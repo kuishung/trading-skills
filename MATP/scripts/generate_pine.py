@@ -94,32 +94,39 @@ mbp = switch syminfo.ticker
 
 has_data = not na(matp)
 
-// Draw horizontal lines via plot(). plot() is the rock-solid Pine
-// primitive for price-anchored series: every Y-pixel position is
-// recomputed from the price coordinate as the user zooms or pans the
-// price scale, so the line always sits at the right price no matter
-// how the chart is manipulated. Trade-off: TradingView's price-scale
-// auto-fit will expand to include MATP/MBP, which can compress the
-// candle view when MATP is far from current price. The user can
-// right-click the price scale -> "Scale price chart only" to make
-// auto-fit ignore the plots if they prefer; the lines remain anchored.
+// Draw horizontal lines via line.new() with xloc.bar_time. Earlier
+// attempts:
+//   v1.4.3 used line.new() with the default xloc.bar_index — the line
+//   sometimes appeared to float against the price coord on zoom.
+//   v1.4.5 reverted to plot(), but plot() can render at the wrong
+//   Y-position on log-scaled charts when the constant value is far
+//   from the historical bars' price range (observed on APH: MBP
+//   $156.52 rendered down near $57). plot() also stretches the
+//   auto-fit, compressing candles.
+// xloc.bar_time anchors the segment in absolute UNIX time, which
+// doesn't shift with the visible window the way bar_index can.
+// extend.both extends infinitely in both directions, so the line
+// always spans the full chart at exactly the price coord.
 
-plot(has_data ? matp : na, "MATP", color=color.orange, linewidth=2)
-plot(has_data ? mbp  : na, "MBP",  color=color.green,  linewidth=2)
-
-// Floating value labels on the right edge of the chart so the price
-// is readable at a glance without hovering.
+var line matp_line = na
+var line mbp_line  = na
 var label matp_lbl = na
 var label mbp_lbl  = na
 
 if barstate.islast
+    if not na(matp_line)
+        line.delete(matp_line)
+    if not na(mbp_line)
+        line.delete(mbp_line)
     if not na(matp_lbl)
         label.delete(matp_lbl)
     if not na(mbp_lbl)
         label.delete(mbp_lbl)
     if has_data
-        matp_lbl := label.new(bar_index, matp, "MATP $" + str.tostring(matp, "#.##"), color=color.orange, textcolor=color.white, style=label.style_label_left, size=size.small)
-        mbp_lbl  := label.new(bar_index, mbp, "MBP $" + str.tostring(mbp, "#.##"), color=color.green, textcolor=color.white, style=label.style_label_left, size=size.small)
+        matp_line := line.new(time[1], matp, time, matp, xloc=xloc.bar_time, extend=extend.both, color=color.orange, width=2)
+        mbp_line  := line.new(time[1], mbp,  time, mbp,  xloc=xloc.bar_time, extend=extend.both, color=color.green,  width=2)
+        matp_lbl  := label.new(time, matp, "MATP $" + str.tostring(matp, "#.##"), xloc=xloc.bar_time, color=color.orange, textcolor=color.white, style=label.style_label_left, size=size.small)
+        mbp_lbl   := label.new(time, mbp,  "MBP $"  + str.tostring(mbp,  "#.##"), xloc=xloc.bar_time, color=color.green,  textcolor=color.white, style=label.style_label_left, size=size.small)
 
 // Staleness badge in the bottom-right corner. Three rows for clarity:
 //   row 0: indicator + version

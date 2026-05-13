@@ -1,17 +1,18 @@
 ---
 name: MATP
-version: 1.4.7
+version: 1.4.8
 description: Build a Median Analyst Target Price (MATP) + Max Buy Price (MBP) table from a Finviz screener URL, push it to Google Sheets, and publish a TradingView Pine Script indicator + importable watchlist that friends can install on any ticker's chart. Use this skill when the user wants to run MATP analysis, generate an MATP table, build the TradingView indicator or watchlist, or asks anything like "compute MATP for this Finviz screener", "give me the MATP table", "run MATP on <finviz url>", "regenerate the Pine Script", "regenerate the watchlist". The skill takes a single Finviz screener URL, extracts every ticker, looks up the latest earnings date on MarketBeat, collects post-earnings analyst price targets, emits a 5-column table plus a detailed markdown file, appends a new dated tab to the configured Google Sheet, generates a Pine Script v5 indicator with a built-in staleness badge and a TradingView-importable watchlist, and auto-uploads both to a shared Drive folder via the same service account.
 ---
 
 # MATP — Median Analyst Target Price + Max Buy Price + TradingView indicator + watchlist
 
-**Version:** 1.4.7 — 2026-05-13
+**Version:** 1.4.8 — 2026-05-13
 
 End-to-end pipeline that turns one Finviz screener URL into a 5-column MATP + MBP table, a TradingView indicator, and a TradingView watchlist that friends can install.
 
 ## Changelog
 
+- **1.4.8** (2026-05-13) — Pine indicator: fix MATP/MBP lines rendering at the wrong Y-position. On log-scaled charts where the MATP value is well above the historical bars' price range (e.g. APH with MATP $180 and historical lows ~$50), `plot()` was rendering the MBP horizontal line down near the historical lows instead of at the MBP price coordinate. Switched back to `line.new()` — this time with `xloc.bar_time` (absolute UNIX time) and `extend=extend.both`. Time coordinates don't shift with the visible window the way bar_index can, which addresses the "line floats on zoom" symptom that drove the 1.4.5 revert. Labels also moved to `xloc.bar_time` for consistency.
 - **1.4.7** (2026-05-13) — Pine indicator: surface the MATP generation date more prominently on the chart. (a) Date is now in the indicator name itself (`MATP/MBP Levels v1.4.7 (2026-05-13)`) so it shows in the chart legend at the top — always visible, can't be hidden by other UI. (b) Corner badge moved from `top_right` (often crowded by TradingView's price-scale / currency / built-in indicator readouts) to `bottom_right`, and split into three rows: version, generation date, age-in-days. Added a 1px white frame at 50% opacity so the badge is easier to spot on busy charts.
 - **1.4.6** (2026-05-13) — Pine indicator now carries the skill version. `generate_pine.py` reads SKILL.md's `version:` field and bakes it into the emitted .pine in three places: the indicator name (`MATP/MBP Levels v1.4.6` — shows in TradingView's chart legend), the header comment block (visible when opening the source), and the corner badge (`MATP v1.4.6 · 2026-05-13 · Nd old`). Friends can see at a glance which version they're running, with no need to open the file.
 - **1.4.5** (2026-05-13) — Pine indicator: reverted MATP/MBP rendering from `line.new(..., extend=extend.both)` back to `plot()`. The `line.new()` approach didn't always re-anchor the line correctly when the user zoomed or scrolled the chart's price axis — the line could appear to "float" relative to the price coordinate. `plot()` is Pine's purpose-built primitive for price-anchored series and re-projects every Y-pixel from the price coordinate on every redraw, so the line always sits at the right price regardless of how the chart is manipulated. Trade-off back on the table: TradingView's price-scale auto-fit will expand to include MATP/MBP values, which can compress the candle view when MATP is far from current price. Mitigation: right-click the price scale → "Scale price chart only" makes auto-fit ignore plots.
