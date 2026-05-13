@@ -50,6 +50,16 @@ One-time setup (~2 minutes):
 
 When the folder is shared with both the service account (Editor) and
 anyone-with-the-link (Viewer), continue below.
+
+IMPORTANT - one-time manual step AFTER this script finishes:
+  Service accounts have NO storage quota on personal Google Drive, so
+  they cannot create the very first file in the folder. You must seed
+  it once yourself:
+    1. Run:   py scripts/generate_pine.py
+    2. Drag the generated MATP_indicator.pine from the skill directory
+       into your Drive folder (so YOU own it, not the service account).
+    3. From then on, py scripts/upload_to_drive.py will update the
+       file in place forever.
 """
 
 

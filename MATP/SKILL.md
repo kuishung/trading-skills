@@ -1,17 +1,18 @@
 ---
 name: MATP
-version: 1.3.0
+version: 1.3.1
 description: Build a Median Analyst Target Price (MATP) + Max Buy Price (MBP) table from a Finviz screener URL, push it to Google Sheets, and publish a TradingView Pine Script indicator that draws MATP/MBP lines on any ticker's chart. Use this skill when the user wants to run MATP analysis, generate an MATP table, build the TradingView indicator, or asks anything like "compute MATP for this Finviz screener", "give me the MATP table", "run MATP on <finviz url>", "regenerate the Pine Script". The skill takes a single Finviz screener URL, extracts every ticker, looks up the latest earnings date on MarketBeat, collects post-earnings analyst price targets, emits a 5-column table plus a detailed markdown file, appends a new dated tab to the configured Google Sheet, generates a Pine Script v5 indicator with a built-in staleness badge, and auto-uploads the .pine to a shared Drive folder via the same service account.
 ---
 
 # MATP — Median Analyst Target Price + Max Buy Price + TradingView indicator
 
-**Version:** 1.3.0 — 2026-05-13
+**Version:** 1.3.1 — 2026-05-13
 
 End-to-end pipeline that turns one Finviz screener URL into a 5-column MATP + MBP table and a TradingView indicator that friends can install.
 
 ## Changelog
 
+- **1.3.1** (2026-05-13) — Document and gracefully handle a Google Drive limitation: service accounts have no storage quota on *personal* Drive, so they can update existing files but cannot create the very first one. `upload_to_drive.py` now catches the `storageQuotaExceeded` error and prints an actionable message telling the user to drag-drop the generated `.pine` into the folder once manually. `setup_drive.py`'s walkthrough surfaces the same caveat upfront. After the one-time manual seed, all future runs update in place automatically.
 - **1.3.0** (2026-05-13) — Added TradingView indicator generation and Drive publishing. `scripts/generate_pine.py` reads `MATP_table.csv` and emits `MATP_indicator.pine` — a Pine Script v5 indicator that draws MATP (orange) and MBP (green) horizontal lines on the chart for any ticker in the screened list, with a color-coded corner badge showing the generation date and age (white <=14d, yellow 15-30d, red >30d). `scripts/upload_to_drive.py` uses the existing service account to push the .pine into a shared Drive folder (updates in place to keep the file's view link stable for friends' bookmarks). `scripts/setup_drive.py` walks the user through one-time folder configuration. `requirements.txt` gains `google-api-python-client`. `setup_sheets.py` patched to preserve unrelated `.env` keys (so re-running it doesn't wipe Drive config).
 - **1.2.3** (2026-05-13) — Sheet cosmetics: right-align extended from MATP/MBP headers to also cover Last Earnings Date (C1). Date and price headers now sit flush with their data below.
 - **1.2.2** (2026-05-13) — Sheet cosmetics: MATP (D1) and MBP (E1) header cells are now right-aligned so they sit flush with their currency-formatted values below. Applied on every push.
@@ -83,6 +84,16 @@ python scripts/setup_drive.py
 This appends `MATP_DRIVE_FOLDER_ID` to `.env`. The folder must be shared with the same service-account email as Editor before this works. The script's printed walkthrough covers the Drive UI steps.
 
 If you skip this step, Stage 5b silently no-ops and the rest of the pipeline (CSV, markdown, Sheets push) still runs.
+
+#### One-time manual seed of the .pine file
+
+Google service accounts have **no storage quota on personal Drive**, so they can update existing files but cannot create the first one. After running `setup_drive.py`, do this once:
+
+1. Run `python scripts/generate_pine.py` to produce `MATP_indicator.pine` locally.
+2. Open your Drive folder in a browser and **drag-drop** the `.pine` file in — you become the owner.
+3. From then on, `python scripts/upload_to_drive.py` updates the existing file in place. The file's URL stays stable, so friends' bookmarks keep working.
+
+If you forget this step and run `upload_to_drive.py` first, the script will surface the issue with explicit drag-drop instructions and exit cleanly — no need to read this section.
 
 ---
 

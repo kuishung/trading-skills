@@ -119,13 +119,33 @@ def main() -> int:
             print(f"Updated existing file {filename}")
         else:
             body = {"name": filename, "parents": [folder_id]}
-            result = service.files().create(
-                body=body,
-                media_body=media,
-                fields="id, webViewLink",
-                supportsAllDrives=True,
-            ).execute()
-            print(f"Created new file {filename}")
+            try:
+                result = service.files().create(
+                    body=body,
+                    media_body=media,
+                    fields="id, webViewLink",
+                    supportsAllDrives=True,
+                ).execute()
+                print(f"Created new file {filename}")
+            except HttpError as exc:
+                err = str(exc)
+                if "storageQuotaExceeded" in err or "Service Accounts do not have storage" in err:
+                    sys.exit(
+                        f"\nERROR: Service account cannot create new files in personal Google Drive.\n"
+                        f"\n"
+                        f"One-time fix:\n"
+                        f"  1. Open the folder in a browser:\n"
+                        f"       https://drive.google.com/drive/folders/{folder_id}\n"
+                        f"  2. Drag this file into the folder so YOU own it:\n"
+                        f"       {pine_path}\n"
+                        f"  3. Re-run this script. From then on it will update the\n"
+                        f"     file in place forever.\n"
+                        f"\n"
+                        f"Why: Drive service accounts have no storage quota on\n"
+                        f"personal Drive, so they can modify existing files but\n"
+                        f"cannot create the very first one.\n"
+                    )
+                raise
     except HttpError as exc:
         sys.exit(f"ERROR: Drive write failed (HTTP {exc.resp.status}): {exc}")
 
