@@ -77,7 +77,7 @@ TEMPLATE = """\
 //      delete, paste the new content, then click "Save". All charts that
 //      use this indicator refresh automatically.
 
-indicator("MATP/MBP Levels v{version}", overlay = true)
+indicator("MATP/MBP Levels v{version} ({gen_date})", overlay = true)
 
 VERSION        = "{version}"
 
@@ -121,13 +121,21 @@ if barstate.islast
         matp_lbl := label.new(bar_index, matp, "MATP $" + str.tostring(matp, "#.##"), color=color.orange, textcolor=color.white, style=label.style_label_left, size=size.small)
         mbp_lbl  := label.new(bar_index, mbp, "MBP $" + str.tostring(mbp, "#.##"), color=color.green, textcolor=color.white, style=label.style_label_left, size=size.small)
 
-// Staleness badge in the top-right corner.
-var table info = table.new(position.top_right, 1, 1, bgcolor = color.new(color.black, 70))
+// Staleness badge in the bottom-right corner. Three rows for clarity:
+//   row 0: indicator + version
+//   row 1: when the underlying MATP data was generated
+//   row 2: age in days, color-coded (white <=14d, yellow 15-30d, red > 30d)
+// Bottom-right because TradingView's top corners are usually occupied
+// by the chart legend (top-left) and the price-scale UI / currency
+// selector / ATR readouts (top-right).
+var table info = table.new(position.bottom_right, 1, 3, bgcolor = color.new(color.black, 70), frame_color = color.new(color.white, 50), frame_width = 1)
 if barstate.islast
     days_old    = math.round((timenow - GENERATED_TS) / (1000 * 60 * 60 * 24))
     badge_color = days_old <= 14 ? color.white : days_old <= 30 ? color.yellow : color.red
-    badge_text  = has_data ? "MATP v" + VERSION + "  " + GENERATED_DATE + "  " + str.tostring(days_old) + "d old" : "MATP v" + VERSION + "  " + GENERATED_DATE + "  no data for " + syminfo.ticker
-    table.cell(info, 0, 0, badge_text, text_color = badge_color, text_size = size.small)
+    age_text    = has_data ? str.tostring(days_old) + "d old" : "no data for " + syminfo.ticker
+    table.cell(info, 0, 0, "MATP v" + VERSION,            text_color = color.white,  text_size = size.small)
+    table.cell(info, 0, 1, "Generated " + GENERATED_DATE, text_color = color.white,  text_size = size.small)
+    table.cell(info, 0, 2, age_text,                      text_color = badge_color,  text_size = size.small)
 """
 
 
