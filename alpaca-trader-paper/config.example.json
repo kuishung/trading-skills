@@ -1,0 +1,6 @@
+{
+  "max_position_pct": 0.10,
+  "max_open_positions": 10,
+  "default_time_in_force": "day",
+  "trade_log_path": "trade_log.jsonl"
+}

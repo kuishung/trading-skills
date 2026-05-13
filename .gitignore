@@ -1,0 +1,49 @@
+# Credentials — never commit, at any depth
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*-sa.json
+*-service-account*.json
+service_account*.json
+credentials/
+**/credentials/
+Google Key/
+**/Google Key/
+.gcp/
+**/.gcp/
+
+# Claude Code local settings
+.claude/settings.local.json
+**/.claude/settings.local.json
+
+# Per-skill local state (not source)
+trade_log.jsonl
+config.json
+
+# Generated outputs (regeneratable, don't commit)
+MATP_table.csv
+MATP_analysis.md
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

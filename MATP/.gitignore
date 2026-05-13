@@ -1,0 +1,13 @@
+# Local credentials and config
+.env
+credentials/
+*-sa.json
+*-service-account*.json
+service_account*.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
