@@ -81,16 +81,8 @@ if barstate.islast
     if not na(mbp_lbl)
         label.delete(mbp_lbl)
     if has_data
-        matp_lbl := label.new(bar_index, matp, "MATP $" + str.tostring(matp, "#.##"),
-            color     = color.orange,
-            textcolor = color.white,
-            style     = label.style_label_left,
-            size      = size.small)
-        mbp_lbl  := label.new(bar_index, mbp, "MBP $" + str.tostring(mbp, "#.##"),
-            color     = color.green,
-            textcolor = color.white,
-            style     = label.style_label_left,
-            size      = size.small)
+        matp_lbl := label.new(bar_index, matp, "MATP $" + str.tostring(matp, "#.##"), color=color.orange, textcolor=color.white, style=label.style_label_left, size=size.small)
+        mbp_lbl := label.new(bar_index, mbp, "MBP $" + str.tostring(mbp, "#.##"), color=color.green, textcolor=color.white, style=label.style_label_left, size=size.small)
 
 // Staleness badge in the top-right corner.
 var table info = table.new(position.top_right, 1, 1, bgcolor = color.new(color.black, 70))

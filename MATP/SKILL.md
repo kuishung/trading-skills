@@ -1,17 +1,18 @@
 ---
 name: MATP
-version: 1.4.1
+version: 1.4.2
 description: Build a Median Analyst Target Price (MATP) + Max Buy Price (MBP) table from a Finviz screener URL, push it to Google Sheets, and publish a TradingView Pine Script indicator + importable watchlist that friends can install on any ticker's chart. Use this skill when the user wants to run MATP analysis, generate an MATP table, build the TradingView indicator or watchlist, or asks anything like "compute MATP for this Finviz screener", "give me the MATP table", "run MATP on <finviz url>", "regenerate the Pine Script", "regenerate the watchlist". The skill takes a single Finviz screener URL, extracts every ticker, looks up the latest earnings date on MarketBeat, collects post-earnings analyst price targets, emits a 5-column table plus a detailed markdown file, appends a new dated tab to the configured Google Sheet, generates a Pine Script v5 indicator with a built-in staleness badge and a TradingView-importable watchlist, and auto-uploads both to a shared Drive folder via the same service account.
 ---
 
 # MATP — Median Analyst Target Price + Max Buy Price + TradingView indicator + watchlist
 
-**Version:** 1.4.1 — 2026-05-13
+**Version:** 1.4.2 — 2026-05-13
 
 End-to-end pipeline that turns one Finviz screener URL into a 5-column MATP + MBP table, a TradingView indicator, and a TradingView watchlist that friends can install.
 
 ## Changelog
 
+- **1.4.2** (2026-05-13) — Pine syntax fix. `generate_pine.py` previously emitted multi-line `label.new(...)` calls with named-argument continuations, which TradingView's Pine v5 parser rejected with `Syntax error at input 'end of line without line continuation'` when the call sat inside nested `if` blocks. Collapsed both label.new calls to single lines so continuation rules don't apply. Long lines work fine in Pine — there's no practical line-length limit.
 - **1.4.1** (2026-05-13) — Docs: flagged exchange-inference as a known weak point in Stage 1. The Finviz `v=111` screener view doesn't expose exchange in its HTML, so the LLM infers from convention and occasionally misclassifies. Verification step added to Stage 7: after TradingView import, surface any `Exchange:Ticker` pairs that TradingView rejects and fix them at source in the CSV. Known examples that have failed in the wild and the correct exchanges for them: ANET → NYSE (not NASDAQ), APH → NYSE (not NASDAQ), FTAI → NASDAQ (moved from NYSE in 2024).
 - **1.4.0** (2026-05-13) — Added TradingView watchlist export. New script `scripts/generate_watchlist.py` reads `MATP_table.csv` and emits `MATP_watchlist.txt` — a plain-text file with one `EXCHANGE:TICKER` per line plus a `###MATP <date>` section header. Friends import it via TradingView's Watchlist panel → "..." menu → Import list. `upload_to_drive.py` now uploads both the `.pine` indicator and the `.txt` watchlist by default; pass `--file` to upload a single specific file.
 - **1.3.1** (2026-05-13) — Document and gracefully handle a Google Drive limitation: service accounts have no storage quota on *personal* Drive, so they can update existing files but cannot create the very first one. `upload_to_drive.py` now catches the `storageQuotaExceeded` error and prints an actionable message telling the user to drag-drop the generated `.pine` into the folder once manually. `setup_drive.py`'s walkthrough surfaces the same caveat upfront. After the one-time manual seed, all future runs update in place automatically.
