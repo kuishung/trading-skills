@@ -26,6 +26,7 @@ config.json
 MATP_table.csv
 MATP_analysis.md
 MATP_indicator.pine
+MATP_watchlist.txt
 
 # Python
 __pycache__/
