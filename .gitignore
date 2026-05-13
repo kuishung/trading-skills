@@ -25,6 +25,7 @@ config.json
 # Generated outputs (regeneratable, don't commit)
 MATP_table.csv
 MATP_analysis.md
+MATP_indicator.pine
 
 # Python
 __pycache__/

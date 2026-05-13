@@ -1,17 +1,18 @@
 ---
 name: MATP
-version: 1.2.3
-description: Build a Median Analyst Target Price (MATP) + Max Buy Price (MBP) table from a Finviz screener URL and push it to Google Sheets. Use this skill when the user wants to run MATP analysis, generate an MATP table, or asks anything like "compute MATP for this Finviz screener", "give me the MATP table", "run MATP on <finviz url>". The skill takes a single Finviz screener URL, extracts every ticker, looks up the latest earnings date on MarketBeat, collects post-earnings analyst price targets, emits a 5-column table (Ticker | Exchange | Last Earnings Date | MATP | MBP) plus a detailed markdown file with all per-ticker evidence, and appends a new dated tab to the configured Google Sheet.
+version: 1.3.0
+description: Build a Median Analyst Target Price (MATP) + Max Buy Price (MBP) table from a Finviz screener URL, push it to Google Sheets, and publish a TradingView Pine Script indicator that draws MATP/MBP lines on any ticker's chart. Use this skill when the user wants to run MATP analysis, generate an MATP table, build the TradingView indicator, or asks anything like "compute MATP for this Finviz screener", "give me the MATP table", "run MATP on <finviz url>", "regenerate the Pine Script". The skill takes a single Finviz screener URL, extracts every ticker, looks up the latest earnings date on MarketBeat, collects post-earnings analyst price targets, emits a 5-column table plus a detailed markdown file, appends a new dated tab to the configured Google Sheet, generates a Pine Script v5 indicator with a built-in staleness badge, and auto-uploads the .pine to a shared Drive folder via the same service account.
 ---
 
-# MATP — Median Analyst Target Price + Max Buy Price builder
+# MATP — Median Analyst Target Price + Max Buy Price + TradingView indicator
 
-**Version:** 1.2.3 — 2026-05-13
+**Version:** 1.3.0 — 2026-05-13
 
-End-to-end pipeline that turns one Finviz screener URL into a 5-column MATP + MBP table.
+End-to-end pipeline that turns one Finviz screener URL into a 5-column MATP + MBP table and a TradingView indicator that friends can install.
 
 ## Changelog
 
+- **1.3.0** (2026-05-13) — Added TradingView indicator generation and Drive publishing. `scripts/generate_pine.py` reads `MATP_table.csv` and emits `MATP_indicator.pine` — a Pine Script v5 indicator that draws MATP (orange) and MBP (green) horizontal lines on the chart for any ticker in the screened list, with a color-coded corner badge showing the generation date and age (white <=14d, yellow 15-30d, red >30d). `scripts/upload_to_drive.py` uses the existing service account to push the .pine into a shared Drive folder (updates in place to keep the file's view link stable for friends' bookmarks). `scripts/setup_drive.py` walks the user through one-time folder configuration. `requirements.txt` gains `google-api-python-client`. `setup_sheets.py` patched to preserve unrelated `.env` keys (so re-running it doesn't wipe Drive config).
 - **1.2.3** (2026-05-13) — Sheet cosmetics: right-align extended from MATP/MBP headers to also cover Last Earnings Date (C1). Date and price headers now sit flush with their data below.
 - **1.2.2** (2026-05-13) — Sheet cosmetics: MATP (D1) and MBP (E1) header cells are now right-aligned so they sit flush with their currency-formatted values below. Applied on every push.
 - **1.2.1** (2026-05-13) — Fix: `push_to_sheets.py --overwrite` previously failed when the target was the only tab in the spreadsheet (Sheets refuses to delete the last sheet). Changed to clear-and-rewrite the tab in place instead of delete-and-recreate.
@@ -45,6 +46,7 @@ If the user has not provided a URL by the time this skill is invoked, ask the qu
 2. **Detail file** written to `MATP_analysis.md` in the skill directory, containing the summary table plus a per-ticker breakdown (every post-earnings analyst target used, sorted list, median calc shown). The summary table includes MBP.
 3. **CSV file** written to `MATP_table.csv` in the skill directory (the same 5 columns, machine-readable). Numeric values unquoted, no `$` sign.
 4. **Google Sheets push** — a new tab in the configured sheet, named with today's date (YYYY-MM-DD), containing the same 5 columns. MATP (D) and MBP (E) are formatted as USD currency. Skipped automatically if Sheets setup hasn't been run.
+5. **TradingView Pine indicator** — `MATP_indicator.pine` written to the skill directory and uploaded to a shared Google Drive folder. Friends bookmark the Drive folder, open the file, copy-paste into TradingView's Pine Editor, save, and add to chart. The indicator draws MATP (orange) and MBP (green) horizontal lines on any chart whose ticker is in the screened list, plus a top-right corner badge showing the generation date and how stale the data is (white / yellow / red color-coded). Skipped automatically if Drive setup hasn't been run.
 
 ## First-run setup (one time only)
 
@@ -68,7 +70,19 @@ If `.env` already exists, skip setup and proceed.
 
 ### Re-running setup / changing the target sheet
 
-Just run `python scripts/setup_sheets.py` again. It overwrites `.env` with whatever new path + Sheet ID you provide. There is no separate "edit config" command — re-run setup. To switch sheets, you'll also need to share the new sheet with the same service-account email (or generate a new key for a new project).
+Just run `python scripts/setup_sheets.py` again. It updates the relevant keys in `.env` while preserving any unrelated config (e.g., `MATP_DRIVE_FOLDER_ID`). There is no separate "edit config" command — re-run setup. To switch sheets, you'll also need to share the new sheet with the same service-account email (or generate a new key for a new project).
+
+### Optional: TradingView indicator + Drive publishing (also one-time)
+
+If you want Stage 5b (auto-publish a Pine indicator to Drive), add a Drive folder:
+
+```bash
+python scripts/setup_drive.py
+```
+
+This appends `MATP_DRIVE_FOLDER_ID` to `.env`. The folder must be shared with the same service-account email as Editor before this works. The script's printed walkthrough covers the Drive UI steps.
+
+If you skip this step, Stage 5b silently no-ops and the rest of the pipeline (CSV, markdown, Sheets push) still runs.
 
 ---
 
@@ -167,6 +181,21 @@ Sorted: a, b, c, ... → median calc = $X. MBP = X / 1.15 = $Y.
 
 **`MATP_table.csv`** — same 5 columns, machine-readable. Header row is `Ticker,Exchange,Last Earnings Date,MATP,MBP`. MATP and MBP values must be unquoted numeric (no `$`, no thousands separator) so Sheets and downstream tools parse them as numbers.
 
+### Stage 5b — Generate Pine Script & upload to Drive
+
+After the CSV is written, build the TradingView indicator and publish it:
+
+```bash
+python scripts/generate_pine.py
+python scripts/upload_to_drive.py
+```
+
+`generate_pine.py` reads `MATP_table.csv` and writes `MATP_indicator.pine` — a self-contained Pine Script v5 indicator. The script's leading comment block includes friend-facing install instructions (paste into TradingView Pine Editor → Save → Add to chart). Today's date is baked into the script so the in-chart staleness badge can compute "X days old" at runtime.
+
+`upload_to_drive.py` pushes the `.pine` into the Drive folder configured by `setup_drive.py`. If the file already exists in the folder it updates in place (preserving the file ID and view link, so friends' bookmarks keep working). The script prints the file's web view URL on success.
+
+Skip both calls if `MATP_DRIVE_FOLDER_ID` is missing from `.env` — the rest of the pipeline still runs. Mention this in the final chat message so the user knows Drive publishing was skipped.
+
 ### Stage 6 — Push to Google Sheets
 
 After writing the CSV, push it to the configured sheet:
@@ -230,10 +259,14 @@ That's ~120 `WebFetch` calls. Batch them aggressively — putting 15 calls in a 
 ## File layout
 
 - `SKILL.md` — this file.
-- `scripts/setup_sheets.py` — one-time interactive setup for Google Sheets credentials.
+- `scripts/setup_sheets.py` — one-time interactive setup for Google Sheets credentials. Preserves any unrelated `.env` keys when re-run.
 - `scripts/push_to_sheets.py` — CSV → Sheets uploader, dated-tab-per-run.
-- `requirements.txt` — `gspread`, `google-auth`.
+- `scripts/setup_drive.py` — one-time interactive setup for the shared Drive folder used to publish the Pine indicator.
+- `scripts/generate_pine.py` — CSV → `MATP_indicator.pine` (Pine Script v5).
+- `scripts/upload_to_drive.py` — pushes `MATP_indicator.pine` into the configured Drive folder, updating in place.
+- `requirements.txt` — `gspread`, `google-auth`, `google-api-python-client`.
 - `.gitignore` — keeps `.env` and any service-account JSONs out of version control.
-- `.env` — created by setup; holds `GOOGLE_SA_KEY_PATH` and `MATP_SHEET_ID`. Gitignored.
-- `MATP_analysis.md` — generated each run (overwritten).
-- `MATP_table.csv` — generated each run (overwritten).
+- `.env` — created by setup; holds `GOOGLE_SA_KEY_PATH`, `MATP_SHEET_ID`, and optionally `MATP_DRIVE_FOLDER_ID`. Gitignored.
+- `MATP_analysis.md` — generated each run (overwritten). Gitignored.
+- `MATP_table.csv` — generated each run (overwritten). Gitignored.
+- `MATP_indicator.pine` — generated each run (overwritten). Gitignored.

@@ -161,11 +161,18 @@ def main() -> int:
 
     print(f"OK: Connected to sheet '{sh.title}'.")
 
-    # --- Persist ---
-    env_lines = [
-        f"GOOGLE_SA_KEY_PATH={json_path}",
-        f"MATP_SHEET_ID={sheet_id}",
-    ]
+    # --- Persist (preserve any unrelated keys already in .env, e.g. Drive config) ---
+    existing: dict[str, str] = {}
+    if ENV_PATH.exists():
+        for raw in ENV_PATH.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            existing[k.strip()] = v.strip()
+    existing["GOOGLE_SA_KEY_PATH"] = str(json_path)
+    existing["MATP_SHEET_ID"] = sheet_id
+    env_lines = [f"{k}={v}" for k, v in existing.items()]
     ENV_PATH.write_text("\n".join(env_lines) + "\n", encoding="utf-8")
     print(f"\nSaved config to {ENV_PATH}")
     print("Future MATP runs will append a new dated tab to this sheet.")
