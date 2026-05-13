@@ -128,14 +128,19 @@ def main() -> int:
 
     ws.update(range_name="A1", values=rows, value_input_option="USER_ENTERED")
 
-    # Cosmetics: freeze header row, bold header, currency on MATP (D) and MBP (E).
+    # Cosmetics: freeze header row, bold all headers, right-align the numeric
+    # column headers (MATP/MBP) so they sit flush with their currency values,
+    # and currency-format the MATP (D) and MBP (E) data.
     ws.freeze(rows=1)
     ws.format(f"A1:{chr(ord('A') + n_cols - 1)}1", {"textFormat": {"bold": True}})
     currency = {"numberFormat": {"type": "CURRENCY", "pattern": "$#,##0.00"}}
+    right_align = {"horizontalAlignment": "RIGHT"}
     if n_cols >= 5:
         ws.format(f"D2:E{n_rows}", currency)
+        ws.format("D1:E1", right_align)
     elif n_cols >= 4:
         ws.format(f"D2:D{n_rows}", currency)
+        ws.format("D1:D1", right_align)
 
     data_rows = n_rows - 1  # exclude header
     sheet_url = (
