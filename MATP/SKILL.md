@@ -1,17 +1,18 @@
 ---
 name: MATP
-version: 1.2.0
+version: 1.2.1
 description: Build a Median Analyst Target Price (MATP) + Max Buy Price (MBP) table from a Finviz screener URL and push it to Google Sheets. Use this skill when the user wants to run MATP analysis, generate an MATP table, or asks anything like "compute MATP for this Finviz screener", "give me the MATP table", "run MATP on <finviz url>". The skill takes a single Finviz screener URL, extracts every ticker, looks up the latest earnings date on MarketBeat, collects post-earnings analyst price targets, emits a 5-column table (Ticker | Exchange | Last Earnings Date | MATP | MBP) plus a detailed markdown file with all per-ticker evidence, and appends a new dated tab to the configured Google Sheet.
 ---
 
 # MATP — Median Analyst Target Price + Max Buy Price builder
 
-**Version:** 1.2.0 — 2026-05-13
+**Version:** 1.2.1 — 2026-05-13
 
 End-to-end pipeline that turns one Finviz screener URL into a 5-column MATP + MBP table.
 
 ## Changelog
 
+- **1.2.1** (2026-05-13) — Fix: `push_to_sheets.py --overwrite` previously failed when the target was the only tab in the spreadsheet (Sheets refuses to delete the last sheet). Changed to clear-and-rewrite the tab in place instead of delete-and-recreate.
 - **1.2.0** (2026-05-13) — Added Max Buy Price (MBP) as column 5. Formula: `MBP = MATP / 1.15`. Rounded to 2 dp. CSV header is now `Ticker,Exchange,Last Earnings Date,MATP,MBP`. `push_to_sheets.py` formats both D (MATP) and E (MBP) as USD currency. Detail markdown summary table gains the same column.
 - **1.1.2** (2026-05-13) — Docs only. Added Windows `py -m pip` note for fresh installs, clarified manual vs in-pipeline invocation of `push_to_sheets.py`, and documented how to re-run setup or change the target sheet.
 - **1.1.1** (2026-05-13) — Improved error reporting in `scripts/setup_sheets.py`: APIError now surfaces the underlying HTTP status + message (so "API not enabled" vs "permission denied" vs "sheet not found" are distinguishable), and unknown exceptions print a full traceback plus errno/filename attributes. No behavior change on the happy path.

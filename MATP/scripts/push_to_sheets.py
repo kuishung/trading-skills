@@ -108,6 +108,9 @@ def main() -> int:
         )
 
     existing = {ws.title for ws in sh.worksheets()}
+    n_rows = len(rows)
+    n_cols = max(len(r) for r in rows)
+
     if tab_name in existing:
         if not args.overwrite:
             sys.exit(
@@ -115,11 +118,14 @@ def main() -> int:
                 f"Re-run with --overwrite to replace it, "
                 f"or --tab <other-name> to write to a different tab."
             )
-        sh.del_worksheet(sh.worksheet(tab_name))
+        # Clear-and-reuse rather than delete-and-recreate: Google Sheets
+        # refuses to delete the only remaining tab in a document.
+        ws = sh.worksheet(tab_name)
+        ws.clear()
+        ws.resize(rows=n_rows + 5, cols=n_cols + 2)
+    else:
+        ws = sh.add_worksheet(title=tab_name, rows=n_rows + 5, cols=n_cols + 2)
 
-    n_rows = len(rows)
-    n_cols = max(len(r) for r in rows)
-    ws = sh.add_worksheet(title=tab_name, rows=n_rows + 5, cols=n_cols + 2)
     ws.update(range_name="A1", values=rows, value_input_option="USER_ENTERED")
 
     # Cosmetics: freeze header row, bold header, currency on MATP (D) and MBP (E).
