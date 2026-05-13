@@ -1,17 +1,18 @@
 ---
 name: MATP
-version: 1.4.0
+version: 1.4.1
 description: Build a Median Analyst Target Price (MATP) + Max Buy Price (MBP) table from a Finviz screener URL, push it to Google Sheets, and publish a TradingView Pine Script indicator + importable watchlist that friends can install on any ticker's chart. Use this skill when the user wants to run MATP analysis, generate an MATP table, build the TradingView indicator or watchlist, or asks anything like "compute MATP for this Finviz screener", "give me the MATP table", "run MATP on <finviz url>", "regenerate the Pine Script", "regenerate the watchlist". The skill takes a single Finviz screener URL, extracts every ticker, looks up the latest earnings date on MarketBeat, collects post-earnings analyst price targets, emits a 5-column table plus a detailed markdown file, appends a new dated tab to the configured Google Sheet, generates a Pine Script v5 indicator with a built-in staleness badge and a TradingView-importable watchlist, and auto-uploads both to a shared Drive folder via the same service account.
 ---
 
 # MATP — Median Analyst Target Price + Max Buy Price + TradingView indicator + watchlist
 
-**Version:** 1.4.0 — 2026-05-13
+**Version:** 1.4.1 — 2026-05-13
 
 End-to-end pipeline that turns one Finviz screener URL into a 5-column MATP + MBP table, a TradingView indicator, and a TradingView watchlist that friends can install.
 
 ## Changelog
 
+- **1.4.1** (2026-05-13) — Docs: flagged exchange-inference as a known weak point in Stage 1. The Finviz `v=111` screener view doesn't expose exchange in its HTML, so the LLM infers from convention and occasionally misclassifies. Verification step added to Stage 7: after TradingView import, surface any `Exchange:Ticker` pairs that TradingView rejects and fix them at source in the CSV. Known examples that have failed in the wild and the correct exchanges for them: ANET → NYSE (not NASDAQ), APH → NYSE (not NASDAQ), FTAI → NASDAQ (moved from NYSE in 2024).
 - **1.4.0** (2026-05-13) — Added TradingView watchlist export. New script `scripts/generate_watchlist.py` reads `MATP_table.csv` and emits `MATP_watchlist.txt` — a plain-text file with one `EXCHANGE:TICKER` per line plus a `###MATP <date>` section header. Friends import it via TradingView's Watchlist panel → "..." menu → Import list. `upload_to_drive.py` now uploads both the `.pine` indicator and the `.txt` watchlist by default; pass `--file` to upload a single specific file.
 - **1.3.1** (2026-05-13) — Document and gracefully handle a Google Drive limitation: service accounts have no storage quota on *personal* Drive, so they can update existing files but cannot create the very first one. `upload_to_drive.py` now catches the `storageQuotaExceeded` error and prints an actionable message telling the user to drag-drop the generated `.pine` into the folder once manually. `setup_drive.py`'s walkthrough surfaces the same caveat upfront. After the one-time manual seed, all future runs update in place automatically.
 - **1.3.0** (2026-05-13) — Added TradingView indicator generation and Drive publishing. `scripts/generate_pine.py` reads `MATP_table.csv` and emits `MATP_indicator.pine` — a Pine Script v5 indicator that draws MATP (orange) and MBP (green) horizontal lines on the chart for any ticker in the screened list, with a color-coded corner badge showing the generation date and age (white <=14d, yellow 15-30d, red >30d). `scripts/upload_to_drive.py` uses the existing service account to push the .pine into a shared Drive folder (updates in place to keep the file's view link stable for friends' bookmarks). `scripts/setup_drive.py` walks the user through one-time folder configuration. `requirements.txt` gains `google-api-python-client`. `setup_sheets.py` patched to preserve unrelated `.env` keys (so re-running it doesn't wipe Drive config).
@@ -115,7 +116,14 @@ Finviz paginates 20 rows per page using a `&r=` offset. If the result count exce
 
 Stop fetching when you have ≥ total result count tickers.
 
-**Exchange caveat.** Finviz's default v=111 view does not always render the exchange column. WebFetch may infer the exchange from convention (most are NASDAQ; a few well-known names like CAT, LLY, V are NYSE). This inference is good enough because **MarketBeat tolerates either `/NASDAQ/<ticker>/` or `/NYSE/<ticker>/` in the URL** — both resolve to the same page. So even if the exchange tag is wrong, the next two stages still work. Use the inferred value in the final table without re-validating.
+**Exchange caveat.** Finviz's default v=111 view does not always render the exchange column. WebFetch may infer the exchange from convention (most are NASDAQ; a few well-known names like CAT, LLY, V are NYSE). This inference is good enough for MarketBeat lookups in Stages 2 and 3 because **MarketBeat tolerates either `/NASDAQ/<ticker>/` or `/NYSE/<ticker>/` in the URL** — both resolve to the same page. But the inference IS lossy for the TradingView watchlist export in Stage 5b, because TradingView strictly validates `EXCHANGE:TICKER` and will reject mismatches.
+
+**Known examples that have misclassified before** (correct them in the CSV before regenerating the watchlist):
+- `ANET` → NYSE (not NASDAQ)
+- `APH` → NYSE (not NASDAQ)
+- `FTAI` → NASDAQ (moved from NYSE in 2024)
+
+If a future run produces a watchlist that a friend reports as having invalid symbols, look them up authoritatively (e.g., on the company's IR page or Google Finance) and patch the CSV at the source — then re-run `generate_watchlist.py` and `upload_to_drive.py`.
 
 ### Stage 2 — Latest earnings date per ticker
 
