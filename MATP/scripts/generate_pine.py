@@ -68,39 +68,32 @@ mbp = switch syminfo.ticker
 
 has_data = not na(matp)
 
-// Draw horizontal lines via line.new() with extend.both rather than
-// plot(). plot() would stretch TradingView's price-scale auto-fit to
-// include MATP/MBP, compressing the actual price action. line.new()
-// anchors the line to a price coordinate without affecting auto-scale,
-// so the chart stays focused on real candles. The trade-off: if
-// MATP/MBP are well outside the current visible price range, the lines
-// will be off-screen until the user zooms out or scrolls the scale.
+// Draw horizontal lines via plot(). plot() is the rock-solid Pine
+// primitive for price-anchored series: every Y-pixel position is
+// recomputed from the price coordinate as the user zooms or pans the
+// price scale, so the line always sits at the right price no matter
+// how the chart is manipulated. Trade-off: TradingView's price-scale
+// auto-fit will expand to include MATP/MBP, which can compress the
+// candle view when MATP is far from current price. The user can
+// right-click the price scale -> "Scale price chart only" to make
+// auto-fit ignore the plots if they prefer; the lines remain anchored.
 
-var line  matp_line = na
-var line  mbp_line  = na
-var label matp_lbl  = na
-var label mbp_lbl   = na
+plot(has_data ? matp : na, "MATP", color=color.orange, linewidth=2)
+plot(has_data ? mbp  : na, "MBP",  color=color.green,  linewidth=2)
+
+// Floating value labels on the right edge of the chart so the price
+// is readable at a glance without hovering.
+var label matp_lbl = na
+var label mbp_lbl  = na
 
 if barstate.islast
-    if not na(matp_line)
-        line.delete(matp_line)
-    if not na(mbp_line)
-        line.delete(mbp_line)
     if not na(matp_lbl)
         label.delete(matp_lbl)
     if not na(mbp_lbl)
         label.delete(mbp_lbl)
     if has_data
-        matp_line := line.new(bar_index - 1, matp, bar_index, matp, extend=extend.both, color=color.orange, width=2)
-        mbp_line  := line.new(bar_index - 1, mbp, bar_index, mbp, extend=extend.both, color=color.green, width=2)
-        matp_lbl  := label.new(bar_index, matp, "MATP $" + str.tostring(matp, "#.##"), color=color.orange, textcolor=color.white, style=label.style_label_left, size=size.small)
-        mbp_lbl   := label.new(bar_index, mbp, "MBP $" + str.tostring(mbp, "#.##"), color=color.green, textcolor=color.white, style=label.style_label_left, size=size.small)
-
-// Price-scale labels on the right Y-axis. display.price_scale shows
-// the value as a tag on the axis only, so it doesn't draw anything in
-// the chart pane and doesn't affect auto-scaling.
-plot(has_data ? matp : na, "MATP", color=color.orange, display=display.price_scale)
-plot(has_data ? mbp  : na, "MBP",  color=color.green,  display=display.price_scale)
+        matp_lbl := label.new(bar_index, matp, "MATP $" + str.tostring(matp, "#.##"), color=color.orange, textcolor=color.white, style=label.style_label_left, size=size.small)
+        mbp_lbl  := label.new(bar_index, mbp, "MBP $" + str.tostring(mbp, "#.##"), color=color.green, textcolor=color.white, style=label.style_label_left, size=size.small)
 
 // Staleness badge in the top-right corner.
 var table info = table.new(position.top_right, 1, 1, bgcolor = color.new(color.black, 70))
