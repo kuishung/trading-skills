@@ -96,6 +96,12 @@ if barstate.islast
         matp_lbl  := label.new(bar_index, matp, "MATP $" + str.tostring(matp, "#.##"), color=color.orange, textcolor=color.white, style=label.style_label_left, size=size.small)
         mbp_lbl   := label.new(bar_index, mbp, "MBP $" + str.tostring(mbp, "#.##"), color=color.green, textcolor=color.white, style=label.style_label_left, size=size.small)
 
+// Price-scale labels on the right Y-axis. display.price_scale shows
+// the value as a tag on the axis only, so it doesn't draw anything in
+// the chart pane and doesn't affect auto-scaling.
+plot(has_data ? matp : na, "MATP", color=color.orange, display=display.price_scale)
+plot(has_data ? mbp  : na, "MBP",  color=color.green,  display=display.price_scale)
+
 // Staleness badge in the top-right corner.
 var table info = table.new(position.top_right, 1, 1, bgcolor = color.new(color.black, 70))
 if barstate.islast

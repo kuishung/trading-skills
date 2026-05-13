@@ -1,17 +1,18 @@
 ---
 name: MATP
-version: 1.4.3
+version: 1.4.4
 description: Build a Median Analyst Target Price (MATP) + Max Buy Price (MBP) table from a Finviz screener URL, push it to Google Sheets, and publish a TradingView Pine Script indicator + importable watchlist that friends can install on any ticker's chart. Use this skill when the user wants to run MATP analysis, generate an MATP table, build the TradingView indicator or watchlist, or asks anything like "compute MATP for this Finviz screener", "give me the MATP table", "run MATP on <finviz url>", "regenerate the Pine Script", "regenerate the watchlist". The skill takes a single Finviz screener URL, extracts every ticker, looks up the latest earnings date on MarketBeat, collects post-earnings analyst price targets, emits a 5-column table plus a detailed markdown file, appends a new dated tab to the configured Google Sheet, generates a Pine Script v5 indicator with a built-in staleness badge and a TradingView-importable watchlist, and auto-uploads both to a shared Drive folder via the same service account.
 ---
 
 # MATP — Median Analyst Target Price + Max Buy Price + TradingView indicator + watchlist
 
-**Version:** 1.4.3 — 2026-05-13
+**Version:** 1.4.4 — 2026-05-13
 
 End-to-end pipeline that turns one Finviz screener URL into a 5-column MATP + MBP table, a TradingView indicator, and a TradingView watchlist that friends can install.
 
 ## Changelog
 
+- **1.4.4** (2026-05-13) — Pine indicator: added price-scale tags on the right Y-axis for MATP and MBP, so the values now show up as labeled tags on the axis (like the current-price tag) in addition to the floating labels on the chart. Implemented via `plot(..., display=display.price_scale)` which only renders to the axis, not to the chart pane, so the chart's auto-scale is still not stretched.
 - **1.4.3** (2026-05-13) — Pine indicator: switched from `plot()` to `line.new(..., extend=extend.both)` for the MATP/MBP horizontal lines. `plot()` was stretching TradingView's price-scale auto-fit to include the MATP/MBP values, which visually compressed the actual price action. `line.new()` anchors each line to its price coordinate without affecting the chart's auto-scale, so candles stay readable. Trade-off: if MATP/MBP are well outside the current visible price range, the lines will be off-screen until the user manually scrolls or zooms.
 - **1.4.2** (2026-05-13) — Pine syntax fix. `generate_pine.py` previously emitted multi-line `label.new(...)` calls with named-argument continuations, which TradingView's Pine v5 parser rejected with `Syntax error at input 'end of line without line continuation'` when the call sat inside nested `if` blocks. Collapsed both label.new calls to single lines so continuation rules don't apply. Long lines work fine in Pine — there's no practical line-length limit.
 - **1.4.1** (2026-05-13) — Docs: flagged exchange-inference as a known weak point in Stage 1. The Finviz `v=111` screener view doesn't expose exchange in its HTML, so the LLM infers from convention and occasionally misclassifies. Verification step added to Stage 7: after TradingView import, surface any `Exchange:Ticker` pairs that TradingView rejects and fix them at source in the CSV. Known examples that have failed in the wild and the correct exchanges for them: ANET → NYSE (not NASDAQ), APH → NYSE (not NASDAQ), FTAI → NASDAQ (moved from NYSE in 2024).
