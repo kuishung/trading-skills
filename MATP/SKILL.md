@@ -1,17 +1,18 @@
 ---
 name: MATP
-version: 1.4.5
+version: 1.4.6
 description: Build a Median Analyst Target Price (MATP) + Max Buy Price (MBP) table from a Finviz screener URL, push it to Google Sheets, and publish a TradingView Pine Script indicator + importable watchlist that friends can install on any ticker's chart. Use this skill when the user wants to run MATP analysis, generate an MATP table, build the TradingView indicator or watchlist, or asks anything like "compute MATP for this Finviz screener", "give me the MATP table", "run MATP on <finviz url>", "regenerate the Pine Script", "regenerate the watchlist". The skill takes a single Finviz screener URL, extracts every ticker, looks up the latest earnings date on MarketBeat, collects post-earnings analyst price targets, emits a 5-column table plus a detailed markdown file, appends a new dated tab to the configured Google Sheet, generates a Pine Script v5 indicator with a built-in staleness badge and a TradingView-importable watchlist, and auto-uploads both to a shared Drive folder via the same service account.
 ---
 
 # MATP — Median Analyst Target Price + Max Buy Price + TradingView indicator + watchlist
 
-**Version:** 1.4.5 — 2026-05-13
+**Version:** 1.4.6 — 2026-05-13
 
 End-to-end pipeline that turns one Finviz screener URL into a 5-column MATP + MBP table, a TradingView indicator, and a TradingView watchlist that friends can install.
 
 ## Changelog
 
+- **1.4.6** (2026-05-13) — Pine indicator now carries the skill version. `generate_pine.py` reads SKILL.md's `version:` field and bakes it into the emitted .pine in three places: the indicator name (`MATP/MBP Levels v1.4.6` — shows in TradingView's chart legend), the header comment block (visible when opening the source), and the corner badge (`MATP v1.4.6 · 2026-05-13 · Nd old`). Friends can see at a glance which version they're running, with no need to open the file.
 - **1.4.5** (2026-05-13) — Pine indicator: reverted MATP/MBP rendering from `line.new(..., extend=extend.both)` back to `plot()`. The `line.new()` approach didn't always re-anchor the line correctly when the user zoomed or scrolled the chart's price axis — the line could appear to "float" relative to the price coordinate. `plot()` is Pine's purpose-built primitive for price-anchored series and re-projects every Y-pixel from the price coordinate on every redraw, so the line always sits at the right price regardless of how the chart is manipulated. Trade-off back on the table: TradingView's price-scale auto-fit will expand to include MATP/MBP values, which can compress the candle view when MATP is far from current price. Mitigation: right-click the price scale → "Scale price chart only" makes auto-fit ignore plots.
 - **1.4.4** (2026-05-13) — Pine indicator: added price-scale tags on the right Y-axis for MATP and MBP, so the values now show up as labeled tags on the axis (like the current-price tag) in addition to the floating labels on the chart. Implemented via `plot(..., display=display.price_scale)` which only renders to the axis, not to the chart pane, so the chart's auto-scale is still not stretched.
 - **1.4.3** (2026-05-13) — Pine indicator: switched from `plot()` to `line.new(..., extend=extend.both)` for the MATP/MBP horizontal lines. `plot()` was stretching TradingView's price-scale auto-fit to include the MATP/MBP values, which visually compressed the actual price action. `line.new()` anchors each line to its price coordinate without affecting the chart's auto-scale, so candles stay readable. Trade-off: if MATP/MBP are well outside the current visible price range, the lines will be off-screen until the user manually scrolls or zooms.
