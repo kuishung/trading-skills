@@ -1,17 +1,18 @@
 ---
 name: MATP
-version: 1.1.2
-description: Build a Median Analyst Target Price (MATP) table from a Finviz screener URL and push it to Google Sheets. Use this skill when the user wants to run MATP analysis, generate an MATP table, or asks anything like "compute MATP for this Finviz screener", "give me the MATP table", "run MATP on <finviz url>". The skill takes a single Finviz screener URL, extracts every ticker, looks up the latest earnings date on MarketBeat, collects post-earnings analyst price targets, emits a 4-column table (Ticker | Exchange | Last Earnings Date | MATP) plus a detailed markdown file with all per-ticker evidence, and appends a new dated tab to the configured Google Sheet.
+version: 1.2.0
+description: Build a Median Analyst Target Price (MATP) + Max Buy Price (MBP) table from a Finviz screener URL and push it to Google Sheets. Use this skill when the user wants to run MATP analysis, generate an MATP table, or asks anything like "compute MATP for this Finviz screener", "give me the MATP table", "run MATP on <finviz url>". The skill takes a single Finviz screener URL, extracts every ticker, looks up the latest earnings date on MarketBeat, collects post-earnings analyst price targets, emits a 5-column table (Ticker | Exchange | Last Earnings Date | MATP | MBP) plus a detailed markdown file with all per-ticker evidence, and appends a new dated tab to the configured Google Sheet.
 ---
 
-# MATP — Median Analyst Target Price builder
+# MATP — Median Analyst Target Price + Max Buy Price builder
 
-**Version:** 1.1.2 — 2026-05-13
+**Version:** 1.2.0 — 2026-05-13
 
-End-to-end pipeline that turns one Finviz screener URL into a 4-column MATP table.
+End-to-end pipeline that turns one Finviz screener URL into a 5-column MATP + MBP table.
 
 ## Changelog
 
+- **1.2.0** (2026-05-13) — Added Max Buy Price (MBP) as column 5. Formula: `MBP = MATP / 1.15`. Rounded to 2 dp. CSV header is now `Ticker,Exchange,Last Earnings Date,MATP,MBP`. `push_to_sheets.py` formats both D (MATP) and E (MBP) as USD currency. Detail markdown summary table gains the same column.
 - **1.1.2** (2026-05-13) — Docs only. Added Windows `py -m pip` note for fresh installs, clarified manual vs in-pipeline invocation of `push_to_sheets.py`, and documented how to re-run setup or change the target sheet.
 - **1.1.1** (2026-05-13) — Improved error reporting in `scripts/setup_sheets.py`: APIError now surfaces the underlying HTTP status + message (so "API not enabled" vs "permission denied" vs "sheet not found" are distinguishable), and unknown exceptions print a full traceback plus errno/filename attributes. No behavior change on the happy path.
 - **1.1.0** (2026-05-13) — Added Stage 6: push CSV to Google Sheets via a service-account-backed `scripts/push_to_sheets.py`. New tab per run, named with today's date in YYYY-MM-DD. Adds `scripts/setup_sheets.py` for one-time credential setup and `requirements.txt` for `gspread` + `google-auth`. Skill is still usable without Sheets push if setup hasn't been run.
@@ -37,10 +38,10 @@ If the user has not provided a URL by the time this skill is invoked, ask the qu
 
 ## Output deliverables
 
-1. **Final 4-column table** rendered in chat: `Ticker | Exchange | Last Earnings Date | MATP`.
-2. **Detail file** written to `MATP_analysis.md` in the skill directory, containing the summary table plus a per-ticker breakdown (every post-earnings analyst target used, sorted list, median calc shown).
-3. **CSV file** written to `MATP_table.csv` in the skill directory (the same 4 columns, machine-readable).
-4. **Google Sheets push** — a new tab in the configured sheet, named with today's date (YYYY-MM-DD), containing the same 4 columns. Skipped automatically if Sheets setup hasn't been run.
+1. **Final 5-column table** rendered in chat: `Ticker | Exchange | Last Earnings Date | MATP | MBP`.
+2. **Detail file** written to `MATP_analysis.md` in the skill directory, containing the summary table plus a per-ticker breakdown (every post-earnings analyst target used, sorted list, median calc shown). The summary table includes MBP.
+3. **CSV file** written to `MATP_table.csv` in the skill directory (the same 5 columns, machine-readable). Numeric values unquoted, no `$` sign.
+4. **Google Sheets push** — a new tab in the configured sheet, named with today's date (YYYY-MM-DD), containing the same 5 columns. MATP (D) and MBP (E) are formatted as USD currency. Skipped automatically if Sheets setup hasn't been run.
 
 ## First-run setup (one time only)
 
@@ -118,21 +119,22 @@ Prompt:
 
 **Skip rows without a numeric target.** "Reiterated Rating" with no number, "Upgrade" with no listed target, "Initiated Coverage" with `(no target listed)`, etc. — drop these. The MATP is computed only over numeric targets.
 
-### Stage 4 — Filter & compute median
+### Stage 4 — Filter, compute median, derive max buy price
 
 For each ticker:
 
 1. Keep only rows where `target_date > latest_earnings_date`. **Strictly greater-than** — same-day-as-earnings targets are excluded by spec.
 2. Sort the surviving targets numerically.
-3. Compute the median:
+3. Compute the median (MATP):
    - **Odd n:** the middle value.
    - **Even n:** the average of the two middle values: `(v[n/2 - 1] + v[n/2]) / 2`.
    - **n = 0:** report `N/A` (no post-earnings coverage yet).
    - **n = 1:** the single value (note this in the per-ticker section).
 
-Do **not** use the mean. MATP is explicitly a median.
+   Do **not** use the mean. MATP is explicitly a median.
+4. Compute the Max Buy Price (MBP): `MBP = MATP / 1.15`. This is the price below which a buy still leaves at least 15% headroom to the median target. If MATP is `N/A`, MBP is also `N/A`.
 
-Round MATP to 2 decimals in the final table.
+Round both MATP and MBP to 2 decimals.
 
 ### Stage 5 — Emit local outputs
 
@@ -148,19 +150,19 @@ Write **both** files in the skill directory:
 **Methodology:** <one-paragraph summary>
 
 ## Summary Table
-| # | Ticker | Exchange | Last Earnings Date | MATP |
-| --- | --- | --- | --- | ---: |
+| # | Ticker | Exchange | Last Earnings Date | MATP | MBP |
+| --- | --- | --- | --- | ---: | ---: |
 ...
 
 ## Per-Ticker Detail
 
-### <TICKER> — <EXCHANGE> | Earnings <DATE> | n=<N> | MATP = $<X>
+### <TICKER> — <EXCHANGE> | Earnings <DATE> | n=<N> | MATP = $<X> | MBP = $<Y>
 | Date | Brokerage | Target |
 | ... |
-Sorted: a, b, c, ... → median calc = $X
+Sorted: a, b, c, ... → median calc = $X. MBP = X / 1.15 = $Y.
 ```
 
-**`MATP_table.csv`** — same 4 columns, machine-readable. Header row is `Ticker,Exchange,Last Earnings Date,MATP`. MATP values must be unquoted numeric (no `$`, no thousands separator) so Sheets and downstream tools parse them as numbers.
+**`MATP_table.csv`** — same 5 columns, machine-readable. Header row is `Ticker,Exchange,Last Earnings Date,MATP,MBP`. MATP and MBP values must be unquoted numeric (no `$`, no thousands separator) so Sheets and downstream tools parse them as numbers.
 
 ### Stage 6 — Push to Google Sheets
 

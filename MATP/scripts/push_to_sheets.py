@@ -122,14 +122,14 @@ def main() -> int:
     ws = sh.add_worksheet(title=tab_name, rows=n_rows + 5, cols=n_cols + 2)
     ws.update(range_name="A1", values=rows, value_input_option="USER_ENTERED")
 
-    # Cosmetics: freeze header row, bold header, currency on MATP column (D).
+    # Cosmetics: freeze header row, bold header, currency on MATP (D) and MBP (E).
     ws.freeze(rows=1)
     ws.format(f"A1:{chr(ord('A') + n_cols - 1)}1", {"textFormat": {"bold": True}})
-    if n_cols >= 4:
-        ws.format(
-            f"D2:D{n_rows}",
-            {"numberFormat": {"type": "CURRENCY", "pattern": "$#,##0.00"}},
-        )
+    currency = {"numberFormat": {"type": "CURRENCY", "pattern": "$#,##0.00"}}
+    if n_cols >= 5:
+        ws.format(f"D2:E{n_rows}", currency)
+    elif n_cols >= 4:
+        ws.format(f"D2:D{n_rows}", currency)
 
     data_rows = n_rows - 1  # exclude header
     sheet_url = (
