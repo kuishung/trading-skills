@@ -131,11 +131,14 @@ def main() -> int:
     # Cosmetics: freeze header row, bold all headers, right-align headers
     # for Last Earnings Date (C), MATP (D), and MBP (E) so they sit flush
     # with their dates / currency values below. Currency-format the MATP
-    # (D) and MBP (E) data.
+    # (D) and MBP (E) data. If a 6th column exists (Trend), center-align
+    # it and tint the cells by classification so the sheet is scannable
+    # at a glance.
     ws.freeze(rows=1)
     ws.format(f"A1:{chr(ord('A') + n_cols - 1)}1", {"textFormat": {"bold": True}})
     currency = {"numberFormat": {"type": "CURRENCY", "pattern": "$#,##0.00"}}
     right_align = {"horizontalAlignment": "RIGHT"}
+    center_align = {"horizontalAlignment": "CENTER"}
     if n_cols >= 5:
         ws.format(f"D2:E{n_rows}", currency)
         ws.format("C1:E1", right_align)
@@ -144,6 +147,47 @@ def main() -> int:
         ws.format("C1:D1", right_align)
     elif n_cols >= 3:
         ws.format("C1:C1", right_align)
+
+    # Trend column (F) — tint by label for fast visual scan. Headers row
+    # stays bold but gets center-aligned. We iterate rows because Sheets
+    # cell-level tinting needs per-row ranges (cheap: ~60 calls/sheet).
+    trend_col_idx = None
+    if rows and "Trend" in rows[0]:
+        trend_col_idx = rows[0].index("Trend")
+    if trend_col_idx is not None:
+        col_letter = chr(ord("A") + trend_col_idx)
+        ws.format(f"{col_letter}1", center_align)
+        ws.format(f"{col_letter}2:{col_letter}{n_rows}", center_align)
+        tints = {
+            "Uptrend":   {"backgroundColor": {"red": 0.80, "green": 0.93, "blue": 0.80}},  # light green
+            "Sideways":  {"backgroundColor": {"red": 1.00, "green": 0.95, "blue": 0.78}},  # light yellow
+            "Downtrend": {"backgroundColor": {"red": 0.97, "green": 0.80, "blue": 0.80}},  # light red
+            "Unknown":   {"backgroundColor": {"red": 0.90, "green": 0.90, "blue": 0.90}},  # gray
+        }
+        # Group by label so we issue one batched call per label rather
+        # than one per row.
+        groups: dict[str, list[int]] = {k: [] for k in tints}
+        for i, r in enumerate(rows[1:], start=2):  # data rows start at sheet row 2
+            label = r[trend_col_idx] if trend_col_idx < len(r) else ""
+            if label in groups:
+                groups[label].append(i)
+        for label, row_idxs in groups.items():
+            if not row_idxs:
+                continue
+            # Build A1-style range list grouped by contiguous runs to keep
+            # the API payload small.
+            ranges: list[str] = []
+            run_start = row_idxs[0]
+            prev = run_start
+            for idx in row_idxs[1:]:
+                if idx == prev + 1:
+                    prev = idx
+                    continue
+                ranges.append(f"{col_letter}{run_start}:{col_letter}{prev}")
+                run_start = idx
+                prev = idx
+            ranges.append(f"{col_letter}{run_start}:{col_letter}{prev}")
+            ws.batch_format([{"range": r, "format": tints[label]} for r in ranges])
 
     data_rows = n_rows - 1  # exclude header
     sheet_url = (
