@@ -45,6 +45,15 @@ env/
 .idea/
 *.swp
 
+# Locally installed MCP server (not part of this repo's source)
+tradingview-mcp/
+node_modules/
+
+# Claude Code MCP project config — contains absolute paths to local MCP
+# servers that vary per machine / per worktree. Use .mcp.json.example as
+# the committed template; copy to .mcp.json and edit paths locally.
+.mcp.json
+
 # OS
 .DS_Store
 Thumbs.db
