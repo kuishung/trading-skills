@@ -1,17 +1,18 @@
 ---
 name: intraday-premarket-brief
-version: 0.1.0
+version: 0.2.0
 description: Pre-market intraday brief — a twice-daily ritual that takes a Finviz screener URL of liquid US movers, enriches every ticker with gap %, pre-market structure, news catalysts, and daily trend, then ranks them into Early Gappers (continuation candidates) and Faders (extended / fade candidates). Runs in two modes — T-60 (60 min before US open) and T-30 (30 min before US open) — and surfaces the Consensus list (top 10 in BOTH runs) as the trader's actionable shortlist. Trigger this skill when the user wants to "run the pre-market brief", "do pre-market study", "find today's intraday candidates", "scan for intraday setups", or any request involving pre-open Finviz-based screening for day-trading.
 ---
 
 # Intraday Pre-Market Brief
 
-**Version:** 0.1.0 — 2026-05-18
+**Version:** 0.2.0 — 2026-05-18
 
 Twice-daily ritual that turns one Finviz intraday-mover screener URL into a ranked, sectioned brief of trade candidates for the upcoming US session.
 
 ## Changelog
 
+- **0.2.0** (2026-05-18) — Catalyst relevance gate. yfinance's per-ticker news feed leaks tangential stories — observed live in the first T-60 run: SMCI's feed returned a Nokia/Cisco earnings article, GOOG and GOOGL's feeds returned a Baidu earnings article, SNDK's feed returned a macro Dow Jones piece mentioning "Nvidia Earnings Ahead". Each of those phantom-earnings tags inflated the score by 40 points (catalyst weight × earnings weight × 100) and pushed the false-positive tickers to the top of the ranking. Fix: new `fetch_ticker_aliases` step pulls each ticker's `shortName` / `longName` via `yfinance.Ticker.info` (parallel, 10 workers, same pattern as the news fetch) and derives lowercased name tokens (corporate suffixes like Inc/Corp/Holdings stripped). `classify_news` now requires the headline or summary to mention the ticker symbol OR a distinctive name token (word-boundary match) before applying any catalyst tag, including the M&A hard-exclude. This refinement is strictly stricter than 0.1.0 — every true positive from 0.1.0 still matches (legitimate Coinbase/Rocket Lab/Netflix headlines all mention the company by name) and only the spurious matches drop, so it's a backward-compatible accuracy fix rather than a formula change. New `filtered_count` field per ticker in the snapshot JSON reports how many headlines were dropped by the gate, for tunability. No new dependencies.
 - **0.1.0** (2026-05-18) — Initial release. Two modes (`--mode t60` / `--mode t30`), Finviz scrape with `&r=` pagination, yfinance enrichment (daily OHLC + EMA20/50/200 trend, pre-market 1-min bars for gap / VWAP / structure), `Ticker.news` catalyst classification with M&A hard-exclude, catalyst-weighted scoring (40/30/20/10), gap-quality bell curve replacing naive gap-size weighting, section split into 🟢 Early Gappers / 🔴 Faders, T-30 mode reads same-day T-60 snapshot to compute Consensus (priorities) / Faded / Emerged buckets. Output is markdown to stdout; optional Telegram send via `--send-telegram` once `setup.py` configures the bot.
 
 ## Versioning policy

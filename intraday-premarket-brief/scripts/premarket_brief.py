@@ -280,19 +280,24 @@ def classify_headline(title: str) -> str | None:
     return None
 
 
-def _normalize_news_item(item: dict) -> tuple[str, float]:
-    """Extract (title, unix_ts) from a yfinance news item.
+def _normalize_news_item(item: dict) -> tuple[str, str, float]:
+    """Extract (title, summary, unix_ts) from a yfinance news item.
 
     yfinance changed its news schema circa 2025: items are now wrapped as
     {id, content: {title, summary, pubDate (ISO), ...}} instead of the old
     flat {title, providerPublishTime, ...}. We support both for forward/
     backward compatibility.
 
-    Returns the TITLE only (not summary) because summaries leak tangential
-    keywords that fire false-positive catalyst classifications.
+    Returns title AND summary. Title is used for catalyst classification
+    (summaries leak tangential keywords and produce false-positive tags).
+    Summary is used ONLY for the relevance gate — does the article actually
+    mention this ticker / company? — because the title alone is often too
+    short to reliably indicate the subject, but the summary almost always
+    spells it out.
     """
     content = item.get("content") or item  # new schema vs old
     title = content.get("title") or ""
+    summary = content.get("summary") or content.get("description") or ""
 
     # Timestamp: new schema uses ISO string at pubDate or displayTime; old
     # used unix int at providerPublishTime. Try in that order.
@@ -313,11 +318,110 @@ def _normalize_news_item(item: dict) -> tuple[str, float]:
             except (ValueError, TypeError):
                 pass
 
-    return title, ts
+    return title, summary, ts
 
 
-def classify_news(news_items: list[dict], lookback_hours: float = NEWS_LOOKBACK_HOURS) -> dict:
+# Corporate-suffix junk we strip from `shortName` / `longName` before pulling
+# tokens. Without this, "Apple Inc" → "apple inc" → headlines like "FDA Inc to
+# IPO" would match. Aggressive list because false positives in catalyst tagging
+# inflate scores; missing a real ticker mention is recoverable (only loses
+# 40 points), but the false positives broke trust in the brief itself.
+_CORP_SUFFIX_RE = re.compile(
+    r"\b(inc\.?|corp\.?|corporation|company|co\.?|holdings?|ltd\.?|llc|"
+    r"plc|group|trust|reit|class\s+[a-z]|\.com|sa|nv|n\.v\.|ag|se|spa|"
+    r"common\s+stock|preferred|adr|adrs?|ordinary\s+shares?)\b",
+    re.IGNORECASE,
+)
+
+
+def _name_tokens(name: str) -> list[str]:
+    """Strip corporate suffixes from a company name and return distinctive
+    lowercased tokens to match in headlines. Returns up to two candidates:
+    the leading 1-word and the leading 2-word prefix (e.g. for
+    "Super Micro Computer Inc" → ["super micro", "super"]). Single-character
+    tokens are dropped to avoid matching common stopwords like "i" or "a".
+    """
+    cleaned = _CORP_SUFFIX_RE.sub("", name or "")
+    cleaned = re.sub(r"[,&]", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    tokens = [t for t in cleaned.lower().split() if len(t) >= 3]
+    out: list[str] = []
+    if tokens:
+        out.append(tokens[0])
+        if len(tokens) >= 2:
+            out.append(" ".join(tokens[:2]))
+    return out
+
+
+def build_aliases(ticker: str, info: dict | None) -> list[str]:
+    """Return case-folded search aliases for matching a headline's subject:
+    the ticker symbol itself + distinctive tokens from shortName / longName.
+    """
+    aliases: list[str] = [ticker.lower()]
+    info = info or {}
+    for key in ("shortName", "longName"):
+        for tok in _name_tokens(info.get(key) or ""):
+            if tok not in aliases:
+                aliases.append(tok)
+    return aliases
+
+
+def headline_is_relevant(title: str, summary: str, aliases: list[str]) -> bool:
+    """True if title OR summary mentions the ticker symbol or company-name
+    tokens. Word-boundary match (so "GOOG" doesn't match "googling" and
+    "apple" doesn't match "applesauce"). Returns False on empty aliases —
+    that means we couldn't resolve the ticker's identity, so we'd rather
+    drop catalysts than let an unfiltered headline produce false positives.
+    """
+    if not aliases:
+        return False
+    haystack = f"{title or ''} {summary or ''}".lower()
+    if not haystack.strip():
+        return False
+    for a in aliases:
+        if not a:
+            continue
+        # Use word boundary on both ends. re.escape handles spaces in
+        # multi-word aliases ("super micro").
+        if re.search(r"\b" + re.escape(a) + r"\b", haystack):
+            return True
+    return False
+
+
+def fetch_ticker_aliases(tickers: list[str], yf, max_workers: int = 10) -> dict[str, list[str]]:
+    """Fetch yfinance Ticker.info in parallel and derive [symbol + name tokens]
+    aliases per ticker. Always includes the ticker symbol as a guaranteed
+    fallback even if .info errors out.
+    """
+    out: dict[str, list[str]] = {}
+
+    def _one(t: str) -> tuple[str, list[str]]:
+        info: dict = {}
+        try:
+            info = yf.Ticker(t).info or {}
+        except Exception:
+            info = {}
+        return t, build_aliases(t, info)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        for fut in as_completed([pool.submit(_one, t) for t in tickers]):
+            t, aliases = fut.result()
+            out[t] = aliases
+    return out
+
+
+def classify_news(
+    news_items: list[dict],
+    aliases: list[str],
+    lookback_hours: float = NEWS_LOOKBACK_HOURS,
+) -> dict:
     """Aggregate a ticker's news into a catalyst summary.
+
+    `aliases` is the list of strings that must appear in the headline OR
+    summary for the article to count toward catalyst classification — this
+    is the relevance gate that filters yfinance's leaky per-ticker news
+    feed (which often returns articles where the ticker is mentioned in
+    passing or not at all). See `build_aliases` / `headline_is_relevant`.
 
     Returns:
       {
@@ -326,17 +430,24 @@ def classify_news(news_items: list[dict], lookback_hours: float = NEWS_LOOKBACK_
         "top_tag": str | None,         # strongest non-MA catalyst, or None
         "top_headline": str | None,
         "all_tags": list[str],         # distinct tags seen
+        "filtered_count": int,         # headlines dropped by relevance gate
       }
     """
     cutoff = datetime.now(timezone.utc).timestamp() - lookback_hours * 3600
     is_ma = False
     ma_headline: str | None = None
     seen_tags: dict[str, str] = {}  # tag -> headline
+    filtered = 0
     for item in news_items or []:
-        title, ts = _normalize_news_item(item)
+        title, summary, ts = _normalize_news_item(item)
         if ts and ts < cutoff:
             continue
         if not title:
+            continue
+        # Relevance gate: drop articles that don't mention the ticker / name
+        # in title or summary. yfinance's news feed leaks tangential stories.
+        if not headline_is_relevant(title, summary, aliases):
+            filtered += 1
             continue
         tag = classify_headline(title)
         if tag == "MA":
@@ -359,6 +470,7 @@ def classify_news(news_items: list[dict], lookback_hours: float = NEWS_LOOKBACK_
         "top_tag": top_tag,
         "top_headline": top_headline,
         "all_tags": list(seen_tags.keys()),
+        "filtered_count": filtered,
     }
 
 
@@ -940,11 +1052,22 @@ def run_pipeline(tickers: list[str], mode: str, finviz_url: str | None,
         except (KeyError, ValueError, TypeError):
             failed_premkt.append(t)
 
+    # --- Ticker aliases (for news relevance gate) ---
+    # yfinance's per-ticker news feed leaks tangential stories (e.g. SMCI's
+    # feed has returned Nokia/Cisco earnings articles, GOOG's has returned
+    # Baidu articles). We fetch each ticker's company name once via
+    # Ticker.info and require the headline to mention the ticker symbol
+    # OR a distinctive name token before tagging a catalyst. Without this,
+    # ~10-15% of names in a 40-ticker universe get false-positive Earnings
+    # tags worth 40 points each, ranking them above legitimately-tagged peers.
+    print(f"Fetching ticker info / aliases for {len(tickers)} tickers (parallel)...", file=sys.stderr)
+    aliases_map = fetch_ticker_aliases(tickers, yf, max_workers=10)
+
     # --- News ---
     print(f"Fetching news for {len(tickers)} tickers (parallel)...", file=sys.stderr)
     news_raw = fetch_news_parallel(tickers, yf, max_workers=10)
     news_metrics: dict[str, dict] = {
-        t: classify_news(items, lookback_hours=news_hours)
+        t: classify_news(items, aliases_map.get(t, [t.lower()]), lookback_hours=news_hours)
         for t, items in news_raw.items()
     }
 
