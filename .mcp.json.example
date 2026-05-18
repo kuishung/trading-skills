@@ -1,0 +1,11 @@
+{
+  "_comment": "Template for Claude Code project-scoped MCP servers. Copy to .mcp.json and edit the absolute path to match THIS machine. .mcp.json is gitignored because the path is per-PC / per-worktree.",
+  "mcpServers": {
+    "tradingview": {
+      "command": "node",
+      "args": [
+        "<ABSOLUTE PATH TO>/tradingview-mcp/src/server.js"
+      ]
+    }
+  }
+}
