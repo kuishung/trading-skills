@@ -10,7 +10,9 @@ from pathlib import Path
 
 PAPER_BASE_URL = "https://paper-api.alpaca.markets"
 SKILL_DIR = Path(__file__).resolve().parent.parent
-ENV_PATH = SKILL_DIR / ".env"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _envpath import env_path
+ENV_PATH = env_path(SKILL_DIR, "alpaca")
 
 
 def prompt_keys():

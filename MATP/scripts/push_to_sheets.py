@@ -20,7 +20,9 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 SKILL_DIR = SCRIPT_DIR.parent
-ENV_PATH = SKILL_DIR / ".env"
+sys.path.insert(0, str(SCRIPT_DIR))
+from _envpath import env_path
+ENV_PATH = env_path(SKILL_DIR, "matp")
 DEFAULT_CSV = SKILL_DIR / "MATP_table.csv"
 
 REQUIRED_ENV = ("GOOGLE_SA_KEY_PATH", "MATP_SHEET_ID")
