@@ -1,16 +1,18 @@
 ---
 name: guns-bot
-version: 0.3.0
-description: Automated paper-trading bot that runs Adam Khoo's Gap Up News Scalp (GUNS) strategy on Alpaca paper, with pluggable data feed (Alpaca IEX free, or IBKR real-time via the user's own TWS in paper mode). Executes Setup 1 (break of pre-market high) and Setup 5 (break of first 1-min candle) on a curated pre-market watchlist of gap-up stocks with a news catalyst. Submits OCO bracket exits at 2R take-profit, moves stop to breakeven at 1R, cancels unfilled entries by 10:30 ET, and reports via Telegram. The user manually opens TWS each morning and curates the watchlist; the bot does the rest. Trigger phrases include "run guns", "start guns bot", "guns paper trade today", "kick off the gap-up bot".
+version: 0.5.0
+description: Fully-automated paper-trading bot that runs Adam Khoo's Gap Up News Scalp (GUNS) strategy on Alpaca paper, driven by parallel IBKR market scanners across PM, RTH, and closing windows. The dashboard auto-starts the trading session at 09:00 ET on weekdays; 7 IBKR scanners (TOP_PERC_GAIN, TOP_OPEN_PERC_GAIN, HOT_BY_VOLUME, TOP_STOCK_BUY_IMBALANCE, TOP_VOLUME_RATE, HOT_BY_OPT_VOLUME, HALTED) feed scanner-driven plan builders that surface Setup 1, Setup 4, Setup 5, and Setup 6 candidates. Setup 1/5 fire orders to Alpaca paper once "armed"; Setup 4 (intraday bull flag) and Setup 6 (closing-bell breakout) are observe-only pending live-execution wiring. Single browser dashboard at http://localhost:8000 shows everything in real time. Trigger phrases include "run guns", "start guns bot", "guns paper trade today", "kick off the gap-up bot".
 ---
 
 # GUNS — Gap Up News Scalp (Alpaca paper-trading bot)
 
-**Version:** 0.3.0 — 2026-05-19
+**Version:** 0.5.0 — 2026-05-20
 
-Automation layer for Adam Khoo's GUNS strategy (Lesson 8). Reads a pre-market watchlist, places Setup 1 / Setup 5 entries on Alpaca paper, manages OCO exits at 2R, moves stop to breakeven at 1R, and reports the day's activity to Telegram.
+Fully-automated layer for Adam Khoo's GUNS strategy (Lesson 8), extended beyond the deck's pre-market focus to cover the full session via parallel IBKR scanners. Auto-launches at 09:00 ET on weekdays; runs Setup 1 (PM-high break) and Setup 5 (first 1-min break) for live execution once armed; surfaces Setup 4 (intraday bull flag) and Setup 6 (closing-bell breakout, invented) as observe-only candidates. Single local dashboard at `http://localhost:8000` shows the whole pipeline in real time.
 
 **Paper-only.** Trades route through the `alpaca-trader-paper` sibling skill, which hard-refuses any non-paper base URL. Going live requires a deliberate code change there — not a config flip in this skill.
+
+**Armed by default = NO.** The bot launches in dry-run mode unless you've explicitly clicked the **Arm** pill on the dashboard. Disarmed = signals evaluate + log, no Alpaca submissions.
 
 ## Strategy reference (verbatim from Lesson 8)
 
@@ -19,15 +21,16 @@ Pre-market window (9:00–9:25 ET):
 - **Watchlist filters**: price ≥ $1.50, pre-market volume ≥ 30,000, strong news catalyst (earnings beat, FDA approval, analyst upgrade, clinical-trial pass — avoid acquisitions or low-impact news), low float (< 100M, ideally 10M–20M).
 - **Chart filters**: gap is above 9 EMA / 20 EMA / 50 SMA / 200 SMA on daily; pre-market chart consolidating within ~20% of the pre-market high; price above 9 / 20 / 50 EMA on 5-min PM chart.
 
-Entry setups (5 in the deck — this bot automates the two rule-based ones):
+Entry setups (5 in the deck + 1 invented for the closing-bell window):
 
 | # | Name | Trigger | Order placed | Status |
 |---|------|---------|--------------|--------|
-| 1 | Break of Pre-Market High | PM consolidates near PM high | Buy-stop-limit 1¢ above PM high, max 3–5¢ limit slip | **Automated** |
+| 1 | Break of Pre-Market High | PM consolidates near PM high | Buy-stop-limit 1¢ above PM high, max 3¢ limit slip | **Automated (live when armed)** |
 | 2 | Break of Pre-Market Pivot | PM consolidates at pivot ≥ 1R below PM high | Same mechanic, around the pivot | Manual / future |
 | 3 | New High of PM Bull Flag | PM bull-flag exists, 1R fits before PM high | Buy-stop-limit above last pullback candle | Manual / future |
-| 4 | First Bull Flag (intraday) | After open, M1/M2/M5 bull flag pulls back to 9/20 EMA | Buy-stop-limit above pullback candle high | Manual / future |
-| 5 | Break of First 1-Min Candle | First 1-min candle is bullish, closes above 9/20 EMA, not abnormally large | Buy-stop-limit 1¢ above 1-min high | **Automated** |
+| 4 | First Bull Flag (intraday) | After open, 1-min thrust → 30–62% pullback → consolidation above EMA9/20 with volume confirm | Buy-stop-limit 1¢ above last-3-bar high | **Automated detector (observe-only)** |
+| 5 | Break of First 1-Min Candle | First 1-min candle bullish, closes above 9/20 EMA, not abnormally large | Buy-stop-limit 1¢ above 1-min high | **Automated (live when armed)** |
+| 6 | Closing-Bell Breakout *(invented)* | Up ≥ 3% on day, close in upper-quartile of intraday range, last-bar vol ≥ 2× 30-bar avg, broke 5-bar consol high, above EMA9/20 | Buy-stop-limit above last bar; **force MOC exit at 15:58 ET** | **Automated detector (observe-only)** |
 
 Exit mechanics (uniform across all 5 setups):
 - **Stop loss** (sell-stop) — for setups 1/2/3 placed by price band:
@@ -47,10 +50,12 @@ Hardware/account in the deck: $25K min (PDT), Level 2 quotes, hot buttons. The b
 
 These are intentional gaps. The bot prints the reason in the EOD report so the user knows what was skipped.
 
-- **No Setup 2 / 3 / 4** — these require pivot detection or bull-flag pattern recognition on intraday data, which is fragile to automate without first dialing in on backtests. Setup 1 + Setup 5 are deterministic single-level rules with clean entry/exit math.
+- **No Setup 2 / 3** — these require explicit pivot detection / multi-candle bull-flag pattern recognition on PM data. Deferred until we have N sessions of Setup 4 observe-only data to validate the harder patterns.
+- **Setup 4 / Setup 6 do NOT submit orders yet** — both are observe-only via `intraday_intake.py`. They log qualifying candidates to `state/intraday_candidates_<date>.jsonl` and emit dashboard events so you can see what they'd have traded. Wiring them into `trade_day.py`'s order-submission path is the next deliberate step, after a few sessions of comparing detector hits against price action.
 - **No Level 2 gate** — Alpaca paper feeds a top-of-book quote, not a usable order-book depth. The deck uses L2 to confirm tight spreads and absence of large asks before entering Setup 4/5. The bot substitutes a spread check (bid-ask spread ≤ 10¢) using the top-of-book quote.
-- **No automated catalyst classification** by default — out of the box, the bot reads a manually-curated watchlist file (`state/watchlist_YYYY-MM-DD.txt`, one ticker per line) which the user prepares 9:00–9:25 ET. Optional auto-scan via Alpaca's free News API is available behind `--auto-scan` (see below) but errs toward more candidates rather than fewer — manual review still recommended.
-- **No float check** — Alpaca doesn't expose shares-outstanding. To approximate the "low float" rule, the auto-scanner cross-references Finviz only if the user has set `FINVIZ_*` credentials (most users will not); otherwise the float rule is skipped. The Finviz MCP could be wired in here as a follow-up.
+- **No daily-chart EMA filter (9 / 20 / 50 / 200 EMA on daily)** — the deck wants the gap to open above all four daily MAs. Requires per-symbol daily-bar fetches that would bump up against IBKR's 60-request-per-10-minute historical pacing limit unless we cache. Skipped for MVP; flagged for follow-up.
+- **No float check** — Alpaca doesn't expose shares-outstanding; IBKR's free scanner data doesn't either. Approximation via Finviz exists but only if `FINVIZ_*` credentials are set. The Finviz MCP could be wired in as a follow-up.
+- **No NYSE holiday calendar** — auto-start fires on weekdays without checking the trading calendar. On a holiday, the bot launches, finds no data, and idles. Harmless but noisy. Worth a fix once we have `pandas_market_calendars` or a hard-coded list.
 
 ### Known bugs / sharp edges
 
@@ -60,46 +65,353 @@ These are intentional gaps. The bot prints the reason in the EOD report so the u
 
 ```
 guns-bot/
-├── SKILL.md                       # this file
-├── requirements.txt               # alpaca-py, python-dotenv, pytz, ib_insync (optional)
-├── config.example.json            # copy to config.json to override risk knobs
+├── SKILL.md                          # this file
+├── requirements.txt                  # alpaca-py, python-dotenv, pytz, ib_insync, fastapi, uvicorn
+├── config.example.json               # copy to config.json to override risk knobs
 ├── .gitignore
+├── start_dashboard.bat               # Windows entry point — opens dashboard + browser
+├── stop_dashboard.bat                # graceful POST /shutdown then force-kill
+├── _supervise_dashboard.bat          # supervisor loop — relaunches on exit code 100 (Restart)
 ├── scripts/
-│   ├── _common.py                 # env loader, ET clock, paper-only guard, data abstraction, Telegram
-│   ├── _ibkr_data.py              # IBKR data adapter (ib_insync); read-only enforced
-│   ├── _events.py                 # tiny emit() helper -> state/events_*.jsonl (dashboard feeds off this)
-│   ├── _smoke_ibkr.py             # bare-socket TWS handshake smoke test
-│   ├── _dryrun_ibkr.py            # exercise the data adapter against SPY/AAPL/NVDA
-│   ├── signals.py                 # gap detection, PM-high finder, first-1min eval
-│   ├── scan_premarket.py          # build today's watchlist (manual or --auto-scan)
-│   ├── trade_day.py               # the session orchestrator — main entrypoint
-│   ├── dashboard.py               # FastAPI + WebSocket local dashboard (port 8000)
-│   ├── setup_schedule.py          # register a Windows Task Scheduler job (bot)
-│   ├── setup_ibkr.py              # one-time IBKR wizard (API toggle + IBC config + smoke test)
-│   └── setup_gateway_autostart.py # register Windows scheduled tasks for IBC start/stop
-├── web/                           # dashboard UI (vanilla HTML + Tailwind CDN)
+│   ├── _common.py                    # env loader, ET clock, paper-only guard, data abstraction, Telegram
+│   ├── _ibkr_data.py                 # IBKR data adapter (ib_insync); read-only enforced
+│   ├── _events.py                    # tiny emit() helper -> state/events_*.jsonl
+│   ├── _smoke_ibkr.py                # bare-socket TWS handshake smoke test
+│   ├── _dryrun_ibkr.py               # exercise the data adapter against SPY/AAPL/NVDA
+│   ├── signals.py                    # Setup 1/4/5/6 detectors, EMA/ATR helpers, sizing
+│   ├── scan_premarket.py             # legacy manual/Alpaca-news watchlist builder (still works)
+│   ├── scanner_observe.py            # 7-scanner parallel IBKR subscription (sees PM/RTH/close)
+│   ├── auto_plan.py                  # scanner-driven plan builder (PM 09:00-09:24, replaces manual watchlist)
+│   ├── intraday_intake.py            # Setup 4 / Setup 6 detector (observe-only, 09:32-15:58)
+│   ├── trade_day.py                  # session orchestrator (Setup 1/5 live, re-reads plan at 09:25)
+│   ├── dashboard.py                  # FastAPI + WS local dashboard + BotManager (co-launches all 4 children)
+│   ├── setup_schedule.py             # register a Windows Task Scheduler job (legacy)
+│   ├── setup_dashboard_launcher.py   # per-PC installer: drops Desktop shortcuts via PowerShell COM
+│   ├── setup_ibkr.py                 # one-time IBKR wizard (API toggle + IBC config + smoke test)
+│   └── setup_gateway_autostart.py    # register Windows scheduled tasks for IBC start/stop
+├── web/                              # dashboard UI (vanilla HTML + Tailwind CDN)
 │   └── index.html
-├── ibc/                           # IBC binaries + config; credentials.txt gitignored
-└── state/                         # gitignored
-    ├── watchlist_YYYY-MM-DD.txt   # one ticker per line; written by scan_premarket
-    ├── plan_YYYY-MM-DD.json       # per-ticker entry/stop/target levels for today
-    ├── fills_YYYY-MM-DD.jsonl     # append-only: every fill / cancel / BE-move event
-    ├── equity_YYYY-MM-DD.json     # opening + closing equity snapshot
-    └── events_YYYY-MM-DD.jsonl    # append-only event log (scanner emits, order events, errors)
+├── ibc/                              # IBC binaries + config; credentials.txt gitignored
+└── state/                            # gitignored
+    ├── armed.flag                    # presence = bot launches in LIVE mode; absence = DRY-RUN
+    ├── auto_started_YYYY-MM-DD.flag  # idempotency marker for the 09:00 ET auto-start
+    ├── watchlist_YYYY-MM-DD.txt      # legacy manual watchlist (still readable as fallback)
+    ├── plan_YYYY-MM-DD.json          # per-ticker entry/stop/target levels (written by auto_plan)
+    ├── intraday_candidates_*.jsonl   # Setup 4/6 detector hits (one row per candidate)
+    ├── fills_YYYY-MM-DD.jsonl        # append-only: fills / cancels / BE-moves
+    ├── equity_YYYY-MM-DD.json        # opening + closing equity snapshot
+    ├── events_YYYY-MM-DD.jsonl       # structured event bus (scanner snapshots, plan refreshes, etc.)
+    ├── bot_YYYY-MM-DD.log            # trade_day.py stdout
+    ├── scanner_YYYY-MM-DD.log        # scanner_observe.py stdout
+    ├── autoplan_YYYY-MM-DD.log       # auto_plan.py stdout
+    └── intraday_YYYY-MM-DD.log       # intraday_intake.py stdout
 ```
+
+## Full automation pipeline
+
+When you click the **GUNS Dashboard** desktop shortcut, you start ONE
+process — the dashboard server. The dashboard's auto-start loop fires the
+trading session at **09:00 ET** on weekdays (configurable), spawning four
+child subprocesses that work together:
+
+```
+                  DASHBOARD (uvicorn, port 8000)
+                         │
+                         │ 09:00 ET weekday  →  BotManager.start()
+                         ▼
+       ┌─────────────────┼─────────────────┬─────────────────┐
+       ▼                 ▼                 ▼                 ▼
+  trade_day.py    scanner_observe.py   auto_plan.py    intraday_intake.py
+  orchestrator    7 parallel IBKR      PM 09:00-09:24  Setup 4 / Setup 6
+  Setup 1 / 5     scanners (clientId   plan builder    observe-only
+  live execution  80)                  (writes plan_*) (09:32-15:58)
+       │                 │                 │                 │
+       │                 │ scanner.snapshot events           │
+       │                 └────────►  state/events_*.jsonl ◄──┤
+       │                                   │
+       │                                   ▼
+       │              state/plan_<date>.json   state/intraday_candidates_*.jsonl
+       │  ▲                                                  │
+       │  │ re-read at 09:25 ET                              │ emits
+       │  └──────────────────────────────────────────────────┘ setup4/6.candidate
+       ▼
+  phase_setup1 (09:25) → phase_setup5 (09:31) → phase_manage (09:31-10:30)
+   → phase_entry_cutoff (10:30) → phase_force_close (11:00) → Telegram EOD
+       ▼
+  Alpaca paper (HTTPS) — execution layer, never IBKR
+```
+
+Each subprocess is independent and logs to its own `state/<name>_<date>.log`.
+The dashboard tracks all four PIDs and exposes Stop / Restart / Shut down
+via the UI dropdown.
+
+## Scanner layer
+
+`scripts/scanner_observe.py` opens **7 parallel IBKR `ScannerSubscription`s**
+on clientId 80 (distinct from the bot's 71 and the dashboard health probe's
+99). Each subscription emits its own `scanner.snapshot` events into
+`state/events_*.jsonl` with the `scan_code` in the payload — about every 30
+seconds.
+
+| Scanner | Role | Best window | Lead time |
+|---|---|---|---|
+| `TOP_PERC_GAIN` | PM baseline (vs prior close) | 04:00–09:30 | lagging baseline |
+| `TOP_OPEN_PERC_GAIN` | RTH baseline (vs today's open) | 09:30–15:30 | lagging baseline |
+| `HOT_BY_VOLUME` | late-RTH cumulative volume | 14:30–15:50 | lagging baseline |
+| `TOP_STOCK_BUY_IMBALANCE_ADV_RATIO` | closing-auction queued orders | 15:50–15:58 | **5–10 min lead** ⭐ |
+| `TOP_VOLUME_RATE` | always-on: volume velocity | all session | **30s–5 min lead** |
+| `HOT_BY_OPT_VOLUME` | always-on: options-flow tell | all session | **minutes to hours** |
+| `HALTED` | always-on: reject set | all session | defensive |
+
+**Parallel-plus-smart-consumer**, not rotated single scanner. Empty scanners
+outside their natural window (auction imbalance pre-15:50, open-perc
+pre-09:30) cost nothing — they emit empty snapshots that consumers skip.
+The leading scanners surface emerging movers *before* a stock climbs the
+lagging % gainer lists.
+
+Scanners that need a data subscription the account lacks (e.g.
+`HOT_BY_OPT_VOLUME` without options data) skip with a
+`scanner.subscribe_failed` event rather than killing the process.
+
+**Hard limit**: IBKR caps active scanner subscriptions at 10 per session.
+We use 7 (70% of cap), leaving headroom for ad-hoc scans during development.
+
+## The shortlisting funnel
+
+Two parallel pipelines, same funnel shape, different inputs and final
+pattern gate.
+
+### PM funnel — `auto_plan.py` (09:00–09:24 ET)
+
+```
+7 IBKR scanners, 20 rows each   →   ~120 ticker mentions
+                                          │
+                                          ▼
+Latest snapshot per scan_code (one pass, read backwards)
+                                          │
+                                          ▼
+UNION of PM-relevant scanners (preserves rank-priority):
+  TOP_PERC_GAIN  (primary baseline)
++ TOP_VOLUME_RATE  (leading)
++ HOT_BY_OPT_VOLUME  (leading)      →   ~40-60 unique symbols
+                                          │
+                                          ▼
+SUBTRACT HALTED reject set          →   ~40-58 symbols
+                                          │
+                                          ▼
+CAP at --max-symbols 15             →   15 prioritised candidates
+                                          │
+                                          ▼
+Fetch PM bars (IBKR) + quotes + Alpaca News (one batched call)
+                                          │
+                                          ▼
+REJECT FILTERS:
+  • no_pm_bars
+  • price_below_1.50
+  • pm_volume_below_30k
+  • spread_too_wide  (>10¢)
+  • news contains acquire/buyout/    →   ~5-10 survivors
+    merger/takeover/tender-offer
+                                          │
+                                          ▼
+PATTERN GATE: is_consolidating_near_pm_high()
+  (last 30 min of PM closed within 1.5% of PM-high)
+                                          │
+                                          ▼                  →   0-4 eligible
+  state/plan_<date>.json ← trade_day.phase_setup1 at 09:25
+```
+
+Re-runs every 60s. Final write at 09:24 is what `phase_setup1` consumes
+(trade_day re-reads from disk to pick up the freshest plan).
+
+### Intraday / closing funnel — `intraday_intake.py` (09:32–15:58 ET)
+
+Same funnel shape, different inputs and final pattern gate:
+
+```
+09:32-15:50 ET (RTH window, Setup 4):
+  Union:  TOP_OPEN_PERC_GAIN + HOT_BY_VOLUME + TOP_VOLUME_RATE + HOT_BY_OPT_VOLUME
+  Cap:    12 symbols
+  Gate:   evaluate_setup4_bull_flag()
+            thrust ≥ 2 × ATR(5)
+            30-62% pullback retracement
+            last 3 closes ≥ pullback midpoint
+            above EMA9 AND EMA20
+            last bar volume ≥ 1.2 × 20-bar avg
+  Output: setup4.candidate events + state/intraday_candidates_*.jsonl
+
+15:50-15:58 ET (closing window, Setup 6):
+  Union:  TOP_STOCK_BUY_IMBALANCE_ADV_RATIO + HOT_BY_VOLUME + TOP_VOLUME_RATE
+  Cap:    12 symbols
+  Gate:   evaluate_setup6_closing_breakout()
+            up ≥ 3% on day
+            close in upper-quartile of intraday range
+            last-bar volume ≥ 2 × 30-bar avg
+            broke 5-bar consolidation high
+            above EMA9 AND EMA20
+  Output: setup6.candidate events + state/intraday_candidates_*.jsonl
+  Exit:   force MOC at 15:58 (the bot would submit market-on-close)
+```
+
+5-min per-symbol cooldown prevents re-emitting the same candidate every
+cycle. **Both detectors are observe-only right now** — they write candidate
+plans but `trade_day.py` does not yet read them to submit orders. Wiring
+into the order-submission path is the next deliberate step.
+
+### Cross-scanner confirmation (the leading-signal payoff)
+
+The architecture's main edge is in the union. A stock appearing on
+`TOP_PERC_GAIN` alone is a gapper. A stock appearing on **both
+`TOP_PERC_GAIN` AND `TOP_VOLUME_RATE`** is a gapper with accelerating volume
+— much higher conviction.
+
+Equally important: a stock appearing on **`TOP_VOLUME_RATE` alone** (not yet
+a top gainer) is the *early* form of tomorrow's leader. Without the leading
+scanners, the bot wouldn't see this name until it climbed the gainer ranks
+5–10 minutes later — by which point most of the move is already done.
+
+## Setup detectors (`signals.py`)
+
+All pure functions, unit-testable. No I/O.
+
+| Function | Inputs | Output |
+|---|---|---|
+| `pm_summary(pm_bars)` | 1-min PM bars | `{pm_high, pm_low, pm_volume, pm_open, pm_last_close, n_bars}` |
+| `is_consolidating_near_pm_high(pm_bars, pm_high, window_min, band_pct)` | bars + window | `bool` |
+| `build_setup1_plan(symbol, pm_high, summary, R)` | survives PM filters | plan dict |
+| `evaluate_setup5_first_minute(first_min, prior_pm, R, symbol)` | first 1-min RTH bar | plan dict or None |
+| `evaluate_setup4_bull_flag(intraday_bars, symbol, R, ...)` | trailing 30 1-min RTH bars | plan dict or None |
+| `evaluate_setup6_closing_breakout(intraday_bars, open_price, symbol, R, ...)` | full-day 1-min bars + today's open | plan dict or None |
+| `position_size(equity, risk_pct, risk_per_share)` | account + risk | `qty: int` |
+| `spread_ok(bid, ask, max_cents)` | top of book | `bool` |
+
+Each `evaluate_*` returns a complete plan dict — `entry_stop_trigger`,
+`entry_limit`, `stop_loss`, `take_profit` (at `take_profit_R × risk_per_share`)
+— plus rich pattern context (retrace %, thrust $, vol ratio, EMA values) for
+human review on the dashboard.
+
+## Arm / disarm
+
+Single header pill replaces the prior dry-run toggle:
+
+| State | Pill | Bot launch behavior |
+|---|---|---|
+| **Disarmed** (default, safe) | grey "○ DISARMED" | Launched with `--dry-run`. Signals evaluate + log; no Alpaca submissions. |
+| **Armed** | red "● ARMED" | Launched without `--dry-run`. Real paper orders go to Alpaca. |
+
+Persisted in `state/armed.flag` (file present = armed). Survives dashboard
+restarts.
+
+Clicking **Arm** requires a confirm dialog; clicking **Disarm** is one-click
+(going to safer state).
+
+**Mid-session arm/disarm**: the currently running bot keeps the mode it was
+launched with (surfaced as `launched_armed` in `/bot/status`). The new arm
+state applies at the *next* session start. The dashboard shows
+"→ applies next start" when the toggle differs from the running mode.
+
+To immediately stop a live armed session: **⏹ Stop bot** button — emergency
+abort. Any open positions stay open in Alpaca.
+
+## Auto-start
+
+The dashboard runs an internal auto-start loop that wakes once a minute,
+checks `now ET`, and fires `bot.start()` when ALL of:
+
+1. `cfg.auto_start_enabled` is true (default), AND
+2. ET wall-clock has crossed `cfg.auto_start_et` (default `09:00`), AND
+3. Day-of-week is Mon–Fri, AND
+4. `state/auto_started_<date>.flag` does not exist (idempotency), AND
+5. The bot is not already running.
+
+When it fires, it writes the flag and emits `session.auto_start`.
+Restarting the dashboard later that day doesn't re-trigger — the flag
+persists.
+
+**Pre-condition**: the dashboard must be running at 09:00 ET. The Desktop
+shortcut spawns the supervisor minimised; leaving it running overnight is
+the supported pattern.
+
+**No NYSE holiday calendar yet** — on a holiday the auto-start fires, the
+children find no data, and they idle. Harmless but noisy.
+
+## Restart / Exit / Shut down
+
+Header dropdown menu in the dashboard:
+
+| Action | Endpoint | Dashboard | Children (bot/scanner/auto_plan/intraday) |
+|---|---|---|---|
+| **↻ Restart** | `POST /restart` | exits code 100 → supervisor relaunches | **untouched** — keep running |
+| **◼ Exit dashboard** | `POST /shutdown` | exits code 0 | **untouched** — keep running |
+| **⏻ Shut down everything** | `POST /shutdown-all` | `bot.stop()` then exits code 0 | terminated |
+
+Restart works because `start_dashboard.bat` spawns `_supervise_dashboard.bat`
+in a loop: when the dashboard exits with code 100, the supervisor sees the
+exit code and re-launches. Other exit codes are clean stops.
+
+**Children survive a dashboard restart**, but the new dashboard loses their
+subprocess handles and reports their status as "stopped" until they exit
+naturally. PID-file adoption is a TODO.
 
 ## Live dashboard
 
-`scripts/dashboard.py` runs a local FastAPI server (http://localhost:8000)
-that observes everything the bot does in real time — scanner candidates,
-qualified watchlist, pending orders, open positions, fills, today's P&L,
-event log. Single browser tab; WebSocket auto-reconnect.
+`scripts/dashboard.py` is a local FastAPI + WebSocket server at
+`http://localhost:8000`. Single browser tab; WebSocket auto-reconnect.
 
-Bot scripts publish events via `_events.emit("type.name", {...})` which
-appends to `state/events_YYYY-MM-DD.jsonl`. The dashboard tails that file
-and pushes new lines to the browser.
+**Panels** (top to bottom):
 
-Run it alongside `trade_day.py` in a separate terminal:
+- **Header status bar** (sticky): ET / MYT clocks, session tag, IBKR /
+  Alpaca health dots, bot pill, scanner pill, arm pill, auto-start hint,
+  ⏹ Stop bot button (when running), Exit dropdown.
+- **Today** (sticky): Day P&L (colored), realized, unrealized, equity, BP.
+- **Scanner**: ranked rows from the *primary scanner for the current ET
+  window* (TOP_PERC_GAIN PM, TOP_OPEN_PERC_GAIN RTH, etc.).
+- **Watchlist**: tickers from today's `state/plan_*.json` with
+  entry / stop / target.
+- **Pending orders / Open positions**: live from Alpaca (10s poll).
+- **Intraday candidates**: Setup 4 / Setup 6 detector hits with retrace %,
+  thrust, vol ratio context.
+- **Today's trades**: from `state/fills_*.jsonl`.
+- **Event log** + **Bot log**: structured events and tail of
+  `state/bot_*.log`.
+
+**Endpoints**:
+
+| Path | Method | Purpose |
+|---|---|---|
+| `/` | GET | serves `web/index.html` |
+| `/snapshot` | GET | full state for initial load + reconnect |
+| `/config` | GET | safe-to-display config (auto-start ET, scanner window) |
+| `/bot/status` | GET | `{status, pid, armed, launched_armed}` |
+| `/bot/arm` | POST | set/clear `state/armed.flag` — body `{"armed": bool}` |
+| `/bot/stop` | POST | SIGTERM all child processes |
+| `/shutdown` | POST | kill dashboard only |
+| `/shutdown-all` | POST | kill children + dashboard |
+| `/restart` | POST | exit code 100 (supervisor relaunches) |
+| `/ws` | WS | push: `snapshot`, `state`, `alpaca`, `health`, `event`, `botlog` |
+
+**Event bus** (`scripts/_events.py`): every long-running script in the
+session calls `emit("type.name", {payload})` to append a JSON record to
+`state/events_<date>.jsonl`. The dashboard tails that file and pushes new
+lines to all connected browsers within ~1s. Event types currently emitted:
+
+```
+scanner.subscribed / scanner.start / scanner.snapshot / scanner.emit /
+scanner.drop / scanner.subscribe_failed / scanner.stop
+
+autoplan.start / autoplan.waiting / autoplan.no_scanner_data /
+plan.refresh / plan.candidate.added / plan.candidate.dropped / autoplan.stop
+
+intraday.start / intraday.waiting / intraday.no_scanner_data /
+setup4.candidate / setup6.candidate / intraday.error / intraday.stop
+
+session.auto_start
+
+(legacy from earlier versions: info.startup, error.*, fill.*, order.*)
+```
+
+Run it standalone if you need to (the Desktop shortcut handles this on
+Windows via the supervisor bat):
 
     py scripts/dashboard.py
 
@@ -400,18 +712,29 @@ You don't need to be at the keyboard. The scheduled task fires at 20:55 MY, bot 
 
 ## Daily run
 
-The bot is one long-running session, **not** a cron loop. Start it once before market open; it sleeps between events and exits after the EOD report.
+**Hands-off path (recommended)**: leave the dashboard running. At 09:00 ET
+the auto-start loop fires `bot.start()`, which spawns all four children.
+You don't open a terminal at all. End-of-day, `trade_day.py` exits
+naturally at 11:00 ET after the force-close phase and posts the EOD report
+to Telegram (if configured).
+
+**Manual path (testing / one-offs)**: each subprocess can be run by hand
+independently — useful for sanity-checking a single piece without spinning
+up the full session.
 
 ```bash
-# 8:55 ET — start the bot. It blocks until ~11:05 ET.
-py scripts/trade_day.py
-
-# Useful flags:
-py scripts/trade_day.py --dry-run        # plan + log only, no Alpaca orders
-py scripts/trade_day.py --auto-scan      # auto-build watchlist via news+gap scan
-py scripts/trade_day.py --watchlist AAA,BBB,CCC   # inline watchlist (skips file)
-py scripts/trade_day.py --fake-now 09:25 # advance to a specific ET wall-clock for testing
+py scripts/dashboard.py            # just the dashboard server, no bot
+py scripts/trade_day.py            # bot only, reads existing plan_*.json
+py scripts/trade_day.py --dry-run  # bot in DRY mode (signals + log only)
+py scripts/scanner_observe.py      # 7 parallel scanners, write events.jsonl
+py scripts/auto_plan.py            # plan builder, reads scanner events
+py scripts/intraday_intake.py      # Setup 4/6 detector
+py scripts/trade_day.py --fake-now 09:25  # advance the ET clock for testing
 ```
+
+The dashboard's **Stop bot** button is the safe way to abort a live session.
+Alpaca paper positions remain open through the abort and continue to fill
+their attached OCO legs.
 
 ### Session timeline
 
@@ -432,7 +755,7 @@ The bot uses an **ET-aware internal clock** regardless of host machine timezone.
 
 **Recommended scheduled-task fire time for Malaysia users:** 20:55 local. This is 5 min before the bot's "watchlist build" phase during DST, and ~1 hour early during US standard time. The early start during standard time is harmless — the bot's internal ET clock makes it sleep until the right ET moment.
 
-### Risk parameters (override in `config.json`)
+### Risk parameters + automation knobs (override in `config.json`)
 
 ```json
 {
@@ -446,9 +769,17 @@ The bot uses an **ET-aware internal clock** regardless of host machine timezone.
   "pm_consolidation_band_pct": 1.5,
   "time_cutoff_entry_et": "10:30",
   "time_cutoff_force_close_et": "11:00",
-  "alpaca_skill_path": "../alpaca-trader-paper"
+  "alpaca_skill_path": "../alpaca-trader-paper",
+
+  "auto_start_enabled": true,
+  "auto_start_et": "09:00"
 }
 ```
+
+- `auto_start_enabled` — set false to disable the 09:00 ET auto-launch (e.g.
+  when developing). The dashboard still runs; the bot just doesn't auto-spawn.
+- `auto_start_et` — ET wall-clock for the auto-launch. Default 09:00 (= 30 min
+  before NYSE open).
 
 - `risk_per_trade_pct` — fraction of account equity risked per trade (default 0.5%). Position size = `(equity × risk_per_trade_pct) / (entry - stop)`.
 - `max_open_concurrent_positions` — hard cap regardless of how many candidates the scan produces.
@@ -483,6 +814,8 @@ Bump `version:` in the frontmatter and add a one-line changelog entry whenever t
 
 ## Changelog
 
+- **0.5.0** (2026-05-20) — Full-day automated pipeline. Dashboard now auto-launches the trading session at 09:00 ET weekdays — no terminal commands. `BotManager` co-spawns four subprocesses (`trade_day`, `scanner_observe`, `auto_plan`, `intraday_intake`) that work together via the event bus + plan file. **`scanner_observe.py`** opens 7 parallel IBKR scanners (TOP_PERC_GAIN, TOP_OPEN_PERC_GAIN, HOT_BY_VOLUME, TOP_STOCK_BUY_IMBALANCE_ADV_RATIO, TOP_VOLUME_RATE, HOT_BY_OPT_VOLUME, HALTED) — parallel-plus-smart-consumer architecture, not rotated. **`auto_plan.py`** replaces the manual watchlist: takes the union of PM-relevant scanners, subtracts HALTED, runs price/PM-vol/spread/M&A-keyword filters, writes `plan_<date>.json` every 60s. **`intraday_intake.py`** (observe-only) adds Setup 4 (bull-flag detector — thrust + pullback + EMA hold + volume confirm) for 09:32–15:50 ET and **Setup 6** (closing-bell breakout, invented strategy not in deck — up ≥ 3%, upper-quartile close, vol surge, broke 5-bar high, force MOC exit) for 15:50–15:58 ET. **Arm/disarm replaces the dry-run toggle** (`state/armed.flag`); bot is launched with `--dry-run` unless armed. **Restart/Exit/Shut-down dropdown** in the dashboard header — Restart works via supervisor bat (`_supervise_dashboard.bat`) that re-launches on exit code 100. **IBKR probe fixed**: bind-probe every 3s + ib_insync handshake every 30s on clientId 99, eliminates the CloseWait socket accumulation that wedged TWS. Sticky header + Today P&L strip stay pinned while scrolling. Desktop shortcuts via PowerShell COM (handles AD-redirected Desktops correctly). `trade_day.py` re-reads `plan_<date>.json` just before `phase_setup1` at 09:25 ET so auto_plan's last refresh is picked up. Config additions: `auto_start_enabled` (default true), `auto_start_et` (default "09:00").
+- **0.4.0** (2026-05-20) — Local dashboard scaffold. Single-page web UI at http://localhost:8000 with WebSocket push for fills, plan, equity. Tail of `state/events_*.jsonl` becomes the dashboard's event-stream channel. Vault-aware Alpaca env loader so the dashboard works on PCs where the sibling's local `.env` isn't synced.
 - **0.3.0** (2026-05-19) — Architecture pivot. Recommended setup is now "Architecture A": the user manually launches TWS in paper each morning, and the bot reads data via TWS's API (port 7497, Read-Only). Same paper account serves both manual trading (clicks in TWS GUI) and the bot (reads bars + submits Alpaca orders) — no session contention because Read-Only API doesn't block GUI trading. IBC + Gateway path ("Architecture B") still works but is now documented as legacy / headless-only. Verified end-to-end dry-run pulled 431 bars of AAPL through TWS on the test session. Other changes: documented the morning catalyst-finding workflow (thestockmarketwatch + Finviz + A/B/C tier system + float/chart check + watchlist file format) — this is the user's daily 25-min routine. Added Malaysia local-time column to session timeline. Flagged a known bug: `position_size()` lacks a notional cap, so dry-run qtys for high-priced tickers (NVDA, TSLA) exceed account equity and would be rejected by Alpaca's `max_position_pct` guard on live submission. Fix planned for v0.3.1.
 - **0.2.0** (2026-05-19) — Added IBKR data feed as an alternative to Alpaca IEX (execution still goes through Alpaca paper). New `data_provider` config key dispatches between `_alpaca_*` helpers and `_ibkr_data.py` (ib_insync-based). IBKR connection is enforced to Read-Only API mode and refuses the live port (7496) without explicit acknowledgement. Added `setup_ibkr.py` wizard (paths + IBC credentials + smoke test) and `setup_gateway_autostart.py` (Windows Task Scheduler entries for IBC start/stop). Auto-fallback to Alpaca on IBKR failure, surfaced in the EOD report. Bot can run end-to-end without IBKR set up — `data_provider="alpaca"` is the default.
 - **0.1.0** (2026-05-19) — Initial scaffold. Setup 1 + Setup 5 automated, OCO exits, breakeven move at 1R, 10:30 entry cutoff, 11:00 force close, Telegram EOD report. Manual watchlist with optional `--auto-scan`. Level 2 gates and Setups 2/3/4 deferred.
