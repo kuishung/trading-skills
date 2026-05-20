@@ -1,9 +1,9 @@
-"""One-time installer for the guns-bot dashboard launchers on Windows.
+"""One-time installer for the intraday_bot dashboard launchers on Windows.
 
 Drops two shortcuts on the user's Desktop:
 
-  GUNS Dashboard.lnk        -> start_dashboard.bat
-  GUNS Dashboard (stop).lnk -> stop_dashboard.bat
+  Intraday Bot Dashboard.lnk        -> start_dashboard.bat
+  Intraday Bot Dashboard (stop).lnk -> stop_dashboard.bat
 
 Idempotent: re-running overwrites the shortcuts so paths stay correct if
 you move the repo. The .bat files themselves are committed to the repo and
@@ -81,20 +81,20 @@ def main() -> None:
         sys.exit(
             f"Launcher .bat files missing. Expected:\n"
             f"  {START_BAT}\n  {STOP_BAT}\n"
-            f"Did you `git pull` the latest guns-bot?"
+            f"Did you `git pull` the latest intraday_bot?"
         )
     desktop = _desktop_dir()
     print(f"Desktop : {desktop}")
     print(f"Repo    : {SKILL_DIR}")
 
-    start_lnk = desktop / "GUNS Dashboard.lnk"
-    stop_lnk = desktop / "GUNS Dashboard (stop).lnk"
+    start_lnk = desktop / "Intraday Bot Dashboard.lnk"
+    stop_lnk = desktop / "Intraday Bot Dashboard (stop).lnk"
 
     try:
         _create_shortcut(START_BAT, start_lnk,
-                         "Start the guns-bot dashboard and open it in the browser.")
+                         "Start the intraday_bot dashboard and open it in the browser.")
         _create_shortcut(STOP_BAT, stop_lnk,
-                         "Stop the running guns-bot dashboard.")
+                         "Stop the running intraday_bot dashboard.")
     except subprocess.CalledProcessError as e:
         sys.exit(
             f"PowerShell failed:\n  STDOUT: {e.stdout}\n  STDERR: {e.stderr}"
@@ -105,7 +105,7 @@ def main() -> None:
     print(f"  {start_lnk}")
     print(f"  {stop_lnk}")
     print()
-    print("Double-click 'GUNS Dashboard' to launch. The dashboard runs in a")
+    print("Double-click 'Intraday Bot Dashboard' to launch. The dashboard runs in a")
     print("minimised cmd window and opens http://localhost:8000 automatically.")
     print("Re-run this installer if you move the repo to a different folder.")
 

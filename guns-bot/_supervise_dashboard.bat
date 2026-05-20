@@ -1,5 +1,5 @@
 @echo off
-REM Supervisor loop for the guns-bot dashboard.
+REM Supervisor loop for the intraday_bot dashboard.
 REM
 REM Runs scripts\dashboard.py and re-launches it if it exits with code 100
 REM (the Restart signal). Any other exit code is a clean stop (Exit dashboard,

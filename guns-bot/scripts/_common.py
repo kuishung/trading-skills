@@ -1,4 +1,4 @@
-"""Shared helpers for guns-bot.
+"""Shared helpers for intraday_bot.
 
 Centralises: config loading, ET clock, alpaca client construction (paper-only
 guard delegated to the sibling skill), state file paths, Telegram send, and
@@ -414,7 +414,7 @@ def send_telegram(cfg: dict, html: str) -> bool:
             f"https://api.telegram.org/bot{token}/sendMessage",
             data=data,
             headers={"Content-Type": "application/x-www-form-urlencoded",
-                     "User-Agent": "guns-bot/0.1"},
+                     "User-Agent": "intraday_bot/0.7"},
         )
         try:
             with urllib.request.urlopen(req, timeout=15) as resp:

@@ -26,9 +26,10 @@ if str(SCRIPTS_DIR) not in sys.path:
 from .base import Strategy  # re-export
 
 
-KNOWN_STRATEGIES: tuple[str, ...] = (
-    "orb_5min",
-)
+# Add the module name (e.g. "orb_5min") here when you wire a new strategy.
+# Each name must correspond to scripts/strategies/<name>.py exposing
+# build(cfg) -> Strategy.
+KNOWN_STRATEGIES: tuple[str, ...] = ()
 
 
 def load_enabled(cfg: dict) -> list[Strategy]:

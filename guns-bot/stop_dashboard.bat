@@ -1,5 +1,5 @@
 @echo off
-REM Stop the running guns-bot dashboard. Sends a graceful POST /shutdown
+REM Stop the running intraday_bot dashboard. Sends a graceful POST /shutdown
 REM first (which lets the server flush its log), then falls back to
 REM killing the process that owns port 8000 if it didn't exit.
 

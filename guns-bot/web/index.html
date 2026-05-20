@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>guns-bot dashboard</title>
+  <title>intraday_bot dashboard</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     /* IBKR / TWS-inspired palette: neutral grays, sharp corners, sans-serif,
@@ -242,11 +242,11 @@
     </div>
   </section>
 
-  <!-- Top row: live scanner (the Stocks in Play universe feeding ORB at 09:35) -->
+  <!-- Top row: live scanner — feeds whatever strategies subscribe to scanner.snapshot -->
   <section class="panel mb-3">
     <h2>scanner — live top movers
       <span class="float-right muted normal-case tracking-normal text-xs">
-        feeds ORB universe at 09:35 ET
+        feeds enabled strategies via scanner.snapshot events
       </span>
     </h2>
     <div id="scanner" class="muted text-sm p-3">No scanner data yet.</div>
@@ -349,7 +349,7 @@ setInterval(tickClock, 1000);
 tickClock();
 
 // ---- Font-size adjuster ----------------------------------------------------
-const FONT_SCALE_KEY = 'guns:fontScale';
+const FONT_SCALE_KEY = 'intraday_bot:fontScale';
 const FONT_SCALE_MIN = 0.7;
 const FONT_SCALE_MAX = 2.0;
 const FONT_SCALE_STEP = 0.1;

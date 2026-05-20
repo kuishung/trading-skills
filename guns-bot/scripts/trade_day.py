@@ -1,26 +1,20 @@
-"""ORB session orchestrator — the main entrypoint.
+"""Bot session orchestrator — the main entrypoint.
 
-5-minute Opening Range Breakout on "Stocks in Play" per Zarattini, Barbon &
-Aziz (2024). Runs ~9:00 -> 16:00 ET as a single long-lived bot.
+Strategy-agnostic framework. Loads enabled strategies from
+config.json -> strategies.{name}, schedules each at its entry_et, and
+runs a shared management loop (fill detection, breakeven moves, OCO
+completion). Per-strategy max_concurrent + a global cap throttle risk.
+EOD safety sweep at 15:58 ET guarantees no position rolls overnight.
 
-Timeline:
-  09:00         Bot launches (idle)
-  09:30-09:35   First 5-min bar accumulates from the IBKR scanner universe
-  09:35         phase_orb reads scanner.snapshot, takes top N "Stocks in
-                Play" (TOP_PERC_GAIN ∪ TOP_VOLUME_RATE ∪ HOT_BY_VOLUME),
-                computes OR per symbol, submits long or short stop-limit
-                + OCO bracket
-  09:35-15:00   Management: attach OCO on entry fill, move stop to BE at
-                1R, watch for TP/SL completion
-  15:00         Cancel any unfilled entries (one-shot)
-  15:00-15:55   Continue managing open positions
-  15:58         phase_eod_close_all: tc.close_all_positions(cancel_orders=
-                True) — final EOD safety sweep, nothing carries overnight
+No strategy logic lives here — every strategy is its own module in
+scripts/strategies/. Adding a strategy = drop in <name>.py, register
+in KNOWN_STRATEGIES, add a config block.
 
 Strict rules (enforced at startup, refuse to launch if violated):
-  - risk_per_trade_pct <= 1% of NLV
-  - take_profit_R == 10.0  (asymmetric ORB payout per the paper)
-  - max_position_pct = 10% of NLV  (notional cap)
+  - risk_per_trade_pct <= 1% of NLV   (global, never override)
+  - max_position_pct = 10% of NLV     (global notional cap)
+  - At least one strategy enabled
+  - Each enabled strategy declares take_profit_R > 0 and max_concurrent > 0
 
 Paper-only. Uses alpaca-py directly for execution to allow the multi-step
 flow (stop-limit entry then OCO attach on fill) that the alpaca-trader-paper

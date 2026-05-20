@@ -1,5 +1,5 @@
 @echo off
-REM Launch the guns-bot dashboard. Idempotent — if it's already running,
+REM Launch the intraday_bot dashboard. Idempotent — if it's already running,
 REM just opens the browser. Path-portable via %~dp0.
 REM
 REM Behaviour:

@@ -1,4 +1,4 @@
-"""Stage 1 of the GUNS scanner pivot — observe-only.
+"""IBKR scanner subscriber for intraday_bot — observe-only.
 
 Subscribes to an IBKR market scanner and logs the live ranking every 30s
 into state/events_YYYY-MM-DD.jsonl. The dashboard reads those events and

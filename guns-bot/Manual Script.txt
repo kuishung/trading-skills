@@ -1,0 +1,9 @@
+cd D:\Dropbox\Claude\claude-skills\trading-skills
+git pull
+py intraday_bot/scripts/setup_dashboard_launcher.py   # one-time, refresh Desktop shortcuts
+
+
+cd D:\Dropbox\Claude\claude-skills\trading-skills
+git pull
+py -m pip install -r intraday_bot/requirements.txt   # if not done already on that PC
+py intraday_bot/scripts/setup_dashboard_launcher.py  # one-time Desktop shortcuts

@@ -3,7 +3,7 @@
 Appends one JSONL record per decision to state/journal_<date>.jsonl.
 Every entry has:
   ts        — ISO-8601 UTC timestamp
-  strategy  — name of the strategy that made the decision (e.g. "orb_5min")
+  strategy  — name of the strategy that made the decision
   event     — one of the canonical event names (see EVENT_VOCAB)
   symbol    — optional, when the decision concerns a specific ticker
   ...       — strategy-specific fields (reason, plan, evidence)

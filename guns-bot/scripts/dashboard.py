@@ -1,4 +1,4 @@
-"""Local dashboard server for guns-bot.
+"""Local dashboard server for intraday_bot.
 
 FastAPI + WebSocket. Serves web/index.html at http://localhost:8000.
 Tails state/events_*.jsonl and re-reads plan/fills/equity files so a
@@ -82,8 +82,9 @@ class BotManager:
     BOT_SCRIPT = "scripts/trade_day.py"
     SCANNER_SCRIPT = "scripts/scanner_observe.py"
 
-    # Scanner ET-window — feeds ORB's "Stocks in Play" universe at 09:35.
-    # Internally rotates scan codes by wall-clock so the universe matches each regime.
+    # Scanner ET-window — feeds whatever strategies subscribe to the
+    # scanner.snapshot event stream. Internally rotates scan codes by
+    # wall-clock so the universe matches each regime.
     SCANNER_START_ET = "09:00"
     SCANNER_END_ET = "15:58"
 
@@ -785,7 +786,7 @@ async def lifespan(_app: FastAPI):
             t.cancel()
 
 
-app = FastAPI(title="guns-bot dashboard", lifespan=lifespan)
+app = FastAPI(title="intraday_bot dashboard", lifespan=lifespan)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -917,7 +918,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
 
 
 def main() -> None:
-    print(f"guns-bot dashboard at http://{HOST}:{PORT}")
+    print(f"intraday_bot dashboard at http://{HOST}:{PORT}")
     print("(Read-only observer. The bot is what places orders.)")
     uvicorn.run(app, host=HOST, port=PORT, log_level="warning")
 

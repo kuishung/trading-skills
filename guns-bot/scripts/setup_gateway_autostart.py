@@ -2,9 +2,9 @@
 
 Creates TWO scheduled tasks:
 
-  1. "guns-ibc-start"   — runs IBC weekdays at 08:30 local clock. IBC launches
+  1. "intraday-ibc-start"   — runs IBC weekdays at 08:30 local clock. IBC launches
                           IB Gateway and auto-fills the paper login.
-  2. "guns-ibc-stop"    — runs each weekday at 16:30 local clock to close
+  2. "intraday-ibc-stop"    — runs each weekday at 16:30 local clock to close
                           Gateway cleanly. Optional but recommended so the
                           process doesn't pile up if you forget.
 
@@ -36,12 +36,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import load_config  # noqa: E402
 
-START_TASK = "guns-ibc-start"
-STOP_TASK = "guns-ibc-stop"
+START_TASK = "intraday-ibc-start"
+STOP_TASK = "intraday-ibc-stop"
 
 
 def find_ibc_start_script(cfg: dict, ibc_dir: Path) -> Path:
-    """We prefer the guns-bot wrapper (StartIBC-guns.bat) which sources
+    """We prefer the intraday_bot wrapper (StartIBC-intraday.bat) which sources
     credentials from the user's chosen path. Fall back to IBC's bundled
     StartIBC.bat only if the wrapper isn't present (and warn the user)."""
     # 1. The launcher we wrote (reads from cfg['ibkr_secrets_path'])

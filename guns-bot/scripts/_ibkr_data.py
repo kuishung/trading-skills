@@ -1,4 +1,4 @@
-"""IBKR data adapter for guns-bot.
+"""IBKR data adapter for intraday_bot.
 
 Wraps ib_insync to expose the same shape as _common.py's data abstractions:
     ibkr_pm_bars()                  -> dict[str, list[bar_dict]]
@@ -128,8 +128,8 @@ def _connect(cfg: dict) -> "IB":
 
 def _stock(symbol: str) -> "Stock":
     # SMART routing; primaryExchange left blank — IBKR will resolve.
-    # For ADRs / dual-listed names the user may need to set primaryExchange in
-    # config, but this isn't in the GUNS universe (small-cap US gappers).
+    # For ADRs / dual-listed names a strategy may need to override
+    # primaryExchange via a custom Stock contract.
     return Stock(symbol.upper(), "SMART", "USD")
 
 

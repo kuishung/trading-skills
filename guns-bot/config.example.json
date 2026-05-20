@@ -5,19 +5,7 @@
   "spread_max_cents": 10,
   "eod_close_all_et": "15:58",
 
-  "strategies": {
-    "orb_5min": {
-      "enabled": true,
-      "entry_et": "09:35",
-      "entry_cutoff_et": "15:00",
-      "max_concurrent": 3,
-      "take_profit_R": 10.0,
-      "orb_minutes": 5,
-      "max_symbols": 20,
-      "slip_cents": 1.0,
-      "limit_slip_cents": 3.0
-    }
-  },
+  "strategies": {},
 
   "alpaca_skill_path": "../alpaca-trader-paper",
   "matp_skill_path_for_telegram": "../MATP",
