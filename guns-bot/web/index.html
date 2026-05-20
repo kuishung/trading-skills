@@ -811,11 +811,16 @@ async function doExitAction(action) {
     endpoint = '/restart';
     overlayMsg = 'Restarting…';
   } else if (action === 'exit') {
-    confirmMsg = 'Stop the dashboard?\n\nOnly the dashboard process dies. Bot, scanner, and auto_plan keep running.';
+    confirmMsg = 'Stop the dashboard?\n\n' +
+                 'Only the dashboard process dies. The bot / scanner / auto_plan / intraday_intake\n' +
+                 'subprocesses are NOT touched — they stay in whatever state they\'re in right now\n' +
+                 '(running keeps running, stopped stays stopped).\n\n' +
+                 'If you want to stop EVERYTHING including any running children, use "Shut down\n' +
+                 'everything" instead.';
     endpoint = '/shutdown';
     overlayMsg = 'Dashboard stopped';
   } else if (action === 'shutdown-all') {
-    confirmMsg = 'SHUT DOWN EVERYTHING?\n\nThis terminates:\n  • bot (trade_day.py) — any open paper positions stay open in Alpaca\n  • scanner (scanner_observe.py)\n  • auto_plan (auto_plan.py)\n  • the dashboard itself\n\nUse this only when you mean it.';
+    confirmMsg = 'SHUT DOWN EVERYTHING?\n\nThis terminates:\n  • bot (trade_day.py) — any open paper positions stay open in Alpaca\n  • scanner (scanner_observe.py)\n  • auto_plan (auto_plan.py)\n  • intraday_intake (intraday_intake.py)\n  • the dashboard itself\n\nUse this only when you mean it.';
     endpoint = '/shutdown-all';
     overlayMsg = 'All processes stopped';
   } else {
