@@ -1,14 +1,24 @@
 {
-  "max_open_concurrent_positions": 3,
-  "risk_per_trade_pct": 0.005,
-  "take_profit_R": 2.0,
-  "max_setup1_candidates": 4,
-  "max_setup5_candidates": 4,
+  "max_open_concurrent_positions": 5,
+  "risk_per_trade_pct": 0.01,
+  "max_position_pct": 0.10,
   "spread_max_cents": 10,
-  "pm_consolidation_window_min": 30,
-  "pm_consolidation_band_pct": 1.5,
-  "time_cutoff_entry_et": "10:30",
-  "time_cutoff_force_close_et": "11:00",
+  "eod_close_all_et": "15:58",
+
+  "strategies": {
+    "orb_5min": {
+      "enabled": true,
+      "entry_et": "09:35",
+      "entry_cutoff_et": "15:00",
+      "max_concurrent": 3,
+      "take_profit_R": 10.0,
+      "orb_minutes": 5,
+      "max_symbols": 20,
+      "slip_cents": 1.0,
+      "limit_slip_cents": 3.0
+    }
+  },
+
   "alpaca_skill_path": "../alpaca-trader-paper",
   "matp_skill_path_for_telegram": "../MATP",
 

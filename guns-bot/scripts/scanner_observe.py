@@ -44,7 +44,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ib_insync import IB, ScannerSubscription
+from ib_insync import IB, ScannerSubscription, Stock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _events import emit  # noqa: E402
@@ -99,11 +99,93 @@ def _row_to_dict(rank: int, row) -> dict:
     }
 
 
+def _safe_float(x) -> float | None:
+    """Coerce to float, returning None for None / NaN / un-coercible."""
+    if x is None:
+        return None
+    try:
+        f = float(x)
+        if f != f:   # NaN
+            return None
+        return f
+    except (TypeError, ValueError):
+        return None
+
+
+# Module-level quote cache keyed by symbol -> {"ts": float, "data": dict}
+# TTL chosen to be just over the 30s scanner cycle so the same symbol seen
+# across multiple parallel scanners reuses one fetch.
+_QUOTE_CACHE: dict[str, dict] = {}
+QUOTE_TTL_S = 35.0
+
+
+def _fetch_quote_snapshots(ib: IB, symbols: list[str]) -> dict[str, dict]:
+    """Batch IBKR snapshot mktData for `symbols`. Returns a dict
+    {symbol: {"last", "prev_close", "change_pct", "day_volume"}}.
+
+    Cached entries inside the TTL window are reused. The snapshot mode
+    auto-releases each market-data line after data arrives, so concurrency
+    against the 100-line cap is short-lived.
+
+    Failures are swallowed — a per-symbol failure just leaves it absent
+    from the result dict.
+    """
+    now = time.time()
+    fresh: list[str] = []
+    out: dict[str, dict] = {}
+    for s in symbols:
+        cached = _QUOTE_CACHE.get(s)
+        if cached and (now - cached["ts"]) < QUOTE_TTL_S:
+            out[s] = cached["data"]
+        else:
+            fresh.append(s)
+    if not fresh:
+        return out
+
+    tickers: list[tuple[str, object]] = []
+    for s in fresh:
+        try:
+            contract = Stock(s, "SMART", "USD")
+            t = ib.reqMktData(contract, "", snapshot=True, regulatorySnapshot=False)
+            tickers.append((s, t))
+        except Exception:
+            continue
+    # Snapshot takes up to ~11s to fully populate; 5s is enough for
+    # last + prev_close + volume on liquid US equities.
+    ib.sleep(5)
+
+    for s, t in tickers:
+        last = _safe_float(getattr(t, "last", None))
+        if last is None:
+            # Fallback chain: marketPrice() -> close
+            try:
+                mp = t.marketPrice()
+                last = _safe_float(mp)
+            except Exception:
+                last = None
+        prev_close = _safe_float(getattr(t, "close", None))
+        vol = _safe_float(getattr(t, "volume", None))
+        # IBKR returns US-stock volume in 100-share lots historically.
+        # We'll show as-is; if downstream needs raw shares, multiply *100.
+        change_pct = None
+        if last is not None and prev_close is not None and prev_close > 0:
+            change_pct = (last - prev_close) / prev_close * 100.0
+        data = {
+            "last": last,
+            "prev_close": prev_close,
+            "change_pct": change_pct,
+            "day_volume": vol,
+        }
+        out[s] = data
+        _QUOTE_CACHE[s] = {"ts": now, "data": data}
+    return out
+
+
 # Parallel-scanner architecture: subscribe to all of these from session
-# start and let consumers (auto_plan, intraday_intake) pick which scanner's
-# events to read based on the current ET window. Scanners that need data
-# you don't have access to (e.g. HOT_BY_OPT_VOLUME without options data
-# sub) skip gracefully with a warning rather than killing the process.
+# start. trade_day.py reads the snapshot at 09:35 to build the ORB "Stocks
+# in Play" universe. Scanners that need data you don't have access to
+# (e.g. HOT_BY_OPT_VOLUME without options data sub) skip gracefully with
+# a warning rather than killing the process.
 DEFAULT_PARALLEL_SCANNERS = (
     # Window-baseline rankers — each makes sense in a specific regime,
     # but we keep them all running so consumers don't have to re-subscribe.
@@ -142,8 +224,11 @@ def main() -> None:
                          "specific subset, e.g. 'TOP_PERC_GAIN,HALTED'.")
     ap.add_argument("--location-code", default="STK.US.MAJOR",
                     help="IBKR location code (default: STK.US.MAJOR)")
-    ap.add_argument("--rows", type=int, default=20,
-                    help="Number of rows to track (default: 20)")
+    ap.add_argument("--rows", type=int, default=50,
+                    help="Number of rows to track per scanner (default: 50). "
+                         "Bumped from 20 to surface mid-cap movers (e.g. ALAB) "
+                         "that get buried on small-cap-rip days where the top "
+                         "of TOP_PERC_GAIN is filled with 100%+ micro-caps.")
     ap.add_argument("--above-price", type=float, default=1.50,
                     help="Minimum price filter (default: 1.50)")
     ap.add_argument("--above-volume", type=int, default=0,
@@ -287,9 +372,40 @@ def main() -> None:
             # ---- Snapshot each active scanner. ----
             ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
             preview_chunks: list[str] = []
+
+            # Pre-compute per-scanner row lists so we can dedupe symbols
+            # across scanners before issuing the quote fetch (one fetch per
+            # unique symbol per cycle).
+            scanner_rows: list[tuple[dict, list[dict]]] = []
+            unique_syms: list[str] = []
+            seen_syms: set[str] = set()
             for s in scanners:
                 rows = list(s["scan_data"])[: args.rows]
                 current = [_row_to_dict(i + 1, r) for i, r in enumerate(rows)]
+                scanner_rows.append((s, current))
+                for r in current:
+                    sym = r["symbol"]
+                    # Skip non-stock placeholders (e.g. "FOO PRE" preferred-share
+                    # listings the scanner occasionally returns) — Stock contract
+                    # routing requires a clean symbol.
+                    if sym and " " not in sym and sym not in seen_syms:
+                        unique_syms.append(sym)
+                        seen_syms.add(sym)
+
+            # Enrich with snapshot mktData (last, prev_close, change%, volume).
+            try:
+                quotes = _fetch_quote_snapshots(ib, unique_syms) if unique_syms else {}
+            except Exception as exc:
+                sys.stderr.write(f"quote enrichment failed (continuing): {exc}\n")
+                quotes = {}
+
+            for s, current in scanner_rows:
+                for r in current:
+                    q = quotes.get(r["symbol"]) or {}
+                    r["last"] = q.get("last")
+                    r["prev_close"] = q.get("prev_close")
+                    r["change_pct"] = q.get("change_pct")
+                    r["day_volume"] = q.get("day_volume")
                 current_by_sym = {r["symbol"]: r for r in current}
 
                 emit("scanner.snapshot", {

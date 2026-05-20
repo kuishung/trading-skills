@@ -210,6 +210,19 @@ def get_rth_minute_bars(symbols: list[str], cfg: dict, fake_now: str | None = No
     return _alpaca_minute_bars(symbols, cfg, fake_now, pm_only=False)
 
 
+def get_history_bars(symbols: list[str], cfg: dict, days: int = 5) -> dict[str, list[dict]]:
+    """RTH-only 1-min bars over the last `days` trading days. Used by the
+    AT scanner's 5d/3m trend filter (needs EMA50 stabilisation)."""
+    if _provider(cfg) == "ibkr":
+        from _ibkr_data import ibkr_history_bars
+        result = _try_ibkr("get_history_bars", ibkr_history_bars, symbols, cfg, days)
+        if result is not None:
+            return result
+    # No Alpaca fallback implemented for multi-day intraday history.
+    sys.stderr.write("get_history_bars: no non-IBKR provider implementation; returning empty\n")
+    return {s: [] for s in symbols}
+
+
 def get_latest_quote(symbols: list[str], cfg: dict) -> dict[str, dict]:
     if _provider(cfg) == "ibkr":
         from _ibkr_data import ibkr_latest_quote

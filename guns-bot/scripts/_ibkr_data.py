@@ -156,6 +156,65 @@ def ibkr_full_day_minute_bars(symbols: list[str], cfg: dict,
     return _fetch_minute_bars(symbols, cfg, fake_now, pm_only=False)
 
 
+def ibkr_history_bars(symbols: list[str], cfg: dict, days: int = 5) -> dict[str, list[dict]]:
+    """RTH-only 1-min bars over the last N trading days per symbol.
+
+    Used by the AT scanner's 5-day/3-min trend filter where EMA6/8/50
+    need enough history to stabilise.
+    """
+    if not symbols:
+        return {}
+    out: dict[str, list[dict]] = {s: [] for s in symbols}
+    duration_str = f"{int(days)} D"
+    ib = _connect(cfg)
+    try:
+        for sym in symbols:
+            contract = _stock(sym)
+            try:
+                ib.qualifyContracts(contract)
+            except Exception as exc:
+                sys.stderr.write(f"IBKR qualify({sym}) failed: {exc}\n")
+                continue
+            try:
+                bars = ib.reqHistoricalData(
+                    contract,
+                    endDateTime="",
+                    durationStr=duration_str,
+                    barSizeSetting="1 min",
+                    whatToShow="TRADES",
+                    useRTH=True,           # RTH only — matches "5d 3m chart"
+                    formatDate=2,
+                    keepUpToDate=False,
+                )
+            except Exception as exc:
+                sys.stderr.write(f"IBKR history_bars({sym}) failed: {exc}\n")
+                continue
+            et = _et_tz()
+            for b in bars or []:
+                t = b.date
+                if isinstance(t, (int, float)):
+                    t = datetime.fromtimestamp(t, tz=timezone.utc).astimezone(et)
+                elif isinstance(t, datetime):
+                    if t.tzinfo is None:
+                        t = t.replace(tzinfo=et)
+                    else:
+                        t = t.astimezone(et)
+                else:
+                    continue
+                out[sym].append({
+                    "t": t,
+                    "o": float(b.open), "h": float(b.high),
+                    "l": float(b.low), "c": float(b.close),
+                    "v": int(b.volume) if b.volume and b.volume > 0 else 0,
+                })
+    finally:
+        try:
+            ib.disconnect()
+        except Exception:
+            pass
+    return out
+
+
 def _fetch_minute_bars(symbols: list[str], cfg: dict, fake_now: str | None,
                        pm_only: bool) -> dict[str, list[dict]]:
     """Fetch 1-min bars per symbol via reqHistoricalData."""

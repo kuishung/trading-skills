@@ -6,28 +6,116 @@
   <title>guns-bot dashboard</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-    .panel { background:#0f172a; border:1px solid #1e293b; border-radius:6px; }
-    .panel h2 { color:#94a3b8; font-size:11px; letter-spacing:.08em; text-transform:uppercase; padding:8px 12px; border-bottom:1px solid #1e293b; }
-    .row { padding: 4px 12px; border-bottom: 1px solid #131b2e; font-size: 13px; }
+    /* IBKR / TWS-inspired palette: neutral grays, sharp corners, sans-serif,
+       tabular numerals, IBKR-red accent. */
+    :root {
+      --bg-page:      #1a1a1a;
+      --bg-panel:     #232323;
+      --bg-panel-alt: #2b2b2b;
+      --bg-hover:     #2f2f2f;
+      --border:       #3a3a3a;
+      --border-soft:  #2e2e2e;
+      --text:         #e6e6e6;
+      --text-muted:   #9a9a9a;
+      --text-dim:     #6e6e6e;
+      --pos:          #2fcc71;
+      --neg:          #ff5252;
+      --warn:         #f5b342;
+      --ibkr-red:     #e81e25;
+      --accent-blue:  #4a9eff;
+      --scale:        1;
+    }
+    body {
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      font-size: calc(14px * var(--scale));
+      font-variant-numeric: tabular-nums;
+      background: var(--bg-page) !important;
+      color: var(--text) !important;
+    }
+    /* Override Tailwind slate utilities so we don't fight class-level dark blues */
+    .bg-slate-950, .bg-slate-950\/95, .bg-slate-950\/90 { background: var(--bg-page) !important; }
+    .bg-slate-900, .bg-slate-900\/95                    { background: var(--bg-panel) !important; }
+    .bg-slate-800                                        { background: var(--bg-panel-alt) !important; }
+    .bg-slate-700                                        { background: var(--bg-hover) !important; }
+    .text-slate-200, .text-slate-300                     { color: var(--text) !important; }
+    .text-slate-400                                      { color: var(--text-muted) !important; }
+    .border-slate-700, .border-slate-800                 { border-color: var(--border) !important; }
+    .backdrop-blur, .backdrop-blur-sm                    { backdrop-filter: none !important; }
+    /* Flat rectangles — TWS has no rounded corners */
+    .rounded, .rounded-sm, .rounded-md, .rounded-lg, .rounded-full {
+      border-radius: 0 !important;
+    }
+    .panel {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 0;
+    }
+    .panel h2 {
+      color: var(--text-muted);
+      font-size: calc(11px * var(--scale));
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      padding: 7px 12px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-panel-alt);
+    }
+    .row {
+      padding: 5px 12px;
+      border-bottom: 1px solid var(--border-soft);
+      font-size: calc(14px * var(--scale));
+    }
     .row:last-child { border-bottom: 0; }
-    .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
-    .dot.up { background:#22c55e; box-shadow: 0 0 6px #22c55e; }
-    .dot.down { background:#ef4444; }
-    .dot.idle { background:#475569; }
-    .pos { color:#22c55e; }
-    .neg { color:#ef4444; }
-    .muted { color:#64748b; }
-    .tag { display:inline-block; padding:1px 6px; border-radius:3px; font-size:10px; letter-spacing:.05em; }
-    .tag.s1 { background:#1e3a8a; color:#bfdbfe; }
-    .tag.s5 { background:#581c87; color:#e9d5ff; }
-    .tag.rej { background:#7f1d1d; color:#fecaca; }
-    .ev-error { color:#fca5a5; }
-    .ev-warn { color:#fcd34d; }
-    .ev-fill { color:#86efac; }
-    .ev-order { color:#93c5fd; }
-    .ev-scanner { color:#c4b5fd; }
-    .ev-info { color:#cbd5e1; }
+    .row:hover { background: var(--bg-hover); }
+    /* Tailwind text-xs / text-sm overrides */
+    .text-xs { font-size: calc(12px * var(--scale)) !important; line-height: 1.4 !important; }
+    .text-sm { font-size: calc(14px * var(--scale)) !important; line-height: 1.45 !important; }
+    /* Status dots — TWS-style small square indicators */
+    .dot {
+      display:inline-block;
+      width:8px; height:8px;
+      border-radius: 0;
+      margin-right:6px;
+      border: 1px solid #000;
+    }
+    .dot.up   { background: var(--pos); }
+    .dot.down { background: var(--neg); }
+    .dot.idle { background: #555; }
+    .pos   { color: var(--pos); }
+    .neg   { color: var(--neg); }
+    .muted { color: var(--text-muted); }
+    /* Tags: rectangular, thin-bordered (replaces rounded pills) */
+    .tag {
+      display:inline-block;
+      padding: 1px 6px;
+      border: 1px solid currentColor;
+      border-radius: 0;
+      font-size: calc(10px * var(--scale));
+      font-weight: 600;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      background: transparent;
+    }
+    .tag.s1  { color: #6cb2ff; }
+    .tag.s5  { color: #c084fc; }
+    .tag.rej { color: #ff6b6b; }
+    /* IBKR-red accent for ARMED state (overridden via JS class swap) */
+    .armed {
+      background: var(--ibkr-red) !important;
+      color: #fff !important;
+      border-color: var(--ibkr-red) !important;
+    }
+    /* Event log color tokens */
+    .ev-error   { color: #ff6b6b; }
+    .ev-warn    { color: #f5b342; }
+    .ev-fill    { color: #5bd97a; }
+    .ev-order   { color: #6cb2ff; }
+    .ev-scanner { color: #c084fc; }
+    .ev-info    { color: #cfcfcf; }
+    /* Right-align numeric columns in rows */
+    .num { font-variant-numeric: tabular-nums; text-align: right; }
+    /* Subtle column separators inside rows */
+    .row > span + span { padding-left: 4px; }
   </style>
 </head>
 <body class="bg-slate-950 text-slate-200 min-h-screen p-3">
@@ -80,6 +168,13 @@
       </button>
     </div>
     <div class="ml-auto flex items-center gap-3 text-xs">
+      <div class="flex items-center gap-1" title="Font size — affects the whole dashboard. Persisted across reloads.">
+        <span class="muted">A</span>
+        <button id="font-down" class="px-2 py-0.5 border border-slate-700 hover:bg-slate-800 leading-none">−</button>
+        <span id="font-scale-label" class="muted text-center" style="min-width:38px;">100%</span>
+        <button id="font-up" class="px-2 py-0.5 border border-slate-700 hover:bg-slate-800 leading-none">+</button>
+        <button id="font-reset" class="muted px-1 hover:text-slate-200" title="Reset to 100%">↺</button>
+      </div>
       <span id="last-update" class="muted">no updates yet</span>
       <div class="relative">
         <button id="kill-btn"
@@ -97,17 +192,17 @@
           <button data-action="restart"
                   class="block w-full text-left px-3 py-2 text-xs hover:bg-slate-800 border-b border-slate-800">
             <div class="font-bold text-amber-300">↻ Restart</div>
-            <div class="muted">Kill the dashboard and respawn it. Bot/scanner/auto_plan keep running.</div>
+            <div class="muted">Kill the dashboard and respawn it. Bot and scanner keep running.</div>
           </button>
           <button data-action="exit"
                   class="block w-full text-left px-3 py-2 text-xs hover:bg-slate-800 border-b border-slate-800">
             <div class="font-bold text-slate-200">◼ Exit dashboard</div>
-            <div class="muted">Kill the dashboard process only. Bot/scanner/auto_plan keep running.</div>
+            <div class="muted">Kill the dashboard process only. Bot and scanner keep running.</div>
           </button>
           <button data-action="shutdown-all"
                   class="block w-full text-left px-3 py-2 text-xs hover:bg-slate-800">
             <div class="font-bold text-red-300">⏻ Shut down everything</div>
-            <div class="muted">Stop all child processes (bot + scanner + auto_plan) AND the dashboard.</div>
+            <div class="muted">Stop bot + scanner AND the dashboard.</div>
           </button>
         </div>
       </div>
@@ -147,17 +242,15 @@
     </div>
   </section>
 
-  <!-- Top row: scanner + watchlist -->
-  <div class="grid grid-cols-2 gap-3 mb-3">
-    <section class="panel">
-      <h2>scanner — live top movers</h2>
-      <div id="scanner" class="muted text-sm p-3">No scanner data yet. Stage 1 work pending.</div>
-    </section>
-    <section class="panel">
-      <h2>watchlist — qualified candidates</h2>
-      <div id="watchlist" class="muted text-sm p-3">No plan_*.json for today yet.</div>
-    </section>
-  </div>
+  <!-- Top row: live scanner (the Stocks in Play universe feeding ORB at 09:35) -->
+  <section class="panel mb-3">
+    <h2>scanner — live top movers
+      <span class="float-right muted normal-case tracking-normal text-xs">
+        feeds ORB universe at 09:35 ET
+      </span>
+    </h2>
+    <div id="scanner" class="muted text-sm p-3">No scanner data yet.</div>
+  </section>
 
   <!-- Mid row: orders + positions -->
   <div class="grid grid-cols-2 gap-3 mb-3">
@@ -170,18 +263,6 @@
       <div id="positions" class="muted text-sm p-3">—</div>
     </section>
   </div>
-
-  <!-- Intraday detector candidates (observe-only Setup 4 / Setup 6) -->
-  <section class="panel mb-3">
-    <h2>intraday candidates
-      <span class="float-right muted normal-case tracking-normal text-xs">
-        Setup 4 (bull flag) · Setup 6 (closing breakout) · observe-only
-      </span>
-    </h2>
-    <div id="intraday" class="muted text-sm p-3">
-      No detector hits yet.
-    </div>
-  </section>
 
   <!-- Trades + equity strip -->
   <section class="panel mb-3">
@@ -212,7 +293,7 @@
   </div>
 
 <script>
-const state = { plan: null, fills: [], equity: null, events: [], botLog: [], alpaca: null, scanner: null, intraday: [] };
+const state = { fills: [], equity: null, events: [], botLog: [], alpaca: null, scanner: null };
 let ws = null;
 let reconnectTimer = null;
 let shuttingDown = false;
@@ -266,6 +347,44 @@ function tickClock() {
 }
 setInterval(tickClock, 1000);
 tickClock();
+
+// ---- Font-size adjuster ----------------------------------------------------
+const FONT_SCALE_KEY = 'guns:fontScale';
+const FONT_SCALE_MIN = 0.7;
+const FONT_SCALE_MAX = 2.0;
+const FONT_SCALE_STEP = 0.1;
+
+function applyFontScale(scale) {
+  scale = Math.max(FONT_SCALE_MIN, Math.min(FONT_SCALE_MAX, scale));
+  document.documentElement.style.setProperty('--scale', String(scale));
+  const lbl = document.getElementById('font-scale-label');
+  if (lbl) lbl.textContent = Math.round(scale * 100) + '%';
+  try { localStorage.setItem(FONT_SCALE_KEY, String(scale)); } catch (_) {}
+  return scale;
+}
+
+function currentFontScale() {
+  const raw = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--scale')) || 1;
+  return raw;
+}
+
+(function initFontScale() {
+  let saved = 1;
+  try {
+    const v = parseFloat(localStorage.getItem(FONT_SCALE_KEY));
+    if (!isNaN(v) && v > 0) saved = v;
+  } catch (_) {}
+  applyFontScale(saved);
+  document.getElementById('font-down').addEventListener('click', () => {
+    applyFontScale(currentFontScale() - FONT_SCALE_STEP);
+  });
+  document.getElementById('font-up').addEventListener('click', () => {
+    applyFontScale(currentFontScale() + FONT_SCALE_STEP);
+  });
+  document.getElementById('font-reset').addEventListener('click', () => {
+    applyFontScale(1);
+  });
+})();
 
 function setWsDot(status) {
   const el = document.getElementById('ws-dot');
@@ -364,35 +483,16 @@ function renderBotLog() {
   el.scrollTop = el.scrollHeight;
 }
 
-function renderIntraday() {
-  const el = document.getElementById('intraday');
-  const hits = state.intraday || [];
-  if (!hits.length) {
-    el.innerHTML = '<div class="muted p-3">No detector hits yet.</div>';
-    return;
-  }
-  // Show newest first; cap at 12 rows for readability.
-  const rows = hits.slice(-12).reverse();
-  el.innerHTML = '<div>' + rows.map(c => {
-    const setupCls = c.setup === 6 ? 'bg-red-900/60 text-red-200' : 'bg-violet-900/60 text-violet-200';
-    const t = (c.detected_at_et || '').slice(0, 8);
-    const r2 = (n, d=2) => (n !== null && n !== undefined) ? Number(n).toFixed(d) : '—';
-    const extras = c.setup === 4
-      ? `retrace ${r2((c.retrace_pct||0)*100, 1)}%  thrust $${r2(c.thrust_dollars)}  ATR5 $${r2(c.atr5_1min)}  vol×${r2(c.vol_ratio, 1)}`
-      : c.setup === 6
-        ? `day +${r2(c.day_gain_pct, 1)}%  rng-pos ${r2((c.range_position||0)*100, 0)}%  vol× ${r2(c.vol_ratio_vs_30bar_avg, 1)}  MOC exit ${c.force_exit_at_et || ''}`
-        : '';
-    return `
-      <div class="row flex items-center gap-3">
-        <span class="muted text-xs w-16">${t}</span>
-        <span class="tag ${setupCls}">S${c.setup}</span>
-        <span class="font-bold w-16">${c.symbol}</span>
-        <span class="muted">entry &gt;$${r2(c.entry_stop_trigger)}</span>
-        <span class="muted">stop $${r2(c.stop_loss)}</span>
-        <span class="muted">tgt $${r2(c.take_profit)}</span>
-        <span class="muted text-xs ml-auto">${extras}</span>
-      </div>`;
-  }).join('') + '</div>';
+function fmtCompactVol(v) {
+  if (v == null || isNaN(v)) return '—';
+  v = Number(v);
+  // IBKR US-stock volume historically reports in 100-share lots; multiply
+  // for display so the figure matches what TWS shows.
+  v = v * 100;
+  if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B';
+  if (v >= 1e6) return (v / 1e6).toFixed(2) + 'M';
+  if (v >= 1e3) return (v / 1e3).toFixed(1) + 'K';
+  return String(Math.round(v));
 }
 
 function renderScanner() {
@@ -411,33 +511,25 @@ function renderScanner() {
     ${stale ? `· showing <span class="ev-warn">${snap.scan_code}</span> (primary not yet emitted)` : ''}
     · top ${snap.rows.length} · ${ts} UTC
   </div>`;
-  el.innerHTML = head + '<div>' + snap.rows.slice(0, 12).map(r => `
-    <div class="row flex items-center gap-3">
-      <span class="muted w-6 text-right">#${r.rank}</span>
-      <span class="font-bold w-16">${r.symbol}</span>
-      <span class="muted text-xs">${r.primary_exchange || ''}</span>
-      <span class="ml-auto text-xs">${r.distance || ''}</span>
-      <span class="text-xs muted">${r.benchmark || ''}</span>
-    </div>`).join('') + '</div>';
-}
-
-function renderWatchlist() {
-  const el = document.getElementById('watchlist');
-  const plan = state.plan;
-  if (!plan || !plan.candidates || !plan.candidates.length) {
-    el.innerHTML = '<div class="muted p-3">No plan_*.json for today yet.</div>';
-    return;
-  }
-  el.innerHTML = '<div>' + plan.candidates.map(c => `
-    <div class="row flex items-center gap-3">
-      <span class="font-bold w-16">${c.symbol || '?'}</span>
-      <span class="tag ${c.setup === 'S5' ? 's5' : 's1'}">${c.setup || 'S?'}</span>
-      <span class="muted">trigger</span>
-      <span>${c.entry ? '>$' + Number(c.entry).toFixed(2) : '—'}</span>
-      <span class="muted ml-auto">stop ${c.stop ? '$' + Number(c.stop).toFixed(2) : '—'}</span>
-      <span class="muted">tgt ${c.target ? '$' + Number(c.target).toFixed(2) : '—'}</span>
-    </div>
-  `).join('') + '</div>';
+  const r2 = (n, d=2) => (n != null && !isNaN(n)) ? Number(n).toFixed(d) : '—';
+  el.innerHTML = head + '<div>' + snap.rows.slice(0, 12).map(r => {
+    const chg = r.change_pct;
+    const chgCls = (chg == null || isNaN(chg)) ? 'muted'
+                   : chg >= 0 ? 'pos' : 'neg';
+    const chgTxt = (chg == null || isNaN(chg)) ? '—'
+                   : (chg >= 0 ? '+' : '') + Number(chg).toFixed(2) + '%';
+    const priceTxt = r.last != null ? '$' + r2(r.last) : '—';
+    const volTxt = fmtCompactVol(r.day_volume);
+    return `
+      <div class="row flex items-center gap-3">
+        <span class="muted w-6 text-right">#${r.rank}</span>
+        <span class="font-bold w-14">${r.symbol}</span>
+        <span class="num w-16 text-right">${priceTxt}</span>
+        <span class="num w-16 text-right ${chgCls}">${chgTxt}</span>
+        <span class="num w-16 text-right muted">${volTxt}</span>
+        <span class="muted text-xs ml-auto">${r.primary_exchange || ''}</span>
+      </div>`;
+  }).join('') + '</div>';
 }
 
 function renderTrades() {
@@ -451,11 +543,12 @@ function renderTrades() {
     const pnl = Number(f.pnl ?? 0);
     const cls = pnl > 0 ? 'pos' : pnl < 0 ? 'neg' : 'muted';
     const r = f.r_multiple !== undefined ? `(${pnl >= 0 ? '+' : ''}${Number(f.r_multiple).toFixed(2)}R)` : '';
+    const sideTag = f.side === 'short' ? 'S' : 'L';
     return `
     <div class="row flex items-center gap-3">
       <span class="muted">${(f.t || '').slice(11, 19)}</span>
       <span class="font-bold w-16">${f.symbol || '?'}</span>
-      <span class="tag ${f.setup === 'S5' ? 's5' : 's1'}">${f.setup || 'S?'}</span>
+      <span class="tag">${sideTag}</span>
       <span class="muted">${f.action || ''}</span>
       <span>@${f.price ? Number(f.price).toFixed(2) : '—'}</span>
       <span class="ml-auto ${cls}">${pnl >= 0 ? '+' : ''}${fmtMoney(pnl)} ${r}</span>
@@ -612,8 +705,6 @@ function renderEvents() {
 function renderAll() {
   renderToday();
   renderScanner();
-  renderWatchlist();
-  renderIntraday();
   renderTrades();
   renderEquity();
   renderEvents();
@@ -693,29 +784,15 @@ function latestScannerFromEvents(events) {
   return fallback;
 }
 
-function intradayHitsFromEvents(events) {
-  // Collect all setup4.candidate / setup6.candidate payloads from events.
-  const out = [];
-  for (const ev of events) {
-    if (ev && ev.type && (ev.type === 'setup4.candidate' || ev.type === 'setup6.candidate')
-        && ev.payload) {
-      out.push({ ts: ev.ts, ...ev.payload });
-    }
-  }
-  return out;
-}
-
 function applyMessage(msg) {
   if (!msg || !msg.type) return;
   if (msg.type === 'snapshot') {
-    state.plan = msg.plan;
     state.fills = msg.fills || [];
     state.equity = msg.equity;
     state.events = msg.events || [];
     state.botLog = msg.bot_log || [];
     state.alpaca = msg.alpaca || null;
     state.scanner = latestScannerFromEvents(state.events);
-    state.intraday = intradayHitsFromEvents(state.events);
     if (msg.health) applyHealth(msg.health);
     renderAll();
     renderBotLog();
@@ -732,10 +809,9 @@ function applyMessage(msg) {
     renderBotLog();
   } else if (msg.type === 'state') {
     const s = msg.state || {};
-    state.plan = s.plan;
     state.fills = s.fills || [];
     state.equity = s.equity;
-    renderWatchlist(); renderTrades(); renderEquity();
+    renderTrades(); renderEquity();
     document.getElementById('last-update').textContent =
       'updated ' + new Date().toLocaleTimeString();
   } else if (msg.type === 'event') {
@@ -749,13 +825,6 @@ function applyMessage(msg) {
         state.scanner = { ts: msg.event.ts, ...msg.event.payload };
         renderScanner();
       }
-    }
-    if (msg.event && (msg.event.type === 'setup4.candidate'
-                       || msg.event.type === 'setup6.candidate')
-        && msg.event.payload) {
-      state.intraday.push({ ts: msg.event.ts, ...msg.event.payload });
-      if (state.intraday.length > 200) state.intraday = state.intraday.slice(-200);
-      renderIntraday();
     }
     renderEvents();
     document.getElementById('last-update').textContent =
@@ -807,12 +876,12 @@ async function doExitAction(action) {
   killMenu.classList.add('hidden');
   let confirmMsg, endpoint, overlayMsg;
   if (action === 'restart') {
-    confirmMsg = 'Restart the dashboard?\n\nThe dashboard process will be killed and respawned by start_dashboard.bat.\nThe bot, scanner, and auto_plan keep running and will be re-discovered.';
+    confirmMsg = 'Restart the dashboard?\n\nThe dashboard process will be killed and respawned by start_dashboard.bat.\nThe bot and scanner keep running and will be re-discovered.';
     endpoint = '/restart';
     overlayMsg = 'Restarting…';
   } else if (action === 'exit') {
     confirmMsg = 'Stop the dashboard?\n\n' +
-                 'Only the dashboard process dies. The bot / scanner / auto_plan / intraday_intake\n' +
+                 'Only the dashboard process dies. The bot and scanner\n' +
                  'subprocesses are NOT touched — they stay in whatever state they\'re in right now\n' +
                  '(running keeps running, stopped stays stopped).\n\n' +
                  'If you want to stop EVERYTHING including any running children, use "Shut down\n' +
@@ -820,7 +889,7 @@ async function doExitAction(action) {
     endpoint = '/shutdown';
     overlayMsg = 'Dashboard stopped';
   } else if (action === 'shutdown-all') {
-    confirmMsg = 'SHUT DOWN EVERYTHING?\n\nThis terminates:\n  • bot (trade_day.py) — any open paper positions stay open in Alpaca\n  • scanner (scanner_observe.py)\n  • auto_plan (auto_plan.py)\n  • intraday_intake (intraday_intake.py)\n  • the dashboard itself\n\nUse this only when you mean it.';
+    confirmMsg = 'SHUT DOWN EVERYTHING?\n\nThis terminates:\n  • bot (trade_day.py — ORB engine) — any open paper positions stay open in Alpaca\n  • scanner (scanner_observe.py — feeds the ORB universe)\n  • the dashboard itself\n\nUse this only when you mean it.';
     endpoint = '/shutdown-all';
     overlayMsg = 'All processes stopped';
   } else {

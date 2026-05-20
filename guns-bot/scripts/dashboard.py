@@ -81,37 +81,21 @@ class BotManager:
 
     BOT_SCRIPT = "scripts/trade_day.py"
     SCANNER_SCRIPT = "scripts/scanner_observe.py"
-    AUTOPLAN_SCRIPT = "scripts/auto_plan.py"
-    INTRADAY_SCRIPT = "scripts/intraday_intake.py"
 
-    # Scanner ET-window — covers PM through closing-bell window. Scanner
-    # internally rotates scan codes (TOP_PERC_GAIN -> TOP_OPEN_PERC_GAIN ->
-    # HOT_BY_VOLUME) by wall-clock so the universe matches each regime.
+    # Scanner ET-window — feeds ORB's "Stocks in Play" universe at 09:35.
+    # Internally rotates scan codes by wall-clock so the universe matches each regime.
     SCANNER_START_ET = "09:00"
     SCANNER_END_ET = "15:58"
-    # auto_plan window — must end ≥1 min before trade_day.py's phase_setup1
-    # at 09:25 so the bot picks up the final plan refresh.
-    AUTOPLAN_START_ET = "09:00"
-    AUTOPLAN_END_ET = "09:24"
-    # intraday_intake — observe-only Setup 4 / Setup 6 detector.
-    INTRADAY_START_ET = "09:32"
-    INTRADAY_END_ET = "15:58"
 
     ARMED_FLAG = "armed.flag"  # presence in state/ = armed
 
     def __init__(self) -> None:
         self.bot_proc: subprocess.Popen | None = None
         self.scanner_proc: subprocess.Popen | None = None
-        self.autoplan_proc: subprocess.Popen | None = None
-        self.intraday_proc: subprocess.Popen | None = None
         self._bot_log_fh = None
         self._scanner_log_fh = None
-        self._autoplan_log_fh = None
-        self._intraday_log_fh = None
         self._bot_started_ts: float | None = None
         self._scanner_started_ts: float | None = None
-        self._autoplan_started_ts: float | None = None
-        self._intraday_started_ts: float | None = None
         # Reflects the mode the running bot was LAUNCHED with — not the
         # current arm flag. Used to surface "applies at next start" in UI.
         self._launched_armed: bool | None = None
@@ -155,7 +139,6 @@ class BotManager:
     def status(self) -> str:
         if any(self._proc_state(p) == "running" for p in (
             self.bot_proc, self.scanner_proc,
-            self.autoplan_proc, self.intraday_proc,
         )):
             return "running"
         return "stopped"
@@ -171,14 +154,6 @@ class BotManager:
     @property
     def scanner_pid(self) -> int | None:
         return self._proc_pid(self.scanner_proc)
-
-    @property
-    def autoplan_status(self) -> str:
-        return self._proc_state(self.autoplan_proc)
-
-    @property
-    def autoplan_pid(self) -> int | None:
-        return self._proc_pid(self.autoplan_proc)
 
     @property
     def bot_uptime_s(self) -> float | None:
@@ -234,60 +209,22 @@ class BotManager:
         )
         self._scanner_started_ts = _time.time()
 
-        # ---- auto_plan (scanner-driven plan builder) ----
-        autoplan_log = STATE_DIR / f"autoplan_{_today_str()}.log"
-        self._autoplan_log_fh = autoplan_log.open("a", encoding="utf-8")
-        autoplan_argv = [
-            sys.executable, str(SKILL_DIR / self.AUTOPLAN_SCRIPT),
-            "--start-et", self.AUTOPLAN_START_ET,
-            "--end-et", self.AUTOPLAN_END_ET,
-        ]
-        self.autoplan_proc = subprocess.Popen(
-            autoplan_argv, cwd=str(SKILL_DIR),
-            stdout=self._autoplan_log_fh, stderr=subprocess.STDOUT,
-            creationflags=cflags,
-        )
-        self._autoplan_started_ts = _time.time()
-
-        # ---- intraday_intake (Setup 4 / Setup 6 observe-only) ----
-        intraday_log = STATE_DIR / f"intraday_{_today_str()}.log"
-        self._intraday_log_fh = intraday_log.open("a", encoding="utf-8")
-        intraday_argv = [
-            sys.executable, str(SKILL_DIR / self.INTRADAY_SCRIPT),
-            "--start-et", self.INTRADAY_START_ET,
-            "--end-et", self.INTRADAY_END_ET,
-        ]
-        self.intraday_proc = subprocess.Popen(
-            intraday_argv, cwd=str(SKILL_DIR),
-            stdout=self._intraday_log_fh, stderr=subprocess.STDOUT,
-            creationflags=cflags,
-        )
-        self._intraday_started_ts = _time.time()
-
         return {
             "status": "started",
             "bot_pid": self.bot_proc.pid,
             "scanner_pid": self.scanner_proc.pid,
-            "autoplan_pid": self.autoplan_proc.pid,
-            "intraday_pid": self.intraday_proc.pid,
             "armed": armed_at_launch,
             "scanner_window_et": f"{self.SCANNER_START_ET}-{self.SCANNER_END_ET}",
-            "autoplan_window_et": f"{self.AUTOPLAN_START_ET}-{self.AUTOPLAN_END_ET}",
-            "intraday_window_et": f"{self.INTRADAY_START_ET}-{self.INTRADAY_END_ET}",
         }
 
     def stop(self) -> dict[str, Any]:
         result: dict[str, Any] = {
             "bot": "not_running",
             "scanner": "not_running",
-            "autoplan": "not_running",
-            "intraday": "not_running",
         }
         for label, proc_attr, log_attr in (
             ("bot", "bot_proc", "_bot_log_fh"),
             ("scanner", "scanner_proc", "_scanner_log_fh"),
-            ("autoplan", "autoplan_proc", "_autoplan_log_fh"),
-            ("intraday", "intraday_proc", "_intraday_log_fh"),
         ):
             proc = getattr(self, proc_attr)
             if proc is not None and proc.poll() is None:
@@ -878,7 +815,7 @@ async def config_view() -> JSONResponse:
 
 @app.post("/shutdown")
 async def shutdown() -> JSONResponse:
-    """Stop the dashboard process only. Bot/scanner/auto_plan stay alive."""
+    """Stop the dashboard process only. Bot and scanner stay alive."""
     async def _kill() -> None:
         await asyncio.sleep(0.3)  # let the HTTP response flush
         os._exit(0)
@@ -889,7 +826,7 @@ async def shutdown() -> JSONResponse:
 @app.post("/restart")
 async def restart() -> JSONResponse:
     """Exit with code 100. start_dashboard.bat's supervisor loop catches that
-    and re-launches the dashboard. Bot/scanner/auto_plan are NOT touched —
+    and re-launches the dashboard. Bot and scanner are NOT touched —
     a code change picked up by the new dashboard inherits them as orphans
     until they exit naturally."""
     async def _exit100() -> None:

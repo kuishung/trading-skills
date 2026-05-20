@@ -1,8 +1,9 @@
 """Dry-run the IBKR data adapter the bot uses in production.
 
-Exercises the same code paths trade_day.py and scan_premarket.py walk:
+Exercises the same code paths trade_day.py / scanner_observe.py walk:
   - ibkr_pm_bars (1-min bars 04:00 ET -> now, pre-market only)
   - ibkr_full_day_minute_bars (1-min bars 04:00 ET -> now, PM + RTH)
+  - ibkr_history_bars (multi-day RTH-only, used for diagnostics)
   - ibkr_latest_quote (top-of-book bid/ask)
 
 Reads config.json for connection params. Safe to run any time — no orders,
