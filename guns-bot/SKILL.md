@@ -97,12 +97,41 @@ event log. Single browser tab; WebSocket auto-reconnect.
 
 Bot scripts publish events via `_events.emit("type.name", {...})` which
 appends to `state/events_YYYY-MM-DD.jsonl`. The dashboard tails that file
-and pushes new lines to the browser. Read-only — the dashboard never sends
-orders.
+and pushes new lines to the browser.
 
 Run it alongside `trade_day.py` in a separate terminal:
 
     py scripts/dashboard.py
+
+### Desktop shortcuts (Windows)
+
+For one-click launching, run the per-PC installer once:
+
+    py scripts/setup_dashboard_launcher.py
+
+Drops two shortcuts on your Desktop:
+
+  - `GUNS Dashboard` — idempotent. Starts the dashboard (if not already
+    running) and opens it in your browser. The dashboard runs in a
+    minimised cmd window; close it via the in-app **Exit dashboard**
+    button or the stop shortcut.
+  - `GUNS Dashboard (stop)` — POSTs `/shutdown` and falls back to killing
+    the process owning port 8000.
+
+The `start_dashboard.bat` and `stop_dashboard.bat` launchers are committed
+(path-portable via `%~dp0`) and sync across PCs via Dropbox. Only the
+per-user `.lnk` shortcuts on Desktop are local to each PC — re-run the
+installer on each new machine.
+
+### IBKR API probe details
+
+The dashboard health probe is composite: a cheap bind-probe every 3 s
+detects whether something owns the API port, and a full ib_insync
+handshake every 30 s verifies the accept loop is responsive. The
+handshake uses clientId 99 so it does not collide with the bot's
+clientId 71. Earlier versions used a raw TCP connect every 3 s — that
+left CloseWait sockets piled up in TWS until its accept loop choked.
+Don't reintroduce that pattern.
 
 ## Data-feed architecture (recommended: manual TWS)
 

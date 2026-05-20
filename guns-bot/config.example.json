@@ -18,5 +18,8 @@
   "ibkr_client_id": 71,
   "ibkr_allow_live_port": false,
   "ibkr_gateway_path": null,
-  "ibkr_ibc_dir": null
+  "ibkr_ibc_dir": null,
+
+  "auto_start_enabled": true,
+  "auto_start_et": "09:00"
 }

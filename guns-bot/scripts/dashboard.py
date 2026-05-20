@@ -18,6 +18,7 @@ import os
 import socket
 import subprocess
 import sys
+import time as _time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,6 +27,8 @@ from typing import Any
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
+
+DASHBOARD_START_TS = _time.time()
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
 STATE_DIR = SKILL_DIR / "state"
@@ -65,80 +68,247 @@ hub = Hub()
 # ------------- Bot subprocess manager -------------
 
 class BotManager:
-    """Spawn/stop the trade_day.py bot as a child process.
+    """Spawn/stop the trading session — trade_day.py + scanner_observe.py.
 
-    Limitation: if the dashboard restarts while the bot is running, the
-    new dashboard loses the subprocess handle and reports 'stopped' until
-    the bot exits or is killed externally. PID-file adoption is a TODO.
+    Both children start together on /bot/start and terminate together on
+    /bot/stop. The scanner has its own ET time guards so it idles outside
+    the configured pre-market window even if launched early.
+
+    Limitation: if the dashboard restarts while children are running, the
+    new dashboard loses the subprocess handles and reports 'stopped' until
+    the children exit or are killed externally. PID-file adoption is a TODO.
     """
 
     BOT_SCRIPT = "scripts/trade_day.py"
+    SCANNER_SCRIPT = "scripts/scanner_observe.py"
+    AUTOPLAN_SCRIPT = "scripts/auto_plan.py"
+    INTRADAY_SCRIPT = "scripts/intraday_intake.py"
+
+    # Scanner ET-window — covers PM through closing-bell window. Scanner
+    # internally rotates scan codes (TOP_PERC_GAIN -> TOP_OPEN_PERC_GAIN ->
+    # HOT_BY_VOLUME) by wall-clock so the universe matches each regime.
+    SCANNER_START_ET = "09:00"
+    SCANNER_END_ET = "15:58"
+    # auto_plan window — must end ≥1 min before trade_day.py's phase_setup1
+    # at 09:25 so the bot picks up the final plan refresh.
+    AUTOPLAN_START_ET = "09:00"
+    AUTOPLAN_END_ET = "09:24"
+    # intraday_intake — observe-only Setup 4 / Setup 6 detector.
+    INTRADAY_START_ET = "09:32"
+    INTRADAY_END_ET = "15:58"
+
+    ARMED_FLAG = "armed.flag"  # presence in state/ = armed
 
     def __init__(self) -> None:
-        self.proc: subprocess.Popen | None = None
-        self._log_fh = None
-        self._log_path: Path | None = None
-        self.dry_run: bool = False
+        self.bot_proc: subprocess.Popen | None = None
+        self.scanner_proc: subprocess.Popen | None = None
+        self.autoplan_proc: subprocess.Popen | None = None
+        self.intraday_proc: subprocess.Popen | None = None
+        self._bot_log_fh = None
+        self._scanner_log_fh = None
+        self._autoplan_log_fh = None
+        self._intraday_log_fh = None
+        self._bot_started_ts: float | None = None
+        self._scanner_started_ts: float | None = None
+        self._autoplan_started_ts: float | None = None
+        self._intraday_started_ts: float | None = None
+        # Reflects the mode the running bot was LAUNCHED with — not the
+        # current arm flag. Used to surface "applies at next start" in UI.
+        self._launched_armed: bool | None = None
+
+    @property
+    def armed(self) -> bool:
+        """Persistent on-disk arm state. Survives dashboard restart."""
+        return (STATE_DIR / self.ARMED_FLAG).exists()
+
+    def set_armed(self, value: bool) -> None:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        flag = STATE_DIR / self.ARMED_FLAG
+        if value:
+            flag.write_text(
+                f"armed at {datetime.now(timezone.utc).isoformat(timespec='seconds')}\n",
+                encoding="utf-8",
+            )
+        else:
+            try:
+                flag.unlink()
+            except FileNotFoundError:
+                pass
+
+    @property
+    def launched_armed(self) -> bool | None:
+        return self._launched_armed
+
+    @staticmethod
+    def _proc_state(proc: subprocess.Popen | None) -> str:
+        if proc is None:
+            return "stopped"
+        return "running" if proc.poll() is None else "stopped"
+
+    @staticmethod
+    def _proc_pid(proc: subprocess.Popen | None) -> int | None:
+        if proc and proc.poll() is None:
+            return proc.pid
+        return None
 
     @property
     def status(self) -> str:
-        if self.proc is None:
-            return "stopped"
-        return "running" if self.proc.poll() is None else "stopped"
+        if any(self._proc_state(p) == "running" for p in (
+            self.bot_proc, self.scanner_proc,
+            self.autoplan_proc, self.intraday_proc,
+        )):
+            return "running"
+        return "stopped"
 
     @property
     def pid(self) -> int | None:
-        if self.proc and self.proc.poll() is None:
-            return self.proc.pid
+        return self._proc_pid(self.bot_proc)
+
+    @property
+    def scanner_status(self) -> str:
+        return self._proc_state(self.scanner_proc)
+
+    @property
+    def scanner_pid(self) -> int | None:
+        return self._proc_pid(self.scanner_proc)
+
+    @property
+    def autoplan_status(self) -> str:
+        return self._proc_state(self.autoplan_proc)
+
+    @property
+    def autoplan_pid(self) -> int | None:
+        return self._proc_pid(self.autoplan_proc)
+
+    @property
+    def bot_uptime_s(self) -> float | None:
+        if self._bot_started_ts and self._proc_state(self.bot_proc) == "running":
+            return _time.time() - self._bot_started_ts
+        return None
+
+    @property
+    def scanner_uptime_s(self) -> float | None:
+        if self._scanner_started_ts and self._proc_state(self.scanner_proc) == "running":
+            return _time.time() - self._scanner_started_ts
         return None
 
     def start(self) -> dict[str, Any]:
         if self.status == "running":
-            return {"status": "already_running", "pid": self.pid}
+            return {
+                "status": "already_running",
+                "bot_pid": self._proc_pid(self.bot_proc),
+                "scanner_pid": self._proc_pid(self.scanner_proc),
+            }
         STATE_DIR.mkdir(parents=True, exist_ok=True)
-        log_path = STATE_DIR / f"bot_{_today_str()}.log"
-        self._log_fh = log_path.open("a", encoding="utf-8")
-        self._log_path = log_path
         cflags = 0
         if os.name == "nt":
             cflags = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
-        script = str(SKILL_DIR / self.BOT_SCRIPT)
-        argv = [sys.executable, script]
-        if self.dry_run:
-            argv.append("--dry-run")
-        self.proc = subprocess.Popen(
-            argv,
-            cwd=str(SKILL_DIR),
-            stdout=self._log_fh,
-            stderr=subprocess.STDOUT,
+
+        # ---- bot ----
+        bot_log = STATE_DIR / f"bot_{_today_str()}.log"
+        self._bot_log_fh = bot_log.open("a", encoding="utf-8")
+        bot_argv = [sys.executable, str(SKILL_DIR / self.BOT_SCRIPT)]
+        armed_at_launch = self.armed
+        if not armed_at_launch:
+            bot_argv.append("--dry-run")
+        self._launched_armed = armed_at_launch
+        self.bot_proc = subprocess.Popen(
+            bot_argv, cwd=str(SKILL_DIR),
+            stdout=self._bot_log_fh, stderr=subprocess.STDOUT,
             creationflags=cflags,
         )
-        return {"status": "started", "pid": self.proc.pid, "log": str(log_path),
-                "dry_run": self.dry_run}
+        self._bot_started_ts = _time.time()
+
+        # ---- scanner ----
+        scanner_log = STATE_DIR / f"scanner_{_today_str()}.log"
+        self._scanner_log_fh = scanner_log.open("a", encoding="utf-8")
+        scanner_argv = [
+            sys.executable, str(SKILL_DIR / self.SCANNER_SCRIPT),
+            "--start-et", self.SCANNER_START_ET,
+            "--end-et", self.SCANNER_END_ET,
+        ]
+        self.scanner_proc = subprocess.Popen(
+            scanner_argv, cwd=str(SKILL_DIR),
+            stdout=self._scanner_log_fh, stderr=subprocess.STDOUT,
+            creationflags=cflags,
+        )
+        self._scanner_started_ts = _time.time()
+
+        # ---- auto_plan (scanner-driven plan builder) ----
+        autoplan_log = STATE_DIR / f"autoplan_{_today_str()}.log"
+        self._autoplan_log_fh = autoplan_log.open("a", encoding="utf-8")
+        autoplan_argv = [
+            sys.executable, str(SKILL_DIR / self.AUTOPLAN_SCRIPT),
+            "--start-et", self.AUTOPLAN_START_ET,
+            "--end-et", self.AUTOPLAN_END_ET,
+        ]
+        self.autoplan_proc = subprocess.Popen(
+            autoplan_argv, cwd=str(SKILL_DIR),
+            stdout=self._autoplan_log_fh, stderr=subprocess.STDOUT,
+            creationflags=cflags,
+        )
+        self._autoplan_started_ts = _time.time()
+
+        # ---- intraday_intake (Setup 4 / Setup 6 observe-only) ----
+        intraday_log = STATE_DIR / f"intraday_{_today_str()}.log"
+        self._intraday_log_fh = intraday_log.open("a", encoding="utf-8")
+        intraday_argv = [
+            sys.executable, str(SKILL_DIR / self.INTRADAY_SCRIPT),
+            "--start-et", self.INTRADAY_START_ET,
+            "--end-et", self.INTRADAY_END_ET,
+        ]
+        self.intraday_proc = subprocess.Popen(
+            intraday_argv, cwd=str(SKILL_DIR),
+            stdout=self._intraday_log_fh, stderr=subprocess.STDOUT,
+            creationflags=cflags,
+        )
+        self._intraday_started_ts = _time.time()
+
+        return {
+            "status": "started",
+            "bot_pid": self.bot_proc.pid,
+            "scanner_pid": self.scanner_proc.pid,
+            "autoplan_pid": self.autoplan_proc.pid,
+            "intraday_pid": self.intraday_proc.pid,
+            "armed": armed_at_launch,
+            "scanner_window_et": f"{self.SCANNER_START_ET}-{self.SCANNER_END_ET}",
+            "autoplan_window_et": f"{self.AUTOPLAN_START_ET}-{self.AUTOPLAN_END_ET}",
+            "intraday_window_et": f"{self.INTRADAY_START_ET}-{self.INTRADAY_END_ET}",
+        }
 
     def stop(self) -> dict[str, Any]:
-        if self.status != "running":
-            self._close_log()
-            return {"status": "not_running"}
-        assert self.proc is not None
-        try:
-            self.proc.terminate()
-            try:
-                self.proc.wait(timeout=5.0)
-            except subprocess.TimeoutExpired:
-                self.proc.kill()
-                self.proc.wait(timeout=3.0)
-        finally:
-            self._close_log()
-        return {"status": "stopped"}
-
-    def _close_log(self) -> None:
-        if self._log_fh:
-            try:
-                self._log_fh.close()
-            except Exception:
-                pass
-        self._log_fh = None
+        result: dict[str, Any] = {
+            "bot": "not_running",
+            "scanner": "not_running",
+            "autoplan": "not_running",
+            "intraday": "not_running",
+        }
+        for label, proc_attr, log_attr in (
+            ("bot", "bot_proc", "_bot_log_fh"),
+            ("scanner", "scanner_proc", "_scanner_log_fh"),
+            ("autoplan", "autoplan_proc", "_autoplan_log_fh"),
+            ("intraday", "intraday_proc", "_intraday_log_fh"),
+        ):
+            proc = getattr(self, proc_attr)
+            if proc is not None and proc.poll() is None:
+                try:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5.0)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=3.0)
+                except Exception:
+                    pass
+                result[label] = "stopped"
+            log_fh = getattr(self, log_attr)
+            if log_fh:
+                try: log_fh.close()
+                except Exception: pass
+                setattr(self, log_attr, None)
+        # Reset the launched-with-armed tracker so UI shows correct next-start state.
+        self._launched_armed = None
+        return result
 
 
 bot = BotManager()
@@ -154,19 +324,91 @@ def _load_cfg() -> dict[str, Any]:
         return {}
 
 
-def _probe_ibkr_tcp(timeout: float = 0.5) -> str:
-    """Return 'up' if TWS/Gateway API port accepts a TCP connect, else 'down'."""
+def _probe_ibkr_listener_bind() -> str:
+    """Cheap: detect whether something owns the API port. Does NOT open a
+    connection to TWS, so leaves no CloseWait. Used as a fast fallback
+    between full handshake probes.
+    """
     cfg = _load_cfg()
     host = cfg.get("ibkr_host", "127.0.0.1")
     try:
         port = int(cfg.get("ibkr_port", 7497))
     except (TypeError, ValueError):
         return "down"
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        with socket.create_connection((host, port), timeout=timeout):
-            return "up"
+        s.bind((host, port))
+        return "down"   # bind succeeded -> nothing listening
+    except OSError:
+        return "up"     # port in use -> a listener owns it
+    finally:
+        try: s.close()
+        except Exception: pass
+
+
+# Probe client id distinct from the bot's 71 so they can coexist.
+PROBE_CLIENT_ID = 99
+_last_handshake_at: float = 0.0
+_last_handshake_result: str = "unknown"
+HANDSHAKE_INTERVAL_S = 30.0
+
+
+def _probe_ibkr_handshake() -> str:
+    """Do a real ib_insync connect+disconnect. Verifies TWS's accept loop
+    is responsive, not just that the OS-level port is bound. Protocol-clean
+    disconnect means TWS drains the socket properly (no CloseWait residue).
+
+    Uses a distinct clientId so it doesn't collide with the bot.
+    """
+    # Run the asyncio shim before importing ib_insync (Python 3.14 / eventkit).
+    try:
+        asyncio.get_event_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+    try:
+        from ib_insync import IB
+    except Exception:
+        return "unknown"
+    cfg = _load_cfg()
+    host = cfg.get("ibkr_host", "127.0.0.1")
+    try:
+        port = int(cfg.get("ibkr_port", 7497))
+    except (TypeError, ValueError):
+        return "down"
+    ib = IB()
+    try:
+        ib.connect(host, port, clientId=PROBE_CLIENT_ID, timeout=4, readonly=True)
+        ok = ib.isConnected()
+        try:
+            ib.disconnect()
+        except Exception:
+            pass
+        return "up" if ok else "down"
     except Exception:
         return "down"
+
+
+def _probe_ibkr_tcp(timeout: float = 0.5) -> str:
+    """Composite probe used by the health loop.
+
+    Most calls are cheap bind-probes. Once every HANDSHAKE_INTERVAL_S we do
+    a real ib_insync handshake to detect wedged-accept-loop states (TWS
+    UI thread blocked by modal dialog, etc.) that a bind-probe can't see.
+    """
+    import time as _time
+    global _last_handshake_at, _last_handshake_result
+    now = _time.time()
+    bind_state = _probe_ibkr_listener_bind()
+    if bind_state == "down":
+        # Listener gone — no point doing the heavy probe.
+        _last_handshake_result = "down"
+        return "down"
+    if now - _last_handshake_at >= HANDSHAKE_INTERVAL_S:
+        _last_handshake_result = _probe_ibkr_handshake()
+        _last_handshake_at = now
+    # If the last handshake said up, keep reporting up between probes; if it
+    # said down (wedged accept loop), keep reporting down until next attempt.
+    return _last_handshake_result if _last_handshake_result in ("up", "down") else bind_state
 
 
 _ibkr_status_cache = "unknown"
@@ -364,7 +606,13 @@ def _snapshot() -> dict[str, Any]:
             "ibkr_host": cfg.get("ibkr_host", "127.0.0.1"),
             "ibkr_port": cfg.get("ibkr_port", 7497),
             "alpaca": _alpaca_cache.get("status", "unknown"),
-            "bot": {"status": bot.status, "pid": bot.pid, "dry_run": bot.dry_run},
+            "bot": {
+                "status": bot.status,
+                "pid": bot.pid,
+                "armed": bot.armed,
+                "launched_armed": bot.launched_armed,
+            },
+            "scanner": {"status": bot.scanner_status, "pid": bot.scanner_pid},
         },
     }
 
@@ -401,18 +649,28 @@ async def _tail_events() -> None:
 
 
 async def _poll_health() -> None:
-    """Probe IBKR TCP port + bot subprocess. Broadcast on transition."""
+    """Probe IBKR TCP port + bot/scanner subprocess. Broadcast on transition,
+    and re-broadcast the processes block every cycle so uptime ticks live."""
     global _ibkr_status_cache, _bot_status_cache
     loop = asyncio.get_event_loop()
+    prev_scanner: tuple[str, int | None] = ("stopped", None)
     while True:
         ibkr = await loop.run_in_executor(None, _probe_ibkr_tcp)
         b_state = (bot.status, bot.pid)
-        if ibkr != _ibkr_status_cache or b_state != _bot_status_cache:
+        s_state = (bot.scanner_status, bot.scanner_pid)
+        if (ibkr != _ibkr_status_cache
+                or b_state != _bot_status_cache
+                or s_state != prev_scanner):
             _ibkr_status_cache = ibkr
             _bot_status_cache = b_state
+            prev_scanner = s_state
             await hub.broadcast({"type": "health", "health": {
                 "ibkr": ibkr,
-                "bot": {"status": b_state[0], "pid": b_state[1], "dry_run": bot.dry_run},
+                "bot": {
+                    "status": b_state[0], "pid": b_state[1],
+                    "armed": bot.armed, "launched_armed": bot.launched_armed,
+                },
+                "scanner": {"status": s_state[0], "pid": s_state[1]},
             }})
         await asyncio.sleep(3.0)
 
@@ -433,6 +691,96 @@ async def _poll_alpaca() -> None:
             }})
             prev_signature = signature
         await asyncio.sleep(10.0)
+
+
+async def _auto_start_loop() -> None:
+    """Auto-launch the trading session at the configured ET wall-clock.
+
+    Behaviour:
+      - Wakes every 60s.
+      - On weekdays (Mon-Fri ET), when ET time crosses cfg.auto_start_et
+        (default 09:15 — 15 minutes before NYSE open), call bot.start()
+        once and write state/auto_started_<date>.flag so a dashboard
+        restart doesn't re-trigger today.
+      - No-op if cfg.auto_start_enabled is false.
+      - No-op if the bot is already running.
+      - Stops trying once ET passes 10:30 — past that the entry window
+        is closed anyway.
+
+    US market holidays are NOT special-cased yet; on a holiday the auto
+    trigger will fire and the bot will find no plan / no data and idle.
+    Worth fixing when we wire scanner -> watchlist (Stage 3).
+    """
+    et = _et_tz_dash()
+    while True:
+        try:
+            cfg = _load_cfg()
+            if not cfg.get("auto_start_enabled", True):
+                await asyncio.sleep(60)
+                continue
+            now_et = datetime.now(timezone.utc).astimezone(et)
+            if now_et.weekday() >= 5:   # Sat/Sun
+                await asyncio.sleep(60)
+                continue
+            target_str = str(cfg.get("auto_start_et", "09:15"))
+            try:
+                hh, mm = target_str.split(":")
+                target_dt = now_et.replace(
+                    hour=int(hh), minute=int(mm), second=0, microsecond=0
+                )
+            except Exception:
+                await asyncio.sleep(60)
+                continue
+            window_end = now_et.replace(hour=10, minute=30, second=0, microsecond=0)
+            today_iso = now_et.strftime("%Y-%m-%d")
+            flag = STATE_DIR / f"auto_started_{today_iso}.flag"
+
+            should_trigger = (
+                target_dt <= now_et < window_end
+                and not flag.exists()
+                and bot.status != "running"
+            )
+            if should_trigger:
+                STATE_DIR.mkdir(parents=True, exist_ok=True)
+                print(f"[auto-start] ET {now_et.strftime('%H:%M:%S')} — "
+                      f"launching session (target was {target_str})")
+                result = bot.start()
+                try:
+                    flag.write_text(
+                        json.dumps({
+                            "ts": now_et.isoformat(timespec="seconds"),
+                            **{k: v for k, v in result.items() if k != "status"},
+                        }, default=str),
+                        encoding="utf-8",
+                    )
+                except Exception:
+                    pass
+                # Surface in event log + push immediate health update so the
+                # browser pill flips green without waiting for the 3s health poll.
+                try:
+                    from _events import emit as _emit
+                    _emit("session.auto_start", result)
+                except Exception:
+                    pass
+                await hub.broadcast({"type": "health", "health": {
+                    "bot": {
+                        "status": bot.status, "pid": bot.pid,
+                        "armed": bot.armed, "launched_armed": bot.launched_armed,
+                    },
+                    "scanner": {"status": bot.scanner_status, "pid": bot.scanner_pid},
+                }})
+        except Exception as e:
+            print(f"[auto-start] error: {e}")
+        await asyncio.sleep(60)
+
+
+def _et_tz_dash():
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo("America/New_York")
+    except ImportError:
+        import pytz
+        return pytz.timezone("America/New_York")
 
 
 async def _tail_bot_log() -> None:
@@ -491,6 +839,7 @@ async def lifespan(_app: FastAPI):
         asyncio.create_task(_poll_health()),
         asyncio.create_task(_tail_bot_log()),
         asyncio.create_task(_poll_alpaca()),
+        asyncio.create_task(_auto_start_loop()),
     ]
     try:
         yield
@@ -514,14 +863,51 @@ async def snapshot() -> JSONResponse:
     return JSONResponse(_snapshot())
 
 
+@app.get("/config")
+async def config_view() -> JSONResponse:
+    """Public view of harmless config knobs. Never leaks secrets — credentials
+    live in VAULT, not in config.json."""
+    cfg = _load_cfg()
+    return JSONResponse({
+        "auto_start_enabled": bool(cfg.get("auto_start_enabled", True)),
+        "auto_start_et": str(cfg.get("auto_start_et", "09:00")),
+        "scanner_start_et": BotManager.SCANNER_START_ET,
+        "scanner_end_et": BotManager.SCANNER_END_ET,
+    })
+
+
 @app.post("/shutdown")
 async def shutdown() -> JSONResponse:
-    """Stop the dashboard process. Does NOT touch the bot."""
+    """Stop the dashboard process only. Bot/scanner/auto_plan stay alive."""
     async def _kill() -> None:
         await asyncio.sleep(0.3)  # let the HTTP response flush
         os._exit(0)
     asyncio.create_task(_kill())
-    return JSONResponse({"status": "shutting down dashboard (bot is unaffected)"})
+    return JSONResponse({"status": "shutting down dashboard (children unaffected)"})
+
+
+@app.post("/restart")
+async def restart() -> JSONResponse:
+    """Exit with code 100. start_dashboard.bat's supervisor loop catches that
+    and re-launches the dashboard. Bot/scanner/auto_plan are NOT touched —
+    a code change picked up by the new dashboard inherits them as orphans
+    until they exit naturally."""
+    async def _exit100() -> None:
+        await asyncio.sleep(0.3)
+        os._exit(100)
+    asyncio.create_task(_exit100())
+    return JSONResponse({"status": "restarting dashboard (children unaffected)"})
+
+
+@app.post("/shutdown-all")
+async def shutdown_all() -> JSONResponse:
+    """Terminate every trading-session subprocess THEN exit the dashboard."""
+    result = bot.stop()
+    async def _kill() -> None:
+        await asyncio.sleep(0.3)
+        os._exit(0)
+    asyncio.create_task(_kill())
+    return JSONResponse({"status": "shutting down everything", "stopped": result})
 
 
 @app.post("/bot/start")
@@ -538,19 +924,40 @@ async def bot_stop() -> JSONResponse:
 
 @app.get("/bot/status")
 async def bot_status() -> JSONResponse:
-    return JSONResponse({"status": bot.status, "pid": bot.pid, "dry_run": bot.dry_run})
+    return JSONResponse({
+        "status": bot.status,
+        "pid": bot.pid,
+        "armed": bot.armed,
+        "launched_armed": bot.launched_armed,
+    })
 
 
-@app.post("/bot/config")
-async def bot_config(body: dict) -> JSONResponse:
-    """Set bot startup config. Only honored on next start (not mid-flight)."""
-    if "dry_run" in body:
-        if bot.status == "running":
-            return JSONResponse(
-                {"error": "cannot change dry_run while bot is running"}, status_code=409
-            )
-        bot.dry_run = bool(body["dry_run"])
-    return JSONResponse({"dry_run": bot.dry_run})
+@app.post("/bot/arm")
+async def bot_arm(body: dict) -> JSONResponse:
+    """Set the armed flag. Live trading is enabled at the bot's next launch.
+
+    Toggling while the bot is running is allowed — it persists for the
+    next session, but the currently running bot keeps the mode it was
+    launched with (surfaced as `launched_armed`).
+    """
+    if "armed" not in body:
+        return JSONResponse({"error": "body must include 'armed' bool"},
+                            status_code=400)
+    bot.set_armed(bool(body["armed"]))
+    # Broadcast immediately so every connected browser updates without
+    # waiting for the next 3s health poll (which wouldn't fire anyway
+    # if nothing else changed).
+    await hub.broadcast({"type": "health", "health": {
+        "bot": {
+            "status": bot.status, "pid": bot.pid,
+            "armed": bot.armed, "launched_armed": bot.launched_armed,
+        },
+    }})
+    return JSONResponse({
+        "armed": bot.armed,
+        "launched_armed": bot.launched_armed,
+        "applies_to_running_session": False,
+    })
 
 
 @app.websocket("/ws")

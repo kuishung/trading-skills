@@ -571,6 +571,21 @@ def main() -> int:
     # 3. Phase 1 — Setup 1 at 9:25 ET
     setup1_at = et_at(date_iso, "09:25")
     sleep_until(setup1_at, args.fake_now)
+    # Re-read the plan file in case auto_plan.py (the scanner-driven builder)
+    # refreshed it between bot startup (≈09:00) and now. If the file is gone
+    # or unreadable, keep the in-memory plan we loaded earlier.
+    try:
+        pp = plan_path(date_iso)
+        if pp.exists():
+            fresh = json.loads(pp.read_text(encoding="utf-8"))
+            if fresh.get("tickers"):
+                plan = fresh
+                safe_log_stdout(
+                    f"Re-read plan from disk just before phase_setup1 — "
+                    f"{len(plan['tickers'])} ticker(s)."
+                )
+    except Exception as _exc:
+        safe_log_stdout(f"Plan re-read failed (using in-memory plan): {_exc}")
     trades: dict[str, TradeRecord] = {}
     phase_setup1(cfg, plan, trades, opening_equity, date_iso, args.dry_run)
 
