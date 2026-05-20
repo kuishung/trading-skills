@@ -1,0 +1,12 @@
+state/watchlist_*.txt
+state/plan_*.json
+state/fills_*.jsonl
+state/equity_*.json
+config.json
+__pycache__/
+*.pyc
+
+# IBC bundle — contains plaintext IBKR credentials, must NEVER be committed
+ibc/credentials.txt
+ibc/*.log
+ibc/Logs/

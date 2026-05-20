@@ -1,0 +1,5 @@
+alpaca-py>=0.30
+python-dotenv>=1.0
+pytz>=2024.1
+# Optional — only needed when data_provider="ibkr" in config.json
+ib_insync>=0.9.86

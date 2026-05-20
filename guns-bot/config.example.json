@@ -1,0 +1,22 @@
+{
+  "max_open_concurrent_positions": 3,
+  "risk_per_trade_pct": 0.005,
+  "take_profit_R": 2.0,
+  "max_setup1_candidates": 4,
+  "max_setup5_candidates": 4,
+  "spread_max_cents": 10,
+  "pm_consolidation_window_min": 30,
+  "pm_consolidation_band_pct": 1.5,
+  "time_cutoff_entry_et": "10:30",
+  "time_cutoff_force_close_et": "11:00",
+  "alpaca_skill_path": "../alpaca-trader-paper",
+  "matp_skill_path_for_telegram": "../MATP",
+
+  "data_provider": "alpaca",
+  "ibkr_host": "127.0.0.1",
+  "ibkr_port": 4002,
+  "ibkr_client_id": 71,
+  "ibkr_allow_live_port": false,
+  "ibkr_gateway_path": null,
+  "ibkr_ibc_dir": null
+}
