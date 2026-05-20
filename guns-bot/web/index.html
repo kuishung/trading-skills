@@ -1,0 +1,577 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>guns-bot dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .panel { background:#0f172a; border:1px solid #1e293b; border-radius:6px; }
+    .panel h2 { color:#94a3b8; font-size:11px; letter-spacing:.08em; text-transform:uppercase; padding:8px 12px; border-bottom:1px solid #1e293b; }
+    .row { padding: 4px 12px; border-bottom: 1px solid #131b2e; font-size: 13px; }
+    .row:last-child { border-bottom: 0; }
+    .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
+    .dot.up { background:#22c55e; box-shadow: 0 0 6px #22c55e; }
+    .dot.down { background:#ef4444; }
+    .dot.idle { background:#475569; }
+    .pos { color:#22c55e; }
+    .neg { color:#ef4444; }
+    .muted { color:#64748b; }
+    .tag { display:inline-block; padding:1px 6px; border-radius:3px; font-size:10px; letter-spacing:.05em; }
+    .tag.s1 { background:#1e3a8a; color:#bfdbfe; }
+    .tag.s5 { background:#581c87; color:#e9d5ff; }
+    .tag.rej { background:#7f1d1d; color:#fecaca; }
+    .ev-error { color:#fca5a5; }
+    .ev-warn { color:#fcd34d; }
+    .ev-fill { color:#86efac; }
+    .ev-order { color:#93c5fd; }
+    .ev-scanner { color:#c4b5fd; }
+    .ev-info { color:#cbd5e1; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-200 min-h-screen p-3">
+
+  <!-- Status bar -->
+  <header class="flex items-center gap-6 px-4 py-2 panel mb-3">
+    <div class="flex items-center gap-3">
+      <span class="text-slate-400 text-xs">ET</span>
+      <span id="clock-et" class="font-bold text-base">--:--:--</span>
+    </div>
+    <div class="flex items-center gap-3">
+      <span class="text-slate-400 text-xs">MYT</span>
+      <span id="clock-myt" class="text-base">--:--:--</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="text-slate-400 text-xs">session</span>
+      <span id="session" class="tag bg-slate-800 text-slate-200">—</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span id="ws-dot" class="dot idle"></span>
+      <span class="text-xs">dashboard</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span id="ibkr-dot" class="dot idle"></span>
+      <span class="text-xs">IBKR API</span>
+      <span id="ibkr-detail" class="text-xs muted">probing…</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span id="alpaca-dot" class="dot idle"></span>
+      <span class="text-xs">Alpaca</span>
+      <span id="alpaca-detail" class="text-xs muted">probing…</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span id="bot-pill" class="tag bg-slate-800 text-slate-300">bot stopped</span>
+      <label class="flex items-center gap-1 text-xs cursor-pointer select-none"
+             title="If on, --dry-run is passed to trade_day.py: signals evaluate but no orders submit.">
+        <input id="dryrun-toggle" type="checkbox" class="accent-amber-500">
+        <span id="dryrun-label">dry-run</span>
+      </label>
+      <button id="bot-start-btn"
+              class="px-2 py-1 rounded border border-emerald-800 text-emerald-300 hover:bg-emerald-950 text-xs"
+              title="Spawn scripts/trade_day.py — this WILL start placing paper orders on Alpaca">
+        ▶ Start bot
+      </button>
+      <button id="bot-stop-btn"
+              class="px-2 py-1 rounded border border-amber-800 text-amber-300 hover:bg-amber-950 text-xs hidden"
+              title="Terminate the running bot process">
+        ⏹ Stop bot
+      </button>
+    </div>
+    <div class="ml-auto flex items-center gap-3 text-xs">
+      <span id="last-update" class="muted">no updates yet</span>
+      <button id="kill-btn"
+              class="px-2 py-1 rounded border border-red-900 text-red-300 hover:bg-red-950 hover:text-red-200"
+              title="Stop the dashboard server process. Does NOT touch the bot.">
+        ◼ Exit dashboard
+      </button>
+    </div>
+  </header>
+
+  <!-- Stopped overlay -->
+  <div id="stopped-overlay"
+       class="hidden fixed inset-0 bg-slate-950/90 flex items-center justify-center z-50">
+    <div class="text-center">
+      <div class="text-2xl font-bold text-red-300 mb-2">Dashboard stopped</div>
+      <div class="muted text-sm">The bot is unaffected. To restart this dashboard:
+        <code class="text-slate-300 bg-slate-800 px-1 rounded">py scripts/dashboard.py</code>
+      </div>
+    </div>
+  </div>
+
+  <!-- Top row: scanner + watchlist -->
+  <div class="grid grid-cols-2 gap-3 mb-3">
+    <section class="panel">
+      <h2>scanner — live top movers</h2>
+      <div id="scanner" class="muted text-sm p-3">No scanner data yet. Stage 1 work pending.</div>
+    </section>
+    <section class="panel">
+      <h2>watchlist — qualified candidates</h2>
+      <div id="watchlist" class="muted text-sm p-3">No plan_*.json for today yet.</div>
+    </section>
+  </div>
+
+  <!-- Mid row: orders + positions -->
+  <div class="grid grid-cols-2 gap-3 mb-3">
+    <section class="panel">
+      <h2>pending orders</h2>
+      <div id="pending" class="muted text-sm p-3">—</div>
+    </section>
+    <section class="panel">
+      <h2>open positions</h2>
+      <div id="positions" class="muted text-sm p-3">—</div>
+    </section>
+  </div>
+
+  <!-- Trades + equity strip -->
+  <section class="panel mb-3">
+    <h2>
+      today's trades
+      <span class="float-right muted normal-case tracking-normal">
+        equity <span id="equity">—</span>
+        &nbsp;·&nbsp; day P&amp;L <span id="day-pnl">—</span>
+      </span>
+    </h2>
+    <div id="trades" class="muted text-sm p-3">No fills yet today.</div>
+  </section>
+
+  <!-- Logs row -->
+  <div class="grid grid-cols-2 gap-3">
+    <section class="panel">
+      <h2>event log <span class="float-right muted normal-case tracking-normal text-xs">structured</span></h2>
+      <div id="events" class="text-xs leading-5 p-3 max-h-72 overflow-y-auto">
+        <span class="muted">No events yet today.</span>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>bot log <span class="float-right muted normal-case tracking-normal text-xs">state/bot_*.log</span></h2>
+      <div id="botlog" class="text-xs leading-5 p-3 max-h-72 overflow-y-auto whitespace-pre-wrap text-slate-300">
+        <span class="muted">Bot has not been started today.</span>
+      </div>
+    </section>
+  </div>
+
+<script>
+const state = { plan: null, fills: [], equity: null, events: [], botLog: [], alpaca: null };
+let ws = null;
+let reconnectTimer = null;
+let shuttingDown = false;
+let botRunning = false;
+
+function fmtPct(n) {
+  if (n === null || n === undefined || isNaN(n)) return '—';
+  const sign = n >= 0 ? '+' : '';
+  return sign + (n * 100).toFixed(2) + '%';
+}
+function fmtMoney(n) {
+  if (n === null || n === undefined || isNaN(n)) return '—';
+  return '$' + Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+function pad(n) { return String(n).padStart(2, '0'); }
+function nyTime() {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', hour12: false,
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+  return fmt.format(new Date());
+}
+function mytTime() {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Kuala_Lumpur', hour12: false,
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+  return fmt.format(new Date());
+}
+function session() {
+  // Use ET hours to bucket the session.
+  const etParts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', hour12: false, hour: '2-digit', minute: '2-digit',
+  }).formatToParts(new Date());
+  const h = Number(etParts.find(p => p.type === 'hour').value);
+  const m = Number(etParts.find(p => p.type === 'minute').value);
+  const t = h * 60 + m;
+  if (t >= 240 && t < 570) return ['PM', 'bg-amber-900/50 text-amber-200'];
+  if (t >= 570 && t < 960) return ['RTH', 'bg-emerald-900/50 text-emerald-200'];
+  if (t >= 960 && t < 1200) return ['after', 'bg-slate-700 text-slate-200'];
+  return ['closed', 'bg-slate-800 text-slate-400'];
+}
+function tickClock() {
+  document.getElementById('clock-et').textContent = nyTime();
+  document.getElementById('clock-myt').textContent = mytTime();
+  const [label, cls] = session();
+  const el = document.getElementById('session');
+  el.textContent = label;
+  el.className = 'tag ' + cls;
+}
+setInterval(tickClock, 1000);
+tickClock();
+
+function setWsDot(status) {
+  const el = document.getElementById('ws-dot');
+  el.className = 'dot ' + (status === 'up' ? 'up' : status === 'down' ? 'down' : 'idle');
+}
+
+function setIbkrDot(status, host, port) {
+  const el = document.getElementById('ibkr-dot');
+  el.className = 'dot ' + (status === 'up' ? 'up' : status === 'down' ? 'down' : 'idle');
+  const detail = document.getElementById('ibkr-detail');
+  const where = (host && port) ? `${host}:${port}` : '';
+  detail.textContent = status === 'up' ? `${where} ●` : status === 'down' ? `${where} unreachable` : 'probing…';
+  detail.className = 'text-xs ' + (status === 'up' ? 'pos' : status === 'down' ? 'neg' : 'muted');
+}
+
+function setAlpacaDot(status) {
+  const el = document.getElementById('alpaca-dot');
+  const detail = document.getElementById('alpaca-detail');
+  let dotCls = 'idle', label = '';
+  if (status === 'ok') { dotCls = 'up'; label = 'paper ●'; }
+  else if (status === 'error') { dotCls = 'down'; label = 'error'; }
+  else if (status === 'no_credentials') { dotCls = 'down'; label = 'no creds'; }
+  else { label = 'probing…'; }
+  el.className = 'dot ' + dotCls;
+  detail.textContent = label;
+  detail.className = 'text-xs ' + (dotCls === 'up' ? 'pos' : dotCls === 'down' ? 'neg' : 'muted');
+}
+
+function setBotStatus(status, pid, dryRun) {
+  const pill = document.getElementById('bot-pill');
+  const startBtn = document.getElementById('bot-start-btn');
+  const stopBtn  = document.getElementById('bot-stop-btn');
+  const toggle = document.getElementById('dryrun-toggle');
+  const label  = document.getElementById('dryrun-label');
+  botRunning = (status === 'running');
+  if (botRunning) {
+    pill.textContent = 'bot running' + (dryRun ? ' (DRY)' : '') + ' (pid ' + (pid || '?') + ')';
+    pill.className = 'tag ' + (dryRun ? 'bg-amber-900/60 text-amber-200' : 'bg-emerald-900/60 text-emerald-200');
+    startBtn.classList.add('hidden');
+    stopBtn.classList.remove('hidden');
+    toggle.disabled = true;
+    label.classList.add('muted');
+  } else {
+    pill.textContent = 'bot stopped';
+    pill.className = 'tag bg-slate-800 text-slate-400';
+    startBtn.classList.remove('hidden');
+    stopBtn.classList.add('hidden');
+    toggle.disabled = false;
+    label.classList.remove('muted');
+  }
+  // Reflect server-side dry_run in the toggle (only when stopped, since we'd
+  // be syncing local choice on next start).
+  if (dryRun !== undefined && !botRunning) toggle.checked = !!dryRun;
+}
+
+function renderBotLog() {
+  const el = document.getElementById('botlog');
+  const lines = state.botLog || [];
+  if (!lines.length) {
+    el.innerHTML = '<span class="muted">Bot has not been started today.</span>';
+    return;
+  }
+  el.textContent = lines.slice(-300).join('\n');
+  el.scrollTop = el.scrollHeight;
+}
+
+function renderWatchlist() {
+  const el = document.getElementById('watchlist');
+  const plan = state.plan;
+  if (!plan || !plan.candidates || !plan.candidates.length) {
+    el.innerHTML = '<div class="muted p-3">No plan_*.json for today yet.</div>';
+    return;
+  }
+  el.innerHTML = '<div>' + plan.candidates.map(c => `
+    <div class="row flex items-center gap-3">
+      <span class="font-bold w-16">${c.symbol || '?'}</span>
+      <span class="tag ${c.setup === 'S5' ? 's5' : 's1'}">${c.setup || 'S?'}</span>
+      <span class="muted">trigger</span>
+      <span>${c.entry ? '>$' + Number(c.entry).toFixed(2) : '—'}</span>
+      <span class="muted ml-auto">stop ${c.stop ? '$' + Number(c.stop).toFixed(2) : '—'}</span>
+      <span class="muted">tgt ${c.target ? '$' + Number(c.target).toFixed(2) : '—'}</span>
+    </div>
+  `).join('') + '</div>';
+}
+
+function renderTrades() {
+  const el = document.getElementById('trades');
+  const fills = state.fills || [];
+  if (!fills.length) {
+    el.innerHTML = '<div class="muted p-3">No fills yet today.</div>';
+    return;
+  }
+  el.innerHTML = '<div>' + fills.map(f => {
+    const pnl = Number(f.pnl ?? 0);
+    const cls = pnl > 0 ? 'pos' : pnl < 0 ? 'neg' : 'muted';
+    const r = f.r_multiple !== undefined ? `(${pnl >= 0 ? '+' : ''}${Number(f.r_multiple).toFixed(2)}R)` : '';
+    return `
+    <div class="row flex items-center gap-3">
+      <span class="muted">${(f.t || '').slice(11, 19)}</span>
+      <span class="font-bold w-16">${f.symbol || '?'}</span>
+      <span class="tag ${f.setup === 'S5' ? 's5' : 's1'}">${f.setup || 'S?'}</span>
+      <span class="muted">${f.action || ''}</span>
+      <span>@${f.price ? Number(f.price).toFixed(2) : '—'}</span>
+      <span class="ml-auto ${cls}">${pnl >= 0 ? '+' : ''}${fmtMoney(pnl)} ${r}</span>
+    </div>`;
+  }).join('') + '</div>';
+}
+
+function renderEquity() {
+  // Prefer live Alpaca account if available; fall back to state/equity_*.json.
+  const acct = state.alpaca && state.alpaca.account;
+  if (acct && acct.equity !== null && acct.equity !== undefined) {
+    document.getElementById('equity').textContent = fmtMoney(acct.equity);
+    const start = acct.last_equity;
+    if (start && acct.equity) {
+      const pnl = acct.equity - start;
+      const pct = pnl / start;
+      const cls = pnl >= 0 ? 'pos' : 'neg';
+      document.getElementById('day-pnl').innerHTML =
+        `<span class="${cls}">${pnl >= 0 ? '+' : ''}${fmtMoney(pnl)} (${fmtPct(pct)})</span>`;
+    } else {
+      document.getElementById('day-pnl').textContent = '—';
+    }
+    return;
+  }
+  const eq = state.equity;
+  if (!eq) {
+    document.getElementById('equity').textContent = '—';
+    document.getElementById('day-pnl').textContent = '—';
+    return;
+  }
+  document.getElementById('equity').textContent = fmtMoney(eq.current ?? eq.equity);
+  const start = eq.opening ?? eq.start_of_day;
+  const cur = eq.current ?? eq.equity;
+  if (start && cur) {
+    const pct = (cur - start) / start;
+    const pnl = cur - start;
+    const cls = pnl >= 0 ? 'pos' : 'neg';
+    document.getElementById('day-pnl').innerHTML =
+      `<span class="${cls}">${pnl >= 0 ? '+' : ''}${fmtMoney(pnl)} (${fmtPct(pct)})</span>`;
+  } else {
+    document.getElementById('day-pnl').textContent = '—';
+  }
+}
+
+function renderPositions() {
+  const el = document.getElementById('positions');
+  const positions = (state.alpaca && state.alpaca.positions) || [];
+  if (!positions.length) {
+    el.innerHTML = '<div class="muted p-3">No open positions.</div>';
+    return;
+  }
+  el.innerHTML = '<div>' + positions.map(p => {
+    const pl = Number(p.unrealized_pl || 0);
+    const plpc = Number(p.unrealized_plpc || 0);
+    const cls = pl > 0 ? 'pos' : pl < 0 ? 'neg' : 'muted';
+    return `
+    <div class="row flex items-center gap-3">
+      <span class="font-bold w-16">${p.symbol}</span>
+      <span class="muted">${p.qty}</span>
+      <span class="muted">entry ${p.avg_entry ? '$' + Number(p.avg_entry).toFixed(2) : '—'}</span>
+      <span>now ${p.current_price ? '$' + Number(p.current_price).toFixed(2) : '—'}</span>
+      <span class="ml-auto ${cls}">${pl >= 0 ? '+' : ''}${fmtMoney(pl)} (${fmtPct(plpc)})</span>
+    </div>`;
+  }).join('') + '</div>';
+}
+
+function renderPending() {
+  const el = document.getElementById('pending');
+  const orders = (state.alpaca && state.alpaca.orders) || [];
+  if (!orders.length) {
+    el.innerHTML = '<div class="muted p-3">No open orders.</div>';
+    return;
+  }
+  el.innerHTML = '<div>' + orders.map(o => {
+    const trigger = o.stop_price ? `stop $${Number(o.stop_price).toFixed(2)}` :
+                    o.limit_price ? `limit $${Number(o.limit_price).toFixed(2)}` : '—';
+    return `
+    <div class="row flex items-center gap-3">
+      <span class="font-bold w-16">${o.symbol}</span>
+      <span class="tag bg-slate-800 text-slate-300">${o.side}</span>
+      <span class="muted">${o.type}</span>
+      <span class="muted">${o.qty}</span>
+      <span>${trigger}</span>
+      <span class="muted ml-auto">${o.status}</span>
+    </div>`;
+  }).join('') + '</div>';
+}
+
+function eventClass(type) {
+  if (!type) return 'ev-info';
+  if (type.startsWith('error')) return 'ev-error';
+  if (type.startsWith('warn')) return 'ev-warn';
+  if (type.startsWith('fill')) return 'ev-fill';
+  if (type.startsWith('order')) return 'ev-order';
+  if (type.startsWith('scanner')) return 'ev-scanner';
+  return 'ev-info';
+}
+
+function renderEvents() {
+  const el = document.getElementById('events');
+  const events = state.events || [];
+  if (!events.length) {
+    el.innerHTML = '<span class="muted">No events yet today.</span>';
+    return;
+  }
+  // Tail latest first
+  el.innerHTML = events.slice(-100).reverse().map(ev => {
+    const t = (ev.ts || '').slice(11, 19);
+    const payload = ev.payload ? JSON.stringify(ev.payload).slice(0, 200) : '';
+    return `<div class="${eventClass(ev.type)}">[${t}] <strong>${ev.type}</strong> <span class="muted">${payload}</span></div>`;
+  }).join('');
+}
+
+function renderAll() {
+  renderWatchlist();
+  renderTrades();
+  renderEquity();
+  renderEvents();
+  renderPositions();
+  renderPending();
+  document.getElementById('last-update').textContent =
+    'updated ' + new Date().toLocaleTimeString();
+}
+
+function applyHealth(h) {
+  if (!h) return;
+  if (h.ibkr !== undefined) setIbkrDot(h.ibkr, h.ibkr_host, h.ibkr_port);
+  if (h.alpaca !== undefined) setAlpacaDot(h.alpaca);
+  if (h.bot) setBotStatus(h.bot.status, h.bot.pid, h.bot.dry_run);
+}
+
+function applyMessage(msg) {
+  if (!msg || !msg.type) return;
+  if (msg.type === 'snapshot') {
+    state.plan = msg.plan;
+    state.fills = msg.fills || [];
+    state.equity = msg.equity;
+    state.events = msg.events || [];
+    state.botLog = msg.bot_log || [];
+    state.alpaca = msg.alpaca || null;
+    if (msg.health) applyHealth(msg.health);
+    renderAll();
+    renderBotLog();
+  } else if (msg.type === 'alpaca') {
+    state.alpaca = msg.alpaca;
+    renderPositions(); renderPending(); renderEquity();
+    document.getElementById('last-update').textContent =
+      'updated ' + new Date().toLocaleTimeString();
+  } else if (msg.type === 'health') {
+    applyHealth(msg.health);
+  } else if (msg.type === 'botlog') {
+    state.botLog.push(msg.line);
+    if (state.botLog.length > 1000) state.botLog = state.botLog.slice(-1000);
+    renderBotLog();
+  } else if (msg.type === 'state') {
+    const s = msg.state || {};
+    state.plan = s.plan;
+    state.fills = s.fills || [];
+    state.equity = s.equity;
+    renderWatchlist(); renderTrades(); renderEquity();
+    document.getElementById('last-update').textContent =
+      'updated ' + new Date().toLocaleTimeString();
+  } else if (msg.type === 'event') {
+    state.events.push(msg.event);
+    if (state.events.length > 500) state.events = state.events.slice(-500);
+    renderEvents();
+    document.getElementById('last-update').textContent =
+      'updated ' + new Date().toLocaleTimeString();
+  }
+}
+
+function connect() {
+  const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
+  ws = new WebSocket(url);
+  ws.onopen = () => { setWsDot('up'); };
+  ws.onclose = () => { setWsDot('down'); scheduleReconnect(); };
+  ws.onerror = () => { setWsDot('down'); };
+  ws.onmessage = (ev) => {
+    try { applyMessage(JSON.parse(ev.data)); }
+    catch (e) { console.error('bad ws message', e); }
+  };
+}
+function scheduleReconnect() {
+  if (shuttingDown) return;
+  if (reconnectTimer) return;
+  reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, 2000);
+}
+
+document.getElementById('kill-btn').addEventListener('click', async () => {
+  if (!confirm('Stop the dashboard server?\n\nThis only kills the dashboard process. The bot keeps running.')) return;
+  shuttingDown = true;
+  try { await fetch('/shutdown', { method: 'POST' }); } catch (e) { /* expected — server closes mid-request */ }
+  if (ws) { try { ws.close(); } catch (e) {} }
+  setWsDot('down');
+  document.getElementById('stopped-overlay').classList.remove('hidden');
+});
+
+document.getElementById('bot-start-btn').addEventListener('click', async () => {
+  const msg = 'Start the trading bot?\n\n' +
+              'This launches scripts/trade_day.py. The bot WILL place paper orders\n' +
+              'on Alpaca once a setup triggers. Make sure:\n' +
+              '  • IBKR API dot is green (data feed reachable)\n' +
+              '  • Today\'s watchlist is in state/, or auto-scan is configured\n' +
+              '  • You are ready to babysit the first few minutes';
+  if (!confirm(msg)) return;
+  try {
+    const r = await fetch('/bot/start', { method: 'POST' });
+    const j = await r.json();
+    console.log('bot start:', j);
+  } catch (e) {
+    alert('Could not reach /bot/start: ' + e);
+  }
+});
+
+document.getElementById('bot-stop-btn').addEventListener('click', async () => {
+  if (!confirm('Stop the bot?\n\nWill SIGTERM the trade_day.py process. Any open positions stay open in Alpaca.')) return;
+  try {
+    const r = await fetch('/bot/stop', { method: 'POST' });
+    const j = await r.json();
+    console.log('bot stop:', j);
+  } catch (e) {
+    alert('Could not reach /bot/stop: ' + e);
+  }
+});
+
+const dryToggle = document.getElementById('dryrun-toggle');
+// Restore from localStorage on load (sync to server once WS connects).
+try {
+  const saved = localStorage.getItem('guns.dry_run');
+  if (saved !== null) dryToggle.checked = (saved === '1');
+} catch (e) {}
+
+dryToggle.addEventListener('change', async () => {
+  if (botRunning) {
+    alert('Cannot change dry-run while the bot is running. Stop it first.');
+    dryToggle.checked = !dryToggle.checked;
+    return;
+  }
+  try { localStorage.setItem('guns.dry_run', dryToggle.checked ? '1' : '0'); } catch (e) {}
+  try {
+    const r = await fetch('/bot/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dry_run: dryToggle.checked }),
+    });
+    const j = await r.json();
+    console.log('config:', j);
+  } catch (e) {
+    alert('Could not save dry-run setting: ' + e);
+  }
+});
+
+// Push the saved preference to the server once on load.
+setTimeout(async () => {
+  try {
+    await fetch('/bot/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dry_run: dryToggle.checked }),
+    });
+  } catch (e) {}
+}, 800);
+
+// Initial bootstrap: fetch /snapshot in case WS connects slowly.
+fetch('/snapshot').then(r => r.json()).then(applyMessage).catch(() => {});
+connect();
+</script>
+</body>
+</html>

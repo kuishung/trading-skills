@@ -3,3 +3,6 @@ python-dotenv>=1.0
 pytz>=2024.1
 # Optional — only needed when data_provider="ibkr" in config.json
 ib_insync>=0.9.86
+# Dashboard server (scripts/dashboard.py)
+fastapi>=0.110
+uvicorn[standard]>=0.29

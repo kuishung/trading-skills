@@ -67,19 +67,42 @@ guns-bot/
 ├── scripts/
 │   ├── _common.py                 # env loader, ET clock, paper-only guard, data abstraction, Telegram
 │   ├── _ibkr_data.py              # IBKR data adapter (ib_insync); read-only enforced
+│   ├── _events.py                 # tiny emit() helper -> state/events_*.jsonl (dashboard feeds off this)
+│   ├── _smoke_ibkr.py             # bare-socket TWS handshake smoke test
+│   ├── _dryrun_ibkr.py            # exercise the data adapter against SPY/AAPL/NVDA
 │   ├── signals.py                 # gap detection, PM-high finder, first-1min eval
 │   ├── scan_premarket.py          # build today's watchlist (manual or --auto-scan)
 │   ├── trade_day.py               # the session orchestrator — main entrypoint
+│   ├── dashboard.py               # FastAPI + WebSocket local dashboard (port 8000)
 │   ├── setup_schedule.py          # register a Windows Task Scheduler job (bot)
 │   ├── setup_ibkr.py              # one-time IBKR wizard (API toggle + IBC config + smoke test)
 │   └── setup_gateway_autostart.py # register Windows scheduled tasks for IBC start/stop
+├── web/                           # dashboard UI (vanilla HTML + Tailwind CDN)
+│   └── index.html
 ├── ibc/                           # IBC binaries + config; credentials.txt gitignored
 └── state/                         # gitignored
     ├── watchlist_YYYY-MM-DD.txt   # one ticker per line; written by scan_premarket
     ├── plan_YYYY-MM-DD.json       # per-ticker entry/stop/target levels for today
     ├── fills_YYYY-MM-DD.jsonl     # append-only: every fill / cancel / BE-move event
-    └── equity_YYYY-MM-DD.json     # opening + closing equity snapshot
+    ├── equity_YYYY-MM-DD.json     # opening + closing equity snapshot
+    └── events_YYYY-MM-DD.jsonl    # append-only event log (scanner emits, order events, errors)
 ```
+
+## Live dashboard
+
+`scripts/dashboard.py` runs a local FastAPI server (http://localhost:8000)
+that observes everything the bot does in real time — scanner candidates,
+qualified watchlist, pending orders, open positions, fills, today's P&L,
+event log. Single browser tab; WebSocket auto-reconnect.
+
+Bot scripts publish events via `_events.emit("type.name", {...})` which
+appends to `state/events_YYYY-MM-DD.jsonl`. The dashboard tails that file
+and pushes new lines to the browser. Read-only — the dashboard never sends
+orders.
+
+Run it alongside `trade_day.py` in a separate terminal:
+
+    py scripts/dashboard.py
 
 ## Data-feed architecture (recommended: manual TWS)
 

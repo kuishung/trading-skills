@@ -2,6 +2,7 @@ state/watchlist_*.txt
 state/plan_*.json
 state/fills_*.jsonl
 state/equity_*.json
+state/events_*.jsonl
 config.json
 __pycache__/
 *.pyc
