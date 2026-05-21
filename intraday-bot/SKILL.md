@@ -1,12 +1,17 @@
 ---
 name: intraday_bot
-version: 0.7.0
-description: Strategy-agnostic intraday paper-trading framework. Provides the infrastructure (IBKR scanner pipeline, Alpaca paper-order execution, OCO brackets, breakeven moves, EOD safety sweep, structured journaling, dashboard) and a strict risk discipline (1% NLV per trade, notional cap, EOD close-all). Strategies are drop-in modules under scripts/strategies/ — wire one in by adding a file that exposes build(cfg) -> Strategy, registering it in KNOWN_STRATEGIES, and enabling it under cfg.strategies.<name> in config.json. With no strategies enabled, the bot refuses to start. Trigger phrases include "run intraday bot", "start intraday bot", "wire intraday strategy".
+version: 0.8.0
+description: Strategy-agnostic intraday paper-trading framework. Provides the infrastructure (IBKR scanner pipeline, Alpaca paper-order execution, OCO brackets, breakeven moves, EOD safety sweep, structured journaling, dashboard) and a strict risk discipline (1% NLV per trade, notional cap, EOD close-all). Strategies are drop-in modules under scripts/strategies/ — wire one in by adding a file that exposes build(cfg) -> Strategy, registering it in KNOWN_STRATEGIES, and enabling it under cfg.strategies.<name> in config.json. Ships with GUNS Setup 1 (PM-high break at 09:30) and GUNS Setup 5 (first 1-min candle break at 09:31), both disabled by default. With no strategies enabled, the bot refuses to start. Trigger phrases include "run intraday bot", "start intraday bot", "wire intraday strategy".
 ---
 
 # Intraday Bot — Strategy-Agnostic Paper-Trading Framework
 
-**Version:** 0.7.0 — clean-slate infrastructure, no strategies wired
+**Version:** 0.8.0 — GUNS Setup 1 + 5 wired, both disabled by default
+
+## Changelog
+
+- **0.8.0** (2026-05-21) — Wire GUNS (Gap Up News Scalp) Setups 1 and 5 as MVP, plus `scripts/guns_scanner.py` to build the daily watchlist. Source: Adam Khoo Piranha Profits Lesson 8. Setup 1 = break of pre-market high at 09:30 ET; Setup 5 = break of first 1-min RTH candle at 09:31 ET. Shared universe via `state/watchlist_guns_<date>.txt` (per-family path so future ORB / DITP strategies get their own scanner + watchlist). The scanner pulls candidates from (a) a GUNS-tuned IBKR `ScannerSubscription` matching the PDF filter recipe (price 1.50-500, change% ≥ 5, avg-vol 20K-70M, today vol > 30K) and (b) `thestockmarketwatch.com/markets/today.aspx` top-gainers HTML scrape — union by symbol with per-source provenance comments. Price-tier SL table (10-50¢ by price bracket), 2R default TP, framework's existing BE-at-1R polling. Defensive double-check on price>=$1.50 and PM-volume>=30K inside each evaluate(). Both setups ship `enabled: false` in config.example.json — flip to true after curating the watchlist. Setups 2 (PM pivot break), 3 (PM bull flag), and 4 (post-open bull flag M1/M2/M5) are out of scope for this MVP; Setup 4 in particular needs a rolling watch window (09:30-10:30) that doesn't yet exist in the framework.
+- **0.7.0** — Clear wired strategies + rename internals to intraday_bot
 
 This is the **framework**. It handles everything that's strategy-agnostic:
 
@@ -152,6 +157,70 @@ py scripts/trade_day.py --dry-run --fake-now 09:36   # full pipeline dry-run
 - **No auto-tuning / "learning".** Strategy parameters are deliberate. The journal exists so a human (or a future analytics layer) can decide what to change.
 - **No regime detection.** Every strategy fires the same way regardless of market context (FOMC days, half-days, etc.). Add a regime gate inside the strategy if you want one.
 - **No level-2 / order-book signals.** Alpaca paper doesn't expose useful depth; IEX-only L2 from the free IBKR feed is too thin for most names.
+
+## GUNS (Gap Up News Scalp) — wired strategies
+
+GUNS is ONE universe (gap-up + news catalyst + low float + price≥$1.50 + PM-volume≥30K) with FIVE entry setups. This release wires the two most mechanical of them. The remaining three are deliberately deferred:
+
+| Setup | Trigger | Status |
+|---|---|---|
+| 1 — Break of PM high (M5) | 09:30 ET | ✅ wired (`guns_setup1`) |
+| 2 — Break of PM pivot (M5) | 09:30 ET | ❌ deferred (needs pivot detection) |
+| 3 — Break of PM bull flag (M5) | 09:30 ET | ❌ deferred (needs flag-pattern detection) |
+| 4 — First post-open bull flag (M1/M2/M5) | 09:30-10:30 ET | ❌ deferred (needs rolling watch window, framework gap) |
+| 5 — Break of first 1-min RTH candle | 09:31 ET | ✅ wired (`guns_setup5`) |
+
+### Watchlist (shared universe input)
+
+Both setups read `state/watchlist_guns_<date>.txt` — one ticker per line, `#` comments allowed. The `guns_` prefix is deliberate: each strategy family (GUNS today; ORB, DITP etc. in future) gets its own scanner with its own filter criteria, writing to its own watchlist file. The bot does NOT classify catalysts or fetch float here — that's an upstream responsibility.
+
+**`scripts/guns_scanner.py` builds this file from two sources** (PDF slides 11-12 + 15-17):
+
+1. **IBKR GUNS-tuned scanner.** Submits a `ScannerSubscription` (`STK.US.MAJOR` — NYSE + AMEX + ARCA + NQ.NM + NQ.SC + BATS, `stockTypeFilter="CORP"` — no ADR/ETF/REIT/CEF, `TOP_PERC_GAIN`) with the filter recipe — price 1.50-500, change% ≥ 5, avg-vol ≥ 20K, today's vol > 30K. Uses `clientId=82` (distinct from bot 71 / observer 80 / dashboard 99).
+2. **`https://thestockmarketwatch.com/markets/today.aspx`.** Scrapes the "Top Gainers" table (best-effort HTML parsing; logs a warning rather than crashing if the page restructures). Applies the same price + change% filter at the source.
+
+The script merges by symbol (union, dedupe), ranks IBKR-then-SMW with overlap weighted highest, caps to `--top N` (default 20), and writes the file with per-symbol provenance comments:
+
+```
+HCWB      # IBKR rank=1; SMW; chg=+12.5%; px=$3.45
+JDZG      # IBKR rank=2
+MTVA      # SMW; chg=+9.1%; px=$2.89
+```
+
+Run it pre-market:
+
+```
+py scripts/guns_scanner.py                  # both sources, top 20
+py scripts/guns_scanner.py --source smw     # SMW only (no IBKR connection)
+py scripts/guns_scanner.py --no-write       # preview to stdout
+```
+
+**Upstream hardening** the scanner does NOT do — the user (or a future tool) must do these before the open:
+- Drop M&A names (per GUNS rules — the `intraday-premarket-brief` skill flags these)
+- Drop high-float names (> 100M float; check Finviz)
+- Verify catalyst quality (earnings beat / FDA / analyst upgrade / clinical pass — NOT acquisitions / cosmetic news)
+
+The bot defensively re-checks price ≥ $1.50 and PM volume ≥ 30K inside each setup's `evaluate()` so a bad row in the file doesn't fire an entry.
+
+### Setup 1 — Break of Pre-Market High (09:30)
+
+Fires once at `entry_et=09:30`. Reads PM 1-min bars, computes PMH and the last-15-min consolidation high, fires a buy-stop-limit at PMH+1¢ if the consolidation high is within `consol_band_pct` (default 1.5%) of PMH. Stop = price-tier table (12/17/25/40¢ by price bracket). TP = 2R (configurable). Unfilled at `entry_cutoff_et=09:35` → canceled. Per-strategy concurrency cap = 2.
+
+### Setup 5 — Break of First 1-Minute Candle (09:31)
+
+Fires at `entry_et=09:31` so the 09:30:00-09:30:59 candle has closed. Eligibility: bullish first candle, closes above EMA9/EMA20/SMA50 (toggleable via `require_above_*`), candle range ≤ `candle_size_mult` × median PM bar range. Stop = `min(price-tier, 1¢ below candle low)` — whichever is tighter. TP = 2R. Unfilled at `entry_cutoff_et=09:33` → canceled. Per-strategy concurrency cap = 2.
+
+### Enabling
+
+```jsonc
+// config.json
+"strategies": {
+  "guns_setup1": { "enabled": true, ... },
+  "guns_setup5": { "enabled": true, ... }
+}
+```
+
+Both ship `enabled: false` in `config.example.json`. The framework's strict-rule check refuses to start with zero strategies enabled.
 
 ## Known sharp edges
 

@@ -29,7 +29,10 @@ from .base import Strategy  # re-export
 # Add the module name (e.g. "orb_5min") here when you wire a new strategy.
 # Each name must correspond to scripts/strategies/<name>.py exposing
 # build(cfg) -> Strategy.
-KNOWN_STRATEGIES: tuple[str, ...] = ()
+KNOWN_STRATEGIES: tuple[str, ...] = (
+    "guns_setup1",   # GUNS — Break of Pre-Market High (09:30)
+    "guns_setup5",   # GUNS — Break of First 1-Minute Candle (09:31)
+)
 
 
 def load_enabled(cfg: dict) -> list[Strategy]:
