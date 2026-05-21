@@ -1,0 +1,1004 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>intraday_bot dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* IBKR / TWS-inspired palette: neutral grays, sharp corners, sans-serif,
+       tabular numerals, IBKR-red accent. */
+    :root {
+      --bg-page:      #1a1a1a;
+      --bg-panel:     #232323;
+      --bg-panel-alt: #2b2b2b;
+      --bg-hover:     #2f2f2f;
+      --border:       #3a3a3a;
+      --border-soft:  #2e2e2e;
+      --text:         #e6e6e6;
+      --text-muted:   #9a9a9a;
+      --text-dim:     #6e6e6e;
+      --pos:          #2fcc71;
+      --neg:          #ff5252;
+      --warn:         #f5b342;
+      --ibkr-red:     #e81e25;
+      --accent-blue:  #4a9eff;
+      --scale:        1;
+    }
+    body {
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      font-size: calc(14px * var(--scale));
+      font-variant-numeric: tabular-nums;
+      background: var(--bg-page) !important;
+      color: var(--text) !important;
+    }
+    /* Override Tailwind slate utilities so we don't fight class-level dark blues */
+    .bg-slate-950, .bg-slate-950\/95, .bg-slate-950\/90 { background: var(--bg-page) !important; }
+    .bg-slate-900, .bg-slate-900\/95                    { background: var(--bg-panel) !important; }
+    .bg-slate-800                                        { background: var(--bg-panel-alt) !important; }
+    .bg-slate-700                                        { background: var(--bg-hover) !important; }
+    .text-slate-200, .text-slate-300                     { color: var(--text) !important; }
+    .text-slate-400                                      { color: var(--text-muted) !important; }
+    .border-slate-700, .border-slate-800                 { border-color: var(--border) !important; }
+    .backdrop-blur, .backdrop-blur-sm                    { backdrop-filter: none !important; }
+    /* Flat rectangles — TWS has no rounded corners */
+    .rounded, .rounded-sm, .rounded-md, .rounded-lg, .rounded-full {
+      border-radius: 0 !important;
+    }
+    .panel {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 0;
+    }
+    .panel h2 {
+      color: var(--text-muted);
+      font-size: calc(11px * var(--scale));
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      padding: 7px 12px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-panel-alt);
+    }
+    .row {
+      padding: 5px 12px;
+      border-bottom: 1px solid var(--border-soft);
+      font-size: calc(14px * var(--scale));
+    }
+    .row:last-child { border-bottom: 0; }
+    .row:hover { background: var(--bg-hover); }
+    /* Tailwind text-xs / text-sm overrides */
+    .text-xs { font-size: calc(12px * var(--scale)) !important; line-height: 1.4 !important; }
+    .text-sm { font-size: calc(14px * var(--scale)) !important; line-height: 1.45 !important; }
+    /* Status dots — TWS-style small square indicators */
+    .dot {
+      display:inline-block;
+      width:8px; height:8px;
+      border-radius: 0;
+      margin-right:6px;
+      border: 1px solid #000;
+    }
+    .dot.up   { background: var(--pos); }
+    .dot.down { background: var(--neg); }
+    .dot.idle { background: #555; }
+    .pos   { color: var(--pos); }
+    .neg   { color: var(--neg); }
+    .muted { color: var(--text-muted); }
+    /* Tags: rectangular, thin-bordered (replaces rounded pills) */
+    .tag {
+      display:inline-block;
+      padding: 1px 6px;
+      border: 1px solid currentColor;
+      border-radius: 0;
+      font-size: calc(10px * var(--scale));
+      font-weight: 600;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      background: transparent;
+    }
+    .tag.s1  { color: #6cb2ff; }
+    .tag.s5  { color: #c084fc; }
+    .tag.rej { color: #ff6b6b; }
+    /* IBKR-red accent for ARMED state (overridden via JS class swap) */
+    .armed {
+      background: var(--ibkr-red) !important;
+      color: #fff !important;
+      border-color: var(--ibkr-red) !important;
+    }
+    /* Event log color tokens */
+    .ev-error   { color: #ff6b6b; }
+    .ev-warn    { color: #f5b342; }
+    .ev-fill    { color: #5bd97a; }
+    .ev-order   { color: #6cb2ff; }
+    .ev-info    { color: #cfcfcf; }
+    /* Right-align numeric columns in rows */
+    .num { font-variant-numeric: tabular-nums; text-align: right; }
+    /* Subtle column separators inside rows */
+    .row > span + span { padding-left: 4px; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-200 min-h-screen p-3">
+
+  <!-- Status bar -->
+  <header id="status-bar" class="flex items-center gap-6 px-4 py-2 panel mb-3 sticky top-0 z-30 bg-slate-950/95 backdrop-blur">
+    <div class="flex items-center gap-3">
+      <span class="text-slate-400 text-xs">ET</span>
+      <span id="clock-et" class="font-bold text-base">--:--:--</span>
+    </div>
+    <div class="flex items-center gap-3">
+      <span class="text-slate-400 text-xs">MYT</span>
+      <span id="clock-myt" class="text-base">--:--:--</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="text-slate-400 text-xs">session</span>
+      <span id="session" class="tag bg-slate-800 text-slate-200">—</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span id="ibkr-dot" class="dot idle"></span>
+      <span class="text-xs">IBKR API</span>
+      <span id="ibkr-detail" class="text-xs muted">probing…</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span id="alpaca-dot" class="dot idle"></span>
+      <span class="text-xs">Alpaca</span>
+      <span id="alpaca-detail" class="text-xs muted">probing…</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span id="bot-pill" class="tag bg-slate-800 text-slate-300">bot stopped</span>
+      <span id="gate-summary"
+            class="tag bg-slate-800 text-slate-400 cursor-pointer hover:bg-slate-700"
+            title="ON = analysis pipeline runs; ARMED = orders submit. Click to open the per-strategy gating panel below.">
+        0 ON · 0 ARMED
+      </span>
+      <span id="auto-start-hint"
+            class="text-xs muted"
+            title="The dashboard auto-launches trade_day.py at this ET wall-clock on weekdays. Configurable in config.json. Per-family scanners (e.g. guns_scanner.py) run separately, ahead of this.">
+        auto-start <span id="auto-start-et">09:00</span> ET
+      </span>
+      <button id="bot-stop-btn"
+              class="px-2 py-1 rounded border border-amber-800 text-amber-300 hover:bg-amber-950 text-xs hidden"
+              title="Terminate the running bot. Emergency abort only.">
+        ⏹ Stop bot
+      </button>
+    </div>
+    <div class="ml-auto flex items-center gap-3 text-xs">
+      <div class="flex items-center gap-1" title="Font size — affects the whole dashboard. Persisted across reloads.">
+        <span class="muted">A</span>
+        <button id="font-down" class="px-2 py-0.5 border border-slate-700 hover:bg-slate-800 leading-none">−</button>
+        <span id="font-scale-label" class="muted text-center" style="min-width:38px;">100%</span>
+        <button id="font-up" class="px-2 py-0.5 border border-slate-700 hover:bg-slate-800 leading-none">+</button>
+        <button id="font-reset" class="muted px-1 hover:text-slate-200" title="Reset to 100%">↺</button>
+      </div>
+      <span id="last-update" class="muted">no updates yet</span>
+      <div class="relative">
+        <button id="kill-btn"
+                class="px-2 py-1 rounded border border-red-900 text-red-300 hover:bg-red-950 hover:text-red-200">
+          ◼ Exit ▾
+        </button>
+        <div id="kill-menu"
+             class="hidden absolute right-0 mt-1 w-72 bg-slate-900 border border-slate-700 rounded shadow-2xl z-50">
+          <!-- Non-interactive status row -->
+          <div class="px-3 py-2 border-b border-slate-800 flex items-center gap-2 text-xs">
+            <span id="ws-dot" class="dot idle"></span>
+            <span class="font-bold">dashboard</span>
+            <span id="ws-status-label" class="muted ml-auto">—</span>
+          </div>
+          <button data-action="restart"
+                  class="block w-full text-left px-3 py-2 text-xs hover:bg-slate-800 border-b border-slate-800">
+            <div class="font-bold text-amber-300">↻ Restart</div>
+            <div class="muted">Kill the dashboard and respawn it. The bot keeps running.</div>
+          </button>
+          <button data-action="exit"
+                  class="block w-full text-left px-3 py-2 text-xs hover:bg-slate-800 border-b border-slate-800">
+            <div class="font-bold text-slate-200">◼ Exit dashboard</div>
+            <div class="muted">Kill the dashboard process only. The bot keeps running.</div>
+          </button>
+          <button data-action="shutdown-all"
+                  class="block w-full text-left px-3 py-2 text-xs hover:bg-slate-800">
+            <div class="font-bold text-red-300">⏻ Shut down everything</div>
+            <div class="muted">Stop the bot AND the dashboard.</div>
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Stopped overlay -->
+  <div id="stopped-overlay"
+       class="hidden fixed inset-0 bg-slate-950/90 flex items-center justify-center z-50">
+    <div class="text-center">
+      <div class="text-2xl font-bold text-red-300 mb-2">Dashboard stopped</div>
+      <div class="muted text-sm">The bot is unaffected. To restart this dashboard:
+        <code class="text-slate-300 bg-slate-800 px-1 rounded">py scripts/dashboard.py</code>
+      </div>
+    </div>
+  </div>
+
+  <!-- Today P&L strip -->
+  <section id="today-tile" class="panel mb-3 sticky z-20 bg-slate-950/95 backdrop-blur" style="top: 56px">
+    <div class="flex items-center gap-4 px-4 py-2 text-sm flex-wrap">
+      <span class="muted uppercase tracking-wider text-xs">Today</span>
+      <span class="muted text-xs">Day P&amp;L</span>
+      <span id="today-pnl-big" class="text-xl font-bold">—</span>
+      <span id="today-pnl-pct" class="text-xs">—</span>
+      <span class="muted">·</span>
+      <span class="muted text-xs">realized</span>
+      <span id="today-realized" class="font-semibold">—</span>
+      <span class="muted">·</span>
+      <span class="muted text-xs">unrealized</span>
+      <span id="today-unrealized" class="font-semibold">—</span>
+      <span class="muted">·</span>
+      <span class="muted text-xs">equity</span>
+      <span id="today-equity" class="font-semibold">—</span>
+      <span class="muted">·</span>
+      <span id="today-bp" class="text-xs muted">—</span>
+      <span id="today-asof" class="muted text-xs ml-auto">—</span>
+    </div>
+  </section>
+
+  <!-- Per-strategy gating panel: ON/OFF + ARM/DISARM -->
+  <section id="gate-panel" class="panel mb-3">
+    <h2>strategy gating
+      <span class="float-right normal-case tracking-normal text-xs flex items-center gap-2 flex-wrap">
+        <span class="muted">live — ON/OFF takes effect at the next scheduled fire; ARM at the next submit</span>
+        <button id="enable-all-btn"
+                class="ml-2 px-2 py-0.5 rounded border border-slate-700 hover:bg-slate-800"
+                title="Turn ON every wired strategy. Pipeline runs at the scheduled entry_et.">enable all</button>
+        <button id="disable-all-btn"
+                class="px-2 py-0.5 rounded border border-slate-700 hover:bg-slate-800"
+                title="Turn OFF every wired strategy. No pipeline runs, no journal entries except a per-fire skip marker.">disable all</button>
+        <span class="muted">·</span>
+        <button id="arm-all-btn"
+                class="px-2 py-0.5 rounded border border-slate-700 hover:bg-slate-800"
+                title="ARM every wired strategy (submits orders when ON+ARMED).">arm all</button>
+        <button id="disarm-all-btn"
+                class="px-2 py-0.5 rounded border border-slate-700 hover:bg-slate-800"
+                title="DISARM every wired strategy. ON strategies will keep evaluating + journaling but submit nothing.">disarm all</button>
+      </span>
+    </h2>
+    <div class="px-3 pt-2 text-xs muted">
+      OFF = no pipeline · ON + DISARMED = evaluate + journal only (paper-eval mode) · ON + ARMED = submit to Alpaca
+    </div>
+    <div id="strategy-gate-list" class="p-3 grid grid-cols-1 gap-1">
+      <span class="muted text-sm">Loading strategies…</span>
+    </div>
+  </section>
+
+  <!-- Mid row: orders + positions -->
+  <div class="grid grid-cols-2 gap-3 mb-3">
+    <section class="panel">
+      <h2>pending orders</h2>
+      <div id="pending" class="muted text-sm p-3">—</div>
+    </section>
+    <section class="panel">
+      <h2>open positions</h2>
+      <div id="positions" class="muted text-sm p-3">—</div>
+    </section>
+  </div>
+
+  <!-- Trades + equity strip -->
+  <section class="panel mb-3">
+    <h2>
+      today's trades
+      <span class="float-right muted normal-case tracking-normal">
+        equity <span id="equity">—</span>
+        &nbsp;·&nbsp; day P&amp;L <span id="day-pnl">—</span>
+      </span>
+    </h2>
+    <div id="trades" class="muted text-sm p-3">No fills yet today.</div>
+  </section>
+
+  <!-- Logs row -->
+  <div class="grid grid-cols-2 gap-3">
+    <section class="panel">
+      <h2>event log <span class="float-right muted normal-case tracking-normal text-xs">structured</span></h2>
+      <div id="events" class="text-xs leading-5 p-3 max-h-72 overflow-y-auto">
+        <span class="muted">No events yet today.</span>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>bot log <span class="float-right muted normal-case tracking-normal text-xs">state/bot_*.log</span></h2>
+      <div id="botlog" class="text-xs leading-5 p-3 max-h-72 overflow-y-auto whitespace-pre-wrap text-slate-300">
+        <span class="muted">Bot has not been started today.</span>
+      </div>
+    </section>
+  </div>
+
+<script>
+const state = { fills: [], equity: null, events: [], botLog: [], alpaca: null };
+let ws = null;
+let reconnectTimer = null;
+let shuttingDown = false;
+let botRunning = false;
+
+function fmtPct(n) {
+  if (n === null || n === undefined || isNaN(n)) return '—';
+  const sign = n >= 0 ? '+' : '';
+  return sign + (n * 100).toFixed(2) + '%';
+}
+function fmtMoney(n) {
+  if (n === null || n === undefined || isNaN(n)) return '—';
+  return '$' + Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+function pad(n) { return String(n).padStart(2, '0'); }
+function nyTime() {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', hour12: false,
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+  return fmt.format(new Date());
+}
+function mytTime() {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Kuala_Lumpur', hour12: false,
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+  return fmt.format(new Date());
+}
+function session() {
+  // Use ET hours to bucket the session.
+  const etParts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', hour12: false, hour: '2-digit', minute: '2-digit',
+  }).formatToParts(new Date());
+  const h = Number(etParts.find(p => p.type === 'hour').value);
+  const m = Number(etParts.find(p => p.type === 'minute').value);
+  const t = h * 60 + m;
+  if (t >= 240 && t < 570) return ['PM', 'bg-amber-900/50 text-amber-200'];
+  if (t >= 570 && t < 960) return ['RTH', 'bg-emerald-900/50 text-emerald-200'];
+  if (t >= 960 && t < 1200) return ['after', 'bg-slate-700 text-slate-200'];
+  return ['closed', 'bg-slate-800 text-slate-400'];
+}
+function tickClock() {
+  document.getElementById('clock-et').textContent = nyTime();
+  document.getElementById('clock-myt').textContent = mytTime();
+  const [label, cls] = session();
+  const el = document.getElementById('session');
+  el.textContent = label;
+  el.className = 'tag ' + cls;
+}
+setInterval(tickClock, 1000);
+tickClock();
+
+// ---- Font-size adjuster ----------------------------------------------------
+const FONT_SCALE_KEY = 'intraday_bot:fontScale';
+const FONT_SCALE_MIN = 0.7;
+const FONT_SCALE_MAX = 2.0;
+const FONT_SCALE_STEP = 0.1;
+
+function applyFontScale(scale) {
+  scale = Math.max(FONT_SCALE_MIN, Math.min(FONT_SCALE_MAX, scale));
+  document.documentElement.style.setProperty('--scale', String(scale));
+  const lbl = document.getElementById('font-scale-label');
+  if (lbl) lbl.textContent = Math.round(scale * 100) + '%';
+  try { localStorage.setItem(FONT_SCALE_KEY, String(scale)); } catch (_) {}
+  return scale;
+}
+
+function currentFontScale() {
+  const raw = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--scale')) || 1;
+  return raw;
+}
+
+(function initFontScale() {
+  let saved = 1;
+  try {
+    const v = parseFloat(localStorage.getItem(FONT_SCALE_KEY));
+    if (!isNaN(v) && v > 0) saved = v;
+  } catch (_) {}
+  applyFontScale(saved);
+  document.getElementById('font-down').addEventListener('click', () => {
+    applyFontScale(currentFontScale() - FONT_SCALE_STEP);
+  });
+  document.getElementById('font-up').addEventListener('click', () => {
+    applyFontScale(currentFontScale() + FONT_SCALE_STEP);
+  });
+  document.getElementById('font-reset').addEventListener('click', () => {
+    applyFontScale(1);
+  });
+})();
+
+function setWsDot(status) {
+  const el = document.getElementById('ws-dot');
+  if (el) el.className = 'dot ' + (status === 'up' ? 'up' : status === 'down' ? 'down' : 'idle');
+  const label = document.getElementById('ws-status-label');
+  if (label) {
+    if (status === 'up') {
+      label.textContent = 'running · port 8000';
+      label.className = 'pos text-xs ml-auto';
+    } else if (status === 'down') {
+      label.textContent = 'disconnected';
+      label.className = 'neg text-xs ml-auto';
+    } else {
+      label.textContent = '—';
+      label.className = 'muted text-xs ml-auto';
+    }
+  }
+}
+
+function setIbkrDot(status, host, port) {
+  const el = document.getElementById('ibkr-dot');
+  el.className = 'dot ' + (status === 'up' ? 'up' : status === 'down' ? 'down' : 'idle');
+  const detail = document.getElementById('ibkr-detail');
+  const where = (host && port) ? `${host}:${port}` : '';
+  detail.textContent = status === 'up' ? `${where} ●` : status === 'down' ? `${where} unreachable` : 'probing…';
+  detail.className = 'text-xs ' + (status === 'up' ? 'pos' : status === 'down' ? 'neg' : 'muted');
+}
+
+function setAlpacaDot(status) {
+  const el = document.getElementById('alpaca-dot');
+  const detail = document.getElementById('alpaca-detail');
+  let dotCls = 'idle', label = '';
+  if (status === 'ok') { dotCls = 'up'; label = 'paper ●'; }
+  else if (status === 'error') { dotCls = 'down'; label = 'error'; }
+  else if (status === 'no_credentials') { dotCls = 'down'; label = 'no creds'; }
+  else { label = 'probing…'; }
+  el.className = 'dot ' + dotCls;
+  detail.textContent = label;
+  detail.className = 'text-xs ' + (dotCls === 'up' ? 'pos' : dotCls === 'down' ? 'neg' : 'muted');
+}
+
+// Per-strategy gating maps. Updated from every health payload that
+// includes enabled_strategies / armed_strategies. Used by both the
+// header summary pill and the per-strategy panel.
+let enableMap = {};   // { strategy_name: bool }   ON/OFF
+let armMap = {};      // { strategy_name: bool }   ARM/DISARM
+
+function paintGateSummary() {
+  const sum = document.getElementById('gate-summary');
+  if (!sum) return;
+  const names = Object.keys(enableMap).length
+    ? Object.keys(enableMap)
+    : Object.keys(armMap);
+  const onCount = names.filter(n => enableMap[n]).length;
+  const armedCount = names.filter(n => armMap[n]).length;
+  const total = names.length;
+  sum.textContent = onCount + ' ON · ' + armedCount + ' ARMED' + (total ? ' / ' + total : '');
+  const live = names.filter(n => enableMap[n] && armMap[n]).length;
+  if (live > 0) {
+    sum.className = 'tag bg-red-950/60 text-red-200 cursor-pointer hover:bg-red-900';
+    sum.title = live + ' strateg' + (live === 1 ? 'y' : 'ies') + ' fully live (ON + ARMED). Click to open the gating panel.';
+  } else if (onCount > 0) {
+    sum.className = 'tag bg-amber-900/60 text-amber-200 cursor-pointer hover:bg-amber-800';
+    sum.title = 'Strategies ON in evaluate-only mode (no ARM). Click to open the gating panel.';
+  } else {
+    sum.className = 'tag bg-slate-800 text-slate-400 cursor-pointer hover:bg-slate-700';
+    sum.title = 'No strategies ON. Click to open the gating panel.';
+  }
+}
+
+function renderGatePanel() {
+  const el = document.getElementById('strategy-gate-list');
+  if (!el) return;
+  const names = Object.keys(enableMap).length
+    ? Object.keys(enableMap)
+    : Object.keys(armMap);
+  if (!names.length) {
+    el.innerHTML = '<span class="muted text-sm">No strategies wired (KNOWN_STRATEGIES is empty).</span>';
+    return;
+  }
+  el.innerHTML = names.map(name => {
+    const on = !!enableMap[name];
+    const armed = !!armMap[name];
+
+    const onPill = on
+      ? 'bg-emerald-900/60 text-emerald-200 border-emerald-700 hover:bg-emerald-800'
+      : 'bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700';
+    const onLbl = on ? '● ON' : '○ off';
+    const onTip = on
+      ? 'Strategy is ON. Click to turn OFF (pipeline stops running).'
+      : 'Strategy is OFF. Click to turn ON (pipeline runs at scheduled entry_et).';
+
+    // ARM pill is dimmed when strategy is OFF (the arm state is
+    // remembered but it does nothing until the strategy is ON).
+    const armPill = !on
+      ? 'bg-slate-900/50 text-slate-500 border-slate-800 hover:bg-slate-800 opacity-60'
+      : armed
+        ? 'bg-red-950/60 text-red-200 border-red-700 hover:bg-red-900'
+        : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700';
+    const armLbl = armed ? '● ARMED' : '○ disarmed';
+    const armTip = !on
+      ? "Strategy is OFF -- arm state is remembered but won't take effect until you turn it ON."
+      : armed
+        ? 'ARMED. Bot will submit real paper orders for this strategy. Click to disarm.'
+        : 'Disarmed. Bot evaluates + journals but submits nothing. Click to arm.';
+
+    return `
+      <div class="row flex items-center gap-3">
+        <span class="font-mono text-sm w-32">${name}</span>
+        <button data-strategy="${name}" data-enabled="${on ? '1' : '0'}"
+                class="strat-enable px-3 py-1 rounded border text-xs font-bold tracking-wider w-20 ${onPill}"
+                title="${onTip}">${onLbl}</button>
+        <button data-strategy="${name}" data-armed="${armed ? '1' : '0'}"
+                class="strat-arm px-3 py-1 rounded border text-xs font-bold tracking-wider w-28 ${armPill}"
+                title="${armTip}">${armLbl}</button>
+        <span class="muted text-xs ml-2">
+          ${on && armed ? 'LIVE — orders fire'
+            : on        ? 'evaluate-only (paper-eval)'
+                        : 'off — no pipeline'}
+        </span>
+      </div>`;
+  }).join('');
+
+  // Wire ON/OFF click handlers.
+  el.querySelectorAll('.strat-enable').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const strategy = btn.dataset.strategy;
+      const target = btn.dataset.enabled !== '1';
+      try {
+        const r = await fetch('/bot/enable', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ strategy, enabled: target }),
+        });
+        const j = await r.json();
+        if (j.enabled_strategies) {
+          enableMap = j.enabled_strategies;
+          paintGateSummary();
+          renderGatePanel();
+        }
+      } catch (err) { console.error('enable toggle failed', err); }
+    });
+  });
+
+  // Wire ARM click handlers.
+  el.querySelectorAll('.strat-arm').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const strategy = btn.dataset.strategy;
+      const target = btn.dataset.armed !== '1';
+      try {
+        const r = await fetch('/bot/arm', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ strategy, armed: target }),
+        });
+        const j = await r.json();
+        if (j.armed_strategies) {
+          armMap = j.armed_strategies;
+          paintGateSummary();
+          renderGatePanel();
+        }
+      } catch (err) { console.error('arm toggle failed', err); }
+    });
+  });
+}
+
+function setBotStatus(status, pid) {
+  const pill = document.getElementById('bot-pill');
+  const stopBtn = document.getElementById('bot-stop-btn');
+  const hint    = document.getElementById('auto-start-hint');
+  botRunning = (status === 'running');
+
+  if (botRunning) {
+    pill.textContent = 'bot running (pid ' + (pid || '?') + ')';
+    pill.className = 'tag bg-emerald-900/60 text-emerald-200';
+    stopBtn.classList.remove('hidden');
+    if (hint) hint.classList.add('hidden');
+  } else {
+    pill.textContent = 'bot stopped';
+    pill.className = 'tag bg-slate-800 text-slate-400';
+    stopBtn.classList.add('hidden');
+    if (hint) hint.classList.remove('hidden');
+  }
+}
+
+function renderBotLog() {
+  const el = document.getElementById('botlog');
+  const lines = state.botLog || [];
+  if (!lines.length) {
+    el.innerHTML = '<span class="muted">Bot has not been started today.</span>';
+    return;
+  }
+  el.textContent = lines.slice(-300).join('\n');
+  el.scrollTop = el.scrollHeight;
+}
+
+function renderTrades() {
+  const el = document.getElementById('trades');
+  const fills = state.fills || [];
+  if (!fills.length) {
+    el.innerHTML = '<div class="muted p-3">No fills yet today.</div>';
+    return;
+  }
+  el.innerHTML = '<div>' + fills.map(f => {
+    const pnl = Number(f.pnl ?? 0);
+    const cls = pnl > 0 ? 'pos' : pnl < 0 ? 'neg' : 'muted';
+    const r = f.r_multiple !== undefined ? `(${pnl >= 0 ? '+' : ''}${Number(f.r_multiple).toFixed(2)}R)` : '';
+    const sideTag = f.side === 'short' ? 'S' : 'L';
+    return `
+    <div class="row flex items-center gap-3">
+      <span class="muted">${(f.t || '').slice(11, 19)}</span>
+      <span class="font-bold w-16">${f.symbol || '?'}</span>
+      <span class="tag">${sideTag}</span>
+      <span class="muted">${f.action || ''}</span>
+      <span>@${f.price ? Number(f.price).toFixed(2) : '—'}</span>
+      <span class="ml-auto ${cls}">${pnl >= 0 ? '+' : ''}${fmtMoney(pnl)} ${r}</span>
+    </div>`;
+  }).join('') + '</div>';
+}
+
+function renderToday() {
+  const acct = state.alpaca && state.alpaca.account;
+  const positions = (state.alpaca && state.alpaca.positions) || [];
+  const big = document.getElementById('today-pnl-big');
+  const pct = document.getElementById('today-pnl-pct');
+  const rel = document.getElementById('today-realized');
+  const unr = document.getElementById('today-unrealized');
+  const eq  = document.getElementById('today-equity');
+  const bp  = document.getElementById('today-bp');
+  const asof = document.getElementById('today-asof');
+  asof.textContent = 'as of ' + new Date().toLocaleTimeString();
+
+  if (!acct || acct.equity === null || acct.equity === undefined) {
+    big.textContent = '—'; big.className = 'text-xl font-bold muted';
+    pct.textContent = '—'; pct.className = 'text-xs muted';
+    rel.textContent = '—'; rel.className = 'font-semibold muted';
+    unr.textContent = '—'; unr.className = 'font-semibold muted';
+    eq.textContent  = '—'; bp.textContent = 'Alpaca not connected';
+    return;
+  }
+
+  const equity = Number(acct.equity);
+  const last   = Number(acct.last_equity || 0);
+  const dayPnl = (last && equity) ? equity - last : 0;
+  const unrealized = positions.reduce((s, p) => s + Number(p.unrealized_pl || 0), 0);
+  const realized   = dayPnl - unrealized;
+
+  const cls = (v) => v > 0 ? 'pos' : v < 0 ? 'neg' : 'muted';
+  const fmtSigned = (v) => (v >= 0 ? '+' : '') + fmtMoney(v);
+
+  big.textContent = fmtSigned(dayPnl);
+  big.className = 'text-xl font-bold ' + cls(dayPnl);
+  pct.textContent = last ? fmtPct(dayPnl / last) : '—';
+  pct.className = 'text-xs ' + (last ? cls(dayPnl) : 'muted');
+  rel.textContent = fmtSigned(realized); rel.className = 'font-semibold ' + cls(realized);
+  unr.textContent = fmtSigned(unrealized); unr.className = 'font-semibold ' + cls(unrealized);
+  eq.textContent  = fmtMoney(equity);
+  bp.textContent  = 'BP ' + fmtMoney(acct.buying_power);
+}
+
+function renderEquity() {
+  // Prefer live Alpaca account if available; fall back to state/equity_*.json.
+  const acct = state.alpaca && state.alpaca.account;
+  if (acct && acct.equity !== null && acct.equity !== undefined) {
+    document.getElementById('equity').textContent = fmtMoney(acct.equity);
+    const start = acct.last_equity;
+    if (start && acct.equity) {
+      const pnl = acct.equity - start;
+      const pct = pnl / start;
+      const cls = pnl >= 0 ? 'pos' : 'neg';
+      document.getElementById('day-pnl').innerHTML =
+        `<span class="${cls}">${pnl >= 0 ? '+' : ''}${fmtMoney(pnl)} (${fmtPct(pct)})</span>`;
+    } else {
+      document.getElementById('day-pnl').textContent = '—';
+    }
+    return;
+  }
+  const eq = state.equity;
+  if (!eq) {
+    document.getElementById('equity').textContent = '—';
+    document.getElementById('day-pnl').textContent = '—';
+    return;
+  }
+  document.getElementById('equity').textContent = fmtMoney(eq.current ?? eq.equity);
+  const start = eq.opening ?? eq.start_of_day;
+  const cur = eq.current ?? eq.equity;
+  if (start && cur) {
+    const pct = (cur - start) / start;
+    const pnl = cur - start;
+    const cls = pnl >= 0 ? 'pos' : 'neg';
+    document.getElementById('day-pnl').innerHTML =
+      `<span class="${cls}">${pnl >= 0 ? '+' : ''}${fmtMoney(pnl)} (${fmtPct(pct)})</span>`;
+  } else {
+    document.getElementById('day-pnl').textContent = '—';
+  }
+}
+
+function renderPositions() {
+  const el = document.getElementById('positions');
+  const positions = (state.alpaca && state.alpaca.positions) || [];
+  if (!positions.length) {
+    el.innerHTML = '<div class="muted p-3">No open positions.</div>';
+    return;
+  }
+  el.innerHTML = '<div>' + positions.map(p => {
+    const pl = Number(p.unrealized_pl || 0);
+    const plpc = Number(p.unrealized_plpc || 0);
+    const cls = pl > 0 ? 'pos' : pl < 0 ? 'neg' : 'muted';
+    return `
+    <div class="row flex items-center gap-3">
+      <span class="font-bold w-16">${p.symbol}</span>
+      <span class="muted">${p.qty}</span>
+      <span class="muted">entry ${p.avg_entry ? '$' + Number(p.avg_entry).toFixed(2) : '—'}</span>
+      <span>now ${p.current_price ? '$' + Number(p.current_price).toFixed(2) : '—'}</span>
+      <span class="ml-auto ${cls}">${pl >= 0 ? '+' : ''}${fmtMoney(pl)} (${fmtPct(plpc)})</span>
+    </div>`;
+  }).join('') + '</div>';
+}
+
+function renderPending() {
+  const el = document.getElementById('pending');
+  const orders = (state.alpaca && state.alpaca.orders) || [];
+  if (!orders.length) {
+    el.innerHTML = '<div class="muted p-3">No open orders.</div>';
+    return;
+  }
+  el.innerHTML = '<div>' + orders.map(o => {
+    const trigger = o.stop_price ? `stop $${Number(o.stop_price).toFixed(2)}` :
+                    o.limit_price ? `limit $${Number(o.limit_price).toFixed(2)}` : '—';
+    return `
+    <div class="row flex items-center gap-3">
+      <span class="font-bold w-16">${o.symbol}</span>
+      <span class="tag bg-slate-800 text-slate-300">${o.side}</span>
+      <span class="muted">${o.type}</span>
+      <span class="muted">${o.qty}</span>
+      <span>${trigger}</span>
+      <span class="muted ml-auto">${o.status}</span>
+    </div>`;
+  }).join('') + '</div>';
+}
+
+function eventClass(type) {
+  if (!type) return 'ev-info';
+  if (type.startsWith('error')) return 'ev-error';
+  if (type.startsWith('warn')) return 'ev-warn';
+  if (type.startsWith('fill')) return 'ev-fill';
+  if (type.startsWith('order')) return 'ev-order';
+  return 'ev-info';
+}
+
+function renderEvents() {
+  const el = document.getElementById('events');
+  const events = state.events || [];
+  if (!events.length) {
+    el.innerHTML = '<span class="muted">No events yet today.</span>';
+    return;
+  }
+  // Tail latest first
+  el.innerHTML = events.slice(-100).reverse().map(ev => {
+    const t = (ev.ts || '').slice(11, 19);
+    const payload = ev.payload ? JSON.stringify(ev.payload).slice(0, 200) : '';
+    return `<div class="${eventClass(ev.type)}">[${t}] <strong>${ev.type}</strong> <span class="muted">${payload}</span></div>`;
+  }).join('');
+}
+
+function renderAll() {
+  renderToday();
+  renderTrades();
+  renderEquity();
+  renderEvents();
+  renderPositions();
+  renderPending();
+  document.getElementById('last-update').textContent =
+    'updated ' + new Date().toLocaleTimeString();
+}
+
+function applyHealth(h) {
+  if (!h) return;
+  if (h.ibkr !== undefined) setIbkrDot(h.ibkr, h.ibkr_host, h.ibkr_port);
+  if (h.alpaca !== undefined) setAlpacaDot(h.alpaca);
+  if (h.bot) {
+    setBotStatus(h.bot.status, h.bot.pid);
+    let updated = false;
+    if (h.bot.enabled_strategies) { enableMap = h.bot.enabled_strategies; updated = true; }
+    if (h.bot.armed_strategies)   { armMap    = h.bot.armed_strategies;   updated = true; }
+    if (updated) {
+      paintGateSummary();
+      renderGatePanel();
+    }
+  }
+}
+
+function applyMessage(msg) {
+  if (!msg || !msg.type) return;
+  if (msg.type === 'snapshot') {
+    state.fills = msg.fills || [];
+    state.equity = msg.equity;
+    state.events = msg.events || [];
+    state.botLog = msg.bot_log || [];
+    state.alpaca = msg.alpaca || null;
+    if (msg.health) applyHealth(msg.health);
+    renderAll();
+    renderBotLog();
+  } else if (msg.type === 'alpaca') {
+    state.alpaca = msg.alpaca;
+    renderToday(); renderPositions(); renderPending(); renderEquity();
+    document.getElementById('last-update').textContent =
+      'updated ' + new Date().toLocaleTimeString();
+  } else if (msg.type === 'health') {
+    applyHealth(msg.health);
+  } else if (msg.type === 'botlog') {
+    state.botLog.push(msg.line);
+    if (state.botLog.length > 1000) state.botLog = state.botLog.slice(-1000);
+    renderBotLog();
+  } else if (msg.type === 'state') {
+    const s = msg.state || {};
+    state.fills = s.fills || [];
+    state.equity = s.equity;
+    renderTrades(); renderEquity();
+    document.getElementById('last-update').textContent =
+      'updated ' + new Date().toLocaleTimeString();
+  } else if (msg.type === 'event') {
+    state.events.push(msg.event);
+    if (state.events.length > 500) state.events = state.events.slice(-500);
+    renderEvents();
+    document.getElementById('last-update').textContent =
+      'updated ' + new Date().toLocaleTimeString();
+  }
+}
+
+function connect() {
+  const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
+  ws = new WebSocket(url);
+  ws.onopen = () => {
+    setWsDot('up');
+    // Clear the "Restarting…" overlay once the new server's WS is up.
+    const overlay = document.getElementById('stopped-overlay');
+    if (!overlay.classList.contains('hidden')
+        && overlay.querySelector('.text-2xl').textContent.startsWith('Restart')) {
+      overlay.classList.add('hidden');
+    }
+  };
+  ws.onclose = () => { setWsDot('down'); scheduleReconnect(); };
+  ws.onerror = () => { setWsDot('down'); };
+  ws.onmessage = (ev) => {
+    try { applyMessage(JSON.parse(ev.data)); }
+    catch (e) { console.error('bad ws message', e); }
+  };
+}
+function scheduleReconnect() {
+  if (shuttingDown) return;
+  if (reconnectTimer) return;
+  reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, 2000);
+}
+
+const killBtn = document.getElementById('kill-btn');
+const killMenu = document.getElementById('kill-menu');
+
+killBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  killMenu.classList.toggle('hidden');
+});
+
+// Click anywhere else closes the menu.
+document.addEventListener('click', (e) => {
+  if (!killMenu.contains(e.target) && e.target !== killBtn) {
+    killMenu.classList.add('hidden');
+  }
+});
+
+async function doExitAction(action) {
+  killMenu.classList.add('hidden');
+  let confirmMsg, endpoint, overlayMsg;
+  if (action === 'restart') {
+    confirmMsg = 'Restart the dashboard?\n\nThe dashboard process will be killed and respawned by start_dashboard.bat.\nThe bot keeps running and will be re-discovered.';
+    endpoint = '/restart';
+    overlayMsg = 'Restarting…';
+  } else if (action === 'exit') {
+    confirmMsg = 'Stop the dashboard?\n\n' +
+                 'Only the dashboard process dies. The bot subprocess\n' +
+                 'is NOT touched — it stays in whatever state it\'s in right now\n' +
+                 '(running keeps running, stopped stays stopped).\n\n' +
+                 'If you want to stop EVERYTHING including the running bot, use "Shut down\n' +
+                 'everything" instead.';
+    endpoint = '/shutdown';
+    overlayMsg = 'Dashboard stopped';
+  } else if (action === 'shutdown-all') {
+    confirmMsg = 'SHUT DOWN EVERYTHING?\n\nThis terminates:\n  • bot (trade_day.py — strategy orchestrator) — any open paper positions stay open in Alpaca\n  • the dashboard itself\n\nUse this only when you mean it.';
+    endpoint = '/shutdown-all';
+    overlayMsg = 'All processes stopped';
+  } else {
+    return;
+  }
+  if (!confirm(confirmMsg)) return;
+  shuttingDown = (action !== 'restart');  // restart will reconnect via the relaunched server
+  try { await fetch(endpoint, { method: 'POST' }); } catch (e) { /* server closes mid-request */ }
+  if (ws) { try { ws.close(); } catch (e) {} }
+  setWsDot('down');
+  if (action === 'restart') {
+    // Auto-reconnect timer keeps retrying — show a brief "restarting" overlay
+    // and clear it as soon as WS reconnects (handled in connect.onopen).
+    const overlay = document.getElementById('stopped-overlay');
+    overlay.querySelector('.text-2xl').textContent = overlayMsg;
+    overlay.classList.remove('hidden');
+    // Allow reconnect attempts to clear the overlay.
+    shuttingDown = false;
+  } else {
+    const overlay = document.getElementById('stopped-overlay');
+    overlay.querySelector('.text-2xl').textContent = overlayMsg;
+    overlay.classList.remove('hidden');
+  }
+}
+
+document.querySelectorAll('#kill-menu [data-action]').forEach(btn => {
+  btn.addEventListener('click', () => doExitAction(btn.dataset.action));
+});
+
+document.getElementById('bot-stop-btn').addEventListener('click', async () => {
+  if (!confirm('Stop the bot?\n\nWill SIGTERM the trade_day.py process. Any open positions stay open in Alpaca.')) return;
+  try {
+    const r = await fetch('/bot/stop', { method: 'POST' });
+    const j = await r.json();
+    console.log('bot stop:', j);
+  } catch (e) {
+    alert('Could not reach /bot/stop: ' + e);
+  }
+});
+
+// Bulk shortcuts in the strategy-gating panel header.
+async function postBulkGate(endpoint, payload, applyMap) {
+  try {
+    const r = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const j = await r.json();
+    applyMap(j);
+    paintGateSummary();
+    renderGatePanel();
+  } catch (e) { alert('Bulk gate update failed: ' + e); }
+}
+
+const enableAllBtn = document.getElementById('enable-all-btn');
+const disableAllBtn = document.getElementById('disable-all-btn');
+const armAllBtn = document.getElementById('arm-all-btn');
+const disarmAllBtn = document.getElementById('disarm-all-btn');
+
+if (enableAllBtn) enableAllBtn.addEventListener('click', async () => {
+  await postBulkGate('/bot/enable', { all: true },
+    j => { if (j.enabled_strategies) enableMap = j.enabled_strategies; });
+});
+if (disableAllBtn) disableAllBtn.addEventListener('click', async () => {
+  await postBulkGate('/bot/enable', { all: false },
+    j => { if (j.enabled_strategies) enableMap = j.enabled_strategies; });
+});
+
+if (armAllBtn) armAllBtn.addEventListener('click', async () => {
+  const total = Object.keys(armMap).length || Object.keys(enableMap).length;
+  const msg = 'ARM ALL ' + total + ' strategies?\n\n' +
+              'Every wired strategy that is also ON will submit REAL paper ' +
+              'orders on its next entry signal. Toggling takes effect LIVE — ' +
+              'no restart needed.';
+  if (!confirm(msg)) return;
+  await postBulkGate('/bot/arm', { all: true },
+    j => { if (j.armed_strategies) armMap = j.armed_strategies; });
+});
+if (disarmAllBtn) disarmAllBtn.addEventListener('click', async () => {
+  // Disarm is non-destructive; no confirm.
+  await postBulkGate('/bot/arm', { all: false },
+    j => { if (j.armed_strategies) armMap = j.armed_strategies; });
+});
+
+// Header summary pill scrolls to the gating panel.
+const gateSummary = document.getElementById('gate-summary');
+if (gateSummary) gateSummary.addEventListener('click', () => {
+  const panel = document.getElementById('gate-panel');
+  if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+});
+
+// Pin today-tile just below the sticky header. Re-measure on resize so a
+// tall/narrow window doesn't leave a gap or overlap.
+function syncStickyOffsets() {
+  const header = document.getElementById('status-bar');
+  const today  = document.getElementById('today-tile');
+  if (!header || !today) return;
+  const h = header.getBoundingClientRect().height;
+  today.style.top = (Math.ceil(h) + 4) + 'px';
+}
+window.addEventListener('load', syncStickyOffsets);
+window.addEventListener('resize', syncStickyOffsets);
+syncStickyOffsets();
+
+// Initial bootstrap: fetch /snapshot in case WS connects slowly.
+fetch('/snapshot').then(r => r.json()).then(applyMessage).catch(() => {});
+// Pull the configured auto-start time so the header hint reflects config.
+fetch('/config').then(r => r.json()).then(c => {
+  if (c && c.auto_start_et) {
+    const el = document.getElementById('auto-start-et');
+    if (el) el.textContent = c.auto_start_et;
+  }
+}).catch(() => {});
+connect();
+</script>
+</body>
+</html>

@@ -21,7 +21,14 @@ import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+# --- intraday-bot bootstrap ---
+_root = Path(__file__).resolve().parent.parent
+for _p in [str(_root)] + [str(_root / s) for s in
+        ("scripts", "resources", "strategy", "execution", "journal", "review", "dashboard")]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+del _root, _p
+# ---
 from _common import CONFIG_PATH, CONFIG_EXAMPLE_PATH, SKILL_DIR, load_config  # noqa: E402
 
 IBC_DIR_DEFAULT = SKILL_DIR / "ibc"
@@ -457,7 +464,7 @@ def step_smoke_test() -> int:
     # Import _ibkr_data FIRST — its module-level shim installs an asyncio
     # event loop (needed by eventkit on Python 3.14+). After that, we can
     # safely check whether ib_insync is actually usable.
-    from _ibkr_data import smoke_test, IB
+    from ibkr_data import smoke_test, IB
     if IB is None:
         print("ib_insync not installed (or failed to import). Install it:")
         print("  py -m pip install ib_insync")

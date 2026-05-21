@@ -1,0 +1,16 @@
+{
+  "ticker": "POET",
+  "atr_14d": 2.5279,
+  "atr_pct": 17.103,
+  "prev_close": 14.779999732971191,
+  "daily_trend": "Uptrend",
+  "atr_period": 14,
+  "n_daily_bars_used": 60,
+  "data_source": "yfinance",
+  "as_of": "2026-05-21",
+  "avg_minute_vol_rth": 199859,
+  "minute_vol_stddev": 714675,
+  "premkt_range_today": null,
+  "n_rth_bars_used": 1950,
+  "last_refreshed_utc": "2026-05-21T08:51:59+00:00"
+}

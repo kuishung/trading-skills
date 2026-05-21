@@ -1,8 +1,9 @@
 """Shared helpers for intraday_bot.
 
-Centralises: config loading, ET clock, alpaca client construction (paper-only
-guard delegated to the sibling skill), state file paths, Telegram send, and
-fill-event logging.
+Centralises: config loading, ET clock, alpaca client construction
+(self-contained -- credentials resolved via the central VAULT folder
+or an in-folder .env, never via a sibling-skill path), state file
+paths, Telegram send, and fill-event logging.
 """
 from __future__ import annotations
 
@@ -19,6 +20,16 @@ SKILL_DIR = Path(__file__).resolve().parent.parent
 STATE_DIR = SKILL_DIR / "state"
 CONFIG_PATH = SKILL_DIR / "config.json"
 CONFIG_EXAMPLE_PATH = SKILL_DIR / "config.example.json"
+
+# --- intraday-bot bootstrap: make sibling layers importable (for the
+# lazy `from ibkr_data import ...` inside the data-provider functions
+# below, plus any future cross-layer imports). ---
+for _p in [str(SKILL_DIR)] + [str(SKILL_DIR / s) for s in
+        ("scripts", "resources", "strategy", "execution", "journal", "review", "dashboard")]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+del _p
+# ---
 
 PAPER_BASE_URL = "https://paper-api.alpaca.markets"
 
@@ -77,39 +88,92 @@ def et_at(date_iso: str, hhmm: str):
         return tz.localize(naive)
 
 
-# ---------- Alpaca client ----------
+# ---------- VAULT-first env resolution (self-contained, no sibling deps) ----------
 
-def load_alpaca_env(cfg: dict) -> tuple[str, str]:
-    """Read alpaca creds from the sibling alpaca-trader-paper skill's .env."""
-    alpaca_dir = (SKILL_DIR / cfg["alpaca_skill_path"]).resolve()
-    env_path = alpaca_dir / ".env"
-    if not env_path.exists():
-        sys.exit(
-            f"Alpaca .env not found at {env_path}.\n"
-            f"Run the alpaca-trader-paper setup first:\n"
-            f"  cd {alpaca_dir} && py scripts/setup.py"
-        )
+def _read_dotenv(path: Path) -> dict[str, str]:
+    """Tiny dotenv reader. Returns {} if the file is missing."""
+    if not path or not path.exists():
+        return {}
     try:
         from dotenv import dotenv_values
-        env = dotenv_values(env_path)
+        return dict(dotenv_values(path) or {})
     except ImportError:
-        env = {}
-        for line in env_path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
+        out: dict[str, str] = {}
+        for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = raw.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
             k, v = line.split("=", 1)
-            env[k.strip()] = v.strip().strip('"').strip("'")
+            out[k.strip()] = v.strip().strip('"').strip("'")
+        return out
+
+
+def _vault_root() -> Path | None:
+    """Walk up from intraday-bot/ looking for a VAULT/Claude Credential folder
+    (the central credential store -- see reference_central_env_folder memory).
+    Returns None if not found."""
+    here = SKILL_DIR.resolve()
+    for ancestor in [here, *here.parents]:
+        for candidate in (
+            ancestor / "VAULT" / "Claude Credential",
+            ancestor.parent / "VAULT" / "Claude Credential",
+        ):
+            if candidate.is_dir():
+                return candidate
+    return None
+
+
+def _env_lookup(filename: str, in_folder_name: str = ".env") -> dict[str, str]:
+    """Resolve a vendor env in priority order:
+
+      1. INTRADAY_ENV_DIR override   (env var)
+      2. <intraday-bot>/.env         (final in-folder fallback)
+      3. <VAULT>/Claude Credential/<filename>   (central, shared across PCs)
+
+    Empty dict if nothing matches.
+    """
+    override = os.environ.get("INTRADAY_ENV_DIR")
+    if override:
+        env = _read_dotenv(Path(override) / filename)
+        if env:
+            return env
+    env = _read_dotenv(SKILL_DIR / in_folder_name)
+    if env.get("ALPACA_API_KEY_ID") or env.get("TELEGRAM_BOT_TOKEN"):
+        return env
+    vault = _vault_root()
+    if vault is not None:
+        return _read_dotenv(vault / filename)
+    return {}
+
+
+# ---------- Alpaca client ----------
+
+def load_alpaca_env(cfg: dict | None = None) -> tuple[str, str]:
+    """Resolve Alpaca creds. Self-contained -- never reads sibling skill
+    folders. Lookup order: INTRADAY_ENV_DIR override -> in-folder .env ->
+    VAULT/Claude Credential/alpaca-trader-paper.env (or alpaca.env).
+
+    Refuses to return creds for a non-paper base URL.
+    """
+    env = _env_lookup("alpaca-trader-paper.env")
+    if not (env.get("ALPACA_API_KEY_ID") and env.get("ALPACA_API_SECRET_KEY")):
+        env = _env_lookup("alpaca.env")
+    if not (env.get("ALPACA_API_KEY_ID") and env.get("ALPACA_API_SECRET_KEY")):
+        sys.exit(
+            "Alpaca creds not found. Put them in one of:\n"
+            "  $INTRADAY_ENV_DIR/alpaca-trader-paper.env\n"
+            f"  {SKILL_DIR / '.env'}\n"
+            "  <Dropbox>/VAULT/Claude Credential/alpaca-trader-paper.env\n"
+            "with ALPACA_API_KEY_ID, ALPACA_API_SECRET_KEY, "
+            f"ALPACA_BASE_URL={PAPER_BASE_URL}"
+        )
     base = env.get("ALPACA_BASE_URL", PAPER_BASE_URL)
     if base != PAPER_BASE_URL:
         sys.exit(
-            f"Refusing to run. ALPACA_BASE_URL in {env_path} is {base!r}, "
+            f"Refusing to run. ALPACA_BASE_URL is {base!r}, "
             f"but this bot is paper-only ({PAPER_BASE_URL})."
         )
-    key, secret = env.get("ALPACA_API_KEY_ID"), env.get("ALPACA_API_SECRET_KEY")
-    if not key or not secret:
-        sys.exit(f"ALPACA_API_KEY_ID / ALPACA_API_SECRET_KEY missing in {env_path}")
-    return key, secret
+    return env["ALPACA_API_KEY_ID"], env["ALPACA_API_SECRET_KEY"]
 
 
 def trading_client(cfg: dict):
@@ -192,7 +256,7 @@ def _try_ibkr(call_name: str, ibkr_callable, *args, **kwargs):
 def get_pm_bars(symbols: list[str], cfg: dict, fake_now: str | None = None) -> dict[str, list[dict]]:
     """1-minute bars from 04:00 ET through 'now' (or fake_now), per symbol."""
     if _provider(cfg) == "ibkr":
-        from _ibkr_data import ibkr_pm_bars
+        from ibkr_data import ibkr_pm_bars
         result = _try_ibkr("get_pm_bars", ibkr_pm_bars, symbols, cfg, fake_now)
         if result is not None:
             return result
@@ -202,7 +266,7 @@ def get_pm_bars(symbols: list[str], cfg: dict, fake_now: str | None = None) -> d
 def get_rth_minute_bars(symbols: list[str], cfg: dict, fake_now: str | None = None) -> dict[str, list[dict]]:
     """Today's full 1-min bar history (PM + RTH up to now). Caller splits."""
     if _provider(cfg) == "ibkr":
-        from _ibkr_data import ibkr_full_day_minute_bars
+        from ibkr_data import ibkr_full_day_minute_bars
         result = _try_ibkr("get_rth_minute_bars", ibkr_full_day_minute_bars,
                            symbols, cfg, fake_now)
         if result is not None:
@@ -214,7 +278,7 @@ def get_history_bars(symbols: list[str], cfg: dict, days: int = 5) -> dict[str, 
     """RTH-only 1-min bars over the last `days` trading days. Used by the
     AT scanner's 5d/3m trend filter (needs EMA50 stabilisation)."""
     if _provider(cfg) == "ibkr":
-        from _ibkr_data import ibkr_history_bars
+        from ibkr_data import ibkr_history_bars
         result = _try_ibkr("get_history_bars", ibkr_history_bars, symbols, cfg, days)
         if result is not None:
             return result
@@ -225,7 +289,7 @@ def get_history_bars(symbols: list[str], cfg: dict, days: int = 5) -> dict[str, 
 
 def get_latest_quote(symbols: list[str], cfg: dict) -> dict[str, dict]:
     if _provider(cfg) == "ibkr":
-        from _ibkr_data import ibkr_latest_quote
+        from ibkr_data import ibkr_latest_quote
         result = _try_ibkr("get_latest_quote", ibkr_latest_quote, symbols, cfg)
         if result is not None:
             return result
@@ -234,7 +298,7 @@ def get_latest_quote(symbols: list[str], cfg: dict) -> dict[str, dict]:
 
 def get_latest_trade(symbols: list[str], cfg: dict) -> dict[str, dict]:
     if _provider(cfg) == "ibkr":
-        from _ibkr_data import ibkr_latest_trade
+        from ibkr_data import ibkr_latest_trade
         result = _try_ibkr("get_latest_trade", ibkr_latest_trade, symbols, cfg)
         if result is not None:
             return result
@@ -364,24 +428,19 @@ def append_fill_event(date_iso: str, event: dict) -> None:
 
 # ---------- Telegram ----------
 
-def telegram_env(cfg: dict) -> tuple[str | None, str | None]:
-    """Pick up Telegram creds from the MATP skill's .env (the existing source of
-    truth in this repo). Returns (token, chat_id) or (None, None) if absent."""
-    matp_env = (SKILL_DIR / cfg.get("matp_skill_path_for_telegram", "../MATP") / ".env").resolve()
-    if not matp_env.exists():
-        return None, None
-    token = chat = None
-    for line in matp_env.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, v = line.split("=", 1)
-        k, v = k.strip(), v.strip().strip('"').strip("'")
-        if k == "TELEGRAM_BOT_TOKEN":
-            token = v
-        elif k == "TELEGRAM_CHAT_ID":
-            chat = v
-    return token, chat
+def telegram_env(cfg: dict | None = None) -> tuple[str | None, str | None]:
+    """Resolve Telegram creds. Self-contained -- never reads sibling skill
+    folders. Lookup: INTRADAY_ENV_DIR override -> in-folder .env ->
+    VAULT/Claude Credential/telegram.env (then matp.env as a back-compat
+    fallback since the user's MATP-era setup used that filename).
+
+    Returns (token, chat_id) or (None, None) if not configured -- Telegram
+    notifications are optional, so this never sys.exits.
+    """
+    env = _env_lookup("telegram.env")
+    if not (env.get("TELEGRAM_BOT_TOKEN") and env.get("TELEGRAM_CHAT_ID")):
+        env = _env_lookup("matp.env")  # legacy filename
+    return env.get("TELEGRAM_BOT_TOKEN") or None, env.get("TELEGRAM_CHAT_ID") or None
 
 
 def send_telegram(cfg: dict, html: str) -> bool:

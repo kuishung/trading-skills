@@ -34,3 +34,67 @@
 {"ts": "2026-05-21T00:37:14+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "TEST", "reason": "not_consolidating_near_pmh", "pmh": 10.0, "consol_high": 9.6, "gap_pct": 4.0, "tolerance_pct": 1.5}
 {"ts": "2026-05-21T00:37:37+00:00", "strategy": "guns_setup5", "event": "planned", "symbol": "TEST", "plan": {"strategy": "guns_setup5", "symbol": "TEST", "side": "long", "entry_stop_trigger": 9.96, "entry_limit": 10.01, "stop_loss": 9.89, "take_profit": 10.25, "risk_per_share": 0.12, "take_profit_R": 2.0, "first_candle_o": 9.85, "first_candle_h": 9.95, "first_candle_l": 9.82, "first_candle_c": 9.93, "first_candle_v": 60000, "ema9": 9.686, "ema20": 9.6315, "sma50": null, "tier_stop_cents": 12, "candle_stop_cents": 15, "stop_cents_chosen": 12}}
 {"ts": "2026-05-21T00:49:37+00:00", "strategy": "guns_setup1", "event": "watchlist_missing", "path": "D:\\Dropbox\\Claude\\claude-skills\\trading-skills\\intraday-bot\\state\\watchlist_guns_2026-05-21.txt"}
+{"ts": "2026-05-21T03:29:47+00:00", "strategy": "guns_setup1", "event": "strategy_started", "entry_et": "09:30", "cap": 2, "armed": true}
+{"ts": "2026-05-21T03:29:47+00:00", "strategy": "guns_setup1", "event": "watchlist_loaded", "path": "D:\\Dropbox\\Claude\\claude-skills\\trading-skills\\intraday-bot\\state\\watchlist_guns_2026-05-20.txt", "n": 5, "symbols": ["HCWB", "JDZG", "MTVA", "MLGO", "IMVT"]}
+{"ts": "2026-05-21T03:29:47+00:00", "strategy": "guns_setup1", "event": "universe_picked", "n": 5, "symbols": ["HCWB", "JDZG", "MTVA", "MLGO", "IMVT"]}
+{"ts": "2026-05-21T03:29:54+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "HCWB", "reason": "pmh_below_min_price", "pmh": 1.1, "min_price": 1.5}
+{"ts": "2026-05-21T03:29:54+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "JDZG", "reason": "pm_volume_below_min", "pm_volume": 7400, "min_pm_volume": 30000}
+{"ts": "2026-05-21T03:29:54+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "MTVA", "reason": "not_consolidating_near_pmh", "pmh": 2.31, "consol_high": 1.98, "gap_pct": 14.29, "tolerance_pct": 1.5}
+{"ts": "2026-05-21T03:29:54+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "MLGO", "reason": "pm_volume_below_min", "pm_volume": 22934, "min_pm_volume": 30000}
+{"ts": "2026-05-21T03:29:54+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "IMVT", "reason": "not_consolidating_near_pmh", "pmh": 34.7, "consol_high": 31.7, "gap_pct": 8.65, "tolerance_pct": 1.5}
+{"ts": "2026-05-21T03:29:54+00:00", "strategy": "guns_setup1", "event": "strategy_finished", "n_submitted": 0, "n_disarmed_skips": 0}
+{"ts": "2026-05-21T03:29:54+00:00", "strategy": "guns_setup5", "event": "strategy_off_skipped", "entry_et": "09:31", "note": "state/enabled_<name>.flag absent at scheduled fire; no scanner / resources / analysis ran"}
+{"ts": "2026-05-21T03:48:22+00:00", "strategy": "guns_setup1", "event": "strategy_started", "entry_et": "09:30", "cap": 2, "armed": true}
+{"ts": "2026-05-21T03:48:22+00:00", "strategy": "guns_setup1", "event": "watchlist_loaded", "path": "D:\\Dropbox\\Claude\\claude-skills\\trading-skills\\intraday-bot\\state\\watchlist_guns_2026-05-20.txt", "n": 5, "symbols": ["HCWB", "JDZG", "MTVA", "MLGO", "IMVT"]}
+{"ts": "2026-05-21T03:48:22+00:00", "strategy": "guns_setup1", "event": "universe_picked", "n": 5, "symbols": ["HCWB", "JDZG", "MTVA", "MLGO", "IMVT"]}
+{"ts": "2026-05-21T03:48:27+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "HCWB", "reason": "pmh_below_min_price", "pmh": 1.1, "min_price": 1.5}
+{"ts": "2026-05-21T03:48:27+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "JDZG", "reason": "pm_volume_below_min", "pm_volume": 7400, "min_pm_volume": 30000}
+{"ts": "2026-05-21T03:48:27+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "MTVA", "reason": "not_consolidating_near_pmh", "pmh": 2.31, "consol_high": 1.98, "gap_pct": 14.29, "tolerance_pct": 1.5}
+{"ts": "2026-05-21T03:48:27+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "MLGO", "reason": "pm_volume_below_min", "pm_volume": 23484, "min_pm_volume": 30000}
+{"ts": "2026-05-21T03:48:27+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "IMVT", "reason": "not_consolidating_near_pmh", "pmh": 34.7, "consol_high": 31.7, "gap_pct": 8.65, "tolerance_pct": 1.5}
+{"ts": "2026-05-21T03:48:27+00:00", "strategy": "guns_setup1", "event": "strategy_finished", "n_submitted": 0, "n_disarmed_skips": 0}
+{"ts": "2026-05-21T03:48:27+00:00", "strategy": "guns_setup5", "event": "strategy_started", "entry_et": "09:31", "cap": 2, "armed": true}
+{"ts": "2026-05-21T03:48:27+00:00", "strategy": "guns_setup5", "event": "watchlist_loaded", "path": "D:\\Dropbox\\Claude\\claude-skills\\trading-skills\\intraday-bot\\state\\watchlist_guns_2026-05-20.txt", "n": 5, "symbols": ["HCWB", "JDZG", "MTVA", "MLGO", "IMVT"]}
+{"ts": "2026-05-21T03:48:27+00:00", "strategy": "guns_setup5", "event": "universe_picked", "n": 5, "symbols": ["HCWB", "JDZG", "MTVA", "MLGO", "IMVT"]}
+{"ts": "2026-05-21T03:48:31+00:00", "strategy": "guns_setup5", "event": "rejected", "symbol": "HCWB", "reason": "first_rth_candle_missing"}
+{"ts": "2026-05-21T03:48:31+00:00", "strategy": "guns_setup5", "event": "rejected", "symbol": "JDZG", "reason": "pm_volume_below_min", "pm_volume": 6321, "min_pm_volume": 30000}
+{"ts": "2026-05-21T03:48:31+00:00", "strategy": "guns_setup5", "event": "rejected", "symbol": "MTVA", "reason": "first_rth_candle_missing"}
+{"ts": "2026-05-21T03:48:31+00:00", "strategy": "guns_setup5", "event": "rejected", "symbol": "MLGO", "reason": "pm_volume_below_min", "pm_volume": 13428, "min_pm_volume": 30000}
+{"ts": "2026-05-21T03:48:31+00:00", "strategy": "guns_setup5", "event": "rejected", "symbol": "IMVT", "reason": "first_rth_candle_missing"}
+{"ts": "2026-05-21T03:48:31+00:00", "strategy": "guns_setup5", "event": "strategy_finished", "n_submitted": 0, "n_disarmed_skips": 0}
+{"ts": "2026-05-21T03:51:29+00:00", "strategy": "guns_setup1", "event": "strategy_started", "entry_et": "09:30", "cap": 2, "armed": true}
+{"ts": "2026-05-21T03:51:29+00:00", "strategy": "guns_setup1", "event": "watchlist_loaded", "path": "D:\\Dropbox\\Claude\\claude-skills\\trading-skills\\intraday-bot\\state\\watchlist_guns_2026-05-20.txt", "n": 5, "symbols": ["HCWB", "JDZG", "MTVA", "MLGO", "IMVT"]}
+{"ts": "2026-05-21T03:51:29+00:00", "strategy": "guns_setup1", "event": "universe_picked", "n": 5, "symbols": ["HCWB", "JDZG", "MTVA", "MLGO", "IMVT"]}
+{"ts": "2026-05-21T03:51:33+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "HCWB", "reason": "pmh_below_min_price", "pmh": 1.1, "min_price": 1.5}
+{"ts": "2026-05-21T03:51:33+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "JDZG", "reason": "pm_volume_below_min", "pm_volume": 7400, "min_pm_volume": 30000}
+{"ts": "2026-05-21T03:51:33+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "MTVA", "reason": "not_consolidating_near_pmh", "pmh": 2.31, "consol_high": 1.98, "gap_pct": 14.29, "tolerance_pct": 1.5}
+{"ts": "2026-05-21T03:51:33+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "MLGO", "reason": "pm_volume_below_min", "pm_volume": 23484, "min_pm_volume": 30000}
+{"ts": "2026-05-21T03:51:33+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "IMVT", "reason": "not_consolidating_near_pmh", "pmh": 34.7, "consol_high": 31.7, "gap_pct": 8.65, "tolerance_pct": 1.5}
+{"ts": "2026-05-21T03:51:33+00:00", "strategy": "guns_setup1", "event": "strategy_finished", "n_submitted": 0, "n_disarmed_skips": 0}
+{"ts": "2026-05-21T03:51:33+00:00", "strategy": "guns_setup5", "event": "strategy_started", "entry_et": "09:31", "cap": 2, "armed": true}
+{"ts": "2026-05-21T03:51:33+00:00", "strategy": "guns_setup5", "event": "watchlist_loaded", "path": "D:\\Dropbox\\Claude\\claude-skills\\trading-skills\\intraday-bot\\state\\watchlist_guns_2026-05-20.txt", "n": 5, "symbols": ["HCWB", "JDZG", "MTVA", "MLGO", "IMVT"]}
+{"ts": "2026-05-21T03:51:33+00:00", "strategy": "guns_setup5", "event": "universe_picked", "n": 5, "symbols": ["HCWB", "JDZG", "MTVA", "MLGO", "IMVT"]}
+{"ts": "2026-05-21T03:51:36+00:00", "strategy": "guns_setup5", "event": "rejected", "symbol": "HCWB", "reason": "first_rth_candle_missing"}
+{"ts": "2026-05-21T03:51:36+00:00", "strategy": "guns_setup5", "event": "rejected", "symbol": "JDZG", "reason": "pm_volume_below_min", "pm_volume": 6321, "min_pm_volume": 30000}
+{"ts": "2026-05-21T03:51:36+00:00", "strategy": "guns_setup5", "event": "rejected", "symbol": "MTVA", "reason": "first_rth_candle_missing"}
+{"ts": "2026-05-21T03:51:36+00:00", "strategy": "guns_setup5", "event": "rejected", "symbol": "MLGO", "reason": "pm_volume_below_min", "pm_volume": 13428, "min_pm_volume": 30000}
+{"ts": "2026-05-21T03:51:37+00:00", "strategy": "guns_setup5", "event": "rejected", "symbol": "IMVT", "reason": "first_rth_candle_missing"}
+{"ts": "2026-05-21T03:51:37+00:00", "strategy": "guns_setup5", "event": "strategy_finished", "n_submitted": 0, "n_disarmed_skips": 0}
+{"ts": "2026-05-21T03:59:02+00:00", "strategy": "guns_setup1", "event": "strategy_started", "entry_et": "09:30", "cap": 2, "armed": true}
+{"ts": "2026-05-21T03:59:02+00:00", "strategy": "guns_setup1", "event": "watchlist_loaded", "path": "D:\\Dropbox\\Claude\\claude-skills\\trading-skills\\intraday-bot\\state\\watchlist_guns_2026-05-20.txt", "n": 5, "symbols": ["HCWB", "JDZG", "MTVA", "MLGO", "IMVT"]}
+{"ts": "2026-05-21T03:59:02+00:00", "strategy": "guns_setup1", "event": "universe_picked", "n": 5, "symbols": ["HCWB", "JDZG", "MTVA", "MLGO", "IMVT"]}
+{"ts": "2026-05-21T03:59:07+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "HCWB", "reason": "pmh_below_min_price", "pmh": 1.1377, "min_price": 1.5}
+{"ts": "2026-05-21T03:59:07+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "JDZG", "reason": "pm_volume_below_min", "pm_volume": 10371, "min_pm_volume": 30000}
+{"ts": "2026-05-21T03:59:07+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "MTVA", "reason": "not_consolidating_near_pmh", "pmh": 2.31, "consol_high": 1.98, "gap_pct": 14.29, "tolerance_pct": 1.5}
+{"ts": "2026-05-21T03:59:07+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "MLGO", "reason": "pm_volume_below_min", "pm_volume": 28745, "min_pm_volume": 30000}
+{"ts": "2026-05-21T03:59:07+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "IMVT", "reason": "not_consolidating_near_pmh", "pmh": 34.7, "consol_high": 31.7, "gap_pct": 8.65, "tolerance_pct": 1.5}
+{"ts": "2026-05-21T03:59:07+00:00", "strategy": "guns_setup1", "event": "strategy_finished", "n_submitted": 0, "n_disarmed_skips": 0}
+{"ts": "2026-05-21T03:59:07+00:00", "strategy": "guns_setup5", "event": "strategy_started", "entry_et": "09:31", "cap": 2, "armed": true}
+{"ts": "2026-05-21T03:59:07+00:00", "strategy": "guns_setup5", "event": "watchlist_loaded", "path": "D:\\Dropbox\\Claude\\claude-skills\\trading-skills\\intraday-bot\\state\\watchlist_guns_2026-05-20.txt", "n": 5, "symbols": ["HCWB", "JDZG", "MTVA", "MLGO", "IMVT"]}
+{"ts": "2026-05-21T03:59:07+00:00", "strategy": "guns_setup5", "event": "universe_picked", "n": 5, "symbols": ["HCWB", "JDZG", "MTVA", "MLGO", "IMVT"]}
+{"ts": "2026-05-21T03:59:10+00:00", "strategy": "guns_setup5", "event": "rejected", "symbol": "HCWB", "reason": "first_rth_candle_missing"}
+{"ts": "2026-05-21T03:59:10+00:00", "strategy": "guns_setup5", "event": "rejected", "symbol": "JDZG", "reason": "pm_volume_below_min", "pm_volume": 6321, "min_pm_volume": 30000}
+{"ts": "2026-05-21T03:59:10+00:00", "strategy": "guns_setup5", "event": "rejected", "symbol": "MTVA", "reason": "first_rth_candle_missing"}
+{"ts": "2026-05-21T03:59:10+00:00", "strategy": "guns_setup5", "event": "rejected", "symbol": "MLGO", "reason": "pm_volume_below_min", "pm_volume": 13428, "min_pm_volume": 30000}
+{"ts": "2026-05-21T03:59:10+00:00", "strategy": "guns_setup5", "event": "rejected", "symbol": "IMVT", "reason": "first_rth_candle_missing"}
+{"ts": "2026-05-21T03:59:10+00:00", "strategy": "guns_setup5", "event": "strategy_finished", "n_submitted": 0, "n_disarmed_skips": 0}

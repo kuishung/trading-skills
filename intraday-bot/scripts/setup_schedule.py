@@ -1,4 +1,4 @@
-"""Register a Windows Task Scheduler job that runs trade_day.py at 08:55 ET
+"""Register a Windows Task Scheduler job that runs execution/orchestrator.py at 08:55 ET
 every weekday. On macOS/Linux, prints the equivalent cron line.
 
 Usage:
@@ -17,7 +17,7 @@ from pathlib import Path
 
 TASK_NAME = "intraday-bot-daily"
 SKILL_DIR = Path(__file__).resolve().parent.parent
-TRADE_DAY = SKILL_DIR / "scripts" / "trade_day.py"
+TRADE_DAY = SKILL_DIR / "execution" / "orchestrator.py"
 
 
 def register_windows(start_time_local: str) -> int:
@@ -70,7 +70,7 @@ def main() -> int:
     args = parse_args()
 
     if not TRADE_DAY.exists():
-        sys.exit(f"trade_day.py not found at {TRADE_DAY}")
+        sys.exit(f"execution/orchestrator.py not found at {TRADE_DAY}")
 
     if platform.system() == "Windows":
         if args.unregister:
@@ -82,7 +82,7 @@ def main() -> int:
             f"  Days : MON-FRI\n"
             f"  Cmd  : {sys.executable} {TRADE_DAY}\n"
             "\nNote: if your local clock isn't ET, the bot's internal ET clock "
-            "will still anchor phases correctly — it just means trade_day.py "
+            "will still anchor phases correctly — it just means execution/orchestrator.py "
             "may start before or after 08:55 ET depending on your TZ.\n"
         )
         ans = input("Proceed? [y/N] ").strip().lower()

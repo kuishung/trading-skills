@@ -8,7 +8,8 @@
   "strategies": {
     "guns_setup1": {
       "enabled": false,
-      "entry_et": "09:30",
+      "shortlist_et": "09:00",
+      "entry_et": "09:28",
       "entry_cutoff_et": "09:35",
       "max_concurrent": 2,
       "take_profit_R": 2.0,
@@ -45,6 +46,9 @@
   "ibkr_gateway_path": null,
   "ibkr_ibc_dir": null,
 
+  "ibkr_autolaunch_enabled": true,
+  "ibkr_autolaunch_timeout_s": 90,
+
   "auto_start_enabled": true,
-  "auto_start_et": "09:00"
+  "auto_start_et": "08:30"
 }
