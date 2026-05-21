@@ -3,6 +3,7 @@ state/plan_*.json
 state/fills_*.jsonl
 state/equity_*.json
 state/events_*.jsonl
+state/cache/
 config.json
 __pycache__/
 *.pyc

@@ -19,16 +19,15 @@ Watchlist file format
     one ticker per line; '#' starts a comment line; blank lines ok.
     The "guns_" prefix is deliberate — each strategy family gets its
     own scanner + watchlist (see project memory on compartmentalization).
-    Build it pre-market with `py scripts/guns_scanner.py`, which pulls
-    from two sources:
-      - A GUNS-tuned IBKR ScannerSubscription (PDF filter recipe)
-      - https://thestockmarketwatch.com/markets/today.aspx top gainers
-    Catalyst + float pre-screening is upstream of this — the scanner
-    does NOT classify catalysts. In practice the workflow is:
-      08:30 ET — intraday-premarket-brief runs (catalyst + Finviz)
-      09:00 ET — guns_scanner.py runs (IBKR + SMW union)
-      09:00-09:25 ET — user prunes the file (drop M&A, non-catalyst,
-                       high-float names) per the GUNS rules.
+    Build it pre-market with `py scripts/guns_scanner.py`, which is a
+    self-contained pipeline (no sibling-skill dependencies):
+      1. IBKR ScannerSubscription (GUNS-tuned filters from the PDF)
+      2. thestockmarketwatch.com top-gainers scrape
+      3. Float filter (scripts/guns_float_lookup.py) — drops > 100M
+      4. Catalyst classifier (scripts/guns_catalyst_classifier.py) —
+         drops M&A, secondary offerings, dilution, going-concern,
+         SEC actions, FDA rejections
+    The output file is ready to trade; no manual pruning needed.
 
 The bot itself enforces the price floor ($1.50) and PM-volume floor
 (30K) as a defensive double-check inside each setup's evaluate().

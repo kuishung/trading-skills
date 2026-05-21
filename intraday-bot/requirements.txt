@@ -6,3 +6,7 @@ ib_insync>=0.9.86
 # Dashboard server (scripts/dashboard.py)
 fastapi>=0.110
 uvicorn[standard]>=0.29
+# GUNS scanner — float lookup + catalyst news classifier
+# (scripts/guns_float_lookup.py, scripts/guns_catalyst_classifier.py).
+# Optional: scanner degrades gracefully (CAUTION flags) if not installed.
+yfinance>=0.2.40

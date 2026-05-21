@@ -1,15 +1,16 @@
 ---
 name: intraday_bot
-version: 0.8.0
-description: Strategy-agnostic intraday paper-trading framework. Provides the infrastructure (IBKR scanner pipeline, Alpaca paper-order execution, OCO brackets, breakeven moves, EOD safety sweep, structured journaling, dashboard) and a strict risk discipline (1% NLV per trade, notional cap, EOD close-all). Strategies are drop-in modules under scripts/strategies/ — wire one in by adding a file that exposes build(cfg) -> Strategy, registering it in KNOWN_STRATEGIES, and enabling it under cfg.strategies.<name> in config.json. Ships with GUNS Setup 1 (PM-high break at 09:30) and GUNS Setup 5 (first 1-min candle break at 09:31), both disabled by default. With no strategies enabled, the bot refuses to start. Trigger phrases include "run intraday bot", "start intraday bot", "wire intraday strategy".
+version: 0.9.0
+description: Strategy-agnostic intraday paper-trading framework. Provides the infrastructure (IBKR scanner pipeline, Alpaca paper-order execution, OCO brackets, breakeven moves, EOD safety sweep, structured journaling, dashboard) and a strict risk discipline (1% NLV per trade, notional cap, EOD close-all). Strategies are drop-in modules under scripts/strategies/ — wire one in by adding a file that exposes build(cfg) -> Strategy, registering it in KNOWN_STRATEGIES, and enabling it under cfg.strategies.<name> in config.json. Ships with GUNS Setup 1 (PM-high break at 09:30) and GUNS Setup 5 (first 1-min candle break at 09:31), both disabled by default. With no strategies enabled, the bot refuses to start. Fully self-contained — float filter (yfinance) and catalyst classifier (yfinance news) run inside this folder; no sibling-skill dependency. Trigger phrases include "run intraday bot", "start intraday bot", "wire intraday strategy".
 ---
 
 # Intraday Bot — Strategy-Agnostic Paper-Trading Framework
 
-**Version:** 0.8.0 — GUNS Setup 1 + 5 wired, both disabled by default
+**Version:** 0.9.0 — GUNS scanner is now self-contained: float + catalyst filters live in this folder
 
 ## Changelog
 
+- **0.9.0** (2026-05-21) — GUNS scanner is now end-to-end self-contained. Added `scripts/guns_float_lookup.py` (yfinance `floatShares` with a 7-day disk cache, drops float > 100M per the PDF) and `scripts/guns_catalyst_classifier.py` (yfinance `Ticker.news` + keyword classifier, drops M&A targets, secondary offerings, dilution, going-concern, SEC actions, FDA rejections; flags AI / earnings / FDA approvals as good). Both modules are GUNS-specific by design and wired only into `guns_scanner.py`. The scanner's output watchlist is now ready-to-trade with no manual pruning — `# UPSTREAM TODO` header line removed. New CLI flags: `--no-float`, `--no-catalyst`, `--strict-float`, `--strict-catalyst`, `--keep-mna`, `--float-cap N`. Bot still defensively re-checks price ≥ $1.50 and PM volume ≥ 30K inside `evaluate()`.
 - **0.8.0** (2026-05-21) — Wire GUNS (Gap Up News Scalp) Setups 1 and 5 as MVP, plus `scripts/guns_scanner.py` to build the daily watchlist. Source: Adam Khoo Piranha Profits Lesson 8. Setup 1 = break of pre-market high at 09:30 ET; Setup 5 = break of first 1-min RTH candle at 09:31 ET. Shared universe via `state/watchlist_guns_<date>.txt` (per-family path so future ORB / DITP strategies get their own scanner + watchlist). The scanner pulls candidates from (a) a GUNS-tuned IBKR `ScannerSubscription` matching the PDF filter recipe (price 1.50-500, change% ≥ 5, avg-vol 20K-70M, today vol > 30K) and (b) `thestockmarketwatch.com/markets/today.aspx` top-gainers HTML scrape — union by symbol with per-source provenance comments. Price-tier SL table (10-50¢ by price bracket), 2R default TP, framework's existing BE-at-1R polling. Defensive double-check on price>=$1.50 and PM-volume>=30K inside each evaluate(). Both setups ship `enabled: false` in config.example.json — flip to true after curating the watchlist. Setups 2 (PM pivot break), 3 (PM bull flag), and 4 (post-open bull flag M1/M2/M5) are out of scope for this MVP; Setup 4 in particular needs a rolling watch window (09:30-10:30) that doesn't yet exist in the framework.
 - **0.7.0** — Clear wired strategies + rename internals to intraday_bot
 
@@ -172,33 +173,34 @@ GUNS is ONE universe (gap-up + news catalyst + low float + price≥$1.50 + PM-vo
 
 ### Watchlist (shared universe input)
 
-Both setups read `state/watchlist_guns_<date>.txt` — one ticker per line, `#` comments allowed. The `guns_` prefix is deliberate: each strategy family (GUNS today; ORB, DITP etc. in future) gets its own scanner with its own filter criteria, writing to its own watchlist file. The bot does NOT classify catalysts or fetch float here — that's an upstream responsibility.
+Both setups read `state/watchlist_guns_<date>.txt` — one ticker per line, `#` comments allowed. The `guns_` prefix is deliberate: each strategy family (GUNS today; ORB, DITP etc. in future) gets its own scanner with its own filter criteria, writing to its own watchlist file.
 
-**`scripts/guns_scanner.py` builds this file from two sources** (PDF slides 11-12 + 15-17):
+**`scripts/guns_scanner.py` is a self-contained pipeline** (no sibling-skill dependencies) — it gathers candidates, filters by float, classifies catalysts, and writes a ready-to-trade file:
 
 1. **IBKR GUNS-tuned scanner.** Submits a `ScannerSubscription` (`STK.US.MAJOR` — NYSE + AMEX + ARCA + NQ.NM + NQ.SC + BATS, `stockTypeFilter="CORP"` — no ADR/ETF/REIT/CEF, `TOP_PERC_GAIN`) with the filter recipe — price 1.50-500, change% ≥ 5, avg-vol ≥ 20K, today's vol > 30K. Uses `clientId=82` (distinct from bot 71 / observer 80 / dashboard 99).
 2. **`https://thestockmarketwatch.com/markets/today.aspx`.** Scrapes the "Top Gainers" table (best-effort HTML parsing; logs a warning rather than crashing if the page restructures). Applies the same price + change% filter at the source.
+3. **`scripts/guns_float_lookup.py`** — yfinance `Ticker.info["floatShares"]` with a 7-day disk cache. Drops anything with float > 100M (PDF rule). Symbols whose float can't be determined are kept with a `CAUTION: float=?` flag unless `--strict-float` is passed.
+4. **`scripts/guns_catalyst_classifier.py`** — yfinance `Ticker.news` filtered to the last 36 hours, then keyword-matched. Drops BAD catalysts (M&A target / acquirer, secondary offering, dilution, PIPE, reverse split, going-concern, bankruptcy, SEC/DOJ action, FDA rejection / CRL, guidance cut). Tags GOOD catalysts (earnings beat, guidance raise, FDA approval, contract win, partnership, analyst upgrade, AI sympathy). Unknown-catalyst names kept with `CAUTION: no-fresh-news` unless `--strict-catalyst`. M&A names dropped by default; `--keep-mna` retains them with caution.
 
-The script merges by symbol (union, dedupe), ranks IBKR-then-SMW with overlap weighted highest, caps to `--top N` (default 20), and writes the file with per-symbol provenance comments:
+The script then merges by symbol (union, dedupe), ranks IBKR-then-SMW with overlap weighted highest, caps to `--top N` (default 20), and writes the file with per-symbol provenance + filter details:
 
 ```
-HCWB      # IBKR rank=1; SMW; chg=+12.5%; px=$3.45
-JDZG      # IBKR rank=2
-MTVA      # SMW; chg=+9.1%; px=$2.89
+HCWB      # IBKR rank=1; SMW; chg=+12.5%; px=$3.45; float=8.2M; cat=earnings_beat
+JDZG      # IBKR rank=2; float=44.1M; cat=fda_good
+MTVA      # SMW; chg=+9.1%; px=$2.89; float=?; cat=?; CAUTION:float=?,no-fresh-news
 ```
 
 Run it pre-market:
 
 ```
-py scripts/guns_scanner.py                  # both sources, top 20
-py scripts/guns_scanner.py --source smw     # SMW only (no IBKR connection)
-py scripts/guns_scanner.py --no-write       # preview to stdout
+py scripts/guns_scanner.py                       # both sources, all filters, top 20
+py scripts/guns_scanner.py --source smw          # SMW only (no IBKR connection)
+py scripts/guns_scanner.py --strict-catalyst     # drop unknown-news names too
+py scripts/guns_scanner.py --float-cap 50000000  # tighter 50M float cap
+py scripts/guns_scanner.py --no-float            # skip float filter (debug)
+py scripts/guns_scanner.py --no-catalyst         # skip catalyst filter (debug)
+py scripts/guns_scanner.py --no-write            # preview to stdout
 ```
-
-**Upstream hardening** the scanner does NOT do — the user (or a future tool) must do these before the open:
-- Drop M&A names (per GUNS rules — the `intraday-premarket-brief` skill flags these)
-- Drop high-float names (> 100M float; check Finviz)
-- Verify catalyst quality (earnings beat / FDA / analyst upgrade / clinical pass — NOT acquisitions / cosmetic news)
 
 The bot defensively re-checks price ≥ $1.50 and PM volume ≥ 30K inside each setup's `evaluate()` so a bad row in the file doesn't fire an entry.
 
