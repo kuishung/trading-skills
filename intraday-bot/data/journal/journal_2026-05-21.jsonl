@@ -124,3 +124,23 @@
 {"ts": "2026-05-21T09:47:51+00:00", "strategy": "guns_setup5", "event": "watchlist_missing", "path": "D:\\Dropbox\\Claude\\claude-skills\\trading-skills\\intraday-bot\\state\\watchlist_guns_2026-05-21.txt"}
 {"ts": "2026-05-21T09:47:51+00:00", "strategy": "guns_setup5", "event": "universe_picked", "n": 0, "symbols": []}
 {"ts": "2026-05-21T09:47:51+00:00", "strategy": "guns_setup5", "event": "strategy_finished", "n_submitted": 0, "reason": "empty universe"}
+{"ts": "2026-05-21T10:25:08+00:00", "strategy": "guns_setup1", "event": "watchlist_missing", "path": "D:\\Dropbox\\Claude\\claude-skills\\trading-skills\\intraday-bot\\state\\watchlist_guns_2026-05-21.txt"}
+{"ts": "2026-05-21T10:25:09+00:00", "strategy": "guns_setup1", "event": "shortlist_built", "n_scanner": 0, "n_smw": 10, "n_merged": 10, "sources_overlap": 0, "symbols": ["WHLR", "PCLA", "ATPC", "EDHL", "INFQ", "RGTI", "APLD", "QBTS", "PURR", "QUBT"]}
+{"ts": "2026-05-21T10:25:09+00:00", "strategy": "guns_setup1", "event": "strategy_started", "entry_et": "09:28", "cap": 2, "armed": true}
+{"ts": "2026-05-21T10:25:09+00:00", "strategy": "guns_setup1", "event": "shortlist_loaded", "path": "D:\\Dropbox\\Claude\\claude-skills\\trading-skills\\intraday-bot\\state\\shortlist_guns_setup1_2026-05-21.json", "n": 10}
+{"ts": "2026-05-21T10:25:09+00:00", "strategy": "guns_setup1", "event": "universe_picked", "n": 10, "symbols": ["WHLR", "PCLA", "ATPC", "EDHL", "INFQ", "RGTI", "APLD", "QBTS", "PURR", "QUBT"]}
+{"ts": "2026-05-21T10:25:14+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "WHLR", "reason": "no_pm_bars"}
+{"ts": "2026-05-21T10:25:14+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "PCLA", "reason": "no_pm_bars"}
+{"ts": "2026-05-21T10:25:14+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "ATPC", "reason": "no_pm_bars"}
+{"ts": "2026-05-21T10:25:14+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "EDHL", "reason": "no_pm_bars"}
+{"ts": "2026-05-21T10:25:14+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "INFQ", "reason": "no_pm_bars"}
+{"ts": "2026-05-21T10:25:14+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "RGTI", "reason": "no_pm_bars"}
+{"ts": "2026-05-21T10:25:14+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "APLD", "reason": "no_pm_bars"}
+{"ts": "2026-05-21T10:25:14+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "QBTS", "reason": "no_pm_bars"}
+{"ts": "2026-05-21T10:25:14+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "PURR", "reason": "no_pm_bars"}
+{"ts": "2026-05-21T10:25:14+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "QUBT", "reason": "no_pm_bars"}
+{"ts": "2026-05-21T10:25:14+00:00", "strategy": "guns_setup1", "event": "strategy_finished", "n_submitted": 0, "n_disarmed_skips": 0}
+{"ts": "2026-05-21T10:25:14+00:00", "strategy": "guns_setup5", "event": "strategy_started", "entry_et": "09:31", "cap": 2, "armed": true}
+{"ts": "2026-05-21T10:25:14+00:00", "strategy": "guns_setup5", "event": "watchlist_missing", "path": "D:\\Dropbox\\Claude\\claude-skills\\trading-skills\\intraday-bot\\state\\watchlist_guns_2026-05-21.txt"}
+{"ts": "2026-05-21T10:25:14+00:00", "strategy": "guns_setup5", "event": "universe_picked", "n": 0, "symbols": []}
+{"ts": "2026-05-21T10:25:14+00:00", "strategy": "guns_setup5", "event": "strategy_finished", "n_submitted": 0, "reason": "empty universe"}
