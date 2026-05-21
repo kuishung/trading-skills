@@ -50,5 +50,11 @@
   "ibkr_autolaunch_timeout_s": 90,
 
   "auto_start_enabled": true,
-  "auto_start_et": "08:30"
+  "auto_start_et": "08:30",
+
+  "eod_history_ingest": true,
+  "eod_history_timeframes": ["1min", "daily"],
+  "eod_history_journal_days": 30,
+  "eod_history_seed_days": 60,
+  "history_universe": []
 }

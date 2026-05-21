@@ -1,12 +1,12 @@
 ---
 name: intraday_bot
-version: 0.14.1
-description: Self-contained intraday paper-trading framework. Six top-level folders (Resources, Strategy, Execution, Journal, Review, Dashboard) + scripts/ for operational glue. Strategies are organised by FAMILY — strategy/<FAMILY>/<setup_name>/ — with the GUNS family (Adam Khoo Gap Up News Scalp) wired today. Each strategy carries its own impl.py + __init__.py + changelog.md (per-strategy versioning). Each family has its own pre-market scanner. Per-strategy gating with TWO independent live flags — ON/OFF (pipeline runs?) and ARMED (plans submit?). Three states: OFF, ON+DISARMED (paper-eval), ON+ARMED (live). Strict risk discipline (1% NLV per trade, notional cap, EOD close-all). Fully self-contained — every dependency inside intraday-bot/, designed for Dropbox sync across PCs. Read intraday-bot/CLAUDE.md first in every session. Trigger phrases: "run intraday bot", "start intraday bot", "wire intraday strategy".
+version: 0.15.0
+description: Self-contained intraday paper-trading framework. Seven top-level folders (Resources, Strategy, Execution, Journal, Review, Data, Dashboard) + scripts/ for operational glue. Strategies are organised by FAMILY — strategy/<FAMILY>/<setup_name>/ — with the GUNS family (Adam Khoo Gap Up News Scalp) wired today. Each strategy carries its own impl.py + __init__.py + changelog.md (per-strategy versioning). Each family has its own pre-market scanner. Per-strategy gating with TWO independent live flags — ON/OFF (pipeline runs?) and ARMED (plans submit?). Three states: OFF, ON+DISARMED (paper-eval), ON+ARMED (live). Strict risk discipline (1% NLV per trade, notional cap, EOD close-all). Fully self-contained — every dependency inside intraday-bot/, designed for Dropbox sync across PCs. Read intraday-bot/CLAUDE.md first in every session. Trigger phrases: "run intraday bot", "start intraday bot", "wire intraday strategy".
 ---
 
 # Intraday Bot — Six-Layer Self-Contained Paper-Trading Framework
 
-**Version:** 0.14.1 — dashboard fully consolidated under `dashboard/` (server + .bat launchers + setup_launcher.py)
+**Version:** 0.15.0 — `data/` artifact folder (the cream) + Parquet bars I/O + S&P 500 yfinance seed + IBKR EOD ingest hook
 
 > **Read [`CLAUDE.md`](CLAUDE.md) first** — it carries the strict rules and the cross-PC sync workflow Claude consults on every session. Mirrored from `~/.claude/.../memory/project_intraday_bot_rules.md`. Keep them in sync.
 

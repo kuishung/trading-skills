@@ -10,3 +10,7 @@ uvicorn[standard]>=0.29
 # (scripts/guns_float_lookup.py, scripts/guns_catalyst_classifier.py).
 # Optional: scanner degrades gracefully (CAUTION flags) if not installed.
 yfinance>=0.2.40
+# Bars storage — Parquet read/write via resources/bars_store.py.
+# Canonical format for data/bars/. Lazy-imported (only triggers when
+# a strategy actually reads/writes historical bars).
+pyarrow>=15

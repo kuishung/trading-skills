@@ -15,7 +15,7 @@ what was seen, what was decided, why, and what happened next.
 
 ## Contents
 
-- `writer.py` — `journal(strategy, event, **fields)` appends one JSONL line per call to `state/journal_<date>.jsonl`. `summarize_by_strategy(date_iso)` prints an EOD per-strategy roll-up (shortlisted / rejected / planned / submitted / filled / BE / TP / SL / cancel / EOD-closed counts).
+- `writer.py` — `journal(strategy, event, **fields)` appends one JSONL line per call to `data/journal/journal_<date>.jsonl` (the cream). `summarize_by_strategy(date_iso)` prints an EOD per-strategy roll-up (shortlisted / rejected / planned / submitted / filled / BE / TP / SL / cancel / EOD-closed counts). `read_journal()` transparently falls back to legacy `state/journal_*.jsonl` so old files stay readable.
 - `events.py` — `emit(type, payload)` appends to `state/events_<date>.jsonl`. Used by the dashboard event stream + the `auto_start` lifecycle event.
 
 ## Canonical event vocabulary (additive)
@@ -50,6 +50,11 @@ ibc_autolaunch_started   bot spawned IBC launcher .bat because TWS wasn't logged
 Add new event names as needed. The vocabulary is open.
 
 ## Changelog
+
+### 2026-05-21 — Output path moved to `data/journal/` (the cream)
+- `journal/writer.py` now writes to `data/journal/journal_<date>.jsonl` instead of `state/journal_<date>.jsonl`. Reason: journals are *accumulated artifacts*, not session-ephemeral state — they're the substrate the `review/` layer reads weeks/months later. They belong in `data/` (committed, long-term memory), not `state/` (gitignored, regenerated every session).
+- `read_journal()` checks the new location first, then falls back to the legacy `state/journal_*.jsonl` path so historical files keep loading without re-migration. Existing files were `git mv`-ed so commit history is preserved.
+- No event-vocabulary changes. No caller of `journal(...)` had to change — the path is encapsulated.
 
 ### 2026-05-21 — Convention: events carry `strategy_version`
 - No code change in this folder. **Discipline change**: strategies should include `strategy_version=plan.get("strategy_version")` in every relevant `journal(...)` call so downstream analytics (`review/stats.py`) can bucket outcomes per rule-set version.

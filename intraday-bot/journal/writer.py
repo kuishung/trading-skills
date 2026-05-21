@@ -1,6 +1,6 @@
 """Structured decision journal for the multi-strategy bot.
 
-Appends one JSONL record per decision to state/journal_<date>.jsonl.
+Appends one JSONL record per decision to data/journal/journal_<date>.jsonl.
 Every entry has:
   ts        — ISO-8601 UTC timestamp
   strategy  — name of the strategy that made the decision
@@ -43,6 +43,7 @@ from typing import Any
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
 STATE_DIR = SKILL_DIR / "state"
+JOURNAL_DIR = SKILL_DIR / "data" / "journal"
 
 
 def _et_tz():
@@ -61,13 +62,13 @@ def _date_iso_et() -> str:
 def journal(strategy: str, event: str,
             symbol: str | None = None,
             **fields: Any) -> None:
-    """Append a structured decision record to state/journal_<date>.jsonl.
+    """Append a structured decision record to data/journal/journal_<date>.jsonl.
 
     Best-effort: failures (disk full, permission denied) print to stderr
     but never raise, so the bot keeps trading even if journaling is broken.
     """
     date_iso = _date_iso_et()
-    path = STATE_DIR / f"journal_{date_iso}.jsonl"
+    path = JOURNAL_DIR / f"journal_{date_iso}.jsonl"
     record: dict[str, Any] = {
         "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "strategy": strategy,
@@ -77,7 +78,7 @@ def journal(strategy: str, event: str,
         record["symbol"] = symbol
     record.update(fields)
     try:
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        JOURNAL_DIR.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record, default=str) + "\n")
     except Exception as exc:
@@ -85,11 +86,20 @@ def journal(strategy: str, event: str,
 
 
 def read_journal(date_iso: str | None = None) -> list[dict]:
-    """Load all journal records for a given ET date (default: today)."""
+    """Load all journal records for a given ET date (default: today).
+
+    Reads from data/journal/journal_<date>.jsonl, falling back to the
+    legacy state/journal_<date>.jsonl path if the new location is
+    empty (one-session migration grace period).
+    """
     date_iso = date_iso or _date_iso_et()
-    path = STATE_DIR / f"journal_{date_iso}.jsonl"
+    path = JOURNAL_DIR / f"journal_{date_iso}.jsonl"
     if not path.exists():
-        return []
+        legacy = STATE_DIR / f"journal_{date_iso}.jsonl"
+        if legacy.exists():
+            path = legacy
+        else:
+            return []
     out: list[dict] = []
     try:
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():

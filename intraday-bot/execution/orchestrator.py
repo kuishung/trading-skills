@@ -700,6 +700,46 @@ def _fire_strategy_shortlist(cfg, strat: Strategy, date_iso: str) -> None:
         journal(strat.name, "shortlist_failed", error=f"{type(exc).__name__}: {exc}")
 
 
+# ---------- EOD history ingest ----------
+
+def _run_eod_history_ingest(cfg) -> None:
+    """Post-EOD: incremental Parquet update of today's universe.
+
+    Soft-fail by design -- the bot's success does NOT depend on this.
+    If IBKR is down, pacing fails, or pyarrow is missing, we log and
+    move on. The user can always rerun manually:
+        py resources/ibkr_history.py update --universe
+    """
+    timeframes = cfg.get("eod_history_timeframes", ["1min", "daily"])
+    journal_days = int(cfg.get("eod_history_journal_days", 30))
+    seed_days = int(cfg.get("eod_history_seed_days", 60))
+    try:
+        from ibkr_history import build_universe, bulk_update
+    except Exception as exc:
+        safe_log_stdout(f"[eod ingest] skipped (import failed): {exc}")
+        return
+    try:
+        symbols = build_universe(cfg, journal_days=journal_days)
+    except Exception as exc:
+        safe_log_stdout(f"[eod ingest] skipped (universe build failed): {exc}")
+        return
+    if not symbols:
+        safe_log_stdout("[eod ingest] universe is empty -- skipped.")
+        return
+    safe_log_stdout(f"=== EOD history ingest -- {len(symbols)} symbols x "
+                    f"{len(timeframes)} timeframes ===")
+    try:
+        bulk_update(symbols, timeframes, cfg, lookback_days_for_new=seed_days)
+        safe_log_stdout("[eod ingest] complete.")
+    except Exception as exc:
+        safe_log_stdout(f"[eod ingest] FAILED: {type(exc).__name__}: {exc}")
+        try:
+            journal("orchestrator", "eod_history_ingest_failed",
+                    error=f"{type(exc).__name__}: {exc}")
+        except Exception:
+            pass
+
+
 # ---------- EOD safety sweep ----------
 
 def phase_eod_close_all(cfg, trades: dict[str, TradeRecord],
@@ -1050,6 +1090,12 @@ def main() -> int:
 
     # 3. EOD sweep at 15:58 ET — final close-all guarantee.
     phase_eod_close_all(cfg, trades, date_iso, args.dry_run, args.fake_now)
+
+    # 3b. EOD history ingest — incremental Parquet update of today's universe
+    #     so tomorrow's review/backtest has fresh bars without manual action.
+    #     Soft-fail: bot success doesn't depend on IBKR being up.
+    if cfg.get("eod_history_ingest", True) and not args.dry_run:
+        _run_eod_history_ingest(cfg)
 
     # 4. Report
     closing_equity = None

@@ -22,13 +22,14 @@ market actually does, not what the original PDF author thought.
 
 ## Contents
 
-- `stats.py` — **The analyzer.** Reads `state/journal_*.jsonl` across a date window. Computes per-strategy event counts, rejection-reason breakdown, per-symbol metrics, and R-multiple distribution for completed trades. Pure stats, no LLM. CLI:
+- `stats.py` — **The analyzer.** Reads `data/journal/journal_*.jsonl` across a date window (and legacy `state/journal_*.jsonl` for pre-migration days). Computes per-strategy event counts, rejection-reason breakdown, per-symbol metrics, and R-multiple distribution for completed trades. Pure stats, no LLM. CLI:
   ```
   py review/stats.py                    # last 7 days, all strategies
   py review/stats.py --window 30d
   py review/stats.py --window all --strategy guns_setup1
   py review/stats.py --symbol NVDA
   py review/stats.py --json             # machine-readable output
+  py review/stats.py --save             # also writes data/review/stats_<today>.json
   ```
 - `propose.py` — **The proposer.** Consumes stats output, runs threshold-based heuristics, emits structured proposals when patterns clearly warrant change. Cold-start safe: refuses to propose with sample size below `--min-sample-size` (default 30). CLI:
   ```
@@ -36,6 +37,7 @@ market actually does, not what the original PDF author thought.
   py review/propose.py --window 30d
   py review/propose.py --min-sample-size 50
   py review/propose.py --json
+  py review/propose.py --save           # also writes data/review/proposals_<today>.json
   ```
 
 ## What's intentionally NOT here yet
@@ -82,6 +84,13 @@ without any capital risk. Once data is in, the enrichment program
 has fuel.
 
 ## Changelog
+
+### 2026-05-21 — `--save` flag wired in stats + propose; reads from `data/journal/`
+- Both CLIs now write JSON snapshots into `data/review/` when `--save` is passed:
+  - `stats.py --save` → `data/review/stats_<today>.json`
+  - `propose.py --save` → `data/review/proposals_<today>.json`
+- This makes the bot's review output a first-class **committed artifact**, not an ephemeral terminal print. Snapshots accumulate over time so we can diff "what did the proposer think a week ago vs today" and see whether tuning intuitions are stabilizing or whipsawing.
+- `stats.py` reads journals from `data/journal/journal_*.jsonl` first, then falls back to legacy `state/journal_*.jsonl` so historical days stay analyzable through the migration.
 
 ### 2026-05-21 — Folder operationalised
 - New `stats.py` (~500 LOC): per-strategy + per-symbol journal analyzer. Reconstructs trade life cycles (`entry_submitted` → `entry_filled` → `breakeven_moved` → `exit_filled` / `force_closed` / `entry_cancelled`) by joining events. Computes R-multiples, win rates, rejection breakdowns. Cold-start tolerant; works on whatever data exists. Emits text or JSON.

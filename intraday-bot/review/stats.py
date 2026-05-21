@@ -1,6 +1,6 @@
 """Per-strategy + per-symbol journal statistics — the analyzer.
 
-Reads state/journal_*.jsonl across a date window and computes:
+Reads data/journal/journal_*.jsonl across a date window and computes:
   - Event counts per strategy (started, finished, planned, submitted,
     filled, disarmed, off_skipped, shortlist_built, rejected, etc.)
   - Rejection-reason breakdown per strategy (why did candidates not fire?)
@@ -42,6 +42,8 @@ while _root != _root.parent and not (_root / "SKILL.md").exists():
     _root = _root.parent
 SKILL_DIR = _root
 STATE_DIR = SKILL_DIR / "state"
+JOURNAL_DIR = SKILL_DIR / "data" / "journal"
+REVIEW_DIR = SKILL_DIR / "data" / "review"
 for _p in [str(_root)] + [str(_root / s) for s in
         ("scripts", "resources", "strategy", "execution",
          "journal", "review", "dashboard")]:
@@ -112,16 +114,27 @@ def parse_window(window: str) -> int:
 
 
 def journal_files_in_window(days: int) -> list[Path]:
-    """Find state/journal_<date>.jsonl within the last `days` (UTC).
+    """Find data/journal/journal_<date>.jsonl within the last `days` (UTC).
+    Also includes legacy state/journal_*.jsonl files so historical
+    runs from before the data/ migration stay readable.
     `days=-1` returns all journal files we have."""
-    all_files = sorted(STATE_DIR.glob("journal_*.jsonl"))
+    primary = sorted(JOURNAL_DIR.glob("journal_*.jsonl"))
+    legacy = sorted(STATE_DIR.glob("journal_*.jsonl"))
+    seen_dates: set[str] = set()
+    all_files: list[Path] = []
+    for p in primary + legacy:
+        stem = p.stem.removeprefix("journal_")
+        if stem in seen_dates:
+            continue
+        seen_dates.add(stem)
+        all_files.append(p)
+    all_files.sort(key=lambda p: p.stem)
     if days < 0:
         return all_files
     today = datetime.now(timezone.utc).date()
     cutoff = today - timedelta(days=days)
     keep: list[Path] = []
     for p in all_files:
-        # state/journal_YYYY-MM-DD.jsonl
         stem = p.stem.removeprefix("journal_")
         try:
             dt = datetime.strptime(stem, "%Y-%m-%d").date()
@@ -454,6 +467,9 @@ def parse_args() -> argparse.Namespace:
                    help="Show per-symbol detail even when empty.")
     p.add_argument("--json", action="store_true",
                    help="Emit machine-readable JSON instead of text.")
+    p.add_argument("--save", action="store_true",
+                   help="Write a JSON snapshot to data/review/stats_<today>.json "
+                        "(in addition to text/JSON stdout).")
     return p.parse_args()
 
 
@@ -471,6 +487,18 @@ def main() -> int:
     stats = aggregate(events,
                       strategy_filter=args.strategy,
                       symbol_filter=args.symbol)
+    if args.save:
+        REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        today = datetime.now(timezone.utc).date().isoformat()
+        snap = REVIEW_DIR / f"stats_{today}.json"
+        snap.write_text(json.dumps({
+            "window": args.window,
+            "files": [str(p.name) for p in files],
+            "strategy_filter": args.strategy,
+            "symbol_filter": args.symbol,
+            "stats": stats,
+        }, indent=2, default=str), encoding="utf-8")
+        sys.stderr.write(f"# snapshot -> {snap}\n")
     if args.json:
         sys.stdout.write(json.dumps(stats, indent=2, default=str))
         sys.stdout.write("\n")

@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +53,9 @@ del _root, _p
 # ---
 
 import stats as stats_mod   # noqa: E402  (review/stats.py)
+
+SKILL_DIR = Path(__file__).resolve().parent.parent
+REVIEW_DIR = SKILL_DIR / "data" / "review"
 
 DEFAULT_MIN_SAMPLE_SIZE = 30  # below this we never propose anything
 
@@ -280,6 +284,9 @@ def parse_args() -> argparse.Namespace:
                         f"(default {DEFAULT_MIN_SAMPLE_SIZE}).")
     p.add_argument("--json", action="store_true",
                    help="Emit machine-readable JSON instead of text.")
+    p.add_argument("--save", action="store_true",
+                   help="Write a JSON snapshot to data/review/proposals_<today>.json "
+                        "(in addition to text/JSON stdout).")
     return p.parse_args()
 
 
@@ -290,6 +297,12 @@ def main() -> int:
         min_sample_size=args.min_sample_size,
         strategy=args.strategy,
     )
+    if args.save:
+        REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        today = datetime.now(timezone.utc).date().isoformat()
+        snap = REVIEW_DIR / f"proposals_{today}.json"
+        snap.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
+        sys.stderr.write(f"# snapshot -> {snap}\n")
     if args.json:
         sys.stdout.write(json.dumps(report, indent=2, default=str) + "\n")
     else:

@@ -83,23 +83,107 @@ When you edit anything in `<folder>/`:
 
 Setup folders (`strategy/<FAMILY>/<setup_name>/`) merge their per-strategy versioning into the same README — they don't carry a separate `changelog.md`. The setup README's Changelog section **is** the version history that journal events reference via `__version__`.
 
-The folders that should have a README: `resources/`, `strategy/`, `strategy/<FAMILY>/`, `strategy/<FAMILY>/<setup>/`, `execution/`, `journal/`, `review/`, `dashboard/`, `scripts/`. Skip `ibc/`, `state/`, `__pycache__/`.
+The folders that should have a README: `resources/`, `strategy/`, `strategy/<FAMILY>/`, `strategy/<FAMILY>/<setup>/`, `execution/`, `journal/`, `review/`, `data/`, `dashboard/`, `scripts/`. Skip `ibc/`, `state/`, `__pycache__/`.
 
 The intraday-bot/ root uses SKILL.md (skill manifest) + this CLAUDE.md instead of a README.
 
-## Architecture (7 top-level folders)
+## Architecture (8 top-level folders)
 
 Every change must map cleanly to one of these:
 
 | Folder | Role | What lives here |
 |---|---|---|
-| `resources/` | Layer 1 — data sources | IBKR adapter, yfinance float/news, future Finviz, etc. Stateless. |
+| `resources/` | Layer 1 — data sources | IBKR adapter, yfinance float/news, pattern primitives, ticker profiles, `bars_store.py` (parquet read/write), vendored TradingView MCP. Stateless. |
 | `strategy/` | Layer 2 — analysis | Per-family subfolders (`GUNS/`, future `ORB/`, ...). Each strategy is its own folder with `impl.py` + `__init__.py` + `changelog.md`. |
 | `execution/` | Layer 3 — Alpaca | Submits, manages positions with strategy-aware exit policies. |
-| `journal/` | Layer 4 — logs | `writer.py` (decisions), `events.py` (event stream). |
-| `review/` | Layer 5 — self-improvement | Reads journals, proposes strategy edits with version bumps. Placeholder today. |
+| `journal/` | Layer 4 — logs | `writer.py` (decisions), `events.py` (event stream). Writes JSONL to `data/journal/`. |
+| `review/` | Layer 5 — self-improvement | Reads `data/journal/`, proposes strategy edits with version bumps. Writes snapshots to `data/review/`. |
+| `data/` | **the cream — accumulated artifacts** | Historical bars (`data/price_history/{1min,5min,15min,daily}/<SYM>.parquet`), decision journals (`data/journal/journal_<date>.jsonl`), review snapshots (`data/review/`), pattern fixtures (`data/fixtures/`). Bars are gitignored (bulk binary, regeneratable, Dropbox-synced); journals + review + fixtures are **committed**. |
 | `dashboard/` | operational UI | `server.py` + `web/index.html` + the `*.bat` launchers + `setup_launcher.py`. Real-time observer + ON/OFF + ARM control. Everything dashboard-related lives in this one folder. |
 | `scripts/` | operational glue | `_common.py` (config + env + ET clock + data dispatch), `_gating.py`, `setup_*.py`. |
+
+**`data/` vs `state/`** — `state/` is *session-ephemeral* (flags, today's
+watchlist, caches, today's fills/equity snapshots; mostly gitignored,
+regenerated every session). `data/` is the *long-term memory* — decision
+journals, ingested historical bars, review reports, test fixtures. If
+the bot's "self-improvement loop" needs to read it weeks later, it lives
+in `data/`. If it's just session bookkeeping that the next run can
+rebuild, it lives in `state/`.
+
+## Bars storage = Parquet (locked decision)
+
+**Historical OHLCV bars are stored as Parquet, full stop.** Don't
+re-evaluate CSV / JSONL / SQLite / DuckDB / W&B / MLflow as alternatives
+— that conversation already happened, Parquet won. Reasons:
+
+- ~10× smaller than CSV / JSONL, columnar, native to pandas + DuckDB,
+  no server to run.
+- Immutable once written (past months never change) → safe under
+  Dropbox sync (no concurrent-write hazard like SQLite has).
+- Append-friendly: a new symbol-month is a new file; old files never
+  rewritten.
+
+Read/write happens **only** through `resources/bars_store.py`. Strategy
+code, `patterns.py`, `ticker_profile.py`, future `review/backtest.py`
+all go through that module so the parquet detail stays in one place.
+Bar dict shape is `{t, o, h, l, c, v}` everywhere — the same shape
+`patterns.py` consumes.
+
+Layout (one file per symbol per timeframe):
+
+```
+data/price_history/1min/<SYM>.parquet      full history per symbol
+data/price_history/5min/<SYM>.parquet
+data/price_history/15min/<SYM>.parquet
+data/price_history/daily/<SYM>.parquet
+```
+
+**One-file-per-symbol tradeoff**: Parquet files are immutable, so
+"appending" a new bar means read + concat + rewrite the whole file.
+At ~3-5 MB per symbol-year that's ~50ms per write — fine. Only revisit
+(go back to month-partitioning) if we ever ingest tick-level data or
+push past ~10 years × 100+ symbols. The simplicity of `AAPL.parquet IS
+AAPL's full history` is worth the rewrite cost at our scale.
+
+`pyarrow` is in `requirements.txt`. It's lazy-imported inside
+`bars_store.py` so modules that don't touch bars never pay the import
+cost; only the actual read/write functions trigger it.
+
+**First-run bulk seed** (`resources/yfinance_history.py` + `resources/sp500.py`):
+- yfinance is the right tool for the INITIAL bulk seed because IBKR's
+  60-per-600s pacing cap makes a 500-symbol fetch take ~9 hours.
+  yfinance does it in ~93 seconds for 2 years of daily.
+- Yahoo lookback caps per interval: **1min = 7d, 5min = 60d,
+  15min = 60d, daily = unlimited**. Intraday pulls include pre-market +
+  after-hours (`prepost=True`) so GUNS strategies have the data.
+- `py resources/yfinance_history.py seed-sp500 --years 2`
+  → 503 symbols × ~500 daily bars × Parquet = **~12 MB on disk**.
+- Add `--include-5min --include-15min` for 60 days of intraday at
+  those timeframes (each ~2-3 min, ~150 MB combined).
+- Add `--include-1min` for 7 days of 1-min (~1-2 min, ~250 MB).
+- `--include-all-intraday` is the shortcut for all three.
+- `sp500.py` scrapes Wikipedia (`List_of_S%26P_500_companies`),
+  7-day cache. The ingest auto-maps share classes (BRK.B <-> BRK-B).
+- Resume-by-default: re-running `seed-sp500` only fetches symbols that
+  aren't already in `bars_store`. `--force` overrides.
+
+**Ongoing ingest pipeline** (`resources/ibkr_history.py`):
+- Pulls OHLCV from IB Gateway / TWS via `ib_insync`, writes through
+  `bars_store.write_bars()`. Two flows: SEED (one-shot bulk lookback)
+  and UPDATE (incremental, only bars after the last stored timestamp).
+- Pacing: 7s between requests by default (under IB's 60-per-600s cap).
+- Universe = symbols seen in `data/journal/` last 30d + today's GUNS
+  watchlist + `cfg.history_universe` manual additions.
+- **Auto-runs post-EOD** when `cfg.eod_history_ingest=true` (default).
+  After the 15:58 close-all sweep, the orchestrator updates today's
+  universe so tomorrow's review/backtest sees fresh bars without
+  manual action. Soft-fail by design — bot success doesn't depend on
+  IBKR being up. User can always rerun manually:
+  `py resources/ibkr_history.py update --universe`.
+- One-shot seed for a fresh PC: `py resources/ibkr_history.py ingest
+  NVDA MSFT TSLA --timeframes 1min,daily --days 60`.
+- clientId 83 (non-collision with: 71 live bot, 80 observer, 82 GUNS
+  scanner, 98 probe, 99 dashboard).
 
 ## Self-contained portability
 

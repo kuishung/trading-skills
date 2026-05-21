@@ -24,6 +24,10 @@ resources/tradingview-mcp/package-lock.json
 # Copyrighted strategy reference material — synced via Dropbox, not git
 strategy/GUNS/Materials/
 
+# data/ — the cream. journals + review snapshots + fixtures ARE committed;
+# bulk historical bars are regeneratable from IBKR/TV/yfinance (Dropbox-synced).
+data/price_history/
+
 # IBC bundle — contains plaintext IBKR credentials, must NEVER be committed
 ibc/credentials.txt
 ibc/*.log
