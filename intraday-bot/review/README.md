@@ -83,7 +83,41 @@ accumulates real journal events at the same rate as live trading
 without any capital risk. Once data is in, the enrichment program
 has fuel.
 
+## Replay workflow (the new substrate for long-term study)
+
+The orchestrator can re-run any past trading day against the bars we stored in `data/price_history/`:
+
+```
+py execution/orchestrator.py --replay-date 2026-05-21 --fake-now 09:36
+```
+
+Mechanics:
+- `--replay-date YYYY-MM-DD` forces `cfg["data_provider"] = "parquet"`, sets `cfg["replay_date"]`, and switches `date_iso` to the replay date.
+- `--dry-run` is forced True. No Alpaca submission, ever.
+- `fetch_bars()` calls inside Setup 1 / Setup 5 go through `scripts/_common.get_pm_bars` → new `_parquet_minute_bars()` which reads `data/price_history/1min/<SYM>.parquet` between 04:00 ET and `--fake-now` ET of the replay date.
+- Journal events are routed to `data/replay/journal_<date>_<run_id>.jsonl` via `journal.writer.set_replay_target()`. Live `data/journal/` and `state/events_*.jsonl` are untouched, so today's dashboard isn't polluted.
+- The shortlist phase is **skipped** in replay mode — `do_shortlist()` scrapes live PM movers / GUNS scanner output, which is TODAY's state, not the replay date's. The entry phase loads whatever shortlist artifact existed at `state/shortlist_guns_setup1_<replay-date>.json`; if missing, the universe is empty. Each replay run also writes its own journal file so multiple runs of the same day are diffable.
+
+Coverage requirements:
+- 1-minute parquet bars must exist for the symbols in the replay-day's shortlist. The S&P 500 1m ingest covers index members; GUNS tiny-cap targets (WHLR / ATPC / PCLA / …) need their own ingest via `py resources/ibkr_history.py update --universe --timeframes 1min`.
+- The historical `state/shortlist_guns_setup1_<date>.json` artifact must exist. The journal's `shortlist_built` event payload contains the symbols if a polluted artifact needs reconstruction.
+
+Output files:
+- `data/replay/journal_<date>_<run_id>.jsonl` — one file per replay run. `run_id` is `YYYYMMDDTHHMMSSZ` of the wall-clock when the orchestrator started, so multiple replays of the same day produce separate files.
+- Can be analyzed by `stats.py` / `propose.py` exactly like live journals (point them at `data/replay/` via the existing CLI args once they're plumbed in — first cut still reads only `data/journal/`).
+
+Known gaps (next iterations):
+- Shortlist replay: today's `--replay-date` uses the historical shortlist artifact. Future: derive the shortlist from `shortlist_built` events in the live journal so reconstruction is automatic.
+- `fetch_bars` in Setup 5 calls `get_rth_minute_bars` (the full-day variant). The parquet provider handles both via `_parquet_minute_bars(..., pm_only=False)`.
+- Setup-version differential replay: re-run the *same* date with a *different* strategy version to see which rule-set would have planned/rejected differently. Mechanics work today (just edit `impl.py`, bump `__version__`, re-run replay); the diff tool is the missing piece.
+
 ## Changelog
+
+### 2026-05-22 — Replay foundation: `--replay-date` reads bars from `data/price_history/`
+- The orchestrator can now re-run past sessions against stored bars instead of going to IBKR/Alpaca. This is the substrate for the self-improvement loop: change a rule, replay yesterday, see how the new ruleset would have decided.
+- New CLI flag (in `execution/orchestrator.py`): `--replay-date YYYY-MM-DD`. Pair with `--fake-now HH:MM` to set the wall-clock cutoff. Forces `--dry-run`.
+- Replay events route to `data/replay/journal_<date>_<run_id>.jsonl` so today's live journal isn't touched. One file per replay run; multiple runs of the same day are diffable.
+- See "Replay workflow" section above for mechanics, coverage requirements, and known gaps.
 
 ### 2026-05-21 — `--save` flag wired in stats + propose; reads from `data/journal/`
 - Both CLIs now write JSON snapshots into `data/review/` when `--save` is passed:

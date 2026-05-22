@@ -255,6 +255,8 @@ def _try_ibkr(call_name: str, ibkr_callable, *args, **kwargs):
 
 def get_pm_bars(symbols: list[str], cfg: dict, fake_now: str | None = None) -> dict[str, list[dict]]:
     """1-minute bars from 04:00 ET through 'now' (or fake_now), per symbol."""
+    if _provider(cfg) == "parquet":
+        return _parquet_minute_bars(symbols, cfg, fake_now, pm_only=True)
     if _provider(cfg) == "ibkr":
         from ibkr_data import ibkr_pm_bars
         result = _try_ibkr("get_pm_bars", ibkr_pm_bars, symbols, cfg, fake_now)
@@ -265,6 +267,8 @@ def get_pm_bars(symbols: list[str], cfg: dict, fake_now: str | None = None) -> d
 
 def get_rth_minute_bars(symbols: list[str], cfg: dict, fake_now: str | None = None) -> dict[str, list[dict]]:
     """Today's full 1-min bar history (PM + RTH up to now). Caller splits."""
+    if _provider(cfg) == "parquet":
+        return _parquet_minute_bars(symbols, cfg, fake_now, pm_only=False)
     if _provider(cfg) == "ibkr":
         from ibkr_data import ibkr_full_day_minute_bars
         result = _try_ibkr("get_rth_minute_bars", ibkr_full_day_minute_bars,
@@ -272,6 +276,55 @@ def get_rth_minute_bars(symbols: list[str], cfg: dict, fake_now: str | None = No
         if result is not None:
             return result
     return _alpaca_minute_bars(symbols, cfg, fake_now, pm_only=False)
+
+
+# ---------- Parquet-backed replay provider ----------
+#
+# When cfg["data_provider"] == "parquet", bars come from
+# data/price_history/1min/<SYM>.parquet (the bars_store layout). The
+# replay-date is read from cfg["replay_date"] (set by the orchestrator's
+# --replay-date flag). fake_now becomes the cutoff time-of-day.
+#
+# This lets the bot re-evaluate a past session by re-running its decision
+# code against the bars it would have seen then — the substrate for the
+# review/ self-improvement loop.
+
+def _parquet_minute_bars(symbols: list[str], cfg: dict,
+                          fake_now: str | None, pm_only: bool) -> dict[str, list[dict]]:
+    """Read 1-min bars for the replay date from bars_store, returning the
+    same shape as the IBKR/Alpaca providers. pm_only=True trims to 04:00 →
+    09:30 ET; pm_only=False returns 04:00 → fake_now (default 16:00) ET.
+    """
+    date_iso = cfg.get("replay_date")
+    if not date_iso:
+        sys.stderr.write("[parquet] data_provider=parquet but cfg['replay_date'] is missing\n")
+        return {s: [] for s in symbols}
+    try:
+        import bars_store  # type: ignore
+    except ImportError as exc:
+        sys.stderr.write(f"[parquet] bars_store import failed: {exc}\n")
+        return {s: [] for s in symbols}
+    from datetime import datetime as _dt
+    et = _et_tz()
+    yyyy, mm, dd = (int(x) for x in date_iso.split("-"))
+    if pm_only:
+        cutoff = fake_now or "09:30"
+    else:
+        cutoff = fake_now or "16:00"
+    h, m = (int(x) for x in cutoff.split(":"))
+    start_et = _dt(yyyy, mm, dd, 4, 0, tzinfo=et)
+    end_et = _dt(yyyy, mm, dd, h, m, tzinfo=et)
+    out: dict[str, list[dict]] = {}
+    for sym in symbols:
+        bars = bars_store.load_bars(
+            sym,
+            start=start_et.astimezone(timezone.utc).isoformat(),
+            end=end_et.astimezone(timezone.utc).isoformat(),
+            timeframe="1min",
+        )
+        # Bars come back with ISO UTC string `t`; strategy code accepts that.
+        out[sym] = bars
+    return out
 
 
 def get_history_bars(symbols: list[str], cfg: dict, days: int = 5) -> dict[str, list[dict]]:

@@ -32,3 +32,15 @@ data/price_history/
 ibc/credentials.txt
 ibc/*.log
 ibc/Logs/
+
+# Scratch logs from ingest CLIs + dashboard server. Real progress lives in
+# data/price_history/<tf>/<SYM>.parquet + the journal.
+data/_*.log
+dashboard/dashboard.log
+state/bot_*.log
+state/intraday_*.log
+state/scanner_*.log
+state/autoplan_*.log
+
+# Dev-only safety backups (e.g. anything ".polluted_by_smoke")
+*.polluted_by_*

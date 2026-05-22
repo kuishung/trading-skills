@@ -45,6 +45,24 @@ SKILL_DIR = Path(__file__).resolve().parent.parent
 STATE_DIR = SKILL_DIR / "state"
 JOURNAL_DIR = SKILL_DIR / "data" / "journal"
 
+# When the orchestrator runs with --replay-date, it calls set_replay_target(path)
+# to redirect every journal() write to a per-replay file under data/replay/. The
+# live data/journal/ stays clean. The dashboard bridge to events.emit() is also
+# skipped in replay mode so today's state/events_*.jsonl isn't polluted with
+# historical decisions.
+_REPLAY_TARGET: "Path | None" = None
+
+
+def set_replay_target(path: "Path | None") -> None:
+    """Orchestrator hook: redirect journal writes to a replay file (or None to
+    restore live behavior). Best-effort — caller wraps in try/except."""
+    global _REPLAY_TARGET
+    _REPLAY_TARGET = path
+
+
+def replay_target() -> "Path | None":
+    return _REPLAY_TARGET
+
 
 def _et_tz():
     try:
@@ -68,7 +86,12 @@ def journal(strategy: str, event: str,
     but never raise, so the bot keeps trading even if journaling is broken.
     """
     date_iso = _date_iso_et()
-    path = JOURNAL_DIR / f"journal_{date_iso}.jsonl"
+    # Replay mode: target file is set by orchestrator; one file per replay run.
+    # Live mode: target rotates by ET date.
+    if _REPLAY_TARGET is not None:
+        path = _REPLAY_TARGET
+    else:
+        path = JOURNAL_DIR / f"journal_{date_iso}.jsonl"
     record: dict[str, Any] = {
         "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "strategy": strategy,
@@ -78,11 +101,21 @@ def journal(strategy: str, event: str,
         record["symbol"] = symbol
     record.update(fields)
     try:
-        JOURNAL_DIR.mkdir(parents=True, exist_ok=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record, default=str) + "\n")
     except Exception as exc:
         sys.stderr.write(f"[journal] write failed (event={event}, sym={symbol}): {exc}\n")
+    # Bridge to the dashboard's legacy event stream so the UI sees strategy
+    # decisions live. Skipped in replay mode — we don't want yesterday's
+    # decisions polluting today's state/events_*.jsonl that the dashboard tails.
+    if _REPLAY_TARGET is None:
+        try:
+            from events import emit as _emit  # type: ignore[import-not-found]
+            payload = {k: v for k, v in record.items() if k not in ("ts", "event")}
+            _emit(f"strategy.{strategy}.{event}", payload)
+        except Exception as exc:
+            sys.stderr.write(f"[journal] dashboard bridge failed: {exc}\n")
 
 
 def read_journal(date_iso: str | None = None) -> list[dict]:

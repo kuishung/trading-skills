@@ -32,6 +32,18 @@ All-OFF runtime state is allowed — bot starts and journals
 
 ## Changelog
 
+### 2026-05-22 — `orchestrator.py`: `--replay-date` for historical re-runs
+- New CLI flag `--replay-date YYYY-MM-DD`. When passed:
+  - `cfg["data_provider"]` is forced to `"parquet"` so bar fetches go through `bars_store` (data/price_history/) instead of IBKR/Alpaca.
+  - `cfg["replay_date"]` is set so the parquet reader knows which date's bars to load.
+  - `cfg["replay_mode"] = True` flips on guards elsewhere (e.g. journal routing, skipped shortlist phase).
+  - `args.dry_run` is forced True — no Alpaca submissions in replay.
+  - `date_iso` is overridden from "today" to the replay date so every "today's <X>" file path resolves to the replay day.
+  - `journal.writer.set_replay_target()` is called with `data/replay/journal_<date>_<run_id>.jsonl` so events route there instead of `data/journal/`.
+- In the `fake_now` branch of `phase_run_strategies`, the shortlist phase is skipped when `cfg["replay_mode"]` is set — `do_shortlist()` scrapes live PM movers, which would corrupt the historical shortlist artifact at `state/shortlist_guns_*.json`. The entry phase reads the existing artifact from the replay date.
+- Pair with `--fake-now HH:MM` to set the wall-clock cutoff (default 16:00 ET = full day).
+- See `review/README.md` → "Replay workflow" for the user-facing workflow + coverage requirements.
+
 ### 2026-05-21 — `orchestrator.py`: IBC auto-launch at T-60
 - Extended the startup IBKR sequence: if the initial probe fails AND `cfg.ibkr_autolaunch_enabled` is true (default), spawn the IBC launcher .bat (`cfg.ibkr_launcher_bat`) as a DETACHED process (so TWS survives the bot's exit — lets the user keep TWS open for manual trading after the bot finishes the day).
 - Retries the probe with a backoff schedule (10/10/10/15/15/20/20s ≈ 100s total) up to `cfg.ibkr_autolaunch_timeout_s` (default 90s). TWS typically logs in within 30-60s.

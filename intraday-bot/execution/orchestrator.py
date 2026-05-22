@@ -619,9 +619,14 @@ def phase_run_strategies(cfg, strategies: list[Strategy],
     eod_dt = et_at(date_iso, eod_str)
 
     if fake_now:
-        # Replay mode: fire shortlist phase (if any) then entry phase.
-        for strat in strategies:
-            _fire_strategy_shortlist(cfg, strat, date_iso)
+        # Replay/test mode: fire shortlist phase (if any) then entry phase.
+        # In TRUE replay (--replay-date), skip the shortlist phase entirely —
+        # do_shortlist() pulls from live PM-mover scrapes / GUNS scanner which
+        # are TODAY's state, not the replay date's. The entry phase reads the
+        # shortlist artifact left over from the historical day's session.
+        if not cfg.get("replay_mode"):
+            for strat in strategies:
+                _fire_strategy_shortlist(cfg, strat, date_iso)
         for strat in strategies:
             _fire_strategy_entries(cfg, strat, trades, opening_equity,
                                    date_iso, dry_run)
@@ -909,6 +914,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--fake-now", default=None,
                    help="ET wall-clock to anchor for testing, HH:MM. "
                         "Disables sleep_until and runs phase_orb in single-shot mode.")
+    p.add_argument("--replay-date", default=None,
+                   help="YYYY-MM-DD: re-run the orchestrator against bars stored "
+                        "in data/price_history/ for this past date. Implies "
+                        "--dry-run and data_provider=parquet. Journal is routed "
+                        "to data/replay/journal_<date>_<run_id>.jsonl so the "
+                        "live data/journal/ stays clean. Pair with --fake-now to "
+                        "set the wall-clock cutoff (default 16:00 ET = full day).")
     return p.parse_args()
 
 
@@ -1057,6 +1069,32 @@ def main() -> int:
     _validate_strict_rules(cfg, strategies)  # refuses to start on bad risk config
     STATE_DIR.mkdir(exist_ok=True)
     date_iso = et_today_iso(args.fake_now)
+
+    # ---- Replay-mode setup ----
+    # --replay-date overrides several knobs at once:
+    #   - data_provider becomes "parquet" (bars from data/price_history/)
+    #   - dry_run is forced True (no Alpaca submissions in replay)
+    #   - date_iso comes from --replay-date instead of "today"
+    #   - journal events are routed to data/replay/ via writer.set_replay_target()
+    # The strategy code is unchanged — it just receives different bars.
+    if args.replay_date:
+        cfg["data_provider"] = "parquet"
+        cfg["replay_date"] = args.replay_date
+        cfg["replay_mode"] = True
+        args.dry_run = True
+        date_iso = args.replay_date
+        try:
+            from writer import set_replay_target  # journal/writer.py
+            from datetime import datetime as _dt
+            run_id = _dt.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            _skill_dir = Path(__file__).resolve().parent.parent
+            replay_path = _skill_dir / "data" / "replay" / f"journal_{args.replay_date}_{run_id}.jsonl"
+            replay_path.parent.mkdir(parents=True, exist_ok=True)
+            set_replay_target(replay_path)
+            safe_log_stdout(f"[REPLAY] date={args.replay_date} cutoff={args.fake_now or '16:00'} "
+                            f"→ journal: {replay_path.relative_to(_skill_dir)}")
+        except Exception as exc:
+            safe_log_stdout(f"[REPLAY] failed to set journal target: {exc}")
 
     # Startup data-provider sequence (cfg.data_provider == "ibkr"):
     #   1. Probe IBKR (5s). If reachable -> use IBKR.
