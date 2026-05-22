@@ -36,6 +36,19 @@ and import it from whichever strategy needs it. No registration.
 
 ## Changelog
 
+### 2026-05-22 — Data-integrity audit: ingest log + integrity checker + dashboard pill
+- **New module** `resources/data_integrity.py` (~340 LOC). Three classes of per-symbol check: **freshness** (last bar within `FRESH_DAYS=2` business days = fresh; 3–6 = stale; ≥ 7 = ancient), **consistency** (bars sorted, no duplicates, no business-day gaps > 5), **validity** (OHLCV sanity per bar: `h ≥ max(o,c)`, `l ≤ min(o,c)`, `h ≥ l`, prices > 0, volume ≥ 0). Aggregate `health_report()` returns `HealthReport(fresh, stale, ancient, missing, consistency_failures, validity_failures, overall: ok|warn|critical, stale_symbols, ancient_symbols, invalid_symbols)`.
+- **New CLI**: `py resources/data_integrity.py {freshness,validity,log,summary}`. `summary` is the same shape served by `/data/health`.
+- **`bars_store.py` now logs every write** to `data/ingest_log.jsonl` (best-effort, never raises). New `write_bars(..., source=)` param identifies the caller; new public `log_ingest_event(...)` hook for resume-skip and error events that don't reach `write_bars`. Each entry: `{ts, source, symbol, timeframe, bars_added, last_bar, n_total, error?, note?}`.
+- **`yfinance_history.py`** threads `source=` through `_ingest`, `ingest_daily`, `ingest_intraday`, `_seed_universe`. Each seed/ingest call now tags its writes with `yfinance.seed-sp500` / `yfinance.seed-midcap400` / `yfinance.ingest` etc. Resume-skipped symbols audit-logged with `note=resume_skipped` so the dashboard can explain stale coverage.
+- **`ibkr_history.py`** writes tagged with `source="ibkr_history"`. Connection failures (qualify, reqHistoricalData) now record an `error` event so the dashboard's pill turns red when TWS drops mid-ingest.
+- **Verified end-to-end** on 2026-05-22 daily snapshot: 1517 fresh / 2 stale (CSGS, SNCY) / 0 ancient / 0 invalid across the 1,519-symbol universe. Pill shows amber `2 stale`; modal lists CSGS + SNCY.
+
+### 2026-05-22 — New constituent fetchers: SmallCap 600 + NASDAQ-100 + DJIA + MidCap 400
+- Four new modules mirroring `sp500.py`: `sp_midcap400.py`, `sp_smallcap600.py`, `nasdaq100.py`, `djia.py`. The S&P pages all use the `id="constituents"` table pattern; NASDAQ-100 and DJIA need a more flexible scanner (try all `wikitable`s × first 4 columns, pick the one yielding the expected ticker count). All four cache at `state/cache/<index>.json` with the same 7-day TTL.
+- `yfinance_history.py` gained `seed_sp400()` / `seed_sp600()` / `seed_nasdaq100()` / `seed_djia()` plus matching CLI subcommands. Common engine `_seed_universe(symbols, label, ...)` shared across all five seeds.
+- Verified counts on 2026-05-22: SmallCap 600 → 603, NASDAQ-100 → 101, DJIA → 30. After seeding, 1,519 unique daily parquets on disk (most NASDAQ-100/DJIA overlap with S&P 500 already in store).
+
 ### 2026-05-21 — `yfinance_history.py`: 5-min + 15-min support (with pre-market)
 - Extended the bulk ingest to handle Yahoo's 5-min and 15-min intervals. Both cap at 60 days of history per call (vs 7 days for 1-min). Pre-market + after-hours included (`prepost=True`) so GUNS pre-market detection has the bars it needs; callers can filter at query time.
 - `seed_sp500()` grew `include_5min` + `include_15min` + `include_all_intraday` flags. CLI mirrors them. `--include-all-intraday` is the shortcut for "give me everything yfinance will sell me cheaply".

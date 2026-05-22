@@ -135,6 +135,9 @@ def _fetch_chunk(ib, symbol: str, end_dt: datetime,
         ib.qualifyContracts(contract)
     except Exception as exc:
         sys.stderr.write(f"[ibkr_history] qualify({symbol}) failed: {exc}\n")
+        bars_store.log_ingest_event(source="ibkr_history", symbol=symbol,
+                                    timeframe=timeframe, bars_added=0,
+                                    error=f"qualify_failed: {exc}")
         return []
     # Empty string = "now"; otherwise format "YYYYMMDD HH:MM:SS UTC"
     end_str = "" if end_dt is None else end_dt.strftime("%Y%m%d %H:%M:%S UTC")
@@ -151,6 +154,9 @@ def _fetch_chunk(ib, symbol: str, end_dt: datetime,
         )
     except Exception as exc:
         sys.stderr.write(f"[ibkr_history] reqHistoricalData({symbol}, {timeframe}, {duration_str}) failed: {exc}\n")
+        bars_store.log_ingest_event(source="ibkr_history", symbol=symbol,
+                                    timeframe=timeframe, bars_added=0,
+                                    error=f"reqHistoricalData_failed: {exc}")
         return []
     out: list[dict] = []
     for b in ib_bars or []:
@@ -184,7 +190,8 @@ def ingest_history(ib, symbol: str, timeframe: str,
         duration_str = f"{this_chunk} D"
         bars = _fetch_chunk(ib, symbol, cursor_end, duration_str, timeframe)
         if bars:
-            bars_store.write_bars(symbol, bars, timeframe=timeframe)
+            bars_store.write_bars(symbol, bars, timeframe=timeframe,
+                                  source="ibkr_history")
             total_written += len(bars)
             # advance cursor backwards by chunk_days; use the earliest bar we got
             earliest = bars[0]["t"]

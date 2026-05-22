@@ -32,6 +32,37 @@ Windows launchers, Desktop-shortcut installer).
 - `web/index.html`: TradingView widget constructor now passes `session_id: 'extended'`, `extended_hours: true`, and `details: true`. Pre-market + after-hours bars render by default — RTH-only would hide the exact PM bars GUNS Setup 1 evaluates (PMH, consol_high) and Setup 5 evaluates (first 1-min RTH candle is fine but PM-bar median range is computed from PM data too).
 - The free Advanced Charts widget has limited control vs the registered Charting Library, so it may show the "Extended Hours" toggle in the toolbar even after these flags — passing all three increases the odds the chart starts in extended mode across widget versions. User can also toggle in-chart (right-click → Time → Extended Hours, or the `E` button when visible).
 
+### 2026-05-22 — DITP universe filter pills
+- `strategy/DITP/scanner.py`: each `P2Candidate` now carries a `universes: list[str]` field (e.g. `["sp500"]`, `["sp600","nasdaq100"]`). Populated by `build_universe_map()` which lazy-imports `sp500`, `sp_midcap400`, `sp_smallcap600`, `nasdaq100`, `djia` and inverts each into `{symbol: [universe_names...]}`. Module-level cache so `detect_p2()` doesn't rebuild per symbol.
+- `web/index.html`: DITP tab now has a row of filter pills above the table: **All · S&P 500 · MidCap · SmallCap · NDX-100 · DJIA**. Each pill shows its candidate count; click to filter the table to just that universe. Active pill highlighted in IBKR red. Empty universes are dimmed and unclickable.
+- Filter state lives in `ditpUniverseFilter` (default `"all"`); selecting a pill re-renders via `renderAnalysis()`. Tier counters (A/B/C) update with the filter — e.g., filtering to S&P 500 shows the tier breakdown of just S&P 500 candidates.
+- Row tooltip shows the symbol's universe membership(s) so multi-index names (e.g. AAPL = S&P 500 + NDX-100 + DJIA) are visible.
+- Watchlist on 2026-05-22 snapshot: 51 candidates total — 33 SmallCap, 9 MidCap, 9 S&P 500, 2 NDX-100, 2 DJIA (overlap because most NDX-100 / DJIA names are S&P 500 too).
+
+### 2026-05-22 — Console layout: left sidebar + slide-out drawers
+- New 44px fixed left sidebar with three vertical text labels: **Gating · Events · Bot log**. Click any label to slide out the matching drawer (one open at a time). Click outside / ESC / drawer's ✕ close.
+- Moved out of the main scroll flow into drawers:
+  - **Strategy gating** (the ON/OFF + ARM/DISARM controls + bulk shortcuts) — previously took ~140 px of vertical space below the today-P&L strip; now hidden until you need it.
+  - **Event log** + **Bot log** — were a two-column row at the bottom of the page; both now live in their own drawers.
+- Element IDs preserved (`#strategy-gate-list`, `#events`, `#botlog`, `#enable-all-btn` etc.) so all the existing JS hooks (`renderGatePanel`, `renderEvents`, `renderBotLog`) work without changes — just paint into the same IDs which now live inside the drawer panels.
+- Main viewport now shows: status bar → day timeline → today P&L → Strategy Analysis + Chart (50/50) → orders + positions → today's trades. Much cleaner; the secondary controls are one click away from the sidebar.
+- Body has `padding-left: 44px` so main content never collides with the sidebar.
+- Drawer width 420 px (max-92vw on mobile), slides in via CSS `transform: translateX(-110% → 0)` with 0.18s easing.
+
+### 2026-05-22 — DITP tab in Strategy Analysis (watchlist view)
+- `server.py`: new endpoint `GET /strategy/ditp/watchlist` reads the highest-dated `state/watchlist_ditp_<date>.json` and returns its full payload (target_date, n_candidates, scanner_run_at_utc, candidates list). Source-of-truth filename returned as `_file` so the UI can show provenance.
+- `web/index.html`: DITP is now a tab in the Strategy Analysis panel alongside GUNS. The tab appears automatically when `ditpWatchlist.candidates.length > 0` (it does the moment the scanner has run for the upcoming session). `renderAnalysis()` dispatches by family: GUNS → existing journal-event-driven per-symbol view; DITP → `renderDitpWatchlist()` table.
+- DITP watchlist UI: target-date header + counts per tier (A/B/C/D), then a table of `tier · sym · variant · score · last · resistance zone (low → high) · distATR · t/m/rM · cautions`. Tier badge uses new `.tier-A/B/C/D` CSS classes (green / amber / dim / muted). Symbol cell is a `.ticker-link` so clicking opens the chart panel.
+- DITP and GUNS share NOTHING about their content model — GUNS is live decisions (journal-event stream), DITP is end-of-day scanner output (file). The family-tabs scaffolding handles both transparently.
+- Initial fetch on page load + 5-min refresh (scanner is EOD-driven; no need for faster polling).
+- Required server restart (new endpoint).
+
+### 2026-05-22 — Data-health pill in status bar + per-symbol modal
+- New `Data` pill in the status bar (between Alpaca and bot status). Polls `/data/health` every 60s. Color follows `overall`: green `N fresh`, amber `N stale[ · M invalid]`, red `N ancient[ · M invalid]`.
+- Click the pill → opens an in-page modal (no popup) showing the three-panel breakdown — **FRESHNESS** (fresh / stale / ancient / missing counts), **CONSISTENCY** (sorted + no-dupes + no-big-gaps check), **VALIDITY** (OHLCV sanity per bar). Plus per-symbol lists of the offenders (`stale_symbols`, `ancient_symbols`, `invalid_symbols`) and the last 30 `data/ingest_log.jsonl` entries with timestamp / source / symbol / bars_added / error.
+- New server endpoints (`dashboard/server.py`): `/data/health[?timeframe=daily&details=true]` and `/data/ingest-log[?tail=30]`. Both delegate to `resources/data_integrity.py`. Wrapped in try/except so a broken parquet never takes down the dashboard.
+- Required server restart (new endpoints added). Existing orchestrator was already exited post-EOD, so the restart was clean.
+
 ### 2026-05-21 — Strategy-family tabs in the analysis panel
 - `web/index.html`: new `.fam-tabs` bar inside the Strategy Analysis panel, between the `<h2>` header and the per-symbol list. One tab per strategy family (derived from `name.split('_')[0].toUpperCase()` — `guns_setup1` → `GUNS`, future `orb_setup1` → `ORB`). Each tab shows a small badge with the count of setups in that family.
 - Active tab uses an IBKR-red underline; clicking switches `activeFamily` and re-renders the list filtered to only that family's setups.

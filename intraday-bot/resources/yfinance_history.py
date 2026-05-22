@@ -218,7 +218,8 @@ def _slice_per_symbol(df, symbols: list[str]):
 
 def ingest_daily(symbols: list[str], *, years: int = 2,
                  batch_size: int = DEFAULT_BATCH_SIZE,
-                 resume: bool = False) -> dict[str, int]:
+                 resume: bool = False,
+                 source: str = "yfinance") -> dict[str, int]:
     """Bulk-fetch `years` of daily bars for all symbols and write to bars_store.
 
     Returns: {symbol: bars_written}. Symbols absent from yfinance return 0.
@@ -228,14 +229,15 @@ def ingest_daily(symbols: list[str], *, years: int = 2,
     period = f"{int(years)}y"
     return _ingest(yf, symbols, period=period, interval=spec["interval"],
                    timeframe="daily", prepost=spec["prepost"],
-                   batch_size=batch_size, resume=resume)
+                   batch_size=batch_size, resume=resume, source=source)
 
 
 def ingest_intraday(symbols: list[str], *,
                     timeframe: str = "1min",
                     days: int | None = None,
                     batch_size: int = DEFAULT_BATCH_SIZE,
-                    resume: bool = False) -> dict[str, int]:
+                    resume: bool = False,
+                    source: str = "yfinance") -> dict[str, int]:
     """Bulk-fetch `days` of intraday bars (1min / 5min / 15min) and write
     to bars_store. Yahoo caps history per interval:
         1min  -> 7 days
@@ -264,12 +266,12 @@ def ingest_intraday(symbols: list[str], *,
     period = f"{int(days)}d"
     return _ingest(yf, symbols, period=period, interval=spec["interval"],
                    timeframe=timeframe, prepost=spec["prepost"],
-                   batch_size=batch_size, resume=resume)
+                   batch_size=batch_size, resume=resume, source=source)
 
 
 def _ingest(yf, symbols: list[str], *, period: str, interval: str,
             timeframe: str, prepost: bool, batch_size: int,
-            resume: bool) -> dict[str, int]:
+            resume: bool, source: str = "yfinance") -> dict[str, int]:
     if not symbols:
         return {}
     if resume:
@@ -279,6 +281,12 @@ def _ingest(yf, symbols: list[str], *, period: str, interval: str,
         if skipped:
             sys.stderr.write(f"[yfinance] resume: skipping {len(skipped)} "
                              f"symbols already in {timeframe}\n")
+            # Audit-trail resume-skips so the dashboard's stale-data
+            # detection can explain why coverage is uneven.
+            for s in skipped:
+                bars_store.log_ingest_event(source=source, symbol=s,
+                                            timeframe=timeframe, bars_added=0,
+                                            note="resume_skipped")
     results: dict[str, int] = {}
     batches = [symbols[i:i + batch_size] for i in range(0, len(symbols), batch_size)]
     total_batches = len(batches)
@@ -302,7 +310,7 @@ def _ingest(yf, symbols: list[str], *, period: str, interval: str,
             if not bars:
                 results[canonical] = 0
                 continue
-            bars_store.write_bars(canonical, bars, timeframe=timeframe)
+            bars_store.write_bars(canonical, bars, timeframe=timeframe, source=source)
             results[canonical] = len(bars)
     elapsed = time.time() - t0
     n_with_data = sum(1 for v in results.values() if v > 0)
@@ -313,6 +321,98 @@ def _ingest(yf, symbols: list[str], *, period: str, interval: str,
         f"{elapsed:.1f}s elapsed.\n"
     )
     return results
+
+
+def _seed_universe(symbols: list[str], label: str, *,
+                   years_daily: int,
+                   include_1min: bool, include_5min: bool, include_15min: bool,
+                   intraday_days_1min: int, intraday_days_5min: int,
+                   intraday_days_15min: int, resume: bool) -> dict:
+    """Shared engine: ingest daily + optionally intraday for a given symbol
+    list. Used by seed_sp500() and seed_sp400() (and any future index)."""
+    sys.stderr.write(f"[{label}] {len(symbols)} symbols\n")
+    source = f"yfinance.{label}"
+    out: dict = {"label": label, "n_symbols": len(symbols)}
+    daily_results = ingest_daily(symbols, years=years_daily, resume=resume, source=source)
+    out["daily"] = {
+        "symbols_with_data": sum(1 for v in daily_results.values() if v > 0),
+        "total_bars": sum(daily_results.values()),
+    }
+    if include_15min:
+        r = ingest_intraday(symbols, timeframe="15min",
+                            days=intraday_days_15min, resume=resume, source=source)
+        out["15min"] = {"symbols_with_data": sum(1 for v in r.values() if v > 0),
+                        "total_bars": sum(r.values())}
+    if include_5min:
+        r = ingest_intraday(symbols, timeframe="5min",
+                            days=intraday_days_5min, resume=resume, source=source)
+        out["5min"] = {"symbols_with_data": sum(1 for v in r.values() if v > 0),
+                       "total_bars": sum(r.values())}
+    if include_1min:
+        r = ingest_intraday(symbols, timeframe="1min",
+                            days=intraday_days_1min, resume=resume, source=source)
+        out["1min"] = {"symbols_with_data": sum(1 for v in r.values() if v > 0),
+                       "total_bars": sum(r.values())}
+    return out
+
+
+def seed_sp400(*, years_daily: int = 2,
+               include_1min: bool = False,
+               include_5min: bool = False,
+               include_15min: bool = False,
+               intraday_days_1min: int = 7,
+               intraday_days_5min: int = 60,
+               intraday_days_15min: int = 60,
+               resume: bool = True,
+               force_refresh_list: bool = False) -> dict:
+    """Seed the S&P MidCap 400 (mid-cap index). ~400 symbols, ~12 MB for
+    daily 2y. Same shape + thresholds as seed_sp500()."""
+    from sp_midcap400 import get_sp400_symbols
+    symbols = get_sp400_symbols(force_refresh=force_refresh_list)
+    return _seed_universe(symbols, "seed-midcap400",
+                          years_daily=years_daily,
+                          include_1min=include_1min, include_5min=include_5min,
+                          include_15min=include_15min,
+                          intraday_days_1min=intraday_days_1min,
+                          intraday_days_5min=intraday_days_5min,
+                          intraday_days_15min=intraday_days_15min,
+                          resume=resume)
+
+
+def seed_sp600(*, years_daily: int = 2, resume: bool = True,
+               force_refresh_list: bool = False) -> dict:
+    """Seed the S&P SmallCap 600. ~600 symbols, ~15 MB daily 2y."""
+    from sp_smallcap600 import get_sp600_symbols
+    symbols = get_sp600_symbols(force_refresh=force_refresh_list)
+    return _seed_universe(symbols, "seed-smallcap600",
+                          years_daily=years_daily,
+                          include_1min=False, include_5min=False, include_15min=False,
+                          intraday_days_1min=7, intraday_days_5min=60,
+                          intraday_days_15min=60, resume=resume)
+
+
+def seed_nasdaq100(*, years_daily: int = 2, resume: bool = True,
+                   force_refresh_list: bool = False) -> dict:
+    """Seed the NASDAQ-100. ~100 symbols (heavy overlap with S&P 500)."""
+    from nasdaq100 import get_nasdaq100_symbols
+    symbols = get_nasdaq100_symbols(force_refresh=force_refresh_list)
+    return _seed_universe(symbols, "seed-nasdaq100",
+                          years_daily=years_daily,
+                          include_1min=False, include_5min=False, include_15min=False,
+                          intraday_days_1min=7, intraday_days_5min=60,
+                          intraday_days_15min=60, resume=resume)
+
+
+def seed_djia(*, years_daily: int = 2, resume: bool = True,
+              force_refresh_list: bool = False) -> dict:
+    """Seed the Dow Jones Industrial Average. 30 symbols (all in S&P 500)."""
+    from djia import get_djia_symbols
+    symbols = get_djia_symbols(force_refresh=force_refresh_list)
+    return _seed_universe(symbols, "seed-djia",
+                          years_daily=years_daily,
+                          include_1min=False, include_5min=False, include_15min=False,
+                          intraday_days_1min=7, intraday_days_5min=60,
+                          intraday_days_15min=60, resume=resume)
 
 
 def seed_sp500(*, years_daily: int = 2,
@@ -392,13 +492,59 @@ def _cmd_seed_sp500(args) -> int:
     return 0
 
 
+def _cmd_seed_sp400(args) -> int:
+    include_1min = args.include_1min or args.include_all_intraday
+    include_5min = args.include_5min or args.include_all_intraday
+    include_15min = args.include_15min or args.include_all_intraday
+    summary = seed_sp400(
+        years_daily=args.years,
+        include_1min=include_1min,
+        include_5min=include_5min,
+        include_15min=include_15min,
+        intraday_days_1min=args.intraday_days_1min,
+        intraday_days_5min=args.intraday_days_5min,
+        intraday_days_15min=args.intraday_days_15min,
+        resume=not args.force,
+        force_refresh_list=args.force_refresh_list,
+    )
+    import json
+    print(json.dumps(summary, indent=2))
+    return 0
+
+
+def _cmd_seed_sp600(args) -> int:
+    summary = seed_sp600(years_daily=args.years, resume=not args.force,
+                         force_refresh_list=args.force_refresh_list)
+    import json
+    print(json.dumps(summary, indent=2))
+    return 0
+
+
+def _cmd_seed_nasdaq100(args) -> int:
+    summary = seed_nasdaq100(years_daily=args.years, resume=not args.force,
+                             force_refresh_list=args.force_refresh_list)
+    import json
+    print(json.dumps(summary, indent=2))
+    return 0
+
+
+def _cmd_seed_djia(args) -> int:
+    summary = seed_djia(years_daily=args.years, resume=not args.force,
+                        force_refresh_list=args.force_refresh_list)
+    import json
+    print(json.dumps(summary, indent=2))
+    return 0
+
+
 def _cmd_ingest(args) -> int:
     symbols = [s.upper() for s in args.symbols]
     if args.tf == "daily":
-        results = ingest_daily(symbols, years=args.years, resume=not args.force)
+        results = ingest_daily(symbols, years=args.years, resume=not args.force,
+                               source="yfinance.ingest")
     elif args.tf in ("1min", "5min", "15min"):
         results = ingest_intraday(symbols, timeframe=args.tf,
-                                  days=args.days, resume=not args.force)
+                                  days=args.days, resume=not args.force,
+                                  source="yfinance.ingest")
     else:
         raise SystemExit(f"yfinance supports daily/1min/5min/15min; got {args.tf!r}")
     n_ok = sum(1 for v in results.values() if v > 0)
@@ -434,6 +580,41 @@ def _build_parser() -> argparse.ArgumentParser:
     p_seed.add_argument("--force-refresh-list", action="store_true",
                         help="ignore the S&P 500 list cache; re-pull from Wikipedia")
     p_seed.set_defaults(func=_cmd_seed_sp500)
+
+    p_seed_mid = sub.add_parser("seed-midcap400",
+                                 help="bulk-seed the S&P MidCap 400 (~400 mid-cap symbols)")
+    p_seed_mid.add_argument("--years", type=int, default=2)
+    p_seed_mid.add_argument("--include-1min", action="store_true")
+    p_seed_mid.add_argument("--include-5min", action="store_true")
+    p_seed_mid.add_argument("--include-15min", action="store_true")
+    p_seed_mid.add_argument("--include-all-intraday", action="store_true")
+    p_seed_mid.add_argument("--intraday-days-1min", type=int, default=7)
+    p_seed_mid.add_argument("--intraday-days-5min", type=int, default=60)
+    p_seed_mid.add_argument("--intraday-days-15min", type=int, default=60)
+    p_seed_mid.add_argument("--force", action="store_true")
+    p_seed_mid.add_argument("--force-refresh-list", action="store_true")
+    p_seed_mid.set_defaults(func=_cmd_seed_sp400)
+
+    p_seed_small = sub.add_parser("seed-smallcap600",
+                                   help="bulk-seed the S&P SmallCap 600 (~600 small-cap symbols)")
+    p_seed_small.add_argument("--years", type=int, default=2)
+    p_seed_small.add_argument("--force", action="store_true")
+    p_seed_small.add_argument("--force-refresh-list", action="store_true")
+    p_seed_small.set_defaults(func=_cmd_seed_sp600)
+
+    p_seed_ndx = sub.add_parser("seed-nasdaq100",
+                                 help="bulk-seed the NASDAQ-100 (~100 symbols; heavy S&P 500 overlap)")
+    p_seed_ndx.add_argument("--years", type=int, default=2)
+    p_seed_ndx.add_argument("--force", action="store_true")
+    p_seed_ndx.add_argument("--force-refresh-list", action="store_true")
+    p_seed_ndx.set_defaults(func=_cmd_seed_nasdaq100)
+
+    p_seed_dj = sub.add_parser("seed-djia",
+                                help="bulk-seed the Dow Jones Industrial Average (30 symbols; all in S&P 500)")
+    p_seed_dj.add_argument("--years", type=int, default=2)
+    p_seed_dj.add_argument("--force", action="store_true")
+    p_seed_dj.add_argument("--force-refresh-list", action="store_true")
+    p_seed_dj.set_defaults(func=_cmd_seed_djia)
 
     p_ing = sub.add_parser("ingest", help="fetch specific symbols")
     p_ing.add_argument("symbols", nargs="+")

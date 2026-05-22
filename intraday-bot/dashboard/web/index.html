@@ -244,6 +244,94 @@
       border: 1px solid var(--border);
     }
     .fam-tab.active .badge { color: var(--text); background: var(--bg-panel-alt); }
+    /* DITP tier badges in the watchlist table */
+    .tier-A { background: rgba(95,217,122,.15); color: #5fd97a; border-color: #5fd97a; }
+    .tier-B { background: rgba(245,179,66,.15); color: #f5b342; border-color: #f5b342; }
+    .tier-C { background: rgba(155,155,155,.15); color: #cfcfcf; border-color: #6e6e6e; }
+    .tier-D { background: rgba(110,110,110,.15); color: #9a9a9a; border-color: #4a4a4a; }
+    /* ============ Left sidebar + slide-out drawers ============ */
+    /* Console-style fixed sidebar on the left edge. Hidden secondary panels
+       (gating, event log, bot log) live in drawers that slide out from the
+       sidebar on click. Main content has a left padding equal to the sidebar
+       width so it never collides. */
+    /* !important needed because Tailwind's `.p-3` class on <body> sets all four
+       paddings; without !important, padding-left:0.75rem wins the specificity
+       fight against `body { ... }` (class > element) and the main content
+       slides under the fixed sidebar. */
+    body { padding-left: 44px !important; }
+    #left-sidebar {
+      position: fixed; left: 0; top: 0; bottom: 0;
+      width: 44px;
+      z-index: 60;
+      background: var(--bg-panel);
+      border-right: 1px solid var(--border);
+      display: flex; flex-direction: column;
+    }
+    .sidebar-btn {
+      writing-mode: vertical-rl;
+      transform: rotate(180deg);
+      padding: 16px 10px;
+      text-align: center;
+      text-transform: uppercase;
+      letter-spacing: .15em;
+      font-size: calc(11px * var(--scale));
+      font-weight: 700;
+      color: var(--text-muted);
+      cursor: pointer;
+      border-bottom: 1px solid var(--border-soft);
+      background: transparent;
+      user-select: none;
+      transition: color .12s, background .12s;
+    }
+    .sidebar-btn:hover { color: var(--text); background: var(--bg-hover); }
+    .sidebar-btn.active {
+      color: var(--text);
+      background: var(--bg-panel-alt);
+      box-shadow: inset 3px 0 0 var(--ibkr-red);
+    }
+    .drawer {
+      position: fixed; top: 0; bottom: 0; left: 44px;
+      width: 420px;
+      max-width: 92vw;
+      z-index: 55;
+      background: var(--bg-panel);
+      border-right: 1px solid var(--border);
+      transform: translateX(-110%);
+      transition: transform .18s ease-out;
+      overflow-y: auto;
+      box-shadow: 6px 0 18px rgba(0,0,0,.45);
+    }
+    .drawer.open { transform: translateX(0); }
+    .drawer-header {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 12px;
+      background: var(--bg-panel-alt);
+      border-bottom: 1px solid var(--border);
+      font-size: calc(11px * var(--scale));
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      position: sticky; top: 0; z-index: 1;
+    }
+    .drawer-close {
+      margin-left: auto;
+      padding: 2px 8px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: calc(11px * var(--scale));
+    }
+    .drawer-close:hover { color: var(--text); background: var(--bg-hover); }
+    .drawer-body { padding: 8px 0; }
+
+    /* DITP watchlist table layout */
+    .ditp-tbl { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+    .ditp-tbl th { color: var(--text-muted); font-weight: 600; text-align: left;
+                    padding: 4px 8px; border-bottom: 1px solid var(--border); font-size: calc(10px * var(--scale)); letter-spacing: .08em; text-transform: uppercase; }
+    .ditp-tbl td { padding: 4px 8px; border-bottom: 1px solid var(--border-soft); }
+    .ditp-tbl tr:hover { background: var(--bg-hover); }
     .verdict-pill.submitted { background: rgba(95,217,122,.12); animation: pulse-green 2s ease-out 1; }
     .verdict-pill.planned   { background: rgba(108,178,255,.10); animation: pulse-blue  2s ease-out 1; }
     .verdict-pill.rejected  { background: rgba(255,107,107,.08); animation: pulse-red   1.5s ease-out 1; }
@@ -334,6 +422,68 @@
 </head>
 <body class="bg-slate-950 text-slate-200 min-h-screen p-3">
 
+  <!-- Left sidebar — three drawer toggles -->
+  <aside id="left-sidebar">
+    <div class="sidebar-btn" data-drawer="drawer-gate" title="Strategy gating (ON/OFF + ARM)">Gating</div>
+    <div class="sidebar-btn" data-drawer="drawer-events" title="Structured event log">Events</div>
+    <div class="sidebar-btn" data-drawer="drawer-bot" title="Bot subprocess log">Bot log</div>
+  </aside>
+
+  <!-- Slide-out drawers (one open at a time) -->
+  <aside id="drawer-gate" class="drawer">
+    <div class="drawer-header">
+      <span>strategy gating</span>
+      <button class="drawer-close" data-close="drawer-gate">✕ close</button>
+    </div>
+    <div class="drawer-body">
+      <div class="px-3 pt-2 text-xs muted">
+        OFF = no pipeline · ON + DISARMED = evaluate + journal only (paper-eval) · ON + ARMED = submit to Alpaca
+      </div>
+      <div class="px-3 py-2 flex flex-wrap items-center gap-2 text-xs">
+        <button id="enable-all-btn"
+                class="px-2 py-0.5 rounded border border-slate-700 hover:bg-slate-800"
+                title="Turn ON every wired strategy.">enable all</button>
+        <button id="disable-all-btn"
+                class="px-2 py-0.5 rounded border border-slate-700 hover:bg-slate-800"
+                title="Turn OFF every wired strategy.">disable all</button>
+        <span class="muted">·</span>
+        <button id="arm-all-btn"
+                class="px-2 py-0.5 rounded border border-slate-700 hover:bg-slate-800"
+                title="ARM every wired strategy.">arm all</button>
+        <button id="disarm-all-btn"
+                class="px-2 py-0.5 rounded border border-slate-700 hover:bg-slate-800"
+                title="DISARM every wired strategy.">disarm all</button>
+      </div>
+      <div id="strategy-gate-list" class="px-3 pb-3 grid grid-cols-1 gap-1">
+        <span class="muted text-sm">Loading strategies…</span>
+      </div>
+    </div>
+  </aside>
+
+  <aside id="drawer-events" class="drawer">
+    <div class="drawer-header">
+      <span>event log <span class="muted">— structured</span></span>
+      <button class="drawer-close" data-close="drawer-events">✕ close</button>
+    </div>
+    <div class="drawer-body">
+      <div id="events" class="text-xs leading-5 p-3">
+        <span class="muted">No events yet today.</span>
+      </div>
+    </div>
+  </aside>
+
+  <aside id="drawer-bot" class="drawer">
+    <div class="drawer-header">
+      <span>bot log <span class="muted">— state/bot_*.log</span></span>
+      <button class="drawer-close" data-close="drawer-bot">✕ close</button>
+    </div>
+    <div class="drawer-body">
+      <div id="botlog" class="text-xs leading-5 p-3 whitespace-pre-wrap text-slate-300">
+        <span class="muted">Bot has not been started today.</span>
+      </div>
+    </div>
+  </aside>
+
   <!-- Status bar -->
   <header id="status-bar" class="flex items-center gap-6 px-4 py-2 panel mb-3 sticky top-0 z-30 bg-slate-950/95 backdrop-blur">
     <div class="flex items-center gap-3">
@@ -358,8 +508,15 @@
       <span class="text-xs">Alpaca</span>
       <span id="alpaca-detail" class="text-xs muted">probing…</span>
     </div>
+    <div class="flex items-center gap-2 cursor-pointer" id="data-health-pill"
+         title="Historical price data health — freshness, consistency, validity of the Parquet files under data/price_history/. Click for the per-symbol breakdown + recent ingest events.">
+      <span id="data-health-dot" class="dot idle"></span>
+      <span class="text-xs">Historical price data health</span>
+      <span id="data-health-detail" class="text-xs muted">checking…</span>
+    </div>
     <div class="flex items-center gap-2">
-      <span id="bot-pill" class="tag bg-slate-800 text-slate-300">bot stopped</span>
+      <span id="bot-pill" class="tag bg-slate-800 text-slate-300"
+            title="The Orchestrator (execution/orchestrator.py) is the trading bot — a Python subprocess the dashboard spawns. It evaluates each strategy at its scheduled entry_et, submits orders to Alpaca when armed, manages positions during the session, and force-closes everything at 15:58 ET. The dashboard auto-starts it at T-60 BMO (08:30 ET) on weekdays. Pill shows its run status.">bot stopped</span>
       <span id="gate-summary"
             class="tag bg-slate-800 text-slate-400 cursor-pointer hover:bg-slate-700"
             title="ON = analysis pipeline runs; ARMED = orders submit. Click to open the per-strategy gating panel below.">
@@ -418,6 +575,21 @@
     </div>
   </header>
 
+  <!-- Data-health modal -->
+  <div id="data-health-modal" class="hidden fixed inset-0 z-40 bg-slate-950/85"
+       style="display:none; backdrop-filter: blur(2px);">
+    <div class="absolute top-12 left-1/2 -translate-x-1/2 panel" style="width:min(900px,92vw); max-height:80vh; overflow-y:auto;">
+      <h2 class="flex items-center gap-3">
+        <span>Historical price data health</span>
+        <span id="data-health-modal-overall" class="tag">—</span>
+        <button id="data-health-refresh" class="ml-auto px-2 py-1 border border-emerald-800 text-emerald-300 hover:bg-emerald-950 text-xs"
+                title="Re-fetch every stale / ancient / missing symbol via yfinance. Targeted; only the flagged symbols are pulled.">↻ refresh stale</button>
+        <button id="data-health-close" class="px-2 py-1 border border-slate-700 hover:bg-slate-800 text-xs">close</button>
+      </h2>
+      <div id="data-health-modal-body" class="p-3 text-xs">loading…</div>
+    </div>
+  </div>
+
   <!-- Toast stack (bottom-right transient notifications) -->
   <div id="toast-stack"></div>
 
@@ -464,33 +636,7 @@
     </div>
   </section>
 
-  <!-- Per-strategy gating panel: ON/OFF + ARM/DISARM -->
-  <section id="gate-panel" class="panel mb-3">
-    <h2>strategy gating
-      <span class="float-right normal-case tracking-normal text-xs flex items-center gap-2 flex-wrap">
-        <span class="muted">live — ON/OFF takes effect at the next scheduled fire; ARM at the next submit</span>
-        <button id="enable-all-btn"
-                class="ml-2 px-2 py-0.5 rounded border border-slate-700 hover:bg-slate-800"
-                title="Turn ON every wired strategy. Pipeline runs at the scheduled entry_et.">enable all</button>
-        <button id="disable-all-btn"
-                class="px-2 py-0.5 rounded border border-slate-700 hover:bg-slate-800"
-                title="Turn OFF every wired strategy. No pipeline runs, no journal entries except a per-fire skip marker.">disable all</button>
-        <span class="muted">·</span>
-        <button id="arm-all-btn"
-                class="px-2 py-0.5 rounded border border-slate-700 hover:bg-slate-800"
-                title="ARM every wired strategy (submits orders when ON+ARMED).">arm all</button>
-        <button id="disarm-all-btn"
-                class="px-2 py-0.5 rounded border border-slate-700 hover:bg-slate-800"
-                title="DISARM every wired strategy. ON strategies will keep evaluating + journaling but submit nothing.">disarm all</button>
-      </span>
-    </h2>
-    <div class="px-3 pt-2 text-xs muted">
-      OFF = no pipeline · ON + DISARMED = evaluate + journal only (paper-eval mode) · ON + ARMED = submit to Alpaca
-    </div>
-    <div id="strategy-gate-list" class="p-3 grid grid-cols-1 gap-1">
-      <span class="muted text-sm">Loading strategies…</span>
-    </div>
-  </section>
+  <!-- (Strategy gating moved to the left-sidebar "Gating" drawer.) -->
 
   <!-- Strategy Analysis (per-symbol verdicts) + Embedded TradingView chart, side by side -->
   <div class="grid grid-cols-2 gap-3 mb-3 items-start">
@@ -513,11 +659,9 @@
         <span id="chart-panel-title" class="muted">click any ticker to load chart</span>
         <span class="muted text-xs">timeframe</span>
         <div class="flex gap-1">
-          <button class="tf-btn" data-tf="1">1m</button>
-          <button class="tf-btn active" data-tf="5">5m</button>
-          <button class="tf-btn" data-tf="15">15m</button>
-          <button class="tf-btn" data-tf="60">1h</button>
-          <button class="tf-btn" data-tf="D">D</button>
+          <button class="tf-btn active" data-tf="D">1D</button>
+          <button class="tf-btn" data-tf="3">3m</button>
+          <button class="tf-btn" data-tf="5">5m</button>
         </div>
       </div>
       <div id="chart-panel-body">
@@ -551,21 +695,7 @@
     <div id="trades" class="muted text-sm p-3">No fills yet today.</div>
   </section>
 
-  <!-- Logs row -->
-  <div class="grid grid-cols-2 gap-3">
-    <section class="panel">
-      <h2>event log <span class="float-right muted normal-case tracking-normal text-xs">structured</span></h2>
-      <div id="events" class="text-xs leading-5 p-3 max-h-72 overflow-y-auto">
-        <span class="muted">No events yet today.</span>
-      </div>
-    </section>
-    <section class="panel">
-      <h2>bot log <span class="float-right muted normal-case tracking-normal text-xs">state/bot_*.log</span></h2>
-      <div id="botlog" class="text-xs leading-5 p-3 max-h-72 overflow-y-auto whitespace-pre-wrap text-slate-300">
-        <span class="muted">Bot has not been started today.</span>
-      </div>
-    </section>
-  </div>
+  <!-- (Event log + bot log moved to the left-sidebar "Events" / "Bot log" drawers.) -->
 
 <script>
 const state = { fills: [], equity: null, events: [], botLog: [], alpaca: null };
@@ -645,7 +775,7 @@ function showToast(msg, ms) {
 // has no "update symbol" hook, so destroy + rebuild is the supported path).
 let tvLoaded = false;
 let tvLoading = null;
-let chartState = { symbol: null, tf: '5' };
+let chartState = { symbol: null, tf: 'D' };
 
 function loadTvScript() {
   if (tvLoaded) return Promise.resolve();
@@ -687,7 +817,7 @@ function rebuildTvWidget() {
     withdateranges: true,
     hide_side_toolbar: false,
     allow_symbol_change: true,
-    studies: ['MAExp@tv-basicstudies', 'MASimple@tv-basicstudies', 'Volume@tv-basicstudies'],
+    studies: ['MAExp@tv-basicstudies', 'MASimple@tv-basicstudies'],
     show_popup_button: false,
     // Pre-market + after-hours in the chart. GUNS strategies trade off PM bars,
     // so RTH-only would hide the data that drives every Setup 1 decision.
@@ -949,6 +1079,217 @@ function setIbkrDot(status, host, port) {
   detail.textContent = status === 'up' ? `${where} ●` : status === 'down' ? `${where} unreachable` : 'probing…';
   detail.className = 'text-xs ' + (status === 'up' ? 'pos' : status === 'down' ? 'neg' : 'muted');
 }
+
+// ---- Parquet data-health pill --------------------------------------------
+// Polls /data/health every 60s; click opens the per-symbol details modal
+// via /data/health?details=true plus /data/ingest-log for the recent
+// ingest events.
+
+function setDataHealthPill(payload) {
+  const dot = document.getElementById('data-health-dot');
+  const det = document.getElementById('data-health-detail');
+  if (!dot || !det) return;
+  if (!payload || payload.overall === 'unknown') {
+    dot.className = 'dot idle';
+    det.className = 'text-xs muted';
+    det.textContent = payload && payload.error ? 'error' : 'checking…';
+    return;
+  }
+  const o = payload.overall;
+  const stale = (payload.stale || 0) + (payload.ancient || 0);
+  const inval = payload.validity_failures || 0;
+  const n = payload.universe_size || 0;
+  let dotClass, detClass, label;
+  if (o === 'ok') {
+    dotClass = 'up';
+    detClass = 'pos';
+    label = `✓ all good · ${n} syms`;
+  } else if (o === 'warn') {
+    dotClass = 'down';   // amber-like via warn keyword would be nicer; reuse down dot
+    detClass = 'text-amber-300';
+    label = `${stale} stale${inval ? ` · ${inval} invalid` : ''} of ${n}`;
+  } else {  // critical
+    dotClass = 'down';
+    detClass = 'neg';
+    label = `${payload.ancient || 0} ancient${inval ? ` · ${inval} invalid` : ''} of ${n}`;
+  }
+  dot.className = 'dot ' + dotClass;
+  det.className = 'text-xs ' + detClass;
+  det.textContent = label;
+}
+
+async function refreshDataHealth() {
+  try {
+    const r = await fetch('/data/health');
+    const j = await r.json();
+    setDataHealthPill(j);
+  } catch (e) {
+    setDataHealthPill({ overall: 'unknown', error: String(e) });
+  }
+}
+
+async function openDataHealthModal() {
+  const modal = document.getElementById('data-health-modal');
+  const body = document.getElementById('data-health-modal-body');
+  const overallPill = document.getElementById('data-health-modal-overall');
+  if (!modal || !body) return;
+  modal.classList.remove('hidden');
+  modal.style.display = 'block';
+  body.innerHTML = '<span class="muted">loading…</span>';
+  try {
+    const [healthRes, logRes] = await Promise.all([
+      fetch('/data/health?details=true').then(r => r.json()),
+      fetch('/data/ingest-log?tail=30').then(r => r.json()),
+    ]);
+    const o = healthRes.overall;
+    const cls = o === 'ok' ? 'bg-emerald-900/60 text-emerald-200'
+              : o === 'warn' ? 'bg-amber-900/60 text-amber-200'
+              : o === 'critical' ? 'bg-red-950/60 text-red-200'
+              : 'bg-slate-800 text-slate-300';
+    overallPill.textContent = (o || '?').toUpperCase();
+    overallPill.className = 'tag ' + cls;
+    const list = (arr, max) => (arr && arr.length)
+      ? arr.slice(0, max).join(', ') + (arr.length > max ? ` … (+${arr.length-max} more)` : '')
+      : '—';
+    const events = (logRes && logRes.events) || [];
+    const eventsHtml = events.length
+      ? events.slice(-30).reverse().map(ev => {
+          const ts = (ev.ts || '').replace('T', ' ').split('+')[0];
+          const err = ev.error ? ` <span class="neg">ERR: ${ev.error}</span>` : '';
+          const note = ev.note ? ` <span class="muted">(${ev.note})</span>` : '';
+          const last = ev.last_bar ? ` last=${String(ev.last_bar).slice(0,10)}` : '';
+          return `<div>${ts} <span class="muted">${ev.source || '?'}</span> <strong>${ev.symbol || '?'}</strong> ${ev.timeframe || '?'} bars+=${ev.bars_added || 0}${last}${note}${err}</div>`;
+        }).join('')
+      : '<span class="muted">no ingest events recorded yet</span>';
+    body.innerHTML = `
+      <div class="grid grid-cols-3 gap-3 mb-3">
+        <div class="panel" style="padding:8px;">
+          <div class="muted text-xs">FRESHNESS (last bar within 2 business days)</div>
+          <div class="pos text-lg font-bold">${healthRes.fresh || 0} fresh</div>
+          <div class="text-amber-300">${healthRes.stale || 0} stale</div>
+          <div class="neg">${healthRes.ancient || 0} ancient</div>
+          <div class="muted">${healthRes.missing || 0} missing</div>
+        </div>
+        <div class="panel" style="padding:8px;">
+          <div class="muted text-xs">CONSISTENCY (sorted, no dupes, no big gaps)</div>
+          <div class="${(healthRes.consistency_failures||0) === 0 ? 'pos' : 'neg'} text-lg font-bold">
+            ${(healthRes.consistency_failures||0) === 0 ? 'OK' : healthRes.consistency_failures + ' failed'}
+          </div>
+        </div>
+        <div class="panel" style="padding:8px;">
+          <div class="muted text-xs">VALIDITY (OHLCV sanity per bar)</div>
+          <div class="${(healthRes.validity_failures||0) === 0 ? 'pos' : 'neg'} text-lg font-bold">
+            ${(healthRes.validity_failures||0) === 0 ? 'OK' : healthRes.validity_failures + ' failed'}
+          </div>
+        </div>
+      </div>
+      <div class="mb-3 text-xs">
+        <div class="muted mb-1">Universe: ${healthRes.universe_size} symbols, timeframe: ${healthRes.timeframe} · checked ${healthRes.ts || ''}</div>
+        <div><strong>Ancient (≥7 business days):</strong> ${list(healthRes.ancient_symbols, 30)}</div>
+        <div><strong>Stale (3-6 business days):</strong> ${list(healthRes.stale_symbols, 30)}</div>
+        <div><strong>Invalid:</strong> ${list(healthRes.invalid_symbols, 30)}</div>
+      </div>
+      <h2 style="margin-top:8px;">recent ingest events</h2>
+      <div class="text-xs" style="font-family: ui-monospace, monospace; line-height:1.5;">${eventsHtml}</div>
+    `;
+  } catch (e) {
+    body.innerHTML = `<span class="neg">Failed to load: ${String(e)}</span>`;
+  }
+}
+
+function closeDataHealthModal() {
+  const modal = document.getElementById('data-health-modal');
+  if (modal) {
+    modal.classList.add('hidden');
+    modal.style.display = 'none';
+  }
+}
+
+async function refreshStaleData() {
+  const btn = document.getElementById('data-health-refresh');
+  if (!btn) return;
+  const origLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '↻ refreshing…';
+  btn.classList.add('blink');
+  try {
+    const r = await fetch('/data/refresh-stale', { method: 'POST' });
+    const j = await r.json();
+    showToast(`Refresh complete: ${j.n_refreshed}/${j.n_targets} symbols pulled`);
+    // Re-render modal contents + pill from fresh data.
+    await openDataHealthModal();
+    await refreshDataHealth();
+  } catch (e) {
+    showToast('Refresh failed: ' + String(e));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origLabel;
+    btn.classList.remove('blink');
+  }
+}
+
+// Wire pill click + close button + refresh-stale button + initial fetch + 60s poll.
+(function initDataHealth() {
+  const pill = document.getElementById('data-health-pill');
+  if (pill) pill.addEventListener('click', openDataHealthModal);
+  const closeBtn = document.getElementById('data-health-close');
+  if (closeBtn) closeBtn.addEventListener('click', closeDataHealthModal);
+  const refreshBtn = document.getElementById('data-health-refresh');
+  if (refreshBtn) refreshBtn.addEventListener('click', refreshStaleData);
+  const modal = document.getElementById('data-health-modal');
+  if (modal) modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeDataHealthModal();
+  });
+  refreshDataHealth();
+  setInterval(refreshDataHealth, 60_000);
+})();
+
+// DITP watchlist — fetch once at load, then every 5 min (scanner is EOD-driven
+// so a snappy refresh isn't needed; this just picks up overnight regenerations).
+(function initDitpWatchlist() {
+  refreshDitpWatchlist();
+  setInterval(refreshDitpWatchlist, 5 * 60_000);
+})();
+
+// ---- Left-sidebar drawers: gating / events / bot log -------------------
+// Console-style sidebar with three vertical tabs. Click toggles the matching
+// drawer (one open at a time). Click outside or ESC closes. Drawers slide
+// in over the main content; the main content is shifted right 44px by the
+// sidebar's fixed width.
+function openDrawer(id) {
+  document.querySelectorAll('.drawer').forEach(d => d.classList.toggle('open', d.id === id));
+  document.querySelectorAll('.sidebar-btn').forEach(b => {
+    b.classList.toggle('active', b.getAttribute('data-drawer') === id);
+  });
+}
+function closeAllDrawers() {
+  document.querySelectorAll('.drawer').forEach(d => d.classList.remove('open'));
+  document.querySelectorAll('.sidebar-btn').forEach(b => b.classList.remove('active'));
+}
+(function initSidebar() {
+  document.querySelectorAll('.sidebar-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.getAttribute('data-drawer');
+      const drawer = document.getElementById(id);
+      if (!drawer) return;
+      if (drawer.classList.contains('open')) closeAllDrawers();
+      else openDrawer(id);
+    });
+  });
+  document.querySelectorAll('.drawer-close').forEach(btn => {
+    btn.addEventListener('click', (e) => { e.stopPropagation(); closeAllDrawers(); });
+  });
+  // Click outside any drawer or sidebar button → close.
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('.drawer') || e.target.closest('#left-sidebar')) return;
+    closeAllDrawers();
+  });
+  // ESC closes drawers.
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeAllDrawers();
+  });
+})();
 
 function setAlpacaDot(status) {
   const el = document.getElementById('alpaca-dot');
@@ -1337,9 +1678,27 @@ function familyOf(stratName) {
   return String(stratName).split('_')[0].toUpperCase();
 }
 
+// DITP content model: end-of-day scanner watchlist, not live journal events.
+// `ditpWatchlist` holds the latest /strategy/ditp/watchlist payload; when
+// non-empty, DITP shows up as a family tab alongside any journal-driven
+// families (GUNS now, future ones automatically).
+let ditpWatchlist = null;
+
+async function refreshDitpWatchlist() {
+  try {
+    const r = await fetch('/strategy/ditp/watchlist');
+    if (!r.ok) return;
+    const j = await r.json();
+    ditpWatchlist = j;
+    renderFamilyTabs();
+    if (activeFamily === 'DITP') renderAnalysis();
+  } catch (e) { /* leave ditpWatchlist null; tab won't show */ }
+}
+
 function familiesFromAnalysis() {
   const out = new Set();
   for (const n of Object.keys(analysis)) out.add(familyOf(n));
+  if (ditpWatchlist && (ditpWatchlist.candidates || []).length) out.add('DITP');
   return Array.from(out).sort();
 }
 
@@ -1430,6 +1789,14 @@ function renderAnalysis() {
   renderFamilyTabs();
   const el = document.getElementById('strategy-analysis-list');
   if (!el) return;
+
+  // DITP tab has its own content model — render the watchlist file (end-of-day
+  // scanner output) instead of journal-event-driven per-symbol decisions.
+  if (activeFamily === 'DITP') {
+    renderDitpWatchlist(el);
+    return;
+  }
+
   const allStrats = Object.keys(analysis).sort();
   if (!allStrats.length) {
     el.innerHTML = '<span class="muted text-sm">Waiting for shortlist + entry events…</span>';
@@ -1522,6 +1889,126 @@ function tickStrategyCountdowns() {
   });
 }
 setInterval(tickStrategyCountdowns, 1000);
+
+// User-selected universe filter for the DITP watchlist. "all" shows
+// everything; otherwise filter to candidates whose `universes` list contains
+// the selected universe name.
+let ditpUniverseFilter = 'all';
+
+const UNIVERSE_LABELS = {
+  all: 'All',
+  sp500: 'S&P 500',
+  sp400: 'MidCap',
+  sp600: 'SmallCap',
+  nasdaq100: 'NDX-100',
+  djia: 'DJIA',
+};
+
+function renderDitpWatchlist(el) {
+  if (!ditpWatchlist || !(ditpWatchlist.candidates || []).length) {
+    el.innerHTML = `<span class="muted text-sm">No DITP watchlist yet. Run <code class="text-slate-300">py strategy/DITP/scanner.py</code> to generate one.</span>`;
+    return;
+  }
+  const all = ditpWatchlist.candidates || [];
+  const date = ditpWatchlist.target_date || '?';
+  const runAt = (ditpWatchlist.scanner_run_at_utc || '').replace('T', ' ').split('+')[0];
+  const file = ditpWatchlist._file || '';
+
+  // Per-universe counts (a symbol can count toward multiple universes)
+  const univCounts = { all: all.length, sp500: 0, sp400: 0, sp600: 0, nasdaq100: 0, djia: 0 };
+  all.forEach(x => {
+    (x.universes || []).forEach(u => {
+      if (univCounts[u] !== undefined) univCounts[u] += 1;
+    });
+  });
+
+  // Apply filter
+  const filtered = (ditpUniverseFilter === 'all')
+    ? all
+    : all.filter(c => (c.universes || []).includes(ditpUniverseFilter));
+
+  // Per-tier counts on the FILTERED set
+  const counts = { A: 0, B: 0, C: 0, D: 0 };
+  filtered.forEach(x => { counts[x.tier] = (counts[x.tier] || 0) + 1; });
+
+  function fmtRange(cand) {
+    const lo = Number(cand.resistance_low);
+    const hi = Number(cand.resistance);
+    if (!isFinite(lo) || !isFinite(hi)) return '—';
+    return lo === hi ? `$${hi.toFixed(2)}` : `$${lo.toFixed(2)} → $${hi.toFixed(2)}`;
+  }
+
+  const filterPills = Object.keys(UNIVERSE_LABELS).map(u => {
+    const active = (u === ditpUniverseFilter);
+    const n = univCounts[u] || 0;
+    const cls = active
+      ? 'bg-red-950/60 text-red-200 border-red-700'
+      : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700';
+    const disabled = (n === 0 && u !== 'all') ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer';
+    return `<button class="ditp-univ-pill px-2 py-0.5 rounded border text-xs ${cls} ${disabled}"
+                    data-universe="${u}" ${n === 0 && u !== 'all' ? 'disabled' : ''}>${UNIVERSE_LABELS[u]} ${n}</button>`;
+  }).join(' ');
+
+  const rows = filtered.map(cand => {
+    const cau = (cand.cautions || []).join(', ') || '—';
+    const univs = (cand.universes || []).map(u => UNIVERSE_LABELS[u] || u).join(', ') || '—';
+    return `
+      <tr title="universes: ${univs}">
+        <td><span class="tag tier-${cand.tier}">${cand.tier}</span></td>
+        <td><span class="font-mono font-bold ticker-link" data-sym="${cand.symbol}" title="Open ${cand.symbol} in the chart">${cand.symbol}</span></td>
+        <td>P2<span class="muted">_${cand.variant}</span></td>
+        <td>${cand.score}</td>
+        <td>$${Number(cand.last_close).toFixed(2)}</td>
+        <td>${fmtRange(cand)}</td>
+        <td>${Number(cand.distance_atr).toFixed(2)}</td>
+        <td><span class="muted">${cand.resistance_touches}/${cand.resistance_mountains}/${cand.resistance_range_mountains}</span></td>
+        <td class="muted">${cau}</td>
+      </tr>
+    `;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="flex items-center gap-3 text-sm mb-2 flex-wrap">
+      <span class="font-bold">DITP P2 watchlist</span>
+      <span class="muted text-xs">target ${date}</span>
+      <span class="muted text-xs">${filtered.length} of ${all.length} · A=${counts.A||0} B=${counts.B||0} C=${counts.C||0}</span>
+      <span class="muted text-xs ml-auto">scanner: ${runAt} · ${file}</span>
+    </div>
+    <div class="mb-2 flex items-center gap-1 flex-wrap">
+      <span class="muted text-xs mr-1">universe:</span>
+      ${filterPills}
+    </div>
+    <div style="max-height: 420px; overflow-y: auto;">
+      <table class="ditp-tbl">
+        <thead>
+          <tr>
+            <th>tier</th>
+            <th>sym</th>
+            <th>variant</th>
+            <th>score</th>
+            <th>last</th>
+            <th>resistance zone</th>
+            <th>distATR</th>
+            <th>t/m/rM</th>
+            <th>cautions</th>
+          </tr>
+        </thead>
+        <tbody>${rows.length ? rows : '<tr><td colspan="9" class="muted">No candidates in this universe.</td></tr>'}</tbody>
+      </table>
+    </div>
+  `;
+
+  // Wire filter pill clicks (delegated since the buttons are freshly rendered)
+  el.querySelectorAll('.ditp-univ-pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const u = btn.getAttribute('data-universe');
+      const n = univCounts[u] || 0;
+      if (u !== 'all' && n === 0) return;
+      ditpUniverseFilter = u;
+      renderAnalysis();  // re-renders with the new filter
+    });
+  });
+}
 
 function rebuildAnalysisFromEvents() {
   analysis = {};

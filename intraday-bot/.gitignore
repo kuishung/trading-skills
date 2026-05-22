@@ -1,4 +1,5 @@
 state/watchlist_*.txt
+state/watchlist_*.json
 state/plan_*.json
 state/fills_*.jsonl
 state/equity_*.json

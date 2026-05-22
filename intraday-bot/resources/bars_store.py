@@ -137,30 +137,98 @@ def _normalize_bars(bars: Iterable[dict]) -> list[dict]:
 # ---------- Write ----------
 
 def write_bars(symbol: str, bars: Iterable[dict],
-               *, timeframe: str = "1min") -> Path:
+               *, timeframe: str = "1min",
+               source: str | None = None) -> Path:
     """Persist bars to data/price_history/<tf>/<SYM>.parquet.
 
     Merges with any existing file (dedup by timestamp, last write wins),
     then rewrites the whole file. Returns the path written.
+
+    Also appends an event to `data/ingest_log.jsonl` (best-effort, never
+    raises) recording the write — used by `data_integrity` checks and the
+    dashboard's data-health pill. Pass `source` to identify the caller
+    (e.g. "yfinance.seed-sp500", "ibkr_history.update").
     """
     pa = _require_pyarrow()
     import pyarrow.parquet as pq  # type: ignore
 
     rows = _normalize_bars(bars)
     if not rows:
+        _log_ingest({
+            "source": source or "unknown",
+            "symbol": symbol.upper(),
+            "timeframe": timeframe,
+            "bars_added": 0,
+            "note": "empty_input",
+        })
         return _symbol_path(symbol, timeframe)
 
     path = _symbol_path(symbol, timeframe)
     path.parent.mkdir(parents=True, exist_ok=True)
 
+    n_added = len(rows)
     if path.exists():
         existing = _read_parquet(path, pa, pq)
+        before_n = len(existing)
         merged = _normalize_bars(existing + rows)
+        n_added = len(merged) - before_n   # net-new after dedup
     else:
         merged = rows
 
     _write_parquet(path, merged, pa, pq)
+    _log_ingest({
+        "source": source or "unknown",
+        "symbol": symbol.upper(),
+        "timeframe": timeframe,
+        "bars_added": int(n_added),
+        "last_bar": merged[-1]["t"] if merged else None,
+        "n_total": len(merged),
+    })
     return path
+
+
+# ---------- Ingest log ----------
+#
+# Append-only audit trail of every parquet write (and every resume-skip /
+# failure reported by the ingest CLIs). One JSONL line per event. Read by
+# `resources/data_integrity.py` for the dashboard's data-health pill.
+
+INGEST_LOG_PATH = SKILL_DIR / "data" / "ingest_log.jsonl"
+
+
+def _log_ingest(event: dict) -> None:
+    """Best-effort append to `data/ingest_log.jsonl`. Never raises — a
+    broken log must not block trading or ingest."""
+    try:
+        from datetime import datetime, timezone
+        INGEST_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            **event,
+        }
+        with INGEST_LOG_PATH.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, default=str) + "\n")
+    except Exception as exc:
+        sys.stderr.write(f"[bars_store] ingest_log append failed: {exc}\n")
+
+
+def log_ingest_event(*, source: str, symbol: str, timeframe: str,
+                     bars_added: int = 0, error: str | None = None,
+                     note: str | None = None, **extra) -> None:
+    """Public hook for ingest CLIs to log resume-skips, errors, and other
+    events where `write_bars()` isn't called. Same JSONL shape."""
+    event: dict = {
+        "source": source,
+        "symbol": symbol.upper(),
+        "timeframe": timeframe,
+        "bars_added": bars_added,
+    }
+    if error is not None:
+        event["error"] = error
+    if note is not None:
+        event["note"] = note
+    event.update(extra)
+    _log_ingest(event)
 
 
 def _write_parquet(path: Path, rows: list[dict], pa, pq) -> None:

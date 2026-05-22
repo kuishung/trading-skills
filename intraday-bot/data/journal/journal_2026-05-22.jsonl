@@ -1,0 +1,26 @@
+{"ts": "2026-05-22T11:01:47+00:00", "strategy": "guns_setup1", "event": "watchlist_missing", "path": "D:\\Dropbox\\Claude\\claude-skills\\trading-skills\\intraday-bot\\state\\watchlist_guns_2026-05-22.txt"}
+{"ts": "2026-05-22T11:01:48+00:00", "strategy": "guns_setup1", "event": "shortlist_built", "n_scanner": 0, "n_smw": 9, "n_merged": 9, "sources_overlap": 0, "symbols": ["PCLA", "LFS", "AKTX", "MTVA", "GOVX", "HCWB", "RYOJ", "HLIT", "NPK"]}
+{"ts": "2026-05-22T11:01:48+00:00", "strategy": "guns_setup1", "event": "strategy_started", "entry_et": "09:28", "cap": 2, "armed": true}
+{"ts": "2026-05-22T11:01:48+00:00", "strategy": "guns_setup1", "event": "shortlist_loaded", "path": "D:\\Dropbox\\Claude\\claude-skills\\trading-skills\\intraday-bot\\state\\shortlist_guns_setup1_2026-05-22.json", "n": 9}
+{"ts": "2026-05-22T11:01:49+00:00", "strategy": "guns_setup1", "event": "universe_picked", "n": 9, "symbols": ["PCLA", "LFS", "AKTX", "MTVA", "GOVX", "HCWB", "RYOJ", "HLIT", "NPK"]}
+{"ts": "2026-05-22T12:30:36+00:00", "strategy": "orchestrator", "event": "ibc_autolaunch_started", "launcher": "D:\\Dropbox\\Claude\\claude-skills\\trading-skills\\intraday-bot\\ibc\\StartIBC-intraday.bat", "probe_reason": "127.0.0.1:7497 -> ConnectionRefusedError: [WinError 1225] The remote computer refused the network connection"}
+{"ts": "2026-05-22T12:32:30+00:00", "strategy": "orchestrator", "event": "data_provider_fallback", "requested": "ibkr", "actual": "alpaca", "reason": "autolaunch timed out after 100s; last_probe_reason=127.0.0.1:7497 -> ConnectionRefusedError: [WinError 1225] The remote computer refused the network connection", "autolaunch_wait_s": 100.0}
+{"ts": "2026-05-22T13:00:03+00:00", "strategy": "guns_setup1", "event": "watchlist_missing", "path": "D:\\Dropbox\\Claude\\claude-skills\\trading-skills\\intraday-bot\\state\\watchlist_guns_2026-05-22.txt"}
+{"ts": "2026-05-22T13:00:05+00:00", "strategy": "guns_setup1", "event": "shortlist_built", "n_scanner": 0, "n_smw": 8, "n_merged": 8, "sources_overlap": 0, "symbols": ["PCLA", "AKTX", "LFS", "GOVX", "HCWB", "MTVA", "RYOJ", "AKAN"]}
+{"ts": "2026-05-22T13:28:01+00:00", "strategy": "guns_setup1", "event": "strategy_started", "entry_et": "09:28", "cap": 2, "armed": true}
+{"ts": "2026-05-22T13:28:01+00:00", "strategy": "guns_setup1", "event": "shortlist_loaded", "path": "D:\\Dropbox\\Claude\\claude-skills\\trading-skills\\intraday-bot\\state\\shortlist_guns_setup1_2026-05-22.json", "n": 8}
+{"ts": "2026-05-22T13:28:01+00:00", "strategy": "guns_setup1", "event": "universe_picked", "n": 8, "symbols": ["PCLA", "AKTX", "LFS", "GOVX", "HCWB", "MTVA", "RYOJ", "AKAN"]}
+{"ts": "2026-05-22T13:28:03+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "PCLA", "reason": "pm_volume_below_min", "pm_volume": 3580, "min_pm_volume": 30000}
+{"ts": "2026-05-22T13:28:03+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "AKTX", "reason": "pm_volume_below_min", "pm_volume": 935, "min_pm_volume": 30000}
+{"ts": "2026-05-22T13:28:03+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "LFS", "reason": "not_consolidating_near_pmh", "pmh": 3.98, "consol_high": 3.89, "gap_pct": 2.26, "tolerance_pct": 1.5}
+{"ts": "2026-05-22T13:28:03+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "GOVX", "reason": "pm_volume_below_min", "pm_volume": 14846, "min_pm_volume": 30000}
+{"ts": "2026-05-22T13:28:03+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "HCWB", "reason": "pm_volume_below_min", "pm_volume": 9994, "min_pm_volume": 30000}
+{"ts": "2026-05-22T13:28:03+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "MTVA", "reason": "pm_volume_below_min", "pm_volume": 14358, "min_pm_volume": 30000}
+{"ts": "2026-05-22T13:28:03+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "RYOJ", "reason": "pm_volume_below_min", "pm_volume": 519, "min_pm_volume": 30000}
+{"ts": "2026-05-22T13:28:03+00:00", "strategy": "guns_setup1", "event": "rejected", "symbol": "AKAN", "reason": "no_pm_bars"}
+{"ts": "2026-05-22T13:28:03+00:00", "strategy": "guns_setup1", "event": "strategy_finished", "n_submitted": 0, "n_disarmed_skips": 0}
+{"ts": "2026-05-22T13:31:03+00:00", "strategy": "guns_setup5", "event": "strategy_started", "entry_et": "09:31", "cap": 2, "armed": true}
+{"ts": "2026-05-22T13:31:03+00:00", "strategy": "guns_setup5", "event": "watchlist_missing", "path": "D:\\Dropbox\\Claude\\claude-skills\\trading-skills\\intraday-bot\\state\\watchlist_guns_2026-05-22.txt"}
+{"ts": "2026-05-22T13:31:03+00:00", "strategy": "guns_setup5", "event": "universe_picked", "n": 0, "symbols": []}
+{"ts": "2026-05-22T13:31:03+00:00", "strategy": "guns_setup5", "event": "strategy_finished", "n_submitted": 0, "reason": "empty universe"}
+{"ts": "2026-05-22T13:57:49+00:00", "strategy": "guns_setup1", "event": "strategy_off_skipped", "entry_et": "09:28", "note": "state/enabled_<name>.flag absent at scheduled fire; no scanner / resources / analysis ran"}

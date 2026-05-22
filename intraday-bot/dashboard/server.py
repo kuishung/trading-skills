@@ -788,6 +788,87 @@ async def snapshot() -> JSONResponse:
     return JSONResponse(_snapshot())
 
 
+@app.get("/data/health")
+async def data_health(timeframe: str = "daily", details: bool = False) -> JSONResponse:
+    """Parquet data integrity summary for the dashboard pill.
+
+    Runs `resources/data_integrity.health_report()` over the requested
+    timeframe (default daily, which is the universe DITP scans). Returns
+    aggregate counts (fresh/stale/ancient/missing + consistency/validity
+    failures) plus a single `overall` status ("ok"/"warn"/"critical") that
+    the dashboard pill colors itself by.
+
+    Pass `details=true` for full per-symbol lists of the stale / ancient /
+    invalid symbols — used by the click-through modal.
+    """
+    try:
+        import data_integrity  # type: ignore  # resources/data_integrity.py
+        r = data_integrity.health_report(timeframe=timeframe)
+        from dataclasses import asdict
+        payload = asdict(r)
+        if not details:
+            # Trim per-symbol lists when caller doesn't need them; the pill
+            # only needs counts + overall status.
+            payload["stale_symbols"] = payload["stale_symbols"][:0]
+            payload["ancient_symbols"] = payload["ancient_symbols"][:0]
+            payload["invalid_symbols"] = payload["invalid_symbols"][:0]
+        return JSONResponse(payload)
+    except Exception as exc:
+        # Never let the pill take down the page; degrade gracefully.
+        return JSONResponse({"overall": "unknown", "error": str(exc),
+                             "ts": datetime.now(timezone.utc).isoformat(timespec="seconds")})
+
+
+@app.get("/strategy/ditp/watchlist")
+async def ditp_watchlist() -> JSONResponse:
+    """Return the latest DITP P2 watchlist (highest-dated
+    `state/watchlist_ditp_<date>.json`). The DITP tab in the dashboard's
+    Strategy Analysis panel renders this since DITP's content model is
+    end-of-day scanner output, not live journal events like GUNS.
+    """
+    try:
+        state_dir = SKILL_DIR / "state"
+        files = sorted(state_dir.glob("watchlist_ditp_*.json"))
+        if not files:
+            return JSONResponse({"candidates": [], "note": "no_watchlist_yet"})
+        latest = files[-1]
+        payload = json.loads(latest.read_text(encoding="utf-8"))
+        payload["_file"] = latest.name
+        return JSONResponse(payload)
+    except Exception as exc:
+        return JSONResponse({"candidates": [], "error": str(exc)})
+
+
+@app.post("/data/refresh-stale")
+async def data_refresh_stale(timeframe: str = "daily") -> JSONResponse:
+    """Re-fetch every stale / ancient / missing parquet via yfinance.
+    Targeted recovery — only the symbols flagged by health_report() get
+    pulled. Returns the per-symbol bars-written counts."""
+    try:
+        import data_integrity  # type: ignore
+        # The yfinance pull blocks, so run it in a thread to keep the
+        # dashboard responsive. Default loop executor is fine here.
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None, lambda: data_integrity.refresh_stale(timeframe=timeframe)
+        )
+        return JSONResponse(result)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get("/data/ingest-log")
+async def data_ingest_log(tail: int = 50) -> JSONResponse:
+    """Recent ingest log entries (most recent last). Read by the data-health
+    modal's "recent ingest events" section."""
+    try:
+        import data_integrity  # type: ignore
+        events = data_integrity._read_ingest_log_tail(tail)
+        return JSONResponse({"events": events, "n": len(events)})
+    except Exception as exc:
+        return JSONResponse({"events": [], "error": str(exc)})
+
+
 @app.get("/config")
 async def config_view() -> JSONResponse:
     """Public view of harmless config knobs. Never leaks secrets — credentials
