@@ -16,7 +16,7 @@ and import it from whichever strategy needs it. No registration.
 - `yfinance_news.py` — News-catalyst classifier via yfinance `Ticker.news`. 36-hour freshness window, regex tables for BAD (M&A, offering, dilution, going-concern, SEC actions, FDA reject) vs GOOD (earnings beat, FDA approval, contract, partnership, upgrade, AI sympathy). 4-hour cache. Currently consumed only by the GUNS scanner; patterns are general enough for reuse.
 - `smw_premarket_movers.py` — Scrape of `stockmarketwatch.com/movers/premarket`. Returns list of `{symbol, change_pct, price, volume, direction, source}` dicts. Filters by direction (gainers/losers/both), min abs(change%), price range. Handles the page's Next.js SSR HTML-comment-interleaved numbers (`+<!-- -->40<!-- -->%`). Used by GUNS Setup 1's shortlist phase; generic enough for reuse.
 - `tradingview-mcp/` — **Vendored MCP server** (`tradesdontlie/tradingview-mcp`). Node.js MCP that bridges Claude to TradingView Desktop via Chrome DevTools Protocol. Per-PC install: `cd resources/tradingview-mcp && npm install`. `node_modules/` + `package-lock.json` are gitignored. Upstream commit recorded in `_UPSTREAM.md`. Registered with Claude Code via `%USERPROFILE%\.claude\.mcp.json` (per-PC absolute path).
-- `ticker_profile.py` — Per-ticker behavioral baseline (ATR, ADR, vol stddev, trend) cached at `strategy/<FAMILY>/profiles/<TICKER>.json` with 24h TTL. Today's data source is yfinance (free); TV MCP wiring is reserved for the next session. The substrate for ticker-relative thresholds (normalized strategy parameters rule). Public API: `get_profile()`, `refresh_profile()`, `get_or_refresh()`. CLI: `py resources/ticker_profile.py NVDA POET --force-refresh`.
+- `ticker_profile.py` — Per-ticker behavioral baseline (UNIVERSAL cross-strategy product) cached at `data/ticker_profile/<TICKER>.json` with 24h TTL. One file per ticker, sections per timeframe: `stats_daily` (ATR/trend/prev_close), `stats_1m_rth` (vol stats), `stats_3m_rth` (ATR + range percentiles + body / tail ratio distributions + outside-bar freq — the substrate for ticker-relative candlestick anti-patterns). Data sources: yfinance for daily+1m, local 1m parquet → aggregated for 3m. The substrate for the normalized-parameter rule. Public API: `get_profile(ticker)`, `refresh_profile(ticker)`, `get_or_refresh(ticker)`, `is_stale(ticker)`. CLI: `py resources/ticker_profile.py NVDA --force-refresh`.
 - `patterns.py` — Pure-function pattern + signal-math primitives. No I/O, no vendor SDK. Operates on the standard bar dict shape `{t, o, h, l, c, v}`. Public API:
   - `ema(values, period)`, `sma(values, period)`, `vwap(bars)` — moving averages and VWAP series
   - `aggregate_to_n_min(bars, n=5)` — resample 1-min bars to N-min bars
@@ -35,6 +35,41 @@ and import it from whichever strategy needs it. No registration.
 - `bars_store.py` — **The bars I/O layer.** Read/write OHLCV bars to/from `data/price_history/{1min,5min,15min,daily}/<SYM>.parquet`. One file per symbol per timeframe (`AAPL.parquet IS AAPL's full history`). Parquet via lazy `pyarrow` import (the hot path doesn't pay it). Append = read + dedup + rewrite the file; ~50ms at realistic scales. Public API: `load_bars(symbol, start, end, timeframe)`, `write_bars(symbol, bars, timeframe)`, `available_range(symbol, timeframe)`, `list_symbols(timeframe)`, `bars_dir(timeframe)`. Bar shape matches `patterns.py`: `{t, o, h, l, c, v}`. CLI: `py resources/bars_store.py list 1min` / `range NVDA 1min` / `head NVDA 1min --n 5`.
 
 ## Changelog
+
+### 2026-05-23 — `ticker_profile.py`: bulk-refresh helper + health summary (dashboard integration)
+- Following the storage refactor below, two new module-level helpers were added so the dashboard can drive profile state without needing a per-ticker loop in the server:
+  - **`refresh_many(tickers, *, pacing_s=0.5, on_progress=None)`** — refresh a batch with yfinance-rate-limit-safe pacing. Returns `{n_total, n_ok, n_partial, n_failed, failures}`. `on_progress(i, ticker, status)` hook for streaming UI updates.
+  - **`profile_health()`** — single read over `data/ticker_profile/*.json`; returns coverage + freshness counts (`n_total / n_fresh / n_stale / n_full / n_partial / n_no_daily / oldest_ts / newest_ts / symbols_3m`). The dashboard `/profile/health` endpoint is a thin wrapper that adds an `overall` status bucket.
+- The 10 current DITP candidates have been profiled end-to-end as the smoke test (8 full + 2 partial — WSR and MCW are still waiting on 1m parquet to ingest).
+
+### 2026-05-23 — `ticker_profile.py`: universal product, moved to `data/ticker_profile/` + 3m baselines added
+- User rule (chat 2026-05-23): *"if it is a universal product then it is data output, i propose to put it into the data folder in ...data\ticker_profile"*. Profiles are NOT strategy-specific — NVDA's 3m ATR is one number, computed once, consumed by any strategy that asks.
+- **Storage moved** from `strategy/<FAMILY>/profiles/<TICKER>.json` → `data/ticker_profile/<TICKER>.json`. Gitignored (same lifecycle as `data/price_history/` — regenerable, Dropbox-synced, daily churn doesn't belong in git).
+- **`family` parameter dropped** from `get_profile`, `save_profile`, `is_stale`, `refresh_profile`, `get_or_refresh`, `profile_path`. The legacy `--family` CLI flag is gone. Sole pre-existing consumer was the (still-untouched) GUNS scanner; the public API gets simpler.
+- **Profile shape now sectioned by timeframe** — `stats_daily`, `stats_1m_rth`, `stats_3m_rth` (each a sub-dict). Legacy top-level fields (`atr_14d`, `prev_close`, `avg_minute_vol_rth`, ...) are still written ALONGSIDE the sections for back-compat with old reads. Future 5m / 15m sections will follow the same pattern.
+- **New `compute_3m_stats_from_1m_bars(bars)`** — aggregates 1m → 3m via `patterns.aggregate_to_n_min`, filters to RTH (13:30-21:00 UTC widest year-round window), then computes Wilder ATR + range p10/p50/p90 + body-ratio mean/stddev + upper/lower tail p90 + outside-bar frequency. The percentile bundle is what makes ticker-relative candlestick anti-pattern detection possible.
+- **New `_fetch_yfinance(ticker)` helper** — single yfinance call returns `(daily_bars, minute_bars)` so the daily and 1m sections share one HTTP round-trip.
+- **`refresh_profile()` rebuilt** — now builds all sections in one pass; each section is best-effort; missing sections are omitted from the JSON (no `null` poisoning). Returns None only if NO section could be populated.
+- **Bar timestamp handling** — accepts both `datetime` objects (live ingest) and ISO strings (`bars_store.load_bars` returns ISO strings). The 1m → 3m aggregation coerces to datetime before passing to `patterns.aggregate_to_n_min`.
+- **Migrated POET.json** in-place; legacy `strategy/GUNS/profiles/` directory + its stub README deleted.
+- **Smoke-tested:** `py resources/ticker_profile.py NVRI --force-refresh` produces all three sections (atr_14d=$0.57, 3m atr=$0.002 reflecting the thin-liquidity reality of a $19 sideways name, p90 upper-tail-ratio=0.80).
+
+### 2026-05-23 — `patterns.py`: numpy-array primitives (cross-strategy hoist)
+- User rule (chat 2026-05-23): *"this pattern recognition should be an independent module in the resources because all the strategy will be using it"*.
+- Five new functions appended to `resources/patterns.py` as a "Numpy-array primitives" section — separate from the existing list-of-dict API so the two conventions coexist cleanly:
+  - **`atr_wilder_np(highs, lows, closes, period=14)`** — Wilder ATR last value
+  - **`ema_np(arr, period)`** — EMA series, numpy in / numpy out (no SMA bootstrap; use list-of-dict `ema()` for TradingView parity)
+  - **`thrust_bar_np(opens, highs, lows, closes, atr, ...)`** — flush-up bar detector, returns negative offset
+  - **`window_slopes_np(opens, highs, lows, closes, resistance, atr, ...)`** — slope-of-highs / slope-of-lows + rect height + last-candle anatomy for a trailing window
+  - **`horizontal_resistance_np(highs, lows, closes, current_price, atr, ...)`** — full mountain-anchored cluster resistance finder (the big one — ~120 LOC). Returns a dict `{level, cluster_touches, mountain_anchors, range_low, range_high, range_mountains}` or None.
+- numpy imported lazily via `_np()` helper so list-of-dict-only consumers don't pay the import cost.
+- Module docstring rewritten to advertise both API conventions side by side. The list-of-dict primitives (`ema`, `find_pivots`, `bull_flag`, etc.) are untouched — strict additive change.
+- All 49 existing patterns tests still pass.
+- First consumer: `strategy/DITP/scanner.py` — its inline `atr14`, `ema`, `find_flush_up_bar`, `find_resistance` are now thin adapters over these primitives. DITP P2 scan output is byte-identical before and after (10 candidates, same order, same scores). Future ORB / other breakout strategies can reuse the same primitives directly.
+
+### 2026-05-23 — `yfinance_news.py`: cross-strategy docstring REVERTED same session
+- User reversed the M&A overlay in DITP same session (*"nevermind we drop out the m&A"*). Since the only consumer outside GUNS was the (now-deleted) DITP filter, the docstring is back to "GUNS-specific … do not import from non-GUNS code".
+- The `classify()` function and regex tables were never touched in either direction. Pure docstring revert.
 
 ### 2026-05-22 — `ibkr_movers.py`: general IBKR US market scanner CLI + library
 - New `resources/ibkr_movers.py` (~280 LOC). Strategy-agnostic wrapper over `ib_insync.ScannerSubscription` exposing IBKR's full scanner catalog: TOP_PERC_GAIN / TOP_PERC_LOSE / MOST_ACTIVE / HOT_BY_VOLUME / HIGH_OPEN_GAP / etc.

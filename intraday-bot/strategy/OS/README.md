@@ -41,6 +41,14 @@ faster than a daily review can catch them.
 
 ## Changelog
 
+### 2026-05-23 — `os_breakout`: IBKR scanner API call disabled by default
+- User rule (chat 2026-05-23): *"we take out the OS strategy first. do not remove the code, just disable the scan API request for this strategy"*.
+- New `params.scan_enabled` flag in `os_breakout/impl.py` `_params()` — **defaults False**. When False, `do_shortlist()` skips the `build_os_watchlist()` IBKR scanner call entirely, writes no watchlist file, journals a `shortlist_skipped` event with reason `scan_enabled=False — IBKR scanner call disabled by config`. The entry phase then evaluates 0 symbols (no plans, no orders).
+- `config.example.json` `os_breakout.params.scan_enabled = false` for fresh-PC fairness. Code default is also False so per-PC `config.json` files with empty `strategies` blocks inherit the disabled state too.
+- All OS code paths remain intact (`scanner.py`, `_helpers.py`, `pick_universe`, `evaluate`). Re-enable by setting `scan_enabled: true` in `config.json` and toggling the strategy ON in the Gating drawer.
+- Stale `state/watchlist_os_*.txt` + `state/shortlist_os_breakout_*.json` files deleted so the dashboard immediately reflects "no OS symbols" in the active-lists Watchlist tab.
+- Universe before / after: **61 watchlist symbols → 11 (DITP 6 + GUNS 5)** — well under the IBKR 95 streaming-sub cap; "subscribe to ENABLED strategies' symbols" policy now has zero contention.
+
 ### 2026-05-23 — Family scaffolded, `os_breakout` v1.0.0 wired
 - Created `__init__.py`, `_helpers.py`, `scanner.py`, this README, and the `os_breakout/` setup folder with `impl.py` v1.0.0.
 - `_helpers.py` mirrors GUNS primitives (price-tier stops, PMH consolidation) but lives in OS's namespace so the two families stay isolated.

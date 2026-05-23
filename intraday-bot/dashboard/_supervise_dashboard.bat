@@ -9,8 +9,11 @@ REM invoke this directly — start_dashboard.bat spawns it minimized.
 setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
+REM Pin to Python 3.12 — ib_insync (used by /lists/all for live IBKR quotes)
+REM doesn't support 3.14 yet. The `py` launcher otherwise picks the highest
+REM installed version, which is currently 3.14 on this PC.
 :loop
-py server.py
+py -3.12 server.py
 if "%errorlevel%"=="100" (
     echo.
     echo Dashboard requested a restart — relaunching in 1s...

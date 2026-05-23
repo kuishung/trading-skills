@@ -27,6 +27,58 @@ just drops a `strategy/DITP/<setup_name>/` subfolder.
 
 ## Changelog
 
+### 2026-05-23 — `ditp_p2/impl.py` v0.1.0 — watch-only strategy wired into orchestrator
+- User rule (chat 2026-05-23): *"the DITP strategy also hook into the dashboard"*. The scanner has been producing watchlists EOD for a while but DITP wasn't a tradeable strategy in the orchestrator's `KNOWN_STRATEGIES`, so it never appeared in the Gating drawer / Candidates tab / Strategy Analysis drawer.
+- New `strategy/DITP/ditp_p2/impl.py` v0.1.0:
+  - `pick_universe(date_iso, cfg)` reads `state/watchlist_ditp_<date>.json`, returns tier A/B/C symbols (D dropped, same as the .txt watchlist). Falls back to the most recent watchlist file when the exact-date file isn't on disk (handles late starts + cross-day dry-runs).
+  - `fetch_bars` returns empty maps — no intraday data needed for watch-only.
+  - `evaluate` journals `strategy.ditp_p2.monitoring` per symbol per fire (carries tier, variant, resistance, distance_atr, cautions, version) and returns **None**. No plan = no order, even when ARMED. This is deliberate: the user explicitly deferred trade execution + sizing — *"we execution of trade and size position we deal with it later. now we focus on the pattern first"*.
+  - `do_shortlist` journals `watchlist_loaded` with per-tier counts.
+- `strategy/__init__.py` — added `"ditp_p2"` to `KNOWN_STRATEGIES` + `"ditp_p2": "DITP.ditp_p2"` to `_STRATEGY_IMPORT_PATHS`.
+- `config.example.json` — new `ditp_p2` block: `enabled: false, shortlist_et: "09:00", entry_et: "09:31", entry_cutoff_et: "09:35", max_concurrent: 3, take_profit_R: 2.0, params.min_tier: "C"`. Sits alongside the existing GUNS / OS blocks.
+- **Smoke-tested end-to-end:** orchestrator now reports `4 strategies wired`; with DITP toggled ON+ARMED the dry run loads 6 universe symbols, journals one `monitoring` event per symbol, and submits zero orders (correct watch-only behaviour). 
+- Next version (v0.2.0): wires the 5 anti-pattern detectors from Step 3 of the user's teaching + the actual breakout entry trigger.
+
+### 2026-05-23 — Scanner: pattern primitives hoisted to `resources/patterns.py`
+- User rule (chat 2026-05-23): *"this pattern recognition should be an independent module in the resources because all the strategy will be using it"*.
+- Four inline functions deleted from `strategy/DITP/scanner.py`: `ema`, `atr14`, `find_flush_up_bar`, `find_resistance`. The slope-math inside `classify_variant` was also extracted.
+- DITP now imports `atr_wilder_np`, `ema_np`, `thrust_bar_np`, `window_slopes_np`, `horizontal_resistance_np` from `patterns`. The new symbols are added to `resources/patterns.py` in a dedicated "Numpy-array primitives" section so they sit alongside the existing list-of-dict API rather than replacing it.
+- A thin `_resistance()` adapter remains in the scanner — it binds `cfg.*` to the primitive's keyword args and reshapes the return into the legacy 6-tuple `detect_p2()` already consumed. Same for `thrust_bar_np` (called with `cfg.flush_up_*` kwargs).
+- What stays in DITP: `P2Config`, `P2Candidate`, `classify_variant` (the variant taxonomy logic — A/B/C decision tree, bullish-markup test), `detect_p2` orchestration, `score_candidate` (scoring + cautions + tier), `scan_universe`, `write_watchlist`, CLI. The split is: primitives = geometry; DITP = semantics.
+- Scan output is **byte-identical** before/after the refactor: same 10 candidates (GS, NVRI, PLD, CTRE, WSR, DOC, CENTA, LYV, FN, MCW), same tiers, same scores, same proximity-first order. 49/49 `patterns.py` tests still pass.
+- Future strategies (ORB, future-DITP-setup-2, etc.) can now import the same primitives directly — no copy-paste, no drift risk.
+
+### 2026-05-23 — Scanner: M&A news overlay REVERTED same session
+- User reversal (chat 2026-05-23): *"nevermind we drop out the m&A"*. The M&A news overlay added moments earlier (entry below) was rolled back in the same session.
+- Removed `filter_ma_targets()` from `strategy/DITP/scanner.py`. `scan_universe()` reverted to returning `list[P2Candidate]` (was `tuple[list, list]`). `write_watchlist()` no longer carries `ma_dropped`. CLI flag `--no-news-filter` deleted.
+- `resources/yfinance_news.py` docstring restored to its original GUNS-only contract — the module is once again a GUNS-internal classifier with no cross-strategy consumers.
+- DITP P2 scanner is now back to: technical filters only (mountain anchors, ATR distance, variant classifier, upper-tail) → proximity-first sort → watchlist write. No news lookup, no yfinance dependency on this path.
+- M&A exclusion was zero-effect on today's shortlist anyway (all 10 names classified as `unknown` by yfinance), so reverting changes nothing about today's list — same 10 candidates, same order.
+
+### 2026-05-23 — Scanner: M&A news overlay (exclude deal stocks) [SUPERSEDED, see entry above]
+- User rule (chat 2026-05-23): *"DITP scanner also exclude merger and acquisition"*. Same rule already in force for GUNS per CLAUDE.md "Traps the user has flagged" — *"M&A names are dropped from intraday lists — an announced deal anchors price, no R:R left."*
+- New `filter_ma_targets(candidates)` in `strategy/DITP/scanner.py` calls `resources/yfinance_news.classify()` on each technical candidate (NOT the 1500-symbol universe — only the ~10 that pass detect_p2). Drops names whose recent-headline `category` is `ma_target` or `ma_generic`.
+- Other GUNS BAD categories (offerings, fraud, SEC actions, FDA rejections) are NOT applied here — they're tuned for the gap-up news scalp and may over-filter for DITP's longer-horizon setup. If we want them later, add via category list, not by classification == "bad".
+- `scan_universe()` signature changed: now returns `(kept, ma_dropped)`. Sole external caller (`main()` in same file) updated. Wire in `--no-news-filter` CLI flag for debug.
+- `write_watchlist()` JSON now carries `ma_dropped` array for audit (headline + url + category + confidence + pub_date). Empty array when nothing dropped.
+- `resources/yfinance_news.py` docstring rewritten to legitimize cross-strategy use; module is no longer GUNS-exclusive. Only the M&A categories cross over; other categories stay GUNS-local.
+- Soft-fail: if yfinance import / network fails, the filter prints a stderr warning and keeps all candidates. Technical filters are primary defence; news is belt-and-braces.
+- Current run: 10 technical candidates, **0 M&A drops** — none of GS/NVRI/PLD/CTRE/WSR/DOC/CENTA/LYV/FN/MCW have an M&A headline (they're structural plays, not deal stocks). Filter is verified active.
+
+### 2026-05-23 — Scanner: proximity to resistance is the primary ranking key
+- User rule (chat 2026-05-23): *"if the current candle near the immediate preceding mountain top resistance, then rank the first for P2 setup as priority"*.
+- `scan_universe()` sort key changed from `(tier, -score, distance_atr)` → `(distance_atr, tier, -score)`. Tier + score stay as tiebreakers so the user can still read structural conviction at a glance.
+- Header label updated to `"sorted by distance > tier > score"`.
+- Reorder on the live shortlist: **GS** (A/A, distATR 0.10) jumps from #5 → **#1**; **MCW** (A/C, distATR 1.35) drops from #2 → #10. The actionability story now matches what fires first in the tape — a 0.10-ATR setup will break out before a 1.35-ATR one regardless of validation score.
+- D-tier candidates would still be excluded from the orchestrator's `.txt` watchlist via the existing `write_watchlist()` filter (`if c.tier != "D"`), so the proximity-first sort can't promote weak setups into the trade list.
+
+### 2026-05-23 — Scanner: multi-mountain is a conviction modifier, NOT an eligibility gate
+- User clarification (chat 2026-05-23): *"on DITP P2 variant A, the multiple mountain top requirement is only add more conviction to the setup"*. Reverses the hard `min_range_mountains = 2` gate added the prior turn alongside the A/B/C variant rewrite.
+- `detect_p2()` no longer returns `None` when `n_range_mountains < 2`. The hard-gate block was deleted; `cfg.min_range_mountains` default lowered to `1` (effectively no gate — every candidate has ≥1 mountain anchor by construction). Field kept for back-compat / future re-tightening.
+- Multi-mountain is still **rewarded** in `score_candidate()`: `range_conv` adds +6 (≥3 mountains) / +3 (2) / 0 (1) to the validation component. Single-mountain candidates also carry the `SINGLE_MOUNTAIN` caution which downgrades them out of A-tier when paired with another caution.
+- Shortlist count: **4 → 10** at the same data snapshot. Restored: **PLD A/B-78** (single mountain — the canonical TSLA-vs-PLD ceiling example), **GS A/A-75** ("GS qualify" per earlier user judgment), **MCW A/C-82**, **WSR B/B-80** (fresh resistance), **FN B/A-65**, **DOC C/B-48** (with `FLUSH_UP` caution intact).
+- No code-flow change for the 4 that survived under the old gate (NVRI, CTRE, CENTA, LYV) — same tiers, same scores.
+
 ### 2026-05-22 — Scanner v0.7: resistance range = MOUNTAIN CONSENSUS only
 - User refinement (chat): "arguably 168 as a consensus resistance with one outlier false breakout to $173" — non-mountain wicks are NOT part of the resistance, even when they sit inside the band. The resistance zone is purely the mountain consensus.
 - Behavioral change in `find_resistance`: `range_low` / `range_high` now derived from `range_mtns_only` (mountain-qualifying peaks in band), not from all swings. Non-mountain swings within band still count as cluster touches (1% band) but don't define the range.

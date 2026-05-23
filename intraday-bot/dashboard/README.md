@@ -28,6 +28,144 @@ Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-05-23 — Pin transfers across tabs + IBKR 100-line subscription cap
+- User rules (chat 2026-05-23): *"if the side is pin, by clicking another tab, it should also be pinned"* and *"i think IBKR data feed is limited to 100 tickers"*.
+- **Pin transfer.** `openDrawer(id)` reverses the prior "always unpin on switch" behaviour: now if any drawer was pinned when you click another sidebar tab, the new drawer inherits the pin. Layout stays consistent — you can rotate Analysis ↔ Gating ↔ Bot log while keeping the right-shifted main area. Still only one drawer open at a time. Explicit ✕ close still unpins; pin button toggle still works per-drawer.
+- **IBKR subscription cap.** Standard IBKR accounts (paper + most live tiers) allow ~100 simultaneous market-data lines. The streamer now caps at **95 subscriptions** (5-slot headroom for ephemeral probes / one-shot `reqTickers` calls). Module constant `_STREAMER_MAX_SUBS = 95`.
+- **Candidates-first prioritisation.** `_set_streamer_symbols` now takes an ordered list (was a set). `_build_lists_payload` builds it as `candidate_syms + watchlist_non_candidate_syms` — so when the universe outgrows the cap, the watch-only tail drops first; actively-traded names always keep live IBKR quotes.
+- **Status fields exposed:** `streamer.requested_n` (how many symbols we asked for), `streamer.max_subs` (the cap), `streamer.capped` (true when over). `/lists/all` payload includes all three.
+- **Visible cap warning** in the active-lists header next to the feed badge: `⚠ N over IBKR 100-line cap` (amber). Shows only when `streamer.capped` is true. Tooltip explains the prioritisation rule.
+- The fall-back chain still operates correctly when subscriptions are capped: the un-subscribed tail falls through to Alpaca-IEX, then yfinance, exactly as it does when TWS is down for a given symbol.
+
+### 2026-05-23 — In-dashboard chart with strategy overlays (lightweight-charts)
+- User rule (chat 2026-05-23): *"i need you to draw the chart based on the ticker select, the workings had to be overlaid in the chart. such as in DITP, the resistance line and for the GUNS the Premarket High etc..."*. The previous TradingView widget renders fine but is a black box — no API to overlay our own levels. Swapping to **lightweight-charts** (TradingView's open-source library, same look) gets us a JS-controllable candle/volume chart with `createPriceLine` for arbitrary horizontal levels.
+- **`<script src="https://unpkg.com/lightweight-charts@4.1.3/...">`** added next to the Tailwind CDN. Single file, ~80kb gzipped.
+- **`/chart/data?symbol=X&timeframe=Y&days=N`** (new endpoint in `dashboard/server.py`):
+  - Reads OHLCV bars via `bars_store.load_bars` (`daily` direct, `3m` aggregated from `1min` via `patterns.aggregate_to_n_min`).
+  - Coerces ISO-string timestamps to `datetime` then to unix seconds (the shape lightweight-charts expects).
+  - Caps the tail (200 daily bars, 5 days × `bars_per_day` for intraday).
+  - Collects strategy overlays per `_gather_chart_overlays(symbol)` — see below.
+- **DITP overlays today** (from `state/watchlist_ditp_<date>.json`):
+  - `level` — resistance (range_high) solid orange, labelled `DITP R · tier X · P2-Y`
+  - `level` — resistance_low dashed orange, labelled `DITP R low`
+  - `level` — round-number snap dotted cyan if a psychological round number sits inside the zone (`$985`, `$170`, `$20` etc., grid scales with price tier)
+- **GUNS / OS** overlays placeholder — reads any `state/shortlist_<family>_<date>.json` for a per-symbol `pmh` field and renders it as a `level`. The shortlist files don't carry PMH today; this is the wiring spot for when they do.
+- **Frontend (`web/index.html`):**
+  - `_ensureLwChart(host)` creates the chart once (dark theme, monospace font, volume histogram inset at 82-100% of height).
+  - `loadChartSymbol(sym)` fetches `/chart/data`, calls `setData` on candles + volume, calls `createPriceLine` per overlay (with `axisLabelVisible: true` so the level label shows on the price scale), then `fitContent` on the time axis.
+  - Old `loadTvScript` / `rebuildTvWidget` / TradingView widget code retired.
+  - The active-lists row-click now calls `loadChartSymbol(sym)` directly (was calling a non-existent `loadChart`, which silently no-op'd).
+- **Loss of features vs TV widget:** no drawing tools, no symbol-search-from-chart, no built-in MA studies. We gain: actual overlays of the bot's decisions, no popups / network dependency on TV.com, full control over chart styling, no 15-minute delay quirks.
+
+### 2026-05-23 — Real-time heartbeat quotes (IBKR streaming) + whole-row chart navigation
+- User rules (chat 2026-05-23): *"the watchlist and candidate quotes should be in realtime heartbeat"* and *"when the list of ticker any row (not just the ticker name) being clicked, the corresponding chart to change"*.
+- **Backend — persistent IBKR streaming-quote thread:**
+  - New module-level state in `dashboard/server.py`: `_STREAMER_THREAD`, `_LIVE_QUOTES`, `_STREAMER_SYMBOLS`, `_STREAMER_STATUS`. Started lazily on the first `/lists/all` call via `_start_streamer_once()`.
+  - The thread owns one persistent `ib_insync.IB` connection (clientId 99, port from cfg), maintains streaming `reqMktData` subscriptions for every symbol that's currently in any watchlist, and snapshots tickers into `_LIVE_QUOTES` every ~2s. Auto-reconnect with backoff on disconnect.
+  - `_set_streamer_symbols(syms)` lets the FastAPI handlers tell the streamer which symbols to track. The streamer reconciles (add/cancel) on its next tick.
+  - `_streamer_get(symbols)` reads the cache instantly — no IBKR round-trip per request. The 20s cold-fetch latency of the old `reqTickers` path is gone.
+- **`_fetch_quotes` priority chain reordered:**
+  1. **IBKR streaming cache** (`_streamer_get`) — primary, real-time
+  2. IBKR ephemeral `reqTickers` — only if the streamer isn't connected yet
+  3. Alpaca IEX
+  4. yfinance
+- **`/lists/all` payload gains a `streamer` field**: `{connected, subscribed_n, last_update, error}` — exposed to the dashboard for status reporting.
+- **Frontend:**
+  - **Polling cadence dropped from 60s → 3s.** Heartbeat ♥ indicator in the panel header.
+  - **Cell-level flash on value change.** New `_lastQuoteBySym` Map persists across re-renders; on each refresh we diff vs the previous snapshot and add `flash-up` (green) / `flash-dn` (red) class to the `last` cell for ~0.9s. Volume cell flashes up-only (volume is monotonically increasing intraday).
+  - **Whole-row click loads chart.** Click handler moved from `td.sym` to `<tr>`. Cursor styling shifted to `tbody tr` so the affordance is obvious. Symbol cell still underlines on row-hover.
+- **What the user sees during RTH now:** the table updates every 3s with each cell briefly flashing on tick. Click anywhere in a row → chart panel loads that symbol. Click a different row → chart switches. Off-hours: no ticks fire so flashes don't trigger; chart navigation still works.
+
+### 2026-05-23 — Active Lists moved to fixed right column · chart centred
+- User rule (chat 2026-05-23): *"the candidate and watchlist panel should be of the right taking 1/5 of the screen and the chart should be moved to the center"*.
+- **Layout now has two fixed columns flanking the centre:**
+  - LEFT — 44px sidebar (Analysis / Gating / Bot log) + optional pinned drawer (20vw)
+  - RIGHT — Active Lists panel (20vw, min 320px)
+  - CENTRE — status bar, today P&L tile, chart panel, orders/positions, trades
+- `body { padding-left: 44px; padding-right: max(320px, 20vw); }` reserves both columns. Status bar + today tile now span the centre region rather than full width — they don't reach under the right Active Lists column.
+- **`#active-lists` styling:** `position: fixed; top:0; right:0; bottom:0; width: max(320px, 20vw);` Flexbox column inside — sticky header + scrolling body that fills remaining height.
+- **Active Lists header restacked vertically** to fit the narrower column:
+  - Row 1: title + Candidates/Watchlist tabs
+  - Row 2: feed badge + cache TTL + last-update timestamp
+- **Table tightened:** font-size dropped to `10px × scale` (9px for the strategy pill), `padding: 3px 4px` per cell, `white-space: nowrap`, smaller letter-spacing on the strategy-pill column. Six columns now fit cleanly inside 320–384px wide.
+- No backend changes — pure HTML/CSS restructure. `/lists/all` endpoint + 60s polling unchanged.
+
+### 2026-05-23 — Drawer width capped at 1/5 screen + full-replace on tab switch
+- User rules (chat 2026-05-23): *"the side bar should only take 1/5 of the screen by max"* and *"any side bar tab that i click should change the side bar entirely not overlap with the old sidebar"*.
+- **Width cap:** `.drawer { width: 20vw; min-width: 320px; max-width: 20vw; }`. On a 1920×1080 monitor that's 384px; on a 1366 laptop it's 320px (the floor); on an ultrawide it stays at 20vw. Previously normal drawers were 420px and the wide (Analysis) drawer was 760px — both replaced with the single capped width.
+- **Body shift while pinned:** `body.has-pinned-drawer { padding-left: max(calc(44px + 320px), calc(44px + 20vw)) !important; }`. Replaces the old two-class system (`has-pinned-drawer-normal` / `has-pinned-drawer-wide`) since all drawers now share the same width.
+- `.drawer-wide` CSS rule retired (no-op now). The class is still on `drawer-analysis` for harmless back-compat.
+- **No overlap on tab switch:** `openDrawer(id)` now force-unpins AND closes every drawer other than the target. Previously pinned drawers persisted alongside a newly-opened one — visually overlapping. New rule: clicking a sidebar tab is a "full replace" — the user explicitly re-pins via 📌 if they want the new drawer pinned too.
+
+### 2026-05-23 — Events drawer merged into Analysis + readable timeline + no-pin default
+- User rules (chat 2026-05-23): *"any pinned by default"*, *"the events are events of the strategies, they should be in the analysis"*, *"the events content to me are unreadable by human, it need to be in readable human language"*.
+- **No drawer pinned by default.** Removed the localStorage save/restore for `pinned_drawer`. Pin state is now session-only — pinning still works during a session, but every fresh dashboard load starts clean.
+- **Events drawer retired; folded into Analysis drawer as a sub-tab.** The standalone `Events` sidebar button + `drawer-events` aside are gone. The Analysis drawer now exposes two sub-tabs at the top:
+  - **by symbol** — the existing family tabs (GUNS / DITP / OS) + per-symbol decision rows
+  - **event timeline** — the readable chronological event stream
+- **Human-readable event formatter.** New `formatEventReadable(ev)` turns the JSON event into a one-line English sentence per type. Examples:
+  - `strategy.ditp_p2.monitoring` → *"ditp_p2 watching **GS** — tier **A** P2-A, resistance **$984.70**, **0.10 ATR** from level. caution: SINGLE_MOUNTAIN, WIDE_BASE"*
+  - `strategy.ditp_p2.strategy_started` → *"ditp_p2 started — entry at 09:31, **ARMED**, cap 3"*
+  - `strategy.os_breakout.planned` → *"os_breakout **planned BIYA** — buy-stop-limit $2.66, stop $2.61, target $2.76"*
+  - `strategy.guns_setup1.rejected` → *"guns_setup1 **rejected MLGO** — **not_consolidating_near_pmh** (PMH=$5.42 gap=2.10%)"*
+  - `orchestrator.data_provider_selected` → *"data provider: **ibkr** (ok)"*
+  - `strategy.guns_setup1.strategy_off_skipped` → *"guns_setup1 **skipped** — strategy is OFF"*
+- **Coverage:** 20+ event types explicitly mapped. Unknown types fall back to a compact `<event-name> <symbol> key=value · key=value` view (still readable, no raw JSON).
+- **Visual treatment:** each row shows `[HH:MM:SS]` time + colour-coded family pill (GUNS amber / DITP cyan / OS purple / SYS grey) + the readable sentence. Numbers tabular-aligned. Symbols rendered in cyan. Reasons/errors in red. Success states (planned, submitted, filled, take_profit) in green.
+- Sidebar collapses from 4 to 3 buttons: **Analysis** (new dual-view drawer) · **Gating** · **Bot log**.
+
+### 2026-05-23 — Sidebar drawers are pinnable
+- User rule (chat 2026-05-23): *"dashboard side bar need to be able to pin"*. The four sidebar drawers (Analysis, Gating, Events, Bot log) slide out as overlays by default and close on outside-click / ESC; that's good for quick peeks but bad when you want one of them visible alongside the main view.
+- Each drawer header gains a **📌 pin** button between the title and the ✕ close button. Click to pin / unpin.
+- **Pin behavior:**
+  - Pinned drawers stay open regardless of outside-click or ESC
+  - Main content shifts right by the drawer width (420px for Gating/Events/Bot log, 760px for Analysis) — chart panel and active lists reflow into the remaining space
+  - Only one drawer can be pinned at a time; pinning a second one unpins the first
+  - Sidebar-button click on a pinned drawer is a no-op (it's already open)
+  - Close button (✕) is the explicit "go away" — unpins AND closes
+- **Persistence:** pin state survives reloads via `localStorage` key `pinned_drawer = "<drawer-id>"`. On dashboard load, the previously-pinned drawer auto-restores.
+- **CSS additions:** `.drawer.pinned` (force translateX(0)), `.drawer-pin` button styling (highlighted in IBKR-red when active), `body.has-pinned-drawer-normal` (padding-left: 464px), `body.has-pinned-drawer-wide` (padding-left: 804px).
+- **JS additions:** `togglePin(id)` and `_setBodyPinnedClass(drawer)`; `openDrawer` + `closeAllDrawers` modified to skip pinned drawers; init reads localStorage and restores.
+
+### 2026-05-23 — Active-lists feed badge (LIVE / DELAYED indicator)
+- User rule (chat 2026-05-23): *"the quote panel should state which data feed it source from"*. Earlier turn already exposed source per-row + a small muted summary; this turn promotes the summary to a prominent labeled badge in the panel header so the LIVE-vs-DELAYED status is unmistakable at a glance.
+- New `.feed-badge` CSS class with four colour states: `feed-ibkr` (green, all-IBKR), `feed-alpaca` (amber, Alpaca-IEX), `feed-yf` (red, delayed), `feed-mixed` (amber, mixed sources), `feed-none` (red, no feed available). Round-dot prefix mirrors the existing status-bar pill aesthetic.
+- Badge labels: `IBKR · LIVE` / `Alpaca IEX · LIVE (IEX vol only)` / `yfinance · DELAYED 15m` / `MIXED · <primary> primary` / `no feed available`. Tooltip on hover carries the full per-source row counts + a 1-line definition of each feed + the fallback order.
+- Driven by the existing `quote_sources` field in `/lists/all`; pure frontend change.
+
+### 2026-05-23 — Strategy Analysis → sidebar drawer + IBKR live quote feed
+- User rules (chat 2026-05-23): *"the analysis of the ticker should be placed in the side bar"* and *"the quote should be from the live IBKR datafeed"*.
+- **Strategy Analysis panel moved out of the main grid into the left sidebar.** New 4th sidebar button "Analysis" opens a wide (760px) drawer carrying the existing `#strategy-family-tabs` + `#strategy-analysis-list` markup verbatim — all of the family-tab + journal-event-stream JS continues to work unchanged because the DOM IDs moved with the markup.
+- Main grid simplified: the chart panel now spans full width (was 50/50 with strategy analysis). Chart-empty message updated to point at "the active lists above, or open the Analysis drawer (left)".
+- **`server.py`**: `_fetch_quotes` reworked as a 3-tier fallback chain — **IBKR snapshot → Alpaca IEX → yfinance**. Per-row `source` field exposes which feed served each row.
+  - **IBKR** (`_fetch_quotes_ibkr`): connects via `ib_insync` on the dashboard's reserved clientId 99, qualifies contracts (resolves SMART/USD + primary exchange), uses **`ib.reqTickers`** for synchronous snapshots (more reliable than `reqMktData` + `ib.sleep`, which silently times out when batching 5+ subscriptions). Real-time during RTH, yesterday's `close` off-hours. Volume reported in shares (IBKR delivers 100-share lots; multiplied accordingly).
+  - **Alpaca IEX** (`_fetch_quotes_alpaca`): one `trades/latest` + one `bars` round-trip for the whole batch. Real-time price, IEX-only volume. Free with paper account; credentials resolved via `_common.load_vendor_env("alpaca")`.
+  - **yfinance** (`_fetch_quotes_yfinance`): last-resort fallback, 15-min delayed.
+- Quote cache bumped from 30s → 60s; frontend polling cadence matched. `reqTickers` is ~340ms per symbol so a 60-symbol cold fetch is ~20s; 60s TTL means at most one cold fetch per minute even with multiple dashboard tabs open.
+- **`web/index.html`** active-lists panel:
+  - Header now shows quote-source breakdown — e.g. `quotes: 50 IBKR · 11 Alpaca-IEX · 60s cache`
+  - Per-row badge next to volume: `IEX` (Alpaca-IEX feed, volume is partial), `yf` (yfinance, delayed), `no quote` (all three sources failed)
+- New `.drawer-wide` CSS class (760px) for the analysis drawer.
+- End-to-end smoke at the moment of landing: 61/61 watchlist symbols served by IBKR, 20.7s cold fetch wall-clock.
+
+### 2026-05-23 — Active Lists panel (Candidates / Watchlist tabs)
+- User rule (chat 2026-05-23): *"In the dashboard i want 2 tabs - candidate and watchlist. Each list will contain column symbol, last, chg, chg%, vol, strategy. The candidate folder is those ticker that passed the gate and ready for trade execution, the watchlist are those still under radar but has not pass the gate."*
+- New full-width panel at the top of the page (above the Strategy Analysis + Chart grid), two tabs:
+  - **Candidates** — symbols whose owning strategy family is currently ON + ARMED. These are the ones the bot will fire on when a valid trigger lands. Drives the operational "what am I about to trade?" view.
+  - **Watchlist** — every symbol on every `state/watchlist_*_*.{txt,json}` file. The raw under-radar pool across families.
+- Each row shows: `SYMBOL | LAST | CHG | CHG% | VOL | STRATEGY`. Strategy column renders as a colour-coded pill (GUNS amber / DITP cyan / OS purple). Symbol cell is click-to-load-chart, reusing the existing embedded TradingView panel.
+- **`server.py`**: new `GET /lists/all` endpoint. Sync builder runs in an executor thread; aggregates rows from JSON + TXT watchlist files (JSON wins when both exist for the same symbol+family), batch-fetches quote data via yfinance (`period=2d, interval=1d`) with a 30s in-process cache, and tags each row with the armed state of its strategy family (via `scripts/_gating.is_enabled` + `is_armed`).
+- **`web/index.html`**: new `.list-tab` styling (uppercase pill row, distinct from per-family `.fam-tab`), `table.active-list` styling (sticky header, right-aligned numerics, sym/strategy left-aligned). Polls `/lists/all` every 30s.
+- End-to-end smoke at the moment of landing: **61 watchlist symbols** (50 OS + 6 DITP + 5 GUNS), **50 candidates** (only OS armed in paper).
+
+### 2026-05-23 — Ticker profile health pill + refresh-scope modal
+- User rule (chat 2026-05-23): *"ok you can start profiling, the dashboard also need to start profile status"*. Per the Dashboard Visibility Rule, the ticker-profile pipeline (added this session) needs an observable surface so the user can see coverage + freshness and trigger refreshes without dropping to CLI.
+- **`server.py`** — two new endpoints:
+  - `GET /profile/health?details=true` — coverage + freshness summary from `ticker_profile.profile_health()`. Returns `n_total / n_fresh / n_stale / n_full / n_partial / n_no_daily / oldest_ts / newest_ts / symbols_3m / overall`. The `overall` field is bucketed `ok | warn | critical` using the same thresholds as the data-health pill (≥80% full+fresh → ok; ≥50% or any stale → warn; else critical).
+  - `POST /profile/refresh?scope=watchlist|ingested|universe` — bulk-refresh trigger. `watchlist` aggregates today's `state/watchlist_*_*.json` symbols (fast, ~10-30 tickers); `ingested` uses every symbol with local 1m parquet (~500 currently); `universe` uses every symbol with daily parquet (~1500). Runs in an executor thread so the UI stays responsive; yfinance calls paced at 0.4s.
+- **`web/index.html`** — new status-bar pill **"Profile health"** sitting next to "Historical price data health". Polls `/profile/health` every 60s; colour follows the same `ok/warn/critical` palette. Click opens a modal mirroring the data-health modal: three KPI panels (coverage / freshness / timestamps), a list of symbols with full 3m profile, and three refresh buttons (watchlist / ingested / universe) labelled with their expected scope size.
+- The substrate this exposes: `data/ticker_profile/<TICKER>.json` files produced by `resources/ticker_profile.py` — per-ticker behavioral baselines (`stats_daily` + `stats_1m_rth` + `stats_3m_rth`). The 3m section is what the upcoming candlestick anti-pattern detectors will read for ticker-relative thresholds.
+
 ### 2026-05-21 — Embedded chart defaults to extended hours
 - `web/index.html`: TradingView widget constructor now passes `session_id: 'extended'`, `extended_hours: true`, and `details: true`. Pre-market + after-hours bars render by default — RTH-only would hide the exact PM bars GUNS Setup 1 evaluates (PMH, consol_high) and Setup 5 evaluates (first 1-min RTH candle is fine but PM-bar median range is computed from PM data too).
 - The free Advanced Charts widget has limited control vs the registered Charting Library, so it may show the "Extended Hours" toggle in the toolbar even after these flags — passing all three increases the odds the chart starts in extended mode across widget versions. User can also toggle in-chart (right-click → Time → Extended Hours, or the `E` button when visible).

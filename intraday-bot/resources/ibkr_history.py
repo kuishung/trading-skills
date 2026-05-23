@@ -67,6 +67,7 @@ DEFAULT_PACING_S = 7.0   # seconds between IBKR requests; safe under 60/600s cap
 # IB historical-data pacing tightens for smaller bars; chunk accordingly.
 TIMEFRAME_TO_IB = {
     "1min":  {"barSize": "1 min",  "chunk_days": 7,   "use_rth": False},
+    "3min":  {"barSize": "3 mins", "chunk_days": 14,  "use_rth": False},
     "5min":  {"barSize": "5 mins", "chunk_days": 30,  "use_rth": False},
     "15min": {"barSize": "15 mins","chunk_days": 60,  "use_rth": False},
     "daily": {"barSize": "1 day",  "chunk_days": 365, "use_rth": True},

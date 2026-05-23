@@ -84,6 +84,15 @@ def _params(strat: Strategy) -> dict:
         "scanner_rows": int(p.get("scanner_rows", 50)),
         "scanner_min_change_pct": float(p.get("scanner_min_change_pct", 3.0)),
         "scanner_min_avg_volume": int(p.get("scanner_min_avg_volume", 200_000)),
+        # Kill-switch for the IBKR scanner API call. When False, the
+        # shortlist phase skips the scan entirely and produces an empty
+        # watchlist. Per user rule 2026-05-23: *"we take out the OS
+        # strategy first. do not remove the code, just disable the scan
+        # API request for this strategy"*. The OS code paths stay
+        # functional — re-enable by setting `scan_enabled: true` under
+        # cfg.strategies.os_breakout.params. Default False reflects the
+        # current "OS is taken out" stance so re-enabling is explicit.
+        "scan_enabled": bool(p.get("scan_enabled", False)),
     }
 
 
@@ -97,20 +106,30 @@ def do_shortlist(date_iso: str, cfg: dict, strat: Strategy) -> None:
     Best-effort: scanner failures land an empty shortlist + a journal
     event. The entry phase will then evaluate against zero symbols
     rather than crash.
+
+    When `params.scan_enabled` is False (default True in config.example,
+    currently set False per user rule 2026-05-23), the IBKR scanner call
+    is skipped entirely — no API request, no watchlist file. A
+    `shortlist_skipped` journal event records the reason for audit.
     """
     p = _params(strat)
-    try:
-        from strategy.OS.scanner import build_os_watchlist, write_os_watchlist
-        syms = build_os_watchlist(
-            rows=p["scanner_rows"],
-            min_change_pct=p["scanner_min_change_pct"],
-            min_avg_volume=p["scanner_min_avg_volume"],
-            cfg=cfg,
-        )
-        write_os_watchlist(syms, date_iso)
-    except Exception as exc:
-        journal(STRATEGY_NAME, "shortlist_failed", error=str(exc))
-        syms = []
+    if not p["scan_enabled"]:
+        journal(STRATEGY_NAME, "shortlist_skipped",
+                reason="scan_enabled=False — IBKR scanner call disabled by config")
+        syms: list[str] = []
+    else:
+        try:
+            from strategy.OS.scanner import build_os_watchlist, write_os_watchlist
+            syms = build_os_watchlist(
+                rows=p["scanner_rows"],
+                min_change_pct=p["scanner_min_change_pct"],
+                min_avg_volume=p["scanner_min_avg_volume"],
+                cfg=cfg,
+            )
+            write_os_watchlist(syms, date_iso)
+        except Exception as exc:
+            journal(STRATEGY_NAME, "shortlist_failed", error=str(exc))
+            syms = []
 
     payload = {
         "date": date_iso,

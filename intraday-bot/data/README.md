@@ -21,6 +21,8 @@ data/
     5min/<SYM>.parquet
     15min/<SYM>.parquet
     daily/<SYM>.parquet
+  ticker_profile/
+    <SYM>.json                       behavioral baseline, ALL timeframes
   journal/journal_<YYYY-MM-DD>.jsonl one file per ET trading day
   review/
     stats_<YYYY-MM-DD>.json          snapshot from `review/stats.py --save`
@@ -33,7 +35,8 @@ data/
 
 | Subfolder | Tracked? | Why |
 |---|---|---|
-| `price_history/` | gitignored | Bulk binary, regeneratable from IBKR/TV/yfinance. Dropbox-synced across PCs so we don't re-pull on every machine. |
+| `price_history/`  | gitignored | Bulk binary, regeneratable from IBKR/TV/yfinance. Dropbox-synced across PCs so we don't re-pull on every machine. |
+| `ticker_profile/` | gitignored | Per-ticker behavioral baselines (ATR, vol, 3m percentile distributions). Derived nightly from `price_history/`; TTL 24h; regeneratable. Same lifecycle as `price_history/` — Dropbox-synced, daily churn doesn't belong in git. |
 | `journal/`  | **committed** | Cream. Decision history is the substrate for `review/`; must travel across PCs and survive disk loss. Append-only, never rewritten. |
 | `review/`   | **committed** | Small curated snapshots — captures the state of the bot's beliefs at a moment in time. Treated like reports. |
 | `fixtures/` | **committed** | Test corpus. Lives alongside the code it validates. |
@@ -108,6 +111,12 @@ when needed). The store itself stays a thin read/write API.
   materials) → `strategy/<FAMILY>/Materials/` (Dropbox-synced, gitignored).
 
 ## Changelog
+
+### 2026-05-23 — `ticker_profile/` added (universal per-ticker behavioral baselines)
+- User rule (chat 2026-05-23): *"if it is a universal product then it is data output, i propose to put it into the data folder in ...data\ticker_profile"*. Ticker profiles are not strategy-specific — they describe the ticker itself (ATR, vol stats, 3m percentile distributions), so they belong in `data/` next to the parquet bars they're derived from, not under `strategy/<FAMILY>/`.
+- Layout: `data/ticker_profile/<TICKER>.json`. One file per ticker, sections per timeframe.
+- Gitignored — same lifecycle as `price_history/`: regenerable from local parquets, refreshes daily, Dropbox-synced. Committing daily churn would be noise.
+- POET.json migrated from `strategy/GUNS/profiles/`. NVRI freshly computed end-to-end (yfinance daily + yfinance 1m + local-parquet-derived 3m percentiles). See `resources/ticker_profile.py` for the API + recipe.
 
 ### 2026-05-21 — `bars/` → `price_history/` (flat one-file-per-symbol layout)
 - Renamed `data/bars/` → `data/price_history/`. More descriptive name; reflects how the user thinks about it ("price history per ticker"), not how an engineer thinks ("OHLCV bars").

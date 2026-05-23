@@ -315,26 +315,20 @@ def _probe_ibkr_handshake() -> str:
 
 
 def _probe_ibkr_tcp(timeout: float = 0.5) -> str:
-    """Composite probe used by the health loop.
+    """Cheap TCP-bind probe — tells us only whether TWS's port is listening.
 
-    Most calls are cheap bind-probes. Once every HANDSHAKE_INTERVAL_S we do
-    a real ib_insync handshake to detect wedged-accept-loop states (TWS
-    UI thread blocked by modal dialog, etc.) that a bind-probe can't see.
+    Used by `_poll_health()` every 3s. We intentionally DO NOT do a real
+    `ib.connect()` handshake here on a schedule — even with try/except,
+    each failed handshake leaves asyncio cleanup events (ConnectionReset,
+    TimeoutError) in the FastAPI main loop. Over a long-running session
+    those accumulate and every endpoint starts taking ~2s. See user
+    incident 2026-05-23.
+
+    The "is the API actually responsive" question is answered on demand
+    when something actually tries to use it (quote fetch, order submit) —
+    those paths have their own error handling and don't poison the loop.
     """
-    import time as _time
-    global _last_handshake_at, _last_handshake_result
-    now = _time.time()
-    bind_state = _probe_ibkr_listener_bind()
-    if bind_state == "down":
-        # Listener gone — no point doing the heavy probe.
-        _last_handshake_result = "down"
-        return "down"
-    if now - _last_handshake_at >= HANDSHAKE_INTERVAL_S:
-        _last_handshake_result = _probe_ibkr_handshake()
-        _last_handshake_at = now
-    # If the last handshake said up, keep reporting up between probes; if it
-    # said down (wedged accept loop), keep reporting down until next attempt.
-    return _last_handshake_result if _last_handshake_result in ("up", "down") else bind_state
+    return _probe_ibkr_listener_bind()
 
 
 _ibkr_status_cache = "unknown"
@@ -817,6 +811,1715 @@ async def data_health(timeframe: str = "daily", details: bool = False) -> JSONRe
         # Never let the pill take down the page; degrade gracefully.
         return JSONResponse({"overall": "unknown", "error": str(exc),
                              "ts": datetime.now(timezone.utc).isoformat(timespec="seconds")})
+
+
+@app.get("/profile/health")
+async def profile_health(details: bool = False) -> JSONResponse:
+    """Ticker-profile coverage + freshness summary for the dashboard pill.
+
+    Reads every JSON under `data/ticker_profile/` and returns aggregate
+    counts (total / fresh / stale / full / partial / no_daily) plus
+    timestamps of the oldest / newest profile. Drives the "Profile
+    health" pill in the status bar.
+
+    Pass `details=true` to also get the full list of symbols whose
+    `stats_3m_rth` section is populated (used by the click-through modal).
+    """
+    try:
+        import ticker_profile  # type: ignore  # resources/ticker_profile.py
+        h = ticker_profile.profile_health()
+        if not details:
+            # Trim symbol list when the pill is just polling; modal asks
+            # for details=true when it opens.
+            h["symbols_3m"] = []
+        # Roll-up status: same colour buckets as the data-health pill.
+        # ok       : ≥80% of profiles full + fresh
+        # warn     : 50-80% full+fresh, OR there are stale profiles
+        # critical : <50% full, or all stale
+        n = max(h["n_total"], 1)
+        full_fresh_ratio = (h["n_full"] - max(0, h["n_full"] - h["n_fresh"])) / n
+        if h["n_total"] == 0:
+            h["overall"] = "unknown"
+        elif full_fresh_ratio >= 0.8:
+            h["overall"] = "ok"
+        elif full_fresh_ratio >= 0.5 or h["n_stale"] > 0:
+            h["overall"] = "warn"
+        else:
+            h["overall"] = "critical"
+        h["ts"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        return JSONResponse(h)
+    except Exception as exc:
+        return JSONResponse({"overall": "unknown", "error": str(exc),
+                             "ts": datetime.now(timezone.utc).isoformat(timespec="seconds")})
+
+
+@app.post("/profile/refresh")
+async def profile_refresh(scope: str = "watchlist") -> JSONResponse:
+    """Trigger a profile refresh. `scope` options:
+      "watchlist"  : symbols in today's DITP / GUNS watchlists (fast, ~10-30 tickers)
+      "ingested"   : every symbol with local 1m parquet (~500-1500, slower)
+      "universe"   : every symbol with daily parquet on disk (the full ~1519)
+
+    Runs in a thread so the dashboard stays responsive. Returns the
+    summary from `ticker_profile.refresh_many()`.
+    """
+    try:
+        import ticker_profile  # type: ignore
+        import bars_store      # type: ignore
+
+        if scope == "watchlist":
+            symbols: list[str] = []
+            for p in sorted((SKILL_DIR / "state").glob("watchlist_*_*.json")):
+                try:
+                    obj = json.loads(p.read_text(encoding="utf-8"))
+                    for c in obj.get("candidates", []):
+                        s = c.get("symbol")
+                        if s:
+                            symbols.append(s.upper())
+                except Exception:
+                    pass
+            # de-dup, keep order
+            seen = set(); ordered = []
+            for s in symbols:
+                if s not in seen:
+                    seen.add(s); ordered.append(s)
+            symbols = ordered
+        elif scope == "ingested":
+            symbols = bars_store.list_symbols("1min")
+        elif scope == "universe":
+            symbols = bars_store.list_symbols("daily")
+        else:
+            return JSONResponse({"error": f"unknown scope {scope!r}"}, status_code=400)
+
+        if not symbols:
+            return JSONResponse({"n_total": 0, "n_ok": 0, "n_partial": 0,
+                                 "n_failed": 0, "failures": [],
+                                 "note": "no symbols in scope"})
+
+        loop = asyncio.get_running_loop()
+        summary = await loop.run_in_executor(
+            None, lambda: ticker_profile.refresh_many(symbols, pacing_s=0.4)
+        )
+        summary["scope"] = scope
+        return JSONResponse(summary)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get("/lists/all")
+async def lists_all() -> JSONResponse:
+    """Unified active-lists view across every strategy family. Returns
+    `{candidates: [...], watchlist: [...]}`.
+
+    Definitions (operational, not philosophical):
+      * **watchlist**: every symbol on every `state/watchlist_*_*.{txt,json}`
+        file the family scanners produced. The raw under-radar pool.
+      * **candidates**: the SUBSET of watchlist whose strategy is currently
+        ON + ARMED (i.e. the bot would actually fire on a trigger). Once
+        the DITP intraday monitor lands, this also subtracts symbols whose
+        intraday anti-pattern count has crossed the demotion threshold.
+
+    Each row carries: symbol, last, chg, chg_pct, vol, strategy, tier?,
+    variant?, resistance?. Quote data is fetched in one yfinance batch
+    with a 30s in-process cache to stay below free-tier rate limits.
+    """
+    loop = asyncio.get_running_loop()
+    payload = await loop.run_in_executor(None, _build_lists_payload)
+    return JSONResponse(payload)
+
+
+# ---- /lists/all helpers (sync, run via executor) -------------------------
+
+_QUOTE_CACHE: dict[str, tuple[float, dict]] = {}
+# 5s cache for non-streaming sources (Alpaca / yfinance fallback). IBKR
+# quotes don't go through this cache — they live in the streamer's in-memory
+# `_LIVE_QUOTES` dict, updated continuously via streaming subscriptions, so
+# `/lists/all` reads them in sub-millisecond.
+_QUOTE_TTL_S = 5.0
+
+# ---- IBKR streaming-quote background thread ----------------------------
+#
+# A single dedicated thread owns one persistent ib_insync `IB()` connection
+# (clientId 99) and maintains streaming `reqMktData` subscriptions for every
+# symbol currently in any state/watchlist_*_*.json. Tickers auto-update as
+# trades print; we snapshot the dict every 2s to populate `_LIVE_QUOTES`.
+# FastAPI handlers read from `_LIVE_QUOTES` directly — no per-request IBKR
+# round-trip, no 20s cold-fetch latency.
+#
+# Why thread, not asyncio: ib_insync's `IB` instance is NOT thread-safe but
+# DOES want its own event loop. Running it in its own thread with a private
+# asyncio loop is the canonical way to use it alongside another async
+# framework (FastAPI). Cross-thread communication = a lock + plain dict
+# + an atomic "subscribed_symbols" set updated by the FastAPI side.
+
+import threading
+
+_STREAMER_LOCK = threading.Lock()
+_STREAMER_THREAD: "threading.Thread | None" = None
+# Ordered priority list — the streamer subscribes from the head up to the
+# 95-slot cap. Candidates first, then watchlist non-candidates.
+_STREAMER_PRIORITY: list[str] = []
+_LIVE_QUOTES: dict[str, dict] = {}       # symbol -> {last, prev_close, chg, chg_pct, vol, ts}
+
+# IBKR standard account allows ~100 simultaneous market data subscriptions
+# (paper and many live accounts share this cap). We hold back 5 slots for
+# ephemeral calls (probes, one-shot reqTickers) so the live streamer can't
+# starve them out.
+_STREAMER_MAX_SUBS = 95
+
+_STREAMER_STATUS: dict = {
+    "connected":     False,
+    "last_update":   None,
+    "subscribed_n":  0,
+    "requested_n":   0,     # how many symbols the caller WANTED
+    "capped":        False, # True when requested > max
+    "max_subs":      _STREAMER_MAX_SUBS,
+    "error":         None,
+}
+
+
+def _set_streamer_symbols(symbols) -> None:
+    """Called by /lists/all on each request. Order matters — the head of
+    the list wins when the count exceeds the IBKR subscription cap.
+
+    The streamer thread reads `_STREAMER_PRIORITY` on its next reconcile
+    (~2s) and adjusts subscriptions to match the first N entries (N=cap)."""
+    global _STREAMER_PRIORITY
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for s in symbols:
+        if not s:
+            continue
+        u = str(s).upper()
+        if u in seen:
+            continue
+        seen.add(u)
+        ordered.append(u)
+    with _STREAMER_LOCK:
+        _STREAMER_PRIORITY = ordered
+        _STREAMER_STATUS["requested_n"] = len(ordered)
+        _STREAMER_STATUS["capped"] = len(ordered) > _STREAMER_MAX_SUBS
+
+
+# Kill-switch for the streaming thread. Set to True to disable IBKR
+# streaming entirely — `/lists/all` falls through to the on-demand
+# `_fetch_quotes_ibkr` (ephemeral reqTickers), then Alpaca-IEX, then
+# yfinance. The streaming thread's uncaught asyncio exceptions
+# (ConnectionResetError, "Peer closed connection" etc.) were
+# destabilising the FastAPI process when TWS rejected connections
+# (paper-disclaimer popup, clientId collision). Re-enabled with a
+# custom asyncio exception handler that swallows the noise (see
+# _streamer_main) so a bad connection cycle no longer crashes the
+# dashboard. Re-flip to True if instability returns.
+_STREAMER_DISABLED = False
+
+
+_STREAMER_SHUTDOWN_REQUESTED = threading.Event()
+_STREAMER_IB_REF: list = []  # one-slot reference to the live IB so atexit can drain
+
+
+def _streamer_atexit_drain():
+    """Best-effort: cancel every reqMktData + disconnect cleanly on
+    process shutdown. TWS releases the market-data lines immediately
+    instead of waiting for its orphan-session timeout (5-10 min)."""
+    _STREAMER_SHUTDOWN_REQUESTED.set()
+    if not _STREAMER_IB_REF:
+        return
+    ib = _STREAMER_IB_REF[0]
+    try:
+        if not ib.isConnected():
+            return
+        for tk in list(ib.tickers()):
+            try: ib.cancelMktData(tk.contract)
+            except Exception: pass
+        try: ib.disconnect()
+        except Exception: pass
+    except Exception:
+        pass
+
+
+import atexit
+atexit.register(_streamer_atexit_drain)
+
+
+def _start_streamer_once() -> None:
+    """Idempotent — starts the streamer thread on first call, no-op after."""
+    if _STREAMER_DISABLED:
+        _STREAMER_STATUS["error"] = "streaming disabled (see _STREAMER_DISABLED in server.py)"
+        return
+    global _STREAMER_THREAD
+    if _STREAMER_THREAD is not None and _STREAMER_THREAD.is_alive():
+        return
+    _STREAMER_THREAD = threading.Thread(
+        target=_streamer_main, daemon=True, name="ibkr-quote-streamer"
+    )
+    _STREAMER_THREAD.start()
+
+
+def _streamer_main() -> None:
+    """Background thread: persistent IBKR connection + streaming subscriptions.
+
+    Lifecycle:
+      1. Create a private asyncio loop for this thread (ib_insync needs one).
+      2. Connect to TWS / Gateway via cfg.ibkr_port + clientId 99.
+      3. Loop forever:
+         a. Reconcile subscriptions vs `_STREAMER_SYMBOLS` (add new, drop gone).
+         b. ib.sleep(2) — pump the event loop, let tickers update.
+         c. Snapshot all live tickers into `_LIVE_QUOTES`.
+      4. On disconnect: brief wait, reconnect.
+    """
+    import asyncio, math, time
+
+    # Mute ib_insync's logger — it's chatty about every reconnect attempt
+    # ("Paper trading disclaimer must first be accepted", "clientId 99
+    # already in use?" etc.). They land in dashboard.log via the asyncio
+    # exception handler below; we don't also need them on stderr where
+    # they fill the supervisor's cmd window.
+    import logging as _logging
+    for _name in ("ib_insync", "ib_insync.client", "ib_insync.wrapper",
+                  "ib_insync.ib", "ib_insync.event"):
+        _logging.getLogger(_name).setLevel(_logging.CRITICAL)
+
+    # Each ib_insync IB instance needs its own asyncio loop in its own thread.
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    # Swallow asyncio noise from ib_insync. The library emits stack traces
+    # via the default exception handler whenever a TCP connection drops
+    # mid-flight (ConnectionResetError, "Peer closed connection",
+    # TimeoutError). These come from transports tearing down AFTER we've
+    # already detected the disconnect via ib.isConnected() and started a
+    # reconnect cycle — they're noise, not a real error condition. The
+    # default handler used to write them to dashboard.log; that wasn't
+    # a problem in itself, but the volume + interaction with stdout
+    # buffering across threads correlated with dashboard hangs. Quiet
+    # handler keeps the streamer recovery path the only authority on
+    # what an error means.
+    def _quiet_async_exc_handler(_loop, context):
+        msg = context.get("message") or ""
+        exc = context.get("exception")
+        if exc is None:
+            return                # benign warning
+        # Categorize so we can still surface unknown errors on stderr.
+        ignored = (
+            "ConnectionResetError", "TimeoutError",
+            "ConnectionRefusedError", "OSError",
+        )
+        if type(exc).__name__ in ignored:
+            return
+        # Anything else: write a single line, no stack trace.
+        sys.stderr.write(f"[streamer-asyncio] {type(exc).__name__}: {msg}\n")
+    loop.set_exception_handler(_quiet_async_exc_handler)
+
+    try:
+        from ib_insync import IB, Stock  # type: ignore
+        from _common import load_config  # type: ignore
+    except ImportError as exc:
+        _STREAMER_STATUS["error"] = f"import_failed: {exc}"
+        return
+
+    cfg = load_config()
+    host = cfg.get("ibkr_host", "127.0.0.1")
+    port = int(cfg.get("ibkr_port", 7497))
+
+    ib = IB()
+    # Park the IB instance where atexit can find it for shutdown cleanup.
+    if _STREAMER_IB_REF:
+        _STREAMER_IB_REF[0] = ib
+    else:
+        _STREAMER_IB_REF.append(ib)
+    contract_by_sym: dict[str, object] = {}
+    fail_streak = 0
+    MAX_FAILS_BEFORE_SLEEP = 3       # then back off to 5-min retries
+    LONG_BACKOFF_S = 300
+    # Pool of clientIds to cycle through on consecutive failures. When TWS
+    # has a half-broken session at clientId 99 (orphaned from a previous
+    # crash), the slot stays locked for several minutes until TWS times
+    # out. Trying a different clientId on each retry sidesteps that —
+    # 100/101/102 are unlikely to be locked at the same time.
+    CLIENT_IDS = [99, 100, 101, 102, 103]
+
+    while True:
+        # ---- Connect / reconnect ----
+        if not ib.isConnected():
+            contract_by_sym.clear()
+            _STREAMER_STATUS["connected"] = False
+            cid = CLIENT_IDS[fail_streak % len(CLIENT_IDS)]
+            try:
+                ib.connect(host, port, clientId=cid, timeout=8)
+                _STREAMER_STATUS["connected"] = True
+                _STREAMER_STATUS["error"] = None
+                fail_streak = 0
+            except Exception as exc:
+                fail_streak += 1
+                msg = str(exc) or type(exc).__name__
+                _STREAMER_STATUS["error"] = f"clientId={cid}: {msg} (fail #{fail_streak})"
+                # After repeated failures (TWS disclaimer not accepted,
+                # clientId collision, etc.), back off hard so we don't
+                # spam asyncio errors into the FastAPI process. Quotes
+                # fall through to Alpaca silently while this is the case.
+                if fail_streak >= MAX_FAILS_BEFORE_SLEEP:
+                    time.sleep(LONG_BACKOFF_S)
+                else:
+                    time.sleep(15)
+                continue
+
+        # ---- Reconcile subscriptions ----
+        try:
+            with _STREAMER_LOCK:
+                # Take the first N entries of the priority list, where N is
+                # the IBKR subscription cap. Candidates come first, then the
+                # rest of the watchlist — so when the universe outgrows the
+                # cap, the watch-only tail gets dropped, not the actively-
+                # traded names.
+                want = set(_STREAMER_PRIORITY[:_STREAMER_MAX_SUBS])
+            have = set(contract_by_sym.keys())
+            to_add = want - have
+            to_remove = have - want
+
+            if to_add:
+                contracts = [Stock(s, "SMART", "USD") for s in to_add]
+                try:
+                    qualified = ib.qualifyContracts(*contracts)
+                except Exception as exc:
+                    _STREAMER_STATUS["error"] = f"qualify: {exc}"
+                    qualified = []
+                for c in qualified:
+                    sym = getattr(c, "symbol", "").upper()
+                    if not sym:
+                        continue
+                    try:
+                        ib.reqMktData(c, "", False, False)
+                        contract_by_sym[sym] = c
+                    except Exception:
+                        continue
+
+            if to_remove:
+                for sym in to_remove:
+                    c = contract_by_sym.pop(sym, None)
+                    if c is None:
+                        continue
+                    try:
+                        ib.cancelMktData(c)
+                    except Exception:
+                        pass
+
+            _STREAMER_STATUS["subscribed_n"] = len(contract_by_sym)
+
+            # ---- Pump event loop (2s) — lets ticker updates flow in ----
+            ib.sleep(2)
+
+            # ---- Snapshot tickers into the live cache ----
+            now_ts = time.time()
+            updated: dict[str, dict] = {}
+            for tk in ib.tickers():
+                sym = getattr(tk.contract, "symbol", "").upper()
+                if not sym or sym not in contract_by_sym:
+                    continue
+                row = _ticker_to_quote_row(tk, math)
+                if row is None:
+                    continue
+                row["ts"] = now_ts
+                updated[sym] = row
+            if updated:
+                with _STREAMER_LOCK:
+                    _LIVE_QUOTES.update(updated)
+                _STREAMER_STATUS["last_update"] = now_ts
+
+        except Exception as exc:
+            # Don't let a single hiccup kill the thread.
+            _STREAMER_STATUS["error"] = f"loop: {exc}"
+            # Clean cancel of every subscription before disconnect — this
+            # tells TWS to release the market-data line immediately rather
+            # than wait for its orphan-session timeout (5-10 min). Without
+            # this, repeated reconnects accumulate phantom subscriptions
+            # in TWS's accounting (the "112 tickers" symptom from user
+            # report 2026-05-23).
+            for sym, c in list(contract_by_sym.items()):
+                try: ib.cancelMktData(c)
+                except Exception: pass
+            contract_by_sym.clear()
+            try: ib.disconnect()
+            except Exception: pass
+            time.sleep(5)
+
+
+def _ticker_to_quote_row(tk, math) -> dict | None:
+    """Extract a quote row from an ib_insync Ticker. Returns None if there's
+    no usable data (e.g. just-subscribed, still waiting for first tick).
+    Reused logic from `_fetch_quotes_ibkr`."""
+    try:
+        last = tk.last
+        if last is None or (isinstance(last, float) and math.isnan(last)):
+            last = tk.close
+        prev = tk.close
+        if last is None or prev is None:
+            return None
+        if isinstance(last, float) and math.isnan(last):
+            return None
+        if isinstance(prev, float) and math.isnan(prev):
+            return None
+        last = float(last); prev = float(prev)
+        if prev <= 0:
+            return None
+        chg = last - prev
+        chg_pct = (chg / prev * 100.0) if prev > 0 else 0.0
+        vol_raw = tk.volume
+        if vol_raw is None or (isinstance(vol_raw, float) and math.isnan(vol_raw)):
+            v = 0
+        else:
+            v = int(float(vol_raw) * 100)
+        return {
+            "last":       round(last, 4),
+            "prev_close": round(prev, 4),
+            "chg":        round(chg, 4),
+            "chg_pct":    round(chg_pct, 3),
+            "vol":        v,
+        }
+    except Exception:
+        return None
+
+
+def _streamer_get(symbols: list[str]) -> dict[str, dict]:
+    """Read the streamer cache for the given symbols. Returns whatever is
+    available (no waiting). Symbols missing from the cache simply aren't
+    in the result — caller falls back to the next quote source."""
+    out: dict[str, dict] = {}
+    with _STREAMER_LOCK:
+        for s in symbols:
+            row = _LIVE_QUOTES.get(s.upper())
+            if row is not None:
+                out[s.upper()] = dict(row)   # shallow copy
+    return out
+
+
+def _aggregate_watchlist_rows() -> list[dict]:
+    """Scan state/watchlist_*_*.{txt,json} -> list of rows tagged with
+    the strategy family that produced the file.
+
+    Filename convention (set by each family scanner):
+        watchlist_<family>_<YYYY-MM-DD>.{txt,json}
+    Family is the second token, lowercased. txt is line-oriented
+    (SYM[<tab>extras]); json is the rich version with tier/variant.
+    """
+    state_dir = SKILL_DIR / "state"
+    rows: list[dict] = []
+    seen: dict[tuple[str, str], dict] = {}   # (symbol, family) -> row
+
+    # Prefer JSON files first; their richer fields populate the row.
+    for path in sorted(state_dir.glob("watchlist_*_*.json")):
+        try:
+            parts = path.stem.split("_")
+            family = parts[1].lower() if len(parts) >= 2 else "unknown"
+        except Exception:
+            family = "unknown"
+        try:
+            obj = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        for c in obj.get("candidates", []):
+            sym = (c.get("symbol") or "").upper()
+            if not sym:
+                continue
+            key = (sym, family)
+            seen[key] = {
+                "symbol":   sym,
+                "strategy": family,
+                "tier":     c.get("tier"),
+                "variant":  c.get("variant"),
+                "resistance": c.get("resistance"),
+                "source":   path.name,
+            }
+
+    # Then .txt files for families that only emit text (GUNS today).
+    for path in sorted(state_dir.glob("watchlist_*_*.txt")):
+        try:
+            parts = path.stem.split("_")
+            family = parts[1].lower() if len(parts) >= 2 else "unknown"
+        except Exception:
+            family = "unknown"
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                sym = line.split()[0].upper()
+                if not sym:
+                    continue
+                key = (sym, family)
+                if key in seen:
+                    continue       # JSON entry wins
+                seen[key] = {
+                    "symbol":   sym,
+                    "strategy": family,
+                    "source":   path.name,
+                }
+        except Exception:
+            continue
+
+    return list(seen.values())
+
+
+def _fetch_quotes(symbols: list[str]) -> dict[str, dict]:
+    """Layered REAL-TIME quote fetch with 30s in-process cache.
+
+    Priority chain (each row's `source` field records which one served it):
+      1. IBKR streaming cache (clientId 99, real-time, full consolidated tape)
+      2. IBKR ephemeral snapshot (warm-up window, before streamer is hot)
+      3. Alpaca IEX (real-time price; volume is IEX-only — marked as such)
+
+    yfinance is **NOT** in this chain by user rule 2026-05-23: *"the real
+    time data we cannot use yFinance, we have to only rely to IBKR and
+    Alpaca only"*. yfinance is 15-min delayed on the free tier — not
+    safe to drive intraday decisions or display as a live quote. The
+    `_fetch_quotes_yfinance` function below is kept callable for
+    non-realtime consumers (ticker_profile daily-bar refresh, etc.) but
+    is never invoked from this real-time path.
+
+    Returns {SYM: {last, prev_close, chg, chg_pct, vol, source}}. When
+    neither IBKR nor Alpaca can serve a symbol, the row is omitted from
+    the result — the row shows in the UI with `last: null` and a
+    `no quote` tag, which is the honest signal that we have no live
+    data for it right now.
+    """
+    import time
+    now = time.time()
+    out: dict[str, dict] = {}
+    needed: list[str] = []
+    for s in symbols:
+        s = s.upper()
+        c = _QUOTE_CACHE.get(s)
+        if c and (now - c[0]) < _QUOTE_TTL_S:
+            out[s] = c[1]
+        else:
+            needed.append(s)
+    if not needed:
+        return out
+
+    # --- 1. IBKR streaming cache (primary, real-time) ---
+    # The streamer thread maintains persistent subscriptions and updates
+    # `_LIVE_QUOTES` every ~2s. Reads here are instant. Symbols just-added
+    # to the watchlist may not have data yet (streamer takes 1-2 reconcile
+    # cycles to qualify + populate); those fall through to the next source.
+    streamer_rows = _streamer_get(needed)
+    for sym, row in streamer_rows.items():
+        row["source"] = "ibkr"
+        # NOT cached in _QUOTE_CACHE — we want to re-read the live dict each
+        # call so updates appear immediately.
+        out[sym] = row
+
+    still_needed = [s for s in needed if s not in out]
+    if not still_needed:
+        return out
+
+    # --- 1b. IBKR ephemeral snapshot ---
+    # Warm-up path — runs only when the streamer is enabled but hasn't yet
+    # connected (typical for the first 5-10 seconds after dashboard start).
+    # Once the streamer is connected, this path is skipped entirely; once
+    # it's gone for a long time, we don't keep poking IBKR — Alpaca/yfinance
+    # fallback handles it.
+    if (not _STREAMER_DISABLED) and (not _STREAMER_STATUS.get("connected")):
+        try:
+            ibkr_rows = _fetch_quotes_ibkr(still_needed)
+        except Exception:
+            ibkr_rows = {}
+        for sym, row in ibkr_rows.items():
+            row["source"] = "ibkr"
+            _QUOTE_CACHE[sym] = (now, row)
+            out[sym] = row
+        still_needed = [s for s in needed if s not in out]
+        if not still_needed:
+            return out
+
+    # --- 2. Alpaca IEX fallback ---
+    try:
+        alpaca_rows = _fetch_quotes_alpaca(still_needed)
+    except Exception:
+        alpaca_rows = {}
+    for sym, row in alpaca_rows.items():
+        row["source"] = "alpaca_iex"
+        _QUOTE_CACHE[sym] = (now, row)
+        out[sym] = row
+
+    # yfinance is deliberately NOT in the real-time chain — see this
+    # function's docstring + user rule 2026-05-23. Symbols neither IBKR
+    # nor Alpaca could serve return without a `last` value; the UI
+    # surfaces this as `no quote` on the row so the user knows the data
+    # is missing, not stale.
+    return out
+
+
+def _fetch_quotes_ibkr(symbols: list[str]) -> dict[str, dict]:
+    """Snapshot quotes from IBKR via ib_insync. Connects ephemerally per
+    call (~1-2s overhead) using the dashboard's reserved clientId 99
+    so it can coexist with the live bot (clientId 71). Soft-fails to
+    empty dict if TWS / Gateway is down or any contract can't qualify.
+    """
+    if not symbols:
+        return {}
+    try:
+        from ib_insync import IB, Stock  # type: ignore
+    except ImportError:
+        return {}
+    try:
+        from _common import load_config  # type: ignore
+    except ImportError:
+        return {}
+    cfg = load_config()
+    host = cfg.get("ibkr_host", "127.0.0.1")
+    port = int(cfg.get("ibkr_port", 7497))
+
+    ib = IB()
+    try:
+        ib.connect(host, port, clientId=99, timeout=4)
+    except Exception:
+        return {}
+
+    try:
+        contracts = [Stock(s, "SMART", "USD") for s in symbols]
+        try:
+            qualified = ib.qualifyContracts(*contracts)
+        except Exception:
+            qualified = []
+        if not qualified:
+            return {}
+
+        # reqTickers is the synchronous snapshot wrapper — blocks until each
+        # contract's ticker has populated. More reliable than reqMktData +
+        # ib.sleep, which silently times out on most symbols when batching
+        # 5+ subscriptions at once.
+        try:
+            tickers = ib.reqTickers(*qualified)
+        except Exception:
+            return {}
+
+        out: dict[str, dict] = {}
+        import math
+        for tk in tickers:
+            try:
+                sym = tk.contract.symbol.upper()
+                last = tk.last
+                if last is None or (isinstance(last, float) and math.isnan(last)):
+                    # No live tick (off-hours, or no data subscription) →
+                    # use yesterday's close as the "current" reference.
+                    last = tk.close
+                prev = tk.close
+                if last is None or prev is None:
+                    continue
+                if isinstance(last, float) and math.isnan(last):
+                    continue
+                if isinstance(prev, float) and math.isnan(prev):
+                    continue
+                last = float(last)
+                prev = float(prev)
+                if prev <= 0:
+                    continue
+                chg = last - prev
+                chg_pct = (chg / prev * 100.0) if prev > 0 else 0.0
+                # IBKR volume is in 100-share lots; multiply.
+                vol_raw = tk.volume
+                if vol_raw is None or (isinstance(vol_raw, float) and math.isnan(vol_raw)):
+                    v = 0
+                else:
+                    v = int(float(vol_raw) * 100)
+                out[sym] = {
+                    "last":       round(last, 4),
+                    "prev_close": round(prev, 4),
+                    "chg":        round(chg, 4),
+                    "chg_pct":    round(chg_pct, 3),
+                    "vol":        v,
+                }
+            except Exception:
+                continue
+        return out
+    finally:
+        try:
+            ib.disconnect()
+        except Exception:
+            pass
+
+
+def _fetch_quotes_alpaca(symbols: list[str]) -> dict[str, dict]:
+    """Alpaca IEX feed via REST. Free-tier paper accounts have IEX by
+    default; price is real-time, volume reflects IEX trades only.
+
+    Reads credentials via the existing alpaca-skill-path adapter so we
+    don't duplicate env-loading logic. Soft-fails to empty dict on any
+    issue (creds missing, network, etc).
+    """
+    if not symbols:
+        return {}
+    try:
+        import urllib.request, urllib.parse
+        from _common import load_config  # type: ignore
+        cfg = load_config()
+    except Exception:
+        return {}
+
+    # Best-effort key lookup — mirrors what alpaca-trader-paper does.
+    api_key = os.environ.get("ALPACA_API_KEY") or os.environ.get("APCA_API_KEY_ID")
+    api_secret = os.environ.get("ALPACA_API_SECRET") or os.environ.get("APCA_API_SECRET_KEY")
+    if not api_key or not api_secret:
+        # Try VAULT loader path (intraday-bot self-contained credential resolution)
+        try:
+            from _common import load_vendor_env  # type: ignore
+            env = load_vendor_env("alpaca")
+            api_key = env.get("APCA_API_KEY_ID")
+            api_secret = env.get("APCA_API_SECRET_KEY")
+        except Exception:
+            pass
+    if not api_key or not api_secret:
+        return {}
+
+    base = "https://data.alpaca.markets/v2/stocks"
+    syms_csv = ",".join(symbols)
+    # Latest trade endpoint — one round-trip for all symbols.
+    url = f"{base}/trades/latest?{urllib.parse.urlencode({'symbols': syms_csv, 'feed': 'iex'})}"
+    req = urllib.request.Request(url, headers={
+        "APCA-API-KEY-ID":     api_key,
+        "APCA-API-SECRET-KEY": api_secret,
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return {}
+    trades = data.get("trades", {}) or {}
+
+    # Need previous close for chg calc — pull a 2-day daily bar batch
+    url2 = (f"{base}/bars?"
+            + urllib.parse.urlencode({
+                "symbols":  syms_csv,
+                "timeframe": "1Day",
+                "limit":    "2",
+                "adjustment": "raw",
+                "feed":     "iex",
+            }))
+    req2 = urllib.request.Request(url2, headers={
+        "APCA-API-KEY-ID":     api_key,
+        "APCA-API-SECRET-KEY": api_secret,
+    })
+    try:
+        with urllib.request.urlopen(req2, timeout=4) as resp:
+            bars_data = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        bars_data = {"bars": {}}
+    bars = bars_data.get("bars", {}) or {}
+
+    out: dict[str, dict] = {}
+    for sym in symbols:
+        sym = sym.upper()
+        tr = trades.get(sym)
+        if not tr:
+            continue
+        last = tr.get("p")
+        v = int(tr.get("s", 0) or 0)
+        sym_bars = bars.get(sym) or []
+        prev = float(sym_bars[-2]["c"]) if len(sym_bars) >= 2 \
+            else (float(sym_bars[-1]["c"]) if sym_bars else None)
+        if last is None or prev is None:
+            continue
+        try:
+            last = float(last); prev = float(prev)
+        except (TypeError, ValueError):
+            continue
+        chg = last - prev
+        chg_pct = (chg / prev * 100.0) if prev > 0 else 0.0
+        out[sym] = {
+            "last":       round(last, 4),
+            "prev_close": round(prev, 4),
+            "chg":        round(chg, 4),
+            "chg_pct":    round(chg_pct, 3),
+            "vol":        v,   # IEX-only — caller's `source` field marks this
+        }
+    return out
+
+
+def _fetch_quotes_yfinance(symbols: list[str]) -> dict[str, dict]:
+    """Last-resort: yfinance batch download. 15-min delayed on free tier."""
+    if not symbols:
+        return {}
+    try:
+        import yfinance as yf  # type: ignore
+    except ImportError:
+        return {}
+    try:
+        df = yf.download(" ".join(symbols), period="2d", interval="1d",
+                         progress=False, auto_adjust=False, threads=False)
+    except Exception:
+        return {}
+    if df is None or df.empty:
+        return {}
+
+    def _series_for(sym: str, field: str):
+        try:
+            if (field, sym) in df.columns:
+                return df[(field, sym)].dropna()
+            if (sym, field) in df.columns:
+                return df[(sym, field)].dropna()
+            if field in df.columns and len(symbols) == 1:
+                return df[field].dropna()
+        except Exception:
+            pass
+        return None
+
+    out: dict[str, dict] = {}
+    for sym in symbols:
+        try:
+            close = _series_for(sym, "Close")
+            vol   = _series_for(sym, "Volume")
+            if close is None or len(close) == 0:
+                continue
+            last = float(close.iloc[-1])
+            prev = float(close.iloc[-2]) if len(close) >= 2 else last
+            chg = last - prev
+            chg_pct = (chg / prev * 100.0) if prev > 0 else 0.0
+            v = int(vol.iloc[-1]) if vol is not None and len(vol) > 0 else 0
+            out[sym] = {
+                "last":       round(last, 4),
+                "prev_close": round(prev, 4),
+                "chg":        round(chg, 4),
+                "chg_pct":    round(chg_pct, 3),
+                "vol":        v,
+            }
+        except Exception:
+            continue
+    return out
+
+
+def _strategy_armed(family: str) -> bool:
+    """True if the family's primary strategy is currently ARMED.
+    Conservative: if any setup within the family is armed, the family is
+    armed for the purpose of the candidates view.
+    """
+    try:
+        import _gating  # type: ignore  scripts/_gating.py
+    except ImportError:
+        return False
+    try:
+        from strategy import KNOWN_STRATEGIES  # type: ignore
+    except ImportError:
+        return False
+    for name in KNOWN_STRATEGIES:
+        if not name.lower().startswith(family.lower()):
+            continue
+        try:
+            if _gating.is_enabled(name) and _gating.is_armed(name):
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _build_lists_payload() -> dict:
+    rows = _aggregate_watchlist_rows()
+    # Per-family armed status — needed BOTH for the candidates split below
+    # AND for ordering the streamer-priority list (candidates first).
+    families = sorted({r["strategy"] for r in rows})
+    armed_map = {f: _strategy_armed(f) for f in families}
+
+    # Streamer priority: armed strategies' symbols first (the "candidates"
+    # set), then the rest of the watchlist. When the IBKR 100-line cap is
+    # hit, the watch-only tail drops — the actively-traded names always
+    # keep their live subscription.
+    cand_syms: list[str] = []
+    rest_syms: list[str] = []
+    seen: set[str] = set()
+    for r in rows:
+        s = (r.get("symbol") or "").upper()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        if armed_map.get(r["strategy"], False):
+            cand_syms.append(s)
+        else:
+            rest_syms.append(s)
+    ordered_syms = cand_syms + rest_syms
+
+    # Sentiment ETFs (SPY/QQQ/IWM/DIA, VXX, UUP/TLT/HYG/GLD, 11 sectors)
+    # always go first — they drive the top-of-page Market Sentiment panel
+    # and need live quotes regardless of which strategy is armed.
+    sentiment_first = [s for s in SENTIMENT_SYMBOLS if s not in seen]
+    ordered_with_sentiment = sentiment_first + ordered_syms
+
+    if ordered_with_sentiment:
+        _set_streamer_symbols(ordered_with_sentiment)
+        _start_streamer_once()
+
+    syms = sorted(seen)
+    quotes = _fetch_quotes(syms) if syms else {}
+    for r in rows:
+        q = quotes.get(r["symbol"], {})
+        r["last"]    = q.get("last")
+        r["chg"]     = q.get("chg")
+        r["chg_pct"] = q.get("chg_pct")
+        r["vol"]     = q.get("vol")
+        r["source"]  = q.get("source")   # 'ibkr' | 'alpaca_iex' | 'yfinance' | None
+
+    # Quote-source coverage for the active-lists header pill.
+    by_source: dict[str, int] = {}
+    for r in rows:
+        s = r.get("source") or "none"
+        by_source[s] = by_source.get(s, 0) + 1
+
+    watchlist = sorted(rows, key=lambda r: (r["strategy"], r["symbol"]))
+    candidates = [r for r in watchlist if armed_map.get(r["strategy"], False)]
+
+    streamer_snapshot = {
+        "connected":    _STREAMER_STATUS.get("connected"),
+        "subscribed_n": _STREAMER_STATUS.get("subscribed_n", 0),
+        "requested_n":  _STREAMER_STATUS.get("requested_n", 0),
+        "max_subs":     _STREAMER_STATUS.get("max_subs", _STREAMER_MAX_SUBS),
+        "capped":       _STREAMER_STATUS.get("capped", False),
+        "last_update":  _STREAMER_STATUS.get("last_update"),
+        "error":        _STREAMER_STATUS.get("error"),
+    }
+    return {
+        "candidates":    candidates,
+        "watchlist":     watchlist,
+        "armed_map":     armed_map,
+        "quote_sources": by_source,
+        "streamer":      streamer_snapshot,
+        "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+
+
+_MARKET_CLOCK_CACHE: dict = {"ts": 0.0, "payload": None}
+_MARKET_CLOCK_TTL_S = 30.0
+
+
+def _alpaca_market_clock() -> dict:
+    """Query Alpaca's `/v2/clock` (free, authoritative US equity market
+    state — handles weekends, federal holidays, and early closes that
+    a pure time-of-day check can't know about). Cached 30s.
+
+    Returns:
+      {is_open, timestamp, next_open, next_close, source}
+    `source` is "alpaca" on success, "fallback" if Alpaca creds missing
+    or unreachable (caller should then compute client-side)."""
+    import time
+    now = time.time()
+    cached = _MARKET_CLOCK_CACHE.get("payload")
+    if cached and (now - _MARKET_CLOCK_CACHE["ts"]) < _MARKET_CLOCK_TTL_S:
+        return cached
+
+    client = _get_alpaca_client()
+    if client is None:
+        result = {"is_open": None, "source": "fallback",
+                  "reason": "no_alpaca_credentials"}
+        _MARKET_CLOCK_CACHE.update(ts=now, payload=result)
+        return result
+    try:
+        c = client.get_clock()
+        result = {
+            "is_open":    bool(c.is_open),
+            "timestamp":  c.timestamp.isoformat() if c.timestamp else None,
+            "next_open":  c.next_open.isoformat()  if c.next_open  else None,
+            "next_close": c.next_close.isoformat() if c.next_close else None,
+            "source":     "alpaca",
+        }
+    except Exception as exc:
+        result = {"is_open": None, "source": "fallback",
+                  "reason": f"alpaca_clock_failed: {exc}"}
+    _MARKET_CLOCK_CACHE.update(ts=now, payload=result)
+    return result
+
+
+# ----- Market Sentiment panel (Option D — full composite) -----------
+#
+# Universe of "sentiment feed" symbols. Always Tier-1 priority on the
+# streamer, so they have live IBKR quotes regardless of strategy state.
+# 4 indices + 1 vol proxy + 4 macro + 11 SPDR sectors = 20 symbols.
+SENTIMENT_INDICES   = ["SPY", "QQQ", "IWM", "DIA"]
+SENTIMENT_VOLATILITY = ["VXX"]              # VIX proxy ETF (real VIX is INDEX/CBOE, requires special contract handling — VXX is sufficient as a directional gauge)
+SENTIMENT_MACRO     = ["UUP", "TLT", "HYG", "GLD"]   # USD-bull proxy, long bonds, high-yield credit, gold
+SENTIMENT_SECTORS   = [
+    "XLK", "XLY", "XLC", "XLF", "XLI", "XLB",       # risk-on
+    "XLE", "XLP", "XLV", "XLU", "XLRE",             # mixed / defensive
+]
+SENTIMENT_SYMBOLS = SENTIMENT_INDICES + SENTIMENT_VOLATILITY + SENTIMENT_MACRO + SENTIMENT_SECTORS
+
+# Risk-on vs risk-off sectors — for the composite "sectors" sub-score.
+RISK_ON_SECTORS  = {"XLK", "XLY", "XLC", "XLF", "XLI", "XLB"}
+RISK_OFF_SECTORS = {"XLP", "XLV", "XLU"}            # classic defensives
+
+# Tooltips shown on hover for each cell. Used by the frontend; sent in
+# the payload so the explanations stay in sync with the data.
+SENTIMENT_TIPS = {
+    "SPY":  "S&P 500 ETF — broadest US large-cap index. Today's % change vs prior close. Green = risk-on day. The benchmark.",
+    "QQQ":  "Nasdaq-100 ETF — tech-heavy. Typically leads SPY in growth-led rallies and lags in defensive rotations. Divergence vs SPY is informative.",
+    "IWM":  "Russell 2000 small-cap ETF. Leading indicator: small caps lead in early-cycle bull markets and lag in late-cycle / defensive moves.",
+    "DIA":  "Dow Jones 30 — mega-cap blue-chip industrials. Less broad than SPY; useful as a sanity check on the index move.",
+    "VXX":  "VIX short-term futures ETF (proxy for VIX). Up = volatility/fear expanding. Down = vol contracting. <15 VIX-equivalent = calm regime where breakouts work; >25 = chop / mean-reversion regime.",
+    "UUP":  "Invesco DB US Dollar Index Bullish ETF (DXY proxy). Up = USD strengthening. Typically inverse to equities — strong dollar = headwind for US multinationals + emerging markets.",
+    "TLT":  "iShares 20+ Year Treasury Bond ETF. Long-duration safe haven. Up = yields down = risk-off rotation. Down = yields up = inflation / risk-on.",
+    "HYG":  "iShares High-Yield Corporate Bond ETF (junk bonds). Risk-on credit gauge. Up = credit healthy, risk appetite expanding. Down = credit stress, early recession warning.",
+    "GLD":  "SPDR Gold Shares ETF. Safe haven + inflation hedge. Up = fear or USD weakness. Use as context, not signal.",
+    "XLK":  "Tech sector ETF — RISK-ON. Growth-led, leads in bull markets. Up when investors are bullish on long-duration earnings.",
+    "XLY":  "Consumer Discretionary ETF — RISK-ON. Cyclical, up when consumers feel confident. Strong economy signal.",
+    "XLC":  "Communication Services ETF — RISK-ON. Internet + media + telecom. Tied to tech sentiment + advertising spend.",
+    "XLF":  "Financials ETF — RISK-ON. Banks + brokers. Up with rising yields and economic activity.",
+    "XLI":  "Industrials ETF — cyclical. Strength signals capex / business confidence.",
+    "XLB":  "Materials ETF — cyclical. Commodities + chemicals. Economic activity proxy.",
+    "XLE":  "Energy ETF — cyclical, commodity-driven. Up with oil prices. Risk-on when oil demand is healthy.",
+    "XLP":  "Consumer Staples ETF — RISK-OFF. Defensive. People buy toilet paper regardless of economy. Up = defensive rotation, bearish signal.",
+    "XLV":  "Healthcare ETF — DEFENSIVE. People need pills regardless of economy. Up = defensive rotation.",
+    "XLU":  "Utilities ETF — RISK-OFF. Bond-proxy. Up = yields down + defensive rotation = bearish signal.",
+    "XLRE": "Real Estate ETF (REITs). Rate-sensitive. Up with falling yields, down with rising. Mixed risk signal.",
+    "advances":         "S&P 500 names trading UP today vs yesterday's close. Compared to declines to gauge breadth of the move. Strong tape needs >300 advances.",
+    "declines":         "S&P 500 names trading DOWN today vs yesterday's close. >300 declines while SPY is positive = narrow leadership = fragile move.",
+    "new_highs":        "S&P 500 names making a new 52-week high today. Conviction signal — strong tape concentrates buying at the high.",
+    "new_lows":         "S&P 500 names making a new 52-week low today. Divergence warning — if SPY positive but new lows expanding, expect a top within weeks.",
+    "pct_above_50sma":  "% of S&P 500 names above their 50-day SMA. >70% = strong uptrend regime (breakouts work). <30% = downtrend regime (long setups fail).",
+    "pct_above_200sma": "% of S&P 500 names above their 200-day SMA. Structural bull/bear demarcation. >60% = bull market. <40% = bear market.",
+    "composite":        "Weighted blend of all sub-scores: 30% indices · 20% A/D · 15% MAs · 15% VIX · 10% sectors · 10% new H/L. Range -100 (max bearish) to +100 (max bullish). >+40 = strong tailwind for breakouts; <-40 = defensive day.",
+    "score_indices":    "Avg %-change of SPY/QQQ/IWM/DIA × 20. +40 ≈ +2% broad-market day. -40 ≈ -2% day.",
+    "score_ad":         "(advances − declines) / 500 × 200. +80 = 350 vs 150 (very broad). -80 = 150 vs 350.",
+    "score_mas":        "Avg of (%above_50SMA − 50) + (%above_200SMA − 50) / 2. Centered on 50% (no skew).",
+    "score_vix":        "(20 − VIX) × 4. VIX 12 → +32. VIX 25 → -20. VIX 35 → -60. Calm market = positive contribution.",
+    "score_sectors":    "(n_risk_on_green − n_risk_off_green) × 10. Risk-on: XLK XLY XLC XLF XLI XLB. Risk-off: XLP XLV XLU.",
+    "score_newHL":      "(new_highs − new_lows) / 500 × 200. Concentration of conviction at the top vs bottom of yearly ranges.",
+}
+
+
+def _sentiment_breadth_from_parquets() -> dict:
+    """Compute S&P 500 breadth metrics from daily parquets. Cached 60s.
+    Result fields:
+      advances / declines           (count vs prev close)
+      new_highs / new_lows          (today's high/low vs 252d rolling)
+      pct_above_50sma               (today's close vs 50-day SMA)
+      pct_above_200sma              (today's close vs 200-day SMA)
+      n_universe                    (S&P 500 names actually loaded)
+    Off-hours: "today" = most recent daily bar on disk.
+    """
+    import time
+    cached = _SENTIMENT_BREADTH_CACHE.get("payload")
+    if cached and (time.time() - _SENTIMENT_BREADTH_CACHE["ts"]) < 60.0:
+        return cached
+    try:
+        import bars_store      # type: ignore
+        import sp500            # type: ignore  resources/sp500.py
+    except ImportError:
+        return {"error": "sp500_module_missing", "n_universe": 0}
+
+    try:
+        symbols = sp500.get_sp500_symbols()
+    except Exception:
+        symbols = []
+    adv = dec = nh = nl = above50 = above200 = n_universe = 0
+    for sym in symbols:
+        bars = bars_store.load_bars(sym, timeframe="daily")
+        if len(bars) < 2:
+            continue
+        n_universe += 1
+        today = bars[-1]
+        prev  = bars[-2]
+        if today["c"] > prev["c"]: adv += 1
+        elif today["c"] < prev["c"]: dec += 1
+        # 52-week (252 trading days) rolling extremes — exclude today's bar
+        window_252 = bars[-253:-1] if len(bars) >= 253 else bars[:-1]
+        if window_252:
+            max_h = max(b["h"] for b in window_252)
+            min_l = min(b["l"] for b in window_252)
+            if today["h"] > max_h: nh += 1
+            if today["l"] < min_l: nl += 1
+        # SMAs
+        if len(bars) >= 50:
+            sma50 = sum(b["c"] for b in bars[-50:]) / 50
+            if today["c"] > sma50: above50 += 1
+        if len(bars) >= 200:
+            sma200 = sum(b["c"] for b in bars[-200:]) / 200
+            if today["c"] > sma200: above200 += 1
+    out = {
+        "advances":         adv,
+        "declines":         dec,
+        "new_highs":        nh,
+        "new_lows":         nl,
+        "pct_above_50sma":  round(above50  / n_universe * 100, 1) if n_universe else 0,
+        "pct_above_200sma": round(above200 / n_universe * 100, 1) if n_universe else 0,
+        "n_universe":       n_universe,
+    }
+    _SENTIMENT_BREADTH_CACHE["payload"] = out
+    _SENTIMENT_BREADTH_CACHE["ts"] = time.time()
+    return out
+
+
+_SENTIMENT_BREADTH_CACHE: dict = {"ts": 0.0, "payload": None}
+
+
+def _build_sentiment_payload() -> dict:
+    """Assemble the full /market/sentiment panel payload — live quotes
+    for the 20 sentiment ETFs + breadth from S&P 500 parquets + composite
+    score. Synchronous; runs in executor."""
+    # 1. Quotes for all 20 sentiment symbols via the streamer cache.
+    quotes = _fetch_quotes(SENTIMENT_SYMBOLS)
+
+    def _row(sym):
+        q = quotes.get(sym.upper(), {})
+        return {
+            "symbol":  sym,
+            "last":    q.get("last"),
+            "chg":     q.get("chg"),
+            "chg_pct": q.get("chg_pct"),
+            "source":  q.get("source"),
+            "tip":     SENTIMENT_TIPS.get(sym, ""),
+        }
+    indices    = [_row(s) for s in SENTIMENT_INDICES]
+    volatility = [_row(s) for s in SENTIMENT_VOLATILITY]
+    macro      = [_row(s) for s in SENTIMENT_MACRO]
+    sectors    = [_row(s) for s in SENTIMENT_SECTORS]
+
+    # 2. Breadth from parquets.
+    breadth = _sentiment_breadth_from_parquets()
+
+    # 3. Sub-scores + composite.
+    def _safe(v, default=0.0):
+        try: return float(v) if v is not None else default
+        except (TypeError, ValueError): return default
+
+    # indices avg %
+    idx_pcts = [_safe(r["chg_pct"]) for r in indices if r["chg_pct"] is not None]
+    avg_idx_pct = sum(idx_pcts) / len(idx_pcts) if idx_pcts else 0.0
+    score_indices = max(-100, min(100, avg_idx_pct * 20))
+
+    adv  = breadth.get("advances", 0)
+    dec  = breadth.get("declines", 0)
+    score_ad = max(-100, min(100, (adv - dec) / 500 * 200))
+
+    p50  = breadth.get("pct_above_50sma", 0)
+    p200 = breadth.get("pct_above_200sma", 0)
+    score_mas = max(-100, min(100, ((p50 - 50) + (p200 - 50)) / 2))
+
+    # VIX proxy — VXX. Translate VXX dollar level to VIX-equivalent very
+    # crudely: not a tight relationship, but +ve VXX % = +ve VIX % usually.
+    # Use VXX's % change as a "vol getting worse" proxy.
+    vxx_pct = _safe(volatility[0]["chg_pct"]) if volatility else 0.0
+    # vxx up 5% ≈ "vol regime worsening" → -20; vxx down 5% → +20.
+    score_vix = max(-100, min(100, -vxx_pct * 4))
+
+    on_green  = sum(1 for s in sectors if s["symbol"] in RISK_ON_SECTORS  and _safe(s["chg_pct"]) > 0)
+    off_green = sum(1 for s in sectors if s["symbol"] in RISK_OFF_SECTORS and _safe(s["chg_pct"]) > 0)
+    score_sectors = max(-100, min(100, (on_green - off_green) * 10))
+
+    nh = breadth.get("new_highs", 0)
+    nl = breadth.get("new_lows", 0)
+    score_nhl = max(-100, min(100, (nh - nl) / 500 * 200))
+
+    composite = (
+        0.30 * score_indices +
+        0.20 * score_ad +
+        0.15 * score_mas +
+        0.15 * score_vix +
+        0.10 * score_sectors +
+        0.10 * score_nhl
+    )
+    composite = max(-100, min(100, round(composite, 1)))
+
+    if   composite >=  40: label = "STRONG BULLISH"
+    elif composite >=  20: label = "BULLISH"
+    elif composite >  -20: label = "NEUTRAL"
+    elif composite >  -40: label = "BEARISH"
+    else:                  label = "STRONG BEARISH"
+
+    return {
+        "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "composite": {
+            "score": composite,
+            "label": label,
+            "sub": {
+                "indices": round(score_indices, 1),
+                "ad":       round(score_ad, 1),
+                "mas":      round(score_mas, 1),
+                "vix":      round(score_vix, 1),
+                "sectors":  round(score_sectors, 1),
+                "nhl":      round(score_nhl, 1),
+            },
+            "tip": SENTIMENT_TIPS["composite"],
+        },
+        "indices":    indices,
+        "volatility": volatility,
+        "macro":      macro,
+        "sectors":    sectors,
+        "breadth":    {**breadth, "tips": {
+            k: SENTIMENT_TIPS[k] for k in
+            ("advances","declines","new_highs","new_lows","pct_above_50sma","pct_above_200sma")
+        }},
+    }
+
+
+@app.get("/market/sentiment")
+async def market_sentiment() -> JSONResponse:
+    """Composite market-sentiment panel — indices, volatility, macro,
+    sectors, S&P 500 breadth, and a weighted composite score. Quotes
+    via the IBKR streamer (with Alpaca fallback); breadth from daily
+    parquets (60s cache). Tooltips for every cell included in payload."""
+    loop = asyncio.get_running_loop()
+    payload = await loop.run_in_executor(None, _build_sentiment_payload)
+    return JSONResponse(payload)
+
+
+@app.get("/market/clock")
+async def market_clock() -> JSONResponse:
+    """US equity market status. Authoritative via Alpaca's `/v2/clock`
+    (handles weekends, holidays, early closes). Falls back to `{source:
+    "fallback"}` with `is_open: null` when Alpaca creds are missing —
+    caller can then degrade to local time-of-day estimation.
+
+    Dashboard polls every 30s; cache TTL is 30s server-side so we hit
+    Alpaca at most twice a minute regardless of tab count.
+    """
+    loop = asyncio.get_running_loop()
+    payload = await loop.run_in_executor(None, _alpaca_market_clock)
+    return JSONResponse(payload)
+
+
+@app.get("/chart/data")
+async def chart_data(symbol: str, timeframe: str = "daily", days: int = 120) -> JSONResponse:
+    """Bars + strategy overlays for the in-dashboard chart panel.
+
+    Used by the lightweight-charts widget. Returns:
+      {symbol, timeframe, bars[], overlays[]}
+
+    bars[]    — `{time(unix-sec), open, high, low, close, volume}` rows
+    overlays[] — per-strategy levels & zones to draw on the chart:
+                 {kind: "level", label, price, color, lineStyle?, strategy}
+                 {kind: "zone",  label, low, high, color, strategy}
+    """
+    loop = asyncio.get_running_loop()
+    payload = await loop.run_in_executor(
+        None, lambda: _build_chart_payload(symbol.upper(), timeframe, max(1, days))
+    )
+    return JSONResponse(payload)
+
+
+_CHART_CACHE: dict[tuple, tuple[float, dict]] = {}
+_CHART_CACHE_TTL_S = 60.0
+
+
+def _build_chart_payload(symbol: str, timeframe: str, days: int) -> dict:
+    """Sync chart-data builder (runs in executor thread). Reads parquet
+    via bars_store, aggregates 1m → 3m if requested, gathers overlays.
+
+    Result cached for 60s by (symbol, timeframe, days). Repeat clicks on
+    the same symbol return instantly from cache; the daily / intraday
+    bars don't change minute-to-minute anyway."""
+    try:
+        import bars_store      # type: ignore  resources/bars_store.py
+        import patterns        # type: ignore  resources/patterns.py
+    except ImportError as exc:
+        return {"symbol": symbol, "timeframe": timeframe, "bars": [],
+                "overlays": [], "error": f"import_failed: {exc}"}
+
+    # Normalize timeframe → bars_store / aggregator key
+    tf_in = (timeframe or "daily").lower()
+    if tf_in in ("d", "1d", "daily"):
+        tf = "daily"
+    elif tf_in in ("3", "3m", "3min"):
+        tf = "3m"
+    elif tf_in in ("5", "5m", "5min"):
+        tf = "5min"
+    elif tf_in in ("15", "15m", "15min"):
+        tf = "15min"
+    elif tf_in in ("1", "1m", "1min"):
+        tf = "1min"
+    else:
+        tf = "daily"
+
+    # Cache lookup
+    import time
+    cache_key = (symbol, tf, days)
+    cached = _CHART_CACHE.get(cache_key)
+    if cached and (time.time() - cached[0]) < _CHART_CACHE_TTL_S:
+        return cached[1]
+
+    # Load bars. 3m has no parquet → aggregate from 1m. The aggregator
+    # needs datetime timestamps; everything else takes ISO strings directly.
+    if tf == "3m":
+        src = bars_store.load_bars(symbol, timeframe="1min")
+        # Tail BEFORE coercion + aggregation — saves time on big histories.
+        # ~540 1min bars per RTH day; days=5 → 2700 bars to start with.
+        per_day_1m = 540
+        cap = days * per_day_1m
+        if len(src) > cap:
+            src = src[-cap:]
+        src_dt = _coerce_bar_timestamps(src)
+        bars = patterns.aggregate_to_n_min(src_dt, n=3)
+    else:
+        bars = bars_store.load_bars(symbol, timeframe=tf)
+        # Tail BEFORE the per-bar timestamp coercion so we only parse the
+        # bars we're returning, not the entire 2-year history.
+        if tf == "daily":
+            if len(bars) > days:
+                bars = bars[-days:]
+        else:
+            per_day = {"1min": 540, "5min": 108, "15min": 36}.get(tf, 200)
+            cap = days * per_day
+            if len(bars) > cap:
+                bars = bars[-cap:]
+
+    # Single-pass: coerce timestamps AND format for lightweight-charts.
+    out_bars = []
+    from datetime import datetime
+    for b in bars:
+        t = b.get("t")
+        if t is None:
+            continue
+        try:
+            if isinstance(t, str):
+                # Cheap ISO parse — common path. fromisoformat takes the
+                # "+00:00" suffix natively on Py 3.11+.
+                t = datetime.fromisoformat(t.replace("Z", "+00:00"))
+            ts = int(t.timestamp())
+        except Exception:
+            continue
+        out_bars.append({
+            "time":   ts,
+            "open":   float(b["o"]),
+            "high":   float(b["h"]),
+            "low":    float(b["l"]),
+            "close":  float(b["c"]),
+            "volume": int(b.get("v", 0) or 0),
+        })
+
+    overlays = _gather_chart_overlays(symbol)
+    payload = {
+        "symbol":    symbol,
+        "timeframe": tf,
+        "bars":      out_bars,
+        "overlays":  overlays,
+        "n_bars":    len(out_bars),
+    }
+    _CHART_CACHE[cache_key] = (time.time(), payload)
+    return payload
+
+
+def _coerce_bar_timestamps(bars: list) -> list:
+    """bars_store returns ISO strings for `t`; some helpers want datetime
+    objects. Coerce in-place into a fresh list of dicts."""
+    if not bars:
+        return []
+    from datetime import datetime
+    out = []
+    for b in bars:
+        t = b.get("t")
+        if isinstance(t, str):
+            try:
+                t = datetime.fromisoformat(t.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+        out.append({**b, "t": t})
+    return out
+
+
+def _premarket_support(symbol: str) -> float | None:
+    """Level A — lowest low of yesterday's premarket session (04:00-09:30 ET).
+    Reads the last day of 1min parquet bars and tails to the PM window.
+    Returns None if 1m parquet doesn't exist or no PM bars."""
+    try:
+        import bars_store  # type: ignore
+    except ImportError:
+        return None
+    bars = bars_store.load_bars(symbol.upper(), timeframe="1min")
+    if not bars:
+        return None
+    # Find the most recent trading-day's PM bars. We scan back from the
+    # last bar's date and collect 1m bars whose UTC hour is in 08:00-13:29
+    # (which covers EDT 04:00-09:29 and EST 03:00-09:29 PM windows for
+    # both halves of the year). Then take min(low).
+    from datetime import datetime
+    last_t = bars[-1].get("t")
+    if isinstance(last_t, str):
+        try:
+            last_t = datetime.fromisoformat(last_t.replace("Z","+00:00"))
+        except ValueError:
+            return None
+    if last_t is None:
+        return None
+    target_date = last_t.date()
+    pm_lows: list[float] = []
+    for b in reversed(bars):
+        t = b.get("t")
+        if isinstance(t, str):
+            try:
+                t = datetime.fromisoformat(t.replace("Z","+00:00"))
+            except ValueError:
+                continue
+        if t is None:
+            continue
+        d = t.date()
+        if d != target_date:
+            # We've walked past the most recent day's bars; stop.
+            if pm_lows: break
+            target_date = d
+        # PM window in UTC: 08:00-13:29 (covers both EDT and EST)
+        hr = t.hour
+        mn = t.minute
+        if (hr == 8) or (9 <= hr <= 12) or (hr == 13 and mn < 30):
+            pm_lows.append(float(b["l"]))
+    return round(min(pm_lows), 2) if pm_lows else None
+
+
+def _first_pullback_valley(symbol: str) -> float | None:
+    """Level B — the valley (local low) formed after RTH open in the
+    most recent trading day. Defined as: the lowest low printed AFTER
+    the first higher-high since 09:30 ET. If price hasn't yet made a
+    higher-high (still in the opening drive), returns None.
+
+    Walks 1min RTH bars from market open forward, looking for the
+    sequence: ascend, peak, descend → that descent's low IS the
+    first pullback valley.
+    """
+    try:
+        import bars_store  # type: ignore
+    except ImportError:
+        return None
+    bars = bars_store.load_bars(symbol.upper(), timeframe="1min")
+    if not bars:
+        return None
+    from datetime import datetime
+    last_t = bars[-1].get("t")
+    if isinstance(last_t, str):
+        try:
+            last_t = datetime.fromisoformat(last_t.replace("Z","+00:00"))
+        except ValueError:
+            return None
+    if last_t is None:
+        return None
+    target_date = last_t.date()
+    rth: list[dict] = []
+    for b in bars:
+        t = b.get("t")
+        if isinstance(t, str):
+            try:
+                t = datetime.fromisoformat(t.replace("Z","+00:00"))
+            except ValueError:
+                continue
+        if t is None or t.date() != target_date:
+            continue
+        # RTH window UTC: 13:30-20:00 (covers EDT 09:30-16:00 and EST 08:30-15:00 too)
+        hr = t.hour
+        mn = t.minute
+        if (hr == 13 and mn >= 30) or (14 <= hr <= 19) or (hr == 20 and mn == 0):
+            rth.append({"t": t, "h": float(b["h"]), "l": float(b["l"]), "c": float(b["c"])})
+    if len(rth) < 10:
+        return None
+    # Find first higher-high after market open: track running max(high).
+    # Once high makes new max at bar i and then a subsequent bar j > i has
+    # high < running_max_at_j AND we then see ANOTHER bar k > j with
+    # high > rth[j].high, that means we had a peak then a valley.
+    # Simpler: walk forward keeping max-high; record min-low between
+    # consecutive higher-highs. The first such valley is the answer.
+    running_max = rth[0]["h"]
+    valley_low = None
+    in_pullback = False
+    for b in rth[1:]:
+        if b["h"] > running_max:
+            if in_pullback and valley_low is not None:
+                # We just made a higher-high — confirms the pullback.
+                return round(valley_low, 2)
+            running_max = b["h"]
+            in_pullback = False
+            valley_low = None
+        else:
+            in_pullback = True
+            valley_low = b["l"] if valley_low is None else min(valley_low, b["l"])
+    return None  # no completed pullback yet
+
+
+def _round_number_neighbours(price: float) -> list[float]:
+    """Level C — psychological round numbers near the current price.
+    Returns up to 3 levels: the nearest round below, nearest above, and
+    the next round above. Grid scales with price tier.
+    """
+    if price is None or price <= 0:
+        return []
+    if price < 5:    grid = 0.50
+    elif price < 20: grid = 1.00
+    elif price < 100: grid = 5.00
+    elif price < 500: grid = 10.0
+    else:             grid = 25.0
+    below = (price // grid) * grid
+    above = below + grid
+    above2 = above + grid
+    out = [round(below, 2), round(above, 2), round(above2, 2)]
+    return [x for x in out if 0.95 * price <= x <= 1.10 * price]
+
+
+def _gather_chart_overlays(symbol: str) -> list[dict]:
+    """For `symbol`, return the strategy-specific lines/zones that should
+    be drawn on its chart. Reads the latest state/watchlist_*_*.json files
+    for each family.
+
+    Today we cover:
+      - **DITP P2**: resistance level + range (range_low → range_high).
+        Round-number snap if it sits inside the zone.
+      - **GUNS / OS**: pre-market high once a candidate file is available
+        (placeholder for now; falls back to whatever the journal carries).
+    """
+    overlays: list[dict] = []
+    state_dir = SKILL_DIR / "state"
+    sym_u = symbol.upper()
+
+    # --- DITP P2 ---
+    for p in sorted(state_dir.glob("watchlist_ditp_*.json"), reverse=True):
+        try:
+            blob = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        match = None
+        for c in blob.get("candidates", []) or []:
+            if (c.get("symbol") or "").upper() == sym_u:
+                match = c
+                break
+        if not match:
+            continue
+        r       = match.get("resistance")
+        r_low   = match.get("resistance_low")
+        tier    = match.get("tier", "?")
+        variant = match.get("variant", "?")
+        if r is not None:
+            overlays.append({
+                "kind":     "level",
+                "label":    f"DITP R · tier {tier} · P2-{variant}",
+                "price":    float(r),
+                "color":    "#f39c12",
+                "lineStyle": "solid",
+                "strategy": "ditp",
+            })
+            if r_low is not None and float(r_low) != float(r):
+                overlays.append({
+                    "kind":      "level",
+                    "label":     "DITP R low",
+                    "price":     float(r_low),
+                    "color":     "#f39c12",
+                    "lineStyle": "dashed",
+                    "strategy":  "ditp",
+                })
+                # Bonus zone — top + bottom of the mountain consensus band
+                overlays.append({
+                    "kind":     "zone",
+                    "label":    "DITP mountain zone",
+                    "low":      float(r_low),
+                    "high":     float(r),
+                    "color":    "rgba(243,156,18,0.10)",
+                    "strategy": "ditp",
+                })
+        # Round-number snap inside the zone
+        if r is not None:
+            snap = _round_number_snap(float(r_low or r), float(r))
+            if snap is not None:
+                overlays.append({
+                    "kind":      "level",
+                    "label":     f"Round # ${snap:.2f}",
+                    "price":     float(snap),
+                    "color":     "#74c0ff",
+                    "lineStyle": "dotted",
+                    "strategy":  "ditp",
+                })
+        break   # latest watchlist wins
+
+    # --- Intraday levels per user rule 2026-05-23 P2 execution guide ---
+    # (A) Premarket support, (B) first-pullback valley, (C) round-number
+    # S/R. All rendered as DOTTED lines to distinguish from the SOLID
+    # daily resistance above.
+    pm_supp = _premarket_support(sym_u)
+    if pm_supp is not None:
+        overlays.append({
+            "kind":      "level",
+            "label":     "Intraday A · PM support",
+            "price":     pm_supp,
+            "color":     "#74c0ff",
+            "lineStyle": "dotted",
+            "strategy":  "intraday",
+        })
+    pullback = _first_pullback_valley(sym_u)
+    if pullback is not None:
+        overlays.append({
+            "kind":      "level",
+            "label":     "Intraday B · 1st pullback",
+            "price":     pullback,
+            "color":     "#b076ff",
+            "lineStyle": "dotted",
+            "strategy":  "intraday",
+        })
+    # (C) round numbers neighbouring the most recent close
+    try:
+        import bars_store  # type: ignore
+        daily = bars_store.load_bars(sym_u, timeframe="daily")
+        last_close = float(daily[-1]["c"]) if daily else None
+    except Exception:
+        last_close = None
+    if last_close:
+        for rn in _round_number_neighbours(last_close):
+            overlays.append({
+                "kind":      "level",
+                "label":     f"Round # ${rn:.2f}",
+                "price":     rn,
+                "color":     "#5fd97a",
+                "lineStyle": "dotted",
+                "strategy":  "intraday",
+            })
+
+    # --- GUNS / OS pre-market high (best-effort) ---
+    # The PMH is computed at entry time and isn't persisted as a standalone
+    # state file today. If a `shortlist_<strategy>_<date>.json` exists with
+    # a per-symbol pmh field, render it; otherwise skip until that data is
+    # surfaced. (Wiring spot for future Step 3 anti-pattern levels too.)
+    for p in sorted(state_dir.glob("shortlist_*_*.json"), reverse=True):
+        try:
+            blob = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        fam = blob.get("strategy", "").lower()
+        family = "guns" if fam.startswith("guns") else ("os" if fam.startswith("os") else fam)
+        color  = "#f5b342" if family == "guns" else ("#b076ff" if family == "os" else "#aaaaaa")
+        for c in blob.get("candidates", []) or blob.get("rows", []) or []:
+            if (c.get("symbol") or "").upper() != sym_u:
+                continue
+            pmh = c.get("pmh") or c.get("pm_high")
+            if pmh:
+                overlays.append({
+                    "kind":     "level",
+                    "label":    f"{family.upper()} PMH",
+                    "price":    float(pmh),
+                    "color":    color,
+                    "lineStyle": "solid",
+                    "strategy": family,
+                })
+            break
+        if overlays:
+            break
+
+    return overlays
+
+
+def _round_number_snap(low: float, high: float) -> float | None:
+    """If a psychological round number (whole dollar / half-dollar / $5 /
+    $10 grid) sits inside [low, high], return it. Snap grid scales with
+    the absolute price level. Returns None if no clean snap exists."""
+    if high <= 0:
+        return None
+    if high < 5:    grid = 0.50
+    elif high < 20: grid = 1.00
+    elif high < 100: grid = 5.00
+    elif high < 500: grid = 10.0
+    else:            grid = 25.0
+    candidates: list[float] = []
+    # Round to grid and check immediate neighbours
+    for k in (-1, 0, 1):
+        cand = round(((low + high) / 2) / grid) * grid + k * grid
+        if low <= cand <= high:
+            candidates.append(cand)
+    # Also try the smaller half-grid
+    half = grid / 2
+    for k in (-1, 0, 1):
+        cand = round(((low + high) / 2) / half) * half + k * half
+        if low <= cand <= high and cand not in candidates:
+            candidates.append(cand)
+    if not candidates:
+        return None
+    # Prefer larger (it's the level price actually has to clear)
+    return max(candidates)
 
 
 @app.get("/strategy/ditp/watchlist")

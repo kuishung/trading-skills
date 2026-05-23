@@ -1,39 +1,52 @@
 """Pattern detection primitives — Layer-1 resource.
 
-Pure functions on the standard bar dict shape:
-    {"t": datetime, "o": float, "h": float, "l": float, "c": float, "v": int}
+Two API conventions live here, side by side:
 
-No I/O. No strategy logic. No vendor SDK imports. Every function is
-side-effect free and deterministic given identical inputs, which means
-you can unit-test it with synthetic bars and use it identically on
-live, replayed, or backtest data.
+  A. **List-of-dict** functions — accept `list[dict]` of the bar shape
+     `{"t": datetime, "o": float, "h": float, "l": float, "c": float, "v": int}`.
+     Designed for live / replay tape and per-bar streaming. Pure Python,
+     no numpy needed. (`ema`, `sma`, `vwap`, `find_pivots`,
+     `consolidation`, `trend`, `higher_highs_lows`, `bull_flag`,
+     `breakout_signal`, `ma_resistance`, `aggregate_to_n_min`.)
 
-Functions return STRUCTURED dicts (not bare booleans) so a calling
-strategy can use the same output for both an eligibility check AND
-a journal-evidence payload — no second-pass computation needed.
+  B. **Numpy-array** functions — accept raw `ndarray` columns
+     `(opens, highs, lows, closes)` plus an `atr` scalar. Suffixed
+     `_np`. Designed for batch historical sweeps where every symbol
+     in a 1000+ universe is analysed once. (`atr_wilder_np`, `ema_np`,
+     `thrust_bar_np`, `window_slopes_np`, `horizontal_resistance_np`.)
+
+Both conventions share the same contract: NO I/O, NO strategy logic,
+NO vendor SDK imports. Side-effect free and deterministic given
+identical inputs. Strategies and review tools consume; primitives
+never call strategies back.
 
 What's here
 -----------
-Signal-math helpers:
+List-of-dict (live tape, per-bar streaming):
     ema(values, period)                 exponential moving average series
     sma(values, period)                 simple moving average series
     vwap(bars)                          cumulative VWAP series
-
-Bar utilities:
     aggregate_to_n_min(bars, n=5)       resample 1-min bars to N-min bars
-
-Pattern primitives:
     find_pivots(bars, left, right)      local extrema (pivot highs + lows)
     consolidation(bars, lookback,
                   max_range_pct)        tight-range detection
     trend(bars, ema_period, ...)        EMA-slope-based direction
     higher_highs_lows(pivots, ...)      HH/HL sequence classification
     bull_flag(bars, ...)                pole + flag detector
-
-Level / breakout:
     breakout_signal(bars, level, ...)   has the last bar broken `level`?
     ma_resistance(bars, current_price,
                   periods)              closest MA above current_price
+
+Numpy-array (batch historical sweep, daily scans):
+    atr_wilder_np(highs, lows,
+                  closes, period=14)    Wilder ATR last value
+    ema_np(arr, period)                 EMA series, numpy in/out
+    thrust_bar_np(...)                  flush-up / thrust-bar detector
+    window_slopes_np(...)               slope-of-highs / slope-of-lows
+                                        in a trailing window
+    horizontal_resistance_np(...)       mountain-anchored cluster-based
+                                        horizontal resistance finder
+                                        with range expansion + ceiling
 
 Design notes
 ------------
@@ -590,6 +603,321 @@ def ma_resistance(
         "resistance_period": p_chosen,
         "distance_pct": (v_chosen - current_price) / current_price * 100.0,
         "ma_kind": ma_kind,
+    }
+
+
+# =====================================================================
+# Numpy-array primitives — daily-bar batch analysis
+# =====================================================================
+#
+# These are the same kinds of primitives as above but optimised for
+# batch sweeps: a scanner that runs every symbol in a 1500-name
+# universe through the same checks once a day.
+#
+# Input convention: numpy float arrays of equal length, one element
+# per bar, in chronological order. The caller is responsible for
+# building (opens, highs, lows, closes) once from its bar source
+# (e.g. resources.bars_store.read_bars).
+#
+# All functions are pure and import numpy lazily so callers that
+# only use the list-of-dict API above don't pay the numpy import
+# cost.
+
+def _np():
+    """Lazy numpy import — module-level import would force numpy on
+    every consumer of `patterns`, including ones that only use the
+    list-of-dict API."""
+    import numpy as np  # type: ignore
+    return np
+
+
+def atr_wilder_np(highs, lows, closes, period: int = 14) -> float:
+    """Wilder ATR — returns the LAST-bar value as a Python float.
+
+    Inputs are numpy arrays (or anything numpy can convert) of equal
+    length. Bootstraps the first `period` bars with the mean of TR,
+    then iterates the Wilder smoothing kernel:
+        atr[i] = (atr[i-1] * (period - 1) + tr[i]) / period
+
+    Returns 0.0 if there are too few bars (< period + 1). Callers
+    typically gate on `atr <= 0` as "not enough history".
+    """
+    np = _np()
+    h = np.asarray(highs, dtype=float)
+    l = np.asarray(lows, dtype=float)
+    c = np.asarray(closes, dtype=float)
+    if len(h) < period + 1:
+        return 0.0
+    tr = np.maximum.reduce([
+        h[1:] - l[1:],
+        np.abs(h[1:] - c[:-1]),
+        np.abs(l[1:] - c[:-1]),
+    ])
+    atr = np.zeros_like(tr)
+    atr[:period] = tr[:period].mean()
+    for i in range(period, len(tr)):
+        atr[i] = (atr[i - 1] * (period - 1) + tr[i]) / period
+    return float(atr[-1])
+
+
+def ema_np(arr, period: int):
+    """EMA series — numpy in, numpy out. Seeded with the first value
+    (NOT the SMA bootstrap that the list-of-dict `ema` uses) so this
+    is the cheap variant for batch jobs that don't need TradingView-
+    parity. Callers that DO need parity should use `patterns.ema(list)`
+    instead."""
+    np = _np()
+    a = np.asarray(arr, dtype=float)
+    out = np.zeros_like(a)
+    if len(a) == 0:
+        return out
+    out[0] = a[0]
+    alpha = 2.0 / (period + 1)
+    for i in range(1, len(a)):
+        out[i] = alpha * a[i] + (1 - alpha) * out[i - 1]
+    return out
+
+
+def thrust_bar_np(opens, highs, lows, closes, atr: float,
+                  *,
+                  body_atr_min: float = 1.5,
+                  prior_high_window: int = 5,
+                  lookback: int = 15,
+                  ) -> int | None:
+    """Find the most recent "thrust bar" in the last `lookback` bars.
+
+    A thrust bar (also called a flush-up bar) is a single bullish
+    candle big enough to puncture the prior range:
+       - body (close - open) > body_atr_min × ATR
+       - close > max(prior `prior_high_window` bars' highs)
+       - body must be bullish (close > open)
+
+    Returns the offset from the end as a NEGATIVE int (e.g. -11 if
+    the bar was 11 days ago) or None if no thrust bar exists in the
+    window. Multiple matches → the most recent one wins.
+
+    Use case: DITP's "flush-up profit-taking" caution — a thrust bar
+    near a resistance traps quick-profit holders at that level, so
+    any retest carries elevated selling pressure.
+    """
+    np = _np()
+    if atr <= 0:
+        return None
+    o = np.asarray(opens, dtype=float)
+    h = np.asarray(highs, dtype=float)
+    c = np.asarray(closes, dtype=float)
+    n = len(c)
+    lookback = min(lookback, n)
+    most_recent_match: int | None = None
+    for offset in range(-lookback, 0):
+        if n + offset - prior_high_window < 0:
+            continue
+        body = abs(float(c[offset]) - float(o[offset]))
+        if body <= body_atr_min * atr:
+            continue
+        if float(c[offset]) <= float(o[offset]):
+            continue  # body must be bullish
+        prior_high = h[offset - prior_high_window:offset].max()
+        if float(c[offset]) > prior_high:
+            most_recent_match = offset
+    return most_recent_match
+
+
+def window_slopes_np(opens, highs, lows, closes, resistance: float,
+                     atr: float,
+                     *,
+                     lookback_bars: int = 10,
+                     cluster_band_pct: float = 0.01,
+                     ) -> dict:
+    """Slope-of-highs / slope-of-lows + window dimensions for the LAST
+    `lookback_bars` bars. Used to classify a window's shape (rectangle
+    vs ascending triangle vs direct approach) at a resistance level.
+
+    Returns a dict with:
+      slope_highs_pct_per_bar      polyfit(highs)[0] / last_close
+      slope_lows_pct_per_bar       polyfit(lows)[0] / last_close
+      rect_height_atr              (max(highs) - min(lows)) / atr
+      highs_near_resistance        N of recent highs within cluster
+                                   band of `resistance`
+      is_bullish_markup            last bar passes the bullish-markup
+                                   anatomy test (caller decides body /
+                                   tail thresholds)
+      last_open / last_high /
+      last_low / last_close        the actual signal-candle anatomy
+      bars_inspected               actual window size (clipped to len)
+
+    Pure geometric output — the caller maps it to strategy semantics
+    (DITP's A/B/C variants, ORB's range, etc.) without re-fitting.
+    """
+    np = _np()
+    h = np.asarray(highs, dtype=float)
+    l = np.asarray(lows, dtype=float)
+    c = np.asarray(closes, dtype=float)
+    o = np.asarray(opens, dtype=float)
+    N = min(lookback_bars, len(h))
+    if N < 2:
+        return {
+            "slope_highs_pct_per_bar": 0.0,
+            "slope_lows_pct_per_bar": 0.0,
+            "rect_height_atr": float("inf") if atr <= 0 else 0.0,
+            "highs_near_resistance": 0,
+            "is_bullish_markup": False,
+            "last_open": float(o[-1]) if len(o) else 0.0,
+            "last_high": float(h[-1]) if len(h) else 0.0,
+            "last_low":  float(l[-1]) if len(l) else 0.0,
+            "last_close": float(c[-1]) if len(c) else 0.0,
+            "bars_inspected": N,
+        }
+    rh = h[-N:]
+    rl = l[-N:]
+    x = np.arange(N, dtype=float)
+    slope_h = float(np.polyfit(x, rh, 1)[0])
+    slope_l = float(np.polyfit(x, rl, 1)[0])
+    px = float(c[-1])
+    rect_height = float(rh.max() - rl.min())
+    near = int(np.sum(np.abs(rh - resistance) / resistance < cluster_band_pct)) \
+        if resistance > 0 else 0
+    return {
+        "slope_highs_pct_per_bar": (slope_h / px) if px else 0.0,
+        "slope_lows_pct_per_bar":  (slope_l / px) if px else 0.0,
+        "rect_height_atr":         (rect_height / atr) if atr > 0 else float("inf"),
+        "highs_near_resistance":   near,
+        "last_open":   float(o[-1]),
+        "last_high":   float(h[-1]),
+        "last_low":    float(l[-1]),
+        "last_close":  float(c[-1]),
+        "bars_inspected": N,
+    }
+
+
+def horizontal_resistance_np(highs, lows, closes, current_price: float,
+                             atr: float,
+                             *,
+                             lookback: int = 120,
+                             swing_radius: int = 3,
+                             min_touches: int = 2,
+                             cluster_band_pct: float = 0.01,
+                             range_pct: float = 0.02,
+                             mountain_min_age_bars: int = 15,
+                             mountain_pullback_atr: float = 2.0,
+                             max_below_window_high_pct: float = 0.02,
+                             ) -> dict | None:
+    """Find the lowest mountain-anchored horizontal resistance above
+    `current_price`.
+
+    Two-stage process:
+
+    1. Enumerate every swing high in `lookback` (a bar is a swing high
+       if it's the local max within ± `swing_radius`).
+    2. Filter to "mountain tops" — swing highs that are
+         (a) old enough: ≥ `mountain_min_age_bars` from the latest bar
+         (b) followed by a real pullback: at least one subsequent low
+             ≤ peak − `mountain_pullback_atr` × atr
+
+    The level chosen = the climax of the PRECEDING MOUNTAIN above
+    `current_price` (the latest in time among mountains above). If
+    no mountain qualifies, falls back to the latest non-mountain
+    swing above — caller's downstream cautioner can tag this as
+    "fresh resistance".
+
+    The RANGE around that level = consensus of mountain tops within
+    ± `range_pct` of the chosen level. Non-mountain swings are NOT
+    part of the consensus.
+
+    Ceiling gate: the chosen level must be the highest mountain in
+    the window (within `max_below_window_high_pct`). If a bigger
+    mountain sits above, the chosen level is just a bounce on the
+    way down — rejected.
+
+    Cluster gate: the chosen level must have ≥ `min_touches` swing
+    highs (mountain OR non-mountain) within ± `cluster_band_pct`.
+
+    Returns a dict or None:
+      level                  resistance price (the preceding-mountain
+                             climax, or fresh-resistance fallback)
+      cluster_touches        # swing highs in cluster band
+      mountain_anchors       # of those touches that qualified as
+                             mountain tops
+      range_low / range_high # consensus zone (mountains only)
+      range_mountains        # mountains inside the range zone
+                             (0 if fresh-resistance fallback)
+
+    Returns None when there are not enough bars, no swings above
+    current price, ceiling gate fails, or cluster fails.
+    """
+    np = _np()
+    h = np.asarray(highs, dtype=float)
+    l = np.asarray(lows, dtype=float)
+    c = np.asarray(closes, dtype=float)
+    lb = min(lookback, len(h))
+    window_h = h[-lb:]
+    window_l = l[-lb:]
+    if len(window_h) < swing_radius * 2 + 1:
+        return None
+
+    # 1. Swing highs in window
+    swings: list[tuple[int, float]] = []
+    for i in range(swing_radius, len(window_h) - swing_radius):
+        if window_h[i] == window_h[i - swing_radius:i + swing_radius + 1].max():
+            swings.append((i, float(window_h[i])))
+    if len(swings) < min_touches:
+        return None
+
+    # 2. Mountain filter: old enough + pullback below peak
+    mountains: list[tuple[int, float]] = []
+    last_idx = len(window_h) - 1
+    for i, hi in swings:
+        if (last_idx - i) < mountain_min_age_bars:
+            continue
+        if i + 1 >= len(window_l):
+            continue
+        post = window_l[i + 1:]
+        if (post.min() if len(post) else float("inf")) <= hi - mountain_pullback_atr * atr:
+            mountains.append((i, hi))
+    mountain_idxs = {i for i, _ in mountains}
+    max_mountain_high = max((hi for _, hi in mountains), default=0.0)
+
+    # 3. Preceding mountain above current price (else fallback to most
+    #    recent swing above)
+    swings_above = [(i, hi) for i, hi in swings if hi > current_price]
+    if not swings_above:
+        return None
+    mountains_above = [(i, hi) for i, hi in swings_above if i in mountain_idxs]
+    if mountains_above:
+        i_imm, h_imm = max(mountains_above, key=lambda x: x[0])
+    else:
+        i_imm, h_imm = max(swings_above, key=lambda x: x[0])
+    level = float(h_imm)
+
+    # Range = consensus of mountains within ± range_pct of level.
+    # Non-mountain swings are not part of the consensus (see DITP user
+    # rule "outlier wicks aren't part of resistance").
+    if mountains_above:
+        range_mtns_only = [hi for _, hi in mountains_above
+                           if abs(hi - level) / level <= range_pct]
+    else:
+        range_mtns_only = [level]
+    range_low = min(range_mtns_only)
+    range_high = max(range_mtns_only)
+    n_range_mountains = len(range_mtns_only) if mountains_above else 0
+
+    # Ceiling gate: chosen level must be the highest mountain
+    if max_mountain_high > 0 and level < max_mountain_high * (1 - max_below_window_high_pct):
+        return None
+
+    # Cluster touches around the chosen level
+    cluster = [(i, hh) for i, hh in swings
+               if abs(hh - level) / level <= cluster_band_pct]
+    if len(cluster) < min_touches:
+        return None
+    n_mountains_in_cluster = sum(1 for i, _ in cluster if i in mountain_idxs)
+    return {
+        "level": level,
+        "cluster_touches": len(cluster),
+        "mountain_anchors": n_mountains_in_cluster,
+        "range_low": range_low,
+        "range_high": range_high,
+        "range_mountains": n_range_mountains,
     }
 
 

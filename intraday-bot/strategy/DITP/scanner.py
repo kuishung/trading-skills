@@ -48,6 +48,16 @@ del _root, _p
 
 import numpy as np  # type: ignore  # noqa: E402
 
+# Layer-1 pattern primitives — every numeric helper this scanner needs
+# lives in resources/patterns.py so other strategies can share them.
+from patterns import (  # noqa: E402
+    atr_wilder_np,
+    ema_np,
+    thrust_bar_np,
+    window_slopes_np,
+    horizontal_resistance_np,
+)
+
 import bars_store  # noqa: E402  (resources/bars_store.py)
 
 STATE_DIR = SKILL_DIR / "state"
@@ -86,8 +96,10 @@ class P2Config:
     # Resistance as a RANGE — user rule (chat 2026-05-22): multiple mountain
     # tops within a tight band form a resistance zone with more conviction.
     # Mountains within ±resistance_range_pct of the preceding mountain count
-    # as the resistance range. `n_range_mountains ≥ 2` adds a conviction
-    # bonus in score_candidate(). LYV's 167.56 / 168.54 / 168.55 mountains
+    # as the resistance range. Per user 2026-05-23 clarification: multi-
+    # mountain is a CONVICTION MODIFIER, not an eligibility gate — a valid
+    # P2 (any variant) may have a single preceding mountain. The bonus is
+    # applied in score_candidate(). LYV's 167.56 / 168.54 / 168.55 mountains
     # within 2% form a 3-mountain zone — high conviction.
     resistance_range_pct: float = 0.02
 
@@ -111,237 +123,146 @@ class P2Config:
     max_upper_tail_ratio: float = 0.15  # upper_tail / candle_range threshold
 
     # Consolidation classifier
-    consolidation_lookback: int = 10    # daily bars window
-    slope_flat_threshold: float = 0.002 # |slope/price| < N => "flat" (0.2%/day)
-    slope_rising_threshold: float = 0.003  # slope/price > N => "rising"
-    tight_rect_height_atr: float = 1.0  # rectangle height < N × ATR14 => "tight"
+    consolidation_lookback: int = 10        # daily bars window
+    slope_flat_threshold: float = 0.002     # |slope/price| < N => "flat" (0.2%/day)
+    slope_rising_threshold: float = 0.001   # slope/price > N => "rising" (0.1%/day) — loosened 2026-05-23 to match real ascending triangles
+    tight_rect_height_atr: float = 2.0      # rectangle height < N × ATR14 => "tight" — loosened 2026-05-23 to match real daily-chart rectangles
+    # Variant A signal-candle: bullish markup bar = solid green body closing
+    # near its high. Per user definition 2026-05-23: "a bullish mark up bar
+    # seen at the range".
+    markup_body_ratio_min: float = 0.6      # body / range > N
+    markup_upper_tail_max: float = 0.10     # (high - close) / range < N
+    # Multi-mountain requirement: per user 2026-05-23 REVISION, this is a
+    # conviction modifier (scored in score_candidate), NOT an eligibility
+    # gate. Field kept for back-compat / future re-tightening but the
+    # detector no longer rejects on it. Default 1 = effectively no gate
+    # (every candidate already has ≥1 mountain anchor by construction).
+    min_range_mountains: int = 1
 
 
 # ---------- Indicator primitives ----------
+#
+# Hoisted to resources/patterns.py as of 2026-05-23 so other strategy
+# families can share them. The DITP scanner now imports:
+#   - atr_wilder_np            (was inline atr14)
+#   - ema_np                   (was inline ema)
+#   - thrust_bar_np            (was inline find_flush_up_bar)
+#   - window_slopes_np         (slope math previously inside classify_variant)
+#   - horizontal_resistance_np (was inline find_resistance)
+# from resources.patterns. The functions below are the DITP-specific
+# orchestration layer — variant taxonomy, scoring, cautions, tier.
 
-def ema(arr: np.ndarray, n: int) -> np.ndarray:
-    out = np.zeros_like(arr, dtype=float)
-    out[0] = arr[0]
-    alpha = 2.0 / (n + 1)
-    for i in range(1, len(arr)):
-        out[i] = alpha * arr[i] + (1 - alpha) * out[i - 1]
-    return out
 
-
-def find_flush_up_bar(opens: np.ndarray, highs: np.ndarray, lows: np.ndarray,
-                      closes: np.ndarray, atr: float, cfg: P2Config) -> int | None:
-    """Find the most recent flush-up bar in the last `flush_up_lookback`
-    daily bars. A flush-up bar = body > flush_up_body_atr × ATR14 AND
-    close > max(prior flush_up_prior_high_window bars' highs).
-
-    Returns the bar's offset from the end (e.g., -11 if it was 11 days ago)
-    or None if no flush-up bar exists in the window.
-
-    Mechanics behind the user's "profit taking" caution: a single oversized
-    bullish bar that punches through prior range traps quick-profit traders
-    AT the breakout level, so any retest of the resulting resistance has
-    elevated selling pressure from those holders.
+def _resistance(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
+                cfg: P2Config, current_close: float, atr: float
+                ) -> tuple[float, int, int, float, float, int] | None:
+    """Thin adapter over patterns.horizontal_resistance_np with DITP
+    parameter binding. Preserves the legacy tuple shape that
+    detect_p2() expects: (level, touches, mountain_anchors, range_low,
+    range_high, n_range_mountains).
     """
-    if atr <= 0:
+    r = horizontal_resistance_np(
+        highs, lows, closes, current_close, atr,
+        lookback=cfg.resistance_lookback,
+        swing_radius=cfg.swing_radius,
+        min_touches=cfg.min_touches,
+        cluster_band_pct=cfg.cluster_band_pct,
+        range_pct=cfg.resistance_range_pct,
+        mountain_min_age_bars=cfg.mountain_min_age_bars,
+        mountain_pullback_atr=cfg.mountain_pullback_atr,
+        max_below_window_high_pct=cfg.max_below_window_high_pct,
+    )
+    if r is None:
         return None
-    n = len(closes)
-    lookback = min(cfg.flush_up_lookback, n)
-    prior_w = cfg.flush_up_prior_high_window
-    most_recent_match: int | None = None
-    for offset in range(-lookback, 0):
-        if n + offset - prior_w < 0:
-            continue
-        body = abs(float(closes[offset]) - float(opens[offset]))
-        if body <= cfg.flush_up_body_atr * atr:
-            continue
-        if float(closes[offset]) <= float(opens[offset]):
-            continue  # body must be bullish (close > open)
-        prior_high = highs[offset - prior_w:offset].max()
-        if float(closes[offset]) > prior_high:
-            most_recent_match = offset   # keep updating; latest match wins
-    return most_recent_match
+    return (r["level"], r["cluster_touches"], r["mountain_anchors"],
+            r["range_low"], r["range_high"], r["range_mountains"])
 
 
-def atr14(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, n: int = 14) -> float:
-    """Wilder ATR — returns last-bar value."""
-    if len(highs) < n + 1:
-        return 0.0
-    tr = np.maximum.reduce([
-        highs[1:] - lows[1:],
-        np.abs(highs[1:] - closes[:-1]),
-        np.abs(lows[1:] - closes[:-1]),
-    ])
-    atr = np.zeros_like(tr)
-    atr[:n] = tr[:n].mean()  # bootstrap
-    for i in range(n, len(tr)):
-        atr[i] = (atr[i - 1] * (n - 1) + tr[i]) / n
-    return float(atr[-1])
+def classify_variant(opens: np.ndarray, highs: np.ndarray, lows: np.ndarray,
+                     closes: np.ndarray, resistance: float, atr: float,
+                     cfg: P2Config) -> tuple[str | None, dict]:
+    """Classify the consolidation shape as A / B / C. Returns (None, diag)
+    if the price action doesn't match any P2 variant — caller drops the
+    candidate.
 
+    Mutually-exclusive variant definitions (per user 2026-05-23):
 
-def find_resistance(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
-                    cfg: P2Config, current_close: float, atr: float
-                    ) -> tuple[float, int, int] | None:
-    """Find lowest horizontal resistance above current price.
+      A = Direct approach — recent slopes BOTH rising AND signal candle is
+          a bullish markup bar (solid green, closes near high, no upper
+          tail). Price action is approaching the resistance range with
+          momentum, no consolidation phase.
 
-    Resistance must be anchored to a "mountain top" — a swing high that is
-    both old enough (≥ mountain_min_age_bars from the current bar) AND has
-    a real pullback (price dropped ≥ mountain_pullback_atr × ATR14 below it
-    at some point after the peak).
+      B = Tight rectangle — flat top + flat bottom + rectangle height <
+          tight_rect_height_atr × ATR. Price consolidating horizontally
+          at the resistance.
 
-    All swing highs in `resistance_lookback` are CANDIDATES; only the
-    qualifying mountain tops can ANCHOR a resistance. Recent (non-mountain)
-    swing highs may still count as touches inside the cluster band.
+      C = Ascending triangle — flat top + rising lows. Price compressing
+          into the apex at the resistance.
 
-    Returns (level, n_touches, n_mountain_anchors) for the LOWEST resistance
-    above current_close, or None.
+    Reject (return None):
+      - Both slopes clearly falling (price is PULLING AWAY from
+        resistance, not approaching — not a P2 setup, could be P3)
+      - Doesn't match any of A / B / C
     """
-    lb = min(cfg.resistance_lookback, len(highs))
-    window_h = highs[-lb:]
-    window_l = lows[-lb:]
-    if len(window_h) < cfg.swing_radius * 2 + 1:
-        return None
-    r = cfg.swing_radius
-
-    # 1. All swing highs in the window.
-    swings: list[tuple[int, float]] = []
-    for i in range(r, len(window_h) - r):
-        if window_h[i] == window_h[i - r:i + r + 1].max():
-            swings.append((i, float(window_h[i])))
-    if len(swings) < cfg.min_touches:
-        return None
-
-    # 2. Filter to "mountain tops" — old enough + with pullback.
-    mountains: list[tuple[int, float]] = []
-    last_idx = len(window_h) - 1
-    for i, h in swings:
-        if (last_idx - i) < cfg.mountain_min_age_bars:
-            continue  # too recent — could be part of the current consolidation
-        # Pullback check: any bar AFTER the peak (still inside the window)
-        # with low ≤ h - mountain_pullback_atr × ATR14.
-        if i + 1 >= len(window_l):
-            continue
-        post = window_l[i + 1:]
-        if (post.min() if len(post) else float("inf")) <= h - cfg.mountain_pullback_atr * atr:
-            mountains.append((i, h))
-
-    # Mountain anchors are now a RANKING dimension, not a hard gate. A
-    # resistance with no mountain anchors (DOC pattern — broke through prior
-    # high, now testing a fresh recent peak) still qualifies, but gets
-    # FRESH_RESISTANCE flagged downstream so the scorer demotes it.
-    mountain_idxs = {i for i, _ in mountains}
-    # Ceiling gate uses MAX MOUNTAIN (not max swing) so a recent non-mountain
-    # wick above the mountain zone doesn't disqualify a valid setup.
-    # LYV 2026-05-22: 173.12 wick at -4d would have falsely failed the
-    # 168.55 mountain-anchored level vs max swing. Using max_mountain instead,
-    # 168.55 IS the highest mountain → ceiling passes.
-    max_mountain_high = max((h for _, h in mountains), default=0.0)
-
-    # 3. The resistance LEVEL = the climax of the PRECEDING MOUNTAIN above
-    # current price. User rule (chat 2026-05-22, rephrased): "immediate high
-    # above current means the climax of the preceding mountain." "Preceding"
-    # = the mountain that immediately precedes the current price action in
-    # time. A "mountain" is a swing high old enough (≥ mountain_min_age_bars)
-    # AND with subsequent pullback (≥ mountain_pullback_atr × ATR14). Recent
-    # unvalidated bumps don't count.
-    #
-    # FALLBACK: if no mountain exists above current price, fall back to the
-    # most recent swing high above current — this covers DOC's pattern
-    # (broke through prior peaks to fresh territory; new resistance hasn't
-    # been validated as a mountain yet). The downstream scorer will fire
-    # FRESH_RESISTANCE caution because cluster_mountains will be 0.
-    swings_above = [(i, h) for i, h in swings if h > current_close]
-    if not swings_above:
-        return None
-    mountains_above = [(i, h) for i, h in swings_above if i in mountain_idxs]
-    if mountains_above:
-        # Preceding mountain (most recent in time above current)
-        i_imm, h_imm = max(mountains_above, key=lambda x: x[0])
-    else:
-        # No mountain above → fallback to most recent swing high above
-        i_imm, h_imm = max(swings_above, key=lambda x: x[0])
-    level = float(h_imm)
-
-    # Resistance RANGE — the CONSENSUS of mountain tops within
-    # ±resistance_range_pct of the preceding mountain. Non-mountain swings
-    # (recent wicks) are NOT part of the consensus; they're outlier
-    # candidates that may represent failed breakouts (e.g., LYV's 173.12
-    # spike at -4d, which broke above the 167–168 mountain consensus and
-    # was rejected). User rule (chat 2026-05-22): "arguably 168 as a
-    # consensus resistance with one outlier false breakout to $173" —
-    # the outlier doesn't define the resistance; the mountain consensus
-    # does.
-    if mountains_above:
-        range_mtns_only = [h for _, h in mountains_above
-                           if abs(h - level) / level <= cfg.resistance_range_pct]
-    else:
-        range_mtns_only = [level]   # fallback: single non-mountain anchor
-    range_low = min(range_mtns_only)
-    range_high = max(range_mtns_only)
-    n_range_mountains = len(range_mtns_only) if mountains_above else 0
-
-    # "Real ceiling" gate — there must be NO HIGHER MOUNTAIN above the level
-    # (a recent non-mountain wick doesn't disqualify — only validated peaks
-    # constitute a higher resistance). TSLA's 418 cluster failed this because
-    # its 452 mountain was overhead. LYV's 168.55 IS the highest mountain
-    # in window → ceiling passes.
-    if max_mountain_high > 0 and level < max_mountain_high * (1 - cfg.max_below_window_high_pct):
-        return None
-
-    # Count touches + mountain anchors WITHIN the cluster band around the
-    # immediate level. Lower swings in the same price band count as touches
-    # validating the level; mountain-qualifying touches drive the
-    # FRESH_RESISTANCE / SINGLE_MOUNTAIN cautions in score_candidate().
-    cluster = [(i, hh) for i, hh in swings
-               if abs(hh - level) / level <= cfg.cluster_band_pct]
-    if len(cluster) < cfg.min_touches:
-        return None
-    n_mountains_in_cluster = sum(1 for i, _ in cluster if i in mountain_idxs)
-    return (level, len(cluster), n_mountains_in_cluster, range_low, range_high, n_range_mountains)
-
-
-def classify_variant(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
-                     resistance: float, atr: float, cfg: P2Config) -> tuple[str, dict]:
-    """Classify the consolidation shape as A / B / C.
-
-    A = direct approach (no specific consolidation; falls through)
-    B = tight horizontal rectangle just below resistance
-    C = ascending triangle (flat top + rising lows)
-    """
-    N = min(cfg.consolidation_lookback, len(highs))
-    recent_highs = highs[-N:]
-    recent_lows = lows[-N:]
-
-    x = np.arange(N, dtype=float)
-    slope_h = float(np.polyfit(x, recent_highs, 1)[0])
-    slope_l = float(np.polyfit(x, recent_lows, 1)[0])
-
-    px = float(closes[-1])
-    slope_h_pct = slope_h / px if px else 0.0
-    slope_l_pct = slope_l / px if px else 0.0
-
-    rect_height = float(recent_highs.max() - recent_lows.min())
-    rect_height_atr = rect_height / atr if atr else float("inf")
-
-    near = np.sum(np.abs(recent_highs - resistance) / resistance < cfg.cluster_band_pct)
+    # Window geometry from the shared primitive
+    w = window_slopes_np(
+        opens, highs, lows, closes,
+        resistance=resistance, atr=atr,
+        lookback_bars=cfg.consolidation_lookback,
+        cluster_band_pct=cfg.cluster_band_pct,
+    )
+    slope_h_pct = w["slope_highs_pct_per_bar"]
+    slope_l_pct = w["slope_lows_pct_per_bar"]
+    rect_height_atr = w["rect_height_atr"]
+    near = w["highs_near_resistance"]
 
     flat_top    = abs(slope_h_pct) < cfg.slope_flat_threshold and near >= 2
     flat_bottom = abs(slope_l_pct) < cfg.slope_flat_threshold
     rising_bot  = slope_l_pct > cfg.slope_rising_threshold
+    rising_top  = slope_h_pct > cfg.slope_rising_threshold
     tight       = rect_height_atr < cfg.tight_rect_height_atr
+    both_falling = (slope_h_pct < -cfg.slope_flat_threshold
+                    and slope_l_pct < -cfg.slope_flat_threshold)
+
+    # Signal-candle test for Variant A — bullish markup bar. Anatomy
+    # numbers come from the primitive; the body/tail thresholds and
+    # the "is this a markup?" decision are DITP-specific so they stay
+    # here.
+    rng = w["last_high"] - w["last_low"]
+    is_bullish_markup = False
+    if rng > 0 and w["last_close"] > w["last_open"]:
+        body_ratio = (w["last_close"] - w["last_open"]) / rng
+        upper_tail_ratio = (w["last_high"] - w["last_close"]) / rng
+        is_bullish_markup = (body_ratio >= cfg.markup_body_ratio_min
+                              and upper_tail_ratio <= cfg.markup_upper_tail_max)
 
     diag = {
         "slope_highs_pct_per_day": round(slope_h_pct, 5),
         "slope_lows_pct_per_day": round(slope_l_pct, 5),
         "rect_height_atr": round(rect_height_atr, 2),
-        "highs_near_resistance": int(near),
-        "consolidation_lookback": N,
+        "highs_near_resistance": near,
+        "consolidation_lookback": w["bars_inspected"],
+        "is_bullish_markup": bool(is_bullish_markup),
+        "both_slopes_falling": bool(both_falling),
     }
 
-    if flat_top and rising_bot:
-        return "C", diag
+    # Reject: pulling away from resistance (both falling)
+    if both_falling:
+        return None, diag
+
+    # B: tight rectangle at resistance (flat top + flat bottom + tight band)
     if flat_top and flat_bottom and tight:
         return "B", diag
-    return "A", diag
+
+    # C: ascending triangle (flat top + rising lows)
+    if flat_top and rising_bot:
+        return "C", diag
+
+    # A: direct approach (both rising + bullish markup signal candle)
+    if rising_top and rising_bot and is_bullish_markup:
+        return "A", diag
+
+    return None, diag
 
 
 # ---------- Universe membership ----------
@@ -426,22 +347,30 @@ def detect_p2(symbol: str, cfg: P2Config) -> P2Candidate | None:
     opens  = np.array([b["o"] for b in bars], dtype=float)
 
     # 1. Bullish EMA stack + price > EMA20
-    e20 = ema(closes, 20)
-    e50 = ema(closes, 50)
-    e200 = ema(closes, 200)
+    e20 = ema_np(closes, 20)
+    e50 = ema_np(closes, 50)
+    e200 = ema_np(closes, 200)
     if not (e20[-1] > e50[-1] > e200[-1] and closes[-1] > e20[-1]):
         return None
 
     # 2. ATR14
-    atr = atr14(highs, lows, closes)
+    atr = atr_wilder_np(highs, lows, closes, period=14)
     if atr <= 0:
         return None
 
     # 3. Horizontal resistance above current, anchored to a left-side mountain top
-    r = find_resistance(highs, lows, closes, cfg, float(closes[-1]), atr)
+    r = _resistance(highs, lows, closes, cfg, float(closes[-1]), atr)
     if r is None:
         return None
     resistance, touches, mountains, range_low, range_high, n_range_mountains = r
+
+    # Note (user clarification 2026-05-23): multi-mountain resistance is a
+    # CONVICTION BOOST, not an eligibility gate. A single preceding mountain
+    # is still a valid P2 anchor — it just earns SINGLE_MOUNTAIN caution +
+    # lower validation score downstream. The legacy hard gate
+    #     if n_range_mountains < cfg.min_range_mountains: return None
+    # has been removed so single-mountain candidates flow through and get
+    # tier'd by score_candidate() like everything else.
 
     # 4. Pending breakout — distance check uses range_low (the closest mountain
     #    in the resistance zone), so a wide range (LYV: zone [167.56, 173.12])
@@ -480,10 +409,19 @@ def detect_p2(symbol: str, cfg: P2Config) -> P2Candidate | None:
         return None
 
     # 6. Classify Setup A / B / C
-    variant, diag = classify_variant(highs, lows, closes, resistance, atr, cfg)
+    variant, diag = classify_variant(opens, highs, lows, closes, resistance, atr, cfg)
+    if variant is None:
+        # Doesn't match A / B / C — either both slopes falling (pulling
+        # away from resistance) or no positive variant pattern fit.
+        return None
 
     last_range_atr = rng / atr if atr > 0 else 0.0
-    flush_offset = find_flush_up_bar(opens, highs, lows, closes, atr, cfg)
+    flush_offset = thrust_bar_np(
+        opens, highs, lows, closes, atr,
+        body_atr_min=cfg.flush_up_body_atr,
+        prior_high_window=cfg.flush_up_prior_high_window,
+        lookback=cfg.flush_up_lookback,
+    )
     if flush_offset is not None:
         diag["flush_up_bar_offset_days"] = int(flush_offset)
         diag["flush_up_bar_body_atr"] = round(
@@ -596,7 +534,7 @@ def score_candidate(c: P2Candidate, atr: float) -> None:
         cautions.append("SINGLE_MOUNTAIN")
     # FLUSH_UP: a strong upward bar within the last N days that punched
     # through prior range. Profit-taking risk on retest of the resulting
-    # resistance. See find_flush_up_bar() for the precise rule. The flush
+    # resistance. See patterns.thrust_bar_np() for the precise rule. The flush
     # may be days ago (DOC pattern) or today.
     if "flush_up_bar_offset_days" in c.diag:
         cautions.append("FLUSH_UP")
@@ -646,9 +584,15 @@ def scan_universe(symbols: Iterable[str], cfg: P2Config,
         if c.variant not in variants_allowed:
             continue
         out.append(c)
-    # Final shortlist sort: tier (A first) → score (high first) → distance (close first).
+    # Final shortlist sort: distance (close first) → tier (A first) → score (high first).
+    # Per user rule 2026-05-23: "if the current candle near the immediate
+    # preceding mountain top resistance, then rank the first for P2 setup
+    # as priority". Proximity is the primary actionability signal — a
+    # candidate 0.10 ATR from breakout will trigger TODAY before one 1.0
+    # ATR away regardless of validation quality. Tier + score remain as
+    # tiebreakers so user can still see the structural conviction.
     tier_rank = {"A": 0, "B": 1, "C": 2, "D": 3}
-    out.sort(key=lambda c: (tier_rank.get(c.tier, 9), -c.score, c.distance_atr))
+    out.sort(key=lambda c: (c.distance_atr, tier_rank.get(c.tier, 9), -c.score))
     return out
 
 
@@ -706,7 +650,7 @@ def main() -> int:
 
     candidates = scan_universe(symbols, cfg, variants_allowed)
 
-    sys.stdout.write(f"# {len(candidates)} candidates, sorted by tier > score > distance:\n")
+    sys.stdout.write(f"# {len(candidates)} candidates, sorted by distance > tier > score:\n")
     sys.stdout.write(f"{'SYM':<6} {'T':<2} {'V':<2} {'score':>5} {'last':>8} "
                      f"{'rng_low':>8} {'rng_high':>8} {'distATR':>8} {'upTail':>7} "
                      f"{'t/m/rM':>8}  cautions\n")

@@ -62,7 +62,7 @@ del _root, _p
 # ---
 
 PRICE_HISTORY_ROOT = SKILL_DIR / "data" / "price_history"
-SUPPORTED_TIMEFRAMES = ("1min", "5min", "15min", "daily")
+SUPPORTED_TIMEFRAMES = ("1min", "3min", "5min", "15min", "daily")
 
 
 # ---------- Path helpers ----------

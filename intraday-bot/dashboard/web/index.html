@@ -5,6 +5,12 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>intraday_bot dashboard</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <!-- TradingView Advanced Charts widget loader. Per user preference
+       2026-05-23, the chart panel uses the iframe widget rather than
+       lightweight-charts — full TV UX (drawing tools, indicators,
+       extended-hours toggle) at the cost of programmatic overlays. -->
+  <!-- (tv.js is loaded lazily by loadTvScript() on first chart click;
+       no module-level <script> here so cold page loads stay fast.) -->
   <style>
     /* IBKR / TWS-inspired palette: neutral grays, sharp corners, sans-serif,
        tabular numerals, IBKR-red accent. */
@@ -244,6 +250,211 @@
       border: 1px solid var(--border);
     }
     .fam-tab.active .badge { color: var(--text); background: var(--bg-panel-alt); }
+    /* Right column — fixed to the right edge as a 1/5-screen-wide
+       stack. Holds Market Sentiment (top, auto height) + Active Lists
+       (below, fills remaining height). User rule 2026-05-23. */
+    #right-column {
+      position: fixed;
+      top: 0; right: 0; bottom: 0;
+      width: max(320px, 20vw);
+      z-index: 40;
+      display: flex; flex-direction: column;
+      overflow: hidden;
+      border-left: 1px solid var(--border);
+    }
+    /* Sentiment lives at the TOP of the right column, sized to its
+       content (capped so it can't push Active Lists off-screen). */
+    #right-column #market-sentiment {
+      flex: 0 0 auto;
+      margin-bottom: 0 !important;
+      max-height: 60vh;
+      overflow-y: auto;
+      border-bottom: 1px solid var(--border);
+    }
+    /* Active Lists fills the remaining height below sentiment. */
+    #right-column #active-lists {
+      flex: 1 1 auto;
+      margin-bottom: 0 !important;
+      display: flex; flex-direction: column;
+      overflow: hidden;
+      min-height: 0;
+    }
+    #right-column #active-lists > h2 { flex: 0 0 auto; }
+    #right-column #active-lists-body {
+      flex: 1 1 auto;
+      max-height: none !important;
+      overflow-y: auto;
+    }
+    /* Active-lists tabs (Candidates / Watchlist) — visually distinct from family tabs */
+    .list-tab {
+      padding: 4px 10px;
+      font-size: calc(11px * var(--scale));
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      background: var(--bg-panel-alt);
+      border: 1px solid var(--border);
+      cursor: pointer;
+    }
+    .list-tab:hover { color: var(--text); background: var(--bg-hover); }
+    .list-tab.active {
+      color: var(--text);
+      background: var(--bg-panel);
+      border-color: var(--ibkr-red);
+    }
+    .list-tab .muted { font-weight: 500; letter-spacing: 0; }
+    /* Active-lists table */
+    table.active-list { width: 100%; border-collapse: collapse;
+      font-size: calc(10px * var(--scale)); }
+    table.active-list th, table.active-list td {
+      padding: 3px 4px;
+      border-bottom: 1px solid var(--border);
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    table.active-list th { color: var(--text-muted); text-align: right;
+      font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+      background: var(--bg-panel-alt); position: sticky; top: 0;
+      font-size: calc(9px * var(--scale)); }
+    table.active-list th.sym, table.active-list td.sym {
+      text-align: left; font-weight: 700; padding-left: 6px;
+    }
+    table.active-list th.strat, table.active-list td.strat {
+      text-align: left; text-transform: uppercase;
+      letter-spacing: .04em; font-weight: 600;
+      padding-right: 6px;
+    }
+    table.active-list td.sym { color: #74c0ff; }
+    /* Whole row is clickable — loads the chart for that symbol */
+    table.active-list tbody tr { cursor: pointer; }
+    table.active-list tr:hover { background: var(--bg-hover); }
+    table.active-list tbody tr:hover td.sym { text-decoration: underline; }
+    /* Per-row "push to TV.com" link */
+    table.active-list td.tv-link {
+      cursor: pointer;
+      text-align: center;
+      width: 24px;
+      padding: 2px 4px;
+      opacity: .55;
+    }
+    table.active-list td.tv-link:hover { opacity: 1; }
+    /* Sync-to-TV toggle in panel header */
+    .tv-sync-btn {
+      padding: 2px 8px;
+      border: 1px solid var(--border);
+      background: var(--bg-panel-alt);
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: calc(10px * var(--scale));
+      letter-spacing: .04em;
+    }
+    .tv-sync-btn:hover { color: var(--text); background: var(--bg-hover); }
+    .tv-sync-btn.on {
+      color: #5fd97a;
+      border-color: #5fd97a;
+      background: rgba(95,217,122,.10);
+    }
+    /* Heartbeat flash — applied to a cell briefly when its value changes.
+       Pulses background colour up + down. */
+    @keyframes ev-flash-up   { 0% { background: rgba(95,217,122,.35); } 100% { background: transparent; } }
+    @keyframes ev-flash-dn   { 0% { background: rgba(255,107,107,.35); } 100% { background: transparent; } }
+    table.active-list td.flash-up { animation: ev-flash-up   .9s ease-out 1; }
+    table.active-list td.flash-dn { animation: ev-flash-dn .9s ease-out 1; }
+    .strat-pill {
+      display: inline-block; padding: 1px 4px;
+      font-size: calc(9px * var(--scale));
+      border: 1px solid var(--border);
+      line-height: 1.2;
+    }
+    .strat-guns { color: #f5b342; border-color: #f5b342; background: rgba(245,179,66,.10); }
+    .strat-ditp { color: #74c0ff; border-color: #74c0ff; background: rgba(116,192,255,.10); }
+    .strat-os   { color: #b076ff; border-color: #b076ff; background: rgba(176,118,255,.10); }
+    /* Data-feed badge in the active-lists header — tells the user at a
+       glance whether the visible quotes are LIVE (IBKR/Alpaca) or DELAYED
+       (yfinance). Click opens the per-symbol breakdown. */
+    .feed-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 3px 10px;
+      font-size: calc(11px * var(--scale));
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      border: 1px solid var(--border);
+      cursor: help;
+    }
+    .feed-badge::before {
+      content: "";
+      display: inline-block;
+      width: 7px; height: 7px;
+      border-radius: 999px;
+      background: currentColor;
+    }
+    .feed-idle  { color: var(--text-muted); background: var(--bg-panel-alt); }
+    .feed-ibkr  { color: #5fd97a; border-color: #5fd97a; background: rgba(95,217,122,.10); }
+    .feed-alpaca { color: #f5b342; border-color: #f5b342; background: rgba(245,179,66,.10); }
+    .feed-yf    { color: #ff6b6b; border-color: #ff6b6b; background: rgba(255,107,107,.10); }
+    .feed-mixed { color: #f5b342; border-color: #f5b342; background: rgba(245,179,66,.06); }
+    .feed-none  { color: #ff6b6b; border-color: #ff6b6b; background: rgba(255,107,107,.15); }
+    /* Market Sentiment panel */
+    #market-sentiment .sent-group {
+      display: flex; flex-wrap: wrap; gap: 4px;
+      padding: 4px 6px;
+      border-bottom: 1px dashed var(--border-soft);
+    }
+    #market-sentiment .sent-group:last-child { border-bottom: 0; padding-bottom: 0; }
+    #market-sentiment .sent-group-label {
+      width: 100%;
+      font-size: calc(9px * var(--scale));
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 2px;
+    }
+    #market-sentiment .sent-cell {
+      display: inline-flex; align-items: center; gap: 3px;
+      padding: 1px 5px;
+      border: 1px solid var(--border);
+      background: var(--bg-panel-alt);
+      font-variant-numeric: tabular-nums;
+      font-size: calc(10px * var(--scale));
+      cursor: help;
+    }
+    #market-sentiment .sent-cell.clickable { cursor: pointer; }
+    #market-sentiment .sent-cell.clickable:hover { background: var(--bg-hover); }
+    #market-sentiment .sent-cell .sym { font-weight: 700; color: #cccccc; }
+    #market-sentiment .sent-cell .pct { font-weight: 700; }
+    #market-sentiment .sent-cell.up   { border-color: #5fd97a; }
+    #market-sentiment .sent-cell.down { border-color: #ff6b6b; }
+    #market-sentiment .sent-cell.up   .pct { color: #5fd97a; }
+    #market-sentiment .sent-cell.down .pct { color: #ff6b6b; }
+    #market-sentiment .sent-cell.flat .pct { color: var(--text-muted); }
+    #market-sentiment .sent-breadth {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px;
+      padding: 4px 6px;
+    }
+    #market-sentiment .sent-bread-tile {
+      display: flex; flex-direction: column;
+      padding: 2px 6px; border: 1px solid var(--border);
+      background: var(--bg-panel-alt); cursor: help;
+    }
+    #market-sentiment .sent-bread-tile .lbl {
+      font-size: calc(8px  * var(--scale));
+      letter-spacing: .04em; text-transform: uppercase;
+      color: var(--text-muted);
+      line-height: 1.2;
+    }
+    #market-sentiment .sent-bread-tile .val {
+      font-size: calc(11px * var(--scale)); font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    #sent-composite-pill { font-weight: 700; letter-spacing: .12em; cursor: help; }
+    #sent-composite-pill.bullish-strong { background: rgba(95,217,122,.22); color: #5fd97a; border-color: #5fd97a; }
+    #sent-composite-pill.bullish        { background: rgba(95,217,122,.12); color: #5fd97a; }
+    #sent-composite-pill.neutral        { background: var(--bg-panel-alt); color: var(--text-muted); }
+    #sent-composite-pill.bearish        { background: rgba(255,107,107,.12); color: #ff6b6b; }
+    #sent-composite-pill.bearish-strong { background: rgba(255,107,107,.22); color: #ff6b6b; border-color: #ff6b6b; }
     /* DITP tier badges in the watchlist table */
     .tier-A { background: rgba(95,217,122,.15); color: #5fd97a; border-color: #5fd97a; }
     .tier-B { background: rgba(245,179,66,.15); color: #f5b342; border-color: #f5b342; }
@@ -258,7 +469,17 @@
        paddings; without !important, padding-left:0.75rem wins the specificity
        fight against `body { ... }` (class > element) and the main content
        slides under the fixed sidebar. */
-    body { padding-left: 44px !important; }
+    /* Body padding reserves the two fixed columns:
+       LEFT  = 44px sidebar
+       RIGHT = max(320px, 20vw) Active Lists panel
+       Main content (chart, today P&L, trades) flows in the centre. */
+    body {
+      padding-left: 44px !important;
+      padding-right: max(320px, 20vw) !important;
+    }
+    /* When a sidebar drawer is pinned, body.has-pinned-drawer (defined
+       below) bumps padding-left up by the drawer width — still leaves
+       room for the right Active Lists column. */
     #left-sidebar {
       position: fixed; left: 0; top: 0; bottom: 0;
       width: 44px;
@@ -291,8 +512,11 @@
     }
     .drawer {
       position: fixed; top: 0; bottom: 0; left: 44px;
-      width: 420px;
-      max-width: 92vw;
+      /* Capped at 1/5 of viewport width (user rule 2026-05-23) with a
+         min-width so the drawer stays usable on smaller screens. */
+      width: 20vw;
+      min-width: 320px;
+      max-width: 20vw;
       z-index: 55;
       background: var(--bg-panel);
       border-right: 1px solid var(--border);
@@ -302,6 +526,13 @@
       box-shadow: 6px 0 18px rgba(0,0,0,.45);
     }
     .drawer.open { transform: translateX(0); }
+    .drawer.pinned { transform: translateX(0) !important; }
+    /* drawer-wide class is now a no-op (all drawers capped at 1/5 screen) —
+       kept on the analysis drawer for back-compat but no special sizing. */
+    /* When ANY drawer is pinned, main content shifts right by drawer width. */
+    body.has-pinned-drawer {
+      padding-left: max(calc(44px + 320px), calc(44px + 20vw)) !important;
+    }
     .drawer-header {
       display: flex; align-items: center; gap: 10px;
       padding: 8px 12px;
@@ -315,7 +546,6 @@
       position: sticky; top: 0; z-index: 1;
     }
     .drawer-close {
-      margin-left: auto;
       padding: 2px 8px;
       border: 1px solid var(--border);
       background: transparent;
@@ -324,7 +554,83 @@
       font-size: calc(11px * var(--scale));
     }
     .drawer-close:hover { color: var(--text); background: var(--bg-hover); }
+    .drawer-pin {
+      margin-left: auto;
+      padding: 2px 8px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: calc(11px * var(--scale));
+    }
+    .drawer-pin:hover { color: var(--text); background: var(--bg-hover); }
+    .drawer.pinned .drawer-pin {
+      color: var(--ibkr-red);
+      border-color: var(--ibkr-red);
+      background: rgba(229,49,49,.10);
+    }
     .drawer-body { padding: 8px 0; }
+    /* Analysis-drawer sub-view tabs (by-symbol vs timeline) */
+    .analysis-view-tabs {
+      display: flex; gap: 0;
+      padding: 0 8px;
+      background: var(--bg-panel-alt);
+      border-bottom: 1px solid var(--border);
+    }
+    .analysis-view-tab {
+      padding: 6px 14px;
+      font-size: calc(11px * var(--scale));
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      background: transparent;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+    }
+    .analysis-view-tab:hover { color: var(--text); background: var(--bg-hover); }
+    .analysis-view-tab.active {
+      color: var(--text);
+      border-bottom-color: var(--ibkr-red);
+    }
+    /* Readable event timeline rows */
+    .ev-row {
+      display: flex; gap: 10px;
+      padding: 4px 8px;
+      border-bottom: 1px solid var(--border-soft);
+    }
+    .ev-row:hover { background: var(--bg-hover); }
+    .ev-time {
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+      flex-shrink: 0;
+      min-width: 64px;
+    }
+    .ev-fam {
+      flex-shrink: 0;
+      min-width: 60px;
+      font-size: calc(9px * var(--scale));
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      padding: 1px 5px;
+      align-self: center;
+      border: 1px solid var(--border);
+      text-align: center;
+      height: fit-content;
+    }
+    .ev-fam-guns { color: #f5b342; border-color: #f5b342; background: rgba(245,179,66,.10); }
+    .ev-fam-ditp { color: #74c0ff; border-color: #74c0ff; background: rgba(116,192,255,.10); }
+    .ev-fam-os   { color: #b076ff; border-color: #b076ff; background: rgba(176,118,255,.10); }
+    .ev-fam-sys  { color: #aaaaaa; border-color: #555; background: rgba(170,170,170,.06); }
+    .ev-msg { flex: 1; line-height: 1.5; }
+    .ev-msg .sym { color: #74c0ff; font-weight: 700; }
+    .ev-msg .num { font-variant-numeric: tabular-nums; }
+    .ev-msg .reason { color: #ff9c9c; }
+    .ev-msg .ok { color: #5fd97a; }
+    .ev-msg .warn { color: #f5b342; }
+    .ev-msg .neg { color: #ff6b6b; }
 
     /* DITP watchlist table layout */
     .ditp-tbl { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
@@ -424,15 +730,48 @@
 
   <!-- Left sidebar — three drawer toggles -->
   <aside id="left-sidebar">
+    <div class="sidebar-btn" data-drawer="drawer-analysis" title="Strategy analysis — per-symbol decisions + readable event timeline">Analysis</div>
     <div class="sidebar-btn" data-drawer="drawer-gate" title="Strategy gating (ON/OFF + ARM)">Gating</div>
-    <div class="sidebar-btn" data-drawer="drawer-events" title="Structured event log">Events</div>
     <div class="sidebar-btn" data-drawer="drawer-bot" title="Bot subprocess log">Bot log</div>
   </aside>
 
   <!-- Slide-out drawers (one open at a time) -->
+  <aside id="drawer-analysis" class="drawer drawer-wide">
+    <div class="drawer-header">
+      <span>strategy analysis</span>
+      <button class="drawer-pin" data-pin="drawer-analysis" title="Pin open — keeps the drawer visible and shifts main content right.">📌 pin</button>
+      <button class="drawer-close" data-close="drawer-analysis">✕ close</button>
+    </div>
+    <!-- Top-level view tabs inside the drawer -->
+    <div class="analysis-view-tabs">
+      <button class="analysis-view-tab active" data-view="by-symbol"
+              title="Per-symbol decisions grouped by strategy family.">by symbol</button>
+      <button class="analysis-view-tab" data-view="timeline"
+              title="Chronological readable timeline of every strategy event today.">event timeline</button>
+    </div>
+
+    <!-- View: by-symbol -->
+    <div id="analysis-view-by-symbol" class="analysis-view active">
+      <div id="strategy-family-tabs" class="fam-tabs">
+        <span class="muted text-xs" style="padding:6px 14px;">no families yet</span>
+      </div>
+      <div id="strategy-analysis-list" class="p-3" style="max-height: calc(100vh - 160px); overflow-y: auto;">
+        <span class="muted text-sm">Waiting for shortlist + entry events…</span>
+      </div>
+    </div>
+
+    <!-- View: timeline (readable event stream — was standalone Events drawer) -->
+    <div id="analysis-view-timeline" class="analysis-view" style="display:none;">
+      <div id="events" class="text-xs leading-6 p-3" style="max-height: calc(100vh - 130px); overflow-y: auto;">
+        <span class="muted">No events yet today.</span>
+      </div>
+    </div>
+  </aside>
+
   <aside id="drawer-gate" class="drawer">
     <div class="drawer-header">
       <span>strategy gating</span>
+      <button class="drawer-pin" data-pin="drawer-gate" title="Pin open — keeps the drawer visible and shifts main content right.">📌 pin</button>
       <button class="drawer-close" data-close="drawer-gate">✕ close</button>
     </div>
     <div class="drawer-body">
@@ -460,21 +799,10 @@
     </div>
   </aside>
 
-  <aside id="drawer-events" class="drawer">
-    <div class="drawer-header">
-      <span>event log <span class="muted">— structured</span></span>
-      <button class="drawer-close" data-close="drawer-events">✕ close</button>
-    </div>
-    <div class="drawer-body">
-      <div id="events" class="text-xs leading-5 p-3">
-        <span class="muted">No events yet today.</span>
-      </div>
-    </div>
-  </aside>
-
   <aside id="drawer-bot" class="drawer">
     <div class="drawer-header">
       <span>bot log <span class="muted">— state/bot_*.log</span></span>
+      <button class="drawer-pin" data-pin="drawer-bot" title="Pin open — keeps the drawer visible and shifts main content right.">📌 pin</button>
       <button class="drawer-close" data-close="drawer-bot">✕ close</button>
     </div>
     <div class="drawer-body">
@@ -513,6 +841,12 @@
       <span id="data-health-dot" class="dot idle"></span>
       <span class="text-xs">Historical price data health</span>
       <span id="data-health-detail" class="text-xs muted">checking…</span>
+    </div>
+    <div class="flex items-center gap-2 cursor-pointer" id="profile-health-pill"
+         title="Ticker profile health — per-ticker behavioral baselines (ATR, vol stats, 3m percentile distributions) under data/ticker_profile/. The substrate for ticker-relative thresholds. Click for the per-symbol breakdown + a refresh button.">
+      <span id="profile-health-dot" class="dot idle"></span>
+      <span class="text-xs">Profile health</span>
+      <span id="profile-health-detail" class="text-xs muted">checking…</span>
     </div>
     <div class="flex items-center gap-2">
       <span id="bot-pill" class="tag bg-slate-800 text-slate-300"
@@ -590,6 +924,30 @@
     </div>
   </div>
 
+  <!-- Profile-health modal -->
+  <div id="profile-health-modal" class="hidden fixed inset-0 z-40 bg-slate-950/85"
+       style="display:none; backdrop-filter: blur(2px);">
+    <div class="absolute top-12 left-1/2 -translate-x-1/2 panel" style="width:min(900px,92vw); max-height:80vh; overflow-y:auto;">
+      <h2 class="flex items-center gap-3">
+        <span>Ticker profile health</span>
+        <span id="profile-health-modal-overall" class="tag">—</span>
+        <div class="ml-auto flex items-center gap-2">
+          <button id="profile-refresh-watchlist"
+                  class="px-2 py-1 border border-emerald-800 text-emerald-300 hover:bg-emerald-950 text-xs"
+                  title="Refresh profiles for every symbol in today's DITP / GUNS watchlists. Fast — typically 10-30 tickers.">↻ watchlist</button>
+          <button id="profile-refresh-ingested"
+                  class="px-2 py-1 border border-emerald-800 text-emerald-300 hover:bg-emerald-950 text-xs"
+                  title="Refresh profiles for every symbol with local 1-min parquet data. Slower — currently ~500 tickers.">↻ ingested (~500)</button>
+          <button id="profile-refresh-universe"
+                  class="px-2 py-1 border border-amber-800 text-amber-300 hover:bg-amber-950 text-xs"
+                  title="Refresh profiles for every symbol with daily parquet. Slowest — ~1500 tickers. Symbols without 1m data get partial profiles (daily + 1m only).">↻ universe (~1500)</button>
+          <button id="profile-health-close" class="px-2 py-1 border border-slate-700 hover:bg-slate-800 text-xs">close</button>
+        </div>
+      </h2>
+      <div id="profile-health-modal-body" class="p-3 text-xs">loading…</div>
+    </div>
+  </div>
+
   <!-- Toast stack (bottom-right transient notifications) -->
   <div id="toast-stack"></div>
 
@@ -638,38 +996,78 @@
 
   <!-- (Strategy gating moved to the left-sidebar "Gating" drawer.) -->
 
-  <!-- Strategy Analysis (per-symbol verdicts) + Embedded TradingView chart, side by side -->
-  <div class="grid grid-cols-2 gap-3 mb-3 items-start">
-    <section id="strategy-analysis" class="panel">
-      <h2>strategy analysis
-        <span class="float-right normal-case tracking-normal text-xs muted">
-          live per-symbol decisions from <code class="text-slate-300">data/journal/</code>
-        </span>
-      </h2>
-      <div id="strategy-family-tabs" class="fam-tabs">
-        <span class="muted text-xs" style="padding:6px 14px;">no families yet</span>
+  <!-- Right column — fixed to the right edge, 1/5 of screen width.
+       Stacks the Market Sentiment panel (top, auto-height) above the
+       Active Lists panel (fills remaining height with Candidates /
+       Watchlist tabs). Per user rule 2026-05-23. -->
+  <aside id="right-column">
+
+    <!-- Market Sentiment — composite read of indices + VIX + macro +
+         sectors + S&P breadth. Each cell mouseover-explained. Polls
+         /market/sentiment every 5s. -->
+    <section id="market-sentiment" class="panel">
+      <div class="flex items-center gap-2 px-3 py-2 border-b border-slate-800">
+        <span class="text-xs uppercase tracking-widest muted">Market Sentiment</span>
+        <span id="sent-composite-pill" class="ml-auto tag bg-slate-800 text-slate-300"
+              title="loading…">— LOADING</span>
       </div>
-      <div id="strategy-analysis-list" class="p-3" style="max-height: 504px; overflow-y: auto;">
-        <span class="muted text-sm">Waiting for shortlist + entry events…</span>
+      <div id="sent-body" class="p-2 text-xs">
+        <div class="muted">loading…</div>
       </div>
     </section>
 
-    <section id="chart-panel" class="panel">
-      <div id="chart-panel-header">
-        <span id="chart-panel-title" class="muted">click any ticker to load chart</span>
-        <span class="muted text-xs">timeframe</span>
-        <div class="flex gap-1">
-          <button class="tf-btn active" data-tf="D">1D</button>
-          <button class="tf-btn" data-tf="3">3m</button>
-          <button class="tf-btn" data-tf="5">5m</button>
-        </div>
+    <!-- Active lists — Candidates vs Watchlist tabs, fills remaining height. -->
+    <section id="active-lists" class="panel">
+    <h2 class="flex flex-col gap-1 items-start" style="padding-bottom:8px;">
+      <div class="flex items-center gap-1 w-full">
+        <span>active lists</span>
+        <button class="list-tab active ml-2" data-list="candidates"
+                title="Symbols whose strategy is ON + ARMED — the bot will fire on a valid trigger.">
+          candidates <span id="list-tab-count-candidates" class="muted">(0)</span>
+        </button>
+        <button class="list-tab" data-list="watchlist"
+                title="All symbols on every family scanner's watchlist — the under-radar pool.">
+          watchlist <span id="list-tab-count-watchlist" class="muted">(0)</span>
+        </button>
       </div>
-      <div id="chart-panel-body">
-        <div id="tv-host" class="tv-host"></div>
-        <div id="chart-empty">No symbol loaded. Click a ticker on the left.</div>
+      <div class="flex items-center gap-2 text-xs w-full flex-wrap">
+        <span id="active-lists-feed-badge" class="feed-badge feed-idle"
+              title="Primary data feed serving the visible quotes.">
+          checking feed…
+        </span>
+        <span id="active-lists-cap-warn"
+              class="text-xs"
+              style="color:#f5b342; display:none;"
+              title="IBKR market-data subscriptions are capped at ~100 lines per account. We hold 5 slots in reserve. When the watchlist exceeds the cap, candidates (armed strategies) keep live IBKR quotes; the rest fall back to Alpaca / yfinance."></span>
+        <button id="tv-sync-toggle" class="tv-sync-btn"
+                title="When ON, every ticker click here ALSO pushes the symbol to a named tradingview.com window — pin one TV.com tab with your TV Plus 3-pane (daily/3m/1m) layout and every dashboard click updates it.">
+          📌 sync TV
+        </button>
+        <span class="muted ml-auto" title="Heartbeat cadence: 3s. Backend reads from a persistent IBKR streaming-quote thread (cap 95 subs).">3s ♥ <span id="active-lists-ts">—</span></span>
       </div>
+    </h2>
+    <div id="active-lists-body" class="p-2 text-xs">
+      <span class="muted">loading…</span>
+    </div>
     </section>
-  </div>
+  </aside>
+
+  <!-- Embedded TradingView chart (now full-width; strategy analysis moved to the left "Analysis" drawer) -->
+  <section id="chart-panel" class="panel mb-3">
+    <div id="chart-panel-header">
+      <span id="chart-panel-title" class="muted">click any ticker to load chart</span>
+      <span class="muted text-xs">timeframe</span>
+      <div class="flex gap-1">
+        <button class="tf-btn active" data-tf="D">1D</button>
+        <button class="tf-btn" data-tf="3">3m</button>
+        <button class="tf-btn" data-tf="5">5m</button>
+      </div>
+    </div>
+    <div id="chart-panel-body">
+      <div id="tv-host" class="tv-host"></div>
+      <div id="chart-empty">No symbol loaded. Click a ticker in the active lists above, or open the Analysis drawer (left).</div>
+    </div>
+  </section>
 
   <!-- Mid row: orders + positions -->
   <div class="grid grid-cols-2 gap-3 mb-3">
@@ -732,15 +1130,172 @@ function session() {
   // Use ET hours to bucket the session.
   const etParts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York', hour12: false, hour: '2-digit', minute: '2-digit',
+    weekday: 'short',
   }).formatToParts(new Date());
   const h = Number(etParts.find(p => p.type === 'hour').value);
   const m = Number(etParts.find(p => p.type === 'minute').value);
+  const wd = (etParts.find(p => p.type === 'weekday') || {}).value || '';
   const t = h * 60 + m;
-  if (t >= 240 && t < 570) return ['PM', 'bg-amber-900/50 text-amber-200'];
-  if (t >= 570 && t < 960) return ['RTH', 'bg-emerald-900/50 text-emerald-200'];
+
+  // Primary: Alpaca's authoritative market clock (handles weekends,
+  // federal holidays, early closes). Cached in _marketClock by the 30s
+  // poll below. We use is_open to choose between RTH and one of the
+  // closed-ish states.
+  const mc = window._marketClock;
+  if (mc && mc.source === 'alpaca') {
+    if (mc.is_open) {
+      return ['RTH', 'bg-emerald-900/50 text-emerald-200'];
+    }
+    // Closed per Alpaca — refine the label with local time-of-day so the
+    // user sees pre-market / after-hours / overnight rather than a
+    // generic "closed". Weekend wins regardless of time.
+    if (wd === 'Sat' || wd === 'Sun') return ['weekend', 'bg-slate-800 text-slate-400'];
+    if (t >= 240 && t < 570)  return ['PM (closed)',    'bg-amber-900/30 text-amber-200/70'];
+    if (t >= 960 && t < 1200) return ['after (closed)', 'bg-slate-700 text-slate-300'];
+    return ['closed', 'bg-slate-800 text-slate-400'];
+  }
+
+  // Fallback: client-side time-of-day estimation. Used when Alpaca creds
+  // are missing or the clock endpoint is unreachable. Doesn't know
+  // about holidays — labels them as if it's a normal weekday.
+  if (wd === 'Sat' || wd === 'Sun') return ['weekend', 'bg-slate-800 text-slate-400'];
+  if (t >= 240 && t < 570)  return ['PM',    'bg-amber-900/50 text-amber-200'];
+  if (t >= 570 && t < 960)  return ['RTH?',  'bg-emerald-900/30 text-emerald-200/70'];  // ? = local estimate
   if (t >= 960 && t < 1200) return ['after', 'bg-slate-700 text-slate-200'];
   return ['closed', 'bg-slate-800 text-slate-400'];
 }
+
+// ---- Market Sentiment panel ---------------------------------------------
+//
+// Polls /market/sentiment every 5s. Renders indices + volatility + macro +
+// sectors + S&P 500 breadth, plus a weighted composite score in the
+// header pill. Every cell has a `title` tooltip explaining what it means
+// (the tooltip text comes from the backend payload so the explanations
+// stay in sync with the math). Cells are clickable to load that ETF's
+// chart in the main chart panel.
+
+function _sentClass(pct) {
+  const x = Number(pct);
+  if (!isFinite(x) || x === 0) return 'flat';
+  return x > 0 ? 'up' : 'down';
+}
+function _sentPctStr(pct) {
+  const x = Number(pct);
+  if (!isFinite(x)) return '—';
+  return (x >= 0 ? '+' : '') + x.toFixed(2) + '%';
+}
+function _sentLastStr(last) {
+  const x = Number(last);
+  if (!isFinite(x)) return '—';
+  return x.toFixed(2);
+}
+function _sentCompositeClass(score) {
+  if (score >=  40) return 'bullish-strong';
+  if (score >=  20) return 'bullish';
+  if (score > -20)  return 'neutral';
+  if (score > -40)  return 'bearish';
+  return 'bearish-strong';
+}
+
+function _sentCellHtml(row, opts={}) {
+  const cls = _sentClass(row.chg_pct) + (opts.clickable !== false ? ' clickable' : '');
+  const tip = (row.tip || '').replace(/"/g, '&quot;');
+  const sym = row.symbol;
+  return `<span class="sent-cell ${cls}" title="${tip}" data-sym="${sym}">
+    <span class="sym">${sym}</span>
+    <span class="last">${_sentLastStr(row.last)}</span>
+    <span class="pct">${_sentPctStr(row.chg_pct)}</span>
+  </span>`;
+}
+function _sentBreadthTile(label, val, tip, suffix='') {
+  return `<div class="sent-bread-tile" title="${(tip||'').replace(/"/g,'&quot;')}">
+    <span class="lbl">${label}</span>
+    <span class="val">${val}${suffix}</span>
+  </div>`;
+}
+
+function renderSentiment(payload) {
+  const pill = document.getElementById('sent-composite-pill');
+  const body = document.getElementById('sent-body');
+  if (!pill || !body || !payload) return;
+  const comp = payload.composite || {};
+  const score = Number(comp.score);
+  const cls = _sentCompositeClass(score);
+  const arrow = score >=  40 ? '📈'
+              : score >=  20 ? '↗'
+              : score >  -20 ? '→'
+              : score >  -40 ? '↘'
+              : '📉';
+  const subTip = comp.sub ? `\n\nSub-scores:\n  indices ${comp.sub.indices}\n  A/D ${comp.sub.ad}\n  MAs ${comp.sub.mas}\n  VIX(prox) ${comp.sub.vix}\n  sectors ${comp.sub.sectors}\n  newH/L ${comp.sub.nhl}` : '';
+  pill.className = 'tag ' + cls;
+  pill.textContent = `${arrow}  ${score >= 0 ? '+' : ''}${score}  ${comp.label || ''}`;
+  pill.title = (comp.tip || '') + subTip;
+
+  const b = payload.breadth || {};
+  const tips = b.tips || {};
+  const breadthHtml = `
+    <div class="sent-breadth">
+      ${_sentBreadthTile('A/D (advances)', b.advances ?? '—', tips.advances)}
+      ${_sentBreadthTile('A/D (declines)', b.declines ?? '—', tips.declines)}
+      ${_sentBreadthTile('New 52w highs', b.new_highs ?? '—', tips.new_highs)}
+      ${_sentBreadthTile('New 52w lows',  b.new_lows  ?? '—', tips.new_lows)}
+      ${_sentBreadthTile('% above 50-SMA',  b.pct_above_50sma  ?? '—', tips.pct_above_50sma,  '%')}
+      ${_sentBreadthTile('% above 200-SMA', b.pct_above_200sma ?? '—', tips.pct_above_200sma, '%')}
+    </div>`;
+
+  body.innerHTML = `
+    <div class="sent-group">
+      <span class="sent-group-label">Indices</span>
+      ${(payload.indices    || []).map(r => _sentCellHtml(r)).join('')}
+    </div>
+    <div class="sent-group">
+      <span class="sent-group-label">Volatility</span>
+      ${(payload.volatility || []).map(r => _sentCellHtml(r)).join('')}
+      <span class="sent-group-label">Macro</span>
+      ${(payload.macro      || []).map(r => _sentCellHtml(r)).join('')}
+    </div>
+    <div class="sent-group">
+      <span class="sent-group-label">Sectors</span>
+      ${(payload.sectors    || []).map(r => _sentCellHtml(r)).join('')}
+    </div>
+    ${breadthHtml}
+  `;
+
+  // Click any ETF cell → load that symbol's chart in the main panel
+  body.querySelectorAll('.sent-cell.clickable').forEach(el => {
+    el.addEventListener('click', () => {
+      const sym = el.getAttribute('data-sym');
+      if (sym && typeof loadChartSymbol === 'function') loadChartSymbol(sym);
+    });
+  });
+}
+
+async function refreshSentiment() {
+  try {
+    const r = await fetch('/market/sentiment');
+    const j = await r.json();
+    renderSentiment(j);
+  } catch (e) {
+    const pill = document.getElementById('sent-composite-pill');
+    if (pill) { pill.textContent = '⚠ sentiment unreachable'; pill.title = String(e); }
+  }
+}
+refreshSentiment();
+setInterval(refreshSentiment, 5_000);
+
+// Market clock — fetched from /market/clock (which proxies Alpaca's
+// authoritative US-equity clock) every 30s. session() reads window._marketClock.
+async function refreshMarketClock() {
+  try {
+    const r = await fetch('/market/clock');
+    const j = await r.json();
+    window._marketClock = j;
+  } catch (e) {
+    window._marketClock = null;
+  }
+}
+refreshMarketClock();
+setInterval(refreshMarketClock, 30_000);
 function tickClock() {
   document.getElementById('clock-et').textContent = nyTime();
   document.getElementById('clock-myt').textContent = mytTime();
@@ -769,10 +1324,17 @@ function showToast(msg, ms) {
 }
 
 // ---- Embedded TradingView chart panel (always-on, in-flow) --------------
-// Uses TradingView's free Advanced Charts widget (tv.js). The widget lives
-// in the dashboard layout itself — no modal, no popup, no extra window.
-// Each ticker click rebuilds the widget at the new symbol (the basic embed
-// has no "update symbol" hook, so destroy + rebuild is the supported path).
+//
+// Reverted from lightweight-charts back to the TradingView Advanced Charts
+// widget per user preference 2026-05-23. Trade-off vs. lightweight-charts:
+//   PRO  — full TV UX: drawing tools, full indicator library, extended
+//          hours toggle, symbol search-from-chart, etc.
+//   CON  — black-box iframe, so we lose programmatic overlays (DITP
+//          resistance lines, round-number snap, GUNS PMH). User can
+//          still draw those manually on the TV chart.
+//
+// The /chart/data backend endpoint stays in server.py for future use
+// (other panels, JSON consumers) — it's not called from the chart anymore.
 let tvLoaded = false;
 let tvLoading = null;
 let chartState = { symbol: null, tf: 'D' };
@@ -819,8 +1381,8 @@ function rebuildTvWidget() {
     allow_symbol_change: true,
     studies: ['MAExp@tv-basicstudies', 'MASimple@tv-basicstudies'],
     show_popup_button: false,
-    // Pre-market + after-hours in the chart. GUNS strategies trade off PM bars,
-    // so RTH-only would hide the data that drives every Setup 1 decision.
+    // Pre-market + after-hours in the chart so GUNS / OS pre-open
+    // structure (PMH, consolidation) is visible.
     session_id: 'extended',
     extended_hours: true,
     details: true,
@@ -831,7 +1393,8 @@ function setChartPanelTitle() {
   const title = document.getElementById('chart-panel-title');
   if (!title) return;
   if (chartState.symbol) {
-    const tfLabel = chartState.tf === 'D' ? 'Daily' : (chartState.tf === '60' ? '1h' : chartState.tf + 'm');
+    const tfLabel = chartState.tf === 'D' ? 'Daily'
+                  : (chartState.tf === '60' ? '1h' : chartState.tf + 'm');
     title.textContent = `${chartState.symbol} · ${tfLabel}`;
     title.classList.remove('muted');
   } else {
@@ -1244,6 +1807,424 @@ async function refreshStaleData() {
   setInterval(refreshDataHealth, 60_000);
 })();
 
+// ---- Active lists (Candidates / Watchlist) -----------------------------
+// Polls /lists/all every 30s during RTH (5 min off-hours). Two tabs;
+// candidates = symbols whose strategy is ON + ARMED; watchlist = all
+// symbols on every family's scanner output.
+
+let _activeListTab = 'candidates';
+let _lastListsPayload = null;
+// Last seen quote per symbol — used to detect changes between polls and
+// flash cells green / red on tick. Survives across re-renders.
+const _lastQuoteBySym = new Map();
+
+function _fmtNum(n, places=2) {
+  if (n === null || n === undefined) return '—';
+  const x = Number(n);
+  if (!isFinite(x)) return '—';
+  return x.toFixed(places);
+}
+function _fmtVol(v) {
+  if (v === null || v === undefined) return '—';
+  const x = Number(v);
+  if (!isFinite(x) || x <= 0) return '—';
+  if (x >= 1e9) return (x/1e9).toFixed(2) + 'B';
+  if (x >= 1e6) return (x/1e6).toFixed(2) + 'M';
+  if (x >= 1e3) return (x/1e3).toFixed(1) + 'K';
+  return String(x);
+}
+function _chgClass(n) {
+  if (n === null || n === undefined || !isFinite(Number(n))) return 'muted';
+  return Number(n) > 0 ? 'pos' : Number(n) < 0 ? 'neg' : 'muted';
+}
+function _stratPill(f) {
+  const fam = (f || '').toLowerCase();
+  const cls = `strat-pill strat-${fam}`;
+  return `<span class="${cls}">${fam.toUpperCase()}</span>`;
+}
+
+function renderActiveLists() {
+  const body = document.getElementById('active-lists-body');
+  const ts = document.getElementById('active-lists-ts');
+  const countCand = document.getElementById('list-tab-count-candidates');
+  const countWl   = document.getElementById('list-tab-count-watchlist');
+  if (!body) return;
+  if (!_lastListsPayload) {
+    body.innerHTML = '<span class="muted">loading…</span>';
+    return;
+  }
+  const rows = _lastListsPayload[_activeListTab] || [];
+  if (countCand) countCand.textContent = `(${(_lastListsPayload.candidates || []).length})`;
+  if (countWl)   countWl.textContent   = `(${(_lastListsPayload.watchlist  || []).length})`;
+  if (ts) ts.textContent = (_lastListsPayload.ts || '').replace('T',' ').split('+')[0];
+
+  // Data-feed badge in the panel header — labelled LIVE / DELAYED with the
+  // primary source name + per-source counts in the tooltip.
+  const badge = document.getElementById('active-lists-feed-badge');
+  if (badge) {
+    const qs = _lastListsPayload.quote_sources || {};
+    const ibkr = qs.ibkr || 0;
+    const alp  = qs.alpaca_iex || 0;
+    // yfinance is intentionally not in the real-time chain (user rule
+    // 2026-05-23). If it ever appears here it means someone re-wired
+    // _fetch_quotes — count it under "no-quote" so it's visibly wrong.
+    const none = (qs.none || 0) + (qs.yfinance || 0);
+    const total = ibkr + alp + none;
+    // Pick the primary source by count
+    let cls, label;
+    if (total === 0) {
+      cls = 'feed-idle'; label = 'no quotes';
+    } else if (ibkr === total) {
+      cls = 'feed-ibkr'; label = 'IBKR · LIVE';
+    } else if (alp === total) {
+      cls = 'feed-alpaca'; label = 'Alpaca IEX · LIVE (IEX vol only)';
+    } else if (none === total) {
+      cls = 'feed-none'; label = 'no live feed';
+    } else {
+      cls = 'feed-mixed';
+      const counts = [['IBKR', ibkr], ['Alpaca-IEX', alp]]
+        .sort((a,b) => b[1] - a[1]);
+      label = `MIXED · ${counts[0][0]} primary`;
+    }
+    const parts = [];
+    if (ibkr) parts.push(`${ibkr} IBKR`);
+    if (alp)  parts.push(`${alp} Alpaca-IEX`);
+    if (none) parts.push(`${none} no-quote`);
+    badge.className = `feed-badge ${cls}`;
+    badge.textContent = label;
+    let titleExtra = '';
+    const sm = _lastListsPayload.streamer;
+    if (sm) {
+      titleExtra = `\n\nIBKR streamer: ${sm.connected ? 'connected' : 'disconnected'}` +
+                   `, ${sm.subscribed_n}/${sm.requested_n} subscribed (cap ${sm.max_subs})`;
+      if (sm.capped) {
+        titleExtra += `\n⚠ capped: ${sm.requested_n - sm.max_subs} symbols dropped (candidates kept first).`;
+      }
+    }
+    badge.title = `Primary data feed serving the visible quotes.\n\nPer-source counts: ${parts.join(' · ') || '—'}\n\nIBKR = real-time, full consolidated tape (primary).\nAlpaca IEX = real-time price; volume is IEX-only (~2-3% of tape) — fallback.\nyfinance NOT used for real-time (delayed; user rule 2026-05-23).\nFallback order: IBKR → Alpaca IEX. No-quote = both unreachable.${titleExtra}`;
+    // Show a visible cap warning next to the badge when subscriptions overflow
+    const capEl = document.getElementById('active-lists-cap-warn');
+    if (capEl) {
+      if (sm && sm.capped) {
+        capEl.style.display = '';
+        capEl.textContent = `⚠ ${sm.requested_n - sm.max_subs} over IBKR 100-line cap`;
+      } else {
+        capEl.style.display = 'none';
+      }
+    }
+  }
+
+  if (rows.length === 0) {
+    if (_activeListTab === 'candidates') {
+      body.innerHTML = `
+        <div class="muted text-xs p-2">
+          No candidates right now. A symbol becomes a candidate when its
+          strategy is ON + ARMED. Toggle a strategy ON+ARM via the Gating
+          drawer (left sidebar) to populate this list.
+        </div>`;
+    } else {
+      body.innerHTML = `<div class="muted text-xs p-2">No watchlist symbols yet — has any family scanner run today?</div>`;
+    }
+    return;
+  }
+  const head = `
+    <tr>
+      <th class="sym">SYMBOL</th>
+      <th>LAST</th>
+      <th>CHG</th>
+      <th>CHG %</th>
+      <th>VOL</th>
+      <th class="strat">STRATEGY</th>
+    </tr>`;
+  // Detect which cells changed since last render so we can flash them.
+  // Compare current row's quote to the prior snapshot stored in
+  // _lastQuoteBySym; tag fields that changed; update the snapshot.
+  const flashHints = new Map();  // symbol -> { last: 'up'|'dn', vol: 'up'|'dn', ... }
+  rows.forEach(r => {
+    const prev = _lastQuoteBySym.get(r.symbol);
+    const hint = {};
+    if (prev) {
+      if (r.last !== undefined && prev.last !== undefined && r.last !== prev.last) {
+        hint.last = (r.last > prev.last) ? 'up' : 'dn';
+      }
+      if (r.vol !== undefined && prev.vol !== undefined && r.vol !== prev.vol) {
+        hint.vol = 'up';   // volume only goes up intraday
+      }
+    }
+    if (Object.keys(hint).length) flashHints.set(r.symbol, hint);
+    _lastQuoteBySym.set(r.symbol, { last: r.last, vol: r.vol });
+  });
+
+  const trs = rows.map(r => {
+    const chgCls = _chgClass(r.chg);
+    const pctCls = _chgClass(r.chg_pct);
+    const chgStr = r.chg === null || r.chg === undefined ? '—'
+                 : (r.chg >= 0 ? '+' : '') + _fmtNum(r.chg, 2);
+    const pctStr = r.chg_pct === null || r.chg_pct === undefined ? '—'
+                 : (r.chg_pct >= 0 ? '+' : '') + _fmtNum(r.chg_pct, 2) + '%';
+    let volTag = '';
+    if (r.source === 'alpaca_iex') {
+      volTag = ' <span class="muted" style="font-size:9px;" title="Alpaca IEX feed — price is real-time but volume is IEX-only (~2-3% of consolidated tape).">IEX</span>';
+    } else if (!r.source || r.last === null || r.last === undefined) {
+      volTag = ' <span class="neg" style="font-size:9px;" title="No live feed reached this symbol. yfinance is intentionally not used for real-time per user rule 2026-05-23.">no quote</span>';
+    }
+    const hint = flashHints.get(r.symbol) || {};
+    const flashLast = hint.last ? `flash-${hint.last}` : '';
+    const flashVol  = hint.vol  ? `flash-${hint.vol}`  : '';
+    return `
+      <tr data-sym="${r.symbol}">
+        <td class="sym">${r.symbol}</td>
+        <td class="${flashLast}">${_fmtNum(r.last, 2)}</td>
+        <td class="${chgCls}">${chgStr}</td>
+        <td class="${pctCls}">${pctStr}</td>
+        <td class="${flashVol}">${_fmtVol(r.vol)}${volTag}</td>
+        <td class="strat">${_stratPill(r.strategy)}</td>
+        <td class="tv-link" title="Open ${r.symbol} on tradingview.com in your synced TV window — uses your TV Plus 3-pane layout if pinned.">📈</td>
+      </tr>`;
+  }).join('');
+  const head2 = head.replace('<th class="strat">STRATEGY</th>',
+                              '<th class="strat">STRATEGY</th><th></th>');
+  body.innerHTML = `<table class="active-list"><thead>${head2}</thead><tbody>${trs}</tbody></table>`;
+
+  // Whole row click → load embedded chart. If sync-to-TV is ON, ALSO
+  // push the symbol to the named TV.com window (your TV Plus 3-pane
+  // layout). Per user rule 2026-05-23.
+  body.querySelectorAll('tbody tr').forEach(tr => {
+    tr.addEventListener('click', (e) => {
+      const sym = tr.getAttribute('data-sym');
+      if (!sym) return;
+      // Direct click on the TV-link cell always pushes to TV.com,
+      // regardless of toggle state.
+      const onTvLink = e.target && e.target.classList.contains('tv-link');
+      if (onTvLink) {
+        _pushToTradingView(sym);
+        return;
+      }
+      // Regular row click → load embedded chart, optionally sync.
+      if (typeof loadChartSymbol === 'function') loadChartSymbol(sym);
+      const panel = document.getElementById('chart-panel');
+      if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      if (window._tvSyncOn) _pushToTradingView(sym);
+    });
+  });
+}
+
+// Push the symbol to a NAMED TradingView.com window. By using the same
+// window name (`intraday_bot_tv`) every time, the browser reuses the
+// same tab — the user pins ONE TV.com tab with their TV Plus 3-pane
+// layout, and every click here updates that same tab with the new
+// symbol.
+function _pushToTradingView(sym) {
+  if (!sym) return;
+  const url = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(sym.toUpperCase())}`;
+  try {
+    window.open(url, 'intraday_bot_tv');
+  } catch (e) {
+    // popup blocked or user prefs — degrade silently
+  }
+}
+
+// Persistent "sync to TV.com" toggle — when ON, every active-list row
+// click also pushes the symbol to the named TV.com window. State
+// survives reloads via localStorage.
+function _readTvSync()  { try { return localStorage.getItem('tv_sync_on') === '1'; } catch(e) { return false; } }
+function _writeTvSync(on) { try { localStorage.setItem('tv_sync_on', on ? '1' : '0'); } catch(e) {} }
+window._tvSyncOn = _readTvSync();
+
+async function refreshActiveLists() {
+  try {
+    const r = await fetch('/lists/all');
+    const j = await r.json();
+    _lastListsPayload = j;
+    renderActiveLists();
+  } catch (e) {
+    const body = document.getElementById('active-lists-body');
+    if (body) body.innerHTML = `<span class="neg">Failed: ${String(e)}</span>`;
+  }
+}
+
+(function initActiveLists() {
+  document.querySelectorAll('.list-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      _activeListTab = btn.getAttribute('data-list') || 'candidates';
+      document.querySelectorAll('.list-tab').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      renderActiveLists();
+    });
+  });
+  // TV-sync toggle — clicking flips state, repaints the pill, persists.
+  const syncBtn = document.getElementById('tv-sync-toggle');
+  if (syncBtn) {
+    const repaint = () => {
+      syncBtn.classList.toggle('on', !!window._tvSyncOn);
+      syncBtn.textContent = window._tvSyncOn ? '📌 sync TV · ON' : '📌 sync TV';
+    };
+    repaint();
+    syncBtn.addEventListener('click', () => {
+      window._tvSyncOn = !window._tvSyncOn;
+      _writeTvSync(window._tvSyncOn);
+      repaint();
+    });
+  }
+  refreshActiveLists();
+  // 3s polling — IBKR streaming is live, so each /lists/all read is a
+  // sub-millisecond lookup of the streamer's in-memory cache. True
+  // real-time heartbeat per user rule 2026-05-23.
+  setInterval(refreshActiveLists, 3_000);
+})();
+
+// ---- Ticker profile health pill -----------------------------------------
+// Polls /profile/health every 60s; click opens the modal with the per-symbol
+// breakdown + the three refresh-scope buttons (watchlist / ingested / universe).
+
+function setProfileHealthPill(payload) {
+  const dot = document.getElementById('profile-health-dot');
+  const det = document.getElementById('profile-health-detail');
+  if (!dot || !det) return;
+  if (!payload || payload.overall === 'unknown') {
+    dot.className = 'dot idle';
+    det.className = 'text-xs muted';
+    det.textContent = payload && payload.error ? 'error' : 'checking…';
+    return;
+  }
+  const o = payload.overall;
+  const total = payload.n_total || 0;
+  const full = payload.n_full || 0;
+  const partial = payload.n_partial || 0;
+  const stale = payload.n_stale || 0;
+  let dotClass, detClass, label;
+  if (o === 'ok') {
+    dotClass = 'up'; detClass = 'pos';
+    label = `✓ ${full} full · ${total} total`;
+  } else if (o === 'warn') {
+    dotClass = 'down'; detClass = 'text-amber-300';
+    label = `${full} full · ${partial} partial${stale ? ` · ${stale} stale` : ''}`;
+  } else if (o === 'critical') {
+    dotClass = 'down'; detClass = 'neg';
+    label = `${full} full · ${partial} partial · ${stale} stale of ${total}`;
+  } else {
+    dotClass = 'idle'; detClass = 'muted';
+    label = `${total} profiles`;
+  }
+  dot.className = 'dot ' + dotClass;
+  det.className = 'text-xs ' + detClass;
+  det.textContent = label;
+}
+
+async function refreshProfileHealth() {
+  try {
+    const r = await fetch('/profile/health');
+    const j = await r.json();
+    setProfileHealthPill(j);
+  } catch (e) {
+    setProfileHealthPill({ overall: 'unknown', error: String(e) });
+  }
+}
+
+async function openProfileHealthModal() {
+  const modal = document.getElementById('profile-health-modal');
+  const body = document.getElementById('profile-health-modal-body');
+  const overallPill = document.getElementById('profile-health-modal-overall');
+  if (!modal || !body) return;
+  modal.classList.remove('hidden');
+  modal.style.display = 'block';
+  body.innerHTML = '<span class="muted">loading…</span>';
+  try {
+    const h = await fetch('/profile/health?details=true').then(r => r.json());
+    const o = h.overall;
+    const cls = o === 'ok' ? 'bg-emerald-900/60 text-emerald-200'
+              : o === 'warn' ? 'bg-amber-900/60 text-amber-200'
+              : o === 'critical' ? 'bg-red-950/60 text-red-200'
+              : 'bg-slate-800 text-slate-300';
+    overallPill.textContent = (o || '?').toUpperCase();
+    overallPill.className = 'tag ' + cls;
+    const syms = h.symbols_3m || [];
+    const sample = syms.slice(0, 60).join(', ') +
+      (syms.length > 60 ? ` … (+${syms.length - 60} more)` : '');
+    body.innerHTML = `
+      <div class="grid grid-cols-3 gap-3 mb-3">
+        <div class="panel" style="padding:8px;">
+          <div class="muted text-xs">COVERAGE</div>
+          <div class="pos text-lg font-bold">${h.n_full || 0} full</div>
+          <div class="text-amber-300">${h.n_partial || 0} partial (no 3m)</div>
+          <div class="neg">${h.n_no_daily || 0} no daily</div>
+          <div class="muted">${h.n_total || 0} total profiles</div>
+        </div>
+        <div class="panel" style="padding:8px;">
+          <div class="muted text-xs">FRESHNESS (24h TTL)</div>
+          <div class="pos text-lg font-bold">${h.n_fresh || 0} fresh</div>
+          <div class="text-amber-300">${h.n_stale || 0} stale</div>
+        </div>
+        <div class="panel" style="padding:8px;">
+          <div class="muted text-xs">TIMESTAMPS</div>
+          <div class="text-xs muted">newest</div>
+          <div class="pos">${(h.newest_ts || '—').replace('T',' ').split('+')[0]}</div>
+          <div class="text-xs muted mt-1">oldest</div>
+          <div class="text-amber-300">${(h.oldest_ts || '—').replace('T',' ').split('+')[0]}</div>
+        </div>
+      </div>
+      <div class="text-xs mb-2"><strong>Symbols with full 3m profile (${syms.length}):</strong></div>
+      <div class="text-xs muted" style="font-family: ui-monospace, monospace; line-height:1.5;">${sample || '— none yet —'}</div>
+      <div class="text-xs muted mt-3">
+        Use one of the refresh buttons above to compute / re-compute profiles.
+        Watchlist scope is fast (~10-30 tickers); ingested + universe scopes
+        pace yfinance calls at ~0.4s each to stay under the free-tier rate limit.
+      </div>
+    `;
+  } catch (e) {
+    body.innerHTML = `<span class="neg">Failed to load: ${String(e)}</span>`;
+  }
+}
+
+function closeProfileHealthModal() {
+  const modal = document.getElementById('profile-health-modal');
+  if (modal) { modal.classList.add('hidden'); modal.style.display = 'none'; }
+}
+
+async function refreshProfilesScope(scope) {
+  const btn = document.getElementById('profile-refresh-' + scope);
+  if (!btn) return;
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '↻ refreshing…';
+  btn.classList.add('blink');
+  try {
+    const r = await fetch('/profile/refresh?scope=' + encodeURIComponent(scope),
+                          { method: 'POST' });
+    const j = await r.json();
+    if (j.error) {
+      showToast('Refresh failed: ' + j.error);
+    } else {
+      showToast(`${scope}: ${j.n_ok} ok · ${j.n_partial} partial · ${j.n_failed} failed (of ${j.n_total})`);
+    }
+    await openProfileHealthModal();
+    await refreshProfileHealth();
+  } catch (e) {
+    showToast('Refresh failed: ' + String(e));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+    btn.classList.remove('blink');
+  }
+}
+
+(function initProfileHealth() {
+  const pill = document.getElementById('profile-health-pill');
+  if (pill) pill.addEventListener('click', openProfileHealthModal);
+  const closeBtn = document.getElementById('profile-health-close');
+  if (closeBtn) closeBtn.addEventListener('click', closeProfileHealthModal);
+  ['watchlist', 'ingested', 'universe'].forEach(scope => {
+    const b = document.getElementById('profile-refresh-' + scope);
+    if (b) b.addEventListener('click', () => refreshProfilesScope(scope));
+  });
+  const modal = document.getElementById('profile-health-modal');
+  if (modal) modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeProfileHealthModal();
+  });
+  refreshProfileHealth();
+  setInterval(refreshProfileHealth, 60_000);
+})();
+
 // DITP watchlist — fetch once at load, then every 5 min (scanner is EOD-driven
 // so a snappy refresh isn't needed; this just picks up overnight regenerations).
 (function initDitpWatchlist() {
@@ -1256,15 +2237,65 @@ async function refreshStaleData() {
 // drawer (one open at a time). Click outside or ESC closes. Drawers slide
 // in over the main content; the main content is shifted right 44px by the
 // sidebar's fixed width.
+function _setBodyPinnedClass(drawer) {
+  if (drawer && drawer.classList.contains('pinned')) {
+    document.body.classList.add('has-pinned-drawer');
+  } else {
+    document.body.classList.remove('has-pinned-drawer');
+  }
+}
 function openDrawer(id) {
-  document.querySelectorAll('.drawer').forEach(d => d.classList.toggle('open', d.id === id));
+  // Switching drawers fully replaces the current view (only one drawer
+  // open at a time). PIN STATE TRANSFERS — per user rule 2026-05-23:
+  // "if the side is pin, by clicking another tab, it should also be
+  // pinned". So when the user clicks a new sidebar tab while another
+  // drawer is pinned, we close the old one but carry the pin over so
+  // the layout stays consistent.
+  const inheritPin = !!document.querySelector('.drawer.pinned');
+  document.querySelectorAll('.drawer').forEach(d => {
+    if (d.id === id) {
+      d.classList.add('open');
+      if (inheritPin) d.classList.add('pinned');
+    } else {
+      d.classList.remove('open');
+      d.classList.remove('pinned');
+    }
+  });
   document.querySelectorAll('.sidebar-btn').forEach(b => {
     b.classList.toggle('active', b.getAttribute('data-drawer') === id);
   });
+  const stillPinned = document.querySelector('.drawer.pinned');
+  _setBodyPinnedClass(stillPinned);
 }
 function closeAllDrawers() {
-  document.querySelectorAll('.drawer').forEach(d => d.classList.remove('open'));
-  document.querySelectorAll('.sidebar-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.drawer').forEach(d => {
+    if (!d.classList.contains('pinned')) d.classList.remove('open');
+  });
+  // Keep the sidebar button active for any pinned drawer; clear the rest.
+  document.querySelectorAll('.sidebar-btn').forEach(b => {
+    const drawer = document.getElementById(b.getAttribute('data-drawer'));
+    b.classList.toggle('active', !!(drawer && drawer.classList.contains('pinned')));
+  });
+}
+function togglePin(id) {
+  const drawer = document.getElementById(id);
+  if (!drawer) return;
+  const wasPinned = drawer.classList.contains('pinned');
+  // Only one drawer can be pinned at a time — unpin every other drawer first.
+  document.querySelectorAll('.drawer').forEach(d => {
+    if (d.id !== id) d.classList.remove('pinned');
+  });
+  if (!wasPinned) {
+    drawer.classList.add('pinned', 'open');
+    document.querySelectorAll('.sidebar-btn').forEach(b => {
+      b.classList.toggle('active', b.getAttribute('data-drawer') === id);
+    });
+  } else {
+    drawer.classList.remove('pinned');
+  }
+  // Pin state is session-only — no localStorage persistence. Every fresh
+  // dashboard load starts with no drawer pinned, per user rule 2026-05-23.
+  _setBodyPinnedClass(drawer.classList.contains('pinned') ? drawer : null);
 }
 (function initSidebar() {
   document.querySelectorAll('.sidebar-btn').forEach(btn => {
@@ -1273,21 +2304,55 @@ function closeAllDrawers() {
       const id = btn.getAttribute('data-drawer');
       const drawer = document.getElementById(id);
       if (!drawer) return;
+      // If pinned, sidebar-button click is a no-op (already open).
+      if (drawer.classList.contains('pinned')) return;
       if (drawer.classList.contains('open')) closeAllDrawers();
       else openDrawer(id);
     });
   });
-  document.querySelectorAll('.drawer-close').forEach(btn => {
-    btn.addEventListener('click', (e) => { e.stopPropagation(); closeAllDrawers(); });
+  document.querySelectorAll('.drawer-pin').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      togglePin(btn.getAttribute('data-pin'));
+    });
   });
-  // Click outside any drawer or sidebar button → close.
+  document.querySelectorAll('.drawer-close').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      // Close also unpins this drawer — the X is the explicit "go away" action.
+      const id = btn.getAttribute('data-close');
+      const drawer = document.getElementById(id);
+      if (drawer && drawer.classList.contains('pinned')) {
+        drawer.classList.remove('pinned');
+        _setBodyPinnedClass(null);
+      }
+      closeAllDrawers();
+    });
+  });
+  // Click outside any drawer or sidebar button → close UNPINNED drawers only.
   document.addEventListener('click', (e) => {
     if (e.target.closest('.drawer') || e.target.closest('#left-sidebar')) return;
     closeAllDrawers();
   });
-  // ESC closes drawers.
+  // ESC closes UNPINNED drawers only.
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeAllDrawers();
+  });
+})();
+
+// ---- Analysis-drawer sub-view tabs (by-symbol vs event timeline) -----
+(function initAnalysisViewTabs() {
+  document.querySelectorAll('.analysis-view-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const view = btn.getAttribute('data-view');
+      document.querySelectorAll('.analysis-view-tab').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.querySelectorAll('.analysis-view').forEach(v => {
+        const active = v.id === 'analysis-view-' + view;
+        v.classList.toggle('active', active);
+        v.style.display = active ? '' : 'none';
+      });
+    });
   });
 })();
 
@@ -2027,18 +3092,145 @@ function eventClass(type) {
   return 'ev-info';
 }
 
+// ---- Human-readable event timeline ------------------------------------
+//
+// Each event has shape {ts, type: "strategy.<family>.<event>"|"<system>.<...>", payload}.
+// `formatEventReadable` turns one event into a one-line English sentence.
+// Unknown types fall back to a clean key=value rendering (still readable).
+
+function _esc(s) {
+  if (s === null || s === undefined) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function _fmtMoney(n) {
+  const x = Number(n);
+  if (!isFinite(x)) return '—';
+  return '$' + x.toFixed(x < 10 ? 3 : 2);
+}
+function _fmtPct(n) {
+  const x = Number(n);
+  if (!isFinite(x)) return '—';
+  return (x >= 0 ? '+' : '') + x.toFixed(2) + '%';
+}
+
+function _eventFamily(ev) {
+  // type = "strategy.<fam>.<evt>" → return the family code prefix
+  const t = (ev.type || '').toLowerCase();
+  if (t.startsWith('strategy.guns')) return 'guns';
+  if (t.startsWith('strategy.ditp')) return 'ditp';
+  if (t.startsWith('strategy.os'))   return 'os';
+  return 'sys';
+}
+
+function formatEventReadable(ev) {
+  const p = ev.payload || {};
+  const type = ev.type || '';
+  const evt  = type.split('.').pop();
+  const fam  = (p.strategy || _eventFamily(ev)).toString();
+  const sym  = p.symbol ? `<span class="sym">${_esc(p.symbol)}</span>` : '';
+
+  switch (evt) {
+    case 'strategy_started':
+      return `${_esc(fam)} <span class="ok">started</span> — entry at ${_esc(p.entry_et || '?')}${p.armed ? ', <span class="ok">ARMED</span>' : ', <span class="warn">disarmed</span>'}, cap ${p.cap ?? '?'}`;
+    case 'strategy_finished':
+      const sub = Number(p.n_submitted || 0);
+      const sk  = Number(p.n_disarmed_skips || 0);
+      const tail = sub > 0 ? `<span class="ok">${sub} submitted</span>`
+                 : sk  > 0 ? `<span class="warn">${sk} skipped (disarmed)</span>`
+                 : 'no entries';
+      return `${_esc(fam)} finished — ${tail}`;
+    case 'strategy_off_skipped':
+      return `${_esc(fam)} <span class="warn">skipped</span> — strategy is OFF`;
+    case 'shortlist_built':
+      return `${_esc(fam)} shortlist built — ${Number(p.n_merged ?? p.n_scanner ?? 0)} symbols${p.symbols ? ': ' + (p.symbols.slice(0,6).join(', ')) + (p.symbols.length>6?' …':'') : ''}`;
+    case 'shortlist_loaded':
+      return `${_esc(fam)} watchlist loaded — ${Number(p.n || 0)} symbols${p.min_tier ? ` (min tier ${_esc(p.min_tier)})` : ''}`;
+    case 'shortlist_failed':
+    case 'shortlist_load_failed':
+      return `${_esc(fam)} <span class="neg">shortlist failed</span> — ${_esc(p.error || p.reason || 'unknown')}`;
+    case 'watchlist_loaded':
+      const tiers = p.by_tier ? Object.entries(p.by_tier).map(([k,v]) => `${v} tier ${k}`).join(', ') : '';
+      return `${_esc(fam)} watchlist for ${_esc(p.date || '?')} — ${Number(p.n_total || 0)} symbols${tiers ? ` (${tiers})` : ''}`;
+    case 'watchlist_missing':
+      return `${_esc(fam)} <span class="warn">no watchlist</span> — ${_esc(p.hint || 'scanner has not run yet')}`;
+    case 'universe_picked':
+      const syms = (p.symbols || []).slice(0,8).join(', ');
+      const more = (p.symbols||[]).length > 8 ? ` … (+${(p.symbols||[]).length-8} more)` : '';
+      return `${_esc(fam)} universe — ${Number(p.n || (p.symbols||[]).length)} symbols: ${_esc(syms)}${more}`;
+    case 'monitoring':
+      const caut = (p.cautions && p.cautions.length) ? ` <span class="warn">caution: ${_esc(p.cautions.join(', '))}</span>` : '';
+      const dist = (p.distance_atr !== undefined) ? `, <span class="num">${Number(p.distance_atr).toFixed(2)} ATR</span> from level` : '';
+      return `${_esc(fam)} watching ${sym} — tier <strong>${_esc(p.tier||'?')}</strong> P2-${_esc(p.variant||'?')}, resistance <span class="num">${_fmtMoney(p.resistance)}</span>${dist}${caut}`;
+    case 'rejected':
+      let extras = '';
+      if (p.pmh !== undefined)        extras += ` PMH=${_fmtMoney(p.pmh)}`;
+      if (p.pm_volume !== undefined)  extras += ` PM-vol=${Number(p.pm_volume).toLocaleString()}`;
+      if (p.gap_pct !== undefined)    extras += ` gap=${Number(p.gap_pct).toFixed(2)}%`;
+      return `${_esc(fam)} <span class="reason">rejected</span> ${sym} — <span class="reason">${_esc(p.reason || 'no reason')}</span>${extras ? ` (${extras.trim()})` : ''}`;
+    case 'planned':
+      const plan = p.plan || p;
+      const trig = plan.trigger_price ?? plan.stop_price ?? plan.entry_price;
+      const stop = plan.stop_loss ?? plan.stop;
+      const tp   = plan.take_profit ?? plan.tp;
+      return `${_esc(fam)} <span class="ok">planned</span> ${sym} — buy-stop-limit ${_fmtMoney(trig)}, stop ${_fmtMoney(stop)}, target ${_fmtMoney(tp)}`;
+    case 'submitted':
+      return `${_esc(fam)} <span class="ok">SUBMITTED</span> ${sym} — ${_esc(p.side || 'buy')} ${Number(p.qty || 0).toLocaleString()} sh @ ${_fmtMoney(p.limit_price ?? p.trigger_price ?? p.price)}`;
+    case 'submit_failed':
+      return `${_esc(fam)} <span class="neg">SUBMIT FAILED</span> ${sym} — ${_esc(p.error || p.reason || 'unknown')}`;
+    case 'fill':
+    case 'filled':
+      return `${_esc(fam)} <span class="ok">FILLED</span> ${sym} — ${Number(p.qty || 0).toLocaleString()} sh @ ${_fmtMoney(p.fill_price ?? p.price)}`;
+    case 'take_profit':
+      return `${_esc(fam)} <span class="ok">TAKE PROFIT</span> ${sym} @ ${_fmtMoney(p.exit_price ?? p.price)} (${_esc(p.r_multiple !== undefined ? '+' + Number(p.r_multiple).toFixed(2) + 'R' : '')})`;
+    case 'stop_loss':
+      return `${_esc(fam)} <span class="neg">STOP LOSS</span> ${sym} @ ${_fmtMoney(p.exit_price ?? p.price)} (${_esc(p.r_multiple !== undefined ? Number(p.r_multiple).toFixed(2) + 'R' : '-1R')})`;
+    case 'breakeven_move':
+      return `${_esc(fam)} moved stop to <span class="ok">break-even</span> on ${sym} @ ${_fmtMoney(p.new_stop ?? p.stop)}`;
+    case 'eod_closed':
+    case 'eod_close':
+      return `${_esc(fam)} <span class="warn">EOD close</span> ${sym} @ ${_fmtMoney(p.exit_price ?? p.price)}`;
+    case 'data_provider_selected':
+      return `data provider: <strong>${_esc(p.provider || '?')}</strong> (${_esc(p.probe || '?')}${p.autolaunch_wait_s !== undefined ? `, after ${p.autolaunch_wait_s}s autolaunch` : ''})`;
+    case 'data_provider_fallback':
+      return `<span class="warn">data provider fallback</span> — wanted ${_esc(p.requested)}, using ${_esc(p.actual)}: ${_esc(p.reason || '')}`;
+    case 'ibc_autolaunch_started':
+      return `auto-launching IBC: ${_esc((p.launcher || '').split(/[\\/]/).pop())} (${_esc(p.probe_reason || 'initial probe failed')})`;
+    case 'eod_sweep':
+    case 'eod_sweep_started':
+      return `<span class="warn">EOD sweep</span> — cancel all orders + close all positions`;
+    default:
+      // Fallback: type + compact key=value list
+      const keys = Object.keys(p).filter(k => k !== 'strategy').slice(0, 6);
+      const pairs = keys.map(k => {
+        let v = p[k];
+        if (Array.isArray(v)) v = `[${v.length}]`;
+        else if (typeof v === 'object' && v !== null) v = '{…}';
+        else if (typeof v === 'string' && v.length > 40) v = v.slice(0,40) + '…';
+        return `${_esc(k)}=${_esc(v)}`;
+      }).join(' · ');
+      return `<strong>${_esc(evt)}</strong>${sym ? ' ' + sym : ''} <span class="muted">${pairs}</span>`;
+  }
+}
+
 function renderEvents() {
   const el = document.getElementById('events');
+  if (!el) return;
   const events = state.events || [];
   if (!events.length) {
     el.innerHTML = '<span class="muted">No events yet today.</span>';
     return;
   }
-  // Tail latest first
-  el.innerHTML = events.slice(-100).reverse().map(ev => {
+  // Latest at top — show last 200
+  el.innerHTML = events.slice(-200).reverse().map(ev => {
     const t = (ev.ts || '').slice(11, 19);
-    const payload = ev.payload ? JSON.stringify(ev.payload).slice(0, 200) : '';
-    return `<div class="${eventClass(ev.type)}">[${t}] <strong>${ev.type}</strong> <span class="muted">${payload}</span></div>`;
+    const fam = _eventFamily(ev);
+    const famLabel = fam === 'sys' ? 'SYS' : fam.toUpperCase();
+    const msg = formatEventReadable(ev);
+    return `<div class="ev-row">
+      <span class="ev-time">${_esc(t)}</span>
+      <span class="ev-fam ev-fam-${_esc(fam)}">${_esc(famLabel)}</span>
+      <span class="ev-msg">${msg}</span>
+    </div>`;
   }).join('');
 }
 

@@ -18,7 +18,8 @@ not support).
 - `guns_setup1/` — Break of Pre-Market High at 09:30 ET.
 - `guns_setup5/` — Break of First 1-Minute RTH Candle at 09:31 ET.
 - `Materials/` — Reference material (copyrighted PDFs). **Gitignored**; syncs via Dropbox only. Currently: `Lesson 8-Gap Up News Scalp Strategy.pdf` from Adam Khoo Piranha Profits.
-- `profiles/` — Per-ticker behavioral baselines (`<TICKER>.json`). Refreshed daily on demand by `resources/ticker_profile.py`. Substrate for the user's normalized-parameter rule. Committed (small files; useful audit record).
+
+Per-ticker behavioral baselines (atr, vol stats, 3m percentile distributions) **now live at `data/ticker_profile/<TICKER>.json`** — a universal cross-strategy product, not GUNS-specific. See `resources/ticker_profile.py`. The legacy `profiles/` subfolder was retired on 2026-05-23.
 
 ## Status of the five PDF setups
 
@@ -31,6 +32,11 @@ not support).
 | 5 — Break of first 1-min RTH candle | 09:31 ET | ✅ wired (`guns_setup5`) |
 
 ## Changelog
+
+### 2026-05-23 — `profiles/` folder retired (moved to universal `data/ticker_profile/`)
+- Per-ticker baselines are now a universal cross-strategy product per the user's rule (chat 2026-05-23: *"if it is a universal product then it is data output, i propose to put it into the data folder in ...data\ticker_profile"*). The single `POET.json` that lived here moved to `data/ticker_profile/POET.json`.
+- The `strategy/GUNS/profiles/` directory + its README are gone — no callers in this folder ever read from it; the only files were the seed `POET.json` and a stub README.
+- All ticker_profile API calls drop the `family` parameter — GUNS reads stay the same shape (`get_profile("NVDA")`).
 
 ### 2026-05-21 — `profiles/` folder added (per-ticker behavioral baselines)
 - Created `profiles/` with its own README. Initial population by `resources/ticker_profile.py` (yfinance source). Each ticker that passes the shortlist phase will get a cached profile here over time.
