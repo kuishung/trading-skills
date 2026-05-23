@@ -295,6 +295,7 @@ User teaches strategies one at a time. When that happens:
 5. Add a config block under `cfg.strategies.<name>`.
 6. Ask the user: **which RESOURCES** does this need? **Which EXIT POLICY**? **What SHORTLIST CONVICTION** should be journaled?
 7. Smoke-test before declaring done.
+8. **Verify dashboard visibility** per the "Dashboard visibility rule" above. The family tab auto-appears once journal events flow, but check: (a) is there a watchlist-style view needed if the strategy produces a scanner output, (b) does the Gating drawer show the new strategy's ON/ARM controls, (c) is there any state the user needs to see that isn't yet visible. Add UI in the same turn if needed.
 
 ## When asked to change an existing strategy
 
@@ -356,6 +357,48 @@ Then register the MCP with Claude Code by writing `%USERPROFILE%\.claude\.mcp.js
 ```
 
 Restart Claude Code → `mcp__tradingview__*` tools become available.
+
+## Dashboard visibility rule (HARD RULE — set 2026-05-23)
+
+**Anything with observable runtime state that the user might want to watch MUST be surfaced in the dashboard before the feature is considered complete.** The bot is operated through the dashboard — if a new piece of work only lives at the CLI, the user can't see it, can't trust it, can't act on it without context-switching.
+
+The user explicitly asked for this rule on 2026-05-23: *"after you have build anything which ought to be reflected in the dashboard please do so so that is can be visualized. make it a rule and memorise it"*.
+
+### What qualifies as needing dashboard reflection
+
+| Category | Examples | Dashboard surface required |
+|---|---|---|
+| **New strategy / setup** | OS Breakout, DITP P2, GUNS Setup 1 | Auto: family-tab in Strategy Analysis panel (driven by journal events) + Gating drawer (driven by `/bot/status`) |
+| **New scanner / watchlist producer** | `strategy/OS/scanner.py`, `strategy/DITP/scanner.py` | Watchlist view in the strategy panel's family tab, OR per-symbol decision rows |
+| **New data source / ingest** | `resources/sp_smallcap600.py`, ibkr 1m ingest | Health pill (`/data/health`) + audit trail via `data/ingest_log.jsonl` |
+| **New scoring / ranking dimension** | DITP universes filter, tier/score columns | Inline UI control in the relevant tab (filter pills, columns in the table) |
+| **New integration** | TradingView chart, IBKR movers, future TV-Desktop CDP | Visible pill / panel / drawer reflecting connection state + data freshness |
+| **New runtime indicator** | "data fresh", "TWS connected", "scanner ran at HH:MM" | Pill in status bar, with click-through to a details modal where useful |
+| **CLI-only utilities** (genuinely one-shot dev tools, no recurring state) | Migration scripts, one-off backfills, smoke tests | Exempt — no UI required |
+
+### Definition of done
+
+A feature isn't complete until **the user can see its state in the dashboard without dropping to the CLI**. If the dashboard work lags the backend by a turn (e.g., the backend lands first, the UI catches up next turn), the next turn MUST close the gap before moving to the next feature.
+
+### Auto-surfaces already wired (use these by default)
+
+- **Strategy family tabs** (Strategy Analysis panel) — auto-appear when `strategy.<name>.<event>` journal events flow. `name.split('_')[0].toUpperCase()` becomes the tab label. GUNS, DITP, OS all picked up automatically.
+- **Gating drawer** (left sidebar) — auto-lists every `KNOWN_STRATEGIES` entry with ON/OFF + ARM/DISARM controls.
+- **Event log + Bot log drawers** (left sidebar) — tail `state/events_<today>.jsonl` and `state/bot_<today>.log`.
+- **Status-bar health pills** — IBKR, Alpaca, Bot, **Historical price data health**, gating summary, auto-start hint.
+
+### When a new auto-surface is needed
+
+If the existing auto-surfaces don't cover the new feature, add a dedicated UI piece in the same turn:
+- New `/strategy/<family>/watchlist` endpoint + tab content (DITP pattern)
+- New `/data/<thing>` endpoint + pill or drawer
+- New CSS + JS that fits the console aesthetic (44px sidebar, drawers from the left, click-outside-to-close)
+
+Server-side endpoints land in `dashboard/server.py`; frontend renders + handlers in `dashboard/web/index.html`. Both files' READMEs get a changelog entry per the per-folder convention.
+
+### Cost of skipping this rule
+
+The user has explicitly stated they don't want to learn CLI commands to operate their own bot. CLI-only features quietly degrade trust in the system because they can't be observed in the daily workflow. **Skip the rule once → the user has to remember "oh, that lives in a CLI", and the cognitive overhead of running the bot grows. Don't.**
 
 ## What NOT to do
 

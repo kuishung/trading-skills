@@ -36,6 +36,15 @@ and import it from whichever strategy needs it. No registration.
 
 ## Changelog
 
+### 2026-05-22 — `ibkr_movers.py`: general IBKR US market scanner CLI + library
+- New `resources/ibkr_movers.py` (~280 LOC). Strategy-agnostic wrapper over `ib_insync.ScannerSubscription` exposing IBKR's full scanner catalog: TOP_PERC_GAIN / TOP_PERC_LOSE / MOST_ACTIVE / HOT_BY_VOLUME / HIGH_OPEN_GAP / etc.
+- Friendly presets: `gainers`, `losers`, `active`, `volume`, `gappers`, `downgap`, `open_up`, `open_dn`, `near_hi`, `near_lo`. Plus `custom` for any scan code + filter combo, and `codes` to list the common scan codes.
+- All filters exposed: `min/max_price`, `min_volume`, `min_avg_volume`, `min/max_change_pct`, `min_market_cap_million`, `stock_type_filter` (CORP/ETF/ALL). Location defaults to `STK.US.MAJOR` (NYSE + NASDAQ + AMEX); accepts `STK.NYSE`, `STK.NASDAQ`, `STK.OTC`, etc.
+- **clientId 84** — stays clear of 71 (live bot), 80 (observer), 82 (GUNS scanner), 83 (history ingest), 98 (probe), 99 (dashboard).
+- **ScannerSubscription is a streaming subscription**, NOT a historical-data request — it does NOT count toward IBKR's 60-per-600s historical-data pacing cap. Safe to run alongside the parquet ingest or the live bot.
+- v0.1 returns contract metadata only (symbol / exchange / primary_exchange). Snapshot price / change% / volume enrichment via chained `reqMktData` is a clean follow-up.
+- Smoke-tested 2026-05-22 against live TWS: `gainers` returned QTEX, BIYA, MTVA, RYOJ, GOVX, ...; `active` returned QTEX, RGTI, BIYA, NVDA, ...; `gappers` returned BIYA, QTEX, GOVX, HCWB, ...
+
 ### 2026-05-22 — Data-integrity audit: ingest log + integrity checker + dashboard pill
 - **New module** `resources/data_integrity.py` (~340 LOC). Three classes of per-symbol check: **freshness** (last bar within `FRESH_DAYS=2` business days = fresh; 3–6 = stale; ≥ 7 = ancient), **consistency** (bars sorted, no duplicates, no business-day gaps > 5), **validity** (OHLCV sanity per bar: `h ≥ max(o,c)`, `l ≤ min(o,c)`, `h ≥ l`, prices > 0, volume ≥ 0). Aggregate `health_report()` returns `HealthReport(fresh, stale, ancient, missing, consistency_failures, validity_failures, overall: ok|warn|critical, stale_symbols, ancient_symbols, invalid_symbols)`.
 - **New CLI**: `py resources/data_integrity.py {freshness,validity,log,summary}`. `summary` is the same shape served by `/data/health`.

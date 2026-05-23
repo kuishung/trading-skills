@@ -71,12 +71,14 @@ from base import Strategy  # noqa: E402  (resolved by the path injection above)
 KNOWN_STRATEGIES: tuple[str, ...] = (
     "guns_setup1",   # GUNS -- Break of Pre-Market High (09:30)
     "guns_setup5",   # GUNS -- Break of First 1-Minute Candle (09:31)
+    "os_breakout",   # OS   -- Opening Surge breakout, fully automated (09:28)
 )
 
 
 _STRATEGY_IMPORT_PATHS: dict[str, str] = {
     "guns_setup1": "GUNS.guns_setup1",
     "guns_setup5": "GUNS.guns_setup5",
+    "os_breakout": "OS.os_breakout",
 }
 
 

@@ -32,6 +32,22 @@
         "require_above_ema20": true,
         "require_above_sma50": true
       }
+    },
+    "os_breakout": {
+      "enabled": true,
+      "shortlist_et": "09:00",
+      "entry_et": "09:28",
+      "entry_cutoff_et": "09:35",
+      "max_concurrent": 3,
+      "take_profit_R": 2.0,
+      "params": {
+        "consol_band_pct": 1.5,
+        "consol_lookback_min": 15,
+        "limit_cents_above_stop": 5,
+        "scanner_rows": 50,
+        "scanner_min_change_pct": 3.0,
+        "scanner_min_avg_volume": 200000
+      }
     }
   },
 
