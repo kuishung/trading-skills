@@ -94,16 +94,30 @@ py -3.12 --version       # should show Python 3.12.x
 git --version
 ```
 
-### 3. Install Dropbox + sign in (CODE ONLY — data syncs via Resilio, see step 5)
-- Download from <https://www.dropbox.com/install>
-- Install, sign in with your Dropbox account
-- **Selective Sync:** in Dropbox preferences, sync ONLY the `Claude/claude-skills/trading-skills/intraday-bot/` folder tree. **Crucially, EXCLUDE `intraday-bot/data/`** — the bulk data does NOT go through Dropbox (Resilio handles it in step 5). Don't sync your personal Dropbox stuff to a server VM either.
-- Wait for sync. Should complete in ~2-5 min since we excluded the heavy data folder.
-- Confirm: `Test-Path C:\<dropbox-root>\intraday-bot\SKILL.md` → True
+### 3. Clone the repo via git (NOT Dropbox — device-limit constraint)
+
+Reason: the laptop's Dropbox plan has a device limit (free tier = 3). Installing Dropbox on Hermes would push over the limit. Use git for code sync; Resilio handles bulk data (next step); both architectures avoid Dropbox entirely on this VM.
+
+```powershell
+# Create parent dir
+New-Item -ItemType Directory -Path "C:\ClaudeSkills" -Force
+cd C:\ClaudeSkills
+
+# Clone — creates C:\ClaudeSkills\trading-skills\
+git clone https://github.com/<your-github-username>/trading-skills.git
+
+# Verify
+cd C:\ClaudeSkills\trading-skills\intraday-bot
+git log --oneline -3
+```
+
+If the repo is private, git prompts for credentials. Easiest: generate a Personal Access Token on GitHub (Settings → Developer Settings → PAT → classic, `repo` scope) and use it as the password. Or set up SSH keys if you prefer.
+
+After clone, the bot lives at `C:\ClaudeSkills\trading-skills\intraday-bot\`. Pulling code updates from laptop is then `cd C:\ClaudeSkills\trading-skills && git pull` (on demand, when you push from laptop).
 
 ### 4. Install intraday-bot Python deps (Python 3.12 explicitly)
 ```powershell
-cd C:\<dropbox-root>\intraday-bot
+cd C:\ClaudeSkills\trading-skills\intraday-bot
 py -3.12 -m pip install --upgrade pip
 py -3.12 -m pip install -r requirements.txt
 ```
@@ -128,36 +142,51 @@ Resilio Sync is the peer-to-peer sync mechanism for the bulk data (parquets, jou
    Test-Path "C:\HermesSync\MarketData\price_history\daily\AAPL.parquet"   # → True
    ```
 
-### 6. Configure data_root in Hermes's config.json
+### 6. Configure data_root + vault_dir in Hermes's config.json
 
-The bot code reads `cfg["data_root"]` and uses it everywhere for data I/O. Each PC sets its own local Resilio path.
+The bot code reads `cfg["data_root"]` and `cfg["vault_dir"]` and uses them everywhere for data I/O + credential resolution. Each PC sets its own local Resilio paths.
 
 ```powershell
 # Copy config.example.json to config.json (per-PC, gitignored)
-cd "C:\<dropbox-root>\intraday-bot"
+cd "C:\ClaudeSkills\trading-skills\intraday-bot"
 Copy-Item config.example.json config.json
 ```
 
-Then edit `config.json` (Notepad++ recommended) and set:
+Then edit `config.json` (Notepad++ recommended) — the Hermes-specific values:
 
 ```jsonc
 {
-  // ... other settings ...
+  // ... risk + strategies settings (identical to laptop) ...
+
   "data_root": "C:\\HermesSync\\MarketData",
-  // ... other settings ...
-  "ibkr_client_id": 84,        // Hermes-specific (laptop uses 71/80/83/99)
-  // ... other settings ...
+  "vault_dir": "C:\\HermesSync\\Vault",
+  
+  "data_provider": "ibkr",
+  "ibkr_host": "127.0.0.1",
+  "ibkr_port": 4002,                                                     // 4002 = IB Gateway paper
+  "ibkr_client_id": 84,                                                  // Hermes-specific (laptop uses 71)
+  "ibkr_secrets_path": "C:\\HermesSync\\Vault\\credentials.txt",         // Resilio-synced
+  "ibkr_ibc_dir": "C:\\ClaudeSkills\\trading-skills\\intraday-bot\\ibc",
+  "ibkr_app_type": "gateway",
+  "ibkr_launcher_bat": "C:\\ClaudeSkills\\trading-skills\\intraday-bot\\ibc\\StartIBC-intraday.bat",
+  "ibkr_autolaunch_enabled": true,
+  "ibkr_autolaunch_timeout_s": 90,
+
+  "auto_start_enabled": false   // Hermes is ingest+backtest only for now
 }
 ```
 
-Verify the override is picked up:
+Verify all overrides are picked up:
 ```powershell
 py -3.12 -c "
 import sys; sys.path.insert(0, 'scripts')
-from _common import get_data_root
+from _common import get_data_root, _vault_root
 print('data_root resolves to:', get_data_root())
+print('vault_dir resolves to:', _vault_root())
 "
-# Expected: data_root resolves to: C:\HermesSync\MarketData
+# Expected:
+#   data_root resolves to: C:\HermesSync\MarketData
+#   vault_dir resolves to: C:\HermesSync\Vault
 ```
 
 ---
@@ -183,7 +212,7 @@ IBC lives in `intraday-bot/ibc/` — already configured. Adapt config for Hermes
    Test-Path "C:\HermesSync\Vault\credentials.txt"   # → True
    ```
 
-2. Open `C:\Code\trading-skills\intraday-bot\ibc\config.ini` and verify:
+2. Open `C:\ClaudeSkills\trading-skills\intraday-bot\ibc\config.ini` and verify:
    ```
    IbDir=C:\Jts\ibgateway\<version>     # adjust to where IB Gateway was installed
    FIX=no
@@ -201,7 +230,7 @@ IBC lives in `intraday-bot/ibc/` — already configured. Adapt config for Hermes
      "ibkr_port": 4002,
      "ibkr_client_id": 84,                                                       // ← Hermes uses 84 (laptop uses 71)
      "ibkr_secrets_path": "C:\\HermesSync\\Vault\\credentials.txt",              // ← IBC reads from Resilio-synced location
-     "ibkr_ibc_dir": "C:\\Code\\trading-skills\\intraday-bot\\ibc",
+     "ibkr_ibc_dir": "C:\\ClaudeSkills\\trading-skills\\intraday-bot\\ibc",
      "ibkr_app_type": "gateway",
      ...rest copied from laptop config...
    }
@@ -210,7 +239,7 @@ IBC lives in `intraday-bot/ibc/` — already configured. Adapt config for Hermes
 4. Create a Windows scheduled task to launch IBC at logon:
    - Task Scheduler → Create Basic Task → "IBC IB Gateway"
    - Trigger: "When I log on"
-   - Action: Start a program → `C:\<dropbox-root>\intraday-bot\ibc\StartGateway.bat`
+   - Action: Start a program → `C:\ClaudeSkills\trading-skills\intraday-bot\ibc\StartGateway.bat`
    - In task properties → "Run with highest privileges"
    - Save
 
@@ -221,7 +250,7 @@ IBC lives in `intraday-bot/ibc/` — already configured. Adapt config for Hermes
 
 ### 9. Smoke-test the IBKR connection
 ```powershell
-cd C:\<dropbox-root>\intraday-bot
+cd C:\ClaudeSkills\trading-skills\intraday-bot
 py resources/ibkr_smoke.py
 ```
 Expected: prints account ID, no errors.
@@ -284,8 +313,8 @@ py scripts/wait_and_ingest.py --timeframes 3min --seed-days 180 --force-seed --u
 **Better: launch as a Windows scheduled task** so it survives RDP disconnects + Hermes restarts:
 - Task Scheduler → Create Task → "DITP P2 180d ingest"
 - Trigger: One time, today
-- Action: `py.exe` with arguments `C:\<dropbox-root>\intraday-bot\scripts\wait_and_ingest.py --timeframes 3min --seed-days 180 --force-seed --universe daily`
-- Start in: `C:\<dropbox-root>\intraday-bot`
+- Action: `py.exe` with arguments `C:\ClaudeSkills\trading-skills\intraday-bot\scripts\wait_and_ingest.py --timeframes 3min --seed-days 180 --force-seed --universe daily`
+- Start in: `C:\ClaudeSkills\trading-skills\intraday-bot`
 - "Run whether user is logged on or not"
 - "Run with highest privileges"
 
