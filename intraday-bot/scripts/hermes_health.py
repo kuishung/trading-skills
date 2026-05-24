@@ -162,19 +162,39 @@ def check_disk_space() -> dict:
 
 
 def check_ibc_credentials() -> dict:
-    p = SKILL_DIR / "ibc" / "credentials.txt"
+    """Verify the IBC credentials file exists at the path config.json points to.
+
+    Resolution order (matches IBC's own behaviour):
+      1. cfg["ibkr_secrets_path"] if set — post-2026-05-24 architecture
+         (file lives in Resilio-synced HermesSync/Vault, not in intraday-bot/ibc/)
+      2. SKILL_DIR/ibc/credentials.txt — legacy / fresh-PC fallback
+    """
+    try:
+        from _common import load_config  # type: ignore
+        cfg = load_config()
+        configured = cfg.get("ibkr_secrets_path") or ""
+        if configured:
+            p = Path(configured)
+            origin = f"cfg.ibkr_secrets_path={configured}"
+        else:
+            p = SKILL_DIR / "ibc" / "credentials.txt"
+            origin = f"default (no cfg.ibkr_secrets_path set): {p}"
+    except Exception as exc:
+        return _result(FAIL, "ibc_credentials", f"cfg load failed: {exc!r}")
+
     if not p.exists():
         return _result(FAIL, "ibc_credentials",
-                       f"missing {p} — see HERMES_SETUP.md Phase 2 step 6")
+                       f"missing {p} ({origin}) — wait for Resilio sync OR see HERMES_SETUP.md Phase 2 step 8")
     try:
         body = p.read_text(encoding="utf-8")
         # Don't print the actual creds; just verify shape
         has_user = "IbLoginId=" in body and not body.split("IbLoginId=")[1].split("\n")[0].strip() == ""
         has_pass = "IbPassword=" in body and not body.split("IbPassword=")[1].split("\n")[0].strip() == ""
         if has_user and has_pass:
-            return _result(PASS, "ibc_credentials", "IbLoginId + IbPassword set")
+            return _result(PASS, "ibc_credentials",
+                           f"IbLoginId + IbPassword set ({origin})")
         return _result(FAIL, "ibc_credentials",
-                       "file exists but IbLoginId or IbPassword is empty")
+                       f"file exists but IbLoginId or IbPassword is empty ({origin})")
     except Exception as exc:
         return _result(FAIL, "ibc_credentials", f"unreadable: {exc!r}")
 
