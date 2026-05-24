@@ -400,6 +400,76 @@ Server-side endpoints land in `dashboard/server.py`; frontend renders + handlers
 
 The user has explicitly stated they don't want to learn CLI commands to operate their own bot. CLI-only features quietly degrade trust in the system because they can't be observed in the daily workflow. **Skip the rule once → the user has to remember "oh, that lives in a CLI", and the cognitive overhead of running the bot grows. Don't.**
 
+## Hermes — autonomous worker VM (Hyper-V on R720)
+
+Set 2026-05-24 as a hard architectural decision. The user owns a Dell R720 office server running Windows Server 2019 with Hyper-V role. A dedicated VM named **Hermes** runs there for jobs that are too long to tie up the laptop.
+
+### Division of labor
+
+| Job | Hermes | Laptop |
+|---|---|---|
+| Continuous data ingest (3min / 1min / daily) | ✅ | ❌ |
+| Long backtest runs (parameter sweeps, multi-day windows) | ✅ | ❌ |
+| Quick backtest iterations | Either | ✅ preferred (fast feedback) |
+| Strategy code editing | ❌ | ✅ |
+| Dashboard during US market hours | ✅ (recommended) or laptop | Either |
+| Live trading bot (when it goes live) | ✅ (future, post-v0.2.0 of any setup) | ❌ |
+| TradingView Desktop chart review | ❌ | ✅ |
+
+**Mental model:** Hermes = autonomous worker. Laptop = developer cockpit.
+
+### Setup reference
+
+Step-by-step install + verification lives in **`intraday-bot/HERMES_SETUP.md`** at the repo root — follow that file when standing Hermes up from a fresh Server 2019 install. Don't duplicate setup instructions in folder READMEs.
+
+VM specs: Windows Server 2019 Standard (Desktop Experience), 16 GB static RAM, 4 vCPU, 200 GB dynamic VHDX, external switch, Gen 2, auto-start with host (60s delay), production checkpoints.
+
+### IBKR clientId allocation (CRITICAL — don't collide)
+
+Each component needs a unique clientId per concurrent IBKR session. The full allocation across all machines:
+
+| ClientId | Used by | Where |
+|---|---|---|
+| 71 | Live trading bot | Laptop (current) → Hermes (future) |
+| 80 | Observer / dashboard streamer | Laptop |
+| 83 | Ingest (legacy / current laptop-based) | Laptop |
+| **84** | **Ingest (production target)** | **Hermes** |
+| **85** | **Hermes health-check probes** | **Hermes** |
+| 98 | Probe / handshake test | Either |
+| 99 | Dashboard probe | Laptop |
+
+Don't reuse these. Append next available number for any new component.
+
+### Cross-machine sync via Dropbox
+
+Code + bulk data sync via the existing Dropbox setup. Sync targets:
+- **Code** (`intraday-bot/`) — Dropbox-synced AND git-tracked. Either path keeps machines aligned.
+- **Bulk historical bars** (`data/price_history/*.parquet`) — Dropbox-synced only, gitignored. When Hermes ingests, parquets appear on laptop within minutes.
+- **Backtest snapshots** (`data/review/backtest_*.{jsonl,json}`) — Dropbox + git. Committed; tiny size.
+- **Decision journals** (`data/journal/*.jsonl`) — Dropbox + git. Committed.
+- **Per-PC state** (`state/*.flag`, `state/watchlist_*.{txt,json}`, `config.json`) — Dropbox synced BUT per-PC semantics. **Never run the orchestrator on both Hermes and laptop simultaneously** — they would compete for the same flags + watchlists.
+
+### Operational rules
+
+- **Don't manually run TWS / IB Gateway on Hermes.** IBC manages it. Manual launches break IBC's lifecycle assumptions.
+- **Long ingests on Hermes go through `scripts/wait_and_ingest.py`** (gives auto-reconnect + log file) OR Task Scheduler. Never naked `py resources/ibkr_history.py ...` inside an interactive RDP session — RDP disconnect kills it.
+- **Only one machine runs the live orchestrator at a time.** The state flags don't coordinate across machines. Either Hermes OR laptop, not both.
+- **Dropbox conflict files** (`*.conflicted.*`) on parquets mean both machines wrote the same parquet near-simultaneously. If you ever see one, investigate — shouldn't happen with our architecture but is a red flag if it does.
+- **Don't push to git from Hermes** unless you've already committed all laptop work. Hermes can pull/clone freely; commits should originate from wherever you actually authored the change.
+- **Patch Hermes host conservatively.** User explicitly flagged the concern (2026-05-24): they don't want to update the R720 host because it might break existing infra. Server 2019 guest VM means we don't need to update the host either. Status quo holds.
+
+### When to RDP into Hermes
+
+Routine: never. Hermes runs autonomously.
+
+Reasons to RDP in:
+- IBC reports "not connected" in a smoke test
+- Disk space approaching limit (>180 GB used)
+- Need to check why a specific ingest log shows errors
+- Quarterly hygiene: Windows Update review (with the host-patch caveat above), Dropbox sync health, disk cleanup
+
+Never RDP in JUST to "check on things." If something needs checking, it should be visible from the laptop dashboard or via the parquet sync.
+
 ## What NOT to do
 
 - Don't add sibling-folder dependencies.

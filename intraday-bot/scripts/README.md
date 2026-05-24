@@ -12,6 +12,7 @@ plus one-time installers.
 - `setup_gateway_autostart.py` — Optional Windows auto-start for IB Gateway (registry Run key).
 - `setup_schedule.py` — Optional Windows Task Scheduler job that fires `execution/orchestrator.py` at 08:55 ET on weekdays.
 - `wait_and_ingest.py` — One-shot operational glue: wait for a specified Windows PID to exit (poll via `tasklist` every 60s), then launch `resources.ibkr_history.bulk_update` on a universe of choice. Reusable for any "ingest A finishes → ingest B starts" sequence where the two would otherwise collide on IBKR clientId. CLI: `py scripts/wait_and_ingest.py --wait-pid 21732 --timeframes 3min --seed-days 180 --force-seed --universe daily`. The `--universe` option supports `daily | 1min | 3min | journal` so a backtest re-seed can target the full daily-parquet universe (~1500 symbols) rather than the narrower journal-derived live universe (~50).
+- `hermes_health.py` — **Hermes VM pre-flight check.** Run on the Hermes VM after Phase 1+2 of `HERMES_SETUP.md` is complete, BEFORE kicking off the multi-day 180-day re-seed. Verifies Python version, required packages importable, bars_store readable, disk space adequate, `ibc/credentials.txt` present, `config.json` clientId matches the host (warns if Hermes still has laptop's 71), IBKR Gateway socket reachable (port 4002 → paper Gateway, 7497 → paper TWS fallback). Safe to run on any PC; flags Python 3.14 + ib_insync asyncio incompatibility with a clear remedy ("use `py -3.12` for IBKR workloads"). CLI: `py scripts/hermes_health.py` (or `--skip-ibkr` for the no-Gateway-yet case, `--json` for machine-readable).
 
 ## Why these are not in their own layer folder
 
@@ -25,6 +26,28 @@ runtime trading system. They could move to `bin/` or `tools/` but
 they're rarely-touched and small, so `scripts/` is fine.
 
 ## Changelog
+
+### 2026-05-24 — `hermes_health.py`: pre-flight check for the Hermes VM
+
+Companion to `HERMES_SETUP.md` (at intraday-bot/ root) and the CLAUDE.md "Hermes — autonomous worker VM" section added today. User is standing up a Hyper-V VM on their office Dell R720 (Windows Server 2019 host, Server 2019 guest VM named "Hermes") to take over multi-day ingest jobs from the laptop.
+
+The script verifies everything that needs to be in place BEFORE kicking off the 180-day full-universe 3min re-seed (which runs unattended for ~4 days):
+
+| Check | What it catches |
+|---|---|
+| Python version + required packages | Missing `pip install -r requirements.txt`, wrong Python interpreter |
+| `bars_store.list_symbols("daily"/"3min")` | Dropbox sync incomplete, parquet dir wrong path |
+| Disk space | <50 GB free = re-seed will fail mid-run |
+| `ibc/credentials.txt` existence (without printing) | IBC not configured — IB Gateway won't auto-launch |
+| `config.json` ibkr_client_id | Hermes still has laptop's clientId 71/83 (will collide with running laptop sessions) |
+| IBKR Gateway port 4002 reachable (TCP probe, no IB slot consumed) | IBC not running / Gateway crashed / wrong port |
+| `strategy.DITP.scanner.detect_p2` importable | Code sync broken |
+| `strategy.DITP._decision_engine` v0.1.0 functions present | Today's backtest scaffold not synced yet |
+| `review._adapter_registry.known()` includes `ditp_p2` | Adapter not registered |
+
+Exit code 1 if any FAIL — operator must fix before continuing. WARNs are non-blocking but worth reviewing.
+
+Special handling: ib_insync on Python 3.14 fails at module load (eventkit's `asyncio.get_event_loop()` raises since 3.14 removed implicit loop creation). The check catches the specific RuntimeError and recommends using `py -3.12` for IBKR workloads — without that diagnostic, the user would see a cryptic asyncio traceback.
 
 ### 2026-05-24 — `wait_and_ingest.py`: launch-after-PID-exit watcher for ingest sequencing
 
