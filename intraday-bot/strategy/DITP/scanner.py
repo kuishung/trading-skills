@@ -308,6 +308,30 @@ def _get_universe_map() -> dict[str, list[str]]:
     return _UNIVERSE_MAP
 
 
+# ---------- Bar-date helper (backtest look-ahead cutoff) ----------
+
+def _bar_date(ts) -> date:
+    """Normalize a bar's timestamp field to a `date` for as_of_date comparison.
+    bars_store may yield int (unix s), datetime, or pandas.Timestamp depending
+    on source/path; we accept all three."""
+    if isinstance(ts, date) and not isinstance(ts, datetime):
+        return ts
+    if isinstance(ts, datetime):
+        return ts.date()
+    if isinstance(ts, (int, float)):
+        return datetime.fromtimestamp(float(ts), tz=timezone.utc).date()
+    # pandas.Timestamp or anything with .date()
+    if hasattr(ts, "date"):
+        try:
+            return ts.date()
+        except Exception:
+            pass
+    # ISO string fallback
+    if isinstance(ts, str):
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).date()
+    raise TypeError(f"_bar_date: unsupported timestamp type {type(ts)!r}")
+
+
 # ---------- Per-symbol detector ----------
 
 # ---------- Confluence tier (DITP P2 v0.2 hard filter) ----------
@@ -421,9 +445,24 @@ class P2Candidate:
     yesterday_close: float = 0.0     # F — fair-value anchor / gap pivot
 
 
-def detect_p2(symbol: str, cfg: P2Config) -> P2Candidate | None:
-    """Apply all P2 rules to one symbol's daily bars. Returns candidate or None."""
+def detect_p2(symbol: str, cfg: P2Config,
+              as_of_date: date | None = None) -> P2Candidate | None:
+    """Apply all P2 rules to one symbol's daily bars. Returns candidate or None.
+
+    `as_of_date` controls look-ahead: when set, only daily bars with
+    timestamp on or before as_of_date are visible to the detector. This is
+    THE critical knob for backtesting — it lets the scanner simulate what
+    it would have produced at the end of day `as_of_date`, with no
+    knowledge of any future bars. When None (default), the full parquet
+    history is visible (live / EOD-scanner use case).
+    """
     bars = bars_store.load_bars(symbol, timeframe="daily")
+    if as_of_date is not None:
+        # Daily bars store timestamps that vary by source (UTC midnight,
+        # session close, etc.). Compare on .date() so we're robust to
+        # however the parquet was written. Keep bars whose date is ≤ cutoff.
+        cutoff = as_of_date
+        bars = [b for b in bars if _bar_date(b["t"]) <= cutoff]
     if len(bars) < 220:
         return None  # need ≥ 200 for EMA200 to stabilize + headroom
     closes = np.array([b["c"] for b in bars], dtype=float)
@@ -681,11 +720,14 @@ def next_trading_day_iso(today: date | None = None) -> str:
 
 
 def scan_universe(symbols: Iterable[str], cfg: P2Config,
-                  variants_allowed: set[str]) -> list[P2Candidate]:
+                  variants_allowed: set[str],
+                  as_of_date: date | None = None) -> list[P2Candidate]:
+    """`as_of_date` is propagated to detect_p2() — see its docstring for the
+    backtest look-ahead-cutoff semantics. Default None = live scan."""
     out: list[P2Candidate] = []
     for sym in symbols:
         try:
-            c = detect_p2(sym, cfg)
+            c = detect_p2(sym, cfg, as_of_date=as_of_date)
         except Exception as exc:
             sys.stderr.write(f"[{sym}] detect_p2 failed: {exc}\n")
             continue

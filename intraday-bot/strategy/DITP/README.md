@@ -27,6 +27,33 @@ just drops a `strategy/DITP/<setup_name>/` subfolder.
 
 ## Changelog
 
+### 2026-05-24 — `_decision_engine.py` v0.1.0 + `ditp_p2/backtest_adapter.py` (Phase 1 of backtest build)
+
+User decision: build the backtester before continuing DITP P2 live execution. *"This was not planned for but I think this is very important before we put the strategy to work, we need to see how good is the strategy."*
+
+Two new files in this folder; live `ditp_p2/impl.py` stays at v0.1.0 (watch-only — no change to live behaviour). The backtester (built in `review/`) plugs into DITP P2 via the new adapter; the adapter wraps the existing scanner + the new family-level decision engine.
+
+`strategy/DITP/_decision_engine.py` v0.1.0
+- Family-level module — will be shared with future DITP setups (P3 retest, etc.) as they come online.
+- 4 pure functions for Phase 1 bare-bracket math: `entry_signal(curr_close, prev_close, resistance)` (first-crossing 3m close above R), `stop_price(entry, atr_daily, mult=0.25)`, `target_price(entry, atr_daily, mult=0.5)`, `tradeability_ok(entry, target, atr_daily, atr_mult_cap=1.0)` (rejects setups where 2R > 1×ATR per user's "we need a tradable setup" rule).
+- Phase 2-4 primitives (`momentum_ok`, `one_min_confirmation_ok`, `anti_pattern_detected`, `update_trailing_stop`, `early_exit_check`, `add_to_winner_check`) documented as commented stubs so the eventual full surface is discoverable in one place.
+- This is the SINGLE SOURCE OF TRUTH for the family's decision math. When `ditp_p2/impl.py` bumps to v0.2.0 for live wiring, it imports from here. Backtest and live cannot drift — same code path by construction.
+
+`strategy/DITP/ditp_p2/backtest_adapter.py`
+- Implements `review._strategy_adapter.BacktestAdapter` Protocol for DITP P2. ~120 LOC including bootstrap + docstrings; ~30 LOC of actual glue.
+- `pick_candidates(as_of_date)` calls `scan_universe(..., as_of_date=as_of_date)` and applies the v0.2-alpha1 tradeability filter (`tier != "D" AND confluence_tier > 0` — same rule the live `.txt` watchlist uses, commit d3d3be5).
+- `entry_signal` / `stop_price` / `target_price` / `tradeability_ok` are thin delegations to `_decision_engine`. Strategy-specific metadata (variant, confluence_tier, cautions, D/E/F levels) is preserved on the candidate dict so the backtest metrics can do `by_variant` / `by_confluence_tier` / `by_caution` cuts.
+- Adapter registered in `review/_adapter_registry.py` as `"ditp_p2"` → `DITPP2BacktestAdapter`.
+
+`strategy/DITP/scanner.py` — `detect_p2()` + `scan_universe()` gain `as_of_date=None` parameter
+- When `as_of_date` is set, the daily bars passed to the detector are truncated to dates ≤ cutoff *before* any pattern math runs. This is THE look-ahead guard for the backtest — without it, the scanner would see future bars and produce dishonest candidates.
+- New `_bar_date()` helper normalizes bar timestamps (int / datetime / pandas.Timestamp / ISO string) to a `date` for the cutoff comparison.
+- Live scan behaviour unchanged when `as_of_date=None` (default).
+
+Smoke-test confirms the cutoff works: `detect_p2('NVRI', cfg)` returns Tier A on today's snapshot but `None` when called with `as_of_date=2026-05-10` (NVRI hadn't yet developed the setup 14 days ago).
+
+Next session: depending on Phase 1 backtest results, either advance to Phase 2 of the backtest build (momentum gate + 1m confirmation) OR begin Phase 2 of live execution (intraday continuous-monitor framework + Alpaca bracket submission). Decision driven by what the data shows.
+
 ### 2026-05-24 — Scanner v0.2-alpha1 (Phase 1 of DITP P2 v0.2): confluence Tier-0 hard filter + prior-day key levels (D/E/F)
 
 **Scope of this slice.** The full DITP P2 v0.2 spec (full live entry, polarity-flip confirmation, anti-pattern detection, HH/HL trailing, hammer-wick stop, add-to-winner) was taught in chat 2026-05-23. This commit ships **Phase 1 only** — the scanner-side prefilter + chart visibility that the future entry pipeline depends on. The remaining phases (intraday monitor framework, decision engine, order submission, dashboard armed-state visibility) are out of scope for this turn and listed below as a queued spec.

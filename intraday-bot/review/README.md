@@ -22,6 +22,18 @@ market actually does, not what the original PDF author thought.
 
 ## Contents
 
+- `backtest.py` — **The strategy-agnostic historical simulator.** Loads any registered strategy by name (`--strategy ditp_p2`), walks the specified date range, asks the strategy's adapter for per-day candidates, simulates each via `_trade_sim.py`, aggregates with `_metrics.py`, writes per-trade JSONL + summary JSON to `data/review/backtest_<strategy>_<ts>.{jsonl,json}`. Knows zero strategy specifics — strategies plug in via the adapter Protocol below. CLI:
+  ```
+  py review/backtest.py --strategy ditp_p2 --start 2026-05-12 --end 2026-05-22
+  py review/backtest.py --list-strategies
+  py review/backtest.py --strategy ditp_p2 --symbols NVRI,CTRE,WSR     # narrow universe
+  py review/backtest.py --strategy ditp_p2 --no-write                  # smoke
+  py review/backtest.py --strategy ditp_p2 --bucket-by tier,cautions   # custom per-group cuts
+  ```
+- `_strategy_adapter.py` — **The adapter Protocol contract.** Defines the surface every backtestable strategy must implement (`name`, `engine_version`, `primary_timeframe`, `pick_candidates`, `entry_signal`, `stop_price`, `target_price`, `tradeability_ok`). Optional Phase-4+ hooks (`update_trailing_stop`, `early_exit_check`, `add_to_winner_check`) are documented as comments; harness probes via `hasattr()`. Strategies implement the Protocol in `strategy/<FAMILY>/<setup>/backtest_adapter.py`.
+- `_adapter_registry.py` — **Name → adapter mapping.** One line per backtestable strategy. Adding a strategy = adding its dotted-path import + class name here. Mirrors the pattern used by `strategy/__init__.py::_STRATEGY_IMPORT_PATHS`.
+- `_trade_sim.py` — **Per-candidate bar walk + virtual bracket simulation.** Strategy-agnostic; calls the adapter's `entry_signal`/`stop_price`/`target_price`/`tradeability_ok` per bar. Phase 1 exit logic: SL hit, TP hit, same-bar SL+TP → conservative `SL_AMBIGUOUS`, otherwise `EOD` close. Tracks `intraday_max_favorable_R` + `intraday_max_adverse_R` for free during the walk.
+- `_metrics.py` — **Aggregation + per-bucket cuts.** Computes overall metrics (win rate, expectancy R, profit factor, max drawdown, consecutive-loss streak, avg winner/loser R, hold time) plus `by_<key>` cuts driven by `--bucket-by`. Operates on any trade list regardless of which strategy produced it.
 - `stats.py` — **The analyzer.** Reads `data/journal/journal_*.jsonl` across a date window (and legacy `state/journal_*.jsonl` for pre-migration days). Computes per-strategy event counts, rejection-reason breakdown, per-symbol metrics, and R-multiple distribution for completed trades. Pure stats, no LLM. CLI:
   ```
   py review/stats.py                    # last 7 days, all strategies
@@ -112,6 +124,37 @@ Known gaps (next iterations):
 - Setup-version differential replay: re-run the *same* date with a *different* strategy version to see which rule-set would have planned/rejected differently. Mechanics work today (just edit `impl.py`, bump `__version__`, re-run replay); the diff tool is the missing piece.
 
 ## Changelog
+
+### 2026-05-24 — `backtest.py` v0.1.0: strategy-agnostic historical simulator (Phase 1)
+
+User decision (chat 2026-05-24): build a backtester before continuing the DITP P2 live execution build. *"This was not planned for but I think this is very important before we put the strategy to work, we need to see how good is the strategy."*
+
+Architecture: adapter pattern, not framework. The harness depends ONLY on a Protocol (`_strategy_adapter.BacktestAdapter`); strategies plug in via a 30-50 LOC adapter file in their setup folder. Same harness backtests DITP P2 today, future GUNS/OS/ORB strategies tomorrow. No harness edits per new strategy.
+
+User rule (chat 2026-05-24): *"backtest only test the math not the art"*. The mechanical primitives (entry trigger, default stop, default target, tradeability filter, momentum gates, anti-pattern detectors, trailing stop, add-to-winner) are testable. The discretionary overlays (sentiment gate, hammer-wick stop placement override, flex-entry at lower key level) are art and are SKIPPED in backtest — they layer on top in live trading. Backtest measures the systematic edge; the art either amplifies or doesn't.
+
+New files (all under `review/`):
+- `backtest.py` — CLI + replay loop. Iterates weekday trading days [start, end], calls `adapter.pick_candidates(as_of_date=D-1)`, loads primary-timeframe bars for each candidate via `bars_store.load_bars`, delegates to `_trade_sim.simulate_trade`, aggregates via `_metrics.compute`, writes `data/review/backtest_<strategy>_<run_ts>.{jsonl,json}`. CLI: `--strategy`, `--start`, `--end`, `--symbols`, `--bucket-by`, `--no-write`, `--list-strategies`.
+- `_strategy_adapter.py` — Protocol contract (9 required methods/attrs + 3 documented optional hooks for Phase 4+).
+- `_adapter_registry.py` — name → `(module_path, class_name)` mapping. Lazy import on `.load(name)`. `--list-strategies` prints the keys.
+- `_trade_sim.py` — strategy-agnostic per-candidate bar walk + virtual bracket fill. Exit priority: same-bar SL+TP → `SL_AMBIGUOUS` (conservative loser-fills-first), then SL, then TP, then EOD close. Tracks `intraday_max_favorable_R` + `intraday_max_adverse_R` for free during the walk. Non-trade records (`no_trigger`, `rejected_tradeability`, `rejected_bad_R`) emitted as trade dicts with the marker so the operator can see what got filtered.
+- `_metrics.py` — aggregation + per-bucket cuts. Headline metrics: trades / W-L-EOD, win_rate, expectancy_R, total_R, profit_factor, max_drawdown_R, max_consecutive_losses, avg_winner_R, avg_loser_R, avg_hold_minutes. Per-bucket via `_by_field` — defaults cover `scanner_tier`, `confluence_tier`, `variant`, `exit_reason`; user can supply any field from `candidate_meta` or top-level trade dict via `--bucket-by`.
+
+Companion changes outside `review/`:
+- `strategy/DITP/scanner.py::detect_p2()` gains `as_of_date=None` parameter. When set, daily bars are truncated to ≤ `as_of_date` before any pattern math runs — the look-ahead guard for backtest. `scan_universe()` propagates. Live scan behaviour unchanged (default `None`).
+- `strategy/DITP/_decision_engine.py` v0.1.0 — 4 pure functions: `entry_signal`, `stop_price`, `target_price`, `tradeability_ok`. Will become the SHARED source of truth between backtest and live `ditp_p2/impl.py` v0.2.0 when the latter is wired. Phase 2-4 primitives documented as commented stubs.
+- `strategy/DITP/ditp_p2/backtest_adapter.py` — DITP P2's adapter class implementing the Protocol. Thin wrapper (~120 LOC including bootstrap + docstrings) over the scanner + decision engine. Tradeability filter mirrors the `.txt` watchlist's "drop Tier-0 + D-tier" rule from scanner v0.2-alpha1 (commit d3d3be5).
+
+Phased build queued in `_decision_engine.py` (additions, not rewrites — adapter unchanged):
+- Phase 2: `momentum_ok` (EMA 6>18>50), `one_min_confirmation_ok`, `ema_cancel_check`
+- Phase 3: `anti_pattern_detected` (5 reversing patterns at key levels)
+- Phase 4: `update_trailing_stop`, `early_exit_check`, `add_to_winner_check`
+- Phase 5: slippage model (`resources/slippage.py` — genuinely Layer-1), Monte-Carlo wrapper (`review/backtest_mc.py`), QuantStats HTML tear sheet, dashboard "Backtest Results" tab
+
+Skipped permanently (art, not math):
+- Sentiment gate — live composite + VXX judgement, no historical store
+- Hammer-wick stop override — discretionary stop placement
+- Flex-entry at lower KL — "price may come back to A/D, hammer, then rally"
 
 ### 2026-05-22 — Replay foundation: `--replay-date` reads bars from `data/price_history/`
 - The orchestrator can now re-run past sessions against stored bars instead of going to IBKR/Alpaca. This is the substrate for the self-improvement loop: change a rule, replay yesterday, see how the new ruleset would have decided.
