@@ -69,13 +69,28 @@ Set-ExecutionPolicy Bypass -Scope Process -Force
 iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
 ```
 
-### 2. Install Python 3.12, Git, Notepad++ (optional)
+### 2. Install Python 3.12 (NOT 3.13 or 3.14), Git, Notepad++ (optional)
+
+**CRITICAL: Install Python 3.12 specifically. NOT 3.13, 3.14, or newer.**
+
 ```powershell
 choco install -y python312 git notepadplusplus
 ```
+
+Why this matters: `ib_insync` (our IBKR client) depends on `eventkit`, which calls `asyncio.get_event_loop()` at module-import time. Python 3.14 removed the implicit event-loop creation (it now raises `RuntimeError: There is no current event loop in thread 'MainThread'`), which means **ib_insync cannot even be imported on Python 3.14** without a workaround. We discovered this on 2026-05-24 when the 180-day re-seed launcher crashed on a Python 3.14 interpreter.
+
+If you have multiple Python versions installed (common on dev machines), always invoke IBKR-related scripts with `py -3.12` explicitly:
+
+```powershell
+py -3.12 resources/ibkr_history.py update --universe --timeframes 3min --seed-days 180 --force-seed
+py -3.12 scripts/wait_and_ingest.py --timeframes 3min --seed-days 180 --force-seed --universe daily
+```
+
+Non-IBKR work (scanner, backtest, dashboard) runs fine on either version.
+
 Restart PowerShell so PATH picks up the new installs. Verify:
 ```powershell
-py --version       # should show 3.12.x
+py -3.12 --version       # should show Python 3.12.x
 git --version
 ```
 

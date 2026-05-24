@@ -449,6 +449,16 @@ Code + bulk data sync via the existing Dropbox setup. Sync targets:
 - **Decision journals** (`data/journal/*.jsonl`) — Dropbox + git. Committed.
 - **Per-PC state** (`state/*.flag`, `state/watchlist_*.{txt,json}`, `config.json`) — Dropbox synced BUT per-PC semantics. **Never run the orchestrator on both Hermes and laptop simultaneously** — they would compete for the same flags + watchlists.
 
+### Python version — `py -3.12` for ALL IBKR workloads (hard rule)
+
+`ib_insync` depends on `eventkit` which calls `asyncio.get_event_loop()` at import time. **Python 3.14 removed the implicit event-loop creation**, so `import ib_insync` raises `RuntimeError: There is no current event loop in thread 'MainThread'` and the module cannot be loaded at all. We discovered this on 2026-05-24 when a watcher launched via the default `py` (which resolved to 3.14) was about to crash the 180-day re-seed.
+
+**Rule:** any script that touches IBKR (`resources/ibkr_history.py`, `resources/ibkr_data.py`, `resources/ibkr_smoke.py`, `scripts/wait_and_ingest.py`, `execution/orchestrator.py` when configured for IBKR) MUST be invoked with `py -3.12` explicitly. Don't rely on the default `py` launcher — different machines have different defaults, and a user upgrading to 3.14 silently breaks everything IBKR-related.
+
+Non-IBKR code (`strategy/`, `review/backtest.py`, `dashboard/`) runs fine on either Python version.
+
+`scripts/hermes_health.py` detects this specific failure mode and emits a WARN with the remedy. Run it before any long IBKR job as the pre-flight gate.
+
 ### Operational rules
 
 - **Don't manually run TWS / IB Gateway on Hermes.** IBC manages it. Manual launches break IBC's lifecycle assumptions.
