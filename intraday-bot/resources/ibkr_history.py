@@ -251,6 +251,39 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
         return {}
     ib = _connect(cfg)
     results: dict[tuple[str, str], int] = {}
+    reconnect_attempts = 0
+    MAX_RECONNECT_ATTEMPTS = 20
+
+    def _ensure_connected(current_ib):
+        """If the connection has dropped (TWS reset, auto-logoff, transient),
+        try to reconnect with exponential-ish backoff. Returns the live IB
+        instance (possibly new), or raises after MAX attempts."""
+        nonlocal reconnect_attempts
+        if current_ib.isConnected():
+            reconnect_attempts = 0
+            return current_ib
+        reconnect_attempts += 1
+        wait_s = min(60, 5 * reconnect_attempts)
+        sys.stderr.write(
+            f"[ibkr_history] connection lost — reconnect attempt #{reconnect_attempts} "
+            f"after {wait_s}s wait...\n"
+        )
+        sys.stderr.flush()
+        time.sleep(wait_s)
+        try: current_ib.disconnect()
+        except Exception: pass
+        new_ib = _connect(cfg)
+        if new_ib.isConnected():
+            sys.stderr.write("[ibkr_history] reconnected.\n")
+            sys.stderr.flush()
+            reconnect_attempts = 0
+            return new_ib
+        if reconnect_attempts >= MAX_RECONNECT_ATTEMPTS:
+            raise RuntimeError(
+                f"ibkr_history: failed to reconnect after {MAX_RECONNECT_ATTEMPTS} attempts"
+            )
+        return current_ib
+
     try:
         first = True
         for sym in symbols:
@@ -258,6 +291,14 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
                 if not first:
                     time.sleep(pacing_s)
                 first = False
+                # Auto-reconnect on TWS drops — prevents the "spin forever
+                # on qualify_failed: Not connected" failure mode that
+                # required manual ingest restarts (user reports 2026-05-23).
+                try:
+                    ib = _ensure_connected(ib)
+                except Exception as exc:
+                    sys.stderr.write(f"[ibkr_history] {exc} — aborting run\n")
+                    break
                 rng = bars_store.available_range(sym, timeframe=tf)
                 if rng is None:
                     n = ingest_history(ib, sym, tf,
