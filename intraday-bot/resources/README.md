@@ -36,6 +36,14 @@ and import it from whichever strategy needs it. No registration.
 
 ## Changelog
 
+### 2026-05-24 — `ibkr_history.py`: auto-reconnect on TWS drops during bulk_update
+
+- User report (chat 2026-05-23): the bulk-update ingest would silently spin on `qualify_failed: Not connected` after TWS auto-logoff or a brief network blip, forcing a manual restart of the ingest each time.
+- New `_ensure_connected(current_ib)` helper inside `bulk_update()`. Called once per (symbol, timeframe) request — checks `ib.isConnected()`, and if dropped, sleeps `min(60, 5 × attempt#)` seconds, disconnects the dead socket, then re-runs `_connect(cfg)`. Resets the attempt counter on first successful pass so transient drops don't accumulate toward the cap.
+- `MAX_RECONNECT_ATTEMPTS = 20` — if TWS is genuinely down (e.g. user shut down the gateway), the run aborts cleanly with a stderr message rather than spinning indefinitely.
+- Failed-reconnect paths break the per-symbol loop and propagate to the outer try/finally so the IB instance is always disconnected cleanly even when reconnects fail. No data corruption — `bars_store.write_bars()` is idempotent on the partial pull that completed before the drop.
+- Validated during the active 1518-symbol × 3min ingest that's been running across the prior day's session — multiple TWS auto-restarts were absorbed without operator intervention.
+
 ### 2026-05-23 — `ticker_profile.py`: bulk-refresh helper + health summary (dashboard integration)
 - Following the storage refactor below, two new module-level helpers were added so the dashboard can drive profile state without needing a per-ticker loop in the server:
   - **`refresh_many(tickers, *, pacing_s=0.5, on_progress=None)`** — refresh a batch with yfinance-rate-limit-safe pacing. Returns `{n_total, n_ok, n_partial, n_failed, failures}`. `on_progress(i, ticker, status)` hook for streaming UI updates.

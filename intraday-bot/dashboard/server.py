@@ -2416,6 +2416,52 @@ def _gather_chart_overlays(symbol: str) -> list[dict]:
                     "lineStyle": "dotted",
                     "strategy":  "ditp",
                 })
+        # Prior-day key levels (DITP P2 v0.2 spec — codes D / E / F in the
+        # user's key-level taxonomy). Drawn dotted to distinguish from the
+        # solid daily resistance. E (yesterday's high) is a potential
+        # polarity-flip target; F (yesterday's close) is a fair-value anchor.
+        # D (yesterday's low) is included for completeness but in muted color
+        # since it sits below entry and isn't actionable for P2 breakouts.
+        y_high  = match.get("yesterday_high")
+        y_low   = match.get("yesterday_low")
+        y_close = match.get("yesterday_close")
+        if y_high is not None and float(y_high) > 0:
+            overlays.append({
+                "kind":      "level",
+                "label":     f"E · Yest H ${float(y_high):.2f}",
+                "price":     float(y_high),
+                "color":     "#e67e22",
+                "lineStyle": "dotted",
+                "strategy":  "ditp",
+            })
+        if y_close is not None and float(y_close) > 0:
+            overlays.append({
+                "kind":      "level",
+                "label":     f"F · Yest C ${float(y_close):.2f}",
+                "price":     float(y_close),
+                "color":     "#9b59b6",
+                "lineStyle": "dotted",
+                "strategy":  "ditp",
+            })
+        if y_low is not None and float(y_low) > 0:
+            overlays.append({
+                "kind":      "level",
+                "label":     f"D · Yest L ${float(y_low):.2f}",
+                "price":     float(y_low),
+                "color":     "#7f8c8d",
+                "lineStyle": "dotted",
+                "strategy":  "ditp",
+            })
+        # Confluence annotation — bubble up Tier ≥ 1 reasons so the chart
+        # legend tells the trader WHY this candidate made the cut.
+        conf_tier = match.get("confluence_tier") or 0
+        conf_reasons = match.get("confluence_reasons") or []
+        if conf_tier > 0 and conf_reasons:
+            overlays.append({
+                "kind":      "annotation",
+                "label":     f"Confluence T{conf_tier}: {'; '.join(conf_reasons)}",
+                "strategy":  "ditp",
+            })
         break   # latest watchlist wins
 
     # --- Intraday levels per user rule 2026-05-23 P2 execution guide ---

@@ -310,6 +310,79 @@ def _get_universe_map() -> dict[str, list[str]]:
 
 # ---------- Per-symbol detector ----------
 
+# ---------- Confluence tier (DITP P2 v0.2 hard filter) ----------
+#
+# Per user teaching 2026-05-23: "P2 Breakout Scenarios that are tradeable
+# with more probability — (1) Daily R coincides with round number,
+# (2) Major round number, (3) Yesterday's H + significant round number."
+# Confluence tier promotes the structural breakout to a high-conviction
+# setup; Tier 0 (no confluence) is dropped from the live entry pipeline.
+
+def _round_grid_for_price(price: float) -> tuple[float, float]:
+    """Return (minor_grid, major_grid) for a price tier. Minor = the
+    regular round-number snap; major = the 'humans say it out loud'
+    larger increment."""
+    if price < 5:    return (0.50, 1.00)
+    if price < 20:   return (1.00, 5.00)
+    if price < 100:  return (5.00, 10.00)
+    if price < 500:  return (10.0, 50.00)
+    if price < 2000: return (25.0, 100.0)
+    return (100.0, 250.0)
+
+
+def _is_near_round_number(level: float, grid: float, tolerance_pct: float = 0.005) -> bool:
+    """Is `level` within ±tolerance_pct of a multiple of `grid`?
+    Default tolerance 0.5%. A $985 level is within 0.5% of $980/$990 too,
+    so we measure to the NEAREST multiple."""
+    if level <= 0 or grid <= 0:
+        return False
+    nearest = round(level / grid) * grid
+    return abs(level - nearest) <= level * tolerance_pct
+
+
+def compute_confluence_tier(resistance: float, yesterday_high: float
+                            ) -> tuple[int, list[str]]:
+    """Score a P2 setup's confluence quality.
+
+    Returns (tier, reasons):
+      tier = 0  → no special confluence (Tier 0 — dropped by hard filter)
+      tier = 1  → daily R aligns with a minor round number
+      tier = 2  → daily R aligns with a MAJOR round number
+      tier = 3  → daily R = yesterday's high AND aligns with a major round
+                  (triple confluence — rare, highest conviction)
+    """
+    if resistance is None or resistance <= 0:
+        return 0, []
+    minor_grid, major_grid = _round_grid_for_price(resistance)
+    reasons: list[str] = []
+    tier = 0
+
+    near_major = _is_near_round_number(resistance, major_grid)
+    near_minor = _is_near_round_number(resistance, minor_grid)
+    near_yesterday_high = (
+        yesterday_high > 0
+        and abs(resistance - yesterday_high) / resistance <= 0.005   # within 0.5%
+    )
+
+    if near_minor:
+        tier = max(tier, 1)
+        nearest_minor = round(resistance / minor_grid) * minor_grid
+        reasons.append(f"daily R near ${nearest_minor:.2f} (minor round)")
+    if near_major:
+        tier = max(tier, 2)
+        nearest_major = round(resistance / major_grid) * major_grid
+        reasons.append(f"daily R near ${nearest_major:.2f} (MAJOR round)")
+    if near_yesterday_high and near_major:
+        tier = 3
+        reasons.append(f"daily R ~ yesterday's high ${yesterday_high:.2f} (triple confluence)")
+    elif near_yesterday_high:
+        reasons.append(f"daily R ~ yesterday's high ${yesterday_high:.2f}")
+        # Yesterday-high alone (no major round) is a meaningful signal — bump to Tier 2
+        tier = max(tier, 2)
+
+    return tier, reasons
+
+
 @dataclass
 class P2Candidate:
     symbol: str
@@ -334,6 +407,18 @@ class P2Candidate:
     score: int = 0              # 0–100, populated by score_candidate()
     tier: str = ""              # "A" / "B" / "C" / "D", populated by score_candidate()
     cautions: list[str] = None  # ["FLUSH_UP", "FRESH_RESISTANCE", ...]
+    # Confluence + prior-day key levels (per DITP P2 v0.2 spec).
+    # confluence_tier (0/1/2/3) drives the hard tradeability filter that
+    # ditp_p2's evaluate() enforces — Tier 0 setups are dropped before
+    # they ever reach the entry pipeline.
+    confluence_tier: int = 0         # 0=plain, 1=at round#, 2=at major round#, 3=triple (R = yH = major round#)
+    confluence_reasons: list[str] = None   # human-readable list of which factors contributed
+    # Yesterday's daily-bar levels — used as additional intraday support
+    # references during the trade. The chart panel draws them as dotted
+    # lines (codes D, E, F in the user's key-level taxonomy).
+    yesterday_low: float = 0.0       # D — strong support, often where institutions step in
+    yesterday_high: float = 0.0      # E — potential polarity-flip target (if today gapped through it)
+    yesterday_close: float = 0.0     # F — fair-value anchor / gap pivot
 
 
 def detect_p2(symbol: str, cfg: P2Config) -> P2Candidate | None:
@@ -427,6 +512,26 @@ def detect_p2(symbol: str, cfg: P2Config) -> P2Candidate | None:
         diag["flush_up_bar_body_atr"] = round(
             abs(float(closes[flush_offset]) - float(opens[flush_offset])) / atr, 2
         )
+
+    # Prior-day key levels (D / E / F per user's key-level taxonomy).
+    # `closes[-1]` is "today" in the daily-parquet sense; index -2 is the
+    # most recent completed prior session.
+    if len(bars) >= 2:
+        prev = bars[-2]
+        yesterday_high  = round(float(prev["h"]), 2)
+        yesterday_low   = round(float(prev["l"]), 2)
+        yesterday_close = round(float(prev["c"]), 2)
+    else:
+        yesterday_high = yesterday_low = yesterday_close = 0.0
+
+    # Confluence tier — Tier 0 candidates pass the daily scan but are
+    # silently filtered out by the orchestrator's DITP P2 evaluate()
+    # before they reach the entry pipeline (hard filter per user 2026-05-23).
+    conf_tier, conf_reasons = compute_confluence_tier(
+        resistance=round(range_high, 2),
+        yesterday_high=yesterday_high,
+    )
+
     cand = P2Candidate(
         symbol=symbol,
         variant=variant,
@@ -447,6 +552,11 @@ def detect_p2(symbol: str, cfg: P2Config) -> P2Candidate | None:
         ema200=round(float(e200[-1]), 2),
         atr14=round(atr, 2),
         diag=diag,
+        confluence_tier=conf_tier,
+        confluence_reasons=conf_reasons,
+        yesterday_high=yesterday_high,
+        yesterday_low=yesterday_low,
+        yesterday_close=yesterday_close,
     )
     score_candidate(cand, atr)
     return cand
@@ -600,11 +710,19 @@ def write_watchlist(candidates: list[P2Candidate], target_date_iso: str) -> tupl
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     txt_path = STATE_DIR / f"watchlist_ditp_{target_date_iso}.txt"
     json_path = STATE_DIR / f"watchlist_ditp_{target_date_iso}.json"
-    # txt: SYM\ttier\tvariant\tresistance — D-tier omitted from the trade-watch
-    # list (kept in .json for review). The orchestrator's entry phase reads .txt.
+    # txt: SYM\ttier\tvariant\tresistance\tconfluence_tier — D-tier AND Tier-0
+    # confluence omitted from the trade-watch list (kept in .json for review).
+    # The orchestrator's entry phase reads .txt.
+    #
+    # Confluence Tier 0 hard filter (DITP P2 v0.2): per user 2026-05-23, only
+    # P2 breakouts that coincide with a round number, major round number, OR
+    # yesterday's high are tradeable with sufficient probability. Plain
+    # breakouts with no confluence anchor are dropped from .txt to keep the
+    # live entry pipeline focused on high-conviction setups.
     lines = [
-        f"{c.symbol}\t{c.tier}\tP2_{c.variant}\t{c.resistance}"
-        for c in candidates if c.tier != "D"
+        f"{c.symbol}\t{c.tier}\tP2_{c.variant}\t{c.resistance}\tCONF{c.confluence_tier}"
+        for c in candidates
+        if c.tier != "D" and c.confluence_tier > 0
     ]
     txt_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
     # json: full metadata
@@ -650,17 +768,21 @@ def main() -> int:
 
     candidates = scan_universe(symbols, cfg, variants_allowed)
 
-    sys.stdout.write(f"# {len(candidates)} candidates, sorted by distance > tier > score:\n")
-    sys.stdout.write(f"{'SYM':<6} {'T':<2} {'V':<2} {'score':>5} {'last':>8} "
+    n_tradeable = sum(1 for c in candidates if c.tier != "D" and c.confluence_tier > 0)
+    sys.stdout.write(f"# {len(candidates)} candidates ({n_tradeable} tradeable after Tier-0 confluence filter), "
+                     f"sorted by distance > tier > score:\n")
+    sys.stdout.write(f"{'SYM':<6} {'T':<2} {'V':<2} {'cnf':>3} {'score':>5} {'last':>8} "
                      f"{'rng_low':>8} {'rng_high':>8} {'distATR':>8} {'upTail':>7} "
-                     f"{'t/m/rM':>8}  cautions\n")
+                     f"{'t/m/rM':>8}  conf_reasons / cautions\n")
     for c in candidates:
         cau = ",".join(c.cautions) if c.cautions else "-"
+        cnf = (c.confluence_reasons[0] if c.confluence_reasons else "-")
+        annot = f"{cnf} | {cau}"
         sys.stdout.write(
-            f"{c.symbol:<6} {c.tier:<2} {c.variant:<2} {c.score:>5d} "
+            f"{c.symbol:<6} {c.tier:<2} {c.variant:<2} {c.confluence_tier:>3d} {c.score:>5d} "
             f"{c.last_close:>8.2f} {c.resistance_low:>8.2f} {c.resistance:>8.2f} "
             f"{c.distance_atr:>8.2f} {c.upper_tail_ratio:>7.3f} "
-            f"{c.resistance_touches:>2d}/{c.resistance_mountains:<1d}/{c.resistance_range_mountains:<2d}  {cau}\n"
+            f"{c.resistance_touches:>2d}/{c.resistance_mountains:<1d}/{c.resistance_range_mountains:<2d}  {annot}\n"
         )
 
     if not args.no_write:

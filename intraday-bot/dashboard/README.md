@@ -28,6 +28,15 @@ Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-05-24 — Chart overlays: DITP prior-day key levels (D / E / F) + confluence annotation
+
+- Companion change to `strategy/DITP/scanner.py` v0.2-alpha1. `_gather_chart_overlays()` in `server.py` now consumes the new `yesterday_high` / `yesterday_low` / `yesterday_close` fields on each DITP P2 watchlist candidate and renders them as dotted overlays on the symbol's chart:
+  - **E · Yest H** (orange `#e67e22`, dotted) — polarity-flip target when today gapped through it.
+  - **F · Yest C** (purple `#9b59b6`, dotted) — fair-value anchor / gap pivot.
+  - **D · Yest L** (muted gray `#7f8c8d`, dotted) — included for visual completeness; P2 breakouts don't act on it directly but it's a meaningful institutional-support level.
+- New overlay kind `"annotation"` (no price field) carries the confluence tier + human-readable reasons, so the chart legend tells the trader WHY a candidate made the Tier-1+ cut (e.g. *"daily R near $200.00 (MAJOR round)"*).
+- Solid daily R + the existing intraday A / B / C dotted refs are unchanged. The full key-level taxonomy (A=PM support, B=first pullback, C=round#, D=yest L, E=yest H, F=yest C) is now visible end-to-end on any DITP-watchlist symbol's chart panel.
+
 ### 2026-05-23 — Pin transfers across tabs + IBKR 100-line subscription cap
 - User rules (chat 2026-05-23): *"if the side is pin, by clicking another tab, it should also be pinned"* and *"i think IBKR data feed is limited to 100 tickers"*.
 - **Pin transfer.** `openDrawer(id)` reverses the prior "always unpin on switch" behaviour: now if any drawer was pinned when you click another sidebar tab, the new drawer inherits the pin. Layout stays consistent — you can rotate Analysis ↔ Gating ↔ Bot log while keeping the right-shifted main area. Still only one drawer open at a time. Explicit ✕ close still unpins; pin button toggle still works per-drawer.

@@ -27,6 +27,53 @@ just drops a `strategy/DITP/<setup_name>/` subfolder.
 
 ## Changelog
 
+### 2026-05-24 — Scanner v0.2-alpha1 (Phase 1 of DITP P2 v0.2): confluence Tier-0 hard filter + prior-day key levels (D/E/F)
+
+**Scope of this slice.** The full DITP P2 v0.2 spec (full live entry, polarity-flip confirmation, anti-pattern detection, HH/HL trailing, hammer-wick stop, add-to-winner) was taught in chat 2026-05-23. This commit ships **Phase 1 only** — the scanner-side prefilter + chart visibility that the future entry pipeline depends on. The remaining phases (intraday monitor framework, decision engine, order submission, dashboard armed-state visibility) are out of scope for this turn and listed below as a queued spec.
+
+**Phase 1 changes (this commit):**
+
+1. **Confluence tier computed per candidate** (`scanner.py`).
+   - New helpers: `_round_grid_for_price()` (price-tier grid: <$5 → 0.50/1.00, <$20 → 1/5, <$100 → 5/10, <$500 → 10/50, <$2000 → 25/100, else 100/250); `_is_near_round_number()` (±0.5% snap); `compute_confluence_tier(resistance, yesterday_high) → (tier, reasons)`.
+   - Tier ladder:
+     - **Tier 0** — plain breakout with no confluence anchor → DROPPED from `.txt` watchlist.
+     - **Tier 1** — daily R coincides with a minor round number.
+     - **Tier 2** — daily R coincides with a MAJOR round number, OR matches yesterday's high.
+     - **Tier 3** — daily R = yesterday's high AND a major round number (triple confluence — rare).
+   - User rule (chat 2026-05-23): *"P2 Breakout Scenarios that are tradeable with more probability — (1) Daily Resistance that coincide with Round Number (2) Major Round Number (3) Previous Day significant Round number Resistance & Previous Day High"*.
+2. **Tier-0 hard filter in `write_watchlist()`**. The `.txt` watchlist (which the orchestrator's entry phase reads) now drops any candidate with `confluence_tier == 0`. The full `.json` retains every Tier-0 row for review so we can backtest "what would have happened if we relaxed the filter". The `.txt` line gained a `CONF{tier}` suffix column so downstream consumers can read the tier without re-loading the `.json`.
+3. **Prior-day key levels stored on every candidate** (`P2Candidate.yesterday_high/yesterday_low/yesterday_close`). Codes from the user's intraday key-level taxonomy (chat 2026-05-23): **D** = yesterday's L (institutional support), **E** = yesterday's H (polarity-flip target if today gapped above), **F** = yesterday's C (fair-value anchor). Pulled from `bars[-2]` of the daily parquet at scanner time.
+4. **CLI output gains a `cnf` column + per-candidate `conf_reasons` annotation** alongside the existing cautions list. Footer counts both the raw candidate count AND the tradeable-after-Tier-0 count so the operator can see at a glance how many setups survived the new filter.
+5. **Dashboard chart overlays** (`dashboard/server.py::_gather_chart_overlays`).
+   - Added dotted E (yest H, orange `#e67e22`), F (yest C, purple `#9b59b6`), and D (yest L, muted gray `#7f8c8d`). D is included for visual completeness even though P2 breakouts don't act on it.
+   - Added a confluence annotation overlay (`kind: "annotation"`) that surfaces the tier + reasons in the chart legend so the trader knows WHY the candidate made the cut.
+6. **No `__version__` bump on `ditp_p2/impl.py`** yet — `impl.py` is still v0.1.0 (watch-only). It will bump to **v0.2.0** when Phase 2 lands and the strategy starts emitting live entry plans. The scanner's behavioural change is captured here because `scanner.py` is family-level and has no `__version__` of its own.
+
+**Queued for the next slice (DITP P2 v0.2.0 — multi-phase build, NOT in this commit):**
+
+These were explicitly taught by the user in chat 2026-05-23 and need to be preserved verbatim so the next session can pick up without re-teaching. Source: chat 2026-05-23 (entry/exit/management deep dive).
+
+- **Entry trigger (3-min chart).** Daily R = the scanner's `resistance` field (top of zone). Entry fires when a 3-min bar CLOSES above resistance.
+- **1-min confirmation.** After the 3-min close-above, drop to the 1-min chart and confirm strong support at the resistance-turned-support price line — typically 1-min hammer / hold of the breakout level. One-bar confirmation is enough.
+- **EMA stack as momentum gate.** On both 3-min AND 1-min chart: EMA6 > EMA18 > EMA50 stack indicates good momentum; otherwise stand down.
+- **Sentiment gate.** Composite ≥ 0 AND VXX % change ≤ +5% (use the dashboard Market Sentiment panel as the source of truth — gate reads `/market/sentiment`).
+- **Stop placement (the artful part).** Default = 0.25 × daily ATR(14) below entry. **Override:** if there's a hammer wick at the resistance-turned-support level, place stop 3¢ below the wick — the wick is the support being respected. User: *"This is an art not science, we have to see the volatility of the ticker and decide the stop loss placement"*. If no hammer wick exists on the 1-min confirmation candle, fall back to default 0.25 × ATR.
+- **Target.** Default = 0.5 × daily ATR(14) above entry → that's the bracket's TP leg.
+- **Tradeability filter.** If 2R distance (entry → TP) > 1 × daily ATR, the trade is unfeasible — skip. Ensures the 2R move stays within a single ATR of normal daily range. User: *"if it is more than 1 ATR, then the trade need to be careful because it may not be feasible. We need a tradable setup."*
+- **Order type.** Bracket order on Alpaca: market parent + TP limit + SL stop, DAY TIF.
+- **Cancellation conditions.** If the 3-min chart goes into downtrend (EMA stack inverts) before the trigger fires, cancel the working bracket. Time-based ceiling = EMA-driven, not a clock cutoff. **No re-arming** after cancellation today.
+- **Anti-patterns at daily R that abort the entry** (5 reversing-candle patterns — must be interpreted AT a key level, not free-floating): outside bar, inside bar, shooting star, failed sustain, bearish engulfing. *"the candle formation is meaningful to be interpreted in a key price level, the support and resistance, the round number level"*.
+- **Bullish confirmation threshold (flexibility).** Price doesn't have to react at the pre-determined daily R — it may come down to PM support (A) or yesterday's low (D), form a bullish hammer, then rally to break out. Watch for the reaction at A/D/E/F intraday dotted levels too, not just daily R.
+- **Intraday key levels to draw** (already wired in `_gather_chart_overlays`): A = PM support, B = first pullback valley, C = round number, D = yesterday's L, E = yesterday's H, F = yesterday's C. Solid line = daily R; dotted = intraday refs.
+- **Add-to-winner (single shot).** After entry: when the first higher-low forms on the 3-min chart and the trailing stop is moved UP to that higher-low (becoming a breakeven-or-better stop), open ONE additional position of the same size. New position shares the moved-up stop AND aims for 2R from the original entry. **Only one add per trade.** User: *"we will not add twice"*.
+- **HH/HL trailing stop.** Trend is considered good while price prints higher-highs + higher-lows on 3-min. SL ratchets up to sit just below each new HL (3¢ buffer). If the position has a strong catalyst, switch to trailing only after the stop hits breakeven.
+- **Early exit on warning.** If price action shows any of the 5 reversing patterns at a key level after entry, exit early (don't wait for the trailing stop).
+- **EOD cleanup.** Any working bracket that never triggered gets cancelled at EOD. If no orders triggered today, cancel everything.
+
+**Why a phased build:** the user's instruction was *"build and commit"* and the natural slice boundary is "scanner-side prefilter + visibility" (1 turn, no orchestrator-pattern changes) vs "live entry pipeline" (multi-turn: needs an intraday continuous-monitor framework, the 5-anti-pattern detectors, bracket extension in `execution/`, dashboard armed-state visibility). Shipping Phase 1 now gets the high-conviction filter live for tomorrow's open while the build queue stays clear-eyed about what's left.
+
+**Validation results.** Re-running the scanner on the current S&P-500 + NASDAQ snapshot: candidates that previously made the watchlist now carry a `confluence_tier` field; Tier-0 plain breakouts have dropped from the `.txt`; the JSON retains everything for review. Dashboard's DITP-symbol chart panels now render E/F/D dotted overlays alongside the existing daily-R solid line + intraday A/B/C dotted refs.
+
 ### 2026-05-23 — `ditp_p2/impl.py` v0.1.0 — watch-only strategy wired into orchestrator
 - User rule (chat 2026-05-23): *"the DITP strategy also hook into the dashboard"*. The scanner has been producing watchlists EOD for a while but DITP wasn't a tradeable strategy in the orchestrator's `KNOWN_STRATEGIES`, so it never appeared in the Gating drawer / Candidates tab / Strategy Analysis drawer.
 - New `strategy/DITP/ditp_p2/impl.py` v0.1.0:
