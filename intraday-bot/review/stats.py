@@ -42,8 +42,6 @@ while _root != _root.parent and not (_root / "SKILL.md").exists():
     _root = _root.parent
 SKILL_DIR = _root
 STATE_DIR = SKILL_DIR / "state"
-JOURNAL_DIR = SKILL_DIR / "data" / "journal"
-REVIEW_DIR = SKILL_DIR / "data" / "review"
 for _p in [str(_root)] + [str(_root / s) for s in
         ("scripts", "resources", "strategy", "execution",
          "journal", "review", "dashboard")]:
@@ -51,6 +49,11 @@ for _p in [str(_root)] + [str(_root / s) for s in
         sys.path.insert(0, _p)
 del _root, _p
 # ---
+
+# JOURNAL_DIR + REVIEW_DIR honour cfg["data_root"] via scripts._common
+from _common import get_data_root  # noqa: E402
+JOURNAL_DIR = get_data_root() / "journal"
+REVIEW_DIR = get_data_root() / "review"
 
 
 # ---------- Journal record container ----------

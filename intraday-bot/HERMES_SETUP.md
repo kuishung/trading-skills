@@ -94,30 +94,82 @@ py -3.12 --version       # should show Python 3.12.x
 git --version
 ```
 
-### 3. Install Dropbox + sign in
+### 3. Install Dropbox + sign in (CODE ONLY — data syncs via Resilio, see step 5)
 - Download from <https://www.dropbox.com/install>
 - Install, sign in with your Dropbox account
-- **Selective Sync:** in Dropbox preferences, sync ONLY the `Claude/claude-skills/trading-skills/intraday-bot/` folder tree. Don't sync your personal Dropbox stuff to a server VM.
-- Wait for full sync to complete. The folder should appear at `C:\Users\<you>\Dropbox\Claude\claude-skills\trading-skills\intraday-bot\` (or wherever Dropbox places it on this VM — depends on your Dropbox install preference).
-- Confirm a known file exists: `Test-Path C:\<dropbox-root>\intraday-bot\SKILL.md` → should return True
+- **Selective Sync:** in Dropbox preferences, sync ONLY the `Claude/claude-skills/trading-skills/intraday-bot/` folder tree. **Crucially, EXCLUDE `intraday-bot/data/`** — the bulk data does NOT go through Dropbox (Resilio handles it in step 5). Don't sync your personal Dropbox stuff to a server VM either.
+- Wait for sync. Should complete in ~2-5 min since we excluded the heavy data folder.
+- Confirm: `Test-Path C:\<dropbox-root>\intraday-bot\SKILL.md` → True
 
-### 4. Install intraday-bot Python deps
+### 4. Install intraday-bot Python deps (Python 3.12 explicitly)
 ```powershell
 cd C:\<dropbox-root>\intraday-bot
-py -m pip install --upgrade pip
-py -m pip install -r requirements.txt
+py -3.12 -m pip install --upgrade pip
+py -3.12 -m pip install -r requirements.txt
+```
+
+### 5. Install Resilio Sync + connect to laptop's HermesSync share
+
+Resilio Sync is the peer-to-peer sync mechanism for the bulk data (parquets, journals, reviews, ingest logs). The laptop is already running it; this step adds Hermes as a second peer.
+
+1. Download Resilio Sync from <https://www.resilio.com/individuals/>
+2. Install. On first launch, choose "Standard install" (no need to create an account)
+3. On the **laptop**, generate a Read & Write key for the laptop's `D:\HermesSync\` folder:
+   - Right-click `D:\HermesSync` → Resilio Sync → Share
+   - Choose **Read & Write** access
+   - Copy the generated key (or QR code, or one-time link)
+4. On Hermes, in Resilio:
+   - Click "Add folder" → "Enter a key or link"
+   - Paste the laptop's key
+   - Set local path to `C:\HermesSync` (create this folder if needed)
+5. Initial sync begins — ~664 MB or more of MarketData transfers over LAN (~5-10 min on Gbps LAN)
+6. Verify after sync:
+   ```powershell
+   Test-Path "C:\HermesSync\MarketData\price_history\daily\AAPL.parquet"   # → True
+   ```
+
+### 6. Configure data_root in Hermes's config.json
+
+The bot code reads `cfg["data_root"]` and uses it everywhere for data I/O. Each PC sets its own local Resilio path.
+
+```powershell
+# Copy config.example.json to config.json (per-PC, gitignored)
+cd "C:\<dropbox-root>\intraday-bot"
+Copy-Item config.example.json config.json
+```
+
+Then edit `config.json` (Notepad++ recommended) and set:
+
+```jsonc
+{
+  // ... other settings ...
+  "data_root": "C:\\HermesSync\\MarketData",
+  // ... other settings ...
+  "ibkr_client_id": 84,        // Hermes-specific (laptop uses 71/80/83/99)
+  // ... other settings ...
+}
+```
+
+Verify the override is picked up:
+```powershell
+py -3.12 -c "
+import sys; sys.path.insert(0, 'scripts')
+from _common import get_data_root
+print('data_root resolves to:', get_data_root())
+"
+# Expected: data_root resolves to: C:\HermesSync\MarketData
 ```
 
 ---
 
 ## Software install order (Phase 2: IBKR)
 
-### 5. Install IB Gateway (not TWS)
+### 7. Install IB Gateway (not TWS)
 - Download IB Gateway from <https://www.interactivebrokers.com/en/trading/ibgateway-stable.php> (paper trading version)
 - Install with defaults
 - **Do NOT launch it manually** — IBC will manage it
 
-### 6. Configure IBC (Interactive Brokers Controller)
+### 8. Configure IBC (Interactive Brokers Controller)
 IBC lives in `intraday-bot/ibc/` — already configured for the laptop. Adapt for Hermes:
 
 1. Open `intraday-bot/ibc/credentials.txt` (gitignored, lives per-PC):
@@ -159,7 +211,7 @@ IBC lives in `intraday-bot/ibc/` — already configured for the laptop. Adapt fo
    - IB Gateway window visible
    - Bottom-right shows "Connected" + green light
 
-### 7. Smoke-test the IBKR connection
+### 9. Smoke-test the IBKR connection
 ```powershell
 cd C:\<dropbox-root>\intraday-bot
 py resources/ibkr_smoke.py
@@ -170,7 +222,7 @@ Expected: prints account ID, no errors.
 
 ## Software install order (Phase 3: bot verification)
 
-### 8. Pre-flight check
+### 10. Pre-flight check
 ```powershell
 py scripts/hermes_health.py
 ```
@@ -185,20 +237,20 @@ This CLI (see `scripts/hermes_health.py`) verifies:
 
 All checks should pass. If any fail, fix before continuing.
 
-### 9. Scanner smoke test
+### 11. Scanner smoke test
 ```powershell
 py strategy/DITP/scanner.py --no-write
 ```
 Expected: prints ~10 candidates, no errors. Verifies the daily parquets are readable on Hermes.
 
-### 10. Backtest smoke test (no IBKR needed)
+### 12. Backtest smoke test (no IBKR needed)
 ```powershell
 py review/backtest.py --list-strategies
 py review/backtest.py --strategy ditp_p2 --start 2026-05-12 --end 2026-05-22 --no-write
 ```
 Expected: ~2 trades (same as laptop's earlier run). Verifies the backtest harness works on Hermes.
 
-### 11. Tiny IBKR ingest test
+### 13. Tiny IBKR ingest test
 ```powershell
 py resources/ibkr_history.py ingest AAPL MSFT --timeframes 3min --days 5
 ```
@@ -338,6 +390,19 @@ When any of these become needed, add a new phase to this doc rather than scatter
 ---
 
 ## Changelog
+
+### 2026-05-24 — Data folder moves out of Dropbox to Resilio-synced HermesSync
+
+Architectural change made same-day as initial setup: the data folder (parquets, journals, reviews, ticker profiles, ingest logs — ~10GB and growing) is too heavy for Dropbox sync. Moved to a peer-to-peer sync folder using Resilio Sync.
+
+**New layout:**
+- Laptop: `D:\HermesSync\MarketData\` (was `intraday-bot\data\`)
+- Hermes: `C:\HermesSync\MarketData\` (junction-free direct location)
+- Sync: Resilio P2P over LAN between the two
+
+**Code change:** all path constants (`bars_store.PRICE_HISTORY_ROOT`, `journal.writer.JOURNAL_DIR`, `review.stats.JOURNAL_DIR + REVIEW_DIR`, `ticker_profile.profile_path()`, `bars_store.INGEST_LOG_PATH`, `data_integrity.INGEST_LOG_PATH`, `review/backtest.py` output, `scripts/wait_and_ingest.py` log dir) now route through `scripts._common.get_data_root()`, which reads `cfg["data_root"]` from per-PC config.json. Default behaviour (no override) still resolves to `SKILL_DIR/data` — preserves single-PC simplicity.
+
+**Setup steps reflect this**: Phase 1 now has steps 5 (install Resilio + connect) and 6 (configure data_root in config.json). Step 3 (Dropbox) now explicitly excludes `data/` from Selective Sync.
 
 ### 2026-05-24 — Initial Hermes setup guide
 Created as part of the DITP P2 backtest infrastructure build. Goal: spin up an autonomous worker VM so the laptop is freed from multi-day ingest jobs. Server 2019 Standard (Desktop Experience), 16 GB RAM, 4 vCPU, 200 GB VHDX, external network switch. IB Gateway managed by IBC. ClientId 84 for ingest (vs laptop's 83 for live + 80 for observer + 99 for dashboard probes).

@@ -440,14 +440,39 @@ Each component needs a unique clientId per concurrent IBKR session. The full all
 
 Don't reuse these. Append next available number for any new component.
 
-### Cross-machine sync via Dropbox
+### Cross-machine sync — Dropbox for code, Resilio for data (set 2026-05-24)
 
-Code + bulk data sync via the existing Dropbox setup. Sync targets:
-- **Code** (`intraday-bot/`) — Dropbox-synced AND git-tracked. Either path keeps machines aligned.
-- **Bulk historical bars** (`data/price_history/*.parquet`) — Dropbox-synced only, gitignored. When Hermes ingests, parquets appear on laptop within minutes.
-- **Backtest snapshots** (`data/review/backtest_*.{jsonl,json}`) — Dropbox + git. Committed; tiny size.
-- **Decision journals** (`data/journal/*.jsonl`) — Dropbox + git. Committed.
-- **Per-PC state** (`state/*.flag`, `state/watchlist_*.{txt,json}`, `config.json`) — Dropbox synced BUT per-PC semantics. **Never run the orchestrator on both Hermes and laptop simultaneously** — they would compete for the same flags + watchlists.
+**Two separate sync mechanisms** for two very different kinds of data:
+
+| Layer | Mechanism | Location | Why this mechanism |
+|---|---|---|---|
+| Code, READMEs, configs | **Dropbox + git** | `intraday-bot/` inside Dropbox | Small, low-conflict, want git history. Dropbox makes cross-PC reads instant. |
+| Bulk data (parquets, journals, reviews, ticker profiles, ingest logs) | **Resilio Sync (P2P over LAN)** | `D:\HermesSync\MarketData\` on laptop / `C:\HermesSync\MarketData\` on Hermes | ~10GB+ and growing — too heavy for Dropbox bandwidth + cloud-storage cost. Resilio = LAN-speed P2P, no cloud middleman. Both peers writable. |
+
+Bot code resolves the data location through `scripts._common.get_data_root()`, which reads `cfg["data_root"]` from `config.json`. Per-PC config sets the local Resilio path:
+
+```jsonc
+// Laptop config.json
+"data_root": "D:\\HermesSync\\MarketData"
+
+// Hermes config.json
+"data_root": "C:\\HermesSync\\MarketData"
+```
+
+Resilio sync of `D:\HermesSync\` ↔ `C:\HermesSync\` handles the actual file transfer. Inside HermesSync, `MarketData/` is the intraday-bot's data; other projects can use sibling folders.
+
+**Implications for code:**
+- All file I/O for data uses `get_data_root() / "<subfolder>"` — never hardcoded `SKILL_DIR / "data" / ...`
+- `bars_store.PRICE_HISTORY_ROOT`, `journal.writer.JOURNAL_DIR`, `review.stats.JOURNAL_DIR / REVIEW_DIR`, `ticker_profile.profile_path()`, `bars_store.INGEST_LOG_PATH`, `review.backtest` output, `scripts.wait_and_ingest` log dir — all honour the cfg override
+- Default (when `data_root` is empty / not set) is `SKILL_DIR / "data"` — preserves the self-contained behaviour for any fresh PC that hasn't customised
+- `state/` is unchanged — still per-PC ephemeral session bookkeeping
+
+**Sync targets summary:**
+- **Dropbox-synced** (per existing Dropbox folder): all of `intraday-bot/` EXCEPT data/. The `data/` folder is no longer Dropbox-synced (excluded via Selective Sync on every PC).
+- **Resilio-synced** (peer-to-peer): the entire `HermesSync/MarketData/` tree, including `price_history/`, `journal/`, `review/`, `ticker_profile/`, `fixtures/`, `ingest_log.jsonl`, ingest log files.
+- **Not synced** (per-PC only): `state/*.flag`, `state/watchlist_*.{txt,json}`, `state/cache/`, `config.json`. **Never run the orchestrator on both Hermes and laptop simultaneously** — they would compete for the same flags + watchlists.
+
+**Git tracking note:** Before 2026-05-24, `data/journal/*.jsonl`, `data/review/*.json`, `data/fixtures/`, `data/ingest_log.jsonl` were committed to git. Post-move, they live at `HermesSync/MarketData/` which is NOT git-tracked. Historical commits preserve the pre-move state; ongoing journal/review writes are now sync-only via Resilio. If we ever want long-term archival back in git, we'd need to copy/symlink specific journal files back into the bot folder.
 
 ### Python version — `py -3.12` for ALL IBKR workloads (hard rule)
 

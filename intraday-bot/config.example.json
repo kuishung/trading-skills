@@ -5,6 +5,9 @@
   "spread_max_cents": 10,
   "eod_close_all_et": "15:58",
 
+  "_comment_data_root": "Override the on-disk location of data/price_history, data/journal, data/review, data/ticker_profile, data/ingest_log.jsonl, etc. Useful for moving the heavy regeneratable parquets out of Dropbox onto a peer-synced location (e.g. Resilio). Leave empty/omitted to use the bot-internal default (intraday-bot/data). Per-PC absolute paths: e.g. 'D:\\HermesSync\\MarketData' on laptop, 'C:\\HermesSync\\MarketData' on Hermes. Forward-slashes work too.",
+  "data_root": "",
+
   "strategies": {
     "guns_setup1": {
       "enabled": false,

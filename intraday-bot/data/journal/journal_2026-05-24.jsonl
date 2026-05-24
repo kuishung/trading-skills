@@ -1,4 +1,0 @@
-{"ts": "2026-05-24T08:24:25+00:00", "strategy": "guns_setup1", "event": "strategy_off_skipped", "entry_et": "09:28", "note": "state/enabled_<name>.flag absent at scheduled fire; no scanner / resources / analysis ran"}
-{"ts": "2026-05-24T08:24:25+00:00", "strategy": "guns_setup5", "event": "strategy_off_skipped", "entry_et": "09:31", "note": "state/enabled_<name>.flag absent at scheduled fire; no scanner / resources / analysis ran"}
-{"ts": "2026-05-24T08:24:25+00:00", "strategy": "os_breakout", "event": "strategy_off_skipped", "entry_et": "09:28", "note": "state/enabled_<name>.flag absent at scheduled fire; no scanner / resources / analysis ran"}
-{"ts": "2026-05-24T08:24:25+00:00", "strategy": "ditp_p2", "event": "strategy_off_skipped", "entry_et": "09:31", "note": "state/enabled_<name>.flag absent at scheduled fire; no scanner / resources / analysis ran"}

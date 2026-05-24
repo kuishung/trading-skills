@@ -94,8 +94,9 @@ def main() -> int:
     args = ap.parse_args()
 
     timeframes = [tf.strip() for tf in args.timeframes.split(",") if tf.strip()]
-    log_dir = SKILL_DIR / "data"
-    log_dir.mkdir(exist_ok=True)
+    # Log file lives alongside the data it documents — honours cfg["data_root"]
+    from _common import get_data_root
+    log_dir = get_data_root()
     tf_label = "-".join(timeframes)
     log_path = log_dir / f"_ingest_{tf_label}_{args.seed_days}d_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 

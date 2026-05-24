@@ -53,9 +53,11 @@ del _root, _p
 # ---
 
 import stats as stats_mod   # noqa: E402  (review/stats.py)
+from _common import get_data_root  # noqa: E402
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
-REVIEW_DIR = SKILL_DIR / "data" / "review"
+# REVIEW_DIR honours cfg["data_root"] via scripts._common
+REVIEW_DIR = get_data_root() / "review"
 
 DEFAULT_MIN_SAMPLE_SIZE = 30  # below this we never propose anything
 

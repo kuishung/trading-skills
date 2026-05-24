@@ -21,6 +21,13 @@ STATE_DIR = SKILL_DIR / "state"
 CONFIG_PATH = SKILL_DIR / "config.json"
 CONFIG_EXAMPLE_PATH = SKILL_DIR / "config.example.json"
 
+# Data root — set 2026-05-24 to support per-PC external data folders
+# (e.g., D:\HermesSync\MarketData on laptop, C:\HermesSync\MarketData on Hermes)
+# synced peer-to-peer via Resilio Sync rather than via Dropbox. Falls back
+# to the in-folder default (SKILL_DIR / "data") for any PC that doesn't
+# override via config. See get_data_root() below.
+DATA_DIR_DEFAULT = SKILL_DIR / "data"
+
 # --- intraday-bot bootstrap: make sibling layers importable (for the
 # lazy `from ibkr_data import ...` inside the data-provider functions
 # below, plus any future cross-layer imports). ---
@@ -44,6 +51,35 @@ def load_config() -> dict:
         except json.JSONDecodeError as e:
             sys.exit(f"config.json is not valid JSON: {e}")
     return cfg
+
+
+def get_data_root() -> Path:
+    """Return the on-disk data root for `data/price_history/`, `data/journal/`,
+    `data/review/`, `data/ticker_profile/`, etc.
+
+    Resolution order:
+      1. cfg["data_root"] from config.json (if set + non-empty) — supports
+         per-PC absolute paths so the heavy regeneratable parquets can live
+         outside the bot folder and sync via Resilio P2P rather than Dropbox.
+         Examples:
+            "D:\\HermesSync\\MarketData"   (laptop)
+            "C:\\HermesSync\\MarketData"   (Hermes VM)
+      2. DATA_DIR_DEFAULT (= SKILL_DIR / "data") — keeps the bot fully
+         self-contained for any PC that hasn't customised.
+
+    Path is created if missing. Returned as pathlib.Path.
+
+    Cost: re-reads config.json on each call. Negligible (small JSON,
+    cached by OS). Strategy modules typically capture the result in a
+    module-level constant at import time."""
+    cfg = load_config()
+    p = cfg.get("data_root")
+    if p:
+        path = Path(p).expanduser()
+    else:
+        path = DATA_DIR_DEFAULT
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 # ---------- ET clock ----------

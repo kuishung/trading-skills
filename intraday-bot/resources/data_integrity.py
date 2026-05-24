@@ -58,8 +58,10 @@ del _root, _p
 # ---
 
 import bars_store  # noqa: E402
+from scripts._common import get_data_root  # noqa: E402
 
-INGEST_LOG_PATH = SKILL_DIR / "data" / "ingest_log.jsonl"
+# Honour cfg["data_root"] per scripts._common.get_data_root() — see bars_store.py
+INGEST_LOG_PATH = get_data_root() / "ingest_log.jsonl"
 
 
 # ---------- Health containers ----------

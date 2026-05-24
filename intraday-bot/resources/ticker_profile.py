@@ -116,8 +116,11 @@ PROFILE_TTL_HOURS = 24
 # ---------- Path helpers ----------
 
 def profile_path(ticker: str) -> Path:
-    """data/ticker_profile/<TICKER>.json"""
-    return SKILL_DIR / "data" / "ticker_profile" / f"{ticker.upper()}.json"
+    """{data_root}/ticker_profile/<TICKER>.json.
+    data_root resolves via scripts._common.get_data_root() — honours
+    cfg["data_root"] for per-PC external paths."""
+    from scripts._common import get_data_root
+    return get_data_root() / "ticker_profile" / f"{ticker.upper()}.json"
 
 
 def _is_fresh(profile: dict, ttl_hours: int = PROFILE_TTL_HOURS) -> bool:
@@ -604,7 +607,8 @@ def profile_health() -> dict:
         symbols_3m:  list of symbols with full 3m profile
       }
     """
-    root = SKILL_DIR / "data" / "ticker_profile"
+    from scripts._common import get_data_root
+    root = get_data_root() / "ticker_profile"
     if not root.exists():
         return {
             "n_total": 0, "n_fresh": 0, "n_stale": 0,

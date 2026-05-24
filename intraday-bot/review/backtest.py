@@ -195,7 +195,8 @@ def run(strategy: str, start: date, end: date,
     }
 
     if write:
-        out_dir = SKILL_DIR / "data" / "review"
+        from _common import get_data_root  # honours cfg["data_root"]
+        out_dir = get_data_root() / "review"
         out_dir.mkdir(parents=True, exist_ok=True)
         jsonl_path = out_dir / f"backtest_{run_id}.jsonl"
         json_path  = out_dir / f"backtest_{run_id}.json"
@@ -204,8 +205,15 @@ def run(strategy: str, start: date, end: date,
                 f.write(json.dumps(t, default=str) + "\n")
         json_path.write_text(json.dumps(summary, indent=2, default=str),
                              encoding="utf-8")
-        print(f"\n# wrote {jsonl_path.relative_to(SKILL_DIR)}", flush=True)
-        print(f"# wrote {json_path.relative_to(SKILL_DIR)}", flush=True)
+        # Display path relative to SKILL_DIR if possible (compact); else absolute
+        try:
+            rel_jsonl = jsonl_path.relative_to(SKILL_DIR)
+            rel_json = json_path.relative_to(SKILL_DIR)
+            print(f"\n# wrote {rel_jsonl}", flush=True)
+            print(f"# wrote {rel_json}", flush=True)
+        except ValueError:
+            print(f"\n# wrote {jsonl_path}", flush=True)
+            print(f"# wrote {json_path}", flush=True)
 
     print("\n" + _metrics.headline(summary), flush=True)
     return summary

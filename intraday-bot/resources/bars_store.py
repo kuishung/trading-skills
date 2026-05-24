@@ -61,7 +61,12 @@ for _p in [str(_root)] + [str(_root / s) for s in
 del _root, _p
 # ---
 
-PRICE_HISTORY_ROOT = SKILL_DIR / "data" / "price_history"
+# Data root resolves via scripts._common.get_data_root() so it honours
+# cfg["data_root"] for per-PC external paths (e.g., D:\HermesSync\MarketData
+# on laptop, C:\HermesSync\MarketData on Hermes). Falls back to
+# SKILL_DIR/"data" if no override.
+from scripts._common import get_data_root  # noqa: E402
+PRICE_HISTORY_ROOT = get_data_root() / "price_history"
 SUPPORTED_TIMEFRAMES = ("1min", "3min", "5min", "15min", "daily")
 
 
@@ -193,7 +198,7 @@ def write_bars(symbol: str, bars: Iterable[dict],
 # failure reported by the ingest CLIs). One JSONL line per event. Read by
 # `resources/data_integrity.py` for the dashboard's data-health pill.
 
-INGEST_LOG_PATH = SKILL_DIR / "data" / "ingest_log.jsonl"
+INGEST_LOG_PATH = get_data_root() / "ingest_log.jsonl"
 
 
 def _log_ingest(event: dict) -> None:

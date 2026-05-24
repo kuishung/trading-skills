@@ -43,7 +43,15 @@ from typing import Any
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
 STATE_DIR = SKILL_DIR / "state"
-JOURNAL_DIR = SKILL_DIR / "data" / "journal"
+# JOURNAL_DIR honours cfg["data_root"] via scripts._common.get_data_root()
+# — see resources/bars_store.py for the same pattern. Bootstrap the
+# scripts dir into sys.path so the import works regardless of caller.
+import sys as _sys
+_scripts_dir = str(SKILL_DIR / "scripts")
+if _scripts_dir not in _sys.path:
+    _sys.path.insert(0, _scripts_dir)
+from _common import get_data_root  # noqa: E402
+JOURNAL_DIR = get_data_root() / "journal"
 
 # When the orchestrator runs with --replay-date, it calls set_replay_target(path)
 # to redirect every journal() write to a per-replay file under data/replay/. The
