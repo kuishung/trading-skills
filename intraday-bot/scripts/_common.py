@@ -145,9 +145,40 @@ def _read_dotenv(path: Path) -> dict[str, str]:
 
 
 def _vault_root() -> Path | None:
-    """Walk up from intraday-bot/ looking for a VAULT/Claude Credential folder
-    (the central credential store -- see reference_central_env_folder memory).
-    Returns None if not found."""
+    """Locate the vendor-credentials directory.
+
+    Resolution order:
+      1. cfg["vault_dir"] from config.json (per-PC override, mirrors the
+         data_root pattern). Supports absolute paths like
+            D:\\HermesSync\\Vault   (laptop, Resilio-synced)
+            C:\\HermesSync\\Vault   (Hermes, Resilio-synced from laptop)
+         Set 2026-05-24 so credential files (alpaca.env, telegram.env,
+         intraday-premarket.env, etc.) can sync peer-to-peer via Resilio
+         rather than via the laptop's Dropbox VAULT folder.
+
+      2. Auto-discover (back-compat): walk up from SKILL_DIR looking for
+         a VAULT/Claude Credential subfolder. Honours the original
+         Dropbox-shared layout for any PC that hasn't customised
+         vault_dir in config.json.
+
+    Returns the Path (whichever wins), or None if neither is configured /
+    discoverable. Caller falls back to in-folder .env or fails loudly per
+    the existing _env_lookup behaviour.
+    """
+    cfg = load_config()
+    vd = cfg.get("vault_dir")
+    if vd:
+        p = Path(str(vd)).expanduser()
+        if p.is_dir():
+            return p
+        # If configured but missing on disk, log + fall through to
+        # auto-discovery so we don't silently break credential resolution
+        # mid-session (e.g., Resilio temporarily disconnected on a peer).
+        sys.stderr.write(
+            f"[_common] vault_dir={vd!r} configured but does not exist; "
+            f"falling back to auto-discovery.\n"
+        )
+    # Fallback: auto-discover (preserves original walk-up behaviour)
     here = SKILL_DIR.resolve()
     for ancestor in [here, *here.parents]:
         for candidate in (

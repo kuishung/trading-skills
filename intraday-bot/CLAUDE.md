@@ -190,14 +190,22 @@ cost; only the actual read/write functions trigger it.
 **Every dependency lives inside intraday-bot/.** NO sibling-folder
 reads (no `../alpaca-trader-paper/.env`, no `../MATP/.env`).
 
-Credential resolution order (in `scripts/_common.py`):
+Credential resolution order (in `scripts/_common.py::_vault_root()` + `_env_lookup()`):
 
-1. `$INTRADAY_ENV_DIR/<vendor>.env` (manual override)
-2. `intraday-bot/.env` (in-folder fallback)
-3. `<Dropbox>/VAULT/Claude Credential/<vendor>.env` (central)
+1. `$INTRADAY_ENV_DIR/<vendor>.env` — manual override via environment variable
+2. `intraday-bot/.env` — in-folder fallback
+3. `cfg["vault_dir"]/<vendor>.env` — per-PC absolute path from config.json (added 2026-05-24)
+4. `<auto-discovered VAULT/Claude Credential>/<vendor>.env` — walk up from SKILL_DIR (back-compat)
 
-On a new PC, `pip install -r requirements.txt` + sync this folder is
-all it takes. NO path edits, NO config tweaks.
+The `cfg["vault_dir"]` setting (added 2026-05-24) mirrors `cfg["data_root"]` — per-PC absolute path supporting Resilio-synced credentials. Current usage:
+- Laptop: `vault_dir = "D:\\HermesSync\\Vault"` (Resilio root)
+- Hermes: `vault_dir = "C:\\HermesSync\\Vault"` (Resilio peer)
+
+This lets credentials sync peer-to-peer via Resilio (encrypted LAN) instead of via Dropbox cloud, mirroring the data-folder architecture. Both files (`alpaca.env`, `intraday-premarket.env`) are tiny so the bandwidth concern was minor; the real motivation was removing the Dropbox dependency on Hermes (device-limit constraints) while keeping cross-PC credential availability.
+
+`ibkr_secrets_path` is configured SEPARATELY because IBC (the IBKR Gateway controller) reads it as a direct file path, not via the bot's `_env_lookup()` mechanism. Set it to wherever your IBC creds file lives — typically alongside the bot's other secrets in HermesSync/Vault/.
+
+On a new PC: clone the repo (or sync via Dropbox if device slots permit), connect to Resilio share, set `cfg["vault_dir"]` + `cfg["data_root"]` to local Resilio paths. Done.
 
 ## Per-strategy gating (two independent live flags)
 

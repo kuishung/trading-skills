@@ -170,31 +170,39 @@ print('data_root resolves to:', get_data_root())
 - **Do NOT launch it manually** — IBC will manage it
 
 ### 8. Configure IBC (Interactive Brokers Controller)
-IBC lives in `intraday-bot/ibc/` — already configured for the laptop. Adapt for Hermes:
+IBC lives in `intraday-bot/ibc/` — already configured. Adapt config for Hermes:
 
-1. Open `intraday-bot/ibc/credentials.txt` (gitignored, lives per-PC):
+1. The IBKR credentials file is at `C:\HermesSync\Vault\credentials.txt` (synced from laptop via Resilio in step 5). Format:
    ```
    IbLoginId=<your paper username>
    IbPassword=<your paper password>
    TradingMode=paper
    ```
-   This file should already exist on Dropbox if you set it up on the laptop. If not, copy from a working laptop install.
+   You do NOT need to create or copy this file manually — Resilio sync delivers it. Just verify it exists:
+   ```powershell
+   Test-Path "C:\HermesSync\Vault\credentials.txt"   # → True
+   ```
 
-2. Open `intraday-bot/ibc/config.ini` and verify:
+2. Open `C:\Code\trading-skills\intraday-bot\ibc\config.ini` and verify:
    ```
    IbDir=C:\Jts\ibgateway\<version>     # adjust to where IB Gateway was installed
    FIX=no
    TradingMode=paper
-   IbLoginId=                            # leave blank, picked up from credentials.txt
-   IbPassword=                           # leave blank, picked up from credentials.txt
+   IbLoginId=                            # leave blank, picked up from credentials file
+   IbPassword=                           # leave blank, picked up from credentials file
    ```
 
-3. Update `intraday-bot/config.json` (gitignored, per-PC — copy from laptop and edit):
+3. Update `intraday-bot/config.json` (gitignored, per-PC). For Hermes, the key fields:
    ```json
    {
+     "data_root": "C:\\HermesSync\\MarketData",
+     "vault_dir": "C:\\HermesSync\\Vault",                                       // ← lets bot find alpaca.env, etc.
      "ibkr_host": "127.0.0.1",
      "ibkr_port": 4002,
-     "ibkr_client_id": 84,         // ← Hermes uses 84 (laptop uses 83 for ingest)
+     "ibkr_client_id": 84,                                                       // ← Hermes uses 84 (laptop uses 71)
+     "ibkr_secrets_path": "C:\\HermesSync\\Vault\\credentials.txt",              // ← IBC reads from Resilio-synced location
+     "ibkr_ibc_dir": "C:\\Code\\trading-skills\\intraday-bot\\ibc",
+     "ibkr_app_type": "gateway",
      ...rest copied from laptop config...
    }
    ```
@@ -390,6 +398,23 @@ When any of these become needed, add a new phase to this doc rather than scatter
 ---
 
 ## Changelog
+
+### 2026-05-24 — Vendor credentials (alpaca.env, intraday-premarket.env, credentials.txt) also move to HermesSync/Vault/
+
+Same-day follow-up to the data-folder relocation: the laptop's Dropbox device-limit blocks installing Dropbox on Hermes, so credentials need a different sync mechanism. Migrated all 3 credential files used by intraday-bot (and the sibling intraday-premarket skill) from `D:\Dropbox\VAULT\Claude Credential\` to `D:\HermesSync\Vault\`. Resilio handles laptop ↔ Hermes sync. Hermes never needs Dropbox.
+
+**Code change:** `scripts/_common.py::_vault_root()` now honours `cfg["vault_dir"]` (new config option), mirroring the `data_root` pattern. Default behaviour (no override) still auto-discovers via the legacy walk-up. Adapter chain in `_env_lookup()` unchanged — `INTRADAY_ENV_DIR` env var still takes priority, then in-folder `.env`, then the (now configurable) vault dir.
+
+**Files migrated:**
+- `credentials.txt` (43 bytes) — IBKR paper creds, consumed by IBC
+- `alpaca.env` (164 bytes) — Alpaca API keys, consumed by `load_alpaca_env()`
+- `intraday-premarket.env` (207 bytes) — sibling skill (not used by intraday-bot itself, but moved for unified location)
+
+**Config additions** on each PC:
+- Laptop `config.json`: `"vault_dir": "D:\\HermesSync\\Vault"`
+- Hermes `config.json`: `"vault_dir": "C:\\HermesSync\\Vault"`
+
+Verified: orchestrator dry-run boots cleanly, Alpaca creds resolve via new path, `_vault_root()` returns the configured location.
 
 ### 2026-05-24 — Data folder moves out of Dropbox to Resilio-synced HermesSync
 
