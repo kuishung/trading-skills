@@ -36,6 +36,14 @@ and import it from whichever strategy needs it. No registration.
 
 ## Changelog
 
+### 2026-05-24 — `ibkr_history.py`: `--force-seed` flag for backward-extending stored history
+
+- Use case (chat 2026-05-24): backtester needs 180 days of 3min depth, but the existing universe already has 14-day parquets — `update --universe` only fills the forward gap (incremental), it does NOT extend backward. To bump depth from 14d → 180d we need a flag that bypasses the "incremental if existing" logic and runs `ingest_history(lookback_days=180)` on EVERY symbol.
+- New `--force-seed` flag on the `update` subcommand. When set, `bulk_update()` ignores `bars_store.available_range()` and always calls `ingest_history` with `--seed-days` of lookback. Status line shows `force-seed(180d)` (vs the regular `seed(60d)` or `update`) so the operator can see which path each symbol took.
+- Safe by construction: `bars_store.write_bars()` deduplicates on timestamp, so re-fetching the recent window that already exists is wasted bandwidth but produces no data corruption / duplicates.
+- Wall-clock cost example: 1518 symbols × 180-day 3min = 13 chunks/symbol × ~15s/chunk = ~80-100 hours (~4 days continuous). Mitigated by the auto-reconnect logic added earlier today — long runs survive TWS hiccups without operator intervention.
+- CLI: `py resources/ibkr_history.py update --universe --timeframes 3min --seed-days 180 --force-seed`
+
 ### 2026-05-24 — `ibkr_history.py`: auto-reconnect on TWS drops during bulk_update
 
 - User report (chat 2026-05-23): the bulk-update ingest would silently spin on `qualify_failed: Not connected` after TWS auto-logoff or a brief network blip, forcing a manual restart of the ingest each time.

@@ -238,12 +238,22 @@ def update_history(ib, symbol: str, timeframe: str,
 
 def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = None,
                 *, lookback_days_for_new: int = 60,
-                pacing_s: float = DEFAULT_PACING_S) -> dict[tuple[str, str], int]:
+                pacing_s: float = DEFAULT_PACING_S,
+                force_seed: bool = False) -> dict[tuple[str, str], int]:
     """Update many (symbol, timeframe) pairs in one IBKR connection.
 
     For symbols with existing bars, runs incremental update.
     For symbols with NO existing bars at that timeframe, seeds with
     `lookback_days_for_new` days.
+
+    `force_seed=True` overrides the "incremental for existing" logic and
+    runs a full ingest_history(lookback_days=lookback_days_for_new) on
+    EVERY symbol, regardless of existing data. Used for extending
+    historical depth backward (e.g., bumping a 14-day seed up to 180
+    days for backtest). Existing bars are deduplicated by bars_store on
+    write, so re-fetching the recent window is wasted bandwidth but
+    safe — no data corruption.
+
     Returns: {(symbol, timeframe): bars_written}.
     """
     cfg = cfg or load_config()
@@ -300,11 +310,12 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
                     sys.stderr.write(f"[ibkr_history] {exc} — aborting run\n")
                     break
                 rng = bars_store.available_range(sym, timeframe=tf)
-                if rng is None:
+                if rng is None or force_seed:
                     n = ingest_history(ib, sym, tf,
                                        lookback_days=lookback_days_for_new,
                                        pacing_s=pacing_s)
-                    label = f"seed({lookback_days_for_new}d)"
+                    label = (f"force-seed({lookback_days_for_new}d)" if force_seed
+                             else f"seed({lookback_days_for_new}d)")
                 else:
                     n = update_history(ib, sym, tf, pacing_s=pacing_s)
                     label = "update"
@@ -418,7 +429,8 @@ def _cmd_update(args) -> int:
           f"(~{len(symbols) * len(timeframes) * args.pacing:.0f}s pacing budget)")
     results = bulk_update(symbols, timeframes, cfg,
                           lookback_days_for_new=args.seed_days,
-                          pacing_s=args.pacing)
+                          pacing_s=args.pacing,
+                          force_seed=args.force_seed)
     total = sum(results.values())
     print(f"# DONE -- {total} bars written across {len(results)} (symbol, timeframe) pairs.")
     return 0
@@ -470,6 +482,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p_update.add_argument("--seed-days", type=int, default=60,
                           help="if symbol has no stored bars yet, seed N days (default 60)")
     p_update.add_argument("--pacing", type=float, default=DEFAULT_PACING_S)
+    p_update.add_argument("--force-seed", action="store_true",
+                          help="re-seed EVERY symbol with --seed-days of history, "
+                               "even ones that already have bars. Use to extend "
+                               "historical depth backward (e.g., bump 14d to 180d "
+                               "for backtest). Existing bars are deduplicated on "
+                               "write -- safe but slower than incremental update.")
     p_update.set_defaults(func=_cmd_update)
 
     p_list = sub.add_parser("list", help="show what's currently stored")
