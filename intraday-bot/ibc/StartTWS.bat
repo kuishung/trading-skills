@@ -30,10 +30,12 @@ setlocal enableextensions enabledelayedexpansion
 
 
 set TWS_MAJOR_VRSN=1045
-set CONFIG=D:\Dropbox\Claude\claude-skills\trading-skills\GUNS\.claude\worktrees\blissful-joliot-1c96e4\guns-bot\ibc\config.ini
+REM Path-portable: resolve CONFIG + IBC_PATH from this script's own location.
+set IBC_PATH=%~dp0
+if "%IBC_PATH:~-1%"=="\" set IBC_PATH=%IBC_PATH:~0,-1%
+set CONFIG=%IBC_PATH%\config.ini
 set TRADING_MODE=paper
 set TWOFA_TIMEOUT_ACTION=exit
-set IBC_PATH=D:\Dropbox\Claude\claude-skills\trading-skills\GUNS\.claude\worktrees\blissful-joliot-1c96e4\guns-bot\ibc
 set TWS_PATH=C:\Jts
 set TWS_SETTINGS_PATH=
 set LOG_PATH=%IBC_PATH%\Logs
