@@ -22,8 +22,10 @@ if not exist "%CONFIG_JSON%" (
     exit /b 1
 )
 
-REM Pull ibkr_secrets_path from config.json via PowerShell ConvertFrom-Json.
-for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "(Get-Content '%CONFIG_JSON%' -Raw | ConvertFrom-Json).ibkr_secrets_path"`) do (
+REM Pull ibkr_secrets_path from config.json via PowerShell. Use [Console]::Write
+REM (instead of bare expression) so PowerShell does NOT append a trailing CR/LF
+REM that would get baked into the cmd variable and break path checks.
+for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::Write(((Get-Content '%CONFIG_JSON%' -Raw ^| ConvertFrom-Json).ibkr_secrets_path))"`) do (
     set "CRED_FILE=%%i"
 )
 
@@ -51,7 +53,8 @@ if "%TWSUSERID%"=="" (
 
 REM Pull ibkr_gateway_path (full path to ibgateway.exe) and derive TWS_PATH
 REM (its parent dir, which is what IBC expects in the --tws-path flag).
-for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "Split-Path -Parent ((Get-Content '%CONFIG_JSON%' -Raw | ConvertFrom-Json).ibkr_gateway_path)"`) do (
+REM [Console]::Write avoids trailing CR/LF that breaks the path check below.
+for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::Write((Split-Path -Parent ((Get-Content '%CONFIG_JSON%' -Raw ^| ConvertFrom-Json).ibkr_gateway_path)))"`) do (
     set "TWS_PATH=%%i"
 )
 
@@ -61,7 +64,8 @@ if "%TWS_PATH%"=="" (
 )
 
 REM Determine which IB app we're launching (gateway / tws) from config.
-for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "(Get-Content '%CONFIG_JSON%' -Raw | ConvertFrom-Json).ibkr_app_type"`) do (
+REM [Console]::Write avoids trailing CR/LF in the captured value.
+for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::Write(((Get-Content '%CONFIG_JSON%' -Raw ^| ConvertFrom-Json).ibkr_app_type))"`) do (
     set "APP_TYPE=%%i"
 )
 if "%APP_TYPE%"=="" set "APP_TYPE=gateway"
