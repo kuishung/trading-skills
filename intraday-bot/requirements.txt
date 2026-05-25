@@ -14,3 +14,8 @@ yfinance>=0.2.40
 # Canonical format for data/bars/. Lazy-imported (only triggers when
 # a strategy actually reads/writes historical bars).
 pyarrow>=15
+# System-tray status icon (dashboard/tray_status.py). Optional polish —
+# the bot runs fine without it; this gives an at-a-glance ingest-state
+# indicator in the Windows tray. Runs anywhere with a desktop session.
+pystray>=0.19
+Pillow>=10
