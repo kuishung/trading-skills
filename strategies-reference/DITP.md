@@ -40,7 +40,8 @@ consolidation shape.
 | 1B | **P2 Pattern — Setup B** (Tight range) | Day of breakout (intraday tape watch) | Daily uptrend + horizontal resistance + ~8–15 recent daily candles form a *tight horizontal rectangle* just below resistance, last candle has no upper tail |
 | 1C | **P2 Pattern — Setup C** (Tightening / ascending triangle) | Day of breakout (intraday tape watch) | Daily uptrend + horizontal resistance + ~8–15 recent daily candles form an *ascending triangle* (flat top at resistance + rising lows), last candle has no upper tail |
 | 3 | **P3 Pattern** (Retest of broken resistance) | Day of retest support hold | Symbol previously had a P2 setup; breakout above resistance HAPPENED; now pulling back to retest the broken resistance from above. Entry on confirmation the level is holding as support. |
-| 2  | TBD | TBD | not yet taught |
+| 2  | **P1 Pattern** (TBD) | TBD | Rebound-type setup. Not yet taught in detail; reserved as Setup 2 per user 2026-05-25. |
+| 4  | **TC** (Trend Continuation) | Day +1 / Day +2 after a P2 breakout or strong P1 rebound | React-don't-anticipate. The 1-2 daily candles after a confirmed breakout / rebound typically continue the trend. TC scanner surfaces yesterday's qualifying events; entry the following morning. |
 
 ## 5. Key level hierarchy
 
@@ -135,7 +136,57 @@ The reference charts strongly imply (i): the yellow-circled candle IS the breako
 
 **Concurrency cap:** TBD.
 
-### Setup 2 — TBD
+### Setup 4 — TC (Trend Continuation)
+
+**Status: IN PROGRESS — capture began chat 2026-05-25 (Memorial Day pause).**
+**Source: user dictation, no chart materials yet.**
+
+**Concept.** Unlike P2 (anticipate the breakout) and P3 (trade the retest of a broken level), TC trades the **continuation strength of the 1-2 daily candles AFTER a confirmed breakout / rebound already happened**. You're not catching the breakout — you're riding the follow-through that typically prints on Day +1 / Day +2.
+
+**Two qualifying Day-0 prior events:**
+
+1. **P2 breakout** — symbol cleared mountain-consensus `range_high` on Day 0 close.
+2. **Strong P1 rebound** — robust bounce off the P1 level. Definition pending P1 framework being taught (Setup 2 — see TBD above).
+
+**Trade window:** Day +1 and Day +2 (the first two daily candles following the qualifying event).
+
+#### Eligibility (captured so far — incomplete)
+
+1. **Day 0 = P2 breakout day** (`close > range_high` for the mountain-consensus zone) **OR strong P1 rebound day** (definition TBD).
+2. **Day 0 daily candle must be a bullish formation.** Working definition (pending user confirmation): `close > open` AND `close` in upper half of daily range. Filters out wicky "barely green with a long upper tail" candles.
+3. **Day +1 premarket price action stays above Day 0 daily high (YH).** Strictness pending confirmation ("every premarket print" vs "premarket VWAP" vs "premarket low" vs "last print before 09:30 ET"). Intent: gap-and-hold — buyers maintained control overnight, so the breakout has real follow-through.
+
+#### Entry trigger
+
+TBD — to be taught.
+
+#### Stop placement
+
+TBD — to be taught.
+
+#### Take profit / exit
+
+TBD — to be taught.
+
+#### Caution flags
+
+TBD — to be taught.
+
+#### TC scanner (architecture sketch)
+
+TC needs its **own scanner** that runs at TWO phases (per user 2026-05-25):
+
+1. **EOD scan, Day 0** (~16:15 ET): Read yesterday's `state/watchlist_ditp_<date>.json` (P2 watchlist), filter to symbols where Day 0 close > `range_high` AND Day 0 candle is bullish. Output: `state/watchlist_tc_<date>.json` (TC candidates pending premarket validation).
+
+2. **Premarket scan, Day +1** (~09:00 ET / T-30 BMO): For each TC candidate, check premarket price action satisfies the "stay above Day 0 high" rule. Output: `state/shortlist_tc_<date>.json` (names eligible to fire at Day +1 open).
+
+3. **Day +1 entry phase** (~09:31 ET): Strategy module evaluates entry triggers on the shortlist. Specific trigger TBD.
+
+The scanner does NOT re-screen the universe — it ingests yesterday's P2 hits (and, once P1 is taught, yesterday's P1 rebound hits).
+
+---
+
+### Setup 2 — P1 (TBD)
 
 Not yet taught.
 
