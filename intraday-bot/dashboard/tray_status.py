@@ -64,7 +64,8 @@ from _common import get_data_root  # noqa: E402
 
 # ---- Tuning ----
 
-POLL_INTERVAL_SEC = 30
+POLL_INTERVAL_SEC = 30        # how often to re-check ingest_log.jsonl
+HEARTBEAT_INTERVAL_SEC = 1.0  # how fast the icon pulses when state == 'running'
 RUNNING_THRESHOLD_SEC = 60    # last entry < 60s ago → actively writing
 IDLE_THRESHOLD_SEC = 600      # last entry < 10 min → idle (between symbols)
                               # last entry > 10 min → stopped
@@ -186,8 +187,12 @@ def get_progress_summary() -> str:
 
 # ---- Icon generation (no .ico files needed — drawn at startup) ----
 
-def _make_circle_icon(color: tuple, size: int = 64) -> Image.Image:
-    """64×64 PNG circle in the given RGBA color. Black 2px outline."""
+def _make_circle_icon(color: tuple, size: int = 64,
+                      inner_dot_radius: int = 0) -> Image.Image:
+    """64×64 PNG circle in the given RGBA color. Black 2px outline.
+    If `inner_dot_radius > 0`, draws a white inner dot of that radius — used
+    for the heartbeat animation (cycling between small/large dot creates a
+    visible pulse so the user can confirm the tray script itself is alive)."""
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     pad = 4
@@ -197,14 +202,36 @@ def _make_circle_icon(color: tuple, size: int = 64) -> Image.Image:
         outline=(0, 0, 0, 255),
         width=2,
     )
+    if inner_dot_radius > 0:
+        cx, cy = size // 2, size // 2
+        r = inner_dot_radius
+        draw.ellipse(
+            [cx - r, cy - r, cx + r, cy + r],
+            fill=(255, 255, 255, 230),
+        )
     return img
 
 
-ICONS = {
-    "running": _make_circle_icon((34, 197, 94, 255)),    # green-500
-    "idle":    _make_circle_icon((250, 204, 21, 255)),   # yellow-400
-    "stopped": _make_circle_icon((239, 68, 68, 255)),    # red-500
-    "unknown": _make_circle_icon((156, 163, 175, 255)),  # gray-400
+# Heartbeat colors (RGBA)
+_GREEN  = (34, 197, 94, 255)    # green-500
+_YELLOW = (250, 204, 21, 255)   # yellow-400
+_RED    = (239, 68, 68, 255)    # red-500
+_GRAY   = (156, 163, 175, 255)  # gray-400
+
+# FRAMES[state] = list of icons to cycle through.
+# - 'running' has 2 frames (small inner dot ↔ large inner dot = heartbeat pulse)
+# - other states are static (single frame, no animation)
+# A pulsing icon proves the TRAY SCRIPT itself is alive — independent signal
+# from the ingest state (color). If the icon freezes mid-pulse, the tray died
+# even if the ingest is healthy.
+FRAMES = {
+    "running": [
+        _make_circle_icon(_GREEN, inner_dot_radius=4),    # heartbeat "rest"
+        _make_circle_icon(_GREEN, inner_dot_radius=11),   # heartbeat "beat"
+    ],
+    "idle":    [_make_circle_icon(_YELLOW)],   # static
+    "stopped": [_make_circle_icon(_RED)],      # static
+    "unknown": [_make_circle_icon(_GRAY)],     # static
 }
 
 
@@ -257,17 +284,51 @@ def _on_quit(icon, item):
 # ---- Main loop ----
 
 def _update_loop(icon: "pystray.Icon"):
-    """Background thread: poll status, update icon + tooltip."""
+    """Background thread: poll status periodically, animate icon continuously.
+
+    Two cadences in one loop:
+      - Status poll every POLL_INTERVAL_SEC (~30s): re-reads ingest_log.jsonl
+      - Heartbeat tick every HEARTBEAT_INTERVAL_SEC (~1s): advances frame index
+
+    When state == 'running', FRAMES['running'] has 2 frames (small/large inner
+    dot) so cycling through them produces a visible pulse — a heartbeat that
+    confirms the tray script is alive. Other states have 1 frame each, so the
+    icon stays static (no point pulsing when nothing's being written).
+    """
+    current_state = "unknown"
+    frame_index = 0
+    last_poll = 0.0
+
     while True:
         try:
-            status = get_ingest_status()
-            icon.icon = ICONS.get(status["state"], ICONS["unknown"])
-            icon.title = f"Ingest: {status['state']} — {status['tooltip']}"
+            now = time.monotonic()
+            # Periodic status refresh (less frequent than animation)
+            if now - last_poll >= POLL_INTERVAL_SEC or _force_refresh.is_set():
+                status = get_ingest_status()
+                new_state = status.get("state", "unknown")
+                icon.title = f"Ingest: {new_state} — {status['tooltip']}"
+                if new_state != current_state:
+                    current_state = new_state
+                    frame_index = 0   # reset animation phase on state change
+                last_poll = now
+                _force_refresh.clear()
+
+            # Advance + apply the current frame
+            frames = FRAMES.get(current_state, FRAMES["unknown"])
+            icon.icon = frames[frame_index % len(frames)]
+            frame_index += 1
+
+            # Static states sleep longer (no animation point) — only re-tick
+            # when the next status poll is due. Running state ticks at the
+            # heartbeat cadence.
+            if len(frames) > 1:
+                time.sleep(HEARTBEAT_INTERVAL_SEC)
+            else:
+                # Sleep until next poll, but allow force-refresh wake-up
+                _force_refresh.wait(timeout=POLL_INTERVAL_SEC)
         except Exception as exc:
             icon.title = f"Ingest tray error: {exc}"
-        # Wait for either the poll interval OR a force-refresh signal
-        _force_refresh.wait(timeout=POLL_INTERVAL_SEC)
-        _force_refresh.clear()
+            time.sleep(POLL_INTERVAL_SEC)
 
 
 def main() -> int:
@@ -283,7 +344,7 @@ def main() -> int:
 
     icon = pystray.Icon(
         "ingest_status",
-        ICONS["unknown"],
+        FRAMES["unknown"][0],
         title="Ingest status (loading...)",
         menu=menu,
     )
