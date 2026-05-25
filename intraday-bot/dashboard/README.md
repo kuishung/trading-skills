@@ -18,6 +18,7 @@ Windows launchers, Desktop-shortcut installer).
 - `_supervise_dashboard.bat` — supervisor loop. Re-launches `server.py` on exit code 100 (Restart signal). Underscore-prefixed name reflects that users don't invoke it directly — `start_dashboard.bat` spawns it minimised.
 - `setup_launcher.py` — one-time launcher installer. Drops `.lnk` files in TWO places: (a) the user's real Desktop (handles OneDrive / AD-redirected Desktops) and (b) this `dashboard/` folder itself, so the shortcut sits next to its target and shows up the moment you navigate into the synced folder on any PC. The in-folder `.lnk` files are gitignored (absolute paths are per-PC). Run once per PC after a fresh Dropbox sync.
 - `Intraday Bot Dashboard.lnk` / `Intraday Bot Dashboard (stop).lnk` — created by `setup_launcher.py`. Gitignored. Double-click to launch / stop the dashboard.
+- `tray_status.py` — Windows system-tray icon for the ingest pipeline. Polls `data/ingest_log.jsonl` every 30s, animates a heartbeat pulse when actively writing (green), idle (yellow), stopped (red), or unknown (gray). Right-click menu exposes Show Status / Refresh Now / Reset Milestones / Open Log File / Open Watcher Log / Quit. Fires Windows toast notifications when count milestones (50/100/250/500/1000 symbols) or letter-group completions are crossed. Run with `py -3.12 dashboard/tray_status.py`. Independent of `server.py` — runs anywhere with a desktop session (laptop or Hermes RDP).
 
 ## URLs
 
@@ -27,6 +28,17 @@ Windows launchers, Desktop-shortcut installer).
 - `http://localhost:8000/bot/enable` / `/bot/arm` — GET to inspect, POST to toggle
 
 ## Changelog
+
+### 2026-05-25 — Tray-icon milestone toasts + current-run gap detection
+
+- User rules (chat 2026-05-25): *"the tray icon, i need it to be have heatbeat so that i would know the ingestion is working"* and *"i need the status bar to tell me a milestone"*. Heartbeat shipped earlier today (commit `7917c45` — a pulsing inner dot on the green "running" state, animation cycles at 1Hz, proves the tray script itself is alive independent of ingest state). Today's follow-up adds **milestone toasts** so the user gets explicit notifications as the 180-day re-seed progresses through the alphabet.
+- **Count milestones** at 50 / 100 / 250 / 500 / 1000 symbols — Windows toast fires once per crossed threshold. *"Ingest milestone: 100 symbols — currently on BAC (letter B)."*
+- **Letter-completion milestones** — each time a letter group fully clears (last symbol from that letter is past), a toast announces the completion: *"Letter A done. Now on B. ETA 60h."*
+- **State persisted** in `state/tray_milestone.json` (gitignored) so each threshold fires exactly once across tray restarts. The right-click menu's new **Reset Milestones** item clears the file so the next thresholds re-fire — useful after a manual re-run or when smoke-testing.
+- **Gap-detection for "current run"** — naïve symbol-counting in a 72-hour lookback window double-counted because the laptop's 14-day ingest yesterday + the Hermes 180-day re-seed today both landed inside the window (`symbols_done = 1514` was the pathological number). `get_progress()` now walks backward through the timestamps; the latest gap > 1 hour between writes marks the boundary between this run and whatever came before. Only entries after that boundary count toward `symbols_done`, `letters_done`, `rate_per_hour`, and `eta_hours`. Smoke test at landing: 5 syms in the current run (started 10:35 UTC, currently on BDX) vs the bogus 1514 before the fix.
+- **Tooltip rewritten** to show the current-run window cleanly: `"BDX | letter B (0 done) | 5 syms in run | +3185 bars"` (running) / `"BDX | 5 syms in run | letter B | 3m idle"` (idle).
+- New module constants: `LOOKBACK_HOURS = 72`, `COUNT_MILESTONES = [50, 100, 250, 500, 1000]`, `RUN_GAP_THRESHOLD_SEC = 3600`, `MILESTONE_STATE_PATH = state/tray_milestone.json`.
+- The `_update_loop()` calls `_check_and_fire_milestones()` after every status poll; toast errors are swallowed so a glitch never kills the tray.
 
 ### 2026-05-24 — Chart overlays: DITP prior-day key levels (D / E / F) + confluence annotation
 

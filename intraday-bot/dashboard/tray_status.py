@@ -70,6 +70,188 @@ RUNNING_THRESHOLD_SEC = 60    # last entry < 60s ago → actively writing
 IDLE_THRESHOLD_SEC = 600      # last entry < 10 min → idle (between symbols)
                               # last entry > 10 min → stopped
 
+# Milestone tracking — fire a Windows toast notification when these thresholds
+# are crossed (only once per threshold, persisted in state/tray_milestone.json).
+LOOKBACK_HOURS = 72           # window for counting "current run" symbols
+COUNT_MILESTONES = [50, 100, 250, 500, 1000]   # symbols-done thresholds
+MILESTONE_STATE_PATH = SKILL_DIR / "state" / "tray_milestone.json"
+
+
+# ---- Progress + milestone tracking ----
+
+def _load_milestone_state() -> dict:
+    """Read which milestones have already been notified for the current run.
+    File schema: {'counts_fired': [50, 100, ...], 'letters_done': ['A', 'B', ...]}.
+    Returns empty state if file missing/corrupt."""
+    if MILESTONE_STATE_PATH.exists():
+        try:
+            return json.loads(MILESTONE_STATE_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {"counts_fired": [], "letters_done": []}
+
+
+def _save_milestone_state(state: dict) -> None:
+    try:
+        MILESTONE_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        MILESTONE_STATE_PATH.write_text(json.dumps(state), encoding="utf-8")
+    except Exception:
+        pass
+
+
+RUN_GAP_THRESHOLD_SEC = 3600   # 1-hour gap = a different run; bound the count to "current run" only
+
+
+def get_progress() -> dict:
+    """Count symbols touched in the CURRENT run, identify the current letter,
+    and compute approximate rate / ETA.
+
+    "Current run" detection: read all ingest_log entries in the last
+    LOOKBACK_HOURS, then find the most-recent gap > RUN_GAP_THRESHOLD_SEC
+    (default 1 hour). Everything AFTER that gap counts as the current run;
+    earlier entries are treated as a different previous run.
+
+    This way a yesterday-14d-run + today-180d-rerun-after-restart doesn't
+    double-count — the user sees only the current session's progress.
+
+    Returns:
+      symbols_done : int  — unique symbols touched in current run
+      letters_done : list[str]  — first-letter groups fully past
+      current_letter : str | None
+      latest_symbol  : str | None
+      rate_per_hour  : float | None
+      eta_hours      : float | None
+      run_started_at : str | None — ISO timestamp of the current run's first entry
+    """
+    EMPTY = {
+        "symbols_done": 0, "letters_done": [],
+        "current_letter": None, "latest_symbol": None,
+        "rate_per_hour": None, "eta_hours": None,
+        "run_started_at": None,
+    }
+    log_path = get_data_root() / "ingest_log.jsonl"
+    if not log_path.exists():
+        return EMPTY
+
+    cutoff = datetime.now(timezone.utc).timestamp() - LOOKBACK_HOURS * 3600
+    raw: list[tuple[datetime, str]] = []   # (ts, symbol) chronological
+    try:
+        with log_path.open(encoding="utf-8") as f:
+            for line in f:
+                try:
+                    e = json.loads(line)
+                    ts = datetime.fromisoformat(e["ts"])
+                    if ts.timestamp() < cutoff:
+                        continue
+                    raw.append((ts, e["symbol"]))
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
+    if not raw:
+        return EMPTY
+
+    # Find the latest run-boundary (gap > threshold) — walk backward from
+    # the end, the first gap we hit is the boundary between this run and
+    # whatever came before.
+    run_start_idx = 0
+    for i in range(len(raw) - 1, 0, -1):
+        gap_sec = (raw[i][0] - raw[i - 1][0]).total_seconds()
+        if gap_sec > RUN_GAP_THRESHOLD_SEC:
+            run_start_idx = i
+            break
+
+    current_run = raw[run_start_idx:]
+
+    # First-appearance order WITHIN the current run only
+    seen: set[str] = set()
+    syms_in_order: list[tuple[str, datetime]] = []
+    for ts, sym in current_run:
+        if sym not in seen:
+            seen.add(sym)
+            syms_in_order.append((sym, ts))
+
+    if not syms_in_order:
+        return EMPTY
+
+    latest_symbol, latest_ts = syms_in_order[-1]
+    current_letter = latest_symbol[0].upper() if latest_symbol else None
+    letters_seen = sorted({s[0].upper() for s, _ in syms_in_order})
+    letters_done = [L for L in letters_seen if current_letter and L < current_letter]
+
+    first_ts = syms_in_order[0][1]
+    elapsed_hours = (latest_ts - first_ts).total_seconds() / 3600
+    rate_per_hour = (len(syms_in_order) / elapsed_hours) if elapsed_hours > 0.1 else None
+    eta_hours = None
+    if rate_per_hour and rate_per_hour > 0:
+        try:
+            import bars_store  # type: ignore
+            target = len(bars_store.list_symbols("daily"))
+        except Exception:
+            target = 1519
+        remaining = max(0, target - len(syms_in_order))
+        eta_hours = remaining / rate_per_hour
+
+    return {
+        "symbols_done": len(syms_in_order),
+        "letters_done": letters_done,
+        "current_letter": current_letter,
+        "latest_symbol": latest_symbol,
+        "rate_per_hour": rate_per_hour,
+        "eta_hours": eta_hours,
+        "run_started_at": first_ts.isoformat(),
+    }
+
+
+def _check_and_fire_milestones(icon, prog: dict) -> None:
+    """Compare current progress against persisted milestone state.
+    Fire ONE Windows notification per crossed milestone, persist what fired."""
+    state = _load_milestone_state()
+    fired_any = False
+
+    # Count-based milestones
+    counts_fired = set(state.get("counts_fired", []))
+    for threshold in COUNT_MILESTONES:
+        if prog["symbols_done"] >= threshold and threshold not in counts_fired:
+            icon.notify(
+                f"{prog['symbols_done']} symbols done — currently on "
+                f"{prog['latest_symbol']} (letter {prog['current_letter']}).",
+                title=f"Ingest milestone: {threshold} symbols",
+            )
+            counts_fired.add(threshold)
+            fired_any = True
+    state["counts_fired"] = sorted(counts_fired)
+
+    # Letter-completion milestones
+    letters_done_now = set(prog["letters_done"])
+    letters_already_announced = set(state.get("letters_done", []))
+    newly_done = letters_done_now - letters_already_announced
+    for letter in sorted(newly_done):
+        eta_msg = ""
+        if prog.get("eta_hours") is not None:
+            eta_msg = f" ETA {prog['eta_hours']:.0f}h."
+        icon.notify(
+            f"Letter {letter} done. Now on {prog['current_letter']}.{eta_msg}",
+            title=f"Ingest milestone: letter {letter} complete",
+        )
+        fired_any = True
+    state["letters_done"] = sorted(letters_done_now | letters_already_announced)
+
+    if fired_any:
+        _save_milestone_state(state)
+
+
+def reset_milestone_state() -> None:
+    """Clear persisted milestone state. Called via right-click menu when the
+    user wants to re-announce milestones on the next thresholds crossed
+    (e.g., after a manual rerun)."""
+    try:
+        if MILESTONE_STATE_PATH.exists():
+            MILESTONE_STATE_PATH.unlink()
+    except Exception:
+        pass
+
 
 # ---- Status snapshot ----
 
@@ -111,15 +293,37 @@ def get_ingest_status() -> dict:
         bars = entry.get("bars_added", 0)
         err = entry.get("error", "")
 
-        # Short tooltip (Windows truncates long ones)
+        # Pull current-run progress (count + current letter) for the tooltip.
+        # Cheap-ish — re-reads the same log we just scanned. Wrapped in try
+        # so a glitch here doesn't break the basic status display.
+        try:
+            prog = get_progress()
+            done = prog["symbols_done"]
+            cur_letter = prog["current_letter"] or "?"
+            n_letters_done = len(prog["letters_done"])
+        except Exception:
+            prog = None
+            done = 0
+            cur_letter = "?"
+            n_letters_done = 0
+
+        # Tooltip — Windows truncates ~127 chars, keep compact
         if state == "running":
-            tooltip = f"{sym} (+{bars} bars, {age_sec:.0f}s ago)"
+            tooltip = (
+                f"{sym} | letter {cur_letter} ({n_letters_done} done) "
+                f"| {done} syms in run | +{bars} bars"
+            )
         elif state == "idle":
-            tooltip = f"{sym} ({age_sec/60:.1f}min ago) — between symbols"
+            tooltip = (
+                f"{sym} | {done} syms in run | letter {cur_letter} "
+                f"| {age_sec/60:.0f}m idle"
+            )
         else:
-            tooltip = f"{sym} ({age_sec/60:.0f}min ago) — likely stopped"
+            tooltip = (
+                f"{sym} | {done} syms in run | stalled {age_sec/60:.0f}m"
+            )
         if err:
-            tooltip = f"ERR: {err[:40]}"
+            tooltip = f"ERR: {err[:50]}"
 
         return {
             "state": state,
@@ -130,6 +334,7 @@ def get_ingest_status() -> dict:
             "age_sec": age_sec,
             "bars_added": bars,
             "error": err,
+            "progress": prog,
         }
     except Exception as exc:
         return {
@@ -277,6 +482,14 @@ def _on_refresh_now(icon, item):
     _force_refresh.set()
 
 
+def _on_reset_milestones(icon, item):
+    """Clear which milestones have already fired. Useful after a manual run
+    or when you want to re-test the toast notifications."""
+    reset_milestone_state()
+    icon.notify("Milestone history cleared — next thresholds will fire fresh.",
+                title="Milestones reset")
+
+
 def _on_quit(icon, item):
     icon.stop()
 
@@ -310,6 +523,13 @@ def _update_loop(icon: "pystray.Icon"):
                 if new_state != current_state:
                     current_state = new_state
                     frame_index = 0   # reset animation phase on state change
+                # Fire milestone toast(s) if we just crossed a threshold
+                prog = status.get("progress")
+                if prog and prog.get("symbols_done", 0) > 0:
+                    try:
+                        _check_and_fire_milestones(icon, prog)
+                    except Exception:
+                        pass  # never let milestone errors kill the tray
                 last_poll = now
                 _force_refresh.clear()
 
@@ -335,6 +555,7 @@ def main() -> int:
     menu = pystray.Menu(
         pystray.MenuItem("Show Status", _on_show_status, default=True),
         pystray.MenuItem("Refresh Now", _on_refresh_now),
+        pystray.MenuItem("Reset Milestones", _on_reset_milestones),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Open Log File", _on_open_log),
         pystray.MenuItem("Open Watcher Log", _on_open_watcher_log),
