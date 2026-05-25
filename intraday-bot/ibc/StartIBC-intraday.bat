@@ -64,22 +64,29 @@ if "%TWS_PATH%"=="" (
 )
 
 REM Determine which IB app we're launching (gateway / tws) from config.
-REM [Console]::Write avoids trailing CR/LF in the captured value.
+REM Used to select which IBC start script (StartGateway.bat vs StartTWS.bat).
 for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::Write(((Get-Content '%CONFIG_JSON%' -Raw ^| ConvertFrom-Json).ibkr_app_type))"`) do (
     set "APP_TYPE=%%i"
 )
 if "%APP_TYPE%"=="" set "APP_TYPE=gateway"
 if /i "%APP_TYPE%"=="gateway" (
-    set "APP_EXE=ibgateway.exe"
     set "MODERN_START=StartGateway.bat"
 ) else (
-    set "APP_EXE=tws.exe"
     set "MODERN_START=StartTWS.bat"
+)
+
+REM Derive the exe filename from ibkr_gateway_path's basename — IB's newer
+REM installers may name the exe with a version suffix (e.g., ibgateway1.exe
+REM on Gateway 10.45+ to support multi-version installs). Don't hardcode.
+for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::Write((Split-Path -Leaf ((Get-Content '%CONFIG_JSON%' -Raw ^| ConvertFrom-Json).ibkr_gateway_path)))"`) do (
+    set "APP_EXE=%%i"
 )
 
 if not exist "%TWS_PATH%\%APP_EXE%" (
     echo ERROR: %APP_EXE% not found at %TWS_PATH%
-    echo Install IB %APP_TYPE% and update cfg.ibkr_gateway_path in config.json.
+    echo Install IB %APP_TYPE% and update cfg.ibkr_gateway_path in config.json
+    echo to the actual installed exe path. Newer IB Gateway versions use
+    echo ibgateway1.exe instead of ibgateway.exe.
     exit /b 1
 )
 
