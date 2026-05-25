@@ -29,6 +29,19 @@ Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-05-25 — Tray icon: percentage number rendered directly on the icon
+
+- User follow-up: *"to in the tray icon to show me the total ingestion percentage done"* — the outer arc gave a visual sense of progress but no exact number until you hovered for the tooltip. Now the percentage is drawn **into the icon itself** so a glance at the tray tells you "47%" without any hover.
+- **`_make_circle_icon()` gains percentage text rendering.** Centered, bold (Segoe UI Bold → Arial Bold → PIL default fallback chain), white with 1px black halo so it's legible against any state color. Auto-shrinks from 22px to 18px at 100% so "100%" fits without bleeding off the icon.
+- **Below 1% (rounds to "0%") the text is suppressed** — showing "0%" when the run has actually done a few symbols would be misleading. The arc starts being visible around 1-2% anyway, so the icon never looks "empty + ingest running" at the same time.
+- **Heartbeat moved from inner dot to background brightness pulse.** The inner dot occupied the icon center, but that's now reserved for the percentage text. Heartbeat now manifests as the colored fill lightening ~12% every other frame — same 1Hz cadence, same proof-of-life signal, just at the perimeter instead of the center. `heartbeat_phase` (0 or 1) replaces the old `inner_dot_radius` parameter.
+- **Four signals composed in one icon now:**
+  - Fill color = ingest state (green/yellow/red/gray)
+  - Outer arc = progress (continuous visual)
+  - Centered text = progress (exact number)
+  - Background brightness pulse = tray-script-alive (running only)
+- **`ImageFont` lazy-loaded** at icon-draw time; falls back gracefully if no TTF fonts are installed (would only happen on a stripped-down Windows install).
+
 ### 2026-05-25 — Tray icon: outer progress arc + N/target tooltip
 
 - User clarified that "milestone" meant a **persistent visible progress indicator**, not just toasts at thresholds — *"what i mean milestone is like a status bar of the ingestion"*. Toasts only fire at 50/100/250/500/1000; between those there was no at-a-glance way to see how far through 1519 symbols the run was without right-click → Show Status or hovering for the tooltip.

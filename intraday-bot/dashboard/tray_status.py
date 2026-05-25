@@ -53,12 +53,26 @@ del _root, _p
 
 try:
     import pystray  # type: ignore
-    from PIL import Image, ImageDraw  # type: ignore
+    from PIL import Image, ImageDraw, ImageFont  # type: ignore
 except ImportError as exc:
     sys.exit(
         f"Missing dependency: {exc}\n"
         "Install with: py -3.12 -m pip install pystray Pillow"
     )
+
+
+def _load_bold_font(size_px: int):
+    """Find a bold TrueType font for the percentage label.
+
+    Tries Segoe UI Bold first (default on every modern Windows including
+    Server 2019), then Arial Bold, falls back to PIL's bitmap font.
+    The bitmap fallback won't scale, but at least the icon still renders."""
+    for name in ("seguibd.ttf", "arialbd.ttf", "tahomabd.ttf"):
+        try:
+            return ImageFont.truetype(name, size_px)
+        except Exception:
+            continue
+    return ImageFont.load_default()
 
 from _common import get_data_root  # noqa: E402
 
@@ -412,34 +426,43 @@ def get_progress_summary() -> str:
 # ---- Icon generation (no .ico files needed — drawn at startup) ----
 
 def _make_circle_icon(color: tuple, size: int = 64,
-                      inner_dot_radius: int = 0,
-                      progress: float = 0.0) -> Image.Image:
+                      progress: float = 0.0,
+                      heartbeat_phase: int = 0) -> Image.Image:
     """64×64 PNG circle in the given RGBA color. Black 2px outline.
 
-    If `inner_dot_radius > 0`, draws a white inner dot of that radius — used
-    for the heartbeat animation (cycling between small/large dot creates a
-    visible pulse so the user can confirm the tray script itself is alive).
+    Composes up to FOUR visible signals into one icon:
 
-    If `progress > 0.0`, draws a white outer arc starting at 12 o'clock and
-    sweeping clockwise — fills as a visible progress indicator. 0.5 = half
-    ring, 1.0 = full ring. The arc sits just inside the black outline so it
-    reads as a "status bar wrapped around the icon"."""
+    - **Fill color** = ingest state (green/yellow/red/gray)
+    - **Outer white arc** = progress fraction (0.0 → 1.0 fills the ring
+      clockwise from 12 o'clock). Sits just inside the black outline.
+    - **Centered percentage text** ("22%" / "100%") = numeric progress, drawn
+      bold white with black outline for legibility on any background.
+    - **Subtle fill brightening on heartbeat_phase=1** = proof-of-life pulse.
+      Alternating phases create a visible breath; the colored circle is the
+      pulse surface, since the percentage text replaced the old inner dot."""
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     pad = 4
+
+    # Heartbeat pulse: lighten the fill ~12% on the "beat" phase.
+    fill = color
+    if heartbeat_phase > 0:
+        r, g, b, a = color
+        fill = (min(255, r + 30), min(255, g + 30), min(255, b + 30), a)
+
     draw.ellipse(
         [pad, pad, size - pad, size - pad],
-        fill=color,
+        fill=fill,
         outline=(0, 0, 0, 255),
         width=2,
     )
-    # Progress arc — drawn ON TOP of the colored circle, just inside its
-    # black outline. White for max contrast against any state color.
+
+    # Outer progress arc — sits inside the black outline so it reads as a
+    # "ring around the icon". White for max contrast against any state color.
     if progress > 0.0:
         progress = max(0.0, min(1.0, progress))
-        arc_inset = pad + 3   # 7px from edge = sits inside the outline ring
-        # PIL angles: 0° = 3 o'clock, clockwise. We want 12 o'clock start,
-        # so subtract 90°. End angle sweeps clockwise by `progress * 360`.
+        arc_inset = pad + 3
+        # PIL angles: 0° = 3 o'clock, clockwise. We want 12 o'clock start.
         start = -90
         end = -90 + (360 * progress)
         draw.arc(
@@ -448,13 +471,37 @@ def _make_circle_icon(color: tuple, size: int = 64,
             fill=(255, 255, 255, 255),
             width=4,
         )
-    if inner_dot_radius > 0:
-        cx, cy = size // 2, size // 2
-        r = inner_dot_radius
-        draw.ellipse(
-            [cx - r, cy - r, cx + r, cy + r],
-            fill=(255, 255, 255, 230),
-        )
+
+    # Percentage text — only draw when progress rounds to >= 1%. Below that,
+    # showing "0%" would be misleading (it's NOT zero, just very small).
+    if progress >= 0.005:
+        pct = int(round(progress * 100))
+        text = f"{pct}%"
+        # Auto-shrink font for 100% (4 chars) so it doesn't bleed off the
+        # icon. 22px works for 1-99%; bumps down to 18px once we hit 100%.
+        font = _load_bold_font(18 if pct >= 100 else 22)
+
+        # Centre using textbbox (Pillow ≥ 10.0)
+        try:
+            bbox = draw.textbbox((0, 0), text, font=font)
+            text_w = bbox[2] - bbox[0]
+            text_h = bbox[3] - bbox[1]
+            x = (size - text_w) // 2 - bbox[0]
+            y = (size - text_h) // 2 - bbox[1]
+        except AttributeError:
+            # Pillow < 10 fallback — coarse centering
+            text_w, text_h = draw.textsize(text, font=font)  # type: ignore[attr-defined]
+            x = (size - text_w) // 2
+            y = (size - text_h) // 2
+
+        # Black halo for legibility against any state color, then white fill
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                if dx == 0 and dy == 0:
+                    continue
+                draw.text((x + dx, y + dy), text, font=font, fill=(0, 0, 0, 255))
+        draw.text((x, y), text, font=font, fill=(255, 255, 255, 255))
+
     return img
 
 
@@ -475,21 +522,22 @@ _STATE_COLORS = {
 def _icon_for(state: str, frame_index: int, progress: float) -> Image.Image:
     """Build the tray icon for the current (state, heartbeat phase, progress).
 
-    Three visible signals composed in one icon:
+    Four visible signals composed in one icon:
       - **Color** = ingest state (green/yellow/red/gray)
-      - **Inner dot pulse** (running only) = tray script is alive (heartbeat)
-      - **Outer arc** = % of universe symbols processed in the current run
+      - **Centered % text** = numeric progress (1% – 100%)
+      - **Outer arc** = same progress as a visual gauge
+      - **Background pulse** (running only) = tray script is alive (heartbeat)
+        — the fill brightens slightly every other frame
 
     Why compose dynamically instead of pre-rendering: progress changes every
     poll, so we can't cache the full icon set. PIL renders a 64×64 image in
     ~1-2ms — cheap enough to redo on every heartbeat tick (1Hz) or status
     poll (every 30s for static states)."""
     color = _STATE_COLORS.get(state, _GRAY)
-    inner_dot = 0
-    if state == "running":
-        # 2-phase heartbeat: small dot ↔ large dot
-        inner_dot = 4 if (frame_index % 2 == 0) else 11
-    return _make_circle_icon(color, inner_dot_radius=inner_dot, progress=progress)
+    # Background brightness pulse: only when running. Other states are static
+    # — no point pulsing when nothing's being written.
+    heartbeat_phase = (frame_index % 2) if state == "running" else 0
+    return _make_circle_icon(color, progress=progress, heartbeat_phase=heartbeat_phase)
 
 
 # ---- Menu actions ----
