@@ -195,8 +195,19 @@ print('vault_dir resolves to:', _vault_root())
 
 ### 7. Install IB Gateway (not TWS)
 - Download IB Gateway from <https://www.interactivebrokers.com/en/trading/ibgateway-stable.php> (paper trading version)
-- Install with defaults
+- Install with defaults (lands at `C:\Jts\ibgateway\<version>\`)
 - **Do NOT launch it manually** — IBC will manage it
+
+**Important — newer Gateway versions use `ibgateway1.exe` (with a "1" suffix).** After install, check the actual exe filename:
+```powershell
+Get-ChildItem "C:\Jts\ibgateway" -Directory | ForEach-Object {
+    Get-ChildItem "$($_.FullName)\ibgateway*.exe" | Select-Object FullName
+}
+```
+- IB Gateway 10.44 and older: `ibgateway.exe`
+- IB Gateway 10.45 and newer: `ibgateway1.exe` (multi-version coexistence convention)
+
+Update `config.json`'s `ibkr_gateway_path` to the exact filename you see. The `StartIBC-intraday.bat` derives the launcher's expected name from this config, so it'll handle either convention transparently.
 
 ### 8. Configure IBC (Interactive Brokers Controller)
 IBC lives in `intraday-bot/ibc/` — already configured. Adapt config for Hermes:
@@ -322,6 +333,93 @@ The watcher + ingest continue even if you RDP out. Re-RDP in any time to check p
 
 ---
 
+## Phase 4 — Time-share scheduled tasks (laptop TWS + Hermes IBC coexistence)
+
+User has only ONE IBKR data subscription, so laptop's TWS and Hermes's IB Gateway can't both hold the session simultaneously. The agreed solution: **time-share**.
+
+- **Daily 16:15 ET** (= 04:15 MYT next day, EDT) — Hermes auto-starts IBC, begins ingest
+- **Daily 08:30 ET** (= 20:30 MYT same day, EDT) — Hermes auto-stops IBC, releases session 1 hour before US market open
+- **08:30 → 16:00 ET** — user uses laptop TWS for manual trading
+- **Daily 16:00 ET** — user's laptop scheduled task auto-closes TWS (5 min before Hermes restart)
+
+### Register the Hermes-side tasks (one-time on Hermes, Admin PowerShell)
+
+**Task: Hermes-IBC-Stop-PreMarket** (kills IB Gateway daily at 20:30 MYT):
+```powershell
+$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -Command `"Get-Process | Where-Object {`$_.Name -in 'java','javaw','ibgateway'} | Stop-Process -Force`""
+$trigger = New-ScheduledTaskTrigger -Daily -At "8:30 PM"
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -Compatibility Win8
+$principal = New-ScheduledTaskPrincipal -UserId "$env:USERNAME" -LogonType Interactive -RunLevel Highest
+Register-ScheduledTask -TaskName "Hermes-IBC-Stop-PreMarket" `
+    -Action $action -Trigger $trigger -Settings $settings -Principal $principal `
+    -Description "Kill IB Gateway daily 1 hour before US market open (08:30 ET)" -Force
+```
+
+**Task: Hermes-IBC-Start-PostMarket** (launches IBC daily at 04:15 MYT):
+```powershell
+$action2 = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c C:\ClaudeSkills\trading-skills\intraday-bot\ibc\StartIBC-intraday.bat" -WorkingDirectory "C:\ClaudeSkills\trading-skills\intraday-bot"
+$trigger2 = New-ScheduledTaskTrigger -Daily -At "4:15 AM"
+$settings2 = New-ScheduledTaskSettingsSet -StartWhenAvailable -Compatibility Win8
+$principal2 = New-ScheduledTaskPrincipal -UserId "$env:USERNAME" -LogonType Interactive -RunLevel Highest
+Register-ScheduledTask -TaskName "Hermes-IBC-Start-PostMarket" `
+    -Action $action2 -Trigger $trigger2 -Settings $settings2 -Principal $principal2 `
+    -Description "Launch IBC + IB Gateway daily 15 min after US market close (16:15 ET)" -Force
+```
+
+Note: `-Compatibility Win8` (NOT `Win10`) — Server 2019's PowerShell `CompatibilityEnum` only allows `At, V1, Vista, Win7, Win8`. Win8 is functionally sufficient for our use.
+
+### DST robustness (one-time GUI tweak, recommended)
+
+The PowerShell triggers use local MYT time (4:15 AM / 8:30 PM), which works during EDT (March–November) but will be 1 hour off during EST. To make them DST-proof:
+
+1. Open Task Scheduler GUI (Win+R → `taskschd.msc`)
+2. Find both `Hermes-IBC-*` tasks under Task Scheduler Library
+3. Right-click each → Properties → Triggers tab → Edit
+4. Check **"Synchronize across time zones"**, set timezone to **(UTC-05:00) Eastern Time (US & Canada)**, set time to **08:30** (Stop task) or **16:15** (Start task)
+5. OK to save
+
+After this, tasks auto-handle the November and March DST transitions.
+
+### Laptop-side task (set up on the laptop, not Hermes)
+
+Daily TWS auto-close at 16:00 ET:
+- Task Scheduler GUI → Create Task → name: `TWS-AutoClose`
+- Trigger: Daily, 16:00, "Synchronize across time zones" + US Eastern
+- Action: `taskkill.exe` with arguments `/F /IM tws.exe`
+- 5-min buffer before Hermes's 16:15 ET start gives IBKR session cleanup time
+
+### Verify both Hermes tasks are registered
+
+```powershell
+Get-ScheduledTask -TaskName "Hermes-IBC-*" | Select-Object TaskName, State, @{N='NextRun';E={(Get-ScheduledTaskInfo $_).NextRunTime}}
+```
+
+Expected: two rows, both `Ready`, with next-run times tonight (Stop) and tomorrow morning (Start).
+
+### Optional Task 3 — auto-launch the ingest after IBC starts
+
+The Start task only launches IBC (the Gateway). The actual `ibkr_history.py update` ingest needs to be triggered separately. Either:
+
+(a) **Manual re-launch** each morning after waking — open PS on Hermes, paste the smart-filter + Start-Process commands.
+
+(b) **Add a third scheduled task** that fires ~10 min after Start (i.e., 04:25 MYT / 16:25 ET) and runs a wrapper PS script. Cleanest if you don't want manual intervention:
+
+```powershell
+# TODO: create scripts/launch_ingest_hermes.ps1 wrapper, then register:
+$action3 = New-ScheduledTaskAction -Execute "powershell.exe" `
+    -Argument "-NoProfile -File C:\ClaudeSkills\trading-skills\intraday-bot\scripts\launch_ingest_hermes.ps1" `
+    -WorkingDirectory "C:\ClaudeSkills\trading-skills\intraday-bot"
+$trigger3 = New-ScheduledTaskTrigger -Daily -At "4:25 AM"
+# ... rest same as Tasks 1+2 ...
+Register-ScheduledTask -TaskName "Hermes-Ingest-Daily" `
+    -Action $action3 -Trigger $trigger3 -Settings $settings3 -Principal $principal3 `
+    -Description "Daily incremental ingest, runs 10 min after IBC starts" -Force
+```
+
+Decision deferred — wrapper script TBD when needed.
+
+---
+
 ## Daily operations (after the 180-day re-seed completes)
 
 ### Incremental updates (every market day)
@@ -427,6 +525,22 @@ When any of these become needed, add a new phase to this doc rather than scatter
 ---
 
 ## Changelog
+
+### 2026-05-25 — Phase 4 (scheduled tasks) + ibgateway1.exe quirk + bug fixes
+
+End-to-end Hermes setup completed. Bot ingest is running autonomously. Five bugs found + fixed during the build, all reflected in the .bat files and `bars_store.py` already shipped:
+
+1. **IBC's `Start{Gateway,TWS}.bat` had hardcoded laptop worktree paths** baked in by IBC's installer at the time of original install (D:\Dropbox\...\GUNS\.claude\worktrees\...). Replaced with `%~dp0` for portability. Commit `cceb0bf`.
+
+2. **Python 3.14 + ib_insync incompatibility** — eventkit's `asyncio.get_event_loop()` raises on 3.14, so any IBKR-touching script must use `py -3.12` explicitly. Already documented in CLAUDE.md. `hermes_health.py` detects this and emits a helpful warning.
+
+3. **Cmd `for /f` + nested-parens + escaped-pipe = PowerShell parser hell.** The original .bat used PowerShell ConvertFrom-Json inline with `^|` escaping, which got mangled when cmd interpreted the backquoted block. Replaced all 4 config reads with Python (`py -3.12 -c "import json,sys; sys.stdout.write(...)"`) — simpler, no escaping gymnastics, no trailing-newline issues. Commit `eba3621`.
+
+4. **IB Gateway 10.45+ installer creates `ibgateway1.exe` (with "1" suffix)**, not `ibgateway.exe`. The .bat now derives the exe name from `cfg.ibkr_gateway_path`'s basename via `os.path.basename(...)`, so any version's naming convention works without code edits. Commits `8e56ae2`, then `3199558`. Phase 2 step 7 docs updated to explain this.
+
+5. **Windows reserves filenames `CON`, `PRN`, `AUX`, `NUL`, `COM1-9`, `LPT1-9`** as device aliases. `CON` is an actual S&P-universe ticker, so its parquet file fails to open via standard Win32 APIs (WinError 87). `bars_store.py` now transparently encodes reserved-name symbols with a leading underscore on disk (CON → `_CON.parquet`), reverse-mapped in `list_symbols()`. Logical ticker stays "CON" throughout the rest of the bot. Commit `3199558`.
+
+Setup completion includes Phase 4: daily scheduled tasks for the IBKR session time-share (Hermes 16:15→08:30 ET, laptop TWS 08:30→16:00 ET). Documented above.
 
 ### 2026-05-24 — Vendor credentials (alpaca.env, intraday-premarket.env, credentials.txt) also move to HermesSync/Vault/
 
