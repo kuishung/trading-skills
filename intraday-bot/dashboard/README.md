@@ -29,6 +29,15 @@ Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-05-25 — Tray icon: outer progress arc + N/target tooltip
+
+- User clarified that "milestone" meant a **persistent visible progress indicator**, not just toasts at thresholds — *"what i mean milestone is like a status bar of the ingestion"*. Toasts only fire at 50/100/250/500/1000; between those there was no at-a-glance way to see how far through 1519 symbols the run was without right-click → Show Status or hovering for the tooltip.
+- **Outer progress arc.** `_make_circle_icon()` gains a `progress: float` parameter (0.0-1.0). When > 0, draws a white 4px arc starting at 12 o'clock and sweeping clockwise inside the black outline. 50% progress = half ring, 100% = full ring. Visible alongside the color (state) and inner-dot pulse (heartbeat) — three signals composed in one 64×64 icon.
+- **Dynamic icon generation.** Previously `FRAMES[state]` was a precomputed list of icons rebuilt once at module load. Progress changes every poll, so pre-rendering doesn't work. Replaced with `_icon_for(state, frame_index, progress) -> Image.Image` that composes the icon on demand. PIL renders ~1-2ms per 64×64, cheap at the 1Hz heartbeat tick.
+- **`get_progress()` now returns `target` + `progress_fraction`.** Target = universe size via `bars_store.list_symbols('daily')` (1519 on the current laptop seed). Progress fraction clamped to [0, 1]. Both fed to the icon renderer and the tooltip.
+- **Tooltip reframed as a progress bar:** `"BCC | 22/1519 (1%) | letter A (0 done) | +2731 bars"` instead of the old `"BCC | letter B (1 done) | 25 syms in run | +3185 bars"`. The denominator + percent make it read as progress, not just a counter.
+- **Heartbeat + milestone toasts unchanged** — the arc is additive, not a replacement. Toasts still fire at 50/100/250/500/1000; the arc gives a continuous signal between thresholds.
+
 ### 2026-05-25 — Tray-icon milestone toasts + current-run gap detection
 
 - User rules (chat 2026-05-25): *"the tray icon, i need it to be have heatbeat so that i would know the ingestion is working"* and *"i need the status bar to tell me a milestone"*. Heartbeat shipped earlier today (commit `7917c45` — a pulsing inner dot on the green "running" state, animation cycles at 1Hz, proves the tray script itself is alive independent of ingest state). Today's follow-up adds **milestone toasts** so the user gets explicit notifications as the 180-day re-seed progresses through the alphabet.

@@ -193,6 +193,17 @@ def get_progress() -> dict:
         remaining = max(0, target - len(syms_in_order))
         eta_hours = remaining / rate_per_hour
 
+    # Target denominator for the progress bar — universe size (daily parquet
+    # count). Cached above for ETA; reuse here so the arc/tooltip have the
+    # same N as the ETA math.
+    try:
+        import bars_store  # type: ignore
+        target = len(bars_store.list_symbols("daily"))
+    except Exception:
+        target = 1519
+    progress_fraction = (len(syms_in_order) / target) if target > 0 else 0.0
+    progress_fraction = max(0.0, min(1.0, progress_fraction))
+
     return {
         "symbols_done": len(syms_in_order),
         "letters_done": letters_done,
@@ -201,6 +212,8 @@ def get_progress() -> dict:
         "rate_per_hour": rate_per_hour,
         "eta_hours": eta_hours,
         "run_started_at": first_ts.isoformat(),
+        "target": target,
+        "progress_fraction": progress_fraction,
     }
 
 
@@ -307,20 +320,26 @@ def get_ingest_status() -> dict:
             cur_letter = "?"
             n_letters_done = 0
 
+        # Progress fraction for the tooltip — "X / N (Y%)" framing makes it
+        # read as a progress bar rather than a raw counter.
+        target = (prog or {}).get("target", 0)
+        pct = int(100 * (prog or {}).get("progress_fraction", 0.0)) if prog else 0
+        prog_str = f"{done}/{target} ({pct}%)" if target > 0 else f"{done} syms"
+
         # Tooltip — Windows truncates ~127 chars, keep compact
         if state == "running":
             tooltip = (
-                f"{sym} | letter {cur_letter} ({n_letters_done} done) "
-                f"| {done} syms in run | +{bars} bars"
+                f"{sym} | {prog_str} | letter {cur_letter} "
+                f"({n_letters_done} done) | +{bars} bars"
             )
         elif state == "idle":
             tooltip = (
-                f"{sym} | {done} syms in run | letter {cur_letter} "
+                f"{sym} | {prog_str} | letter {cur_letter} "
                 f"| {age_sec/60:.0f}m idle"
             )
         else:
             tooltip = (
-                f"{sym} | {done} syms in run | stalled {age_sec/60:.0f}m"
+                f"{sym} | {prog_str} | stalled {age_sec/60:.0f}m"
             )
         if err:
             tooltip = f"ERR: {err[:50]}"
@@ -393,11 +412,18 @@ def get_progress_summary() -> str:
 # ---- Icon generation (no .ico files needed — drawn at startup) ----
 
 def _make_circle_icon(color: tuple, size: int = 64,
-                      inner_dot_radius: int = 0) -> Image.Image:
+                      inner_dot_radius: int = 0,
+                      progress: float = 0.0) -> Image.Image:
     """64×64 PNG circle in the given RGBA color. Black 2px outline.
+
     If `inner_dot_radius > 0`, draws a white inner dot of that radius — used
     for the heartbeat animation (cycling between small/large dot creates a
-    visible pulse so the user can confirm the tray script itself is alive)."""
+    visible pulse so the user can confirm the tray script itself is alive).
+
+    If `progress > 0.0`, draws a white outer arc starting at 12 o'clock and
+    sweeping clockwise — fills as a visible progress indicator. 0.5 = half
+    ring, 1.0 = full ring. The arc sits just inside the black outline so it
+    reads as a "status bar wrapped around the icon"."""
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     pad = 4
@@ -407,6 +433,21 @@ def _make_circle_icon(color: tuple, size: int = 64,
         outline=(0, 0, 0, 255),
         width=2,
     )
+    # Progress arc — drawn ON TOP of the colored circle, just inside its
+    # black outline. White for max contrast against any state color.
+    if progress > 0.0:
+        progress = max(0.0, min(1.0, progress))
+        arc_inset = pad + 3   # 7px from edge = sits inside the outline ring
+        # PIL angles: 0° = 3 o'clock, clockwise. We want 12 o'clock start,
+        # so subtract 90°. End angle sweeps clockwise by `progress * 360`.
+        start = -90
+        end = -90 + (360 * progress)
+        draw.arc(
+            [arc_inset, arc_inset, size - arc_inset, size - arc_inset],
+            start=start, end=end,
+            fill=(255, 255, 255, 255),
+            width=4,
+        )
     if inner_dot_radius > 0:
         cx, cy = size // 2, size // 2
         r = inner_dot_radius
@@ -417,27 +458,38 @@ def _make_circle_icon(color: tuple, size: int = 64,
     return img
 
 
-# Heartbeat colors (RGBA)
+# State colors (RGBA)
 _GREEN  = (34, 197, 94, 255)    # green-500
 _YELLOW = (250, 204, 21, 255)   # yellow-400
 _RED    = (239, 68, 68, 255)    # red-500
 _GRAY   = (156, 163, 175, 255)  # gray-400
 
-# FRAMES[state] = list of icons to cycle through.
-# - 'running' has 2 frames (small inner dot ↔ large inner dot = heartbeat pulse)
-# - other states are static (single frame, no animation)
-# A pulsing icon proves the TRAY SCRIPT itself is alive — independent signal
-# from the ingest state (color). If the icon freezes mid-pulse, the tray died
-# even if the ingest is healthy.
-FRAMES = {
-    "running": [
-        _make_circle_icon(_GREEN, inner_dot_radius=4),    # heartbeat "rest"
-        _make_circle_icon(_GREEN, inner_dot_radius=11),   # heartbeat "beat"
-    ],
-    "idle":    [_make_circle_icon(_YELLOW)],   # static
-    "stopped": [_make_circle_icon(_RED)],      # static
-    "unknown": [_make_circle_icon(_GRAY)],     # static
+_STATE_COLORS = {
+    "running": _GREEN,
+    "idle":    _YELLOW,
+    "stopped": _RED,
+    "unknown": _GRAY,
 }
+
+
+def _icon_for(state: str, frame_index: int, progress: float) -> Image.Image:
+    """Build the tray icon for the current (state, heartbeat phase, progress).
+
+    Three visible signals composed in one icon:
+      - **Color** = ingest state (green/yellow/red/gray)
+      - **Inner dot pulse** (running only) = tray script is alive (heartbeat)
+      - **Outer arc** = % of universe symbols processed in the current run
+
+    Why compose dynamically instead of pre-rendering: progress changes every
+    poll, so we can't cache the full icon set. PIL renders a 64×64 image in
+    ~1-2ms — cheap enough to redo on every heartbeat tick (1Hz) or status
+    poll (every 30s for static states)."""
+    color = _STATE_COLORS.get(state, _GRAY)
+    inner_dot = 0
+    if state == "running":
+        # 2-phase heartbeat: small dot ↔ large dot
+        inner_dot = 4 if (frame_index % 2 == 0) else 11
+    return _make_circle_icon(color, inner_dot_radius=inner_dot, progress=progress)
 
 
 # ---- Menu actions ----
@@ -500,15 +552,16 @@ def _update_loop(icon: "pystray.Icon"):
     """Background thread: poll status periodically, animate icon continuously.
 
     Two cadences in one loop:
-      - Status poll every POLL_INTERVAL_SEC (~30s): re-reads ingest_log.jsonl
-      - Heartbeat tick every HEARTBEAT_INTERVAL_SEC (~1s): advances frame index
+      - Status poll every POLL_INTERVAL_SEC (~30s): re-reads ingest_log.jsonl,
+        recomputes progress fraction
+      - Heartbeat tick every HEARTBEAT_INTERVAL_SEC (~1s): advances frame
+        index and redraws icon (heartbeat phase changes)
 
-    When state == 'running', FRAMES['running'] has 2 frames (small/large inner
-    dot) so cycling through them produces a visible pulse — a heartbeat that
-    confirms the tray script is alive. Other states have 1 frame each, so the
-    icon stays static (no point pulsing when nothing's being written).
-    """
+    The icon redraws each tick with the latest (state, frame_index, progress)
+    so the outer progress arc reflects the most recent symbols_done/target
+    ratio. Arc grows monotonically over the course of a run."""
     current_state = "unknown"
+    current_progress = 0.0
     frame_index = 0
     last_poll = 0.0
 
@@ -523,8 +576,11 @@ def _update_loop(icon: "pystray.Icon"):
                 if new_state != current_state:
                     current_state = new_state
                     frame_index = 0   # reset animation phase on state change
-                # Fire milestone toast(s) if we just crossed a threshold
+                # Progress fraction drives the outer arc
                 prog = status.get("progress")
+                if prog:
+                    current_progress = prog.get("progress_fraction", 0.0)
+                # Fire milestone toast(s) if we just crossed a threshold
                 if prog and prog.get("symbols_done", 0) > 0:
                     try:
                         _check_and_fire_milestones(icon, prog)
@@ -533,18 +589,17 @@ def _update_loop(icon: "pystray.Icon"):
                 last_poll = now
                 _force_refresh.clear()
 
-            # Advance + apply the current frame
-            frames = FRAMES.get(current_state, FRAMES["unknown"])
-            icon.icon = frames[frame_index % len(frames)]
+            # Render current icon — incorporates state color, heartbeat phase,
+            # AND progress arc in one composed image
+            icon.icon = _icon_for(current_state, frame_index, current_progress)
             frame_index += 1
 
-            # Static states sleep longer (no animation point) — only re-tick
-            # when the next status poll is due. Running state ticks at the
-            # heartbeat cadence.
-            if len(frames) > 1:
+            # Static states sleep longer (no heartbeat to animate) — only
+            # re-tick when the next status poll is due. Running state ticks
+            # at the heartbeat cadence so the pulse stays visible.
+            if current_state == "running":
                 time.sleep(HEARTBEAT_INTERVAL_SEC)
             else:
-                # Sleep until next poll, but allow force-refresh wake-up
                 _force_refresh.wait(timeout=POLL_INTERVAL_SEC)
         except Exception as exc:
             icon.title = f"Ingest tray error: {exc}"
@@ -565,7 +620,7 @@ def main() -> int:
 
     icon = pystray.Icon(
         "ingest_status",
-        FRAMES["unknown"][0],
+        _icon_for("unknown", 0, 0.0),
         title="Ingest status (loading...)",
         menu=menu,
     )
