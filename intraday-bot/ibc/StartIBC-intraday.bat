@@ -22,10 +22,10 @@ if not exist "%CONFIG_JSON%" (
     exit /b 1
 )
 
-REM Pull ibkr_secrets_path from config.json via PowerShell. Use [Console]::Write
-REM (instead of bare expression) so PowerShell does NOT append a trailing CR/LF
-REM that would get baked into the cmd variable and break path checks.
-for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::Write(((Get-Content '%CONFIG_JSON%' -Raw ^| ConvertFrom-Json).ibkr_secrets_path))"`) do (
+REM Pull ibkr_secrets_path from config.json. Python is more predictable than
+REM PowerShell inside cmd's for/f — cmd parser mangles nested parens + pipes.
+REM sys.stdout.write avoids the trailing newline that print() would add.
+for /f "usebackq tokens=*" %%i in (`py -3.12 -c "import json,sys; sys.stdout.write(json.load(open(r'%CONFIG_JSON%')).get('ibkr_secrets_path',''))"`) do (
     set "CRED_FILE=%%i"
 )
 
@@ -51,10 +51,9 @@ if "%TWSUSERID%"=="" (
     exit /b 1
 )
 
-REM Pull ibkr_gateway_path (full path to ibgateway.exe) and derive TWS_PATH
-REM (its parent dir, which is what IBC expects in the --tws-path flag).
-REM [Console]::Write avoids trailing CR/LF that breaks the path check below.
-for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::Write((Split-Path -Parent ((Get-Content '%CONFIG_JSON%' -Raw ^| ConvertFrom-Json).ibkr_gateway_path)))"`) do (
+REM Derive TWS_PATH = dirname of cfg.ibkr_gateway_path. Python instead of
+REM PowerShell to avoid the cmd-parser-vs-nested-parens issue.
+for /f "usebackq tokens=*" %%i in (`py -3.12 -c "import json,sys,os; sys.stdout.write(os.path.dirname(json.load(open(r'%CONFIG_JSON%')).get('ibkr_gateway_path','')))"`) do (
     set "TWS_PATH=%%i"
 )
 
@@ -65,7 +64,7 @@ if "%TWS_PATH%"=="" (
 
 REM Determine which IB app we're launching (gateway / tws) from config.
 REM Used to select which IBC start script (StartGateway.bat vs StartTWS.bat).
-for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::Write(((Get-Content '%CONFIG_JSON%' -Raw ^| ConvertFrom-Json).ibkr_app_type))"`) do (
+for /f "usebackq tokens=*" %%i in (`py -3.12 -c "import json,sys; sys.stdout.write(json.load(open(r'%CONFIG_JSON%')).get('ibkr_app_type','gateway'))"`) do (
     set "APP_TYPE=%%i"
 )
 if "%APP_TYPE%"=="" set "APP_TYPE=gateway"
@@ -78,7 +77,7 @@ if /i "%APP_TYPE%"=="gateway" (
 REM Derive the exe filename from ibkr_gateway_path's basename — IB's newer
 REM installers may name the exe with a version suffix (e.g., ibgateway1.exe
 REM on Gateway 10.45+ to support multi-version installs). Don't hardcode.
-for /f "usebackq tokens=*" %%i in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "[Console]::Write((Split-Path -Leaf ((Get-Content '%CONFIG_JSON%' -Raw ^| ConvertFrom-Json).ibkr_gateway_path)))"`) do (
+for /f "usebackq tokens=*" %%i in (`py -3.12 -c "import json,sys,os; sys.stdout.write(os.path.basename(json.load(open(r'%CONFIG_JSON%')).get('ibkr_gateway_path','')))"`) do (
     set "APP_EXE=%%i"
 )
 
