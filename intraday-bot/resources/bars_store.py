@@ -80,16 +80,52 @@ def bars_dir(timeframe: str = "1min") -> Path:
     return PRICE_HISTORY_ROOT / timeframe
 
 
+# Windows reserves these names as device aliases (legacy DOS console / printer
+# devices). NTFS allows CREATING a file named CON.parquet etc., but Win32 APIs
+# (incl. pyarrow's path resolver) refuse to OPEN them, raising WinError 87
+# "The parameter is incorrect". CON is a real S&P-universe ticker, so we
+# can't just skip it — encode reserved names with a leading underscore on
+# disk and translate back when listing symbols. The undecorated name is what
+# the rest of the bot uses (strategies, journals, etc.); only the on-disk
+# filename gets the prefix.
+_RESERVED_BASENAMES = frozenset({
+    "CON", "PRN", "AUX", "NUL",
+    "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+})
+
+
+def _safe_basename(symbol: str) -> str:
+    """Return the on-disk basename for a symbol (no extension).
+    Prepends '_' for Windows-reserved device names to make them openable."""
+    s = symbol.upper()
+    if s in _RESERVED_BASENAMES:
+        return f"_{s}"
+    return s
+
+
+def _symbol_from_basename(basename: str) -> str:
+    """Reverse of _safe_basename: strip the leading '_' if the rest is reserved."""
+    if basename.startswith("_"):
+        tail = basename[1:]
+        if tail.upper() in _RESERVED_BASENAMES:
+            return tail
+    return basename
+
+
 def _symbol_path(symbol: str, timeframe: str) -> Path:
-    """data/price_history/<tf>/<SYM>.parquet"""
-    return bars_dir(timeframe) / f"{symbol.upper()}.parquet"
+    """data/price_history/<tf>/<SYM>.parquet (with reserved-name escaping)."""
+    return bars_dir(timeframe) / f"{_safe_basename(symbol)}.parquet"
 
 
 def list_symbols(timeframe: str = "1min") -> list[str]:
+    """Return the symbols (logical ticker names, not on-disk basenames) that
+    have a parquet file at the given timeframe. Reserved-name files like
+    _CON.parquet are reported as 'CON'."""
     d = bars_dir(timeframe)
     if not d.exists():
         return []
-    return sorted(p.stem for p in d.glob("*.parquet"))
+    return sorted(_symbol_from_basename(p.stem) for p in d.glob("*.parquet"))
 
 
 # ---------- pyarrow shim ----------
