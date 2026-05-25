@@ -263,14 +263,20 @@
       border-left: 1px solid var(--border);
     }
     /* Sentiment lives at the TOP of the right column, sized to its
-       content (capped so it can't push Active Lists off-screen). */
+       content (capped so Active Lists keeps the bulk of the height).
+       Three display modes — see .sent-mode-* classes:
+         compact  ~110px   gauge + dot rows + mini breadth (default)
+         expanded ~35vh    full labelled cells (old view)
+         collapsed ~36px   header pill only (user wants max watchlist room) */
     #right-column #market-sentiment {
       flex: 0 0 auto;
       margin-bottom: 0 !important;
-      max-height: 60vh;
       overflow-y: auto;
       border-bottom: 1px solid var(--border);
+      max-height: 35vh;   /* cap expanded view; compact is always under this */
     }
+    #right-column #market-sentiment.sent-mode-collapsed { max-height: 38px; overflow: hidden; }
+    #right-column #market-sentiment.sent-mode-compact   { max-height: 130px; }
     /* Active Lists fills the remaining height below sentiment. */
     #right-column #active-lists {
       flex: 1 1 auto;
@@ -449,6 +455,95 @@
       font-size: calc(11px * var(--scale)); font-weight: 700;
       font-variant-numeric: tabular-nums;
     }
+    /* --- Compact sentiment view (default) — gauge + dot rows + mini breadth.
+       Each ETF is a single colored dot (green/red/gray). Hover shows symbol +
+       %; click loads chart. Total height ~110px vs ~400px for expanded. --- */
+    .sent-toggle-btn {
+      padding: 1px 6px;
+      border: 1px solid var(--border);
+      background: var(--bg-panel-alt);
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: calc(11px * var(--scale));
+      line-height: 1;
+    }
+    .sent-toggle-btn:hover { color: var(--text); background: var(--bg-hover); }
+    #market-sentiment .sent-gauge {
+      display: flex; align-items: center; gap: 6px;
+      padding: 6px 8px 4px;
+    }
+    #market-sentiment .sent-gauge-label {
+      font-size: calc(8px * var(--scale));
+      letter-spacing: .08em;
+      color: var(--text-muted);
+      text-transform: uppercase;
+    }
+    #market-sentiment .sent-gauge-track {
+      flex: 1; height: 8px;
+      background: linear-gradient(to right,
+        rgba(255,107,107,.55) 0%,
+        rgba(255,107,107,.25) 35%,
+        rgba(245,179,66,.18)  50%,
+        rgba(95,217,122,.25)  65%,
+        rgba(95,217,122,.55)  100%);
+      position: relative;
+      border: 1px solid var(--border);
+    }
+    #market-sentiment .sent-gauge-marker {
+      position: absolute; top: -2px;
+      width: 3px; height: 12px;
+      background: #fff;
+      box-shadow: 0 0 0 1px #000;
+      transform: translateX(-50%);
+      transition: left .4s ease;
+    }
+    #market-sentiment .sent-dot-row {
+      display: flex; flex-wrap: wrap; gap: 6px;
+      padding: 2px 8px 4px;
+      align-items: center;
+    }
+    #market-sentiment .sent-dot-group {
+      display: inline-flex; align-items: center; gap: 3px;
+    }
+    #market-sentiment .sent-dot-group .lbl {
+      font-size: calc(8px * var(--scale));
+      color: var(--text-muted);
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      margin-right: 1px;
+    }
+    #market-sentiment .sent-dot {
+      display: inline-block;
+      width: 9px; height: 9px;
+      border-radius: 999px;
+      cursor: pointer;
+      border: 1px solid rgba(0,0,0,.5);
+      background: #888;
+      transition: transform .1s ease;
+    }
+    #market-sentiment .sent-dot:hover { transform: scale(1.4); }
+    #market-sentiment .sent-dot.up          { background: #5fd97a; }
+    #market-sentiment .sent-dot.down        { background: #ff6b6b; }
+    #market-sentiment .sent-dot.flat        { background: #888; }
+    #market-sentiment .sent-dot.strong-up   { background: #5fd97a; box-shadow: 0 0 5px #5fd97a; }
+    #market-sentiment .sent-dot.strong-down { background: #ff6b6b; box-shadow: 0 0 5px #ff6b6b; }
+    #market-sentiment .sent-breadth-mini {
+      display: flex; flex-wrap: wrap; gap: 10px;
+      padding: 2px 8px 6px;
+      font-size: calc(10px * var(--scale));
+      align-items: center;
+    }
+    #market-sentiment .sent-breadth-mini .item { color: var(--text-muted); }
+    #market-sentiment .sent-breadth-mini .val {
+      color: var(--text); font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    #market-sentiment .sent-breadth-mini .val.up   { color: #5fd97a; }
+    #market-sentiment .sent-breadth-mini .val.down { color: #ff6b6b; }
+    /* When collapsed, hide everything except the header. */
+    #market-sentiment.sent-mode-collapsed #sent-compact,
+    #market-sentiment.sent-mode-collapsed #sent-body { display: none !important; }
+    /* Composite pill — unchanged */
     #sent-composite-pill { font-weight: 700; letter-spacing: .12em; cursor: help; }
     #sent-composite-pill.bullish-strong { background: rgba(95,217,122,.22); color: #5fd97a; border-color: #5fd97a; }
     #sent-composite-pill.bullish        { background: rgba(95,217,122,.12); color: #5fd97a; }
@@ -1003,15 +1098,25 @@
   <aside id="right-column">
 
     <!-- Market Sentiment — composite read of indices + VIX + macro +
-         sectors + S&P breadth. Each cell mouseover-explained. Polls
-         /market/sentiment every 5s. -->
-    <section id="market-sentiment" class="panel">
+         sectors + S&P breadth. Polls /market/sentiment every 5s.
+         Three view modes (cycled via the toggle button):
+           compact   — gauge + colored dots + mini A/D row  (~110px, default)
+           expanded  — full labelled cells (the original detailed view)
+           collapsed — header pill only, lets watchlist take more height -->
+    <section id="market-sentiment" class="panel sent-mode-compact">
       <div class="flex items-center gap-2 px-3 py-2 border-b border-slate-800">
-        <span class="text-xs uppercase tracking-widest muted">Market Sentiment</span>
+        <span class="text-xs uppercase tracking-widest muted">Sentiment</span>
         <span id="sent-composite-pill" class="ml-auto tag bg-slate-800 text-slate-300"
               title="loading…">— LOADING</span>
+        <button id="sent-toggle" class="sent-toggle-btn"
+                title="Cycle view: compact → expanded → collapsed">▾</button>
       </div>
-      <div id="sent-body" class="p-2 text-xs">
+      <!-- Compact view: gauge bar + colored dots + mini breadth (graphic) -->
+      <div id="sent-compact">
+        <div class="muted p-2 text-xs">loading…</div>
+      </div>
+      <!-- Expanded view: original full-detail rendering (hidden by default) -->
+      <div id="sent-body" class="p-2 text-xs" style="display:none">
         <div class="muted">loading…</div>
       </div>
     </section>
@@ -1214,10 +1319,115 @@ function _sentBreadthTile(label, val, tip, suffix='') {
   </div>`;
 }
 
+// Compact graphic view — gauge bar + colored dots per ETF + mini breadth row.
+// Default state per user rule 2026-05-25: *"the market sentiment are too big
+// i need a concise one and adjustable for the watchlist below to be pull up.
+// I need it to be shown by graphic rather than too wordy"*.
+function _sentDotClass(pct) {
+  const x = Number(pct);
+  if (!isFinite(x)) return 'flat';
+  if (x > 1.5)      return 'strong-up';
+  if (x > 0.05)     return 'up';
+  if (x < -1.5)     return 'strong-down';
+  if (x < -0.05)    return 'down';
+  return 'flat';
+}
+function _sentDots(rows) {
+  return (rows || []).map(r => {
+    const cls = _sentDotClass(r.chg_pct);
+    const pct = Number(r.chg_pct);
+    const pctStr = isFinite(pct) ? (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%' : '—';
+    const tip = `${r.symbol}  ${pctStr}` + (r.tip ? `\n${r.tip}` : '');
+    return `<span class="sent-dot ${cls}" title="${tip.replace(/"/g,'&quot;')}" data-sym="${r.symbol}"></span>`;
+  }).join('');
+}
+function renderSentimentCompact(payload) {
+  const el = document.getElementById('sent-compact');
+  if (!el || !payload) return;
+  const comp = payload.composite || {};
+  const score = Number(comp.score) || 0;
+  // Map -100..+100 to 0%..100% horizontal position of the gauge marker.
+  const markerPct = Math.max(0, Math.min(100, ((score + 100) / 200) * 100));
+
+  const b = payload.breadth || {};
+  const adv = Number(b.advances), dec = Number(b.declines);
+  const adCls = (isFinite(adv) && isFinite(dec))
+    ? (adv > dec ? 'up' : adv < dec ? 'down' : '') : '';
+  const pct50 = Number(b.pct_above_50sma);
+  const pct50Cls = isFinite(pct50) ? (pct50 >= 55 ? 'up' : pct50 <= 45 ? 'down' : '') : '';
+
+  el.innerHTML = `
+    <div class="sent-gauge" title="Composite sentiment score, -100 (bearish) to +100 (bullish). Marker shows the current weighted score.">
+      <span class="sent-gauge-label">BEAR</span>
+      <div class="sent-gauge-track">
+        <div class="sent-gauge-marker" style="left:${markerPct}%"></div>
+      </div>
+      <span class="sent-gauge-label">BULL</span>
+    </div>
+    <div class="sent-dot-row">
+      <div class="sent-dot-group" title="Major US indices (SPY/QQQ/IWM/DIA). Click any dot to load that ETF's chart.">
+        <span class="lbl">IDX</span>${_sentDots(payload.indices)}
+      </div>
+      <div class="sent-dot-group" title="Volatility (VIX) — inverse of bullish sentiment.">
+        <span class="lbl">VIX</span>${_sentDots(payload.volatility)}
+      </div>
+      <div class="sent-dot-group" title="S&amp;P 500 sectors (XL*). Quick visual breadth across sectors.">
+        <span class="lbl">SEC</span>${_sentDots(payload.sectors)}
+      </div>
+    </div>
+    <div class="sent-breadth-mini">
+      <span class="item">A/D <span class="val ${adCls}">${b.advances ?? '—'}/${b.declines ?? '—'}</span></span>
+      <span class="item">NH/NL <span class="val">${b.new_highs ?? '—'}/${b.new_lows ?? '—'}</span></span>
+      <span class="item">&gt;50SMA <span class="val ${pct50Cls}">${b.pct_above_50sma ?? '—'}%</span></span>
+    </div>
+  `;
+  // Click any dot to load that ETF's chart in the main panel
+  el.querySelectorAll('.sent-dot[data-sym]').forEach(d => {
+    d.addEventListener('click', () => {
+      const sym = d.getAttribute('data-sym');
+      if (sym && typeof loadChartSymbol === 'function') loadChartSymbol(sym);
+    });
+  });
+}
+
+// View mode cycling: compact → expanded → collapsed → compact …
+// Persisted in localStorage so the user's preference survives reloads.
+const SENT_MODES = ['compact', 'expanded', 'collapsed'];
+function applySentMode() {
+  const panel = document.getElementById('market-sentiment');
+  if (!panel) return;
+  const mode = localStorage.getItem('sent_mode') || 'compact';
+  SENT_MODES.forEach(m => panel.classList.remove('sent-mode-' + m));
+  panel.classList.add('sent-mode-' + mode);
+  const compact  = document.getElementById('sent-compact');
+  const expanded = document.getElementById('sent-body');
+  if (compact)  compact.style.display  = (mode === 'compact')  ? '' : 'none';
+  if (expanded) expanded.style.display = (mode === 'expanded') ? '' : 'none';
+  const btn = document.getElementById('sent-toggle');
+  if (btn) {
+    btn.textContent = mode === 'compact' ? '▾' : (mode === 'expanded' ? '▴' : '─');
+    btn.title = `View: ${mode}. Click to cycle (compact → expanded → collapsed).`;
+  }
+}
+function cycleSentMode() {
+  const cur = localStorage.getItem('sent_mode') || 'compact';
+  const i = SENT_MODES.indexOf(cur);
+  const next = SENT_MODES[(i + 1) % SENT_MODES.length];
+  localStorage.setItem('sent_mode', next);
+  applySentMode();
+}
+document.addEventListener('DOMContentLoaded', () => {
+  const btn = document.getElementById('sent-toggle');
+  if (btn) btn.addEventListener('click', cycleSentMode);
+  applySentMode();
+});
+
 function renderSentiment(payload) {
   const pill = document.getElementById('sent-composite-pill');
   const body = document.getElementById('sent-body');
   if (!pill || !body || !payload) return;
+  // Always paint the compact view too — toggling between modes is purely CSS-driven.
+  try { renderSentimentCompact(payload); } catch (e) { /* never break the main render */ }
   const comp = payload.composite || {};
   const score = Number(comp.score);
   const cls = _sentCompositeClass(score);

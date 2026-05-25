@@ -29,7 +29,21 @@ Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
-### 2026-05-25 — Tray icon: percentage number rendered directly on the icon
+### 2026-05-25 — Market Sentiment: compact graphic view + 3-mode toggle
+
+- User rule: *"the market sentiment are too big i need a concise one and adjustable for the watchlist below to be pull up. I need it to be shown by graphic rather than too wordy"*. The original panel could swell to 60vh with 4 labelled cell groups plus 6 breadth tiles — ~400px on a 1080p monitor, eating into the Active Lists watchlist below it.
+- **New compact graphic view (default):**
+  - **Sentiment gauge bar** — horizontal red→amber→green gradient with a white marker showing where the composite score sits on a -100 / +100 scale. Replaces the textual sub-score tooltip as the primary at-a-glance read.
+  - **Colored dot rows** — one dot per ETF (indices / VIX / sectors), color = direction (`up` green, `down` red, `flat` grey, `strong-up`/`strong-down` glow when |pct| > 1.5%). Hover shows symbol + percent; click loads chart. ~9px dots, three group labels (IDX / VIX / SEC).
+  - **Mini breadth row** — A/D ratio, NH/NL, %>50SMA in a single line of plain numbers (color-coded). Drops the 6-tile grid entirely.
+  - Total compact height ~110px vs ~400px expanded — **~3.6× more room for the watchlist** without losing any signal.
+- **3-mode toggle** in the panel header — cycles `compact → expanded → collapsed → compact`:
+  - **compact** (default) — the new graphic view
+  - **expanded** — the original labelled-cell view (kept intact for users who want exact numbers without hovering)
+  - **collapsed** — 38px header pill only, lets the watchlist take the whole right column
+  - Mode persisted in `localStorage.sent_mode` so the choice survives reloads.
+- **CSS `max-height` cap reduced**: 60vh → 35vh for expanded mode. Compact mode caps at 130px. Collapsed at 38px. None of the three can dominate the right column anymore.
+- `renderSentiment(payload)` continues to render the full expanded view; a new `renderSentimentCompact(payload)` paints the compact view from the SAME payload, so toggling between modes is pure CSS show/hide — no extra fetches.
 
 - User follow-up: *"to in the tray icon to show me the total ingestion percentage done"* — the outer arc gave a visual sense of progress but no exact number until you hovered for the tooltip. Now the percentage is drawn **into the icon itself** so a glance at the tray tells you "47%" without any hover.
 - **`_make_circle_icon()` gains percentage text rendering.** Centered, bold (Segoe UI Bold → Arial Bold → PIL default fallback chain), white with 1px black halo so it's legible against any state color. Auto-shrinks from 22px to 18px at 100% so "100%" fits without bleeding off the icon.
