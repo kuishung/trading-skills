@@ -238,21 +238,27 @@ def update_history(ib, symbol: str, timeframe: str,
 
 def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = None,
                 *, lookback_days_for_new: int = 60,
+                lookback_days_by_tf: dict[str, int] | None = None,
                 pacing_s: float = DEFAULT_PACING_S,
                 force_seed: bool = False) -> dict[tuple[str, str], int]:
     """Update many (symbol, timeframe) pairs in one IBKR connection.
 
     For symbols with existing bars, runs incremental update.
     For symbols with NO existing bars at that timeframe, seeds with
-    `lookback_days_for_new` days.
+    `lookback_days_for_new` days (or `lookback_days_by_tf[tf]` if set).
 
     `force_seed=True` overrides the "incremental for existing" logic and
-    runs a full ingest_history(lookback_days=lookback_days_for_new) on
-    EVERY symbol, regardless of existing data. Used for extending
-    historical depth backward (e.g., bumping a 14-day seed up to 180
-    days for backtest). Existing bars are deduplicated by bars_store on
-    write, so re-fetching the recent window is wasted bandwidth but
-    safe — no data corruption.
+    runs a full ingest_history(lookback_days=...) on EVERY symbol,
+    regardless of existing data. Used for extending historical depth
+    backward (e.g., bumping a 14-day seed up to 180 days for backtest).
+    Existing bars are deduplicated by bars_store on write, so re-fetching
+    the recent window is wasted bandwidth but safe — no data corruption.
+
+    `lookback_days_by_tf` (optional, added 2026-05-26) overrides
+    `lookback_days_for_new` per timeframe — useful for mixed runs like
+    `{"3min": 180, "5min": 180, "daily": 730}` where daily wants more
+    depth than the intraday bars (EMA200 + 2-year backtest window).
+    Any timeframe not in the dict falls back to `lookback_days_for_new`.
 
     Returns: {(symbol, timeframe): bars_written}.
     """
@@ -319,12 +325,17 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
                 # are hopeless), but per-symbol failures are skipped.
                 try:
                     rng = bars_store.available_range(sym, timeframe=tf)
+                    # Per-timeframe depth override (e.g., daily=730d for the
+                    # 2-year backtest window while 3min/5min stay at 180d)
+                    days_for_this_tf = (lookback_days_by_tf or {}).get(
+                        tf, lookback_days_for_new
+                    )
                     if rng is None or force_seed:
                         n = ingest_history(ib, sym, tf,
-                                           lookback_days=lookback_days_for_new,
+                                           lookback_days=days_for_this_tf,
                                            pacing_s=pacing_s)
-                        label = (f"force-seed({lookback_days_for_new}d)" if force_seed
-                                 else f"seed({lookback_days_for_new}d)")
+                        label = (f"force-seed({days_for_this_tf}d)" if force_seed
+                                 else f"seed({days_for_this_tf}d)")
                     else:
                         n = update_history(ib, sym, tf, pacing_s=pacing_s)
                         label = "update"

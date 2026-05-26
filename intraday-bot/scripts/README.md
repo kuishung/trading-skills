@@ -28,6 +28,14 @@ they're rarely-touched and small, so `scripts/` is fine.
 
 ## Changelog
 
+### 2026-05-26 — `wait_and_ingest.py`: `--timeframes` accepts `TF:DAYS` per-timeframe depths
+
+- User rule: *"I will need 1d (2 years), 3m and 5m for 180 days"*. Single `--seed-days` was too rigid — daily wants more history (EMA200 + 2-year backtest window) while intraday timeframes can stay tight at 180d.
+- New syntax: `--timeframes "3min:180,5min:180,daily:730"`. Each comma-separated entry may carry `TF:DAYS`. Entries without `:DAYS` fall back to `--seed-days` (default 180).
+- Parser is forgiving: whitespace tolerated, malformed depth values (non-int after the colon) trigger a clean argparse error.
+- Filename of the per-run log file (`_ingest_<tf_label>_<days>d_<ts>.log`) now uses the LARGEST `:DAYS` value seen in the run, so a mixed 180d+730d run is logged as `_ingest_3min-5min-daily_730d_*.log` — captures the outermost lookback in the filename.
+- Passes the parsed dict to `ibkr_history.bulk_update(lookback_days_by_tf=…)` so each per-(sym,tf) ingest uses the right depth.
+
 ### 2026-05-26 — `Watch-Ingest.ps1`: process-level supervisor for the watcher
 
 - User rule: *"i prefer to run it without interruption"*. The existing in-Python resilience covers IBKR socket reconnects (up to 20 attempts in `ibkr_history._ensure_connected`) — but if the Python process itself dies (crash, OOM, killed by an errant `Stop-Process`), nothing relaunches it. The supervisor closes that gap.

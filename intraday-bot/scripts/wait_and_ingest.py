@@ -76,9 +76,14 @@ def main() -> int:
                     help="Windows PID to wait for (poll every 60s via tasklist). "
                          "Skip this flag to launch immediately.")
     ap.add_argument("--timeframes", default="3min",
-                    help="comma-separated timeframes to ingest (default: 3min)")
+                    help="comma-separated timeframes to ingest. Each entry may "
+                         "carry its own depth as TF:DAYS — e.g., "
+                         "'3min:180,5min:180,daily:730' gives daily 2-year "
+                         "history while intraday stays at 180d. Entries "
+                         "without :DAYS use --seed-days.")
     ap.add_argument("--seed-days", type=int, default=180,
-                    help="lookback in days per (symbol, timeframe). Default 180 "
+                    help="lookback in days for any timeframe that didn't "
+                         "specify a per-tf depth in --timeframes. Default 180 "
                          "= the DITP P2 backtest target depth.")
     ap.add_argument("--force-seed", action="store_true",
                     help="re-seed every symbol regardless of existing data. "
@@ -93,12 +98,36 @@ def main() -> int:
                     help="seconds between IBKR requests (under 60-per-600s cap)")
     args = ap.parse_args()
 
-    timeframes = [tf.strip() for tf in args.timeframes.split(",") if tf.strip()]
+    # Parse --timeframes — each entry can be either "3min" or "3min:180".
+    # Returns (timeframes_list, per_tf_days_dict). Any tf without :DAYS uses
+    # args.seed_days as the fallback.
+    timeframes: list[str] = []
+    lookback_days_by_tf: dict[str, int] = {}
+    for spec in args.timeframes.split(","):
+        spec = spec.strip()
+        if not spec:
+            continue
+        if ":" in spec:
+            tf, days_str = spec.split(":", 1)
+            tf = tf.strip()
+            try:
+                days = int(days_str.strip())
+            except ValueError:
+                ap.error(f"--timeframes entry {spec!r}: days must be int")
+            timeframes.append(tf)
+            lookback_days_by_tf[tf] = days
+        else:
+            timeframes.append(spec)
+            lookback_days_by_tf[spec] = args.seed_days
+
     # Log file lives alongside the data it documents — honours cfg["data_root"]
     from _common import get_data_root
     log_dir = get_data_root()
     tf_label = "-".join(timeframes)
-    log_path = log_dir / f"_ingest_{tf_label}_{args.seed_days}d_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+    # Pick the LARGEST seed-days seen for the filename — captures the run's
+    # outermost lookback ("180d" for 3m/5m runs, "730d" if daily is in the mix).
+    max_days = max(lookback_days_by_tf.values()) if lookback_days_by_tf else args.seed_days
+    log_path = log_dir / f"_ingest_{tf_label}_{max_days}d_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 
     def log(msg: str) -> None:
         line = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}"
@@ -106,7 +135,8 @@ def main() -> int:
             f.write(line + "\n")
         print(line, flush=True)
 
-    log(f"wait_and_ingest: timeframes={timeframes} seed_days={args.seed_days} "
+    log(f"wait_and_ingest: timeframes={timeframes} "
+        f"seed_days_by_tf={lookback_days_by_tf} "
         f"force_seed={args.force_seed} universe={args.universe} pacing={args.pacing}")
 
     # --- Wait phase ---
@@ -131,6 +161,7 @@ def main() -> int:
         results = bulk_update(
             symbols, timeframes,
             lookback_days_for_new=args.seed_days,
+            lookback_days_by_tf=lookback_days_by_tf,
             pacing_s=args.pacing,
             force_seed=args.force_seed,
         )

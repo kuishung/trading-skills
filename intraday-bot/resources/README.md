@@ -36,6 +36,12 @@ and import it from whichever strategy needs it. No registration.
 
 ## Changelog
 
+### 2026-05-26 — `bulk_update`: per-timeframe lookback override (`lookback_days_by_tf`)
+
+- User rule: *"I will need 1d (2 years), 3m and 5m for 180 days"*. Previously `lookback_days_for_new` was a single int applied to every timeframe in the run — fine for "everything 180 days", impossible for "daily 2 years AND intraday 180 days" in one launch.
+- Added optional `lookback_days_by_tf: dict[str, int] | None` kwarg. When set, overrides `lookback_days_for_new` per timeframe. Any timeframe not in the dict falls back to `lookback_days_for_new`. Backward-compatible — existing callers passing only `lookback_days_for_new` work unchanged.
+- Paired with `scripts/wait_and_ingest.py` accepting `--timeframes "3min:180,5min:180,daily:730"` — each entry can carry its own depth via `TF:DAYS` syntax.
+
 ### 2026-05-26 — `ibkr_history.bulk_update`: per-symbol try/except so one bad ticker can't kill a 1519-symbol run
 
 - User rule: *"i prefer to run it without interruption"*. Previously, an unhandled exception inside `ingest_history()` or `update_history()` would propagate all the way up to `bulk_update`'s outer `try/finally` and abort the entire run. We hit this during the 180d re-seed when delisted symbols + transient IBKR errors caused the watcher to silently die mid-loop.
