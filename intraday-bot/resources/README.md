@@ -37,6 +37,20 @@ and import it from whichever strategy needs it. No registration.
 
 ## Changelog
 
+### 2026-05-26 — Fix: `ibkr_data._connect` raises ConnectionError instead of `sys.exit`
+
+Follow-up to 92eed6b. After that fix landed, Hermes's supervisor log showed iterations now succeeding through the pre-flight (in ~2s with the new fast metadata path), but still crashing with `code=1` after exactly 12 seconds — and the watcher log still ended at `[pre-flight] N unique symbols need work` with no `FAILED:` line.
+
+Root cause: `ibkr_data._connect` called `sys.exit(diagnostic)` when `ib.connect()` failed. `sys.exit` raises `SystemExit`, which is a `BaseException` — NOT an `Exception` — so `wait_and_ingest`'s `try: bulk_update(...) except Exception:` guard didn't catch it. The watcher exited cleanly with the helpful diagnostic going to stderr (discarded by Task Scheduler on Hermes), leaving no breadcrumb in the watcher log file.
+
+Fix: both `_check_lib` and `_connect` now raise (`ImportError` and `ConnectionError` respectively) instead of calling `sys.exit`. The diagnostic message is preserved in the exception's args. Verified by smoke test: connecting to a closed port now raises `ConnectionError`, not `SystemExit`. Orchestrator dry-run still passes.
+
+Net effect on Hermes: when Gateway is unreachable, the next iteration's watcher log will land a `FAILED: ConnectionError('Could not connect to IB Gateway at 127.0.0.1:4002 (clientId=84): [WinError 1225] ...')` line that points directly at the operational issue, instead of crashing silently.
+
+The companion `scripts/_common.py::_try_ibkr` wrapper (which catches both Exception AND SystemExit for the data-provider fallback path) was unaffected — it kept SystemExit handling for any legacy paths but now hits the Exception branch for `_connect` failures. Comment updated to reflect the new reality.
+
+This change doesn't make Gateway reachable — it only makes the failure visible in the watcher log. Operational follow-up (restart Gateway, check clientId 84 availability, verify port 4002 listening) is independent and still required.
+
 ### 2026-05-26 — Fix: pre-flight crash on Hermes + 1000x faster metadata scan
 
 Hermes supervisor was reporting `watcher exited (code=1) after 2.2m` in a tight loop, with the watcher log going silent after `starting bulk_update ...` and no `FAILED:` line. Root cause: `_classify_pair` calls `bars_store.available_range`, which materializes every row of every parquet just to extract first/last timestamp. With 1518 syms × 3 tf = 4554 reads over Resilio-synced storage, the scan took minutes. **Worse**, the pre-flight loop had no try/except around `_classify_pair`, so a single corrupted parquet (mid-Resilio-sync or otherwise) crashed the entire pre-flight before any `_emit` could fire — hence the silent crash with no FAILED line.

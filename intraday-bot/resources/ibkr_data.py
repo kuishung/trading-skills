@@ -81,16 +81,31 @@ def _et_tz():
 
 
 def _check_lib() -> None:
+    """Raise ImportError if ib_insync wasn't importable at module load
+    (paired with the top-of-file `try: from ib_insync import IB; except
+    ImportError: IB = None` pattern). NEVER sys.exit — callers must be
+    able to catch this; see _connect docstring for why."""
     if IB is None:
-        sys.exit(
-            "ib_insync not installed. Install it:\n"
-            "  py -m pip install ib_insync\n"
-            "Then ensure IB Gateway (paper) is running on 127.0.0.1:7497."
+        raise ImportError(
+            "ib_insync not installed. Install it: "
+            "py -m pip install ib_insync . "
+            "Then ensure IB Gateway (paper) is running on 127.0.0.1:4002."
         )
 
 
 def _connect(cfg: dict) -> "IB":
-    """Open an IBKR connection. Refuses live port unless explicitly allowed."""
+    """Open an IBKR connection. Refuses live port unless explicitly allowed.
+
+    Raises ConnectionError on failure -- NEVER sys.exit. Calling sys.exit
+    raises SystemExit (a BaseException), which slips past any
+    `except Exception:` guard in the caller and exits the process silently
+    with a stderr message that gets discarded under Task Scheduler. That's
+    exactly what we observed on Hermes 2026-05-26: watcher exited code=1
+    every 12 seconds with no FAILED line in the watcher log, because
+    bulk_update's failing connect call did sys.exit instead of raising.
+    Changed to raise so wait_and_ingest's try/except can log a clear
+    FAILED: line with the actual reason.
+    """
     _check_lib()
     host = cfg.get("ibkr_host", DEFAULT_HOST)
     port = int(cfg.get("ibkr_port", PAPER_PORT))
@@ -99,7 +114,7 @@ def _connect(cfg: dict) -> "IB":
     # Reject the well-known live ports (Gateway 4001, TWS 7496) unless explicit.
     LIVE_PORTS = {4001, 7496}
     if port in LIVE_PORTS and not allow_live:
-        sys.exit(
+        raise ConnectionError(
             f"Refusing to connect to IBKR live port {port}. "
             f"This bot is paper-only. Use {PAPER_PORT} (Gateway paper) or 7497 "
             f"(TWS paper) in config.json's ibkr_port, or set "
@@ -110,19 +125,17 @@ def _connect(cfg: dict) -> "IB":
     try:
         ib.connect(host, port, clientId=client_id, timeout=8, readonly=True)
     except Exception as exc:
-        sys.exit(
+        raise ConnectionError(
             f"Could not connect to IB Gateway at {host}:{port} "
-            f"(clientId={client_id}): {exc}\n"
-            f"Checks:\n"
-            f"  1. IB Gateway is running and logged in (paper account).\n"
-            f"  2. Configure -> Settings -> API -> Settings:\n"
-            f"       - Read-Only API is ON (required by this skill).\n"
-            f"       - Socket port matches the bot's ibkr_port (Gateway paper = 4002).\n"
-            f"       - 127.0.0.1 is in Trusted IPs.\n"
-            f"  3. clientId is not already in use by another session.\n"
-            f"  4. If you're running TWS instead of Gateway, set "
-            f"ibkr_port to 7497 in config.json."
-        )
+            f"(clientId={client_id}): {exc}. "
+            f"Checks: "
+            f"(1) IB Gateway running and logged in (paper account); "
+            f"(2) Configure -> Settings -> API -> Settings: Read-Only API ON, "
+            f"socket port matches cfg.ibkr_port (Gateway paper=4002), "
+            f"127.0.0.1 in Trusted IPs; "
+            f"(3) clientId {client_id} not already in use; "
+            f"(4) if running TWS instead of Gateway, set ibkr_port to 7497."
+        ) from exc
     return ib
 
 

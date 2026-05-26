@@ -293,10 +293,13 @@ def fallback_state() -> tuple[bool, str | None]:
 
 def _try_ibkr(call_name: str, ibkr_callable, *args, **kwargs):
     """Run an IBKR call; on failure, latch a process-wide fallback and return
-    None so the caller can swap in the Alpaca implementation. SystemExit from
-    inside the IBKR adapter is caught here (the adapter uses sys.exit on
-    connection failure, which is convenient for CLI smoke-tests but too
-    aggressive for the live trading loop)."""
+    None so the caller can swap in the Alpaca implementation.
+
+    Catches both Exception (the new behaviour as of 2026-05-26 — ibkr_data
+    now raises ConnectionError on connect failure) AND SystemExit (legacy
+    paths and any remaining CLI-style sys.exit). Both branches keep the
+    process alive and latch the fallback so subsequent calls in the same
+    session don't re-pay the timeout."""
     global _FALLBACK_LATCHED, _FALLBACK_REASON
     if _FALLBACK_LATCHED:
         return None
