@@ -58,8 +58,15 @@ del _root, _p
 import bars_store           # noqa: E402  resources/bars_store.py
 from _common import load_config  # noqa: E402  scripts/_common.py
 
-# History-ingest client id. Picked to NOT collide with:
-#   71 live bot, 80 observer, 82 GUNS scanner, 98 probe, 99 dashboard
+# Default history-ingest client id. Picked to NOT collide with:
+#   71 live bot, 80 observer, 82 GUNS scanner, 98 probe, 99 dashboard.
+# Per-machine override via cfg["ibkr_history_client_id"] (see _connect
+# below). CLAUDE.md's clientId allocation table sets 83 = laptop ingest,
+# 84 = Hermes ingest — both machines must be on different clientIds
+# because IBKR's server-side session table won't allow simultaneous
+# connections on the same id (manifests as "remove Client 83" entries
+# in IBC's log + 8-second TimeoutErrors from ib_insync's connect, as
+# observed on Hermes 2026-05-26).
 HISTORY_CLIENT_ID = 83
 DEFAULT_PACING_S = 7.0   # seconds between IBKR requests; safe under 60/600s cap
 
@@ -77,12 +84,26 @@ TIMEFRAME_TO_IB = {
 # ---------- IBKR connection ----------
 
 def _connect(cfg: dict):
-    """Open a long-lived IB connection for the bulk operation."""
-    # Reuse the existing connection plumbing from ibkr_data.
-    from ibkr_data import _connect as _base_connect, DEFAULT_CLIENT_ID
-    # Override the client id to avoid collision with the live bot.
+    """Open a long-lived IB connection for the bulk operation.
+
+    Client id resolution (most specific wins):
+      1. cfg["ibkr_history_client_id"] -- per-machine override in
+         config.json. Use this to set Hermes=84 and laptop=83 so the
+         two machines don't fight over the same id.
+      2. HISTORY_CLIENT_ID (module default = 83) -- back-compat for
+         config files that don't yet have the new key.
+
+    The override is necessary because the previous code hardcoded 83
+    for BOTH machines, which caused IBKR's server-side session table
+    to reject every new connection attempt as a duplicate (IBC logs
+    showed 'remove Client 83' repeating; the watcher's connect timed
+    out after 8 seconds, supervisor crash-looped every 12s).
+    """
+    from ibkr_data import _connect as _base_connect, DEFAULT_CLIENT_ID  # noqa: F401
     cfg_local = dict(cfg or {})
-    cfg_local["ibkr_client_id"] = HISTORY_CLIENT_ID
+    cfg_local["ibkr_client_id"] = int(
+        cfg_local.get("ibkr_history_client_id", HISTORY_CLIENT_ID)
+    )
     return _base_connect(cfg_local)
 
 

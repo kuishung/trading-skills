@@ -87,6 +87,8 @@
   "ibkr_host": "127.0.0.1",
   "ibkr_port": 4002,
   "ibkr_client_id": 71,
+  "_comment_ibkr_history_client_id": "Per-machine override for the bulk-history-ingest clientId (resources/ibkr_history.py). IBKR refuses simultaneous connections on the same clientId, so the laptop and Hermes MUST use different ids. CLAUDE.md's allocation table: laptop=83 (default if omitted, set explicitly here for clarity), Hermes=84. Symptom of getting this wrong: IBC log shows 'remove Client N' repeating, watcher connects time out after 8s, supervisor crash-loops every 12s.",
+  "ibkr_history_client_id": 83,
   "ibkr_allow_live_port": false,
   "ibkr_gateway_path": null,
   "ibkr_ibc_dir": null,

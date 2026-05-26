@@ -37,6 +37,20 @@ and import it from whichever strategy needs it. No registration.
 
 ## Changelog
 
+### 2026-05-26 — `HISTORY_CLIENT_ID` now config-driven (`cfg["ibkr_history_client_id"]`)
+
+Sequel to the connection-failure debug session that produced c3f6dd6. After the FAILED line started landing in Hermes's watcher log, the actual error was visible: `Could not connect to IB Gateway at 127.0.0.1:4002 (clientId=83): . Checks: ...` — empty exception body (= 8s TimeoutError from ib_insync) plus IBC's log showing `remove Client 83` repeating 15+ times. Diagnosis: BOTH the laptop and Hermes were trying to connect on the hardcoded `HISTORY_CLIENT_ID = 83`, so IBKR's server-side session table treated every new attempt as a duplicate and kicked it.
+
+Fix: `ibkr_history._connect` now reads `cfg["ibkr_history_client_id"]` (per-machine, in the gitignored `config.json`), falling back to the legacy `HISTORY_CLIENT_ID = 83` for back-compat when the key is absent. Per CLAUDE.md's allocation table:
+- Laptop: `"ibkr_history_client_id": 83` (the default; explicit is good practice)
+- Hermes: `"ibkr_history_client_id": 84`
+
+`config.example.json` documents the key with a `_comment_*` explaining the trap (symptom: `remove Client N` in IBC logs + 12s crash-loops). Both machines must be on distinct ids if they ever run ingest concurrently.
+
+Smoke-tested: stubbed `ibkr_data._connect` to capture cfg; verified the override correctly propagates 83 (default), 84, 85 from cfg through `_connect` to the underlying `_base_connect`.
+
+This doesn't fix the immediate Hermes situation by itself — the user also needs to update Hermes's `config.json` to add `"ibkr_history_client_id": 84` so the next iteration connects on 84 instead of the colliding 83.
+
 ### 2026-05-26 — Fix: `ibkr_data._connect` raises ConnectionError instead of `sys.exit`
 
 Follow-up to 92eed6b. After that fix landed, Hermes's supervisor log showed iterations now succeeding through the pre-flight (in ~2s with the new fast metadata path), but still crashing with `code=1` after exactly 12 seconds — and the watcher log still ended at `[pre-flight] N unique symbols need work` with no `FAILED:` line.
