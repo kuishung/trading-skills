@@ -28,7 +28,14 @@ they're rarely-touched and small, so `scripts/` is fine.
 
 ## Changelog
 
-### 2026-05-26 — `wait_and_ingest.py` + `Watch-Ingest.ps1`: `--symbols-file` for pure-IBKR runs
+### 2026-05-26 - `Watch-Ingest.ps1`: ASCII-only source (PS 5.1 em-dash parser bug)
+
+- Hermes ran the freshly-pulled supervisor and hit `TerminatorExpectedAtEndOfString` at line 109 + "Missing closing '}'" at line 102 - both red herrings. Root cause: Windows PowerShell 5.1 reads `.ps1` files as the system ANSI codepage (Windows-1252) when there is no UTF-8 BOM, so the em-dashes (`-` U+2014, UTF-8 bytes `E2 80 94`) decode as three Win-1252 chars where the third byte (`0x94`) is U+201D RIGHT DOUBLE QUOTATION MARK. PS 5.1's tokenizer treats curly quotes as alternates for `"`, so it silently closed/reopened strings mid-file and the parser exploded much later in a way that pointed nowhere useful.
+- Fix: replaced every em-dash in `Watch-Ingest.ps1` with an ASCII hyphen `-`. Verified zero non-ASCII bytes remain and `[System.Management.Automation.Language.Parser]::ParseFile` returns no errors.
+- Hard rule going forward: **every `.ps1` in this repo stays pure ASCII**. PowerShell Core 7+ defaults to UTF-8 without BOM, but Hermes (Server 2019) ships Windows PowerShell 5.1, and we must keep both happy. If a future script genuinely needs Unicode, save it with a UTF-8 BOM AND test it under `powershell.exe` (not just `pwsh`).
+- Hermes recovery: `git pull` then re-run the same `Watch-Ingest.ps1` invocation - no other changes needed.
+
+### 2026-05-26 - `wait_and_ingest.py` + `Watch-Ingest.ps1`: `--symbols-file` for pure-IBKR runs
 
 - User rule: *"make sure the code only seed from IBKR, nothing outside IBKR"*. Previously `--universe daily` required existing daily parquets to resolve the symbol list — on a fresh Hermes with all parquets wiped, we had to use yfinance to bootstrap that. Now there's a third option that needs neither parquets nor network.
 - **`--symbols-file <path>`** (new flag in `wait_and_ingest.py`): reads the universe from a plain-text file (one symbol per line, `#` comments and blank lines skipped, Windows reserved names defensively filtered). Overrides `--universe` when set. Paired with `resources/universe_full.txt` (1518 syms, committed to git).

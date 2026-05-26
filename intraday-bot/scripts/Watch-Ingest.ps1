@@ -1,4 +1,4 @@
-# Watch-Ingest.ps1 — supervisor that keeps wait_and_ingest.py alive forever.
+# Watch-Ingest.ps1 - supervisor that keeps wait_and_ingest.py alive forever.
 #
 # If the Python process exits for ANY reason (clean finish, crash, kill,
 # OOM, IBKR auth pop-up that closes Gateway), this loop waits RestartDelay
@@ -7,7 +7,7 @@
 #
 # Per user 2026-05-26: *"i prefer to run it without interruption"*. The
 # Python script itself handles in-process resilience (socket reconnect,
-# per-symbol error skip — see resources/ibkr_history.py); this supervisor
+# per-symbol error skip - see resources/ibkr_history.py); this supervisor
 # handles process-level resilience.
 #
 # Typical use (Hermes, after Gateway is up):
@@ -17,7 +17,7 @@
 # Or as a Task Scheduler "Run whether user is logged on or not" task for
 # fully autonomous operation across Hermes reboots.
 #
-# Parameters mirror wait_and_ingest.py — defaults match the 180d re-seed
+# Parameters mirror wait_and_ingest.py - defaults match the 180d re-seed
 # we've been running.
 
 param(
@@ -30,7 +30,7 @@ param(
     [int]    $MaxIterations = 0         # 0 = forever
 )
 
-# Resolve paths relative to the script — works from any CWD
+# Resolve paths relative to the script - works from any CWD
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BotRoot   = Split-Path -Parent $ScriptDir
 $CfgPath   = Join-Path $BotRoot "config.json"
@@ -43,7 +43,7 @@ if (Test-Path $CfgPath) {
         $cfg = Get-Content $CfgPath -Raw | ConvertFrom-Json
         if ($cfg.data_root) { $DataRoot = $cfg.data_root }
     } catch {
-        Write-Warning "could not parse config.json — using bot root for log"
+        Write-Warning "could not parse config.json - using bot root for log"
     }
 }
 
@@ -82,11 +82,11 @@ $iter = 0
 while ($true) {
     $iter++
     if ($MaxIterations -gt 0 -and $iter -gt $MaxIterations) {
-        Write-Log "reached MaxIterations=$MaxIterations — exiting supervisor"
+        Write-Log "reached MaxIterations=$MaxIterations - exiting supervisor"
         break
     }
 
-    Write-Log "iteration #$iter — launching watcher"
+    Write-Log "iteration #$iter - launching watcher"
     $startTime = Get-Date
 
     # Foreground call so $LASTEXITCODE is populated when it exits
@@ -98,9 +98,9 @@ while ($true) {
     Write-Log "watcher exited (code=$exitCode) after ${mins}m"
 
     if ($exitCode -eq 0) {
-        Write-Log "clean exit — full universe completed. Sleeping ${RestartDelay}s before next pass (incremental update)..."
+        Write-Log "clean exit - full universe completed. Sleeping ${RestartDelay}s before next pass (incremental update)..."
     } else {
-        Write-Log "non-zero exit — likely crash/disconnect. Restarting in ${RestartDelay}s"
+        Write-Log "non-zero exit - likely crash/disconnect. Restarting in ${RestartDelay}s"
     }
 
     Start-Sleep -Seconds $RestartDelay
