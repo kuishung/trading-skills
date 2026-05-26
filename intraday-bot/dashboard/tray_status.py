@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -959,9 +960,49 @@ def _show_progress_window_inner():
 
 
 def _on_show_status(icon, item):
-    """Default tray action (left-click) — open the progress window in a
-    daemon thread so pystray's event loop isn't blocked by Tk's mainloop."""
-    threading.Thread(target=_show_progress_window, daemon=True).start()
+    """Default tray action (left-click) — open the progress window as a
+    SUBPROCESS rather than a daemon thread.
+
+    Why subprocess: tkinter requires its operations to happen on the actual
+    main thread of the Python interpreter. pystray's "Show Status" handler
+    runs on a callback thread, and any daemon thread we spawn from it is
+    not the main thread either. Calling tk.Tk() + tk.StringVar(...) from
+    a non-main thread raises 'RuntimeError: main thread is not in main
+    loop' on Python 3.12 (we hit this on Hermes 2026-05-26 — see the
+    `7c00359` commit's diagnostic which surfaced the exception).
+
+    Spawning a subprocess gives each click its own fresh Python interpreter
+    where the spawned process's main thread IS the thread that runs Tk —
+    no thread-safety issues, no shared state to corrupt, and a single
+    foot-gun (a Tcl crash, a font failure) can't take down the tray.
+
+    Cost: ~0.5–1s process startup latency per click. Acceptable for a
+    tray-icon click, given the alternative is "doesn't work at all."
+    """
+    script = Path(__file__).resolve()
+    # pythonw.exe (no console window) preferred over python.exe on Windows.
+    # sys.executable might be either depending on how the tray was launched;
+    # py -3.12 launcher route handles both transparently.
+    creation_flags = 0
+    if sys.platform == "win32":
+        # CREATE_NO_WINDOW = 0x08000000 — suppresses the brief cmd-window
+        # flash when launching a child python from a tray icon click.
+        creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    try:
+        subprocess.Popen(
+            [sys.executable, str(script), "--window-only"],
+            cwd=str(script.parent.parent),   # intraday-bot root
+            creationflags=creation_flags,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception as exc:
+        sys.stderr.write(
+            f"[tray_status] failed to spawn window subprocess: "
+            f"{type(exc).__name__}: {exc}\n"
+        )
+        sys.stderr.flush()
 
 
 def _on_open_log(icon, item):
@@ -1068,6 +1109,15 @@ def _update_loop(icon: "pystray.Icon"):
 
 
 def main() -> int:
+    # --window-only mode: child subprocess spawned by _on_show_status. Just
+    # opens the progress window on this process's main thread (which IS the
+    # actual main thread of this fresh interpreter — no tkinter threading
+    # error), runs the mainloop, exits when the window closes. No pystray,
+    # no update loop, no milestones.
+    if "--window-only" in sys.argv:
+        _show_progress_window_inner()
+        return 0
+
     menu = pystray.Menu(
         pystray.MenuItem("Show Status", _on_show_status, default=True),
         pystray.MenuItem("Refresh Now", _on_refresh_now),

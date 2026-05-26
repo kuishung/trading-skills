@@ -29,6 +29,26 @@ Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-05-26 - `tray_status.py`: progress window spawned as subprocess (fixes "main thread is not in main loop")
+
+Sequel to 7c00359 (which added the try/finally + traceback that surfaced the real cause). With the diagnostic in place, the next Hermes attempt revealed:
+
+```
+[tray_status] _show_progress_window failed: RuntimeError: main thread is not in main loop
+  ... line 762 in _show_progress_window_inner
+    pct_var = tk.StringVar(value='-')
+```
+
+Tkinter requires its operations to run on the actual main thread of the Python interpreter. pystray's "Show Status" callback runs on its own thread; any daemon thread we spawn from it is not the main thread either. On Python 3.12 this surfaces as `RuntimeError: main thread is not in main loop` from the very first `tk.StringVar(...)` call after `tk.Tk()`.
+
+Fix: `_on_show_status` now spawns the window as a SUBPROCESS — `py -3.12 dashboard\tray_status.py --window-only` — instead of a daemon thread. Each subprocess gets its own fresh interpreter with its own main thread (which IS the thread that runs Tk), so the thread-safety issue disappears entirely. `main()` checks for `--window-only` in argv and short-circuits straight to `_show_progress_window_inner()` without starting pystray or the update loop.
+
+Trade-off accepted: ~0.5–1s subprocess startup latency per click. That's well within tolerance for a tray-icon click, given the alternative was "window doesn't open at all." Bonus: each click is now fully isolated — a Tcl crash, font loading failure, or any other Tk gremlin in one window can't take down the tray or affect future windows.
+
+On Windows the subprocess uses `CREATE_NO_WINDOW` so there's no cmd-shell flash at spawn time. stdin/stdout/stderr are routed to DEVNULL since the subprocess doesn't need a console — if it has its own internal error, it's still visible via the existing try/finally + traceback inside `_show_progress_window` (which is now the body of the subprocess's main).
+
+The `_progress_window_active` single-instance flag is preserved (no harm) but is effectively unused — multiple clicks now spawn multiple subprocess windows, which is fine.
+
 ### 2026-05-26 - `tray_status.py`: fix "tray icon can't open the window" — flag stuck after a failed first-open
 
 User report: clicking the tray icon stopped opening the progress window. Root cause: `_show_progress_window` set `_progress_window_active` BEFORE the Tk-construction code, but the lifecycle's try/finally only wrapped `win.mainloop()`. If anything between the .set() and the mainloop raised (`tk.Tk()` can fail when launched from a daemon thread; ttk style configuration can fail under certain Tcl builds; etc.), the function exited via exception with the flag stuck set forever. Every subsequent click hit the single-instance early-return at the top → silent no-op → window never opened again.
