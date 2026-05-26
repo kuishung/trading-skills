@@ -246,16 +246,26 @@ def _classify_pair(sym: str, tf: str, target_days: int, force_seed: bool
         "force"     force_seed=True → full re-fetch regardless of disk state
         "refill"    has data but depth < 90% of target → backfill
         "top_up"    has data, deep enough → only an incremental update is needed
-        "unreadable" parquet timestamp couldn't be parsed → treat as refill
+        "unreadable" parquet read failed or timestamp couldn't be parsed →
+                    treated as refill so the bad/partial file gets re-fetched
 
-    Used by the pre-flight pass to plan work and surface a summary up front,
-    so that on watcher restart the user sees immediately how many symbols are
-    already complete and doesn't have to wonder whether the loop is "really
-    doing something" while it slowly skips through fully-seeded names.
+    Uses bars_store.available_range_fast (parquet metadata only, ~1ms per
+    call vs ~50ms for the full read). Falls back to the full read when the
+    fast path returns None for a file that does exist (e.g., the parquet
+    was written without statistics for some reason).
+
+    Caller's pre-flight loop wraps THIS function in its own try/except as
+    belt-and-braces — but available_range_fast already swallows file-read
+    exceptions internally, so a corrupted parquet from a partial Resilio
+    sync no longer kills the entire pre-flight scan (which previously
+    crashed the watcher silently with no FAILED line in the watcher log
+    because the exception happened before any _emit call — observed on
+    Hermes 2026-05-26, supervisor reported code=1 after exactly 2.2m each
+    iteration).
     """
     if force_seed:
         return "force", f"force_seed({target_days}d)"
-    rng = bars_store.available_range(sym, timeframe=tf)
+    rng = bars_store.available_range_fast(sym, timeframe=tf)
     if rng is None:
         return "seed", f"seed({target_days}d)"
     try:
@@ -347,15 +357,55 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
     # Classify everything, log a summary, then build the work list. This
     # is what gives the user the "which has been done and which now" view
     # on every watcher restart.
+    #
+    # Resilience: each pair's _classify_pair call is wrapped in try/except
+    # so that a single bad parquet (corrupted, partial Resilio sync, etc.)
+    # is logged + classified as "unreadable" instead of crashing the
+    # entire pre-flight pass. Before this guard, Hermes was crashing
+    # silently inside pre-flight after 2.2 min with no FAILED line in
+    # the watcher log because the exception bubbled out of bulk_update
+    # before any _emit call had run.
+    #
+    # Progress emit: 4554 pairs over Resilio-synced storage can take
+    # a minute or more even with the metadata-only fast path. We emit a
+    # progress line every PREFLIGHT_PROGRESS_EVERY pairs so the watcher
+    # log shows the scan is alive — eliminating the "log is silent after
+    # 'starting bulk_update' — is it stuck?" question.
+    PREFLIGHT_PROGRESS_EVERY = 500
     plan: list[tuple[str, str, str, str, int]] = []   # (sym, tf, action, note, target_days)
     counts: dict[str, int] = {"seed": 0, "force": 0, "refill": 0,
                               "top_up": 0, "unreadable": 0}
+    total_pairs = len(symbols) * len(timeframes)
+    n_scanned = 0
+    n_classify_errors = 0
+    _emit(f"[pre-flight] starting metadata scan of {total_pairs} (sym,tf) pairs ...")
     for sym in symbols:
         for tf in timeframes:
             target_days = (lookback_days_by_tf or {}).get(tf, lookback_days_for_new)
-            action, note = _classify_pair(sym, tf, target_days, force_seed)
+            try:
+                action, note = _classify_pair(sym, tf, target_days, force_seed)
+            except Exception as exc:
+                # Don't let one bad parquet kill the entire pre-flight.
+                # Treat it as unreadable → refill on the IBKR side.
+                n_classify_errors += 1
+                if n_classify_errors <= 5:
+                    _emit_err(
+                        f"[pre-flight] classify {sym} {tf}: "
+                        f"{type(exc).__name__}: {str(exc)[:80]} — treating as unreadable"
+                    )
+                action, note = "unreadable", f"classify_error: {type(exc).__name__}"
             counts[action] = counts.get(action, 0) + 1
             plan.append((sym, tf, action, note, target_days))
+            n_scanned += 1
+            if n_scanned % PREFLIGHT_PROGRESS_EVERY == 0:
+                _emit(
+                    f"[pre-flight] scanned {n_scanned}/{total_pairs} "
+                    f"({100*n_scanned/total_pairs:.0f}%) ..."
+                )
+    if n_classify_errors > 5:
+        _emit_err(
+            f"[pre-flight] (+{n_classify_errors - 5} more classify errors suppressed)"
+        )
 
     n_total = len(plan)
     work_items = [

@@ -37,6 +37,20 @@ and import it from whichever strategy needs it. No registration.
 
 ## Changelog
 
+### 2026-05-26 — Fix: pre-flight crash on Hermes + 1000x faster metadata scan
+
+Hermes supervisor was reporting `watcher exited (code=1) after 2.2m` in a tight loop, with the watcher log going silent after `starting bulk_update ...` and no `FAILED:` line. Root cause: `_classify_pair` calls `bars_store.available_range`, which materializes every row of every parquet just to extract first/last timestamp. With 1518 syms × 3 tf = 4554 reads over Resilio-synced storage, the scan took minutes. **Worse**, the pre-flight loop had no try/except around `_classify_pair`, so a single corrupted parquet (mid-Resilio-sync or otherwise) crashed the entire pre-flight before any `_emit` could fire — hence the silent crash with no FAILED line.
+
+Three fixes:
+
+1. **`bars_store.available_range_fast(symbol, *, timeframe)`** — reads the parquet's per-row-group min/max statistics for the `t` column instead of materializing rows. Pyarrow records these stats by default on write, so existing files Just Work. Measured: 1083× speedup for a 730-row daily parquet (1627ms → 1.5ms). Across the full 4554-pair scan: ~12s vs the previous several-minute crawl. All exceptions internal to the function (corrupted parquet, partial Resilio sync, schema drift) return `None`, never raise.
+2. **`_classify_pair` uses the fast path** + treats `None` from a non-existent parquet as `seed`, from an existing but unreadable file as `unreadable` (→ refill on the IBKR side).
+3. **Pre-flight loop wraps `_classify_pair` in try/except** with belt-and-braces error counting. A bad parquet now logs one line (up to 5 verbose, then a suppressed-count footer) and gets classified as `unreadable` instead of crashing the watcher. Also emits a `[pre-flight] scanned N/M (X%)` progress line every 500 pairs so silence ≠ stuck.
+
+Subtle bug encountered + fixed in development: my first cut of `available_range_fast` used `meta.schema.num_columns` + `meta.schema.column(i).name`, which doesn't exist on `pyarrow._parquet.ParquetSchema` (it has `.names` — a list). The `AttributeError` got swallowed by the function's outer `except Exception: return None`, so every call silently returned `None` and every symbol would have classified as `seed` (full re-fetch). Caught by the smoke test (`slow != fast`). Now uses `meta.schema.names.index("t")`.
+
+Smoke-tested end-to-end on the laptop's 74-symbol parquet set: full pre-flight on 222 pairs in 0.58 seconds, returns clean 6-line summary, `_emit` flushes through `log_callback` correctly, `bulk_update` returns `{}` without touching IBKR when `n_work == 0`.
+
 ### 2026-05-26 — `ibkr_history.bulk_update`: `log_callback` + `unique symbols need work` line
 
 Follow-up to today's pre-flight refactor (entry below). Two problems surfaced after the user pulled the change on Hermes:

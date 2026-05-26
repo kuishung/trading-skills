@@ -339,6 +339,65 @@ def _coerce_iso(x) -> str | None:
     raise TypeError(f"unsupported start/end: {x!r}")
 
 
+def available_range_fast(symbol: str,
+                         *, timeframe: str = "1min") -> tuple[str, str] | None:
+    """Fast metadata-only version of `available_range`.
+
+    Reads the parquet file's per-row-group statistics for the `t` column
+    instead of materializing all rows. On a 730-row daily parquet this is
+    ~1ms vs `available_range`'s ~50ms; on a 70k-row 3min parquet the gap
+    widens to ~1ms vs several hundred ms — especially over Resilio-synced
+    storage. Used by the bulk_update pre-flight scan (4554 calls per
+    watcher iteration), where the round-trip difference is minutes.
+
+    Returns `(min_t, max_t)` derived from row-group statistics, or None if
+    the file doesn't exist, is empty, or doesn't carry the expected
+    statistics. Falls back to None — caller treats that as "unreadable"
+    and re-fetches.
+
+    All exceptions (corrupted parquet, partial sync from Resilio, schema
+    mismatch) are caught and surfaced as None, so a single bad file
+    doesn't crash the calling pre-flight loop.
+    """
+    pa = _require_pyarrow()
+    import pyarrow.parquet as pq  # type: ignore
+    path = _symbol_path(symbol, timeframe)
+    if not path.exists():
+        return None
+    try:
+        meta = pq.ParquetFile(path).metadata
+        if meta is None or meta.num_rows == 0 or meta.num_row_groups == 0:
+            return None
+        # Find the `t` column's position in the schema. ParquetSchema's
+        # public API is `.names` (a list of column-path strings) — there
+        # is no num_columns or column(i).name accessor on the schema
+        # object itself. (Row-group columns have .path_in_schema for the
+        # name, but we need the index into the row group's column list,
+        # which matches the schema's positional ordering.)
+        try:
+            col_idx = meta.schema.names.index("t")
+        except ValueError:
+            return None
+        # Collect per-row-group min/max for the `t` column; take the
+        # overall min and max. ISO timestamp strings sort lexicographically
+        # so string min/max is correct.
+        mins: list[str] = []
+        maxs: list[str] = []
+        for g in range(meta.num_row_groups):
+            stats = meta.row_group(g).column(col_idx).statistics
+            if stats is None or not stats.has_min_max:
+                return None
+            mins.append(str(stats.min))
+            maxs.append(str(stats.max))
+        if not mins:
+            return None
+        return (min(mins), max(maxs))
+    except Exception:
+        # Corrupted parquet, partial Resilio sync, schema drift — let the
+        # caller treat this as "unreadable" and decide what to do.
+        return None
+
+
 def available_range(symbol: str,
                     *, timeframe: str = "1min") -> tuple[str, str] | None:
     """Return (first_ts, last_ts) ISO strings, or None if no bars stored."""
