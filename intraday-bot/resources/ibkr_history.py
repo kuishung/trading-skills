@@ -273,7 +273,8 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
                 lookback_days_by_tf: dict[str, int] | None = None,
                 pacing_s: float = DEFAULT_PACING_S,
                 force_seed: bool = False,
-                skip_up_to_date: bool = False) -> dict[tuple[str, str], int]:
+                skip_up_to_date: bool = False,
+                log_callback=None) -> dict[tuple[str, str], int]:
     """Update many (symbol, timeframe) pairs in one IBKR connection.
 
     Pre-flight pass (NO IBKR calls): classify every (sym, tf) into one of
@@ -317,6 +318,31 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
     if not symbols:
         return {}
 
+    # ---------- Routing: every output line goes via _emit ----------
+    # When `log_callback` is set (wait_and_ingest.py passes its own log()),
+    # ALL of bulk_update's output — pre-flight summary AND per-iteration
+    # progress lines — lands in the watcher's _ingest_*.log file. This is
+    # important on Hermes where the supervisor runs under Task Scheduler,
+    # which discards the child process's stdout/stderr; without this
+    # callback the pre-flight + progress would vanish into the void.
+    # When `log_callback` is None (orchestrator's post-EOD path), fall
+    # back to direct stdout/stderr (preserves existing behaviour).
+    def _emit(msg: str) -> None:
+        msg = msg.rstrip("\n")
+        if log_callback:
+            log_callback(msg)
+        else:
+            sys.stdout.write(msg + "\n")
+            sys.stdout.flush()
+
+    def _emit_err(msg: str) -> None:
+        msg = msg.rstrip("\n")
+        if log_callback:
+            log_callback(msg)   # single stream — caller's log() handles it
+        else:
+            sys.stderr.write(msg + "\n")
+            sys.stderr.flush()
+
     # ---------- Pre-flight (no IBKR calls) ----------
     # Classify everything, log a summary, then build the work list. This
     # is what gives the user the "which has been done and which now" view
@@ -324,20 +350,11 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
     plan: list[tuple[str, str, str, str, int]] = []   # (sym, tf, action, note, target_days)
     counts: dict[str, int] = {"seed": 0, "force": 0, "refill": 0,
                               "top_up": 0, "unreadable": 0}
-    already_done: list[tuple[str, str, int]] = []   # for the optional verbose listing
     for sym in symbols:
         for tf in timeframes:
             target_days = (lookback_days_by_tf or {}).get(tf, lookback_days_for_new)
             action, note = _classify_pair(sym, tf, target_days, force_seed)
             counts[action] = counts.get(action, 0) + 1
-            if action == "top_up":
-                # Track depth for the "already done" report. note format is
-                # "depth=Nd ok"; pull out N for the report.
-                try:
-                    days_back = int(note.split("=", 1)[1].split("d", 1)[0])
-                except (IndexError, ValueError):
-                    days_back = -1
-                already_done.append((sym, tf, days_back))
             plan.append((sym, tf, action, note, target_days))
 
     n_total = len(plan)
@@ -348,18 +365,23 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
     ]
     n_work = len(work_items)
     n_skipped = n_total - n_work
+    # Unique-symbol count among work items: this is the right denominator
+    # for the tray's "X / Y symbols" display (the tray's numerator counts
+    # unique symbols actually written to). A symbol with 2 shallow
+    # timeframes is 2 work items but 1 unique symbol.
+    n_work_symbols = len({s for (s, _tf, _a, _n, _td) in work_items})
 
-    sys.stdout.write(
+    _emit(
         f"[pre-flight] {n_total} (sym,tf) pairs scanned: "
         f"seed={counts['seed']} force={counts['force']} "
         f"refill={counts['refill']} top_up={counts['top_up']} "
-        f"unreadable={counts['unreadable']}\n"
+        f"unreadable={counts['unreadable']}"
     )
     if n_skipped:
-        sys.stdout.write(
+        _emit(
             f"[pre-flight] skipping {n_skipped} top_up pairs already at full depth "
-            f"(skip_up_to_date=True). Estimated time saved: ~{n_skipped * pacing_s / 60:.1f} min "
-            f"of pacing.\n"
+            f"(skip_up_to_date=True). Estimated time saved: "
+            f"~{n_skipped * pacing_s / 60:.1f} min of pacing."
         )
     # Per-timeframe breakdown of already-done — gives the user a one-glance
     # view of which slot is the closest to complete.
@@ -369,18 +391,20 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
         by_tf_total[tf] = by_tf_total.get(tf, 0) + 1
         if action == "top_up":
             by_tf_done[tf] = by_tf_done.get(tf, 0) + 1
-    sys.stdout.write("[pre-flight] per-timeframe completion: ")
     parts = []
     for tf in timeframes:
         done = by_tf_done.get(tf, 0)
         tot = by_tf_total.get(tf, 0)
         parts.append(f"{tf}={done}/{tot}")
-    sys.stdout.write(" ".join(parts) + "\n")
-    sys.stdout.write(f"[pre-flight] {n_work} work items remaining\n")
-    sys.stdout.flush()
+    _emit("[pre-flight] per-timeframe completion: " + " ".join(parts))
+    _emit(f"[pre-flight] {n_work} work items remaining")
+    # Tray-friendly denominator line — parsed by dashboard/tray_status.py to
+    # show "X / N symbols" with N = unique symbols that still need a fetch.
+    # Keep the exact text stable; the tray regex matches against it.
+    _emit(f"[pre-flight] {n_work_symbols} unique symbols need work")
 
     if n_work == 0:
-        sys.stdout.write("[pre-flight] nothing to do — all pairs at full depth\n")
+        _emit("[pre-flight] nothing to do — all pairs at full depth")
         return {}
 
     # ---------- Connect + execute ----------
@@ -399,18 +423,16 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
             return current_ib
         reconnect_attempts += 1
         wait_s = min(60, 5 * reconnect_attempts)
-        sys.stderr.write(
+        _emit_err(
             f"[ibkr_history] connection lost — reconnect attempt #{reconnect_attempts} "
-            f"after {wait_s}s wait...\n"
+            f"after {wait_s}s wait..."
         )
-        sys.stderr.flush()
         time.sleep(wait_s)
         try: current_ib.disconnect()
         except Exception: pass
         new_ib = _connect(cfg)
         if new_ib.isConnected():
-            sys.stderr.write("[ibkr_history] reconnected.\n")
-            sys.stderr.flush()
+            _emit_err("[ibkr_history] reconnected.")
             reconnect_attempts = 0
             return new_ib
         if reconnect_attempts >= MAX_RECONNECT_ATTEMPTS:
@@ -431,7 +453,7 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
             try:
                 ib = _ensure_connected(ib)
             except Exception as exc:
-                sys.stderr.write(f"[ibkr_history] {exc} — aborting run\n")
+                _emit_err(f"[ibkr_history] {exc} — aborting run")
                 break
             # Per-symbol try/except — one bad ticker (delisted, ticker
             # change, weird IBKR error, parquet write failure, etc.)
@@ -454,22 +476,20 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
                     elif action == "refill":
                         label = f"refill({note})"
                     else:
-                        label = f"refill(unreadable→{target_days}d)"
+                        label = f"refill(unreadable->{target_days}d)"
                 else:   # action == "top_up"
                     n = update_history(ib, sym, tf, pacing_s=pacing_s)
                     label = f"update({note})"
                 results[(sym, tf)] = n
-                sys.stdout.write(
-                    f"  {progress:<12} {sym:<8} {tf:<6} {label:<22} +{n} bars\n"
+                _emit(
+                    f"  {progress:<12} {sym:<8} {tf:<6} {label:<22} +{n} bars"
                 )
             except Exception as exc:
                 err_str = f"{type(exc).__name__}: {str(exc)[:80]}"
                 results[(sym, tf)] = 0
-                sys.stderr.write(
-                    f"  {progress:<12} {sym:<8} {tf:<6} FAILED: {err_str} — skipping\n"
+                _emit_err(
+                    f"  {progress:<12} {sym:<8} {tf:<6} FAILED: {err_str} — skipping"
                 )
-            sys.stdout.flush()
-            sys.stderr.flush()
     finally:
         try:
             ib.disconnect()

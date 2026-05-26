@@ -29,6 +29,10 @@ they're rarely-touched and small, so `scripts/` is fine.
 
 ## Changelog
 
+### 2026-05-26 - `wait_and_ingest.py`: also passes `log_callback=log` to bulk_update
+
+Follow-up to today's earlier `skip_up_to_date=True` entry. On Hermes the supervisor runs under Task Scheduler, which discards the watcher's stdout — so the pre-flight summary lines and per-iteration progress that `bulk_update` writes to stdout were never landing in the watcher's `_ingest_*.log` file. Passing `log_callback=log` routes everything through the same logger that writes the log file, so the dashboard tray can parse the pre-flight summary and the user can `Get-Content $log -Tail N` to see real progress. See `resources/README.md` changelog for the matching `bulk_update` parameter addition.
+
 ### 2026-05-26 - `wait_and_ingest.py`: passes `skip_up_to_date=True` to bulk_update
 
 User feedback: *"when the ingest restart it always start from the A, i want it to have a log to confirm the which has been done and which now so i can save a lot of time"*. The watcher's bulk_update call now skips (sym, tf) pairs already at full target depth, which is exactly the right semantics for the watcher (it's the backfill tool; today's incremental top-up is the orchestrator's post-EOD job, not this script's). See `resources/README.md` changelog for the matching `bulk_update` pre-flight + `skip_up_to_date` parameter change.

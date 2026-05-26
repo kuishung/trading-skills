@@ -207,6 +207,61 @@ def _target_universe_size() -> int:
     return max(daily_n, file_n) or 1519
 
 
+# Pre-flight denominator parser. The watcher log file emits a line like
+#     [pre-flight] 47 unique symbols need work
+# at the top of every iteration when bulk_update runs with skip_up_to_date.
+# That count is the right "X / N" denominator for this iteration — much
+# better than the full universe size, which makes "1 / 1518 (0.1%)" look
+# like nothing has happened even when the pre-flight skipped 1471 already-
+# deep symbols.
+#
+# Matched against the watcher log inside its data_root, NOT the supervisor
+# log (which doesn't capture the watcher's stdout since 2026-05-26's
+# log_callback refactor routed it back through the watcher's own log()).
+_PREFLIGHT_SYMS_RE = re.compile(r"\[pre-flight\]\s+(\d+)\s+unique symbols need work")
+_preflight_cache: dict[str, tuple[float, int | None]] = {}
+
+
+def _work_symbols_from_iteration_log(log_name: str) -> int | None:
+    """Read the watcher log file `log_name` (basename, inside data_root)
+    and return the pre-flight `unique symbols need work` count, or None
+    if the line isn't present yet (older log format, or pre-flight still
+    running).
+
+    Cached by (path, mtime) — only re-parses when the file has actually
+    changed. The pre-flight summary lands once at the very start of an
+    iteration, so a cache hit after first parse is the common case.
+    """
+    if not log_name:
+        return None
+    try:
+        log_path = get_data_root() / log_name
+        if not log_path.exists():
+            return None
+        mtime = log_path.stat().st_mtime
+    except OSError:
+        return None
+    cached = _preflight_cache.get(log_name)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    # Parse first ~80 lines — pre-flight summary lands within the first few
+    # lines of a new iteration's log; cap is a defensive bound.
+    n_work_symbols: int | None = None
+    try:
+        with log_path.open("r", encoding="utf-8", errors="replace") as f:
+            for i, line in enumerate(f):
+                if i > 80:
+                    break
+                m = _PREFLIGHT_SYMS_RE.search(line)
+                if m:
+                    n_work_symbols = int(m.group(1))
+                    break
+    except OSError:
+        pass
+    _preflight_cache[log_name] = (mtime, n_work_symbols)
+    return n_work_symbols
+
+
 def get_progress() -> dict:
     """Count symbols touched in the CURRENT iteration, identify the current
     letter, and compute approximate rate / ETA.
@@ -244,7 +299,8 @@ def get_progress() -> dict:
         "current_letter": None, "latest_symbol": None,
         "rate_per_hour": None, "eta_hours": None,
         "run_started_at": None, "iteration_key": None,
-        "target": 0, "progress_fraction": 0.0, "overshoot": False,
+        "target": 0, "target_source": "universe",
+        "progress_fraction": 0.0, "overshoot": False,
         "last_write_at": None,
     }
     log_path = get_data_root() / "ingest_log.jsonl"
@@ -314,7 +370,21 @@ def get_progress() -> dict:
     first_ts = syms_in_order[0][1]
     elapsed_hours = (latest_ts - first_ts).total_seconds() / 3600
     rate_per_hour = (len(syms_in_order) / elapsed_hours) if elapsed_hours > 0.1 else None
-    target = _target_universe_size()
+    # Prefer the iteration's pre-flight work-symbol count as the denominator.
+    # When skip_up_to_date is in effect (the watcher's default since
+    # 2026-05-26), most symbols are skipped and the right denominator is
+    # "unique symbols that still need a fetch", not the full universe size.
+    # Falls back to the universe size when the pre-flight line isn't found
+    # in the log (legacy iteration logs, or pre-flight still computing).
+    target_source = "universe"
+    target = None
+    if iteration_key:
+        n_work_syms = _work_symbols_from_iteration_log(iteration_key)
+        if n_work_syms is not None and n_work_syms > 0:
+            target = n_work_syms
+            target_source = "pre-flight"
+    if target is None:
+        target = _target_universe_size()
     eta_hours = None
     if rate_per_hour and rate_per_hour > 0:
         remaining = max(0, target - len(syms_in_order))
@@ -334,6 +404,7 @@ def get_progress() -> dict:
         "run_started_at": first_ts.isoformat(),
         "iteration_key": iteration_key,
         "target": target,
+        "target_source": target_source,
         "progress_fraction": progress_fraction,
         "overshoot": overshoot,
         "last_write_at": latest_ts.isoformat(),
@@ -761,7 +832,13 @@ def _show_progress_window():
                 pct_var.set(f"{pct:.1f}%")
                 pb_var.set(pct)
                 pct_lbl.configure(fg='#888' if pct < 0.5 else '#5fd97a')
-            count_var.set(f"{done} / {target} symbols")
+            # Label reflects the denominator source: "X / N to fetch" when
+            # the pre-flight gave us the count of unique symbols that
+            # actually need work (skip-up-to-date watcher), "X / N symbols"
+            # when we're using the universe size as a fallback.
+            tsrc = p.get('target_source') or 'universe'
+            label = "to fetch" if tsrc == 'pre-flight' else "symbols"
+            count_var.set(f"{done} / {target} {label}")
             cur_letter = p.get('current_letter') or '?'
             n_done = len(p.get('letters_done') or [])
             latest = p.get('latest_symbol') or '-'

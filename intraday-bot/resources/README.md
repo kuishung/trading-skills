@@ -37,6 +37,22 @@ and import it from whichever strategy needs it. No registration.
 
 ## Changelog
 
+### 2026-05-26 — `ibkr_history.bulk_update`: `log_callback` + `unique symbols need work` line
+
+Follow-up to today's pre-flight refactor (entry below). Two problems surfaced after the user pulled the change on Hermes:
+
+1. On Hermes the supervisor runs under Windows Task Scheduler, which discards the child process's stdout/stderr. The pre-flight summary lines I'd added (`sys.stdout.write(...)`) therefore vanished — none of them landed in the watcher's `_ingest_*.log` file, and the dashboard tray couldn't see them.
+2. The tray's denominator was still the universe size (1518), so a watcher that correctly skipped 1471 already-deep symbols still displayed "1 / 1518 (0.1%)" — looked like nothing was happening.
+
+Fix:
+
+- New `log_callback` parameter on `bulk_update`. When set, **every** output line — pre-flight summary, per-iteration progress, reconnect notices, per-symbol failures — is routed through the callback. `scripts/wait_and_ingest.py` now passes `log_callback=log` so all those lines land in the watcher log file (and via the file-logger's `print()`, also on stdout where available).
+- Default `log_callback=None` preserves the existing direct-stdout behaviour for the orchestrator's post-EOD path.
+- Pre-flight emits a new tray-friendly line: `[pre-flight] N unique symbols need work`. That count is the right denominator for the tray's "unique symbols touched" numerator (vs. the existing `N work items remaining` which counts pair-iterations and overcounts when a symbol has 2-3 shallow timeframes).
+- `dashboard/tray_status.py` reads the new line and uses it as the denominator when present.
+
+Smoke-tested end-to-end on the laptop: captured 6 pre-flight log lines via callback, wrote them to a synthetic watcher log, the tray parser extracted the count correctly with mtime-keyed caching.
+
 ### 2026-05-26 — `ibkr_history.bulk_update`: pre-flight scan + `skip_up_to_date` for fast restart
 
 User flagged: *"when the ingest restart it always start from the A, i want it to have a log to confirm the which has been done and which now so i can save a lot of time"*. Before this change, `bulk_update` looped all 1518 symbols × 3 timeframes paying the full 7s pacing per pair on every restart — even for symbols already at full depth. With three timeframes that's 4554 pairs × 7s ≈ 9 hours of pacing alone before any new work happens.

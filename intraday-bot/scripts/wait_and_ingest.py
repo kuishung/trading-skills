@@ -206,6 +206,12 @@ def main() -> int:
             pacing_s=args.pacing,
             force_seed=args.force_seed,
             skip_up_to_date=True,
+            # Route ALL bulk_update output through this script's log() so
+            # the watcher's _ingest_*.log captures pre-flight summary +
+            # per-iteration progress. Without this, on Hermes (Task
+            # Scheduler) the supervisor's child stdout is discarded and
+            # the log file would be empty after this point.
+            log_callback=log,
         )
         total = sum(results.values())
         log(f"DONE: {total} bars written across {len(results)} (symbol,timeframe) pairs")

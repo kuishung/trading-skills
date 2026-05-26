@@ -29,6 +29,22 @@ Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-05-26 - `tray_status.py`: pre-flight work-item count is now the progress denominator
+
+User screenshot showed the Tk progress window stuck at "1 / 1518 symbols (0.1%)" with `Latest: ALLY` shortly after a Hermes watcher restart. The watcher had correctly skipped ~30 already-deep A-symbols (the new `skip_up_to_date=True` from earlier today), but the tray's denominator was still the universe size (1518), making the actual progress look trivial.
+
+Fix: tray now parses the watcher log for the line emitted by `bulk_update`'s pre-flight pass:
+
+    [pre-flight] 47 unique symbols need work
+
+When that line is present in the current iteration's `_ingest_*.log`, the tray uses `47` as the denominator instead of the universe size. The Tk window label switches from `"X / N symbols"` to `"X / N to fetch"` to reflect the smaller, more meaningful number. Falls back to the universe-size denominator + "symbols" label when the pre-flight line isn't present (legacy log files, or pre-flight still running).
+
+New helper `_work_symbols_from_iteration_log(log_name)` with a (path, mtime) cache so the parse runs once per iteration rather than on every 3-second refresh.
+
+`get_progress()` returns a new `target_source` field (`"pre-flight"` vs `"universe"`) so the UI can adapt its label accordingly.
+
+Paired with `resources/ibkr_history.py::bulk_update` gaining a `log_callback` parameter (so the pre-flight summary actually lands in the watcher log — under Task Scheduler on Hermes, the child stdout is discarded and the lines would otherwise be lost). See `resources/README.md` changelog for the matching backend change.
+
 ### 2026-05-26 - `tray_status.py`: full audit, four bugs + dead-code purge
 
 Trigger was a Hermes screenshot showing `92 / 2 symbols (100%)` with `Latest: AMZN` while the supervisor log on the right showed iteration #1 had just launched and was actively writing A and AA. End-to-end audit of `tray_status.py` against real ingest_log + watcher logs surfaced four real bugs plus one dead function. All four fixed in one bundle; verified against the live Hermes data:
