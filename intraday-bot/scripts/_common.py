@@ -44,10 +44,18 @@ PAPER_BASE_URL = "https://paper-api.alpaca.markets"
 # ---------- Config ----------
 
 def load_config() -> dict:
-    cfg = json.loads(CONFIG_EXAMPLE_PATH.read_text(encoding="utf-8"))
+    # Use utf-8-sig (NOT utf-8) so a UTF-8 BOM at the start of either file
+    # is silently stripped. Windows PowerShell 5.1's `Set-Content -Encoding
+    # UTF8` writes UTF-8 *with* BOM by default, which utf-8 decode would
+    # leave as a literal "﻿" character at position 0 -> json.loads
+    # then chokes with "Unexpected UTF-8 BOM (decode using utf-8-sig)".
+    # Anyone editing config.json from PS 5.1 hits this trap. utf-8-sig
+    # decodes both BOM'd and BOM-less UTF-8 correctly, so no other change
+    # is required.
+    cfg = json.loads(CONFIG_EXAMPLE_PATH.read_text(encoding="utf-8-sig"))
     if CONFIG_PATH.exists():
         try:
-            cfg.update(json.loads(CONFIG_PATH.read_text(encoding="utf-8")))
+            cfg.update(json.loads(CONFIG_PATH.read_text(encoding="utf-8-sig")))
         except json.JSONDecodeError as e:
             sys.exit(f"config.json is not valid JSON: {e}")
     return cfg

@@ -29,6 +29,18 @@ they're rarely-touched and small, so `scripts/` is fine.
 
 ## Changelog
 
+### 2026-05-26 - `_common.load_config`: tolerate UTF-8 BOM in config.json
+
+User hit `config.json is not valid JSON: Unexpected UTF-8 BOM (decode using utf-8-sig)` when launching the tray on Hermes. Root cause: a previous turn's PowerShell snippet (`Set-Content -Encoding UTF8` on Windows PowerShell 5.1) silently writes UTF-8 *with* BOM. Python's `utf-8` codec leaves the BOM as a literal `﻿` character at byte 0, which `json.loads` rejects.
+
+Fix: `load_config` now reads both `config.example.json` and `config.json` with encoding `utf-8-sig` instead of `utf-8`. `utf-8-sig` decodes both BOM'd and BOM-less UTF-8 correctly, so no other change is required and existing files keep working. Anyone editing `config.json` from PS 5.1 (a common laptop/Hermes editing path) no longer hits this trap.
+
+Smoke-tested two cases:
+- normal `config.json` still loads (33 top-level keys, no regression)
+- a synthetic BOM-prefixed (`\xef\xbb\xbf...`) JSON file loads cleanly and yields the expected dict
+
+Orchestrator dry-run still passes (5 strategies wired).
+
 ### 2026-05-26 - `wait_and_ingest.py`: also passes `log_callback=log` to bulk_update
 
 Follow-up to today's earlier `skip_up_to_date=True` entry. On Hermes the supervisor runs under Task Scheduler, which discards the watcher's stdout — so the pre-flight summary lines and per-iteration progress that `bulk_update` writes to stdout were never landing in the watcher's `_ingest_*.log` file. Passing `log_callback=log` routes everything through the same logger that writes the log file, so the dashboard tray can parse the pre-flight summary and the user can `Get-Content $log -Tail N` to see real progress. See `resources/README.md` changelog for the matching `bulk_update` parameter addition.
