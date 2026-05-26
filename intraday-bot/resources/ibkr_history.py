@@ -309,19 +309,36 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
                 except Exception as exc:
                     sys.stderr.write(f"[ibkr_history] {exc} — aborting run\n")
                     break
-                rng = bars_store.available_range(sym, timeframe=tf)
-                if rng is None or force_seed:
-                    n = ingest_history(ib, sym, tf,
-                                       lookback_days=lookback_days_for_new,
-                                       pacing_s=pacing_s)
-                    label = (f"force-seed({lookback_days_for_new}d)" if force_seed
-                             else f"seed({lookback_days_for_new}d)")
-                else:
-                    n = update_history(ib, sym, tf, pacing_s=pacing_s)
-                    label = "update"
-                results[(sym, tf)] = n
-                sys.stdout.write(f"  {sym:<8} {tf:<6} {label:<14} +{n} bars\n")
+                # Per-symbol try/except — one bad ticker (delisted, ticker-
+                # change, weird IBKR error, parquet write failure, etc.)
+                # must NOT kill the entire 1519-symbol run. Log the failure,
+                # record 0 bars in results, move on to the next symbol.
+                # Added 2026-05-26 per user request: "let it run without
+                # interruption". Pairs with the existing _ensure_connected
+                # reconnect logic — reconnect failures still break (those
+                # are hopeless), but per-symbol failures are skipped.
+                try:
+                    rng = bars_store.available_range(sym, timeframe=tf)
+                    if rng is None or force_seed:
+                        n = ingest_history(ib, sym, tf,
+                                           lookback_days=lookback_days_for_new,
+                                           pacing_s=pacing_s)
+                        label = (f"force-seed({lookback_days_for_new}d)" if force_seed
+                                 else f"seed({lookback_days_for_new}d)")
+                    else:
+                        n = update_history(ib, sym, tf, pacing_s=pacing_s)
+                        label = "update"
+                    results[(sym, tf)] = n
+                    sys.stdout.write(f"  {sym:<8} {tf:<6} {label:<14} +{n} bars\n")
+                except Exception as exc:
+                    # Compact the error to one line so the watcher log stays
+                    # readable. The full exception type + message gives
+                    # enough info to triage (delisted, IBKR error code, etc.)
+                    err_str = f"{type(exc).__name__}: {str(exc)[:80]}"
+                    results[(sym, tf)] = 0
+                    sys.stderr.write(f"  {sym:<8} {tf:<6} FAILED: {err_str} — skipping\n")
                 sys.stdout.flush()
+                sys.stderr.flush()
     finally:
         try:
             ib.disconnect()

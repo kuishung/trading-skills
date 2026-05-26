@@ -12,6 +12,7 @@ plus one-time installers.
 - `setup_gateway_autostart.py` — Optional Windows auto-start for IB Gateway (registry Run key).
 - `setup_schedule.py` — Optional Windows Task Scheduler job that fires `execution/orchestrator.py` at 08:55 ET on weekdays.
 - `wait_and_ingest.py` — One-shot operational glue: wait for a specified Windows PID to exit (poll via `tasklist` every 60s), then launch `resources.ibkr_history.bulk_update` on a universe of choice. Reusable for any "ingest A finishes → ingest B starts" sequence where the two would otherwise collide on IBKR clientId. CLI: `py scripts/wait_and_ingest.py --wait-pid 21732 --timeframes 3min --seed-days 180 --force-seed --universe daily`. The `--universe` option supports `daily | 1min | 3min | journal` so a backtest re-seed can target the full daily-parquet universe (~1500 symbols) rather than the narrower journal-derived live universe (~50).
+- `Watch-Ingest.ps1` — **Process supervisor for `wait_and_ingest.py`.** PowerShell forever-loop that relaunches the watcher every time it exits (clean finish, crash, OOM, killed). Pairs with the in-Python resilience in `resources/ibkr_history.py` (socket reconnect + per-symbol error skip). Run from a foreground PS window: `powershell -ExecutionPolicy Bypass -File .\scripts\Watch-Ingest.ps1`. Stops on Ctrl+C. Logs to `<data_root>/_supervisor_<timestamp>.log`. Parameters mirror `wait_and_ingest.py` (`-Timeframes`, `-SeedDays`, `-ForceSeed`, `-Universe`, `-RestartDelay`).
 - `hermes_health.py` — **Hermes VM pre-flight check.** Run on the Hermes VM after Phase 1+2 of `HERMES_SETUP.md` is complete, BEFORE kicking off the multi-day 180-day re-seed. Verifies Python version, required packages importable, bars_store readable, disk space adequate, `ibc/credentials.txt` present, `config.json` clientId matches the host (warns if Hermes still has laptop's 71), IBKR Gateway socket reachable (port 4002 → paper Gateway, 7497 → paper TWS fallback). Safe to run on any PC; flags Python 3.14 + ib_insync asyncio incompatibility with a clear remedy ("use `py -3.12` for IBKR workloads"). CLI: `py scripts/hermes_health.py` (or `--skip-ibkr` for the no-Gateway-yet case, `--json` for machine-readable).
 
 ## Why these are not in their own layer folder
@@ -26,6 +27,15 @@ runtime trading system. They could move to `bin/` or `tools/` but
 they're rarely-touched and small, so `scripts/` is fine.
 
 ## Changelog
+
+### 2026-05-26 — `Watch-Ingest.ps1`: process-level supervisor for the watcher
+
+- User rule: *"i prefer to run it without interruption"*. The existing in-Python resilience covers IBKR socket reconnects (up to 20 attempts in `ibkr_history._ensure_connected`) — but if the Python process itself dies (crash, OOM, killed by an errant `Stop-Process`), nothing relaunches it. The supervisor closes that gap.
+- **Forever-loop**: launches `py -3.12 scripts/wait_and_ingest.py ...` and waits for exit; on any exit code, sleeps `-RestartDelay` (default 30s) then relaunches. Continues until Ctrl+C or PS window close.
+- **Clean exit ≠ done forever**: when the run finishes the full universe (exit 0), the supervisor still relaunches — that's intentional, the next pass will do incremental updates only (existing parquets get top-up bars from the last stored timestamp), which is the right behaviour for an "always-fresh" data warehouse.
+- **Per-iteration logging** to `<data_root>/_supervisor_<timestamp>.log`: launch time, exit code, runtime per iteration. Useful for forensic analysis if the watcher is dying often.
+- **Pairs with the `ibkr_history.bulk_update` per-symbol try/except** added in the same commit — together they cover the two main interruption sources: per-symbol failures (in-process) and process-level death (out-of-process).
+- Not used by default — the user still launches via `Start-Process … -WindowStyle Hidden` for single-shot runs. The supervisor is for "really truly never stop" scenarios (e.g., overnight Hermes runs that span multiple days).
 
 ### 2026-05-24 — `hermes_health.py`: pre-flight check for the Hermes VM
 

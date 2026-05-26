@@ -36,6 +36,13 @@ and import it from whichever strategy needs it. No registration.
 
 ## Changelog
 
+### 2026-05-26 — `ibkr_history.bulk_update`: per-symbol try/except so one bad ticker can't kill a 1519-symbol run
+
+- User rule: *"i prefer to run it without interruption"*. Previously, an unhandled exception inside `ingest_history()` or `update_history()` would propagate all the way up to `bulk_update`'s outer `try/finally` and abort the entire run. We hit this during the 180d re-seed when delisted symbols + transient IBKR errors caused the watcher to silently die mid-loop.
+- **Per-symbol shielding**: each `(symbol, timeframe)` iteration now sits inside its own `try/except`. Any exception (delisted contract, weird IBKR error code, parquet write failure, transient network blip the reconnect handler can't catch) gets compactly logged as `SYM 3min FAILED: <ExceptionType>: <first 80 chars>` and the loop moves on to the next symbol. Failed (sym, tf) pairs record `0` bars in the results dict.
+- **Reconnect failures still break the loop** — those come from `_ensure_connected` running out of retry budget (20 attempts), which means Gateway is genuinely unreachable. No point continuing.
+- **What this does NOT fix**: process-level death (crash, OOM, killed by `Stop-Process`). For that, use `scripts/Watch-Ingest.ps1` (added in the same commit) — a PowerShell supervisor that relaunches the watcher on any exit.
+
 ### 2026-05-24 — `ibkr_history.py`: `--force-seed` flag for backward-extending stored history
 
 - Use case (chat 2026-05-24): backtester needs 180 days of 3min depth, but the existing universe already has 14-day parquets — `update --universe` only fills the forward gap (incremental), it does NOT extend backward. To bump depth from 14d → 180d we need a flag that bypasses the "incremental if existing" logic and runs `ingest_history(lookback_days=180)` on EVERY symbol.
