@@ -542,13 +542,160 @@ def _icon_for(state: str, frame_index: int, progress: float) -> Image.Image:
 
 # ---- Menu actions ----
 
+# Single-instance guard for the progress window — calling Show Status while
+# one is already open just no-ops (rather than stacking multiple windows).
+_progress_window_active = threading.Event()
+
+
+def _show_progress_window():
+    """Pop up a small always-on-top window with a big percentage + visual
+    progress bar + current-run stats. Refreshes itself every 3 seconds while
+    open. Replaces the old Windows-toast notification on left-click.
+
+    User rule 2026-05-26: *"i want the percentage and a progress bar to show
+    when i click the tray icon"*. The toast was text-only and Windows
+    truncated long messages; a Tk window can show a real progress bar and
+    self-refresh."""
+    if _progress_window_active.is_set():
+        return
+    _progress_window_active.set()
+
+    try:
+        import tkinter as tk
+        from tkinter import ttk
+    except ImportError:
+        _progress_window_active.clear()
+        return
+
+    win = tk.Tk()
+    win.title("Ingest Progress")
+    win.geometry("420x300")
+    win.resizable(False, False)
+    win.attributes('-topmost', True)
+    win.configure(bg='#1a1a1a')
+
+    # Dark theme for ttk widgets (defaults look like Windows 95)
+    style = ttk.Style(win)
+    try:
+        style.theme_use('clam')   # 'clam' respects custom colors better than 'vista'
+    except Exception:
+        pass
+    style.configure(
+        'Ingest.Horizontal.TProgressbar',
+        background='#5fd97a',
+        troughcolor='#262626',
+        bordercolor='#1a1a1a',
+        lightcolor='#5fd97a',
+        darkcolor='#3fb55c',
+        thickness=22,
+    )
+
+    # Big centered percentage
+    pct_var = tk.StringVar(value='—')
+    pct_lbl = tk.Label(
+        win, textvariable=pct_var,
+        font=('Segoe UI', 44, 'bold'),
+        bg='#1a1a1a', fg='#5fd97a',
+    )
+    pct_lbl.pack(pady=(18, 6))
+
+    # Visual progress bar
+    pb_var = tk.DoubleVar(value=0)
+    ttk.Progressbar(
+        win, length=380, mode='determinate', maximum=100,
+        variable=pb_var,
+        style='Ingest.Horizontal.TProgressbar',
+    ).pack(padx=20, pady=(0, 12))
+
+    # "X / N symbols" line
+    count_var = tk.StringVar(value='—')
+    tk.Label(
+        win, textvariable=count_var, font=('Segoe UI', 12, 'bold'),
+        bg='#1a1a1a', fg='#cccccc',
+    ).pack(pady=(0, 4))
+
+    # Current letter + latest symbol
+    detail_var = tk.StringVar(value='—')
+    tk.Label(
+        win, textvariable=detail_var, font=('Segoe UI', 10),
+        bg='#1a1a1a', fg='#888888',
+    ).pack(pady=2)
+
+    # Rate + ETA
+    eta_var = tk.StringVar(value='—')
+    tk.Label(
+        win, textvariable=eta_var, font=('Segoe UI', 10),
+        bg='#1a1a1a', fg='#888888',
+    ).pack(pady=2)
+
+    # Close button
+    def close():
+        try:
+            win.destroy()
+        except Exception:
+            pass
+
+    tk.Button(
+        win, text='Close', command=close,
+        bg='#333333', fg='#cccccc',
+        activebackground='#555555', activeforeground='#ffffff',
+        relief='flat', font=('Segoe UI', 9),
+        padx=14, pady=2, borderwidth=0,
+    ).pack(pady=(10, 0))
+
+    def refresh():
+        try:
+            if not win.winfo_exists():
+                return
+        except Exception:
+            return
+        try:
+            p = get_progress()
+            pct = (p.get('progress_fraction') or 0.0) * 100
+            pct_var.set(f"{pct:.1f}%")
+            pb_var.set(pct)
+            target = p.get('target') or 0
+            count_var.set(f"{p['symbols_done']} / {target} symbols")
+            cur_letter = p.get('current_letter') or '?'
+            n_done = len(p.get('letters_done') or [])
+            latest = p.get('latest_symbol') or '—'
+            detail_var.set(
+                f"Letter {cur_letter} ({n_done} groups done)   ·   Latest: {latest}"
+            )
+            eta_h = p.get('eta_hours')
+            rate = p.get('rate_per_hour')
+            if eta_h is not None and rate:
+                eta_var.set(
+                    f"ETA: {eta_h:.1f}h ({eta_h/24:.1f}d)   ·   "
+                    f"Rate: {rate:.0f} syms/hr"
+                )
+            else:
+                eta_var.set('ETA: gathering data...')
+            # Tint percentage by progress: green throughout, but red if 0
+            pct_lbl.configure(fg='#888' if pct < 0.5 else '#5fd97a')
+        except Exception as exc:
+            pct_var.set('error')
+            count_var.set(str(exc)[:60])
+        # Schedule next refresh while window is alive
+        try:
+            win.after(3000, refresh)
+        except Exception:
+            pass
+
+    refresh()
+    win.bind('<Escape>', lambda e: close())
+    win.protocol("WM_DELETE_WINDOW", close)
+
+    try:
+        win.mainloop()
+    finally:
+        _progress_window_active.clear()
+
+
 def _on_show_status(icon, item):
-    """Popup notification with the longer progress summary."""
-    msg = get_progress_summary()
-    # Windows truncates long notifications; trim if needed
-    if len(msg) > 250:
-        msg = msg[:247] + "..."
-    icon.notify(msg, title="Ingest Status")
+    """Default tray action (left-click) — open the progress window in a
+    daemon thread so pystray's event loop isn't blocked by Tk's mainloop."""
+    threading.Thread(target=_show_progress_window, daemon=True).start()
 
 
 def _on_open_log(icon, item):

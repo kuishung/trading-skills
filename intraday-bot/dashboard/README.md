@@ -29,6 +29,23 @@ Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-05-26 — Tray click → Tk progress window (big % + visual progress bar)
+
+- User rule: *"i want the percentage and a progress bar to show when i click the tray icon"*. The previous "Show Status" action fired a Windows toast with multi-line text — text-only, truncated at ~250 chars, no visual progress indicator.
+- **Replaced with a Tkinter Toplevel window** that left-click on the tray icon now opens:
+  - **Big 44px green percentage** centered at the top
+  - **Visual `ttk.Progressbar`** (380px wide, 22px thick, green fill on dark trough)
+  - **Symbol counter** (`X / 1519 symbols`)
+  - **Current letter + latest symbol** line
+  - **ETA + rate** line (gracefully shows "gathering data..." if rate not computable yet)
+  - **Close button** + Escape key + window-X all dismiss
+- **Self-refreshing every 3 seconds** via `win.after()` — the window updates in place as the ingest progresses without you having to close + reopen.
+- **Always-on-top** (`-topmost`) so it doesn't get lost behind other windows.
+- **Single-instance** via `_progress_window_active = threading.Event()` — clicking the tray icon while the window is already open is a no-op rather than stacking multiple windows.
+- **Thread-isolated**: Tk's `mainloop()` blocks, so the menu callback launches it in a daemon thread to keep pystray's event loop responsive. Win is destroyed cleanly when closed, lock released, ready for next open.
+- **Dark theme**: `ttk.Style('clam')` + custom colors — matches the tray's aesthetic rather than the Windows 95 default ttk look.
+- The old text-toast notification path is gone for "Show Status". The toast remains for milestone notifications + transient one-offs.
+
 ### 2026-05-25 — Market Sentiment: compact graphic view + 3-mode toggle
 
 - User rule: *"the market sentiment are too big i need a concise one and adjustable for the watchlist below to be pull up. I need it to be shown by graphic rather than too wordy"*. The original panel could swell to 60vh with 4 labelled cell groups plus 6 breadth tiles — ~400px on a 1080p monitor, eating into the Active Lists watchlist below it.
