@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -93,16 +94,29 @@ MILESTONE_STATE_PATH = SKILL_DIR / "state" / "tray_milestone.json"
 
 # ---- Progress + milestone tracking ----
 
-def _load_milestone_state() -> dict:
-    """Read which milestones have already been notified for the current run.
-    File schema: {'counts_fired': [50, 100, ...], 'letters_done': ['A', 'B', ...]}.
-    Returns empty state if file missing/corrupt."""
+def _load_milestone_state(iteration_key: str | None = None) -> dict:
+    """Read which milestones have already been notified for the current
+    iteration. State is keyed by `iteration_key` (the watcher log filename)
+    so a supervisor restart -> new _ingest_*.log -> milestone state resets
+    automatically and toasts re-fire as the new iteration crosses 50/100/...
+    again.
+
+    Schema on disk:
+      {'iteration_key': '<filename>',
+       'counts_fired': [50, 100, ...],
+       'letters_done': ['A', 'B', ...]}
+
+    If the on-disk key doesn't match the live iteration_key, treat as fresh
+    state. Returns empty state if file missing/corrupt or key mismatch.
+    """
     if MILESTONE_STATE_PATH.exists():
         try:
-            return json.loads(MILESTONE_STATE_PATH.read_text(encoding="utf-8"))
+            state = json.loads(MILESTONE_STATE_PATH.read_text(encoding="utf-8"))
+            if iteration_key is None or state.get("iteration_key") == iteration_key:
+                return state
         except Exception:
             pass
-    return {"counts_fired": [], "letters_done": []}
+    return {"iteration_key": iteration_key, "counts_fired": [], "letters_done": []}
 
 
 def _save_milestone_state(state: dict) -> None:
@@ -113,41 +127,138 @@ def _save_milestone_state(state: dict) -> None:
         pass
 
 
-RUN_GAP_THRESHOLD_SEC = 3600   # 1-hour gap = a different run; bound the count to "current run" only
+RUN_GAP_THRESHOLD_SEC = 3600   # legacy fallback: 1-hour gap = a different run.
+                               # Only used when no _ingest_*.log is present to
+                               # tell us the exact iteration boundary.
+
+UNIVERSE_FALLBACK_PATH = SKILL_DIR / "resources" / "universe_full.txt"
+
+# Filename format: _ingest_<tf_label>_<days>d_<YYYYMMDD>_<HHMMSS>.log
+# (see scripts/wait_and_ingest.py — the watcher writes one of these per
+# iteration, in local time per strftime).
+_INGEST_LOG_TS_RE = re.compile(r'_(\d{8})_(\d{6})\.log$')
+
+
+def _latest_iteration() -> tuple[str, datetime] | None:
+    """Find the most-recent watcher iteration's identity + start time.
+
+    Each iteration of `wait_and_ingest.py` creates a fresh `_ingest_*.log`
+    file. We glob those, sort by the YYYYMMDD_HHMMSS embedded in the
+    filename, return (filename, iteration_start_utc) for the latest.
+
+    Why this matters: when the supervisor restarts (em-dash crash, OOM,
+    Ctrl+C, etc.), the new iteration's progress should start from zero --
+    NOT inherit the dead iteration's 90+ syms still sitting in the
+    72-hour `ingest_log.jsonl` lookback window. The watcher log file is
+    the cleanest signal of "this iteration began at T".
+
+    Returns None if no _ingest_*.log files exist, in which case the
+    caller falls back to the legacy 1-hour-gap rule.
+    """
+    try:
+        candidates: list[tuple[str, str]] = []
+        for p in get_data_root().glob("_ingest_*.log"):
+            m = _INGEST_LOG_TS_RE.search(p.name)
+            if m:
+                candidates.append((m.group(1) + m.group(2), p.name))
+        if not candidates:
+            return None
+        candidates.sort(reverse=True)
+        stamp, fname = candidates[0]
+        # Filename strftime is local time per wait_and_ingest.py; convert to
+        # UTC via Python's naive->aware->UTC chain.
+        local_naive = datetime.strptime(stamp, "%Y%m%d%H%M%S")
+        local_aware = local_naive.astimezone()       # interpret as local tz
+        utc_start = local_aware.astimezone(timezone.utc)
+        return fname, utc_start
+    except Exception:
+        return None
+
+
+def _target_universe_size() -> int:
+    """Best estimate of the in-progress ingest's total universe size.
+
+    Returns max(daily_parquet_count, universe_full_txt_line_count), so:
+      * Fresh seed (daily=0..N still growing)         -> universe_full count wins
+      * Post-complete (daily fully populated)         -> daily count wins
+      * Partial-sync (daily=1 from Resilio crumb)     -> universe_full count wins
+      * Both unavailable                              -> 1519 legacy floor
+
+    Trade-off: a narrow `--universe journal` run (~50 syms) still gets the
+    universe_full denominator, which under-reports % for that case. The
+    proper fix is to have wait_and_ingest.py publish the exact target to
+    state/ -- left for a follow-up if the narrow-universe view matters.
+    """
+    daily_n = 0
+    try:
+        import bars_store  # type: ignore
+        daily_n = len(bars_store.list_symbols("daily"))
+    except Exception:
+        pass
+    file_n = 0
+    try:
+        if UNIVERSE_FALLBACK_PATH.exists():
+            file_n = sum(
+                1 for line in UNIVERSE_FALLBACK_PATH.read_text(encoding="utf-8").splitlines()
+                if line.strip() and not line.strip().startswith("#")
+            )
+    except Exception:
+        pass
+    return max(daily_n, file_n) or 1519
 
 
 def get_progress() -> dict:
-    """Count symbols touched in the CURRENT run, identify the current letter,
-    and compute approximate rate / ETA.
+    """Count symbols touched in the CURRENT iteration, identify the current
+    letter, and compute approximate rate / ETA.
 
-    "Current run" detection: read all ingest_log entries in the last
-    LOOKBACK_HOURS, then find the most-recent gap > RUN_GAP_THRESHOLD_SEC
-    (default 1 hour). Everything AFTER that gap counts as the current run;
-    earlier entries are treated as a different previous run.
+    Iteration boundary (preferred): the start timestamp of the latest
+    `_ingest_*.log` file in data_root. Each call to wait_and_ingest.py
+    creates a fresh one, so when the supervisor relaunches the watcher,
+    the iteration boundary moves with it. Progress, rate, and ETA all
+    reset cleanly per supervisor iteration.
 
-    This way a yesterday-14d-run + today-180d-rerun-after-restart doesn't
-    double-count — the user sees only the current session's progress.
+    Iteration boundary (fallback): if no `_ingest_*.log` exists (e.g.,
+    user ran ibkr_history.py directly without the supervisor), fall back
+    to the legacy 1-hour-gap detection over a LOOKBACK_HOURS window.
 
     Returns:
-      symbols_done : int  — unique symbols touched in current run
-      letters_done : list[str]  — first-letter groups fully past
+      symbols_done   : int  — unique symbols touched in current iteration
+      letters_done   : list[str]  — first-letter groups we've moved past
       current_letter : str | None
-      latest_symbol  : str | None
+      latest_symbol  : str | None — actual chronologically-last ingest entry
       rate_per_hour  : float | None
       eta_hours      : float | None
-      run_started_at : str | None — ISO timestamp of the current run's first entry
+      run_started_at : str | None — ISO UTC start of current iteration
+      iteration_key  : str | None — filename of the watcher log (used to
+                       key milestone state so restarts re-fire toasts)
+      target         : int  — denominator (see _target_universe_size)
+      progress_fraction : float in [0, 1]
+      overshoot      : bool — True iff symbols_done > target (denominator
+                       is wrong, UI shouldn't render 100% with confidence)
+      last_write_at  : str | None — ISO UTC of chronologically-last ingest
+                       entry, so the Tk window can show a live "Ns ago"
+                       counter between refreshes
     """
     EMPTY = {
         "symbols_done": 0, "letters_done": [],
         "current_letter": None, "latest_symbol": None,
         "rate_per_hour": None, "eta_hours": None,
-        "run_started_at": None,
+        "run_started_at": None, "iteration_key": None,
+        "target": 0, "progress_fraction": 0.0, "overshoot": False,
+        "last_write_at": None,
     }
     log_path = get_data_root() / "ingest_log.jsonl"
     if not log_path.exists():
         return EMPTY
 
-    cutoff = datetime.now(timezone.utc).timestamp() - LOOKBACK_HOURS * 3600
+    iteration = _latest_iteration()
+    if iteration is not None:
+        iteration_key, iteration_start_utc = iteration
+        cutoff = iteration_start_utc.timestamp()
+    else:
+        iteration_key = None
+        cutoff = datetime.now(timezone.utc).timestamp() - LOOKBACK_HOURS * 3600
+
     raw: list[tuple[datetime, str]] = []   # (ts, symbol) chronological
     try:
         with log_path.open(encoding="utf-8") as f:
@@ -166,19 +277,22 @@ def get_progress() -> dict:
     if not raw:
         return EMPTY
 
-    # Find the latest run-boundary (gap > threshold) — walk backward from
-    # the end, the first gap we hit is the boundary between this run and
-    # whatever came before.
-    run_start_idx = 0
-    for i in range(len(raw) - 1, 0, -1):
-        gap_sec = (raw[i][0] - raw[i - 1][0]).total_seconds()
-        if gap_sec > RUN_GAP_THRESHOLD_SEC:
-            run_start_idx = i
-            break
+    # Bound to the current iteration:
+    #   - watcher log found  -> raw is already filtered to entries since the
+    #     iteration start; use it as-is
+    #   - no watcher log     -> apply legacy 1-hour-gap rule as a fallback
+    if iteration is None:
+        run_start_idx = 0
+        for i in range(len(raw) - 1, 0, -1):
+            gap_sec = (raw[i][0] - raw[i - 1][0]).total_seconds()
+            if gap_sec > RUN_GAP_THRESHOLD_SEC:
+                run_start_idx = i
+                break
+        current_run = raw[run_start_idx:]
+    else:
+        current_run = raw
 
-    current_run = raw[run_start_idx:]
-
-    # First-appearance order WITHIN the current run only
+    # First-appearance order within the current iteration only
     seen: set[str] = set()
     syms_in_order: list[tuple[str, datetime]] = []
     for ts, sym in current_run:
@@ -189,7 +303,10 @@ def get_progress() -> dict:
     if not syms_in_order:
         return EMPTY
 
-    latest_symbol, latest_ts = syms_in_order[-1]
+    # Latest = chronologically-last ingest entry, NOT syms_in_order[-1]
+    # (which would freeze whenever the latest entries are repeats of
+    # already-seen symbols).
+    latest_ts, latest_symbol = current_run[-1]
     current_letter = latest_symbol[0].upper() if latest_symbol else None
     letters_seen = sorted({s[0].upper() for s, _ in syms_in_order})
     letters_done = [L for L in letters_seen if current_letter and L < current_letter]
@@ -197,26 +314,15 @@ def get_progress() -> dict:
     first_ts = syms_in_order[0][1]
     elapsed_hours = (latest_ts - first_ts).total_seconds() / 3600
     rate_per_hour = (len(syms_in_order) / elapsed_hours) if elapsed_hours > 0.1 else None
+    target = _target_universe_size()
     eta_hours = None
     if rate_per_hour and rate_per_hour > 0:
-        try:
-            import bars_store  # type: ignore
-            target = len(bars_store.list_symbols("daily"))
-        except Exception:
-            target = 1519
         remaining = max(0, target - len(syms_in_order))
         eta_hours = remaining / rate_per_hour
 
-    # Target denominator for the progress bar — universe size (daily parquet
-    # count). Cached above for ETA; reuse here so the arc/tooltip have the
-    # same N as the ETA math.
-    try:
-        import bars_store  # type: ignore
-        target = len(bars_store.list_symbols("daily"))
-    except Exception:
-        target = 1519
-    progress_fraction = (len(syms_in_order) / target) if target > 0 else 0.0
-    progress_fraction = max(0.0, min(1.0, progress_fraction))
+    raw_fraction = (len(syms_in_order) / target) if target > 0 else 0.0
+    overshoot = len(syms_in_order) > target > 0
+    progress_fraction = max(0.0, min(1.0, raw_fraction))
 
     return {
         "symbols_done": len(syms_in_order),
@@ -226,15 +332,25 @@ def get_progress() -> dict:
         "rate_per_hour": rate_per_hour,
         "eta_hours": eta_hours,
         "run_started_at": first_ts.isoformat(),
+        "iteration_key": iteration_key,
         "target": target,
         "progress_fraction": progress_fraction,
+        "overshoot": overshoot,
+        "last_write_at": latest_ts.isoformat(),
     }
 
 
 def _check_and_fire_milestones(icon, prog: dict) -> None:
     """Compare current progress against persisted milestone state.
-    Fire ONE Windows notification per crossed milestone, persist what fired."""
-    state = _load_milestone_state()
+    Fire ONE Windows notification per crossed milestone, persist what fired.
+
+    Milestone state is keyed by iteration -- when the supervisor restarts
+    and a new _ingest_*.log appears, prog['iteration_key'] changes,
+    _load_milestone_state returns fresh state, and milestones re-fire as
+    the new iteration crosses each threshold."""
+    iteration_key = prog.get("iteration_key")
+    state = _load_milestone_state(iteration_key)
+    state["iteration_key"] = iteration_key   # persist the key even if no new fires
     fired_any = False
 
     # Count-based milestones
@@ -375,52 +491,6 @@ def get_ingest_status() -> dict:
             "msg": f"error: {exc}",
             "tooltip": f"status read failed: {exc}",
         }
-
-
-def get_progress_summary() -> str:
-    """Build a multi-line progress summary for the notification popup."""
-    log_path = get_data_root() / "ingest_log.jsonl"
-    if not log_path.exists():
-        return "No ingest log yet."
-
-    # Heuristic: count distinct symbols seen "today" (last 24h)
-    cutoff = datetime.now(timezone.utc).timestamp() - 24 * 3600
-    syms = set()
-    total_bars = 0
-    last_entry = None
-    n_writes = 0
-
-    try:
-        with log_path.open(encoding="utf-8") as f:
-            for line in f:
-                try:
-                    e = json.loads(line)
-                    ts = datetime.fromisoformat(e["ts"])
-                    if ts.timestamp() >= cutoff:
-                        syms.add(e["symbol"])
-                        total_bars += e.get("bars_added", 0)
-                        n_writes += 1
-                        last_entry = e
-                except Exception:
-                    continue
-    except Exception as exc:
-        return f"Couldn't read log: {exc}"
-
-    if not last_entry:
-        return "No ingest activity in the last 24 hours."
-
-    ts = datetime.fromisoformat(last_entry["ts"])
-    age = (datetime.now(timezone.utc) - ts).total_seconds()
-
-    lines = [
-        f"Last 24h:",
-        f"  Symbols touched:  {len(syms)}",
-        f"  Chunk writes:     {n_writes}",
-        f"  Bars added:       {total_bars:,}",
-        f"  Current symbol:   {last_entry.get('symbol', '?')}",
-        f"  Last write:       {age:.0f}s ago",
-    ]
-    return "\n".join(lines)
 
 
 # ---- Icon generation (no .ico files needed — drawn at startup) ----
@@ -569,7 +639,7 @@ def _show_progress_window():
 
     win = tk.Tk()
     win.title("Ingest Progress")
-    win.geometry("420x300")
+    win.geometry("420x330")
     win.resizable(False, False)
     win.attributes('-topmost', True)
     win.configure(bg='#1a1a1a')
@@ -608,21 +678,32 @@ def _show_progress_window():
     ).pack(padx=20, pady=(0, 12))
 
     # "X / N symbols" line
-    count_var = tk.StringVar(value='—')
+    count_var = tk.StringVar(value='-')
     tk.Label(
         win, textvariable=count_var, font=('Segoe UI', 12, 'bold'),
         bg='#1a1a1a', fg='#cccccc',
     ).pack(pady=(0, 4))
 
+    # Live indicator: spinner glyph + colored status dot + "Ns ago" counter.
+    # Updates every 150ms (animate()) independently of the 3s data refresh,
+    # so the user sees continuous motion as long as the script is alive --
+    # AND a green-vs-red dot for whether the watcher itself is alive.
+    live_var = tk.StringVar(value='- waiting...')
+    live_lbl = tk.Label(
+        win, textvariable=live_var, font=('Consolas', 10),
+        bg='#1a1a1a', fg='#888888',
+    )
+    live_lbl.pack(pady=(2, 4))
+
     # Current letter + latest symbol
-    detail_var = tk.StringVar(value='—')
+    detail_var = tk.StringVar(value='-')
     tk.Label(
         win, textvariable=detail_var, font=('Segoe UI', 10),
         bg='#1a1a1a', fg='#888888',
     ).pack(pady=2)
 
     # Rate + ETA
-    eta_var = tk.StringVar(value='—')
+    eta_var = tk.StringVar(value='-')
     tk.Label(
         win, textvariable=eta_var, font=('Segoe UI', 10),
         bg='#1a1a1a', fg='#888888',
@@ -643,7 +724,21 @@ def _show_progress_window():
         padx=14, pady=2, borderwidth=0,
     ).pack(pady=(10, 0))
 
-    def refresh():
+    # Shared state between the slow data refresh and the fast animation tick.
+    # Closure over a single dict so animate() can read fields that
+    # refresh_data() writes (last_write_dt, state) without re-reading the log.
+    live_state: dict = {
+        "spinner_idx": 0,
+        "last_write_dt": None,    # datetime | None — when the watcher last wrote
+        "have_data": False,       # bool — have we ever populated yet?
+    }
+
+    # Braille spinner glyphs — 10 frames, animate by cycling the index every
+    # 150ms. Renders fine in Consolas/Segoe UI on Windows 10+ / Server 2019.
+    SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+    def refresh_data():
+        """Heavy refresh: re-reads ingest_log via get_progress(). Every 3s."""
         try:
             if not win.winfo_exists():
                 return
@@ -652,37 +747,105 @@ def _show_progress_window():
         try:
             p = get_progress()
             pct = (p.get('progress_fraction') or 0.0) * 100
-            pct_var.set(f"{pct:.1f}%")
-            pb_var.set(pct)
             target = p.get('target') or 0
-            count_var.set(f"{p['symbols_done']} / {target} symbols")
+            done = p.get('symbols_done', 0)
+            overshoot = p.get('overshoot', False)
+            if overshoot:
+                # Denominator is wrong (numerator > target). Don't pretend
+                # we're at 100% -- show "?" + amber tint so the user knows
+                # the % is suspect.
+                pct_var.set("?")
+                pb_var.set(0)
+                pct_lbl.configure(fg='#facc15')   # amber
+            else:
+                pct_var.set(f"{pct:.1f}%")
+                pb_var.set(pct)
+                pct_lbl.configure(fg='#888' if pct < 0.5 else '#5fd97a')
+            count_var.set(f"{done} / {target} symbols")
             cur_letter = p.get('current_letter') or '?'
             n_done = len(p.get('letters_done') or [])
-            latest = p.get('latest_symbol') or '—'
+            latest = p.get('latest_symbol') or '-'
             detail_var.set(
-                f"Letter {cur_letter} ({n_done} groups done)   ·   Latest: {latest}"
+                f"Letter {cur_letter} ({n_done} groups past)   -   Latest: {latest}"
             )
             eta_h = p.get('eta_hours')
             rate = p.get('rate_per_hour')
             if eta_h is not None and rate:
                 eta_var.set(
-                    f"ETA: {eta_h:.1f}h ({eta_h/24:.1f}d)   ·   "
+                    f"ETA: {eta_h:.1f}h ({eta_h/24:.1f}d)   -   "
                     f"Rate: {rate:.0f} syms/hr"
                 )
             else:
                 eta_var.set('ETA: gathering data...')
-            # Tint percentage by progress: green throughout, but red if 0
-            pct_lbl.configure(fg='#888' if pct < 0.5 else '#5fd97a')
+
+            # Cache last-write timestamp for the live indicator
+            last_iso = p.get('last_write_at')
+            if last_iso:
+                try:
+                    live_state['last_write_dt'] = datetime.fromisoformat(last_iso)
+                except Exception:
+                    pass
+            live_state['have_data'] = done > 0
         except Exception as exc:
             pct_var.set('error')
             count_var.set(str(exc)[:60])
-        # Schedule next refresh while window is alive
+
         try:
-            win.after(3000, refresh)
+            win.after(3000, refresh_data)
         except Exception:
             pass
 
-    refresh()
+    def animate():
+        """Light tick: advances spinner + recomputes 'Ns ago' from cached
+        last_write_dt. Every 150ms. No file I/O."""
+        try:
+            if not win.winfo_exists():
+                return
+        except Exception:
+            return
+        try:
+            i = live_state['spinner_idx'] % len(SPINNER)
+            glyph = SPINNER[i]
+            live_state['spinner_idx'] = i + 1
+
+            last_dt = live_state['last_write_dt']
+            if last_dt is None:
+                if live_state['have_data']:
+                    live_var.set(f"{glyph}  waiting on next ingest entry...")
+                    live_lbl.configure(fg='#888888')
+                else:
+                    live_var.set(f"{glyph}  waiting for first ingest entry...")
+                    live_lbl.configure(fg='#888888')
+            else:
+                age = (datetime.now(timezone.utc) - last_dt).total_seconds()
+                if age < 0:
+                    age = 0
+                # Color the dot by liveness: matches the tray-icon thresholds
+                # in get_ingest_status() for consistency
+                if age < RUNNING_THRESHOLD_SEC:
+                    dot, dot_fg, state_word = '●', '#5fd97a', 'live'  # green
+                elif age < IDLE_THRESHOLD_SEC:
+                    dot, dot_fg, state_word = '●', '#facc15', 'idle'  # amber
+                else:
+                    dot, dot_fg, state_word = '●', '#ef4444', 'stalled'  # red
+                if age < 60:
+                    age_str = f"{age:.0f}s ago"
+                elif age < 3600:
+                    age_str = f"{age/60:.0f}m ago"
+                else:
+                    age_str = f"{age/3600:.1f}h ago"
+                live_var.set(f"{glyph}  {dot} {state_word}  -  last write {age_str}")
+                live_lbl.configure(fg=dot_fg)
+        except Exception:
+            pass
+
+        try:
+            win.after(150, animate)
+        except Exception:
+            pass
+
+    refresh_data()
+    animate()
     win.bind('<Escape>', lambda e: close())
     win.protocol("WM_DELETE_WINDOW", close)
 

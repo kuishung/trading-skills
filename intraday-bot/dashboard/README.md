@@ -29,6 +29,55 @@ Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-05-26 - `tray_status.py`: full audit, four bugs + dead-code purge
+
+Trigger was a Hermes screenshot showing `92 / 2 symbols (100%)` with `Latest: AMZN` while the supervisor log on the right showed iteration #1 had just launched and was actively writing A and AA. End-to-end audit of `tray_status.py` against real ingest_log + watcher logs surfaced four real bugs plus one dead function. All four fixed in one bundle; verified against the live Hermes data:
+
+| Field | Before | After |
+|---|---|---|
+| `symbols_done` | 92 (carried over from crashed iteration) | 25 (just this iteration) |
+| `target` | 2 (only A, AA seeded so far) | 1518 (universe_full.txt) |
+| `progress_fraction` | 1.0 (clamped from 46.0) | 0.016 (real) |
+| `latest_symbol` | "AMZN" (frozen on dead iteration) | "ACN" (actual current) |
+
+**Bug 1 - Denominator was the daily-parquet count.**
+- `bars_store.list_symbols("daily")` returns `[]` during fresh seed and small numbers during partial Resilio sync; the pre-existing 1519 fallback only fired on import/IO exceptions, not on an empty list.
+- **Fix**: new `_target_universe_size()` returns `max(daily_parquet_count, universe_full_txt_line_count) or 1519`. Larger wins. Verified: `max(2, 1518) = 1518`.
+- **Known limitation**: narrow `--universe journal` runs (~50 syms) still get denominator 1518, under-reporting % for that run. Proper fix is `wait_and_ingest.py` publishing the exact target to `state/_ingest_target.json` -- deferred until the narrow-universe view matters.
+
+**Bug 2 - `latest_symbol` froze across supervisor restarts.**
+- Read from `syms_in_order[-1]` -- the last *first-appearance*. After supervisor restart, the new iteration's A/AA/AAPL are already in the `seen` dedup set from the dead iteration, so `syms_in_order` doesn't grow even as fresh ingest_log entries arrive. `latest_symbol` stayed pinned to whichever symbol died last.
+- **Fix**: `latest_ts, latest_symbol = current_run[-1]` -- the actual chronologically-last log entry.
+
+**Bug 3 (the big one) - `symbols_done` and `rate_per_hour` spanned the dead iteration.**
+- `get_progress()` used a 1-hour run-gap rule. Supervisor restarts in 30s, so a fresh iteration was lumped in with the previous crashed iteration's 90+ syms in the same "current run." The new iteration that has done 2 syms in 18 seconds was displayed as `92 / target, rate 18/hr` (a 5-hour-average rate that has nothing to do with what's happening right now).
+- **Fix**: new `_latest_iteration()` parses the `_(\d{8})_(\d{6}).log$` timestamp out of the newest `_ingest_*.log` filename and uses that as a hard iteration boundary. ingest_log entries earlier than that cutoff are dropped. The 1-hour-gap rule survives only as a fallback for the no-watcher-log case (e.g., someone running `ibkr_history.py` directly).
+- Side benefit: each iteration's `rate_per_hour` and `eta_hours` are real per-iteration numbers, not 5-hour cross-iteration averages.
+
+**Bug 4 - `progress_fraction` saturated silently at 1.0.**
+- `clamp(0, 1, n/d)` papered over the denominator-wrong case as `100%`. User sees a green progress bar with no signal anything's off.
+- **Fix**: `get_progress()` now returns an `overshoot: bool` field (True iff `symbols_done > target`). The Tk window renders `?` in amber instead of 100% green when overshoot is True.
+
+**Bug 5 (housekeeping) - `get_progress_summary()` was dead code.**
+- 44 lines, no callers. Was the old toast-popup body that the 2026-05-26 Tk-window changelog already replaced. Deleted.
+
+**Milestone state - keyed by iteration.**
+- `_load_milestone_state(iteration_key)` returns fresh state when the on-disk key doesn't match the current iteration's filename. So a supervisor restart -> new `_ingest_*.log` -> milestone notifications re-fire cleanly as the new iteration crosses 50/100/250/... again. No "ghost" milestones surviving a restart, no missing toasts when the user wants to see them.
+
+**Live activity indicator in the Tk window.**
+- User: *"i need a progress or moving animation to show it is progressing"*. The Tk window was static between 3s data refreshes, and at ~18 syms/hr the % only ticks every ~3 minutes. No way to tell at a glance whether anything was happening.
+- Added a live indicator row between the count line and the letter line:
+  - **Spinner glyph** (braille `⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`) cycling every 150ms -> proves the tray UI is alive and the refresh loop is firing
+  - **Status dot** colored green / amber / red mirroring the tray-icon liveness thresholds (`<60s` / `<10min` / older) -> proves the watcher itself is alive
+  - **"last write Ns ago"** counter incrementing live -> proves the ingest pipeline is still producing entries
+- Refactored `_show_progress_window()` to split two cadences: `refresh_data()` every 3s (re-reads `ingest_log.jsonl` via `get_progress()`), `animate()` every 150ms (spinner + age counter only, reads cached `last_write_dt` so no file I/O). 5+ ticks/sec on the spinner without hammering the ~2MB log file.
+- New `last_write_at` field on `get_progress()` return so the animation tick has the latest entry's UTC timestamp to compute "age" against.
+- Window grew 300 -> 330 px tall to fit the new row.
+
+**What I did NOT touch.**
+- The `"Letter X done"` notification text still fires when ANY symbol with first letter > X appears -- it means "we've moved past alphabetically," not "every X-symbol completed." The text overstates but the inaccuracy is mild and an iteration-boundary `letters_done` reset makes the case clearer.
+- 7-second IBKR pacing, 60s `RUNNING_THRESHOLD_SEC`, 30s `POLL_INTERVAL_SEC` -- all left as-is, they match the actual cadence in the ingest_log. If the new amber-after-60s on the live indicator turns out to flicker too often during legitimate big-symbol chunks (3 timeframes × N chunks @ 7s pacing can naturally span 60-200s between log entries), bump the threshold then.
+
 ### 2026-05-26 — Tray click → Tk progress window (big % + visual progress bar)
 
 - User rule: *"i want the percentage and a progress bar to show when i click the tray icon"*. The previous "Show Status" action fired a Windows toast with multi-line text — text-only, truncated at ~250 chars, no visual progress indicator.
