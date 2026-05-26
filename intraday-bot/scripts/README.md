@@ -29,6 +29,12 @@ they're rarely-touched and small, so `scripts/` is fine.
 
 ## Changelog
 
+### 2026-05-26 - `wait_and_ingest.py`: passes `skip_up_to_date=True` to bulk_update
+
+User feedback: *"when the ingest restart it always start from the A, i want it to have a log to confirm the which has been done and which now so i can save a lot of time"*. The watcher's bulk_update call now skips (sym, tf) pairs already at full target depth, which is exactly the right semantics for the watcher (it's the backfill tool; today's incremental top-up is the orchestrator's post-EOD job, not this script's). See `resources/README.md` changelog for the matching `bulk_update` pre-flight + `skip_up_to_date` parameter change.
+
+Net effect for the user: on watcher restart, the log now opens with a pre-flight summary telling you exactly how many pairs are done vs. remaining (e.g., `per-timeframe completion: 3min=1456/1518 5min=1462/1518 daily=1456/1518`), then iterates only the gap-fill work with `[i/N]` progress prefixes. No more "scanning from A to wherever you got" wasted pacing time.
+
 ### 2026-05-26 - `setup_hermes_supervisor_task.ps1`: scheduled-task installer
 
 - Trigger: Hermes's supervisor died twice today. Once from the em-dash parser crash (fixed in `Watch-Ingest.ps1`), once from RDP disconnect killing the interactive PowerShell window. The second death was the bigger lesson: any supervisor launched inside an RDP PS window dies when the RDP session ends, taking the watcher with it. The fix isn't a code change to the supervisor -- it's running the supervisor under Windows Task Scheduler so it lives in a session decoupled from any RDP login.

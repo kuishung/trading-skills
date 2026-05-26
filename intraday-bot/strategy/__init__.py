@@ -73,6 +73,7 @@ KNOWN_STRATEGIES: tuple[str, ...] = (
     "guns_setup5",   # GUNS -- Break of First 1-Minute Candle (09:31)
     "os_breakout",   # OS   -- Opening Surge breakout, fully automated (09:28)
     "ditp_p2",       # DITP -- P2 Pattern break of mountain resistance (watch-only v0.1)
+    "ditp_tc",       # DITP -- Trend Continuation (Day +1/+2 follow-through, watch-only v0.1)
 )
 
 
@@ -81,6 +82,7 @@ _STRATEGY_IMPORT_PATHS: dict[str, str] = {
     "guns_setup5": "GUNS.guns_setup5",
     "os_breakout": "OS.os_breakout",
     "ditp_p2":     "DITP.ditp_p2",
+    "ditp_tc":     "DITP.ditp_tc",
 }
 
 

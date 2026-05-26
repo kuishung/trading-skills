@@ -66,6 +66,17 @@
       "params": {
         "min_tier": "C"
       }
+    },
+    "ditp_tc": {
+      "enabled": false,
+      "shortlist_et": "09:00",
+      "entry_et": "09:31",
+      "entry_cutoff_et": "09:35",
+      "max_concurrent": 3,
+      "take_profit_R": 2.0,
+      "params": {
+        "min_tier": "C"
+      }
     }
   },
 

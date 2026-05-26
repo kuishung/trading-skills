@@ -10,7 +10,7 @@ state/armed.flag
 state/armed_*.flag
 state/enabled_*.flag
 state/auto_started_*.flag
-state/_*.txt
+state/_*
 state/sample_charts/
 config.json
 __pycache__/

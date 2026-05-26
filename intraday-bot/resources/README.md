@@ -32,9 +32,59 @@ and import it from whichever strategy needs it. No registration.
 - `sp500.py` — **S&P 500 constituent list.** Scrapes Wikipedia's canonical `List_of_S%26P_500_companies` table; 7-day cache at `state/cache/sp500.json`. Public API: `get_sp500_symbols(force_refresh=False)`, `refresh_sp500()`. CLI: `py resources/sp500.py` / `--count` / `--force-refresh`. Returns ~503 symbols (BRK.B / BF.B included in canonical dotted form; the yfinance ingest auto-maps these to Yahoo's dashed form).
 - `yfinance_history.py` — **yfinance -> Parquet bulk ingest.** The fast-seed path. Bulk-downloads daily + intraday (1min / 5min / 15min) bars via yfinance, writes through `bars_store.write_bars()`. Batches symbols 50-at-a-time, retries transient failures (3 attempts, exponential backoff), maps share-class symbols (BRK.B <-> BRK-B). Intraday pulls include pre-market + after-hours (`prepost=True`) so GUNS-style strategies have the data they need. Yahoo lookback caps: 1min = 7 days, 5min = 60 days, 15min = 60 days, daily = unlimited. Resume-by-default skips symbols already stored. CLI: `seed-sp500 [--years N] [--include-1min] [--include-5min] [--include-15min] [--include-all-intraday] [--force]` / `ingest <SYMS> --tf daily|1min|5min|15min`.
 - `ibkr_history.py` — **IBKR -> Parquet ingest pipeline.** Bulk seed and incremental update of historical OHLCV bars. Writes through `bars_store.write_bars()`. Two flows: SEED (one-shot lookback when first ingesting a symbol) and UPDATE (incremental, only bars after the last stored timestamp). Pacing: 7s between requests by default (under IB's 60-per-600s cap). Universe selection: symbols seen in `data/journal/` last 30d + today's GUNS watchlist + `cfg.history_universe`. Auto-triggered post-EOD by the orchestrator when `cfg.eod_history_ingest=true`. Clientid 83 (non-collision). CLI: `ingest <SYMS> --timeframes 1min,daily --days 60` / `update --universe` / `update --symbols NVDA,MSFT` / `list` / `universe`.
+- `market_calendar.py` — **NYSE market calendar.** Hardcoded full-closure list for 2024-2028 + `is_trading_day(d) / last_trading_day(d) / next_trading_day(d)` helpers. Source-of-truth for any scanner / scheduler that needs to skip Sat/Sun **and** US market holidays. Update annually as the NYSE publishes the new year's calendar. CLI: `py resources/market_calendar.py --date 2026-05-25` / `--list-year 2026`.
 - `bars_store.py` — **The bars I/O layer.** Read/write OHLCV bars to/from `data/price_history/{1min,5min,15min,daily}/<SYM>.parquet`. One file per symbol per timeframe (`AAPL.parquet IS AAPL's full history`). Parquet via lazy `pyarrow` import (the hot path doesn't pay it). Append = read + dedup + rewrite the file; ~50ms at realistic scales. Public API: `load_bars(symbol, start, end, timeframe)`, `write_bars(symbol, bars, timeframe)`, `available_range(symbol, timeframe)`, `list_symbols(timeframe)`, `bars_dir(timeframe)`. Bar shape matches `patterns.py`: `{t, o, h, l, c, v}`. CLI: `py resources/bars_store.py list 1min` / `range NVDA 1min` / `head NVDA 1min --n 5`.
 
 ## Changelog
+
+### 2026-05-26 — `ibkr_history.bulk_update`: pre-flight scan + `skip_up_to_date` for fast restart
+
+User flagged: *"when the ingest restart it always start from the A, i want it to have a log to confirm the which has been done and which now so i can save a lot of time"*. Before this change, `bulk_update` looped all 1518 symbols × 3 timeframes paying the full 7s pacing per pair on every restart — even for symbols already at full depth. With three timeframes that's 4554 pairs × 7s ≈ 9 hours of pacing alone before any new work happens.
+
+Two changes:
+
+1. **Pre-flight pass (no IBKR calls).** New `_classify_pair(sym, tf, target_days, force_seed)` walks each pair locally and returns one of `seed` / `force` / `refill` / `top_up` / `unreadable` based purely on what's on disk. Before the IBKR connection is even opened, `bulk_update` logs:
+   - the totals by action (`seed=N force=N refill=N top_up=N unreadable=N`)
+   - per-timeframe completion (`3min=1234/1518 5min=1234/1518 daily=1234/1518`)
+   - the estimated minutes saved by skipping top_up pairs
+   - the count of remaining work items
+
+   This is what the user wanted: a glance at the top of the log answers "which has been done" without RDP-ing in or scrolling.
+
+2. **`skip_up_to_date` parameter (default `False`).** When `True`, the work loop skips `top_up` pairs entirely — no pacing, no IBKR call. The watcher's purpose is bulk backfill, not incremental top-up (that's the orchestrator's post-EOD job), so `scripts/wait_and_ingest.py` now passes `skip_up_to_date=True`. The orchestrator's post-EOD ingest keeps the default `False` since it explicitly wants today's incremental bars.
+
+3. **Per-iteration progress counter.** Each work-item log line is now prefixed with `[i/N]` so progress is visible at a glance instead of inferred from how far down the alphabet the symbols are.
+
+Sample of the new log shape:
+
+```
+[pre-flight] 4554 (sym,tf) pairs scanned: seed=0 force=0 refill=120 top_up=4374 unreadable=60
+[pre-flight] skipping 4374 top_up pairs already at full depth (skip_up_to_date=True). Estimated time saved: ~510.3 min of pacing.
+[pre-flight] per-timeframe completion: 3min=1456/1518 5min=1462/1518 daily=1456/1518
+[pre-flight] 180 work items remaining
+  [1/180]      NVDA     3min   refill(depth=14d<180d)   +12345 bars
+  [2/180]      TSLA     3min   refill(depth=14d<180d)   +12340 bars
+  ...
+```
+
+No behaviour change for the orchestrator's existing post-EOD ingest (default `skip_up_to_date=False`). The watcher's behaviour change is the intended user-facing fix.
+
+### 2026-05-26 — `market_calendar.py`: NYSE full-closure helpers (skip US holidays, not just weekends)
+
+User rule (chat 2026-05-26): *"when scanning for the tickers we will be looking at last trading day setup, skip the holiday"*. Found because the DITP P2 scanner's `next_trading_day_iso` (and the brand-new TC scanner's `_next_business_day`) only skipped Sat/Sun, not US market holidays. Running EOD Fri 2026-05-22, the P2 scanner had written `watchlist_ditp_2026-05-25.json` (Memorial Day Mon) — a non-trading day with no daily bars — and TC scanner consuming that file found zero data to work with.
+
+The fix is a single source of truth for "is this a trading day?", reusable by every future scanner / scheduler.
+
+- **`_NYSE_FULL_CLOSURES_RAW`** — explicit list of `(year, month, day)` tuples for full NYSE closures 2024–2028. Includes observed dates (Saturday holidays → preceding Friday; Sunday → following Monday; except New Year's Day which is not observed when on Saturday). Source: https://www.nyse.com/markets/hours-calendars. **Update annually.**
+- **`is_trading_day(d)`** — `True` iff `d` is Mon-Fri AND not in the closure set.
+- **`last_trading_day(d=today)`** — walk backward (inclusive of `d`) until a trading day; bounded at 14 days to surface bugs in the holiday list.
+- **`next_trading_day(d=today)`** — walk forward strictly after `d` until a trading day.
+- `KNOWN_YEAR_RANGE = (2024, 2028)` — outside this range, holiday data is missing and the CLI warns; weekday-only fallback still applies.
+- CLI: `py resources/market_calendar.py --date 2026-05-25` prints `is_trading_day=False`, `last=2026-05-22`, `next=2026-05-26`. `--list-year 2026` prints the year's full-closure list.
+
+Consumers wired in the same turn:
+- `strategy/DITP/scanner.py::next_trading_day_iso` — was Mon-Fri-only, now delegates to `next_trading_day`. Effect: EOD Friday-before-Memorial-Day writes a Tuesday-targeted watchlist (correct), not a Monday-targeted one.
+- `strategy/DITP/tc_scanner.py` — uses `is_trading_day` + `last_trading_day` + `next_trading_day`. When the consumed P2 watchlist's `target_date` is a holiday (legacy file pattern), TC walks source_date back to the last actual trading day and emits a `# note:` to stdout.
 
 ### 2026-05-26 — `universe_full.txt`: static 1518-symbol universe for pure-IBKR runs
 

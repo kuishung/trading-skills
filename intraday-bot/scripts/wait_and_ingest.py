@@ -189,12 +189,23 @@ def main() -> int:
     log("starting bulk_update ...")
     from ibkr_history import bulk_update  # type: ignore
     try:
+        # skip_up_to_date=True: the watcher's purpose is bulk historical
+        # backfill, not the incremental top-up. On restart, this skips the
+        # (sym, tf) pairs that are already at full depth — saves the 7s
+        # pacing + IBKR round-trip per pair. The orchestrator's post-EOD
+        # job is the one that fetches today's new bars; the watcher
+        # shouldn't duplicate that work. User request 2026-05-26:
+        # *"when the ingest restart it always start from the A, i want
+        # i to have a log to confirm the which has been done and which
+        # now so i can save a lot of time"*. The bulk_update pre-flight
+        # logs which pairs are already done before the loop starts.
         results = bulk_update(
             symbols, timeframes,
             lookback_days_for_new=args.seed_days,
             lookback_days_by_tf=lookback_days_by_tf,
             pacing_s=args.pacing,
             force_seed=args.force_seed,
+            skip_up_to_date=True,
         )
         total = sum(results.values())
         log(f"DONE: {total} bars written across {len(results)} (symbol,timeframe) pairs")

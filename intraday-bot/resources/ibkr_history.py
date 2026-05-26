@@ -236,45 +236,154 @@ def update_history(ib, symbol: str, timeframe: str,
                           lookback_days=lookback, pacing_s=pacing_s)
 
 
+def _classify_pair(sym: str, tf: str, target_days: int, force_seed: bool
+                   ) -> tuple[str, str]:
+    """LOCAL-ONLY classification (no IBKR calls). Decides what bulk_update
+    needs to do for one (sym, tf) pair based solely on the parquet on disk.
+
+    Returns (action, note) where action is one of:
+        "seed"      no data on disk → full fetch needed
+        "force"     force_seed=True → full re-fetch regardless of disk state
+        "refill"    has data but depth < 90% of target → backfill
+        "top_up"    has data, deep enough → only an incremental update is needed
+        "unreadable" parquet timestamp couldn't be parsed → treat as refill
+
+    Used by the pre-flight pass to plan work and surface a summary up front,
+    so that on watcher restart the user sees immediately how many symbols are
+    already complete and doesn't have to wonder whether the loop is "really
+    doing something" while it slowly skips through fully-seeded names.
+    """
+    if force_seed:
+        return "force", f"force_seed({target_days}d)"
+    rng = bars_store.available_range(sym, timeframe=tf)
+    if rng is None:
+        return "seed", f"seed({target_days}d)"
+    try:
+        earliest = datetime.fromisoformat(rng[0].replace("Z", "+00:00"))
+        days_back = (datetime.now(timezone.utc) - earliest).days
+    except (ValueError, AttributeError):
+        return "unreadable", "depth=unparseable"
+    if days_back < int(target_days * 0.90):
+        return "refill", f"depth={days_back}d<{target_days}d"
+    return "top_up", f"depth={days_back}d ok"
+
+
 def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = None,
                 *, lookback_days_for_new: int = 60,
                 lookback_days_by_tf: dict[str, int] | None = None,
                 pacing_s: float = DEFAULT_PACING_S,
-                force_seed: bool = False) -> dict[tuple[str, str], int]:
+                force_seed: bool = False,
+                skip_up_to_date: bool = False) -> dict[tuple[str, str], int]:
     """Update many (symbol, timeframe) pairs in one IBKR connection.
 
-    Decides per (sym, tf) which mode to use, in this order:
+    Pre-flight pass (NO IBKR calls): classify every (sym, tf) into one of
+    `seed` / `force` / `refill` / `top_up` / `unreadable` based on what's
+    already in the parquet, log a summary, and build the work list. Then
+    iterate ONLY the work items, with a `[i/N]` progress counter on each
+    line so the user can see exactly where the run is.
 
-    1. **No data on disk** → full seed (`ingest_history(lookback_days=N)`)
-    2. **`force_seed=True`** → full re-seed (overwrites whatever's there)
-    3. **Has data, but shallower than 90% of target depth** → partial seed
-       detected (probably a crash mid-symbol on a previous run) → full
-       re-fetch to the target depth (`refill`). bars_store deduplicates
-       on write so existing chunks are safely overwritten.
-    4. **Has data and deep enough** → incremental update only
-       (`update_history` — top up from last stored bar to now)
+    Per (sym, tf) work modes:
+
+    1. **`seed`** — no data on disk → full `ingest_history(lookback_days=N)`
+    2. **`force`** — `force_seed=True` → full re-seed regardless of disk
+    3. **`refill`** — partial seed (depth < 90% target, e.g., previous run
+       crashed mid-symbol) → full re-fetch to target depth. bars_store
+       deduplicates on write, so existing chunks are safely overwritten.
+    4. **`top_up`** — has data, deep enough → incremental update only.
+       Included in the work list when `skip_up_to_date=False` (the
+       orchestrator's post-EOD path wants today's new bars). Filtered out
+       when `skip_up_to_date=True` (the watcher's bulk backfill path
+       doesn't need today's incremental — that's what the post-EOD
+       orchestrator job is for).
 
     Seed depth resolution: `lookback_days_by_tf[tf]` if set, else
     `lookback_days_for_new`.
 
-    `force_seed=True` overrides the "incremental for existing" logic and
-    runs a full ingest_history(lookback_days=...) on EVERY symbol,
-    regardless of existing data. Used for extending historical depth
-    backward (e.g., bumping a 14-day seed up to 180 days for backtest).
-    Existing bars are deduplicated by bars_store on write, so re-fetching
-    the recent window is wasted bandwidth but safe — no data corruption.
-
-    `lookback_days_by_tf` (optional, added 2026-05-26) overrides
+    `lookback_days_by_tf` (added 2026-05-26) overrides
     `lookback_days_for_new` per timeframe — useful for mixed runs like
     `{"3min": 180, "5min": 180, "daily": 730}` where daily wants more
-    depth than the intraday bars (EMA200 + 2-year backtest window).
-    Any timeframe not in the dict falls back to `lookback_days_for_new`.
+    depth than the intraday bars.
 
-    Returns: {(symbol, timeframe): bars_written}.
+    `skip_up_to_date` (added 2026-05-26 — user request after observing
+    that restart of the watcher iterated all 1518 symbols paying full
+    pacing even though many were already at depth): when True, drop
+    `top_up` pairs from the work list entirely. Default False preserves
+    the existing orchestrator post-EOD behaviour.
+
+    Returns: {(symbol, timeframe): bars_written}. Pairs that were skipped
+    (top_up + skip_up_to_date=True) are NOT in the dict.
     """
     cfg = cfg or load_config()
     if not symbols:
         return {}
+
+    # ---------- Pre-flight (no IBKR calls) ----------
+    # Classify everything, log a summary, then build the work list. This
+    # is what gives the user the "which has been done and which now" view
+    # on every watcher restart.
+    plan: list[tuple[str, str, str, str, int]] = []   # (sym, tf, action, note, target_days)
+    counts: dict[str, int] = {"seed": 0, "force": 0, "refill": 0,
+                              "top_up": 0, "unreadable": 0}
+    already_done: list[tuple[str, str, int]] = []   # for the optional verbose listing
+    for sym in symbols:
+        for tf in timeframes:
+            target_days = (lookback_days_by_tf or {}).get(tf, lookback_days_for_new)
+            action, note = _classify_pair(sym, tf, target_days, force_seed)
+            counts[action] = counts.get(action, 0) + 1
+            if action == "top_up":
+                # Track depth for the "already done" report. note format is
+                # "depth=Nd ok"; pull out N for the report.
+                try:
+                    days_back = int(note.split("=", 1)[1].split("d", 1)[0])
+                except (IndexError, ValueError):
+                    days_back = -1
+                already_done.append((sym, tf, days_back))
+            plan.append((sym, tf, action, note, target_days))
+
+    n_total = len(plan)
+    work_items = [
+        (sym, tf, action, note, target_days)
+        for (sym, tf, action, note, target_days) in plan
+        if not (skip_up_to_date and action == "top_up")
+    ]
+    n_work = len(work_items)
+    n_skipped = n_total - n_work
+
+    sys.stdout.write(
+        f"[pre-flight] {n_total} (sym,tf) pairs scanned: "
+        f"seed={counts['seed']} force={counts['force']} "
+        f"refill={counts['refill']} top_up={counts['top_up']} "
+        f"unreadable={counts['unreadable']}\n"
+    )
+    if n_skipped:
+        sys.stdout.write(
+            f"[pre-flight] skipping {n_skipped} top_up pairs already at full depth "
+            f"(skip_up_to_date=True). Estimated time saved: ~{n_skipped * pacing_s / 60:.1f} min "
+            f"of pacing.\n"
+        )
+    # Per-timeframe breakdown of already-done — gives the user a one-glance
+    # view of which slot is the closest to complete.
+    by_tf_done: dict[str, int] = {}
+    by_tf_total: dict[str, int] = {}
+    for (sym, tf, action, _note, _td) in plan:
+        by_tf_total[tf] = by_tf_total.get(tf, 0) + 1
+        if action == "top_up":
+            by_tf_done[tf] = by_tf_done.get(tf, 0) + 1
+    sys.stdout.write("[pre-flight] per-timeframe completion: ")
+    parts = []
+    for tf in timeframes:
+        done = by_tf_done.get(tf, 0)
+        tot = by_tf_total.get(tf, 0)
+        parts.append(f"{tf}={done}/{tot}")
+    sys.stdout.write(" ".join(parts) + "\n")
+    sys.stdout.write(f"[pre-flight] {n_work} work items remaining\n")
+    sys.stdout.flush()
+
+    if n_work == 0:
+        sys.stdout.write("[pre-flight] nothing to do — all pairs at full depth\n")
+        return {}
+
+    # ---------- Connect + execute ----------
     ib = _connect(cfg)
     results: dict[tuple[str, str], int] = {}
     reconnect_attempts = 0
@@ -312,88 +421,55 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
 
     try:
         first = True
-        for sym in symbols:
-            for tf in timeframes:
-                if not first:
-                    time.sleep(pacing_s)
-                first = False
-                # Auto-reconnect on TWS drops — prevents the "spin forever
-                # on qualify_failed: Not connected" failure mode that
-                # required manual ingest restarts (user reports 2026-05-23).
-                try:
-                    ib = _ensure_connected(ib)
-                except Exception as exc:
-                    sys.stderr.write(f"[ibkr_history] {exc} — aborting run\n")
-                    break
-                # Per-symbol try/except — one bad ticker (delisted, ticker-
-                # change, weird IBKR error, parquet write failure, etc.)
-                # must NOT kill the entire 1519-symbol run. Log the failure,
-                # record 0 bars in results, move on to the next symbol.
-                # Added 2026-05-26 per user request: "let it run without
-                # interruption". Pairs with the existing _ensure_connected
-                # reconnect logic — reconnect failures still break (those
-                # are hopeless), but per-symbol failures are skipped.
-                try:
-                    rng = bars_store.available_range(sym, timeframe=tf)
-                    # Per-timeframe depth override (e.g., daily=730d for the
-                    # 2-year backtest window while 3min/5min stay at 180d)
-                    days_for_this_tf = (lookback_days_by_tf or {}).get(
-                        tf, lookback_days_for_new
-                    )
-                    # Smart resume: a parquet that exists but only spans a
-                    # small fraction of the target window means a previous
-                    # ingest crashed mid-symbol. We re-fetch to the target
-                    # depth instead of just doing the forward-only update,
-                    # which would leave the historical gap unfilled.
-                    # Threshold: 90% of target_days. Use bars_store dedup
-                    # to safely overwrite the partial chunks already there.
-                    # User rule 2026-05-26: *"seed it without interuption
-                    # and if IBKR reset ... we continue with the seeding
-                    # from where it left off"*.
-                    needs_full_seed = (rng is None) or force_seed
-                    if not needs_full_seed and rng is not None:
-                        try:
-                            earliest = datetime.fromisoformat(
-                                rng[0].replace("Z", "+00:00")
-                            )
-                            days_back = (datetime.now(timezone.utc) - earliest).days
-                            if days_back < int(days_for_this_tf * 0.90):
-                                needs_full_seed = True
-                                resume_note = f"depth={days_back}d<{days_for_this_tf}d"
-                            else:
-                                resume_note = f"depth={days_back}d ok"
-                        except (ValueError, AttributeError):
-                            # Can't parse timestamp → assume shallow, re-seed
-                            needs_full_seed = True
-                            resume_note = "depth=unparseable"
+        for i, (sym, tf, action, note, target_days) in enumerate(work_items, start=1):
+            if not first:
+                time.sleep(pacing_s)
+            first = False
+            # Auto-reconnect on TWS drops — prevents the "spin forever
+            # on qualify_failed: Not connected" failure mode that
+            # required manual ingest restarts (user reports 2026-05-23).
+            try:
+                ib = _ensure_connected(ib)
+            except Exception as exc:
+                sys.stderr.write(f"[ibkr_history] {exc} — aborting run\n")
+                break
+            # Per-symbol try/except — one bad ticker (delisted, ticker
+            # change, weird IBKR error, parquet write failure, etc.)
+            # must NOT kill the entire 1519-symbol run. Log the failure,
+            # record 0 bars in results, move on to the next symbol.
+            # Added 2026-05-26 per user request: "let it run without
+            # interruption". Pairs with the existing _ensure_connected
+            # reconnect logic — reconnect failures still break (those
+            # are hopeless), but per-symbol failures are skipped.
+            progress = f"[{i}/{n_work}]"
+            try:
+                if action in ("seed", "force", "refill", "unreadable"):
+                    n = ingest_history(ib, sym, tf,
+                                       lookback_days=target_days,
+                                       pacing_s=pacing_s)
+                    if action == "force":
+                        label = f"force-seed({target_days}d)"
+                    elif action == "seed":
+                        label = f"seed({target_days}d)"
+                    elif action == "refill":
+                        label = f"refill({note})"
                     else:
-                        resume_note = "no data"
-
-                    if needs_full_seed:
-                        n = ingest_history(ib, sym, tf,
-                                           lookback_days=days_for_this_tf,
-                                           pacing_s=pacing_s)
-                        if force_seed:
-                            label = f"force-seed({days_for_this_tf}d)"
-                        elif rng is None:
-                            label = f"seed({days_for_this_tf}d)"
-                        else:
-                            # Partial seed → backfill
-                            label = f"refill({resume_note})"
-                    else:
-                        n = update_history(ib, sym, tf, pacing_s=pacing_s)
-                        label = f"update({resume_note})"
-                    results[(sym, tf)] = n
-                    sys.stdout.write(f"  {sym:<8} {tf:<6} {label:<14} +{n} bars\n")
-                except Exception as exc:
-                    # Compact the error to one line so the watcher log stays
-                    # readable. The full exception type + message gives
-                    # enough info to triage (delisted, IBKR error code, etc.)
-                    err_str = f"{type(exc).__name__}: {str(exc)[:80]}"
-                    results[(sym, tf)] = 0
-                    sys.stderr.write(f"  {sym:<8} {tf:<6} FAILED: {err_str} — skipping\n")
-                sys.stdout.flush()
-                sys.stderr.flush()
+                        label = f"refill(unreadable→{target_days}d)"
+                else:   # action == "top_up"
+                    n = update_history(ib, sym, tf, pacing_s=pacing_s)
+                    label = f"update({note})"
+                results[(sym, tf)] = n
+                sys.stdout.write(
+                    f"  {progress:<12} {sym:<8} {tf:<6} {label:<22} +{n} bars\n"
+                )
+            except Exception as exc:
+                err_str = f"{type(exc).__name__}: {str(exc)[:80]}"
+                results[(sym, tf)] = 0
+                sys.stderr.write(
+                    f"  {progress:<12} {sym:<8} {tf:<6} FAILED: {err_str} — skipping\n"
+                )
+            sys.stdout.flush()
+            sys.stderr.flush()
     finally:
         try:
             ib.disconnect()

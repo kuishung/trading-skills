@@ -12,12 +12,19 @@ just drops a `strategy/DITP/<setup_name>/` subfolder.
 - `__init__.py` — Family package marker. Light docstring describing the family.
 - `_helpers.py` — Family-shared helpers (skeleton). Add shared constants + plan builders here as setups are wired.
 - `scanner.py` — DITP P2 Pattern scanner CLI. Reads daily parquet bars from `data/price_history/daily/`, applies the §6 eligibility filters (EMA stack + real-ceiling resistance + signal-candle anatomy + pending-breakout state), classifies sub-variant A / B / C, then runs the §6.5 ranking layer (5-component score + 5 caution flags + tier mapping). Writes `state/watchlist_ditp_<tomorrow>.txt` + `.json`. Source: `strategies-reference/DITP.md` §6 + §6.5.
+- `tc_scanner.py` — DITP TC (Trend Continuation) **EOD Day-0** scanner CLI. Walks the most recent `state/watchlist_ditp_*.json`, filters to symbols whose Day-0 daily candle both (a) closed above the P2 candidate's `resistance` (= `range_high`) and (b) printed bullish (close > open AND close in upper half of range), and writes `state/watchlist_tc_<tomorrow>.txt` + `.json`. Source: `strategies-reference/DITP.md` §6 Setup 4 (Phase 1 — premarket validation + entry pipeline still TBD).
+- `ditp_p2/` — Setup 1 (P2 Pattern). See its own README.
+- `ditp_tc/` — Setup 4 (TC — Trend Continuation). See its own README.
+- `_decision_engine.py` — Family-shared decision math (entry/stop/target/tradeability for the live entry pipeline). Currently used by `ditp_p2/backtest_adapter.py`.
 
 ## Status of the DITP setups
 
 | Setup | Trigger | Status |
 |---|---|---|
-| TBD | TBD | not scaffolded — awaiting strategies-reference/DITP.md §4 Setup catalog |
+| 1 (P2 — A/B/C variants) | Day of breakout (intraday tape watch) | scaffolded — `ditp_p2/` v0.1.0 watch-only |
+| 2 (P1) | TBD | not yet taught (DITP.md §4) |
+| 3 (P3 — retest) | Day of retest support hold | spec partial, not scaffolded |
+| 4 (TC — Trend Continuation) | Day +1 / Day +2 after a qualifying breakout / rebound | scaffolded — `ditp_tc/` v0.1.0 watch-only, EOD Day-0 scanner in `tc_scanner.py`; Phase 2 (premarket) + Phase 3 (entry) TBD |
 
 ## Convention reminders (from CLAUDE.md)
 
@@ -26,6 +33,53 @@ just drops a `strategy/DITP/<setup_name>/` subfolder.
 - Every rule edit bumps `__version__` in the setup's `impl.py` and adds a dated entry to that setup's README changelog (which IS the version history — there's no separate `changelog.md` per CLAUDE.md).
 
 ## Changelog
+
+### 2026-05-26 — `scanner.py` + `tc_scanner.py`: holiday-aware target / source dates
+
+User rule (chat 2026-05-26, immediately after the TC scaffold landed): *"when scanning for the tickers we will be looking at last trading day setup, skip the holiday"*. Both DITP scanners were using a Mon-Fri-only "skip weekends" date math, which produced bogus `target_date=2026-05-25` (Memorial Day) when the P2 scanner ran EOD Fri 2026-05-22, then the TC scanner consuming that file resolved its source date to a non-trading-day and found zero bars.
+
+Fix lives in the new `resources/market_calendar.py` (NYSE full-closure list + `is_trading_day` / `last_trading_day` / `next_trading_day` helpers). Both scanners now import from there:
+
+- **`scanner.py::next_trading_day_iso`** — was Mon-Fri-only weekday skip, now delegates to `resources.market_calendar.next_trading_day`. The function signature is unchanged, so no caller modification required. Effect: a P2 scan running EOD Friday-before-Memorial-Day correctly writes a Tuesday-targeted watchlist.
+- **`tc_scanner.py`** —
+  - Removed the local `_next_business_day` helper. All "next trading day" / "last trading day" calls now use `resources.market_calendar`.
+  - When `--source-date` is omitted, the scanner reads the consumed P2 watchlist's `target_date`. If that date is **not** a trading day (legacy file pattern from before this fix), it walks back to the last actual trading day and prints a `# note:` to stdout explaining the walk-back. The TC candidate's bar lookup then happens on a date that genuinely has bars.
+  - If the resolved source_date is still not a trading day after the walk (shouldn't be possible, defensive check), the scanner aborts with a stderr error and exit code 1 instead of silently producing 0 candidates.
+  - `--source-date` (explicit) is taken literally — the user knows what they're doing.
+
+Smoke-validated against the existing `watchlist_ditp_2026-05-25.json` on disk: TC scanner now correctly resolves source_date to 2026-05-22 (Fri), computes target_date=2026-05-26 (Tue, skipping Mon), and emits the walk-back note. The 0-candidates result is now a genuine "no Friday breakouts in this watchlist" rather than a "no bars on Memorial Day" data hole.
+
+No `__version__` bumps on `ditp_p2/impl.py` or `ditp_tc/impl.py` — the candidate-dict shapes are unchanged; this is purely a date-math fix in the scanner layer.
+
+### 2026-05-26 — `ditp_tc/` v0.1.0 + `tc_scanner.py` (Phase 1 of TC build)
+
+First wire-up of DITP Setup 4 — TC (Trend Continuation). Mirrors the same phased-build pattern that DITP P2 used (commit history: 4a3f9c4 P2 v0.1 watch-only → d3d3be5 confluence-tier filter → c05ee47 backtest adapter). Source: `strategies-reference/DITP.md` §6 Setup 4 (capture began chat 2026-05-25).
+
+Files added in this folder:
+- `tc_scanner.py` — EOD Day-0 TC scanner (family-level CLI, sibling of `scanner.py`).
+- `ditp_tc/__init__.py` — setup package marker.
+- `ditp_tc/impl.py` — strategy module v0.1.0 (`pick_universe` / `fetch_bars` / `evaluate` / `do_shortlist` / `build`).
+- `ditp_tc/README.md` — setup README with Status + TBDs + this same Changelog entry rephrased from the setup's perspective.
+
+**Phase 1 scope:**
+
+1. **`tc_scanner.py`** walks the most recent `state/watchlist_ditp_*.json` and applies the Day-0 filters captured so far in DITP.md §6 Setup 4:
+   - Today's daily close > P2 candidate's `resistance` (= `range_high`). The breakout actually fired.
+   - Today's daily candle is bullish: `close > open` AND `(close - low) / (high - low) >= 0.5` (close in upper half). Filters wicky/barely-green breakouts.
+2. **TC candidate** carries forward enough P2 metadata (variant, tier, score, resistance, confluence, cautions, EMAs, ATR14, yesterday's D/E/F levels, universes) that downstream consumers don't need to re-read the P2 watchlist. Plus Day-0 specifics: `day0_close`, `day0_open/high/low`, `day0_close_position` (0–1 normalized), `breakout_strength_atr` ((close − R)/ATR — how cleanly the close cleared resistance).
+3. **`watchlist_tc_<tomorrow>.txt`** mirrors P2's `.txt` format (drops D-tier + Tier-0 confluence) so the orchestrator's entry pipeline applies a consistent filter across DITP setups. `.json` keeps every candidate for review.
+4. **`impl.py` v0.1.0** — watch-only. `evaluate()` returns None; `do_shortlist()` journals `watchlist_loaded` with per-tier + per-event counts. `source_event` field is `p2_breakout` today; ready for `p1_rebound` once Setup 2 (P1) is taught.
+5. **Sort key** = `(-breakout_strength_atr, tier, -score)`. Cleanest breakouts first — those are the highest-conviction continuation candidates.
+
+**Why phased build (matching P2's pattern):** the TC framework taught 2026-05-25 was incomplete — premarket strictness, entry trigger, stop, TP, and cautions are all TBD in DITP.md §6 Setup 4. Phase 1 ships the part that IS fully specified (Day-0 filter + scanner output) so the watchlist starts producing data immediately. Phase 2 (premarket validation) + Phase 3 (live entry pipeline) wait on the user filling the gaps.
+
+**Cross-folder impact (recorded in those folders too per the per-folder README rule):**
+- `strategy/__init__.py` — added `"ditp_tc"` to `KNOWN_STRATEGIES` + `"DITP.ditp_tc"` to `_STRATEGY_IMPORT_PATHS`. (No separate README for `strategy/`; SKILL.md serves as that level's manifest.)
+- `config.example.json` — new `ditp_tc` config block alongside `ditp_p2`. First-run seed only; live state lives in `state/enabled_ditp_tc.flag` + `state/armed_ditp_tc.flag`.
+
+**Dashboard visibility (per CLAUDE.md "Dashboard visibility rule"):** auto-surfaces handle v0.1 — the Gating drawer + Strategy Analysis drawer pick TC up automatically once `strategy.ditp_tc.*` events flow. A dedicated `/strategy/ditp/tc_watchlist` endpoint + frontend section showing the TC candidate table is the natural next turn's work per the rule's "UI catches up next turn" allowance.
+
+**No live-bot risk** — `evaluate()` returns None regardless of ARM. Even if the user toggles ARM, no order is submitted.
 
 ### 2026-05-24 — `_decision_engine.py` v0.1.0 + `ditp_p2/backtest_adapter.py` (Phase 1 of backtest build)
 

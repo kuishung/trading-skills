@@ -59,6 +59,7 @@ from patterns import (  # noqa: E402
 )
 
 import bars_store  # noqa: E402  (resources/bars_store.py)
+from market_calendar import next_trading_day  # noqa: E402  (resources/market_calendar.py)
 
 STATE_DIR = SKILL_DIR / "state"
 
@@ -711,12 +712,16 @@ def score_candidate(c: P2Candidate, atr: float) -> None:
 # ---------- Universe + output ----------
 
 def next_trading_day_iso(today: date | None = None) -> str:
-    """Next business day (Mon-Fri only; ignores US holidays — best-effort)."""
+    """Next NYSE trading day (Mon-Fri AND skipping US market holidays).
+
+    Holiday-aware via resources/market_calendar.next_trading_day. Prior to
+    2026-05-26 this function only skipped Sat/Sun, which produced a holiday
+    target_date when the scanner ran the trading day immediately before a
+    holiday (e.g., EOD Fri 2026-05-22 wrote a watchlist targeted at Memorial
+    Day Mon 2026-05-25, which then had no daily bars to evaluate).
+    """
     today = today or date.today()
-    nxt = today + timedelta(days=1)
-    while nxt.weekday() >= 5:   # 5=Sat 6=Sun
-        nxt += timedelta(days=1)
-    return nxt.strftime("%Y-%m-%d")
+    return next_trading_day(today).strftime("%Y-%m-%d")
 
 
 def scan_universe(symbols: Iterable[str], cfg: P2Config,
