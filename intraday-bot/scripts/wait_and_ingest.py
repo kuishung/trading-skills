@@ -93,7 +93,15 @@ def main() -> int:
                     help="how to resolve the symbol list. 'daily' = every symbol "
                          "with a daily parquet (full backtest universe, ~1500). "
                          "'journal' = symbols from recent journal events (~50, "
-                         "the default of ibkr_history.py update --universe).")
+                         "the default of ibkr_history.py update --universe). "
+                         "IGNORED when --symbols-file is set.")
+    ap.add_argument("--symbols-file",
+                    help="Read the universe from a plain-text file (one symbol "
+                         "per line, '#' comments and blank lines skipped). "
+                         "Use this for pure-IBKR Hermes runs where neither "
+                         "yfinance nor Wikipedia is available — pre-generate "
+                         "the file with resources/universe_full.txt or any "
+                         "custom list. Overrides --universe when set.")
     ap.add_argument("--pacing", type=float, default=7.0,
                     help="seconds between IBKR requests (under 60-per-600s cap)")
     args = ap.parse_args()
@@ -152,8 +160,31 @@ def main() -> int:
 
     # --- Launch phase ---
     log("resolving universe ...")
-    symbols = resolve_universe(args.universe)
-    log(f"universe ({args.universe}): {len(symbols)} symbols")
+    if args.symbols_file:
+        # Pure-IBKR mode — read the symbol list from a static file (no yfinance,
+        # no Wikipedia, no dependency on existing parquets). The file is
+        # typically resources/universe_full.txt, generated on a host that has
+        # network access to Wikipedia. Reserved Windows names should already
+        # be filtered when the file was generated; we re-filter defensively.
+        from pathlib import Path as _P
+        symbols_path = _P(args.symbols_file)
+        if not symbols_path.is_absolute():
+            symbols_path = SKILL_DIR / symbols_path
+        if not symbols_path.exists():
+            log(f"FATAL: --symbols-file {symbols_path} not found")
+            return 2
+        RESERVED = {'CON','PRN','AUX','NUL',
+                    'COM1','COM2','COM3','COM4','COM5','COM6','COM7','COM8','COM9',
+                    'LPT1','LPT2','LPT3','LPT4','LPT5','LPT6','LPT7','LPT8','LPT9'}
+        raw = symbols_path.read_text(encoding="utf-8").splitlines()
+        symbols = sorted({
+            s.strip().upper() for s in raw
+            if s.strip() and not s.lstrip().startswith("#")
+        } - RESERVED)
+        log(f"universe (file={symbols_path.name}): {len(symbols)} symbols")
+    else:
+        symbols = resolve_universe(args.universe)
+        log(f"universe ({args.universe}): {len(symbols)} symbols")
 
     log("starting bulk_update ...")
     from ibkr_history import bulk_update  # type: ignore

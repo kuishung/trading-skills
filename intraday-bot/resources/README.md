@@ -36,6 +36,29 @@ and import it from whichever strategy needs it. No registration.
 
 ## Changelog
 
+### 2026-05-26 — `universe_full.txt`: static 1518-symbol universe for pure-IBKR runs
+
+- User rule: *"make sure the code only seed from IBKR, nothing outside IBKR"*. The previous launch flow on Hermes had a bootstrap problem — `bars_store.list_symbols('daily')` returns empty when the folder is wiped, so we needed yfinance to pre-seed daily parquets just so the watcher had a universe to iterate. That mixed sources.
+- **Pre-generated static universe file** at `resources/universe_full.txt` — 1518 unique symbols, the deduplicated union of S&P 500 (503) + S&P MidCap 400 (400) + S&P SmallCap 600 (603) + NASDAQ-100 (101) + DJIA (30). Generated on a host that has Wikipedia access (laptop), committed to git so Hermes gets it via `git pull`. Reserved Windows names already filtered.
+- Paired with `scripts/wait_and_ingest.py --symbols-file <path>` (added same day) so the watcher reads the universe from this text file instead of from existing parquets or Wikipedia-scraping at runtime.
+- **Now zero non-IBKR data sources** end-to-end on Hermes: universe comes from a static checked-in text file (just ticker symbols, not OHLCV); every bar of price data comes from IBKR.
+- Regenerate by running the same one-liner on the laptop (Wikipedia caches in `state/cache/`):
+
+  ```python
+  py -3.12 -c "
+  import sys; sys.path.insert(0, 'resources')
+  from sp500 import get_sp500_symbols; from sp_midcap400 import get_sp400_symbols
+  from sp_smallcap600 import get_sp600_symbols; from nasdaq100 import get_nasdaq100_symbols
+  from djia import get_djia_symbols
+  RESERVED = {'CON','PRN','AUX','NUL','COM1','COM2','COM3','COM4','COM5','COM6','COM7','COM8','COM9','LPT1','LPT2','LPT3','LPT4','LPT5','LPT6','LPT7','LPT8','LPT9'}
+  u = sorted(set(get_sp500_symbols()) | set(get_sp400_symbols()) | set(get_sp600_symbols()) | set(get_nasdaq100_symbols()) | set(get_djia_symbols()) - RESERVED)
+  open('resources/universe_full.txt','w').write('\n'.join(u) + '\n')
+  print(len(u), 'symbols')
+  "
+  ```
+
+  Commit the regenerated file when the S&P committee changes membership.
+
 ### 2026-05-26 — `bulk_update`: smart-resume for partial seeds (no more need for `--force-seed`)
 
 - User rule: *"seed it without interuption and if IBKR reset in Hermes for whatever reason we continue with the seeding from where it left off"*.

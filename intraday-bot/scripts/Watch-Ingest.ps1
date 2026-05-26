@@ -21,12 +21,13 @@
 # we've been running.
 
 param(
-    [string] $Timeframes   = "3min",
-    [int]    $SeedDays     = 180,
-    [switch] $ForceSeed    = $true,
-    [string] $Universe     = "daily",
-    [int]    $RestartDelay = 30,
-    [int]    $MaxIterations = 0   # 0 = forever
+    [string] $Timeframes    = "3min",
+    [int]    $SeedDays      = 180,
+    [switch] $ForceSeed     = $false,
+    [string] $Universe      = "daily",
+    [string] $SymbolsFile   = "",       # overrides $Universe when non-empty
+    [int]    $RestartDelay  = 30,
+    [int]    $MaxIterations = 0         # 0 = forever
 )
 
 # Resolve paths relative to the script — works from any CWD
@@ -60,9 +61,13 @@ $pyArgs = @(
     "-3.12",
     (Join-Path $BotRoot "scripts\wait_and_ingest.py"),
     "--timeframes", $Timeframes,
-    "--seed-days",  $SeedDays,
-    "--universe",   $Universe
+    "--seed-days",  $SeedDays
 )
+if ($SymbolsFile) {
+    $pyArgs += @("--symbols-file", $SymbolsFile)
+} else {
+    $pyArgs += @("--universe", $Universe)
+}
 if ($ForceSeed) { $pyArgs += "--force-seed" }
 
 Write-Log "supervisor starting"

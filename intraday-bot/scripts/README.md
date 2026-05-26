@@ -28,6 +28,14 @@ they're rarely-touched and small, so `scripts/` is fine.
 
 ## Changelog
 
+### 2026-05-26 — `wait_and_ingest.py` + `Watch-Ingest.ps1`: `--symbols-file` for pure-IBKR runs
+
+- User rule: *"make sure the code only seed from IBKR, nothing outside IBKR"*. Previously `--universe daily` required existing daily parquets to resolve the symbol list — on a fresh Hermes with all parquets wiped, we had to use yfinance to bootstrap that. Now there's a third option that needs neither parquets nor network.
+- **`--symbols-file <path>`** (new flag in `wait_and_ingest.py`): reads the universe from a plain-text file (one symbol per line, `#` comments and blank lines skipped, Windows reserved names defensively filtered). Overrides `--universe` when set. Paired with `resources/universe_full.txt` (1518 syms, committed to git).
+- **`-SymbolsFile <path>`** (new param in `Watch-Ingest.ps1`): forwards to the watcher's `--symbols-file`. When set, the supervisor doesn't pass `--universe` at all.
+- **`-ForceSeed` default flipped from `$true` to `$false`** in the supervisor — smart-resume (added the same day in `ibkr_history.bulk_update`) makes force-seed unnecessary for the resume case. User opts in explicitly if they want to wipe.
+- Now the full launch on Hermes is yfinance-free: `Watch-Ingest.ps1 -Timeframes "3min:180,5min:180,daily:730" -SymbolsFile resources\universe_full.txt`
+
 ### 2026-05-26 — `wait_and_ingest.py`: `--timeframes` accepts `TF:DAYS` per-timeframe depths
 
 - User rule: *"I will need 1d (2 years), 3m and 5m for 180 days"*. Single `--seed-days` was too rigid — daily wants more history (EMA200 + 2-year backtest window) while intraday timeframes can stay tight at 180d.
