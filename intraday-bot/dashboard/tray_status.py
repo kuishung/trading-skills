@@ -696,16 +696,43 @@ def _show_progress_window():
     User rule 2026-05-26: *"i want the percentage and a progress bar to show
     when i click the tray icon"*. The toast was text-only and Windows
     truncated long messages; a Tk window can show a real progress bar and
-    self-refresh."""
+    self-refresh.
+
+    Lifecycle hardening (2026-05-26): the WHOLE function body is now wrapped
+    in try/finally so `_progress_window_active` is always cleared on exit --
+    regardless of what raised. Previously, if anything between the .set()
+    call and the mainloop's enclosing try/finally raised (tk.Tk() can fail
+    on a daemon thread, ttk style configuration can fail under certain Tcl
+    builds, etc.), the flag stayed set forever and every subsequent click
+    no-op'd silently -- presenting to the user as "tray icon can't open the
+    window". The fix: hard guarantee the flag is released. Exceptions also
+    log to stderr so a foreground-launched tray surfaces the real cause.
+    """
     if _progress_window_active.is_set():
         return
     _progress_window_active.set()
+    try:
+        _show_progress_window_inner()
+    except Exception as exc:
+        import traceback
+        sys.stderr.write(
+            f"\n[tray_status] _show_progress_window failed: "
+            f"{type(exc).__name__}: {exc}\n"
+        )
+        traceback.print_exc(file=sys.stderr)
+        sys.stderr.flush()
+    finally:
+        _progress_window_active.clear()
 
+
+def _show_progress_window_inner():
+    """The original window-setup + mainloop, now in its own function so
+    `_show_progress_window`'s try/finally lifecycle wrapper stays small
+    and clearly readable."""
     try:
         import tkinter as tk
         from tkinter import ttk
     except ImportError:
-        _progress_window_active.clear()
         return
 
     win = tk.Tk()
@@ -925,11 +952,10 @@ def _show_progress_window():
     animate()
     win.bind('<Escape>', lambda e: close())
     win.protocol("WM_DELETE_WINDOW", close)
-
-    try:
-        win.mainloop()
-    finally:
-        _progress_window_active.clear()
+    # mainloop blocks until the window is closed; _progress_window_active is
+    # cleared by the outer _show_progress_window wrapper's finally clause
+    # regardless of whether mainloop returns cleanly or raises.
+    win.mainloop()
 
 
 def _on_show_status(icon, item):

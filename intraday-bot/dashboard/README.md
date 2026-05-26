@@ -29,6 +29,14 @@ Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-05-26 - `tray_status.py`: fix "tray icon can't open the window" — flag stuck after a failed first-open
+
+User report: clicking the tray icon stopped opening the progress window. Root cause: `_show_progress_window` set `_progress_window_active` BEFORE the Tk-construction code, but the lifecycle's try/finally only wrapped `win.mainloop()`. If anything between the .set() and the mainloop raised (`tk.Tk()` can fail when launched from a daemon thread; ttk style configuration can fail under certain Tcl builds; etc.), the function exited via exception with the flag stuck set forever. Every subsequent click hit the single-instance early-return at the top → silent no-op → window never opened again.
+
+Fix: split into `_show_progress_window` (a thin wrapper that takes the flag, calls the inner, releases the flag in a finally clause, and logs any exception to stderr) and `_show_progress_window_inner` (the original window-setup + mainloop). The flag is now released regardless of what raised, AND a traceback hits stderr so a foreground-launched tray surfaces the real failure cause for diagnosis.
+
+Smoke-tested by monkey-patching `_show_progress_window_inner` to raise a simulated exception — verified the flag is cleared on exit and the traceback prints. No behaviour change in the happy path (window opens normally → mainloop runs → close → flag released).
+
 ### 2026-05-26 - `tray_status.py`: pre-flight work-item count is now the progress denominator
 
 User screenshot showed the Tk progress window stuck at "1 / 1518 symbols (0.1%)" with `Latest: ALLY` shortly after a Hermes watcher restart. The watcher had correctly skipped ~30 already-deep A-symbols (the new `skip_up_to_date=True` from earlier today), but the tray's denominator was still the universe size (1518), making the actual progress look trivial.
