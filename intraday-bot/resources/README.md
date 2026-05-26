@@ -36,6 +36,22 @@ and import it from whichever strategy needs it. No registration.
 
 ## Changelog
 
+### 2026-05-26 — `bulk_update`: smart-resume for partial seeds (no more need for `--force-seed`)
+
+- User rule: *"seed it without interuption and if IBKR reset in Hermes for whatever reason we continue with the seeding from where it left off"*.
+- Previously the per-(sym, tf) mode decision was binary:
+  - `available_range == None` → full ingest
+  - `available_range != None` → incremental update only (forward gap fill)
+  - `force_seed=True` → override to full ingest regardless
+- That missed a critical resume case: **a parquet that exists but only has, say, 30 days of the targeted 180 days** (crash mid-symbol). The old logic took that as "exists, just update forward" — leaving the 150-day historical gap unfilled forever.
+- New ternary logic — `bulk_update` now checks earliest bar age vs target:
+  - No data → full seed
+  - Has data, age of earliest ≥ 90% of target days → incremental update (`update(depth=Nd ok)`)
+  - Has data, age of earliest < 90% of target days → partial seed detected → full re-fetch to target depth (`refill(depth=30d<180d)`)
+  - `force_seed=True` still forces full re-fetch unconditionally (`force-seed(180d)`)
+- bars_store deduplicates on write, so re-fetching over existing partial chunks is safe — no data corruption, just network/time cost.
+- **Practical implication**: drop `--force-seed` from the launch. The first pass seeds everything; if the watcher crashes / Hermes reboots / IBKR resets, the supervisor relaunches and the script naturally resumes — already-completed symbols are top-up only, partial symbols get re-filled to the right depth, untouched symbols get fresh seed. **True idempotent resume.**
+
 ### 2026-05-26 — `bulk_update`: per-timeframe lookback override (`lookback_days_by_tf`)
 
 - User rule: *"I will need 1d (2 years), 3m and 5m for 180 days"*. Previously `lookback_days_for_new` was a single int applied to every timeframe in the run — fine for "everything 180 days", impossible for "daily 2 years AND intraday 180 days" in one launch.

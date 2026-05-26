@@ -243,9 +243,19 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
                 force_seed: bool = False) -> dict[tuple[str, str], int]:
     """Update many (symbol, timeframe) pairs in one IBKR connection.
 
-    For symbols with existing bars, runs incremental update.
-    For symbols with NO existing bars at that timeframe, seeds with
-    `lookback_days_for_new` days (or `lookback_days_by_tf[tf]` if set).
+    Decides per (sym, tf) which mode to use, in this order:
+
+    1. **No data on disk** → full seed (`ingest_history(lookback_days=N)`)
+    2. **`force_seed=True`** → full re-seed (overwrites whatever's there)
+    3. **Has data, but shallower than 90% of target depth** → partial seed
+       detected (probably a crash mid-symbol on a previous run) → full
+       re-fetch to the target depth (`refill`). bars_store deduplicates
+       on write so existing chunks are safely overwritten.
+    4. **Has data and deep enough** → incremental update only
+       (`update_history` — top up from last stored bar to now)
+
+    Seed depth resolution: `lookback_days_by_tf[tf]` if set, else
+    `lookback_days_for_new`.
 
     `force_seed=True` overrides the "incremental for existing" logic and
     runs a full ingest_history(lookback_days=...) on EVERY symbol,
@@ -330,15 +340,49 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
                     days_for_this_tf = (lookback_days_by_tf or {}).get(
                         tf, lookback_days_for_new
                     )
-                    if rng is None or force_seed:
+                    # Smart resume: a parquet that exists but only spans a
+                    # small fraction of the target window means a previous
+                    # ingest crashed mid-symbol. We re-fetch to the target
+                    # depth instead of just doing the forward-only update,
+                    # which would leave the historical gap unfilled.
+                    # Threshold: 90% of target_days. Use bars_store dedup
+                    # to safely overwrite the partial chunks already there.
+                    # User rule 2026-05-26: *"seed it without interuption
+                    # and if IBKR reset ... we continue with the seeding
+                    # from where it left off"*.
+                    needs_full_seed = (rng is None) or force_seed
+                    if not needs_full_seed and rng is not None:
+                        try:
+                            earliest = datetime.fromisoformat(
+                                rng[0].replace("Z", "+00:00")
+                            )
+                            days_back = (datetime.now(timezone.utc) - earliest).days
+                            if days_back < int(days_for_this_tf * 0.90):
+                                needs_full_seed = True
+                                resume_note = f"depth={days_back}d<{days_for_this_tf}d"
+                            else:
+                                resume_note = f"depth={days_back}d ok"
+                        except (ValueError, AttributeError):
+                            # Can't parse timestamp → assume shallow, re-seed
+                            needs_full_seed = True
+                            resume_note = "depth=unparseable"
+                    else:
+                        resume_note = "no data"
+
+                    if needs_full_seed:
                         n = ingest_history(ib, sym, tf,
                                            lookback_days=days_for_this_tf,
                                            pacing_s=pacing_s)
-                        label = (f"force-seed({days_for_this_tf}d)" if force_seed
-                                 else f"seed({days_for_this_tf}d)")
+                        if force_seed:
+                            label = f"force-seed({days_for_this_tf}d)"
+                        elif rng is None:
+                            label = f"seed({days_for_this_tf}d)"
+                        else:
+                            # Partial seed → backfill
+                            label = f"refill({resume_note})"
                     else:
                         n = update_history(ib, sym, tf, pacing_s=pacing_s)
-                        label = "update"
+                        label = f"update({resume_note})"
                     results[(sym, tf)] = n
                     sys.stdout.write(f"  {sym:<8} {tf:<6} {label:<14} +{n} bars\n")
                 except Exception as exc:
