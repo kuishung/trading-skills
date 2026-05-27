@@ -727,7 +727,8 @@ def window_slopes_np(opens, highs, lows, closes, resistance: float,
                      atr: float,
                      *,
                      lookback_bars: int = 10,
-                     cluster_band_pct: float = 0.01,
+                     tick_size: float = 0.01,
+                     cluster_tolerance_ticks: int = 3,
                      ) -> dict:
     """Slope-of-highs / slope-of-lows + window dimensions for the LAST
     `lookback_bars` bars. Used to classify a window's shape (rectangle
@@ -775,7 +776,10 @@ def window_slopes_np(opens, highs, lows, closes, resistance: float,
     slope_l = float(np.polyfit(x, rl, 1)[0])
     px = float(c[-1])
     rect_height = float(rh.max() - rl.min())
-    near = int(np.sum(np.abs(rh - resistance) / resistance < cluster_band_pct)) \
+    # Absolute tick-based "near resistance" count per user rule
+    # 2026-05-27 ("the placeholder cannot be too wide... plus minus 3 tick").
+    cluster_band = cluster_tolerance_ticks * tick_size
+    near = int(np.sum(np.abs(rh - resistance) <= cluster_band)) \
         if resistance > 0 else 0
     return {
         "slope_highs_pct_per_bar": (slope_h / px) if px else 0.0,
@@ -795,15 +799,21 @@ def horizontal_resistance_np(highs, lows, closes, current_price: float,
                              *,
                              lookback: int = 120,
                              swing_radius: int = 3,
-                             min_touches: int = 2,
-                             cluster_band_pct: float = 0.01,
+                             min_touches: int = 1,
+                             tick_size: float = 0.01,
+                             cluster_tolerance_ticks: int = 3,
                              range_pct: float = 0.02,
-                             mountain_min_age_bars: int = 15,
-                             mountain_pullback_atr: float = 2.0,
-                             max_below_window_high_pct: float = 0.02,
+                             mountain_min_age_bars: int = 5,
+                             mountain_pullback_atr: float = 0.5,
+                             max_below_window_high_pct: float = 1.0,
                              ) -> dict | None:
-    """Find the lowest mountain-anchored horizontal resistance above
-    `current_price`.
+    """Find THE IMMEDIATE NEAREST mountain-anchored horizontal
+    resistance above `current_price` — the lowest mountain top above
+    current. User framework reintegration 2026-05-27: each mountain
+    peak is an independent P2 setup; the lowest mountain above current
+    is the next ceiling to break. Higher mountains above are FUTURE
+    P2 setups (will become relevant when price reaches them) — not
+    currently relevant.
 
     Two-stage process:
 
@@ -814,27 +824,51 @@ def horizontal_resistance_np(highs, lows, closes, current_price: float,
          (b) followed by a real pullback: at least one subsequent low
              ≤ peak − `mountain_pullback_atr` × atr
 
-    The level chosen = the climax of the PRECEDING MOUNTAIN above
-    `current_price` (the latest in time among mountains above). If
-    no mountain qualifies, falls back to the latest non-mountain
-    swing above — caller's downstream cautioner can tag this as
-    "fresh resistance".
+    The level chosen = the LOWEST mountain peak above `current_price`
+    (= the immediate nearest resistance to break). If no mountain
+    qualifies, falls back to the lowest non-mountain swing above —
+    caller's downstream cautioner can tag this as "fresh resistance".
 
     The RANGE around that level = consensus of mountain tops within
     ± `range_pct` of the chosen level. Non-mountain swings are NOT
     part of the consensus.
 
-    Ceiling gate: the chosen level must be the highest mountain in
-    the window (within `max_below_window_high_pct`). If a bigger
-    mountain sits above, the chosen level is just a bounce on the
-    way down — rejected.
+    Ceiling gate (DISABLED by default since 2026-05-27 reintegration):
+    `max_below_window_high_pct=1.0` effectively disables the gate.
+    User framework: higher mountains above the chosen level are FUTURE
+    P2 setups, not disqualifiers. The TSLA-style "midway-bounce-in-
+    a-downtrend" discrimination this gate used to provide is now
+    handled by the EMA-stack trend gate in P1/P2/P3 detectors. Set
+    `max_below_window_high_pct=0.02` (legacy strict value) if you
+    need the old behavior.
 
     Cluster gate: the chosen level must have ≥ `min_touches` swing
-    highs (mountain OR non-mountain) within ± `cluster_band_pct`.
+    highs (mountain OR non-mountain) within ± `cluster_tolerance_ticks
+    × tick_size` (default ±3 ticks at $0.01 tick size = ±$0.03).
+    Switched from a percentage tolerance to absolute-tick tolerance
+    on 2026-05-27 per user rule: *"the placeholder cannot be too
+    wide"* + *"plus minus 3 tick"*. The previous 1% percentage scaled
+    badly with price -- for a $400 stock that meant ±$4, far wider
+    than the user intent. Absolute ticks stays tight across the
+    universe. Multi-touch confirmation still surfaces via the
+    `cluster_touches` field (callers can score on it).
+
+    Mountain validation defaults (lowered 2026-05-27 from
+    `mountain_min_age_bars=15, mountain_pullback_atr=2.0` to
+    `5, 0.5`): the user's chart-reading framework identifies levels
+    that have been "actively tested" by recent price action, not by
+    requiring weeks of age and deep structural pullback. GOOGL's
+    $382.77 valley (9 trading days old, 2.68-ATR rally since) doesn't
+    satisfy the strict gates but IS a P1 support per the user's read.
+    The relaxed defaults align with this. Minimum 5 trading days is
+    just above the swing_radius=3 floor (a swing low at index i
+    requires i+3 bars to confirm) so we don't surface unconfirmed
+    swings. DITP P2 scanner keeps strict tuning (15 / 2.0) via
+    explicit P2Config override to preserve legacy watchlist quality.
 
     Returns a dict or None:
-      level                  resistance price (the preceding-mountain
-                             climax, or fresh-resistance fallback)
+      level                  resistance price (the immediate-nearest
+                             mountain climax, or fresh-resistance fallback)
       cluster_touches        # swing highs in cluster band
       mountain_anchors       # of those touches that qualified as
                              mountain tops
@@ -877,16 +911,20 @@ def horizontal_resistance_np(highs, lows, closes, current_price: float,
     mountain_idxs = {i for i, _ in mountains}
     max_mountain_high = max((hi for _, hi in mountains), default=0.0)
 
-    # 3. Preceding mountain above current price (else fallback to most
-    #    recent swing above)
+    # 3. Immediate nearest mountain above current price = LOWEST level
+    #    above current. User framework reintegration 2026-05-27: each
+    #    mountain peak is an independent P2 setup; the relevant
+    #    resistance is the one closest above current price. The prior
+    #    "most recent in time" rule could miss a closer-in-price
+    #    mountain that was older but still the active obstacle.
     swings_above = [(i, hi) for i, hi in swings if hi > current_price]
     if not swings_above:
         return None
     mountains_above = [(i, hi) for i, hi in swings_above if i in mountain_idxs]
     if mountains_above:
-        i_imm, h_imm = max(mountains_above, key=lambda x: x[0])
+        i_imm, h_imm = min(mountains_above, key=lambda x: x[1])
     else:
-        i_imm, h_imm = max(swings_above, key=lambda x: x[0])
+        i_imm, h_imm = min(swings_above, key=lambda x: x[1])
     level = float(h_imm)
 
     # Range = consensus of mountains within ± range_pct of level.
@@ -905,9 +943,12 @@ def horizontal_resistance_np(highs, lows, closes, current_price: float,
     if max_mountain_high > 0 and level < max_mountain_high * (1 - max_below_window_high_pct):
         return None
 
-    # Cluster touches around the chosen level
+    # Cluster touches around the chosen level. Absolute tick-based
+    # tolerance per user rule 2026-05-27: "the placeholder cannot be
+    # too wide... plus minus 3 tick".
+    cluster_band = cluster_tolerance_ticks * tick_size
     cluster = [(i, hh) for i, hh in swings
-               if abs(hh - level) / level <= cluster_band_pct]
+               if abs(hh - level) <= cluster_band]
     if len(cluster) < min_touches:
         return None
     n_mountains_in_cluster = sum(1 for i, _ in cluster if i in mountain_idxs)

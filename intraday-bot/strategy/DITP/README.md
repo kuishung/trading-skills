@@ -14,8 +14,8 @@ just drops a `strategy/DITP/<setup_name>/` subfolder.
 - `scanner.py` — DITP P2 Pattern scanner CLI. Reads daily parquet bars from `data/price_history/daily/`, applies the §6 eligibility filters (EMA stack + real-ceiling resistance + signal-candle anatomy + pending-breakout state), classifies sub-variant A / B / C, then runs the §6.5 ranking layer (5-component score + 5 caution flags + tier mapping). Writes `state/watchlist_ditp_<tomorrow>.txt` + `.json`. Source: `strategies-reference/DITP.md` §6 + §6.5.
 - `tc_scanner.py` — DITP TC (Trend Continuation) **EOD Day-0** scanner CLI. Walks the most recent `state/watchlist_ditp_*.json`, filters to symbols whose Day-0 daily candle both (a) closed above the P2 candidate's `resistance` (= `range_high`) and (b) printed bullish (close > open AND close in upper half of range), and writes `state/watchlist_tc_<tomorrow>.txt` + `.json`. Source: `strategies-reference/DITP.md` §6 Setup 4 (Phase 1 — premarket validation + entry pipeline still TBD).
 - `ema_rebound.py` — **EMA rebound detector** (daily support bounce on EMA20 / EMA50 / EMA200). Single-file detector module; no CLI scanner / watchlist file (consumed only by the dashboard's `POST /scanner/yf_scan?setup=ema_rebound` for ad-hoc filtering of the Finviz universe). Returns the WHICH EMA acted as support + proximity/recency metrics. Source: user request 2026-05-27 ("find rebound on EMA20 or EMA50 or EMA200"). `__version__ = "1.0.0"`. Public API: `detect_ema_rebound(symbol, cfg)` -> dict | None; `scan_universe(symbols, cfg)` -> list[dict]. Config: `EMARebConfig` (lookback_bars=5, touch_tolerance_atr=0.3, max_distance_atr=1.0, require_stack=True, require_above_ema200=True, require_bullish_close=True, min_close_position=0.5).
-- `p1_rebound.py` — **DITP P1 detector** -- rebound off a horizontal SUPPORT level (long-side mirror of P2). Trend gate (EMA20>EMA50>EMA200) + bullish reclaim candle + horizontal-support touch via `resources/sr_levels.horizontal_support_np` + **reaction-magnitude gate** (bounce from touch's low to today's close >= 0.3 * ATR; the touch alone isn't enough — a real visible bounce is required). Mountain-valley validation = same "old swing low + subsequent rally" logic as the resistance side. Single-file detector consumed by the dashboard's `POST /scanner/yf_scan?setup=p1_rebound`. Source: user framing 2026-05-27 ("P1 is price rebounding key support level... we want to see if price action is bouncing at the horizontal support"). `__version__ = "1.1.0"`. Public API: `detect_p1_rebound(symbol, cfg)` / `scan_universe(symbols, cfg)`. Config: `P1RebConfig`.
-- `p3_retest.py` — **DITP P3 detector** -- retest of a broken resistance level (polarity flip; resistance → support). Trend gate + bullish reclaim candle + broken-R candidate from `resources/sr_levels.find_broken_resistance_below` (gated by staleness window: breakout 3-45 days ago) + **reaction-magnitude gate** (same math as P1; price must show a visible bounce off the polarity-flip level, not just drift near it). Single-file detector consumed by the dashboard's `POST /scanner/yf_scan?setup=p3_retest`. Source: user framing 2026-05-27 ("P3 is price have already breakout of a key resistance level and the price come back to retest... price action shows reactions in the resistance turned support"). `__version__ = "1.1.0"`. Public API: `detect_p3_retest(symbol, cfg)` / `scan_universe(symbols, cfg)`. Config: `P3RetestConfig`.
+- `p1_rebound.py` — **DITP P1 detector** -- rebound off a horizontal SUPPORT level. Trend gate (EMA20>EMA50>EMA200) + bullish reclaim candle + horizontal-support touch via `resources/sr_levels.horizontal_support_np` (immediate-nearest valley below current per user framework reintegration 2026-05-27) + **reaction-magnitude gate** (bounce from touch's low to today's close >= 0.3 * ATR — a real visible bounce is required). Single-file detector consumed by the dashboard's `POST /scanner/yf_scan?setup=p1_rebound`. Source: user framing 2026-05-27. `__version__ = "1.2.0"`. Public API: `detect_p1_rebound(symbol, cfg)` / `scan_universe(symbols, cfg)`. Config: `P1RebConfig`.
+- `p3_retest.py` — **DITP P3 detector** -- retest of a broken resistance level (polarity flip; resistance → support). Trend gate + bullish reclaim candle + broken-R candidate from `resources/sr_levels.find_broken_resistance_below` v1.2.0 (immediate-nearest broken mountain below current, with 3-tick breakout tolerance) + staleness window (breakout 3-45 days ago) + **reaction-magnitude gate** (same math as P1). Single-file detector consumed by the dashboard's `POST /scanner/yf_scan?setup=p3_retest`. Source: user framing 2026-05-27 + user reintegration same day ("immediate mountain top nearest to current price action is relevant"). `__version__ = "1.3.0"`. Public API: `detect_p3_retest(symbol, cfg)` / `scan_universe(symbols, cfg)`. Config: `P3RetestConfig`.
 - `ditp_p2/` — Setup 1 (P2 Pattern). See its own README.
 - `ditp_tc/` — Setup 4 (TC — Trend Continuation). See its own README.
 - `_decision_engine.py` — Family-shared decision math (entry/stop/target/tradeability for the live entry pipeline). Currently used by `ditp_p2/backtest_adapter.py`.
@@ -36,6 +36,74 @@ just drops a `strategy/DITP/<setup_name>/` subfolder.
 - Every rule edit bumps `__version__` in the setup's `impl.py` and adds a dated entry to that setup's README changelog (which IS the version history — there's no separate `changelog.md` per CLAUDE.md).
 
 ## Changelog
+
+### 2026-05-27 — Cluster tolerance: percentage → absolute ticks (±3 ticks)
+
+User rule 2026-05-27: *"the placeholder cannot be too wide... plus minus 3 tick."* The cluster band in `resources/patterns.horizontal_resistance_np` etc. switched from percentage (`cluster_band_pct=0.01` = 1%) to absolute ticks (`cluster_tolerance_ticks=3, tick_size=0.01` = ±$0.03). For a $400 stock the previous 1% meant ±$4 (400 ticks wide), wildly off the user's intent. Absolute ticks keeps the placeholder tight across the universe.
+
+P1Config + P2 scanner config updated:
+- `P1RebConfig` and `P2Config`: `cluster_band_pct: float = 0.01` REPLACED with `tick_size: float = 0.01` + `cluster_tolerance_ticks: int = 3`. Passed through to `horizontal_resistance_np` / `horizontal_support_np`. (P3 detector uses `find_broken_resistance_below` which already had tick-based tolerance for the breakout check.)
+
+P1/P3 candidate counts unchanged (16 / 19), but `mountain_anchors` field is now tighter (touches within ±$0.03, not ±1%). Scoring downstream re-balances slightly — multi-touch level scores drop because the touches no longer cluster within the tight band. The candidate ORDER reshuffles but no setups are dropped.
+
+See `resources/README.md` for the full rationale on the API change.
+
+### 2026-05-27 — P1 + P3 mountain defaults relaxed (5 days / 0.5 ATR) for actively-tested levels
+
+User teaching from GOOGL case 2026-05-27: GOOGL is BOTH an EMA20-rebound AND a P1 setup (per user's chart-reading). The support level $382.77 (May 12 pin bar valley) is only 9 trading days old, with a 2.68-ATR rally since — well within the "actively-tested level" framework, but blocked by the previous strict gates (15-day age, 2.0-ATR pullback). User's framework: the same level evolves P2 → P3 → P1 over time as price interacts with it, and recent active levels matter.
+
+**P1RebConfig + P3RetestConfig overrides:**
+- `support_min_age_bars` / `mountain_min_age_bars`: 15 → **5**
+- `support_pullback_atr` / `mountain_pullback_atr`: 2.0 → **0.5**
+
+The underlying `resources/patterns.horizontal_resistance_np`, `resources/sr_levels.horizontal_support_np`, and `resources/sr_levels.find_broken_resistance_below` module-level defaults were also relaxed in lockstep so `find_key_levels` (chart pane S/R strip) uses the same defaults. See `resources/README.md` for the full rationale.
+
+**DITP P2 scanner (`scanner.py`) KEEPS strict tuning** (`mountain_min_age_bars=15, mountain_pullback_atr=2.0`) — P2's watchlist generation has been tuned against historical-quality benchmarks; loosening would regress watchlist quality. P2 + P1 + P3 now have DIFFERENT validation gates for their structural levels, deliberate.
+
+**Smoke-tested impact**:
+- GOOGL surfaces as P1: support $382.77, today's low $382.60 (touched), bounce 0.65 ATR, close $388.88, distance 0.63 ATR, score 30. The setup matches the user's read.
+- Parquet universe (241 tickers): P1 candidates **10 → 16** (BFS, AVNS, CARR, BANR — additional multi-mountain-anchor supports). P3 candidates **10 → 19** (recent breakouts like AA 7d ago, AVT 7d, AMD 10d, AAPL 5d — previously blocked by 15-day age gate). All retain bounce ≥0.3 ATR.
+- USAR remains correctly excluded from P3 (its broken-R candidate $26.36 is 77d old, well outside the 3-45 day staleness window — independent of the mountain-age gate change).
+
+### 2026-05-27 — `p1_rebound.py` v1.2.0 + `p3_retest.py` v1.3.0 + DITP P2 scanner: framework reintegration
+
+User framework reintegration 2026-05-27: *"the immediate mountain top nearest to the current price action is relevant... Higher mountains are FUTURE P2 setups, not currently relevant. So on and so forth..."*. Each mountain peak is an independent P2 → P3 lifecycle. The relevant level at any moment is the one closest in price to current.
+
+**Underlying changes** in `resources/patterns.py` + `resources/sr_levels.py` (see those READMEs for the full story):
+- Selection rule: LOWEST mountain above current for resistance, HIGHEST mountain valley below current for support, HIGHEST broken mountain below current for P3 polarity-flip — all "immediate nearest in price" semantics.
+- Ceiling gate (`max_below_window_high_pct`) default raised from 0.02 → 1.0 (effectively disabled). Higher mountains above the chosen level are FUTURE setups, not disqualifiers.
+- Cluster gate `min_touches` default lowered from 2 → 1. A single confirmed mountain top is a valid level.
+
+**Per-detector impact:**
+- `p1_rebound.py` v1.1.0 → **v1.2.0**: picks up the new `horizontal_support_np` semantics; config `support_min_touches` lowered 2 → 1 to match.
+- `p3_retest.py` v1.2.0 → **v1.3.0**: picks up the new `find_broken_resistance_below` semantics; docstring updated; the previous "absolute highest mountain must be broken" gate (v1.2.0) is removed — it was over-restrictive and blocked legitimate P3 candidates whenever some old historical peak loomed unbroken.
+- `scanner.py` (P2): config `min_touches` 2 → 1; config `max_below_window_high_pct` 0.02 → 1.0 (gate disabled). No version bump in this turn — the watchlist generation logic is unchanged, only the resistance-discovery defaults shifted to match the framework.
+
+**Smoke-tested impact:**
+- USAR: previously tagged P3 with flip $25.95 (v1.0.0) or completely blocked (v1.1.0). Now correctly: P3 returns nothing (broken-R candidate $26.36 is 77d old, outside the 3-45 day staleness window); chart-pane R-above = $32.07 (the next structural mountain). USAR remains "P2 territory in progress" per the user's reading, but is 1.79 ATR from $32.07 so not yet within the 1.5 ATR P2 trigger gate.
+- Live Finviz scan: P1 2 candidates (TSLA, C), P3 0 candidates, P2 0 candidates — all clean.
+- Parquet universe (241): P1 3 → **10** candidates (top scorer AME with 4 mountain anchors at $227.95, score 70), P3 4 → **10** candidates.
+
+**Known tradeoff**: the user's visually-identified peaks (like USAR's $28.69) may not satisfy `mountain_pullback_atr=2.0` if the subsequent pullback was shallow (<2×ATR). The algorithm falls through to the next structurally-confirmed mountain. If the user wants shallower peaks to count as mountains, lower `mountain_pullback_atr` to 1.0-1.5. Documented as a config knob, not changed by default to avoid surfacing noise across the universe.
+
+### 2026-05-27 — `p3_retest.py` v1.2.0: only the highest mountain counts, 3-tick breakout tolerance
+
+User correction 2026-05-27 from the USAR case: USAR was tagged P3 with `flip=$25.95` (a lower mountain peak that price had crossed). But USAR's REAL structural ceiling was higher — close $28.62 was still BELOW the actual key resistance. The user explained: *"For a P3 setup, the breakout must have already happen to break above [the resistance] and stay above this level as a support and price coming back to test this new support. Allow a plus minus 3 tick of this level when interpreting this setup."*
+
+**Fix** (v1.2.0): pulls through to `resources/sr_levels.find_broken_resistance_below` v1.1.0, which now refuses to return ANY level unless the **highest** mountain peak in the 1-year lookback has been clearly broken above (`current_price > highest_level + 3 * 0.01`). Lower crossed peaks no longer count — they're not the key resistance.
+
+**Config gains** two tick-tolerance fields:
+- `tick_size: float = 0.01`
+- `breakout_ticks: int = 3`
+
+**Removed**: `max_candidates: int = 5` (the broken-R helper now returns at most 1 level; per-candidate iteration is single-pass).
+
+**Smoke-tested impact**:
+- USAR: previously tagged P3 with flip $25.95 / bounce 0.99 ATR / score 41. Now correctly drops out.
+- Full Finviz scan (44 tickers): P3 candidates 1 → 0 (USAR was the only false positive).
+- Parquet universe (241 tickers): P3 candidates 11 → 4 (AOSL, BNL, ATEN, ALGM — all real breakout-retest setups).
+
+Per CLAUDE.md bump rule: MINOR (gating filter tightened + new config fields; plan-dict shape unchanged).
 
 ### 2026-05-27 — `p1_rebound.py` v1.1.0 + `p3_retest.py` v1.1.0: bounce-magnitude reaction gate
 

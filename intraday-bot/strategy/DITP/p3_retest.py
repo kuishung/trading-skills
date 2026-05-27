@@ -17,25 +17,30 @@ to matter), the retest-touch gate (price actually came back down to
 the level), and the bullish-reclaim signal candle.
 
 Detection flow (per symbol):
-  1. Load daily bars. Need >= 220 for EMA200 stability + lookback headroom.
+  1. Load daily bars. Need >= cfg.lookback + 14 (~252 + ATR warmup).
   2. Trend gate: EMA20 > EMA50 > EMA200 AND close > EMA200. P3 is a
      long-side polarity flip, not a dead-cat bounce in a downtrend.
   3. Today's candle gate: bullish (close > open) AND close in upper
      half of bar range (reclaim character, not a weak retest).
-  4. Enumerate broken-resistance candidates below current price via
-     sr_levels.find_broken_resistance_below.
-  5. For each candidate (closest-to-current first), check:
+  4. Resolve THE relevant broken resistance via
+     sr_levels.find_broken_resistance_below v1.2.0: the IMMEDIATE
+     NEAREST mountain below current price (highest mountain below)
+     that price has clearly broken above (> breakout_ticks * tick_size).
+     User framework reintegration 2026-05-27: each mountain peak is an
+     independent P2 -> P3 lifecycle; the relevant level is the one
+     closest to current price, not the absolute highest in the window.
+     Higher unbroken mountains above are FUTURE P2 setups, not
+     disqualifiers of the current P3 opportunity. (The earlier v1.1.0
+     "absolute highest" gate was over-restrictive, blocking valid P3
+     setups whenever some old historical peak loomed unbroken.)
+  5. Apply the P3 gates to that one level:
        * Staleness gate: bars_ago in [breakout_min_age, breakout_max_age]
-       * Reclaim: today's close > level (not just a retest, but a
-         successful reclaim)
+       * Reclaim: today's close > level
        * Proximity: today's close within max_distance_atr*ATR
        * Retest touch: scan last touch_lookback_bars days for a bar
-         where low <= level + tolerance*ATR. First touch wins; the
-         touch IS the retest.
-     First level that passes all gates is the anchor; the closest
-     candidate beats further-away ones (find_broken_resistance_below
-     already sorts highest-first).
-  6. Score for sort order: staleness sweet spot + proximity + recency.
+         where low <= level + tolerance*ATR. The touch IS the retest.
+       * Reaction gate: bounce_magnitude_atr >= cfg.min_bounce_atr
+  6. Score for sort order: staleness + proximity + recency + reaction.
 
 Per CLAUDE.md normalization rule: all thresholds ticker-relative.
 
@@ -68,7 +73,7 @@ from sr_levels import find_broken_resistance_below  # noqa: E402
 import bars_store  # noqa: E402
 
 
-__version__ = "1.1.0"
+__version__ = "1.3.0"
 
 
 @dataclass
@@ -86,9 +91,16 @@ class P3RetestConfig:
     # (~252 trading days). See resources/sr_levels.py docstring.
     lookback:               int   = 252
     swing_radius:           int   = 3
-    mountain_min_age_bars:  int   = 15
-    mountain_pullback_atr:  float = 2.0
-    max_candidates:         int   = 5     # how many polarity-flip levels to inspect
+    # Relaxed 2026-05-27 from 15 / 2.0 to match user's chart-reading
+    # framework (see patterns.horizontal_resistance_np docstring).
+    mountain_min_age_bars:  int   = 5
+    mountain_pullback_atr:  float = 0.5
+    # Tick-tolerance breakout gate (user rule 2026-05-27, USAR case):
+    # the highest mountain in the lookback is THE key resistance. P3
+    # requires current price > highest_mountain + breakout_ticks*tick_size,
+    # otherwise the symbol is still pending breakout (P2 territory).
+    tick_size:              float = 0.01
+    breakout_ticks:         int   = 3
     # Staleness window for the breakout
     breakout_min_age:       int   = 3     # bars since the prior-resistance peak (lower bound)
     breakout_max_age:       int   = 45    # bars since the prior-resistance peak (upper bound)
@@ -163,15 +175,17 @@ def detect_p3_retest(symbol: str, cfg: P3RetestConfig) -> dict | None:
     if close_position < cfg.min_close_position:
         return None
 
-    # Enumerate broken-R candidates (closest-to-current first).
+    # Resolve THE key broken-resistance (v1.1.0 of sr_levels: returns
+    # the HIGHEST mountain only, or [] if it's not clearly broken
+    # above by breakout_ticks * tick_size).
     broken = find_broken_resistance_below(
         highs, lows, closes, last_close, atr,
         lookback=cfg.lookback,
         swing_radius=cfg.swing_radius,
         mountain_min_age_bars=cfg.mountain_min_age_bars,
         mountain_pullback_atr=cfg.mountain_pullback_atr,
-        dedup_pct=0.01,
-        max_results=cfg.max_candidates,
+        tick_size=cfg.tick_size,
+        breakout_ticks=cfg.breakout_ticks,
     )
     if not broken:
         return None

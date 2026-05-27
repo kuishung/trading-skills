@@ -56,7 +56,7 @@ from sr_levels import horizontal_support_np  # noqa: E402
 import bars_store  # noqa: E402
 
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 
 @dataclass
@@ -75,11 +75,20 @@ class P1RebConfig:
     # (~252 trading days). See resources/sr_levels.py docstring.
     support_lookback:       int   = 252
     support_swing_radius:   int   = 3
-    support_min_touches:    int   = 2
-    support_cluster_band:   float = 0.01
+    support_min_touches:    int   = 1   # user reintegration 2026-05-27: a single confirmed mountain valley is a valid support
+    # Cluster tolerance switched to absolute ticks 2026-05-27 per user rule
+    # "the placeholder cannot be too wide... plus minus 3 tick". The
+    # previous 1% scaled badly with price.
+    tick_size:              float = 0.01
+    cluster_tolerance_ticks: int  = 3
     support_range_pct:      float = 0.02
-    support_min_age_bars:   int   = 15
-    support_pullback_atr:   float = 2.0
+    # Relaxed 2026-05-27 from 15 / 2.0 to match user's chart-reading
+    # framework. GOOGL's $382.77 valley (9 trading days old, 2.68-ATR
+    # rally since) is a clear P1 support per the user's read but
+    # didn't qualify under strict criteria. See
+    # patterns.horizontal_resistance_np docstring for the rationale.
+    support_min_age_bars:   int   = 5
+    support_pullback_atr:   float = 0.5
     # Bounce gates. User rule 2026-05-27: "we want to see if price
     # action is bouncing at the horizontal support... if price action
     # react by [re]bouncing in the horizontal support, we have a
@@ -164,7 +173,8 @@ def detect_p1_rebound(symbol: str, cfg: P1RebConfig) -> dict | None:
         lookback=cfg.support_lookback,
         swing_radius=cfg.support_swing_radius,
         min_touches=cfg.support_min_touches,
-        cluster_band_pct=cfg.support_cluster_band,
+        tick_size=cfg.tick_size,
+        cluster_tolerance_ticks=cfg.cluster_tolerance_ticks,
         range_pct=cfg.support_range_pct,
         mountain_min_age_bars=cfg.support_min_age_bars,
         mountain_pullback_atr=cfg.support_pullback_atr,

@@ -74,8 +74,12 @@ class P2Config:
     # window used by P1 / P3 / find_key_levels.
     resistance_lookback: int = 252      # daily bars to scan for swing highs
     swing_radius: int = 3               # bars on each side for swing-high local-max
-    cluster_band_pct: float = 0.01      # within 1% of each other forms a cluster
-    min_touches: int = 2                # ≥ N swing highs in cluster (any kind)
+    # Cluster tolerance switched to absolute ticks 2026-05-27 per user rule
+    # "the placeholder cannot be too wide... plus minus 3 tick". Previous
+    # 1% percentage scaled badly with price (±$4 for a $400 stock).
+    tick_size: float = 0.01             # US equity tick = 1 cent
+    cluster_tolerance_ticks: int = 3    # cluster band = 3 × $0.01 = ±$0.03
+    min_touches: int = 1                # ≥ N swing highs in cluster (any kind); lowered 2026-05-27 per user reintegration -- single mountain top is a valid resistance
     # Flush-up bar detector — looks BACK over recent bars (not just today's
     # signal candle) for a strong upward bar that broke prior range. Risk =
     # profit-taking after such a move. The flush-up may be days back (DOC
@@ -114,12 +118,16 @@ class P2Config:
     # (the TSLA-vs-PLD discrimination from the 2026-05-22 chat refinement).
     mountain_min_age_bars: int = 15     # ≥ N daily bars from the current bar
     mountain_pullback_atr: float = 2.0  # price must have dropped ≥ N × ATR14 below the peak
-    # "Real ceiling" filter — the cluster must be the actual top of the window,
-    # not a midway point in a downtrend. If a higher mountain top exists
-    # significantly above the cluster level, the cluster is just a bounce on
-    # the way down, not a structural resistance. Discriminates TSLA (418
-    # cluster has a 452 peak above it) from PLD (145 cluster is the highest).
-    max_below_window_high_pct: float = 0.02  # cluster level ≥ max_mountain × (1 - N)
+    # "Real ceiling" filter — DISABLED by user reintegration 2026-05-27.
+    # Original purpose: discriminate TSLA-style mid-downtrend bounces
+    # ($418 cluster has $452 peak above = bounce on the way down, not
+    # structural R) from PLD-style true ceilings ($145 cluster IS the
+    # highest). Replaced by: the EMA-stack trend gate already filters
+    # out downtrends, AND the user's framework treats each mountain
+    # peak as an independent P2 setup -- higher mountains above the
+    # chosen level are FUTURE P2s, not disqualifiers. Set this to
+    # 0.02 to restore the legacy strict behavior if needed.
+    max_below_window_high_pct: float = 1.0
 
     # Signal candle eligibility
     max_distance_atr: float = 1.5       # last close within N × ATR14 below resistance
@@ -169,7 +177,8 @@ def _resistance(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray,
         lookback=cfg.resistance_lookback,
         swing_radius=cfg.swing_radius,
         min_touches=cfg.min_touches,
-        cluster_band_pct=cfg.cluster_band_pct,
+        tick_size=cfg.tick_size,
+        cluster_tolerance_ticks=cfg.cluster_tolerance_ticks,
         range_pct=cfg.resistance_range_pct,
         mountain_min_age_bars=cfg.mountain_min_age_bars,
         mountain_pullback_atr=cfg.mountain_pullback_atr,
@@ -212,7 +221,8 @@ def classify_variant(opens: np.ndarray, highs: np.ndarray, lows: np.ndarray,
         opens, highs, lows, closes,
         resistance=resistance, atr=atr,
         lookback_bars=cfg.consolidation_lookback,
-        cluster_band_pct=cfg.cluster_band_pct,
+        tick_size=cfg.tick_size,
+        cluster_tolerance_ticks=cfg.cluster_tolerance_ticks,
     )
     slope_h_pct = w["slope_highs_pct_per_bar"]
     slope_l_pct = w["slope_lows_pct_per_bar"]

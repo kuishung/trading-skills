@@ -76,7 +76,7 @@ from patterns import horizontal_resistance_np, atr_wilder_np  # noqa: E402
 import bars_store  # noqa: E402
 
 
-__version__ = "1.0.0"
+__version__ = "1.2.0"
 
 
 def horizontal_support_np(highs, lows, closes, current_price: float,
@@ -84,15 +84,19 @@ def horizontal_support_np(highs, lows, closes, current_price: float,
                           *,
                           lookback: int = 252,
                           swing_radius: int = 3,
-                          min_touches: int = 2,
-                          cluster_band_pct: float = 0.01,
+                          min_touches: int = 1,
+                          tick_size: float = 0.01,
+                          cluster_tolerance_ticks: int = 3,
                           range_pct: float = 0.02,
-                          mountain_min_age_bars: int = 15,
-                          mountain_pullback_atr: float = 2.0,
+                          mountain_min_age_bars: int = 5,
+                          mountain_pullback_atr: float = 0.5,
                           ) -> dict | None:
-    """Most-recent mountain-valley-anchored horizontal SUPPORT below
-    `current_price`. Mirror of patterns.horizontal_resistance_np, with
-    one deliberate asymmetry (no floor gate -- see below).
+    """IMMEDIATE NEAREST mountain-valley-anchored horizontal SUPPORT
+    below `current_price` (= the HIGHEST mountain valley below current).
+    Mirror of patterns.horizontal_resistance_np, which after the
+    2026-05-27 reintegration picks the LOWEST mountain above current.
+    Both follow the same user framework: each level is an independent
+    setup; the immediate-nearest-in-price wins.
 
     Two-stage process:
 
@@ -103,9 +107,12 @@ def horizontal_support_np(highs, lows, closes, current_price: float,
          (b) followed by a real rally: at least one subsequent HIGH
              >= valley + `mountain_pullback_atr` * atr
 
-    The level chosen = the most recent in time among mountain valleys
-    below `current_price`. If none qualify, falls back to the most
-    recent non-mountain swing low (fresh-support fallback).
+    The level chosen = the HIGHEST mountain valley below `current_price`
+    (= the immediate nearest support being tested in a pullback). If
+    none qualify, falls back to the highest non-mountain swing low
+    below current (fresh-support fallback). The prior "most recent in
+    time" rule could miss a closer-in-price valley that was older but
+    still the active support.
 
     The RANGE around that level = consensus of mountain valleys within
     +/- `range_pct` of the chosen level.
@@ -122,7 +129,9 @@ def horizontal_support_np(highs, lows, closes, current_price: float,
     closest-in-time mountain valley below current wins.
 
     Cluster gate: the chosen level must have >= `min_touches` swing
-    lows (mountain OR non-mountain) within +/- `cluster_band_pct`.
+    lows (mountain OR non-mountain) within +/- `cluster_tolerance_ticks
+    * tick_size` (default +/-$0.03 = 3 ticks). Absolute-tick tolerance
+    per user rule 2026-05-27 ("the placeholder cannot be too wide").
 
     Returns dict with the same field shape as horizontal_resistance_np:
       level, cluster_touches, mountain_anchors, range_low, range_high,
@@ -161,16 +170,18 @@ def horizontal_support_np(highs, lows, closes, current_price: float,
             mountains.append((i, lo))
     mountain_idxs = {i for i, _ in mountains}
 
-    # 3. Most-recent mountain valley below current price (fallback to
-    #    most-recent non-mountain swing if none qualify).
+    # 3. Immediate nearest mountain valley below current = HIGHEST level
+    #    below current. User framework reintegration 2026-05-27: each
+    #    valley is an independent P1 support; the relevant one is
+    #    closest to current price (the level being tested NOW).
     swings_below = [(i, lo) for i, lo in swings if lo < current_price]
     if not swings_below:
         return None
     mountains_below = [(i, lo) for i, lo in swings_below if i in mountain_idxs]
     if mountains_below:
-        i_imm, lo_imm = max(mountains_below, key=lambda x: x[0])
+        i_imm, lo_imm = max(mountains_below, key=lambda x: x[1])
     else:
-        i_imm, lo_imm = max(swings_below, key=lambda x: x[0])
+        i_imm, lo_imm = max(swings_below, key=lambda x: x[1])
     level = float(lo_imm)
 
     # Range = consensus of mountain valleys within +/- range_pct of level.
@@ -185,9 +196,12 @@ def horizontal_support_np(highs, lows, closes, current_price: float,
 
     # (No floor gate -- see docstring rationale.)
 
-    # Cluster touches around the chosen level
+    # Cluster touches around the chosen level. Absolute tick-based
+    # tolerance per user rule 2026-05-27: "the placeholder cannot be
+    # too wide... plus minus 3 tick".
+    cluster_band = cluster_tolerance_ticks * tick_size
     cluster = [(i, lo) for i, lo in swings
-               if abs(lo - level) / level <= cluster_band_pct]
+               if abs(lo - level) <= cluster_band]
     if len(cluster) < min_touches:
         return None
     n_mountains_in_cluster = sum(1 for i, _ in cluster if i in mountain_idxs)
@@ -206,26 +220,49 @@ def find_broken_resistance_below(highs, lows, closes, current_price: float,
                                  *,
                                  lookback: int = 252,
                                  swing_radius: int = 3,
-                                 mountain_min_age_bars: int = 15,
-                                 mountain_pullback_atr: float = 2.0,
-                                 dedup_pct: float = 0.01,
-                                 max_results: int = 3,
+                                 mountain_min_age_bars: int = 5,
+                                 mountain_pullback_atr: float = 0.5,
+                                 tick_size: float = 0.01,
+                                 breakout_ticks: int = 3,
                                  ) -> list[dict]:
-    """Enumerate mountain-anchored swing HIGHS in lookback that are now
-    BELOW `current_price`. These are P3 polarity-flip candidates:
-    historic resistance that price has CLOSED above and may now retest
-    as support.
+    """Return the IMMEDIATE NEAREST broken-resistance level below
+    current price (= the HIGHEST mountain peak BELOW current price
+    that has been clearly broken above by > breakout_ticks * tick_size),
+    or [] when no such level exists.
 
-    Returns a list of dicts (closest-to-current first):
+    User framework reintegration 2026-05-27: each mountain peak is an
+    independent P2 → P3 lifecycle. When price breaks above a mountain
+    top, THAT specific mountain transitions from resistance to support
+    (polarity flip). Higher unbroken mountains above are FUTURE P2
+    setups, NOT disqualifiers of the current P3 retest opportunity.
+
+    History:
+    - v1.0.0: returned all mountain peaks below current, deduped + top-3.
+      Incorrectly surfaced stale lower-mountain retests in cases where
+      the immediate-nearest above hadn't been broken yet (USAR case
+      tagged P3 at $25.95 when $28.69 was the active P2 ceiling).
+    - v1.1.0: over-corrected — required the ABSOLUTE HIGHEST mountain
+      in the lookback to be broken. Too restrictive: USAR's highest
+      mountain was $43.98, an irrelevant historical peak. The fix
+      blocked even legitimate P3 candidates further down the chart.
+    - v1.2.0 (this): return the IMMEDIATE NEAREST mountain below current
+      (= highest mountain below current price). The P3 detector's own
+      staleness window (3-45 bars since breakout) + retest-touch gate
+      + reaction-magnitude gate handle the rest.
+
+    Tick tolerance for "clearly broken": `current_price > immediate
+    nearest level + breakout_ticks * tick_size` (default 3 ticks ×
+    $0.01 = $0.03). Deliberate exception to CLAUDE.md's ATR-relative
+    rule -- this is a noise-suppression check on the level
+    determination, not a setup-tightness threshold.
+
+    Returns at most ONE dict (the immediate-nearest broken mountain):
       level     : the broken-resistance price
-      bars_ago  : trading days between the swing-high bar and the
-                  latest bar (proxy for "how stale is this level")
-      mountain  : bool -- always True (non-mountain peaks rejected)
+      bars_ago  : trading days since the swing-high bar
+      mountain  : bool -- always True
 
-    Dedup: levels within `dedup_pct` of each other collapse to the
-    higher (closer to current) one. Max `max_results` returned.
-
-    Empty list when no qualifying peaks; never None.
+    Empty list = no mountain below current is clearly broken (price
+    is either too close to or below the highest mountain below).
     """
     h = np.asarray(highs, dtype=float)
     l = np.asarray(lows, dtype=float)
@@ -243,11 +280,6 @@ def find_broken_resistance_below(highs, lows, closes, current_price: float,
         if (last_idx - i) < mountain_min_age_bars:
             continue
         peak = float(window_h[i])
-        # P3 = price has already BROKEN above the level. Use strict <
-        # so a peak still acting as overhead (handled by the resistance
-        # finder) doesn't leak in here.
-        if peak >= current_price:
-            continue
         post = window_l[i + 1:]
         if len(post) == 0:
             continue
@@ -262,17 +294,19 @@ def find_broken_resistance_below(highs, lows, closes, current_price: float,
 
     if not peaks:
         return []
-    # Sort closest-to-current-price first (highest level wins, since
-    # they're all below current price).
-    peaks.sort(key=lambda d: -d["level"])
-    # Dedup within `dedup_pct`
-    dedup: list[dict] = [peaks[0]]
-    for p in peaks[1:]:
-        if abs(p["level"] - dedup[-1]["level"]) / dedup[-1]["level"] > dedup_pct:
-            dedup.append(p)
-        if len(dedup) >= max_results:
-            break
-    return dedup[:max_results]
+
+    # Filter to mountains clearly BELOW current price (broken above
+    # by > breakout_ticks * tick_size).
+    broken_threshold = current_price - breakout_ticks * tick_size
+    broken_mountains = [p for p in peaks if p["level"] < broken_threshold]
+    if not broken_mountains:
+        return []
+
+    # Immediate nearest broken = HIGHEST level below current. This is
+    # the polarity-flip candidate -- the mountain most recently
+    # transitioned from resistance to support.
+    immediate = max(broken_mountains, key=lambda d: d["level"])
+    return [immediate]
 
 
 def _round_level_dict(r: dict | None) -> dict | None:
@@ -328,24 +362,27 @@ def find_key_levels(symbol: str) -> dict:
         return {**out_empty, "current": round(float(closes[-1]), 2)}
     current = float(closes[-1])
 
+    # Use the relaxed defaults (mountain_min_age_bars=10,
+    # mountain_pullback_atr=0.5) -- see patterns.horizontal_resistance_np
+    # docstring for rationale (user chart-reading framework 2026-05-27).
     resistance = horizontal_resistance_np(
         highs, lows, closes, current, atr,
-        lookback=252, swing_radius=3, min_touches=2,
-        cluster_band_pct=0.01, range_pct=0.02,
-        mountain_min_age_bars=15, mountain_pullback_atr=2.0,
-        max_below_window_high_pct=0.02,
+        lookback=252, swing_radius=3, min_touches=1,
+        tick_size=0.01, cluster_tolerance_ticks=3, range_pct=0.02,
+        mountain_min_age_bars=5, mountain_pullback_atr=0.5,
+        max_below_window_high_pct=1.0,
     )
     support = horizontal_support_np(
         highs, lows, closes, current, atr,
-        lookback=252, swing_radius=3, min_touches=2,
-        cluster_band_pct=0.01, range_pct=0.02,
-        mountain_min_age_bars=15, mountain_pullback_atr=2.0,
+        lookback=252, swing_radius=3, min_touches=1,
+        tick_size=0.01, cluster_tolerance_ticks=3, range_pct=0.02,
+        mountain_min_age_bars=5, mountain_pullback_atr=0.5,
     )
     broken = find_broken_resistance_below(
         highs, lows, closes, current, atr,
         lookback=252, swing_radius=3,
-        mountain_min_age_bars=15, mountain_pullback_atr=2.0,
-        dedup_pct=0.01, max_results=3,
+        mountain_min_age_bars=5, mountain_pullback_atr=0.5,
+        tick_size=0.01, breakout_ticks=3,
     )
 
     return {

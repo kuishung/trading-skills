@@ -40,6 +40,77 @@ and import it from whichever strategy needs it. No registration.
 
 ## Changelog
 
+### 2026-05-27 — Cluster tolerance: percentage → absolute ticks (±3 ticks default)
+
+User rule 2026-05-27: *"the placeholder cannot be too wide... plus minus 3 tick."* The previous `cluster_band_pct=0.01` (1% of level) scaled badly with price — for a $400 stock that meant a ±$4 cluster band (400 ticks wide), nothing like the user's ±3-tick (±$0.03) intent.
+
+**API change** (breaking but contained — all in-repo callers updated):
+- `patterns.horizontal_resistance_np`, `patterns.window_slopes_np`, `sr_levels.horizontal_support_np` — parameter `cluster_band_pct: float = 0.01` REPLACED with `tick_size: float = 0.01` + `cluster_tolerance_ticks: int = 3`. Cluster band is computed as `cluster_tolerance_ticks × tick_size` (absolute, default ±$0.03).
+- All callers (`strategy/DITP/scanner.py::P2Config`, `strategy/DITP/p1_rebound.py::P1RebConfig`, `find_key_levels`) updated to pass the new parameters.
+- The `cluster_touches` and `mountain_anchors` output fields now count touches within ±3 ticks of the chosen level (tight placeholder). Previously they counted touches within ±1% (loose zone).
+
+**Impact**:
+- GOOGL: unchanged — still detects S=$382.77 as P1 support, mountain_anchors=1 (only the precise level itself qualifies in a ±$0.03 band).
+- Universe-wide P1/P3 candidate COUNTS are unchanged (16 P1, 19 P3) because the detectors pick the immediate-nearest mountain and `min_touches=1` allows single-point levels. But mountain_anchors counts are TIGHTER — AME at $227.95 previously showed 4 anchors (multi-touches within ±$2.27), now shows 1 (only touches within ±$0.03). This is the user's intended "tight placeholder" semantic.
+- Scoring downstream: P1/P3 score weights validation (mountain_anchors × 10 + cluster_touches × 2), so scores for previously-multi-anchor levels naturally drop. The ranking ORDER is reshuffled but the candidate SET is preserved.
+
+**Why absolute ticks, not percentage** (deliberate exception to CLAUDE.md's ATR-relative rule): noise around a precise level is dominated by minimum-tick increments, not by ATR-volatility. A $0.03 noise band is the right semantic for "is this touch at THE placeholder" — and it doesn't bloat into a $4 band for high-priced stocks. The range_pct parameter (default 2%) still scales by price for the ZONE width.
+
+### 2026-05-27 — Mountain validation defaults relaxed: `mountain_min_age_bars` 15→5, `mountain_pullback_atr` 2.0→0.5
+
+User teaching from GOOGL case 2026-05-27: GOOGL closed $388.88 with today's low $382.60, bouncing off the $382.77 valley (May 12 pin bar). The valley level was previously $384 resistance (broken on Apr 30 = P2), retested on May 12 (P3 polarity flip), now being tested again as support (P1). Same level evolves P2 → P3 → P1 over time as price interacts with it.
+
+The strict mountain criteria (`15 days old, 2.0×ATR pullback`) were inherited from the original DITP P2 scanner — designed to filter historical structural levels. They're too tight for "actively-tested" levels where price hasn't yet had a deep pullback between visits. GOOGL's pin-bar valley is only 9 trading days old with a 2.68-ATR rally since — well within the chart-reading definition of "valid support being tested" but blocked by the strict gates.
+
+**Relaxed module-level defaults** in `resources/patterns.horizontal_resistance_np`, `resources/sr_levels.horizontal_support_np`, and `resources/sr_levels.find_broken_resistance_below`:
+- `mountain_min_age_bars`: 15 → **5** (just above the swing_radius=3 floor — swings of 5+ days have at least 2 days of post-swing confirmation beyond the radius)
+- `mountain_pullback_atr`: 2.0 → **0.5** (any meaningful rejection counts as structural validation; the previous 2.0 was tuned for "deep structural pullback")
+
+**Dual-default tradeoff documented**:
+- New permissive defaults apply to: `sr_levels.find_key_levels` (chart pane S/R strip), `strategy/DITP/p1_rebound.py` (P1RebConfig defaults overridden to 5/0.5), `strategy/DITP/p3_retest.py` (P3RetestConfig overridden to 5/0.5).
+- Legacy strict tuning preserved in: `strategy/DITP/scanner.py::P2Config` (`mountain_min_age_bars=15, mountain_pullback_atr=2.0`). P2 watchlist generation is unchanged — its strict gates have been tuned against the historical-watchlist quality bar.
+
+**Smoke-tested impact**:
+- GOOGL via `/chart/sr_levels`: S below now correctly shows **$382.77** (was $331.35 under old gates). R above $408.61. P1 detector confirms GOOGL as a candidate with today's low $382.60 touching the support, bounce magnitude 0.65 ATR, score 30.
+- Parquet universe (241): P1 candidates 10 → **16** (additional names like BFS, AVNS, CARR — multi-mountain-anchor supports). P3 candidates 10 → **19** (AA broke just 7 days ago, AVT 7d, AMD 10d — recent breakout-retests that the previous 15-day age gate filtered out).
+- All new candidates retain bounce-magnitude ≥0.3 ATR (the reaction-magnitude gate from v1.1.0 remains the quality filter).
+
+### 2026-05-27 — `sr_levels.py` v1.2.0 + `patterns.horizontal_resistance_np`: framework reintegration — immediate-nearest-in-price selection
+
+User framework reintegration 2026-05-27 (USAR re-examination): *"the immediate mountain top nearest to the current price action is relevant because that will be the nearest resistance it has to break (P2 Setup). The Second and Third mountain top is less relevant in the price action because the current price action has not reach the price level yet to test that resistance, but when its come near that level, it will become another new P2 setup. So on and so forth..."*
+
+This reframes how levels are selected for P1/P2/P3. Each mountain peak is an INDEPENDENT P2 → P3 lifecycle. The relevant level at any moment is the one **closest in price to current** — not the most-recent-in-time, not the absolute-highest, not a multi-touch cluster requirement.
+
+**Three coordinated changes:**
+
+1. `patterns.horizontal_resistance_np` — selection rule changed from "most recent in time among mountains above current" to "**LOWEST mountain above current**" (= immediate nearest above). The TSLA-style ceiling gate (`max_below_window_high_pct`) default raised from `0.02` → `1.0` (effectively disabled). The trend-discrimination this gate provided is now redundant with the EMA-stack gate in P1/P2/P3.
+
+2. `sr_levels.horizontal_support_np` — selection rule changed from "most recent in time among valleys below current" to "**HIGHEST mountain valley below current**" (= immediate nearest below). Symmetric mirror of the resistance change.
+
+3. `sr_levels.find_broken_resistance_below` — reverted v1.1.0's overly-restrictive "absolute highest mountain must be broken" gate. Now returns the **IMMEDIATE NEAREST mountain BELOW current** (highest mountain below) that's clearly broken above (still 3-tick tolerance). The v1.1.0 fix was over-correcting USAR — blocking valid P3 candidates whenever some old historical peak loomed unbroken.
+
+**Cluster gate relaxed**: `min_touches` default lowered from 2 → 1 in both resistance and support finders. A single confirmed mountain top is a valid resistance even without a second touch nearby — matches the user's visual chart-reading. The mountain validation (age + 2×ATR pullback) already provides the structural credential. Multi-touch confirmation still surfaces via `cluster_touches`.
+
+**Smoke-tested impact**:
+- USAR via `/chart/sr_levels`: now correctly shows immediate-nearest R above = **$32.07** (the next structural mountain after the v1.0.0 false-positive $25.95 and the v1.1.0 absolute-highest $43.98), S below = $21.46, broken-R retest = $26.36 (77d ago, outside P3 staleness so no false P3). Note: user's visually-identified $28.69 peak doesn't satisfy the strict `mountain_pullback_atr=2.0` gate (USAR only dipped ~1.5×ATR after that peak) so the algorithm falls through to $32.07 — a known knob the user can relax if they want shallower peaks to count as structural mountains.
+- Live Finviz scan: P3 0 candidates (USAR clean), P1 2 candidates (TSLA, C).
+- Parquet universe (241 tickers): P1 candidates 3 → **10** (multi-touch supports like AME with 4 mountain anchors now surface), P3 candidates 4 → **10** (more polarity-flip retests visible). Quality bar held by the bounce-magnitude gate (≥0.3 ATR).
+
+### 2026-05-27 — `sr_levels.py` v1.1.0: `find_broken_resistance_below` enforces "highest mountain" + 3-tick breakout tolerance
+
+User correction 2026-05-27 from the USAR case: the v1.0.0 implementation tagged USAR as P3 because it found a $25.95 mountain peak below the current $27.73 close. But USAR's actual structural ceiling was higher (~$28.69 by the user's chart read, or $43.98 historically — either way, well above current price). Price hasn't broken THE key resistance yet, so USAR is a **P2 pending-breakout**, not a P3 retest. The detector was picking minor crossed peaks instead of the structural ceiling.
+
+**Fix**: `find_broken_resistance_below` now returns at most ONE level — the **HIGHEST** mountain peak in the lookback — and only when current price is clearly above it. "Clearly" = `current_price > highest_level + breakout_ticks * tick_size` (default 3 ticks × $0.01 = $0.03). If the highest mountain is still at-or-above current price within that noise band, the function returns `[]` (no P3).
+
+**Why an absolute tick threshold (not ATR-relative)?** CLAUDE.md's normalization rule says thresholds should be ATR-relative. The breakout test is a deliberate exception: it's a noise-suppression check (is the breakout *unambiguous*?), not a setup-tightness check (is the entry tight enough?). 3 ticks of noise is roughly constant across the price-range of liquid US equities; ATR-relative noise would be too generous for high-ATR names.
+
+**Removed**: the `dedup_pct` and `max_results` params (no longer relevant since we return at most 1 level). Added `tick_size` (default 0.01) and `breakout_ticks` (default 3).
+
+**Smoke-tested impact**:
+- USAR: previously tagged P3 with `flip=$25.95`. Now correctly drops out (highest mountain $43.98 vs close $27.73 → not broken).
+- Live Finviz scan (44 tickers): P3 candidates dropped from 1 (USAR-only false positive) to 0.
+- Parquet universe scan (241 tickers): P3 candidates dropped from 11 to **4** — AOSL, BNL, ATEN, ALGM — all genuine breakout-then-retest setups where the highest mountain was actually crossed.
+
 ### 2026-05-27 — `sr_levels.py`: lookback extended to 1 year (252 trading days) per user rule
 
 User rule 2026-05-27: *"when you look at Support and Resistance on a daily chart, you will look at 1 year daily chart to look at valley and mountains."* Initial implementation used 120-day support/resistance and 180-day broken-resistance lookbacks (heuristic defaults). Bumped all three lookbacks in `find_key_levels` to 252 (matches "1 year of trading days"); raised minimum bar requirement from 50 to 252+14 (ATR-warmup buffer); added the rationale to the module docstring as a callable reference for downstream callers.
