@@ -16,6 +16,9 @@ just drops a `strategy/DITP/<setup_name>/` subfolder.
 - `ema_rebound.py` — **EMA rebound detector** (daily support bounce on EMA20 / EMA50 / EMA200). Single-file detector module; no CLI scanner / watchlist file (consumed only by the dashboard's `POST /scanner/yf_scan?setup=ema_rebound` for ad-hoc filtering of the Finviz universe). Returns the WHICH EMA acted as support + proximity/recency metrics. Source: user request 2026-05-27 ("find rebound on EMA20 or EMA50 or EMA200"). `__version__ = "1.0.0"`. Public API: `detect_ema_rebound(symbol, cfg)` -> dict | None; `scan_universe(symbols, cfg)` -> list[dict]. Config: `EMARebConfig` (lookback_bars=5, touch_tolerance_atr=0.3, max_distance_atr=1.0, require_stack=True, require_above_ema200=True, require_bullish_close=True, min_close_position=0.5).
 - `p1_rebound.py` — **DITP P1 detector** -- rebound off a horizontal SUPPORT level. Trend gate (EMA20>EMA50>EMA200) + bullish reclaim candle + horizontal-support touch via `resources/sr_levels.horizontal_support_np` (immediate-nearest valley below current per user framework reintegration 2026-05-27) + **reaction-magnitude gate** (bounce from touch's low to today's close >= 0.3 * ATR — a real visible bounce is required). Single-file detector consumed by the dashboard's `POST /scanner/yf_scan?setup=p1_rebound`. Source: user framing 2026-05-27. `__version__ = "1.2.0"`. Public API: `detect_p1_rebound(symbol, cfg)` / `scan_universe(symbols, cfg)`. Config: `P1RebConfig`.
 - `p3_retest.py` — **DITP P3 detector** -- retest of a broken resistance level (polarity flip; resistance → support). Trend gate + bullish reclaim candle + broken-R candidate from `resources/sr_levels.find_broken_resistance_below` v1.2.0 (immediate-nearest broken mountain below current, with 3-tick breakout tolerance) + staleness window (breakout 3-45 days ago) + **reaction-magnitude gate** (same math as P1). Single-file detector consumed by the dashboard's `POST /scanner/yf_scan?setup=p3_retest`. Source: user framing 2026-05-27 + user reintegration same day ("immediate mountain top nearest to current price action is relevant"). `__version__ = "1.3.0"`. Public API: `detect_p3_retest(symbol, cfg)` / `scan_universe(symbols, cfg)`. Config: `P3RetestConfig`.
+- `p1a_rejection.py` — **DITP P1a detector** (SHORT side). Bearish rejection at a horizontal resistance — *"a failed P2 setup will be P1a setup"* (user 2026-05-27). Uses `patterns.horizontal_resistance_np` for the level (same as P2). Signal: bearish close, close in lower half of bar range, upper tail ≥ 30% of range, reaction magnitude `(high - close) / atr ≥ 0.3`, today's high touched the resistance. NO downtrend gate — fires in any trend (early-reversal short on uptrends, continuation short on downtrends). `__version__ = "1.0.0"`. Public API: `detect_p1a_rejection(symbol, cfg)` / `scan_universe(symbols, cfg)`. Config: `P1aRejectConfig`.
+- `p2a_breakdown.py` — **DITP P2a detector** (SHORT side). Pending breakdown below horizontal support — *"a break below support will be a P2a setup"* (user 2026-05-27). Mirror of P2: trend gate `EMA20 < EMA50 < EMA200 + close < EMA200` (downtrend stack), uses `sr_levels.horizontal_support_np` for the level (immediate-nearest most-recent valley below). Signal: bearish close, close in lower half, lower-tail ≤ 15% (no rejection wick), close still ABOVE support (pending), close within 1.5×ATR of support. Recent-breakdown-rejection check: if support was breached within 2 days, symbol is past P2a (graduated to P3a). `__version__ = "1.0.0"`. Public API: `detect_p2a_breakdown(symbol, cfg)` / `scan_universe(symbols, cfg)`. Config: `P2aBreakdownConfig`.
+- `p3a_retest.py` — **DITP P3a detector** (SHORT side). Retest of broken support as resistance — *"a successful break below (P2a) which support become a resistance after the break below and price action come back to test the Support turn resistance is P3a setup"* (user 2026-05-27). Mirror of P3: downtrend EMA stack, uses new `sr_levels.find_broken_support_above` helper (immediate-nearest broken-S above current = lowest mountain valley above current that price has clearly broken below by > 3 ticks), staleness window (breakdown 3-45 days ago), bearish reclaim-from-below candle, retest-touch + reaction-magnitude gates. `__version__ = "1.0.0"`. Public API: `detect_p3a_retest(symbol, cfg)` / `scan_universe(symbols, cfg)`. Config: `P3aRetestConfig`.
 - `ditp_p2/` — Setup 1 (P2 Pattern). See its own README.
 - `ditp_tc/` — Setup 4 (TC — Trend Continuation). See its own README.
 - `_decision_engine.py` — Family-shared decision math (entry/stop/target/tradeability for the live entry pipeline). Currently used by `ditp_p2/backtest_adapter.py`.
@@ -25,9 +28,12 @@ just drops a `strategy/DITP/<setup_name>/` subfolder.
 | Setup | Trigger | Status |
 |---|---|---|
 | 1 (P2 — A/B/C variants) | Day of breakout (intraday tape watch) | scaffolded — `ditp_p2/` v0.1.0 watch-only + dashboard scan `p2_pattern` (via `scanner.py`) |
-| 2 (P1) | Day of support reclaim / rebound | dashboard scan `p1_rebound.py` v1.0.0 — filter only (no live entry pipeline yet) |
-| 3 (P3 — retest) | Day of polarity-flip retest reclaim | dashboard scan `p3_retest.py` v1.0.0 — filter only (no live entry pipeline yet) |
+| 2 (P1) | Day of support reclaim / rebound | dashboard scan `p1_rebound.py` v1.2.0 — filter only |
+| 3 (P3 — retest) | Day of polarity-flip retest reclaim | dashboard scan `p3_retest.py` v1.3.0 — filter only |
 | 4 (TC — Trend Continuation) | Day +1 / Day +2 after a qualifying breakout / rebound | scaffolded — `ditp_tc/` v0.1.0 watch-only, EOD Day-0 scanner in `tc_scanner.py`; Phase 2 (premarket) + Phase 3 (entry) TBD |
+| **P1a (SHORT)** | Day of rejection at resistance (failed P2) | dashboard scan `p1a_rejection.py` v1.0.0 — filter only |
+| **P2a (SHORT)** | Day of pending breakdown of support | dashboard scan `p2a_breakdown.py` v1.0.0 — filter only |
+| **P3a (SHORT)** | Day of polarity-flip retest rejection (broken-S now R) | dashboard scan `p3a_retest.py` v1.0.0 — filter only |
 
 ## Convention reminders (from CLAUDE.md)
 
@@ -36,6 +42,45 @@ just drops a `strategy/DITP/<setup_name>/` subfolder.
 - Every rule edit bumps `__version__` in the setup's `impl.py` and adds a dated entry to that setup's README changelog (which IS the version history — there's no separate `changelog.md` per CLAUDE.md).
 
 ## Changelog
+
+### 2026-05-27 — `sr_levels.py` v1.4.0: single-most-recent-peak rule fixes AAOI mis-P3
+
+User correction 2026-05-27: AAOI was being tagged P3 by the framework when it shouldn't be. The most-recent mountain on AAOI's 1Y chart is $233.67 (May 13, 9d ago, above current $182). My algorithm picked $173.41 (Apr 21, 25d ago, below current) as a P3 polarity-flip candidate — but per the user, that's a stale level the market has moved past.
+
+Underlying fix in `resources/sr_levels.py` v1.4.0: only the **single most-recent mountain peak** in the lookback is the active level. Its side relative to current determines whether `horizontal_resistance_np` (P2 territory) OR `find_broken_resistance_below` (P3 polarity-flip) fires — never both. Same coupling for valleys (P1 vs P3a). See `resources/README.md` for the full rationale.
+
+**P1 / P3 / P3a detector impact** (no code changes — picked up via the call chain):
+- AAOI: previously P3 (flip $173.41) → no longer a candidate ✓
+- Universe-wide: P1 16→6, P3 19→14, P3a 11→7 candidates (tighter, fewer false positives).
+
+### 2026-05-27 — P1a / P2a / P3a v1.0.0: short-side mirror framework
+
+User teaching 2026-05-27: *"P1 and P3 inverse will be P1a and P3a -- which is shorting setup. A failed P2 setup will be P1a setup. A break below support will be a P2a setup and a successful break below (P2a) which support become a resistance after the break below and price action come back to rest the Support turn resistance is P3a setup."*
+
+The short-side framework is the symmetric mirror of P1/P2/P3:
+
+| Long | Short | Level | Position | Signal |
+|---|---|---|---|---|
+| P1 | **P1a** | Mountain top (resistance) | Above current | Bearish rejection (failed P2) |
+| P2 | **P2a** | Mountain valley (support) | Below current | Bearish breakdown approach |
+| P3 | **P3a** | Broken mountain valley | Above current | Bearish retest (S → R polarity flip) |
+
+**Three new detector modules** following the same shape as the long-side counterparts (single-file, `@dataclass` config, `detect_*` returning dict-or-None, `scan_universe` returning sorted list):
+- `p1a_rejection.py` — bearish rejection at horizontal resistance. No downtrend gate (allows early-reversal shorts on uptrends).
+- `p2a_breakdown.py` — pending breakdown of horizontal support. Mirrors P2's strict candle anatomy (no lower-tail rejection, close in lower half).
+- `p3a_retest.py` — retest of broken-S now acting as R. Uses new `resources/sr_levels.find_broken_support_above` helper.
+
+**`resources/sr_levels.py` bumped to v1.3.0**: new function `find_broken_support_above` mirrors `find_broken_resistance_below` — returns the immediate-nearest broken mountain valley above current price (= lowest mountain valley above current that price has clearly broken below by > 3 ticks), or empty list.
+
+**Dashboard wiring**:
+- `_VALID_SETUPS` extended with `p1a_rejection`, `p2a_breakdown`, `p3a_retest`.
+- `/scanner/yf_scan` dispatch branches added for all three.
+- `SETUPS` registry in `web/index.html` adds three entries with `shortLabel` `P1a` / `P2a` / `P3a` and red-tone badge styling via `.tag.strategy.short` so bullish vs bearish setups are visually distinct in the watchlist.
+
+**Smoke-tested** on the 252-symbol parquet universe:
+- P1a: 28 candidates. Top: APP at $498.69 rejecting $512.69 (1.32-ATR fall from high, 55% upper tail, score 43).
+- P2a: 9 candidates. Top: AWK at $123.85 about to break $123.55 support (3% lower tail = clean breakdown anatomy, score 37).
+- P3a: 11 candidates. Top: BBWI at $17.73 rejected at broken-support $18.07 (broken 18 days ago, 0.73-ATR fall, score 41).
 
 ### 2026-05-27 — Support selection: most-recent-in-time (asymmetric to resistance)
 

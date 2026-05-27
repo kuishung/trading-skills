@@ -35,10 +35,46 @@ and import it from whichever strategy needs it. No registration.
 - `market_calendar.py` — **NYSE market calendar.** Hardcoded full-closure list for 2024-2028 + `is_trading_day(d) / last_trading_day(d) / next_trading_day(d)` helpers. Source-of-truth for any scanner / scheduler that needs to skip Sat/Sun **and** US market holidays. Update annually as the NYSE publishes the new year's calendar. CLI: `py resources/market_calendar.py --date 2026-05-25` / `--list-year 2026`.
 - `finviz_screener.py` — **Finviz screener URL → symbol list, with on-disk caching.** Pulls the result-set tickers out of a Finviz screener URL so the dashboard's `/scanner/yf_scan` can use it as the universe. Walks pages (20 rows each) until a page yields zero new symbols; rate-limited at 1 page/sec. Caches per-URL at `state/cache/finviz_<sha1>.json` with default 1h TTL. Parses via `data-boxover-ticker` HTML attribute (most stable hook across recent Finviz markup changes). User-Agent header set to a current Chrome to avoid soft blocks. Returns dotted-form share classes (BRK.B not BRK-B). Empty list on fetch failure → caller falls back to a default universe rather than scanning nothing. Public API: `fetch_screener_symbols(url, max_pages=20, cache_ttl_s=3600, force_refresh=False)`. CLI: `py resources/finviz_screener.py "<URL>"` / `--force-refresh`.
 - `yf_daily_bars.py` — **yFinance daily-bar adapter for interactive scanning.** Distinct purpose from `yfinance_history.py`: this module returns bars **in-memory only** in the canonical `[{t,o,h,l,c,v}]` shape; nothing written to disk. Used by the dashboard's `POST /scanner/yf_scan` so daily-chart setups can run on fresh yFinance data without touching the parquet store (which is reserved for backtesting per user directive 2026-05-27). Auto-handles yFinance's multi-index DataFrame shape with `group_by="ticker"` and the `BRK.B <-> BRK-B` share-class symbol normalization. Public API: `fetch_daily_batch(symbols, lookback_days=400)`, `fetch_daily_single(symbol, lookback_days=400)`. CLI: `py resources/yf_daily_bars.py AAPL MSFT --lookback 30` (prints last 5 bars per symbol).
-- `sr_levels.py` — **Key support / resistance level detector.** Unifies the three DITP setups' level questions: P1 (rebound off horizontal support), P2 (breakout to horizontal resistance — already covered by `patterns.horizontal_resistance_np`), P3 (retest of broken resistance now acting as support). Built symmetrically on the existing resistance primitive: `horizontal_support_np(...)` mirrors swing-low + mountain-valley logic (no floor gate — see docstring rationale), `find_broken_resistance_below(...)` enumerates historic mountain peaks now below current price as polarity-flip retest candidates. One-stop API: `find_key_levels(symbol)` returns `{current, atr14, resistance_above, support_below, broken_resistance:[...]}` — consumed by `GET /chart/sr_levels` in `dashboard/server.py`. All thresholds ATR-relative per CLAUDE.md normalization rule. CLI: `py resources/sr_levels.py AAPL ABBV MSFT`.
+- `sr_levels.py` — **Key support / resistance level detector** (v1.3.0). Unifies the SIX DITP setups' level questions: P1/P2/P3 (long side: support / resistance / broken-R-as-S) AND P1a/P2a/P3a (short-side mirror: rejection-at-R / pending-breakdown-of-S / broken-S-as-R). Built on `patterns.horizontal_resistance_np` (long resistance) + `horizontal_support_np` (long support) + `find_broken_resistance_below` (P3 polarity flip) + `find_broken_support_above` (P3a polarity flip, the short-side mirror). Selection rules are asymmetric (see module docstring): resistance-above = lowest in price, support-below = most-recent in time, broken-R = highest below current, broken-S = lowest above current. One-stop API: `find_key_levels(symbol)` returns `{current, atr14, resistance_above, support_below, broken_resistance:[...]}` — consumed by `GET /chart/sr_levels` in `dashboard/server.py`. All thresholds ATR-relative per CLAUDE.md normalization rule. CLI: `py resources/sr_levels.py AAPL ABBV MSFT`.
 - `bars_store.py` — **The bars I/O layer.** Read/write OHLCV bars to/from `data/price_history/{1min,5min,15min,daily}/<SYM>.parquet`. One file per symbol per timeframe (`AAPL.parquet IS AAPL's full history`). Parquet via lazy `pyarrow` import (the hot path doesn't pay it). Append = read + dedup + rewrite the file; ~50ms at realistic scales. Public API: `load_bars(symbol, start, end, timeframe)`, `write_bars(symbol, bars, timeframe)`, `available_range(symbol, timeframe)`, `list_symbols(timeframe)`, `bars_dir(timeframe)`. Bar shape matches `patterns.py`: `{t, o, h, l, c, v}`. CLI: `py resources/bars_store.py list 1min` / `range NVDA 1min` / `head NVDA 1min --n 5`.
 
 ## Changelog
+
+### 2026-05-27 — `sr_levels.py` v1.4.0: unified single-most-recent-peak/valley rule (AAOI fix)
+
+User correction 2026-05-27 from AAOI case: *"again why you look at April 21, the nearest mountain formed was 13.5.2026 at $233.67"*. AAOI had `R above = $191.87` (lowest above current, 17d ago) AND a P3 tag `flip = $173.41` (highest below current, 25d ago). But the **single most-recent mountain in lookback was $233.67** (9 days ago, above current) — that's the only active level. My algorithm was treating both functions independently, which let stale older peaks below current leak into P3 detection even when the *true* active level was a more-recent peak above.
+
+**Unified rule**: there's ONE most-recent peak in the lookback. Its side relative to current price determines which function fires:
+- Most-recent peak ABOVE current → `horizontal_resistance_np` returns it (P2 candidate territory); `find_broken_resistance_below` returns `[]`
+- Most-recent peak BELOW current (clearly broken by ≥3 ticks) → `find_broken_resistance_below` returns it (P3 polarity-flip candidate); `horizontal_resistance_np` returns `None`
+- Most-recent peak BELOW current but within 3 ticks → transitional state, both return empty/None
+
+Same coupling for the valley side: `horizontal_support_np` (P1) vs `find_broken_support_above` (P3a) — only ONE fires based on the most-recent valley's side. The user's mental model: each ticker has ONE active peak setup and ONE active valley setup, mutually exclusive per side.
+
+**Earlier rejected approaches** (documented in module docstring):
+- v1.0.0: returned all broken peaks below — surfaced stale lower-mountain P3s.
+- v1.2.0: "highest below" selection — picked $173.41 instead of $233.67 for AAOI.
+- v1.3.0: "most-recent broken below" alone — still let $173.41 leak in because the cross-side coupling was missing.
+- **v1.4.0 (this)**: cross-side coupling. AAOI's $173.41 polarity-flip case correctly suppressed because the *active* level is $233.67 above.
+
+**Smoke-tested impact** (3 user-provided cases):
+- USAR: R above $28.69 ✓ / S below $19.36 ✓ / P3 empty ✓
+- GOOGL: R above $408.61 ✓ / S below $382.77 ✓ / P3 empty ✓
+- AAOI: R above **$233.67** ✓ (was $191.87) / S below $160.10 / P3 empty (was tagged $173.41) ✓
+
+**Universe-wide** (259 symbols): P1 16→6, P3 19→14, P3a 11→7 candidates. The tightened rule drops mis-classifications where stale levels were leaking into the polarity-flip detection.
+
+### 2026-05-27 — `sr_levels.py` v1.3.0: `find_broken_support_above` helper for the short-side P3a
+
+User teaching 2026-05-27: *"P1 and P3 inverse will be P1a and P3a -- which is shorting setup... a successful break below (P2a) which support become a resistance after the break below and price action come back to test the Support turn resistance is P3a setup."*
+
+The short-side P3a (retest of broken support as resistance) needs the mirror of `find_broken_resistance_below`. New function `find_broken_support_above` returns the **immediate-nearest broken mountain valley above current price** (= lowest mountain valley above current that price has clearly broken below by > 3 ticks), or empty list.
+
+Symmetric design:
+- `find_broken_resistance_below` → for P3 long-side polarity flip (R → S)
+- `find_broken_support_above` → for P3a short-side polarity flip (S → R)
+
+Same parameters (mountain validation gates, tick-tolerance breakdown check), inverted comparisons. Used by `strategy/DITP/p3a_retest.py` v1.0.0 (see `strategy/DITP/README.md`).
 
 ### 2026-05-27 — `horizontal_support_np`: most-recent-in-time selection (asymmetric to resistance)
 

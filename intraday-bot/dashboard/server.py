@@ -2867,7 +2867,9 @@ async def scanner_run(family: str) -> JSONResponse:
 #
 # Returns (symbols, source_label) so the response can tell the UI which
 # universe was actually used.
-_VALID_SETUPS = ("ditp", "ditp_tc", "ema_rebound", "p1_rebound", "p3_retest")
+_VALID_SETUPS = ("ditp", "ditp_tc", "ema_rebound",
+                 "p1_rebound", "p3_retest",
+                 "p1a_rejection", "p2a_breakdown", "p3a_retest")
 
 
 def _universe_for_setup(setup: str) -> tuple[list[str], str]:
@@ -3184,6 +3186,27 @@ async def scanner_yf_scan(
             candidates_dicts = await loop.run_in_executor(
                 None,
                 lambda: p3_mod.scan_universe(symbols, cfg),
+            )
+        elif setup == "p1a_rejection":
+            from strategy.DITP import p1a_rejection as p1a_mod  # type: ignore
+            cfg = p1a_mod.P1aRejectConfig()
+            candidates_dicts = await loop.run_in_executor(
+                None,
+                lambda: p1a_mod.scan_universe(symbols, cfg),
+            )
+        elif setup == "p2a_breakdown":
+            from strategy.DITP import p2a_breakdown as p2a_mod  # type: ignore
+            cfg = p2a_mod.P2aBreakdownConfig()
+            candidates_dicts = await loop.run_in_executor(
+                None,
+                lambda: p2a_mod.scan_universe(symbols, cfg),
+            )
+        elif setup == "p3a_retest":
+            from strategy.DITP import p3a_retest as p3a_mod  # type: ignore
+            cfg = p3a_mod.P3aRetestConfig()
+            candidates_dicts = await loop.run_in_executor(
+                None,
+                lambda: p3a_mod.scan_universe(symbols, cfg),
             )
         else:
             # Should be unreachable -- _VALID_SETUPS guard at top + ditp_tc

@@ -807,13 +807,19 @@ def horizontal_resistance_np(highs, lows, closes, current_price: float,
                              mountain_pullback_atr: float = 0.5,
                              max_below_window_high_pct: float = 1.0,
                              ) -> dict | None:
-    """Find THE IMMEDIATE NEAREST mountain-anchored horizontal
-    resistance above `current_price` — the lowest mountain top above
-    current. User framework reintegration 2026-05-27: each mountain
-    peak is an independent P2 setup; the lowest mountain above current
-    is the next ceiling to break. Higher mountains above are FUTURE
-    P2 setups (will become relevant when price reaches them) — not
-    currently relevant.
+    """Find THE MOST RECENT mountain-anchored horizontal resistance
+    above `current_price` — the most-recent-in-time mountain top above
+    current. User clarification 2026-05-27 (AAOI case): "nearest" means
+    most recent in time, not lowest in price. AAOI has $233.67 (May 13,
+    9 days ago) and $191.87 (May 1, 17 days ago) both above current
+    $178. The lowest-above rule picked $191.87 incorrectly; the
+    most-recent rule picks $233.67 which is the active resistance.
+
+    Each mountain peak is an independent P2 setup: the most-recent
+    one is the level the current price action is unfolding around.
+    Older mountains (further back in time) — even if they happen to
+    be lower in price than the most recent — are stale levels that
+    the market has moved past.
 
     Two-stage process:
 
@@ -824,10 +830,11 @@ def horizontal_resistance_np(highs, lows, closes, current_price: float,
          (b) followed by a real pullback: at least one subsequent low
              ≤ peak − `mountain_pullback_atr` × atr
 
-    The level chosen = the LOWEST mountain peak above `current_price`
-    (= the immediate nearest resistance to break). If no mountain
-    qualifies, falls back to the lowest non-mountain swing above —
-    caller's downstream cautioner can tag this as "fresh resistance".
+    The level chosen = the MOST RECENT IN TIME mountain peak above
+    `current_price` (= the resistance the current price action is
+    unfolding around). If no mountain qualifies, falls back to the
+    most-recent non-mountain swing above — caller's downstream
+    cautioner can tag this as "fresh resistance".
 
     The RANGE around that level = consensus of mountain tops within
     ± `range_pct` of the chosen level. Non-mountain swings are NOT
@@ -911,21 +918,31 @@ def horizontal_resistance_np(highs, lows, closes, current_price: float,
     mountain_idxs = {i for i, _ in mountains}
     max_mountain_high = max((hi for _, hi in mountains), default=0.0)
 
-    # 3. Immediate nearest mountain above current price = LOWEST level
-    #    above current. User framework reintegration 2026-05-27: each
-    #    mountain peak is an independent P2 setup; the relevant
-    #    resistance is the one closest above current price. The prior
-    #    "most recent in time" rule could miss a closer-in-price
-    #    mountain that was older but still the active obstacle.
-    swings_above = [(i, hi) for i, hi in swings if hi > current_price]
-    if not swings_above:
-        return None
-    mountains_above = [(i, hi) for i, hi in swings_above if i in mountain_idxs]
-    if mountains_above:
-        i_imm, h_imm = min(mountains_above, key=lambda x: x[1])
+    # 3. Pick THE most-recent mountain peak in the lookback (no side
+    #    filter first), then return ONLY IF it's above current price.
+    #    If it's below current, this function returns None -- the
+    #    most-recent peak has been broken, and the polarity-flip case
+    #    belongs to find_broken_resistance_below.
+    #
+    #    User clarification 2026-05-27 from AAOI case: only the SINGLE
+    #    most-recent peak in lookback is relevant. AAOI had $233.67
+    #    (9d, above) AND $173.41 (25d, below). The naive
+    #    most-recent-above rule would still pick $233.67 but separately
+    #    let $173.41 leak into broken-R / P3. The unified rule: there
+    #    is ONE active level (the most recent peak), and it's either
+    #    R above OR broken-R below depending on its side -- never both.
+    if mountains:
+        i_imm, h_imm = max(mountains, key=lambda x: x[0])
+    elif swings:
+        i_imm, h_imm = max(swings, key=lambda x: x[0])
     else:
-        i_imm, h_imm = min(swings_above, key=lambda x: x[1])
+        return None
+    if h_imm <= current_price:
+        return None  # most-recent peak is broken; caller's broken-R helper handles it
     level = float(h_imm)
+    # `mountains_above` (used downstream for range/consensus) recomputed
+    # from the chosen anchor: mountains within range_pct of the level.
+    mountains_above = [(i, hi) for i, hi in mountains if hi > current_price]
 
     # Range = consensus of mountains within ± range_pct of level.
     # Non-mountain swings are not part of the consensus (see DITP user

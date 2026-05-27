@@ -29,6 +29,29 @@ Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-05-27 — Scanner: P1a / P2a / P3a short-side setups added (red-tone badges)
+
+User teaching 2026-05-27: *"P1 and P3 inverse will be P1a and P3a -- which is shorting setup."* The dashboard previously only ran long-side scans (P1/P2/P3/EMA). Three new short-side detectors join the framework.
+
+**Backend (`server.py`)**:
+- `_VALID_SETUPS` extended to `("ditp", "ditp_tc", "ema_rebound", "p1_rebound", "p3_retest", "p1a_rejection", "p2a_breakdown", "p3a_retest")`.
+- Three new dispatch branches in `POST /scanner/yf_scan` for `p1a_rejection` / `p2a_breakdown` / `p3a_retest`. Same monkey-patch-bars_store pattern.
+
+**Frontend (`web/index.html`)**:
+- `SETUPS` registry appends three entries: shortLabel `P1a` / `P2a` / `P3a`. Tooltips include the level price + reaction magnitude in ATR.
+- Visual distinction: short-side badges render with `.tag.strategy.short` class (red tone — `#ff7b72` text on `#f851491a` background) so the user can instantly tell bullish vs bearish setups in the watchlist column.
+- `setupBadgesHtml` regex `/^p\d+a/.test(setup.key)` decides the styling class.
+
+**The lifecycle** the user described (same price level evolves through both sides):
+
+| Long progression | Short progression |
+|---|---|
+| P2 (pending breakout) → fires when broken → P3 (retest from above) → P1 (re-tests as ongoing support) | P1a (failed P2 = rejection) → P2a (pending breakdown) → P3a (retest of broken-S now R) |
+
+A single ticker can flip between P2 / P1a depending on whether today's candle breaks the resistance or rejects at it. The dashboard's 4 long-side + 3 short-side badges cover both possibilities — the user sees ALL active setups for each ticker at a glance.
+
+Smoke-tested via CLI on the 252-symbol parquet universe: P1a 28 candidates, P2a 9, P3a 11.
+
 ### 2026-05-27 — Setup badges: clean labels (P1/P2/P3/EMA20/EMA50/EMA200), detail moves to tooltip
 
 User refinement 2026-05-27: *"on the label, just label it EMA20, EMA50, EMA200, P1, P2, P3 at the watchlist."* The previous iteration (same day, hours earlier) put the level price + bounce magnitude inline (`P1 $83.75 ↑0.40A`). Too noisy for the 270-px watchlist column once multiple badges stack per row.

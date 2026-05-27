@@ -292,6 +292,13 @@
       border-color: #1f6feb55;
       color: #79c0ff;
     }
+    /* Short-side setup badges (P1a/P2a/P3a) in red so the user can
+       instantly distinguish bullish vs bearish setups in the Setup column. */
+    .tag.strategy.short {
+      background: #f851491a;
+      border-color: #f8514955;
+      color: #ff7b72;
+    }
     .tag.tier-A { background: #3fb95022; border-color: #3fb95055; color: var(--ok); }
     .tag.tier-B { background: #d2992222; border-color: #d2992255; color: var(--warn); }
     .tag.tier-C { background: #8b949e22; border-color: #8b949e55; color: var(--text-muted); }
@@ -1533,6 +1540,52 @@
         badgeText:  c => c.ema_anchor || 'EMA',
         tooltipDetail: c => c.ema_anchor ? `bounce off ${c.ema_anchor}` : '',
       },
+      // ---- Short-side setups (user framework reintegration 2026-05-27) ----
+      // "P1 and P3 inverse will be P1a and P3a -- which is shorting setup."
+      //   P1a = bearish rejection at resistance (failed P2)
+      //   P2a = pending breakdown of support (mirror of P2)
+      //   P3a = retest of broken support as resistance (mirror of P3)
+      {
+        key:        'p1a_rejection',
+        label:      'DITP P1a - Bearish rejection at resistance (failed P2)',
+        shortLabel: 'P1a',
+        run:        'yf',
+        badgeText:  () => 'P1a',
+        tooltipDetail: c => {
+          if (c.resistance_level == null) return '';
+          const lvl = `$${Number(c.resistance_level).toFixed(2)}`;
+          if (c.reaction_atr != null) {
+            return `R=${lvl}, fall ${Number(c.reaction_atr).toFixed(2)}xATR`;
+          }
+          return `R=${lvl}`;
+        },
+      },
+      {
+        key:        'p2a_breakdown',
+        label:      'DITP P2a - Pending breakdown below support',
+        shortLabel: 'P2a',
+        run:        'yf',
+        badgeText:  () => 'P2a',
+        tooltipDetail: c => {
+          if (c.support_level == null) return '';
+          return `S=$${Number(c.support_level).toFixed(2)} (about to break)`;
+        },
+      },
+      {
+        key:        'p3a_retest',
+        label:      'DITP P3a - Retest of broken support as resistance',
+        shortLabel: 'P3a',
+        run:        'yf',
+        badgeText:  () => 'P3a',
+        tooltipDetail: c => {
+          if (c.polarity_level == null) return '';
+          const lvl = `$${Number(c.polarity_level).toFixed(2)}`;
+          if (c.reaction_atr != null) {
+            return `flip=${lvl}, fall ${Number(c.reaction_atr).toFixed(2)}xATR`;
+          }
+          return `flip=${lvl}`;
+        },
+      },
       // Stubs kept in the registry so we remember they exist + can flip
       // their `run` to 'yf' when the backend dispatch lands. They never
       // appear in the Setup column (no candidates -> no badges).
@@ -1562,7 +1615,9 @@
     // either a "-" for no matches, or one or more <span class="tag strategy">
     // badges, one per setup that matched this symbol. The visible badge
     // text comes from `setup.badgeText(candidate)`; the hover tooltip
-    // appends `setup.tooltipDetail(candidate)` to `setup.label`.
+    // appends `setup.tooltipDetail(candidate)` to `setup.label`. Short-
+    // side setups (key suffix 'a' for P1a/P2a/P3a) render with the
+    // .short variant (red tone) so bullish vs bearish is obvious.
     function setupBadgesHtml(symbol) {
       const badges = [];
       for (const setup of SETUPS) {
@@ -1572,8 +1627,9 @@
         const text = setup.badgeText ? setup.badgeText(cand) : (setup.shortLabel || '?');
         const tooltip = setup.tooltipDetail ? setup.tooltipDetail(cand) : '';
         const title = tooltip ? `${setup.label} — ${tooltip}` : setup.label;
+        const cls = /^p\d+a/.test(setup.key) ? 'tag strategy short' : 'tag strategy';
         badges.push(
-          `<span class="tag strategy" title="${title}">${text}</span>`
+          `<span class="${cls}" title="${title}">${text}</span>`
         );
       }
       return badges.length ? badges.join(' ') : '<span class="muted">-</span>';

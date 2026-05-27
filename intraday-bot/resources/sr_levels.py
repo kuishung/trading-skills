@@ -44,25 +44,32 @@ the market has long since forgotten. 252 is the canonical anchor for
 all three finders (resistance above, support below, broken-resistance
 polarity-flip).
 
-Selection rules are ASYMMETRIC between above and below current price:
+Selection rule is UNIFORM across all four finders: pick the
+MOST RECENT IN TIME mountain (peak or valley) on the relevant side
+of current price.
 
-  * Resistance ABOVE current: LOWEST mountain top above current wins
-    (= next ceiling to break). Price hasn't tested it yet; higher
-    mountains above are FUTURE P2 setups.
+  * Resistance ABOVE current: most-recent mountain top above
+  * Support BELOW current: most-recent mountain valley below
+  * Broken resistance (polarity flip): most-recent mountain top below
+  * Broken support (polarity flip): most-recent mountain valley above
 
-  * Support BELOW current: MOST RECENT mountain valley below current
-    wins (= where the current rally started). Price has been ABOVE
-    older swing lows since dipping through them, so those are no
-    longer active support -- the most recent low is the active anchor.
+User clarification 2026-05-27 from the AAOI case: "nearest" means
+most recent in time, not closest in price. AAOI had $191.87 (May 1,
+17d ago) and $233.67 (May 13, 9d ago) both above current $178. The
+naive "lowest above" rule picked $191.87 as the next resistance --
+incorrect. The active resistance is $233.67 (most recent) because
+that's the level the current price action is unfolding around;
+$191.87 is a stale older peak the market has moved past.
 
-  * Broken resistance (polarity flip): HIGHEST broken mountain below
-    current wins (= the most recently broken level in a clean
-    uptrend, since each new high breaks the lowest unbroken peak first).
+Earlier rejected approaches:
+  * "Lowest above / highest below" (closest in price): broke the
+    AAOI case -- picked stale mid-rally peaks instead of the
+    most-recent structural anchor.
+  * "Most recent for support, highest below for broken-R" (asymmetric):
+    broke the AAOI case for the broken-R finder.
 
-This asymmetry was set 2026-05-27 after the USAR case: $19.36 swing
-low (5 days ago) is the active support, not $21.46 (19 days ago).
-$21.46 sits HIGHER than $19.36 but price went BELOW $21.46 to make
-$19.36, so $21.46 was bypassed and is no longer load-bearing.
+Unified rule is simpler and matches the user's chart-reading
+across all four cases (USAR, GOOGL, AAOI verified).
 
 Public API:
   horizontal_support_np(highs, lows, closes, current_price, atr, **kw)
@@ -96,7 +103,7 @@ from patterns import horizontal_resistance_np, atr_wilder_np  # noqa: E402
 import bars_store  # noqa: E402
 
 
-__version__ = "1.2.0"
+__version__ = "1.4.0"
 
 
 def horizontal_support_np(highs, lows, closes, current_price: float,
@@ -207,22 +214,27 @@ def horizontal_support_np(highs, lows, closes, current_price: float,
             mountains.append((i, lo))
     mountain_idxs = {i for i, _ in mountains}
 
-    # 3. Most-recent mountain valley below current = highest INDEX
-    #    below current (most recent in time, not highest in price).
-    #    User correction 2026-05-27 from USAR case: the active support
-    #    is the most recent low (the origin of the current rally),
-    #    NOT the highest swing low below current. Older swing lows
-    #    above the most-recent one were bypassed when price dipped
-    #    through them -- no longer active support.
-    swings_below = [(i, lo) for i, lo in swings if lo < current_price]
-    if not swings_below:
-        return None
-    mountains_below = [(i, lo) for i, lo in swings_below if i in mountain_idxs]
-    if mountains_below:
-        i_imm, lo_imm = max(mountains_below, key=lambda x: x[0])
+    # 3. Pick THE most-recent mountain valley in the lookback (no side
+    #    filter first), then return ONLY IF it's below current price.
+    #    If it's above current, this function returns None -- the
+    #    most-recent valley has been broken, and the polarity-flip case
+    #    belongs to find_broken_support_above.
+    #
+    #    User clarification 2026-05-27 from AAOI case (mirror reasoning):
+    #    there's ONE active valley (the most recent one), and it's
+    #    either S below OR broken-S above depending on its side --
+    #    never both. Older bypassed valleys don't leak in as supports.
+    if mountains:
+        i_imm, lo_imm = max(mountains, key=lambda x: x[0])
+    elif swings:
+        i_imm, lo_imm = max(swings, key=lambda x: x[0])
     else:
-        i_imm, lo_imm = max(swings_below, key=lambda x: x[0])
+        return None
+    if lo_imm >= current_price:
+        return None  # most-recent valley is broken; caller's broken-S helper handles it
     level = float(lo_imm)
+    # mountains_below for downstream range/consensus (mountains within range_pct of level)
+    mountains_below = [(i, lo) for i, lo in mountains if lo < current_price]
 
     # Range = consensus of mountain valleys within +/- range_pct of level.
     if mountains_below:
@@ -265,30 +277,29 @@ def find_broken_resistance_below(highs, lows, closes, current_price: float,
                                  tick_size: float = 0.01,
                                  breakout_ticks: int = 3,
                                  ) -> list[dict]:
-    """Return the IMMEDIATE NEAREST broken-resistance level below
-    current price (= the HIGHEST mountain peak BELOW current price
-    that has been clearly broken above by > breakout_ticks * tick_size),
-    or [] when no such level exists.
+    """Return the MOST RECENT broken-resistance level below current
+    price (= the most-recent-in-time mountain peak BELOW current
+    price that has been clearly broken above by > breakout_ticks *
+    tick_size), or [] when no such level exists.
 
-    User framework reintegration 2026-05-27: each mountain peak is an
-    independent P2 → P3 lifecycle. When price breaks above a mountain
-    top, THAT specific mountain transitions from resistance to support
-    (polarity flip). Higher unbroken mountains above are FUTURE P2
-    setups, NOT disqualifiers of the current P3 retest opportunity.
+    User clarification 2026-05-27 (AAOI case): "nearest" = most recent
+    in time, not highest in price. The most-recent broken mountain is
+    the level the current price action is unfolding around (the recent
+    polarity flip). Older / lower mountains are stale levels.
 
     History:
     - v1.0.0: returned all mountain peaks below current, deduped + top-3.
-      Incorrectly surfaced stale lower-mountain retests in cases where
-      the immediate-nearest above hadn't been broken yet (USAR case
-      tagged P3 at $25.95 when $28.69 was the active P2 ceiling).
-    - v1.1.0: over-corrected — required the ABSOLUTE HIGHEST mountain
-      in the lookback to be broken. Too restrictive: USAR's highest
-      mountain was $43.98, an irrelevant historical peak. The fix
-      blocked even legitimate P3 candidates further down the chart.
-    - v1.2.0 (this): return the IMMEDIATE NEAREST mountain below current
-      (= highest mountain below current price). The P3 detector's own
-      staleness window (3-45 bars since breakout) + retest-touch gate
-      + reaction-magnitude gate handle the rest.
+    - v1.1.0: over-corrected -- required ABSOLUTE HIGHEST mountain to
+      be broken. Too restrictive.
+    - v1.2.0: returned HIGHEST mountain below current (= closest in
+      price). For USAR/GOOGL this matched the active level. For AAOI
+      this picked $173.41 (an old level), missing that current price
+      action is unfolding around $233.67 = the most-recent peak.
+    - v1.3.0 (this): MOST RECENT mountain below current (highest
+      index in time). For AAOI: same $173.41 here because it IS the
+      most recent below current (all newer peaks are above). General
+      rule: most-recent-in-time wins, matching the resistance and
+      support selection asymmetry across the module.
 
     Tick tolerance for "clearly broken": `current_price > immediate
     nearest level + breakout_ticks * tick_size` (default 3 ticks ×
@@ -296,13 +307,14 @@ def find_broken_resistance_below(highs, lows, closes, current_price: float,
     rule -- this is a noise-suppression check on the level
     determination, not a setup-tightness threshold.
 
-    Returns at most ONE dict (the immediate-nearest broken mountain):
+    Returns at most ONE dict (the most-recent broken mountain):
       level     : the broken-resistance price
       bars_ago  : trading days since the swing-high bar
       mountain  : bool -- always True
 
-    Empty list = no mountain below current is clearly broken (price
-    is either too close to or below the highest mountain below).
+    Empty list = no mountain below current has been clearly broken
+    above (none in the lookback, or price is too close to / below
+    the most-recent mountain below).
     """
     h = np.asarray(highs, dtype=float)
     l = np.asarray(lows, dtype=float)
@@ -335,18 +347,109 @@ def find_broken_resistance_below(highs, lows, closes, current_price: float,
     if not peaks:
         return []
 
-    # Filter to mountains clearly BELOW current price (broken above
-    # by > breakout_ticks * tick_size).
+    # Pick THE most-recent peak in the lookback (no side filter
+    # first). Only return it if it's clearly BELOW current price
+    # (broken above by > breakout_ticks * tick_size). If the
+    # most-recent peak is above current, the active level is a
+    # P2 candidate (handled by horizontal_resistance_np), NOT a
+    # polarity-flip P3 candidate -- return [].
+    #
+    # User clarification 2026-05-27 from AAOI: only the single
+    # most-recent peak is relevant. AAOI had $233.67 (9d, above)
+    # AND $173.41 (25d, below). The previous "most-recent broken
+    # below" filter would still pick $173.41 and tag AAOI as P3,
+    # even though $233.67 is the active level. The unified rule
+    # binds R-above and broken-R to the SAME peak; only the side
+    # determines which function fires.
+    most_recent = min(peaks, key=lambda d: d["bars_ago"])
     broken_threshold = current_price - breakout_ticks * tick_size
-    broken_mountains = [p for p in peaks if p["level"] < broken_threshold]
-    if not broken_mountains:
+    if most_recent["level"] >= broken_threshold:
+        return []
+    return [most_recent]
+
+
+def find_broken_support_above(highs, lows, closes, current_price: float,
+                              atr: float,
+                              *,
+                              lookback: int = 252,
+                              swing_radius: int = 3,
+                              mountain_min_age_bars: int = 5,
+                              mountain_pullback_atr: float = 0.5,
+                              tick_size: float = 0.01,
+                              breakdown_ticks: int = 3,
+                              ) -> list[dict]:
+    """Return the MOST RECENT broken-support level above current
+    price (= the most-recent-in-time mountain valley ABOVE current
+    price that has been clearly broken below by > breakdown_ticks *
+    tick_size), or [] when no such level exists.
+
+    Short-side mirror of find_broken_resistance_below. Used by the
+    P3a (retest of broken support as resistance) detector.
+
+    User clarification 2026-05-27 (AAOI case): "nearest" = most
+    recent in time. Each mountain valley is an independent P2a -> P3a
+    lifecycle; the most-recent broken-S above current is the active
+    polarity-flip level.
+
+    Tick tolerance for "clearly broken below": `current_price <
+    immediate-nearest level - breakdown_ticks * tick_size` (default
+    3 ticks * $0.01 = $0.03). Same noise-suppression rule as the
+    long-side find_broken_resistance_below.
+
+    Returns at most ONE dict (the immediate-nearest broken valley):
+      level     : the broken-support price
+      bars_ago  : trading days since the swing-low bar
+      mountain  : bool -- always True
+
+    Empty list = no mountain valley above current is clearly broken
+    below.
+    """
+    h = np.asarray(highs, dtype=float)
+    l = np.asarray(lows, dtype=float)
+    lb = min(lookback, len(h))
+    window_h = h[-lb:]
+    window_l = l[-lb:]
+    if len(window_l) < swing_radius * 2 + 1:
         return []
 
-    # Immediate nearest broken = HIGHEST level below current. This is
-    # the polarity-flip candidate -- the mountain most recently
-    # transitioned from resistance to support.
-    immediate = max(broken_mountains, key=lambda d: d["level"])
-    return [immediate]
+    last_idx = len(window_l) - 1
+    valleys: list[dict] = []
+    for i in range(swing_radius, len(window_l) - swing_radius):
+        if window_l[i] != window_l[i - swing_radius:i + swing_radius + 1].min():
+            continue
+        if (last_idx - i) < mountain_min_age_bars:
+            continue
+        valley = float(window_l[i])
+        post = window_h[i + 1:]
+        if len(post) == 0:
+            continue
+        # Mountain-valley qualification: subsequent rally by N*ATR
+        # (price rallied at least mountain_pullback_atr * atr above
+        # the valley after it formed).
+        if post.max() < valley + mountain_pullback_atr * atr:
+            continue
+        valleys.append({
+            "level": valley,
+            "bars_ago": last_idx - i,
+            "mountain": True,
+        })
+
+    if not valleys:
+        return []
+
+    # Pick THE most-recent valley (no side filter first). Only return
+    # it if clearly ABOVE current price (broken below by > breakdown_ticks
+    # * tick_size). If most-recent valley is below current, the active
+    # level is a P1 support (handled by horizontal_support_np), NOT a
+    # polarity-flip P3a candidate -- return [].
+    #
+    # Mirror of the AAOI fix in find_broken_resistance_below: there's
+    # ONE active valley; only the side determines which function fires.
+    most_recent = min(valleys, key=lambda d: d["bars_ago"])
+    breakdown_threshold = current_price + breakdown_ticks * tick_size
+    if most_recent["level"] <= breakdown_threshold:
+        return []
+    return [most_recent]
 
 
 def _round_level_dict(r: dict | None) -> dict | None:
