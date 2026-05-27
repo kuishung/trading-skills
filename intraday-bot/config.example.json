@@ -103,5 +103,8 @@
   "eod_history_timeframes": ["1min", "daily"],
   "eod_history_journal_days": 30,
   "eod_history_seed_days": 60,
-  "history_universe": []
+  "history_universe": [],
+
+  "_comment_finviz_screener_url": "Override the universe used by the dashboard's POST /scanner/yf_scan endpoint. Paste a Finviz screener URL here; the dashboard scrapes the symbol list from this URL on each scan (cached 1h per URL at state/cache/finviz_<sha1>.json). Leave empty/omitted to fall back to S&P 500 (resources/sp500.py). Edit the URL in this file to change filter criteria (cap, ATR, beta, volatility, etc.); no code change needed. The example URL below filters for mid-cap+ US-listed names with ATR > $2, beta > 1, volatility >= 2%, price > $20, avg vol >= 10K -- intraday-tradeable universe (~40-300 symbols depending on market regime). The optional trailing &preset= param is a user-specific saved-preset reference; not required for the filters.",
+  "finviz_screener_url": "https://finviz.com/screener.ashx?v=111&f=cap_midover,geo_usa,sh_avgvol_10000to,sh_price_o20,ta_averagetruerange_o2,ta_beta_o1,ta_volatility_2tox2to&ft=3&o=-volume"
 }

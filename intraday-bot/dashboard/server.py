@@ -2858,15 +2858,106 @@ async def scanner_run(family: str) -> JSONResponse:
 #     implementation is safe as long as the return shape matches.
 # ----------------------------------------------------------------------
 
-# Universe registry per setup. SP500 is a good default for daily-chart
-# setups; future setups (small-cap, mid-cap variants) can plug in their
-# own universe builders here.
-def _universe_for_setup(setup: str) -> list[str]:
+# Universe registry per setup. Two-tier resolution:
+#   1. If `cfg["finviz_screener_url"]` is set, use the Finviz screener
+#      result as the universe (cached 1h). Lets the user steer the
+#      universe by pasting a screener URL into config.json -- no code
+#      change to alter filters (mid-cap+, ATR, beta, volatility, etc.).
+#   2. Else fall back to S&P 500 (`resources/sp500.py`).
+#
+# Returns (symbols, source_label) so the response can tell the UI which
+# universe was actually used.
+def _universe_for_setup(setup: str) -> tuple[list[str], str]:
     setup = setup.lower()
-    if setup in ("ditp", "ditp_tc"):
-        import sp500  # type: ignore  (resources/sp500.py)
-        return sp500.get_sp500_symbols()
-    raise ValueError(f"unknown setup '{setup}' (no universe builder wired)")
+    if setup not in ("ditp", "ditp_tc"):
+        raise ValueError(f"unknown setup '{setup}' (no universe builder wired)")
+
+    try:
+        from _common import load_config  # type: ignore  (scripts/_common.py)
+        cfg = load_config()
+    except Exception:
+        cfg = {}
+    fv_url = (cfg.get("finviz_screener_url") or "").strip() if cfg else ""
+
+    if fv_url:
+        try:
+            import finviz_screener  # type: ignore  (resources/finviz_screener.py)
+            syms = finviz_screener.fetch_screener_symbols(fv_url, cache_ttl_s=3600)
+            if syms:
+                return syms, f"finviz ({len(syms)} symbols)"
+            # Empty result -- Finviz returned nothing OR scrape failed. Fall
+            # back to SP500 rather than scanning nothing.
+            print(f"[scanner/yf_scan] finviz_screener returned 0 symbols; falling back to SP500. URL: {fv_url[:120]}")
+        except Exception as exc:
+            print(f"[scanner/yf_scan] finviz fetch failed ({exc}); falling back to SP500")
+
+    import sp500  # type: ignore  (resources/sp500.py)
+    return sp500.get_sp500_symbols(), "sp500"
+
+
+@app.get("/scanner/finviz_tickers")
+async def scanner_finviz_tickers(force_refresh: bool = False) -> JSONResponse:
+    """Return the current Finviz screener result set as a row list.
+
+    Reads `cfg["finviz_screener_url"]`, scrapes the URL via
+    `resources/finviz_screener.fetch_screener_rows()` (cached 1h),
+    returns `{ url, count, rows: [{symbol, price, volume}, ...] }`.
+
+    This is the FIRST step of the manual scanning workflow per user
+    directive 2026-05-27: pull the Finviz tickers, then user decides
+    which to chart / which to apply a setup to. NO setup detection
+    runs here; the response is just the universe.
+
+    Empty URL -> 400 (the dashboard should surface this to the user
+    so they configure config.json before expecting results).
+    """
+    try:
+        from _common import load_config  # type: ignore
+        cfg = load_config()
+    except Exception:
+        cfg = {}
+    url = (cfg.get("finviz_screener_url") or "").strip()
+    if not url:
+        raise HTTPException(
+            status_code=400,
+            detail="cfg.finviz_screener_url is empty. Paste a Finviz screener URL into config.json.",
+        )
+    try:
+        import finviz_screener  # type: ignore
+        rows = finviz_screener.fetch_screener_rows(url, force_refresh=force_refresh)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"finviz fetch failed: {exc}")
+    return JSONResponse({
+        "url":   url,
+        "count": len(rows),
+        "rows":  rows,
+    })
+
+
+@app.get("/scanner/universe")
+async def scanner_universe(setup: str = "ditp") -> JSONResponse:
+    """Cheap probe: returns which universe `/scanner/yf_scan?setup=X`
+    WOULD use right now, without running the full scan. Lets the
+    dashboard label the panel before the user clicks Scan.
+
+    Resolves the same way the real endpoint does (finviz_screener_url
+    first, then SP500 fallback) but does NOT fetch yFinance bars.
+    Cached finviz results return instantly; uncached ones still cost
+    one Finviz round trip (~3s).
+    """
+    setup = (setup or "").lower()
+    if setup not in ("ditp", "ditp_tc"):
+        raise HTTPException(status_code=400, detail=f"unknown setup '{setup}'")
+    try:
+        symbols, source = _universe_for_setup(setup)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return JSONResponse({
+        "setup":  setup,
+        "source": source,
+        "size":   len(symbols),
+        "sample": symbols[:10],
+    })
 
 
 @app.post("/scanner/yf_scan")
@@ -2903,7 +2994,7 @@ async def scanner_yf_scan(
 
     started = _time.time()
     try:
-        symbols = _universe_for_setup(setup)
+        symbols, universe_source = _universe_for_setup(setup)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     if limit and limit > 0:
@@ -2964,6 +3055,7 @@ async def scanner_yf_scan(
         "ok":               True,
         "setup":            setup,
         "today_et":         today_et,
+        "universe_source":  universe_source,
         "universe_size":    len(symbols),
         "fetched_n":        fetched_n,
         "n_candidates":     len(candidates_dicts),

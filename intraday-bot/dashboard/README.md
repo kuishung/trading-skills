@@ -29,6 +29,45 @@ Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-05-27 - Scanner view reduced to step 1: Finviz ticker list (setup application deferred)
+
+User: *"we do it step by step, in the dashboard, you pull out the the FInviz Scanner ticker first. Then manually I can apply the setup that I am looking for"*. Scanner view is now Finviz-only -- it pulls the ticker list and that's it. Setup application (DITP P2 / DITP TC detection on the selected tickers) is a separate step that will be wired later.
+
+**New backend endpoint**: `GET /scanner/finviz_tickers?force_refresh=<bool>` -> `{ url, count, rows: [{symbol, price, volume}, ...] }`. Reads the URL from `cfg["finviz_screener_url"]`, hits `resources/finviz_screener.fetch_screener_rows()` (cached 1h per URL). Returns 400 if the URL is empty (clear signal to the user to set config.json).
+
+**`resources/finviz_screener.py`** gained `fetch_screener_rows(url, ...)` to complement the existing `fetch_screener_symbols()` -- same pagination + cache contract, returns dicts with price + volume parsed from Finviz's "TS" comment block (`<!-- TS\nSYM|PRICE|VOLUME\n... -->`) which is the cleanest hook on the page (independent of which `v=` view the URL requested).
+
+**Frontend changes:**
+- Scanner view now has ONE panel titled "Finviz scanner": header with row count + Refresh button, the source URL shown below, then a table of Symbol / Price / Volume rows.
+- Auto-loads on view activation (cached, so view-switching is instant). Click Refresh to force-bypass the cache.
+- Row click still opens TradingView in the named-target tab (existing event delegation).
+- **Removed from the UI** (kept in JS as backend endpoints): the setup dropdown, Scan button, scan log pane, scan-stats line, results-table renderer, universe-label line. The DITP-via-yFinance flow + /scanner/yf_scan + /scanner/runs + /scanner/universe endpoints all stay alive for when step 2 lands.
+
+**File size**: 36KB -> 30KB. The CSS for the removed UI bits (scan-controls / scan-log / runs-grid / age-badge / run-scanner) is still in the file unused -- I'll harvest it next time we touch the styles.
+
+### 2026-05-27 - Scanner universe is now driven by `cfg["finviz_screener_url"]`
+
+User directive: *"perhaps we store the finviz criteria in the scanner setting, if we want to change anything we can just change the URL"*. The dashboard scan universe now resolves in two tiers:
+1. If `cfg["finviz_screener_url"]` is set, scrape the symbol list from that URL via `resources/finviz_screener.py` (cached 1h per URL).
+2. Else fall back to S&P 500 from `resources/sp500.py`.
+
+The user changes the URL in `config.json` to alter the scan filters (mid-cap+, ATR, beta, volatility, etc.) -- no code change needed.
+
+**New backend endpoint**: `GET /scanner/universe?setup=ditp` -> `{ source, size, sample[:10] }`. Cheap probe so the Scanner panel can label the universe BEFORE the user clicks Scan (the source label appears in the panel header as "Universe: finviz (43 symbols)"). Same resolution logic as `/scanner/yf_scan` but skips the yFinance fetch.
+
+**Updated**: `POST /scanner/yf_scan` response now includes `universe_source: "finviz (N symbols)" | "sp500"` so the scan results know which universe was actually used. The frontend echoes it in the stats line under the table.
+
+**Config**: `config.example.json` now ships with the user's intraday-tradeable filter URL as the default example so a fresh clone behaves usefully out of the box.
+
+**Frontend**:
+- Panel header now reads `Universe: <source label>` (driven by `/scanner/universe` on view activation).
+- Scan stats line includes the universe source.
+- Sample symbols are shown as a tooltip when hovering the source label.
+
+**Smoke test** (laptop, with `finviz_screener_url` pointing at the user's mid-cap+ intraday filter):
+- `GET /scanner/universe?setup=ditp` -> `{"source": "finviz (43 symbols)", "size": 43, "sample": ["NVDA", "INTC", "RGTI", ...]}`
+- `POST /scanner/yf_scan?setup=ditp` -> `ok=true, universe_source="finviz (43 symbols)", universe_size=43, fetched_n=43, n_candidates=0, errors=0, fetch=3.3s, scan=0.0s`. 0 candidates is plausible because Finviz's high-volatility set is dominated by recent IPOs (NVTS, LUNR, ASTS, QBTS) that fail DITP's `len(bars) >= 220` gate. The integration is correct; the strategy filter is just strict for this universe.
+
 ### 2026-05-27 - TradingView row-click: reuse the same browser tab across clicks
 
 User: *"then the ticker is click, use back the same browser to view dont open new broswer"*.

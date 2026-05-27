@@ -446,21 +446,15 @@
       <div class="view active" data-view="scanner">
         <section class="panel">
           <div class="panel-header">
-            <h2>Daily chart scanner</h2>
-            <span class="meta">Data source: <strong>yFinance daily</strong> (fresh, in-memory, no parquet)</span>
+            <h2>Finviz scanner</h2>
+            <span class="meta">
+              <span id="finviz-meta">loading...</span>
+              <button class="refresh" id="finviz-refresh" title="Force-refresh from Finviz, bypassing the 1h cache">Refresh</button>
+            </span>
           </div>
-          <div class="scan-controls">
-            <label for="setup-select">Setup:</label>
-            <select id="setup-select">
-              <option value="ditp">DITP P2 &mdash; Resistance breakout</option>
-              <option value="ditp_tc" disabled>DITP TC &mdash; Day-0 trend continuation (yf path not yet wired)</option>
-            </select>
-            <button class="scan-btn" id="scan-btn">Scan</button>
-            <span class="scan-stats" id="scan-stats" style="margin:0;">pick a setup and click Scan. ~30-60s for SP500.</span>
-          </div>
-          <div class="scan-log" id="scan-log"></div>
-          <div id="results-wrap">
-            <div class="empty-state">no scan run yet</div>
+          <p class="placeholder" id="finviz-url-line" style="margin:0 0 10px 0;font-size:11px;word-break:break-all">URL: <code id="finviz-url"></code></p>
+          <div id="finviz-table-wrap">
+            <div class="empty-state">loading Finviz tickers...</div>
           </div>
         </section>
       </div>
@@ -627,34 +621,30 @@
     }
 
     // ---------------------------------------------------------------
-    // SCANNER CONTROL ROW (dropdown + Refresh data + Scan)
+    // SCANNER VIEW -- step 1: pull Finviz tickers
+    //
+    // Per user directive 2026-05-27 ("we do it step by step, in the
+    // dashboard, you pull out the Finviz Scanner ticker first. Then
+    // manually I can apply the setup that I am looking for"), the
+    // Scanner view now does ONE thing: list the tickers from the
+    // Finviz URL configured in cfg.finviz_screener_url. No setup
+    // detection runs here.
     //
     // Workflow:
-    //   1. User picks a setup from the dropdown.
-    //   2. (Optional) Click "Refresh data" -> POST /data/refresh-stale
-    //      -> yFinance pulls fresh daily for stale parquets.
-    //   3. Click "Scan" -> POST /scanner/run -> spawns the scanner
-    //      subprocess, which reads parquets and writes the new watchlist.
-    //   4. Watchlist table below auto-reloads when the run completes.
+    //   1. View activates -> GET /scanner/finviz_tickers -> populate table
+    //   2. User scans the list, clicks a row to open the chart in
+    //      TradingView (existing delegation handler).
+    //   3. User decides which (if any) to apply a setup to -- step 2
+    //      of the workflow, NOT built yet. The DITP-via-yFinance
+    //      backend endpoint (POST /scanner/yf_scan) is still alive
+    //      and will be re-wired into the UI when we get there.
     //
-    // Data-source reality:
-    //   - DITP P2 / DITP TC scanners READ daily parquets via bars_store.
-    //   - Parquets are seeded + refreshed by yFinance (resources/yfinance_history.py
-    //     seed-sp500 / data_integrity.refresh_stale). So "yFinance daily"
-    //     is the effective data source for these scanners, even though
-    //     the scanner code itself just opens the parquet files.
-    //   - GUNS scanner ALSO needs IBKR for its live momentum scan, so
-    //     it's disabled in the dropdown on configs without IBKR (which
-    //     the dashboard cannot detect ahead-of-time; we just label it).
-    //
-    // The /scanner/runs metadata endpoint still drives the stats line
-    // -- it tells us the LATEST watchlist file per family, when it was
-    // written, how many candidates, and how stale it is in days vs
-    // today ET.
+    // Data shape from /scanner/finviz_tickers:
+    //   { url: "<finviz URL>", count: 43,
+    //     rows: [{symbol, price, volume}, ...] }
+    // Empty/missing URL -> backend returns 400 with a clear message,
+    // shown inline so the user knows to set config.json.
     // ---------------------------------------------------------------
-
-    let scanInFlight = false;
-    let scannerRunsCache = null;
 
     // ---------------------------------------------------------------
     // TradingView row-click handler.
@@ -696,6 +686,70 @@
       if (url) window.open(url, 'intraday_bot_tv');
     });
 
+    function fmtVol(v) {
+      if (v === null || v === undefined) return '';
+      const n = typeof v === 'number' ? v : parseFloat(v);
+      if (Number.isNaN(n)) return '';
+      // Compact: 182,750,546 -> 182.75M ; 7,421,783 -> 7.42M ; 850k -> 850K
+      if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+      if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+      if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+      return String(n);
+    }
+
+    function renderFinvizTable(data) {
+      const wrap = document.getElementById('finviz-table-wrap');
+      const rows = (data && data.rows) || [];
+      if (rows.length === 0) {
+        wrap.innerHTML = '<div class="empty-state">Finviz returned 0 tickers. Either the screener filters matched nothing today, or the scrape failed -- check stderr.</div>';
+        return;
+      }
+      let html = '<table class="scanner"><thead><tr>'
+        + '<th>#</th>'
+        + '<th>Symbol</th>'
+        + '<th style="text-align:right">Price</th>'
+        + '<th style="text-align:right">Volume</th>'
+        + '</tr></thead><tbody>';
+      rows.forEach((r, i) => {
+        const sym = r.symbol || '';
+        html += `<tr data-symbol="${sym}" title="Click to open ${sym} in TradingView">`
+          + `<td class="muted">${i + 1}</td>`
+          + `<td class="sym">${sym}</td>`
+          + `<td class="num">${r.price !== null && r.price !== undefined ? fmtNum(r.price, 2) : ''}</td>`
+          + `<td class="num">${fmtVol(r.volume)}</td>`
+          + '</tr>';
+      });
+      html += '</tbody></table>';
+      wrap.innerHTML = html;
+    }
+
+    async function loadFinvizTickers(forceRefresh) {
+      const wrap = document.getElementById('finviz-table-wrap');
+      const meta = document.getElementById('finviz-meta');
+      const urlEl = document.getElementById('finviz-url');
+      meta.textContent = forceRefresh ? 'refreshing from Finviz...' : 'loading...';
+      try {
+        const r = await fetch(
+          `/scanner/finviz_tickers${forceRefresh ? '?force_refresh=true' : ''}`,
+          { cache: 'no-store' }
+        );
+        if (!r.ok) {
+          let detail = `HTTP ${r.status}`;
+          try { const j = await r.json(); if (j && j.detail) detail += ` -- ${j.detail}`; } catch {}
+          throw new Error(detail);
+        }
+        const j = await r.json();
+        urlEl.textContent = j.url || '(none)';
+        meta.innerHTML = `<strong>${j.count}</strong> tickers &middot; fetched ${new Date().toLocaleTimeString()}`;
+        renderFinvizTable(j);
+      } catch (e) {
+        wrap.innerHTML = `<div class="empty-state">Error: ${e.message}</div>`;
+        meta.textContent = '';
+      }
+    }
+
+    document.getElementById('finviz-refresh').addEventListener('click', () => loadFinvizTickers(true));
+
     function ageBadge(meta) {
       const a = meta.age_days;
       if (a === null || a === undefined) {
@@ -709,163 +763,13 @@
       return `<span class="age-badge ${cls}">${a} ${word} old</span>`;
     }
 
-    function updateScanStats() {
-      const sel = document.getElementById('setup-select');
-      const statsEl = document.getElementById('scan-stats');
-      if (!scannerRunsCache || !scannerRunsCache.families) {
-        statsEl.textContent = 'loading scanner metadata...';
-        return;
-      }
-      const fam = sel.value;
-      const meta = scannerRunsCache.families[fam];
-      if (!meta) {
-        statsEl.textContent = `(no metadata for ${fam})`;
-        return;
-      }
-      const parts = [`<strong>${meta.label}</strong>`];
-      parts.push(ageBadge(meta));
-      if (meta.latest_file) {
-        parts.push(`<strong>${meta.n_candidates}</strong> candidates`);
-        parts.push(`<code style="font-size:11px">${meta.latest_file}</code>`);
-        if (meta.scanner_run_at) {
-          parts.push(`last run ${new Date(meta.scanner_run_at).toLocaleString()}`);
-        }
-      } else {
-        parts.push('no scan output on disk yet');
-      }
-      statsEl.innerHTML = parts.join(' &middot; ');
-    }
-
-    async function loadScannerRuns() {
-      try {
-        const r = await fetch('/scanner/runs', { cache: 'no-store' });
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        scannerRunsCache = await r.json();
-        updateScanStats();
-      } catch (e) {
-        document.getElementById('scan-stats').textContent = `error loading /scanner/runs: ${e.message}`;
-      }
-    }
-
-    function setControlsDisabled(disabled, runningLabel) {
-      const scanBtn = document.getElementById('scan-btn');
-      const sel = document.getElementById('setup-select');
-      scanBtn.disabled = disabled;
-      sel.disabled = disabled;
-      if (disabled && runningLabel) {
-        scanBtn.classList.add('running');
-        scanBtn.textContent = runningLabel;
-      } else {
-        scanBtn.classList.remove('running');
-        scanBtn.textContent = 'Scan';
-      }
-    }
-
-    function renderYfResults(j) {
-      const wrap = document.getElementById('results-wrap');
-      if (!j || !Array.isArray(j.candidates)) {
-        wrap.innerHTML = '<div class="empty-state">no candidates field in response</div>';
-        return;
-      }
-      const cands = j.candidates;
-      if (cands.length === 0) {
-        wrap.innerHTML = `<div class="empty-state">0 candidates from ${j.universe_size || '?'} symbols (DITP filters are strict; this is normal in flat / corrective markets).</div>`;
-        return;
-      }
-      let html = '<table class="scanner"><thead><tr>'
-        + '<th>Symbol</th>'
-        + '<th>Tier</th>'
-        + '<th>Variant</th>'
-        + '<th>Conf</th>'
-        + '<th style="text-align:right">Last</th>'
-        + '<th style="text-align:right">Resistance</th>'
-        + '<th style="text-align:right">Dist (ATR)</th>'
-        + '<th style="text-align:right">Score</th>'
-        + '<th>Cautions</th>'
-        + '</tr></thead><tbody>';
-      for (const c of cands) {
-        const tierClass = c.tier ? `tag tier-${c.tier}` : 'tag';
-        const cautions = (c.cautions && c.cautions.length) ? c.cautions.join(', ') : '<span class="muted">-</span>';
-        const sym = c.symbol || '';
-        html += `<tr data-symbol="${sym}" title="Click to open ${sym} in TradingView">`
-          + `<td class="sym">${sym}</td>`
-          + `<td>${c.tier ? `<span class="${tierClass}">${c.tier}</span>` : '-'}</td>`
-          + `<td class="muted">${c.variant || ''}</td>`
-          + `<td class="num">${c.confluence_tier ?? ''}</td>`
-          + `<td class="num">${fmtNum(c.last_close)}</td>`
-          + `<td class="num">${fmtNum(c.resistance)}</td>`
-          + `<td class="num">${fmtNum(c.distance_atr)}</td>`
-          + `<td class="num">${c.score ?? ''}</td>`
-          + `<td style="font-size:11px;color:var(--text-muted)">${cautions}</td>`
-          + '</tr>';
-      }
-      html += '</tbody></table>';
-      wrap.innerHTML = html;
-    }
-
-    function showLog(level, text) {
-      const log = document.getElementById('scan-log');
-      log.classList.remove('ok', 'err');
-      if (level) log.classList.add(level);
-      log.classList.add('show');
-      log.textContent = text;
-    }
-    function appendLog(text) {
-      const log = document.getElementById('scan-log');
-      log.classList.add('show');
-      log.textContent = (log.textContent || '') + '\n' + text;
-      log.scrollTop = log.scrollHeight;
-    }
-
-    async function onScan() {
-      if (scanInFlight) return;
-      scanInFlight = true;
-      const sel = document.getElementById('setup-select');
-      const setup = sel.value;
-      setControlsDisabled(true, 'Scanning... 0s');
-      const start = Date.now();
-      const tick = setInterval(() => {
-        const s = Math.round((Date.now() - start) / 1000);
-        const btn = document.getElementById('scan-btn');
-        if (btn) btn.textContent = `Scanning... ${s}s`;
-      }, 1000);
-      // yFinance batch fetch + DITP detection -- typically 30-90s for SP500.
-      showLog(null, `POST /scanner/yf_scan?setup=${setup}\nFetching daily bars from yFinance for the universe, then running detection. NO parquets touched.`);
-      try {
-        const r = await fetch(`/scanner/yf_scan?setup=${encodeURIComponent(setup)}`, {
-          method: 'POST', cache: 'no-store',
-        });
-        const j = await r.json();
-        clearInterval(tick);
-        const okClass = r.ok && j.ok ? 'ok' : 'err';
-        const parts = [];
-        if (r.ok && j.ok) {
-          parts.push(`OK  fetch=${j.fetch_duration_s}s  scan=${j.scan_duration_s}s  total=${j.total_duration_s}s`);
-          parts.push(`universe=${j.universe_size}  fetched=${j.fetched_n}  candidates=${j.n_candidates}  errors=${j.errors_count}`);
-          if (j.errors_count > 0 && j.errors_tail) {
-            parts.push('--- last errors ---\n' + j.errors_tail.join('\n'));
-          }
-        } else {
-          parts.push(`FAIL  HTTP ${r.status}`);
-          parts.push(JSON.stringify(j, null, 2));
-        }
-        showLog(okClass, parts.join('\n\n'));
-        renderYfResults(j);
-        document.getElementById('scan-stats').innerHTML = j.ok
-          ? `<strong>${j.n_candidates}</strong> candidates &middot; ${j.universe_size} symbols scanned &middot; today ET ${j.today_et}`
-          : 'scan failed -- see log above';
-      } catch (e) {
-        clearInterval(tick);
-        showLog('err', `Request failed: ${e.message}`);
-        document.getElementById('scan-stats').textContent = 'scan failed';
-      } finally {
-        scanInFlight = false;
-        setControlsDisabled(false);
-      }
-    }
-
-    document.getElementById('setup-select').addEventListener('change', updateScanStats);
-    document.getElementById('scan-btn').addEventListener('click', onScan);
+    // The DITP-via-yFinance flow (renderYfResults / onScan / scan log
+    // / setup dropdown) was removed from the UI on 2026-05-27 -- the
+    // Scanner view is now Finviz-only for step 1. The backend endpoints
+    // /scanner/yf_scan, /scanner/runs, /scanner/universe, /scanner/run
+    // all remain alive for re-wiring when step 2 (apply setup) lands.
+    // ageBadge() is unused at the moment too; kept defined above so we
+    // don't have to recreate it when wiring the setup-results panel.
 
     // ---------------------------------------------------------------
     // SIDEBAR navigation
@@ -886,13 +790,12 @@
       if (location.hash.replace('#', '') !== name) {
         history.replaceState(null, '', '#' + name);
       }
-      // Per-view lifecycle hooks. Scanner view: load the per-setup
-      // metadata so the stats line is populated when the view opens.
-      // No auto-poll: the yf scan is on-demand only (each Scan click
-      // does a 30-60s yFinance batch fetch -- not something to repeat
-      // on a timer).
+      // Per-view lifecycle hooks. Scanner view: pull the Finviz
+      // ticker list (cached 1h on the backend, so view-flipping is
+      // fast). No auto-poll -- the user clicks Refresh to force a
+      // fresh fetch.
       if (name === 'scanner') {
-        loadScannerRuns();
+        loadFinvizTickers(false);
       }
     }
 
