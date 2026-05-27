@@ -29,6 +29,37 @@ Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-05-26 - DITP TC (Trend Continuation) watchlist now visible in the DITP family tab
+
+Closes the dashboard-visibility gap that the TC Phase 1 build (commit 2e00724) left open per CLAUDE.md's "UI catches up next turn" rule. TC was wired into `KNOWN_STRATEGIES` and journal events were auto-surfacing in the Strategy Analysis drawer, but the TC watchlist file itself (`state/watchlist_tc_<date>.json`, produced EOD by `strategy/DITP/tc_scanner.py`) had no dedicated UI.
+
+**Backend**: new `GET /strategy/ditp/tc_watchlist` endpoint mirroring `/strategy/ditp/watchlist`. Returns the highest-dated `state/watchlist_tc_*.json` payload (or `{candidates: [], note: "no_watchlist_yet"}` when no file exists).
+
+**Frontend**: the DITP family tab now renders TWO stacked tables. The TC table sits on top (since it shows TOMORROW's actionable list) with a green title bar (`#86efac`) and these columns:
+
+| Column | Source field | Meaning |
+|---|---|---|
+| tier | `p2_tier` | Inherited from the originating P2 candidate's tier |
+| sym | `symbol` | Clickable; opens the chart |
+| variant | `p2_variant` | TC_A/B/C — inherited P2 sub-variant |
+| D0 close | `day0_close` | The breakout day's close (today) |
+| R cleared | `resistance` | The level the close cleared (= P2.range_high) |
+| brkATR | `breakout_strength_atr` | (close − R)/ATR — how cleanly the close cleared R |
+| closPos | `day0_close_position` | (close − low)/(high − low) — 1.0 = closed AT high, 0.5 = midpoint |
+| conf | `confluence_tier` | Inherited confluence tier (0 plain → 3 triple) |
+| cautions | `cautions` | Inherited from P2 |
+
+Header line shows `target Day+1 date · from Day-0 date · N tradeable of M · A/B/C tier counts · scanner timestamp · file`. P2 table below is unchanged.
+
+**`familiesFromAnalysis()` updated** to include DITP if EITHER P2 or TC has candidates (was only checking P2). When the P2 file is missing but TC has data (rare, but possible if user only ran tc_scanner.py), the TC section renders alone with a placeholder for the missing P2 file.
+
+Both watchlists refresh on the same 5-minute cadence as P2 (`initDitpWatchlist`). TC scanner runs after P2's EOD pass, so the TC payload appears slightly later in the EOD window.
+
+Smoke-tested end-to-end:
+- empty state: `{candidates: [], note: "no_watchlist_yet"}` ✓
+- synthetic payload (2 candidates with realistic AAON + AAPL data): endpoint returns 200 with `n_cands=2`, fields preserved (`brkATR=0.42`, `closPos=0.875`)
+- orchestrator dry-run still passes (5 strategies wired)
+
 ### 2026-05-26 - `tray_status.py`: progress window spawned as subprocess (fixes "main thread is not in main loop")
 
 Sequel to 7c00359 (which added the try/finally + traceback that surfaced the real cause). With the diagnostic in place, the next Hermes attempt revealed:

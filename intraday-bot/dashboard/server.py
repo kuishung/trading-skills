@@ -2588,6 +2588,32 @@ async def ditp_watchlist() -> JSONResponse:
         return JSONResponse({"candidates": [], "error": str(exc)})
 
 
+@app.get("/strategy/ditp/tc_watchlist")
+async def ditp_tc_watchlist() -> JSONResponse:
+    """Return the latest DITP TC (Trend Continuation) watchlist
+    (highest-dated `state/watchlist_tc_<date>.json`). Mirror of the P2
+    endpoint above. Source: strategies-reference/DITP.md §6 Setup 4.
+
+    The TC scanner runs EOD on Day 0 (after the orchestrator's post-EOD
+    history ingest completes), reads the P2 watchlist for "today", filters
+    to symbols whose Day-0 candle both broke out AND printed bullish, and
+    writes this file targeted at Day +1. The dashboard's DITP family tab
+    renders this above the P2 table so the trader sees tomorrow's
+    follow-through candidates alongside today's pending breakouts.
+    """
+    try:
+        state_dir = SKILL_DIR / "state"
+        files = sorted(state_dir.glob("watchlist_tc_*.json"))
+        if not files:
+            return JSONResponse({"candidates": [], "note": "no_watchlist_yet"})
+        latest = files[-1]
+        payload = json.loads(latest.read_text(encoding="utf-8"))
+        payload["_file"] = latest.name
+        return JSONResponse(payload)
+    except Exception as exc:
+        return JSONResponse({"candidates": [], "error": str(exc)})
+
+
 @app.post("/data/refresh-stale")
 async def data_refresh_stale(timeframe: str = "daily") -> JSONResponse:
     """Re-fetch every stale / ancient / missing parquet via yfinance.

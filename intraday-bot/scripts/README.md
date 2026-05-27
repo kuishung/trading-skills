@@ -14,6 +14,8 @@ plus one-time installers.
 - `wait_and_ingest.py` — One-shot operational glue: wait for a specified Windows PID to exit (poll via `tasklist` every 60s), then launch `resources.ibkr_history.bulk_update` on a universe of choice. Reusable for any "ingest A finishes → ingest B starts" sequence where the two would otherwise collide on IBKR clientId. CLI: `py scripts/wait_and_ingest.py --wait-pid 21732 --timeframes 3min --seed-days 180 --force-seed --universe daily`. The `--universe` option supports `daily | 1min | 3min | journal` so a backtest re-seed can target the full daily-parquet universe (~1500 symbols) rather than the narrower journal-derived live universe (~50).
 - `Watch-Ingest.ps1` — **Process supervisor for `wait_and_ingest.py`.** PowerShell forever-loop that relaunches the watcher every time it exits (clean finish, crash, OOM, killed). Pairs with the in-Python resilience in `resources/ibkr_history.py` (socket reconnect + per-symbol error skip). Run from a foreground PS window: `powershell -ExecutionPolicy Bypass -File .\scripts\Watch-Ingest.ps1`. Stops on Ctrl+C. Logs to `<data_root>/_supervisor_<timestamp>.log`. Parameters mirror `wait_and_ingest.py` (`-Timeframes`, `-SeedDays`, `-ForceSeed`, `-Universe`, `-RestartDelay`).
 - `setup_hermes_supervisor_task.ps1` — **One-shot Windows Scheduled Task installer for the Watch-Ingest.ps1 supervisor.** Registers `IntradayBot-Watcher` to run at Hermes boot under the Administrator principal (LogonType S4U, RunLevel Highest), with `RestartCount 3` and no execution-time limit. Pairs with `Watch-Ingest.ps1` to give the full failure-recovery chain: watcher crashes -> supervisor restarts (30s); supervisor crashes -> Task Scheduler restarts (60s, up to 3x); Hermes reboots -> task auto-fires. Survives RDP disconnects (the trap that killed the supervisor twice on 2026-05-26). Idempotent (-Force). Detects already-running supervisors and refuses `-StartNow` to prevent IBKR clientId collisions. ASCII-only per the PS 5.1 em-dash lesson. Run once per Hermes rebuild: `powershell -ExecutionPolicy Bypass -File scripts\setup_hermes_supervisor_task.ps1 -StartNow`.
+- `keep_gateway_alive.ps1` — **Idempotent "is Gateway running? if not, launch it" check.** Called by the `IntradayBot-Gateway` scheduled task every 5 minutes. Logic: (1) is something listening on cfg port 4002? -> exit 0 silently (healthy). (2) is an IBC/Gateway process alive (might be starting up)? -> exit 0 with a log entry (don't double-launch). (3) otherwise -> `Start-Process` `ibc\StartIBC-intraday.bat` minimized + log. Defaults to port 4002 + the bot's standard launcher; both overridable via `-Port` / `-LauncherBat`. Logs to `<data_root>\_gateway_keepalive.log` (silent on the healthy path to avoid spam). ASCII-only per the PS 5.1 em-dash lesson. Standalone CLI for diagnostics: `powershell -File scripts\keep_gateway_alive.ps1`.
+- `setup_hermes_gateway_task.ps1` — **One-shot installer for the IntradayBot-Gateway scheduled task.** Registers a task that fires `keep_gateway_alive.ps1` (a) on Hermes boot (AtStartup trigger) AND (b) every 5 minutes (Once + RepetitionInterval, with RepetitionDuration 9999 days as the PS 5.1 "effectively forever" pattern). Administrator/S4U principal, RestartCount 3, MultipleInstances IgnoreNew (overlapping checks coalesce). Pairs with `setup_hermes_supervisor_task.ps1` to give the FULL recovery chain: Gateway crash -> keep-alive relaunches within 5 min; watcher crash -> supervisor restarts in 30s; supervisor crash -> task scheduler restarts in 60s; Hermes reboot -> AtStartup triggers both tasks. Run once per Hermes rebuild: `powershell -ExecutionPolicy Bypass -File scripts\setup_hermes_gateway_task.ps1 -StartNow`.
 - `hermes_health.py` — **Hermes VM pre-flight check.** Run on the Hermes VM after Phase 1+2 of `HERMES_SETUP.md` is complete, BEFORE kicking off the multi-day 180-day re-seed. Verifies Python version, required packages importable, bars_store readable, disk space adequate, `ibc/credentials.txt` present, `config.json` clientId matches the host (warns if Hermes still has laptop's 71), IBKR Gateway socket reachable (port 4002 → paper Gateway, 7497 → paper TWS fallback). Safe to run on any PC; flags Python 3.14 + ib_insync asyncio incompatibility with a clear remedy ("use `py -3.12` for IBKR workloads"). CLI: `py scripts/hermes_health.py` (or `--skip-ibkr` for the no-Gateway-yet case, `--json` for machine-readable).
 
 ## Why these are not in their own layer folder
@@ -28,6 +30,43 @@ runtime trading system. They could move to `bin/` or `tools/` but
 they're rarely-touched and small, so `scripts/` is fine.
 
 ## Changelog
+
+### 2026-05-26 - `keep_gateway_alive.ps1` + `setup_hermes_gateway_task.ps1`: autonomous Gateway resurrection
+
+User flagged: *"the Hermes ingest gateway auto shut down at 8am, i need to make sure if it shut down or restart will resurrect without intervention"*. Today's failure modes (IBKR daily-reset interaction, IBC sys.exit collision, clientId 83 dropped sessions) all surface as "Gateway not listening" — and the existing watcher-supervisor stack only restarts the Python watcher, which then crash-loops forever on failed connect because nothing brings Gateway back.
+
+Two new files close the gap:
+
+1. **`keep_gateway_alive.ps1`** — idempotent check. Three-step logic:
+   - Port 4002 listening? -> exit 0 silently (healthy path, no log spam)
+   - IBC/Gateway process alive (might be starting)? -> exit 0 with a log line (don't double-launch into a session collision)
+   - Otherwise -> `Start-Process` `ibc\StartIBC-intraday.bat` minimized + log
+   - Logs to `<data_root>\_gateway_keepalive.log` so the trail lives next to the watcher's `_ingest_*.log` files.
+
+2. **`setup_hermes_gateway_task.ps1`** — registers `IntradayBot-Gateway` scheduled task:
+   - Triggers: AtStartup + Once-At-now + RepetitionInterval 5min, RepetitionDuration 9999 days (the PS 5.1 "effectively forever" pattern)
+   - Principal: Administrator, S4U, RunLevel Highest (survives RDP disconnects)
+   - MultipleInstances IgnoreNew (overlapping checks coalesce safely)
+   - ExecutionTimeLimit 5min per invocation (each check should be sub-second; cap prevents a stuck check from holding the slot)
+
+Failure recovery chain after both tasks are registered on Hermes:
+
+| Failure | Recovery |
+|---|---|
+| Watcher crashes | `Watch-Ingest.ps1` restarts the Python in 30s |
+| Watcher supervisor crashes | `IntradayBot-Watcher` task restarts the supervisor in 60s (up to 3x) |
+| **Gateway crashes / shuts down** | `IntradayBot-Gateway` keep-alive detects within 5 min, relaunches IBC |
+| **IBC crashes** | Same — keep-alive treats "no process listening on 4002 + no java process with IBC.jar" as DOWN |
+| Hermes reboots | AtStartup triggers BOTH tasks; full stack comes back up |
+
+The watcher's `_ensure_connected` reconnect backoff (5..60s, up to 20 attempts = ~5 min total) bridges the gap perfectly while the keep-alive brings Gateway back.
+
+ASCII-only and no null-coalescing in both scripts, per the PS 5.1 em-dash lesson (Watch-Ingest.ps1's history) and the discovered-during-supervisor-write `??`-doesn't-exist gotcha. Headers note both traps for future authors.
+
+One-shot setup on Hermes (after `git pull`):
+```
+powershell -ExecutionPolicy Bypass -File scripts\setup_hermes_gateway_task.ps1 -StartNow
+```
 
 ### 2026-05-26 - `_common.load_config`: tolerate UTF-8 BOM in config.json
 

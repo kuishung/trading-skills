@@ -30,6 +30,7 @@ The EOD Day-0 TC scanner lives one level up at `strategy/DITP/tc_scanner.py` —
 | Config block `cfg.strategies.ditp_tc` (first-run seed) | ✅ | `config.example.json` |
 | Gating drawer ON/OFF + ARM controls | ✅ (auto) | dashboard's existing auto-surface |
 | Strategy Analysis drawer DITP tab picks up TC events | ✅ (auto) | dashboard's existing auto-surface (event name → family tab) |
+| Dedicated TC watchlist table in the DITP tab | ✅ | `/strategy/ditp/tc_watchlist` endpoint + frontend renderer (above the P2 table) |
 
 ## What's deferred (TBDs that need user teaching)
 
@@ -44,6 +45,10 @@ The EOD Day-0 TC scanner lives one level up at `strategy/DITP/tc_scanner.py` —
 | **Day +2 carryover** — re-fire if Day +1 didn't trigger? | DITP.md §6 Setup 4 "Trade window: Day +1 and Day +2" — currently Phase 1 only emits Day +1 |
 
 ## Changelog
+
+### 2026-05-26 — Dashboard: TC watchlist table now visible in the DITP family tab
+
+Closes the "UI catches up next turn" gap left open by the Phase 1 build. The TC watchlist file (`state/watchlist_tc_<date>.json`) is now rendered as a dedicated table in the DITP family tab, sitting above the P2 table since it shows tomorrow's actionable list (vs. P2's pending-breakout watch). Backend: new `GET /strategy/ditp/tc_watchlist` endpoint. See `dashboard/README.md` for the full UI column spec + smoke-test results.
 
 ### 2026-05-26 — v0.1.0 — TC scaffolded + EOD Day-0 scanner wired
 

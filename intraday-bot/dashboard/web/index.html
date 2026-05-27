@@ -2435,11 +2435,15 @@ async function refreshProfilesScope(scope) {
   setInterval(refreshProfileHealth, 60_000);
 })();
 
-// DITP watchlist — fetch once at load, then every 5 min (scanner is EOD-driven
-// so a snappy refresh isn't needed; this just picks up overnight regenerations).
+// DITP watchlists (P2 + TC) — fetch once at load, then every 5 min.
+// Both scanners are EOD-driven so a snappy refresh isn't needed; the
+// interval just picks up overnight regenerations. TC scanner runs after
+// P2's, so the TC payload appears slightly later in the EOD window.
 (function initDitpWatchlist() {
   refreshDitpWatchlist();
+  refreshTcWatchlist();
   setInterval(refreshDitpWatchlist, 5 * 60_000);
+  setInterval(refreshTcWatchlist,   5 * 60_000);
 })();
 
 // ---- Left-sidebar drawers: gating / events / bot log -------------------
@@ -2954,10 +2958,12 @@ function familyOf(stratName) {
 }
 
 // DITP content model: end-of-day scanner watchlist, not live journal events.
-// `ditpWatchlist` holds the latest /strategy/ditp/watchlist payload; when
-// non-empty, DITP shows up as a family tab alongside any journal-driven
-// families (GUNS now, future ones automatically).
+// `ditpWatchlist` holds the latest /strategy/ditp/watchlist payload (P2);
+// `tcWatchlist` holds /strategy/ditp/tc_watchlist (TC follow-through).
+// When EITHER is non-empty, DITP shows up as a family tab alongside any
+// journal-driven families (GUNS now, future ones automatically).
 let ditpWatchlist = null;
+let tcWatchlist = null;
 
 async function refreshDitpWatchlist() {
   try {
@@ -2970,10 +2976,22 @@ async function refreshDitpWatchlist() {
   } catch (e) { /* leave ditpWatchlist null; tab won't show */ }
 }
 
+async function refreshTcWatchlist() {
+  try {
+    const r = await fetch('/strategy/ditp/tc_watchlist');
+    if (!r.ok) return;
+    const j = await r.json();
+    tcWatchlist = j;
+    renderFamilyTabs();
+    if (activeFamily === 'DITP') renderAnalysis();
+  } catch (e) { /* leave tcWatchlist null; the TC section just doesn't render */ }
+}
+
 function familiesFromAnalysis() {
   const out = new Set();
   for (const n of Object.keys(analysis)) out.add(familyOf(n));
   if (ditpWatchlist && (ditpWatchlist.candidates || []).length) out.add('DITP');
+  if (tcWatchlist && (tcWatchlist.candidates || []).length) out.add('DITP');
   return Array.from(out).sort();
 }
 
@@ -3179,9 +3197,81 @@ const UNIVERSE_LABELS = {
   djia: 'DJIA',
 };
 
+// TC (Trend Continuation) section — Day +1 follow-through candidates from the
+// previous day's P2 breakouts. Rendered ABOVE the P2 table inside the DITP
+// family tab so the trader sees tomorrow's actionable list first. Returns an
+// HTML string ('' when no TC watchlist is loaded). Source:
+// strategies-reference/DITP.md §6 Setup 4 + strategy/DITP/tc_scanner.py.
+function renderTcSectionHtml() {
+  if (!tcWatchlist || !(tcWatchlist.candidates || []).length) return '';
+  const cands  = tcWatchlist.candidates || [];
+  const date   = tcWatchlist.target_date || '?';
+  const srcD   = tcWatchlist.source_date || '?';
+  const runAt  = (tcWatchlist.scanner_run_at_utc || '').replace('T', ' ').split('+')[0];
+  const file   = tcWatchlist._file || '';
+  const n_tradeable = tcWatchlist.n_tradeable_after_filter ?? cands.length;
+  // Per-(inherited-P2-)tier counts so the trader sees A/B/C breakdown at a glance.
+  const counts = { A: 0, B: 0, C: 0, D: 0 };
+  cands.forEach(c => { counts[c.p2_tier] = (counts[c.p2_tier] || 0) + 1; });
+  const rows = cands.map(c => {
+    const cau  = (c.cautions || []).join(', ') || '—';
+    const brk  = Number(c.breakout_strength_atr).toFixed(2);   // (close - R) / ATR
+    const pos  = Number(c.day0_close_position).toFixed(2);     // 0..1; 1 = closed AT high
+    return `
+      <tr title="source: ${c.source_event} on ${c.source_date}; trade window Day +1 (${date})">
+        <td><span class="tag tier-${c.p2_tier}">${c.p2_tier}</span></td>
+        <td><span class="font-mono font-bold ticker-link" data-sym="${c.symbol}" title="Open ${c.symbol} in the chart">${c.symbol}</span></td>
+        <td>TC<span class="muted">_${c.p2_variant}</span></td>
+        <td>$${Number(c.day0_close).toFixed(2)}</td>
+        <td>$${Number(c.resistance).toFixed(2)}</td>
+        <td>${brk}</td>
+        <td>${pos}</td>
+        <td>${c.confluence_tier}</td>
+        <td class="muted">${cau}</td>
+      </tr>
+    `;
+  }).join('');
+  return `
+    <div class="flex items-center gap-3 text-sm mb-2 flex-wrap">
+      <span class="font-bold" style="color:#86efac;">DITP TC — Trend Continuation</span>
+      <span class="muted text-xs">trade window Day +1 = ${date} · from Day-0 ${srcD}</span>
+      <span class="muted text-xs">${n_tradeable} tradeable of ${cands.length} · A=${counts.A||0} B=${counts.B||0} C=${counts.C||0}</span>
+      <span class="muted text-xs ml-auto">scanner: ${runAt} · ${file}</span>
+    </div>
+    <div style="max-height: 280px; overflow-y: auto; margin-bottom: 18px;">
+      <table class="ditp-tbl">
+        <thead>
+          <tr>
+            <th title="Inherited from the originating P2 candidate's tier">tier</th>
+            <th>sym</th>
+            <th title="Inherited P2 variant (A=direct, B=tight range, C=ascending triangle)">variant</th>
+            <th title="Day 0 close (the breakout day)">D0 close</th>
+            <th title="Resistance level the Day-0 close cleared (= P2.range_high)">R cleared</th>
+            <th title="(close - resistance) / ATR — how cleanly the close cleared R">brkATR</th>
+            <th title="(close - low) / (high - low) — 1.0 = closed AT high, 0.5 = midpoint">closPos</th>
+            <th title="Confluence tier inherited from the P2 setup (0 = plain, 1/2/3 = increasing conviction)">conf</th>
+            <th>cautions</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+
 function renderDitpWatchlist(el) {
+  // TC section sits ABOVE the P2 table -- tomorrow's actionable list first,
+  // today's pending-breakout watch second.
+  const tcHtml = renderTcSectionHtml();
   if (!ditpWatchlist || !(ditpWatchlist.candidates || []).length) {
-    el.innerHTML = `<span class="muted text-sm">No DITP watchlist yet. Run <code class="text-slate-300">py strategy/DITP/scanner.py</code> to generate one.</span>`;
+    // No P2 watchlist yet. If TC has data, show it; otherwise the placeholder.
+    if (tcHtml) {
+      el.innerHTML = tcHtml +
+        `<span class="muted text-sm">No DITP P2 watchlist yet. Run <code class="text-slate-300">py strategy/DITP/scanner.py</code> to generate one.</span>`;
+    } else {
+      el.innerHTML = `<span class="muted text-sm">No DITP watchlist yet. Run <code class="text-slate-300">py strategy/DITP/scanner.py</code> (P2) or <code class="text-slate-300">py strategy/DITP/tc_scanner.py</code> (TC) to generate one.</span>`;
+    }
     return;
   }
   const all = ditpWatchlist.candidates || [];
@@ -3242,7 +3332,7 @@ function renderDitpWatchlist(el) {
     `;
   }).join('');
 
-  el.innerHTML = `
+  el.innerHTML = tcHtml + `
     <div class="flex items-center gap-3 text-sm mb-2 flex-wrap">
       <span class="font-bold">DITP P2 watchlist</span>
       <span class="muted text-xs">target ${date}</span>
