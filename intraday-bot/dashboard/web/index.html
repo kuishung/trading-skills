@@ -540,6 +540,38 @@
       padding: 20px;
     }
     .chart-placeholder.hidden { display: none; }
+    /* S/R strip below the chart header. Compact pill row: R / S / P3 retest.
+       Hidden until the first /chart/sr_levels response lands. */
+    .sr-strip {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-panel);
+      flex-shrink: 0;
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+    }
+    .sr-pill {
+      padding: 2px 8px;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      color: var(--text-muted);
+      background: #0d1117;
+      white-space: nowrap;
+    }
+    .sr-pill .sr-val {
+      color: var(--text);
+      margin-left: 4px;
+    }
+    .sr-pill.sr-r  { border-color: rgba(248, 81, 73,  0.35); }
+    .sr-pill.sr-r  .sr-val { color: #f85149; }
+    .sr-pill.sr-s  { border-color: rgba(63, 185, 80,  0.35); }
+    .sr-pill.sr-s  .sr-val { color: #3fb950; }
+    .sr-pill.sr-p3 { border-color: rgba(187, 128, 9,  0.35); }
+    .sr-pill.sr-p3 .sr-val { color: #d29922; }
+    .sr-pill.empty .sr-val { color: var(--text-muted); }
     /* The Finviz panel inside the scanner view: compact stacked cards
        instead of a wide table, since the narrow column can't comfortably
        fit a multi-column tabular layout. */
@@ -767,6 +799,14 @@
             <span class="label">Chart:</span>
             <span class="chart-symbol" id="chart-symbol">&mdash;</span>
             <a id="chart-external-link" class="external-link" target="intraday_bot_tv" href="#" style="display:none">Open in TradingView &nearr;</a>
+          </div>
+          <!-- S/R strip: shows daily-chart key levels (resistance above,
+               support below, P3 retest candidates) for the currently-
+               loaded symbol. Driven by GET /chart/sr_levels. -->
+          <div class="sr-strip" id="sr-strip" style="display:none">
+            <span class="sr-pill sr-r" id="sr-r" title="Nearest mountain-anchored resistance above current price">R <span class="sr-val">&mdash;</span></span>
+            <span class="sr-pill sr-s" id="sr-s" title="Nearest mountain-valley-anchored support below current price">S <span class="sr-val">&mdash;</span></span>
+            <span class="sr-pill sr-p3" id="sr-p3" title="Broken-resistance levels now below current price (P3 retest candidates)">P3 <span class="sr-val">&mdash;</span></span>
           </div>
           <div class="chart-iframe-wrap">
             <div class="chart-placeholder" id="chart-placeholder">
@@ -1029,12 +1069,14 @@
       const symLabel    = document.getElementById('chart-symbol');
       const extLink     = document.getElementById('chart-external-link');
       const container   = document.getElementById('tv-chart-container');
+      const srStrip     = document.getElementById('sr-strip');
 
       if (!symbol) {
         if (container) container.innerHTML = '';
         if (placeholder) placeholder.classList.remove('hidden');
         symLabel.textContent = '—';
         if (extLink) extLink.style.display = 'none';
+        if (srStrip) srStrip.style.display = 'none';
         return;
       }
 
@@ -1060,6 +1102,95 @@
         container.appendChild(iframe);
       }
       iframe.src = tvWidgetUrl(symbol);
+
+      // Fire S/R lookup in parallel with the chart load. The strip
+      // shows mountain-anchored R above, mountain-valley-anchored S
+      // below, and broken-resistance retest candidates (P3 polarity
+      // flip). User asked 2026-05-27: "would you be able to identify
+      // key support and resistance" -- this strip is the answer.
+      loadSrLevels(symbol);
+    }
+
+    // ---------------------------------------------------------------
+    // S/R strip -- daily-chart key levels for the loaded symbol.
+    // GET /chart/sr_levels?symbol=<X> returns resistance_above /
+    // support_below / broken_resistance. We format each as a pill
+    // with the level price and signed ATR distance from current.
+    // ---------------------------------------------------------------
+    let _srAbortController = null;
+
+    function fmtSrPill(prefix, lvl, current, atr, isAbove) {
+      if (lvl == null || current == null || atr == null || atr <= 0) {
+        return { text: '—', empty: true };
+      }
+      const dist = isAbove ? (lvl - current) / atr : (current - lvl) / atr;
+      const sign = isAbove ? '+' : '−';
+      return {
+        text: `$${lvl.toFixed(2)} (${sign}${dist.toFixed(2)} ATR)`,
+        empty: false,
+      };
+    }
+
+    async function loadSrLevels(symbol) {
+      const strip = document.getElementById('sr-strip');
+      const rPill = document.getElementById('sr-r');
+      const sPill = document.getElementById('sr-s');
+      const p3Pill = document.getElementById('sr-p3');
+      if (!strip || !rPill || !sPill || !p3Pill) return;
+
+      // Show strip immediately with loading state so the user sees activity.
+      strip.style.display = 'flex';
+      [rPill, sPill, p3Pill].forEach(p => {
+        p.classList.add('empty');
+        p.querySelector('.sr-val').textContent = '…';
+      });
+
+      // Cancel any in-flight S/R fetch from a prior symbol click.
+      if (_srAbortController) _srAbortController.abort();
+      _srAbortController = new AbortController();
+
+      try {
+        const resp = await fetch(`/chart/sr_levels?symbol=${encodeURIComponent(symbol)}`,
+          { signal: _srAbortController.signal });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        const current = data.current;
+        const atr = data.atr14;
+
+        // R above
+        const rLvl = data.resistance_above ? data.resistance_above.level : null;
+        const r = fmtSrPill('R', rLvl, current, atr, true);
+        rPill.classList.toggle('empty', r.empty);
+        rPill.querySelector('.sr-val').textContent = r.text;
+
+        // S below
+        const sLvl = data.support_below ? data.support_below.level : null;
+        const s = fmtSrPill('S', sLvl, current, atr, false);
+        sPill.classList.toggle('empty', s.empty);
+        sPill.querySelector('.sr-val').textContent = s.text;
+
+        // P3 retest -- show top 2 closest candidates if present (the
+        // backend already sorts closest-to-current first).
+        const broken = Array.isArray(data.broken_resistance) ? data.broken_resistance : [];
+        if (broken.length === 0 || current == null || !atr) {
+          p3Pill.classList.add('empty');
+          p3Pill.querySelector('.sr-val').textContent = '—';
+        } else {
+          const top = broken.slice(0, 2).map(d => {
+            const dist = (current - d.level) / atr;
+            return `$${d.level.toFixed(2)} (−${dist.toFixed(2)})`;
+          }).join(' · ');
+          p3Pill.classList.remove('empty');
+          p3Pill.querySelector('.sr-val').textContent = top;
+        }
+      } catch (err) {
+        if (err.name === 'AbortError') return;  // user clicked another row
+        [rPill, sPill, p3Pill].forEach(p => {
+          p.classList.add('empty');
+          p.querySelector('.sr-val').textContent = '(err)';
+        });
+        console.warn('sr_levels fetch failed:', err);
+      }
     }
 
     document.addEventListener('click', (ev) => {

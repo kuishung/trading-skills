@@ -2934,6 +2934,78 @@ async def chart_yf_bars(symbol: str, lookback_days: int = 400) -> JSONResponse:
     return JSONResponse({"symbol": symbol, "count": len(bars), "bars": bars})
 
 
+@app.get("/chart/sr_levels")
+async def chart_sr_levels(symbol: str, lookback_days: int = 400) -> JSONResponse:
+    """Return key support / resistance levels for one symbol.
+
+    Built on resources/sr_levels.find_key_levels which calls:
+      - patterns.horizontal_resistance_np  -> mountain-anchored R above
+      - sr_levels.horizontal_support_np    -> mountain-valley-anchored S below
+      - sr_levels.find_broken_resistance_below -> P3 polarity-flip retest
+                                                   candidates (prior peaks
+                                                   now below current price)
+
+    Consumer: dashboard chart pane's S/R strip (below the chart header)
+    so the user can see "R: $X.XX | S: $Y.YY | P3 retest: $Z.ZZ" at a
+    glance whenever they click a watchlist symbol -- saves redrawing
+    levels in TradingView for every name.
+
+    Bars come from FRESH yFinance (no parquets touched), consistent
+    with /chart/yf_bars and the user's 2026-05-27 directive that the
+    parquet store is backtest-only on the dashboard side.
+
+    Returns:
+      { symbol, current, atr14,
+        resistance_above: { level, range_low, range_high, ... } | null,
+        support_below:    { level, range_low, range_high, ... } | null,
+        broken_resistance: [ { level, bars_ago, mountain }, ... ] }
+    """
+    symbol = (symbol or "").upper().strip()
+    if not symbol:
+        raise HTTPException(status_code=400, detail="symbol query param required")
+    if not (50 <= lookback_days <= 1000):
+        # Need enough history for the 120-bar resistance + 180-bar broken-R
+        # finders. 50-day floor keeps callers honest; 400 default matches
+        # /chart/yf_bars.
+        raise HTTPException(status_code=400, detail="lookback_days must be 50..1000")
+    try:
+        import yf_daily_bars  # type: ignore  resources/yf_daily_bars.py
+        import bars_store      # type: ignore  resources/bars_store.py
+        import sr_levels        # type: ignore  resources/sr_levels.py
+    except ImportError as exc:
+        raise HTTPException(status_code=500, detail=f"import failure: {exc}")
+
+    loop = asyncio.get_running_loop()
+    try:
+        bars = await loop.run_in_executor(
+            None,
+            lambda: yf_daily_bars.fetch_daily_single(symbol, lookback_days=lookback_days),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"yfinance fetch failed: {exc}")
+
+    # Monkey-patch bars_store.load_bars so find_key_levels() reads our
+    # in-memory yfinance bars instead of parquets. Same pattern as
+    # /scanner/yf_scan.
+    original_load = bars_store.load_bars
+
+    def _yf_backed_load(sym, start=None, end=None, *, timeframe: str = "1min"):
+        if timeframe != "daily" or sym.upper() != symbol:
+            return original_load(sym, start, end, timeframe=timeframe)
+        return bars
+
+    try:
+        bars_store.load_bars = _yf_backed_load  # type: ignore[assignment]
+        result = await loop.run_in_executor(
+            None,
+            lambda: sr_levels.find_key_levels(symbol),
+        )
+    finally:
+        bars_store.load_bars = original_load  # type: ignore[assignment]
+
+    return JSONResponse(result)
+
+
 @app.get("/scanner/finviz_tickers")
 async def scanner_finviz_tickers(force_refresh: bool = False) -> JSONResponse:
     """Return the current Finviz screener result set as a row list.

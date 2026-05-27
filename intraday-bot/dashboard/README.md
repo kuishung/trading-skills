@@ -29,6 +29,23 @@ Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-05-27 — Chart pane: S/R strip (R / S / P3 retest) wired to `GET /chart/sr_levels`
+
+User question 2026-05-27: *"would you be able to identify key support and resistance we have a pattern recognition in the resources?"* — then framed the three DITP setups in terms of structural levels (P1 = rebound off support, P2 = breakout to resistance, P3 = retest of broken resistance). The dashboard chart pane previously showed only the symbol + EMAs via the iframe widget; the user now needs the structural-level read without having to draw on TradingView manually for every ticker.
+
+**Backend**: new `GET /chart/sr_levels?symbol=<X>` in `server.py`. Fetches fresh yFinance daily bars (no parquets touched — consistent with the rule established earlier in this session) and calls `resources/sr_levels.find_key_levels()`. Returns `{symbol, current, atr14, resistance_above, support_below, broken_resistance:[...]}`. Same monkey-patch trick as `/scanner/yf_scan`: temporarily swap `bars_store.load_bars` for an in-memory closure so the underlying detector doesn't need to know about yFinance.
+
+**Frontend (`web/index.html`)**: compact S/R strip between the chart header and the chart iframe. Three pills:
+- **R** (red border) — nearest mountain-anchored resistance ABOVE current price, formatted `$X.XX (+N.NN ATR)`
+- **S** (green border) — nearest mountain-valley-anchored support BELOW current price, formatted `$X.XX (−N.NN ATR)`
+- **P3** (amber border) — up to 2 closest broken-resistance retest candidates (historical peaks now below current), e.g. `$214.87 (−0.16) · $212.35 (−0.63)`
+
+Strip is hidden until the first symbol click; on click it fires `/chart/sr_levels` in parallel with the iframe load (`loadTvChart` calls `loadSrLevels`). An `AbortController` cancels in-flight S/R fetches when the user clicks another row so we don't render stale data. Loading state shows `…` in each pill; empty-set states show `—`; errors show `(err)`.
+
+Color tones match the existing palette (R/S/P3 = red/green/amber from the status-bar pills' value tones), tabular-numeric font so prices line up.
+
+**Why a strip and not chart overlays?** The iframe widgetembed (the path that finally renders EMAs reliably) doesn't expose a drawing API, so we can't overlay lines. The strip surfaces the same information textually with one-glance readability and avoids reopening the multi-day EMA-line saga. If the user later wants overlay lines, the natural step is to revisit Lightweight Charts (commit `6713ce7` baseline) with the level math already exposed via `/chart/sr_levels` — no math rewrite needed.
+
 ### 2026-05-27 - Chart pane: switch to iframe `widgetembed` URL with studies in URL (EMAs finally render)
 
 User: *"the ema line are still not shown"* -- the JS widget's `chart.createStudy()` didn't actually add the EMAs on this browser/widget revision, despite multiple attempts. Conclusion: the free Advanced Charts widget's API surface is too inconsistent to reliably add studies post-construction. Switched to a different code path entirely:
