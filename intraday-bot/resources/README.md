@@ -40,6 +40,17 @@ and import it from whichever strategy needs it. No registration.
 
 ## Changelog
 
+### 2026-05-27 — `sr_levels.py`: lookback extended to 1 year (252 trading days) per user rule
+
+User rule 2026-05-27: *"when you look at Support and Resistance on a daily chart, you will look at 1 year daily chart to look at valley and mountains."* Initial implementation used 120-day support/resistance and 180-day broken-resistance lookbacks (heuristic defaults). Bumped all three lookbacks in `find_key_levels` to 252 (matches "1 year of trading days"); raised minimum bar requirement from 50 to 252+14 (ATR-warmup buffer); added the rationale to the module docstring as a callable reference for downstream callers.
+
+Effect on existing levels (smoke-tested):
+- AAPL: support_below validation strengthened from 2 touches / 2 mountains → **5 touches / 5 mountains** at $265.07 (the wider window picked up older touches at the same level).
+- ABBV: P3 retest list grew from 2 to 3 candidates; the closest-in-time retest ($214.87, 16 days ago) remained the top pick, with deeper-history flips at $212.45 (189d) and $197.50 (219d) now visible.
+- AAPL P3: same 3 candidates as before, but they're at 73/97/117 days ago — within the new window, out of the old one.
+
+The same rule was propagated to `strategy/DITP/scanner.py` (P2 resistance_lookback 90 → 252), `strategy/DITP/p1_rebound.py` (support_lookback 120 → 252), and `strategy/DITP/p3_retest.py` (lookback 180 → 252) so all four S/R-anchored detectors agree on the lookback window. yFinance fetch defaults in `dashboard/server.py` bumped from 400 → 500 calendar days so 252-bar histories arrive with comfortable headroom (~355 trading days delivered vs 266 needed).
+
 ### 2026-05-27 — `sr_levels.py`: symmetric S/R + broken-resistance detector
 
 User question 2026-05-27: *"would you be able to identify key support and resistance we have a pattern recognition in the resources?"* — followed by the framing of the three DITP setups (P1 = rebound off support, P2 = breakout to resistance, P3 = retest of broken resistance now as support). The existing `patterns.horizontal_resistance_np` already handled P2; what was missing was the symmetric support detector and a broken-resistance scanner for P3.

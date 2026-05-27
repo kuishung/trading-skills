@@ -1471,26 +1471,67 @@
     // Setup registry. Drives:
     //   - The async run loop in runAllSetups (only run: 'yf' entries)
     //   - The Setup column rendering in the Finviz table:
-    //       `shortLabel` = compact name shown in the column badge
-    //       `matchDetail(candidate)` = optional short suffix to disambiguate
-    //         (e.g. which EMA was the support, or the P2 tier/variant).
+    //       `badgeText(candidate)` = the compact label shown in the column
+    //         (P1 / P2 / P3 / EMA20 / EMA50 / EMA200). User rule
+    //         2026-05-27: "on the label, just label it EMA20, EMA50,
+    //         EMA200, P1, P2, P3 at the watchlist" -- no inline detail
+    //         in the visible badge.
+    //       `tooltipDetail(candidate)` = the hover text appended to
+    //         `label` (price, bounce magnitude, variant -- the diagnostic
+    //         numbers that used to bloat the badge text).
     // Adding a new setup = append an entry; no other code change.
     const SETUPS = [
+      {
+        key:        'p1_rebound',
+        label:      'DITP P1 - Rebound off horizontal support',
+        shortLabel: 'P1',
+        run:        'yf',
+        badgeText:  () => 'P1',
+        tooltipDetail: c => {
+          if (c.support_level == null) return '';
+          const lvl = `$${Number(c.support_level).toFixed(2)}`;
+          if (c.bounce_magnitude_atr != null) {
+            return `S=${lvl}, bounce ${Number(c.bounce_magnitude_atr).toFixed(2)}xATR`;
+          }
+          return `S=${lvl}`;
+        },
+      },
       {
         key:        'ditp',
         label:      'DITP P2 - Resistance breakout',
         shortLabel: 'P2',
         run:        'yf',
-        matchDetail: c => (c.tier || c.variant)
-          ? `${c.tier || '?'}/${c.variant || '?'}`
+        badgeText:  () => 'P2',
+        tooltipDetail: c => (c.tier || c.variant)
+          ? `tier ${c.tier || '?'} / variant ${c.variant || '?'}`
           : '',
+      },
+      {
+        key:        'p3_retest',
+        label:      'DITP P3 - Retest of broken resistance',
+        shortLabel: 'P3',
+        run:        'yf',
+        badgeText:  () => 'P3',
+        tooltipDetail: c => {
+          if (c.polarity_level == null) return '';
+          const lvl = `$${Number(c.polarity_level).toFixed(2)}`;
+          if (c.bounce_magnitude_atr != null) {
+            return `flip=${lvl}, bounce ${Number(c.bounce_magnitude_atr).toFixed(2)}xATR`;
+          }
+          return `flip=${lvl}`;
+        },
       },
       {
         key:        'ema_rebound',
         label:      'EMA rebound (20 / 50 / 200)',
         shortLabel: 'EMA',
         run:        'yf',
-        matchDetail: c => c.ema_anchor || '',
+        // EMA rebound's badge IS the anchor EMA (EMA20 / EMA50 / EMA200)
+        // -- which EMA acted as support is the signal the user wants to
+        // see at a glance, not a generic "EMA" tag. Fallback to "EMA"
+        // if the field is somehow missing.
+        badgeText:  c => c.ema_anchor || 'EMA',
+        tooltipDetail: c => c.ema_anchor ? `bounce off ${c.ema_anchor}` : '',
       },
       // Stubs kept in the registry so we remember they exist + can flip
       // their `run` to 'yf' when the backend dispatch lands. They never
@@ -1519,19 +1560,20 @@
 
     // Build the HTML for the Setup column of one Finviz row. Returns
     // either a "-" for no matches, or one or more <span class="tag strategy">
-    // badges, one per setup that matched this symbol.
+    // badges, one per setup that matched this symbol. The visible badge
+    // text comes from `setup.badgeText(candidate)`; the hover tooltip
+    // appends `setup.tooltipDetail(candidate)` to `setup.label`.
     function setupBadgesHtml(symbol) {
       const badges = [];
       for (const setup of SETUPS) {
         if (setup.run !== 'yf') continue;
         const cand = candidateFor(setup, symbol);
         if (!cand) continue;
-        const detail = setup.matchDetail ? setup.matchDetail(cand) : '';
-        const text = detail
-          ? `${setup.shortLabel} ${detail}`
-          : setup.shortLabel;
+        const text = setup.badgeText ? setup.badgeText(cand) : (setup.shortLabel || '?');
+        const tooltip = setup.tooltipDetail ? setup.tooltipDetail(cand) : '';
+        const title = tooltip ? `${setup.label} — ${tooltip}` : setup.label;
         badges.push(
-          `<span class="tag strategy" title="${setup.label} - ${detail || 'match'}">${text}</span>`
+          `<span class="tag strategy" title="${title}">${text}</span>`
         );
       }
       return badges.length ? badges.join(' ') : '<span class="muted">-</span>';

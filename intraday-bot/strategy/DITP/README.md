@@ -14,6 +14,8 @@ just drops a `strategy/DITP/<setup_name>/` subfolder.
 - `scanner.py` — DITP P2 Pattern scanner CLI. Reads daily parquet bars from `data/price_history/daily/`, applies the §6 eligibility filters (EMA stack + real-ceiling resistance + signal-candle anatomy + pending-breakout state), classifies sub-variant A / B / C, then runs the §6.5 ranking layer (5-component score + 5 caution flags + tier mapping). Writes `state/watchlist_ditp_<tomorrow>.txt` + `.json`. Source: `strategies-reference/DITP.md` §6 + §6.5.
 - `tc_scanner.py` — DITP TC (Trend Continuation) **EOD Day-0** scanner CLI. Walks the most recent `state/watchlist_ditp_*.json`, filters to symbols whose Day-0 daily candle both (a) closed above the P2 candidate's `resistance` (= `range_high`) and (b) printed bullish (close > open AND close in upper half of range), and writes `state/watchlist_tc_<tomorrow>.txt` + `.json`. Source: `strategies-reference/DITP.md` §6 Setup 4 (Phase 1 — premarket validation + entry pipeline still TBD).
 - `ema_rebound.py` — **EMA rebound detector** (daily support bounce on EMA20 / EMA50 / EMA200). Single-file detector module; no CLI scanner / watchlist file (consumed only by the dashboard's `POST /scanner/yf_scan?setup=ema_rebound` for ad-hoc filtering of the Finviz universe). Returns the WHICH EMA acted as support + proximity/recency metrics. Source: user request 2026-05-27 ("find rebound on EMA20 or EMA50 or EMA200"). `__version__ = "1.0.0"`. Public API: `detect_ema_rebound(symbol, cfg)` -> dict | None; `scan_universe(symbols, cfg)` -> list[dict]. Config: `EMARebConfig` (lookback_bars=5, touch_tolerance_atr=0.3, max_distance_atr=1.0, require_stack=True, require_above_ema200=True, require_bullish_close=True, min_close_position=0.5).
+- `p1_rebound.py` — **DITP P1 detector** -- rebound off a horizontal SUPPORT level (long-side mirror of P2). Trend gate (EMA20>EMA50>EMA200) + bullish reclaim candle + horizontal-support touch via `resources/sr_levels.horizontal_support_np` + **reaction-magnitude gate** (bounce from touch's low to today's close >= 0.3 * ATR; the touch alone isn't enough — a real visible bounce is required). Mountain-valley validation = same "old swing low + subsequent rally" logic as the resistance side. Single-file detector consumed by the dashboard's `POST /scanner/yf_scan?setup=p1_rebound`. Source: user framing 2026-05-27 ("P1 is price rebounding key support level... we want to see if price action is bouncing at the horizontal support"). `__version__ = "1.1.0"`. Public API: `detect_p1_rebound(symbol, cfg)` / `scan_universe(symbols, cfg)`. Config: `P1RebConfig`.
+- `p3_retest.py` — **DITP P3 detector** -- retest of a broken resistance level (polarity flip; resistance → support). Trend gate + bullish reclaim candle + broken-R candidate from `resources/sr_levels.find_broken_resistance_below` (gated by staleness window: breakout 3-45 days ago) + **reaction-magnitude gate** (same math as P1; price must show a visible bounce off the polarity-flip level, not just drift near it). Single-file detector consumed by the dashboard's `POST /scanner/yf_scan?setup=p3_retest`. Source: user framing 2026-05-27 ("P3 is price have already breakout of a key resistance level and the price come back to retest... price action shows reactions in the resistance turned support"). `__version__ = "1.1.0"`. Public API: `detect_p3_retest(symbol, cfg)` / `scan_universe(symbols, cfg)`. Config: `P3RetestConfig`.
 - `ditp_p2/` — Setup 1 (P2 Pattern). See its own README.
 - `ditp_tc/` — Setup 4 (TC — Trend Continuation). See its own README.
 - `_decision_engine.py` — Family-shared decision math (entry/stop/target/tradeability for the live entry pipeline). Currently used by `ditp_p2/backtest_adapter.py`.
@@ -22,9 +24,9 @@ just drops a `strategy/DITP/<setup_name>/` subfolder.
 
 | Setup | Trigger | Status |
 |---|---|---|
-| 1 (P2 — A/B/C variants) | Day of breakout (intraday tape watch) | scaffolded — `ditp_p2/` v0.1.0 watch-only |
-| 2 (P1) | TBD | not yet taught (DITP.md §4) |
-| 3 (P3 — retest) | Day of retest support hold | spec partial, not scaffolded |
+| 1 (P2 — A/B/C variants) | Day of breakout (intraday tape watch) | scaffolded — `ditp_p2/` v0.1.0 watch-only + dashboard scan `p2_pattern` (via `scanner.py`) |
+| 2 (P1) | Day of support reclaim / rebound | dashboard scan `p1_rebound.py` v1.0.0 — filter only (no live entry pipeline yet) |
+| 3 (P3 — retest) | Day of polarity-flip retest reclaim | dashboard scan `p3_retest.py` v1.0.0 — filter only (no live entry pipeline yet) |
 | 4 (TC — Trend Continuation) | Day +1 / Day +2 after a qualifying breakout / rebound | scaffolded — `ditp_tc/` v0.1.0 watch-only, EOD Day-0 scanner in `tc_scanner.py`; Phase 2 (premarket) + Phase 3 (entry) TBD |
 
 ## Convention reminders (from CLAUDE.md)
@@ -34,6 +36,59 @@ just drops a `strategy/DITP/<setup_name>/` subfolder.
 - Every rule edit bumps `__version__` in the setup's `impl.py` and adds a dated entry to that setup's README changelog (which IS the version history — there's no separate `changelog.md` per CLAUDE.md).
 
 ## Changelog
+
+### 2026-05-27 — `p1_rebound.py` v1.1.0 + `p3_retest.py` v1.1.0: bounce-magnitude reaction gate
+
+User rule 2026-05-27: *"we want to see if price action is bouncing at the horizontal support... if price action react by [re]bouncing in the horizontal support, we have a potential P1 setup."* And for P3: *"price action shows reactions in the resistance turned support."* The key word in both is **REACTION** — a touch followed by sideways drift isn't a setup; a touch followed by a visible bounce is. The v1.0.0 detectors gated on touch + bullish close + reclaim, but never measured the size of the reaction itself.
+
+**v1.1.0 adds a reaction-magnitude gate (P1 + P3 identical math):**
+```
+bounce_low           = min(lows[touched_idx:])           # lowest low since touch
+bounce_magnitude_atr = (last_close - bounce_low) / atr
+gate: bounce_magnitude_atr >= cfg.min_bounce_atr          # default 0.3
+```
+
+The "lowest low since touch" framing handles multi-bar touches where the deepest probe of the level might be earlier than the most-recent qualifying touch. The magnitude is in ATR units (per CLAUDE.md normalization rule), so the same 0.3 default applies across $4-ATR and $1.50-ATR tickers without retuning.
+
+**Recency tightened to keep the reaction fresh:**
+- P1: `touch_lookback_bars` 5 → 3 (a 5-day-old touch with no follow-through isn't a "reaction")
+- P3: `touch_lookback_bars` 7 → 5 (P3 retests can take a bit longer to develop than P1 rebounds)
+
+**Reaction strength now drives sort order.** Added a `reaction` score component (`min(10, int(bounce_magnitude_atr * 10))`) to both detectors. Stronger bounces score higher.
+
+**Candidate dict** gains a `bounce_magnitude_atr` field for downstream consumers (the dashboard's Setup-column rendering picks it up automatically — the matchDetail formatter still shows the level price, but raw data is there if needed).
+
+**Smoke-tested impact**:
+- P1: same 3 symbols pass, reordered — AME (bounce 0.76 ATR) now ranks ahead of ABCB (bounce 0.40 ATR) despite equal mountain anchors. Reaction strength is the new tiebreaker.
+- P3: 12 → 11 candidates (ADEA filtered for weak bounce). Top is now a 4-way tie at score 42: BRX (0.88 ATR), AOSL (0.86), BNL (1.00), AA (1.34) — all showing decisive polarity-flip reactions. Previous top BHF dropped to #5 (its 0.66-ATR bounce is middling despite proximity 0.06 ATR).
+
+Per CLAUDE.md bump rule: MINOR (new gating filter + sort-order knob, plan-dict shape unchanged besides the additive field).
+
+### 2026-05-27 — S/R lookback unified to 1 year (~252 trading days) across P1 / P2 / P3
+
+User rule 2026-05-27: *"when you look at Support and Resistance on a daily chart, you will look at 1 year daily chart to look at valley and mountains."* The three S/R-anchored DITP detectors had different defaults from earlier tuning:
+
+- `scanner.py` (P2): `resistance_lookback = 90` → **252**
+- `p1_rebound.py` (P1): `support_lookback = 120` → **252**
+- `p3_retest.py` (P3): `lookback = 180` → **252**
+
+Minimum bar requirement in each detector raised correspondingly (from 220 to `cfg.lookback + 14` = 266). yFinance fetch in `dashboard/server.py` bumped from 400 → 500 calendar days so the histories arrive with margin (~355 trading days delivered vs 266 needed).
+
+Smoke-tested impact: AAPL's support_below validation jumped from 2 touches / 2 mountains → 5 / 5 at the same level (older touches now in range); ABBV gained an extra historic P3 candidate; P1 / P3 scanners returned the same actionable candidate sets (staleness window and EMA gates dominate over the lookback for those).
+
+This change is documented as a rule in the `sr_levels.py` module docstring as well, so the rationale doesn't get lost if a future caller wonders why the defaults look "round" rather than "tuned".
+
+### 2026-05-27 — `p1_rebound.py` + `p3_retest.py` v1.0.0: DITP P1 and P3 dashboard scans
+
+User: *"ok for front end me will also apply the P1, P2 and P3 setup"* — P2 was already wired via `scanner.py` (key `ditp` in the dashboard SETUPS registry); P1 and P3 needed parallel detectors so the same Finviz-universe + Setup-column workflow could cover all three structural-level setups.
+
+Both detectors are single-file modules in the same shape as `ema_rebound.py` — `@dataclass` config + `detect_*` returning candidate dict | None + `scan_universe` returning sorted list. No CLI watchlist files; consumed only by the dashboard's `POST /scanner/yf_scan?setup={p1_rebound,p3_retest}` for ad-hoc filtering of the Finviz universe. The "no entry pipeline yet" status applies to both — they're filters/scanners, not live trading systems.
+
+**P1 (rebound off horizontal support)** is the long-side mirror of P2. Uses `resources/sr_levels.horizontal_support_np` for level discovery (mountain-valley anchors instead of mountain peaks; no floor gate so closest-recent valley wins — see sr_levels.py for the asymmetry rationale). Bullish reclaim candle + recent low-touch within `touch_lookback_bars=5`. Smoke-test against the 211-symbol laptop daily set returned 3 candidates: ABCB (S=$83.75, 2 mountain anchors, today's touch), AME, ACA — all in clean uptrends bouncing tightly off a validated support.
+
+**P3 (retest of broken resistance)** uses `resources/sr_levels.find_broken_resistance_below` to enumerate historic mountain peaks now below current price, then applies a STALENESS WINDOW (`breakout_min_age=3, breakout_max_age=45`) — too-fresh peaks are still on the rocket-up from the breakout, too-stale peaks are no longer load-bearing. Closest qualifying level wins (the helper already sorts highest-first). Smoke-test returned 12 candidates; top scorer BHF showed the textbook polarity flip: flip level $62.63, today's close $62.67 (+0.06 ATR — basically touching), breakout 26 days ago. Score components: staleness sweet-spot (peak 7-28 days), proximity, recency.
+
+Default config knobs all ATR-relative per CLAUDE.md normalization rule. Both detectors require uptrend stack + close > EMA200 (no dead-cat-bounce / mid-downtrend false positives).
 
 ### 2026-05-27 — `ema_rebound.py` v1.0.0: daily support-bounce detector on EMA20 / EMA50 / EMA200
 

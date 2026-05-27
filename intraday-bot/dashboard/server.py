@@ -2867,7 +2867,7 @@ async def scanner_run(family: str) -> JSONResponse:
 #
 # Returns (symbols, source_label) so the response can tell the UI which
 # universe was actually used.
-_VALID_SETUPS = ("ditp", "ditp_tc", "ema_rebound")
+_VALID_SETUPS = ("ditp", "ditp_tc", "ema_rebound", "p1_rebound", "p3_retest")
 
 
 def _universe_for_setup(setup: str) -> tuple[list[str], str]:
@@ -2899,7 +2899,7 @@ def _universe_for_setup(setup: str) -> tuple[list[str], str]:
 
 
 @app.get("/chart/yf_bars")
-async def chart_yf_bars(symbol: str, lookback_days: int = 400) -> JSONResponse:
+async def chart_yf_bars(symbol: str, lookback_days: int = 500) -> JSONResponse:
     """Return daily OHLCV bars for one symbol, fetched fresh via yFinance.
 
     Consumer: the dashboard's chart pane. Renders candles + EMAs using
@@ -2935,7 +2935,7 @@ async def chart_yf_bars(symbol: str, lookback_days: int = 400) -> JSONResponse:
 
 
 @app.get("/chart/sr_levels")
-async def chart_sr_levels(symbol: str, lookback_days: int = 400) -> JSONResponse:
+async def chart_sr_levels(symbol: str, lookback_days: int = 500) -> JSONResponse:
     """Return key support / resistance levels for one symbol.
 
     Built on resources/sr_levels.find_key_levels which calls:
@@ -3125,7 +3125,10 @@ async def scanner_yf_scan(
         bars_by_symbol = await loop.run_in_executor(
             None,
             lambda: yf_daily_bars.fetch_daily_batch(
-                symbols, lookback_days=400, threads=True, progress=False,
+                # 500 calendar days ~= 355 trading days, comfortably
+                # above the 252+14-bar minimum imposed by P1/P2/P3 +
+                # find_key_levels (user 1-year-window rule 2026-05-27).
+                symbols, lookback_days=500, threads=True, progress=False,
             ),
         )
     except Exception as exc:
@@ -3167,6 +3170,20 @@ async def scanner_yf_scan(
             candidates_dicts = await loop.run_in_executor(
                 None,
                 lambda: ema_mod.scan_universe(symbols, cfg),
+            )
+        elif setup == "p1_rebound":
+            from strategy.DITP import p1_rebound as p1_mod  # type: ignore
+            cfg = p1_mod.P1RebConfig()
+            candidates_dicts = await loop.run_in_executor(
+                None,
+                lambda: p1_mod.scan_universe(symbols, cfg),
+            )
+        elif setup == "p3_retest":
+            from strategy.DITP import p3_retest as p3_mod  # type: ignore
+            cfg = p3_mod.P3RetestConfig()
+            candidates_dicts = await loop.run_in_executor(
+                None,
+                lambda: p3_mod.scan_universe(symbols, cfg),
             )
         else:
             # Should be unreachable -- _VALID_SETUPS guard at top + ditp_tc

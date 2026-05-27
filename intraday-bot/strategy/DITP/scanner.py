@@ -69,8 +69,10 @@ STATE_DIR = SKILL_DIR / "state"
 @dataclass
 class P2Config:
     """All thresholds are ticker-relative (ATR multiples + scale-free slopes)."""
-    # Resistance discovery
-    resistance_lookback: int = 90       # daily bars to scan for swing highs
+    # Resistance discovery. User rule 2026-05-27: daily-chart S/R is a
+    # 1-year (~252 trading day) read for valleys and mountains. Same
+    # window used by P1 / P3 / find_key_levels.
+    resistance_lookback: int = 252      # daily bars to scan for swing highs
     swing_radius: int = 3               # bars on each side for swing-high local-max
     cluster_band_pct: float = 0.01      # within 1% of each other forms a cluster
     min_touches: int = 2                # ≥ N swing highs in cluster (any kind)
@@ -464,8 +466,8 @@ def detect_p2(symbol: str, cfg: P2Config,
         # however the parquet was written. Keep bars whose date is ≤ cutoff.
         cutoff = as_of_date
         bars = [b for b in bars if _bar_date(b["t"]) <= cutoff]
-    if len(bars) < 220:
-        return None  # need ≥ 200 for EMA200 to stabilize + headroom
+    if len(bars) < cfg.resistance_lookback + 14:
+        return None  # need ≥ lookback + ATR(14) headroom; user rule 2026-05-27: 1-year window
     closes = np.array([b["c"] for b in bars], dtype=float)
     highs  = np.array([b["h"] for b in bars], dtype=float)
     lows   = np.array([b["l"] for b in bars], dtype=float)

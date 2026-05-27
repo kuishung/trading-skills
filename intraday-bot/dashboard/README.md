@@ -29,6 +29,59 @@ Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-05-27 — Setup badges: clean labels (P1/P2/P3/EMA20/EMA50/EMA200), detail moves to tooltip
+
+User refinement 2026-05-27: *"on the label, just label it EMA20, EMA50, EMA200, P1, P2, P3 at the watchlist."* The previous iteration (same day, hours earlier) put the level price + bounce magnitude inline (`P1 $83.75 ↑0.40A`). Too noisy for the 270-px watchlist column once multiple badges stack per row.
+
+**New badge text** = just the setup label, period:
+- P1 / P2 / P3 (the DITP setups)
+- EMA20 / EMA50 / EMA200 (whichever EMA actually anchored the rebound — driven by `c.ema_anchor` from `ema_rebound.detect_ema_rebound`)
+
+**Detail moves to the hover tooltip.** Each badge's `title` attribute shows the full label + the diagnostic numbers:
+- P1: `DITP P1 - Rebound off horizontal support — S=$83.75, bounce 0.40xATR`
+- P2: `DITP P2 - Resistance breakout — tier A / variant B`
+- P3: `DITP P3 - Retest of broken resistance — flip=$31.04, bounce 0.88xATR`
+- EMA: `EMA rebound (20 / 50 / 200) — bounce off EMA50`
+
+**Registry refactor**: SETUPS entries now carry `badgeText(candidate)` (the visible text — a function so EMA can return the actual anchor) and `tooltipDetail(candidate)` (the hover text). The legacy `matchDetail` field is retired. `setupBadgesHtml` was simplified accordingly. `shortLabel` is kept on each entry because `runAllSetups`'s progress meta still references it ("building P1 (1/4)..." status line).
+
+### 2026-05-27 — Setup badges: show bounce magnitude inline (P1 + P3 reaction visibility)
+
+User rule 2026-05-27: *"we want to see if price action is bouncing at the horizontal support... if price action react by [re]bouncing in the horizontal support, we have a potential P1 setup."* Same logic for P3. The v1.1.0 backend now gates on a reaction-magnitude threshold (`bounce_magnitude_atr >= 0.3`) AND returns the field in every candidate; the dashboard surfaces it.
+
+**Badge format** (P1 and P3 use the same convention):
+- Before: `P1 $83.75` (just the support level)
+- After: `P1 $83.75 ↑0.40A` (level + bounce magnitude in ATR units)
+
+The `↑N.NNA` suffix uses an up-arrow + "A" abbreviation for "ATR" so the badge stays compact (the watchlist column is 270 px). Strong bounces (`↑1.00A+`) stand out visually from weak ones (`↑0.40A`). If `bounce_magnitude_atr` is missing on a candidate dict (e.g. an older v1.0.0 server response), the badge falls back to showing just the level — no crash, no missing badge.
+
+**Where the rendering happens** (no code changes besides the matchDetail formatters):
+- `SETUPS` registry entries for `p1_rebound` and `p3_retest` have their `matchDetail(c)` formatter extended to include the bounce magnitude.
+- The downstream `setupBadgesHtml(symbol)` + `renderFinvizTable()` pipeline picks it up automatically — they were already designed for "give me whatever the matchDetail formatter returns."
+
+**Auto-rendering flow** (already wired; restating for documentation completeness): on Scanner view activation, `loadFinvizTickers()` fetches the 43-ticker universe, then `runAllSetups()` automatically fires one `POST /scanner/yf_scan?setup=<key>` per yf setup (P1 → P2 → P3 → EMA), and `renderFinvizTable()` re-renders the watchlist after each so badges light up progressively. Matched tickers float to the top, grouped by the SETUPS array order; within each setup group, Finviz's original volume-desc order is preserved.
+
+### 2026-05-27 — yFinance fetch window: 400 → 500 calendar days (1-year S/R lookback rule)
+
+User rule 2026-05-27 (recorded in `resources/sr_levels.py` docstring and the DITP README): *"when you look at Support and Resistance on a daily chart, you will look at 1 year daily chart to look at valley and mountains."* The P1/P2/P3 detectors and `find_key_levels` now require >= 266 daily bars (252-bar lookback + 14-bar ATR warmup). At 400 calendar days the yFinance fetch delivers ~285 trading days = only ~19 bars of headroom; at 500 calendar days we deliver ~355 trading days = comfortable margin.
+
+Affected endpoints:
+- `GET /chart/yf_bars` default lookback_days 400 → 500
+- `GET /chart/sr_levels` default lookback_days 400 → 500
+- `POST /scanner/yf_scan` internal `fetch_daily_batch(..., lookback_days=500, ...)`
+
+Caller-facing change is silent — the param is still overrideable, just with a more generous default.
+
+### 2026-05-27 — Scanner: add P1 + P3 setups alongside existing P2 + EMA-rebound
+
+User: *"ok for front end me will also apply the P1, P2 and P3 setup"* — the existing scanner only wired DITP P2 (key `ditp`) and the EMA-rebound filter as `yf`-runnable setups. P1 (rebound off horizontal support) and P3 (retest of broken resistance / polarity flip) needed the same first-class treatment so all three structural-level setups can run against the Finviz universe through the same Setup-column workflow.
+
+**Backend (`server.py`)**: `_VALID_SETUPS` extended to `("ditp", "ditp_tc", "ema_rebound", "p1_rebound", "p3_retest")`. New dispatch branches in `POST /scanner/yf_scan` call `strategy/DITP/p1_rebound.py::scan_universe` and `strategy/DITP/p3_retest.py::scan_universe` (both v1.0.0). Same monkey-patch-bars_store pattern as the other branches — fresh yFinance bars, no parquets touched.
+
+**Frontend (`web/index.html`)**: two new entries in the `SETUPS` registry — `p1_rebound` (shortLabel "P1", matchDetail shows `$XX.XX` support level) and `p3_retest` (shortLabel "P3", matchDetail shows the polarity-flip level). Setups are ordered P1 → P2 → P3 → EMA for natural reading. The "Setup" column in the Finviz watchlist now renders up to four badges per row when a ticker matches multiple setups (e.g. P1 + EMA rebound at the same time, which is common — both detect support reclaim from different anchor sources).
+
+No UI plumbing changes needed beyond the registry entry — the existing `runAllSetups` / `setupBadgesHtml` / Setup-column rendering loop the `SETUPS` array, so adding a new setup is a single-row append. Mirrors the dashboard-visibility rule's "auto-surfaces already wired" guidance.
+
 ### 2026-05-27 — Chart pane: S/R strip (R / S / P3 retest) wired to `GET /chart/sr_levels`
 
 User question 2026-05-27: *"would you be able to identify key support and resistance we have a pattern recognition in the resources?"* — then framed the three DITP setups in terms of structural levels (P1 = rebound off support, P2 = breakout to resistance, P3 = retest of broken resistance). The dashboard chart pane previously showed only the symbol + EMAs via the iframe widget; the user now needs the structural-level read without having to draw on TradingView manually for every ticker.

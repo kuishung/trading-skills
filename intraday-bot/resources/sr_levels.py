@@ -34,6 +34,16 @@ Mathematical structure:
 All thresholds ticker-relative (ATR multiples) per CLAUDE.md
 "Normalized strategy parameters" rule.
 
+Lookback window for daily-chart S/R is 252 trading days (~1 year) for
+every level finder in this module. User rule 2026-05-27: "when you
+look at Support and Resistance on a daily chart, you will look at 1
+year daily chart to look at valley and mountains." Less than a year
+under-counts structural levels (you miss the prior earnings cycle and
+the prior big swing); more than a year over-counts stale levels that
+the market has long since forgotten. 252 is the canonical anchor for
+all three finders (resistance above, support below, broken-resistance
+polarity-flip).
+
 Public API:
   horizontal_support_np(highs, lows, closes, current_price, atr, **kw)
       -> dict | None  (same shape as horizontal_resistance_np)
@@ -72,7 +82,7 @@ __version__ = "1.0.0"
 def horizontal_support_np(highs, lows, closes, current_price: float,
                           atr: float,
                           *,
-                          lookback: int = 120,
+                          lookback: int = 252,
                           swing_radius: int = 3,
                           min_touches: int = 2,
                           cluster_band_pct: float = 0.01,
@@ -194,7 +204,7 @@ def horizontal_support_np(highs, lows, closes, current_price: float,
 def find_broken_resistance_below(highs, lows, closes, current_price: float,
                                  atr: float,
                                  *,
-                                 lookback: int = 180,
+                                 lookback: int = 252,
                                  swing_radius: int = 3,
                                  mountain_min_age_bars: int = 15,
                                  mountain_pullback_atr: float = 2.0,
@@ -304,7 +314,11 @@ def find_key_levels(symbol: str) -> dict:
         "support_below":     None,
         "broken_resistance": [],
     }
-    if len(bars) < 50:
+    # User rule 2026-05-27: daily-chart S/R looks at a 1-year window
+    # (~252 trading days) for valleys and mountains. Require enough
+    # bars that the lookback can be fully populated (252) plus a
+    # small ATR-warmup buffer.
+    if len(bars) < 252 + 14:
         return out_empty
     highs  = np.array([b["h"] for b in bars], dtype=float)
     lows   = np.array([b["l"] for b in bars], dtype=float)
@@ -316,20 +330,20 @@ def find_key_levels(symbol: str) -> dict:
 
     resistance = horizontal_resistance_np(
         highs, lows, closes, current, atr,
-        lookback=120, swing_radius=3, min_touches=2,
+        lookback=252, swing_radius=3, min_touches=2,
         cluster_band_pct=0.01, range_pct=0.02,
         mountain_min_age_bars=15, mountain_pullback_atr=2.0,
         max_below_window_high_pct=0.02,
     )
     support = horizontal_support_np(
         highs, lows, closes, current, atr,
-        lookback=120, swing_radius=3, min_touches=2,
+        lookback=252, swing_radius=3, min_touches=2,
         cluster_band_pct=0.01, range_pct=0.02,
         mountain_min_age_bars=15, mountain_pullback_atr=2.0,
     )
     broken = find_broken_resistance_below(
         highs, lows, closes, current, atr,
-        lookback=180, swing_radius=3,
+        lookback=252, swing_radius=3,
         mountain_min_age_bars=15, mountain_pullback_atr=2.0,
         dedup_pct=0.01, max_results=3,
     )
