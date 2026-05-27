@@ -29,6 +29,20 @@ Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-05-27 - `start_dashboard.bat`: fixed silent failure on double-click ('M' is not recognized...)
+
+User reported that double-clicking `start_dashboard.bat` produced "nothing happens" — no browser open, no dashboard, no visible window. Reproduction via `cmd /c start_dashboard.bat` exposed `'M' is not recognized as an internal or external command` on stderr; the dashboard launch logic was being silently corrupted.
+
+Root cause (TWO compounding bugs):
+1. The file had LF-only line endings (Unix-style), but Windows `cmd.exe`'s `^` line-continuation parser is unreliable without CRLF. The multi-line `powershell -Command "..." ^ "..." ^ ...` block was being mis-tokenized — cmd was treating `Minimized;"` from line 19 as the start of a new command, hence the `'M'` error.
+2. Even when the `^`-continuation parsing worked, the multi-line argument-array form of `powershell -Command` is fragile across PowerShell versions.
+
+Fix: rewrote `start_dashboard.bat` to use a SINGLE-LINE `powershell -Command "..."` with semicolons, no `^` continuations needed. Also forced CRLF line endings on `start_dashboard.bat`, `_supervise_dashboard.bat`, and `stop_dashboard.bat` (all three were LF-only) via a one-shot `[System.IO.File]::WriteAllText` rewrite. The single-line form is unambiguous regardless of whether the file is LF or CRLF, but CRLF is now the on-disk standard for these files going forward.
+
+Verified end-to-end: bat now exits 0 with empty stderr, supervised dashboard launches cleanly, port 8000 listens, browser auto-opens to `http://localhost:8000`, dashboard responds with HTTP 200.
+
+ASCII-only in the file body per the existing house style (no em-dashes).
+
 ### 2026-05-27 - `tray_status.py`: Tk-on-main-thread + pystray-on-daemon-thread (final architecture)
 
 The subprocess approach (commit 3a7bcf2) had a Windows-specific failure: after the first "Show Status" click successfully opened a window subprocess, the PARENT tray process died. Confirmed 2026-05-27 by process queries — `Get-CimInstance` returned no python.exe with `tray_status.py` after the first click. Why exactly the spawn killed the parent on this user's setup is unclear (possible interaction between pystray's win32 NotifyIcon, the py.exe launcher chain, and `subprocess.Popen` with `CREATE_NO_WINDOW`), but the symptom — tray icon disappears after first window-open — was reproducible.
