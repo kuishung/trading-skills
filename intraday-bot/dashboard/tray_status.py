@@ -33,7 +33,7 @@ from __future__ import annotations
 import json
 import os
 import re
-import subprocess
+import queue
 import sys
 import threading
 import time
@@ -683,60 +683,52 @@ def _icon_for(state: str, frame_index: int, progress: float) -> Image.Image:
 
 
 # ---- Menu actions ----
+#
+# Architecture (2026-05-27, after the subprocess approach proved to kill the
+# parent tray process on Windows):
+#
+#   - The Tk root + progress window are created ONCE by main() on the
+#     interpreter's real main thread, then immediately withdrawn (hidden).
+#   - pystray runs in a daemon thread (its Show Status / Quit callbacks
+#     fire on that thread).
+#   - Cross-thread communication uses a Queue + a periodic Tk-side poll
+#     (root.after(100, ...)). Tk widgets are NEVER touched from the
+#     pystray thread -- only the queue is.
+#   - "Show Status" enqueues 'show'; the Tk poll deiconifies + lifts.
+#   - "Close" / Esc / WM_DELETE withdraws (hides) the window, NOT
+#     destroys -- so subsequent Show Status clicks reuse the same
+#     persistent window.
+#   - "Quit" enqueues 'quit'; the Tk poll calls icon.stop() then
+#     root.quit() which ends mainloop and exits cleanly.
+#
+# Why this replaces the previous subprocess approach:
+#   The previous code (3a7bcf2) spawned a fresh Python process per click
+#   to dodge the "main thread is not in main loop" tkinter error. That
+#   worked the first click but on Windows the spawn somehow caused the
+#   PARENT tray process to die, so the tray icon disappeared after the
+#   first window-open. Confirmed 2026-05-27 via process queries:
+#   Get-CimInstance returned no python.exe with tray_status.py after the
+#   first click. The proper fix is the Tk-on-main-thread pattern --
+#   single process, persistent window, no spawn churn.
 
-# Single-instance guard for the progress window — calling Show Status while
-# one is already open just no-ops (rather than stacking multiple windows).
-_progress_window_active = threading.Event()
+_command_queue: "queue.Queue[str]" = queue.Queue()
 
 
-def _show_progress_window():
-    """Pop up a small always-on-top window with a big percentage + visual
-    progress bar + current-run stats. Refreshes itself every 3 seconds while
-    open. Replaces the old Windows-toast notification on left-click.
+def _build_progress_window(root):
+    """Build the progress-window widgets on `root` and wire up the periodic
+    refresh + animation callbacks. The window starts hidden (root.withdraw
+    is called by main BEFORE this builds); `_command_queue` 'show' commands
+    deiconify it.
 
-    User rule 2026-05-26: *"i want the percentage and a progress bar to show
-    when i click the tray icon"*. The toast was text-only and Windows
-    truncated long messages; a Tk window can show a real progress bar and
-    self-refresh.
-
-    Lifecycle hardening (2026-05-26): the WHOLE function body is now wrapped
-    in try/finally so `_progress_window_active` is always cleared on exit --
-    regardless of what raised. Previously, if anything between the .set()
-    call and the mainloop's enclosing try/finally raised (tk.Tk() can fail
-    on a daemon thread, ttk style configuration can fail under certain Tcl
-    builds, etc.), the flag stayed set forever and every subsequent click
-    no-op'd silently -- presenting to the user as "tray icon can't open the
-    window". The fix: hard guarantee the flag is released. Exceptions also
-    log to stderr so a foreground-launched tray surfaces the real cause.
+    Called ONCE at startup. The widgets, refresh_data + animate scheduling,
+    and close-handler are all permanent for the process lifetime. Closing
+    the window via the X / Close button / Escape calls root.withdraw() so
+    the next Show Status click can re-show without rebuilding anything.
     """
-    if _progress_window_active.is_set():
-        return
-    _progress_window_active.set()
-    try:
-        _show_progress_window_inner()
-    except Exception as exc:
-        import traceback
-        sys.stderr.write(
-            f"\n[tray_status] _show_progress_window failed: "
-            f"{type(exc).__name__}: {exc}\n"
-        )
-        traceback.print_exc(file=sys.stderr)
-        sys.stderr.flush()
-    finally:
-        _progress_window_active.clear()
+    import tkinter as tk
+    from tkinter import ttk
 
-
-def _show_progress_window_inner():
-    """The original window-setup + mainloop, now in its own function so
-    `_show_progress_window`'s try/finally lifecycle wrapper stays small
-    and clearly readable."""
-    try:
-        import tkinter as tk
-        from tkinter import ttk
-    except ImportError:
-        return
-
-    win = tk.Tk()
+    win = root   # use the root window directly as the progress window
     win.title("Ingest Progress")
     win.geometry("420x330")
     win.resizable(False, False)
@@ -809,9 +801,12 @@ def _show_progress_window_inner():
     ).pack(pady=2)
 
     # Close button
+    # HIDE (withdraw), don't DESTROY -- destroy would kill the Tk root which
+    # holds the whole tray process together. Subsequent Show Status clicks
+    # just deiconify this same persistent window.
     def close():
         try:
-            win.destroy()
+            win.withdraw()
         except Exception:
             pass
 
@@ -952,57 +947,21 @@ def _show_progress_window_inner():
     refresh_data()
     animate()
     win.bind('<Escape>', lambda e: close())
+    # WM_DELETE_WINDOW = the X button. Hide instead of destroy (see close()).
     win.protocol("WM_DELETE_WINDOW", close)
-    # mainloop blocks until the window is closed; _progress_window_active is
-    # cleared by the outer _show_progress_window wrapper's finally clause
-    # regardless of whether mainloop returns cleanly or raises.
-    win.mainloop()
+    # NB: mainloop is started by main() on the root, not here. _build is
+    # purely setup; the actual event loop runs once for the whole process.
 
 
 def _on_show_status(icon, item):
-    """Default tray action (left-click) — open the progress window as a
-    SUBPROCESS rather than a daemon thread.
+    """Default tray action (left-click) -- enqueue a 'show' command.
 
-    Why subprocess: tkinter requires its operations to happen on the actual
-    main thread of the Python interpreter. pystray's "Show Status" handler
-    runs on a callback thread, and any daemon thread we spawn from it is
-    not the main thread either. Calling tk.Tk() + tk.StringVar(...) from
-    a non-main thread raises 'RuntimeError: main thread is not in main
-    loop' on Python 3.12 (we hit this on Hermes 2026-05-26 — see the
-    `7c00359` commit's diagnostic which surfaced the exception).
-
-    Spawning a subprocess gives each click its own fresh Python interpreter
-    where the spawned process's main thread IS the thread that runs Tk —
-    no thread-safety issues, no shared state to corrupt, and a single
-    foot-gun (a Tcl crash, a font failure) can't take down the tray.
-
-    Cost: ~0.5–1s process startup latency per click. Acceptable for a
-    tray-icon click, given the alternative is "doesn't work at all."
+    Called from pystray's daemon thread. We MUST NOT touch Tk widgets
+    from this thread (see the architecture comment at the top of the
+    'Menu actions' section). The main thread polls _command_queue every
+    100ms via root.after(...) and handles the actual deiconify.
     """
-    script = Path(__file__).resolve()
-    # pythonw.exe (no console window) preferred over python.exe on Windows.
-    # sys.executable might be either depending on how the tray was launched;
-    # py -3.12 launcher route handles both transparently.
-    creation_flags = 0
-    if sys.platform == "win32":
-        # CREATE_NO_WINDOW = 0x08000000 — suppresses the brief cmd-window
-        # flash when launching a child python from a tray icon click.
-        creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
-    try:
-        subprocess.Popen(
-            [sys.executable, str(script), "--window-only"],
-            cwd=str(script.parent.parent),   # intraday-bot root
-            creationflags=creation_flags,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    except Exception as exc:
-        sys.stderr.write(
-            f"[tray_status] failed to spawn window subprocess: "
-            f"{type(exc).__name__}: {exc}\n"
-        )
-        sys.stderr.flush()
+    _command_queue.put('show')
 
 
 def _on_open_log(icon, item):
@@ -1045,7 +1004,8 @@ def _on_reset_milestones(icon, item):
 
 
 def _on_quit(icon, item):
-    icon.stop()
+    """Enqueue 'quit'; main thread will call icon.stop() + root.quit()."""
+    _command_queue.put('quit')
 
 
 # ---- Main loop ----
@@ -1109,15 +1069,33 @@ def _update_loop(icon: "pystray.Icon"):
 
 
 def main() -> int:
-    # --window-only mode: child subprocess spawned by _on_show_status. Just
-    # opens the progress window on this process's main thread (which IS the
-    # actual main thread of this fresh interpreter — no tkinter threading
-    # error), runs the mainloop, exits when the window closes. No pystray,
-    # no update loop, no milestones.
-    if "--window-only" in sys.argv:
-        _show_progress_window_inner()
-        return 0
+    # ---- Tk root on the actual main thread ----
+    # tkinter REQUIRES its operations to happen on the interpreter's main
+    # thread (this is exactly the constraint that broke the previous
+    # subprocess-based attempt). The root is created here, the progress
+    # window is built on it, then it's withdrawn (hidden) until the user
+    # clicks Show Status.
+    try:
+        import tkinter as tk
+    except ImportError:
+        sys.stderr.write("[tray_status] tkinter not available; cannot show progress window.\n")
+        return 1
 
+    root = tk.Tk()
+    root.withdraw()   # start hidden — Show Status click will deiconify
+    try:
+        _build_progress_window(root)
+    except Exception as exc:
+        import traceback
+        sys.stderr.write(
+            f"[tray_status] _build_progress_window failed: "
+            f"{type(exc).__name__}: {exc}\n"
+        )
+        traceback.print_exc(file=sys.stderr)
+        sys.stderr.flush()
+        return 1
+
+    # ---- pystray on a daemon thread ----
     menu = pystray.Menu(
         pystray.MenuItem("Show Status", _on_show_status, default=True),
         pystray.MenuItem("Refresh Now", _on_refresh_now),
@@ -1136,11 +1114,56 @@ def main() -> int:
         menu=menu,
     )
 
-    # Background updater
+    # Icon + update loop both go on daemon threads so they don't block the
+    # Tk mainloop on the main thread.
+    threading.Thread(target=icon.run, daemon=True).start()
     threading.Thread(target=_update_loop, args=(icon,), daemon=True).start()
 
-    # Blocks until _on_quit is called
-    icon.run()
+    # ---- Cross-thread command poll ----
+    # pystray callbacks (Show Status / Quit) put strings here; the Tk-side
+    # poller reads + acts. 100ms latency between click and window-show is
+    # imperceptible.
+    def process_commands():
+        try:
+            while True:
+                cmd = _command_queue.get_nowait()
+                if cmd == 'show':
+                    try:
+                        root.deiconify()
+                        root.lift()
+                        # Windows anti-focus-stealing: re-assert topmost
+                        # briefly so the window actually pops to front,
+                        # then leave it set (the window's permanent
+                        # behaviour is topmost anyway).
+                        root.attributes('-topmost', True)
+                        root.focus_force()
+                    except Exception as exc:
+                        sys.stderr.write(
+                            f"[tray_status] deiconify failed: {type(exc).__name__}: {exc}\n"
+                        )
+                elif cmd == 'quit':
+                    try:
+                        icon.stop()
+                    except Exception:
+                        pass
+                    root.quit()
+                    return   # stop polling — mainloop is about to exit
+        except queue.Empty:
+            pass
+        root.after(100, process_commands)
+
+    root.after(100, process_commands)
+
+    # ---- Run Tk mainloop on the main thread (blocks until root.quit()) ----
+    try:
+        root.mainloop()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        try:
+            icon.stop()
+        except Exception:
+            pass
     return 0
 
 

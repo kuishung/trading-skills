@@ -30,6 +30,16 @@ Dropbox. Workflow:
 **Your responsibilities every session:**
 
 1. **At session start**, before any code work:
+   - **`git pull --ff-only` first** — user rule 2026-05-27: *"whenever
+     i develop in this laptop, always gitpull here so that the changes
+     are automatically made to this laptop"*. The other PC (Hermes)
+     may have pushed commits via RDP between laptop sessions (config
+     tweaks, IBC bundle edits, hot-fix patches). Skipping the pull
+     risks immediate merge conflicts on the first laptop commit. The
+     `--ff-only` flag aborts cleanly if a non-trivial merge would be
+     needed, so this can never silently create a mess. If the pull
+     finds a divergent history, stop and surface that to the user
+     before any code work.
    - `git status` to confirm the working tree is clean.
    - `git log --oneline -5` to confirm the most recent commit matches
      what the user expects.

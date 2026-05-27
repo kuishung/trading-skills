@@ -29,6 +29,33 @@ Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-05-27 - `tray_status.py`: Tk-on-main-thread + pystray-on-daemon-thread (final architecture)
+
+The subprocess approach (commit 3a7bcf2) had a Windows-specific failure: after the first "Show Status" click successfully opened a window subprocess, the PARENT tray process died. Confirmed 2026-05-27 by process queries — `Get-CimInstance` returned no python.exe with `tray_status.py` after the first click. Why exactly the spawn killed the parent on this user's setup is unclear (possible interaction between pystray's win32 NotifyIcon, the py.exe launcher chain, and `subprocess.Popen` with `CREATE_NO_WINDOW`), but the symptom — tray icon disappears after first window-open — was reproducible.
+
+Proper fix: the standard Python GUI-tray pattern. Single process, no spawn churn.
+
+**Architecture:**
+- `main()` runs on the interpreter's real main thread; creates Tk root, builds the progress-window widgets ONCE, then `root.withdraw()` (hides it).
+- pystray runs in a daemon thread (`threading.Thread(target=icon.run, daemon=True).start()`).
+- "Show Status" / "Quit" callbacks fire on the pystray thread; they MUST NOT touch Tk widgets. Instead they enqueue strings onto `_command_queue`.
+- A Tk-side poller (`root.after(100, process_commands)`) reads the queue every 100ms and acts on the main thread — `deiconify` + `lift` + `focus_force` for 'show', `icon.stop()` + `root.quit()` for 'quit'.
+- The window's close button / X / Escape now calls `root.withdraw()` (hide), NOT `root.destroy()` (which would kill the whole Tk session). The window is persistent for the process lifetime — subsequent Show Status clicks just re-deiconify the same widgets.
+
+**Removed:**
+- `subprocess` import (no longer spawning anything)
+- `--window-only` CLI mode (no longer needed; window lives in the tray process)
+- `_progress_window_active` single-instance flag (no longer needed; the window IS singular by construction)
+- `_show_progress_window` wrapper (was the try/finally lifecycle guard for the spawn approach; the new architecture has no spawn to guard)
+
+**Why this is more robust than every previous attempt:**
+- No thread-safety issue (Tk operations all happen on main thread)
+- No subprocess (no parent-child interaction)
+- No flag to get stuck (no single-instance guard)
+- The progress window is created exactly once per process, hidden by default — even ttk style configuration only runs at startup, not on every click. Any future Tk gremlin shows up at process start, not at the first click after hours of uptime.
+
+Smoke-tested structurally: imports clean, `subprocess` no longer imported, `queue` is, `_command_queue` is a `Queue`, `_on_show_status`/`_on_quit` both put on the queue, `main()` contains the `tk.Tk()` + `root.withdraw()` + `process_commands` + daemon `icon.run` + `root.mainloop()` pieces, and `--window-only` is gone. End-to-end UI verification happens when the user runs `py -3.12 dashboard\tray_status.py` and clicks Show Status repeatedly.
+
 ### 2026-05-26 - DITP TC (Trend Continuation) watchlist now visible in the DITP family tab
 
 Closes the dashboard-visibility gap that the TC Phase 1 build (commit 2e00724) left open per CLAUDE.md's "UI catches up next turn" rule. TC was wired into `KNOWN_STRATEGIES` and journal events were auto-surfacing in the Strategy Analysis drawer, but the TC watchlist file itself (`state/watchlist_tc_<date>.json`, produced EOD by `strategy/DITP/tc_scanner.py`) had no dedicated UI.
