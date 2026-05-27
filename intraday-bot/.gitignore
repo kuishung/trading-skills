@@ -20,6 +20,13 @@ __pycache__/
 # dashboard/setup_launcher.py once per PC.
 dashboard/*.lnk
 
+# Archived old dashboard layout (2026-05-27 wipe). Kept on disk for
+# snippet salvage during the rebuild; not committed because we don't
+# want git to track a dead file that grows stale relative to the live
+# index.html. Delete locally once the rebuild is far enough along that
+# you don't need to reference the old panels.
+dashboard/web/index.html.old
+
 # Vendored TradingView MCP -- per-PC npm install artifacts
 resources/tradingview-mcp/node_modules/
 resources/tradingview-mcp/package-lock.json

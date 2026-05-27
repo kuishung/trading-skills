@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
 
@@ -2612,6 +2612,221 @@ async def ditp_tc_watchlist() -> JSONResponse:
         return JSONResponse(payload)
     except Exception as exc:
         return JSONResponse({"candidates": [], "error": str(exc)})
+
+
+# ----------------------------------------------------------------------
+# SCANNER METADATA + ON-DEMAND RUN (added 2026-05-27 for dashboard Scanner view)
+#
+# The Scanner view needs two things:
+#   1. Per-family metadata (latest watchlist file, target_date, age in
+#      days vs today ET, candidate count) so it can show "X days stale"
+#      indicators next to each family.
+#   2. A way to trigger a re-scan on demand without the user dropping
+#      to a terminal.
+#
+# Whitelist design: the family -> command mapping is hard-coded here.
+# The client only ever sends a family name; the server picks the
+# command. No way to inject arbitrary shell. cwd is pinned to SKILL_DIR
+# so the scanner imports its sibling modules correctly. sys.executable
+# is whatever launched this server -- in production that's `py -3.12`
+# (per dashboard/_supervise_dashboard.bat), which is what ib_insync
+# needs.
+# ----------------------------------------------------------------------
+
+# Whitelist: family -> (filename prefix used in watchlist_<prefix>_<date>, scanner CLI path)
+# The prefix can differ from the family name -- ditp_tc writes
+# watchlist_tc_<date>.json (the TC scanner uses the short "tc" prefix
+# to keep filenames manageable).
+_SCANNER_REGISTRY = {
+    "guns": {
+        "label":  "GUNS",
+        "prefix": "guns",
+        "cli":    str(SKILL_DIR / "strategy" / "GUNS" / "scanner.py"),
+    },
+    "ditp": {
+        "label":  "DITP P2",
+        "prefix": "ditp",
+        "cli":    str(SKILL_DIR / "strategy" / "DITP" / "scanner.py"),
+    },
+    "ditp_tc": {
+        "label":  "DITP TC",
+        "prefix": "tc",
+        "cli":    str(SKILL_DIR / "strategy" / "DITP" / "tc_scanner.py"),
+    },
+}
+
+# Generous: the DITP scanner walks ~500 daily parquets and can take
+# 60s+ on a cold Resilio cache. 300s is comfortable headroom; if a
+# scanner is genuinely hung past that, we fail visibly rather than
+# block the dashboard forever.
+_SCANNER_TIMEOUT_S = 300
+
+
+def _today_et_iso() -> str:
+    """Today's date in America/New_York as YYYY-MM-DD. Used for
+    age-in-days comparisons against watchlist filename dates (which
+    are always written in the scanner's local ET context).
+    """
+    return datetime.now(_et_tz_dash()).date().isoformat()
+
+
+def _scanner_run_meta(family: str) -> dict:
+    """Build the metadata dict for one family. Always returns SOMETHING
+    (even when no file exists) so the dashboard can render an empty
+    state with a Run button rather than a missing entry."""
+    reg = _SCANNER_REGISTRY[family]
+    state_dir = SKILL_DIR / "state"
+    today = _today_et_iso()
+    meta = {
+        "family":         family,
+        "label":          reg["label"],
+        "latest_file":    None,
+        "target_date":    None,
+        "scanner_run_at": None,
+        "n_candidates":   0,
+        "age_days":       None,
+        "stale":          True,    # default to stale until proven fresh
+        "today_et":       today,
+    }
+    # Prefer JSON (richer); fall back to txt. Sort reverse by name so
+    # the highest-dated file wins.
+    json_files = sorted(state_dir.glob(f"watchlist_{reg['prefix']}_*.json"), reverse=True)
+    txt_files  = sorted(state_dir.glob(f"watchlist_{reg['prefix']}_*.txt"),  reverse=True)
+    latest = json_files[0] if json_files else (txt_files[0] if txt_files else None)
+    if latest is None:
+        return meta
+    meta["latest_file"] = latest.name
+    # Filename convention: watchlist_<prefix>_<YYYY-MM-DD>.<ext>
+    try:
+        date_str = latest.stem.split("_")[-1]
+        meta["target_date"] = date_str
+        from datetime import date as _date
+        try:
+            td = _date.fromisoformat(date_str)
+            today_d = _date.fromisoformat(today)
+            meta["age_days"] = (today_d - td).days
+            meta["stale"] = meta["age_days"] > 0
+        except Exception:
+            pass
+    except Exception:
+        pass
+    # Pull richer fields from JSON if available.
+    if latest.suffix == ".json":
+        try:
+            obj = json.loads(latest.read_text(encoding="utf-8"))
+            meta["scanner_run_at"] = obj.get("scanner_run_at_utc") or obj.get("scanner_run_at")
+            if "n_candidates" in obj:
+                meta["n_candidates"] = obj["n_candidates"]
+            elif "candidates" in obj:
+                meta["n_candidates"] = len(obj["candidates"])
+        except Exception:
+            pass
+    else:
+        try:
+            count = 0
+            for line in latest.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    count += 1
+            meta["n_candidates"] = count
+        except Exception:
+            pass
+    return meta
+
+
+@app.get("/scanner/runs")
+async def scanner_runs() -> JSONResponse:
+    """Per-family scanner-run metadata for the dashboard Scanner view.
+
+    For each known family (guns, ditp, ditp_tc) returns:
+      latest_file, target_date, scanner_run_at, n_candidates,
+      age_days (vs today ET), stale (bool).
+
+    The dashboard uses this to draw an "X days stale" badge next to
+    each family and to enable/disable per-family Run buttons.
+    """
+    out = {
+        "today_et": _today_et_iso(),
+        "families": {fam: _scanner_run_meta(fam) for fam in _SCANNER_REGISTRY},
+    }
+    return JSONResponse(out)
+
+
+@app.post("/scanner/run")
+async def scanner_run(family: str) -> JSONResponse:
+    """Spawn a scanner subprocess for the given family. Synchronous --
+    waits up to _SCANNER_TIMEOUT_S for completion, returns stdout/stderr
+    tails + the new watchlist's metadata.
+
+    Safety: family is validated against _SCANNER_REGISTRY whitelist.
+    cwd is pinned to SKILL_DIR. shell=False (default for subprocess.run
+    with a list argv). No client-supplied data ever reaches the shell.
+    """
+    family = (family or "").lower()
+    if family not in _SCANNER_REGISTRY:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown family '{family}'. Valid: {list(_SCANNER_REGISTRY)}",
+        )
+    reg = _SCANNER_REGISTRY[family]
+    cli_path = Path(reg["cli"])
+    if not cli_path.exists():
+        raise HTTPException(
+            status_code=500,
+            detail=f"scanner CLI not found at {cli_path}",
+        )
+    cmd = [sys.executable, str(cli_path)]
+    started = _time.time()
+    # Run synchronously in a thread so the event loop stays responsive
+    # for other dashboard polls while the scanner is working.
+    loop = asyncio.get_running_loop()
+    try:
+        proc = await loop.run_in_executor(
+            None,
+            lambda: subprocess.run(
+                cmd,
+                cwd=str(SKILL_DIR),
+                capture_output=True,
+                text=True,
+                timeout=_SCANNER_TIMEOUT_S,
+                check=False,
+            ),
+        )
+    except subprocess.TimeoutExpired:
+        return JSONResponse(
+            {
+                "ok":         False,
+                "family":     family,
+                "error":      f"timeout after {_SCANNER_TIMEOUT_S}s",
+                "duration_s": round(_time.time() - started, 1),
+                "cmd":        " ".join(cmd),
+            },
+            status_code=504,
+        )
+    except Exception as exc:
+        return JSONResponse(
+            {
+                "ok":         False,
+                "family":     family,
+                "error":      f"subprocess failed: {exc}",
+                "duration_s": round(_time.time() - started, 1),
+                "cmd":        " ".join(cmd),
+            },
+            status_code=500,
+        )
+    duration = round(_time.time() - started, 1)
+    # Tail stdout/stderr (last ~2KB each) so the dashboard can show
+    # the scanner's progress lines without exploding the response.
+    return JSONResponse({
+        "ok":         proc.returncode == 0,
+        "family":     family,
+        "returncode": proc.returncode,
+        "duration_s": duration,
+        "stdout_tail": (proc.stdout or "")[-2000:],
+        "stderr_tail": (proc.stderr or "")[-2000:],
+        "meta":       _scanner_run_meta(family),
+        "cmd":        " ".join(cmd),
+    })
 
 
 @app.post("/data/refresh-stale")

@@ -29,6 +29,139 @@ Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-05-27 - Scanner view: dropdown + Scan + yFinance refresh (laptop-friendly daily scan)
+
+User feedback: *"i need you to construct the scanner page yFinance on daily chart setup. And I need the strategy on a dropdown box for me to select and click scan"*. Restructured the Scanner view from a 3-card grid (one card per family with its own Run button) to a single control row: setup dropdown + Refresh-data button + Scan button + log + stats line.
+
+**Why this layout:**
+- One decision at a time. The user picks a setup, then acts -- not "which of three buttons do I click first".
+- Surfaces the data-source choice in the UI ("Data source: yFinance daily candles (via parquet store)"), making the laptop-friendly path obvious. The user explicitly wants the laptop to be self-sufficient for daily-chart setups without needing IBKR.
+- GUNS is listed but disabled (greyed) with a tooltip explaining it needs IBKR for the live momentum scan. Honest signal: "this exists but won't work on this config" beats hiding it entirely.
+
+**Two-step workflow (both optional/independent):**
+1. **Refresh data (yFinance)** -> `POST /data/refresh-stale?timeframe=daily` -> pulls fresh daily bars from yFinance for any stale/missing parquets. Targeted -- if nothing is flagged, it's a no-op in seconds. Useful right before a scan if the user wants to be sure today's bars are in the parquet store.
+2. **Scan** -> `POST /scanner/run?family=<setup>` -> spawns the selected scanner subprocess. DITP scanners read parquets and write a fresh watchlist.
+
+**Both steps share state**: only one operation runs at a time (`scanInFlight` guard), other controls disable + show live elapsed counter. Log pane below shows stdout/stderr tail with green/red tint per exit code.
+
+**Removed**: the `runs-grid` 3-card layout + its `run-card` CSS + the per-family `triggerScanner` JS. The /scanner/runs endpoint stays (drives the single-line stats display for the selected setup).
+
+**File size**: 33KB -> 35KB.
+
+**Backend**: no new endpoints required. Uses the existing /scanner/runs + /scanner/run + /data/refresh-stale.
+
+### 2026-05-27 - `server.py` + `web/index.html`: watchlist age indicator + on-demand scanner run
+
+User feedback: *"yes need a watchlist age and i should be able to run the scanner"*. The Scanner view was showing 15 symbols but the user couldn't tell that they were from a 1-7 day old scan, and there was no way to refresh other than dropping to a terminal.
+
+**New endpoints in `server.py`:**
+
+`GET /scanner/runs` -> per-family scanner metadata:
+```json
+{
+  "today_et": "2026-05-26",
+  "families": {
+    "guns":    { "label": "GUNS", "latest_file": "watchlist_guns_2026-05-20.txt",
+                 "target_date": "2026-05-20", "n_candidates": 5, "age_days": 6, "stale": true, ... },
+    "ditp":    { "label": "DITP P2", "latest_file": "watchlist_ditp_2026-05-25.json",
+                 "target_date": "2026-05-25", "scanner_run_at": "2026-05-24T08:24:39+00:00",
+                 "n_candidates": 10, "age_days": 1, "stale": true, ... },
+    "ditp_tc": { "label": "DITP TC", "latest_file": null, "n_candidates": 0, "stale": true, ... }
+  }
+}
+```
+
+`POST /scanner/run?family=<guns|ditp|ditp_tc>` -> spawns the scanner subprocess for that family, waits up to 300s, returns `{ ok, returncode, duration_s, stdout_tail, stderr_tail, meta }`.
+
+**Safety**: family is validated against `_SCANNER_REGISTRY` whitelist (no shell injection possible); `sys.executable` is the same Python that's running the server (which under the supervisor is `py -3.12` per the `eventkit`/`ib_insync` rule in CLAUDE.md); `cwd` pinned to `SKILL_DIR` so the scanner's relative imports work; `subprocess.run` with `shell=False` (default for list-argv form). Runs in a thread-pool executor so the FastAPI event loop stays responsive for other polls while the scan is in flight.
+
+**Frontend additions (Scanner view):**
+- New top panel "Scanners" -- a responsive grid of cards, one per family. Each card shows:
+  - Family label (GUNS / DITP P2 / DITP TC)
+  - Age badge: `fresh` (green, age <= 0), `stale` (amber, 1-7 days), `ancient` (red, >7 days), `never scanned` (gray, no file)
+  - Candidate count + filename + scanner-run timestamp
+  - Run scanner button
+- Click Run -> button switches to "Running... Xs" with a live elapsed counter; other Run buttons disable (one scanner at a time keeps subprocess load predictable); a collapsible log pane appears below the card showing stdout/stderr tail on completion. On success: tinted green border, log shown for review. On failure: tinted red border + non-zero exit code surfaced.
+- After the run completes (or fails): both `/scanner/runs` and `/lists/all` are re-fetched so the cards + the watchlist table reflect the new state in one update.
+- Second panel ("Today's watchlist") is the existing aggregated table, unchanged.
+
+**Threshold choice for the age badge** (fresh / stale / ancient cutoffs at 0 / 1-7 / 8+) reflects how the watchlists are USED: a watchlist becomes operationally useless the moment trading-day rolls over. Anything 1 day old is already targeting yesterday's session and shouldn't be acted on. 7 days is the soft limit where the data is so stale even a glance-confirmation has no value. These are display thresholds only -- the bot doesn't act on them.
+
+**File size**: 23KB -> 33KB.
+
+### 2026-05-27 - `web/index.html`: sidebar + Scanner view (function-specific navigation lands)
+
+User feedback: *"i want you to build a side bar with scanner first"* + earlier *"next want the dashboard to be function specific"*. Switched the layout from top-tab strip to left-sidebar function nav, with Scanner as the first (default-active) sidebar slot. The other four functions (Monitor, Strategies, Trades, Data) are stubs until each is explicitly built out.
+
+**Layout shape:**
+```
++------------------------------------------+
+|  STATUS BAR (sticky, always visible)     |
++----------+-------------------------------+
+| SIDEBAR  | ACTIVE VIEW                   |
+| Scanner* |   - one panel per concern     |
+| Monitor  |   - view-specific data only   |
+| Strats   |                               |
+| Trades   |                               |
+| Data     |                               |
++----------+-------------------------------+
+```
+
+**Sidebar choice over top tabs**: vertical nav scales better as more functions accrete and leaves the full content width for tables (which is what most functions render). The active item gets a left-edge accent stripe + tinted background, which carries glance-recognizable state from anywhere on the page.
+
+**Scanner view built:**
+- Data source: `GET /lists/all` (already existed -- aggregates `state/watchlist_<family>_<date>.{txt,json}` across all strategy families via `_aggregate_watchlist_rows()` in `server.py`).
+- Table columns: Symbol / Strategy / Tier (color-coded A=green, B=amber, C=muted) / Variant / Resistance / Last / Chg % / ARM (live ARMED/disarmed pill driven by `armed_map` in the same payload).
+- Auto-refresh every 60s while view is active; manual Refresh button next to the timestamp. Auto-refresh stops when leaving the view (per-view lifecycle hooks in `activateView()`).
+- Meta line: total symbol count + per-strategy breakdown (e.g. `15 symbols  ·  DITP=15  ·  as of 09:01:23`).
+- Empty state when scanners haven't run yet.
+
+**Per-view lifecycle hooks** are the design pattern future views should follow: each view registers `boot` + `teardown` actions in `activateView()` so per-view pollers / WebSocket subscriptions don't run when their view is hidden. Saves bandwidth + keeps event loop clean.
+
+**File size**: 13KB -> 23KB. Still hand-readable end-to-end.
+
+**Endpoints exercised**: `/snapshot`, `/data/health`, `/lists/all`. No new backend endpoints required.
+
+### 2026-05-27 - `web/index.html`: status bar (panel 1 of rebuild) -- 6 pills
+
+First panel of the rebuild lands: a top status bar with 6 pills covering "is the world OK right now".
+
+**The six pills:**
+| Pill | Source | Poll | Levels |
+|---|---|---|---|
+| Local | `new Date()` | 1s tick | (no color, just time) |
+| ET    | `Intl.DateTimeFormat` America/New_York | 1s tick | (no color, just time) |
+| Stage | computed client-side from ET hour/min/weekday | 1s tick | ok=RTH, warn=pre/after/closed |
+| IBKR  | `/snapshot` -> `health.ibkr` | 5s | ok=up, err=down, warn=no_lib/other |
+| Alpaca| `/snapshot` -> `health.alpaca` | 5s | ok=ok, warn=no_credentials, err=error |
+| Price Data | `/data/health?timeframe=daily` -> `overall` + summary | 30s | ok / warn / err mapped from overall |
+
+**Design choices worth keeping for future panels:**
+- Time pills use monospace numerals (`font-variant-numeric: tabular-nums`) so the seconds digit changing doesn't jitter the row width.
+- Stage classification is client-side from ET parts (NOT a call to `/market/clock`) because `/market/clock` requires Alpaca creds and would return `is_open: null` on the laptop dev config; we want the stage pill to work everywhere. Holiday awareness is deliberately out of scope for the pill -- the bot's scanner remains the source of truth for "is today a trading day".
+- All five non-time pills go red on fetch failure rather than freezing on the previous value. Silent UI is worse than an honest red dot.
+- Polling cadences differ by cost: 5s for snapshot (cheap, drives most state), 30s for data/health (slow-moving, scans the universe parquets), 1s for clocks (purely client).
+
+**File size**: 5KB -> 13KB (vs the original 163KB). Still small enough to scan end-to-end.
+
+**Endpoints exercised**: `/snapshot`, `/data/health`. No new backend endpoints required.
+
+### 2026-05-27 - `web/index.html`: WIPE -- restart layout design from scratch
+
+User feedback: *"the whole dashboard concept is too complicated. I want to clear all layout and restart the layout design"*. The previous index.html had grown to ~163KB / ~10 panels (status bar + sidebar drawers + GUNS/DITP/OS family tabs + watchlists + positions + orders + event log + bot log + gating drawer + ...) and the cognitive cost of scanning it had exceeded the value it provided as a control surface.
+
+**Approach: "wipe and we build up"** (user pick from a 4-option question on 2026-05-27). Strip to a blank page + one "server alive" pill. Add panels back one at a time, each justified before it lands.
+
+**Done:**
+- `web/index.html` archived to `web/index.html.old` (gitignored via root `.gitignore`; kept on disk for snippet salvage during the rebuild only -- delete locally once rebuild is far enough along).
+- New `web/index.html`: 5KB plain HTML + scoped CSS + 30 lines of vanilla JS. Polls `/snapshot` every 5s to drive the alive-check pill. No Tailwind, no framework, no build step.
+- Layout conventions for the rebuild are documented in the new file's top CSS comment so future panels stay coherent: plain HTML/vanilla JS, one `<section class="panel">` per concern, status pills as `<span class="pill ok|warn|err">`, ET-labeled timestamps when ET.
+- `server.py` endpoints untouched -- every old endpoint (`/snapshot`, `/data/health`, `/lists/all`, `/strategy/ditp/watchlist`, `/strategy/ditp/tc_watchlist`, `/bot/status`, `/bot/arm`, `/bot/enable`, `/market/sentiment`, `/market/clock`, `/chart/data`, `/data/ingest-log`, `/ws`, ...) still responds. They simply have no caller in the new UI until panels grow back to consume them.
+
+**Why this is safe to do mid-stream**: the dashboard is observation + control. Nothing it shows is a source of truth. The journal, parquets, state flags are all that matter for correctness; the UI just renders them. Wiping the UI loses zero data and breaks no other component.
+
+**Hard rule still in force** (CLAUDE.md "Dashboard visibility rule"): every observable feature must eventually be surfaced. The wipe doesn't repeal that rule -- it just means we re-add surfaces deliberately instead of accreting them. The growth-back conversation starts with: "what's the most important thing to see first?"
+
 ### 2026-05-27 - `start_dashboard.bat`: fixed silent failure on double-click ('M' is not recognized...)
 
 User reported that double-clicking `start_dashboard.bat` produced "nothing happens" — no browser open, no dashboard, no visible window. Reproduction via `cmd /c start_dashboard.bat` exposed `'M' is not recognized as an internal or external command` on stderr; the dashboard launch logic was being silently corrupted.
