@@ -25,7 +25,18 @@ if not exist "%CONFIG_JSON%" (
 REM Pull ibkr_secrets_path from config.json. Python is more predictable than
 REM PowerShell inside cmd's for/f — cmd parser mangles nested parens + pipes.
 REM sys.stdout.write avoids the trailing newline that print() would add.
-for /f "usebackq tokens=*" %%i in (`py -3.12 -c "import json,sys; sys.stdout.write(json.load(open(r'%CONFIG_JSON%')).get('ibkr_secrets_path',''))"`) do (
+REM
+REM IMPORTANT: every json.load() below uses encoding='utf-8-sig' (NOT 'utf-8')
+REM so a UTF-8 BOM at byte 0 -- which Windows PowerShell 5.1's
+REM `Set-Content -Encoding UTF8` silently inserts -- doesn't cause
+REM `JSONDecodeError: Expecting value: line 1 column 1 (char 0)`. We hit
+REM this exact failure on Hermes 2026-05-27 after a PS-driven config tweak:
+REM Gateway exited at the 8am daily-reset, keep-alive task fired the bat,
+REM bat couldn't parse config.json, returned 1 without launching IBC,
+REM keep-alive looped forever. utf-8-sig decodes both BOM'd and BOM-less
+REM UTF-8 correctly so this is the safe encoding to use everywhere we read
+REM config.json from PowerShell-edited environments.
+for /f "usebackq tokens=*" %%i in (`py -3.12 -c "import json,sys; sys.stdout.write(json.load(open(r'%CONFIG_JSON%', encoding='utf-8-sig')).get('ibkr_secrets_path',''))"`) do (
     set "CRED_FILE=%%i"
 )
 
@@ -53,7 +64,7 @@ if "%TWSUSERID%"=="" (
 
 REM Derive TWS_PATH = dirname of cfg.ibkr_gateway_path. Python instead of
 REM PowerShell to avoid the cmd-parser-vs-nested-parens issue.
-for /f "usebackq tokens=*" %%i in (`py -3.12 -c "import json,sys,os; sys.stdout.write(os.path.dirname(json.load(open(r'%CONFIG_JSON%')).get('ibkr_gateway_path','')))"`) do (
+for /f "usebackq tokens=*" %%i in (`py -3.12 -c "import json,sys,os; sys.stdout.write(os.path.dirname(json.load(open(r'%CONFIG_JSON%', encoding='utf-8-sig')).get('ibkr_gateway_path','')))"`) do (
     set "TWS_PATH=%%i"
 )
 
@@ -64,7 +75,7 @@ if "%TWS_PATH%"=="" (
 
 REM Determine which IB app we're launching (gateway / tws) from config.
 REM Used to select which IBC start script (StartGateway.bat vs StartTWS.bat).
-for /f "usebackq tokens=*" %%i in (`py -3.12 -c "import json,sys; sys.stdout.write(json.load(open(r'%CONFIG_JSON%')).get('ibkr_app_type','gateway'))"`) do (
+for /f "usebackq tokens=*" %%i in (`py -3.12 -c "import json,sys; sys.stdout.write(json.load(open(r'%CONFIG_JSON%', encoding='utf-8-sig')).get('ibkr_app_type','gateway'))"`) do (
     set "APP_TYPE=%%i"
 )
 if "%APP_TYPE%"=="" set "APP_TYPE=gateway"
@@ -77,7 +88,7 @@ if /i "%APP_TYPE%"=="gateway" (
 REM Derive the exe filename from ibkr_gateway_path's basename — IB's newer
 REM installers may name the exe with a version suffix (e.g., ibgateway1.exe
 REM on Gateway 10.45+ to support multi-version installs). Don't hardcode.
-for /f "usebackq tokens=*" %%i in (`py -3.12 -c "import json,sys,os; sys.stdout.write(os.path.basename(json.load(open(r'%CONFIG_JSON%')).get('ibkr_gateway_path','')))"`) do (
+for /f "usebackq tokens=*" %%i in (`py -3.12 -c "import json,sys,os; sys.stdout.write(os.path.basename(json.load(open(r'%CONFIG_JSON%', encoding='utf-8-sig')).get('ibkr_gateway_path','')))"`) do (
     set "APP_EXE=%%i"
 )
 
