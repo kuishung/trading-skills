@@ -29,6 +29,32 @@ Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-05-27 - Scanner step 2 lands: setup filter panel inside the Finviz view
+
+User directive: *"with the finviz tickers, then i can select from a panel to filter from the ticker the setup that match the strategies"*. The Finviz table is the primary surface; the setup detector now runs on demand and annotates which rows matched, without moving them.
+
+**Layout addition (inside the existing Finviz panel):**
+```
+Filter by setup:  [DITP P2 ▼]  [Apply]  ☐ Show only matches      <status line>
+```
+- Dropdown lists the wired setups; DITP TC and GUNS are present but disabled with explanatory labels (TC needs the prior-day P2 watchlist in memory; GUNS needs IBKR's live momentum scan -- neither is wired for the yFinance path yet).
+- **Apply** -> `POST /scanner/yf_scan?setup=<X>`. Because both `/scanner/finviz_tickers` and `/scanner/yf_scan` resolve their universe via the same `cfg.finviz_screener_url`, candidates are guaranteed to be a SUBSET of the visible ticker table -- no symbol-list shuffling between the two endpoints.
+- **Match highlight**: rows whose symbol is in the candidates set get a green dot prefix on the symbol cell, a faint green tint across the row, AND new columns appear (Match / Tier / Var / Conf / Dist (ATR) / Score). Non-matched rows show `-` in those columns.
+- **Show only matches** checkbox: pure client-side filter using the cached candidate map -- no extra round-trip.
+- **Status line** to the right of the controls reports last-applied summary: `DITP P2 -> 3 matches · fetch=2.6s scan=0.0s · universe: finviz (43 symbols)`. Green for matches > 0, red on failure.
+
+**State management** (single-page, no framework):
+- `finvizRowsCache`: rows from last `/scanner/finviz_tickers` call.
+- `matchesBySymbol`: symbol -> candidate dict after last Apply.
+- `activeSetupLabel`: short name shown in the Match column badge.
+- Re-rendering the table reads from these three; toggling "show only matches" does NOT refetch -- saves bandwidth and keeps the UI snappy.
+- Clicking **Refresh** on the Finviz panel invalidates `matchesBySymbol` (the candidates were computed against the OLD universe -- safer to drop them than risk showing stale match labels).
+
+**Smoke test** (laptop, Finviz URL = user's intraday filter, today's market data):
+- `POST /scanner/yf_scan?setup=ditp` returns `ok=true, universe_source="finviz (43 symbols)", n_candidates=0, fetch=2.6s, scan=0.0s`. Zero matches is expected for this universe (Finviz's high-volatility filter selects mostly recent IPOs that fail DITP's `len(bars) >= 220` gate). The integration is correct; the result is honest. To get matches with this URL we'd need to loosen DITP's bar-count gate or tighten the Finviz filter to exclude post-IPO names (add `ipodate_morethan10y` or similar).
+
+**File-size delta**: index.html 30KB -> 38KB. The new filter panel + match-aware renderer + state management are non-trivial; reasonable cost for the UX gain.
+
 ### 2026-05-27 - Scanner view reduced to step 1: Finviz ticker list (setup application deferred)
 
 User: *"we do it step by step, in the dashboard, you pull out the the FInviz Scanner ticker first. Then manually I can apply the setup that I am looking for"*. Scanner view is now Finviz-only -- it pulls the ticker list and that's it. Setup application (DITP P2 / DITP TC detection on the selected tickers) is a separate step that will be wired later.
