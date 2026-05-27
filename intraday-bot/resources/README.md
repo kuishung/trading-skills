@@ -40,6 +40,22 @@ and import it from whichever strategy needs it. No registration.
 
 ## Changelog
 
+### 2026-05-27 — `horizontal_support_np`: most-recent-in-time selection (asymmetric to resistance)
+
+User correction 2026-05-27 from USAR case: *"the support for USAR is the first valley which is 19.5.2026 candle 19.36"*. USAR's swing lows include $19.36 (5 days ago) and $21.46 (19 days ago). My algorithm picked $21.46 because it was higher (closer in price to current $26.55). But $19.36 is the ACTUAL active support — price went BELOW $21.46 to make $19.36, then rallied back above both. $21.46 was "bypassed" when price dipped through it; the rally's structural origin is $19.36.
+
+**The asymmetry between resistance and support is deliberate:**
+
+| Side | Selection rule | Why |
+|---|---|---|
+| Resistance above | LOWEST mountain top above current | Next ceiling to break. Price hasn't tested it yet; higher mountains above are FUTURE P2 setups. |
+| Support below | MOST RECENT mountain valley below current | Where the current rally started. Older swing lows above the most-recent one were bypassed when price went below them — no longer load-bearing. |
+| Broken-R polarity flip | HIGHEST broken mountain below current | The most recently broken level in a clean uptrend (each new high breaks the lowest unbroken peak first). |
+
+**Change in `sr_levels.horizontal_support_np`**: selection swapped from `max(mountains_below, key=lambda x: x[1])` (highest level) to `max(mountains_below, key=lambda x: x[0])` (most recent index). Docstring + module-level docstring document the asymmetry.
+
+**USAR re-verification**: S below now correctly returns $19.36 (was $21.46 under the previous symmetric rule). The chart-pane S/R strip shows the user's identified level. Note: USAR is NOT a P1 candidate today because price ($26.55) is 3.03 ATR above its support — far beyond the 1.0-ATR proximity gate. USAR is "structurally anchored to $19.36" but not "actively retesting $19.36" — those are different conditions.
+
 ### 2026-05-27 — Cluster tolerance: percentage → absolute ticks (±3 ticks default)
 
 User rule 2026-05-27: *"the placeholder cannot be too wide... plus minus 3 tick."* The previous `cluster_band_pct=0.01` (1% of level) scaled badly with price — for a $400 stock that meant a ±$4 cluster band (400 ticks wide), nothing like the user's ±3-tick (±$0.03) intent.

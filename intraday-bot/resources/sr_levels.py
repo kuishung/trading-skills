@@ -44,6 +44,26 @@ the market has long since forgotten. 252 is the canonical anchor for
 all three finders (resistance above, support below, broken-resistance
 polarity-flip).
 
+Selection rules are ASYMMETRIC between above and below current price:
+
+  * Resistance ABOVE current: LOWEST mountain top above current wins
+    (= next ceiling to break). Price hasn't tested it yet; higher
+    mountains above are FUTURE P2 setups.
+
+  * Support BELOW current: MOST RECENT mountain valley below current
+    wins (= where the current rally started). Price has been ABOVE
+    older swing lows since dipping through them, so those are no
+    longer active support -- the most recent low is the active anchor.
+
+  * Broken resistance (polarity flip): HIGHEST broken mountain below
+    current wins (= the most recently broken level in a clean
+    uptrend, since each new high breaks the lowest unbroken peak first).
+
+This asymmetry was set 2026-05-27 after the USAR case: $19.36 swing
+low (5 days ago) is the active support, not $21.46 (19 days ago).
+$21.46 sits HIGHER than $19.36 but price went BELOW $21.46 to make
+$19.36, so $21.46 was bypassed and is no longer load-bearing.
+
 Public API:
   horizontal_support_np(highs, lows, closes, current_price, atr, **kw)
       -> dict | None  (same shape as horizontal_resistance_np)
@@ -91,12 +111,31 @@ def horizontal_support_np(highs, lows, closes, current_price: float,
                           mountain_min_age_bars: int = 5,
                           mountain_pullback_atr: float = 0.5,
                           ) -> dict | None:
-    """IMMEDIATE NEAREST mountain-valley-anchored horizontal SUPPORT
-    below `current_price` (= the HIGHEST mountain valley below current).
-    Mirror of patterns.horizontal_resistance_np, which after the
-    2026-05-27 reintegration picks the LOWEST mountain above current.
-    Both follow the same user framework: each level is an independent
-    setup; the immediate-nearest-in-price wins.
+    """MOST-RECENT mountain-valley-anchored horizontal SUPPORT below
+    `current_price` (= the most recent in time, not necessarily the
+    highest in price below current).
+
+    User correction 2026-05-27 from USAR case: the "first valley"
+    (most recent swing low in time) is the active support, not the
+    highest swing low below current. The asymmetry between resistance
+    and support is deliberate:
+
+      * Resistance above current price: LOWEST in price wins -- it's
+        the next ceiling to break, since price hasn't tested it yet.
+        Higher mountains above are FUTURE P2 setups, not currently
+        relevant. (See patterns.horizontal_resistance_np.)
+
+      * Support below current price: MOST RECENT in time wins -- it's
+        where the current up-move started, the active anchor of the
+        rally. Older swing lows above the most-recent one were
+        bypassed when price went below them, so they're no longer
+        active support (even if they sit above the most-recent low).
+
+    USAR example: swing lows at $19.36 (5 days ago) and $21.46 (19
+    days ago). $21.46 is HIGHER but $19.36 is MORE RECENT. Price went
+    BELOW $21.46 to make $19.36, then rallied back above both. The
+    active support is $19.36 (the origin of the current rally), not
+    $21.46 (a broken-and-bypassed level).
 
     Two-stage process:
 
@@ -107,12 +146,10 @@ def horizontal_support_np(highs, lows, closes, current_price: float,
          (b) followed by a real rally: at least one subsequent HIGH
              >= valley + `mountain_pullback_atr` * atr
 
-    The level chosen = the HIGHEST mountain valley below `current_price`
-    (= the immediate nearest support being tested in a pullback). If
-    none qualify, falls back to the highest non-mountain swing low
-    below current (fresh-support fallback). The prior "most recent in
-    time" rule could miss a closer-in-price valley that was older but
-    still the active support.
+    The level chosen = the MOST RECENT IN TIME mountain valley below
+    `current_price` (= the last bounce point that anchors the current
+    rally). If none qualify, falls back to the most-recent non-mountain
+    swing low below current (fresh-support fallback).
 
     The RANGE around that level = consensus of mountain valleys within
     +/- `range_pct` of the chosen level.
@@ -170,18 +207,21 @@ def horizontal_support_np(highs, lows, closes, current_price: float,
             mountains.append((i, lo))
     mountain_idxs = {i for i, _ in mountains}
 
-    # 3. Immediate nearest mountain valley below current = HIGHEST level
-    #    below current. User framework reintegration 2026-05-27: each
-    #    valley is an independent P1 support; the relevant one is
-    #    closest to current price (the level being tested NOW).
+    # 3. Most-recent mountain valley below current = highest INDEX
+    #    below current (most recent in time, not highest in price).
+    #    User correction 2026-05-27 from USAR case: the active support
+    #    is the most recent low (the origin of the current rally),
+    #    NOT the highest swing low below current. Older swing lows
+    #    above the most-recent one were bypassed when price dipped
+    #    through them -- no longer active support.
     swings_below = [(i, lo) for i, lo in swings if lo < current_price]
     if not swings_below:
         return None
     mountains_below = [(i, lo) for i, lo in swings_below if i in mountain_idxs]
     if mountains_below:
-        i_imm, lo_imm = max(mountains_below, key=lambda x: x[1])
+        i_imm, lo_imm = max(mountains_below, key=lambda x: x[0])
     else:
-        i_imm, lo_imm = max(swings_below, key=lambda x: x[1])
+        i_imm, lo_imm = max(swings_below, key=lambda x: x[0])
     level = float(lo_imm)
 
     # Range = consensus of mountain valleys within +/- range_pct of level.

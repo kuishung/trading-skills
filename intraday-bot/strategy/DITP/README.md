@@ -37,6 +37,14 @@ just drops a `strategy/DITP/<setup_name>/` subfolder.
 
 ## Changelog
 
+### 2026-05-27 — Support selection: most-recent-in-time (asymmetric to resistance)
+
+User correction 2026-05-27 from USAR case: the active support is the MOST RECENT swing low ($19.36 from 19.5.2026), not the HIGHEST swing low below current ($21.46). Older swing lows above the most-recent one were bypassed when price dipped through them, so they're no longer load-bearing.
+
+The asymmetry (resistance = lowest above, support = most-recent below, broken-R = highest below) is now codified in `resources/sr_levels.py` module docstring. See `resources/README.md` for full rationale.
+
+**Impact on P1 detector**: P1 still requires close within `max_distance_atr=1.0` of the support level. USAR's $19.36 is 3.03 ATR below current — too far for P1. USAR is "structurally anchored to $19.36" but not "actively retesting it". The chart-pane S/R strip surfaces the level for visual context even when no scan trigger fires.
+
 ### 2026-05-27 — Cluster tolerance: percentage → absolute ticks (±3 ticks)
 
 User rule 2026-05-27: *"the placeholder cannot be too wide... plus minus 3 tick."* The cluster band in `resources/patterns.horizontal_resistance_np` etc. switched from percentage (`cluster_band_pct=0.01` = 1%) to absolute ticks (`cluster_tolerance_ticks=3, tick_size=0.01` = ±$0.03). For a $400 stock the previous 1% meant ±$4 (400 ticks wide), wildly off the user's intent. Absolute ticks keeps the placeholder tight across the universe.
