@@ -127,6 +127,44 @@
       min-width: 0;       /* allow children to shrink within flex */
       overflow-y: auto;
     }
+    /* ----- Subtle scrollbar -----
+       Invisible by default; fades in to the --text-muted tone on
+       hover of the scrollable container. Same treatment for main
+       and the watchlist scroll region; extend to other containers
+       by adding their selectors here. User directive 2026-05-27. */
+    main,
+    #finviz-table-wrap {
+      scrollbar-width: thin;
+      scrollbar-color: transparent transparent;
+      transition: scrollbar-color 0.2s;
+    }
+    main:hover,
+    #finviz-table-wrap:hover {
+      scrollbar-color: rgba(139, 148, 158, 0.45) transparent;
+    }
+    main::-webkit-scrollbar,
+    #finviz-table-wrap::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    main::-webkit-scrollbar-track,
+    #finviz-table-wrap::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    main::-webkit-scrollbar-thumb,
+    #finviz-table-wrap::-webkit-scrollbar-thumb {
+      background: transparent;
+      border-radius: 4px;
+      transition: background 0.2s;
+    }
+    main:hover::-webkit-scrollbar-thumb,
+    #finviz-table-wrap:hover::-webkit-scrollbar-thumb {
+      background: rgba(139, 148, 158, 0.35);
+    }
+    main::-webkit-scrollbar-thumb:hover,
+    #finviz-table-wrap::-webkit-scrollbar-thumb:hover {
+      background: rgba(139, 148, 158, 0.6);
+    }
     main > .view {
       display: none;
       flex-direction: column;
@@ -349,6 +387,218 @@
     }
     .matches-status.ok  strong { color: var(--ok); }
     .matches-status.err strong { color: var(--err); }
+
+    /* ----- Scanner view: two-pane layout -----
+       Left pane: Watchlist column at 270px (1.5x sidebar), internally
+                  scrollable, FLUSH against the nav sidebar (no gap,
+                  no rounded outer edge -- it visually extends the
+                  sidebar as a second navigation/watchlist column).
+       Right pane: TradingView chart that updates when a watchlist
+                   row is clicked. Fills remaining width.
+       Other views keep their default column-stack layout. */
+    main > .view[data-view="scanner"] {
+      max-width: none;
+      flex-direction: row;
+      height: 100%;
+      gap: 0;                /* flush -- no gap between watchlist and chart */
+      overflow: hidden;
+      /* Cancel main's padding so the watchlist sits flush against the
+         actual nav sidebar on the left and the chart goes edge-to-
+         edge on the right. Achieved via negative margins matching
+         main's padding (24px on all sides). */
+      margin: -24px;
+    }
+    /* LEFT pane: Watchlist panel, sidebar-flush look */
+    main > .view[data-view="scanner"] > section.panel:first-of-type {
+      width: 270px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      padding: 12px 14px;
+      border-radius: 0;            /* flush edge -- no rounding */
+      border-top: none;
+      border-left: none;
+      border-bottom: none;
+      border-right: 1px solid var(--border);
+    }
+    main > .view[data-view="scanner"] .panel-header {
+      flex-wrap: wrap;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+    main > .view[data-view="scanner"] .panel-header .meta {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 11px;
+    }
+    /* Finviz filter pills (replaces the raw-URL display under the
+       Watchlist header). One pill per filter code in the Finviz
+       URL's `f=` param, formatted via formatFinvizFilter() in JS. */
+    .filter-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin: 0 0 10px 0;
+      flex-shrink: 0;
+    }
+    .filter-pill {
+      font-size: 10px;
+      padding: 2px 7px;
+      background: #21262d;
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      white-space: nowrap;
+      line-height: 1.4;
+      cursor: help;             /* hover -> tooltip shows the raw code */
+    }
+    /* The list itself is the scrollable region; everything else stays put. */
+    main > .view[data-view="scanner"] #finviz-table-wrap {
+      flex: 1;
+      overflow-y: auto;
+      min-height: 0;
+      /* tiny right padding so the scrollbar doesn't clip the row borders */
+      padding-right: 2px;
+      margin-right: -2px;
+    }
+
+    /* RIGHT pane: TradingView chart panel -- also flush, no rounding */
+    .scanner-chart-panel {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      padding: 0 !important;
+      border-radius: 0;
+      border: none;
+    }
+    /* The JS widget mounts inside this div and uses autosize:true to
+       fill the wrapper. Keep it positioned absolutely so the
+       placeholder overlay can sit on top until a symbol is loaded. */
+    #tv-chart-container {
+      width: 100%;
+      height: 100%;
+    }
+    .chart-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      flex-shrink: 0;
+      background: var(--bg-panel);
+    }
+    .chart-header .label { color: var(--text-muted); }
+    .chart-header .chart-symbol {
+      color: var(--accent);
+      font-weight: 600;
+      font-size: 14px;
+      font-variant-numeric: tabular-nums;
+    }
+    .chart-header .external-link {
+      margin-left: auto;
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 11px;
+      padding: 3px 9px;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+    }
+    .chart-header .external-link:hover {
+      color: var(--accent);
+      border-color: var(--accent);
+    }
+    .chart-iframe-wrap {
+      flex: 1;
+      position: relative;
+      min-height: 0;
+      background: var(--bg);
+    }
+    .chart-iframe-wrap iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+      display: block;
+    }
+    .chart-placeholder {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      font-size: 13px;
+      background: var(--bg-panel);
+      pointer-events: none;
+      text-align: center;
+      padding: 20px;
+    }
+    .chart-placeholder.hidden { display: none; }
+    /* The Finviz panel inside the scanner view: compact stacked cards
+       instead of a wide table, since the narrow column can't comfortably
+       fit a multi-column tabular layout. */
+    .finviz-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .finviz-row {
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: #0d1117;
+      cursor: pointer;
+      transition: background 0.1s, border-color 0.1s;
+    }
+    .finviz-row:hover { background: #1c2128; }
+    .finviz-row.matched {
+      border-color: rgba(63, 185, 80, 0.35);
+      background: rgba(63, 185, 80, 0.04);
+    }
+    .finviz-row.matched:hover { background: rgba(63, 185, 80, 0.08); }
+    .finviz-row .line1 {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .finviz-row .rank {
+      color: var(--text-muted);
+      font-size: 10px;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+      min-width: 24px;
+    }
+    .finviz-row .sym { color: var(--accent); }
+    .finviz-row.matched .sym { color: var(--ok); }
+    .finviz-row .badge-group {
+      margin-left: auto;
+      display: flex;
+      gap: 3px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .finviz-row .badge-group .tag {
+      font-size: 10px;
+      padding: 1px 5px;
+    }
+    .finviz-row .line2 {
+      display: flex;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+      margin-top: 1px;
+      padding-left: 30px;   /* align with text after the #rank column */
+    }
+    .finviz-row .line2 .sep { opacity: 0.4; }
     /* ----- Scanner view: dropdown control row + scan log ----- */
     .scan-controls {
       display: flex;
@@ -500,18 +750,34 @@
       <div class="view active" data-view="scanner">
         <section class="panel">
           <div class="panel-header">
-            <h2>Finviz scanner</h2>
+            <h2>Watchlist</h2>
             <span class="meta">
               <span id="finviz-meta">loading...</span>
               <button class="refresh" id="finviz-refresh" title="Force-refresh from Finviz, bypassing the 1h cache">Refresh</button>
             </span>
           </div>
-          <p class="placeholder" id="finviz-url-line" style="margin:0 0 10px 0;font-size:11px;word-break:break-all">URL: <code id="finviz-url"></code></p>
+          <div class="filter-pills" id="finviz-filters"></div>
           <div id="finviz-table-wrap">
             <div class="empty-state">loading Finviz tickers...</div>
           </div>
         </section>
 
+        <section class="panel scanner-chart-panel">
+          <div class="chart-header">
+            <span class="label">Chart:</span>
+            <span class="chart-symbol" id="chart-symbol">&mdash;</span>
+            <a id="chart-external-link" class="external-link" target="intraday_bot_tv" href="#" style="display:none">Open in TradingView &nearr;</a>
+          </div>
+          <div class="chart-iframe-wrap">
+            <div class="chart-placeholder" id="chart-placeholder">
+              Click a ticker in the watchlist to load its chart
+            </div>
+            <!-- TradingView JS widget mounts inside this div. Used the
+                 JS widget (not the simple iframe) because we need
+                 per-study color overrides for EMA20/50/200. -->
+            <div id="tv-chart-container"></div>
+          </div>
+        </section>
       </div>
 
       <!-- MONITOR ---------------------------------------------------- -->
@@ -702,43 +968,222 @@
     // ---------------------------------------------------------------
 
     // ---------------------------------------------------------------
-    // TradingView row-click handler.
+    // TradingView integration -- inline chart in the right pane.
     //
-    // Convention: any <tr data-symbol="NVDA"> inside a .scanner table
-    // opens https://www.tradingview.com/chart/?symbol=<SYM> in a
-    // NAMED browser tab on click. The named target ('intraday_bot_tv')
-    // means the FIRST click opens a TradingView tab; every subsequent
-    // click navigates that SAME tab to the new symbol instead of
-    // spawning a fresh one. User directive 2026-05-27: "then the
-    // ticker is click, use back the same browser to view dont open
-    // new broswer".
+    // User directive 2026-05-27: "add a tradingview chart that link
+    // to the watchlist". Click a watchlist row -> right-pane iframe
+    // loads that symbol via TradingView's widgetembed URL. No more
+    // popping a new browser tab on click; the chart header has a
+    // small "Open in TradingView ↗" link for users who want the full
+    // TradingView page (still uses the named-target reuse pattern so
+    // there's at most one external tab open across the session).
     //
-    // Note: deliberately NOT passing 'noopener,noreferrer' in the
-    // features string -- those flags create a NEW top-level browsing
-    // context that ignores the target-name reuse, defeating the whole
-    // point. The trade-off is TradingView could in theory call
-    // window.opener to navigate the dashboard tab; TV is a trusted
-    // first-party page so this is acceptable.
+    // Symbol form: canonical dotted form (BRK.B not BRK-B); TV
+    // accepts both, and the dotted form matches what we journal
+    // everywhere else.
     //
-    // The symbol form is the canonical dotted form (BRK.B not BRK-B);
-    // TradingView accepts both but the dotted form matches what we
-    // journal everywhere else.
-    //
-    // Use event delegation on document so newly-rendered tables get
-    // the behaviour automatically -- no need to re-wire on every
-    // render. Filter to .scanner tables so unrelated tables aren't
-    // accidentally interactive.
+    // Event delegation on document so newly-rendered rows pick up
+    // the behaviour automatically -- no per-render rewire. Selector
+    // matches either the compact `.finviz-row` form (current Scanner
+    // view) or `table.scanner tbody tr[data-symbol]` (in case any
+    // future panel renders matches as a table).
     // ---------------------------------------------------------------
-    function tvUrl(symbol) {
-      if (!symbol) return null;
-      return `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(symbol)}`;
+    function tvFullUrl(symbol) {
+      return 'https://www.tradingview.com/chart/?symbol=' + encodeURIComponent(symbol);
     }
+
+    // -------- Lightweight Charts (TradingView's open-source library) --------
+    // The free Advanced Charts widget didn't reliably accept per-study
+    // color overrides for the three EMAs the user wants, so we render
+    // the chart programmatically with Lightweight Charts instead.
+    // ~50KB, pure JS, no widget API to fight.
+    //
+    // Data path: ticker click -> GET /chart/yf_bars?symbol=X -> array of
+    // {t,o,h,l,c,v} bars from yFinance -> compute EMA20/50/200 in JS
+    // -> render candles + 3 line series with exact colors.
+    //
+    // The library is lazy-loaded from unpkg on the first chart open
+    // (no startup cost). If unpkg is blocked / offline, the chart pane
+    // shows an inline error.
+    let lwcChart = null;
+    let lwcScriptPromise = null;
+
+    function ensureLwcScript() {
+      if (window.LightweightCharts) return Promise.resolve();
+      if (lwcScriptPromise) return lwcScriptPromise;
+      lwcScriptPromise = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        // Pin a known-stable major version; v4 is the current line.
+        s.src = 'https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js';
+        s.async = true;
+        s.onload = () => resolve();
+        s.onerror = () => reject(new Error('failed to load lightweight-charts from unpkg.com'));
+        document.head.appendChild(s);
+      });
+      return lwcScriptPromise;
+    }
+
+    // Standard EMA: out[0] = values[0]; out[i] = values[i]*k + out[i-1]*(1-k)
+    // where k = 2/(period+1). The leading bars (< period) are technically
+    // unstable but we still emit a value for each so the line spans the
+    // whole chart -- the user wants visual continuity, not statistical
+    // purity. Once the period is exceeded, the EMA matches TradingView's
+    // built-in EMA to within float-rounding.
+    function emaSeries(closes, period) {
+      const k = 2 / (period + 1);
+      const out = new Array(closes.length);
+      if (closes.length === 0) return out;
+      let prev = closes[0];
+      out[0] = prev;
+      for (let i = 1; i < closes.length; i++) {
+        prev = closes[i] * k + prev * (1 - k);
+        out[i] = prev;
+      }
+      return out;
+    }
+
+    function renderLwcChart(symbol, bars) {
+      const container = document.getElementById('tv-chart-container');
+      if (!container) return;
+      // Tear down any prior chart so series don't accumulate. LWC is
+      // cheap to instantiate; fresh on each symbol is the simplest
+      // correct path.
+      if (lwcChart) {
+        try { lwcChart.remove(); } catch (e) { console.warn('[lwc] remove failed:', e); }
+      }
+      lwcChart = null;
+      container.innerHTML = '';
+
+      if (!bars || bars.length === 0) {
+        container.innerHTML = '<div style="padding:20px;color:var(--text-muted)">No bars returned for ' + symbol + '.</div>';
+        return;
+      }
+
+      lwcChart = LightweightCharts.createChart(container, {
+        width:  container.clientWidth,
+        height: container.clientHeight,
+        layout: {
+          background: { type: 'solid', color: '#0d1117' },
+          textColor:  '#c9d1d9',
+          fontFamily: '"Segoe UI", system-ui, sans-serif',
+          fontSize:   11,
+        },
+        grid: {
+          vertLines: { color: '#21262d' },
+          horzLines: { color: '#21262d' },
+        },
+        rightPriceScale: { borderColor: '#30363d' },
+        timeScale:       { borderColor: '#30363d', timeVisible: false, secondsVisible: false },
+        crosshair:       { mode: 1 },
+      });
+
+      // Bar shape: {t:'YYYY-MM-DDTHH:MM:SSZ', o,h,l,c,v}. LWC daily
+      // accepts time as 'YYYY-MM-DD' (business day) or UTC seconds.
+      // We slice the date portion off the ISO timestamp.
+      const candleData = bars.map(b => ({
+        time:  b.t.slice(0, 10),
+        open:  b.o, high: b.h, low: b.l, close: b.c,
+      }));
+      const times  = bars.map(b => b.t.slice(0, 10));
+      const closes = bars.map(b => b.c);
+
+      // Candles in our standard up/down colors (green/red).
+      const candleSeries = lwcChart.addCandlestickSeries({
+        upColor:        '#3fb950',
+        downColor:      '#f85149',
+        borderVisible:  false,
+        wickUpColor:    '#3fb950',
+        wickDownColor:  '#f85149',
+      });
+      candleSeries.setData(candleData);
+
+      // Three EMAs in the user-specified colors.
+      function addEmaLine(period, color) {
+        const series = lwcChart.addLineSeries({
+          color, lineWidth: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        });
+        const ema = emaSeries(closes, period);
+        series.setData(ema.map((v, i) => ({ time: times[i], value: v })));
+        return series;
+      }
+      addEmaLine(20,  '#f85149');  // red
+      addEmaLine(50,  '#3fb950');  // green
+      addEmaLine(200, '#bc8cff');  // purple
+
+      lwcChart.timeScale().fitContent();
+
+      // LWC doesn't auto-resize. Attach once; the listener picks up
+      // viewport changes after this render.
+      if (!window._lwcResizeAttached) {
+        window.addEventListener('resize', () => {
+          if (!lwcChart) return;
+          const c = document.getElementById('tv-chart-container');
+          if (c) {
+            try {
+              lwcChart.applyOptions({ width: c.clientWidth, height: c.clientHeight });
+            } catch (e) {}
+          }
+        });
+        window._lwcResizeAttached = true;
+      }
+    }
+
+    // Main click-handler entry point. Lazy-loads Lightweight Charts +
+    // fetches yFinance daily bars in parallel, then renders candles
+    // and the three EMA lines. Name kept as `loadTvChart` so the
+    // delegated click listener doesn't need rewiring.
+    async function loadTvChart(symbol) {
+      const placeholder = document.getElementById('chart-placeholder');
+      const symLabel    = document.getElementById('chart-symbol');
+      const extLink     = document.getElementById('chart-external-link');
+      const container   = document.getElementById('tv-chart-container');
+
+      if (!symbol) {
+        if (lwcChart) try { lwcChart.remove(); } catch (_) {}
+        lwcChart = null;
+        if (container) container.innerHTML = '';
+        if (placeholder) placeholder.classList.remove('hidden');
+        symLabel.textContent = '—';
+        if (extLink) extLink.style.display = 'none';
+        return;
+      }
+
+      symLabel.textContent = symbol;
+      if (extLink) {
+        extLink.style.display = '';
+        extLink.href = tvFullUrl(symbol);
+      }
+      if (placeholder) placeholder.classList.add('hidden');
+      if (container) container.innerHTML =
+        '<div style="padding:20px;color:var(--text-muted)">loading bars + library...</div>';
+
+      try {
+        const [_, payload] = await Promise.all([
+          ensureLwcScript(),
+          fetch('/chart/yf_bars?symbol=' + encodeURIComponent(symbol) + '&lookback_days=400',
+                { cache: 'no-store' }).then(r => {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+          }),
+        ]);
+        renderLwcChart(symbol, payload.bars || []);
+      } catch (e) {
+        if (container) container.innerHTML =
+          `<div style="padding:20px;color:var(--err)">Chart failed: ${e.message}</div>`;
+      }
+    }
+
     document.addEventListener('click', (ev) => {
-      const tr = ev.target.closest('table.scanner tbody tr[data-symbol]');
-      if (!tr) return;
-      const sym = tr.dataset.symbol;
-      const url = tvUrl(sym);
-      if (url) window.open(url, 'intraday_bot_tv');
+      // Match the compact list-row form (Scanner view) or any future
+      // setup-results table that adopts the data-symbol convention.
+      const el = ev.target.closest('.finviz-row[data-symbol], table.scanner tbody tr[data-symbol]');
+      if (!el) return;
+      const sym = el.dataset.symbol;
+      if (!sym) return;
+      loadTvChart(sym);
     });
 
     function fmtVol(v) {
@@ -764,28 +1209,63 @@
         wrap.innerHTML = '<div class="empty-state">Finviz returned 0 tickers. Either the screener filters matched nothing today, or the scrape failed -- check stderr.</div>';
         return;
       }
-      let html = '<table class="scanner"><thead><tr>'
-        + '<th>#</th>'
-        + '<th>Symbol</th>'
-        + '<th style="text-align:right">Price</th>'
-        + '<th style="text-align:right">Volume</th>'
-        + '<th>Setup matched</th>'
-        + '</tr></thead><tbody>';
-      let matched = 0;
-      rows.forEach((r, i) => {
-        const sym = (r.symbol || '').toUpperCase();
-        const badges = setupBadgesHtml(sym);
-        const isMatched = !badges.includes('class="muted"');
-        if (isMatched) matched++;
-        html += `<tr data-symbol="${sym}" class="${isMatched ? 'matched' : ''}" title="Click to open ${sym} in TradingView">`
-          + `<td class="muted">${i + 1}</td>`
-          + `<td class="sym">${sym}</td>`
-          + `<td class="num">${r.price !== null && r.price !== undefined ? fmtNum(r.price, 2) : ''}</td>`
-          + `<td class="num">${fmtVol(r.volume)}</td>`
-          + `<td>${badges}</td>`
-          + '</tr>';
+      // Sort by setup: matched rows first (grouped by which setup
+      // matched, in SETUPS order), then unmatched rows. Within each
+      // group, preserve Finviz's original volume-desc order. The "#"
+      // column still shows the FINVIZ rank (not the display position)
+      // so the user can see where each row fell in the volume sort --
+      // useful since high-volume names tend to be the most liquid.
+      const yfSetups = SETUPS.filter(s => s.run === 'yf');
+      function primarySetupIdx(symbol) {
+        for (let i = 0; i < yfSetups.length; i++) {
+          if (candidateFor(yfSetups[i], symbol)) return i;
+        }
+        return -1;
+      }
+      const indexed = rows.map((r, idx) => ({
+        r, idx,
+        setupIdx: primarySetupIdx((r.symbol || '').toUpperCase()),
+      }));
+      indexed.sort((a, b) => {
+        const aMatchPriority = a.setupIdx >= 0 ? 0 : 1;
+        const bMatchPriority = b.setupIdx >= 0 ? 0 : 1;
+        if (aMatchPriority !== bMatchPriority) return aMatchPriority - bMatchPriority;
+        if (a.setupIdx !== b.setupIdx) return a.setupIdx - b.setupIdx;
+        return a.idx - b.idx;
       });
-      html += '</tbody></table>';
+
+      // Compact card list -- one row per ticker, two lines each:
+      //   Line 1: #rank · symbol · setup-badges (right-aligned)
+      //   Line 2: $price · volume                (left-aligned to symbol)
+      // The full Symbol/Price/Volume/Setup info is preserved; just
+      // wrapped vertically so it fits the 270px-wide scanner column.
+      let html = '<div class="finviz-list">';
+      let matched = 0;
+      indexed.forEach((item) => {
+        const r = item.r;
+        const sym = (r.symbol || '').toUpperCase();
+        const isMatched = item.setupIdx >= 0;
+        if (isMatched) matched++;
+        const badges = isMatched ? setupBadgesHtml(sym) : '';
+        const priceStr = (r.price !== null && r.price !== undefined)
+          ? '$' + fmtNum(r.price, 2)
+          : '';
+        const volStr = fmtVol(r.volume);
+        html += `<div class="finviz-row ${isMatched ? 'matched' : ''}" `
+          + `data-symbol="${sym}" title="Click to open ${sym} in TradingView">`
+          + '<div class="line1">'
+          +   `<span class="rank">#${item.idx + 1}</span>`
+          +   `<span class="sym">${sym}</span>`
+          +   `<span class="badge-group">${badges}</span>`
+          + '</div>'
+          + '<div class="line2">'
+          +   (priceStr ? `<span>${priceStr}</span>` : '')
+          +   (priceStr && volStr ? '<span class="sep">&middot;</span>' : '')
+          +   (volStr ? `<span>${volStr}</span>` : '')
+          + '</div>'
+          + '</div>';
+      });
+      html += '</div>';
       wrap.innerHTML = html;
       // Update the panel header meta with the live match count.
       const meta = document.getElementById('finviz-meta');
@@ -800,10 +1280,114 @@
       }
     }
 
+    // ---------------------------------------------------------------
+    // Finviz filter pretty-printer.
+    //
+    // The Finviz screener URL embeds its criteria in the `f=` query
+    // param as a comma-separated list of opaque codes like
+    // `cap_midover,sh_price_o20,ta_averagetruerange_o2,...`. The user
+    // doesn't want to read the raw URL; they want the criteria shown
+    // as readable labels.
+    //
+    // formatFinvizFilter(code) returns a short human label. Known
+    // single-token codes are in FINVIZ_FILTER_LABELS; parametric
+    // codes (price/atr/beta/vol thresholds) are matched with regex.
+    // Unknown codes fall back to the raw code so we never hide info
+    // -- the tooltip on each pill always shows the raw code anyway.
+    // ---------------------------------------------------------------
+    const FINVIZ_FILTER_LABELS = {
+      // Market cap (mutually exclusive selectors)
+      'cap_nano':       'Nano Cap',
+      'cap_micro':      'Micro Cap',
+      'cap_small':      'Small Cap',
+      'cap_mid':        'Mid Cap',
+      'cap_large':      'Large Cap',
+      'cap_mega':       'Mega Cap',
+      'cap_microover':  'Micro Cap+',
+      'cap_smallover':  'Small Cap+',
+      'cap_midover':    'Mid Cap+',
+      'cap_largeover':  'Large Cap+',
+      'cap_megaover':   'Mega Cap+',
+      'cap_smallunder': 'Small Cap or less',
+      'cap_midunder':   'Mid Cap or less',
+      'cap_largeunder': 'Large Cap or less',
+      // Geography
+      'geo_usa':        'US-listed',
+      'geo_foreign':    'Non-US',
+    };
+
+    function fmtCompactNum(n) {
+      if (n >= 1e9) return (n / 1e9).toFixed(n % 1e9 === 0 ? 0 : 1) + 'B';
+      if (n >= 1e6) return (n / 1e6).toFixed(n % 1e6 === 0 ? 0 : 1) + 'M';
+      if (n >= 1e3) return (n / 1e3).toFixed(n % 1e3 === 0 ? 0 : 1) + 'K';
+      return String(n);
+    }
+
+    function formatFinvizFilter(code) {
+      if (FINVIZ_FILTER_LABELS[code]) return FINVIZ_FILTER_LABELS[code];
+      let m;
+      // Avg volume. Finviz uses two formats:
+      //   sh_avgvol_o<N>   -> over N thousand shares  (N in thousands)
+      //   sh_avgvol_<N>to  -> N and up (raw shares; the Elite range form)
+      //   sh_avgvol_u<N>   -> under N thousand
+      if ((m = code.match(/^sh_avgvol_o(\d+(?:\.\d+)?)$/))) {
+        return 'Avg Vol > ' + fmtCompactNum(parseFloat(m[1]) * 1000);
+      }
+      if ((m = code.match(/^sh_avgvol_(\d+(?:\.\d+)?)to$/))) {
+        return 'Avg Vol ≥ ' + fmtCompactNum(parseFloat(m[1]));
+      }
+      if ((m = code.match(/^sh_avgvol_u(\d+(?:\.\d+)?)$/))) {
+        return 'Avg Vol < ' + fmtCompactNum(parseFloat(m[1]) * 1000);
+      }
+      // Price ($)
+      if ((m = code.match(/^sh_price_o(\d+(?:\.\d+)?)$/))) return 'Price > $' + m[1];
+      if ((m = code.match(/^sh_price_u(\d+(?:\.\d+)?)$/))) return 'Price < $' + m[1];
+      // ATR ($)
+      if ((m = code.match(/^ta_averagetruerange_o(\d+(?:\.\d+)?)$/))) return 'ATR > $' + m[1];
+      if ((m = code.match(/^ta_averagetruerange_u(\d+(?:\.\d+)?)$/))) return 'ATR < $' + m[1];
+      // Beta (scale-free)
+      if ((m = code.match(/^ta_beta_o(\d+(?:\.\d+)?)$/))) return 'Beta > ' + m[1];
+      if ((m = code.match(/^ta_beta_u(\d+(?:\.\d+)?)$/))) return 'Beta < ' + m[1];
+      // Volatility (% Week). Common forms first; Finviz's multi-select
+      // can produce odd-looking compound codes (e.g. `2tox2to`) -- show
+      // them raw so the user sees something.
+      if ((m = code.match(/^ta_volatility_o(\d+(?:\.\d+)?)$/))) return 'Volatility > ' + m[1] + '%';
+      if ((m = code.match(/^ta_volatility_u(\d+(?:\.\d+)?)$/))) return 'Volatility < ' + m[1] + '%';
+      if ((m = code.match(/^ta_volatility_(\d+)to(\d+)$/)))  return 'Volatility ' + m[1] + '-' + m[2] + '%';
+      if ((m = code.match(/^ta_volatility_(.+)$/)))           return 'Volatility: ' + m[1];
+      // IPO age
+      if ((m = code.match(/^ipodate_morethan(\d+)y$/))) return 'IPO > ' + m[1] + 'y';
+      if ((m = code.match(/^ipodate_lessthan(\d+)y$/))) return 'IPO < ' + m[1] + 'y';
+      // Fallback
+      return code;
+    }
+
+    function parseFinvizFilters(url) {
+      if (!url) return [];
+      const m = url.match(/[?&]f=([^&#]+)/);
+      if (!m) return [];
+      return decodeURIComponent(m[1]).split(',').map(s => s.trim()).filter(Boolean);
+    }
+
+    function renderFinvizFilters(url) {
+      const wrap = document.getElementById('finviz-filters');
+      if (!wrap) return;
+      const filters = parseFinvizFilters(url);
+      if (filters.length === 0) {
+        wrap.innerHTML = '<span class="filter-pill" style="opacity:0.6">no filters</span>';
+        return;
+      }
+      // Each pill shows the human label; tooltip carries the raw code
+      // so the user can still see the underlying Finviz filter when
+      // they hover (useful for debugging an unfamiliar code).
+      wrap.innerHTML = filters
+        .map(f => `<span class="filter-pill" title="${f}">${formatFinvizFilter(f)}</span>`)
+        .join('');
+    }
+
     async function loadFinvizTickers(forceRefresh) {
       const wrap = document.getElementById('finviz-table-wrap');
       const meta = document.getElementById('finviz-meta');
-      const urlEl = document.getElementById('finviz-url');
       meta.textContent = forceRefresh ? 'refreshing from Finviz...' : 'loading...';
       try {
         const r = await fetch(
@@ -816,7 +1400,10 @@
           throw new Error(detail);
         }
         const j = await r.json();
-        urlEl.textContent = j.url || '(none)';
+        // Render the human-readable filter criteria (replaces the raw
+        // URL display). Backend still returns the full URL so the
+        // tooltip on each pill can show its raw code.
+        renderFinvizFilters(j.url);
         // Stash base count + fetched timestamp on the meta element so
         // renderFinvizTable can rebuild the header string with live
         // match counts as setups complete.

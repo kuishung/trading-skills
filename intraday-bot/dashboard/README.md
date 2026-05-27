@@ -29,6 +29,187 @@ Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-05-27 - Chart pane: switch from TradingView widget to Lightweight Charts (full programmatic control)
+
+User reported repeatedly that EMA lines wouldn't render in the right colors via the free Advanced Charts widget. After three iterations of fighting widget-API quirks (constructor `studies_overrides` with indexed keys: ignored; `chart.createStudy` 6-arg overrides: studies added in wrong colors; post-creation per-study `applyOverrides`: studies stopped showing at all), it became clear the free tv.js embed's API surface isn't reliable enough to land per-study colors consistently.
+
+**Switched the chart pane to Lightweight Charts** -- TradingView's open-source charting library:
+- ~50 KB pure JS, lazy-loaded from `unpkg.com/lightweight-charts@4.2.0/...`. No widget API to fight; we own every pixel.
+- Renders candles (green up / red down) + three EMA lines in exact colors (EMA20 red, EMA50 green, EMA200 purple) computed in JS from the same yFinance bars used elsewhere in the dashboard.
+- Re-creates the chart on each ticker click (LWC is cheap to instantiate; fresh-on-each-symbol avoids stale series state).
+
+**New backend endpoint**: `GET /chart/yf_bars?symbol=<X>&lookback_days=<N>` (default 400). Returns `{ symbol, count, bars: [{t,o,h,l,c,v}] }`. Reuses `resources/yf_daily_bars.fetch_daily_single()` so the chart and the scan pipeline share the same fetch code + canonical bar shape. No parquet read.
+
+**Frontend**:
+- New helpers: `ensureLwcScript()` (lazy CDN load), `emaSeries(closes, period)` (standard EMA math), `renderLwcChart(symbol, bars)` (chart construction + series setup).
+- `loadTvChart(symbol)` (name kept so the existing event-delegation click handler doesn't need rewiring) now: parallel-loads the library + bars, then calls `renderLwcChart`.
+- Removed: all TradingView widget code -- `tvWidget`, `tvWidgetReady`, `tvScriptPromise`, `ensureTvScriptLoaded`, `addEmaStudies`, `EMA_COLORS`, the `studies_overrides` block. ~150 lines gone.
+- Chart styling matches dashboard tokens: `#0d1117` background, `#c9d1d9` text, `#21262d` grid, etc.
+- The "Open in TradingView &nearr;" link still works (full TV page in the named external tab).
+
+**Trade-offs accepted:**
+- No built-in TradingView UI tools (drawings, alerts, indicator picker) -- those need the paid Charting Library.
+- Chart re-renders fully on each symbol click (~50-200ms; no perceived lag).
+- Single network dependency on `unpkg.com` for the LWC script. If unpkg is blocked, the chart pane shows an inline error and the rest of the dashboard keeps working. Easy to vendor locally if reliability becomes an issue.
+
+**Smoke verified:**
+- `GET /chart/yf_bars?symbol=AAPL&lookback_days=30` -> HTTP 200, 30 bars, latest 2026-05-26 (today ET).
+- Page serves 60.7 KB. No dangling `tvWidget` / `addEmaStudies` / `EMA_COLORS` references in the JS.
+
+### 2026-05-27 - TradingView chart: move EMAs to constructor `studies` (more reliable than onChartReady + createStudy)
+
+User: *"the EMA lines can be added to chart?"*. Previous code used `widget.onChartReady(() => chart.createStudy(...))` -- which works on the full Charting Library but is fragile on the free `tv.js` Advanced Charts embed (the `chart()` method's surface varies by widget version; `createStudy` sometimes silently fails or isn't exposed).
+
+Switched to declaring the three EMA studies at widget-construction time via the `studies` array, which is documented for the free embed:
+
+```js
+studies: [
+  { id: 'MAExp@tv-basicstudies', inputs: { length:  20 } },
+  { id: 'MAExp@tv-basicstudies', inputs: { length:  50 } },
+  { id: 'MAExp@tv-basicstudies', inputs: { length: 200 } },
+],
+studies_overrides: {
+  'moving average exponential.plot.color.0':     '#f85149',  // EMA20 red
+  'moving average exponential.plot.linewidth.0': 2,
+  'moving average exponential.plot.color.1':     '#3fb950',  // EMA50 green
+  'moving average exponential.plot.linewidth.1': 2,
+  'moving average exponential.plot.color.2':     '#bc8cff',  // EMA200 purple
+  'moving average exponential.plot.linewidth.2': 2,
+},
+```
+
+The `.0`/`.1`/`.2` index suffix in `studies_overrides` targets the Nth instance of the named study in declaration order -- documented mechanism for per-instance overrides without a post-creation callback dance.
+
+Dropped `addEmaStudies()` and the `onChartReady` callback that called it. Kept `onChartReady` only to flip the `tvWidgetReady` flag (used by `setSymbol()` to short-circuit a re-instantiate).
+
+**Failure mode if the indexed-override pattern doesn't apply on a specific TV widget revision**: all three EMAs still render in their default TV colors (typically blue/orange/violet). The user can right-click each EMA in the chart and pick a custom color from TV's UI. Worst-case: chart works, EMAs visible, colors not exactly as specified -- still functional. Tell me if you see this; we can switch to the JS-widget-with-custom-tv.js-version path or pre-compute the EMAs server-side and draw them as overlay shapes.
+
+### 2026-05-27 - Scrollbar: invisible by default, fades in on hover at the muted tone
+
+User: *"the scroll bar make it invisible and only visible when mouse over and colour tone to match"*. Applied a subtle-scrollbar treatment to the two scrollable containers (`main` for non-scanner views; `#finviz-table-wrap` for the watchlist):
+
+- **Default state**: scrollbar track and thumb are both `transparent` -> visually invisible.
+- **Container hover**: thumb fades to `rgba(139, 148, 158, 0.35)` (the `--text-muted` colour at 35% opacity) with a 0.2s transition.
+- **Direct thumb hover**: thumb darkens to `rgba(139, 148, 158, 0.6)` to signal you're hovering the drag target.
+- Width is `8px` (WebKit) / `thin` (Firefox). Both engines covered.
+
+Rules are bundled in one block right after `main { ... }` so they're easy to find. Adding another scrollable container = append its selector to the existing list (rather than re-declaring the rules elsewhere).
+
+### 2026-05-27 - Watchlist header: show readable filter pills, not the raw Finviz URL
+
+User: *"the finviz url do not show the url just show the criteria that applied to get the tickers"*. Replaced the raw-URL display under the Watchlist header with a row of compact pills, one per filter code from the Finviz `f=` param.
+
+Each pill:
+- Shows a human label (e.g. `Mid Cap+`, `Price > $20`, `ATR > $2`, `Beta > 1`, `Avg Vol ≥ 10K`, `US-listed`).
+- Tooltip on hover shows the raw Finviz code (e.g. `cap_midover`, `sh_price_o20`) so the user can still see what's behind the label when debugging an unfamiliar filter.
+
+**Mapping coverage:**
+- Static codes (cap_midover, geo_usa, etc.) live in `FINVIZ_FILTER_LABELS`.
+- Parametric codes (price/ATR/beta/volatility/avg-vol thresholds) are matched with regex and rendered with the numeric value extracted.
+- Unknown codes fall through to the raw code as the label so we never silently drop information.
+
+Backend response unchanged -- `/scanner/finviz_tickers` still returns the full URL; the dashboard just stops displaying it verbatim. If we ever want server-side parsing instead (to share between dashboard + CLI), promote `formatFinvizFilter` to a Python helper.
+
+**File-size delta**: 52KB -> 57KB (the static FINVIZ_FILTER_LABELS map + regex parser are ~80 lines).
+
+### 2026-05-27 - Scanner view: rename to "Watchlist", flush-edge layout, EMA chart studies
+
+Three threaded requests:
+1. *"the scanner just penal just call watchlist"* -> renamed the left-pane panel header from "Finviz scanner" to "Watchlist".
+2. *"do it like a side bar with the edge"* -> the left pane now sits flush against the actual nav sidebar; the right chart pane goes edge-to-edge of the viewport. No gap between panes; no rounded outer corners; the only visible separator is the 1px right-border on the watchlist column.
+3. *"I need the EMA20 red EMA50 green EMA200 purple line to be shown in the tradingview chart"* -> swapped the `widgetembed` iframe for the JS widget (`TradingView.widget`), which exposes the `createStudy()` API for per-study color overrides.
+
+**Flush-edge layout:**
+- `main > .view[data-view="scanner"]` now uses `margin: -24px` to cancel main's own padding so the panels go edge-to-edge.
+- Both panels lose their `border-radius` + outer borders. Watchlist keeps a 1px right-border as the visual separator from the chart pane.
+
+**EMA wiring:**
+- Lazy-loads `https://s3.tradingview.com/tv.js` on first chart open (no startup cost; only pays when the user clicks a ticker).
+- First click creates the widget and runs `onChartReady` -> three `chart.createStudy('Moving Average Exponential', false, false, [N], null, {Plot.color, Plot.linewidth})` calls with lengths 20/50/200 and colors `#f85149` / `#3fb950` / `#bc8cff` (matching dashboard's --err / --ok / a custom purple).
+- Subsequent clicks call `widget.setSymbol(symbol, 'D')` -> chart re-loads data in-place; the three EMA studies persist. Much faster than the iframe-reload approach.
+- Failure path: if tv.js fails to load (offline, CDN block, etc.) the chart pane shows an inline error; the watchlist + Finviz endpoints keep working.
+
+**Why JS widget instead of iframe with `&studies=...`**: the iframe `widgetembed` URL accepts a `studies` parameter but it can't differentiate colors per study instance -- all three EMAs would render with the default TV blue. `createStudy()` per-instance overrides are the only way to get red/green/purple.
+
+**File-size delta**: 47KB -> 52KB (the JS widget integration code is non-trivial).
+
+### 2026-05-27 - Scanner view: scrollable watchlist + inline TradingView chart in the right pane
+
+User: *"anything in the watchlist cannot fit the screen to be scrolled / the remaining right page add a tradingview chart that link to the watchlist"*. Made the watchlist internally scrollable (panel header stays put) and added a second panel filling the remaining viewport width with a TradingView iframe chart that updates when you click a watchlist row.
+
+**Layout shape:**
+```
++--------+------- 270px -------+--- rest of viewport ---+
+|        | Finviz scanner      | Chart: NVDA  [Open ↗] |
+| Side   |  43 tickers · 4 m.  |                       |
+| bar    |  URL: ...           |  +--- TradingView   --+|
+|        |  [Refresh]          |  |  iframe          ||
+|180px   |  +-------------+    |  |  (D candles,     ||
+|        |  | #5 FCX [EMA]|    |  |   dark theme)    ||
+|        |  | $64.36 ...  |    |  |                  ||
+|        |  +-------------+    |  +-----------------+|
+|        |  +-------------+    |                       |
+|        |  | #24 C [EMA] |    |                       |
+|        |  | scrollable! |    |                       |
+|        |  ...             v  |                       |
++--------+---------------------+-----------------------+
+```
+
+**Scrollable watchlist** — the Scanner view now uses `height: 100%` + `flex-direction: row` + `overflow: hidden`, and the inner `#finviz-table-wrap` gets `flex: 1; overflow-y: auto; min-height: 0`. Result: the panel header (title, count, URL, Refresh button) stays anchored at the top of the panel while the list scrolls underneath. The page itself doesn't scroll — main's overflow is contained by the per-pane scroll regions.
+
+**Inline chart pane:**
+- New `<section class="panel scanner-chart-panel">` next to the Finviz panel. Header reads `Chart: <SYMBOL> [Open in TradingView ↗]`. The iframe fills the rest of the panel; default placeholder text reads *"Click a ticker in the watchlist to load its chart"*.
+- Click any watchlist row -> iframe loads `https://s.tradingview.com/widgetembed/?symbol=<SYM>&interval=D&theme=dark&style=1&...`. Daily candles, dark theme, no social ideas panel, toolbar tinted to match the dashboard background.
+- The `Open in TradingView ↗` link in the chart header is a fallback to TradingView's full UI — uses the same named-tab target (`intraday_bot_tv`) so at most one external tab exists across the session.
+- Symbol form stays canonical dotted (`BRK.B` not `BRK-B`); TV accepts both.
+
+**Click-handler change** — the previous behaviour (open in named-tab via `window.open`) is replaced by `loadTvChart(symbol)` which updates the inline iframe. The named-tab path is still available via the `Open in TradingView ↗` link.
+
+**Why iframe `widgetembed` instead of the JS widget API**: simpler to wire (just set `iframe.src` on click); no TradingView SDK to load, no widget lifecycle to manage. The reload-on-symbol-change cost (~1-2s) is acceptable for interactive use. If we ever want symbol-change-without-reload, swap to `new TradingView.widget(...)` + `widget.chart().setSymbol(...)`.
+
+**File-size delta**: 40KB -> 47KB (chart panel CSS + JS).
+
+### 2026-05-27 - Scanner view: narrow column (270px = 1.5x sidebar) with compact card list
+
+User: *"the scanner i want it to be next to the side bar, 1.5 width of the side bar"*. Constrained the Scanner view to 270px (180px sidebar * 1.5) and converted the Finviz list from a horizontal table to a vertical stack of compact cards.
+
+**Layout shape:**
+```
++--------+------- 270px -------+ <empty rest of viewport for future panels>
+|        | Finviz scanner      |
+| Side   |   43 tickers · 4 m. |
+| bar    |   [Refresh]         |
+|        |  URL: ...           |
+|180px   |  +--------+         |
+|        |  | #5 FCX [EMA50]   |  <- each ticker = one card
+|        |  | $64.36  50.12M   |
+|        |  +--------+         |
+|        |  ...                |
++--------+---------------------+
+```
+
+**Each card stacks two lines:**
+- Line 1: `#<Finviz rank>` (muted, small) - `<SYMBOL>` (accent) - setup-match badges (right-aligned, wraps if multiple)
+- Line 2: `$<price>` - `<volume>` (small, muted, indented to align with symbol)
+
+Matched rows get a green-tinted border and faint green background; symbol turns green too. Hover effect intensifies the tint. Click anywhere on the card -> TradingView (same reused tab).
+
+**Why not just narrow the table**: at 270px a 5-column table (`# · Symbol · Price · Volume · Setup`) would be cramped at best and unreadable with multiple setup badges. Card stacking preserves all the info AND lets setup badges wrap naturally onto a second line.
+
+**Scoped to the Scanner view only**: other views (Monitor, Strategies, Trades, Data) keep their wide layout. The `main > .view[data-view="scanner"]` selector targets the constraint.
+
+**Click delegation** widened: the TradingView open-on-click handler now matches either `.finviz-row[data-symbol]` (the new card form) OR `table.scanner tbody tr[data-symbol]` (kept for any future setup-results tables that might land in other views).
+
+### 2026-05-27 - Scanner: sort Finviz rows by setup membership
+
+User: *"the list will sort by setup"*. Matched rows now float to the top of the Finviz table, grouped by which setup matched (in SETUPS-registry order: DITP P2 first, then EMA rebound, ...). Unmatched rows fall to the bottom. Within each group, Finviz's original volume-desc order is preserved as a stable tiebreaker.
+
+**The `#` column keeps its Finviz rank** (1-indexed position in the original volume-desc result) rather than the display position, so a row showing `#5 FCX [EMA EMA50]` tells you both *that FCX was the 5th-most-traded name in the Finviz screen* AND *that EMA-rebound matched it*. Useful intel: high-volume names tend to be the most liquid for entries.
+
+**Sort key** (per row): `(matched ? 0 : 1, setupIdx_in_SETUPS, original_finviz_idx)`. Sort is stable, so multi-setup matches go to the first-matching setup's group (set by `SETUPS` declaration order: DITP P2 before EMA rebound).
+
+**Why SETUPS-declaration order** rather than alphabetical: the registry order is the authoring intent for setup priority. If we ever want a user-tunable priority, that's a separate UI control; for now declaration-order is the simplest sensible default.
+
 ### 2026-05-27 - Scanner: consolidate to single Finviz panel with a "Setup matched" column
 
 User: *"we use back the same panel to indicate whether there are any setup matched in a setup column"*. Reverted the grouped-by-setup second panel; now the Finviz table is the sole panel and has a new last column showing which setup(s) matched each ticker.

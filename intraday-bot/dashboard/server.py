@@ -2898,6 +2898,42 @@ def _universe_for_setup(setup: str) -> tuple[list[str], str]:
     return sp500.get_sp500_symbols(), "sp500"
 
 
+@app.get("/chart/yf_bars")
+async def chart_yf_bars(symbol: str, lookback_days: int = 400) -> JSONResponse:
+    """Return daily OHLCV bars for one symbol, fetched fresh via yFinance.
+
+    Consumer: the dashboard's chart pane. Renders candles + EMAs using
+    Lightweight Charts (TradingView's open-source library) -- the
+    Advanced Charts iframe/widget didn't reliably accept per-study
+    color overrides on the free tier, so we moved to a programmatic
+    chart that we fully control.
+
+    Reuses resources/yf_daily_bars.fetch_daily_single() so this stays
+    consistent with the universe scan path (same fetch code, same
+    canonical bar shape). No parquets touched -- user directive
+    2026-05-27: "the parquet store i intend to use it for backtesting
+    only, this scanning of daily setup through yfinance only".
+    """
+    symbol = (symbol or "").upper().strip()
+    if not symbol:
+        raise HTTPException(status_code=400, detail="symbol query param required")
+    if not (1 <= lookback_days <= 1000):
+        raise HTTPException(status_code=400, detail="lookback_days must be 1..1000")
+    try:
+        import yf_daily_bars  # type: ignore  resources/yf_daily_bars.py
+    except ImportError as exc:
+        raise HTTPException(status_code=500, detail=f"import yf_daily_bars failed: {exc}")
+    loop = asyncio.get_running_loop()
+    try:
+        bars = await loop.run_in_executor(
+            None,
+            lambda: yf_daily_bars.fetch_daily_single(symbol, lookback_days=lookback_days),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"yfinance fetch failed: {exc}")
+    return JSONResponse({"symbol": symbol, "count": len(bars), "bars": bars})
+
+
 @app.get("/scanner/finviz_tickers")
 async def scanner_finviz_tickers(force_refresh: bool = False) -> JSONResponse:
     """Return the current Finviz screener result set as a row list.
