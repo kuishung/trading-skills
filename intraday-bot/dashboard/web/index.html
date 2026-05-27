@@ -295,66 +295,60 @@
       padding: 24px;
       text-align: center;
     }
-    /* ----- Scanner setup filter panel ----- */
-    .setup-filter {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      flex-wrap: wrap;
-      padding: 10px 12px;
+    /* ----- Setup-matches panel: one card per setup ----- */
+    .setup-group {
+      border: 1px solid var(--border);
+      border-radius: 4px;
       margin-bottom: 12px;
       background: #0d1117;
-      border: 1px solid var(--border);
-      border-radius: 4px;
+      overflow: hidden;
     }
-    .setup-filter label {
-      color: var(--text-muted);
-      font-size: 12px;
+    .setup-group:last-child { margin-bottom: 0; }
+    .setup-group-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      background: #161b22;
+      border-bottom: 1px solid var(--border);
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .setup-group.empty .setup-group-header { border-bottom: none; }
+    .setup-group .title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
       letter-spacing: 0.3px;
     }
-    .setup-filter select {
-      background: #21262d;
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      padding: 5px 10px;
-      font-size: 13px;
-      font-family: inherit;
-      cursor: pointer;
-      min-width: 260px;
-    }
-    .setup-filter select option:disabled { color: var(--text-muted); }
-    .show-matches-toggle {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      cursor: pointer;
-      user-select: none;
-    }
-    .show-matches-toggle input { cursor: pointer; margin: 0; }
-    .setup-status {
-      margin-left: auto;
-      font-size: 12px;
+    .setup-group .summary {
       color: var(--text-muted);
+      font-size: 12px;
       font-variant-numeric: tabular-nums;
     }
-    .setup-status.ok { color: var(--ok); }
-    .setup-status.err { color: var(--err); }
-    .setup-status strong { color: var(--text); font-weight: 600; }
-    /* Highlight rows that matched the applied setup */
-    table.scanner tbody tr.matched td {
-      background: rgba(63, 185, 80, 0.05);
+    .setup-group .summary strong { color: var(--text); }
+    .setup-group .summary.ok strong   { color: var(--ok); }
+    .setup-group .summary.warn strong { color: var(--warn); }
+    .setup-group .summary.err strong  { color: var(--err); }
+    .setup-group .body {
+      padding: 8px 0;
     }
-    table.scanner tbody tr.matched td.sym {
-      color: var(--ok);
+    .setup-group.empty .body { display: none; }
+    .setup-group .note {
+      padding: 10px 14px;
+      color: var(--text-muted);
+      font-size: 12px;
     }
-    table.scanner tbody tr.matched td.sym::before {
-      content: '\25CF ';   /* small filled circle as match indicator */
-      color: var(--ok);
-      font-size: 9px;
-      vertical-align: middle;
-      margin-right: 4px;
+    .setup-group .note.err   { color: var(--err); }
+    .setup-group .note.warn  { color: var(--warn); }
+    .setup-group .note code {
+      background: #21262d;
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-size: 11px;
     }
+    .matches-status.ok  strong { color: var(--ok); }
+    .matches-status.err strong { color: var(--err); }
     /* ----- Scanner view: dropdown control row + scan log ----- */
     .scan-controls {
       display: flex;
@@ -513,24 +507,26 @@
             </span>
           </div>
           <p class="placeholder" id="finviz-url-line" style="margin:0 0 10px 0;font-size:11px;word-break:break-all">URL: <code id="finviz-url"></code></p>
-
-          <div class="setup-filter">
-            <label for="apply-setup">Filter by setup:</label>
-            <select id="apply-setup">
-              <option value="ditp">DITP P2 &mdash; Resistance breakout</option>
-              <option value="ditp_tc" disabled>DITP TC (Day-0 trend continuation) &mdash; not wired yet</option>
-              <option value="guns" disabled>GUNS &mdash; needs IBKR (intraday, not daily-chart)</option>
-            </select>
-            <button class="scan-btn" id="apply-setup-btn">Apply</button>
-            <label class="show-matches-toggle">
-              <input type="checkbox" id="matches-only" />
-              Show only matches
-            </label>
-            <span class="setup-status" id="setup-status">no setup applied yet</span>
-          </div>
-
           <div id="finviz-table-wrap">
             <div class="empty-state">loading Finviz tickers...</div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Setup matches</h2>
+            <span class="meta">
+              <span id="matches-status">no setups run yet</span>
+              <button class="scan-btn" id="run-all-btn">Run all setups</button>
+            </span>
+          </div>
+          <p class="placeholder" style="margin:0 0 10px 0;font-size:11px">
+            Runs each wired daily-chart setup against the Finviz tickers
+            above, then groups the matches by setup. Sequential -- each
+            setup is a separate yFinance fetch + detection pass.
+          </p>
+          <div id="setup-groups">
+            <div class="empty-state">click <strong>Run all setups</strong> to see which Finviz tickers match each strategy</div>
           </div>
         </section>
       </div>
@@ -773,15 +769,10 @@
       return String(n);
     }
 
-    // Module-level state for the Finviz view.
-    //   finvizRowsCache  = the rows returned by the last /scanner/finviz_tickers call
-    //   matchesBySymbol  = symbol -> candidate dict from the last setup apply
-    //   activeSetupLabel = human-readable name of the last setup applied
-    // Re-renders read from these so toggling "show only matches" doesn't
-    // require another network round-trip.
+    // Finviz table is independent of setup analysis. The two panels --
+    // Finviz tickers (top) and Setup matches (bottom) -- share only
+    // the universe via cfg.finviz_screener_url on the backend.
     let finvizRowsCache = [];
-    let matchesBySymbol = {};      // empty when no setup applied
-    let activeSetupLabel = '';
 
     function renderFinvizTable() {
       const wrap = document.getElementById('finviz-table-wrap');
@@ -790,54 +781,20 @@
         wrap.innerHTML = '<div class="empty-state">Finviz returned 0 tickers. Either the screener filters matched nothing today, or the scrape failed -- check stderr.</div>';
         return;
       }
-      const hasMatches = Object.keys(matchesBySymbol).length > 0;
-      const matchesOnly = document.getElementById('matches-only')?.checked && hasMatches;
-      const visibleRows = matchesOnly
-        ? rows.filter(r => matchesBySymbol[(r.symbol || '').toUpperCase()])
-        : rows;
-      if (visibleRows.length === 0 && matchesOnly) {
-        wrap.innerHTML = '<div class="empty-state">No matches for the applied setup. Uncheck "Show only matches" to see all Finviz tickers.</div>';
-        return;
-      }
       let html = '<table class="scanner"><thead><tr>'
         + '<th>#</th>'
         + '<th>Symbol</th>'
         + '<th style="text-align:right">Price</th>'
-        + '<th style="text-align:right">Volume</th>';
-      if (hasMatches) {
-        html += ''
-          + '<th>Match</th>'
-          + '<th>Tier</th>'
-          + '<th>Var</th>'
-          + '<th>Conf</th>'
-          + '<th style="text-align:right">Dist (ATR)</th>'
-          + '<th style="text-align:right">Score</th>';
-      }
-      html += '</tr></thead><tbody>';
-      visibleRows.forEach((r, i) => {
+        + '<th style="text-align:right">Volume</th>'
+        + '</tr></thead><tbody>';
+      rows.forEach((r, i) => {
         const sym = (r.symbol || '').toUpperCase();
-        const cand = matchesBySymbol[sym];
-        const matchedCls = cand ? ' matched' : '';
-        html += `<tr data-symbol="${sym}" class="${matchedCls.trim()}" title="Click to open ${sym} in TradingView">`
+        html += `<tr data-symbol="${sym}" title="Click to open ${sym} in TradingView">`
           + `<td class="muted">${i + 1}</td>`
           + `<td class="sym">${sym}</td>`
           + `<td class="num">${r.price !== null && r.price !== undefined ? fmtNum(r.price, 2) : ''}</td>`
-          + `<td class="num">${fmtVol(r.volume)}</td>`;
-        if (hasMatches) {
-          if (cand) {
-            const tierClass = cand.tier ? `tag tier-${cand.tier}` : 'tag';
-            html += ''
-              + `<td><span class="tag strategy">${activeSetupLabel}</span></td>`
-              + `<td>${cand.tier ? `<span class="${tierClass}">${cand.tier}</span>` : '-'}</td>`
-              + `<td class="muted">${cand.variant || ''}</td>`
-              + `<td class="num">${cand.confluence_tier ?? ''}</td>`
-              + `<td class="num">${fmtNum(cand.distance_atr)}</td>`
-              + `<td class="num">${cand.score ?? ''}</td>`;
-          } else {
-            html += '<td class="muted">-</td><td class="muted">-</td><td class="muted">-</td><td class="muted">-</td><td class="muted">-</td><td class="muted">-</td>';
-          }
-        }
-        html += '</tr>';
+          + `<td class="num">${fmtVol(r.volume)}</td>`
+          + '</tr>';
       });
       html += '</tbody></table>';
       wrap.innerHTML = html;
@@ -862,12 +819,12 @@
         urlEl.textContent = j.url || '(none)';
         meta.innerHTML = `<strong>${j.count}</strong> tickers &middot; fetched ${new Date().toLocaleTimeString()}`;
         finvizRowsCache = j.rows || [];
-        // Refreshing the universe invalidates any prior setup-match state --
-        // those candidates were computed against the OLD ticker set.
-        matchesBySymbol = {};
-        activeSetupLabel = '';
-        setSetupStatus(null, 'no setup applied yet');
         renderFinvizTable();
+        // Refreshing the universe invalidates any prior setup-run results --
+        // they were computed against the old ticker set.
+        setupResultsCache = {};
+        setMatchesStatus(null, 'no setups run yet (universe changed)');
+        renderSetupGroups();
       } catch (e) {
         wrap.innerHTML = `<div class="empty-state">Error: ${e.message}</div>`;
         meta.textContent = '';
@@ -877,83 +834,226 @@
     document.getElementById('finviz-refresh').addEventListener('click', () => loadFinvizTickers(true));
 
     // -----------------------------------------------------------------
-    // Apply-setup panel (step 2 of the scan workflow)
+    // SETUP MATCHES PANEL
     //
-    // User picks a setup, clicks Apply -> POST /scanner/yf_scan?setup=X.
-    // The backend uses the SAME universe the Finviz panel pulled (both
-    // resolve via cfg.finviz_screener_url), so candidates are guaranteed
-    // to be a subset of the visible ticker list. We index them by
-    // symbol, then re-render the Finviz table with extra columns for
-    // matched rows.
+    // Iterates all known setups, runs each against the SAME universe
+    // the Finviz panel pulled (cfg.finviz_screener_url resolved
+    // server-side in _universe_for_setup), and groups the results by
+    // setup name.
     //
-    // Setup name -> short label used in the Match column badge.
+    // Each setup entry in SETUPS is either:
+    //   { key, label, run: 'yf' }        -- backed by /scanner/yf_scan
+    //   { key, label, run: 'stub', note} -- not wired yet; renders the
+    //                                       note text and skips the
+    //                                       network call
+    //
+    // Add new setups by appending to SETUPS. No other code change
+    // needed -- the renderer is fully data-driven.
+    //
+    // Sequential calls (not parallel): each yf_scan does its own
+    // yFinance batch fetch, so running 3 wired setups would do 3x the
+    // network work today. When we get >1 wired setup, the right move
+    // is a backend endpoint that fetches yFinance once and runs all
+    // detectors on the shared bars cache; tracked but out of scope
+    // here.
     // -----------------------------------------------------------------
-    const SETUP_LABELS = {
-      'ditp':    'DITP P2',
-      'ditp_tc': 'DITP TC',
-      'guns':    'GUNS',
-    };
+    const SETUPS = [
+      {
+        key:    'ditp',
+        label:  'DITP P2 - Resistance breakout',
+        run:    'yf',
+      },
+      {
+        key:    'ditp_tc',
+        label:  'DITP TC - Day-0 trend continuation',
+        run:    'stub',
+        note:   'Not wired for yFinance yet. TC needs the prior P2 watchlist in memory; will wire when we refactor tc_scanner to accept candidates as a parameter.',
+        level:  'warn',
+      },
+      {
+        key:    'guns',
+        label:  'GUNS - Momentum gappers',
+        run:    'stub',
+        note:   'Intraday-only setup -- needs IBKR live momentum scan. Daily yFinance bars are the wrong substrate for this strategy.',
+        level:  'warn',
+      },
+    ];
 
-    function setSetupStatus(level, html) {
-      const el = document.getElementById('setup-status');
+    // setupResultsCache[key] holds the last successful yf_scan response
+    // for that setup (or {error: "..."} on failure). Stubs are never
+    // cached; the renderer reads their note text directly from SETUPS.
+    let setupResultsCache = {};
+    let runAllInFlight = false;
+
+    function setMatchesStatus(level, html) {
+      const el = document.getElementById('matches-status');
       el.classList.remove('ok', 'err');
       if (level) el.classList.add(level);
       el.innerHTML = html;
     }
 
-    let applyInFlight = false;
+    function candidateRowHtml(c) {
+      const sym = (c.symbol || '').toUpperCase();
+      const tierClass = c.tier ? `tag tier-${c.tier}` : 'tag';
+      const cautions = (c.cautions && c.cautions.length)
+        ? c.cautions.join(', ')
+        : '<span class="muted">-</span>';
+      return `<tr data-symbol="${sym}" title="Click to open ${sym} in TradingView">`
+        + `<td class="sym">${sym}</td>`
+        + `<td>${c.tier ? `<span class="${tierClass}">${c.tier}</span>` : '-'}</td>`
+        + `<td class="muted">${c.variant || ''}</td>`
+        + `<td class="num">${c.confluence_tier ?? ''}</td>`
+        + `<td class="num">${fmtNum(c.last_close)}</td>`
+        + `<td class="num">${fmtNum(c.resistance)}</td>`
+        + `<td class="num">${fmtNum(c.distance_atr)}</td>`
+        + `<td class="num">${c.score ?? ''}</td>`
+        + `<td style="font-size:11px;color:var(--text-muted)">${cautions}</td>`
+        + '</tr>';
+    }
 
-    async function onApplySetup() {
-      if (applyInFlight) return;
-      applyInFlight = true;
-      const sel = document.getElementById('apply-setup');
-      const setup = sel.value;
-      const btn = document.getElementById('apply-setup-btn');
-      btn.disabled = true;
-      btn.classList.add('running');
-      const start = Date.now();
-      const tick = setInterval(() => {
-        const s = Math.round((Date.now() - start) / 1000);
-        btn.textContent = `Applying... ${s}s`;
-      }, 1000);
-      setSetupStatus(null, `running <strong>${SETUP_LABELS[setup] || setup}</strong> against ${finvizRowsCache.length} tickers...`);
+    function renderSetupGroup(setup) {
+      const result = setupResultsCache[setup.key];
+      // Stub setup: just show the note. No table.
+      if (setup.run === 'stub') {
+        return `
+          <div class="setup-group empty">
+            <div class="setup-group-header">
+              <span class="title">${setup.label}</span>
+              <span class="summary">stub</span>
+            </div>
+            <div class="note ${setup.level || 'warn'}">${setup.note || ''}</div>
+          </div>
+        `;
+      }
+      // Not yet run.
+      if (!result) {
+        return `
+          <div class="setup-group empty">
+            <div class="setup-group-header">
+              <span class="title">${setup.label}</span>
+              <span class="summary">not run yet</span>
+            </div>
+          </div>
+        `;
+      }
+      // Errored.
+      if (result.error) {
+        return `
+          <div class="setup-group empty">
+            <div class="setup-group-header">
+              <span class="title">${setup.label}</span>
+              <span class="summary err"><strong>error</strong></span>
+            </div>
+            <div class="note err">${result.error}</div>
+          </div>
+        `;
+      }
+      const n = result.n_candidates || 0;
+      const summaryLevel = n > 0 ? 'ok' : 'warn';
+      const summary = `<strong>${n}</strong> match${n === 1 ? '' : 'es'} `
+        + `&middot; universe=${result.universe_size} `
+        + `&middot; fetch=${result.fetch_duration_s}s scan=${result.scan_duration_s}s`;
+      if (n === 0) {
+        return `
+          <div class="setup-group empty">
+            <div class="setup-group-header">
+              <span class="title">${setup.label}</span>
+              <span class="summary ${summaryLevel}">${summary}</span>
+            </div>
+          </div>
+        `;
+      }
+      const rows = (result.candidates || []).map(candidateRowHtml).join('');
+      return `
+        <div class="setup-group">
+          <div class="setup-group-header">
+            <span class="title">${setup.label}</span>
+            <span class="summary ${summaryLevel}">${summary}</span>
+          </div>
+          <div class="body">
+            <table class="scanner">
+              <thead><tr>
+                <th>Symbol</th><th>Tier</th><th>Var</th><th>Conf</th>
+                <th style="text-align:right">Last</th>
+                <th style="text-align:right">Resistance</th>
+                <th style="text-align:right">Dist (ATR)</th>
+                <th style="text-align:right">Score</th>
+                <th>Cautions</th>
+              </tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderSetupGroups() {
+      const wrap = document.getElementById('setup-groups');
+      const anyResults = Object.keys(setupResultsCache).length > 0;
+      if (!anyResults && SETUPS.every(s => s.run !== 'stub')) {
+        wrap.innerHTML = '<div class="empty-state">click <strong>Run all setups</strong> to see which Finviz tickers match each strategy</div>';
+        return;
+      }
+      wrap.innerHTML = SETUPS.map(renderSetupGroup).join('');
+    }
+
+    async function runOneSetup(setup) {
+      if (setup.run !== 'yf') return;     // stubs don't make network calls
       try {
-        const r = await fetch(`/scanner/yf_scan?setup=${encodeURIComponent(setup)}`, {
+        const r = await fetch(`/scanner/yf_scan?setup=${encodeURIComponent(setup.key)}`, {
           method: 'POST', cache: 'no-store',
         });
         const j = await r.json();
-        clearInterval(tick);
         if (!r.ok || !j.ok) {
-          setSetupStatus('err', `failed: HTTP ${r.status} -- ${j.detail || JSON.stringify(j).slice(0, 200)}`);
-          return;
+          setupResultsCache[setup.key] = { error: `HTTP ${r.status}: ${j.detail || JSON.stringify(j).slice(0, 200)}` };
+        } else {
+          setupResultsCache[setup.key] = j;
         }
-        // Build a symbol -> candidate index for fast row lookup during render.
-        matchesBySymbol = {};
-        for (const c of (j.candidates || [])) {
-          const sym = (c.symbol || '').toUpperCase();
-          if (sym) matchesBySymbol[sym] = c;
-        }
-        activeSetupLabel = SETUP_LABELS[setup] || setup.toUpperCase();
-        const okLevel = j.n_candidates > 0 ? 'ok' : null;
-        setSetupStatus(okLevel,
-          `<strong>${activeSetupLabel}</strong> &rarr; <strong>${j.n_candidates}</strong> matches `
-          + `&middot; fetch=${j.fetch_duration_s}s scan=${j.scan_duration_s}s `
-          + `&middot; universe: ${j.universe_source || '?'}`
-        );
-        renderFinvizTable();
       } catch (e) {
-        clearInterval(tick);
-        setSetupStatus('err', `request failed: ${e.message}`);
-      } finally {
-        applyInFlight = false;
-        btn.disabled = false;
-        btn.classList.remove('running');
-        btn.textContent = 'Apply';
+        setupResultsCache[setup.key] = { error: e.message };
       }
     }
 
-    document.getElementById('apply-setup-btn').addEventListener('click', onApplySetup);
-    document.getElementById('matches-only').addEventListener('change', renderFinvizTable);
+    async function runAllSetups() {
+      if (runAllInFlight) return;
+      runAllInFlight = true;
+      const btn = document.getElementById('run-all-btn');
+      btn.disabled = true;
+      btn.classList.add('running');
+
+      const yfSetups = SETUPS.filter(s => s.run === 'yf');
+      let done = 0;
+      const start = Date.now();
+      for (const setup of yfSetups) {
+        setMatchesStatus(null, `running <strong>${setup.label}</strong> (${done + 1}/${yfSetups.length})...`);
+        btn.textContent = `Running... ${Math.round((Date.now() - start) / 1000)}s`;
+        await runOneSetup(setup);
+        done++;
+        renderSetupGroups();   // incremental: each group flips from "not run" -> result as it completes
+      }
+
+      const totalMatches = yfSetups.reduce((acc, s) => {
+        const r = setupResultsCache[s.key];
+        return acc + (r && !r.error ? (r.n_candidates || 0) : 0);
+      }, 0);
+      const totalErrors = yfSetups.reduce((acc, s) => {
+        const r = setupResultsCache[s.key];
+        return acc + (r && r.error ? 1 : 0);
+      }, 0);
+      const level = totalErrors > 0 ? 'err' : (totalMatches > 0 ? 'ok' : null);
+      setMatchesStatus(level,
+        `<strong>${totalMatches}</strong> total matches across ${yfSetups.length} setup${yfSetups.length === 1 ? '' : 's'} `
+        + `&middot; ${Math.round((Date.now() - start) / 1000)}s`
+        + (totalErrors > 0 ? ` &middot; <strong>${totalErrors}</strong> error${totalErrors === 1 ? '' : 's'}` : '')
+      );
+
+      runAllInFlight = false;
+      btn.disabled = false;
+      btn.classList.remove('running');
+      btn.textContent = 'Run all setups';
+    }
+
+    document.getElementById('run-all-btn').addEventListener('click', runAllSetups);
 
     function ageBadge(meta) {
       const a = meta.age_days;

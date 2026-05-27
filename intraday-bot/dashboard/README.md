@@ -29,6 +29,50 @@ Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-05-27 - Scanner step 2 rework: dedicated "Setup matches" panel grouped by setup
+
+User: *"instead of apply the setup filter, we do another panel to go through these tickers on all the setup that we have group them by setup"*. Replaced the in-table filter (one setup at a time, match-tagged rows) with a second `<section class="panel">` below the Finviz table that runs every wired setup and groups the matches.
+
+**Layout shape:**
+```
++--- Finviz scanner ---------------------------------------+
+| 43 tickers ... [Refresh]                                 |
+| #  Symbol  Price   Volume                                |  (plain table)
++----------------------------------------------------------+
+
++--- Setup matches ----------------------------------------+
+| <status>                              [Run all setups]   |
+|                                                          |
+| -- DITP P2 - Resistance breakout  N matches / N=universe |
+|    <table: Symbol Tier Var Conf Last Resist Dist Score>  |
+|                                                          |
+| -- DITP TC ...                    stub (not wired)       |
+| -- GUNS ...                       stub (intraday only)   |
++----------------------------------------------------------+
+```
+
+**Why a separate panel:** the Finviz table is the universe (what's tradeable today). The setup matches are the analysis (which of those fit which strategy). Conflating them in one match-tagged table mixed two concerns. Separate panels lets the user keep the Finviz view as a sortable / scrollable reference while the matches grow underneath.
+
+**Data-driven setup registry** in JS (`const SETUPS`):
+- Each entry is `{ key, label, run: 'yf' | 'stub', note?, level? }`.
+- `'yf'` setups call `POST /scanner/yf_scan?setup=<key>` sequentially.
+- `'stub'` setups render the explanatory note without a network call -- placeholder for future wiring (DITP TC, GUNS, etc).
+- Adding a new setup is a one-line append to `SETUPS`; the renderer is fully data-driven.
+
+**Sequential execution** (not parallel). Each `yf_scan` does its own yFinance batch fetch, so 3 wired setups would do 3x the network work. Acceptable while only DITP P2 is wired; when we get >1 wired setup, the right move is a backend `/scanner/yf_scan_all` that fetches yFinance once and runs all detectors on the shared bars cache. Tracked but out of scope here.
+
+**Incremental rendering**: as each setup completes, its group flips from `not run yet` -> result. Users see progress instead of a single blocking wait.
+
+**Removed (replaced by the new panel):**
+- The `.setup-filter` row inside the Finviz panel (dropdown + Apply + matches-only checkbox + status line).
+- The match-aware columns in `renderFinvizTable()` (Tier / Var / Conf / Dist / Score appearing inline).
+- The `matched` row tint + green-dot prefix CSS.
+- JS state: `matchesBySymbol`, `activeSetupLabel`, `applyInFlight`, `onApplySetup`, `SETUP_LABELS`, `setSetupStatus`.
+
+**Universe-refresh consistency**: clicking Refresh on the Finviz panel now also clears `setupResultsCache` -- stale match groups would otherwise survive a universe change.
+
+**File-size delta**: 38KB -> 41KB. The grouped renderer + data-driven SETUPS registry are slightly heavier than the inline filter approach, but the separation buys clarity for future setup additions.
+
 ### 2026-05-27 - Scanner step 2 lands: setup filter panel inside the Finviz view
 
 User directive: *"with the finviz tickers, then i can select from a panel to filter from the ticker the setup that match the strategies"*. The Finviz table is the primary surface; the setup detector now runs on demand and annotates which rows matched, without moving them.
