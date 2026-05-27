@@ -2867,9 +2867,12 @@ async def scanner_run(family: str) -> JSONResponse:
 #
 # Returns (symbols, source_label) so the response can tell the UI which
 # universe was actually used.
+_VALID_SETUPS = ("ditp", "ditp_tc", "ema_rebound")
+
+
 def _universe_for_setup(setup: str) -> tuple[list[str], str]:
     setup = setup.lower()
-    if setup not in ("ditp", "ditp_tc"):
+    if setup not in _VALID_SETUPS:
         raise ValueError(f"unknown setup '{setup}' (no universe builder wired)")
 
     try:
@@ -2946,7 +2949,7 @@ async def scanner_universe(setup: str = "ditp") -> JSONResponse:
     one Finviz round trip (~3s).
     """
     setup = (setup or "").lower()
-    if setup not in ("ditp", "ditp_tc"):
+    if setup not in _VALID_SETUPS:
         raise HTTPException(status_code=400, detail=f"unknown setup '{setup}'")
     try:
         symbols, source = _universe_for_setup(setup)
@@ -2978,17 +2981,24 @@ async def scanner_yf_scan(
         fetch_duration_s, scan_duration_s, total_duration_s, today_et }
     """
     setup = (setup or "").lower()
-    if setup not in ("ditp", "ditp_tc"):
+    if setup not in _VALID_SETUPS:
         raise HTTPException(
             status_code=400,
-            detail=f"setup must be 'ditp' or 'ditp_tc'. Got: {setup!r}",
+            detail=f"setup must be one of {list(_VALID_SETUPS)}. Got: {setup!r}",
+        )
+    if setup == "ditp_tc":
+        # ditp_tc has no yFinance-direct detector yet (needs in-memory P2
+        # watchlist plumbing). The frontend's SETUPS array marks it as a
+        # stub so it shouldn't actually call this; guard anyway.
+        raise HTTPException(
+            status_code=501,
+            detail="ditp_tc via yFinance not wired yet. Use the CLI scanner or DITP P2/ema_rebound for now.",
         )
 
-    # Both heavy imports done lazily so server startup stays cheap.
+    # Heavy imports done lazily so server startup stays cheap.
     try:
         import yf_daily_bars                # type: ignore  resources/yf_daily_bars.py
         import bars_store                   # type: ignore  resources/bars_store.py
-        from strategy.DITP import scanner as ditp_scanner  # type: ignore
     except ImportError as exc:
         raise HTTPException(status_code=500, detail=f"import failure: {exc}")
 
@@ -3021,31 +3031,42 @@ async def scanner_yf_scan(
 
     def _yf_backed_load(symbol, start=None, end=None, *, timeframe: str = "1min"):
         if timeframe != "daily":
-            # The DITP scanner only requests daily for this code path.
-            # If something else asks for intraday we honour the original
-            # (which will read parquets) -- safer than crashing.
+            # Detectors only request daily on this code path. If
+            # something asks for intraday we honour the original
+            # (which would read parquets) -- safer than crashing.
             return original_load(symbol, start, end, timeframe=timeframe)
         return bars_by_symbol.get(symbol.upper(), [])
 
-    cfg = ditp_scanner.P2Config()
-    variants_allowed = {"A", "B", "C"}
     errors: list[str] = []
     try:
         bars_store.load_bars = _yf_backed_load  # type: ignore[assignment]
-        # scan_universe() in the DITP module loops symbols, swallows
-        # per-symbol exceptions to stderr, applies variant filtering,
-        # and final-sorts by (distance_atr, tier, -score). We just run
-        # it in a thread because the per-symbol numpy work is CPU bound.
-        cand_objs = await loop.run_in_executor(
-            None,
-            lambda: ditp_scanner.scan_universe(symbols, cfg, variants_allowed),
-        )
+        # Dispatch by setup. Each branch returns a list of JSON-serializable
+        # candidate dicts. CPU-bound numpy work runs in the default
+        # executor so the FastAPI event loop stays responsive.
+        if setup == "ditp":
+            from strategy.DITP import scanner as ditp_scanner  # type: ignore
+            cfg = ditp_scanner.P2Config()
+            variants_allowed = {"A", "B", "C"}
+            cand_objs = await loop.run_in_executor(
+                None,
+                lambda: ditp_scanner.scan_universe(symbols, cfg, variants_allowed),
+            )
+            from dataclasses import asdict as _asdict
+            candidates_dicts = [_asdict(c) for c in cand_objs]
+        elif setup == "ema_rebound":
+            from strategy.DITP import ema_rebound as ema_mod  # type: ignore
+            cfg = ema_mod.EMARebConfig()
+            candidates_dicts = await loop.run_in_executor(
+                None,
+                lambda: ema_mod.scan_universe(symbols, cfg),
+            )
+        else:
+            # Should be unreachable -- _VALID_SETUPS guard at top + ditp_tc
+            # 501 guard above mean we only get here for setups whose dispatch
+            # is missing. Surface that loudly.
+            raise HTTPException(status_code=500, detail=f"no dispatch wired for setup '{setup}'")
     finally:
         bars_store.load_bars = original_load  # type: ignore[assignment]
-
-    # P2Candidate is a dataclass; asdict serializes nested fields safely.
-    from dataclasses import asdict as _asdict
-    candidates_dicts = [_asdict(c) for c in cand_objs]
 
     scan_duration = round(_time.time() - t_scan0, 1)
     total_duration = round(_time.time() - started, 1)

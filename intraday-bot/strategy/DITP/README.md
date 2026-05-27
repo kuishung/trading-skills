@@ -13,6 +13,7 @@ just drops a `strategy/DITP/<setup_name>/` subfolder.
 - `_helpers.py` — Family-shared helpers (skeleton). Add shared constants + plan builders here as setups are wired.
 - `scanner.py` — DITP P2 Pattern scanner CLI. Reads daily parquet bars from `data/price_history/daily/`, applies the §6 eligibility filters (EMA stack + real-ceiling resistance + signal-candle anatomy + pending-breakout state), classifies sub-variant A / B / C, then runs the §6.5 ranking layer (5-component score + 5 caution flags + tier mapping). Writes `state/watchlist_ditp_<tomorrow>.txt` + `.json`. Source: `strategies-reference/DITP.md` §6 + §6.5.
 - `tc_scanner.py` — DITP TC (Trend Continuation) **EOD Day-0** scanner CLI. Walks the most recent `state/watchlist_ditp_*.json`, filters to symbols whose Day-0 daily candle both (a) closed above the P2 candidate's `resistance` (= `range_high`) and (b) printed bullish (close > open AND close in upper half of range), and writes `state/watchlist_tc_<tomorrow>.txt` + `.json`. Source: `strategies-reference/DITP.md` §6 Setup 4 (Phase 1 — premarket validation + entry pipeline still TBD).
+- `ema_rebound.py` — **EMA rebound detector** (daily support bounce on EMA20 / EMA50 / EMA200). Single-file detector module; no CLI scanner / watchlist file (consumed only by the dashboard's `POST /scanner/yf_scan?setup=ema_rebound` for ad-hoc filtering of the Finviz universe). Returns the WHICH EMA acted as support + proximity/recency metrics. Source: user request 2026-05-27 ("find rebound on EMA20 or EMA50 or EMA200"). `__version__ = "1.0.0"`. Public API: `detect_ema_rebound(symbol, cfg)` -> dict | None; `scan_universe(symbols, cfg)` -> list[dict]. Config: `EMARebConfig` (lookback_bars=5, touch_tolerance_atr=0.3, max_distance_atr=1.0, require_stack=True, require_above_ema200=True, require_bullish_close=True, min_close_position=0.5).
 - `ditp_p2/` — Setup 1 (P2 Pattern). See its own README.
 - `ditp_tc/` — Setup 4 (TC — Trend Continuation). See its own README.
 - `_decision_engine.py` — Family-shared decision math (entry/stop/target/tradeability for the live entry pipeline). Currently used by `ditp_p2/backtest_adapter.py`.
@@ -33,6 +34,35 @@ just drops a `strategy/DITP/<setup_name>/` subfolder.
 - Every rule edit bumps `__version__` in the setup's `impl.py` and adds a dated entry to that setup's README changelog (which IS the version history — there's no separate `changelog.md` per CLAUDE.md).
 
 ## Changelog
+
+### 2026-05-27 — `ema_rebound.py` v1.0.0: daily support-bounce detector on EMA20 / EMA50 / EMA200
+
+User: *"Add a setup that will find rebound on EMA20 or EMA50 or EMA200"* -- applied as a filter setup in the dashboard's Scanner view (one of the entries in the "Setup matches" panel that runs against the Finviz universe).
+
+**Detection logic** (per symbol, daily bars; needs >= 210 bars for EMA200 stability):
+
+1. **Trend gate**: EMA20 > EMA50 > EMA200 AND close > EMA200. Without uptrend the EMAs would act as resistance, not support; the setup is meaningless.
+2. **Bullish-candle gate**: today's close > today's open AND close in upper half of bar range (rebound character, not a weak retest).
+3. **EMA selection** (descending strength: EMA200 -> EMA50 -> EMA20):
+   - Close above the EMA (rebound confirmed).
+   - Close within `max_distance_atr * ATR` of the EMA (recent rebound, not a 5-ATR runner).
+   - A bar in the last `lookback_bars` days where low was at or just below the EMA (within `touch_tolerance_atr * ATR`).
+   - First EMA that satisfies all three is the anchor. EMA200 beats EMA50 beats EMA20 because the deeper pullback that held = stronger structural support.
+4. **Score**: `_EMA_WEIGHTS[anchor] + proximity_bonus + recency_bonus`. Sort `(-score, distance_atr asc)`.
+
+**Why a single-file module, not a `strategy/DITP/ema_rebound/` setup folder**: this detector is consumed only by the dashboard's ad-hoc scan endpoint, not the bot's execution pipeline. There's no `build(cfg)` or `evaluate()` to plug into the orchestrator; no journal events; no `__version__` per-rule-edit churn anticipated near term. If/when we wire it into the bot's live entry pipeline, promote to a proper setup folder following the convention (`ditp_p2/` is the template).
+
+**Smoke test** (laptop, user's intraday Finviz URL):
+- `POST /scanner/yf_scan?setup=ema_rebound` -> 4 matches against 43 Finviz tickers in ~3s total:
+  - FCX -> EMA50, touched 1 day ago, dist 0.94 ATR, score 30
+  - C    -> EMA20, touched today, dist 0.54 ATR, score 23
+  - GOOG -> EMA20, touched today, dist 0.74 ATR, score 22
+  - GOOGL-> EMA20, touched today, dist 0.79 ATR, score 22
+- No EMA200 hits in this universe (would need a deeper pullback that recently held; the high-vol Finviz set hasn't seen those recently).
+
+**Wiring notes:**
+- Server: dispatch added in `dashboard/server.py::scanner_yf_scan` for `setup=ema_rebound` -- monkey-patches `bars_store.load_bars` to return the yFinance bar cache (identical pattern to the DITP P2 path) then calls `ema_rebound.scan_universe()`.
+- Frontend: new entry in the `SETUPS` array with a custom column spec (Symbol / EMA / Last / EMA value / Dist ATR / Days since / ATR / Score). The dashboard renderer is now column-spec-driven so adding more setups with different shapes won't require renderer forks.
 
 ### 2026-05-26 — `scanner.py` + `tc_scanner.py`: holiday-aware target / source dates
 

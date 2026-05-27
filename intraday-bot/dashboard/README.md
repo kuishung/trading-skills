@@ -29,6 +29,26 @@ Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-05-27 - Scanner: add EMA-rebound setup + column-spec-driven renderer
+
+User: *"Add a setup that will find rebound on EMA20 or EMA50 or EMA200"* applied as a FILTER setup (not a separate universe / scanner). Slots into the existing "Setup matches" panel alongside DITP P2.
+
+**Backend (dashboard/server.py):**
+- New dispatch in `POST /scanner/yf_scan` for `setup=ema_rebound`. Same monkey-patch-bars_store pattern as DITP P2 -- the yFinance batch fetch is shared infra; only the detector function differs. Calls `strategy.DITP.ema_rebound.scan_universe()`.
+- `_VALID_SETUPS = ("ditp", "ditp_tc", "ema_rebound")` constant centralizes the allowlist.
+- `ditp_tc` now returns 501 explicitly (was previously falling through to the DITP P2 detector silently -- a latent bug; the frontend never let it through but a hand-crafted curl would have).
+- New detector lives at `strategy/DITP/ema_rebound.py` (v1.0.0). See `strategy/DITP/README.md` changelog for the detection logic + smoke-test results.
+
+**Frontend (web/index.html):**
+- New `ema_rebound` entry in `SETUPS` array with its own `columns` spec (Symbol / EMA / Last / EMA value / Dist ATR / Days since / ATR / Score).
+- Renderer is now **column-spec driven**: `candidateRowHtml(c, columns)` reads field names from the setup definition; `renderSetupGroup` builds the header row from the same spec. Adding new setups with different result shapes no longer requires a renderer fork. New helper: `renderCell(value, kind)` with kinds `sym | num | num-int | tier | tag-ema | cautions | muted`.
+
+**Smoke test** on laptop with user's intraday Finviz URL:
+- DITP P2 -> 0 matches (high-vol Finviz set is IPO-heavy, fails 220-bar EMA200 gate)
+- EMA rebound -> 4 matches (FCX on EMA50; C, GOOG, GOOGL on EMA20). Real, actionable hits.
+
+File-size delta: 41KB -> 44KB (new setup spec + renderCell helper).
+
 ### 2026-05-27 - Scanner step 2 rework: dedicated "Setup matches" panel grouped by setup
 
 User: *"instead of apply the setup filter, we do another panel to go through these tickers on all the setup that we have group them by setup"*. Replaced the in-table filter (one setup at a time, match-tagged rows) with a second `<section class="panel">` below the Finviz table that runs every wired setup and groups the matches.

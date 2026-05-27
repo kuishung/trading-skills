@@ -857,11 +857,41 @@
     // detectors on the shared bars cache; tracked but out of scope
     // here.
     // -----------------------------------------------------------------
+    // Per-setup column spec drives both the header row and each
+    // candidate row. `kind` is a small enum understood by renderCell()
+    // below: sym | num | num-int | tier | tag | cautions | muted.
+    // Adding a new setup = append an entry here with its column list.
     const SETUPS = [
       {
         key:    'ditp',
         label:  'DITP P2 - Resistance breakout',
         run:    'yf',
+        columns: [
+          { header: 'Symbol',     field: 'symbol',          kind: 'sym' },
+          { header: 'Tier',       field: 'tier',            kind: 'tier' },
+          { header: 'Var',        field: 'variant',         kind: 'muted' },
+          { header: 'Conf',       field: 'confluence_tier', kind: 'num-int', align: 'right' },
+          { header: 'Last',       field: 'last_close',      kind: 'num',     align: 'right' },
+          { header: 'Resistance', field: 'resistance',      kind: 'num',     align: 'right' },
+          { header: 'Dist (ATR)', field: 'distance_atr',    kind: 'num',     align: 'right' },
+          { header: 'Score',      field: 'score',           kind: 'num-int', align: 'right' },
+          { header: 'Cautions',   field: 'cautions',        kind: 'cautions' },
+        ],
+      },
+      {
+        key:    'ema_rebound',
+        label:  'EMA rebound (20 / 50 / 200) - Daily support bounce',
+        run:    'yf',
+        columns: [
+          { header: 'Symbol',         field: 'symbol',           kind: 'sym' },
+          { header: 'EMA',            field: 'ema_anchor',       kind: 'tag-ema' },
+          { header: 'Last',           field: 'last_close',       kind: 'num',     align: 'right' },
+          { header: 'EMA value',      field: 'ema_value',        kind: 'num',     align: 'right' },
+          { header: 'Dist (ATR)',     field: 'distance_atr',     kind: 'num',     align: 'right' },
+          { header: 'Days since',     field: 'days_since_touch', kind: 'num-int', align: 'right' },
+          { header: 'ATR(14)',        field: 'atr14',            kind: 'num',     align: 'right' },
+          { header: 'Score',          field: 'score',            kind: 'num-int', align: 'right' },
+        ],
       },
       {
         key:    'ditp_tc',
@@ -892,23 +922,48 @@
       el.innerHTML = html;
     }
 
-    function candidateRowHtml(c) {
+    // Column-spec driven cell renderer. `kind` selects formatting +
+    // CSS class so each setup can have its own column shape without
+    // forking the renderer.
+    function renderCell(value, kind) {
+      // Null/missing -> dash. Catches all the optional fields without
+      // sprinkling `?? ''` everywhere.
+      if (value === null || value === undefined || value === '') {
+        return '<td class="muted">-</td>';
+      }
+      switch (kind) {
+        case 'sym':
+          return `<td class="sym">${value}</td>`;
+        case 'num':
+          return `<td class="num">${fmtNum(value)}</td>`;
+        case 'num-int': {
+          const v = (typeof value === 'number') ? value : parseFloat(value);
+          return `<td class="num">${Number.isFinite(v) ? Math.round(v) : ''}</td>`;
+        }
+        case 'tier':
+          return `<td><span class="tag tier-${value}">${value}</span></td>`;
+        case 'tag-ema':
+          return `<td><span class="tag strategy">${value}</span></td>`;
+        case 'cautions': {
+          const arr = Array.isArray(value) ? value : [];
+          const txt = arr.length ? arr.join(', ') : '<span class="muted">-</span>';
+          return `<td style="font-size:11px;color:var(--text-muted)">${txt}</td>`;
+        }
+        case 'muted':
+          return `<td class="muted">${value}</td>`;
+        default:
+          return `<td>${value}</td>`;
+      }
+    }
+
+    function candidateRowHtml(c, columns) {
       const sym = (c.symbol || '').toUpperCase();
-      const tierClass = c.tier ? `tag tier-${c.tier}` : 'tag';
-      const cautions = (c.cautions && c.cautions.length)
-        ? c.cautions.join(', ')
-        : '<span class="muted">-</span>';
-      return `<tr data-symbol="${sym}" title="Click to open ${sym} in TradingView">`
-        + `<td class="sym">${sym}</td>`
-        + `<td>${c.tier ? `<span class="${tierClass}">${c.tier}</span>` : '-'}</td>`
-        + `<td class="muted">${c.variant || ''}</td>`
-        + `<td class="num">${c.confluence_tier ?? ''}</td>`
-        + `<td class="num">${fmtNum(c.last_close)}</td>`
-        + `<td class="num">${fmtNum(c.resistance)}</td>`
-        + `<td class="num">${fmtNum(c.distance_atr)}</td>`
-        + `<td class="num">${c.score ?? ''}</td>`
-        + `<td style="font-size:11px;color:var(--text-muted)">${cautions}</td>`
-        + '</tr>';
+      let html = `<tr data-symbol="${sym}" title="Click to open ${sym} in TradingView">`;
+      for (const col of columns) {
+        html += renderCell(c[col.field], col.kind);
+      }
+      html += '</tr>';
+      return html;
     }
 
     function renderSetupGroup(setup) {
@@ -963,7 +1018,11 @@
           </div>
         `;
       }
-      const rows = (result.candidates || []).map(candidateRowHtml).join('');
+      const cols = setup.columns || [];
+      const rows = (result.candidates || []).map(c => candidateRowHtml(c, cols)).join('');
+      const headerCells = cols.map(col =>
+        `<th${col.align === 'right' ? ' style="text-align:right"' : ''}>${col.header}</th>`
+      ).join('');
       return `
         <div class="setup-group">
           <div class="setup-group-header">
@@ -972,14 +1031,7 @@
           </div>
           <div class="body">
             <table class="scanner">
-              <thead><tr>
-                <th>Symbol</th><th>Tier</th><th>Var</th><th>Conf</th>
-                <th style="text-align:right">Last</th>
-                <th style="text-align:right">Resistance</th>
-                <th style="text-align:right">Dist (ATR)</th>
-                <th style="text-align:right">Score</th>
-                <th>Cautions</th>
-              </tr></thead>
+              <thead><tr>${headerCells}</tr></thead>
               <tbody>${rows}</tbody>
             </table>
           </div>
