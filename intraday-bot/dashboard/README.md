@@ -29,6 +29,49 @@ Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-05-27 - Scanner: consolidate to single Finviz panel with a "Setup matched" column
+
+User: *"we use back the same panel to indicate whether there are any setup matched in a setup column"*. Reverted the grouped-by-setup second panel; now the Finviz table is the sole panel and has a new last column showing which setup(s) matched each ticker.
+
+**Removed:**
+- The entire `<section class="panel">` for "Watchlist by setup" (HTML).
+- `renderSetupGroup()` and `renderSetupGroups()` (per-setup-card renderers).
+- `candidateRowHtml()` and `renderCell()` -- the column-spec-driven row renderer used by the grouped panel.
+- `ageBadge()` -- leftover from the disk-watchlist age UI.
+- `setMatchesStatus()` and the `#matches-status` element.
+- The `#run-all-btn` Refresh button (in the removed panel).
+
+**Added/changed:**
+- Each yf setup in `SETUPS` now carries:
+  - `shortLabel`  -- compact name shown in the badge (e.g. `P2`, `EMA`)
+  - `matchDetail(candidate)` -- function returning a short disambiguator suffix (e.g. `B/A` for DITP, `EMA50` for ema_rebound). Tooltip on the badge shows the full label.
+- New helpers `candidateFor(setup, symbol)` and `setupBadgesHtml(symbol)` build the per-row Setup column. A non-match renders as `-`; a match renders as one or more `<span class="tag strategy">` badges.
+- `renderFinvizTable()` adds the new `Setup matched` column and counts matched rows. Header meta line is rebuilt live: `<N> tickers · <K> matched · fetched HH:MM:SS` once setups have run; just `<N> tickers · fetched HH:MM:SS` before they do.
+- `runAllSetups()` simplified: drives `renderFinvizTable()` after each setup completes (incremental column population), and uses the Finviz panel's `#finviz-meta` line for in-flight status (`<N> tickers · building EMA (2/2)... · 3s`).
+
+**Stubs** (DITP TC, GUNS) still live in `SETUPS` so the registry remembers them, but they never produce badges in the column (no candidates). When/if wired, flipping `run: 'stub'` -> `run: 'yf'` is all the change needed.
+
+**Confined to dashboard** per the user directive: no parquet read, no backend changes, no Hermes-facing state. The "shortlist" is whichever Finviz rows have a non-empty Setup column at this moment.
+
+File size: 45KB -> 38KB (removed the grouped-panel renderer + its CSS scaffolding).
+
+### 2026-05-27 - Scanner: reframe "Setup matches" as a watchlist + auto-populate on view open
+
+User: *"we are focused on the dashboard, do not mix with the hermes ... I need the setup being applied to the tickers obtained from the Finviz criteria and listed in a watchlist grouped by each setup"*. The existing panel already did exactly this; it just felt like an on-demand "scan" rather than a watchlist because it required a button click. Reframed the UX without restructuring the data flow.
+
+**Changes:**
+- Panel renamed from "Setup matches" -> "Watchlist by setup".
+- Subheader copy reframed in watchlist terms: *"Each Finviz ticker run through every wired setup; matches listed below grouped by setup. Auto-runs when the Finviz tickers load."*
+- Auto-run: `loadFinvizTickers()` now fires `runAllSetups()` after a successful Finviz fetch (and after clearing the prior universe's results). Watchlist is populated by the time the user looks at it; no manual click required.
+- Button label: "Run all setups" -> "Refresh". Still re-runs every wired setup against the current universe; useful after editing setup config or to see fresh intraday yFinance bars.
+- Mid-run button text: "Running... Xs" -> "Building... Xs". Status line during the run: "building watchlist - DITP P2 (1/2)..." instead of generic "running DITP P2".
+- Final status line: "<N> shortlist candidates from <M> tickers across <K> setups - Xs" reframes the result as a shortlist rather than a scan report.
+- Empty-state copy in the groups container: "click Run all setups..." -> "loading watchlist...".
+
+**No backend change** -- this is purely a UX reframing on the same data pipeline (Finviz universe -> `/scanner/yf_scan` per setup -> grouped render).
+
+**Confined to dashboard** per user directive: nothing touches parquets, journal, or any Hermes-facing state. The shortlist lives entirely in the browser tab (`setupResultsCache` JS module state); refreshing the page re-runs from scratch.
+
 ### 2026-05-27 - Scanner: add EMA-rebound setup + column-spec-driven renderer
 
 User: *"Add a setup that will find rebound on EMA20 or EMA50 or EMA200"* applied as a FILTER setup (not a separate universe / scanner). Slots into the existing "Setup matches" panel alongside DITP P2.
