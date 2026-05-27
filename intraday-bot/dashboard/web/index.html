@@ -992,80 +992,45 @@
       return 'https://www.tradingview.com/chart/?symbol=' + encodeURIComponent(symbol);
     }
 
-    // -------- TradingView Advanced Charts widget --------
-    // Reverted from Lightweight Charts back to the TV widget per user
-    // 2026-05-27 ("look back where you manage to draw the EMA but just
-    // colour not changed"). The widget reliably renders three EMA
-    // studies; the per-study color override is the part that fights
-    // back on the free embed, so we just leave the EMAs at TV's
-    // default colors. User can right-click any line in the chart to
-    // change its color manually via TV's UI.
+    // -------- TradingView iframe (widgetembed) with EMAs in URL --------
+    // The JS widget's chart.createStudy() did NOT actually add EMAs on
+    // this embed despite repeated attempts -- the API surface on the
+    // free Advanced Charts widget is too inconsistent. Switching to
+    // the iframe-based widgetembed URL, which supports `studies` as a
+    // URL-encoded JSON array; this is well-documented and known to
+    // work for adding studies (just no per-instance color control,
+    // which we've already accepted).
     //
-    // The widget script (tv.js) is loaded lazily on first chart open.
-    // Once the widget is built we call createStudy three times in
-    // onChartReady for lengths 20/50/200 -- no overrides, 4-arg form
-    // only, which is the call that empirically works on this embed.
-    let tvWidget = null;
-    let tvWidgetReady = false;
-    let tvScriptPromise = null;
-
-    function ensureTvScriptLoaded() {
-      if (window.TradingView) return Promise.resolve();
-      if (tvScriptPromise) return tvScriptPromise;
-      tvScriptPromise = new Promise((resolve, reject) => {
-        const s = document.createElement('script');
-        s.src = 'https://s3.tradingview.com/tv.js';
-        s.async = true;
-        s.onload = () => resolve();
-        s.onerror = () => reject(new Error('failed to load tv.js'));
-        document.head.appendChild(s);
-      });
-      return tvScriptPromise;
+    // URL shape:
+    //   https://s.tradingview.com/widgetembed/
+    //     ?symbol=<SYM>&interval=D&theme=dark&style=1
+    //     &studies=[{"id":"MAExp@tv-basicstudies","inputs":{"length":20}},
+    //               {"id":"MAExp@tv-basicstudies","inputs":{"length":50}},
+    //               {"id":"MAExp@tv-basicstudies","inputs":{"length":200}}]
+    //
+    // Each ticker click rebuilds the URL and sets iframe.src -- the
+    // iframe reloads. ~1-2s reload cost vs the widget's setSymbol
+    // in-place swap, but reliably renders the three EMAs.
+    function tvWidgetUrl(symbol) {
+      const studies = [
+        { id: 'MAExp@tv-basicstudies', inputs: { length:  20 } },
+        { id: 'MAExp@tv-basicstudies', inputs: { length:  50 } },
+        { id: 'MAExp@tv-basicstudies', inputs: { length: 200 } },
+      ];
+      return 'https://s.tradingview.com/widgetembed/'
+        + '?symbol=' + encodeURIComponent(symbol)
+        + '&interval=D&theme=dark&style=1&timezone=Etc%2FUTC'
+        + '&toolbarbg=171b22&hideideas=1&hide_legend=0'
+        + '&studies=' + encodeURIComponent(JSON.stringify(studies));
     }
 
-    function addEmaStudies(widget) {
-      // Resolve the chart object. widget.chart() is the form documented
-      // for the Advanced Charts widget; fall back to activeChart() if
-      // chart() returns null (older widget builds).
-      let chart = null;
-      try { if (typeof widget.chart === 'function') chart = widget.chart(); }
-      catch (e) { console.warn('[tv] widget.chart() threw:', e); }
-      if (!chart) {
-        try { if (typeof widget.activeChart === 'function') chart = widget.activeChart(); }
-        catch (e) { console.warn('[tv] widget.activeChart() threw:', e); }
-      }
-      if (!chart || typeof chart.createStudy !== 'function') {
-        console.warn('[tv] chart.createStudy not exposed; EMAs not added');
-        return;
-      }
-      // 4-arg createStudy. No callback, no overrides -- the override
-      // path doesn't take on the free embed, and trying to use it has
-      // broken the chart entirely in past attempts. Three EMAs render
-      // at TradingView's default line colors.
-      [20, 50, 200].forEach((length, idx) => {
-        setTimeout(() => {
-          try {
-            chart.createStudy('Moving Average Exponential', true /*forceOverlay*/, false /*lock*/, [length]);
-            console.log(`[tv] EMA${length} added`);
-          } catch (e) {
-            console.warn(`[tv] EMA${length} createStudy failed:`, e);
-          }
-        }, idx * 150);   // stagger -- back-to-back createStudy calls can be dropped during initial render
-      });
-    }
-
-    async function loadTvChart(symbol) {
+    function loadTvChart(symbol) {
       const placeholder = document.getElementById('chart-placeholder');
       const symLabel    = document.getElementById('chart-symbol');
       const extLink     = document.getElementById('chart-external-link');
       const container   = document.getElementById('tv-chart-container');
 
       if (!symbol) {
-        if (tvWidget && typeof tvWidget.remove === 'function') {
-          try { tvWidget.remove(); } catch (_) {}
-        }
-        tvWidget = null;
-        tvWidgetReady = false;
         if (container) container.innerHTML = '';
         if (placeholder) placeholder.classList.remove('hidden');
         symLabel.textContent = '—';
@@ -1080,50 +1045,21 @@
       }
       if (placeholder) placeholder.classList.add('hidden');
 
-      try {
-        await ensureTvScriptLoaded();
-      } catch (e) {
-        if (container) container.innerHTML =
-          `<div style="padding:20px;color:var(--err)">TradingView failed to load: ${e.message}</div>`;
-        return;
+      // Lazily create the iframe so the first chart open replaces the
+      // placeholder. Subsequent clicks just update the src.
+      let iframe = container.querySelector('iframe#tv-chart-iframe');
+      if (!iframe) {
+        container.innerHTML = '';
+        iframe = document.createElement('iframe');
+        iframe.id = 'tv-chart-iframe';
+        iframe.title = 'TradingView chart';
+        iframe.style.width = '100%';
+        iframe.style.height = '100%';
+        iframe.style.border = 'none';
+        iframe.style.display = 'block';
+        container.appendChild(iframe);
       }
-
-      // Reuse existing widget if it's ready -- setSymbol swaps the
-      // chart in place without re-creating, which keeps the EMAs.
-      if (tvWidget && tvWidgetReady) {
-        try {
-          tvWidget.setSymbol(symbol, 'D');
-          return;
-        } catch (e) {
-          console.warn('[tv] setSymbol failed, recreating widget:', e);
-          try { tvWidget.remove(); } catch (_) {}
-          tvWidget = null;
-          tvWidgetReady = false;
-        }
-      }
-
-      // Fresh widget creation.
-      container.innerHTML = '';
-      tvWidget = new TradingView.widget({
-        container_id:        'tv-chart-container',
-        autosize:            true,
-        symbol:              symbol,
-        interval:            'D',
-        timezone:            'Etc/UTC',
-        theme:               'dark',
-        style:               '1',
-        locale:              'en',
-        enable_publishing:   false,
-        allow_symbol_change: false,
-        hide_top_toolbar:    false,
-        hide_side_toolbar:   false,
-        hide_legend:         false,
-        toolbar_bg:          '#171b22',
-      });
-      tvWidget.onChartReady(() => {
-        tvWidgetReady = true;
-        addEmaStudies(tvWidget);
-      });
+      iframe.src = tvWidgetUrl(symbol);
     }
 
     document.addEventListener('click', (ev) => {

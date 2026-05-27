@@ -29,6 +29,36 @@ Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-05-27 - Chart pane: switch to iframe `widgetembed` URL with studies in URL (EMAs finally render)
+
+User: *"the ema line are still not shown"* -- the JS widget's `chart.createStudy()` didn't actually add the EMAs on this browser/widget revision, despite multiple attempts. Conclusion: the free Advanced Charts widget's API surface is too inconsistent to reliably add studies post-construction. Switched to a different code path entirely:
+
+**Iframe `widgetembed` URL with studies in URL params.** Well-documented, simple, known to work for adding studies. URL shape:
+
+```
+https://s.tradingview.com/widgetembed/
+  ?symbol=<SYM>&interval=D&theme=dark&style=1
+  &studies=[{"id":"MAExp@tv-basicstudies","inputs":{"length":20}},
+            {"id":"MAExp@tv-basicstudies","inputs":{"length":50}},
+            {"id":"MAExp@tv-basicstudies","inputs":{"length":200}}]
+```
+
+Studies are JSON-encoded then URL-encoded into the `studies` param.
+
+**Flow:**
+- First ticker click: build URL, create iframe, set src.
+- Subsequent clicks: same iframe, just update `iframe.src`. ~1-2s reload per click (vs the widget's in-place setSymbol which would have been instant -- but the widget never actually rendered the EMAs, so this is the right trade).
+- "Open in TradingView ↗" link in the header still goes to the full TV page in the named external tab.
+
+**Trade-offs accepted:**
+- No full TradingView UI (drawing tools / indicator menu / saved layouts). The widgetembed is the minimal chart embed.
+- EMAs render in TradingView's default line colors (typically blue / orange / violet). User can right-click any line in the embed's reduced UI to recolor.
+- Each symbol switch reloads the iframe (~1-2s). Acceptable for interactive use; would be a problem for high-frequency switching, which isn't our pattern.
+
+**Removed** (~120 lines): `tvWidget`, `tvWidgetReady`, `tvScriptPromise`, `ensureTvScriptLoaded`, `addEmaStudies`, all the widget-API gymnastics.
+
+**Kept**: backend `GET /chart/yf_bars` endpoint (currently unused; useful if we ever build a sidebar stats panel or revisit Lightweight Charts).
+
 ### 2026-05-27 - Chart pane: revert back to TradingView widget (default-colored EMAs, but widget UI intact)
 
 User: *"can you look back where you manage to draw the EMA but just colour not changed"*. After the Lightweight Charts pivot, the user preferred the TradingView widget approach -- even with EMAs in TV's default colors -- over LWC. Reverting the chart pane back to the widget, with the simpler EMA-add path that was empirically working (3 EMAs visible) before I broke it trying to force red/green/purple colors.
