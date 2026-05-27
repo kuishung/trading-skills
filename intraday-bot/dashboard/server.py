@@ -2829,6 +2829,153 @@ async def scanner_run(family: str) -> JSONResponse:
     })
 
 
+# ----------------------------------------------------------------------
+# YFINANCE-DIRECT DAILY SCAN (added 2026-05-27)
+#
+# User architectural directive: "the parquet store i intend to use it
+# for backtesting only, this scanning of daily setup through yfinance
+# only". The dashboard's Scanner view runs through THIS endpoint, NOT
+# /scanner/run (which spawns the CLI scanner that reads parquets).
+#
+# Design:
+#   1. Fetch fresh daily bars via yfinance.download() in ONE batch call
+#      (resources/yf_daily_bars.py). ~30s for SP500.
+#   2. Monkey-patch `bars_store.load_bars` to return the in-memory
+#      bars cache for the duration of THIS scan. This lets the existing
+#      DITP detection code (`strategy/DITP/scanner.py::evaluate()`) run
+#      unchanged -- it still calls `bars_store.load_bars(sym, timeframe="daily")`,
+#      but the call now returns yFinance bars instead of reading parquet.
+#   3. Loop the symbols, collect P2Candidate objects, return as JSON.
+#   4. Nothing is written to disk. No state/watchlist_*.json file is
+#      created. Parquets are NEVER touched (read or write).
+#
+# Why monkey-patch instead of refactor evaluate()?
+#   - evaluate() is deep production code with the full DITP detection.
+#     Touching it carries regression risk for the nightly batch scanners.
+#   - Monkey-patch is scoped to one request via try/finally; no
+#     persistent state change.
+#   - bars_store.load_bars is a pure read API -- swapping its
+#     implementation is safe as long as the return shape matches.
+# ----------------------------------------------------------------------
+
+# Universe registry per setup. SP500 is a good default for daily-chart
+# setups; future setups (small-cap, mid-cap variants) can plug in their
+# own universe builders here.
+def _universe_for_setup(setup: str) -> list[str]:
+    setup = setup.lower()
+    if setup in ("ditp", "ditp_tc"):
+        import sp500  # type: ignore  (resources/sp500.py)
+        return sp500.get_sp500_symbols()
+    raise ValueError(f"unknown setup '{setup}' (no universe builder wired)")
+
+
+@app.post("/scanner/yf_scan")
+async def scanner_yf_scan(
+    setup: str,
+    limit: int | None = None,
+) -> JSONResponse:
+    """Run a daily-chart setup scan using FRESH yFinance bars (no
+    parquets touched). Returns candidates in-memory; nothing written
+    to disk.
+
+    Query params:
+      setup -- one of: ditp, ditp_tc
+      limit -- optional, cap universe to first N symbols (debug aid).
+
+    Returns:
+      { ok, setup, universe_size, n_candidates, candidates: [...],
+        fetch_duration_s, scan_duration_s, total_duration_s, today_et }
+    """
+    setup = (setup or "").lower()
+    if setup not in ("ditp", "ditp_tc"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"setup must be 'ditp' or 'ditp_tc'. Got: {setup!r}",
+        )
+
+    # Both heavy imports done lazily so server startup stays cheap.
+    try:
+        import yf_daily_bars                # type: ignore  resources/yf_daily_bars.py
+        import bars_store                   # type: ignore  resources/bars_store.py
+        from strategy.DITP import scanner as ditp_scanner  # type: ignore
+    except ImportError as exc:
+        raise HTTPException(status_code=500, detail=f"import failure: {exc}")
+
+    started = _time.time()
+    try:
+        symbols = _universe_for_setup(setup)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if limit and limit > 0:
+        symbols = symbols[:limit]
+
+    loop = asyncio.get_running_loop()
+    # --- Step 1: yFinance batch fetch (run in thread; yfinance is blocking) ---
+    t_fetch0 = _time.time()
+    try:
+        bars_by_symbol = await loop.run_in_executor(
+            None,
+            lambda: yf_daily_bars.fetch_daily_batch(
+                symbols, lookback_days=400, threads=True, progress=False,
+            ),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"yfinance fetch failed: {exc}")
+    fetch_duration = round(_time.time() - t_fetch0, 1)
+    fetched_n = sum(1 for v in bars_by_symbol.values() if v)
+
+    # --- Step 2: scan with monkey-patched bars_store.load_bars ---
+    t_scan0 = _time.time()
+    original_load = bars_store.load_bars
+
+    def _yf_backed_load(symbol, start=None, end=None, *, timeframe: str = "1min"):
+        if timeframe != "daily":
+            # The DITP scanner only requests daily for this code path.
+            # If something else asks for intraday we honour the original
+            # (which will read parquets) -- safer than crashing.
+            return original_load(symbol, start, end, timeframe=timeframe)
+        return bars_by_symbol.get(symbol.upper(), [])
+
+    cfg = ditp_scanner.P2Config()
+    variants_allowed = {"A", "B", "C"}
+    errors: list[str] = []
+    try:
+        bars_store.load_bars = _yf_backed_load  # type: ignore[assignment]
+        # scan_universe() in the DITP module loops symbols, swallows
+        # per-symbol exceptions to stderr, applies variant filtering,
+        # and final-sorts by (distance_atr, tier, -score). We just run
+        # it in a thread because the per-symbol numpy work is CPU bound.
+        cand_objs = await loop.run_in_executor(
+            None,
+            lambda: ditp_scanner.scan_universe(symbols, cfg, variants_allowed),
+        )
+    finally:
+        bars_store.load_bars = original_load  # type: ignore[assignment]
+
+    # P2Candidate is a dataclass; asdict serializes nested fields safely.
+    from dataclasses import asdict as _asdict
+    candidates_dicts = [_asdict(c) for c in cand_objs]
+
+    scan_duration = round(_time.time() - t_scan0, 1)
+    total_duration = round(_time.time() - started, 1)
+    today_et = _today_et_iso()
+
+    return JSONResponse({
+        "ok":               True,
+        "setup":            setup,
+        "today_et":         today_et,
+        "universe_size":    len(symbols),
+        "fetched_n":        fetched_n,
+        "n_candidates":     len(candidates_dicts),
+        "candidates":       candidates_dicts,
+        "fetch_duration_s": fetch_duration,
+        "scan_duration_s":  scan_duration,
+        "total_duration_s": total_duration,
+        "errors_tail":      errors[-20:],   # last 20 per-symbol errors for diagnosis
+        "errors_count":     len(errors),
+    })
+
+
 @app.post("/data/refresh-stale")
 async def data_refresh_stale(timeframe: str = "daily") -> JSONResponse:
     """Re-fetch every stale / ancient / missing parquet via yfinance.

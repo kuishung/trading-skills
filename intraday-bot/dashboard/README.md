@@ -29,6 +29,76 @@ Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-05-27 - TradingView row-click: reuse the same browser tab across clicks
+
+User: *"then the ticker is click, use back the same browser to view dont open new broswer"*.
+
+Changed `window.open(url, '_blank', 'noopener,noreferrer')` to `window.open(url, 'intraday_bot_tv')`. The second argument is now a NAMED target instead of `'_blank'`:
+- First row click -> opens TradingView in a new tab named `intraday_bot_tv`.
+- Every subsequent row click -> the browser sees the existing tab with that name and NAVIGATES it to the new symbol's URL instead of spawning another tab.
+- Net effect: at most ONE TradingView tab open across an entire scan session, no matter how many rows the user clicks.
+
+Subtle trade-off worth recording: deliberately dropped the `'noopener,noreferrer'` features string. Those flags force a fresh top-level browsing context, which ignores the named-target reuse and reintroduces the new-tab-per-click behaviour we just fixed. Without `noopener`, TradingView could in theory call `window.opener` to navigate the dashboard tab; TV is a trusted first-party page so this risk is acceptable. If we ever embed an untrusted third-party in the click target, revisit.
+
+### 2026-05-27 - Scanner view: removed legacy "Watchlist files on disk" panel
+
+User: *"remove the old watchlist files on disk penal"*. The bottom panel showing aggregated `state/watchlist_*.json` content via `/lists/all` was the last vestige of the parquet-based scanning workflow on the dashboard. Per the architectural shift to yFinance-only dashboard scanning (earlier this session), it had become an inconsistent secondary surface -- nobody should be acting on those stale CLI outputs from the dashboard.
+
+**Removed from `web/index.html`:**
+- The `<section class="panel" style="opacity:0.7">...</section>` block containing the legacy table + its "kept for reference" placeholder text.
+- `renderScanner()`, `loadScanner()`, `startScannerAutoRefresh()`, `stopScannerAutoRefresh()`, the `scannerTimer` module-level state, and the `scanner-refresh` button handler.
+- The per-view lifecycle hook that auto-polled `/lists/all` every 60s when Scanner view was active.
+
+**Kept:**
+- `fmtNum()` helper (still used by `renderYfResults` for the live scan table).
+- The TradingView row-click delegation (still applies to the yf-scan results table).
+- The backend `GET /lists/all` endpoint -- no dashboard caller, but other consumers may exist (the bot's quote layer, future Monitor view), so retiring it is out of scope for this change.
+
+**Page size**: ~36KB -> ~33KB. The Scanner view is now a single panel: dropdown + Scan button + log + results table. Nothing else.
+
+### 2026-05-27 - Scanner tables: row click opens TradingView in a new tab
+
+User feedback: *"when any row is click, open tradingview"*. Both Scanner tables (the new yFinance results table AND the legacy on-disk watchlist table) now respond to row clicks by opening `https://www.tradingview.com/chart/?symbol=<SYM>` in a new tab.
+
+**Implementation choices:**
+- **Event delegation** on `document` for `table.scanner tbody tr[data-symbol]` -- newly-rendered rows pick up the behaviour without needing to re-wire on every render.
+- **Hover cues**: pointer cursor on rows, underline on the symbol cell, `??` arrow appended -- so it's discoverable, not a surprise.
+- **`title` attribute** on each row spells out "Click to open NVDA in TradingView" for tooltip-on-hover.
+- **Browser URL, not the TradingView MCP** (`resources/tradingview-mcp/`). The MCP would need TV Desktop running with `--remote-debugging-port=9222` -- works for some users, doesn't for others. The browser URL works for everyone, every session, no setup. If we ever want "open in Desktop" as an option, that becomes a second click target (e.g. a small button per row), not the default behaviour.
+- **`window.open(url, '_blank', 'noopener,noreferrer')`** so the dashboard tab stays focused and there's no opener-window leakage.
+
+Symbol form is the canonical dotted form (BRK.B not BRK-B). TradingView accepts both; we send dotted to match what the journal and the rest of the dashboard use.
+
+### 2026-05-27 - Scanner: yFinance-direct scan path (parquet store decoupled from dashboard scanning)
+
+User architectural directive: *"the parquet store i intend to use it for backtesting only, this scanning of daily setup through yfinance only"*.
+
+Until now the dashboard's Scan button spawned the CLI scanner (`strategy/DITP/scanner.py`) which reads daily parquets via `bars_store.load_bars`. After this commit the dashboard scan path is fully yFinance-native -- no parquet read, no `state/watchlist_*.json` write.
+
+**New backend endpoint**: `POST /scanner/yf_scan?setup=<ditp|ditp_tc>&limit=<N>`
+1. Resolves the universe (currently SP500 via `resources/sp500.py`).
+2. Batched yFinance fetch via `resources/yf_daily_bars.fetch_daily_batch()` -- ~2s for 5 symbols, ~30-60s for SP500. Returns bars in the canonical `[{t,o,h,l,c,v}]` shape.
+3. Monkey-patches `bars_store.load_bars` to return the in-memory bars cache, then calls the existing DITP `scan_universe()` so the FULL P2 detection (EMAs, ATR, resistance discovery, flush-up filter, breach-rejection check, confluence tiering, scoring) runs unchanged. Patch is reverted in a `finally` block.
+4. Returns candidates as JSON. **Nothing is written to disk**. **Parquets are never touched**.
+
+**Frontend changes:**
+- Dropdown now lists DITP P2 only (DITP TC option is greyed -- the TC scanner needs the prior day's P2 watchlist on disk which the yf path doesn't write; wiring DITP TC is a follow-up).
+- Removed the `Refresh data (yFinance)` button (no longer needed -- the scan is self-contained).
+- Removed the `scan-stats` line for stale-age display (the yf scan is always fresh by construction; no age to display).
+- New results table renders the candidates inline: Symbol / Tier / Variant / Conf / Last / Resistance / Dist (ATR) / Score / Cautions. Sorted by `(distance_atr, tier, -score)` per `scan_universe()`.
+- Kept the "On-disk watchlists (legacy)" panel below at 70% opacity with a clearly-labeled note. Useful for inspecting nightly CLI outputs (which still run on Hermes) without conflating them with the live yf scan.
+
+**New module**: `resources/yf_daily_bars.py` -- batch yFinance adapter returning canonical bar dicts. Used by the dashboard endpoint; backtesting can keep using `yfinance_history.py` (which writes parquets).
+
+**Why monkey-patch instead of refactoring `detect_p2`**: the DITP detection is deep production code with the full P2 spec embedded. Touching it risks regressing the nightly Hermes scanners. The monkey-patch is scoped to one request via `try/finally`, has no persistent side effects, and lets the SAME detection code path run on either parquet OR yFinance bars depending on caller.
+
+**Out of scope this turn:**
+- DITP TC via yFinance (TC needs the prior P2 watchlist; needs a small refactor to pass it in-memory).
+- GUNS via yFinance (GUNS's live momentum scan is intraday and needs IBKR; not a daily-chart setup).
+- Removing the legacy /scanner/run + /scanner/runs endpoints (kept for now; can be retired once the user has used the yf path enough to confirm they don't miss the CLI pathway).
+
+**File-size delta**: `server.py` +145 lines (new endpoint), `web/index.html` ~+~30 lines (results table, simplified controls).
+
 ### 2026-05-27 - Scanner view: dropdown + Scan + yFinance refresh (laptop-friendly daily scan)
 
 User feedback: *"i need you to construct the scanner page yFinance on daily chart setup. And I need the strategy on a dropdown box for me to select and click scan"*. Restructured the Scanner view from a 3-card grid (one card per family with its own Run button) to a single control row: setup dropdown + Refresh-data button + Scan button + log + stats line.

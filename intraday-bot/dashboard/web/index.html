@@ -278,7 +278,14 @@
       font-variant-numeric: tabular-nums;
     }
     table.scanner tbody tr:last-child td { border-bottom: none; }
-    table.scanner tbody tr:hover { background: #1c2128; }
+    table.scanner tbody tr:hover { background: #1c2128; cursor: pointer; }
+    table.scanner tbody tr[data-symbol]:hover td.sym { text-decoration: underline; }
+    table.scanner tbody tr[data-symbol]:hover td.sym::after {
+      content: ' \2197';     /* up-right arrow hint */
+      font-size: 10px;
+      color: var(--text-muted);
+      margin-left: 4px;
+    }
     table.scanner td.sym { font-weight: 600; color: var(--accent); }
     table.scanner td.num { text-align: right; color: var(--text); }
     table.scanner td.muted { color: var(--text-muted); }
@@ -440,31 +447,20 @@
         <section class="panel">
           <div class="panel-header">
             <h2>Daily chart scanner</h2>
-            <span class="meta">Data source: <strong>yFinance daily candles</strong> (via parquet store)</span>
+            <span class="meta">Data source: <strong>yFinance daily</strong> (fresh, in-memory, no parquet)</span>
           </div>
           <div class="scan-controls">
             <label for="setup-select">Setup:</label>
             <select id="setup-select">
-              <option value="ditp">DITP P2 &mdash; Resistance breakout (daily)</option>
-              <option value="ditp_tc">DITP TC &mdash; Day-0 trend continuation (daily)</option>
-              <option value="guns" disabled>GUNS &mdash; Momentum gappers (needs IBKR live scan)</option>
+              <option value="ditp">DITP P2 &mdash; Resistance breakout</option>
+              <option value="ditp_tc" disabled>DITP TC &mdash; Day-0 trend continuation (yf path not yet wired)</option>
             </select>
-            <button class="refresh-data" id="refresh-data-btn" title="Pull fresh daily bars from yFinance for any stale or missing parquets, BEFORE running the scanner. Skip if you trust the existing parquets.">Refresh data (yFinance)</button>
             <button class="scan-btn" id="scan-btn">Scan</button>
+            <span class="scan-stats" id="scan-stats" style="margin:0;">pick a setup and click Scan. ~30-60s for SP500.</span>
           </div>
-          <div class="scan-stats" id="scan-stats">select a setup above...</div>
           <div class="scan-log" id="scan-log"></div>
-        </section>
-        <section class="panel">
-          <div class="panel-header">
-            <h2>Watchlist</h2>
-            <span class="meta">
-              <span id="scanner-meta">loading...</span>
-              <button class="refresh" id="scanner-refresh">Refresh</button>
-            </span>
-          </div>
-          <div id="scanner-table-wrap">
-            <div class="empty-state">loading watchlist...</div>
+          <div id="results-wrap">
+            <div class="empty-state">no scan run yet</div>
           </div>
         </section>
       </div>
@@ -616,27 +612,12 @@
       }
     }
 
-    // ---------------------------------------------------------------
-    // SCANNER VIEW
-    //
-    // Data source: GET /lists/all -> { watchlist: [...], candidates:
-    //   [...], armed_map: {...}, ts: "..." }
-    //
-    // Each watchlist row carries: { symbol, strategy, tier, variant,
-    // resistance, source, last, chg, chg_pct, vol }. Rows are
-    // aggregated server-side from state/watchlist_<family>_<date>.{txt,json}
-    // -- one file per strategy family, written by that family's
-    // scanner CLI pre-market.
-    //
-    // Refresh strategy:
-    //   - Auto-load on view activation
-    //   - Manual refresh button
-    //   - Auto-refresh every 60s while view is active (scanners only
-    //     run pre-market, so polling faster has no signal value)
-    // ---------------------------------------------------------------
-
-    let scannerTimer = null;
-
+    // Shared number formatter used by renderYfResults below.
+    // (The legacy /lists/all "Watchlist files on disk" panel + its
+    // renderScanner/loadScanner code were removed 2026-05-27 per user
+    // directive -- the dashboard is now yFinance-only for scanning.
+    // /lists/all on the backend stays available for now but has no
+    // dashboard caller.)
     function fmtNum(n, digits) {
       if (digits === undefined) digits = 2;
       if (n === null || n === undefined || n === '') return '';
@@ -644,82 +625,6 @@
       if (Number.isNaN(v)) return '';
       return v.toFixed(digits);
     }
-
-    function renderScanner(data) {
-      const wrap = $('scanner-table-wrap');
-      const meta = $('scanner-meta');
-      if (!data || !data.watchlist || data.watchlist.length === 0) {
-        wrap.innerHTML = '<div class="empty-state">No watchlist for today. Scanners haven\'t run yet, or no symbols passed filters.</div>';
-        meta.textContent = data && data.ts ? `as of ${new Date(data.ts).toLocaleTimeString()}` : '';
-        return;
-      }
-      // Group by strategy then symbol so families cluster together.
-      const rows = [...data.watchlist].sort((a, b) =>
-        (a.strategy || '').localeCompare(b.strategy || '') ||
-        (a.symbol || '').localeCompare(b.symbol || '')
-      );
-      const armedMap = data.armed_map || {};
-      let html = '<table class="scanner"><thead><tr>'
-        + '<th>Symbol</th>'
-        + '<th>Strategy</th>'
-        + '<th>Tier</th>'
-        + '<th>Variant</th>'
-        + '<th style="text-align:right">Resistance</th>'
-        + '<th style="text-align:right">Last</th>'
-        + '<th style="text-align:right">Chg %</th>'
-        + '<th>ARM</th>'
-        + '</tr></thead><tbody>';
-      for (const r of rows) {
-        const tierClass = r.tier ? `tag tier-${r.tier}` : 'tag';
-        const armed = armedMap[r.strategy];
-        const armPill = armed === true
-          ? '<span class="pill ok"><span class="dot"></span><span class="value">ARMED</span></span>'
-          : armed === false
-            ? '<span class="pill warn"><span class="dot"></span><span class="value">disarmed</span></span>'
-            : '<span class="pill"><span class="dot"></span><span class="value">unknown</span></span>';
-        const chgPct = (r.chg_pct !== null && r.chg_pct !== undefined && r.chg_pct !== '')
-          ? `${fmtNum(r.chg_pct, 2)}%` : '';
-        html += '<tr>'
-          + `<td class="sym">${r.symbol || ''}</td>`
-          + `<td><span class="tag strategy">${(r.strategy || '').toUpperCase()}</span></td>`
-          + `<td>${r.tier ? `<span class="${tierClass}">${r.tier}</span>` : '<span class="muted">-</span>'}</td>`
-          + `<td class="muted">${r.variant || ''}</td>`
-          + `<td class="num">${fmtNum(r.resistance)}</td>`
-          + `<td class="num">${fmtNum(r.last)}</td>`
-          + `<td class="num">${chgPct}</td>`
-          + `<td>${armPill}</td>`
-          + '</tr>';
-      }
-      html += '</tbody></table>';
-      wrap.innerHTML = html;
-      const byStrat = {};
-      for (const r of rows) byStrat[r.strategy] = (byStrat[r.strategy] || 0) + 1;
-      const stratSummary = Object.entries(byStrat).map(([k, v]) => `${k.toUpperCase()}=${v}`).join(' / ');
-      meta.innerHTML = `${rows.length} symbols &middot; ${stratSummary} &middot; as of ${data.ts ? new Date(data.ts).toLocaleTimeString() : '?'}`;
-    }
-
-    async function loadScanner() {
-      const wrap = $('scanner-table-wrap');
-      try {
-        const r = await fetch('/lists/all', { cache: 'no-store' });
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        const j = await r.json();
-        renderScanner(j);
-      } catch (e) {
-        wrap.innerHTML = `<div class="empty-state">Error loading /lists/all: ${e.message}</div>`;
-        $('scanner-meta').textContent = '';
-      }
-    }
-
-    function startScannerAutoRefresh() {
-      stopScannerAutoRefresh();
-      scannerTimer = setInterval(loadScanner, 60000);
-    }
-    function stopScannerAutoRefresh() {
-      if (scannerTimer) { clearInterval(scannerTimer); scannerTimer = null; }
-    }
-
-    document.getElementById('scanner-refresh').addEventListener('click', loadScanner);
 
     // ---------------------------------------------------------------
     // SCANNER CONTROL ROW (dropdown + Refresh data + Scan)
@@ -750,6 +655,46 @@
 
     let scanInFlight = false;
     let scannerRunsCache = null;
+
+    // ---------------------------------------------------------------
+    // TradingView row-click handler.
+    //
+    // Convention: any <tr data-symbol="NVDA"> inside a .scanner table
+    // opens https://www.tradingview.com/chart/?symbol=<SYM> in a
+    // NAMED browser tab on click. The named target ('intraday_bot_tv')
+    // means the FIRST click opens a TradingView tab; every subsequent
+    // click navigates that SAME tab to the new symbol instead of
+    // spawning a fresh one. User directive 2026-05-27: "then the
+    // ticker is click, use back the same browser to view dont open
+    // new broswer".
+    //
+    // Note: deliberately NOT passing 'noopener,noreferrer' in the
+    // features string -- those flags create a NEW top-level browsing
+    // context that ignores the target-name reuse, defeating the whole
+    // point. The trade-off is TradingView could in theory call
+    // window.opener to navigate the dashboard tab; TV is a trusted
+    // first-party page so this is acceptable.
+    //
+    // The symbol form is the canonical dotted form (BRK.B not BRK-B);
+    // TradingView accepts both but the dotted form matches what we
+    // journal everywhere else.
+    //
+    // Use event delegation on document so newly-rendered tables get
+    // the behaviour automatically -- no need to re-wire on every
+    // render. Filter to .scanner tables so unrelated tables aren't
+    // accidentally interactive.
+    // ---------------------------------------------------------------
+    function tvUrl(symbol) {
+      if (!symbol) return null;
+      return `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(symbol)}`;
+    }
+    document.addEventListener('click', (ev) => {
+      const tr = ev.target.closest('table.scanner tbody tr[data-symbol]');
+      if (!tr) return;
+      const sym = tr.dataset.symbol;
+      const url = tvUrl(sym);
+      if (url) window.open(url, 'intraday_bot_tv');
+    });
 
     function ageBadge(meta) {
       const a = meta.age_days;
@@ -804,10 +749,8 @@
 
     function setControlsDisabled(disabled, runningLabel) {
       const scanBtn = document.getElementById('scan-btn');
-      const refreshBtn = document.getElementById('refresh-data-btn');
       const sel = document.getElementById('setup-select');
       scanBtn.disabled = disabled;
-      refreshBtn.disabled = disabled;
       sel.disabled = disabled;
       if (disabled && runningLabel) {
         scanBtn.classList.add('running');
@@ -815,8 +758,49 @@
       } else {
         scanBtn.classList.remove('running');
         scanBtn.textContent = 'Scan';
-        refreshBtn.textContent = 'Refresh data (yFinance)';
       }
+    }
+
+    function renderYfResults(j) {
+      const wrap = document.getElementById('results-wrap');
+      if (!j || !Array.isArray(j.candidates)) {
+        wrap.innerHTML = '<div class="empty-state">no candidates field in response</div>';
+        return;
+      }
+      const cands = j.candidates;
+      if (cands.length === 0) {
+        wrap.innerHTML = `<div class="empty-state">0 candidates from ${j.universe_size || '?'} symbols (DITP filters are strict; this is normal in flat / corrective markets).</div>`;
+        return;
+      }
+      let html = '<table class="scanner"><thead><tr>'
+        + '<th>Symbol</th>'
+        + '<th>Tier</th>'
+        + '<th>Variant</th>'
+        + '<th>Conf</th>'
+        + '<th style="text-align:right">Last</th>'
+        + '<th style="text-align:right">Resistance</th>'
+        + '<th style="text-align:right">Dist (ATR)</th>'
+        + '<th style="text-align:right">Score</th>'
+        + '<th>Cautions</th>'
+        + '</tr></thead><tbody>';
+      for (const c of cands) {
+        const tierClass = c.tier ? `tag tier-${c.tier}` : 'tag';
+        const cautions = (c.cautions && c.cautions.length) ? c.cautions.join(', ') : '<span class="muted">-</span>';
+        const sym = c.symbol || '';
+        html += `<tr data-symbol="${sym}" title="Click to open ${sym} in TradingView">`
+          + `<td class="sym">${sym}</td>`
+          + `<td>${c.tier ? `<span class="${tierClass}">${c.tier}</span>` : '-'}</td>`
+          + `<td class="muted">${c.variant || ''}</td>`
+          + `<td class="num">${c.confluence_tier ?? ''}</td>`
+          + `<td class="num">${fmtNum(c.last_close)}</td>`
+          + `<td class="num">${fmtNum(c.resistance)}</td>`
+          + `<td class="num">${fmtNum(c.distance_atr)}</td>`
+          + `<td class="num">${c.score ?? ''}</td>`
+          + `<td style="font-size:11px;color:var(--text-muted)">${cautions}</td>`
+          + '</tr>';
+      }
+      html += '</tbody></table>';
+      wrap.innerHTML = html;
     }
 
     function showLog(level, text) {
@@ -833,41 +817,11 @@
       log.scrollTop = log.scrollHeight;
     }
 
-    async function onRefreshData() {
-      if (scanInFlight) return;
-      scanInFlight = true;
-      const refreshBtn = document.getElementById('refresh-data-btn');
-      refreshBtn.disabled = true;
-      const start = Date.now();
-      const tick = setInterval(() => {
-        const s = Math.round((Date.now() - start) / 1000);
-        refreshBtn.textContent = `Refreshing... ${s}s`;
-      }, 1000);
-      showLog(null, 'POST /data/refresh-stale?timeframe=daily ...');
-      try {
-        const r = await fetch('/data/refresh-stale?timeframe=daily', {
-          method: 'POST', cache: 'no-store',
-        });
-        const j = await r.json();
-        clearInterval(tick);
-        const okClass = r.ok ? 'ok' : 'err';
-        const summary = `exit ${r.status}  duration ${Math.round((Date.now() - start) / 1000)}s\n\n` + JSON.stringify(j, null, 2).slice(0, 4000);
-        showLog(okClass, summary);
-      } catch (e) {
-        clearInterval(tick);
-        showLog('err', `Refresh failed: ${e.message}`);
-      } finally {
-        scanInFlight = false;
-        refreshBtn.disabled = false;
-        refreshBtn.textContent = 'Refresh data (yFinance)';
-      }
-    }
-
     async function onScan() {
       if (scanInFlight) return;
       scanInFlight = true;
       const sel = document.getElementById('setup-select');
-      const family = sel.value;
+      const setup = sel.value;
       setControlsDisabled(true, 'Scanning... 0s');
       const start = Date.now();
       const tick = setInterval(() => {
@@ -875,34 +829,43 @@
         const btn = document.getElementById('scan-btn');
         if (btn) btn.textContent = `Scanning... ${s}s`;
       }, 1000);
-      showLog(null, `POST /scanner/run?family=${family}  (this can take 30-120s for DITP, see stderr tail below)`);
+      // yFinance batch fetch + DITP detection -- typically 30-90s for SP500.
+      showLog(null, `POST /scanner/yf_scan?setup=${setup}\nFetching daily bars from yFinance for the universe, then running detection. NO parquets touched.`);
       try {
-        const r = await fetch(`/scanner/run?family=${encodeURIComponent(family)}`, {
+        const r = await fetch(`/scanner/yf_scan?setup=${encodeURIComponent(setup)}`, {
           method: 'POST', cache: 'no-store',
         });
         const j = await r.json();
         clearInterval(tick);
-        const okClass = j.ok ? 'ok' : 'err';
+        const okClass = r.ok && j.ok ? 'ok' : 'err';
         const parts = [];
-        parts.push(`exit code ${j.returncode}  ${j.ok ? 'OK' : 'FAIL'}  (${j.duration_s}s)`);
-        if (j.error) parts.push(`error: ${j.error}`);
-        if (j.stdout_tail) parts.push('--- stdout (tail) ---\n' + j.stdout_tail);
-        if (j.stderr_tail) parts.push('--- stderr (tail) ---\n' + j.stderr_tail);
+        if (r.ok && j.ok) {
+          parts.push(`OK  fetch=${j.fetch_duration_s}s  scan=${j.scan_duration_s}s  total=${j.total_duration_s}s`);
+          parts.push(`universe=${j.universe_size}  fetched=${j.fetched_n}  candidates=${j.n_candidates}  errors=${j.errors_count}`);
+          if (j.errors_count > 0 && j.errors_tail) {
+            parts.push('--- last errors ---\n' + j.errors_tail.join('\n'));
+          }
+        } else {
+          parts.push(`FAIL  HTTP ${r.status}`);
+          parts.push(JSON.stringify(j, null, 2));
+        }
         showLog(okClass, parts.join('\n\n'));
+        renderYfResults(j);
+        document.getElementById('scan-stats').innerHTML = j.ok
+          ? `<strong>${j.n_candidates}</strong> candidates &middot; ${j.universe_size} symbols scanned &middot; today ET ${j.today_et}`
+          : 'scan failed -- see log above';
       } catch (e) {
         clearInterval(tick);
         showLog('err', `Request failed: ${e.message}`);
+        document.getElementById('scan-stats').textContent = 'scan failed';
       } finally {
         scanInFlight = false;
         setControlsDisabled(false);
-        // Refresh meta + watchlist so the new file (if any) shows up.
-        await Promise.all([loadScannerRuns(), loadScanner()]);
       }
     }
 
     document.getElementById('setup-select').addEventListener('change', updateScanStats);
     document.getElementById('scan-btn').addEventListener('click', onScan);
-    document.getElementById('refresh-data-btn').addEventListener('click', onRefreshData);
 
     // ---------------------------------------------------------------
     // SIDEBAR navigation
@@ -923,13 +886,13 @@
       if (location.hash.replace('#', '') !== name) {
         history.replaceState(null, '', '#' + name);
       }
-      // Per-view lifecycle hooks.
+      // Per-view lifecycle hooks. Scanner view: load the per-setup
+      // metadata so the stats line is populated when the view opens.
+      // No auto-poll: the yf scan is on-demand only (each Scan click
+      // does a 30-60s yFinance batch fetch -- not something to repeat
+      // on a timer).
       if (name === 'scanner') {
         loadScannerRuns();
-        loadScanner();
-        startScannerAutoRefresh();
-      } else {
-        stopScannerAutoRefresh();
       }
     }
 
