@@ -16,6 +16,7 @@ plus one-time installers.
 - `setup_hermes_supervisor_task.ps1` — **One-shot Windows Scheduled Task installer for the Watch-Ingest.ps1 supervisor.** Registers `IntradayBot-Watcher` to run at Hermes boot under the Administrator principal (LogonType S4U, RunLevel Highest), with `RestartCount 3` and no execution-time limit. Pairs with `Watch-Ingest.ps1` to give the full failure-recovery chain: watcher crashes -> supervisor restarts (30s); supervisor crashes -> Task Scheduler restarts (60s, up to 3x); Hermes reboots -> task auto-fires. Survives RDP disconnects (the trap that killed the supervisor twice on 2026-05-26). Idempotent (-Force). Detects already-running supervisors and refuses `-StartNow` to prevent IBKR clientId collisions. ASCII-only per the PS 5.1 em-dash lesson. Run once per Hermes rebuild: `powershell -ExecutionPolicy Bypass -File scripts\setup_hermes_supervisor_task.ps1 -StartNow`.
 - `keep_gateway_alive.ps1` — **Idempotent "is Gateway running? if not, launch it" check.** Called by the `IntradayBot-Gateway` scheduled task every 5 minutes. Logic: (1) is something listening on cfg port 4002? -> exit 0 silently (healthy). (2) is an IBC/Gateway process alive (might be starting up)? -> exit 0 with a log entry (don't double-launch). (3) otherwise -> `Start-Process` `ibc\StartIBC-intraday.bat` minimized + log. Defaults to port 4002 + the bot's standard launcher; both overridable via `-Port` / `-LauncherBat`. Logs to `<data_root>\_gateway_keepalive.log` (silent on the healthy path to avoid spam). ASCII-only per the PS 5.1 em-dash lesson. Standalone CLI for diagnostics: `powershell -File scripts\keep_gateway_alive.ps1`.
 - `setup_hermes_gateway_task.ps1` — **One-shot installer for the IntradayBot-Gateway scheduled task.** Registers a task that fires `keep_gateway_alive.ps1` (a) on Hermes boot (AtStartup trigger) AND (b) every 5 minutes (Once + RepetitionInterval, with RepetitionDuration 9999 days as the PS 5.1 "effectively forever" pattern). Administrator/S4U principal, RestartCount 3, MultipleInstances IgnoreNew (overlapping checks coalesce). Pairs with `setup_hermes_supervisor_task.ps1` to give the FULL recovery chain: Gateway crash -> keep-alive relaunches within 5 min; watcher crash -> supervisor restarts in 30s; supervisor crash -> task scheduler restarts in 60s; Hermes reboot -> AtStartup triggers both tasks. Run once per Hermes rebuild: `powershell -ExecutionPolicy Bypass -File scripts\setup_hermes_gateway_task.ps1 -StartNow`.
+- `setup_hermes_tray_task.ps1` — **One-shot installer for the IntradayBot-Tray scheduled task** — auto-launches the ingest progress tray icon when the user logs in (including RDP). User rule 2026-05-27: *"when the seed process is fired, the tray icon should come along and show up, not separate"*. Trigger: AtLogon (UserId=Administrator); fires every RDP login. Action: `pythonw.exe dashboard\tray_status.py` (pythonw = no console flash). Principal: **Interactive** (LogonType Interactive, RunLevel Limited) — this is the critical difference from the supervisor + Gateway tasks: tray icons REQUIRE a desktop session, S4U principal won't work for UI tasks. Settings: RestartCount 3, MultipleInstances IgnoreNew (RDPing in twice won't spawn duplicates), no execution-time limit (tray runs for the session lifetime). Auto-locates `pythonw.exe` by asking the py launcher (`py -3.12 -c "import sys; print(sys.executable)"`) and replacing `python.exe` with `pythonw.exe`, with fallbacks to common install paths. Idempotent (-Force). Run once per Hermes rebuild: `powershell -ExecutionPolicy Bypass -File scripts\setup_hermes_tray_task.ps1 -StartNow`.
 - `hermes_health.py` — **Hermes VM pre-flight check.** Run on the Hermes VM after Phase 1+2 of `HERMES_SETUP.md` is complete, BEFORE kicking off the multi-day 180-day re-seed. Verifies Python version, required packages importable, bars_store readable, disk space adequate, `ibc/credentials.txt` present, `config.json` clientId matches the host (warns if Hermes still has laptop's 71), IBKR Gateway socket reachable (port 4002 → paper Gateway, 7497 → paper TWS fallback). Safe to run on any PC; flags Python 3.14 + ib_insync asyncio incompatibility with a clear remedy ("use `py -3.12` for IBKR workloads"). CLI: `py scripts/hermes_health.py` (or `--skip-ibkr` for the no-Gateway-yet case, `--json` for machine-readable).
 
 ## Why these are not in their own layer folder
@@ -30,6 +31,29 @@ runtime trading system. They could move to `bin/` or `tools/` but
 they're rarely-touched and small, so `scripts/` is fine.
 
 ## Changelog
+
+### 2026-05-27 - `setup_hermes_tray_task.ps1`: tray auto-launches on RDP login
+
+User rule: *"when the seed process is fired, the tray icon should come along and show up, not separate"*. Previously the tray had to be launched manually (`py -3.12 dashboard\tray_status.py`) after every RDP-in. Now a third scheduled task — `IntradayBot-Tray` — fires on Administrator logon and launches the tray via `pythonw.exe` (no console flash).
+
+**Key design detail: LogonType Interactive (NOT S4U).** The existing supervisor + Gateway tasks use S4U (headless — they don't need a desktop). The tray task can't: system-tray icons live in the logged-in user's desktop session, so the task MUST run inside that session. AtLogon trigger + Interactive principal is the standard Windows pattern for "auto-launch this UI when the user logs in".
+
+Full Hermes autonomous stack after all three tasks are registered:
+
+| Task | Trigger | Principal | Purpose |
+|---|---|---|---|
+| `IntradayBot-Watcher` | AtStartup | S4U | Watch-Ingest.ps1 supervisor (restarts the Python watcher) |
+| `IntradayBot-Gateway` | AtStartup + every 5min | S4U | keep_gateway_alive.ps1 (relaunches IBC when Gateway dies) |
+| `IntradayBot-Tray` | AtLogon (per-user) | Interactive | tray_status.py UI (auto-shows when you RDP in) |
+
+`pythonw.exe` auto-located by asking the py launcher (`py -3.12 -c "import sys; print(sys.executable)"`) then swapping `python.exe -> pythonw.exe`. Fallbacks to common install paths (`C:\Python312\`, `%LOCALAPPDATA%\Programs\Python\`) if the launcher isn't available. Errors clearly if no pythonw.exe can be found.
+
+One-shot setup on Hermes:
+```
+powershell -ExecutionPolicy Bypass -File scripts\setup_hermes_tray_task.ps1 -StartNow
+```
+
+`-StartNow` detects an already-running tray and refuses to double-launch (avoids two icons in the tray).
 
 ### 2026-05-26 - `keep_gateway_alive.ps1` + `setup_hermes_gateway_task.ps1`: autonomous Gateway resurrection
 
