@@ -992,149 +992,68 @@
       return 'https://www.tradingview.com/chart/?symbol=' + encodeURIComponent(symbol);
     }
 
-    // -------- Lightweight Charts (TradingView's open-source library) --------
-    // The free Advanced Charts widget didn't reliably accept per-study
-    // color overrides for the three EMAs the user wants, so we render
-    // the chart programmatically with Lightweight Charts instead.
-    // ~50KB, pure JS, no widget API to fight.
+    // -------- TradingView Advanced Charts widget --------
+    // Reverted from Lightweight Charts back to the TV widget per user
+    // 2026-05-27 ("look back where you manage to draw the EMA but just
+    // colour not changed"). The widget reliably renders three EMA
+    // studies; the per-study color override is the part that fights
+    // back on the free embed, so we just leave the EMAs at TV's
+    // default colors. User can right-click any line in the chart to
+    // change its color manually via TV's UI.
     //
-    // Data path: ticker click -> GET /chart/yf_bars?symbol=X -> array of
-    // {t,o,h,l,c,v} bars from yFinance -> compute EMA20/50/200 in JS
-    // -> render candles + 3 line series with exact colors.
-    //
-    // The library is lazy-loaded from unpkg on the first chart open
-    // (no startup cost). If unpkg is blocked / offline, the chart pane
-    // shows an inline error.
-    let lwcChart = null;
-    let lwcScriptPromise = null;
+    // The widget script (tv.js) is loaded lazily on first chart open.
+    // Once the widget is built we call createStudy three times in
+    // onChartReady for lengths 20/50/200 -- no overrides, 4-arg form
+    // only, which is the call that empirically works on this embed.
+    let tvWidget = null;
+    let tvWidgetReady = false;
+    let tvScriptPromise = null;
 
-    function ensureLwcScript() {
-      if (window.LightweightCharts) return Promise.resolve();
-      if (lwcScriptPromise) return lwcScriptPromise;
-      lwcScriptPromise = new Promise((resolve, reject) => {
+    function ensureTvScriptLoaded() {
+      if (window.TradingView) return Promise.resolve();
+      if (tvScriptPromise) return tvScriptPromise;
+      tvScriptPromise = new Promise((resolve, reject) => {
         const s = document.createElement('script');
-        // Pin a known-stable major version; v4 is the current line.
-        s.src = 'https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js';
+        s.src = 'https://s3.tradingview.com/tv.js';
         s.async = true;
         s.onload = () => resolve();
-        s.onerror = () => reject(new Error('failed to load lightweight-charts from unpkg.com'));
+        s.onerror = () => reject(new Error('failed to load tv.js'));
         document.head.appendChild(s);
       });
-      return lwcScriptPromise;
+      return tvScriptPromise;
     }
 
-    // Standard EMA: out[0] = values[0]; out[i] = values[i]*k + out[i-1]*(1-k)
-    // where k = 2/(period+1). The leading bars (< period) are technically
-    // unstable but we still emit a value for each so the line spans the
-    // whole chart -- the user wants visual continuity, not statistical
-    // purity. Once the period is exceeded, the EMA matches TradingView's
-    // built-in EMA to within float-rounding.
-    function emaSeries(closes, period) {
-      const k = 2 / (period + 1);
-      const out = new Array(closes.length);
-      if (closes.length === 0) return out;
-      let prev = closes[0];
-      out[0] = prev;
-      for (let i = 1; i < closes.length; i++) {
-        prev = closes[i] * k + prev * (1 - k);
-        out[i] = prev;
+    function addEmaStudies(widget) {
+      // Resolve the chart object. widget.chart() is the form documented
+      // for the Advanced Charts widget; fall back to activeChart() if
+      // chart() returns null (older widget builds).
+      let chart = null;
+      try { if (typeof widget.chart === 'function') chart = widget.chart(); }
+      catch (e) { console.warn('[tv] widget.chart() threw:', e); }
+      if (!chart) {
+        try { if (typeof widget.activeChart === 'function') chart = widget.activeChart(); }
+        catch (e) { console.warn('[tv] widget.activeChart() threw:', e); }
       }
-      return out;
-    }
-
-    function renderLwcChart(symbol, bars) {
-      const container = document.getElementById('tv-chart-container');
-      if (!container) return;
-      // Tear down any prior chart so series don't accumulate. LWC is
-      // cheap to instantiate; fresh on each symbol is the simplest
-      // correct path.
-      if (lwcChart) {
-        try { lwcChart.remove(); } catch (e) { console.warn('[lwc] remove failed:', e); }
-      }
-      lwcChart = null;
-      container.innerHTML = '';
-
-      if (!bars || bars.length === 0) {
-        container.innerHTML = '<div style="padding:20px;color:var(--text-muted)">No bars returned for ' + symbol + '.</div>';
+      if (!chart || typeof chart.createStudy !== 'function') {
+        console.warn('[tv] chart.createStudy not exposed; EMAs not added');
         return;
       }
-
-      lwcChart = LightweightCharts.createChart(container, {
-        width:  container.clientWidth,
-        height: container.clientHeight,
-        layout: {
-          background: { type: 'solid', color: '#0d1117' },
-          textColor:  '#c9d1d9',
-          fontFamily: '"Segoe UI", system-ui, sans-serif',
-          fontSize:   11,
-        },
-        grid: {
-          vertLines: { color: '#21262d' },
-          horzLines: { color: '#21262d' },
-        },
-        rightPriceScale: { borderColor: '#30363d' },
-        timeScale:       { borderColor: '#30363d', timeVisible: false, secondsVisible: false },
-        crosshair:       { mode: 1 },
-      });
-
-      // Bar shape: {t:'YYYY-MM-DDTHH:MM:SSZ', o,h,l,c,v}. LWC daily
-      // accepts time as 'YYYY-MM-DD' (business day) or UTC seconds.
-      // We slice the date portion off the ISO timestamp.
-      const candleData = bars.map(b => ({
-        time:  b.t.slice(0, 10),
-        open:  b.o, high: b.h, low: b.l, close: b.c,
-      }));
-      const times  = bars.map(b => b.t.slice(0, 10));
-      const closes = bars.map(b => b.c);
-
-      // Candles in our standard up/down colors (green/red).
-      const candleSeries = lwcChart.addCandlestickSeries({
-        upColor:        '#3fb950',
-        downColor:      '#f85149',
-        borderVisible:  false,
-        wickUpColor:    '#3fb950',
-        wickDownColor:  '#f85149',
-      });
-      candleSeries.setData(candleData);
-
-      // Three EMAs in the user-specified colors.
-      function addEmaLine(period, color) {
-        const series = lwcChart.addLineSeries({
-          color, lineWidth: 2,
-          priceLineVisible: false,
-          lastValueVisible: false,
-          crosshairMarkerVisible: false,
-        });
-        const ema = emaSeries(closes, period);
-        series.setData(ema.map((v, i) => ({ time: times[i], value: v })));
-        return series;
-      }
-      addEmaLine(20,  '#f85149');  // red
-      addEmaLine(50,  '#3fb950');  // green
-      addEmaLine(200, '#bc8cff');  // purple
-
-      lwcChart.timeScale().fitContent();
-
-      // LWC doesn't auto-resize. Attach once; the listener picks up
-      // viewport changes after this render.
-      if (!window._lwcResizeAttached) {
-        window.addEventListener('resize', () => {
-          if (!lwcChart) return;
-          const c = document.getElementById('tv-chart-container');
-          if (c) {
-            try {
-              lwcChart.applyOptions({ width: c.clientWidth, height: c.clientHeight });
-            } catch (e) {}
+      // 4-arg createStudy. No callback, no overrides -- the override
+      // path doesn't take on the free embed, and trying to use it has
+      // broken the chart entirely in past attempts. Three EMAs render
+      // at TradingView's default line colors.
+      [20, 50, 200].forEach((length, idx) => {
+        setTimeout(() => {
+          try {
+            chart.createStudy('Moving Average Exponential', true /*forceOverlay*/, false /*lock*/, [length]);
+            console.log(`[tv] EMA${length} added`);
+          } catch (e) {
+            console.warn(`[tv] EMA${length} createStudy failed:`, e);
           }
-        });
-        window._lwcResizeAttached = true;
-      }
+        }, idx * 150);   // stagger -- back-to-back createStudy calls can be dropped during initial render
+      });
     }
 
-    // Main click-handler entry point. Lazy-loads Lightweight Charts +
-    // fetches yFinance daily bars in parallel, then renders candles
-    // and the three EMA lines. Name kept as `loadTvChart` so the
-    // delegated click listener doesn't need rewiring.
     async function loadTvChart(symbol) {
       const placeholder = document.getElementById('chart-placeholder');
       const symLabel    = document.getElementById('chart-symbol');
@@ -1142,8 +1061,11 @@
       const container   = document.getElementById('tv-chart-container');
 
       if (!symbol) {
-        if (lwcChart) try { lwcChart.remove(); } catch (_) {}
-        lwcChart = null;
+        if (tvWidget && typeof tvWidget.remove === 'function') {
+          try { tvWidget.remove(); } catch (_) {}
+        }
+        tvWidget = null;
+        tvWidgetReady = false;
         if (container) container.innerHTML = '';
         if (placeholder) placeholder.classList.remove('hidden');
         symLabel.textContent = '—';
@@ -1157,23 +1079,51 @@
         extLink.href = tvFullUrl(symbol);
       }
       if (placeholder) placeholder.classList.add('hidden');
-      if (container) container.innerHTML =
-        '<div style="padding:20px;color:var(--text-muted)">loading bars + library...</div>';
 
       try {
-        const [_, payload] = await Promise.all([
-          ensureLwcScript(),
-          fetch('/chart/yf_bars?symbol=' + encodeURIComponent(symbol) + '&lookback_days=400',
-                { cache: 'no-store' }).then(r => {
-            if (!r.ok) throw new Error('HTTP ' + r.status);
-            return r.json();
-          }),
-        ]);
-        renderLwcChart(symbol, payload.bars || []);
+        await ensureTvScriptLoaded();
       } catch (e) {
         if (container) container.innerHTML =
-          `<div style="padding:20px;color:var(--err)">Chart failed: ${e.message}</div>`;
+          `<div style="padding:20px;color:var(--err)">TradingView failed to load: ${e.message}</div>`;
+        return;
       }
+
+      // Reuse existing widget if it's ready -- setSymbol swaps the
+      // chart in place without re-creating, which keeps the EMAs.
+      if (tvWidget && tvWidgetReady) {
+        try {
+          tvWidget.setSymbol(symbol, 'D');
+          return;
+        } catch (e) {
+          console.warn('[tv] setSymbol failed, recreating widget:', e);
+          try { tvWidget.remove(); } catch (_) {}
+          tvWidget = null;
+          tvWidgetReady = false;
+        }
+      }
+
+      // Fresh widget creation.
+      container.innerHTML = '';
+      tvWidget = new TradingView.widget({
+        container_id:        'tv-chart-container',
+        autosize:            true,
+        symbol:              symbol,
+        interval:            'D',
+        timezone:            'Etc/UTC',
+        theme:               'dark',
+        style:               '1',
+        locale:              'en',
+        enable_publishing:   false,
+        allow_symbol_change: false,
+        hide_top_toolbar:    false,
+        hide_side_toolbar:   false,
+        hide_legend:         false,
+        toolbar_bg:          '#171b22',
+      });
+      tvWidget.onChartReady(() => {
+        tvWidgetReady = true;
+        addEmaStudies(tvWidget);
+      });
     }
 
     document.addEventListener('click', (ev) => {

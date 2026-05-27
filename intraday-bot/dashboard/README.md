@@ -29,6 +29,27 @@ Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-05-27 - Chart pane: revert back to TradingView widget (default-colored EMAs, but widget UI intact)
+
+User: *"can you look back where you manage to draw the EMA but just colour not changed"*. After the Lightweight Charts pivot, the user preferred the TradingView widget approach -- even with EMAs in TV's default colors -- over LWC. Reverting the chart pane back to the widget, with the simpler EMA-add path that was empirically working (3 EMAs visible) before I broke it trying to force red/green/purple colors.
+
+**Current chart pane:**
+- Loads `tv.js` from `s3.tradingview.com` lazily on first chart open.
+- Constructs the widget WITHOUT any `studies` parameter (the constructor's object-form `studies` array crashed the widget on this revision -- chart wouldn't load at all).
+- After `onChartReady`, calls `chart.createStudy('Moving Average Exponential', true /*forceOverlay*/, false /*lock*/, [length])` three times for lengths 20 / 50 / 200, staggered 150ms apart (back-to-back createStudy calls during initial render can be dropped).
+- **No color overrides**. The free embed accepts the override args but doesn't apply them; trying to be clever about it broke the chart in previous iterations. EMAs render in TradingView's default line colors. Right-click any EMA line in the chart UI to recolor manually.
+- Subsequent clicks call `widget.setSymbol(symbol, 'D')` -- chart re-loads data in place; studies persist.
+- "Open in TradingView ↗" link in the header still goes to the full TV page in the named external tab.
+
+**Removed:**
+- All Lightweight Charts code: `lwcChart`, `lwcScriptPromise`, `ensureLwcScript`, `emaSeries`, `renderLwcChart`, `_lwcResizeAttached`. ~150 lines.
+- The unpkg CDN dependency.
+
+**Kept:**
+- Backend `GET /chart/yf_bars` endpoint. Currently unused by the chart pane (the TV widget pulls its own data) but harmless and may be useful later (e.g. for a separate stats panel or for a future LWC variant if we change our minds).
+
+**Trade-off acknowledged**: EMAs are TradingView's default colors (typically blue / orange / violet), not the red/green/purple the user specified. After three failed override attempts on the free embed, the practical conclusion is: those overrides are not reliably available, and forcing them via JS keeps breaking the chart. Default colors + working chart > exact colors + broken chart.
+
 ### 2026-05-27 - Chart pane: switch from TradingView widget to Lightweight Charts (full programmatic control)
 
 User reported repeatedly that EMA lines wouldn't render in the right colors via the free Advanced Charts widget. After three iterations of fighting widget-API quirks (constructor `studies_overrides` with indexed keys: ignored; `chart.createStudy` 6-arg overrides: studies added in wrong colors; post-creation per-study `applyOverrides`: studies stopped showing at all), it became clear the free tv.js embed's API surface isn't reliable enough to land per-study colors consistently.
