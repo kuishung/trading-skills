@@ -29,6 +29,22 @@ Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-05-28 — Alpaca creds: `_vault_root()` now reads `cfg.vault_dir`
+
+User report 2026-05-28: *"alpaca why no creds"*. The Alpaca pill showed `no_credentials`. Root cause: `_vault_root()` was only looking for the legacy Dropbox `VAULT/Claude Credential` path via parent-walk, but the laptop's creds moved to `D:\HermesSync\Vault\alpaca.env` (Resilio-synced) per the 2026-05-24 architecture decision documented in CLAUDE.md.
+
+Fix: `_vault_root()` now reads `cfg["vault_dir"]` FIRST (the per-PC absolute Resilio path), falling back to the legacy parent-walk for back-compat. After dashboard restart, the Alpaca pill flips from `no_credentials` → `ok`.
+
+### 2026-05-27 — Scanner 2: pattern detectors disabled (signal IS the pattern)
+
+User rule 2026-05-27: *"for scanner 2 we are not applying the patterns."* Scanner 2's universe is already a Finviz pattern scan (Double Bottom / Channel Up / Wedge / Head & Shoulders / etc.) — the signal IS the pattern detection. Running our P1/P2/P3/EMA/P1a/P2a/P3a detectors on top would be redundant.
+
+**Behavior change** in `loadFinvizTickers(idx, forceRefresh)`: gated `runAllSetups(idx)` behind `if (idx === 1)`. Scanner 1 still auto-runs all 7 yf setups against its quality-filtered universe (the original DITP-setup-finding workflow). Scanner 2 stops at "fetch tickers + render watchlist + click for chart".
+
+Visual effect on Scanner 2: the Setup column stays empty for all rows (no badges, no green-border `.matched` styling). Sort order falls back to Finviz's original volume-desc. Meta line shows `99 tickers · fetched HH:MM:SS` without the "building..." progress chatter.
+
+The frontend setupResultsCache is still cleared on each Scanner 2 ticker refresh (no stale state), it just never gets populated.
+
 ### 2026-05-27 — Scanner 2: Finviz signal-picker dropdown (Double Bottom, Channel Up, etc.)
 
 User asked 2026-05-27: *"in scanner 2 page, I want to use the dropdown box to list the signal type and get the tickers."* Scanner 2's universe is now driven by a curated dropdown of Finviz signal types — pick a pattern (Double Bottom, Wedge Up, etc.) or day signal (Top Gainers, New 52w High, etc.) and the dashboard runs all 7 setup detectors against that universe.

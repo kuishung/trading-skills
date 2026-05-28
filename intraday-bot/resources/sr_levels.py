@@ -103,7 +103,7 @@ from patterns import horizontal_resistance_np, atr_wilder_np  # noqa: E402
 import bars_store  # noqa: E402
 
 
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 
 
 def horizontal_support_np(highs, lows, closes, current_price: float,
@@ -214,27 +214,19 @@ def horizontal_support_np(highs, lows, closes, current_price: float,
             mountains.append((i, lo))
     mountain_idxs = {i for i, _ in mountains}
 
-    # 3. Pick THE most-recent mountain valley in the lookback (no side
-    #    filter first), then return ONLY IF it's below current price.
-    #    If it's above current, this function returns None -- the
-    #    most-recent valley has been broken, and the polarity-flip case
-    #    belongs to find_broken_support_above.
-    #
-    #    User clarification 2026-05-27 from AAOI case (mirror reasoning):
-    #    there's ONE active valley (the most recent one), and it's
-    #    either S below OR broken-S above depending on its side --
-    #    never both. Older bypassed valleys don't leak in as supports.
-    if mountains:
-        i_imm, lo_imm = max(mountains, key=lambda x: x[0])
-    elif swings:
-        i_imm, lo_imm = max(swings, key=lambda x: x[0])
+    # 3. Filter to valleys BELOW current price, then pick the most-recent
+    #    in time. v1.5.0 reverts the v1.4.0 coupled rule (see comment in
+    #    patterns.horizontal_resistance_np). The two finders are now
+    #    independent; downstream P1/P3a detectors filter bad candidates.
+    mountains_below = [(i, lo) for i, lo in mountains if lo < current_price]
+    swings_below = [(i, lo) for i, lo in swings if lo < current_price]
+    if mountains_below:
+        i_imm, lo_imm = max(mountains_below, key=lambda x: x[0])
+    elif swings_below:
+        i_imm, lo_imm = max(swings_below, key=lambda x: x[0])
     else:
         return None
-    if lo_imm >= current_price:
-        return None  # most-recent valley is broken; caller's broken-S helper handles it
     level = float(lo_imm)
-    # mountains_below for downstream range/consensus (mountains within range_pct of level)
-    mountains_below = [(i, lo) for i, lo in mountains if lo < current_price]
 
     # Range = consensus of mountain valleys within +/- range_pct of level.
     if mountains_below:
@@ -347,25 +339,29 @@ def find_broken_resistance_below(highs, lows, closes, current_price: float,
     if not peaks:
         return []
 
-    # Pick THE most-recent peak in the lookback (no side filter
-    # first). Only return it if it's clearly BELOW current price
-    # (broken above by > breakout_ticks * tick_size). If the
-    # most-recent peak is above current, the active level is a
-    # P2 candidate (handled by horizontal_resistance_np), NOT a
-    # polarity-flip P3 candidate -- return [].
+    # v1.5.0: return the HIGHEST mountain peak BELOW current price
+    # that's clearly broken (within tick tolerance). User correction
+    # 2026-05-28 from NVDA case: NVDA's $212.19 (Oct 2025 peak,
+    # 143d ago) is the active polarity-flip level being retested,
+    # but the v1.4.0 coupled rule blocked it because $236.54 (8d ago,
+    # ABOVE current) was the single most-recent peak.
     #
-    # User clarification 2026-05-27 from AAOI: only the single
-    # most-recent peak is relevant. AAOI had $233.67 (9d, above)
-    # AND $173.41 (25d, below). The previous "most-recent broken
-    # below" filter would still pick $173.41 and tag AAOI as P3,
-    # even though $233.67 is the active level. The unified rule
-    # binds R-above and broken-R to the SAME peak; only the side
-    # determines which function fires.
-    most_recent = min(peaks, key=lambda d: d["bars_ago"])
+    # The single-most-recent-peak rule was over-restrictive: multiple
+    # historical broken peaks can coexist as polarity-flip levels.
+    # The P3 detector's gates (touch, bounce, upper-tail) filter
+    # which one is ACTIVELY being retested today; sr_levels should
+    # surface the candidate (the highest mountain below current that
+    # was broken), not pre-filter on the entire lookback's most-recent.
+    #
+    # For AAOI (v1.4.0's motivating case): $173.41 is still returned
+    # as the candidate, BUT the P3 detector now has a 15% upper-tail
+    # filter (v1.4.0) that rejects AAOI's 46% rejection bar.
     broken_threshold = current_price - breakout_ticks * tick_size
-    if most_recent["level"] >= broken_threshold:
+    broken_peaks = [p for p in peaks if p["level"] < broken_threshold]
+    if not broken_peaks:
         return []
-    return [most_recent]
+    highest_broken = max(broken_peaks, key=lambda d: d["level"])
+    return [highest_broken]
 
 
 def find_broken_support_above(highs, lows, closes, current_price: float,
@@ -437,19 +433,17 @@ def find_broken_support_above(highs, lows, closes, current_price: float,
     if not valleys:
         return []
 
-    # Pick THE most-recent valley (no side filter first). Only return
-    # it if clearly ABOVE current price (broken below by > breakdown_ticks
-    # * tick_size). If most-recent valley is below current, the active
-    # level is a P1 support (handled by horizontal_support_np), NOT a
-    # polarity-flip P3a candidate -- return [].
-    #
-    # Mirror of the AAOI fix in find_broken_resistance_below: there's
-    # ONE active valley; only the side determines which function fires.
-    most_recent = min(valleys, key=lambda d: d["bars_ago"])
+    # v1.5.0: return the LOWEST mountain valley ABOVE current price
+    # that's clearly broken below (within tick tolerance). Mirror of
+    # the find_broken_resistance_below revert: multiple historical
+    # broken valleys can coexist as polarity-flip levels. The P3a
+    # detector's gates filter which one is actively being retested.
     breakdown_threshold = current_price + breakdown_ticks * tick_size
-    if most_recent["level"] <= breakdown_threshold:
+    broken_valleys = [v for v in valleys if v["level"] > breakdown_threshold]
+    if not broken_valleys:
         return []
-    return [most_recent]
+    lowest_broken = min(broken_valleys, key=lambda d: d["level"])
+    return [lowest_broken]
 
 
 def _round_level_dict(r: dict | None) -> dict | None:

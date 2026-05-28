@@ -347,7 +347,20 @@ _alpaca_cache: dict[str, Any] = {
 
 
 def _vault_root() -> Path | None:
-    """Locate Dropbox VAULT root using parent-walk; cache unset."""
+    """Locate the credentials vault. Precedence:
+       1. `cfg["vault_dir"]` (per-PC absolute path, added 2026-05-24 for
+          Resilio-synced credentials; e.g. D:\\HermesSync\\Vault on laptop,
+          C:\\HermesSync\\Vault on Hermes). This is the canonical source
+          since the Dropbox VAULT migration.
+       2. Legacy Dropbox parent-walk for `VAULT/Claude Credential` (kept
+          for back-compat on PCs that haven't set vault_dir yet).
+    """
+    cfg = _load_cfg()
+    vd = (cfg.get("vault_dir") or "").strip()
+    if vd:
+        p = Path(vd).expanduser()
+        if p.is_dir():
+            return p
     here = Path(__file__).resolve()
     for ancestor in [here, *here.parents]:
         candidate = ancestor.parent / "VAULT" / "Claude Credential"

@@ -1546,13 +1546,22 @@
         scanners[idx].rowsCache = j.rows || [];
         // Refreshing the universe invalidates any prior setup-run results --
         // they were computed against the old ticker set. Drop the cache,
-        // re-render the (now-empty Setup column) table, then immediately
-        // kick off the setup runs so the column populates without
-        // requiring a manual click.
+        // re-render the (now-empty Setup column) table, then maybe kick
+        // off the setup runs.
         scanners[idx].setupResultsCache = {};
         renderFinvizTable(idx);
-        // Fire-and-forget; runAllSetups guards against overlap.
-        runAllSetups(idx);
+        // Scanner 1 auto-runs the P1/P2/P3/EMA/P1a/P2a/P3a detectors
+        // against the Finviz universe -- our scope is to find DITP
+        // setups inside a quality-filtered ticker list.
+        //
+        // Scanner 2 does NOT run those detectors -- user rule
+        // 2026-05-27: "for scanner 2 we are not applying the
+        // patterns." Scanner 2's universe IS already a Finviz
+        // pattern scan (Double Bottom / Channel Up / Wedge / etc.);
+        // running our own pattern detection on top would be
+        // redundant. User browses the signal-matched tickers
+        // directly, clicks any row for chart + S/R strip.
+        if (idx === 1) runAllSetups(idx);
       } catch (e) {
         wrap.innerHTML = `<div class="empty-state">Error: ${e.message}</div>`;
         meta.textContent = '';

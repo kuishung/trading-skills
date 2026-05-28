@@ -68,7 +68,7 @@ from patterns import ema_np, atr_wilder_np  # noqa: E402  (resources/patterns.py
 import bars_store  # noqa: E402  (resources/bars_store.py)
 
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 
 
 @dataclass
@@ -104,6 +104,13 @@ class EMARebConfig:
     # behaviour (no pin-bar anatomy required).
     tick_size:                  float = 0.01
     close_below_tolerance_ticks: int  = 5     # close <= EMA - N*tick_size still qualifies (if pin bar)
+    # ATR-relative close-below tolerance added 2026-05-28. For NVDA at
+    # $214 with ATR $7.39, 5 ticks ($0.05) is too tight -- today's pin
+    # bar closed $1.85 below EMA20 ($0.25 ATR below). Effective tolerance
+    # is `max(close_below_tolerance_ticks*tick_size,
+    # close_below_tolerance_atr*atr)`, so the gate scales with volatility
+    # while still being absolute-tick-bounded for tight ranges.
+    close_below_tolerance_atr:  float = 0.30
     pin_max_body_ratio:         float = 0.40  # pin bar: body / range <= this
     pin_min_lower_tail_ratio:   float = 0.50  # pin bar: lower wick / range >= this
     # Prior-tests conviction signal (added 2026-05-27, v1.3.0).
@@ -195,38 +202,48 @@ def detect_ema_rebound(symbol: str, cfg: EMARebConfig) -> dict | None:
     last_high  = float(highs[-1])
     last_low   = float(lows[-1])
 
-    # Pre-compute tick tolerance + bar anatomy (used for the
-    # close-below-EMA pin-bar case introduced in v1.2.0).
-    close_below_tol = cfg.close_below_tolerance_ticks * cfg.tick_size
+    # Pre-compute close-below-EMA tolerance + bar anatomy.
+    # v1.4.0: tolerance is max(tick-based, ATR-based) -- the tick
+    # path is the floor for tight-range stocks; the ATR path scales
+    # for high-priced / high-vol names (NVDA case: 5 ticks = $0.05
+    # is too tight when ATR=$7.39; 0.3*ATR=$2.22 catches today's
+    # bullish hammer that closed $1.85 below EMA20).
+    close_below_tol = max(
+        cfg.close_below_tolerance_ticks * cfg.tick_size,
+        cfg.close_below_tolerance_atr * atr,
+    )
 
     # Trend gate.
     if cfg.require_stack and not (ema20[-1] > ema50[-1] > ema200[-1]):
         return None
-    # Relax the close > EMA200 gate by the same tick tolerance --
-    # pin bar that traded through EMA200 still qualifies.
+    # Relax the close > EMA200 gate by the same tolerance -- pin bar
+    # that traded through EMA200 still qualifies.
     if cfg.require_above_ema200 and last_close < ema200[-1] - close_below_tol:
         return None
 
-    # Bullish-candle gate.
-    if cfg.require_bullish_close and last_close <= last_open:
-        return None
+    # Pin-bar / hammer anatomy. Computed up front because v1.4.0 uses
+    # it to relax the bullish-close gate: a hammer / pin bar with the
+    # body at the top of range and a long lower wick IS a bullish
+    # rebound signal even if close < open by a small amount (NVDA case
+    # 2026-05-27: O=$214.12, C=$212.60 -- technically bearish close,
+    # but body 28% + lower wick 71% + close in upper 71% = clean
+    # bullish hammer).
     rng = last_high - last_low
     if rng <= 0:
         return None
     close_position = (last_close - last_low) / rng
     if close_position < cfg.min_close_position:
         return None
-
-    # Pin-bar anatomy. Used as an additional gate when close is BELOW
-    # the EMA -- a bullish pin bar that pierced and almost-closed-back
-    # qualifies as rebound; a plain bullish bar that closed below
-    # does NOT (it's a failed reclaim).
     body = abs(last_close - last_open)
     body_ratio = body / rng
     lower_tail = min(last_open, last_close) - last_low
     lower_tail_ratio = lower_tail / rng
     is_pin_bar = (body_ratio <= cfg.pin_max_body_ratio
                   and lower_tail_ratio >= cfg.pin_min_lower_tail_ratio)
+
+    # Bullish-candle gate. v1.4.0 relaxes: accept close > open OR pin bar.
+    if cfg.require_bullish_close and last_close <= last_open and not is_pin_bar:
+        return None
 
     # Check each EMA in descending strength order. First qualifying = winner.
     best: dict | None = None

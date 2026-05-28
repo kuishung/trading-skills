@@ -516,8 +516,15 @@ def detect_p2(symbol: str, cfg: P2Config,
     distance_atr = (range_low - float(closes[-1])) / atr
     if distance_atr < 0 or distance_atr > cfg.max_distance_atr:
         return None
-    if float(highs[-1]) > resistance:
-        return None  # already broken intraday today
+    # User correction 2026-05-28 (ASTS case): the old `highs[-1] >
+    # resistance` gate rejected pending-breakout pin bars where price
+    # spiked through R intraday then closed back below. That's EXACTLY
+    # the textbook P2 setup -- testing the level, not yet a confirmed
+    # close-above breakout. Switched to a close-based check: if close
+    # > resistance the breakout has CONFIRMED (graduated to P3 retest
+    # watch), so the symbol is no longer a pending-P2 candidate.
+    if float(closes[-1]) > resistance:
+        return None  # already closed above today; graduated to P3
     # Find the most recent close ABOVE resistance (no buffer — even a tiny
     # close-above counts as a breach event for this check). If days_since_breach
     # ≤ grace period, the breakout is still active → graduated to P3. If days
@@ -545,12 +552,18 @@ def detect_p2(symbol: str, cfg: P2Config,
     if ratio > cfg.max_upper_tail_ratio:
         return None
 
-    # 6. Classify Setup A / B / C
+    # 6. Classify Setup A / B / C. User correction 2026-05-28 (ASTS):
+    # variant=None previously rejected the candidate (e.g., ASTS's
+    # ~43% body falls between markup threshold and rectangle thresholds
+    # so no variant fits). For the dashboard's P2 surfacing this is
+    # too strict. Fallback to "U" (unclassified P2) when no A/B/C
+    # pattern fits but the symbol is still pending breakout. Downstream
+    # scoring penalises tier via variant bonus (U=5 like fallback).
     variant, diag = classify_variant(opens, highs, lows, closes, resistance, atr, cfg)
     if variant is None:
-        # Doesn't match A / B / C — either both slopes falling (pulling
-        # away from resistance) or no positive variant pattern fit.
-        return None
+        if diag.get("both_slopes_falling"):
+            return None     # PULLING AWAY -- definitively not P2
+        variant = "U"       # pending breakout, no clean A/B/C anatomy
 
     last_range_atr = rng / atr if atr > 0 else 0.0
     flush_offset = thrust_bar_np(

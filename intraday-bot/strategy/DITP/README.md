@@ -43,6 +43,49 @@ just drops a `strategy/DITP/<setup_name>/` subfolder.
 
 ## Changelog
 
+### 2026-05-28 — DITP P2 scanner: close-based "already broken" gate + variant `"U"` fallback (ASTS fix)
+
+User question 2026-05-28: *"Why ASTS is not under the radar for P2?"* ASTS today (O=$124, **H=$131.20**, L=$118.04, **C=$129.60**) is at the textbook P2 setup — close at R=$129.89 with no confirmed close-above breakout. But two gates blocked it:
+
+1. **`highs[-1] > resistance` gate**: the old logic rejected if today's HIGH exceeded R, even when close came back below. For ASTS, H=$131.20 > $129.89 → rejected, despite C=$129.60 = clean rejection-at-resistance = textbook P2 pending. Fix: switched to **`closes[-1] > resistance`** — only confirmed close-above breakouts graduate the symbol out of P2 (to P3 retest watch). Intraday wick-throughs that close back below are still pending P2.
+
+2. **Variant `None` rejection**: ASTS's bar didn't fit A/B/C anatomy strict-ly (body 43% between markup's 60% threshold and rectangle's flatness — no fit). Old logic rejected `variant=None`. Fix: introduce **variant `"U"` (Unclassified)** as a fallback — still pending P2 territory but anatomy doesn't match A/B/C. Score's variant bonus already maps unknown variants to `5` so the existing scoring is unchanged. `both_slopes_falling` (price pulling AWAY from R) is the only `variant=None` case that still rejects.
+
+After fix: ASTS fires as **P2 variant=U, tier=C, confluence=1, score=54**. Frontend tooltip will read `"tier C / variant U"`.
+
+**No version bump** on `scanner.py` since the watchlist-generation contract is unchanged (additive variant + gate semantics tightened in one direction). Watchlist `.txt` rows for variant=U candidates can be filtered downstream if needed.
+
+### 2026-05-28 — Overlapping setups: NVDA hits BOTH P3 + EMA20 (v1.4.0 / v1.5.0 framework)
+
+User teaching 2026-05-28: *"the pattern for each ticker can be overlapped... NVDA, I would say it is a rebound of EMA20 trade through as the bullish hammer is formed. If we look back on 1y1d chart, the mountain top form on 29.10.2025 at $212.19 and the recent mountain top formed on 27.4.2026 constitute a horizontal support where a line can be drawn in that range, now the price action is retesting the support. So it is p3 setup."*
+
+NVDA today: O=$214.12, H=$214.15, L=$208.78, C=$212.60 — bullish hammer (body 28%, lower wick 71%, upper wick 0.6%). The framework was failing to fire EITHER P3 or EMA20 on NVDA. Three coordinated changes fix this without re-introducing the AAOI / USAR false positives that earlier versions had:
+
+**1. `ema_rebound.py` v1.4.0** — accept bullish-OR-pin-bar + ATR-relative close-below tolerance
+- `require_bullish_close` relaxed: a clear pin bar / hammer (body ≤ 40% of range, lower wick ≥ 50% of range) is a bullish rebound signal even with close < open by a small amount. NVDA's body is 28% bearish but the hammer shape is unmistakable.
+- New `close_below_tolerance_atr=0.30`. Effective close-below-EMA tolerance is `max(tick-based, ATR-based)`. For NVDA (ATR=$7.39): 5 ticks=$0.05 vs 0.3·ATR=$2.22 → uses $2.22; close was $1.85 below EMA20 → passes.
+- Result: NVDA fires EMA20 with `rebound_type=pin_through, prior_tests=7, score=46`.
+
+**2. `p3_retest.py` v1.4.0** — upper-tail rejection filter + pin-bar acceptance + extended staleness window
+- New `max_upper_tail_ratio: float = 0.15` (mirrors P2). Differentiates clean P3 reclaim from a doji / rejection bar. AAOI 2026-05-27 had 46% upper tail = rejection at $187 high, NOT a clean retest of $173.41 — now correctly rejected. NVDA has 1% upper tail → passes.
+- `require_bullish_close` relaxed same way as EMA rebound (pin-bar accepted).
+- `breakout_max_age` extended 45 → **252 days** (full lookback). NVDA's $212.19 is 143 days old — was outside the prior 45-day window. The detector's touch / bounce / upper-tail gates ensure only actively-retested levels qualify; the breakout age itself doesn't need a tight upper bound.
+
+**3. `resources/sr_levels.py` v1.5.0** — revert single-most-recent-peak coupling
+- v1.4.0 had coupled `horizontal_resistance_np` and `find_broken_resistance_below` so only ONE fired per ticker (based on the side of the single most-recent peak in the lookback). For NVDA this blocked the $212.19 polarity flip because $236.54 (8d ago, above current) was the most-recent peak.
+- v1.5.0: the two finders are independent again. `horizontal_resistance_np` returns the most-recent peak ABOVE current ($236.54 for NVDA). `find_broken_resistance_below` returns the HIGHEST broken peak BELOW current ($212.19 for NVDA). Both can fire — that's the "overlapping patterns" the user wants. Same change applied symmetrically to `horizontal_support_np` and `find_broken_support_above` (for P1 vs P3a).
+
+**Verification (4 test cases):**
+
+| Symbol | Hits | Notes |
+|---|---|---|
+| **NVDA** | P3 ($212.19, 143d) + EMA20 (pin_through) | ✓ overlapping patterns as user described |
+| AAOI | EMA20 only | ✓ P3 correctly rejected (upper tail 46% > 15%) |
+| USAR | (none) | ✓ correctly excluded |
+| GOOGL | (none) | Today's bar weak (close in lower half) |
+
+Per CLAUDE.md bump rule: MINOR (new gate filters added; plan-dict shape additively extended with `upper_tail_ratio`, `is_pin_bar`).
+
 ### 2026-05-27 — `ema_rebound.py` v1.3.0: prior trade-through tests = conviction score boost
 
 User refinement 2026-05-27: *"the chart will give you more conviction if it previously tested the same EMAs by traded through. In the case of NVDA, it happened 4.5.2026 and 5.5.2026."* A current bullish hammer at an EMA is a setup; the same EMA having been tested via similar trade-through patterns BEFORE makes the setup stronger.

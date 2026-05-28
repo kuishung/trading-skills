@@ -40,6 +40,17 @@ and import it from whichever strategy needs it. No registration.
 
 ## Changelog
 
+### 2026-05-28 — `sr_levels.py` v1.5.0: revert single-most-recent-peak coupling (NVDA overlapping setups)
+
+User correction 2026-05-28 from NVDA case: the v1.4.0 unified rule that bound `horizontal_resistance_np` and `find_broken_resistance_below` to the SAME single most-recent peak was over-restrictive. NVDA has $236.54 (8d ago, above current) AND $212.19 (143d ago, below current); both are valid levels (R-above + polarity-flip P3 candidate). The user's framework: *"the pattern for each ticker can be overlapped."*
+
+**Fix**: the two finders are independent again.
+- `horizontal_resistance_np` returns the most-recent peak ABOVE current (NVDA: $236.54).
+- `find_broken_resistance_below` returns the HIGHEST broken peak BELOW current (NVDA: $212.19).
+- Same applies symmetrically to `horizontal_support_np` (most-recent valley below current) and `find_broken_support_above` (lowest broken valley above current).
+
+**AAOI not re-broken**: the v1.4.0 coupling was added to fix AAOI's false-positive P3 at $173.41. v1.5.0 surfaces $173.41 again but the **`strategy/DITP/p3_retest.py` v1.4.0** added a `max_upper_tail_ratio=0.15` filter that rejects AAOI's 46%-upper-tail rejection bar. Downstream detector gates handle the discrimination; sr_levels just surfaces the candidate.
+
 ### 2026-05-27 — `sr_levels.py` v1.4.0: unified single-most-recent-peak/valley rule (AAOI fix)
 
 User correction 2026-05-27 from AAOI case: *"again why you look at April 21, the nearest mountain formed was 13.5.2026 at $233.67"*. AAOI had `R above = $191.87` (lowest above current, 17d ago) AND a P3 tag `flip = $173.41` (highest below current, 25d ago). But the **single most-recent mountain in lookback was $233.67** (9 days ago, above current) — that's the only active level. My algorithm was treating both functions independently, which let stale older peaks below current leak into P3 detection even when the *true* active level was a more-recent peak above.

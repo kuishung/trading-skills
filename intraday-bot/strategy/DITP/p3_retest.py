@@ -73,7 +73,7 @@ from sr_levels import find_broken_resistance_below  # noqa: E402
 import bars_store  # noqa: E402
 
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 
 
 @dataclass
@@ -101,9 +101,17 @@ class P3RetestConfig:
     # otherwise the symbol is still pending breakout (P2 territory).
     tick_size:              float = 0.01
     breakout_ticks:         int   = 3
-    # Staleness window for the breakout
-    breakout_min_age:       int   = 3     # bars since the prior-resistance peak (lower bound)
-    breakout_max_age:       int   = 45    # bars since the prior-resistance peak (upper bound)
+    # Staleness window for the breakout. The min_age (3 days) keeps
+    # too-fresh peaks out (price still rocketing up from breakout, not
+    # yet a retest). The max_age extended 2026-05-28 from 45 -> 252 to
+    # accommodate older polarity-flip levels per user NVDA case --
+    # $212.19 from Oct 2025 (143 days ago) IS the relevant retest
+    # level. The P3 detector's other gates (touch within last 5 days,
+    # bullish reclaim, bounce magnitude, upper-tail filter) ensure
+    # only ACTIVELY-retested levels qualify; the breakout age itself
+    # doesn't need a tight upper bound.
+    breakout_min_age:       int   = 3
+    breakout_max_age:       int   = 252
     # Retest gates. User rule 2026-05-27: "price action shows reactions
     # in the resistance turned support" -- the retest is only a P3 setup
     # when there is a visible BOUNCE / reaction off the polarity-flip
@@ -114,6 +122,18 @@ class P3RetestConfig:
     max_distance_atr:       float = 1.0
     require_bullish_close:  bool  = True
     min_close_position:     float = 0.5
+    # Upper-tail rejection filter added 2026-05-28 (v1.4.0). Mirrors P2's
+    # max_upper_tail_ratio=0.15 gate. Differentiates a clean P3 reclaim
+    # (small upper tail, body in upper half) from a doji-like
+    # indecisive bar (big upper tail = rejection at higher resistance).
+    # AAOI case 2026-05-27: 46% upper tail = rejection at $187.18,
+    # NOT a clean retest of $173.41 -- now correctly excluded.
+    max_upper_tail_ratio:   float = 0.15
+    # Pin-bar anatomy (added 2026-05-28 for v1.4.0 bullish-OR-pin acceptance).
+    # NVDA case 2026-05-27: bullish hammer with close $1.52 below open
+    # but body at top of range + long lower wick = clean rebound signal.
+    pin_max_body_ratio:         float = 0.40
+    pin_min_lower_tail_ratio:   float = 0.50
     # Trend gates
     require_above_ema200:   bool  = True
     require_stack:          bool  = True
@@ -165,14 +185,29 @@ def detect_p3_retest(symbol: str, cfg: P3RetestConfig) -> dict | None:
     if cfg.require_above_ema200 and last_close < ema200[-1]:
         return None
 
-    # Bullish-candle gate.
-    if cfg.require_bullish_close and last_close <= last_open:
-        return None
+    # Bar anatomy. Compute pin-bar / hammer shape up front because
+    # v1.4.0 relaxes the bullish-close gate to accept hammer bars
+    # (NVDA case: close < open by $1.52 but bar is a clean hammer).
     rng = last_high - last_low
     if rng <= 0:
         return None
     close_position = (last_close - last_low) / rng
     if close_position < cfg.min_close_position:
+        return None
+    body = abs(last_close - last_open)
+    body_ratio = body / rng
+    lower_tail = min(last_open, last_close) - last_low
+    lower_tail_ratio = lower_tail / rng
+    upper_tail = last_high - max(last_open, last_close)
+    upper_tail_ratio = upper_tail / rng
+    is_pin_bar = (body_ratio <= cfg.pin_max_body_ratio
+                  and lower_tail_ratio >= cfg.pin_min_lower_tail_ratio)
+
+    # Bullish-candle gate (v1.4.0 relaxed: close > open OR pin bar).
+    if cfg.require_bullish_close and last_close <= last_open and not is_pin_bar:
+        return None
+    # Upper-tail rejection filter (v1.4.0): clean retest has SMALL upper tail.
+    if upper_tail_ratio > cfg.max_upper_tail_ratio:
         return None
 
     # Resolve THE key broken-resistance (v1.1.0 of sr_levels: returns
@@ -276,6 +311,8 @@ def detect_p3_retest(symbol: str, cfg: P3RetestConfig) -> dict | None:
         "days_since_touch":         int(best["days_since_touch"]),
         "atr14":                    round(float(atr), 2),
         "close_position_in_range":  round(float(close_position), 3),
+        "upper_tail_ratio":         round(float(upper_tail_ratio), 3),
+        "is_pin_bar":               bool(is_pin_bar),
         "ema20":                    round(float(ema20[-1]), 2),
         "ema50":                    round(float(ema50[-1]), 2),
         "ema200":                   round(float(ema200[-1]), 2),
