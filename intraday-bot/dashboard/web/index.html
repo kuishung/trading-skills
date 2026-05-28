@@ -403,7 +403,10 @@
        Right pane: TradingView chart that updates when a watchlist
                    row is clicked. Fills remaining width.
        Other views keep their default column-stack layout. */
-    main > .view[data-view="scanner"] {
+    /* `[data-view^="scanner"]` matches both `scanner` and `scanner2`
+       (Scanner 2 page added 2026-05-27 -- same layout, different
+       Finviz URL). Prefix selector keeps the layout rules DRY. */
+    main > .view[data-view^="scanner"] {
       max-width: none;
       flex-direction: row;
       height: 100%;
@@ -416,7 +419,7 @@
       margin: -24px;
     }
     /* LEFT pane: Watchlist panel, sidebar-flush look */
-    main > .view[data-view="scanner"] > section.panel:first-of-type {
+    main > .view[data-view^="scanner"] > section.panel:first-of-type {
       width: 270px;
       flex-shrink: 0;
       display: flex;
@@ -429,12 +432,12 @@
       border-bottom: none;
       border-right: 1px solid var(--border);
     }
-    main > .view[data-view="scanner"] .panel-header {
+    main > .view[data-view^="scanner"] .panel-header {
       flex-wrap: wrap;
       gap: 6px;
       flex-shrink: 0;
     }
-    main > .view[data-view="scanner"] .panel-header .meta {
+    main > .view[data-view^="scanner"] .panel-header .meta {
       width: 100%;
       display: flex;
       align-items: center;
@@ -442,6 +445,36 @@
       gap: 8px;
       font-size: 11px;
     }
+    /* Scanner 2 signal-picker (Finviz signal dropdown). Sits between
+       the panel header and the filter pills. User request 2026-05-27:
+       dropdown to choose a Finviz pattern signal (Double Bottom etc.)
+       as the Scanner 2 universe. */
+    .signal-picker {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 4px 0 10px 0;
+      font-size: 11px;
+      flex-shrink: 0;
+    }
+    .signal-picker label {
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+    .signal-picker select {
+      flex: 1;
+      background: #0d1117;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 3px 6px;
+      font-size: 11px;
+      font-family: inherit;
+      cursor: pointer;
+      min-width: 0;          /* allow flex shrink so it fits 270px column */
+    }
+    .signal-picker select:hover { border-color: var(--accent); }
+    .signal-picker select:focus { outline: none; border-color: var(--accent); }
     /* Finviz filter pills (replaces the raw-URL display under the
        Watchlist header). One pill per filter code in the Finviz
        URL's `f=` param, formatted via formatFinvizFilter() in JS. */
@@ -464,7 +497,7 @@
       cursor: help;             /* hover -> tooltip shows the raw code */
     }
     /* The list itself is the scrollable region; everything else stays put. */
-    main > .view[data-view="scanner"] #finviz-table-wrap {
+    main > .view[data-view^="scanner"] [id^="finviz-table-wrap"] {
       flex: 1;
       overflow-y: auto;
       min-height: 0;
@@ -778,6 +811,7 @@
     -->
     <nav class="sidebar" id="sidebar">
       <button data-view="scanner"    class="active">Scanner</button>
+      <button data-view="scanner2">Scanner 2</button>
       <button data-view="monitor">Monitor</button>
       <button data-view="strategies">Strategies</button>
       <button data-view="trades">Trades</button>
@@ -823,6 +857,54 @@
                  JS widget (not the simple iframe) because we need
                  per-study color overrides for EMA20/50/200. -->
             <div id="tv-chart-container"></div>
+          </div>
+        </section>
+      </div>
+
+      <!-- SCANNER 2 -------------------------------------------------- -->
+      <!-- Same layout + DOM structure as Scanner; all IDs suffixed `-2`.
+           Scanner 2's universe is driven by a SIGNAL DROPDOWN (Finviz
+           pattern signals like Double Bottom, Channel Up, etc.) rather
+           than cfg.finviz_screener_url_2. User request 2026-05-27:
+           "I want to use the dropdown box to list the signal type and
+           get the tickers." -->
+      <div class="view" data-view="scanner2">
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Watchlist 2</h2>
+            <span class="meta">
+              <span id="finviz-meta-2">pick a signal...</span>
+              <button class="refresh" id="finviz-refresh-2" title="Force-refresh from Finviz, bypassing the 1h cache">Refresh</button>
+            </span>
+          </div>
+          <div class="signal-picker">
+            <label for="finviz-signal-2">Finviz signal:</label>
+            <select id="finviz-signal-2">
+              <option value="">— pick a signal —</option>
+            </select>
+          </div>
+          <div class="filter-pills" id="finviz-filters-2"></div>
+          <div id="finviz-table-wrap-2">
+            <div class="empty-state">Pick a Finviz signal above to load tickers.</div>
+          </div>
+        </section>
+
+        <section class="panel scanner-chart-panel">
+          <div class="chart-header">
+            <span class="label">Chart:</span>
+            <span class="chart-symbol" id="chart-symbol-2">&mdash;</span>
+            <a id="chart-external-link-2" class="external-link" target="intraday_bot_tv" href="#" style="display:none">Open in TradingView &nearr;</a>
+          </div>
+          <div class="sr-strip" id="sr-strip-2" style="display:none">
+            <span class="sr-pill sr-r" id="sr-r-2" title="Nearest mountain-anchored resistance above current price">R <span class="sr-val">&mdash;</span></span>
+            <span class="sr-pill sr-s" id="sr-s-2" title="Nearest mountain-valley-anchored support below current price">S <span class="sr-val">&mdash;</span></span>
+            <span class="sr-pill sr-p3" id="sr-p3-2" title="Broken-resistance levels now below current price (P3 retest candidates)">P3 <span class="sr-val">&mdash;</span></span>
+          </div>
+          <div class="chart-iframe-wrap">
+            <div class="chart-placeholder" id="chart-placeholder-2">
+              Click a ticker in the watchlist to load its chart
+            </div>
+            <div id="tv-chart-container-2"></div>
           </div>
         </section>
       </div>
@@ -1071,12 +1153,12 @@
         + '&studies=' + encodeURIComponent(JSON.stringify(studies));
     }
 
-    function loadTvChart(symbol) {
-      const placeholder = document.getElementById('chart-placeholder');
-      const symLabel    = document.getElementById('chart-symbol');
-      const extLink     = document.getElementById('chart-external-link');
-      const container   = document.getElementById('tv-chart-container');
-      const srStrip     = document.getElementById('sr-strip');
+    function loadTvChart(idx, symbol) {
+      const placeholder = elFor(idx, 'chart-placeholder');
+      const symLabel    = elFor(idx, 'chart-symbol');
+      const extLink     = elFor(idx, 'chart-external-link');
+      const container   = elFor(idx, 'tv-chart-container');
+      const srStrip     = elFor(idx, 'sr-strip');
 
       if (!symbol) {
         if (container) container.innerHTML = '';
@@ -1095,12 +1177,15 @@
       if (placeholder) placeholder.classList.add('hidden');
 
       // Lazily create the iframe so the first chart open replaces the
-      // placeholder. Subsequent clicks just update the src.
-      let iframe = container.querySelector('iframe#tv-chart-iframe');
+      // placeholder. Subsequent clicks just update the src. The iframe
+      // gets a per-scanner ID so the two scanners don't share a single
+      // iframe element.
+      const iframeId = elId(idx, 'tv-chart-iframe');
+      let iframe = container.querySelector('iframe#' + iframeId);
       if (!iframe) {
         container.innerHTML = '';
         iframe = document.createElement('iframe');
-        iframe.id = 'tv-chart-iframe';
+        iframe.id = iframeId;
         iframe.title = 'TradingView chart';
         iframe.style.width = '100%';
         iframe.style.height = '100%';
@@ -1110,12 +1195,8 @@
       }
       iframe.src = tvWidgetUrl(symbol);
 
-      // Fire S/R lookup in parallel with the chart load. The strip
-      // shows mountain-anchored R above, mountain-valley-anchored S
-      // below, and broken-resistance retest candidates (P3 polarity
-      // flip). User asked 2026-05-27: "would you be able to identify
-      // key support and resistance" -- this strip is the answer.
-      loadSrLevels(symbol);
+      // Fire S/R lookup in parallel with the chart load.
+      loadSrLevels(idx, symbol);
     }
 
     // ---------------------------------------------------------------
@@ -1123,9 +1204,8 @@
     // GET /chart/sr_levels?symbol=<X> returns resistance_above /
     // support_below / broken_resistance. We format each as a pill
     // with the level price and signed ATR distance from current.
+    // Per-scanner AbortController lives on scanners[idx].srAbortController.
     // ---------------------------------------------------------------
-    let _srAbortController = null;
-
     function fmtSrPill(prefix, lvl, current, atr, isAbove) {
       if (lvl == null || current == null || atr == null || atr <= 0) {
         return { text: '—', empty: true };
@@ -1138,11 +1218,11 @@
       };
     }
 
-    async function loadSrLevels(symbol) {
-      const strip = document.getElementById('sr-strip');
-      const rPill = document.getElementById('sr-r');
-      const sPill = document.getElementById('sr-s');
-      const p3Pill = document.getElementById('sr-p3');
+    async function loadSrLevels(idx, symbol) {
+      const strip = elFor(idx, 'sr-strip');
+      const rPill = elFor(idx, 'sr-r');
+      const sPill = elFor(idx, 'sr-s');
+      const p3Pill = elFor(idx, 'sr-p3');
       if (!strip || !rPill || !sPill || !p3Pill) return;
 
       // Show strip immediately with loading state so the user sees activity.
@@ -1152,13 +1232,15 @@
         p.querySelector('.sr-val').textContent = '…';
       });
 
-      // Cancel any in-flight S/R fetch from a prior symbol click.
-      if (_srAbortController) _srAbortController.abort();
-      _srAbortController = new AbortController();
+      // Cancel any in-flight S/R fetch from a prior symbol click on
+      // THIS scanner. Each scanner has its own controller so clicking
+      // in Scanner 2 doesn't abort an in-flight Scanner 1 fetch.
+      if (scanners[idx].srAbortController) scanners[idx].srAbortController.abort();
+      scanners[idx].srAbortController = new AbortController();
 
       try {
         const resp = await fetch(`/chart/sr_levels?symbol=${encodeURIComponent(symbol)}`,
-          { signal: _srAbortController.signal });
+          { signal: scanners[idx].srAbortController.signal });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
         const current = data.current;
@@ -1203,11 +1285,15 @@
     document.addEventListener('click', (ev) => {
       // Match the compact list-row form (Scanner view) or any future
       // setup-results table that adopts the data-symbol convention.
+      // Detect scanner index from the clicked row's parent view -- so a
+      // click in Scanner 2 loads the chart in Scanner 2's chart pane.
       const el = ev.target.closest('.finviz-row[data-symbol], table.scanner tbody tr[data-symbol]');
       if (!el) return;
       const sym = el.dataset.symbol;
       if (!sym) return;
-      loadTvChart(sym);
+      const view = el.closest('[data-view]');
+      const idx = view && view.dataset.view === 'scanner2' ? 2 : 1;
+      loadTvChart(idx, sym);
     });
 
     function fmtVol(v) {
@@ -1221,14 +1307,26 @@
       return String(n);
     }
 
-    // Finviz table is independent of setup analysis. The two panels --
-    // Finviz tickers (top) and Setup matches (bottom) -- share only
-    // the universe via cfg.finviz_screener_url on the backend.
-    let finvizRowsCache = [];
+    // Per-scanner state. Two independent watchlists (Scanner / Scanner 2)
+    // each have their own ticker cache, setup-results cache, in-flight
+    // flag, and S/R abort controller. Driven by cfg.finviz_screener_url
+    // (scanner 1) vs cfg.finviz_screener_url_2 (scanner 2). All scanner
+    // functions take an `idx` param so the same code paths serve both.
+    const scanners = {
+      1: { rowsCache: [], setupResultsCache: {}, runAllInFlight: false, srAbortController: null, signal: null },
+      2: { rowsCache: [], setupResultsCache: {}, runAllInFlight: false, srAbortController: null, signal: null },
+    };
 
-    function renderFinvizTable() {
-      const wrap = document.getElementById('finviz-table-wrap');
-      const rows = finvizRowsCache;
+    // ID helper: scanner 1 uses unsuffixed IDs (finviz-table-wrap,
+    // finviz-meta, ...), scanner 2 uses `-2` suffix
+    // (finviz-table-wrap-2, ...). Keeps the existing IDs stable while
+    // letting Scanner 2 coexist.
+    function elId(idx, base) { return idx === 1 ? base : `${base}-${idx}`; }
+    function elFor(idx, base) { return document.getElementById(elId(idx, base)); }
+
+    function renderFinvizTable(idx) {
+      const wrap = elFor(idx, 'finviz-table-wrap');
+      const rows = scanners[idx].rowsCache;
       if (!rows || rows.length === 0) {
         wrap.innerHTML = '<div class="empty-state">Finviz returned 0 tickers. Either the screener filters matched nothing today, or the scrape failed -- check stderr.</div>';
         return;
@@ -1242,12 +1340,12 @@
       const yfSetups = SETUPS.filter(s => s.run === 'yf');
       function primarySetupIdx(symbol) {
         for (let i = 0; i < yfSetups.length; i++) {
-          if (candidateFor(yfSetups[i], symbol)) return i;
+          if (candidateFor(idx, yfSetups[i], symbol)) return i;
         }
         return -1;
       }
-      const indexed = rows.map((r, idx) => ({
-        r, idx,
+      const indexed = rows.map((r, rowIdx) => ({
+        r, idx: rowIdx,
         setupIdx: primarySetupIdx((r.symbol || '').toUpperCase()),
       }));
       indexed.sort((a, b) => {
@@ -1270,7 +1368,7 @@
         const sym = (r.symbol || '').toUpperCase();
         const isMatched = item.setupIdx >= 0;
         if (isMatched) matched++;
-        const badges = isMatched ? setupBadgesHtml(sym) : '';
+        const badges = isMatched ? setupBadgesHtml(idx, sym) : '';
         const priceStr = (r.price !== null && r.price !== undefined)
           ? '$' + fmtNum(r.price, 2)
           : '';
@@ -1292,11 +1390,11 @@
       html += '</div>';
       wrap.innerHTML = html;
       // Update the panel header meta with the live match count.
-      const meta = document.getElementById('finviz-meta');
+      const meta = elFor(idx, 'finviz-meta');
       if (meta && meta.dataset.baseCount !== undefined) {
         const base = meta.dataset.baseCount;
         const fetchedAt = meta.dataset.fetchedAt || '';
-        const ranSetups = Object.keys(setupResultsCache).length;
+        const ranSetups = Object.keys(scanners[idx].setupResultsCache).length;
         const matchStr = ranSetups > 0
           ? ` &middot; <strong>${matched}</strong> matched`
           : '';
@@ -1393,8 +1491,8 @@
       return decodeURIComponent(m[1]).split(',').map(s => s.trim()).filter(Boolean);
     }
 
-    function renderFinvizFilters(url) {
-      const wrap = document.getElementById('finviz-filters');
+    function renderFinvizFilters(idx, url) {
+      const wrap = elFor(idx, 'finviz-filters');
       if (!wrap) return;
       const filters = parseFinvizFilters(url);
       if (filters.length === 0) {
@@ -1409,15 +1507,27 @@
         .join('');
     }
 
-    async function loadFinvizTickers(forceRefresh) {
-      const wrap = document.getElementById('finviz-table-wrap');
-      const meta = document.getElementById('finviz-meta');
+    async function loadFinvizTickers(idx, forceRefresh) {
+      const wrap = elFor(idx, 'finviz-table-wrap');
+      const meta = elFor(idx, 'finviz-meta');
+      // Scanner 2 with no signal picked: show empty state, don't fetch.
+      const signal = scanners[idx].signal;
+      if (idx === 2 && !signal) {
+        wrap.innerHTML = '<div class="empty-state">Pick a Finviz signal above to load tickers.</div>';
+        meta.textContent = 'pick a signal...';
+        meta.dataset.baseCount = '0';
+        scanners[idx].rowsCache = [];
+        scanners[idx].setupResultsCache = {};
+        return;
+      }
       meta.textContent = forceRefresh ? 'refreshing from Finviz...' : 'loading...';
       try {
-        const r = await fetch(
-          `/scanner/finviz_tickers${forceRefresh ? '?force_refresh=true' : ''}`,
-          { cache: 'no-store' }
-        );
+        const qs = new URLSearchParams();
+        if (forceRefresh) qs.set('force_refresh', 'true');
+        if (idx !== 1) qs.set('scanner', String(idx));
+        if (signal)    qs.set('signal', signal);
+        const url = `/scanner/finviz_tickers${qs.toString() ? '?' + qs.toString() : ''}`;
+        const r = await fetch(url, { cache: 'no-store' });
         if (!r.ok) {
           let detail = `HTTP ${r.status}`;
           try { const j = await r.json(); if (j && j.detail) detail += ` -- ${j.detail}`; } catch {}
@@ -1427,29 +1537,30 @@
         // Render the human-readable filter criteria (replaces the raw
         // URL display). Backend still returns the full URL so the
         // tooltip on each pill can show its raw code.
-        renderFinvizFilters(j.url);
+        renderFinvizFilters(idx, j.url);
         // Stash base count + fetched timestamp on the meta element so
         // renderFinvizTable can rebuild the header string with live
         // match counts as setups complete.
         meta.dataset.baseCount = String(j.count);
         meta.dataset.fetchedAt = new Date().toLocaleTimeString();
-        finvizRowsCache = j.rows || [];
+        scanners[idx].rowsCache = j.rows || [];
         // Refreshing the universe invalidates any prior setup-run results --
         // they were computed against the old ticker set. Drop the cache,
         // re-render the (now-empty Setup column) table, then immediately
         // kick off the setup runs so the column populates without
         // requiring a manual click.
-        setupResultsCache = {};
-        renderFinvizTable();
+        scanners[idx].setupResultsCache = {};
+        renderFinvizTable(idx);
         // Fire-and-forget; runAllSetups guards against overlap.
-        runAllSetups();
+        runAllSetups(idx);
       } catch (e) {
         wrap.innerHTML = `<div class="empty-state">Error: ${e.message}</div>`;
         meta.textContent = '';
       }
     }
 
-    document.getElementById('finviz-refresh').addEventListener('click', () => loadFinvizTickers(true));
+    document.getElementById('finviz-refresh')  .addEventListener('click', () => loadFinvizTickers(1, true));
+    document.getElementById('finviz-refresh-2').addEventListener('click', () => loadFinvizTickers(2, true));
 
     // -----------------------------------------------------------------
     // SETUP MATCHES PANEL
@@ -1536,9 +1647,25 @@
         // EMA rebound's badge IS the anchor EMA (EMA20 / EMA50 / EMA200)
         // -- which EMA acted as support is the signal the user wants to
         // see at a glance, not a generic "EMA" tag. Fallback to "EMA"
-        // if the field is somehow missing.
+        // if the field is somehow missing. Tooltip surfaces the bounce
+        // magnitude (v1.1.0) + rebound type (v1.2.0 -- "pin through" when
+        // close is below EMA but bar is a clear pin bar) + prior trade-
+        // through count at the same EMA (v1.3.0 conviction signal).
         badgeText:  c => c.ema_anchor || 'EMA',
-        tooltipDetail: c => c.ema_anchor ? `bounce off ${c.ema_anchor}` : '',
+        tooltipDetail: c => {
+          if (!c.ema_anchor) return '';
+          const parts = [`bounce off ${c.ema_anchor}`];
+          if (c.rebound_type === 'pin_through') {
+            parts.push('pin bar through EMA');
+          }
+          if (c.bounce_magnitude_atr != null) {
+            parts.push(`${Number(c.bounce_magnitude_atr).toFixed(2)}xATR`);
+          }
+          if (c.prior_tests_count != null && c.prior_tests_count > 0) {
+            parts.push(`${c.prior_tests_count} prior tests`);
+          }
+          return parts.join(', ');
+        },
       },
       // ---- Short-side setups (user framework reintegration 2026-05-27) ----
       // "P1 and P3 inverse will be P1a and P3a -- which is shorting setup."
@@ -1603,9 +1730,10 @@
       },
     ];
 
-    // Look up candidate dict for a given symbol within a setup's results.
-    function candidateFor(setup, symbol) {
-      const result = setupResultsCache[setup.key];
+    // Look up candidate dict for a given symbol within a setup's results,
+    // scoped to the given scanner index (1 or 2 -- separate caches).
+    function candidateFor(idx, setup, symbol) {
+      const result = scanners[idx].setupResultsCache[setup.key];
       if (!result || !Array.isArray(result.candidates)) return null;
       const upper = symbol.toUpperCase();
       return result.candidates.find(c => (c.symbol || '').toUpperCase() === upper) || null;
@@ -1618,11 +1746,11 @@
     // appends `setup.tooltipDetail(candidate)` to `setup.label`. Short-
     // side setups (key suffix 'a' for P1a/P2a/P3a) render with the
     // .short variant (red tone) so bullish vs bearish is obvious.
-    function setupBadgesHtml(symbol) {
+    function setupBadgesHtml(idx, symbol) {
       const badges = [];
       for (const setup of SETUPS) {
         if (setup.run !== 'yf') continue;
-        const cand = candidateFor(setup, symbol);
+        const cand = candidateFor(idx, setup, symbol);
         if (!cand) continue;
         const text = setup.badgeText ? setup.badgeText(cand) : (setup.shortLabel || '?');
         const tooltip = setup.tooltipDetail ? setup.tooltipDetail(cand) : '';
@@ -1635,37 +1763,36 @@
       return badges.length ? badges.join(' ') : '<span class="muted">-</span>';
     }
 
-    // setupResultsCache[key] holds the last successful yf_scan response
-    // for that setup (or {error: "..."} on failure). Stubs are never
-    // cached; the renderer reads their note text directly from SETUPS.
-    let setupResultsCache = {};
-    let runAllInFlight = false;
-
-    async function runOneSetup(setup) {
+    async function runOneSetup(idx, setup) {
       if (setup.run !== 'yf') return;     // stubs don't make network calls
       try {
-        const r = await fetch(`/scanner/yf_scan?setup=${encodeURIComponent(setup.key)}`, {
+        const qs = new URLSearchParams({ setup: setup.key });
+        if (idx !== 1) qs.set('scanner', String(idx));
+        const signal = scanners[idx].signal;
+        if (signal) qs.set('signal', signal);
+        const r = await fetch(`/scanner/yf_scan?${qs.toString()}`, {
           method: 'POST', cache: 'no-store',
         });
         const j = await r.json();
         if (!r.ok || !j.ok) {
-          setupResultsCache[setup.key] = { error: `HTTP ${r.status}: ${j.detail || JSON.stringify(j).slice(0, 200)}` };
+          scanners[idx].setupResultsCache[setup.key] = { error: `HTTP ${r.status}: ${j.detail || JSON.stringify(j).slice(0, 200)}` };
         } else {
-          setupResultsCache[setup.key] = j;
+          scanners[idx].setupResultsCache[setup.key] = j;
         }
       } catch (e) {
-        setupResultsCache[setup.key] = { error: e.message };
+        scanners[idx].setupResultsCache[setup.key] = { error: e.message };
       }
     }
 
-    async function runAllSetups() {
-      if (runAllInFlight) return;
-      runAllInFlight = true;
-      const meta = document.getElementById('finviz-meta');
-      const baseCount = meta.dataset.baseCount || String(finvizRowsCache.length);
+    async function runAllSetups(idx) {
+      const s = scanners[idx];
+      if (s.runAllInFlight) return;
+      s.runAllInFlight = true;
+      const meta = elFor(idx, 'finviz-meta');
+      const baseCount = meta.dataset.baseCount || String(s.rowsCache.length);
       const fetchedAt = meta.dataset.fetchedAt || '';
 
-      const yfSetups = SETUPS.filter(s => s.run === 'yf');
+      const yfSetups = SETUPS.filter(setup => setup.run === 'yf');
       let done = 0;
       const start = Date.now();
       for (const setup of yfSetups) {
@@ -1676,14 +1803,14 @@
           + `&middot; building <strong>${setup.shortLabel}</strong> `
           + `(${done + 1}/${yfSetups.length})... `
           + `&middot; ${Math.round((Date.now() - start) / 1000)}s`;
-        await runOneSetup(setup);
+        await runOneSetup(idx, setup);
         done++;
         // Re-render: each setup completion lights up its column entries
         // for matched tickers; final iteration also writes the final
         // "<base> tickers · N matched · fetched <ts>" header.
-        renderFinvizTable();
+        renderFinvizTable(idx);
       }
-      runAllInFlight = false;
+      s.runAllInFlight = false;
     }
 
     // ---------------------------------------------------------------
@@ -1692,7 +1819,7 @@
     // Per-view boot/teardown hooks fire on activation so e.g. Scanner
     // only auto-refreshes when it's the visible view.
     // ---------------------------------------------------------------
-    const validViews = ['scanner', 'monitor', 'strategies', 'trades', 'data'];
+    const validViews = ['scanner', 'scanner2', 'monitor', 'strategies', 'trades', 'data'];
 
     function activateView(name) {
       if (!validViews.includes(name)) name = 'scanner';
@@ -1705,13 +1832,12 @@
       if (location.hash.replace('#', '') !== name) {
         history.replaceState(null, '', '#' + name);
       }
-      // Per-view lifecycle hooks. Scanner view: pull the Finviz
+      // Per-view lifecycle hooks. Scanner / Scanner 2: pull the Finviz
       // ticker list (cached 1h on the backend, so view-flipping is
       // fast). No auto-poll -- the user clicks Refresh to force a
-      // fresh fetch.
-      if (name === 'scanner') {
-        loadFinvizTickers(false);
-      }
+      // fresh fetch. Each scanner has its own independent state.
+      if (name === 'scanner')  loadFinvizTickers(1, false);
+      if (name === 'scanner2') loadFinvizTickers(2, false);
     }
 
     document.querySelectorAll('nav.sidebar button').forEach(btn => {
@@ -1720,6 +1846,65 @@
     window.addEventListener('hashchange', () => {
       activateView(location.hash.replace('#', ''));
     });
+
+    // ---------------------------------------------------------------
+    // Scanner 2 signal-picker. Populates the <select> from
+    // GET /scanner/finviz_signals on boot, restores the last
+    // selection from localStorage, and fires loadFinvizTickers(2,
+    // forceRefresh=true) on change.
+    // ---------------------------------------------------------------
+    async function initSignalPicker() {
+      const sel = document.getElementById('finviz-signal-2');
+      if (!sel) return;
+      try {
+        const resp = await fetch('/scanner/finviz_signals');
+        const j = await resp.json();
+        // Group signals into <optgroup> sections.
+        const groups = {};
+        for (const s of (j.signals || [])) {
+          const g = s.group || 'Other';
+          (groups[g] = groups[g] || []).push(s);
+        }
+        for (const groupName of Object.keys(groups)) {
+          const og = document.createElement('optgroup');
+          og.label = groupName;
+          for (const s of groups[groupName]) {
+            const opt = document.createElement('option');
+            opt.value = s.value;
+            opt.textContent = s.label;
+            og.appendChild(opt);
+          }
+          sel.appendChild(og);
+        }
+        // Restore last selection (per-PC, persists across browser
+        // refreshes via localStorage).
+        const last = localStorage.getItem('finviz-signal-2') || '';
+        if (last) {
+          sel.value = last;
+          scanners[2].signal = last;
+          // If Scanner 2 is the active view at boot, fire a tickers
+          // load now that the restored signal is in scanners[2].signal.
+          // (activateView fired BEFORE the signal list loaded, so it
+          // would have shown the empty-state.)
+          const activeView = (location.hash.replace('#', '') || 'scanner');
+          if (activeView === 'scanner2') loadFinvizTickers(2, false);
+        }
+      } catch (e) {
+        console.warn('failed to load finviz signals:', e);
+      }
+      sel.addEventListener('change', (ev) => {
+        const v = ev.target.value || '';
+        scanners[2].signal = v || null;
+        localStorage.setItem('finviz-signal-2', v);
+        // Drop the universe + setup caches so the next load is fresh.
+        scanners[2].rowsCache = [];
+        scanners[2].setupResultsCache = {};
+        // If Scanner 2 is the active view, reload immediately.
+        loadFinvizTickers(2, true);
+      });
+    }
+
+    initSignalPicker();
 
     // Boot.
     activateView(location.hash.replace('#', '') || 'scanner');

@@ -13,7 +13,7 @@ just drops a `strategy/DITP/<setup_name>/` subfolder.
 - `_helpers.py` — Family-shared helpers (skeleton). Add shared constants + plan builders here as setups are wired.
 - `scanner.py` — DITP P2 Pattern scanner CLI. Reads daily parquet bars from `data/price_history/daily/`, applies the §6 eligibility filters (EMA stack + real-ceiling resistance + signal-candle anatomy + pending-breakout state), classifies sub-variant A / B / C, then runs the §6.5 ranking layer (5-component score + 5 caution flags + tier mapping). Writes `state/watchlist_ditp_<tomorrow>.txt` + `.json`. Source: `strategies-reference/DITP.md` §6 + §6.5.
 - `tc_scanner.py` — DITP TC (Trend Continuation) **EOD Day-0** scanner CLI. Walks the most recent `state/watchlist_ditp_*.json`, filters to symbols whose Day-0 daily candle both (a) closed above the P2 candidate's `resistance` (= `range_high`) and (b) printed bullish (close > open AND close in upper half of range), and writes `state/watchlist_tc_<tomorrow>.txt` + `.json`. Source: `strategies-reference/DITP.md` §6 Setup 4 (Phase 1 — premarket validation + entry pipeline still TBD).
-- `ema_rebound.py` — **EMA rebound detector** (daily support bounce on EMA20 / EMA50 / EMA200). Single-file detector module; no CLI scanner / watchlist file (consumed only by the dashboard's `POST /scanner/yf_scan?setup=ema_rebound` for ad-hoc filtering of the Finviz universe). Returns the WHICH EMA acted as support + proximity/recency metrics. Source: user request 2026-05-27 ("find rebound on EMA20 or EMA50 or EMA200"). `__version__ = "1.0.0"`. Public API: `detect_ema_rebound(symbol, cfg)` -> dict | None; `scan_universe(symbols, cfg)` -> list[dict]. Config: `EMARebConfig` (lookback_bars=5, touch_tolerance_atr=0.3, max_distance_atr=1.0, require_stack=True, require_above_ema200=True, require_bullish_close=True, min_close_position=0.5).
+- `ema_rebound.py` — **EMA rebound detector** (daily support bounce on EMA20 / EMA50 / EMA200). Single-file detector module; no CLI scanner / watchlist file (consumed only by the dashboard's `POST /scanner/yf_scan?setup=ema_rebound` for ad-hoc filtering of the Finviz universe). Returns the WHICH EMA acted as support + bounce magnitude + **rebound_type** (`"reclaim"` = close above EMA, `"pin_through"` = close 1-5 ticks below EMA, qualified as pin bar) + **prior_tests_count** (how many bars in the prior 60 days ALSO tested the same EMA via trade-through, used as a conviction score boost). Source: user 2026-05-27 EMA-rebound refinements. `__version__ = "1.3.0"`. Public API: `detect_ema_rebound(symbol, cfg)` / `scan_universe(symbols, cfg)`. Config: `EMARebConfig` (lookback_bars=5, touch_tolerance_atr=0.3, max_distance_atr=1.0, min_bounce_atr=0.3, tick_size=0.01, close_below_tolerance_ticks=5, pin_max_body_ratio=0.40, pin_min_lower_tail_ratio=0.50, **prior_tests_lookback=60**, **prior_tests_score_per=5**, **prior_tests_score_cap=15**, require_stack=True, require_above_ema200=True, require_bullish_close=True, min_close_position=0.5).
 - `p1_rebound.py` — **DITP P1 detector** -- rebound off a horizontal SUPPORT level. Trend gate (EMA20>EMA50>EMA200) + bullish reclaim candle + horizontal-support touch via `resources/sr_levels.horizontal_support_np` (immediate-nearest valley below current per user framework reintegration 2026-05-27) + **reaction-magnitude gate** (bounce from touch's low to today's close >= 0.3 * ATR — a real visible bounce is required). Single-file detector consumed by the dashboard's `POST /scanner/yf_scan?setup=p1_rebound`. Source: user framing 2026-05-27. `__version__ = "1.2.0"`. Public API: `detect_p1_rebound(symbol, cfg)` / `scan_universe(symbols, cfg)`. Config: `P1RebConfig`.
 - `p3_retest.py` — **DITP P3 detector** -- retest of a broken resistance level (polarity flip; resistance → support). Trend gate + bullish reclaim candle + broken-R candidate from `resources/sr_levels.find_broken_resistance_below` v1.2.0 (immediate-nearest broken mountain below current, with 3-tick breakout tolerance) + staleness window (breakout 3-45 days ago) + **reaction-magnitude gate** (same math as P1). Single-file detector consumed by the dashboard's `POST /scanner/yf_scan?setup=p3_retest`. Source: user framing 2026-05-27 + user reintegration same day ("immediate mountain top nearest to current price action is relevant"). `__version__ = "1.3.0"`. Public API: `detect_p3_retest(symbol, cfg)` / `scan_universe(symbols, cfg)`. Config: `P3RetestConfig`.
 - `p1a_rejection.py` — **DITP P1a detector** (SHORT side). Bearish rejection at a horizontal resistance — *"a failed P2 setup will be P1a setup"* (user 2026-05-27). Uses `patterns.horizontal_resistance_np` for the level (same as P2). Signal: bearish close, close in lower half of bar range, upper tail ≥ 30% of range, reaction magnitude `(high - close) / atr ≥ 0.3`, today's high touched the resistance. NO downtrend gate — fires in any trend (early-reversal short on uptrends, continuation short on downtrends). `__version__ = "1.0.0"`. Public API: `detect_p1a_rejection(symbol, cfg)` / `scan_universe(symbols, cfg)`. Config: `P1aRejectConfig`.
@@ -42,6 +42,79 @@ just drops a `strategy/DITP/<setup_name>/` subfolder.
 - Every rule edit bumps `__version__` in the setup's `impl.py` and adds a dated entry to that setup's README changelog (which IS the version history — there's no separate `changelog.md` per CLAUDE.md).
 
 ## Changelog
+
+### 2026-05-27 — `ema_rebound.py` v1.3.0: prior trade-through tests = conviction score boost
+
+User refinement 2026-05-27: *"the chart will give you more conviction if it previously tested the same EMAs by traded through. In the case of NVDA, it happened 4.5.2026 and 5.5.2026."* A current bullish hammer at an EMA is a setup; the same EMA having been tested via similar trade-through patterns BEFORE makes the setup stronger.
+
+**New diagnostic + scoring**:
+- After the current setup is identified, scan back `prior_tests_lookback` bars (default 60 trading days ≈ 3 months) from the current touch index.
+- For each bar in that window, check whether it ALSO traded through the same EMA with rebound anatomy (helper `_is_prior_trade_through`):
+  - Low pierced the EMA (`low < ema_at_that_time`)
+  - Close came back within tick tolerance (`close >= ema - 5*tick_size`)
+  - Bullish close (`close > open`)
+  - Close in upper half of bar range
+- Count = `prior_tests_count` field on the candidate.
+- Score bonus: `min(15, prior_tests_count × 5)` = up to +15 points for 3+ prior tests. Surfaced as `prior_tests_bonus` field for inspection.
+
+**Each prior bar counts independently.** Consecutive same-week tests (NVDA's 4.5 + 5.5 case) both contribute to the count — that's the user's intent (multiple distinct tests of the level).
+
+**Smoke-tested** (505-symbol universe): 27 of 29 candidates have ≥1 prior trade-through at the same EMA. Top picks:
+- BKH (EMA50, 11 prior tests, bonus +15, score 54)
+- ARI (EMA20, 14 prior tests, bonus +15, score 45)
+- BKU / CALY (EMA50, 9-10 prior tests each)
+- CVI / ACA (EMA50, 3 prior tests each, score 58 / 55 — top scorers thanks to combined bounce + prior-tests)
+
+**NVDA-specific note**: today's NVDA bar per yfinance data is technically bearish (O=$214.12, C=$212.60 — close < open by $1.52) so it doesn't qualify as a bullish hammer in the framework. The user's chart source may differ from yfinance — if the bar IS bullish in their data, the prior-tests counter would catch the 4.5 / 5.5 tests if they pass the same trade-through anatomy.
+
+### 2026-05-27 — `ema_rebound.py` v1.2.0: accept bullish pin bar that closes 1-5 ticks BELOW the EMA
+
+User refinement 2026-05-27: *"bounce off EMA does not mean that it has to close above the EMAs. If the last candle form bullish pin bar below the EMA 2-5 ticks below, it can still be qualified as rebound by way of trade through EMAs."*
+
+The v1.1.0 close gate required `close > ema_now` strictly — a bullish pin bar that pierced the EMA and closed 3 ticks below (e.g., $99.97 close vs $100.00 EMA) was REJECTED even though the rebound character was clearly present. v1.2.0 admits this case under tighter anatomy.
+
+**Two accepted rebound states** (mutually exclusive `rebound_type`):
+- `"reclaim"` (v1.1.0 behaviour) — `close >= EMA`. No additional shape check; the bullish close + close-in-upper-half + bounce-magnitude gates already ensure clean reclaim.
+- `"pin_through"` (NEW v1.2.0) — `EMA − tolerance ≤ close < EMA` AND the bar is a clear bullish pin bar:
+  - `body / range ≤ pin_max_body_ratio` (default 0.40 — body is small)
+  - `lower_wick / range ≥ pin_min_lower_tail_ratio` (default 0.50 — wick is long)
+
+The pin-bar anatomy gate is required ONLY for the below-EMA case. A plain bullish bar that closed below the EMA without the pin-bar shape is still rejected (it's a *failed* reclaim, not a trade-through rebound).
+
+**Tolerance is absolute, tick-based** (mirrors the cluster-tolerance convention from sr_levels): `close_below_tolerance_ticks × tick_size` = 5 × $0.01 = **$0.05** by default. Stays tight across stock prices ($30 stock or $400 stock), unlike a percentage which would scale with price.
+
+**Trend gate `require_above_ema200`** relaxed by the same tick tolerance — a pin bar that pierced EMA200 still qualifies.
+
+**New candidate dict fields**:
+- `rebound_type` — `"reclaim"` or `"pin_through"`
+- `is_pin_bar` — bool, the pin-bar anatomy result for today's bar
+
+Per CLAUDE.md bump rule: MINOR (gate semantics extended + new config fields, plan-dict shape additive).
+
+**Smoke-tested** (505-symbol universe): 29 candidates, all `reclaim` today (no pin-through cases in today's snapshot — rare scenario by nature). Synthetic verification: a $100 stock with bar O=$99.90, H=$100.10, L=$98.50, C=$99.97 (pin shape: 4% body, 87% lower wick) at EMA=$100.00 correctly qualifies as `pin_through`.
+
+### 2026-05-27 — `ema_rebound.py` v1.1.0: reaction-magnitude gate (pin-bar / hammer + confirmation candle)
+
+User refinement 2026-05-27: *"sometimes price action will trade through the EMAs and form a rebound with pin bar or a bullish hammer, those are considered rebound on EMA, we have to find the confirmation candle i.e. the candle formation of a bullish candle."*
+
+The v1.0.0 detector caught most rebound cases (touch + bullish close + reclaim) but didn't measure the bounce STRENGTH from the deepest probe of the EMA. The new gate mirrors what P1/P3 v1.1.0 added: `bounce_magnitude_atr = (last_close - min(lows[touched_idx:])) / atr` must clear `min_bounce_atr` (default 0.3 ATR).
+
+**Why this matters for the pin-bar / hammer case**:
+- The touch window detects the day price PIERCED the EMA (low went well below)
+- The bounce gate measures cumulative reaction up to today's close — captures both same-bar rebounds (today IS the hammer, bounce within the bar) and prior-day pin + today confirmation candle
+- Hammers naturally pass: small body near the high, long lower wick = close_position ≈ 0.7-0.9 and bounce_magnitude ≈ 0.5-1.0 ATR
+
+**Other changes**:
+- Score gains a `reaction` component (`min(10, bounce_magnitude_atr * 10)`) so stronger bounces rank higher.
+- Candidate dict adds `bounce_magnitude_atr` field — surfaced in the dashboard EMA-badge tooltip alongside the anchor name.
+- Touch logic now explicitly documents that the tolerance allows BOTH small overshoots above the EMA AND deep pierces below (the bounce gate is the quality filter, not the touch tolerance).
+
+**Smoke-tested** (parquet universe, 371 symbols):
+- 26 candidates; bounce magnitudes 0.39–1.20 ATR
+- Top: CVI (EMA50, 0.83 ATR, score 43), AME (EMA50, 0.76, 42), ACA (EMA50, 0.78, 40), AROC (EMA50 touch 1d ago + confirmation today, 1.11 ATR), COHR (EMA20, 1.00 ATR)
+- AROC is a textbook pin+confirmation: touch 1 day ago, today's bullish candle adds the 1.11-ATR cumulative bounce.
+
+Per CLAUDE.md bump rule: MINOR (new gating filter + plan-dict additively extended with `bounce_magnitude_atr`).
 
 ### 2026-05-27 — `sr_levels.py` v1.4.0: single-most-recent-peak rule fixes AAOI mis-P3
 

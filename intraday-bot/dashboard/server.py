@@ -2872,29 +2872,104 @@ _VALID_SETUPS = ("ditp", "ditp_tc", "ema_rebound",
                  "p1a_rejection", "p2a_breakdown", "p3a_retest")
 
 
-def _universe_for_setup(setup: str) -> tuple[list[str], str]:
+# ---- Finviz signal picker (Scanner 2 dropdown) ----
+# Curated list of Finviz "s=" signal codes. Each becomes a one-click
+# universe in the Scanner 2 dropdown (added 2026-05-27 per user request:
+# "I want to use the dropdown box to list the signal type and get the
+# tickers"). The URL built from a signal is
+# `https://finviz.com/screener.ashx?s=<value>&o=-volume` -- works through
+# the existing finviz_screener scraper unchanged.
+#
+# Grouping is just for the dropdown UI's <optgroup> labels.
+FINVIZ_SIGNALS = [
+    # Chart patterns (the user's primary interest -- "double bottom etc.")
+    {"value": "ta_p_channelup",        "label": "Channel Up",                 "group": "Chart patterns"},
+    {"value": "ta_p_channeldown",      "label": "Channel Down",               "group": "Chart patterns"},
+    {"value": "ta_p_channel",          "label": "Channel (sideways)",         "group": "Chart patterns"},
+    {"value": "ta_p_doublebottom",     "label": "Double Bottom",              "group": "Chart patterns"},
+    {"value": "ta_p_doubletop",        "label": "Double Top",                 "group": "Chart patterns"},
+    {"value": "ta_p_horsbottom",       "label": "Head & Shoulders Bottom",    "group": "Chart patterns"},
+    {"value": "ta_p_horstop",          "label": "Head & Shoulders Top",       "group": "Chart patterns"},
+    {"value": "ta_p_multiplebottom",   "label": "Multiple Bottom",            "group": "Chart patterns"},
+    {"value": "ta_p_multipletop",      "label": "Multiple Top",               "group": "Chart patterns"},
+    {"value": "ta_p_tlsupport",        "label": "Triangle Ascending (TL support)",   "group": "Chart patterns"},
+    {"value": "ta_p_tlresistance",     "label": "Triangle Descending (TL resistance)", "group": "Chart patterns"},
+    {"value": "ta_p_wedgeup",          "label": "Wedge Up",                   "group": "Chart patterns"},
+    {"value": "ta_p_wedgedown",        "label": "Wedge Down",                 "group": "Chart patterns"},
+    {"value": "ta_p_wedge",            "label": "Wedge (symmetric)",          "group": "Chart patterns"},
+    # Day-of signals
+    {"value": "ta_topgainers",         "label": "Top Gainers (today)",        "group": "Day signals"},
+    {"value": "ta_toplosers",          "label": "Top Losers (today)",         "group": "Day signals"},
+    {"value": "ta_newhigh",            "label": "New 52w High",               "group": "Day signals"},
+    {"value": "ta_newlow",             "label": "New 52w Low",                "group": "Day signals"},
+    {"value": "ta_mostvolatile",       "label": "Most Volatile (intraday)",   "group": "Day signals"},
+    {"value": "ta_mostactive",         "label": "Most Active",                "group": "Day signals"},
+    {"value": "ta_unusualvolume",      "label": "Unusual Volume",             "group": "Day signals"},
+    # Oscillator / overbought-oversold
+    {"value": "ta_overbought",         "label": "Overbought (RSI > 70)",      "group": "Oscillators"},
+    {"value": "ta_oversold",           "label": "Oversold (RSI < 30)",        "group": "Oscillators"},
+]
+
+_VALID_SIGNAL_VALUES = {s["value"] for s in FINVIZ_SIGNALS}
+
+
+def _signal_to_url(signal: str) -> str:
+    """Build the Finviz screener URL for a given signal value."""
+    return f"https://finviz.com/screener.ashx?s={signal}&o=-volume"
+
+
+def _universe_for_setup(setup: str, scanner_idx: int = 1,
+                        signal: str | None = None) -> tuple[list[str], str]:
+    """Resolve the symbol universe for a given setup + scanner index.
+
+    `scanner_idx=1` reads `cfg.finviz_screener_url` (the primary
+    Scanner page). `scanner_idx=2` reads `cfg.finviz_screener_url_2`
+    (the Scanner 2 page -- different screener URL for a second
+    watchlist). Empty / missing URLs fall back to SP500.
+
+    `signal` (optional) overrides BOTH the scanner-idx URL lookup AND
+    the cfg fallback. Used by Scanner 2's signal-picker dropdown
+    (added 2026-05-27): user picks "Double Bottom" -> backend builds
+    `https://finviz.com/screener.ashx?s=ta_p_doublebottom&o=-volume`
+    and uses that universe.
+    """
     setup = setup.lower()
     if setup not in _VALID_SETUPS:
         raise ValueError(f"unknown setup '{setup}' (no universe builder wired)")
+
+    if signal:
+        if signal not in _VALID_SIGNAL_VALUES:
+            raise ValueError(f"unknown finviz signal '{signal}'")
+        try:
+            import finviz_screener  # type: ignore
+            syms = finviz_screener.fetch_screener_symbols(_signal_to_url(signal), cache_ttl_s=3600)
+            if syms:
+                return syms, f"finviz signal '{signal}' ({len(syms)} symbols)"
+            print(f"[scanner/yf_scan signal={signal}] returned 0 symbols; falling back to SP500")
+        except Exception as exc:
+            print(f"[scanner/yf_scan signal={signal}] fetch failed ({exc}); falling back to SP500")
+        import sp500  # type: ignore
+        return sp500.get_sp500_symbols(), "sp500"
 
     try:
         from _common import load_config  # type: ignore  (scripts/_common.py)
         cfg = load_config()
     except Exception:
         cfg = {}
-    fv_url = (cfg.get("finviz_screener_url") or "").strip() if cfg else ""
+    url_key = "finviz_screener_url" if scanner_idx == 1 else f"finviz_screener_url_{scanner_idx}"
+    fv_url = (cfg.get(url_key) or "").strip() if cfg else ""
 
     if fv_url:
         try:
             import finviz_screener  # type: ignore  (resources/finviz_screener.py)
             syms = finviz_screener.fetch_screener_symbols(fv_url, cache_ttl_s=3600)
             if syms:
-                return syms, f"finviz ({len(syms)} symbols)"
+                return syms, f"finviz#{scanner_idx} ({len(syms)} symbols)"
             # Empty result -- Finviz returned nothing OR scrape failed. Fall
             # back to SP500 rather than scanning nothing.
-            print(f"[scanner/yf_scan] finviz_screener returned 0 symbols; falling back to SP500. URL: {fv_url[:120]}")
+            print(f"[scanner/yf_scan #{scanner_idx}] finviz_screener returned 0 symbols; falling back to SP500. URL: {fv_url[:120]}")
         except Exception as exc:
-            print(f"[scanner/yf_scan] finviz fetch failed ({exc}); falling back to SP500")
+            print(f"[scanner/yf_scan #{scanner_idx}] finviz fetch failed ({exc}); falling back to SP500")
 
     import sp500  # type: ignore  (resources/sp500.py)
     return sp500.get_sp500_symbols(), "sp500"
@@ -3008,42 +3083,71 @@ async def chart_sr_levels(symbol: str, lookback_days: int = 500) -> JSONResponse
     return JSONResponse(result)
 
 
+@app.get("/scanner/finviz_signals")
+async def scanner_finviz_signals() -> JSONResponse:
+    """Curated list of Finviz signal types for the Scanner 2 dropdown.
+
+    Returns `{ signals: [{value, label, group}, ...] }`. Each entry's
+    `value` is the Finviz `s=` URL parameter (e.g. "ta_p_doublebottom");
+    `label` is the human label for the dropdown; `group` lets the
+    frontend render <optgroup> sections.
+    """
+    return JSONResponse({"signals": FINVIZ_SIGNALS})
+
+
 @app.get("/scanner/finviz_tickers")
-async def scanner_finviz_tickers(force_refresh: bool = False) -> JSONResponse:
+async def scanner_finviz_tickers(
+    force_refresh: bool = False,
+    scanner: int = 1,
+    signal: str | None = None,
+) -> JSONResponse:
     """Return the current Finviz screener result set as a row list.
 
-    Reads `cfg["finviz_screener_url"]`, scrapes the URL via
-    `resources/finviz_screener.fetch_screener_rows()` (cached 1h),
-    returns `{ url, count, rows: [{symbol, price, volume}, ...] }`.
+    URL selection precedence (highest first):
+      1. `signal` param (e.g. "ta_p_doublebottom") -- builds
+         `https://finviz.com/screener.ashx?s=<signal>&o=-volume`. Used
+         by the Scanner 2 signal-picker dropdown.
+      2. `cfg["finviz_screener_url"]` for scanner=1, or
+         `cfg["finviz_screener_url_2"]` for scanner=2.
 
-    This is the FIRST step of the manual scanning workflow per user
-    directive 2026-05-27: pull the Finviz tickers, then user decides
-    which to chart / which to apply a setup to. NO setup detection
-    runs here; the response is just the universe.
+    Scrapes via `resources/finviz_screener.fetch_screener_rows()`
+    (cached 1h). Returns `{scanner, url, signal, count,
+    rows: [{symbol, price, volume}, ...]}`.
 
-    Empty URL -> 400 (the dashboard should surface this to the user
-    so they configure config.json before expecting results).
+    Empty URL with no signal -> 400 (surface to user so they configure
+    config.json or pick a signal).
     """
-    try:
-        from _common import load_config  # type: ignore
-        cfg = load_config()
-    except Exception:
-        cfg = {}
-    url = (cfg.get("finviz_screener_url") or "").strip()
-    if not url:
-        raise HTTPException(
-            status_code=400,
-            detail="cfg.finviz_screener_url is empty. Paste a Finviz screener URL into config.json.",
-        )
+    if scanner not in (1, 2):
+        raise HTTPException(status_code=400, detail="scanner must be 1 or 2")
+    if signal:
+        if signal not in _VALID_SIGNAL_VALUES:
+            raise HTTPException(status_code=400, detail=f"unknown signal '{signal}'")
+        url = _signal_to_url(signal)
+    else:
+        try:
+            from _common import load_config  # type: ignore
+            cfg = load_config()
+        except Exception:
+            cfg = {}
+        url_key = "finviz_screener_url" if scanner == 1 else f"finviz_screener_url_{scanner}"
+        url = (cfg.get(url_key) or "").strip()
+        if not url:
+            raise HTTPException(
+                status_code=400,
+                detail=f"cfg.{url_key} is empty. Paste a Finviz screener URL into config.json, "
+                       f"or pick a signal from the dropdown.",
+            )
     try:
         import finviz_screener  # type: ignore
         rows = finviz_screener.fetch_screener_rows(url, force_refresh=force_refresh)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"finviz fetch failed: {exc}")
     return JSONResponse({
-        "url":   url,
-        "count": len(rows),
-        "rows":  rows,
+        "scanner": scanner,
+        "signal":  signal,
+        "url":     url,
+        "count":   len(rows),
+        "rows":    rows,
     })
 
 
@@ -3077,19 +3181,26 @@ async def scanner_universe(setup: str = "ditp") -> JSONResponse:
 async def scanner_yf_scan(
     setup: str,
     limit: int | None = None,
+    scanner: int = 1,
+    signal: str | None = None,
 ) -> JSONResponse:
     """Run a daily-chart setup scan using FRESH yFinance bars (no
     parquets touched). Returns candidates in-memory; nothing written
     to disk.
 
     Query params:
-      setup -- one of: ditp, ditp_tc
+      setup -- one of: ditp, ditp_tc, ema_rebound, p1_rebound,
+                       p3_retest, p1a_rejection, p2a_breakdown, p3a_retest
       limit -- optional, cap universe to first N symbols (debug aid).
+      scanner -- 1 (default, uses cfg.finviz_screener_url) or
+                 2 (uses cfg.finviz_screener_url_2 -- the Scanner 2 page).
 
     Returns:
-      { ok, setup, universe_size, n_candidates, candidates: [...],
+      { ok, setup, scanner, universe_size, n_candidates, candidates: [...],
         fetch_duration_s, scan_duration_s, total_duration_s, today_et }
     """
+    if scanner not in (1, 2):
+        raise HTTPException(status_code=400, detail="scanner must be 1 or 2")
     setup = (setup or "").lower()
     if setup not in _VALID_SETUPS:
         raise HTTPException(
@@ -3114,7 +3225,7 @@ async def scanner_yf_scan(
 
     started = _time.time()
     try:
-        symbols, universe_source = _universe_for_setup(setup)
+        symbols, universe_source = _universe_for_setup(setup, scanner_idx=scanner, signal=signal)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     if limit and limit > 0:
@@ -3223,6 +3334,7 @@ async def scanner_yf_scan(
     return JSONResponse({
         "ok":               True,
         "setup":            setup,
+        "scanner":          scanner,
         "today_et":         today_et,
         "universe_source":  universe_source,
         "universe_size":    len(symbols),

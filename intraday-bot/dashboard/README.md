@@ -29,6 +29,55 @@ Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-05-27 — Scanner 2: Finviz signal-picker dropdown (Double Bottom, Channel Up, etc.)
+
+User asked 2026-05-27: *"in scanner 2 page, I want to use the dropdown box to list the signal type and get the tickers."* Scanner 2's universe is now driven by a curated dropdown of Finviz signal types — pick a pattern (Double Bottom, Wedge Up, etc.) or day signal (Top Gainers, New 52w High, etc.) and the dashboard runs all 7 setup detectors against that universe.
+
+**Backend (`server.py`)**:
+- `FINVIZ_SIGNALS` constant: 23 entries grouped by category — 14 chart patterns (Channel Up/Down, Double Bottom/Top, Head & Shoulders, Multiple Top/Bottom, Triangle, Wedge), 7 day signals (Top Gainers, New 52w High, Most Volatile, Unusual Volume, ...), 2 oscillators (Overbought, Oversold).
+- New endpoint `GET /scanner/finviz_signals` returns the list with `{value, label, group}` per entry. Frontend uses `group` to render `<optgroup>` sections in the dropdown.
+- `GET /scanner/finviz_tickers` and `POST /scanner/yf_scan` accept optional `signal` query param. When present, builds `https://finviz.com/screener.ashx?s=<signal>&o=-volume` server-side and uses that as the universe — overrides the cfg URL lookup.
+- `_universe_for_setup(setup, scanner_idx, signal)` handles the precedence: signal > cfg URL > SP500 fallback.
+
+**Frontend (`web/index.html`)**:
+- Scanner 2 panel header now has a `.signal-picker` row with a `<select id="finviz-signal-2">` between the watchlist title and the filter pills.
+- `<optgroup>` sections separate chart patterns / day signals / oscillators for readability in a 270 px column.
+- `initSignalPicker()` fetches the list on boot, populates the dropdown, restores the last selection from `localStorage` (`finviz-signal-2` key, per-PC), and wires a `change` handler that clears Scanner 2's caches and reloads.
+- Boot-order race handled: if `#scanner2` is the active view URL, `activateView` fires first and shows the empty-state; once the signal list loads and the stored selection is restored, the picker triggers a fresh `loadFinvizTickers(2, false)` so the user sees their last signal's tickers without re-picking.
+- Scanner 2 with no signal selected shows: *"Pick a Finviz signal above to load tickers."*
+- All Scanner 2 fetches (`loadFinvizTickers` + `runOneSetup`) include `&signal=<value>` when `scanners[2].signal` is set.
+
+**`cfg.finviz_screener_url_2` is now optional** — Scanner 2 prefers the signal dropdown. If neither a signal is picked nor `cfg.finviz_screener_url_2` is set, Scanner 2 shows the empty-state. The cfg key is kept as a fallback path for users who want a fixed custom screener URL (mid-cap+ Double Bottom + extra filters, etc.).
+
+**Smoke-tested**:
+- `GET /scanner/finviz_signals` → 23 signals ✓
+- `GET /scanner/finviz_tickers?scanner=2&signal=ta_p_doublebottom` → 99 tickers ✓ (top by volume: MREO, PLTR, BBWI, CRM, TTD)
+- Frontend: dropdown renders 3 optgroups, localStorage persists selection across reloads.
+
+### 2026-05-27 — Scanner 2 page: second independent watchlist driven by `cfg.finviz_screener_url_2`
+
+User asked 2026-05-27: *"I want to build a scanner 2 page with all the requirement same as the scanner page."* Use case: run TWO independent Finviz screener URLs (e.g., a swing-trade universe and a momentum-gapper universe) without swapping config values.
+
+**Backend (`server.py`)**:
+- `_universe_for_setup(setup, scanner_idx=1)` — picks `cfg.finviz_screener_url` (scanner=1) or `cfg.finviz_screener_url_2` (scanner=2).
+- `GET /scanner/finviz_tickers?scanner=N` and `POST /scanner/yf_scan?setup=X&scanner=N` accept the optional `scanner` query param (defaults to 1 = back-compat with all existing callers).
+- Empty `cfg.finviz_screener_url_2` returns a 400 with the specific config-key name to set.
+
+**Frontend (`web/index.html`)**:
+- Sidebar gains a "Scanner 2" button between Scanner and Monitor.
+- Scanner 2 view DOM clones the Scanner view structure with all IDs suffixed `-2` (`finviz-table-wrap-2`, `finviz-meta-2`, `chart-symbol-2`, `tv-chart-container-2`, `sr-strip-2`, etc.).
+- CSS layout rules use `[data-view^="scanner"]` prefix selector so both views share the same flush 270px + chart-pane layout — no rule duplication.
+- JS refactored to be scanner-aware: every scanner function (`renderFinvizTable`, `loadFinvizTickers`, `runAllSetups`, `runOneSetup`, `candidateFor`, `setupBadgesHtml`, `loadTvChart`, `loadSrLevels`, `renderFinvizFilters`) takes a leading `idx` param. Per-scanner state lives on `scanners[1]` and `scanners[2]` objects (`rowsCache`, `setupResultsCache`, `runAllInFlight`, `srAbortController`).
+- ID helper `elFor(idx, base)` returns `document.getElementById(base)` for scanner 1, `${base}-2` for scanner 2. Keeps existing scanner-1 IDs stable.
+- Click delegation detects scanner index from the clicked row's parent `[data-view]` so a click in Scanner 2 loads the chart in Scanner 2's chart pane (independent iframe + S/R strip).
+- `runAllInFlight` is per-scanner so concurrent scans in both views don't block each other.
+
+**Config**: add `"finviz_screener_url_2": "https://finviz.com/screener?v=111&..."` to `config.json` (per-PC + gitignored). Empty / missing falls back to "configure this URL" error in the Scanner 2 panel.
+
+**Smoke-tested**:
+- `GET /scanner/finviz_tickers?scanner=1` → 45 tickers ✓
+- `GET /scanner/finviz_tickers?scanner=2` → HTTP 400 with clear message ✓ (not yet configured on this PC)
+
 ### 2026-05-27 — Scanner: P1a / P2a / P3a short-side setups added (red-tone badges)
 
 User teaching 2026-05-27: *"P1 and P3 inverse will be P1a and P3a -- which is shorting setup."* The dashboard previously only ran long-side scans (P1/P2/P3/EMA). Three new short-side detectors join the framework.
