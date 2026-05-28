@@ -7,6 +7,16 @@ never decides whether to trade. It just answers data questions.
 Adding a new resource: drop a module here (e.g. `resources/finviz.py`)
 and import it from whichever strategy needs it. No registration.
 
+**Horizontal S/R framework**: the canonical specification lives at
+`strategies-reference/SR.md` ("Identifying Support & Resistance on a
+1Y / 1D Chart"). `patterns.horizontal_resistance_np` + `sr_levels`
+(horizontal_support_np, find_broken_resistance_below,
+find_broken_support_above) are the numerical implementation of that
+framework. Known deviations from SR.md (`min_touches=1`, no volume
+integration, round-number detection limited to DITP P2 only) are
+documented in the `sr_levels.py` module docstring — read those before
+treating any "missing" feature as a bug.
+
 ## Contents
 
 - `ibkr_data.py` — IBKR bars / quotes / trades adapter. Lazy `ib_insync` import (heavy dep, only needed when `cfg["data_provider"]=="ibkr"`).

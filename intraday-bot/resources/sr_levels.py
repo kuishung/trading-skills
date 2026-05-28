@@ -1,5 +1,24 @@
 """Key support / resistance level detector -- symmetric over patterns.py.
 
+Canonical framework reference: `strategies-reference/SR.md`
+("Identifying Support & Resistance on a 1Y / 1D Chart"). Read SR.md
+first for the WHAT; this module is the HOW (numerical implementation).
+
+Where this codebase deliberately deviates from SR.md:
+  * `min_touches=1` (single confirmed mountain top is a valid level).
+    SR.md prefers 2+; user override 2026-05-27 ("a single confirmed
+    mountain top is a valid resistance even without a second touch
+    nearby. Mountain validation provides the structural credential").
+  * No volume integration. SR.md emphasizes volume (Step 5, Confirming
+    Signals, Common Mistake #3). Tracked as a known gap; revisit when
+    a specific case proves the need.
+  * Round-number / psychological-S/R detection. Implemented in
+    `strategy/DITP/scanner.py::compute_confluence_tier` for DITP P2
+    only; NOT yet propagated to P1 / P3 / P3a or the chart-pane S/R
+    strip. Another known gap.
+  * Trendlines, volume profile, Fibonacci (SR.md Section 4). Out of
+    scope -- not implemented.
+
 User-facing concept (set 2026-05-27 during dashboard chart pane work):
 the three DITP setups all hinge on the same structural-level question:
 

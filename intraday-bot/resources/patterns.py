@@ -1,5 +1,15 @@
 """Pattern detection primitives — Layer-1 resource.
 
+For horizontal support/resistance specifically: the canonical framework
+is `strategies-reference/SR.md`. `horizontal_resistance_np` is the
+numerical implementation; `sr_levels.horizontal_support_np` mirrors it
+for the support side. Both follow SR.md's 1Y/1D, swing-pivot, mountain-
+anchored model. Known deviations from SR.md (`min_touches=1`, no
+volume tracking, etc.) are documented in `sr_levels.py`'s module
+docstring -- check there before adding "missing" S/R features.
+
+
+
 Two API conventions live here, side by side:
 
   A. **List-of-dict** functions — accept `list[dict]` of the bar shape
