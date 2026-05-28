@@ -68,12 +68,12 @@ del _root, _p
 
 import numpy as np  # type: ignore  # noqa: E402
 
-from patterns import ema_np, atr_wilder_np  # noqa: E402
+from patterns import ema_np, atr_wilder_np, horizontal_resistance_np  # noqa: E402
 from sr_levels import find_broken_resistance_below  # noqa: E402
 import bars_store  # noqa: E402
 
 
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 
 
 @dataclass
@@ -227,6 +227,30 @@ def detect_p3_retest(symbol: str, cfg: P3RetestConfig) -> dict | None:
 
     tolerance = cfg.touch_tolerance_atr * atr
 
+    # v1.5.0: P2-zone vs P3-zone discriminator. User USAR case
+    # 2026-05-28: USAR today has R-above = $28.69 (10d, $0.50 above
+    # close $28.19) AND broken-R = $26.36 (79d, $1.83 below). Both
+    # are valid by individual gates, but the active level the price
+    # action is testing is $28.69 (P2 territory), NOT $26.36 (stale
+    # P3 retest). The discriminator: close should be CLOSER to the
+    # broken-R level than to R-above -- i.e., below the midpoint
+    # between the two. If close is above midpoint, the symbol is in
+    # P2 zone and P3 must not fire.
+    #
+    # Compute R-above ONCE up front (same parameters horizontal_resistance
+    # would use via find_key_levels). Used as the midpoint anchor below.
+    r_above_info = horizontal_resistance_np(
+        highs, lows, closes, last_close, atr,
+        lookback=cfg.lookback,
+        swing_radius=cfg.swing_radius,
+        min_touches=1,
+        tick_size=cfg.tick_size,
+        cluster_tolerance_ticks=cfg.breakout_ticks,  # symmetric noise band
+        mountain_min_age_bars=cfg.mountain_min_age_bars,
+        mountain_pullback_atr=cfg.mountain_pullback_atr,
+    )
+    r_above_level = float(r_above_info["level"]) if r_above_info else None
+
     # Test each candidate (closest-to-current first) against the P3
     # gates. First one that passes is the anchor.
     best: dict | None = None
@@ -243,6 +267,13 @@ def detect_p3_retest(symbol: str, cfg: P3RetestConfig) -> dict | None:
         distance_atr = (last_close - level) / atr
         if distance_atr > cfg.max_distance_atr:
             continue
+        # v1.5.0 zone discriminator: if R-above exists and close is
+        # ABOVE the midpoint of (broken-R, R-above), the active level
+        # is R-above (P2 territory) -- not the polarity flip.
+        if r_above_level is not None:
+            midpoint = (r_above_level + level) / 2.0
+            if last_close > midpoint:
+                continue   # P2 zone, not P3
         # Retest-touch: scan back for a low at/below level + tolerance.
         lb = min(cfg.touch_lookback_bars, len(bars))
         touched_idx: int | None = None

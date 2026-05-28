@@ -43,6 +43,30 @@ just drops a `strategy/DITP/<setup_name>/` subfolder.
 
 ## Changelog
 
+### 2026-05-28 — `p3_retest.py` v1.5.0: P2-zone vs P3-zone midpoint discriminator (USAR fix)
+
+User question 2026-05-28: *"for USAR why you indicate it as P3 setup?"*
+
+USAR today: O=$26.45, H=$28.59, L=$25.80, **C=$28.19**.
+- R above (immediate-nearest mountain): **$28.69** (10 days ago, just $0.50 above close)
+- Broken-R polarity flip: **$26.36** (79 days ago, $1.83 below close)
+
+Both levels pass individual P3 gates — broken_R candidate exists, touch + bullish close + close-above-level + 14.3% upper tail (just under the 15% filter) + 0.99-ATR bounce. The detector tagged USAR as P3 with score 36. But per the user's framework, **the level the price action is actually testing is $28.69 (P2 territory), NOT the 79-day-old polarity flip $26.36** — the same exact correction USAR triggered back in v1.0.0 (where $25.95 was the false-positive flip).
+
+**Fix**: new gate in `detect_p3_retest`. Compute R-above via `patterns.horizontal_resistance_np` up front; if it exists, the polarity-flip candidate is only accepted when today's close is **closer to broken-R than to R-above** (i.e., below the midpoint of the two levels). USAR's close $28.19 > midpoint $27.525 → P2 zone → rejected.
+
+**Verification across user's named cases:**
+
+| Symbol | R above | Broken-R | Midpoint | Close | Zone | P3 fires? |
+|---|---|---|---|---|---|---|
+| **USAR today** | $28.69 (0.21 ATR away) | $26.36 (0.76 ATR away) | $27.525 | $28.19 | P2 (above midpoint) | ✓ now rejected |
+| **NVDA** (yesterday) | $236.54 (3.24 ATR away) | $212.19 (0.06 ATR away) | $224.37 | $212.60 | P3 (below midpoint) | ✓ still fires |
+| **AAOI** | $233.67 (2.59 ATR away) | $173.41 (0.21 ATR away) | $203.54 | $178.00 | P3 (below midpoint) | rejected by 46%-upper-tail filter (separate gate) |
+
+**Edge case** — when `R_above` is `None` (price is at the top of the structure, no overhead mountain), the midpoint check has no anchor and is skipped. The other gates still apply.
+
+Per CLAUDE.md bump rule: MINOR (new gating filter; plan-dict shape unchanged).
+
 ### 2026-05-28 — DITP P2 scanner: close-based "already broken" gate + variant `"U"` fallback (ASTS fix)
 
 User question 2026-05-28: *"Why ASTS is not under the radar for P2?"* ASTS today (O=$124, **H=$131.20**, L=$118.04, **C=$129.60**) is at the textbook P2 setup — close at R=$129.89 with no confirmed close-above breakout. But two gates blocked it:
