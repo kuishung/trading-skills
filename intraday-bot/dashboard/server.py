@@ -3362,6 +3362,179 @@ async def scanner_yf_scan(
     })
 
 
+def _run_all_setups_sync(symbols: list[str]) -> dict[str, list[dict]]:
+    """Run all 7 yf-runnable detectors against `symbols`. Caller is
+    responsible for monkey-patching `bars_store.load_bars` to point at
+    an in-memory yFinance cache before calling this. Returns
+    `{setup_key: [candidate_dict, ...], ...}` for each wired setup.
+
+    Used by `/scanner/yf_scan_all` to amortise the yFinance fetch over
+    all 7 detectors (avoids the ~7x network round trips that running
+    each setup separately incurs).
+    """
+    from dataclasses import asdict as _asdict
+    out: dict[str, list[dict]] = {}
+
+    # P1 (long-side rebound off support)
+    from strategy.DITP import p1_rebound as p1_mod                # type: ignore
+    out["p1_rebound"] = p1_mod.scan_universe(symbols, p1_mod.P1RebConfig())
+
+    # DITP P2 (long-side breakout). Variants A/B/C/U all allowed
+    # (U = unclassified P2 added 2026-05-28 for ASTS case).
+    from strategy.DITP import scanner as ditp_scanner             # type: ignore
+    p2_cand_objs = ditp_scanner.scan_universe(
+        symbols, ditp_scanner.P2Config(), {"A", "B", "C", "U"},
+    )
+    out["ditp"] = [_asdict(c) for c in p2_cand_objs]
+
+    # P3 (long-side retest of broken resistance)
+    from strategy.DITP import p3_retest as p3_mod                 # type: ignore
+    out["p3_retest"] = p3_mod.scan_universe(symbols, p3_mod.P3RetestConfig())
+
+    # EMA20/50/200 rebound
+    from strategy.DITP import ema_rebound as ema_mod              # type: ignore
+    out["ema_rebound"] = ema_mod.scan_universe(symbols, ema_mod.EMARebConfig())
+
+    # Short-side mirrors: P1a (rejection at R), P2a (pending breakdown),
+    # P3a (retest of broken support).
+    from strategy.DITP import p1a_rejection as p1a_mod            # type: ignore
+    out["p1a_rejection"] = p1a_mod.scan_universe(symbols, p1a_mod.P1aRejectConfig())
+
+    from strategy.DITP import p2a_breakdown as p2a_mod            # type: ignore
+    out["p2a_breakdown"] = p2a_mod.scan_universe(symbols, p2a_mod.P2aBreakdownConfig())
+
+    from strategy.DITP import p3a_retest as p3a_mod               # type: ignore
+    out["p3a_retest"] = p3a_mod.scan_universe(symbols, p3a_mod.P3aRetestConfig())
+
+    return out
+
+
+@app.post("/scanner/yf_scan_all")
+async def scanner_yf_scan_all(
+    scanner: int = 1,
+    signal: str | None = None,
+    limit: int | None = None,
+) -> JSONResponse:
+    """Fetch yFinance ONCE for the universe, then run ALL 7 yf-runnable
+    setup detectors against the shared in-memory bars cache.
+
+    Built 2026-05-28 to address the dashboard's slow Scanner-refresh
+    workflow. Per the legacy TODO at the top of the frontend's
+    runAllSetups loop, looping the single-setup endpoint did its own
+    yFinance batch fetch per setup -- 7x the network work for a full
+    refresh. This endpoint amortises the fetch (~8-12s) across all
+    detectors, dropping a full refresh from ~70-90s to ~12-18s for a
+    45-ticker Finviz universe.
+
+    Query params (same as /scanner/yf_scan minus `setup`):
+      scanner -- 1 (cfg.finviz_screener_url) or 2 (cfg.finviz_screener_url_2)
+      signal  -- optional Finviz `s=...` signal (Scanner 2 dropdown)
+      limit   -- optional cap on universe size (debug aid)
+
+    Returns:
+      {
+        ok, scanner, signal, today_et,
+        universe_source, universe_size, fetched_n,
+        fetch_duration_s, scan_duration_s, total_duration_s,
+        setups: {
+          <setup_key>: { ok, setup, scanner, today_et, universe_source,
+                         universe_size, fetched_n, n_candidates,
+                         candidates: [...] },
+          ...
+        }
+      }
+    Each `setups[key]` carries the same shape the single-setup endpoint
+    returns, so the frontend can spread them into `setupResultsCache`
+    directly.
+    """
+    if scanner not in (1, 2):
+        raise HTTPException(status_code=400, detail="scanner must be 1 or 2")
+
+    try:
+        import yf_daily_bars                # type: ignore  resources/yf_daily_bars.py
+        import bars_store                   # type: ignore  resources/bars_store.py
+    except ImportError as exc:
+        raise HTTPException(status_code=500, detail=f"import failure: {exc}")
+
+    started = _time.time()
+    try:
+        # Any valid setup key works -- universe resolution only depends
+        # on scanner + signal, not on which detector we're running.
+        symbols, universe_source = _universe_for_setup(
+            "p1_rebound", scanner_idx=scanner, signal=signal,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if limit and limit > 0:
+        symbols = symbols[:limit]
+
+    loop = asyncio.get_running_loop()
+    # --- yFinance batch fetch (ONCE for the whole universe) ---
+    t_fetch0 = _time.time()
+    try:
+        bars_by_symbol = await loop.run_in_executor(
+            None,
+            lambda: yf_daily_bars.fetch_daily_batch(
+                symbols, lookback_days=500, threads=True, progress=False,
+            ),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"yfinance fetch failed: {exc}")
+    fetch_duration = round(_time.time() - t_fetch0, 1)
+    fetched_n = sum(1 for v in bars_by_symbol.values() if v)
+
+    # --- Run all 7 detectors against the shared bars cache ---
+    t_scan0 = _time.time()
+    original_load = bars_store.load_bars
+
+    def _yf_backed_load(symbol, start=None, end=None, *, timeframe: str = "1min"):
+        if timeframe != "daily":
+            return original_load(symbol, start, end, timeframe=timeframe)
+        return bars_by_symbol.get(symbol.upper(), [])
+
+    try:
+        bars_store.load_bars = _yf_backed_load  # type: ignore[assignment]
+        setup_results = await loop.run_in_executor(
+            None, lambda: _run_all_setups_sync(symbols),
+        )
+    finally:
+        bars_store.load_bars = original_load   # type: ignore[assignment]
+
+    scan_duration = round(_time.time() - t_scan0, 1)
+    total_duration = round(_time.time() - started, 1)
+    today_et = _today_et_iso()
+
+    # Wrap each setup's candidates in the single-setup response shape
+    # so the frontend's setupResultsCache can ingest them by key.
+    setups_response: dict[str, dict] = {}
+    for key, candidates in setup_results.items():
+        setups_response[key] = {
+            "ok":              True,
+            "setup":           key,
+            "scanner":         scanner,
+            "today_et":        today_et,
+            "universe_source": universe_source,
+            "universe_size":   len(symbols),
+            "fetched_n":       fetched_n,
+            "n_candidates":    len(candidates),
+            "candidates":      candidates,
+        }
+
+    return JSONResponse({
+        "ok":               True,
+        "scanner":          scanner,
+        "signal":           signal,
+        "today_et":         today_et,
+        "universe_source":  universe_source,
+        "universe_size":    len(symbols),
+        "fetched_n":        fetched_n,
+        "fetch_duration_s": fetch_duration,
+        "scan_duration_s":  scan_duration,
+        "total_duration_s": total_duration,
+        "setups":           setups_response,
+    })
+
+
 @app.post("/data/refresh-stale")
 async def data_refresh_stale(timeframe: str = "daily") -> JSONResponse:
     """Re-fetch every stale / ancient / missing parquet via yfinance.

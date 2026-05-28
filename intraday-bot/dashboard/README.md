@@ -29,6 +29,35 @@ Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-05-28 — Scanner refresh sped up ~7× via `/scanner/yf_scan_all`
+
+User question 2026-05-28: *"it takes quite long time to actually study the finviz tickers, what caused the slow?"*
+
+Root cause: the legacy `runAllSetups` JS loop fired `POST /scanner/yf_scan?setup=X` 7 times sequentially (one per wired setup: P1, P2/ditp, P3, EMA, P1a, P2a, P3a). Each call did its own yFinance batch fetch of the entire Finviz universe (45 symbols × 500 days of daily bars). With 7 wired setups, that's 7× the network round trips.
+
+Pre-fix timing (warm yFinance cache, 45-ticker Finviz universe):
+- ~4.5s yFinance fetch × 7 = **~32s of network**
+- ~1s detector compute × 7 = ~7s of CPU
+- **~40-45s total** for a full Scanner refresh
+
+The TODO had been documented in the JS for months: *"Sequential calls (not parallel): each yf_scan does its own yFinance batch fetch... When we get >1 wired setup, the right move is a backend endpoint that fetches yFinance once and runs all detectors on the shared bars cache."*
+
+**Fix**: new `POST /scanner/yf_scan_all` endpoint (`server.py`):
+- Accepts the same query params as `/scanner/yf_scan` minus `setup` (so `scanner=N` and `signal=X` work identically).
+- Resolves universe once via `_universe_for_setup`.
+- Fetches yFinance ONCE for the whole universe.
+- Calls a new `_run_all_setups_sync(symbols)` helper that runs all 7 detectors against the monkey-patched in-memory bars cache. Each detector is just numpy on cached arrays — the combined compute is < 1 second.
+- Returns `{setups: {<key>: {ok, setup, scanner, n_candidates, candidates: [...]}, ...}}`. Each `setups[key]` matches the single-setup endpoint's response shape exactly, so the frontend can spread them into `setupResultsCache` unchanged.
+
+**Frontend (`web/index.html`)**: `runAllSetups(idx)` collapsed from a 7-iteration for-loop into a single POST. The meta line now shows a live elapsed-seconds counter (`"scanning all setups... 5s"`) updated every 500 ms so the user knows the dashboard's working during the one long fetch. The per-setup `runOneSetup` function is kept for any single-setup tests.
+
+**Measured speedup** (live, warm yFinance cache, 45-ticker Finviz universe):
+- Before: ~40-45 s
+- After: **~5.5 s total** (4.5 s fetch + 1.0 s scan)
+- ~7-8× faster
+
+Cold-cache case (first refresh after dashboard restart) is also faster — ~57s vs ~70-90s — but still bottlenecked by the single uncached yFinance fetch.
+
 ### 2026-05-28 — Alpaca creds: `_vault_root()` now reads `cfg.vault_dir`
 
 User report 2026-05-28: *"alpaca why no creds"*. The Alpaca pill showed `no_credentials`. Root cause: `_vault_root()` was only looking for the legacy Dropbox `VAULT/Claude Credential` path via parent-walk, but the laptop's creds moved to `D:\HermesSync\Vault\alpaca.env` (Resilio-synced) per the 2026-05-24 architecture decision documented in CLAUDE.md.

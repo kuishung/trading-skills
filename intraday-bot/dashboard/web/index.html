@@ -1588,12 +1588,13 @@
     // Add new setups by appending to SETUPS. No other code change
     // needed -- the renderer is fully data-driven.
     //
-    // Sequential calls (not parallel): each yf_scan does its own
-    // yFinance batch fetch, so running 3 wired setups would do 3x the
-    // network work today. When we get >1 wired setup, the right move
-    // is a backend endpoint that fetches yFinance once and runs all
-    // detectors on the shared bars cache; tracked but out of scope
-    // here.
+    // Single batched call (2026-05-28): runAllSetups POSTs to
+    // /scanner/yf_scan_all which does ONE yFinance batch fetch and
+    // runs all 7 detectors against the shared in-memory bars cache.
+    // The legacy per-setup loop (one POST per setup, each with its
+    // own yFinance fetch) was ~7x slower for a 45-ticker universe
+    // (~70-90s -> ~12-18s). runOneSetup() is kept below for the
+    // optional single-setup API path.
     // -----------------------------------------------------------------
     // Setup registry. Drives:
     //   - The async run loop in runAllSetups (only run: 'yf' entries)
@@ -1799,26 +1800,58 @@
       s.runAllInFlight = true;
       const meta = elFor(idx, 'finviz-meta');
       const baseCount = meta.dataset.baseCount || String(s.rowsCache.length);
-      const fetchedAt = meta.dataset.fetchedAt || '';
 
-      const yfSetups = SETUPS.filter(setup => setup.run === 'yf');
-      let done = 0;
+      // Single call to /scanner/yf_scan_all -- the backend does ONE
+      // yFinance batch fetch and runs all 7 detectors against the
+      // shared bars cache. Replaces the legacy per-setup loop that
+      // hit yFinance 7x.
+      //
+      // Live elapsed-seconds counter so the meta line shows the user
+      // we're still working during the ~12-18s backend run.
       const start = Date.now();
-      for (const setup of yfSetups) {
-        // Per-step status in the Finviz panel meta line. renderFinvizTable
-        // will rewrite this when the run completes (with the final match
-        // count), so we don't have to clean up after the loop.
+      meta.innerHTML = `<strong>${baseCount}</strong> tickers `
+        + `&middot; scanning all setups...`;
+      const tickId = setInterval(() => {
+        const elapsed = Math.round((Date.now() - start) / 1000);
         meta.innerHTML = `<strong>${baseCount}</strong> tickers `
-          + `&middot; building <strong>${setup.shortLabel}</strong> `
-          + `(${done + 1}/${yfSetups.length})... `
-          + `&middot; ${Math.round((Date.now() - start) / 1000)}s`;
-        await runOneSetup(idx, setup);
-        done++;
-        // Re-render: each setup completion lights up its column entries
-        // for matched tickers; final iteration also writes the final
-        // "<base> tickers · N matched · fetched <ts>" header.
-        renderFinvizTable(idx);
+          + `&middot; scanning all setups... ${elapsed}s`;
+      }, 500);
+
+      try {
+        const qs = new URLSearchParams();
+        if (idx !== 1) qs.set('scanner', String(idx));
+        if (s.signal)  qs.set('signal', s.signal);
+        const url = `/scanner/yf_scan_all${qs.toString() ? '?' + qs.toString() : ''}`;
+        const r = await fetch(url, { method: 'POST', cache: 'no-store' });
+        const j = await r.json();
+        if (r.ok && j.ok && j.setups) {
+          // Spread the per-setup results into the cache so the
+          // existing setupBadgesHtml / candidateFor lookups work
+          // unchanged. Each `j.setups[key]` already matches the shape
+          // a single /scanner/yf_scan response has.
+          for (const [key, result] of Object.entries(j.setups)) {
+            s.setupResultsCache[key] = result;
+          }
+        } else {
+          console.warn('yf_scan_all failed:', j);
+          // Mark every yf setup as error so the cache has a sentinel.
+          for (const setup of SETUPS) {
+            if (setup.run !== 'yf') continue;
+            s.setupResultsCache[setup.key] = { error: (j && j.detail) || `HTTP ${r.status}` };
+          }
+        }
+      } catch (e) {
+        console.warn('yf_scan_all error:', e);
+        for (const setup of SETUPS) {
+          if (setup.run !== 'yf') continue;
+          s.setupResultsCache[setup.key] = { error: e.message };
+        }
       }
+
+      clearInterval(tickId);
+      // renderFinvizTable rewrites the meta line with the final
+      // "<base> tickers · N matched · fetched <ts>" header.
+      renderFinvizTable(idx);
       s.runAllInFlight = false;
     }
 
