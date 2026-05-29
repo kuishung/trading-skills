@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Studies &middot; TST{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-semibold mb-6">Studies</h1>
+
+<section class="mb-10">
+  <h2 class="text-lg font-medium mb-3">MATP board <span class="text-xs text-slate-500">(quarterly)</span></h2>
+  {% if levels %}
+  <table class="w-full text-sm border border-slate-800">
+    <thead class="bg-slate-900 text-slate-400">
+      <tr>
+        <th class="text-left px-3 py-2">Symbol</th>
+        <th class="text-left px-3 py-2">Trend</th>
+        <th class="text-right px-3 py-2">MATP</th>
+        <th class="text-right px-3 py-2">MBP</th>
+        <th class="text-left px-3 py-2">As of</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for lv in levels %}
+      <tr class="border-t border-slate-800">
+        <td class="px-3 py-2 font-medium">{{ lv.symbol }}</td>
+        <td class="px-3 py-2 text-slate-400">{{ lv.trend or "-" }}</td>
+        <td class="px-3 py-2 text-right">{{ "%.2f"|format(lv.matp) if lv.matp else "-" }}</td>
+        <td class="px-3 py-2 text-right">{{ "%.2f"|format(lv.mbp) if lv.mbp else "-" }}</td>
+        <td class="px-3 py-2 text-slate-500">{{ lv.as_of.date() if lv.as_of else "-" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="text-slate-500 text-sm">No MATP levels yet &mdash; the Finviz &rarr; MATP refresh lands in Phase 2.</p>
+  {% endif %}
+</section>
+
+<section>
+  <h2 class="text-lg font-medium mb-3">Setups</h2>
+  {% if setups %}
+  <ul class="space-y-2">
+    {% for s in setups %}
+    <li class="rounded border border-slate-800 px-3 py-2">
+      <span class="font-medium">{{ s.symbol }}</span> &mdash; {{ s.title }}
+      <span class="text-xs text-slate-500">[{{ s.status }}]</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="text-slate-500 text-sm">No setups yet &mdash; posting + entry/SL/PT collaboration lands in Phase 3.</p>
+  {% endif %}
+</section>
+{% endblock %}

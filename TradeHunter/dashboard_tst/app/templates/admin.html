@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Admin &middot; TST{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-semibold mb-6">Admin</h1>
+
+<section class="mb-10">
+  <h2 class="text-lg font-medium mb-3">Pending approval
+    <span class="text-xs text-slate-500">({{ pending|length }})</span></h2>
+  {% if pending %}
+  <table class="w-full text-sm border border-slate-800">
+    <thead class="bg-slate-900 text-slate-400">
+      <tr>
+        <th class="text-left px-3 py-2">Email</th>
+        <th class="text-left px-3 py-2">Name</th>
+        <th class="text-left px-3 py-2">Requested</th>
+        <th class="text-right px-3 py-2">Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in pending %}
+      <tr class="border-t border-slate-800">
+        <td class="px-3 py-2">{{ u.email }}</td>
+        <td class="px-3 py-2">{{ u.display_name }}</td>
+        <td class="px-3 py-2 text-slate-500">{{ u.created_at.date() if u.created_at else "-" }}</td>
+        <td class="px-3 py-2 text-right space-x-2">
+          <form method="post" action="/admin/users/{{ u.id }}/approve" class="inline">
+            <button class="rounded bg-emerald-600 hover:bg-emerald-500 px-2 py-1 text-xs">Approve</button>
+          </form>
+          <form method="post" action="/admin/users/{{ u.id }}/disable" class="inline">
+            <button class="rounded border border-slate-700 hover:border-rose-500 px-2 py-1 text-xs">Reject</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="text-slate-500 text-sm">No pending requests.</p>
+  {% endif %}
+</section>
+
+<section class="mb-10">
+  <h2 class="text-lg font-medium mb-3">Members</h2>
+  <table class="w-full text-sm border border-slate-800">
+    <thead class="bg-slate-900 text-slate-400">
+      <tr>
+        <th class="text-left px-3 py-2">Email</th>
+        <th class="text-left px-3 py-2">Name</th>
+        <th class="text-left px-3 py-2">Status</th>
+        <th class="text-left px-3 py-2">Role</th>
+        <th class="text-right px-3 py-2">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in members %}
+      <tr class="border-t border-slate-800">
+        <td class="px-3 py-2">{{ u.email }}</td>
+        <td class="px-3 py-2">{{ u.display_name }}</td>
+        <td class="px-3 py-2 {{ 'text-emerald-400' if u.is_approved else 'text-slate-500' }}">{{ u.status }}</td>
+        <td class="px-3 py-2">
+          <form method="post" action="/admin/users/{{ u.id }}/role" class="inline">
+            <select name="role" onchange="this.form.submit()"
+                    class="bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-xs"
+                    {% if u.id == user.id %}disabled{% endif %}>
+              <option value="member" {{ "selected" if u.role == "member" }}>member</option>
+              <option value="admin" {{ "selected" if u.role == "admin" }}>admin</option>
+            </select>
+          </form>
+        </td>
+        <td class="px-3 py-2 text-right">
+          {% if u.id != user.id %}
+          <form method="post" action="/admin/users/{{ u.id }}/disable" class="inline">
+            <button class="rounded border border-slate-700 hover:border-rose-500 px-2 py-1 text-xs">Disable</button>
+          </form>
+          {% else %}
+          <span class="text-xs text-slate-600">you</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2 class="text-lg font-medium mb-3">Swing bot &mdash; control plane</h2>
+  <p class="text-xs text-amber-400/80 mb-3">
+    Control plane only. This process never holds broker credentials or submits orders &mdash;
+    it relays signals to the trusted-side execution plane (not wired yet).
+  </p>
+  <div class="flex gap-2">
+    {% for action in ["enable", "disable", "arm", "disarm", "status"] %}
+    <button hx-post="/admin/bot/{{ action }}" hx-swap="none"
+            class="rounded border border-slate-700 hover:border-emerald-600 px-3 py-1.5 text-sm capitalize">{{ action }}</button>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

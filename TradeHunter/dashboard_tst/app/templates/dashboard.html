@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block content %}
+{% if user and user.is_approved %}
+  <h1 class="text-2xl font-semibold mb-1">Welcome, {{ user.display_name }}</h1>
+  <p class="text-slate-400 mb-6">Trend &amp; swing collaboration platform.</p>
+  <div class="grid sm:grid-cols-3 gap-4">
+    <a href="/studies" class="rounded-lg border border-slate-800 p-4 hover:border-emerald-600 transition">
+      <div class="font-medium">Studies</div>
+      <div class="text-sm text-slate-400 mt-1">MATP levels, setups, entry/SL/PT collaboration</div>
+    </a>
+    <div class="rounded-lg border border-slate-800 p-4 opacity-60">
+      <div class="font-medium">Options win-rate</div>
+      <div class="text-sm text-slate-400 mt-1">Phase 4 &mdash; Black-Scholes</div>
+    </div>
+    <div class="rounded-lg border border-slate-800 p-4 opacity-60">
+      <div class="font-medium">Backtest</div>
+      <div class="text-sm text-slate-400 mt-1">Phase 5 &mdash; parquet success-rate</div>
+    </div>
+  </div>
+{% elif user %}
+  {# logged in but pending / disabled #}
+  <div class="max-w-md mx-auto text-center py-16">
+    <h1 class="text-xl font-semibold mb-2">Awaiting approval</h1>
+    <p class="text-slate-400">Hi {{ user.display_name }} &mdash; your account is pending admin approval.</p>
+    <form method="post" action="/logout" class="mt-6">
+      <button class="text-sm text-slate-400 hover:text-rose-400">Sign out</button>
+    </form>
+  </div>
+{% else %}
+  <div class="text-center py-16">
+    <h1 class="text-2xl font-semibold mb-2">TST &middot; trend &amp; swing</h1>
+    <p class="text-slate-400 mb-6">Members-only collaboration platform.</p>
+    <a href="/login" class="inline-block rounded bg-emerald-600 hover:bg-emerald-500 px-4 py-2">Sign in</a>
+  </div>
+{% endif %}
+{% endblock %}

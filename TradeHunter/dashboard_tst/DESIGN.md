@@ -214,10 +214,19 @@ These gate the affected phases. Recorded here so they're not lost.
 - **[OPEN] Host isolation** on the R720: dedicated new Hyper-V DMZ VM
   (recommended) vs container on the existing Hermes VM vs same-VM
   process. Drives the security posture.
-- **[OPEN] Web stack:** FastAPI + Postgres + HTMX (recommended) vs
-  FastAPI + Postgres + React SPA vs FastAPI + SQLite + HTMX.
-- **[OPEN] Auth model:** invite-only / admin-creates (recommended) vs
-  Google OAuth + allowlist vs open signup + approval.
+- **[PROVISIONAL — scaffolded]** Web stack: **FastAPI + SQLAlchemy +
+  Jinja2/HTMX**, DB via `TST_DATABASE_URL` (SQLite for dev, Postgres for
+  prod — no code change). Chosen as the scaffold default; change before
+  Phase 2 if you'd rather go React SPA / pin Postgres now.
+- **[DECIDED — scaffolded]** Auth model: **Google OAuth (OIDC) + admin
+  approval**. Google authenticates (no passwords stored); a new user lands
+  `status=pending` and cannot access member areas until an admin approves
+  them. `TST_ADMIN_EMAIL` is auto-promoted to admin+approved on first
+  sign-in. Optional `TST_ALLOWED_EMAIL_DOMAINS` gate restricts who can even
+  create a pending request (makes it effectively invite-only). Google
+  sign-in for non-sensitive scopes (`openid`/`email`/`profile`) is free —
+  no security assessment. Requires a Google Cloud OAuth client (Client ID +
+  Secret in `.env`).
 - **[OPEN] Swing strategy family** name + which swing setups to code
   first (none exist yet — DITP/GUNS are intraday).
 - **[OPEN] Swing bot clientId** — assign the next free number, append to

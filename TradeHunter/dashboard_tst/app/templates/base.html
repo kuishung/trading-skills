@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}TST &middot; trend &amp; swing{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+  <header class="border-b border-slate-800 px-4 py-3 flex items-center justify-between">
+    <a href="/" class="font-semibold tracking-wide">TST &middot; trend &amp; swing</a>
+    <nav class="text-sm flex gap-4 items-center">
+      {% if user %}
+        <a href="/studies" class="hover:text-emerald-400">Studies</a>
+        {% if user.is_admin %}<a href="/admin" class="hover:text-emerald-400">Admin</a>{% endif %}
+        <span class="text-slate-400">{{ user.display_name }}</span>
+        <form method="post" action="/logout" class="inline">
+          <button class="text-slate-400 hover:text-rose-400">Logout</button>
+        </form>
+      {% else %}
+        <a href="/login" class="hover:text-emerald-400">Login</a>
+      {% endif %}
+    </nav>
+  </header>
+  <main class="max-w-5xl mx-auto px-4 py-8">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

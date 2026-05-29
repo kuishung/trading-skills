@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}{% if rejected %}Access denied{% else %}Awaiting approval{% endif %} &middot; TST{% endblock %}
+{% block content %}
+<div class="max-w-md mx-auto text-center py-16">
+  {% if rejected %}
+    <h1 class="text-xl font-semibold mb-2 text-rose-400">Access denied</h1>
+    <p class="text-slate-400">The email <span class="text-slate-200">{{ email }}</span> is not permitted on this platform.</p>
+  {% else %}
+    <h1 class="text-xl font-semibold mb-2">Awaiting approval</h1>
+    <p class="text-slate-400">Your account has been created and is pending admin approval.
+      You'll have access once an admin approves you.</p>
+  {% endif %}
+  <form method="post" action="/logout" class="mt-6">
+    <button class="text-sm text-slate-400 hover:text-rose-400">Sign out</button>
+  </form>
+</div>
+{% endblock %}

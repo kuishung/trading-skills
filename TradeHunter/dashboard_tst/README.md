@@ -43,6 +43,20 @@ from this dashboard.
   `TST Dashboard (stop).lnk` (distinct names from the intraday shortcuts
   so both can live on the Desktop). Gitignored, per-PC. Run once per PC:
   `py dashboard_tst/setup_launcher.py`.
+- `app/` — **the collaboration platform** (FastAPI app, Phase 1 scaffold).
+  Separate application from the legacy operational `server.py` fork. Run
+  from this folder: `uvicorn app.main:app --reload`. Layout:
+  `config.py` (env-driven settings, `TST_*`), `db.py` (SQLAlchemy;
+  `TST_DATABASE_URL` → SQLite dev / Postgres prod), `models.py`
+  (`User`/`MATPLevel`/`Setup`/`Comment`), `security.py` (PBKDF2 hashing +
+  session auth + `require_user`/`require_admin`), `main.py` (app factory,
+  invite-only admin bootstrap, `/health`, `/`), `routes/` (`auth`,
+  `studies`, admin-only `admin` with the **control-plane-only** swing-bot
+  stubs), `services/` (`black_scholes.py` — working pure-math option
+  pricing/prob-ITM; `resources_bridge.py` — import seam to the shared
+  `resources/`/`review/` library, Phase-tagged stubs), `templates/` +
+  `static/`, `requirements.txt`, `.env.example`. Deps are per-PC
+  (gitignored); the SQLite db (`*.db`) and `.env` are gitignored.
 - `DESIGN.md` — **product blueprint** (DRAFT, pre-implementation). The
   agreed vision: `dashboard_tst` as TradeHunter's trend & swing product +
   members-only, internet-facing collaboration platform (Finviz → MATP/MBP
@@ -81,6 +95,14 @@ controls, intraday scanner setups) will be trimmed as the trend/swing
 surface takes shape.
 
 ## Changelog
+
+### 2026-05-30 — Auth refactor: Google OAuth (OIDC) + admin approval
+
+Replaced the placeholder password/invite-only auth with **Google sign-in + admin approval** (user decision). Google authenticates (no passwords stored anywhere); a first-time user is created `status=pending` and is blocked from member areas (`require_user` enforces approved + not-disabled) until an admin approves them on the new **pending queue** in the admin page. `TST_ADMIN_EMAIL` is auto-promoted to admin+approved on first sign-in (bootstrap); optional `TST_ALLOWED_EMAIL_DOMAINS` restricts who can even create a pending request. Changes: `models.User` swapped `password_hash`/`is_active` → `google_sub`/`picture`/`status`(pending|approved|disabled)/`approved_at`; `security.py` dropped all password code; `routes/auth.py` now does `/login → Google → /auth/callback` via Authlib; `routes/admin.py` gained approve/disable/role actions (replacing manual user creation); new `templates/pending.html` + Google-button login + admin queue; `main.py` dropped the password bootstrap and warns if Google creds are unset. New deps: `authlib`, `httpx`. Verified: all `app/*.py` byte-compile clean. Google sign-in for `openid`/`email`/`profile` is free (no CASA assessment). DESIGN.md auth item flipped `[PROVISIONAL]` → `[DECIDED]`. Setup needs a Google Cloud OAuth client (redirect `…/auth/callback`); placeholders are in `.env.example`.
+
+### 2026-05-30 — Phase 1 scaffold: `app/` collaboration platform (FastAPI)
+
+Stood up the platform skeleton per DESIGN.md, separate from the legacy operational `server.py` fork (which stays untouched for now). Stack chosen from the DESIGN recommendations (the user dismissed the stack questions, so these are provisional defaults, overridable): **FastAPI + SQLAlchemy + Jinja2/HTMX**, DB via `TST_DATABASE_URL` (SQLite dev → Postgres prod, no code change), **invite-only** session auth (admin seeds accounts; no public signup), role-based (`member`/`admin`). Security posture baked in from line one: admin-only control plane, and **zero order-execution in this process** — the swing-bot control endpoints are explicit stubs that relay to the trusted-side execution plane (not wired). Included a working pure-stdlib `services/black_scholes.py` (verified: call=10.4506 on the textbook inputs, put-call parity exact) and a Phase-tagged `services/resources_bridge.py` import seam to the shared `resources/`/`review/` library. All `app/*.py` byte-compile clean; web deps are per-PC and not yet installed here. Root `.gitignore` gained `*.db`/`*.sqlite3`. No trading logic yet — Phases 2-6 (MATP board, setups/collaboration, Black-Scholes UI, backtest, swing-bot wiring) build on this shell.
 
 ### 2026-05-30 — DESIGN.md: review loop is shared with collaborators
 

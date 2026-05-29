@@ -2,6 +2,10 @@
 .env
 .env.*
 !.env.example
+
+# Local databases (dashboard_tst platform dev SQLite, etc.)
+*.db
+*.sqlite3
 *.pem
 *.key
 *-sa.json

@@ -1,0 +1,13 @@
+# dashboard_tst collaboration platform (separate from the bot's root requirements.txt).
+fastapi>=0.110
+uvicorn[standard]>=0.29
+sqlalchemy>=2.0
+jinja2>=3.1
+python-multipart>=0.0.9   # form parsing (admin actions)
+itsdangerous>=2.1         # required by Starlette SessionMiddleware
+authlib>=1.3              # Google OAuth / OIDC client
+httpx>=0.27               # async HTTP, used by authlib's token exchange
+
+# Production extras (not needed for the SQLite dev scaffold):
+#   psycopg[binary]>=3.1   # when TST_DATABASE_URL points at Postgres
+#   alembic                # schema migrations once models stabilise
