@@ -48,8 +48,21 @@ treating any "missing" feature as a bug.
 - `sr_levels.py` — **Key support / resistance level detector** (v1.3.0). Unifies the SIX DITP setups' level questions: P1/P2/P3 (long side: support / resistance / broken-R-as-S) AND P1a/P2a/P3a (short-side mirror: rejection-at-R / pending-breakdown-of-S / broken-S-as-R). Built on `patterns.horizontal_resistance_np` (long resistance) + `horizontal_support_np` (long support) + `find_broken_resistance_below` (P3 polarity flip) + `find_broken_support_above` (P3a polarity flip, the short-side mirror). Selection rules are asymmetric (see module docstring): resistance-above = lowest in price, support-below = most-recent in time, broken-R = highest below current, broken-S = lowest above current. One-stop API: `find_key_levels(symbol)` returns `{current, atr14, resistance_above, support_below, broken_resistance:[...]}` — consumed by `GET /chart/sr_levels` in `dashboard/server.py`. All thresholds ATR-relative per CLAUDE.md normalization rule. CLI: `py resources/sr_levels.py AAPL ABBV MSFT`.
 - `symbol_ctx.py` — **Per-symbol shared computation context.** Added 2026-05-29 efficiency Pass 2 #1 per the dashboard audit. Hoists the prelude that every DITP detector independently recomputed (bars load + 4 numpy array allocations + EMA20/EMA50/EMA200 + ATR(14)) into ONE place. Built once per symbol by the dashboard's `_run_all_setups_sync` before fanning each detector across a ThreadPoolExecutor. Detectors accept an optional `ctx: SymbolContext | None = None` kwarg — when present, they skip the entire prelude; when None (CLI / backtest path), they rebuild context internally. `frozen=True` dataclass so accidental mutation is caught. Public API: `SymbolContext(...)` (dataclass), `build_context(symbol, bars=None, *, min_bars=15) -> SymbolContext | None`.
 - `bars_store.py` — **The bars I/O layer.** Read/write OHLCV bars to/from `data/price_history/{1min,5min,15min,daily}/<SYM>.parquet`. One file per symbol per timeframe (`AAPL.parquet IS AAPL's full history`). Parquet via lazy `pyarrow` import (the hot path doesn't pay it). Append = read + dedup + rewrite the file; ~50ms at realistic scales. Public API: `load_bars(symbol, start, end, timeframe)`, `write_bars(symbol, bars, timeframe)`, `available_range(symbol, timeframe)`, `list_symbols(timeframe)`, `bars_dir(timeframe)`. Bar shape matches `patterns.py`: `{t, o, h, l, c, v}`. CLI: `py resources/bars_store.py list 1min` / `range NVDA 1min` / `head NVDA 1min --n 5`.
+- `trend_state.py` — **EMA 20/50/200 daily-chart trend classifier** (v1.0.0). Source: `strategies-reference/TREND_EMA.md`. Classifies any symbol into one of four states using EMA stack order + spread dynamics: `uptrend` (EMA20 > EMA50 > EMA200), `downtrend` (EMA20 < EMA50 < EMA200), `consolidation` (not stacked + all EMAs converging), `sideways` (not stacked + not converging). Pure-function core (no I/O): `classify_trend_ema(closes)`, `trend_ema_detail(closes)`. Convenience wrappers with bars_store integration: `classify_symbol_trend(symbol, detail=False)`, `classify_universe_trends(symbols)`. String constants exported: `UPTREND`, `DOWNTREND`, `CONSOLIDATION`, `SIDEWAYS`, `UNKNOWN`. Smoke-tested on 679 symbols (0 unknowns).
 
 ## Changelog
+
+### 2026-05-29 — new `trend_state.py` v1.0.0: EMA 20/50/200 trend classifier
+
+Added `resources/trend_state.py` implementing the four-state daily-chart trend
+classifier from `strategies-reference/TREND_EMA.md` (user-provided 2026-05-29).
+Decision tree: EMA20>EMA50>EMA200 = uptrend; EMA20<EMA50<EMA200 = downtrend;
+not-stacked + converging spreads = consolidation; otherwise sideways. Pure-function
+core (`classify_trend_ema`, `trend_ema_detail`) + convenience wrappers
+(`classify_symbol_trend`, `classify_universe_trends`) that load daily parquet via
+`bars_store.load_bars`. Smoke-tested across the full 679-symbol daily universe:
+zero unknowns, distribution uptrend 45% / downtrend 31% / sideways 15% /
+consolidation 9%.
 
 ### 2026-05-29 — new `symbol_ctx.py` + `finviz_screener.py` in-process cache (dashboard efficiency Pass 1 #5 + Pass 2 #1)
 
