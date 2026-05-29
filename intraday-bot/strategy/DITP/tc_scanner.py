@@ -62,7 +62,7 @@ from dataclasses import dataclass, asdict
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-# --- intraday-bot bootstrap ---
+# --- TradeHunter bootstrap ---
 _root = Path(__file__).resolve().parent
 while _root != _root.parent and not (_root / "SKILL.md").exists():
     _root = _root.parent

@@ -29,7 +29,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-# --- intraday-bot bootstrap ---
+# --- TradeHunter bootstrap ---
 _root = Path(__file__).resolve().parent
 while _root != _root.parent and not (_root / "SKILL.md").exists():
     _root = _root.parent
@@ -50,7 +50,7 @@ WIKI_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 def _fetch_from_wikipedia() -> list[str]:
     """Scrape the first table on the Wikipedia page. Returns ticker symbols."""
     req = urllib.request.Request(WIKI_URL, headers={
-        "User-Agent": "Mozilla/5.0 (intraday-bot S&P 500 list fetcher)"
+        "User-Agent": "Mozilla/5.0 (TradeHunter S&P 500 list fetcher)"
     })
     with urllib.request.urlopen(req, timeout=30) as resp:
         html = resp.read().decode("utf-8", errors="replace")

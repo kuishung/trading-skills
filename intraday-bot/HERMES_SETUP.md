@@ -107,17 +107,17 @@ cd C:\ClaudeSkills
 git clone https://github.com/<your-github-username>/trading-skills.git
 
 # Verify
-cd C:\ClaudeSkills\trading-skills\intraday-bot
+cd C:\ClaudeSkills\trading-skills\TradeHunter
 git log --oneline -3
 ```
 
 If the repo is private, git prompts for credentials. Easiest: generate a Personal Access Token on GitHub (Settings → Developer Settings → PAT → classic, `repo` scope) and use it as the password. Or set up SSH keys if you prefer.
 
-After clone, the bot lives at `C:\ClaudeSkills\trading-skills\intraday-bot\`. Pulling code updates from laptop is then `cd C:\ClaudeSkills\trading-skills && git pull` (on demand, when you push from laptop).
+After clone, the bot lives at `C:\ClaudeSkills\trading-skills\TradeHunter\`. Pulling code updates from laptop is then `cd C:\ClaudeSkills\trading-skills && git pull` (on demand, when you push from laptop).
 
-### 4. Install intraday-bot Python deps (Python 3.12 explicitly)
+### 4. Install TradeHunter Python deps (Python 3.12 explicitly)
 ```powershell
-cd C:\ClaudeSkills\trading-skills\intraday-bot
+cd C:\ClaudeSkills\trading-skills\TradeHunter
 py -3.12 -m pip install --upgrade pip
 py -3.12 -m pip install -r requirements.txt
 ```
@@ -148,7 +148,7 @@ The bot code reads `cfg["data_root"]` and `cfg["vault_dir"]` and uses them every
 
 ```powershell
 # Copy config.example.json to config.json (per-PC, gitignored)
-cd "C:\ClaudeSkills\trading-skills\intraday-bot"
+cd "C:\ClaudeSkills\trading-skills\TradeHunter"
 Copy-Item config.example.json config.json
 ```
 
@@ -166,9 +166,9 @@ Then edit `config.json` (Notepad++ recommended) — the Hermes-specific values:
   "ibkr_port": 4002,                                                     // 4002 = IB Gateway paper
   "ibkr_client_id": 84,                                                  // Hermes-specific (laptop uses 71)
   "ibkr_secrets_path": "C:\\HermesSync\\Vault\\credentials.txt",         // Resilio-synced
-  "ibkr_ibc_dir": "C:\\ClaudeSkills\\trading-skills\\intraday-bot\\ibc",
+  "ibkr_ibc_dir": "C:\\ClaudeSkills\\trading-skills\\TradeHunter\\ibc",
   "ibkr_app_type": "gateway",
-  "ibkr_launcher_bat": "C:\\ClaudeSkills\\trading-skills\\intraday-bot\\ibc\\StartIBC-intraday.bat",
+  "ibkr_launcher_bat": "C:\\ClaudeSkills\\trading-skills\\TradeHunter\\ibc\\StartIBC-intraday.bat",
   "ibkr_autolaunch_enabled": true,
   "ibkr_autolaunch_timeout_s": 90,
 
@@ -210,7 +210,7 @@ Get-ChildItem "C:\Jts\ibgateway" -Directory | ForEach-Object {
 Update `config.json`'s `ibkr_gateway_path` to the exact filename you see. The `StartIBC-intraday.bat` derives the launcher's expected name from this config, so it'll handle either convention transparently.
 
 ### 8. Configure IBC (Interactive Brokers Controller)
-IBC lives in `intraday-bot/ibc/` — already configured. Adapt config for Hermes:
+IBC lives in `TradeHunter/ibc/` — already configured. Adapt config for Hermes:
 
 1. The IBKR credentials file is at `C:\HermesSync\Vault\credentials.txt` (synced from laptop via Resilio in step 5). Format:
    ```
@@ -223,7 +223,7 @@ IBC lives in `intraday-bot/ibc/` — already configured. Adapt config for Hermes
    Test-Path "C:\HermesSync\Vault\credentials.txt"   # → True
    ```
 
-2. Open `C:\ClaudeSkills\trading-skills\intraday-bot\ibc\config.ini` and verify:
+2. Open `C:\ClaudeSkills\trading-skills\TradeHunter\ibc\config.ini` and verify:
    ```
    IbDir=C:\Jts\ibgateway\<version>     # adjust to where IB Gateway was installed
    FIX=no
@@ -232,7 +232,7 @@ IBC lives in `intraday-bot/ibc/` — already configured. Adapt config for Hermes
    IbPassword=                           # leave blank, picked up from credentials file
    ```
 
-3. Update `intraday-bot/config.json` (gitignored, per-PC). For Hermes, the key fields:
+3. Update `TradeHunter/config.json` (gitignored, per-PC). For Hermes, the key fields:
    ```json
    {
      "data_root": "C:\\HermesSync\\MarketData",
@@ -241,7 +241,7 @@ IBC lives in `intraday-bot/ibc/` — already configured. Adapt config for Hermes
      "ibkr_port": 4002,
      "ibkr_client_id": 84,                                                       // ← Hermes uses 84 (laptop uses 71)
      "ibkr_secrets_path": "C:\\HermesSync\\Vault\\credentials.txt",              // ← IBC reads from Resilio-synced location
-     "ibkr_ibc_dir": "C:\\ClaudeSkills\\trading-skills\\intraday-bot\\ibc",
+     "ibkr_ibc_dir": "C:\\ClaudeSkills\\trading-skills\\TradeHunter\\ibc",
      "ibkr_app_type": "gateway",
      ...rest copied from laptop config...
    }
@@ -250,7 +250,7 @@ IBC lives in `intraday-bot/ibc/` — already configured. Adapt config for Hermes
 4. Create a Windows scheduled task to launch IBC at logon:
    - Task Scheduler → Create Basic Task → "IBC IB Gateway"
    - Trigger: "When I log on"
-   - Action: Start a program → `C:\ClaudeSkills\trading-skills\intraday-bot\ibc\StartGateway.bat`
+   - Action: Start a program → `C:\ClaudeSkills\trading-skills\TradeHunter\ibc\StartGateway.bat`
    - In task properties → "Run with highest privileges"
    - Save
 
@@ -261,7 +261,7 @@ IBC lives in `intraday-bot/ibc/` — already configured. Adapt config for Hermes
 
 ### 9. Smoke-test the IBKR connection
 ```powershell
-cd C:\ClaudeSkills\trading-skills\intraday-bot
+cd C:\ClaudeSkills\trading-skills\TradeHunter
 py resources/ibkr_smoke.py
 ```
 Expected: prints account ID, no errors.
@@ -311,7 +311,7 @@ Expected: pulls ~390 bars per symbol (5 days × 78 RTH bars + extended hours). V
 Once all smoke tests pass, this is the command to run for the actual backtest data preparation:
 
 ```powershell
-# In an Administrator PowerShell, from intraday-bot/ root:
+# In an Administrator PowerShell, from TradeHunter/ root:
 py scripts/wait_and_ingest.py --timeframes 3min --seed-days 180 --force-seed --universe daily
 ```
 
@@ -324,8 +324,8 @@ py scripts/wait_and_ingest.py --timeframes 3min --seed-days 180 --force-seed --u
 **Better: launch as a Windows scheduled task** so it survives RDP disconnects + Hermes restarts:
 - Task Scheduler → Create Task → "DITP P2 180d ingest"
 - Trigger: One time, today
-- Action: `py.exe` with arguments `C:\ClaudeSkills\trading-skills\intraday-bot\scripts\wait_and_ingest.py --timeframes 3min --seed-days 180 --force-seed --universe daily`
-- Start in: `C:\ClaudeSkills\trading-skills\intraday-bot`
+- Action: `py.exe` with arguments `C:\ClaudeSkills\trading-skills\TradeHunter\scripts\wait_and_ingest.py --timeframes 3min --seed-days 180 --force-seed --universe daily`
+- Start in: `C:\ClaudeSkills\trading-skills\TradeHunter`
 - "Run whether user is logged on or not"
 - "Run with highest privileges"
 
@@ -357,7 +357,7 @@ Register-ScheduledTask -TaskName "Hermes-IBC-Stop-PreMarket" `
 
 **Task: Hermes-IBC-Start-PostMarket** (launches IBC daily at 04:15 MYT):
 ```powershell
-$action2 = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c C:\ClaudeSkills\trading-skills\intraday-bot\ibc\StartIBC-intraday.bat" -WorkingDirectory "C:\ClaudeSkills\trading-skills\intraday-bot"
+$action2 = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c C:\ClaudeSkills\trading-skills\TradeHunter\ibc\StartIBC-intraday.bat" -WorkingDirectory "C:\ClaudeSkills\trading-skills\TradeHunter"
 $trigger2 = New-ScheduledTaskTrigger -Daily -At "4:15 AM"
 $settings2 = New-ScheduledTaskSettingsSet -StartWhenAvailable -Compatibility Win8
 $principal2 = New-ScheduledTaskPrincipal -UserId "$env:USERNAME" -LogonType Interactive -RunLevel Highest
@@ -407,8 +407,8 @@ The Start task only launches IBC (the Gateway). The actual `ibkr_history.py upda
 ```powershell
 # TODO: create scripts/launch_ingest_hermes.ps1 wrapper, then register:
 $action3 = New-ScheduledTaskAction -Execute "powershell.exe" `
-    -Argument "-NoProfile -File C:\ClaudeSkills\trading-skills\intraday-bot\scripts\launch_ingest_hermes.ps1" `
-    -WorkingDirectory "C:\ClaudeSkills\trading-skills\intraday-bot"
+    -Argument "-NoProfile -File C:\ClaudeSkills\trading-skills\TradeHunter\scripts\launch_ingest_hermes.ps1" `
+    -WorkingDirectory "C:\ClaudeSkills\trading-skills\TradeHunter"
 $trigger3 = New-ScheduledTaskTrigger -Daily -At "4:25 AM"
 # ... rest same as Tasks 1+2 ...
 Register-ScheduledTask -TaskName "Hermes-Ingest-Daily" `
@@ -457,7 +457,7 @@ Get-Content data\_ingest_3min_180d_*.log -Tail 50 -Wait
 |---|---|---|
 | "Cannot connect to IB Gateway" | IBC didn't auto-launch | Check Task Scheduler "IBC IB Gateway" task is enabled; manually run `ibc/StartGateway.bat` |
 | "clientId 84 already in use" | Previous ingest didn't disconnect cleanly | Kill any orphan `python.exe` processes; restart IB Gateway via IBC |
-| Dropbox parquets not appearing on laptop | Dropbox not syncing | Right-click Dropbox icon → "Pause syncing" then "Resume syncing"; check selective-sync includes `intraday-bot/` |
+| Dropbox parquets not appearing on laptop | Dropbox not syncing | Right-click Dropbox icon → "Pause syncing" then "Resume syncing"; check selective-sync includes `TradeHunter/` |
 | `pyarrow` not installed | requirements.txt missed | `py -m pip install pyarrow` |
 | Hermes time drift from real time | NTP not configured | `w32tm /resync /force`; ensure VM time sync via Hyper-V Integration Services is enabled |
 | Ingest dies after RDP disconnect | Running interactively, not as scheduled task | Re-launch via Task Scheduler "Run whether user is logged on or not" |
@@ -544,14 +544,14 @@ Setup completion includes Phase 4: daily scheduled tasks for the IBKR session ti
 
 ### 2026-05-24 — Vendor credentials (alpaca.env, intraday-premarket.env, credentials.txt) also move to HermesSync/Vault/
 
-Same-day follow-up to the data-folder relocation: the laptop's Dropbox device-limit blocks installing Dropbox on Hermes, so credentials need a different sync mechanism. Migrated all 3 credential files used by intraday-bot (and the sibling intraday-premarket skill) from `D:\Dropbox\VAULT\Claude Credential\` to `D:\HermesSync\Vault\`. Resilio handles laptop ↔ Hermes sync. Hermes never needs Dropbox.
+Same-day follow-up to the data-folder relocation: the laptop's Dropbox device-limit blocks installing Dropbox on Hermes, so credentials need a different sync mechanism. Migrated all 3 credential files used by TradeHunter (and the sibling intraday-premarket skill) from `D:\Dropbox\VAULT\Claude Credential\` to `D:\HermesSync\Vault\`. Resilio handles laptop ↔ Hermes sync. Hermes never needs Dropbox.
 
 **Code change:** `scripts/_common.py::_vault_root()` now honours `cfg["vault_dir"]` (new config option), mirroring the `data_root` pattern. Default behaviour (no override) still auto-discovers via the legacy walk-up. Adapter chain in `_env_lookup()` unchanged — `INTRADAY_ENV_DIR` env var still takes priority, then in-folder `.env`, then the (now configurable) vault dir.
 
 **Files migrated:**
 - `credentials.txt` (43 bytes) — IBKR paper creds, consumed by IBC
 - `alpaca.env` (164 bytes) — Alpaca API keys, consumed by `load_alpaca_env()`
-- `intraday-premarket.env` (207 bytes) — sibling skill (not used by intraday-bot itself, but moved for unified location)
+- `intraday-premarket.env` (207 bytes) — sibling skill (not used by TradeHunter itself, but moved for unified location)
 
 **Config additions** on each PC:
 - Laptop `config.json`: `"vault_dir": "D:\\HermesSync\\Vault"`
@@ -564,7 +564,7 @@ Verified: orchestrator dry-run boots cleanly, Alpaca creds resolve via new path,
 Architectural change made same-day as initial setup: the data folder (parquets, journals, reviews, ticker profiles, ingest logs — ~10GB and growing) is too heavy for Dropbox sync. Moved to a peer-to-peer sync folder using Resilio Sync.
 
 **New layout:**
-- Laptop: `D:\HermesSync\MarketData\` (was `intraday-bot\data\`)
+- Laptop: `D:\HermesSync\MarketData\` (was `TradeHunter\data\`)
 - Hermes: `C:\HermesSync\MarketData\` (junction-free direct location)
 - Sync: Resilio P2P over LAN between the two
 

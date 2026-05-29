@@ -1,16 +1,25 @@
-"""Local dashboard server for intraday_bot.
+"""Trend & Swing Trading dashboard server (dashboard_tst).
 
-FastAPI + WebSocket. Serves dashboard/web/index.html at
-http://localhost:8000. Tails state/events_*.jsonl and re-reads plan/
-fills/equity files so a browser tab shows what the bot is doing in
-real time.
+FastAPI + WebSocket. Serves dashboard_tst/web/index.html at
+http://localhost:8001. Independent copy of dashboard_intraday/server.py
+(forked 2026-05-29), repurposed for TREND & SWING trading.
 
-Read-only. The dashboard never sends orders -- it observes files the
-bot writes plus the same data adapter the bot reads. The bot is what
-places orders (execution/orchestrator.py).
+Runs on port 8001 as a SEPARATE process alongside the intraday
+dashboard (port 8000). Both can run at once.
+
+IMPORTANT — bot auto-start is DISABLED in this dashboard. Only ONE
+dashboard may control the live orchestrator (execution/orchestrator.py)
+because the per-strategy state flags don't coordinate across processes
+(CLAUDE.md hard rule). The intraday dashboard (port 8000) owns the bot
+lifecycle; dashboard_tst is a read-only observer + trend/swing scanner.
+The auto-start coroutine is intentionally NOT scheduled in lifespan
+here, and the bot start/stop endpoints, while present (inherited from
+the copy), should not be used from this dashboard.
+
+Read-only. The dashboard never sends orders.
 
 Run:
-    py dashboard/server.py
+    py dashboard_tst/server.py
 """
 from __future__ import annotations
 
@@ -30,11 +39,11 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
 
-# --- intraday-bot bootstrap: make all layer folders importable ---
-_root = Path(__file__).resolve().parent.parent   # intraday-bot/
+# --- TradeHunter bootstrap: make all layer folders importable ---
+_root = Path(__file__).resolve().parent.parent   # TradeHunter/
 for _p in [str(_root)] + [str(_root / s) for s in
         ("scripts", "resources", "strategy", "execution",
-         "journal", "review", "dashboard")]:
+         "journal", "review", "dashboard_tst")]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
 del _root, _p
@@ -57,11 +66,11 @@ _BARS_PATCH_LOCK: asyncio.Lock | None = None
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
 STATE_DIR = SKILL_DIR / "state"
-WEB_DIR = Path(__file__).resolve().parent / "web"   # dashboard/web/
+WEB_DIR = Path(__file__).resolve().parent / "web"   # dashboard_tst/web/
 INDEX_HTML = WEB_DIR / "index.html"
 
 HOST = "127.0.0.1"
-PORT = 8000
+PORT = 8001   # dashboard_tst (trend & swing) -- intraday dashboard owns 8000
 
 
 class Hub:
@@ -869,13 +878,18 @@ async def lifespan(_app: FastAPI):
     # binds to the running loop on construction.
     global _BARS_PATCH_LOCK
     _BARS_PATCH_LOCK = asyncio.Lock()
+    # NOTE (dashboard_tst): _auto_start_loop is INTENTIONALLY OMITTED.
+    # Only the intraday dashboard (port 8000) may auto-spawn / control
+    # the live orchestrator -- the per-strategy state flags don't
+    # coordinate across processes (CLAUDE.md hard rule). dashboard_tst
+    # is a read-only observer + trend/swing scanner. Keep the health /
+    # state / event pollers (read-only) but never the bot launcher.
     tasks = [
         asyncio.create_task(_tail_events()),
         asyncio.create_task(_poll_state()),
         asyncio.create_task(_poll_health()),
         asyncio.create_task(_tail_bot_log()),
         asyncio.create_task(_poll_alpaca()),
-        asyncio.create_task(_auto_start_loop()),
     ]
     try:
         yield
@@ -884,7 +898,7 @@ async def lifespan(_app: FastAPI):
             t.cancel()
 
 
-app = FastAPI(title="intraday_bot dashboard", lifespan=lifespan)
+app = FastAPI(title="dashboard_tst (trend & swing)", lifespan=lifespan)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -1677,7 +1691,7 @@ def _fetch_quotes_alpaca(symbols: list[str]) -> dict[str, dict]:
     api_key = os.environ.get("ALPACA_API_KEY") or os.environ.get("APCA_API_KEY_ID")
     api_secret = os.environ.get("ALPACA_API_SECRET") or os.environ.get("APCA_API_SECRET_KEY")
     if not api_key or not api_secret:
-        # Try VAULT loader path (intraday-bot self-contained credential resolution)
+        # Try VAULT loader path (TradeHunter self-contained credential resolution)
         try:
             from _common import load_vendor_env  # type: ignore
             env = load_vendor_env("alpaca")
@@ -4011,7 +4025,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
 
 
 def main() -> None:
-    print(f"intraday_bot dashboard at http://{HOST}:{PORT}")
+    print(f"TradeHunter dashboard at http://{HOST}:{PORT}")
     print("(Read-only observer. The bot is what places orders.)")
     uvicorn.run(app, host=HOST, port=PORT, log_level="warning")
 

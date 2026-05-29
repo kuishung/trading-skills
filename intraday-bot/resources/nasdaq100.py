@@ -22,7 +22,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-# --- intraday-bot bootstrap ---
+# --- TradeHunter bootstrap ---
 _root = Path(__file__).resolve().parent
 while _root != _root.parent and not (_root / "SKILL.md").exists():
     _root = _root.parent
@@ -60,7 +60,7 @@ def _extract_tickers_from_table(table_html: str, col: int) -> list[str]:
 
 def _fetch_from_wikipedia() -> list[str]:
     req = urllib.request.Request(WIKI_URL, headers={
-        "User-Agent": "Mozilla/5.0 (intraday-bot NASDAQ-100 list fetcher)"
+        "User-Agent": "Mozilla/5.0 (TradeHunter NASDAQ-100 list fetcher)"
     })
     with urllib.request.urlopen(req, timeout=30) as resp:
         html = resp.read().decode("utf-8", errors="replace")

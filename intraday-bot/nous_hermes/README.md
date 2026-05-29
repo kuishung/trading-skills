@@ -6,7 +6,7 @@ CLI + SSH); this folder is the source of truth that gets deployed there.
 
 > **Naming convention:** this folder is `nous_hermes` (not `hermes`) on purpose,
 > to disambiguate from the R720 Windows Server **"Hermes" Hyper-V VM** documented
-> in the repo-root `CLAUDE.md`. That VM is an unrelated intraday-bot data-ingest
+> in the repo-root `CLAUDE.md`. That VM is an unrelated TradeHunter data-ingest
 > worker and **cannot** run the Nous Hermes agent. Anything Nous-agent-related
 > lives under `nous_hermes/` and deploys to the Linux box.
 
@@ -56,13 +56,13 @@ Prereq: `hermes setup` has been run and the Telegram gateway is configured
 1. Get this folder onto the server. Until git is set up there, scp it:
    ```bash
    # from the dev PC:
-   scp -r nous_hermes user@server:/path/to/intraday-bot/nous_hermes
+   scp -r nous_hermes user@server:/path/to/TradeHunter/nous_hermes
    ```
    (Later, once the server has the repo: `git pull` then re-run install.sh.)
 
 2. Install the skill(s):
    ```bash
-   bash /path/to/intraday-bot/nous_hermes/install.sh
+   bash /path/to/TradeHunter/nous_hermes/install.sh
    ```
    Verify: in the agent chat run `/skills` and confirm `premarket-briefing`
    appears; or test on demand with `/premarket-briefing`.

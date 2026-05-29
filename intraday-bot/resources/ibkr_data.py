@@ -1,4 +1,4 @@
-"""IBKR data adapter for intraday_bot.
+"""IBKR data adapter for TradeHunter.
 
 Wraps ib_insync to expose the same shape as _common.py's data abstractions:
     ibkr_pm_bars()                  -> dict[str, list[bar_dict]]
@@ -59,7 +59,7 @@ except RuntimeError as _ib_exc:
     )
     IB = None  # type: ignore
 
-SKILL_DIR = Path(__file__).resolve().parent.parent   # intraday-bot/
+SKILL_DIR = Path(__file__).resolve().parent.parent   # TradeHunter/
 
 # Port mapping:
 #   IB Gateway: 4001 (live) / 4002 (paper)  <-- the bot defaults to these

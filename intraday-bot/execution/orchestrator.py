@@ -36,12 +36,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-# --- intraday-bot bootstrap: make sibling layers importable ---
+# --- TradeHunter bootstrap: make sibling layers importable ---
 _root = Path(__file__).resolve().parent
 while _root != _root.parent and not (_root / "SKILL.md").exists():
     _root = _root.parent
 # Layer folders on sys.path so `from base import Strategy` works directly.
-# Plus the intraday-bot root so `from strategy import KNOWN_STRATEGIES` works
+# Plus the TradeHunter root so `from strategy import KNOWN_STRATEGIES` works
 # as a package import (uses strategy/__init__.py).
 for _p in [str(_root)] + [str(_root / s) for s in
         ("scripts", "resources", "strategy", "execution", "journal", "review", "dashboard")]:

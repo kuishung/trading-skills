@@ -15,7 +15,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-TASK_NAME = "intraday-bot-daily"
+TASK_NAME = "TradeHunter-daily"
 SKILL_DIR = Path(__file__).resolve().parent.parent
 TRADE_DAY = SKILL_DIR / "execution" / "orchestrator.py"
 

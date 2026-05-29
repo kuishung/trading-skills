@@ -76,7 +76,7 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-# --- intraday-bot bootstrap (in case future helpers need cross-layer imports) ---
+# --- TradeHunter bootstrap (in case future helpers need cross-layer imports) ---
 _root = Path(__file__).resolve().parent
 while _root != _root.parent and not (_root / "SKILL.md").exists():
     _root = _root.parent

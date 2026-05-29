@@ -7,7 +7,7 @@ prefix is intentional: each strategy family (GUNS today; ORB, DITP
 etc. in future) has its own scanner with its own filter criteria,
 writing to its own watchlist.
 
-Pipeline (all stages live inside intraday-bot/, no external skills):
+Pipeline (all stages live inside TradeHunter/, no external skills):
 
   1. Gather candidates from up to 2 sources:
        a. IBKR ScannerSubscription — GUNS-tuned filters (PDF slides
@@ -68,7 +68,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-# --- intraday-bot bootstrap: make sibling layers importable ---
+# --- TradeHunter bootstrap: make sibling layers importable ---
 _root = Path(__file__).resolve().parent
 while _root != _root.parent and not (_root / "SKILL.md").exists():
     _root = _root.parent
@@ -84,7 +84,7 @@ from _common import (  # noqa: E402  (scripts/_common.py)
     STATE_DIR, et_now, et_today_iso, load_config, safe_log_stdout,
 )
 # Absolute package path -- works whether scanner runs as a script
-# (py strategy/GUNS/scanner.py) or is imported (intraday-bot root is
+# (py strategy/GUNS/scanner.py) or is imported (TradeHunter root is
 # on sys.path via the bootstrap above).
 from strategy.GUNS._helpers import guns_watchlist_path  # noqa: E402
 from yfinance_float import (  # noqa: E402  (resources/yfinance_float.py)

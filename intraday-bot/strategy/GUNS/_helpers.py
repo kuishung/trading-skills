@@ -34,7 +34,7 @@ The bot itself enforces the price floor ($1.50) and PM-volume floor
 """
 from __future__ import annotations
 
-# --- intraday-bot bootstrap: make sibling layers importable ---
+# --- TradeHunter bootstrap: make sibling layers importable ---
 import sys
 from pathlib import Path
 _root = Path(__file__).resolve().parent

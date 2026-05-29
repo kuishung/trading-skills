@@ -157,7 +157,7 @@ Net effect for the user: on watcher restart, the log now opens with a pre-flight
 
 ### 2026-05-24 — `hermes_health.py`: pre-flight check for the Hermes VM
 
-Companion to `HERMES_SETUP.md` (at intraday-bot/ root) and the CLAUDE.md "Hermes — autonomous worker VM" section added today. User is standing up a Hyper-V VM on their office Dell R720 (Windows Server 2019 host, Server 2019 guest VM named "Hermes") to take over multi-day ingest jobs from the laptop.
+Companion to `HERMES_SETUP.md` (at TradeHunter/ root) and the CLAUDE.md "Hermes — autonomous worker VM" section added today. User is standing up a Hyper-V VM on their office Dell R720 (Windows Server 2019 host, Server 2019 guest VM named "Hermes") to take over multi-day ingest jobs from the laptop.
 
 The script verifies everything that needs to be in place BEFORE kicking off the 180-day full-universe 3min re-seed (which runs unattended for ~4 days):
 
@@ -212,9 +212,9 @@ disown
 
 ### 2026-05-21 — `_common.py` self-contained
 - Dropped `../alpaca-trader-paper/.env` and `../MATP/.env` sibling-folder reads.
-- New `_env_lookup` walks: `$INTRADAY_ENV_DIR` → `intraday-bot/.env` → `<Dropbox>/VAULT/Claude Credential/<vendor>.env`.
+- New `_env_lookup` walks: `$INTRADAY_ENV_DIR` → `TradeHunter/.env` → `<Dropbox>/VAULT/Claude Credential/<vendor>.env`.
 - `load_alpaca_env` and `telegram_env` use the new lookup. No more cross-folder dependencies.
-- Added a sys.path bootstrap (adds intraday-bot/ root + every layer folder) so the lazy `from ibkr_data import ...` calls inside the data-provider dispatch functions resolve regardless of how the importer is invoked.
+- Added a sys.path bootstrap (adds TradeHunter/ root + every layer folder) so the lazy `from ibkr_data import ...` calls inside the data-provider dispatch functions resolve regardless of how the importer is invoked.
 
 ### 2026-05-21 — `_arming.py` → `_gating.py`
 - Renamed to reflect the new ON/OFF gate added alongside the existing ARM gate.

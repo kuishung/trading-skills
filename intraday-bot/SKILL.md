@@ -1,18 +1,18 @@
 ---
-name: intraday_bot
+name: TradeHunter
 version: 0.15.0
-description: Self-contained intraday paper-trading framework. Seven top-level folders (Resources, Strategy, Execution, Journal, Review, Data, Dashboard) + scripts/ for operational glue. Strategies are organised by FAMILY — strategy/<FAMILY>/<setup_name>/ — with the GUNS family (Adam Khoo Gap Up News Scalp) wired today. Each strategy carries its own impl.py + __init__.py + changelog.md (per-strategy versioning). Each family has its own pre-market scanner. Per-strategy gating with TWO independent live flags — ON/OFF (pipeline runs?) and ARMED (plans submit?). Three states: OFF, ON+DISARMED (paper-eval), ON+ARMED (live). Strict risk discipline (1% NLV per trade, notional cap, EOD close-all). Fully self-contained — every dependency inside intraday-bot/, designed for Dropbox sync across PCs. Read intraday-bot/CLAUDE.md first in every session. Trigger phrases: "run intraday bot", "start intraday bot", "wire intraday strategy".
+description: Self-contained intraday paper-trading framework. Seven top-level folders (Resources, Strategy, Execution, Journal, Review, Data, Dashboard) + scripts/ for operational glue. Strategies are organised by FAMILY — strategy/<FAMILY>/<setup_name>/ — with the GUNS family (Adam Khoo Gap Up News Scalp) wired today. Each strategy carries its own impl.py + __init__.py + changelog.md (per-strategy versioning). Each family has its own pre-market scanner. Per-strategy gating with TWO independent live flags — ON/OFF (pipeline runs?) and ARMED (plans submit?). Three states: OFF, ON+DISARMED (paper-eval), ON+ARMED (live). Strict risk discipline (1% NLV per trade, notional cap, EOD close-all). Fully self-contained — every dependency inside TradeHunter/, designed for Dropbox sync across PCs. Read TradeHunter/CLAUDE.md first in every session. Trigger phrases: "run intraday bot", "start intraday bot", "wire intraday strategy".
 ---
 
 # Intraday Bot — Six-Layer Self-Contained Paper-Trading Framework
 
 **Version:** 0.15.0 — `data/` artifact folder (the cream) + Parquet bars I/O + S&P 500 yfinance seed + IBKR EOD ingest hook
 
-> **Read [`CLAUDE.md`](CLAUDE.md) first** — it carries the strict rules and the cross-PC sync workflow Claude consults on every session. Mirrored from `~/.claude/.../memory/project_intraday_bot_rules.md`. Keep them in sync.
+> **Read [`CLAUDE.md`](CLAUDE.md) first** — it carries the strict rules and the cross-PC sync workflow Claude consults on every session. Mirrored from `~/.claude/.../memory/project_TradeHunter_rules.md`. Keep them in sync.
 
 ## Changelog
 
-- **0.14.1** (2026-05-21) — Moved the remaining dashboard files into `dashboard/`. `start_dashboard.bat`, `stop_dashboard.bat`, `_supervise_dashboard.bat` all left intraday-bot/ root; `scripts/setup_dashboard_launcher.py` → `dashboard/setup_launcher.py`. The supervisor now `cd`s into `dashboard/` and runs `py server.py` (no path prefix needed since it's in the same folder). `setup_launcher.py` updates its START_BAT/STOP_BAT paths to `dashboard/`. Smoke-tested: `cd dashboard && py server.py` brings up the UI exactly like before.
+- **0.14.1** (2026-05-21) — Moved the remaining dashboard files into `dashboard/`. `start_dashboard.bat`, `stop_dashboard.bat`, `_supervise_dashboard.bat` all left TradeHunter/ root; `scripts/setup_dashboard_launcher.py` → `dashboard/setup_launcher.py`. The supervisor now `cd`s into `dashboard/` and runs `py server.py` (no path prefix needed since it's in the same folder). `setup_launcher.py` updates its START_BAT/STOP_BAT paths to `dashboard/`. Smoke-tested: `cd dashboard && py server.py` brings up the UI exactly like before.
 - **0.14.0** (2026-05-21) — Strategy family folders + dedicated dashboard folder.
   - `strategy/_guns_common.py` → `strategy/GUNS/_helpers.py`
   - `strategy/_guns_scanner.py` → `strategy/GUNS/scanner.py` (no underscore — CLI entry point)
@@ -23,7 +23,7 @@ description: Self-contained intraday paper-trading framework. Seven top-level fo
   - `strategy/__init__.py` gains `_STRATEGY_IMPORT_PATHS` — leaf-name → dotted package path mapping. Leaf names (`guns_setup1`) stay everywhere user-facing (state flags, journal events, dashboard pills); the dotted path (`GUNS.guns_setup1`) is only used by importlib.
   - Files inside `strategy/GUNS/guns_setupN/impl.py` switched to relative imports (`from .._helpers import ...`) for family-internal references; cross-layer imports stay bare-name.
   - `dashboard` added to the path-bootstrap tuple in every layer module.
-  - New file `intraday-bot/CLAUDE.md` — the in-folder copy of the strict rules. Auto-loaded by Claude Code when cwd touches intraday-bot/. First file consulted in each session.
+  - New file `TradeHunter/CLAUDE.md` — the in-folder copy of the strict rules. Auto-loaded by Claude Code when cwd touches TradeHunter/. First file consulted in each session.
   - `_supervise_dashboard.bat` points to `dashboard\server.py`.
 - **0.13.0** (2026-05-21) — Big restructure to the five-layer architecture the user committed to. New top-level folders: `resources/`, `strategy/`, `execution/`, `journal/`, `review/`. Files moved:
   - `scripts/_ibkr_data.py` → `resources/ibkr_data.py`
@@ -40,9 +40,9 @@ description: Self-contained intraday paper-trading framework. Seven top-level fo
   - `scripts/trade_day.py` → `execution/orchestrator.py`
   - `scripts/` keeps the operational glue: `_common.py`, `_gating.py`, `dashboard.py`, `setup_*.py`.
   - `review/` is a placeholder for the self-improvement loop.
-  Each layer module starts with a small sys.path bootstrap that walks up to find SKILL.md and adds every layer folder + intraday-bot root, so bare-name imports (`from base import Strategy`) and package-style imports (`from strategy import KNOWN_STRATEGIES`) both work regardless of how a file is invoked.
+  Each layer module starts with a small sys.path bootstrap that walks up to find SKILL.md and adds every layer folder + TradeHunter root, so bare-name imports (`from base import Strategy`) and package-style imports (`from strategy import KNOWN_STRATEGIES`) both work regardless of how a file is invoked.
 
-  Portability hardening (the second half of the user's request): `_common.py` no longer reads `../alpaca-trader-paper/.env` or `../MATP/.env`. All credential lookup now goes VAULT-first via the central Dropbox folder, with an in-folder `.env` as final fallback. The bot is now fully self-contained — syncing intraday-bot/ to another machine and `pip install -r requirements.txt` is all it takes.
+  Portability hardening (the second half of the user's request): `_common.py` no longer reads `../alpaca-trader-paper/.env` or `../MATP/.env`. All credential lookup now goes VAULT-first via the central Dropbox folder, with an in-folder `.env` as final fallback. The bot is now fully self-contained — syncing TradeHunter/ to another machine and `pip install -r requirements.txt` is all it takes.
 
   Per-strategy versioning scaffolding: each `strategy/<name>/impl.py` declares `__version__`. A `changelog.md` next to it records every rule edit. Future trade-journal events will carry this version so post-trade analytics can attribute outcomes to a specific rule-set.
 
@@ -52,7 +52,7 @@ description: Self-contained intraday paper-trading framework. Seven top-level fo
 - **0.10.0** (2026-05-21) — Removed `scripts/scanner_observe.py` (the old 7-parallel IBKR ambient scanner) and all related dashboard plumbing. The model is now strictly **one scanner per strategy family**: each family owns its own pre-market scanner (`guns_scanner.py` today; future `orb_scanner.py`, `ditp_scanner.py`) that writes its own `state/watchlist_<family>_<date>.txt`. Dashboard simplifications: no more scanner-pill, no more "live top movers" panel, `BotManager` now manages only `trade_day.py`. The event log still surfaces every event the bot emits; the `scanner.*` event class is gone. `web/index.html` lost ~200 lines of scanner-specific rendering. The dashboard's auto-start path still fires at 09:00 ET to launch the bot — pre-market scanners will be wired into the launch sequence in a separate change.
 - **0.9.0** (2026-05-21) — GUNS scanner is now end-to-end self-contained. Added `scripts/guns_float_lookup.py` (yfinance `floatShares` with a 7-day disk cache, drops float > 100M per the PDF) and `scripts/guns_catalyst_classifier.py` (yfinance `Ticker.news` + keyword classifier, drops M&A targets, secondary offerings, dilution, going-concern, SEC actions, FDA rejections; flags AI / earnings / FDA approvals as good). Both modules are GUNS-specific by design and wired only into `guns_scanner.py`. The scanner's output watchlist is now ready-to-trade with no manual pruning — `# UPSTREAM TODO` header line removed. New CLI flags: `--no-float`, `--no-catalyst`, `--strict-float`, `--strict-catalyst`, `--keep-mna`, `--float-cap N`. Bot still defensively re-checks price ≥ $1.50 and PM volume ≥ 30K inside `evaluate()`.
 - **0.8.0** (2026-05-21) — Wire GUNS (Gap Up News Scalp) Setups 1 and 5 as MVP, plus `scripts/guns_scanner.py` to build the daily watchlist. Source: Adam Khoo Piranha Profits Lesson 8. Setup 1 = break of pre-market high at 09:30 ET; Setup 5 = break of first 1-min RTH candle at 09:31 ET. Shared universe via `state/watchlist_guns_<date>.txt` (per-family path so future ORB / DITP strategies get their own scanner + watchlist). The scanner pulls candidates from (a) a GUNS-tuned IBKR `ScannerSubscription` matching the PDF filter recipe (price 1.50-500, change% ≥ 5, avg-vol 20K-70M, today vol > 30K) and (b) `thestockmarketwatch.com/markets/today.aspx` top-gainers HTML scrape — union by symbol with per-source provenance comments. Price-tier SL table (10-50¢ by price bracket), 2R default TP, framework's existing BE-at-1R polling. Defensive double-check on price>=$1.50 and PM-volume>=30K inside each evaluate(). Both setups ship `enabled: false` in config.example.json — flip to true after curating the watchlist. Setups 2 (PM pivot break), 3 (PM bull flag), and 4 (post-open bull flag M1/M2/M5) are out of scope for this MVP; Setup 4 in particular needs a rolling watch window (09:30-10:30) that doesn't yet exist in the framework.
-- **0.7.0** — Clear wired strategies + rename internals to intraday_bot
+- **0.7.0** — Clear wired strategies + rename internals to TradeHunter
 
 This is the **framework**. It handles everything that's strategy-agnostic:
 
@@ -89,14 +89,14 @@ The bot is allowed to start with every strategy OFF — the orchestrator just jo
 ## File layout — six-layer architecture
 
 ```
-intraday-bot/
+TradeHunter/
 ├── SKILL.md                          # this file
 ├── CLAUDE.md                         # rules + cross-PC workflow (READ FIRST)
 ├── requirements.txt                  # alpaca-py, ib_insync, yfinance, fastapi, ...
 ├── config.example.json
 ├── config.json                       # (gitignored)
 ├── .gitignore
-│   (dashboard launchers live under dashboard/ — see below)
+│   (dashboard launchers live under dashboard_intraday/ + dashboard_tst/ — see below)
 │
 ├── resources/                        # === LAYER 1: stateless data sources ===
 │   ├── ibkr_data.py                  # IBKR bars/quotes/trades adapter
@@ -133,12 +133,20 @@ intraday-bot/
 ├── review/                           # === LAYER 5: self-improvement loop ===
 │   └── (placeholder — TODO)
 │
-├── dashboard/                        # === operational UI (all in one folder) ===
+├── dashboard_intraday/               # === operational UI: intraday (port 8000) ===
 │   ├── server.py                     # FastAPI + child-process manager
 │   ├── start_dashboard.bat           # idempotent Windows launcher
 │   ├── stop_dashboard.bat            # graceful POST /shutdown then port-kill
 │   ├── _supervise_dashboard.bat      # respawn-on-exit-100 supervisor
 │   ├── setup_launcher.py             # one-time Desktop shortcut installer
+│   └── web/
+│       └── index.html
+│   (renamed from dashboard/ on 2026-05-29)
+│
+├── dashboard_tst/                    # === operational UI: trend & swing (port 8001) ===
+│   ├── server.py                     # independent copy of intraday server, port 8001
+│   ├── start_dashboard.bat / stop_dashboard.bat / _supervise_dashboard.bat
+│   ├── setup_launcher.py
 │   └── web/
 │       └── index.html
 │
@@ -160,14 +168,14 @@ intraday-bot/
     └── cache/                        # yfinance float + news caches
 ```
 
-Each layer module starts with a small `sys.path` bootstrap that walks up to find `SKILL.md`, then adds every layer folder + intraday-bot root. This means bare-name imports (`from base import Strategy`) and package-style imports (`from strategy import KNOWN_STRATEGIES`) both work, regardless of how the file is invoked.
+Each layer module starts with a small `sys.path` bootstrap that walks up to find `SKILL.md`, then adds every layer folder + TradeHunter root. This means bare-name imports (`from base import Strategy`) and package-style imports (`from strategy import KNOWN_STRATEGIES`) both work, regardless of how the file is invoked.
 
 ## Self-contained — no sibling-skill dependencies
 
-Every dependency lives inside `intraday-bot/`. Syncing this folder to another machine and running `pip install -r requirements.txt` is all it takes. Credential resolution walks this priority order:
+Every dependency lives inside `TradeHunter/`. Syncing this folder to another machine and running `pip install -r requirements.txt` is all it takes. Credential resolution walks this priority order:
 
 1. `$INTRADAY_ENV_DIR/<vendor>.env` (manual override)
-2. `intraday-bot/.env` (in-folder fallback)
+2. `TradeHunter/.env` (in-folder fallback)
 3. `<Dropbox>/VAULT/Claude Credential/<vendor>.env` (central, shared across PCs)
 
 `_common.py` no longer reads `../alpaca-trader-paper/.env` or `../MATP/.env` — those sibling-folder reads were removed in 0.13.0.

@@ -39,8 +39,8 @@ import importlib
 import sys
 from pathlib import Path
 
-# --- intraday-bot bootstrap: make sibling layers importable as top-level
-# modules + the intraday-bot root importable so the strategy package is
+# --- TradeHunter bootstrap: make sibling layers importable as top-level
+# modules + the TradeHunter root importable so the strategy package is
 # accessible as `import strategy`. Walks up to find SKILL.md. ---
 _root = Path(__file__).resolve().parent
 while _root != _root.parent and not (_root / "SKILL.md").exists():

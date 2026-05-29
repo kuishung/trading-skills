@@ -5,7 +5,7 @@
   "spread_max_cents": 10,
   "eod_close_all_et": "15:58",
 
-  "_comment_data_root": "Override the on-disk location of data/price_history, data/journal, data/review, data/ticker_profile, data/ingest_log.jsonl, etc. Useful for moving the heavy regeneratable parquets out of Dropbox onto a peer-synced location (e.g. Resilio). Leave empty/omitted to use the bot-internal default (intraday-bot/data). Per-PC absolute paths: e.g. 'D:\\HermesSync\\MarketData' on laptop, 'C:\\HermesSync\\MarketData' on Hermes. Forward-slashes work too.",
+  "_comment_data_root": "Override the on-disk location of data/price_history, data/journal, data/review, data/ticker_profile, data/ingest_log.jsonl, etc. Useful for moving the heavy regeneratable parquets out of Dropbox onto a peer-synced location (e.g. Resilio). Leave empty/omitted to use the bot-internal default (TradeHunter/data). Per-PC absolute paths: e.g. 'D:\\HermesSync\\MarketData' on laptop, 'C:\\HermesSync\\MarketData' on Hermes. Forward-slashes work too.",
   "data_root": "",
 
   "_comment_vault_dir": "Override the on-disk location of vendor credentials (alpaca.env, telegram.env, intraday-premarket.env, etc. — the .env files that scripts._common.load_alpaca_env() and friends read). Same pattern as data_root: per-PC absolute path so credentials can move from Dropbox's VAULT/Claude Credential/ to a Resilio-synced folder (e.g. D:\\HermesSync\\Vault on laptop, C:\\HermesSync\\Vault on Hermes). Leave empty/omitted to use the legacy auto-discovery (walk up from SKILL_DIR looking for VAULT/Claude Credential/). Note: ibkr_secrets_path is configured SEPARATELY because IBC reads it directly, not via the bot's vendor.env mechanism.",

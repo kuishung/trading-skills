@@ -74,7 +74,7 @@ Bump rules:
 - `impl.py`: `__version__` 1.0.0 → 1.0.1, docstring "Timing" section added, `build()` hardcoded fallback for `entry_et` changed from `"09:30"` to `"09:28"` (so the new default holds even when `config.json` doesn't override).
 
 **Files touched elsewhere (see those folders' READMEs for their own entries):**
-- `config.example.json` at intraday-bot/ root: `guns_setup1.entry_et` 09:30 → 09:28.
+- `config.example.json` at TradeHunter/ root: `guns_setup1.entry_et` 09:30 → 09:28.
 
 ### 1.0.0 — 2026-05-21 — Initial wired implementation
 - Trigger: 09:30 ET, single shot. Cancel unfilled at 09:35.

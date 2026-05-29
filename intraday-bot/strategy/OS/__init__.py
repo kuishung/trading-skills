@@ -6,7 +6,7 @@ catalyst + float qualitative gates so it can run fully automated with
 no human in the loop.
 
 Reference doc: strategies-reference/OS.md (in the worktree, not
-intraday-bot/). Setup folders live under this directory as
+TradeHunter/). Setup folders live under this directory as
 strategy/OS/<setup_name>/.
 
 Setups wired:

@@ -12,7 +12,7 @@ setlocal EnableDelayedExpansion
 set "IBC_PATH=%~dp0"
 if "%IBC_PATH:~-1%"=="\" set "IBC_PATH=%IBC_PATH:~0,-1%"
 
-REM intraday-bot root = parent of ibc/
+REM TradeHunter root = parent of ibc/
 set "BOT_ROOT=%IBC_PATH%\.."
 set "CONFIG_JSON=%BOT_ROOT%\config.json"
 

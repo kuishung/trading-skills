@@ -50,7 +50,7 @@ Config block (cfg.strategies.ditp_tc)
 """
 from __future__ import annotations
 
-# --- intraday-bot bootstrap ---
+# --- TradeHunter bootstrap ---
 import sys
 from pathlib import Path
 _root = Path(__file__).resolve().parent

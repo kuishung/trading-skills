@@ -1,4 +1,4 @@
-"""Shared helpers for intraday_bot.
+"""Shared helpers for TradeHunter.
 
 Centralises: config loading, ET clock, alpaca client construction
 (self-contained -- credentials resolved via the central VAULT folder
@@ -28,7 +28,7 @@ CONFIG_EXAMPLE_PATH = SKILL_DIR / "config.example.json"
 # override via config. See get_data_root() below.
 DATA_DIR_DEFAULT = SKILL_DIR / "data"
 
-# --- intraday-bot bootstrap: make sibling layers importable (for the
+# --- TradeHunter bootstrap: make sibling layers importable (for the
 # lazy `from ibkr_data import ...` inside the data-provider functions
 # below, plus any future cross-layer imports). ---
 for _p in [str(SKILL_DIR)] + [str(SKILL_DIR / s) for s in
@@ -202,7 +202,7 @@ def _env_lookup(filename: str, in_folder_name: str = ".env") -> dict[str, str]:
     """Resolve a vendor env in priority order:
 
       1. INTRADAY_ENV_DIR override   (env var)
-      2. <intraday-bot>/.env         (final in-folder fallback)
+      2. <TradeHunter>/.env         (final in-folder fallback)
       3. <VAULT>/Claude Credential/<filename>   (central, shared across PCs)
 
     Empty dict if nothing matches.
@@ -604,7 +604,7 @@ def send_telegram(cfg: dict, html: str) -> bool:
             f"https://api.telegram.org/bot{token}/sendMessage",
             data=data,
             headers={"Content-Type": "application/x-www-form-urlencoded",
-                     "User-Agent": "intraday_bot/0.7"},
+                     "User-Agent": "TradeHunter/0.7"},
         )
         try:
             with urllib.request.urlopen(req, timeout=15) as resp:

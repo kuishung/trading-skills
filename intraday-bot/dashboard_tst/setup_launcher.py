@@ -1,16 +1,16 @@
-"""One-time installer for the intraday_bot dashboard launchers on Windows.
+"""One-time installer for the TST (trend & swing) dashboard launchers on Windows.
 
 Drops shortcuts in TWO locations:
 
   1. Desktop  -- for quick double-click launch from anywhere
-     Intraday Bot Dashboard.lnk         -> start_dashboard.bat
-     Intraday Bot Dashboard (stop).lnk  -> stop_dashboard.bat
+     TST Dashboard.lnk         -> start_dashboard.bat
+     TST Dashboard (stop).lnk  -> stop_dashboard.bat
 
-  2. dashboard/ folder -- so the shortcut sits next to its target,
-     visible when the user navigates into the synced intraday-bot/
+  2. dashboard_tst/ folder -- so the shortcut sits next to its target,
+     visible when the user navigates into the synced TradeHunter/
      folder on any PC
-     Intraday Bot Dashboard.lnk
-     Intraday Bot Dashboard (stop).lnk
+     TST Dashboard.lnk
+     TST Dashboard (stop).lnk
 
 Both sets are idempotent: re-running overwrites them. Both contain
 absolute paths so they are PER-PC -- the in-folder .lnks are gitignored
@@ -30,8 +30,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-SKILL_DIR = Path(__file__).resolve().parent.parent   # intraday-bot/
-DASHBOARD_DIR = Path(__file__).resolve().parent      # intraday-bot/dashboard/
+SKILL_DIR = Path(__file__).resolve().parent.parent   # TradeHunter/
+DASHBOARD_DIR = Path(__file__).resolve().parent      # TradeHunter/dashboard_tst/
 START_BAT = DASHBOARD_DIR / "start_dashboard.bat"
 STOP_BAT = DASHBOARD_DIR / "stop_dashboard.bat"
 
@@ -93,7 +93,7 @@ def main() -> None:
         sys.exit(
             f"Launcher .bat files missing. Expected:\n"
             f"  {START_BAT}\n  {STOP_BAT}\n"
-            f"Did you `git pull` the latest intraday_bot?"
+            f"Did you `git pull` the latest TradeHunter?"
         )
     desktop = _desktop_dir()
     print(f"Desktop   : {desktop}")
@@ -101,21 +101,21 @@ def main() -> None:
     print(f"Repo      : {SKILL_DIR}")
 
     # Two install sites: Desktop (global launcher) + in-folder (sync-portable
-    # visibility when the user navigates into intraday-bot/dashboard/).
+    # visibility when the user navigates into TradeHunter/dashboard_tst/).
     sites: list[tuple[Path, str]] = [
         (desktop,       "Desktop"),
-        (DASHBOARD_DIR, "dashboard/ folder"),
+        (DASHBOARD_DIR, "dashboard_tst/ folder"),
     ]
 
     created: list[Path] = []
     try:
         for parent, label in sites:
-            start_lnk = parent / "Intraday Bot Dashboard.lnk"
-            stop_lnk  = parent / "Intraday Bot Dashboard (stop).lnk"
+            start_lnk = parent / "TST Dashboard.lnk"
+            stop_lnk  = parent / "TST Dashboard (stop).lnk"
             _create_shortcut(START_BAT, start_lnk,
-                             "Start the intraday_bot dashboard and open it in the browser.")
+                             "Start the TST (trend & swing) dashboard and open it in the browser.")
             _create_shortcut(STOP_BAT, stop_lnk,
-                             "Stop the running intraday_bot dashboard.")
+                             "Stop the running TradeHunter dashboard.")
             created.append(start_lnk)
             created.append(stop_lnk)
             print(f"  [{label:<18}] {start_lnk}")
@@ -128,7 +128,7 @@ def main() -> None:
     print()
     print(f"Created {len(created)} shortcuts.")
     print()
-    print("Double-click 'Intraday Bot Dashboard' (Desktop OR dashboard/) to launch.")
+    print("Double-click 'TST Dashboard' (Desktop OR dashboard_tst/) to launch.")
     print("The dashboard runs in a minimised cmd window and opens")
     print("http://localhost:8000 automatically.")
     print()

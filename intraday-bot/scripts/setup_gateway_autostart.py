@@ -41,7 +41,7 @@ STOP_TASK = "intraday-ibc-stop"
 
 
 def find_ibc_start_script(cfg: dict, ibc_dir: Path) -> Path:
-    """We prefer the intraday_bot wrapper (StartIBC-intraday.bat) which sources
+    """We prefer the TradeHunter wrapper (StartIBC-intraday.bat) which sources
     credentials from the user's chosen path. Fall back to IBC's bundled
     StartIBC.bat only if the wrapper isn't present (and warn the user)."""
     # 1. The launcher we wrote (reads from cfg['ibkr_secrets_path'])

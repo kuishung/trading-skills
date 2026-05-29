@@ -45,7 +45,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-# --- intraday-bot bootstrap so this module is importable from anywhere ---
+# --- TradeHunter bootstrap so this module is importable from anywhere ---
 _root = Path(__file__).resolve().parent
 while _root != _root.parent and not (_root / "SKILL.md").exists():
     _root = _root.parent

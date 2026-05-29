@@ -1,4 +1,4 @@
-# intraday-bot — strict rules + cross-PC workflow
+# TradeHunter — strict rules + cross-PC workflow
 
 **Read this first. This file is the ONLY portable source of truth.**
 
@@ -24,10 +24,10 @@ Everything that must travel across the user's PCs lives here.
 
 ## Cross-PC sync workflow (critical)
 
-The user works on multiple PCs. The `intraday-bot/` folder syncs via
+The user works on multiple PCs. The `TradeHunter/` folder syncs via
 Dropbox. Workflow:
 
-  - On PC A: start session pointing at intraday-bot/, work, **commit
+  - On PC A: start session pointing at TradeHunter/, work, **commit
     + push** before leaving.
   - Dropbox propagates the folder (source + state) to PC B.
   - On PC B: start session pointing at the same folder, pull, continue.
@@ -78,7 +78,7 @@ Trigger phrases that activate sign-off prompting:
 
 ## Per-folder README convention (read carefully)
 
-**Every folder under intraday-bot/ has its own README.md.** Each README has:
+**Every folder under TradeHunter/ has its own README.md.** Each README has:
 
 1. A one-line role description (what is this folder for?)
 2. A "Contents" section listing the files with one-liners
@@ -98,11 +98,11 @@ When you edit anything in `<folder>/`:
 
 Setup folders (`strategy/<FAMILY>/<setup_name>/`) merge their per-strategy versioning into the same README — they don't carry a separate `changelog.md`. The setup README's Changelog section **is** the version history that journal events reference via `__version__`.
 
-The folders that should have a README: `resources/`, `strategy/`, `strategy/<FAMILY>/`, `strategy/<FAMILY>/<setup>/`, `execution/`, `journal/`, `review/`, `data/`, `dashboard/`, `scripts/`. Skip `ibc/`, `state/`, `__pycache__/`.
+The folders that should have a README: `resources/`, `strategy/`, `strategy/<FAMILY>/`, `strategy/<FAMILY>/<setup>/`, `execution/`, `journal/`, `review/`, `data/`, `dashboard_intraday/`, `dashboard_tst/`, `scripts/`. Skip `ibc/`, `state/`, `__pycache__/`.
 
-The intraday-bot/ root uses SKILL.md (skill manifest) + this CLAUDE.md instead of a README.
+The TradeHunter/ root uses SKILL.md (skill manifest) + this CLAUDE.md instead of a README.
 
-## Architecture (8 top-level folders)
+## Architecture (9 top-level folders)
 
 Every change must map cleanly to one of these:
 
@@ -114,7 +114,8 @@ Every change must map cleanly to one of these:
 | `journal/` | Layer 4 — logs | `writer.py` (decisions), `events.py` (event stream). Writes JSONL to `data/journal/`. |
 | `review/` | Layer 5 — self-improvement | Reads `data/journal/`, proposes strategy edits with version bumps. Writes snapshots to `data/review/`. |
 | `data/` | **the cream — accumulated artifacts** | Historical bars (`data/price_history/{1min,5min,15min,daily}/<SYM>.parquet`), decision journals (`data/journal/journal_<date>.jsonl`), review snapshots (`data/review/`), pattern fixtures (`data/fixtures/`). Bars are gitignored (bulk binary, regeneratable, Dropbox-synced); journals + review + fixtures are **committed**. |
-| `dashboard/` | operational UI | `server.py` + `web/index.html` + the `*.bat` launchers + `setup_launcher.py`. Real-time observer + ON/OFF + ARM control. Everything dashboard-related lives in this one folder. |
+| `dashboard_intraday/` | operational UI (intraday) | `server.py` (port 8000) + `web/index.html` + the `*.bat` launchers + `setup_launcher.py`. Real-time observer + ON/OFF + ARM control for the intraday bot (DITP / GUNS). Renamed from `dashboard/` on 2026-05-29. |
+| `dashboard_tst/` | operational UI (trend & swing) | `server.py` (port 8001) + `web/index.html` + launchers. Independent copy of the intraday dashboard, repurposed for trend & swing trading (trend-state classifier + future swing setups). Runs as a separate process alongside the intraday dashboard. Added 2026-05-29. |
 | `scripts/` | operational glue | `_common.py` (config + env + ET clock + data dispatch), `_gating.py`, `setup_*.py`. |
 
 **`data/` vs `state/`** — `state/` is *session-ephemeral* (flags, today's
@@ -202,13 +203,13 @@ cost; only the actual read/write functions trigger it.
 
 ## Self-contained portability
 
-**Every dependency lives inside intraday-bot/.** NO sibling-folder
+**Every dependency lives inside TradeHunter/.** NO sibling-folder
 reads (no `../alpaca-trader-paper/.env`, no `../MATP/.env`).
 
 Credential resolution order (in `scripts/_common.py::_vault_root()` + `_env_lookup()`):
 
 1. `$INTRADAY_ENV_DIR/<vendor>.env` — manual override via environment variable
-2. `intraday-bot/.env` — in-folder fallback
+2. `TradeHunter/.env` — in-folder fallback
 3. `cfg["vault_dir"]/<vendor>.env` — per-PC absolute path from config.json (added 2026-05-24)
 4. `<auto-discovered VAULT/Claude Credential>/<vendor>.env` — walk up from SKILL_DIR (back-compat)
 
@@ -261,7 +262,7 @@ Per-ticker performance tracking still happens — the journal accumulates per-ti
 
 When the user shares a new trading strategy (PDF / video / chat):
 
-1. **Save the reference doc** as `strategies-reference/<NAME>.md` at the worktree root (the parent of `intraday-bot/`, since multiple skills could reference the same doc). Use the framework's canonical name (`DITP.md`, `GUNS.md`) — not `dynamic_intraday_trading.md`.
+1. **Save the reference doc** as `strategies-reference/<NAME>.md` at the worktree root (the parent of `TradeHunter/`, since multiple skills could reference the same doc). Use the framework's canonical name (`DITP.md`, `GUNS.md`) — not `dynamic_intraday_trading.md`.
 2. **Structure consistently** so every framework doc is navigable the same way:
    - Source attribution (path / URL / who taught it)
    - Methodology type (mechanical / discretionary / hybrid)
@@ -347,7 +348,7 @@ The user is a self-directed intraday US-equities trader operating from **Malaysi
 
 ## Vendored MCP servers and tools
 
-**The day-one rule wins**: every dependency, including MCP servers, lives **inside `intraday-bot/`**. No "I'll put it in `~/mcp-servers/` because it's a dev tool" exceptions — that breaks the cross-PC sync invariant and the user has rejected it explicitly.
+**The day-one rule wins**: every dependency, including MCP servers, lives **inside `TradeHunter/`**. No "I'll put it in `~/mcp-servers/` because it's a dev tool" exceptions — that breaks the cross-PC sync invariant and the user has rejected it explicitly.
 
 ### TradingView MCP — `resources/tradingview-mcp/`
 
@@ -360,7 +361,7 @@ Vendored from https://github.com/tradesdontlie/tradingview-mcp. Original `.git` 
 ### Per-PC install steps (after fresh Dropbox sync)
 
 ```bash
-cd intraday-bot/resources/tradingview-mcp
+cd TradeHunter/resources/tradingview-mcp
 npm install
 ```
 
@@ -373,7 +374,7 @@ Then register the MCP with Claude Code by writing `%USERPROFILE%\.claude\.mcp.js
   "mcpServers": {
     "tradingview": {
       "command": "node",
-      "args": ["<dropbox root>\\Claude\\claude-skills\\trading-skills\\intraday-bot\\resources\\tradingview-mcp\\src\\server.js"]
+      "args": ["<dropbox root>\\Claude\\claude-skills\\trading-skills\\TradeHunter\\resources\\tradingview-mcp\\src\\server.js"]
     }
   }
 }
@@ -417,7 +418,7 @@ If the existing auto-surfaces don't cover the new feature, add a dedicated UI pi
 - New `/data/<thing>` endpoint + pill or drawer
 - New CSS + JS that fits the console aesthetic (44px sidebar, drawers from the left, click-outside-to-close)
 
-Server-side endpoints land in `dashboard/server.py`; frontend renders + handlers in `dashboard/web/index.html`. Both files' READMEs get a changelog entry per the per-folder convention.
+Server-side endpoints land in `dashboard_intraday/server.py` (intraday) or `dashboard_tst/server.py` (trend & swing); frontend renders + handlers in the corresponding `web/index.html`. Both files' READMEs get a changelog entry per the per-folder convention.
 
 ### Cost of skipping this rule
 
@@ -443,7 +444,7 @@ Set 2026-05-24 as a hard architectural decision. The user owns a Dell R720 offic
 
 ### Setup reference
 
-Step-by-step install + verification lives in **`intraday-bot/HERMES_SETUP.md`** at the repo root — follow that file when standing Hermes up from a fresh Server 2019 install. Don't duplicate setup instructions in folder READMEs.
+Step-by-step install + verification lives in **`TradeHunter/HERMES_SETUP.md`** at the repo root — follow that file when standing Hermes up from a fresh Server 2019 install. Don't duplicate setup instructions in folder READMEs.
 
 VM specs: Windows Server 2019 Standard (Desktop Experience), 16 GB static RAM, 4 vCPU, 200 GB dynamic VHDX, external switch, Gen 2, auto-start with host (60s delay), production checkpoints.
 
@@ -469,7 +470,7 @@ Don't reuse these. Append next available number for any new component.
 
 | Layer | Mechanism | Location | Why this mechanism |
 |---|---|---|---|
-| Code, READMEs, configs | **Dropbox + git** | `intraday-bot/` inside Dropbox | Small, low-conflict, want git history. Dropbox makes cross-PC reads instant. |
+| Code, READMEs, configs | **Dropbox + git** | `TradeHunter/` inside Dropbox | Small, low-conflict, want git history. Dropbox makes cross-PC reads instant. |
 | Bulk data (parquets, journals, reviews, ticker profiles, ingest logs) | **Resilio Sync (P2P over LAN)** | `D:\HermesSync\MarketData\` on laptop / `C:\HermesSync\MarketData\` on Hermes | ~10GB+ and growing — too heavy for Dropbox bandwidth + cloud-storage cost. Resilio = LAN-speed P2P, no cloud middleman. Both peers writable. |
 
 Bot code resolves the data location through `scripts._common.get_data_root()`, which reads `cfg["data_root"]` from `config.json`. Per-PC config sets the local Resilio path:
@@ -482,7 +483,7 @@ Bot code resolves the data location through `scripts._common.get_data_root()`, w
 "data_root": "C:\\HermesSync\\MarketData"
 ```
 
-Resilio sync of `D:\HermesSync\` ↔ `C:\HermesSync\` handles the actual file transfer. Inside HermesSync, `MarketData/` is the intraday-bot's data; other projects can use sibling folders.
+Resilio sync of `D:\HermesSync\` ↔ `C:\HermesSync\` handles the actual file transfer. Inside HermesSync, `MarketData/` is the TradeHunter's data; other projects can use sibling folders.
 
 **Implications for code:**
 - All file I/O for data uses `get_data_root() / "<subfolder>"` — never hardcoded `SKILL_DIR / "data" / ...`
@@ -491,7 +492,7 @@ Resilio sync of `D:\HermesSync\` ↔ `C:\HermesSync\` handles the actual file tr
 - `state/` is unchanged — still per-PC ephemeral session bookkeeping
 
 **Sync targets summary:**
-- **Dropbox-synced** (per existing Dropbox folder): all of `intraday-bot/` EXCEPT data/. The `data/` folder is no longer Dropbox-synced (excluded via Selective Sync on every PC).
+- **Dropbox-synced** (per existing Dropbox folder): all of `TradeHunter/` EXCEPT data/. The `data/` folder is no longer Dropbox-synced (excluded via Selective Sync on every PC).
 - **Resilio-synced** (peer-to-peer): the entire `HermesSync/MarketData/` tree, including `price_history/`, `journal/`, `review/`, `ticker_profile/`, `fixtures/`, `ingest_log.jsonl`, ingest log files.
 - **Not synced** (per-PC only): `state/*.flag`, `state/watchlist_*.{txt,json}`, `state/cache/`, `config.json`. **Never run the orchestrator on both Hermes and laptop simultaneously** — they would compete for the same flags + watchlists.
 
@@ -503,7 +504,7 @@ Resilio sync of `D:\HermesSync\` ↔ `C:\HermesSync\` handles the actual file tr
 
 **Rule:** any script that touches IBKR (`resources/ibkr_history.py`, `resources/ibkr_data.py`, `resources/ibkr_smoke.py`, `scripts/wait_and_ingest.py`, `execution/orchestrator.py` when configured for IBKR) MUST be invoked with `py -3.12` explicitly. Don't rely on the default `py` launcher — different machines have different defaults, and a user upgrading to 3.14 silently breaks everything IBKR-related.
 
-Non-IBKR code (`strategy/`, `review/backtest.py`, `dashboard/`) runs fine on either Python version.
+Non-IBKR code (`strategy/`, `review/backtest.py`, `dashboard_intraday/`, `dashboard_tst/`) runs fine on either Python version.
 
 `scripts/hermes_health.py` detects this specific failure mode and emits a WARN with the remedy. Run it before any long IBKR job as the pre-flight gate.
 
@@ -557,5 +558,5 @@ it — memory files don't sync across PCs.
 - Don't put global risk numbers in a strategy module.
 - Don't skip the `strategy_off_skipped` journal event.
 - Don't auto-commit. User always says "commit" or "push" explicitly to initiate the sequence. **But once they do, commit + push are bundled — never stop at commit and wait for a separate "push" instruction.** The user added this rule on 2026-05-23: *"after i confirm and commit you to perform certain things, always push to git after you have done so"*. Translation: when an explicit `commit` / `push` request lands, run smoke check → `git status` → stage → `git commit` → `git push` as ONE operation. Don't make the user say "push" after "commit", and don't make them say "commit" after authorising work — the explicit request covers both halves.
-- Don't break the cross-PC sync invariant: if you put a file outside `intraday-bot/`, the user's other PCs won't see it.
-- **Don't carve "external tools" exceptions to the day-one rule.** MCP servers, helper utilities, third-party libraries — they all go inside `intraday-bot/` (typically vendored into `resources/`). If a fresh clone needs `npm install` or `pip install`, that's fine — those are per-PC artifacts and gitignored. But the SOURCE must travel with the folder. (Mistake made + corrected on 2026-05-21: TradingView MCP was first cloned to `~/Dropbox/Claude/mcp-servers/`; user rejected the location and the code was moved to `resources/tradingview-mcp/`.)
+- Don't break the cross-PC sync invariant: if you put a file outside `TradeHunter/`, the user's other PCs won't see it.
+- **Don't carve "external tools" exceptions to the day-one rule.** MCP servers, helper utilities, third-party libraries — they all go inside `TradeHunter/` (typically vendored into `resources/`). If a fresh clone needs `npm install` or `pip install`, that's fine — those are per-PC artifacts and gitignored. But the SOURCE must travel with the folder. (Mistake made + corrected on 2026-05-21: TradingView MCP was first cloned to `~/Dropbox/Claude/mcp-servers/`; user rejected the location and the code was moved to `resources/tradingview-mcp/`.)

@@ -1,0 +1,2015 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TST dashboard — trend & swing</title>
+  <style>
+    /*
+     * Wipe & rebuild (2026-05-27).
+     *
+     * Layout:
+     *   - Top status bar (sticky, always visible across views).
+     *   - Left sidebar: function navigation. Scanner first (highest
+     *     priority for the user's workflow), other functions follow.
+     *   - Right content area: shows the active function's panels.
+     *
+     * Conventions for new panels (carry these forward):
+     *  - Plain HTML + vanilla JS. No Tailwind / React / build step.
+     *  - One <section class="panel"> per discrete concern.
+     *  - Each panel lives inside ONE sidebar item's view. Don't
+     *    duplicate panels across views -- if a panel needs to live
+     *    in two places, lift it into the status bar or footer.
+     *  - All data flows through fetch() of server.py endpoints.
+     *  - Status pills are <span class="pill ok|warn|err"> driven by
+     *    the polling layer at the bottom of <script>.
+     *  - Times displayed in user's locale unless they explicitly are
+     *    ET (e.g. market clock). Always label the zone.
+     *  - Active view is persisted in #hash so reloads + bookmarks
+     *    land back on the same view.
+     */
+    :root {
+      --bg: #0d1117;
+      --bg-panel: #161b22;
+      --bg-side: #0a0d12;
+      --border: #30363d;
+      --text: #c9d1d9;
+      --text-muted: #8b949e;
+      --accent: #58a6ff;
+      --ok: #3fb950;
+      --warn: #d29922;
+      --err: #f85149;
+      --info: #58a6ff;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      height: 100%;
+    }
+    body {
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+    header {
+      padding: 10px 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-panel);
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      flex-wrap: wrap;
+      flex-shrink: 0;
+    }
+    header h1 {
+      font-size: 16px;
+      font-weight: 600;
+      margin: 0;
+      letter-spacing: 0.3px;
+      flex-shrink: 0;
+    }
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    /*
+     * Layout below header: sidebar (left) + content (right).
+     */
+    .shell {
+      flex: 1;
+      display: flex;
+      align-items: stretch;
+      min-height: 0;
+    }
+    nav.sidebar {
+      width: 180px;
+      flex-shrink: 0;
+      background: var(--bg-side);
+      border-right: 1px solid var(--border);
+      padding: 16px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    nav.sidebar button {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      text-align: left;
+      padding: 10px 20px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      border-left: 3px solid transparent;
+      letter-spacing: 0.3px;
+      font-family: inherit;
+      transition: color 0.1s, background 0.1s, border-color 0.1s;
+    }
+    nav.sidebar button:hover {
+      color: var(--text);
+      background: rgba(255,255,255,0.02);
+    }
+    nav.sidebar button.active {
+      color: var(--accent);
+      background: rgba(88,166,255,0.08);
+      border-left-color: var(--accent);
+    }
+    main {
+      flex: 1;
+      padding: 24px;
+      min-width: 0;       /* allow children to shrink within flex */
+      overflow-y: auto;
+    }
+    /* ----- Subtle scrollbar -----
+       Invisible by default; fades in to the --text-muted tone on
+       hover of the scrollable container. Same treatment for main
+       and the watchlist scroll region; extend to other containers
+       by adding their selectors here. User directive 2026-05-27. */
+    main,
+    #finviz-table-wrap {
+      scrollbar-width: thin;
+      scrollbar-color: transparent transparent;
+      transition: scrollbar-color 0.2s;
+    }
+    main:hover,
+    #finviz-table-wrap:hover {
+      scrollbar-color: rgba(139, 148, 158, 0.45) transparent;
+    }
+    main::-webkit-scrollbar,
+    #finviz-table-wrap::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    main::-webkit-scrollbar-track,
+    #finviz-table-wrap::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    main::-webkit-scrollbar-thumb,
+    #finviz-table-wrap::-webkit-scrollbar-thumb {
+      background: transparent;
+      border-radius: 4px;
+      transition: background 0.2s;
+    }
+    main:hover::-webkit-scrollbar-thumb,
+    #finviz-table-wrap:hover::-webkit-scrollbar-thumb {
+      background: rgba(139, 148, 158, 0.35);
+    }
+    main::-webkit-scrollbar-thumb:hover,
+    #finviz-table-wrap::-webkit-scrollbar-thumb:hover {
+      background: rgba(139, 148, 158, 0.6);
+    }
+    main > .view {
+      display: none;
+      flex-direction: column;
+      gap: 16px;
+      max-width: 1200px;
+    }
+    main > .view.active {
+      display: flex;
+    }
+    .panel {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 16px 20px;
+    }
+    .panel h2 {
+      font-size: 13px;
+      font-weight: 600;
+      margin: 0 0 12px 0;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+    }
+    /* Pills (status chips). */
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 500;
+      background: #21262d;
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+    .pill .label {
+      color: var(--text-muted);
+      font-weight: 500;
+      letter-spacing: 0.3px;
+    }
+    .pill .label::after {
+      content: ':';
+      margin-right: 2px;
+    }
+    .pill .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      flex-shrink: 0;
+    }
+    .pill.ok    .dot { background: var(--ok); }
+    .pill.warn  .dot { background: var(--warn); }
+    .pill.err   .dot { background: var(--err); }
+    .pill.info  .dot { background: var(--info); }
+    .pill.ok    .value { color: var(--ok); }
+    .pill.warn  .value { color: var(--warn); }
+    .pill.err   .value { color: var(--err); }
+    .pill.info  .value { color: var(--info); }
+    .pill.time .dot { display: none; }
+    .pill.time .value { color: var(--text); }
+    .placeholder {
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+    .placeholder code {
+      background: #21262d;
+      padding: 2px 6px;
+      border-radius: 3px;
+      color: var(--accent);
+      font-size: 12px;
+    }
+    .stub {
+      color: var(--text-muted);
+      font-size: 13px;
+      padding: 32px 20px;
+      text-align: center;
+      border: 1px dashed var(--border);
+      border-radius: 6px;
+      background: var(--bg-panel);
+    }
+    .stub strong { color: var(--text); }
+    /* ----- Scanner view: panel header, refresh button, tags, table ----- */
+    .panel-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .panel-header h2 { margin-bottom: 0; }
+    .panel-header .meta {
+      color: var(--text-muted);
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    button.refresh {
+      background: #21262d;
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 11px;
+      padding: 3px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    button.refresh:hover { background: #30363d; }
+    .tag {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 11px;
+      font-weight: 500;
+      background: #21262d;
+      color: var(--text);
+      border: 1px solid var(--border);
+      font-variant-numeric: tabular-nums;
+    }
+    .tag.strategy {
+      background: #1f6feb1a;
+      border-color: #1f6feb55;
+      color: #79c0ff;
+    }
+    /* Short-side setup badges (P1a/P2a/P3a) in red so the user can
+       instantly distinguish bullish vs bearish setups in the Setup column. */
+    .tag.strategy.short {
+      background: #f851491a;
+      border-color: #f8514955;
+      color: #ff7b72;
+    }
+    .tag.tier-A { background: #3fb95022; border-color: #3fb95055; color: var(--ok); }
+    .tag.tier-B { background: #d2992222; border-color: #d2992255; color: var(--warn); }
+    .tag.tier-C { background: #8b949e22; border-color: #8b949e55; color: var(--text-muted); }
+    table.scanner {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    table.scanner thead th {
+      text-align: left;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border);
+      color: var(--text-muted);
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    table.scanner tbody td {
+      padding: 8px 10px;
+      border-bottom: 1px solid #21262d;
+      font-variant-numeric: tabular-nums;
+    }
+    table.scanner tbody tr:last-child td { border-bottom: none; }
+    table.scanner tbody tr:hover { background: #1c2128; cursor: pointer; }
+    table.scanner tbody tr[data-symbol]:hover td.sym { text-decoration: underline; }
+    table.scanner tbody tr[data-symbol]:hover td.sym::after {
+      content: ' \2197';     /* up-right arrow hint */
+      font-size: 10px;
+      color: var(--text-muted);
+      margin-left: 4px;
+    }
+    table.scanner td.sym { font-weight: 600; color: var(--accent); }
+    table.scanner td.num { text-align: right; color: var(--text); }
+    table.scanner td.muted { color: var(--text-muted); }
+    .empty-state {
+      color: var(--text-muted);
+      font-size: 13px;
+      padding: 24px;
+      text-align: center;
+    }
+    /* ----- Setup-matches panel: one card per setup ----- */
+    .setup-group {
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      margin-bottom: 12px;
+      background: #0d1117;
+      overflow: hidden;
+    }
+    .setup-group:last-child { margin-bottom: 0; }
+    .setup-group-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      background: #161b22;
+      border-bottom: 1px solid var(--border);
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .setup-group.empty .setup-group-header { border-bottom: none; }
+    .setup-group .title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      letter-spacing: 0.3px;
+    }
+    .setup-group .summary {
+      color: var(--text-muted);
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+    }
+    .setup-group .summary strong { color: var(--text); }
+    .setup-group .summary.ok strong   { color: var(--ok); }
+    .setup-group .summary.warn strong { color: var(--warn); }
+    .setup-group .summary.err strong  { color: var(--err); }
+    .setup-group .body {
+      padding: 8px 0;
+    }
+    .setup-group.empty .body { display: none; }
+    .setup-group .note {
+      padding: 10px 14px;
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+    .setup-group .note.err   { color: var(--err); }
+    .setup-group .note.warn  { color: var(--warn); }
+    .setup-group .note code {
+      background: #21262d;
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-size: 11px;
+    }
+    .matches-status.ok  strong { color: var(--ok); }
+    .matches-status.err strong { color: var(--err); }
+
+    /* ----- Scanner view: two-pane layout -----
+       Left pane: Watchlist column at 270px (1.5x sidebar), internally
+                  scrollable, FLUSH against the nav sidebar (no gap,
+                  no rounded outer edge -- it visually extends the
+                  sidebar as a second navigation/watchlist column).
+       Right pane: TradingView chart that updates when a watchlist
+                   row is clicked. Fills remaining width.
+       Other views keep their default column-stack layout. */
+    /* `[data-view^="scanner"]` matches both `scanner` and `scanner2`
+       (Scanner 2 page added 2026-05-27 -- same layout, different
+       Finviz URL). Prefix selector keeps the layout rules DRY. */
+    main > .view[data-view^="scanner"] {
+      max-width: none;
+      flex-direction: row;
+      height: 100%;
+      gap: 0;                /* flush -- no gap between watchlist and chart */
+      overflow: hidden;
+      /* Cancel main's padding so the watchlist sits flush against the
+         actual nav sidebar on the left and the chart goes edge-to-
+         edge on the right. Achieved via negative margins matching
+         main's padding (24px on all sides). */
+      margin: -24px;
+    }
+    /* LEFT pane: Watchlist panel, sidebar-flush look */
+    main > .view[data-view^="scanner"] > section.panel:first-of-type {
+      width: 270px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      padding: 12px 14px;
+      border-radius: 0;            /* flush edge -- no rounding */
+      border-top: none;
+      border-left: none;
+      border-bottom: none;
+      border-right: 1px solid var(--border);
+    }
+    main > .view[data-view^="scanner"] .panel-header {
+      flex-wrap: wrap;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+    main > .view[data-view^="scanner"] .panel-header .meta {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 11px;
+    }
+    /* Scanner 2 signal-picker (Finviz signal dropdown). Sits between
+       the panel header and the filter pills. User request 2026-05-27:
+       dropdown to choose a Finviz pattern signal (Double Bottom etc.)
+       as the Scanner 2 universe. */
+    .signal-picker {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 4px 0 10px 0;
+      font-size: 11px;
+      flex-shrink: 0;
+    }
+    .signal-picker label {
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+    .signal-picker select {
+      flex: 1;
+      background: #0d1117;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 3px 6px;
+      font-size: 11px;
+      font-family: inherit;
+      cursor: pointer;
+      min-width: 0;          /* allow flex shrink so it fits 270px column */
+    }
+    .signal-picker select:hover { border-color: var(--accent); }
+    .signal-picker select:focus { outline: none; border-color: var(--accent); }
+    /* Finviz filter pills (replaces the raw-URL display under the
+       Watchlist header). One pill per filter code in the Finviz
+       URL's `f=` param, formatted via formatFinvizFilter() in JS. */
+    .filter-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin: 0 0 10px 0;
+      flex-shrink: 0;
+    }
+    .filter-pill {
+      font-size: 10px;
+      padding: 2px 7px;
+      background: #21262d;
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      white-space: nowrap;
+      line-height: 1.4;
+      cursor: help;             /* hover -> tooltip shows the raw code */
+    }
+    /* The list itself is the scrollable region; everything else stays put. */
+    main > .view[data-view^="scanner"] [id^="finviz-table-wrap"] {
+      flex: 1;
+      overflow-y: auto;
+      min-height: 0;
+      /* tiny right padding so the scrollbar doesn't clip the row borders */
+      padding-right: 2px;
+      margin-right: -2px;
+    }
+
+    /* RIGHT pane: TradingView chart panel -- also flush, no rounding */
+    .scanner-chart-panel {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      padding: 0 !important;
+      border-radius: 0;
+      border: none;
+    }
+    /* The JS widget mounts inside this div and uses autosize:true to
+       fill the wrapper. Keep it positioned absolutely so the
+       placeholder overlay can sit on top until a symbol is loaded. */
+    #tv-chart-container {
+      width: 100%;
+      height: 100%;
+    }
+    .chart-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      flex-shrink: 0;
+      background: var(--bg-panel);
+    }
+    .chart-header .label { color: var(--text-muted); }
+    .chart-header .chart-symbol {
+      color: var(--accent);
+      font-weight: 600;
+      font-size: 14px;
+      font-variant-numeric: tabular-nums;
+    }
+    .chart-header .external-link {
+      margin-left: auto;
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 11px;
+      padding: 3px 9px;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+    }
+    .chart-header .external-link:hover {
+      color: var(--accent);
+      border-color: var(--accent);
+    }
+    .chart-iframe-wrap {
+      flex: 1;
+      position: relative;
+      min-height: 0;
+      background: var(--bg);
+    }
+    .chart-iframe-wrap iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+      display: block;
+    }
+    .chart-placeholder {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      font-size: 13px;
+      background: var(--bg-panel);
+      pointer-events: none;
+      text-align: center;
+      padding: 20px;
+    }
+    .chart-placeholder.hidden { display: none; }
+    /* S/R strip below the chart header. Compact pill row: R / S / P3 retest.
+       Hidden until the first /chart/sr_levels response lands. */
+    .sr-strip {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-panel);
+      flex-shrink: 0;
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+    }
+    .sr-pill {
+      padding: 2px 8px;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      color: var(--text-muted);
+      background: #0d1117;
+      white-space: nowrap;
+    }
+    .sr-pill .sr-val {
+      color: var(--text);
+      margin-left: 4px;
+    }
+    .sr-pill.sr-r  { border-color: rgba(248, 81, 73,  0.35); }
+    .sr-pill.sr-r  .sr-val { color: #f85149; }
+    .sr-pill.sr-s  { border-color: rgba(63, 185, 80,  0.35); }
+    .sr-pill.sr-s  .sr-val { color: #3fb950; }
+    .sr-pill.sr-p3 { border-color: rgba(187, 128, 9,  0.35); }
+    .sr-pill.sr-p3 .sr-val { color: #d29922; }
+    .sr-pill.empty .sr-val { color: var(--text-muted); }
+    /* The Finviz panel inside the scanner view: compact stacked cards
+       instead of a wide table, since the narrow column can't comfortably
+       fit a multi-column tabular layout. */
+    .finviz-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .finviz-row {
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: #0d1117;
+      cursor: pointer;
+      transition: background 0.1s, border-color 0.1s;
+    }
+    .finviz-row:hover { background: #1c2128; }
+    .finviz-row.matched {
+      border-color: rgba(63, 185, 80, 0.35);
+      background: rgba(63, 185, 80, 0.04);
+    }
+    .finviz-row.matched:hover { background: rgba(63, 185, 80, 0.08); }
+    .finviz-row .line1 {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .finviz-row .rank {
+      color: var(--text-muted);
+      font-size: 10px;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+      min-width: 24px;
+    }
+    .finviz-row .sym { color: var(--accent); }
+    .finviz-row.matched .sym { color: var(--ok); }
+    .finviz-row .badge-group {
+      margin-left: auto;
+      display: flex;
+      gap: 3px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .finviz-row .badge-group .tag {
+      font-size: 10px;
+      padding: 1px 5px;
+    }
+    .finviz-row .line2 {
+      display: flex;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+      margin-top: 1px;
+      padding-left: 30px;   /* align with text after the #rank column */
+    }
+    .finviz-row .line2 .sep { opacity: 0.4; }
+    /* ----- Scanner view: dropdown control row + scan log ----- */
+    .scan-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+    .scan-controls label {
+      color: var(--text-muted);
+      font-size: 12px;
+      letter-spacing: 0.3px;
+    }
+    .scan-controls select {
+      background: #21262d;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 6px 10px;
+      font-size: 13px;
+      font-family: inherit;
+      cursor: pointer;
+      min-width: 280px;
+    }
+    .scan-controls select:focus {
+      outline: 1px solid var(--accent);
+      outline-offset: -1px;
+    }
+    .scan-controls select option:disabled {
+      color: var(--text-muted);
+    }
+    .scan-stats {
+      color: var(--text-muted);
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+      margin-bottom: 10px;
+    }
+    .scan-stats strong {
+      color: var(--text);
+      font-weight: 600;
+    }
+    .age-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 3px;
+      font-size: 11px;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+    }
+    .age-badge.fresh { background: #3fb95022; color: var(--ok); border: 1px solid #3fb95055; }
+    .age-badge.stale { background: #d2992222; color: var(--warn); border: 1px solid #d2992255; }
+    .age-badge.ancient { background: #f8514922; color: var(--err); border: 1px solid #f8514955; }
+    .age-badge.never { background: #8b949e22; color: var(--text-muted); border: 1px solid #8b949e55; }
+    button.scan-btn, button.refresh-data {
+      color: #fff;
+      border: none;
+      padding: 6px 16px;
+      border-radius: 4px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      letter-spacing: 0.3px;
+    }
+    button.scan-btn { background: var(--accent); }
+    button.scan-btn:hover:not(:disabled) { background: #4493f8; }
+    button.refresh-data { background: #30363d; color: var(--text); border: 1px solid var(--border); }
+    button.refresh-data:hover:not(:disabled) { background: #444c56; }
+    button.scan-btn:disabled, button.refresh-data:disabled {
+      background: #30363d;
+      color: var(--text-muted);
+      cursor: not-allowed;
+    }
+    button.scan-btn.running { background: var(--warn); }
+    .scan-log {
+      display: none;
+      margin-top: 12px;
+      padding: 10px 12px;
+      background: #0d1117;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-family: 'Consolas', 'Monaco', monospace;
+      font-size: 11px;
+      color: var(--text-muted);
+      max-height: 280px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .scan-log.show { display: block; }
+    .scan-log.err  { border-color: #f8514955; }
+    .scan-log.ok   { border-color: #3fb95055; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>TST · trend &amp; swing</h1>
+    <div class="status-bar" id="status-bar">
+      <span class="pill time" id="pill-local">
+        <span class="label">Local</span>
+        <span class="value" id="pill-local-value">--:--:--</span>
+      </span>
+      <span class="pill time" id="pill-et">
+        <span class="label">ET</span>
+        <span class="value" id="pill-et-value">--:--:--</span>
+      </span>
+      <span class="pill" id="pill-stage">
+        <span class="label">Stage</span>
+        <span class="dot"></span>
+        <span class="value" id="pill-stage-value">...</span>
+      </span>
+      <span class="pill" id="pill-ibkr">
+        <span class="label">IBKR</span>
+        <span class="dot"></span>
+        <span class="value" id="pill-ibkr-value">...</span>
+      </span>
+      <span class="pill" id="pill-alpaca">
+        <span class="label">Alpaca</span>
+        <span class="dot"></span>
+        <span class="value" id="pill-alpaca-value">...</span>
+      </span>
+      <span class="pill" id="pill-data">
+        <span class="label">Price Data</span>
+        <span class="dot"></span>
+        <span class="value" id="pill-data-value">...</span>
+      </span>
+    </div>
+  </header>
+
+  <div class="shell">
+    <!--
+      SIDEBAR.
+      Order intentional: Scanner first (priority per user request
+      2026-05-27). Other functions follow but are stubs until each
+      is explicitly built.
+    -->
+    <nav class="sidebar" id="sidebar">
+      <button data-view="scanner"    class="active">Scanner</button>
+      <button data-view="scanner2">Scanner 2</button>
+      <button data-view="monitor">Monitor</button>
+      <button data-view="strategies">Strategies</button>
+      <button data-view="trades">Trades</button>
+      <button data-view="data">Data</button>
+    </nav>
+
+    <main>
+      <!-- SCANNER ---------------------------------------------------- -->
+      <div class="view active" data-view="scanner">
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Watchlist</h2>
+            <span class="meta">
+              <span id="finviz-meta">loading...</span>
+              <button class="refresh" id="finviz-refresh" title="Force-refresh from Finviz, bypassing the 1h cache">Refresh</button>
+            </span>
+          </div>
+          <div class="filter-pills" id="finviz-filters"></div>
+          <div id="finviz-table-wrap">
+            <div class="empty-state">loading Finviz tickers...</div>
+          </div>
+        </section>
+
+        <section class="panel scanner-chart-panel">
+          <div class="chart-header">
+            <span class="label">Chart:</span>
+            <span class="chart-symbol" id="chart-symbol">&mdash;</span>
+            <a id="chart-external-link" class="external-link" target="intraday_bot_tv" href="#" style="display:none">Open in TradingView &nearr;</a>
+          </div>
+          <!-- S/R strip: shows daily-chart key levels (resistance above,
+               support below, P3 retest candidates) for the currently-
+               loaded symbol. Driven by GET /chart/sr_levels. -->
+          <div class="sr-strip" id="sr-strip" style="display:none">
+            <span class="sr-pill sr-r" id="sr-r" title="Nearest mountain-anchored resistance above current price">R <span class="sr-val">&mdash;</span></span>
+            <span class="sr-pill sr-s" id="sr-s" title="Nearest mountain-valley-anchored support below current price">S <span class="sr-val">&mdash;</span></span>
+            <span class="sr-pill sr-p3" id="sr-p3" title="Broken-resistance levels now below current price (P3 retest candidates)">P3 <span class="sr-val">&mdash;</span></span>
+          </div>
+          <div class="chart-iframe-wrap">
+            <div class="chart-placeholder" id="chart-placeholder">
+              Click a ticker in the watchlist to load its chart
+            </div>
+            <!-- TradingView JS widget mounts inside this div. Used the
+                 JS widget (not the simple iframe) because we need
+                 per-study color overrides for EMA20/50/200. -->
+            <div id="tv-chart-container"></div>
+          </div>
+        </section>
+      </div>
+
+      <!-- SCANNER 2 -------------------------------------------------- -->
+      <!-- Same layout + DOM structure as Scanner; all IDs suffixed `-2`.
+           Scanner 2's universe is driven by a SIGNAL DROPDOWN (Finviz
+           pattern signals like Double Bottom, Channel Up, etc.) rather
+           than cfg.finviz_screener_url_2. User request 2026-05-27:
+           "I want to use the dropdown box to list the signal type and
+           get the tickers." -->
+      <div class="view" data-view="scanner2">
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Watchlist 2</h2>
+            <span class="meta">
+              <span id="finviz-meta-2">pick a signal...</span>
+              <button class="refresh" id="finviz-refresh-2" title="Force-refresh from Finviz, bypassing the 1h cache">Refresh</button>
+            </span>
+          </div>
+          <div class="signal-picker">
+            <label for="finviz-signal-2">Finviz signal:</label>
+            <select id="finviz-signal-2">
+              <option value="">— pick a signal —</option>
+            </select>
+          </div>
+          <div class="filter-pills" id="finviz-filters-2"></div>
+          <div id="finviz-table-wrap-2">
+            <div class="empty-state">Pick a Finviz signal above to load tickers.</div>
+          </div>
+        </section>
+
+        <section class="panel scanner-chart-panel">
+          <div class="chart-header">
+            <span class="label">Chart:</span>
+            <span class="chart-symbol" id="chart-symbol-2">&mdash;</span>
+            <a id="chart-external-link-2" class="external-link" target="intraday_bot_tv" href="#" style="display:none">Open in TradingView &nearr;</a>
+          </div>
+          <div class="sr-strip" id="sr-strip-2" style="display:none">
+            <span class="sr-pill sr-r" id="sr-r-2" title="Nearest mountain-anchored resistance above current price">R <span class="sr-val">&mdash;</span></span>
+            <span class="sr-pill sr-s" id="sr-s-2" title="Nearest mountain-valley-anchored support below current price">S <span class="sr-val">&mdash;</span></span>
+            <span class="sr-pill sr-p3" id="sr-p3-2" title="Broken-resistance levels now below current price (P3 retest candidates)">P3 <span class="sr-val">&mdash;</span></span>
+          </div>
+          <div class="chart-iframe-wrap">
+            <div class="chart-placeholder" id="chart-placeholder-2">
+              Click a ticker in the watchlist to load its chart
+            </div>
+            <div id="tv-chart-container-2"></div>
+          </div>
+        </section>
+      </div>
+
+      <!-- MONITOR ---------------------------------------------------- -->
+      <div class="view" data-view="monitor">
+        <div class="stub">
+          <strong>Monitor</strong> &mdash; what the bot is doing RIGHT NOW.<br />
+          Today's watchlist, pending orders, recent fills, live event tail.<br /><br />
+          <span class="placeholder">Not built yet. Ask Claude: <code>build the Monitor view</code>.</span>
+        </div>
+      </div>
+
+      <!-- STRATEGIES ------------------------------------------------- -->
+      <div class="view" data-view="strategies">
+        <div class="stub">
+          <strong>Strategies</strong> &mdash; per-strategy analysis.<br />
+          GUNS / DITP / OS each with their own scanner output,
+          performance, journal events.<br /><br />
+          <span class="placeholder">Not built yet. Ask Claude: <code>build the Strategies view</code>.</span>
+        </div>
+      </div>
+
+      <!-- TRADES ----------------------------------------------------- -->
+      <div class="view" data-view="trades">
+        <div class="stub">
+          <strong>Trades</strong> &mdash; orders, positions, fills.<br />
+          Open positions, pending orders, today's fills, today's P&amp;L.<br /><br />
+          <span class="placeholder">Not built yet. Ask Claude: <code>build the Trades view</code>.</span>
+        </div>
+      </div>
+
+      <!-- DATA ------------------------------------------------------- -->
+      <div class="view" data-view="data">
+        <div class="stub">
+          <strong>Data</strong> &mdash; parquets, ingest, freshness.<br />
+          Per-timeframe parquet health, ingest log tail, last refresh times,
+          missing-symbol counts.<br /><br />
+          <span class="placeholder">Not built yet. Ask Claude: <code>build the Data view</code>.</span>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    // ---------------------------------------------------------------
+    // STATUS BAR -- 6 pills (Local, ET, Stage, IBKR, Alpaca, Price Data)
+    // (See top-of-file CSS comment for design conventions.)
+    // ---------------------------------------------------------------
+
+    const $ = id => document.getElementById(id);
+
+    function setPill(id, level, valueText) {
+      const pill = $('pill-' + id);
+      const val  = $('pill-' + id + '-value');
+      pill.classList.remove('ok', 'warn', 'err', 'info');
+      if (level) pill.classList.add(level);
+      val.textContent = valueText;
+    }
+
+    const fmtLocal = new Intl.DateTimeFormat('en-GB', {
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+    });
+    const fmtET = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+    });
+    const partsET = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      hour: '2-digit', minute: '2-digit', weekday: 'short', hour12: false
+    });
+
+    function classifyStage(now) {
+      const parts = partsET.formatToParts(now);
+      const get = (t) => parts.find(p => p.type === t).value;
+      const wkd = get('weekday');
+      let hh = parseInt(get('hour'), 10);
+      const mm = parseInt(get('minute'), 10);
+      if (hh === 24) hh = 0;
+      if (wkd === 'Sat' || wkd === 'Sun') return { label: 'closed (weekend)', level: 'warn' };
+      const minutesET = hh * 60 + mm;
+      const PRE_OPEN  = 4 * 60;
+      const RTH_OPEN  = 9 * 60 + 30;
+      const RTH_CLOSE = 16 * 60;
+      const AH_CLOSE  = 20 * 60;
+      if (minutesET >= RTH_OPEN && minutesET < RTH_CLOSE) return { label: 'RTH', level: 'ok' };
+      if (minutesET >= PRE_OPEN && minutesET < RTH_OPEN)  return { label: 'pre-market', level: 'warn' };
+      if (minutesET >= RTH_CLOSE && minutesET < AH_CLOSE) return { label: 'after-hours', level: 'warn' };
+      return { label: 'closed', level: 'warn' };
+    }
+
+    function tickClocks() {
+      const now = new Date();
+      $('pill-local-value').textContent = fmtLocal.format(now);
+      $('pill-et-value').textContent    = fmtET.format(now);
+      const s = classifyStage(now);
+      setPill('stage', s.level, s.label);
+    }
+
+    function mapIbkr(h) {
+      if (h === 'up')     return { level: 'ok',   text: 'up' };
+      if (h === 'down')   return { level: 'err',  text: 'down' };
+      if (h === 'no_lib') return { level: 'warn', text: 'no ib_insync' };
+      return { level: 'warn', text: h || 'unknown' };
+    }
+    function mapAlpaca(h) {
+      if (h === 'ok')              return { level: 'ok',   text: 'ok' };
+      if (h === 'no_credentials')  return { level: 'warn', text: 'no creds' };
+      if (h === 'error')           return { level: 'err',  text: 'error' };
+      return { level: 'warn', text: h || 'unknown' };
+    }
+    function mapData(overall, summary) {
+      const txt = summary ? `${overall} (${summary})` : (overall || 'unknown');
+      if (overall === 'ok')        return { level: 'ok',   text: txt };
+      if (overall === 'warn')      return { level: 'warn', text: txt };
+      if (overall === 'critical')  return { level: 'err',  text: txt };
+      return { level: 'warn', text: txt };
+    }
+
+    async function pollSnapshot() {
+      try {
+        const r = await fetch('/snapshot', { cache: 'no-store' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const j = await r.json();
+        const ib = mapIbkr(j.health && j.health.ibkr);
+        setPill('ibkr', ib.level, ib.text);
+        const ap = mapAlpaca(j.health && j.health.alpaca);
+        setPill('alpaca', ap.level, ap.text);
+      } catch (e) {
+        setPill('ibkr',   'err', 'no /snapshot');
+        setPill('alpaca', 'err', 'no /snapshot');
+      }
+    }
+
+    async function pollData() {
+      try {
+        const r = await fetch('/data/health?timeframe=daily', { cache: 'no-store' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const j = await r.json();
+        let summary = '';
+        if (j.universe_size) {
+          const flagged = (j.stale || 0) + (j.ancient || 0) + (j.missing || 0);
+          summary = flagged > 0 ? `${flagged}/${j.universe_size} flagged` : `${j.fresh}/${j.universe_size} fresh`;
+        }
+        const m = mapData(j.overall, summary);
+        setPill('data', m.level, m.text);
+      } catch (e) {
+        setPill('data', 'err', 'no /data/health');
+      }
+    }
+
+    // Shared number formatter used by renderYfResults below.
+    // (The legacy /lists/all "Watchlist files on disk" panel + its
+    // renderScanner/loadScanner code were removed 2026-05-27 per user
+    // directive -- the dashboard is now yFinance-only for scanning.
+    // /lists/all on the backend stays available for now but has no
+    // dashboard caller.)
+    function fmtNum(n, digits) {
+      if (digits === undefined) digits = 2;
+      if (n === null || n === undefined || n === '') return '';
+      const v = typeof n === 'number' ? n : parseFloat(n);
+      if (Number.isNaN(v)) return '';
+      return v.toFixed(digits);
+    }
+
+    // ---------------------------------------------------------------
+    // SCANNER VIEW -- step 1: pull Finviz tickers
+    //
+    // Per user directive 2026-05-27 ("we do it step by step, in the
+    // dashboard, you pull out the Finviz Scanner ticker first. Then
+    // manually I can apply the setup that I am looking for"), the
+    // Scanner view now does ONE thing: list the tickers from the
+    // Finviz URL configured in cfg.finviz_screener_url. No setup
+    // detection runs here.
+    //
+    // Workflow:
+    //   1. View activates -> GET /scanner/finviz_tickers -> populate table
+    //   2. User scans the list, clicks a row to open the chart in
+    //      TradingView (existing delegation handler).
+    //   3. User decides which (if any) to apply a setup to -- step 2
+    //      of the workflow, NOT built yet. The DITP-via-yFinance
+    //      backend endpoint (POST /scanner/yf_scan) is still alive
+    //      and will be re-wired into the UI when we get there.
+    //
+    // Data shape from /scanner/finviz_tickers:
+    //   { url: "<finviz URL>", count: 43,
+    //     rows: [{symbol, price, volume}, ...] }
+    // Empty/missing URL -> backend returns 400 with a clear message,
+    // shown inline so the user knows to set config.json.
+    // ---------------------------------------------------------------
+
+    // ---------------------------------------------------------------
+    // TradingView integration -- inline chart in the right pane.
+    //
+    // User directive 2026-05-27: "add a tradingview chart that link
+    // to the watchlist". Click a watchlist row -> right-pane iframe
+    // loads that symbol via TradingView's widgetembed URL. No more
+    // popping a new browser tab on click; the chart header has a
+    // small "Open in TradingView ↗" link for users who want the full
+    // TradingView page (still uses the named-target reuse pattern so
+    // there's at most one external tab open across the session).
+    //
+    // Symbol form: canonical dotted form (BRK.B not BRK-B); TV
+    // accepts both, and the dotted form matches what we journal
+    // everywhere else.
+    //
+    // Event delegation on document so newly-rendered rows pick up
+    // the behaviour automatically -- no per-render rewire. Selector
+    // matches either the compact `.finviz-row` form (current Scanner
+    // view) or `table.scanner tbody tr[data-symbol]` (in case any
+    // future panel renders matches as a table).
+    // ---------------------------------------------------------------
+    function tvFullUrl(symbol) {
+      return 'https://www.tradingview.com/chart/?symbol=' + encodeURIComponent(symbol);
+    }
+
+    // -------- TradingView iframe (widgetembed) with EMAs in URL --------
+    // The JS widget's chart.createStudy() did NOT actually add EMAs on
+    // this embed despite repeated attempts -- the API surface on the
+    // free Advanced Charts widget is too inconsistent. Switching to
+    // the iframe-based widgetembed URL, which supports `studies` as a
+    // URL-encoded JSON array; this is well-documented and known to
+    // work for adding studies (just no per-instance color control,
+    // which we've already accepted).
+    //
+    // URL shape:
+    //   https://s.tradingview.com/widgetembed/
+    //     ?symbol=<SYM>&interval=D&theme=dark&style=1
+    //     &studies=[{"id":"MAExp@tv-basicstudies","inputs":{"length":20}},
+    //               {"id":"MAExp@tv-basicstudies","inputs":{"length":50}},
+    //               {"id":"MAExp@tv-basicstudies","inputs":{"length":200}}]
+    //
+    // Each ticker click rebuilds the URL and sets iframe.src -- the
+    // iframe reloads. ~1-2s reload cost vs the widget's setSymbol
+    // in-place swap, but reliably renders the three EMAs.
+    function tvWidgetUrl(symbol) {
+      const studies = [
+        { id: 'MAExp@tv-basicstudies', inputs: { length:  20 } },
+        { id: 'MAExp@tv-basicstudies', inputs: { length:  50 } },
+        { id: 'MAExp@tv-basicstudies', inputs: { length: 200 } },
+      ];
+      return 'https://s.tradingview.com/widgetembed/'
+        + '?symbol=' + encodeURIComponent(symbol)
+        + '&interval=D&theme=dark&style=1&timezone=Etc%2FUTC'
+        + '&toolbarbg=171b22&hideideas=1&hide_legend=0'
+        + '&studies=' + encodeURIComponent(JSON.stringify(studies));
+    }
+
+    function loadTvChart(idx, symbol) {
+      const placeholder = elFor(idx, 'chart-placeholder');
+      const symLabel    = elFor(idx, 'chart-symbol');
+      const extLink     = elFor(idx, 'chart-external-link');
+      const container   = elFor(idx, 'tv-chart-container');
+      const srStrip     = elFor(idx, 'sr-strip');
+
+      if (!symbol) {
+        if (container) container.innerHTML = '';
+        if (placeholder) placeholder.classList.remove('hidden');
+        symLabel.textContent = '—';
+        if (extLink) extLink.style.display = 'none';
+        if (srStrip) srStrip.style.display = 'none';
+        return;
+      }
+
+      symLabel.textContent = symbol;
+      if (extLink) {
+        extLink.style.display = '';
+        extLink.href = tvFullUrl(symbol);
+      }
+      if (placeholder) placeholder.classList.add('hidden');
+
+      // Lazily create the iframe so the first chart open replaces the
+      // placeholder. Subsequent clicks just update the src. The iframe
+      // gets a per-scanner ID so the two scanners don't share a single
+      // iframe element.
+      const iframeId = elId(idx, 'tv-chart-iframe');
+      let iframe = container.querySelector('iframe#' + iframeId);
+      if (!iframe) {
+        container.innerHTML = '';
+        iframe = document.createElement('iframe');
+        iframe.id = iframeId;
+        iframe.title = 'TradingView chart';
+        iframe.style.width = '100%';
+        iframe.style.height = '100%';
+        iframe.style.border = 'none';
+        iframe.style.display = 'block';
+        container.appendChild(iframe);
+      }
+      iframe.src = tvWidgetUrl(symbol);
+
+      // Fire S/R lookup in parallel with the chart load.
+      loadSrLevels(idx, symbol);
+    }
+
+    // ---------------------------------------------------------------
+    // S/R strip -- daily-chart key levels for the loaded symbol.
+    // GET /chart/sr_levels?symbol=<X> returns resistance_above /
+    // support_below / broken_resistance. We format each as a pill
+    // with the level price and signed ATR distance from current.
+    // Per-scanner AbortController lives on scanners[idx].srAbortController.
+    // ---------------------------------------------------------------
+    function fmtSrPill(prefix, lvl, current, atr, isAbove) {
+      if (lvl == null || current == null || atr == null || atr <= 0) {
+        return { text: '—', empty: true };
+      }
+      const dist = isAbove ? (lvl - current) / atr : (current - lvl) / atr;
+      const sign = isAbove ? '+' : '−';
+      return {
+        text: `$${lvl.toFixed(2)} (${sign}${dist.toFixed(2)} ATR)`,
+        empty: false,
+      };
+    }
+
+    async function loadSrLevels(idx, symbol) {
+      const strip = elFor(idx, 'sr-strip');
+      const rPill = elFor(idx, 'sr-r');
+      const sPill = elFor(idx, 'sr-s');
+      const p3Pill = elFor(idx, 'sr-p3');
+      if (!strip || !rPill || !sPill || !p3Pill) return;
+
+      // Show strip immediately with loading state so the user sees activity.
+      strip.style.display = 'flex';
+      [rPill, sPill, p3Pill].forEach(p => {
+        p.classList.add('empty');
+        p.querySelector('.sr-val').textContent = '…';
+      });
+
+      // Cancel any in-flight S/R fetch from a prior symbol click on
+      // THIS scanner. Each scanner has its own controller so clicking
+      // in Scanner 2 doesn't abort an in-flight Scanner 1 fetch.
+      if (scanners[idx].srAbortController) scanners[idx].srAbortController.abort();
+      scanners[idx].srAbortController = new AbortController();
+
+      try {
+        const resp = await fetch(`/chart/sr_levels?symbol=${encodeURIComponent(symbol)}`,
+          { signal: scanners[idx].srAbortController.signal });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        const current = data.current;
+        const atr = data.atr14;
+
+        // R above
+        const rLvl = data.resistance_above ? data.resistance_above.level : null;
+        const r = fmtSrPill('R', rLvl, current, atr, true);
+        rPill.classList.toggle('empty', r.empty);
+        rPill.querySelector('.sr-val').textContent = r.text;
+
+        // S below
+        const sLvl = data.support_below ? data.support_below.level : null;
+        const s = fmtSrPill('S', sLvl, current, atr, false);
+        sPill.classList.toggle('empty', s.empty);
+        sPill.querySelector('.sr-val').textContent = s.text;
+
+        // P3 retest -- show top 2 closest candidates if present (the
+        // backend already sorts closest-to-current first).
+        const broken = Array.isArray(data.broken_resistance) ? data.broken_resistance : [];
+        if (broken.length === 0 || current == null || !atr) {
+          p3Pill.classList.add('empty');
+          p3Pill.querySelector('.sr-val').textContent = '—';
+        } else {
+          const top = broken.slice(0, 2).map(d => {
+            const dist = (current - d.level) / atr;
+            return `$${d.level.toFixed(2)} (−${dist.toFixed(2)})`;
+          }).join(' · ');
+          p3Pill.classList.remove('empty');
+          p3Pill.querySelector('.sr-val').textContent = top;
+        }
+      } catch (err) {
+        if (err.name === 'AbortError') return;  // user clicked another row
+        [rPill, sPill, p3Pill].forEach(p => {
+          p.classList.add('empty');
+          p.querySelector('.sr-val').textContent = '(err)';
+        });
+        console.warn('sr_levels fetch failed:', err);
+      }
+    }
+
+    document.addEventListener('click', (ev) => {
+      // Match the compact list-row form (Scanner view) or any future
+      // setup-results table that adopts the data-symbol convention.
+      // Detect scanner index from the clicked row's parent view -- so a
+      // click in Scanner 2 loads the chart in Scanner 2's chart pane.
+      const el = ev.target.closest('.finviz-row[data-symbol], table.scanner tbody tr[data-symbol]');
+      if (!el) return;
+      const sym = el.dataset.symbol;
+      if (!sym) return;
+      const view = el.closest('[data-view]');
+      const idx = view && view.dataset.view === 'scanner2' ? 2 : 1;
+      loadTvChart(idx, sym);
+    });
+
+    function fmtVol(v) {
+      if (v === null || v === undefined) return '';
+      const n = typeof v === 'number' ? v : parseFloat(v);
+      if (Number.isNaN(n)) return '';
+      // Compact: 182,750,546 -> 182.75M ; 7,421,783 -> 7.42M ; 850k -> 850K
+      if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+      if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+      if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+      return String(n);
+    }
+
+    // Per-scanner state. Two independent watchlists (Scanner / Scanner 2)
+    // each have their own ticker cache, setup-results cache, in-flight
+    // flag, and S/R abort controller. Driven by cfg.finviz_screener_url
+    // (scanner 1) vs cfg.finviz_screener_url_2 (scanner 2). All scanner
+    // functions take an `idx` param so the same code paths serve both.
+    const scanners = {
+      1: { rowsCache: [], setupResultsCache: {}, runAllInFlight: false, srAbortController: null, signal: null },
+      2: { rowsCache: [], setupResultsCache: {}, runAllInFlight: false, srAbortController: null, signal: null },
+    };
+
+    // ID helper: scanner 1 uses unsuffixed IDs (finviz-table-wrap,
+    // finviz-meta, ...), scanner 2 uses `-2` suffix
+    // (finviz-table-wrap-2, ...). Keeps the existing IDs stable while
+    // letting Scanner 2 coexist.
+    function elId(idx, base) { return idx === 1 ? base : `${base}-${idx}`; }
+    function elFor(idx, base) { return document.getElementById(elId(idx, base)); }
+
+    function renderFinvizTable(idx) {
+      const wrap = elFor(idx, 'finviz-table-wrap');
+      const rows = scanners[idx].rowsCache;
+      if (!rows || rows.length === 0) {
+        wrap.innerHTML = '<div class="empty-state">Finviz returned 0 tickers. Either the screener filters matched nothing today, or the scrape failed -- check stderr.</div>';
+        return;
+      }
+      // Sort by setup: matched rows first (grouped by which setup
+      // matched, in SETUPS order), then unmatched rows. Within each
+      // group, preserve Finviz's original volume-desc order. The "#"
+      // column still shows the FINVIZ rank (not the display position)
+      // so the user can see where each row fell in the volume sort --
+      // useful since high-volume names tend to be the most liquid.
+      const yfSetups = SETUPS.filter(s => s.run === 'yf');
+      function primarySetupIdx(symbol) {
+        for (let i = 0; i < yfSetups.length; i++) {
+          if (candidateFor(idx, yfSetups[i], symbol)) return i;
+        }
+        return -1;
+      }
+      const indexed = rows.map((r, rowIdx) => ({
+        r, idx: rowIdx,
+        setupIdx: primarySetupIdx((r.symbol || '').toUpperCase()),
+      }));
+      indexed.sort((a, b) => {
+        const aMatchPriority = a.setupIdx >= 0 ? 0 : 1;
+        const bMatchPriority = b.setupIdx >= 0 ? 0 : 1;
+        if (aMatchPriority !== bMatchPriority) return aMatchPriority - bMatchPriority;
+        if (a.setupIdx !== b.setupIdx) return a.setupIdx - b.setupIdx;
+        return a.idx - b.idx;
+      });
+
+      // Compact card list -- one row per ticker, two lines each:
+      //   Line 1: #rank · symbol · setup-badges (right-aligned)
+      //   Line 2: $price · volume                (left-aligned to symbol)
+      // The full Symbol/Price/Volume/Setup info is preserved; just
+      // wrapped vertically so it fits the 270px-wide scanner column.
+      let html = '<div class="finviz-list">';
+      let matched = 0;
+      indexed.forEach((item) => {
+        const r = item.r;
+        const sym = (r.symbol || '').toUpperCase();
+        const isMatched = item.setupIdx >= 0;
+        if (isMatched) matched++;
+        const badges = isMatched ? setupBadgesHtml(idx, sym) : '';
+        const priceStr = (r.price !== null && r.price !== undefined)
+          ? '$' + fmtNum(r.price, 2)
+          : '';
+        const volStr = fmtVol(r.volume);
+        html += `<div class="finviz-row ${isMatched ? 'matched' : ''}" `
+          + `data-symbol="${sym}" title="Click to open ${sym} in TradingView">`
+          + '<div class="line1">'
+          +   `<span class="rank">#${item.idx + 1}</span>`
+          +   `<span class="sym">${sym}</span>`
+          +   `<span class="badge-group">${badges}</span>`
+          + '</div>'
+          + '<div class="line2">'
+          +   (priceStr ? `<span>${priceStr}</span>` : '')
+          +   (priceStr && volStr ? '<span class="sep">&middot;</span>' : '')
+          +   (volStr ? `<span>${volStr}</span>` : '')
+          + '</div>'
+          + '</div>';
+      });
+      html += '</div>';
+      wrap.innerHTML = html;
+      // Update the panel header meta with the live match count.
+      const meta = elFor(idx, 'finviz-meta');
+      if (meta && meta.dataset.baseCount !== undefined) {
+        const base = meta.dataset.baseCount;
+        const fetchedAt = meta.dataset.fetchedAt || '';
+        const ranSetups = Object.keys(scanners[idx].setupResultsCache).length;
+        const matchStr = ranSetups > 0
+          ? ` &middot; <strong>${matched}</strong> matched`
+          : '';
+        meta.innerHTML = `<strong>${base}</strong> tickers${matchStr} &middot; fetched ${fetchedAt}`;
+      }
+    }
+
+    // ---------------------------------------------------------------
+    // Finviz filter pretty-printer.
+    //
+    // The Finviz screener URL embeds its criteria in the `f=` query
+    // param as a comma-separated list of opaque codes like
+    // `cap_midover,sh_price_o20,ta_averagetruerange_o2,...`. The user
+    // doesn't want to read the raw URL; they want the criteria shown
+    // as readable labels.
+    //
+    // formatFinvizFilter(code) returns a short human label. Known
+    // single-token codes are in FINVIZ_FILTER_LABELS; parametric
+    // codes (price/atr/beta/vol thresholds) are matched with regex.
+    // Unknown codes fall back to the raw code so we never hide info
+    // -- the tooltip on each pill always shows the raw code anyway.
+    // ---------------------------------------------------------------
+    const FINVIZ_FILTER_LABELS = {
+      // Market cap (mutually exclusive selectors)
+      'cap_nano':       'Nano Cap',
+      'cap_micro':      'Micro Cap',
+      'cap_small':      'Small Cap',
+      'cap_mid':        'Mid Cap',
+      'cap_large':      'Large Cap',
+      'cap_mega':       'Mega Cap',
+      'cap_microover':  'Micro Cap+',
+      'cap_smallover':  'Small Cap+',
+      'cap_midover':    'Mid Cap+',
+      'cap_largeover':  'Large Cap+',
+      'cap_megaover':   'Mega Cap+',
+      'cap_smallunder': 'Small Cap or less',
+      'cap_midunder':   'Mid Cap or less',
+      'cap_largeunder': 'Large Cap or less',
+      // Geography
+      'geo_usa':        'US-listed',
+      'geo_foreign':    'Non-US',
+    };
+
+    function fmtCompactNum(n) {
+      if (n >= 1e9) return (n / 1e9).toFixed(n % 1e9 === 0 ? 0 : 1) + 'B';
+      if (n >= 1e6) return (n / 1e6).toFixed(n % 1e6 === 0 ? 0 : 1) + 'M';
+      if (n >= 1e3) return (n / 1e3).toFixed(n % 1e3 === 0 ? 0 : 1) + 'K';
+      return String(n);
+    }
+
+    function formatFinvizFilter(code) {
+      if (FINVIZ_FILTER_LABELS[code]) return FINVIZ_FILTER_LABELS[code];
+      let m;
+      // Avg volume. Finviz uses two formats:
+      //   sh_avgvol_o<N>   -> over N thousand shares  (N in thousands)
+      //   sh_avgvol_<N>to  -> N and up (raw shares; the Elite range form)
+      //   sh_avgvol_u<N>   -> under N thousand
+      if ((m = code.match(/^sh_avgvol_o(\d+(?:\.\d+)?)$/))) {
+        return 'Avg Vol > ' + fmtCompactNum(parseFloat(m[1]) * 1000);
+      }
+      if ((m = code.match(/^sh_avgvol_(\d+(?:\.\d+)?)to$/))) {
+        return 'Avg Vol ≥ ' + fmtCompactNum(parseFloat(m[1]));
+      }
+      if ((m = code.match(/^sh_avgvol_u(\d+(?:\.\d+)?)$/))) {
+        return 'Avg Vol < ' + fmtCompactNum(parseFloat(m[1]) * 1000);
+      }
+      // Price ($)
+      if ((m = code.match(/^sh_price_o(\d+(?:\.\d+)?)$/))) return 'Price > $' + m[1];
+      if ((m = code.match(/^sh_price_u(\d+(?:\.\d+)?)$/))) return 'Price < $' + m[1];
+      // ATR ($)
+      if ((m = code.match(/^ta_averagetruerange_o(\d+(?:\.\d+)?)$/))) return 'ATR > $' + m[1];
+      if ((m = code.match(/^ta_averagetruerange_u(\d+(?:\.\d+)?)$/))) return 'ATR < $' + m[1];
+      // Beta (scale-free)
+      if ((m = code.match(/^ta_beta_o(\d+(?:\.\d+)?)$/))) return 'Beta > ' + m[1];
+      if ((m = code.match(/^ta_beta_u(\d+(?:\.\d+)?)$/))) return 'Beta < ' + m[1];
+      // Volatility (% Week). Common forms first; Finviz's multi-select
+      // can produce odd-looking compound codes (e.g. `2tox2to`) -- show
+      // them raw so the user sees something.
+      if ((m = code.match(/^ta_volatility_o(\d+(?:\.\d+)?)$/))) return 'Volatility > ' + m[1] + '%';
+      if ((m = code.match(/^ta_volatility_u(\d+(?:\.\d+)?)$/))) return 'Volatility < ' + m[1] + '%';
+      if ((m = code.match(/^ta_volatility_(\d+)to(\d+)$/)))  return 'Volatility ' + m[1] + '-' + m[2] + '%';
+      if ((m = code.match(/^ta_volatility_(.+)$/)))           return 'Volatility: ' + m[1];
+      // IPO age
+      if ((m = code.match(/^ipodate_morethan(\d+)y$/))) return 'IPO > ' + m[1] + 'y';
+      if ((m = code.match(/^ipodate_lessthan(\d+)y$/))) return 'IPO < ' + m[1] + 'y';
+      // Fallback
+      return code;
+    }
+
+    function parseFinvizFilters(url) {
+      if (!url) return [];
+      const m = url.match(/[?&]f=([^&#]+)/);
+      if (!m) return [];
+      return decodeURIComponent(m[1]).split(',').map(s => s.trim()).filter(Boolean);
+    }
+
+    function renderFinvizFilters(idx, url) {
+      const wrap = elFor(idx, 'finviz-filters');
+      if (!wrap) return;
+      const filters = parseFinvizFilters(url);
+      if (filters.length === 0) {
+        wrap.innerHTML = '<span class="filter-pill" style="opacity:0.6">no filters</span>';
+        return;
+      }
+      // Each pill shows the human label; tooltip carries the raw code
+      // so the user can still see the underlying Finviz filter when
+      // they hover (useful for debugging an unfamiliar code).
+      wrap.innerHTML = filters
+        .map(f => `<span class="filter-pill" title="${f}">${formatFinvizFilter(f)}</span>`)
+        .join('');
+    }
+
+    async function loadFinvizTickers(idx, forceRefresh) {
+      const wrap = elFor(idx, 'finviz-table-wrap');
+      const meta = elFor(idx, 'finviz-meta');
+      // Scanner 2 with no signal picked: show empty state, don't fetch.
+      const signal = scanners[idx].signal;
+      if (idx === 2 && !signal) {
+        wrap.innerHTML = '<div class="empty-state">Pick a Finviz signal above to load tickers.</div>';
+        meta.textContent = 'pick a signal...';
+        meta.dataset.baseCount = '0';
+        scanners[idx].rowsCache = [];
+        scanners[idx].setupResultsCache = {};
+        return;
+      }
+      meta.textContent = forceRefresh ? 'refreshing from Finviz...' : 'loading...';
+      try {
+        const qs = new URLSearchParams();
+        if (forceRefresh) qs.set('force_refresh', 'true');
+        if (idx !== 1) qs.set('scanner', String(idx));
+        if (signal)    qs.set('signal', signal);
+        const url = `/scanner/finviz_tickers${qs.toString() ? '?' + qs.toString() : ''}`;
+        const r = await fetch(url, { cache: 'no-store' });
+        if (!r.ok) {
+          let detail = `HTTP ${r.status}`;
+          try { const j = await r.json(); if (j && j.detail) detail += ` -- ${j.detail}`; } catch {}
+          throw new Error(detail);
+        }
+        const j = await r.json();
+        // Render the human-readable filter criteria (replaces the raw
+        // URL display). Backend still returns the full URL so the
+        // tooltip on each pill can show its raw code.
+        renderFinvizFilters(idx, j.url);
+        // Stash base count + fetched timestamp on the meta element so
+        // renderFinvizTable can rebuild the header string with live
+        // match counts as setups complete.
+        meta.dataset.baseCount = String(j.count);
+        meta.dataset.fetchedAt = new Date().toLocaleTimeString();
+        scanners[idx].rowsCache = j.rows || [];
+        // Refreshing the universe invalidates any prior setup-run results --
+        // they were computed against the old ticker set. Drop the cache,
+        // re-render the (now-empty Setup column) table, then maybe kick
+        // off the setup runs.
+        scanners[idx].setupResultsCache = {};
+        renderFinvizTable(idx);
+        // Scanner 1 auto-runs the P1/P2/P3/EMA/P1a/P2a/P3a detectors
+        // against the Finviz universe -- our scope is to find DITP
+        // setups inside a quality-filtered ticker list.
+        //
+        // Scanner 2 does NOT run those detectors -- user rule
+        // 2026-05-27: "for scanner 2 we are not applying the
+        // patterns." Scanner 2's universe IS already a Finviz
+        // pattern scan (Double Bottom / Channel Up / Wedge / etc.);
+        // running our own pattern detection on top would be
+        // redundant. User browses the signal-matched tickers
+        // directly, clicks any row for chart + S/R strip.
+        if (idx === 1) runAllSetups(idx);
+      } catch (e) {
+        wrap.innerHTML = `<div class="empty-state">Error: ${e.message}</div>`;
+        meta.textContent = '';
+      }
+    }
+
+    document.getElementById('finviz-refresh')  .addEventListener('click', () => loadFinvizTickers(1, true));
+    document.getElementById('finviz-refresh-2').addEventListener('click', () => loadFinvizTickers(2, true));
+
+    // -----------------------------------------------------------------
+    // SETUP MATCHES PANEL
+    //
+    // Iterates all known setups, runs each against the SAME universe
+    // the Finviz panel pulled (cfg.finviz_screener_url resolved
+    // server-side in _universe_for_setup), and groups the results by
+    // setup name.
+    //
+    // Each setup entry in SETUPS is either:
+    //   { key, label, run: 'yf' }        -- backed by /scanner/yf_scan
+    //   { key, label, run: 'stub', note} -- not wired yet; renders the
+    //                                       note text and skips the
+    //                                       network call
+    //
+    // Add new setups by appending to SETUPS. No other code change
+    // needed -- the renderer is fully data-driven.
+    //
+    // Single batched call (2026-05-28): runAllSetups POSTs to
+    // /scanner/yf_scan_all which does ONE yFinance batch fetch and
+    // runs all 7 detectors against the shared in-memory bars cache.
+    // The legacy per-setup loop (one POST per setup, each with its
+    // own yFinance fetch) was ~7x slower for a 45-ticker universe
+    // (~70-90s -> ~12-18s). runOneSetup() is kept below for the
+    // optional single-setup API path.
+    // -----------------------------------------------------------------
+    // Setup registry. Drives:
+    //   - The async run loop in runAllSetups (only run: 'yf' entries)
+    //   - The Setup column rendering in the Finviz table:
+    //       `badgeText(candidate)` = the compact label shown in the column
+    //         (P1 / P2 / P3 / EMA20 / EMA50 / EMA200). User rule
+    //         2026-05-27: "on the label, just label it EMA20, EMA50,
+    //         EMA200, P1, P2, P3 at the watchlist" -- no inline detail
+    //         in the visible badge.
+    //       `tooltipDetail(candidate)` = the hover text appended to
+    //         `label` (price, bounce magnitude, variant -- the diagnostic
+    //         numbers that used to bloat the badge text).
+    // Adding a new setup = append an entry; no other code change.
+    const SETUPS = [
+      {
+        key:        'p1_rebound',
+        label:      'DITP P1 - Rebound off horizontal support',
+        shortLabel: 'P1',
+        run:        'yf',
+        badgeText:  () => 'P1',
+        tooltipDetail: c => {
+          if (c.support_level == null) return '';
+          const lvl = `$${Number(c.support_level).toFixed(2)}`;
+          if (c.bounce_magnitude_atr != null) {
+            return `S=${lvl}, bounce ${Number(c.bounce_magnitude_atr).toFixed(2)}xATR`;
+          }
+          return `S=${lvl}`;
+        },
+      },
+      {
+        key:        'ditp',
+        label:      'DITP P2 - Resistance breakout',
+        shortLabel: 'P2',
+        run:        'yf',
+        badgeText:  () => 'P2',
+        tooltipDetail: c => (c.tier || c.variant)
+          ? `tier ${c.tier || '?'} / variant ${c.variant || '?'}`
+          : '',
+      },
+      {
+        key:        'p3_retest',
+        label:      'DITP P3 - Retest of broken resistance',
+        shortLabel: 'P3',
+        run:        'yf',
+        badgeText:  () => 'P3',
+        tooltipDetail: c => {
+          if (c.polarity_level == null) return '';
+          const lvl = `$${Number(c.polarity_level).toFixed(2)}`;
+          if (c.bounce_magnitude_atr != null) {
+            return `flip=${lvl}, bounce ${Number(c.bounce_magnitude_atr).toFixed(2)}xATR`;
+          }
+          return `flip=${lvl}`;
+        },
+      },
+      {
+        key:        'ema_rebound',
+        label:      'EMA rebound (20 / 50 / 200)',
+        shortLabel: 'EMA',
+        run:        'yf',
+        // EMA rebound's badge IS the anchor EMA (EMA20 / EMA50 / EMA200)
+        // -- which EMA acted as support is the signal the user wants to
+        // see at a glance, not a generic "EMA" tag. Fallback to "EMA"
+        // if the field is somehow missing. Tooltip surfaces the bounce
+        // magnitude (v1.1.0) + rebound type (v1.2.0 -- "pin through" when
+        // close is below EMA but bar is a clear pin bar) + prior trade-
+        // through count at the same EMA (v1.3.0 conviction signal).
+        badgeText:  c => c.ema_anchor || 'EMA',
+        tooltipDetail: c => {
+          if (!c.ema_anchor) return '';
+          const parts = [`bounce off ${c.ema_anchor}`];
+          if (c.rebound_type === 'pin_through') {
+            parts.push('pin bar through EMA');
+          }
+          if (c.bounce_magnitude_atr != null) {
+            parts.push(`${Number(c.bounce_magnitude_atr).toFixed(2)}xATR`);
+          }
+          if (c.prior_tests_count != null && c.prior_tests_count > 0) {
+            parts.push(`${c.prior_tests_count} prior tests`);
+          }
+          return parts.join(', ');
+        },
+      },
+      {
+        // EMA watch (pre-confirmation) added 2026-05-29 per user note
+        // "AAOI is also EMA20 candidate". The strict EMA rebound detector
+        // requires today's bar to be the confirmation candle (bullish
+        // close OR pin bar); AAOI today is bearish, so rebound skips it.
+        // This watch surface keeps in-progress pullbacks on the radar:
+        // trend stack intact + close near EMA + recent touch. Tomorrow's
+        // bar is where the confirmation lands.
+        key:        'ema_watch',
+        label:      'EMA watch (pre-confirmation pullback to 20 / 50 / 200)',
+        shortLabel: 'EMAw',
+        run:        'yf',
+        // Suffix the anchor EMA with "w" so the badge is visually
+        // distinct from the confirmed-rebound EMA20/EMA50/EMA200 badges.
+        badgeText:  c => (c.ema_anchor || 'EMA') + 'w',
+        tooltipDetail: c => {
+          if (!c.ema_anchor) return '';
+          const parts = [`watching ${c.ema_anchor}`];
+          if (c.watch_state) parts.push(c.watch_state.toLowerCase().replace('_', ' '));
+          if (c.pierced_today && c.pierce_depth_atr != null && c.pierce_depth_atr > 0) {
+            parts.push(`pierced ${Number(c.pierce_depth_atr).toFixed(2)}xATR today`);
+          }
+          if (c.distance_atr != null) {
+            const d = Number(c.distance_atr);
+            const sign = d >= 0 ? '+' : '';
+            parts.push(`close ${sign}${d.toFixed(2)}xATR vs EMA`);
+          }
+          return parts.join(', ');
+        },
+      },
+      {
+        // TC breakout (Trend Continuation) added 2026-05-29 per user
+        // batch: "SNDK should be trend continuation and P3 candidate /
+        // APLD should be a trend continuation candidate / ORCL is a
+        // Trend continuation candidate, P2 resistance broken".
+        // Self-contained: identifies Day 0 / Day +1 / Day +2
+        // continuation patterns from price action alone (no prior P2
+        // watchlist dependency, unlike tc_scanner.py).
+        key:        'tc_breakout',
+        label:      'TC - Trend continuation (post-breakout Day 0-5)',
+        shortLabel: 'TC',
+        run:        'yf',
+        // Badge shows the day-since-breakout to immediately surface
+        // freshness (Day 0 = today's breakout, Day +5 = stale).
+        badgeText:  c => (c.days_since_breakout != null) ? `TC+${c.days_since_breakout}` : 'TC',
+        tooltipDetail: c => {
+          if (c.breakout_level == null) return '';
+          const parts = [`broke $${Number(c.breakout_level).toFixed(2)} (Day +${c.days_since_breakout ?? '?'})`];
+          if (c.extension_atr != null) {
+            parts.push(`ext ${Number(c.extension_atr).toFixed(2)}xATR`);
+          }
+          return parts.join(', ');
+        },
+      },
+      // ---- Short-side setups (user framework reintegration 2026-05-27) ----
+      // "P1 and P3 inverse will be P1a and P3a -- which is shorting setup."
+      //   P1a = bearish rejection at resistance (failed P2)
+      //   P2a = pending breakdown of support (mirror of P2)
+      //   P3a = retest of broken support as resistance (mirror of P3)
+      {
+        key:        'p1a_rejection',
+        label:      'DITP P1a - Bearish rejection at resistance (failed P2)',
+        shortLabel: 'P1a',
+        run:        'yf',
+        badgeText:  () => 'P1a',
+        tooltipDetail: c => {
+          if (c.resistance_level == null) return '';
+          const lvl = `$${Number(c.resistance_level).toFixed(2)}`;
+          if (c.reaction_atr != null) {
+            return `R=${lvl}, fall ${Number(c.reaction_atr).toFixed(2)}xATR`;
+          }
+          return `R=${lvl}`;
+        },
+      },
+      {
+        key:        'p2a_breakdown',
+        label:      'DITP P2a - Pending breakdown below support',
+        shortLabel: 'P2a',
+        run:        'yf',
+        badgeText:  () => 'P2a',
+        tooltipDetail: c => {
+          if (c.support_level == null) return '';
+          return `S=$${Number(c.support_level).toFixed(2)} (about to break)`;
+        },
+      },
+      {
+        key:        'p3a_retest',
+        label:      'DITP P3a - Retest of broken support as resistance',
+        shortLabel: 'P3a',
+        run:        'yf',
+        badgeText:  () => 'P3a',
+        tooltipDetail: c => {
+          if (c.polarity_level == null) return '';
+          const lvl = `$${Number(c.polarity_level).toFixed(2)}`;
+          if (c.reaction_atr != null) {
+            return `flip=${lvl}, fall ${Number(c.reaction_atr).toFixed(2)}xATR`;
+          }
+          return `flip=${lvl}`;
+        },
+      },
+      // Stubs kept in the registry so we remember they exist + can flip
+      // their `run` to 'yf' when the backend dispatch lands. They never
+      // appear in the Setup column (no candidates -> no badges).
+      {
+        key:    'ditp_tc',
+        label:  'DITP TC - Day-0 trend continuation',
+        run:    'stub',
+        note:   'Not wired for yFinance yet. TC needs the prior P2 watchlist in memory.',
+      },
+      {
+        key:    'guns',
+        label:  'GUNS - Momentum gappers',
+        run:    'stub',
+        note:   'Intraday-only setup -- needs IBKR live momentum scan.',
+      },
+    ];
+
+    // Look up candidate dict for a given symbol within a setup's results,
+    // scoped to the given scanner index (1 or 2 -- separate caches).
+    function candidateFor(idx, setup, symbol) {
+      const result = scanners[idx].setupResultsCache[setup.key];
+      if (!result || !Array.isArray(result.candidates)) return null;
+      const upper = symbol.toUpperCase();
+      return result.candidates.find(c => (c.symbol || '').toUpperCase() === upper) || null;
+    }
+
+    // Build the HTML for the Setup column of one Finviz row. Returns
+    // either a "-" for no matches, or one or more <span class="tag strategy">
+    // badges, one per setup that matched this symbol. The visible badge
+    // text comes from `setup.badgeText(candidate)`; the hover tooltip
+    // appends `setup.tooltipDetail(candidate)` to `setup.label`. Short-
+    // side setups (key suffix 'a' for P1a/P2a/P3a) render with the
+    // .short variant (red tone) so bullish vs bearish is obvious.
+    function setupBadgesHtml(idx, symbol) {
+      const badges = [];
+      for (const setup of SETUPS) {
+        if (setup.run !== 'yf') continue;
+        const cand = candidateFor(idx, setup, symbol);
+        if (!cand) continue;
+        const text = setup.badgeText ? setup.badgeText(cand) : (setup.shortLabel || '?');
+        const tooltip = setup.tooltipDetail ? setup.tooltipDetail(cand) : '';
+        const title = tooltip ? `${setup.label} — ${tooltip}` : setup.label;
+        const cls = /^p\d+a/.test(setup.key) ? 'tag strategy short' : 'tag strategy';
+        badges.push(
+          `<span class="${cls}" title="${title}">${text}</span>`
+        );
+      }
+      return badges.length ? badges.join(' ') : '<span class="muted">-</span>';
+    }
+
+    async function runOneSetup(idx, setup) {
+      if (setup.run !== 'yf') return;     // stubs don't make network calls
+      try {
+        const qs = new URLSearchParams({ setup: setup.key });
+        if (idx !== 1) qs.set('scanner', String(idx));
+        const signal = scanners[idx].signal;
+        if (signal) qs.set('signal', signal);
+        const r = await fetch(`/scanner/yf_scan?${qs.toString()}`, {
+          method: 'POST', cache: 'no-store',
+        });
+        const j = await r.json();
+        if (!r.ok || !j.ok) {
+          scanners[idx].setupResultsCache[setup.key] = { error: `HTTP ${r.status}: ${j.detail || JSON.stringify(j).slice(0, 200)}` };
+        } else {
+          scanners[idx].setupResultsCache[setup.key] = j;
+        }
+      } catch (e) {
+        scanners[idx].setupResultsCache[setup.key] = { error: e.message };
+      }
+    }
+
+    async function runAllSetups(idx) {
+      const s = scanners[idx];
+      if (s.runAllInFlight) return;
+      s.runAllInFlight = true;
+      const meta = elFor(idx, 'finviz-meta');
+      const baseCount = meta.dataset.baseCount || String(s.rowsCache.length);
+
+      // Single call to /scanner/yf_scan_all -- the backend does ONE
+      // yFinance batch fetch and runs all 7 detectors against the
+      // shared bars cache. Replaces the legacy per-setup loop that
+      // hit yFinance 7x.
+      //
+      // Live elapsed-seconds counter so the meta line shows the user
+      // we're still working during the ~12-18s backend run.
+      const start = Date.now();
+      meta.innerHTML = `<strong>${baseCount}</strong> tickers `
+        + `&middot; scanning all setups...`;
+      const tickId = setInterval(() => {
+        const elapsed = Math.round((Date.now() - start) / 1000);
+        meta.innerHTML = `<strong>${baseCount}</strong> tickers `
+          + `&middot; scanning all setups... ${elapsed}s`;
+      }, 500);
+
+      try {
+        const qs = new URLSearchParams();
+        if (idx !== 1) qs.set('scanner', String(idx));
+        if (s.signal)  qs.set('signal', s.signal);
+        const url = `/scanner/yf_scan_all${qs.toString() ? '?' + qs.toString() : ''}`;
+        const r = await fetch(url, { method: 'POST', cache: 'no-store' });
+        const j = await r.json();
+        if (r.ok && j.ok && j.setups) {
+          // Spread the per-setup results into the cache so the
+          // existing setupBadgesHtml / candidateFor lookups work
+          // unchanged. Each `j.setups[key]` already matches the shape
+          // a single /scanner/yf_scan response has.
+          for (const [key, result] of Object.entries(j.setups)) {
+            s.setupResultsCache[key] = result;
+          }
+        } else {
+          console.warn('yf_scan_all failed:', j);
+          // Mark every yf setup as error so the cache has a sentinel.
+          for (const setup of SETUPS) {
+            if (setup.run !== 'yf') continue;
+            s.setupResultsCache[setup.key] = { error: (j && j.detail) || `HTTP ${r.status}` };
+          }
+        }
+      } catch (e) {
+        console.warn('yf_scan_all error:', e);
+        for (const setup of SETUPS) {
+          if (setup.run !== 'yf') continue;
+          s.setupResultsCache[setup.key] = { error: e.message };
+        }
+      }
+
+      clearInterval(tickId);
+      // renderFinvizTable rewrites the meta line with the final
+      // "<base> tickers · N matched · fetched <ts>" header.
+      renderFinvizTable(idx);
+      s.runAllInFlight = false;
+    }
+
+    // ---------------------------------------------------------------
+    // SIDEBAR navigation
+    // Click a sidebar button -> activate that view + persist in #hash.
+    // Per-view boot/teardown hooks fire on activation so e.g. Scanner
+    // only auto-refreshes when it's the visible view.
+    // ---------------------------------------------------------------
+    const validViews = ['scanner', 'scanner2', 'monitor', 'strategies', 'trades', 'data'];
+
+    function activateView(name) {
+      if (!validViews.includes(name)) name = 'scanner';
+      document.querySelectorAll('nav.sidebar button').forEach(b => {
+        b.classList.toggle('active', b.dataset.view === name);
+      });
+      document.querySelectorAll('main > .view').forEach(v => {
+        v.classList.toggle('active', v.dataset.view === name);
+      });
+      if (location.hash.replace('#', '') !== name) {
+        history.replaceState(null, '', '#' + name);
+      }
+      // Per-view lifecycle hooks. Scanner / Scanner 2: pull the Finviz
+      // ticker list (cached 1h on the backend, so view-flipping is
+      // fast). No auto-poll -- the user clicks Refresh to force a
+      // fresh fetch. Each scanner has its own independent state.
+      if (name === 'scanner')  loadFinvizTickers(1, false);
+      if (name === 'scanner2') loadFinvizTickers(2, false);
+    }
+
+    document.querySelectorAll('nav.sidebar button').forEach(btn => {
+      btn.addEventListener('click', () => activateView(btn.dataset.view));
+    });
+    window.addEventListener('hashchange', () => {
+      activateView(location.hash.replace('#', ''));
+    });
+
+    // ---------------------------------------------------------------
+    // Scanner 2 signal-picker. Populates the <select> from
+    // GET /scanner/finviz_signals on boot, restores the last
+    // selection from localStorage, and fires loadFinvizTickers(2,
+    // forceRefresh=true) on change.
+    // ---------------------------------------------------------------
+    async function initSignalPicker() {
+      const sel = document.getElementById('finviz-signal-2');
+      if (!sel) return;
+      try {
+        const resp = await fetch('/scanner/finviz_signals');
+        const j = await resp.json();
+        // Group signals into <optgroup> sections.
+        const groups = {};
+        for (const s of (j.signals || [])) {
+          const g = s.group || 'Other';
+          (groups[g] = groups[g] || []).push(s);
+        }
+        for (const groupName of Object.keys(groups)) {
+          const og = document.createElement('optgroup');
+          og.label = groupName;
+          for (const s of groups[groupName]) {
+            const opt = document.createElement('option');
+            opt.value = s.value;
+            opt.textContent = s.label;
+            og.appendChild(opt);
+          }
+          sel.appendChild(og);
+        }
+        // Restore last selection (per-PC, persists across browser
+        // refreshes via localStorage).
+        const last = localStorage.getItem('finviz-signal-2') || '';
+        if (last) {
+          sel.value = last;
+          scanners[2].signal = last;
+          // If Scanner 2 is the active view at boot, fire a tickers
+          // load now that the restored signal is in scanners[2].signal.
+          // (activateView fired BEFORE the signal list loaded, so it
+          // would have shown the empty-state.)
+          const activeView = (location.hash.replace('#', '') || 'scanner');
+          if (activeView === 'scanner2') loadFinvizTickers(2, false);
+        }
+      } catch (e) {
+        console.warn('failed to load finviz signals:', e);
+      }
+      sel.addEventListener('change', (ev) => {
+        const v = ev.target.value || '';
+        scanners[2].signal = v || null;
+        localStorage.setItem('finviz-signal-2', v);
+        // Drop the universe + setup caches so the next load is fresh.
+        scanners[2].rowsCache = [];
+        scanners[2].setupResultsCache = {};
+        // If Scanner 2 is the active view, reload immediately.
+        loadFinvizTickers(2, true);
+      });
+    }
+
+    initSignalPicker();
+
+    // Boot.
+    activateView(location.hash.replace('#', '') || 'scanner');
+    tickClocks();
+    setInterval(tickClocks, 1000);
+    pollSnapshot();
+    pollData();
+    setInterval(pollSnapshot, 5000);
+    setInterval(pollData,    30000);
+  </script>
+</body>
+</html>

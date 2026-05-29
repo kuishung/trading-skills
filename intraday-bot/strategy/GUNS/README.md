@@ -2,7 +2,7 @@
 
 Source: Adam Khoo Piranha Profits, Lesson 8 (2017).
 Reference doc: `strategies-reference/GUNS.md` (in the worktree, not the
-intraday-bot folder).
+TradeHunter folder).
 
 ONE universe (gap-up + news catalyst + low float + price ≥ $1.50 + PM
 volume ≥ 30K) with FIVE entry setups. This family wires setups 1 and 5.
@@ -44,7 +44,7 @@ Per-ticker behavioral baselines (atr, vol stats, 3m percentile distributions) **
 - Sample: `POET.json` confirmed end-to-end (ATR(14)=$2.53, 17% of close, Uptrend).
 
 ### 2026-05-21 — `Materials/` folder added
-- Moved the copyrighted PDF reference material into `Materials/` (was at intraday-bot/ root as `GUNS Materials/`). Stays gitignored; syncs via Dropbox.
+- Moved the copyrighted PDF reference material into `Materials/` (was at TradeHunter/ root as `GUNS Materials/`). Stays gitignored; syncs via Dropbox.
 
 ### 2026-05-21 — Family folder established
 - Created `_helpers.py` (the GUNS-family shared utilities).

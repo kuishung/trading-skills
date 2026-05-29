@@ -51,7 +51,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-# --- intraday-bot bootstrap (same pattern as scanner.py) -----------
+# --- TradeHunter bootstrap (same pattern as scanner.py) -----------
 _root = Path(__file__).resolve().parent
 while _root != _root.parent and not (_root / "SKILL.md").exists():
     _root = _root.parent

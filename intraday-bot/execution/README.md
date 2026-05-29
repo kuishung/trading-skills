@@ -69,7 +69,7 @@ All-OFF runtime state is allowed — bot starts and journals
 
 ### 2026-05-21 — Folder established
 - Moved `scripts/trade_day.py` → `orchestrator.py`.
-- Bootstrap snippet added; `from strategy import ...` uses the package import path now that intraday-bot/ root is on sys.path.
+- Bootstrap snippet added; `from strategy import ...` uses the package import path now that TradeHunter/ root is on sys.path.
 - ON/OFF gate added: `_fire_strategy_entries` skips at top if `is_enabled(strat.name)` is false and emits one `strategy_off_skipped` event.
 - ARM gate already in place: skip submit + emit `entry_disarmed` if `not is_armed(strat.name)`.
 - Dropped the "at least one strategy enabled" strict rule — runtime gating handles it.

@@ -67,7 +67,7 @@ All detectors accept `ctx: SymbolContext | None = None` as an optional last kwar
 
 **Backward compatibility**: every `scan_universe()` wrapper, every CLI entry point, every backtest call site keeps working without modification. The ctx kwarg is purely additive.
 
-End-to-end: dashboard scan portion dropped from 0.3-0.4s to **0.1s** (30-symbol Scanner 1 universe). See `dashboard/README.md` for the full audit + numbers.
+End-to-end: dashboard scan portion dropped from 0.3-0.4s to **0.1s** (30-symbol Scanner 1 universe). See `dashboard_intraday/README.md` for the full audit + numbers.
 
 ### 2026-05-29 — Detector relaxations: TSLA/MRVL upper-tail floor, MSFT stack, MRVL distance, BE short-gate
 

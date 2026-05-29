@@ -29,7 +29,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-# --- intraday-bot bootstrap ---
+# --- TradeHunter bootstrap ---
 _root = Path(__file__).resolve().parent.parent
 for _p in [str(_root)] + [str(_root / s) for s in
         ("scripts", "resources", "strategy", "execution",
@@ -166,7 +166,7 @@ def check_ibc_credentials() -> dict:
 
     Resolution order (matches IBC's own behaviour):
       1. cfg["ibkr_secrets_path"] if set — post-2026-05-24 architecture
-         (file lives in Resilio-synced HermesSync/Vault, not in intraday-bot/ibc/)
+         (file lives in Resilio-synced HermesSync/Vault, not in TradeHunter/ibc/)
       2. SKILL_DIR/ibc/credentials.txt — legacy / fresh-PC fallback
     """
     try:

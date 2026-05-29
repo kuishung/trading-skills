@@ -29,7 +29,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-# --- intraday-bot bootstrap: make sibling layers importable ---
+# --- TradeHunter bootstrap: make sibling layers importable ---
 _root = Path(__file__).resolve().parent
 while _root != _root.parent and not (_root / "SKILL.md").exists():
     _root = _root.parent

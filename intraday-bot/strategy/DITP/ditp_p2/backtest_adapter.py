@@ -23,7 +23,7 @@ from datetime import date
 from pathlib import Path
 from typing import Sequence
 
-# --- intraday-bot bootstrap (same shape as scanner.py) ---
+# --- TradeHunter bootstrap (same shape as scanner.py) ---
 _root = Path(__file__).resolve().parent
 while _root != _root.parent and not (_root / "SKILL.md").exists():
     _root = _root.parent

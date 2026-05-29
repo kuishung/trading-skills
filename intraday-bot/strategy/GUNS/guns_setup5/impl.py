@@ -65,7 +65,7 @@ Config block (cfg.strategies.guns_setup5)
 """
 from __future__ import annotations
 
-# --- intraday-bot bootstrap: make sibling layers importable ---
+# --- TradeHunter bootstrap: make sibling layers importable ---
 import sys
 from pathlib import Path
 _root = Path(__file__).resolve().parent

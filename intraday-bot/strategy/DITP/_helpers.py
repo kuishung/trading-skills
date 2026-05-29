@@ -6,14 +6,14 @@ Skeleton. Add helpers here as setups are wired and patterns repeat:
 - plan builders shared across setups
 
 Reference doc: strategies-reference/DITP.md (in the worktree, not
-intraday-bot/).
+TradeHunter/).
 
 Keep DITP helpers separate from GUNS helpers. Per CLAUDE.md
 "Never blend rules from multiple frameworks into one strategy file."
 """
 from __future__ import annotations
 
-# --- intraday-bot bootstrap ---
+# --- TradeHunter bootstrap ---
 import sys
 from pathlib import Path
 _root = Path(__file__).resolve().parent

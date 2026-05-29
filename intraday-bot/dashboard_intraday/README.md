@@ -1,13 +1,17 @@
-# dashboard/ — operational UI
+# dashboard_intraday/ — operational UI (intraday)
 
-Real-time observer + control surface for the bot. FastAPI + WebSocket
-backend, static HTML/Tailwind frontend. Read-only with respect to
-orders — the dashboard never sends orders to Alpaca. The bot
+**Renamed from `dashboard/` on 2026-05-29** when a second dashboard
+(`dashboard_tst/`, trend & swing trading, port 8001) was added. This
+folder is the INTRADAY dashboard and runs on **port 8000**.
+
+Real-time observer + control surface for the intraday bot. FastAPI +
+WebSocket backend, static HTML/Tailwind frontend. Read-only with respect
+to orders — the dashboard never sends orders to Alpaca. The bot
 (`execution/orchestrator.py`) does that. The dashboard just observes
 the files the bot writes and exposes the per-strategy gating controls.
 
-Everything dashboard-related lives in this one folder (server, web,
-Windows launchers, Desktop-shortcut installer).
+Everything intraday-dashboard-related lives in this one folder (server,
+web, Windows launchers, Desktop-shortcut installer).
 
 ## Contents
 
@@ -16,9 +20,9 @@ Windows launchers, Desktop-shortcut installer).
 - `start_dashboard.bat` — idempotent Windows launcher. Opens the browser to `http://localhost:8000`. If the dashboard is already running, just opens the browser.
 - `stop_dashboard.bat` — graceful `POST /shutdown`, then port-kill fallback.
 - `_supervise_dashboard.bat` — supervisor loop. Re-launches `server.py` on exit code 100 (Restart signal). Underscore-prefixed name reflects that users don't invoke it directly — `start_dashboard.bat` spawns it minimised.
-- `setup_launcher.py` — one-time launcher installer. Drops `.lnk` files in TWO places: (a) the user's real Desktop (handles OneDrive / AD-redirected Desktops) and (b) this `dashboard/` folder itself, so the shortcut sits next to its target and shows up the moment you navigate into the synced folder on any PC. The in-folder `.lnk` files are gitignored (absolute paths are per-PC). Run once per PC after a fresh Dropbox sync.
+- `setup_launcher.py` — one-time launcher installer. Drops `.lnk` files in TWO places: (a) the user's real Desktop (handles OneDrive / AD-redirected Desktops) and (b) this `dashboard_intraday/` folder itself, so the shortcut sits next to its target and shows up the moment you navigate into the synced folder on any PC. The in-folder `.lnk` files are gitignored (absolute paths are per-PC). Run once per PC after a fresh Dropbox sync.
 - `Intraday Bot Dashboard.lnk` / `Intraday Bot Dashboard (stop).lnk` — created by `setup_launcher.py`. Gitignored. Double-click to launch / stop the dashboard.
-- `tray_status.py` — Windows system-tray icon for the ingest pipeline. Polls `data/ingest_log.jsonl` every 30s, animates a heartbeat pulse when actively writing (green), idle (yellow), stopped (red), or unknown (gray). Right-click menu exposes Show Status / Refresh Now / Reset Milestones / Open Log File / Open Watcher Log / Quit. Fires Windows toast notifications when count milestones (50/100/250/500/1000 symbols) or letter-group completions are crossed. Run with `py -3.12 dashboard/tray_status.py`. Independent of `server.py` — runs anywhere with a desktop session (laptop or Hermes RDP).
+- `tray_status.py` — Windows system-tray icon for the ingest pipeline. Polls `data/ingest_log.jsonl` every 30s, animates a heartbeat pulse when actively writing (green), idle (yellow), stopped (red), or unknown (gray). Right-click menu exposes Show Status / Refresh Now / Reset Milestones / Open Log File / Open Watcher Log / Quit. Fires Windows toast notifications when count milestones (50/100/250/500/1000 symbols) or letter-group completions are crossed. Run with `py -3.12 dashboard_intraday/tray_status.py`. Independent of `server.py` — runs anywhere with a desktop session (laptop or Hermes RDP).
 
 ## URLs
 
@@ -28,6 +32,17 @@ Windows launchers, Desktop-shortcut installer).
 - `http://localhost:8000/bot/enable` / `/bot/arm` — GET to inspect, POST to toggle
 
 ## Changelog
+
+### 2026-05-29 — Renamed `dashboard/` → `dashboard_intraday/`
+
+User request 2026-05-29: *"the dashboard work i want you to change the name to dashboard_intraday. I want to wire another dashboard call dashboard_tst which is for trend and swing trading."*
+
+`dashboard/` is now `dashboard_intraday/` (via `git mv`, history preserved). A second dashboard `dashboard_tst/` (trend & swing trading, port 8001) was added as an independent copy. Changes in this folder:
+- `server.py` sys.path bootstrap tuple: `"dashboard"` → `"dashboard_intraday"`; docstring + `WEB_DIR` comment updated. Still binds **port 8000**.
+- README title + Contents self-references updated to `dashboard_intraday/`.
+- `.bat` launchers + `setup_launcher.py` keep working unchanged (relative `%~dp0` paths); their titles still read "Intraday Bot Dashboard" which is now accurate-by-name.
+
+Cross-PC note: `config.json` is gitignored and per-PC; nothing in it referenced the old path. The `.lnk` desktop shortcuts are gitignored and per-PC — re-run `py dashboard_intraday/setup_launcher.py` on each machine to regenerate them pointing at the new path.
 
 ### 2026-05-29 — `server.py`: efficiency Pass 1 + Pass 2 (scan 3-4× faster, dashboard polls cheaper)
 
@@ -451,7 +466,7 @@ User: *"anything in the watchlist cannot fit the screen to be scrolled / the rem
 **Inline chart pane:**
 - New `<section class="panel scanner-chart-panel">` next to the Finviz panel. Header reads `Chart: <SYMBOL> [Open in TradingView ↗]`. The iframe fills the rest of the panel; default placeholder text reads *"Click a ticker in the watchlist to load its chart"*.
 - Click any watchlist row -> iframe loads `https://s.tradingview.com/widgetembed/?symbol=<SYM>&interval=D&theme=dark&style=1&...`. Daily candles, dark theme, no social ideas panel, toolbar tinted to match the dashboard background.
-- The `Open in TradingView ↗` link in the chart header is a fallback to TradingView's full UI — uses the same named-tab target (`intraday_bot_tv`) so at most one external tab exists across the session.
+- The `Open in TradingView ↗` link in the chart header is a fallback to TradingView's full UI — uses the same named-tab target (`TradeHunter_tv`) so at most one external tab exists across the session.
 - Symbol form stays canonical dotted (`BRK.B` not `BRK-B`); TV accepts both.
 
 **Click-handler change** — the previous behaviour (open in named-tab via `window.open`) is replaced by `loadTvChart(symbol)` which updates the inline iframe. The named-tab path is still available via the `Open in TradingView ↗` link.
@@ -677,8 +692,8 @@ The user changes the URL in `config.json` to alter the scan filters (mid-cap+, A
 
 User: *"then the ticker is click, use back the same browser to view dont open new broswer"*.
 
-Changed `window.open(url, '_blank', 'noopener,noreferrer')` to `window.open(url, 'intraday_bot_tv')`. The second argument is now a NAMED target instead of `'_blank'`:
-- First row click -> opens TradingView in a new tab named `intraday_bot_tv`.
+Changed `window.open(url, '_blank', 'noopener,noreferrer')` to `window.open(url, 'TradeHunter_tv')`. The second argument is now a NAMED target instead of `'_blank'`:
+- First row click -> opens TradingView in a new tab named `TradeHunter_tv`.
 - Every subsequent row click -> the browser sees the existing tab with that name and NAVIGATES it to the new symbol's URL instead of spawning another tab.
 - Net effect: at most ONE TradingView tab open across an entire scan session, no matter how many rows the user clicks.
 
@@ -1291,7 +1306,7 @@ Trigger was a Hermes screenshot showing `92 / 2 symbols (100%)` with `Latest: AM
 - `web/index.html`: new `.fam-tabs` bar inside the Strategy Analysis panel, between the `<h2>` header and the per-symbol list. One tab per strategy family (derived from `name.split('_')[0].toUpperCase()` — `guns_setup1` → `GUNS`, future `orb_setup1` → `ORB`). Each tab shows a small badge with the count of setups in that family.
 - Active tab uses an IBKR-red underline; clicking switches `activeFamily` and re-renders the list filtered to only that family's setups.
 - New families appear automatically as soon as they emit any journal event — no code change needed when adding ORB / future strategies.
-- Selection persists across reloads via `localStorage` (`intraday_bot:familyTab`); falls back to the first family if the saved value isn't valid anymore.
+- Selection persists across reloads via `localStorage` (`TradeHunter:familyTab`); falls back to the first family if the saved value isn't valid anymore.
 - Analysis list `max-height` dropped from 540px → 504px to keep the panel the same total height as the chart panel now that the tab bar adds ~36px of chrome.
 
 ### 2026-05-21 — Analysis + chart side-by-side (50/50 split)
@@ -1331,7 +1346,7 @@ Trigger was a Hermes screenshot showing `92 / 2 symbols (100%)` with `Latest: AM
 - Depends on `journal/writer.py` bridging to `events.emit()` so the dashboard sees the `strategy.*` envelopes; see that folder's changelog for the bridge.
 
 ### 2026-05-21 — `setup_launcher.py` also drops `.lnk` files in this folder
-- `setup_launcher.py`: now creates the two shortcuts in TWO places — Desktop (as before) AND in this `dashboard/` folder itself. When the user navigates into the synced intraday-bot/dashboard/ folder via Windows Explorer on any PC, the launcher is right there.
+- `setup_launcher.py`: now creates the two shortcuts in TWO places — Desktop (as before) AND in this `dashboard/` folder itself. When the user navigates into the synced TradeHunter/dashboard/ folder via Windows Explorer on any PC, the launcher is right there.
 - Both sets contain absolute paths so they're per-PC; the in-folder copy is gitignored (`dashboard/*.lnk` added to root `.gitignore`). Re-run the installer once per new PC after a fresh Dropbox sync.
 
 ### 2026-05-21 — Auto-start moved to 08:30 ET (T-60 BMO)
@@ -1342,7 +1357,7 @@ Trigger was a Hermes screenshot showing `92 / 2 symbols (100%)` with `Latest: AM
 ### 2026-05-21 — Everything dashboard-related consolidated here
 - `scripts/dashboard.py` → `server.py`
 - `web/` → `dashboard/web/`
-- `start_dashboard.bat`, `stop_dashboard.bat`, `_supervise_dashboard.bat` moved from intraday-bot/ root.
+- `start_dashboard.bat`, `stop_dashboard.bat`, `_supervise_dashboard.bat` moved from TradeHunter/ root.
 - `scripts/setup_dashboard_launcher.py` → `setup_launcher.py`.
 - Supervisor updated: now `cd`s to this folder and runs `py server.py` (no `dashboard\` prefix needed since it's a sibling).
 - `setup_launcher.py` `START_BAT` / `STOP_BAT` paths point to this folder.
