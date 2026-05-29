@@ -37,6 +37,17 @@ per the trader's GUNS methodology so they can be skipped fast.
 Open in MYT: **21:30** during US EDT (Mar–Nov) / **22:30** during US EST (Nov–Mar);
 briefing fires 30 min earlier. Anchored to ET so it auto-tracks DST.
 
+## Accessing the server (SSH)
+
+The agent runs on a Linux box on the LAN. First login from any dev PC:
+
+```bash
+ssh administrator@192.168.1.163
+```
+
+- Host `192.168.1.163` · user `administrator` · port 22 · **password-based**
+  (it prompts; password is not stored in the repo).
+
 ## Deploy (on the Linux server)
 
 Prereq: `hermes setup` has been run and the Telegram gateway is configured
@@ -84,6 +95,14 @@ Edit files here, redeploy (scp / git pull → `bash install.sh`), then re-test w
 recreate the cron job unless the schedule or delivery target changes.
 
 ## Changelog
+- **2026-05-29** — Added "Accessing the server (SSH)" section with the LAN
+  first-login command (`ssh administrator@192.168.1.163`, password-based).
+- **2026-05-29** — Added RRG (Relative Rotation Graph) check to the Step 3 Micro
+  sector-rotation read (StockCharts/TradingView RRG) + new sources.md section.
+- **2026-05-29** — Added MarketWatch + CNBC as major-market-news sources for the
+  macro narrative (Step 3 note + `references/sources.md` macro-tape section).
+- **2026-05-29** — Added StreetInsider + TradingView as catalyst sources for the
+  stock/industry catalyst scan (Step 4 source list + `references/sources.md`).
 - **2026-05-29** — Folder created. Added `markets/premarket-briefing` skill
   v1.0.0 (economic calendar + pre-market sentiment + macro/micro + large/mid-cap
   catalyst watch, web-research-first, Telegram delivery, weekday 09:00 ET cron).

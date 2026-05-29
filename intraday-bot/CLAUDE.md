@@ -6,16 +6,21 @@ Memory files at `~/.claude/projects/.../memory/` are LOCAL to whichever
 PC built them — they do NOT sync via Dropbox. **CLAUDE.md syncs**.
 Everything that must travel across the user's PCs lives here.
 
-**Meta-rule for "remember this" requests:**
-- Hard rule, convention, architecture decision, or any policy the user
-  expects to outlive this session → **write it to CLAUDE.md** (here)
-  first. Optionally mirror to a memory file for local-session
-  convenience, but CLAUDE.md is canonical. If the two drift, CLAUDE.md
-  wins.
-- Personal preference about the user, transient session context, or
-  one-off observations → memory file is fine, with an explicit ack
-  that it won't travel to the other PC.
-- If unsure whether something is "hard" — assume yes, write here.
+**Meta-rule for "remember this" requests (user rule, set 2026-05-29):**
+- **EVERY time the user says "remember" / "memorise" / "don't make me
+  remind you again", the memory MUST be made cross-PC** — i.e. written
+  to a Dropbox-synced location, never a local-only memory file alone.
+  The user works across multiple PCs and expects whatever they ask me to
+  remember to be recalled on ALL of them.
+- Default cross-PC home = **CLAUDE.md** (this file): it both syncs via
+  Dropbox AND is auto-loaded into context at every session start, so it
+  guarantees recall on any PC. Use a folder README (also synced) for
+  project-doc-shaped detail, but always leave at least a pointer here so
+  it's auto-recalled.
+- A local per-PC memory file is allowed only as an *additional*
+  convenience copy on the current PC — never as the sole store. If the
+  two drift, CLAUDE.md wins.
+- If unsure where something belongs — assume cross-PC, write here.
 
 ## Cross-PC sync workflow (critical)
 
@@ -522,6 +527,25 @@ Reasons to RDP in:
 - Quarterly hygiene: Windows Update review (with the host-patch caveat above), Dropbox sync health, disk cleanup
 
 Never RDP in JUST to "check on things." If something needs checking, it should be visible from the laptop dashboard or via the parquet sync.
+
+## Nous Hermes agent — Linux server (SSH access)
+
+The Nous Research Hermes agent (project folder `nous_hermes/`) runs on a
+Linux box on the user's LAN — **unrelated** to the R720 Windows "Hermes"
+Hyper-V VM above. The user SSHes in from whichever dev PC they're on, and
+wants the first-login command surfaced immediately whenever they mention
+accessing/deploying to it (no need to re-ask):
+
+```bash
+ssh administrator@192.168.1.163
+```
+
+- Host `192.168.1.163` (same LAN) · user `administrator` · port 22 ·
+  **password-based** (prompts; password is NOT stored in the repo).
+
+Canonical detail + deploy steps live in `nous_hermes/README.md`. This
+note lives in CLAUDE.md (not just a memory file) so every dev PC recalls
+it — memory files don't sync across PCs.
 
 ## What NOT to do
 

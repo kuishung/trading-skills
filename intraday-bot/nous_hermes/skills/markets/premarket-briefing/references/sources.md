@@ -12,12 +12,20 @@ it looks stale or off-consensus.
 - Federal Reserve calendar (FOMC dates, speakers)
 
 ## Pre-market sentiment / futures / macro tape
-- CNBC pre-markets / futures page
+- CNBC pre-markets / futures page — also a primary source for major market news/headlines
+- MarketWatch markets / top stories — major market news + overnight narrative
 - Investing.com (indices futures, VIX, DXY, US10Y, WTI, gold, BTC)
 - TradingView quotes
 - Reuters / Bloomberg markets headlines for the overnight narrative
 
+## Sector rotation (RRG — Relative Rotation Graphs)
+- StockCharts RRG (sector ETFs vs SPY benchmark) — leading / weakening / lagging / improving quadrants
+- TradingView RRG — sector/asset rotation, same quadrant model
+- Use to inform the Step 3 Micro sector-rotation read; flag any notable rotation.
+
 ## Catalysts / movers (large & mid cap)
+- StreetInsider (stock-specific + industry catalysts: earnings, guidance, analyst actions, M&A, PR) — strong for per-name and sector catalyst flow
+- TradingView (stock + industry/sector news feeds, movers, screeners) — cross-check pre-market % and sector moves
 - Benzinga (Why Is It Moving, analyst ratings)
 - Briefing.com "In Play"
 - Yahoo Finance (trending tickers, earnings calendar)

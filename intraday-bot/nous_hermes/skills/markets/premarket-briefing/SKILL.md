@@ -40,11 +40,12 @@ For each release list: **time (ET) · event · consensus vs prior · importance 
 Pull current pre-market values (web search / browser): **ES / NQ / YM / RTY futures (% chg), VIX, DXY, US10Y yield, WTI crude, gold, BTC.** Add overnight context: how Asia (Nikkei, Hang Seng, KOSPI) and Europe (DAX, FTSE, STOXX) closed/are trading. Synthesize into a **one-line risk read**: risk-on / risk-off / mixed, and what's driving it.
 
 ### Step 3 — Macro & Micro Insights of the Day
+For major market news / the dominant narrative, web-search MarketWatch and CNBC (plus Reuters/Bloomberg headlines).
 - **Macro (top-down):** the single dominant narrative driving markets right now — Fed/rate-path repricing, inflation prints, geopolitics, oil, credit, USD. 2–3 bullets max.
-- **Micro (bottom-up):** sector rotation in play, notable sector/factor moves pre-market (e.g. semis strong, regional banks weak), any theme (AI capex, GLP-1, rate-sensitives). 2–3 bullets max.
+- **Micro (bottom-up):** sector rotation in play, notable sector/factor moves pre-market (e.g. semis strong, regional banks weak), any theme (AI capex, GLP-1, rate-sensitives). 2–3 bullets max. Check an **RRG (Relative Rotation Graph)** — sector ETFs vs SPY benchmark — to read which sectors are leading / weakening / lagging / improving, and note any rotation worth flagging. Sources: StockCharts RRG, TradingView RRG.
 
 ### Step 4 — Catalyst Watch (large & mid cap)
-Scan for large- and mid-cap names with catalysts likely to drive a **significant intraday move**. Web-search sources: Benzinga, Briefing.com "In Play", Yahoo Finance trending, MarketWatch movers, Seeking Alpha headlines, Earnings Whispers, company PR wires.
+Scan for large- and mid-cap names with catalysts likely to drive a **significant intraday move**. Web-search sources: StreetInsider (stock + industry catalysts), TradingView (stock + sector news/movers), Benzinga, Briefing.com "In Play", Yahoo Finance trending, MarketWatch movers, Seeking Alpha headlines, Earnings Whispers, company PR wires.
 Catalyst types to surface:
 - **Earnings** — reported after yesterday's close or before today's open (beat/miss + guidance + pre-market % move).
 - **Analyst actions** — notable upgrades/downgrades/initiations with price-target changes on large/mid caps.
