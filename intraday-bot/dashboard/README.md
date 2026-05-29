@@ -29,6 +29,41 @@ Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-05-29 — `server.py`: efficiency Pass 1 + Pass 2 (scan 3-4× faster, dashboard polls cheaper)
+
+User request 2026-05-29: *"the code has to be efficient so that the dashboard will not be lagging. You have to check the code how it can be made efficient."* Comprehensive audit identified 10 hotspots; both passes landed in one session.
+
+**Pass 1 (six quick caching/cadence wins, no behavior change):**
+
+| # | Where | Change |
+|---|---|---|
+| 3 | `_load_cfg` | mtime-aware cache (`_CFG_CACHE`). Previously called 7+× per `/snapshot` poll; now skips re-read when `config.json` hasn't changed. |
+| 5 | `resources/finviz_screener.py` `fetch_screener_symbols` | In-process `_MEM_CACHE` (dict) on top of the existing disk cache. Disk hits get promoted into memory. TTL semantics identical; `force_refresh=True` bypasses both. |
+| 7 | `/scanner/yf_scan_all` + `/scanner/yf_scan` | yfinance `lookback_days=500 → 400`. 400 calendar days ≈ 276 trading days, comfortably above the 252+14-bar minimum. ~20% smaller payload per scan. |
+| 4 | `_snapshot` + `_read_json` / `_read_jsonl` / `_read_text_tail` | (a) `_FILE_CACHE` keyed by `(mtime, size)` — files only re-parsed when they change on disk; (b) `_SNAP_CACHE` 1s TTL — concurrent pollers get the same payload without re-reading every file. |
+| 9 | `_poll_alpaca` | Changed from `json.dumps(snap, sort_keys=True)` for change detection to `_alpaca_change_key(snap)` returning a tuple of `(status, equity, last_equity, n_positions, n_orders)`. O(snapshot) → O(1). |
+| 10 | `_poll_health` | IBKR TCP probe cadence bumped from 3s → 8s. Pure observer; transitions still surface within ~10s. |
+
+**Pass 2 (architecture refactor, scan 3-4× faster):**
+
+The 10 yf-runnable DITP detectors each independently re-loaded bars + re-allocated 4 numpy arrays + recomputed EMA20/EMA50/EMA200 + ATR(14) for every symbol. At 30 symbols × 9 detectors that's 270 redundant numpy passes per scan. The scan path was also serialized (one symbol at a time, one detector at a time).
+
+| # | Change |
+|---|---|
+| 1 | New `resources/symbol_ctx.py` with `SymbolContext` dataclass + `build_context(symbol, bars=None)`. Holds bars + ohlcv numpy arrays + ema20/50/200 + atr14 — all the work that was previously copy/pasted across 10 detector preludes. |
+| | Refactored 9 detectors to accept an optional `ctx: SymbolContext | None = None` kwarg: `ema_watch.py` v1.0.1, `ema_rebound.py` v1.4.1, `tc_breakout.py` v1.0.1, `p1_rebound.py` v1.2.1, `p3_retest.py` v1.6.1, `p1a_rejection.py` v1.1.1, `p2a_breakdown.py` v1.0.1, `p3a_retest.py` v1.0.1, `scanner.py` (P2) — backward compatible (when `ctx=None`, the detector rebuilds the context itself; CLI / backtest paths unchanged). |
+| 2 | `_run_all_setups_sync` reshaped: loops PER SYMBOL (not per setup), builds `SymbolContext` once per symbol, calls each detector with `ctx=ctx`. Wrapped in a `ThreadPoolExecutor` (max 8 workers) so symbols compute in parallel. numpy releases the GIL on heavy ops; pure-Python EMA inner loop doesn't, but the net is positive. |
+| 8 | Dropped the `bars_store.load_bars = ...` monkey-patch from `/scanner/yf_scan_all` (no longer needed — bars now flow through `ctx`). The single-setup endpoint + `/levels` endpoint still use the patch (downstream callers don't yet accept `ctx`); wrapped both with `_BARS_PATCH_LOCK` (an `asyncio.Lock` initialised in `lifespan`) to make concurrent requests safe. |
+
+**Verification.** 30-symbol Scanner 1 scan, warm-cache, three consecutive runs:
+
+| | fetch | scan | total |
+|---|---|---|---|
+| Pre-Pass-2 | 2.8s | **0.3-0.4s** | 3.1-5.4s |
+| Post-Pass-2 | 1.0-1.1s | **0.1s** | 1.1-1.2s |
+
+Same candidates across all 9 surfaces; only intra-bucket sort order differs (uniform score-desc sort vs the old per-detector sort tiebreakers). 44-symbol full universe: 2.0s total (yfinance dominates; scan still 0.1s). At 200+ symbols, expected scan portion stays sub-second because the ThreadPool keeps adding workers.
+
 ### 2026-05-29 — `server.py` + `web/index.html`: TC (Trend Continuation) wired
 
 User batch 2026-05-29: *"SNDK should be trend continuation and P3 candidate / APLD should be a trend continuation candidate / ORCL is a Trend continuation candidate, P2 resistance broken"*. The existing `tc_scanner.py` requires yesterday's P2 watchlist — not available for ad-hoc Finviz scans. New `strategy/DITP/tc_breakout.py` v1.0.0 detector identifies the recent-breakout-and-holding pattern from price action alone. Dashboard wiring:

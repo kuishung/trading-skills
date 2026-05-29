@@ -54,9 +54,10 @@ import numpy as np  # type: ignore  # noqa: E402
 from patterns import ema_np, atr_wilder_np  # noqa: E402
 from sr_levels import horizontal_support_np  # noqa: E402
 import bars_store  # noqa: E402
+from symbol_ctx import SymbolContext, build_context  # noqa: E402  (resources/symbol_ctx.py)
 
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 
 @dataclass
@@ -84,7 +85,11 @@ class P2aBreakdownConfig:
     require_stack:             bool  = True
 
 
-def detect_p2a_breakdown(symbol: str, cfg: P2aBreakdownConfig) -> dict | None:
+def detect_p2a_breakdown(
+    symbol: str,
+    cfg: P2aBreakdownConfig,
+    ctx: SymbolContext | None = None,
+) -> dict | None:
     """Apply P2a rules to one symbol's daily bars. Returns candidate
     dict or None.
 
@@ -100,21 +105,21 @@ def detect_p2a_breakdown(symbol: str, cfg: P2aBreakdownConfig) -> dict | None:
       ema20/50/200              : current EMA values
       score                     : composite
     """
-    bars = bars_store.load_bars(symbol, timeframe="daily")
-    if len(bars) < cfg.lookback + 14:
+    # v1.0.1: ctx-aware (Pass 2 #1). Shared prelude hoisted out.
+    if ctx is None:
+        ctx = build_context(symbol)
+    if ctx is None or len(ctx.bars) < cfg.lookback + 14:
         return None
 
-    closes = np.array([b["c"] for b in bars], dtype=float)
-    opens  = np.array([b["o"] for b in bars], dtype=float)
-    highs  = np.array([b["h"] for b in bars], dtype=float)
-    lows   = np.array([b["l"] for b in bars], dtype=float)
-
-    ema20  = ema_np(closes, 20)
-    ema50  = ema_np(closes, 50)
-    ema200 = ema_np(closes, 200)
-    atr    = atr_wilder_np(highs, lows, closes, period=14)
-    if atr <= 0:
-        return None
+    bars   = ctx.bars
+    closes = ctx.closes
+    opens  = ctx.opens
+    highs  = ctx.highs
+    lows   = ctx.lows
+    ema20  = ctx.ema20
+    ema50  = ctx.ema50
+    ema200 = ctx.ema200
+    atr    = ctx.atr14
 
     last_close = float(closes[-1])
     last_open  = float(opens[-1])

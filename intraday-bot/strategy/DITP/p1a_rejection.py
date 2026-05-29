@@ -68,9 +68,10 @@ import numpy as np  # type: ignore  # noqa: E402
 
 from patterns import ema_np, atr_wilder_np, horizontal_resistance_np  # noqa: E402
 import bars_store  # noqa: E402
+from symbol_ctx import SymbolContext, build_context  # noqa: E402  (resources/symbol_ctx.py)
 
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 
 
 @dataclass
@@ -96,7 +97,11 @@ class P1aRejectConfig:
     require_stack:             bool  = True  # require EMA20 < EMA50 < EMA200
 
 
-def detect_p1a_rejection(symbol: str, cfg: P1aRejectConfig) -> dict | None:
+def detect_p1a_rejection(
+    symbol: str,
+    cfg: P1aRejectConfig,
+    ctx: SymbolContext | None = None,
+) -> dict | None:
     """Apply P1a rules to one symbol's daily bars. Returns candidate
     dict or None.
 
@@ -116,28 +121,28 @@ def detect_p1a_rejection(symbol: str, cfg: P1aRejectConfig) -> dict | None:
       score                     : composite (level validation + rejection
                                   strength + proximity)
     """
-    bars = bars_store.load_bars(symbol, timeframe="daily")
-    if len(bars) < cfg.lookback + 14:
+    # v1.1.1: ctx-aware (Pass 2 #1). Shared prelude hoisted out.
+    if ctx is None:
+        ctx = build_context(symbol)
+    if ctx is None or len(ctx.bars) < cfg.lookback + 14:
         return None
 
-    closes = np.array([b["c"] for b in bars], dtype=float)
-    opens  = np.array([b["o"] for b in bars], dtype=float)
-    highs  = np.array([b["h"] for b in bars], dtype=float)
-    lows   = np.array([b["l"] for b in bars], dtype=float)
+    bars   = ctx.bars
+    closes = ctx.closes
+    opens  = ctx.opens
+    highs  = ctx.highs
+    lows   = ctx.lows
+    ema20  = ctx.ema20
+    ema50  = ctx.ema50
+    ema200 = ctx.ema200
+    atr    = ctx.atr14
 
-    atr = atr_wilder_np(highs, lows, closes, period=14)
-    if atr <= 0:
-        return None
-
-    # Trend gate (added v1.1.0). User rule 2026-05-29: short setups
-    # must be on a downtrend chart (EMA20 < EMA50 < EMA200). Without
-    # this gate, BE 2026-05-28 (clean UPTREND stack with a bearish
-    # rejection bar at $310 R) wrongly fired P1a. In an uptrend, a
+    # Trend gate (v1.1.0). User rule 2026-05-29: short setups must be
+    # on a downtrend chart (EMA20 < EMA50 < EMA200). BE 2026-05-28
+    # (clean UPTREND stack with a bearish rejection at $310 R)
+    # wrongly fired P1a before this gate landed -- in an uptrend, a
     # rejection at R = P2 candidate setting up its NEXT breakout
     # attempt, not a short.
-    ema20  = ema_np(closes, 20)
-    ema50  = ema_np(closes, 50)
-    ema200 = ema_np(closes, 200)
     if cfg.require_stack and not (ema20[-1] < ema50[-1] < ema200[-1]):
         return None
 

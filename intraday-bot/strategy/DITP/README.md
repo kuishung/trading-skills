@@ -45,6 +45,30 @@ just drops a `strategy/DITP/<setup_name>/` subfolder.
 
 ## Changelog
 
+### 2026-05-29 — All 9 detectors: ctx-aware (efficiency Pass 2 #1)
+
+Dashboard audit identified that every DITP detector independently re-loaded bars + re-allocated 4 numpy arrays + recomputed EMA20/EMA50/EMA200 + ATR(14) on every call. At 30 symbols × 9 detectors that's 270 redundant numpy passes per scan. Fix: new `resources/symbol_ctx.py` builds the prelude ONCE per symbol, detectors accept an optional `ctx` kwarg.
+
+Refactor summary:
+
+| Detector | Before | After |
+|---|---|---|
+| `ema_watch.py` | v1.0.0 | v1.0.1 (ctx-aware) |
+| `ema_rebound.py` | v1.4.0 | v1.4.1 (ctx-aware) |
+| `tc_breakout.py` | v1.0.0 | v1.0.1 (ctx-aware) |
+| `p1_rebound.py` | v1.2.0 | v1.2.1 (ctx-aware) |
+| `p3_retest.py` | v1.6.0 | v1.6.1 (ctx-aware) |
+| `p1a_rejection.py` | v1.1.0 | v1.1.1 (ctx-aware) |
+| `p2a_breakdown.py` | v1.0.0 | v1.0.1 (ctx-aware) |
+| `p3a_retest.py` | v1.0.0 | v1.0.1 (ctx-aware) |
+| `scanner.py` (P2) | (no version) | ctx-aware via `detect_p2(symbol, cfg, as_of_date=None, ctx=None)` |
+
+All detectors accept `ctx: SymbolContext | None = None` as an optional last kwarg. When None (CLI / backtest path), the detector calls `build_context(symbol)` itself — same behaviour as before. When provided (dashboard path), the detector reuses `ctx.closes`, `ctx.ema20`, etc. directly. PATCH-level bumps because behaviour is unchanged; the rule set is identical.
+
+**Backward compatibility**: every `scan_universe()` wrapper, every CLI entry point, every backtest call site keeps working without modification. The ctx kwarg is purely additive.
+
+End-to-end: dashboard scan portion dropped from 0.3-0.4s to **0.1s** (30-symbol Scanner 1 universe). See `dashboard/README.md` for the full audit + numbers.
+
 ### 2026-05-29 — Detector relaxations: TSLA/MRVL upper-tail floor, MSFT stack, MRVL distance, BE short-gate
 
 User batch 2026-05-29 (10 tickers in two waves): *"AMD is a TC candidate / IONQ is TC / TSLA is P2 / MSFT is P2 / MRVL is P3 retesting $190 / OBIO is P2 / SMCI is TC / RGTI is P2 / RDW is TC"* + *"why BE is labelled as P1a, perhaps we have to set a fixed rule. the shorting strategy P1a, P2a, P3a has to be based on downtrend chart based on EMA20, 50, 200 for shorting"*.

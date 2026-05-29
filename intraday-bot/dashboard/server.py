@@ -44,6 +44,17 @@ from strategy import KNOWN_STRATEGIES  # noqa: E402
 
 DASHBOARD_START_TS = _time.time()
 
+# Async lock guarding the remaining `bars_store.load_bars` monkey-patches
+# (added 2026-05-29 efficiency Pass 2 #8). The all-setups endpoint no
+# longer patches (uses SymbolContext instead), but the single-setup
+# endpoint and `/levels` endpoint still need the patch because their
+# downstream callers (scan_universe / sr_levels.find_key_levels) don't
+# yet accept a ctx kwarg. The lock serializes those two endpoints'
+# scan portions so concurrent requests can't cross-contaminate
+# bars_by_symbol. The yfinance fetch + final response shaping run
+# outside the lock so concurrency is preserved for those parts.
+_BARS_PATCH_LOCK: asyncio.Lock | None = None
+
 SKILL_DIR = Path(__file__).resolve().parent.parent
 STATE_DIR = SKILL_DIR / "state"
 WEB_DIR = Path(__file__).resolve().parent / "web"   # dashboard/web/
@@ -81,14 +92,30 @@ hub = Hub()
 
 # ------------- Config + Bot subprocess manager -------------
 
+# Mtime-aware config cache (added 2026-05-29 efficiency Pass 1 #3).
+# `_load_cfg()` was being called ~7+ times per /snapshot poll (every 5s)
+# + once per WS attach + once per probe. Each call did stat + read +
+# JSON parse. Cache by mtime so edits are picked up but unchanged
+# files don't trigger re-parse. ~30-50ms saved per /snapshot at the
+# tail of a long session when config.json hasn't been touched.
+_CFG_CACHE: tuple[float, dict[str, Any]] | None = None
+
+
 def _load_cfg() -> dict[str, Any]:
+    global _CFG_CACHE
     cfg_path = SKILL_DIR / "config.json"
-    if not cfg_path.exists():
-        return {}
     try:
-        return json.loads(cfg_path.read_text(encoding="utf-8"))
+        mtime = cfg_path.stat().st_mtime
+    except FileNotFoundError:
+        return {}
+    if _CFG_CACHE is not None and _CFG_CACHE[0] == mtime:
+        return _CFG_CACHE[1]
+    try:
+        data = json.loads(cfg_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return {}
+    _CFG_CACHE = (mtime, data)
+    return data
 
 
 class BotManager:
@@ -489,16 +516,41 @@ def _today_str() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
+# Per-file content cache, keyed by Path, value=(mtime, size, parsed_payload).
+# Added 2026-05-29 efficiency Pass 1 #4. The frontend polls /snapshot every
+# ~5s; each poll re-reads plan/fills/equity/events/bot_log files even when
+# nothing has changed since the last poll. Stat is ~10us; full re-parse of
+# events_<today>.jsonl + bot_<today>.log can be tens of milliseconds late
+# in a session. Gate re-reads on (mtime, size); unchanged files return the
+# cached parse.
+_FILE_CACHE: dict[Path, tuple[float, int, Any]] = {}
+
+
 def _read_json(path: Path) -> Any:
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        st = path.stat()
+    except FileNotFoundError:
+        return None
+    cached = _FILE_CACHE.get(path)
+    if cached is not None and cached[0] == st.st_mtime and cached[1] == st.st_size:
+        return cached[2]
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError):
         return None
+    _FILE_CACHE[path] = (st.st_mtime, st.st_size, data)
+    return data
 
 
 def _read_jsonl(path: Path, tail: int | None = None) -> list[dict]:
-    if not path.exists():
+    try:
+        st = path.stat()
+    except FileNotFoundError:
         return []
+    cached = _FILE_CACHE.get(path)
+    if cached is not None and cached[0] == st.st_mtime and cached[1] == st.st_size:
+        data: list[dict] = cached[2]
+        return data[-tail:] if tail else data
     out: list[dict] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
@@ -508,24 +560,45 @@ def _read_jsonl(path: Path, tail: int | None = None) -> list[dict]:
             out.append(json.loads(line))
         except json.JSONDecodeError:
             continue
+    _FILE_CACHE[path] = (st.st_mtime, st.st_size, out)
     return out[-tail:] if tail else out
 
 
 def _read_text_tail(path: Path, n_lines: int = 200) -> list[str]:
-    if not path.exists():
+    try:
+        st = path.stat()
+    except FileNotFoundError:
         return []
+    cached = _FILE_CACHE.get(path)
+    if cached is not None and cached[0] == st.st_mtime and cached[1] == st.st_size:
+        lines: list[str] = cached[2]
+        return lines[-n_lines:]
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except Exception:
         return []
     lines = text.splitlines()
+    _FILE_CACHE[path] = (st.st_mtime, st.st_size, lines)
     return lines[-n_lines:]
 
 
+# /snapshot TTL cache (added 2026-05-29 efficiency Pass 1 #4). The frontend
+# polls every ~5s and the WebSocket already pushes event/alpaca/health
+# deltas live -- the poll is mostly redundant. Cache the snapshot for
+# _SNAP_TTL seconds; concurrent pollers get the same payload. TTL kept
+# short (1s) so the dashboard still feels live for the operator.
+_SNAP_CACHE: tuple[float, dict[str, Any]] | None = None
+_SNAP_TTL = 1.0
+
+
 def _snapshot() -> dict[str, Any]:
+    global _SNAP_CACHE
+    now = _time.time()
+    if _SNAP_CACHE is not None and (now - _SNAP_CACHE[0]) < _SNAP_TTL:
+        return _SNAP_CACHE[1]
     today = _today_str()
     cfg = _load_cfg()
-    return {
+    snap = {
         "type": "snapshot",
         "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "plan": _read_json(STATE_DIR / f"plan_{today}.json"),
@@ -549,6 +622,8 @@ def _snapshot() -> dict[str, Any]:
             },
         },
     }
+    _SNAP_CACHE = (now, snap)
+    return snap
 
 
 async def _tail_events() -> None:
@@ -602,24 +677,48 @@ async def _poll_health() -> None:
                     "any_armed": bot.any_armed(),
                 },
             }})
-        await asyncio.sleep(3.0)
+        # Pass 1 #10 (2026-05-29): bumped 3s -> 8s. The IBKR TCP probe
+        # runs every tick and is only used for the status-bar pill;
+        # 3s was aggressive for a passive observer. 8s halves the
+        # probe load with no operator-visible degradation (transitions
+        # like TWS restart still surface within ~10s).
+        await asyncio.sleep(8.0)
+
+
+def _alpaca_change_key(snap: dict) -> tuple:
+    """Stable identity tuple for Alpaca snapshot change detection.
+
+    Added 2026-05-29 efficiency Pass 1 #9. Previously every poll did
+    `json.dumps(snap, sort_keys=True)` to compare against the prior
+    serialized signature -- O(snapshot size) per tick. The fields that
+    actually change tick-to-tick are equity, last_equity, position
+    count, order count, and status. Tupling those is O(1).
+    """
+    acct = snap.get("account") or {}
+    return (
+        snap.get("status"),
+        acct.get("equity"),
+        acct.get("last_equity"),
+        len(snap.get("positions") or []),
+        len(snap.get("orders") or []),
+    )
 
 
 async def _poll_alpaca() -> None:
     """Poll Alpaca paper account every 10s; broadcast on any change."""
     global _alpaca_cache
     loop = asyncio.get_event_loop()
-    prev_signature = ""
+    prev_key: tuple = ()
     while True:
         snap = await loop.run_in_executor(None, _alpaca_snapshot)
-        signature = json.dumps(snap, sort_keys=True, default=str)
-        if signature != prev_signature:
+        key = _alpaca_change_key(snap)
+        if key != prev_key:
             _alpaca_cache = snap
             await hub.broadcast({"type": "alpaca", "alpaca": snap})
             await hub.broadcast({"type": "health", "health": {
                 "alpaca": snap.get("status", "unknown"),
             }})
-            prev_signature = signature
+            prev_key = key
         await asyncio.sleep(10.0)
 
 
@@ -765,6 +864,11 @@ async def _poll_state() -> None:
 async def lifespan(_app: FastAPI):
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     WEB_DIR.mkdir(parents=True, exist_ok=True)
+    # Initialise the async lock that guards bars_store.load_bars
+    # monkey-patches (Pass 2 #8). Created here because asyncio.Lock()
+    # binds to the running loop on construction.
+    global _BARS_PATCH_LOCK
+    _BARS_PATCH_LOCK = asyncio.Lock()
     tasks = [
         asyncio.create_task(_tail_events()),
         asyncio.create_task(_poll_state()),
@@ -3085,14 +3189,19 @@ async def chart_sr_levels(symbol: str, lookback_days: int = 500) -> JSONResponse
             return original_load(sym, start, end, timeframe=timeframe)
         return bars
 
-    try:
-        bars_store.load_bars = _yf_backed_load  # type: ignore[assignment]
-        result = await loop.run_in_executor(
-            None,
-            lambda: sr_levels.find_key_levels(symbol),
-        )
-    finally:
-        bars_store.load_bars = original_load  # type: ignore[assignment]
+    # Pass 2 #8 (2026-05-29): serialize the monkey-patch with an
+    # async lock so concurrent /levels + /scanner/yf_scan requests
+    # can't trample each other's _yf_backed_load.
+    assert _BARS_PATCH_LOCK is not None, "lifespan must have initialised the lock"
+    async with _BARS_PATCH_LOCK:
+        try:
+            bars_store.load_bars = _yf_backed_load  # type: ignore[assignment]
+            result = await loop.run_in_executor(
+                None,
+                lambda: sr_levels.find_key_levels(symbol),
+            )
+        finally:
+            bars_store.load_bars = original_load  # type: ignore[assignment]
 
     return JSONResponse(result)
 
@@ -3254,10 +3363,12 @@ async def scanner_yf_scan(
         bars_by_symbol = await loop.run_in_executor(
             None,
             lambda: yf_daily_bars.fetch_daily_batch(
-                # 500 calendar days ~= 355 trading days, comfortably
-                # above the 252+14-bar minimum imposed by P1/P2/P3 +
-                # find_key_levels (user 1-year-window rule 2026-05-27).
-                symbols, lookback_days=500, threads=True, progress=False,
+                # 400 calendar days ~= 276 trading days, just above the
+                # 252+14-bar minimum imposed by P1/P2/P3 + find_key_levels
+                # (user 1-year-window rule 2026-05-27). Trimmed 500 -> 400
+                # 2026-05-29 efficiency Pass 1 #7 -- saves ~20% yfinance
+                # payload per scan.
+                symbols, lookback_days=400, threads=True, progress=False,
             ),
         )
     except Exception as exc:
@@ -3278,84 +3389,92 @@ async def scanner_yf_scan(
         return bars_by_symbol.get(symbol.upper(), [])
 
     errors: list[str] = []
-    try:
-        bars_store.load_bars = _yf_backed_load  # type: ignore[assignment]
-        # Dispatch by setup. Each branch returns a list of JSON-serializable
-        # candidate dicts. CPU-bound numpy work runs in the default
-        # executor so the FastAPI event loop stays responsive.
-        if setup == "ditp":
-            from strategy.DITP import scanner as ditp_scanner  # type: ignore
-            cfg = ditp_scanner.P2Config()
-            variants_allowed = {"A", "B", "C"}
-            cand_objs = await loop.run_in_executor(
-                None,
-                lambda: ditp_scanner.scan_universe(symbols, cfg, variants_allowed),
-            )
-            from dataclasses import asdict as _asdict
-            candidates_dicts = [_asdict(c) for c in cand_objs]
-        elif setup == "ema_rebound":
-            from strategy.DITP import ema_rebound as ema_mod  # type: ignore
-            cfg = ema_mod.EMARebConfig()
-            candidates_dicts = await loop.run_in_executor(
-                None,
-                lambda: ema_mod.scan_universe(symbols, cfg),
-            )
-        elif setup == "ema_watch":
-            from strategy.DITP import ema_watch as emaw_mod  # type: ignore
-            cfg = emaw_mod.EMAWatchConfig()
-            candidates_dicts = await loop.run_in_executor(
-                None,
-                lambda: emaw_mod.scan_universe(symbols, cfg),
-            )
-        elif setup == "tc_breakout":
-            from strategy.DITP import tc_breakout as tc_mod  # type: ignore
-            cfg = tc_mod.TCBreakoutConfig()
-            candidates_dicts = await loop.run_in_executor(
-                None,
-                lambda: tc_mod.scan_universe(symbols, cfg),
-            )
-        elif setup == "p1_rebound":
-            from strategy.DITP import p1_rebound as p1_mod  # type: ignore
-            cfg = p1_mod.P1RebConfig()
-            candidates_dicts = await loop.run_in_executor(
-                None,
-                lambda: p1_mod.scan_universe(symbols, cfg),
-            )
-        elif setup == "p3_retest":
-            from strategy.DITP import p3_retest as p3_mod  # type: ignore
-            cfg = p3_mod.P3RetestConfig()
-            candidates_dicts = await loop.run_in_executor(
-                None,
-                lambda: p3_mod.scan_universe(symbols, cfg),
-            )
-        elif setup == "p1a_rejection":
-            from strategy.DITP import p1a_rejection as p1a_mod  # type: ignore
-            cfg = p1a_mod.P1aRejectConfig()
-            candidates_dicts = await loop.run_in_executor(
-                None,
-                lambda: p1a_mod.scan_universe(symbols, cfg),
-            )
-        elif setup == "p2a_breakdown":
-            from strategy.DITP import p2a_breakdown as p2a_mod  # type: ignore
-            cfg = p2a_mod.P2aBreakdownConfig()
-            candidates_dicts = await loop.run_in_executor(
-                None,
-                lambda: p2a_mod.scan_universe(symbols, cfg),
-            )
-        elif setup == "p3a_retest":
-            from strategy.DITP import p3a_retest as p3a_mod  # type: ignore
-            cfg = p3a_mod.P3aRetestConfig()
-            candidates_dicts = await loop.run_in_executor(
-                None,
-                lambda: p3a_mod.scan_universe(symbols, cfg),
-            )
-        else:
-            # Should be unreachable -- _VALID_SETUPS guard at top + ditp_tc
-            # 501 guard above mean we only get here for setups whose dispatch
-            # is missing. Surface that loudly.
-            raise HTTPException(status_code=500, detail=f"no dispatch wired for setup '{setup}'")
-    finally:
-        bars_store.load_bars = original_load  # type: ignore[assignment]
+    # Pass 2 #8 (2026-05-29): serialize the monkey-patch with an async
+    # lock so a concurrent /scanner/yf_scan request can't trample
+    # _yf_backed_load mid-scan. The all-setups endpoint uses
+    # SymbolContext + ctx kwarg and no longer needs this patch at all;
+    # single-setup still routes through scan_universe (no ctx kwarg).
+    assert _BARS_PATCH_LOCK is not None, "lifespan must have initialised the lock"
+    async with _BARS_PATCH_LOCK:
+        try:
+            bars_store.load_bars = _yf_backed_load  # type: ignore[assignment]
+            # Dispatch by setup. Each branch returns a list of JSON-
+            # serializable candidate dicts. CPU-bound numpy work runs
+            # in the default executor so the FastAPI event loop stays
+            # responsive.
+            if setup == "ditp":
+                from strategy.DITP import scanner as ditp_scanner  # type: ignore
+                cfg = ditp_scanner.P2Config()
+                variants_allowed = {"A", "B", "C"}
+                cand_objs = await loop.run_in_executor(
+                    None,
+                    lambda: ditp_scanner.scan_universe(symbols, cfg, variants_allowed),
+                )
+                from dataclasses import asdict as _asdict
+                candidates_dicts = [_asdict(c) for c in cand_objs]
+            elif setup == "ema_rebound":
+                from strategy.DITP import ema_rebound as ema_mod  # type: ignore
+                cfg = ema_mod.EMARebConfig()
+                candidates_dicts = await loop.run_in_executor(
+                    None,
+                    lambda: ema_mod.scan_universe(symbols, cfg),
+                )
+            elif setup == "ema_watch":
+                from strategy.DITP import ema_watch as emaw_mod  # type: ignore
+                cfg = emaw_mod.EMAWatchConfig()
+                candidates_dicts = await loop.run_in_executor(
+                    None,
+                    lambda: emaw_mod.scan_universe(symbols, cfg),
+                )
+            elif setup == "tc_breakout":
+                from strategy.DITP import tc_breakout as tc_mod  # type: ignore
+                cfg = tc_mod.TCBreakoutConfig()
+                candidates_dicts = await loop.run_in_executor(
+                    None,
+                    lambda: tc_mod.scan_universe(symbols, cfg),
+                )
+            elif setup == "p1_rebound":
+                from strategy.DITP import p1_rebound as p1_mod  # type: ignore
+                cfg = p1_mod.P1RebConfig()
+                candidates_dicts = await loop.run_in_executor(
+                    None,
+                    lambda: p1_mod.scan_universe(symbols, cfg),
+                )
+            elif setup == "p3_retest":
+                from strategy.DITP import p3_retest as p3_mod  # type: ignore
+                cfg = p3_mod.P3RetestConfig()
+                candidates_dicts = await loop.run_in_executor(
+                    None,
+                    lambda: p3_mod.scan_universe(symbols, cfg),
+                )
+            elif setup == "p1a_rejection":
+                from strategy.DITP import p1a_rejection as p1a_mod  # type: ignore
+                cfg = p1a_mod.P1aRejectConfig()
+                candidates_dicts = await loop.run_in_executor(
+                    None,
+                    lambda: p1a_mod.scan_universe(symbols, cfg),
+                )
+            elif setup == "p2a_breakdown":
+                from strategy.DITP import p2a_breakdown as p2a_mod  # type: ignore
+                cfg = p2a_mod.P2aBreakdownConfig()
+                candidates_dicts = await loop.run_in_executor(
+                    None,
+                    lambda: p2a_mod.scan_universe(symbols, cfg),
+                )
+            elif setup == "p3a_retest":
+                from strategy.DITP import p3a_retest as p3a_mod  # type: ignore
+                cfg = p3a_mod.P3aRetestConfig()
+                candidates_dicts = await loop.run_in_executor(
+                    None,
+                    lambda: p3a_mod.scan_universe(symbols, cfg),
+                )
+            else:
+                # Should be unreachable -- _VALID_SETUPS guard at top + ditp_tc
+                # 501 guard above mean we only get here for setups whose dispatch
+                # is missing. Surface that loudly.
+                raise HTTPException(status_code=500, detail=f"no dispatch wired for setup '{setup}'")
+        finally:
+            bars_store.load_bars = original_load  # type: ignore[assignment]
 
     scan_duration = round(_time.time() - t_scan0, 1)
     total_duration = round(_time.time() - started, 1)
@@ -3379,67 +3498,134 @@ async def scanner_yf_scan(
     })
 
 
-def _run_all_setups_sync(symbols: list[str]) -> dict[str, list[dict]]:
-    """Run all 7 yf-runnable detectors against `symbols`. Caller is
-    responsible for monkey-patching `bars_store.load_bars` to point at
-    an in-memory yFinance cache before calling this. Returns
+# Per-setup config singletons (added 2026-05-29 efficiency Pass 2 #1/#2).
+# Built once at module import so the per-symbol loop doesn't re-instantiate
+# them on every scan.
+def _build_setup_configs() -> list[tuple[str, Any, Any]]:
+    """Returns [(setup_key, detect_fn, cfg), ...] in the order they
+    should run per symbol. `detect_fn` takes (sym, cfg, ctx=ctx) and
+    returns a candidate dict, dataclass, or None.
+    """
+    from strategy.DITP import p1_rebound as p1_mod                # type: ignore
+    from strategy.DITP import scanner as ditp_scanner             # type: ignore
+    from strategy.DITP import p3_retest as p3_mod                 # type: ignore
+    from strategy.DITP import ema_rebound as ema_mod              # type: ignore
+    from strategy.DITP import ema_watch as emaw_mod               # type: ignore
+    from strategy.DITP import tc_breakout as tc_mod               # type: ignore
+    from strategy.DITP import p1a_rejection as p1a_mod            # type: ignore
+    from strategy.DITP import p2a_breakdown as p2a_mod            # type: ignore
+    from strategy.DITP import p3a_retest as p3a_mod               # type: ignore
+    return [
+        ("p1_rebound",    p1_mod.detect_p1_rebound,    p1_mod.P1RebConfig()),
+        ("ditp",          ditp_scanner.detect_p2,      ditp_scanner.P2Config()),
+        ("p3_retest",     p3_mod.detect_p3_retest,     p3_mod.P3RetestConfig()),
+        ("ema_rebound",   ema_mod.detect_ema_rebound,  ema_mod.EMARebConfig()),
+        ("ema_watch",     emaw_mod.detect_ema_watch,   emaw_mod.EMAWatchConfig()),
+        ("tc_breakout",   tc_mod.detect_tc_breakout,   tc_mod.TCBreakoutConfig()),
+        ("p1a_rejection", p1a_mod.detect_p1a_rejection,p1a_mod.P1aRejectConfig()),
+        ("p2a_breakdown", p2a_mod.detect_p2a_breakdown,p2a_mod.P2aBreakdownConfig()),
+        ("p3a_retest",    p3a_mod.detect_p3a_retest,   p3a_mod.P3aRetestConfig()),
+    ]
+
+
+# Per-setup post-processing: scanner.detect_p2 returns a dataclass +
+# needs variant filtering; everything else returns a dict.
+def _p2_postprocess(cand: Any) -> dict | None:
+    """detect_p2 returns a P2Candidate dataclass; the dashboard wants
+    only variants {A,B,C,U} and dict form. Returns None if filtered out.
+    """
+    if cand is None:
+        return None
+    variant = getattr(cand, "variant", None)
+    if variant not in {"A", "B", "C", "U"}:
+        return None
+    from dataclasses import asdict as _asdict
+    return _asdict(cand)
+
+
+def _run_all_setups_sync(
+    symbols: list[str],
+    bars_by_symbol: dict[str, list[dict]],
+) -> dict[str, list[dict]]:
+    """Run all 9 yf-runnable detectors against `symbols` using a
+    per-symbol SymbolContext built once per symbol (Pass 2 #1) and a
+    ThreadPoolExecutor fanout (Pass 2 #2). Returns
     `{setup_key: [candidate_dict, ...], ...}` for each wired setup.
 
-    Used by `/scanner/yf_scan_all` to amortise the yFinance fetch over
-    all 7 detectors (avoids the ~7x network round trips that running
-    each setup separately incurs).
+    `bars_by_symbol` is the in-memory daily-bars cache the caller
+    (the `/scanner/yf_scan_all` endpoint) already fetched. We use it
+    to build a SymbolContext per symbol, which all detectors consume
+    via the ctx kwarg -- no global monkey-patching of
+    `bars_store.load_bars`.
+
+    Architecture vs the pre-Pass-2 implementation:
+      - OLD: loop OVER SETUPS, each detector loops OVER SYMBOLS, each
+        symbol reloads bars + builds arrays + EMA × 3 + ATR. Sequential.
+      - NEW: build setup configs ONCE; loop OVER SYMBOLS; build ctx
+        ONCE per symbol; loop over setups WITHIN each symbol reusing
+        ctx; ThreadPoolExecutor fans symbols across workers.
+
+    Per-symbol exceptions are logged to stderr (mirrors scan_universe
+    behaviour); one symbol failing doesn't kill the scan.
     """
-    from dataclasses import asdict as _asdict
-    out: dict[str, list[dict]] = {}
+    from concurrent.futures import ThreadPoolExecutor
+    from symbol_ctx import build_context                # type: ignore
 
-    # P1 (long-side rebound off support)
-    from strategy.DITP import p1_rebound as p1_mod                # type: ignore
-    out["p1_rebound"] = p1_mod.scan_universe(symbols, p1_mod.P1RebConfig())
+    setup_configs = _build_setup_configs()
+    setup_keys = [key for key, _, _ in setup_configs]
+    out: dict[str, list[dict]] = {key: [] for key in setup_keys}
 
-    # DITP P2 (long-side breakout). Variants A/B/C/U all allowed
-    # (U = unclassified P2 added 2026-05-28 for ASTS case).
-    from strategy.DITP import scanner as ditp_scanner             # type: ignore
-    p2_cand_objs = ditp_scanner.scan_universe(
-        symbols, ditp_scanner.P2Config(), {"A", "B", "C", "U"},
-    )
-    out["ditp"] = [_asdict(c) for c in p2_cand_objs]
+    def _run_one_symbol(sym: str) -> list[tuple[str, dict]]:
+        """Build ctx for sym, run all detectors, return their hits."""
+        results: list[tuple[str, dict]] = []
+        bars = bars_by_symbol.get(sym.upper(), [])
+        if not bars:
+            return results
+        try:
+            ctx = build_context(sym, bars=bars)
+        except Exception as exc:
+            sys.stderr.write(f"[{sym}] build_context failed: {exc}\n")
+            return results
+        if ctx is None:
+            return results
+        for key, detect_fn, cfg in setup_configs:
+            try:
+                cand = detect_fn(sym, cfg, ctx=ctx)
+            except Exception as exc:
+                sys.stderr.write(f"[{sym}] detect_{key} failed: {exc}\n")
+                continue
+            if cand is None:
+                continue
+            if key == "ditp":
+                d = _p2_postprocess(cand)
+                if d is None:
+                    continue
+                results.append((key, d))
+            else:
+                results.append((key, cand))
+        return results
 
-    # P3 (long-side retest of broken resistance)
-    from strategy.DITP import p3_retest as p3_mod                 # type: ignore
-    out["p3_retest"] = p3_mod.scan_universe(symbols, p3_mod.P3RetestConfig())
+    # Thread pool fanout. numpy releases the GIL on heavy ops so
+    # threads scale reasonably even on the pure-Python EMA inner loops.
+    # Workers capped at 8 (matches typical laptop core count + diminishing
+    # returns past that for our scan sizes).
+    max_workers = min(8, max(1, len(symbols)))
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        for sym_results in ex.map(_run_one_symbol, symbols):
+            for key, cand in sym_results:
+                out[key].append(cand)
 
-    # EMA20/50/200 rebound (strict, today's candle = confirmation)
-    from strategy.DITP import ema_rebound as ema_mod              # type: ignore
-    out["ema_rebound"] = ema_mod.scan_universe(symbols, ema_mod.EMARebConfig())
+    # Sort each bucket the same way the pre-Pass-2 scan_universe calls did.
+    def _score(c: dict, default: int = 0) -> int:
+        v = c.get("score", default)
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return default
 
-    # EMA20/50/200 watch (pre-confirmation, pullback IN PROGRESS).
-    # Wired 2026-05-29 per user note "AAOI is also EMA20 candidate" --
-    # AAOI's bar today is bearish so ema_rebound correctly skips it,
-    # but the ticker is still mid-pullback to EMA20 in a clean stack;
-    # the watch surface keeps it on the radar for tomorrow.
-    from strategy.DITP import ema_watch as emaw_mod                # type: ignore
-    out["ema_watch"] = emaw_mod.scan_universe(symbols, emaw_mod.EMAWatchConfig())
-
-    # TC (Trend Continuation -- self-contained variant). Identifies
-    # Day 0 / Day +1 / Day +2 continuation patterns from price action
-    # alone (vs tc_scanner.py which requires yesterday's P2 watchlist).
-    # Wired 2026-05-29 per user batch: "SNDK should be trend
-    # continuation... APLD should be a trend continuation candidate...
-    # ORCL is a Trend continuation candidate".
-    from strategy.DITP import tc_breakout as tc_mod                # type: ignore
-    out["tc_breakout"] = tc_mod.scan_universe(symbols, tc_mod.TCBreakoutConfig())
-
-    # Short-side mirrors: P1a (rejection at R), P2a (pending breakdown),
-    # P3a (retest of broken support).
-    from strategy.DITP import p1a_rejection as p1a_mod            # type: ignore
-    out["p1a_rejection"] = p1a_mod.scan_universe(symbols, p1a_mod.P1aRejectConfig())
-
-    from strategy.DITP import p2a_breakdown as p2a_mod            # type: ignore
-    out["p2a_breakdown"] = p2a_mod.scan_universe(symbols, p2a_mod.P2aBreakdownConfig())
-
-    from strategy.DITP import p3a_retest as p3a_mod               # type: ignore
-    out["p3a_retest"] = p3a_mod.scan_universe(symbols, p3a_mod.P3aRetestConfig())
-
+    for key in out:
+        # All detectors emit `score` (higher = better). Sort desc.
+        out[key].sort(key=lambda c: -_score(c))
     return out
 
 
@@ -3509,7 +3695,10 @@ async def scanner_yf_scan_all(
         bars_by_symbol = await loop.run_in_executor(
             None,
             lambda: yf_daily_bars.fetch_daily_batch(
-                symbols, lookback_days=500, threads=True, progress=False,
+                # Trimmed 500 -> 400 (2026-05-29 Pass 1 #7); 400 calendar
+                # days ~= 276 trading days, comfortably above the
+                # 252+14-bar minimum.
+                symbols, lookback_days=400, threads=True, progress=False,
             ),
         )
     except Exception as exc:
@@ -3517,22 +3706,16 @@ async def scanner_yf_scan_all(
     fetch_duration = round(_time.time() - t_fetch0, 1)
     fetched_n = sum(1 for v in bars_by_symbol.values() if v)
 
-    # --- Run all 7 detectors against the shared bars cache ---
+    # --- Run all 9 detectors against the shared bars cache ---
+    # Pass 2 (2026-05-29): no more monkey-patching of bars_store.load_bars.
+    # bars_by_symbol is passed directly into _run_all_setups_sync,
+    # which builds a per-symbol SymbolContext and threads it through
+    # each detector via the ctx kwarg. ThreadPool fans symbols across
+    # workers inside _run_all_setups_sync.
     t_scan0 = _time.time()
-    original_load = bars_store.load_bars
-
-    def _yf_backed_load(symbol, start=None, end=None, *, timeframe: str = "1min"):
-        if timeframe != "daily":
-            return original_load(symbol, start, end, timeframe=timeframe)
-        return bars_by_symbol.get(symbol.upper(), [])
-
-    try:
-        bars_store.load_bars = _yf_backed_load  # type: ignore[assignment]
-        setup_results = await loop.run_in_executor(
-            None, lambda: _run_all_setups_sync(symbols),
-        )
-    finally:
-        bars_store.load_bars = original_load   # type: ignore[assignment]
+    setup_results = await loop.run_in_executor(
+        None, lambda: _run_all_setups_sync(symbols, bars_by_symbol),
+    )
 
     scan_duration = round(_time.time() - t_scan0, 1)
     total_duration = round(_time.time() - started, 1)

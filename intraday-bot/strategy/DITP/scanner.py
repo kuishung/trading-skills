@@ -59,6 +59,7 @@ from patterns import (  # noqa: E402
 )
 
 import bars_store  # noqa: E402  (resources/bars_store.py)
+from symbol_ctx import SymbolContext, build_context  # noqa: E402  (resources/symbol_ctx.py)
 from market_calendar import next_trading_day  # noqa: E402  (resources/market_calendar.py)
 
 STATE_DIR = SKILL_DIR / "state"
@@ -496,7 +497,8 @@ class P2Candidate:
 
 
 def detect_p2(symbol: str, cfg: P2Config,
-              as_of_date: date | None = None) -> P2Candidate | None:
+              as_of_date: date | None = None,
+              ctx: SymbolContext | None = None) -> P2Candidate | None:
     """Apply all P2 rules to one symbol's daily bars. Returns candidate or None.
 
     `as_of_date` controls look-ahead: when set, only daily bars with
@@ -505,40 +507,58 @@ def detect_p2(symbol: str, cfg: P2Config,
     it would have produced at the end of day `as_of_date`, with no
     knowledge of any future bars. When None (default), the full parquet
     history is visible (live / EOD-scanner use case).
+
+    `ctx` (added 2026-05-29 efficiency Pass 2 #1): optional pre-built
+    SymbolContext for the live / scanner path. IGNORED when
+    `as_of_date` is set -- the backtest path needs to filter bars,
+    which would invalidate any pre-built context. Live dashboard path
+    uses ctx to skip the bars load + numpy arrays + EMA × 3 + ATR
+    that this detector would otherwise recompute.
     """
-    bars = bars_store.load_bars(symbol, timeframe="daily")
-    if as_of_date is not None:
-        # Daily bars store timestamps that vary by source (UTC midnight,
-        # session close, etc.). Compare on .date() so we're robust to
-        # however the parquet was written. Keep bars whose date is ≤ cutoff.
-        cutoff = as_of_date
-        bars = [b for b in bars if _bar_date(b["t"]) <= cutoff]
-    if len(bars) < cfg.resistance_lookback + 14:
-        return None  # need ≥ lookback + ATR(14) headroom; user rule 2026-05-27: 1-year window
-    closes = np.array([b["c"] for b in bars], dtype=float)
-    highs  = np.array([b["h"] for b in bars], dtype=float)
-    lows   = np.array([b["l"] for b in bars], dtype=float)
-    opens  = np.array([b["o"] for b in bars], dtype=float)
+    if as_of_date is not None or ctx is None:
+        # Backtest path OR live path without a ctx -- do the load +
+        # filter + compute here.
+        bars = bars_store.load_bars(symbol, timeframe="daily")
+        if as_of_date is not None:
+            cutoff = as_of_date
+            bars = [b for b in bars if _bar_date(b["t"]) <= cutoff]
+        if len(bars) < cfg.resistance_lookback + 14:
+            return None
+        closes = np.array([b["c"] for b in bars], dtype=float)
+        highs  = np.array([b["h"] for b in bars], dtype=float)
+        lows   = np.array([b["l"] for b in bars], dtype=float)
+        opens  = np.array([b["o"] for b in bars], dtype=float)
+        e20  = ema_np(closes, 20)
+        e50  = ema_np(closes, 50)
+        e200 = ema_np(closes, 200)
+        atr  = atr_wilder_np(highs, lows, closes, period=14)
+        if atr <= 0:
+            return None
+    else:
+        # ctx-supplied path (dashboard batched scan).
+        if len(ctx.bars) < cfg.resistance_lookback + 14:
+            return None
+        bars   = ctx.bars
+        closes = ctx.closes
+        highs  = ctx.highs
+        lows   = ctx.lows
+        opens  = ctx.opens
+        e20    = ctx.ema20
+        e50    = ctx.ema50
+        e200   = ctx.ema200
+        atr    = ctx.atr14
 
     # 1. Bullish EMA stack + price > EMA20.
     # Strict mode (require_full_stack=True): full 20>50>200 stack.
     # Relaxed mode (default): close > EMA20 > EMA50 only -- accepts
     # early-recovery cases like MSFT 2026-05-28 where short-term trend
     # is up but EMA200 is still overhead.
-    e20 = ema_np(closes, 20)
-    e50 = ema_np(closes, 50)
-    e200 = ema_np(closes, 200)
     if cfg.require_full_stack:
         if not (e20[-1] > e50[-1] > e200[-1] and closes[-1] > e20[-1]):
             return None
     else:
         if not (closes[-1] > e20[-1] > e50[-1]):
             return None
-
-    # 2. ATR14
-    atr = atr_wilder_np(highs, lows, closes, period=14)
-    if atr <= 0:
-        return None
 
     # 3. Horizontal resistance above current, anchored to a left-side mountain top
     r = _resistance(highs, lows, closes, cfg, float(closes[-1]), atr)

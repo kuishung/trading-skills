@@ -184,6 +184,15 @@ def _extract_rows(html: str) -> list[dict]:
     return rows
 
 
+# In-process LRU on top of the disk cache (added 2026-05-29 efficiency
+# Pass 1 #5). Dashboard's `_universe_for_setup` calls this on every
+# scan, every Scanner-2 ticker reload, every health-pill render --
+# disk cache still does SHA1 + stat + read + JSON parse (~5-10ms per
+# call). Memory cache keyed by normalized URL collapses to a dict
+# lookup. TTL semantics identical; force_refresh bypasses both layers.
+_MEM_CACHE: dict[str, tuple[float, list[str]]] = {}
+
+
 def fetch_screener_symbols(
     url: str,
     *,
@@ -197,9 +206,10 @@ def fetch_screener_symbols(
     a page yields zero NEW symbols (sentinel for end-of-results) or
     `max_pages` is hit. Sleeps `_PAGE_SLEEP_S` between page fetches.
 
-    Caching: results are stored at `state/cache/finviz_<sha1>.json`
-    keyed by the (normalized) URL. Reused while younger than
-    `cache_ttl_s`. Pass `force_refresh=True` to bypass.
+    Caching layers (in order):
+      1. In-process `_MEM_CACHE` keyed by normalized URL.
+      2. Disk cache `state/cache/finviz_<sha1>.json` keyed by the same.
+    Both honour `cache_ttl_s`. Pass `force_refresh=True` to skip both.
 
     Returns dedup'd list, uppercase, dotted-form share classes.
     Empty list if the fetch fails -- caller should treat empty as
@@ -208,11 +218,20 @@ def fetch_screener_symbols(
     if not url or not url.strip():
         return []
     base = _normalize_url(url.strip())
+
+    if not force_refresh:
+        # Layer 1: in-process cache.
+        hit = _MEM_CACHE.get(base)
+        if hit is not None and (time.time() - hit[0]) <= cache_ttl_s:
+            return list(hit[1])
+
     cache = _cache_path(base)
 
     if not force_refresh:
         cached = _read_cache(cache, cache_ttl_s)
         if cached is not None:
+            # Promote disk hit into memory so subsequent calls skip disk.
+            _MEM_CACHE[base] = (time.time(), cached)
             return cached
 
     all_symbols: list[str] = []
@@ -243,6 +262,8 @@ def fetch_screener_symbols(
 
     if all_symbols:
         _write_cache(cache, base, all_symbols)
+        # Also promote into the in-process cache (Pass 1 #5).
+        _MEM_CACHE[base] = (time.time(), all_symbols)
     return all_symbols
 
 

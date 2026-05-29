@@ -66,9 +66,10 @@ import numpy as np  # type: ignore  # noqa: E402
 
 from patterns import ema_np, atr_wilder_np  # noqa: E402  (resources/patterns.py)
 import bars_store  # noqa: E402  (resources/bars_store.py)
+from symbol_ctx import SymbolContext, build_context  # noqa: E402  (resources/symbol_ctx.py)
 
 
-__version__ = "1.4.0"
+__version__ = "1.4.1"
 
 
 @dataclass
@@ -158,7 +159,11 @@ def _is_prior_trade_through(o: float, h: float, l: float, c: float,
     return True
 
 
-def detect_ema_rebound(symbol: str, cfg: EMARebConfig) -> dict | None:
+def detect_ema_rebound(
+    symbol: str,
+    cfg: EMARebConfig,
+    ctx: SymbolContext | None = None,
+) -> dict | None:
     """Apply EMA-rebound rules to one symbol's daily bars. Returns
     candidate dict or None.
 
@@ -181,21 +186,23 @@ def detect_ema_rebound(symbol: str, cfg: EMARebConfig) -> dict | None:
     expected to be monkey-patched by the dashboard's yf_scan endpoint
     when running against fresh yFinance bars (no parquet read).
     """
-    bars = bars_store.load_bars(symbol, timeframe="daily")
-    if len(bars) < 210:
+    # v1.4.1: ctx-aware (Pass 2 #1). When dashboard provides a
+    # SymbolContext, skip the load + array allocation + EMA + ATR
+    # computation (already done once for this symbol).
+    if ctx is None:
+        ctx = build_context(symbol)
+    if ctx is None or len(ctx.bars) < 210:
         return None
 
-    closes = np.array([b["c"] for b in bars], dtype=float)
-    opens  = np.array([b["o"] for b in bars], dtype=float)
-    highs  = np.array([b["h"] for b in bars], dtype=float)
-    lows   = np.array([b["l"] for b in bars], dtype=float)
-
-    ema20  = ema_np(closes, 20)
-    ema50  = ema_np(closes, 50)
-    ema200 = ema_np(closes, 200)
-    atr    = atr_wilder_np(highs, lows, closes, period=14)
-    if atr <= 0:
-        return None
+    bars   = ctx.bars
+    closes = ctx.closes
+    opens  = ctx.opens
+    highs  = ctx.highs
+    lows   = ctx.lows
+    ema20  = ctx.ema20
+    ema50  = ctx.ema50
+    ema200 = ctx.ema200
+    atr    = ctx.atr14
 
     last_close = float(closes[-1])
     last_open  = float(opens[-1])
