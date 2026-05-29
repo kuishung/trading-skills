@@ -57,6 +57,16 @@ from this dashboard.
   `resources/`/`review/` library, Phase-tagged stubs), `templates/` +
   `static/`, `requirements.txt`, `.env.example`. Deps are per-PC
   (gitignored); the SQLite db (`*.db`) and `.env` are gitignored.
+- `deploy/` — **deployment kit for the server.** `run_app.ps1` (create venv,
+  install deps, launch uvicorn; `-BindHost`/`-Port`/`-Reload`) and
+  `setup_hermes_webapp_task.ps1` (register the `TST-Dashboard-Web`
+  scheduled task so it survives reboot/RDP, mirroring the bot's
+  `setup_hermes_*` pattern). Both ASCII-only, parse-clean.
+- `DEPLOY.md` — **deployment runbook.** Active **Path B** (Hamachi VPN,
+  `http://<server-hamachi-ip>:8000`, password auth, no domain/TLS — the VPN
+  tunnel is encrypted) step-by-step: pull → `.env` → first run → firewall
+  lock to the `25.0.0.0/8` Hamachi subnet → service install → members join
+  → update loop. Plus the future **Path A** (public + Google) upgrade notes.
 - `DESIGN.md` — **product blueprint** (DRAFT, pre-implementation). The
   agreed vision: `dashboard_tst` as TradeHunter's trend & swing product +
   members-only, internet-facing collaboration platform (Finviz → MATP/MBP
@@ -95,6 +105,10 @@ controls, intraday scanner setups) will be trimmed as the trend/swing
 surface takes shape.
 
 ## Changelog
+
+### 2026-05-30 — Path B: VPN deploy + mode-switchable auth (password active)
+
+User chose **Path B** — host on the server, members reach it over a **Hamachi VPN** (`http://<server-hamachi-ip>:8000`), no public internet / domain / TLS (the VPN tunnel is already encrypted; the VPN membership is the access gate). This collided with the prior Google-only auth (Google rejects bare/private IPs as OAuth redirect URIs), so auth is now **mode-switchable via `TST_AUTH_MODE`**: `password` (active — admin creates accounts, PBKDF2-hashed, approved on creation) or `google` (Path A, fully built and parked for when a domain+TLS exist). Changes: `config.py` adds `auth_mode` + re-adds `admin_password`; `models.User` re-adds nullable `password_hash` alongside `google_sub`; `security.py` re-adds PBKDF2 hash/verify; `routes/auth.py` branches on mode (Authlib lazy-imported so password mode needs no OAuth dep); `routes/admin.py` shows a create-user form (password) or the pending queue (google); `main.py` seeds the admin in password mode; `login.html`/`admin.html` branch on mode. Added the **deploy kit**: `deploy/run_app.ps1`, `deploy/setup_hermes_webapp_task.ps1` (both parse-clean), and a `DEPLOY.md` Path-B runbook (incl. firewall lock to the Hamachi subnet + the Path-A upgrade notes). All `app/*.py` byte-compile clean; config logic verified (defaults to password, switches to google, domain gate case-insensitive). DESIGN.md auth + networking items updated.
 
 ### 2026-05-30 — Auth refactor: Google OAuth (OIDC) + admin approval
 

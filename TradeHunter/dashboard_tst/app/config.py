@@ -10,6 +10,9 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
+AUTH_PASSWORD = "password"
+AUTH_GOOGLE = "google"
+
 
 def _bool(value: str | None, default: bool = False) -> bool:
     if value is None:
@@ -34,34 +37,39 @@ class Settings:
     )
     debug: bool = field(default_factory=lambda: _bool(os.environ.get("TST_DEBUG"), False))
 
-    # --- Google OAuth (Sign in with Google) ---
+    # --- Auth mode ---
+    # "password" (Path B): admin seeds accounts with passwords; access is
+    #   gated by the Hamachi VPN + login. No domain/TLS/Google needed.
+    # "google"  (Path A): Google OAuth + admin approval. Requires an https
+    #   domain (Google rejects bare/private IPs as redirect URIs).
+    auth_mode: str = field(
+        default_factory=lambda: (os.environ.get("TST_AUTH_MODE", AUTH_PASSWORD) or AUTH_PASSWORD).strip().lower()
+    )
+
+    # Admin bootstrap.
+    # password mode: TST_ADMIN_EMAIL + TST_ADMIN_PASSWORD seed an approved
+    #   admin on first startup.
+    # google mode: TST_ADMIN_EMAIL is auto-promoted to admin on first sign-in.
+    admin_email: str | None = field(default_factory=lambda: os.environ.get("TST_ADMIN_EMAIL"))
+    admin_password: str | None = field(default_factory=lambda: os.environ.get("TST_ADMIN_PASSWORD"))
+
+    # --- Google OAuth (only used when auth_mode == "google") ---
     google_client_id: str | None = field(
         default_factory=lambda: os.environ.get("TST_GOOGLE_CLIENT_ID")
     )
     google_client_secret: str | None = field(
         default_factory=lambda: os.environ.get("TST_GOOGLE_CLIENT_SECRET")
     )
-    # Optional explicit redirect URI. Behind a TLS reverse proxy the
-    # auto-derived URL may be http://, so set this in prod to the exact
-    # https URI registered in the Google Cloud OAuth client, e.g.
-    #   https://study.example.com/auth/callback
     oauth_redirect_uri: str | None = field(
         default_factory=lambda: os.environ.get("TST_OAUTH_REDIRECT_URI")
     )
-
-    # Authorization model: Google authenticates; the admin approves.
-    # The single email that is auto-promoted to admin + approved on first
-    # sign-in (bootstrap). Everyone else starts 'pending'.
-    admin_email: str | None = field(default_factory=lambda: os.environ.get("TST_ADMIN_EMAIL"))
-    # Optional hard gate: if set, only these email domains may even create
-    # a pending account (cuts approval-queue spam). Comma-separated.
     allowed_email_domains: tuple[str, ...] = field(
         default_factory=lambda: _csv(os.environ.get("TST_ALLOWED_EMAIL_DOMAINS"))
     )
 
-    # Session cookie
+    # Session cookie. Set TST_HTTPS_ONLY=1 only when served over TLS; over a
+    # Hamachi VPN on plain http it must stay 0 (the VPN tunnel is encrypted).
     session_cookie: str = "tst_session"
-    # Set TST_HTTPS_ONLY=1 in production (behind TLS).
     session_https_only: bool = field(
         default_factory=lambda: _bool(os.environ.get("TST_HTTPS_ONLY"), False)
     )
@@ -73,6 +81,10 @@ class Settings:
     @property
     def secret_is_default(self) -> bool:
         return self.secret_key == "dev-insecure-change-me"
+
+    @property
+    def is_google_auth(self) -> bool:
+        return self.auth_mode == AUTH_GOOGLE
 
     @property
     def google_configured(self) -> bool:

@@ -1,8 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Admin &middot; TST{% endblock %}
 {% block content %}
-<h1 class="text-2xl font-semibold mb-6">Admin</h1>
+<h1 class="text-2xl font-semibold mb-6">Admin
+  <span class="text-xs text-slate-500">(auth: {{ auth_mode }})</span></h1>
 
+{% if is_google_auth %}
 <section class="mb-10">
   <h2 class="text-lg font-medium mb-3">Pending approval
     <span class="text-xs text-slate-500">({{ pending|length }})</span></h2>
@@ -38,10 +40,11 @@
   <p class="text-slate-500 text-sm">No pending requests.</p>
   {% endif %}
 </section>
+{% endif %}
 
 <section class="mb-10">
   <h2 class="text-lg font-medium mb-3">Members</h2>
-  <table class="w-full text-sm border border-slate-800">
+  <table class="w-full text-sm border border-slate-800 mb-4">
     <thead class="bg-slate-900 text-slate-400">
       <tr>
         <th class="text-left px-3 py-2">Email</th>
@@ -80,6 +83,23 @@
       {% endfor %}
     </tbody>
   </table>
+
+  {% if not is_google_auth %}
+  <h3 class="text-sm font-medium mb-2 text-slate-300">Create member</h3>
+  <form method="post" action="/admin/users" class="flex flex-wrap gap-2 items-end">
+    <input name="email" type="email" placeholder="Email" required
+           class="rounded bg-slate-900 border border-slate-700 px-3 py-2 text-sm">
+    <input name="display_name" type="text" placeholder="Name"
+           class="rounded bg-slate-900 border border-slate-700 px-3 py-2 text-sm">
+    <input name="password" type="text" placeholder="Initial password" required
+           class="rounded bg-slate-900 border border-slate-700 px-3 py-2 text-sm">
+    <select name="role" class="rounded bg-slate-900 border border-slate-700 px-3 py-2 text-sm">
+      <option value="member">member</option>
+      <option value="admin">admin</option>
+    </select>
+    <button class="rounded bg-emerald-600 hover:bg-emerald-500 px-3 py-2 text-sm font-medium">Create</button>
+  </form>
+  {% endif %}
 </section>
 
 <section>

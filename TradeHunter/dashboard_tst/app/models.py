@@ -41,6 +41,9 @@ class User(Base):
 
     id = Column(Integer, primary_key=True)
     email = Column(String(255), unique=True, nullable=False, index=True)
+    # password mode (Path B): PBKDF2 hash. google mode (Path A): OIDC subject.
+    # A user has one or the other depending on TST_AUTH_MODE.
+    password_hash = Column(String(255), nullable=True)
     google_sub = Column(String(64), unique=True, nullable=True, index=True)  # OIDC subject
     display_name = Column(String(120), nullable=False, default="")
     picture = Column(String(512), nullable=True)

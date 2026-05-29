@@ -22,12 +22,12 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import __version__ as APP_VERSION
 from .config import settings
-from .db import init_db
-from .models import User
+from .db import SessionLocal, init_db
+from .models import APPROVED, User
 from .routes import admin as admin_routes
 from .routes import auth as auth_routes
 from .routes import studies as studies_routes
-from .security import current_user
+from .security import current_user, hash_password
 
 log = logging.getLogger("dashboard_tst")
 
@@ -35,21 +35,47 @@ APP_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
 
 
+def _bootstrap_admin_password() -> None:
+    """password mode: seed an approved admin from env on first startup."""
+    if not (settings.admin_email and settings.admin_password):
+        return
+    import datetime as _dt
+
+    email = settings.admin_email.strip().lower()
+    db = SessionLocal()
+    try:
+        if db.query(User).filter(User.email == email).first() is None:
+            db.add(
+                User(
+                    email=email,
+                    display_name="Admin",
+                    password_hash=hash_password(settings.admin_password),
+                    role="admin",
+                    status=APPROVED,
+                    approved_at=_dt.datetime.now(_dt.timezone.utc),
+                )
+            )
+            db.commit()
+            log.info("Seeded admin account %s", email)
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    # The admin is bootstrapped on first Google sign-in (TST_ADMIN_EMAIL is
-    # auto-promoted to admin+approved in routes/auth.py), so there is no
-    # password-based seed step.
+    if settings.is_google_auth:
+        # google mode: admin is auto-promoted on first sign-in (routes/auth.py).
+        if not settings.google_configured:
+            log.warning(
+                "auth_mode=google but Google OAuth is not configured "
+                "(TST_GOOGLE_CLIENT_ID / TST_GOOGLE_CLIENT_SECRET). Sign-in unavailable."
+            )
+    else:
+        _bootstrap_admin_password()
     if settings.secret_is_default:
         log.warning(
-            "TST_SECRET_KEY is the insecure default. Set a real secret before "
-            "exposing this app."
-        )
-    if not settings.google_configured:
-        log.warning(
-            "Google OAuth not configured (TST_GOOGLE_CLIENT_ID / "
-            "TST_GOOGLE_CLIENT_SECRET). Sign-in will be unavailable until set."
+            "TST_SECRET_KEY is the insecure default. Set a real secret before exposing this app."
         )
     yield
 

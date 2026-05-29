@@ -211,22 +211,29 @@ collaboration surface have opposite security needs. We split them:
 
 These gate the affected phases. Recorded here so they're not lost.
 
+- **[DECIDED] Networking = Hamachi VPN (Path B).** Members install Hamachi
+  and reach the app at `http://<server-hamachi-ip>:8000`. The VPN tunnel is
+  encrypted, so plain http is acceptable and no public exposure / domain /
+  TLS is needed at this stage. The VPN membership is itself the access gate.
+  Caveat: free Hamachi caps a network at 5 machines (Tailscale if it grows).
+  Public-internet exposure (Path A) is deferred — see DEPLOY.md.
 - **[OPEN] Host isolation** on the R720: dedicated new Hyper-V DMZ VM
-  (recommended) vs container on the existing Hermes VM vs same-VM
-  process. Drives the security posture.
+  (recommended) vs the existing Hermes VM. Lower stakes under Path B (no
+  public surface), but a separate VM is still cleaner. The app holds no
+  broker creds regardless.
 - **[PROVISIONAL — scaffolded]** Web stack: **FastAPI + SQLAlchemy +
   Jinja2/HTMX**, DB via `TST_DATABASE_URL` (SQLite for dev, Postgres for
   prod — no code change). Chosen as the scaffold default; change before
   Phase 2 if you'd rather go React SPA / pin Postgres now.
-- **[DECIDED — scaffolded]** Auth model: **Google OAuth (OIDC) + admin
-  approval**. Google authenticates (no passwords stored); a new user lands
-  `status=pending` and cannot access member areas until an admin approves
-  them. `TST_ADMIN_EMAIL` is auto-promoted to admin+approved on first
-  sign-in. Optional `TST_ALLOWED_EMAIL_DOMAINS` gate restricts who can even
-  create a pending request (makes it effectively invite-only). Google
-  sign-in for non-sensitive scopes (`openid`/`email`/`profile`) is free —
-  no security assessment. Requires a Google Cloud OAuth client (Client ID +
-  Secret in `.env`).
+- **[DECIDED] Auth = mode-switchable (`TST_AUTH_MODE`).** Active mode is
+  **`password` (Path B)**: the admin creates member accounts (email +
+  password, PBKDF2-hashed, approved on creation); access is gated by the
+  Hamachi VPN + login. The **`google` (Path A)** mode is fully built and
+  parked: Google OAuth (OIDC) + admin-approval queue, `TST_ADMIN_EMAIL`
+  auto-promoted on first sign-in, optional email-domain allowlist. Flip to
+  Path A with `TST_AUTH_MODE=google` once a domain + TLS exist (Google
+  rejects bare/private IPs as redirect URIs, so it can't run over a raw
+  Hamachi IP). Google sign-in for `openid`/`email`/`profile` is free.
 - **[OPEN] Swing strategy family** name + which swing setups to code
   first (none exist yet — DITP/GUNS are intraday).
 - **[OPEN] Swing bot clientId** — assign the next free number, append to

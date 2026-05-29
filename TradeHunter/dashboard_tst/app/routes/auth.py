@@ -1,21 +1,22 @@
-"""Google OAuth (OIDC) login + logout.
+"""Login / logout, mode-switchable (config.TST_AUTH_MODE).
 
-Flow:
-  GET  /login          -> redirect to Google's consent screen
-  GET  /auth/callback  -> exchange code, upsert the user, set session
-  POST /logout         -> clear session
+password (Path B, default):
+  GET  /login  -> password form
+  POST /login  -> verify email + password, set session
 
-New users are created with ``status='pending'`` and must be approved by an
-admin (see routes/admin.py). The single ``TST_ADMIN_EMAIL`` is auto-promoted
-to admin + approved on first sign-in. No passwords are ever handled here.
+google (Path A):
+  GET  /login          -> redirect to Google consent
+  GET  /auth/callback  -> exchange code, upsert (pending), set session
+  Authlib is imported lazily so the password-mode deploy needs no OAuth deps.
+
+Both modes share the session + the pending/approval model.
 """
 from __future__ import annotations
 
 import datetime as _dt
 from pathlib import Path
 
-from authlib.integrations.starlette_client import OAuth, OAuthError
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
@@ -23,42 +24,84 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..db import get_db
 from ..models import APPROVED, PENDING, User
-from ..security import login_user, logout_user
+from ..security import login_user, logout_user, verify_password
 
 router = APIRouter(tags=["auth"])
 templates = Jinja2Templates(
     directory=str(Path(__file__).resolve().parent.parent / "templates")
 )
 
-# Register the Google provider via OIDC discovery. Safe to register even if
-# creds are absent; the /login route checks `settings.google_configured`.
-oauth = OAuth()
-oauth.register(
-    name="google",
-    client_id=settings.google_client_id,
-    client_secret=settings.google_client_secret,
-    server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
-    client_kwargs={"scope": "openid email profile"},
-)
+
+def _login_ctx(request: Request, error: str | None = None) -> dict:
+    return {"request": request, "error": error, "auth_mode": settings.auth_mode}
 
 
+# ----------------------------------------------------------------------------
+# Google (Path A) — lazy Authlib registration so password mode has no OAuth dep
+# ----------------------------------------------------------------------------
+_oauth = None
+
+
+def _google():
+    global _oauth
+    if _oauth is None:
+        from authlib.integrations.starlette_client import OAuth
+
+        _oauth = OAuth()
+        _oauth.register(
+            name="google",
+            client_id=settings.google_client_id,
+            client_secret=settings.google_client_secret,
+            server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+            client_kwargs={"scope": "openid email profile"},
+        )
+    return _oauth.google
+
+
+# ----------------------------------------------------------------------------
+# Routes
+# ----------------------------------------------------------------------------
 @router.get("/login")
 async def login(request: Request):
-    if not settings.google_configured:
+    if settings.is_google_auth:
+        if not settings.google_configured:
+            return templates.TemplateResponse(
+                "login.html",
+                _login_ctx(request, "Google sign-in is not configured on this server."),
+                status_code=503,
+            )
+        redirect_uri = settings.oauth_redirect_uri or str(request.url_for("auth_callback"))
+        return await _google().authorize_redirect(request, redirect_uri)
+    # password mode
+    return templates.TemplateResponse("login.html", _login_ctx(request))
+
+
+@router.post("/login")
+async def login_password(
+    request: Request,
+    email: str = Form(...),
+    password: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    """Password-mode form submit. (In google mode the GET handles everything.)"""
+    if settings.is_google_auth:
+        return RedirectResponse(url="/login", status_code=303)
+    user = db.query(User).filter(User.email == email.strip().lower()).first()
+    if user is None or not verify_password(password, user.password_hash):
         return templates.TemplateResponse(
-            "login.html",
-            {"request": request, "error": "Google sign-in is not configured on this server."},
-            status_code=503,
+            "login.html", _login_ctx(request, "Invalid email or password."), status_code=401
         )
-    redirect_uri = settings.oauth_redirect_uri or str(request.url_for("auth_callback"))
-    return await oauth.google.authorize_redirect(request, redirect_uri)
+    login_user(request, user)
+    return RedirectResponse(url="/", status_code=303)
 
 
 @router.get("/auth/callback", name="auth_callback")
 async def auth_callback(request: Request, db: Session = Depends(get_db)):
+    if not settings.is_google_auth:
+        return RedirectResponse(url="/login", status_code=303)
     try:
-        token = await oauth.google.authorize_access_token(request)
-    except OAuthError:
+        token = await _google().authorize_access_token(request)
+    except Exception:
         return RedirectResponse(url="/login", status_code=303)
 
     info = token.get("userinfo") or {}
@@ -67,17 +110,13 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
     if not sub or not email:
         return RedirectResponse(url="/login", status_code=303)
 
-    # Optional domain gate before we even create a pending row.
     if not settings.domain_allowed(email):
         return templates.TemplateResponse(
-            "pending.html",
-            {"request": request, "rejected": True, "email": email},
-            status_code=403,
+            "pending.html", {"request": request, "rejected": True, "email": email}, status_code=403
         )
 
     name = info.get("name") or email
     picture = info.get("picture")
-
     user = (
         db.query(User).filter(User.google_sub == sub).first()
         or db.query(User).filter(User.email == email).first()
@@ -97,13 +136,11 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
         )
         db.add(user)
     else:
-        # Returning user: keep status/role; refresh OIDC identity + profile.
         user.google_sub = sub
         user.picture = picture
         if not user.display_name:
             user.display_name = name
     db.commit()
-
     login_user(request, user)
     return RedirectResponse(url="/", status_code=303)
 
