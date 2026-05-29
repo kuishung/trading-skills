@@ -43,6 +43,16 @@ from this dashboard.
   `TST Dashboard (stop).lnk` (distinct names from the intraday shortcuts
   so both can live on the Desktop). Gitignored, per-PC. Run once per PC:
   `py dashboard_tst/setup_launcher.py`.
+- `DESIGN.md` — **product blueprint** (DRAFT, pre-implementation). The
+  agreed vision: `dashboard_tst` as TradeHunter's trend & swing product +
+  members-only, internet-facing collaboration platform (Finviz → MATP/MBP
+  quarterly → pattern study → collaborate on entry/SL/PT → Black-Scholes
+  option win-rate → parquet backtest), driving its own trend-swing bot
+  that journals/reviews/self-improves via the shared Layer 4/5 code.
+  Captures the roof model, the swing-bot gating/clientId/state plan, the
+  public/trusted security split (control plane vs execution plane), the
+  reuse map, a phased roadmap, and the still-OPEN decisions. Read this
+  before building anything here.
 
 ## URLs
 
@@ -71,6 +81,14 @@ controls, intraday scanner setups) will be trimmed as the trend/swing
 surface takes shape.
 
 ## Changelog
+
+### 2026-05-30 — DESIGN.md: review loop is shared with collaborators
+
+Corrected the data-visibility model. The earlier draft kept the automated review loop (Layer 5) admin-only and gave collaborators only study-level data. Per user direction, the **review loop is shared with collaborators** — it's the feedback core of the collaboration (members co-develop the swing setups, so they see how those setups performed and what the review proposes). The "two tiers" split collapses to one shared analytics surface with a single hard carve-out: **broker credentials + the live order-execution session stay trusted-side, never exposed**. Added an [OPEN] presentation choice — whether to show absolute dollar figures or normalised metrics (R-multiples, win-rate %) — defaulting to normalised. Updated §5, §6.2, §8 phase 5, and §10 accordingly.
+
+### 2026-05-29 — Added DESIGN.md product blueprint
+
+Captured the agreed vision for `dashboard_tst` as a **product** (not just an observer fork): TradeHunter's trend & swing methodology surfaced as a members-only, internet-facing collaboration platform. The blueprint records the roof model (TradeHunter = umbrella + shared `resources/`; two products diverging in methodology/UI/exposure), the user funnel (Finviz → MATP/MBP quarterly → pattern study → collaborate on entry/SL/PT → Black-Scholes option win-rate → parquet backtest), a dedicated trend-swing bot with its own family/gating/clientId/state that reuses the shared journal (Layer 4) + review (Layer 5) for journaling/review/self-improvement, the two-review-loops + data-sensitivity tiers (live P&L = admin-only; collaborators see study data), and the hard security split for public hosting on the R720 (admin-only control plane vs trusted-side execution plane, TLS reverse proxy, isolation from the trading Vault). Several decisions remain **[OPEN]** in the doc (host isolation, web stack, auth model, swing family name, clientId, Black-Scholes definition + options data source, backtest success definition). No code yet — this is the blueprint to design against.
 
 ### 2026-05-29 — Created as independent copy of dashboard_intraday/ on port 8001
 
