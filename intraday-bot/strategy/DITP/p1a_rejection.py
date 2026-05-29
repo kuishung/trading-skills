@@ -2,15 +2,26 @@
 
 User framing 2026-05-27: *"a failed P2 setup will be P1a setup."*
 P1a is the SHORT-SIDE inverse of P1 (rebound at support). It fires
-when price approached a key resistance with the intent to break it
-(P2 candidate) but got REJECTED -- price spiked into the level
-intraday and closed back below.
+when price approached a key resistance and got REJECTED -- price
+spiked into the level intraday and closed back below.
 
-P1a doesn't require a downtrend EMA stack -- by definition it can
-fire on a stalling uptrend (the bar where a P2 setup fails). The
-candle anatomy IS the signal: bearish close, large upper tail
-(price reached the level but couldn't hold), close in the lower
-half of the bar range.
+v1.1.0 (2026-05-29): user correction *"the shorting strategy P1a,
+P2a, P3a has to be based on downtrend chart based on EMA20, 50, 200
+for shorting"*. P1a v1.0.0 fired on ANY trend (uptrend or downtrend)
+because the candle anatomy was treated as the dominant signal; a
+bearish rejection bar at R was considered a "failed P2" regardless
+of stack. The user has reclassified: bearish rejection at R in an
+UPTREND is a P2 candidate (pending continuation breakout, today
+just got rejected -- next attempt is the signal). It's NOT a P1a
+short. Only in a DOWNTREND stack (EMA20 < EMA50 < EMA200) is the
+rejection at R a tradeable short setup -- the trend is your friend,
+and the rejection confirms the downtrend will resume. BE 2026-05-28
+case: clean uptrend stack (EMA20 276 > EMA50 237 > EMA200 150) with
+a bearish rejection bar at $310 R; this WAS firing P1a (false
+positive) and is now correctly rejected by the downtrend gate.
+
+P2a and P3a already had `require_stack=True` (downtrend) since
+their v1.0.0 -- this fix brings P1a into alignment.
 
 Detection flow (per symbol):
   1. Load daily bars. Need >= cfg.lookback + 14 (1-year window + ATR warmup).
@@ -59,7 +70,7 @@ from patterns import ema_np, atr_wilder_np, horizontal_resistance_np  # noqa: E4
 import bars_store  # noqa: E402
 
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 
 @dataclass
@@ -79,6 +90,10 @@ class P1aRejectConfig:
     min_close_position_max:    float = 0.5   # close in LOWER half (cp <= 0.5)
     min_reaction_atr:          float = 0.3   # (high - close) / atr >= this
     require_bearish_close:     bool  = True  # today's close < today's open
+    # Trend gate (added v1.1.0). User rule 2026-05-29: short setups
+    # must be on a downtrend chart (EMA20 < EMA50 < EMA200). Brings
+    # P1a into alignment with P2a / P3a which already required this.
+    require_stack:             bool  = True  # require EMA20 < EMA50 < EMA200
 
 
 def detect_p1a_rejection(symbol: str, cfg: P1aRejectConfig) -> dict | None:
@@ -112,6 +127,18 @@ def detect_p1a_rejection(symbol: str, cfg: P1aRejectConfig) -> dict | None:
 
     atr = atr_wilder_np(highs, lows, closes, period=14)
     if atr <= 0:
+        return None
+
+    # Trend gate (added v1.1.0). User rule 2026-05-29: short setups
+    # must be on a downtrend chart (EMA20 < EMA50 < EMA200). Without
+    # this gate, BE 2026-05-28 (clean UPTREND stack with a bearish
+    # rejection bar at $310 R) wrongly fired P1a. In an uptrend, a
+    # rejection at R = P2 candidate setting up its NEXT breakout
+    # attempt, not a short.
+    ema20  = ema_np(closes, 20)
+    ema50  = ema_np(closes, 50)
+    ema200 = ema_np(closes, 200)
+    if cfg.require_stack and not (ema20[-1] < ema50[-1] < ema200[-1]):
         return None
 
     last_close = float(closes[-1])
@@ -161,10 +188,7 @@ def detect_p1a_rejection(symbol: str, cfg: P1aRejectConfig) -> dict | None:
     if reaction_atr < cfg.min_reaction_atr:
         return None
 
-    # EMAs for journaling
-    ema20  = ema_np(closes, 20)
-    ema50  = ema_np(closes, 50)
-    ema200 = ema_np(closes, 200)
+    # EMAs already computed above for the trend gate (v1.1.0); reuse here.
 
     # Composite score: level validation + rejection strength + proximity
     validation = (r["mountain_anchors"] * 10) + (r["cluster_touches"] * 2)

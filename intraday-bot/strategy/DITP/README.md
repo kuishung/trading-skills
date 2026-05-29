@@ -13,10 +13,12 @@ just drops a `strategy/DITP/<setup_name>/` subfolder.
 - `_helpers.py` — Family-shared helpers (skeleton). Add shared constants + plan builders here as setups are wired.
 - `scanner.py` — DITP P2 Pattern scanner CLI. Reads daily parquet bars from `data/price_history/daily/`, applies the §6 eligibility filters (EMA stack + real-ceiling resistance + signal-candle anatomy + pending-breakout state), classifies sub-variant A / B / C, then runs the §6.5 ranking layer (5-component score + 5 caution flags + tier mapping). Writes `state/watchlist_ditp_<tomorrow>.txt` + `.json`. Source: `strategies-reference/DITP.md` §6 + §6.5.
 - `tc_scanner.py` — DITP TC (Trend Continuation) **EOD Day-0** scanner CLI. Walks the most recent `state/watchlist_ditp_*.json`, filters to symbols whose Day-0 daily candle both (a) closed above the P2 candidate's `resistance` (= `range_high`) and (b) printed bullish (close > open AND close in upper half of range), and writes `state/watchlist_tc_<tomorrow>.txt` + `.json`. Source: `strategies-reference/DITP.md` §6 Setup 4 (Phase 1 — premarket validation + entry pipeline still TBD).
+- `tc_breakout.py` — **TC (Trend Continuation) detector — SELF-CONTAINED variant** (vs `tc_scanner.py` which requires yesterday's P2 watchlist). Single-file detector for the dashboard's ad-hoc Finviz-universe scanning. Identifies Day 0 / Day +1 / Day +2 / ... continuation patterns from PRICE ACTION ALONE: prior swing high = `max(closes[-prior_swing_lookback : -prior_swing_exclude_recent])`, first close above that swing within `max_days_since_breakout`, today's close still above the broken level, optional anti-extension filter. Trend gate RELAXED (default `require_stack=False`, `require_ema20_above_ema50=True`, `require_close_above_ema20=True`) so early-recovery cases like ORCL (EMA20 marginally below EMA200 on a recovery rally) still qualify. `__version__ = "1.0.0"`. Public API: `detect_tc_breakout(symbol, cfg)` / `scan_universe(symbols, cfg)`. Config: `TCBreakoutConfig` (prior_swing_lookback=20, prior_swing_exclude_recent=3, max_days_since_breakout=5, max_extension_atr=5.0). Wired to dashboard `POST /scanner/yf_scan?setup=tc_breakout` and bundled into `/scanner/yf_scan_all`. Returns `breakout_level`, `days_since_breakout`, `extension_atr` for UI badges.
+- `ema_watch.py` — **EMA watch detector** (pre-confirmation pullback to EMA20 / EMA50 / EMA200). Looser counterpart to `ema_rebound.py`: same trend-stack + close-near-EMA + recent-touch gates, but NO bullish-close requirement and NO bounce-magnitude requirement. Surfaces tickers whose pullback is IN PROGRESS (today's low pierced an EMA but today's bar isn't a confirmation candle yet). `__version__ = "1.0.0"`. Public API: `detect_ema_watch(symbol, cfg)` / `scan_universe(symbols, cfg)`. Config: `EMAWatchConfig` (lookback_bars=3, touch_tolerance_atr=0.3, max_distance_atr=1.0, require_stack=True, require_above_ema200=True). Returns `watch_state` (`"TESTING"` / `"PULLING_BACK"`), `pierced_today`, `pierce_depth_atr` for UI badges. Wired to dashboard `POST /scanner/yf_scan?setup=ema_watch` and bundled into `/scanner/yf_scan_all`.
 - `ema_rebound.py` — **EMA rebound detector** (daily support bounce on EMA20 / EMA50 / EMA200). Single-file detector module; no CLI scanner / watchlist file (consumed only by the dashboard's `POST /scanner/yf_scan?setup=ema_rebound` for ad-hoc filtering of the Finviz universe). Returns the WHICH EMA acted as support + bounce magnitude + **rebound_type** (`"reclaim"` = close above EMA, `"pin_through"` = close 1-5 ticks below EMA, qualified as pin bar) + **prior_tests_count** (how many bars in the prior 60 days ALSO tested the same EMA via trade-through, used as a conviction score boost). Source: user 2026-05-27 EMA-rebound refinements. `__version__ = "1.3.0"`. Public API: `detect_ema_rebound(symbol, cfg)` / `scan_universe(symbols, cfg)`. Config: `EMARebConfig` (lookback_bars=5, touch_tolerance_atr=0.3, max_distance_atr=1.0, min_bounce_atr=0.3, tick_size=0.01, close_below_tolerance_ticks=5, pin_max_body_ratio=0.40, pin_min_lower_tail_ratio=0.50, **prior_tests_lookback=60**, **prior_tests_score_per=5**, **prior_tests_score_cap=15**, require_stack=True, require_above_ema200=True, require_bullish_close=True, min_close_position=0.5).
 - `p1_rebound.py` — **DITP P1 detector** -- rebound off a horizontal SUPPORT level. Trend gate (EMA20>EMA50>EMA200) + bullish reclaim candle + horizontal-support touch via `resources/sr_levels.horizontal_support_np` (immediate-nearest valley below current per user framework reintegration 2026-05-27) + **reaction-magnitude gate** (bounce from touch's low to today's close >= 0.3 * ATR — a real visible bounce is required). Single-file detector consumed by the dashboard's `POST /scanner/yf_scan?setup=p1_rebound`. Source: user framing 2026-05-27. `__version__ = "1.2.0"`. Public API: `detect_p1_rebound(symbol, cfg)` / `scan_universe(symbols, cfg)`. Config: `P1RebConfig`.
-- `p3_retest.py` — **DITP P3 detector** -- retest of a broken resistance level (polarity flip; resistance → support). Trend gate + bullish reclaim candle + broken-R candidate from `resources/sr_levels.find_broken_resistance_below` v1.2.0 (immediate-nearest broken mountain below current, with 3-tick breakout tolerance) + staleness window (breakout 3-45 days ago) + **reaction-magnitude gate** (same math as P1). Single-file detector consumed by the dashboard's `POST /scanner/yf_scan?setup=p3_retest`. Source: user framing 2026-05-27 + user reintegration same day ("immediate mountain top nearest to current price action is relevant"). `__version__ = "1.3.0"`. Public API: `detect_p3_retest(symbol, cfg)` / `scan_universe(symbols, cfg)`. Config: `P3RetestConfig`.
-- `p1a_rejection.py` — **DITP P1a detector** (SHORT side). Bearish rejection at a horizontal resistance — *"a failed P2 setup will be P1a setup"* (user 2026-05-27). Uses `patterns.horizontal_resistance_np` for the level (same as P2). Signal: bearish close, close in lower half of bar range, upper tail ≥ 30% of range, reaction magnitude `(high - close) / atr ≥ 0.3`, today's high touched the resistance. NO downtrend gate — fires in any trend (early-reversal short on uptrends, continuation short on downtrends). `__version__ = "1.0.0"`. Public API: `detect_p1a_rejection(symbol, cfg)` / `scan_universe(symbols, cfg)`. Config: `P1aRejectConfig`.
+- `p3_retest.py` — **DITP P3 detector** -- retest of a broken resistance level (polarity flip; resistance → support). Trend gate + bullish reclaim candle + broken-R candidate from `resources/sr_levels.find_broken_resistance_below` v1.5.0 (independent of `horizontal_resistance_np`, HIGHEST broken peak below current) + staleness window (breakout 3-252 days ago) + **reaction-magnitude gate** + P2-zone vs P3-zone midpoint discriminator (v1.5.0) + **upper-tail ATR-magnitude floor** (v1.6.0). `__version__ = "1.6.0"`. Public API: `detect_p3_retest(symbol, cfg)` / `scan_universe(symbols, cfg)`. Config: `P3RetestConfig` (mountain_min_age_bars=5, mountain_pullback_atr=0.5, breakout_min_age=3, breakout_max_age=252, touch_lookback_bars=5, max_distance_atr=1.5 (v1.6.0 ↑ from 1.0), max_upper_tail_ratio=0.15, **upper_tail_atr_min=0.25** (v1.6.0 new), require_stack=True).
+- `p1a_rejection.py` — **DITP P1a detector** (SHORT side). Bearish rejection at a horizontal resistance — *"a failed P2 setup will be P1a setup"* (user 2026-05-27). Uses `patterns.horizontal_resistance_np` for the level (same as P2). Signal: bearish close, close in lower half of bar range, upper tail ≥ 30% of range, reaction magnitude `(high - close) / atr ≥ 0.3`, today's high touched the resistance. **Downtrend stack required as of v1.1.0** (2026-05-29 user rule: short setups must be on EMA20<50<200 downtrend chart). `__version__ = "1.1.0"`. Public API: `detect_p1a_rejection(symbol, cfg)` / `scan_universe(symbols, cfg)`. Config: `P1aRejectConfig` (require_stack=True new).
 - `p2a_breakdown.py` — **DITP P2a detector** (SHORT side). Pending breakdown below horizontal support — *"a break below support will be a P2a setup"* (user 2026-05-27). Mirror of P2: trend gate `EMA20 < EMA50 < EMA200 + close < EMA200` (downtrend stack), uses `sr_levels.horizontal_support_np` for the level (immediate-nearest most-recent valley below). Signal: bearish close, close in lower half, lower-tail ≤ 15% (no rejection wick), close still ABOVE support (pending), close within 1.5×ATR of support. Recent-breakdown-rejection check: if support was breached within 2 days, symbol is past P2a (graduated to P3a). `__version__ = "1.0.0"`. Public API: `detect_p2a_breakdown(symbol, cfg)` / `scan_universe(symbols, cfg)`. Config: `P2aBreakdownConfig`.
 - `p3a_retest.py` — **DITP P3a detector** (SHORT side). Retest of broken support as resistance — *"a successful break below (P2a) which support become a resistance after the break below and price action come back to test the Support turn resistance is P3a setup"* (user 2026-05-27). Mirror of P3: downtrend EMA stack, uses new `sr_levels.find_broken_support_above` helper (immediate-nearest broken-S above current = lowest mountain valley above current that price has clearly broken below by > 3 ticks), staleness window (breakdown 3-45 days ago), bearish reclaim-from-below candle, retest-touch + reaction-magnitude gates. `__version__ = "1.0.0"`. Public API: `detect_p3a_retest(symbol, cfg)` / `scan_universe(symbols, cfg)`. Config: `P3aRetestConfig`.
 - `ditp_p2/` — Setup 1 (P2 Pattern). See its own README.
@@ -31,7 +33,7 @@ just drops a `strategy/DITP/<setup_name>/` subfolder.
 | 2 (P1) | Day of support reclaim / rebound | dashboard scan `p1_rebound.py` v1.2.0 — filter only |
 | 3 (P3 — retest) | Day of polarity-flip retest reclaim | dashboard scan `p3_retest.py` v1.3.0 — filter only |
 | 4 (TC — Trend Continuation) | Day +1 / Day +2 after a qualifying breakout / rebound | scaffolded — `ditp_tc/` v0.1.0 watch-only, EOD Day-0 scanner in `tc_scanner.py`; Phase 2 (premarket) + Phase 3 (entry) TBD |
-| **P1a (SHORT)** | Day of rejection at resistance (failed P2) | dashboard scan `p1a_rejection.py` v1.0.0 — filter only |
+| **P1a (SHORT)** | Day of rejection at resistance (failed P2) | dashboard scan `p1a_rejection.py` v1.1.0 — filter only (downtrend stack required as of 2026-05-29) |
 | **P2a (SHORT)** | Day of pending breakdown of support | dashboard scan `p2a_breakdown.py` v1.0.0 — filter only |
 | **P3a (SHORT)** | Day of polarity-flip retest rejection (broken-S now R) | dashboard scan `p3a_retest.py` v1.0.0 — filter only |
 
@@ -42,6 +44,139 @@ just drops a `strategy/DITP/<setup_name>/` subfolder.
 - Every rule edit bumps `__version__` in the setup's `impl.py` and adds a dated entry to that setup's README changelog (which IS the version history — there's no separate `changelog.md` per CLAUDE.md).
 
 ## Changelog
+
+### 2026-05-29 — Detector relaxations: TSLA/MRVL upper-tail floor, MSFT stack, MRVL distance, BE short-gate
+
+User batch 2026-05-29 (10 tickers in two waves): *"AMD is a TC candidate / IONQ is TC / TSLA is P2 / MSFT is P2 / MRVL is P3 retesting $190 / OBIO is P2 / SMCI is TC / RGTI is P2 / RDW is TC"* + *"why BE is labelled as P1a, perhaps we have to set a fixed rule. the shorting strategy P1a, P2a, P3a has to be based on downtrend chart based on EMA20, 50, 200 for shorting"*.
+
+**Four coordinated changes:**
+
+**1. `p1a_rejection.py` v1.1.0 — require downtrend stack (BE fix)**
+
+User rule: short setups must be on a downtrend chart. P1a v1.0.0 fired on ANY trend because the bar anatomy was treated as the dominant signal. BE 2026-05-28 has a clean uptrend stack (EMA20 $276 > EMA50 $237 > EMA200 $150) and a bearish rejection bar at $310 R — v1.0.0 wrongly tagged this as P1a. Per the user's framework, bearish rejection at R in an UPTREND = P2 candidate (pending continuation), not a P1a short. Added `require_stack: bool = True` (matches P2a / P3a which already had this gate). BE now correctly fires only `ditp` (P2), no P1a false positive.
+
+**2. `scanner.py` (P2) — three gate relaxations**
+
+a. **`upper_tail_atr_min: float = 0.20`** — TSLA 5/28 had range $7.66 (0.51 ATR), upper tail $1.86 (0.12 ATR) = 24% of range. The 15% percentage gate rejected this clean P2 even though the absolute wick is tiny — the ratio was inflated by the small denominator on tight-range consolidation bars. Fix: skip the percentage check when upper tail < `upper_tail_atr_min * ATR`. The wick is absolutely small so ratio doesn't matter.
+
+b. **`require_full_stack: bool = False` (default)** — MSFT 5/28 is in early-recovery from a downtrend: EMA20 ($415) > EMA50 ($411) but EMA50 < EMA200 ($437). Strict full stack rejected MSFT despite close $426.99 sitting $2.93 below R $429.92 (textbook P2 pending breakout). Relaxed default requires `close > EMA20 > EMA50` only; full stack is now a scoring boost in `score_candidate`, not a hard gate. Strict mode opt-in via `require_full_stack=True` for the production bot path. Mirrors `tc_breakout.py`'s relaxed-stack default (the same early-recovery case that caught ORCL).
+
+c. **`max_upper_tail_ratio_rejected: float = 0.50`** (already landed earlier today for QCOM) — relaxed upper-tail tolerance specifically for rejected-breakout candidates.
+
+**3. `p3_retest.py` v1.6.0 — upper-tail floor + distance bump (MRVL)**
+
+a. **`upper_tail_atr_min: float = 0.25`** — MRVL 5/28 had range $12.69 (1.0 ATR), upper tail $2.56 (0.21 ATR) = 20% of range. Same problem as TSLA: 15% ratio inflated by tight bar. Same fix: skip percentage gate when upper tail < `upper_tail_atr_min * ATR`.
+
+b. **`max_distance_atr: 1.0 -> 1.5`** — MRVL 5/28 close ($204.83) is 1.02 ATR above broken-R $192.15 (9 days ago). The 1.0 cap rejected this even though the touch test passed (today's low $194.70 ≤ $192.15 + 0.3 ATR). A strong-bounce retest with the close 1+ ATR above the level is a valid P3 — the level held, price ran. Bumped to 1.5 ATR to match `scanner.py` P2's distance gate.
+
+**4. Verification across user-named tickers (yfinance 2y, 2026-05-28):**
+
+Earlier batch (10 tickers from prior message):
+
+| Symbol | User said | Now fires |
+|---|---|---|
+| GLW | EMA20 | ema_watch ✓ |
+| SNDK | TC + P3 | tc_breakout ✓ (P3 missing — no broken-R below, recent uptrend hasn't formed required mountain structure) |
+| APLD | TC | p3_retest + tc_breakout ✓ (bonus P3 from $42 broken 83d ago) |
+| QCOM | P2 | **ditp** ✓ + tc_breakout |
+| LUNR | P2 | tc_breakout ✓ (making new highs, no R above) |
+| ORCL | TC + P2 | **ditp** + tc_breakout ✓ (relaxed stack catches MSFT-like case) |
+
+New batch (10 tickers from this message):
+
+| Symbol | User said | Now fires |
+|---|---|---|
+| AMD | TC | tc_breakout ✓ |
+| IONQ | TC | tc_breakout ✓ |
+| TSLA | P2 | **ditp** ✓ + p3_retest (bonus) |
+| MSFT | P2 | **ditp** ✓ |
+| MRVL | P3 ($190) | **p3_retest** ✓ + tc_breakout |
+| OBIO | P2 | (none) — close $3.98 < EMA20 $4.02; doesn't fit any framework setup |
+| SMCI | TC | tc_breakout ✓ |
+| RGTI | P2 | **ditp** ✓ + tc_breakout |
+| RDW | TC | tc_breakout ✓ |
+| BE | (was wrongly P1a) | **ditp** ✓ — P1a no longer fires (downtrend gate) |
+
+Regression checks (previously-validated cases): USAR fires `ditp` only (no P3 false positive — v1.5.0 midpoint discriminator still holding). ASTS migrates to `p3_retest + tc_breakout` (P2 graduated). LYV fires `ditp + ema_rebound + ema_watch` (multi-fire overlapping setups). NVDA fires `p3_retest + ema_watch`. AAOI fires `ema_watch` only (strict EMA rebound still correctly skips today's bearish bar).
+
+**OBIO note**: doesn't fit P2 because close is BELOW EMA20. The framework's P2 definition requires the stock to be in a short-term uptrend approaching overhead R. OBIO is in early-stage consolidation / downtrend. If the user wants a wider "anywhere near a level" surface, that would need a separate pre-confirmation detector (similar to `ema_watch.py`); ask if needed.
+
+Per CLAUDE.md normalization rule: all new gates ATR-relative. Same code applies to AMD's $30 ATR and OBIO's $0.20 ATR.
+
+### 2026-05-29 — `tc_breakout.py` v1.0.0: standalone TC detector (SNDK, APLD, ORCL, LUNR)
+
+User batch 2026-05-29: *"SNDK should be trend continuation and P3 candidate / APLD should be a trend continuation candidate / ORCL is a Trend continuation candidate, P2 resistance broken / LUNR is a P2 candidate"*.
+
+The existing `tc_scanner.py` is the PIPELINE-STRICT TC scanner — it requires yesterday's P2 watchlist to walk through. That's the right architecture for the live trading bot's Day-0 EOD scan. But the dashboard's ad-hoc Finviz-universe scanning has no yesterday-P2 watchlist (and shouldn't — the user picks fresh signal-based universes each session). So a separate, standalone TC detector was needed.
+
+**`tc_breakout.py`** — self-contained, identifies the "recent breakout + still above" pattern from price action alone:
+- Prior swing = `max(closes[-prior_swing_lookback : -prior_swing_exclude_recent])` — the close-based swing high of the pre-breakout window
+- First breakout = first close above the prior swing within the recent action
+- Filters: today's close still above the broken level, breakout within `max_days_since_breakout` (default 5), trend gates relaxed
+- Returns `breakout_level`, `days_since_breakout`, `extension_atr` for UI badges
+
+**Verification across user-named tickers (yfinance 2y daily, 2026-05-28):**
+
+| Symbol | User said | Day | Breakout level | Close | Ext (ATR) | Score |
+|---|---|---|---|---|---|---|
+| **SNDK** | TC + P3 | +2 | $1562.34 | $1641.64 | +0.71 | 34 |
+| **APLD** | TC | +1 | $48.02 | $49.65 | +0.40 | 32 |
+| **ORCL** | TC | 0 | $195.95 | $203.70 | +0.90 | 30 |
+| **LUNR** | P2 | +1 | $38.26 | $45.70 | +1.65 | 37 |
+| **QCOM** | P2 | +2 (bonus) | $238.16 | $243.29 | +0.31 | 29 |
+
+LUNR was called "P2" by the user but it's actually making new highs (no overhead R in the 252d lookback), so the strict P2 detector correctly returns None. The pattern the user is observing — recent strong breakout, still trending — is TC, not P2. The user's "P2" label is the wider colloquial sense ("pending more upside"); the framework's specific terminology pins it as TC.
+
+SNDK called "P3" by the user — but `find_broken_resistance_below` returns no mountains (the recent move was too fast for valid pullback validation). P3 doesn't fire. The TC label IS firing, which is the dominant signal.
+
+ORCL's EMA stack is technically BROKEN (EMA20 $187.43 marginally below EMA200 $187.72) — this is an early-recovery case. The relaxed `require_stack=False` default keeps it in.
+
+NVDA, AAOI, GLW correctly DON'T fire TC (no recent breakout in window) — no false positives.
+
+Per CLAUDE.md normalization rule: all thresholds ATR-relative. Same code applies to APLD's $4 ATR and SNDK's $112 ATR.
+
+### 2026-05-29 — `scanner.py`: ATR-relative rejection override for P2 breach grace (QCOM fix)
+
+User question 2026-05-29: *"QCOM is a P2 candidate 26.5.2026 is a outlier, it is retesting the 245 resistance"*.
+
+QCOM 2026-05-26 closed $248.82 > R $247.90 (breach). 2026-05-27 closed $233.40 ($14.50 below R = -0.88 ATR). 2026-05-28 (today) closed $243.29 ($4.61 below R = -0.28 ATR). Per the user's framework, the 5/26 breach was an outlier; the strong 5/27 rejection nullified it and price is now retesting R from below = textbook P2.
+
+The pre-fix scanner rejected QCOM because `days_since_breach (2) <= breach_rejection_grace_days (2)` — the grace window assumes we can't yet tell if the breach was real or rejected. But QCOM's 5/27 rejection IS visible — the close pulled back $14.50 below R, more than 0.88 ATR. The grace shouldn't apply when the market has already provided a clear answer.
+
+**Fix:** new `breach_rejection_atr: float = 0.3` config. After finding `last_breach_idx`, scan post-breach closes: if any closed `<= R - 0.3 * ATR`, set `is_rejected_breakout=True` and bypass the grace return. Plus a relaxed `max_upper_tail_ratio_rejected: float = 0.50` for these candidates (vs 0.15 for clean pending P2) — QCOM's 34% upper tail reflects today's intraday re-probe of R, exactly the signal the user wants surfaced.
+
+**Verification:**
+| Symbol | Breach idx | days_since | Post-breach min close vs R | rejection_seen | Result |
+|---|---|---|---|---|---|
+| **QCOM** | 5/26 ($248.82) | 2 | 5/27 close $233.40 = -0.88 ATR | ✓ | P2 variant=U, tier=C, score=48 |
+
+No version bump on `scanner.py` (additive config + tightened-in-one-direction grace logic; plan-dict shape unchanged).
+
+### 2026-05-29 — `ema_watch.py` v1.0.0: new pre-confirmation surface (AAOI)
+
+User note 2026-05-29: *"AAOI is also EMA20 candidate"*.
+
+AAOI today (2026-05-28): O=$181.25, H=$183.24, L=$166.69, **C=$169.02**, EMA20=$173.05. The bar is unambiguously bearish — close < open by $12.23, body = 74% of range, close in lower 14% of range. The strict `ema_rebound` detector (v1.4.0) correctly skips this: neither the bullish-close path nor the pin-bar fallback fires on a bar with that anatomy. But the *setup* is clearly forming — the trend stack is intact (20>50>200), close is only -0.19 ATR from EMA20, and today's low pierced EMA20 by 0.30 ATR. Tomorrow's bar could easily be the confirmation.
+
+The strict rebound detector is doing the right thing — it shouldn't loosen its anatomy gates and start firing on bearish-bodied bars (that would re-introduce false positives in the universe). The right fix is a *parallel* surface that surfaces these in-progress pullbacks without claiming confirmation.
+
+**`ema_watch.py`** is that surface. Same trend gates + close-near-EMA + recent-touch logic, but:
+
+- NO bullish-close requirement
+- NO bounce-magnitude requirement
+- Lookback window shorter (3 days vs 5) — only the freshest pullbacks
+- Returns `watch_state` (`"TESTING"` when close within tick tolerance of EMA, `"PULLING_BACK"` otherwise) and `pierced_today` so the UI badge can read e.g. "EMA20w / pierced 0.30xATR today / testing"
+
+**Verification across user-named tickers (yfinance 1y/1d, 2026-05-28):**
+
+| Symbol | EMA anchor | Close vs EMA | Pierced today | watch_state | Score | Notes |
+|---|---|---|---|---|---|---|
+| AAOI | EMA20 | -0.19 ATR | yes (0.30 ATR depth) | TESTING | 30 | originally flagged |
+| NVDA | EMA20 | -0.03 ATR | yes (0.45 ATR depth) | TESTING | 30 | also hits strict EMA rebound (pin_through) — overlapping setups |
+
+Per CLAUDE.md "no absolute thresholds" rule: every gate is ATR-relative (touch tolerance, distance cap, close-below tolerance), so the same code applies to NVDA's $7.17 ATR and AAOI's $21.30 ATR without retuning.
+
+Wired into `dashboard/server.py`'s `/scanner/yf_scan?setup=ema_watch` AND bundled into `/scanner/yf_scan_all` (the "Run All" path), and registered as a new SETUPS entry in `dashboard/web/index.html` (badge: `EMA20w` / `EMA50w` / `EMA200w` — the trailing "w" disambiguates from confirmed rebound badges).
 
 ### 2026-05-28 — `p3_retest.py` v1.5.0: P2-zone vs P3-zone midpoint discriminator (USAR fix)
 

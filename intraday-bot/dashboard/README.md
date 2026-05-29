@@ -29,6 +29,24 @@ Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-05-29 — `server.py` + `web/index.html`: TC (Trend Continuation) wired
+
+User batch 2026-05-29: *"SNDK should be trend continuation and P3 candidate / APLD should be a trend continuation candidate / ORCL is a Trend continuation candidate, P2 resistance broken"*. The existing `tc_scanner.py` requires yesterday's P2 watchlist — not available for ad-hoc Finviz scans. New `strategy/DITP/tc_breakout.py` v1.0.0 detector identifies the recent-breakout-and-holding pattern from price action alone. Dashboard wiring:
+
+- **`server.py`**: added `"tc_breakout"` to `_VALID_SETUPS`; new dispatch branch in `scanner_yf_scan()` calling `tc_breakout.scan_universe(symbols, TCBreakoutConfig())`; bundled into `_run_all_setups_sync()` so the batched endpoint surfaces TC candidates alongside the other 8 setups. Single yFinance fetch still amortises across all 9 detectors.
+- **`web/index.html`**: new `SETUPS` registry entry with key `tc_breakout`, shortLabel `TC`, badge `TC+0` / `TC+1` / `TC+2` (the day-since-breakout is surfaced directly on the badge — Day 0 = freshest, Day +5 = stale). Tooltip surfaces breakout level + ATR extension.
+
+End-to-end smoke test (yfinance 2y) confirms all 6 user-named tickers land on the right surfaces: GLW→ema_watch, QCOM→ditp+tc_breakout, SNDK/APLD/ORCL/LUNR→tc_breakout. NVDA/AAOI correctly stay on EMA Watch (no recent breakout to trigger TC) — no false positives.
+
+### 2026-05-29 — `server.py` + `web/index.html`: EMA Watch (pre-confirmation) wired
+
+User note 2026-05-29: *"AAOI is also EMA20 candidate"*. AAOI today is mid-pullback to EMA20 in a clean trend stack, but today's bar is bearish so the strict `ema_rebound` detector (correctly) skips it. The new `strategy/DITP/ema_watch.py` v1.0.0 detector surfaces these in-progress pullbacks without requiring a confirmation candle. Dashboard wiring:
+
+- **`server.py`**: added `"ema_watch"` to `_VALID_SETUPS`; new dispatch branch in `scanner_yf_scan()` (single-setup endpoint) calling `ema_watch.scan_universe(symbols, EMAWatchConfig())`; bundled into `_run_all_setups_sync()` so the "Run All" batched endpoint surfaces watch candidates alongside the other 7 setups. Single yFinance fetch still amortises across all 8 detectors (no additional network cost).
+- **`web/index.html`**: new `SETUPS` registry entry with key `ema_watch`, shortLabel `EMAw`, badge text `EMA20w`/`EMA50w`/`EMA200w` (trailing "w" disambiguates from confirmed rebound badges so both can coexist on the same ticker — NVDA today fires BOTH `EMA20` (strict rebound) and `EMA20w` (watch)). Tooltip surfaces `watch_state` (TESTING / PULLING_BACK), pierce depth (if any), and signed close-vs-EMA distance.
+
+The watch surface is intentionally looser than the strict rebound: no bullish-close gate, no bounce-magnitude gate, 3-day touch lookback. Per CLAUDE.md "anything with observable runtime state MUST be surfaced in the dashboard" — the backend detector landing without the badge would be invisible to the daily workflow.
+
 ### 2026-05-28 — Scanner refresh sped up ~7× via `/scanner/yf_scan_all`
 
 User question 2026-05-28: *"it takes quite long time to actually study the finviz tickers, what caused the slow?"*

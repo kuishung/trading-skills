@@ -99,6 +99,43 @@ class P2Config:
     # (1 day ago < 2-day grace) — real breakout in progress, P2 invalidated.
     recent_breakout_lookback: int = 15      # how far back to scan for prior closing breach
     breach_rejection_grace_days: int = 2    # days_since_last_breach > N => rejected, still P2
+    # ATR-relative rejection override (added 2026-05-29 per user QCOM case).
+    # If any bar AFTER the most-recent breach closed `breach_rejection_atr` *
+    # ATR or more BELOW resistance, the breakout has been visibly rejected
+    # even when days_since_breach is still inside the grace window. Bypasses
+    # the grace return-None so QCOM (breach 5/26, rejection 5/27 at -0.88
+    # ATR vs R, today's close 0.28 ATR below R) flows through as P2.
+    breach_rejection_atr: float = 0.3
+    # Relaxed upper-tail tolerance for rejected-breakout candidates.
+    # In the standard pending-P2 case, max_upper_tail_ratio = 15% filters
+    # out rejection bars that aren't yet pending breakouts. But in the
+    # rejected-breakout case (visible market rejection of a prior close
+    # above R), today's bar OFTEN has a substantial upper tail because
+    # price re-probed R from below -- and that's exactly the signal the
+    # user wants to surface. QCOM 5/28: upper tail = 34% (H probed R
+    # again, close pulled back below). Allow up to 50% in this case;
+    # anything more would be a heavy bearish bar that's no longer P2.
+    max_upper_tail_ratio_rejected: float = 0.50
+    # Absolute ATR-magnitude floor for the upper-tail gate (added
+    # 2026-05-29 per user TSLA case). TSLA today: range $7.66 (0.51
+    # ATR), upper tail $1.86 (0.12 ATR) = 24% of range. The 15%
+    # percentage gate rejected this even though the absolute wick is
+    # tiny -- the percentage is amplified by the small denominator on
+    # tight-range consolidation bars. Skip the percentage gate when
+    # upper tail is smaller than `upper_tail_atr_min` ATR -- the wick
+    # is absolutely small, so its ratio-of-range doesn't matter.
+    upper_tail_atr_min: float = 0.20
+    # Trend stack mode (added 2026-05-29 per user MSFT case). MSFT
+    # 2026-05-28 is in early-recovery from a downtrend: EMA20 ($415)
+    # > EMA50 ($411) but EMA50 < EMA200 ($437). The short-term trend
+    # is up but EMA200 is overhead. Strict 20>50>200 rejects MSFT.
+    # User calls it P2 because price is at R ($429.92, $2.93 above
+    # close). Relaxed mode: require close > EMA20 > EMA50 only --
+    # full stack EMA50 > EMA200 becomes a scoring boost (handled in
+    # score_candidate), not a hard gate. Strict mode (require_full_stack
+    # = True) preserves the v1.0.0 behaviour for the production bot
+    # path if needed.
+    require_full_stack: bool = False
 
     # Resistance as a RANGE — user rule (chat 2026-05-22): multiple mountain
     # tops within a tight band form a resistance zone with more conviction.
@@ -483,12 +520,20 @@ def detect_p2(symbol: str, cfg: P2Config,
     lows   = np.array([b["l"] for b in bars], dtype=float)
     opens  = np.array([b["o"] for b in bars], dtype=float)
 
-    # 1. Bullish EMA stack + price > EMA20
+    # 1. Bullish EMA stack + price > EMA20.
+    # Strict mode (require_full_stack=True): full 20>50>200 stack.
+    # Relaxed mode (default): close > EMA20 > EMA50 only -- accepts
+    # early-recovery cases like MSFT 2026-05-28 where short-term trend
+    # is up but EMA200 is still overhead.
     e20 = ema_np(closes, 20)
     e50 = ema_np(closes, 50)
     e200 = ema_np(closes, 200)
-    if not (e20[-1] > e50[-1] > e200[-1] and closes[-1] > e20[-1]):
-        return None
+    if cfg.require_full_stack:
+        if not (e20[-1] > e50[-1] > e200[-1] and closes[-1] > e20[-1]):
+            return None
+    else:
+        if not (closes[-1] > e20[-1] > e50[-1]):
+            return None
 
     # 2. ATR14
     atr = atr_wilder_np(highs, lows, closes, period=14)
@@ -539,18 +584,49 @@ def detect_p2(symbol: str, cfg: P2Config,
         if float(closes[j]) > resistance:
             last_breach_idx = j
             break
+    is_rejected_breakout = False
     if last_breach_idx is not None:
         days_since_breach = (len(closes) - 1) - last_breach_idx
-        if days_since_breach <= cfg.breach_rejection_grace_days:
-            return None  # recent breach within grace → graduated to P3, not P2
+        # ATR-relative rejection check (added 2026-05-29 per user QCOM
+        # case). Any post-breach close <= R - breach_rejection_atr * ATR
+        # is a visible rejection -- we've SEEN the market reject the
+        # breakout, regardless of grace window.
+        rejection_threshold = resistance - cfg.breach_rejection_atr * atr
+        rejection_seen = False
+        for k in range(last_breach_idx + 1, len(closes)):
+            if float(closes[k]) <= rejection_threshold:
+                rejection_seen = True
+                break
+        if rejection_seen:
+            # Mark the candidate so downstream gates (the upper-tail
+            # filter below) can relax for this "failed breakout, now
+            # pending again" pattern.
+            is_rejected_breakout = True
+        elif days_since_breach <= cfg.breach_rejection_grace_days:
+            # No visible rejection AND still in grace window -> can't
+            # yet tell whether the breach is a real breakout. Treat as
+            # graduated to P3 watch (current behaviour pre-fix).
+            return None
 
-    # 5. Last candle has NO UPPER TAIL
+    # 5. Last candle has NO UPPER TAIL. Three modes:
+    #   - Absolute-magnitude floor (TSLA case): if the upper tail is
+    #     smaller than `upper_tail_atr_min * ATR` in absolute terms,
+    #     skip the percentage gate -- the wick is too small to be
+    #     a meaningful rejection regardless of its ratio-of-range.
+    #   - Rejected-breakout (QCOM case): relaxed limit because today's
+    #     high probing R from below is the signal, not a bear flag.
+    #   - Standard: tight 15% ratio cap.
     body_top = max(float(opens[-1]), float(closes[-1]))
     rng = float(highs[-1] - lows[-1])
     upper_tail = float(highs[-1]) - body_top
-    ratio = (upper_tail / rng) if rng > 0 else 0.0
-    if ratio > cfg.max_upper_tail_ratio:
-        return None
+    upper_tail_atr = upper_tail / atr if atr > 0 else 0.0
+    ratio = (upper_tail / rng) if rng > 0 else 0.0  # always defined for journaling
+    if upper_tail_atr >= cfg.upper_tail_atr_min:
+        upper_tail_limit = (cfg.max_upper_tail_ratio_rejected
+                           if is_rejected_breakout
+                           else cfg.max_upper_tail_ratio)
+        if ratio > upper_tail_limit:
+            return None
 
     # 6. Classify Setup A / B / C. User correction 2026-05-28 (ASTS):
     # variant=None previously rejected the candidate (e.g., ASTS's

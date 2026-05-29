@@ -2880,7 +2880,8 @@ async def scanner_run(family: str) -> JSONResponse:
 #
 # Returns (symbols, source_label) so the response can tell the UI which
 # universe was actually used.
-_VALID_SETUPS = ("ditp", "ditp_tc", "ema_rebound",
+_VALID_SETUPS = ("ditp", "ditp_tc", "tc_breakout",
+                 "ema_rebound", "ema_watch",
                  "p1_rebound", "p3_retest",
                  "p1a_rejection", "p2a_breakdown", "p3a_retest")
 
@@ -3202,8 +3203,10 @@ async def scanner_yf_scan(
     to disk.
 
     Query params:
-      setup -- one of: ditp, ditp_tc, ema_rebound, p1_rebound,
-                       p3_retest, p1a_rejection, p2a_breakdown, p3a_retest
+      setup -- one of: ditp, ditp_tc, tc_breakout,
+                       ema_rebound, ema_watch,
+                       p1_rebound, p3_retest,
+                       p1a_rejection, p2a_breakdown, p3a_retest
       limit -- optional, cap universe to first N symbols (debug aid).
       scanner -- 1 (default, uses cfg.finviz_screener_url) or
                  2 (uses cfg.finviz_screener_url_2 -- the Scanner 2 page).
@@ -3296,6 +3299,20 @@ async def scanner_yf_scan(
             candidates_dicts = await loop.run_in_executor(
                 None,
                 lambda: ema_mod.scan_universe(symbols, cfg),
+            )
+        elif setup == "ema_watch":
+            from strategy.DITP import ema_watch as emaw_mod  # type: ignore
+            cfg = emaw_mod.EMAWatchConfig()
+            candidates_dicts = await loop.run_in_executor(
+                None,
+                lambda: emaw_mod.scan_universe(symbols, cfg),
+            )
+        elif setup == "tc_breakout":
+            from strategy.DITP import tc_breakout as tc_mod  # type: ignore
+            cfg = tc_mod.TCBreakoutConfig()
+            candidates_dicts = await loop.run_in_executor(
+                None,
+                lambda: tc_mod.scan_universe(symbols, cfg),
             )
         elif setup == "p1_rebound":
             from strategy.DITP import p1_rebound as p1_mod  # type: ignore
@@ -3391,9 +3408,26 @@ def _run_all_setups_sync(symbols: list[str]) -> dict[str, list[dict]]:
     from strategy.DITP import p3_retest as p3_mod                 # type: ignore
     out["p3_retest"] = p3_mod.scan_universe(symbols, p3_mod.P3RetestConfig())
 
-    # EMA20/50/200 rebound
+    # EMA20/50/200 rebound (strict, today's candle = confirmation)
     from strategy.DITP import ema_rebound as ema_mod              # type: ignore
     out["ema_rebound"] = ema_mod.scan_universe(symbols, ema_mod.EMARebConfig())
+
+    # EMA20/50/200 watch (pre-confirmation, pullback IN PROGRESS).
+    # Wired 2026-05-29 per user note "AAOI is also EMA20 candidate" --
+    # AAOI's bar today is bearish so ema_rebound correctly skips it,
+    # but the ticker is still mid-pullback to EMA20 in a clean stack;
+    # the watch surface keeps it on the radar for tomorrow.
+    from strategy.DITP import ema_watch as emaw_mod                # type: ignore
+    out["ema_watch"] = emaw_mod.scan_universe(symbols, emaw_mod.EMAWatchConfig())
+
+    # TC (Trend Continuation -- self-contained variant). Identifies
+    # Day 0 / Day +1 / Day +2 continuation patterns from price action
+    # alone (vs tc_scanner.py which requires yesterday's P2 watchlist).
+    # Wired 2026-05-29 per user batch: "SNDK should be trend
+    # continuation... APLD should be a trend continuation candidate...
+    # ORCL is a Trend continuation candidate".
+    from strategy.DITP import tc_breakout as tc_mod                # type: ignore
+    out["tc_breakout"] = tc_mod.scan_universe(symbols, tc_mod.TCBreakoutConfig())
 
     # Short-side mirrors: P1a (rejection at R), P2a (pending breakdown),
     # P3a (retest of broken support).

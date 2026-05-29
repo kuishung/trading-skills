@@ -1677,6 +1677,60 @@
           return parts.join(', ');
         },
       },
+      {
+        // EMA watch (pre-confirmation) added 2026-05-29 per user note
+        // "AAOI is also EMA20 candidate". The strict EMA rebound detector
+        // requires today's bar to be the confirmation candle (bullish
+        // close OR pin bar); AAOI today is bearish, so rebound skips it.
+        // This watch surface keeps in-progress pullbacks on the radar:
+        // trend stack intact + close near EMA + recent touch. Tomorrow's
+        // bar is where the confirmation lands.
+        key:        'ema_watch',
+        label:      'EMA watch (pre-confirmation pullback to 20 / 50 / 200)',
+        shortLabel: 'EMAw',
+        run:        'yf',
+        // Suffix the anchor EMA with "w" so the badge is visually
+        // distinct from the confirmed-rebound EMA20/EMA50/EMA200 badges.
+        badgeText:  c => (c.ema_anchor || 'EMA') + 'w',
+        tooltipDetail: c => {
+          if (!c.ema_anchor) return '';
+          const parts = [`watching ${c.ema_anchor}`];
+          if (c.watch_state) parts.push(c.watch_state.toLowerCase().replace('_', ' '));
+          if (c.pierced_today && c.pierce_depth_atr != null && c.pierce_depth_atr > 0) {
+            parts.push(`pierced ${Number(c.pierce_depth_atr).toFixed(2)}xATR today`);
+          }
+          if (c.distance_atr != null) {
+            const d = Number(c.distance_atr);
+            const sign = d >= 0 ? '+' : '';
+            parts.push(`close ${sign}${d.toFixed(2)}xATR vs EMA`);
+          }
+          return parts.join(', ');
+        },
+      },
+      {
+        // TC breakout (Trend Continuation) added 2026-05-29 per user
+        // batch: "SNDK should be trend continuation and P3 candidate /
+        // APLD should be a trend continuation candidate / ORCL is a
+        // Trend continuation candidate, P2 resistance broken".
+        // Self-contained: identifies Day 0 / Day +1 / Day +2
+        // continuation patterns from price action alone (no prior P2
+        // watchlist dependency, unlike tc_scanner.py).
+        key:        'tc_breakout',
+        label:      'TC - Trend continuation (post-breakout Day 0-5)',
+        shortLabel: 'TC',
+        run:        'yf',
+        // Badge shows the day-since-breakout to immediately surface
+        // freshness (Day 0 = today's breakout, Day +5 = stale).
+        badgeText:  c => (c.days_since_breakout != null) ? `TC+${c.days_since_breakout}` : 'TC',
+        tooltipDetail: c => {
+          if (c.breakout_level == null) return '';
+          const parts = [`broke $${Number(c.breakout_level).toFixed(2)} (Day +${c.days_since_breakout ?? '?'})`];
+          if (c.extension_atr != null) {
+            parts.push(`ext ${Number(c.extension_atr).toFixed(2)}xATR`);
+          }
+          return parts.join(', ');
+        },
+      },
       // ---- Short-side setups (user framework reintegration 2026-05-27) ----
       // "P1 and P3 inverse will be P1a and P3a -- which is shorting setup."
       //   P1a = bearish rejection at resistance (failed P2)

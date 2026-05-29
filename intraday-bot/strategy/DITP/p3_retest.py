@@ -73,7 +73,7 @@ from sr_levels import find_broken_resistance_below  # noqa: E402
 import bars_store  # noqa: E402
 
 
-__version__ = "1.5.0"
+__version__ = "1.6.0"
 
 
 @dataclass
@@ -119,7 +119,12 @@ class P3RetestConfig:
     touch_lookback_bars:    int   = 5     # how recent the retest-touch must be (tightened from 7)
     touch_tolerance_atr:    float = 0.3
     min_bounce_atr:         float = 0.3   # (last_close - lowest_low_since_touch) / atr must clear this
-    max_distance_atr:       float = 1.0
+    # v1.6.0 2026-05-29: bumped 1.0 -> 1.5 to match P2's distance gate
+    # so a strong-bounce retest (low touched the level, close ran 1+
+    # ATR away) doesn't get rejected. MRVL 5/28: low $194.70 touched
+    # broken-R $192.15 (within 0.3-ATR tolerance), close $204.83 ran
+    # 1.02 ATR above -- valid P3 setup that v1.5.0 was rejecting.
+    max_distance_atr:       float = 1.5
     require_bullish_close:  bool  = True
     min_close_position:     float = 0.5
     # Upper-tail rejection filter added 2026-05-28 (v1.4.0). Mirrors P2's
@@ -129,6 +134,15 @@ class P3RetestConfig:
     # AAOI case 2026-05-27: 46% upper tail = rejection at $187.18,
     # NOT a clean retest of $173.41 -- now correctly excluded.
     max_upper_tail_ratio:   float = 0.15
+    # Absolute ATR-magnitude floor for the upper-tail gate (added v1.6.0
+    # 2026-05-29 per user MRVL case). MRVL today: range $12.69 (1.0 ATR),
+    # upper tail $2.56 (0.21 ATR) = 20% of range. The 15% ratio rejected
+    # this clean retest of $192.15 (broken 9 days ago) even though the
+    # absolute wick is small. Skip the percentage gate when the upper
+    # tail is below `upper_tail_atr_min * ATR` -- the wick is absolutely
+    # small so its ratio doesn't matter. Mirrors the same field added
+    # to scanner.py P2Config 2026-05-29 (TSLA case).
+    upper_tail_atr_min:     float = 0.25
     # Pin-bar anatomy (added 2026-05-28 for v1.4.0 bullish-OR-pin acceptance).
     # NVDA case 2026-05-27: bullish hammer with close $1.52 below open
     # but body at top of range + long lower wick = clean rebound signal.
@@ -206,9 +220,15 @@ def detect_p3_retest(symbol: str, cfg: P3RetestConfig) -> dict | None:
     # Bullish-candle gate (v1.4.0 relaxed: close > open OR pin bar).
     if cfg.require_bullish_close and last_close <= last_open and not is_pin_bar:
         return None
-    # Upper-tail rejection filter (v1.4.0): clean retest has SMALL upper tail.
-    if upper_tail_ratio > cfg.max_upper_tail_ratio:
-        return None
+    # Upper-tail rejection filter (v1.4.0): clean retest has SMALL upper
+    # tail. v1.6.0 (2026-05-29): only apply the percentage gate when the
+    # absolute upper-tail magnitude is >= upper_tail_atr_min * ATR. MRVL
+    # 5/28 had 20% upper tail but only 0.21 ATR -- absolutely small,
+    # ratio-of-range inflated by tight bar; allow through.
+    upper_tail_atr = upper_tail / atr if atr > 0 else 0.0
+    if upper_tail_atr >= cfg.upper_tail_atr_min:
+        if upper_tail_ratio > cfg.max_upper_tail_ratio:
+            return None
 
     # Resolve THE key broken-resistance (v1.1.0 of sr_levels: returns
     # the HIGHEST mountain only, or [] if it's not clearly broken
