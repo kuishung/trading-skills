@@ -211,12 +211,16 @@ collaboration surface have opposite security needs. We split them:
 
 These gate the affected phases. Recorded here so they're not lost.
 
-- **[DECIDED] Networking = Hamachi VPN (Path B).** Members install Hamachi
-  and reach the app at `http://<server-hamachi-ip>:8000`. The VPN tunnel is
-  encrypted, so plain http is acceptable and no public exposure / domain /
-  TLS is needed at this stage. The VPN membership is itself the access gate.
-  Caveat: free Hamachi caps a network at 5 machines (Tailscale if it grows).
-  Public-internet exposure (Path A) is deferred — see DEPLOY.md.
+- **[DECIDED] Networking = public URL via Cloudflare Tunnel (on Hermes).**
+  Collaborators install nothing — they open `https://study.<your-domain>`.
+  `cloudflared` runs on Hermes alongside uvicorn and dials **out** to
+  Cloudflare (no inbound ports opened, no router changes), giving a free,
+  auto-HTTPS public URL that proxies to `localhost:8000`. Supersedes the
+  earlier Hamachi-VPN plan (dropped once we learned collaborators won't
+  install a VPN client). Free; only a domain (~$10/yr) is needed for a
+  stable URL. Access control is the login (password mode); set
+  `TST_HTTPS_ONLY=1`. The deploy loop is push → Hermes `git pull` + restart
+  service (autopull task). See DEPLOY.md.
 - **[OPEN] Host isolation** on the R720: dedicated new Hyper-V DMZ VM
   (recommended) vs the existing Hermes VM. Lower stakes under Path B (no
   public surface), but a separate VM is still cleaner. The app holds no

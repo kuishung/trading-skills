@@ -32,8 +32,8 @@ templates = Jinja2Templates(
 )
 
 
-def _login_ctx(request: Request, error: str | None = None) -> dict:
-    return {"request": request, "error": error, "auth_mode": settings.auth_mode}
+def _login_ctx(error: str | None = None) -> dict:
+    return {"error": error, "auth_mode": settings.auth_mode}
 
 
 # ----------------------------------------------------------------------------
@@ -66,14 +66,15 @@ async def login(request: Request):
     if settings.is_google_auth:
         if not settings.google_configured:
             return templates.TemplateResponse(
+                request,
                 "login.html",
-                _login_ctx(request, "Google sign-in is not configured on this server."),
+                _login_ctx("Google sign-in is not configured on this server."),
                 status_code=503,
             )
         redirect_uri = settings.oauth_redirect_uri or str(request.url_for("auth_callback"))
         return await _google().authorize_redirect(request, redirect_uri)
     # password mode
-    return templates.TemplateResponse("login.html", _login_ctx(request))
+    return templates.TemplateResponse(request, "login.html", _login_ctx())
 
 
 @router.post("/login")
@@ -89,7 +90,7 @@ async def login_password(
     user = db.query(User).filter(User.email == email.strip().lower()).first()
     if user is None or not verify_password(password, user.password_hash):
         return templates.TemplateResponse(
-            "login.html", _login_ctx(request, "Invalid email or password."), status_code=401
+            request, "login.html", _login_ctx("Invalid email or password."), status_code=401
         )
     login_user(request, user)
     return RedirectResponse(url="/", status_code=303)
@@ -112,7 +113,7 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
 
     if not settings.domain_allowed(email):
         return templates.TemplateResponse(
-            "pending.html", {"request": request, "rejected": True, "email": email}, status_code=403
+            request, "pending.html", {"rejected": True, "email": email}, status_code=403
         )
 
     name = info.get("name") or email

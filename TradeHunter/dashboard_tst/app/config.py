@@ -9,6 +9,17 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
+
+# Load app/.env into the process environment (if present) so the settings
+# below resolve from it. Gitignored, per-PC. No-op if python-dotenv or the
+# file is missing.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parent / ".env")
+except Exception:
+    pass
 
 AUTH_PASSWORD = "password"
 AUTH_GOOGLE = "google"

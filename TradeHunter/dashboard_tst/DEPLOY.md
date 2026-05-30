@@ -1,136 +1,152 @@
-# dashboard_tst — Deployment runbook
+# dashboard_tst — Deployment runbook (Hermes + Cloudflare Tunnel)
 
-How to stand up the collaboration platform on the server and let members
-reach it. Two paths exist; **Path B is the current/active one.**
+How to host the collaboration platform on **Hermes (Windows Server 2019)**
+and give collaborators a plain **URL** (no client install) via **Cloudflare
+Tunnel**.
 
-| | Path B (active) | Path A (future) |
-|---|---|---|
-| Reach | Hamachi VPN, `http://<server-hamachi-ip>:8000` | public internet, `https://<domain>` |
-| Auth | `password` (admin seeds accounts) | `google` (OAuth + admin approval) |
-| TLS / domain | none (VPN tunnel is encrypted) | Caddy + Let's Encrypt + a real domain |
-| `TST_AUTH_MODE` | `password` | `google` |
+## The model
 
-The app code supports both — switching is just `TST_AUTH_MODE` in `.env`
-(plus the Path-A infrastructure). This runbook covers Path B.
+```
+collaborator browser
+  https://study.<your-domain>  ──►  Cloudflare  ──(outbound tunnel)──►  cloudflared ─► uvicorn 127.0.0.1:8000
+                                                          (on Hermes)        (on Hermes, the app)
 
----
+laptop:  edit → commit → push          Hermes:  git pull + restart service  (auto-update task, every 5 min)
+```
 
-## Why HTTP-over-Hamachi is acceptable
+Everything collaborators touch runs on **Hermes**: uvicorn (the app) + the
+cloudflared agent. The agent dials **out** to Cloudflare, so **no inbound
+ports are opened** on your network. Auth stays password-mode (admin creates
+accounts); the public URL just lands on the login page.
 
-Hamachi encrypts the peer-to-peer tunnel (AES). Traffic between a member's
-machine and the server never traverses the open internet in cleartext, so
-plain `http://` inside the VPN is fine for this stage. Keep
-`TST_HTTPS_ONLY=0`. Do **not** also expose port 8000 to the public internet.
+| | This deploy |
+|---|---|
+| Host | Hermes (Win Server 2019) |
+| Public access | Cloudflare Tunnel (free, auto-HTTPS, no port-forward) |
+| Auth | `TST_AUTH_MODE=password` (admin-created accounts) |
+| TLS | terminated by Cloudflare; set `TST_HTTPS_ONLY=1` |
+| Refresh-on-push | `git pull` + restart service (autopull task) |
 
----
-
-## 0. Where it runs
-
-Per `DESIGN.md`, the long-term home for an internet-facing deployment is a
-**separate VM** on the R720, isolated from the trading "Hermes" VM and its
-broker credentials. For a VPN-only Path B preview the exposure is much
-lower (no public surface), but a separate VM is still the cleaner choice.
-**This app holds no broker credentials and opens no IBKR session** — the
-swing-bot control endpoints are stubs that will relay to a trusted-side
-execution plane later.
-
-Requirements on the server: **Python 3.10+**, **git**, and **Hamachi**
-(installed + a network created). Python 3.12 is fine; the `py -3.12`
-IBKR rule does NOT apply (this is a non-IBKR web app).
+Cost: Cloudflare Tunnel + account are **free**; the only cost is a domain
+(~$10/yr) for a stable URL. (A throwaway `trycloudflare.com` URL needs no
+domain but **changes every restart** — fine for a smoke test, not for
+collaborators.)
 
 ---
 
-## 1. Get the code
+## A. App service on Hermes
 
-The server pulls via git (no Dropbox there):
+Requirements: **Python 3.12**, **git** (and later **cloudflared**). The
+`py -3.12` IBKR rule does NOT apply — this is a non-IBKR web app.
 
 ```powershell
-# first time
+# 1. Clone (first time)
 git clone <repo-url> C:\TradeHunter-checkout
 cd C:\TradeHunter-checkout\TradeHunter\dashboard_tst
-# subsequently
-git pull --ff-only
-```
 
-## 2. Configure
-
-```powershell
+# 2. Configure
 copy app\.env.example app\.env
-```
-Edit `app\.env`:
-- `TST_SECRET_KEY` — generate: `py -c "import secrets; print(secrets.token_hex(32))"`
-- `TST_AUTH_MODE=password`
-- `TST_ADMIN_EMAIL` / `TST_ADMIN_PASSWORD` — seeds your approved admin on first run.
-- `TST_HTTPS_ONLY=0`
+#   In app\.env set:
+#     TST_SECRET_KEY  -> py -c "import secrets; print(secrets.token_hex(32))"
+#     TST_AUTH_MODE=password
+#     TST_ADMIN_EMAIL / TST_ADMIN_PASSWORD   (seeds your admin on first run)
+#     TST_HTTPS_ONLY=1                        (served over Cloudflare HTTPS)
 
-`.env` is gitignored (per-PC). The SQLite DB (`tst.db`) is gitignored too.
+# 3. First run (foreground sanity check) -> http://localhost:8000/health
+powershell -ExecutionPolicy Bypass -File deploy\run_app.ps1
 
-## 3. First run (foreground sanity check)
-
-```powershell
-powershell -ExecutionPolicy Bypass -File deploy\run_app.ps1 -BindHost 0.0.0.0
-```
-This creates `.venv`, installs `app\requirements.txt`, and launches uvicorn.
-Verify locally on the server: open `http://localhost:8000/health` -> `{"status":"ok"}`.
-Ctrl+C to stop, then make it persistent (step 5).
-
-## 4. Firewall — lock port 8000 to the VPN
-
-Allow inbound 8000 ONLY from the Hamachi subnet (`25.0.0.0/8`), so the LAN
-and any public interface can't reach it:
-
-```powershell
-New-NetFirewallRule -DisplayName "TST Dashboard (Hamachi only)" `
-  -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8000 `
-  -RemoteAddress 25.0.0.0/8
-```
-
-## 5. Run it as a service (survives reboot / RDP disconnect)
-
-```powershell
+# 4. Run as a service (survives reboot/RDP); binds 127.0.0.1
 powershell -ExecutionPolicy Bypass -File deploy\setup_hermes_webapp_task.ps1 -StartNow
 ```
-Registers `TST-Dashboard-Web` (AtStartup, S4U, auto-restart). Mirrors the
-bot's `setup_hermes_*` task pattern.
 
-## 6. Members connect
-
-1. Install Hamachi, join your network (invite them; free Hamachi caps a
-   network at **5 machines** — server + 4 members — paid plan or Tailscale
-   for more).
-2. Browse `http://<server-hamachi-ip>:8000` (find the server's Hamachi IP
-   in the Hamachi window, `25.x.x.x`).
-3. You (admin) log in with the seeded creds, open **Admin**, and create
-   member accounts (email + initial password). Share those with members.
-
-## 7. Update loop (as we build)
-
-```
-laptop:  edit -> commit -> push
-server:  git pull --ff-only
-         Restart-ScheduledTask -TaskName 'TST-Dashboard-Web'
-```
-(`run_app.ps1` re-installs deps on each start, so new requirements are
-picked up automatically.)
+`.env` and the SQLite DB are gitignored (per-PC). The app is bound to
+**127.0.0.1** — only cloudflared (same host) reaches it.
 
 ---
 
-## Upgrading to Path A (public + Google) later
+## B. Public URL with Cloudflare Tunnel
 
-When you want public access with Google login: get a domain, set
-`TST_AUTH_MODE=google` + the `TST_GOOGLE_*` vars, put Caddy in front for
-TLS, and register the OAuth client redirect `https://<domain>/auth/callback`.
-A domain A-record can even point at the Hamachi IP with Caddy using the
-DNS-01 challenge if you want it private-but-with-real-Google-login. That
-infra (Caddyfile + service) is not built yet — flagged as the Path-A step.
+Install cloudflared on Hermes (`winget install Cloudflare.cloudflared`, or
+the `.msi` from Cloudflare's GitHub releases).
+
+### Smoke test today (no domain, ephemeral URL)
+```powershell
+cloudflared tunnel --url http://localhost:8000
+```
+Prints a `https://<random>.trycloudflare.com` that proxies to the app. Open
+it, confirm collaborators can reach the login page. The URL changes each run.
+
+### Stable URL for collaborators (named tunnel — needs a domain on Cloudflare)
+```powershell
+cloudflared tunnel login                       # browser auth, one time
+cloudflared tunnel create tst                  # creates tunnel + creds .json
+cloudflared tunnel route dns tst study.<your-domain>
+# create the config from the template:
+#   copy deploy\cloudflared-config.example.yml  %USERPROFILE%\.cloudflared\config.yml
+#   fill in <TUNNEL-ID>, creds path, hostname
+cloudflared tunnel run tst                     # test in foreground
+cloudflared service install                    # then run on boot as a service
+```
+Collaborators open `https://study.<your-domain>` — permanent, HTTPS, nothing
+to install. Cloudflare's edge also absorbs bots/DDoS in front of the login.
+
+---
+
+## C. The "push from laptop → Hermes refreshes" loop
+
+`uvicorn --reload` proved unreliable on synced/networked drives, so the
+refresh step **restarts the service** instead.
+
+```powershell
+# Manual refresh after a push:
+powershell -ExecutionPolicy Bypass -File deploy\update.ps1     # git pull --ff-only + restart
+
+# Hands-off: poll + auto-refresh every 5 min
+powershell -ExecutionPolicy Bypass -File deploy\setup_hermes_autopull_task.ps1 -StartNow
+```
+`update.ps1` pulls, reinstalls deps only if `requirements.txt` changed, and
+restarts `TST-Dashboard-Web`. With the autopull task, you just push from the
+laptop and Hermes reflects it within a few minutes.
+
+> Polling, not a webhook: a tunnelled private server isn't reachable inbound
+> by GitHub, so we poll `git pull`.
+
+---
+
+## D. Members
+
+You (admin) log in at the URL and create accounts: **Admin → Create member**
+(email + initial password). Share those; collaborators log in and use the
+**Feedback** board to comment on the build as it goes.
+
+---
+
+## E. Checking status
+
+`GET /status` (unauthenticated, non-sensitive): `{status, version, auth_mode,
+db_ok, uptime_seconds}`.
+
+```powershell
+# on the server:
+powershell -ExecutionPolicy Bypass -File deploy\status_check.ps1
+# remotely, if reachable:
+powershell -ExecutionPolicy Bypass -File deploy\status_check.ps1 -Target https://study.<your-domain>
+```
+
+---
+
+## Notes / guardrails
+
+- **Isolation:** the app is genuinely public now (auth-gated). It holds no
+  broker credentials and opens no IBKR session, but running it on a **separate
+  VM** from the trading "Hermes" VM is the cleaner choice (DESIGN.md).
+- **Google login (Path A):** now that there's a real HTTPS domain, you could
+  switch `TST_AUTH_MODE=google`. Password mode is fine; your call.
 
 ## Troubleshooting
-
-- **Can't reach it from a member machine** — confirm both are "online" (green)
-  in Hamachi; check the firewall rule; confirm the task is Running
-  (`Get-ScheduledTask -TaskName TST-Dashboard-Web`).
-- **`/health` works locally but not over Hamachi** — the app is bound to
-  127.0.0.1; ensure the task/run used `-BindHost 0.0.0.0`.
-- **Login fails for the admin** — the admin is only seeded on first startup
-  when `TST_ADMIN_EMAIL`+`TST_ADMIN_PASSWORD` are set AND no such user
-  exists yet. Set them, delete `tst.db` if it was created empty, restart.
+- **`/health` works locally but the public URL 502s** — cloudflared can't
+  reach the app: confirm the web-app task is Running and bound to `:8000`.
+- **trycloudflare URL keeps changing** — expected; use a named tunnel.
+- **Admin login fails** — admin is seeded only on first startup when
+  `TST_ADMIN_EMAIL`+`TST_ADMIN_PASSWORD` are set and no such user exists; set
+  them, delete an empty `tst.db`, restart.

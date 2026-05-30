@@ -39,7 +39,8 @@ if (-not (Test-Path $EnvFile)) {
 
 if (-not (Test-Path $Venv)) {
     Write-Host "Creating virtual env at $Venv ..." -ForegroundColor Cyan
-    py -m venv $Venv
+    # Prefer Python 3.12 (reliable wheels for the web deps); fall back to default.
+    if (py -3.12 --version 2>$null) { py -3.12 -m venv $Venv } else { py -m venv $Venv }
 }
 
 Write-Host "Installing/updating dependencies ..." -ForegroundColor Cyan

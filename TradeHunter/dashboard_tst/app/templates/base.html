@@ -13,6 +13,7 @@
     <nav class="text-sm flex gap-4 items-center">
       {% if user %}
         <a href="/studies" class="hover:text-emerald-400">Studies</a>
+        <a href="/feedback" class="hover:text-emerald-400">Feedback</a>
         {% if user.is_admin %}<a href="/admin" class="hover:text-emerald-400">Admin</a>{% endif %}
         <span class="text-slate-400">{{ user.display_name }}</span>
         <form method="post" action="/logout" class="inline">

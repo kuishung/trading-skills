@@ -44,9 +44,9 @@ def admin_home(
         db.query(User).filter(User.status != PENDING).order_by(User.status, User.email).all()
     )
     return templates.TemplateResponse(
+        request,
         "admin.html",
         {
-            "request": request,
             "user": admin,
             "pending": pending,
             "members": members,

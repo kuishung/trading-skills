@@ -33,8 +33,9 @@ def list_studies(
     levels = db.query(MATPLevel).order_by(MATPLevel.symbol).all()
     setups = db.query(Setup).order_by(Setup.created_at.desc()).all()
     return templates.TemplateResponse(
+        request,
         "studies.html",
-        {"request": request, "user": user, "levels": levels, "setups": setups},
+        {"user": user, "levels": levels, "setups": setups},
     )
 
 

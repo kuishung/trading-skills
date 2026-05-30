@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Feedback &middot; TST{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-semibold mb-1">Development feedback</h1>
+<p class="text-slate-400 mb-6 text-sm">Comment on the build as it goes &mdash; everyone here sees the thread.</p>
+
+<form method="post" action="/feedback" class="mb-8 space-y-2">
+  <input name="topic" type="text" placeholder="Topic (optional) e.g. 'MATP board', 'login'"
+         class="w-full rounded bg-slate-900 border border-slate-700 px-3 py-2 text-sm focus:border-emerald-500 outline-none">
+  <textarea name="body" rows="3" required placeholder="Your comment..."
+            class="w-full rounded bg-slate-900 border border-slate-700 px-3 py-2 text-sm focus:border-emerald-500 outline-none"></textarea>
+  <div class="text-right">
+    <button class="rounded bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-medium">Post</button>
+  </div>
+</form>
+
+{% if items %}
+<ul class="space-y-3">
+  {% for it in items %}
+  <li class="rounded-lg border border-slate-800 p-3">
+    <div class="flex items-center justify-between text-xs text-slate-500 mb-1">
+      <span class="text-slate-300 font-medium">{{ it.user.display_name if it.user else "?" }}</span>
+      <span>{{ it.created_at.strftime("%Y-%m-%d %H:%M") if it.created_at else "" }} UTC</span>
+    </div>
+    {% if it.topic %}<div class="text-xs text-emerald-400 mb-1">[{{ it.topic }}]</div>{% endif %}
+    <div class="text-sm whitespace-pre-wrap">{{ it.body }}</div>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="text-slate-500 text-sm">No comments yet &mdash; be the first.</p>
+{% endif %}
+{% endblock %}

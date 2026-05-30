@@ -118,3 +118,19 @@ class Comment(Base):
 
     setup = relationship("Setup", back_populates="comments")
     user = relationship("User")
+
+
+class Feedback(Base):
+    """Development feedback board -- collaborators comment on the build as it
+    goes (not tied to a specific setup). The lightweight 'react to each part
+    as it ships' surface."""
+
+    __tablename__ = "feedback"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    topic = Column(String(120), nullable=True)  # optional free-text label
+    body = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=_utcnow)
+
+    user = relationship("User")

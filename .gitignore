@@ -6,6 +6,9 @@
 # Local databases (dashboard_tst platform dev SQLite, etc.)
 *.db
 *.sqlite3
+
+# Per-PC preview launch config (machine-absolute paths)
+**/.claude/launch.json
 *.pem
 *.key
 *-sa.json

@@ -11,8 +11,11 @@ execution plane lives trusted-side.
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+
+_START_MONOTONIC = time.monotonic()
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import HTMLResponse
@@ -26,6 +29,7 @@ from .db import SessionLocal, init_db
 from .models import APPROVED, User
 from .routes import admin as admin_routes
 from .routes import auth as auth_routes
+from .routes import feedback as feedback_routes
 from .routes import studies as studies_routes
 from .security import current_user, hash_password
 
@@ -59,6 +63,21 @@ def _bootstrap_admin_password() -> None:
             log.info("Seeded admin account %s", email)
     finally:
         db.close()
+
+
+def _db_ok() -> bool:
+    """Trivial connectivity probe for /status."""
+    from sqlalchemy import text
+
+    try:
+        db = SessionLocal()
+        try:
+            db.execute(text("SELECT 1"))
+            return True
+        finally:
+            db.close()
+    except Exception:
+        return False
 
 
 @asynccontextmanager
@@ -97,16 +116,29 @@ def create_app() -> FastAPI:
 
     app.include_router(auth_routes.router)
     app.include_router(studies_routes.router)
+    app.include_router(feedback_routes.router)
     app.include_router(admin_routes.router)
 
     @app.get("/health")
     def health():
         return {"status": "ok", "version": APP_VERSION}
 
+    @app.get("/status")
+    def status_endpoint():
+        """Lightweight, unauthenticated operational status for monitoring
+        (status_check.ps1). Non-sensitive only -- no user data, no counts."""
+        return {
+            "status": "ok",
+            "version": APP_VERSION,
+            "auth_mode": settings.auth_mode,
+            "db_ok": _db_ok(),
+            "uptime_seconds": round(time.monotonic() - _START_MONOTONIC, 1),
+        }
+
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request, user: User | None = Depends(current_user)):
         return templates.TemplateResponse(
-            "dashboard.html", {"request": request, "user": user}
+            request, "dashboard.html", {"user": user}
         )
 
     return app

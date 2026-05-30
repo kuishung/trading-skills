@@ -50,18 +50,23 @@ from this dashboard.
   `TST_DATABASE_URL` → SQLite dev / Postgres prod), `models.py`
   (`User`/`MATPLevel`/`Setup`/`Comment`), `security.py` (PBKDF2 hashing +
   session auth + `require_user`/`require_admin`), `main.py` (app factory,
-  invite-only admin bootstrap, `/health`, `/`), `routes/` (`auth`,
-  `studies`, admin-only `admin` with the **control-plane-only** swing-bot
+  admin bootstrap, `/health`, `/status`, `/`), `models.py` also has
+  `Feedback`; `routes/` (`auth`, `studies`, `feedback` [the development
+  comment board], admin-only `admin` with the **control-plane-only** swing-bot
   stubs), `services/` (`black_scholes.py` — working pure-math option
   pricing/prob-ITM; `resources_bridge.py` — import seam to the shared
   `resources/`/`review/` library, Phase-tagged stubs), `templates/` +
   `static/`, `requirements.txt`, `.env.example`. Deps are per-PC
   (gitignored); the SQLite db (`*.db`) and `.env` are gitignored.
-- `deploy/` — **deployment kit for the server.** `run_app.ps1` (create venv,
-  install deps, launch uvicorn; `-BindHost`/`-Port`/`-Reload`) and
-  `setup_hermes_webapp_task.ps1` (register the `TST-Dashboard-Web`
-  scheduled task so it survives reboot/RDP, mirroring the bot's
-  `setup_hermes_*` pattern). Both ASCII-only, parse-clean.
+- `deploy/` — **deployment kit for Hermes (Cloudflare Tunnel model).**
+  `run_app.ps1` (create venv [prefers py 3.12], install deps, launch uvicorn
+  bound to 127.0.0.1), `setup_hermes_webapp_task.ps1` (the `TST-Dashboard-Web`
+  service task), `update.ps1` (the refresh step: `git pull --ff-only` +
+  restart the service — does NOT rely on `--reload`), `setup_hermes_autopull_task.ps1`
+  (`TST-Dashboard-Autopull` — polls `update.ps1` every 5 min so pushes
+  auto-deploy), `cloudflared-config.example.yml` (named-tunnel ingress
+  template → `localhost:8000`), and `status_check.ps1` (poll `/status` +
+  task state). All ASCII-only, parse-clean.
 - `DEPLOY.md` — **deployment runbook.** Active **Path B** (Hamachi VPN,
   `http://<server-hamachi-ip>:8000`, password auth, no domain/TLS — the VPN
   tunnel is encrypted) step-by-step: pull → `.env` → first run → firewall
@@ -105,6 +110,18 @@ controls, intraday scanner setups) will be trimmed as the trend/swing
 surface takes shape.
 
 ## Changelog
+
+### 2026-05-30 — Access via Cloudflare Tunnel (public URL); auto-deploy loop
+
+Collaborators won't install a VPN client, so the access model changed from Hamachi to a **public URL via Cloudflare Tunnel** on Hermes. `cloudflared` runs alongside uvicorn and dials out to Cloudflare (no inbound ports, no router changes), giving a free auto-HTTPS URL that proxies to `localhost:8000`. Auth stays password-mode; `TST_HTTPS_ONLY=1`. Added the auto-deploy loop: `deploy/update.ps1` (`git pull --ff-only` + restart the service — explicit restart, since `--reload` proved unreliable on synced drives during dev) and `deploy/setup_hermes_autopull_task.ps1` (polls every 5 min; webhook can't reach a tunnelled private box). Added `deploy/cloudflared-config.example.yml`. `run_app.ps1` now prefers `py -3.12`; the web-app task binds `127.0.0.1` (cloudflared reaches it locally — the app isn't directly exposed). `DEPLOY.md` rewritten around the Hermes + Cloudflare Tunnel runbook; DESIGN.md networking decision updated; root `.gitignore` ignores per-PC `.claude/launch.json`. All deploy scripts parse-clean.
+
+### 2026-05-30 — Live preview verified + feedback board + two blocking-bug fixes
+
+Stood up a real local preview (uvicorn on a 3.12 venv outside Dropbox) and verified the app end-to-end — which caught two bugs that compile checks missed: (1) the installed Starlette requires `TemplateResponse(request, name, context)` — the old `(name, context)` calls 500'd every page; fixed across all routes; (2) the app never loaded `app/.env` (config read `os.environ` but nothing populated it) — added `python-dotenv` loading (a real deployment fix). Then built the **Feedback board** (`/feedback`, `Feedback` model + route + template + nav link): any approved member posts a comment (optional topic + body), shown newest-first with author + UTC timestamp — the "collaborators comment on the development as it goes" surface. Verified live: login → post → thread renders. Also confirmed `--reload` does NOT fire on the Dropbox drive (informed the deploy loop's pull-and-restart design).
+
+### 2026-05-30 — Status monitoring: `/status` endpoint + `status_check.ps1`
+
+Added a way to watch the deployment "along the way." New unauthenticated `GET /status` returns non-sensitive operational state — `status`, `version`, `auth_mode`, `db_ok` (a `SELECT 1` connectivity probe), `uptime_seconds` (monotonic since process start). New `deploy/status_check.ps1` polls `/status` and the `TST-Dashboard-Web` scheduled-task state, printing `[UP]/[DOWN]` + a `healthy/problem` result (exit 0/1). Runnable on the server (localhost) or from the laptop when both machines share the LAN or the Hamachi VPN (`-Target http://<server-hamachi-ip>:8000`) — which also lets Claude check status on demand from the laptop once the laptop joins the VPN. `main.py` byte-compiles clean; the script parses clean.
 
 ### 2026-05-30 — Path B: VPN deploy + mode-switchable auth (password active)
 

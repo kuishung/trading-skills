@@ -1,0 +1,17 @@
+# cloudflared named-tunnel config (EXAMPLE). On Hermes, copy to the
+# cloudflared config location and fill in the placeholders:
+#   - interactive run: C:\Users\<you>\.cloudflared\config.yml
+#   - as a Windows service: %USERPROFILE%\.cloudflared\config.yml of the
+#     service account (often C:\Windows\System32\config\systemprofile\.cloudflared\)
+#
+# Replace <TUNNEL-ID>, the credentials path, and <your-domain>. The tunnel
+# reverse-proxies the public hostname to the local uvicorn app on :8000.
+
+tunnel: <TUNNEL-ID>
+credentials-file: C:\Users\Administrator\.cloudflared\<TUNNEL-ID>.json
+
+ingress:
+  - hostname: study.yourdomain.com
+    service: http://localhost:8000
+  # everything else returns 404
+  - service: http_status:404

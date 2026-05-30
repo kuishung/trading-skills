@@ -3,9 +3,9 @@
 # RDP disconnects (mirrors the setup_hermes_*.ps1 pattern used by the bot).
 #
 # The task runs deploy\run_app.ps1, which creates/refreshes the venv,
-# installs deps, and launches uvicorn. Bound to 0.0.0.0 so it is reachable
-# over the Hamachi VPN -- LOCK IT DOWN with a firewall rule that only allows
-# the Hamachi subnet (see DEPLOY.md, "Firewall").
+# installs deps, and launches uvicorn. Bound to 127.0.0.1: the app is NOT
+# exposed directly -- cloudflared (Cloudflare Tunnel) runs on the same host
+# and reverse-proxies the public URL to localhost:8000. See DEPLOY.md.
 #
 # Run once on the server (elevated):
 #   powershell -ExecutionPolicy Bypass -File dashboard_tst\deploy\setup_hermes_webapp_task.ps1 -StartNow
@@ -16,7 +16,7 @@
 param(
     [string] $TaskName = 'TST-Dashboard-Web',
     [int]    $Port     = 8000,
-    [string] $BindHost = '0.0.0.0',
+    [string] $BindHost = '127.0.0.1',
     [switch] $StartNow
 )
 
@@ -61,6 +61,7 @@ if ($StartNow) {
 
 Write-Host ""
 Write-Host "Reminders:" -ForegroundColor Yellow
-Write-Host "  - Lock the firewall to the Hamachi subnet (see DEPLOY.md)."
-Write-Host "  - After 'git pull' on the server, restart:  Restart-ScheduledTask -TaskName '$TaskName'"
+Write-Host "  - cloudflared provides public access; the app stays bound to localhost (see DEPLOY.md)."
+Write-Host "  - Auto-update loop: register TST-Dashboard-Autopull (setup_hermes_autopull_task.ps1)."
+Write-Host "  - Manual refresh after a push:  deploy\update.ps1"
 Write-Host "  - Remove:  Unregister-ScheduledTask -TaskName '$TaskName' -Confirm:`$false"
