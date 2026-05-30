@@ -12,7 +12,8 @@
 
 [CmdletBinding()]
 param(
-    [string] $TaskName = "TST-Dashboard-Web"
+    [string] $TaskName = "TST-Dashboard-Web",
+    [int]    $Port     = 8000
 )
 
 $ErrorActionPreference = "Stop"
@@ -43,6 +44,14 @@ if ($changed -match "dashboard_tst/app/requirements.txt") {
 Write-Host "Restarting $TaskName ..." -ForegroundColor Cyan
 # ScheduledTasks module has no Restart-* cmdlet; stop then start.
 Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+# Stop-ScheduledTask kills the wrapper script but can ORPHAN the uvicorn
+# child still holding the port -> the fresh start then can't bind and the
+# stale/hung process keeps serving old code. Free the port explicitly.
+$busy = (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue).OwningProcess | Select-Object -Unique
+if ($busy) {
+    Write-Host "Freeing port $Port (orphaned PID(s): $($busy -join ','))" -ForegroundColor Yellow
+    $busy | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }
+}
 Start-Sleep -Seconds 2
 Start-ScheduledTask -TaskName $TaskName
 Write-Host "Done. Site updated." -ForegroundColor Green

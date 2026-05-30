@@ -31,6 +31,7 @@ from .routes import admin as admin_routes
 from .routes import auth as auth_routes
 from .routes import feedback as feedback_routes
 from .routes import finviz as finviz_routes
+from .routes import matp as matp_routes
 from .routes import studies as studies_routes
 from .security import current_user, hash_password
 
@@ -116,6 +117,7 @@ def create_app() -> FastAPI:
     app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="static")
 
     app.include_router(auth_routes.router)
+    app.include_router(matp_routes.router)
     app.include_router(studies_routes.router)
     app.include_router(finviz_routes.router)
     app.include_router(feedback_routes.router)

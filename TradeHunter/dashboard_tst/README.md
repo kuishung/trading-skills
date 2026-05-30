@@ -111,6 +111,14 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-05-30 — MATP landing page + post-login routing
+
+Added a **MATP** page (`/matp`, nav link) — the Median Analyst Target Price board, currently a themed "Under construction" placeholder (the real MATP/MBP board, driven by active Finviz filters, comes later). Post-login routing now matches the intended flow: **approved** users (Google callback or password login) redirect to **`/matp`**; **pending** users go to `/` and see the awaiting-approval message (`require_user` also blocks pending from `/matp`). New files: `routes/matp.py`, `templates/matp.html`. Verified: approved login → `Location: /matp`, page renders.
+
+### 2026-05-30 — update.ps1: free port 8000 on restart (fix orphaned uvicorn)
+
+Recurring deploy issue: `Stop-ScheduledTask` terminates the `run_app.ps1` wrapper but **orphans the child `uvicorn` process still holding port 8000**, so the fresh start can't bind and the stale/hung process keeps serving old code (symptoms: "site froze", "new pages don't appear after git pull", `/status` uptime never resets). Fixed `update.ps1` to explicitly kill whatever listens on the port (new `-Port`, default 8000) between stop and start, so every pull reliably runs the new code. Manual one-off recovery is the same kill-port-then-start sequence.
+
 ### 2026-05-30 — Finviz tab: saved-filter manager (no scan)
 
 Added a **Finviz** tab (`/finviz`, nav link) to **manage a list of saved screener filters** — this page only curates the list, it does not run any scan (scanning is a later step that consumes the active filters). New `FinvizFilter` model (id, description, url, is_active, created_by, created_at). **Moderators+** add a filter (description + URL + Active checkbox), toggle Active/Inactive, and delete; **all approved members** view the list read-only (URL links out to Finviz in a new tab). New files: `routes/finviz.py` (CRUD), `templates/finviz.html`. Verified end-to-end in a throwaway run: add active + inactive → list renders with statuses → toggle works; member add → 403, member view → 200. (The `resources_bridge.screen_universe()` + `finviz_screener.py` Accept-header fix from earlier remain, ready for the future scan step.)

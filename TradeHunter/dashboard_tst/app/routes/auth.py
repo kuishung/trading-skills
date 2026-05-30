@@ -97,7 +97,7 @@ async def login_password(
             request, "login.html", _login_ctx("Invalid email or password."), status_code=401
         )
     login_user(request, user)
-    return RedirectResponse(url="/", status_code=303)
+    return RedirectResponse(url=("/matp" if user.is_approved else "/"), status_code=303)
 
 
 @router.get("/auth/callback", name="auth_callback")
@@ -150,7 +150,8 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
             user.display_name = name
     db.commit()
     login_user(request, user)
-    return RedirectResponse(url="/", status_code=303)
+    # Approved -> MATP page; pending -> home (shows awaiting-approval).
+    return RedirectResponse(url=("/matp" if user.is_approved else "/"), status_code=303)
 
 
 @router.post("/logout")
