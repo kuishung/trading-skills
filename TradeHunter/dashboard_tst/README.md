@@ -111,6 +111,13 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-05-30 — Branding finalize, login redesign, /auth/google flow, faster restarts
+
+- **Branding:** dropped the placeholder "TST" and "trend & swing" everywhere — browser-tab titles now "… · TradeHunter", header/landing taglines now "trade collaboration" / "Collaborative trade research" (the platform isn't limited to one methodology).
+- **Login redesign:** `login.html` is now a polished centered card (logo, heading, labeled inputs, styled error) for both password and Google modes.
+- **`/auth/google` flow:** split "render the login page" from "start Google OAuth". `GET /login` now always renders the card (in google mode it shows a *Sign in with Google* button → `GET /auth/google` → OAuth redirect), instead of auto-redirecting. Better UX and lets the login card render in google mode.
+- **`run_app.ps1` faster restarts:** install deps only when the venv is new or `requirements.txt` changed (SHA-256 hash check in `.venv\.reqhash`), instead of reinstalling on every launch. A cold reinstall at boot was delaying uvicorn by minutes; now the app comes back in seconds after a reboot/restart. Also dropped the cosmetic `pip install --upgrade pip` step.
+
 ### 2026-05-30 — Branding: TradeHunter logo + themed background
 
 Added `app/static/logo.svg` — a vector mark (emerald crosshair + rising trend arrow = "hunt the trade"), wired into the header (mark + "TradeHunter · trend & swing" wordmark), the landing-page hero, and the favicon. Rebranded the site from the placeholder "TST" to **TradeHunter** throughout. Added a site-wide themed background in `base.html` (a `<style>` block): an emerald radial glow top-center + a faint cyan glow, a subtle chart-style grid, and a vertical depth gradient; plus a sticky translucent blurred header. (A candlestick-chart graphic overlay was trialed and reverted per user preference — kept the glow/grid only.) Pure CSS/SVG, no images or extra requests.

@@ -2,7 +2,7 @@
 {% block content %}
 {% if user and user.is_approved %}
   <h1 class="text-2xl font-semibold mb-1">Welcome, {{ user.display_name }}</h1>
-  <p class="text-slate-400 mb-6">Trend &amp; swing collaboration platform.</p>
+  <p class="text-slate-400 mb-6">Collaborative trade research platform.</p>
   <div class="grid sm:grid-cols-3 gap-4">
     <a href="/studies" class="rounded-lg border border-slate-800 p-4 hover:border-emerald-600 transition">
       <div class="font-medium">Studies</div>
@@ -30,7 +30,7 @@
   <div class="text-center py-16">
     <img src="/static/logo.svg" alt="" class="h-16 w-16 mx-auto mb-4">
     <h1 class="text-2xl font-semibold mb-1">TradeHunter</h1>
-    <p class="text-slate-400 mb-6">Trend &amp; swing collaboration platform &mdash; members only.</p>
+    <p class="text-slate-400 mb-6">Collaborative trade research &mdash; members only.</p>
     <a href="/login" class="inline-block rounded bg-emerald-600 hover:bg-emerald-500 px-4 py-2">Sign in</a>
   </div>
 {% endif %}

@@ -37,15 +37,27 @@ if (-not (Test-Path $EnvFile)) {
     Write-Warning "app\.env not found. Copy app\.env.example -> app\.env and fill it in (secret, Google creds, admin email) before going live."
 }
 
+$created = $false
 if (-not (Test-Path $Venv)) {
     Write-Host "Creating virtual env at $Venv ..." -ForegroundColor Cyan
     # Prefer Python 3.12 (reliable wheels for the web deps); fall back to default.
     if (py -3.12 --version 2>$null) { py -3.12 -m venv $Venv } else { py -m venv $Venv }
+    $created = $true
 }
 
-Write-Host "Installing/updating dependencies ..." -ForegroundColor Cyan
-& $Pip install --upgrade pip
-& $Pip install -r $ReqFile
+# Install deps ONLY when the venv is new or requirements.txt changed. This
+# skips the slow reinstall on every boot/restart, so the app comes back in
+# seconds (a cold reinstall at startup was taking minutes and delaying uvicorn).
+$ReqHashFile = Join-Path $Venv ".reqhash"
+$ReqHash = (Get-FileHash -Path $ReqFile -Algorithm SHA256).Hash
+$HaveHash = (Test-Path $ReqHashFile) -and ((Get-Content $ReqHashFile -Raw).Trim() -eq $ReqHash)
+if ($created -or -not $HaveHash) {
+    Write-Host "Installing/updating dependencies ..." -ForegroundColor Cyan
+    & $Pip install -r $ReqFile
+    Set-Content -Path $ReqHashFile -Value $ReqHash -Encoding ascii
+} else {
+    Write-Host "Dependencies up to date; skipping install." -ForegroundColor DarkGray
+}
 
 $uargs = @("app.main:app", "--host", $BindHost, "--port", "$Port")
 if ($Reload) { $uargs += "--reload" }

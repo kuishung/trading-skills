@@ -63,18 +63,22 @@ def _google():
 # ----------------------------------------------------------------------------
 @router.get("/login")
 async def login(request: Request):
-    if settings.is_google_auth:
-        if not settings.google_configured:
-            return templates.TemplateResponse(
-                request,
-                "login.html",
-                _login_ctx("Google sign-in is not configured on this server."),
-                status_code=503,
-            )
-        redirect_uri = settings.oauth_redirect_uri or str(request.url_for("auth_callback"))
-        return await _google().authorize_redirect(request, redirect_uri)
-    # password mode
-    return templates.TemplateResponse(request, "login.html", _login_ctx())
+    """Render the login page (card). In google mode it shows a
+    'Sign in with Google' button pointing at /auth/google; in password mode
+    it shows the email/password form."""
+    error = None
+    if settings.is_google_auth and not settings.google_configured:
+        error = "Google sign-in is not configured on this server."
+    return templates.TemplateResponse(request, "login.html", _login_ctx(error))
+
+
+@router.get("/auth/google")
+async def auth_google(request: Request):
+    """Kick off the Google OAuth redirect (the button target)."""
+    if not settings.is_google_auth or not settings.google_configured:
+        return RedirectResponse(url="/login", status_code=303)
+    redirect_uri = settings.oauth_redirect_uri or str(request.url_for("auth_callback"))
+    return await _google().authorize_redirect(request, redirect_uri)
 
 
 @router.post("/login")
