@@ -41,5 +41,8 @@ if ($changed -match "dashboard_tst/app/requirements.txt") {
 }
 
 Write-Host "Restarting $TaskName ..." -ForegroundColor Cyan
-Restart-ScheduledTask -TaskName $TaskName
+# ScheduledTasks module has no Restart-* cmdlet; stop then start.
+Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 2
+Start-ScheduledTask -TaskName $TaskName
 Write-Host "Done. Site updated." -ForegroundColor Green
