@@ -548,6 +548,53 @@ Canonical detail + deploy steps live in `nous_hermes/README.md`. This
 note lives in CLAUDE.md (not just a memory file) so every dev PC recalls
 it — memory files don't sync across PCs.
 
+## TradeHunter collaboration platform (`dashboard_tst`) — deploy on Hermes
+
+`dashboard_tst/` is no longer just the trend-&-swing dashboard — it became
+**TradeHunter**, a members-only, internet-facing **trade-collaboration web
+platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
+`dashboard_tst/DEPLOY.md`. Key facts (so any session/PC recalls them):
+
+- **Stack:** FastAPI app under `dashboard_tst/app/` (uvicorn), SQLAlchemy →
+  **SQLite file `tst.db`** (no DB server; swap to Postgres later via
+  `TST_DATABASE_URL`). Config via `app/.env` (gitignored, per-PC), loaded by
+  python-dotenv. Tailwind/HTMX templates. Branded "TradeHunter · trade
+  collaboration" (logo `app/static/logo.svg`).
+- **Auth:** mode-switchable `TST_AUTH_MODE` — **`google`** (OAuth, prod) or
+  `password` (dev/local). New sign-in → **pending**, role **member**; an
+  admin **approves** before access (`TST_AUTO_APPROVE=0` default; `=1`
+  auto-member). `TST_ADMIN_EMAIL` auto-becomes admin on first sign-in.
+- **Roles:** Administrator / Moderator / Member (admin = user mgmt + all;
+  moderator = content moderation, e.g. Finviz filters + delete feedback;
+  member = collaborate). Managed in the `/admin` console.
+- **Pages:** `/matp` (approved-user landing, "under construction" board),
+  `/studies`, `/finviz` (moderator-curated saved-filter list — no scan
+  here), `/feedback`, `/admin`.
+- **Hosting:** **Hermes (Win Server 2019)** at **`tradehunter.net`** via
+  **Cloudflare Tunnel** (`cloudflared` dials out; no inbound ports). App runs
+  as the **`TST-Dashboard-Web`** scheduled task; code arrives via **git
+  pull** (Hermes has NO Dropbox). `.env`/`tst.db` are per-PC and survive
+  pulls. Google OAuth redirect: `https://tradehunter.net/auth/callback`.
+- **Restart caveat:** `Stop-ScheduledTask` orphans the uvicorn child on port
+  8000 — `deploy/update.ps1` now frees the port before restart. If a deploy
+  "freezes"/old code persists, kill the PID on :8000 then start the task.
+
+**Post-push rule (user, set 2026-05-30):** EVERY time the user says "push"
+(and a push happens), ALSO give them the **Hermes pull-and-restart command**
+to copy-paste over RDP. Must be **PowerShell 5.1 compatible — no `&&`** (use
+separate lines or `;`). Canonical form:
+
+```powershell
+cd C:\trading-skills
+git pull --ff-only
+cd C:\trading-skills\TradeHunter\dashboard_tst
+powershell -ExecutionPolicy Bypass -File deploy\update.ps1
+```
+
+(`update.ps1` pulls + frees port 8000 + restarts; the bare two-line pull is
+the minimum if they only want code synced. The autopull task also pulls
+every ~5 min once installed.)
+
 ## What NOT to do
 
 - Don't add sibling-folder dependencies.

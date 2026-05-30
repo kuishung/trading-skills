@@ -111,6 +111,10 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-05-30 — Build indicator + callback error-surfacing
+
+Added a running-build indicator so you can tell at a glance whether a machine (esp. Hermes) is on the latest code after a deploy: `app/_build.py` reads the git commit SHA from `.git` at process start (no `git` on PATH needed); shown as `build <sha>` in the login-page footer and in `/status`. Also made the Google OAuth callback **surface its real error**: the handler now wraps the whole flow, logs the exception (`log.exception`), and — when `TST_DEBUG=1` — returns the traceback on the `/auth/callback` page instead of silently redirecting (was hiding the cause of login failures). Diagnostic aid for the Hermes login issue (root cause was a dead IPv6 route to `oauth2.googleapis.com` — see CLAUDE.md/Hermes notes).
+
 ### 2026-05-30 — MATP landing page + post-login routing
 
 Added a **MATP** page (`/matp`, nav link) — the Median Analyst Target Price board, currently a themed "Under construction" placeholder (the real MATP/MBP board, driven by active Finviz filters, comes later). Post-login routing now matches the intended flow: **approved** users (Google callback or password login) redirect to **`/matp`**; **pending** users go to `/` and see the awaiting-approval message (`require_user` also blocks pending from `/matp`). New files: `routes/matp.py`, `templates/matp.html`. Verified: approved login → `Location: /matp`, page renders.

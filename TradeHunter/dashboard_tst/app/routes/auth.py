@@ -14,6 +14,7 @@ Both modes share the session + the pending/approval model.
 from __future__ import annotations
 
 import datetime as _dt
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -21,11 +22,13 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
+from .._build import BUILD
 from ..config import settings
 from ..db import get_db
 from ..models import APPROVED, PENDING, User
 from ..security import login_user, logout_user, verify_password
 
+log = logging.getLogger("dashboard_tst")
 router = APIRouter(tags=["auth"])
 templates = Jinja2Templates(
     directory=str(Path(__file__).resolve().parent.parent / "templates")
@@ -33,7 +36,7 @@ templates = Jinja2Templates(
 
 
 def _login_ctx(error: str | None = None) -> dict:
-    return {"error": error, "auth_mode": settings.auth_mode}
+    return {"error": error, "auth_mode": settings.auth_mode, "build": BUILD}
 
 
 # ----------------------------------------------------------------------------
@@ -106,52 +109,64 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse(url="/login", status_code=303)
     try:
         token = await _google().authorize_access_token(request)
+        info = token.get("userinfo") or {}
+        sub = info.get("sub")
+        email = (info.get("email") or "").strip().lower()
+        if not sub or not email:
+            raise RuntimeError(
+                f"token missing sub/email (token keys={list(token.keys())}, "
+                f"userinfo keys={list(info.keys())})"
+            )
+
+        if not settings.domain_allowed(email):
+            return templates.TemplateResponse(
+                request, "pending.html", {"rejected": True, "email": email}, status_code=403
+            )
+
+        name = info.get("name") or email
+        picture = info.get("picture")
+        user = (
+            db.query(User).filter(User.google_sub == sub).first()
+            or db.query(User).filter(User.email == email).first()
+        )
+        if user is None:
+            is_bootstrap_admin = bool(
+                settings.admin_email and email == settings.admin_email.strip().lower()
+            )
+            # First-time users default to Member. Auto-approved unless
+            # TST_AUTO_APPROVE=0 (then they land 'pending' for admin approval).
+            auto_ok = is_bootstrap_admin or settings.auto_approve
+            user = User(
+                email=email,
+                google_sub=sub,
+                display_name=name,
+                picture=picture,
+                role="admin" if is_bootstrap_admin else "member",
+                status=APPROVED if auto_ok else PENDING,
+                approved_at=_dt.datetime.now(_dt.timezone.utc) if auto_ok else None,
+            )
+            db.add(user)
+        else:
+            user.google_sub = sub
+            user.picture = picture
+            if not user.display_name:
+                user.display_name = name
+        db.commit()
+        login_user(request, user)
+        # Approved -> MATP page; pending -> home (shows awaiting-approval).
+        return RedirectResponse(url=("/matp" if user.is_approved else "/"), status_code=303)
     except Exception:
-        return RedirectResponse(url="/login", status_code=303)
-
-    info = token.get("userinfo") or {}
-    sub = info.get("sub")
-    email = (info.get("email") or "").strip().lower()
-    if not sub or not email:
-        return RedirectResponse(url="/login", status_code=303)
-
-    if not settings.domain_allowed(email):
-        return templates.TemplateResponse(
-            request, "pending.html", {"rejected": True, "email": email}, status_code=403
-        )
-
-    name = info.get("name") or email
-    picture = info.get("picture")
-    user = (
-        db.query(User).filter(User.google_sub == sub).first()
-        or db.query(User).filter(User.email == email).first()
-    )
-    if user is None:
-        is_bootstrap_admin = bool(
-            settings.admin_email and email == settings.admin_email.strip().lower()
-        )
-        # First-time users default to Member. Auto-approved unless
-        # TST_AUTO_APPROVE=0 (then they land 'pending' for admin approval).
-        auto_ok = is_bootstrap_admin or settings.auto_approve
-        user = User(
-            email=email,
-            google_sub=sub,
-            display_name=name,
-            picture=picture,
-            role="admin" if is_bootstrap_admin else "member",
-            status=APPROVED if auto_ok else PENDING,
-            approved_at=_dt.datetime.now(_dt.timezone.utc) if auto_ok else None,
-        )
-        db.add(user)
-    else:
-        user.google_sub = sub
-        user.picture = picture
-        if not user.display_name:
-            user.display_name = name
-    db.commit()
-    login_user(request, user)
-    # Approved -> MATP page; pending -> home (shows awaiting-approval).
-    return RedirectResponse(url=("/matp" if user.is_approved else "/"), status_code=303)
+        log.exception("OAuth callback failed")
+        if settings.debug:
+            import traceback
+            return HTMLResponse(
+                "<pre style='color:#e2e8f0;background:#0f172a;padding:1rem;"
+                "white-space:pre-wrap'>OAuth callback failed:\n\n"
+                + traceback.format_exc()
+                + "</pre>",
+                status_code=500,
+            )
+        return RedirectResponse(url="/login?e=oauth", status_code=303)
 
 
 @router.post("/logout")

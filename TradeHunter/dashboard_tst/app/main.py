@@ -24,6 +24,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import __version__ as APP_VERSION
+from ._build import BUILD
 from .config import settings
 from .db import SessionLocal, init_db
 from .models import APPROVED, User
@@ -134,6 +135,7 @@ def create_app() -> FastAPI:
         return {
             "status": "ok",
             "version": APP_VERSION,
+            "build": BUILD,
             "auth_mode": settings.auth_mode,
             "db_ok": _db_ok(),
             "uptime_seconds": round(time.monotonic() - _START_MONOTONIC, 1),
