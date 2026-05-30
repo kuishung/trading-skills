@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Finviz filters &middot; TradeHunter{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-semibold mb-1">Finviz filters</h1>
+<p class="text-slate-400 text-sm mb-6">Saved screener filters. Active ones feed the scan step.</p>
+
+{% if can_edit %}
+<form method="post" action="/finviz/filters" class="mb-8 space-y-3 rounded-lg border border-slate-800 p-4">
+  <div>
+    <label class="block text-xs text-slate-400 mb-1">Description</label>
+    <input name="description" required placeholder="e.g. Mega-cap tech, high volume"
+           class="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm focus:border-emerald-500 outline-none">
+  </div>
+  <div>
+    <label class="block text-xs text-slate-400 mb-1">Finviz screener URL</label>
+    <input name="url" type="url" required placeholder="https://finviz.com/screener?v=111&f=..."
+           class="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm focus:border-emerald-500 outline-none">
+  </div>
+  <div class="flex items-center justify-between">
+    <label class="flex items-center gap-2 text-sm text-slate-300">
+      <input type="checkbox" name="is_active" checked class="accent-emerald-500"> Active
+    </label>
+    <button class="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-medium">Save filter</button>
+  </div>
+</form>
+{% endif %}
+
+{% if filters %}
+<table class="w-full text-sm border border-slate-800">
+  <thead class="bg-slate-900 text-slate-400">
+    <tr>
+      <th class="text-left px-3 py-2">Description</th>
+      <th class="text-left px-3 py-2">URL</th>
+      <th class="text-left px-3 py-2">Status</th>
+      {% if can_edit %}<th class="text-right px-3 py-2">Actions</th>{% endif %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for f in filters %}
+    <tr class="border-t border-slate-800 align-top">
+      <td class="px-3 py-2 font-medium">{{ f.description }}</td>
+      <td class="px-3 py-2 max-w-md">
+        <a href="{{ f.url }}" target="_blank" rel="noopener"
+           class="text-sky-400 hover:underline break-all text-xs">{{ f.url }}</a>
+      </td>
+      <td class="px-3 py-2">
+        {% if f.is_active %}
+          <span class="text-emerald-400">&#9679; Active</span>
+        {% else %}
+          <span class="text-slate-500">&#9675; Inactive</span>
+        {% endif %}
+      </td>
+      {% if can_edit %}
+      <td class="px-3 py-2 text-right space-x-1 whitespace-nowrap">
+        <form method="post" action="/finviz/filters/{{ f.id }}/toggle" class="inline">
+          <button class="rounded border border-slate-700 hover:border-emerald-500 px-2 py-1 text-xs">
+            {{ "Deactivate" if f.is_active else "Activate" }}
+          </button>
+        </form>
+        <form method="post" action="/finviz/filters/{{ f.id }}/delete" class="inline"
+              onsubmit="return confirm('Delete this filter?');">
+          <button class="rounded border border-slate-700 hover:border-rose-500 px-2 py-1 text-xs">Delete</button>
+        </form>
+      </td>
+      {% endif %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="text-slate-500 text-sm">
+  No filters yet.
+  {% if can_edit %}Add one above.{% else %}A moderator hasn't added any.{% endif %}
+</p>
+{% endif %}
+{% endblock %}

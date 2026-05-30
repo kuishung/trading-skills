@@ -1,8 +1,15 @@
 {% extends "base.html" %}
 {% block title %}Admin &middot; TradeHunter{% endblock %}
 {% block content %}
-<h1 class="text-2xl font-semibold mb-6">Admin
+<h1 class="text-2xl font-semibold mb-4">Admin
   <span class="text-xs text-slate-500">(auth: {{ auth_mode }})</span></h1>
+
+<div class="flex flex-wrap gap-3 mb-8 text-sm">
+  <span class="rounded-lg border border-slate-800 px-3 py-2">Total users <b class="ml-1">{{ counts.total }}</b></span>
+  <span class="rounded-lg border border-amber-500/40 text-amber-300 px-3 py-2">Pending <b class="ml-1">{{ counts.pending }}</b></span>
+  <span class="rounded-lg border border-emerald-600/40 text-emerald-300 px-3 py-2">Active <b class="ml-1">{{ counts.active }}</b></span>
+  <span class="rounded-lg border border-slate-700 text-slate-400 px-3 py-2">Disabled <b class="ml-1">{{ counts.disabled }}</b></span>
+</div>
 
 {% if is_google_auth %}
 <section class="mb-10">
@@ -51,6 +58,7 @@
         <th class="text-left px-3 py-2">Name</th>
         <th class="text-left px-3 py-2">Status</th>
         <th class="text-left px-3 py-2">Role</th>
+        <th class="text-left px-3 py-2">Joined</th>
         <th class="text-right px-3 py-2">Actions</th>
       </tr>
     </thead>
@@ -59,24 +67,30 @@
       <tr class="border-t border-slate-800">
         <td class="px-3 py-2">{{ u.email }}</td>
         <td class="px-3 py-2">{{ u.display_name }}</td>
-        <td class="px-3 py-2 {{ 'text-emerald-400' if u.is_approved else 'text-slate-500' }}">{{ u.status }}</td>
+        <td class="px-3 py-2 {{ 'text-emerald-400' if u.is_approved else 'text-rose-400' }}">{{ u.status }}</td>
         <td class="px-3 py-2">
           <form method="post" action="/admin/users/{{ u.id }}/role" class="inline">
             <select name="role" onchange="this.form.submit()"
                     class="bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-xs"
                     {% if u.id == user.id %}disabled{% endif %}>
-              <option value="member" {{ "selected" if u.role == "member" }}>member</option>
-              <option value="admin" {{ "selected" if u.role == "admin" }}>admin</option>
+              <option value="member" {{ "selected" if u.role == "member" }}>Member</option>
+              <option value="moderator" {{ "selected" if u.role == "moderator" }}>Moderator</option>
+              <option value="admin" {{ "selected" if u.role == "admin" }}>Administrator</option>
             </select>
           </form>
         </td>
+        <td class="px-3 py-2 text-slate-500">{{ u.created_at.date() if u.created_at else "-" }}</td>
         <td class="px-3 py-2 text-right">
-          {% if u.id != user.id %}
-          <form method="post" action="/admin/users/{{ u.id }}/disable" class="inline">
-            <button class="rounded border border-slate-700 hover:border-rose-500 px-2 py-1 text-xs">Disable</button>
-          </form>
+          {% if u.id == user.id %}
+            <span class="text-xs text-slate-600">you</span>
+          {% elif u.status == "disabled" %}
+            <form method="post" action="/admin/users/{{ u.id }}/approve" class="inline">
+              <button class="rounded bg-emerald-600 hover:bg-emerald-500 px-2 py-1 text-xs">Enable</button>
+            </form>
           {% else %}
-          <span class="text-xs text-slate-600">you</span>
+            <form method="post" action="/admin/users/{{ u.id }}/disable" class="inline">
+              <button class="rounded border border-slate-700 hover:border-rose-500 px-2 py-1 text-xs">Disable</button>
+            </form>
           {% endif %}
         </td>
       </tr>
@@ -94,8 +108,9 @@
     <input name="password" type="text" placeholder="Initial password" required
            class="rounded bg-slate-900 border border-slate-700 px-3 py-2 text-sm">
     <select name="role" class="rounded bg-slate-900 border border-slate-700 px-3 py-2 text-sm">
-      <option value="member">member</option>
-      <option value="admin">admin</option>
+      <option value="member">Member</option>
+      <option value="moderator">Moderator</option>
+      <option value="admin">Administrator</option>
     </select>
     <button class="rounded bg-emerald-600 hover:bg-emerald-500 px-3 py-2 text-sm font-medium">Create</button>
   </form>

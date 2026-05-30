@@ -14,6 +14,7 @@ from __future__ import annotations
 import datetime as _dt
 
 from sqlalchemy import (
+    Boolean,
     Column,
     DateTime,
     Float,
@@ -30,6 +31,17 @@ from .db import Base
 PENDING = "pending"
 APPROVED = "approved"
 DISABLED = "disabled"
+
+# role values (administrator > moderator > member)
+ROLE_ADMIN = "admin"
+ROLE_MODERATOR = "moderator"
+ROLE_MEMBER = "member"
+ROLES = (ROLE_ADMIN, ROLE_MODERATOR, ROLE_MEMBER)
+ROLE_LABELS = {
+    ROLE_ADMIN: "Administrator",
+    ROLE_MODERATOR: "Moderator",
+    ROLE_MEMBER: "Member",
+}
 
 
 def _utcnow() -> _dt.datetime:
@@ -54,7 +66,20 @@ class User(Base):
 
     @property
     def is_admin(self) -> bool:
-        return self.role == "admin"
+        return self.role == ROLE_ADMIN
+
+    @property
+    def is_moderator(self) -> bool:
+        return self.role == ROLE_MODERATOR
+
+    @property
+    def can_moderate(self) -> bool:
+        """Moderators and admins can moderate content."""
+        return self.role in (ROLE_ADMIN, ROLE_MODERATOR)
+
+    @property
+    def role_label(self) -> str:
+        return ROLE_LABELS.get(self.role, self.role)
 
     @property
     def is_approved(self) -> bool:
@@ -118,6 +143,23 @@ class Comment(Base):
 
     setup = relationship("Setup", back_populates="comments")
     user = relationship("User")
+
+
+class FinvizFilter(Base):
+    """A saved Finviz screener: URL + description + active flag. Moderators
+    manage the list; the tickers from *active* filters form the shared
+    universe everyone studies. New table -> create_all adds it safely."""
+
+    __tablename__ = "finviz_filters"
+
+    id = Column(Integer, primary_key=True)
+    description = Column(String(200), nullable=False)
+    url = Column(Text, nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_by = Column(Integer, ForeignKey("users.id"))
+    created_at = Column(DateTime, default=_utcnow)
+
+    author = relationship("User")
 
 
 class Feedback(Base):

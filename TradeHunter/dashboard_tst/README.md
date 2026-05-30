@@ -111,6 +111,22 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-05-30 — Finviz tab: saved-filter manager (no scan)
+
+Added a **Finviz** tab (`/finviz`, nav link) to **manage a list of saved screener filters** — this page only curates the list, it does not run any scan (scanning is a later step that consumes the active filters). New `FinvizFilter` model (id, description, url, is_active, created_by, created_at). **Moderators+** add a filter (description + URL + Active checkbox), toggle Active/Inactive, and delete; **all approved members** view the list read-only (URL links out to Finviz in a new tab). New files: `routes/finviz.py` (CRUD), `templates/finviz.html`. Verified end-to-end in a throwaway run: add active + inactive → list renders with statuses → toggle works; member add → 403, member view → 200. (The `resources_bridge.screen_universe()` + `finviz_screener.py` Accept-header fix from earlier remain, ready for the future scan step.)
+
+### 2026-05-30 — New sign-ins: pending + admin approval (role defaults to Member)
+
+A first-time Google sign-in lands **`pending` with role `member`** and must be **approved by an admin** in the console before getting access; the admin can also change the role afterward. Added `TST_AUTO_APPROVE` (default **`0`** = approval required); set `=1` to auto-approve new users as active members instead. `auth_callback` sets `status=pending` for new users unless auto-approve is on (the bootstrap admin email always becomes an approved admin). The who-can-sign-in gate remains Google's test-user list / `TST_ALLOWED_EMAIL_DOMAINS`; this adds the per-user approval step on top. Verified: default `auto_approve=False`.
+
+### 2026-05-30 — Three user roles: Administrator / Moderator / Member
+
+Extended the two-role model (member/admin) to three tiers. `models.py` gains role constants (`ROLE_ADMIN`/`ROLE_MODERATOR`/`ROLE_MEMBER`), labels, and `is_moderator`/`can_moderate`/`role_label` helpers; `security.py` gains a `require_moderator` dependency (admins + moderators). Permissions: **Administrator** = full (user management, roles, bot control); **Moderator** = member powers + content moderation (cannot manage users); **Member** = post/collaborate. Made the moderator tier tangible now by gating **feedback deletion** behind `require_moderator` (member can post; moderator/admin can remove any — with a `×` button shown only to moderators). Admin console role dropdowns (member-row + create-user) now list all three; `set_role` validates against the allowed set and blocks an admin from changing their own role (lockout guard). Verified in a throwaway run: all three options render, moderator delete → 303, member delete → 403.
+
+### 2026-05-30 — Admin console: user counts, Joined column, re-enable
+
+Built out the admin console (`/admin`, admin-only) for managing users. Added a counts strip (Total / Pending / Active / Disabled), a **Joined** date column in the members table, and — fixing a real gap — an **Enable** action so a disabled user can be brought back (previously `disable` was one-way in the UI; the Enable button reuses the approve endpoint, which sets status back to APPROVED). The pending-approval queue (google mode) and role/disable controls are unchanged. Verified end-to-end in a throwaway password-mode run: login → create users → `/admin` 200 with all new elements → disable shows Enable + "disabled" status → re-enable clears it.
+
 ### 2026-05-30 — Branding finalize, login redesign, /auth/google flow, faster restarts
 
 - **Branding:** dropped the placeholder "TST" and "trend & swing" everywhere — browser-tab titles now "… · TradeHunter", header/landing taglines now "trade collaboration" / "Collaborative trade research" (the platform isn't limited to one methodology).

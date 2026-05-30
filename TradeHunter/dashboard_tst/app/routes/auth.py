@@ -130,14 +130,17 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
         is_bootstrap_admin = bool(
             settings.admin_email and email == settings.admin_email.strip().lower()
         )
+        # First-time users default to Member. Auto-approved unless
+        # TST_AUTO_APPROVE=0 (then they land 'pending' for admin approval).
+        auto_ok = is_bootstrap_admin or settings.auto_approve
         user = User(
             email=email,
             google_sub=sub,
             display_name=name,
             picture=picture,
             role="admin" if is_bootstrap_admin else "member",
-            status=APPROVED if is_bootstrap_admin else PENDING,
-            approved_at=_dt.datetime.now(_dt.timezone.utc) if is_bootstrap_admin else None,
+            status=APPROVED if auto_ok else PENDING,
+            approved_at=_dt.datetime.now(_dt.timezone.utc) if auto_ok else None,
         )
         db.add(user)
     else:

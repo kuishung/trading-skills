@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import Feedback, User
-from ..security import require_user
+from ..security import require_moderator, require_user
 
 router = APIRouter(prefix="/feedback", tags=["feedback"])
 templates = Jinja2Templates(
@@ -46,5 +46,20 @@ def post_feedback(
     text = body.strip()
     if text:
         db.add(Feedback(user_id=user.id, topic=(topic.strip() or None), body=text))
+        db.commit()
+    return RedirectResponse(url="/feedback", status_code=303)
+
+
+@router.post("/{fid}/delete")
+def delete_feedback(
+    fid: int,
+    request: Request,
+    mod: User = Depends(require_moderator),
+    db: Session = Depends(get_db),
+):
+    """Moderators and admins can remove any feedback post."""
+    item = db.get(Feedback, fid)
+    if item:
+        db.delete(item)
         db.commit()
     return RedirectResponse(url="/feedback", status_code=303)

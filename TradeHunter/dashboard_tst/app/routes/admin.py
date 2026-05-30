@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..db import get_db
-from ..models import APPROVED, DISABLED, PENDING, User
+from ..models import APPROVED, DISABLED, PENDING, ROLE_MEMBER, ROLES, User
 from ..security import hash_password, require_admin
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -43,6 +43,12 @@ def admin_home(
     members = (
         db.query(User).filter(User.status != PENDING).order_by(User.status, User.email).all()
     )
+    counts = {
+        "total": len(pending) + len(members),
+        "pending": len(pending),
+        "active": sum(1 for u in members if u.status == APPROVED),
+        "disabled": sum(1 for u in members if u.status == DISABLED),
+    }
     return templates.TemplateResponse(
         request,
         "admin.html",
@@ -50,6 +56,7 @@ def admin_home(
             "user": admin,
             "pending": pending,
             "members": members,
+            "counts": counts,
             "auth_mode": settings.auth_mode,
             "is_google_auth": settings.is_google_auth,
         },
@@ -81,7 +88,7 @@ def create_user(
                 email=email,
                 display_name=display_name or email,
                 password_hash=hash_password(password),
-                role="admin" if role == "admin" else "member",
+                role=role if role in ROLES else ROLE_MEMBER,
                 status=APPROVED,
                 approved_at=_dt.datetime.now(_dt.timezone.utc),
             )
@@ -117,8 +124,9 @@ def set_role(
     db: Session = Depends(get_db),
 ):
     u = _get(db, uid)
-    if u:
-        u.role = "admin" if role == "admin" else "member"
+    # validate role; don't let an admin change their own role (lockout guard)
+    if u and u.id != admin.id and role in ROLES:
+        u.role = role
         db.commit()
     return RedirectResponse(url="/admin", status_code=303)
 

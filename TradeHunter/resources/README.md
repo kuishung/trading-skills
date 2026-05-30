@@ -53,6 +53,10 @@ treating any "missing" feature as a bug.
 
 ## Changelog
 
+### 2026-05-30 — `finviz_screener.py`: fix Finviz 301 + connection drop
+
+Finviz moved the screener path (`screener.ashx` -> `screener`, served as a 301) and now **drops requests that lack browser-like Accept headers** — the bare `urllib` request (User-Agent only) was getting `RemoteDisconnected`, so `fetch_screener_symbols`/`fetch_screener_rows` returned empty. Fix: `_fetch_page` now sends `Accept` + `Accept-Language` alongside the User-Agent; urllib follows the 301 cleanly. Verified live: a mega-cap-tech filter returns 25 symbols and 25 rows with price+volume (the `<!-- TS -->` block still parses). Benefits every caller (GUNS scanner, the dashboard's universe builder, and the new `dashboard_tst` Finviz tab).
+
 ### 2026-05-30 — `MATP/` vendored skill moved in from the repo root
 
 The MATP skill (Median Analyst Target Price pipeline) moved from `trading-skills/MATP/` to `resources/MATP/` so it lives under the TradeHunter roof (day-one rule: every dependency inside `TradeHunter/`). Motivation: it's the canonical analyst-target source the `dashboard_tst` trend & swing platform builds its MATP/MBP board on (see `dashboard_tst/DESIGN.md`), and it sits naturally alongside the other vendored sub-project (`tradingview-mcp/`). Committed as a git rename of the 13 tracked source files (`SKILL.md`, `requirements.txt`, `.gitignore`, `scripts/*.py`) — history preserved. Deliberately excluded from the commit: the per-PC `.env` (credentials), the generated run artifacts (`MATP_table.csv`/`MATP_indicator.pine`/`MATP_analysis.md`/`MATP_watchlist.txt`), `__pycache__`, and a stray Claude worktree (`.claude/worktrees/…`) that got copied along with the move — those remain untracked. Note: MATP's own `.gitignore` covers `.env`/`__pycache__` but not the generated artifacts, so they were kept out by explicit staging rather than ignore rules.

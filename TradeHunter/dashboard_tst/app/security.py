@@ -82,3 +82,10 @@ def require_admin(user: User = Depends(require_user)) -> User:
     if not user.is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin only")
     return user
+
+
+def require_moderator(user: User = Depends(require_user)) -> User:
+    """Moderators and admins (content moderation)."""
+    if not user.can_moderate:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Moderator or admin only")
+    return user

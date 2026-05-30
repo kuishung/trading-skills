@@ -118,7 +118,14 @@ def _page_url(base: str, offset: int) -> str:
 
 
 def _fetch_page(url: str) -> str:
-    req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+    # Finviz 301-redirects screener.ashx -> screener and drops requests that
+    # lack browser-like Accept headers (closes the connection -> urllib
+    # RemoteDisconnected). Send a full header set; urllib follows the 301.
+    req = urllib.request.Request(url, headers={
+        "User-Agent": _USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    })
     with urllib.request.urlopen(req, timeout=20) as resp:
         return resp.read().decode("utf-8", errors="replace")
 

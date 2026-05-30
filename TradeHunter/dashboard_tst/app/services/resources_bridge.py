@@ -21,10 +21,14 @@ if str(TRADEHUNTER_ROOT) not in sys.path:
     sys.path.insert(0, str(TRADEHUNTER_ROOT))
 
 
-def screen_universe(finviz_url: str) -> list[str]:
-    """Phase 2: resolve a Finviz filter URL to a ticker list via
-    resources.finviz_screener."""
-    raise NotImplementedError("Phase 2: wire resources.finviz_screener")
+def screen_universe(finviz_url: str, *, max_pages: int = 10, force_refresh: bool = False) -> list[dict]:
+    """Resolve a Finviz screener URL to rows of {symbol, price, volume} via
+    the shared resources.finviz_screener (public-page scrape + 1h cache)."""
+    from resources import finviz_screener
+
+    return finviz_screener.fetch_screener_rows(
+        finviz_url, max_pages=max_pages, force_refresh=force_refresh
+    )
 
 
 def refresh_matp(symbols: list[str]) -> int:

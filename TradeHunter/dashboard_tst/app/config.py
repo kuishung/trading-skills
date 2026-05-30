@@ -64,6 +64,13 @@ class Settings:
     admin_email: str | None = field(default_factory=lambda: os.environ.get("TST_ADMIN_EMAIL"))
     admin_password: str | None = field(default_factory=lambda: os.environ.get("TST_ADMIN_PASSWORD"))
 
+    # New-user policy (google mode). Default OFF: a first-time sign-in lands
+    # 'pending' (role = member) and must be APPROVED by an admin before they
+    # get access; the admin can also change their role afterward. Set
+    # TST_AUTO_APPROVE=1 to skip approval (new users become active members
+    # automatically).
+    auto_approve: bool = field(default_factory=lambda: _bool(os.environ.get("TST_AUTO_APPROVE"), False))
+
     # --- Google OAuth (only used when auth_mode == "google") ---
     google_client_id: str | None = field(
         default_factory=lambda: os.environ.get("TST_GOOGLE_CLIENT_ID")
