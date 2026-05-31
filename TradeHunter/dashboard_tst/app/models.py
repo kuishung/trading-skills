@@ -22,6 +22,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
@@ -104,6 +105,49 @@ class MATPLevel(Base):
     mbp = Column(Float, nullable=True)
     trend = Column(String(20), nullable=True)  # from resources.trend_state
     as_of = Column(DateTime, default=_utcnow)  # quarterly refresh stamp
+
+
+class MATPHistory(Base):
+    """Append-only MATP/MBP observations over time, so the board can show how a
+    ticker's analyst target evolved. De-duped on write: a new row is appended
+    only when the MATP value actually changes (analysts update infrequently)."""
+
+    __tablename__ = "matp_history"
+
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), nullable=False, index=True)
+    matp = Column(Float, nullable=False)  # the median (the headline number)
+    mbp = Column(Float, nullable=True)
+    last_earnings_date = Column(String(20), nullable=True)
+    n_targets = Column(Integer, nullable=True)
+    # distribution summary of the post-earnings targets behind the median (B)
+    target_high = Column(Float, nullable=True)
+    target_low = Column(Float, nullable=True)
+    target_mean = Column(Float, nullable=True)
+    source = Column(String(40), nullable=True)  # e.g. "nous_hermes"
+    as_of = Column(DateTime, default=_utcnow, index=True)
+
+
+class MATPTarget(Base):
+    """One analyst price target (the evidence behind a MATP). Stored once per
+    unique (symbol, brokerage, target_date, target_price) -- re-pushing the same
+    list each run does NOT duplicate. `included` (post-earnings?) is computed on
+    display from target_date vs the current earnings date, so it never goes
+    stale."""
+
+    __tablename__ = "matp_targets"
+    __table_args__ = (
+        UniqueConstraint(
+            "symbol", "brokerage", "target_date", "target_price", name="uq_matp_target"
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), nullable=False, index=True)
+    brokerage = Column(String(120), nullable=True)
+    target_price = Column(Float, nullable=False)
+    target_date = Column(String(20), nullable=True)  # YYYY-MM-DD, the issue date
+    as_of = Column(DateTime, default=_utcnow)  # when first recorded
 
 
 class Setup(Base):

@@ -72,6 +72,14 @@ from this dashboard.
   tunnel is encrypted) step-by-step: pull → `.env` → first run → firewall
   lock to the `25.0.0.0/8` Hamachi subnet → service install → members join
   → update loop. Plus the future **Path A** (public + Google) upgrade notes.
+- `alembic/` + `alembic.ini` — **DB migrations.** `env.py` is wired to the
+  app's `Base` + `TST_DATABASE_URL` (`render_as_batch=True` for SQLite ALTERs);
+  `versions/` holds the migration scripts (baseline = `d555dc88d20b`). The app
+  runs `alembic upgrade head` on startup (with safe onboarding for legacy DBs —
+  see `app/db.py::init_db`). To add a schema change: edit the models, then
+  `alembic revision --autogenerate -m "..."` from `dashboard_tst/`; it
+  auto-applies on next start. **Never** add a column model-only — always a
+  migration (per the CLAUDE.md data-handling rule).
 - `DESIGN.md` — **product blueprint** (DRAFT, pre-implementation). The
   agreed vision: `dashboard_tst` as TradeHunter's trend & swing product +
   members-only, internet-facing collaboration platform (Finviz → MATP/MBP
@@ -110,6 +118,34 @@ controls, intraday scanner setups) will be trimmed as the trend/swing
 surface takes shape.
 
 ## Changelog
+
+### 2026-05-30 — v1.8: Alembic migrations (DB schema is now upgrade-safe)
+
+Closed the `create_all` ALTER gap (which 500'd when a new column was added to an existing table). Added **Alembic** wired to the app's `Base` + `TST_DATABASE_URL` (so migrations target SQLite dev / Postgres prod identically), with `render_as_batch=True` for SQLite ALTERs. `alembic/versions/d555dc88d20b_baseline_schema.py` is the baseline (all current tables). `db.init_db()` now runs migrations on startup with **safe onboarding** for all three states: fresh DB → run all migrations; already-managed DB → apply pending; **legacy `create_all` DB (Hermes) → add any missing tables via `create_all`, then `stamp head`** so it becomes migration-managed without losing data. Verified on a fresh DB (8 tables + `alembic_version` created) AND a simulated Hermes DB (new MATP tables added, existing users/filters preserved, stamped). Going forward, every schema change is a tiny reversible migration — satisfies the "upgrade to hosted Postgres without a rewrite" rule. **Workflow:** after editing models, run `alembic revision --autogenerate -m "..."` from `dashboard_tst/`; the new migration auto-applies on the next app start / deploy.
+
+### 2026-05-30 — v1.7: MATP evidence (A+B+C) — distribution + per-analyst targets
+
+Extended the MATP data model from output-only to the full three layers (user decision):
+- **B — distribution summary** on each `matp_history` row: `target_high`/`target_low`/`target_mean` (the spread of analyst disagreement around the median). Shown as a Range column on the detail history table.
+- **C — `matp_targets`** (new model): every individual analyst target (`brokerage`, `target_price`, `target_date`), unique on `(symbol, brokerage, target_date, target_price)` so re-pushing the same list each run inserts nothing new. `included` (post-earnings?) is **computed on display** from `target_date` vs the current earnings date, so it never goes stale.
+- `/api/matp` payload extended (`TargetIn` + distribution fields); ingest returns `targets_added`. `/matp/{symbol}` detail now shows the **Analyst targets evidence table** with post-earnings ✅ / pre-earnings (dropped) status. Nous Hermes `matp` skill Stage 4-5 updated to compute the distribution + push the full target list.
+- Verified on a clean DB: 3 targets stored, re-push de-dupes to 0, detail renders evidence + status. **Note:** this exposed the `create_all` ALTER gap (a stale local table lacked the new columns) — reinforces the Alembic need for future column adds; new tables on Hermes create fresh.
+
+### 2026-05-30 — v1.6: MATP hookup — machine API + history + board + chart
+
+Wired the full MATP data flow with **no LLM in TradeHunter**. The faithful, web-research-heavy computation runs on the **Nous Hermes agent** (Linux, DeepSeek + browser; skill at `nous_hermes/skills/markets/matp/`); TradeHunter receives, stores **with history**, and displays.
+
+- **Machine API** (`routes/api.py`, auth via shared `TST_INGEST_API_KEY` / `X-API-Key`, constant-time; 503 if unset, 401 on bad key): `GET /api/filters` (active Finviz filter URLs the agent screens) + `POST /api/matp` (push computed levels). No user session.
+- **History kept.** `POST /api/matp` upserts the current snapshot (`MATPLevel`, one row/symbol) AND appends a **de-duped** `MATPHistory` row (new model) — only when the MATP value changes — so we track how each ticker's analyst target moved over time. Carries `n_targets` + `source` (provenance).
+- **Board built** (`/matp` was a placeholder): lists current MATP/MBP/trend/last-earnings/updated per ticker; each ticker links to its detail.
+- **Per-ticker history view** (`/matp/{symbol}`): a dependency-free **server-rendered SVG line chart** of MATP over time + the full history table.
+- `config.py` gains `ingest_api_key`; `.env.example` documents `TST_INGEST_API_KEY`. Verified live: 401 without key; 3 distinct values → 3 de-duped history rows; board + detail chart render (200).
+
+**Still open:** per-ticker on-demand refresh trigger from the UI; a `tst.db` backup (the platform's accumulated data — users/filters/MATP/history/setups — is a single un-backed-up SQLite file on Hermes).
+
+### 2026-05-30 — v1.4: Finviz list shows decoded criteria, URL hidden in link
+
+The Finviz filters list showed the raw screener URL (meaningless on screen). Replaced the "URL" column with "Filter criteria": `routes/finviz.parse_finviz_criteria(url)` decodes the screener's `f=` parameter (tokens like `cap_largeover`, `sh_avgvol_o500`, `ta_sma200_pa`) into readable chips (Market Cap, Avg Volume > 500, SMA200, P/E < 30, etc.), with the URL **embedded in the link** behind the chips (opens Finviz in a new tab). URLs without an `f=` fall back to "Open in Finviz ↗". Decoder covers the common category prefixes + over/under/range values; unknown tokens render as-is.
 
 ### 2026-05-30 — v1.3: harden update.ps1 restart (no more deploy hangs)
 

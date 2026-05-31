@@ -64,6 +64,10 @@ class Settings:
     admin_email: str | None = field(default_factory=lambda: os.environ.get("TST_ADMIN_EMAIL"))
     admin_password: str | None = field(default_factory=lambda: os.environ.get("TST_ADMIN_PASSWORD"))
 
+    # Shared key for the machine-to-machine /api/* endpoints (the Nous Hermes
+    # agent pushes MATP levels here). Unset -> those endpoints return 503.
+    ingest_api_key: str | None = field(default_factory=lambda: os.environ.get("TST_INGEST_API_KEY"))
+
     # New-user policy (google mode). Default OFF: a first-time sign-in lands
     # 'pending' (role = member) and must be APPROVED by an admin before they
     # get access; the admin can also change their role afterward. Set

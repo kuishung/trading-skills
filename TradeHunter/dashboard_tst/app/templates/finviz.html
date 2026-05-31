@@ -30,7 +30,7 @@
   <thead class="bg-slate-900 text-slate-400">
     <tr>
       <th class="text-left px-3 py-2">Description</th>
-      <th class="text-left px-3 py-2">URL</th>
+      <th class="text-left px-3 py-2">Filter criteria</th>
       <th class="text-left px-3 py-2">Status</th>
       {% if can_edit %}<th class="text-right px-3 py-2">Actions</th>{% endif %}
     </tr>
@@ -40,8 +40,17 @@
     <tr class="border-t border-slate-800 align-top">
       <td class="px-3 py-2 font-medium">{{ f.description }}</td>
       <td class="px-3 py-2 max-w-md">
-        <a href="{{ f.url }}" target="_blank" rel="noopener"
-           class="text-sky-400 hover:underline break-all text-xs">{{ f.url }}</a>
+        <a href="{{ f.url }}" target="_blank" rel="noopener" title="Open this filter on Finviz"
+           class="group inline-flex flex-wrap items-center gap-1">
+          {% if f.criteria %}
+            {% for c in f.criteria %}
+            <span class="rounded bg-slate-800 text-slate-300 group-hover:text-emerald-300 px-1.5 py-0.5 text-xs">{{ c }}</span>
+            {% endfor %}
+            <span class="text-sky-400 text-xs group-hover:underline">&#8599;</span>
+          {% else %}
+            <span class="text-sky-400 text-xs group-hover:underline">Open in Finviz &#8599;</span>
+          {% endif %}
+        </a>
       </td>
       <td class="px-3 py-2">
         {% if f.is_active %}

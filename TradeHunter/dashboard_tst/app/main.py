@@ -29,6 +29,7 @@ from .config import settings
 from .db import SessionLocal, init_db
 from .models import APPROVED, User
 from .routes import admin as admin_routes
+from .routes import api as api_routes
 from .routes import auth as auth_routes
 from .routes import feedback as feedback_routes
 from .routes import finviz as finviz_routes
@@ -123,6 +124,7 @@ def create_app() -> FastAPI:
     app.include_router(finviz_routes.router)
     app.include_router(feedback_routes.router)
     app.include_router(admin_routes.router)
+    app.include_router(api_routes.router)
 
     @app.get("/health")
     def health():

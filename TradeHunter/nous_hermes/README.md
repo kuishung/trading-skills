@@ -17,6 +17,15 @@ CLI + SSH); this folder is the source of truth that gets deployed there.
     - `SKILL.md` — procedure + rules.
     - `templates/briefing.md` — Telegram output format.
     - `references/sources.md` — trusted data sources per section.
+  - `markets/matp/` — the **MATP skill** (v1.0.0). Computes the faithful
+    Median Analyst Target Price + Max Buy Price for **TradeHunter** and POSTs
+    the results to the platform's `/api/matp` (no CSV/Sheets/Telegram). Reads
+    the active Finviz filters from `GET {TRADEHUNTER_URL}/api/filters`, expands
+    to a ticker universe, looks up each ticker's latest earnings + post-earnings
+    analyst targets on MarketBeat, computes the median (MATP) + MBP=MATP/1.15,
+    and pushes via `X-API-Key`. Scheduled by `hermes cron` (monthly + optional
+    daily earnings-aware). Needs `TRADEHUNTER_URL` + `TST_INGEST_API_KEY` set on
+    the box.
 - `install.sh` — copies `skills/` into `~/.hermes/skills/` on the server.
 
 ## The pre-market briefing skill
@@ -95,6 +104,12 @@ Edit files here, redeploy (scp / git pull → `bash install.sh`), then re-test w
 recreate the cron job unless the schedule or delivery target changes.
 
 ## Changelog
+- **2026-05-30** — Added `markets/matp` skill v1.0.0 — the LLM/web-research
+  half of TradeHunter's MATP feature. Browses Finviz + MarketBeat (DeepSeek +
+  browser), applies the post-earnings filter, computes median (MATP) + MBP, and
+  POSTs to TradeHunter's authenticated `/api/matp` (no CSV/Sheets/Telegram).
+  Pairs with TradeHunter v1.5's `routes/api.py`. Config: `TRADEHUNTER_URL` +
+  `TST_INGEST_API_KEY` on the box; schedule via `hermes cron`.
 - **2026-05-29** — Added "Accessing the server (SSH)" section with the LAN
   first-login command (`ssh administrator@192.168.1.163`, password-based).
 - **2026-05-29** — Added RRG (Relative Rotation Graph) check to the Step 3 Micro

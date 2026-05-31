@@ -1,16 +1,47 @@
 {% extends "base.html" %}
 {% block title %}MATP &middot; TradeHunter{% endblock %}
 {% block content %}
-<div class="text-center py-20">
-  <img src="/static/logo.svg" alt="" class="h-14 w-14 mx-auto mb-4 opacity-80">
-  <h1 class="text-2xl font-semibold mb-1">MATP</h1>
-  <p class="text-slate-400">Median Analyst Target Price board</p>
-  <span class="inline-block mt-4 rounded-full border border-amber-500/40 bg-amber-500/10 text-amber-300 px-3 py-1 text-xs">
-    Under construction
-  </span>
-  <p class="text-slate-500 text-sm mt-6 max-w-md mx-auto">
-    Coming soon: per-ticker MATP / MBP target levels (refreshed quarterly),
-    driven by the active Finviz filters.
+<h1 class="text-2xl font-semibold mb-1">MATP board</h1>
+<p class="text-slate-400 text-sm mb-6">
+  Median Analyst Target Price + Max Buy Price (MBP = MATP / 1.15). Click a ticker to see how its target moved over time.
+</p>
+
+{% if levels %}
+<table class="w-full text-sm border border-slate-800">
+  <thead class="bg-slate-900 text-slate-400">
+    <tr>
+      <th class="text-left px-3 py-2">Ticker</th>
+      <th class="text-right px-3 py-2">MATP</th>
+      <th class="text-right px-3 py-2">MBP</th>
+      <th class="text-left px-3 py-2">Trend</th>
+      <th class="text-left px-3 py-2">Last earnings</th>
+      <th class="text-left px-3 py-2">Updated</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for lv in levels %}
+    <tr class="border-t border-slate-800">
+      <td class="px-3 py-2 font-medium">
+        <a href="/matp/{{ lv.symbol }}" class="text-emerald-400 hover:underline">{{ lv.symbol }}</a>
+        {% if lv.exchange %}<span class="text-slate-600 text-xs">{{ lv.exchange }}</span>{% endif %}
+      </td>
+      <td class="px-3 py-2 text-right tabular-nums">{{ "%.2f"|format(lv.matp) if lv.matp is not none else "-" }}</td>
+      <td class="px-3 py-2 text-right tabular-nums text-slate-300">{{ "%.2f"|format(lv.mbp) if lv.mbp is not none else "-" }}</td>
+      <td class="px-3 py-2 text-slate-400">{{ lv.trend or "-" }}</td>
+      <td class="px-3 py-2 text-slate-500">{{ lv.last_earnings_date or "-" }}</td>
+      <td class="px-3 py-2 text-slate-500">{{ lv.as_of.strftime("%Y-%m-%d") if lv.as_of else "-" }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="text-center py-16">
+  <img src="/static/logo.svg" alt="" class="h-12 w-12 mx-auto mb-3 opacity-70">
+  <p class="text-slate-400">No MATP levels yet.</p>
+  <p class="text-slate-500 text-sm mt-2 max-w-md mx-auto">
+    Populated by the Nous Hermes MATP run (it screens the active Finviz filters,
+    computes post-earnings analyst-target medians, and pushes them here).
   </p>
 </div>
+{% endif %}
 {% endblock %}

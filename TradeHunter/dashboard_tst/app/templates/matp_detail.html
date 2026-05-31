@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}{{ symbol }} MATP &middot; TradeHunter{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-1">
+  <h1 class="text-2xl font-semibold">{{ symbol }}
+    {% if level and level.exchange %}<span class="text-slate-600 text-base">{{ level.exchange }}</span>{% endif %}
+  </h1>
+  <a href="/matp" class="text-sm text-slate-400 hover:text-emerald-400">&larr; MATP board</a>
+</div>
+
+{% if level %}
+<div class="flex flex-wrap gap-6 text-sm mb-6">
+  <div><span class="text-slate-500">MATP</span> <span class="font-semibold tabular-nums">{{ "%.2f"|format(level.matp) if level.matp is not none else "-" }}</span></div>
+  <div><span class="text-slate-500">MBP</span> <span class="font-semibold tabular-nums text-slate-300">{{ "%.2f"|format(level.mbp) if level.mbp is not none else "-" }}</span></div>
+  <div><span class="text-slate-500">Last earnings</span> <span>{{ level.last_earnings_date or "-" }}</span></div>
+  <div><span class="text-slate-500">Updated</span> <span>{{ level.as_of.strftime("%Y-%m-%d") if level.as_of else "-" }}</span></div>
+</div>
+{% endif %}
+
+<h2 class="text-sm font-medium text-slate-300 mb-2">MATP over time</h2>
+{% if chart %}
+<div class="rounded-lg border border-slate-800 bg-slate-900/40 p-3 mb-8">
+  <svg viewBox="0 0 {{ chart.width }} {{ chart.height }}" class="w-full" preserveAspectRatio="none" role="img" aria-label="MATP history chart">
+    <path d="{{ chart.area }}" fill="rgba(16,185,129,0.12)"/>
+    <polyline points="{{ chart.polyline }}" fill="none" stroke="#10b981" stroke-width="2" stroke-linejoin="round"/>
+    {% for d in chart.dots %}
+    <circle cx="{{ d.x }}" cy="{{ d.y }}" r="3" fill="#34d399"/>
+    {% endfor %}
+    <text x="6" y="{{ chart.pad }}" fill="#64748b" font-size="10">{{ "%.2f"|format(chart.vmax) }}</text>
+    <text x="6" y="{{ chart.height - chart.pad + 4 }}" fill="#64748b" font-size="10">{{ "%.2f"|format(chart.vmin) }}</text>
+    <text x="{{ chart.pad }}" y="{{ chart.height - 8 }}" fill="#64748b" font-size="10">{{ chart.first_date }}</text>
+    <text x="{{ chart.width - chart.pad }}" y="{{ chart.height - 8 }}" fill="#64748b" font-size="10" text-anchor="end">{{ chart.last_date }}</text>
+  </svg>
+</div>
+{% else %}
+<p class="text-slate-500 text-sm mb-8">Not enough history for a chart yet &mdash; needs at least two MATP changes.</p>
+{% endif %}
+
+<h2 class="text-sm font-medium text-slate-300 mb-2">History</h2>
+{% if history %}
+<table class="w-full text-sm border border-slate-800">
+  <thead class="bg-slate-900 text-slate-400">
+    <tr>
+      <th class="text-left px-3 py-2">Date</th>
+      <th class="text-right px-3 py-2">MATP</th>
+      <th class="text-right px-3 py-2">MBP</th>
+      <th class="text-right px-3 py-2">Range (low&ndash;high)</th>
+      <th class="text-right px-3 py-2"># targets</th>
+      <th class="text-left px-3 py-2">Earnings</th>
+      <th class="text-left px-3 py-2">Source</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for h in history %}
+    <tr class="border-t border-slate-800">
+      <td class="px-3 py-2 text-slate-300">{{ h.as_of.strftime("%Y-%m-%d %H:%M") if h.as_of else "-" }}</td>
+      <td class="px-3 py-2 text-right tabular-nums">{{ "%.2f"|format(h.matp) }}</td>
+      <td class="px-3 py-2 text-right tabular-nums text-slate-400">{{ "%.2f"|format(h.mbp) if h.mbp is not none else "-" }}</td>
+      <td class="px-3 py-2 text-right tabular-nums text-slate-500">
+        {% if h.target_low is not none and h.target_high is not none %}{{ "%.0f"|format(h.target_low) }}&ndash;{{ "%.0f"|format(h.target_high) }}{% else %}-{% endif %}
+      </td>
+      <td class="px-3 py-2 text-right text-slate-400">{{ h.n_targets if h.n_targets is not none else "-" }}</td>
+      <td class="px-3 py-2 text-slate-500">{{ h.last_earnings_date or "-" }}</td>
+      <td class="px-3 py-2 text-slate-500 text-xs">{{ h.source or "-" }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="text-slate-500 text-sm">No history recorded yet for {{ symbol }}.</p>
+{% endif %}
+
+<h2 class="text-sm font-medium text-slate-300 mb-2 mt-8">Analyst targets
+  <span class="text-xs text-slate-500">(the evidence &mdash; only post-earnings ones count toward MATP)</span>
+</h2>
+{% if targets %}
+<table class="w-full text-sm border border-slate-800">
+  <thead class="bg-slate-900 text-slate-400">
+    <tr>
+      <th class="text-left px-3 py-2">Brokerage</th>
+      <th class="text-left px-3 py-2">Issued</th>
+      <th class="text-right px-3 py-2">Target</th>
+      <th class="text-left px-3 py-2">Status</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for t in targets %}
+    <tr class="border-t border-slate-800 {{ '' if t.included else 'opacity-50' }}">
+      <td class="px-3 py-2">{{ t.brokerage or "-" }}</td>
+      <td class="px-3 py-2 text-slate-400">{{ t.target_date or "-" }}</td>
+      <td class="px-3 py-2 text-right tabular-nums">{{ "%.2f"|format(t.target_price) }}</td>
+      <td class="px-3 py-2">
+        {% if t.included %}
+          <span class="text-emerald-400">&#9679; post-earnings</span>
+        {% else %}
+          <span class="text-slate-500">&#9675; pre-earnings (dropped)</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="text-xs text-slate-500 mt-2">Latest earnings: {{ earnings or "unknown" }}. A target counts only if it was issued after that date.</p>
+{% else %}
+<p class="text-slate-500 text-sm">No analyst targets recorded yet &mdash; the agent will push them with the next MATP run.</p>
+{% endif %}
+{% endblock %}

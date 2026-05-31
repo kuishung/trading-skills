@@ -560,6 +560,20 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
   `TST_DATABASE_URL`). Config via `app/.env` (gitignored, per-PC), loaded by
   python-dotenv. Tailwind/HTMX templates. Branded "TradeHunter · trade
   collaboration" (logo `app/static/logo.svg`).
+- **DATA-HANDLING RULE (user, set 2026-05-30 — applies to ALL platform data
+  work, every session):** everything must be built so it can **scale and
+  upgrade to a hosted database (Postgres) with minimal effort** — never a
+  rewrite. Concretely: (1) **SQLAlchemy ORM only** — no raw SQL, no
+  SQLite-specific syntax/pragmas, no SQLite-only `INSERT OR REPLACE`; do
+  upserts in portable ORM (query-then-update/insert, as `/api/matp` does).
+  (2) The engine is chosen solely by `TST_DATABASE_URL` (SQLite dev → Postgres
+  prod), so the swap is a config change + a one-time data copy. (3) Use
+  **portable column types** (Integer/Float/String/Text/DateTime/Boolean/JSON);
+  avoid SQLite-only behaviours. (4) **Schema changes go through migrations
+  (Alembic)** — not just `create_all` — so upgrading a live Postgres DB is
+  low-effort and reversible. (Current code is ORM + `TST_DATABASE_URL`-driven;
+  the open gap is adding Alembic, which should happen before there's real
+  production data to migrate.)
 - **Auth:** mode-switchable `TST_AUTH_MODE` — **`google`** (OAuth, prod) or
   `password` (dev/local). New sign-in → **pending**, role **member**; an
   admin **approves** before access (`TST_AUTO_APPROVE=0` default; `=1`

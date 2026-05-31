@@ -8,6 +8,7 @@ step elsewhere/later. Members can view the list (read-only).
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -24,6 +25,65 @@ templates = Jinja2Templates(
 )
 
 
+# --- Finviz screener URL -> readable filter criteria ------------------------
+# Decode the `f=` query parameter (comma-separated filter tokens like
+# `cap_largeover`, `sh_avgvol_o500`, `ta_sma200_pa`) into human-readable chips
+# so the list shows what a filter actually screens for, not a meaningless URL.
+_FINVIZ_CATS = {
+    "exch": "Exchange", "idx": "Index", "sec": "Sector", "ind": "Industry",
+    "geo": "Country", "cap": "Market Cap",
+    "sh_price": "Price", "sh_avgvol": "Avg Volume", "sh_relvol": "Rel Volume",
+    "sh_curvol": "Volume", "sh_float": "Float", "sh_short": "Short Float",
+    "sh_outstanding": "Shares Out",
+    "fa_div": "Dividend", "fa_pe": "P/E", "fa_fpe": "Fwd P/E", "fa_peg": "PEG",
+    "fa_ps": "P/S", "fa_pb": "P/B", "fa_roe": "ROE", "fa_roa": "ROA",
+    "fa_debteq": "Debt/Eq", "fa_curratio": "Current Ratio",
+    "fa_grossmargin": "Gross Margin", "fa_opermargin": "Oper Margin",
+    "fa_netmargin": "Net Margin", "fa_epsyoy": "EPS grth (yr)",
+    "fa_eps5years": "EPS grth (5y)", "fa_sales5years": "Sales grth (5y)",
+    "ta_sma20": "SMA20", "ta_sma50": "SMA50", "ta_sma200": "SMA200",
+    "ta_perf2": "Performance", "ta_perf": "Performance",
+    "ta_volatility": "Volatility", "ta_rsi": "RSI", "ta_gap": "Gap",
+    "ta_change": "Change", "ta_highlow52w": "52W Range",
+    "an_recom": "Analyst Recom", "targetprice": "Target Price",
+    "earningsdate": "Earnings", "ipodate": "IPO Date", "news": "News",
+}
+_FINVIZ_PREFIXES = sorted(_FINVIZ_CATS, key=len, reverse=True)  # longest match first
+
+
+def _decode_finviz_value(v: str) -> str:
+    if not v:
+        return ""
+    if v[0] == "o" and v[1:].replace(".", "", 1).isdigit():
+        return f"> {v[1:]}"
+    if v[0] == "u" and v[1:].replace(".", "", 1).isdigit():
+        return f"< {v[1:]}"
+    if "to" in v:
+        a, _, b = v.partition("to")
+        return f"{a}-{b}"
+    return v.replace("_", " ")
+
+
+def parse_finviz_criteria(url: str) -> list[str]:
+    """Return readable criteria chips from a Finviz screener URL (empty if none)."""
+    try:
+        f = parse_qs(urlparse(url).query).get("f", [])
+    except Exception:
+        return []
+    if not f:
+        return []
+    chips = []
+    for tok in (t for t in f[0].split(",") if t):
+        label = tok
+        for p in _FINVIZ_PREFIXES:
+            if tok.startswith(p):
+                val = _decode_finviz_value(tok[len(p):].lstrip("_"))
+                label = f"{_FINVIZ_CATS[p]}: {val}" if val else _FINVIZ_CATS[p]
+                break
+        chips.append(label)
+    return chips
+
+
 @router.get("", response_class=HTMLResponse)
 def finviz_home(
     request: Request,
@@ -35,6 +95,8 @@ def finviz_home(
         .order_by(FinvizFilter.is_active.desc(), FinvizFilter.created_at.desc())
         .all()
     )
+    for f in filters:  # attach decoded criteria chips for the template
+        f.criteria = parse_finviz_criteria(f.url)
     return templates.TemplateResponse(
         request,
         "finviz.html",
