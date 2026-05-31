@@ -35,6 +35,66 @@
 </tr>
 {% endmacro %}
 
+{# ---- watchlist rail: each active filter, expandable to its tickers + Run ---- #}
+{% macro watchlist_rail(watchlists, unfiled, user, open_filter_ids, open_symbols) %}
+<div class="space-y-2 text-sm">
+  {% for w in watchlists %}
+  <details class="rounded-lg border border-slate-800 bg-slate-900/40" {% if loop.first %}open{% endif %}>
+    <summary class="cursor-pointer px-3 py-2 flex items-center justify-between hover:bg-slate-800/40 rounded-lg">
+      <span class="text-slate-200 truncate">{{ w.filter.description }}</span>
+      <span class="text-xs text-slate-500 ml-2 shrink-0">{{ w.tickers|length }}</span>
+    </summary>
+    <div class="px-2 pb-2">
+      {% if user.can_moderate %}
+        {% if w.filter.id in open_filter_ids %}
+        <div class="px-1 py-1 text-xs text-amber-300">&#8635; queued</div>
+        {% else %}
+        <form method="post" action="/matp/run-filter" class="px-1 py-1">
+          <input type="hidden" name="filter_id" value="{{ w.filter.id }}">
+          <input type="hidden" name="next" value="/matp">
+          <button class="text-xs px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">&#8635; Run MATP</button>
+        </form>
+        {% endif %}
+      {% endif %}
+      {% if w.tickers %}
+      <ul class="mt-1">
+        {% for lv in w.tickers %}
+        <li>
+          <a href="/matp/{{ lv.symbol }}" class="flex items-center justify-between px-2 py-1 rounded hover:bg-slate-800/70">
+            <span class="text-emerald-400">{{ lv.symbol }}{% if lv.symbol in open_symbols %} <span class="text-amber-400 text-xs">&#8635;</span>{% endif %}</span>
+            <span class="text-xs text-slate-500 tabular-nums">MBP {{ "%.0f"|format(lv.mbp) if lv.mbp is not none else "-" }}</span>
+          </a>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="px-2 py-1 text-xs text-slate-600">No tickers yet &mdash; run it to populate.</p>
+      {% endif %}
+    </div>
+  </details>
+  {% endfor %}
+  {% if unfiled %}
+  <details class="rounded-lg border border-slate-800 bg-slate-900/40">
+    <summary class="cursor-pointer px-3 py-2 flex items-center justify-between hover:bg-slate-800/40 rounded-lg">
+      <span class="text-slate-400">Other</span>
+      <span class="text-xs text-slate-500">{{ unfiled|length }}</span>
+    </summary>
+    <ul class="px-2 pb-2">
+      {% for lv in unfiled %}
+      <li><a href="/matp/{{ lv.symbol }}" class="flex items-center justify-between px-2 py-1 rounded hover:bg-slate-800/70">
+        <span class="text-emerald-400">{{ lv.symbol }}</span>
+        <span class="text-xs text-slate-500 tabular-nums">MBP {{ "%.0f"|format(lv.mbp) if lv.mbp is not none else "-" }}</span>
+      </a></li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+  {% if not watchlists and not unfiled %}
+  <p class="text-xs text-slate-500 px-1">No active watchlists. Add a Finviz filter on the <a href="/finviz" class="text-emerald-400 hover:underline">Finviz</a> page.</p>
+  {% endif %}
+</div>
+{% endmacro %}
+
 {% block content %}
 <h1 class="text-2xl font-semibold mb-1">MATP board</h1>
 <p class="text-slate-400 text-sm mb-6">
@@ -42,11 +102,24 @@
   Names are the current Finviz-screen members; ones that fell out of the screen are kept under <em>Dropped</em>. Click a ticker for the levels band, bounce setup, history and analyst evidence.
 </p>
 
+{# mobile: watchlists collapse into a dropdown above the board #}
+<details class="lg:hidden mb-4 rounded-lg border border-slate-800 bg-slate-900/40">
+  <summary class="cursor-pointer px-3 py-2 text-slate-300 select-none">Watchlists &#9662;</summary>
+  <div class="p-2">{{ watchlist_rail(watchlists, unfiled, user, open_filter_ids, open_symbols) }}</div>
+</details>
+
+<div class="lg:flex lg:gap-6 lg:items-start">
+  {# desktop: watchlists as a second sidebar #}
+  <aside class="hidden lg:block lg:w-64 lg:shrink-0 lg:sticky lg:top-16">
+    <div class="text-xs uppercase tracking-wide text-slate-500 mb-2 px-1">Watchlists</div>
+    {{ watchlist_rail(watchlists, unfiled, user, open_filter_ids, open_symbols) }}
+  </aside>
+
+  {# main board column #}
+  <div class="flex-1 min-w-0">
+
 {# live runs panel: polls every 5s, renders progress bars while runs are open #}
 <div hx-get="/matp/runs" hx-trigger="load, every 5s" hx-swap="innerHTML"></div>
-
-{% set run_next = "/matp" %}
-{% include "_run_filter.html" %}
 
 {% if active %}
 <table class="w-full text-sm border border-slate-800">
@@ -103,4 +176,7 @@
   </table>
 </details>
 {% endif %}
+
+  </div>{# /main board column #}
+</div>{# /lg:flex wrapper #}
 {% endblock %}

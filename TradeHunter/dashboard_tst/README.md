@@ -119,6 +119,14 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-05-31 — v2.8: Watchlist second sidebar (responsive — collapses on mobile)
+
+Added a **watchlist rail** to the MATP page: each active Finviz watchlist, expandable to its tickers (click → detail), with a per-watchlist **↻ Run MATP** button (mods/admins) and MBP shown per ticker. Tickers with no source filter fall under an **"Other"** group.
+- **Responsive (the mobile concern):** on `lg+` it's a sticky **second sidebar** (`lg:w-64`) beside the board; on phones it **collapses to a "Watchlists ▾" dropdown** above the board (`<details>`, `lg:hidden` / `hidden lg:block` swap) so three columns never squeeze a narrow screen. Same rail markup via a `watchlist_rail()` macro, rendered in both containers.
+- The standalone v2.1 filter selector is **replaced** by the rail's per-watchlist Run buttons (route `POST /matp/run-filter` unchanged; `_run_filter.html` now unused).
+- Route groups active tickers by `filter_id` into `watchlists` + `unfiled`.
+- Verified: desktop aside + mobile dropdown both render, grouping correct, Run forms + "Other" group present, board table intact.
+
 ### 2026-05-31 — v2.7: Run-MATP selector lives on the MATP page only
 
 Removed the "Run MATP" filter selector from the `/admin` console (reverted the admin route's filter context); it now appears only on the MATP board, which is its natural home. Admin stays focused on user management + bot control.

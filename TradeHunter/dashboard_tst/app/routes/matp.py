@@ -72,6 +72,14 @@ def matp_home(
     open_symbols = {r.symbol for r in open_reqs if r.scope == "ticker" and r.symbol}
     open_filter_ids = {r.filter_id for r in open_reqs if r.scope == "filter"}
 
+    # watchlist rail: group active tickers by their source filter (active order
+    # carries through, so signals stay on top within each watchlist)
+    by_filter: dict = {}
+    for lv in active:
+        by_filter.setdefault(lv.filter_id, []).append(lv)
+    watchlists = [{"filter": f, "tickers": by_filter.get(f.id, [])} for f in active_filters]
+    unfiled = by_filter.get(None, [])
+
     return templates.TemplateResponse(
         request,
         "matp.html",
@@ -84,6 +92,8 @@ def matp_home(
             "open_reqs": open_reqs,
             "open_symbols": open_symbols,
             "open_filter_ids": open_filter_ids,
+            "watchlists": watchlists,
+            "unfiled": unfiled,
         },
     )
 
