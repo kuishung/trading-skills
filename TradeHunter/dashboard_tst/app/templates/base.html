@@ -30,86 +30,63 @@
     ('/matp', 'MATP'),
     ('/studies', 'Studies'),
     ('/finviz', 'Finviz'),
-    ('/feedback', 'Feedback'),
   ] %}
-  <div class="flex min-h-screen lg:h-screen">
+  <div class="flex flex-col min-h-screen lg:h-screen">
 
-    {# ---------------- left sidebar (nav) — hidden on mobile (hamburger in header) ---------------- #}
-    <aside class="hidden lg:flex w-56 shrink-0 border-r border-slate-800 bg-slate-950/60 backdrop-blur flex-col h-screen">
-      <a href="/" class="flex items-center gap-2 font-semibold tracking-wide px-4 py-4 border-b border-slate-800">
+    {# ---------------- top bar (nav relocated here) ---------------- #}
+    <header class="shrink-0 z-20 border-b border-slate-800 bg-slate-950/80 backdrop-blur px-3 sm:px-4 py-2 flex items-center gap-3">
+      <a href="/" class="flex items-center gap-2 font-semibold tracking-wide shrink-0">
         <img src="/static/logo.svg" alt="" class="h-7 w-7">
-        <span class="leading-tight">TradeHunter
-          <span class="block text-slate-500 font-normal text-[11px]">trade collaboration &middot; v{{ version }}</span></span>
+        <span class="hidden sm:block leading-none">TradeHunter
+          <span class="text-slate-600 text-[10px] font-normal">v{{ version }}</span></span>
       </a>
-      <nav class="flex-1 px-2 py-3 text-sm space-y-1">
+      <nav class="flex items-center gap-1 text-sm min-w-0 overflow-x-auto">
         {% for href, label in nav %}
         <a href="{{ href }}"
-           class="block rounded-lg px-3 py-2 transition
-                  {% if p.startswith(href) %}bg-emerald-500/10 text-emerald-300{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-emerald-300{% endif %}">
-          {{ label }}
-        </a>
+           class="rounded-lg px-3 py-1.5 whitespace-nowrap transition
+                  {% if p.startswith(href) %}bg-emerald-500/10 text-emerald-300{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-emerald-300{% endif %}">{{ label }}</a>
         {% endfor %}
         {% if user.is_admin %}
         <a href="/admin"
-           class="block rounded-lg px-3 py-2 transition
-                  {% if p.startswith('/admin') %}bg-emerald-500/10 text-emerald-300{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-emerald-300{% endif %}">
-          Admin
-        </a>
+           class="rounded-lg px-3 py-1.5 whitespace-nowrap transition
+                  {% if p.startswith('/admin') %}bg-emerald-500/10 text-emerald-300{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-emerald-300{% endif %}">Admin</a>
         {% endif %}
       </nav>
-    </aside>
 
-    {# ---------------- content column ---------------- #}
-    <div class="flex-1 min-w-0 flex flex-col lg:overflow-hidden">
-      <header class="shrink-0 z-10 border-b border-slate-800 bg-slate-950/70 backdrop-blur px-4 py-2.5 flex items-center">
-        {# mobile: logo + hamburger nav (the left sidebar is hidden < lg) #}
-        <details class="relative lg:hidden">
-          <summary class="cursor-pointer flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-slate-800/70">
-            <img src="/static/logo.svg" alt="" class="h-7 w-7">
-            <svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor" class="text-slate-400"><path d="M3 5h14v2H3zM3 9h14v2H3zM3 13h14v2H3z"/></svg>
-          </summary>
-          <div class="absolute left-0 mt-2 w-52 rounded-lg border border-slate-800 bg-slate-900 shadow-xl py-1 z-30">
-            <div class="px-3 py-2 border-b border-slate-800 font-semibold">TradeHunter
-              <span class="block text-[10px] text-slate-500 font-normal">trade collaboration &middot; v{{ version }}</span></div>
-            {% for href, label in nav %}
-            <a href="{{ href }}" class="block px-3 py-2 text-sm {% if p.startswith(href) %}text-emerald-300 bg-emerald-500/10{% else %}text-slate-300 hover:bg-slate-800{% endif %}">{{ label }}</a>
-            {% endfor %}
-            {% if user.is_admin %}<a href="/admin" class="block px-3 py-2 text-sm {% if p.startswith('/admin') %}text-emerald-300 bg-emerald-500/10{% else %}text-slate-300 hover:bg-slate-800{% endif %}">Admin</a>{% endif %}
+      {# user menu (right) #}
+      <details class="relative ml-auto shrink-0">
+        <summary class="cursor-pointer flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-slate-800/70">
+          {% if user.picture %}
+            <img src="{{ user.picture }}" alt="" class="h-8 w-8 rounded-full object-cover">
+          {% else %}
+            <span class="h-8 w-8 rounded-full bg-slate-700 text-slate-200 flex items-center justify-center text-sm font-medium">
+              {{ (user.display_name or user.email)[:1]|upper }}
+            </span>
+          {% endif %}
+          <span class="text-sm text-slate-300 hidden md:inline">{{ user.display_name or user.email }}</span>
+          <svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor" class="text-slate-500"><path d="M5.5 7.5 10 12l4.5-4.5z"/></svg>
+        </summary>
+        <div class="absolute right-0 mt-2 w-52 rounded-lg border border-slate-800 bg-slate-900 shadow-xl py-1 z-30">
+          <div class="px-3 py-2 border-b border-slate-800">
+            <div class="text-sm text-slate-200 truncate">{{ user.display_name or user.email }}</div>
+            <div class="text-xs text-slate-500">{{ user.role_label }}{% if user.email and user.display_name %} &middot; {{ user.email }}{% endif %}</div>
           </div>
-        </details>
-        <details class="relative ml-auto">
-          <summary class="cursor-pointer flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-slate-800/70">
-            {% if user.picture %}
-              <img src="{{ user.picture }}" alt="" class="h-8 w-8 rounded-full object-cover">
-            {% else %}
-              <span class="h-8 w-8 rounded-full bg-slate-700 text-slate-200 flex items-center justify-center text-sm font-medium">
-                {{ (user.display_name or user.email)[:1]|upper }}
-              </span>
-            {% endif %}
-            <span class="text-sm text-slate-300 hidden sm:inline">{{ user.display_name or user.email }}</span>
-            <svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor" class="text-slate-500"><path d="M5.5 7.5 10 12l4.5-4.5z"/></svg>
-          </summary>
-          <div class="absolute right-0 mt-2 w-52 rounded-lg border border-slate-800 bg-slate-900 shadow-xl py-1 z-20">
-            <div class="px-3 py-2 border-b border-slate-800">
-              <div class="text-sm text-slate-200 truncate">{{ user.display_name or user.email }}</div>
-              <div class="text-xs text-slate-500">{{ user.role_label }}{% if user.email and user.display_name %} &middot; {{ user.email }}{% endif %}</div>
-            </div>
-            <form method="post" action="/logout">
-              <button class="w-full text-left px-3 py-2 text-sm text-slate-300 hover:bg-slate-800 hover:text-rose-400 flex items-center gap-2">
-                <svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor"><path d="M3 3h7v2H5v10h5v2H3zM13 6l5 4-5 4v-3H8V9h5z"/></svg>
-                Logout
-              </button>
-            </form>
-          </div>
-        </details>
-      </header>
-      <main class="{% block main_class %}flex-1 min-h-0 overflow-y-auto w-full px-4 py-6 max-w-5xl mx-auto{% endblock %}">
-        {% block content %}{% endblock %}
-      </main>
-    </div>
+          <form method="post" action="/logout">
+            <button class="w-full text-left px-3 py-2 text-sm text-slate-300 hover:bg-slate-800 hover:text-rose-400 flex items-center gap-2">
+              <svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor"><path d="M3 3h7v2H5v10h5v2H3zM13 6l5 4-5 4v-3H8V9h5z"/></svg>
+              Logout
+            </button>
+          </form>
+        </div>
+      </details>
+    </header>
+
+    <main class="{% block main_class %}flex-1 min-h-0 overflow-y-auto w-full px-4 py-6 max-w-6xl mx-auto{% endblock %}">
+      {% block content %}{% endblock %}
+    </main>
   </div>
 {% else %}
-  {# logged out (login page): no sidebar; scroll within the viewport #}
+  {# logged out (login page): no nav; scroll within the viewport #}
   <main class="h-screen overflow-y-auto px-4 py-8">
     {{ self.content() }}
   </main>

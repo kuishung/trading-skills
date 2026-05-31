@@ -138,6 +138,15 @@ def matp_home(
     )
 
 
+@router.get("/ticker-search")
+def ticker_search(q: str = "", user: User = Depends(require_user)):
+    """Typeahead suggestions for the ad-hoc ticker box: US tickers + company
+    names matching the query (Yahoo search). Returns [] on failure."""
+    from ..services.prices import search_tickers
+
+    return {"results": search_tickers(q)}
+
+
 @router.get("/runs", response_class=HTMLResponse)
 def matp_runs(
     request: Request,
@@ -448,7 +457,7 @@ def run_ticker(
     """Ad-hoc single US ticker run — available to any approved member. Enqueues a
     ticker-scope request (no prune); the agent fetches just that ticker."""
     sym = (symbol or "").strip().upper()
-    valid = 1 <= len(sym) <= 6 and all(c.isalpha() or c == "." for c in sym)
+    valid = 1 <= len(sym) <= 6 and all(c.isalpha() or c in ".-" for c in sym)
     if valid:
         _enqueue(db, "ticker", symbol=sym, user=user)
         return RedirectResponse(url=f"/matp?symbol={sym}", status_code=303)

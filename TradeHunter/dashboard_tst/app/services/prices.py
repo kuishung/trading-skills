@@ -42,6 +42,38 @@ def fetch_daily_ohlc(symbol: str, *, rng: str = "2y") -> list[dict]:
     return bars
 
 
+_US_TICKER = __import__("re").compile(r"^[A-Z]{1,5}([.\-][A-Z])?$")
+
+
+def search_tickers(q: str, *, limit: int = 8) -> list[dict]:
+    """Typeahead: match a ticker or company name to US equities via Yahoo's
+    search API. Returns [{symbol, name}] (US stocks only). [] on any failure."""
+    q = (q or "").strip()
+    if not q:
+        return []
+    try:
+        r = httpx.get(
+            "https://query1.finance.yahoo.com/v1/finance/search",
+            params={"q": q, "quotesCount": limit + 6, "newsCount": 0},
+            headers={"User-Agent": _UA}, timeout=6.0,
+        )
+        r.raise_for_status()
+        out: list[dict] = []
+        for it in (r.json().get("quotes") or []):
+            if it.get("quoteType") != "EQUITY":
+                continue
+            sym = (it.get("symbol") or "").upper()
+            if not _US_TICKER.match(sym):  # US-listed plain tickers only
+                continue
+            name = it.get("shortname") or it.get("longname") or ""
+            out.append({"symbol": sym, "name": name})
+            if len(out) >= limit:
+                break
+        return out
+    except Exception:
+        return []
+
+
 def _fetch(sym: str, rng: str) -> list[dict]:
     params = {"range": rng, "interval": "1d"}
     headers = {"User-Agent": _UA}

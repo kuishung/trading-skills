@@ -119,6 +119,12 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-05-31 — v2.29: top nav bar + ticker autocomplete; Feedback removed
+
+- **Nav relocated to a top bar.** The left sidebar is gone; `base.html` is now a top header (logo + horizontal nav + user menu) over full-width content (no new panels added — the MATP watchlist/chart reclaim the freed width). Removed the mobile hamburger (nav fits the top bar).
+- **Deleted "Feedback"** from the nav.
+- **Ad-hoc ticker autocomplete** — the ticker box is now a typeahead over **US tickers + company names**: typing a symbol or a name fetches suggestions from `GET /matp/ticker-search` (Yahoo search, US-equities only) into a `<datalist>`; picking one fills the symbol. `run-ticker` validation now allows `-` (e.g. BRK-B). Verified live: "nvid"→NVDA, "apple"→AAPL.
+
 ### 2026-05-31 — v2.28: watchlist dropdown filters the shown tickers
 
 The Run-panel **watchlist dropdown is now a view selector**: changing it filters the middle ticker list to that watchlist (navigates `?wl=<filter_id>`), auto-selects that watchlist's first ticker (chart updates), and the **Run** button runs the selected watchlist. The dropdown is visible to everyone (members can switch which watchlist they view); only mod/admin see the Run button. Board route takes `?wl`, computes `sel_wl` (default = first active filter) and `shown_watchlists`; the middle panel + mobile dropdown render only the selected watchlist. Verified switching Growth↔Value filters the list and auto-selects.
