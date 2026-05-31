@@ -119,6 +119,24 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-05-31 — v2.7: Run-MATP selector lives on the MATP page only
+
+Removed the "Run MATP" filter selector from the `/admin` console (reverted the admin route's filter context); it now appears only on the MATP board, which is its natural home. Admin stays focused on user management + bot control.
+
+### 2026-05-31 — v2.6: Live MATP-run progress bar + visible dedup
+
+The MATP board now shows a live **"Active MATP runs"** panel (HTMX-polled every 5s, no full reload) for every pending/running request: a **progress bar** + **who triggered it** + when. The bar is **determinate** (done/total tickers) once the agent reports counts, **indeterminate** (animated) while queued/before counts. Replaces the old static "N queued" banner.
+- **Model:** `matp_refresh_requests` gains `progress_done` / `progress_total` (migration `c3d4e5f6a7b8`).
+- **API:** `POST /api/refresh-queue/{id}/status` accepts optional `progress_done` / `progress_total`; on `done` it snaps the bar to 100%.
+- **New fragment endpoint:** `GET /matp/runs` → `_runs_panel.html` (defined before `/{symbol}` so it doesn't collide).
+- **Dedup made visible** (answers "avoid another run"): enqueue already blocks a second open request for the same filter/ticker; the panel now shows it's already in flight (status + triggerer), and the selector still labels it "— queued". Verified: two clicks → one run.
+- Nous Hermes `matp` skill → v1.3.0: queue-poll mode now posts `progress_total` on start and `progress_done` every ~5 tickers, driving the bar.
+- Verified: panel renders queued (indeterminate) → running 30/61 (~49% determinate) → done (drops off, snapped to 61/61); dedup holds.
+
+### 2026-05-31 — v2.5: Price chart fetches live (Yahoo) instead of parquet
+
+Switched the price chart's data source from the stored parquet to a **live Yahoo Finance fetch** — so it works for any symbol immediately, with no dependency on bars being seeded / Resilio-synced / `data_root`-configured on the host. New `app/services/prices.py::fetch_daily_ohlc()` calls the Yahoo v8 chart API via `httpx` (already a dep — no API key, query1/query2 failover, ~10-min in-process TTL cache, browser UA), returns lightweight-charts shape, and yields `[]` on any failure (chart shows "Couldn't load live price data — try again shortly"). `GET /matp/{symbol}/prices` now calls this; the parquet path (`resources_bridge.daily_bars`) and the `pyarrow` requirement added in v2.3 are **reverted**. Verified live: NVDA → 251 daily bars, bogus symbol → [].
+
 ### 2026-05-31 — v2.4: Layout — left sidebar nav + user dropdown menu
 
 Restructured the chrome in `base.html`. Nav links (MATP / Studies / Finviz / Admin) moved from the top bar into a **left sidebar** (`<aside>`, sticky, with active-link highlighting via `request.url.path`). The **name + Logout** moved into an **icon-triggered dropdown menu** in the top-right (avatar/initial + chevron → menu with name, role, email, Logout) — JS-free using `<details>`/`<summary>` (marker hidden via CSS). Logged-out pages (login) render full-width with **no sidebar**; the `content` block is defined once and referenced via `self.content()` so there's no duplicate-block error. Verified both states render correctly.

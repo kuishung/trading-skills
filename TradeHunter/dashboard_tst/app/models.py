@@ -180,6 +180,9 @@ class MATPRefreshRequest(Base):
     filter_id = Column(Integer, ForeignKey("finviz_filters.id"), nullable=True)  # filter scope
     status = Column(String(12), nullable=False, default="pending", index=True)  # pending|running|done|failed
     note = Column(Text, nullable=True)  # agent's result / error message
+    # live progress (agent reports as it works the universe; null until it starts)
+    progress_done = Column(Integer, nullable=True)   # tickers processed so far
+    progress_total = Column(Integer, nullable=True)  # tickers in this run
     requested_by = Column(Integer, ForeignKey("users.id"))
     created_at = Column(DateTime, default=_utcnow)
     claimed_at = Column(DateTime, nullable=True)     # when the agent started it

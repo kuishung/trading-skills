@@ -31,31 +31,6 @@ def screen_universe(finviz_url: str, *, max_pages: int = 10, force_refresh: bool
     )
 
 
-def daily_bars(symbol: str, *, max_bars: int = 400) -> list[dict]:
-    """Daily OHLC for `symbol` from the shared parquet store, newest `max_bars`
-    rows, in lightweight-charts shape: {time:'YYYY-MM-DD', open, high, low,
-    close}. Returns [] if there's no parquet for the symbol (or pyarrow/data
-    aren't available) so the chart can show an empty state instead of erroring.
-    """
-    from resources import bars_store
-
-    rows = bars_store.load_bars(symbol.strip().upper(), timeframe="daily")
-    if not rows:
-        return []
-    if max_bars:
-        rows = rows[-max_bars:]
-    out = []
-    for r in rows:
-        t = (r.get("t") or "")[:10]  # ISO ts -> 'YYYY-MM-DD'
-        if not t:
-            continue
-        out.append(
-            {"time": t, "open": r.get("o"), "high": r.get("h"),
-             "low": r.get("l"), "close": r.get("c")}
-        )
-    return out
-
-
 def refresh_matp(symbols: list[str]) -> int:
     """Phase 2: run the resources/MATP pipeline and upsert MATPLevel rows.
     Returns the number of tickers refreshed."""

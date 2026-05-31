@@ -11,12 +11,6 @@
   <span class="rounded-lg border border-slate-700 text-slate-400 px-3 py-2">Disabled <b class="ml-1">{{ counts.disabled }}</b></span>
 </div>
 
-<section class="mb-10">
-  <h2 class="text-lg font-medium mb-3">Run MATP</h2>
-  {% set run_next = "/admin" %}
-  {% include "_run_filter.html" %}
-</section>
-
 {% if is_google_auth %}
 <section class="mb-10">
   <h2 class="text-lg font-medium mb-3">Pending approval

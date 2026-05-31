@@ -128,6 +128,16 @@ rebuild, it lives in `state/`.
 
 ## Bars storage = Parquet (locked decision)
 
+**SCOPE RULE — Parquet is for BACKTESTING ONLY (user, set 2026-05-31,
+"remember remember this").** The stored Parquet bars exist solely for
+**backtesting / offline historical analysis** (`review/backtest.py` and
+similar batch jobs). They are **NOT** the data source for any live or
+operational UI. In particular, the `dashboard_tst` MATP **price chart fetches
+prices LIVE** (Yahoo via `httpx`; `yfinance` is the other approved live
+source) — never from `bars_store`/parquet. Do **not** wire live UI/chart
+features to the parquet store; reserve parquet reads for backtests and batch
+analysis. If a live feature needs prices, fetch them live.
+
 **Historical OHLCV bars are stored as Parquet, full stop.** Don't
 re-evaluate CSV / JSONL / SQLite / DuckDB / W&B / MLflow as alternatives
 — that conversation already happened, Parquet won. Reasons:

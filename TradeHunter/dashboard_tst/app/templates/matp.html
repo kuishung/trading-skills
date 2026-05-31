@@ -42,11 +42,8 @@
   Names are the current Finviz-screen members; ones that fell out of the screen are kept under <em>Dropped</em>. Click a ticker for the levels band, bounce setup, history and analyst evidence.
 </p>
 
-{% if open_reqs %}
-<div class="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-300">
-  &#8635; {{ open_reqs|length }} refresh request{{ "s" if open_reqs|length != 1 else "" }} queued &mdash; the research agent picks these up within ~10&nbsp;min.
-</div>
-{% endif %}
+{# live runs panel: polls every 5s, renders progress bars while runs are open #}
+<div hx-get="/matp/runs" hx-trigger="load, every 5s" hx-swap="innerHTML"></div>
 
 {% set run_next = "/matp" %}
 {% include "_run_filter.html" %}

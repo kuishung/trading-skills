@@ -81,6 +81,8 @@ _REQUEST_STATES = {"running", "done", "failed"}
 class RefreshStatusIn(BaseModel):
     status: str  # running | done | failed
     note: str | None = None
+    progress_done: int | None = None   # tickers processed so far
+    progress_total: int | None = None  # tickers in this run
 
 
 @router.post("/refresh-queue/{rid}/status")
@@ -90,7 +92,8 @@ def update_refresh_status(
     _: bool = Depends(require_api_key),
     db: Session = Depends(get_db),
 ):
-    """Agent reports progress: 'running' when it starts, 'done'/'failed' after."""
+    """Agent reports progress: 'running' (with optional done/total counts) when
+    it starts and as it works, then 'done'/'failed'."""
     if payload.status not in _REQUEST_STATES:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"bad status {payload.status!r}")
     r = db.get(MATPRefreshRequest, rid)
@@ -100,10 +103,17 @@ def update_refresh_status(
     r.status = payload.status
     if payload.note is not None:
         r.note = payload.note
+    if payload.progress_total is not None:
+        r.progress_total = payload.progress_total
+    if payload.progress_done is not None:
+        r.progress_done = payload.progress_done
     if payload.status == "running" and r.claimed_at is None:
         r.claimed_at = now
     if payload.status in ("done", "failed"):
         r.completed_at = now
+        # snap the bar to full on a clean finish
+        if payload.status == "done" and r.progress_total:
+            r.progress_done = r.progress_total
     db.commit()
     return {"ok": True, "id": rid, "status": r.status}
 

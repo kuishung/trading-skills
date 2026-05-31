@@ -1,6 +1,6 @@
 ---
 name: matp
-version: 1.2.0
+version: 1.3.0
 description: Compute the faithful Median Analyst Target Price (MATP) + Max Buy Price (MBP) for TradeHunter and push the results to the platform. Use when asked to "refresh MATP", "run MATP", "update target prices", or on the scheduled cron. Reads the active Finviz screener filters from TradeHunter's API, expands them to a ticker universe, and for each ticker looks up the latest earnings date + analyst price targets on MarketBeat, keeps only targets issued AFTER the latest earnings, computes the median (MATP) and MBP = MATP/1.15, then POSTs the rows to TradeHunter's /api/matp endpoint. Does NOT write CSV / Google Sheets / Telegram -- output is the API push only.
 ---
 
@@ -51,18 +51,25 @@ GET {TRADEHUNTER_URL}/api/refresh-queue     header: X-API-Key: {TST_INGEST_API_K
    ]}
 ```
 For each request:
-1. **Mark it running:**
-   `POST /api/refresh-queue/{id}/status` body `{"status":"running"}`
-2. **Do the work:**
+1. **Mark it running, with the total** so the UI can draw a real progress bar:
+   `POST /api/refresh-queue/{id}/status` body
+   `{"status":"running","progress_total":N,"progress_done":0}`
+   (N = number of tickers this run will process — 1 for a ticker request, the
+   universe size for a filter request once you've screened it.)
+2. **Do the work, reporting progress as you go:**
    - `scope:"ticker"` → run Stages 2-5 for that one `symbol`. Push via
      `/api/matp` as a single item, **no `filter_id`, no `prune`** (a single
      ticker is not a universe — pruning would wrongly drop everything else).
    - `scope:"filter"` → run Stages 1-5 for that filter's `filter_url` (the full
      universe). Push via `/api/matp` with `filter_id` + `prune:true`.
+   - **Every few tickers**, update progress:
+     `POST /api/refresh-queue/{id}/status` body `{"status":"running","progress_done":K}`
+     (K = tickers finished so far). This drives the live progress bar; don't
+     post on every single ticker — every ~5 is plenty.
 3. **Mark it done/failed:**
-   `POST /api/refresh-queue/{id}/status` body `{"status":"done","note":"refreshed 1 ticker"}`
+   `POST /api/refresh-queue/{id}/status` body `{"status":"done","note":"refreshed 12 tickers"}`
    — on error, `{"status":"failed","note":"<short reason>"}`. The note shows on
-   the ticker's detail page.
+   the ticker's detail page. (On `done`, the server snaps the bar to 100%.)
 
 Idempotent: if the queue is empty, do nothing. TradeHunter de-dupes requests, so
 you'll never see two open requests for the same target.

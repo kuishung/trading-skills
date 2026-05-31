@@ -24,16 +24,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..db import get_db
-from ..models import (
-    APPROVED,
-    DISABLED,
-    PENDING,
-    ROLE_MEMBER,
-    ROLES,
-    FinvizFilter,
-    MATPRefreshRequest,
-    User,
-)
+from ..models import APPROVED, DISABLED, PENDING, ROLE_MEMBER, ROLES, User
 from ..security import hash_password, require_admin
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -58,17 +49,6 @@ def admin_home(
         "active": sum(1 for u in members if u.status == APPROVED),
         "disabled": sum(1 for u in members if u.status == DISABLED),
     }
-    # Finviz-filter run control (admins can run MATP from here too)
-    active_filters = (
-        db.query(FinvizFilter).filter(FinvizFilter.is_active.is_(True)).all()
-    )
-    open_filter_ids = {
-        r.filter_id
-        for r in db.query(MATPRefreshRequest).filter(
-            MATPRefreshRequest.scope == "filter",
-            MATPRefreshRequest.status.in_(("pending", "running")),
-        )
-    }
     return templates.TemplateResponse(
         request,
         "admin.html",
@@ -79,8 +59,6 @@ def admin_home(
             "counts": counts,
             "auth_mode": settings.auth_mode,
             "is_google_auth": settings.is_google_auth,
-            "active_filters": active_filters,
-            "open_filter_ids": open_filter_ids,
         },
     )
 

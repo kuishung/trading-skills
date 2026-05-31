@@ -88,6 +88,25 @@ def matp_home(
     )
 
 
+@router.get("/runs", response_class=HTMLResponse)
+def matp_runs(
+    request: Request,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """HTMX-polled fragment: the live 'active runs' panel (pending + running),
+    newest first, with progress + who triggered it."""
+    runs = (
+        db.query(MATPRefreshRequest)
+        .filter(MATPRefreshRequest.status.in_(_OPEN_STATES))
+        .order_by(MATPRefreshRequest.created_at.desc())
+        .all()
+    )
+    return templates.TemplateResponse(
+        request, "_runs_panel.html", {"user": user, "runs": runs}
+    )
+
+
 def _build_chart(points, width=600, height=170, pad=28):
     """points: list of (date_str, value) ascending by time. Returns an SVG-ready
     dict (polyline + area path + dots) or None if <2 points."""
@@ -137,17 +156,12 @@ def _build_band(low, high, mbp, matp):
 
 @router.get("/{symbol}/prices")
 def matp_prices(symbol: str, user: User = Depends(require_user)):
-    """Daily OHLC for the price chart (lightweight-charts shape). Reads the
-    shared parquet store; returns an empty list (not an error) if bars/pyarrow
-    aren't available, so the chart degrades to an empty state."""
-    sym = symbol.strip().upper()
-    try:
-        from ..services import resources_bridge
+    """Daily OHLC for the price chart (lightweight-charts shape), fetched LIVE
+    from Yahoo (cached ~10 min). Returns an empty list (not an error) on any
+    failure so the chart degrades to an empty state."""
+    from ..services.prices import fetch_daily_ohlc
 
-        bars = resources_bridge.daily_bars(sym)
-    except Exception:  # missing pyarrow, no data_root, unreadable parquet, ...
-        bars = []
-    return {"symbol": sym, "bars": bars}
+    return {"symbol": symbol.strip().upper(), "bars": fetch_daily_ohlc(symbol)}
 
 
 @router.get("/{symbol}", response_class=HTMLResponse)
