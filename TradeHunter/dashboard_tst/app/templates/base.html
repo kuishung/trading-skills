@@ -23,7 +23,7 @@
     summary { list-style: none; }
   </style>
 </head>
-<body class="bg-slate-950 text-slate-100 h-screen overflow-hidden">
+<body class="bg-slate-950 text-slate-100 min-h-screen lg:h-screen lg:overflow-hidden">
 {% if user %}
   {% set p = request.url.path %}
   {% set nav = [
@@ -32,10 +32,10 @@
     ('/finviz', 'Finviz'),
     ('/feedback', 'Feedback'),
   ] %}
-  <div class="flex h-screen">
+  <div class="flex min-h-screen lg:h-screen">
 
-    {# ---------------- left sidebar (nav) ---------------- #}
-    <aside class="w-56 shrink-0 border-r border-slate-800 bg-slate-950/60 backdrop-blur flex flex-col sticky top-0 h-screen">
+    {# ---------------- left sidebar (nav) — hidden on mobile (hamburger in header) ---------------- #}
+    <aside class="hidden lg:flex w-56 shrink-0 border-r border-slate-800 bg-slate-950/60 backdrop-blur flex-col h-screen">
       <a href="/" class="flex items-center gap-2 font-semibold tracking-wide px-4 py-4 border-b border-slate-800">
         <img src="/static/logo.svg" alt="" class="h-7 w-7">
         <span class="leading-tight">TradeHunter
@@ -60,9 +60,24 @@
     </aside>
 
     {# ---------------- content column ---------------- #}
-    <div class="flex-1 min-w-0 flex flex-col overflow-hidden">
-      <header class="shrink-0 z-10 border-b border-slate-800 bg-slate-950/70 backdrop-blur px-4 py-2.5 flex items-center justify-end">
-        <details class="relative">
+    <div class="flex-1 min-w-0 flex flex-col lg:overflow-hidden">
+      <header class="shrink-0 z-10 border-b border-slate-800 bg-slate-950/70 backdrop-blur px-4 py-2.5 flex items-center">
+        {# mobile: logo + hamburger nav (the left sidebar is hidden < lg) #}
+        <details class="relative lg:hidden">
+          <summary class="cursor-pointer flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-slate-800/70">
+            <img src="/static/logo.svg" alt="" class="h-7 w-7">
+            <svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor" class="text-slate-400"><path d="M3 5h14v2H3zM3 9h14v2H3zM3 13h14v2H3z"/></svg>
+          </summary>
+          <div class="absolute left-0 mt-2 w-52 rounded-lg border border-slate-800 bg-slate-900 shadow-xl py-1 z-30">
+            <div class="px-3 py-2 border-b border-slate-800 font-semibold">TradeHunter
+              <span class="block text-[10px] text-slate-500 font-normal">trade collaboration &middot; v{{ version }}</span></div>
+            {% for href, label in nav %}
+            <a href="{{ href }}" class="block px-3 py-2 text-sm {% if p.startswith(href) %}text-emerald-300 bg-emerald-500/10{% else %}text-slate-300 hover:bg-slate-800{% endif %}">{{ label }}</a>
+            {% endfor %}
+            {% if user.is_admin %}<a href="/admin" class="block px-3 py-2 text-sm {% if p.startswith('/admin') %}text-emerald-300 bg-emerald-500/10{% else %}text-slate-300 hover:bg-slate-800{% endif %}">Admin</a>{% endif %}
+          </div>
+        </details>
+        <details class="relative ml-auto">
           <summary class="cursor-pointer flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-slate-800/70">
             {% if user.picture %}
               <img src="{{ user.picture }}" alt="" class="h-8 w-8 rounded-full object-cover">

@@ -554,6 +554,13 @@ ssh administrator@192.168.1.163
 - Host `192.168.1.163` (same LAN) · user `administrator` · port 22 ·
   **password-based** (prompts; password is NOT stored in the repo).
 
+**Rule (user, set 2026-05-31): whenever you hand the user commands to run on
+this agent box, ALWAYS prepend the SSH login line** (`ssh administrator@192.168.1.163`)
+as the first line, so it's one copy-paste sequence and they never have to
+recall/look up the host. The password is entered interactively (not scripted).
+Same spirit as the Hermes deploy-script rule — give the full ordered sequence,
+login included, every time.
+
 Canonical detail + deploy steps live in `nous_hermes/README.md`. This
 note lives in CLAUDE.md (not just a memory file) so every dev PC recalls
 it — memory files don't sync across PCs.

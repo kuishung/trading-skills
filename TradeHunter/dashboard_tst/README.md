@@ -119,6 +119,36 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-05-31 — v2.23: TradingView ticker-info widget above the chart
+
+Added TradingView's **Symbol-Info** embed widget above the price chart (in `_price_chart.html`, so board + detail both get it) — shows the ticker's price/change/key stats that our chart can't. **Kept the lightweight chart** with MATP/MBP/EMA overlays (user choice: "keep ours + add TV info panel"), so nothing is lost. Symbol resolves with the exchange prefix when known (`NASDAQ:NVDA`), else the bare symbol; dark/transparent theme. `chart_exchange` passed from board (`sel.exchange`) and detail (`level.exchange`).
+
+### 2026-05-31 — v2.22: Run panel — watchlist dropdown + ad-hoc ticker run + progress
+
+A dedicated **Run panel** at the top of the MATP page (separate, full-width, visible on mobile):
+- **Watchlist dropdown + Run** (moderators/admins) — pick an active Finviz filter and run it (`POST /matp/run-filter`).
+- **Ad-hoc ticker + Run** (any approved member) — type a US ticker and run just that one (`POST /matp/run-ticker`, validates A–Z/`.`/≤6, dedup, redirects to the ticker). Members can run single tickers; full-filter runs stay mod/admin.
+- **Live progress** (`#runsbox`, polls `/matp/runs`) moved here into its own panel (hidden when idle via `empty:hidden`); removed from the chart panel.
+- Verified: dropdown shows for mod only; ticker form for all; member ticker run enqueues + dedups; invalid ticker rejected.
+
+### 2026-05-31 — v2.21: Mobile-responsive shell + band guard fix
+
+Made the app usable on a phone:
+- **Left sidebar hidden < `lg`**, replaced by a **hamburger menu in the header** (logo + nav links + version). On desktop the sidebar is unchanged.
+- The fixed **no-scroll single-screen** layout is now **`lg`-only**; on mobile the body/containers use `min-h-screen` and the page **scrolls naturally**. The MATP three-pane stacks vertically (watchlist dropdown → chart panel), the analyst table caps at `max-h-[60vh]` with its own scroll, and `main` is `overflow-y-auto lg:overflow-hidden`.
+- **Bug fix:** the consensus zone guard used `is not none` on a possibly-*undefined* key — a ticker with **no post-earnings targets** crashed the band (board + detail). Now guarded with `band.n`. Verified the no-targets case renders.
+
+### 2026-05-31 — v2.20: MATP page cleanup (band concentration, calc date, trimmed chrome)
+
+Six requested tweaks to the MATP workspace:
+1. **Band concentration** — dropped the histogram; the consensus is now a **shaded green zone on the bar** marking where the majority of analyst targets cluster (densest contiguous run of buckets), with the low/high/consensus labels kept.
+2. Removed the **"MATP board"** heading and the **"Watchlists"** label (decluttered chrome).
+3/4. Removed the **"Analyst summary"** heading; the **analyst targets table + "Open full detail →"** button now live together in the analyst (band) section.
+5. Added a **"MATP … · MBP … · calculated <date> · earnings <date>"** line so you can see **when the MATP was computed** (`MATPLevel.as_of`).
+6. Removed the **"Other"** (unfiled) group from the watchlist.
+
+`_band.html` reworked (shared by board + detail); `_build_band` now returns the consensus zone as start/end percentages. Verified all six on a throwaway DB.
+
 ### 2026-05-31 — v2.19: "Ask the progress" — refresh button + agent narration
 
 The runs panel gains a **↻ refresh** button (HTMX re-fetch of `/matp/runs` into `#runsbox`) so you can pull the latest status on demand instead of waiting for the 5s auto-poll, and it now shows the **agent's narration `note`** ("processing MSFT (12/61)") so you see exactly what it's doing. (The dashboard can't call the Linux agent directly — outbound-only — so progress stays pull-based: the agent reports via `/api/refresh-queue/{id}/status`, the panel displays it.) Nous Hermes `matp` skill v1.4.1 now posts a `note` alongside each progress update.

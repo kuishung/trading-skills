@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}MATP &middot; TradeHunter{% endblock %}
-{# full-width, single-screen (no page scroll); panes scroll internally #}
-{% block main_class %}flex-1 min-h-0 overflow-hidden w-full px-4 py-3{% endblock %}
+{# desktop: full-width single-screen (panes scroll internally). mobile: page scrolls. #}
+{% block main_class %}flex-1 lg:min-h-0 w-full px-4 py-3 overflow-y-auto lg:overflow-hidden{% endblock %}
 
 {% macro trend_badge(t) %}
   {% if t == "Uptrend" %}<span class="text-emerald-400">&#9650; up</span>
@@ -75,34 +75,39 @@
     </div>
   </details>
   {% endfor %}
-  {% if unfiled %}
-  <details class="rounded-lg border border-slate-800 bg-slate-900/40" open>
-    <summary class="cursor-pointer px-3 py-2 flex items-center justify-between hover:bg-slate-800/40 rounded-lg">
-      <span class="text-slate-400">Other</span>
-      <span class="text-xs text-slate-500">{{ unfiled|length }}</span>
-    </summary>
-    <ul class="px-2 pb-2">
-      {% for lv in unfiled %}
-      <li><a href="/matp?symbol={{ lv.symbol }}" class="flex items-center justify-between px-2 py-1 rounded {% if sel and sel.symbol == lv.symbol %}bg-emerald-500/15{% else %}hover:bg-slate-800/70{% endif %}">
-        <span class="{% if sel and sel.symbol == lv.symbol %}text-emerald-300{% else %}text-emerald-400{% endif %}">{{ lv.symbol }}</span>
-        <span class="text-xs text-slate-500 tabular-nums">MBP {{ "%.0f"|format(lv.mbp) if lv.mbp is not none else "-" }}</span>
-      </a></li>
-      {% endfor %}
-    </ul>
-  </details>
-  {% endif %}
-  {% if not watchlists and not unfiled %}
+  {% if not watchlists %}
   <p class="text-xs text-slate-500 px-1">No active watchlists. Add a Finviz filter on the <a href="/finviz" class="text-emerald-400 hover:underline">Finviz</a> page.</p>
   {% endif %}
 </div>
 {% endmacro %}
 
 {% block content %}
-<div class="h-full flex flex-col">
-<div class="flex items-center justify-between mb-2 shrink-0">
-  <h1 class="text-lg font-semibold">MATP board</h1>
-  <span class="text-xs text-slate-500 hidden sm:block">MBP = MATP/1.15 &mdash; pay below it for &ge;15% headroom &middot; click a ticker for its chart</span>
+<div class="lg:h-full flex flex-col">
+
+{# ── Run panel (separate): watchlist dropdown (mod/admin) + ad-hoc ticker (any member) ── #}
+<div class="shrink-0 mb-2 rounded-lg border border-slate-800 bg-slate-900/40 p-2 flex flex-wrap items-center gap-x-4 gap-y-2">
+  {% if user.can_moderate and active_filters %}
+  <form method="post" action="/matp/run-filter" class="flex items-center gap-2">
+    <span class="text-xs text-slate-500">Watchlist</span>
+    <select name="filter_id" class="rounded bg-slate-950/60 border border-slate-700 px-2 py-1 text-sm focus:border-emerald-500 outline-none">
+      {% for f in active_filters %}<option value="{{ f.id }}">{{ f.description }}{% if f.id in open_filter_ids %} — queued{% endif %}</option>{% endfor %}
+    </select>
+    <input type="hidden" name="next" value="/matp">
+    <button class="text-xs px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 font-medium">&#8635; Run</button>
+  </form>
+  <span class="hidden sm:block text-slate-700">|</span>
+  {% endif %}
+  <form method="post" action="/matp/run-ticker" class="flex items-center gap-2">
+    <span class="text-xs text-slate-500">Ticker</span>
+    <input name="symbol" placeholder="e.g. NVDA" required maxlength="6"
+           class="w-28 rounded bg-slate-950/60 border border-slate-700 px-2 py-1 text-sm uppercase focus:border-emerald-500 outline-none"
+           style="text-transform:uppercase">
+    <button class="text-xs px-2.5 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">&#8635; Run</button>
+  </form>
 </div>
+
+{# ── live run progress (separate panel; everyone sees it) ── #}
+<div id="runsbox" class="shrink-0 empty:hidden mb-2" hx-get="/matp/runs" hx-trigger="load, every 5s" hx-swap="innerHTML"></div>
 
 {# mobile: watchlists collapse into a dropdown above the board #}
 <details class="lg:hidden mb-2 shrink-0 rounded-lg border border-slate-800 bg-slate-900/40">
@@ -110,10 +115,9 @@
   <div class="p-2">{{ watchlist_rail(watchlists, unfiled, user, open_filter_ids, open_symbols) }}</div>
 </details>
 
-<div class="lg:flex lg:gap-4 flex-1 min-h-0">
+<div class="lg:flex lg:gap-4 lg:flex-1 lg:min-h-0">
   {# MIDDLE: watchlist panel #}
   <aside class="hidden lg:flex lg:flex-col lg:w-72 lg:shrink-0 lg:h-full">
-    <div class="text-xs uppercase tracking-wide text-slate-500 mb-2 px-1 shrink-0">Watchlists</div>
     <div class="flex-1 min-h-0 overflow-y-auto pr-1">
       {{ watchlist_rail(watchlists, unfiled, user, open_filter_ids, open_symbols, sel) }}
       {% if dropped %}
@@ -132,14 +136,12 @@
     </div>
   </aside>
 
-  {# RIGHT: chart panel — MATP run pinned on top (no scroll), then chart, band, analyst summary #}
-  <div class="lg:flex-1 min-w-0 lg:h-full flex flex-col gap-3 min-h-0">
-    {# MATP run stays on top and does not scroll #}
-    <div id="runsbox" class="shrink-0" hx-get="/matp/runs" hx-trigger="load, every 5s" hx-swap="innerHTML"></div>
-
+  {# RIGHT: chart panel — chart, band, analyst summary #}
+  <div class="lg:flex-1 min-w-0 lg:h-full flex flex-col gap-3 lg:min-h-0 mt-4 lg:mt-0">
     {% if sel %}
     <div class="shrink-0">
       {% set chart_symbol = sel.symbol %}
+      {% set chart_exchange = sel.exchange %}
       {% set chart_matp = sel.matp %}
       {% set chart_mbp = sel.mbp %}
       {% set chart_detail_link = true %}
@@ -147,18 +149,24 @@
       {% include "_price_chart.html" %}
     </div>
 
+    {# when the MATP was calculated #}
+    <div class="shrink-0 text-xs text-slate-500">
+      MATP <span class="text-slate-300 tabular-nums">{{ "%.2f"|format(sel.matp) if sel.matp is not none else "-" }}</span>
+      &middot; MBP <span class="text-emerald-300 tabular-nums">{{ "%.2f"|format(sel.mbp) if sel.mbp is not none else "-" }}</span>
+      &middot; calculated <span class="text-slate-300">{{ sel.as_of.strftime("%Y-%m-%d %H:%M") if sel.as_of else "unknown" }}</span>
+      {% if sel.last_earnings_date %}&middot; earnings <span class="text-slate-300">{{ sel.last_earnings_date }}</span>{% endif %}
+    </div>
+
+    {# analyst section: consensus band + targets + full detail #}
     {% if sel_band %}
     <div class="shrink-0">{% set band = sel_band %}{% include "_band.html" %}</div>
     {% endif %}
 
-    <div class="flex items-center justify-between shrink-0">
-      <h3 class="text-sm font-medium text-slate-300">Analyst summary
-        <span class="text-xs text-slate-500">&mdash; {{ sel.symbol }}</span>
-      </h3>
+    <div class="flex items-center justify-end shrink-0">
       <button type="button" hx-get="/matp/{{ sel.symbol }}/targets" hx-target="#atModalBody" hx-swap="innerHTML"
-              onclick="atOpen()" class="text-xs px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Full detail &rarr;</button>
+              onclick="atOpen()" class="text-xs px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Open full detail &rarr;</button>
     </div>
-    <div class="flex-1 min-h-0 overflow-y-auto rounded-lg border border-slate-800">
+    <div class="lg:flex-1 lg:min-h-0 overflow-y-auto max-h-[60vh] lg:max-h-none rounded-lg border border-slate-800">
       <table class="w-full text-sm">
         <thead class="bg-slate-900 text-slate-400 sticky top-0">
           <tr>

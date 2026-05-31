@@ -67,6 +67,7 @@
 
 {% if level %}
   {% set chart_symbol = symbol %}
+  {% set chart_exchange = level.exchange %}
   {% set chart_matp = level.matp %}
   {% set chart_mbp = level.mbp %}
   {% include "_price_chart.html" %}

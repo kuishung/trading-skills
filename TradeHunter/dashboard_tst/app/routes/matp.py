@@ -273,11 +273,19 @@ def _build_band(low, high, mbp, matp, prices=None, bins=18):
             }
             for i, c in enumerate(counts)
         ]
-        # consensus zone = the densest single bin
+        # consensus zone = the densest contiguous run of bins (the cluster where
+        # the majority of targets sit), so the highlight isn't just one thin bin.
         top = max(range(bins), key=lambda i: counts[i])
-        band["consensus_lo"] = round(low + top / bins * span, 2)
-        band["consensus_hi"] = round(low + (top + 1) / bins * span, 2)
-        band["consensus_count"] = counts[top]
+        lo_i = hi_i = top
+        while lo_i - 1 >= 0 and counts[lo_i - 1] >= max(1, counts[top] * 0.5):
+            lo_i -= 1
+        while hi_i + 1 < bins and counts[hi_i + 1] >= max(1, counts[top] * 0.5):
+            hi_i += 1
+        band["consensus_lo"] = round(low + lo_i / bins * span, 2)
+        band["consensus_hi"] = round(low + (hi_i + 1) / bins * span, 2)
+        band["consensus_count"] = sum(counts[lo_i : hi_i + 1])
+        band["consensus_lo_pct"] = round(lo_i / bins * 100, 1)
+        band["consensus_hi_pct"] = round((hi_i + 1) / bins * 100, 1)
         band["n"] = len(vals)
     return band
 
@@ -418,6 +426,23 @@ def request_ticker_refresh(
     sym = symbol.strip().upper()
     _enqueue(db, "ticker", symbol=sym, user=user)
     return RedirectResponse(url=f"/matp/{sym}", status_code=303)
+
+
+@router.post("/run-ticker")
+def run_ticker(
+    request: Request,
+    symbol: str = Form(...),
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Ad-hoc single US ticker run — available to any approved member. Enqueues a
+    ticker-scope request (no prune); the agent fetches just that ticker."""
+    sym = (symbol or "").strip().upper()
+    valid = 1 <= len(sym) <= 6 and all(c.isalpha() or c == "." for c in sym)
+    if valid:
+        _enqueue(db, "ticker", symbol=sym, user=user)
+        return RedirectResponse(url=f"/matp?symbol={sym}", status_code=303)
+    return RedirectResponse(url="/matp", status_code=303)
 
 
 @router.post("/filter/{filter_id}/refresh")
