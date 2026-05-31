@@ -64,7 +64,7 @@
 </script>
 
 {# ── live run progress (separate panel; everyone sees it) ── #}
-<div id="runsbox" class="shrink-0 empty:hidden mb-2" hx-get="/matp/runs" hx-trigger="load, every 5s" hx-swap="innerHTML"></div>
+<div id="runsbox" class="shrink-0 empty:hidden mb-2" hx-get="/matp/runs" hx-trigger="load" hx-swap="innerHTML"></div>
 
 {% set wl_url = "/matp/watchlist?wl=" ~ (sel_wl or "") ~ "&sym=" ~ (sel.symbol if sel else "") %}
 

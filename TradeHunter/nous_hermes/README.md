@@ -104,6 +104,12 @@ Edit files here, redeploy (scp / git pull → `bash install.sh`), then re-test w
 recreate the cron job unless the schedule or delivery target changes.
 
 ## Changelog
+- **2026-06-01** — `markets/matp` skill → **v1.6.0**: on every poll the agent now
+  POSTs a heartbeat to TradeHunter's `POST /api/agent/heartbeat` (X-API-Key)
+  first thing — `{agent, version, host, crons (raw `crontab -l`), polled_at}` —
+  so TradeHunter's **Agent** page can show the agent online/stale + the literal
+  crons it's running (the agent stays outbound-only; no inbound access). Pairs
+  with TradeHunter dashboard_tst v2.41.
 - **2026-05-30** — Added `markets/matp` skill v1.0.0 — the LLM/web-research
   half of TradeHunter's MATP feature. Browses Finviz + MarketBeat (DeepSeek +
   browser), applies the post-earnings filter, computes median (MATP) + MBP, and

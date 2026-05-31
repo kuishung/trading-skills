@@ -56,6 +56,11 @@
            class="rounded-lg px-3 py-1.5 whitespace-nowrap transition
                   {% if p.startswith(href) %}bg-emerald-500/10 text-emerald-300{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-emerald-300{% endif %}">{{ label }}</a>
         {% endfor %}
+        {% if user.can_moderate %}
+        <a href="/agent"
+           class="rounded-lg px-3 py-1.5 whitespace-nowrap transition
+                  {% if p.startswith('/agent') %}bg-emerald-500/10 text-emerald-300{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-emerald-300{% endif %}">Agent</a>
+        {% endif %}
         {% if user.is_admin %}
         <a href="/admin"
            class="rounded-lg px-3 py-1.5 whitespace-nowrap transition

@@ -37,7 +37,9 @@
 
   <p class="text-[11px] text-slate-500 mt-2">
     Shaded = analyst low&ndash;high; heat = target concentration{% if band.n %} (consensus {{ "%.0f"|format(band.consensus_lo) }}&ndash;{{ "%.0f"|format(band.consensus_hi) }}){% endif %}.
-    <span class="text-green-500">MBP</span> / <span class="text-orange-400">MATP</span> / <span class="text-amber-300">price</span> shown to scale.
+    <span class="text-green-500">MBP{% if band.mbp is not none %} {{ "%.2f"|format(band.mbp) }}{% endif %}</span> /
+    <span class="text-orange-400">MATP{% if band.matp is not none %} {{ "%.2f"|format(band.matp) }}{% endif %}</span> /
+    <span class="text-amber-300">price{% if band.current is not none %} {{ "%.2f"|format(band.current) }}{% endif %}</span> shown to scale.
   </p>
 </div>
 {% endif %}

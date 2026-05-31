@@ -7,8 +7,9 @@ the results here; this process only validates + stores them. No LLM runs in
 TradeHunter.
 
 Endpoints (header `X-API-Key: <TST_INGEST_API_KEY>` required):
-  GET  /api/filters  -> active Finviz filter URLs the agent should screen
-  POST /api/matp     -> upsert computed MATP/MBP levels into MATPLevel
+  GET  /api/filters         -> active Finviz filter URLs the agent should screen
+  POST /api/matp            -> upsert computed MATP/MBP levels into MATPLevel
+  POST /api/agent/heartbeat -> agent liveness + its crontab (shown on /agent)
 """
 from __future__ import annotations
 
@@ -25,6 +26,7 @@ from ..config import settings
 from ..db import get_db
 from ..models import (
     RUN_INTERVALS,
+    AgentHeartbeat,
     FinvizFilter,
     MATPHistory,
     MATPLevel,
@@ -74,6 +76,46 @@ def due_filters(_: bool = Depends(require_api_key), db: Session = Depends(get_db
         if nxt is None or nxt <= now:
             due.append({"id": f.id, "description": f.description, "url": f.url, "interval": f.run_interval})
     return {"filters": due}
+
+
+# ---------------------------------------------------------------------------
+# Agent heartbeat — the outbound-only Nous Hermes agent self-reports liveness +
+# its crontab on each poll. TradeHunter can't reach into the Linux box, so this
+# is how the /agent page knows the agent is alive and which crons it's running.
+class HeartbeatIn(BaseModel):
+    agent: str = "nous_hermes"
+    version: str | None = None
+    crons: str | None = None          # raw `crontab -l` output
+    host: str | None = None
+    polled_at: str | None = None      # ISO-8601 from the agent's own clock
+
+
+@router.post("/agent/heartbeat")
+def agent_heartbeat(
+    payload: HeartbeatIn,
+    _: bool = Depends(require_api_key),
+    db: Session = Depends(get_db),
+):
+    """Upsert one heartbeat row per agent name (portable query-then-update)."""
+    name = (payload.agent or "nous_hermes").strip() or "nous_hermes"
+    now = _dt.datetime.now(_dt.timezone.utc)
+    polled = None
+    if payload.polled_at:
+        try:
+            polled = _dt.datetime.fromisoformat(payload.polled_at.replace("Z", "+00:00"))
+        except ValueError:
+            polled = None
+    row = db.query(AgentHeartbeat).filter(AgentHeartbeat.agent == name).first()
+    if row is None:
+        row = AgentHeartbeat(agent=name)
+        db.add(row)
+    row.version = payload.version
+    row.crons = payload.crons
+    row.host = payload.host
+    row.polled_at = polled
+    row.received_at = now
+    db.commit()
+    return {"ok": True, "agent": name, "received_at": now.isoformat()}
 
 
 # ---------------------------------------------------------------------------

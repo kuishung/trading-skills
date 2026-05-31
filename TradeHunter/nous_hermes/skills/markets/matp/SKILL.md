@@ -1,6 +1,6 @@
 ---
 name: matp
-version: 1.5.0
+version: 1.6.0
 description: Compute the faithful Median Analyst Target Price (MATP) + Max Buy Price (MBP) for TradeHunter and push the results to the platform. Use when asked to "refresh MATP", "run MATP", "update target prices", or on the scheduled cron. Reads the active Finviz screener filters from TradeHunter's API, expands them to a ticker universe, and for each ticker looks up the latest earnings date + analyst price targets on MarketBeat, keeps only targets issued AFTER the latest earnings, computes the median (MATP) and MBP = MATP/1.15, then POSTs the rows to TradeHunter's /api/matp endpoint. Does NOT write CSV / Google Sheets / Telegram -- output is the API push only.
 ---
 
@@ -47,6 +47,26 @@ Nothing on the scheduled run. If invoked ad-hoc for specific tickers
    "Request refresh" buttons on TradeHunter's MATP page actually do something.
 
 ---
+
+## Heartbeat (every poll — do this FIRST, before draining the queue)
+TradeHunter can't reach into this Linux box, so it can't tell whether the agent
+is alive or what crons are installed. Tell it: **on every poll, before anything
+else, POST a heartbeat** with the agent's version and its actual crontab. The
+dashboard's **/agent** page shows this (online/stale + the literal cron lines),
+so the user can confirm from the web UI which crons are running here.
+
+```bash
+CRONS="$(crontab -l 2>/dev/null)"
+curl -s -X POST "{TRADEHUNTER_URL}/api/agent/heartbeat" \
+  -H "X-API-Key: {TST_INGEST_API_KEY}" -H "Content-Type: application/json" \
+  -d "$(jq -nc --arg v "matp 1.6.0" --arg h "$(hostname)" --arg c "$CRONS" \
+        --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '{agent:"nous_hermes", version:$v, host:$h, crons:$c, polled_at:$t}')"
+```
+(`agent` defaults to `nous_hermes`; `crons` is the raw `crontab -l` text — the
+server splits + filters comments for display. Soft-fail: if the heartbeat POST
+errors, log it and carry on with the poll — it must never block the real work.)
+Expect `{"ok":true,"agent":"nous_hermes","received_at":"..."}`.
 
 ## Ad-hoc refresh queue (frequent poll)
 Collaborators (moderators/admins) click "Request refresh" on TradeHunter's MATP

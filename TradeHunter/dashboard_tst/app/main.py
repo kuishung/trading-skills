@@ -29,6 +29,7 @@ from .config import settings
 from .db import SessionLocal, init_db
 from .models import APPROVED, User
 from .routes import admin as admin_routes
+from .routes import agent as agent_routes
 from .routes import api as api_routes
 from .routes import auth as auth_routes
 from .routes import feedback as feedback_routes
@@ -46,7 +47,7 @@ templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
 # sidebar logo (base.html) shows "v<version>" without each route passing it.
 for _routes_mod in (
     auth_routes, matp_routes, studies_routes,
-    finviz_routes, feedback_routes, admin_routes,
+    finviz_routes, feedback_routes, admin_routes, agent_routes,
 ):
     _routes_mod.templates.env.globals["version"] = APP_VERSION
 templates.env.globals["version"] = APP_VERSION
@@ -133,6 +134,7 @@ def create_app() -> FastAPI:
     app.include_router(finviz_routes.router)
     app.include_router(feedback_routes.router)
     app.include_router(admin_routes.router)
+    app.include_router(agent_routes.router)
     app.include_router(api_routes.router)
 
     @app.get("/health")

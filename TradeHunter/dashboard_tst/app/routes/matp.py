@@ -219,14 +219,9 @@ def matp_watchlist(
     )
 
 
-@router.get("/runs", response_class=HTMLResponse)
-def matp_runs(
-    request: Request,
-    user: User = Depends(require_user),
-    db: Session = Depends(get_db),
-):
-    """HTMX-polled fragment: the live 'active runs' panel (pending + running),
-    newest first, with progress + who triggered it."""
+def _open_run_items(db: Session):
+    """Build the active-runs list (pending + running), newest first, each tagged
+    with how long it's waited/run and whether it looks stale."""
     runs = (
         db.query(MATPRefreshRequest)
         .filter(MATPRefreshRequest.status.in_(_OPEN_STATES))
@@ -252,9 +247,64 @@ def matp_runs(
             or (r.status == "running" and ran is not None and ran >= 8 and not r.progress_done)
         )
         items.append({"r": r, "waited": waited, "ran": ran, "stale": stale})
+    return items
 
+
+def _runs_context(db: Session, user: User) -> dict:
+    """Template context for the runs panel, including an adaptive self-poll
+    cadence so the page doesn't refresh forever:
+      - a run actively *running* → poll 5s (watch the progress bar)
+      - a fresh *pending* run     → poll 10s (waiting for the agent to claim it)
+      - everything stale, or no runs → poll_in = 0 → STOP auto-refreshing
+        (a stale run means the agent likely isn't polling — hammering won't help;
+        the manual ↻ refresh / ↻ retry buttons resume it)."""
+    items = _open_run_items(db)
+    running_live = any(it["r"].status == "running" and not it["stale"] for it in items)
+    pending_live = any(it["r"].status == "pending" and not it["stale"] for it in items)
+    poll_in = 5 if running_live else (10 if pending_live else 0)
+    return {"user": user, "items": items, "poll_in": poll_in}
+
+
+@router.get("/runs", response_class=HTMLResponse)
+def matp_runs(
+    request: Request,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """HTMX-polled fragment: the live 'active runs' panel (pending + running),
+    newest first, with progress + who triggered it. Self-polls adaptively."""
     return templates.TemplateResponse(
-        request, "_runs_panel.html", {"user": user, "items": items}
+        request, "_runs_panel.html", _runs_context(db, user)
+    )
+
+
+@router.post("/runs/{rid}/retry", response_class=HTMLResponse)
+def retry_run(
+    rid: int,
+    request: Request,
+    user: User = Depends(require_moderator),
+    db: Session = Depends(get_db),
+):
+    """Re-queue a stuck request so the agent's next poll picks it up again.
+
+    The agent is outbound-only — we can't push it a 'go now'. All we can do is
+    reset the request to a fresh 'pending' (clear the claim + progress and reset
+    the wait clock); the agent re-claims it on its next poll. If NOTHING is
+    polling, this won't help — that's a cron/agent problem, surfaced on /agent.
+    """
+    r = db.get(MATPRefreshRequest, rid)
+    if r is not None and r.status in _OPEN_STATES:
+        now = _dt.datetime.now(_dt.timezone.utc)
+        r.status = "pending"
+        r.claimed_at = None
+        r.completed_at = None
+        r.progress_done = None
+        r.progress_total = None
+        r.created_at = now  # reset the "waited Nm" clock
+        r.note = "re-queued by " + (user.display_name or user.email or "a moderator")
+        db.commit()
+    return templates.TemplateResponse(
+        request, "_runs_panel.html", _runs_context(db, user)
     )
 
 

@@ -119,6 +119,52 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-01 — v2.43: adaptive run-panel polling (stop hammering when stale)
+
+- The active-runs panel no longer polls `/matp/runs` every 5s **forever**. It
+  now **self-polls adaptively**: 5s while a run is actively *running*, 10s while
+  a fresh request is *pending*, and **stops entirely once everything is stale**
+  (agent likely not polling — re-rendering forever is pointless and annoying).
+  Header shows "· auto-refresh paused"; the manual ↻ refresh / ↻ ask-agent-to-retry
+  buttons resume it (retry resets the wait clock, so polling restarts).
+- Mechanism: outer `#runsbox` kicks off once (`hx-trigger="load"`); each returned
+  fragment schedules the next poll via `hx-trigger="load delay:{poll_in}s"` only
+  when `poll_in > 0`. Cadence computed in `_runs_context()`.
+
+### 2026-06-01 — v2.42: "ask agent to retry" on stuck runs + price in band wording
+
+- **Retry button** on the active-runs panel: when a request goes **stale**
+  (pending >15m, or running >8m with no progress), moderators see "↻ ask agent
+  to retry" → `POST /matp/runs/{rid}/retry` re-queues it (clears the claim +
+  progress, resets the wait clock) so the agent re-claims it on its next poll.
+  Honest by design — if *nothing* is polling, re-queueing can't help; the stale
+  note now links to the **/agent** page to check the cron. (`_open_run_items`
+  helper shared by the poll + retry routes.)
+- **Band wording** now shows the actual values inline: "MBP 254.35 / MATP 292.50
+  / price 268.10 shown to scale" (was just the labels).
+
+### 2026-06-01 — v2.41: Agent status page (Nous Hermes liveness + crontab)
+
+- New **Agent** top-nav item (moderators/admins) → `/agent`: shows whether the
+  Nous Hermes agent is **online/stale**, its **version**, last check-in time,
+  and the **literal crontab lines** it's running. Answers "what cron is the
+  agent running?" from the web UI — no SSH.
+- Architecture-preserving: the agent stays **outbound-only**. New machine
+  endpoint `POST /api/agent/heartbeat` (X-API-Key) that the agent calls on each
+  poll with `{agent, version, host, crons, polled_at}`; upserted one row per
+  agent (`AgentHeartbeat` model, migration `e5f6a7b8c9d0`). The dashboard never
+  reaches into the Linux box.
+- New `routes/agent.py` (`require_moderator`), `templates/agent.html`; online if
+  the last heartbeat is within 25 min (poll is ~10 min). Comment lines in the
+  crontab are filtered from display.
+- Pairs with agent skill **matp v1.6.0**, which now POSTs the heartbeat first
+  thing on every poll (see `nous_hermes/`).
+
+### 2026-05-31 — v2.40: brighten MBP chart line a shade
+
+- MBP chart price line + legend swatch `#15803d` → `#16a34a` (green-600) — still
+  dark green, more legible on the dark chart, distinct from the EMA50 green.
+
 ### 2026-05-31 — v2.39: colour tweaks (MATP orange, MBP dark green, white watchlist text)
 
 - **MATP** is now **orange** (`#f97316`) — chart price line, band marker/label, legend.
