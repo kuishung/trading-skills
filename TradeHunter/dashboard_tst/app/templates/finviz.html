@@ -2,7 +2,13 @@
 {% block title %}Finviz filters &middot; TradeHunter{% endblock %}
 {% block content %}
 <h1 class="text-2xl font-semibold mb-1">Finviz filters</h1>
-<p class="text-slate-400 text-sm mb-6">Saved screener filters. Active ones feed MATP. Set a <b>schedule</b> and the research agent runs that filter automatically when it's due.</p>
+<p class="text-slate-400 text-sm mb-3">Saved screener filters. Active ones feed MATP. Set a <b>schedule</b> and the research agent runs that filter automatically when it's due.</p>
+{% if can_edit %}
+<div class="mb-6 rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2 text-xs text-slate-400">
+  <b class="text-slate-300">Scheduling never creates agent crons.</b> Intervals live here (updated in place — no duplicates). The agent runs <b>one</b> poll cron that picks up whatever is due. Create it once on the agent box:
+  <code class="block mt-1 text-slate-300 break-all">hermes cron create "*/10 * * * *" "Run the matp skill in queue-poll mode: drain /api/refresh-queue and run any /api/due-filters." --skill matp</code>
+</div>
+{% endif %}
 
 {% if can_edit %}
 <form method="post" action="/finviz/filters" class="mb-8 space-y-3 rounded-lg border border-slate-800 p-4">

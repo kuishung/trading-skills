@@ -8,15 +8,16 @@
 
 {# ── Run panel (separate): watchlist selector (changes the shown tickers) + ad-hoc ticker ── #}
 <div class="shrink-0 mb-2 rounded-lg border border-slate-800 bg-slate-900/40 p-2 flex flex-wrap items-center gap-x-4 gap-y-2">
-  {% if active_filters %}
   <div class="flex items-center gap-2">
     <span class="text-xs text-slate-500">Watchlist</span>
     {# changing this filters the middle list (navigates ?wl=…) #}
-    <select onchange="if(this.value)location.href='/matp?wl='+this.value"
+    <select onchange="location.href='/matp?wl='+this.value"
             class="rounded bg-slate-950/60 border border-slate-700 px-2 py-1 text-sm focus:border-emerald-500 outline-none">
-      {% for f in active_filters %}<option value="{{ f.id }}" {% if f.id == sel_wl %}selected{% endif %}>{{ f.description }}{% if f.id in open_filter_ids %} — queued{% endif %}</option>{% endfor %}
+      <option value="all" {% if sel_wl == "all" %}selected{% endif %}>All</option>
+      {% for f in active_filters %}<option value="{{ f.id }}" {% if sel_wl == f.id|string %}selected{% endif %}>{{ f.description }}{% if f.id in open_filter_ids %} — queued{% endif %}</option>{% endfor %}
+      <option value="individual" {% if sel_wl == "individual" %}selected{% endif %}>Selective Tickers</option>
     </select>
-    {% if user.can_moderate %}
+    {% if user.can_moderate and sel_wl.isdigit() %}
     <form method="post" action="/matp/run-filter" class="inline">
       <input type="hidden" name="filter_id" value="{{ sel_wl }}">
       <input type="hidden" name="next" value="/matp?wl={{ sel_wl }}">
@@ -25,7 +26,6 @@
     {% endif %}
   </div>
   <span class="hidden sm:block text-slate-700">|</span>
-  {% endif %}
   <form method="post" action="/matp/run-ticker" class="flex items-center gap-2">
     <span class="text-xs text-slate-500">Ticker</span>
     <input name="symbol" id="tickerInput" list="tickerOptions" placeholder="ticker or company name…"

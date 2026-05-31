@@ -119,6 +119,14 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-05-31 — v2.38: watchlist All / Selective Tickers / Disqualified split; smaller chart heading
+
+- **Watchlist selector** gains **All** (every ticker in the DB) and **Selective Tickers** (ad-hoc tickers with no Finviz filter), plus each filter. `?wl=all|individual|<id>`; default is **All**. The **Run** button only shows for a specific filter (not All/Selective).
+- **Removed the watchlist group title** (the dropdown already names the selection); the list is the sorted ticker grid. Added a **Price** column (live).
+- **Disqualified section** — tickers whose **live price > MBP** (you shouldn't buy above the max-buy price) drop into a collapsible **"Disqualified · Price > MBP"** section; the rest stay in the main (qualified) list.
+- **Finviz schedule note:** clarified on the page that scheduling **never creates agent crons** — intervals live in the dashboard (updated in place), the agent runs one poll cron; shows the one-time cron command.
+- **Chart heading (TradingView widget) scaled to ~60%** (fixed 5rem header) so the flex-fill price chart gets more height.
+
 ### 2026-05-31 — v2.37: runtime Trend/Signal (lazy, non-blocking) + band extends past range
 
 - **Watchlist Trend/Signal are now RUNTIME-detected** (from `resources.patterns` on live daily bars), but **lazy-loaded so the dashboard never freezes**: the page renders instantly, then the watchlist grid loads via one HTMX request (`GET /matp/watchlist`) that computes signals in a **bounded thread pool (8) with a 15-min per-symbol cache**. Trend (up/down/sideways) + a bounce-style Signal (HOT/WARM/WATCHING) per ticker; falls back to the stored value if a live calc fails. Macros moved to `_wl_macros.html` + fragment `_watchlist.html`.

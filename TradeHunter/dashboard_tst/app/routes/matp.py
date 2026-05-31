@@ -47,7 +47,7 @@ templates = Jinja2Templates(
 def matp_home(
     request: Request,
     symbol: str | None = None,  # ?symbol=NVDA -> show its chart inline on the board
-    wl: int | None = None,      # ?wl=<filter_id> -> which watchlist's tickers to show
+    wl: str | None = None,      # ?wl=all | individual | <filter_id>
     user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ):
@@ -79,15 +79,19 @@ def matp_home(
     by_filter: dict = {}
     for lv in active:
         by_filter.setdefault(lv.filter_id, []).append(lv)
-    watchlists = [{"filter": f, "tickers": by_filter.get(f.id, [])} for f in active_filters]
     unfiled = by_filter.get(None, [])
 
-    # selected watchlist (?wl=…); default to the first active filter. Only that
-    # watchlist's tickers are shown in the middle panel.
-    valid_wl = {f.id for f in active_filters}
-    sel_wl = wl if (wl in valid_wl) else (active_filters[0].id if active_filters else None)
-    shown_watchlists = [w for w in watchlists if w["filter"].id == sel_wl]
-    shown_tickers = by_filter.get(sel_wl, [])
+    # selected watchlist: ?wl = all | individual | <filter_id>. "all" shows every
+    # active ticker; "individual" shows the ad-hoc (no-filter) tickers.
+    valid_ids = {str(f.id) for f in active_filters}
+    sel_wl = (wl or "all").strip()
+    if sel_wl == "individual":
+        shown_tickers = list(unfiled)
+    elif sel_wl in valid_ids:
+        shown_tickers = list(by_filter.get(int(sel_wl), []))
+    else:
+        sel_wl = "all"
+        shown_tickers = list(active)
 
     # selected ticker: ?symbol=… , else the first ticker of the shown watchlist
     # (so a chart shows on load without a click).
@@ -131,10 +135,7 @@ def matp_home(
             "open_reqs": open_reqs,
             "open_symbols": open_symbols,
             "open_filter_ids": open_filter_ids,
-            "watchlists": watchlists,
-            "shown_watchlists": shown_watchlists,
             "sel_wl": sel_wl,
-            "unfiled": unfiled,
             "sel": sel,
             "sel_band": sel_band,
             "sel_targets": sel_targets,
@@ -155,14 +156,14 @@ def ticker_search(q: str = "", user: User = Depends(require_user)):
 @router.get("/watchlist", response_class=HTMLResponse)
 def matp_watchlist(
     request: Request,
-    wl: int | None = None,
+    wl: str | None = None,    # all | individual | <filter_id>
     sym: str | None = None,
     user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ):
-    """Lazy-loaded watchlist grid with RUNTIME trend/signal. Loaded via HTMX
-    after the page renders, so computing the live signals never freezes the
-    main view; results are cached + computed with bounded concurrency."""
+    """Lazy-loaded watchlist grid with RUNTIME trend/signal + a price>MBP split.
+    Loaded via HTMX after the page renders so computing live signals never
+    freezes the main view (cached + bounded concurrency)."""
     all_levels = db.query(MATPLevel).all()
     active = sorted(
         [lv for lv in all_levels if (lv.status or "active") == "active"], key=_signal_key
@@ -181,25 +182,35 @@ def matp_watchlist(
     by_filter: dict = {}
     for lv in active:
         by_filter.setdefault(lv.filter_id, []).append(lv)
-    valid_wl = {f.id for f in active_filters}
-    sel_wl = wl if (wl in valid_wl) else (active_filters[0].id if active_filters else None)
-    shown_watchlists = [
-        {"filter": f, "tickers": by_filter.get(f.id, [])}
-        for f in active_filters if f.id == sel_wl
-    ]
     unfiled = by_filter.get(None, [])
 
-    syms = [lv.symbol for w in shown_watchlists for lv in w["tickers"]]
-    syms += [lv.symbol for lv in unfiled]
-    live = _watchlist_signals(syms)
+    valid_ids = {str(f.id) for f in active_filters}
+    sel_wl = (wl or "all").strip()
+    if sel_wl == "individual":
+        shown = list(unfiled)
+    elif sel_wl in valid_ids:
+        shown = list(by_filter.get(int(sel_wl), []))
+    else:
+        shown = list(active)
+
+    live = _watchlist_signals([lv.symbol for lv in shown])
+
+    # split: disqualified = live price ABOVE the max-buy price (MBP)
+    qualified, disqualified = [], []
+    for lv in shown:
+        cur = live.get(lv.symbol, {}).get("current")
+        if cur is not None and lv.mbp is not None and cur > lv.mbp:
+            disqualified.append(lv)
+        else:
+            qualified.append(lv)
 
     return templates.TemplateResponse(
         request,
         "_watchlist.html",
         {
             "user": user,
-            "shown_watchlists": shown_watchlists,
-            "unfiled": unfiled,
+            "qualified": qualified,
+            "disqualified": disqualified,
             "dropped": dropped,
             "open_symbols": open_symbols,
             "sel_sym": (sym or "").strip().upper(),
@@ -384,14 +395,14 @@ def _watchlist_signals(symbols) -> dict:
 
     def work(s):
         a = _ticker_analysis(s)
-        return s, {"trend": a.get("trend"), "signal": a.get("signal")}
+        return s, {"trend": a.get("trend"), "signal": a.get("signal"), "current": a.get("current")}
 
     try:
         with ThreadPoolExecutor(max_workers=8) as ex:
             for s, r in ex.map(work, syms):
                 out[s] = r
     except Exception:
-        out = {s: {"trend": None, "signal": None} for s in syms}
+        out = {s: {"trend": None, "signal": None, "current": None} for s in syms}
     return out
 
 
