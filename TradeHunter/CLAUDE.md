@@ -609,6 +609,19 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
 - **Restart caveat:** `Stop-ScheduledTask` orphans the uvicorn child on port
   8000 — `deploy/update.ps1` now frees the port before restart. If a deploy
   "freezes"/old code persists, kill the PID on :8000 then start the task.
+- **UI RULE — scrollbars always invisible-until-hover (user, set 2026-05-31,
+  "make it permanent and remember always"):** EVERY scroll area on EVERY page
+  (`/matp`, `/studies`, `/finviz`, `/admin`, modals, panels — all of them) must
+  have its scrollbar **hidden by default and fade in only on hover** of that
+  scroll area. This is implemented globally in
+  `dashboard_tst/app/templates/base.html` (`*` `scrollbar-color: transparent`
+  + `scrollbar-width: thin`, and the `*::-webkit-scrollbar*` rules that go
+  transparent → `rgba(148,163,184,0.35)` on `:hover`). Because it's wildcard
+  CSS in `base.html`, any page that `{% extends "base.html" %}` inherits it for
+  free — so the rule is: **never override it back to a permanent visible
+  scrollbar**, and any new standalone HTML/widget must carry the same
+  invisible-until-hover scrollbar styling. Do not remove these `base.html`
+  rules.
 
 **Post-push rule (user, set 2026-05-30; reinforced):** EVERY time a push
 happens, ALSO give the user the **complete, in-order, copy-paste Hermes
