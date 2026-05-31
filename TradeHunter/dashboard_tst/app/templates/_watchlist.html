@@ -1,0 +1,17 @@
+{# Lazy-loaded watchlist grid (runtime trend/signal). Context:
+   shown_watchlists, unfiled, dropped, open_symbols, sel_sym, live #}
+{% from "_wl_macros.html" import watchlist_rail, ticker_grid %}
+{{ watchlist_rail(shown_watchlists, unfiled, open_symbols, sel_sym, live) }}
+{% if dropped %}
+<details class="mt-2 rounded-lg border border-slate-800 bg-slate-900/40">
+  <summary class="cursor-pointer px-3 py-2 text-xs text-slate-500 select-none">Dropped from filter ({{ dropped|length }})</summary>
+  <ul class="px-2 pb-2">
+    {% for lv in dropped %}
+    <li><a href="/matp?symbol={{ lv.symbol }}" class="flex items-center justify-between px-2 py-1 rounded hover:bg-slate-800/70 opacity-70">
+      <span class="text-slate-400">{{ lv.symbol }}</span>
+      <span class="text-xs text-slate-600 tabular-nums">MBP {{ "%.0f"|format(lv.mbp) if lv.mbp is not none else "-" }}</span>
+    </a></li>
+    {% endfor %}
+  </ul>
+</details>
+{% endif %}

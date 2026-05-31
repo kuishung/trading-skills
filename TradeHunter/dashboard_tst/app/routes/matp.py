@@ -152,6 +152,62 @@ def ticker_search(q: str = "", user: User = Depends(require_user)):
     return {"results": search_tickers(q)}
 
 
+@router.get("/watchlist", response_class=HTMLResponse)
+def matp_watchlist(
+    request: Request,
+    wl: int | None = None,
+    sym: str | None = None,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Lazy-loaded watchlist grid with RUNTIME trend/signal. Loaded via HTMX
+    after the page renders, so computing the live signals never freezes the
+    main view; results are cached + computed with bounded concurrency."""
+    all_levels = db.query(MATPLevel).all()
+    active = sorted(
+        [lv for lv in all_levels if (lv.status or "active") == "active"], key=_signal_key
+    )
+    dropped = sorted(
+        [lv for lv in all_levels if (lv.status or "active") == "dropped"],
+        key=lambda lv: lv.symbol,
+    )
+    active_filters = [f for f in db.query(FinvizFilter).all() if f.is_active]
+    open_reqs = (
+        db.query(MATPRefreshRequest)
+        .filter(MATPRefreshRequest.status.in_(_OPEN_STATES))
+        .all()
+    )
+    open_symbols = {r.symbol for r in open_reqs if r.scope == "ticker" and r.symbol}
+    by_filter: dict = {}
+    for lv in active:
+        by_filter.setdefault(lv.filter_id, []).append(lv)
+    valid_wl = {f.id for f in active_filters}
+    sel_wl = wl if (wl in valid_wl) else (active_filters[0].id if active_filters else None)
+    shown_watchlists = [
+        {"filter": f, "tickers": by_filter.get(f.id, [])}
+        for f in active_filters if f.id == sel_wl
+    ]
+    unfiled = by_filter.get(None, [])
+
+    syms = [lv.symbol for w in shown_watchlists for lv in w["tickers"]]
+    syms += [lv.symbol for lv in unfiled]
+    live = _watchlist_signals(syms)
+
+    return templates.TemplateResponse(
+        request,
+        "_watchlist.html",
+        {
+            "user": user,
+            "shown_watchlists": shown_watchlists,
+            "unfiled": unfiled,
+            "dropped": dropped,
+            "open_symbols": open_symbols,
+            "sel_sym": (sym or "").strip().upper(),
+            "live": live,
+        },
+    )
+
+
 @router.get("/runs", response_class=HTMLResponse)
 def matp_runs(
     request: Request,
@@ -259,16 +315,28 @@ def matp_targets_modal(
     )
 
 
+_ANALYSIS_CACHE: dict = {}   # symbol -> (expiry_epoch, result)
+_ANALYSIS_TTL = 900.0        # 15 min — runtime trend/signal/patterns are cached
+
+
 def _ticker_analysis(symbol: str) -> dict:
-    """Live current price + simple pattern flags for the selected ticker, from
-    the shared resources.patterns on live daily bars. Soft-fail (never breaks
-    the page); returns {current, patterns:[{name, value, good}]}."""
-    out: dict = {"current": None, "patterns": []}
+    """RUNTIME detection from the shared resources.patterns on live daily bars:
+    trend (up/down/sideways), a bounce-style signal (HOT/WARM/WATCHING), pattern
+    flags, and the current price. Cached per symbol (15 min) and soft-fail, so
+    the watchlist can compute these without freezing the dashboard."""
+    import time
+
+    sym = symbol.strip().upper()
+    hit = _ANALYSIS_CACHE.get(sym)
+    if hit and hit[0] > time.time():
+        return hit[1]
+
+    out: dict = {"current": None, "patterns": [], "trend": None, "signal": None}
     try:
         from ..services import resources_bridge  # noqa: F401  (puts TradeHunter on sys.path)
         from ..services.prices import fetch_daily_ohlc
 
-        raw = fetch_daily_ohlc(symbol)
+        raw = fetch_daily_ohlc(sym)
         if not raw:
             return out
         out["current"] = raw[-1]["close"]
@@ -279,51 +347,93 @@ def _ticker_analysis(symbol: str) -> dict:
         ]
         from resources import patterns
 
+        d = (patterns.trend(bars) or {}).get("direction")          # up/down/sideways
+        consol = (patterns.consolidation(bars) or {}).get("is_consol")
+        flag = (patterns.bull_flag(bars) or {}).get("detected")
+        out["trend"] = d
+        if d == "up" and flag:
+            out["signal"] = "HOT"
+        elif d == "up" and consol:
+            out["signal"] = "WARM"
+        elif d == "up":
+            out["signal"] = "WATCHING"
         pats = []
-        d = (patterns.trend(bars) or {}).get("direction")
         if d in ("up", "down", "sideways"):
             pats.append({"name": "Trend", "value": d, "good": d == "up"})
-        if (patterns.consolidation(bars) or {}).get("is_consol"):
+        if consol:
             pats.append({"name": "Consolidation", "value": "tight range", "good": True})
-        if (patterns.bull_flag(bars) or {}).get("detected"):
+        if flag:
             pats.append({"name": "Bull flag", "value": "", "good": True})
         out["patterns"] = pats
+        _ANALYSIS_CACHE[sym] = (time.time() + _ANALYSIS_TTL, out)
     except Exception:
         pass
     return out
 
 
+def _watchlist_signals(symbols) -> dict:
+    """Runtime {symbol: {trend, signal}} for a list of tickers, computed in a
+    bounded thread pool (cached). Bounded concurrency + the 15-min cache keep
+    this from hammering Yahoo or blocking. Soft-fail per symbol."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    syms = list(dict.fromkeys(s for s in symbols if s))  # unique, ordered
+    out: dict = {}
+    if not syms:
+        return out
+
+    def work(s):
+        a = _ticker_analysis(s)
+        return s, {"trend": a.get("trend"), "signal": a.get("signal")}
+
+    try:
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            for s, r in ex.map(work, syms):
+                out[s] = r
+    except Exception:
+        out = {s: {"trend": None, "signal": None} for s in syms}
+    return out
+
+
 def _build_band(low, high, mbp, matp, prices=None, current=None, bins=18):
-    """Horizontal levels band: MBP + MATP + current-price markers along the
-    analyst low->high range, plus a concentration heatmap. None unless we have a
-    range. `current` is the live price (marker only — may sit outside low..high)."""
+    """Levels band. The DISPLAY range extends past the analyst low->high to
+    include the current price (and MBP) so an out-of-range price is shown
+    proportionately instead of clamped at the edge. The analyst range, the
+    concentration heatmap, MBP/MATP, and the current price are all positioned as
+    %-offsets within the display range. None unless we have a low->high range."""
     if low is None or high is None or high <= low:
         return None
+
+    # display range = analyst range, extended to include current/mbp/matp, + pad
+    los = [low] + [v for v in (current, mbp) if v is not None]
+    his = [high] + [v for v in (current, matp) if v is not None]
+    dlo, dhi = min(los), max(his)
+    pad = (dhi - dlo) * 0.04 or 1.0
+    dlo -= pad
+    dhi += pad
+    dspan = dhi - dlo
 
     def pct(v):
         if v is None:
             return None
-        return round(max(0.0, min(100.0, (v - low) / (high - low) * 100.0)), 1)
+        return round(max(0.0, min(100.0, (v - dlo) / dspan * 100.0)), 2)
 
     band = {
-        "low": low, "high": high,
-        "mbp": mbp, "matp": matp,
-        "mbp_pct": pct(mbp), "matp_pct": pct(matp),
-        "current": current, "current_pct": pct(current),
+        "low": low, "high": high, "mbp": mbp, "matp": matp, "current": current,
+        "mbp_pct": pct(mbp), "matp_pct": pct(matp), "current_pct": pct(current),
+        "low_pct": pct(low), "high_pct": pct(high),
     }
 
     vals = [p for p in (prices or []) if p is not None]
     if vals:
         counts = [0] * bins
-        span = high - low
+        arange = high - low
         for p in vals:
-            idx = int((p - low) / span * bins)
+            idx = int((p - low) / arange * bins)
             counts[min(bins - 1, max(0, idx))] += 1
         mx = max(counts) or 1
-        bw = 100.0 / bins
 
-        # consensus zone = the densest contiguous run of bins (the cluster where
-        # the majority of targets sit). The neon heatmap colours ONLY this zone.
+        # consensus zone = densest contiguous run of bins; heatmap colours it only
         top = max(range(bins), key=lambda i: counts[i])
         lo_i = hi_i = top
         while lo_i - 1 >= 0 and counts[lo_i - 1] >= max(1, counts[top] * 0.5):
@@ -332,29 +442,24 @@ def _build_band(low, high, mbp, matp, prices=None, current=None, bins=18):
             hi_i += 1
 
         def _heat(i, c):
-            # neon rainbow, ONLY inside the concentrated zone; peak (most) -> red.
             if not (lo_i <= i <= hi_i) or not c:
                 return "transparent"
             hue = round(240 * (1 - c / mx))  # 240 blue -> 0 red
             return "hsl(%d, 100%%, 60%%)" % hue
 
+        # each bin positioned within the DISPLAY range (lo_pct..hi_pct)
         band["bins"] = [
             {
-                "left": round(i * bw, 3),
-                "width": round(bw, 3),
-                "h": round(c / mx * 100),
-                "count": c,
+                "lo_pct": pct(low + i / bins * arange),
+                "hi_pct": pct(low + (i + 1) / bins * arange),
                 "color": _heat(i, c),
-                "lo": round(low + i / bins * span, 2),
-                "hi": round(low + (i + 1) / bins * span, 2),
+                "count": c,
             }
             for i, c in enumerate(counts)
         ]
-        band["consensus_lo"] = round(low + lo_i / bins * span, 2)
-        band["consensus_hi"] = round(low + (hi_i + 1) / bins * span, 2)
+        band["consensus_lo"] = round(low + lo_i / bins * arange, 2)
+        band["consensus_hi"] = round(low + (hi_i + 1) / bins * arange, 2)
         band["consensus_count"] = sum(counts[lo_i : hi_i + 1])
-        band["consensus_lo_pct"] = round(lo_i / bins * 100, 1)
-        band["consensus_hi_pct"] = round((hi_i + 1) / bins * 100, 1)
         band["n"] = len(vals)
     return band
 

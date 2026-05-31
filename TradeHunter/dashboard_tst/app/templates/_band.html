@@ -1,36 +1,43 @@
-{# Analyst low->high band (bare — caller supplies the box). Heat = concentration
-   of analyst targets in the consensus zone (neon, peak=red). Markers: MBP, MATP,
-   and the live current price. Context: band #}
+{# Analyst band. The bar's range extends past the analyst low->high to include
+   the current price, so an out-of-range price shows proportionately. Heat =
+   target concentration; markers: MBP, MATP, current. Context: band #}
 {% if band %}
 <div class="select-none">
-  {# row above the bar: current price #}
+  {# current price label (above) #}
   <div class="relative h-4 text-[11px]">
     {% if band.current_pct is not none %}
     <span class="absolute -translate-x-1/2 text-amber-300 font-medium whitespace-nowrap" style="left: {{ band.current_pct }}%">&#9660; {{ "%.2f"|format(band.current) }}</span>
     {% endif %}
   </div>
 
-  {# the bar: heatmap zone + low/high inside + markers #}
-  <div class="relative h-9 rounded-md overflow-hidden flex bg-slate-800 ring-1 ring-slate-700">
-    {% if band.bins %}
-      {% for b in band.bins %}<div class="h-full" style="width: {{ b.width }}%; background: {{ b.color }}{% if b.color != 'transparent' %}; box-shadow: 0 0 10px {{ b.color }}{% endif %}"></div>{% endfor %}
+  {# the bar (display range) #}
+  <div class="relative h-9 rounded-md bg-slate-900 ring-1 ring-slate-700 overflow-hidden">
+    {# analyst low->high sub-range backdrop #}
+    {% if band.low_pct is not none and band.high_pct is not none %}
+    <div class="absolute top-0 h-full bg-slate-700/50 border-x border-slate-600" style="left: {{ band.low_pct }}%; width: {{ (band.high_pct - band.low_pct) }}%"></div>
     {% endif %}
-    <span class="absolute left-2 top-1/2 -translate-y-1/2 text-[11px] text-slate-300" style="text-shadow:0 1px 2px #000">{{ "%.0f"|format(band.low) }}</span>
-    <span class="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-slate-300" style="text-shadow:0 1px 2px #000">{{ "%.0f"|format(band.high) }}</span>
+    {# concentration heatmap bins (only the consensus zone is coloured) #}
+    {% if band.bins %}
+      {% for b in band.bins %}{% if b.color != 'transparent' %}<div class="absolute top-0 h-full" style="left: {{ b.lo_pct }}%; width: {{ (b.hi_pct - b.lo_pct) }}%; background: {{ b.color }}; box-shadow: 0 0 10px {{ b.color }}"></div>{% endif %}{% endfor %}
+    {% endif %}
+    {# low / high labels at the analyst-range edges (inside the bar) #}
+    {% if band.low_pct is not none %}<span class="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 text-[10px] text-slate-200" style="left: {{ band.low_pct }}%; text-shadow:0 1px 2px #000">{{ "%.0f"|format(band.low) }}</span>{% endif %}
+    {% if band.high_pct is not none %}<span class="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 text-[10px] text-slate-200" style="left: {{ band.high_pct }}%; text-shadow:0 1px 2px #000">{{ "%.0f"|format(band.high) }}</span>{% endif %}
+    {# markers #}
     {% if band.mbp_pct is not none %}<div class="absolute top-0 h-full w-px bg-emerald-300" style="left: {{ band.mbp_pct }}%"></div>{% endif %}
     {% if band.matp_pct is not none %}<div class="absolute top-0 h-full w-px bg-slate-100" style="left: {{ band.matp_pct }}%"></div>{% endif %}
     {% if band.current_pct is not none %}<div class="absolute top-0 h-full w-0.5 bg-amber-400" style="left: {{ band.current_pct }}%"></div>{% endif %}
   </div>
 
-  {# row below the bar: MBP + MATP #}
+  {# MBP / MATP labels (below) #}
   <div class="relative h-4 mt-0.5 text-[11px]">
     {% if band.mbp_pct is not none %}<span class="absolute -translate-x-1/2 text-emerald-300 whitespace-nowrap" style="left: {{ band.mbp_pct }}%">MBP {{ "%.0f"|format(band.mbp) }}</span>{% endif %}
     {% if band.matp_pct is not none %}<span class="absolute -translate-x-1/2 text-slate-100 whitespace-nowrap" style="left: {{ band.matp_pct }}%">MATP {{ "%.0f"|format(band.matp) }}</span>{% endif %}
   </div>
 
   <p class="text-[11px] text-slate-500 mt-2">
-    Heat = analyst-target concentration{% if band.n %} &middot; consensus {{ "%.0f"|format(band.consensus_lo) }}&ndash;{{ "%.0f"|format(band.consensus_hi) }} ({{ band.consensus_count }}/{{ band.n }}){% endif %}
-    &middot; <span class="text-emerald-300">MBP</span> / <span class="text-slate-100">MATP</span> / <span class="text-amber-300">price</span> marked.
+    Shaded = analyst low&ndash;high; heat = target concentration{% if band.n %} (consensus {{ "%.0f"|format(band.consensus_lo) }}&ndash;{{ "%.0f"|format(band.consensus_hi) }}){% endif %}.
+    <span class="text-emerald-300">MBP</span> / <span class="text-slate-100">MATP</span> / <span class="text-amber-300">price</span> shown to scale.
   </p>
 </div>
 {% endif %}

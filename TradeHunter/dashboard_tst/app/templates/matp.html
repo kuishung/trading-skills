@@ -3,91 +3,6 @@
 {# desktop: full-width single-screen (panes scroll internally). mobile: page scrolls. #}
 {% block main_class %}flex-1 lg:min-h-0 w-full px-4 py-3 overflow-y-auto lg:overflow-hidden{% endblock %}
 
-{% macro trend_badge(t) %}
-  {% if t == "Uptrend" %}<span class="text-emerald-400">&#9650; up</span>
-  {% elif t == "Downtrend" %}<span class="text-rose-400">&#9660; down</span>
-  {% elif t == "Sideways" %}<span class="text-amber-400">&#8212; flat</span>
-  {% else %}<span class="text-slate-600">&middot;</span>{% endif %}
-{% endmacro %}
-
-{% macro signal_badge(s) %}
-  {% if s == "HOT" %}<span class="px-1.5 py-0.5 rounded text-xs bg-rose-500/15 text-rose-300">&#9679; HOT</span>
-  {% elif s == "WARM" %}<span class="px-1.5 py-0.5 rounded text-xs bg-amber-500/15 text-amber-300">&#9679; WARM</span>
-  {% elif s == "WATCHING" %}<span class="px-1.5 py-0.5 rounded text-xs bg-sky-500/15 text-sky-300">&#9675; watch</span>
-  {% else %}<span class="text-slate-700">&middot;</span>{% endif %}
-{% endmacro %}
-
-{% macro row(lv, filt_names, open_symbols, dim=false) %}
-<tr class="border-t border-slate-800 {{ 'opacity-50' if dim else '' }}">
-  <td class="px-3 py-2 font-medium">
-    <a href="/matp/{{ lv.symbol }}" class="text-emerald-400 hover:underline">{{ lv.symbol }}</a>
-    {% if lv.exchange %}<span class="text-slate-600 text-xs">{{ lv.exchange }}</span>{% endif %}
-    {% if lv.symbol in open_symbols %}<span class="text-amber-400 text-xs" title="refresh queued">&#8635;</span>{% endif %}
-  </td>
-  <td class="px-3 py-2 text-right tabular-nums">{{ "%.2f"|format(lv.matp) if lv.matp is not none else "-" }}</td>
-  <td class="px-3 py-2 text-right tabular-nums text-slate-300">{{ "%.2f"|format(lv.mbp) if lv.mbp is not none else "-" }}</td>
-  <td class="px-3 py-2">{{ trend_badge(lv.trend) }}</td>
-  <td class="px-3 py-2">{{ signal_badge(lv.signal) }}</td>
-  <td class="px-3 py-2 text-right text-slate-400 tabular-nums">
-    {% if lv.n_targets is not none %}{{ lv.n_targets }}{% if lv.n_targets <= 2 %}<span class="text-amber-400" title="low confidence">&#9888;</span>{% endif %}{% else %}-{% endif %}
-  </td>
-  <td class="px-3 py-2 text-slate-400 tabular-nums">{{ lv.last_earnings_date or "-" }}</td>
-  <td class="px-3 py-2 text-slate-500 text-xs">{{ filt_names.get(lv.filter_id, "") if lv.filter_id else "" }}</td>
-  <td class="px-3 py-2 text-slate-500">{{ lv.as_of.strftime("%Y-%m-%d") if lv.as_of else "-" }}</td>
-</tr>
-{% endmacro %}
-
-{# ---- ticker grid: Sym · Trend · Signal · MBP, clickable rows ---- #}
-{% macro ticker_grid(tickers, open_symbols, sel) %}
-<div class="grid grid-cols-[1fr_auto_auto_auto] gap-x-2 px-2 pt-1 text-[10px] uppercase tracking-wide text-slate-600">
-  <span>Sym</span><span class="text-center">Trend</span><span class="text-center">Signal</span><span class="text-right">MBP</span>
-</div>
-{% for lv in tickers %}
-<a href="/matp?symbol={{ lv.symbol }}"
-   class="grid grid-cols-[1fr_auto_auto_auto] items-center gap-x-2 px-2 py-1 rounded {% if sel and sel.symbol == lv.symbol %}bg-emerald-500/15{% else %}hover:bg-slate-800/70{% endif %}">
-  <span class="{% if sel and sel.symbol == lv.symbol %}text-emerald-300{% else %}text-emerald-400{% endif %}">{{ lv.symbol }}{% if lv.symbol in open_symbols %} <span class="text-amber-400 text-xs">&#8635;</span>{% endif %}</span>
-  <span class="text-center">{{ trend_badge(lv.trend) }}</span>
-  <span class="text-center">{{ signal_badge(lv.signal) }}</span>
-  <span class="text-right text-xs text-slate-500 tabular-nums">{{ "%.0f"|format(lv.mbp) if lv.mbp is not none else "-" }}</span>
-</a>
-{% endfor %}
-{% endmacro %}
-
-{# ---- watchlist rail: each active filter, expandable to its tickers ---- #}
-{% macro watchlist_rail(watchlists, unfiled, user, open_filter_ids, open_symbols, sel=None) %}
-<div class="space-y-2 text-sm">
-  {% for w in watchlists %}
-  <details class="rounded-lg border border-slate-800 bg-slate-900/40" open>
-    <summary class="cursor-pointer px-3 py-2 flex items-center justify-between hover:bg-slate-800/40 rounded-lg">
-      <span class="text-slate-200 truncate">{{ w.filter.description }}</span>
-      <span class="text-xs text-slate-500 ml-2 shrink-0">{{ w.tickers|length }}</span>
-    </summary>
-    <div class="px-1 pb-2">
-      {% if w.filter.id in open_filter_ids %}
-      <div class="px-1 py-1 text-xs text-amber-300">&#8635; queued</div>
-      {% endif %}
-      {% if w.tickers %}{{ ticker_grid(w.tickers, open_symbols, sel) }}
-      {% else %}
-      <p class="px-2 py-1 text-xs text-slate-600">No tickers yet.</p>
-      {% endif %}
-    </div>
-  </details>
-  {% endfor %}
-  {% if unfiled %}
-  <details class="rounded-lg border border-slate-800 bg-slate-900/40" open>
-    <summary class="cursor-pointer px-3 py-2 flex items-center justify-between hover:bg-slate-800/40 rounded-lg">
-      <span class="text-slate-300">Individual tickers</span>
-      <span class="text-xs text-slate-500 ml-2 shrink-0">{{ unfiled|length }}</span>
-    </summary>
-    <div class="px-1 pb-2">{{ ticker_grid(unfiled, open_symbols, sel) }}</div>
-  </details>
-  {% endif %}
-  {% if not watchlists and not unfiled %}
-  <p class="text-xs text-slate-500 px-1">No active watchlists. Add a Finviz filter on the <a href="/finviz" class="text-emerald-400 hover:underline">Finviz</a> page.</p>
-  {% endif %}
-</div>
-{% endmacro %}
-
 {% block content %}
 <div class="lg:h-full flex flex-col">
 
@@ -151,30 +66,22 @@
 {# ── live run progress (separate panel; everyone sees it) ── #}
 <div id="runsbox" class="shrink-0 empty:hidden mb-2" hx-get="/matp/runs" hx-trigger="load, every 5s" hx-swap="innerHTML"></div>
 
-{# mobile: watchlists collapse into a dropdown above the board #}
+{% set wl_url = "/matp/watchlist?wl=" ~ (sel_wl or "") ~ "&sym=" ~ (sel.symbol if sel else "") %}
+
+{# mobile: watchlists collapse into a dropdown above the board (lazy-loaded) #}
 <details class="lg:hidden mb-2 shrink-0 rounded-lg border border-slate-800 bg-slate-900/40">
   <summary class="cursor-pointer px-3 py-2 text-slate-300 select-none">Watchlists &#9662;</summary>
-  <div class="p-2">{{ watchlist_rail(shown_watchlists, unfiled, user, open_filter_ids, open_symbols, sel) }}</div>
+  <div class="p-2" hx-get="{{ wl_url }}" hx-trigger="load" hx-swap="innerHTML">
+    <div class="text-xs text-slate-500 px-2 py-2">Loading&hellip;</div>
+  </div>
 </details>
 
 <div class="lg:flex lg:gap-4 lg:flex-1 lg:min-h-0">
-  {# MIDDLE: watchlist panel #}
+  {# MIDDLE: watchlist panel — lazy-loads the grid with runtime trend/signal #}
   <aside class="hidden lg:flex lg:flex-col lg:w-72 lg:shrink-0 lg:h-full">
-    <div class="flex-1 min-h-0 overflow-y-auto pr-1">
-      {{ watchlist_rail(shown_watchlists, unfiled, user, open_filter_ids, open_symbols, sel) }}
-      {% if dropped %}
-      <details class="mt-2 rounded-lg border border-slate-800 bg-slate-900/40">
-        <summary class="cursor-pointer px-3 py-2 text-xs text-slate-500 select-none">Dropped from filter ({{ dropped|length }})</summary>
-        <ul class="px-2 pb-2">
-          {% for lv in dropped %}
-          <li><a href="/matp?symbol={{ lv.symbol }}" class="flex items-center justify-between px-2 py-1 rounded hover:bg-slate-800/70 opacity-70">
-            <span class="text-slate-400">{{ lv.symbol }}</span>
-            <span class="text-xs text-slate-600 tabular-nums">MBP {{ "%.0f"|format(lv.mbp) if lv.mbp is not none else "-" }}</span>
-          </a></li>
-          {% endfor %}
-        </ul>
-      </details>
-      {% endif %}
+    <div class="flex-1 min-h-0 overflow-y-auto pr-1"
+         hx-get="{{ wl_url }}" hx-trigger="load" hx-swap="innerHTML">
+      <div class="text-xs text-slate-500 px-2 py-3">Loading watchlist&hellip;</div>
     </div>
   </aside>
 

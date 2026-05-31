@@ -119,6 +119,11 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-05-31 — v2.37: runtime Trend/Signal (lazy, non-blocking) + band extends past range
+
+- **Watchlist Trend/Signal are now RUNTIME-detected** (from `resources.patterns` on live daily bars), but **lazy-loaded so the dashboard never freezes**: the page renders instantly, then the watchlist grid loads via one HTMX request (`GET /matp/watchlist`) that computes signals in a **bounded thread pool (8) with a 15-min per-symbol cache**. Trend (up/down/sideways) + a bounce-style Signal (HOT/WARM/WATCHING) per ticker; falls back to the stored value if a live calc fails. Macros moved to `_wl_macros.html` + fragment `_watchlist.html`.
+- **Analyst band extends past the analyst range** to include the current price: the bar's display range now spans `min(low,price,mbp) … max(high,price,matp)` (+pad), so an **out-of-range price is shown proportionately** (distance to scale) instead of clamped at the edge. The analyst low–high is a shaded sub-segment; bins/MBP/MATP/price are absolute-positioned within the display range. `_build_band` reworked; verified price-below / price-above / price-inside all position correctly.
+
 ### 2026-05-31 — v2.36: scale to 110% + hover-only scrollbars
 
 - Dropped the global scale from 130% → **110%** (`html { font-size: 110% }`).
