@@ -281,12 +281,21 @@ def _build_band(low, high, mbp, matp, prices=None, bins=18):
             counts[min(bins - 1, max(0, idx))] += 1
         mx = max(counts) or 1
         bw = 100.0 / bins
+
+        def _heat(c):
+            # heatmap: empty -> transparent, low -> blue, high -> red (hue 240->0)
+            if not c:
+                return "transparent"
+            hue = round(240 * (1 - c / mx))
+            return "hsl(%d, 85%%, 55%%)" % hue
+
         band["bins"] = [
             {
                 "left": round(i * bw, 3),
                 "width": round(bw, 3),
-                "h": round(c / mx * 100),  # bar height as % of the tallest
+                "h": round(c / mx * 100),
                 "count": c,
+                "color": _heat(c),
                 "lo": round(low + i / bins * span, 2),
                 "hi": round(low + (i + 1) / bins * span, 2),
             }

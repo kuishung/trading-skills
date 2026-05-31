@@ -119,6 +119,12 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-05-31 — v2.30: analyst band as a concentration heatmap; targets table removed
+
+- **Band reworked into a thick heatmap bar** (`h-8`): each price bucket is coloured by how many analyst targets fall in it — **blue→red, red = most concentrated** (`_build_band` adds an HSL `color` per bin, hue 240→0). The **low/high labels now sit inside the bar**; MBP/MATP markers + labels above/below.
+- **Removed the inline analyst-targets table** from the right panel; the **"Analyst targets"** button on the band still opens the full list in the pop-out modal.
+- Verified: heatmap colours (densest bucket → red), low/high inside, table gone, modal button intact.
+
 ### 2026-05-31 — v2.29: top nav bar + ticker autocomplete; Feedback removed
 
 - **Nav relocated to a top bar.** The left sidebar is gone; `base.html` is now a top header (logo + horizontal nav + user menu) over full-width content (no new panels added — the MATP watchlist/chart reclaim the freed width). Removed the mobile hamburger (nav fits the top bar).

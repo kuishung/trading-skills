@@ -1,27 +1,38 @@
-{# Analyst low->high band (bare — caller provides the box). The shaded green
-   segment = where the majority of analyst targets concentrate. Context: band #}
+{# Analyst low->high band (bare — caller supplies the box). Colour = concentration
+   of analyst targets across the price range (blue -> red, red = most). Context: band #}
 {% if band %}
 <div>
-  <div class="flex items-center justify-between text-xs text-slate-500 mb-6">
-    <span>low {{ "%.0f"|format(band.low) }}</span>
-    {% if band.n %}<span class="text-emerald-300">consensus {{ "%.0f"|format(band.consensus_lo) }}&ndash;{{ "%.0f"|format(band.consensus_hi) }} ({{ band.consensus_count }}/{{ band.n }})</span>{% endif %}
-    <span>high {{ "%.0f"|format(band.high) }}</span>
-  </div>
-  <div class="relative h-3 rounded-full bg-gradient-to-r from-slate-700 via-slate-600 to-slate-700">
-    {# concentration zone: colour band where most targets cluster #}
-    {% if band.n and band.consensus_lo_pct is not none %}
-    <div class="absolute top-0 h-3 rounded bg-emerald-400/40 border-x border-emerald-300/60"
-         style="left: {{ band.consensus_lo_pct }}%; width: {{ (band.consensus_hi_pct - band.consensus_lo_pct) }}%"></div>
-    {% endif %}
+  {# MBP label row (above the bar) #}
+  <div class="relative h-4 text-[11px]">
     {% if band.mbp_pct is not none %}
-    <div class="absolute -top-5 -translate-x-1/2 text-[11px] text-emerald-300 whitespace-nowrap" style="left: {{ band.mbp_pct }}%">MBP {{ "%.0f"|format(band.mbp) }}</div>
-    <div class="absolute top-0 h-3 w-0.5 -translate-x-1/2 bg-emerald-300" style="left: {{ band.mbp_pct }}%"></div>
+    <span class="absolute -translate-x-1/2 text-emerald-300 whitespace-nowrap" style="left: {{ band.mbp_pct }}%">MBP {{ "%.0f"|format(band.mbp) }}</span>
+    {% endif %}
+  </div>
+
+  {# thick heatmap bar with low/high inside #}
+  <div class="relative h-8 rounded-md overflow-hidden flex bg-slate-800">
+    {% if band.bins %}
+      {% for b in band.bins %}<div class="h-full" style="width: {{ b.width }}%; background: {{ b.color }}"></div>{% endfor %}
+    {% else %}
+      <div class="h-full w-full bg-gradient-to-r from-slate-700 via-slate-600 to-slate-700"></div>
+    {% endif %}
+    <span class="absolute left-2 top-1/2 -translate-y-1/2 text-[11px] font-medium text-slate-100" style="text-shadow:0 1px 3px rgba(0,0,0,.9)">low {{ "%.0f"|format(band.low) }}</span>
+    <span class="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-medium text-slate-100" style="text-shadow:0 1px 3px rgba(0,0,0,.9)">high {{ "%.0f"|format(band.high) }}</span>
+    {% if band.mbp_pct is not none %}
+    <div class="absolute top-0 h-full w-0.5 bg-emerald-200" style="left: {{ band.mbp_pct }}%"></div>
     {% endif %}
     {% if band.matp_pct is not none %}
-    <div class="absolute -bottom-6 -translate-x-1/2 text-[11px] text-slate-100 whitespace-nowrap" style="left: {{ band.matp_pct }}%">MATP {{ "%.0f"|format(band.matp) }}</div>
-    <div class="absolute top-0 h-3 w-0.5 -translate-x-1/2 bg-slate-100" style="left: {{ band.matp_pct }}%"></div>
+    <div class="absolute top-0 h-full w-0.5 bg-white" style="left: {{ band.matp_pct }}%"></div>
     {% endif %}
   </div>
-  <p class="text-[11px] text-slate-600 mt-7">The green zone marks where most analyst targets concentrate; MBP &amp; MATP marked on the bar.</p>
+
+  {# MATP label row (below the bar) #}
+  <div class="relative h-4 text-[11px]">
+    {% if band.matp_pct is not none %}
+    <span class="absolute -translate-x-1/2 text-slate-100 whitespace-nowrap" style="left: {{ band.matp_pct }}%">MATP {{ "%.0f"|format(band.matp) }}</span>
+    {% endif %}
+  </div>
+
+  <p class="text-[11px] text-slate-600 mt-1">Colour = analyst-target concentration (blue&rarr;red, red = most){% if band.n %}; consensus {{ "%.0f"|format(band.consensus_lo) }}&ndash;{{ "%.0f"|format(band.consensus_hi) }} ({{ band.consensus_count }}/{{ band.n }}){% endif %}.</p>
 </div>
 {% endif %}
