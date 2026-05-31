@@ -42,16 +42,18 @@ if ($changed -match "dashboard_tst/app/requirements.txt") {
 }
 
 Write-Host "Restarting $TaskName ..." -ForegroundColor Cyan
-# ScheduledTasks module has no Restart-* cmdlet; stop then start.
-Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-# Stop-ScheduledTask kills the wrapper script but can ORPHAN the uvicorn
-# child still holding the port -> the fresh start then can't bind and the
-# stale/hung process keeps serving old code. Free the port explicitly.
+# Order matters. FREE THE PORT FIRST by killing the (possibly orphaned)
+# uvicorn directly -- this is reliable and makes the task's wrapper exit on
+# its own. Doing this BEFORE stopping the task avoids the hang we hit when
+# Stop-ScheduledTask blocked waiting on that child process.
 $busy = (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue).OwningProcess | Select-Object -Unique
 if ($busy) {
-    Write-Host "Freeing port $Port (orphaned PID(s): $($busy -join ','))" -ForegroundColor Yellow
+    Write-Host "Freeing port $Port (PID(s): $($busy -join ','))" -ForegroundColor Yellow
     $busy | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }
 }
+# Non-blocking task stop (schtasks /End returns immediately; Stop-ScheduledTask
+# can wait on a stuck process tree). Ignore output/errors -- best effort.
+& schtasks.exe /End /TN $TaskName *> $null
 Start-Sleep -Seconds 2
 Start-ScheduledTask -TaskName $TaskName
 Write-Host "Done. Site updated." -ForegroundColor Green

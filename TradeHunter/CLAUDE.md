@@ -579,21 +579,37 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
   8000 — `deploy/update.ps1` now frees the port before restart. If a deploy
   "freezes"/old code persists, kill the PID on :8000 then start the task.
 
-**Post-push rule (user, set 2026-05-30):** EVERY time the user says "push"
-(and a push happens), ALSO give them the **Hermes pull-and-restart command**
-to copy-paste over RDP. Must be **PowerShell 5.1 compatible — no `&&`** (use
-separate lines or `;`). Canonical form:
+**Post-push rule (user, set 2026-05-30; reinforced):** EVERY time a push
+happens, ALSO give the user the **complete, in-order, copy-paste Hermes
+deploy script** — the whole thing, every time, so they never have to
+reassemble it or trial-and-error it. Must be **PowerShell 5.1 compatible —
+no `&&`** (separate lines or `;`). **A Hermes pull is ALWAYS paired with a
+restart** — a bare `git pull` only updates files; the running uvicorn keeps
+serving OLD code until restarted (no prod auto-reload). NEVER hand Hermes a
+plain `git pull` alone.
+
+**Canonical Hermes deploy script (give this in full after every push):**
 
 ```powershell
 cd C:\trading-skills
 git pull --ff-only
-cd C:\trading-skills\TradeHunter\dashboard_tst
-powershell -ExecutionPolicy Bypass -File deploy\update.ps1
+Get-NetTCPConnection -LocalPort 8000 -State Listen -EA SilentlyContinue |
+  Select-Object -ExpandProperty OwningProcess -Unique |
+  ForEach-Object { Stop-Process -Id $_ -Force -EA SilentlyContinue }
+schtasks /End /TN TST-Dashboard-Web
+Start-Sleep 2
+Start-ScheduledTask -TaskName TST-Dashboard-Web
+Start-Sleep 15
+Invoke-RestMethod http://localhost:8000/status   # confirm version = latest
 ```
 
-(`update.ps1` pulls + frees port 8000 + restarts; the bare two-line pull is
-the minimum if they only want code synced. The autopull task also pulls
-every ~5 min once installed.)
+This is the bulletproof sequence: pull → free port 8000 (kill orphaned
+uvicorn) → non-blocking task stop (`schtasks /End`, NOT `Stop-ScheduledTask`
+which can hang on the orphan) → start → verify `/status`. `deploy/update.ps1`
+wraps exactly this, so once it's deployed `update.ps1` alone is equivalent —
+but always hand over the full ordered script above unless the user says
+otherwise. (The autopull task also pulls + restarts every ~5 min once
+installed.)
 
 ## What NOT to do
 

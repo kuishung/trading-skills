@@ -111,6 +111,10 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-05-30 — v1.3: harden update.ps1 restart (no more deploy hangs)
+
+`deploy/update.ps1` could hang on deploy: it called `Stop-ScheduledTask` **before** freeing port 8000, and `Stop-ScheduledTask` can block waiting on the orphaned uvicorn child — so it never reached the port-free step. Reordered the restart to **free the port first** (kill the listener on 8000 directly, which also lets the task wrapper exit), then a **non-blocking** stop via `schtasks /End`, then start. Deploy is now reliably one command (`update.ps1`) with no manual port-killing.
+
 ### 2026-05-30 — v1.2: straight-to-login root + hand-maintained version
 
 - **Root goes straight to the login page.** `GET /` now redirects: unauthenticated → `/login` (no marketing/hero landing), approved members → `/matp`, pending/disabled → the awaiting-approval page.
