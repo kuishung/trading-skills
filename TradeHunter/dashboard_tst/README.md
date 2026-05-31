@@ -119,6 +119,11 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-05-31 — v2.27: TV link in the legend line + opaque chart background
+
+- Moved the **"open TradingView chart →"** link out of the widget overlay into the **description/legend line** below the chart.
+- Made the **chart background opaque** (`layout.background` `#0f172a`, panel `bg-slate-900`) so the page's grid-pattern background no longer bleeds through and clashes with the chart's own gridlines.
+
 ### 2026-05-31 — v2.26: connect the TradingView header, chart, and analyst band
 
 The TradingView ticker header, the price chart, and the analyst consensus band are now **one connected panel** — a single rounded border with thin `border-b` dividers between the three sections (no gaps/separate boxes). `_band.html` is now "bare" (caller supplies the box); `_price_chart.html` takes an optional `chart_band` and renders the band as the panel's third section with the "Analyst targets" button. Board passes `chart_band=sel_band`; the detail page wraps the bare band in its own box. Verified the connected panel + detail page.
