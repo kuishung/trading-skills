@@ -30,8 +30,8 @@
       <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#ef4444"></span>EMA20</span>
       <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#22c55e"></span>EMA50</span>
       <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#a855f7"></span>EMA200</span>
-      <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#e2e8f0"></span>MATP <span class="text-slate-200 tabular-nums">{{ "%.2f"|format(chart_matp) if chart_matp is not none else "-" }}</span></span>
-      <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#34d399"></span>MBP <span class="text-emerald-300 tabular-nums">{{ "%.2f"|format(chart_mbp) if chart_mbp is not none else "-" }}</span></span>
+      <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#f97316"></span>MATP <span class="text-orange-300 tabular-nums">{{ "%.2f"|format(chart_matp) if chart_matp is not none else "-" }}</span></span>
+      <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#15803d"></span>MBP <span class="text-green-500 tabular-nums">{{ "%.2f"|format(chart_mbp) if chart_mbp is not none else "-" }}</span></span>
       {% if chart_as_of %}<span class="text-slate-500">&middot; calculated {{ chart_as_of.strftime("%Y-%m-%d %H:%M") }}</span>{% endif %}
       {% if chart_earnings %}<span class="text-slate-500">&middot; earnings {{ chart_earnings }}</span>{% endif %}
       <a href="https://www.tradingview.com/chart/?symbol={{ tv_symbol }}" target="_blank" rel="noopener" class="text-sky-300 hover:text-sky-200">&middot; open TradingView chart &rarr;</a>
@@ -112,8 +112,8 @@
       addEma(chart, bars, 20, '#ef4444');   // EMA20 red
       addEma(chart, bars, 50, '#22c55e');   // EMA50 green
       addEma(chart, bars, 200, '#a855f7');  // EMA200 purple
-      if (matp != null) s.createPriceLine({ price: matp, color: '#e2e8f0', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'MATP' });
-      if (mbp != null) s.createPriceLine({ price: mbp, color: '#34d399', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'MBP' });
+      if (matp != null) s.createPriceLine({ price: matp, color: '#f97316', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'MATP' });
+      if (mbp != null) s.createPriceLine({ price: mbp, color: '#15803d', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'MBP' });
       chart.timeScale().fitContent();
     })
     .catch(empty);

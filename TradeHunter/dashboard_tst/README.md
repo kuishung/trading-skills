@@ -119,6 +119,12 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-05-31 — v2.39: colour tweaks (MATP orange, MBP dark green, white watchlist text)
+
+- **MATP** is now **orange** (`#f97316`) — chart price line, band marker/label, legend.
+- **MBP** is now **dark green** (`#15803d` / green-600) — chart price line, band marker/label, legend.
+- **Watchlist text → white** (ticker symbol + price columns) for readability.
+
 ### 2026-05-31 — v2.38: watchlist All / Selective Tickers / Disqualified split; smaller chart heading
 
 - **Watchlist selector** gains **All** (every ticker in the DB) and **Selective Tickers** (ad-hoc tickers with no Finviz filter), plus each filter. `?wl=all|individual|<id>`; default is **All**. The **Run** button only shows for a specific filter (not All/Selective).

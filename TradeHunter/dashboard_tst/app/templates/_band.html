@@ -24,20 +24,20 @@
     {% if band.low_pct is not none %}<span class="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 text-[10px] text-slate-200" style="left: {{ band.low_pct }}%; text-shadow:0 1px 2px #000">{{ "%.0f"|format(band.low) }}</span>{% endif %}
     {% if band.high_pct is not none %}<span class="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 text-[10px] text-slate-200" style="left: {{ band.high_pct }}%; text-shadow:0 1px 2px #000">{{ "%.0f"|format(band.high) }}</span>{% endif %}
     {# markers #}
-    {% if band.mbp_pct is not none %}<div class="absolute top-0 h-full w-px bg-emerald-300" style="left: {{ band.mbp_pct }}%"></div>{% endif %}
-    {% if band.matp_pct is not none %}<div class="absolute top-0 h-full w-px bg-slate-100" style="left: {{ band.matp_pct }}%"></div>{% endif %}
+    {% if band.mbp_pct is not none %}<div class="absolute top-0 h-full w-px bg-green-600" style="left: {{ band.mbp_pct }}%"></div>{% endif %}
+    {% if band.matp_pct is not none %}<div class="absolute top-0 h-full w-px bg-orange-500" style="left: {{ band.matp_pct }}%"></div>{% endif %}
     {% if band.current_pct is not none %}<div class="absolute top-0 h-full w-0.5 bg-amber-400" style="left: {{ band.current_pct }}%"></div>{% endif %}
   </div>
 
   {# MBP / MATP labels (below) #}
   <div class="relative h-4 mt-0.5 text-[11px]">
-    {% if band.mbp_pct is not none %}<span class="absolute -translate-x-1/2 text-emerald-300 whitespace-nowrap" style="left: {{ band.mbp_pct }}%">MBP {{ "%.0f"|format(band.mbp) }}</span>{% endif %}
-    {% if band.matp_pct is not none %}<span class="absolute -translate-x-1/2 text-slate-100 whitespace-nowrap" style="left: {{ band.matp_pct }}%">MATP {{ "%.0f"|format(band.matp) }}</span>{% endif %}
+    {% if band.mbp_pct is not none %}<span class="absolute -translate-x-1/2 text-green-500 whitespace-nowrap" style="left: {{ band.mbp_pct }}%">MBP {{ "%.0f"|format(band.mbp) }}</span>{% endif %}
+    {% if band.matp_pct is not none %}<span class="absolute -translate-x-1/2 text-orange-400 whitespace-nowrap" style="left: {{ band.matp_pct }}%">MATP {{ "%.0f"|format(band.matp) }}</span>{% endif %}
   </div>
 
   <p class="text-[11px] text-slate-500 mt-2">
     Shaded = analyst low&ndash;high; heat = target concentration{% if band.n %} (consensus {{ "%.0f"|format(band.consensus_lo) }}&ndash;{{ "%.0f"|format(band.consensus_hi) }}){% endif %}.
-    <span class="text-emerald-300">MBP</span> / <span class="text-slate-100">MATP</span> / <span class="text-amber-300">price</span> shown to scale.
+    <span class="text-green-500">MBP</span> / <span class="text-orange-400">MATP</span> / <span class="text-amber-300">price</span> shown to scale.
   </p>
 </div>
 {% endif %}
