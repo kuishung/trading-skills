@@ -26,7 +26,7 @@ _UA = (
 _HOSTS = ("query1.finance.yahoo.com", "query2.finance.yahoo.com")
 
 
-def fetch_daily_ohlc(symbol: str, *, rng: str = "1y") -> list[dict]:
+def fetch_daily_ohlc(symbol: str, *, rng: str = "2y") -> list[dict]:
     sym = symbol.strip().upper()
     if not sym:
         return []

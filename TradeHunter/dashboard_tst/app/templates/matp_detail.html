@@ -177,4 +177,50 @@
 {% else %}
 <p class="text-slate-500 text-sm">No analyst targets recorded yet &mdash; the agent will push them with the next MATP run.</p>
 {% endif %}
+
+<h2 class="text-sm font-medium text-slate-300 mb-2 mt-8">Run archive
+  <span class="text-xs text-slate-500">(each saved run &mdash; exactly what was extracted that day)</span>
+</h2>
+{% if archive_runs %}
+<div class="space-y-2">
+  {% for r in archive_runs %}
+  <details class="rounded-lg border border-slate-800 bg-slate-900/40">
+    <summary class="cursor-pointer px-3 py-2 flex flex-wrap items-center gap-x-3 gap-y-1 hover:bg-slate-800/40 rounded-lg text-sm">
+      <span class="text-slate-200">{{ (r.saved_at[:16] | replace("T", " ")) if r.saved_at else r.file }}</span>
+      <span class="text-xs text-slate-500">MATP {{ "%.2f"|format(r.matp) if r.matp is not none else "-" }} &middot; MBP {{ "%.2f"|format(r.mbp) if r.mbp is not none else "-" }} &middot; {{ r.targets|length }} targets</span>
+      {% if r.source %}<span class="text-[11px] text-slate-600">{{ r.source }}</span>{% endif %}
+    </summary>
+    <div class="px-3 pb-3">
+      <p class="text-[11px] text-slate-500 mb-2">Earnings: {{ r.last_earnings_date or "unknown" }} &middot; file: <span class="text-slate-600">{{ r.file }}</span></p>
+      {% if r.targets %}
+      <table class="w-full text-sm border border-slate-800">
+        <thead class="bg-slate-900 text-slate-400">
+          <tr>
+            <th class="text-left px-3 py-1.5">Brokerage</th>
+            <th class="text-left px-3 py-1.5">Issued</th>
+            <th class="text-right px-3 py-1.5">Target</th>
+            <th class="text-left px-3 py-1.5">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for t in r.targets %}
+          <tr class="border-t border-slate-800 {{ '' if t.included else 'opacity-50' }}">
+            <td class="px-3 py-1.5">{{ t.brokerage or "-" }}</td>
+            <td class="px-3 py-1.5 text-slate-400">{{ t.target_date or "-" }}</td>
+            <td class="px-3 py-1.5 text-right tabular-nums">{{ "%.2f"|format(t.target_price) if t.target_price is not none else "-" }}</td>
+            <td class="px-3 py-1.5">{% if t.included %}<span class="text-emerald-400">&#9679; post-earnings</span>{% else %}<span class="text-slate-500">&#9675; pre (dropped)</span>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="text-xs text-slate-600">No analyst targets captured in this run.</p>
+      {% endif %}
+    </div>
+  </details>
+  {% endfor %}
+</div>
+{% else %}
+<p class="text-slate-500 text-sm">No archived runs for {{ symbol }} yet &mdash; saved to the MATP folder on each run.</p>
+{% endif %}
 {% endblock %}

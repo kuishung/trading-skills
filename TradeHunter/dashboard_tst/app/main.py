@@ -42,6 +42,15 @@ log = logging.getLogger("dashboard_tst")
 APP_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
 
+# Expose the build version as a Jinja global on every templates env, so the
+# sidebar logo (base.html) shows "v<version>" without each route passing it.
+for _routes_mod in (
+    auth_routes, matp_routes, studies_routes,
+    finviz_routes, feedback_routes, admin_routes,
+):
+    _routes_mod.templates.env.globals["version"] = APP_VERSION
+templates.env.globals["version"] = APP_VERSION
+
 
 def _bootstrap_admin_password() -> None:
     """password mode: seed an approved admin from env on first startup."""

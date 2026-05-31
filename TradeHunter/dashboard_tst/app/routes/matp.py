@@ -223,6 +223,42 @@ def matp_detail(
         }
         for t in rows
     ]
+    # archived runs that included this ticker (raw extraction, newest first)
+    from ..services.matp_archive import runs_for_symbol
+
+    archive_runs = []
+    for r in runs_for_symbol(sym):
+        it = r["item"]
+        earn_r = it.get("last_earnings_date")
+        rows_r = sorted(
+            it.get("targets", []),
+            key=lambda t: (t.get("target_date") or ""),
+            reverse=True,
+        )
+        archive_runs.append(
+            {
+                "file": r["file"],
+                "saved_at": r["saved_at"],
+                "source": r["source"],
+                "filter_desc": r["filter_desc"],
+                "matp": it.get("matp"),
+                "mbp": it.get("mbp"),
+                "n_targets": it.get("n_targets"),
+                "last_earnings_date": earn_r,
+                "targets": [
+                    {
+                        "brokerage": t.get("brokerage"),
+                        "target_price": t.get("target_price"),
+                        "target_date": t.get("target_date"),
+                        "included": bool(
+                            earn_r and t.get("target_date") and t["target_date"] > earn_r
+                        ),
+                    }
+                    for t in rows_r
+                ],
+            }
+        )
+
     # latest ad-hoc refresh request for this ticker (status banner)
     last_req = (
         db.query(MATPRefreshRequest)
@@ -242,6 +278,7 @@ def matp_detail(
             "earnings": earn,
             "last_req": last_req,
             "req_open": bool(last_req and last_req.status in _OPEN_STATES),
+            "archive_runs": archive_runs,
         },
     )
 

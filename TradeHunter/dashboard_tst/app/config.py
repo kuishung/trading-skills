@@ -68,6 +68,11 @@ class Settings:
     # agent pushes MATP levels here). Unset -> those endpoints return 503.
     ingest_api_key: str | None = field(default_factory=lambda: os.environ.get("TST_INGEST_API_KEY"))
 
+    # Where to archive each MATP run as a JSON file (the raw extraction, the
+    # "cream"). On Hermes set this to the Resilio-synced MarketData path, e.g.
+    # C:\HermesSync\MarketData\MATP. Empty -> defaults to <TradeHunter>/data/MATP.
+    matp_dir: str | None = field(default_factory=lambda: os.environ.get("TST_MATP_DIR"))
+
     # New-user policy (google mode). Default OFF: a first-time sign-in lands
     # 'pending' (role = member) and must be APPROVED by an admin before they
     # get access; the admin can also change their role afterward. Set

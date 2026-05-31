@@ -1,6 +1,6 @@
 ---
 name: matp
-version: 1.3.0
+version: 1.4.0
 description: Compute the faithful Median Analyst Target Price (MATP) + Max Buy Price (MBP) for TradeHunter and push the results to the platform. Use when asked to "refresh MATP", "run MATP", "update target prices", or on the scheduled cron. Reads the active Finviz screener filters from TradeHunter's API, expands them to a ticker universe, and for each ticker looks up the latest earnings date + analyst price targets on MarketBeat, keeps only targets issued AFTER the latest earnings, computes the median (MATP) and MBP = MATP/1.15, then POSTs the rows to TradeHunter's /api/matp endpoint. Does NOT write CSV / Google Sheets / Telegram -- output is the API push only.
 ---
 
@@ -61,7 +61,13 @@ For each request:
      `/api/matp` as a single item, **no `filter_id`, no `prune`** (a single
      ticker is not a universe — pruning would wrongly drop everything else).
    - `scope:"filter"` → run Stages 1-5 for that filter's `filter_url` (the full
-     universe). Push via `/api/matp` with `filter_id` + `prune:true`.
+     universe). **Push incrementally so the table fills live:** as each ticker
+     (or small batch) is computed, `POST /api/matp` with that batch +
+     `filter_id` and **`final:false`** (NO `prune`) — these upsert the processed
+     tickers immediately (they appear on the board mid-run) and are NOT archived.
+     When the whole universe is done, send ONE closing push with the **full**
+     item list + `filter_id` + **`prune:true`** + **`final:true`** — that one
+     prunes the fallen-out tickers AND is saved as the run's archive file.
    - **Every few tickers**, update progress:
      `POST /api/refresh-queue/{id}/status` body `{"status":"running","progress_done":K}`
      (K = tickers finished so far). This drives the live progress bar; don't
@@ -157,9 +163,11 @@ Content-Type: application/json
 }
 ```
 - **`filter_id` + `prune: true`** on a full-universe run = enable drift tracking
-  for that filter. Send the COMPLETE ticker set for the filter in that one POST
-  (chunking a single filter across POSTs would falsely "drop" the chunks not in
-  the last call). Ad-hoc / per-ticker runs: omit both (no pruning).
+  for that filter. To fill the board live, push processed tickers incrementally
+  with **`final:false`** (no `prune`) as you go, then send ONE closing push with
+  the COMPLETE ticker set + `prune:true` + **`final:true`** (only that closing
+  push prunes fallen-out names AND is saved as the archive file). Ad-hoc /
+  per-ticker runs: omit `filter_id`/`prune` and leave `final:true` (default).
 - `mbp` optional (server recomputes MATP/1.15 if omitted) — but send it.
 - `trend` optional: `Uptrend` / `Sideways` / `Downtrend` if you classify it
   (else omit; a separate daily job may fill it).

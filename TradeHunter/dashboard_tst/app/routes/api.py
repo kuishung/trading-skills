@@ -156,6 +156,10 @@ class MatpIngest(BaseModel):
     # Per-ticker ad-hoc refreshes leave filter_id unset / prune=False.
     filter_id: int | None = None
     prune: bool = False
+    # Incremental population: the agent pushes processed tickers as it goes with
+    # final=False (no archive, no prune) so the table fills live; the closing
+    # push sets final=True (+ prune=True) — that one is archived as the run file.
+    final: bool = True
 
 
 @router.post("/matp")
@@ -267,8 +271,22 @@ def ingest_matp(
             .update({MATPLevel.status: "dropped"}, synchronize_session=False)
         )
     db.commit()
+
+    # archive the raw run as one JSON file in the MATP folder (the "cream"),
+    # only on the finalizing push (so incremental population doesn't spam files).
+    # Soft-fail: archiving must never break ingest.
+    archived = None
+    if payload.final:
+        filter_desc = None
+        if payload.filter_id is not None:
+            f = db.get(FinvizFilter, payload.filter_id)
+            filter_desc = f.description if f else None
+        from ..services.matp_archive import save_run
+
+        archived = save_run(payload, now, filter_desc=filter_desc)
+
     return {
         "ok": True, "upserted": upserted,
         "history_appended": appended, "targets_added": targets_added,
-        "dropped": dropped,
+        "dropped": dropped, "archived": archived,
     }

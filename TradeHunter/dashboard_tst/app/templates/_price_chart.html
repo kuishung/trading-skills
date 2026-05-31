@@ -8,8 +8,15 @@
     {% if chart_detail_link %}<a href="/matp/{{ chart_symbol }}" class="text-xs text-slate-400 hover:text-emerald-400">open full detail &rarr;</a>{% endif %}
   </div>
   <div class="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
-    <div id="priceChart" class="w-full" style="height:360px"></div>
+    <div id="priceChart" class="w-full h-[360px] lg:h-[72vh]"></div>
     <p id="priceChartMsg" class="text-slate-500 text-sm hidden">Couldn't load live price data for {{ chart_symbol }} right now &mdash; try again shortly.</p>
+    <div class="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-400 mt-2">
+      <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#ef4444"></span>EMA20</span>
+      <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#22c55e"></span>EMA50</span>
+      <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#a855f7"></span>EMA200</span>
+      <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#e2e8f0"></span>MATP</span>
+      <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#34d399"></span>MBP</span>
+    </div>
   </div>
 </div>
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
@@ -20,6 +27,23 @@
   var matp = {{ chart_matp|tojson }};
   var mbp = {{ (chart_mbp if chart_mbp is not none else None)|tojson }};
   function empty() { if (el) el.classList.add('hidden'); if (msg) msg.classList.remove('hidden'); }
+  function ema(bars, period) {
+    if (bars.length < period) return [];
+    var k = 2 / (period + 1), sum = 0;
+    for (var i = 0; i < period; i++) sum += bars[i].close;
+    var prev = sum / period, out = [{ time: bars[period - 1].time, value: prev }];
+    for (var j = period; j < bars.length; j++) {
+      prev = bars[j].close * k + prev * (1 - k);
+      out.push({ time: bars[j].time, value: prev });
+    }
+    return out;
+  }
+  function addEma(chart, bars, period, color) {
+    var data = ema(bars, period);
+    if (!data.length) return;
+    var ls = chart.addLineSeries({ color: color, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+    ls.setData(data);
+  }
   if (!window.LightweightCharts || !el) { empty(); return; }
   fetch('/matp/{{ chart_symbol }}/prices')
     .then(function (r) { return r.json(); })
@@ -35,9 +59,25 @@
       });
       var s = chart.addCandlestickSeries({
         upColor: '#10b981', downColor: '#ef4444', borderVisible: false,
-        wickUpColor: '#10b981', wickDownColor: '#ef4444'
+        wickUpColor: '#10b981', wickDownColor: '#ef4444',
+        // keep MATP + MBP inside the visible price range by default
+        autoscaleInfoProvider: function (orig) {
+          var r = orig();
+          if (r && r.priceRange) {
+            [matp, mbp].forEach(function (v) {
+              if (v != null) {
+                r.priceRange.minValue = Math.min(r.priceRange.minValue, v);
+                r.priceRange.maxValue = Math.max(r.priceRange.maxValue, v);
+              }
+            });
+          }
+          return r;
+        }
       });
       s.setData(bars);
+      addEma(chart, bars, 20, '#ef4444');   // EMA20 red
+      addEma(chart, bars, 50, '#22c55e');   // EMA50 green
+      addEma(chart, bars, 200, '#a855f7');  // EMA200 purple
       if (matp != null) s.createPriceLine({ price: matp, color: '#e2e8f0', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'MATP' });
       if (mbp != null) s.createPriceLine({ price: mbp, color: '#34d399', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'MBP' });
       chart.timeScale().fitContent();

@@ -119,6 +119,38 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-05-31 — v2.14: MATP/MBP always visible · live table population · collapsible watchlist rail
+
+Three things:
+- **Chart shows MATP + MBP by default.** Added an `autoscaleInfoProvider` to the candlestick series so the visible price range always includes MATP and MBP — they're no longer clipped off-screen when far from the current price.
+- **Table populates mid-run.** `/api/matp` gains a `final` flag: the agent now pushes processed tickers incrementally with `final:false` (upsert only, no prune, **not archived**) so they appear on the board as they're computed, then sends ONE closing push (`final:true` + `prune:true`) that prunes fallen-out names and is the archived run file. While a queue run is active the board auto-refreshes (20s) so the rows appear without a manual reload. Nous Hermes `matp` skill → v1.4.0 (incremental + closing push).
+- **Collapsible watchlist rail.** The left watchlist is now a narrow rail showing **tickers only** when retracted; it **expands on hover** (as an overlay, so the board doesn't reflow) and can be **pinned** open (persisted in `localStorage`). Clicking a ticker swaps the chart (`?symbol=`). Mobile keeps the "Watchlists ▾" dropdown.
+- Verified: incremental push writes no archive, finalizing push archives one file; rail/pin/hover markup + autoscale + active-run auto-refresh all present.
+
+### 2026-05-31 — v2.13: MATP run archive (one JSON file per run) + per-ticker view
+
+Every `/api/matp` run is now archived as **one JSON file per run** in the MATP folder (`<data_root>/MATP/run_<UTC>[_f<filter_id>].json`) — on Hermes set `TST_MATP_DIR=C:\HermesSync\MarketData\MATP` (Resilio-synced); defaults to `<TradeHunter>/data/MATP`. The file holds the run's full raw extraction (every ticker + its analyst targets/distribution). This is the durable "cream" archive; the live UI still reads `tst.db` (Postgres-portable), so the data-handling rule is intact.
+- New `app/services/matp_archive.py` (`save_run`, `runs_for_symbol`); `config.matp_dir` (`TST_MATP_DIR`). Archiving is soft-fail — it never breaks ingest (`/api/matp` returns `archived: <filename>`).
+- The dashboard writes the file (only Hermes has the MarketData path; the Linux agent just POSTs).
+- **Detail page** gains a **"Run archive"** section: each archived run that included the ticker, expandable to the analyst summary extracted *that day* (brokerage / issued / target / post-vs-pre), so you can see exactly what each run captured.
+- Verified: ingest writes the file (`run_…_f1.json`) with full payload; detail renders the run archive with correct post/pre status.
+
+### 2026-05-31 — v2.12: EMA20/50/200 overlays on the price chart
+
+Added three EMA overlays to the price chart: **EMA20 (red)**, **EMA50 (green)**, **EMA200 (purple)**, all at lineWidth 2. Computed client-side from the daily closes (standard EMA, SMA-seeded) and drawn as lightweight-charts line series; a small legend identifies each line alongside MATP/MBP. Bumped the live fetch window `1y → 2y` so EMA200 is meaningful (≈300 points instead of ≈50). Verified: NVDA 2y → 501 bars; all three EMA series + legend render.
+
+### 2026-05-31 — v2.11: MATP three-pane layout — expanded watchlist, full-width, chart on the right
+
+Reworked the MATP page into a left-aligned, full-width three-pane layout: **watchlist (left, all groups expanded)** · **board table (middle)** · **price chart (right, sticky, ~72vh)** when a ticker is selected. Previously the chart stacked above the table in a centered, capped column.
+- `base.html` `main` width is now overridable via a `main_wrap` block; MATP overrides it to full-width/left-aligned (other pages keep the centered `max-w-5xl`).
+- Watchlist `<details>` now default to **open** (all groups expanded), not just the first.
+- Middle board column is `lg:flex-1`; the selected chart sits in a `lg:flex-1 lg:sticky` right column, so board + chart split the space beside the watchlist. On mobile everything stacks (watchlist dropdown → board → chart).
+- Verified: MATP full-width vs admin centered; watchlist expanded; no chart unselected; chart in sticky right pane when `?symbol=` set.
+
+### 2026-05-31 — v2.10: Build version shown at the sidebar logo
+
+The hand-maintained build version now shows under the TradeHunter logo in the sidebar ("trade collaboration · v2.10") on every page — quick at-a-glance confirmation of what's deployed. Implemented by exposing `__version__` as a Jinja **global** (`version`) on every route module's templates env, set in one place in `main.py` (no per-route plumbing). `base.html` reads `{{ version }}`. Verified across /matp, /finviz, /feedback, /admin.
+
 ### 2026-05-31 — v2.9: Price chart inline on the MATP page (click a watchlist ticker)
 
 The price chart (MATP/MBP candlestick) now shows **on the MATP board itself**, not only the detail page. Clicking a ticker in the watchlist rail goes to `/matp?symbol=SYM#chart`, and the board renders that ticker's chart inline at the top of the main column (with an "open full detail →" link). The chart markup+script was factored into a shared partial **`_price_chart.html`** (params `chart_symbol`/`chart_matp`/`chart_mbp`), now included by both the board and the detail page — single source, no duplication.

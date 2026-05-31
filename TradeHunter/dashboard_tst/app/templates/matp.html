@@ -1,5 +1,7 @@
 {% extends "base.html" %}
 {% block title %}MATP &middot; TradeHunter{% endblock %}
+{# full-width, left-aligned (override base.html centering) so the chart can take the right half #}
+{% block main_wrap %}{% endblock %}
 
 {% macro trend_badge(t) %}
   {% if t == "Uptrend" %}<span class="text-emerald-400">&#9650; up</span>
@@ -39,7 +41,7 @@
 {% macro watchlist_rail(watchlists, unfiled, user, open_filter_ids, open_symbols) %}
 <div class="space-y-2 text-sm">
   {% for w in watchlists %}
-  <details class="rounded-lg border border-slate-800 bg-slate-900/40" {% if loop.first %}open{% endif %}>
+  <details class="rounded-lg border border-slate-800 bg-slate-900/40" open>
     <summary class="cursor-pointer px-3 py-2 flex items-center justify-between hover:bg-slate-800/40 rounded-lg">
       <span class="text-slate-200 truncate">{{ w.filter.description }}</span>
       <span class="text-xs text-slate-500 ml-2 shrink-0">{{ w.tickers|length }}</span>
@@ -74,7 +76,7 @@
   </details>
   {% endfor %}
   {% if unfiled %}
-  <details class="rounded-lg border border-slate-800 bg-slate-900/40">
+  <details class="rounded-lg border border-slate-800 bg-slate-900/40" open>
     <summary class="cursor-pointer px-3 py-2 flex items-center justify-between hover:bg-slate-800/40 rounded-lg">
       <span class="text-slate-400">Other</span>
       <span class="text-xs text-slate-500">{{ unfiled|length }}</span>
@@ -109,23 +111,61 @@
 </details>
 
 <div class="lg:flex lg:gap-6 lg:items-start">
-  {# desktop: watchlists as a second sidebar #}
-  <aside class="hidden lg:block lg:w-64 lg:shrink-0 lg:sticky lg:top-16">
-    <div class="text-xs uppercase tracking-wide text-slate-500 mb-2 px-1">Watchlists</div>
-    {{ watchlist_rail(watchlists, unfiled, user, open_filter_ids, open_symbols) }}
+  {# desktop: collapsible watchlist rail — tickers-only when retracted,
+     expands on hover (overlay), pinnable; click a ticker swaps the chart #}
+  <style>
+    #wlrail { width: 3.5rem; transition: width .15s ease; }
+    #wlrail.wl-pinned { width: 16rem; }
+    #wlrail .wl-full { display: none; }
+    #wlrail.wl-pinned .wl-full { display: block; }
+    #wlrail.wl-pinned .wl-mini { display: none; }
+    #wlrail:not(.wl-pinned):hover .wl-full {
+      display: block; position: absolute; left: 0; top: 0; width: 16rem; z-index: 30;
+      background: #0b1220; border: 1px solid rgb(30 41 59); border-radius: .5rem;
+      padding: .5rem; box-shadow: 0 12px 34px rgba(0,0,0,.55);
+    }
+  </style>
+  <aside id="wlrail" class="hidden lg:block lg:shrink-0 lg:sticky lg:top-16 wl-collapsed">
+    <div class="relative">
+      {# mini: tickers only (retracted state) #}
+      <div class="wl-mini overflow-y-auto" style="max-height: calc(100vh - 5rem)">
+        <div class="text-[10px] uppercase tracking-wide text-slate-600 text-center py-1">WL</div>
+        {% for w in watchlists %}{% for lv in w.tickers %}
+        <a href="/matp?symbol={{ lv.symbol }}#chart" title="{{ lv.symbol }} — MBP {{ '%.0f'|format(lv.mbp) if lv.mbp is not none else '-' }}"
+           class="block text-center text-[11px] py-1 truncate hover:bg-slate-800/70 {% if sel and sel.symbol == lv.symbol %}bg-slate-800 text-emerald-300{% else %}text-emerald-400{% endif %}">{{ lv.symbol }}</a>
+        {% endfor %}{% endfor %}
+        {% for lv in unfiled %}
+        <a href="/matp?symbol={{ lv.symbol }}#chart" title="{{ lv.symbol }}"
+           class="block text-center text-[11px] py-1 truncate hover:bg-slate-800/70 {% if sel and sel.symbol == lv.symbol %}bg-slate-800 text-emerald-300{% else %}text-emerald-400{% endif %}">{{ lv.symbol }}</a>
+        {% endfor %}
+      </div>
+      {# full: complete watchlist (shown on hover, or kept open when pinned) #}
+      <div class="wl-full overflow-y-auto" style="max-height: calc(100vh - 5rem)">
+        <div class="flex items-center justify-between mb-2 px-1">
+          <span class="text-xs uppercase tracking-wide text-slate-500">Watchlists</span>
+          <button type="button" id="wlpin" onclick="toggleWlPin()" class="text-xs text-slate-400 hover:text-emerald-300" title="Pin / unpin the watchlist">pin</button>
+        </div>
+        {{ watchlist_rail(watchlists, unfiled, user, open_filter_ids, open_symbols) }}
+      </div>
+    </div>
   </aside>
+  <script>
+    function applyWlPin(p) {
+      var r = document.getElementById('wlrail'); if (!r) return;
+      r.classList.toggle('wl-pinned', p);
+      r.classList.toggle('wl-collapsed', !p);
+      var b = document.getElementById('wlpin'); if (b) b.textContent = p ? 'unpin' : 'pin';
+    }
+    function toggleWlPin() {
+      var p = localStorage.getItem('wlPinned') !== '1';
+      localStorage.setItem('wlPinned', p ? '1' : '0');
+      applyWlPin(p);
+    }
+    applyWlPin(localStorage.getItem('wlPinned') === '1');
+  </script>
 
-  {# main board column #}
-  <div class="flex-1 min-w-0">
-
-{# selected ticker's live price chart (MATP/MBP lines), shown inline on the board #}
-{% if sel %}
-  {% set chart_symbol = sel.symbol %}
-  {% set chart_matp = sel.matp %}
-  {% set chart_mbp = sel.mbp %}
-  {% set chart_detail_link = true %}
-  {% include "_price_chart.html" %}
-{% endif %}
+  {# middle: board column #}
+  <div class="lg:flex-1 min-w-0">
 
 {# live runs panel: polls every 5s, renders progress bars while runs are open #}
 <div hx-get="/matp/runs" hx-trigger="load, every 5s" hx-swap="innerHTML"></div>
@@ -186,6 +226,23 @@
 </details>
 {% endif %}
 
-  </div>{# /main board column #}
+  </div>{# /middle board column #}
+
+  {# right: selected ticker's live price chart, occupies the other half #}
+  {% if sel %}
+  <aside class="lg:flex-1 lg:min-w-0 lg:sticky lg:top-16 mt-6 lg:mt-0">
+    {% set chart_symbol = sel.symbol %}
+    {% set chart_matp = sel.matp %}
+    {% set chart_mbp = sel.mbp %}
+    {% set chart_detail_link = true %}
+    {% include "_price_chart.html" %}
+  </aside>
+  {% endif %}
 </div>{# /lg:flex wrapper #}
+
+{% if open_reqs %}
+{# a run is active: refresh so tickers appear in the table/watchlist as they're processed.
+   (URL keeps ?symbol, so the selected chart persists; pin state is in localStorage.) #}
+<script>setTimeout(function () { location.reload(); }, 20000);</script>
+{% endif %}
 {% endblock %}
