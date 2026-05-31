@@ -4,9 +4,9 @@
 {% if chart_symbol and chart_matp is not none %}
 {% set tv_symbol = (chart_exchange ~ ':' ~ chart_symbol) if chart_exchange else chart_symbol %}
 {# one connected panel: TradingView header -> price chart -> analyst band #}
-<div id="chart" class="rounded-lg border border-slate-800 bg-slate-900 overflow-hidden">
+<div id="chart" class="rounded-lg border border-slate-800 bg-slate-900 overflow-hidden {% if chart_fill %}flex flex-col lg:flex-1 lg:min-h-0{% endif %}">
   {# TradingView ticker info (heading) #}
-  <div class="border-b border-slate-800">
+  <div class="border-b border-slate-800 {% if chart_fill %}shrink-0{% endif %}">
     <div class="tradingview-widget-container">
       <div class="tradingview-widget-container__widget"></div>
       <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-symbol-info.js" async>
@@ -21,10 +21,10 @@
     </div>
   </div>
   {# price chart #}
-  <div class="p-3 {% if chart_band %}border-b border-slate-800{% endif %}">
-    <div id="priceChart" class="w-full {{ chart_height_class | default('h-[300px] lg:h-[44vh]') }}"></div>
+  <div class="p-3 {% if chart_band %}border-b border-slate-800{% endif %} {% if chart_fill %}lg:flex-1 lg:min-h-0 flex flex-col{% endif %}">
+    <div id="priceChart" class="w-full {% if chart_fill %}min-h-[240px] lg:min-h-0 lg:flex-1{% else %}{{ chart_height_class | default('h-[300px] lg:h-[44vh]') }}{% endif %}"></div>
     <p id="priceChartMsg" class="text-slate-500 text-sm hidden">Couldn't load live price data for {{ chart_symbol }} right now &mdash; try again shortly.</p>
-    <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400 mt-2">
+    <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400 mt-2 {% if chart_fill %}shrink-0{% endif %}">
       <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#ef4444"></span>EMA20</span>
       <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#22c55e"></span>EMA50</span>
       <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#a855f7"></span>EMA200</span>
@@ -37,7 +37,7 @@
   </div>
   {# analyst band (connected, same panel) #}
   {% if chart_band %}
-  <div class="p-3">
+  <div class="p-3 {% if chart_fill %}shrink-0{% endif %}">
     <div class="flex justify-end mb-2">
       <button type="button" hx-get="/matp/{{ chart_symbol }}/targets" hx-target="#atModalBody" hx-swap="innerHTML"
               onclick="atOpen()" class="text-xs px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Analyst targets &rarr;</button>

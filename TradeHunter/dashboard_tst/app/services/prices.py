@@ -60,13 +60,14 @@ def search_tickers(q: str, *, limit: int = 8) -> list[dict]:
         r.raise_for_status()
         out: list[dict] = []
         for it in (r.json().get("quotes") or []):
-            if it.get("quoteType") != "EQUITY":
+            if it.get("quoteType") not in ("EQUITY", "ETF"):  # stocks + ETFs
                 continue
             sym = (it.get("symbol") or "").upper()
             if not _US_TICKER.match(sym):  # US-listed plain tickers only
                 continue
             name = it.get("shortname") or it.get("longname") or ""
-            out.append({"symbol": sym, "name": name})
+            kind = "ETF" if it.get("quoteType") == "ETF" else ""
+            out.append({"symbol": sym, "name": name, "kind": kind})
             if len(out) >= limit:
                 break
         return out

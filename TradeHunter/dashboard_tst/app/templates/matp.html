@@ -124,8 +124,8 @@
           (d.results || []).forEach(function (it) {
             var o = document.createElement('option');
             o.value = it.symbol;            // selecting fills the symbol
-            o.label = it.symbol + ' — ' + it.name;
-            o.textContent = it.name;        // company name (matched while typing)
+            o.label = it.symbol + (it.kind ? ' [' + it.kind + ']' : '') + ' — ' + it.name;
+            o.textContent = it.name + (it.kind ? ' (ETF)' : '');
             dl.appendChild(o);
           });
         }).catch(function () {});
@@ -164,10 +164,9 @@
     </div>
   </aside>
 
-  {# RIGHT: chart panel — chart, band, analyst summary #}
-  <div class="lg:flex-1 min-w-0 lg:h-full flex flex-col gap-3 lg:min-h-0 lg:overflow-y-auto mt-4 lg:mt-0">
+  {# RIGHT: chart panel — fills the screen (chart canvas takes the remaining height) #}
+  <div class="lg:flex-1 min-w-0 lg:h-full flex flex-col lg:min-h-0 mt-4 lg:mt-0">
     {% if sel %}
-    <div class="shrink-0">
       {% set chart_symbol = sel.symbol %}
       {% set chart_exchange = sel.exchange %}
       {% set chart_matp = sel.matp %}
@@ -175,9 +174,8 @@
       {% set chart_as_of = sel.as_of %}
       {% set chart_earnings = sel.last_earnings_date %}
       {% set chart_band = sel_band %}
-      {% set chart_height_class = 'h-[280px] lg:h-[42vh]' %}
+      {% set chart_fill = true %}
       {% include "_price_chart.html" %}
-    </div>
     {% else %}
     <div class="flex-1 flex items-center justify-center text-slate-500 text-sm">No tickers yet &mdash; run a watchlist to populate.</div>
     {% endif %}

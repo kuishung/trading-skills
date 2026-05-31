@@ -119,6 +119,11 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-05-31 — v2.33: chart fills the screen + ETFs in search
+
+- **Chart fits the screen.** The chart card now flex-fills the right panel (`chart_fill`): the TradingView header and the analyst band are fixed (`shrink-0`), and the **price-chart canvas takes the remaining height** (`lg:flex-1`, min-h fallback on mobile). No more fixed `vh` height that overflowed at the 130% scale; the watchlist column keeps its own internal scroll.
+- **ETFs included** in the ticker search/autocomplete (`quoteType` now `EQUITY` *or* `ETF`; suggestions tagged `[ETF]`). Verified SPY/VOO show up.
+
 ### 2026-05-31 — v2.32: neon zone-only heatmap + fix Analyst-targets button overlap
 
 - The band heatmap now **only colours the concentrated zone** (the densest contiguous run of buckets) — scattered outlier targets stay neutral — using **neon** colours (`hsl(h,100%,60%)`, blue→red, peak=red) with a CSS **glow** (`box-shadow`). Per-bin colour is `transparent` outside the zone. (`_build_band` computes the zone before colouring.)
