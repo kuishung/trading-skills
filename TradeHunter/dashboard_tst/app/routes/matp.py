@@ -8,16 +8,34 @@ LLM and does no scraping). Approved members only.
 """
 from __future__ import annotations
 
+import datetime as _dt
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import MATPHistory, MATPLevel, MATPTarget, User
-from ..security import require_user
+from ..models import (
+    FinvizFilter,
+    MATPHistory,
+    MATPLevel,
+    MATPRefreshRequest,
+    MATPTarget,
+    User,
+)
+from ..security import require_moderator, require_user
+
+# request states that mean "the agent hasn't finished this yet"
+_OPEN_STATES = ("pending", "running")
+
+# Board sort: actionable bounce signals float to the top.
+_SIGNAL_RANK = {"HOT": 0, "WARM": 1, "WATCHING": 2}
+
+
+def _signal_key(lv):
+    return (_SIGNAL_RANK.get((lv.signal or "").upper(), 3), lv.symbol)
 
 router = APIRouter(prefix="/matp", tags=["matp"])
 templates = Jinja2Templates(
@@ -31,9 +49,42 @@ def matp_home(
     user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ):
-    levels = db.query(MATPLevel).order_by(MATPLevel.symbol).all()
+    all_levels = db.query(MATPLevel).all()
+    active = sorted(
+        [lv for lv in all_levels if (lv.status or "active") == "active"],
+        key=_signal_key,
+    )
+    dropped = sorted(
+        [lv for lv in all_levels if (lv.status or "active") == "dropped"],
+        key=lambda lv: lv.symbol,
+    )
+    filters = db.query(FinvizFilter).all()
+    # filter id -> description, so the board can label which screen sourced a name
+    filt_names = {f.id: f.description for f in filters}
+    active_filters = [f for f in filters if f.is_active]
+
+    # open (pending/running) refresh requests -> show status; suppress dup buttons
+    open_reqs = (
+        db.query(MATPRefreshRequest)
+        .filter(MATPRefreshRequest.status.in_(_OPEN_STATES))
+        .all()
+    )
+    open_symbols = {r.symbol for r in open_reqs if r.scope == "ticker" and r.symbol}
+    open_filter_ids = {r.filter_id for r in open_reqs if r.scope == "filter"}
+
     return templates.TemplateResponse(
-        request, "matp.html", {"user": user, "levels": levels}
+        request,
+        "matp.html",
+        {
+            "user": user,
+            "active": active,
+            "dropped": dropped,
+            "filt_names": filt_names,
+            "active_filters": active_filters,
+            "open_reqs": open_reqs,
+            "open_symbols": open_symbols,
+            "open_filter_ids": open_filter_ids,
+        },
     )
 
 
@@ -66,6 +117,24 @@ def _build_chart(points, width=600, height=170, pad=28):
     }
 
 
+def _build_band(low, high, mbp, matp):
+    """Horizontal levels band: place MBP + MATP markers along the analyst
+    low->high range as left% offsets. Returns None unless we have a real range."""
+    if low is None or high is None or high <= low:
+        return None
+
+    def pct(v):
+        if v is None:
+            return None
+        return round(max(0.0, min(100.0, (v - low) / (high - low) * 100.0)), 1)
+
+    return {
+        "low": low, "high": high,
+        "mbp": mbp, "matp": matp,
+        "mbp_pct": pct(mbp), "matp_pct": pct(matp),
+    }
+
+
 @router.get("/{symbol}", response_class=HTMLResponse)
 def matp_detail(
     symbol: str,
@@ -83,6 +152,12 @@ def matp_detail(
     )
     points = [(h.as_of.strftime("%Y-%m-%d") if h.as_of else "", h.matp) for h in history]
     chart = _build_chart(points)
+
+    # levels band: MBP/MATP against the analyst low->high range (latest snapshot)
+    latest = history[-1] if history else None
+    band = None
+    if level and latest:
+        band = _build_band(latest.target_low, latest.target_high, level.mbp, level.matp)
 
     # evidence: the individual analyst targets, newest issue date first.
     # 'included' (post-earnings) is computed here against the CURRENT earnings
@@ -103,6 +178,13 @@ def matp_detail(
         }
         for t in rows
     ]
+    # latest ad-hoc refresh request for this ticker (status banner)
+    last_req = (
+        db.query(MATPRefreshRequest)
+        .filter(MATPRefreshRequest.scope == "ticker", MATPRefreshRequest.symbol == sym)
+        .order_by(MATPRefreshRequest.created_at.desc())
+        .first()
+    )
     return templates.TemplateResponse(
         request,
         "matp_detail.html",
@@ -110,7 +192,57 @@ def matp_detail(
             "user": user, "symbol": sym, "level": level,
             "history": list(reversed(history)),  # newest-first table
             "chart": chart,
+            "band": band,
             "targets": targets,
             "earnings": earn,
+            "last_req": last_req,
+            "req_open": bool(last_req and last_req.status in _OPEN_STATES),
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Ad-hoc refresh queue (moderators/admins) — enqueue only; the Nous Hermes
+# agent polls /api/refresh-queue, does the work, and marks rows done.
+# ---------------------------------------------------------------------------
+def _enqueue(db: Session, scope: str, *, symbol=None, filter_id=None, user: User):
+    """Create a pending request unless an identical one is already open."""
+    q = db.query(MATPRefreshRequest).filter(
+        MATPRefreshRequest.scope == scope,
+        MATPRefreshRequest.status.in_(_OPEN_STATES),
+    )
+    q = q.filter(MATPRefreshRequest.symbol == symbol) if scope == "ticker" \
+        else q.filter(MATPRefreshRequest.filter_id == filter_id)
+    if q.first() is not None:
+        return False  # already queued/running — don't duplicate
+    db.add(
+        MATPRefreshRequest(
+            scope=scope, symbol=symbol, filter_id=filter_id,
+            requested_by=user.id, status="pending",
+        )
+    )
+    db.commit()
+    return True
+
+
+@router.post("/{symbol}/refresh")
+def request_ticker_refresh(
+    symbol: str,
+    request: Request,
+    user: User = Depends(require_moderator),
+    db: Session = Depends(get_db),
+):
+    sym = symbol.strip().upper()
+    _enqueue(db, "ticker", symbol=sym, user=user)
+    return RedirectResponse(url=f"/matp/{sym}", status_code=303)
+
+
+@router.post("/filter/{filter_id}/refresh")
+def request_filter_refresh(
+    filter_id: int,
+    request: Request,
+    user: User = Depends(require_moderator),
+    db: Session = Depends(get_db),
+):
+    _enqueue(db, "filter", filter_id=filter_id, user=user)
+    return RedirectResponse(url="/matp", status_code=303)

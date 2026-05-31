@@ -119,6 +119,25 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-05-31 — v2.0: Collaborator-triggered ad-hoc MATP refresh (request queue)
+
+Moderators/admins can now trigger a MATP refresh from the page — without breaking the LLM-free / outbound-only-agent separation. TradeHunter can't fetch and can't reach the agent, so a click **enqueues** rather than fetches; the agent polls and drains the queue (near-real-time, ~10 min, not synchronous).
+- **New model `matp_refresh_requests`** (migration `b2c3d4e5f6a7`): `scope` (`ticker`/`filter`), `symbol`, `filter_id`, `status` (pending/running/done/failed), `note`, `requested_by`, `created_at`/`claimed_at`/`completed_at`.
+- **UI (moderators/admins only):** detail page gets a "↻ Request refresh" button + a status banner (queued / in progress / completed at / failed: reason); board gets per-active-filter "↻ Refresh a whole filter" buttons, an "N refresh requests queued" banner, and a ↻ badge on rows with an open request. Enqueue **de-dupes** — an identical open request won't double-up (button flips to "queued").
+- **API (agent, X-API-Key):** `GET /api/refresh-queue` (pending requests; filter scope includes `filter_url`/`filter_description`), `POST /api/refresh-queue/{id}/status` (`running`/`done`/`failed` + optional `note`, stamps claimed/completed).
+- **Routes (session, moderator-gated):** `POST /matp/{symbol}/refresh`, `POST /matp/filter/{id}/refresh`.
+- Nous Hermes `matp` skill → v1.2.0: documents the two run modes (scheduled full vs **queue poll**), the queue endpoints, the ticker-scope = no-prune / filter-scope = prune rule, and a `*/10 * * * *` poll cron.
+- Verified end-to-end on a throwaway DB (all 3 migrations apply): member enqueue → 403, moderator ticker+filter enqueue → 303, de-dup holds (2 rows, not 3), agent queue GET + running→done transitions, board + detail render the controls/banners.
+
+### 2026-05-31 — v1.9: MATP board redesign — Finviz-drift tracking + bounce signal
+
+Reworked the MATP pages around the question the method actually answers ("is this a buy now, and how much room is left?") instead of a flat data dump.
+- **Universe-drift tracking.** The Finviz screen is dynamic — names fall out / qualify each run. Added to `matp_levels`: `status` (`active`/`dropped`), `filter_id` (FK → `finviz_filters`), `last_seen_at`. A ticker that leaves the screen is marked **dropped** (its MATP history is *retained*, never deleted). `/api/matp` gained `filter_id` + `prune`: a full-universe run for one filter marks same-filter tickers absent from the batch as dropped (returns `dropped` count). Per-ticker ad-hoc runs omit both (no pruning).
+- **Actionable bounce signal** on `matp_levels`: `signal` (HOT/WARM/WATCHING) + `signal_entry`/`signal_stop`/`signal_target`(= MATP)/`signal_rr`, mirroring `resources/MATP`'s `daily_bounce_alert.py`. Ingest only touches these when a payload includes a signal, so a MATP-only run never wipes a signal set by the separate daily bounce job (and vice-versa). Also added `n_targets` to the level (board low-confidence ⚠ when n≤2).
+- **Board (`/matp`)**: columns Ticker · MATP · MBP(max buy) · Trend · Signal · n · Filter · Updated; **active sorted HOT→WARM→WATCHING→rest**; dropped names tucked behind a collapsible "Dropped from filter (N)" section.
+- **Detail (`/matp/{symbol}`)**: added a **levels band** (MBP + MATP markers along the analyst low→high range) and a **Bounce setup** card (entry/stop/target/R:R) above the existing history chart + analyst-evidence table.
+- Migration `a1b2c3d4e5f6_matp_drift_and_signal` (batch mode for SQLite). Nous Hermes `matp` skill bumped to v1.1.0 — pushes **per-filter** with `filter_id`+`prune`, optional `trend`; bounce `signal*` declared out of scope (price-bar work). Verified end-to-end on a throwaway DB: both migrations apply, two-run drift (AAPL dropped, NVDA history appended, targets de-duped), board + detail render with signal/band/dropped section.
+
 ### 2026-05-30 — v1.8: Alembic migrations (DB schema is now upgrade-safe)
 
 Closed the `create_all` ALTER gap (which 500'd when a new column was added to an existing table). Added **Alembic** wired to the app's `Base` + `TST_DATABASE_URL` (so migrations target SQLite dev / Postgres prod identically), with `render_as_batch=True` for SQLite ALTERs. `alembic/versions/d555dc88d20b_baseline_schema.py` is the baseline (all current tables). `db.init_db()` now runs migrations on startup with **safe onboarding** for all three states: fresh DB → run all migrations; already-managed DB → apply pending; **legacy `create_all` DB (Hermes) → add any missing tables via `create_all`, then `stamp head`** so it becomes migration-managed without losing data. Verified on a fresh DB (8 tables + `alembic_version` created) AND a simulated Hermes DB (new MATP tables added, existing users/filters preserved, stamped). Going forward, every schema change is a tiny reversible migration — satisfies the "upgrade to hosted Postgres without a rewrite" rule. **Workflow:** after editing models, run `alembic revision --autogenerate -m "..."` from `dashboard_tst/`; the new migration auto-applies on the next app start / deploy.

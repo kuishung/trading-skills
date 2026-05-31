@@ -1,6 +1,6 @@
 ---
 name: matp
-version: 1.0.0
+version: 1.2.0
 description: Compute the faithful Median Analyst Target Price (MATP) + Max Buy Price (MBP) for TradeHunter and push the results to the platform. Use when asked to "refresh MATP", "run MATP", "update target prices", or on the scheduled cron. Reads the active Finviz screener filters from TradeHunter's API, expands them to a ticker universe, and for each ticker looks up the latest earnings date + analyst price targets on MarketBeat, keeps only targets issued AFTER the latest earnings, computes the median (MATP) and MBP = MATP/1.15, then POSTs the rows to TradeHunter's /api/matp endpoint. Does NOT write CSV / Google Sheets / Telegram -- output is the API push only.
 ---
 
@@ -29,6 +29,44 @@ The skill needs two values (from the agent's env / `~/.hermes` config):
 Nothing on the scheduled run. If invoked ad-hoc for specific tickers
 ("refresh MATP for NVDA, MSFT"), use those tickers and skip Stage 1.
 
+## Two run modes
+1. **Scheduled full refresh** (monthly cron) — Stage 1→5 over all active
+   filters, pushing per-filter with `prune:true` (drift tracking).
+2. **Queue poll** (frequent cron, ~10 min) — drain the collaborator-triggered
+   ad-hoc requests. See "Ad-hoc refresh queue" below. This is what makes the
+   "Request refresh" buttons on TradeHunter's MATP page actually do something.
+
+---
+
+## Ad-hoc refresh queue (frequent poll)
+Collaborators (moderators/admins) click "Request refresh" on TradeHunter's MATP
+page; that enqueues a request. TradeHunter can't fetch and can't reach this
+agent — so the agent **polls** and drains the queue.
+
+```
+GET {TRADEHUNTER_URL}/api/refresh-queue     header: X-API-Key: {TST_INGEST_API_KEY}
+-> {"requests":[
+     {"id":7,"scope":"ticker","symbol":"NVDA","filter_id":null},
+     {"id":8,"scope":"filter","filter_id":1,"filter_url":"https://finviz.com/...","filter_description":"growth screen"}
+   ]}
+```
+For each request:
+1. **Mark it running:**
+   `POST /api/refresh-queue/{id}/status` body `{"status":"running"}`
+2. **Do the work:**
+   - `scope:"ticker"` → run Stages 2-5 for that one `symbol`. Push via
+     `/api/matp` as a single item, **no `filter_id`, no `prune`** (a single
+     ticker is not a universe — pruning would wrongly drop everything else).
+   - `scope:"filter"` → run Stages 1-5 for that filter's `filter_url` (the full
+     universe). Push via `/api/matp` with `filter_id` + `prune:true`.
+3. **Mark it done/failed:**
+   `POST /api/refresh-queue/{id}/status` body `{"status":"done","note":"refreshed 1 ticker"}`
+   — on error, `{"status":"failed","note":"<short reason>"}`. The note shows on
+   the ticker's detail page.
+
+Idempotent: if the queue is empty, do nothing. TradeHunter de-dupes requests, so
+you'll never see two open requests for the same target.
+
 ---
 
 ## Procedure
@@ -37,12 +75,16 @@ Nothing on the scheduled run. If invoked ad-hoc for specific tickers
 ```
 GET {TRADEHUNTER_URL}/api/filters     header: X-API-Key: {TST_INGEST_API_KEY}
 ```
-Returns `{"filters":[{"description","url"}, ...]}`. For each filter `url`,
+Returns `{"filters":[{"id","description","url"}, ...]}`. For each filter `url`,
 open it in the browser and extract every ticker (with exchange). Finviz
 paginates 20/page via `&r=21`, `&r=41`, ... — page through to the reported
-total. **De-duplicate** tickers across filters into one universe.
+total. **Keep the per-filter ticker set** (which `id` each ticker came from) —
+you push back per filter so TradeHunter can track drift. You MAY compute MATP
+once per unique ticker and cache it (a ticker in two filters is fetched once),
+but the PUSH is per-filter (Stage 5).
 
-(Ad-hoc mode: skip this; use the tickers the user named.)
+(Ad-hoc mode: skip this; use the tickers the user named. No `filter_id`, no
+`prune` — see Stage 5.)
 
 ### Stage 2 — Latest earnings date per ticker
 For each ticker, open:
@@ -81,15 +123,21 @@ Do NOT use the mean for MATP — MATP is a median (the mean is only a
 distribution stat).
 
 ### Stage 5 — Push to TradeHunter (the only output)
+**One POST per filter** (not one merged universe). Each POST carries that
+filter's `id` as `filter_id` and `prune: true`, plus its COMPLETE current
+ticker set. That lets TradeHunter mark tickers previously tied to that filter
+but absent now as `dropped` (data retained, hidden from the live board).
 ```
 POST {TRADEHUNTER_URL}/api/matp     header: X-API-Key: {TST_INGEST_API_KEY}
 Content-Type: application/json
 {
   "source": "nous_hermes",
+  "filter_id": 1,
+  "prune": true,
   "items": [
     {
       "symbol": "NVDA", "exchange": "NASDAQ", "last_earnings_date": "2026-05-21",
-      "matp": 175.50, "mbp": 152.61, "n_targets": 12,
+      "matp": 175.50, "mbp": 152.61, "n_targets": 12, "trend": "Uptrend",
       "target_high": 220, "target_low": 140, "target_mean": 178.3,
       "targets": [
         {"brokerage": "Morgan Stanley", "target_date": "2026-05-22", "target_price": 200},
@@ -101,17 +149,26 @@ Content-Type: application/json
   ]
 }
 ```
+- **`filter_id` + `prune: true`** on a full-universe run = enable drift tracking
+  for that filter. Send the COMPLETE ticker set for the filter in that one POST
+  (chunking a single filter across POSTs would falsely "drop" the chunks not in
+  the last call). Ad-hoc / per-ticker runs: omit both (no pruning).
 - `mbp` optional (server recomputes MATP/1.15 if omitted) — but send it.
+- `trend` optional: `Uptrend` / `Sideways` / `Downtrend` if you classify it
+  (else omit; a separate daily job may fill it).
 - `target_high/low/mean` = distribution of the **post-earnings** set (Stage 4.4).
 - `targets` = the **full** list (post + pre); server de-dupes on
   `(symbol, brokerage, target_date, target_price)`, so re-pushing the same list
   each run adds nothing new. Include `target_date` on every target — it's how
   post/pre is decided.
 - Omit tickers with n=0 post-earnings targets (don't push a null MATP).
-- Expect `{"ok":true,"upserted":N,"history_appended":H,"targets_added":T}`.
+- Expect `{"ok":true,"upserted":N,"history_appended":H,"targets_added":T,"dropped":D}`.
   401 = wrong key; 503 = TradeHunter has no `TST_INGEST_API_KEY` set yet.
 
-Batch the POST — send all tickers in one request (or chunks of ~50).
+**Out of scope for this skill:** the `signal*` fields (HOT/WARM/WATCHING bounce
+setup — entry/stop/target/rr). Those need daily price bars (EMA20/EMA50 bounce)
+and are filled by a separate daily job. This skill leaves them unset; the server
+preserves any signal already on the row when a payload omits it.
 
 **No CSV, no Google Sheets, no Pine, no Telegram.** The API push is the output.
 
@@ -134,6 +191,13 @@ hermes cron create "0 6 1 * *" \
 ```
 For a more frequent earnings-aware pass, add a daily cron that runs matp only
 for tickers whose latest earnings was in the last 1-2 days.
+
+Queue poll (every 10 min — drains collaborator "Request refresh" clicks):
+```
+hermes cron create "*/10 * * * *" \
+  "Run the matp skill in queue-poll mode: GET /api/refresh-queue and action any pending requests." \
+  --skill matp
+```
 
 ## Source / method
 Mirrors the canonical MATP methodology in TradeHunter's

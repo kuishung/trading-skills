@@ -5,15 +5,81 @@
   <h1 class="text-2xl font-semibold">{{ symbol }}
     {% if level and level.exchange %}<span class="text-slate-600 text-base">{{ level.exchange }}</span>{% endif %}
   </h1>
-  <a href="/matp" class="text-sm text-slate-400 hover:text-emerald-400">&larr; MATP board</a>
+  <div class="flex items-center gap-3">
+    {% if user.can_moderate %}
+      {% if req_open %}
+      <span class="text-xs px-2.5 py-1 rounded-full border border-amber-500/30 text-amber-300">&#8635; refresh queued</span>
+      {% else %}
+      <form method="post" action="/matp/{{ symbol }}/refresh" class="inline">
+        <button class="text-xs px-2.5 py-1 rounded-full border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">&#8635; Request refresh</button>
+      </form>
+      {% endif %}
+    {% endif %}
+    <a href="/matp" class="text-sm text-slate-400 hover:text-emerald-400">&larr; MATP board</a>
+  </div>
 </div>
 
+{% if last_req %}
+<div class="mb-3 text-xs
+  {% if last_req.status == 'pending' or last_req.status == 'running' %}text-amber-300
+  {% elif last_req.status == 'failed' %}text-rose-300{% else %}text-slate-500{% endif %}">
+  {% if last_req.status == 'pending' %}&#8635; Refresh queued &mdash; the research agent picks it up within ~10&nbsp;min.
+  {% elif last_req.status == 'running' %}&#8635; Refresh in progress&hellip;
+  {% elif last_req.status == 'done' %}&#10003; Last refresh completed {{ last_req.completed_at.strftime("%Y-%m-%d %H:%M") if last_req.completed_at else "" }}.
+  {% elif last_req.status == 'failed' %}&#10007; Last refresh failed{% if last_req.note %}: {{ last_req.note }}{% endif %}.
+  {% endif %}
+</div>
+{% endif %}
+
 {% if level %}
-<div class="flex flex-wrap gap-6 text-sm mb-6">
+<div class="flex flex-wrap gap-6 text-sm mb-5">
   <div><span class="text-slate-500">MATP</span> <span class="font-semibold tabular-nums">{{ "%.2f"|format(level.matp) if level.matp is not none else "-" }}</span></div>
-  <div><span class="text-slate-500">MBP</span> <span class="font-semibold tabular-nums text-slate-300">{{ "%.2f"|format(level.mbp) if level.mbp is not none else "-" }}</span></div>
+  <div><span class="text-slate-500">MBP (max buy)</span> <span class="font-semibold tabular-nums text-emerald-300">{{ "%.2f"|format(level.mbp) if level.mbp is not none else "-" }}</span></div>
+  <div><span class="text-slate-500">Trend</span>
+    <span>{% if level.trend == "Uptrend" %}<span class="text-emerald-400">&#9650; up</span>{% elif level.trend == "Downtrend" %}<span class="text-rose-400">&#9660; down</span>{% elif level.trend == "Sideways" %}<span class="text-amber-400">&#8212; flat</span>{% else %}{{ level.trend or "-" }}{% endif %}</span>
+  </div>
+  <div><span class="text-slate-500"># targets</span> <span class="tabular-nums">{{ level.n_targets if level.n_targets is not none else "-" }}{% if level.n_targets is not none and level.n_targets <= 2 %}<span class="text-amber-400" title="low confidence">&#9888;</span>{% endif %}</span></div>
   <div><span class="text-slate-500">Last earnings</span> <span>{{ level.last_earnings_date or "-" }}</span></div>
   <div><span class="text-slate-500">Updated</span> <span>{{ level.as_of.strftime("%Y-%m-%d") if level.as_of else "-" }}</span></div>
+</div>
+{% endif %}
+
+{% if band %}
+<div class="rounded-lg border border-slate-800 bg-slate-900/40 p-4 mb-6">
+  <div class="flex items-center justify-between text-xs text-slate-500 mb-6">
+    <span>analyst low {{ "%.0f"|format(band.low) }}</span>
+    <span>high {{ "%.0f"|format(band.high) }}</span>
+  </div>
+  <div class="relative h-2 rounded-full bg-gradient-to-r from-slate-700 via-slate-600 to-slate-700">
+    {% if band.mbp_pct is not none %}
+    <div class="absolute -top-5 -translate-x-1/2 text-[11px] text-emerald-300 whitespace-nowrap" style="left: {{ band.mbp_pct }}%">MBP {{ "%.0f"|format(band.mbp) }}</div>
+    <div class="absolute top-0 h-2 w-0.5 -translate-x-1/2 bg-emerald-400" style="left: {{ band.mbp_pct }}%"></div>
+    {% endif %}
+    {% if band.matp_pct is not none %}
+    <div class="absolute -bottom-6 -translate-x-1/2 text-[11px] text-slate-200 whitespace-nowrap" style="left: {{ band.matp_pct }}%">MATP {{ "%.0f"|format(band.matp) }}</div>
+    <div class="absolute top-0 h-2 w-0.5 -translate-x-1/2 bg-slate-100" style="left: {{ band.matp_pct }}%"></div>
+    {% endif %}
+  </div>
+  <p class="text-[11px] text-slate-600 mt-7">Where MBP and the median target sit within the full post-earnings analyst range.</p>
+</div>
+{% endif %}
+
+{% if level and level.signal %}
+<div class="rounded-lg border p-4 mb-8
+  {% if level.signal == 'HOT' %}border-rose-500/40 bg-rose-500/5{% elif level.signal == 'WARM' %}border-amber-500/40 bg-amber-500/5{% else %}border-sky-500/40 bg-sky-500/5{% endif %}">
+  <div class="flex items-center gap-2 mb-3">
+    <h2 class="text-sm font-semibold text-slate-200">Bounce setup</h2>
+    {% if level.signal == "HOT" %}<span class="px-1.5 py-0.5 rounded text-xs bg-rose-500/20 text-rose-300">&#9679; HOT</span>
+    {% elif level.signal == "WARM" %}<span class="px-1.5 py-0.5 rounded text-xs bg-amber-500/20 text-amber-300">&#9679; WARM</span>
+    {% else %}<span class="px-1.5 py-0.5 rounded text-xs bg-sky-500/20 text-sky-300">&#9675; WATCHING</span>{% endif %}
+  </div>
+  <div class="flex flex-wrap gap-6 text-sm">
+    <div><span class="text-slate-500">Entry</span> <span class="font-semibold tabular-nums">{{ "%.2f"|format(level.signal_entry) if level.signal_entry is not none else "-" }}</span></div>
+    <div><span class="text-slate-500">Stop</span> <span class="font-semibold tabular-nums text-rose-300">{{ "%.2f"|format(level.signal_stop) if level.signal_stop is not none else "-" }}</span></div>
+    <div><span class="text-slate-500">Target</span> <span class="font-semibold tabular-nums text-emerald-300">{{ "%.2f"|format(level.signal_target) if level.signal_target is not none else "-" }}</span> <span class="text-xs text-slate-600">(= MATP)</span></div>
+    <div><span class="text-slate-500">R:R</span> <span class="font-semibold tabular-nums">{{ "%.2f"|format(level.signal_rr) if level.signal_rr is not none else "-" }}</span></div>
+  </div>
+  <p class="text-[11px] text-slate-600 mt-3">EMA20/EMA50 bounce in an uptrend; entry = last close, stop = last low, target = MATP. Confirm on the chart before acting.</p>
 </div>
 {% endif %}
 

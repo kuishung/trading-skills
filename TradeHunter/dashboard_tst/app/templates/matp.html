@@ -1,12 +1,68 @@
 {% extends "base.html" %}
 {% block title %}MATP &middot; TradeHunter{% endblock %}
+
+{% macro trend_badge(t) %}
+  {% if t == "Uptrend" %}<span class="text-emerald-400">&#9650; up</span>
+  {% elif t == "Downtrend" %}<span class="text-rose-400">&#9660; down</span>
+  {% elif t == "Sideways" %}<span class="text-amber-400">&#8212; flat</span>
+  {% else %}<span class="text-slate-600">&middot;</span>{% endif %}
+{% endmacro %}
+
+{% macro signal_badge(s) %}
+  {% if s == "HOT" %}<span class="px-1.5 py-0.5 rounded text-xs bg-rose-500/15 text-rose-300">&#9679; HOT</span>
+  {% elif s == "WARM" %}<span class="px-1.5 py-0.5 rounded text-xs bg-amber-500/15 text-amber-300">&#9679; WARM</span>
+  {% elif s == "WATCHING" %}<span class="px-1.5 py-0.5 rounded text-xs bg-sky-500/15 text-sky-300">&#9675; watch</span>
+  {% else %}<span class="text-slate-700">&middot;</span>{% endif %}
+{% endmacro %}
+
+{% macro row(lv, filt_names, open_symbols, dim=false) %}
+<tr class="border-t border-slate-800 {{ 'opacity-50' if dim else '' }}">
+  <td class="px-3 py-2 font-medium">
+    <a href="/matp/{{ lv.symbol }}" class="text-emerald-400 hover:underline">{{ lv.symbol }}</a>
+    {% if lv.exchange %}<span class="text-slate-600 text-xs">{{ lv.exchange }}</span>{% endif %}
+    {% if lv.symbol in open_symbols %}<span class="text-amber-400 text-xs" title="refresh queued">&#8635;</span>{% endif %}
+  </td>
+  <td class="px-3 py-2 text-right tabular-nums">{{ "%.2f"|format(lv.matp) if lv.matp is not none else "-" }}</td>
+  <td class="px-3 py-2 text-right tabular-nums text-slate-300">{{ "%.2f"|format(lv.mbp) if lv.mbp is not none else "-" }}</td>
+  <td class="px-3 py-2">{{ trend_badge(lv.trend) }}</td>
+  <td class="px-3 py-2">{{ signal_badge(lv.signal) }}</td>
+  <td class="px-3 py-2 text-right text-slate-400 tabular-nums">
+    {% if lv.n_targets is not none %}{{ lv.n_targets }}{% if lv.n_targets <= 2 %}<span class="text-amber-400" title="low confidence">&#9888;</span>{% endif %}{% else %}-{% endif %}
+  </td>
+  <td class="px-3 py-2 text-slate-500 text-xs">{{ filt_names.get(lv.filter_id, "") if lv.filter_id else "" }}</td>
+  <td class="px-3 py-2 text-slate-500">{{ lv.as_of.strftime("%Y-%m-%d") if lv.as_of else "-" }}</td>
+</tr>
+{% endmacro %}
+
 {% block content %}
 <h1 class="text-2xl font-semibold mb-1">MATP board</h1>
 <p class="text-slate-400 text-sm mb-6">
-  Median Analyst Target Price + Max Buy Price (MBP = MATP / 1.15). Click a ticker to see how its target moved over time.
+  Median Analyst Target Price + Max Buy Price (MBP = MATP / 1.15 &mdash; pay below this and you keep &ge;15% headroom to the median target).
+  Names are the current Finviz-screen members; ones that fell out of the screen are kept under <em>Dropped</em>. Click a ticker for the levels band, bounce setup, history and analyst evidence.
 </p>
 
-{% if levels %}
+{% if open_reqs %}
+<div class="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-300">
+  &#8635; {{ open_reqs|length }} refresh request{{ "s" if open_reqs|length != 1 else "" }} queued &mdash; the research agent picks these up within ~10&nbsp;min.
+</div>
+{% endif %}
+
+{% if user.can_moderate and active_filters %}
+<div class="mb-5 flex flex-wrap items-center gap-2">
+  <span class="text-xs text-slate-500">Refresh a whole filter:</span>
+  {% for f in active_filters %}
+    {% if f.id in open_filter_ids %}
+    <span class="text-xs px-2.5 py-1 rounded-full border border-amber-500/30 text-amber-300">&#8635; {{ f.description }} (queued)</span>
+    {% else %}
+    <form method="post" action="/matp/filter/{{ f.id }}/refresh" class="inline">
+      <button class="text-xs px-2.5 py-1 rounded-full border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">&#8635; {{ f.description }}</button>
+    </form>
+    {% endif %}
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if active %}
 <table class="w-full text-sm border border-slate-800">
   <thead class="bg-slate-900 text-slate-400">
     <tr>
@@ -14,24 +70,14 @@
       <th class="text-right px-3 py-2">MATP</th>
       <th class="text-right px-3 py-2">MBP</th>
       <th class="text-left px-3 py-2">Trend</th>
-      <th class="text-left px-3 py-2">Last earnings</th>
+      <th class="text-left px-3 py-2">Signal</th>
+      <th class="text-right px-3 py-2">n</th>
+      <th class="text-left px-3 py-2">Filter</th>
       <th class="text-left px-3 py-2">Updated</th>
     </tr>
   </thead>
   <tbody>
-    {% for lv in levels %}
-    <tr class="border-t border-slate-800">
-      <td class="px-3 py-2 font-medium">
-        <a href="/matp/{{ lv.symbol }}" class="text-emerald-400 hover:underline">{{ lv.symbol }}</a>
-        {% if lv.exchange %}<span class="text-slate-600 text-xs">{{ lv.exchange }}</span>{% endif %}
-      </td>
-      <td class="px-3 py-2 text-right tabular-nums">{{ "%.2f"|format(lv.matp) if lv.matp is not none else "-" }}</td>
-      <td class="px-3 py-2 text-right tabular-nums text-slate-300">{{ "%.2f"|format(lv.mbp) if lv.mbp is not none else "-" }}</td>
-      <td class="px-3 py-2 text-slate-400">{{ lv.trend or "-" }}</td>
-      <td class="px-3 py-2 text-slate-500">{{ lv.last_earnings_date or "-" }}</td>
-      <td class="px-3 py-2 text-slate-500">{{ lv.as_of.strftime("%Y-%m-%d") if lv.as_of else "-" }}</td>
-    </tr>
-    {% endfor %}
+    {% for lv in active %}{{ row(lv, filt_names, open_symbols) }}{% endfor %}
   </tbody>
 </table>
 {% else %}
@@ -43,5 +89,30 @@
     computes post-earnings analyst-target medians, and pushes them here).
   </p>
 </div>
+{% endif %}
+
+{% if dropped %}
+<details class="mt-6">
+  <summary class="cursor-pointer text-sm text-slate-400 hover:text-slate-200 select-none">
+    Dropped from filter ({{ dropped|length }}) &mdash; history kept
+  </summary>
+  <table class="w-full text-sm border border-slate-800 mt-2">
+    <thead class="bg-slate-900 text-slate-400">
+      <tr>
+        <th class="text-left px-3 py-2">Ticker</th>
+        <th class="text-right px-3 py-2">MATP</th>
+        <th class="text-right px-3 py-2">MBP</th>
+        <th class="text-left px-3 py-2">Trend</th>
+        <th class="text-left px-3 py-2">Signal</th>
+        <th class="text-right px-3 py-2">n</th>
+        <th class="text-left px-3 py-2">Filter</th>
+        <th class="text-left px-3 py-2">Last seen</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for lv in dropped %}{{ row(lv, filt_names, open_symbols, dim=true) }}{% endfor %}
+    </tbody>
+  </table>
+</details>
 {% endif %}
 {% endblock %}

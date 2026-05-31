@@ -103,7 +103,22 @@ class MATPLevel(Base):
     last_earnings_date = Column(String(20), nullable=True)
     matp = Column(Float, nullable=True)
     mbp = Column(Float, nullable=True)
+    n_targets = Column(Integer, nullable=True)  # post-earnings count behind the median
     trend = Column(String(20), nullable=True)  # from resources.trend_state
+    # ---- universe membership / Finviz-filter drift tracking ----
+    # The Finviz screen is dynamic: each run some names fall out and others
+    # qualify. We never delete -- a ticker that leaves the screen is marked
+    # 'dropped' (its MATP history is retained) so the board can default to
+    # current candidates while keeping the time series.
+    status = Column(String(12), nullable=False, default="active")  # active | dropped
+    filter_id = Column(Integer, ForeignKey("finviz_filters.id"), nullable=True, index=True)
+    last_seen_at = Column(DateTime, nullable=True)  # last run that included this ticker
+    # ---- actionable bounce signal (daily_bounce_alert logic, pushed by agent) ----
+    signal = Column(String(12), nullable=True)        # HOT | WARM | WATCHING
+    signal_entry = Column(Float, nullable=True)       # last close
+    signal_stop = Column(Float, nullable=True)        # last low
+    signal_target = Column(Float, nullable=True)      # usually = MATP
+    signal_rr = Column(Float, nullable=True)          # reward:risk to target
     as_of = Column(DateTime, default=_utcnow)  # quarterly refresh stamp
 
 
@@ -148,6 +163,30 @@ class MATPTarget(Base):
     target_price = Column(Float, nullable=False)
     target_date = Column(String(20), nullable=True)  # YYYY-MM-DD, the issue date
     as_of = Column(DateTime, default=_utcnow)  # when first recorded
+
+
+class MATPRefreshRequest(Base):
+    """A collaborator-triggered ad-hoc MATP refresh. TradeHunter is LLM-free and
+    can't fetch, and the Nous Hermes agent only calls outward -- so a click here
+    just enqueues a 'pending' row. The agent polls /api/refresh-queue, runs the
+    work, pushes results via /api/matp, and marks the row done. Near-real-time,
+    not synchronous. Moderators/admins only (enforced in the route)."""
+
+    __tablename__ = "matp_refresh_requests"
+
+    id = Column(Integer, primary_key=True)
+    scope = Column(String(10), nullable=False)  # 'ticker' | 'filter'
+    symbol = Column(String(20), nullable=True, index=True)        # ticker scope
+    filter_id = Column(Integer, ForeignKey("finviz_filters.id"), nullable=True)  # filter scope
+    status = Column(String(12), nullable=False, default="pending", index=True)  # pending|running|done|failed
+    note = Column(Text, nullable=True)  # agent's result / error message
+    requested_by = Column(Integer, ForeignKey("users.id"))
+    created_at = Column(DateTime, default=_utcnow)
+    claimed_at = Column(DateTime, nullable=True)     # when the agent started it
+    completed_at = Column(DateTime, nullable=True)   # done / failed stamp
+
+    requester = relationship("User")
+    filter = relationship("FinvizFilter")
 
 
 class Setup(Base):
