@@ -119,6 +119,10 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-05-31 — v2.25: fold MATP/MBP/calculated/earnings into the chart legend
+
+Merged the separate "MATP … · MBP … · calculated … · earnings …" line into the **EMA legend** below the chart, so it reads as one description: `EMA20 · EMA50 · EMA200 · MATP <v> · MBP <v> · calculated <date> · earnings <date>`. `_price_chart.html` takes `chart_as_of` + `chart_earnings` (passed from board `sel` and detail `level`); the standalone calc line is removed.
+
 ### 2026-05-31 — v2.24: chart/analyst/watchlist polish
 
 - Removed the **"Price vs MATP / MBP"** chart heading.

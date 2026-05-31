@@ -137,17 +137,10 @@
       {% set chart_exchange = sel.exchange %}
       {% set chart_matp = sel.matp %}
       {% set chart_mbp = sel.mbp %}
-      {% set chart_detail_link = true %}
+      {% set chart_as_of = sel.as_of %}
+      {% set chart_earnings = sel.last_earnings_date %}
       {% set chart_height_class = 'h-[280px] lg:h-[42vh]' %}
       {% include "_price_chart.html" %}
-    </div>
-
-    {# when the MATP was calculated #}
-    <div class="shrink-0 text-xs text-slate-500">
-      MATP <span class="text-slate-300 tabular-nums">{{ "%.2f"|format(sel.matp) if sel.matp is not none else "-" }}</span>
-      &middot; MBP <span class="text-emerald-300 tabular-nums">{{ "%.2f"|format(sel.mbp) if sel.mbp is not none else "-" }}</span>
-      &middot; calculated <span class="text-slate-300">{{ sel.as_of.strftime("%Y-%m-%d %H:%M") if sel.as_of else "unknown" }}</span>
-      {% if sel.last_earnings_date %}&middot; earnings <span class="text-slate-300">{{ sel.last_earnings_date }}</span>{% endif %}
     </div>
 
     {# analyst section: consensus band (with the Analyst-targets button) + targets #}
