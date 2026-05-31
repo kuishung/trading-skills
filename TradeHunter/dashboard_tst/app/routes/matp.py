@@ -46,10 +46,15 @@ templates = Jinja2Templates(
 @router.get("", response_class=HTMLResponse)
 def matp_home(
     request: Request,
+    symbol: str | None = None,  # ?symbol=NVDA -> show its chart inline on the board
     user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ):
     all_levels = db.query(MATPLevel).all()
+    sel = None
+    if symbol:
+        sym = symbol.strip().upper()
+        sel = next((lv for lv in all_levels if lv.symbol == sym), None)
     active = sorted(
         [lv for lv in all_levels if (lv.status or "active") == "active"],
         key=_signal_key,
@@ -94,6 +99,7 @@ def matp_home(
             "open_filter_ids": open_filter_ids,
             "watchlists": watchlists,
             "unfiled": unfiled,
+            "sel": sel,
         },
     )
 

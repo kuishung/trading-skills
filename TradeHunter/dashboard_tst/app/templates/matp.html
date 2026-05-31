@@ -60,7 +60,7 @@
       <ul class="mt-1">
         {% for lv in w.tickers %}
         <li>
-          <a href="/matp/{{ lv.symbol }}" class="flex items-center justify-between px-2 py-1 rounded hover:bg-slate-800/70">
+          <a href="/matp?symbol={{ lv.symbol }}#chart" class="flex items-center justify-between px-2 py-1 rounded hover:bg-slate-800/70">
             <span class="text-emerald-400">{{ lv.symbol }}{% if lv.symbol in open_symbols %} <span class="text-amber-400 text-xs">&#8635;</span>{% endif %}</span>
             <span class="text-xs text-slate-500 tabular-nums">MBP {{ "%.0f"|format(lv.mbp) if lv.mbp is not none else "-" }}</span>
           </a>
@@ -81,7 +81,7 @@
     </summary>
     <ul class="px-2 pb-2">
       {% for lv in unfiled %}
-      <li><a href="/matp/{{ lv.symbol }}" class="flex items-center justify-between px-2 py-1 rounded hover:bg-slate-800/70">
+      <li><a href="/matp?symbol={{ lv.symbol }}#chart" class="flex items-center justify-between px-2 py-1 rounded hover:bg-slate-800/70">
         <span class="text-emerald-400">{{ lv.symbol }}</span>
         <span class="text-xs text-slate-500 tabular-nums">MBP {{ "%.0f"|format(lv.mbp) if lv.mbp is not none else "-" }}</span>
       </a></li>
@@ -117,6 +117,15 @@
 
   {# main board column #}
   <div class="flex-1 min-w-0">
+
+{# selected ticker's live price chart (MATP/MBP lines), shown inline on the board #}
+{% if sel %}
+  {% set chart_symbol = sel.symbol %}
+  {% set chart_matp = sel.matp %}
+  {% set chart_mbp = sel.mbp %}
+  {% set chart_detail_link = true %}
+  {% include "_price_chart.html" %}
+{% endif %}
 
 {# live runs panel: polls every 5s, renders progress bars while runs are open #}
 <div hx-get="/matp/runs" hx-trigger="load, every 5s" hx-swap="innerHTML"></div>

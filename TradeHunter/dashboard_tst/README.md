@@ -119,6 +119,13 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-05-31 — v2.9: Price chart inline on the MATP page (click a watchlist ticker)
+
+The price chart (MATP/MBP candlestick) now shows **on the MATP board itself**, not only the detail page. Clicking a ticker in the watchlist rail goes to `/matp?symbol=SYM#chart`, and the board renders that ticker's chart inline at the top of the main column (with an "open full detail →" link). The chart markup+script was factored into a shared partial **`_price_chart.html`** (params `chart_symbol`/`chart_matp`/`chart_mbp`), now included by both the board and the detail page — single source, no duplication.
+- `matp_home` accepts `?symbol=` and passes the matched level as `sel`.
+- Rail ticker links (watchlist + Other) point at `?symbol=…#chart`; the main board table's ticker links still go to the full detail page.
+- Verified: board without `?symbol` has no chart; `?symbol=NVDA` renders it (lib + MATP injected + detail link + fetch URL); detail page still renders via the partial.
+
 ### 2026-05-31 — v2.8: Watchlist second sidebar (responsive — collapses on mobile)
 
 Added a **watchlist rail** to the MATP page: each active Finviz watchlist, expandable to its tickers (click → detail), with a per-watchlist **↻ Run MATP** button (mods/admins) and MBP shown per ticker. Tickers with no source filter fall under an **"Other"** group.
