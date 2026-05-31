@@ -11,4 +11,6 @@ accounts, an admin-only control plane, and NO order execution in this
 process (the execution plane lives trusted-side).
 """
 
-__version__ = "0.0.1"
+# Hand-maintained release version, shown as "build vX.Y" on the login page
+# (easier to track than a git SHA). Bump on each meaningful release.
+__version__ = "1.2"

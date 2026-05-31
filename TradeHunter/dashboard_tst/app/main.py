@@ -18,7 +18,7 @@ from pathlib import Path
 _START_MONOTONIC = time.monotonic()
 
 from fastapi import Depends, FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
@@ -143,9 +143,14 @@ def create_app() -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request, user: User | None = Depends(current_user)):
-        return templates.TemplateResponse(
-            request, "dashboard.html", {"user": user}
-        )
+        # Go straight to the login page for visitors (no marketing landing).
+        if user is None:
+            return RedirectResponse(url="/login", status_code=303)
+        # Approved members land on the MATP board; pending/disabled users
+        # see the awaiting-approval page.
+        if user.is_approved:
+            return RedirectResponse(url="/matp", status_code=303)
+        return templates.TemplateResponse(request, "dashboard.html", {"user": user})
 
     return app
 

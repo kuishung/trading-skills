@@ -111,6 +111,11 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-05-30 — v1.2: straight-to-login root + hand-maintained version
+
+- **Root goes straight to the login page.** `GET /` now redirects: unauthenticated → `/login` (no marketing/hero landing), approved members → `/matp`, pending/disabled → the awaiting-approval page.
+- **Build label is now a hand-maintained version.** `app/__init__.py __version__` (currently **`1.2`**) shows as `build v1.2` in the login footer — easier to track than a git SHA. The exact commit SHA still lives in `/status` (`build` field) for precise deploy verification. Convention: bump `__version__` on each meaningful change and note it here.
+
 ### 2026-05-30 — Build indicator + callback error-surfacing
 
 Added a running-build indicator so you can tell at a glance whether a machine (esp. Hermes) is on the latest code after a deploy: `app/_build.py` reads the git commit SHA from `.git` at process start (no `git` on PATH needed); shown as `build <sha>` in the login-page footer and in `/status`. Also made the Google OAuth callback **surface its real error**: the handler now wraps the whole flow, logs the exception (`log.exception`), and — when `TST_DEBUG=1` — returns the traceback on the `/auth/callback` page instead of silently redirecting (was hiding the cause of login failures). Diagnostic aid for the Hermes login issue (root cause was a dead IPv6 route to `oauth2.googleapis.com` — see CLAUDE.md/Hermes notes).

@@ -22,7 +22,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from .._build import BUILD
+from .. import __version__
 from ..config import settings
 from ..db import get_db
 from ..models import APPROVED, PENDING, User
@@ -36,7 +36,7 @@ templates = Jinja2Templates(
 
 
 def _login_ctx(error: str | None = None) -> dict:
-    return {"error": error, "auth_mode": settings.auth_mode, "build": BUILD}
+    return {"error": error, "auth_mode": settings.auth_mode, "build": f"v{__version__}"}
 
 
 # ----------------------------------------------------------------------------
