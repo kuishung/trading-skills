@@ -16,7 +16,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import FinvizFilter, User
+from ..models import RUN_INTERVALS, FinvizFilter, User
 from ..security import require_moderator, require_user
 
 router = APIRouter(prefix="/finviz", tags=["finviz"])
@@ -100,8 +100,30 @@ def finviz_home(
     return templates.TemplateResponse(
         request,
         "finviz.html",
-        {"user": user, "filters": filters, "can_edit": user.can_moderate},
+        {
+            "user": user,
+            "filters": filters,
+            "can_edit": user.can_moderate,
+            "intervals": list(RUN_INTERVALS.keys()),
+        },
     )
+
+
+@router.post("/filters/{fid}/interval")
+def set_interval(
+    fid: int,
+    interval: str = Form(...),
+    mod: User = Depends(require_moderator),
+    db: Session = Depends(get_db),
+):
+    """Set a filter's scheduled-run cadence (the agent's poll cron runs it when
+    due). Setting an interval makes it due immediately (next_run_at cleared)."""
+    f = db.get(FinvizFilter, fid)
+    if f is not None and interval in RUN_INTERVALS:
+        f.run_interval = interval
+        f.next_run_at = None  # due now (then advances on the next completed run)
+        db.commit()
+    return RedirectResponse(url="/finviz", status_code=303)
 
 
 @router.post("/filters")

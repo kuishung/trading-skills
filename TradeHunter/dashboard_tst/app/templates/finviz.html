@@ -2,7 +2,7 @@
 {% block title %}Finviz filters &middot; TradeHunter{% endblock %}
 {% block content %}
 <h1 class="text-2xl font-semibold mb-1">Finviz filters</h1>
-<p class="text-slate-400 text-sm mb-6">Saved screener filters. Active ones feed the scan step.</p>
+<p class="text-slate-400 text-sm mb-6">Saved screener filters. Active ones feed MATP. Set a <b>schedule</b> and the research agent runs that filter automatically when it's due.</p>
 
 {% if can_edit %}
 <form method="post" action="/finviz/filters" class="mb-8 space-y-3 rounded-lg border border-slate-800 p-4">
@@ -32,6 +32,7 @@
       <th class="text-left px-3 py-2">Description</th>
       <th class="text-left px-3 py-2">Filter criteria</th>
       <th class="text-left px-3 py-2">Status</th>
+      <th class="text-left px-3 py-2">Schedule</th>
       {% if can_edit %}<th class="text-right px-3 py-2">Actions</th>{% endif %}
     </tr>
   </thead>
@@ -57,6 +58,24 @@
           <span class="text-emerald-400">&#9679; Active</span>
         {% else %}
           <span class="text-slate-500">&#9675; Inactive</span>
+        {% endif %}
+      </td>
+      <td class="px-3 py-2 whitespace-nowrap">
+        {% if can_edit %}
+        <form method="post" action="/finviz/filters/{{ f.id }}/interval" class="inline">
+          <select name="interval" onchange="this.form.submit()"
+                  class="rounded bg-slate-900 border border-slate-700 px-2 py-1 text-xs focus:border-emerald-500 outline-none">
+            {% for iv in intervals %}<option value="{{ iv }}" {% if f.run_interval == iv %}selected{% endif %}>{{ iv }}</option>{% endfor %}
+          </select>
+        </form>
+        {% else %}
+        <span class="text-slate-400 text-xs">{{ f.run_interval }}</span>
+        {% endif %}
+        {% if f.run_interval != "off" %}
+        <div class="text-[11px] text-slate-500 mt-0.5">
+          {% if f.next_run_at %}next {{ f.next_run_at.strftime("%Y-%m-%d") }}{% else %}due now{% endif %}
+          {% if f.last_run_at %} &middot; last {{ f.last_run_at.strftime("%Y-%m-%d") }}{% endif %}
+        </div>
         {% endif %}
       </td>
       {% if can_edit %}

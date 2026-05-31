@@ -1,6 +1,6 @@
 ---
 name: matp
-version: 1.4.1
+version: 1.5.0
 description: Compute the faithful Median Analyst Target Price (MATP) + Max Buy Price (MBP) for TradeHunter and push the results to the platform. Use when asked to "refresh MATP", "run MATP", "update target prices", or on the scheduled cron. Reads the active Finviz screener filters from TradeHunter's API, expands them to a ticker universe, and for each ticker looks up the latest earnings date + analyst price targets on MarketBeat, keeps only targets issued AFTER the latest earnings, computes the median (MATP) and MBP = MATP/1.15, then POSTs the rows to TradeHunter's /api/matp endpoint. Does NOT write CSV / Google Sheets / Telegram -- output is the API push only.
 ---
 
@@ -91,6 +91,21 @@ For each request:
 
 Idempotent: if the queue is empty, do nothing. TradeHunter de-dupes requests, so
 you'll never see two open requests for the same target.
+
+### Scheduled filters (same poll)
+On the SAME poll, also run any Finviz filters whose schedule is due:
+```
+GET {TRADEHUNTER_URL}/api/due-filters     header: X-API-Key: {TST_INGEST_API_KEY}
+-> {"filters":[{"id":1,"description":"...","url":"https://finviz.com/...","interval":"weekly"}, ...]}
+```
+For each due filter, run the **full universe** (Stages 1-5 on its `filter_url`)
+and push as a filter run — incremental `final:false` pushes while you work, then
+a closing push with `filter_id` + `prune:true` + `final:true`. That closing push
+**advances the filter's schedule** automatically (TradeHunter sets its
+`last_run_at`/`next_run_at` from its interval), so a filter set to "weekly" reruns
+about a week later. If `/api/due-filters` returns an empty list, nothing is due —
+do nothing. (The per-filter interval is configured by moderators in the
+TradeHunter Finviz page; you just run whatever is due.)
 
 ---
 

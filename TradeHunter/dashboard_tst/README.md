@@ -119,6 +119,15 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-05-31 — v2.35: per-Finviz-filter run schedule (agent runs due filters)
+
+Each saved Finviz filter now has a **run schedule** — `off / daily / weekly / monthly / quarterly` — set by moderators on the `/finviz` page (a Schedule column with a dropdown + "next/last run" info). The interval lives in the dashboard; the **agent's poll cron just runs whatever's due**, so you don't manage per-filter crons on the agent.
+- **Model:** `finviz_filters` gains `run_interval` / `last_run_at` / `next_run_at` (migration `d4e5f6a7b8c9`). `RUN_INTERVALS` maps interval→days.
+- **API:** `GET /api/due-filters` returns active filters with `next_run_at <= now` (and interval ≠ off). The **finalizing `/api/matp` push advances** that filter's `last_run_at`/`next_run_at` from its interval — so completing a run (scheduled or manual) reschedules the next one. Setting an interval makes it due immediately (`next_run_at` cleared).
+- **Route:** `POST /finviz/filters/{id}/interval`.
+- Nous Hermes `matp` skill → v1.5.0: on each poll it also `GET /api/due-filters` and runs each due filter full-universe (`prune` + `final`), which advances the schedule.
+- Verified: off→none due; set weekly→due now→run→advances +7d→not due; UI dropdown renders.
+
 ### 2026-05-31 — v2.34: pro band + current price + patterns + Trend column + individual-ticker group
 
 - **Analyst band redesigned** (cleaner: taller `h-9` bar with a ring, low/high inside, MBP/MATP labels below) **+ a live current-price marker** (amber ▼ + line, positioned by % within the range). `_build_band` takes `current`; the route fetches the live close (cached) for the selected ticker.

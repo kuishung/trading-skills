@@ -19,9 +19,12 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from datetime import timedelta
+
 from ..config import settings
 from ..db import get_db
 from ..models import (
+    RUN_INTERVALS,
     FinvizFilter,
     MATPHistory,
     MATPLevel,
@@ -50,6 +53,27 @@ def list_active_filters(_: bool = Depends(require_api_key), db: Session = Depend
     # `id` lets the agent post each run back with filter_id so we can diff the
     # universe (mark tickers that fell out of the screen as 'dropped').
     return {"filters": [{"id": f.id, "description": f.description, "url": f.url} for f in rows]}
+
+
+@router.get("/due-filters")
+def due_filters(_: bool = Depends(require_api_key), db: Session = Depends(get_db)):
+    """Active filters whose SCHEDULE is due (next_run_at <= now). The agent runs
+    these full-universe on its poll cron; the finalizing /api/matp push advances
+    each filter's schedule. Interval is set per filter in the dashboard."""
+    now = _dt.datetime.now(_dt.timezone.utc)
+    rows = (
+        db.query(FinvizFilter)
+        .filter(FinvizFilter.is_active.is_(True), FinvizFilter.run_interval != "off")
+        .all()
+    )
+    due = []
+    for f in rows:
+        nxt = f.next_run_at
+        if nxt is not None and nxt.tzinfo is None:
+            nxt = nxt.replace(tzinfo=_dt.timezone.utc)
+        if nxt is None or nxt <= now:
+            due.append({"id": f.id, "description": f.description, "url": f.url, "interval": f.run_interval})
+    return {"filters": due}
 
 
 # ---------------------------------------------------------------------------
@@ -281,6 +305,11 @@ def ingest_matp(
         if payload.filter_id is not None:
             f = db.get(FinvizFilter, payload.filter_id)
             filter_desc = f.description if f else None
+            # advance the filter's run schedule on a completed run
+            if f is not None and (RUN_INTERVALS.get(f.run_interval)):
+                f.last_run_at = now
+                f.next_run_at = now + timedelta(days=RUN_INTERVALS[f.run_interval])
+                db.commit()
         from ..services.matp_archive import save_run
 
         archived = save_run(payload, now, filter_desc=filter_desc)

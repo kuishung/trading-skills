@@ -242,10 +242,18 @@ class FinvizFilter(Base):
     description = Column(String(200), nullable=False)
     url = Column(Text, nullable=False)
     is_active = Column(Boolean, nullable=False, default=True)
+    # scheduled MATP run: the agent's poll cron runs filters that are *due*.
+    run_interval = Column(String(12), nullable=False, default="off")  # off|daily|weekly|monthly|quarterly
+    last_run_at = Column(DateTime, nullable=True)
+    next_run_at = Column(DateTime, nullable=True, index=True)
     created_by = Column(Integer, ForeignKey("users.id"))
     created_at = Column(DateTime, default=_utcnow)
 
     author = relationship("User")
+
+
+# interval -> days; the agent runs a filter when next_run_at <= now.
+RUN_INTERVALS = {"off": None, "daily": 1, "weekly": 7, "monthly": 30, "quarterly": 91}
 
 
 class Feedback(Base):
