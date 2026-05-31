@@ -37,7 +37,23 @@
 </tr>
 {% endmacro %}
 
-{# ---- watchlist rail: each active filter, expandable to its tickers + Run ---- #}
+{# ---- ticker grid: Sym · Trend · Signal · MBP, clickable rows ---- #}
+{% macro ticker_grid(tickers, open_symbols, sel) %}
+<div class="grid grid-cols-[1fr_auto_auto_auto] gap-x-2 px-2 pt-1 text-[10px] uppercase tracking-wide text-slate-600">
+  <span>Sym</span><span class="text-center">Trend</span><span class="text-center">Signal</span><span class="text-right">MBP</span>
+</div>
+{% for lv in tickers %}
+<a href="/matp?symbol={{ lv.symbol }}"
+   class="grid grid-cols-[1fr_auto_auto_auto] items-center gap-x-2 px-2 py-1 rounded {% if sel and sel.symbol == lv.symbol %}bg-emerald-500/15{% else %}hover:bg-slate-800/70{% endif %}">
+  <span class="{% if sel and sel.symbol == lv.symbol %}text-emerald-300{% else %}text-emerald-400{% endif %}">{{ lv.symbol }}{% if lv.symbol in open_symbols %} <span class="text-amber-400 text-xs">&#8635;</span>{% endif %}</span>
+  <span class="text-center">{{ trend_badge(lv.trend) }}</span>
+  <span class="text-center">{{ signal_badge(lv.signal) }}</span>
+  <span class="text-right text-xs text-slate-500 tabular-nums">{{ "%.0f"|format(lv.mbp) if lv.mbp is not none else "-" }}</span>
+</a>
+{% endfor %}
+{% endmacro %}
+
+{# ---- watchlist rail: each active filter, expandable to its tickers ---- #}
 {% macro watchlist_rail(watchlists, unfiled, user, open_filter_ids, open_symbols, sel=None) %}
 <div class="space-y-2 text-sm">
   {% for w in watchlists %}
@@ -50,25 +66,23 @@
       {% if w.filter.id in open_filter_ids %}
       <div class="px-1 py-1 text-xs text-amber-300">&#8635; queued</div>
       {% endif %}
-      {% if w.tickers %}
-      <div class="grid grid-cols-[1fr_auto_auto] gap-x-2 px-2 pt-1 text-[10px] uppercase tracking-wide text-slate-600">
-        <span>Sym</span><span class="text-center">Signal</span><span class="text-right">MBP</span>
-      </div>
-      {% for lv in w.tickers %}
-      <a href="/matp?symbol={{ lv.symbol }}"
-         class="grid grid-cols-[1fr_auto_auto] items-center gap-x-2 px-2 py-1 rounded {% if sel and sel.symbol == lv.symbol %}bg-emerald-500/15{% else %}hover:bg-slate-800/70{% endif %}">
-        <span class="{% if sel and sel.symbol == lv.symbol %}text-emerald-300{% else %}text-emerald-400{% endif %}">{{ lv.symbol }}{% if lv.symbol in open_symbols %} <span class="text-amber-400 text-xs">&#8635;</span>{% endif %}</span>
-        <span class="text-center">{{ signal_badge(lv.signal) }}</span>
-        <span class="text-right text-xs text-slate-500 tabular-nums">{{ "%.0f"|format(lv.mbp) if lv.mbp is not none else "-" }}</span>
-      </a>
-      {% endfor %}
+      {% if w.tickers %}{{ ticker_grid(w.tickers, open_symbols, sel) }}
       {% else %}
       <p class="px-2 py-1 text-xs text-slate-600">No tickers yet.</p>
       {% endif %}
     </div>
   </details>
   {% endfor %}
-  {% if not watchlists %}
+  {% if unfiled %}
+  <details class="rounded-lg border border-slate-800 bg-slate-900/40" open>
+    <summary class="cursor-pointer px-3 py-2 flex items-center justify-between hover:bg-slate-800/40 rounded-lg">
+      <span class="text-slate-300">Individual tickers</span>
+      <span class="text-xs text-slate-500 ml-2 shrink-0">{{ unfiled|length }}</span>
+    </summary>
+    <div class="px-1 pb-2">{{ ticker_grid(unfiled, open_symbols, sel) }}</div>
+  </details>
+  {% endif %}
+  {% if not watchlists and not unfiled %}
   <p class="text-xs text-slate-500 px-1">No active watchlists. Add a Finviz filter on the <a href="/finviz" class="text-emerald-400 hover:underline">Finviz</a> page.</p>
   {% endif %}
 </div>
@@ -174,6 +188,7 @@
       {% set chart_as_of = sel.as_of %}
       {% set chart_earnings = sel.last_earnings_date %}
       {% set chart_band = sel_band %}
+      {% set chart_patterns = sel_patterns %}
       {% set chart_fill = true %}
       {% include "_price_chart.html" %}
     {% else %}

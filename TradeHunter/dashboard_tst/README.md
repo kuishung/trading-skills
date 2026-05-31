@@ -119,6 +119,14 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-05-31 — v2.34: pro band + current price + patterns + Trend column + individual-ticker group
+
+- **Analyst band redesigned** (cleaner: taller `h-9` bar with a ring, low/high inside, MBP/MATP labels below) **+ a live current-price marker** (amber ▼ + line, positioned by % within the range). `_build_band` takes `current`; the route fetches the live close (cached) for the selected ticker.
+- **Pattern recognition hooked in** (shared `resources.patterns` on live daily bars): the chart panel shows badges for **Trend (up/down/sideways)**, **Consolidation**, and **Bull flag** for the selected ticker. New `_ticker_analysis()` (soft-fail). 
+- **Watchlist gains a Trend column** (Sym · Trend · Signal · MBP) via the new `ticker_grid` macro (uses the stored `MATPLevel.trend`).
+- **Individual-ticker group**: ad-hoc ticker runs (no Finviz filter) now appear under an **"Individual tickers"** group in the watchlist (answers "how does a single-ticker run show up?" — previously they were invisible).
+- Verified live: NVDA → current 211.14, trend/bull-flag badges; trend column, individual group, current marker all render.
+
 ### 2026-05-31 — v2.33: chart fills the screen + ETFs in search
 
 - **Chart fits the screen.** The chart card now flex-fills the right panel (`chart_fill`): the TradingView header and the analyst band are fixed (`shrink-0`), and the **price-chart canvas takes the remaining height** (`lg:flex-1`, min-h fallback on mobile). No more fixed `vh` height that overflowed at the 130% scale; the watchlist column keeps its own internal scroll.

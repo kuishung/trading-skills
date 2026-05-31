@@ -1,38 +1,36 @@
-{# Analyst low->high band (bare — caller supplies the box). Colour = concentration
-   of analyst targets across the price range (blue -> red, red = most). Context: band #}
+{# Analyst low->high band (bare — caller supplies the box). Heat = concentration
+   of analyst targets in the consensus zone (neon, peak=red). Markers: MBP, MATP,
+   and the live current price. Context: band #}
 {% if band %}
-<div>
-  {# MBP label row (above the bar) #}
+<div class="select-none">
+  {# row above the bar: current price #}
   <div class="relative h-4 text-[11px]">
-    {% if band.mbp_pct is not none %}
-    <span class="absolute -translate-x-1/2 text-emerald-300 whitespace-nowrap" style="left: {{ band.mbp_pct }}%">MBP {{ "%.0f"|format(band.mbp) }}</span>
+    {% if band.current_pct is not none %}
+    <span class="absolute -translate-x-1/2 text-amber-300 font-medium whitespace-nowrap" style="left: {{ band.current_pct }}%">&#9660; {{ "%.2f"|format(band.current) }}</span>
     {% endif %}
   </div>
 
-  {# thick heatmap bar with low/high inside #}
-  <div class="relative h-8 rounded-md overflow-hidden flex bg-slate-800">
+  {# the bar: heatmap zone + low/high inside + markers #}
+  <div class="relative h-9 rounded-md overflow-hidden flex bg-slate-800 ring-1 ring-slate-700">
     {% if band.bins %}
-      {% for b in band.bins %}<div class="h-full" style="width: {{ b.width }}%; background: {{ b.color }}{% if b.color != 'transparent' %}; box-shadow: 0 0 8px {{ b.color }}{% endif %}"></div>{% endfor %}
-    {% else %}
-      <div class="h-full w-full bg-gradient-to-r from-slate-700 via-slate-600 to-slate-700"></div>
+      {% for b in band.bins %}<div class="h-full" style="width: {{ b.width }}%; background: {{ b.color }}{% if b.color != 'transparent' %}; box-shadow: 0 0 10px {{ b.color }}{% endif %}"></div>{% endfor %}
     {% endif %}
-    <span class="absolute left-2 top-1/2 -translate-y-1/2 text-[11px] font-medium text-slate-100" style="text-shadow:0 1px 3px rgba(0,0,0,.9)">low {{ "%.0f"|format(band.low) }}</span>
-    <span class="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-medium text-slate-100" style="text-shadow:0 1px 3px rgba(0,0,0,.9)">high {{ "%.0f"|format(band.high) }}</span>
-    {% if band.mbp_pct is not none %}
-    <div class="absolute top-0 h-full w-0.5 bg-emerald-200" style="left: {{ band.mbp_pct }}%"></div>
-    {% endif %}
-    {% if band.matp_pct is not none %}
-    <div class="absolute top-0 h-full w-0.5 bg-white" style="left: {{ band.matp_pct }}%"></div>
-    {% endif %}
+    <span class="absolute left-2 top-1/2 -translate-y-1/2 text-[11px] text-slate-300" style="text-shadow:0 1px 2px #000">{{ "%.0f"|format(band.low) }}</span>
+    <span class="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-slate-300" style="text-shadow:0 1px 2px #000">{{ "%.0f"|format(band.high) }}</span>
+    {% if band.mbp_pct is not none %}<div class="absolute top-0 h-full w-px bg-emerald-300" style="left: {{ band.mbp_pct }}%"></div>{% endif %}
+    {% if band.matp_pct is not none %}<div class="absolute top-0 h-full w-px bg-slate-100" style="left: {{ band.matp_pct }}%"></div>{% endif %}
+    {% if band.current_pct is not none %}<div class="absolute top-0 h-full w-0.5 bg-amber-400" style="left: {{ band.current_pct }}%"></div>{% endif %}
   </div>
 
-  {# MATP label row (below the bar) #}
-  <div class="relative h-4 text-[11px]">
-    {% if band.matp_pct is not none %}
-    <span class="absolute -translate-x-1/2 text-slate-100 whitespace-nowrap" style="left: {{ band.matp_pct }}%">MATP {{ "%.0f"|format(band.matp) }}</span>
-    {% endif %}
+  {# row below the bar: MBP + MATP #}
+  <div class="relative h-4 mt-0.5 text-[11px]">
+    {% if band.mbp_pct is not none %}<span class="absolute -translate-x-1/2 text-emerald-300 whitespace-nowrap" style="left: {{ band.mbp_pct }}%">MBP {{ "%.0f"|format(band.mbp) }}</span>{% endif %}
+    {% if band.matp_pct is not none %}<span class="absolute -translate-x-1/2 text-slate-100 whitespace-nowrap" style="left: {{ band.matp_pct }}%">MATP {{ "%.0f"|format(band.matp) }}</span>{% endif %}
   </div>
 
-  <p class="text-[11px] text-slate-600 mt-1">Colour = analyst-target concentration (blue&rarr;red, red = most){% if band.n %}; consensus {{ "%.0f"|format(band.consensus_lo) }}&ndash;{{ "%.0f"|format(band.consensus_hi) }} ({{ band.consensus_count }}/{{ band.n }}){% endif %}.</p>
+  <p class="text-[11px] text-slate-500 mt-2">
+    Heat = analyst-target concentration{% if band.n %} &middot; consensus {{ "%.0f"|format(band.consensus_lo) }}&ndash;{{ "%.0f"|format(band.consensus_hi) }} ({{ band.consensus_count }}/{{ band.n }}){% endif %}
+    &middot; <span class="text-emerald-300">MBP</span> / <span class="text-slate-100">MATP</span> / <span class="text-amber-300">price</span> marked.
+  </p>
 </div>
 {% endif %}

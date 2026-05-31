@@ -98,11 +98,14 @@ def matp_home(
     if sel is None:
         sel = shown_tickers[0] if shown_tickers else (active[0] if active else None)
 
-    # selected ticker's consensus band + analyst summary for the right panel
+    # selected ticker's consensus band + analyst summary + live analysis
     sel_band = None
     sel_targets = []
+    sel_patterns = []
     if sel is not None:
         sel_targets = _ticker_targets(db, sel.symbol, sel.last_earnings_date)
+        analysis = _ticker_analysis(sel.symbol)
+        sel_patterns = analysis["patterns"]
         latest = (
             db.query(MATPHistory)
             .filter(MATPHistory.symbol == sel.symbol)
@@ -112,7 +115,8 @@ def matp_home(
         if latest is not None:
             incl = [t["target_price"] for t in sel_targets if t["included"]]
             sel_band = _build_band(
-                latest.target_low, latest.target_high, sel.mbp, sel.matp, prices=incl
+                latest.target_low, latest.target_high, sel.mbp, sel.matp,
+                prices=incl, current=analysis["current"],
             )
 
     return templates.TemplateResponse(
@@ -134,6 +138,7 @@ def matp_home(
             "sel": sel,
             "sel_band": sel_band,
             "sel_targets": sel_targets,
+            "sel_patterns": sel_patterns,
         },
     )
 
@@ -254,10 +259,44 @@ def matp_targets_modal(
     )
 
 
-def _build_band(low, high, mbp, matp, prices=None, bins=18):
-    """Horizontal levels band: MBP + MATP markers along the analyst low->high
-    range (as left% offsets), plus a histogram of the individual targets so you
-    can see where consensus concentrates. Returns None unless we have a range."""
+def _ticker_analysis(symbol: str) -> dict:
+    """Live current price + simple pattern flags for the selected ticker, from
+    the shared resources.patterns on live daily bars. Soft-fail (never breaks
+    the page); returns {current, patterns:[{name, value, good}]}."""
+    out: dict = {"current": None, "patterns": []}
+    try:
+        from ..services import resources_bridge  # noqa: F401  (puts TradeHunter on sys.path)
+        from ..services.prices import fetch_daily_ohlc
+
+        raw = fetch_daily_ohlc(symbol)
+        if not raw:
+            return out
+        out["current"] = raw[-1]["close"]
+        bars = [
+            {"t": b["time"], "o": b["open"], "h": b["high"],
+             "l": b["low"], "c": b["close"], "v": 0}
+            for b in raw
+        ]
+        from resources import patterns
+
+        pats = []
+        d = (patterns.trend(bars) or {}).get("direction")
+        if d in ("up", "down", "sideways"):
+            pats.append({"name": "Trend", "value": d, "good": d == "up"})
+        if (patterns.consolidation(bars) or {}).get("is_consol"):
+            pats.append({"name": "Consolidation", "value": "tight range", "good": True})
+        if (patterns.bull_flag(bars) or {}).get("detected"):
+            pats.append({"name": "Bull flag", "value": "", "good": True})
+        out["patterns"] = pats
+    except Exception:
+        pass
+    return out
+
+
+def _build_band(low, high, mbp, matp, prices=None, current=None, bins=18):
+    """Horizontal levels band: MBP + MATP + current-price markers along the
+    analyst low->high range, plus a concentration heatmap. None unless we have a
+    range. `current` is the live price (marker only — may sit outside low..high)."""
     if low is None or high is None or high <= low:
         return None
 
@@ -270,6 +309,7 @@ def _build_band(low, high, mbp, matp, prices=None, bins=18):
         "low": low, "high": high,
         "mbp": mbp, "matp": matp,
         "mbp_pct": pct(mbp), "matp_pct": pct(matp),
+        "current": current, "current_pct": pct(current),
     }
 
     vals = [p for p in (prices or []) if p is not None]

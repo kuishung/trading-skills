@@ -38,9 +38,14 @@
   {# analyst band (connected, same panel) #}
   {% if chart_band %}
   <div class="p-3 {% if chart_fill %}shrink-0{% endif %}">
-    <div class="flex justify-end mb-2">
+    <div class="flex items-center justify-between gap-2 mb-2">
+      <div class="flex flex-wrap items-center gap-1">
+        {% for pat in chart_patterns or [] %}
+        <span class="text-[11px] px-1.5 py-0.5 rounded {% if pat.good %}bg-emerald-500/15 text-emerald-300{% else %}bg-slate-700/50 text-slate-300{% endif %}">{{ pat.name }}{% if pat.value %}: {{ pat.value }}{% endif %}</span>
+        {% endfor %}
+      </div>
       <button type="button" hx-get="/matp/{{ chart_symbol }}/targets" hx-target="#atModalBody" hx-swap="innerHTML"
-              onclick="atOpen()" class="text-xs px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Analyst targets &rarr;</button>
+              onclick="atOpen()" class="shrink-0 text-xs px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Analyst targets &rarr;</button>
     </div>
     {% set band = chart_band %}{% include "_band.html" %}
   </div>
