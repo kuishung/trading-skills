@@ -250,31 +250,45 @@ def _open_run_items(db: Session):
     return items
 
 
-def _runs_context(db: Session, user: User) -> dict:
+def _runs_context(db: Session, user: User, wl: str = "", sym: str = "", poll: int = 0) -> dict:
     """Template context for the runs panel, including an adaptive self-poll
     cadence so the page doesn't refresh forever:
       - a run actively *running* → poll 5s (watch the progress bar)
       - a fresh *pending* run     → poll 10s (waiting for the agent to claim it)
       - everything stale, or no runs → poll_in = 0 → STOP auto-refreshing
         (a stale run means the agent likely isn't polling — hammering won't help;
-        the manual ↻ refresh / ↻ retry buttons resume it)."""
+        the manual ↻ refresh / ↻ retry buttons resume it).
+
+    The cadence is deliberately calm (no fast progress-bar churn): we poll just
+    often enough to NOTICE completion, then reload the board ONCE. `poll`
+    distinguishes a self-poll from the initial page load, so an empty result
+    from a poll means "a run just finished → reload the watchlist", whereas an
+    empty result on first load just means nothing is running yet."""
     items = _open_run_items(db)
     running_live = any(it["r"].status == "running" and not it["stale"] for it in items)
     pending_live = any(it["r"].status == "pending" and not it["stale"] for it in items)
-    poll_in = 5 if running_live else (10 if pending_live else 0)
-    return {"user": user, "items": items, "poll_in": poll_in}
+    poll_in = 10 if running_live else (20 if pending_live else 0)
+    completed = bool(poll) and not items  # a watched run just finished
+    return {
+        "user": user, "items": items, "poll_in": poll_in,
+        "wl": wl or "", "sym": sym or "", "completed": completed,
+        "reload_url": "/matp/watchlist?wl=" + (wl or "") + "&sym=" + (sym or ""),
+    }
 
 
 @router.get("/runs", response_class=HTMLResponse)
 def matp_runs(
     request: Request,
+    wl: str = "",
+    sym: str = "",
+    poll: int = 0,
     user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ):
-    """HTMX-polled fragment: the live 'active runs' panel (pending + running),
-    newest first, with progress + who triggered it. Self-polls adaptively."""
+    """HTMX fragment: the active-runs panel. Self-polls calmly while a run is in
+    flight, then reloads the board once when it finishes (see _runs_context)."""
     return templates.TemplateResponse(
-        request, "_runs_panel.html", _runs_context(db, user)
+        request, "_runs_panel.html", _runs_context(db, user, wl=wl, sym=sym, poll=poll)
     )
 
 
@@ -282,6 +296,8 @@ def matp_runs(
 def retry_run(
     rid: int,
     request: Request,
+    wl: str = Form(""),
+    sym: str = Form(""),
     user: User = Depends(require_moderator),
     db: Session = Depends(get_db),
 ):
@@ -304,7 +320,7 @@ def retry_run(
         r.note = "re-queued by " + (user.display_name or user.email or "a moderator")
         db.commit()
     return templates.TemplateResponse(
-        request, "_runs_panel.html", _runs_context(db, user)
+        request, "_runs_panel.html", _runs_context(db, user, wl=wl, sym=sym, poll=1)
     )
 
 

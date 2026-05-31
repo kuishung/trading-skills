@@ -63,9 +63,6 @@
 })();
 </script>
 
-{# ── live run progress (separate panel; everyone sees it) ── #}
-<div id="runsbox" class="shrink-0 empty:hidden mb-2" hx-get="/matp/runs" hx-trigger="load" hx-swap="innerHTML"></div>
-
 {% set wl_url = "/matp/watchlist?wl=" ~ (sel_wl or "") ~ "&sym=" ~ (sel.symbol if sel else "") %}
 
 {# mobile: watchlists collapse into a dropdown above the board (lazy-loaded) #}
@@ -77,9 +74,13 @@
 </details>
 
 <div class="lg:flex lg:gap-4 lg:flex-1 lg:min-h-0">
-  {# MIDDLE: watchlist panel — lazy-loads the grid with runtime trend/signal #}
+  {# MIDDLE: watchlist panel — lazy-loads the grid with runtime trend/signal.
+     The active-runs panel sits on top of THIS column (narrow), not spanning
+     across to the chart. #}
   <aside class="hidden lg:flex lg:flex-col lg:w-72 lg:shrink-0 lg:h-full">
-    <div class="flex-1 min-h-0 overflow-y-auto pr-1"
+    <div id="runsbox" class="shrink-0 empty:hidden mb-2"
+         hx-get="/matp/runs?wl={{ sel_wl }}&sym={{ sel.symbol if sel else '' }}" hx-trigger="load" hx-swap="innerHTML"></div>
+    <div id="wlbox" class="flex-1 min-h-0 overflow-y-auto pr-1"
          hx-get="{{ wl_url }}" hx-trigger="load" hx-swap="innerHTML">
       <div class="text-xs text-slate-500 px-2 py-3">Loading watchlist&hellip;</div>
     </div>

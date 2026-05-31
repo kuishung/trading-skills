@@ -1,0 +1,5 @@
+{# Inner content of the nav "Nous Hermes" pill (swapped into the <a> by HTMX).
+   Context: has_beat, online, status_text. #}
+<span class="h-2 w-2 rounded-full shrink-0 {{ 'bg-emerald-400' if online else ('bg-rose-500' if has_beat else 'bg-slate-600') }}"
+      title="Nous Hermes agent · {{ status_text }}"></span>
+<span class="hidden sm:inline {{ 'text-emerald-300' if online else 'text-slate-400' }}">Nous Hermes</span>

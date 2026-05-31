@@ -119,6 +119,43 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-01 — v2.47: "Nous Hermes" heartbeat pill in the top bar
+
+- A **Nous Hermes** pill now sits in the top nav, just **left of the user
+  icon** (moderators/admins): a liveness dot (green online / red stale / grey no
+  heartbeat) + label, self-refreshing every 60s, click-through to `/agent`. New
+  `GET /agent/pill` fragment + `_agent_pill.html`. base.html places it with
+  `ml-auto` (user menu drops its own `ml-auto` when the pill is present).
+
+### 2026-06-01 — v2.46: don't churn during a run; reload the board once when it finishes
+
+- The runs panel no longer animates/flickers while a run is in progress. It
+  shows a **calm static status** (no pulsing bar) and polls at a slower cadence
+  (running 10s, pending 20s) **only to notice completion**.
+- When a watched run **finishes**, the panel reloads the **watchlist board
+  exactly once** (`#wlbox`) so the new MATP data appears — instead of the board
+  never updating or the panel refreshing continuously. Mechanism: a `poll=1`
+  flag distinguishes a self-poll from the initial load; an empty poll result =
+  "a run just finished → reload the board", carrying `wl`/`sym` so the right
+  watchlist is reloaded. Retry button forwards `wl`/`sym` too.
+
+### 2026-06-01 — v2.45: active-runs panel moved onto the watchlist column
+
+- The "Active MATP runs" panel no longer spans the full page width above the
+  board. It now sits **on top of the watchlist column** (the narrow `w-72`
+  aside), so it doesn't push into / overlap the chart section. Single `#runsbox`
+  relocated inside the aside (desktop); self-poll/retry behaviour unchanged.
+
+### 2026-06-01 — v2.44: /agent shows each cron's FULL prompt (not the truncated name)
+
+- Heartbeat gains a structured `cron_jobs` array `[{id,schedule,skills,prompt,
+  next_run,active}]` (new `AgentHeartbeat.cron_jobs` JSON column, migration
+  `f6a7b8c9d0e1`). The `/agent` page now renders one card per cron — schedule +
+  skill + next-run badges and the **full prompt the agent runs** — so you can see
+  what each job actually does. Falls back to the raw `hermes cron list` text when
+  the agent is on an older skill (no structured jobs).
+- Pairs with agent skill **matp v1.7.0** (sends `cron_jobs`).
+
 ### 2026-06-01 — v2.43: adaptive run-panel polling (stop hammering when stale)
 
 - The active-runs panel no longer polls `/matp/runs` every 5s **forever**. It

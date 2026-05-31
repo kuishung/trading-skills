@@ -104,6 +104,16 @@ Edit files here, redeploy (scp / git pull → `bash install.sh`), then re-test w
 recreate the cron job unless the schedule or delivery target changes.
 
 ## Changelog
+- **2026-06-01** — `markets/matp` skill → **v1.7.0**: heartbeat now sends a
+  STRUCTURED `cron_jobs` array — one object per cron with its **full prompt**
+  (`hermes cron list` truncates the Name) — so TradeHunter's /agent page shows
+  what each cron actually does. Full prompt sourced from `hermes cron list
+  --json` / `hermes cron show <id>` / the `~/.hermes` cron store. Pairs with
+  dashboard_tst v2.44.
+- **2026-06-01** — `markets/matp` skill → **v1.6.1**: heartbeat now reports
+  `hermes cron list` (this agent schedules via Hermes's own scheduler; the system
+  `crontab -l` is empty here, so v1.6.0 would have reported no crons). Same
+  heartbeat endpoint/cadence otherwise.
 - **2026-06-01** — `markets/matp` skill → **v1.6.0**: on every poll the agent now
   POSTs a heartbeat to TradeHunter's `POST /api/agent/heartbeat` (X-API-Key)
   first thing — `{agent, version, host, crons (raw `crontab -l`), polled_at}` —

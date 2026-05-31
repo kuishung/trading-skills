@@ -61,6 +61,9 @@ def agent_status(
         if recv is not None and recv.tzinfo is None:
             recv = recv.replace(tzinfo=_dt.timezone.utc)
         online = recv is not None and (now - recv) <= STALE_AFTER
+        # structured jobs (full prompt per cron) when the agent sent them;
+        # else fall back to the raw `hermes cron list` text lines.
+        jobs = r.cron_jobs if isinstance(r.cron_jobs, list) else []
         cron_lines = [
             ln for ln in (r.crons or "").splitlines()
             if ln.strip() and not ln.strip().startswith("#")
@@ -71,8 +74,36 @@ def agent_status(
             "host": r.host,
             "online": online,
             "seen_ago": _fmt_ago(recv, now),
+            "jobs": jobs,
             "cron_lines": cron_lines,
         })
     return templates.TemplateResponse(
         request, "agent.html", {"user": user, "agents": agents}
+    )
+
+
+@router.get("/pill", response_class=HTMLResponse)
+def agent_pill(
+    request: Request,
+    user: User = Depends(require_moderator),
+    db: Session = Depends(get_db),
+):
+    """Tiny nav-bar pill fragment: Nous Hermes liveness dot + label, HTMX-polled
+    on every page. Links to /agent for the full view."""
+    now = _dt.datetime.now(_dt.timezone.utc)
+    r = (
+        db.query(AgentHeartbeat).filter(AgentHeartbeat.agent == "nous_hermes").first()
+        or db.query(AgentHeartbeat).order_by(AgentHeartbeat.received_at.desc()).first()
+    )
+    recv = r.received_at if r else None
+    if recv is not None and recv.tzinfo is None:
+        recv = recv.replace(tzinfo=_dt.timezone.utc)
+    online = recv is not None and (now - recv) <= STALE_AFTER
+    if r is None:
+        status_text = "no heartbeat yet"
+    else:
+        status_text = ("online" if online else "stale") + " · " + _fmt_ago(recv, now)
+    return templates.TemplateResponse(
+        request, "_agent_pill.html",
+        {"has_beat": r is not None, "online": online, "status_text": status_text},
     )

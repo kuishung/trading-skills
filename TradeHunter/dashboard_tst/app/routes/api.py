@@ -82,10 +82,20 @@ def due_filters(_: bool = Depends(require_api_key), db: Session = Depends(get_db
 # Agent heartbeat — the outbound-only Nous Hermes agent self-reports liveness +
 # its crontab on each poll. TradeHunter can't reach into the Linux box, so this
 # is how the /agent page knows the agent is alive and which crons it's running.
+class CronJobIn(BaseModel):
+    id: str | None = None
+    schedule: str | None = None       # e.g. "*/10 * * * *"
+    skills: str | None = None         # e.g. "matp"
+    prompt: str | None = None         # the FULL prompt the cron runs
+    next_run: str | None = None
+    active: bool | None = None
+
+
 class HeartbeatIn(BaseModel):
     agent: str = "nous_hermes"
     version: str | None = None
-    crons: str | None = None          # raw `crontab -l` output
+    crons: str | None = None          # raw `hermes cron list` text (fallback)
+    cron_jobs: list[CronJobIn] | None = None  # structured, with full prompts
     host: str | None = None
     polled_at: str | None = None      # ISO-8601 from the agent's own clock
 
@@ -111,6 +121,10 @@ def agent_heartbeat(
         db.add(row)
     row.version = payload.version
     row.crons = payload.crons
+    row.cron_jobs = (
+        [j.model_dump() for j in payload.cron_jobs]
+        if payload.cron_jobs is not None else None
+    )
     row.host = payload.host
     row.polled_at = polled
     row.received_at = now

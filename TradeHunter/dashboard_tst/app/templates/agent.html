@@ -28,12 +28,29 @@
       </div>
     </div>
     <div class="px-4 py-3">
-      <div class="text-[10px] uppercase tracking-wide text-slate-600 mb-1">crontab &middot; {{ a.cron_lines|length }} active</div>
-      {% if a.cron_lines %}
+      <div class="text-[10px] uppercase tracking-wide text-slate-600 mb-2">scheduled jobs &middot; {{ (a.jobs or a.cron_lines)|length }}</div>
+      {% if a.jobs %}
+      <div class="space-y-2">
+        {% for j in a.jobs %}
+        <div class="rounded-md bg-slate-950/60 border border-slate-800 p-3">
+          <div class="flex items-center flex-wrap gap-2 mb-1.5">
+            <span class="text-xs font-mono text-emerald-300 bg-emerald-500/10 rounded px-1.5 py-0.5">{{ j.schedule or "?" }}</span>
+            {% if j.skills %}<span class="text-[11px] text-sky-300 bg-sky-500/10 rounded px-1.5 py-0.5">{{ j.skills }}</span>{% endif %}
+            {% if j.active is defined and j.active == false %}<span class="text-[11px] text-rose-300">paused</span>{% endif %}
+            {% if j.id %}<span class="text-[10px] text-slate-600 font-mono">{{ j.id }}</span>{% endif %}
+            {% if j.next_run %}<span class="text-[10px] text-slate-500 ml-auto">next {{ j.next_run }}</span>{% endif %}
+          </div>
+          {% if j.prompt %}<p class="text-xs text-slate-300 leading-relaxed">{{ j.prompt }}</p>{% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      {% elif a.cron_lines %}
+      {# fallback: raw `hermes cron list` text (agent on an older skill, no full prompts) #}
       <pre class="text-xs text-slate-300 bg-slate-950/60 rounded-md p-3 overflow-x-auto whitespace-pre">{% for ln in a.cron_lines %}{{ ln }}
 {% endfor %}</pre>
+      <p class="text-[11px] text-slate-600 mt-1">Update the agent skill to v1.7.0+ to see each cron&rsquo;s full prompt here.</p>
       {% else %}
-      <p class="text-xs text-slate-600">No active cron lines reported.</p>
+      <p class="text-xs text-slate-600">No scheduled jobs reported.</p>
       {% endif %}
     </div>
   </div>

@@ -14,6 +14,7 @@ from __future__ import annotations
 import datetime as _dt
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Column,
     DateTime,
@@ -270,7 +271,11 @@ class AgentHeartbeat(Base):
     id = Column(Integer, primary_key=True)
     agent = Column(String(60), unique=True, nullable=False, index=True)  # e.g. "nous_hermes"
     version = Column(String(40), nullable=True)   # agent / skill version string
-    crons = Column(Text, nullable=True)           # raw `crontab -l` output
+    crons = Column(Text, nullable=True)           # raw `hermes cron list` text (fallback)
+    # structured cron jobs incl. the FULL prompt each one runs, so the /agent
+    # page can show what every cron actually does (not the truncated Name):
+    #   [{"id","schedule","skills","prompt","next_run","active"}]
+    cron_jobs = Column(JSON, nullable=True)
     host = Column(String(120), nullable=True)     # optional hostname
     polled_at = Column(DateTime, nullable=True)   # agent's own clock at send
     received_at = Column(DateTime, default=_utcnow)  # server clock on receipt

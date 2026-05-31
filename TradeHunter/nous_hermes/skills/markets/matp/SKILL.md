@@ -1,6 +1,6 @@
 ---
 name: matp
-version: 1.6.0
+version: 1.7.0
 description: Compute the faithful Median Analyst Target Price (MATP) + Max Buy Price (MBP) for TradeHunter and push the results to the platform. Use when asked to "refresh MATP", "run MATP", "update target prices", or on the scheduled cron. Reads the active Finviz screener filters from TradeHunter's API, expands them to a ticker universe, and for each ticker looks up the latest earnings date + analyst price targets on MarketBeat, keeps only targets issued AFTER the latest earnings, computes the median (MATP) and MBP = MATP/1.15, then POSTs the rows to TradeHunter's /api/matp endpoint. Does NOT write CSV / Google Sheets / Telegram -- output is the API push only.
 ---
 
@@ -51,21 +51,44 @@ Nothing on the scheduled run. If invoked ad-hoc for specific tickers
 ## Heartbeat (every poll — do this FIRST, before draining the queue)
 TradeHunter can't reach into this Linux box, so it can't tell whether the agent
 is alive or what crons are installed. Tell it: **on every poll, before anything
-else, POST a heartbeat** with the agent's version and its actual crontab. The
-dashboard's **/agent** page shows this (online/stale + the literal cron lines),
-so the user can confirm from the web UI which crons are running here.
+else, POST a heartbeat** with the agent's version and a STRUCTURED list of its
+crons — **including the FULL prompt each cron runs** — so the dashboard's
+**/agent** page can show what every job actually does (not a truncated name).
 
+**This agent schedules via Hermes's OWN scheduler (`hermes cron`), NOT the system
+crontab** (`crontab -l` is empty here).
+
+**Build `cron_jobs` — one object per cron with its FULL prompt.** `hermes cron
+list` truncates the Name and has no `--json`/`show`, so read the cron-store file
+**`~/.hermes/cron/jobs.json`** directly — it holds every job's full definition
+(id, schedule, skills, and the complete prompt). Map each entry to
+`{id, schedule, skills, prompt, next_run, active}` where **`prompt` is the
+complete, untruncated instruction**. Map fields sensibly to the observed
+jobs.json shape: `schedule` is an **object** `{"kind","expr","display"}` → send
+its `display` (or `expr`) **string**, not the object; `skills` may be a list →
+join with commas; `active` may be null (treat as active) or come from inverting
+`paused`. Also send the raw `hermes cron list` text as `crons` (a fallback the
+server uses if `cron_jobs` is absent).
+
+Post it (example with two fields shown; include every cron you have):
 ```bash
-CRONS="$(crontab -l 2>/dev/null)"
 curl -s -X POST "{TRADEHUNTER_URL}/api/agent/heartbeat" \
   -H "X-API-Key: {TST_INGEST_API_KEY}" -H "Content-Type: application/json" \
-  -d "$(jq -nc --arg v "matp 1.6.0" --arg h "$(hostname)" --arg c "$CRONS" \
-        --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        '{agent:"nous_hermes", version:$v, host:$h, crons:$c, polled_at:$t}')"
+  -d '{
+    "agent": "nous_hermes",
+    "version": "matp 1.7.0",
+    "host": "<hostname>",
+    "polled_at": "<UTC ISO-8601>",
+    "crons": "<raw `hermes cron list` text>",
+    "cron_jobs": [
+      {"id": "8be925747007", "schedule": "*/10 * * * *", "skills": "matp",
+       "prompt": "Run the matp skill in queue-poll mode: GET /api/refresh-queue and action any pending requests.",
+       "next_run": "2026-06-01T00:20:00+08:00", "active": true}
+    ]
+  }'
 ```
-(`agent` defaults to `nous_hermes`; `crons` is the raw `crontab -l` text — the
-server splits + filters comments for display. Soft-fail: if the heartbeat POST
-errors, log it and carry on with the poll — it must never block the real work.)
+(`agent` defaults to `nous_hermes`. Soft-fail: if the heartbeat POST errors, log
+it and carry on with the poll — it must never block the real work.)
 Expect `{"ok":true,"agent":"nous_hermes","received_at":"..."}`.
 
 ## Ad-hoc refresh queue (frequent poll)

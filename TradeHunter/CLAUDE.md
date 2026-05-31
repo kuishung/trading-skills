@@ -561,6 +561,22 @@ recall/look up the host. The password is entered interactively (not scripted).
 Same spirit as the Hermes deploy-script rule — give the full ordered sequence,
 login included, every time.
 
+**Rule (user, set 2026-06-01): EVERY script/command I hand over MUST state WHICH
+MACHINE + which terminal it runs in — every time, no exceptions.** The user
+develops across **three machines** and it's easy to paste a command into the
+wrong one. Always label the target up front. The three machines:
+
+| Machine | OS / shell | What runs there | How to get a prompt |
+|---|---|---|---|
+| **Laptop** (dev cockpit) | Windows / PowerShell | code edits, `git commit`/`push` | local terminal (this is where Claude works) |
+| **Hermes** (R720 Hyper-V VM) | Windows Server 2019 / PowerShell | the `dashboard_tst` web app (tradehunter.net), git pull + deploy | RDP / console → `PS C:\…>` |
+| **Nous agent** | Ubuntu Linux / bash | the `matp` skill, `hermes cron`, heartbeats | `ssh administrator@192.168.1.163` → `administrator@nous-agent:~$` |
+
+So: a `git pull`/deploy PowerShell block → **Hermes**; a `python3`/`hermes`/`curl
+~/.hermes` bash block → **Nous agent** (prepend the ssh login line); a
+`git commit`/code task → **Laptop**. Name the machine before the code block,
+always.
+
 Canonical detail + deploy steps live in `nous_hermes/README.md`. This
 note lives in CLAUDE.md (not just a memory file) so every dev PC recalls
 it — memory files don't sync across PCs.
