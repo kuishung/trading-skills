@@ -119,6 +119,10 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-05-31 — v2.31: scale the whole UI ~30% bigger
+
+Set `html { font-size: 130% }` in `base.html` — since Tailwind's sizes are rem-based, fonts, padding, widths and most spacing scale up ~30% together, so the whole app reads bigger. Added `lg:overflow-y-auto` to the right chart panel so the larger content scrolls within the panel instead of clipping under the no-scroll desktop layout.
+
 ### 2026-05-31 — v2.30: analyst band as a concentration heatmap; targets table removed
 
 - **Band reworked into a thick heatmap bar** (`h-8`): each price bucket is coloured by how many analyst targets fall in it — **blue→red, red = most concentrated** (`_build_band` adds an HSL `color` per bin, hue 240→0). The **low/high labels now sit inside the bar**; MBP/MATP markers + labels above/below.

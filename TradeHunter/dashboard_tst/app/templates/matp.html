@@ -165,7 +165,7 @@
   </aside>
 
   {# RIGHT: chart panel — chart, band, analyst summary #}
-  <div class="lg:flex-1 min-w-0 lg:h-full flex flex-col gap-3 lg:min-h-0 mt-4 lg:mt-0">
+  <div class="lg:flex-1 min-w-0 lg:h-full flex flex-col gap-3 lg:min-h-0 lg:overflow-y-auto mt-4 lg:mt-0">
     {% if sel %}
     <div class="shrink-0">
       {% set chart_symbol = sel.symbol %}
