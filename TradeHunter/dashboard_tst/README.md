@@ -119,6 +119,12 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-05-31 — v2.32: neon zone-only heatmap + fix Analyst-targets button overlap
+
+- The band heatmap now **only colours the concentrated zone** (the densest contiguous run of buckets) — scattered outlier targets stay neutral — using **neon** colours (`hsl(h,100%,60%)`, blue→red, peak=red) with a CSS **glow** (`box-shadow`). Per-bin colour is `transparent` outside the zone. (`_build_band` computes the zone before colouring.)
+- Fixed the **"Analyst targets" button overlap**: it's no longer absolutely positioned over the band — it sits in its own right-aligned row above the band (board + detail).
+- The band already recomputes per ticker (each selection is a full reload with the new `sel`/`sel_band`).
+
 ### 2026-05-31 — v2.31: scale the whole UI ~30% bigger
 
 Set `html { font-size: 130% }` in `base.html` — since Tailwind's sizes are rem-based, fonts, padding, widths and most spacing scale up ~30% together, so the whole app reads bigger. Added `lg:overflow-y-auto` to the right chart panel so the larger content scrolls within the panel instead of clipping under the no-scroll desktop layout.

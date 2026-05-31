@@ -45,9 +45,12 @@
 {% endif %}
 
 {% if band %}
-<div class="mb-6 relative rounded-lg border border-slate-800 bg-slate-900/40 p-3">{% include "_band.html" %}
-  <button type="button" hx-get="/matp/{{ symbol }}/targets" hx-target="#atModalBody" hx-swap="innerHTML"
-          onclick="atOpen()" class="absolute right-3 top-3 text-xs px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Analyst targets</button>
+<div class="mb-6 rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+  <div class="flex justify-end mb-2">
+    <button type="button" hx-get="/matp/{{ symbol }}/targets" hx-target="#atModalBody" hx-swap="innerHTML"
+            onclick="atOpen()" class="text-xs px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Analyst targets &rarr;</button>
+  </div>
+  {% include "_band.html" %}
 </div>
 {% endif %}
 

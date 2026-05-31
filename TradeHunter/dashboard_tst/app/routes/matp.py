@@ -282,12 +282,21 @@ def _build_band(low, high, mbp, matp, prices=None, bins=18):
         mx = max(counts) or 1
         bw = 100.0 / bins
 
-        def _heat(c):
-            # heatmap: empty -> transparent, low -> blue, high -> red (hue 240->0)
-            if not c:
+        # consensus zone = the densest contiguous run of bins (the cluster where
+        # the majority of targets sit). The neon heatmap colours ONLY this zone.
+        top = max(range(bins), key=lambda i: counts[i])
+        lo_i = hi_i = top
+        while lo_i - 1 >= 0 and counts[lo_i - 1] >= max(1, counts[top] * 0.5):
+            lo_i -= 1
+        while hi_i + 1 < bins and counts[hi_i + 1] >= max(1, counts[top] * 0.5):
+            hi_i += 1
+
+        def _heat(i, c):
+            # neon rainbow, ONLY inside the concentrated zone; peak (most) -> red.
+            if not (lo_i <= i <= hi_i) or not c:
                 return "transparent"
-            hue = round(240 * (1 - c / mx))
-            return "hsl(%d, 85%%, 55%%)" % hue
+            hue = round(240 * (1 - c / mx))  # 240 blue -> 0 red
+            return "hsl(%d, 100%%, 60%%)" % hue
 
         band["bins"] = [
             {
@@ -295,20 +304,12 @@ def _build_band(low, high, mbp, matp, prices=None, bins=18):
                 "width": round(bw, 3),
                 "h": round(c / mx * 100),
                 "count": c,
-                "color": _heat(c),
+                "color": _heat(i, c),
                 "lo": round(low + i / bins * span, 2),
                 "hi": round(low + (i + 1) / bins * span, 2),
             }
             for i, c in enumerate(counts)
         ]
-        # consensus zone = the densest contiguous run of bins (the cluster where
-        # the majority of targets sit), so the highlight isn't just one thin bin.
-        top = max(range(bins), key=lambda i: counts[i])
-        lo_i = hi_i = top
-        while lo_i - 1 >= 0 and counts[lo_i - 1] >= max(1, counts[top] * 0.5):
-            lo_i -= 1
-        while hi_i + 1 < bins and counts[hi_i + 1] >= max(1, counts[top] * 0.5):
-            hi_i += 1
         band["consensus_lo"] = round(low + lo_i / bins * span, 2)
         band["consensus_hi"] = round(low + (hi_i + 1) / bins * span, 2)
         band["consensus_count"] = sum(counts[lo_i : hi_i + 1])

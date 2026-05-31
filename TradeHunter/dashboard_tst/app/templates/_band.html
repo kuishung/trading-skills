@@ -12,7 +12,7 @@
   {# thick heatmap bar with low/high inside #}
   <div class="relative h-8 rounded-md overflow-hidden flex bg-slate-800">
     {% if band.bins %}
-      {% for b in band.bins %}<div class="h-full" style="width: {{ b.width }}%; background: {{ b.color }}"></div>{% endfor %}
+      {% for b in band.bins %}<div class="h-full" style="width: {{ b.width }}%; background: {{ b.color }}{% if b.color != 'transparent' %}; box-shadow: 0 0 8px {{ b.color }}{% endif %}"></div>{% endfor %}
     {% else %}
       <div class="h-full w-full bg-gradient-to-r from-slate-700 via-slate-600 to-slate-700"></div>
     {% endif %}
