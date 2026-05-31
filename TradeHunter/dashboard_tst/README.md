@@ -119,6 +119,15 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-05-31 — v2.24: chart/analyst/watchlist polish
+
+- Removed the **"Price vs MATP / MBP"** chart heading.
+- Moved the **"Analyst targets"** button onto the **consensus band** (opens the targets modal); removed the redundant **"open full detail"** link/button (board + detail).
+- The **TradingView widget** now has an **"open TradingView chart →"** link that opens the full TV chart for that ticker (`tradingview.com/chart/?symbol=<EXCH:SYM>`).
+- **Watchlist is now a grid** — columns **Sym · Signal · MBP** (signal badge per ticker) with a small header row.
+- Removed the per-watchlist **"Run MATP"** button from the rail (the Run panel above handles running).
+- Verified all six on a throwaway DB.
+
 ### 2026-05-31 — v2.23: TradingView ticker-info widget above the chart
 
 Added TradingView's **Symbol-Info** embed widget above the price chart (in `_price_chart.html`, so board + detail both get it) — shows the ticker's price/change/key stats that our chart can't. **Kept the lightweight chart** with MATP/MBP/EMA overlays (user choice: "keep ours + add TV info panel"), so nothing is lost. Symbol resolves with the exchange prefix when known (`NASDAQ:NVDA`), else the bare symbol; dark/transparent theme. `chart_exchange` passed from board (`sel.exchange`) and detail (`level.exchange`).

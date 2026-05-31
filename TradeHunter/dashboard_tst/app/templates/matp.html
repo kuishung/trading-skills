@@ -46,31 +46,24 @@
       <span class="text-slate-200 truncate">{{ w.filter.description }}</span>
       <span class="text-xs text-slate-500 ml-2 shrink-0">{{ w.tickers|length }}</span>
     </summary>
-    <div class="px-2 pb-2">
-      {% if user.can_moderate %}
-        {% if w.filter.id in open_filter_ids %}
-        <div class="px-1 py-1 text-xs text-amber-300">&#8635; queued</div>
-        {% else %}
-        <form method="post" action="/matp/run-filter" class="px-1 py-1">
-          <input type="hidden" name="filter_id" value="{{ w.filter.id }}">
-          <input type="hidden" name="next" value="/matp">
-          <button class="text-xs px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">&#8635; Run MATP</button>
-        </form>
-        {% endif %}
+    <div class="px-1 pb-2">
+      {% if w.filter.id in open_filter_ids %}
+      <div class="px-1 py-1 text-xs text-amber-300">&#8635; queued</div>
       {% endif %}
       {% if w.tickers %}
-      <ul class="mt-1">
-        {% for lv in w.tickers %}
-        <li>
-          <a href="/matp?symbol={{ lv.symbol }}" class="flex items-center justify-between px-2 py-1 rounded {% if sel and sel.symbol == lv.symbol %}bg-emerald-500/15{% else %}hover:bg-slate-800/70{% endif %}">
-            <span class="{% if sel and sel.symbol == lv.symbol %}text-emerald-300{% else %}text-emerald-400{% endif %}">{{ lv.symbol }}{% if lv.symbol in open_symbols %} <span class="text-amber-400 text-xs">&#8635;</span>{% endif %}</span>
-            <span class="text-xs text-slate-500 tabular-nums">MBP {{ "%.0f"|format(lv.mbp) if lv.mbp is not none else "-" }}</span>
-          </a>
-        </li>
-        {% endfor %}
-      </ul>
+      <div class="grid grid-cols-[1fr_auto_auto] gap-x-2 px-2 pt-1 text-[10px] uppercase tracking-wide text-slate-600">
+        <span>Sym</span><span class="text-center">Signal</span><span class="text-right">MBP</span>
+      </div>
+      {% for lv in w.tickers %}
+      <a href="/matp?symbol={{ lv.symbol }}"
+         class="grid grid-cols-[1fr_auto_auto] items-center gap-x-2 px-2 py-1 rounded {% if sel and sel.symbol == lv.symbol %}bg-emerald-500/15{% else %}hover:bg-slate-800/70{% endif %}">
+        <span class="{% if sel and sel.symbol == lv.symbol %}text-emerald-300{% else %}text-emerald-400{% endif %}">{{ lv.symbol }}{% if lv.symbol in open_symbols %} <span class="text-amber-400 text-xs">&#8635;</span>{% endif %}</span>
+        <span class="text-center">{{ signal_badge(lv.signal) }}</span>
+        <span class="text-right text-xs text-slate-500 tabular-nums">{{ "%.0f"|format(lv.mbp) if lv.mbp is not none else "-" }}</span>
+      </a>
+      {% endfor %}
       {% else %}
-      <p class="px-2 py-1 text-xs text-slate-600">No tickers yet &mdash; run it to populate.</p>
+      <p class="px-2 py-1 text-xs text-slate-600">No tickers yet.</p>
       {% endif %}
     </div>
   </details>
@@ -157,15 +150,15 @@
       {% if sel.last_earnings_date %}&middot; earnings <span class="text-slate-300">{{ sel.last_earnings_date }}</span>{% endif %}
     </div>
 
-    {# analyst section: consensus band + targets + full detail #}
+    {# analyst section: consensus band (with the Analyst-targets button) + targets #}
     {% if sel_band %}
-    <div class="shrink-0">{% set band = sel_band %}{% include "_band.html" %}</div>
+    <div class="shrink-0 relative">
+      {% set band = sel_band %}{% include "_band.html" %}
+      <button type="button" hx-get="/matp/{{ sel.symbol }}/targets" hx-target="#atModalBody" hx-swap="innerHTML"
+              onclick="atOpen()" class="absolute right-3 top-3 text-xs px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Analyst targets</button>
+    </div>
     {% endif %}
 
-    <div class="flex items-center justify-end shrink-0">
-      <button type="button" hx-get="/matp/{{ sel.symbol }}/targets" hx-target="#atModalBody" hx-swap="innerHTML"
-              onclick="atOpen()" class="text-xs px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Open full detail &rarr;</button>
-    </div>
     <div class="lg:flex-1 lg:min-h-0 overflow-y-auto max-h-[60vh] lg:max-h-none rounded-lg border border-slate-800">
       <table class="w-full text-sm">
         <thead class="bg-slate-900 text-slate-400 sticky top-0">

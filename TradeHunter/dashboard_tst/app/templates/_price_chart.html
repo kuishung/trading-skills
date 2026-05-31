@@ -2,29 +2,23 @@
    Context: chart_symbol, chart_matp, chart_mbp. Optional: chart_detail_link
    (show an "open full detail" link when rendered on the board). #}
 {% if chart_symbol and chart_matp is not none %}
+{% set tv_symbol = (chart_exchange ~ ':' ~ chart_symbol) if chart_exchange else chart_symbol %}
 <div id="chart" class="mb-8">
-  {# TradingView ticker info (price, change, key stats) — fundamentals our chart can't show #}
-  <div class="rounded-lg border border-slate-800 bg-slate-900/40 overflow-hidden mb-3">
+  {# TradingView ticker info — click "open chart" to jump to the full TV chart of this ticker #}
+  <div class="rounded-lg border border-slate-800 bg-slate-900/40 overflow-hidden mb-3 relative">
+    <a href="https://www.tradingview.com/chart/?symbol={{ tv_symbol }}" target="_blank" rel="noopener"
+       class="absolute right-2 top-2 z-10 text-[11px] text-sky-300 hover:text-sky-200 bg-slate-900/80 rounded px-1.5 py-0.5">open TradingView chart &rarr;</a>
     <div class="tradingview-widget-container">
       <div class="tradingview-widget-container__widget"></div>
       <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-symbol-info.js" async>
       {
-      "symbol": "{{ (chart_exchange ~ ':' ~ chart_symbol) if chart_exchange else chart_symbol }}",
+      "symbol": "{{ tv_symbol }}",
       "width": "100%",
       "locale": "en",
       "colorTheme": "dark",
       "isTransparent": true
       }
       </script>
-    </div>
-  </div>
-  <div class="flex items-center justify-between mb-2 gap-3">
-    <h2 class="text-sm font-medium text-slate-300">Price vs MATP / MBP &mdash; {{ chart_symbol }}</h2>
-    <div class="flex items-center gap-3 shrink-0">
-      <button type="button" hx-get="/matp/{{ chart_symbol }}/targets" hx-target="#atModalBody" hx-swap="innerHTML"
-              onclick="atOpen()"
-              class="text-xs px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Analyst targets</button>
-      {% if chart_detail_link %}<a href="/matp/{{ chart_symbol }}" class="text-xs text-slate-400 hover:text-emerald-400">open full detail &rarr;</a>{% endif %}
     </div>
   </div>
   <div class="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
