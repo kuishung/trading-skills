@@ -29,6 +29,7 @@
   <td class="px-3 py-2 text-right text-slate-400 tabular-nums">
     {% if lv.n_targets is not none %}{{ lv.n_targets }}{% if lv.n_targets <= 2 %}<span class="text-amber-400" title="low confidence">&#9888;</span>{% endif %}{% else %}-{% endif %}
   </td>
+  <td class="px-3 py-2 text-slate-400 tabular-nums">{{ lv.last_earnings_date or "-" }}</td>
   <td class="px-3 py-2 text-slate-500 text-xs">{{ filt_names.get(lv.filter_id, "") if lv.filter_id else "" }}</td>
   <td class="px-3 py-2 text-slate-500">{{ lv.as_of.strftime("%Y-%m-%d") if lv.as_of else "-" }}</td>
 </tr>
@@ -47,20 +48,8 @@
 </div>
 {% endif %}
 
-{% if user.can_moderate and active_filters %}
-<div class="mb-5 flex flex-wrap items-center gap-2">
-  <span class="text-xs text-slate-500">Refresh a whole filter:</span>
-  {% for f in active_filters %}
-    {% if f.id in open_filter_ids %}
-    <span class="text-xs px-2.5 py-1 rounded-full border border-amber-500/30 text-amber-300">&#8635; {{ f.description }} (queued)</span>
-    {% else %}
-    <form method="post" action="/matp/filter/{{ f.id }}/refresh" class="inline">
-      <button class="text-xs px-2.5 py-1 rounded-full border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">&#8635; {{ f.description }}</button>
-    </form>
-    {% endif %}
-  {% endfor %}
-</div>
-{% endif %}
+{% set run_next = "/matp" %}
+{% include "_run_filter.html" %}
 
 {% if active %}
 <table class="w-full text-sm border border-slate-800">
@@ -72,6 +61,7 @@
       <th class="text-left px-3 py-2">Trend</th>
       <th class="text-left px-3 py-2">Signal</th>
       <th class="text-right px-3 py-2">n</th>
+      <th class="text-left px-3 py-2">Last earnings</th>
       <th class="text-left px-3 py-2">Filter</th>
       <th class="text-left px-3 py-2">Updated</th>
     </tr>
@@ -105,6 +95,7 @@
         <th class="text-left px-3 py-2">Trend</th>
         <th class="text-left px-3 py-2">Signal</th>
         <th class="text-right px-3 py-2">n</th>
+        <th class="text-left px-3 py-2">Last earnings</th>
         <th class="text-left px-3 py-2">Filter</th>
         <th class="text-left px-3 py-2">Last seen</th>
       </tr>

@@ -119,6 +119,30 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-05-31 — v2.4: Layout — left sidebar nav + user dropdown menu
+
+Restructured the chrome in `base.html`. Nav links (MATP / Studies / Finviz / Admin) moved from the top bar into a **left sidebar** (`<aside>`, sticky, with active-link highlighting via `request.url.path`). The **name + Logout** moved into an **icon-triggered dropdown menu** in the top-right (avatar/initial + chevron → menu with name, role, email, Logout) — JS-free using `<details>`/`<summary>` (marker hidden via CSS). Logged-out pages (login) render full-width with **no sidebar**; the `content` block is defined once and referenced via `self.content()` so there's no duplicate-block error. Verified both states render correctly.
+
+### 2026-05-31 — v2.3: Interactive price chart with MATP/MBP level lines
+
+The in-app version of the MATP Pine indicator. On a ticker's detail page, a **"Price vs MATP / MBP"** candlestick chart now renders with **MATP** (light) and **MBP** (green) drawn as horizontal price lines — so you see where price sits vs the median target and the max-buy line. Flow: select a watchlist → click a ticker → chart.
+- **Tech:** TradingView's free **lightweight-charts** (v4.2.0, CDN) + new endpoint `GET /matp/{symbol}/prices` (session-auth) returning daily OHLC in chart shape. `resources_bridge.daily_bars()` reads the **shared parquet** store (`resources.bars_store`, `timeframe="daily"`, last ~400 bars) — deterministic, self-contained, no external calls.
+- **Graceful degradation:** if a symbol has no parquet (or pyarrow/data_root isn't set up), the endpoint returns `bars:[]` and the chart shows "No daily price bars yet" instead of erroring.
+- `pyarrow` added to `app/requirements.txt` (the bars reader needs it). **Deploy dependency:** the chart only draws real candles where the daily parquet is present on Hermes (Resilio `MarketData` + `config.json` `data_root`); otherwise it shows the empty state until price history is synced.
+- Verified: shape conversion (stubbed bars), endpoint serialization, and the detail page injecting the chart container + lib + correct MATP/MBP price-line values + fetch URL.
+
+### 2026-05-31 — v2.2: MATP board shows Last earnings column
+
+Re-added a **Last earnings** column to the MATP board (it was dropped in the v1.9 redesign; the data — `MATPLevel.last_earnings_date` — was always stored, just not surfaced). Added to the shared `row()` macro (after `n`) and both table headers (active + dropped), so a collaborator sees the post-earnings reference date that the MATP is computed against without opening the detail page.
+
+### 2026-05-31 — v2.1: Finviz-filter run selector (MATP board + admin console)
+
+Replaced the per-filter refresh buttons with a **filter selector**: a dropdown of active Finviz filters + a "↻ Run" button, available on **both** the MATP board and the `/admin` console (admins run from there too). Scales cleanly past one filter and reads as an intentional "run this screen" action.
+- New shared partial `templates/_run_filter.html` (select + Run + queued indicator), included on `matp.html` (`run_next=/matp`) and `admin.html` (`run_next=/admin`).
+- New route `POST /matp/run-filter` (`require_moderator`, Form `filter_id` + `next`): only **active** filters are runnable (inactive = no-op), enqueues via the existing dedup path, redirects to the internal `next`. Path chosen to avoid colliding with `/{symbol}/refresh`.
+- `admin.py` now passes `active_filters` + `open_filter_ids`. Gating unchanged — **moderators + admins only** (per decision); members see results but no control.
+- Verified: selector renders for mod/admin and is hidden from members; admin run → 303→/admin; member run → 403; dedup holds across users; inactive filter not enqueued.
+
 ### 2026-05-31 — v2.0: Collaborator-triggered ad-hoc MATP refresh (request queue)
 
 Moderators/admins can now trigger a MATP refresh from the page — without breaking the LLM-free / outbound-only-agent separation. TradeHunter can't fetch and can't reach the agent, so a click **enqueues** rather than fetches; the agent polls and drains the queue (near-real-time, ~10 min, not synchronous).

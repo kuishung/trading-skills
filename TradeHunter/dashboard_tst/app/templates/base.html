@@ -19,32 +19,85 @@
       background-size: 100% 100%, 100% 100%, 38px 38px, 38px 38px, 100% 100%;
       background-attachment: fixed;
     }
+    summary::-webkit-details-marker { display: none; }
+    summary { list-style: none; }
   </style>
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen">
-  <header class="sticky top-0 z-10 border-b border-slate-800 bg-slate-950/70 backdrop-blur px-4 py-3 flex items-center justify-between">
-    <a href="/" class="flex items-center gap-2 font-semibold tracking-wide">
-      <img src="/static/logo.svg" alt="" class="h-7 w-7">
-      <span>TradeHunter <span class="text-slate-500 font-normal text-sm">&middot; trade collaboration</span></span>
-    </a>
-    <nav class="text-sm flex gap-4 items-center">
-      {% if user %}
-        <a href="/matp" class="hover:text-emerald-400">MATP</a>
-        <a href="/studies" class="hover:text-emerald-400">Studies</a>
-        <a href="/finviz" class="hover:text-emerald-400">Finviz</a>
-        <a href="/feedback" class="hover:text-emerald-400">Feedback</a>
-        {% if user.is_admin %}<a href="/admin" class="hover:text-emerald-400">Admin</a>{% endif %}
-        <span class="text-slate-400">{{ user.display_name }}</span>
-        <form method="post" action="/logout" class="inline">
-          <button class="text-slate-400 hover:text-rose-400">Logout</button>
-        </form>
-      {% else %}
-        <a href="/login" class="hover:text-emerald-400">Login</a>
-      {% endif %}
-    </nav>
-  </header>
+{% if user %}
+  {% set p = request.url.path %}
+  {% set nav = [
+    ('/matp', 'MATP'),
+    ('/studies', 'Studies'),
+    ('/finviz', 'Finviz'),
+    ('/feedback', 'Feedback'),
+  ] %}
+  <div class="flex min-h-screen">
+
+    {# ---------------- left sidebar (nav) ---------------- #}
+    <aside class="w-56 shrink-0 border-r border-slate-800 bg-slate-950/60 backdrop-blur flex flex-col sticky top-0 h-screen">
+      <a href="/" class="flex items-center gap-2 font-semibold tracking-wide px-4 py-4 border-b border-slate-800">
+        <img src="/static/logo.svg" alt="" class="h-7 w-7">
+        <span class="leading-tight">TradeHunter
+          <span class="block text-slate-500 font-normal text-[11px]">trade collaboration</span></span>
+      </a>
+      <nav class="flex-1 px-2 py-3 text-sm space-y-1">
+        {% for href, label in nav %}
+        <a href="{{ href }}"
+           class="block rounded-lg px-3 py-2 transition
+                  {% if p.startswith(href) %}bg-emerald-500/10 text-emerald-300{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-emerald-300{% endif %}">
+          {{ label }}
+        </a>
+        {% endfor %}
+        {% if user.is_admin %}
+        <a href="/admin"
+           class="block rounded-lg px-3 py-2 transition
+                  {% if p.startswith('/admin') %}bg-emerald-500/10 text-emerald-300{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-emerald-300{% endif %}">
+          Admin
+        </a>
+        {% endif %}
+      </nav>
+    </aside>
+
+    {# ---------------- content column ---------------- #}
+    <div class="flex-1 min-w-0 flex flex-col">
+      <header class="sticky top-0 z-10 border-b border-slate-800 bg-slate-950/70 backdrop-blur px-4 py-2.5 flex items-center justify-end">
+        <details class="relative">
+          <summary class="cursor-pointer flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-slate-800/70">
+            {% if user.picture %}
+              <img src="{{ user.picture }}" alt="" class="h-8 w-8 rounded-full object-cover">
+            {% else %}
+              <span class="h-8 w-8 rounded-full bg-slate-700 text-slate-200 flex items-center justify-center text-sm font-medium">
+                {{ (user.display_name or user.email)[:1]|upper }}
+              </span>
+            {% endif %}
+            <span class="text-sm text-slate-300 hidden sm:inline">{{ user.display_name or user.email }}</span>
+            <svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor" class="text-slate-500"><path d="M5.5 7.5 10 12l4.5-4.5z"/></svg>
+          </summary>
+          <div class="absolute right-0 mt-2 w-52 rounded-lg border border-slate-800 bg-slate-900 shadow-xl py-1 z-20">
+            <div class="px-3 py-2 border-b border-slate-800">
+              <div class="text-sm text-slate-200 truncate">{{ user.display_name or user.email }}</div>
+              <div class="text-xs text-slate-500">{{ user.role_label }}{% if user.email and user.display_name %} &middot; {{ user.email }}{% endif %}</div>
+            </div>
+            <form method="post" action="/logout">
+              <button class="w-full text-left px-3 py-2 text-sm text-slate-300 hover:bg-slate-800 hover:text-rose-400 flex items-center gap-2">
+                <svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor"><path d="M3 3h7v2H5v10h5v2H3zM13 6l5 4-5 4v-3H8V9h5z"/></svg>
+                Logout
+              </button>
+            </form>
+          </div>
+        </details>
+      </header>
+      <main class="flex-1 max-w-5xl w-full mx-auto px-4 py-8">
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+  </div>
+{% else %}
+  {# logged out (login page): no sidebar, full-width — reuse the same content block #}
   <main class="max-w-5xl mx-auto px-4 py-8">
-    {% block content %}{% endblock %}
+    {{ self.content() }}
   </main>
+{% endif %}
 </body>
 </html>

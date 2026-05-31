@@ -1,0 +1,21 @@
+{# Finviz-filter run control (mods/admins). Needs in context:
+   user, active_filters, open_filter_ids, and optionally run_next (redirect). #}
+{% if user.can_moderate %}
+  {% if active_filters %}
+  <form method="post" action="/matp/run-filter" class="flex flex-wrap items-center gap-2 mb-5">
+    <input type="hidden" name="next" value="{{ run_next | default('/matp') }}">
+    <label class="text-xs text-slate-500">Run MATP on a Finviz filter:</label>
+    <select name="filter_id"
+            class="rounded-lg bg-slate-950/60 border border-slate-700 px-3 py-1.5 text-sm focus:border-emerald-500 outline-none">
+      {% for f in active_filters %}
+      <option value="{{ f.id }}">{{ f.description }}{% if f.id in open_filter_ids %} — queued{% endif %}</option>
+      {% endfor %}
+    </select>
+    <button class="text-sm px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 font-medium transition">&#8635; Run</button>
+    {% if open_filter_ids %}<span class="text-xs text-amber-300">&#8635; {{ open_filter_ids|length }} filter run{{ "s" if open_filter_ids|length != 1 else "" }} queued</span>{% endif %}
+  </form>
+  <p class="text-[11px] text-slate-600 -mt-3 mb-5">Queues a full-universe refresh for the chosen screen; the research agent picks it up within ~10&nbsp;min.</p>
+  {% else %}
+  <p class="text-xs text-slate-500 mb-5">No active Finviz filters — add one on the <a href="/finviz" class="text-emerald-400 hover:underline">Finviz</a> page to run MATP on it.</p>
+  {% endif %}
+{% endif %}

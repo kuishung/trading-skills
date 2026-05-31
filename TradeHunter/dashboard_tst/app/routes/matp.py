@@ -11,7 +11,7 @@ from __future__ import annotations
 import datetime as _dt
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
@@ -135,6 +135,21 @@ def _build_band(low, high, mbp, matp):
     }
 
 
+@router.get("/{symbol}/prices")
+def matp_prices(symbol: str, user: User = Depends(require_user)):
+    """Daily OHLC for the price chart (lightweight-charts shape). Reads the
+    shared parquet store; returns an empty list (not an error) if bars/pyarrow
+    aren't available, so the chart degrades to an empty state."""
+    sym = symbol.strip().upper()
+    try:
+        from ..services import resources_bridge
+
+        bars = resources_bridge.daily_bars(sym)
+    except Exception:  # missing pyarrow, no data_root, unreadable parquet, ...
+        bars = []
+    return {"symbol": sym, "bars": bars}
+
+
 @router.get("/{symbol}", response_class=HTMLResponse)
 def matp_detail(
     symbol: str,
@@ -246,3 +261,21 @@ def request_filter_refresh(
 ):
     _enqueue(db, "filter", filter_id=filter_id, user=user)
     return RedirectResponse(url="/matp", status_code=303)
+
+
+@router.post("/run-filter")
+def run_filter_from_select(
+    request: Request,
+    filter_id: int = Form(...),
+    next: str = Form("/matp"),
+    user: User = Depends(require_moderator),
+    db: Session = Depends(get_db),
+):
+    """Filter-selector form (MATP board + admin console). Only active filters
+    are runnable. Redirects back to the page that submitted (`next`, internal
+    paths only)."""
+    f = db.get(FinvizFilter, filter_id)
+    if f is not None and f.is_active:
+        _enqueue(db, "filter", filter_id=filter_id, user=user)
+    dest = next if next.startswith("/") else "/matp"
+    return RedirectResponse(url=dest, status_code=303)
