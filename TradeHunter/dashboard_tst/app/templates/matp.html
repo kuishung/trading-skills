@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}MATP &middot; TradeHunter{% endblock %}
-{# full-width, left-aligned (override base.html centering) so the chart can take the right half #}
-{% block main_wrap %}{% endblock %}
+{# full-width, single-screen (no page scroll); panes scroll internally #}
+{% block main_class %}flex-1 min-h-0 overflow-hidden w-full px-4 py-3{% endblock %}
 
 {% macro trend_badge(t) %}
   {% if t == "Uptrend" %}<span class="text-emerald-400">&#9650; up</span>
@@ -38,7 +38,7 @@
 {% endmacro %}
 
 {# ---- watchlist rail: each active filter, expandable to its tickers + Run ---- #}
-{% macro watchlist_rail(watchlists, unfiled, user, open_filter_ids, open_symbols) %}
+{% macro watchlist_rail(watchlists, unfiled, user, open_filter_ids, open_symbols, sel=None) %}
 <div class="space-y-2 text-sm">
   {% for w in watchlists %}
   <details class="rounded-lg border border-slate-800 bg-slate-900/40" open>
@@ -62,8 +62,8 @@
       <ul class="mt-1">
         {% for lv in w.tickers %}
         <li>
-          <a href="/matp?symbol={{ lv.symbol }}#chart" class="flex items-center justify-between px-2 py-1 rounded hover:bg-slate-800/70">
-            <span class="text-emerald-400">{{ lv.symbol }}{% if lv.symbol in open_symbols %} <span class="text-amber-400 text-xs">&#8635;</span>{% endif %}</span>
+          <a href="/matp?symbol={{ lv.symbol }}" class="flex items-center justify-between px-2 py-1 rounded {% if sel and sel.symbol == lv.symbol %}bg-emerald-500/15{% else %}hover:bg-slate-800/70{% endif %}">
+            <span class="{% if sel and sel.symbol == lv.symbol %}text-emerald-300{% else %}text-emerald-400{% endif %}">{{ lv.symbol }}{% if lv.symbol in open_symbols %} <span class="text-amber-400 text-xs">&#8635;</span>{% endif %}</span>
             <span class="text-xs text-slate-500 tabular-nums">MBP {{ "%.0f"|format(lv.mbp) if lv.mbp is not none else "-" }}</span>
           </a>
         </li>
@@ -83,8 +83,8 @@
     </summary>
     <ul class="px-2 pb-2">
       {% for lv in unfiled %}
-      <li><a href="/matp?symbol={{ lv.symbol }}#chart" class="flex items-center justify-between px-2 py-1 rounded hover:bg-slate-800/70">
-        <span class="text-emerald-400">{{ lv.symbol }}</span>
+      <li><a href="/matp?symbol={{ lv.symbol }}" class="flex items-center justify-between px-2 py-1 rounded {% if sel and sel.symbol == lv.symbol %}bg-emerald-500/15{% else %}hover:bg-slate-800/70{% endif %}">
+        <span class="{% if sel and sel.symbol == lv.symbol %}text-emerald-300{% else %}text-emerald-400{% endif %}">{{ lv.symbol }}</span>
         <span class="text-xs text-slate-500 tabular-nums">MBP {{ "%.0f"|format(lv.mbp) if lv.mbp is not none else "-" }}</span>
       </a></li>
       {% endfor %}
@@ -98,151 +98,101 @@
 {% endmacro %}
 
 {% block content %}
-<h1 class="text-2xl font-semibold mb-1">MATP board</h1>
-<p class="text-slate-400 text-sm mb-6">
-  Median Analyst Target Price + Max Buy Price (MBP = MATP / 1.15 &mdash; pay below this and you keep &ge;15% headroom to the median target).
-  Names are the current Finviz-screen members; ones that fell out of the screen are kept under <em>Dropped</em>. Click a ticker for the levels band, bounce setup, history and analyst evidence.
-</p>
+<div class="h-full flex flex-col">
+<div class="flex items-center justify-between mb-2 shrink-0">
+  <h1 class="text-lg font-semibold">MATP board</h1>
+  <span class="text-xs text-slate-500 hidden sm:block">MBP = MATP/1.15 &mdash; pay below it for &ge;15% headroom &middot; click a ticker for its chart</span>
+</div>
 
 {# mobile: watchlists collapse into a dropdown above the board #}
-<details class="lg:hidden mb-4 rounded-lg border border-slate-800 bg-slate-900/40">
+<details class="lg:hidden mb-2 shrink-0 rounded-lg border border-slate-800 bg-slate-900/40">
   <summary class="cursor-pointer px-3 py-2 text-slate-300 select-none">Watchlists &#9662;</summary>
   <div class="p-2">{{ watchlist_rail(watchlists, unfiled, user, open_filter_ids, open_symbols) }}</div>
 </details>
 
-<div class="lg:flex lg:gap-6 lg:items-start">
-  {# desktop: collapsible watchlist rail — tickers-only when retracted,
-     expands on hover (overlay), pinnable; click a ticker swaps the chart #}
-  <style>
-    #wlrail { width: 3.5rem; transition: width .15s ease; }
-    #wlrail.wl-pinned { width: 16rem; }
-    #wlrail .wl-full { display: none; }
-    #wlrail.wl-pinned .wl-full { display: block; }
-    #wlrail.wl-pinned .wl-mini { display: none; }
-    #wlrail:not(.wl-pinned):hover .wl-full {
-      display: block; position: absolute; left: 0; top: 0; width: 16rem; z-index: 30;
-      background: #0b1220; border: 1px solid rgb(30 41 59); border-radius: .5rem;
-      padding: .5rem; box-shadow: 0 12px 34px rgba(0,0,0,.55);
-    }
-  </style>
-  <aside id="wlrail" class="hidden lg:block lg:shrink-0 lg:sticky lg:top-16 wl-collapsed">
-    <div class="relative">
-      {# mini: tickers only (retracted state) #}
-      <div class="wl-mini overflow-y-auto" style="max-height: calc(100vh - 5rem)">
-        <div class="text-[10px] uppercase tracking-wide text-slate-600 text-center py-1">WL</div>
-        {% for w in watchlists %}{% for lv in w.tickers %}
-        <a href="/matp?symbol={{ lv.symbol }}#chart" title="{{ lv.symbol }} — MBP {{ '%.0f'|format(lv.mbp) if lv.mbp is not none else '-' }}"
-           class="block text-center text-[11px] py-1 truncate hover:bg-slate-800/70 {% if sel and sel.symbol == lv.symbol %}bg-slate-800 text-emerald-300{% else %}text-emerald-400{% endif %}">{{ lv.symbol }}</a>
-        {% endfor %}{% endfor %}
-        {% for lv in unfiled %}
-        <a href="/matp?symbol={{ lv.symbol }}#chart" title="{{ lv.symbol }}"
-           class="block text-center text-[11px] py-1 truncate hover:bg-slate-800/70 {% if sel and sel.symbol == lv.symbol %}bg-slate-800 text-emerald-300{% else %}text-emerald-400{% endif %}">{{ lv.symbol }}</a>
-        {% endfor %}
-      </div>
-      {# full: complete watchlist (shown on hover, or kept open when pinned) #}
-      <div class="wl-full overflow-y-auto" style="max-height: calc(100vh - 5rem)">
-        <div class="flex items-center justify-between mb-2 px-1">
-          <span class="text-xs uppercase tracking-wide text-slate-500">Watchlists</span>
-          <button type="button" id="wlpin" onclick="toggleWlPin()" class="text-xs text-slate-400 hover:text-emerald-300" title="Pin / unpin the watchlist">pin</button>
-        </div>
-        {{ watchlist_rail(watchlists, unfiled, user, open_filter_ids, open_symbols) }}
-      </div>
+<div class="lg:flex lg:gap-4 flex-1 min-h-0">
+  {# MIDDLE: watchlist panel #}
+  <aside class="hidden lg:flex lg:flex-col lg:w-72 lg:shrink-0 lg:h-full">
+    <div class="text-xs uppercase tracking-wide text-slate-500 mb-2 px-1 shrink-0">Watchlists</div>
+    <div class="flex-1 min-h-0 overflow-y-auto pr-1">
+      {{ watchlist_rail(watchlists, unfiled, user, open_filter_ids, open_symbols, sel) }}
+      {% if dropped %}
+      <details class="mt-2 rounded-lg border border-slate-800 bg-slate-900/40">
+        <summary class="cursor-pointer px-3 py-2 text-xs text-slate-500 select-none">Dropped from filter ({{ dropped|length }})</summary>
+        <ul class="px-2 pb-2">
+          {% for lv in dropped %}
+          <li><a href="/matp?symbol={{ lv.symbol }}" class="flex items-center justify-between px-2 py-1 rounded hover:bg-slate-800/70 opacity-70">
+            <span class="text-slate-400">{{ lv.symbol }}</span>
+            <span class="text-xs text-slate-600 tabular-nums">MBP {{ "%.0f"|format(lv.mbp) if lv.mbp is not none else "-" }}</span>
+          </a></li>
+          {% endfor %}
+        </ul>
+      </details>
+      {% endif %}
     </div>
   </aside>
-  <script>
-    function applyWlPin(p) {
-      var r = document.getElementById('wlrail'); if (!r) return;
-      r.classList.toggle('wl-pinned', p);
-      r.classList.toggle('wl-collapsed', !p);
-      var b = document.getElementById('wlpin'); if (b) b.textContent = p ? 'unpin' : 'pin';
-    }
-    function toggleWlPin() {
-      var p = localStorage.getItem('wlPinned') !== '1';
-      localStorage.setItem('wlPinned', p ? '1' : '0');
-      applyWlPin(p);
-    }
-    applyWlPin(localStorage.getItem('wlPinned') === '1');
-  </script>
 
-  {# middle: board column #}
-  <div class="lg:flex-1 min-w-0">
+  {# RIGHT: chart panel — MATP run pinned on top (no scroll), then chart, band, analyst summary #}
+  <div class="lg:flex-1 min-w-0 lg:h-full flex flex-col gap-3 min-h-0">
+    {# MATP run stays on top and does not scroll #}
+    <div id="runsbox" class="shrink-0" hx-get="/matp/runs" hx-trigger="load, every 5s" hx-swap="innerHTML"></div>
 
-{# live runs panel: polls every 5s, renders progress bars while runs are open #}
-<div hx-get="/matp/runs" hx-trigger="load, every 5s" hx-swap="innerHTML"></div>
+    {% if sel %}
+    <div class="shrink-0">
+      {% set chart_symbol = sel.symbol %}
+      {% set chart_matp = sel.matp %}
+      {% set chart_mbp = sel.mbp %}
+      {% set chart_detail_link = true %}
+      {% set chart_height_class = 'h-[280px] lg:h-[42vh]' %}
+      {% include "_price_chart.html" %}
+    </div>
 
-{% if active %}
-<table class="w-full text-sm border border-slate-800">
-  <thead class="bg-slate-900 text-slate-400">
-    <tr>
-      <th class="text-left px-3 py-2">Ticker</th>
-      <th class="text-right px-3 py-2">MATP</th>
-      <th class="text-right px-3 py-2">MBP</th>
-      <th class="text-left px-3 py-2">Trend</th>
-      <th class="text-left px-3 py-2">Signal</th>
-      <th class="text-right px-3 py-2">n</th>
-      <th class="text-left px-3 py-2">Last earnings</th>
-      <th class="text-left px-3 py-2">Filter</th>
-      <th class="text-left px-3 py-2">Updated</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for lv in active %}{{ row(lv, filt_names, open_symbols) }}{% endfor %}
-  </tbody>
-</table>
-{% else %}
-<div class="text-center py-16">
-  <img src="/static/logo.svg" alt="" class="h-12 w-12 mx-auto mb-3 opacity-70">
-  <p class="text-slate-400">No MATP levels yet.</p>
-  <p class="text-slate-500 text-sm mt-2 max-w-md mx-auto">
-    Populated by the Nous Hermes MATP run (it screens the active Finviz filters,
-    computes post-earnings analyst-target medians, and pushes them here).
-  </p>
-</div>
-{% endif %}
+    {% if sel_band %}
+    <div class="shrink-0">{% set band = sel_band %}{% include "_band.html" %}</div>
+    {% endif %}
 
-{% if dropped %}
-<details class="mt-6">
-  <summary class="cursor-pointer text-sm text-slate-400 hover:text-slate-200 select-none">
-    Dropped from filter ({{ dropped|length }}) &mdash; history kept
-  </summary>
-  <table class="w-full text-sm border border-slate-800 mt-2">
-    <thead class="bg-slate-900 text-slate-400">
-      <tr>
-        <th class="text-left px-3 py-2">Ticker</th>
-        <th class="text-right px-3 py-2">MATP</th>
-        <th class="text-right px-3 py-2">MBP</th>
-        <th class="text-left px-3 py-2">Trend</th>
-        <th class="text-left px-3 py-2">Signal</th>
-        <th class="text-right px-3 py-2">n</th>
-        <th class="text-left px-3 py-2">Last earnings</th>
-        <th class="text-left px-3 py-2">Filter</th>
-        <th class="text-left px-3 py-2">Last seen</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for lv in dropped %}{{ row(lv, filt_names, open_symbols, dim=true) }}{% endfor %}
-    </tbody>
-  </table>
-</details>
-{% endif %}
+    <div class="flex items-center justify-between shrink-0">
+      <h3 class="text-sm font-medium text-slate-300">Analyst summary
+        <span class="text-xs text-slate-500">&mdash; {{ sel.symbol }}</span>
+      </h3>
+      <button type="button" hx-get="/matp/{{ sel.symbol }}/targets" hx-target="#atModalBody" hx-swap="innerHTML"
+              onclick="atOpen()" class="text-xs px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Full detail &rarr;</button>
+    </div>
+    <div class="flex-1 min-h-0 overflow-y-auto rounded-lg border border-slate-800">
+      <table class="w-full text-sm">
+        <thead class="bg-slate-900 text-slate-400 sticky top-0">
+          <tr>
+            <th class="text-left px-3 py-1.5">Brokerage</th>
+            <th class="text-left px-3 py-1.5">Issued</th>
+            <th class="text-right px-3 py-1.5">Target</th>
+            <th class="text-left px-3 py-1.5">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for t in sel_targets %}
+          <tr class="border-t border-slate-800 {{ '' if t.included else 'opacity-40' }}">
+            <td class="px-3 py-1.5">{{ t.brokerage or "-" }}</td>
+            <td class="px-3 py-1.5 text-slate-400">{{ t.target_date or "-" }}</td>
+            <td class="px-3 py-1.5 text-right tabular-nums">{{ "%.2f"|format(t.target_price) if t.target_price is not none else "-" }}</td>
+            <td class="px-3 py-1.5">{% if t.included %}<span class="text-emerald-400">&#9679; post</span>{% else %}<span class="text-slate-500">&#9675; pre</span>{% endif %}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="4" class="px-3 py-4 text-slate-500">No analyst targets yet for {{ sel.symbol }}.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="flex-1 flex items-center justify-center text-slate-500 text-sm">No tickers yet &mdash; run a watchlist to populate.</div>
+    {% endif %}
+  </div>
+</div>{# /lg:flex 3-pane #}
+</div>{# /h-full flex-col #}
 
-  </div>{# /middle board column #}
-
-  {# right: selected ticker's live price chart, occupies the other half #}
-  {% if sel %}
-  <aside class="lg:flex-1 lg:min-w-0 lg:sticky lg:top-16 mt-6 lg:mt-0">
-    {% set chart_symbol = sel.symbol %}
-    {% set chart_matp = sel.matp %}
-    {% set chart_mbp = sel.mbp %}
-    {% set chart_detail_link = true %}
-    {% include "_price_chart.html" %}
-  </aside>
-  {% endif %}
-</div>{# /lg:flex wrapper #}
+{% include "_at_modal.html" %}
 
 {% if open_reqs %}
-{# a run is active: refresh so tickers appear in the table/watchlist as they're processed.
-   (URL keeps ?symbol, so the selected chart persists; pin state is in localStorage.) #}
+{# a run is active: refresh so newly-processed tickers appear (URL keeps ?symbol) #}
 <script>setTimeout(function () { location.reload(); }, 20000);</script>
 {% endif %}
 {% endblock %}

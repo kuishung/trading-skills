@@ -51,10 +51,6 @@ def matp_home(
     db: Session = Depends(get_db),
 ):
     all_levels = db.query(MATPLevel).all()
-    sel = None
-    if symbol:
-        sym = symbol.strip().upper()
-        sel = next((lv for lv in all_levels if lv.symbol == sym), None)
     active = sorted(
         [lv for lv in all_levels if (lv.status or "active") == "active"],
         key=_signal_key,
@@ -85,6 +81,32 @@ def matp_home(
     watchlists = [{"filter": f, "tickers": by_filter.get(f.id, [])} for f in active_filters]
     unfiled = by_filter.get(None, [])
 
+    # selected ticker: ?symbol=… , else default to the FIRST active ticker so a
+    # chart shows on load without a click.
+    sel = None
+    if symbol:
+        sym = symbol.strip().upper()
+        sel = next((lv for lv in all_levels if lv.symbol == sym), None)
+    if sel is None and active:
+        sel = active[0]
+
+    # selected ticker's consensus band + analyst summary for the right panel
+    sel_band = None
+    sel_targets = []
+    if sel is not None:
+        sel_targets = _ticker_targets(db, sel.symbol, sel.last_earnings_date)
+        latest = (
+            db.query(MATPHistory)
+            .filter(MATPHistory.symbol == sel.symbol)
+            .order_by(MATPHistory.as_of.desc())
+            .first()
+        )
+        if latest is not None:
+            incl = [t["target_price"] for t in sel_targets if t["included"]]
+            sel_band = _build_band(
+                latest.target_low, latest.target_high, sel.mbp, sel.matp, prices=incl
+            )
+
     return templates.TemplateResponse(
         request,
         "matp.html",
@@ -100,6 +122,8 @@ def matp_home(
             "watchlists": watchlists,
             "unfiled": unfiled,
             "sel": sel,
+            "sel_band": sel_band,
+            "sel_targets": sel_targets,
         },
     )
 
@@ -118,8 +142,28 @@ def matp_runs(
         .order_by(MATPRefreshRequest.created_at.desc())
         .all()
     )
+    now = _dt.datetime.now(_dt.timezone.utc)
+
+    def _mins(ts):
+        if ts is None:
+            return None
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=_dt.timezone.utc)
+        return max(0, int((now - ts).total_seconds() // 60))
+
+    items = []
+    for r in runs:
+        waited = _mins(r.created_at)
+        ran = _mins(r.claimed_at)
+        # 'pending' too long, or 'running' with no progress for a while = likely stuck
+        stale = (
+            (r.status == "pending" and waited is not None and waited >= 15)
+            or (r.status == "running" and ran is not None and ran >= 8 and not r.progress_done)
+        )
+        items.append({"r": r, "waited": waited, "ran": ran, "stale": stale})
+
     return templates.TemplateResponse(
-        request, "_runs_panel.html", {"user": user, "runs": runs}
+        request, "_runs_panel.html", {"user": user, "items": items}
     )
 
 
@@ -152,9 +196,49 @@ def _build_chart(points, width=600, height=170, pad=28):
     }
 
 
-def _build_band(low, high, mbp, matp):
-    """Horizontal levels band: place MBP + MATP markers along the analyst
-    low->high range as left% offsets. Returns None unless we have a real range."""
+def _ticker_targets(db: Session, sym: str, earn):
+    """Analyst targets for `sym`, newest issue date first. `included`
+    (post-earnings) is computed against `earn` so it never goes stale."""
+    rows = (
+        db.query(MATPTarget)
+        .filter(MATPTarget.symbol == sym)
+        .order_by(MATPTarget.target_date.desc())
+        .all()
+    )
+    return [
+        {
+            "brokerage": t.brokerage,
+            "target_price": t.target_price,
+            "target_date": t.target_date,
+            "included": bool(earn and t.target_date and t.target_date > earn),
+        }
+        for t in rows
+    ]
+
+
+@router.get("/{symbol}/targets", response_class=HTMLResponse)
+def matp_targets_modal(
+    symbol: str,
+    request: Request,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """HTMX fragment: analyst targets for a ticker, rendered into the pop-out
+    modal (so the board/detail screen stays clean)."""
+    sym = symbol.strip().upper()
+    level = db.query(MATPLevel).filter(MATPLevel.symbol == sym).first()
+    earn = level.last_earnings_date if level else None
+    return templates.TemplateResponse(
+        request,
+        "_targets_modal.html",
+        {"user": user, "symbol": sym, "targets": _ticker_targets(db, sym, earn), "earnings": earn},
+    )
+
+
+def _build_band(low, high, mbp, matp, prices=None, bins=18):
+    """Horizontal levels band: MBP + MATP markers along the analyst low->high
+    range (as left% offsets), plus a histogram of the individual targets so you
+    can see where consensus concentrates. Returns None unless we have a range."""
     if low is None or high is None or high <= low:
         return None
 
@@ -163,11 +247,39 @@ def _build_band(low, high, mbp, matp):
             return None
         return round(max(0.0, min(100.0, (v - low) / (high - low) * 100.0)), 1)
 
-    return {
+    band = {
         "low": low, "high": high,
         "mbp": mbp, "matp": matp,
         "mbp_pct": pct(mbp), "matp_pct": pct(matp),
     }
+
+    vals = [p for p in (prices or []) if p is not None]
+    if vals:
+        counts = [0] * bins
+        span = high - low
+        for p in vals:
+            idx = int((p - low) / span * bins)
+            counts[min(bins - 1, max(0, idx))] += 1
+        mx = max(counts) or 1
+        bw = 100.0 / bins
+        band["bins"] = [
+            {
+                "left": round(i * bw, 3),
+                "width": round(bw, 3),
+                "h": round(c / mx * 100),  # bar height as % of the tallest
+                "count": c,
+                "lo": round(low + i / bins * span, 2),
+                "hi": round(low + (i + 1) / bins * span, 2),
+            }
+            for i, c in enumerate(counts)
+        ]
+        # consensus zone = the densest single bin
+        top = max(range(bins), key=lambda i: counts[i])
+        band["consensus_lo"] = round(low + top / bins * span, 2)
+        band["consensus_hi"] = round(low + (top + 1) / bins * span, 2)
+        band["consensus_count"] = counts[top]
+        band["n"] = len(vals)
+    return band
 
 
 @router.get("/{symbol}/prices")
@@ -198,31 +310,20 @@ def matp_detail(
     points = [(h.as_of.strftime("%Y-%m-%d") if h.as_of else "", h.matp) for h in history]
     chart = _build_chart(points)
 
-    # levels band: MBP/MATP against the analyst low->high range (latest snapshot)
+    # evidence: the individual analyst targets, newest issue date first.
+    earn = level.last_earnings_date if level else None
+    targets = _ticker_targets(db, sym, earn)
+
+    # levels band: MBP/MATP against the analyst low->high range (latest snapshot),
+    # plus a consensus histogram from the post-earnings target prices.
     latest = history[-1] if history else None
     band = None
     if level and latest:
-        band = _build_band(latest.target_low, latest.target_high, level.mbp, level.matp)
-
-    # evidence: the individual analyst targets, newest issue date first.
-    # 'included' (post-earnings) is computed here against the CURRENT earnings
-    # date, so it never goes stale.
-    earn = level.last_earnings_date if level else None
-    rows = (
-        db.query(MATPTarget)
-        .filter(MATPTarget.symbol == sym)
-        .order_by(MATPTarget.target_date.desc())
-        .all()
-    )
-    targets = [
-        {
-            "brokerage": t.brokerage,
-            "target_price": t.target_price,
-            "target_date": t.target_date,
-            "included": bool(earn and t.target_date and t.target_date > earn),
-        }
-        for t in rows
-    ]
+        incl_prices = [t["target_price"] for t in targets if t["included"]]
+        band = _build_band(
+            latest.target_low, latest.target_high, level.mbp, level.matp,
+            prices=incl_prices,
+        )
     # archived runs that included this ticker (raw extraction, newest first)
     from ..services.matp_archive import runs_for_symbol
 

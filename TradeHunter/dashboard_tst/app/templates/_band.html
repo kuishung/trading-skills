@@ -1,0 +1,29 @@
+{# Analyst low->high band with a consensus histogram. Context: band #}
+{% if band %}
+<div class="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+  <div class="flex items-center justify-between text-xs text-slate-500 mb-1">
+    <span>analyst low {{ "%.0f"|format(band.low) }}</span>
+    {% if band.n %}<span class="text-emerald-300">consensus {{ "%.0f"|format(band.consensus_lo) }}&ndash;{{ "%.0f"|format(band.consensus_hi) }} ({{ band.consensus_count }}/{{ band.n }})</span>{% endif %}
+    <span>high {{ "%.0f"|format(band.high) }}</span>
+  </div>
+  {% if band.bins %}
+  <div class="relative h-12 flex items-end gap-px mb-1">
+    {% for b in band.bins %}
+    <div class="flex-1 rounded-t {% if b.count and b.lo <= band.consensus_hi and b.hi >= band.consensus_lo %}bg-emerald-500/70{% elif b.count %}bg-emerald-500/30{% else %}bg-slate-800/40{% endif %}"
+         style="height: {{ b.h if b.h > 0 else 2 }}%" title="{{ '%.0f'|format(b.lo) }}–{{ '%.0f'|format(b.hi) }}: {{ b.count }} target(s)"></div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  <div class="relative h-2 rounded-full bg-gradient-to-r from-slate-700 via-slate-600 to-slate-700">
+    {% if band.mbp_pct is not none %}
+    <div class="absolute -top-5 -translate-x-1/2 text-[11px] text-emerald-300 whitespace-nowrap" style="left: {{ band.mbp_pct }}%">MBP {{ "%.0f"|format(band.mbp) }}</div>
+    <div class="absolute top-0 h-2 w-0.5 -translate-x-1/2 bg-emerald-400" style="left: {{ band.mbp_pct }}%"></div>
+    {% endif %}
+    {% if band.matp_pct is not none %}
+    <div class="absolute -bottom-6 -translate-x-1/2 text-[11px] text-slate-200 whitespace-nowrap" style="left: {{ band.matp_pct }}%">MATP {{ "%.0f"|format(band.matp) }}</div>
+    <div class="absolute top-0 h-2 w-0.5 -translate-x-1/2 bg-slate-100" style="left: {{ band.matp_pct }}%"></div>
+    {% endif %}
+  </div>
+  <p class="text-[11px] text-slate-600 mt-7">Bars = how many analyst targets fall in each price bucket; the green cluster is the consensus zone.</p>
+</div>
+{% endif %}

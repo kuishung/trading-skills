@@ -1,6 +1,6 @@
 ---
 name: matp
-version: 1.4.0
+version: 1.4.1
 description: Compute the faithful Median Analyst Target Price (MATP) + Max Buy Price (MBP) for TradeHunter and push the results to the platform. Use when asked to "refresh MATP", "run MATP", "update target prices", or on the scheduled cron. Reads the active Finviz screener filters from TradeHunter's API, expands them to a ticker universe, and for each ticker looks up the latest earnings date + analyst price targets on MarketBeat, keeps only targets issued AFTER the latest earnings, computes the median (MATP) and MBP = MATP/1.15, then POSTs the rows to TradeHunter's /api/matp endpoint. Does NOT write CSV / Google Sheets / Telegram -- output is the API push only.
 ---
 
@@ -18,12 +18,22 @@ messy HTML best handled by an agent with a browser, not a brittle scraper. So
 TradeHunter offloads it to this agent (DeepSeek-backed), which pushes results
 back over an authenticated API.
 
-## Config (set once on the Linux box)
-The skill needs two values (from the agent's env / `~/.hermes` config):
+## Config — READ THESE FROM `~/.hermes/.env` (do NOT ask the user)
+**Before any API call, get the two values by reading the agent's secrets file
+`~/.hermes/.env`** (the file `hermes config` lists under "Secrets" — NOT a
+project/repo `.env`). Run exactly:
+
+```bash
+grep -E '^(TRADEHUNTER_URL|TST_INGEST_API_KEY)=' ~/.hermes/.env
+```
+
+Use those exact values for every request below. **Never prompt the user for
+them and never search the repo for a `.env`** — they live only in
+`~/.hermes/.env`. If the grep returns nothing, stop and report that the two
+keys are missing from `~/.hermes/.env` (don't guess).
 - `TRADEHUNTER_URL` — e.g. `https://app.tradehunter.net`
-- `TST_INGEST_API_KEY` — the shared key, identical to `TST_INGEST_API_KEY` in
-  TradeHunter's `app/.env` on the Windows Hermes box. Sent as the
-  `X-API-Key` header.
+- `TST_INGEST_API_KEY` — sent as the `X-API-Key` header (identical to
+  `TST_INGEST_API_KEY` in TradeHunter's `app/.env` on the Windows Hermes box).
 
 ## What to ask the user
 Nothing on the scheduled run. If invoked ad-hoc for specific tickers
@@ -68,9 +78,11 @@ For each request:
      When the whole universe is done, send ONE closing push with the **full**
      item list + `filter_id` + **`prune:true`** + **`final:true`** — that one
      prunes the fallen-out tickers AND is saved as the run's archive file.
-   - **Every few tickers**, update progress:
-     `POST /api/refresh-queue/{id}/status` body `{"status":"running","progress_done":K}`
-     (K = tickers finished so far). This drives the live progress bar; don't
+   - **Every few tickers**, update progress AND narrate what you're doing:
+     `POST /api/refresh-queue/{id}/status` body
+     `{"status":"running","progress_done":K,"note":"processing <SYM> (K/N)"}`
+     (K = tickers finished so far). The `note` shows on the dashboard so the
+     user sees what's happening live; the count drives the progress bar. Don't
      post on every single ticker — every ~5 is plenty.
 3. **Mark it done/failed:**
    `POST /api/refresh-queue/{id}/status` body `{"status":"done","note":"refreshed 12 tickers"}`

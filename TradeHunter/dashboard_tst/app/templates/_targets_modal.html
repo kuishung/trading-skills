@@ -1,0 +1,35 @@
+{# HTMX fragment: analyst targets for the pop-out modal. Context: symbol, targets, earnings #}
+<div class="flex items-center justify-between mb-3">
+  <h3 class="text-base font-semibold text-slate-100">{{ symbol }} &mdash; Analyst targets
+    <span class="text-xs font-normal text-slate-500">(only post-earnings count toward MATP)</span>
+  </h3>
+  <button type="button" onclick="atClose()" class="text-slate-400 hover:text-slate-100 text-2xl leading-none px-1" aria-label="Close">&times;</button>
+</div>
+{% if targets %}
+<table class="w-full text-sm border border-slate-800">
+  <thead class="bg-slate-900 text-slate-400">
+    <tr>
+      <th class="text-left px-3 py-2">Brokerage</th>
+      <th class="text-left px-3 py-2">Issued</th>
+      <th class="text-right px-3 py-2">Target</th>
+      <th class="text-left px-3 py-2">Status</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for t in targets %}
+    <tr class="border-t border-slate-800 {{ '' if t.included else 'opacity-50' }}">
+      <td class="px-3 py-2">{{ t.brokerage or "-" }}</td>
+      <td class="px-3 py-2 text-slate-400">{{ t.target_date or "-" }}</td>
+      <td class="px-3 py-2 text-right tabular-nums">{{ "%.2f"|format(t.target_price) if t.target_price is not none else "-" }}</td>
+      <td class="px-3 py-2">
+        {% if t.included %}<span class="text-emerald-400">&#9679; post-earnings</span>
+        {% else %}<span class="text-slate-500">&#9675; pre-earnings (dropped)</span>{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="text-xs text-slate-500 mt-2">Latest earnings: {{ earnings or "unknown" }}. A target counts only if it was issued after that date.</p>
+{% else %}
+<p class="text-slate-500 text-sm">No analyst targets recorded yet for {{ symbol }}.</p>
+{% endif %}

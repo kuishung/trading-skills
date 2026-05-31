@@ -44,25 +44,7 @@
 </div>
 {% endif %}
 
-{% if band %}
-<div class="rounded-lg border border-slate-800 bg-slate-900/40 p-4 mb-6">
-  <div class="flex items-center justify-between text-xs text-slate-500 mb-6">
-    <span>analyst low {{ "%.0f"|format(band.low) }}</span>
-    <span>high {{ "%.0f"|format(band.high) }}</span>
-  </div>
-  <div class="relative h-2 rounded-full bg-gradient-to-r from-slate-700 via-slate-600 to-slate-700">
-    {% if band.mbp_pct is not none %}
-    <div class="absolute -top-5 -translate-x-1/2 text-[11px] text-emerald-300 whitespace-nowrap" style="left: {{ band.mbp_pct }}%">MBP {{ "%.0f"|format(band.mbp) }}</div>
-    <div class="absolute top-0 h-2 w-0.5 -translate-x-1/2 bg-emerald-400" style="left: {{ band.mbp_pct }}%"></div>
-    {% endif %}
-    {% if band.matp_pct is not none %}
-    <div class="absolute -bottom-6 -translate-x-1/2 text-[11px] text-slate-200 whitespace-nowrap" style="left: {{ band.matp_pct }}%">MATP {{ "%.0f"|format(band.matp) }}</div>
-    <div class="absolute top-0 h-2 w-0.5 -translate-x-1/2 bg-slate-100" style="left: {{ band.matp_pct }}%"></div>
-    {% endif %}
-  </div>
-  <p class="text-[11px] text-slate-600 mt-7">Where MBP and the median target sit within the full post-earnings analyst range.</p>
-</div>
-{% endif %}
+<div class="mb-6">{% include "_band.html" %}</div>
 
 {% if level and level.signal %}
 <div class="rounded-lg border p-4 mb-8
@@ -143,41 +125,6 @@
 <p class="text-slate-500 text-sm">No history recorded yet for {{ symbol }}.</p>
 {% endif %}
 
-<h2 class="text-sm font-medium text-slate-300 mb-2 mt-8">Analyst targets
-  <span class="text-xs text-slate-500">(the evidence &mdash; only post-earnings ones count toward MATP)</span>
-</h2>
-{% if targets %}
-<table class="w-full text-sm border border-slate-800">
-  <thead class="bg-slate-900 text-slate-400">
-    <tr>
-      <th class="text-left px-3 py-2">Brokerage</th>
-      <th class="text-left px-3 py-2">Issued</th>
-      <th class="text-right px-3 py-2">Target</th>
-      <th class="text-left px-3 py-2">Status</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for t in targets %}
-    <tr class="border-t border-slate-800 {{ '' if t.included else 'opacity-50' }}">
-      <td class="px-3 py-2">{{ t.brokerage or "-" }}</td>
-      <td class="px-3 py-2 text-slate-400">{{ t.target_date or "-" }}</td>
-      <td class="px-3 py-2 text-right tabular-nums">{{ "%.2f"|format(t.target_price) }}</td>
-      <td class="px-3 py-2">
-        {% if t.included %}
-          <span class="text-emerald-400">&#9679; post-earnings</span>
-        {% else %}
-          <span class="text-slate-500">&#9675; pre-earnings (dropped)</span>
-        {% endif %}
-      </td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-<p class="text-xs text-slate-500 mt-2">Latest earnings: {{ earnings or "unknown" }}. A target counts only if it was issued after that date.</p>
-{% else %}
-<p class="text-slate-500 text-sm">No analyst targets recorded yet &mdash; the agent will push them with the next MATP run.</p>
-{% endif %}
-
 <h2 class="text-sm font-medium text-slate-300 mb-2 mt-8">Run archive
   <span class="text-xs text-slate-500">(each saved run &mdash; exactly what was extracted that day)</span>
 </h2>
@@ -223,4 +170,6 @@
 {% else %}
 <p class="text-slate-500 text-sm">No archived runs for {{ symbol }} yet &mdash; saved to the MATP folder on each run.</p>
 {% endif %}
+
+{% include "_at_modal.html" %}
 {% endblock %}

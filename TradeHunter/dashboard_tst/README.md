@@ -119,6 +119,35 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-05-31 — v2.19: "Ask the progress" — refresh button + agent narration
+
+The runs panel gains a **↻ refresh** button (HTMX re-fetch of `/matp/runs` into `#runsbox`) so you can pull the latest status on demand instead of waiting for the 5s auto-poll, and it now shows the **agent's narration `note`** ("processing MSFT (12/61)") so you see exactly what it's doing. (The dashboard can't call the Linux agent directly — outbound-only — so progress stays pull-based: the agent reports via `/api/refresh-queue/{id}/status`, the panel displays it.) Nous Hermes `matp` skill v1.4.1 now posts a `note` alongside each progress update.
+
+### 2026-05-31 — v2.18: Run observability (elapsed + stale warning)
+
+The runs panel now shows **how long** each run has been queued/running (`queued 12m` / `running 5m`) and flags a **stale** run in red with guidance: a `pending` request sitting >15m warns "the research agent may not be polling (check its `matp` cron)"; a `running` request with no progress >8m warns it may be stuck. `/matp/runs` computes elapsed minutes + the stale flag server-side. This makes "is it working?" answerable at a glance instead of guessing. (Paired with Nous Hermes `matp` skill v1.4.1 — reads creds from `~/.hermes/.env` explicitly so it stops prompting.)
+
+### 2026-05-31 — v2.17: MATP three-panel workspace (menu · watchlist · chart)
+
+Reworked the MATP page into the working layout: **side menu (left, base nav) · watchlist (middle) · chart panel (right)**, all in one non-scrolling screen.
+- **Middle = watchlist** (`lg:w-72`), groups expanded, scrolls internally, highlights the selected ticker; Dropped names tuck into a collapsible at the bottom. The big multi-column board table is **removed** (its per-ticker detail now lives in the right panel).
+- **Right = chart panel**, stacked top→bottom and fixed (no page scroll): **MATP run** (live progress, pinned on top) → **price chart** (EMAs + MATP/MBP) → **analyst low–high band with the consensus histogram** → **analyst summary list**, with a **"Full detail →"** button that opens the analyst-targets pop-out modal.
+- **First ticker auto-selected** on load (`?symbol=` overrides) so a chart shows immediately. Chart height parameterized (`chart_height_class`) so the composite fits; band factored into shared `_band.html` (used by board + detail).
+- Verified: default selection renders chart/band/summary; run pinned on top; watchlist highlight; modal button; no board table; no-scroll shell; explicit `?symbol` works.
+
+### 2026-05-31 — v2.16: Single-screen app-shell (no page scroll) + consensus histogram on the band
+
+- **No-scroll, single-screen layout.** Converted the shell to a fixed-height app layout: `base.html` body is `h-screen overflow-hidden`, the content column is `overflow-hidden`, and `main` is height-controlled via a new `main_class` block (default still scrolls; other pages unchanged). The MATP page is now `h-full flex flex-col` with **panes that scroll internally** — the watchlist rail, the board table, and the chart each scroll on their own, so the **main frame never scrolls**. Trimmed the header/intro to a compact one-liner to save vertical space. Watchlist rail kept (collapsed = tickers-only, hover-expand overlay, pin, click swaps chart) and made full-height.
+- **Consensus concentration on the analyst band.** `_build_band` now bins the post-earnings target prices into a **histogram** drawn above the low→high band — taller/green bars = where targets cluster. The densest bucket is surfaced as a **consensus N–M (k/total)** label, so you can see where analysts actually agree vs the full range.
+- Verified: no-scroll shell classes + internal-scroll panes on board/detail; band histogram + consensus label render from the target distribution.
+
+### 2026-05-31 — v2.15: Analyst targets open in a pop-out modal
+
+Analyst targets now open in a **pop-out modal** instead of rendering inline on the page. An **"Analyst targets"** button sits in the chart header (so it's available on both the MATP board when a ticker is selected, and the detail page); clicking it HTMX-loads the targets into a centered overlay (close via ×, click-outside, or Esc).
+- New `GET /matp/{symbol}/targets` returns the `_targets_modal.html` fragment (brokerage / issued / target / post-vs-pre); `_ticker_targets()` helper shared with the detail route. Reusable modal shell `_at_modal.html` (included once per page).
+- The detail page's inline "Analyst targets" table is **removed** (replaced by the modal button); the "Run archive" section stays inline.
+- Verified: button + modal shell on board and detail; fragment renders post/pre correctly; inline evidence table gone.
+
 ### 2026-05-31 — v2.14: MATP/MBP always visible · live table population · collapsible watchlist rail
 
 Three things:
