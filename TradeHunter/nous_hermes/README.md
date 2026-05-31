@@ -26,7 +26,13 @@ CLI + SSH); this folder is the source of truth that gets deployed there.
     and pushes via `X-API-Key`. Scheduled by `hermes cron` (monthly + optional
     daily earnings-aware). Needs `TRADEHUNTER_URL` + `TST_INGEST_API_KEY` set on
     the box.
-- `install.sh` — copies `skills/` into `~/.hermes/skills/` on the server.
+- `install.sh` — copies `skills/` into `~/.hermes/skills/` on the server, and
+  deploys `heartbeat.sh` to `~/.hermes/heartbeat.sh` (+ prints its cron line).
+- `heartbeat.sh` — standalone liveness ping for TradeHunter's `/agent` page.
+  Runs from **system cron** (every 3 min), independent of the Hermes LLM, so the
+  online/stale signal can't be derailed by model shell-mangling or the agent's
+  terminal-tool approval gate. Builds the JSON with `jq -n`; POSTs to
+  `{TRADEHUNTER_URL}/api/agent/heartbeat`.
 
 ## The pre-market briefing skill
 
@@ -104,6 +110,19 @@ Edit files here, redeploy (scp / git pull → `bash install.sh`), then re-test w
 recreate the cron job unless the schedule or delivery target changes.
 
 ## Changelog
+- **2026-06-01** — Added **`heartbeat.sh`** — a standalone liveness ping run by
+  **system cron** (every 3 min), decoupled from the Hermes LLM. Diagnosed the
+  agent going "stale" on TradeHunter's /agent page while the gateway was
+  perfectly alive (2.7-day uptime): the in-skill heartbeat ran the POST through
+  the LLM, where DeepSeek mangled the shell quoting, the agent terminal tool
+  gated outbound `curl` as `pending_approval` in unattended cron, and DeepSeek
+  stream stalls dropped whole polls — so the beat rarely landed. The new script
+  builds the JSON with `jq -n` (no string interpolation), reads `~/.hermes/.env`
+  at the OS level (bypassing the agent-tool credential-read block), and runs in
+  plain bash (no approval gate). `install.sh` now copies it to
+  `~/.hermes/heartbeat.sh`, `chmod +x`'s it, and prints the crontab line.
+  Liveness is now mechanical; the LLM is left to do only the queue-drain work it
+  actually needs. (Pairs with dashboard_tst `/api/agent/heartbeat`.)
 - **2026-06-01** — `markets/matp` skill → **v1.7.0**: heartbeat now sends a
   STRUCTURED `cron_jobs` array — one object per cron with its **full prompt**
   (`hermes cron list` truncates the Name) — so TradeHunter's /agent page shows

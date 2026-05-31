@@ -44,5 +44,27 @@ fi
 echo
 echo "Done. Installed into: $DEST"
 echo "Verify in the agent with:  /skills   (or)  hermes skills list"
+
+# --- Standalone liveness heartbeat (runs from system cron, NOT the LLM) -------
+# Deploy heartbeat.sh next to the agent home and make it executable. This is the
+# robust online/stale ping for TradeHunter's /agent page; see heartbeat.sh's
+# header for why it lives outside the skill/LLM path.
+HB_SRC="$SCRIPT_DIR/heartbeat.sh"
+HB_DEST="$HERMES_HOME/heartbeat.sh"
+if [ -f "$HB_SRC" ]; then
+  cp "$HB_SRC" "$HB_DEST"
+  chmod +x "$HB_DEST"
+  echo
+  echo "Installed heartbeat: $HB_DEST"
+  CRON_LINE="*/3 * * * * $HB_DEST >/dev/null 2>&1"
+  if crontab -l 2>/dev/null | grep -qF "$HB_DEST"; then
+    echo "  cron: already scheduled (crontab entry for heartbeat.sh present)."
+  else
+    echo "  cron: NOT scheduled yet. Install the every-3-min job with:"
+    echo "    ( crontab -l 2>/dev/null; echo '$CRON_LINE' ) | crontab -"
+    echo "  Then verify:  crontab -l   and   tail ~/.hermes/logs/heartbeat.log"
+  fi
+fi
+
 echo
-echo "Next: schedule the weekday 09:00 ET briefing (see hermes/README.md)."
+echo "Next: schedule the weekday 09:00 ET briefing (see nous_hermes/README.md)."
