@@ -3,9 +3,10 @@
    (show an "open full detail" link when rendered on the board). #}
 {% if chart_symbol and chart_matp is not none %}
 {% set tv_symbol = (chart_exchange ~ ':' ~ chart_symbol) if chart_exchange else chart_symbol %}
-<div id="chart" class="mb-8">
-  {# TradingView ticker info — click "open chart" to jump to the full TV chart of this ticker #}
-  <div class="rounded-lg border border-slate-800 bg-slate-900/40 overflow-hidden mb-3 relative">
+{# one connected panel: TradingView header -> price chart -> analyst band #}
+<div id="chart" class="rounded-lg border border-slate-800 bg-slate-900/40 overflow-hidden">
+  {# TradingView ticker info (heading) — click to open the full TV chart #}
+  <div class="relative border-b border-slate-800">
     <a href="https://www.tradingview.com/chart/?symbol={{ tv_symbol }}" target="_blank" rel="noopener"
        class="absolute right-2 top-2 z-10 text-[11px] text-sky-300 hover:text-sky-200 bg-slate-900/80 rounded px-1.5 py-0.5">open TradingView chart &rarr;</a>
     <div class="tradingview-widget-container">
@@ -21,7 +22,8 @@
       </script>
     </div>
   </div>
-  <div class="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+  {# price chart #}
+  <div class="p-3 {% if chart_band %}border-b border-slate-800{% endif %}">
     <div id="priceChart" class="w-full {{ chart_height_class | default('h-[300px] lg:h-[44vh]') }}"></div>
     <p id="priceChartMsg" class="text-slate-500 text-sm hidden">Couldn't load live price data for {{ chart_symbol }} right now &mdash; try again shortly.</p>
     <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400 mt-2">
@@ -34,6 +36,14 @@
       {% if chart_earnings %}<span class="text-slate-500">&middot; earnings {{ chart_earnings }}</span>{% endif %}
     </div>
   </div>
+  {# analyst band (connected, same panel) #}
+  {% if chart_band %}
+  <div class="p-3 relative">
+    {% set band = chart_band %}{% include "_band.html" %}
+    <button type="button" hx-get="/matp/{{ chart_symbol }}/targets" hx-target="#atModalBody" hx-swap="innerHTML"
+            onclick="atOpen()" class="absolute right-3 top-3 text-xs px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Analyst targets</button>
+  </div>
+  {% endif %}
 </div>
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <script>

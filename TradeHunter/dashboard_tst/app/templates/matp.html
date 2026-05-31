@@ -139,18 +139,10 @@
       {% set chart_mbp = sel.mbp %}
       {% set chart_as_of = sel.as_of %}
       {% set chart_earnings = sel.last_earnings_date %}
+      {% set chart_band = sel_band %}
       {% set chart_height_class = 'h-[280px] lg:h-[42vh]' %}
       {% include "_price_chart.html" %}
     </div>
-
-    {# analyst section: consensus band (with the Analyst-targets button) + targets #}
-    {% if sel_band %}
-    <div class="shrink-0 relative">
-      {% set band = sel_band %}{% include "_band.html" %}
-      <button type="button" hx-get="/matp/{{ sel.symbol }}/targets" hx-target="#atModalBody" hx-swap="innerHTML"
-              onclick="atOpen()" class="absolute right-3 top-3 text-xs px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Analyst targets</button>
-    </div>
-    {% endif %}
 
     <div class="lg:flex-1 lg:min-h-0 overflow-y-auto max-h-[60vh] lg:max-h-none rounded-lg border border-slate-800">
       <table class="w-full text-sm">

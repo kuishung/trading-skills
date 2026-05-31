@@ -1,7 +1,7 @@
-{# Analyst low->high band. The shaded green segment = where the majority of
-   analyst targets concentrate (consensus). Context: band #}
+{# Analyst low->high band (bare — caller provides the box). The shaded green
+   segment = where the majority of analyst targets concentrate. Context: band #}
 {% if band %}
-<div class="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+<div>
   <div class="flex items-center justify-between text-xs text-slate-500 mb-6">
     <span>low {{ "%.0f"|format(band.low) }}</span>
     {% if band.n %}<span class="text-emerald-300">consensus {{ "%.0f"|format(band.consensus_lo) }}&ndash;{{ "%.0f"|format(band.consensus_hi) }} ({{ band.consensus_count }}/{{ band.n }})</span>{% endif %}

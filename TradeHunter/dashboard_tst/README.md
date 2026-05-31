@@ -119,6 +119,10 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-05-31 — v2.26: connect the TradingView header, chart, and analyst band
+
+The TradingView ticker header, the price chart, and the analyst consensus band are now **one connected panel** — a single rounded border with thin `border-b` dividers between the three sections (no gaps/separate boxes). `_band.html` is now "bare" (caller supplies the box); `_price_chart.html` takes an optional `chart_band` and renders the band as the panel's third section with the "Analyst targets" button. Board passes `chart_band=sel_band`; the detail page wraps the bare band in its own box. Verified the connected panel + detail page.
+
 ### 2026-05-31 — v2.25: fold MATP/MBP/calculated/earnings into the chart legend
 
 Merged the separate "MATP … · MBP … · calculated … · earnings …" line into the **EMA legend** below the chart, so it reads as one description: `EMA20 · EMA50 · EMA200 · MATP <v> · MBP <v> · calculated <date> · earnings <date>`. `_price_chart.html` takes `chart_as_of` + `chart_earnings` (passed from board `sel` and detail `level`); the standalone calc line is removed.
