@@ -119,6 +119,11 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-05-31 — v2.36: scale to 110% + hover-only scrollbars
+
+- Dropped the global scale from 130% → **110%** (`html { font-size: 110% }`).
+- **Scrollbars are now invisible by default and fade in on hover** of the scroll area (thin `scrollbar-width`, transparent thumb → visible on `:hover`, both WebKit and Firefox).
+
 ### 2026-05-31 — v2.35: per-Finviz-filter run schedule (agent runs due filters)
 
 Each saved Finviz filter now has a **run schedule** — `off / daily / weekly / monthly / quarterly` — set by moderators on the `/finviz` page (a Schedule column with a dropdown + "next/last run" info). The interval lives in the dashboard; the **agent's poll cron just runs whatever's due**, so you don't manage per-filter crons on the agent.
