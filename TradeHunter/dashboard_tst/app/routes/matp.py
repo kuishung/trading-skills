@@ -47,6 +47,7 @@ templates = Jinja2Templates(
 def matp_home(
     request: Request,
     symbol: str | None = None,  # ?symbol=NVDA -> show its chart inline on the board
+    wl: int | None = None,      # ?wl=<filter_id> -> which watchlist's tickers to show
     user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ):
@@ -81,14 +82,21 @@ def matp_home(
     watchlists = [{"filter": f, "tickers": by_filter.get(f.id, [])} for f in active_filters]
     unfiled = by_filter.get(None, [])
 
-    # selected ticker: ?symbol=… , else default to the FIRST active ticker so a
-    # chart shows on load without a click.
+    # selected watchlist (?wl=…); default to the first active filter. Only that
+    # watchlist's tickers are shown in the middle panel.
+    valid_wl = {f.id for f in active_filters}
+    sel_wl = wl if (wl in valid_wl) else (active_filters[0].id if active_filters else None)
+    shown_watchlists = [w for w in watchlists if w["filter"].id == sel_wl]
+    shown_tickers = by_filter.get(sel_wl, [])
+
+    # selected ticker: ?symbol=… , else the first ticker of the shown watchlist
+    # (so a chart shows on load without a click).
     sel = None
     if symbol:
         sym = symbol.strip().upper()
         sel = next((lv for lv in all_levels if lv.symbol == sym), None)
-    if sel is None and active:
-        sel = active[0]
+    if sel is None:
+        sel = shown_tickers[0] if shown_tickers else (active[0] if active else None)
 
     # selected ticker's consensus band + analyst summary for the right panel
     sel_band = None
@@ -120,6 +128,8 @@ def matp_home(
             "open_symbols": open_symbols,
             "open_filter_ids": open_filter_ids,
             "watchlists": watchlists,
+            "shown_watchlists": shown_watchlists,
+            "sel_wl": sel_wl,
             "unfiled": unfiled,
             "sel": sel,
             "sel_band": sel_band,

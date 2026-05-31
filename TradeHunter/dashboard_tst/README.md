@@ -119,6 +119,10 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-05-31 — v2.28: watchlist dropdown filters the shown tickers
+
+The Run-panel **watchlist dropdown is now a view selector**: changing it filters the middle ticker list to that watchlist (navigates `?wl=<filter_id>`), auto-selects that watchlist's first ticker (chart updates), and the **Run** button runs the selected watchlist. The dropdown is visible to everyone (members can switch which watchlist they view); only mod/admin see the Run button. Board route takes `?wl`, computes `sel_wl` (default = first active filter) and `shown_watchlists`; the middle panel + mobile dropdown render only the selected watchlist. Verified switching Growth↔Value filters the list and auto-selects.
+
 ### 2026-05-31 — v2.27: TV link in the legend line + opaque chart background
 
 - Moved the **"open TradingView chart →"** link out of the widget overlay into the **description/legend line** below the chart.
