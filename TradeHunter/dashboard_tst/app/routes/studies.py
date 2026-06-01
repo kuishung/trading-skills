@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..db import get_db
 from ..models import Comment, MATPLevel, Setup, User
-from ..security import require_moderator, require_user
+from ..security import require_admin, require_moderator, require_user
 from ..services import discord
 
 router = APIRouter(prefix="/studies", tags=["studies"])
@@ -367,9 +367,11 @@ def set_status(
 @router.post("/{sid}/delete")
 def delete_study(
     sid: int,
-    user: User = Depends(require_moderator),
+    user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    """Admin-only — deletes the study + its on-platform comments (the Discord
+    thread + MATP data are untouched)."""
     s = db.get(Setup, sid)
     if s is not None:
         db.delete(s)

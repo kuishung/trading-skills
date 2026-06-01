@@ -76,6 +76,7 @@
 
     {# status panel: badge + title + data + (moderator) status controls #}
     <div class="shrink-0 rounded-lg border border-slate-800 bg-slate-900/40 p-2.5 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+      <span class="font-semibold text-white">{{ sel.symbol }} <span class="text-slate-500 font-normal">#{{ sel.id }}</span></span>
       {{ st_badge(sel.status) }}
       {% if sel.title and sel.title != sel.symbol %}<span class="text-slate-400 truncate max-w-[16rem]">{{ sel.title }}</span>{% endif %}
       {% if level %}
@@ -90,10 +91,12 @@
             {% if sel.status == st %}border-emerald-500/60 text-emerald-300 bg-emerald-500/10{% else %}border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300{% endif %}">{{ st }}</button>
         </form>
         {% endfor %}
+        {% if user.is_admin %}
         <form method="post" action="/studies/{{ sel.id }}/delete" class="inline"
-              onsubmit="return confirm('Delete this study and its discussion?');">
+              onsubmit="return confirm('Delete study #{{ sel.id }} ({{ sel.symbol }})? The Discord thread stays in Discord.');">
           <button class="text-[11px] px-2 py-0.5 rounded border border-rose-500/40 text-rose-300 hover:bg-rose-500/15 transition">delete</button>
         </form>
+        {% endif %}
       </div>
       {% endif %}
     </div>

@@ -119,6 +119,19 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-01 — v2.80: rename Data Ingest §2 → "Price Data History"
+
+- Renamed the Data Ingest page's section 2 from "Parquet Ingest" to **"Price Data
+  History"** (heading + subtitle); behaviour unchanged.
+
+### 2026-06-01 — v2.79: delete is admin-only + study numbering surfaced
+
+- **Delete study is now admin-only** (`require_admin`; moderators can't, button
+  hidden for them) — confirm spells out it keeps the Discord thread.
+- **Study number surfaced consistently**: the middle status panel leads with
+  `SYMBOL #id` (e.g. `AMZN #5`); left cards already show `#id`; the Discord thread
+  is `SYMBOL — study #id` — same number identifies a study everywhere.
+
 ### 2026-06-01 — v2.78: wider chatroom + smaller chat font
 
 - Study chatroom (right panel) widened to **1/4 of the screen** (`lg:w-80` →

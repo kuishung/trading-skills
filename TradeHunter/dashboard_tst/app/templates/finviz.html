@@ -2,7 +2,7 @@
 {% block title %}Data Ingest &middot; TradeHunter{% endblock %}
 {% block content %}
 <h1 class="text-2xl font-semibold mb-1">Data Ingest</h1>
-<p class="text-slate-400 text-sm mb-5">Screener filters that feed MATP, plus the health of the parquet bars ingest.</p>
+<p class="text-slate-400 text-sm mb-5">Screener filters that feed MATP, plus the health of the price data history (parquet bars).</p>
 
 <h2 class="text-lg font-medium mb-1">1 &middot; Finviz Filters</h2>
 <p class="text-slate-400 text-sm mb-3">Saved screener filters. Active ones feed MATP. Set a <b>schedule</b> and the research agent runs that filter automatically when it's due.</p>
@@ -111,8 +111,8 @@
 </p>
 {% endif %}
 
-{# ============ 2 · Parquet Ingest health (freshness only) ============ #}
-<h2 class="text-lg font-medium mt-10 mb-1">2 &middot; Parquet Ingest
+{# ============ 2 · Price Data History health (freshness only) ============ #}
+<h2 class="text-lg font-medium mt-10 mb-1">2 &middot; Price Data History
   <span class="text-xs font-normal text-slate-500">&mdash; backtest bars health</span></h2>
 <p class="text-slate-400 text-sm mb-3">Daily health check of the historical bars store (the ingest runs on the Hermes box; this is read-only freshness).</p>
 {% if ingest %}
