@@ -33,8 +33,8 @@
 
   {# MBP / MATP labels (below) #}
   <div class="relative h-4 mt-0.5 text-[11px]">
-    {% if band.mbp_pct is not none %}<span class="absolute -translate-x-1/2 text-green-500 whitespace-nowrap" style="left: {{ band.mbp_pct }}%">MBP {{ "%.0f"|format(band.mbp) }}</span>{% endif %}
-    {% if band.matp_pct is not none %}<span class="absolute -translate-x-1/2 text-orange-400 whitespace-nowrap" style="left: {{ band.matp_pct }}%">MATP {{ "%.0f"|format(band.matp) }}</span>{% endif %}
+    {% if band.mbp_pct is not none %}<span class="absolute -translate-x-1/2 text-green-500 whitespace-nowrap" style="left: {{ band.mbp_pct }}%">MBP {{ "%.2f"|format(band.mbp) }}</span>{% endif %}
+    {% if band.matp_pct is not none %}<span class="absolute -translate-x-1/2 text-orange-400 whitespace-nowrap" style="left: {{ band.matp_pct }}%">MATP {{ "%.2f"|format(band.matp) }}</span>{% endif %}
   </div>
 
   <p class="text-[11px] text-slate-500 mt-2">

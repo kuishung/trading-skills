@@ -119,6 +119,15 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-01 — v2.50: exact MBP/MATP in the analyst band
+
+- The analyst band's **MBP/MATP labels** now show the exact stored 2-decimal
+  value (`%.0f` → `%.2f`). MBP is a max-buy threshold stored as
+  `round(matp/1.15, 2)`; the old whole-number label rounded to nearest, so a true
+  100.60 displayed as `101` — *above* the real cap. Now exact, consistent with
+  the detail page + chart legend. (Watchlist grid/rail still show whole-number
+  MBP — separate, not yet changed.)
+
 ### 2026-06-01 — v2.49: pill blink fix + band marker thickness
 
 - **Pill now blinks on any live MATP run (queued OR running), not just
