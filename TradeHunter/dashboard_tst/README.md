@@ -119,6 +119,14 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-01 — v2.70: crop the chart header gap (single-quote widget)
+
+- The TradingView single-quote header rendered tall with empty space below the
+  quote, leaving a big gap before the chart. Height-capped the header to ~5.5rem
+  + overflow-hidden so the blank space is cropped, and trimmed the chart panel's
+  top padding. Shared `_price_chart.html`, so it fixes the gap on **both** the
+  MATP board chart and the Studies chart. (Height tunable if the price clips.)
+
 ### 2026-06-01 — v2.69: basket mini-card strip expands on hover
 
 - The study page's curation-basket strip stays one compact row (extra cards
