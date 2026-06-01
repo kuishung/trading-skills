@@ -119,6 +119,15 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-01 — v2.53: chart zoom presets 6M/1Y/1.5Y/2Y + right-third blank
+
+- Price chart zoom replaced 7M/All with **6M · 1Y · 1.5Y · 2Y** presets (default
+  **6M**). Each shows the lookback in the **left ~2/3** of the chart with the
+  **right ~1/3 left blank** (room ahead of current price): we set the visible
+  *logical* range from the lookback's first bar to `lastBar + dataBars/2`, so
+  data = 2/3 and blank = 1/3 of the width (current candle lands at ~2/3).
+  `_price_chart.html` only.
+
 ### 2026-06-01 — v2.52: watchlist gridview — aligned columns + smaller fonts
 
 - **Header now aligns with the rows.** The watchlist header and every row share

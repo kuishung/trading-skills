@@ -24,12 +24,13 @@
   </div>
   {# price chart #}
   <div class="p-3 {% if chart_band %}border-b border-slate-800{% endif %} {% if chart_fill %}lg:flex-1 lg:min-h-0 flex flex-col{% endif %}">
-    {# zoom toolbar: 7M focuses recent price action; All shows the full ~2y feed #}
+    {# zoom toolbar: 6M (default) / 1Y / 1.5Y / 2Y. Each shows the lookback in the
+       left ~2/3 with the right ~1/3 blank (room ahead of current price). #}
     <div class="flex items-center justify-end gap-1 mb-1 {% if chart_fill %}shrink-0{% endif %}">
-      <button type="button" id="zoom7m"
-              class="text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 transition">7M</button>
-      <button type="button" id="zoomAll"
-              class="text-[11px] px-2 py-0.5 rounded border border-emerald-500/60 text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 transition">All</button>
+      <button type="button" class="zoombtn text-[11px] px-2 py-0.5 rounded border border-emerald-500/60 text-emerald-300 bg-emerald-500/10 transition" data-months="6">6M</button>
+      <button type="button" class="zoombtn text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 transition hover:border-emerald-500 hover:text-emerald-300" data-months="12">1Y</button>
+      <button type="button" class="zoombtn text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 transition hover:border-emerald-500 hover:text-emerald-300" data-months="18">1.5Y</button>
+      <button type="button" class="zoombtn text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 transition hover:border-emerald-500 hover:text-emerald-300" data-months="24">2Y</button>
     </div>
     <div id="priceChart" class="w-full {% if chart_fill %}min-h-[240px] lg:min-h-0 lg:flex-1{% else %}{{ chart_height_class | default('h-[300px] lg:h-[44vh]') }}{% endif %}"></div>
     <p id="priceChartMsg" class="text-slate-500 text-sm hidden">Couldn't load live price data for {{ chart_symbol }} right now &mdash; try again shortly.</p>
@@ -123,37 +124,39 @@
       if (mbp != null) s.createPriceLine({ price: mbp, color: '#16a34a', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'MBP' });
 
       // ---- zoom controls -------------------------------------------------
-      // 7M focuses the last ~7 months so current price action fills the chart;
-      // All shows the whole ~2y feed. Bar time is 'YYYY-MM-DD', so we can set a
-      // real calendar range (strings compare lexicographically for clamping).
-      function show7m() {
-        try {
-          var to = bars[bars.length - 1].time;
-          var d = new Date(to + 'T00:00:00Z');
-          d.setUTCMonth(d.getUTCMonth() - 7);
-          var from = d.toISOString().slice(0, 10);
-          if (from < bars[0].time) from = bars[0].time;
-          chart.timeScale().setVisibleRange({ from: from, to: to });
-        } catch (e) { chart.timeScale().fitContent(); }
+      // 6M / 1Y / 1.5Y / 2Y. Show the chosen lookback in the LEFT ~2/3 of the
+      // chart and leave the right ~1/3 blank (room ahead of current price). We
+      // extend the visible LOGICAL range past the last bar by half the data-bar
+      // count: data = 2/3, blank = 1/3 of the total width. Bar time is
+      // 'YYYY-MM-DD' (strings compare lexicographically), so the lookback cutoff
+      // is a real calendar date.
+      function showRange(months) {
+        var last = bars.length - 1;
+        if (last < 1) { chart.timeScale().fitContent(); return; }
+        var d = new Date(bars[last].time + 'T00:00:00Z');
+        d.setUTCMonth(d.getUTCMonth() - months);
+        var fromStr = d.toISOString().slice(0, 10);
+        var firstIdx = 0;
+        while (firstIdx < last && bars[firstIdx].time < fromStr) firstIdx++;
+        var dataBars = last - firstIdx + 1;
+        var blank = Math.max(1, Math.round(dataBars / 2)); // blank = 1/3 of total
+        chart.timeScale().setVisibleLogicalRange({ from: firstIdx, to: last + blank });
       }
-      function showAll() { chart.timeScale().fitContent(); }
-      var b7 = document.getElementById('zoom7m');
-      var bAll = document.getElementById('zoomAll');
-      function mark(active) {
-        if (!b7 || !bAll) return;
-        var on = 'border-emerald-500/60 text-emerald-300 bg-emerald-500/10';
-        var off = 'border-slate-700 text-slate-400';
-        (active === '7m' ? b7 : bAll).className =
-          'text-[11px] px-2 py-0.5 rounded border transition hover:border-emerald-500 hover:text-emerald-300 ' + on;
-        (active === '7m' ? bAll : b7).className =
-          'text-[11px] px-2 py-0.5 rounded border transition hover:border-emerald-500 hover:text-emerald-300 ' + off;
+      var zbtns = el.parentElement.querySelectorAll('.zoombtn');
+      function setActive(months) {
+        zbtns.forEach(function (b) {
+          var on = (+b.dataset.months === months);
+          b.className = 'zoombtn text-[11px] px-2 py-0.5 rounded border transition hover:border-emerald-500 hover:text-emerald-300 ' +
+            (on ? 'border-emerald-500/60 text-emerald-300 bg-emerald-500/10' : 'border-slate-700 text-slate-400');
+        });
       }
-      if (b7) b7.addEventListener('click', function () { show7m(); mark('7m'); });
-      if (bAll) bAll.addEventListener('click', function () { showAll(); mark('all'); });
+      zbtns.forEach(function (b) {
+        b.addEventListener('click', function () { var m = +b.dataset.months; showRange(m); setActive(m); });
+      });
 
-      // default: show the full ~2y feed (7M button zooms in on demand)
-      showAll();
-      mark('all');
+      // default: 6M
+      showRange(6);
+      setActive(6);
     })
     .catch(empty);
 })();
