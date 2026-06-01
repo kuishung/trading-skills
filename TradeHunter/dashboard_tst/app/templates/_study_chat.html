@@ -23,7 +23,12 @@
   {% elif bot_configured and user.can_moderate and s and not s.discord_thread_id %}
   <form method="post" action="/studies/{{ s.id }}/discord-thread"><button class="text-[11px] text-indigo-300 hover:text-indigo-200">Start Discord thread</button></form>
   {% endif %}
-  <form method="post" action="/studies/{{ s.id }}/comment" class="flex gap-1.5">
+  {# HTMX: post the comment and swap the refreshed chat in place (the whole
+     #chatbox is replaced, so the new message shows instantly and the input
+     resets). Falls back to a normal POST + redirect with no JS. #}
+  <form method="post" action="/studies/{{ s.id }}/comment"
+        hx-post="/studies/{{ s.id }}/comment" hx-target="#chatbox" hx-swap="innerHTML"
+        class="flex gap-1.5">
     <input name="body" required autocomplete="off" placeholder="Message&hellip;"
            class="flex-1 min-w-0 rounded bg-slate-950/60 border border-slate-700 px-2.5 py-1.5 text-sm focus:border-emerald-500 outline-none">
     <button class="text-sm px-3 rounded bg-emerald-600 hover:bg-emerald-500 font-medium">Send</button>

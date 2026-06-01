@@ -119,6 +119,15 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-01 — v2.72: chatroom comment posts in-place (HTMX)
+
+- A member's comment now appears in the chatroom **instantly**: the composer
+  `hx-post`s and swaps the refreshed merged-chat fragment into `#chatbox`
+  (input resets, auto-scrolls). Previously it did a full-page reload whose chat
+  fragment could serve from browser cache, so the new comment didn't show.
+  `add_comment` returns the chat fragment for HX requests (full-page redirect as
+  the no-JS fallback); chat render refactored into `_render_chat`.
+
 ### 2026-06-01 — v2.71: Studies = 3-panel app (cards · chart+levels · chatroom)
 
 - Redesigned Studies into a single-screen **3-panel** layout, replacing the

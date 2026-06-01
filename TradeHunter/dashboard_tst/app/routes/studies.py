@@ -276,15 +276,9 @@ def study_page(
     return templates.TemplateResponse(request, "studies.html", _page_ctx(db, user, sel))
 
 
-@router.get("/{sid}/chat", response_class=HTMLResponse)
-def study_chat(
-    sid: int,
-    request: Request,
-    user: User = Depends(require_user),
-    db: Session = Depends(get_db),
-):
-    """Right-panel chatroom: the study's Discord thread messages MERGED with the
-    on-platform comments, time-sorted, rendered as chat bubbles. Self-polls."""
+def _render_chat(request: Request, db: Session, user: User, sid: int):
+    """Render the right-panel chat fragment: the study's Discord thread messages
+    MERGED with the on-platform comments, time-sorted as chat bubbles."""
     s = db.get(Setup, sid)
     msgs: list[dict] = []
     if s is not None:
@@ -310,9 +304,21 @@ def study_chat(
     )
 
 
-@router.post("/{sid}/comment")
+@router.get("/{sid}/chat", response_class=HTMLResponse)
+def study_chat(
+    sid: int,
+    request: Request,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Right-panel chatroom fragment (Discord + platform comments merged)."""
+    return _render_chat(request, db, user, sid)
+
+
+@router.post("/{sid}/comment", response_class=HTMLResponse)
 def add_comment(
     sid: int,
+    request: Request,
     body: str = Form(...),
     user: User = Depends(require_user),
     db: Session = Depends(get_db),
@@ -322,6 +328,10 @@ def add_comment(
     if s is not None and text:
         db.add(Comment(setup_id=sid, user_id=user.id, body=text[:4000]))
         db.commit()
+    # HTMX composer → return the refreshed chat fragment (instant, in-place);
+    # no-JS fallback → full-page redirect back to the study.
+    if request.headers.get("HX-Request"):
+        return _render_chat(request, db, user, sid)
     return RedirectResponse(f"/studies/{sid}", status_code=303)
 
 
