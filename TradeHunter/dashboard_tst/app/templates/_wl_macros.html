@@ -10,27 +10,38 @@
 {% endmacro %}
 
 {% macro signal_badge(s) %}
-  {% if s == "HOT" %}<span class="px-1.5 py-0.5 rounded text-xs bg-rose-500/15 text-rose-300">&#9679; HOT</span>
-  {% elif s == "WARM" %}<span class="px-1.5 py-0.5 rounded text-xs bg-amber-500/15 text-amber-300">&#9679; WARM</span>
-  {% elif s == "WATCHING" %}<span class="px-1.5 py-0.5 rounded text-xs bg-sky-500/15 text-sky-300">&#9675; watch</span>
+  {% if s == "HOT" %}<span class="px-1 py-0.5 rounded text-[10px] bg-rose-500/15 text-rose-300">&#9679; HOT</span>
+  {% elif s == "WARM" %}<span class="px-1 py-0.5 rounded text-[10px] bg-amber-500/15 text-amber-300">&#9679; WARM</span>
+  {% elif s == "WATCHING" %}<span class="px-1 py-0.5 rounded text-[10px] bg-sky-500/15 text-sky-300">&#9675; watch</span>
   {% else %}<span class="text-slate-700">&middot;</span>{% endif %}
 {% endmacro %}
 
 {% macro ticker_grid(tickers, open_symbols, sel_sym, live, wl="") %}
-<div class="grid grid-cols-[1fr_auto_auto_auto_auto_auto] gap-x-2 px-2 pt-1 text-[10px] uppercase tracking-wide text-slate-600">
-  <span>Sym</span><span class="text-center">Trend</span><span class="text-center">Sig</span><span class="text-right">Price</span><span class="text-right">MATP</span><span class="text-right">MBP</span>
+{# Shared column template — used VERBATIM by the header and every row so the
+   columns line up pixel-for-pixel (separate grids with `auto` cols would drift).
+   Sym flexes (truncates); Trend/Sig/Price/MATP/MBP are fixed widths. Defined
+   INSIDE the macro so it's in scope even when imported into another template. #}
+{% set GRIDCSS = "display:grid;grid-template-columns:minmax(0,1fr) 2.5rem 2.9rem 3rem 3rem 3rem;column-gap:0.25rem;align-items:center" %}
+<div style="{{ GRIDCSS }}" class="px-2 pt-1 text-[9px] uppercase tracking-wide text-slate-600">
+  <span>Sym</span>
+  <span class="text-center">Trend</span>
+  <span class="text-center">Sig</span>
+  <span class="text-right">Price</span>
+  <span class="text-right">MATP</span>
+  <span class="text-right">MBP</span>
 </div>
 {% for lv in tickers %}
 {% set lr = live.get(lv.symbol, {}) if live else {} %}
 {% set cur = lr.get("current") %}
 <a href="/matp?symbol={{ lv.symbol }}{% if wl %}&wl={{ wl }}{% endif %}"
-   class="grid grid-cols-[1fr_auto_auto_auto_auto_auto] items-center gap-x-2 px-2 py-1 rounded {% if sel_sym == lv.symbol %}bg-emerald-500/15{% else %}hover:bg-slate-800/70{% endif %}">
-  <span class="font-medium {% if sel_sym == lv.symbol %}text-emerald-300{% else %}text-white{% endif %}">{{ lv.symbol }}{% if lv.symbol in open_symbols %} <span class="text-amber-400 text-xs">&#8635;</span>{% endif %}</span>
-  <span class="text-center">{{ trend_badge(lr.get("trend") or lv.trend) }}</span>
+   style="{{ GRIDCSS }}"
+   class="px-2 py-1 rounded {% if sel_sym == lv.symbol %}bg-emerald-500/15{% else %}hover:bg-slate-800/70{% endif %}">
+  <span class="text-[11px] font-medium truncate {% if sel_sym == lv.symbol %}text-emerald-300{% else %}text-white{% endif %}">{{ lv.symbol }}{% if lv.symbol in open_symbols %} <span class="text-amber-400">&#8635;</span>{% endif %}</span>
+  <span class="text-center text-[10px]">{{ trend_badge(lr.get("trend") or lv.trend) }}</span>
   <span class="text-center">{{ signal_badge(lr.get("signal") or lv.signal) }}</span>
-  <span class="text-right text-xs tabular-nums {% if cur is not none and lv.mbp is not none and cur > lv.mbp %}text-rose-300{% else %}text-white{% endif %}">{{ "%.2f"|format(cur) if cur is not none else "-" }}</span>
-  <span class="text-right text-xs text-orange-300 tabular-nums">{{ "%.2f"|format(lv.matp) if lv.matp is not none else "-" }}</span>
-  <span class="text-right text-xs text-green-500 tabular-nums">{{ "%.2f"|format(lv.mbp) if lv.mbp is not none else "-" }}</span>
+  <span class="text-right text-[11px] tabular-nums {% if cur is not none and lv.mbp is not none and cur > lv.mbp %}text-rose-300{% else %}text-white{% endif %}">{{ "%.2f"|format(cur) if cur is not none else "-" }}</span>
+  <span class="text-right text-[11px] text-orange-300 tabular-nums">{{ "%.2f"|format(lv.matp) if lv.matp is not none else "-" }}</span>
+  <span class="text-right text-[11px] text-green-500 tabular-nums">{{ "%.2f"|format(lv.mbp) if lv.mbp is not none else "-" }}</span>
 </a>
 {% endfor %}
 {% endmacro %}

@@ -119,6 +119,17 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-01 — v2.52: watchlist gridview — aligned columns + smaller fonts
+
+- **Header now aligns with the rows.** The watchlist header and every row share
+  one inline `grid-template-columns` (fixed widths) in `ticker_grid`, so columns
+  line up pixel-for-pixel — the old drift came from each being a separate `auto`
+  grid that sized independently.
+- **Smaller Sym/Trend/Sig fonts** (`text-[11px]` / `text-[10px]`; header
+  `text-[9px]`; `signal_badge` shrunk to `text-[10px]` + tighter padding) to fit
+  the six columns cleanly. Price/MATP/MBP stay at `text-[11px]`.
+- **Watchlist sidebar widened** `w-72 → w-80` so the 6-column grid isn't cramped.
+
 ### 2026-06-01 — v2.51: members see Nous Hermes + watchlist MATP column
 
 - **Nous Hermes is now visible to all approved members** (was moderator-only):

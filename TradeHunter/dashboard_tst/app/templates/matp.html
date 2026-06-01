@@ -99,7 +99,7 @@
   {# MIDDLE: watchlist panel — lazy-loads the grid with runtime trend/signal.
      The active-runs panel sits on top of THIS column (narrow), not spanning
      across to the chart. #}
-  <aside class="hidden lg:flex lg:flex-col lg:w-72 lg:shrink-0 lg:h-full">
+  <aside class="hidden lg:flex lg:flex-col lg:w-80 lg:shrink-0 lg:h-full">
     <div id="runsbox" class="shrink-0 empty:hidden mb-2"
          hx-get="/matp/runs?wl={{ sel_wl }}&sym={{ sel.symbol if sel else '' }}" hx-trigger="load" hx-swap="innerHTML"></div>
     <div id="wlbox" class="flex-1 min-h-0 overflow-y-auto pr-1"
