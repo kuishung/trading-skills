@@ -26,6 +26,7 @@ from ..config import settings
 from ..db import get_db
 from ..models import APPROVED, DISABLED, PENDING, ROLE_MEMBER, ROLES, User
 from ..security import hash_password, require_admin
+from ..services import discord
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 templates = Jinja2Templates(
@@ -59,8 +60,29 @@ def admin_home(
             "counts": counts,
             "auth_mode": settings.auth_mode,
             "is_google_auth": settings.is_google_auth,
+            "discord_configured": discord.configured(),
         },
     )
+
+
+@router.post("/discord-test", response_class=HTMLResponse)
+def discord_test(admin: User = Depends(require_admin)):
+    """Fire a test post to the configured Discord webhook (HTMX fragment result).
+    Lets an admin confirm the integration without waiting for a real refresh."""
+    if not discord.configured():
+        return HTMLResponse(
+            '<span class="text-rose-300">No webhook configured — set '
+            '<code>TST_DISCORD_WEBHOOK_URL</code> in app/.env and restart.</span>'
+        )
+    ok = discord.post_embed(
+        title="🔔 TradeHunter · test",
+        description=f"Test post from {admin.display_name or admin.email}. "
+        "If you can read this in your channel, the Discord integration works.",
+        url=settings.public_url,
+    )
+    if ok:
+        return HTMLResponse('<span class="text-emerald-300">Sent ✓ — check your Discord channel.</span>')
+    return HTMLResponse('<span class="text-rose-300">Webhook POST failed — see the server log.</span>')
 
 
 def _get(db: Session, uid: int) -> User | None:

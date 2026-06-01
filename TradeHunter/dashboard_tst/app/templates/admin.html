@@ -11,6 +11,34 @@
   <span class="rounded-lg border border-slate-700 text-slate-400 px-3 py-2">Disabled <b class="ml-1">{{ counts.disabled }}</b></span>
 </div>
 
+{# ---- Integrations: Discord outbound webhook ---- #}
+<section class="mb-10">
+  <h2 class="text-lg font-medium mb-3">Integrations</h2>
+  <div class="rounded-lg border border-slate-800 bg-slate-900/40 p-4 max-w-2xl">
+    <div class="flex items-center justify-between gap-3 flex-wrap">
+      <div>
+        <div class="text-sm text-slate-200 font-medium">Discord notifications</div>
+        <div class="text-xs text-slate-500 mt-0.5">
+          Posts a summary to your Discord channel when a MATP refresh completes.
+          {% if discord_configured %}
+          <span class="text-emerald-300">Webhook configured.</span>
+          {% else %}
+          <span class="text-amber-300">Not configured</span> — set
+          <code class="text-slate-400">TST_DISCORD_WEBHOOK_URL</code> in <code class="text-slate-400">app/.env</code> and restart.
+          {% endif %}
+        </div>
+      </div>
+      <div class="flex items-center gap-3 shrink-0">
+        <span id="discordTestResult" class="text-xs"></span>
+        <button type="button" hx-post="/admin/discord-test" hx-target="#discordTestResult" hx-swap="innerHTML"
+                class="text-xs px-3 py-1.5 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">
+          Send test post
+        </button>
+      </div>
+    </div>
+  </div>
+</section>
+
 {% if is_google_auth %}
 <section class="mb-10">
   <h2 class="text-lg font-medium mb-3">Pending approval

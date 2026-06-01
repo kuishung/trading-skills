@@ -42,6 +42,86 @@ def fetch_daily_ohlc(symbol: str, *, rng: str = "2y") -> list[dict]:
     return bars
 
 
+# --- Next earnings date (Yahoo calendarEvents) ------------------------------
+# Yahoo's quoteSummary now requires a consent cookie + a matching crumb. We do
+# that handshake once (cached ~1h) and reuse it across symbols. Everything is
+# soft-fail: any hiccup -> None, and the chart simply omits the earnings line.
+_EARN_CACHE: dict[str, tuple[float, dict | None]] = {}
+_EARN_TTL = 6 * 3600.0   # earnings dates move slowly
+_EARN_MISS_TTL = 900.0   # but don't hammer on a miss
+_YH_SESSION: dict = {"crumb": None, "cookies": None, "exp": 0.0}
+
+
+def _yahoo_session():
+    """(crumb, cookies) for authenticated quoteSummary, cached. -> (None, None)
+    on any failure."""
+    now = time.time()
+    if _YH_SESSION["crumb"] and _YH_SESSION["exp"] > now:
+        return _YH_SESSION["crumb"], _YH_SESSION["cookies"]
+    try:
+        with httpx.Client(headers={"User-Agent": _UA}, timeout=6.0, follow_redirects=True) as c:
+            c.get("https://fc.yahoo.com")  # sets the A1/A3 consent cookies
+            r = c.get("https://query2.finance.yahoo.com/v1/test/getcrumb")
+            crumb = (r.text or "").strip()
+            if not crumb or "<" in crumb:  # an HTML error page = no usable crumb
+                return None, None
+            _YH_SESSION.update(crumb=crumb, cookies=c.cookies, exp=now + 3600.0)
+            return crumb, c.cookies
+    except Exception:
+        return None, None
+
+
+def fetch_next_earnings(symbol: str) -> dict | None:
+    """Soonest upcoming earnings for `symbol` (today or later) from Yahoo, cached
+    + soft-fail. Returns ``{"date": "YYYY-MM-DD", "days": <int from today>}`` or
+    None when unavailable."""
+    sym = symbol.strip().upper()
+    if not sym:
+        return None
+    now = time.time()
+    hit = _EARN_CACHE.get(sym)
+    if hit and hit[0] > now:
+        return hit[1]
+    res = _fetch_next_earnings(sym)
+    _EARN_CACHE[sym] = (now + (_EARN_TTL if res else _EARN_MISS_TTL), res)
+    return res
+
+
+def _fetch_next_earnings(sym: str) -> dict | None:
+    crumb, cookies = _yahoo_session()
+    if not crumb:
+        return None
+    today = _dt.date.today()
+    for host in _HOSTS:
+        try:
+            r = httpx.get(
+                f"https://{host}/v10/finance/quoteSummary/{sym}",
+                params={"modules": "calendarEvents", "crumb": crumb},
+                headers={"User-Agent": _UA}, cookies=cookies, timeout=6.0,
+            )
+            if r.status_code != 200:
+                continue
+            res = (r.json().get("quoteSummary") or {}).get("result") or []
+            if not res:
+                continue
+            raw_dates = (
+                ((res[0].get("calendarEvents") or {}).get("earnings") or {}).get("earningsDate") or []
+            )
+            days = []
+            for d in raw_dates:
+                raw = d.get("raw")
+                if raw is not None:
+                    days.append(_dt.datetime.utcfromtimestamp(raw).date())
+            days = sorted(set(days))
+            nxt = next((d for d in days if d >= today), days[-1] if days else None)
+            if nxt is None:
+                continue
+            return {"date": nxt.isoformat(), "days": (nxt - today).days}
+        except Exception:
+            continue
+    return None
+
+
 _US_TICKER = __import__("re").compile(r"^[A-Z]{1,5}([.\-][A-Z])?$")
 
 

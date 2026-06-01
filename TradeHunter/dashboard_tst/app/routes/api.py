@@ -16,7 +16,7 @@ from __future__ import annotations
 import datetime as _dt
 import hmac
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -33,6 +33,7 @@ from ..models import (
     MATPRefreshRequest,
     MATPTarget,
 )
+from ..services import discord
 
 router = APIRouter(prefix="/api", tags=["api"])
 
@@ -165,15 +166,56 @@ class RefreshStatusIn(BaseModel):
     progress_total: int | None = None  # tickers in this run
 
 
+def _discord_refresh_summary(db: Session, r: MATPRefreshRequest) -> dict | None:
+    """Build a Discord embed kwargs dict for a COMPLETED refresh, or None if the
+    webhook isn't configured. Does all DB reads here (in the request, with a live
+    session) so the background task only performs the HTTP POST."""
+    if not discord.configured():
+        return None
+    base = settings.public_url
+    if r.scope == "ticker" and r.symbol:
+        sym = r.symbol
+        lv = db.query(MATPLevel).filter(MATPLevel.symbol == sym).first()
+        fields = []
+        if lv is not None:
+            if lv.matp is not None:
+                fields.append({"name": "MATP", "value": f"{lv.matp:.2f}", "inline": True})
+            if lv.mbp is not None:
+                fields.append({"name": "MBP (max buy)", "value": f"{lv.mbp:.2f}", "inline": True})
+        return {
+            "title": f"✅ MATP refreshed · {sym}",
+            "description": r.note or None,
+            "url": f"{base}/matp?symbol={sym}",
+            "fields": fields or None,
+        }
+    # filter scope
+    desc = (r.filter.description if r.filter else None) or (f"filter #{r.filter_id}" if r.filter_id else "filter")
+    n = (
+        db.query(MATPLevel)
+        .filter(MATPLevel.filter_id == r.filter_id, MATPLevel.status == "active")
+        .count()
+        if r.filter_id is not None else None
+    )
+    body = r.note or (f"{n} names updated" if n is not None else "Refresh complete")
+    return {
+        "title": f"✅ MATP refreshed · {desc}",
+        "description": body,
+        "url": f"{base}/matp" + (f"?wl={r.filter_id}" if r.filter_id is not None else ""),
+        "fields": None,
+    }
+
+
 @router.post("/refresh-queue/{rid}/status")
 def update_refresh_status(
     rid: int,
     payload: RefreshStatusIn,
+    background: BackgroundTasks,
     _: bool = Depends(require_api_key),
     db: Session = Depends(get_db),
 ):
     """Agent reports progress: 'running' (with optional done/total counts) when
-    it starts and as it works, then 'done'/'failed'."""
+    it starts and as it works, then 'done'/'failed'. On 'done' we post a summary
+    to Discord (if a webhook is configured) via a background task (soft-fail)."""
     if payload.status not in _REQUEST_STATES:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"bad status {payload.status!r}")
     r = db.get(MATPRefreshRequest, rid)
@@ -195,6 +237,12 @@ def update_refresh_status(
         if payload.status == "done" and r.progress_total:
             r.progress_done = r.progress_total
     db.commit()
+
+    # On a clean finish, notify Discord (outbound, soft-fail, non-blocking).
+    if payload.status == "done":
+        summary = _discord_refresh_summary(db, r)
+        if summary is not None:
+            background.add_task(discord.post_embed, **summary)
     return {"ok": True, "id": rid, "status": r.status}
 
 

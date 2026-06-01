@@ -119,6 +119,55 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-01 — v2.58: on-chart earnings "E" markers (overlay)
+
+- Added earnings markers **on** the candle chart (lightweight-charts has no
+  built-in earnings overlay like full TradingView): the **past** earnings shows
+  a circle "E" below its bar; the **upcoming** earnings shows an "E" out in the
+  right blank margin — the time axis is extended with whitespace points so the
+  future date has a slot to pin the marker to. Wrapped in try/catch so a marker
+  failure can never break the candles. `_price_chart.html` only.
+- NOTE: needs an eyeball after deploy (the whitespace-extension + future marker
+  can't be browser-verified from the laptop).
+
+### 2026-06-01 — v2.57: next earnings on the chart (date + countdown)
+
+- The price chart now shows the **next/upcoming earnings** in the legend:
+  "· next earnings 2026-08-26 (~12 weeks from now)" (countdown is `today` /
+  `tomorrow` / `N days from now` / `~M weeks from now`). The existing earnings
+  label is relabelled **"last earnings"** for clarity.
+- Source: **live Yahoo `calendarEvents`** via a new `fetch_next_earnings()` in
+  `services/prices.py` — does Yahoo's cookie+crumb handshake (cached ~1h, reused
+  across symbols), per-symbol result cached ~6h, and **soft-fails to None** so
+  the chart just omits the line if unavailable. Returned from the existing
+  `/matp/{symbol}/prices` endpoint (no extra round-trip) and rendered by the
+  chart script. (On-chart vertical earnings marker is a possible follow-up.)
+
+### 2026-06-01 — v2.56: /agent page — agent identity as heading, crons below
+
+- Restructured the Nous Hermes `/agent` page: the **agent name + liveness is now
+  the page heading** (with a blinking dot when online), the live "working now"
+  panel sits right under it, and the **"Working crons" are listed below** —
+  instead of a generic "Agent status" title with the agent buried in a card
+  header. Single-agent-friendly; the working-now panel renders once (`loop.first`).
+
+### 2026-06-01 — v2.55: Discord notifications (outbound webhook) — MATP refresh
+
+- **First Discord integration: outbound webhook.** When a MATP refresh request
+  completes (`POST /api/refresh-queue/{id}/status` → `done`), TradeHunter posts a
+  summary embed to a Discord channel — ticker scope shows MATP/MBP + a link to
+  `/matp?symbol=…`; filter scope shows the filter + names-updated count + a link
+  to `/matp?wl=…`. Outbound-only (no bot, no inbound), fired via FastAPI
+  `BackgroundTasks` so it never adds latency, and **soft-fail** (no webhook or a
+  network error is logged, never breaks the request).
+- New `app/services/discord.py` (`post_embed`, `configured`); config
+  `TST_DISCORD_WEBHOOK_URL` + `TST_PUBLIC_URL` (for click-through links);
+  documented in `app/.env.example`.
+- **Admin → Integrations** card shows webhook status + a **"Send test post"**
+  button (`POST /admin/discord-test`, HTMX) so an admin can verify the webhook
+  without waiting for a real refresh.
+- Off by default: with no `TST_DISCORD_WEBHOOK_URL` set, nothing is posted.
+
 ### 2026-06-01 — v2.54: remove redundant "open TradingView chart" link
 
 - Removed the "· open TradingView chart →" link from the chart legend — clicking

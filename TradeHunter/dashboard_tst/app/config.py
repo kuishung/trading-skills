@@ -73,6 +73,20 @@ class Settings:
     # C:\HermesSync\MarketData\MATP. Empty -> defaults to <TradeHunter>/data/MATP.
     matp_dir: str | None = field(default_factory=lambda: os.environ.get("TST_MATP_DIR"))
 
+    # Discord: outbound webhook URL for collaboration notifications (e.g. a MATP
+    # refresh completing posts a summary to a channel). Unset -> notifications
+    # are silently skipped. Create it in Discord: Server Settings -> Integrations
+    # -> Webhooks -> New Webhook -> Copy URL.
+    discord_webhook_url: str | None = field(
+        default_factory=lambda: os.environ.get("TST_DISCORD_WEBHOOK_URL")
+    )
+
+    # Public base URL used to build click-through links in outbound notifications
+    # (the agent calls the API server-side, so request.base_url is internal).
+    public_url: str = field(
+        default_factory=lambda: (os.environ.get("TST_PUBLIC_URL") or "https://tradehunter.net").rstrip("/")
+    )
+
     # New-user policy (google mode). Default OFF: a first-time sign-in lands
     # 'pending' (role = member) and must be APPROVED by an admin before they
     # get access; the admin can also change their role afterward. Set

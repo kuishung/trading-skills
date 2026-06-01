@@ -41,7 +41,9 @@
       <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#f97316"></span>MATP <span class="text-orange-300 tabular-nums">{{ "%.2f"|format(chart_matp) if chart_matp is not none else "-" }}</span></span>
       <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#16a34a"></span>MBP <span class="text-green-500 tabular-nums">{{ "%.2f"|format(chart_mbp) if chart_mbp is not none else "-" }}</span></span>
       {% if chart_as_of %}<span class="text-slate-500">&middot; calculated {{ chart_as_of.strftime("%Y-%m-%d %H:%M") }}</span>{% endif %}
-      {% if chart_earnings %}<span class="text-slate-500">&middot; earnings {{ chart_earnings }}</span>{% endif %}
+      {% if chart_earnings %}<span class="text-slate-500">&middot; last earnings {{ chart_earnings }}</span>{% endif %}
+      {# next earnings (date + countdown) is filled in by the chart script from the live prices feed #}
+      <span id="nextEarnings" class="text-violet-300"></span>
       {# "open TradingView chart" link removed — clicking the ticker name in the TradingView header widget opens it anyway #}
     </div>
   </div>
@@ -68,6 +70,7 @@
   var msg = document.getElementById('priceChartMsg');
   var matp = {{ chart_matp|tojson }};
   var mbp = {{ (chart_mbp if chart_mbp is not none else None)|tojson }};
+  var lastEarn = {{ (chart_earnings if chart_earnings else None)|tojson }};  // 'YYYY-MM-DD' or null
   function empty() { if (el) el.classList.add('hidden'); if (msg) msg.classList.remove('hidden'); }
   function ema(bars, period) {
     if (bars.length < period) return [];
@@ -91,6 +94,17 @@
     .then(function (r) { return r.json(); })
     .then(function (d) {
       var bars = (d && d.bars) || [];
+      // next earnings: date + "in N days / ~M weeks" (independent of candles)
+      (function () {
+        var ne = d && d.next_earnings, neEl = document.getElementById('nextEarnings');
+        if (!neEl || !ne || !ne.date) return;
+        var days = ne.days, when;
+        if (days <= 0) when = 'today';
+        else if (days === 1) when = 'tomorrow';
+        else if (days < 14) when = days + ' days from now';
+        else when = '~' + Math.round(days / 7) + ' weeks from now';
+        neEl.textContent = '· next earnings ' + ne.date + ' (' + when + ')';
+      })();
       if (!bars.length) { empty(); return; }
       var chart = LightweightCharts.createChart(el, {
         autoSize: true,
@@ -122,6 +136,35 @@
       addEma(chart, bars, 200, '#a855f7');  // EMA200 purple
       if (matp != null) s.createPriceLine({ price: matp, color: '#f97316', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'MATP' });
       if (mbp != null) s.createPriceLine({ price: mbp, color: '#16a34a', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'MBP' });
+
+      // ---- earnings "E" markers ------------------------------------------
+      // Past earnings sits below its bar; the UPCOMING one sits out in the right
+      // blank margin — we extend the time axis with whitespace points so the
+      // future date has a slot the marker can pin to. Defensive: never break the
+      // candles if anything here misbehaves.
+      try {
+        var markers = [];
+        var lastT = bars[bars.length - 1].time;
+        if (lastEarn) {
+          var bi = -1;
+          for (var i = 0; i < bars.length; i++) { if (bars[i].time <= lastEarn) bi = i; else break; }
+          if (bi >= 0) markers.push({ time: bars[bi].time, position: 'belowBar', color: '#a855f7', shape: 'circle', text: 'E' });
+        }
+        var ne = d && d.next_earnings;
+        if (ne && ne.date && ne.date > lastT) {
+          var ws = [], cur = new Date(lastT + 'T00:00:00Z'), end = new Date(ne.date + 'T00:00:00Z');
+          while (cur < end) {
+            cur.setUTCDate(cur.getUTCDate() + 1);
+            var dow = cur.getUTCDay();
+            if (dow === 0 || dow === 6) continue;
+            ws.push({ time: cur.toISOString().slice(0, 10) });
+          }
+          if (!ws.length || ws[ws.length - 1].time !== ne.date) ws.push({ time: ne.date });
+          s.setData(bars.concat(ws));  // real candles + whitespace tail to the earnings date
+          markers.push({ time: ne.date, position: 'aboveBar', color: '#a855f7', shape: 'arrowDown', text: 'E' });
+        }
+        if (markers.length) s.setMarkers(markers);
+      } catch (e) { /* earnings markers are non-essential */ }
 
       // ---- zoom controls -------------------------------------------------
       // 6M / 1Y / 1.5Y / 2Y. Show the chosen lookback in the LEFT ~2/3 of the
