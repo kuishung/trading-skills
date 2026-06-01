@@ -9,7 +9,7 @@
     <div class="flex items-center gap-1.5 text-[10px] text-slate-500 mb-0.5">
       <span class="font-medium text-slate-400">{{ m.author }}</span>
       <span class="px-1 rounded {% if m.source == 'discord' %}bg-indigo-500/20 text-indigo-300{% else %}bg-slate-700/40 text-slate-400{% endif %}">{{ 'discord' if m.source == 'discord' else 'web' }}</span>
-      {% if m.ts %}<span>{{ m.ts[11:16] }}</span>{% endif %}
+      {% if m.ts_iso %}<time class="chat-ts" data-utc="{{ m.ts_iso }}">{{ m.ts[11:16] }}</time>{% endif %}
     </div>
     <div class="rounded-lg px-3 py-1.5 text-sm max-w-[92%] whitespace-pre-line leading-relaxed {% if m.me %}bg-emerald-600/20 text-emerald-100{% else %}bg-slate-800/70 text-slate-200{% endif %}">{{ m.text }}</div>
   </div>
@@ -35,5 +35,12 @@
   </form>
 </div>
 
-{# jump to newest on (re)load #}
-<script>(function(){var e=document.getElementById('chatscroll');if(e)e.scrollTop=e.scrollHeight;})();</script>
+{# render each UTC timestamp in the VIEWER's local time, then jump to newest #}
+<script>(function(){
+  document.querySelectorAll('#chatscroll .chat-ts').forEach(function(el){
+    var u = el.getAttribute('data-utc'); if(!u) return;
+    var d = new Date(u);
+    if(!isNaN(d.getTime())) el.textContent = d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  });
+  var e = document.getElementById('chatscroll'); if(e) e.scrollTop = e.scrollHeight;
+})();</script>

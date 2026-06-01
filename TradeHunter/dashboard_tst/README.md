@@ -119,6 +119,22 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-01 — v2.74: web → Discord (two-way chat bridge)
+
+- Sending from the web chatroom now **posts into the study's Discord thread** via
+  the bot (`Name: message`), so it shows in Discord / the phone app, and reads
+  back into the web chat (no platform Comment stored → no duplicate). Falls back
+  to a plain on-platform comment when there's no thread or the bot post fails, so
+  nothing is lost. New `discord.post_thread_message()`. Requires the bot
+  configured + a thread on the study + Send Messages in Threads.
+
+### 2026-06-01 — v2.73: chat timestamps in the viewer's local time
+
+- Chat times were shown in UTC (Discord + stored comments are UTC), so they read
+  8h off in MYT. Each message now carries a UTC-marked ISO string and the browser
+  renders it in the viewer's local time via `toLocaleTimeString` (falls back to
+  the server UTC HH:MM with no JS).
+
 ### 2026-06-01 — v2.72: chatroom comment posts in-place (HTMX)
 
 - A member's comment now appears in the chatroom **instantly**: the composer

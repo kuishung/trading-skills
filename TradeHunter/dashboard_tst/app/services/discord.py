@@ -80,6 +80,26 @@ def create_study_thread(name: str, embed: dict | None = None) -> str | None:
         return None
 
 
+def post_thread_message(thread_id: str, content: str) -> bool:
+    """Post a plain message into a thread (the bot speaks on a member's behalf,
+    so web chat mirrors into Discord). Returns True on a 2xx. Needs Send Messages
+    in Threads. Soft-fail."""
+    if not (bot_configured() and thread_id and content):
+        return False
+    try:
+        r = httpx.post(
+            f"{_API}/channels/{thread_id}/messages",
+            headers=_bot_headers(), json={"content": content[:2000]}, timeout=8.0,
+        )
+        if r.status_code // 100 == 2:
+            return True
+        log.warning("discord post-message non-2xx: %s %s", r.status_code, (r.text or "")[:200])
+        return False
+    except Exception as e:  # noqa: BLE001 — soft-fail
+        log.warning("discord post-message error: %s", e)
+        return False
+
+
 def fetch_thread_messages(thread_id: str, limit: int = 50) -> list[dict] | None:
     """Read a thread's recent messages (chronological). Returns a list of
     ``{author, content, ts, bot}`` dicts, or None on failure. Needs the bot to

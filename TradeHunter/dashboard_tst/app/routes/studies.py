@@ -294,6 +294,10 @@ def _render_chat(request: Request, db: Session, user: User, sid: int):
                 "source": "web", "me": (c.user_id == user.id),
             })
     msgs.sort(key=lambda x: x["ts"] or "")
+    # ts is UTC wall-clock ("YYYY-MM-DD HH:MM:SS"); expose a UTC-marked ISO string
+    # so the browser can render each message in the VIEWER's local time.
+    for x in msgs:
+        x["ts_iso"] = (x["ts"].replace(" ", "T") + "Z") if x["ts"] else ""
     return templates.TemplateResponse(
         request, "_study_chat.html",
         {
@@ -326,8 +330,18 @@ def add_comment(
     s = db.get(Setup, sid)
     text = (body or "").strip()
     if s is not None and text:
-        db.add(Comment(setup_id=sid, user_id=user.id, body=text[:4000]))
-        db.commit()
+        name = user.display_name or user.email or "member"
+        # Two-way bridge: if this study has a Discord thread, the bot posts the
+        # message INTO the thread (so it shows in Discord / the phone app) and the
+        # chat reads it back — no platform Comment, so it isn't shown twice. If
+        # there's no thread or the post fails, fall back to a platform comment so
+        # the message is never lost.
+        mirrored = False
+        if s.discord_thread_id and discord.bot_configured():
+            mirrored = discord.post_thread_message(s.discord_thread_id, f"{name}: {text[:1900]}")
+        if not mirrored:
+            db.add(Comment(setup_id=sid, user_id=user.id, body=text[:4000]))
+            db.commit()
     # HTMX composer → return the refreshed chat fragment (instant, in-place);
     # no-JS fallback → full-page redirect back to the study.
     if request.headers.get("HX-Request"):
