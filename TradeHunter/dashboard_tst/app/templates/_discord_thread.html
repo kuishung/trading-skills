@@ -1,0 +1,34 @@
+{# Per-study Discord discussion, read via the bot. Context: s, messages,
+   bot_configured, thread_link. Self-polls so new Discord replies appear. #}
+{% if s and s.discord_thread_id and messages is not none %}
+<div hx-get="/studies/{{ s.id }}/discord" hx-trigger="load delay:15s" hx-target="#discordbox" hx-swap="innerHTML"></div>
+<div class="space-y-3">
+  {% for m in messages %}
+  <div class="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+    <div class="flex items-center justify-between gap-2 mb-1 text-xs">
+      <span class="text-slate-300 font-medium">{{ m.author }}{% if m.bot %} <span class="text-[10px] px-1 rounded bg-indigo-500/20 text-indigo-300">bot</span>{% endif %}</span>
+      <span class="text-slate-600">{{ m.ts }}</span>
+    </div>
+    {% if m.content %}<p class="text-sm text-slate-200 whitespace-pre-line leading-relaxed">{{ m.content }}</p>
+    {% else %}<p class="text-xs text-slate-600 italic">(embed / attachment)</p>{% endif %}
+  </div>
+  {% else %}
+  <p class="text-sm text-slate-500">No messages in the Discord thread yet &mdash; reply in Discord to start it.</p>
+  {% endfor %}
+</div>
+{% if thread_link %}<a href="{{ thread_link }}" target="_blank" rel="noopener" class="inline-block mt-3 text-xs text-indigo-300 hover:text-indigo-200">Reply in Discord &#8599;</a>{% endif %}
+
+{% elif s and s.discord_thread_id and messages is none %}
+{# thread exists but the read failed — likely bot perms / Message Content intent #}
+<div hx-get="/studies/{{ s.id }}/discord" hx-trigger="load delay:30s" hx-target="#discordbox" hx-swap="innerHTML"></div>
+<p class="text-sm text-rose-300">Couldn&rsquo;t read the Discord thread. Check the bot token, its <em>Read Message History</em> permission, and the <em>Message Content</em> intent.</p>
+
+{% elif bot_configured and user.can_moderate %}
+<form method="post" action="/studies/{{ s.id }}/discord-thread">
+  <button class="text-sm px-3 py-1.5 rounded border border-indigo-500/50 text-indigo-300 hover:bg-indigo-500/15 transition">Start Discord thread</button>
+</form>
+<p class="text-[11px] text-slate-600 mt-1">Creates a Discord thread for this study so its discussion shows here.</p>
+
+{% else %}
+<p class="text-sm text-slate-500">Discord discussion isn&rsquo;t configured.</p>
+{% endif %}

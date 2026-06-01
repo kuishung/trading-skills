@@ -26,11 +26,21 @@
   <div class="p-3 {% if chart_band %}border-b border-slate-800{% endif %} {% if chart_fill %}lg:flex-1 lg:min-h-0 flex flex-col{% endif %}">
     {# zoom toolbar: 6M (default) / 1Y / 1.5Y / 2Y. Each shows the lookback in the
        left ~2/3 with the right ~1/3 blank (room ahead of current price). #}
-    <div class="flex items-center justify-end gap-1 mb-1 {% if chart_fill %}shrink-0{% endif %}">
-      <button type="button" class="zoombtn text-[11px] px-2 py-0.5 rounded border border-emerald-500/60 text-emerald-300 bg-emerald-500/10 transition" data-months="6">6M</button>
-      <button type="button" class="zoombtn text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 transition hover:border-emerald-500 hover:text-emerald-300" data-months="12">1Y</button>
-      <button type="button" class="zoombtn text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 transition hover:border-emerald-500 hover:text-emerald-300" data-months="18">1.5Y</button>
-      <button type="button" class="zoombtn text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 transition hover:border-emerald-500 hover:text-emerald-300" data-months="24">2Y</button>
+    <div class="flex items-center justify-between gap-1 mb-1 {% if chart_fill %}shrink-0{% endif %}">
+      {# Curate -> create/open a study for this ticker (moderators, only where curatable) #}
+      {% if chart_curatable is defined and chart_curatable and user and user.can_moderate %}
+      <form method="post" action="/studies/curate" class="inline">
+        <input type="hidden" name="symbol" value="{{ chart_symbol }}">
+        <button type="submit" class="text-[11px] px-2 py-0.5 rounded border border-violet-500/50 text-violet-300 hover:bg-violet-500/15 transition"
+                title="Curate {{ chart_symbol }} — create/open a study to mark support, resistance, entry, stop & R:R">&#128203; Curate</button>
+      </form>
+      {% else %}<span></span>{% endif %}
+      <div class="flex items-center gap-1">
+        <button type="button" class="zoombtn text-[11px] px-2 py-0.5 rounded border border-emerald-500/60 text-emerald-300 bg-emerald-500/10 transition" data-months="6">6M</button>
+        <button type="button" class="zoombtn text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 transition hover:border-emerald-500 hover:text-emerald-300" data-months="12">1Y</button>
+        <button type="button" class="zoombtn text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 transition hover:border-emerald-500 hover:text-emerald-300" data-months="18">1.5Y</button>
+        <button type="button" class="zoombtn text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 transition hover:border-emerald-500 hover:text-emerald-300" data-months="24">2Y</button>
+      </div>
     </div>
     <div id="priceChart" class="w-full {% if chart_fill %}min-h-[240px] lg:min-h-0 lg:flex-1{% else %}{{ chart_height_class | default('h-[300px] lg:h-[44vh]') }}{% endif %}"></div>
     <p id="priceChartMsg" class="text-slate-500 text-sm hidden">Couldn't load live price data for {{ chart_symbol }} right now &mdash; try again shortly.</p>
@@ -71,6 +81,8 @@
   var matp = {{ chart_matp|tojson }};
   var mbp = {{ (chart_mbp if chart_mbp is not none else None)|tojson }};
   var lastEarn = {{ (chart_earnings if chart_earnings else None)|tojson }};  // 'YYYY-MM-DD' or null
+  var supp = {{ (chart_support if (chart_support is defined and chart_support is not none) else None)|tojson }};   // curator support level or null
+  var resis = {{ (chart_resistance if (chart_resistance is defined and chart_resistance is not none) else None)|tojson }}; // curator resistance level or null
   function empty() { if (el) el.classList.add('hidden'); if (msg) msg.classList.remove('hidden'); }
   function ema(bars, period) {
     if (bars.length < period) return [];
@@ -116,11 +128,11 @@
       var s = chart.addCandlestickSeries({
         upColor: '#10b981', downColor: '#ef4444', borderVisible: false,
         wickUpColor: '#10b981', wickDownColor: '#ef4444',
-        // keep MATP + MBP inside the visible price range by default
+        // keep MATP + MBP (+ curator support/resistance) inside the price range
         autoscaleInfoProvider: function (orig) {
           var r = orig();
           if (r && r.priceRange) {
-            [matp, mbp].forEach(function (v) {
+            [matp, mbp, supp, resis].forEach(function (v) {
               if (v != null) {
                 r.priceRange.minValue = Math.min(r.priceRange.minValue, v);
                 r.priceRange.maxValue = Math.max(r.priceRange.maxValue, v);
@@ -136,6 +148,9 @@
       addEma(chart, bars, 200, '#a855f7');  // EMA200 purple
       if (matp != null) s.createPriceLine({ price: matp, color: '#f97316', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'MATP' });
       if (mbp != null) s.createPriceLine({ price: mbp, color: '#16a34a', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'MBP' });
+      // curator's horizontal support / resistance (solid; only on a study chart)
+      if (supp != null) s.createPriceLine({ price: supp, color: '#38bdf8', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: 'S' });
+      if (resis != null) s.createPriceLine({ price: resis, color: '#e879f9', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: 'R' });
 
       // ---- earnings "E" badges pinned to the DATE AXIS (bottom) ----------
       // lightweight-charts markers only attach to a bar's PRICE (above/below the

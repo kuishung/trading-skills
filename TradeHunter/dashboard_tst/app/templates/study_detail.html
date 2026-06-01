@@ -50,12 +50,36 @@
   </div>
   {% endif %}
 
-  {# curator's proposed trade levels #}
-  {% if s.entry is not none or s.stop_loss is not none or s.profit_target is not none %}
+  {# ---- curator's trade levels: support/resistance + entry/stop/target + R:R ---- #}
+  {% set rr_cls = ('text-emerald-300' if (rr is not none and rr >= 2) else ('text-amber-300' if (rr is not none and rr >= 1) else ('text-rose-300' if rr is not none else 'text-slate-500'))) %}
+  {% if user.can_moderate %}
+  <form method="post" action="/studies/{{ s.id }}/levels" class="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+    <div class="text-[10px] uppercase tracking-wide text-slate-600 mb-2">Trade levels &middot; curator determines</div>
+    <div class="grid grid-cols-2 sm:grid-cols-5 gap-3">
+      {% for name, lbl, cls in [('support','Support','text-sky-300'), ('resistance','Resistance','text-fuchsia-300'), ('entry','Entry','text-slate-100'), ('stop_loss','Stop','text-rose-300'), ('profit_target','Target','text-emerald-300')] %}
+      <label class="text-[11px] text-slate-500 flex flex-col gap-1">{{ lbl }}
+        <input name="{{ name }}" type="number" step="any" inputmode="decimal"
+               value="{{ '%.2f'|format(s[name]) if s[name] is not none else '' }}"
+               class="rounded bg-slate-950/60 border border-slate-700 px-2 py-1 text-sm tabular-nums {{ cls }} focus:border-emerald-500 outline-none">
+      </label>
+      {% endfor %}
+    </div>
+    <div class="flex items-center justify-between mt-3">
+      <div class="text-sm text-slate-400">Risk:Reward
+        <span class="font-semibold tabular-nums {{ rr_cls }}">{{ ('%.2f'|format(rr)) ~ ' : 1' if rr is not none else '—' }}</span>
+        <span class="text-[11px] text-slate-600">(target&minus;entry)/(entry&minus;stop)</span>
+      </div>
+      <button class="text-sm px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 font-medium">Save levels</button>
+    </div>
+  </form>
+  {% elif s.support is not none or s.resistance is not none or s.entry is not none or s.stop_loss is not none or s.profit_target is not none %}
   <div class="flex flex-wrap gap-x-6 gap-y-1 text-sm rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+    <div><span class="text-slate-500">Support</span> <span class="tabular-nums text-sky-300">{{ "%.2f"|format(s.support) if s.support is not none else "-" }}</span></div>
+    <div><span class="text-slate-500">Resistance</span> <span class="tabular-nums text-fuchsia-300">{{ "%.2f"|format(s.resistance) if s.resistance is not none else "-" }}</span></div>
     <div><span class="text-slate-500">Entry</span> <span class="tabular-nums">{{ "%.2f"|format(s.entry) if s.entry is not none else "-" }}</span></div>
     <div><span class="text-slate-500">Stop</span> <span class="tabular-nums text-rose-300">{{ "%.2f"|format(s.stop_loss) if s.stop_loss is not none else "-" }}</span></div>
     <div><span class="text-slate-500">Target</span> <span class="tabular-nums text-emerald-300">{{ "%.2f"|format(s.profit_target) if s.profit_target is not none else "-" }}</span></div>
+    <div><span class="text-slate-500">R:R</span> <span class="font-semibold tabular-nums {{ rr_cls }}">{{ ('%.2f'|format(rr)) ~ ' : 1' if rr is not none else "-" }}</span></div>
   </div>
   {% endif %}
 
@@ -75,10 +99,20 @@
   {% set chart_as_of = level.as_of %}
   {% set chart_earnings = level.last_earnings_date %}
   {% set chart_band = None %}
+  {% set chart_support = s.support %}
+  {% set chart_resistance = s.resistance %}
   {% include "_price_chart.html" %}
   {% endif %}
 
-  {# ---- discussion ---- #}
+  {# ---- Discord discussion (read live from the study's bot thread) ---- #}
+  <div>
+    <h2 class="text-lg font-medium mb-3">Discord discussion</h2>
+    <div id="discordbox" hx-get="/studies/{{ s.id }}/discord" hx-trigger="load" hx-swap="innerHTML">
+      <p class="text-sm text-slate-500">Loading&hellip;</p>
+    </div>
+  </div>
+
+  {# ---- on-platform discussion ---- #}
   <div>
     <h2 class="text-lg font-medium mb-3">Discussion <span class="text-xs text-slate-500">({{ comments|length }})</span></h2>
     <div class="space-y-3 mb-4">

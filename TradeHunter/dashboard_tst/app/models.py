@@ -209,6 +209,11 @@ class Setup(Base):
     entry = Column(Float, nullable=True)
     stop_loss = Column(Float, nullable=True)
     profit_target = Column(Float, nullable=True)
+    # curator's marked horizontal levels (determined during the study)
+    support = Column(Float, nullable=True)
+    resistance = Column(Float, nullable=True)
+    # per-study Discord thread (bot-created) whose messages we show on the page
+    discord_thread_id = Column(String(40), nullable=True)
     status = Column(String(20), nullable=False, default="draft")  # draft|discussing|agreed|closed
     created_by = Column(Integer, ForeignKey("users.id"))
     created_at = Column(DateTime, default=_utcnow)

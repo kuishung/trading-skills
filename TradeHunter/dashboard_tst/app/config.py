@@ -81,6 +81,24 @@ class Settings:
         default_factory=lambda: os.environ.get("TST_DISCORD_WEBHOOK_URL")
     )
 
+    # Discord BOT (read path): webhooks are write-only, so to SHOW a study's
+    # discussion we use a bot to create one thread per study and read its
+    # messages back. Create a bot at discord.com/developers (enable the MESSAGE
+    # CONTENT intent), invite it to the server with: Create Public Threads, Send
+    # Messages in Threads, Read Message History. Then set the token + the parent
+    # channel id where study threads are created. Guild id (optional) is only for
+    # building "open in Discord" deep-links. Unset -> the discussion panel is
+    # hidden and threads aren't created (webhook doorbell still works).
+    discord_bot_token: str | None = field(
+        default_factory=lambda: os.environ.get("TST_DISCORD_BOT_TOKEN")
+    )
+    discord_channel_id: str | None = field(
+        default_factory=lambda: os.environ.get("TST_DISCORD_CHANNEL_ID")
+    )
+    discord_guild_id: str | None = field(
+        default_factory=lambda: os.environ.get("TST_DISCORD_GUILD_ID")
+    )
+
     # Public base URL used to build click-through links in outbound notifications
     # (the agent calls the API server-side, so request.base_url is internal).
     public_url: str = field(

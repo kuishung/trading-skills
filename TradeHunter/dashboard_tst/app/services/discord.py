@@ -23,9 +23,98 @@ COLOR_AMBER = 0xF59E0B
 COLOR_ROSE = 0xEF4444
 
 
+_API = "https://discord.com/api/v10"
+
+
 def configured() -> bool:
     """True when a webhook URL is set (so callers can skip building a payload)."""
     return bool(settings.discord_webhook_url)
+
+
+def bot_configured() -> bool:
+    """True when a bot token + parent channel are set, so we can create a thread
+    per study and READ its messages back (webhooks can't read)."""
+    return bool(settings.discord_bot_token and settings.discord_channel_id)
+
+
+def _bot_headers() -> dict:
+    return {
+        "Authorization": f"Bot {settings.discord_bot_token}",
+        "Content-Type": "application/json",
+        "User-Agent": "TradeHunter (https://tradehunter.net, 1.0)",
+    }
+
+
+def create_study_thread(name: str, embed: dict | None = None) -> str | None:
+    """Create a public thread in the configured channel for a study and post the
+    opening embed into it. Returns the thread id (a string), or None on any
+    failure (soft-fail — never raises). Needs the bot to have Create Public
+    Threads + Send Messages in Threads."""
+    if not bot_configured():
+        return None
+    try:
+        # type 11 = public thread; 10080 min = 7-day auto-archive
+        r = httpx.post(
+            f"{_API}/channels/{settings.discord_channel_id}/threads",
+            headers=_bot_headers(),
+            json={"name": (name or "study")[:100], "type": 11, "auto_archive_duration": 10080},
+            timeout=8.0,
+        )
+        if r.status_code // 100 != 2:
+            log.warning("discord create-thread non-2xx: %s %s", r.status_code, (r.text or "")[:200])
+            return None
+        tid = str((r.json() or {}).get("id") or "")
+        if not tid:
+            return None
+        if embed is not None:
+            try:
+                httpx.post(
+                    f"{_API}/channels/{tid}/messages",
+                    headers=_bot_headers(), json={"embeds": [embed]}, timeout=8.0,
+                )
+            except Exception as e:  # noqa: BLE001 — opening message is best-effort
+                log.warning("discord thread opener error: %s", e)
+        return tid
+    except Exception as e:  # noqa: BLE001 — soft-fail
+        log.warning("discord create-thread error: %s", e)
+        return None
+
+
+def fetch_thread_messages(thread_id: str, limit: int = 50) -> list[dict] | None:
+    """Read a thread's recent messages (chronological). Returns a list of
+    ``{author, content, ts, bot}`` dicts, or None on failure. Needs the bot to
+    have Read Message History (+ the Message Content intent for full content)."""
+    if not (bot_configured() and thread_id):
+        return None
+    try:
+        r = httpx.get(
+            f"{_API}/channels/{thread_id}/messages",
+            headers=_bot_headers(), params={"limit": max(1, min(100, limit))}, timeout=8.0,
+        )
+        if r.status_code // 100 != 2:
+            log.warning("discord read-messages non-2xx: %s %s", r.status_code, (r.text or "")[:200])
+            return None
+        out = []
+        for m in (r.json() or []):
+            a = m.get("author") or {}
+            out.append({
+                "author": a.get("global_name") or a.get("username") or "member",
+                "content": m.get("content") or "",
+                "ts": (m.get("timestamp") or "")[:19].replace("T", " "),
+                "bot": bool(a.get("bot")),
+            })
+        out.reverse()  # API returns newest-first; show oldest-first
+        return out
+    except Exception as e:  # noqa: BLE001 — soft-fail
+        log.warning("discord read-messages error: %s", e)
+        return None
+
+
+def thread_link(thread_id: str | None) -> str | None:
+    """Deep-link to a thread in the Discord client, if the guild id is set."""
+    if thread_id and settings.discord_guild_id:
+        return f"https://discord.com/channels/{settings.discord_guild_id}/{thread_id}"
+    return None
 
 
 def build_ticker_embed(

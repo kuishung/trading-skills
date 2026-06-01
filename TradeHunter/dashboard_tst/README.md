@@ -119,7 +119,38 @@ surface takes shape.
 
 ## Changelog
 
-### 2026-06-01 — v2.61: Studies = curated tickers + discussion
+### 2026-06-01 — v2.63: per-study Discord discussion shown on the study page
+
+- **Discord discussion now appears on the study page.** Webhooks are write-only,
+  so this adds a **bot** read path: on curate, a Discord **thread** is created per
+  study (id stored on `Setup.discord_thread_id`, migration `b8c9d0e1f2a3`), and
+  the study page reads that thread's messages via the bot API and renders them in
+  a "Discord discussion" panel that self-polls (15s) so new replies appear. A
+  "Reply in Discord ↗" deep-link shows when a guild id is set; moderators get a
+  "Start Discord thread" button for studies curated before the bot existed.
+- New `discord.bot_configured()` / `create_study_thread()` / `fetch_thread_messages()`
+  / `thread_link()`; `GET /studies/{id}/discord` (fragment) + `POST
+  /studies/{id}/discord-thread`. Config: `TST_DISCORD_BOT_TOKEN`,
+  `TST_DISCORD_CHANNEL_ID`, optional `TST_DISCORD_GUILD_ID`. All soft-fail — with
+  no bot set, the panel shows "not configured" and the webhook doorbell is
+  unaffected.
+
+### 2026-06-01 — v2.62: Curate from MATP + study trade levels (S/R, entry, stop, R:R)
+
+- **"Curate" button on the MATP chart** (board + detail, moderators): one click
+  on a tradable ticker creates (or reopens) a study and jumps to it. New
+  `POST /studies/curate` (reuses any non-closed study for the symbol instead of
+  duplicating). Gated by a `chart_curatable` flag so it shows on MATP but not on
+  the study page itself.
+- **Study = where the curator determines the trade.** Study detail now has an
+  editable **Trade levels** form (moderators): **Support, Resistance, Entry,
+  Stop, Target**, with **Risk:Reward** derived live = (target−entry)/(entry−stop),
+  colour-coded (≥2 green / ≥1 amber / <1 red). Members see it read-only. New
+  `support`/`resistance` columns on `Setup` (Alembic migration
+  `a7b8c9d0e1f2`, auto-applied on startup) + `POST /studies/{id}/levels`.
+- **Support/Resistance drawn on the study chart** as solid horizontal lines
+  (S = sky, R = fuchsia), alongside the dashed MATP/MBP lines, and kept inside
+  the autoscaled price range.
 
 - The **/studies** page is now the **curate → discuss** surface. A moderator
   curates a ticker (symbol + title + rationale + optional entry/stop/target);

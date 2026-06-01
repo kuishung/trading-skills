@@ -40,6 +40,18 @@ def _to_float(v):
         return None
 
 
+def _rr(entry, stop, target):
+    """Reward:risk for a long setup = (target - entry) / (entry - stop).
+    None unless all three are set and the risk is positive."""
+    if entry is None or stop is None or target is None:
+        return None
+    risk = entry - stop
+    reward = target - entry
+    if risk <= 0:
+        return None
+    return round(reward / risk, 2)
+
+
 @router.get("", response_class=HTMLResponse)
 def list_studies(
     request: Request,
@@ -88,7 +100,62 @@ def create_study(
     db.add(s)
     db.commit()
     _post_new_study(db, s, user)
+    _ensure_thread(db, s, user)
     return RedirectResponse(f"/studies/{s.id}", status_code=303)
+
+
+@router.post("/curate")
+def curate_from_matp(
+    request: Request,
+    symbol: str = Form(...),
+    user: User = Depends(require_moderator),
+    db: Session = Depends(get_db),
+):
+    """One-click curate from the MATP board/detail: create (or reopen) a study
+    for this ticker and open it straight into discussion, then jump to it so the
+    curator can mark support/resistance/entry/stop. Reuses an existing
+    non-closed study for the same ticker instead of duplicating."""
+    sym = (symbol or "").strip().upper()
+    if not sym:
+        return RedirectResponse("/matp", status_code=303)
+    existing = (
+        db.query(Setup)
+        .filter(Setup.symbol == sym, Setup.status != "closed")
+        .order_by(Setup.id.desc())
+        .first()
+    )
+    if existing is not None:
+        return RedirectResponse(f"/studies/{existing.id}", status_code=303)
+    s = Setup(symbol=sym, title=sym, status="discussing", created_by=user.id)
+    db.add(s)
+    db.commit()
+    _post_new_study(db, s, user)
+    _ensure_thread(db, s, user)
+    return RedirectResponse(f"/studies/{s.id}", status_code=303)
+
+
+@router.post("/{sid}/levels")
+def set_levels(
+    sid: int,
+    support: str = Form(""),
+    resistance: str = Form(""),
+    entry: str = Form(""),
+    stop_loss: str = Form(""),
+    profit_target: str = Form(""),
+    user: User = Depends(require_moderator),
+    db: Session = Depends(get_db),
+):
+    """Curator sets the study's horizontal levels + trade plan (R:R is derived
+    at display time)."""
+    s = db.get(Setup, sid)
+    if s is not None:
+        s.support = _to_float(support)
+        s.resistance = _to_float(resistance)
+        s.entry = _to_float(entry)
+        s.stop_loss = _to_float(stop_loss)
+        s.profit_target = _to_float(profit_target)
+        db.commit()
+    return RedirectResponse(f"/studies/{sid}", status_code=303)
 
 
 def _post_new_study(db: Session, s: Setup, user: User) -> None:
@@ -118,6 +185,36 @@ def _post_new_study(db: Session, s: Setup, user: User) -> None:
         pass
 
 
+def _ensure_thread(db: Session, s: Setup, user: User) -> None:
+    """Create the study's Discord thread (bot) if missing, so the study page can
+    show its discussion. Soft-fail; never blocks curation."""
+    if not discord.bot_configured() or s.discord_thread_id:
+        return
+    try:
+        from ..services.prices import fetch_daily_ohlc, fetch_next_earnings
+
+        lv = db.query(MATPLevel).filter(MATPLevel.symbol == s.symbol).first()
+        bars = fetch_daily_ohlc(s.symbol)
+        price = bars[-1]["close"] if bars else None
+        embed = discord.build_ticker_embed(
+            symbol=s.symbol,
+            matp=lv.matp if lv else None, mbp=lv.mbp if lv else None,
+            signal=lv.signal if lv else None, price=price,
+            next_earnings=fetch_next_earnings(s.symbol),
+            last_earnings=lv.last_earnings_date if lv else None,
+            note=f"{s.title} — curated by {user.display_name or user.email}"
+            + (f"\n{s.rationale}" if s.rationale else ""),
+            title_prefix="📋 Study", public_url=settings.public_url,
+            url=f"{settings.public_url}/studies/{s.id}",
+        )
+        tid = discord.create_study_thread(name=f"{s.symbol} — study #{s.id}", embed=embed)
+        if tid:
+            s.discord_thread_id = tid
+            db.commit()
+    except Exception:  # noqa: BLE001 — soft-fail
+        pass
+
+
 @router.get("/{sid}", response_class=HTMLResponse)
 def study_detail(
     sid: int,
@@ -134,7 +231,10 @@ def study_detail(
     )
     return templates.TemplateResponse(
         request, "study_detail.html",
-        {"user": user, "s": s, "level": level, "comments": comments, "statuses": STATUSES},
+        {
+            "user": user, "s": s, "level": level, "comments": comments,
+            "statuses": STATUSES, "rr": _rr(s.entry, s.stop_loss, s.profit_target),
+        },
     )
 
 
@@ -179,3 +279,41 @@ def delete_study(
         db.delete(s)
         db.commit()
     return RedirectResponse("/studies", status_code=303)
+
+
+@router.get("/{sid}/discord", response_class=HTMLResponse)
+def study_discord(
+    sid: int,
+    request: Request,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """HTMX fragment: the study's Discord-thread discussion (read via the bot).
+    Self-polls so new Discord replies appear. Soft-fail to a friendly state."""
+    s = db.get(Setup, sid)
+    msgs = (
+        discord.fetch_thread_messages(s.discord_thread_id)
+        if (s and s.discord_thread_id) else None
+    )
+    return templates.TemplateResponse(
+        request, "_discord_thread.html",
+        {
+            "user": user, "s": s, "messages": msgs,
+            "bot_configured": discord.bot_configured(),
+            "thread_link": discord.thread_link(s.discord_thread_id) if s else None,
+        },
+    )
+
+
+@router.post("/{sid}/discord-thread")
+def start_discord_thread(
+    sid: int,
+    user: User = Depends(require_moderator),
+    db: Session = Depends(get_db),
+):
+    """Manually create the Discord thread for a study that doesn't have one yet
+    (e.g. curated before the bot was configured)."""
+    s = db.get(Setup, sid)
+    if s is not None:
+        _ensure_thread(db, s, user)
+    return RedirectResponse(f"/studies/{sid}", status_code=303)
