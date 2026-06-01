@@ -119,6 +119,19 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-01 — v2.59: earnings markers on the date axis + chart cleanup
+
+- **Earnings "E" markers now anchor to the date axis.** Both past and upcoming
+  earnings sit at the bottom (`belowBar`) as up-arrows pointing at their date on
+  the time axis, instead of one floating `belowBar` circle + one `aboveBar`
+  down-arrow in the price area.
+- **Earnings legend wording** consolidated to `· earnings: last <date> · next
+  <date> (… from now)` (was "last earnings …" + "next earnings …").
+- **Removed the TradingView symbol-info header widget** from the chart panel —
+  it forced an "Upcoming Earnings / EPS / Market Cap / P/E" row with no option to
+  hide it; the chart panel now starts at the zoom toolbar. Dropped the now-unused
+  `tv_symbol`.
+
 ### 2026-06-01 — v2.58: on-chart earnings "E" markers (overlay)
 
 - Added earnings markers **on** the candle chart (lightweight-charts has no

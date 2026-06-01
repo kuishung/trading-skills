@@ -2,26 +2,9 @@
    Context: chart_symbol, chart_matp, chart_mbp. Optional: chart_detail_link
    (show an "open full detail" link when rendered on the board). #}
 {% if chart_symbol and chart_matp is not none %}
-{% set tv_symbol = (chart_exchange ~ ':' ~ chart_symbol) if chart_exchange else chart_symbol %}
-{# one connected panel: TradingView header -> price chart -> analyst band #}
+{# one connected panel: price chart -> analyst band (TradingView symbol-info
+   header removed — it forced the Upcoming Earnings/EPS/Market Cap/P/E row) #}
 <div id="chart" class="rounded-lg border border-slate-800 bg-slate-900 overflow-hidden {% if chart_fill %}flex flex-col lg:flex-1 lg:min-h-0{% endif %}">
-  {# TradingView ticker info (heading) — scaled to ~half so the chart gets the height #}
-  <div class="border-b border-slate-800 {% if chart_fill %}shrink-0{% endif %} overflow-hidden" style="height:5rem">
-    <div style="transform:scale(0.6);transform-origin:top left;width:166.6%">
-      <div class="tradingview-widget-container">
-        <div class="tradingview-widget-container__widget"></div>
-        <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-symbol-info.js" async>
-        {
-        "symbol": "{{ tv_symbol }}",
-        "width": "100%",
-        "locale": "en",
-        "colorTheme": "dark",
-        "isTransparent": true
-        }
-        </script>
-      </div>
-    </div>
-  </div>
   {# price chart #}
   <div class="p-3 {% if chart_band %}border-b border-slate-800{% endif %} {% if chart_fill %}lg:flex-1 lg:min-h-0 flex flex-col{% endif %}">
     {# zoom toolbar: 6M (default) / 1Y / 1.5Y / 2Y. Each shows the lookback in the
@@ -41,8 +24,8 @@
       <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#f97316"></span>MATP <span class="text-orange-300 tabular-nums">{{ "%.2f"|format(chart_matp) if chart_matp is not none else "-" }}</span></span>
       <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#16a34a"></span>MBP <span class="text-green-500 tabular-nums">{{ "%.2f"|format(chart_mbp) if chart_mbp is not none else "-" }}</span></span>
       {% if chart_as_of %}<span class="text-slate-500">&middot; calculated {{ chart_as_of.strftime("%Y-%m-%d %H:%M") }}</span>{% endif %}
-      {% if chart_earnings %}<span class="text-slate-500">&middot; last earnings {{ chart_earnings }}</span>{% endif %}
-      {# next earnings (date + countdown) is filled in by the chart script from the live prices feed #}
+      {% if chart_earnings %}<span class="text-slate-500">&middot; earnings: last {{ chart_earnings }}</span>{% endif %}
+      {# next earnings (date + "… from now" countdown) is filled in by the chart script from the live prices feed #}
       <span id="nextEarnings" class="text-violet-300"></span>
       {# "open TradingView chart" link removed — clicking the ticker name in the TradingView header widget opens it anyway #}
     </div>
@@ -103,7 +86,7 @@
         else if (days === 1) when = 'tomorrow';
         else if (days < 14) when = days + ' days from now';
         else when = '~' + Math.round(days / 7) + ' weeks from now';
-        neEl.textContent = '· next earnings ' + ne.date + ' (' + when + ')';
+        neEl.textContent = ' · next ' + ne.date + ' (' + when + ')';
       })();
       if (!bars.length) { empty(); return; }
       var chart = LightweightCharts.createChart(el, {
@@ -137,18 +120,19 @@
       if (matp != null) s.createPriceLine({ price: matp, color: '#f97316', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'MATP' });
       if (mbp != null) s.createPriceLine({ price: mbp, color: '#16a34a', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'MBP' });
 
-      // ---- earnings "E" markers ------------------------------------------
-      // Past earnings sits below its bar; the UPCOMING one sits out in the right
-      // blank margin — we extend the time axis with whitespace points so the
-      // future date has a slot the marker can pin to. Defensive: never break the
-      // candles if anything here misbehaves.
+      // ---- earnings "E" markers (anchored to the DATE AXIS) --------------
+      // Both past and upcoming earnings sit at the BOTTOM (belowBar), as up-
+      // arrows pointing at their date on the time axis — so they read as date-
+      // axis tags, not floating price markers. For the upcoming one we extend
+      // the time axis with whitespace points so the future date has a slot the
+      // marker can pin to. Defensive: never break the candles if this misbehaves.
       try {
         var markers = [];
         var lastT = bars[bars.length - 1].time;
         if (lastEarn) {
           var bi = -1;
           for (var i = 0; i < bars.length; i++) { if (bars[i].time <= lastEarn) bi = i; else break; }
-          if (bi >= 0) markers.push({ time: bars[bi].time, position: 'belowBar', color: '#a855f7', shape: 'circle', text: 'E' });
+          if (bi >= 0) markers.push({ time: bars[bi].time, position: 'belowBar', color: '#a855f7', shape: 'arrowUp', text: 'E' });
         }
         var ne = d && d.next_earnings;
         if (ne && ne.date && ne.date > lastT) {
@@ -161,7 +145,7 @@
           }
           if (!ws.length || ws[ws.length - 1].time !== ne.date) ws.push({ time: ne.date });
           s.setData(bars.concat(ws));  // real candles + whitespace tail to the earnings date
-          markers.push({ time: ne.date, position: 'aboveBar', color: '#a855f7', shape: 'arrowDown', text: 'E' });
+          markers.push({ time: ne.date, position: 'belowBar', color: '#a855f7', shape: 'arrowUp', text: 'E' });
         }
         if (markers.length) s.setMarkers(markers);
       } catch (e) { /* earnings markers are non-essential */ }
