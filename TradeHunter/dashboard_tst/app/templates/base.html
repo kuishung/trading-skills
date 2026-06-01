@@ -31,6 +31,9 @@
     }
     summary::-webkit-details-marker { display: none; }
     summary { list-style: none; }
+    /* Nous Hermes pill liveness dot — blink so it reads as a live indicator */
+    @keyframes th-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.15; } }
+    .th-blink { animation: th-blink 1.2s steps(1, end) infinite; }
   </style>
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen lg:h-screen lg:overflow-hidden">
@@ -54,28 +57,24 @@
         {% for href, label in nav %}
         <a href="{{ href }}"
            class="rounded-lg px-3 py-1.5 whitespace-nowrap transition
-                  {% if p.startswith(href) %}bg-emerald-500/10 text-emerald-300{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-emerald-300{% endif %}">{{ label }}</a>
+                  {% if p.startswith(href) %}bg-orange-500/15 text-orange-300{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-orange-300{% endif %}">{{ label }}</a>
         {% endfor %}
-        {% if user.can_moderate %}
-        <a href="/agent"
-           class="rounded-lg px-3 py-1.5 whitespace-nowrap transition
-                  {% if p.startswith('/agent') %}bg-emerald-500/10 text-emerald-300{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-emerald-300{% endif %}">Agent</a>
-        {% endif %}
+        {# 'Agent' nav item removed — the Nous Hermes pill (right) already links to /agent #}
         {% if user.is_admin %}
         <a href="/admin"
            class="rounded-lg px-3 py-1.5 whitespace-nowrap transition
-                  {% if p.startswith('/admin') %}bg-emerald-500/10 text-emerald-300{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-emerald-300{% endif %}">Admin</a>
+                  {% if p.startswith('/admin') %}bg-orange-500/15 text-orange-300{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-orange-300{% endif %}">Admin</a>
         {% endif %}
       </nav>
 
       {# Nous Hermes heartbeat pill (moderators+) — self-refreshes; click -> /agent #}
       {% if user.can_moderate %}
       <a href="/agent" id="agentpill"
-         hx-get="/agent/pill" hx-trigger="load, every 60s" hx-swap="innerHTML"
+         hx-get="/agent/pill" hx-trigger="load" hx-swap="innerHTML"
          class="ml-auto shrink-0 flex items-center gap-1.5 rounded-lg px-2 py-1 text-sm hover:bg-slate-800/70 transition"
          title="Nous Hermes agent status">
         <span class="h-2 w-2 rounded-full shrink-0 bg-slate-600"></span>
-        <span class="hidden sm:inline text-slate-400">Nous Hermes</span>
+        <span class="hidden sm:inline text-white">Nous Hermes</span>
       </a>
       {% endif %}
 

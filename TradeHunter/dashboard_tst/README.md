@@ -119,6 +119,58 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-01 — v2.48: live "working now" panel + moving progress bar on /agent
+
+- The **/agent** (Nous Hermes) page now shows what the agent is **processing
+  right now**: each active MATP refresh request (pending/running) rendered with a
+  **moving progress bar** (width = `progress_done/progress_total`, `transition-all`
+  animates it as the count climbs). New `GET /agent/active` HTMX fragment +
+  `_agent_runs.html`; `agent.html` loads it on open into `#agent-active`.
+- **Refreshes periodically, never goes silent.** The fragment self-polls on an
+  adaptive cadence — 4s while a run is *running* (so the bar visibly moves), 8s
+  while merely *queued*, and a 15s idle heartbeat when nothing is running so a
+  **newly-queued run appears without a manual page reload** (the prior matp-board
+  panel went fully quiet when idle, which is why a fresh run looked frozen).
+- Queued / not-yet-claimed runs show an indeterminate pulsing bar; stale runs
+  (pending >15m, or running >8m with no progress) turn the bar red with a "the
+  agent may be stuck/ not polling" note that links to the liveness above.
+- Pairs with nous_hermes `matp_status.sh` (agent-side progress reporter) so the
+  bar has real data to move with. Bump `app/__init__.py` 2.47 → 2.48.
+- **MATP watchlist selection now persists.** Clicking a ticker used to drop the
+  `?wl=` (the links were `/matp?symbol=X`), so picking "Selective Tickers" then a
+  ticker bounced you back to "All". Ticker links (and the "dropped" link) now
+  carry `wl`, the `ticker_grid`/`watchlist_rail` macros take a `wl` arg, and the
+  selection is also saved to `localStorage` + restored on any `/matp` load that
+  arrives without `?wl=` (redirects after a run, bare reloads). `matp_watchlist`
+  now passes `sel_wl` to `_watchlist.html`.
+- **Top-bar tweaks:** the **selected** nav item (MATP/Studies/Finviz/Admin) is
+  now **orange** (`bg-orange-500/15 text-orange-300`) instead of green; removed
+  the redundant **Agent** nav item (the Nous Hermes pill already links to
+  `/agent`); the **"Nous Hermes"** pill label is now
+  **white**, and its liveness dot **blinks only while the agent is executing a
+  MATP run** (`status='running'`), static otherwise (`.th-blink` keyframe in
+  base.html). The pill self-polls adaptively — 5s while a run executes (so the
+  blink starts/stops promptly), 20s idle — replacing the old fixed 60s refresh;
+  `/agent/pill` now returns a `working` flag.
+- **Analyst targets sorted relevant-and-high first.** `_ticker_targets` now
+  orders the included (post-earnings, MATP-counting) targets first, then the
+  dropped ones, each group by target price descending — so the targets table
+  (modal + detail page) leads with the relevant, highest targets instead of
+  newest-issue-date order.
+- **Analyst band redesign — per-analyst lines instead of a heatmap.** The band
+  bar is now ~half height, and each post-earnings analyst target is drawn as its
+  own thin vertical line (positioned by price) rather than a coloured consensus
+  heatmap — where lines bunch up you read the concentration directly. Each line
+  has a wider transparent hover target; **mousing over shows the brokerage +
+  price** (and brightens/thickens the line). `_build_band` now takes
+  `analysts=[{brokerage, price}]` and emits `band["lines"]` (dropped `bins` /
+  `consensus_*`); both callers pass the included targets with brokerage.
+- **Price chart 7M / All zoom.** Added a **7M / All** toggle to the price chart.
+  Default is **All** (`fitContent()`, full ~2y); **7M** zooms to the last ~7
+  months so current price action fills the view — `setVisibleRange` computes a
+  real calendar range off the `YYYY-MM-DD` bar times (clamped to the feed start).
+  `_price_chart.html` only.
+
 ### 2026-06-01 — v2.47: "Nous Hermes" heartbeat pill in the top bar
 
 - A **Nous Hermes** pill now sits in the top nav, just **left of the user

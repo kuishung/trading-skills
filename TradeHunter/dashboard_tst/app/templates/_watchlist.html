@@ -1,13 +1,14 @@
 {# Lazy-loaded watchlist grid (runtime trend/signal/price). Context:
    qualified, disqualified, dropped, open_symbols, sel_sym, live #}
 {% from "_wl_macros.html" import ticker_grid %}
-{% if qualified %}{{ ticker_grid(qualified, open_symbols, sel_sym, live) }}
+{% set wl = sel_wl or "" %}
+{% if qualified %}{{ ticker_grid(qualified, open_symbols, sel_sym, live, wl) }}
 {% elif not disqualified %}<p class="text-xs text-slate-500 px-2 py-2">No tickers here yet.</p>{% endif %}
 
 {% if disqualified %}
 <details class="mt-2 rounded-lg border border-rose-500/30 bg-rose-500/5" open>
   <summary class="cursor-pointer px-3 py-2 text-xs text-rose-300 select-none">Disqualified &middot; Price &gt; MBP ({{ disqualified|length }})</summary>
-  <div class="px-1 pb-2 opacity-90">{{ ticker_grid(disqualified, open_symbols, sel_sym, live) }}</div>
+  <div class="px-1 pb-2 opacity-90">{{ ticker_grid(disqualified, open_symbols, sel_sym, live, wl) }}</div>
 </details>
 {% endif %}
 
@@ -16,7 +17,7 @@
   <summary class="cursor-pointer px-3 py-2 text-xs text-slate-500 select-none">Dropped from filter ({{ dropped|length }})</summary>
   <ul class="px-2 pb-2">
     {% for lv in dropped %}
-    <li><a href="/matp?symbol={{ lv.symbol }}" class="flex items-center justify-between px-2 py-1 rounded hover:bg-slate-800/70 opacity-70">
+    <li><a href="/matp?symbol={{ lv.symbol }}{% if wl %}&wl={{ wl }}{% endif %}" class="flex items-center justify-between px-2 py-1 rounded hover:bg-slate-800/70 opacity-70">
       <span class="text-slate-400">{{ lv.symbol }}</span>
       <span class="text-xs text-slate-600 tabular-nums">MBP {{ "%.0f"|format(lv.mbp) if lv.mbp is not none else "-" }}</span>
     </a></li>

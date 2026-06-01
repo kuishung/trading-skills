@@ -7,6 +7,10 @@
     <p class="text-sm text-slate-500">The Nous Hermes agent is outbound-only &mdash; it checks in here on each poll. This shows what it last reported: liveness, version, and the crons it&rsquo;s running.</p>
   </div>
 
+  {# live "working now" panel — active MATP runs with a moving progress bar.
+     Loads on open, then self-polls (see /agent/active + _agent_runs.html). #}
+  <div id="agent-active" hx-get="/agent/active" hx-trigger="load" hx-swap="innerHTML"></div>
+
   {% if not agents %}
   <div class="rounded-lg border border-slate-800 bg-slate-900/50 p-6 text-center">
     <p class="text-sm text-slate-400">No heartbeat received yet.</p>

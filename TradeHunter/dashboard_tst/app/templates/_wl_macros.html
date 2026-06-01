@@ -16,14 +16,14 @@
   {% else %}<span class="text-slate-700">&middot;</span>{% endif %}
 {% endmacro %}
 
-{% macro ticker_grid(tickers, open_symbols, sel_sym, live) %}
+{% macro ticker_grid(tickers, open_symbols, sel_sym, live, wl="") %}
 <div class="grid grid-cols-[1fr_auto_auto_auto_auto] gap-x-2 px-2 pt-1 text-[10px] uppercase tracking-wide text-slate-600">
   <span>Sym</span><span class="text-center">Trend</span><span class="text-center">Sig</span><span class="text-right">Price</span><span class="text-right">MBP</span>
 </div>
 {% for lv in tickers %}
 {% set lr = live.get(lv.symbol, {}) if live else {} %}
 {% set cur = lr.get("current") %}
-<a href="/matp?symbol={{ lv.symbol }}"
+<a href="/matp?symbol={{ lv.symbol }}{% if wl %}&wl={{ wl }}{% endif %}"
    class="grid grid-cols-[1fr_auto_auto_auto_auto] items-center gap-x-2 px-2 py-1 rounded {% if sel_sym == lv.symbol %}bg-emerald-500/15{% else %}hover:bg-slate-800/70{% endif %}">
   <span class="font-medium {% if sel_sym == lv.symbol %}text-emerald-300{% else %}text-white{% endif %}">{{ lv.symbol }}{% if lv.symbol in open_symbols %} <span class="text-amber-400 text-xs">&#8635;</span>{% endif %}</span>
   <span class="text-center">{{ trend_badge(lr.get("trend") or lv.trend) }}</span>
@@ -34,7 +34,7 @@
 {% endfor %}
 {% endmacro %}
 
-{% macro watchlist_rail(watchlists, unfiled, open_symbols, sel_sym, live) %}
+{% macro watchlist_rail(watchlists, unfiled, open_symbols, sel_sym, live, wl="") %}
 <div class="space-y-2 text-sm">
   {% for w in watchlists %}
   <details class="rounded-lg border border-slate-800 bg-slate-900/40" open>
@@ -42,7 +42,7 @@
       <span class="text-slate-200 truncate">{{ w.filter.description }}</span>
       <span class="text-xs text-slate-500 ml-2 shrink-0">{{ w.tickers|length }}</span>
     </summary>
-    <div class="px-1 pb-2">{% if w.tickers %}{{ ticker_grid(w.tickers, open_symbols, sel_sym, live) }}{% else %}<p class="px-2 py-1 text-xs text-slate-600">No tickers yet.</p>{% endif %}</div>
+    <div class="px-1 pb-2">{% if w.tickers %}{{ ticker_grid(w.tickers, open_symbols, sel_sym, live, wl) }}{% else %}<p class="px-2 py-1 text-xs text-slate-600">No tickers yet.</p>{% endif %}</div>
   </details>
   {% endfor %}
   {% if unfiled %}
@@ -51,7 +51,7 @@
       <span class="text-slate-300">Individual tickers</span>
       <span class="text-xs text-slate-500 ml-2 shrink-0">{{ unfiled|length }}</span>
     </summary>
-    <div class="px-1 pb-2">{{ ticker_grid(unfiled, open_symbols, sel_sym, live) }}</div>
+    <div class="px-1 pb-2">{{ ticker_grid(unfiled, open_symbols, sel_sym, live, wl) }}</div>
   </details>
   {% endif %}
   {% if not watchlists and not unfiled %}

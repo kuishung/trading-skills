@@ -33,6 +33,11 @@ CLI + SSH); this folder is the source of truth that gets deployed there.
   online/stale signal can't be derailed by model shell-mangling or the agent's
   terminal-tool approval gate. Builds the JSON with `jq -n`; POSTs to
   `{TRADEHUNTER_URL}/api/agent/heartbeat`.
+- `matp_status.sh` — deterministic progress reporter the **agent** calls while
+  draining the MATP refresh queue (`matp_status.sh <rid> <status> [done] [total]
+  [note]`). Drives the moving progress bar on `/agent`; POSTs to
+  `{TRADEHUNTER_URL}/api/refresh-queue/{rid}/status`. Replaces the hand-built
+  curl the LLM kept mangling.
 
 ## The pre-market briefing skill
 
@@ -110,6 +115,20 @@ Edit files here, redeploy (scp / git pull → `bash install.sh`), then re-test w
 recreate the cron job unless the schedule or delivery target changes.
 
 ## Changelog
+- **2026-06-01** — Added **`matp_status.sh`** + `markets/matp` skill → **v1.7.1**.
+  The agent drives TradeHunter's `/agent`-page progress bar by POSTing
+  `/api/refresh-queue/{id}/status` as it works, but letting DeepSeek hand-build
+  that curl+JSON kept failing the same way the heartbeat did (mangled quoting).
+  `matp_status.sh` is a deterministic positional-arg wrapper
+  (`matp_status.sh <rid> <status> [done] [total] [note]`) — reads `~/.hermes/.env`
+  itself, builds JSON with `jq`, logs to `~/.hermes/logs/matp_status.log`. SKILL.md
+  now instructs the agent to call the helper instead of raw curl at every
+  status step (claim/total, per-~5-tickers progress, done/failed). `install.sh`
+  deploys it to `~/.hermes/matp_status.sh` alongside `heartbeat.sh`. NOTE: unlike
+  the heartbeat it can't run from system cron (only the agent knows its own
+  progress), so it still goes through the agent terminal tool — if the box gates
+  outbound POSTs as `pending_approval`, allowlist this one script path. Pairs
+  with dashboard_tst v2.48 (the moving progress bar on /agent).
 - **2026-06-01** — Added **`heartbeat.sh`** — a standalone liveness ping run by
   **system cron** (every 3 min), decoupled from the Hermes LLM. Diagnosed the
   agent going "stale" on TradeHunter's /agent page while the gateway was

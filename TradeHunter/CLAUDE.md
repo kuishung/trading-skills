@@ -639,14 +639,24 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
   invisible-until-hover scrollbar styling. Do not remove these `base.html`
   rules.
 
-**Post-push rule (user, set 2026-05-30; reinforced):** EVERY time a push
-happens, ALSO give the user the **complete, in-order, copy-paste Hermes
-deploy script** — the whole thing, every time, so they never have to
-reassemble it or trial-and-error it. Must be **PowerShell 5.1 compatible —
-no `&&`** (separate lines or `;`). **A Hermes pull is ALWAYS paired with a
-restart** — a bare `git pull` only updates files; the running uvicorn keeps
-serving OLD code until restarted (no prod auto-reload). NEVER hand Hermes a
-plain `git pull` alone.
+**Post-push rule (user, set 2026-05-30; reinforced 2026-06-01):** EVERY time a
+push happens, ALSO give the user the **complete, in-order, copy-paste deploy
+script(s)** — the whole thing, every time, so they never have to reassemble it
+or trial-and-error it. **Every script MUST be labelled with WHICH MACHINE +
+which terminal it runs in** (Laptop / Hermes / Nous agent — see the three-machine
+table above), and **if it runs on a machine reached via SSH (the Nous agent),
+the script MUST begin with the SSH login line** (`ssh administrator@192.168.1.163`)
+so it's one copy-paste sequence, login included. Give the deploy script for EVERY
+machine the push touches:
+- changes under `dashboard_tst/` → the **Hermes** web-deploy script (below).
+- changes under `nous_hermes/` → the **Nous agent** deploy (prepend the SSH login
+  line, then `git pull`/`install.sh`/etc.).
+- if a push spans both, give BOTH scripts, each clearly machine-labelled.
+
+The Hermes script must be **PowerShell 5.1 compatible — no `&&`** (separate lines
+or `;`). **A Hermes pull is ALWAYS paired with a restart** — a bare `git pull`
+only updates files; the running uvicorn keeps serving OLD code until restarted
+(no prod auto-reload). NEVER hand Hermes a plain `git pull` alone.
 
 **Canonical Hermes deploy script (give this in full after every push):**
 

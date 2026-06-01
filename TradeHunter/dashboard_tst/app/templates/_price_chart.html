@@ -24,6 +24,13 @@
   </div>
   {# price chart #}
   <div class="p-3 {% if chart_band %}border-b border-slate-800{% endif %} {% if chart_fill %}lg:flex-1 lg:min-h-0 flex flex-col{% endif %}">
+    {# zoom toolbar: 7M focuses recent price action; All shows the full ~2y feed #}
+    <div class="flex items-center justify-end gap-1 mb-1 {% if chart_fill %}shrink-0{% endif %}">
+      <button type="button" id="zoom7m"
+              class="text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 transition">7M</button>
+      <button type="button" id="zoomAll"
+              class="text-[11px] px-2 py-0.5 rounded border border-emerald-500/60 text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 transition">All</button>
+    </div>
     <div id="priceChart" class="w-full {% if chart_fill %}min-h-[240px] lg:min-h-0 lg:flex-1{% else %}{{ chart_height_class | default('h-[300px] lg:h-[44vh]') }}{% endif %}"></div>
     <p id="priceChartMsg" class="text-slate-500 text-sm hidden">Couldn't load live price data for {{ chart_symbol }} right now &mdash; try again shortly.</p>
     <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400 mt-2 {% if chart_fill %}shrink-0{% endif %}">
@@ -114,7 +121,39 @@
       addEma(chart, bars, 200, '#a855f7');  // EMA200 purple
       if (matp != null) s.createPriceLine({ price: matp, color: '#f97316', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'MATP' });
       if (mbp != null) s.createPriceLine({ price: mbp, color: '#16a34a', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'MBP' });
-      chart.timeScale().fitContent();
+
+      // ---- zoom controls -------------------------------------------------
+      // 7M focuses the last ~7 months so current price action fills the chart;
+      // All shows the whole ~2y feed. Bar time is 'YYYY-MM-DD', so we can set a
+      // real calendar range (strings compare lexicographically for clamping).
+      function show7m() {
+        try {
+          var to = bars[bars.length - 1].time;
+          var d = new Date(to + 'T00:00:00Z');
+          d.setUTCMonth(d.getUTCMonth() - 7);
+          var from = d.toISOString().slice(0, 10);
+          if (from < bars[0].time) from = bars[0].time;
+          chart.timeScale().setVisibleRange({ from: from, to: to });
+        } catch (e) { chart.timeScale().fitContent(); }
+      }
+      function showAll() { chart.timeScale().fitContent(); }
+      var b7 = document.getElementById('zoom7m');
+      var bAll = document.getElementById('zoomAll');
+      function mark(active) {
+        if (!b7 || !bAll) return;
+        var on = 'border-emerald-500/60 text-emerald-300 bg-emerald-500/10';
+        var off = 'border-slate-700 text-slate-400';
+        (active === '7m' ? b7 : bAll).className =
+          'text-[11px] px-2 py-0.5 rounded border transition hover:border-emerald-500 hover:text-emerald-300 ' + on;
+        (active === '7m' ? bAll : b7).className =
+          'text-[11px] px-2 py-0.5 rounded border transition hover:border-emerald-500 hover:text-emerald-300 ' + off;
+      }
+      if (b7) b7.addEventListener('click', function () { show7m(); mark('7m'); });
+      if (bAll) bAll.addEventListener('click', function () { showAll(); mark('all'); });
+
+      // default: show the full ~2y feed (7M button zooms in on demand)
+      showAll();
+      mark('all');
     })
     .catch(empty);
 })();

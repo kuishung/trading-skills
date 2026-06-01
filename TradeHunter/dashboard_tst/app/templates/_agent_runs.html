@@ -1,0 +1,64 @@
+{# Live "working now" panel for the /agent page: the MATP runs the agent is
+   processing right now, each with a MOVING progress bar. The bar width is driven
+   by progress_done/progress_total (reported by the agent via
+   /api/refresh-queue/{id}/status); `transition-all` animates it smoothly as the
+   count climbs between polls. Context: items, poll_in.
+
+   The self-poller is ALWAYS present (even when idle) so the panel refreshes
+   periodically and a newly-queued run appears without a manual page reload —
+   unlike the calm matp-board panel, which goes fully silent when nothing runs. #}
+<div hx-get="/agent/active" hx-trigger="load delay:{{ poll_in or 15 }}s"
+     hx-target="#agent-active" hx-swap="innerHTML"></div>
+
+{% if items %}
+<div class="rounded-lg border border-slate-800 bg-slate-900/50 p-4">
+  <div class="text-[10px] uppercase tracking-wide text-slate-600 mb-3 flex items-center justify-between">
+    <span>Working now &middot; {{ items|length }} active</span>
+    <button type="button" hx-get="/agent/active" hx-target="#agent-active" hx-swap="innerHTML"
+            class="text-slate-500 hover:text-emerald-300" title="Check now">&#8635;</button>
+  </div>
+  <div class="space-y-3">
+    {% for it in items %}
+    {% set r = it.r %}
+    <div>
+      <div class="flex items-center justify-between gap-2 mb-1 text-sm">
+        <span class="text-slate-200 truncate">{{ it.label }}<span class="text-slate-500 text-xs"> &middot; {{ r.scope }}</span></span>
+        <span class="text-xs shrink-0 {% if it.stale %}text-rose-300{% elif r.status == 'running' %}text-emerald-300{% else %}text-amber-300{% endif %}">
+          {% if r.status == 'running' %}&#9679; running{% if it.pct is not none %} {{ it.pct }}%{% endif %}
+          {% else %}&#9675; queued{% endif %}
+        </span>
+      </div>
+      {# the moving progress bar #}
+      <div class="h-2 rounded-full bg-slate-800 overflow-hidden">
+        {% if it.pct is not none %}
+        <div class="h-full rounded-full {% if it.stale %}bg-rose-500{% else %}bg-emerald-500{% endif %} transition-all duration-700 ease-out"
+             style="width: {{ it.pct }}%"></div>
+        {% else %}
+        {# indeterminate: queued, or claimed before a total is known #}
+        <div class="h-full w-1/3 rounded-full {% if it.stale %}bg-rose-500{% else %}bg-amber-500/70 animate-pulse{% endif %}"></div>
+        {% endif %}
+      </div>
+      <div class="text-[11px] mt-1 {% if it.stale %}text-rose-300{% else %}text-slate-500{% endif %}">
+        {% if r.status == 'running' %}
+          {% if r.progress_total %}{{ r.progress_done or 0 }}/{{ r.progress_total }} tickers &middot; {% endif %}working{% if it.ran is not none %} &middot; {{ it.ran }}m{% endif %}
+        {% else %}
+          waiting for the agent to claim it{% if it.waited is not none %} &middot; {{ it.waited }}m{% endif %}
+        {% endif %}
+        &middot; {{ r.requester.display_name if r.requester else "someone" }}
+        {% if r.created_at %} &middot; {{ r.created_at.strftime("%H:%M") }}{% endif %}
+      </div>
+      {% if r.note %}<div class="text-[11px] text-slate-400 italic mt-0.5">&ldquo;{{ r.note }}&rdquo;</div>{% endif %}
+      {% if it.stale %}
+      <div class="text-[11px] text-rose-300 mt-0.5">
+        &#9888; no progress{% if r.status == 'running' %} for {{ it.ran }}m &mdash; the agent may be stuck reporting status{% else %} after {{ it.waited }}m &mdash; the agent may not be polling (check liveness above){% endif %}.
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% else %}
+<div class="rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3 text-center">
+  <p class="text-xs text-slate-500">No active MATP run &middot; the agent is idle or between polls.</p>
+</div>
+{% endif %}

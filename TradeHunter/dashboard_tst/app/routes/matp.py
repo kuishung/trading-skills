@@ -117,10 +117,13 @@ def matp_home(
             .first()
         )
         if latest is not None:
-            incl = [t["target_price"] for t in sel_targets if t["included"]]
+            incl = [
+                {"brokerage": t["brokerage"], "price": t["target_price"]}
+                for t in sel_targets if t["included"]
+            ]
             sel_band = _build_band(
                 latest.target_low, latest.target_high, sel.mbp, sel.matp,
-                prices=incl, current=analysis["current"],
+                analysts=incl, current=analysis["current"],
             )
 
     return templates.TemplateResponse(
@@ -214,6 +217,7 @@ def matp_watchlist(
             "dropped": dropped,
             "open_symbols": open_symbols,
             "sel_sym": (sym or "").strip().upper(),
+            "sel_wl": sel_wl,
             "live": live,
         },
     )
@@ -354,15 +358,12 @@ def _build_chart(points, width=600, height=170, pad=28):
 
 
 def _ticker_targets(db: Session, sym: str, earn):
-    """Analyst targets for `sym`, newest issue date first. `included`
-    (post-earnings) is computed against `earn` so it never goes stale."""
-    rows = (
-        db.query(MATPTarget)
-        .filter(MATPTarget.symbol == sym)
-        .order_by(MATPTarget.target_date.desc())
-        .all()
-    )
-    return [
+    """Analyst targets for `sym`, ordered **relevant-and-high first**: the
+    included (post-earnings, MATP-counting) targets come first, then the dropped
+    ones, and within each group by target price descending (highest first).
+    `included` is computed against `earn` so it never goes stale."""
+    rows = db.query(MATPTarget).filter(MATPTarget.symbol == sym).all()
+    out = [
         {
             "brokerage": t.brokerage,
             "target_price": t.target_price,
@@ -371,6 +372,9 @@ def _ticker_targets(db: Session, sym: str, earn):
         }
         for t in rows
     ]
+    # relevant (included) first, then highest target first within each group
+    out.sort(key=lambda t: (not t["included"], -(t["target_price"] or 0.0)))
+    return out
 
 
 @router.get("/{symbol}/targets", response_class=HTMLResponse)
@@ -472,18 +476,26 @@ def _watchlist_signals(symbols) -> dict:
     return out
 
 
-def _build_band(low, high, mbp, matp, prices=None, current=None, bins=18):
+def _build_band(low, high, mbp, matp, analysts=None, current=None):
     """Levels band. The DISPLAY range extends past the analyst low->high to
-    include the current price (and MBP) so an out-of-range price is shown
-    proportionately instead of clamped at the edge. The analyst range, the
-    concentration heatmap, MBP/MATP, and the current price are all positioned as
-    %-offsets within the display range. None unless we have a low->high range."""
+    include the current price (and MBP/MATP, and any analyst outlier) so an
+    out-of-range value shows proportionately instead of clamped at the edge.
+    Each analyst target becomes a vertical line (``band["lines"]``) positioned
+    as a %-offset within the display range — clustered lines read as
+    concentration, no heatmap needed. None unless we have a low->high range.
+
+    ``analysts`` = list of ``{"brokerage": str, "price": float}`` (the included,
+    post-earnings targets)."""
     if low is None or high is None or high <= low:
         return None
 
-    # display range = analyst range, extended to include current/mbp/matp, + pad
-    los = [low] + [v for v in (current, mbp) if v is not None]
-    his = [high] + [v for v in (current, matp) if v is not None]
+    analysts = [a for a in (analysts or []) if a.get("price") is not None]
+    apx = [a["price"] for a in analysts]
+
+    # display range = analyst range, extended to include current/mbp/matp + any
+    # analyst outlier, + pad
+    los = [low] + [v for v in (current, mbp) if v is not None] + ([min(apx)] if apx else [])
+    his = [high] + [v for v in (current, matp) if v is not None] + ([max(apx)] if apx else [])
     dlo, dhi = min(los), max(his)
     pad = (dhi - dlo) * 0.04 or 1.0
     dlo -= pad
@@ -501,43 +513,15 @@ def _build_band(low, high, mbp, matp, prices=None, current=None, bins=18):
         "low_pct": pct(low), "high_pct": pct(high),
     }
 
-    vals = [p for p in (prices or []) if p is not None]
-    if vals:
-        counts = [0] * bins
-        arange = high - low
-        for p in vals:
-            idx = int((p - low) / arange * bins)
-            counts[min(bins - 1, max(0, idx))] += 1
-        mx = max(counts) or 1
-
-        # consensus zone = densest contiguous run of bins; heatmap colours it only
-        top = max(range(bins), key=lambda i: counts[i])
-        lo_i = hi_i = top
-        while lo_i - 1 >= 0 and counts[lo_i - 1] >= max(1, counts[top] * 0.5):
-            lo_i -= 1
-        while hi_i + 1 < bins and counts[hi_i + 1] >= max(1, counts[top] * 0.5):
-            hi_i += 1
-
-        def _heat(i, c):
-            if not (lo_i <= i <= hi_i) or not c:
-                return "transparent"
-            hue = round(240 * (1 - c / mx))  # 240 blue -> 0 red
-            return "hsl(%d, 100%%, 60%%)" % hue
-
-        # each bin positioned within the DISPLAY range (lo_pct..hi_pct)
-        band["bins"] = [
-            {
-                "lo_pct": pct(low + i / bins * arange),
-                "hi_pct": pct(low + (i + 1) / bins * arange),
-                "color": _heat(i, c),
-                "count": c,
-            }
-            for i, c in enumerate(counts)
-        ]
-        band["consensus_lo"] = round(low + lo_i / bins * arange, 2)
-        band["consensus_hi"] = round(low + (hi_i + 1) / bins * arange, 2)
-        band["consensus_count"] = sum(counts[lo_i : hi_i + 1])
-        band["n"] = len(vals)
+    # one vertical line per analyst target — density shows concentration.
+    lines = [
+        {"price": a["price"], "pct": pct(a["price"]),
+         "brokerage": a.get("brokerage") or "Analyst"}
+        for a in analysts
+    ]
+    lines.sort(key=lambda x: x["price"])
+    band["lines"] = lines
+    band["n"] = len(lines)
     return band
 
 
@@ -578,10 +562,13 @@ def matp_detail(
     latest = history[-1] if history else None
     band = None
     if level and latest:
-        incl_prices = [t["target_price"] for t in targets if t["included"]]
+        incl_analysts = [
+            {"brokerage": t["brokerage"], "price": t["target_price"]}
+            for t in targets if t["included"]
+        ]
         band = _build_band(
             latest.target_low, latest.target_high, level.mbp, level.matp,
-            prices=incl_prices,
+            analysts=incl_analysts,
         )
     # archived runs that included this ticker (raw extraction, newest first)
     from ..services.matp_archive import runs_for_symbol

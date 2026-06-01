@@ -45,22 +45,29 @@ echo
 echo "Done. Installed into: $DEST"
 echo "Verify in the agent with:  /skills   (or)  hermes skills list"
 
-# --- Standalone liveness heartbeat (runs from system cron, NOT the LLM) -------
-# Deploy heartbeat.sh next to the agent home and make it executable. This is the
-# robust online/stale ping for TradeHunter's /agent page; see heartbeat.sh's
-# header for why it lives outside the skill/LLM path.
-HB_SRC="$SCRIPT_DIR/heartbeat.sh"
+# --- Standalone bash helpers (deterministic, no LLM shell-mangling) ----------
+# Deploy the ops helper scripts next to the agent home and make them executable.
+#   heartbeat.sh   — liveness ping, run from SYSTEM CRON (not the LLM)
+#   matp_status.sh — progress reporter, called BY the agent with positional args
+# See each script's header for why they live outside the skill/LLM curl path.
+for helper in heartbeat.sh matp_status.sh; do
+  src="$SCRIPT_DIR/$helper"
+  dest="$HERMES_HOME/$helper"
+  if [ -f "$src" ]; then
+    cp "$src" "$dest"
+    chmod +x "$dest"
+    echo "Installed helper: $dest"
+  fi
+done
+
+# Schedule the liveness heartbeat (every 3 min) if not already in the crontab.
 HB_DEST="$HERMES_HOME/heartbeat.sh"
-if [ -f "$HB_SRC" ]; then
-  cp "$HB_SRC" "$HB_DEST"
-  chmod +x "$HB_DEST"
-  echo
-  echo "Installed heartbeat: $HB_DEST"
+if [ -f "$HB_DEST" ]; then
   CRON_LINE="*/3 * * * * $HB_DEST >/dev/null 2>&1"
   if crontab -l 2>/dev/null | grep -qF "$HB_DEST"; then
-    echo "  cron: already scheduled (crontab entry for heartbeat.sh present)."
+    echo "  heartbeat cron: already scheduled."
   else
-    echo "  cron: NOT scheduled yet. Install the every-3-min job with:"
+    echo "  heartbeat cron: NOT scheduled yet. Install the every-3-min job with:"
     echo "    ( crontab -l 2>/dev/null; echo '$CRON_LINE' ) | crontab -"
     echo "  Then verify:  crontab -l   and   tail ~/.hermes/logs/heartbeat.log"
   fi

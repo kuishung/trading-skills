@@ -1,6 +1,6 @@
 ---
 name: matp
-version: 1.7.0
+version: 1.7.1
 description: Compute the faithful Median Analyst Target Price (MATP) + Max Buy Price (MBP) for TradeHunter and push the results to the platform. Use when asked to "refresh MATP", "run MATP", "update target prices", or on the scheduled cron. Reads the active Finviz screener filters from TradeHunter's API, expands them to a ticker universe, and for each ticker looks up the latest earnings date + analyst price targets on MarketBeat, keeps only targets issued AFTER the latest earnings, computes the median (MATP) and MBP = MATP/1.15, then POSTs the rows to TradeHunter's /api/matp endpoint. Does NOT write CSV / Google Sheets / Telegram -- output is the API push only.
 ---
 
@@ -103,12 +103,31 @@ GET {TRADEHUNTER_URL}/api/refresh-queue     header: X-API-Key: {TST_INGEST_API_K
      {"id":8,"scope":"filter","filter_id":1,"filter_url":"https://finviz.com/...","filter_description":"growth screen"}
    ]}
 ```
+**Report status with the `matp_status.sh` helper — NOT a hand-built curl.**
+Progress drives the moving progress bar on TradeHunter's **/agent** page. Build
+the status POST by hand and you WILL mangle the shell quoting (it happened
+repeatedly); instead call the deterministic wrapper installed at
+`~/.hermes/matp_status.sh`:
+```bash
+~/.hermes/matp_status.sh <rid> <status> [done] [total] [note]
+#   status = running | done | failed   (empty done/total are simply not sent)
+~/.hermes/matp_status.sh 7 running 0 25 "starting growth screen"   # claim + total
+~/.hermes/matp_status.sh 7 running 10                              # 10/25
+~/.hermes/matp_status.sh 7 done "" "" "refreshed 25 tickers"       # bar -> 100%
+~/.hermes/matp_status.sh 7 failed "" "" "marketbeat blocked"
+```
+It reads `~/.hermes/.env` itself, builds the JSON with `jq`, POSTs to
+`/api/refresh-queue/{rid}/status`, and logs to `~/.hermes/logs/matp_status.log`.
+(If the helper is somehow absent, fall back to the raw POST below — but the
+helper is the supported path.)
+
 For each request:
 1. **Mark it running, with the total** so the UI can draw a real progress bar:
-   `POST /api/refresh-queue/{id}/status` body
-   `{"status":"running","progress_total":N,"progress_done":0}`
+   `~/.hermes/matp_status.sh {id} running 0 N "<what you're starting>"`
    (N = number of tickers this run will process — 1 for a ticker request, the
-   universe size for a filter request once you've screened it.)
+   universe size for a filter request once you've screened it.) Raw equivalent:
+   `POST /api/refresh-queue/{id}/status` body
+   `{"status":"running","progress_total":N,"progress_done":0}`.
 2. **Do the work, reporting progress as you go:**
    - `scope:"ticker"` → run Stages 2-5 for that one `symbol`. Push via
      `/api/matp` as a single item, **no `filter_id`, no `prune`** (a single
@@ -122,15 +141,16 @@ For each request:
      item list + `filter_id` + **`prune:true`** + **`final:true`** — that one
      prunes the fallen-out tickers AND is saved as the run's archive file.
    - **Every few tickers**, update progress AND narrate what you're doing:
-     `POST /api/refresh-queue/{id}/status` body
-     `{"status":"running","progress_done":K,"note":"processing <SYM> (K/N)"}`
-     (K = tickers finished so far). The `note` shows on the dashboard so the
-     user sees what's happening live; the count drives the progress bar. Don't
-     post on every single ticker — every ~5 is plenty.
+     `~/.hermes/matp_status.sh {id} running K "" "processing <SYM> (K/N)"`
+     (K = tickers finished so far; leave total empty to keep the original). The
+     `note` shows on the dashboard so the user sees what's happening live; the
+     count drives the moving progress bar. Don't post on every single ticker —
+     every ~5 is plenty.
 3. **Mark it done/failed:**
-   `POST /api/refresh-queue/{id}/status` body `{"status":"done","note":"refreshed 12 tickers"}`
-   — on error, `{"status":"failed","note":"<short reason>"}`. The note shows on
-   the ticker's detail page. (On `done`, the server snaps the bar to 100%.)
+   `~/.hermes/matp_status.sh {id} done "" "" "refreshed 12 tickers"`
+   — on error, `~/.hermes/matp_status.sh {id} failed "" "" "<short reason>"`. The
+   note shows on the ticker's detail page. (On `done`, the server snaps the bar
+   to 100%.)
 
 Idempotent: if the queue is empty, do nothing. TradeHunter de-dupes requests, so
 you'll never see two open requests for the same target.

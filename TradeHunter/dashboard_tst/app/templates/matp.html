@@ -4,14 +4,36 @@
 {% block main_class %}flex-1 lg:min-h-0 w-full px-4 py-3 overflow-y-auto lg:overflow-hidden{% endblock %}
 
 {% block content %}
+{# Restore the last-used watchlist as early as possible: if this load has no
+   ?wl= in the URL (e.g. a redirect after running a ticker, or a bare /matp)
+   but a non-"all" section was last selected, navigate to it once — keeping any
+   ?symbol=. When ?wl= IS present it's authoritative and we just remember it.
+   Runs before the body renders to avoid a flash of the wrong (All) list. #}
+<script>
+(function () {
+  try {
+    var params = new URLSearchParams(location.search);
+    var saved = localStorage.getItem('matp_wl');
+    if (params.has('wl')) {
+      localStorage.setItem('matp_wl', params.get('wl'));
+    } else if (saved && saved !== 'all') {
+      var sym = params.get('symbol');
+      location.replace('/matp?wl=' + encodeURIComponent(saved) +
+                       (sym ? '&symbol=' + encodeURIComponent(sym) : ''));
+    }
+  } catch (e) {}
+})();
+</script>
 <div class="lg:h-full flex flex-col">
 
 {# ── Run panel (separate): watchlist selector (changes the shown tickers) + ad-hoc ticker ── #}
 <div class="shrink-0 mb-2 rounded-lg border border-slate-800 bg-slate-900/40 p-2 flex flex-wrap items-center gap-x-4 gap-y-2">
   <div class="flex items-center gap-2">
     <span class="text-xs text-slate-500">Watchlist</span>
-    {# changing this filters the middle list (navigates ?wl=…) #}
-    <select onchange="location.href='/matp?wl='+this.value"
+    {# changing this filters the middle list (navigates ?wl=…). The choice is
+       remembered in localStorage so it survives reloads/redirects (see the
+       restore script below). #}
+    <select onchange="try{localStorage.setItem('matp_wl',this.value)}catch(e){};location.href='/matp?wl='+this.value"
             class="rounded bg-slate-950/60 border border-slate-700 px-2 py-1 text-sm focus:border-emerald-500 outline-none">
       <option value="all" {% if sel_wl == "all" %}selected{% endif %}>All</option>
       {% for f in active_filters %}<option value="{{ f.id }}" {% if sel_wl == f.id|string %}selected{% endif %}>{{ f.description }}{% if f.id in open_filter_ids %} — queued{% endif %}</option>{% endfor %}

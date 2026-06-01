@@ -1,6 +1,7 @@
 {# Analyst band. The bar's range extends past the analyst low->high to include
-   the current price, so an out-of-range price shows proportionately. Heat =
-   target concentration; markers: MBP, MATP, current. Context: band #}
+   the current price, so an out-of-range price shows proportionately. Each
+   analyst target is a vertical line — clustered lines read as concentration;
+   hover a line for the analyst + price. Markers: MBP, MATP, current. Context: band #}
 {% if band %}
 <div class="select-none">
   {# current price label (above) #}
@@ -10,19 +11,20 @@
     {% endif %}
   </div>
 
-  {# the bar (display range) #}
-  <div class="relative h-9 rounded-md bg-slate-900 ring-1 ring-slate-700 overflow-hidden">
+  {# the bar (display range) — slimmed to ~half height #}
+  <div class="relative h-[1.125rem] rounded bg-slate-900 ring-1 ring-slate-700 overflow-hidden">
     {# analyst low->high sub-range backdrop #}
     {% if band.low_pct is not none and band.high_pct is not none %}
-    <div class="absolute top-0 h-full bg-slate-700/50 border-x border-slate-600" style="left: {{ band.low_pct }}%; width: {{ (band.high_pct - band.low_pct) }}%"></div>
+    <div class="absolute top-0 h-full bg-slate-700/40" style="left: {{ band.low_pct }}%; width: {{ (band.high_pct - band.low_pct) }}%"></div>
     {% endif %}
-    {# concentration heatmap bins (only the consensus zone is coloured) #}
-    {% if band.bins %}
-      {% for b in band.bins %}{% if b.color != 'transparent' %}<div class="absolute top-0 h-full" style="left: {{ b.lo_pct }}%; width: {{ (b.hi_pct - b.lo_pct) }}%; background: {{ b.color }}; box-shadow: 0 0 10px {{ b.color }}"></div>{% endif %}{% endfor %}
-    {% endif %}
-    {# low / high labels at the analyst-range edges (inside the bar) #}
-    {% if band.low_pct is not none %}<span class="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 text-[10px] text-slate-200" style="left: {{ band.low_pct }}%; text-shadow:0 1px 2px #000">{{ "%.0f"|format(band.low) }}</span>{% endif %}
-    {% if band.high_pct is not none %}<span class="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 text-[10px] text-slate-200" style="left: {{ band.high_pct }}%; text-shadow:0 1px 2px #000">{{ "%.0f"|format(band.high) }}</span>{% endif %}
+    {# one line per analyst target — denser = stronger consensus; hover for analyst + price.
+       The visible mark is a thin 2px line; a wider transparent wrapper gives an easy hover target. #}
+    {% for l in band.lines or [] %}
+    <div class="absolute top-0 h-full group cursor-help" style="left: {{ l.pct }}%; width: 10px; transform: translateX(-5px)"
+         title="{{ l.brokerage }} &mdash; {{ '%.2f'|format(l.price) }}">
+      <div class="mx-auto h-full w-0.5 bg-sky-400/50 group-hover:bg-sky-200 group-hover:w-1 transition-all"></div>
+    </div>
+    {% endfor %}
     {# markers #}
     {% if band.mbp_pct is not none %}<div class="absolute top-0 h-full w-px bg-green-600" style="left: {{ band.mbp_pct }}%"></div>{% endif %}
     {% if band.matp_pct is not none %}<div class="absolute top-0 h-full w-px bg-orange-500" style="left: {{ band.matp_pct }}%"></div>{% endif %}
@@ -36,10 +38,10 @@
   </div>
 
   <p class="text-[11px] text-slate-500 mt-2">
-    Shaded = analyst low&ndash;high; heat = target concentration{% if band.n %} (consensus {{ "%.0f"|format(band.consensus_lo) }}&ndash;{{ "%.0f"|format(band.consensus_hi) }}){% endif %}.
+    Shaded = analyst low&ndash;high{% if band.low is not none and band.high is not none %} ({{ "%.0f"|format(band.low) }}&ndash;{{ "%.0f"|format(band.high) }}){% endif %}; each line = one analyst target{% if band.n %} ({{ band.n }}){% endif %} &mdash; denser = stronger consensus; hover a line for the analyst &amp; price.
     <span class="text-green-500">MBP{% if band.mbp is not none %} {{ "%.2f"|format(band.mbp) }}{% endif %}</span> /
     <span class="text-orange-400">MATP{% if band.matp is not none %} {{ "%.2f"|format(band.matp) }}{% endif %}</span> /
-    <span class="text-amber-300">price{% if band.current is not none %} {{ "%.2f"|format(band.current) }}{% endif %}</span> shown to scale.
+    <span class="text-amber-300">price{% if band.current is not none %} {{ "%.2f"|format(band.current) }}{% endif %}</span> to scale.
   </p>
 </div>
 {% endif %}
