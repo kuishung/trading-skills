@@ -4,7 +4,8 @@ The agent is **outbound-only**: it polls us (/api/refresh-queue, /api/due-filter
 and pushes MATP; the dashboard never reaches into the Linux box. So this page
 just shows whatever the agent last POSTed to /api/agent/heartbeat — its version,
 the literal crontab it's running, and how long ago it checked in. That answers
-"what cron is Nous Hermes running?" without any inbound access. Moderators+.
+"what cron is Nous Hermes running?" without any inbound access. Visible to any
+approved member (read-only) — they can watch the agent + its running MATP task.
 """
 from __future__ import annotations
 
@@ -18,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import AgentHeartbeat, MATPRefreshRequest, User
-from ..security import require_moderator
+from ..security import require_user
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 templates = Jinja2Templates(
@@ -53,7 +54,7 @@ def _fmt_ago(ts: _dt.datetime | None, now: _dt.datetime) -> str:
 @router.get("", response_class=HTMLResponse)
 def agent_status(
     request: Request,
-    user: User = Depends(require_moderator),
+    user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ):
     now = _dt.datetime.now(_dt.timezone.utc)
@@ -88,7 +89,7 @@ def agent_status(
 @router.get("/pill", response_class=HTMLResponse)
 def agent_pill(
     request: Request,
-    user: User = Depends(require_moderator),
+    user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ):
     """Tiny nav-bar pill fragment: Nous Hermes liveness dot + label, HTMX-polled
@@ -189,7 +190,7 @@ def _active_context(db: Session) -> dict:
 @router.get("/active", response_class=HTMLResponse)
 def agent_active(
     request: Request,
-    user: User = Depends(require_moderator),
+    user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ):
     """HTMX fragment: the agent's live 'working now' panel — active MATP runs

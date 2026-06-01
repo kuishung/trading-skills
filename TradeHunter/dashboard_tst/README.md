@@ -119,6 +119,17 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-01 — v2.51: members see Nous Hermes + watchlist MATP column
+
+- **Nous Hermes is now visible to all approved members** (was moderator-only):
+  the top-bar pill, the `/agent` page, and the live "working now" panel
+  (`/agent`, `/agent/pill`, `/agent/active`) dropped from `require_moderator` to
+  `require_user`, and the pill renders for every logged-in member. View-only —
+  the matp-board retry control stays moderator-gated.
+- **Watchlist shows Price · MATP · MBP, all 2-decimal.** Added a MATP column to
+  `ticker_grid` (orange), and Price/MATP/MBP now format `%.2f` instead of whole
+  numbers (MBP green, price white/red-if-above-MBP). "Dropped" list MBP also 2dp.
+
 ### 2026-06-01 — v2.50: exact MBP/MATP in the analyst band
 
 - The analyst band's **MBP/MATP labels** now show the exact stored 2-decimal

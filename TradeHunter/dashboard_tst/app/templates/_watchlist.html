@@ -19,7 +19,7 @@
     {% for lv in dropped %}
     <li><a href="/matp?symbol={{ lv.symbol }}{% if wl %}&wl={{ wl }}{% endif %}" class="flex items-center justify-between px-2 py-1 rounded hover:bg-slate-800/70 opacity-70">
       <span class="text-slate-400">{{ lv.symbol }}</span>
-      <span class="text-xs text-slate-600 tabular-nums">MBP {{ "%.0f"|format(lv.mbp) if lv.mbp is not none else "-" }}</span>
+      <span class="text-xs text-slate-600 tabular-nums">MBP {{ "%.2f"|format(lv.mbp) if lv.mbp is not none else "-" }}</span>
     </a></li>
     {% endfor %}
   </ul>
