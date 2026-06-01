@@ -166,43 +166,52 @@ class RefreshStatusIn(BaseModel):
     progress_total: int | None = None  # tickers in this run
 
 
-def _discord_refresh_summary(db: Session, r: MATPRefreshRequest) -> dict | None:
-    """Build a Discord embed kwargs dict for a COMPLETED refresh, or None if the
-    webhook isn't configured. Does all DB reads here (in the request, with a live
-    session) so the background task only performs the HTTP POST."""
-    if not discord.configured():
-        return None
-    base = settings.public_url
-    if r.scope == "ticker" and r.symbol:
-        sym = r.symbol
-        lv = db.query(MATPLevel).filter(MATPLevel.symbol == sym).first()
-        fields = []
-        if lv is not None:
-            if lv.matp is not None:
-                fields.append({"name": "MATP", "value": f"{lv.matp:.2f}", "inline": True})
-            if lv.mbp is not None:
-                fields.append({"name": "MBP (max buy)", "value": f"{lv.mbp:.2f}", "inline": True})
-        return {
-            "title": f"✅ MATP refreshed · {sym}",
-            "description": r.note or None,
-            "url": f"{base}/matp?symbol={sym}",
-            "fields": fields or None,
-        }
-    # filter scope
-    desc = (r.filter.description if r.filter else None) or (f"filter #{r.filter_id}" if r.filter_id else "filter")
-    n = (
-        db.query(MATPLevel)
-        .filter(MATPLevel.filter_id == r.filter_id, MATPLevel.status == "active")
-        .count()
-        if r.filter_id is not None else None
-    )
-    body = r.note or (f"{n} names updated" if n is not None else "Refresh complete")
-    return {
-        "title": f"✅ MATP refreshed · {desc}",
-        "description": body,
-        "url": f"{base}/matp" + (f"?wl={r.filter_id}" if r.filter_id is not None else ""),
-        "fields": None,
-    }
+def _notify_refresh_done(rid: int) -> None:
+    """Background task: post a rich Discord embed for a COMPLETED refresh. Opens
+    its own DB session (the request's is closed by now) and does the live price /
+    next-earnings lookups here so the request returns immediately. Soft-fail."""
+    from ..db import SessionLocal
+    from ..services.prices import fetch_daily_ohlc, fetch_next_earnings
+
+    db = SessionLocal()
+    try:
+        r = db.get(MATPRefreshRequest, rid)
+        if r is None:
+            return
+        base = settings.public_url
+        if r.scope == "ticker" and r.symbol:
+            sym = r.symbol
+            lv = db.query(MATPLevel).filter(MATPLevel.symbol == sym).first()
+            bars = fetch_daily_ohlc(sym)
+            price = bars[-1]["close"] if bars else None
+            discord.post_embed(
+                **discord.build_ticker_embed(
+                    symbol=sym,
+                    matp=lv.matp if lv else None, mbp=lv.mbp if lv else None,
+                    signal=lv.signal if lv else None, price=price,
+                    next_earnings=fetch_next_earnings(sym),
+                    last_earnings=lv.last_earnings_date if lv else None,
+                    note=r.note, title_prefix="✅ MATP refreshed", public_url=base,
+                )
+            )
+        else:
+            desc = (r.filter.description if r.filter else None) or (
+                f"filter #{r.filter_id}" if r.filter_id else "filter")
+            n = (
+                db.query(MATPLevel)
+                .filter(MATPLevel.filter_id == r.filter_id, MATPLevel.status == "active")
+                .count()
+                if r.filter_id is not None else None
+            )
+            body = r.note or (f"{n} names updated" if n is not None else "Refresh complete")
+            discord.post_embed(
+                title=f"✅ MATP refreshed · {desc}", description=body,
+                url=f"{base}/matp" + (f"?wl={r.filter_id}" if r.filter_id is not None else ""),
+            )
+    except Exception:  # noqa: BLE001 — notifications must never break ingest
+        pass
+    finally:
+        db.close()
 
 
 @router.post("/refresh-queue/{rid}/status")
@@ -239,10 +248,8 @@ def update_refresh_status(
     db.commit()
 
     # On a clean finish, notify Discord (outbound, soft-fail, non-blocking).
-    if payload.status == "done":
-        summary = _discord_refresh_summary(db, r)
-        if summary is not None:
-            background.add_task(discord.post_embed, **summary)
+    if payload.status == "done" and discord.configured():
+        background.add_task(_notify_refresh_done, rid)
     return {"ok": True, "id": rid, "status": r.status}
 
 

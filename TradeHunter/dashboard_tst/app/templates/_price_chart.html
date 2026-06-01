@@ -137,19 +137,20 @@
       if (matp != null) s.createPriceLine({ price: matp, color: '#f97316', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'MATP' });
       if (mbp != null) s.createPriceLine({ price: mbp, color: '#16a34a', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'MBP' });
 
-      // ---- earnings "E" markers (anchored to the DATE AXIS) --------------
-      // TradingView-style "E" badges at the BOTTOM (belowBar) on each earnings
-      // date — enlarged (size:2, square) so they're clearly visible, not the
-      // tiny default markers. Past = solid violet; upcoming = lighter violet,
-      // pinned to a whitespace tail we add so the future date has a slot.
-      // Defensive: never break the candles if this misbehaves.
+      // ---- earnings "E" badges pinned to the DATE AXIS (bottom) ----------
+      // lightweight-charts markers only attach to a bar's PRICE (above/below the
+      // candle), so they float mid-chart. To put the "E" on the DATE AXIS like
+      // TradingView, we overlay small HTML badges positioned via
+      // timeToCoordinate() at the bottom of the plot, and reposition them on
+      // zoom/pan/resize. The upcoming earnings still needs a whitespace tail so
+      // its future date has a coordinate. Defensive: never break the candles.
       try {
-        var markers = [];
         var lastT = bars[bars.length - 1].time;
+        var earnPts = [];
         if (lastEarn) {
           var bi = -1;
           for (var i = 0; i < bars.length; i++) { if (bars[i].time <= lastEarn) bi = i; else break; }
-          if (bi >= 0) markers.push({ time: bars[bi].time, position: 'belowBar', color: '#a855f7', shape: 'square', size: 2, text: 'E' });
+          if (bi >= 0) earnPts.push({ date: bars[bi].time, color: '#a855f7', label: 'Earnings ' + lastEarn });
         }
         var ne = d && d.next_earnings;
         if (ne && ne.date && ne.date > lastT) {
@@ -161,11 +162,36 @@
             ws.push({ time: cur.toISOString().slice(0, 10) });
           }
           if (!ws.length || ws[ws.length - 1].time !== ne.date) ws.push({ time: ne.date });
-          s.setData(bars.concat(ws));  // real candles + whitespace tail to the earnings date
-          markers.push({ time: ne.date, position: 'belowBar', color: '#c084fc', shape: 'square', size: 2, text: 'E' });
+          s.setData(bars.concat(ws));  // whitespace tail so the future date has a coordinate
+          earnPts.push({ date: ne.date, color: '#c084fc', label: 'Next earnings ' + ne.date });
         }
-        if (markers.length) s.setMarkers(markers);
-      } catch (e) { /* earnings markers are non-essential */ }
+        if (earnPts.length) {
+          el.style.position = 'relative';
+          var badges = earnPts.map(function (p) {
+            var b = document.createElement('div');
+            b.textContent = 'E';
+            b.title = p.label;
+            b.style.cssText = 'position:absolute;bottom:30px;transform:translateX(-50%);' +
+              'z-index:3;font:700 10px/1 ui-sans-serif,system-ui;color:#fff;background:' +
+              p.color + ';border-radius:3px;padding:1px 4px;pointer-events:auto;' +
+              'cursor:help;white-space:nowrap;';
+            el.appendChild(b);
+            return { el: b, date: p.date };
+          });
+          var placeEarn = function () {
+            var ts = chart.timeScale();
+            badges.forEach(function (bd) {
+              var x = ts.timeToCoordinate(bd.date);
+              if (x === null || x === undefined) { bd.el.style.display = 'none'; }
+              else { bd.el.style.display = ''; bd.el.style.left = x + 'px'; }
+            });
+          };
+          chart.timeScale().subscribeVisibleLogicalRangeChange(placeEarn);
+          if (window.ResizeObserver) { try { new ResizeObserver(placeEarn).observe(el); } catch (e2) {} }
+          placeEarn();
+          setTimeout(placeEarn, 0);   // re-place once the initial zoom settles
+        }
+      } catch (e) { /* earnings badges are non-essential */ }
 
       // ---- zoom controls -------------------------------------------------
       // 6M / 1Y / 1.5Y / 2Y. Show the chosen lookback in the LEFT ~2/3 of the

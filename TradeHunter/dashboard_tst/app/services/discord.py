@@ -28,6 +28,57 @@ def configured() -> bool:
     return bool(settings.discord_webhook_url)
 
 
+def build_ticker_embed(
+    *,
+    symbol: str,
+    matp: float | None = None,
+    mbp: float | None = None,
+    signal: str | None = None,
+    price: float | None = None,
+    next_earnings: dict | None = None,
+    last_earnings: str | None = None,
+    note: str | None = None,
+    title_prefix: str = "MATP",
+    public_url: str = "https://tradehunter.net",
+    url: str | None = None,
+) -> dict:
+    """Build rich embed kwargs for a single ticker (used by the auto MATP-refresh
+    post AND the manual 'Share to Discord' button, so both look identical).
+    Colour follows the signal (HOT=rose, WARM=amber, else emerald). Pass the
+    result straight to ``post_embed(**...)``."""
+    sig = (signal or "").upper()
+    color = COLOR_ROSE if sig == "HOT" else COLOR_AMBER if sig == "WARM" else COLOR_EMERALD
+
+    fields: list[dict] = []
+    if price is not None:
+        fields.append({"name": "Price", "value": f"{price:.2f}", "inline": True})
+    if matp is not None:
+        fields.append({"name": "MATP", "value": f"{matp:.2f}", "inline": True})
+    if mbp is not None:
+        # flag whether the live price is within the max-buy price
+        tag = ("  ✅ at/below" if price <= mbp else "  ⛔ above") if price is not None else ""
+        fields.append({"name": "MBP (max buy)", "value": f"{mbp:.2f}{tag}", "inline": True})
+    if sig in ("HOT", "WARM", "WATCHING"):
+        fields.append({"name": "Signal", "value": sig, "inline": True})
+    if next_earnings and next_earnings.get("date"):
+        days = next_earnings.get("days")
+        when = ""
+        if days is not None:
+            when = (" (today)" if days <= 0 else " (tomorrow)" if days == 1
+                    else f" ({days} days)" if days < 14 else f" (~{round(days / 7)} wks)")
+        fields.append({"name": "Next earnings", "value": f"{next_earnings['date']}{when}", "inline": True})
+    if last_earnings:
+        fields.append({"name": "Last earnings", "value": str(last_earnings), "inline": True})
+
+    return {
+        "title": f"{title_prefix} · {symbol}",
+        "description": note or None,
+        "url": url or f"{public_url}/matp?symbol={symbol}",
+        "color": color,
+        "fields": fields or None,
+    }
+
+
 def post_embed(
     title: str,
     description: str | None = None,

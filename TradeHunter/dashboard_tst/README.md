@@ -119,6 +119,36 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-01 — v2.61: Studies = curated tickers + discussion
+
+- The **/studies** page is now the **curate → discuss** surface. A moderator
+  curates a ticker (symbol + title + rationale + optional entry/stop/target);
+  it opens in **discussing** and members discuss via comments; status moves
+  `draft → discussing → agreed → closed`. Reuses the existing `Setup`+`Comment`
+  models — **no migration**. One study == one curated ticker.
+- New routes: `GET /studies` (cards: symbol, MATP/MBP, status, comment count),
+  `POST /studies` (curate, moderators), `GET /studies/{id}` (detail + the MATP
+  price chart + curator thesis + discussion thread), `POST /studies/{id}/comment`
+  (members), `POST /studies/{id}/status` + `/delete` (moderators).
+- **Discord doorbell:** creating a study posts the rich ticker embed to the
+  channel ("📋 New study · SYM", linked to `/studies/{id}`), soft-fail.
+- Templates: rewrote `studies.html` (curate form + list), new `study_detail.html`
+  (reuses `_price_chart.html` for the chart).
+
+### 2026-06-01 — v2.60: Discord — rich embeds + manual "Share to Discord"
+
+- **Richer Discord embeds.** New shared `discord.build_ticker_embed()` builds one
+  consistent embed for a ticker — Price, MATP, MBP (with ✅ at/below or ⛔ above
+  the live price), Signal, Next earnings (+ countdown), Last earnings — coloured
+  by signal (HOT=rose, WARM=amber, else emerald), titled + linked to `/matp?symbol=`.
+- **Manual "Share to Discord"** button on the ticker detail page (moderators,
+  shown only when a webhook is configured): `POST /matp/{symbol}/share-discord`
+  posts that pick on demand (HTMX result inline). Synchronous + soft-fail.
+- **Auto MATP-refresh post upgraded** to the same rich embed, now run as a proper
+  background task (`_notify_refresh_done`, own DB session) so the agent's status
+  call returns immediately while price/earnings are fetched for the post.
+- (Still queued: extra auto-triggers — agent stale/online, new signal.)
+
 ### 2026-06-01 — v2.59: earnings markers on the date axis + chart cleanup
 
 - **Earnings "E" markers now anchor to the date axis.** Both past and upcoming

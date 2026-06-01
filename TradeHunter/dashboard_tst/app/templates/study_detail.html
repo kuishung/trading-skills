@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}{{ s.symbol }} study &middot; TradeHunter{% endblock %}
+{% block content %}
+<div class="max-w-4xl mx-auto space-y-5">
+
+  {# ---- header ---- #}
+  <div class="flex items-start justify-between gap-3 flex-wrap">
+    <div class="min-w-0">
+      <div class="flex items-center gap-2 flex-wrap">
+        <h1 class="text-2xl font-semibold">{{ s.symbol }}</h1>
+        {% if s.status == 'discussing' %}<span class="text-[11px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300">discussing</span>
+        {% elif s.status == 'agreed' %}<span class="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300">agreed</span>
+        {% elif s.status == 'closed' %}<span class="text-[11px] px-2 py-0.5 rounded-full bg-slate-700/40 text-slate-400">closed</span>
+        {% else %}<span class="text-[11px] px-2 py-0.5 rounded-full bg-slate-700/40 text-slate-300">draft</span>{% endif %}
+      </div>
+      <p class="text-slate-300 mt-0.5">{{ s.title }}</p>
+      <p class="text-xs text-slate-500 mt-0.5">curated by {{ s.author.display_name or s.author.email if s.author else "someone" }}{% if s.created_at %} &middot; {{ s.created_at.strftime("%Y-%m-%d") }}{% endif %}</p>
+    </div>
+    <div class="flex items-center gap-3 shrink-0">
+      <a href="/matp?symbol={{ s.symbol }}" class="text-xs text-sky-300 hover:text-sky-200">full MATP chart &rarr;</a>
+      <a href="/studies" class="text-sm text-slate-400 hover:text-emerald-400">&larr; Studies</a>
+    </div>
+  </div>
+
+  {# ---- moderator controls ---- #}
+  {% if user.can_moderate %}
+  <div class="flex items-center gap-2 flex-wrap rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+    <span class="text-xs text-slate-500 mr-1">Status</span>
+    {% for st in statuses %}
+    <form method="post" action="/studies/{{ s.id }}/status" class="inline">
+      <input type="hidden" name="status" value="{{ st }}">
+      <button class="text-[11px] px-2 py-0.5 rounded border transition
+        {% if s.status == st %}border-emerald-500/60 text-emerald-300 bg-emerald-500/10{% else %}border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300{% endif %}">{{ st }}</button>
+    </form>
+    {% endfor %}
+    <form method="post" action="/studies/{{ s.id }}/delete" class="inline ml-auto"
+          onsubmit="return confirm('Delete this study and its discussion?');">
+      <button class="text-[11px] px-2 py-0.5 rounded border border-rose-500/40 text-rose-300 hover:bg-rose-500/15 transition">delete</button>
+    </form>
+  </div>
+  {% endif %}
+
+  {# ---- data summary ---- #}
+  {% if level %}
+  <div class="flex flex-wrap gap-x-6 gap-y-1 text-sm">
+    <div><span class="text-slate-500">MATP</span> <span class="font-semibold tabular-nums text-orange-300">{{ "%.2f"|format(level.matp) if level.matp is not none else "-" }}</span></div>
+    <div><span class="text-slate-500">MBP</span> <span class="font-semibold tabular-nums text-green-500">{{ "%.2f"|format(level.mbp) if level.mbp is not none else "-" }}</span></div>
+    {% if level.signal %}<div><span class="text-slate-500">Signal</span> <span class="font-semibold">{{ level.signal }}</span></div>{% endif %}
+    {% if level.last_earnings_date %}<div><span class="text-slate-500">Last earnings</span> <span>{{ level.last_earnings_date }}</span></div>{% endif %}
+  </div>
+  {% endif %}
+
+  {# curator's proposed trade levels #}
+  {% if s.entry is not none or s.stop_loss is not none or s.profit_target is not none %}
+  <div class="flex flex-wrap gap-x-6 gap-y-1 text-sm rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+    <div><span class="text-slate-500">Entry</span> <span class="tabular-nums">{{ "%.2f"|format(s.entry) if s.entry is not none else "-" }}</span></div>
+    <div><span class="text-slate-500">Stop</span> <span class="tabular-nums text-rose-300">{{ "%.2f"|format(s.stop_loss) if s.stop_loss is not none else "-" }}</span></div>
+    <div><span class="text-slate-500">Target</span> <span class="tabular-nums text-emerald-300">{{ "%.2f"|format(s.profit_target) if s.profit_target is not none else "-" }}</span></div>
+  </div>
+  {% endif %}
+
+  {% if s.rationale %}
+  <div class="rounded-lg border border-slate-800 bg-slate-900/40 p-4">
+    <div class="text-[10px] uppercase tracking-wide text-slate-600 mb-1">Rationale</div>
+    <p class="text-sm text-slate-200 whitespace-pre-line leading-relaxed">{{ s.rationale }}</p>
+  </div>
+  {% endif %}
+
+  {# ---- chart (reuses the MATP price chart) ---- #}
+  {% if level and level.matp is not none %}
+  {% set chart_symbol = s.symbol %}
+  {% set chart_exchange = level.exchange %}
+  {% set chart_matp = level.matp %}
+  {% set chart_mbp = level.mbp %}
+  {% set chart_as_of = level.as_of %}
+  {% set chart_earnings = level.last_earnings_date %}
+  {% set chart_band = None %}
+  {% include "_price_chart.html" %}
+  {% endif %}
+
+  {# ---- discussion ---- #}
+  <div>
+    <h2 class="text-lg font-medium mb-3">Discussion <span class="text-xs text-slate-500">({{ comments|length }})</span></h2>
+    <div class="space-y-3 mb-4">
+      {% for c in comments %}
+      <div class="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+        <div class="flex items-center justify-between gap-2 mb-1 text-xs">
+          <span class="text-slate-300 font-medium">{{ c.user.display_name or c.user.email if c.user else "member" }}</span>
+          <span class="text-slate-600">{{ c.created_at.strftime("%Y-%m-%d %H:%M") if c.created_at else "" }}</span>
+        </div>
+        <p class="text-sm text-slate-200 whitespace-pre-line leading-relaxed">{{ c.body }}</p>
+      </div>
+      {% else %}
+      <p class="text-sm text-slate-500">No comments yet &mdash; start the discussion.</p>
+      {% endfor %}
+    </div>
+    <form method="post" action="/studies/{{ s.id }}/comment" class="flex flex-col gap-2">
+      <textarea name="body" rows="3" required placeholder="Add to the discussion…"
+                class="w-full rounded bg-slate-950/60 border border-slate-700 px-3 py-2 text-sm focus:border-emerald-500 outline-none"></textarea>
+      <div><button class="text-sm px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 font-medium">Post comment</button></div>
+    </form>
+  </div>
+
+</div>
+{% endblock %}

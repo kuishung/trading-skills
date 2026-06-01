@@ -7,6 +7,12 @@
   </h1>
   <div class="flex items-center gap-3">
     {% if user.can_moderate %}
+      {% if discord_configured %}
+      <span id="shareDiscordResult" class="text-xs"></span>
+      <button type="button" hx-post="/matp/{{ symbol }}/share-discord" hx-target="#shareDiscordResult" hx-swap="innerHTML"
+              class="text-xs px-2.5 py-1 rounded-full border border-indigo-500/40 text-indigo-300 hover:border-indigo-400 hover:text-indigo-200 transition"
+              title="Post this pick (price, MATP, MBP, signal, next earnings) to the Discord channel">&#128279; Share to Discord</button>
+      {% endif %}
       {% if req_open %}
       <span class="text-xs px-2.5 py-1 rounded-full border border-amber-500/30 text-amber-300">&#8635; refresh queued</span>
       {% else %}

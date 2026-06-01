@@ -16,6 +16,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
+from ..config import settings
 from ..db import get_db
 from ..models import (
     FinvizFilter,
@@ -26,6 +27,7 @@ from ..models import (
     User,
 )
 from ..security import require_moderator, require_user
+from ..services import discord
 
 # request states that mean "the agent hasn't finished this yet"
 _OPEN_STATES = ("pending", "running")
@@ -396,6 +398,40 @@ def matp_targets_modal(
     )
 
 
+@router.post("/{symbol}/share-discord", response_class=HTMLResponse)
+def share_discord(
+    symbol: str,
+    user: User = Depends(require_moderator),
+    db: Session = Depends(get_db),
+):
+    """Moderator 'Share to Discord' — post this ticker's pick (price, MATP, MBP,
+    signal, next earnings) to the channel on demand. HTMX fragment result.
+    Synchronous (user-initiated) and soft-fail."""
+    if not discord.configured():
+        return HTMLResponse('<span class="text-rose-300">No Discord webhook configured.</span>')
+    from ..services.prices import fetch_daily_ohlc, fetch_next_earnings
+
+    sym = symbol.strip().upper()
+    lv = db.query(MATPLevel).filter(MATPLevel.symbol == sym).first()
+    bars = fetch_daily_ohlc(sym)
+    price = bars[-1]["close"] if bars else None
+    ok = discord.post_embed(
+        **discord.build_ticker_embed(
+            symbol=sym,
+            matp=lv.matp if lv else None, mbp=lv.mbp if lv else None,
+            signal=lv.signal if lv else None, price=price,
+            next_earnings=fetch_next_earnings(sym),
+            last_earnings=lv.last_earnings_date if lv else None,
+            note=f"Shared by {user.display_name or user.email}",
+            title_prefix="📌 Pick", public_url=settings.public_url,
+        )
+    )
+    return HTMLResponse(
+        '<span class="text-emerald-300">Shared to Discord ✓</span>' if ok
+        else '<span class="text-rose-300">Discord post failed — see server log.</span>'
+    )
+
+
 _ANALYSIS_CACHE: dict = {}   # symbol -> (expiry_epoch, result)
 _ANALYSIS_TTL = 900.0        # 15 min — runtime trend/signal/patterns are cached
 
@@ -631,6 +667,7 @@ def matp_detail(
             "last_req": last_req,
             "req_open": bool(last_req and last_req.status in _OPEN_STATES),
             "archive_runs": archive_runs,
+            "discord_configured": discord.configured(),
         },
     )
 

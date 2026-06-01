@@ -1,51 +1,70 @@
 {% extends "base.html" %}
 {% block title %}Studies &middot; TradeHunter{% endblock %}
 {% block content %}
-<h1 class="text-2xl font-semibold mb-6">Studies</h1>
+{% macro status_badge(st) %}
+  {% if st == 'discussing' %}<span class="text-[11px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300">discussing</span>
+  {% elif st == 'agreed' %}<span class="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300">agreed</span>
+  {% elif st == 'closed' %}<span class="text-[11px] px-2 py-0.5 rounded-full bg-slate-700/40 text-slate-400">closed</span>
+  {% else %}<span class="text-[11px] px-2 py-0.5 rounded-full bg-slate-700/40 text-slate-300">draft</span>{% endif %}
+{% endmacro %}
 
-<section class="mb-10">
-  <h2 class="text-lg font-medium mb-3">MATP board <span class="text-xs text-slate-500">(quarterly)</span></h2>
-  {% if levels %}
-  <table class="w-full text-sm border border-slate-800">
-    <thead class="bg-slate-900 text-slate-400">
-      <tr>
-        <th class="text-left px-3 py-2">Symbol</th>
-        <th class="text-left px-3 py-2">Trend</th>
-        <th class="text-right px-3 py-2">MATP</th>
-        <th class="text-right px-3 py-2">MBP</th>
-        <th class="text-left px-3 py-2">As of</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for lv in levels %}
-      <tr class="border-t border-slate-800">
-        <td class="px-3 py-2 font-medium">{{ lv.symbol }}</td>
-        <td class="px-3 py-2 text-slate-400">{{ lv.trend or "-" }}</td>
-        <td class="px-3 py-2 text-right">{{ "%.2f"|format(lv.matp) if lv.matp else "-" }}</td>
-        <td class="px-3 py-2 text-right">{{ "%.2f"|format(lv.mbp) if lv.mbp else "-" }}</td>
-        <td class="px-3 py-2 text-slate-500">{{ lv.as_of.date() if lv.as_of else "-" }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p class="text-slate-500 text-sm">No MATP levels yet &mdash; the Finviz &rarr; MATP refresh lands in Phase 2.</p>
-  {% endif %}
-</section>
+<div class="flex items-end justify-between gap-3 flex-wrap mb-5">
+  <div>
+    <h1 class="text-2xl font-semibold">Studies</h1>
+    <p class="text-sm text-slate-500">Curated tickers &mdash; a curator picks a name, members discuss it.</p>
+  </div>
+</div>
 
-<section>
-  <h2 class="text-lg font-medium mb-3">Setups</h2>
-  {% if setups %}
-  <ul class="space-y-2">
-    {% for s in setups %}
-    <li class="rounded border border-slate-800 px-3 py-2">
-      <span class="font-medium">{{ s.symbol }}</span> &mdash; {{ s.title }}
-      <span class="text-xs text-slate-500">[{{ s.status }}]</span>
-    </li>
-    {% endfor %}
-  </ul>
-  {% else %}
-  <p class="text-slate-500 text-sm">No setups yet &mdash; posting + entry/SL/PT collaboration lands in Phase 3.</p>
-  {% endif %}
-</section>
+{% if user.can_moderate %}
+<details class="mb-6 rounded-lg border border-slate-800 bg-slate-900/40">
+  <summary class="cursor-pointer px-4 py-3 text-sm text-slate-200 select-none">&#43; Curate a ticker</summary>
+  <form method="post" action="/studies" class="p-4 pt-0 grid gap-3 sm:grid-cols-2">
+    <label class="text-xs text-slate-400">Symbol
+      <input name="symbol" required maxlength="6" placeholder="NVDA"
+             class="mt-1 w-full rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm uppercase focus:border-emerald-500 outline-none">
+    </label>
+    <label class="text-xs text-slate-400">Title
+      <input name="title" required maxlength="200" placeholder="Bounce off EMA50 into MATP"
+             class="mt-1 w-full rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm focus:border-emerald-500 outline-none">
+    </label>
+    <label class="text-xs text-slate-400 sm:col-span-2">Rationale (optional)
+      <textarea name="rationale" rows="3" placeholder="Why this name, why now…"
+                class="mt-1 w-full rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm focus:border-emerald-500 outline-none"></textarea>
+    </label>
+    <div class="grid grid-cols-3 gap-2 sm:col-span-2">
+      <label class="text-xs text-slate-400">Entry
+        <input name="entry" inputmode="decimal" class="mt-1 w-full rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm tabular-nums focus:border-emerald-500 outline-none"></label>
+      <label class="text-xs text-slate-400">Stop
+        <input name="stop_loss" inputmode="decimal" class="mt-1 w-full rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm tabular-nums focus:border-emerald-500 outline-none"></label>
+      <label class="text-xs text-slate-400">Target
+        <input name="profit_target" inputmode="decimal" class="mt-1 w-full rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm tabular-nums focus:border-emerald-500 outline-none"></label>
+    </div>
+    <div class="sm:col-span-2">
+      <button class="text-sm px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 font-medium">Curate &rarr; open for discussion</button>
+    </div>
+  </form>
+</details>
+{% endif %}
+
+{% if items %}
+<div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+  {% for it in items %}
+  {% set s = it.s %}{% set lv = it.level %}
+  <a href="/studies/{{ s.id }}" class="block rounded-lg border border-slate-800 bg-slate-900/40 p-4 hover:border-emerald-500/50 transition {% if s.status == 'closed' %}opacity-60{% endif %}">
+    <div class="flex items-center justify-between gap-2 mb-1">
+      <span class="font-semibold text-slate-100">{{ s.symbol }}</span>
+      {{ status_badge(s.status) }}
+    </div>
+    <div class="text-sm text-slate-300 truncate">{{ s.title }}</div>
+    <div class="flex items-center gap-x-3 text-[11px] text-slate-500 mt-2 tabular-nums">
+      {% if lv and lv.matp is not none %}<span class="text-orange-300">MATP {{ "%.2f"|format(lv.matp) }}</span>{% endif %}
+      {% if lv and lv.mbp is not none %}<span class="text-green-500">MBP {{ "%.2f"|format(lv.mbp) }}</span>{% endif %}
+      <span class="ml-auto">&#128172; {{ it.comments }}</span>
+    </div>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<p class="text-slate-500 text-sm">No curated tickers yet.{% if user.can_moderate %} Use &ldquo;Curate a ticker&rdquo; above to add the first.{% endif %}</p>
+{% endif %}
 {% endblock %}
