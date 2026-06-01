@@ -3,7 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}TradeHunter &middot; trade collaboration{% endblock %}</title>
+  {# Fixed browser-tab title — always "TradeHunter", never per-page (per-page
+     {% block title %} overrides in child templates are intentionally inert). #}
+  <title>TradeHunter</title>
   <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
@@ -51,7 +53,7 @@
       <a href="/" class="flex items-center gap-2 font-semibold tracking-wide shrink-0">
         <img src="/static/logo.svg" alt="" class="h-7 w-7">
         <span class="hidden sm:block leading-none">TradeHunter
-          <span class="text-slate-600 text-[10px] font-normal">v{{ version }}</span></span>
+          <span class="text-slate-300 text-sm font-semibold">v{{ version }}</span></span>
       </a>
       <nav class="flex items-center gap-1 text-sm min-w-0 overflow-x-auto">
         {% for href, label in nav %}
