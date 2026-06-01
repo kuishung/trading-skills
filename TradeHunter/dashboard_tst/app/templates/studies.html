@@ -15,6 +15,15 @@
   </div>
 </div>
 
+{# Curation basket: compact watchlist of the tickers under curation (lazy-loaded
+   so the live price fetch never blocks the page). #}
+<div class="mb-6">
+  <div class="text-[10px] uppercase tracking-wide text-slate-600 mb-2">Curation basket &middot; under curation</div>
+  <div id="basketbox" hx-get="/studies/basket" hx-trigger="load" hx-swap="innerHTML">
+    <p class="text-xs text-slate-500 px-1">Loading basket&hellip;</p>
+  </div>
+</div>
+
 {% if user.can_moderate %}
 <details class="mb-6 rounded-lg border border-slate-800 bg-slate-900/40">
   <summary class="cursor-pointer px-4 py-3 text-sm text-slate-200 select-none">&#43; Curate a ticker</summary>

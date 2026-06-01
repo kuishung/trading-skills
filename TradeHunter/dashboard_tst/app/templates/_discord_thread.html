@@ -10,7 +10,9 @@
       <span class="text-slate-600">{{ m.ts }}</span>
     </div>
     {% if m.content %}<p class="text-sm text-slate-200 whitespace-pre-line leading-relaxed">{{ m.content }}</p>
-    {% else %}<p class="text-xs text-slate-600 italic">(embed / attachment)</p>{% endif %}
+    {% elif m.embed_text %}<p class="text-sm text-slate-300 whitespace-pre-line leading-relaxed">{{ m.embed_text }}</p>
+    {% elif m.has_attach %}<p class="text-xs text-slate-600 italic">(attachment)</p>
+    {% else %}<p class="text-xs text-slate-600 italic">(no text &mdash; enable the Message Content intent if this was a typed reply)</p>{% endif %}
   </div>
   {% else %}
   <p class="text-sm text-slate-500">No messages in the Discord thread yet &mdash; reply in Discord to start it.</p>

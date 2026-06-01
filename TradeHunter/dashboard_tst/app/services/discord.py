@@ -97,9 +97,21 @@ def fetch_thread_messages(thread_id: str, limit: int = 50) -> list[dict] | None:
         out = []
         for m in (r.json() or []):
             a = m.get("author") or {}
+            # flatten any embeds (e.g. the bot's opening study card) to text, so
+            # the panel shows something meaningful instead of "(embed)".
+            parts = []
+            for e in (m.get("embeds") or []):
+                if e.get("title"):
+                    parts.append(str(e["title"]))
+                if e.get("description"):
+                    parts.append(str(e["description"]))
+                for f in (e.get("fields") or []):
+                    parts.append(f"{f.get('name', '')}: {f.get('value', '')}".strip(": "))
             out.append({
                 "author": a.get("global_name") or a.get("username") or "member",
                 "content": m.get("content") or "",
+                "embed_text": "\n".join(p for p in parts if p),
+                "has_attach": bool(m.get("attachments")),
                 "ts": (m.get("timestamp") or "")[:19].replace("T", " "),
                 "bot": bool(a.get("bot")),
             })

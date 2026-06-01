@@ -119,6 +119,35 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-01 — v2.66: study page = fixed chart/status/levels, scrolling messages
+
+- Restructured the study detail page into a **single-screen layout** (desktop):
+  a **fixed top zone** — slim header → **chart** → **status panel** (data summary
+  + moderator status controls, merged) → **trade levels** — that does **not
+  scroll**, with the **messages** (rationale + Discord discussion + on-platform
+  discussion) in a **scrolling region** below. The chart is shortened
+  (`lg:h-[32vh]`) so the fixed zone fits; mobile falls back to normal page scroll
+  (`main_class` override + `lg:overflow-hidden` / inner `lg:overflow-y-auto`).
+
+### 2026-06-01 — v2.65: Curation basket (watchlist) on the Studies page
+
+- Added a **"Curation basket"** at the top of `/studies`: every OPEN (non-closed)
+  study as a compact, scannable row — live **Price** (red if above MBP) + **Signal**,
+  **MBP**, the trade plan (**Entry/Stop/Target**) and **R:R** (colour-coded), each
+  row clicking through to the study. New `GET /studies/basket` HTMX fragment
+  (`_studies_basket.html`), lazy-loaded so the live price fetch (reuses MATP's
+  cached `_watchlist_signals`) never blocks the page. Declared before `/{sid}`
+  so the literal route wins. The existing discussion cards remain below.
+
+### 2026-06-01 — v2.64: render Discord embeds in the discussion panel
+
+- The discussion panel showed "(embed / attachment)" for any message without
+  plain-text content — including the bot's own opening study **embed**.
+  `fetch_thread_messages` now flattens each message's embeds (title +
+  description + fields) to text, and the panel renders that; genuine attachments
+  show "(attachment)", and a truly-empty message hints to enable the Message
+  Content intent (human text comes back blank without it).
+
 ### 2026-06-01 — v2.63: per-study Discord discussion shown on the study page
 
 - **Discord discussion now appears on the study page.** Webhooks are write-only,

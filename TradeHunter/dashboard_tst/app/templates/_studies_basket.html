@@ -1,0 +1,46 @@
+{# Curation "watchlist basket": open studies as a compact, scannable table with
+   live price/signal + the trade plan + R:R. Context: items=[{s, level, rr, live}]. #}
+{% from "_wl_macros.html" import signal_badge %}
+{% macro st_pill(st) %}
+  {% if st == 'discussing' %}<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300">discussing</span>
+  {% elif st == 'agreed' %}<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300">agreed</span>
+  {% else %}<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-700/40 text-slate-300">draft</span>{% endif %}
+{% endmacro %}
+{% if items %}
+<div class="overflow-x-auto rounded-lg border border-slate-800">
+  <table class="w-full text-sm whitespace-nowrap">
+    <thead class="bg-slate-900/60 text-[10px] uppercase tracking-wide text-slate-500">
+      <tr>
+        <th class="text-left px-3 py-2">Sym</th>
+        <th class="text-left px-2 py-2">Status</th>
+        <th class="text-center px-2 py-2">Sig</th>
+        <th class="text-right px-2 py-2">Price</th>
+        <th class="text-right px-2 py-2">MBP</th>
+        <th class="text-right px-2 py-2">Entry</th>
+        <th class="text-right px-2 py-2">Stop</th>
+        <th class="text-right px-2 py-2">Target</th>
+        <th class="text-right px-3 py-2">R:R</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for it in items %}
+      {% set s = it.s %}{% set lv = it.level %}{% set cur = it.live.get('current') %}{% set rr = it.rr %}
+      {% set rr_cls = ('text-emerald-300' if (rr is not none and rr >= 2) else ('text-amber-300' if (rr is not none and rr >= 1) else ('text-rose-300' if rr is not none else 'text-slate-600'))) %}
+      <tr class="border-t border-slate-800 hover:bg-slate-800/40 cursor-pointer" onclick="location.href='/studies/{{ s.id }}'">
+        <td class="px-3 py-1.5 font-medium text-white">{{ s.symbol }}</td>
+        <td class="px-2 py-1.5">{{ st_pill(s.status) }}</td>
+        <td class="px-2 py-1.5 text-center">{{ signal_badge((it.live.get('signal')) or (lv.signal if lv else None)) }}</td>
+        <td class="px-2 py-1.5 text-right tabular-nums {% if cur is not none and lv and lv.mbp is not none and cur > lv.mbp %}text-rose-300{% else %}text-white{% endif %}">{{ "%.2f"|format(cur) if cur is not none else "-" }}</td>
+        <td class="px-2 py-1.5 text-right tabular-nums text-green-500">{{ "%.2f"|format(lv.mbp) if lv and lv.mbp is not none else "-" }}</td>
+        <td class="px-2 py-1.5 text-right tabular-nums text-slate-200">{{ "%.2f"|format(s.entry) if s.entry is not none else "-" }}</td>
+        <td class="px-2 py-1.5 text-right tabular-nums text-rose-300">{{ "%.2f"|format(s.stop_loss) if s.stop_loss is not none else "-" }}</td>
+        <td class="px-2 py-1.5 text-right tabular-nums text-emerald-300">{{ "%.2f"|format(s.profit_target) if s.profit_target is not none else "-" }}</td>
+        <td class="px-3 py-1.5 text-right tabular-nums font-semibold {{ rr_cls }}">{{ "%.2f"|format(rr) if rr is not none else "-" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="text-xs text-slate-500">No tickers under curation yet &mdash; curate one below, or hit &#128203; Curate on a MATP chart.</p>
+{% endif %}

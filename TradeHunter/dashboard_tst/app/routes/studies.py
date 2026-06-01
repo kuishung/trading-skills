@@ -73,6 +73,37 @@ def list_studies(
     )
 
 
+@router.get("/basket", response_class=HTMLResponse)
+def studies_basket(
+    request: Request,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """HTMX fragment: the curation 'watchlist basket' — every OPEN (non-closed)
+    study as a compact row with live price/signal + its trade plan + R:R. Lazy-
+    loaded so the live price fetch never blocks the Studies page. Declared BEFORE
+    GET /{sid} so '/basket' isn't captured as a study id."""
+    from .matp import _watchlist_signals  # cached + bounded; reuse the MATP path
+
+    open_setups = (
+        db.query(Setup).filter(Setup.status != "closed").all()
+    )
+    levels = {lv.symbol: lv for lv in db.query(MATPLevel).all()}
+    live = _watchlist_signals([s.symbol for s in open_setups])
+    items = [
+        {
+            "s": s, "level": levels.get(s.symbol),
+            "rr": _rr(s.entry, s.stop_loss, s.profit_target),
+            "live": live.get(s.symbol, {}) or {},
+        }
+        for s in open_setups
+    ]
+    items.sort(key=lambda it: (_STATUS_RANK.get(it["s"].status, 9), it["s"].symbol))
+    return templates.TemplateResponse(
+        request, "_studies_basket.html", {"user": user, "items": items}
+    )
+
+
 @router.post("")
 def create_study(
     request: Request,
