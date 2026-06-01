@@ -1,92 +1,147 @@
 {% extends "base.html" %}
 {% block title %}Studies &middot; TradeHunter{% endblock %}
-{# Single-screen: header + curate form fixed on top; the basket + cards scroll
-   within one screen on desktop. Mobile falls back to normal page scroll. #}
-{% block main_class %}flex-1 w-full px-4 py-3 overflow-y-auto lg:min-h-0 lg:overflow-hidden{% endblock %}
+{# 3-panel app: left = curated ticker cards · middle = chart + trade levels ·
+   right = Discord+platform chatroom. Single-screen on desktop. #}
+{% block main_class %}flex-1 w-full px-3 py-2 overflow-y-auto lg:min-h-0 lg:overflow-hidden{% endblock %}
 {% block content %}
-{% macro status_badge(st) %}
+{% macro st_badge(st) %}
   {% if st == 'discussing' %}<span class="text-[11px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300">discussing</span>
   {% elif st == 'agreed' %}<span class="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300">agreed</span>
   {% elif st == 'closed' %}<span class="text-[11px] px-2 py-0.5 rounded-full bg-slate-700/40 text-slate-400">closed</span>
   {% else %}<span class="text-[11px] px-2 py-0.5 rounded-full bg-slate-700/40 text-slate-300">draft</span>{% endif %}
 {% endmacro %}
+{% macro st_dot(st) %}<span class="inline-block h-1.5 w-1.5 rounded-full {% if st=='discussing' %}bg-amber-400{% elif st=='agreed' %}bg-emerald-400{% elif st=='closed' %}bg-slate-600{% else %}bg-slate-400{% endif %}"></span>{% endmacro %}
+{% set rr_cls = ('text-emerald-300' if (rr is not none and rr >= 2) else ('text-amber-300' if (rr is not none and rr >= 1) else ('text-rose-300' if rr is not none else 'text-slate-500'))) %}
 
-<div class="lg:h-full flex flex-col gap-3 max-w-6xl mx-auto w-full">
+<div class="lg:h-full flex flex-col lg:flex-row gap-3">
 
-  {# ---- fixed top: header + curate form ---- #}
-  <div class="shrink-0 space-y-3">
-    <div class="flex items-end justify-between gap-3 flex-wrap">
-      <div>
-        <h1 class="text-2xl font-semibold">Studies</h1>
-        <p class="text-sm text-slate-500">Curated tickers &mdash; a curator picks a name, members discuss it.</p>
-      </div>
+  {# ============ LEFT: curated ticker cards ============ #}
+  <aside class="lg:w-60 lg:shrink-0 lg:h-full flex flex-col gap-2 min-h-0">
+    <div class="flex items-center justify-between shrink-0">
+      <h1 class="text-lg font-semibold">Studies</h1>
+      {% if user.can_moderate %}
+      <button type="button" onclick="document.getElementById('curateForm').classList.toggle('hidden')"
+              class="text-xs text-emerald-300 hover:text-emerald-200">&#43; Curate</button>
+      {% endif %}
     </div>
-
     {% if user.can_moderate %}
-    <details class="rounded-lg border border-slate-800 bg-slate-900/40">
-      <summary class="cursor-pointer px-4 py-3 text-sm text-slate-200 select-none">&#43; Curate a ticker</summary>
-      <form method="post" action="/studies" class="p-4 pt-0 grid gap-3 sm:grid-cols-2">
-    <label class="text-xs text-slate-400">Symbol
+    <form id="curateForm" method="post" action="/studies/curate" class="hidden flex gap-1 shrink-0">
       <input name="symbol" required maxlength="6" placeholder="NVDA"
-             class="mt-1 w-full rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm uppercase focus:border-emerald-500 outline-none">
-    </label>
-    <label class="text-xs text-slate-400">Title
-      <input name="title" required maxlength="200" placeholder="Bounce off EMA50 into MATP"
-             class="mt-1 w-full rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm focus:border-emerald-500 outline-none">
-    </label>
-    <label class="text-xs text-slate-400 sm:col-span-2">Rationale (optional)
-      <textarea name="rationale" rows="3" placeholder="Why this name, why now…"
-                class="mt-1 w-full rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm focus:border-emerald-500 outline-none"></textarea>
-    </label>
-    <div class="grid grid-cols-3 gap-2 sm:col-span-2">
-      <label class="text-xs text-slate-400">Entry
-        <input name="entry" inputmode="decimal" class="mt-1 w-full rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm tabular-nums focus:border-emerald-500 outline-none"></label>
-      <label class="text-xs text-slate-400">Stop
-        <input name="stop_loss" inputmode="decimal" class="mt-1 w-full rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm tabular-nums focus:border-emerald-500 outline-none"></label>
-      <label class="text-xs text-slate-400">Target
-        <input name="profit_target" inputmode="decimal" class="mt-1 w-full rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm tabular-nums focus:border-emerald-500 outline-none"></label>
+             class="flex-1 min-w-0 rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm uppercase focus:border-emerald-500 outline-none">
+      <button class="text-sm px-2.5 rounded bg-emerald-600 hover:bg-emerald-500 font-medium">Add</button>
+    </form>
+    {% endif %}
+    <div class="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-1">
+      {% for b in basket %}
+      {% set b_cls = ('text-emerald-300' if (b.rr is not none and b.rr >= 2) else ('text-amber-300' if (b.rr is not none and b.rr >= 1) else ('text-rose-300' if b.rr is not none else 'text-slate-600'))) %}
+      <a href="/studies/{{ b.id }}"
+         class="block rounded-lg border px-3 py-2 transition {% if sel and b.id == sel.id %}border-emerald-500/60 bg-emerald-500/10{% else %}border-slate-800 bg-slate-900/40 hover:border-emerald-500/40{% endif %} {% if b.status == 'closed' %}opacity-50{% endif %}">
+        <div class="flex items-center justify-between gap-2">
+          <span class="font-semibold text-white">{{ b.symbol }}</span>
+          <span class="text-[10px] text-slate-500">#{{ b.id }}</span>
+        </div>
+        <div class="flex items-center gap-2 text-[11px] text-slate-500 mt-1">
+          {{ st_dot(b.status) }} <span>{{ b.status }}</span>
+          {% if b.rr is not none %}<span class="tabular-nums {{ b_cls }}">{{ "%.1f"|format(b.rr) }}R</span>{% endif %}
+          <span class="ml-auto">&#128172; {{ b.comments }}</span>
+        </div>
+      </a>
+      {% else %}
+      <p class="text-xs text-slate-500 px-1">No curated tickers yet.{% if user.can_moderate %} Use &ldquo;+ Curate&rdquo;.{% endif %}</p>
+      {% endfor %}
     </div>
-    <div class="sm:col-span-2">
-      <button class="text-sm px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 font-medium">Curate &rarr; open for discussion</button>
+  </aside>
+
+  {# ============ MIDDLE: chart + status + trade levels ============ #}
+  <main class="lg:flex-1 lg:min-w-0 lg:h-full flex flex-col gap-2 min-h-0">
+    {% if sel %}
+
+    {% if level and level.matp is not none %}
+    {% set chart_symbol = sel.symbol %}
+    {% set chart_exchange = level.exchange %}
+    {% set chart_matp = level.matp %}
+    {% set chart_mbp = level.mbp %}
+    {% set chart_as_of = level.as_of %}
+    {% set chart_earnings = level.last_earnings_date %}
+    {% set chart_band = None %}
+    {% set chart_support = sel.support %}
+    {% set chart_resistance = sel.resistance %}
+    {% set chart_fill = true %}
+    {% include "_price_chart.html" %}
+    {% else %}
+    <div class="rounded-lg border border-slate-800 bg-slate-900/40 p-6 text-center text-sm text-slate-500 shrink-0">
+      No MATP data for {{ sel.symbol }} yet &mdash; run a MATP refresh from the MATP page.
     </div>
-  </form>
-</details>
-{% endif %}
-  </div>
+    {% endif %}
 
-  {# ---- scrolling region: basket + cards ---- #}
-  <div class="lg:flex-1 lg:min-h-0 lg:overflow-y-auto space-y-5 pr-1">
-
-    {# Curation basket: compact watchlist of tickers under curation (lazy-loaded) #}
-    <div>
-      <div class="text-[10px] uppercase tracking-wide text-slate-600 mb-2">Curation basket &middot; under curation</div>
-      <div id="basketbox" hx-get="/studies/basket" hx-trigger="load" hx-swap="innerHTML">
-        <p class="text-xs text-slate-500 px-1">Loading basket&hellip;</p>
+    {# status panel: badge + title + data + (moderator) status controls #}
+    <div class="shrink-0 rounded-lg border border-slate-800 bg-slate-900/40 p-2.5 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+      {{ st_badge(sel.status) }}
+      {% if sel.title and sel.title != sel.symbol %}<span class="text-slate-400 truncate max-w-[16rem]">{{ sel.title }}</span>{% endif %}
+      {% if level %}
+      {% if level.signal %}<div><span class="text-slate-500">Signal</span> <span class="font-semibold">{{ level.signal }}</span></div>{% endif %}
+      {% endif %}
+      {% if user.can_moderate %}
+      <div class="flex items-center gap-1.5 flex-wrap ml-auto">
+        {% for st in statuses %}
+        <form method="post" action="/studies/{{ sel.id }}/status" class="inline">
+          <input type="hidden" name="status" value="{{ st }}">
+          <button class="text-[11px] px-2 py-0.5 rounded border transition
+            {% if sel.status == st %}border-emerald-500/60 text-emerald-300 bg-emerald-500/10{% else %}border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300{% endif %}">{{ st }}</button>
+        </form>
+        {% endfor %}
+        <form method="post" action="/studies/{{ sel.id }}/delete" class="inline"
+              onsubmit="return confirm('Delete this study and its discussion?');">
+          <button class="text-[11px] px-2 py-0.5 rounded border border-rose-500/40 text-rose-300 hover:bg-rose-500/15 transition">delete</button>
+        </form>
       </div>
+      {% endif %}
     </div>
 
-{% if items %}
-<div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-  {% for it in items %}
-  {% set s = it.s %}{% set lv = it.level %}
-  <a href="/studies/{{ s.id }}" class="block rounded-lg border border-slate-800 bg-slate-900/40 p-4 hover:border-emerald-500/50 transition {% if s.status == 'closed' %}opacity-60{% endif %}">
-    <div class="flex items-center justify-between gap-2 mb-1">
-      <span class="font-semibold text-slate-100">{{ s.symbol }}</span>
-      {{ status_badge(s.status) }}
+    {# trade levels: support/resistance + entry/stop/target + R:R #}
+    {% if user.can_moderate %}
+    <form method="post" action="/studies/{{ sel.id }}/levels" class="shrink-0 rounded-lg border border-slate-800 bg-slate-900/40 p-2.5">
+      <div class="grid grid-cols-3 sm:grid-cols-6 gap-2 items-end">
+        {% for name, lbl, cls in [('support','Support','text-sky-300'), ('resistance','Resistance','text-fuchsia-300'), ('entry','Entry','text-slate-100'), ('stop_loss','Stop','text-rose-300'), ('profit_target','Target','text-emerald-300')] %}
+        <label class="text-[10px] text-slate-500 flex flex-col gap-0.5">{{ lbl }}
+          <input name="{{ name }}" type="number" step="any" inputmode="decimal"
+                 value="{{ '%.2f'|format(sel[name]) if sel[name] is not none else '' }}"
+                 class="rounded bg-slate-950/60 border border-slate-700 px-2 py-1 text-sm tabular-nums {{ cls }} focus:border-emerald-500 outline-none">
+        </label>
+        {% endfor %}
+        <div class="flex flex-col gap-0.5">
+          <span class="text-[10px] text-slate-500">R:R</span>
+          <span class="px-1 py-1 text-sm font-semibold tabular-nums {{ rr_cls }}">{{ ('%.2f'|format(rr)) ~ ':1' if rr is not none else '—' }}</span>
+        </div>
+      </div>
+      <div class="text-right mt-2"><button class="text-xs px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 font-medium">Save levels</button></div>
+    </form>
+    {% elif sel.support is not none or sel.entry is not none or sel.stop_loss is not none or sel.profit_target is not none %}
+    <div class="shrink-0 flex flex-wrap gap-x-5 gap-y-1 text-sm rounded-lg border border-slate-800 bg-slate-900/40 p-2.5">
+      <div><span class="text-slate-500">Support</span> <span class="tabular-nums text-sky-300">{{ "%.2f"|format(sel.support) if sel.support is not none else "-" }}</span></div>
+      <div><span class="text-slate-500">Resist</span> <span class="tabular-nums text-fuchsia-300">{{ "%.2f"|format(sel.resistance) if sel.resistance is not none else "-" }}</span></div>
+      <div><span class="text-slate-500">Entry</span> <span class="tabular-nums">{{ "%.2f"|format(sel.entry) if sel.entry is not none else "-" }}</span></div>
+      <div><span class="text-slate-500">Stop</span> <span class="tabular-nums text-rose-300">{{ "%.2f"|format(sel.stop_loss) if sel.stop_loss is not none else "-" }}</span></div>
+      <div><span class="text-slate-500">Target</span> <span class="tabular-nums text-emerald-300">{{ "%.2f"|format(sel.profit_target) if sel.profit_target is not none else "-" }}</span></div>
+      <div><span class="text-slate-500">R:R</span> <span class="font-semibold tabular-nums {{ rr_cls }}">{{ ('%.2f'|format(rr)) ~ ':1' if rr is not none else "-" }}</span></div>
     </div>
-    <div class="text-sm text-slate-300 truncate">{{ s.title }}</div>
-    <div class="flex items-center gap-x-3 text-[11px] text-slate-500 mt-2 tabular-nums">
-      {% if lv and lv.matp is not none %}<span class="text-orange-300">MATP {{ "%.2f"|format(lv.matp) }}</span>{% endif %}
-      {% if lv and lv.mbp is not none %}<span class="text-green-500">MBP {{ "%.2f"|format(lv.mbp) }}</span>{% endif %}
-      <span class="ml-auto">&#128172; {{ it.comments }}</span>
-    </div>
-  </a>
-  {% endfor %}
-</div>
-{% else %}
-<p class="text-slate-500 text-sm">No curated tickers yet.{% if user.can_moderate %} Use &ldquo;Curate a ticker&rdquo; above to add the first.{% endif %}</p>
-{% endif %}
+    {% endif %}
 
-  </div>
+    {% else %}
+    <div class="flex-1 flex items-center justify-center text-slate-500 text-sm">Curate a ticker to start a study.</div>
+    {% endif %}
+  </main>
+
+  {# ============ RIGHT: chatroom (Discord + platform, merged) ============ #}
+  {% if sel %}
+  <aside class="lg:w-80 lg:shrink-0 lg:h-full flex flex-col min-h-0">
+    <div class="shrink-0 text-[10px] uppercase tracking-wide text-slate-600 mb-2">Chatroom</div>
+    <div id="chatbox" class="flex-1 min-h-0 flex flex-col"
+         hx-get="/studies/{{ sel.id }}/chat" hx-trigger="load" hx-swap="innerHTML">
+      <p class="text-xs text-slate-500">Loading&hellip;</p>
+    </div>
+  </aside>
+  {% endif %}
+
 </div>
 {% endblock %}

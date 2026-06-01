@@ -52,25 +52,40 @@ def _rr(entry, stop, target):
     return round(reward / risk, 2)
 
 
+def _page_ctx(db: Session, user: User, sel) -> dict:
+    """Context for the 3-panel Studies page: left basket cards (all studies, open
+    first), the selected study + its level/R:R, statuses."""
+    counts = dict(
+        db.query(Comment.setup_id, func.count(Comment.id)).group_by(Comment.setup_id).all()
+    )
+    levels = {lv.symbol: lv for lv in db.query(MATPLevel).all()}
+    basket = [
+        {"id": x.id, "symbol": x.symbol, "status": x.status,
+         "rr": _rr(x.entry, x.stop_loss, x.profit_target), "comments": counts.get(x.id, 0)}
+        for x in db.query(Setup).all()
+    ]
+    basket.sort(key=lambda b: (_STATUS_RANK.get(b["status"], 9), b["symbol"]))
+    return {
+        "user": user, "basket": basket, "sel": sel,
+        "level": levels.get(sel.symbol) if sel else None,
+        "rr": _rr(sel.entry, sel.stop_loss, sel.profit_target) if sel else None,
+        "statuses": STATUSES,
+    }
+
+
 @router.get("", response_class=HTMLResponse)
-def list_studies(
+def studies_home(
     request: Request,
     user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ):
-    setups = db.query(Setup).all()
-    levels = {lv.symbol: lv for lv in db.query(MATPLevel).all()}
-    counts = dict(
-        db.query(Comment.setup_id, func.count(Comment.id)).group_by(Comment.setup_id).all()
+    """Land straight on a study's chart (no separate list page): pick the newest
+    open study (else the newest of any), or an empty state when there are none."""
+    sel = (
+        db.query(Setup).filter(Setup.status != "closed").order_by(Setup.id.desc()).first()
+        or db.query(Setup).order_by(Setup.id.desc()).first()
     )
-    items = [
-        {"s": s, "level": levels.get(s.symbol), "comments": counts.get(s.id, 0)}
-        for s in setups
-    ]
-    items.sort(key=lambda it: (_STATUS_RANK.get(it["s"].status, 9), -it["s"].id))
-    return templates.TemplateResponse(
-        request, "studies.html", {"user": user, "items": items, "statuses": STATUSES}
-    )
+    return templates.TemplateResponse(request, "studies.html", _page_ctx(db, user, sel))
 
 
 @router.get("/basket", response_class=HTMLResponse)
@@ -247,31 +262,50 @@ def _ensure_thread(db: Session, s: Setup, user: User) -> None:
 
 
 @router.get("/{sid}", response_class=HTMLResponse)
-def study_detail(
+def study_page(
     sid: int,
     request: Request,
     user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ):
-    s = db.get(Setup, sid)
-    if s is None:
+    """The 3-panel study page with this study selected (left basket · middle
+    chart+levels · right chatroom)."""
+    sel = db.get(Setup, sid)
+    if sel is None:
         return RedirectResponse("/studies", status_code=303)
-    level = db.query(MATPLevel).filter(MATPLevel.symbol == s.symbol).first()
-    comments = (
-        db.query(Comment).filter(Comment.setup_id == sid).order_by(Comment.created_at.asc()).all()
-    )
-    # mini-card basket strip: the other OPEN studies, for quick switching.
-    basket = [
-        {"id": x.id, "symbol": x.symbol, "status": x.status,
-         "rr": _rr(x.entry, x.stop_loss, x.profit_target)}
-        for x in db.query(Setup).filter(Setup.status != "closed").order_by(Setup.symbol).all()
-    ]
+    return templates.TemplateResponse(request, "studies.html", _page_ctx(db, user, sel))
+
+
+@router.get("/{sid}/chat", response_class=HTMLResponse)
+def study_chat(
+    sid: int,
+    request: Request,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Right-panel chatroom: the study's Discord thread messages MERGED with the
+    on-platform comments, time-sorted, rendered as chat bubbles. Self-polls."""
+    s = db.get(Setup, sid)
+    msgs: list[dict] = []
+    if s is not None:
+        for m in (discord.fetch_thread_messages(s.discord_thread_id) if s.discord_thread_id else None) or []:
+            text = m.get("content") or m.get("embed_text") or ("(attachment)" if m.get("has_attach") else "")
+            msgs.append({"author": m["author"], "text": text, "ts": m["ts"],
+                         "source": "discord", "me": False})
+        for c in db.query(Comment).filter(Comment.setup_id == sid).all():
+            msgs.append({
+                "author": (c.user.display_name or c.user.email) if c.user else "member",
+                "text": c.body,
+                "ts": c.created_at.strftime("%Y-%m-%d %H:%M:%S") if c.created_at else "",
+                "source": "web", "me": (c.user_id == user.id),
+            })
+    msgs.sort(key=lambda x: x["ts"] or "")
     return templates.TemplateResponse(
-        request, "study_detail.html",
+        request, "_study_chat.html",
         {
-            "user": user, "s": s, "level": level, "comments": comments,
-            "statuses": STATUSES, "rr": _rr(s.entry, s.stop_loss, s.profit_target),
-            "basket": basket,
+            "user": user, "s": s, "messages": msgs,
+            "bot_configured": discord.bot_configured(),
+            "thread_link": discord.thread_link(s.discord_thread_id) if s else None,
         },
     )
 

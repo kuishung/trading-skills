@@ -119,6 +119,21 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-01 — v2.71: Studies = 3-panel app (cards · chart+levels · chatroom)
+
+- Redesigned Studies into a single-screen **3-panel** layout, replacing the
+  separate list + detail pages: **left** = curated-ticker cards (symbol, #id,
+  status dot, R:R, 💬 count; current highlighted; "+ Curate" inline), **middle**
+  = chart (fills) + status controls + trade levels, **right** = a **chatroom**
+  merging the study's **Discord thread + on-platform comments** (time-sorted
+  bubbles, source-tagged, self-polling, auto-scroll, composer posts a web comment,
+  "Reply in Discord ↗").
+- **`/studies` now lands straight on a study's chart** (newest open one) — no
+  list page. `/studies/{id}` selects a study; clicking a left card is a full page
+  load (the chart re-inits cleanly). New `_page_ctx` helper + `GET
+  /studies/{id}/chat` (merged feed). `study_detail.html` removed (its content
+  folded into the 3-panel `studies.html`).
+
 ### 2026-06-01 — v2.70: crop the chart header gap (single-quote widget)
 
 - The TradingView single-quote header rendered tall with empty space below the
