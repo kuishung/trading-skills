@@ -119,6 +119,12 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-01 — v2.54: remove redundant "open TradingView chart" link
+
+- Removed the "· open TradingView chart →" link from the chart legend — clicking
+  the ticker name in the TradingView header widget opens it anyway, so the extra
+  link was redundant. `_price_chart.html` only.
+
 ### 2026-06-01 — v2.53: chart zoom presets 6M/1Y/1.5Y/2Y + right-third blank
 
 - Price chart zoom replaced 7M/All with **6M · 1Y · 1.5Y · 2Y** presets (default
