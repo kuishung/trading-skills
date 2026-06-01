@@ -119,6 +119,30 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-01 — v2.69: basket mini-card strip expands on hover
+
+- The study page's curation-basket strip stays one compact row (extra cards
+  clipped); **hovering expands the full list** as a wrapped floating overlay
+  (absolute-positioned, so the chart below never shifts). Pure CSS (`group` +
+  `group-hover`).
+
+### 2026-06-01 — v2.68: study page — basket mini-cards, no title, half-screen split
+
+- Added a **curation-basket mini-card strip** on top of the study page: small
+  clickable cards of the other OPEN studies (symbol + Rn:R, current highlighted)
+  for quick switching; route now passes a lightweight `basket`.
+- **Removed the symbol/title header** (the chart's TradingView header already
+  shows it); the study's descriptive title now sits small in the status panel.
+- **Half-screen split:** chart (now ~26vh) → status → trade levels are the fixed
+  top; the **Discord + platform discussion scroll in the bottom half**.
+
+### 2026-06-01 — v2.67: Studies list = single-screen
+
+- The Studies list page is now single-screen (desktop): header + the "Curate a
+  ticker" form are a **fixed top**, and the **Curation basket + discussion cards
+  scroll within one screen** (`main_class` override + `lg:overflow-hidden` outer
+  / `lg:overflow-y-auto` inner). Mobile falls back to normal page scroll.
+
 ### 2026-06-01 — v2.66: study page = fixed chart/status/levels, scrolling messages
 
 - Restructured the study detail page into a **single-screen layout** (desktop):

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ s.symbol }} study &middot; TradeHunter{% endblock %}
-{# Desktop: single-screen — the chart + status + trade levels are a FIXED top
-   zone; only the messages below scroll. Mobile: the whole page scrolls. #}
+{# Single-screen: a curation-basket mini-card strip + the chart + status + trade
+   levels sit in the TOP HALF (fixed); the messages scroll in the bottom half. #}
 {% block main_class %}flex-1 w-full px-4 py-3 overflow-y-auto lg:min-h-0 lg:overflow-hidden{% endblock %}
 {% block content %}
 {% macro st_badge(st) %}
@@ -12,25 +12,33 @@
 {% endmacro %}
 {% set rr_cls = ('text-emerald-300' if (rr is not none and rr >= 2) else ('text-amber-300' if (rr is not none and rr >= 1) else ('text-rose-300' if rr is not none else 'text-slate-500'))) %}
 
-<div class="lg:h-full flex flex-col gap-3 max-w-4xl mx-auto w-full">
+<div class="lg:h-full flex flex-col gap-2 max-w-4xl mx-auto w-full">
 
-  {# ============ FIXED TOP (does not scroll on desktop) ============ #}
-  <div class="shrink-0 space-y-3">
-
-    {# slim header #}
-    <div class="flex items-center justify-between gap-3 flex-wrap">
-      <div class="flex items-center gap-2 min-w-0 flex-wrap">
-        <h1 class="text-xl font-semibold">{{ s.symbol }}</h1>
-        {{ st_badge(s.status) }}
-        <span class="text-slate-400 text-sm truncate">{{ s.title }}</span>
-      </div>
-      <div class="flex items-center gap-3 shrink-0 text-xs">
-        <a href="/matp?symbol={{ s.symbol }}" class="text-sky-300 hover:text-sky-200">full MATP chart &rarr;</a>
-        <a href="/studies" class="text-slate-400 hover:text-emerald-400">&larr; Studies</a>
+  {# ---- curation basket: mini-card strip (switch between studies) ----
+       One compact row by default (extra cards clipped); HOVER expands to the
+       full wrapped list as an overlay so the chart below never shifts. #}
+  <div class="shrink-0 flex items-start gap-2">
+    <div class="relative flex-1 min-w-0 h-7 group">
+      <div class="absolute inset-x-0 top-0 flex gap-2 overflow-hidden
+                  group-hover:flex-wrap group-hover:overflow-visible group-hover:z-30
+                  group-hover:bg-slate-950/95 group-hover:ring-1 group-hover:ring-slate-800
+                  group-hover:rounded-lg group-hover:p-2 group-hover:shadow-xl group-hover:-m-1">
+        {% for b in basket %}
+        {% set b_cls = ('text-emerald-300' if (b.rr is not none and b.rr >= 2) else ('text-amber-300' if (b.rr is not none and b.rr >= 1) else ('text-rose-300' if b.rr is not none else 'text-slate-500'))) %}
+        <a href="/studies/{{ b.id }}"
+           class="shrink-0 rounded-md border px-2.5 py-1 text-xs whitespace-nowrap transition {% if b.id == s.id %}border-emerald-500/60 bg-emerald-500/10 text-emerald-200{% else %}border-slate-800 bg-slate-900/40 text-slate-300 hover:border-emerald-500/50{% endif %}">
+          <span class="font-semibold">{{ b.symbol }}</span>{% if b.rr is not none %} <span class="tabular-nums {{ b_cls }}">{{ "%.1f"|format(b.rr) }}R</span>{% endif %}
+        </a>
+        {% endfor %}
       </div>
     </div>
+    <a href="/studies" class="shrink-0 text-xs text-slate-400 hover:text-emerald-400 mt-1">&larr; Studies</a>
+  </div>
 
-    {# chart on top (reuses the MATP price chart; shorter so the fixed zone fits) #}
+  {# ---- TOP HALF (fixed): chart -> status -> trade levels ---- #}
+  <div class="shrink-0 space-y-2">
+
+    {# chart on top (the TradingView header already shows the symbol/title) #}
     {% if level and level.matp is not none %}
     {% set chart_symbol = s.symbol %}
     {% set chart_exchange = level.exchange %}
@@ -41,21 +49,21 @@
     {% set chart_band = None %}
     {% set chart_support = s.support %}
     {% set chart_resistance = s.resistance %}
-    {% set chart_height_class = 'h-[240px] lg:h-[32vh]' %}
+    {% set chart_height_class = 'h-[200px] lg:h-[26vh]' %}
     {% include "_price_chart.html" %}
     {% endif %}
 
-    {# status panel: data summary + (moderator) status controls #}
+    {# status panel: badge + title + data summary + (moderator) status controls #}
     <div class="rounded-lg border border-slate-800 bg-slate-900/40 p-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+      {{ st_badge(s.status) }}
+      {% if s.title and s.title != s.symbol %}<span class="text-slate-400 truncate max-w-[18rem]">{{ s.title }}</span>{% endif %}
       {% if level %}
       <div><span class="text-slate-500">MATP</span> <span class="font-semibold tabular-nums text-orange-300">{{ "%.2f"|format(level.matp) if level.matp is not none else "-" }}</span></div>
       <div><span class="text-slate-500">MBP</span> <span class="font-semibold tabular-nums text-green-500">{{ "%.2f"|format(level.mbp) if level.mbp is not none else "-" }}</span></div>
       {% if level.signal %}<div><span class="text-slate-500">Signal</span> <span class="font-semibold">{{ level.signal }}</span></div>{% endif %}
-      {% if level.last_earnings_date %}<div><span class="text-slate-500">Earnings</span> <span>{{ level.last_earnings_date }}</span></div>{% endif %}
       {% endif %}
       {% if user.can_moderate %}
       <div class="flex items-center gap-2 flex-wrap ml-auto">
-        <span class="text-xs text-slate-500">Status</span>
         {% for st in statuses %}
         <form method="post" action="/studies/{{ s.id }}/status" class="inline">
           <input type="hidden" name="status" value="{{ st }}">
@@ -105,7 +113,7 @@
 
   </div>
 
-  {# ============ SCROLLING REGION (messages) ============ #}
+  {# ---- BOTTOM HALF (scrolls): messages ---- #}
   <div class="lg:flex-1 lg:min-h-0 lg:overflow-y-auto space-y-5 pr-1">
 
     {% if s.rationale %}

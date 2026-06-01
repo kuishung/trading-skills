@@ -260,11 +260,18 @@ def study_detail(
     comments = (
         db.query(Comment).filter(Comment.setup_id == sid).order_by(Comment.created_at.asc()).all()
     )
+    # mini-card basket strip: the other OPEN studies, for quick switching.
+    basket = [
+        {"id": x.id, "symbol": x.symbol, "status": x.status,
+         "rr": _rr(x.entry, x.stop_loss, x.profit_target)}
+        for x in db.query(Setup).filter(Setup.status != "closed").order_by(Setup.symbol).all()
+    ]
     return templates.TemplateResponse(
         request, "study_detail.html",
         {
             "user": user, "s": s, "level": level, "comments": comments,
             "statuses": STATUSES, "rr": _rr(s.entry, s.stop_loss, s.profit_target),
+            "basket": basket,
         },
     )
 

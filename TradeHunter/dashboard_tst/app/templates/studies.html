@@ -1,5 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Studies &middot; TradeHunter{% endblock %}
+{# Single-screen: header + curate form fixed on top; the basket + cards scroll
+   within one screen on desktop. Mobile falls back to normal page scroll. #}
+{% block main_class %}flex-1 w-full px-4 py-3 overflow-y-auto lg:min-h-0 lg:overflow-hidden{% endblock %}
 {% block content %}
 {% macro status_badge(st) %}
   {% if st == 'discussing' %}<span class="text-[11px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300">discussing</span>
@@ -8,26 +11,21 @@
   {% else %}<span class="text-[11px] px-2 py-0.5 rounded-full bg-slate-700/40 text-slate-300">draft</span>{% endif %}
 {% endmacro %}
 
-<div class="flex items-end justify-between gap-3 flex-wrap mb-5">
-  <div>
-    <h1 class="text-2xl font-semibold">Studies</h1>
-    <p class="text-sm text-slate-500">Curated tickers &mdash; a curator picks a name, members discuss it.</p>
-  </div>
-</div>
+<div class="lg:h-full flex flex-col gap-3 max-w-6xl mx-auto w-full">
 
-{# Curation basket: compact watchlist of the tickers under curation (lazy-loaded
-   so the live price fetch never blocks the page). #}
-<div class="mb-6">
-  <div class="text-[10px] uppercase tracking-wide text-slate-600 mb-2">Curation basket &middot; under curation</div>
-  <div id="basketbox" hx-get="/studies/basket" hx-trigger="load" hx-swap="innerHTML">
-    <p class="text-xs text-slate-500 px-1">Loading basket&hellip;</p>
-  </div>
-</div>
+  {# ---- fixed top: header + curate form ---- #}
+  <div class="shrink-0 space-y-3">
+    <div class="flex items-end justify-between gap-3 flex-wrap">
+      <div>
+        <h1 class="text-2xl font-semibold">Studies</h1>
+        <p class="text-sm text-slate-500">Curated tickers &mdash; a curator picks a name, members discuss it.</p>
+      </div>
+    </div>
 
-{% if user.can_moderate %}
-<details class="mb-6 rounded-lg border border-slate-800 bg-slate-900/40">
-  <summary class="cursor-pointer px-4 py-3 text-sm text-slate-200 select-none">&#43; Curate a ticker</summary>
-  <form method="post" action="/studies" class="p-4 pt-0 grid gap-3 sm:grid-cols-2">
+    {% if user.can_moderate %}
+    <details class="rounded-lg border border-slate-800 bg-slate-900/40">
+      <summary class="cursor-pointer px-4 py-3 text-sm text-slate-200 select-none">&#43; Curate a ticker</summary>
+      <form method="post" action="/studies" class="p-4 pt-0 grid gap-3 sm:grid-cols-2">
     <label class="text-xs text-slate-400">Symbol
       <input name="symbol" required maxlength="6" placeholder="NVDA"
              class="mt-1 w-full rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm uppercase focus:border-emerald-500 outline-none">
@@ -54,6 +52,18 @@
   </form>
 </details>
 {% endif %}
+  </div>
+
+  {# ---- scrolling region: basket + cards ---- #}
+  <div class="lg:flex-1 lg:min-h-0 lg:overflow-y-auto space-y-5 pr-1">
+
+    {# Curation basket: compact watchlist of tickers under curation (lazy-loaded) #}
+    <div>
+      <div class="text-[10px] uppercase tracking-wide text-slate-600 mb-2">Curation basket &middot; under curation</div>
+      <div id="basketbox" hx-get="/studies/basket" hx-trigger="load" hx-swap="innerHTML">
+        <p class="text-xs text-slate-500 px-1">Loading basket&hellip;</p>
+      </div>
+    </div>
 
 {% if items %}
 <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -76,4 +86,7 @@
 {% else %}
 <p class="text-slate-500 text-sm">No curated tickers yet.{% if user.can_moderate %} Use &ldquo;Curate a ticker&rdquo; above to add the first.{% endif %}</p>
 {% endif %}
+
+  </div>
+</div>
 {% endblock %}
