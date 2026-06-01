@@ -286,6 +286,22 @@ class AgentHeartbeat(Base):
     received_at = Column(DateTime, default=_utcnow)  # server clock on receipt
 
 
+class IngestHealth(Base):
+    """Latest parquet-ingest health report, pushed by the Hermes-side reporter
+    cron (POST /api/ingest/health). The dashboard doesn't read the bars store
+    over the network — Hermes prepares the report and reports in, like the agent
+    heartbeat. One row (upserted by host). ``report`` holds the raw payload:
+    {timeframes:[{tf,symbols,mb,newest_epoch}], generated_epoch, log_tail:[...]}.
+    """
+
+    __tablename__ = "ingest_health"
+
+    id = Column(Integer, primary_key=True)
+    host = Column(String(120), unique=True, nullable=False, index=True)
+    report = Column(JSON, nullable=True)
+    received_at = Column(DateTime, default=_utcnow)  # server clock on receipt
+
+
 class Feedback(Base):
     """Development feedback board -- collaborators comment on the build as it
     goes (not tied to a specific setup). The lightweight 'react to each part

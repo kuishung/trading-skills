@@ -16,7 +16,7 @@ from __future__ import annotations
 import datetime as _dt
 import hmac
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -28,6 +28,7 @@ from ..models import (
     RUN_INTERVALS,
     AgentHeartbeat,
     FinvizFilter,
+    IngestHealth,
     MATPHistory,
     MATPLevel,
     MATPRefreshRequest,
@@ -131,6 +132,28 @@ def agent_heartbeat(
     row.received_at = now
     db.commit()
     return {"ok": True, "agent": name, "received_at": now.isoformat()}
+
+
+@router.post("/ingest/health")
+def ingest_health(
+    payload: dict = Body(...),
+    _: bool = Depends(require_api_key),
+    db: Session = Depends(get_db),
+):
+    """Hermes-side reporter cron pushes the parquet-ingest health report here
+    (freshness per timeframe + recent ingest-log tail). Upsert one row per host;
+    the Data Ingest page shows the latest. Body is the raw report JSON, e.g.
+    {host, generated_epoch, timeframes:[{tf,symbols,mb,newest_epoch}], log_tail:[]}.
+    """
+    host = (str(payload.get("host") or "hermes")).strip()[:120] or "hermes"
+    row = db.query(IngestHealth).filter(IngestHealth.host == host).first()
+    if row is None:
+        row = IngestHealth(host=host)
+        db.add(row)
+    row.report = payload
+    row.received_at = _dt.datetime.now(_dt.timezone.utc)
+    db.commit()
+    return {"ok": True, "host": host}
 
 
 # ---------------------------------------------------------------------------

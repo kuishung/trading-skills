@@ -73,6 +73,14 @@ class Settings:
     # C:\HermesSync\MarketData\MATP. Empty -> defaults to <TradeHunter>/data/MATP.
     matp_dir: str | None = field(default_factory=lambda: os.environ.get("TST_MATP_DIR"))
 
+    # Parquet bars store root, for the Data Ingest page's HEALTH check (freshness
+    # only — file metadata, never parquet content; parquet stays backtest-only).
+    # On Hermes set to the Resilio path, e.g. C:\HermesSync\MarketData\price_history.
+    # Empty -> the Parquet-ingest health section shows "not configured".
+    price_history_dir: str | None = field(
+        default_factory=lambda: os.environ.get("TST_PRICE_HISTORY_DIR")
+    )
+
     # Discord: outbound webhook URL for collaboration notifications (e.g. a MATP
     # refresh completing posts a summary to a channel). Unset -> notifications
     # are silently skipped. Create it in Discord: Server Settings -> Integrations

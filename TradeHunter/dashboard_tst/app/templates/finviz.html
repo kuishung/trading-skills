@@ -1,7 +1,10 @@
 {% extends "base.html" %}
-{% block title %}Finviz filters &middot; TradeHunter{% endblock %}
+{% block title %}Data Ingest &middot; TradeHunter{% endblock %}
 {% block content %}
-<h1 class="text-2xl font-semibold mb-1">Finviz filters</h1>
+<h1 class="text-2xl font-semibold mb-1">Data Ingest</h1>
+<p class="text-slate-400 text-sm mb-5">Screener filters that feed MATP, plus the health of the parquet bars ingest.</p>
+
+<h2 class="text-lg font-medium mb-1">1 &middot; Finviz Filters</h2>
 <p class="text-slate-400 text-sm mb-3">Saved screener filters. Active ones feed MATP. Set a <b>schedule</b> and the research agent runs that filter automatically when it's due.</p>
 {% if can_edit %}
 <div class="mb-6 rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2 text-xs text-slate-400">
@@ -106,5 +109,52 @@
   No filters yet.
   {% if can_edit %}Add one above.{% else %}A moderator hasn't added any.{% endif %}
 </p>
+{% endif %}
+
+{# ============ 2 · Parquet Ingest health (freshness only) ============ #}
+<h2 class="text-lg font-medium mt-10 mb-1">2 &middot; Parquet Ingest
+  <span class="text-xs font-normal text-slate-500">&mdash; backtest bars health</span></h2>
+<p class="text-slate-400 text-sm mb-3">Daily health check of the historical bars store (the ingest runs on the Hermes box; this is read-only freshness).</p>
+{% if ingest %}
+{% set dot = {0:'bg-emerald-400', 1:'bg-amber-400', 2:'bg-rose-500'} %}
+{% set txt = {0:'text-emerald-300', 1:'text-amber-300', 2:'text-rose-300'} %}
+<div class="rounded-lg border border-slate-800 bg-slate-900/40 p-4">
+  <div class="flex items-center gap-2 mb-3 text-sm flex-wrap">
+    <span class="inline-block h-2.5 w-2.5 rounded-full {{ dot[ingest.tier] }}"></span>
+    <span class="text-slate-300">Last ingest write <b class="{{ txt[ingest.tier] }}">{{ ingest.newest_ago or 'never' }}</b></span>
+    {% if ingest.received_ago %}<span class="text-[11px] text-slate-500">&middot; reported {{ ingest.received_ago }}{% if ingest.host %} by {{ ingest.host }}{% endif %}</span>{% endif %}
+    {% if ingest.root %}<span class="text-[11px] text-slate-600 ml-auto break-all">{{ ingest.root }}</span>{% endif %}
+  </div>
+  <table class="w-full text-sm">
+    <thead class="text-[10px] uppercase tracking-wide text-slate-500">
+      <tr><th class="text-left px-2 py-1">Timeframe</th><th class="text-right px-2 py-1">Symbols</th><th class="text-right px-2 py-1">Last write</th><th class="text-right px-2 py-1">Size</th></tr>
+    </thead>
+    <tbody>
+      {% for t in ingest.timeframes %}
+      <tr class="border-t border-slate-800">
+        <td class="px-2 py-1 font-medium text-slate-200">{{ t.tf }}</td>
+        <td class="px-2 py-1 text-right tabular-nums">{{ t.symbols }}</td>
+        <td class="px-2 py-1 text-right tabular-nums {{ txt[t.tier] }}">{{ t.newest_ago or 'never' }}</td>
+        <td class="px-2 py-1 text-right tabular-nums text-slate-400">{{ t.mb }} MB</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if ingest.log_tail %}
+  <div class="mt-3 border-t border-slate-800 pt-2">
+    <div class="text-[10px] uppercase tracking-wide text-slate-600 mb-1">Recent ingest log</div>
+    <div class="space-y-0.5 font-mono text-[11px] text-slate-400 max-h-32 overflow-y-auto pr-1">
+      {% for ln in ingest.log_tail %}<div class="truncate">{{ ln }}</div>{% endfor %}
+    </div>
+  </div>
+  {% endif %}
+  <p class="text-[11px] text-slate-600 mt-2">Freshness only (file timestamps) &mdash; parquet is backtest data, ingested on Hermes (IBKR/yfinance &rarr; bars store), not from this page.</p>
+</div>
+{% else %}
+<div class="rounded-lg border border-slate-800 bg-slate-900/40 p-4 text-sm text-slate-500">
+  Parquet ingest health isn&rsquo;t available here &mdash; set <code class="text-slate-400">TST_PRICE_HISTORY_DIR</code>
+  (e.g. <code class="text-slate-400">C:\HermesSync\MarketData\price_history</code>) in <code class="text-slate-400">app/.env</code>
+  on the host that holds the bars store, then restart.
+</div>
 {% endif %}
 {% endblock %}

@@ -119,6 +119,40 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-01 — v2.78: wider chatroom + smaller chat font
+
+- Study chatroom (right panel) widened to **1/4 of the screen** (`lg:w-80` →
+  `lg:w-1/4`); chat bubbles + composer dropped to **text-xs** for density.
+
+### 2026-06-01 — v2.77: ingest health via a pushed report (reporter cron)
+
+- The parquet-ingest health is now **pushed** by a Hermes-side reporter, not read
+  over the network. New `deploy/report_ingest_health.py` (stdlib-only) stats the
+  bars store + tails `ingest_log.jsonl` and POSTs a report to **`POST
+  /api/ingest/health`** (X-API-Key); run it from a Windows scheduled task (the
+  "cron"). New `IngestHealth` model + migration `c9d0e1f2a3b4`; the Data Ingest
+  page shows the latest report (per-timeframe freshness + **"reported X ago"** so
+  a dead reporter is obvious + a recent ingest-log tail). Falls back to the local
+  filesystem read (v2.76) when no report has been received yet.
+
+### 2026-06-01 — v2.76: "Finviz" → "Data Ingest" (filters + parquet health)
+
+- Renamed the **Finviz** nav/page to **Data Ingest**, now two sections:
+  **1 · Finviz Filters** (the existing saved-filter manager) and **2 · Parquet
+  Ingest** — a read-only **health/freshness** view of the bars store (per
+  timeframe: # symbols, last-write "X ago" with green/amber/red tiers, size; an
+  overall freshness pill). The ingest itself still runs on Hermes (unchanged);
+  this is just the daily eyeball. New `services/ingest_health.py` (stats **file
+  metadata only** — no parquet content reads, per the backtest-only scope rule)
+  + `TST_PRICE_HISTORY_DIR` config. (Route prefix stays `/finviz`.)
+
+### 2026-06-01 — v2.75: members always see (read-only) trade levels
+
+- The study trade-levels panel now **always renders for members** (was only shown
+  when a level was set), as a read-only row (Support/Resist/Entry/Stop/Target/R:R,
+  "—" for unset) with **no inputs** — members view the curator's plan but can't
+  edit it. The editable form stays moderator-only.
+
 ### 2026-06-01 — v2.74: web → Discord (two-way chat bridge)
 
 - Sending from the web chatroom now **posts into the study's Discord thread** via

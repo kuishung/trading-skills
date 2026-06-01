@@ -97,6 +97,14 @@ def finviz_home(
     )
     for f in filters:  # attach decoded criteria chips for the template
         f.criteria = parse_finviz_criteria(f.url)
+    from ..models import IngestHealth
+    from ..services.ingest_health import parquet_health, report_to_display
+
+    # Prefer the report PUSHED by the Hermes reporter cron; fall back to a live
+    # local read (works when the dashboard is co-located with the bars store).
+    row = db.query(IngestHealth).order_by(IngestHealth.received_at.desc()).first()
+    ingest = report_to_display(row.report, row.received_at) if (row and row.report) else parquet_health()
+
     return templates.TemplateResponse(
         request,
         "finviz.html",
@@ -105,6 +113,7 @@ def finviz_home(
             "filters": filters,
             "can_edit": user.can_moderate,
             "intervals": list(RUN_INTERVALS.keys()),
+            "ingest": ingest,
         },
     )
 
