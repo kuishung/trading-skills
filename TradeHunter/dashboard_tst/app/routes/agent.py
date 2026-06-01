@@ -106,17 +106,15 @@ def agent_pill(
         status_text = "no heartbeat yet"
     else:
         status_text = ("online" if online else "stale") + " · " + _fmt_ago(recv, now)
-    # Is the agent actively EXECUTING a MATP run right now? (a claimed/running
-    # request — not merely queued). The pill blinks only while this is true.
-    working = (
-        db.query(MATPRefreshRequest)
-        .filter(MATPRefreshRequest.status == "running")
-        .first()
-        is not None
-    )
-    # Poll faster while a run executes so the blink starts/stops promptly; calm
-    # when idle. The fragment carries its own next poll (see _agent_pill.html).
-    poll_in = 5 if working else 20
+    # Does the agent have a LIVE MATP run (queued OR running, not stale)? The
+    # pill blinks while this is true. We deliberately include 'pending' — not
+    # just 'running' — because the agent's running-status report can lag or fail
+    # (it goes through the terminal-tool approval gate), so a requested refresh
+    # should blink as soon as it's queued and stop when it finishes or goes
+    # stale. Reuses _active_run_items' staleness so a stuck run stops blinking.
+    working = any(not it["stale"] for it in _active_run_items(db))
+    # Poll faster while working so the blink starts/stops promptly; calm idle.
+    poll_in = 5 if working else 15
     return templates.TemplateResponse(
         request, "_agent_pill.html",
         {

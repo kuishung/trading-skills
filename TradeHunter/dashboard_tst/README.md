@@ -119,6 +119,17 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-01 — v2.49: pill blink fix + band marker thickness
+
+- **Pill now blinks on any live MATP run (queued OR running), not just
+  `running`.** Keying on `status='running'` never lit up in practice — the
+  agent's running-status POST is gated by the terminal-tool approval, so runs
+  sit in `pending`. The pill now blinks as soon as a refresh is queued (and
+  stops when it finishes or goes stale); idle poll trimmed 20s → 15s.
+  `/agent/pill` reuses `_active_run_items` for the `working` flag.
+- **Analyst-band MBP/MATP lines thickened to match the price line** (`w-px` →
+  `w-0.5`), so all three markers read at the same weight.
+
 ### 2026-06-01 — v2.48: live "working now" panel + moving progress bar on /agent
 
 - The **/agent** (Nous Hermes) page now shows what the agent is **processing
@@ -147,11 +158,14 @@ surface takes shape.
   now **orange** (`bg-orange-500/15 text-orange-300`) instead of green; removed
   the redundant **Agent** nav item (the Nous Hermes pill already links to
   `/agent`); the **"Nous Hermes"** pill label is now
-  **white**, and its liveness dot **blinks only while the agent is executing a
-  MATP run** (`status='running'`), static otherwise (`.th-blink` keyframe in
-  base.html). The pill self-polls adaptively — 5s while a run executes (so the
-  blink starts/stops promptly), 20s idle — replacing the old fixed 60s refresh;
-  `/agent/pill` now returns a `working` flag.
+  **white**, and its liveness dot **blinks while the agent has a live MATP run
+  (queued OR running, not stale)**, static otherwise (`.th-blink` keyframe in
+  base.html). Originally keyed on `status='running'` only, but that never lights
+  up in practice — the agent's running-status POST is gated by the terminal-tool
+  approval, so runs sit in `pending`; keying on any live open run makes the pill
+  blink as soon as a refresh is requested. The pill self-polls adaptively — 5s
+  working, 15s idle — replacing the old fixed 60s refresh; `/agent/pill` returns
+  a `working` flag.
 - **Analyst targets sorted relevant-and-high first.** `_ticker_targets` now
   orders the included (post-earnings, MATP-counting) targets first, then the
   dropped ones, each group by target price descending — so the targets table

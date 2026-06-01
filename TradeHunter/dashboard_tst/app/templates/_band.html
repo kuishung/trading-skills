@@ -25,9 +25,9 @@
       <div class="mx-auto h-full w-0.5 bg-sky-400/50 group-hover:bg-sky-200 group-hover:w-1 transition-all"></div>
     </div>
     {% endfor %}
-    {# markers #}
-    {% if band.mbp_pct is not none %}<div class="absolute top-0 h-full w-px bg-green-600" style="left: {{ band.mbp_pct }}%"></div>{% endif %}
-    {% if band.matp_pct is not none %}<div class="absolute top-0 h-full w-px bg-orange-500" style="left: {{ band.matp_pct }}%"></div>{% endif %}
+    {# markers — MBP/MATP same thickness as the current-price line (w-0.5) #}
+    {% if band.mbp_pct is not none %}<div class="absolute top-0 h-full w-0.5 bg-green-600" style="left: {{ band.mbp_pct }}%"></div>{% endif %}
+    {% if band.matp_pct is not none %}<div class="absolute top-0 h-full w-0.5 bg-orange-500" style="left: {{ band.matp_pct }}%"></div>{% endif %}
     {% if band.current_pct is not none %}<div class="absolute top-0 h-full w-0.5 bg-amber-400" style="left: {{ band.current_pct }}%"></div>{% endif %}
   </div>
 
