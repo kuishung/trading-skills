@@ -70,6 +70,28 @@ from _common import load_config  # noqa: E402  scripts/_common.py
 HISTORY_CLIENT_ID = 83
 DEFAULT_PACING_S = 7.0   # seconds between IBKR requests; safe under 60/600s cap
 
+# Symbols IBKR cannot serve historical bars for on this account (only resolve
+# under the dataless 'VALUE' placeholder exchange, or aren't findable as a US
+# stock). Listed in resources/ibkr_unservable.txt and excluded from the work
+# list so the ingest stops re-attempting them on every restart. See that file
+# for the diagnosis + how to re-enable if the IBKR data subscription changes.
+UNSERVABLE_PATH = SKILL_DIR / "resources" / "ibkr_unservable.txt"
+
+
+def load_unservable() -> set[str]:
+    """Read resources/ibkr_unservable.txt -> upper-cased symbol set.
+    Best-effort: returns empty set if the file is missing/unreadable."""
+    try:
+        out: set[str] = set()
+        for line in UNSERVABLE_PATH.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            out.add(line.split()[0].upper())
+        return out
+    except Exception:
+        return set()
+
 # IBKR barSizeSetting + sensible max-duration-per-request mapping.
 # IB historical-data pacing tightens for smaller bars; chunk accordingly.
 TIMEFRAME_TO_IB = {
@@ -373,6 +395,26 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
         else:
             sys.stderr.write(msg + "\n")
             sys.stderr.flush()
+
+    # ---------- Drop IBKR-unservable symbols ----------
+    # These only resolve under IBKR's dataless 'VALUE' exchange (or aren't
+    # findable as US stocks), so every seed attempt returns +0 bars and they'd
+    # otherwise be re-classified as `seed` and retried first on every restart —
+    # the cause of the "ingest loops forever on the last N tickers" symptom.
+    # Filter BEFORE the pre-flight scan so they never enter the work list.
+    unservable = load_unservable()
+    if unservable:
+        before = len(symbols)
+        dropped = sorted(s for s in symbols if s.upper() in unservable)
+        symbols = [s for s in symbols if s.upper() not in unservable]
+        if dropped:
+            _emit(
+                f"[pre-flight] excluding {len(dropped)} IBKR-unservable symbol(s) "
+                f"(see resources/ibkr_unservable.txt): {', '.join(dropped)}"
+            )
+        if not symbols:
+            _emit(f"[pre-flight] all {before} symbols were unservable — nothing to do")
+            return {}
 
     # ---------- Pre-flight (no IBKR calls) ----------
     # Classify everything, log a summary, then build the work list. This

@@ -22,6 +22,7 @@ treating any "missing" feature as a bug.
 - `ibkr_data.py` — IBKR bars / quotes / trades adapter. Lazy `ib_insync` import (heavy dep, only needed when `cfg["data_provider"]=="ibkr"`).
 - `ibkr_smoke.py` — Bare-socket TWS handshake test. Run as CLI to verify IBKR connectivity.
 - `ibkr_probe_symbols.py` — One-shot read-only diagnostic (clientId 98) for symbols that ingest `+0 bars`. Runs `reqContractDetails` raw + dot→space, prints contract count / `conId` / `primaryExchange`, then a tiny daily TRADES pull. CLI: `py -3.12 resources/ibkr_probe_symbols.py [SYM ...]`.
+- `ibkr_unservable.txt` — Plain-text skip-list of symbols IBKR cannot serve historical bars for on this account (resolve only under the dataless `VALUE` exchange, or not findable as a US stock). `ibkr_history.bulk_update()` drops these before the pre-flight scan so the ingest stops re-attempting them every restart. See the file header for the diagnosis + when to re-enable.
 - `ibkr_dryrun.py` — Exercises the data adapter end-to-end without any Alpaca side effects.
 - `yfinance_float.py` — Free-float lookup via yfinance `Ticker.info["floatShares"]`. 7-day disk cache at `state/cache/float_<sym>.json`. Drops > 100M by default (configurable cap). Used by the GUNS scanner; reusable by future strategies that need float screening.
 - `yfinance_news.py` — News-catalyst classifier via yfinance `Ticker.news`. 36-hour freshness window, regex tables for BAD (M&A, offering, dilution, going-concern, SEC actions, FDA reject) vs GOOD (earnings beat, FDA approval, contract, partnership, upgrade, AI sympathy). 4-hour cache. Currently consumed only by the GUNS scanner; patterns are general enough for reuse.
@@ -53,6 +54,28 @@ treating any "missing" feature as a bug.
 - `trend_state.py` — **EMA 20/50/200 daily-chart trend classifier** (v1.0.0). Source: `strategies-reference/TREND_EMA.md`. Classifies any symbol into one of four states using EMA stack order + spread dynamics: `uptrend` (EMA20 > EMA50 > EMA200), `downtrend` (EMA20 < EMA50 < EMA200), `consolidation` (not stacked + all EMAs converging), `sideways` (not stacked + not converging). Pure-function core (no I/O): `classify_trend_ema(closes)`, `trend_ema_detail(closes)`. Convenience wrappers with bars_store integration: `classify_symbol_trend(symbol, detail=False)`, `classify_universe_trends(symbols)`. String constants exported: `UPTREND`, `DOWNTREND`, `CONSOLIDATION`, `SIDEWAYS`, `UNKNOWN`. Smoke-tested on 679 symbols (0 unknowns).
 
 ## Changelog
+
+### 2026-06-03 — fix stuck +0-bar ingest loop: share-class `_stock()` + skip-list
+
+Resolved the "ingest keeps looping / last ~28 tickers take ages" problem.
+Probe (`ibkr_probe_symbols.py`) on Hermes split the stuck set into three:
+
+1. **Share-class dot bug** (`BF.B`, `BRK.B`, `MOG.A`) — `ibkr_data._stock()`
+   sent the dot form to IBKR (`reqContractDetails` → "No security definition")
+   so every history request returned empty. **Fix:** `_stock()` now maps
+   `.`→` ` for the IBKR contract only (`BRK.B`→`BRK B`), keeping the dotted
+   symbol as the parquet/storage key. `ibkr_history._stock` delegates here, so
+   both adapters are fixed at once. Confirmed: dot→space returns bars.
+2. **IBKR-unservable** (`CWEN.A`, `ASGN`, `BK`, `CSGS`, `EXPI`, `MCW`, `PSTG`,
+   `SNCY`) — resolve only under the dataless `VALUE` placeholder exchange
+   (hist → Error 162) or aren't findable as US stocks (conId+SMART → "Unknown
+   contract"). Likely a missing US market-data subscription on the account.
+   **Fix:** added `resources/ibkr_unservable.txt` + `load_unservable()`;
+   `bulk_update()` now drops these before the pre-flight scan and logs what it
+   excluded (no silent truncation), so they never re-enter the work list.
+3. **Corrupt parquets** (`AMRX`, `AORT` 3min — `OSError: Column cannot have
+   more than one dictionary`, partial-sync corruption) — deleted so they
+   re-seed clean.
 
 ### 2026-06-03 — `ibkr_probe_symbols.py`: diagnose stuck +0-bar seeds
 

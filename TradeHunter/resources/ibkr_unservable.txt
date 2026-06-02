@@ -1,0 +1,31 @@
+# IBKR-unservable symbols — EXCLUDED from the ibkr_history ingest work list.
+#
+# Each symbol below was confirmed (2026-06-03, resources/ibkr_probe_symbols.py
+# run against Hermes' IB Gateway paper) to be unfetchable for historical bars
+# on this IBKR account: it either resolves ONLY under the dataless 'VALUE'
+# placeholder exchange (reqHistoricalData -> Error 162 "No data of type
+# EODChart ... for exchange 'VALUE'") or is not findable as a US stock at all
+# (reqMatchingSymbols returns 0 / only foreign listings / a different ticker).
+#
+# Effect: bulk_update() drops these before the pre-flight scan, so the ingest
+# stops re-classifying them as `seed` and re-attempting (and hanging on) them
+# at the top of the work list on every restart — which is what made the run
+# look like an infinite loop on the "last N tickers".
+#
+# LIKELY ROOT CAUSE: a missing US equities market-data subscription on the
+# IBKR account (the 'VALUE' exchange is IBKR's tell for "no data permission").
+# If you enable that subscription and these begin resolving on SMART (re-run
+# resources/ibkr_probe_symbols.py to verify), DELETE them from this list so
+# they seed normally via IBKR — including 3min, which yfinance cannot provide.
+#
+# One symbol per line (dotted share-class form as stored), '#' comments + blank
+# lines ignored. Matched case-insensitively against the ingest universe.
+
+ASGN
+BK
+CSGS
+CWEN.A
+EXPI
+MCW
+PSTG
+SNCY

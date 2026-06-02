@@ -180,7 +180,18 @@ def _stock(symbol: str) -> "Stock":
     # SMART routing; primaryExchange left blank — IBKR will resolve.
     # For ADRs / dual-listed names a strategy may need to override
     # primaryExchange via a custom Stock contract.
-    return Stock(symbol.upper(), "SMART", "USD")
+    #
+    # Share-class tickers: IBKR represents the class with a SPACE, not a dot
+    # ("BRK.B" -> "BRK B", "MOG.A" -> "MOG A", "BF.B" -> "BF B"). Our universe
+    # files and parquet keys use the dot form, so translate ONLY for the IBKR
+    # contract — the caller keeps using the dotted symbol for storage. Without
+    # this, reqContractDetails returns "No security definition has been found"
+    # and every historical request comes back empty (+0 bars), permanently
+    # trapping those symbols in the ingest work list. Confirmed 2026-06-03 via
+    # resources/ibkr_probe_symbols.py on Hermes: dot form -> 0 contracts, space
+    # form -> 1 NYSE contract returning bars.
+    ib_symbol = symbol.upper().replace(".", " ")
+    return Stock(ib_symbol, "SMART", "USD")
 
 
 def _now_et(fake_now: str | None):
