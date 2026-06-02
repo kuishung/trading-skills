@@ -77,6 +77,18 @@ def _details_px(ib, symbol: str, primary: str):
         return f"ERROR: {type(exc).__name__}: {exc}"
 
 
+def _hist_by_conid(ib, conid: int) -> str:
+    """Qualify a Contract by conId (exchange=SMART) and try a 5-D daily pull.
+    This routes history via SMART instead of the dataless 'VALUE' placeholder."""
+    from ib_insync import Contract
+    try:
+        c = Contract(conId=conid, exchange="SMART", currency="USD")
+        ib.qualifyContracts(c)
+        return f"qualified={c.symbol or '?'}/{c.primaryExchange or '?'} | {_hist_count(ib, c)}"
+    except Exception as exc:
+        return f"ERROR: {type(exc).__name__}: {str(exc)[:120]}"
+
+
 def _hist_count(ib, contract) -> str:
     """Tiny 5-day daily TRADES pull on an explicit contract; report outcome."""
     try:
@@ -116,30 +128,30 @@ def probe(symbol: str, ib, pace: float) -> None:
 
     # If neither raw nor dot->space resolved, ask IBKR what it actually has.
     if not resolved:
-        m = _matching(ib, symbol.replace(".", " "))
+        query = symbol.replace(".", " ")
+        m = _matching(ib, query)
         time.sleep(pace)
         if isinstance(m, str):
             print(f"  matchingSymbols -> {m}")
             return
-        us = [d for d in m if getattr(d.contract, "secType", "") == "STK"
-              and getattr(d.contract, "currency", "") == "USD"]
-        print(f"  matchingSymbols({symbol!r}) -> {len(m)} match(es), {len(us)} US stock(s)")
+        # EXACT-symbol US stock matches only (avoid fuzzy junk like BK->BKNG).
+        exact = [d for d in m
+                 if getattr(d.contract, "secType", "") == "STK"
+                 and getattr(d.contract, "currency", "") == "USD"
+                 and getattr(d.contract, "symbol", "").upper() == query.upper()]
+        print(f"  matchingSymbols({query!r}) -> {len(m)} match(es), {len(exact)} EXACT US stock(s)")
         for d in m[:8]:
             c = d.contract
             print(f"        sym={c.symbol:<8} secType={c.secType:<5} "
                   f"primary={c.primaryExchange or '-':<8} cur={c.currency} conId={c.conId}")
-        # Retry contract details WITH the primaryExchange of the first US match.
-        if us:
-            px = us[0].contract.primaryExchange
-            sym_real = us[0].contract.symbol
-            det2 = _details_px(ib, sym_real, px)
-            time.sleep(pace)
-            if isinstance(det2, str):
-                print(f"  cd+primary({sym_real!r},{px}) -> {det2}")
-            else:
-                print(f"  cd+primary({sym_real!r},{px}) -> {len(det2)} contract(s)")
-                if det2:
-                    print(f"        hist: {_hist_count(ib, det2[0].contract)}")
+        # The fix hypothesis: take the exact match's conId and request history
+        # via SMART (NOT the 'VALUE' placeholder exchange).
+        if exact:
+            conid = exact[0].contract.conId
+            print(f"  -> conId={conid} via SMART:")
+            print(f"        hist(conId,SMART): {_hist_by_conid(ib, conid)}")
+        else:
+            print("  (no exact US-stock match — genuinely absent / renamed in IBKR)")
 
 
 def main() -> int:
