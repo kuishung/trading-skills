@@ -6,23 +6,26 @@ Read-only. clientId 98 (probe id — never collides with 71 bot / 80 observer /
 For each symbol it:
   1. reqContractDetails on the RAW symbol  ("BRK.B", "BK", ...)
   2. reqContractDetails on the dot->space variant ("BRK B")  if it differs
-  3. reports how many contracts matched (0 = unknown, >1 = AMBIGUOUS) and the
-     conId / primaryExchange of each candidate
-  4. attempts a tiny reqHistoricalData (5 D daily, TRADES) on the best
-     qualified contract and prints bar count or the IBKR error
+  3. reqMatchingSymbols(symbol) — IBKR's OWN fuzzy symbol search — to show
+     what contract(s) actually exist for that ticker (conId / primaryExchange
+     / secType), which distinguishes "needs primaryExchange" from "throttled"
+     from "genuinely absent".
+  4. if a US-stock match is found, retries reqContractDetails WITH the
+     match's primaryExchange, then a tiny 5-D daily TRADES pull.
 
-This isolates the three hypotheses for the stuck-seed set:
-  - dotted share classes  -> raw fails, dot->space succeeds      (code bug)
-  - ambiguous SMART        -> >1 contract, qualify can't pin one  (needs primaryExchange)
-  - genuinely no data      -> 1 contract qualifies but hist is empty / errors
+Requests are PACED (default 1.5s) so a consecutive-request throttle on
+reqContractDetails (IBKR error 200 returned spuriously under burst) can't be
+mistaken for a genuine "no security definition".
 
 Run (Laptop OR Hermes — wherever IB Gateway paper is reachable):
     py -3.12 resources/ibkr_probe_symbols.py
     py -3.12 resources/ibkr_probe_symbols.py BK ASGN BRK.B     # custom list
+    py -3.12 resources/ibkr_probe_symbols.py --pace 3.0 BK     # slower pacing
 """
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 _root = Path(__file__).resolve().parent.parent
@@ -55,6 +58,25 @@ def _details(ib, symbol: str):
         return f"ERROR: {type(exc).__name__}: {exc}"
 
 
+def _matching(ib, symbol: str):
+    """reqMatchingSymbols — IBKR's fuzzy search. Returns list of ContractDescription."""
+    try:
+        return ib.reqMatchingSymbols(symbol.upper())
+    except Exception as exc:
+        return f"ERROR: {type(exc).__name__}: {exc}"
+
+
+def _details_px(ib, symbol: str, primary: str):
+    """reqContractDetails with an explicit primaryExchange."""
+    from ib_insync import Stock
+    try:
+        c = Stock(symbol.upper(), "SMART", "USD")
+        c.primaryExchange = primary
+        return ib.reqContractDetails(c)
+    except Exception as exc:
+        return f"ERROR: {type(exc).__name__}: {exc}"
+
+
 def _hist_count(ib, contract) -> str:
     """Tiny 5-day daily TRADES pull on an explicit contract; report outcome."""
     try:
@@ -68,35 +90,74 @@ def _hist_count(ib, contract) -> str:
         return f"ERROR: {type(exc).__name__}: {str(exc)[:120]}"
 
 
-def probe(symbol: str, ib) -> None:
+def probe(symbol: str, ib, pace: float) -> None:
     print(f"\n=== {symbol} ===")
     variants = [symbol]
     if "." in symbol:
         variants.append(symbol.replace(".", " "))   # dot -> space (IBKR class format)
 
+    resolved = False
     for v in variants:
         det = _details(ib, v)
+        time.sleep(pace)
         if isinstance(det, str):
-            print(f"  query {v!r:12} -> {det}")
+            print(f"  cd {v!r:12} -> {det}")
             continue
-        print(f"  query {v!r:12} -> {len(det)} contract(s)")
+        print(f"  cd {v!r:12} -> {len(det)} contract(s)")
         for d in det[:6]:
             c = d.contract
             print(f"        conId={c.conId:<10} sym={c.symbol:<6} "
                   f"local={c.localSymbol:<8} primary={c.primaryExchange or '-':<8} "
                   f"exch={c.exchange}")
-        # historical probe on the FIRST qualified candidate
         if det:
+            resolved = True
             print(f"        hist({v!r}): {_hist_count(ib, det[0].contract)}")
+            time.sleep(pace)
+
+    # If neither raw nor dot->space resolved, ask IBKR what it actually has.
+    if not resolved:
+        m = _matching(ib, symbol.replace(".", " "))
+        time.sleep(pace)
+        if isinstance(m, str):
+            print(f"  matchingSymbols -> {m}")
+            return
+        us = [d for d in m if getattr(d.contract, "secType", "") == "STK"
+              and getattr(d.contract, "currency", "") == "USD"]
+        print(f"  matchingSymbols({symbol!r}) -> {len(m)} match(es), {len(us)} US stock(s)")
+        for d in m[:8]:
+            c = d.contract
+            print(f"        sym={c.symbol:<8} secType={c.secType:<5} "
+                  f"primary={c.primaryExchange or '-':<8} cur={c.currency} conId={c.conId}")
+        # Retry contract details WITH the primaryExchange of the first US match.
+        if us:
+            px = us[0].contract.primaryExchange
+            sym_real = us[0].contract.symbol
+            det2 = _details_px(ib, sym_real, px)
+            time.sleep(pace)
+            if isinstance(det2, str):
+                print(f"  cd+primary({sym_real!r},{px}) -> {det2}")
+            else:
+                print(f"  cd+primary({sym_real!r},{px}) -> {len(det2)} contract(s)")
+                if det2:
+                    print(f"        hist: {_hist_count(ib, det2[0].contract)}")
 
 
 def main() -> int:
-    syms = [s.upper() for s in sys.argv[1:]] or DEFAULT_SYMBOLS
+    argv = [a for a in sys.argv[1:]]
+    pace = 1.5
+    if "--pace" in argv:
+        i = argv.index("--pace")
+        try:
+            pace = float(argv[i + 1])
+            del argv[i:i + 2]
+        except (IndexError, ValueError):
+            print("--pace needs a number"); return 2
+    syms = [s.upper() for s in argv] or DEFAULT_SYMBOLS
     cfg = dict(load_config() or {})
     cfg["ibkr_client_id"] = PROBE_CLIENT_ID
     print(f"# probing {len(syms)} symbols on "
           f"{cfg.get('ibkr_host','127.0.0.1')}:{cfg.get('ibkr_port',4002)} "
-          f"(clientId={PROBE_CLIENT_ID}, read-only)")
+          f"(clientId={PROBE_CLIENT_ID}, read-only, pace={pace}s)")
     try:
         ib = ibkr_data._connect(cfg)
     except Exception as exc:
@@ -104,7 +165,7 @@ def main() -> int:
         return 2
     try:
         for s in syms:
-            probe(s, ib)
+            probe(s, ib, pace)
     finally:
         try:
             ib.disconnect()

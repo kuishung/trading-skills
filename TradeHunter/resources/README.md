@@ -69,6 +69,15 @@ show the real outcome. Isolates the three hypotheses: dotted share classes
 exempt). Run on whichever machine has IB Gateway paper reachable:
 `py -3.12 resources/ibkr_probe_symbols.py`.
 
+First Hermes run (2026-06-03) confirmed: dotted classes (`BF.B`/`BRK.B`/
+`MOG.A`) resolve once converted to IBKR's space form (`BF B` …) and return
+bars; but 7 "plain" tickers (ASGN/BK/CSGS/EXPI/MCW/PSTG/SNCY) **and** CWEN.A
+returned `0 contracts` / "No security definition" while TSLA worked. To tell
+"needs `primaryExchange`" from a burst-throttle of `reqContractDetails`, the
+probe gained request **pacing** (`--pace`, default 1.5s) and a
+`reqMatchingSymbols` fallback that prints IBKR's own search results + retries
+contract lookup with the matched `primaryExchange`.
+
 ### 2026-05-30 — `finviz_screener.py`: fix Finviz 301 + connection drop
 
 Finviz moved the screener path (`screener.ashx` -> `screener`, served as a 301) and now **drops requests that lack browser-like Accept headers** — the bare `urllib` request (User-Agent only) was getting `RemoteDisconnected`, so `fetch_screener_symbols`/`fetch_screener_rows` returned empty. Fix: `_fetch_page` now sends `Accept` + `Accept-Language` alongside the User-Agent; urllib follows the 301 cleanly. Verified live: a mega-cap-tech filter returns 25 symbols and 25 rows with price+volume (the `<!-- TS -->` block still parses). Benefits every caller (GUNS scanner, the dashboard's universe builder, and the new `dashboard_tst` Finviz tab).
