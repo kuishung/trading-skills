@@ -104,6 +104,16 @@ def main() -> int:
                          "custom list. Overrides --universe when set.")
     ap.add_argument("--pacing", type=float, default=7.0,
                     help="seconds between IBKR requests (under 60-per-600s cap)")
+    ap.add_argument("--topup", action="store_true",
+                    help="TOP-UP MODE: pass skip_up_to_date=False so already-"
+                         "depth-complete symbols get an INCREMENTAL update "
+                         "(bars after the last stored timestamp) instead of "
+                         "being skipped. Use with --symbols-file to refresh the "
+                         "recent tail of specific stale symbols (the watcher's "
+                         "default skip_up_to_date=True never appends new days to "
+                         "full-depth symbols, so the broad universe goes stale). "
+                         "Target the timeframes that are actually stale to avoid "
+                         "a wasteful cross-product.")
     args = ap.parse_args()
 
     # Parse --timeframes — each entry can be either "3min" or "3min:180".
@@ -145,7 +155,8 @@ def main() -> int:
 
     log(f"wait_and_ingest: timeframes={timeframes} "
         f"seed_days_by_tf={lookback_days_by_tf} "
-        f"force_seed={args.force_seed} universe={args.universe} pacing={args.pacing}")
+        f"force_seed={args.force_seed} topup={args.topup} "
+        f"universe={args.universe} pacing={args.pacing}")
 
     # --- Wait phase ---
     if args.wait_pid:
@@ -205,7 +216,7 @@ def main() -> int:
             lookback_days_by_tf=lookback_days_by_tf,
             pacing_s=args.pacing,
             force_seed=args.force_seed,
-            skip_up_to_date=True,
+            skip_up_to_date=not args.topup,
             # Route ALL bulk_update output through this script's log() so
             # the watcher's _ingest_*.log captures pre-flight summary +
             # per-iteration progress. Without this, on Hermes (Task

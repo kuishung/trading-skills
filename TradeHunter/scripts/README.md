@@ -34,6 +34,18 @@ they're rarely-touched and small, so `scripts/` is fine.
 
 ## Changelog
 
+### 2026-06-03 - `wait_and_ingest.py`: add `--topup` (refresh stale tails)
+
+New `--topup` flag passes `skip_up_to_date=False` to `bulk_update`, so
+already-depth-complete symbols get an INCREMENTAL update (bars after the last
+stored timestamp) instead of being skipped. The default watcher
+(`skip_up_to_date=True`) never appends new days to full-depth symbols, so the
+broad universe's recent tail goes stale (the `check_bars_integrity.py` audit
+found ~178 daily / ~23 intraday symbols ~1-2 weeks behind). Pair with
+`--symbols-file` + the actually-stale timeframes to refresh just those tails
+without a wasteful cross-product, e.g.
+`wait_and_ingest.py --symbols-file C:\HermesSync\MarketData\_stale_daily.txt --timeframes daily --topup`.
+
 ### 2026-06-03 - `check_bars_integrity.py`: parquet audit (integrity + consistency)
 
 Read-only auditor for `data/price_history/`. **Tier 1** (default, metadata-only,
