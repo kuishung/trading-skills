@@ -33,6 +33,21 @@ web, Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-06-03 — `tray_status.py`: surface the deep-check / integrity result
+
+Per the **tray-sync rule** (CLAUDE.md, 2026-06-03): the tray now reads the
+latest `_deepcheck_<ts>.txt` integrity report (written by
+`ingest_supervisor.py` after every top-up) via new `get_deepcheck_status()` and
+shows it. It parses Tier-1 `corrupt`/`empty`/`bad_schema`/`stale` + Tier-2
+`flagged files` and classifies `clean` / `issues` / `partial` / `none`. The
+result is appended to the tray tooltip (`deepcheck: CLEAN (…) MM-DD HH:MM` /
+`ISSUES (…)`), and on `issues` the icon draws a **thick red alert ring** on top
+of the normal ingest-state fill — so a data-integrity problem is visible at a
+glance without dropping to the CLI. Parser unit-checked (clean→no alert,
+issues→alert, partial). NOTE: the running `IntradayBot-Tray` task must point at
+this canonical copy (`C:\trading-skills\TradeHunter`) rather than the legacy
+`C:\ClaudeSkills\…\intraday-bot` one for this to take effect.
+
 ### 2026-05-29 — Renamed `dashboard/` → `dashboard_intraday/`
 
 User request 2026-05-29: *"the dashboard work i want you to change the name to dashboard_intraday. I want to wire another dashboard call dashboard_tst which is for trend and swing trading."*

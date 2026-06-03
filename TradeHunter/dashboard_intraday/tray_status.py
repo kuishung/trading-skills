@@ -565,11 +565,68 @@ def get_ingest_status() -> dict:
         }
 
 
+def get_deepcheck_status() -> dict:
+    """Parse the latest `_deepcheck_<ts>.txt` integrity report in data_root.
+
+    The supervisor (ingest_supervisor.py) writes one after every top-up. The
+    tray MUST surface this (tray-sync rule, 2026-06-03): a clean audit is
+    healthy; any corruption / empty / schema problem / Tier-2 `flagged files`
+    is a critical data-quality alert the user needs to SEE at a glance.
+
+    Returns: {status: clean|issues|partial|none|unknown, summary, ts,
+              issues, corrupt, flagged, stale, age_min}.
+    """
+    import re
+    try:
+        root = get_data_root()
+        reports = sorted(root.glob("_deepcheck_*.txt"))
+    except Exception as exc:
+        return {"status": "unknown", "summary": f"read failed: {exc}", "ts": None}
+    if not reports:
+        return {"status": "none", "summary": "no deep-check yet", "ts": None}
+    latest = reports[-1]   # filename ts sorts chronologically
+    try:
+        text = latest.read_text(encoding="utf-8", errors="replace")
+    except Exception as exc:
+        return {"status": "unknown", "summary": f"read failed: {exc}", "ts": None}
+
+    ts = None; age_min = None
+    m = re.search(r"_deepcheck_(\d{8})_(\d{6})", latest.name)
+    if m:
+        try:
+            dt = datetime.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+            ts = dt.strftime("%m-%d %H:%M")
+            age_min = (datetime.now(timezone.utc) - dt).total_seconds() / 60.0
+        except ValueError:
+            pass
+
+    def _sum(pat):
+        return sum(int(x) for x in re.findall(pat, text))
+    corrupt = _sum(r"corrupt=(\d+)")
+    empty   = _sum(r"empty=(\d+)")
+    schema  = _sum(r"bad_schema=(\d+)")
+    flagged = _sum(r"flagged files:\s*(\d+)")
+    stale   = _sum(r"stale=(\d+)")
+    issues = corrupt + empty + schema + flagged
+    done = "# done" in text
+
+    if not done:
+        status, summary = "partial", "deep-check incomplete / running"
+    elif issues > 0:
+        status = "issues"
+        summary = f"corrupt={corrupt} empty={empty} schema={schema} flagged={flagged}"
+    else:
+        status, summary = "clean", f"clean, stale={stale}"
+    return {"status": status, "summary": summary, "ts": ts, "age_min": age_min,
+            "issues": issues, "corrupt": corrupt, "flagged": flagged, "stale": stale}
+
+
 # ---- Icon generation (no .ico files needed — drawn at startup) ----
 
 def _make_circle_icon(color: tuple, size: int = 64,
                       progress: float = 0.0,
-                      heartbeat_phase: int = 0) -> Image.Image:
+                      heartbeat_phase: int = 0,
+                      alert: bool = False) -> Image.Image:
     """64×64 PNG circle in the given RGBA color. Black 2px outline.
 
     Composes up to FOUR visible signals into one icon:
@@ -592,11 +649,16 @@ def _make_circle_icon(color: tuple, size: int = 64,
         r, g, b, a = color
         fill = (min(255, r + 30), min(255, g + 30), min(255, b + 30), a)
 
+    # Alert outline: a thick RED ring when the latest deep check found data
+    # integrity issues (corruption / empty / schema / Tier-2 flagged). This
+    # rides ON TOP of the ingest-state fill colour so the user sees BOTH the
+    # ingest state and a clear "data is bad" alarm at a glance (tray-sync rule).
+    _outline = (239, 68, 68, 255) if alert else (0, 0, 0, 255)
     draw.ellipse(
         [pad, pad, size - pad, size - pad],
         fill=fill,
-        outline=(0, 0, 0, 255),
-        width=2,
+        outline=_outline,
+        width=5 if alert else 2,
     )
 
     # Outer progress arc — sits inside the black outline so it reads as a
@@ -661,7 +723,8 @@ _STATE_COLORS = {
 }
 
 
-def _icon_for(state: str, frame_index: int, progress: float) -> Image.Image:
+def _icon_for(state: str, frame_index: int, progress: float,
+              alert: bool = False) -> Image.Image:
     """Build the tray icon for the current (state, heartbeat phase, progress).
 
     Four visible signals composed in one icon:
@@ -679,7 +742,8 @@ def _icon_for(state: str, frame_index: int, progress: float) -> Image.Image:
     # Background brightness pulse: only when running. Other states are static
     # — no point pulsing when nothing's being written.
     heartbeat_phase = (frame_index % 2) if state == "running" else 0
-    return _make_circle_icon(color, progress=progress, heartbeat_phase=heartbeat_phase)
+    return _make_circle_icon(color, progress=progress,
+                             heartbeat_phase=heartbeat_phase, alert=alert)
 
 
 # ---- Menu actions ----
@@ -1024,6 +1088,7 @@ def _update_loop(icon: "pystray.Icon"):
     ratio. Arc grows monotonically over the course of a run."""
     current_state = "unknown"
     current_progress = 0.0
+    current_alert = False
     frame_index = 0
     last_poll = 0.0
 
@@ -1034,7 +1099,17 @@ def _update_loop(icon: "pystray.Icon"):
             if now - last_poll >= POLL_INTERVAL_SEC or _force_refresh.is_set():
                 status = get_ingest_status()
                 new_state = status.get("state", "unknown")
-                icon.title = f"Ingest: {new_state} — {status['tooltip']}"
+                # Deep-check result — surfaced on the tray per the tray-sync rule.
+                # A red alert ring + tooltip line whenever the latest integrity
+                # audit found issues (corruption / schema / Tier-2 flagged).
+                try:
+                    dc = get_deepcheck_status()
+                except Exception:
+                    dc = {"status": "unknown", "summary": "deep-check read error", "ts": None}
+                current_alert = (dc.get("status") == "issues")
+                dc_ts = f" {dc['ts']}" if dc.get("ts") else ""
+                dc_str = f"deepcheck: {dc.get('status', '?').upper()} ({dc.get('summary', '')}){dc_ts}"
+                icon.title = f"Ingest: {new_state} — {status['tooltip']} | {dc_str}"
                 if new_state != current_state:
                     current_state = new_state
                     frame_index = 0   # reset animation phase on state change
@@ -1053,7 +1128,8 @@ def _update_loop(icon: "pystray.Icon"):
 
             # Render current icon — incorporates state color, heartbeat phase,
             # AND progress arc in one composed image
-            icon.icon = _icon_for(current_state, frame_index, current_progress)
+            icon.icon = _icon_for(current_state, frame_index, current_progress,
+                                  alert=current_alert)
             frame_index += 1
 
             # Static states sleep longer (no heartbeat to animate) — only

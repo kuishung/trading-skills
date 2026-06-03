@@ -392,6 +392,18 @@ Then register the MCP with Claude Code by writing `%USERPROFILE%\.claude\.mcp.js
 
 Restart Claude Code → `mcp__tradingview__*` tools become available.
 
+## Tray-sync rule (HARD RULE — set 2026-06-03)
+
+**The Hermes tray icon (`dashboard_intraday/tray_status.py`) is the user's at-a-glance health signal, and it MUST stay in sync with the code. Whenever any code change alters observable runtime state — ingest behaviour, the deep-check/integrity result, Gateway lifecycle, the supervisor's phase, etc. — the SAME change MUST also update the tray so the icon/tooltip/detail-window reflects it. Updating the tray is part of "done", never a follow-up.**
+
+The user set this on 2026-06-03: *"i need the tray icon to actually update the deep checking result. when we update any code, the tray icon must also be updated, remember this."*
+
+Concretely:
+- The tray must surface the **latest deep-check result** (clean vs issues + when), not just ingest progress. A clean integrity audit shows healthy; any corruption / `flagged files > 0` / schema problem must be visible (distinct colour/badge + tooltip + detail line).
+- New runtime signals (supervisor phase RUN/BLACKOUT, Gateway up/down, last top-up session, deadline aborts) should be added to the tray as they're introduced.
+- This is the **tray analogue of the Dashboard-visibility rule below** — same spirit (don't leave observable state CLI-only), different surface (the Hermes system-tray icon, which is what's actually watched on the autonomous box).
+- The canonical tray lives in the current copy (`C:\trading-skills\TradeHunter\dashboard_intraday\tray_status.py`); the `IntradayBot-Tray` task must point there (not the legacy `C:\ClaudeSkills\…\intraday-bot` copy) for tray edits to take effect.
+
 ## Dashboard visibility rule (HARD RULE — set 2026-05-23)
 
 **Anything with observable runtime state that the user might want to watch MUST be surfaced in the dashboard before the feature is considered complete.** The bot is operated through the dashboard — if a new piece of work only lives at the CLI, the user can't see it, can't trust it, can't act on it without context-switching.
