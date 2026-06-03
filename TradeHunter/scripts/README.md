@@ -12,6 +12,7 @@ plus one-time installers.
 - `setup_gateway_autostart.py` — Optional Windows auto-start for IB Gateway (registry Run key).
 - `setup_schedule.py` — Optional Windows Task Scheduler job that fires `execution/orchestrator.py` at 08:55 ET on weekdays.
 - `wait_and_ingest.py` — One-shot operational glue: wait for a specified Windows PID to exit (poll via `tasklist` every 60s), then launch `resources.ibkr_history.bulk_update` on a universe of choice. Reusable for any "ingest A finishes → ingest B starts" sequence where the two would otherwise collide on IBKR clientId. CLI: `py scripts/wait_and_ingest.py --wait-pid 21732 --timeframes 3min --seed-days 180 --force-seed --universe daily`. The `--universe` option supports `daily | 1min | 3min | journal` so a backtest re-seed can target the full daily-parquet universe (~1500 symbols) rather than the narrower journal-derived live universe (~50).
+- `check_bars_integrity.py` — Read-only parquet auditor for `data/price_history/`. Tier 1 (metadata, ~seconds): corruption / schema / row-count / depth-vs-target / staleness / cross-timeframe coverage. Tier 2 (`--deep`, full read): duplicate & unsorted timestamps, OHLC sanity, NaN, negative volume. CLI: `py -3.12 scripts/check_bars_integrity.py [--deep] [--tf 3min,daily]`.
 - `Watch-Ingest.ps1` — **Process supervisor for `wait_and_ingest.py`.** PowerShell forever-loop that relaunches the watcher every time it exits (clean finish, crash, OOM, killed). Pairs with the in-Python resilience in `resources/ibkr_history.py` (socket reconnect + per-symbol error skip). Run from a foreground PS window: `powershell -ExecutionPolicy Bypass -File .\scripts\Watch-Ingest.ps1`. Stops on Ctrl+C. Logs to `<data_root>/_supervisor_<timestamp>.log`. Parameters mirror `wait_and_ingest.py` (`-Timeframes`, `-SeedDays`, `-ForceSeed`, `-Universe`, `-RestartDelay`).
 - `setup_hermes_supervisor_task.ps1` — **One-shot Windows Scheduled Task installer for the Watch-Ingest.ps1 supervisor.** Registers `IntradayBot-Watcher` to run at Hermes boot under the Administrator principal (LogonType S4U, RunLevel Highest), with `RestartCount 3` and no execution-time limit. Pairs with `Watch-Ingest.ps1` to give the full failure-recovery chain: watcher crashes -> supervisor restarts (30s); supervisor crashes -> Task Scheduler restarts (60s, up to 3x); Hermes reboots -> task auto-fires. Survives RDP disconnects (the trap that killed the supervisor twice on 2026-05-26). Idempotent (-Force). Detects already-running supervisors and refuses `-StartNow` to prevent IBKR clientId collisions. ASCII-only per the PS 5.1 em-dash lesson. Run once per Hermes rebuild: `powershell -ExecutionPolicy Bypass -File scripts\setup_hermes_supervisor_task.ps1 -StartNow`.
 - `keep_gateway_alive.ps1` — **Idempotent "is Gateway running? if not, launch it" check.** Called by the `IntradayBot-Gateway` scheduled task every 5 minutes. Logic: (1) is something listening on cfg port 4002? -> exit 0 silently (healthy). (2) is an IBC/Gateway process alive (might be starting up)? -> exit 0 with a log entry (don't double-launch). (3) otherwise -> `Start-Process` `ibc\StartIBC-intraday.bat` minimized + log. Defaults to port 4002 + the bot's standard launcher; both overridable via `-Port` / `-LauncherBat`. Logs to `<data_root>\_gateway_keepalive.log` (silent on the healthy path to avoid spam). ASCII-only per the PS 5.1 em-dash lesson. Standalone CLI for diagnostics: `powershell -File scripts\keep_gateway_alive.ps1`.
@@ -32,6 +33,23 @@ runtime trading system. They could move to `bin/` or `tools/` but
 they're rarely-touched and small, so `scripts/` is fine.
 
 ## Changelog
+
+### 2026-06-03 - `check_bars_integrity.py`: parquet audit (integrity + consistency)
+
+Read-only auditor for `data/price_history/`. **Tier 1** (default, metadata-only,
+~seconds even for 4500+ files): opens every parquet (catches corruption like the
+`Column cannot have more than one dictionary` OSError), checks the `{t,o,h,l,c,v}`
+schema, row count, date-range *depth* vs per-tf target (3min/5min=180d,
+daily=730d), staleness (`--stale-days`), and cross-timeframe symbol coverage.
+**Tier 2** (`--deep`, full read, ~10-20 min over ~1.4 GB): duplicate timestamps,
+non-monotonic order, OHLC sanity (`h>=l`, `o,c in [l,h]`), NaN/inf, negative
+volume; Tier-2 progress prints to stderr so a redirected report stays clean. CLI:
+`py -3.12 scripts/check_bars_integrity.py [--deep] [--tf 3min,daily] [--stale-days N]`.
+First Tier-1 run: 0 corrupt / 0 empty / 0 schema issues across all 4527 files,
+full cross-tf coverage; only findings were legit short-depth young tickers and
+~178 daily / ~23 intraday symbols with stale recent tails (a
+`skip_up_to_date=True` consequence — depth-complete symbols never get recent days
+appended).
 
 ### 2026-05-29 - `check_rename_hermes.ps1`: post-rename Hermes health check
 
