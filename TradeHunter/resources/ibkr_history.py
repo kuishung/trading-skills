@@ -327,6 +327,7 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
                 pacing_s: float = DEFAULT_PACING_S,
                 force_seed: bool = False,
                 skip_up_to_date: bool = False,
+                fresh_through=None,
                 log_callback=None) -> dict[tuple[str, str], int]:
     """Update many (symbol, timeframe) pairs in one IBKR connection.
 
@@ -437,7 +438,13 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
     PREFLIGHT_PROGRESS_EVERY = 500
     plan: list[tuple[str, str, str, str, int]] = []   # (sym, tf, action, note, target_days)
     counts: dict[str, int] = {"seed": 0, "force": 0, "refill": 0,
-                              "top_up": 0, "unreadable": 0}
+                              "top_up": 0, "unreadable": 0, "fresh": 0}
+    # `fresh_through` (a datetime.date): a (sym,tf) whose latest stored bar is
+    # already >= this date is skipped entirely (no IBKR request). This makes a
+    # crash-retry of a nightly top-up reach only the un-fetched tail instead of
+    # re-pacing through every already-current symbol — keeping the run inside
+    # the 08:00 ET deadline. Distinct from skip_up_to_date (which is depth-based;
+    # this is recency-based).
     total_pairs = len(symbols) * len(timeframes)
     n_scanned = 0
     n_classify_errors = 0
@@ -445,6 +452,20 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
     for sym in symbols:
         for tf in timeframes:
             target_days = (lookback_days_by_tf or {}).get(tf, lookback_days_for_new)
+            # Recency-skip: already has the target session's bar -> no fetch.
+            if fresh_through is not None and not force_seed:
+                rng = bars_store.available_range_fast(sym, timeframe=tf)
+                if rng is not None:
+                    try:
+                        latest = datetime.fromisoformat(
+                            rng[1].replace("Z", "+00:00")).date()
+                        if latest >= fresh_through:
+                            counts["fresh"] += 1
+                            plan.append((sym, tf, "fresh", f"latest={latest}", target_days))
+                            n_scanned += 1
+                            continue
+                    except (ValueError, AttributeError, IndexError):
+                        pass
             try:
                 action, note = _classify_pair(sym, tf, target_days, force_seed)
             except Exception as exc:
@@ -474,7 +495,7 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
     work_items = [
         (sym, tf, action, note, target_days)
         for (sym, tf, action, note, target_days) in plan
-        if not (skip_up_to_date and action == "top_up")
+        if action != "fresh" and not (skip_up_to_date and action == "top_up")
     ]
     n_work = len(work_items)
     n_skipped = n_total - n_work
@@ -488,7 +509,7 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
         f"[pre-flight] {n_total} (sym,tf) pairs scanned: "
         f"seed={counts['seed']} force={counts['force']} "
         f"refill={counts['refill']} top_up={counts['top_up']} "
-        f"unreadable={counts['unreadable']}"
+        f"unreadable={counts['unreadable']} fresh={counts['fresh']}"
     )
     if n_skipped:
         _emit(

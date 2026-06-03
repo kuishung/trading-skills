@@ -104,6 +104,12 @@ def main() -> int:
                          "custom list. Overrides --universe when set.")
     ap.add_argument("--pacing", type=float, default=7.0,
                     help="seconds between IBKR requests (under 60-per-600s cap)")
+    ap.add_argument("--fresh-through", default=None,
+                    help="ISO date (YYYY-MM-DD). Skip any (sym,tf) whose latest "
+                         "stored bar is already >= this date (no IBKR request). "
+                         "Used by ingest_supervisor so a crash-retry of the "
+                         "nightly top-up only re-fetches the un-fetched tail, "
+                         "staying inside the 08:00 ET deadline.")
     ap.add_argument("--topup", action="store_true",
                     help="TOP-UP MODE: pass skip_up_to_date=False so already-"
                          "depth-complete symbols get an INCREMENTAL update "
@@ -138,6 +144,15 @@ def main() -> int:
             timeframes.append(spec)
             lookback_days_by_tf[spec] = args.seed_days
 
+    # Parse --fresh-through (recency-skip cutoff date) -> datetime.date | None
+    _fresh_through = None
+    if args.fresh_through:
+        from datetime import date as _date
+        try:
+            _fresh_through = _date.fromisoformat(args.fresh_through.strip())
+        except ValueError:
+            ap.error(f"--fresh-through {args.fresh_through!r}: must be YYYY-MM-DD")
+
     # Log file lives alongside the data it documents — honours cfg["data_root"]
     from _common import get_data_root
     log_dir = get_data_root()
@@ -156,6 +171,7 @@ def main() -> int:
     log(f"wait_and_ingest: timeframes={timeframes} "
         f"seed_days_by_tf={lookback_days_by_tf} "
         f"force_seed={args.force_seed} topup={args.topup} "
+        f"fresh_through={_fresh_through} "
         f"universe={args.universe} pacing={args.pacing}")
 
     # --- Wait phase ---
@@ -217,6 +233,7 @@ def main() -> int:
             pacing_s=args.pacing,
             force_seed=args.force_seed,
             skip_up_to_date=not args.topup,
+            fresh_through=_fresh_through,
             # Route ALL bulk_update output through this script's log() so
             # the watcher's _ingest_*.log captures pre-flight summary +
             # per-iteration progress. Without this, on Hermes (Task

@@ -12,6 +12,8 @@ plus one-time installers.
 - `setup_gateway_autostart.py` — Optional Windows auto-start for IB Gateway (registry Run key).
 - `setup_schedule.py` — Optional Windows Task Scheduler job that fires `execution/orchestrator.py` at 08:55 ET on weekdays.
 - `wait_and_ingest.py` — One-shot operational glue: wait for a specified Windows PID to exit (poll via `tasklist` every 60s), then launch `resources.ibkr_history.bulk_update` on a universe of choice. Reusable for any "ingest A finishes → ingest B starts" sequence where the two would otherwise collide on IBKR clientId. CLI: `py scripts/wait_and_ingest.py --wait-pid 21732 --timeframes 3min --seed-days 180 --force-seed --universe daily`. The `--universe` option supports `daily | 1min | 3min | journal` so a backtest re-seed can target the full daily-parquet universe (~1500 symbols) rather than the narrower journal-derived live universe (~50).
+- `ingest_supervisor.py` — Autonomous daily post-extended-close top-up + deep-check service (Hermes). ET-windowed (20:10->08:00 ET run, 08:00->20:10 ET + weekend blackout), owns Gateway start/stop, retry-until-success-or-deadline. `--self-test` / `--dry-run` for laptop smoke-testing. Started at boot by the task below.
+- `setup_hermes_ingest_supervisor_task.ps1` — Registers `TradeHunter-IngestSupervisor` as an at-boot Scheduled Task running `ingest_supervisor.py` (S4U Administrator, RunLevel Highest, RestartCount 3, no time limit). Idempotent (`-Force`); `-StartNow` to launch immediately.
 - `check_bars_integrity.py` — Read-only parquet auditor for `data/price_history/`. Tier 1 (metadata, ~seconds): corruption / schema / row-count / depth-vs-target / staleness / cross-timeframe coverage. Tier 2 (`--deep`, full read): duplicate & unsorted timestamps, OHLC sanity, NaN, negative volume. CLI: `py -3.12 scripts/check_bars_integrity.py [--deep] [--tf 3min,daily]`.
 - `Watch-Ingest.ps1` — **Process supervisor for `wait_and_ingest.py`.** PowerShell forever-loop that relaunches the watcher every time it exits (clean finish, crash, OOM, killed). Pairs with the in-Python resilience in `resources/ibkr_history.py` (socket reconnect + per-symbol error skip). Run from a foreground PS window: `powershell -ExecutionPolicy Bypass -File .\scripts\Watch-Ingest.ps1`. Stops on Ctrl+C. Logs to `<data_root>/_supervisor_<timestamp>.log`. Parameters mirror `wait_and_ingest.py` (`-Timeframes`, `-SeedDays`, `-ForceSeed`, `-Universe`, `-RestartDelay`).
 - `setup_hermes_supervisor_task.ps1` — **One-shot Windows Scheduled Task installer for the Watch-Ingest.ps1 supervisor.** Registers `IntradayBot-Watcher` to run at Hermes boot under the Administrator principal (LogonType S4U, RunLevel Highest), with `RestartCount 3` and no execution-time limit. Pairs with `Watch-Ingest.ps1` to give the full failure-recovery chain: watcher crashes -> supervisor restarts (30s); supervisor crashes -> Task Scheduler restarts (60s, up to 3x); Hermes reboots -> task auto-fires. Survives RDP disconnects (the trap that killed the supervisor twice on 2026-05-26). Idempotent (-Force). Detects already-running supervisors and refuses `-StartNow` to prevent IBKR clientId collisions. ASCII-only per the PS 5.1 em-dash lesson. Run once per Hermes rebuild: `powershell -ExecutionPolicy Bypass -File scripts\setup_hermes_supervisor_task.ps1 -StartNow`.
@@ -33,6 +35,28 @@ runtime trading system. They could move to `bin/` or `tools/` but
 they're rarely-touched and small, so `scripts/` is fine.
 
 ## Changelog
+
+### 2026-06-03 - `ingest_supervisor.py` + boot-task installer: autonomous nightly top-up
+
+New always-on supervisor that OWNS the Gateway + ingest lifecycle on Hermes
+(replaces the `IntradayBot-Gateway` keep-alive + `Hermes-IBC-Start-PostMarket`
+tasks). All timing in ET (`zoneinfo`, DST-safe) even though Hermes runs MYT.
+Daily: at **20:10 ET** (10 min after the 20:00 extended close) open Gateway ->
+top up the day's bars (retry on crash/stall until success OR the **08:00 ET**
+deadline) -> full deep check + timestamped report -> close Gateway -> idle.
+**Blackout 08:00->20:10 ET (and all weekend): Gateway forced OFF, nothing
+runs** so it never collides with the user's manual IBKR trading (begins 90 min
+before open). Modes: `--self-test` (pure timing/window/session/deadline + DST
+assertions), `--dry-run` (loop with mocked Gateway/ingest/deepcheck + fake
+clock), default = real loop. Smoke-tested green on the laptop before any Hermes
+deploy. `setup_hermes_ingest_supervisor_task.ps1` registers it as an at-boot
+Scheduled Task (S4U Administrator, RunLevel Highest, RestartCount 3, no time
+limit), mirroring `setup_hermes_supervisor_task.ps1`.
+
+Also: `wait_and_ingest.py` gained `--fresh-through YYYY-MM-DD` (recency-skip) so
+a crash-retry of the nightly top-up skips symbols that already have that
+session's bar and only re-fetches the un-fetched tail (keeps the run inside the
+08:00 ET deadline). The supervisor passes the session date automatically.
 
 ### 2026-06-03 - `wait_and_ingest.py`: add `--topup` (refresh stale tails)
 

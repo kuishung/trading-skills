@@ -55,6 +55,16 @@ treating any "missing" feature as a bug.
 
 ## Changelog
 
+### 2026-06-03 — `ibkr_history.bulk_update`: add `fresh_through` recency-skip
+
+New `fresh_through` (a `datetime.date`) param: in the pre-flight, any `(sym,tf)`
+whose latest stored bar is already `>= fresh_through` is classified `fresh` and
+**skipped entirely (no IBKR request)**. Distinct from `skip_up_to_date` (which is
+depth-based) — this is recency-based, for the nightly top-up driven by
+`ingest_supervisor.py`: on a crash-retry it skips the symbols already brought
+current and only re-paces through the un-fetched tail, so the run stays inside
+the 08:00 ET deadline. Pre-flight summary now also reports `fresh=N`.
+
 ### 2026-06-03 — fix stuck +0-bar ingest loop: share-class `_stock()` + skip-list
 
 Resolved the "ingest keeps looping / last ~28 tickers take ages" problem.
