@@ -55,6 +55,18 @@ treating any "missing" feature as a bug.
 
 ## Changelog
 
+### 2026-06-04 — `bulk_update` recency-skip: fix UTC/ET date skew (winter data-loss bug)
+
+The `fresh_through` recency-skip compared the latest bar's **UTC** date to the ET
+session date. Daily bars are anchored to the UTC calendar date (fine), but
+intraday bars carry real session timestamps — in **EST** the prior session's last
+bar (e.g. 19:55 ET) is `00:55 UTC` the *next* day, so its UTC date equalled
+tonight's session and the symbol was falsely classified `fresh` → the entire
+nightly **intraday** top-up would be skipped every winter night (silent data
+loss, self-healing only the next day). Fix: daily keeps the UTC calendar date;
+**intraday converts to ET** (`_et_tz()`) before taking `.date()`. Regression test
+confirms the old logic wrongly skips and the new logic fetches.
+
 ### 2026-06-03 — `ibkr_history.bulk_update`: add `fresh_through` recency-skip
 
 New `fresh_through` (a `datetime.date`) param: in the pre-flight, any `(sym,tf)`

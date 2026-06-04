@@ -33,6 +33,19 @@ web, Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-06-04 — `tray_status.py`: "Completed through" date + deep-check in the progress window
+
+The progress window (and tooltip) now shows **which date the ingest has
+completed through** — the data-currency the user asked for. New
+`get_completed_through()`: prefers the supervisor's last fully-topped-up session
+(`state/ingest_supervisor_state.json`), falls back to the most recent `last_bar`
+in `ingest_log.jsonl`. Rendered as a bold green `Completed through: YYYY-MM-DD
+(source)` line in the Show-Status window and `through <date>` in the icon
+tooltip. The deep-check result is now also a line in that window (green clean /
+red issues), not just the tooltip. (Companion fix in `ingest_supervisor.py`:
+`--self-test`/`--dry-run` no longer write the real state file — they were
+polluting `last_success_session`.)
+
 ### 2026-06-03 — `tray_status.py`: surface the deep-check / integrity result
 
 Per the **tray-sync rule** (CLAUDE.md, 2026-06-03): the tray now reads the

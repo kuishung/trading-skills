@@ -36,6 +36,7 @@ Modes:
 from __future__ import annotations
 
 import argparse
+import shutil
 import subprocess
 import sys
 import time as _time
@@ -67,8 +68,15 @@ RUN_END   = _add_min(MARKET_OPEN, -STOP_BEFORE_OPEN_MIN)      # 08:00 ET
 GATEWAY_PORT = 4002
 TICK_SEC = 60          # supervisor poll cadence in real mode
 GATEWAY_UP_TIMEOUT_SEC = 180
+DEADLINE_MARGIN_MIN = 3   # stop heavy work + shut Gateway this many min BEFORE
+                          # RUN_END (08:00 ET) so the Gateway is provably down
+                          # before the user's manual-trade window begins.
 TOPUP_TIMEFRAMES = "3min:180,5min:180,daily:730"
 SYMBOLS_FILE = "resources/universe_full.txt"
+
+# Absolute py launcher — bare "py" may not resolve under the Task Scheduler S4U
+# session's PATH. C:\Windows\py.exe is the standard launcher location.
+PY = shutil.which("py") or r"C:\Windows\py.exe"
 
 
 # ======================================================================
@@ -112,13 +120,15 @@ def should_fetch(now_et: datetime, last_success_session: date | None) -> bool:
 
 
 def deadline_for(now_et: datetime) -> datetime:
-    """The 08:00 ET hard-stop for the current window. If we're in the morning
-    leg (<08:00) it's today 08:00; if evening (>=20:10) it's tomorrow 08:00."""
+    """The WORKING deadline for the current window = RUN_END (08:00 ET) minus a
+    shutdown margin, so heavy work stops and the Gateway is down BEFORE 08:00.
+    Morning leg (<08:00) -> today; evening (>=20:10) -> tomorrow."""
     if now_et.time() < RUN_END:
         d = now_et.date()
     else:
         d = now_et.date() + timedelta(days=1)
-    return datetime.combine(d, RUN_END, tzinfo=ET)
+    return (datetime.combine(d, RUN_END, tzinfo=ET)
+            - timedelta(minutes=DEADLINE_MARGIN_MIN))
 
 
 # ======================================================================
@@ -147,15 +157,22 @@ class RealEffects:
     def gateway_up(self) -> bool:
         if self.gateway_is_up():
             return True
-        bat = SKILL_DIR / "ibc" / "StartIBC-intraday.bat"
-        self.log(f"starting Gateway via {bat}")
-        try:
-            subprocess.Popen(["cmd.exe", "/c", str(bat)],
-                             cwd=str(bat.parent),
-                             creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
-        except Exception as exc:
-            self.log(f"Gateway launch failed: {exc}")
-            return False
+        # Don't launch a SECOND IBC if one is already starting up — login can
+        # take ~30-60s before the port listens, and a duplicate means two
+        # Gateway sessions on the same account (IBKR kicks one). If an IBC/
+        # Gateway process is already alive, just wait for it to finish logging in.
+        if self._gateway_proc_alive():
+            self.log("IBC/Gateway process already alive (login in progress) — waiting, not relaunching")
+        else:
+            bat = SKILL_DIR / "ibc" / "StartIBC-intraday.bat"
+            self.log(f"starting Gateway via {bat}")
+            try:
+                subprocess.Popen(["cmd.exe", "/c", str(bat)],
+                                 cwd=str(bat.parent),
+                                 creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
+            except Exception as exc:
+                self.log(f"Gateway launch failed: {exc}")
+                return False
         waited = 0
         while waited < GATEWAY_UP_TIMEOUT_SEC:
             _time.sleep(10); waited += 10
@@ -205,7 +222,7 @@ class RealEffects:
         """Launch the full-universe incremental top-up; monitor; kill at the
         08:00 ET deadline. Returns True on a clean exit before the deadline.
         `--fresh-through <session>` makes a retry skip already-fetched symbols."""
-        cmd = ["py", "-3.12", str(SKILL_DIR / "scripts" / "wait_and_ingest.py"),
+        cmd = [PY, "-3.12", str(SKILL_DIR / "scripts" / "wait_and_ingest.py"),
                "--symbols-file", str(SKILL_DIR / SYMBOLS_FILE),
                "--timeframes", TOPUP_TIMEFRAMES, "--topup",
                "--fresh-through", session.isoformat()]
@@ -236,7 +253,7 @@ class RealEffects:
         self.log(f"deep check -> {report}")
         try:
             with report.open("w", encoding="utf-8") as fh:
-                subprocess.run(["py", "-3.12",
+                subprocess.run([PY, "-3.12",
                                 str(SKILL_DIR / "scripts" / "check_bars_integrity.py"),
                                 "--deep"], cwd=str(SKILL_DIR), stdout=fh, timeout=3600)
         except Exception as exc:
@@ -247,6 +264,7 @@ class RealEffects:
 # CLOCK  (injectable for tests)
 # ======================================================================
 _FAKE = {"now": None, "step": timedelta(minutes=5)}
+_PERSIST_STATE = True   # set False in --self-test/--dry-run so tests don't write real state
 
 def et_now() -> datetime:
     if _FAKE["now"] is not None:
@@ -258,12 +276,16 @@ def et_now() -> datetime:
 # SUPERVISOR LOOP
 # ======================================================================
 
-def supervisor_tick(now_et: datetime, state: dict, fx, log) -> str:
-    """One decision step. Returns the action label (for tests). Pure-ish:
-    all I/O goes through `fx` (RealEffects or a mock)."""
+def supervisor_tick(state: dict, fx, log) -> str:
+    """One decision step. Reads the clock via et_now() (so the deadline check
+    after a long blocking top-up uses CURRENT time, and tests stay deterministic
+    via _FAKE). Returns an action label. All I/O goes through `fx`."""
+    now_et = et_now()
     sess = session_date(now_et)
     last = state.get("last_success_session")
 
+    # BLACKOUT (incl. weekend daytime): Gateway MUST be off — never collide with
+    # the user's manual trading. Force it down if anything left it up.
     if is_blackout(now_et.time()):
         if fx.gateway_is_up():
             log(f"[blackout {now_et:%a %H:%M ET}] Gateway up — shutting down")
@@ -271,32 +293,54 @@ def supervisor_tick(now_et: datetime, state: dict, fx, log) -> str:
             return "BLACKOUT_GW_DOWN"
         return "BLACKOUT_IDLE"
 
-    # In run window:
+    # In the run window but not a trading session (weekend evening): nothing to
+    # fetch; keep the Gateway off.
     if not is_trading_session(sess):
         if fx.gateway_is_up():
             fx.gateway_down()
             return "WEEKEND_GW_DOWN"
         return "WEEKEND_IDLE"
 
+    # Already finished this session: stay idle with the Gateway off.
     if last == sess:
         if fx.gateway_is_up():
             fx.gateway_down()
             return "DONE_GW_DOWN"
         return "DONE_IDLE"
 
+    # Inside the shutdown margin before RUN_END? Do NOT start heavy work; make
+    # sure the Gateway is off so it's provably down before 08:00 ET.
+    dl = deadline_for(now_et)
+    if now_et >= dl:
+        if fx.gateway_is_up():
+            fx.gateway_down()
+        log(f"[session {sess}] within shutdown margin before {RUN_END} ET — Gateway off, not starting")
+        return "PAST_DEADLINE"
+
     # Need to fetch this session.
     if not fx.gateway_up():
         log("Gateway failed to come up — will retry next tick")
         return "GW_UP_FAILED"
-    ok = fx.run_topup(deadline_for(now_et), sess)
+    ok = fx.run_topup(dl, sess)
     if ok:
-        fx.run_deep_check()
+        # Shut the Gateway IMMEDIATELY — the deep check is read-only and needs no
+        # Gateway, so we minimise Gateway-up time and never let the ~15-min deep
+        # check push Gateway-down toward the trading window.
+        fx.gateway_down()
         state["last_success_session"] = sess
         _save_state(state)
-        fx.gateway_down()
-        log(f"[session {sess}] top-up + deep check DONE — Gateway down")
+        fx.run_deep_check()
+        log(f"[session {sess}] top-up DONE -> Gateway down -> deep check written")
         return "FETCH_OK"
-    log(f"[session {sess}] top-up failed/aborted — retry next tick if in window")
+    # Failed or deadline-aborted. If we're now at/after the deadline (or already
+    # in blackout), shut the Gateway right away rather than waiting a tick.
+    now2 = et_now()
+    if now2 >= dl or is_blackout(now2.time()):
+        if fx.gateway_is_up():
+            fx.gateway_down()
+        log(f"[session {sess}] top-up aborted at deadline — Gateway down")
+        return "FETCH_ABORTED"
+    log(f"[session {sess}] top-up failed — retry next tick")
     return "FETCH_RETRY"
 
 
@@ -318,6 +362,8 @@ def _load_state() -> dict:
     return {}
 
 def _save_state(state: dict) -> None:
+    if not _PERSIST_STATE:
+        return
     import json
     p = _state_path(); p.parent.mkdir(parents=True, exist_ok=True)
     out = dict(state)
@@ -332,7 +378,7 @@ def run_loop(fx, log) -> None:
         f"last_success_session={state.get('last_success_session')}")
     while True:
         try:
-            supervisor_tick(et_now(), state, fx, log)
+            supervisor_tick(state, fx, log)
         except Exception as exc:
             log(f"tick error: {exc!r}")
         _time.sleep(TICK_SEC)
@@ -379,11 +425,11 @@ def self_test() -> int:
     chk("Sat 02:00 = Fri session, not done -> fetch",
         should_fetch(_dt("2026-06-06 02:00"), None), True)
 
-    print("# deadline")
-    chk("Mon 20:10 -> deadline Tue 08:00",
-        deadline_for(_dt("2026-06-01 20:10")), _dt("2026-06-02 08:00"))
-    chk("Tue 02:00 -> deadline Tue 08:00",
-        deadline_for(_dt("2026-06-02 02:00")), _dt("2026-06-02 08:00"))
+    print("# deadline (RUN_END 08:00 ET minus 3-min shutdown margin = 07:57)")
+    chk("Mon 20:10 -> deadline Tue 07:57",
+        deadline_for(_dt("2026-06-01 20:10")), _dt("2026-06-02 07:57"))
+    chk("Tue 02:00 -> deadline Tue 07:57",
+        deadline_for(_dt("2026-06-02 02:00")), _dt("2026-06-02 07:57"))
 
     print("# DST sanity (ET offset flips; wall-clock logic unchanged)")
     # 2026 DST: starts Sun Mar 8, ends Sun Nov 1.
@@ -423,17 +469,23 @@ class MockEffects:
 def scenario_test() -> int:
     """Assert the failure/retry, deadline-stop, and force-off-during-blackout
     behaviours with mocked effects (the safety-critical loop logic)."""
+    global _PERSIST_STATE
+    _PERSIST_STATE = False   # never write real state during tests
     fails = []
     def chk(desc, got, exp):
         if got != exp: fails.append(f"  FAIL {desc}: got {got!r} expected {exp!r}")
         else: print(f"  ok   {desc}")
     nolog = lambda m: None
 
+    def tick_at(when, state, fx):
+        _FAKE["now"] = _dt(when)
+        return supervisor_tick(state, fx, nolog)
+
     # A: top-up fails twice then succeeds within the window -> retry, retry, OK, idle
     fx = MockEffects(nolog, fail_topup=2); state = {}; seq = []
-    t = _dt("2026-06-01 20:10")
-    for _ in range(4):
-        seq.append(supervisor_tick(t, state, fx, nolog)); t += timedelta(minutes=30)
+    for when in ("2026-06-01 20:10", "2026-06-01 20:40",
+                 "2026-06-01 21:10", "2026-06-01 21:40"):
+        seq.append(tick_at(when, state, fx))
     chk("A retry->retry->ok->idle", seq, ["FETCH_RETRY", "FETCH_RETRY", "FETCH_OK", "DONE_IDLE"])
     chk("A success session recorded", state.get("last_success_session"), date(2026, 6, 1))
     chk("A deep check ran exactly once", fx.actions.count("DEEPCHECK"), 1)
@@ -441,30 +493,39 @@ def scenario_test() -> int:
 
     # B: NO revive during blackout (the user's manual-trading window) — never fetch
     fx = MockEffects(nolog); state = {}
-    chk("B blackout 10:00 -> no fetch", supervisor_tick(_dt("2026-06-02 10:00"), state, fx, nolog), "BLACKOUT_IDLE")
+    chk("B blackout 10:00 -> no fetch", tick_at("2026-06-02 10:00", state, fx), "BLACKOUT_IDLE")
     chk("B no top-up attempted", "TOPUP" in fx.actions, False)
 
     # C: Gateway somehow UP during blackout -> force it OFF (manual-trade safety net)
     fx = MockEffects(nolog, start_up=True); state = {}
-    chk("C blackout + gw up -> shut down", supervisor_tick(_dt("2026-06-02 10:00"), state, fx, nolog), "BLACKOUT_GW_DOWN")
+    chk("C blackout + gw up -> shut down", tick_at("2026-06-02 10:00", state, fx), "BLACKOUT_GW_DOWN")
     chk("C gateway now DOWN", fx.gateway_is_up(), False)
 
     # D: Gateway UP on a weekend evening -> force OFF (no session to fetch)
     fx = MockEffects(nolog, start_up=True); state = {}
-    chk("D weekend + gw up -> shut down", supervisor_tick(_dt("2026-06-06 21:00"), state, fx, nolog), "WEEKEND_GW_DOWN")
+    chk("D weekend + gw up -> shut down", tick_at("2026-06-06 21:00", state, fx), "WEEKEND_GW_DOWN")
     chk("D gateway now DOWN", fx.gateway_is_up(), False)
 
     # E: already-succeeded session in window -> idle, no duplicate fetch
     fx = MockEffects(nolog); state = {"last_success_session": date(2026, 6, 1)}
-    chk("E same session -> idle", supervisor_tick(_dt("2026-06-02 02:00"), state, fx, nolog), "DONE_IDLE")
+    chk("E same session -> idle", tick_at("2026-06-02 02:00", state, fx), "DONE_IDLE")
     chk("E no top-up", "TOPUP" in fx.actions, False)
 
+    # F: inside the shutdown margin before 08:00 ET -> do NOT start; Gateway off
+    fx = MockEffects(nolog, start_up=True); state = {}
+    chk("F 07:58 (margin) -> past deadline, no fetch", tick_at("2026-06-02 07:58", state, fx), "PAST_DEADLINE")
+    chk("F no top-up attempted", "TOPUP" in fx.actions, False)
+    chk("F gateway forced DOWN", fx.gateway_is_up(), False)
+
+    _FAKE["now"] = None
     if fails:
         print("\n".join(fails)); print(f"\nSCENARIO TESTS FAILED ({len(fails)})"); return 1
     print("\nSCENARIO TESTS PASSED"); return 0
 
 
 def dry_run(start: str, step_min: int, ticks: int) -> int:
+    global _PERSIST_STATE
+    _PERSIST_STATE = False   # dry-run must not write real state
     fx = MockEffects(print)
     state = {}
     _FAKE["now"] = _dt(start)
@@ -472,7 +533,7 @@ def dry_run(start: str, step_min: int, ticks: int) -> int:
           f"(RUN {RUN_START}-{RUN_END} ET)\n")
     for _ in range(ticks):
         now = _FAKE["now"]
-        action = supervisor_tick(now, state, fx, lambda m: None)
+        action = supervisor_tick(state, fx, lambda m: None)
         print(f"{now:%a %Y-%m-%d %H:%M ET}  ->  {action:16} "
               f"(gw={'UP' if fx.gateway_is_up() else 'down'}, "
               f"last_success={state.get('last_success_session')})")

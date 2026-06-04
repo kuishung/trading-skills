@@ -621,6 +621,41 @@ def get_deepcheck_status() -> dict:
             "issues": issues, "corrupt": corrupt, "flagged": flagged, "stale": stale}
 
 
+def get_completed_through() -> dict:
+    """Date through which the daily ingest has completed — shown in the progress
+    window + tooltip so the user knows the data's currency at a glance.
+
+    Primary source: the supervisor's last fully-topped-up session
+    (`state/ingest_supervisor_state.json` -> last_success_session). Fallback
+    (pre-supervisor): the most recent `last_bar` recorded in ingest_log.jsonl.
+    Returns {date: 'YYYY-MM-DD'|None, source: supervisor|data|none}.
+    """
+    import json
+    try:
+        sp = Path(__file__).resolve().parent.parent / "state" / "ingest_supervisor_state.json"
+        if sp.exists():
+            s = json.loads(sp.read_text(encoding="utf-8")).get("last_success_session")
+            if s:
+                return {"date": str(s)[:10], "source": "supervisor"}
+    except Exception:
+        pass
+    try:
+        log = get_data_root() / "ingest_log.jsonl"
+        last_line = None
+        if log.exists():
+            with log.open(encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        last_line = line
+        if last_line:
+            lb = json.loads(last_line).get("last_bar")
+            if lb:
+                return {"date": str(lb)[:10], "source": "data"}
+    except Exception:
+        pass
+    return {"date": None, "source": "none"}
+
+
 # ---- Icon generation (no .ico files needed — drawn at startup) ----
 
 def _make_circle_icon(color: tuple, size: int = 64,
@@ -839,6 +874,21 @@ def _build_progress_window(root):
         bg='#1a1a1a', fg='#cccccc',
     ).pack(pady=(0, 4))
 
+    # "Data complete through: YYYY-MM-DD" — the ingest currency the user asked for
+    through_var = tk.StringVar(value='Completed through: -')
+    tk.Label(
+        win, textvariable=through_var, font=('Segoe UI', 12, 'bold'),
+        bg='#1a1a1a', fg='#5fd97a',
+    ).pack(pady=(0, 4))
+
+    # Latest deep-check / integrity result (tray-sync rule)
+    deepcheck_var = tk.StringVar(value='Deep check: -')
+    deepcheck_lbl = tk.Label(
+        win, textvariable=deepcheck_var, font=('Segoe UI', 10),
+        bg='#1a1a1a', fg='#888888',
+    )
+    deepcheck_lbl.pack(pady=(0, 4))
+
     # Live indicator: spinner glyph + colored status dot + "Ns ago" counter.
     # Updates every 150ms (animate()) independently of the 3s data refresh,
     # so the user sees continuous motion as long as the script is alive --
@@ -950,6 +1000,27 @@ def _build_progress_window(root):
                 except Exception:
                     pass
             live_state['have_data'] = done > 0
+
+            # "Completed through" date (ingest currency)
+            try:
+                ct = get_completed_through()
+                if ct.get('date'):
+                    through_var.set(f"Completed through: {ct['date']}  ({ct['source']})")
+                else:
+                    through_var.set("Completed through: (no data yet)")
+            except Exception:
+                through_var.set("Completed through: -")
+
+            # Deep-check result line (clean / issues / partial)
+            try:
+                dc = get_deepcheck_status()
+                st = dc.get('status', '?')
+                ts = f"  {dc['ts']}" if dc.get('ts') else ""
+                deepcheck_var.set(f"Deep check: {st.upper()} - {dc.get('summary','')}{ts}")
+                deepcheck_lbl.configure(fg='#ef4444' if st == 'issues'
+                                        else ('#5fd97a' if st == 'clean' else '#888888'))
+            except Exception:
+                deepcheck_var.set("Deep check: -")
         except Exception as exc:
             pct_var.set('error')
             count_var.set(str(exc)[:60])
@@ -1109,7 +1180,12 @@ def _update_loop(icon: "pystray.Icon"):
                 current_alert = (dc.get("status") == "issues")
                 dc_ts = f" {dc['ts']}" if dc.get("ts") else ""
                 dc_str = f"deepcheck: {dc.get('status', '?').upper()} ({dc.get('summary', '')}){dc_ts}"
-                icon.title = f"Ingest: {new_state} — {status['tooltip']} | {dc_str}"
+                try:
+                    ct = get_completed_through()
+                    through_str = f"through {ct['date']}" if ct.get("date") else "through -"
+                except Exception:
+                    through_str = "through -"
+                icon.title = f"Ingest: {new_state} — {status['tooltip']} | {through_str} | {dc_str}"
                 if new_state != current_state:
                     current_state = new_state
                     frame_index = 0   # reset animation phase on state change

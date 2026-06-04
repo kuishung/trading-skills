@@ -457,8 +457,16 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
                 rng = bars_store.available_range_fast(sym, timeframe=tf)
                 if rng is not None:
                     try:
-                        latest = datetime.fromisoformat(
-                            rng[1].replace("Z", "+00:00")).date()
+                        latest_dt = datetime.fromisoformat(rng[1].replace("Z", "+00:00"))
+                        # Daily bars are anchored to the UTC calendar date, so their
+                        # UTC .date() IS the session date. Intraday bars carry real
+                        # session timestamps — take the ET date, NOT the UTC date:
+                        # in EST the prior session's last bar (e.g. 19:55 ET) is
+                        # 00:55 UTC the NEXT day, so a UTC .date() would be +1 and
+                        # falsely mark the prior session "current", skipping the whole
+                        # night's intraday fetch. (Manifested every winter night.)
+                        latest = (latest_dt.date() if tf == "daily"
+                                  else latest_dt.astimezone(_et_tz()).date())
                         if latest >= fresh_through:
                             counts["fresh"] += 1
                             plan.append((sym, tf, "fresh", f"latest={latest}", target_days))

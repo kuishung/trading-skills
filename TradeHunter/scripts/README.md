@@ -36,6 +36,25 @@ they're rarely-touched and small, so `scripts/` is fine.
 
 ## Changelog
 
+### 2026-06-04 - `ingest_supervisor.py`: pre-deploy hardening (detailed code review)
+
+Five real issues found reviewing the not-yet-deployed supervisor and fixed:
+1. **Deep check now runs with the Gateway already DOWN** - the success path shuts
+   the Gateway *before* the (read-only) deep check, so a top-up finishing near
+   08:00 ET can't keep the Gateway up into the manual-trade window.
+2. **3-min shutdown margin** (`DEADLINE_MARGIN_MIN`): the working deadline is now
+   RUN_END (08:00 ET) minus 3 min, plus a `PAST_DEADLINE` guard and an immediate
+   `gateway_down` on deadline-abort - so the Gateway is provably OFF before 08:00,
+   not ~60-90s after.
+3. **No double-launch of IBC** - `gateway_up()` checks for a live IBC/Gateway
+   process and waits for login instead of spawning a second session.
+4. **Absolute `PY` launcher** (was bare `py`, which may not resolve under the
+   Task Scheduler S4U PATH).
+5. **`supervisor_tick` reads the clock via `et_now()` consistently** (the
+   post-blocking-top-up deadline check now uses *current* time; tests are
+   deterministic via `_FAKE` and side-effect-free via `_PERSIST_STATE`).
+Self-test + scenario suite (incl. a new `PAST_DEADLINE` margin case) all green.
+
 ### 2026-06-03 - `ingest_supervisor.py` + boot-task installer: autonomous nightly top-up
 
 New always-on supervisor that OWNS the Gateway + ingest lifecycle on Hermes
