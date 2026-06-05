@@ -36,6 +36,20 @@ they're rarely-touched and small, so `scripts/` is fine.
 
 ## Changelog
 
+### 2026-06-05 - `ingest_supervisor.py`: fix Gateway-shutdown hang that stalled it ~2 days
+
+First Hermes deploy (2026-06-04) STALLED: the supervisor started at the 08:00 ET
+blackout, found a leftover Gateway up, called `ibc/Stop.bat` which **hung the
+full 60s** (IBC's STOP stalls when IBC isn't tracking that Gateway), the
+force-kill path was unguarded, and the supervisor never ran a nightly cycle
+again — ingest stalled ~2 days. Fixes:
+- `gateway_down()` is now **hang-proof + bounded** (~60s max): Stop.bat gets a
+  15s budget, the **force-kill is the reliable path** (guarded in try/except),
+  and it warns if the Gateway is somehow still listening at the end.
+- **Heartbeat log**: `run_loop` logs on every phase change AND every ~30 min
+  during idle, so a silent stall is immediately visible in `_supervisor.log`
+  (the original failure left no log after it got stuck).
+
 ### 2026-06-04 - `ingest_supervisor.py`: pre-deploy hardening (detailed code review)
 
 Five real issues found reviewing the not-yet-deployed supervisor and fixed:

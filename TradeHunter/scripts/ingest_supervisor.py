@@ -183,27 +183,38 @@ class RealEffects:
         return False
 
     def gateway_down(self) -> None:
+        # Hang-proof + reliable. The earlier version let ibc/Stop.bat block for
+        # 60s (IBC's STOP command stalls when IBC isn't tracking this Gateway —
+        # e.g. it was started by an old/other IBC) and left the force-kill
+        # unguarded; on Hermes 2026-06-04 this stalled the whole supervisor for
+        # ~2 days. Now: SHORT Stop.bat budget, force-kill is the reliable path
+        # and is guarded, and the whole routine is bounded (~60s worst case).
         if not self.gateway_is_up() and not self._gateway_proc_alive():
             return
         stop = SKILL_DIR / "ibc" / "Stop.bat"
-        self.log("stopping Gateway (ibc/Stop.bat)")
+        self.log("stopping Gateway (ibc/Stop.bat, 15s budget)")
         try:
             subprocess.run(["cmd.exe", "/c", str(stop)], cwd=str(stop.parent),
-                           timeout=60)
+                           timeout=15)
         except Exception as exc:
-            self.log(f"Stop.bat failed: {exc}")
+            self.log(f"Stop.bat did not finish ({type(exc).__name__}) — going to force-kill")
         waited = 0
-        while waited < 60 and self.gateway_is_up():
+        while waited < 15 and self.gateway_is_up():
             _time.sleep(5); waited += 5
         if self.gateway_is_up() or self._gateway_proc_alive():
-            self.log("Gateway still up after Stop.bat — force-killing ibgateway*/java")
-            subprocess.run(["powershell", "-NoProfile", "-Command",
-                            "Get-CimInstance Win32_Process | "
-                            "Where-Object { $_.Name -match 'ibgateway' -or "
-                            "($_.Name -match 'java' -and $_.CommandLine -match 'IBC') } | "
-                            "ForEach-Object { Stop-Process -Id $_.ProcessId -Force "
-                            "-ErrorAction SilentlyContinue }"],
-                           timeout=30)
+            self.log("force-killing ibgateway*/java(IBC)")
+            try:
+                subprocess.run(["powershell", "-NoProfile", "-Command",
+                                "Get-CimInstance Win32_Process | "
+                                "Where-Object { $_.Name -match 'ibgateway' -or "
+                                "($_.Name -match 'java' -and $_.CommandLine -match 'IBC') } | "
+                                "ForEach-Object { Stop-Process -Id $_.ProcessId -Force "
+                                "-ErrorAction SilentlyContinue }"],
+                               timeout=30)
+            except Exception as exc:
+                self.log(f"force-kill subprocess error: {exc}")
+        if self.gateway_is_up():
+            self.log("WARNING: Gateway STILL listening after Stop.bat + force-kill")
 
     def _gateway_proc_alive(self) -> bool:
         try:
@@ -376,9 +387,20 @@ def run_loop(fx, log) -> None:
     state = _load_state()
     log(f"ingest_supervisor up. RUN_START={RUN_START} RUN_END={RUN_END} ET. "
         f"last_success_session={state.get('last_success_session')}")
+    last_action = None
+    ticks = 0
+    HEARTBEAT_EVERY = 30   # ticks (~30 min at TICK_SEC=60) — proves it's alive
     while True:
         try:
-            supervisor_tick(state, fx, log)
+            action = supervisor_tick(state, fx, log)
+            # Log on every phase CHANGE, and a periodic heartbeat during idle, so
+            # the supervisor is never silently stalled (the 2026-06-04 failure had
+            # no log after it got stuck — a heartbeat would have made it obvious).
+            if action != last_action or ticks % HEARTBEAT_EVERY == 0:
+                log(f"[heartbeat] {action} (et={et_now():%a %H:%M ET}, "
+                    f"last_success={state.get('last_success_session')})")
+                last_action = action
+            ticks += 1
         except Exception as exc:
             log(f"tick error: {exc!r}")
         _time.sleep(TICK_SEC)
