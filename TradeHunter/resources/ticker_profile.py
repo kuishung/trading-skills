@@ -276,6 +276,118 @@ def compute_volume_stats_from_minute_bars(minute_bars: list[dict]) -> dict:
 
 # ---------- Refresh ----------
 
+def _rth_filter(bars: list[dict]) -> list[dict]:
+    """Keep RTH bars only (13:30-21:00 UTC covers EDT + EST). Timestamps may be
+    datetime objects (live ingest) or ISO strings (bars_store)."""
+    out = []
+    for b in bars:
+        t = b.get("t")
+        hr = mn = None
+        if hasattr(t, "hour"):
+            hr, mn = t.hour, getattr(t, "minute", 0)
+        elif isinstance(t, str):
+            try:
+                parts = t.split("T", 1)[1].split(":")
+                hr, mn = int(parts[0]), int(parts[1])
+            except (IndexError, ValueError):
+                continue
+        if hr is None or not (13 <= hr <= 21):
+            continue
+        if hr == 13 and mn < 30:
+            continue
+        out.append(b)
+    return out
+
+
+def _bar_stats_3m(bars_3m: list[dict], atr_period: int = 14) -> dict | None:
+    """Candle-stat block shared by the 1m-aggregated path and the native-3m
+    path. Operates on a list of 3-min bar dicts {t,o,h,l,c,v}."""
+    if len(bars_3m) < atr_period + 5:
+        return None
+    try:
+        import patterns  # type: ignore
+    except ImportError:
+        return None
+    import numpy as np
+    o = np.array([b["o"] for b in bars_3m], dtype=float)
+    h = np.array([b["h"] for b in bars_3m], dtype=float)
+    l = np.array([b["l"] for b in bars_3m], dtype=float)
+    c = np.array([b["c"] for b in bars_3m], dtype=float)
+    rng = h - l
+    body = np.abs(c - o)
+    upper_tail = h - np.maximum(o, c)
+    lower_tail = np.minimum(o, c) - l
+    safe_rng = np.where(rng > 0, rng, np.nan)
+    body_ratio = body / safe_rng
+    upper_tail_ratio = upper_tail / safe_rng
+    lower_tail_ratio = lower_tail / safe_rng
+    atr_3m = patterns.atr_wilder_np(h, l, c, period=atr_period) \
+        if hasattr(patterns, "atr_wilder_np") else float(np.nanmean(rng))
+    outside = (h[1:] > h[:-1]) & (l[1:] < l[:-1])
+    outside_freq = float(outside.sum()) / max(len(outside), 1)
+    def _pct(arr, q):
+        arr = arr[~np.isnan(arr)]
+        return float(np.percentile(arr, q)) if len(arr) else None
+    return {
+        "atr":               round(atr_3m, 4),
+        "range_p10":         round(_pct(rng, 10), 4),
+        "range_p50":         round(_pct(rng, 50), 4),
+        "range_p90":         round(_pct(rng, 90), 4),
+        "body_ratio_mean":   round(float(np.nanmean(body_ratio)), 4),
+        "body_ratio_stddev": round(float(np.nanstd(body_ratio)), 4),
+        "upper_tail_p90":    round(_pct(upper_tail_ratio, 90), 4),
+        "lower_tail_p90":    round(_pct(lower_tail_ratio, 90), 4),
+        "outside_bar_freq":  round(outside_freq, 4),
+        "n_bars_used":       len(bars_3m),
+        "atr_period":        atr_period,
+    }
+
+
+def compute_3m_stats_from_3m_bars(bars_3m_raw: list[dict], *,
+                                  atr_period: int = 14) -> dict | None:
+    """stats_3m_rth from NATIVE 3-min parquet bars (no 1m->3m aggregation)."""
+    return _bar_stats_3m(_rth_filter(bars_3m_raw), atr_period)
+
+
+def refresh_profile_from_store(ticker: str) -> dict | None:
+    """Build the INTRADAY profile entirely from the seeded parquet store
+    (daily + 3min) — no yfinance, no 1min. This is the path the nightly regen
+    uses after the supervisor's ingest. Same on-disk shape as refresh_profile."""
+    import bars_store  # noqa: E402
+    tk = ticker.upper()
+    profile: dict = {"ticker": tk,
+                     "as_of": datetime.now(timezone.utc).date().isoformat(),
+                     "data_sources": {}, "source": "store"}
+    daily = bars_store.load_bars(tk, timeframe="daily")
+    if daily:
+        ds = compute_profile_from_daily_bars(tk, daily)
+        profile["stats_daily"] = {k: ds.get(k) for k in
+            ("atr_14d", "atr_pct", "prev_close", "daily_trend",
+             "atr_period", "n_daily_bars_used")}
+        profile["data_sources"]["daily"] = "parquet"
+        profile.update({"atr_14d": ds.get("atr_14d"), "atr_pct": ds.get("atr_pct"),
+                        "prev_close": ds.get("prev_close"),
+                        "daily_trend": ds.get("daily_trend")})
+    bars3 = bars_store.load_bars(tk, timeframe="3min")
+    if bars3:
+        s3 = compute_3m_stats_from_3m_bars(bars3)
+        if s3:
+            profile["stats_3m_rth"] = s3
+            profile["data_sources"]["3m"] = "parquet"
+        rth = _rth_filter(bars3)
+        vols = [int(b.get("v", 0) or 0) for b in rth]
+        if len(vols) > 1:
+            avg = sum(vols) / len(vols)
+            var = sum((v - avg) ** 2 for v in vols) / (len(vols) - 1)
+            profile["stats_3m_vol"] = {"avg_vol_3m": int(avg),
+                                       "vol_3m_stddev": int(var ** 0.5),
+                                       "n_bars_used": len(vols)}
+    if not profile.get("stats_daily") and not profile.get("stats_3m_rth"):
+        return None
+    save_profile(profile)
+    return profile
+
+
 def compute_3m_stats_from_1m_bars(minute_bars: list[dict],
                                   *, atr_period: int = 14
                                   ) -> dict | None:
@@ -352,50 +464,7 @@ def compute_3m_stats_from_1m_bars(minute_bars: list[dict],
         rth_dt.append(b2)
 
     bars_3m = patterns.aggregate_to_n_min(rth_dt, n=3)
-    if len(bars_3m) < atr_period + 5:
-        return None
-
-    import numpy as np
-    o = np.array([b["o"] for b in bars_3m], dtype=float)
-    h = np.array([b["h"] for b in bars_3m], dtype=float)
-    l = np.array([b["l"] for b in bars_3m], dtype=float)
-    c = np.array([b["c"] for b in bars_3m], dtype=float)
-
-    rng = h - l
-    body = np.abs(c - o)
-    upper_tail = h - np.maximum(o, c)
-    lower_tail = np.minimum(o, c) - l
-    # Avoid divide-by-zero on flat bars
-    safe_rng = np.where(rng > 0, rng, np.nan)
-    body_ratio = body / safe_rng
-    upper_tail_ratio = upper_tail / safe_rng
-    lower_tail_ratio = lower_tail / safe_rng
-
-    # Wilder ATR
-    atr_3m = patterns.atr_wilder_np(h, l, c, period=atr_period) \
-        if hasattr(patterns, "atr_wilder_np") else float(np.nanmean(rng))
-
-    # Outside-bar frequency
-    outside = (h[1:] > h[:-1]) & (l[1:] < l[:-1])
-    outside_freq = float(outside.sum()) / max(len(outside), 1)
-
-    def _percentile(arr, q):
-        arr = arr[~np.isnan(arr)]
-        return float(np.percentile(arr, q)) if len(arr) else None
-
-    return {
-        "atr":               round(atr_3m, 4),
-        "range_p10":         round(_percentile(rng, 10), 4),
-        "range_p50":         round(_percentile(rng, 50), 4),
-        "range_p90":         round(_percentile(rng, 90), 4),
-        "body_ratio_mean":   round(float(np.nanmean(body_ratio)), 4),
-        "body_ratio_stddev": round(float(np.nanstd(body_ratio)), 4),
-        "upper_tail_p90":    round(_percentile(upper_tail_ratio, 90), 4),
-        "lower_tail_p90":    round(_percentile(lower_tail_ratio, 90), 4),
-        "outside_bar_freq":  round(outside_freq, 4),
-        "n_bars_used":       len(bars_3m),
-        "atr_period":        atr_period,
-    }
+    return _bar_stats_3m(bars_3m, atr_period)
 
 
 def refresh_profile(
@@ -417,8 +486,14 @@ def refresh_profile(
       "yfinance" -- yfinance only (daily + 1m; no 3m derived stats)
       "local"    -- local parquet only (daily + 1m + 3m derived)
 
+      "store"    -- seeded parquet ONLY (daily + native 3min); no yfinance/1min.
+                    This is the offline path the nightly regen uses.
+
     Stub-todo: TV MCP + IBKR direct sources.
     """
+    if source == "store":
+        return refresh_profile_from_store(ticker)
+
     profile: dict = {
         "ticker": ticker.upper(),
         "as_of": datetime.now(timezone.utc).date().isoformat(),

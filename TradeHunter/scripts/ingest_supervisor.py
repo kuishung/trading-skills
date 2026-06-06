@@ -257,7 +257,10 @@ class RealEffects:
                     except subprocess.TimeoutExpired: proc.kill()
                     return False
 
-    def run_deep_check(self) -> None:
+    def run_deep_check(self) -> dict:
+        """Run the full deep check, write the report, and return a parsed
+        summary {status, corrupt, flagged, stale, report}."""
+        import re
         from _common import get_data_root
         ts = et_now().strftime("%Y%m%d_%H%M%S")
         report = get_data_root() / f"_deepcheck_{ts}.txt"
@@ -269,6 +272,71 @@ class RealEffects:
                                 "--deep"], cwd=str(SKILL_DIR), stdout=fh, timeout=3600)
         except Exception as exc:
             self.log(f"deep check failed: {exc}")
+            return {"status": "error", "report": report.name, "error": str(exc)[:120]}
+        try:
+            text = report.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            return {"status": "unknown", "report": report.name}
+        def _s(p): return sum(int(x) for x in re.findall(p, text))
+        corrupt = _s(r"corrupt=(\d+)") + _s(r"empty=(\d+)") + _s(r"bad_schema=(\d+)")
+        flagged = _s(r"flagged files:\s*(\d+)")
+        stale = _s(r"stale=(\d+)")
+        status = ("issues" if (corrupt + flagged) > 0
+                  else ("clean" if "# done" in text else "partial"))
+        return {"status": status, "corrupt": corrupt, "flagged": flagged,
+                "stale": stale, "report": report.name}
+
+    def run_regen(self) -> dict:
+        """Nightly INTRADAY profile regen from the parquet (local, no Gateway)."""
+        self.log("regen intraday profiles")
+        try:
+            sys.path.insert(0, str(SKILL_DIR / "scripts"))
+            import regen_profiles  # noqa
+            res = regen_profiles.regen("intraday", None, log=self.log)
+            return {"status": "ok", **res.get("phases", {}).get("intraday", {}),
+                    "duration_s": res.get("duration_s")}
+        except Exception as exc:
+            self.log(f"regen failed: {exc}")
+            return {"status": "error", "error": str(exc)[:120]}
+
+    def write_run_manifest(self, session, deep: dict, regen: dict) -> None:
+        """Write the per-run pipeline manifest the dashboard_tst /pipeline page
+        reads: ingest (parsed from the latest _ingest log) -> deep-check ->
+        profiles, with status + metrics + log pointers."""
+        import json
+        from _common import get_data_root
+        root = get_data_root()
+        # ingest summary from the newest _ingest_*.log
+        ingest = {"status": "unknown"}
+        try:
+            logs = sorted(root.glob("_ingest_*.log"), key=lambda p: p.stat().st_mtime)
+            if logs:
+                txt = logs[-1].read_text(encoding="utf-8", errors="replace")
+                import re
+                m = re.search(r"DONE:\s*(\d+)\s*bars written across\s*(\d+)", txt)
+                w = re.search(r"(\d+)\s+unique symbols need work", txt)
+                ingest = {"status": "ok" if "DONE:" in txt else "partial",
+                          "bars": int(m.group(1)) if m else None,
+                          "pairs": int(m.group(2)) if m else None,
+                          "symbols_needed": int(w.group(1)) if w else None,
+                          "log": logs[-1].name}
+        except Exception as exc:
+            ingest = {"status": "error", "error": str(exc)[:120]}
+        overall = "success"
+        if ingest.get("status") not in ("ok",) or deep.get("status") in ("issues", "error") \
+                or regen.get("status") == "error":
+            overall = "partial" if ingest.get("status") == "ok" else "failed"
+        manifest = {
+            "run_id": f"{session}_{et_now():%H%M%S}",
+            "session": str(session),
+            "finished_at": et_now().isoformat(),
+            "overall": overall,
+            "phases": {"ingest": ingest, "deepcheck": deep, "profiles": regen},
+        }
+        d = root / "pipeline_runs"; d.mkdir(parents=True, exist_ok=True)
+        (d / f"run_{session}_{et_now():%H%M%S}.json").write_text(
+            json.dumps(manifest, indent=2), encoding="utf-8")
+        self.log(f"manifest written: overall={overall}")
 
 
 # ======================================================================
@@ -340,8 +408,11 @@ def supervisor_tick(state: dict, fx, log) -> str:
         fx.gateway_down()
         state["last_success_session"] = sess
         _save_state(state)
-        fx.run_deep_check()
-        log(f"[session {sess}] top-up DONE -> Gateway down -> deep check written")
+        deep = fx.run_deep_check()          # read-only, no Gateway
+        regen = fx.run_regen()              # intraday profile regen (local)
+        fx.write_run_manifest(sess, deep, regen)
+        log(f"[session {sess}] top-up DONE -> Gateway down -> deep check -> "
+            f"profiles -> manifest")
         return "FETCH_OK"
     # Failed or deadline-aborted. If we're now at/after the deadline (or already
     # in blackout), shut the Gateway right away rather than waiting a tick.
@@ -485,7 +556,11 @@ class MockEffects:
             self._fail -= 1; self.actions.append("TOPUP_FAIL"); return False
         return True
     def run_deep_check(self):
-        self.actions.append("DEEPCHECK"); self.log("    [mock] deep check + report")
+        self.actions.append("DEEPCHECK"); self.log("    [mock] deep check + report"); return {"status": "clean"}
+    def run_regen(self):
+        self.actions.append("REGEN"); self.log("    [mock] profile regen"); return {"status": "ok"}
+    def write_run_manifest(self, session, deep, regen):
+        self.actions.append("MANIFEST"); self.log("    [mock] run manifest")
 
 
 def scenario_test() -> int:

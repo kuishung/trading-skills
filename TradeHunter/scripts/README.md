@@ -14,6 +14,7 @@ plus one-time installers.
 - `wait_and_ingest.py` — One-shot operational glue: wait for a specified Windows PID to exit (poll via `tasklist` every 60s), then launch `resources.ibkr_history.bulk_update` on a universe of choice. Reusable for any "ingest A finishes → ingest B starts" sequence where the two would otherwise collide on IBKR clientId. CLI: `py scripts/wait_and_ingest.py --wait-pid 21732 --timeframes 3min --seed-days 180 --force-seed --universe daily`. The `--universe` option supports `daily | 1min | 3min | journal` so a backtest re-seed can target the full daily-parquet universe (~1500 symbols) rather than the narrower journal-derived live universe (~50).
 - `ingest_supervisor.py` — Autonomous daily post-extended-close top-up + deep-check service (Hermes). ET-windowed (20:10->08:00 ET run, 08:00->20:10 ET + weekend blackout), owns Gateway start/stop, retry-until-success-or-deadline. `--self-test` / `--dry-run` for laptop smoke-testing. Started at boot by the task below.
 - `setup_hermes_ingest_supervisor_task.ps1` — Registers `TradeHunter-IngestSupervisor` as an at-boot Scheduled Task running `ingest_supervisor.py` (S4U Administrator, RunLevel Highest, RestartCount 3, no time limit). Idempotent (`-Force`); `-StartNow` to launch immediately.
+- `regen_profiles.py` — Unified profile-regen runner (`intraday|swing|both`, `--all` or per-ticker). Builds both profiles offline from the parquet store. Called by the supervisor (nightly intraday), a weekly swing job, and the dashboard triggers. `regen(kind, tickers=None)` returns a summary dict.
 - `check_bars_integrity.py` — Read-only parquet auditor for `data/price_history/`. Tier 1 (metadata, ~seconds): corruption / schema / row-count / depth-vs-target / staleness / cross-timeframe coverage. Tier 2 (`--deep`, full read): duplicate & unsorted timestamps, OHLC sanity, NaN, negative volume. CLI: `py -3.12 scripts/check_bars_integrity.py [--deep] [--tf 3min,daily]`.
 - `Watch-Ingest.ps1` — **Process supervisor for `wait_and_ingest.py`.** PowerShell forever-loop that relaunches the watcher every time it exits (clean finish, crash, OOM, killed). Pairs with the in-Python resilience in `resources/ibkr_history.py` (socket reconnect + per-symbol error skip). Run from a foreground PS window: `powershell -ExecutionPolicy Bypass -File .\scripts\Watch-Ingest.ps1`. Stops on Ctrl+C. Logs to `<data_root>/_supervisor_<timestamp>.log`. Parameters mirror `wait_and_ingest.py` (`-Timeframes`, `-SeedDays`, `-ForceSeed`, `-Universe`, `-RestartDelay`).
 - `setup_hermes_supervisor_task.ps1` — **One-shot Windows Scheduled Task installer for the Watch-Ingest.ps1 supervisor.** Registers `IntradayBot-Watcher` to run at Hermes boot under the Administrator principal (LogonType S4U, RunLevel Highest), with `RestartCount 3` and no execution-time limit. Pairs with `Watch-Ingest.ps1` to give the full failure-recovery chain: watcher crashes -> supervisor restarts (30s); supervisor crashes -> Task Scheduler restarts (60s, up to 3x); Hermes reboots -> task auto-fires. Survives RDP disconnects (the trap that killed the supervisor twice on 2026-05-26). Idempotent (-Force). Detects already-running supervisors and refuses `-StartNow` to prevent IBKR clientId collisions. ASCII-only per the PS 5.1 em-dash lesson. Run once per Hermes rebuild: `powershell -ExecutionPolicy Bypass -File scripts\setup_hermes_supervisor_task.ps1 -StartNow`.
@@ -35,6 +36,20 @@ runtime trading system. They could move to `bin/` or `tools/` but
 they're rarely-touched and small, so `scripts/` is fine.
 
 ## Changelog
+
+### 2026-06-06 - `regen_profiles.py` + supervisor manifest/regen wiring
+
+- **`regen_profiles.py`** — unified profile-regen runner: `intraday | swing | both`,
+  full universe (`--all`) or ad-hoc per-ticker. One entry point for the nightly
+  supervisor (intraday), a weekly swing job, and the dashboard triggers. Builds
+  offline from the parquet store. Timings: per-ticker ~1.3s, intraday full
+  ~6.8 min, swing full ~0.8 min. `regen(kind, tickers=None)` returns a summary.
+- **`ingest_supervisor.py`** — the nightly success path now chains
+  `gateway_down -> deep check -> intraday profile regen -> run manifest`.
+  `run_deep_check()` returns a parsed summary; new `run_regen()` (local, no
+  Gateway) and `write_run_manifest()` emit `data_root/pipeline_runs/run_<session>
+  _<ts>.json` (ingest+deepcheck+profiles status/metrics) — the artifact the
+  dashboard_tst `/pipeline` page reads.
 
 ### 2026-06-05 - `setup_hermes_ingest_supervisor_task.ps1`: `-Interactive` mode (autonomous Gateway launch)
 
