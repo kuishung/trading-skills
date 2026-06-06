@@ -119,6 +119,13 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-07 — Data Ingest §3 renamed "Nightly pipeline" → "Ticker Profile"
+- The §3 section is now titled **Ticker Profile** (it builds the per-ticker
+  swing/trend & intraday profiles), with a clearer subtitle and the action button
+  relabelled **Run regen → Run update**. Empty-state + "started" banner reworded
+  to "profile update". Pure copy/label change — the `/pipeline/regen` endpoint,
+  manifests, and kinds (swing-first) are unchanged.
+
 ### 2026-06-07 — Price Data History: show the newest-bar DATE (not just "N ago")
 - §2 "Last write" column → **"Last bar (date)"**, showing the actual date of the
   newest bar per timeframe (daily → `2026-06-05`; intraday → `2026-06-05 19:57
