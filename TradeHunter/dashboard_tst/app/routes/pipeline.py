@@ -21,6 +21,7 @@ from fastapi.templating import Jinja2Templates
 
 from ..security import require_moderator, require_user
 from ..services import pipeline_runs
+from ..services import profiles as profiles_svc
 from ..services.resources_bridge import TRADEHUNTER_ROOT
 
 router = APIRouter(tags=["pipeline"])
@@ -46,6 +47,26 @@ def pipeline_page(request: Request, user=Depends(require_user)):
         "configured": runs is not None,
         "kinds": _KINDS,
     })
+
+
+@router.get("/profile", response_class=HTMLResponse)
+def profile_page(request: Request, ticker: str = "", user=Depends(require_user)):
+    """Swing/Trend profile lookup — type a ticker, see its swing profile."""
+    data = profiles_svc.swing_profile(ticker) if ticker else None
+    return templates.TemplateResponse(request, "profile.html", {
+        "user": user,
+        "configured": profiles_svc.configured(),
+        "ticker": (ticker or "").strip().upper(),
+        "prof": data,
+        "rows": profiles_svc.display_rows(data) if data else [],
+        "count": len(profiles_svc.available()),
+    })
+
+
+@router.get("/api/profile/{ticker}")
+def api_profile(ticker: str, user=Depends(require_user)):
+    """JSON swing profile (also consumed by the Nous agent for the daily brief)."""
+    return {"ticker": ticker.strip().upper(), "swing": profiles_svc.swing_profile(ticker)}
 
 
 @router.get("/api/pipeline-runs")

@@ -119,6 +119,18 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-06 — `/profile` page: per-ticker Swing/Trend profile viewer
+
+New **Profile** nav page — type a ticker, see its **swing/trend** profile (the
+intraday one stays in `dashboard_intraday`). `services/profiles.py` reads
+`<data_root>/swing_profile/<T>.json` (file-read, no resources import) and
+`display_rows()` flattens it into cells so the template is a simple loop.
+`routes/pipeline.py`: `GET /profile?ticker=` (page) + `GET /api/profile/{ticker}`
+(JSON for the Nous agent). Shows daily+weekly trend badges, EMA structure, 52w
+position, ATR, base/accum, pullback, momentum, RS percentile, + analyst/earnings
+slots (from MATP later). NOTE: context var is `prof` not `p` — `base.html`
+shadows `p`, which silently blanked every `p.*` access.
+
 ### 2026-06-06 — `/pipeline` page: nightly ingest→deep-check→profiles report + regen triggers
 
 New **Pipeline** nav page surfacing the overnight work on Hermes so freshness is

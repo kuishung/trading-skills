@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Profile &middot; TradeHunter{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-semibold mb-1">Swing / Trend profile</h1>
+<p class="text-slate-400 mb-5 text-sm">
+  Per-ticker trend &amp; swing behavioral profile &mdash; {{ count }} tickers profiled.
+</p>
+
+<form method="get" action="/profile" class="mb-6 flex items-end gap-2">
+  <div>
+    <label class="block text-xs text-slate-500 mb-1">Ticker</label>
+    <input name="ticker" value="{{ ticker }}" autofocus placeholder="e.g. NVDA"
+           class="rounded bg-slate-900 border border-slate-700 px-3 py-2 text-sm uppercase focus:border-emerald-500 outline-none">
+  </div>
+  <button class="rounded bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-medium">Look up</button>
+</form>
+
+{% if not configured %}
+<div class="rounded border border-slate-700 bg-slate-900 px-3 py-3 text-sm text-slate-400">
+  Not configured &mdash; set <code>TST_PRICE_HISTORY_DIR</code> (swing profiles live in its sibling <code>swing_profile/</code>).
+</div>
+{% elif ticker and not prof %}
+<div class="rounded border border-amber-800 bg-amber-900/20 px-3 py-3 text-sm text-amber-300">
+  No swing profile for <b>{{ ticker }}</b> yet. Generate one from the
+  <a href="/pipeline" class="underline">Pipeline page</a> (Run regen &rarr; swing &rarr; type {{ ticker }}).
+</div>
+{% elif prof %}
+{% set tc = {'Uptrend':'emerald','Downtrend':'rose','Sideways':'amber','Unknown':'slate'} %}
+<div class="rounded-lg border border-slate-800 p-4">
+  <div class="flex items-center justify-between mb-4">
+    <div class="flex items-center gap-3">
+      <span class="text-xl font-semibold">{{ prof.ticker }}</span>
+      <span class="text-slate-400">${{ prof.price }}</span>
+      <span class="text-xs px-2 py-0.5 rounded bg-{{ tc.get(prof.trend_state,'slate') }}-900/40 text-{{ tc.get(prof.trend_state,'slate') }}-300 border border-{{ tc.get(prof.trend_state,'slate') }}-800">daily {{ prof.trend_state }}</span>
+      <span class="text-xs px-2 py-0.5 rounded bg-{{ tc.get(prof.weekly_trend_state,'slate') }}-900/40 text-{{ tc.get(prof.weekly_trend_state,'slate') }}-300 border border-{{ tc.get(prof.weekly_trend_state,'slate') }}-800">weekly {{ prof.weekly_trend_state }}</span>
+    </div>
+    <span class="text-xs text-slate-500">{{ prof.n_daily_bars }} daily bars
+      {% if prof.rs_percentile is not none %} &middot; RS {{ prof.rs_percentile }}%ile{% endif %}</span>
+  </div>
+
+  <div class="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+    {% for r in rows %}
+    <div class="rounded border border-slate-800 bg-slate-900/40 px-3 py-2">
+      <div class="text-[11px] uppercase tracking-wide text-slate-500">{{ r.label }}</div>
+      <div class="text-slate-200 font-medium">{{ r.value }}</div>
+      {% if r.sub %}<div class="text-[11px] text-slate-500">{{ r.sub }}</div>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  <div class="mt-3 text-right">
+    <a href="/api/profile/{{ prof.ticker }}" class="text-xs text-slate-500 hover:text-slate-300 underline">raw JSON</a>
+  </div>
+</div>
+{% else %}
+<div class="text-sm text-slate-500">Enter a ticker to see its swing/trend profile.</div>
+{% endif %}
+{% endblock %}
