@@ -29,7 +29,8 @@ treating any "missing" feature as a bug.
 - `smw_premarket_movers.py` — Scrape of `stockmarketwatch.com/movers/premarket`. Returns list of `{symbol, change_pct, price, volume, direction, source}` dicts. Filters by direction (gainers/losers/both), min abs(change%), price range. Handles the page's Next.js SSR HTML-comment-interleaved numbers (`+<!-- -->40<!-- -->%`). Used by GUNS Setup 1's shortlist phase; generic enough for reuse.
 - `tradingview-mcp/` — **Vendored MCP server** (`tradesdontlie/tradingview-mcp`). Node.js MCP that bridges Claude to TradingView Desktop via Chrome DevTools Protocol. Per-PC install: `cd resources/tradingview-mcp && npm install`. `node_modules/` + `package-lock.json` are gitignored. Upstream commit recorded in `_UPSTREAM.md`. Registered with Claude Code via `%USERPROFILE%\.claude\.mcp.json` (per-PC absolute path).
 - `MATP/` — **Vendored skill** (Median Analyst Target Price). End-to-end pipeline turning a Finviz screener URL into MATP (median post-earnings analyst price target) + MBP (Max Buy Price = MATP/1.15) per ticker, with optional trend classification, daily EMA-bounce Telegram alerts, Google Sheets push, and a TradingView Pine indicator + importable watchlist. Self-contained: `scripts/` + `SKILL.md` + own `requirements.txt`/`.gitignore`. Per-PC `.env` (credentials) and generated run artifacts (`MATP_table.csv`, `MATP_indicator.pine`, `MATP_analysis.md`, `MATP_watchlist.txt`) are NOT committed. Moved here from the repo root on 2026-05-30 to live under the TradeHunter roof; the canonical analyst-target source the `dashboard_tst` trend & swing platform builds its MATP board on (see `dashboard_tst/DESIGN.md`), reusable by any strategy needing target levels.
-- `ticker_profile.py` — Per-ticker behavioral baseline (UNIVERSAL cross-strategy product) cached at `data/ticker_profile/<TICKER>.json` with 24h TTL. One file per ticker, sections per timeframe: `stats_daily` (ATR/trend/prev_close), `stats_1m_rth` (vol stats), `stats_3m_rth` (ATR + range percentiles + body / tail ratio distributions + outside-bar freq — the substrate for ticker-relative candlestick anti-patterns). Data sources: yfinance for daily+1m, local 1m parquet → aggregated for 3m. The substrate for the normalized-parameter rule. Public API: `get_profile(ticker)`, `refresh_profile(ticker)`, `get_or_refresh(ticker)`, `is_stale(ticker)`. CLI: `py resources/ticker_profile.py NVDA --force-refresh`.
+- `ticker_profile.py` — Per-ticker behavioral baseline (UNIVERSAL cross-strategy product) cached at `data/ticker_profile/<TICKER>.json` with 24h TTL. One file per ticker, sections per timeframe: `stats_daily` (ATR/trend/prev_close), `stats_1m_rth` (vol stats), `stats_3m_rth` (ATR + range percentiles + body / tail ratio distributions + outside-bar freq — the substrate for ticker-relative candlestick anti-patterns). Data sources: yfinance for daily+1m, local 1m parquet → aggregated for 3m. The substrate for the normalized-parameter rule. Public API: `get_profile(ticker)`, `refresh_profile(ticker)`, `get_or_refresh(ticker)`, `is_stale(ticker)`. CLI: `py resources/ticker_profile.py NVDA --force-refresh`. **This is the INTRADAY profile** (see `swing_profile.py` for the trend/swing one). NOTE: sources 3m via 1min parquet — needs updating to read the seeded 3min/5min parquet directly since 1min is no longer seeded.
+- `swing_profile.py` — **Per-ticker SWING/TREND profile** (the second profile product) cached at `data/swing_profile/<TICKER>.json`. Daily(2yr)+weekly: daily+weekly trend state (reuses MATP `classify_trend`), EMA20/50/200 structure/slope/stacking, 52w position, swing ATR, volatility-contraction (base quality), accumulation/distribution, EMA pullback, 1/3/6-mo momentum, cross-sectional RS percentile. Weekly regen + earnings-driven. API: `get_swing_profile`, `refresh_swing_profile`, `refresh_all_swing`. CLI: `py -3.12 resources/swing_profile.py NVDA | --all`.
 - `patterns.py` — Pure-function pattern + signal-math primitives. No I/O, no vendor SDK. Operates on the standard bar dict shape `{t, o, h, l, c, v}`. Public API:
   - `ema(values, period)`, `sma(values, period)`, `vwap(bars)` — moving averages and VWAP series
   - `aggregate_to_n_min(bars, n=5)` — resample 1-min bars to N-min bars
@@ -54,6 +55,27 @@ treating any "missing" feature as a bug.
 - `trend_state.py` — **EMA 20/50/200 daily-chart trend classifier** (v1.0.0). Source: `strategies-reference/TREND_EMA.md`. Classifies any symbol into one of four states using EMA stack order + spread dynamics: `uptrend` (EMA20 > EMA50 > EMA200), `downtrend` (EMA20 < EMA50 < EMA200), `consolidation` (not stacked + all EMAs converging), `sideways` (not stacked + not converging). Pure-function core (no I/O): `classify_trend_ema(closes)`, `trend_ema_detail(closes)`. Convenience wrappers with bars_store integration: `classify_symbol_trend(symbol, detail=False)`, `classify_universe_trends(symbols)`. String constants exported: `UPTREND`, `DOWNTREND`, `CONSOLIDATION`, `SIDEWAYS`, `UNKNOWN`. Smoke-tested on 679 symbols (0 unknowns).
 
 ## Changelog
+
+### 2026-06-06 — `swing_profile.py`: SWING/TREND per-ticker profile (the second profile product)
+
+**Two-profile convention (locked 2026-06-06):** per-ticker behavioral profiles are
+**two separate products by trading style**, not one:
+- `ticker_profile.py` → **INTRADAY** (3/5min + daily, recency window, **nightly**
+  regen) → `data/ticker_profile/<T>.json` → GUNS/DITP / `dashboard_intraday`.
+- `swing_profile.py` → **SWING/TREND** (daily 2yr + weekly resample, long lookback,
+  **weekly** regen + earnings-driven) → `data/swing_profile/<T>.json` → MATP / swing
+  setups / `dashboard_tst`.
+
+They share `bars_store` + the per-ticker-JSON shape but differ in timeframe,
+lookback, cadence, fields, and consumer. `swing_profile.py` reuses the MATP
+`classify_trend` rule (Uptrend/Downtrend/Sideways/Unknown) so trend states agree.
+Fields (daily-derived): daily + weekly trend state, EMA20/50/200 structure +
+slope/stacking, 52w position, swing ATR, volatility-contraction (base quality),
+accumulation/distribution, EMA pullback, 1/3/6-mo momentum, and **cross-sectional
+RS percentile** (rank of 3-mo return across the universe — no index ETF in the
+store). `analyst_target`/`mbp`/`next_earnings` left null (merged from MATP/yfinance).
+Full universe ~0.8 min (daily files are tiny). CLI:
+`py -3.12 resources/swing_profile.py NVDA` or `--all`.
 
 ### 2026-06-04 — `bulk_update` recency-skip: fix UTC/ET date skew (winter data-loss bug)
 

@@ -264,6 +264,12 @@ Three states:
 
 Per-ticker behavioral baselines live in a cached JSON profile per ticker (e.g. `strategy/<FAMILY>/profiles/<TICKER>.json`) refreshed pre-market daily. Fields the brain reads: `atr_14d`, `atr_pct`, `avg_minute_vol_rth`, `minute_vol_stddev`, `premkt_range_avg`, `prev_close`, `daily_trend`.
 
+**Two-profile convention (set 2026-06-06):** per-ticker profiles are **two separate products by trading style**, not one — because intraday and swing/trend care about different timeframes, lookback windows, cadences, fields, and consumers:
+- **Intraday** → `resources/ticker_profile.py` → `data/ticker_profile/<T>.json` — 3/5min + daily, recency window, **nightly** regen, consumed by GUNS/DITP + `dashboard_intraday`.
+- **Swing/Trend** → `resources/swing_profile.py` → `data/swing_profile/<T>.json` — daily 2yr + weekly resample, long lookback, **weekly** regen + earnings-driven, consumed by MATP / swing setups + `dashboard_tst`. Reuses MATP's `classify_trend` rule so trend states agree.
+
+Don't merge them into one file; keep the cadences/consumers separate.
+
 Violation = strategy works on the ticker it was tuned for, fails everywhere else. This is the trap that kills most retail intraday systems.
 
 Per-ticker performance tracking still happens — the journal accumulates per-ticker stats (win-rate, avg R, total R) so the user can prune low-edge names from each strategy's whitelist over time. Normalization removes hand-tuning, it does NOT guarantee universal applicability.
