@@ -19,11 +19,12 @@ from ..config import settings
 
 
 def _runs_dir() -> Path | None:
+    """The pipeline_runs dir (sibling of price_history), or None if the data
+    root isn't configured. May not exist yet (no runs written)."""
     ph = settings.price_history_dir
     if not ph:
         return None
-    d = Path(ph).parent / "pipeline_runs"
-    return d if d.exists() else None
+    return Path(ph).parent / "pipeline_runs"
 
 
 def _ago(secs: float) -> str:
@@ -43,9 +44,13 @@ def _tier(age: float | None) -> int:
 
 
 def list_runs(limit: int = 30) -> list[dict] | None:
+    """Newest-first run manifests. None => data root NOT configured (TST_PRICE_
+    HISTORY_DIR unset). [] => configured but no runs yet."""
     d = _runs_dir()
     if d is None:
         return None
+    if not d.exists():
+        return []
     files = sorted(d.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:limit]
     now = _dt.datetime.now(_dt.timezone.utc)
     out: list[dict] = []
