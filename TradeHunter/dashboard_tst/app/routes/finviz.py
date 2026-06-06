@@ -105,6 +105,10 @@ def finviz_home(
     row = db.query(IngestHealth).order_by(IngestHealth.received_at.desc()).first()
     ingest = report_to_display(row.report, row.received_at) if (row and row.report) else parquet_health()
 
+    # Nightly pipeline (ingest -> deep-check -> profiles) — folded into this page.
+    from ..services import pipeline_runs
+    pruns = pipeline_runs.list_runs()
+
     return templates.TemplateResponse(
         request,
         "finviz.html",
@@ -114,6 +118,9 @@ def finviz_home(
             "can_edit": user.can_moderate,
             "intervals": list(RUN_INTERVALS.keys()),
             "ingest": ingest,
+            "pipeline": pruns,
+            "pipeline_configured": pruns is not None,
+            "pipeline_kinds": ("intraday", "swing", "both"),
         },
     )
 

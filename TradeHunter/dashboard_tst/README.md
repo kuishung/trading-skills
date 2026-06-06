@@ -119,6 +119,15 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-06 — pipeline report folded into the Data Ingest page
+
+The standalone `/pipeline` page was removed; its report + regen triggers now live
+as **§3 "Nightly pipeline"** on the **Data Ingest** (`/finviz`) page (the natural
+home alongside the parquet-health §2). The `/finviz` route adds `pipeline_runs.
+list_runs()` to its context; `POST /pipeline/regen` now redirects to `/finviz`;
+`/api/pipeline-runs` + the `/profile` page/API are unchanged. `pipeline.html`
+deleted, 'Pipeline' nav item removed.
+
 ### 2026-06-06 — `/profile` page: per-ticker Swing/Trend profile viewer
 
 New **Profile** nav page — type a ticker, see its **swing/trend** profile (the

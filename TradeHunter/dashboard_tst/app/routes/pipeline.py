@@ -38,17 +38,6 @@ def _py() -> str:
     return shutil.which("py") or r"C:\Windows\py.exe"
 
 
-@router.get("/pipeline", response_class=HTMLResponse)
-def pipeline_page(request: Request, user=Depends(require_user)):
-    runs = pipeline_runs.list_runs()
-    return templates.TemplateResponse(request, "pipeline.html", {
-        "user": user,
-        "runs": runs,
-        "configured": runs is not None,
-        "kinds": _KINDS,
-    })
-
-
 @router.get("/profile", response_class=HTMLResponse)
 def profile_page(request: Request, ticker: str = "", user=Depends(require_user)):
     """Swing/Trend profile lookup — type a ticker, see its swing profile."""
@@ -99,6 +88,6 @@ def trigger_regen(request: Request,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          creationflags=flags)
     except Exception as exc:
-        return RedirectResponse(f"/pipeline?err={type(exc).__name__}", status_code=303)
+        return RedirectResponse(f"/finviz?err={type(exc).__name__}", status_code=303)
     scope = ",".join(syms) if syms else "all"
-    return RedirectResponse(f"/pipeline?started={kind}:{scope}", status_code=303)
+    return RedirectResponse(f"/finviz?started={kind}:{scope}", status_code=303)
