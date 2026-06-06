@@ -861,8 +861,13 @@ def _build_progress_window(root):
 
     win = root   # use the root window directly as the progress window
     win.title("Ingest Progress")
-    win.geometry("420x330")
-    win.resizable(False, False)
+    # Sized to fit all lines (pct, progress, count, completed-through, gateway,
+    # deep-check, live, detail, eta) PLUS the operator buttons + action line +
+    # Close. Height grew when those were added; allow vertical resize so future
+    # additions can never cover the Close button again.
+    win.geometry("460x540")
+    win.minsize(460, 540)
+    win.resizable(False, True)
     win.attributes('-topmost', True)
     win.configure(bg='#1a1a1a')
 
