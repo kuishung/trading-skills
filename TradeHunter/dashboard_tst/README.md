@@ -119,6 +119,12 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-06 — v2.81: Data Ingest freshness + universe health + swing-first pipeline
+Release marker for today's Data Ingest batch (all detailed below): per-timeframe
+DATA freshness via the Hermes reporter, the per-category Universe-health table,
+correct 3min/5min/daily timeframes, and the swing-first nightly pipeline. Bumped
+`app/__init__.py` 2.80 → 2.81 so `/status` confirms the deploy.
+
 ### 2026-06-06 — Price Data History: correct timeframes + true data freshness
 - `services/ingest_health.py`: `_TIMEFRAMES` was `1min/5min/15min/daily` but the
   seed + supervisor only pull **3min/5min/daily**. So §2 showed alarming
