@@ -16,9 +16,15 @@ Daily cycle (per the user's spec, 2026-06-03):
         timestamped report -> close Gateway.
     Then idle (Gateway OFF) until the next window. No overnight busy-loop —
     the market is closed, so there is nothing new to fetch.
-  - BLACKOUT: 08:00 ET -> 20:10 ET, plus ALL weekend. Gateway is forced OFF and
-    nothing runs, so it can NEVER collide with the user's manual IBKR trading
-    (which begins 90 min before the open).
+  - WEEKDAY BLACKOUT: 08:00 ET -> 20:10 ET, Mon–Fri only. Gateway is forced OFF
+    so it can NEVER collide with the user's manual IBKR trading (which begins
+    90 min before the open).
+  - WEEKEND SEEDING (set 2026-06-07): across the market-closed span Sat 00:00 ET
+    -> Mon 08:00 ET the Gateway is kept ON (auto-revived) so a seed/backfill can
+    run uninterrupted — no daytime blackout, because there's no manual trading to
+    protect. The Monday 08:00 ET blackout resumes for the trading week. The seed
+    itself is run on demand (tray "Run ingest" / a seed job); the supervisor's job
+    here is to keep the Gateway available.
 
 The "retry / auto-revive" requirement is satisfied as *retry-until-success*:
 if the single nightly top-up crashes or the Gateway drops mid-fetch, the loop
@@ -130,6 +136,24 @@ def deadline_for(now_et: datetime) -> datetime:
         d = now_et.date() + timedelta(days=1)
     return (datetime.combine(d, RUN_END, tzinfo=ET)
             - timedelta(minutes=DEADLINE_MARGIN_MIN))
+
+
+def is_weekend_seeding(now_et: datetime) -> bool:
+    """True across the continuous market-closed weekend span — **Saturday 00:00
+    ET through Monday 08:00 ET (RUN_END)**. During this span the Gateway is kept
+    UP for seeding/backfill instead of being forced off, because there is no
+    manual trading to protect (set 2026-06-07 per user: "Gateway should be on for
+    seeding in Hermes during weekends").
+
+    Friday evening still runs the normal Friday-session top-up (NOT seeding);
+    Monday 08:00 ET onward the weekday blackout resumes so the Gateway is provably
+    down before the trading week."""
+    wd = now_et.weekday()                       # Mon=0 .. Sun=6
+    if wd in (5, 6):                            # all of Saturday and Sunday
+        return True
+    if wd == 0 and now_et.time() < RUN_END:     # Monday early morning (<08:00 ET)
+        return True
+    return False
 
 
 # ======================================================================
@@ -401,69 +425,77 @@ def supervisor_tick(state: dict, fx, log) -> str:
     now_et = et_now()
     sess = session_date(now_et)
     last = state.get("last_success_session")
+    seeding = is_weekend_seeding(now_et)
 
-    # BLACKOUT (incl. weekend daytime): Gateway MUST be off — never collide with
-    # the user's manual trading. Force it down if anything left it up.
-    if is_blackout(now_et.time()):
+    # WEEKDAY BLACKOUT (Mon–Fri 08:00 ET .. 20:10 ET): Gateway MUST be off — never
+    # collide with the user's manual trading. SUPPRESSED across the weekend
+    # seeding span (Sat 00:00 .. Mon 08:00 ET) — market closed, safe to keep up.
+    if not seeding and is_blackout(now_et.time()):
         if fx.gateway_is_up():
             log(f"[blackout {now_et:%a %H:%M ET}] Gateway up — shutting down")
             fx.gateway_down()
             return "BLACKOUT_GW_DOWN"
         return "BLACKOUT_IDLE"
 
-    # In the run window but not a trading session (weekend evening): nothing to
-    # fetch; keep the Gateway off.
-    if not is_trading_session(sess):
-        if fx.gateway_is_up():
-            fx.gateway_down()
-            return "WEEKEND_GW_DOWN"
-        return "WEEKEND_IDLE"
+    # A weekday trading session still needs its top-up — fetch it if we're before
+    # the shutdown margin. (Also finishes a Friday run that spilled into Saturday.)
+    if is_trading_session(sess) and last != sess:
+        dl = deadline_for(now_et)
+        if now_et < dl:
+            if not fx.gateway_up():
+                log("Gateway failed to come up — will retry next tick")
+                return "GW_UP_FAILED"
+            ok = fx.run_topup(dl, sess)
+            if ok:
+                # Weekday: shut the Gateway IMMEDIATELY (deep check is read-only,
+                # so we minimise Gateway-up time before the trading window). On the
+                # weekend span KEEP it up — seeding continues after the top-up.
+                if not seeding:
+                    fx.gateway_down()
+                state["last_success_session"] = sess
+                _save_state(state)
+                deep = fx.run_deep_check()          # read-only, no Gateway
+                regen = fx.run_regen()              # profile regen (local)
+                fx.write_run_manifest(sess, deep, regen)
+                fx.report_freshness()               # push freshness to dashboard
+                log(f"[session {sess}] top-up DONE -> deep check -> profiles -> "
+                    f"manifest -> freshness"
+                    + (" (Gateway kept up for weekend seeding)" if seeding
+                       else " -> Gateway down"))
+                return "FETCH_OK"
+            # Failed. On a weekday, if we're now past the deadline / in blackout,
+            # shut the Gateway right away rather than waiting a tick.
+            now2 = et_now()
+            if not seeding and (now2 >= dl or is_blackout(now2.time())):
+                if fx.gateway_is_up():
+                    fx.gateway_down()
+                log(f"[session {sess}] top-up aborted at deadline — Gateway down")
+                return "FETCH_ABORTED"
+            log(f"[session {sess}] top-up failed — retry next tick")
+            return "FETCH_RETRY"
+        elif not seeding:
+            # Past the shutdown margin before 08:00 ET on a weekday morning: do
+            # NOT start heavy work; make sure the Gateway is provably down.
+            if fx.gateway_is_up():
+                fx.gateway_down()
+            log(f"[session {sess}] within shutdown margin before {RUN_END} ET — not starting")
+            return "PAST_DEADLINE"
 
-    # Already finished this session: stay idle with the Gateway off.
-    if last == sess:
-        if fx.gateway_is_up():
-            fx.gateway_down()
-            return "DONE_GW_DOWN"
-        return "DONE_IDLE"
+    # WEEKEND SEEDING (Sat 00:00 .. Mon 08:00 ET): keep the Gateway UP so a seed /
+    # backfill can run uninterrupted (manual via the tray, or a seed job). Revive
+    # it if it's down.
+    if seeding:
+        if not fx.gateway_is_up():
+            log(f"[weekend {now_et:%a %H:%M ET}] bringing Gateway up for seeding")
+            return "WEEKEND_GW_UP" if fx.gateway_up() else "WEEKEND_GW_UP_FAILED"
+        return "WEEKEND_GW_LIVE"
 
-    # Inside the shutdown margin before RUN_END? Do NOT start heavy work; make
-    # sure the Gateway is off so it's provably down before 08:00 ET.
-    dl = deadline_for(now_et)
-    if now_et >= dl:
-        if fx.gateway_is_up():
-            fx.gateway_down()
-        log(f"[session {sess}] within shutdown margin before {RUN_END} ET — Gateway off, not starting")
-        return "PAST_DEADLINE"
-
-    # Need to fetch this session.
-    if not fx.gateway_up():
-        log("Gateway failed to come up — will retry next tick")
-        return "GW_UP_FAILED"
-    ok = fx.run_topup(dl, sess)
-    if ok:
-        # Shut the Gateway IMMEDIATELY — the deep check is read-only and needs no
-        # Gateway, so we minimise Gateway-up time and never let the ~15-min deep
-        # check push Gateway-down toward the trading window.
+    # WEEKDAY, in the run window, nothing to fetch (session already done, or the
+    # early-morning gap): Gateway off, idle.
+    if fx.gateway_is_up():
         fx.gateway_down()
-        state["last_success_session"] = sess
-        _save_state(state)
-        deep = fx.run_deep_check()          # read-only, no Gateway
-        regen = fx.run_regen()              # intraday profile regen (local)
-        fx.write_run_manifest(sess, deep, regen)
-        fx.report_freshness()               # push DATA freshness to dashboard
-        log(f"[session {sess}] top-up DONE -> Gateway down -> deep check -> "
-            f"profiles -> manifest -> freshness pushed")
-        return "FETCH_OK"
-    # Failed or deadline-aborted. If we're now at/after the deadline (or already
-    # in blackout), shut the Gateway right away rather than waiting a tick.
-    now2 = et_now()
-    if now2 >= dl or is_blackout(now2.time()):
-        if fx.gateway_is_up():
-            fx.gateway_down()
-        log(f"[session {sess}] top-up aborted at deadline — Gateway down")
-        return "FETCH_ABORTED"
-    log(f"[session {sess}] top-up failed — retry next tick")
-    return "FETCH_RETRY"
+        return "IDLE_GW_DOWN"
+    return "IDLE"
 
 
 # ---- state persistence (per-PC, state/) ----
@@ -558,6 +590,15 @@ def self_test() -> int:
     chk("Sat 02:00 = Fri session, not done -> fetch",
         should_fetch(_dt("2026-06-06 02:00"), None), True)
 
+    print("# weekend seeding span (Sat 00:00 ET .. Mon 08:00 ET -> Gateway up)")
+    chk("Fri 12:00 -> not seeding", is_weekend_seeding(_dt("2026-06-05 12:00")), False)
+    chk("Fri 21:00 (Fri run) -> not seeding", is_weekend_seeding(_dt("2026-06-05 21:00")), False)
+    chk("Sat 00:00 -> seeding", is_weekend_seeding(_dt("2026-06-06 00:00")), True)
+    chk("Sat 12:00 -> seeding", is_weekend_seeding(_dt("2026-06-06 12:00")), True)
+    chk("Sun 12:00 -> seeding", is_weekend_seeding(_dt("2026-06-07 12:00")), True)
+    chk("Mon 02:00 -> seeding", is_weekend_seeding(_dt("2026-06-01 02:00")), True)
+    chk("Mon 08:00 -> NOT seeding (trading week)", is_weekend_seeding(_dt("2026-06-01 08:00")), False)
+
     print("# deadline (RUN_END 08:00 ET minus 3-min shutdown margin = 07:57)")
     chk("Mon 20:10 -> deadline Tue 07:57",
         deadline_for(_dt("2026-06-01 20:10")), _dt("2026-06-02 07:57"))
@@ -625,7 +666,7 @@ def scenario_test() -> int:
     for when in ("2026-06-01 20:10", "2026-06-01 20:40",
                  "2026-06-01 21:10", "2026-06-01 21:40"):
         seq.append(tick_at(when, state, fx))
-    chk("A retry->retry->ok->idle", seq, ["FETCH_RETRY", "FETCH_RETRY", "FETCH_OK", "DONE_IDLE"])
+    chk("A retry->retry->ok->idle", seq, ["FETCH_RETRY", "FETCH_RETRY", "FETCH_OK", "IDLE"])
     chk("A success session recorded", state.get("last_success_session"), date(2026, 6, 1))
     chk("A deep check ran exactly once", fx.actions.count("DEEPCHECK"), 1)
     chk("A gateway ended DOWN", fx.gateway_is_up(), False)
@@ -640,14 +681,33 @@ def scenario_test() -> int:
     chk("C blackout + gw up -> shut down", tick_at("2026-06-02 10:00", state, fx), "BLACKOUT_GW_DOWN")
     chk("C gateway now DOWN", fx.gateway_is_up(), False)
 
-    # D: Gateway UP on a weekend evening -> force OFF (no session to fetch)
+    # D: WEEKEND — Gateway is KEPT UP for seeding (not forced off). Sat 06-06.
     fx = MockEffects(nolog, start_up=True); state = {}
-    chk("D weekend + gw up -> shut down", tick_at("2026-06-06 21:00", state, fx), "WEEKEND_GW_DOWN")
-    chk("D gateway now DOWN", fx.gateway_is_up(), False)
+    chk("D weekend + gw up -> kept LIVE for seeding", tick_at("2026-06-06 21:00", state, fx), "WEEKEND_GW_LIVE")
+    chk("D gateway stays UP", fx.gateway_is_up(), True)
+    # D2: weekend daytime with Gateway down -> bring it UP (was blackout before)
+    fx = MockEffects(nolog, start_up=False); state = {}
+    chk("D2 Sat daytime + gw down -> brought UP", tick_at("2026-06-06 12:00", state, fx), "WEEKEND_GW_UP")
+    chk("D2 gateway now UP", fx.gateway_is_up(), True)
+    chk("D2 no top-up on weekend", "TOPUP" in fx.actions, False)
+    # D3: Sunday daytime too
+    fx = MockEffects(nolog, start_up=False); state = {}
+    chk("D3 Sun daytime + gw down -> brought UP", tick_at("2026-06-07 12:00", state, fx), "WEEKEND_GW_UP")
+    # D4: Monday early morning (<08:00) still seeding -> Gateway up
+    fx = MockEffects(nolog, start_up=False); state = {}
+    chk("D4 Mon 02:00 (<08:00) -> brought UP", tick_at("2026-06-01 02:00", state, fx), "WEEKEND_GW_UP")
+    # D5: Monday 08:00 -> trading week resumes -> Gateway forced OFF (safety)
+    fx = MockEffects(nolog, start_up=True); state = {}
+    chk("D5 Mon 08:00 -> blackout shuts gateway", tick_at("2026-06-01 08:00", state, fx), "BLACKOUT_GW_DOWN")
+    chk("D5 gateway now DOWN", fx.gateway_is_up(), False)
+    # D6: Friday daytime still protected (Gateway off for Friday trading)
+    fx = MockEffects(nolog, start_up=True); state = {}
+    chk("D6 Fri 12:00 -> blackout shuts gateway", tick_at("2026-06-05 12:00", state, fx), "BLACKOUT_GW_DOWN")
+    chk("D6 gateway now DOWN", fx.gateway_is_up(), False)
 
     # E: already-succeeded session in window -> idle, no duplicate fetch
     fx = MockEffects(nolog); state = {"last_success_session": date(2026, 6, 1)}
-    chk("E same session -> idle", tick_at("2026-06-02 02:00", state, fx), "DONE_IDLE")
+    chk("E same session -> idle", tick_at("2026-06-02 02:00", state, fx), "IDLE")
     chk("E no top-up", "TOPUP" in fx.actions, False)
 
     # F: inside the shutdown margin before 08:00 ET -> do NOT start; Gateway off

@@ -37,6 +37,24 @@ they're rarely-touched and small, so `scripts/` is fine.
 
 ## Changelog
 
+### 2026-06-07 - `ingest_supervisor.py`: keep Gateway ON for weekend seeding
+- New `is_weekend_seeding(now_et)` — the market-closed span **Sat 00:00 ET → Mon
+  08:00 ET**. Across it the supervisor now **keeps the Gateway UP** (auto-revives
+  it if down) instead of forcing it off, so a seed/backfill can run all weekend
+  (user request 2026-06-07: "Gateway should be on for seeding in Hermes during
+  weekends"). `supervisor_tick` restructured: weekday blackout (Mon–Fri
+  08:00–20:10 ET) is **suppressed** on the seeding span; new actions
+  `WEEKEND_GW_UP` / `WEEKEND_GW_LIVE`; weekday-idle is now `IDLE`/`IDLE_GW_DOWN`.
+- **Unchanged safety:** Mon–Fri manual-trading blackout still forces the Gateway
+  OFF (verified Mon 08:00 and Fri 12:00 → `BLACKOUT_GW_DOWN`); the Friday-evening
+  and weekday overnight top-ups still run. After a weekday top-up the Gateway is
+  shut immediately as before; on the weekend span it's kept up.
+- Tests: added `is_weekend_seeding` window assertions + scenario cases D2–D6
+  (Sat/Sun daytime bring-up, Mon-early stays up, Mon 08:00 + Fri 12:00 forced
+  off). Self-test + scenario tests green. Dry-run Fri→Mon confirms Gateway LIVE
+  all weekend, OFF from Mon 08:00.
+- The on/off schedule is now surfaced in the Hermes tray window (tray-sync rule).
+
 ### 2026-06-06 - `report_ingest_health.py`: API-key resolution = last-wins (dotenv parity)
 - `_resolve_key` now returns the **last** matching `TST_INGEST_API_KEY` line in
   `dashboard_tst/app/.env` (was: first). python-dotenv (the dashboard) uses

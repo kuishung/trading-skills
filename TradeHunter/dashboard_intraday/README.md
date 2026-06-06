@@ -33,6 +33,14 @@ web, Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-06-07 — `tray_status.py`: show the designed Gateway on/off schedule
+- Added a static schedule line under the Gateway status: "ON nightly 20:10–08:00
+  ET · ON all weekend (Sat→Mon 08:00 ET) for seeding · OFF Mon–Fri 08:00–20:10 ET
+  (your trading)". Mirrors `scripts/ingest_supervisor.py` so the user can see, at
+  a glance, when the Gateway is up/down **by design** (vs the live LIVE/down line
+  just above it). Tracks the weekend-seeding change made to the supervisor the
+  same day (tray-sync rule).
+
 ### 2026-06-06 — `tray_status.py`: operator buttons (Start Gateway / Run ingest)
 - Added two buttons to the progress window: **Start Gateway** (launches IBC via
   `ibc/StartIBC-intraday.bat` in a new console, guarded by an "are you trading

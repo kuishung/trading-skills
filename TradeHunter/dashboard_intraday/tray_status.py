@@ -926,6 +926,19 @@ def _build_progress_window(root):
     )
     gw_lbl.pack(pady=(0, 4))
 
+    # Designed Gateway on/off schedule (static — mirrors ingest_supervisor:
+    # nightly run 20:10–08:00 ET, weekday blackout 08:00–20:10 ET for the user's
+    # manual trading, Gateway kept ON all weekend Sat 00:00 → Mon 08:00 ET for
+    # seeding/backfill). So the user knows when it's up/down by design.
+    tk.Label(
+        win,
+        text=("By design — ON nightly 20:10–08:00 ET  ·  "
+              "ON all weekend (Sat→Mon 08:00 ET) for seeding  ·  "
+              "OFF Mon–Fri 08:00–20:10 ET (your trading)"),
+        font=('Segoe UI', 8), bg='#1a1a1a', fg='#6b7280',
+        wraplength=430, justify='center',
+    ).pack(pady=(0, 4))
+
     # Latest deep-check / integrity result (tray-sync rule)
     deepcheck_var = tk.StringVar(value='Deep check: -')
     deepcheck_lbl = tk.Label(
