@@ -92,6 +92,36 @@ def load_unservable() -> set[str]:
     except Exception:
         return set()
 
+
+# ---- Per-(sym,tf) "verified-current" checkpoints -------------------------
+# After a top-up returns +0 bars, IBKR has nothing newer than what we already
+# store. We record the `fresh_through` date we checked against, so later runs
+# with the same (or older) fresh_through SKIP that pair instead of re-pacing
+# through it every time. Without this, the ~180 symbols whose IBKR data legit
+# ends before the latest session ("perpetual laggards") were re-fetched for +0
+# bars on EVERY run — wasted minutes on a weekday, ~10 h on the slow weekend
+# data farm. When fresh_through advances to the next session, the pair is
+# attempted once more (and re-checkpointed). Keyed "SYM|tf" -> "YYYY-MM-DD".
+def _checkpoint_path() -> Path:
+    return bars_store.PRICE_HISTORY_ROOT.parent / "_ingest_checkpoints.json"
+
+
+def _load_checkpoints() -> dict:
+    try:
+        data = json.loads(_checkpoint_path().read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_checkpoints(cp: dict) -> None:
+    try:
+        p = _checkpoint_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(cp, separators=(",", ":")), encoding="utf-8")
+    except Exception as exc:
+        sys.stderr.write(f"[ibkr_history] checkpoint save failed: {exc}\n")
+
 # IBKR barSizeSetting + sensible max-duration-per-request mapping.
 # IB historical-data pacing tightens for smaller bars; chunk accordingly.
 TIMEFRAME_TO_IB = {
@@ -445,6 +475,13 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
     # re-pacing through every already-current symbol — keeping the run inside
     # the 08:00 ET deadline. Distinct from skip_up_to_date (which is depth-based;
     # this is recency-based).
+    # Verified-current checkpoints (only meaningful for recency-skip runs).
+    use_checkpoints = (fresh_through is not None and not force_seed)
+    ft_iso = fresh_through.isoformat() if fresh_through is not None else None
+    checkpoints = _load_checkpoints() if use_checkpoints else {}
+    cp_dirty = False
+    n_checkpoint_skipped = 0
+
     total_pairs = len(symbols) * len(timeframes)
     n_scanned = 0
     n_classify_errors = 0
@@ -474,6 +511,16 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
                             continue
                     except (ValueError, AttributeError, IndexError):
                         pass
+                # Verified-current: a prior top-up for this (or a later) session
+                # already found IBKR had nothing newer -> skip until fresh_through
+                # advances (kills the perpetual-laggard re-fetch churn).
+                cp = checkpoints.get(sym + "|" + tf)
+                if isinstance(cp, str) and cp >= ft_iso:
+                    counts["fresh"] += 1
+                    n_checkpoint_skipped += 1
+                    plan.append((sym, tf, "fresh", f"verified-empty {cp}", target_days))
+                    n_scanned += 1
+                    continue
             try:
                 action, note = _classify_pair(sym, tf, target_days, force_seed)
             except Exception as exc:
@@ -519,6 +566,13 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
         f"refill={counts['refill']} top_up={counts['top_up']} "
         f"unreadable={counts['unreadable']} fresh={counts['fresh']}"
     )
+    if n_checkpoint_skipped:
+        _emit(
+            f"[pre-flight] {n_checkpoint_skipped} pair(s) skipped as verified-current "
+            f"(prior top-up found nothing newer through this session). "
+            f"Saved ~{n_checkpoint_skipped * pacing_s / 60:.1f} min of pacing + the "
+            f"per-request round-trips."
+        )
     if n_skipped:
         _emit(
             f"[pre-flight] skipping {n_skipped} top_up pairs already at full depth "
@@ -622,6 +676,13 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
                 else:   # action == "top_up"
                     n = update_history(ib, sym, tf, pacing_s=pacing_s)
                     label = f"update({note})"
+                    if use_checkpoints:
+                        # Mark this (sym,tf) attempted for this session so a later
+                        # run with the same fresh_through won't re-pace it (the +0
+                        # 'nothing newer' laggards). Re-attempted once fresh_through
+                        # advances to the next session.
+                        checkpoints[sym + "|" + tf] = ft_iso
+                        cp_dirty = True
                 results[(sym, tf)] = n
                 _emit(
                     f"  {progress:<12} {sym:<8} {tf:<6} {label:<22} +{n} bars"
@@ -633,6 +694,10 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
                     f"  {progress:<12} {sym:<8} {tf:<6} FAILED: {err_str} — skipping"
                 )
     finally:
+        # Persist checkpoints even on an early abort — preserves the verified
+        # pairs done so far so a re-run doesn't repeat them.
+        if cp_dirty:
+            _save_checkpoints(checkpoints)
         try:
             ib.disconnect()
         except Exception:

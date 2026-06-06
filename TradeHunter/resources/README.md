@@ -56,6 +56,28 @@ treating any "missing" feature as a bug.
 
 ## Changelog
 
+### 2026-06-07 — `ibkr_history.py`: verified-current checkpoints (kill the laggard re-fetch churn)
+- **Problem:** ~180 symbols whose IBKR data legitimately ends before the latest
+  session ("perpetual laggards") were classified `top_up` and re-fetched for
+  **+0 bars on every run** — minutes wasted on a weekday, ~10 h on the slow
+  weekend data farm (the "ingest keeps gathering" report). They never reach
+  "fresh" (latest bar < `fresh_through`), so nothing skipped them.
+- **Fix:** a checkpoint file `<data_root>/_ingest_checkpoints.json`
+  (`"SYM|tf" -> "YYYY-MM-DD"`). After any `top_up` attempt for a given
+  `fresh_through`, the pair is recorded; the pre-flight then skips it (counts as
+  `fresh`, note `verified-empty`) until `fresh_through` advances to the next
+  session. Each (sym,tf) is attempted **at most once per session date**, not once
+  per run. Re-attempted automatically when the session advances (e.g. Monday).
+  Saved in `bulk_update`'s `finally` (survives an early abort). Helpers
+  `_load_checkpoints`/`_save_checkpoints`; gated on `fresh_through set and not
+  force_seed` (full seeds / force runs unaffected).
+- Efficiency review of the rest of `bulk_update`: `update_history` already fetches
+  only the incremental gap (`gap_days+1`, not full depth — the `depth=Nd` in the
+  log is the on-disk depth note, not the request size); the pre-flight is
+  metadata-only (`available_range_fast`, ~1ms/pair); `skip_up_to_date` still does
+  depth-based skipping. The remaining ~60 s/request on weekends is IBKR
+  data-farm latency (server-side, unavoidable).
+
 ### 2026-06-06 — backtest no-lookahead primitives (`bar_session_date_et` + `profile_at`)
 - **`bars_store.bar_session_date_et(t)` (new)** — the US market SESSION date
   (America/New_York) for a bar timestamp: pre-market 04:00 → after-hours 20:00
