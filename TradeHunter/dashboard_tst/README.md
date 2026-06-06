@@ -132,6 +132,15 @@ surface takes shape.
   that pushed row over the file-mtime read. No dashboard code change was needed
   for the freshness — only the reporter that feeds the existing pushed-report
   path. (Scope rule preserved: the dashboard never opens a parquet.)
+- §2 now also renders a **Universe coverage** strip — how the 1509 seeded
+  symbols split across index memberships (S&P 500 / 400 / 600 / NASDAQ-100 +
+  Other + Total), carried in the pushed report's new `universe` field
+  (`report_to_display` passes it through; the local read sends `[]`). Memberships
+  overlap (NASDAQ-100 names sit inside the S&P 500) — noted in the UI.
+- §3 regen form now defaults to **swing** (this is the trend & swing site), and
+  the supervisor's nightly regen runs `both` so manifests carry
+  `profiles_swing` (not just `profiles_intraday`). `pipeline_kinds` reordered
+  swing-first; `POST /pipeline/regen` default kind = swing.
 
 ### 2026-06-06 — pipeline report folded into the Data Ingest page
 

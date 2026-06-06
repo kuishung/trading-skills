@@ -94,6 +94,48 @@ def _tf_report(tf: str) -> dict:
     }
 
 
+def _canon(s: str) -> str:
+    """Canonical symbol key for cross-source matching — folds share-class
+    punctuation so BRK.B (Wikipedia) and BRK-B (stored) compare equal."""
+    out = []
+    for ch in str(s).upper():
+        if ch.isalnum():
+            out.append(ch)
+    return "".join(out)
+
+
+def _universe_breakdown(stored: set[str]) -> list[dict]:
+    """How the seeded symbols split across the index universes (memberships
+    overlap — NASDAQ-100 names are mostly inside the S&P 500). Reads the cached
+    Wikipedia membership lists via resources/*; soft-fail to [] if unavailable."""
+    try:
+        from resources import sp500, sp_midcap400, sp_smallcap600, nasdaq100
+    except Exception:
+        return []
+    indices = [
+        ("S&P 500", sp500.get_sp500_symbols),
+        ("S&P 400 (mid)", sp_midcap400.get_sp400_symbols),
+        ("S&P 600 (small)", sp_smallcap600.get_sp600_symbols),
+        ("NASDAQ-100", nasdaq100.get_nasdaq100_symbols),
+    ]
+    canon_stored = {_canon(s) for s in stored}
+    rows: list[dict] = []
+    covered: set[str] = set()
+    for name, fn in indices:
+        try:
+            members = {_canon(x) for x in fn()}
+        except Exception:
+            continue
+        hit = canon_stored & members
+        covered |= hit
+        rows.append({"name": name, "count": len(hit)})
+    other = len(canon_stored - covered)
+    if other:
+        rows.append({"name": "Other", "count": other})
+    rows.append({"name": "Total seeded", "count": len(canon_stored), "_total": True})
+    return rows
+
+
 def _resolve_key(cli_key: str | None) -> str | None:
     if cli_key:
         return cli_key.strip()
@@ -114,11 +156,14 @@ def _resolve_key(cli_key: str | None) -> str | None:
 
 def build_report() -> dict:
     tfs = [_tf_report(tf) for tf in TIMEFRAMES]
+    # Canonical universe = the daily store (one file per seeded symbol).
+    stored = set(bars_store.list_symbols("daily")) or set(bars_store.list_symbols("3min"))
     return {
         "host": os.environ.get("COMPUTERNAME") or "hermes",
         "root": str(bars_store.PRICE_HISTORY_ROOT),
         "generated_epoch": int(time.time()),
         "timeframes": tfs,
+        "universe": _universe_breakdown(stored),
         "log_tail": [],
     }
 

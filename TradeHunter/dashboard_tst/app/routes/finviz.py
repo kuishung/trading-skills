@@ -120,7 +120,8 @@ def finviz_home(
             "ingest": ingest,
             "pipeline": pruns,
             "pipeline_configured": pruns is not None,
-            "pipeline_kinds": ("intraday", "swing", "both"),
+            # swing first => default selection (this is the trend & swing site)
+            "pipeline_kinds": ("swing", "intraday", "both"),
         },
     )
 

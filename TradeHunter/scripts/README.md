@@ -37,7 +37,7 @@ they're rarely-touched and small, so `scripts/` is fine.
 
 ## Changelog
 
-### 2026-06-06 - `report_ingest_health.py` + supervisor freshness push
+### 2026-06-06 - `report_ingest_health.py` + supervisor freshness/universe/swing
 - **New `report_ingest_health.py`** — Hermes-side reporter that reads the
   **newest-bar epoch** per seeded timeframe (3min/5min/daily) from parquet
   row-group statistics (metadata only, ~1ms/symbol via
@@ -48,10 +48,18 @@ they're rarely-touched and small, so `scripts/` is fine.
   rule) — the reporter does, on the ingest box. API key resolves from
   `--api-key` → `$TST_INGEST_API_KEY` → `dashboard_tst/app/.env`. `--dry-run`
   prints the report without posting.
+- **Universe breakdown** — the report also carries `universe`: how the seeded
+  symbols split across index memberships (S&P 500 / 400 / 600 / NASDAQ-100 +
+  Other + Total), computed via `resources/{sp500,sp_midcap400,sp_smallcap600,
+  nasdaq100}`. `_canon()` folds share-class punctuation (BRK.B vs BRK-B).
+  Memberships overlap (NASDAQ-100 ⊂ S&P 500). The dashboard renders it under §2.
 - **`ingest_supervisor.py`** — wired `report_freshness()` into the success path
   (after `write_run_manifest`), so every autonomous nightly top-up pushes fresh
-  freshness to the dashboard automatically. Soft-fail (a reporting hiccup never
-  affects the ingest). Added the matching no-op to `MockEffects`; self-test +
+  freshness + universe to the dashboard automatically. Soft-fail. Added the
+  matching no-op to `MockEffects`.
+- **`run_regen` now runs `regen("both")`** (intraday + swing) and the manifest
+  expands the per-kind phases into `profiles_intraday` + `profiles_swing`, so the
+  trend & swing dashboard shows swing freshness (not just intraday). Self-test +
   scenario tests stay green.
 
 ### 2026-06-06 - `regen_profiles.py` + supervisor manifest/regen wiring

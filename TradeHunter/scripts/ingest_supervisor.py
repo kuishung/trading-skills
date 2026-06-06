@@ -288,14 +288,18 @@ class RealEffects:
                 "stale": stale, "report": report.name}
 
     def run_regen(self) -> dict:
-        """Nightly INTRADAY profile regen from the parquet (local, no Gateway)."""
-        self.log("regen intraday profiles")
+        """Nightly profile regen from the parquet (local, no Gateway). Runs BOTH
+        the intraday profile (consumed by dashboard_intraday/GUNS) and the
+        swing/trend profile (consumed by dashboard_tst/MATP) — both are cheap and
+        each dashboard surfaces its own. Returns the per-kind phases so the
+        manifest carries profiles_intraday + profiles_swing."""
+        self.log("regen profiles (intraday + swing)")
         try:
             sys.path.insert(0, str(SKILL_DIR / "scripts"))
             import regen_profiles  # noqa
-            res = regen_profiles.regen("intraday", None, log=self.log)
-            return {"status": "ok", **res.get("phases", {}).get("intraday", {}),
-                    "duration_s": res.get("duration_s")}
+            res = regen_profiles.regen("both", None, log=self.log)
+            phases = res.get("phases", {})
+            return {"status": "ok", "phases": phases, "duration_s": res.get("duration_s")}
         except Exception as exc:
             self.log(f"regen failed: {exc}")
             return {"status": "error", "error": str(exc)[:120]}
@@ -327,12 +331,22 @@ class RealEffects:
         if ingest.get("status") not in ("ok",) or deep.get("status") in ("issues", "error") \
                 or regen.get("status") == "error":
             overall = "partial" if ingest.get("status") == "ok" else "failed"
+        # Expand the per-kind profile phases (profiles_intraday + profiles_swing)
+        # so each dashboard sees its own; fall back to a single "profiles" phase
+        # if the regen errored before producing per-kind results.
+        phases = {"ingest": ingest, "deepcheck": deep}
+        rphases = regen.get("phases") if isinstance(regen, dict) else None
+        if rphases:
+            for k, v in rphases.items():
+                phases[f"profiles_{k}"] = v
+        else:
+            phases["profiles"] = regen
         manifest = {
             "run_id": f"{session}_{et_now():%H%M%S}",
             "session": str(session),
             "finished_at": et_now().isoformat(),
             "overall": overall,
-            "phases": {"ingest": ingest, "deepcheck": deep, "profiles": regen},
+            "phases": phases,
         }
         d = root / "pipeline_runs"; d.mkdir(parents=True, exist_ok=True)
         (d / f"run_{session}_{et_now():%H%M%S}.json").write_text(

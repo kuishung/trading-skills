@@ -68,7 +68,7 @@ def api_pipeline_runs(user=Depends(require_user)):
 
 @router.post("/pipeline/regen")
 def trigger_regen(request: Request,
-                  kind: str = Form("intraday"),
+                  kind: str = Form("swing"),
                   tickers: str = Form(""),
                   user=Depends(require_moderator)):
     """Spawn a detached profile regen. Empty `tickers` => full universe (--all);

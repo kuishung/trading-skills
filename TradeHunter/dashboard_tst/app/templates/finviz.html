@@ -140,6 +140,20 @@
       {% endfor %}
     </tbody>
   </table>
+  {% if ingest.universe %}
+  <div class="mt-3 border-t border-slate-800 pt-3">
+    <div class="text-[10px] uppercase tracking-wide text-slate-600 mb-2">Universe coverage
+      <span class="text-slate-700 normal-case">&mdash; index memberships overlap (NASDAQ-100 names sit inside the S&amp;P 500)</span></div>
+    <div class="flex flex-wrap gap-2">
+      {% for u in ingest.universe %}
+      <div class="rounded-lg border {{ 'border-emerald-700 bg-emerald-900/20' if u._total else 'border-slate-800 bg-slate-900/60' }} px-3 py-1.5">
+        <div class="text-[10px] uppercase tracking-wide {{ 'text-emerald-400' if u._total else 'text-slate-500' }}">{{ u.name }}</div>
+        <div class="text-base font-semibold tabular-nums {{ 'text-emerald-300' if u._total else 'text-slate-200' }}">{{ '{:,}'.format(u.count) }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
   {% if ingest.log_tail %}
   <div class="mt-3 border-t border-slate-800 pt-2">
     <div class="text-[10px] uppercase tracking-wide text-slate-600 mb-1">Recent ingest log</div>
