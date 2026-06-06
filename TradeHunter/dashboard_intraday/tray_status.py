@@ -997,9 +997,19 @@ def _build_progress_window(root):
         cmd = [py, "-3.12", str(SKILL_DIR / "scripts" / "wait_and_ingest.py"),
                "--symbols-file", str(SKILL_DIR / _SF),
                "--timeframes", _TT, "--topup"]
+        # Recency-skip cutoff = the last TRADING day, NOT today's calendar date.
+        # On a weekend "today" (Sat/Sun) is a non-trading day, so nothing is
+        # "fresh through" it and --topup re-fetches the ENTIRE universe at full
+        # tail depth (~85h of +0-bar fetches — the 2026-06-07 weekend stall).
+        # Stepping back to the last weekday skips everything already current and
+        # fetches only genuine gaps (minutes). Holidays ignored (harmless).
         try:
-            from _common import et_today_iso
-            cmd += ["--fresh-through", et_today_iso()]   # skip already-fresh symbols
+            from _common import et_now
+            import datetime as _dt
+            d = et_now().date()
+            while d.weekday() >= 5:          # Sat/Sun -> back to Friday
+                d -= _dt.timedelta(days=1)
+            cmd += ["--fresh-through", d.isoformat()]
         except Exception:
             pass
         return cmd

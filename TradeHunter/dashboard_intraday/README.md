@@ -33,6 +33,15 @@ web, Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-06-07 — `tray_status.py`: Run-ingest uses last TRADING day for --fresh-through
+- The "Run ingest now" button passed `--fresh-through` = **today's calendar
+  date** (`et_today_iso`). On a weekend that's Sat/Sun — a non-trading day — so
+  NO symbol counts as "fresh through" it and `--topup` re-fetched the **entire**
+  universe at full tail depth (~85h of `+0 bars`; the 2026-06-07 weekend "stall"
+  that was really a pointless full re-fetch). Now it steps back to the last
+  weekday (Sat/Sun → Friday), so the run skips everything already current and
+  fetches only genuine gaps (minutes). Weekday behaviour unchanged.
+
 ### 2026-06-07 — `tray_status.py`: show the designed Gateway on/off schedule
 - Added a static schedule line under the Gateway status: "ON nightly 20:10–08:00
   ET · ON all weekend (Sat→Mon 08:00 ET) for seeding · OFF Mon–Fri 08:00–20:10 ET
