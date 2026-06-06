@@ -954,6 +954,87 @@ def _build_progress_window(root):
         bg='#1a1a1a', fg='#888888',
     ).pack(pady=2)
 
+    # ---- Operator controls: Start Gateway / Run ad-hoc ingest -------------
+    # User wants manual Gateway + ingest control from the tray (no RDP needed).
+    # Both launch in a NEW CONSOLE so progress is visible, and both reuse the
+    # SAME scripts/config the supervisor uses (DRY) — wait_and_ingest.py resolves
+    # data_root / clientId / secrets via scripts/_common, i.e. "reads the env".
+    import shutil as _shutil
+    import subprocess as _subprocess
+    from tkinter import messagebox as _msg
+
+    def _spawn_console(cmd, cwd):
+        flags = getattr(_subprocess, "CREATE_NEW_CONSOLE", 0)
+        return _subprocess.Popen(cmd, cwd=str(cwd), creationflags=flags)
+
+    action_var = tk.StringVar(value='')
+
+    def _ingest_cmd():
+        py = _shutil.which("py") or r"C:\Windows\py.exe"
+        # mirror ingest_supervisor's top-up (symbols file + timeframes)
+        try:
+            from ingest_supervisor import SYMBOLS_FILE as _SF, TOPUP_TIMEFRAMES as _TT
+        except Exception:
+            _SF, _TT = "resources/universe_full.txt", "3min:180,5min:180,daily:730"
+        cmd = [py, "-3.12", str(SKILL_DIR / "scripts" / "wait_and_ingest.py"),
+               "--symbols-file", str(SKILL_DIR / _SF),
+               "--timeframes", _TT, "--topup"]
+        try:
+            from _common import et_today_iso
+            cmd += ["--fresh-through", et_today_iso()]   # skip already-fresh symbols
+        except Exception:
+            pass
+        return cmd
+
+    def start_gateway():
+        try:
+            if get_gateway_status().get('up'):
+                action_var.set("Gateway already LIVE")
+                return
+        except Exception:
+            pass
+        if not _msg.askyesno("Start IB Gateway",
+                "Launch IB Gateway (IBC) now?\n\nDon't do this while you are "
+                "trading manually on the same IBKR account — two sessions "
+                "collide and IBKR kicks one."):
+            return
+        bat = SKILL_DIR / "ibc" / "StartIBC-intraday.bat"
+        try:
+            _spawn_console(["cmd.exe", "/c", str(bat)], bat.parent)
+            action_var.set("Gateway start requested - watch for LIVE (~30-60s)")
+        except Exception as exc:
+            action_var.set(f"Gateway start failed: {exc}")
+
+    def run_ingest():
+        if not _msg.askyesno("Run ingest now",
+                "Launch an ad-hoc top-up ingest now?\n\nNeeds IB Gateway LIVE; "
+                "it will wait/reconnect if the Gateway isn't up yet."):
+            return
+        try:
+            proc = _spawn_console(_ingest_cmd(), SKILL_DIR)
+            up = False
+            try:
+                up = get_gateway_status().get('up', False)
+            except Exception:
+                pass
+            tail = "" if up else "  (Gateway down - it will wait)"
+            action_var.set(f"Ingest launched (PID {proc.pid}){tail}")
+        except Exception as exc:
+            action_var.set(f"Ingest launch failed: {exc}")
+
+    btn_row = tk.Frame(win, bg='#1a1a1a')
+    btn_row.pack(pady=(8, 0))
+    tk.Button(btn_row, text='Start Gateway', command=start_gateway,
+              bg='#1f6f3f', fg='#ffffff', activebackground='#2a8a4f',
+              activeforeground='#ffffff', relief='flat', font=('Segoe UI', 9),
+              padx=12, pady=3, borderwidth=0).pack(side='left', padx=(0, 6))
+    tk.Button(btn_row, text='Run ingest now', command=run_ingest,
+              bg='#2a4a6f', fg='#ffffff', activebackground='#36608f',
+              activeforeground='#ffffff', relief='flat', font=('Segoe UI', 9),
+              padx=12, pady=3, borderwidth=0).pack(side='left')
+    tk.Label(win, textvariable=action_var, font=('Segoe UI', 9),
+             bg='#1a1a1a', fg='#9bbcd6').pack(pady=(4, 0))
+
     # Close button
     # HIDE (withdraw), don't DESTROY -- destroy would kill the Tk root which
     # holds the whole tray process together. Subsequent Show Status clicks

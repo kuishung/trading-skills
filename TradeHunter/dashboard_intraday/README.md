@@ -33,6 +33,21 @@ web, Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-06-06 — `tray_status.py`: operator buttons (Start Gateway / Run ingest)
+- Added two buttons to the progress window: **Start Gateway** (launches IBC via
+  `ibc/StartIBC-intraday.bat` in a new console, guarded by an "are you trading
+  manually?" confirm — two sessions on one account collide) and **Run ingest
+  now** (launches `scripts/wait_and_ingest.py --topup` with the same symbols
+  file + timeframes the supervisor uses; resolves data_root/clientId/secrets via
+  `_common`, i.e. "reads the env"). Each spawns a NEW CONSOLE so progress is
+  visible; an action line under the buttons reports what was launched. The
+  existing `Gateway: LIVE/down` line flips within ~3s once IBC brings it up, so
+  the button gives immediate visual feedback.
+- NOTE (deploy): if the Gateway line or these buttons don't appear, the
+  `IntradayBot-Tray` task is running the **legacy** copy. Per the tray-sync rule
+  it MUST point at `C:\trading-skills\TradeHunter\dashboard_intraday\tray_status.py`
+  — repoint + restart the task (see commit notes / chat for the one-liner).
+
 ### 2026-06-06 — `tray_status.py`: IB Gateway live/down indicator
 
 Per the tray-sync rule: the progress window + tooltip now show whether the IB
