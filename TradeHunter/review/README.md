@@ -125,6 +125,27 @@ Known gaps (next iterations):
 
 ## Changelog
 
+### 2026-06-06 — backtest correctness foundation (Phase 0) + design doc
+- **`BACKTEST_DESIGN.md` (new)** — the persisted backtesting mind map + phased
+  roadmap with BUILT/PARTIAL/GAP status. The single source of truth for where
+  the backtester is and what's next.
+- **`backtest.py` — ET session bug fixed.** `_bars_for_date` bucketed bars by
+  **UTC date**, which mis-filed after-hours bars (20:00 ET = 00:00 UTC the next
+  day) into tomorrow's session — corrupting any intraday backtest. Now uses
+  `bars_store.bar_session_date_et()` (pre-market 04:00 → after-hours 20:00 ET
+  into one ET session date).
+- **`backtest.py` — data-sufficiency pre-flight wired.** `run()` now calls
+  `_coverage.check_coverage()` before the loop, prints a headline, and stores
+  the result in `summary["coverage"]`, so a window the store doesn't fully
+  cover can't masquerade as a flat strategy result (warn, don't block).
+- **`_coverage.py` (new)** — classifies each universe symbol's parquet coverage
+  of `[start, end]` (full / partial / missing) via `available_range_fast`
+  (metadata-only) + ET session dates. Mirrors the dashboard's universe-health
+  check, scoped to one backtest window.
+- No-lookahead note: the DITP scanner already recomputes ATR point-in-time from
+  daily bars ≤ as_of, so `ditp_p2` was already clean. The reusable guard for
+  future intraday adapters is `ticker_profile.profile_at()` (see resources/).
+
 ### 2026-05-24 — `backtest.py` v0.1.0: strategy-agnostic historical simulator (Phase 1)
 
 User decision (chat 2026-05-24): build a backtester before continuing the DITP P2 live execution build. *"This was not planned for but I think this is very important before we put the strategy to work, we need to see how good is the strategy."*

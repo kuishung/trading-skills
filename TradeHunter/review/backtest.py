@@ -77,31 +77,24 @@ def _iter_trading_days(start: date, end: date):
 # over the date's bars.
 
 def _bars_for_date(symbol: str, timeframe: str, d: date) -> list[dict]:
-    """Return all bars whose UTC date matches `d` (00:00 to 23:59 UTC).
-    Empty list if the symbol's parquet doesn't cover the date."""
+    """Return all bars belonging to the ET SESSION `d` (pre-market 04:00 ET
+    through after-hours 20:00 ET). Empty list if the symbol's parquet doesn't
+    cover the date.
+
+    Uses `bars_store.bar_session_date_et` — NOT a naive UTC date. A UTC date
+    mis-files after-hours bars (20:00 ET = 00:00 UTC next day) into tomorrow's
+    session, which corrupts intraday backtests (GUNS, DITP extended-hours).
+    """
     all_bars = bars_store.load_bars(symbol, timeframe=timeframe)
     if not all_bars:
         return []
     out = []
     for b in all_bars:
-        bt = b["t"]
-        # Normalize to datetime
-        if isinstance(bt, datetime):
-            ts = bt
-        elif isinstance(bt, (int, float)):
-            ts = datetime.fromtimestamp(float(bt), tz=timezone.utc)
-        elif isinstance(bt, str):
-            ts = datetime.fromisoformat(bt.replace("Z", "+00:00"))
-        elif hasattr(bt, "to_pydatetime"):
-            ts = bt.to_pydatetime()
-        else:
+        try:
+            if bars_store.bar_session_date_et(b["t"]) == d:
+                out.append(b)
+        except (TypeError, ValueError):
             continue
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
-        else:
-            ts = ts.astimezone(timezone.utc)
-        if ts.date() == d:
-            out.append(b)
     return out
 
 
@@ -128,6 +121,23 @@ def run(strategy: str, start: date, end: date,
 
     print(f"# backtest {strategy} v{adapter.engine_version} "
           f"({tf}) -- {start} to {end}", flush=True)
+
+    # Data-sufficiency pre-flight: does the store actually cover this window for
+    # the universe + primary timeframe? Warn (don't block) — partial coverage is
+    # informative, not fatal. Skip the full-store scan unless a universe was
+    # given OR it's cheap, to keep ad-hoc runs snappy.
+    coverage = None
+    try:
+        from review import _coverage
+        cov_syms = symbols or bars_store.list_symbols(tf)
+        coverage = _coverage.check_coverage(cov_syms, tf, start, end)
+        print(_coverage.headline(coverage), flush=True)
+        if not coverage["fully_covered"]:
+            print("#   ^ some symbols lack full history for this window — "
+                  "their absence understates trade count (not a strategy result).",
+                  flush=True)
+    except Exception as exc:
+        print(f"# coverage check skipped: {type(exc).__name__}: {exc}", flush=True)
 
     for d in _iter_trading_days(start, end):
         n_days += 1
@@ -193,6 +203,8 @@ def run(strategy: str, start: date, end: date,
         "n_symbol_days_skipped_missing_bars": n_symbols_skipped_missing_bars,
         "note": "today's snapshot — survivorship bias caveat applies",
     }
+    if coverage is not None:
+        summary["coverage"] = coverage
 
     if write:
         from _common import get_data_root  # honours cfg["data_root"]

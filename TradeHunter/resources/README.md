@@ -56,6 +56,20 @@ treating any "missing" feature as a bug.
 
 ## Changelog
 
+### 2026-06-06 — backtest no-lookahead primitives (`bar_session_date_et` + `profile_at`)
+- **`bars_store.bar_session_date_et(t)` (new)** — the US market SESSION date
+  (America/New_York) for a bar timestamp: pre-market 04:00 → after-hours 20:00
+  ET fold into one date. The backtester (and any session-bucketing code) must
+  use this instead of a naive UTC date, which mis-files after-hours bars
+  (20:00 ET = 00:00 UTC next day) into the wrong session.
+- **`ticker_profile.profile_at(ticker, as_of, *, save=False)` (new)** — the
+  POINT-IN-TIME intraday profile: same shape as `refresh_profile_from_store`
+  but built only from parquet bars on/before the ET session `as_of`, and not
+  saved by default. This is the no-lookahead guard for backtest adapters — the
+  nightly `data/ticker_profile/<T>.json` files are *today's* snapshot, so
+  reading them inside a backtest leaks the future. Verified point-in-time: NVDA
+  ATR 5.29 (Feb) → 5.45 (Apr) → 7.81 (Jun) across as-of dates.
+
 ### 2026-06-06 — `swing_profile.py`: SWING/TREND per-ticker profile (the second profile product)
 
 **Two-profile convention (locked 2026-06-06):** per-ticker behavioral profiles are

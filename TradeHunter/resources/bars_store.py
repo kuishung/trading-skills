@@ -158,6 +158,24 @@ def _parse_ts(t) -> datetime:
     raise TypeError(f"unsupported bar timestamp: {t!r} ({type(t).__name__})")
 
 
+_ET_TZ = None
+
+
+def bar_session_date_et(t) -> date:
+    """The US market SESSION date (America/New_York) for a bar timestamp.
+
+    Buckets pre-market (04:00 ET) through after-hours (20:00 ET) into the same
+    calendar date. A NAIVE UTC-date split is wrong for backtesting: an after-
+    hours bar at 20:00 ET is 00:00 UTC the *next* day, so UTC-date bucketing
+    files it under tomorrow's session. Always use this for session bucketing.
+    """
+    global _ET_TZ
+    if _ET_TZ is None:
+        from zoneinfo import ZoneInfo
+        _ET_TZ = ZoneInfo("America/New_York")
+    return _parse_ts(t).astimezone(_ET_TZ).date()
+
+
 def _normalize_bars(bars: Iterable[dict]) -> list[dict]:
     """Coerce each bar into the canonical shape; sort by ts; dedup (last wins)."""
     seen: dict[str, dict] = {}

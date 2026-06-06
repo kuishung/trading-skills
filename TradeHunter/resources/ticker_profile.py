@@ -388,6 +388,69 @@ def refresh_profile_from_store(ticker: str) -> dict | None:
     return profile
 
 
+def profile_at(ticker: str, as_of, *, save: bool = False) -> dict | None:
+    """POINT-IN-TIME intraday profile — the same shape as
+    ``refresh_profile_from_store`` but computed only from bars on or before the
+    ET session ``as_of`` (a date or ISO 'YYYY-MM-DD' string), and NOT saved to
+    disk by default.
+
+    This is the no-lookahead primitive for BACKTESTING. The nightly profile
+    files (``data/ticker_profile/<T>.json``) are snapshots of TODAY's state —
+    reading them inside a backtest leaks the future into the past. Any backtest
+    adapter that needs ATR / volume baselines must call this with the simulated
+    as-of date instead of ``get_profile`` / ``refresh_profile_from_store``.
+
+    Returns None if there isn't enough history before ``as_of``.
+    """
+    import bars_store  # noqa: E402
+    from datetime import date as _date
+    if isinstance(as_of, str):
+        as_of = _date.fromisoformat(as_of[:10])
+
+    def _upto(bars):
+        out = []
+        for b in bars or []:
+            try:
+                if bars_store.bar_session_date_et(b["t"]) <= as_of:
+                    out.append(b)
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    tk = ticker.upper()
+    profile: dict = {"ticker": tk, "as_of": as_of.isoformat(),
+                     "data_sources": {}, "source": "store_point_in_time"}
+    daily = _upto(bars_store.load_bars(tk, timeframe="daily"))
+    if daily:
+        ds = compute_profile_from_daily_bars(tk, daily)
+        profile["stats_daily"] = {k: ds.get(k) for k in
+            ("atr_14d", "atr_pct", "prev_close", "daily_trend",
+             "atr_period", "n_daily_bars_used")}
+        profile["data_sources"]["daily"] = "parquet"
+        profile.update({"atr_14d": ds.get("atr_14d"), "atr_pct": ds.get("atr_pct"),
+                        "prev_close": ds.get("prev_close"),
+                        "daily_trend": ds.get("daily_trend")})
+    bars3 = _upto(bars_store.load_bars(tk, timeframe="3min"))
+    if bars3:
+        s3 = compute_3m_stats_from_3m_bars(bars3)
+        if s3:
+            profile["stats_3m_rth"] = s3
+            profile["data_sources"]["3m"] = "parquet"
+        rth = _rth_filter(bars3)
+        vols = [int(b.get("v", 0) or 0) for b in rth]
+        if len(vols) > 1:
+            avg = sum(vols) / len(vols)
+            var = sum((v - avg) ** 2 for v in vols) / (len(vols) - 1)
+            profile["stats_3m_vol"] = {"avg_vol_3m": int(avg),
+                                       "vol_3m_stddev": int(var ** 0.5),
+                                       "n_bars_used": len(vols)}
+    if not profile.get("stats_daily") and not profile.get("stats_3m_rth"):
+        return None
+    if save:
+        save_profile(profile)
+    return profile
+
+
 def compute_3m_stats_from_1m_bars(minute_bars: list[dict],
                                   *, atr_period: int = 14
                                   ) -> dict | None:
