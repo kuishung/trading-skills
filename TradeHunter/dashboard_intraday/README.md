@@ -33,6 +33,17 @@ web, Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-06-07 — `tray_status.py`: show ITEM progress (fixes false "gathering data" on weekends)
+- The progress %/ETA were driven by `ingest_log.jsonl` (bars **written**). On a
+  weekend every fetch is `+0` (no new bars) → 0 written → the bar sat at 0 and
+  ETA showed "gathering data…" forever, so a *working* no-op pass looked stuck
+  (repeated false alarms). New `get_item_progress()` parses the watcher text log's
+  `[N/M] SYM tf … +X bars` lines (present for every item regardless of writes) and
+  the `DONE:` marker. The window now shows **"451 / 563 checked · +0 new"** with a
+  moving bar, and **"up to date (563/563 checked)"** when finished (or "done — +N
+  new"). Liveness uses the log's mtime. Falls back to the old bars-written view
+  when no watcher log exists.
+
 ### 2026-06-07 — `tray_status.py`: idempotent Start Gateway / Run ingest (kill-then-start)
 - Both buttons now **clear existing instances before starting**, so a new launch
   can't collide with a leftover (the `qualify_failed: Socket disconnect` from a

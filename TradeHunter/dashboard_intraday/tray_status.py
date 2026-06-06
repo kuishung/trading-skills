@@ -263,6 +263,61 @@ def _work_symbols_from_iteration_log(log_name: str) -> int | None:
     return n_work_symbols
 
 
+# Per-item progress from the watcher text log. Each work item logs a line like
+#   [2026-06-07 07:20:29]   [450/563]  WRLD   3min   update(depth=249d ok)  +0 bars
+# These exist for EVERY item regardless of whether bars were written — so they
+# reflect real activity even on a weekend when every fetch is +0 (the case where
+# get_progress(), which counts bars WRITTEN, sits at 0 and looks "stuck").
+_ITEM_RE = re.compile(r"\[(\d+)/(\d+)\]\s+(\S+)\s+(\S+)\s+.*?\+(\d+)\s+bars")
+_DONE_RE = re.compile(r"\bDONE:\s*(\d+)\s*bars written")
+_item_cache: dict[str, tuple[float, dict | None]] = {}
+
+
+def get_item_progress() -> dict | None:
+    """Item-level progress for the current iteration's watcher log: items
+    processed / total + NEW bars produced + finished flag. None if no log.
+
+    Keys: items_done, items_total, new_bars, latest_sym, latest_tf, finished,
+    mtime (epoch of last log write, for liveness)."""
+    it = _latest_iteration()
+    if it is None:
+        return None
+    log_name, _ = it
+    try:
+        p = get_data_root() / log_name
+        mtime = p.stat().st_mtime
+    except OSError:
+        return None
+    cached = _item_cache.get(log_name)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    done_i = total = new_bars = 0
+    latest_sym = latest_tf = None
+    finished = False
+    try:
+        with p.open("r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                m = _ITEM_RE.search(line)
+                if m:
+                    done_i = int(m.group(1)); total = int(m.group(2))
+                    latest_sym = m.group(3); latest_tf = m.group(4)
+                    nb = int(m.group(5))
+                    if nb > 0:
+                        new_bars += nb
+                elif _DONE_RE.search(line):
+                    finished = True
+    except OSError:
+        return None
+    result = {
+        "items_done": done_i, "items_total": total, "new_bars": new_bars,
+        "latest_sym": latest_sym, "latest_tf": latest_tf,
+        "finished": finished or (total > 0 and done_i >= total),
+        "mtime": mtime,
+    }
+    _item_cache[log_name] = (mtime, result)
+    return result
+
+
 def get_progress() -> dict:
     """Count symbols touched in the CURRENT iteration, identify the current
     letter, and compute approximate rate / ETA.
@@ -1147,53 +1202,73 @@ def _build_progress_window(root):
         except Exception:
             return
         try:
-            p = get_progress()
-            pct = (p.get('progress_fraction') or 0.0) * 100
-            target = p.get('target') or 0
-            done = p.get('symbols_done', 0)
-            overshoot = p.get('overshoot', False)
-            if overshoot:
-                # Denominator is wrong (numerator > target). Don't pretend
-                # we're at 100% -- show "?" + amber tint so the user knows
-                # the % is suspect.
-                pct_var.set("?")
-                pb_var.set(0)
-                pct_lbl.configure(fg='#facc15')   # amber
-            else:
-                pct_var.set(f"{pct:.1f}%")
-                pb_var.set(pct)
-                pct_lbl.configure(fg='#888' if pct < 0.5 else '#5fd97a')
-            # Label reflects the denominator source: "X / N to fetch" when
-            # the pre-flight gave us the count of unique symbols that
-            # actually need work (skip-up-to-date watcher), "X / N symbols"
-            # when we're using the universe size as a fallback.
-            tsrc = p.get('target_source') or 'universe'
-            label = "to fetch" if tsrc == 'pre-flight' else "symbols"
-            count_var.set(f"{done} / {target} {label}")
-            cur_letter = p.get('current_letter') or '?'
-            n_done = len(p.get('letters_done') or [])
-            latest = p.get('latest_symbol') or '-'
-            detail_var.set(
-                f"Letter {cur_letter} ({n_done} groups past)   -   Latest: {latest}"
-            )
-            eta_h = p.get('eta_hours')
-            rate = p.get('rate_per_hour')
-            if eta_h is not None and rate:
-                eta_var.set(
-                    f"ETA: {eta_h:.1f}h ({eta_h/24:.1f}d)   -   "
-                    f"Rate: {rate:.0f} syms/hr"
+            ip = get_item_progress()
+            if ip and ip.get("items_total"):
+                # ITEM progress (preferred) — reflects real activity even when
+                # every fetch is +0 (weekend top-ups), so a no-op pass reads as
+                # "451/563 checked · +0 new · up to date", never "stuck".
+                di = ip["items_done"]; tt = ip["items_total"]; nb = ip["new_bars"]
+                frac = (di / tt * 100) if tt else 0.0
+                pct_var.set(f"{frac:.0f}%")
+                pb_var.set(frac)
+                pct_lbl.configure(fg='#5fd97a' if frac >= 99.9 else '#888')
+                newtxt = f"+{nb:,} new" if nb else "+0 new"
+                count_var.set(f"{di:,} / {tt:,} checked   ·   {newtxt}")
+                detail_var.set(
+                    f"Latest: {ip['latest_sym']} {ip['latest_tf']}"
+                    if ip.get("latest_sym") else "-"
                 )
-            else:
-                eta_var.set('ETA: gathering data...')
-
-            # Cache last-write timestamp for the live indicator
-            last_iso = p.get('last_write_at')
-            if last_iso:
+                if ip.get("finished"):
+                    eta_var.set(("up to date" if nb == 0 else f"done — {newtxt}")
+                                + f"   ({di:,}/{tt:,} checked)")
+                else:
+                    eta_var.set(f"checking…   {newtxt}")
                 try:
-                    live_state['last_write_dt'] = datetime.fromisoformat(last_iso)
+                    live_state['last_write_dt'] = datetime.fromtimestamp(
+                        ip["mtime"], tz=timezone.utc)
                 except Exception:
                     pass
-            live_state['have_data'] = done > 0
+                live_state['have_data'] = di > 0
+            else:
+                # Fallback: bars-written progress from ingest_log.jsonl.
+                p = get_progress()
+                pct = (p.get('progress_fraction') or 0.0) * 100
+                target = p.get('target') or 0
+                done = p.get('symbols_done', 0)
+                overshoot = p.get('overshoot', False)
+                if overshoot:
+                    pct_var.set("?")
+                    pb_var.set(0)
+                    pct_lbl.configure(fg='#facc15')   # amber
+                else:
+                    pct_var.set(f"{pct:.1f}%")
+                    pb_var.set(pct)
+                    pct_lbl.configure(fg='#888' if pct < 0.5 else '#5fd97a')
+                tsrc = p.get('target_source') or 'universe'
+                label = "to fetch" if tsrc == 'pre-flight' else "symbols"
+                count_var.set(f"{done} / {target} {label}")
+                cur_letter = p.get('current_letter') or '?'
+                n_done = len(p.get('letters_done') or [])
+                latest = p.get('latest_symbol') or '-'
+                detail_var.set(
+                    f"Letter {cur_letter} ({n_done} groups past)   -   Latest: {latest}"
+                )
+                eta_h = p.get('eta_hours')
+                rate = p.get('rate_per_hour')
+                if eta_h is not None and rate:
+                    eta_var.set(
+                        f"ETA: {eta_h:.1f}h ({eta_h/24:.1f}d)   -   "
+                        f"Rate: {rate:.0f} syms/hr"
+                    )
+                else:
+                    eta_var.set('ETA: gathering data...')
+                last_iso = p.get('last_write_at')
+                if last_iso:
+                    try:
+                        live_state['last_write_dt'] = datetime.fromisoformat(last_iso)
+                    except Exception:
+                        pass
+                live_state['have_data'] = done > 0
 
             # IB Gateway live/down
             try:
