@@ -33,6 +33,19 @@ web, Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-06-07 — `tray_status.py`: idempotent Start Gateway / Run ingest (kill-then-start)
+- Both buttons now **clear existing instances before starting**, so a new launch
+  can't collide with a leftover (the `qualify_failed: Socket disconnect` from a
+  clientId-84 overlap, and duplicate-Gateway sessions IBKR kicks):
+  - **Run ingest now**: kills any running `wait_and_ingest` / `ibkr_history`,
+    then **waits 15s for IBKR to release clientId 84** before launching a fresh
+    run (with a live countdown in the action line).
+  - **Start Gateway**: if the port's already up → "already LIVE" (no duplicate);
+    otherwise kills any stale `ibgateway` process, then launches one clean IBC.
+- Both run in a **background thread** (`_kill_procs` shells to PowerShell;
+  `_ui()` marshals status back via `win.after`), so the kill+wait never freezes
+  the tray UI. No psutil dependency.
+
 ### 2026-06-07 — `tray_status.py`: Run-ingest uses last TRADING day for --fresh-through
 - The "Run ingest now" button passed `--fresh-through` = **today's calendar
   date** (`et_today_iso`). On a weekend that's Sat/Sun — a non-trading day — so

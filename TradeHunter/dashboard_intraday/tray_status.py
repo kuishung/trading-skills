@@ -979,6 +979,8 @@ def _build_progress_window(root):
     # data_root / clientId / secrets via scripts/_common, i.e. "reads the env".
     import shutil as _shutil
     import subprocess as _subprocess
+    import threading as _threading
+    import time as _time
     from tkinter import messagebox as _msg
 
     def _spawn_console(cmd, cwd):
@@ -1014,6 +1016,29 @@ def _build_progress_window(root):
             pass
         return cmd
 
+    def _ui(msg):
+        """Set the action line from a worker thread (marshal onto the Tk loop)."""
+        try:
+            win.after(0, lambda: action_var.set(msg))
+        except Exception:
+            pass
+
+    def _kill_procs(pattern):
+        """Force-kill any process whose command line matches `pattern` (regex).
+        Shells to PowerShell (reliable on Server 2019, no psutil dependency).
+        Idempotent: starting Gateway/ingest first clears existing instances so a
+        new one can't collide (duplicate Gateway session / clientId-84 overlap ->
+        'qualify_failed: Socket disconnect')."""
+        ps = ("Get-CimInstance Win32_Process | Where-Object { $_.CommandLine "
+              f"-match '{pattern}' }} | ForEach-Object {{ Stop-Process -Id "
+              "$_.ProcessId -Force -EA SilentlyContinue }")
+        try:
+            _subprocess.run(["powershell", "-NoProfile", "-NonInteractive",
+                             "-Command", ps], timeout=30,
+                            creationflags=getattr(_subprocess, "CREATE_NO_WINDOW", 0))
+        except Exception:
+            pass
+
     def start_gateway():
         try:
             if get_gateway_status().get('up'):
@@ -1026,29 +1051,49 @@ def _build_progress_window(root):
                 "trading manually on the same IBKR account — two sessions "
                 "collide and IBKR kicks one."):
             return
-        bat = SKILL_DIR / "ibc" / "StartIBC-intraday.bat"
-        try:
-            _spawn_console(["cmd.exe", "/c", str(bat)], bat.parent)
-            action_var.set("Gateway start requested - watch for LIVE (~30-60s)")
-        except Exception as exc:
-            action_var.set(f"Gateway start failed: {exc}")
+
+        def worker():
+            # Port wasn't up -> clear any half-dead Gateway so we start exactly
+            # one clean session (a duplicate gets kicked by IBKR).
+            _ui("Clearing any stale Gateway…")
+            _kill_procs("ibgateway")
+            _time.sleep(2)
+            bat = SKILL_DIR / "ibc" / "StartIBC-intraday.bat"
+            try:
+                _spawn_console(["cmd.exe", "/c", str(bat)], bat.parent)
+                _ui("Gateway start requested - watch for LIVE (~30-60s)")
+            except Exception as exc:
+                _ui(f"Gateway start failed: {exc}")
+        _threading.Thread(target=worker, daemon=True).start()
 
     def run_ingest():
         if not _msg.askyesno("Run ingest now",
-                "Launch an ad-hoc top-up ingest now?\n\nNeeds IB Gateway LIVE; "
-                "it will wait/reconnect if the Gateway isn't up yet."):
+                "Launch an ad-hoc top-up ingest now?\n\nAny running ingest is "
+                "stopped first, then a fresh one starts (needs IB Gateway LIVE)."):
             return
-        try:
-            proc = _spawn_console(_ingest_cmd(), SKILL_DIR)
-            up = False
+
+        def worker():
+            # Idempotent start: kill any existing ingest, then WAIT for IBKR to
+            # release clientId 84 before reconnecting — otherwise the new session
+            # overlaps the old one and IBKR drops it (qualify_failed: Socket
+            # disconnect). Done off the Tk thread so the wait doesn't freeze the UI.
+            _ui("Stopping any running ingest…")
+            _kill_procs("wait_and_ingest|ibkr_history")
+            for i in range(15, 0, -1):
+                _ui(f"Waiting {i}s for IBKR to release clientId 84…")
+                _time.sleep(1)
             try:
-                up = get_gateway_status().get('up', False)
-            except Exception:
-                pass
-            tail = "" if up else "  (Gateway down - it will wait)"
-            action_var.set(f"Ingest launched (PID {proc.pid}){tail}")
-        except Exception as exc:
-            action_var.set(f"Ingest launch failed: {exc}")
+                proc = _spawn_console(_ingest_cmd(), SKILL_DIR)
+                up = False
+                try:
+                    up = get_gateway_status().get('up', False)
+                except Exception:
+                    pass
+                tail = "" if up else "  (Gateway down - it will wait)"
+                _ui(f"Ingest launched (PID {proc.pid}){tail}")
+            except Exception as exc:
+                _ui(f"Ingest launch failed: {exc}")
+        _threading.Thread(target=worker, daemon=True).start()
 
     btn_row = tk.Frame(win, bg='#1a1a1a')
     btn_row.pack(pady=(8, 0))
