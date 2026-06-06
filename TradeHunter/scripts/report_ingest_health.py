@@ -208,15 +208,19 @@ def _resolve_key(cli_key: str | None) -> str | None:
     if env:
         return env.strip()
     envf = ROOT / "dashboard_tst" / "app" / ".env"
+    found: str | None = None
     try:
-        for line in envf.read_text(encoding="utf-8").splitlines():
+        for line in envf.read_text(encoding="utf-8-sig").splitlines():
             line = line.strip()
             if line.startswith("TST_INGEST_API_KEY"):
                 _, _, v = line.partition("=")
-                return v.strip().strip('"').strip("'") or None
+                v = v.strip().strip('"').strip("'")
+                if v:
+                    found = v   # LAST wins — matches python-dotenv, so a
+                                # duplicate key never silently mismatches the app
     except OSError:
         pass
-    return None
+    return found
 
 
 def build_report() -> dict:

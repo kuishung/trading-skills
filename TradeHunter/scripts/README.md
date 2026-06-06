@@ -37,6 +37,14 @@ they're rarely-touched and small, so `scripts/` is fine.
 
 ## Changelog
 
+### 2026-06-06 - `report_ingest_health.py`: API-key resolution = last-wins (dotenv parity)
+- `_resolve_key` now returns the **last** matching `TST_INGEST_API_KEY` line in
+  `dashboard_tst/app/.env` (was: first). python-dotenv (the dashboard) uses
+  last-wins, so when `.env` had a duplicate key the reporter sent the *first*
+  value while the app expected the *last* → silent **401**. Aligning to last-wins
+  makes a duplicate key harmless. Also reads `.env` as `utf-8-sig` to tolerate a
+  BOM. (Root cause of the 2026-06-06 401: a duplicate key line in Hermes `.env`.)
+
 ### 2026-06-06 - `report_ingest_health.py` + supervisor freshness/universe/swing
 - **New `report_ingest_health.py`** — Hermes-side reporter that reads the
   **newest-bar epoch** per seeded timeframe (3min/5min/daily) from parquet
