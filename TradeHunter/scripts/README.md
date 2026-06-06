@@ -36,6 +36,18 @@ they're rarely-touched and small, so `scripts/` is fine.
 
 ## Changelog
 
+### 2026-06-05 - `setup_hermes_ingest_supervisor_task.ps1`: `-Interactive` mode (autonomous Gateway launch)
+
+First live run exposed that the supervisor **cannot launch the IB Gateway GUI from
+its background S4U session** (no desktop) - the manual launch in an RDP desktop
+worked, the S4U task's launches all hit `Gateway did NOT come up within 180s`.
+Added `-Interactive`: registers the task with an **AtLogOn** trigger +
+**Interactive** principal so it runs in the logged-on desktop session, where the
+Gateway GUI can start. Pair with **auto-logon** on Hermes so a console session
+always exists after a reboot. With this, the supervisor's existing window-aware
+logic does the "auto-resurrect the Gateway during the seeding window, force it off
+during blackout" with no manual step. Default (no switch) stays S4U/AtStartup.
+
 ### 2026-06-05 - `ingest_supervisor.py`: fix Gateway-shutdown hang that stalled it ~2 days
 
 First Hermes deploy (2026-06-04) STALLED: the supervisor started at the 08:00 ET

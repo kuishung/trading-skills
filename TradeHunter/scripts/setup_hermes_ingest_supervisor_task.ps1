@@ -18,6 +18,10 @@
 param(
     [string] $TaskName = 'TradeHunter-IngestSupervisor',
     [string] $UserId   = 'Administrator',
+    [switch] $Interactive = $false,   # run in the logged-on DESKTOP session so it
+                                      # can launch the IB Gateway GUI (S4U/background
+                                      # cannot). Requires the user to be logged on
+                                      # (use auto-logon so it survives reboots).
     [switch] $StartNow = $false
 )
 
@@ -57,13 +61,26 @@ if ($existing) {
 $arguments = "-3.12 `"$Supervisor`""
 
 $action = New-ScheduledTaskAction -Execute $Py -Argument $arguments -WorkingDirectory $BotRoot
-$trigger = New-ScheduledTaskTrigger -AtStartup
 $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
     -StartWhenAvailable `
     -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) `
     -ExecutionTimeLimit (New-TimeSpan -Days 0)   # 0 = no limit; runs forever
-$principal = New-ScheduledTaskPrincipal -UserId $UserId -LogonType S4U -RunLevel Highest
+
+if ($Interactive) {
+    # Run in the user's logged-on DESKTOP session so child IB Gateway GUI
+    # launches have a desktop. Trigger at logon (pair with auto-logon so a
+    # console session always exists after a reboot). RunLevel Highest.
+    $trigger   = New-ScheduledTaskTrigger -AtLogOn -User $UserId
+    $principal = New-ScheduledTaskPrincipal -UserId $UserId -LogonType Interactive -RunLevel Highest
+    $TrigDesc  = "AtLogOn ($UserId), Interactive"
+} else {
+    # Background (S4U) at boot. Works for everything EXCEPT launching the GUI
+    # Gateway (no desktop) -- use -Interactive on hosts that must auto-launch it.
+    $trigger   = New-ScheduledTaskTrigger -AtStartup
+    $principal = New-ScheduledTaskPrincipal -UserId $UserId -LogonType S4U -RunLevel Highest
+    $TrigDesc  = "AtStartup, S4U"
+}
 
 try {
     $null = Register-ScheduledTask -TaskName $TaskName `
@@ -82,7 +99,7 @@ if (-not $verify) { Write-Error "Task '$TaskName' did not register."; exit 1 }
 Write-Host ""
 Write-Host "Task registered: $TaskName  (State: $($verify.State))" -ForegroundColor Green
 Write-Host "  Execute      : $Py $arguments"
-Write-Host "  Trigger      : AtStartup"
+Write-Host "  Trigger      : $TrigDesc"
 Write-Host "  Working dir  : $BotRoot"
 Write-Host "  Principal    : $UserId (S4U, RunLevel Highest)"
 Write-Host ""
