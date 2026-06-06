@@ -48,11 +48,17 @@ they're rarely-touched and small, so `scripts/` is fine.
   rule) — the reporter does, on the ingest box. API key resolves from
   `--api-key` → `$TST_INGEST_API_KEY` → `dashboard_tst/app/.env`. `--dry-run`
   prints the report without posting.
-- **Universe breakdown** — the report also carries `universe`: how the seeded
-  symbols split across index memberships (S&P 500 / 400 / 600 / NASDAQ-100 +
-  Other + Total), computed via `resources/{sp500,sp_midcap400,sp_smallcap600,
-  nasdaq100}`. `_canon()` folds share-class punctuation (BRK.B vs BRK-B).
-  Memberships overlap (NASDAQ-100 ⊂ S&P 500). The dashboard renders it under §2.
+- **Per-category universe health** — the report carries `universe_health`: for
+  each index (S&P 500 / 400 / 600 / NASDAQ-100 / Other / All seeded) it reports
+  **completeness** (expected members vs seeded vs missing) and **per-timeframe
+  freshness** (fresh/stale counts + worst lag + a 0/1/2 tier). "Stale" is
+  cohort-relative — a member lagging the freshest symbol in its timeframe (>~25h
+  for 3/5min, >~3.5d for daily) or with no file at all — so a closed-market
+  weekend flags nobody. The cohort reference is the **p95** newest-bar epoch
+  (capped at now), so one bad future-dated bar can't paint every category red.
+  Memberships overlap (NASDAQ-100 ⊂ S&P 500); `_canon()` folds share-class
+  punctuation (BRK.B vs BRK-B). Computed via `resources/{sp500,sp_midcap400,
+  sp_smallcap600,nasdaq100}`. The dashboard renders it as a table under §2.
 - **`ingest_supervisor.py`** — wired `report_freshness()` into the success path
   (after `write_run_manifest`), so every autonomous nightly top-up pushes fresh
   freshness + universe to the dashboard automatically. Soft-fail. Added the

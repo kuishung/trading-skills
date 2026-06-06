@@ -78,20 +78,37 @@ def _tf_report(tf: str) -> dict:
                 total += e.stat().st_size
             except OSError:
                 pass
-    # Newest bar across the universe (metadata-only stat read per symbol).
+    # Newest bar per symbol (metadata-only stat read). Keyed by canonical symbol
+    # so the per-category health pass can match index membership lists.
+    per_sym: dict[str, float] = {}
     for sym in bars_store.list_symbols(tf):
         try:
             rng = bars_store.available_range_fast(sym, timeframe=tf)
         except Exception:
             rng = None
         if rng:
-            newest = max(newest, _epoch(rng[1]))
-    return {
+            ep = _epoch(rng[1])
+            if ep:
+                per_sym[_canon(sym)] = ep
+                newest = max(newest, ep)
+    row = {
         "tf": tf,
         "symbols": symbols,
         "mb": round(total / 1048576, 1),
         "newest_epoch": int(newest) if newest else 0,
     }
+    return row, per_sym
+
+
+def _ago(secs: float) -> str:
+    secs = int(secs or 0)
+    if secs < 90:
+        return "just now"
+    if secs // 60 < 90:
+        return f"{secs // 60} min ago"
+    if secs // 3600 < 48:
+        return f"{secs // 3600}h ago"
+    return f"{secs // 86400}d ago"
 
 
 def _canon(s: str) -> str:
@@ -104,10 +121,43 @@ def _canon(s: str) -> str:
     return "".join(out)
 
 
-def _universe_breakdown(stored: set[str]) -> list[dict]:
-    """How the seeded symbols split across the index universes (memberships
-    overlap — NASDAQ-100 names are mostly inside the S&P 500). Reads the cached
-    Wikipedia membership lists via resources/*; soft-fail to [] if unavailable."""
+# How far behind the freshest symbol (per timeframe) a symbol may fall before
+# it counts as "lagging". Cohort-relative, so a market-closed weekend (all
+# symbols equally old) flags nobody — only symbols that missed the last ingest.
+_LAG_SECS = {"3min": 90000, "5min": 90000, "daily": 300000}  # ~25h / ~25h / ~3.5d
+
+
+def _tf_health(members: set[str], per_sym: dict[str, float], ref: float, tf: str) -> dict:
+    """Freshness of one category on one timeframe: fresh vs stale (lagging the
+    cohort OR no file at all), plus the worst lag age, plus a 0/1/2 tier."""
+    lag_secs = _LAG_SECS.get(tf, 90000)
+    fresh = stale = 0
+    worst = 0.0
+    for s in members:
+        ep = per_sym.get(s)
+        if ep is None:
+            stale += 1            # member has no parquet at this timeframe
+            continue
+        behind = ref - ep
+        if behind > lag_secs:
+            stale += 1
+            worst = max(worst, behind)
+        else:
+            fresh += 1
+    total = fresh + stale
+    # tolerate a tiny tail (≤2% or 1 symbol) as amber; more is red
+    tol = max(1, int(total * 0.02))
+    tier = 0 if stale == 0 else (1 if stale <= tol else 2)
+    return {"fresh": fresh, "stale": stale, "total": total,
+            "worst_ago": _ago(worst) if worst else None, "tier": tier}
+
+
+def _universe_health(tf_per_sym: dict[str, dict[str, float]],
+                     store_newest: dict[str, float],
+                     stored: set[str], timeframes) -> list[dict]:
+    """Per-category completeness + per-timeframe freshness. Memberships overlap
+    (NASDAQ-100 ⊂ S&P 500). Reads cached Wikipedia membership lists via
+    resources/*; soft-fail to [] if unavailable."""
     try:
         from resources import sp500, sp_midcap400, sp_smallcap600, nasdaq100
     except Exception:
@@ -121,18 +171,33 @@ def _universe_breakdown(stored: set[str]) -> list[dict]:
     canon_stored = {_canon(s) for s in stored}
     rows: list[dict] = []
     covered: set[str] = set()
+
+    def _row(name, members, expected):
+        seeded_members = members & canon_stored
+        seeded = len(seeded_members)
+        per_tf, worst_tier = [], 0
+        for tf in timeframes:
+            h = _tf_health(seeded_members, tf_per_sym.get(tf, {}), store_newest.get(tf, 0.0), tf)
+            h["tf"] = tf
+            per_tf.append(h)
+            worst_tier = max(worst_tier, h["tier"])
+        return {"name": name, "expected": expected, "seeded": seeded,
+                "missing": max(0, expected - seeded) if expected else 0,
+                "timeframes": per_tf, "tier": worst_tier}
+
     for name, fn in indices:
         try:
             members = {_canon(x) for x in fn()}
         except Exception:
             continue
-        hit = canon_stored & members
-        covered |= hit
-        rows.append({"name": name, "count": len(hit)})
-    other = len(canon_stored - covered)
+        covered |= (members & canon_stored)
+        rows.append(_row(name, members, len(members)))
+    # residual: seeded symbols not in any index above
+    other = canon_stored - covered
     if other:
-        rows.append({"name": "Other", "count": other})
-    rows.append({"name": "Total seeded", "count": len(canon_stored), "_total": True})
+        rows.append(_row("Other", other, 0))
+    rows.append(_row("All seeded", canon_stored, 0))
+    rows[-1]["_total"] = True
     return rows
 
 
@@ -155,7 +220,19 @@ def _resolve_key(cli_key: str | None) -> str | None:
 
 
 def build_report() -> dict:
-    tfs = [_tf_report(tf) for tf in TIMEFRAMES]
+    tfs = []
+    tf_per_sym: dict[str, dict] = {}
+    store_newest: dict[str, float] = {}
+    now = time.time()
+    for tf in TIMEFRAMES:
+        row, per_sym = _tf_report(tf)
+        tfs.append(row)
+        tf_per_sym[tf] = per_sym
+        # Cohort reference = 95th percentile of newest-bar epochs (capped at now),
+        # not the raw max — so a single bad future-dated bar can't poison the ref
+        # and paint every category red.
+        vals = sorted(e for e in per_sym.values() if e <= now + 3600)
+        store_newest[tf] = vals[int(len(vals) * 0.95)] if vals else 0.0
     # Canonical universe = the daily store (one file per seeded symbol).
     stored = set(bars_store.list_symbols("daily")) or set(bars_store.list_symbols("3min"))
     return {
@@ -163,7 +240,7 @@ def build_report() -> dict:
         "root": str(bars_store.PRICE_HISTORY_ROOT),
         "generated_epoch": int(time.time()),
         "timeframes": tfs,
-        "universe": _universe_breakdown(stored),
+        "universe_health": _universe_health(tf_per_sym, store_newest, stored, TIMEFRAMES),
         "log_tail": [],
     }
 

@@ -132,11 +132,14 @@ surface takes shape.
   that pushed row over the file-mtime read. No dashboard code change was needed
   for the freshness — only the reporter that feeds the existing pushed-report
   path. (Scope rule preserved: the dashboard never opens a parquet.)
-- §2 now also renders a **Universe coverage** strip — how the 1509 seeded
-  symbols split across index memberships (S&P 500 / 400 / 600 / NASDAQ-100 +
-  Other + Total), carried in the pushed report's new `universe` field
-  (`report_to_display` passes it through; the local read sends `[]`). Memberships
-  overlap (NASDAQ-100 names sit inside the S&P 500) — noted in the UI.
+- §2 now also renders a **Universe health by category** table — per index
+  (S&P 500 / 400 / 600 / NASDAQ-100 / Other / All seeded): members, seeded,
+  missing (completeness), and a per-timeframe fresh/stale cell (✓ or "N stale",
+  tier-coloured, with worst-lag in the tooltip). Carried in the pushed report's
+  new `universe_health` field (`report_to_display` passes it through; the local
+  read sends `[]`). "Stale" is cohort-relative (lagging the freshest peer / no
+  file) so a closed-market weekend flags nobody. Memberships overlap
+  (NASDAQ-100 ⊂ S&P 500) — noted in the UI.
 - §3 regen form now defaults to **swing** (this is the trend & swing site), and
   the supervisor's nightly regen runs `both` so manifests carry
   `profiles_swing` (not just `profiles_intraday`). `pipeline_kinds` reordered

@@ -50,7 +50,7 @@ def report_to_display(report: dict, received_at) -> dict:
     return {
         "source": "pushed", "host": report.get("host"), "root": report.get("root"),
         "received_ago": rec_ago, "timeframes": tfs, "log_tail": report.get("log_tail") or [],
-        "universe": report.get("universe") or [],
+        "universe_health": report.get("universe_health") or [],
         "newest_ago": _ago(overall_age) if overall_age is not None else None,
         "tier": _tier(overall_age),
     }
@@ -111,7 +111,7 @@ def parquet_health() -> dict | None:
     return {
         "root": root,
         "timeframes": tfs,
-        "universe": [],   # only the Hermes-side pushed report carries the breakdown
+        "universe_health": [],   # only the Hermes-side pushed report carries the breakdown
         "newest_ago": _ago(overall_age) if overall_age is not None else None,
         "tier": 2 if overall_age is None else (0 if overall_age < 26 * 3600 else (1 if overall_age < 74 * 3600 else 2)),
     }
