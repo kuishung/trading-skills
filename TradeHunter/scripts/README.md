@@ -37,6 +37,23 @@ they're rarely-touched and small, so `scripts/` is fine.
 
 ## Changelog
 
+### 2026-06-06 - `report_ingest_health.py` + supervisor freshness push
+- **New `report_ingest_health.py`** — Hermes-side reporter that reads the
+  **newest-bar epoch** per seeded timeframe (3min/5min/daily) from parquet
+  row-group statistics (metadata only, ~1ms/symbol via
+  `bars_store.available_range_fast`) and POSTs it to the dashboard's
+  `/api/ingest/health`. This makes the Data Ingest "Price Data History" panel
+  show how fresh the *data* is ("newest 8h ago"), not just the file write time
+  the dashboard's local read can see. The dashboard never opens a parquet (scope
+  rule) — the reporter does, on the ingest box. API key resolves from
+  `--api-key` → `$TST_INGEST_API_KEY` → `dashboard_tst/app/.env`. `--dry-run`
+  prints the report without posting.
+- **`ingest_supervisor.py`** — wired `report_freshness()` into the success path
+  (after `write_run_manifest`), so every autonomous nightly top-up pushes fresh
+  freshness to the dashboard automatically. Soft-fail (a reporting hiccup never
+  affects the ingest). Added the matching no-op to `MockEffects`; self-test +
+  scenario tests stay green.
+
 ### 2026-06-06 - `regen_profiles.py` + supervisor manifest/regen wiring
 
 - **`regen_profiles.py`** — unified profile-regen runner: `intraday | swing | both`,

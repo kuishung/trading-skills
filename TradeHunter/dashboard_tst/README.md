@@ -119,6 +119,20 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-06 — Price Data History: correct timeframes + true data freshness
+- `services/ingest_health.py`: `_TIMEFRAMES` was `1min/5min/15min/daily` but the
+  seed + supervisor only pull **3min/5min/daily**. So §2 showed alarming
+  "1min never / 15min never" rows and hid the real 3min row. Fixed to
+  `(3min, 5min, daily)`.
+- The local read still only knows the **file write time** ("just now"), not how
+  fresh the *data* is. The fix for that lives on the ingest side:
+  `scripts/report_ingest_health.py` (new) reads the newest-bar epoch per
+  timeframe on Hermes and POSTs it here; `report_to_display()` (already present)
+  renders "newest <age> ago" per timeframe, and the Data Ingest route prefers
+  that pushed row over the file-mtime read. No dashboard code change was needed
+  for the freshness — only the reporter that feeds the existing pushed-report
+  path. (Scope rule preserved: the dashboard never opens a parquet.)
+
 ### 2026-06-06 — pipeline report folded into the Data Ingest page
 
 The standalone `/pipeline` page was removed; its report + regen triggers now live

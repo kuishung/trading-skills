@@ -36,6 +36,7 @@ Modes:
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -338,6 +339,30 @@ class RealEffects:
             json.dumps(manifest, indent=2), encoding="utf-8")
         self.log(f"manifest written: overall={overall}")
 
+    def report_freshness(self) -> None:
+        """Push per-timeframe DATA freshness (newest-bar epoch) to the
+        dashboard's /api/ingest/health so the Data Ingest page shows how fresh
+        the seeded data is — not just the file write time. Soft-fail: a
+        reporting hiccup must never affect the ingest run itself."""
+        try:
+            sys.path.insert(0, str(SKILL_DIR / "scripts"))
+            import report_ingest_health as rep  # noqa
+            report = rep.build_report()
+            key = rep._resolve_key(None)
+            if not key:
+                self.log("freshness: no API key — skipped")
+                return
+            import json as _json
+            import urllib.request as _u
+            url = os.environ.get("TST_DASHBOARD_URL", "http://localhost:8000").rstrip("/") \
+                + "/api/ingest/health"
+            req = _u.Request(url, data=_json.dumps(report).encode("utf-8"), method="POST",
+                             headers={"Content-Type": "application/json", "X-API-Key": key})
+            with _u.urlopen(req, timeout=20) as resp:
+                self.log(f"freshness pushed -> {resp.status}")
+        except Exception as exc:
+            self.log(f"freshness push failed: {exc}")
+
 
 # ======================================================================
 # CLOCK  (injectable for tests)
@@ -411,8 +436,9 @@ def supervisor_tick(state: dict, fx, log) -> str:
         deep = fx.run_deep_check()          # read-only, no Gateway
         regen = fx.run_regen()              # intraday profile regen (local)
         fx.write_run_manifest(sess, deep, regen)
+        fx.report_freshness()               # push DATA freshness to dashboard
         log(f"[session {sess}] top-up DONE -> Gateway down -> deep check -> "
-            f"profiles -> manifest")
+            f"profiles -> manifest -> freshness pushed")
         return "FETCH_OK"
     # Failed or deadline-aborted. If we're now at/after the deadline (or already
     # in blackout), shut the Gateway right away rather than waiting a tick.
@@ -561,6 +587,8 @@ class MockEffects:
         self.actions.append("REGEN"); self.log("    [mock] profile regen"); return {"status": "ok"}
     def write_run_manifest(self, session, deep, regen):
         self.actions.append("MANIFEST"); self.log("    [mock] run manifest")
+    def report_freshness(self):
+        self.actions.append("FRESHNESS"); self.log("    [mock] freshness pushed")
 
 
 def scenario_test() -> int:
