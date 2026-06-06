@@ -656,6 +656,38 @@ def get_completed_through() -> dict:
     return {"date": None, "source": "none"}
 
 
+_gw_cache = {"ts": 0.0, "result": None}
+
+def get_gateway_status() -> dict:
+    """Is the IB Gateway live? Quick TCP probe of the API port (127.0.0.1:ibkr_port).
+    Shown in the progress window + tooltip so the user sees Gateway up/down at a
+    glance (tray-sync rule).
+
+    Cached ~8s: callers (window refresh @3s, tooltip poll) get the cached value, so
+    the actual probe runs at most every 8s — bounds both the UI cost (a dropped/
+    firewalled closed port can take the full timeout) and the API connection noise.
+    Short 0.4s timeout so a down Gateway never stalls the UI."""
+    now = time.monotonic()
+    if _gw_cache["result"] is not None and (now - _gw_cache["ts"]) < 8.0:
+        return _gw_cache["result"]
+    import socket
+    port = 4002
+    try:
+        from _common import load_config
+        port = int(load_config().get("ibkr_port") or 4002)
+    except Exception:
+        pass
+    try:
+        s = socket.create_connection(("127.0.0.1", port), timeout=0.4)
+        s.close()
+        result = {"up": True, "port": port}
+    except Exception:
+        result = {"up": False, "port": port}
+    _gw_cache["ts"] = now
+    _gw_cache["result"] = result
+    return result
+
+
 # ---- Icon generation (no .ico files needed — drawn at startup) ----
 
 def _make_circle_icon(color: tuple, size: int = 64,
@@ -881,6 +913,14 @@ def _build_progress_window(root):
         bg='#1a1a1a', fg='#5fd97a',
     ).pack(pady=(0, 4))
 
+    # IB Gateway live/down indicator (tray-sync rule)
+    gw_var = tk.StringVar(value='Gateway: -')
+    gw_lbl = tk.Label(
+        win, textvariable=gw_var, font=('Segoe UI', 11, 'bold'),
+        bg='#1a1a1a', fg='#888888',
+    )
+    gw_lbl.pack(pady=(0, 4))
+
     # Latest deep-check / integrity result (tray-sync rule)
     deepcheck_var = tk.StringVar(value='Deep check: -')
     deepcheck_lbl = tk.Label(
@@ -1000,6 +1040,18 @@ def _build_progress_window(root):
                 except Exception:
                     pass
             live_state['have_data'] = done > 0
+
+            # IB Gateway live/down
+            try:
+                gw = get_gateway_status()
+                if gw.get('up'):
+                    gw_var.set(f"Gateway: LIVE  (port {gw['port']})")
+                    gw_lbl.configure(fg='#5fd97a')   # green
+                else:
+                    gw_var.set(f"Gateway: down  (port {gw['port']})")
+                    gw_lbl.configure(fg='#888888')   # gray (normal when idle/blackout)
+            except Exception:
+                gw_var.set("Gateway: ?")
 
             # "Completed through" date (ingest currency)
             try:
@@ -1185,7 +1237,12 @@ def _update_loop(icon: "pystray.Icon"):
                     through_str = f"through {ct['date']}" if ct.get("date") else "through -"
                 except Exception:
                     through_str = "through -"
-                icon.title = f"Ingest: {new_state} — {status['tooltip']} | {through_str} | {dc_str}"
+                try:
+                    gw = get_gateway_status()
+                    gw_str = "GW LIVE" if gw.get("up") else "GW down"
+                except Exception:
+                    gw_str = "GW ?"
+                icon.title = f"Ingest: {new_state} — {status['tooltip']} | {gw_str} | {through_str} | {dc_str}"
                 if new_state != current_state:
                     current_state = new_state
                     frame_index = 0   # reset animation phase on state change

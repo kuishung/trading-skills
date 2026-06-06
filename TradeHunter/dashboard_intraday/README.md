@@ -33,6 +33,16 @@ web, Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-06-06 — `tray_status.py`: IB Gateway live/down indicator
+
+Per the tray-sync rule: the progress window + tooltip now show whether the IB
+Gateway is live. New `get_gateway_status()` does a fast TCP probe of
+`127.0.0.1:<ibkr_port>` (0.4s timeout, cached ~8s so it never stalls the UI or
+spams the API). Window shows `Gateway: LIVE (port 4002)` in green / `Gateway:
+down` in gray; tooltip carries `GW LIVE`/`GW down`. Lets the user see at a glance
+whether the Gateway is up during the seeding window — the exact signal needed
+after the 2026-06-05 Gateway-launch troubleshooting.
+
 ### 2026-06-04 — `tray_status.py`: "Completed through" date + deep-check in the progress window
 
 The progress window (and tooltip) now shows **which date the ingest has
