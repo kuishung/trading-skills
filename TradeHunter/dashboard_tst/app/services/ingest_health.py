@@ -41,6 +41,7 @@ def report_to_display(report: dict, received_at) -> dict:
         tfs.append({
             "tf": t.get("tf", "?"), "symbols": t.get("symbols", 0), "mb": t.get("mb", 0),
             "newest_ago": _ago(age) if age is not None else None, "tier": _tier(age),
+            "newest_bar": t.get("newest_bar"),   # DATE of the newest bar (from reporter)
         })
     overall_age = (now - newest_overall) if newest_overall else None
     rec_ago = None
@@ -104,6 +105,7 @@ def parquet_health() -> dict | None:
             "symbols": count,
             "mb": round(total / 1048576, 1),
             "newest_ago": _ago(age) if age is not None else None,
+            "newest_bar": None,   # file-mtime read can't know the bar date (pushed report does)
             # freshness tier for colouring: 0 ok / 1 warn / 2 stale|missing
             "tier": 2 if age is None else (0 if age < 26 * 3600 else (1 if age < 74 * 3600 else 2)),
         })

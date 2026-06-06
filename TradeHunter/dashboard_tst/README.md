@@ -119,6 +119,18 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-07 — Price Data History: show the newest-bar DATE (not just "N ago")
+- §2 "Last write" column → **"Last bar (date)"**, showing the actual date of the
+  newest bar per timeframe (daily → `2026-06-05`; intraday → `2026-06-05 19:57
+  ET`), with the relative age kept as a small secondary. Header relabelled
+  "Last ingest write" → "Newest data". So freshness is read as a date, not a
+  relative age the user has to translate.
+- The date comes from the reporter's new per-timeframe `newest_bar` field
+  (`report_ingest_health._newest_label`: daily uses the stored UTC date so a
+  UTC-midnight daily stamp shows the right session day; intraday converts to ET).
+  `report_to_display` passes it through; the file-mtime local read sends `None`
+  (it can't know the bar date) and the column falls back to the age.
+
 ### 2026-06-06 — v2.81: Data Ingest freshness + universe health + swing-first pipeline
 Release marker for today's Data Ingest batch (all detailed below): per-timeframe
 DATA freshness via the Hermes reporter, the per-category Universe-health table,

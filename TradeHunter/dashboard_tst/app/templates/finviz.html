@@ -121,20 +121,20 @@
 <div class="rounded-lg border border-slate-800 bg-slate-900/40 p-4">
   <div class="flex items-center gap-2 mb-3 text-sm flex-wrap">
     <span class="inline-block h-2.5 w-2.5 rounded-full {{ dot[ingest.tier] }}"></span>
-    <span class="text-slate-300">Last ingest write <b class="{{ txt[ingest.tier] }}">{{ ingest.newest_ago or 'never' }}</b></span>
+    <span class="text-slate-300">Newest data <b class="{{ txt[ingest.tier] }}">{{ ingest.newest_ago or 'never' }}</b></span>
     {% if ingest.received_ago %}<span class="text-[11px] text-slate-500">&middot; reported {{ ingest.received_ago }}{% if ingest.host %} by {{ ingest.host }}{% endif %}</span>{% endif %}
     {% if ingest.root %}<span class="text-[11px] text-slate-600 ml-auto break-all">{{ ingest.root }}</span>{% endif %}
   </div>
   <table class="w-full text-sm">
     <thead class="text-[10px] uppercase tracking-wide text-slate-500">
-      <tr><th class="text-left px-2 py-1">Timeframe</th><th class="text-right px-2 py-1">Symbols</th><th class="text-right px-2 py-1">Last write</th><th class="text-right px-2 py-1">Size</th></tr>
+      <tr><th class="text-left px-2 py-1">Timeframe</th><th class="text-right px-2 py-1">Symbols</th><th class="text-right px-2 py-1">Last bar (date)</th><th class="text-right px-2 py-1">Size</th></tr>
     </thead>
     <tbody>
       {% for t in ingest.timeframes %}
       <tr class="border-t border-slate-800">
         <td class="px-2 py-1 font-medium text-slate-200">{{ t.tf }}</td>
         <td class="px-2 py-1 text-right tabular-nums">{{ t.symbols }}</td>
-        <td class="px-2 py-1 text-right tabular-nums {{ txt[t.tier] }}">{{ t.newest_ago or 'never' }}</td>
+        <td class="px-2 py-1 text-right tabular-nums {{ txt[t.tier] }}">{{ t.newest_bar or t.newest_ago or 'never' }}{% if t.newest_bar and t.newest_ago %}<span class="text-slate-500 text-[10px]"> &middot; {{ t.newest_ago }}</span>{% endif %}</td>
         <td class="px-2 py-1 text-right tabular-nums text-slate-400">{{ t.mb }} MB</td>
       </tr>
       {% endfor %}

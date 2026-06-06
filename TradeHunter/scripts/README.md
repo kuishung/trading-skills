@@ -37,6 +37,13 @@ they're rarely-touched and small, so `scripts/` is fine.
 
 ## Changelog
 
+### 2026-06-07 - `report_ingest_health.py`: report the newest-bar DATE per timeframe
+- New per-tf `newest_bar` field via `_newest_label`: daily → `YYYY-MM-DD` (stored
+  UTC date = session day); intraday → `YYYY-MM-DD HH:MM ET`. Tracks the newest
+  bar's raw ISO (not just the epoch) so the dashboard can show the data's last
+  date instead of a relative "N ago". Verified: daily 2026-06-05, 3min/5min
+  2026-06-05 19:57/19:55 ET.
+
 ### 2026-06-07 - `ingest_supervisor.py`: keep Gateway ON for weekend seeding
 - New `is_weekend_seeding(now_et)` — the market-closed span **Sat 00:00 ET → Mon
   08:00 ET**. Across it the supervisor now **keeps the Gateway UP** (auto-revives

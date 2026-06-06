@@ -81,6 +81,7 @@ def _tf_report(tf: str) -> dict:
     # Newest bar per symbol (metadata-only stat read). Keyed by canonical symbol
     # so the per-category health pass can match index membership lists.
     per_sym: dict[str, float] = {}
+    newest_iso = None
     for sym in bars_store.list_symbols(tf):
         try:
             rng = bars_store.available_range_fast(sym, timeframe=tf)
@@ -90,14 +91,42 @@ def _tf_report(tf: str) -> dict:
             ep = _epoch(rng[1])
             if ep:
                 per_sym[_canon(sym)] = ep
-                newest = max(newest, ep)
+                if ep > newest:
+                    newest = ep
+                    newest_iso = rng[1]
     row = {
         "tf": tf,
         "symbols": symbols,
         "mb": round(total / 1048576, 1),
         "newest_epoch": int(newest) if newest else 0,
+        "newest_bar": _newest_label(newest_iso, tf),   # the DATE of the newest bar
     }
     return row, per_sym
+
+
+def _newest_label(iso, tf: str) -> str | None:
+    """Human label for the newest bar: daily -> 'YYYY-MM-DD' (session date, taken
+    as the stored UTC date so a UTC-midnight daily stamp shows the right day);
+    intraday -> 'YYYY-MM-DD HH:MM ET'. So the user reads the data's last date, not
+    a relative 'N ago'."""
+    if not iso:
+        return None
+    s = str(iso).strip().replace(" ", "T")
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        d = dt.datetime.fromisoformat(s)
+    except ValueError:
+        return str(iso)[:10]
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=dt.timezone.utc)
+    if tf == "daily":
+        return d.astimezone(dt.timezone.utc).strftime("%Y-%m-%d")
+    try:
+        from zoneinfo import ZoneInfo
+        return d.astimezone(ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M ET")
+    except Exception:
+        return d.astimezone(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
 def _ago(secs: float) -> str:
