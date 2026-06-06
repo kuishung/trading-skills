@@ -17,7 +17,10 @@ import time
 
 from ..config import settings
 
-_TIMEFRAMES = ("1min", "5min", "15min", "daily")
+# Timeframes we actually seed (set 2026-06-06). 1min/15min are NOT seeded
+# (the seed/supervisor pull 3min/5min/daily), so listing them just showed
+# alarming "never" rows while hiding the real 3min row.
+_TIMEFRAMES = ("3min", "5min", "daily")
 
 
 def _tier(age: float | None) -> int:
