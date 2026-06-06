@@ -119,6 +119,24 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-06 — `/pipeline` page: nightly ingest→deep-check→profiles report + regen triggers
+
+New **Pipeline** nav page surfacing the overnight work on Hermes so freshness is
+checkable from the web (no Hermes login):
+- `services/pipeline_runs.py` — reads the per-run manifests the ingest supervisor
+  + regen runner write to `<data_root>/pipeline_runs/run_*.json` (file-read only,
+  like `ingest_health`; data_root derived from `TST_PRICE_HISTORY_DIR`'s parent).
+- `routes/pipeline.py` — `GET /pipeline` (page), `GET /api/pipeline-runs` (JSON for
+  the Nous agent), `POST /pipeline/regen` (moderator). Each run renders as a card
+  with per-phase badges (ingest bars/pairs, deep-check corrupt/flagged/stale,
+  profiles +written/-skipped) coloured by status + freshness tier.
+- **Regen triggers** (moderator-only panel): pick `intraday|swing|both`, blank
+  tickers = full universe (~7 min / ~1 min) or list tickers for an **ad-hoc
+  per-ticker** run. Spawns `scripts/regen_profiles.py … --manifest` DETACHED with
+  the data-science `py -3.12` (not the uvicorn venv), so it never ties up the web
+  worker; the run drops a manifest that appears on the same page.
+- Wired in `main.py` (router + version global) + nav link in `base.html`.
+
 ### 2026-06-01 — v2.80: rename Data Ingest §2 → "Price Data History"
 
 - Renamed the Data Ingest page's section 2 from "Parquet Ingest" to **"Price Data

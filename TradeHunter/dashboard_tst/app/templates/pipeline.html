@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Pipeline &middot; TradeHunter{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-semibold mb-1">Nightly pipeline</h1>
+<p class="text-slate-400 mb-6 text-sm">
+  ingest &rarr; deep-check &rarr; profile regen &mdash; freshness of the overnight work on Hermes.
+</p>
+
+{% if request.query_params.get('started') %}
+<div class="mb-4 rounded border border-emerald-700 bg-emerald-900/30 px-3 py-2 text-sm text-emerald-300">
+  Regen started: <code>{{ request.query_params.get('started') }}</code> &mdash; it runs in the background; refresh in a bit to see the manifest.
+</div>
+{% endif %}
+{% if request.query_params.get('err') %}
+<div class="mb-4 rounded border border-rose-700 bg-rose-900/30 px-3 py-2 text-sm text-rose-300">
+  Couldn't start regen: {{ request.query_params.get('err') }}
+</div>
+{% endif %}
+
+{% if user.can_moderate %}
+{# ---- moderator trigger panel: no Hermes login needed ---- #}
+<form method="post" action="/pipeline/regen"
+      class="mb-8 rounded-lg border border-slate-800 p-4 flex flex-wrap items-end gap-3">
+  <div>
+    <label class="block text-xs text-slate-500 mb-1">Profile kind</label>
+    <select name="kind" class="rounded bg-slate-900 border border-slate-700 px-3 py-2 text-sm">
+      {% for k in kinds %}<option value="{{ k }}">{{ k }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="flex-1 min-w-[14rem]">
+    <label class="block text-xs text-slate-500 mb-1">Tickers (blank = full universe)</label>
+    <input name="tickers" type="text" placeholder="e.g. NVDA TSLA AAPL"
+           class="w-full rounded bg-slate-900 border border-slate-700 px-3 py-2 text-sm focus:border-emerald-500 outline-none">
+  </div>
+  <button class="rounded bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-medium">Run regen</button>
+  <p class="basis-full text-xs text-slate-500">
+    Blank tickers = full regen (~7&nbsp;min intraday, ~1&nbsp;min swing). A few tickers = ad-hoc, seconds. Runs detached on Hermes.
+  </p>
+</form>
+{% endif %}
+
+{% if not configured %}
+<div class="rounded border border-slate-700 bg-slate-900 px-3 py-3 text-sm text-slate-400">
+  Pipeline runs not configured / not present on this host
+  (set <code>TST_PRICE_HISTORY_DIR</code>; manifests live in its sibling <code>pipeline_runs/</code>).
+</div>
+{% elif not runs %}
+<div class="rounded border border-slate-700 bg-slate-900 px-3 py-3 text-sm text-slate-400">
+  No pipeline runs yet &mdash; the supervisor writes one after each nightly cycle.
+</div>
+{% else %}
+{% set badge = {'ok':'emerald','clean':'emerald','success':'emerald',
+                'issues':'rose','error':'rose','failed':'rose',
+                'partial':'amber','unknown':'slate'} %}
+<ul class="space-y-3">
+  {% for r in runs %}
+  {% set oc = badge.get(r.overall, 'slate') %}
+  <li class="rounded-lg border border-slate-800 p-4">
+    <div class="flex items-center justify-between mb-2">
+      <div class="flex items-center gap-2">
+        <span class="inline-block w-2.5 h-2.5 rounded-full bg-{{ ['emerald','amber','rose'][r._tier] }}-500"></span>
+        <span class="font-medium text-slate-200">{{ r.run_id or r._file }}</span>
+        {% if r.trigger == 'manual' %}<span class="text-[10px] uppercase tracking-wide text-sky-400 border border-sky-800 rounded px-1">manual</span>{% endif %}
+        <span class="text-xs px-1.5 py-0.5 rounded bg-{{ oc }}-900/40 text-{{ oc }}-300 border border-{{ oc }}-800">{{ r.overall }}</span>
+      </div>
+      <span class="text-xs text-slate-500">{{ r._ago }}{% if r.session %} &middot; session {{ r.session }}{% endif %}</span>
+    </div>
+    <div class="flex flex-wrap gap-2">
+      {% for ph in r._phases %}
+      {% set pc = badge.get(ph.status, 'slate') %}
+      <div class="rounded border border-{{ pc }}-800 bg-{{ pc }}-900/20 px-2.5 py-1.5 text-xs">
+        <div class="text-{{ pc }}-300 font-medium">{{ ph.name }} &middot; {{ ph.status }}</div>
+        <div class="text-slate-400 mt-0.5">
+          {% if ph.bars is defined and ph.bars is not none %}{{ "{:,}".format(ph.bars) }} bars / {{ ph.pairs }} pairs{% endif %}
+          {% if ph.corrupt is defined and ph.corrupt is not none %}corrupt {{ ph.corrupt }} &middot; flagged {{ ph.flagged }} &middot; stale {{ ph.stale }}{% endif %}
+          {% if ph.written is defined and ph.written is not none %}+{{ ph.written }} / -{{ ph.skipped }}{% endif %}
+          {% if ph.duration_s is defined and ph.duration_s is not none %} &middot; {{ ph.duration_s }}s{% endif %}
+          {% if ph.log %} &middot; <span class="text-slate-500">{{ ph.log }}</span>{% endif %}
+          {% if ph.report %} &middot; <span class="text-slate-500">{{ ph.report }}</span>{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

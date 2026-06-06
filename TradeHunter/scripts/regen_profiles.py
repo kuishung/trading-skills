@@ -82,14 +82,18 @@ def regen(kind: str, tickers: list[str] | None = None, log=print) -> dict:
     log(f"[regen] kind={kind} scope={'all' if full else f'{len(syms)} tickers'} "
         f"({len(syms)} symbols)")
 
+    def _status(ph):
+        ph["status"] = "ok" if ph.get("written") else "partial"
+        return ph
+
     phases: dict[str, dict] = {}
     if kind in ("intraday", "both"):
         ti = time.time()
-        phases["intraday"] = regen_intraday(syms, log)
+        phases["intraday"] = _status(regen_intraday(syms, log))
         phases["intraday"]["duration_s"] = round(time.time() - ti, 1)
     if kind in ("swing", "both"):
         ts = time.time()
-        phases["swing"] = regen_swing(syms, full, log)
+        phases["swing"] = _status(regen_swing(syms, full, log))
         phases["swing"]["duration_s"] = round(time.time() - ts, 1)
 
     out = {
@@ -108,17 +112,48 @@ def regen(kind: str, tickers: list[str] | None = None, log=print) -> dict:
     return out
 
 
+def write_manifest(res: dict) -> Path:
+    """Write a pipeline-run manifest so the dashboard /pipeline page shows this
+    (manual / triggered) regen alongside the supervisor's nightly runs."""
+    import json
+    from _common import get_data_root
+    d = get_data_root() / "pipeline_runs"
+    d.mkdir(parents=True, exist_ok=True)
+    ts = res["finished"].replace(":", "").replace("-", "")[:15]
+    overall = "success"
+    for ph in res.get("phases", {}).values():
+        if ph.get("skipped", 0) and not ph.get("written", 0):
+            overall = "partial"
+    manifest = {
+        "run_id": f"regen_{ts}",
+        "session": None,
+        "finished_at": res["finished"],
+        "overall": overall,
+        "trigger": "manual",
+        "phases": {f"profiles_{k}": v for k, v in res.get("phases", {}).items()},
+        "scope": res.get("scope"), "n_symbols": res.get("n_symbols"),
+        "duration_s": res.get("duration_s"),
+    }
+    p = d / f"regen_{ts}.json"
+    p.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    return p
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("kind", choices=KINDS)
     ap.add_argument("tickers", nargs="*", help="symbols (omit with --all)")
     ap.add_argument("--all", action="store_true", help="full daily universe")
+    ap.add_argument("--manifest", action="store_true",
+                    help="write a pipeline_runs manifest (used by the dashboard trigger)")
     args = ap.parse_args()
     if not args.all and not args.tickers:
         ap.error("give tickers, or --all")
     import json
     res = regen(args.kind, None if args.all else args.tickers)
+    if args.manifest:
+        write_manifest(res)
     print(json.dumps(res, indent=2, default=str))
     return 0
 
