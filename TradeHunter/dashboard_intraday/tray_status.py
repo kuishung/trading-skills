@@ -85,6 +85,12 @@ HEARTBEAT_INTERVAL_SEC = 1.0  # how fast the icon pulses when state == 'running'
 RUNNING_THRESHOLD_SEC = 60    # last entry < 60s ago → actively writing
 IDLE_THRESHOLD_SEC = 600      # last entry < 10 min → idle (between symbols)
                               # last entry > 10 min → stopped
+# Liveness thresholds for an ACTIVE ingest run (used by the window's live line).
+# Generous, because weekend items are ~68s apart and a big/slow IBKR request can
+# take minutes — so a gap of a few minutes is NORMAL, not stalled. "Stalled" is
+# reserved for genuinely frozen (no item for ~20 min while a run is active).
+RUN_OK_SEC = 300              # < 5 min since last item → running (green)
+RUN_SLOW_SEC = 1200           # 5–20 min → running but slow (amber); >20 → stalled (red)
 
 # Milestone tracking — fire a Windows toast notification when these thresholds
 # are crossed (only once per threshold, persisted in state/tray_milestone.json).
@@ -1235,6 +1241,8 @@ def _build_progress_window(root):
         "spinner_idx": 0,
         "last_write_dt": None,    # datetime | None — when the watcher last wrote
         "have_data": False,       # bool — have we ever populated yet?
+        "ingest_active": False,   # bool — an ingest run is in progress
+        "ingest_finished": False, # bool — the current/last run completed (DONE)
     }
 
     # Braille spinner glyphs — 10 frames, animate by cycling the index every
@@ -1276,6 +1284,8 @@ def _build_progress_window(root):
                 except Exception:
                     pass
                 live_state['have_data'] = di > 0
+                live_state['ingest_finished'] = bool(ip.get("finished"))
+                live_state['ingest_active'] = not bool(ip.get("finished"))
             else:
                 # Fallback: bars-written progress from ingest_log.jsonl.
                 p = get_progress()
@@ -1316,6 +1326,14 @@ def _build_progress_window(root):
                     except Exception:
                         pass
                 live_state['have_data'] = done > 0
+                live_state['ingest_finished'] = False
+                # No watcher item-log this iteration -> treat bars-written as
+                # "active" only if it's recent (a direct ibkr_history run);
+                # otherwise idle, so an old bars timestamp never reads as stalled.
+                live_state['ingest_active'] = bool(
+                    last_iso and (datetime.now(timezone.utc)
+                                  - live_state['last_write_dt']).total_seconds() < RUN_OK_SEC
+                ) if last_iso else False
 
             # Supervisor live/down (the resurrector — most important signal)
             try:
@@ -1384,33 +1402,37 @@ def _build_progress_window(root):
             glyph = SPINNER[i]
             live_state['spinner_idx'] = i + 1
 
+            # Liveness states (no longer "stalled" just because no NEW bars):
+            #   finished      -> up to date (green)          run done, nothing new
+            #   not active    -> idle (gray)                 no ingest running now
+            #   active+recent -> running (green)             items advancing (+0 is fine)
+            #   active+slow   -> running, slow (amber)       big/slow IBKR request
+            #   active+frozen -> stalled (red)               no item ~20 min while active
             last_dt = live_state['last_write_dt']
-            if last_dt is None:
-                if live_state['have_data']:
-                    live_var.set(f"{glyph}  waiting on next ingest entry...")
-                    live_lbl.configure(fg='#888888')
-                else:
-                    live_var.set(f"{glyph}  waiting for first ingest entry...")
-                    live_lbl.configure(fg='#888888')
+            if live_state.get('ingest_finished'):
+                live_var.set(f"{glyph}  ✓ up to date  ·  nothing new to ingest")
+                live_lbl.configure(fg='#5fd97a')   # green
+            elif not live_state.get('ingest_active'):
+                live_var.set(f"{glyph}  ○ idle  ·  no ingest running")
+                live_lbl.configure(fg='#888888')   # gray (not alarming)
+            elif last_dt is None:
+                live_var.set(f"{glyph}  starting…")
+                live_lbl.configure(fg='#888888')
             else:
-                age = (datetime.now(timezone.utc) - last_dt).total_seconds()
-                if age < 0:
-                    age = 0
-                # Color the dot by liveness: matches the tray-icon thresholds
-                # in get_ingest_status() for consistency
-                if age < RUNNING_THRESHOLD_SEC:
-                    dot, dot_fg, state_word = '●', '#5fd97a', 'live'  # green
-                elif age < IDLE_THRESHOLD_SEC:
-                    dot, dot_fg, state_word = '●', '#facc15', 'idle'  # amber
+                age = max(0.0, (datetime.now(timezone.utc) - last_dt).total_seconds())
+                if age < RUN_OK_SEC:
+                    dot, dot_fg, word = '●', '#5fd97a', 'running'           # green
+                elif age < RUN_SLOW_SEC:
+                    dot, dot_fg, word = '●', '#facc15', 'running (slow)'    # amber
                 else:
-                    dot, dot_fg, state_word = '●', '#ef4444', 'stalled'  # red
+                    dot, dot_fg, word = '●', '#ef4444', 'stalled'          # red
                 if age < 60:
                     age_str = f"{age:.0f}s ago"
                 elif age < 3600:
                     age_str = f"{age/60:.0f}m ago"
                 else:
                     age_str = f"{age/3600:.1f}h ago"
-                live_var.set(f"{glyph}  {dot} {state_word}  -  last write {age_str}")
+                live_var.set(f"{glyph}  {dot} {word}  ·  last item {age_str}")
                 live_lbl.configure(fg=dot_fg)
         except Exception:
             pass

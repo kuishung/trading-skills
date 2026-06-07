@@ -33,6 +33,19 @@ web, Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-06-07 — `tray_status.py`: liveness states (no more misleading "stalled")
+- The live line was driven purely by *time since last bar written*, so a healthy
+  weekend pass (items advancing ~68s apart, all `+0`) — and worse, a *finished*
+  run (writes stop → age grows) — flipped to red **"stalled"** even though nothing
+  was wrong. Redesigned into honest states from the run's actual status:
+  **✓ up to date** (run finished, nothing new), **○ idle** (no ingest running),
+  **● running** (active, items advancing — `+0` is fine), **running (slow)**
+  (active, 5–20 min since last item), **stalled** (active **and** frozen >20 min —
+  the only red). Driven by new `ingest_active`/`ingest_finished` flags from
+  item-progress; thresholds `RUN_OK_SEC`=5 min / `RUN_SLOW_SEC`=20 min fit weekend
+  IBKR latency. So "running but no new data" reads as running/up-to-date, never
+  stalled.
+
 ### 2026-06-07 — `tray_status.py`: Supervisor LIVE/DOWN indicator
 - Added a **"Supervisor: LIVE/DOWN"** line at the top of the status block (above
   Gateway) — it's the process that keeps the Gateway up and resurrects it after
