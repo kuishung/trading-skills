@@ -37,6 +37,18 @@ they're rarely-touched and small, so `scripts/` is fine.
 
 ## Changelog
 
+### 2026-06-07 - `ingest_supervisor.py`: resurrect Gateway after the daily auto-logout (weekends)
+- IBKR auto-logs the Gateway out daily (~08:00); it leaves the Gateway PROCESS
+  alive but logged out (port down). A plain `gateway_up()` only *waits* for that
+  stale process, so weekend seeding would stall after the logout. Now: on a
+  weekend tick with the Gateway down, the first detection does a gentle bring-up
+  (handles a clean in-flight restart); if it's STILL down next tick, the
+  supervisor forces a **clean restart** — `gateway_down()` (kill the logged-out
+  session) then `gateway_up()` (relaunch IBC) → `WEEKEND_GW_RESURRECT`. Uses an
+  in-memory `gw_down_ticks` counter. Weekday blackout unchanged (Gateway stays
+  off 08:00–20:10 for trading). Added `MockEffects(fail_gw_up=...)` + scenario R
+  (logout → bring-up fails → forced restart resurrects); self-test green.
+
 ### 2026-06-07 - `report_ingest_health.py`: report the newest-bar DATE per timeframe
 - New per-tf `newest_bar` field via `_newest_label`: daily → `YYYY-MM-DD` (stored
   UTC date = session day); intraday → `YYYY-MM-DD HH:MM ET`. Tracks the newest

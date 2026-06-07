@@ -482,13 +482,36 @@ def supervisor_tick(state: dict, fx, log) -> str:
             return "PAST_DEADLINE"
 
     # WEEKEND SEEDING (Sat 00:00 .. Mon 08:00 ET): keep the Gateway UP so a seed /
-    # backfill can run uninterrupted (manual via the tray, or a seed job). Revive
-    # it if it's down.
+    # backfill can run uninterrupted. Resurrect it if it drops — including the
+    # daily ~08:00 IBKR auto-logout, which leaves the Gateway PROCESS alive but
+    # logged out (port down). A plain gateway_up() only *waits* for that stale
+    # process, so after one failed bring-up we force a CLEAN RESTART (kill the
+    # logged-out session, relaunch IBC). `gw_down_ticks` is in-memory only.
     if seeding:
-        if not fx.gateway_is_up():
-            log(f"[weekend {now_et:%a %H:%M ET}] bringing Gateway up for seeding")
-            return "WEEKEND_GW_UP" if fx.gateway_up() else "WEEKEND_GW_UP_FAILED"
-        return "WEEKEND_GW_LIVE"
+        if fx.gateway_is_up():
+            state["gw_down_ticks"] = 0
+            return "WEEKEND_GW_LIVE"
+        n = state.get("gw_down_ticks", 0) + 1
+        state["gw_down_ticks"] = n
+        if n == 1:
+            # First detection — gentle: launch if dead, or wait for an in-flight
+            # (re)login (don't kill a clean restart that's already coming up).
+            log(f"[weekend {now_et:%a %H:%M ET}] Gateway down — bringing up for seeding")
+            ok = fx.gateway_up()
+            if ok:
+                state["gw_down_ticks"] = 0
+                return "WEEKEND_GW_UP"
+            return "WEEKEND_GW_UP_FAILED"
+        # Still down after a prior attempt — the session is stale/logged-out
+        # (the 08:00 auto-logout). Force a clean restart: kill, then relaunch.
+        log(f"[weekend {now_et:%a %H:%M ET}] Gateway still down after auto-logout — "
+            f"forcing a clean restart (kill stale session + relaunch IBC)")
+        fx.gateway_down()
+        ok = fx.gateway_up()
+        if ok:
+            state["gw_down_ticks"] = 0
+            return "WEEKEND_GW_RESURRECT"
+        return "WEEKEND_GW_RESURRECT_FAILED"
 
     # WEEKDAY, in the run window, nothing to fetch (session already done, or the
     # early-morning gap): Gateway off, idle.
@@ -622,10 +645,15 @@ def self_test() -> int:
 # ======================================================================
 
 class MockEffects:
-    def __init__(self, log, fail_topup=0, start_up=False):
+    def __init__(self, log, fail_topup=0, start_up=False, fail_gw_up=0):
         self.log = log; self._up = start_up; self.actions = []; self._fail = fail_topup
+        self._fail_gw_up = fail_gw_up   # simulate N failed bring-ups (logged-out stale session)
     def gateway_is_up(self): return self._up
     def gateway_up(self):
+        if self._fail_gw_up > 0:
+            self._fail_gw_up -= 1
+            self.actions.append("GW_UP_FAIL"); self.log("    [mock] gateway UP failed")
+            return False
         if not self._up: self.actions.append("GW_UP"); self.log("    [mock] gateway UP")
         self._up = True; return True
     def gateway_down(self):
@@ -704,6 +732,17 @@ def scenario_test() -> int:
     fx = MockEffects(nolog, start_up=True); state = {}
     chk("D6 Fri 12:00 -> blackout shuts gateway", tick_at("2026-06-05 12:00", state, fx), "BLACKOUT_GW_DOWN")
     chk("D6 gateway now DOWN", fx.gateway_is_up(), False)
+
+    # R: weekend AUTO-LOGOUT resurrection — the 08:00 logout leaves a stale,
+    # logged-out session so the gentle bring-up FAILS once; the next tick forces
+    # a clean restart (kill + relaunch) and the Gateway comes back for seeding.
+    fx = MockEffects(nolog, start_up=False, fail_gw_up=1); state = {}
+    chk("R Sat 08:30 tick1 (stale logout) -> bring-up failed",
+        tick_at("2026-06-06 08:30", state, fx), "WEEKEND_GW_UP_FAILED")
+    chk("R still down after tick1", fx.gateway_is_up(), False)
+    chk("R tick2 -> forced clean restart resurrects",
+        tick_at("2026-06-06 08:31", state, fx), "WEEKEND_GW_RESURRECT")
+    chk("R gateway back UP", fx.gateway_is_up(), True)
 
     # E: already-succeeded session in window -> idle, no duplicate fetch
     fx = MockEffects(nolog); state = {"last_success_session": date(2026, 6, 1)}
