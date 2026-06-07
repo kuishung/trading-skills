@@ -65,7 +65,12 @@ $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
     -StartWhenAvailable `
     -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) `
+    -MultipleInstances IgnoreNew `
     -ExecutionTimeLimit (New-TimeSpan -Days 0)   # 0 = no limit; runs forever
+# MultipleInstances=IgnoreNew so the 5-min keepalive repetition (added to the
+# trigger below) NEVER starts a duplicate supervisor while one is alive -- it
+# relaunches ONLY when the process is actually gone (crash / kill / clean exit /
+# RestartCount exhausted). This resurrects the SUPERVISOR itself within ~5 min.
 
 if ($Interactive) {
     # Run in the user's logged-on DESKTOP session so child IB Gateway GUI
@@ -80,6 +85,20 @@ if ($Interactive) {
     $trigger   = New-ScheduledTaskTrigger -AtStartup
     $principal = New-ScheduledTaskPrincipal -UserId $UserId -LogonType S4U -RunLevel Highest
     $TrigDesc  = "AtStartup, S4U"
+}
+
+# Keepalive: repeat the trigger every 5 min indefinitely. Combined with
+# MultipleInstances=IgnoreNew, Task Scheduler re-launches the supervisor whenever
+# it's NOT running (and skips the fire when it IS) -- so a crashed/killed/exited
+# supervisor self-resurrects within ~5 min, no separate watchdog needed. Built
+# via the standard dummy -Once trigger trick (AtLogOn/AtStartup triggers don't
+# take -RepetitionInterval directly in PS 5.1).
+try {
+    $trigger.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) `
+        -RepetitionInterval (New-TimeSpan -Minutes 5)).Repetition
+    $TrigDesc += " + repeat 5m (keepalive)"
+} catch {
+    Write-Warning "Could not attach 5-min keepalive repetition: $($_.Exception.Message)"
 }
 
 try {

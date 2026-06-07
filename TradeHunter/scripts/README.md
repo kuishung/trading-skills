@@ -37,6 +37,19 @@ they're rarely-touched and small, so `scripts/` is fine.
 
 ## Changelog
 
+### 2026-06-07 - `setup_hermes_ingest_supervisor_task.ps1`: keepalive (resurrect the SUPERVISOR itself)
+- The Gateway is resurrected by the supervisor — but nothing resurrected the
+  supervisor if it died (only `-RestartCount 3` on crash, which doesn't cover a
+  clean exit / kill / exhausted retries / down-at-boot). Added a **5-min trigger
+  repetition** + `-MultipleInstances IgnoreNew`: Task Scheduler relaunches the
+  supervisor whenever it's not running and skips the fire when it is, so a dead
+  supervisor self-resurrects within ~5 min — no separate watchdog. Built via the
+  standard dummy `-Once` trigger `.Repetition` trick (AtLogOn/AtStartup can't take
+  `-RepetitionInterval` directly in PS 5.1). Re-run the installer to apply.
+  (Discovered the supervisor was never installed as a task on Hermes — only the
+  legacy disabled `IntradayBot-Gateway`/`-Watcher` + the tray existed — which is
+  why resurrection never happened unattended.)
+
 ### 2026-06-07 - `ingest_supervisor.py`: self-healing `gateway_up()` (everyday resurrection)
 - Context: user sets IBKR auto-logout to **16:00 ET** (market close). On weekdays
   that falls in the blackout (Gateway already off 08:00–20:10), so the overnight
