@@ -75,6 +75,10 @@ RUN_END   = _add_min(MARKET_OPEN, -STOP_BEFORE_OPEN_MIN)      # 08:00 ET
 GATEWAY_PORT = 4002
 TICK_SEC = 60          # supervisor poll cadence in real mode
 GATEWAY_UP_TIMEOUT_SEC = 180
+GATEWAY_LOGIN_GRACE_SEC = 90   # wait this long for an in-flight (re)login before
+                               # treating an alive-but-portless Gateway as a stale
+                               # logged-out session (the daily auto-logout) and
+                               # force-restarting it.
 DEADLINE_MARGIN_MIN = 3   # stop heavy work + shut Gateway this many min BEFORE
                           # RUN_END (08:00 ET) so the Gateway is provably down
                           # before the user's manual-trade window begins.
@@ -182,29 +186,44 @@ class RealEffects:
     def gateway_up(self) -> bool:
         if self.gateway_is_up():
             return True
-        # Don't launch a SECOND IBC if one is already starting up — login can
-        # take ~30-60s before the port listens, and a duplicate means two
-        # Gateway sessions on the same account (IBKR kicks one). If an IBC/
-        # Gateway process is already alive, just wait for it to finish logging in.
+        # A process may already be alive: EITHER a clean (re)login in progress
+        # (login takes ~30-60s before the port listens — don't launch a second
+        # IBC, two sessions on one account get one kicked), OR a STALE session
+        # left logged-out by the daily IBKR auto-logout (process alive, port
+        # never comes up). Give an in-flight login a brief grace; if the port
+        # still isn't up, treat it as stale -> kill it + relaunch fresh. This is
+        # the everyday resurrection (esp. with auto-logout set to 16:00 ET) and
+        # also fixes the "did NOT come up within 180s" relaunch loop.
         if self._gateway_proc_alive():
-            self.log("IBC/Gateway process already alive (login in progress) — waiting, not relaunching")
-        else:
-            bat = SKILL_DIR / "ibc" / "StartIBC-intraday.bat"
-            self.log(f"starting Gateway via {bat}")
-            try:
-                subprocess.Popen(["cmd.exe", "/c", str(bat)],
-                                 cwd=str(bat.parent),
-                                 creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
-            except Exception as exc:
-                self.log(f"Gateway launch failed: {exc}")
-                return False
+            self.log(f"IBC/Gateway process alive — waiting up to {GATEWAY_LOGIN_GRACE_SEC}s for login")
+            if self._wait_for_port(GATEWAY_LOGIN_GRACE_SEC):
+                self.log("Gateway login completed")
+                return True
+            self.log("login did not complete — stale/logged-out session; "
+                     "killing it and relaunching (resurrection)")
+            self.gateway_down()
+        bat = SKILL_DIR / "ibc" / "StartIBC-intraday.bat"
+        self.log(f"starting Gateway via {bat}")
+        try:
+            subprocess.Popen(["cmd.exe", "/c", str(bat)],
+                             cwd=str(bat.parent),
+                             creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
+        except Exception as exc:
+            self.log(f"Gateway launch failed: {exc}")
+            return False
+        if self._wait_for_port(GATEWAY_UP_TIMEOUT_SEC):
+            self.log("Gateway up")
+            return True
+        self.log(f"Gateway did NOT come up within {GATEWAY_UP_TIMEOUT_SEC}s")
+        return False
+
+    def _wait_for_port(self, timeout_s: int) -> bool:
+        """Poll the Gateway port until it accepts connections or timeout."""
         waited = 0
-        while waited < GATEWAY_UP_TIMEOUT_SEC:
+        while waited < timeout_s:
             _time.sleep(10); waited += 10
             if self.gateway_is_up():
-                self.log(f"Gateway up after ~{waited}s")
                 return True
-        self.log(f"Gateway did NOT come up within {GATEWAY_UP_TIMEOUT_SEC}s")
         return False
 
     def gateway_down(self) -> None:

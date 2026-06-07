@@ -37,6 +37,20 @@ they're rarely-touched and small, so `scripts/` is fine.
 
 ## Changelog
 
+### 2026-06-07 - `ingest_supervisor.py`: self-healing `gateway_up()` (everyday resurrection)
+- Context: user sets IBKR auto-logout to **16:00 ET** (market close). On weekdays
+  that falls in the blackout (Gateway already off 08:00–20:10), so the overnight
+  window (20:10–08:00) never hits a logout; on weekends the 16:00 logout
+  interrupts seeding. Either way the daily bring-up must cope with a session the
+  auto-logout left **alive but logged-out** (port down).
+- `gateway_up()` previously just *waited* for an alive process (the "did NOT come
+  up within 180s" relaunch loop / the Friday 45-min struggle). Now it grace-waits
+  `GATEWAY_LOGIN_GRACE_SEC` (90s) for an in-flight login, and if the port still
+  isn't up it treats the process as **stale → kills it (`gateway_down`) and
+  relaunches IBC fresh**. So every bring-up (weekday 20:10 *and* weekend) self-
+  resurrects. New `_wait_for_port()` helper. Weekday blackout (auto-down before
+  open) unchanged. Self-test + scenario tests green.
+
 ### 2026-06-07 - `ingest_supervisor.py`: resurrect Gateway after the daily auto-logout (weekends)
 - IBKR auto-logs the Gateway out daily (~08:00); it leaves the Gateway PROCESS
   alive but logged out (port down). A plain `gateway_up()` only *waits* for that
