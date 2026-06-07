@@ -120,7 +120,8 @@ Write-Host "Task registered: $TaskName  (State: $($verify.State))" -ForegroundCo
 Write-Host "  Execute      : $Py $arguments"
 Write-Host "  Trigger      : $TrigDesc"
 Write-Host "  Working dir  : $BotRoot"
-Write-Host "  Principal    : $UserId (S4U, RunLevel Highest)"
+$PrinDesc = if ($Interactive) { 'Interactive (desktop session)' } else { 'S4U (background)' }
+Write-Host "  Principal    : $UserId ($PrinDesc, RunLevel Highest)"
 Write-Host ""
 
 if ($StartNow) {
