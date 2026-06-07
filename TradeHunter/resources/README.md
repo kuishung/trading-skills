@@ -56,6 +56,19 @@ treating any "missing" feature as a bug.
 
 ## Changelog
 
+### 2026-06-07 — `ibkr_history.py`: hard per-request timeouts (fix the WTW-style freeze)
+- A single non-responding symbol (WTW, 2026-06-07) froze the whole run at
+  486/563 — `qualifyContracts` has no timeout and `reqHistoricalData`'s wasn't
+  firing. Now each call is bounded with `asyncio.wait_for` via the async variants:
+  `qualifyContractsAsync` (`QUALIFY_TIMEOUT_S`=30s) and `reqHistoricalDataAsync`
+  (`HIST_TIMEOUT_S`=120s). On timeout the symbol is **skipped** and the (likely
+  half-open) socket is **dropped** so the caller's `_ensure_connected` reconnects
+  fresh next item → the run drains instead of hanging.
+- Correctness: a top-up that returned 0 bars because it **errored/timed out** is
+  NOT checkpointed (tracked in `_FETCH_ERRORED`, cleared per run) — only a CLEAN
+  +0 ("nothing newer") is marked verified-current. So a transient timeout retries
+  next run instead of being wrongly skipped until the session advances.
+
 ### 2026-06-07 — `ibkr_history.py`: checkpoint fast-path (don't recheck a good ingest from start)
 - Extends the checkpoint system so a **re-run after a good ingest is near-instant**
   instead of re-reading every pair's parquet metadata (~20s). On the FIRST run of

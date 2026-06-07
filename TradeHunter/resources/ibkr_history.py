@@ -36,6 +36,7 @@ CLI:
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import sys
 import time
@@ -132,6 +133,20 @@ TIMEFRAME_TO_IB = {
     "daily": {"barSize": "1 day",  "chunk_days": 365, "use_rth": True},
 }
 
+# Hard per-request timeouts. ib_insync's own timeout isn't reliable here (and
+# qualifyContracts has none), so a single non-responding symbol (e.g. WTW
+# 2026-06-07) froze the whole run. We bound each call with asyncio.wait_for: on
+# timeout the symbol is skipped AND the (likely wedged) socket is dropped so the
+# next item reconnects fresh. Generous, to tolerate slow weekend data-farm.
+QUALIFY_TIMEOUT_S = 30
+HIST_TIMEOUT_S = 120
+
+# (sym, tf) pairs that hit an error/timeout this process. A top-up that returns
+# 0 bars because it ERRORED must NOT be checkpointed as "verified-current"
+# (that would skip it until the session advances). Only a CLEAN 0-bar response
+# means "nothing newer". bulk_update clears this at the start of each run.
+_FETCH_ERRORED: set = set()
+
 
 # ---------- IBKR connection ----------
 
@@ -205,18 +220,35 @@ def _fetch_chunk(ib, symbol: str, end_dt: datetime,
     """One reqHistoricalData call. Returns bars in canonical shape."""
     spec = TIMEFRAME_TO_IB[timeframe]
     contract = _stock(symbol)
+
+    def _drop_wedged_socket():
+        # A timeout usually means the socket is half-open (connected but not
+        # answering). Drop it so the caller's _ensure_connected reconnects fresh
+        # next item instead of timing out forever on a dead pipe.
+        try:
+            ib.disconnect()
+        except Exception:
+            pass
+
+    # --- qualify (hard timeout) ---
     try:
-        ib.qualifyContracts(contract)
+        ib.run(asyncio.wait_for(ib.qualifyContractsAsync(contract), QUALIFY_TIMEOUT_S))
     except Exception as exc:
-        sys.stderr.write(f"[ibkr_history] qualify({symbol}) failed: {exc}\n")
+        is_to = isinstance(exc, (asyncio.TimeoutError, TimeoutError))
+        kind = "qualify_timeout" if is_to else "qualify_failed"
+        sys.stderr.write(f"[ibkr_history] qualify({symbol}) {kind}: {exc}\n")
         bars_store.log_ingest_event(source="ibkr_history", symbol=symbol,
                                     timeframe=timeframe, bars_added=0,
-                                    error=f"qualify_failed: {exc}")
+                                    error=f"{kind}: {exc}")
+        _FETCH_ERRORED.add((symbol, timeframe))
+        if is_to:
+            _drop_wedged_socket()
         return []
     # Empty string = "now"; otherwise format "YYYYMMDD HH:MM:SS UTC"
     end_str = "" if end_dt is None else end_dt.strftime("%Y%m%d %H:%M:%S UTC")
+    # --- historical data (hard timeout) ---
     try:
-        ib_bars = ib.reqHistoricalData(
+        ib_bars = ib.run(asyncio.wait_for(ib.reqHistoricalDataAsync(
             contract,
             endDateTime=end_str,
             durationStr=duration_str,
@@ -225,12 +257,17 @@ def _fetch_chunk(ib, symbol: str, end_dt: datetime,
             useRTH=spec["use_rth"],
             formatDate=2,           # epoch seconds
             keepUpToDate=False,
-        )
+        ), HIST_TIMEOUT_S))
     except Exception as exc:
-        sys.stderr.write(f"[ibkr_history] reqHistoricalData({symbol}, {timeframe}, {duration_str}) failed: {exc}\n")
+        is_to = isinstance(exc, (asyncio.TimeoutError, TimeoutError))
+        kind = "reqHistoricalData_timeout" if is_to else "reqHistoricalData_failed"
+        sys.stderr.write(f"[ibkr_history] reqHistoricalData({symbol}, {timeframe}, {duration_str}) {kind}: {exc}\n")
         bars_store.log_ingest_event(source="ibkr_history", symbol=symbol,
                                     timeframe=timeframe, bars_added=0,
-                                    error=f"reqHistoricalData_failed: {exc}")
+                                    error=f"{kind}: {exc}")
+        _FETCH_ERRORED.add((symbol, timeframe))
+        if is_to:
+            _drop_wedged_socket()
         return []
     out: list[dict] = []
     for b in ib_bars or []:
@@ -481,6 +518,7 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
     checkpoints = _load_checkpoints() if use_checkpoints else {}
     cp_dirty = False
     n_checkpoint_skipped = 0
+    _FETCH_ERRORED.clear()   # fresh per run — only CLEAN +0 top-ups get checkpointed
 
     total_pairs = len(symbols) * len(timeframes)
     n_scanned = 0
@@ -686,11 +724,11 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
                 else:   # action == "top_up"
                     n = update_history(ib, sym, tf, pacing_s=pacing_s)
                     label = f"update({note})"
-                    if use_checkpoints:
-                        # Mark this (sym,tf) attempted for this session so a later
-                        # run with the same fresh_through won't re-pace it (the +0
-                        # 'nothing newer' laggards). Re-attempted once fresh_through
-                        # advances to the next session.
+                    if use_checkpoints and (sym, tf) not in _FETCH_ERRORED:
+                        # Clean response (incl. a genuine +0 'nothing newer') -> mark
+                        # verified-current so a later run with the same fresh_through
+                        # skips it. A timeout/error is NOT checkpointed (it stays in
+                        # _FETCH_ERRORED) so it's retried next run, not wrongly skipped.
                         checkpoints[sym + "|" + tf] = ft_iso
                         cp_dirty = True
                 results[(sym, tf)] = n
