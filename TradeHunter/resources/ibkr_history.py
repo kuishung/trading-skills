@@ -489,6 +489,20 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
     for sym in symbols:
         for tf in timeframes:
             target_days = (lookback_days_by_tf or {}).get(tf, lookback_days_for_new)
+            # FAST PATH (checkpoint first, NO parquet read): a prior run this
+            # session already verified this pair current -> skip instantly. This
+            # is what makes a RE-RUN after a good ingest near-instant instead of
+            # re-reading every pair's metadata ("no need to recheck from start").
+            # Covers BOTH the perpetual-laggard case (+0 nothing-newer) AND fresh
+            # pairs (checkpointed below once confirmed current).
+            if use_checkpoints:
+                cp = checkpoints.get(sym + "|" + tf)
+                if isinstance(cp, str) and cp >= ft_iso:
+                    counts["fresh"] += 1
+                    n_checkpoint_skipped += 1
+                    plan.append((sym, tf, "fresh", f"verified {cp}", target_days))
+                    n_scanned += 1
+                    continue
             # Recency-skip: already has the target session's bar -> no fetch.
             if fresh_through is not None and not force_seed:
                 rng = bars_store.available_range_fast(sym, timeframe=tf)
@@ -506,21 +520,15 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
                                   else latest_dt.astimezone(_et_tz()).date())
                         if latest >= fresh_through:
                             counts["fresh"] += 1
+                            # Remember it's current through this session so the NEXT
+                            # run skips it with no read (the fast path above).
+                            checkpoints[sym + "|" + tf] = ft_iso
+                            cp_dirty = True
                             plan.append((sym, tf, "fresh", f"latest={latest}", target_days))
                             n_scanned += 1
                             continue
                     except (ValueError, AttributeError, IndexError):
                         pass
-                # Verified-current: a prior top-up for this (or a later) session
-                # already found IBKR had nothing newer -> skip until fresh_through
-                # advances (kills the perpetual-laggard re-fetch churn).
-                cp = checkpoints.get(sym + "|" + tf)
-                if isinstance(cp, str) and cp >= ft_iso:
-                    counts["fresh"] += 1
-                    n_checkpoint_skipped += 1
-                    plan.append((sym, tf, "fresh", f"verified-empty {cp}", target_days))
-                    n_scanned += 1
-                    continue
             try:
                 action, note = _classify_pair(sym, tf, target_days, force_seed)
             except Exception as exc:
@@ -568,10 +576,9 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
     )
     if n_checkpoint_skipped:
         _emit(
-            f"[pre-flight] {n_checkpoint_skipped} pair(s) skipped as verified-current "
-            f"(prior top-up found nothing newer through this session). "
-            f"Saved ~{n_checkpoint_skipped * pacing_s / 60:.1f} min of pacing + the "
-            f"per-request round-trips."
+            f"[pre-flight] {n_checkpoint_skipped} pair(s) verified-current from a prior "
+            f"run this session -> skipped with NO parquet read (re-run fast path). "
+            f"Re-checked automatically once the session date advances."
         )
     if n_skipped:
         _emit(
@@ -600,6 +607,9 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
     _emit(f"[pre-flight] {n_work_symbols} unique symbols need work")
 
     if n_work == 0:
+        if cp_dirty:
+            _save_checkpoints(checkpoints)   # persist fresh-pair checkpoints so a
+                                             # re-run skips with zero parquet reads
         _emit("[pre-flight] nothing to do — all pairs at full depth")
         return {}
 

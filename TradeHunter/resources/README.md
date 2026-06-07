@@ -56,6 +56,17 @@ treating any "missing" feature as a bug.
 
 ## Changelog
 
+### 2026-06-07 — `ibkr_history.py`: checkpoint fast-path (don't recheck a good ingest from start)
+- Extends the checkpoint system so a **re-run after a good ingest is near-instant**
+  instead of re-reading every pair's parquet metadata (~20s). On the FIRST run of
+  a session, every pair confirmed current (fresh OR top-up) is checkpointed
+  `SYM|tf -> session`. The pre-flight now checks the **checkpoint FIRST** (in-
+  memory dict, no parquet read) and skips any pair already verified through this
+  (or a later) session. So run 2 of the same session does ~0 reads and finishes in
+  a blink; pairs are auto-rechecked once the session date advances (e.g. Monday).
+  Pre-flight checkpoints are persisted even on the `n_work == 0` early return.
+  (Answers "if the data's already in good shape, why recheck from start?")
+
 ### 2026-06-07 — `ibkr_history.py`: verified-current checkpoints (kill the laggard re-fetch churn)
 - **Problem:** ~180 symbols whose IBKR data legitimately ends before the latest
   session ("perpetual laggards") were classified `top_up` and re-fetched for
