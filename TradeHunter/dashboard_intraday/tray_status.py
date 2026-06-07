@@ -682,6 +682,24 @@ def get_deepcheck_status() -> dict:
             "issues": issues, "corrupt": corrupt, "flagged": flagged, "stale": stale}
 
 
+def get_deepcheck_progress() -> dict | None:
+    """LIVE deep-check progress from `_deepcheck_progress.json` (written by
+    check_bars_integrity every ~50 files). Returns {phase, done, total, frac} while
+    a deep check is running, or None when none is running (file absent or stale)."""
+    try:
+        p = get_data_root() / "_deepcheck_progress.json"
+        d = json.loads(p.read_text(encoding="utf-8"))
+        ts = datetime.fromisoformat(d["ts"])
+        if (datetime.now(timezone.utc) - ts).total_seconds() > 90:
+            return None   # stale -> not running
+        total = int(d.get("total") or 0)
+        done = int(d.get("done") or 0)
+        return {"phase": d.get("phase", "?"), "done": done, "total": total,
+                "frac": (done / total) if total else 0.0}
+    except Exception:
+        return None
+
+
 def get_completed_through() -> dict:
     """Date through which the daily ingest has completed — shown in the progress
     window + tooltip so the user knows the data's currency at a glance.
@@ -967,8 +985,8 @@ def _build_progress_window(root):
     # deep-check, live, detail, eta) PLUS the operator buttons + action line +
     # Close. Height grew when those were added; allow vertical resize so future
     # additions can never cover the Close button again.
-    win.geometry("460x540")
-    win.minsize(460, 540)
+    win.geometry("460x680")
+    win.minsize(460, 600)
     win.resizable(False, True)
     win.attributes('-topmost', True)
     win.configure(bg='#1a1a1a')
@@ -988,6 +1006,32 @@ def _build_progress_window(root):
         darkcolor='#3fb55c',
         thickness=22,
     )
+    # Purple bar for the deep-check section (matches the 'Deep check' button).
+    style.configure(
+        'Deep.Horizontal.TProgressbar',
+        background='#a78bfa',
+        troughcolor='#262626',
+        bordercolor='#1a1a1a',
+        lightcolor='#a78bfa',
+        darkcolor='#7c5cd6',
+        thickness=14,
+    )
+
+    # ── NOW banner ─────────────────────────────────────────────────────────
+    # The single most-important line: a plain-language statement of WHAT is
+    # running right now (deep check / ingest / idle), so the user never has to
+    # decode the dials below. refresh_data() rewrites it every 3s.
+    now_var = tk.StringVar(value='NOW:  starting…')
+    now_lbl = tk.Label(
+        win, textvariable=now_var, font=('Segoe UI', 12, 'bold'),
+        bg='#10243a', fg='#cfe6ff', wraplength=430, justify='center',
+        padx=10, pady=7,
+    )
+    now_lbl.pack(fill='x', padx=10, pady=(10, 6))
+
+    # ── INGEST section ─────────────────────────────────────────────────────
+    tk.Label(win, text='INGEST', font=('Segoe UI', 8, 'bold'),
+             bg='#1a1a1a', fg='#5f7fa6').pack(pady=(2, 0))
 
     # Big centered percentage
     pct_var = tk.StringVar(value='—')
@@ -996,7 +1040,7 @@ def _build_progress_window(root):
         font=('Segoe UI', 44, 'bold'),
         bg='#1a1a1a', fg='#5fd97a',
     )
-    pct_lbl.pack(pady=(18, 6))
+    pct_lbl.pack(pady=(2, 6))
 
     # Visual progress bar
     pb_var = tk.DoubleVar(value=0)
@@ -1011,14 +1055,43 @@ def _build_progress_window(root):
     tk.Label(
         win, textvariable=count_var, font=('Segoe UI', 12, 'bold'),
         bg='#1a1a1a', fg='#cccccc',
-    ).pack(pady=(0, 4))
+    ).pack(pady=(0, 2))
+
+    # Current letter + latest symbol
+    detail_var = tk.StringVar(value='-')
+    tk.Label(
+        win, textvariable=detail_var, font=('Segoe UI', 10),
+        bg='#1a1a1a', fg='#888888',
+    ).pack(pady=1)
+
+    # Rate + ETA
+    eta_var = tk.StringVar(value='-')
+    tk.Label(
+        win, textvariable=eta_var, font=('Segoe UI', 10),
+        bg='#1a1a1a', fg='#888888',
+    ).pack(pady=1)
+
+    # Live indicator: spinner glyph + colored status dot + "Ns ago" counter.
+    # Updates every 150ms (animate()) independently of the 3s data refresh,
+    # so the user sees continuous motion as long as the script is alive --
+    # AND a green-vs-red dot for whether the watcher itself is alive.
+    live_var = tk.StringVar(value='- waiting...')
+    live_lbl = tk.Label(
+        win, textvariable=live_var, font=('Consolas', 10),
+        bg='#1a1a1a', fg='#888888',
+    )
+    live_lbl.pack(pady=(1, 4))
 
     # "Data complete through: YYYY-MM-DD" — the ingest currency the user asked for
     through_var = tk.StringVar(value='Completed through: -')
     tk.Label(
         win, textvariable=through_var, font=('Segoe UI', 12, 'bold'),
         bg='#1a1a1a', fg='#5fd97a',
-    ).pack(pady=(0, 4))
+    ).pack(pady=(0, 2))
+
+    # ── SERVICES section ───────────────────────────────────────────────────
+    tk.Label(win, text='SERVICES', font=('Segoe UI', 8, 'bold'),
+             bg='#1a1a1a', fg='#5f7fa6').pack(pady=(8, 0))
 
     # Supervisor live/down indicator (tray-sync rule) — it's what keeps the
     # Gateway up + resurrects it, so its health is the most important signal.
@@ -1027,7 +1100,7 @@ def _build_progress_window(root):
         win, textvariable=sup_var, font=('Segoe UI', 11, 'bold'),
         bg='#1a1a1a', fg='#888888',
     )
-    sup_lbl.pack(pady=(0, 4))
+    sup_lbl.pack(pady=(0, 2))
 
     # IB Gateway live/down indicator (tray-sync rule)
     gw_var = tk.StringVar(value='Gateway: -')
@@ -1035,7 +1108,7 @@ def _build_progress_window(root):
         win, textvariable=gw_var, font=('Segoe UI', 11, 'bold'),
         bg='#1a1a1a', fg='#888888',
     )
-    gw_lbl.pack(pady=(0, 4))
+    gw_lbl.pack(pady=(0, 2))
 
     # Designed Gateway on/off schedule (static — mirrors ingest_supervisor:
     # nightly run 20:10–08:00 ET, weekday blackout 08:00–20:10 ET for the user's
@@ -1050,38 +1123,32 @@ def _build_progress_window(root):
         wraplength=430, justify='center',
     ).pack(pady=(0, 4))
 
+    # ── DEEP CHECK section ─────────────────────────────────────────────────
+    tk.Label(win, text='DEEP CHECK', font=('Segoe UI', 8, 'bold'),
+             bg='#1a1a1a', fg='#8b7fb6').pack(pady=(6, 0))
+
     # Latest deep-check / integrity result (tray-sync rule)
     deepcheck_var = tk.StringVar(value='Deep check: -')
     deepcheck_lbl = tk.Label(
         win, textvariable=deepcheck_var, font=('Segoe UI', 10),
+        bg='#1a1a1a', fg='#888888', wraplength=430, justify='center',
+    )
+    deepcheck_lbl.pack(pady=(0, 2))
+
+    # Live deep-check progress bar — only meaningful while a deep check runs
+    # (fed by _deepcheck_progress.json via get_deepcheck_progress()). Sits at 0
+    # when idle; the result line above shows the last outcome.
+    deep_pb_var = tk.DoubleVar(value=0)
+    ttk.Progressbar(
+        win, length=380, mode='determinate', maximum=100,
+        variable=deep_pb_var, style='Deep.Horizontal.TProgressbar',
+    ).pack(padx=20, pady=(0, 2))
+    deepprog_var = tk.StringVar(value='idle')
+    deepprog_lbl = tk.Label(
+        win, textvariable=deepprog_var, font=('Consolas', 9),
         bg='#1a1a1a', fg='#888888',
     )
-    deepcheck_lbl.pack(pady=(0, 4))
-
-    # Live indicator: spinner glyph + colored status dot + "Ns ago" counter.
-    # Updates every 150ms (animate()) independently of the 3s data refresh,
-    # so the user sees continuous motion as long as the script is alive --
-    # AND a green-vs-red dot for whether the watcher itself is alive.
-    live_var = tk.StringVar(value='- waiting...')
-    live_lbl = tk.Label(
-        win, textvariable=live_var, font=('Consolas', 10),
-        bg='#1a1a1a', fg='#888888',
-    )
-    live_lbl.pack(pady=(2, 4))
-
-    # Current letter + latest symbol
-    detail_var = tk.StringVar(value='-')
-    tk.Label(
-        win, textvariable=detail_var, font=('Segoe UI', 10),
-        bg='#1a1a1a', fg='#888888',
-    ).pack(pady=2)
-
-    # Rate + ETA
-    eta_var = tk.StringVar(value='-')
-    tk.Label(
-        win, textvariable=eta_var, font=('Segoe UI', 10),
-        bg='#1a1a1a', fg='#888888',
-    ).pack(pady=2)
+    deepprog_lbl.pack(pady=(0, 4))
 
     # ---- Operator controls: Start Gateway / Run ad-hoc ingest -------------
     # User wants manual Gateway + ingest control from the tray (no RDP needed).
@@ -1407,7 +1474,8 @@ def _build_progress_window(root):
             except Exception:
                 through_var.set("Completed through: -")
 
-            # Deep-check result line (clean / issues / partial)
+            # Deep-check result line (clean / issues / partial) + live progress bar
+            dc_running = None
             try:
                 dc = get_deepcheck_status()
                 st = dc.get('status', '?')
@@ -1417,6 +1485,43 @@ def _build_progress_window(root):
                                         else ('#5fd97a' if st == 'clean' else '#888888'))
             except Exception:
                 deepcheck_var.set("Deep check: -")
+            try:
+                dc_running = get_deepcheck_progress()
+                if dc_running:
+                    f = dc_running['frac'] * 100
+                    deep_pb_var.set(f)
+                    ph = dc_running['phase']
+                    phlabel = {"tier1": "metadata pass", "tier2": "full-read pass"}.get(ph, ph)
+                    deepprog_var.set(
+                        f"running · {phlabel} · "
+                        f"{dc_running['done']:,}/{dc_running['total']:,} files ({f:.0f}%)")
+                    deepprog_lbl.configure(fg='#a78bfa')
+                else:
+                    deep_pb_var.set(0)
+                    deepprog_var.set('idle')
+                    deepprog_lbl.configure(fg='#888888')
+            except Exception:
+                deep_pb_var.set(0)
+                deepprog_var.set('idle')
+
+            # ── NOW banner: one plain-language line for what's running now ──
+            try:
+                if dc_running:
+                    f = dc_running['frac'] * 100
+                    now_var.set(f"NOW:  \U0001F50D deep check running — "
+                                f"{dc_running['done']:,}/{dc_running['total']:,} files ({f:.0f}%)")
+                    now_lbl.configure(bg='#2a1a3a', fg='#d8c7ff')
+                elif live_state.get('ingest_active'):
+                    now_var.set("NOW:  ⬇ ingest running — " + count_var.get())
+                    now_lbl.configure(bg='#10243a', fg='#cfe6ff')
+                elif live_state.get('ingest_finished'):
+                    now_var.set("NOW:  ✓ ingest complete — " + eta_var.get())
+                    now_lbl.configure(bg='#102a1c', fg='#bdf0cf')
+                else:
+                    now_var.set("NOW:  ✓ idle — nothing running")
+                    now_lbl.configure(bg='#1f2937', fg='#cbd5e1')
+            except Exception:
+                pass
         except Exception as exc:
             pct_var.set('error')
             count_var.set(str(exc)[:60])

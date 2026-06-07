@@ -37,6 +37,14 @@ they're rarely-touched and small, so `scripts/` is fine.
 
 ## Changelog
 
+### 2026-06-07 - `check_bars_integrity.py`: live progress for the tray deep-check bar
+- Emits `<data_root>/_deepcheck_progress.json` (`{phase, done, total, ts}`) every
+  ~50 files via `_write_progress`/`_bump`, covering both tier1 (metadata) and
+  tier2 (`--deep` full-read) passes; `total = files * (2 if --deep else 1)`. File is
+  deleted on completion (`_clear_progress` after `# done`), so absent file = not
+  running / finished. Consumed by the tray's new `get_deepcheck_progress()` +
+  purple deep-check progress bar. (tray-sync rule.)
+
 ### 2026-06-07 - `ingest_supervisor.py`: per-tick heartbeat for the tray
 - `run_loop` now writes `state/supervisor_heartbeat.json` ({ts, action, et}) every
   tick via `_write_heartbeat()`, so the Hermes tray can show "Supervisor: LIVE ·

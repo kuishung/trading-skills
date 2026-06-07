@@ -43,6 +43,38 @@ from _common import get_data_root       # noqa: E402
 TARGET_DAYS = {"1min": 7, "3min": 180, "5min": 180, "15min": 60, "daily": 730}
 EXPECTED_COLS = {"t", "o", "h", "l", "c", "v"}
 
+# Live progress for the tray's deep-check bar. We write a tiny JSON every ~50
+# files; the tray polls it (and treats it as "running" while the ts is fresh).
+_PROG = {"done": 0, "total": 0}
+
+
+def _progress_path() -> Path:
+    return get_data_root() / "_deepcheck_progress.json"
+
+
+def _write_progress(phase: str) -> None:
+    try:
+        import json
+        _progress_path().write_text(json.dumps({
+            "phase": phase, "done": _PROG["done"], "total": _PROG["total"],
+            "ts": datetime.now(timezone.utc).isoformat(),
+        }), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _bump(phase: str) -> None:
+    _PROG["done"] += 1
+    if _PROG["done"] % 50 == 0 or _PROG["done"] >= _PROG["total"]:
+        _write_progress(phase)
+
+
+def _clear_progress() -> None:
+    try:
+        _progress_path().unlink()
+    except Exception:
+        pass
+
 
 def _parse_iso(s: str) -> datetime:
     return datetime.fromisoformat(s.replace("Z", "+00:00"))
@@ -62,6 +94,7 @@ def tier1(timeframes: list[str], price_root: Path, stale_days: int) -> dict:
         for f in files:
             sym = f.stem
             syms.add(sym)
+            _bump("tier1")
             try:
                 md = pq.read_metadata(f)
             except Exception as exc:
@@ -106,6 +139,7 @@ def tier2(timeframes: list[str], price_root: Path, max_show: int) -> dict:
         sys.stderr.write(f"[tier2] {tf}: reading {n} files ...\n"); sys.stderr.flush()
         for i, f in enumerate(files, 1):
             sym = f.stem
+            _bump("tier2")
             if i % 200 == 0 or i == n:
                 sys.stderr.write(f"[tier2] {tf}: {i}/{n}\n"); sys.stderr.flush()
             try:
@@ -147,6 +181,16 @@ def main() -> int:
     price_root = get_data_root() / "price_history"
     print(f"# auditing {price_root}")
     print(f"# timeframes: {tfs}\n")
+
+    # Progress denominator for the tray bar: every file is read once in tier1,
+    # and again in tier2 when --deep, so total = files * (2 if deep else 1).
+    all_n = 0
+    for tf in tfs:
+        d = price_root / tf
+        all_n += len(list(d.glob("*.parquet"))) if d.exists() else 0
+    _PROG["total"] = all_n * (2 if args.deep else 1)
+    _PROG["done"] = 0
+    _write_progress("tier1")
 
     r = tier1(tfs, price_root, args.stale_days)
     N = args.max_show
@@ -196,6 +240,7 @@ def main() -> int:
             show("NEGATIVE volume", issues["neg_vol"], lambda x: f"{x[0]}: {x[1]} bars")
 
     print("\n# done")
+    _clear_progress()   # tray: absent file => deep check finished
     return 0
 
 

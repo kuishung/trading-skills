@@ -33,6 +33,21 @@ web, Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-06-07 — `tray_status.py`: progress-window redesign + live deep-check bar
+- **Redesigned the progress window into clear labelled sections** (NOW banner →
+  INGEST → SERVICES → DEEP CHECK) so the user can tell at a glance what's running.
+  A bold **NOW: …** banner at the top states the single current activity in plain
+  language ("🔍 deep check running — 2,150/9,054 files (24%)", "⬇ ingest running …",
+  "✓ ingest complete …", "✓ idle"), recolouring per state.
+- Added a dedicated **purple deep-check progress bar** + `running · <pass> ·
+  done/total files (NN%)` line, fed by new `get_deepcheck_progress()` which reads
+  `<data_root>/_deepcheck_progress.json` (written by `check_bars_integrity.py`) and
+  treats it as live only while the timestamp is fresh (<90s). Idle → bar at 0,
+  "idle"; the existing Deep-check result line still shows the last outcome.
+- Reordered ingest liveness lines (count → latest → eta → spinner → completed-
+  through) under the INGEST header; Supervisor/Gateway/schedule grouped under
+  SERVICES; window grown to 460x680 to fit. (tray-sync rule.)
+
 ### 2026-06-07 — `tray_status.py`: Deep-check button + passive Gateway probe
 - Added a **Deep check** button to the progress window (third operator button,
   next to Start Gateway / Run ingest). Runs `check_bars_integrity.py --deep` in a
