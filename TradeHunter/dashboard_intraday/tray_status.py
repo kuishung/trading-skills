@@ -1206,6 +1206,36 @@ def _build_progress_window(root):
                 _ui(f"Ingest launch failed: {exc}")
         _threading.Thread(target=worker, daemon=True).start()
 
+    def run_deepcheck():
+        if not _msg.askyesno("Run deep check",
+                "Run a FULL parquet integrity deep-check now?\n\nReads every bar "
+                "file (~10-15 min). Read-only — no Gateway needed, safe anytime. "
+                "The result appears on the 'Deep check' line when done."):
+            return
+
+        def worker():
+            from _common import get_data_root
+            try:
+                from _common import et_now
+                ts = et_now().strftime("%Y%m%d_%H%M%S")
+            except Exception:
+                import datetime as _d
+                ts = _d.datetime.now().strftime("%Y%m%d_%H%M%S")
+            report = get_data_root() / f"_deepcheck_{ts}.txt"
+            py = _shutil.which("py") or r"C:\Windows\py.exe"
+            script = SKILL_DIR / "scripts" / "check_bars_integrity.py"
+            # Tee-Object: show progress in the console AND write the report file,
+            # so the tray's "Deep check" line (get_deepcheck_status) updates when
+            # it finishes — same report the supervisor writes.
+            cmd = ["powershell", "-NoProfile", "-Command",
+                   f"& '{py}' -3.12 '{script}' --deep | Tee-Object -FilePath '{report}'"]
+            try:
+                _spawn_console(cmd, SKILL_DIR)
+                _ui("Deep check started (~10-15 min) — result shows on the Deep check line")
+            except Exception as exc:
+                _ui(f"Deep check launch failed: {exc}")
+        _threading.Thread(target=worker, daemon=True).start()
+
     btn_row = tk.Frame(win, bg='#1a1a1a')
     btn_row.pack(pady=(8, 0))
     tk.Button(btn_row, text='Start Gateway', command=start_gateway,
@@ -1214,6 +1244,10 @@ def _build_progress_window(root):
               padx=12, pady=3, borderwidth=0).pack(side='left', padx=(0, 6))
     tk.Button(btn_row, text='Run ingest now', command=run_ingest,
               bg='#2a4a6f', fg='#ffffff', activebackground='#36608f',
+              activeforeground='#ffffff', relief='flat', font=('Segoe UI', 9),
+              padx=12, pady=3, borderwidth=0).pack(side='left', padx=(0, 6))
+    tk.Button(btn_row, text='Deep check', command=run_deepcheck,
+              bg='#5a3a6f', fg='#ffffff', activebackground='#6f4a8a',
               activeforeground='#ffffff', relief='flat', font=('Segoe UI', 9),
               padx=12, pady=3, borderwidth=0).pack(side='left')
     tk.Label(win, textvariable=action_var, font=('Segoe UI', 9),

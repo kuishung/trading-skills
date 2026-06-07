@@ -33,6 +33,18 @@ web, Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-06-07 — `tray_status.py`: Deep-check button + passive Gateway probe
+- Added a **Deep check** button to the progress window (third operator button,
+  next to Start Gateway / Run ingest). Runs `check_bars_integrity.py --deep` in a
+  visible console **and** Tee's the output to a `_deepcheck_<ts>.txt` report — the
+  same report the supervisor writes — so the tray's **Deep check** line updates
+  with the result (clean / issues) when it finishes (~10-15 min, read-only, no
+  Gateway needed). Runs off the Tk thread.
+- `get_gateway_status()` now probes the port **passively** via
+  `Get-NetTCPConnection` instead of a raw `socket.connect()`, so it no longer
+  spams the IB Gateway log with `Client disconnected before version was sent`
+  every ~8s. Cached 10s.
+
 ### 2026-06-07 — `tray_status.py`: liveness states (no more misleading "stalled")
 - The live line was driven purely by *time since last bar written*, so a healthy
   weekend pass (items advancing ~68s apart, all `+0`) — and worse, a *finished*
