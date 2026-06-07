@@ -720,30 +720,33 @@ def get_completed_through() -> dict:
 _gw_cache = {"ts": 0.0, "result": None}
 
 def get_gateway_status() -> dict:
-    """Is the IB Gateway live? Quick TCP probe of the API port (127.0.0.1:ibkr_port).
-    Shown in the progress window + tooltip so the user sees Gateway up/down at a
-    glance (tray-sync rule).
-
-    Cached ~8s: callers (window refresh @3s, tooltip poll) get the cached value, so
-    the actual probe runs at most every 8s — bounds both the UI cost (a dropped/
-    firewalled closed port can take the full timeout) and the API connection noise.
-    Short 0.4s timeout so a down Gateway never stalls the UI."""
+    """Is the IB Gateway live? PASSIVE listener check via Get-NetTCPConnection
+    (reads the OS TCP table) — it does NOT open a connection to the API port, so
+    it never trips the Gateway's 'Client disconnected before version was sent'
+    log spam that the old raw socket.connect() probe caused (every ~8s). Shown in
+    the progress window + tooltip (tray-sync rule). Cached ~10s."""
     now = time.monotonic()
-    if _gw_cache["result"] is not None and (now - _gw_cache["ts"]) < 8.0:
+    if _gw_cache["result"] is not None and (now - _gw_cache["ts"]) < 10.0:
         return _gw_cache["result"]
-    import socket
     port = 4002
     try:
         from _common import load_config
         port = int(load_config().get("ibkr_port") or 4002)
     except Exception:
         pass
+    up = False
     try:
-        s = socket.create_connection(("127.0.0.1", port), timeout=0.4)
-        s.close()
-        result = {"up": True, "port": port}
+        import subprocess
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+             f"(Get-NetTCPConnection -LocalPort {port} -State Listen "
+             f"-ErrorAction SilentlyContinue | Measure-Object).Count"],
+            capture_output=True, text=True, timeout=5,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        up = out.stdout.strip().isdigit() and int(out.stdout.strip()) > 0
     except Exception:
-        result = {"up": False, "port": port}
+        up = False
+    result = {"up": up, "port": port}
     _gw_cache["ts"] = now
     _gw_cache["result"] = result
     return result

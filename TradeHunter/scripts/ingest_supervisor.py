@@ -172,16 +172,25 @@ class RealEffects:
 
     # ---- Gateway ----
     def gateway_is_up(self) -> bool:
+        # Cache ~8s: a single tick calls this several times (and the heartbeat
+        # reads it too) — caching collapses those to ONE port check, cutting the
+        # Gateway-log "client disconnected" probe noise.
+        now = _time.monotonic()
+        cached = getattr(self, "_gw_up_cache", None)
+        if cached is not None and (now - cached[0]) < 8.0:
+            return cached[1]
         try:
             out = subprocess.run(
                 ["powershell", "-NoProfile", "-Command",
                  f"(Get-NetTCPConnection -LocalPort {GATEWAY_PORT} -State Listen "
                  f"-ErrorAction SilentlyContinue | Measure-Object).Count"],
                 capture_output=True, text=True, timeout=20)
-            return out.stdout.strip().isdigit() and int(out.stdout.strip()) > 0
+            val = out.stdout.strip().isdigit() and int(out.stdout.strip()) > 0
         except Exception as exc:
             self.log(f"gateway_is_up check failed: {exc}")
-            return False
+            val = False
+        self._gw_up_cache = (now, val)
+        return val
 
     def gateway_up(self) -> bool:
         if self.gateway_is_up():
