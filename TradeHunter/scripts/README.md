@@ -37,6 +37,13 @@ they're rarely-touched and small, so `scripts/` is fine.
 
 ## Changelog
 
+### 2026-06-07 - `ingest_supervisor.py`: per-tick heartbeat for the tray
+- `run_loop` now writes `state/supervisor_heartbeat.json` ({ts, action, et}) every
+  tick via `_write_heartbeat()`, so the Hermes tray can show "Supervisor: LIVE ·
+  <action>" (liveness itself is a process check on the tray side, since this file
+  goes stale during a long blocking top-up/deep-check). Guarded by `_PERSIST_STATE`
+  so tests/dry-runs don't write it. (tray-sync rule.)
+
 ### 2026-06-07 - `setup_hermes_ingest_supervisor_task.ps1`: keepalive (resurrect the SUPERVISOR itself)
 - The Gateway is resurrected by the supervisor — but nothing resurrected the
   supervisor if it died (only `-RestartCount 3` on crash, which doesn't cover a

@@ -568,6 +568,29 @@ def _save_state(state: dict) -> None:
     p.write_text(json.dumps(out), encoding="utf-8")
 
 
+def _heartbeat_path() -> Path:
+    return SKILL_DIR / "state" / "supervisor_heartbeat.json"
+
+
+def _write_heartbeat(action: str) -> None:
+    """Stamp a tiny per-tick heartbeat (UTC ts + last action) so the tray can show
+    'Supervisor: LIVE · <action>'. Liveness itself is confirmed by the tray via a
+    process check (this file goes stale during a long blocking top-up/deep-check,
+    when the supervisor is alive but not ticking)."""
+    if not _PERSIST_STATE:
+        return
+    import json
+    try:
+        p = _heartbeat_path(); p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "action": action,
+            "et": et_now().strftime("%a %H:%M ET"),
+        }), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def run_loop(fx, log) -> None:
     state = _load_state()
     log(f"ingest_supervisor up. RUN_START={RUN_START} RUN_END={RUN_END} ET. "
@@ -578,6 +601,7 @@ def run_loop(fx, log) -> None:
     while True:
         try:
             action = supervisor_tick(state, fx, log)
+            _write_heartbeat(action)   # per-tick liveness/action for the tray
             # Log on every phase CHANGE, and a periodic heartbeat during idle, so
             # the supervisor is never silently stalled (the 2026-06-04 failure had
             # no log after it got stuck — a heartbeat would have made it obvious).

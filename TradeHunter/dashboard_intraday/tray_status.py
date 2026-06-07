@@ -743,6 +743,44 @@ def get_gateway_status() -> dict:
     return result
 
 
+_sup_cache = {"ts": 0.0, "result": None}
+
+
+def get_supervisor_status() -> dict:
+    """Is the ingest SUPERVISOR process alive? It's what keeps the Gateway up and
+    resurrects it after the daily auto-logout — so the tray must show its health
+    (tray-sync rule). Liveness = a process check (authoritative even while the
+    supervisor is blocked in a long top-up/deep-check, when its heartbeat file is
+    momentarily stale); the last action comes from the heartbeat file. Cached ~8s.
+    Returns {alive: bool, action: str|None}."""
+    now = time.monotonic()
+    if _sup_cache["result"] is not None and (now - _sup_cache["ts"]) < 8.0:
+        return _sup_cache["result"]
+    import subprocess
+    alive = False
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+             "(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine "
+             "-match 'ingest_supervisor' } | Measure-Object).Count"],
+            capture_output=True, text=True, timeout=6,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        alive = out.stdout.strip().isdigit() and int(out.stdout.strip()) > 0
+    except Exception:
+        alive = False
+    action = None
+    try:
+        hb = SKILL_DIR / "state" / "supervisor_heartbeat.json"
+        d = json.loads(hb.read_text(encoding="utf-8"))
+        action = d.get("action")
+    except Exception:
+        pass
+    result = {"alive": alive, "action": action}
+    _sup_cache["ts"] = now
+    _sup_cache["result"] = result
+    return result
+
+
 # ---- Icon generation (no .ico files needed — drawn at startup) ----
 
 def _make_circle_icon(color: tuple, size: int = 64,
@@ -972,6 +1010,15 @@ def _build_progress_window(root):
         win, textvariable=through_var, font=('Segoe UI', 12, 'bold'),
         bg='#1a1a1a', fg='#5fd97a',
     ).pack(pady=(0, 4))
+
+    # Supervisor live/down indicator (tray-sync rule) — it's what keeps the
+    # Gateway up + resurrects it, so its health is the most important signal.
+    sup_var = tk.StringVar(value='Supervisor: -')
+    sup_lbl = tk.Label(
+        win, textvariable=sup_var, font=('Segoe UI', 11, 'bold'),
+        bg='#1a1a1a', fg='#888888',
+    )
+    sup_lbl.pack(pady=(0, 4))
 
     # IB Gateway live/down indicator (tray-sync rule)
     gw_var = tk.StringVar(value='Gateway: -')
@@ -1269,6 +1316,19 @@ def _build_progress_window(root):
                     except Exception:
                         pass
                 live_state['have_data'] = done > 0
+
+            # Supervisor live/down (the resurrector — most important signal)
+            try:
+                sup = get_supervisor_status()
+                if sup.get('alive'):
+                    act = sup.get('action')
+                    sup_var.set(f"Supervisor: LIVE" + (f"  ·  {act}" if act else ""))
+                    sup_lbl.configure(fg='#5fd97a')   # green
+                else:
+                    sup_var.set("Supervisor: DOWN  (not running — install/start the task)")
+                    sup_lbl.configure(fg='#ef4444')   # red — nothing will resurrect the Gateway
+            except Exception:
+                sup_var.set("Supervisor: ?")
 
             # IB Gateway live/down
             try:

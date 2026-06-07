@@ -33,6 +33,17 @@ web, Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-06-07 — `tray_status.py`: Supervisor LIVE/DOWN indicator
+- Added a **"Supervisor: LIVE/DOWN"** line at the top of the status block (above
+  Gateway) — it's the process that keeps the Gateway up and resurrects it after
+  the daily auto-logout, so its health is the most important signal (tray-sync
+  rule). `get_supervisor_status()` confirms liveness via a **process check**
+  (authoritative even while the supervisor is blocked in a long top-up/deep-check,
+  when its heartbeat file is momentarily stale; cached ~8s) and reads the last
+  action from `state/supervisor_heartbeat.json` (written each tick by the
+  supervisor). Green "LIVE · <action>" when running; red "DOWN (not running —
+  install/start the task)" when not, since nothing resurrects the Gateway then.
+
 ### 2026-06-07 — `tray_status.py`: show ITEM progress (fixes false "gathering data" on weekends)
 - The progress %/ETA were driven by `ingest_log.jsonl` (bars **written**). On a
   weekend every fetch is `+0` (no new bars) → 0 written → the bar sat at 0 and
