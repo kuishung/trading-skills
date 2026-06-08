@@ -11,6 +11,12 @@
   "_comment_vault_dir": "Override the on-disk location of vendor credentials (alpaca.env, telegram.env, intraday-premarket.env, etc. — the .env files that scripts._common.load_alpaca_env() and friends read). Same pattern as data_root: per-PC absolute path so credentials can move from Dropbox's VAULT/Claude Credential/ to a Resilio-synced folder (e.g. D:\\HermesSync\\Vault on laptop, C:\\HermesSync\\Vault on Hermes). Leave empty/omitted to use the legacy auto-discovery (walk up from SKILL_DIR looking for VAULT/Claude Credential/). Note: ibkr_secrets_path is configured SEPARATELY because IBC reads it directly, not via the bot's vendor.env mechanism.",
   "vault_dir": "",
 
+  "_comment_edgar": "SEC EDGAR Seeder contact (resources/EDGAR Seeder/). SEC's fair-access policy REQUIRES a real, routable company+email User-Agent; fake/.local addresses get throttled or 403'd. Fill both with your real details (the email is only ever sent to SEC). Alternatively pass --email/--company on the CLI or set EDGAR_EMAIL/EDGAR_COMPANY env vars.",
+  "edgar": {
+    "email": "",
+    "company": ""
+  },
+
   "strategies": {
     "guns_setup1": {
       "enabled": false,

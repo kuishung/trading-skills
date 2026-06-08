@@ -56,6 +56,16 @@ treating any "missing" feature as a bug.
 
 ## Changelog
 
+### 2026-06-09 — added `EDGAR Seeder/` subfolder
+- New self-contained subsystem to fetch SEC earnings filings (10-Q/10-K) into a
+  versioned, Obsidian-friendly corpus (`<data_root>/edgar/`), with real
+  incremental updates and a consistency auditor. Stdlib-only (drops the
+  `sec-edgar-downloader` dependency). Hardened in-repo successor to the user's
+  standalone `~/hermes_tools/fetch_edgar.py` prototype — see
+  `EDGAR Seeder/README.md` for the full design + usage. Output lands under the
+  Resilio-synced data root via `_common.get_data_root()`, consistent with the
+  bars/journal/profile stores.
+
 ### 2026-06-07 — `ibkr_history.py`: hard per-request timeouts (fix the WTW-style freeze)
 - A single non-responding symbol (WTW, 2026-06-07) froze the whole run at
   486/563 — `qualifyContracts` has no timeout and `reqHistoricalData`'s wasn't
