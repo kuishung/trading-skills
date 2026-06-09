@@ -66,7 +66,12 @@ from this dashboard.
   (`TST-Dashboard-Autopull` — polls `update.ps1` every 5 min so pushes
   auto-deploy), `cloudflared-config.example.yml` (named-tunnel ingress
   template → `localhost:8000`), and `status_check.ps1` (poll `/status` +
-  task state). All ASCII-only, parse-clean.
+  task state). All ASCII-only, parse-clean. Also holds the **push reporters**
+  that run where data lives and report into the app: `report_ingest_health.py`
+  (parquet freshness, on Hermes) and `report_edgar_health.py` (EDGAR filing-corpus
+  completeness, on **AI-Hermes** — folder-scans
+  `C:\HermesSync\MarketResearch\QuarterlyReport` for missing quarters / stub MDs,
+  POSTs `/api/ingest/edgar`; scheduled task).
 - `DEPLOY.md` — **deployment runbook.** Active **Path B** (Hamachi VPN,
   `http://<server-hamachi-ip>:8000`, password auth, no domain/TLS — the VPN
   tunnel is encrypted) step-by-step: pull → `.env` → first run → firewall
@@ -118,6 +123,36 @@ controls, intraday scanner setups) will be trimmed as the trend/swing
 surface takes shape.
 
 ## Changelog
+
+### 2026-06-09 — Data Ingest §3: EDGAR filing-corpus completeness (folder-derived)
+- New **§3 "EDGAR Earnings Filings"** card on the Data Ingest page (`/finviz`)
+  showing whether each ticker's SEC 10-Q/10-K history is complete. The corpus is
+  fetched by the Nous agent and stored on **AI-Hermes** (the Windows file server,
+  192.168.1.162, `C:\HermesSync\MarketResearch\QuarterlyReport`). The web app
+  can't read that box, so — like the parquet `IngestHealth` pattern — AI-Hermes
+  **pushes** a per-ticker report.
+- **Folder-derived, no DB of "what should exist"** (user, 2026-06-09: "we do not
+  need a db to keep track what is not there… run the folder, you'll see which
+  quarter is missing"). Each fiscal year has 3 ten-Q quarters + a ten-K, so the
+  reporter reads the present quarters from the filenames and lists the **missing
+  quarters** directly (handles non-calendar filers via each ticker's regular
+  filing slots). Statuses: **COMPLETE / GAPS** (holes in the cadence — the
+  missing `YYYY-Qn` are listed) **/ STUB** (filings present but no usable
+  Markdown body — `.md` absent or an empty stub). Aggregate also surfaces "no
+  10-K seeded".
+- Files: `app/models.py` `EdgarIngestHealth` (+ migration
+  `alembic/versions/d0e1f2a3b4c5_edgar_ingest_health.py`, off head `c9d0e1f2a3b4`),
+  `app/routes/api.py` `POST /api/ingest/edgar` (API-key gated, upsert per host),
+  `app/services/edgar_health.py` (COMPLETE/GAPS/STUB + aggregate; renders only
+  the actionable rows so 700+ tickers stay usable), `app/routes/finviz.py`
+  (fetch latest row → display), `app/templates/finviz.html` (the card; the old
+  §3 Ticker Profile renumbered §4), and the AI-Hermes reporter
+  `deploy/report_edgar_health.py` (stdlib-only folder scan — no network, no DB).
+- Verified on the real corpus (735 tickers): **4 with genuine quarter gaps**
+  (e.g. AMD missing 2017-Q1 & 2023-Q1 — confirmed absent on disk), **731 stub-MD**
+  (the prototype's empty-`.md` bug), **735 with no 10-K** (the prototype fetched
+  only 10-Qs). Classifier across all statuses; template renders (populated +
+  empty); migration up/down/up round-trip; endpoint upsert + display integration.
 
 ### 2026-06-07 — Data Ingest §3 renamed "Nightly pipeline" → "Ticker Profile"
 - The §3 section is now titled **Ticker Profile** (it builds the per-ticker

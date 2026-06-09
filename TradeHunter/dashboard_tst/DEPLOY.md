@@ -135,6 +135,41 @@ powershell -ExecutionPolicy Bypass -File deploy\status_check.ps1 -Target https:/
 
 ---
 
+## F. EDGAR earnings-filing reporter (on AI-Hermes, 192.168.1.162)
+
+The EDGAR corpus (SEC 10-Q/10-K) is fetched by the Nous agent and stored on
+**AI-Hermes** (the Windows file server), NOT on the Hermes web host. The web app
+can't read that box, so AI-Hermes runs `deploy/report_edgar_health.py` (stdlib
+only) which **folder-scans** the corpus — deriving each ticker's missing quarters
++ stub/absent MDs straight from the filenames (no DB, no network) — and POSTs to
+`/api/ingest/edgar`. The Data Ingest page §3 then shows COMPLETE/GAPS/STUB.
+
+Run ON **AI-Hermes** (PowerShell). The repo arrives via the same `git pull` /
+Dropbox sync as the rest of TradeHunter.
+
+```powershell
+# 1. Configure — in app\.env (or as TST_ env vars) set:
+#     TST_EDGAR_DIR=C:\HermesSync\MarketResearch\QuarterlyReport   (default if unset)
+#     TST_INGEST_API_KEY=<same key the dashboard uses>
+#     TST_DASHBOARD_URL=https://study.<your-domain>                (or the tunnel/LAN URL)
+
+# 2. Smoke test (no POST) — confirms the folder scan works:
+py dashboard_tst\deploy\report_edgar_health.py --dry-run --limit 20
+
+# 3. One real push:
+py dashboard_tst\deploy\report_edgar_health.py
+
+# 4. Schedule it (a pure folder scan — run it after each seed/update run):
+schtasks /Create /TN "TST-Edgar-Report" /TR ^
+  "py C:\trading-skills\TradeHunter\dashboard_tst\deploy\report_edgar_health.py" ^
+  /SC DAILY /ST 13:00 /F
+```
+
+The scan is local-only (no network, no DB, ~735 tickers in seconds) and soft-fail
+throughout — an unreadable ticker folder is skipped, never breaks the push.
+
+---
+
 ## Notes / guardrails
 
 - **Isolation:** the app is genuinely public now (auth-gated). It holds no

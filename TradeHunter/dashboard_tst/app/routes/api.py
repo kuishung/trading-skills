@@ -27,6 +27,7 @@ from ..db import get_db
 from ..models import (
     RUN_INTERVALS,
     AgentHeartbeat,
+    EdgarIngestHealth,
     FinvizFilter,
     IngestHealth,
     MATPHistory,
@@ -149,6 +150,32 @@ def ingest_health(
     row = db.query(IngestHealth).filter(IngestHealth.host == host).first()
     if row is None:
         row = IngestHealth(host=host)
+        db.add(row)
+    row.report = payload
+    row.received_at = _dt.datetime.now(_dt.timezone.utc)
+    db.commit()
+    return {"ok": True, "host": host}
+
+
+@router.post("/ingest/edgar")
+def ingest_edgar(
+    payload: dict = Body(...),
+    _: bool = Depends(require_api_key),
+    db: Session = Depends(get_db),
+):
+    """AI-Hermes reporter pushes the EDGAR earnings-filing corpus health here:
+    per-ticker latest seeded period + earnings dates + stub-MD flags. The EDGAR
+    files live on AI-Hermes (the web app can't read that box's filesystem), so
+    it scans + reports in, like the parquet /ingest/health above. Upsert one row
+    per host; the Data Ingest page computes DUE/OVERDUE and shows the latest.
+    Body, e.g. {host, generated_epoch, root,
+    tickers:[{ticker, latest_period, newest_epoch, html, md, stub_md,
+    last_earnings, next_earnings}], log_tail:[...]}.
+    """
+    host = (str(payload.get("host") or "ai-hermes")).strip()[:120] or "ai-hermes"
+    row = db.query(EdgarIngestHealth).filter(EdgarIngestHealth.host == host).first()
+    if row is None:
+        row = EdgarIngestHealth(host=host)
         db.add(row)
     row.report = payload
     row.received_at = _dt.datetime.now(_dt.timezone.utc)

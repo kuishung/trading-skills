@@ -228,8 +228,13 @@ def fiscal_label(form: str, report_date: str, fye_mmdd: str) -> str:
 
 # ---- HTML -> text -----------------------------------------------------------
 class _TextExtractor(HTMLParser):
-    """Strip tags to plain text, dropping <script>/<style> bodies."""
-    _DROP = {"script", "style", "head"}
+    """Strip tags to plain text, dropping <script>/<style>/<head> bodies and the
+    inline-XBRL header (`<ix:header>` holds the hidden duplicate facts + context
+    /unit definitions — without dropping it the extracted text begins with a wall
+    of XBRL gibberish like `...us-gaap:CommonStockMember2025...` before the real
+    report). Visible inline facts (`<ix:nonFraction>` etc. in the body) are
+    outside the header, so their numbers still render."""
+    _DROP = {"script", "style", "head", "ix:header"}
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)

@@ -302,6 +302,26 @@ class IngestHealth(Base):
     received_at = Column(DateTime, default=_utcnow)  # server clock on receipt
 
 
+class EdgarIngestHealth(Base):
+    """Latest EDGAR earnings-filing ingest report, pushed by the AI-Hermes
+    reporter (POST /api/ingest/edgar). The EDGAR corpus lives on AI-Hermes
+    (the Windows file server, 192.168.1.162) — the web app can't read it over
+    the network, so AI-Hermes scans the corpus + looks up each ticker's
+    earnings dates and reports in, exactly like the parquet IngestHealth above.
+    One row (upserted by host). ``report`` holds the raw payload:
+    {host, generated_epoch, root, tickers:[{ticker, latest_period,
+    newest_epoch, html, md, stub_md, last_earnings, next_earnings}],
+    log_tail:[...]}.
+    """
+
+    __tablename__ = "edgar_ingest_health"
+
+    id = Column(Integer, primary_key=True)
+    host = Column(String(120), unique=True, nullable=False, index=True)
+    report = Column(JSON, nullable=True)
+    received_at = Column(DateTime, default=_utcnow)  # server clock on receipt
+
+
 class Feedback(Base):
     """Development feedback board -- collaborators comment on the build as it
     goes (not tied to a specific setup). The lightweight 'react to each part

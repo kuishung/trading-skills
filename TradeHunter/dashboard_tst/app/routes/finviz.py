@@ -97,13 +97,24 @@ def finviz_home(
     )
     for f in filters:  # attach decoded criteria chips for the template
         f.criteria = parse_finviz_criteria(f.url)
-    from ..models import IngestHealth
+    from ..models import EdgarIngestHealth, IngestHealth
     from ..services.ingest_health import parquet_health, report_to_display
 
     # Prefer the report PUSHED by the Hermes reporter cron; fall back to a live
     # local read (works when the dashboard is co-located with the bars store).
     row = db.query(IngestHealth).order_by(IngestHealth.received_at.desc()).first()
     ingest = report_to_display(row.report, row.received_at) if (row and row.report) else parquet_health()
+
+    # EDGAR earnings-filing corpus health — pushed by the AI-Hermes reporter
+    # (the web app can't read that box). None until the first report lands.
+    from ..services.edgar_health import report_to_display as edgar_to_display
+
+    erow = (
+        db.query(EdgarIngestHealth)
+        .order_by(EdgarIngestHealth.received_at.desc())
+        .first()
+    )
+    edgar = edgar_to_display(erow.report, erow.received_at) if (erow and erow.report) else None
 
     # Nightly pipeline (ingest -> deep-check -> profiles) — folded into this page.
     from ..services import pipeline_runs
@@ -118,6 +129,7 @@ def finviz_home(
             "can_edit": user.can_moderate,
             "intervals": list(RUN_INTERVALS.keys()),
             "ingest": ingest,
+            "edgar": edgar,
             "pipeline": pruns,
             "pipeline_configured": pruns is not None,
             # swing first => default selection (this is the trend & swing site)

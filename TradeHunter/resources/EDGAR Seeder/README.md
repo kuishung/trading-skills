@@ -16,6 +16,7 @@ only quarters) and removes the pip dependency.
 |---|---|
 | `edgar_seeder.py` | CLI: `seed` (bulk historical), `update` (incremental — only new filings), `tickers` (resolve ticker→CIK). |
 | `check_edgar_integrity.py` | Read-only consistency audit of the seeded corpus (missing/empty/orphan files, label collisions, **missing 10-Q quarters**, stale tickers). Writes `_edgar_health.json` with `--json`. |
+| `rebuild_md_from_html.py` | Regenerate full-text `.md` (frontmatter + `[[wikilink]]` + body) from the `.html` already on disk — **no SEC re-download**. Fixes stub/absent MDs (e.g. the legacy `fetch_edgar.py` prototype's 245-byte stubs) so they're readable in Obsidian. `--root <corpus>`, `--tickers`, `--force`, `--dry-run`. |
 | `_edgar_common.py` | Shared SEC client: rate-limited HTTP (≤10 req/s + backoff), real-User-Agent enforcement, ticker→CIK map (7-day cache), submissions parsing, **fiscal-quarter labelling via `fiscalYearEnd`**, HTML→text, manifest + Markdown writers. |
 
 ## How it works
@@ -84,6 +85,25 @@ every run:
   large universes unattended.
 
 ## Changelog
+
+### 2026-06-09 — fix extracted-text XBRL preamble + add MD-from-HTML rebuilder
+- `_edgar_common.py`: `_TextExtractor._DROP` now also drops **`ix:header`** (the
+  inline-XBRL header holding the hidden duplicate facts + context/unit defs).
+  Without it, extracted `.md` bodies began with a wall of XBRL gibberish
+  (`...us-gaap:CommonStockMember2025...`) before the real report; now they start
+  at the document proper ("UNITED STATES SECURITIES AND EXCHANGE COMMISSION …
+  FORM 10-Q …"). Affects both `edgar_seeder.py` output and the new rebuilder.
+- `rebuild_md_from_html.py` (new): regenerates full-text `.md` from each existing
+  `.html` (no SEC re-download), to repair the legacy prototype dump whose `.md`
+  files are 245-byte stubs. Verified on AMD: 45 quarters → ~180–220 KB full-text
+  MDs each, clean frontmatter + `[[html]]` wikilink, body starts at the real
+  report. Stubs/missing only by default; `--force` rewrites all.
+- Context: the operational EDGAR corpus on AI-Hermes
+  (`C:\HermesSync\MarketResearch\QuarterlyReport`) was the old `fetch_edgar.py`
+  prototype dump — folder scan (via `dashboard_tst`'s new EDGAR ingest card)
+  found 731/735 stub-MD, 735/735 with no 10-K, and 4 tickers with genuine quarter
+  gaps. The rebuilder fixes the MD bodies in place; `edgar_seeder.py` (`update`)
+  still needs to run to add the never-fetched 10-Ks + missing quarters.
 
 ### 2026-06-09 — initial in-repo version (v1.0.0)
 - Created the folder as the hardened, in-repo successor to the standalone
