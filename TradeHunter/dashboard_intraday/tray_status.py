@@ -1695,7 +1695,12 @@ def _update_loop(icon: "pystray.Icon"):
                     gw_str = "GW LIVE" if gw.get("up") else "GW down"
                 except Exception:
                     gw_str = "GW ?"
-                icon.title = f"Ingest: {new_state} — {status['tooltip']} | {gw_str} | {through_str} | {dc_str}"
+                # Windows tray tooltips cap at 128 chars; put the critical
+                # signals (state, deep-check, gateway, through) FIRST so they
+                # survive, and let the verbose status tooltip trail + be trimmed.
+                icon.title = _clamp_title(
+                    f"Ingest: {new_state} | {dc_str} | {gw_str} | {through_str} — {status['tooltip']}"
+                )
                 if new_state != current_state:
                     current_state = new_state
                     frame_index = 0   # reset animation phase on state change
@@ -1726,8 +1731,18 @@ def _update_loop(icon: "pystray.Icon"):
             else:
                 _force_refresh.wait(timeout=POLL_INTERVAL_SEC)
         except Exception as exc:
-            icon.title = f"Ingest tray error: {exc}"
+            icon.title = _clamp_title(f"Ingest tray error: {exc}")
             time.sleep(POLL_INTERVAL_SEC)
+
+
+def _clamp_title(s: str, limit: int = 128) -> str:
+    """Clamp a tray tooltip to Windows' limit. pystray's ``icon.title`` maps to
+    NOTIFYICONDATA.szTip, capped at 128 chars — assigning a longer string raises
+    'string too long (N, maximum length 128)' and breaks the tooltip. Truncate
+    with an ellipsis so a verbose ingest/deep-check status degrades gracefully
+    instead of erroring."""
+    s = str(s)
+    return s if len(s) <= limit else s[: limit - 1] + "…"
 
 
 def main() -> int:

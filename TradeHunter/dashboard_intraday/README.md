@@ -33,6 +33,28 @@ web, Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-06-09 — `show_ingest_status.py`: headless tray-status readout (CLI)
+- New script that prints the **same signals the tray progress window shows**
+  (NOW activity | ingest progress | Supervisor/Gateway liveness | completed-
+  through date | deep-check result + live deep-check progress) to the console —
+  so status is checkable over RDP/PowerShell on Hermes without opening the GUI.
+- Reuses `tray_status.py`'s data-getters (no duplicated logic); stubs the GUI-only
+  `pystray`/`PIL` so it runs even on a box that doesn't run the tray. ASCII-safe
+  output for Windows consoles (PS 5.1 codepage). Flags: `--json` (machine-readable),
+  `--watch N` (refresh every N s). Run: `py -3.12 dashboard_intraday\show_ingest_status.py`.
+
+### 2026-06-09 — `tray_status.py`: fix "Ingest tray error: string too long (>128)"
+- The tooltip (`icon.title`) concatenated state + status + gateway + through +
+  deep-check, which overflowed Windows' 128-char tray-tooltip cap
+  (NOTIFYICONDATA.szTip); pystray raised `string too long (166, maximum length
+  128)`, so the tooltip showed that error instead of the status.
+- Added `_clamp_title()` (truncates to 128 with an ellipsis) applied to both
+  `icon.title` assignments, and **reordered** the tooltip so the critical
+  signals — state, **deep-check result**, gateway, through-date — come first and
+  the verbose `status['tooltip']` trails (it's what gets trimmed). This keeps the
+  deep-check result visible per the CLAUDE.md tray-sync rule. Verified: a 147-char
+  title clamps to 128 with `deepcheck: …` intact; short titles pass untouched.
+
 ### 2026-06-07 — `tray_status.py`: progress-window redesign + live deep-check bar
 - **Redesigned the progress window into clear labelled sections** (NOW banner →
   INGEST → SERVICES → DEEP CHECK) so the user can tell at a glance what's running.
