@@ -37,6 +37,23 @@ they're rarely-touched and small, so `scripts/` is fine.
 
 ## Changelog
 
+### 2026-06-11 — manual Gateway override for ad-hoc daytime ingest
+- `ingest_supervisor.py`: new **manual-override** mechanism so the user can bring the
+  Gateway up to ingest the parquet store during the weekday blackout (08:00–20:10 ET)
+  when they're NOT trading. Without it the supervisor's blackout rule force-shuts any
+  running Gateway within ~1 tick. Armed via a `state/manual_gateway_override.flag`
+  carrying an absolute UTC expiry; while armed, `supervisor_tick` returns
+  `MANUAL_OVERRIDE` and keeps HANDS OFF the Gateway (no shutdown, no nightly top-up).
+  Auto-expires (default 4h) so it can never bleed into the trading window; the
+  override check is gated to real mode so `--self-test`/`--dry-run` stay deterministic.
+  CLI: `--override on [--hours N] | off | status`. Surfaces on the tray/headless
+  readout via the per-tick heartbeat action (tray-sync rule). New self-test group G.
+- `manual_ingest.ps1` (new, Hermes): one-command wrapper for the full safe cycle —
+  arm override → start Gateway (IBC, telnet-free) → wait for port 4002 →
+  `ibkr_history.py update --universe` → disarm (the supervisor then shuts the Gateway
+  at the next blackout tick). `-KeepUp` leaves it up for more manual work; `-Hours N`
+  sets the override window.
+
 ### 2026-06-11 — top-up sequence: daily → 5min → 3min (priority order)
 - `ingest_supervisor.py`: `TOPUP_TIMEFRAMES` reordered to
   `daily:730,5min:180,3min:180` — combined with `bulk_update`'s new

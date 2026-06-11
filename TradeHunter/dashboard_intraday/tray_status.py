@@ -985,8 +985,8 @@ def _build_progress_window(root):
     # deep-check, live, detail, eta) PLUS the operator buttons + action line +
     # Close. Height grew when those were added; allow vertical resize so future
     # additions can never cover the Close button again.
-    win.geometry("460x680")
-    win.minsize(460, 600)
+    win.geometry("460x730")
+    win.minsize(460, 640)
     win.resizable(False, True)
     win.attributes('-topmost', True)
     win.configure(bg='#1a1a1a')
@@ -1303,6 +1303,33 @@ def _build_progress_window(root):
                 _ui(f"Deep check launch failed: {exc}")
         _threading.Thread(target=worker, daemon=True).start()
 
+    def run_sidedoor_ingest():
+        """Ad-hoc 'side door' ingest that works DURING the weekday blackout /
+        market hours. Runs scripts/manual_ingest.ps1, which arms a timed manual
+        override (so the supervisor won't shut the Gateway), starts the Gateway,
+        runs a universe top-up, then disarms — the nightly schedule is untouched."""
+        if not _msg.askyesno("Side-door ad-hoc ingest",
+                "Open the IB Gateway and run an ad-hoc ingest NOW — even during the "
+                "weekday blackout / market hours?\n\n"
+                "This arms a TIMED manual override (4h, auto-expiring) so the "
+                "supervisor won't shut the Gateway, runs a universe top-up, then "
+                "disarms. The nightly schedule is NOT changed.\n\n"
+                "ONLY do this when you are NOT trading manually on the same IBKR "
+                "account — a second session can collide with your trading login."):
+            return
+
+        def worker():
+            ps1 = SKILL_DIR / "scripts" / "manual_ingest.ps1"
+            cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                   "-File", str(ps1)]
+            try:
+                _spawn_console(cmd, SKILL_DIR)
+                _ui("Side-door ingest launched (new window): arm override → start "
+                    "Gateway → top-up → disarm")
+            except Exception as exc:
+                _ui(f"Side-door ingest launch failed: {exc}")
+        _threading.Thread(target=worker, daemon=True).start()
+
     btn_row = tk.Frame(win, bg='#1a1a1a')
     btn_row.pack(pady=(8, 0))
     tk.Button(btn_row, text='Start Gateway', command=start_gateway,
@@ -1317,6 +1344,18 @@ def _build_progress_window(root):
               bg='#5a3a6f', fg='#ffffff', activebackground='#6f4a8a',
               activeforeground='#ffffff', relief='flat', font=('Segoe UI', 9),
               padx=12, pady=3, borderwidth=0).pack(side='left')
+
+    # Second row: the ad-hoc "side door" — opens the Gateway + ingests during the
+    # blackout / market hours via a timed override, without touching the nightly
+    # structure. Amber = caution (only when you're not trading).
+    btn_row2 = tk.Frame(win, bg='#1a1a1a')
+    btn_row2.pack(pady=(6, 0))
+    tk.Button(btn_row2, text='⤵ Side-door ingest (ad-hoc, override)',
+              command=run_sidedoor_ingest,
+              bg='#8a5a1f', fg='#ffffff', activebackground='#a86f2a',
+              activeforeground='#ffffff', relief='flat', font=('Segoe UI', 9),
+              padx=12, pady=3, borderwidth=0).pack(side='left')
+
     tk.Label(win, textvariable=action_var, font=('Segoe UI', 9),
              bg='#1a1a1a', fg='#9bbcd6').pack(pady=(4, 0))
 

@@ -33,6 +33,16 @@ web, Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-06-11 — `tray_status.py`: "Side-door ingest" button (ad-hoc, override)
+- New amber operator button on a second row: **⤵ Side-door ingest (ad-hoc, override)**.
+  Runs `scripts/manual_ingest.ps1` in a new console — arms the supervisor's timed
+  manual override (so the Gateway isn't shut during the weekday blackout / market
+  hours), starts the Gateway, runs a universe top-up, then disarms. Lets the user
+  ingest on an ad-hoc basis **while a session is open** without disturbing the nightly
+  structure (the override auto-expires, default 4h). Confirm dialog warns to use it
+  only when NOT trading manually (IBKR session-collision risk). Window grown to
+  460×730 for the extra row. (Pairs with `scripts/ingest_supervisor.py --override`.)
+
 ### 2026-06-11 — `tray_status.py`: top-up fallback timeframes reordered
 - The tray's "Run top-up now" command mirrors `ingest_supervisor.TOPUP_TIMEFRAMES`
   by import; its hardcoded fallback literal is updated to the new

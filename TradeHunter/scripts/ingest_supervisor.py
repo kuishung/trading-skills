@@ -459,6 +459,15 @@ def supervisor_tick(state: dict, fx, log) -> str:
     last = state.get("last_success_session")
     seeding = is_weekend_seeding(now_et)
 
+    # MANUAL OVERRIDE (real mode only): the user armed an ad-hoc ingest window —
+    # e.g. to seed the parquet during the weekday blackout when they're NOT
+    # trading. Keep HANDS OFF the Gateway (don't shut it down, don't start a
+    # nightly top-up) so their manual Start + ingest runs uninterrupted. It
+    # auto-expires (manual_override_expiry), so it can't bleed into the trading
+    # window. Gated to real mode so --self-test / --dry-run stay deterministic.
+    if _FAKE["now"] is None and manual_override_expiry() is not None:
+        return "MANUAL_OVERRIDE"
+
     # WEEKDAY BLACKOUT (Mon–Fri 08:00 ET .. 20:10 ET): Gateway MUST be off — never
     # collide with the user's manual trading. SUPPRESSED across the weekend
     # seeding span (Sat 00:00 .. Mon 08:00 ET) — market closed, safe to keep up.
@@ -602,6 +611,55 @@ def _write_heartbeat(action: str) -> None:
         }), encoding="utf-8")
     except Exception:
         pass
+
+
+# ---- manual Gateway override (ad-hoc ingest OUTSIDE the run window) ----
+# Use case (user, 2026-06-11): "if I'm not trading, I want to manually turn the
+# Gateway on to ingest." During the weekday blackout the supervisor force-shuts
+# any running Gateway (manual-trade safety). While this override is ARMED, the
+# tick keeps HANDS OFF the Gateway so a manual Start + ingest runs uninterrupted.
+# It carries an absolute expiry so a forgotten override auto-clears and can never
+# bleed into the trading window.
+def _override_path() -> Path:
+    return SKILL_DIR / "state" / "manual_gateway_override.flag"
+
+
+def set_manual_override(hours: float) -> datetime:
+    """Arm the override for `hours`. Returns the expiry (UTC)."""
+    expiry = datetime.now(timezone.utc) + timedelta(hours=hours)
+    p = _override_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(expiry.isoformat(), encoding="utf-8")
+    return expiry
+
+
+def clear_manual_override() -> None:
+    try:
+        _override_path().unlink()
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+
+
+def manual_override_expiry() -> "datetime | None":
+    """Override expiry (UTC) if ARMED and not yet expired; else None. Auto-clears
+    a flag that has expired or is malformed, so it can never linger."""
+    try:
+        raw = _override_path().read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return None
+    except Exception:
+        return None
+    try:
+        expiry = datetime.fromisoformat(raw)
+    except ValueError:
+        clear_manual_override()
+        return None
+    if datetime.now(timezone.utc) >= expiry:
+        clear_manual_override()
+        return None
+    return expiry
 
 
 def run_loop(fx, log) -> None:
@@ -811,6 +869,17 @@ def scenario_test() -> int:
     chk("F no top-up attempted", "TOPUP" in fx.actions, False)
     chk("F gateway forced DOWN", fx.gateway_is_up(), False)
 
+    # G: manual override helpers arm/expiry/clear (filesystem flag round-trip)
+    clear_manual_override()
+    chk("G override off by default", manual_override_expiry(), None)
+    set_manual_override(1.0)
+    chk("G armed -> active", manual_override_expiry() is not None, True)
+    # an already-expired flag auto-clears
+    set_manual_override(-1.0)
+    chk("G expired flag -> inactive (auto-cleared)", manual_override_expiry(), None)
+    set_manual_override(1.0); clear_manual_override()
+    chk("G cleared -> off", manual_override_expiry(), None)
+
     _FAKE["now"] = None
     if fails:
         print("\n".join(fails)); print(f"\nSCENARIO TESTS FAILED ({len(fails)})"); return 1
@@ -844,7 +913,32 @@ def main() -> int:
     ap.add_argument("--fake-start", default="2026-06-01 19:00")
     ap.add_argument("--fake-step", type=int, default=30)
     ap.add_argument("--fake-ticks", type=int, default=80)
+    ap.add_argument("--override", choices=["on", "off", "status"],
+                    help="manual Gateway override: 'on' arms an ad-hoc ingest window "
+                         "(the supervisor keeps hands off the Gateway so you can Start "
+                         "it + ingest during the weekday blackout); 'off' disarms; "
+                         "'status' shows it.")
+    ap.add_argument("--hours", type=float, default=4.0,
+                    help="override duration in hours, with --override on (default 4)")
     args = ap.parse_args()
+
+    if args.override:
+        if args.override == "on":
+            exp = set_manual_override(args.hours)
+            print(f"Manual override ARMED for {args.hours:g}h. The supervisor will "
+                  f"leave the Gateway alone until\n  {exp.astimezone(ET):%Y-%m-%d %H:%M ET} "
+                  f"(then it auto-expires and normal blackout control resumes).\n"
+                  f"Now: Start the Gateway + run your ingest. Run '--override off' "
+                  f"when done (or let it expire).")
+        elif args.override == "off":
+            clear_manual_override()
+            print("Manual override CLEARED. The supervisor resumes normal control "
+                  "(it shuts the Gateway during the weekday blackout, ~1 tick).")
+        else:  # status
+            exp = manual_override_expiry()
+            print(f"Manual override ACTIVE until {exp.astimezone(ET):%Y-%m-%d %H:%M ET}."
+                  if exp else "Manual override is OFF.")
+        return 0
 
     if args.self_test:
         rc1 = self_test()
