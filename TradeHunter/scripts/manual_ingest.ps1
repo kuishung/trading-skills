@@ -53,8 +53,17 @@ if (-not $ok) {
 }
 Write-Host "Gateway is LIVE on 4002." -ForegroundColor Green
 
-Write-Host "== 4/4  Running universe ingest (top-up) =="
-& py -3.12 "resources\ibkr_history.py" update --universe
+Write-Host "== 4/4  Running universe top-up (daily -> 5min -> 3min, same as the nightly schedule) =="
+# Pull the timeframes + symbols file from the SAME constants the supervisor uses
+# (single source of truth) so the side-door can never drift from the schedule.
+# TOPUP_TIMEFRAMES = "daily:730,5min:180,3min:180" -> daily candles first, then
+# 5min, then 3min (timeframe-major), matching ingest_supervisor.run_topup.
+$tf = & py -3.12 -c "import sys; sys.path.insert(0,'scripts'); import ingest_supervisor as s; print(s.TOPUP_TIMEFRAMES)"
+$symf = & py -3.12 -c "import sys; sys.path.insert(0,'scripts'); import ingest_supervisor as s; print(s.SYMBOLS_FILE)"
+if (-not $tf) { $tf = "daily:730,5min:180,3min:180" }
+if (-not $symf) { $symf = "resources\universe_full.txt" }
+$symPath = Join-Path $root $symf
+& py -3.12 "scripts\wait_and_ingest.py" --symbols-file $symPath --timeframes $tf --topup
 
 if ($KeepUp) {
     Write-Host ""

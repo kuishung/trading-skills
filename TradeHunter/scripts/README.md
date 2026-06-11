@@ -50,9 +50,14 @@ they're rarely-touched and small, so `scripts/` is fine.
   readout via the per-tick heartbeat action (tray-sync rule). New self-test group G.
 - `manual_ingest.ps1` (new, Hermes): one-command wrapper for the full safe cycle —
   arm override → start Gateway (IBC, telnet-free) → wait for port 4002 →
-  `ibkr_history.py update --universe` → disarm (the supervisor then shuts the Gateway
-  at the next blackout tick). `-KeepUp` leaves it up for more manual work; `-Hours N`
-  sets the override window.
+  universe top-up → disarm (the supervisor then shuts the Gateway at the next
+  blackout tick). `-KeepUp` leaves it up for more manual work; `-Hours N` sets the
+  override window. The top-up runs `wait_and_ingest.py --topup` with the timeframes
+  + symbols pulled from `ingest_supervisor.TOPUP_TIMEFRAMES` / `SYMBOLS_FILE` (single
+  source of truth) so the side-door follows the **same daily → 5min → 3min sequence**
+  as the nightly schedule and can never drift from it. (Fixed: the first cut called
+  `ibkr_history.py update --universe`, which defaults to `1min,daily` — wrong order
+  and missing 5min/3min.)
 
 ### 2026-06-11 — top-up sequence: daily → 5min → 3min (priority order)
 - `ingest_supervisor.py`: `TOPUP_TIMEFRAMES` reordered to
