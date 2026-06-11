@@ -10,8 +10,8 @@
      EPS/Market Cap/P/E fundamentals row with no option to hide it.)
      Height-capped + overflow-hidden so the widget's tall empty space below the
      quote is cropped — no wasted gap before the chart. #}
-  <div class="tvq-header border-b border-slate-800 {% if chart_fill %}shrink-0{% endif %} overflow-hidden" style="height:5.5rem">
-    <div class="tradingview-widget-container">
+  <div class="tvq-header border-b border-slate-800 {% if chart_fill %}shrink-0{% endif %} overflow-hidden flex items-stretch" style="height:5.5rem">
+    <div class="tradingview-widget-container flex-1 min-w-0">
       <div class="tradingview-widget-container__widget"></div>
       <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-single-quote.js" async>
       {
@@ -23,6 +23,11 @@
       }
       </script>
     </div>
+    {% if chart_status_slot is defined and chart_status_slot %}
+    {# Studies: the study's status strip (badge + controls) docks here, next to
+       the ticker quote — JS moves #statusPanel in (lg only) #}
+    <div id="chartStatusSlot" class="shrink-0 max-w-[62%] overflow-hidden hidden lg:flex items-center px-3"></div>
+    {% endif %}
   </div>
   {# price chart #}
   <div class="px-3 pt-1.5 pb-3 {% if chart_band %}border-b border-slate-800{% endif %} {% if chart_fill %}lg:flex-1 lg:min-h-0 flex flex-col{% endif %}">
@@ -46,7 +51,7 @@
     </div>
     <div id="priceChart" class="w-full {% if chart_fill %}min-h-[240px] lg:min-h-0 lg:flex-1{% else %}{{ chart_height_class | default('h-[300px] lg:h-[44vh]') }}{% endif %}"></div>
     <p id="priceChartMsg" class="text-slate-500 text-sm hidden">Couldn't load live price data for {{ chart_symbol }} right now &mdash; try again shortly.</p>
-    <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400 mt-2 {% if chart_fill %}shrink-0{% endif %}">
+    <div class="chart-legend flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400 mt-2 {% if chart_fill %}shrink-0{% endif %}">
       <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#ef4444"></span>EMA20</span>
       <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#22c55e"></span>EMA50</span>
       <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#a855f7"></span>EMA200</span>

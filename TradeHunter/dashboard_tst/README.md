@@ -124,6 +124,28 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-11 — v2.83: status docks into the chart header + proportional ¼ compact
+- User feedback on v2.82, same day. (1) The **status strip** (badge + status
+  controls) is no longer a separate panel — on lg it **docks into the chart's
+  top header next to the TradingView ticker quote** (`#chartStatusSlot` in
+  `_price_chart.html`, opt-in via `chart_status_slot`; JS moves `#statusPanel`
+  in). Mobile / no-chart keeps the card-in-flow style. (2) Compact mode now
+  shrinks the chart **proportionally — half width × half height = ¼ area,
+  keeping its shape** — instead of squashing it into a full-width 23vh ribbon
+  (56vh full → 32vh half-width compact). The trade-levels panel docks into the
+  freed width beside it; the TV quote header is no longer cropped (it carries
+  the status now), the EMA legend row + status title/signal hide in compact so
+  the half-width header fits without cropping. **Chart floor (user): never
+  smaller than 12cm × 8cm** (`min-width: 12cm` on the compact chart,
+  `min-height: 8cm` on the chart zone) — the 50%/32vh proportions apply only
+  where they stay above the floor, so small laptop screens get 12×8cm and
+  large monitors get the proportional ¼.
+- `_bs_calc.html` footnote now states the **data sources** explicitly (user
+  asked where the analyser's data comes from): spot + IV default from the live
+  Yahoo daily feed (last close / 30-day realized vol), target from the trade
+  plan, premiums/probabilities computed by Black-Scholes from the inputs — no
+  live option-chain quotes; the strike list is a model ladder.
+
 ### 2026-06-11 — v2.82: Studies scroll-compact chart + Black-Scholes strike analyser
 - **Studies middle column is now two zones**: the chart on top, a scrollable
   zone below (status panel, trade levels, and the new strike analyser).

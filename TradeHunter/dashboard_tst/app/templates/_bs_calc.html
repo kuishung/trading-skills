@@ -47,10 +47,17 @@
   </div>
 
   <p class="text-[10px] text-slate-600 mt-2">
-    Premiums &amp; probabilities are <span class="text-slate-400">risk-neutral</span> Black-Scholes values from your
-    inputs (IV defaults to {{ sel.symbol }}'s 30-day <span class="text-slate-400">realized</span> volatility) — a pricing
-    convention, <span class="text-slate-400">not</span> a real-world win forecast. Live option-chain premiums and listed
-    strikes will differ; P/L @ target assumes the underlying sits exactly at Target on expiry day.
+    <span class="text-slate-400">Data:</span> Spot and the IV default come from the <span class="text-slate-400">live
+    Yahoo Finance daily feed</span> (the same one the chart uses) — spot is the latest close, IV is {{ sel.symbol }}'s
+    30-day <span class="text-slate-400">realized</span> volatility computed from those bars. Target seeds from this
+    study's trade plan; rate and dividend yield are manual. Everything in the table (premium, delta, probabilities) is
+    then <span class="text-slate-400">computed by the Black-Scholes model from your inputs</span> — no live option-chain
+    quotes are fetched, and the strike list is a model ladder, not the listed chain.
+  </p>
+  <p class="text-[10px] text-slate-600 mt-1">
+    Probabilities are <span class="text-slate-400">risk-neutral</span> — a pricing convention, <span
+    class="text-slate-400">not</span> a real-world win forecast. Live option-chain premiums will differ; P/L @ target
+    assumes the underlying sits exactly at Target on expiry day.
   </p>
 </div>
 
