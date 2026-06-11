@@ -1,0 +1,176 @@
+{# Black-Scholes option strike analyser (Studies page, below the chart).
+   Context: sel (the selected study). Prefills spot + IV from the same live
+   prices feed the chart uses (last close + 30-day realized vol); the study's
+   profit target seeds the "Target" input. Every input change re-queries
+   /studies/api/black-scholes (debounced) and re-renders the strike ladder. #}
+<div id="bsCalc" class="shrink-0 rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+  <div class="flex flex-wrap items-center gap-2 mb-2">
+    <h2 class="text-sm font-semibold text-white">Option strike analyser</h2>
+    <span class="text-[11px] text-slate-500">Black-Scholes &middot; {{ sel.symbol }}</span>
+    <div class="ml-auto flex items-center gap-1">
+      <button type="button" data-kind="call" class="bs-kind text-[11px] px-2.5 py-0.5 rounded border border-emerald-500/60 text-emerald-300 bg-emerald-500/10 transition">Call</button>
+      <button type="button" data-kind="put" class="bs-kind text-[11px] px-2.5 py-0.5 rounded border border-slate-700 text-slate-400 transition hover:border-emerald-500 hover:text-emerald-300">Put</button>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-2">
+    {% for id, lbl, ph in [('bsS','Spot $','live'), ('bsTarget','Target $','optional'),
+                           ('bsDays','Days to expiry','30'), ('bsIV','IV %','HV30'),
+                           ('bsR','Rate %','4.5'), ('bsQ','Div yield %','0')] %}
+    <label class="text-[10px] text-slate-500 flex flex-col gap-0.5">{{ lbl }}
+      <input id="{{ id }}" type="number" step="any" inputmode="decimal" placeholder="{{ ph }}"
+             class="rounded bg-slate-950/60 border border-slate-700 px-2 py-1 text-sm tabular-nums focus:border-emerald-500 outline-none">
+    </label>
+    {% endfor %}
+  </div>
+
+  <div id="bsBest" class="hidden mb-2 rounded border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-xs text-slate-300"></div>
+
+  <div class="overflow-x-auto">
+    <table class="w-full text-xs tabular-nums">
+      <thead>
+        <tr class="text-[10px] uppercase tracking-wide text-slate-500 text-right">
+          <th class="text-left py-1 pr-2 font-medium">Strike</th>
+          <th class="py-1 px-2 font-medium">Premium</th>
+          <th class="py-1 px-2 font-medium">Delta</th>
+          <th class="py-1 px-2 font-medium">Breakeven</th>
+          <th class="py-1 px-2 font-medium" title="risk-neutral probability the option expires in the money">P(ITM)</th>
+          <th class="py-1 px-2 font-medium" title="risk-neutral probability the underlying expires beyond breakeven">P(profit)</th>
+          <th class="py-1 px-2 font-medium" title="option value minus premium if the underlying is at Target at expiry">P/L @ target</th>
+          <th class="py-1 pl-2 font-medium">ROI @ target</th>
+        </tr>
+      </thead>
+      <tbody id="bsRows">
+        <tr><td colspan="8" class="py-3 text-slate-500">Loading&hellip;</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="text-[10px] text-slate-600 mt-2">
+    Premiums &amp; probabilities are <span class="text-slate-400">risk-neutral</span> Black-Scholes values from your
+    inputs (IV defaults to {{ sel.symbol }}'s 30-day <span class="text-slate-400">realized</span> volatility) — a pricing
+    convention, <span class="text-slate-400">not</span> a real-world win forecast. Live option-chain premiums and listed
+    strikes will differ; P/L @ target assumes the underlying sits exactly at Target on expiry day.
+  </p>
+</div>
+
+<script>
+(function () {
+  var SYM = {{ sel.symbol|tojson }};
+  var TARGET = {{ (sel.profit_target if sel.profit_target is not none else None)|tojson }};
+  function $(id) { return document.getElementById(id); }
+  var kind = 'call', timer = null, seq = 0;
+
+  function val(id) { var v = parseFloat($(id).value); return isFinite(v) ? v : null; }
+  function money(x) { return x == null ? '&mdash;' : x.toFixed(2); }
+  function pct(x) { return x == null ? '&mdash;' : (x * 100).toFixed(0) + '%'; }
+
+  function render(d) {
+    var body = $('bsRows'), best = $('bsBest');
+    if (!d || d.error || !d.rows || !d.rows.length) {
+      body.innerHTML = '<tr><td colspan="8" class="py-3 text-slate-500">' +
+        ((d && d.error) || 'No result &mdash; check the inputs.') + '</td></tr>';
+      best.classList.add('hidden');
+      return;
+    }
+    var spot = val('bsS');
+    body.innerHTML = d.rows.map(function (r) {
+      var isBest = (d.best_strike != null && r.strike === d.best_strike);
+      var isAtm = (d.atm_strike != null && r.strike === d.atm_strike);
+      var itm = spot != null && (d.kind === 'call' ? r.strike < spot : r.strike > spot);
+      var plCls = r.pl_target == null ? 'text-slate-500'
+                : (r.pl_target > 0 ? 'text-emerald-300' : 'text-rose-300');
+      return '<tr class="border-t border-slate-800/60 text-right' +
+        (isBest ? ' bg-emerald-500/10' : '') + '">' +
+        '<td class="text-left py-1 pr-2 font-semibold ' + (itm ? 'text-slate-100' : 'text-slate-400') + '">' +
+          r.strike + (isBest ? ' <span class="text-emerald-300">&starf; best</span>' : '') +
+          (isAtm ? ' <span class="text-[10px] text-sky-300">ATM</span>' : '') + '</td>' +
+        '<td class="py-1 px-2">' + money(r.premium) + '</td>' +
+        '<td class="py-1 px-2 text-slate-400">' + (r.delta == null ? '&mdash;' : r.delta.toFixed(2)) + '</td>' +
+        '<td class="py-1 px-2">' + money(r.breakeven) + '</td>' +
+        '<td class="py-1 px-2 text-slate-400">' + pct(r.prob_itm) + '</td>' +
+        '<td class="py-1 px-2 text-slate-400">' + pct(r.prob_profit) + '</td>' +
+        '<td class="py-1 px-2 ' + plCls + '">' + money(r.pl_target) + '</td>' +
+        '<td class="py-1 pl-2 ' + plCls + '">' + (r.roi_target == null ? '&mdash;' : r.roi_target.toFixed(0) + '%') + '</td>' +
+        '</tr>';
+    }).join('');
+    if (d.best_strike != null) {
+      var b = null;
+      d.rows.forEach(function (r) { if (r.strike === d.best_strike) b = r; });
+      best.innerHTML = '<span class="text-emerald-300 font-semibold">&starf; Best strike ' + b.strike + '</span>' +
+        ' &mdash; premium $' + money(b.premium) + ' &middot; breakeven ' + money(b.breakeven) +
+        ' &middot; P(profit) ' + pct(b.prob_profit) + ' &middot; ROI at target ' + b.roi_target.toFixed(0) + '%' +
+        ' <span class="text-slate-500">(ranked by ROI &times; probability of profit)</span>';
+      best.classList.remove('hidden');
+    } else if (val('bsTarget') != null && val('bsTarget') > 0) {
+      best.innerHTML = '<span class="text-amber-300/80">No strike profits at target ' + money(val('bsTarget')) +
+        ' &mdash; the target is ' + (d.kind === 'call' ? 'too close below' : 'too close above') +
+        ' spot to beat the premium. Adjust Target / DTE / IV or switch Call&middot;Put.</span>';
+      best.classList.remove('hidden');
+    } else {
+      best.innerHTML = '<span class="text-slate-400">Set a Target to rank strikes by payoff &times; odds.</span>';
+      best.classList.remove('hidden');
+    }
+  }
+
+  function run() {
+    var S = val('bsS'), iv = val('bsIV'), days = val('bsDays');
+    if (S == null || iv == null || days == null) return;
+    var p = new URLSearchParams({
+      S: S, sigma_pct: iv, days: days, kind: kind,
+      r_pct: val('bsR') == null ? 4.5 : val('bsR'),
+      q_pct: val('bsQ') == null ? 0 : val('bsQ')
+    });
+    var tgt = val('bsTarget');
+    if (tgt != null && tgt > 0) p.set('target', tgt);
+    var mySeq = ++seq;     // drop stale responses (rapid input changes)
+    fetch('/studies/api/black-scholes?' + p.toString())
+      .then(function (r) { return r.json(); })
+      .then(function (d) { if (mySeq === seq) render(d); })
+      .catch(function () { if (mySeq === seq) render(null); });
+  }
+  function recalc() { clearTimeout(timer); timer = setTimeout(run, 250); }
+
+  ['bsS', 'bsTarget', 'bsDays', 'bsIV', 'bsR', 'bsQ'].forEach(function (id) {
+    $(id).addEventListener('input', recalc);
+  });
+  var kbtns = document.querySelectorAll('#bsCalc .bs-kind');
+  kbtns.forEach(function (b) {
+    b.addEventListener('click', function () {
+      kind = b.dataset.kind;
+      kbtns.forEach(function (x) {
+        var on = (x.dataset.kind === kind);
+        x.className = 'bs-kind text-[11px] px-2.5 py-0.5 rounded border transition ' +
+          (on ? 'border-emerald-500/60 text-emerald-300 bg-emerald-500/10'
+              : 'border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300');
+      });
+      run();
+    });
+  });
+
+  // defaults: DTE 30, rate 4.5%, div yield 0, target from the trade plan
+  $('bsDays').value = 30;
+  $('bsR').value = 4.5;
+  $('bsQ').value = 0;
+  if (TARGET != null) $('bsTarget').value = TARGET.toFixed(2);
+
+  // prefill spot + IV from the same live feed the chart uses: last close and
+  // 30-day realized (annualised) volatility of daily log returns
+  fetch('/matp/' + SYM + '/prices')
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      var bars = (d && d.bars) || [];
+      if (bars.length && !$('bsS').value) $('bsS').value = bars[bars.length - 1].close.toFixed(2);
+      if (bars.length > 5 && !$('bsIV').value) {
+        var rets = [];
+        for (var i = Math.max(1, bars.length - 30); i < bars.length; i++)
+          rets.push(Math.log(bars[i].close / bars[i - 1].close));
+        var m = rets.reduce(function (a, b) { return a + b; }, 0) / rets.length;
+        var v = rets.reduce(function (a, b) { return a + (b - m) * (b - m); }, 0) / (rets.length - 1);
+        $('bsIV').value = (Math.sqrt(v * 252) * 100).toFixed(1);
+      }
+      run();
+    })
+    .catch(run);
+})();
+</script>

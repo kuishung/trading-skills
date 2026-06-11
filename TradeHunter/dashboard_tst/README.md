@@ -124,6 +124,34 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-11 — v2.82: Studies scroll-compact chart + Black-Scholes strike analyser
+- **Studies middle column is now two zones**: the chart on top, a scrollable
+  zone below (status panel, trade levels, and the new strike analyser).
+  Scrolling the lower zone past ~48px animates the chart down to **~¼ height**
+  (56vh → 23vh, with the TradingView quote header cropped away so the plot
+  keeps its room) and **docks the status + trade-levels panels into a side
+  column beside the chart** (JS reparents them; slide-in animation), freeing
+  the column for analysis work. Scrolling back to the top restores the full
+  chart. Hysteresis (enter 48px / exit 8px) + a compact-only spacer keep the
+  toggle from oscillating; lg-only — mobile stacks and page-scrolls as before.
+- **New: Black-Scholes option strike analyser** (`_bs_calc.html`) below the
+  levels panel — finally wires the until-now-unused `services/black_scholes.py`
+  (DESIGN.md phase 4) to a UI. Inputs: Call/Put, spot, target, DTE, IV, rate,
+  dividend yield. Spot prefills from the chart's live price feed and **IV
+  defaults to the ticker's 30-day realized volatility** (computed client-side
+  from the same bars); Target seeds from the study's profit target. Renders a
+  ±27.5% strike ladder (premium, delta, breakeven, risk-neutral P(ITM),
+  P(profit beyond breakeven), P/L + ROI if the target is hit at expiry) with
+  the ATM strike flagged and a **"best strike"** highlight ranked by
+  ROI × P(profit) — so a lottery-ticket far-OTM strike can't win on ROI alone.
+  The risk-neutral-vs-real-world caveat from the service docstring is surfaced
+  in the UI as required.
+- Files: `app/routes/studies.py` (`GET /studies/api/black-scholes` strike-grid
+  endpoint + `_strike_step` spacing heuristic), `app/templates/studies.html`
+  (zones + compact CSS/JS), `app/templates/_bs_calc.html` (new),
+  `app/templates/_price_chart.html` (`tvq-header` class hook only — shared
+  with MATP pages, no behaviour change there), `app/__init__.py` (v2.82).
+
 ### 2026-06-09 — Data Ingest §3: EDGAR filing-corpus completeness (folder-derived)
 - New **§3 "EDGAR Earnings Filings"** card on the Data Ingest page (`/finviz`)
   showing whether each ticker's SEC 10-Q/10-K history is complete. The corpus is

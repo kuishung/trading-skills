@@ -52,30 +52,43 @@
     </div>
   </aside>
 
-  {# ============ MIDDLE: chart + status + trade levels ============ #}
-  <main class="lg:flex-1 lg:min-w-0 lg:h-full flex flex-col gap-2 min-h-0">
+  {# ============ MIDDLE: chart + status + trade levels + strike analyser ============ #}
+  {# Two zones: #chartZone (animated height) on top, #scrollZone below. Scrolling
+     the lower zone shrinks the chart to ~1/4 ("compact") and docks the status +
+     trade-levels panels into #sideCol BESIDE the chart, freeing the column for
+     the Black-Scholes strike analyser. Scrolling back to the top restores the
+     full-height chart. lg-only; on mobile everything stacks and page-scrolls. #}
+  <main id="studyMain" class="lg:flex-1 lg:min-w-0 lg:h-full flex flex-col gap-2 min-h-0">
     {% if sel %}
 
-    {% if level and level.matp is not none %}
-    {% set chart_symbol = sel.symbol %}
-    {% set chart_exchange = level.exchange %}
-    {% set chart_matp = level.matp %}
-    {% set chart_mbp = level.mbp %}
-    {% set chart_as_of = level.as_of %}
-    {% set chart_earnings = level.last_earnings_date %}
-    {% set chart_band = None %}
-    {% set chart_support = sel.support %}
-    {% set chart_resistance = sel.resistance %}
-    {% set chart_fill = true %}
-    {% include "_price_chart.html" %}
-    {% else %}
-    <div class="rounded-lg border border-slate-800 bg-slate-900/40 p-6 text-center text-sm text-slate-500 shrink-0">
-      No MATP data for {{ sel.symbol }} yet &mdash; run a MATP refresh from the MATP page.
+    <div id="chartZone" class="shrink-0 flex gap-2 min-h-0">
+      <div id="chartHost" class="flex-1 min-w-0 flex flex-col min-h-0">
+        {% if level and level.matp is not none %}
+        {% set chart_symbol = sel.symbol %}
+        {% set chart_exchange = level.exchange %}
+        {% set chart_matp = level.matp %}
+        {% set chart_mbp = level.mbp %}
+        {% set chart_as_of = level.as_of %}
+        {% set chart_earnings = level.last_earnings_date %}
+        {% set chart_band = None %}
+        {% set chart_support = sel.support %}
+        {% set chart_resistance = sel.resistance %}
+        {% set chart_fill = true %}
+        {% include "_price_chart.html" %}
+        {% else %}
+        <div class="rounded-lg border border-slate-800 bg-slate-900/40 p-6 text-center text-sm text-slate-500 shrink-0">
+          No MATP data for {{ sel.symbol }} yet &mdash; run a MATP refresh from the MATP page.
+        </div>
+        {% endif %}
+      </div>
+      {# compact-mode dock: the status + levels panels are moved here by JS #}
+      <div id="sideCol" class="hidden lg:flex flex-col gap-2 min-h-0"></div>
     </div>
-    {% endif %}
+
+    <div id="scrollZone" class="flex-1 min-h-0 flex flex-col gap-2 lg:overflow-y-auto lg:pr-1">
 
     {# status panel: badge + title + data + (moderator) status controls #}
-    <div class="shrink-0 rounded-lg border border-slate-800 bg-slate-900/40 p-2.5 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+    <div id="statusPanel" class="shrink-0 rounded-lg border border-slate-800 bg-slate-900/40 p-2.5 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
       <span class="font-semibold text-white">{{ sel.symbol }} <span class="text-slate-500 font-normal">#{{ sel.id }}</span></span>
       {{ st_badge(sel.status) }}
       {% if sel.title and sel.title != sel.symbol %}<span class="text-slate-400 truncate max-w-[16rem]">{{ sel.title }}</span>{% endif %}
@@ -103,8 +116,8 @@
 
     {# trade levels: support/resistance + entry/stop/target + R:R #}
     {% if user.can_moderate %}
-    <form method="post" action="/studies/{{ sel.id }}/levels" class="shrink-0 rounded-lg border border-slate-800 bg-slate-900/40 p-2.5">
-      <div class="grid grid-cols-3 sm:grid-cols-6 gap-2 items-end">
+    <form id="levelsPanel" method="post" action="/studies/{{ sel.id }}/levels" class="shrink-0 rounded-lg border border-slate-800 bg-slate-900/40 p-2.5">
+      <div class="lv-grid grid grid-cols-3 sm:grid-cols-6 gap-2 items-end">
         {% for name, lbl, cls in [('support','Support','text-sky-300'), ('resistance','Resistance','text-fuchsia-300'), ('entry','Entry','text-slate-100'), ('stop_loss','Stop','text-rose-300'), ('profit_target','Target','text-emerald-300')] %}
         <label class="text-[10px] text-slate-500 flex flex-col gap-0.5">{{ lbl }}
           <input name="{{ name }}" type="number" step="any" inputmode="decimal"
@@ -121,7 +134,7 @@
     </form>
     {% else %}
     {# members: read-only trade levels — always shown, never editable #}
-    <div class="shrink-0 flex flex-wrap gap-x-5 gap-y-1 text-sm rounded-lg border border-slate-800 bg-slate-900/40 p-2.5">
+    <div id="levelsPanel" class="shrink-0 flex flex-wrap gap-x-5 gap-y-1 text-sm rounded-lg border border-slate-800 bg-slate-900/40 p-2.5">
       <div><span class="text-slate-500">Support</span> <span class="tabular-nums text-sky-300">{{ "%.2f"|format(sel.support) if sel.support is not none else "-" }}</span></div>
       <div><span class="text-slate-500">Resist</span> <span class="tabular-nums text-fuchsia-300">{{ "%.2f"|format(sel.resistance) if sel.resistance is not none else "-" }}</span></div>
       <div><span class="text-slate-500">Entry</span> <span class="tabular-nums">{{ "%.2f"|format(sel.entry) if sel.entry is not none else "-" }}</span></div>
@@ -130,6 +143,14 @@
       <div><span class="text-slate-500">R:R</span> <span class="font-semibold tabular-nums {{ rr_cls }}">{{ ('%.2f'|format(rr)) ~ ':1' if rr is not none else "-" }}</span></div>
     </div>
     {% endif %}
+
+    {# Black-Scholes strike analyser — the "other purpose" space below the chart #}
+    {% include "_bs_calc.html" %}
+
+    {# spacer (compact only): keeps #scrollZone scrollable after the panels dock
+       into #sideCol, so the compact state can't flicker-revert on its own #}
+    <div id="szSpacer" class="shrink-0"></div>
+    </div>{# /scrollZone #}
 
     {% else %}
     <div class="flex-1 flex items-center justify-center text-slate-500 text-sm">Curate a ticker to start a study.</div>
@@ -148,4 +169,60 @@
   {% endif %}
 
 </div>
+
+<style>
+  /* ——— scroll-compact chart (lg only): full chart ⇄ ¼ chart + docked panels ——— */
+  @media (min-width: 1024px) {
+    /* no scroll anchoring: reparenting the panels out of the scroll zone must
+       NOT make the browser "compensate" scrollTop back to 0 (would instantly
+       un-compact and flicker) */
+    #scrollZone { overflow-anchor: none; }
+    #chartZone { height: 56vh; transition: height .55s cubic-bezier(.33,.1,.2,1); }
+    #studyMain.compact #chartZone { height: 23vh; }
+    /* side dock slides open beside the chart */
+    #sideCol { width: 0; opacity: 0; overflow: hidden;
+               transition: width .55s cubic-bezier(.33,.1,.2,1), opacity .3s ease .12s; }
+    #studyMain.compact #sideCol { width: 21rem; opacity: 1; overflow-y: auto; }
+    #studyMain.compact #sideCol > * { animation: dockIn .55s cubic-bezier(.33,.1,.2,1) both; }
+    /* crop the TradingView quote header in compact so the ¼-height plot keeps room */
+    .tvq-header { transition: height .45s cubic-bezier(.33,.1,.2,1), opacity .3s ease; }
+    #studyMain.compact .tvq-header { height: 0 !important; opacity: 0; border-bottom-width: 0; }
+    /* trade-levels grid: 3-up when docked in the narrow side column */
+    #sideCol .lv-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    /* anti-flicker: guarantee the scroll zone stays scrollable while compact */
+    #studyMain.compact #szSpacer { height: 10rem; }
+  }
+  @keyframes dockIn { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+</style>
+<script>
+(function () {
+  var main = document.getElementById('studyMain'), sz = document.getElementById('scrollZone'),
+      side = document.getElementById('sideCol');
+  if (!main || !sz || !side) return;
+  var statusP = document.getElementById('statusPanel'), levelsP = document.getElementById('levelsPanel');
+  var compact = false;
+  function setCompact(on) {
+    if (on === compact) return;
+    compact = on;
+    main.classList.toggle('compact', on);
+    if (on) {            // dock the panels beside the chart
+      if (statusP) side.appendChild(statusP);
+      if (levelsP) side.appendChild(levelsP);
+    } else {             // bring them home, original order: status, levels
+      if (levelsP) sz.insertBefore(levelsP, sz.firstChild);
+      if (statusP) sz.insertBefore(statusP, sz.firstChild);
+    }
+  }
+  // hysteresis (enter at 48px, exit below 8px) so the toggle can't oscillate
+  sz.addEventListener('scroll', function () {
+    var y = sz.scrollTop;
+    if (y > 48) setCompact(true);
+    else if (y < 8) setCompact(false);
+  }, { passive: true });
+  // below lg the side dock is display:none — make sure the panels live in the flow
+  var mq = window.matchMedia('(min-width: 1024px)');
+  function onMq() { if (!mq.matches) setCompact(false); }
+  if (mq.addEventListener) mq.addEventListener('change', onMq); else mq.addListener(onMq);
+})();
+</script>
 {% endblock %}

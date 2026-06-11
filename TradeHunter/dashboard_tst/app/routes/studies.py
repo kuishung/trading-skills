@@ -9,6 +9,7 @@ discuss doorbell.
 """
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -117,6 +118,77 @@ def studies_basket(
     return templates.TemplateResponse(
         request, "_studies_basket.html", {"user": user, "items": items}
     )
+
+
+def _strike_step(spot: float) -> float:
+    """Listed-options-style strike spacing — picks the increment that yields
+    ~22-28 strikes across the ±27.5% ladder the analyser shows (a $208 stock
+    gets $5 strikes, like its real chain — not $10)."""
+    raw = spot * 0.02
+    for cand in (0.5, 1.0, 2.5, 5.0, 10.0, 25.0, 50.0, 100.0):
+        if raw <= cand:
+            return cand
+    return 200.0
+
+
+@router.get("/api/black-scholes")
+def black_scholes_grid(
+    S: float,
+    sigma_pct: float,
+    days: float,
+    r_pct: float = 4.5,
+    q_pct: float = 0.0,
+    kind: str = "call",
+    target: float | None = None,
+    user: User = Depends(require_user),
+):
+    """Strike-ladder JSON for the Studies option analyser (the UI feeds the
+    inputs straight into ``services.black_scholes``). Per strike: premium,
+    delta, risk-neutral P(expire ITM), P(profit) = P(expire beyond breakeven),
+    and — when a target price is given — P/L + ROI if the underlying sits at
+    the target on expiry day. ``best_strike`` maximises ROI x P(profit), so a
+    lottery-ticket far-OTM strike can't win on ROI alone."""
+    from ..services.black_scholes import black_scholes
+
+    kind = "put" if (kind or "").strip().lower() == "put" else "call"
+    if not (S > 0 and 0 < days <= 1095 and 0 < sigma_pct <= 500):
+        return {"error": "Spot, DTE (max 1095) and IV must all be positive."}
+    T = days / 365.0
+    r, q, sigma = r_pct / 100.0, q_pct / 100.0, sigma_pct / 100.0
+    step = _strike_step(S)
+    K = max(step, math.floor(S * 0.725 / step) * step)
+    rows = []
+    while K <= S * 1.275 + 1e-9:
+        bs = black_scholes(S, K, T, r, sigma, kind=kind, q=q)
+        prem = bs.price
+        be = K + prem if kind == "call" else K - prem
+        prob_profit = (
+            black_scholes(S, be, T, r, sigma, kind=kind, q=q).prob_itm if be > 0 else None
+        )
+        row = {
+            "strike": round(K, 2),
+            "premium": round(prem, 2),
+            "delta": round(bs.delta, 2),
+            "prob_itm": round(bs.prob_itm, 4),
+            "prob_profit": round(prob_profit, 4) if prob_profit is not None else None,
+            "breakeven": round(be, 2),
+            "pl_target": None,
+            "roi_target": None,
+            "score": None,
+        }
+        if target is not None and target > 0 and prem >= 0.01:
+            intrinsic = max(target - K, 0.0) if kind == "call" else max(K - target, 0.0)
+            pl = intrinsic - prem
+            row["pl_target"] = round(pl, 2)
+            row["roi_target"] = round(pl / prem * 100.0, 1)
+            if prob_profit is not None:
+                row["score"] = round((pl / prem) * prob_profit, 4)
+        rows.append(row)
+        K = round(K + step, 10)
+    atm = min(rows, key=lambda x: abs(x["strike"] - S))["strike"] if rows else None
+    winners = [x for x in rows if x["score"] is not None and x["pl_target"] > 0]
+    best = max(winners, key=lambda x: x["score"])["strike"] if winners else None
+    return {"kind": kind, "atm_strike": atm, "best_strike": best, "rows": rows}
 
 
 @router.post("")
