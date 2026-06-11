@@ -715,7 +715,9 @@ def _run_eod_history_ingest(cfg) -> None:
     move on. The user can always rerun manually:
         py resources/ibkr_history.py update --universe
     """
-    timeframes = cfg.get("eod_history_timeframes", ["1min", "daily"])
+    # Order = priority: bulk_update runs timeframe-major, so daily candles for
+    # the whole universe land before any intraday top-up (user, 2026-06-11).
+    timeframes = cfg.get("eod_history_timeframes", ["daily", "1min"])
     journal_days = int(cfg.get("eod_history_journal_days", 30))
     seed_days = int(cfg.get("eod_history_seed_days", 60))
     try:

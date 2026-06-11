@@ -78,9 +78,11 @@ def main() -> int:
     ap.add_argument("--timeframes", default="3min",
                     help="comma-separated timeframes to ingest. Each entry may "
                          "carry its own depth as TF:DAYS — e.g., "
-                         "'3min:180,5min:180,daily:730' gives daily 2-year "
+                         "'daily:730,5min:180,3min:180' gives daily 2-year "
                          "history while intraday stays at 180d. Entries "
-                         "without :DAYS use --seed-days.")
+                         "without :DAYS use --seed-days. ORDER MATTERS: "
+                         "bulk_update runs timeframe-major in this order "
+                         "(all symbols of the first tf, then the next).")
     ap.add_argument("--seed-days", type=int, default=180,
                     help="lookback in days for any timeframe that didn't "
                          "specify a per-tf depth in --timeframes. Default 180 "

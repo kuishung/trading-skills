@@ -1173,7 +1173,7 @@ def _build_progress_window(root):
         try:
             from ingest_supervisor import SYMBOLS_FILE as _SF, TOPUP_TIMEFRAMES as _TT
         except Exception:
-            _SF, _TT = "resources/universe_full.txt", "3min:180,5min:180,daily:730"
+            _SF, _TT = "resources/universe_full.txt", "daily:730,5min:180,3min:180"
         cmd = [py, "-3.12", str(SKILL_DIR / "scripts" / "wait_and_ingest.py"),
                "--symbols-file", str(SKILL_DIR / _SF),
                "--timeframes", _TT, "--topup"]

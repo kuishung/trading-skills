@@ -33,6 +33,12 @@ web, Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-06-11 — `tray_status.py`: top-up fallback timeframes reordered
+- The tray's "Run top-up now" command mirrors `ingest_supervisor.TOPUP_TIMEFRAMES`
+  by import; its hardcoded fallback literal is updated to the new
+  `daily:730,5min:180,3min:180` order so a tray-launched top-up syncs daily
+  first even when the supervisor module isn't importable.
+
 ### 2026-06-09 — `show_ingest_status.py`: headless tray-status readout (CLI)
 - New script that prints the **same signals the tray progress window shows**
   (NOW activity | ingest progress | Supervisor/Gateway liveness | completed-

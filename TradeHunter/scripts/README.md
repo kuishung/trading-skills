@@ -37,6 +37,16 @@ they're rarely-touched and small, so `scripts/` is fine.
 
 ## Changelog
 
+### 2026-06-11 — top-up sequence: daily → 5min → 3min (priority order)
+- `ingest_supervisor.py`: `TOPUP_TIMEFRAMES` reordered to
+  `daily:730,5min:180,3min:180` — combined with `bulk_update`'s new
+  timeframe-major ordering (see resources/README), the nightly top-up now
+  syncs every symbol's daily candles first, then all 5min, then all 3min
+  (user request 2026-06-11). A 08:00 ET deadline abort therefore costs the
+  3min tail only, never the daily layer.
+- `wait_and_ingest.py`: `--timeframes` help text now documents that order
+  matters (timeframe-major execution); example updated to daily-first.
+
 ### 2026-06-07 - `check_bars_integrity.py`: live progress for the tray deep-check bar
 - Emits `<data_root>/_deepcheck_progress.json` (`{phase, done, total, ts}`) every
   ~50 files via `_write_progress`/`_bump`, covering both tier1 (metadata) and

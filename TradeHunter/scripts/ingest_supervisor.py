@@ -82,7 +82,11 @@ GATEWAY_LOGIN_GRACE_SEC = 90   # wait this long for an in-flight (re)login befor
 DEADLINE_MARGIN_MIN = 3   # stop heavy work + shut Gateway this many min BEFORE
                           # RUN_END (08:00 ET) so the Gateway is provably down
                           # before the user's manual-trade window begins.
-TOPUP_TIMEFRAMES = "3min:180,5min:180,daily:730"
+# Order = sync priority (user, 2026-06-11): bulk_update runs timeframe-major
+# in this order — ALL daily candles first (whole universe, fastest + most
+# important), then all 5min, then all 3min. A deadline abort therefore costs
+# the 3min tail, never the daily layer.
+TOPUP_TIMEFRAMES = "daily:730,5min:180,3min:180"
 SYMBOLS_FILE = "resources/universe_full.txt"
 
 # Absolute py launcher — bare "py" may not resolve under the Task Scheduler S4U

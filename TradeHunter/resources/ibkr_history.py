@@ -432,6 +432,11 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
     `top_up` pairs from the work list entirely. Default False preserves
     the existing orchestrator post-EOD behaviour.
 
+    Ordering (changed 2026-06-11, user request): work runs TIMEFRAME-MAJOR
+    in the order of `timeframes` — every symbol of timeframes[0], then
+    timeframes[1], etc. Pass the most important timeframe first (the
+    nightly top-up passes daily,5min,3min).
+
     Returns: {(symbol, timeframe): bars_written}. Pairs that were skipped
     (top_up + skip_up_to_date=True) are NOT in the dict.
     """
@@ -524,8 +529,15 @@ def bulk_update(symbols: list[str], timeframes: list[str], cfg: dict | None = No
     n_scanned = 0
     n_classify_errors = 0
     _emit(f"[pre-flight] starting metadata scan of {total_pairs} (sym,tf) pairs ...")
-    for sym in symbols:
-        for tf in timeframes:
+    # TIMEFRAME-MAJOR order (user, 2026-06-11): the work list runs ALL symbols
+    # of timeframes[0] first, then timeframes[1], etc. — so the caller's
+    # timeframe order is a PRIORITY order. The nightly top-up passes
+    # daily,5min,3min: the (small, fast) daily candles for the whole universe
+    # land in the first ~hour instead of trickling in across the entire run,
+    # and a deadline abort costs the least-important tail, not a slice of
+    # every timeframe.
+    for tf in timeframes:
+        for sym in symbols:
             target_days = (lookback_days_by_tf or {}).get(tf, lookback_days_for_new)
             # FAST PATH (checkpoint first, NO parquet read): a prior run this
             # session already verified this pair current -> skip instantly. This

@@ -56,6 +56,17 @@ treating any "missing" feature as a bug.
 
 ## Changelog
 
+### 2026-06-11 — `ibkr_history.py`: bulk_update runs TIMEFRAME-MAJOR (caller order = priority)
+- `bulk_update` now iterates `for tf in timeframes: for sym in symbols:` instead
+  of symbol-major — ALL symbols of the first timeframe complete before the next
+  starts, so the caller's timeframe order is a priority order. User request
+  (2026-06-11): sync daily candles first, then 5min, then 3min. With ~10s/request
+  IB pacing a full-universe top-up takes hours; daily-first means the most
+  important layer (daily, used by swing profiles / MATP) finishes in the first
+  ~hour and a 08:00 ET deadline abort only ever costs the 3min tail — not a
+  slice of every timeframe. Verified with a patched-IB dry harness (3 fake
+  symbols × daily,5min,3min → 9 calls in exact tf-major order).
+
 ### 2026-06-09 — added `EDGAR Seeder/` subfolder
 - New self-contained subsystem to fetch SEC earnings filings (10-Q/10-K) into a
   versioned, Obsidian-friendly corpus (`<data_root>/edgar/`), with real

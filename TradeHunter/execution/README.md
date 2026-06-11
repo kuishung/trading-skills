@@ -32,6 +32,13 @@ All-OFF runtime state is allowed — bot starts and journals
 
 ## Changelog
 
+### 2026-06-11 — `orchestrator.py`: post-EOD ingest default reordered (daily first)
+- `_run_eod_history_ingest`: default `eod_history_timeframes` flipped to
+  `["daily", "1min"]` — `bulk_update` now runs timeframe-major, so the order
+  is a priority order and daily candles land before the 1min top-up (matches
+  the supervisor's new daily→5min→3min sequence, user request 2026-06-11).
+  `cfg.eod_history_timeframes` still overrides.
+
 ### 2026-05-22 — `orchestrator.py`: `--replay-date` for historical re-runs
 - New CLI flag `--replay-date YYYY-MM-DD`. When passed:
   - `cfg["data_provider"]` is forced to `"parquet"` so bar fetches go through `bars_store` (data/price_history/) instead of IBKR/Alpaca.
