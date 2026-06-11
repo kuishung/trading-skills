@@ -124,6 +124,15 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-11 — v2.84: sticky header for the option strike analyser
+- `_bs_calc.html`: the **Option strike analyser** heading + Call/Put toggle +
+  parameter inputs (Spot/Target/Days/IV/Rate/Div) are now a **sticky header**
+  (`lg:sticky lg:top-0`) pinned to the top of `#scrollZone` while the strike
+  ladder scrolls underneath — so the inputs stay visible and editable as you read
+  the table (user request). Negative margins span the card's `p-3` so the opaque
+  band sits flush to the card edges + a bottom divider; lg-only because
+  `#scrollZone` is only an overflow container on lg (mobile page-scrolls).
+
 ### 2026-06-11 — v2.83: status docks into the chart header + proportional ¼ compact
 - User feedback on v2.82, same day. (1) The **status strip** (badge + status
   controls) is no longer a separate panel — on lg it **docks into the chart's
