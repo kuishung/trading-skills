@@ -579,21 +579,27 @@ recall/look up the host. The password is entered interactively (not scripted).
 Same spirit as the Hermes deploy-script rule — give the full ordered sequence,
 login included, every time.
 
-**Rule (user, set 2026-06-01): EVERY script/command I hand over MUST state WHICH
-MACHINE + which terminal it runs in — every time, no exceptions.** The user
-develops across **three machines** and it's easy to paste a command into the
-wrong one. Always label the target up front. The three machines:
+**Rule (user, set 2026-06-01; REINFORCED 2026-06-09 — "where to run these code,
+always let me know and remember"): EVERY script/command I hand over MUST state
+WHICH MACHINE + which terminal it runs in — every time, no exceptions, and the
+label goes on EVERY code block (not just a section header above several blocks).**
+The user develops across **multiple machines** and it's easy to paste a command
+into the wrong one. Always label the target immediately before each fenced block.
+The machines:
 
 | Machine | OS / shell | What runs there | How to get a prompt |
 |---|---|---|---|
 | **Laptop** (dev cockpit) | Windows / PowerShell | code edits, `git commit`/`push` | local terminal (this is where Claude works) |
 | **Hermes** (R720 Hyper-V VM) | Windows Server 2019 / PowerShell | the `dashboard_tst` web app (tradehunter.net), git pull + deploy | RDP / console → `PS C:\…>` |
-| **Nous agent** | Ubuntu Linux / bash | the `matp` skill, `hermes cron`, heartbeats | `ssh administrator@192.168.1.163` → `administrator@nous-agent:~$` |
+| **Nous agent** | Ubuntu Linux / bash | the `matp` skill, `hermes cron`, heartbeats, the EDGAR seeder/rebuilder | `ssh administrator@192.168.1.163` → `administrator@nous-agent:~$` |
+| **AI-Hermes** (192.168.1.162) | Windows file server | stores `C:\HermesSync\MarketResearch\…` incl. the **EDGAR corpus** (`QuarterlyReport`) + other HermesSync data | rarely driven directly — the Nous agent reads/writes its share over **cifs at `/mnt/hermes_sync`** (`//192.168.1.162/MarketResearch`) |
 
 So: a `git pull`/deploy PowerShell block → **Hermes**; a `python3`/`hermes`/`curl
-~/.hermes` bash block → **Nous agent** (prepend the ssh login line); a
-`git commit`/code task → **Laptop**. Name the machine before the code block,
-always.
+~/.hermes`/EDGAR-seeder bash block (incl. anything under `/mnt/hermes_sync`) →
+**Nous agent** (prepend the ssh login line); a `git commit`/code task →
+**Laptop**. The EDGAR corpus physically lives on **AI-Hermes** but is operated
+from the **Nous agent** via the cifs mount. Name the machine before the code
+block, always.
 
 Canonical detail + deploy steps live in `nous_hermes/README.md`. This
 note lives in CLAUDE.md (not just a memory file) so every dev PC recalls
