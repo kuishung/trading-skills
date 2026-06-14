@@ -336,3 +336,97 @@ class Feedback(Base):
     created_at = Column(DateTime, default=_utcnow)
 
     user = relationship("User")
+
+
+# ---------------------------------------------------------------------------
+# Research — member co-designs a research topic with the LLM (DeepSeek, called
+# DIRECTLY by the dashboard for the planning chat), records the agreed plan as
+# Markdown, schedules it on a per-topic hermes cron, and the Nous agent runs it
+# OUTBOUND-ONLY: it polls /api/research/due, executes with its corpus + cifs,
+# writes the output md to AI-Hermes, and POSTs the result back. See
+# RESEARCH_DESIGN.md. Portable column types only (Postgres-upgradeable).
+# ---------------------------------------------------------------------------
+
+# topic kinds
+RESEARCH_MACRO = "macro"
+RESEARCH_COMPANY = "company"
+
+# topic status lifecycle
+RT_DRAFT = "draft"          # being chatted/planned
+RT_PLANNED = "planned"      # a PLAN.md has been agreed
+RT_SCHEDULED = "scheduled"  # a cron is registered
+RT_ARCHIVED = "archived"
+
+# run status
+RUN_QUEUED = "queued"
+RUN_RUNNING = "running"
+RUN_OK = "ok"
+RUN_ERROR = "error"
+
+
+class ResearchTopic(Base):
+    """A unit of research the user co-designs with the LLM and schedules."""
+
+    __tablename__ = "research_topics"
+
+    id = Column(Integer, primary_key=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    title = Column(String(200), nullable=False)
+    kind = Column(String(12), nullable=False, default=RESEARCH_COMPANY)  # macro | company
+    subject = Column(String(120), nullable=True)   # ticker (company) or theme (macro)
+    status = Column(String(12), nullable=False, default=RT_DRAFT)
+    # which inputs the agent should pull when running (JSON list: edgar/matp/bars/web)
+    sources = Column(JSON, nullable=True)
+    # the agreed research plan, Markdown. DB is the source of truth; the agent
+    # renders this to PLAN.md in the corpus when it runs.
+    plan_md = Column(Text, nullable=True)
+    # cron expression for the per-topic hermes cron (null = not scheduled)
+    schedule_cron = Column(String(120), nullable=True)
+    enabled = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+    owner = relationship("User")
+    messages = relationship(
+        "ResearchMessage", back_populates="topic",
+        cascade="all, delete-orphan", order_by="ResearchMessage.seq",
+    )
+    runs = relationship(
+        "ResearchRun", back_populates="topic",
+        cascade="all, delete-orphan", order_by="ResearchRun.id.desc()",
+    )
+
+
+class ResearchMessage(Base):
+    """One turn of the planning conversation. Rendered into PLAN.md context."""
+
+    __tablename__ = "research_messages"
+
+    id = Column(Integer, primary_key=True)
+    topic_id = Column(Integer, ForeignKey("research_topics.id"), nullable=False, index=True)
+    seq = Column(Integer, nullable=False, default=0)   # order within the topic
+    role = Column(String(12), nullable=False)          # user | assistant | system
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=_utcnow)
+
+    topic = relationship("ResearchTopic", back_populates="messages")
+
+
+class ResearchRun(Base):
+    """One execution of a topic's plan by the Nous agent (outbound-only)."""
+
+    __tablename__ = "research_runs"
+
+    id = Column(Integer, primary_key=True)
+    topic_id = Column(Integer, ForeignKey("research_topics.id"), nullable=False, index=True)
+    status = Column(String(12), nullable=False, default=RUN_QUEUED)
+    trigger = Column(String(12), nullable=False, default="manual")  # manual | cron
+    queued_at = Column(DateTime, default=_utcnow)
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
+    output_md_path = Column(String(512), nullable=True)  # path in the AI-Hermes corpus
+    summary = Column(Text, nullable=True)
+    tokens = Column(Integer, nullable=True)
+    error = Column(Text, nullable=True)
+
+    topic = relationship("ResearchTopic", back_populates="runs")

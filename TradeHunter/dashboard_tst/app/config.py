@@ -134,6 +134,21 @@ class Settings:
         default_factory=lambda: _csv(os.environ.get("TST_ALLOWED_EMAIL_DOMAINS"))
     )
 
+    # --- Research: planning chat talks to DeepSeek DIRECTLY (the Nous agent is
+    # outbound-only, so it can't serve a real-time chat). OpenAI-compatible API,
+    # so the same fields work for DeepSeek cloud or a local deployment — only the
+    # base_url/key differ. Key lives in app/.env (gitignored) / the Vault, never
+    # the repo. Unset key -> the chat endpoint returns a friendly "not configured".
+    deepseek_api_key: str | None = field(
+        default_factory=lambda: os.environ.get("TST_DEEPSEEK_API_KEY")
+    )
+    deepseek_base_url: str = field(
+        default_factory=lambda: os.environ.get("TST_DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+    )
+    deepseek_model: str = field(
+        default_factory=lambda: os.environ.get("TST_DEEPSEEK_MODEL", "deepseek-chat")
+    )
+
     # Session cookie. Set TST_HTTPS_ONLY=1 only when served over TLS; over a
     # Hamachi VPN on plain http it must stay 0 (the VPN tunnel is encrypted).
     session_cookie: str = "tst_session"

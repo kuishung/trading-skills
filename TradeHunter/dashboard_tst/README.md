@@ -124,6 +124,23 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-13 — v2.85: Research page (Phase 1 — chat → plan → queue)
+- New members-facing **/research** page (`routes/research.py`, `research.html`,
+  `research_detail.html`, nav item): create a macro/company research topic, chat
+  with the assistant to shape it, save the agreed **plan** (Markdown), and queue a
+  run / set a per-topic cron. Owner-scoped (mods/admin see all).
+- **Planning chat calls DeepSeek DIRECTLY** from the dashboard
+  (`services/research_llm.py`, OpenAI-compatible) — because the Nous agent is
+  outbound-only and can't serve a real-time chat. New config:
+  `TST_DEEPSEEK_API_KEY` / `TST_DEEPSEEK_BASE_URL` (default `https://api.deepseek.com`)
+  / `TST_DEEPSEEK_MODEL` (default `deepseek-chat`). Soft-fails with a clear notice
+  if the key is unset. See `RESEARCH_DESIGN.md` (architecture correction).
+- Models `ResearchTopic` / `ResearchMessage` / `ResearchRun` + Alembic migration
+  `e1f2a3b4c5d6` (portable types, Postgres-ready). Migration auto-runs on startup.
+- **Phase 2 (next):** the agent side — poll `/api/research/due`, execute against the
+  corpus, write output md to AI-Hermes, POST results back; register the per-topic
+  `hermes cron`. "Run now" currently queues a run for that agent loop.
+
 ### 2026-06-11 — v2.84: sticky header for the option strike analyser
 - `_bs_calc.html`: the **Option strike analyser** heading + Call/Put toggle +
   parameter inputs (Spot/Target/Days/IV/Rate/Div) are now a **sticky header**

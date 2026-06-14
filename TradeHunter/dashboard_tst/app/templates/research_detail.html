@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}{{ t.title }} &middot; Research{% endblock %}
+{% block content %}
+<div class="mb-4">
+  <a href="/research" class="text-xs text-slate-500 hover:text-orange-300">&larr; All topics</a>
+  <div class="flex items-center gap-2 flex-wrap mt-1">
+    <span class="text-[10px] uppercase px-1.5 py-0.5 rounded border
+      {% if t.kind == 'company' %}border-sky-500/40 text-sky-300{% else %}border-fuchsia-500/40 text-fuchsia-300{% endif %}">{{ t.kind }}</span>
+    <h1 class="text-2xl font-semibold">{{ t.title }}</h1>
+    {% if t.subject %}<span class="text-slate-500">· {{ t.subject }}</span>{% endif %}
+    <span class="ml-auto text-[10px] uppercase px-1.5 py-0.5 rounded border border-slate-700 text-slate-400">{{ t.status }}</span>
+    <form method="post" action="/research/{{ t.id }}/archive" class="inline"
+          onsubmit="return confirm('Archive this topic? It stops scheduling and hides from the active list.');">
+      <button class="text-[11px] px-2 py-0.5 rounded border border-rose-500/40 text-rose-300 hover:bg-rose-500/15 transition">archive</button>
+    </form>
+  </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+  {# ---------------- LEFT: planning chat ---------------- #}
+  <section class="rounded-lg border border-slate-800 bg-slate-900/40 p-3 flex flex-col" style="max-height:70vh">
+    <h2 class="text-sm font-semibold text-white mb-2">Planning chat
+      <span class="text-[11px] text-slate-500 font-normal">· Nous Hermes (DeepSeek)</span></h2>
+
+    <div class="flex-1 overflow-y-auto space-y-3 pr-1 mb-2">
+      {% if not messages %}
+      <p class="text-slate-500 text-sm">Start the conversation — describe what you want to understand,
+        and the assistant will help you shape a concrete research plan.</p>
+      {% endif %}
+      {% for m in messages %}
+      <div class="flex {% if m.role == 'user' %}justify-end{% endif %}">
+        <div class="max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap
+          {% if m.role == 'user' %}bg-emerald-600/20 border border-emerald-600/30 text-slate-100{% else %}bg-slate-800/60 border border-slate-700 text-slate-200{% endif %}">{{ m.content }}</div>
+      </div>
+      {% endfor %}
+      <span id="bottom"></span>
+    </div>
+
+    <form method="post" action="/research/{{ t.id }}/chat" class="flex items-end gap-2">
+      <textarea name="message" rows="2" required {% if not chat_ready %}disabled{% endif %}
+                placeholder="{% if chat_ready %}Ask, refine, or agree the plan…{% else %}Chat not configured (set TST_DEEPSEEK_API_KEY){% endif %}"
+                class="flex-1 rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm focus:border-emerald-500 outline-none"></textarea>
+      <button {% if not chat_ready %}disabled{% endif %}
+              class="rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 px-4 py-2 text-sm font-medium">Send</button>
+    </form>
+  </section>
+
+  {# ---------------- RIGHT: plan + schedule + runs ---------------- #}
+  <div class="space-y-4">
+
+    {# plan #}
+    <section id="plan" class="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+      <div class="flex items-center gap-2 mb-2">
+        <h2 class="text-sm font-semibold text-white">Research plan</h2>
+        <form method="post" action="/research/{{ t.id }}/plan/draft" class="ml-auto">
+          <button {% if not chat_ready or not messages %}disabled{% endif %}
+                  class="text-[11px] px-2.5 py-0.5 rounded border border-sky-500/50 text-sky-300 hover:bg-sky-500/10 disabled:opacity-40 transition"
+                  title="Distil the chat into a plan">Draft from chat</button>
+        </form>
+      </div>
+      <form method="post" action="/research/{{ t.id }}/plan">
+        <textarea name="plan_md" rows="10"
+                  placeholder="The agreed plan (Markdown): objective, numbered steps, data sources, expected output. Use 'Draft from chat' to auto-fill, then edit."
+                  class="w-full rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm font-mono whitespace-pre focus:border-emerald-500 outline-none">{{ t.plan_md or "" }}</textarea>
+        <div class="text-right mt-2">
+          <button class="rounded bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 text-sm font-medium">Save plan</button>
+        </div>
+      </form>
+    </section>
+
+    {# schedule #}
+    <section id="schedule" class="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+      <h2 class="text-sm font-semibold text-white mb-1">Schedule</h2>
+      <p class="text-[11px] text-slate-500 mb-2">A cron expression (UTC). The Nous agent registers a
+        per-topic job and runs it outbound-only. Leave blank to unschedule.</p>
+      <form method="post" action="/research/{{ t.id }}/schedule" class="flex items-center gap-2">
+        <input name="schedule_cron" type="text" value="{{ t.schedule_cron or '' }}"
+               placeholder="0 22 * * 1   (Mondays 22:00 UTC)"
+               class="flex-1 rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm font-mono focus:border-emerald-500 outline-none">
+        <button class="rounded bg-slate-700 hover:bg-slate-600 px-3 py-1.5 text-sm">Save</button>
+      </form>
+    </section>
+
+    {# runs #}
+    <section id="runs" class="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+      <div class="flex items-center gap-2 mb-2">
+        <h2 class="text-sm font-semibold text-white">Runs</h2>
+        <form method="post" action="/research/{{ t.id }}/run" class="ml-auto">
+          <button {% if not t.plan_md %}disabled{% endif %}
+                  class="text-[11px] px-2.5 py-0.5 rounded border border-emerald-500/60 text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 disabled:opacity-40 transition"
+                  title="{% if t.plan_md %}Queue a run for the agent{% else %}Save a plan first{% endif %}">Run now</button>
+        </form>
+      </div>
+      {% if runs %}
+      <ul class="space-y-1.5 text-sm">
+        {% for r in runs %}
+        <li class="rounded border border-slate-800 px-2.5 py-1.5">
+          <div class="flex items-center gap-2">
+            <span class="text-[10px] uppercase px-1.5 py-0.5 rounded border
+              {% if r.status == 'ok' %}border-emerald-500/50 text-emerald-300
+              {% elif r.status == 'error' %}border-rose-500/50 text-rose-300
+              {% elif r.status == 'running' %}border-sky-500/50 text-sky-300
+              {% else %}border-slate-600 text-slate-400{% endif %}">{{ r.status }}</span>
+            <span class="text-slate-500 text-xs">{{ r.trigger }}</span>
+            <span class="ml-auto text-xs text-slate-500">{{ (r.finished_at or r.queued_at).strftime("%Y-%m-%d %H:%M") if (r.finished_at or r.queued_at) else "" }} UTC</span>
+          </div>
+          {% if r.summary %}<div class="mt-1 text-slate-300 text-xs whitespace-pre-wrap">{{ r.summary }}</div>{% endif %}
+          {% if r.output_md_path %}<div class="mt-1 text-[11px] text-slate-500">→ {{ r.output_md_path }}</div>{% endif %}
+          {% if r.error %}<div class="mt-1 text-[11px] text-rose-300/80 whitespace-pre-wrap">{{ r.error }}</div>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="text-slate-500 text-sm">No runs yet. Save a plan, then <b>Run now</b> (queues it for the agent) or set a schedule.</p>
+      {% endif %}
+    </section>
+
+  </div>
+</div>
+{% endblock %}

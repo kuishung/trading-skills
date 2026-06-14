@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Research &middot; TradeHunter{% endblock %}
+{% block content %}
+<div class="flex items-baseline justify-between gap-3 mb-1">
+  <h1 class="text-2xl font-semibold">Research</h1>
+  <span class="text-xs text-slate-500">macro &amp; company · chat → plan → schedule</span>
+</div>
+<p class="text-slate-400 mb-6 text-sm">
+  Co-design a research topic with the assistant, save the agreed plan, and schedule
+  the Nous agent to run it. Outputs land in the Obsidian corpus on AI-Hermes.
+</p>
+
+{% if not chat_ready %}
+<div class="mb-6 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-200/90">
+  ⚠️ The planning chat isn't configured yet — set <code class="text-amber-100">TST_DEEPSEEK_API_KEY</code>
+  in <code>app/.env</code> on the dashboard host. You can still create topics; chat will work once it's set.
+</div>
+{% endif %}
+
+{# new topic #}
+<form method="post" action="/research" class="mb-8 rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+  <div class="grid grid-cols-1 sm:grid-cols-6 gap-2 items-end">
+    <label class="sm:col-span-3 text-[11px] text-slate-500 flex flex-col gap-0.5">New topic
+      <input name="title" type="text" required placeholder="e.g. 'NVDA datacenter demand durability' or 'US rate-cut path 2026'"
+             class="rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm focus:border-emerald-500 outline-none">
+    </label>
+    <label class="text-[11px] text-slate-500 flex flex-col gap-0.5">Kind
+      <select name="kind" class="rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm focus:border-emerald-500 outline-none">
+        <option value="company">Company</option>
+        <option value="macro">Macro</option>
+      </select>
+    </label>
+    <label class="text-[11px] text-slate-500 flex flex-col gap-0.5">Subject (ticker / theme)
+      <input name="subject" type="text" placeholder="NVDA / rates"
+             class="rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm focus:border-emerald-500 outline-none">
+    </label>
+    <button class="rounded bg-emerald-600 hover:bg-emerald-500 px-4 py-1.5 text-sm font-medium">Create</button>
+  </div>
+</form>
+
+{% if topics %}
+<ul class="space-y-2">
+  {% for t in topics %}
+  <li>
+    <a href="/research/{{ t.id }}"
+       class="block rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2.5 hover:border-emerald-500/50 transition">
+      <div class="flex items-center gap-2 flex-wrap">
+        <span class="text-[10px] uppercase px-1.5 py-0.5 rounded border
+          {% if t.kind == 'company' %}border-sky-500/40 text-sky-300{% else %}border-fuchsia-500/40 text-fuchsia-300{% endif %}">{{ t.kind }}</span>
+        <span class="font-medium text-slate-100">{{ t.title }}</span>
+        {% if t.subject %}<span class="text-slate-500 text-sm">· {{ t.subject }}</span>{% endif %}
+        <span class="ml-auto text-[10px] uppercase px-1.5 py-0.5 rounded border border-slate-700 text-slate-400">{{ t.status }}</span>
+      </div>
+      <div class="mt-1 text-xs text-slate-500 flex items-center gap-3">
+        {% if user.can_moderate and t.owner %}<span>by {{ t.owner.display_name or t.owner.email }}</span>{% endif %}
+        {% if t.schedule_cron %}<span title="cron">⏱ {{ t.schedule_cron }}</span>{% endif %}
+        {% if t.runs %}<span>{{ t.runs|length }} run(s)</span>{% endif %}
+        <span class="ml-auto">{{ t.updated_at.strftime("%Y-%m-%d %H:%M") if t.updated_at else "" }} UTC</span>
+      </div>
+    </a>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="text-slate-500 text-sm">No research topics yet — create one above to start a planning chat.</p>
+{% endif %}
+{% endblock %}

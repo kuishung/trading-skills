@@ -1,7 +1,19 @@
 # Research page — design
 
-Status: **draft for review** (2026-06-13). Captures the agreed shape before any
-code. Edit inline; once settled we scaffold Phase 1.
+Status: **Phase 1 BUILT** (2026-06-13, dashboard side). Architecture corrected
+below after discovering the existing integration is **outbound-only**.
+
+> **ARCHITECTURE CORRECTION (2026-06-13).** The first draft assumed the dashboard
+> would relay chat/runs *into* a Runner service on the Nous agent. But the existing
+> platform is deliberately **outbound-only** — the agent polls the dashboard
+> (`/api/*`, keyed by `TST_INGEST_API_KEY`) and pushes results; the dashboard
+> **never reaches into the Linux box** (`routes/agent.py`). So the design changed:
+> - **Planning chat → the dashboard calls DeepSeek DIRECTLY** (OpenAI-compatible
+>   API; key in the Vault). Real-time, no inbound to the agent. (user choice 2026-06-13)
+> - **Runs → outbound-only, like MATP:** the dashboard *queues* a run; the agent
+>   polls `/api/research/due`, executes with its corpus, writes md to AI-Hermes, and
+>   POSTs the result back. (agent side = Phase 2)
+> The Runner-service / inbound-relay design below is **superseded** by this.
 
 A members-facing **Research** page on TradeHunter (`dashboard_tst`) where a user
 chats with the Nous-agent LLM to co-design a research topic (macro or
