@@ -124,6 +124,22 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-15 — v2.87: Research chat — real chatbot UX (async, markdown, thinking)
+- Replaced the form-reload planning chat with a proper **async chatbot**
+  (`research_detail.html` + new `POST /research/{id}/chat.json`): sending a message
+  no longer reloads the page — the user bubble appears instantly, an animated
+  **"Nous Hermes is thinking… Ns"** indicator runs while the agent works (with a
+  *"reading the filings — up to a minute"* note in agent mode), and the reply is
+  appended in place. Essential now that agent-grounded replies take 15–60s.
+- **Markdown rendering** of assistant replies (marked + DOMPurify via CDN, same
+  pattern as base.html's Tailwind/HTMX) — headings, lists, tables, code, bold now
+  render instead of showing raw `**asterisks**`. Scoped `.md-body` styles match the
+  console theme; inherits the global invisible-until-hover scrollbar rule.
+- **Graceful degradation:** the form keeps `action=/research/{id}/chat` (the
+  original redirect route), so with JS off it still works via full-page POST.
+- Enter sends / Shift+Enter newline; textarea auto-grows; "Draft from chat"
+  enables after the first message without a reload.
+
 ### 2026-06-15 — v2.86: Research chat — agent-grounded mode (reads the 10-Q corpus)
 - The planning chat can now be **relayed to the Nous agent** instead of calling
   DeepSeek blind. When `TST_RESEARCH_RUNNER_URL` (+ `TST_RESEARCH_TOKEN`) are set,

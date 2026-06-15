@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
@@ -142,6 +142,41 @@ def post_chat(
                            content=reply["content"]))
     db.commit()
     return RedirectResponse(url=f"/research/{t.id}#bottom", status_code=303)
+
+
+@router.post("/{topic_id}/chat.json")
+def post_chat_json(
+    topic_id: int,
+    message: str = Form(...),
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Async chat for the JS chatbot: persist the user turn, get the assistant
+    reply (agent runner or DeepSeek-direct), persist it, return JSON. Same
+    persistence as the form POST above, but no redirect — the page appends the
+    reply in place (no reload). The form POST remains as a no-JS fallback."""
+    t = _get_topic(db, topic_id, user)
+    msg = message.strip()
+    if not msg:
+        return JSONResponse({"ok": False, "content": "", "error": "empty message"},
+                            status_code=400)
+
+    next_seq = (max((m.seq for m in t.messages), default=-1)) + 1
+    db.add(ResearchMessage(topic_id=t.id, seq=next_seq, role="user", content=msg))
+    db.commit()
+
+    history = [{"role": m.role, "content": m.content}
+               for m in db.query(ResearchMessage)
+               .filter(ResearchMessage.topic_id == t.id)
+               .order_by(ResearchMessage.seq).all()]
+    reply = research_llm.chat(history, topic=_topic_context(t))
+
+    db.add(ResearchMessage(topic_id=t.id, seq=next_seq + 1, role="assistant",
+                           content=reply["content"]))
+    db.commit()
+    return JSONResponse({"ok": bool(reply.get("ok", True)),
+                         "content": reply.get("content", ""),
+                         "via": reply.get("via")})
 
 
 @router.post("/{topic_id}/plan/draft")

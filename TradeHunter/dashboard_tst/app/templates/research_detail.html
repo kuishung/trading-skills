@@ -18,8 +18,9 @@
 
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
-  {# ---------------- LEFT: planning chat ---------------- #}
-  <section class="rounded-lg border border-slate-800 bg-slate-900/40 p-3 flex flex-col" style="max-height:70vh">
+  {# ---------------- LEFT: planning chat (real chatbot) ---------------- #}
+  <section id="chatpanel" data-topic="{{ t.id }}" data-mode="{{ chat_mode }}"
+           class="rounded-lg border border-slate-800 bg-slate-900/40 p-3 flex flex-col" style="max-height:70vh">
     <h2 class="text-sm font-semibold text-white mb-2">Planning chat
       {% if chat_mode == 'agent' %}
       <span class="text-[11px] px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-normal"
@@ -29,25 +30,24 @@
             title="Direct DeepSeek API — fast, but no access to the filings corpus.">· Nous Hermes · DeepSeek (direct)</span>
       {% endif %}</h2>
 
-    <div class="flex-1 overflow-y-auto space-y-3 pr-1 mb-2">
-      {% if not messages %}
-      <p class="text-slate-500 text-sm">Start the conversation — describe what you want to understand,
+    <div id="chatlog" class="flex-1 overflow-y-auto space-y-3 pr-1 mb-2">
+      <p id="chatempty" class="text-slate-500 text-sm {% if messages %}hidden{% endif %}">Start the conversation — describe what you want to understand,
         and the assistant will help you shape a concrete research plan.</p>
-      {% endif %}
       {% for m in messages %}
       <div class="flex {% if m.role == 'user' %}justify-end{% endif %}">
-        <div class="max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap
-          {% if m.role == 'user' %}bg-emerald-600/20 border border-emerald-600/30 text-slate-100{% else %}bg-slate-800/60 border border-slate-700 text-slate-200{% endif %}">{{ m.content }}</div>
+        <div class="max-w-[85%] rounded-lg px-3 py-2 text-sm
+          {% if m.role == 'user' %}whitespace-pre-wrap bg-emerald-600/20 border border-emerald-600/30 text-slate-100{% else %}md-body bg-slate-800/60 border border-slate-700 text-slate-200{% endif %}"
+          {% if m.role != 'user' %}data-md{% endif %}>{{ m.content }}</div>
       </div>
       {% endfor %}
       <span id="bottom"></span>
     </div>
 
-    <form method="post" action="/research/{{ t.id }}/chat" class="flex items-end gap-2">
-      <textarea name="message" rows="2" required {% if not chat_ready %}disabled{% endif %}
-                placeholder="{% if chat_ready %}Ask, refine, or agree the plan…{% else %}Chat not configured (set TST_DEEPSEEK_API_KEY){% endif %}"
-                class="flex-1 rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm focus:border-emerald-500 outline-none"></textarea>
-      <button {% if not chat_ready %}disabled{% endif %}
+    <form id="chatform" method="post" action="/research/{{ t.id }}/chat" class="flex items-end gap-2">
+      <textarea id="chatinput" name="message" rows="2" required {% if not chat_ready %}disabled{% endif %}
+                placeholder="{% if chat_ready %}Ask, refine, or agree the plan…  (Enter to send, Shift+Enter for newline){% else %}Chat not configured{% endif %}"
+                class="flex-1 rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm focus:border-emerald-500 outline-none resize-none"></textarea>
+      <button id="chatsend" {% if not chat_ready %}disabled{% endif %}
               class="rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 px-4 py-2 text-sm font-medium">Send</button>
     </form>
   </section>
@@ -60,7 +60,7 @@
       <div class="flex items-center gap-2 mb-2">
         <h2 class="text-sm font-semibold text-white">Research plan</h2>
         <form method="post" action="/research/{{ t.id }}/plan/draft" class="ml-auto">
-          <button {% if not chat_ready or not messages %}disabled{% endif %}
+          <button id="draftbtn" {% if not chat_ready or not messages %}disabled{% endif %}
                   class="text-[11px] px-2.5 py-0.5 rounded border border-sky-500/50 text-sky-300 hover:bg-sky-500/10 disabled:opacity-40 transition"
                   title="Distil the chat into a plan">Draft from chat</button>
         </form>
@@ -124,4 +124,125 @@
 
   </div>
 </div>
+
+{# ---------------- chatbot: markdown rendering + async send ---------------- #}
+<style>
+  /* markdown body inside assistant bubbles */
+  .md-body { line-height: 1.5; }
+  .md-body > :first-child { margin-top: 0; }
+  .md-body > :last-child { margin-bottom: 0; }
+  .md-body p { margin: 0 0 .5rem; }
+  .md-body ul, .md-body ol { margin: .25rem 0 .5rem; padding-left: 1.25rem; }
+  .md-body ul { list-style: disc; }
+  .md-body ol { list-style: decimal; }
+  .md-body li { margin: .15rem 0; }
+  .md-body h1, .md-body h2, .md-body h3, .md-body h4 { font-weight: 600; color: #fff; margin: .6rem 0 .3rem; line-height: 1.3; }
+  .md-body h1 { font-size: 1.02rem; } .md-body h2 { font-size: .97rem; } .md-body h3 { font-size: .92rem; }
+  .md-body strong { color: #fff; font-weight: 600; }
+  .md-body a { color: #5eead4; text-decoration: underline; }
+  .md-body code { background: rgba(148,163,184,.16); padding: .05rem .3rem; border-radius: .25rem; font-size: .85em; }
+  .md-body pre { background: rgba(2,6,23,.6); border: 1px solid rgba(148,163,184,.2); border-radius: .4rem; padding: .55rem .65rem; overflow-x: auto; margin: .3rem 0 .55rem; }
+  .md-body pre code { background: none; padding: 0; font-size: .82em; }
+  .md-body blockquote { border-left: 2px solid rgba(148,163,184,.4); padding-left: .5rem; color: #cbd5e1; margin: .3rem 0; }
+  .md-body table { border-collapse: collapse; margin: .3rem 0; font-size: .9em; }
+  .md-body th, .md-body td { border: 1px solid rgba(148,163,184,.25); padding: .2rem .45rem; text-align: left; }
+  /* animated "thinking" ellipsis + dot */
+  @keyframes th-ell { 0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75%, 100% { content: '...'; } }
+  .th-dots::after { content: ''; display: inline-block; width: 1.1em; text-align: left; animation: th-ell 1.2s steps(1, end) infinite; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+<script>
+(function () {
+  var panel = document.getElementById('chatpanel');
+  if (!panel || !window.marked || !window.DOMPurify) return;
+  var topic = panel.dataset.topic, mode = panel.dataset.mode;
+  var log = document.getElementById('chatlog');
+  var bottom = document.getElementById('bottom');
+  var form = document.getElementById('chatform');
+  var input = document.getElementById('chatinput');
+  var sendBtn = document.getElementById('chatsend');
+
+  function md(text) { return DOMPurify.sanitize(marked.parse((text || '').trim())); }
+  function toBottom() { bottom.scrollIntoView({ block: 'end' }); }
+
+  // render server-supplied assistant messages (raw markdown text -> HTML)
+  document.querySelectorAll('#chatlog [data-md]').forEach(function (el) {
+    el.innerHTML = md(el.textContent);
+  });
+  toBottom();
+
+  function addBubble(role, text, isMd) {
+    var wrap = document.createElement('div');
+    wrap.className = 'flex' + (role === 'user' ? ' justify-end' : '');
+    var inner = document.createElement('div');
+    inner.className = 'max-w-[85%] rounded-lg px-3 py-2 text-sm ' + (role === 'user'
+      ? 'whitespace-pre-wrap bg-emerald-600/20 border border-emerald-600/30 text-slate-100'
+      : 'md-body bg-slate-800/60 border border-slate-700 text-slate-200');
+    if (isMd) { inner.innerHTML = md(text); }
+    else { inner.textContent = text; }
+    wrap.appendChild(inner);
+    log.insertBefore(wrap, bottom);
+    return wrap;
+  }
+
+  function addThinking() {
+    var wrap = document.createElement('div');
+    wrap.className = 'flex';
+    wrap.innerHTML =
+      '<div class="max-w-[85%] rounded-lg px-3 py-2 text-sm bg-slate-800/60 border border-slate-700 text-slate-400">' +
+        '<span class="th-dots">Nous Hermes is thinking</span> <span class="th-el text-slate-500">0s</span>' +
+        (mode === 'agent'
+          ? '<div class="text-[11px] text-slate-500 mt-1">reading the filings — this can take up to a minute…</div>'
+          : '') +
+      '</div>';
+    log.insertBefore(wrap, bottom);
+    return wrap;
+  }
+
+  function autosize() { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 160) + 'px'; }
+  input.addEventListener('input', autosize);
+
+  var busy = false;
+  async function send() {
+    var msg = (input.value || '').trim();
+    if (!msg || busy || input.disabled) return;
+    busy = true;
+    var empty = document.getElementById('chatempty'); if (empty) empty.classList.add('hidden');
+    input.value = ''; autosize();
+    input.disabled = true; sendBtn.disabled = true;
+    addBubble('user', msg, false); toBottom();
+
+    var t0 = Date.now();
+    var ind = addThinking(); toBottom();
+    var timer = setInterval(function () {
+      var el = ind.querySelector('.th-el');
+      if (el) el.textContent = Math.round((Date.now() - t0) / 1000) + 's';
+    }, 1000);
+
+    try {
+      var res = await fetch('/research/' + topic + '/chat.json', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ message: msg })
+      });
+      var data = {};
+      try { data = await res.json(); } catch (e) {}
+      ind.remove(); clearInterval(timer);
+      addBubble('assistant', data.content || '⚠️ Empty reply — please try again.', true);
+      var draft = document.getElementById('draftbtn'); if (draft) draft.disabled = false;
+    } catch (e) {
+      ind.remove(); clearInterval(timer);
+      addBubble('assistant', '⚠️ Network error — please try again.', false);
+    } finally {
+      input.disabled = false; sendBtn.disabled = false; busy = false; input.focus(); toBottom();
+    }
+  }
+
+  form.addEventListener('submit', function (e) { e.preventDefault(); send(); });
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+  });
+})();
+</script>
 {% endblock %}
