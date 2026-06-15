@@ -113,7 +113,8 @@
   var clearMark = document.getElementById('clearMark');
 
   var chart = LightweightCharts.createChart(el, {
-    autoSize: true,
+    width: el.clientWidth || el.offsetWidth || 800,
+    height: 440,
     layout: { background: { color: '#0f172a' }, textColor: '#94a3b8' },
     grid: { vertLines: { color: 'rgba(148,163,184,0.08)' }, horzLines: { color: 'rgba(148,163,184,0.08)' } },
     rightPriceScale: { borderColor: 'rgba(148,163,184,0.2)' },
@@ -123,6 +124,12 @@
     upColor: '#10b981', downColor: '#ef4444', borderVisible: false,
     wickUpColor: '#10b981', wickDownColor: '#ef4444'
   });
+  // keep the chart width synced to the container (explicit sizing — autoSize can
+  // resolve to a 0-height canvas in some layouts, hiding the candles).
+  function syncSize() { chart.applyOptions({ width: el.clientWidth || el.offsetWidth || 800, height: 440 }); }
+  window.addEventListener('resize', syncSize);
+  if (window.ResizeObserver) { new ResizeObserver(syncSize).observe(el); }
+  setTimeout(syncSize, 50);   // one tick after layout settles
 
   var loaded = [];            // [{time,t,open,...}]
   var timeToIso = new Map();  // normalized LWC time -> ISO t

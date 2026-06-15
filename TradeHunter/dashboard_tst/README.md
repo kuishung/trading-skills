@@ -124,6 +124,13 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-15 — v2.89: Pattern Trainer chart fix (explicit sizing)
+- The Lightweight Charts candles weren't visible on `/patterns` even though the
+  `/bars` endpoint returned valid data: `autoSize: true` was resolving the canvas
+  to **0 height** in this layout, so the chart painted into nothing. Switched to
+  **explicit `width`/`height`** at `createChart` + a `ResizeObserver`/`resize`
+  width-sync (`pattern_detail.html`). No backend change.
+
 ### 2026-06-15 — v2.88: Pattern Trainer (Phase 1 — teach a pattern on a parquet chart)
 - New members page **/patterns** (`routes/patterns.py`, `patterns.html`,
   `pattern_detail.html`, nav item, `Pattern`/`PatternLesson` models + Alembic
