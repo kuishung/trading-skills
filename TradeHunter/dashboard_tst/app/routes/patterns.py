@@ -51,6 +51,8 @@ templates = Jinja2Templates(
 _TIMEFRAMES = ("daily", "3min", "1min")
 # default lookback window per timeframe (keeps the payload bounded)
 _WINDOW_DAYS = {"daily": 1825, "3min": 60, "1min": 10}
+# cap the default-window bar count per timeframe (bounds the JSON payload)
+_MAX_BARS = {"daily": 2500, "3min": 5000, "1min": 3000}
 
 
 def _slugify(name: str) -> str:
@@ -85,24 +87,33 @@ def _to_lwc_time(t_iso: str, tf: str):
 
 
 def _load_window(symbol: str, tf: str, start: str | None, end: str | None) -> list[dict]:
-    """Load bars for symbol@tf. If start/end omitted, use the recent default
-    window for that timeframe (bounded payload)."""
+    """Load bars for symbol@tf. With explicit start+end (a marked region) load
+    exactly that range. Otherwise load the recent default window for that
+    timeframe (bounded by days + a bar-count cap).
+
+    NB: we deliberately do NOT use `available_range_fast` to find the window —
+    it returns None for parquet files written without `t` column statistics
+    (the intraday seeds), which would wrongly yield "no bars". We read the file
+    and slice from the actual last bar instead, so it works regardless."""
     if bars_store is None:
         return []
     symbol = symbol.upper().strip()
     if not symbol:
         return []
-    if start is None or end is None:
-        rng = bars_store.available_range_fast(symbol, timeframe=tf)
-        if not rng:
-            return []
-        first_iso, last_iso = rng
-        end = end or last_iso
-        if start is None:
-            last_dt = _dt.datetime.fromisoformat(last_iso.replace("Z", "+00:00"))
-            start_dt = last_dt - _dt.timedelta(days=_WINDOW_DAYS.get(tf, 60))
-            start = start_dt.isoformat()
-    return bars_store.load_bars(symbol, start=start, end=end, timeframe=tf)
+    if start and end:
+        return bars_store.load_bars(symbol, start=start, end=end, timeframe=tf)
+
+    bars = bars_store.load_bars(symbol, timeframe=tf)
+    if not bars:
+        return []
+    last_iso = bars[-1]["t"]
+    try:
+        last_dt = _dt.datetime.fromisoformat(last_iso.replace("Z", "+00:00"))
+        cutoff = (last_dt - _dt.timedelta(days=_WINDOW_DAYS.get(tf, 60))).isoformat()
+        bars = [b for b in bars if b["t"] >= cutoff]
+    except Exception:
+        pass
+    return bars[-_MAX_BARS.get(tf, 5000):]
 
 
 # --------------------------------------------------------------------------- #

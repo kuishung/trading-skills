@@ -124,6 +124,15 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-15 — v2.90: Pattern Trainer intraday bars fix (no-stats parquet)
+- `/patterns` chart returned "no bars" for **3min/1min** even though the files
+  exist (daily worked). Cause: `_load_window` used `bars_store.available_range_fast`
+  to find the default window, but that returns `None` for parquet written without
+  `t` column statistics (the intraday seeds), so the route bailed. Now it reads
+  the file and slices from the actual last bar (windowed by `_WINDOW_DAYS` + capped
+  by `_MAX_BARS`), independent of column stats. Marked-region loads (explicit
+  start+end) are unchanged.
+
 ### 2026-06-15 — v2.89: Pattern Trainer chart fix (explicit sizing)
 - The Lightweight Charts candles weren't visible on `/patterns` even though the
   `/bars` endpoint returned valid data: `autoSize: true` was resolving the canvas
