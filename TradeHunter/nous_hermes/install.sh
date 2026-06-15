@@ -60,6 +60,26 @@ for helper in heartbeat.sh matp_status.sh; do
   fi
 done
 
+# --- research-runner shim (LAN-only agent-grounded chat for the Research page) -
+# Copy server.py + the systemd unit template into ~/.hermes/research_runner/.
+# Starting the service is a one-time manual step (see research_runner/README.md)
+# because it needs a token in ~/.hermes/.env first.
+RR_SRC="$SCRIPT_DIR/research_runner"
+RR_DEST="$HERMES_HOME/research_runner"
+if [ -d "$RR_SRC" ]; then
+  mkdir -p "$RR_DEST"
+  cp "$RR_SRC/server.py" "$RR_DEST/server.py"
+  cp "$RR_SRC/research-runner.service" "$RR_DEST/research-runner.service"
+  echo "Installed research-runner shim: $RR_DEST/server.py"
+  if grep -q '^TST_RESEARCH_TOKEN=' "$HERMES_HOME/.env" 2>/dev/null; then
+    echo "  research-runner token: present in ~/.hermes/.env."
+    echo "  (Re)start it with:  systemctl --user restart research-runner"
+  else
+    echo "  research-runner token: NOT set. See research_runner/README.md to set"
+    echo "  TST_RESEARCH_TOKEN and start the systemd user service."
+  fi
+fi
+
 # Schedule the liveness heartbeat (every 3 min) if not already in the crontab.
 HB_DEST="$HERMES_HOME/heartbeat.sh"
 if [ -f "$HB_DEST" ]; then

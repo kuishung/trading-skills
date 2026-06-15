@@ -149,6 +149,23 @@ class Settings:
         default_factory=lambda: os.environ.get("TST_DEEPSEEK_MODEL", "deepseek-chat")
     )
 
+    # --- Research chat: agent-grounded mode (optional) ---
+    # When TST_RESEARCH_RUNNER_URL is set, the Research planning chat is relayed
+    # to the LAN-only research-runner shim on the Nous agent (Linux box) instead
+    # of calling DeepSeek directly. The shim runs the REAL Hermes agent, so the
+    # chat can read the EDGAR 10-Q corpus on demand. If the runner is unset or
+    # unreachable, the chat falls back to DeepSeek-direct (deepseek_* above).
+    # The token must match TST_RESEARCH_TOKEN in the runner's ~/.hermes/.env.
+    research_runner_url: str | None = field(
+        default_factory=lambda: os.environ.get("TST_RESEARCH_RUNNER_URL")
+    )
+    research_runner_token: str | None = field(
+        default_factory=lambda: os.environ.get("TST_RESEARCH_TOKEN")
+    )
+    research_runner_timeout: float = field(
+        default_factory=lambda: float(os.environ.get("TST_RESEARCH_RUNNER_TIMEOUT", "150"))
+    )
+
     # Session cookie. Set TST_HTTPS_ONLY=1 only when served over TLS; over a
     # Hamachi VPN on plain http it must stay 0 (the VPN tunnel is encrypted).
     session_cookie: str = "tst_session"

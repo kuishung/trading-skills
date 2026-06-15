@@ -26,8 +26,20 @@ CLI + SSH); this folder is the source of truth that gets deployed there.
     and pushes via `X-API-Key`. Scheduled by `hermes cron` (monthly + optional
     daily earnings-aware). Needs `TRADEHUNTER_URL` + `TST_INGEST_API_KEY` set on
     the box.
-- `install.sh` — copies `skills/` into `~/.hermes/skills/` on the server, and
-  deploys `heartbeat.sh` to `~/.hermes/heartbeat.sh` (+ prints its cron line).
+  - `markets/research-planning/` — the **research-planning skill** (v1.0.0). The
+    agent-grounded planning chat behind TradeHunter's **Research** page. Co-designs
+    one research topic (macro/company) into a runnable PLAN; reads the EDGAR 10-Q
+    corpus at `/mnt/hermes_sync/QuarterlyReport/<TICKER>/…` **on demand** + web.
+    Invoked via the research-runner shim (`hermes chat -q … -s research-planning`).
+- `research_runner/` — the **LAN-only HTTP shim** that lets the (outbound-only)
+  dashboard get an agent-grounded chat reply over the LAN. `server.py` (stdlib
+  `http.server`, token-auth, `POST /chat`) + `research-runner.service` (systemd
+  user unit) + its own README. See that README for the one-time token + systemd
+  setup. Pairs with dashboard_tst v2.86's runner-mode chat relay.
+- `install.sh` — copies `skills/` into `~/.hermes/skills/` on the server,
+  deploys `heartbeat.sh` + `matp_status.sh` to `~/.hermes/`, and copies the
+  `research_runner/` shim to `~/.hermes/research_runner/` (+ prints its cron/setup
+  lines).
 - `heartbeat.sh` — standalone liveness ping for TradeHunter's `/agent` page.
   Runs from **system cron** (every 3 min), independent of the Hermes LLM, so the
   online/stale signal can't be derailed by model shell-mangling or the agent's
@@ -115,6 +127,19 @@ Edit files here, redeploy (scp / git pull → `bash install.sh`), then re-test w
 recreate the cron job unless the schedule or delivery target changes.
 
 ## Changelog
+- **2026-06-15** — Added the **`markets/research-planning` skill (v1.0.0)** + the
+  **`research_runner/` LAN shim** — the agent-grounded chat behind TradeHunter's
+  Research page. The dashboard is outbound-only, so for the planning chat it now
+  POSTs the conversation to `research_runner/server.py` (stdlib `http.server`,
+  `X-Research-Token` auth, LAN-bound, systemd user service) which runs
+  `hermes chat -q "<conversation>" -s research-planning -Q --max-turns 12 --yolo`.
+  The agent reads the EDGAR 10-Q corpus on the mount **on demand**, so planning is
+  grounded in the real filings. `install.sh` now also deploys the shim to
+  `~/.hermes/research_runner/`. One-time setup (token + `systemctl --user enable
+  --now research-runner`) is in `research_runner/README.md`. Pairs with
+  dashboard_tst **v2.86** (`research_llm` runner-mode relay + DeepSeek-direct
+  fallback + the chat-mode pill). MVP is synchronous (replies take 15–60s) and
+  stateless per turn; per-topic session memory + async UX are noted follow-ups.
 - **2026-06-01** — Added **`matp_status.sh`** + `markets/matp` skill → **v1.7.1**.
   The agent drives TradeHunter's `/agent`-page progress bar by POSTing
   `/api/refresh-queue/{id}/status` as it works, but letting DeepSeek hand-build

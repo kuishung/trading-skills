@@ -1,0 +1,30 @@
+# research-runner systemd unit — LAN-only agent-grounded chat shim for TradeHunter.
+#
+# Install (on the Nous agent / Linux box):
+#   mkdir -p ~/.config/systemd/user
+#   cp ~/.hermes/research_runner/research-runner.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now research-runner
+#   loginctl enable-linger administrator        # keep it running without an active login
+#
+# Logs:  journalctl --user -u research-runner -f   (also ~/.hermes/logs/research_runner.log)
+#
+# It reads its token (TST_RESEARCH_TOKEN) + overrides from ~/.hermes/.env, so no
+# secrets live in this unit. `install.sh` copies server.py to
+# ~/.hermes/research_runner/server.py.
+
+[Unit]
+Description=TradeHunter research-runner (LAN-only agent-grounded chat shim)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/env python3 %h/.hermes/research_runner/server.py
+Restart=on-failure
+RestartSec=5
+# Give hermes (often in ~/.local/bin) a sane PATH:
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target

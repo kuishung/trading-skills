@@ -124,6 +124,31 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-15 — v2.86: Research chat — agent-grounded mode (reads the 10-Q corpus)
+- The planning chat can now be **relayed to the Nous agent** instead of calling
+  DeepSeek blind. When `TST_RESEARCH_RUNNER_URL` (+ `TST_RESEARCH_TOKEN`) are set,
+  `services/research_llm.chat()` POSTs the conversation to the LAN-only
+  `research-runner` shim on the Linux box, which runs the real Hermes agent
+  (`hermes chat -q … -s research-planning`). That agent reads the EDGAR 10-Q
+  corpus at `/mnt/hermes_sync/QuarterlyReport/<TICKER>/…` **on demand**, so the
+  chat is grounded in the actual filings. (Agent-side pieces live in
+  `nous_hermes/research_runner/` + the `markets/research-planning` skill.)
+- **DeepSeek-direct is now the fallback**, not the only path: used when no runner
+  is configured OR when the runner is unreachable/errors — so the page never
+  breaks. `research_llm` refactored into `_chat_runner()` + `_chat_deepseek()`,
+  with `runner_enabled()` / `chat_mode()` helpers.
+- **Dashboard-visibility:** the planning-chat header shows a mode pill —
+  *agent-grounded* (emerald) vs *DeepSeek (direct)* (slate) — so the user can see
+  which brain is answering (`research_detail.html`, driven by `chat_mode`).
+- DeepSeek-direct error messages now surface the API's real reason (e.g.
+  *HTTP 401: Authentication Fails* / *402: Insufficient Balance*) instead of a
+  bare code, and the key is `.strip()`-ed before use (a trailing space in `.env`
+  had masqueraded as a bad key).
+- New config (`config.py`): `TST_RESEARCH_RUNNER_URL`, `TST_RESEARCH_TOKEN`,
+  `TST_RESEARCH_RUNNER_TIMEOUT` (default 150s). All optional — unset = prior
+  DeepSeek-direct behaviour. Note: agent-grounded replies take **15–60s** (the
+  agent runs a tool-calling loop); async UX is a deferred follow-up.
+
 ### 2026-06-13 — v2.85: Research page (Phase 1 — chat → plan → queue)
 - New members-facing **/research** page (`routes/research.py`, `research.html`,
   `research_detail.html`, nav item): create a macro/company research topic, chat

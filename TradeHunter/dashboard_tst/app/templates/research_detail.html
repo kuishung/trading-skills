@@ -21,7 +21,13 @@
   {# ---------------- LEFT: planning chat ---------------- #}
   <section class="rounded-lg border border-slate-800 bg-slate-900/40 p-3 flex flex-col" style="max-height:70vh">
     <h2 class="text-sm font-semibold text-white mb-2">Planning chat
-      <span class="text-[11px] text-slate-500 font-normal">· Nous Hermes (DeepSeek)</span></h2>
+      {% if chat_mode == 'agent' %}
+      <span class="text-[11px] px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-normal"
+            title="Relayed to the Nous agent — reads the EDGAR 10-Q corpus on demand. Replies take longer.">· Nous Hermes · agent-grounded</span>
+      {% elif chat_mode == 'direct' %}
+      <span class="text-[11px] px-1.5 py-0.5 rounded bg-slate-700/40 border border-slate-600 text-slate-400 font-normal"
+            title="Direct DeepSeek API — fast, but no access to the filings corpus.">· Nous Hermes · DeepSeek (direct)</span>
+      {% endif %}</h2>
 
     <div class="flex-1 overflow-y-auto space-y-3 pr-1 mb-2">
       {% if not messages %}

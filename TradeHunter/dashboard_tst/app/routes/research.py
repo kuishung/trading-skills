@@ -41,6 +41,11 @@ _KINDS = (RESEARCH_COMPANY, RESEARCH_MACRO)
 _SOURCE_OPTIONS = ("edgar", "matp", "bars", "web")
 
 
+def _topic_context(t: ResearchTopic) -> dict:
+    """Minimal topic info the agent runner needs to ground the chat."""
+    return {"kind": t.kind, "subject": t.subject, "title": t.title}
+
+
 def _get_topic(db: Session, topic_id: int, user: User) -> ResearchTopic:
     """Fetch a topic the user may see/edit (owner, or any moderator/admin)."""
     t = db.get(ResearchTopic, topic_id)
@@ -64,7 +69,8 @@ def research_home(
     return templates.TemplateResponse(
         request, "research.html",
         {"user": user, "topics": topics, "kinds": _KINDS,
-         "chat_ready": research_llm.is_configured()},
+         "chat_ready": research_llm.is_configured(),
+         "chat_mode": research_llm.chat_mode()},
     )
 
 
@@ -104,7 +110,8 @@ def topic_detail(
         request, "research_detail.html",
         {"user": user, "t": t, "messages": t.messages, "runs": t.runs,
          "source_options": _SOURCE_OPTIONS,
-         "chat_ready": research_llm.is_configured()},
+         "chat_ready": research_llm.is_configured(),
+         "chat_mode": research_llm.chat_mode()},
     )
 
 
@@ -129,7 +136,7 @@ def post_chat(
                for m in db.query(ResearchMessage)
                .filter(ResearchMessage.topic_id == t.id)
                .order_by(ResearchMessage.seq).all()]
-    reply = research_llm.chat(history)
+    reply = research_llm.chat(history, topic=_topic_context(t))
 
     db.add(ResearchMessage(topic_id=t.id, seq=next_seq + 1, role="assistant",
                            content=reply["content"]))
@@ -151,7 +158,7 @@ def draft_plan(
         "Summarise everything we agreed as the research PLAN for this topic, in "
         "Markdown: a one-line objective, numbered research steps, the data sources "
         "to use, and what the final output should answer. Plan only — no preamble.")})
-    reply = research_llm.chat(history)
+    reply = research_llm.chat(history, topic=_topic_context(t))
     if reply["ok"]:
         t.plan_md = reply["content"]
         if t.status == RT_DRAFT:

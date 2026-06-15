@@ -3,6 +3,32 @@
 Status: **Phase 1 BUILT** (2026-06-13, dashboard side). Architecture corrected
 below after discovering the existing integration is **outbound-only**.
 
+> **UPDATE 2026-06-15 — agent-grounded planning chat (Option B, built).** The
+> Phase-1 chat was DeepSeek-direct and *blind* (no corpus). User chose to make the
+> chat itself **agent-grounded** so it can read the EDGAR 10-Q corpus while
+> planning. Resolving Q1 below: the Nous agent's `hermes` CLI **can be driven
+> non-interactively** (`hermes chat -q "<prompt>" -Q --max-turns N --yolo`,
+> `-s <skill>` to preload a persona), and it already has the corpus on its mount.
+> So the "Runner" is **not** a from-scratch DeepSeek+tools service — it's a thin
+> **LAN-only HTTP shim** (`nous_hermes/research_runner/server.py`, stdlib only)
+> that shells out to `hermes chat` and relays the answer. Data is pulled **on
+> demand** (the agent reads a filing only when the question needs it), not
+> pre-injected. Decisions for this slice:
+> - **Where:** chat computation on the **Linux box** (Nous agent), page+auth+DB on
+>   the dashboard. The dashboard relays `POST /chat` over the LAN; the page is NOT
+>   mirrored to the Linux box (it stays the only internet-facing surface).
+> - **Brain:** still DeepSeek (the agent's own model) — the win is corpus access,
+>   not a different model.
+> - **Skill:** `nous_hermes/skills/markets/research-planning/SKILL.md` carries the
+>   planning persona + the corpus path (`/mnt/hermes_sync/QuarterlyReport/<T>/…`).
+> - **Fallback:** if the runner is unset/unreachable, the dashboard falls back to
+>   DeepSeek-direct, so the page never breaks.
+> - **MVP scope:** synchronous (replies 15–60s) + stateless per turn. Deferred:
+>   per-topic `hermes chat -c` session memory (avoid re-reading filings), async
+>   UX (poll/SSE), and MATP/bars read tools (need a GET endpoint first).
+> Corpus layout confirmed on the box: `QuarterlyReport/<TICKER>/<TICKER>_10Q_<YYYY>-Q<N>.md`,
+> plus `RawFilings/`, `ObsidianVault/`, `_edgar_earnings_cache.json` on the mount.
+
 > **ARCHITECTURE CORRECTION (2026-06-13).** The first draft assumed the dashboard
 > would relay chat/runs *into* a Runner service on the Nous agent. But the existing
 > platform is deliberately **outbound-only** — the agent polls the dashboard
