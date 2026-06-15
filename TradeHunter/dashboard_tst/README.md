@@ -124,6 +124,14 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-15 — v2.92: Pattern Trainer — daily back in dropdown + /bars diagnostic
+- Re-added **Daily** to the timeframe dropdown → now **Daily / 3-min / 5-min**
+  (`_TIMEFRAMES`, default chart timeframe back to daily).
+- When `/patterns/{id}/bars` returns no bars, the JSON now includes a `debug`
+  block (`root`, `path`, `path_exists`, `n_symbols_tf`) so a data-root / path
+  mismatch can be diagnosed from the response itself. (Temporary aid while
+  tracking down intraday "no bars" on Hermes.)
+
 ### 2026-06-15 — v2.91: Pattern Trainer timeframes → 3-min / 5-min
 - Switched the Pattern Trainer chart timeframes to **3-min and 5-min** (both fully
   seeded at ~1,509 symbols), dropping daily and the mostly-empty 1-min (only ~58

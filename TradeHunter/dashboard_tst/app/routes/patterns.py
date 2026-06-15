@@ -51,7 +51,7 @@ templates = Jinja2Templates(
 # Offered timeframes = the ones actually seeded in the store at ~1500 symbols.
 # (daily + 1min are in the store too but 1min is only ~58 symbols; re-add either
 # here if needed — _WINDOW_DAYS/_MAX_BARS already carry sane defaults for them.)
-_TIMEFRAMES = ("3min", "5min")
+_TIMEFRAMES = ("daily", "3min", "5min")
 # default lookback window per timeframe (keeps the payload bounded)
 _WINDOW_DAYS = {"daily": 1825, "5min": 60, "3min": 60, "1min": 10}
 # cap the default-window bar count per timeframe (bounds the JSON payload)
@@ -190,8 +190,20 @@ def pattern_bars(pattern_id: int,
     p.chart_timeframe = tf
     db.commit()
 
-    return JSONResponse({"ok": True, "symbol": symbol.upper().strip(), "tf": tf,
-                         "count": len(bars), "bars": bars})
+    resp = {"ok": True, "symbol": symbol.upper().strip(), "tf": tf,
+            "count": len(bars), "bars": bars}
+    if not bars:  # diagnostic: surface exactly what path the app resolved
+        try:
+            sp = bars_store._symbol_path(symbol.upper().strip(), tf)
+            resp["debug"] = {
+                "root": str(bars_store.PRICE_HISTORY_ROOT),
+                "path": str(sp),
+                "path_exists": sp.exists(),
+                "n_symbols_tf": len(bars_store.list_symbols(tf)),
+            }
+        except Exception as exc:  # noqa: BLE001
+            resp["debug"] = {"err": repr(exc)}
+    return JSONResponse(resp)
 
 
 # --------------------------------------------------------------------------- #
