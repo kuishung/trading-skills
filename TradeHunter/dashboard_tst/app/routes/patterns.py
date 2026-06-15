@@ -48,11 +48,14 @@ templates = Jinja2Templates(
     directory=str(Path(__file__).resolve().parent.parent / "templates")
 )
 
-_TIMEFRAMES = ("daily", "3min", "1min")
+# Offered timeframes = the ones actually seeded in the store at ~1500 symbols.
+# (daily + 1min are in the store too but 1min is only ~58 symbols; re-add either
+# here if needed — _WINDOW_DAYS/_MAX_BARS already carry sane defaults for them.)
+_TIMEFRAMES = ("3min", "5min")
 # default lookback window per timeframe (keeps the payload bounded)
-_WINDOW_DAYS = {"daily": 1825, "3min": 60, "1min": 10}
+_WINDOW_DAYS = {"daily": 1825, "5min": 60, "3min": 60, "1min": 10}
 # cap the default-window bar count per timeframe (bounds the JSON payload)
-_MAX_BARS = {"daily": 2500, "3min": 5000, "1min": 3000}
+_MAX_BARS = {"daily": 2500, "5min": 4000, "3min": 5000, "1min": 3000}
 
 
 def _slugify(name: str) -> str:
@@ -173,7 +176,7 @@ def pattern_bars(pattern_id: int,
                  user: User = Depends(require_user), db: Session = Depends(get_db)):
     p = _get_pattern(db, pattern_id, user)
     if tf not in _TIMEFRAMES:
-        tf = "daily"
+        tf = _TIMEFRAMES[0]
     if bars_store is None:
         return JSONResponse({"ok": False, "error": "bars store unavailable", "bars": []},
                             status_code=503)

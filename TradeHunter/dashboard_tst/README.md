@@ -124,6 +124,13 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-15 — v2.91: Pattern Trainer timeframes → 3-min / 5-min
+- Switched the Pattern Trainer chart timeframes to **3-min and 5-min** (both fully
+  seeded at ~1,509 symbols), dropping daily and the mostly-empty 1-min (only ~58
+  symbols seeded). `_TIMEFRAMES`, window/cap maps, the no-match fallback, and the
+  dropdown labels updated. daily/1min defaults remain in the maps so either can be
+  re-added by listing it in `_TIMEFRAMES`.
+
 ### 2026-06-15 — v2.90: Pattern Trainer intraday bars fix (no-stats parquet)
 - `/patterns` chart returned "no bars" for **3min/1min** even though the files
   exist (daily worked). Cause: `_load_window` used `bars_store.available_range_fast`

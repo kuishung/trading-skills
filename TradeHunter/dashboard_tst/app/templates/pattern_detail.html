@@ -19,7 +19,7 @@
 
 {# ---------------- chart ---------------- #}
 <section id="chartwrap" data-pattern="{{ p.id }}"
-         data-symbol="{{ p.chart_symbol or '' }}" data-tf="{{ p.chart_timeframe or 'daily' }}"
+         data-symbol="{{ p.chart_symbol or '' }}" data-tf="{{ p.chart_timeframe or '3min' }}"
          class="rounded-lg border border-slate-800 bg-slate-900/40 p-3 mb-4">
   <div class="flex flex-wrap items-end gap-2 mb-2">
     <div>
@@ -31,7 +31,7 @@
       <label class="block text-[11px] text-slate-500 mb-1">Timeframe</label>
       <select id="tfSelect" class="rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm focus:border-emerald-500 outline-none">
         {% for tf in timeframes %}
-        <option value="{{ tf }}" {% if p.chart_timeframe == tf %}selected{% endif %}>{{ {'daily':'Daily','3min':'3-min','1min':'1-min'}[tf] }}</option>
+        <option value="{{ tf }}" {% if p.chart_timeframe == tf %}selected{% endif %}>{{ {'daily':'Daily','5min':'5-min','3min':'3-min','1min':'1-min'}[tf] }}</option>
         {% endfor %}
       </select>
     </div>
