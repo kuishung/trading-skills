@@ -124,6 +124,19 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-15 — v2.93: Pattern Trainer — fix empty pattern-id in chart fetch (the real "no bars" cause)
+- **THE root cause of every "no bars" on the chart:** the chart JS read the
+  pattern id from the `data-pattern` attribute, which resolved **empty** at
+  runtime, so every request went to `/patterns//bars` (double slash) → **404** →
+  the frontend rendered that as "no bars" for *every* symbol/timeframe. The
+  backend was always returning data; the request never reached it. Fix: derive
+  the id from the page URL (`/patterns/<id>`) with the attribute as fallback
+  (`pattern_detail.html`).
+- Also hardened caching (found while diagnosing): the chart `fetch()` uses
+  `cache:'no-store'` + a `_=<ts>` buster, and `/bars` sends `Cache-Control:
+  no-store` (`routes/patterns.py`) so a stale empty response can't stick.
+- Removed the temporary v2.92 `/bars` debug block.
+
 ### 2026-06-15 — v2.92: Pattern Trainer — daily back in dropdown + /bars diagnostic
 - Re-added **Daily** to the timeframe dropdown → now **Daily / 3-min / 5-min**
   (`_TIMEFRAMES`, default chart timeframe back to daily).

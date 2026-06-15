@@ -103,7 +103,9 @@
 (function () {
   // ---------- chart ----------
   var wrap = document.getElementById('chartwrap');
-  var pid = wrap.dataset.pattern;
+  // Derive the pattern id from the URL (/patterns/<id>) — robust even if the
+  // data-pattern attribute is empty/stale. Falls back to the attribute.
+  var pid = (location.pathname.match(/\/patterns\/(\d+)/) || [])[1] || wrap.dataset.pattern || '';
   var el = document.getElementById('chart');
   var symInput = document.getElementById('symInput');
   var tfSelect = document.getElementById('tfSelect');
@@ -149,7 +151,7 @@
     status.textContent = 'loading…';
     clearMarking();
     try {
-      var res = await fetch('/patterns/' + pid + '/bars?symbol=' + encodeURIComponent(sym) + '&tf=' + tf);
+      var res = await fetch('/patterns/' + pid + '/bars?symbol=' + encodeURIComponent(sym) + '&tf=' + tf + '&_=' + Date.now(), { cache: 'no-store' });
       var d = await res.json();
       if (!d.ok || !d.bars || !d.bars.length) { status.textContent = 'no bars for ' + sym + ' @ ' + tf; series.setData([]); loaded = []; return; }
       loaded = d.bars;

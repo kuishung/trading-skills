@@ -190,20 +190,13 @@ def pattern_bars(pattern_id: int,
     p.chart_timeframe = tf
     db.commit()
 
-    resp = {"ok": True, "symbol": symbol.upper().strip(), "tf": tf,
-            "count": len(bars), "bars": bars}
-    if not bars:  # diagnostic: surface exactly what path the app resolved
-        try:
-            sp = bars_store._symbol_path(symbol.upper().strip(), tf)
-            resp["debug"] = {
-                "root": str(bars_store.PRICE_HISTORY_ROOT),
-                "path": str(sp),
-                "path_exists": sp.exists(),
-                "n_symbols_tf": len(bars_store.list_symbols(tf)),
-            }
-        except Exception as exc:  # noqa: BLE001
-            resp["debug"] = {"err": repr(exc)}
-    return JSONResponse(resp)
+    # never cache price data — a stale empty response otherwise sticks in the
+    # browser cache and the chart shows "no bars" even after the store is fixed.
+    return JSONResponse(
+        {"ok": True, "symbol": symbol.upper().strip(), "tf": tf,
+         "count": len(bars), "bars": bars},
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 # --------------------------------------------------------------------------- #
