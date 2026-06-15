@@ -1,0 +1,273 @@
+{% extends "base.html" %}
+{% block title %}{{ p.name }} · Pattern Trainer{% endblock %}
+{% block content %}
+<div class="mb-4">
+  <a href="/patterns" class="text-xs text-slate-500 hover:text-orange-300">&larr; All patterns</a>
+  <div class="flex items-center gap-2 flex-wrap mt-1">
+    <span class="text-[10px] uppercase px-1.5 py-0.5 rounded border
+      {% if p.status == 'ready' %}border-emerald-500/50 text-emerald-300
+      {% elif p.status == 'learning' %}border-sky-500/50 text-sky-300
+      {% else %}border-slate-600 text-slate-400{% endif %}">{{ p.status }}</span>
+    <h1 class="text-2xl font-semibold">{{ p.name }}</h1>
+    {% if p.description %}<span class="text-slate-500 text-sm">· {{ p.description }}</span>{% endif %}
+    <form method="post" action="/patterns/{{ p.id }}/archive" class="ml-auto inline"
+          onsubmit="return confirm('Archive this pattern?');">
+      <button class="text-[11px] px-2 py-0.5 rounded border border-rose-500/40 text-rose-300 hover:bg-rose-500/15 transition">archive</button>
+    </form>
+  </div>
+</div>
+
+{# ---------------- chart ---------------- #}
+<section id="chartwrap" data-pattern="{{ p.id }}"
+         data-symbol="{{ p.chart_symbol or '' }}" data-tf="{{ p.chart_timeframe or 'daily' }}"
+         class="rounded-lg border border-slate-800 bg-slate-900/40 p-3 mb-4">
+  <div class="flex flex-wrap items-end gap-2 mb-2">
+    <div>
+      <label class="block text-[11px] text-slate-500 mb-1">Ticker</label>
+      <input id="symInput" value="{{ p.chart_symbol or '' }}" placeholder="AAPL"
+             class="w-28 rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm uppercase focus:border-emerald-500 outline-none">
+    </div>
+    <div>
+      <label class="block text-[11px] text-slate-500 mb-1">Timeframe</label>
+      <select id="tfSelect" class="rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm focus:border-emerald-500 outline-none">
+        {% for tf in timeframes %}
+        <option value="{{ tf }}" {% if p.chart_timeframe == tf %}selected{% endif %}>{{ {'daily':'Daily','3min':'3-min','1min':'1-min'}[tf] }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button id="loadBtn" class="rounded bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 text-sm font-medium">Load</button>
+    <div class="w-px h-8 bg-slate-700 mx-1"></div>
+    <button id="markBtn" class="rounded border border-amber-500/50 text-amber-300 hover:bg-amber-500/10 px-3 py-1.5 text-sm">Mark region</button>
+    <span id="markInfo" class="text-xs text-slate-400"></span>
+    <a id="clearMark" href="#" class="text-[11px] text-slate-500 hover:text-rose-300 hidden">clear</a>
+    <span id="chartStatus" class="ml-auto text-xs text-slate-500"></span>
+  </div>
+  <div id="chart" style="height:440px;"></div>
+  <p class="text-[11px] text-slate-500 mt-1">Click <b>Mark region</b>, then click the chart twice (start &amp; end of the pattern). The marked bars are sent to the chat as the example you're teaching.</p>
+</section>
+
+{# ---------------- teaching chat ---------------- #}
+<section id="chatpanel" data-pattern="{{ p.id }}"
+         class="rounded-lg border border-slate-800 bg-slate-900/40 p-3 flex flex-col" style="max-height:60vh">
+  <h2 class="text-sm font-semibold text-white mb-2">Teaching chat
+    <span class="text-[11px] text-slate-500 font-normal">· explain the marked pattern; I'll learn to define it</span></h2>
+
+  <div id="chatlog" class="flex-1 overflow-y-auto space-y-3 pr-1 mb-2" style="min-height:160px">
+    <p id="chatempty" class="text-slate-500 text-sm {% if lessons %}hidden{% endif %}">
+      Load a chart, mark the pattern, and describe it — e.g. “this is a bull flag: a sharp
+      pole, then a tight downward-drifting consolidation on falling volume, then breakout.”
+    </p>
+    {% for m in lessons %}
+    <div class="flex {% if m.role == 'user' %}justify-end{% endif %}">
+      <div class="max-w-[85%] rounded-lg px-3 py-2 text-sm
+        {% if m.role == 'user' %}whitespace-pre-wrap bg-emerald-600/20 border border-emerald-600/30 text-slate-100{% else %}md-body bg-slate-800/60 border border-slate-700 text-slate-200{% endif %}"
+        {% if m.role != 'user' %}data-md{% endif %}>{{ m.content }}{% if m.marked %}<div class="text-[10px] text-amber-300/80 mt-1">⌖ {{ m.marked.symbol }} · {{ m.marked.timeframe }} · {{ m.marked.n }} bars</div>{% endif %}</div>
+    </div>
+    {% endfor %}
+    <span id="bottom"></span>
+  </div>
+
+  <form id="chatform" method="post" action="/patterns/{{ p.id }}/chat" class="flex items-end gap-2">
+    <input type="hidden" name="symbol" id="f_symbol"><input type="hidden" name="tf" id="f_tf">
+    <input type="hidden" name="start" id="f_start"><input type="hidden" name="end" id="f_end">
+    <textarea id="chatinput" name="message" rows="2" required {% if not chat_ready %}disabled{% endif %}
+              placeholder="{% if chat_ready %}Describe the pattern in the marked region…  (Enter to send){% else %}Chat not configured{% endif %}"
+              class="flex-1 rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm focus:border-emerald-500 outline-none resize-none"></textarea>
+    <button id="chatsend" {% if not chat_ready %}disabled{% endif %}
+            class="rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 px-4 py-2 text-sm font-medium">Send</button>
+  </form>
+</section>
+
+<style>
+  .md-body { line-height: 1.5; }
+  .md-body > :first-child { margin-top: 0; } .md-body > :last-child { margin-bottom: 0; }
+  .md-body p { margin: 0 0 .5rem; }
+  .md-body ul, .md-body ol { margin: .25rem 0 .5rem; padding-left: 1.25rem; }
+  .md-body ul { list-style: disc; } .md-body ol { list-style: decimal; }
+  .md-body li { margin: .15rem 0; }
+  .md-body h1, .md-body h2, .md-body h3 { font-weight: 600; color: #fff; margin: .6rem 0 .3rem; }
+  .md-body h1 { font-size: 1.02rem; } .md-body h2 { font-size: .97rem; } .md-body h3 { font-size: .92rem; }
+  .md-body strong { color: #fff; } .md-body a { color: #5eead4; text-decoration: underline; }
+  .md-body code { background: rgba(148,163,184,.16); padding: .05rem .3rem; border-radius: .25rem; font-size: .85em; }
+  .md-body pre { background: rgba(2,6,23,.6); border: 1px solid rgba(148,163,184,.2); border-radius: .4rem; padding: .55rem; overflow-x: auto; margin: .3rem 0 .55rem; }
+  .md-body pre code { background: none; padding: 0; font-size: .82em; }
+  .md-body table { border-collapse: collapse; margin: .3rem 0; font-size: .9em; }
+  .md-body th, .md-body td { border: 1px solid rgba(148,163,184,.25); padding: .2rem .45rem; }
+  @keyframes th-ell { 0% { content:''; } 25% { content:'.'; } 50% { content:'..'; } 75%,100% { content:'...'; } }
+  .th-dots::after { content:''; display:inline-block; width:1.1em; text-align:left; animation: th-ell 1.2s steps(1,end) infinite; }
+</style>
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+<script>
+(function () {
+  // ---------- chart ----------
+  var wrap = document.getElementById('chartwrap');
+  var pid = wrap.dataset.pattern;
+  var el = document.getElementById('chart');
+  var symInput = document.getElementById('symInput');
+  var tfSelect = document.getElementById('tfSelect');
+  var status = document.getElementById('chartStatus');
+  var markBtn = document.getElementById('markBtn');
+  var markInfo = document.getElementById('markInfo');
+  var clearMark = document.getElementById('clearMark');
+
+  var chart = LightweightCharts.createChart(el, {
+    autoSize: true,
+    layout: { background: { color: '#0f172a' }, textColor: '#94a3b8' },
+    grid: { vertLines: { color: 'rgba(148,163,184,0.08)' }, horzLines: { color: 'rgba(148,163,184,0.08)' } },
+    rightPriceScale: { borderColor: 'rgba(148,163,184,0.2)' },
+    timeScale: { borderColor: 'rgba(148,163,184,0.2)', timeVisible: true, secondsVisible: false }
+  });
+  var series = chart.addCandlestickSeries({
+    upColor: '#10b981', downColor: '#ef4444', borderVisible: false,
+    wickUpColor: '#10b981', wickDownColor: '#ef4444'
+  });
+
+  var loaded = [];            // [{time,t,open,...}]
+  var timeToIso = new Map();  // normalized LWC time -> ISO t
+  var marking = false, markStart = null, markEnd = null;  // {time, iso}
+
+  function normTime(t) {
+    if (t && typeof t === 'object' && 'year' in t) {
+      return t.year + '-' + String(t.month).padStart(2,'0') + '-' + String(t.day).padStart(2,'0');
+    }
+    return t;
+  }
+
+  async function load() {
+    var sym = (symInput.value || '').trim().toUpperCase();
+    var tf = tfSelect.value;
+    if (!sym) { status.textContent = 'enter a ticker'; return; }
+    status.textContent = 'loading…';
+    clearMarking();
+    try {
+      var res = await fetch('/patterns/' + pid + '/bars?symbol=' + encodeURIComponent(sym) + '&tf=' + tf);
+      var d = await res.json();
+      if (!d.ok || !d.bars || !d.bars.length) { status.textContent = 'no bars for ' + sym + ' @ ' + tf; series.setData([]); loaded = []; return; }
+      loaded = d.bars;
+      timeToIso.clear();
+      loaded.forEach(function (b) { timeToIso.set(String(normTime(b.time)), b.t); });
+      series.setData(loaded.map(function (b) { return { time: b.time, open: b.open, high: b.high, low: b.low, close: b.close }; }));
+      chart.timeScale().fitContent();
+      status.textContent = sym + ' · ' + tf + ' · ' + d.count + ' bars';
+    } catch (e) { status.textContent = 'load failed'; }
+  }
+
+  function clearMarking() {
+    marking = false; markStart = null; markEnd = null;
+    series.setMarkers([]); markInfo.textContent = ''; clearMark.classList.add('hidden');
+    markBtn.classList.remove('bg-amber-500/20');
+    setMarkFields();
+  }
+  function setMarkFields() {
+    document.getElementById('f_symbol').value = (markStart && markEnd) ? (symInput.value || '').trim().toUpperCase() : '';
+    document.getElementById('f_tf').value = (markStart && markEnd) ? tfSelect.value : '';
+    document.getElementById('f_start').value = (markStart && markEnd) ? markStart.iso : '';
+    document.getElementById('f_end').value = (markStart && markEnd) ? markEnd.iso : '';
+  }
+  function barsInRange() {
+    if (!(markStart && markEnd)) return 0;
+    var a = markStart.iso, b = markEnd.iso; if (a > b) { var t = a; a = b; b = t; }
+    return loaded.filter(function (x) { return x.t >= a && x.t <= b; }).length;
+  }
+  function refreshMarkers() {
+    var ms = [];
+    if (markStart) ms.push({ time: markStart.time, position: 'belowBar', color: '#f59e0b', shape: 'arrowUp', text: 'A' });
+    if (markEnd) ms.push({ time: markEnd.time, position: 'belowBar', color: '#f59e0b', shape: 'arrowUp', text: 'B' });
+    series.setMarkers(ms);
+  }
+
+  markBtn.addEventListener('click', function () {
+    marking = !marking; markStart = null; markEnd = null; series.setMarkers([]);
+    markBtn.classList.toggle('bg-amber-500/20', marking);
+    markInfo.textContent = marking ? 'click the chart: start of the pattern…' : '';
+    clearMark.classList.add('hidden'); setMarkFields();
+  });
+  clearMark.addEventListener('click', function (e) { e.preventDefault(); clearMarking(); });
+
+  chart.subscribeClick(function (param) {
+    if (!marking || !param.time) return;
+    var key = String(normTime(param.time));
+    var iso = timeToIso.get(key);
+    if (!iso) return;
+    if (!markStart) {
+      markStart = { time: param.time, iso: iso };
+      markInfo.textContent = 'now click the END of the pattern…';
+      refreshMarkers();
+    } else if (!markEnd) {
+      markEnd = { time: param.time, iso: iso };
+      marking = false; markBtn.classList.remove('bg-amber-500/20');
+      refreshMarkers();
+      markInfo.textContent = '⌖ marked ' + barsInRange() + ' bars';
+      clearMark.classList.remove('hidden');
+      setMarkFields();
+    }
+  });
+
+  document.getElementById('loadBtn').addEventListener('click', load);
+  symInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); load(); } });
+  tfSelect.addEventListener('change', load);
+  if ((wrap.dataset.symbol || '').trim()) load();   // reopen where we left off
+
+  // ---------- chat ----------
+  if (!window.marked || !window.DOMPurify) return;
+  var log = document.getElementById('chatlog'), bottom = document.getElementById('bottom');
+  var form = document.getElementById('chatform'), input = document.getElementById('chatinput'), sendBtn = document.getElementById('chatsend');
+  function md(t) { return DOMPurify.sanitize(marked.parse((t || '').trim())); }
+  function toBottom() { bottom.scrollIntoView({ block: 'end' }); }
+  document.querySelectorAll('#chatlog [data-md]').forEach(function (e2) {
+    // re-render markdown but keep the trailing marked badge (a child div) intact
+    var badge = e2.querySelector('div');
+    var raw = badge ? e2.childNodes[0].textContent : e2.textContent;
+    e2.innerHTML = md(raw); if (badge) e2.appendChild(badge);
+  });
+  toBottom();
+
+  function bubble(role, text, isMd, markTag) {
+    var w = document.createElement('div'); w.className = 'flex' + (role === 'user' ? ' justify-end' : '');
+    var i = document.createElement('div');
+    i.className = 'max-w-[85%] rounded-lg px-3 py-2 text-sm ' + (role === 'user'
+      ? 'whitespace-pre-wrap bg-emerald-600/20 border border-emerald-600/30 text-slate-100'
+      : 'md-body bg-slate-800/60 border border-slate-700 text-slate-200');
+    if (isMd) { i.innerHTML = md(text); } else { i.textContent = text; }
+    if (markTag) { var b = document.createElement('div'); b.className = 'text-[10px] text-amber-300/80 mt-1'; b.textContent = '⌖ ' + markTag; i.appendChild(b); }
+    w.appendChild(i); log.insertBefore(w, bottom); return w;
+  }
+  function thinking() {
+    var w = document.createElement('div'); w.className = 'flex';
+    w.innerHTML = '<div class="max-w-[85%] rounded-lg px-3 py-2 text-sm bg-slate-800/60 border border-slate-700 text-slate-400">' +
+      '<span class="th-dots">Learning</span> <span class="th-el text-slate-500">0s</span></div>';
+    log.insertBefore(w, bottom); return w;
+  }
+  function autosize() { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 160) + 'px'; }
+  input.addEventListener('input', autosize);
+
+  var busy = false;
+  async function send() {
+    var msg = (input.value || '').trim(); if (!msg || busy || input.disabled) return;
+    busy = true;
+    var empty = document.getElementById('chatempty'); if (empty) empty.classList.add('hidden');
+    var hasMark = !!(markStart && markEnd);
+    var markTag = hasMark ? ((symInput.value || '').trim().toUpperCase() + ' · ' + tfSelect.value + ' · ' + barsInRange() + ' bars') : '';
+    input.value = ''; autosize(); input.disabled = true; sendBtn.disabled = true;
+    bubble('user', msg, false, markTag); toBottom();
+    var t0 = Date.now(); var ind = thinking(); toBottom();
+    var timer = setInterval(function () { var e3 = ind.querySelector('.th-el'); if (e3) e3.textContent = Math.round((Date.now() - t0) / 1000) + 's'; }, 1000);
+    try {
+      var body = new URLSearchParams({ message: msg });
+      if (hasMark) { body.set('symbol', symInput.value.trim().toUpperCase()); body.set('tf', tfSelect.value); body.set('start', markStart.iso); body.set('end', markEnd.iso); }
+      var res = await fetch('/patterns/' + pid + '/chat.json', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body });
+      var data = {}; try { data = await res.json(); } catch (e) {}
+      ind.remove(); clearInterval(timer);
+      bubble('assistant', data.content || '⚠️ Empty reply — try again.', true);
+    } catch (e) {
+      ind.remove(); clearInterval(timer);
+      bubble('assistant', '⚠️ Network error — try again.', false);
+    } finally { input.disabled = false; sendBtn.disabled = false; busy = false; input.focus(); toBottom(); }
+  }
+  form.addEventListener('submit', function (e) { e.preventDefault(); send(); });
+  input.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
+})();
+</script>
+{% endblock %}

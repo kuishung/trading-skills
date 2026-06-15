@@ -138,6 +138,23 @@ source) — never from `bars_store`/parquet. Do **not** wire live UI/chart
 features to the parquet store; reserve parquet reads for backtests and batch
 analysis. If a live feature needs prices, fetch them live.
 
+**CARVE-OUT — offline analysis/training UIs MAY read parquet (user, set
+2026-06-15).** The rule above forbids parquet for *live/operational* UIs. It does
+**not** forbid parquet for **offline historical-analysis / training** UIs, which
+are the same "backtesting / offline" purpose parquet exists for — just surfaced in
+a browser instead of a batch script. Concretely: the **Pattern Trainer** page
+(`dashboard_tst` `/patterns`) loads its chart **from parquet** (daily/3m/1m via
+`bars_store`) on purpose — you teach patterns on stored history, and the
+pattern-finder scans stored history. That is allowed. The line stays bright:
+- **Live/operational views** (anything reflecting *now* — the MATP price chart,
+  live quotes, an intraday tape) → **fetch live** (Yahoo/yfinance). Never parquet.
+- **Offline analysis/training views** (Pattern Trainer, future backtest viewers /
+  replay tools) → **parquet is the correct source**. Don't force these to live
+  feeds (live sources cap intraday history at 7–60d, which would cripple training
+  on older charts).
+If unsure which a new feature is: does it show/act on *the present*? → live. Does
+it study *stored history*? → parquet.
+
 **Historical OHLCV bars are stored as Parquet, full stop.** Don't
 re-evaluate CSV / JSONL / SQLite / DuckDB / W&B / MLflow as alternatives
 — that conversation already happened, Parquet won. Reasons:

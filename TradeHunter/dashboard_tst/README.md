@@ -124,6 +124,27 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-15 — v2.88: Pattern Trainer (Phase 1 — teach a pattern on a parquet chart)
+- New members page **/patterns** (`routes/patterns.py`, `patterns.html`,
+  `pattern_detail.html`, nav item, `Pattern`/`PatternLesson` models + Alembic
+  migration `f2a3b4c5d6e7`): create a pattern, load a real chart, mark the region
+  that shows it, and teach the assistant in chat.
+- **Chart loads FROM PARQUET** (daily/3min/1min) via `resources.bars_store` —
+  the first UI to do so on purpose. This is an OFFLINE training tool, so parquet
+  is the right source; recorded as a **CARVE-OUT** in CLAUDE.md's "parquet =
+  backtesting only" rule (live views still fetch live). Uses TradingView
+  Lightweight Charts 4.2.0 (same lib as the MATP chart). New `GET
+  /patterns/{id}/bars`.
+- **Region marking:** click "Mark region" then two points on the chart (start/end);
+  those bars are re-loaded from parquet and **injected into the teaching prompt**
+  (`services/pattern_llm.py`, DeepSeek-direct, ticker-relative-threshold persona).
+- **Same chatbot UX as Research** (async, markdown, thinking timer) pointed at the
+  pattern endpoint, with a per-message "⌖ SYM · tf · N bars" badge when a region
+  is attached. No-JS form fallback kept.
+- Phase 2 (generate `pattern.md` + `detect.py`, committed to
+  `strategy/patterns/<slug>/`) and Phase 3 (the "Find pattern" universe scan) are
+  designed in `PATTERN_TRAINER_DESIGN.md`, not yet built.
+
 ### 2026-06-15 — v2.87: Research chat — real chatbot UX (async, markdown, thinking)
 - Replaced the form-reload planning chat with a proper **async chatbot**
   (`research_detail.html` + new `POST /research/{id}/chat.json`): sending a message

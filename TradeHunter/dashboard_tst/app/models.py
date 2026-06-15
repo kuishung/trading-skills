@@ -430,3 +430,62 @@ class ResearchRun(Base):
     error = Column(Text, nullable=True)
 
     topic = relationship("ResearchTopic", back_populates="runs")
+
+
+# --------------------------------------------------------------------------
+# Pattern Trainer — teach a chart pattern by example, generate a detector.
+# (see dashboard_tst/PATTERN_TRAINER_DESIGN.md)
+# --------------------------------------------------------------------------
+PT_LEARNING = "learning"   # being taught via chat
+PT_READY = "ready"         # pattern.md + detect.py generated
+PT_ARCHIVED = "archived"
+
+
+class Pattern(Base):
+    """A user-taught chart pattern. The teaching transcript (PatternLesson) is
+    distilled into a Markdown spec (`pattern_md`) + a Python detector
+    (`detect_py`); both are also committed to the repo under
+    strategy/patterns/<slug>/. The DB is the source of truth; the files are a
+    rendered projection (per the data-handling rule)."""
+
+    __tablename__ = "patterns"
+
+    id = Column(Integer, primary_key=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String(120), nullable=False)
+    slug = Column(String(120), nullable=False, index=True)  # filesystem-safe id
+    description = Column(String(400), nullable=True)
+    status = Column(String(12), nullable=False, default=PT_LEARNING)
+    # last chart the user was teaching on (so the page reopens where they left)
+    chart_symbol = Column(String(20), nullable=True)
+    chart_timeframe = Column(String(8), nullable=True)       # daily | 3min | 1min
+    pattern_md = Column(Text, nullable=True)                 # learned spec
+    detect_py = Column(Text, nullable=True)                  # generated detector
+    md_path = Column(String(512), nullable=True)             # committed repo path
+    script_path = Column(String(512), nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+    owner = relationship("User")
+    lessons = relationship(
+        "PatternLesson", back_populates="pattern",
+        cascade="all, delete-orphan", order_by="PatternLesson.seq",
+    )
+
+
+class PatternLesson(Base):
+    """One turn of the teaching conversation. `marked` records which chart
+    region (symbol/timeframe/time-range) the user was pointing at for that
+    turn, so the bars can be re-loaded and injected as context."""
+
+    __tablename__ = "pattern_lessons"
+
+    id = Column(Integer, primary_key=True)
+    pattern_id = Column(Integer, ForeignKey("patterns.id"), nullable=False, index=True)
+    seq = Column(Integer, nullable=False, default=0)
+    role = Column(String(12), nullable=False)               # user | assistant | system
+    content = Column(Text, nullable=False)
+    marked = Column(JSON, nullable=True)                    # {symbol, timeframe, start, end, n}
+    created_at = Column(DateTime, default=_utcnow)
+
+    pattern = relationship("Pattern", back_populates="lessons")
