@@ -48,14 +48,21 @@ the files here are a rendered projection written when you "Save what you learned
 - **`_features.py`** (L2, **IMPLEMENTED D2**) — window → scale-invariant feature
   vector (`FEATURE_KEYS`); slopes in ATR-multiples/bar; degrades gracefully when
   a window lacks ≥2 swing highs/lows.
-- **`_harvester.py`** (D3) — review-queue candidate sources: loose high-recall
-  `harvest` sweep, `active_learning_rank` (hardest cases), and `random_sample`
-  (random ticker+window → run detect → qualify; catches the detector's FALSE
-  NEGATIVES that the pre-filter can't surface). Background/offline (parquet).
-- **`_calibrate.py`** (D4) — fit thresholds to the user's labelled set (the
-  "smart from examples" step); portable thresholds dict.
-- **`_validate.py`** (D4) — calibration suite + walk-forward + held-out tickers +
-  no-lookahead probe.
+- **`_harvester.py`** (D3 **IMPLEMENTED**) — review-queue candidate sources:
+  loose high-recall `harvest` sweep (+ default `loose_prefilter`),
+  `active_learning_rank` (most-uncertain first + spot-check tail), and
+  `random_sample` (random ticker+window → run detect → qualify; catches the
+  detector's FALSE NEGATIVES the pre-filter can't surface). Background/offline
+  (parquet); reproducible RNG via passed `rng_seed`.
+- **`_calibrate.py`** (D4 **IMPLEMENTED**) — fit thresholds to the user's
+  labelled set: per-feature best-separating cutoffs (`fit_thresholds`, with
+  ticker + time holdout for walk-forward), per-feature AUC → score weights
+  (`feature_separation`), `fit_score_cutoff` (balanced/high-precision/
+  high-recall), and `mine_false_positives` (high-scoring negatives + culprit
+  feature = candidate missing rule). Output is a merge-compatible thresholds dict.
+- **`_validate.py`** (D4 **IMPLEMENTED**) — `run_calibration_suite` (regression
+  gate: positives must fire, negatives stay quiet) + `assert_no_lookahead`
+  (incremental replay; raises if a match ever references a future bar).
 - **`ascending_triangle/`** — first pattern. `detect.py` (L3 rule scorer +
   `SEED_THRESHOLDS`, **IMPLEMENTED D2**: slides windows → features → soft-scored
   rules → NMS → explainable matches) + `pattern.md` (the human spec).
@@ -65,6 +72,20 @@ the files here are a rendered projection written when you "Save what you learned
   triangle scores ~0.97; runs on real parquet — NVDA/AAPL/AMD).
 
 ## Changelog
+- **2026-06-16** — **D3 + D4 implemented + verified.** `_harvester` (loose
+  `harvest` sweep + `loose_prefilter`, `active_learning_rank`, `random_sample`)
+  and `_calibrate` (`fit_thresholds` with walk-forward holdout, `feature_separation`
+  AUC → weights, `fit_score_cutoff`, `mine_false_positives`) and `_validate`
+  (`run_calibration_suite`, `assert_no_lookahead`) are real pure functions. The
+  scorer now accepts calibration `weights` (weighted geometric mean). Verified on
+  synthetic triangles-vs-rising-wedges + real parquet: feature_separation ranks
+  the discriminating axes (res_slope/sup_slope/contraction/apex = 1.0), fit_thresholds
+  derives data-driven cutoffs (res_r2_min 0.60→0.99) with 2 tickers held out, the
+  calibration suite catches the seed-threshold wedge leak (pass_rate 0.5),
+  mine_false_positives flags it for a human rule (mechanism 4), and the
+  no-lookahead probe passes on real NVDA bars. Honest finding: pure soft-threshold
+  calibration narrows but doesn't perfectly separate a wedge that's 90% triangle —
+  exactly the documented hand-off to a human-added hard gate / later ML.
 - **2026-06-16** — **D1 + D2 implemented + verified.** `_geometry` (ATR, fractal
   swings with no-lookahead + ATR-prominence, least-squares line fit/R², touches,
   convergence, contraction) and `_features.window_features` are now real pure

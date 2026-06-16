@@ -39,6 +39,7 @@
     <div class="w-px h-8 bg-slate-700 mx-1"></div>
     <button id="markBtn" class="hidden rounded border border-amber-500/50 text-amber-300 hover:bg-amber-500/10 px-3 py-1.5 text-sm">Mark region</button>
     <button id="drawBtn" class="rounded border border-violet-500/60 text-violet-300 hover:bg-violet-500/10 px-3 py-1.5 text-sm">&#9651; Draw triangle</button>
+    <button id="findBtn" class="rounded border border-cyan-500/60 text-cyan-300 hover:bg-cyan-500/10 px-3 py-1.5 text-sm" title="Run the geometric detector on this chart and overlay what it flags">&#9678; Find pattern</button>
     {# draw-mode actions (shown only while drawing) #}
     <span id="drawActions" class="hidden flex items-center gap-2">
       <input id="drawLabel" placeholder="label (optional)" class="w-32 rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-xs focus:border-emerald-500 outline-none">
@@ -51,6 +52,16 @@
     <span id="chartStatus" class="ml-auto text-xs text-slate-500"></span>
   </div>
   <div id="chart" class="relative" style="height:440px;"></div>
+  {# D5 — detector overlay: what the geometric detector flags on this chart #}
+  <div id="detResults" class="hidden mt-2 rounded-lg border border-cyan-500/25 bg-cyan-500/5 p-2">
+    <div class="flex items-center gap-2 mb-1">
+      <span class="text-xs font-semibold text-cyan-300">&#9678; Detector</span>
+      <span id="detSummary" class="text-[11px] text-slate-400"></span>
+      <a id="detClear" href="#" class="ml-auto text-[11px] text-slate-500 hover:text-rose-300">clear</a>
+    </div>
+    <div id="detList" class="flex flex-wrap gap-1.5"></div>
+    <p class="text-[10px] text-slate-500 mt-1">Click a flag to zoom the chart to that window and eyeball it &mdash; this is the visual precision/recall check (offline, never a live signal).</p>
+  </div>
   <p class="text-[11px] text-slate-500 mt-1"><b>&#9651; Draw triangle</b>: drag the <span class="text-rose-300">resistance</span> (top) and <span class="text-emerald-300">support</span> (bottom) handles &mdash; each snaps to a candle's high/low. <b>Save positive</b> if it's an ascending triangle, <b>Reject</b> if it's a near-miss. You never type numbers &mdash; the shape you draw is the label. Saved examples appear in the gallery below and redraw when reloaded.</p>
 </section>
 
@@ -198,6 +209,56 @@
       status.textContent = sym + ' · ' + tf + ' · ' + d.count + ' bars';
     } catch (e) { status.textContent = 'load failed'; }
   }
+
+  // ---- D5: detector overlay (visual evaluation of the geometric detector) ----
+  var detResults = document.getElementById('detResults');
+  var detList = document.getElementById('detList');
+  var detSummary = document.getElementById('detSummary');
+  var findBtn = document.getElementById('findBtn');
+  async function findPattern() {
+    var sym = (symInput.value || '').trim().toUpperCase();
+    var tf = tfSelect.value;
+    if (!sym) { status.textContent = 'enter a ticker'; return; }
+    var old = findBtn.textContent; findBtn.disabled = true; findBtn.textContent = 'scanning…';
+    try {
+      var res = await fetch('/patterns/' + pid + '/detect?symbol=' + encodeURIComponent(sym) + '&tf=' + tf + '&_=' + Date.now(), { cache: 'no-store' });
+      var d = await res.json();
+      detList.innerHTML = '';
+      if (!d.ok) { detSummary.textContent = 'detector error: ' + (d.error || '?'); detResults.classList.remove('hidden'); return; }
+      detSummary.textContent = d.count + ' region' + (d.count === 1 ? '' : 's') + ' flagged'
+        + (d.detector ? ' · ' + d.detector + ' ' + (d.version || '') : '');
+      if (!d.count) {
+        var none = document.createElement('span');
+        none.className = 'text-[11px] text-slate-500'; none.textContent = 'nothing flagged on this window';
+        detList.appendChild(none);
+      }
+      (d.matches || []).slice().sort(function (a, b) { return b.score - a.score; }).forEach(function (m) {
+        var pct = Math.round(m.score * 100);
+        var b = document.createElement('button');
+        b.className = 'flex items-center gap-1.5 rounded border border-cyan-600/40 bg-cyan-950/30 px-2 py-1 text-[11px] hover:border-cyan-400 transition';
+        b.innerHTML = '<span class="font-semibold text-cyan-300">' + pct + '%</span>'
+          + '<span class="text-slate-400">' + (m.start_t || '').slice(5, 16) + '</span>'
+          + '<span class="text-slate-600">&rarr;</span>'
+          + '<span class="text-slate-400">' + (m.end_t || '').slice(5, 16) + '</span>';
+        b.title = JSON.stringify(m.notes || {});
+        b.addEventListener('click', function () {
+          try { chart.timeScale().setVisibleRange({ from: m.start_time, to: m.end_time }); } catch (e) {}
+          var nt = m.notes || {};
+          status.textContent = 'detector ' + pct + '% · touches ' + nt.n_touch_res + '/' + nt.n_touch_sup
+            + ' · contr ' + nt.contraction + ' · apex ' + nt.apex_bars + ' bars';
+        });
+        detList.appendChild(b);
+      });
+      detResults.classList.remove('hidden');
+    } catch (e) {
+      detSummary.textContent = 'scan failed'; detResults.classList.remove('hidden');
+    } finally { findBtn.disabled = false; findBtn.textContent = old; }
+  }
+  if (findBtn) findBtn.addEventListener('click', findPattern);
+  var detClear = document.getElementById('detClear');
+  if (detClear) detClear.addEventListener('click', function (e) {
+    e.preventDefault(); detResults.classList.add('hidden'); detList.innerHTML = '';
+  });
 
   function clearMarking() {
     marking = false; markStart = null; markEnd = null;

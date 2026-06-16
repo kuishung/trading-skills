@@ -124,6 +124,30 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-16 — v2.96: Pattern Trainer — "Find pattern" detector overlay (D5)
+- The Trainer now **runs the real geometric detector against the chart and draws
+  what it found** — closing the loop from "teach" to "test". New **Find pattern**
+  button calls `GET /patterns/{id}/detect?symbol&timeframe`, which loads the
+  parquet window and runs the implemented `strategy/patterns/<slug>/detect.py`
+  (D1–D4 engine: swings → line-fit → soft-scored geometric mean → NMS). Each
+  match comes back with a **score + explainable `notes`** (slopes, R², touches,
+  apex, contraction) and Lightweight-Charts times (epoch for intraday, ISO date
+  for daily).
+- A **results panel** under the chart lists every flagged window (score + window
+  span); clicking a row **zooms the chart to that match's range**
+  (`timeScale().setVisibleRange`). This is the visual-evaluation surface from
+  `DETECTOR_DESIGN.md` — you eyeball whether the detector's geometry agrees with
+  your own labels before trusting it, and mis-fires become new negative examples
+  for the D4 calibration set.
+- Backend detector resolution is **slug-driven** (`_detector_for(slug)` →
+  `strategy.patterns.<slug>.detect` via `import_module`, falling back to
+  `ascending_triangle`). Import uses `importlib.import_module` deliberately: the
+  pattern package re-exports `detect()`, which shadows the submodule attribute,
+  so a plain `import …detect as x` would bind the function — `import_module`
+  returns the true module with `.detect`/`.__version__`.
+- Verified end-to-end against parquet: NVDA 3min → 29 flags, AAPL daily → 3
+  flags, each with valid scores + LWC times; route compiles, template parses.
+
 ### 2026-06-16 — v2.95: Pattern Trainer — drag-to-label triangle tool (zero text)
 - The canonical labelling UX is now **direct manipulation, never typing** (user:
   "I need to drag from the chart… inputting text is confusing"). **Draw triangle**

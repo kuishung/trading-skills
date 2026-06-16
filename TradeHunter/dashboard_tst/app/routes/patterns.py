@@ -44,6 +44,29 @@ try:
     from resources import bars_store  # noqa: E402
 except Exception:  # pragma: no cover - surfaced at request time
     bars_store = None
+try:
+    # the implemented geometric detector MODULE (D1-D4). Use import_module: the
+    # package __init__ re-exports the detect() FUNCTION, which shadows the
+    # submodule attribute, so `import ...detect as x` would bind the function.
+    # import_module returns the real module (with .detect / .__version__).
+    import importlib as _importlib  # noqa: E402
+    _at_detect = _importlib.import_module("strategy.patterns.ascending_triangle.detect")
+except Exception:  # pragma: no cover
+    _at_detect = None
+
+
+def _detector_for(slug: str):
+    """The committed detector for a pattern slug, falling back to the
+    ascending-triangle detector (the one currently implemented) so visual
+    evaluation works for any pattern while others are still being built."""
+    import importlib
+    if slug:
+        try:
+            return importlib.import_module(
+                f"strategy.patterns.{slug.replace('-', '_')}.detect")
+        except Exception:
+            pass
+    return _at_detect
 
 router = APIRouter(prefix="/patterns", tags=["patterns"])
 templates = Jinja2Templates(
@@ -198,6 +221,50 @@ def pattern_bars(pattern_id: int,
     return JSONResponse(
         {"ok": True, "symbol": symbol.upper().strip(), "tf": tf,
          "count": len(bars), "bars": bars},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Detector overlay (D5 — visual evaluation of the geometric detector)
+# --------------------------------------------------------------------------- #
+@router.get("/{pattern_id}/detect")
+def pattern_detect(pattern_id: int,
+                   symbol: str = Query(...),
+                   tf: str = Query("daily"),
+                   user: User = Depends(require_user), db: Session = Depends(get_db)):
+    """Run the pattern's geometric detector over the same parquet window the chart
+    shows, and return its matches (with Lightweight-Charts time values) so the
+    frontend can overlay them — the D5 'visually evaluate precision/recall' loop.
+    Read-only / offline; never a live signal."""
+    p = _get_pattern(db, pattern_id, user)
+    if tf not in _TIMEFRAMES:
+        tf = _TIMEFRAMES[0]
+    if bars_store is None:
+        return JSONResponse({"ok": False, "error": "bars store unavailable", "matches": []},
+                            status_code=503)
+    det = _detector_for(p.slug)
+    if det is None:
+        return JSONResponse({"ok": False, "error": "detector unavailable", "matches": []},
+                            status_code=503)
+    raw = _load_window(symbol, tf, None, None)
+    if not raw:
+        return JSONResponse({"ok": True, "symbol": symbol.upper().strip(), "tf": tf,
+                             "count": 0, "matches": []}, headers={"Cache-Control": "no-store"})
+    try:
+        matches = det.detect(raw)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"ok": False, "error": repr(exc), "matches": []},
+                            status_code=500)
+    out = [{**m,
+            "start_time": _to_lwc_time(m["start_t"], tf),
+            "end_time": _to_lwc_time(m["end_t"], tf)} for m in matches]
+    _parts = (getattr(det, "__name__", "") or "").split(".")
+    detector_name = _parts[-2] if len(_parts) >= 2 else (_parts[0] if _parts else "?")
+    return JSONResponse(
+        {"ok": True, "symbol": symbol.upper().strip(), "tf": tf,
+         "detector": detector_name, "version": getattr(det, "__version__", "?"),
+         "count": len(out), "matches": out},
         headers={"Cache-Control": "no-store"},
     )
 

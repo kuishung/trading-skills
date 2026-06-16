@@ -16,6 +16,8 @@ shared L1/L2 layers; thresholds are seeds for the D4 calibration loop.
 """
 from __future__ import annotations
 
+import math
+
 from .. import _features as feat
 from .. import _geometry as geo  # noqa: F401  (re-exported for callers)
 
@@ -70,28 +72,43 @@ def _band(x: float, lo: float, hi: float) -> float:
 
 
 def _score(f: dict, thr: dict) -> float:
-    """Geometric mean of the per-rule sub-scores → 0..1. Hard gates (window out
-    of range, or no fitted lines) return 0 so impossible shapes can't sneak in."""
+    """(Weighted) geometric mean of the per-rule sub-scores → 0..1. Hard gates
+    (window out of range, or no fitted lines) return 0 so impossible shapes can't
+    sneak in. If `thr['weights']` is present (from _calibrate.fit_thresholds), the
+    sub-scores are weighted by feature so the score emphasises the geometry that
+    actually separates the user's labels; otherwise every sub-score is equal."""
     lo, hi = thr["window_bars_range"]
     if not (lo <= f["window_len"] <= hi):
         return 0.0
     if f["res_r2"] <= 0.0 or f["sup_r2"] <= 0.0:   # need both trendlines
         return 0.0
     af_lo, af_hi = thr["apex_frac_range"]
+    # (feature_key, sub_score) — feature_key matches _calibrate's weight keys
     subs = [
-        _le_soft(abs(f["res_slope"]), thr["res_slope_max_atrpct_per_bar"]),  # flat ceiling
-        _ge_soft(f["res_r2"], thr["res_r2_min"]),                            # highs line up
-        _ge_soft(f["sup_slope"], thr["sup_slope_min_atrpct_per_bar"]),       # support rising
-        _ge_soft(f["sup_r2"], thr["sup_r2_min"]),                            # lows line up
-        _ge_soft(f["n_touch_res"], thr["min_touches_each"]),
-        _ge_soft(f["n_touch_sup"], thr["min_touches_each"]),
-        _le_soft(f["contraction"], thr["contraction_max"]),                  # squeeze
-        _band(f["apex_frac"], af_lo, af_hi),                                 # converging ahead
+        ("res_slope_abs", _le_soft(abs(f["res_slope"]), thr["res_slope_max_atrpct_per_bar"])),
+        ("res_r2",        _ge_soft(f["res_r2"], thr["res_r2_min"])),
+        ("sup_slope",     _ge_soft(f["sup_slope"], thr["sup_slope_min_atrpct_per_bar"])),
+        ("sup_r2",        _ge_soft(f["sup_r2"], thr["sup_r2_min"])),
+        ("n_touch_res",   _ge_soft(f["n_touch_res"], thr["min_touches_each"])),
+        ("n_touch_sup",   _ge_soft(f["n_touch_sup"], thr["min_touches_each"])),
+        ("contraction",   _le_soft(f["contraction"], thr["contraction_max"])),
+        ("apex_frac",     _band(f["apex_frac"], af_lo, af_hi)),
     ]
-    prod = 1.0
-    for s in subs:
-        prod *= max(1e-6, s)
-    return prod ** (1.0 / len(subs))
+    weights = thr.get("weights") or {}
+    log_sum = 0.0
+    w_sum = 0.0
+    for key, s in subs:
+        w = float(weights.get(key, 1.0))
+        if w <= 0.0:
+            continue
+        log_sum += w * math.log(max(1e-6, s))
+        w_sum += w
+    if w_sum <= 0.0:                                # all weights zero → equal mean
+        prod = 1.0
+        for _, s in subs:
+            prod *= max(1e-6, s)
+        return prod ** (1.0 / len(subs))
+    return math.exp(log_sum / w_sum)
 
 
 def _notes(f: dict) -> dict:

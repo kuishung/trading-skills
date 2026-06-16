@@ -70,6 +70,13 @@ def detect(bars: list[dict]) -> list[dict]:
   high-recall sweep of the parquet universe surfacing candidate windows for
   confirm/reject review (the calibration/eval input), NOT a live-signal scan.
   See `DETECTOR_DESIGN.md` (D3–D5).
+- **Phase 3a — per-chart "Find pattern" overlay (D5, BUILT v2.96):** before the
+  full-universe sweep, the Trainer runs the detector against the *currently
+  loaded* chart (`GET /patterns/{id}/detect?symbol&timeframe`) and lists the
+  flagged windows under the chart; clicking one zooms to its range. This is the
+  visual-evaluation surface — eyeball detector-vs-your-label agreement, turn
+  mis-fires into negative examples — and the same code path the universe sweep
+  will reuse per symbol.
 - **Review-queue candidate sources (3):** the queue is fed by (a) pre-filter
   harvest, (b) active-learning (hardest cases), and (c) a **"Random sample"**
   button / auto-feed (`_harvester.random_sample`) — pick a random ticker+window,
