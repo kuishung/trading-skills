@@ -28,6 +28,7 @@ from ..models import (
     PT_ARCHIVED,
     PT_LEARNING,
     Pattern,
+    PatternExample,
     PatternLesson,
     User,
 )
@@ -158,7 +159,8 @@ def pattern_detail(pattern_id: int, request: Request,
     p = _get_pattern(db, pattern_id, user)
     return templates.TemplateResponse(
         request, "pattern_detail.html",
-        {"user": user, "p": p, "lessons": p.lessons, "timeframes": _TIMEFRAMES,
+        {"user": user, "p": p, "lessons": p.lessons, "examples": p.examples,
+         "timeframes": _TIMEFRAMES,
          "chat_ready": pattern_llm.is_configured(),
          "bars_ok": bars_store is not None},
     )
@@ -266,6 +268,55 @@ def post_chat(pattern_id: int, message: str = Form(...),
         ctx = _marked_context(symbol or None, tf or None, start or None, end or None)
         _do_chat(db, p, msg, ctx)
     return RedirectResponse(url=f"/patterns/{p.id}#bottom", status_code=303)
+
+
+# --------------------------------------------------------------------------- #
+# Saved examples (the per-pattern teaching gallery)
+# --------------------------------------------------------------------------- #
+def _example_json(e: PatternExample) -> dict:
+    return {"id": e.id, "symbol": e.symbol, "timeframe": e.timeframe,
+            "start": e.start_t, "end": e.end_t, "n": e.n_bars,
+            "label": e.label or "", "note": e.note or ""}
+
+
+@router.post("/{pattern_id}/examples.json")
+def save_example(pattern_id: int,
+                 symbol: str = Form(...), tf: str = Form(...),
+                 start: str = Form(...), end: str = Form(...),
+                 label: str = Form(""), note: str = Form(""),
+                 user: User = Depends(require_user), db: Session = Depends(get_db)):
+    """Save the currently-marked region as a reloadable example. Validates the
+    region against the parquet store (must resolve to at least one bar) so we
+    never persist an empty/garbage range."""
+    p = _get_pattern(db, pattern_id, user)
+    sym = symbol.upper().strip()[:20]
+    if tf not in _TIMEFRAMES:
+        return JSONResponse({"ok": False, "error": "bad timeframe"}, status_code=400)
+    a, b = (start, end) if start <= end else (end, start)
+    bars = _load_window(sym, tf, a, b)
+    if not bars:
+        return JSONResponse(
+            {"ok": False, "error": "no bars in that range — re-mark the region"},
+            status_code=400,
+        )
+    e = PatternExample(pattern_id=p.id, symbol=sym, timeframe=tf,
+                       start_t=a, end_t=b, n_bars=len(bars),
+                       label=(label.strip()[:120] or None),
+                       note=(note.strip()[:2000] or None))
+    db.add(e)
+    db.commit()
+    return JSONResponse({"ok": True, "example": _example_json(e)})
+
+
+@router.post("/{pattern_id}/examples/{example_id}/delete")
+def delete_example(pattern_id: int, example_id: int,
+                   user: User = Depends(require_user), db: Session = Depends(get_db)):
+    p = _get_pattern(db, pattern_id, user)
+    e = db.get(PatternExample, example_id)
+    if e is not None and e.pattern_id == p.id:
+        db.delete(e)
+        db.commit()
+    return JSONResponse({"ok": True})
 
 
 @router.post("/{pattern_id}/archive")

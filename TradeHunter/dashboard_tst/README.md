@@ -124,6 +124,35 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-16 — v2.94: Pattern Trainer — saved-examples gallery + ROOT-CAUSE fix for the empty-`p` bug
+- **New: saved-examples gallery** (user request — "save every example; when I load
+  it again it shows up"). Mark a ticker+region, hit **★ Save example**, and it's
+  stored as a reloadable artifact under the pattern. The page lists examples in a
+  gallery; **clicking one reloads that ticker+timeframe and redraws the marked
+  box** (A/B markers restored, ready to teach again). Delete removes it. Builds a
+  per-pattern training set the Phase-2 detector generator will cite.
+  - `models.py` `PatternExample` (pattern_id, symbol, timeframe, start_t, end_t,
+    n_bars, label, note) + cascade off `Pattern.examples`; migration
+    `a3b4c5d6e7f8_pattern_examples` (off head `f2a3b4c5d6e7`; up/down round-trip
+    verified). `routes/patterns.py`: `POST /{id}/examples.json` (validates the
+    region resolves to ≥1 parquet bar before saving), `POST /{id}/examples/{ex}/delete`,
+    and `examples` passed to the detail page. `pattern_detail.html`: gallery panel +
+    Save button (enabled only when a region is marked) + JS `applyMarkedRegion`
+    (re-applies an example's ISO bounds onto the loaded bars).
+- **ROOT-CAUSE fix for the Pattern-detail "empty fields" bug** (the real cause the
+  v2.93 JS band-aid only worked around): `base.html` did `{% set p = request.url.path %}`
+  as a nav-highlight helper. `pattern_detail.html` passes a **Pattern object as `p`** —
+  so inside `{% block content %}`, base's `p` (the URL string) **shadowed** it, and
+  every `{{ p.name }}` / `{{ p.chart_symbol }}` / `{{ p.id }}` / `{{ p.status }}`
+  silently resolved against a string → **blank**. That's why the title, the chart
+  ticker (so the chart never auto-reopened), the status badge, AND `data-pattern`
+  (the v2.93 "empty pattern-id → /patterns//bars 404 → no bars" symptom) were all
+  empty. The list page escaped it only because it uses a loop-scoped `{% for p in
+  patterns %}`. Fix: rename base.html's helper `p` → `nav_path` (it's used only
+  inside base.html's nav). Verified: detail page now renders name/ticker/status,
+  the chart **auto-reopens on the saved ticker**, and nav highlighting still works.
+  This makes the chart half of "load it again and it shows up" work too.
+
 ### 2026-06-15 — v2.93: Pattern Trainer — fix empty pattern-id in chart fetch (the real "no bars" cause)
 - **THE root cause of every "no bars" on the chart:** the chart JS read the
   pattern id from the `data-pattern` attribute, which resolved **empty** at

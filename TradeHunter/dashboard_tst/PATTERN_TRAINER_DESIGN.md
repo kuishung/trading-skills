@@ -27,12 +27,17 @@ Browser ──▶ /patterns (dashboard_tst, Hermes)
 The teaching chat does **not** use the Nous agent/corpus — the data it reasons
 over (the bars) is injected directly — so DeepSeek-direct is sufficient and fast.
 
-## Data model (SQLAlchemy ORM, Postgres-ready; Alembic migration `f2a3b4c5d6e7`)
+## Data model (SQLAlchemy ORM, Postgres-ready; Alembic migrations `f2a3b4c5d6e7`, `a3b4c5d6e7f8`)
 - **Pattern** — id, owner_id, name, slug, description, status
   (`learning|ready|archived`), chart_symbol, chart_timeframe, `pattern_md`,
   `detect_py`, md_path, script_path, created/updated.
 - **PatternLesson** — pattern_id, seq, role, content, `marked`
   (JSON: {symbol, timeframe, start, end, n}), created_at. The teaching transcript.
+- **PatternExample** (added 2026-06-16, migration `a3b4c5d6e7f8`) — pattern_id,
+  symbol, timeframe, start_t, end_t, n_bars, label, note, created_at. A saved,
+  named, reloadable marked region — the per-pattern **example gallery**. Distinct
+  from `PatternLesson.marked` (which is per-chat-turn context); an example is a
+  first-class artifact you reload to redraw the box and re-teach.
 
 ## Detector contract (Phase 2/3)
 Each generated `detect.py` exposes a stable interface so the scanner is one code
@@ -49,12 +54,22 @@ def detect(bars: list[dict]) -> list[dict]:
 - **Phase 1 (BUILT):** `/patterns` page + parquet chart (symbol/timeframe load) +
   region marking (click start/end) + teaching chat with marked-bars injection +
   Pattern/PatternLesson models + migration. No artifact generation yet.
-- **Phase 2:** "Save what you learned" → the assistant emits `pattern.md` +
-  `detect.py` (validated against the contract), stored in the DB and written to
-  `strategy/patterns/<slug>/`, committed. Status → `ready`.
-- **Phase 3:** "Find pattern" → run `detect.py` over the full parquet universe ×
-  timeframes (bounded/queued), surface matches the user can load on the chart to
-  verify. Show match counts + per-match mini-context.
+- **Phase 1.5 (BUILT 2026-06-16):** saved-examples gallery (PatternExample) — save
+  a marked region as a named example, reload it to redraw the box. Plus the
+  base.html `p`-shadow root-cause fix (see dashboard_tst README v2.94) that
+  restores the chart auto-reopen.
+- **Phase 2 (SUPERSEDED — see `strategy/patterns/DETECTOR_DESIGN.md`):** the
+  original idea was "the assistant emits a one-off `detect.py`." That's now
+  replaced by the **systematic framework**: `detect.py` is a deterministic
+  geometric rule-scorer built on the shared `_geometry`/`_features` layers, with
+  `SEED_THRESHOLDS` calibrated from the user's labelled examples
+  (`_calibrate`). The Trainer's role is to feed that loop (gallery labels), not
+  to free-write a detector. Still stored under `strategy/patterns/<slug>/`,
+  committed, status → `ready`.
+- **Phase 3:** "Find pattern" is the **harvester** (`_harvester`) — a loose
+  high-recall sweep of the parquet universe surfacing candidate windows for
+  confirm/reject review (the calibration/eval input), NOT a live-signal scan.
+  See `DETECTOR_DESIGN.md` (D3–D5).
 
 ## Open items / follow-ups
 - **Marking precision:** Phase 1 marks by two clicks (start/end bar). A drag-box

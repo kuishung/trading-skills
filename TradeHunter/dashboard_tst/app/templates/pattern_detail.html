@@ -38,12 +38,38 @@
     <button id="loadBtn" class="rounded bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 text-sm font-medium">Load</button>
     <div class="w-px h-8 bg-slate-700 mx-1"></div>
     <button id="markBtn" class="rounded border border-amber-500/50 text-amber-300 hover:bg-amber-500/10 px-3 py-1.5 text-sm">Mark region</button>
+    <button id="saveExBtn" disabled class="rounded border border-sky-500/50 text-sky-300 hover:bg-sky-500/10 disabled:opacity-40 disabled:hover:bg-transparent px-3 py-1.5 text-sm">&#9733; Save example</button>
     <span id="markInfo" class="text-xs text-slate-400"></span>
     <a id="clearMark" href="#" class="text-[11px] text-slate-500 hover:text-rose-300 hidden">clear</a>
     <span id="chartStatus" class="ml-auto text-xs text-slate-500"></span>
   </div>
   <div id="chart" style="height:440px;"></div>
-  <p class="text-[11px] text-slate-500 mt-1">Click <b>Mark region</b>, then click the chart twice (start &amp; end of the pattern). The marked bars are sent to the chat as the example you're teaching.</p>
+  <p class="text-[11px] text-slate-500 mt-1">Click <b>Mark region</b>, then click the chart twice (start &amp; end of the pattern). Send the marked bars to the chat, or <b>&#9733; Save example</b> to keep this ticker+region in the gallery below &mdash; it reloads and redraws the box next time.</p>
+</section>
+
+{# ---------------- saved examples gallery ---------------- #}
+<section id="gallery" data-pattern="{{ p.id }}" class="rounded-lg border border-slate-800 bg-slate-900/40 p-3 mb-4">
+  <div class="flex items-center gap-2 mb-2">
+    <h2 class="text-sm font-semibold text-white">Saved examples</h2>
+    <span class="text-[11px] text-slate-500">click one to reload its chart + marked region</span>
+    <span id="exCount" class="ml-auto text-[11px] text-slate-500">{{ examples|length }}</span>
+  </div>
+  <div id="exList" class="flex flex-wrap gap-2">
+    {% for e in examples %}
+    <div class="exItem group flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-950/40 px-2.5 py-1.5 text-sm hover:border-sky-500/60 transition"
+         data-id="{{ e.id }}" data-symbol="{{ e.symbol }}" data-tf="{{ e.timeframe }}"
+         data-start="{{ e.start_t }}" data-end="{{ e.end_t }}">
+      <button type="button" class="exLoad flex items-center gap-2">
+        <span class="font-semibold text-white">{{ e.symbol }}</span>
+        <span class="text-[11px] text-slate-400">{{ e.timeframe }}</span>
+        <span class="text-[11px] text-amber-300/80">&#8982; {{ e.n_bars or '?' }} bars</span>
+        {% if e.label %}<span class="text-[11px] text-slate-500">&middot; {{ e.label }}</span>{% endif %}
+      </button>
+      <button type="button" class="exDel text-[11px] text-slate-600 hover:text-rose-300" title="Delete example">&times;</button>
+    </div>
+    {% endfor %}
+  </div>
+  <p id="exEmpty" class="text-[11px] text-slate-500 {% if examples %}hidden{% endif %}">No saved examples yet &mdash; mark a region and hit &#9733; Save example.</p>
 </section>
 
 {# ---------------- teaching chat ---------------- #}
@@ -111,6 +137,7 @@
   var tfSelect = document.getElementById('tfSelect');
   var status = document.getElementById('chartStatus');
   var markBtn = document.getElementById('markBtn');
+  var saveExBtn = document.getElementById('saveExBtn');
   var markInfo = document.getElementById('markInfo');
   var clearMark = document.getElementById('clearMark');
 
@@ -170,10 +197,12 @@
     setMarkFields();
   }
   function setMarkFields() {
-    document.getElementById('f_symbol').value = (markStart && markEnd) ? (symInput.value || '').trim().toUpperCase() : '';
-    document.getElementById('f_tf').value = (markStart && markEnd) ? tfSelect.value : '';
-    document.getElementById('f_start').value = (markStart && markEnd) ? markStart.iso : '';
-    document.getElementById('f_end').value = (markStart && markEnd) ? markEnd.iso : '';
+    var done = !!(markStart && markEnd);
+    document.getElementById('f_symbol').value = done ? (symInput.value || '').trim().toUpperCase() : '';
+    document.getElementById('f_tf').value = done ? tfSelect.value : '';
+    document.getElementById('f_start').value = done ? markStart.iso : '';
+    document.getElementById('f_end').value = done ? markEnd.iso : '';
+    if (saveExBtn) saveExBtn.disabled = !done;   // can only save a complete region
   }
   function barsInRange() {
     if (!(markStart && markEnd)) return 0;
@@ -218,6 +247,91 @@
   symInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); load(); } });
   tfSelect.addEventListener('change', load);
   if ((wrap.dataset.symbol || '').trim()) load();   // reopen where we left off
+
+  // ---------- saved examples gallery ----------
+  // Re-apply a marked region (ISO start/end) onto the currently-loaded bars:
+  // find the loaded bars at/after start and at/before end, set the A/B markers.
+  function applyMarkedRegion(startIso, endIso) {
+    if (!loaded.length) return false;
+    var a = startIso, b = endIso; if (a > b) { var t = a; a = b; b = t; }
+    var sBar = null, eBar = null;
+    for (var i = 0; i < loaded.length; i++) { if (loaded[i].t >= a) { sBar = loaded[i]; break; } }
+    for (var j = loaded.length - 1; j >= 0; j--) { if (loaded[j].t <= b) { eBar = loaded[j]; break; } }
+    if (!sBar || !eBar) return false;
+    marking = false; markBtn.classList.remove('bg-amber-500/20');
+    markStart = { time: sBar.time, iso: sBar.t };
+    markEnd = { time: eBar.time, iso: eBar.t };
+    refreshMarkers();
+    markInfo.textContent = '⦂ marked ' + barsInRange() + ' bars';
+    clearMark.classList.remove('hidden');
+    setMarkFields();
+    return true;
+  }
+
+  var exList = document.getElementById('exList');
+  var exCount = document.getElementById('exCount');
+  var exEmpty = document.getElementById('exEmpty');
+  var saveExBtn2 = saveExBtn;
+
+  function exItemHtml(ex) {
+    var d = document.createElement('div');
+    d.className = 'exItem group flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-950/40 px-2.5 py-1.5 text-sm hover:border-sky-500/60 transition';
+    d.dataset.id = ex.id; d.dataset.symbol = ex.symbol; d.dataset.tf = ex.timeframe;
+    d.dataset.start = ex.start; d.dataset.end = ex.end;
+    var label = ex.label ? ('<span class="text-[11px] text-slate-500">· ' + ex.label + '</span>') : '';
+    d.innerHTML = '<button type="button" class="exLoad flex items-center gap-2">' +
+      '<span class="font-semibold text-white">' + ex.symbol + '</span>' +
+      '<span class="text-[11px] text-slate-400">' + ex.timeframe + '</span>' +
+      '<span class="text-[11px] text-amber-300/80">⋆ ' + (ex.n || '?') + ' bars</span>' +
+      label + '</button>' +
+      '<button type="button" class="exDel text-[11px] text-slate-600 hover:text-rose-300" title="Delete example">×</button>';
+    return d;
+  }
+  function refreshCount() {
+    var n = exList.querySelectorAll('.exItem').length;
+    exCount.textContent = n;
+    exEmpty.classList.toggle('hidden', n > 0);
+  }
+
+  async function loadExample(item) {
+    symInput.value = item.dataset.symbol;
+    tfSelect.value = item.dataset.tf;
+    await load();                                  // reload that ticker+timeframe
+    if (!applyMarkedRegion(item.dataset.start, item.dataset.end)) {
+      status.textContent += ' (region outside the loaded window)';
+    }
+    document.getElementById('chartwrap').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  async function deleteExample(item) {
+    var id = item.dataset.id;
+    try {
+      await fetch('/patterns/' + pid + '/examples/' + id + '/delete', { method: 'POST' });
+      item.remove(); refreshCount();
+    } catch (e) { /* leave it; user can retry */ }
+  }
+  exList.addEventListener('click', function (e) {
+    var item = e.target.closest('.exItem'); if (!item) return;
+    if (e.target.closest('.exDel')) { deleteExample(item); }
+    else if (e.target.closest('.exLoad')) { loadExample(item); }
+  });
+
+  if (saveExBtn2) saveExBtn2.addEventListener('click', async function () {
+    if (saveExBtn2.disabled || !(markStart && markEnd)) return;
+    var label = (prompt('Label for this example (optional):', '') || '').trim();
+    saveExBtn2.disabled = true;
+    try {
+      var body = new URLSearchParams({
+        symbol: (symInput.value || '').trim().toUpperCase(), tf: tfSelect.value,
+        start: markStart.iso, end: markEnd.iso, label: label
+      });
+      var res = await fetch('/patterns/' + pid + '/examples.json',
+        { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body });
+      var d = await res.json();
+      if (d.ok && d.example) { exList.appendChild(exItemHtml(d.example)); refreshCount(); }
+      else { alert(d.error || 'Could not save example.'); }
+    } catch (e) { alert('Network error saving example.'); }
+    finally { saveExBtn2.disabled = !(markStart && markEnd); }
+  });
 
   // ---------- chat ----------
   if (!window.marked || !window.DOMPurify) return;

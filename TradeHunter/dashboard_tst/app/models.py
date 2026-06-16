@@ -471,6 +471,34 @@ class Pattern(Base):
         "PatternLesson", back_populates="pattern",
         cascade="all, delete-orphan", order_by="PatternLesson.seq",
     )
+    examples = relationship(
+        "PatternExample", back_populates="pattern",
+        cascade="all, delete-orphan", order_by="PatternExample.created_at",
+    )
+
+
+class PatternExample(Base):
+    """A saved teaching example: one marked chart region (symbol/timeframe/
+    time-range) the user pointed at while teaching this pattern. Unlike the
+    per-turn `PatternLesson.marked`, an example is a first-class, named,
+    reloadable artifact — the page lists them in a gallery and clicking one
+    reloads that ticker+timeframe and redraws the marked box. Builds a
+    per-pattern training set the detector generator (Phase 2) can cite."""
+
+    __tablename__ = "pattern_examples"
+
+    id = Column(Integer, primary_key=True)
+    pattern_id = Column(Integer, ForeignKey("patterns.id"), nullable=False, index=True)
+    symbol = Column(String(20), nullable=False)
+    timeframe = Column(String(8), nullable=False)            # daily | 5min | 3min | 1min
+    start_t = Column(String(32), nullable=False)             # ISO bound (bars_store)
+    end_t = Column(String(32), nullable=False)
+    n_bars = Column(Integer, nullable=True)
+    label = Column(String(120), nullable=True)               # optional user label
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
+
+    pattern = relationship("Pattern", back_populates="examples")
 
 
 class PatternLesson(Base):

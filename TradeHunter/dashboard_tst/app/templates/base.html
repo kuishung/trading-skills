@@ -40,7 +40,11 @@
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen lg:h-screen lg:overflow-hidden">
 {% if user %}
-  {% set p = request.url.path %}
+  {# nav highlight helper — named nav_path (NOT 'p') so it can't shadow a child
+     template's own `p` context var inside {% block content %}. pattern_detail
+     passes a Pattern as `p`; while this was named `p`, every {{ p.name }} there
+     resolved against this URL string -> all fields rendered blank. Keep distinct. #}
+  {% set nav_path = request.url.path %}
   {% set nav = [
     ('/matp', 'MATP'),
     ('/studies', 'Studies'),
@@ -62,13 +66,13 @@
         {% for href, label in nav %}
         <a href="{{ href }}"
            class="rounded-lg px-3 py-1.5 whitespace-nowrap transition
-                  {% if p.startswith(href) %}bg-orange-500/15 text-orange-300{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-orange-300{% endif %}">{{ label }}</a>
+                  {% if nav_path.startswith(href) %}bg-orange-500/15 text-orange-300{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-orange-300{% endif %}">{{ label }}</a>
         {% endfor %}
         {# 'Agent' nav item removed — the Nous Hermes pill (right) already links to /agent #}
         {% if user.is_admin %}
         <a href="/admin"
            class="rounded-lg px-3 py-1.5 whitespace-nowrap transition
-                  {% if p.startswith('/admin') %}bg-orange-500/15 text-orange-300{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-orange-300{% endif %}">Admin</a>
+                  {% if nav_path.startswith('/admin') %}bg-orange-500/15 text-orange-300{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-orange-300{% endif %}">Admin</a>
         {% endif %}
       </nav>
 
