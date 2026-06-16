@@ -124,6 +124,48 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-16 — v2.98: Pattern Trainer — rebuilt around the calibration loop
+- Reorganised the whole detail page from a button-pile into the **Teach → Calibrate
+  → Test → Promote** loop (the page is a calibration loop, not a form). New layout:
+  a **chart workspace** (2/3) beside a **brain sidebar** (1/3).
+- **One mode switch** (`Teach` ⇄ `Test`) replaces the stacked toolbar. Teach shows
+  draw-triangle + save positive/counter; Test shows Find pattern. Dropped the legacy
+  click-to-`Mark region` primitive — drawing is the only label (its markers code is
+  retained only to redraw older non-geometry examples).
+- **Readiness sidebar**: example counts (✓/✗), validation suite pass-rate + bar, and
+  a single next-step hint, all gated — `Recalibrate` unlocks at ≥3 ✓ and ≥2 ✗;
+  `Promote → live` unlocks only when the suite passes ≥80%; `Run across universe`
+  unlocks only once promoted.
+- **Correction loop**: each detector hit in Test mode carries `✓ correct` / `✗ wrong`
+  — one tap saves it as a positive/counter example and bumps readiness, so misfires
+  feed the next calibration (active learning made literal). No new backend — it posts
+  the detected window to the existing `examples.json`.
+- New routes (`patterns.py`): `POST /calibrate` (fit thresholds from examples via the
+  D4 engine + run the validation suite, store pass-rate), `POST /promote` /
+  `POST /reopen` (gated status flips), `GET /scan` (capped universe sweep with the
+  calibrated detector — honest about the cap; full queued scan is a later build).
+  `/detect` now runs with the pattern's **calibrated** thresholds once it has them.
+- DB: `patterns` gains `detector_thresholds` (JSON) + `detector_version` +
+  `calib_pass_rate` + `calib_at` (Alembic `c5d6e7f8a9b0`, ORM-portable, up/down
+  verified base→head). Verified end-to-end via TestClient on real parquet: calibrate
+  fits + scores a suite, promote is correctly blocked below 80%, scan is blocked
+  until ready.
+
+### 2026-06-16 — v2.97: Pattern Trainer — remove the teaching chat (drawing is the label)
+- Deleted the **Teaching chat** entirely (user: "why is the teach chat still
+  there?"). Once the drag-to-label triangle tool (v2.95) made the *drawn geometry*
+  the authoritative label — the calibrator derives slope/R²/touches from the shape,
+  not from prose — the free-text chat was redundant and confusing. Removed: the
+  `#chatpanel` section + chat JS from `pattern_detail.html`, the unused
+  marked/DOMPurify CDN scripts + markdown CSS, the `/patterns/{id}/chat` and
+  `/chat.json` routes + `_do_chat`/`_marked_context` helpers, and the
+  `pattern_llm`/`PatternLesson`/`lessons`/`chat_ready` wiring in `patterns.py`.
+- `patterns.html` intro + the "chat not configured" banner rewritten to describe the
+  draw-to-label + **Find pattern** flow. (DB table `pattern_lessons` is left in
+  place — harmless, no migration needed; can be dropped later if desired.)
+- Verified: both templates parse, route file compiles, app imports v2.97, chat
+  routes gone, `/detect` still present.
+
 ### 2026-06-16 — v2.96: Pattern Trainer — "Find pattern" detector overlay (D5)
 - The Trainer now **runs the real geometric detector against the chart and draws
   what it found** — closing the loop from "teach" to "test". New **Find pattern**

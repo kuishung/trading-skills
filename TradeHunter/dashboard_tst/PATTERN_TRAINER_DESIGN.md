@@ -19,20 +19,25 @@ universe for it.
 ```
 Browser ──▶ /patterns (dashboard_tst, Hermes)
    ├─ chart  ── GET /patterns/{id}/bars?symbol=&tf= ──▶ resources.bars_store (PARQUET)
-   └─ chat   ── POST /patterns/{id}/chat.json ──▶ pattern_llm (DeepSeek-direct)
-                 marked region's OHLCV injected into the prompt
+   ├─ label  ── draw the triangle ──▶ POST /patterns/{id}/examples.json (positive/negative)
+   └─ find   ── GET /patterns/{id}/detect?symbol=&tf= ──▶ strategy/patterns/<slug>/detect.py
+                 geometric detector overlays its matches on the chart (D5)
    (Phase 2) "Save what you learned" ──▶ pattern.md + detect.py (committed)
    (Phase 3) "Find pattern" ──▶ run detect.py over the parquet universe ──▶ matches
 ```
-The teaching chat does **not** use the Nous agent/corpus — the data it reasons
-over (the bars) is injected directly — so DeepSeek-direct is sufficient and fast.
+Labels are **drawn, not typed** — the drawn geometry IS the label; the calibrator
+derives slope/R²/touches from the shape. (The original free-text "teaching chat",
+DeepSeek-direct with marked-bars injection, was **removed in v2.97** once drawing
+became canonical — it was redundant and confusing.)
 
 ## Data model (SQLAlchemy ORM, Postgres-ready; Alembic migrations `f2a3b4c5d6e7`, `a3b4c5d6e7f8`)
 - **Pattern** — id, owner_id, name, slug, description, status
   (`learning|ready|archived`), chart_symbol, chart_timeframe, `pattern_md`,
   `detect_py`, md_path, script_path, created/updated.
 - **PatternLesson** — pattern_id, seq, role, content, `marked`
-  (JSON: {symbol, timeframe, start, end, n}), created_at. The teaching transcript.
+  (JSON: {symbol, timeframe, start, end, n}), created_at. The old teaching-chat
+  transcript. **The chat UI/routes were removed in v2.97** (drawing is the label);
+  the table is retained (no migration) but no longer written.
 - **PatternExample** (added 2026-06-16, migration `a3b4c5d6e7f8`) — pattern_id,
   symbol, timeframe, start_t, end_t, n_bars, label, note, created_at. A saved,
   named, reloadable marked region — the per-pattern **example gallery**. Distinct
@@ -50,10 +55,32 @@ def detect(bars: list[dict]) -> list[dict]:
 ```
 `pattern.md` is the human spec the detector implements (shape, rules, sources).
 
+## Page model — the calibration loop (BUILT v2.98)
+The detail page is organised as the loop, not a form:
+**Teach → Calibrate → Test → Correct → Promote** (with Test→Correct→Teach the tight
+inner loop). Layout = a **chart workspace** (2/3) next to a **brain sidebar** (1/3).
+- **One mode switch** `Teach ⇄ Test`. Teach = draw the triangle → save positive /
+  counter (drawing is the only label; legacy click-`Mark region` removed). Test =
+  `Find pattern` overlays the detector's hits.
+- **Brain sidebar** = the pattern's state, always visible: example counts (✓/✗),
+  suite pass-rate + bar, and the single next action — plus the gated buttons.
+- **Gating** (`_readiness` in `patterns.py`): `Recalibrate` unlocks at
+  ≥`_CALIB_MIN_POS` (3) ✓ and ≥`_CALIB_MIN_NEG` (2) ✗; `Promote` only when the
+  validation suite ≥ `_PROMOTE_PASS` (0.80); `Run across universe` only once `ready`.
+- **Correction loop**: each Test hit carries `✓ correct` / `✗ wrong` → one tap saves
+  a positive / counter example (posts the detected window to `examples.json`) and
+  bumps readiness. Active learning made literal — misfires feed the next calibration.
+- **Routes**: `POST /calibrate` (fit thresholds from examples + run the suite, store
+  `detector_thresholds`/`calib_pass_rate`/`calib_at`/`detector_version` on `Pattern`),
+  `POST /promote`·`POST /reopen` (gated status flips), `GET /scan` (capped universe
+  sweep, honest about the cap). `/detect` runs with the **calibrated** thresholds.
+
 ## Phased build
-- **Phase 1 (BUILT):** `/patterns` page + parquet chart (symbol/timeframe load) +
-  region marking (click start/end) + teaching chat with marked-bars injection +
-  Pattern/PatternLesson models + migration. No artifact generation yet.
+- **Phase 1 (BUILT; chat since removed):** `/patterns` page + parquet chart
+  (symbol/timeframe load) + region marking (click start/end) + Pattern/PatternLesson
+  models + migration. Originally shipped with a teaching chat (marked-bars
+  injection); **the chat was removed in v2.97** when drawing became the canonical
+  label. No artifact generation yet.
 - **Phase 1.5 (BUILT 2026-06-16):** saved-examples gallery (PatternExample) — save
   a marked region as a named example, reload it to redraw the box. Plus the
   base.html `p`-shadow root-cause fix (see dashboard_tst README v2.94) that

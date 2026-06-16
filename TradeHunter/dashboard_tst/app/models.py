@@ -463,6 +463,14 @@ class Pattern(Base):
     detect_py = Column(Text, nullable=True)                  # generated detector
     md_path = Column(String(512), nullable=True)             # committed repo path
     script_path = Column(String(512), nullable=True)
+    # ---- calibration state (the D4 loop, surfaced in the trainer readiness card)
+    # `detector_thresholds` is the fitted thresholds dict (merge-compatible with the
+    # detector's SEED_THRESHOLDS); the detector runs with it once calibrated. The
+    # rest record how good/recent that calibration is so the page can gate Promote.
+    detector_thresholds = Column(JSON, nullable=True)
+    detector_version = Column(String(20), nullable=True)     # __version__ at calibration
+    calib_pass_rate = Column(Float, nullable=True)           # last validation-suite pass (0..1)
+    calib_at = Column(DateTime, nullable=True)               # when last calibrated
     created_at = Column(DateTime, default=_utcnow)
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 

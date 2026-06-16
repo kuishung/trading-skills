@@ -1,15 +1,16 @@
 {% extends "base.html" %}
 {% block title %}{{ p.name }} · Pattern Trainer{% endblock %}
 {% block content %}
-<div class="mb-4">
+<div class="mb-3">
   <a href="/patterns" class="text-xs text-slate-500 hover:text-orange-300">&larr; All patterns</a>
   <div class="flex items-center gap-2 flex-wrap mt-1">
-    <span class="text-[10px] uppercase px-1.5 py-0.5 rounded border
+    <span id="statusBadge" class="text-[10px] uppercase px-1.5 py-0.5 rounded border
       {% if p.status == 'ready' %}border-emerald-500/50 text-emerald-300
       {% elif p.status == 'learning' %}border-sky-500/50 text-sky-300
       {% else %}border-slate-600 text-slate-400{% endif %}">{{ p.status }}</span>
     <h1 class="text-2xl font-semibold">{{ p.name }}</h1>
     {% if p.description %}<span class="text-slate-500 text-sm">· {{ p.description }}</span>{% endif %}
+    <span id="rdHintTop" class="text-[11px] text-slate-400 hidden sm:inline">{{ readiness.hint }}</span>
     <form method="post" action="/patterns/{{ p.id }}/archive" class="ml-auto inline"
           onsubmit="return confirm('Archive this pattern?');">
       <button class="text-[11px] px-2 py-0.5 rounded border border-rose-500/40 text-rose-300 hover:bg-rose-500/15 transition">archive</button>
@@ -17,153 +18,160 @@
   </div>
 </div>
 
-{# ---------------- chart ---------------- #}
-<section id="chartwrap" data-pattern="{{ p.id }}"
-         data-symbol="{{ p.chart_symbol or '' }}" data-tf="{{ p.chart_timeframe or 'daily' }}"
-         class="rounded-lg border border-slate-800 bg-slate-900/40 p-3 mb-4">
-  <div class="flex flex-wrap items-end gap-2 mb-2">
-    <div>
-      <label class="block text-[11px] text-slate-500 mb-1">Ticker</label>
-      <input id="symInput" value="{{ p.chart_symbol or '' }}" placeholder="AAPL"
-             class="w-28 rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm uppercase focus:border-emerald-500 outline-none">
+<div class="grid lg:grid-cols-3 gap-4">
+
+  {# ============================= chart workspace ============================= #}
+  <section id="chartwrap" data-pattern="{{ p.id }}"
+           data-symbol="{{ p.chart_symbol or '' }}" data-tf="{{ p.chart_timeframe or 'daily' }}"
+           class="lg:col-span-2 rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+    <div class="flex flex-wrap items-end gap-2 mb-2">
+      <div>
+        <label class="block text-[11px] text-slate-500 mb-1">Ticker</label>
+        <input id="symInput" value="{{ p.chart_symbol or '' }}" placeholder="AAPL"
+               class="w-24 rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm uppercase focus:border-emerald-500 outline-none">
+      </div>
+      <div>
+        <label class="block text-[11px] text-slate-500 mb-1">Timeframe</label>
+        <select id="tfSelect" class="rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm focus:border-emerald-500 outline-none">
+          {% for tf in timeframes %}
+          <option value="{{ tf }}" {% if p.chart_timeframe == tf %}selected{% endif %}>{{ {'daily':'Daily','5min':'5-min','3min':'3-min','1min':'1-min'}[tf] }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <button id="loadBtn" class="rounded bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 text-sm font-medium">Load</button>
+      <div class="w-px h-8 bg-slate-700 mx-1"></div>
+      {# the one mode switch — Teach (draw examples) vs Test (run the detector) #}
+      <div class="inline-flex rounded-lg border border-slate-700 overflow-hidden text-sm">
+        <button id="teachTab" class="px-3 py-1.5 flex items-center gap-1.5">&#9651; Teach</button>
+        <button id="testTab" class="px-3 py-1.5 flex items-center gap-1.5 text-slate-400">&#9678; Test</button>
+      </div>
+      <span id="chartStatus" class="ml-auto text-xs text-slate-500"></span>
     </div>
-    <div>
-      <label class="block text-[11px] text-slate-500 mb-1">Timeframe</label>
-      <select id="tfSelect" class="rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm focus:border-emerald-500 outline-none">
-        {% for tf in timeframes %}
-        <option value="{{ tf }}" {% if p.chart_timeframe == tf %}selected{% endif %}>{{ {'daily':'Daily','5min':'5-min','3min':'3-min','1min':'1-min'}[tf] }}</option>
+
+    {# --- TEACH bar: draw the triangle, save as a positive/counter example --- #}
+    <div id="teachBar" class="flex flex-wrap items-center gap-2 mb-2">
+      <button id="drawBtn" class="rounded border border-violet-500/60 text-violet-300 hover:bg-violet-500/10 px-3 py-1.5 text-sm">&#9651; Draw triangle</button>
+      <span id="drawActions" class="hidden flex items-center gap-2">
+        <input id="drawLabel" placeholder="label (optional)" class="w-32 rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-xs focus:border-emerald-500 outline-none">
+        <button id="savePosBtn" class="rounded bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 text-sm font-medium">&#9650; Save positive</button>
+        <button id="saveNegBtn" class="rounded border border-rose-500/50 text-rose-300 hover:bg-rose-500/10 px-3 py-1.5 text-sm">&#10007; Reject (counter)</button>
+        <button id="cancelDrawBtn" class="text-[11px] text-slate-500 hover:text-slate-300">cancel</button>
+      </span>
+      <span id="markInfo" class="text-xs text-slate-400"></span>
+      <a id="clearMark" href="#" class="text-[11px] text-slate-500 hover:text-rose-300 hidden">clear</a>
+      <span class="text-[11px] text-slate-500">drag the <span class="text-rose-300">resistance</span> + <span class="text-emerald-300">support</span> handles onto the shape — the drawing is the label.</span>
+    </div>
+
+    {# --- TEST bar: run the detector on this chart, then correct its misfires --- #}
+    <div id="testBar" class="hidden flex flex-wrap items-center gap-2 mb-2">
+      <button id="findBtn" class="rounded border border-cyan-500/60 text-cyan-300 hover:bg-cyan-500/10 px-3 py-1.5 text-sm" title="Run the geometric detector on this chart and overlay what it flags">&#9678; Find pattern</button>
+      <span class="text-[11px] text-slate-500">runs your <b>calibrated</b> detector on this chart — mark each hit &#10003;&nbsp;correct or &#10007;&nbsp;wrong to feed calibration.</span>
+    </div>
+
+    <div id="chart" class="relative" style="height:440px;"></div>
+
+    {# detector overlay results (Test mode) #}
+    <div id="detResults" class="hidden mt-2 rounded-lg border border-cyan-500/25 bg-cyan-500/5 p-2">
+      <div class="flex items-center gap-2 mb-1">
+        <span class="text-xs font-semibold text-cyan-300">&#9678; Detector</span>
+        <span id="detSummary" class="text-[11px] text-slate-400"></span>
+        <a id="detClear" href="#" class="ml-auto text-[11px] text-slate-500 hover:text-rose-300">clear</a>
+      </div>
+      <div id="detList" class="flex flex-col gap-1.5"></div>
+      <p class="text-[10px] text-slate-500 mt-1">Click a row to zoom; &#10003;&nbsp;correct / &#10007;&nbsp;wrong saves it as an example so the next calibration is sharper. Offline check — never a live signal.</p>
+    </div>
+  </section>
+
+  {# ================================ brain sidebar ================================ #}
+  <aside class="flex flex-col gap-4">
+
+    {# ---- readiness card ---- #}
+    <section class="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+      <div class="text-[11px] uppercase tracking-wide text-slate-500 mb-2">Readiness</div>
+      <div class="grid grid-cols-2 gap-2 mb-2">
+        <div class="rounded bg-slate-950/50 px-3 py-2">
+          <div class="text-[11px] text-slate-500">Examples</div>
+          <div class="text-lg font-semibold"><span id="rdPos" class="text-emerald-300">0</span><span class="text-slate-600"> ✓ / </span><span id="rdNeg" class="text-rose-300">0</span><span class="text-slate-600"> ✗</span></div>
+        </div>
+        <div class="rounded bg-slate-950/50 px-3 py-2">
+          <div class="text-[11px] text-slate-500">Suite pass</div>
+          <div id="rdPass" class="text-lg font-semibold">—</div>
+        </div>
+      </div>
+      <div class="h-1.5 rounded-full bg-slate-800 overflow-hidden mb-2">
+        <div id="rdBar" class="h-full bg-cyan-500 transition-all" style="width:0%"></div>
+      </div>
+      <div id="rdHint" class="text-[11px] text-slate-400">{{ readiness.hint }}</div>
+    </section>
+
+    {# ---- detector card ---- #}
+    <section class="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+      <div class="flex items-baseline gap-2 mb-2">
+        <span class="text-xs font-semibold text-white">&#9881; Detector</span>
+        <span id="detVer" class="text-[11px] text-slate-500 font-mono">{{ detector.version or 'seed' }}</span>
+      </div>
+      <div id="thrChips" class="flex flex-wrap gap-1 mb-3"></div>
+      <button id="calibBtn" class="w-full rounded border border-sky-500/50 text-sky-300 hover:bg-sky-500/10 disabled:opacity-40 disabled:cursor-not-allowed px-3 py-1.5 text-sm mb-1.5">&#9881; Recalibrate from examples</button>
+      <button id="promoteBtn" class="w-full rounded bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 disabled:cursor-not-allowed px-3 py-1.5 text-sm font-medium mb-1.5">&#9650; Promote &rarr; live</button>
+      <button id="reopenBtn" class="hidden w-full rounded border border-slate-600 text-slate-300 hover:bg-slate-700/30 px-3 py-1.5 text-sm mb-1.5">&#8617; Reopen for editing</button>
+      <button id="scanBtn" class="w-full rounded border border-cyan-500/50 text-cyan-300 hover:bg-cyan-500/10 disabled:opacity-40 disabled:cursor-not-allowed px-3 py-1.5 text-sm">&#9678; Run across universe</button>
+      <div id="scanResults" class="hidden mt-2">
+        <div class="flex items-center gap-2 mb-1">
+          <span id="scanSummary" class="text-[11px] text-slate-400"></span>
+          <a id="scanClear" href="#" class="ml-auto text-[11px] text-slate-500 hover:text-rose-300">clear</a>
+        </div>
+        <div id="scanList" class="flex flex-col gap-1 max-h-64 overflow-y-auto"></div>
+      </div>
+    </section>
+
+    {# ---- saved examples gallery ---- #}
+    <section id="gallery" data-pattern="{{ p.id }}" class="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+      <div class="flex items-center gap-2 mb-2">
+        <h2 class="text-xs font-semibold text-white">Examples</h2>
+        <span class="text-[11px] text-slate-500">click to reload + redraw</span>
+        <span id="exCount" class="ml-auto text-[11px] text-slate-500">{{ examples|length }}</span>
+      </div>
+      <div id="exList" class="flex flex-col gap-1.5 max-h-72 overflow-y-auto">
+        {% for e in examples %}
+        <div class="exItem group flex items-center gap-2 rounded border border-slate-700 bg-slate-950/40 px-2 py-1.5 text-sm hover:border-sky-500/60 transition"
+             data-id="{{ e.id }}" data-symbol="{{ e.symbol }}" data-tf="{{ e.timeframe }}"
+             data-start="{{ e.start_t }}" data-end="{{ e.end_t }}"
+             data-kind="{{ e.kind or 'positive' }}" data-geometry='{{ e.geometry | tojson if e.geometry else "" }}'>
+          <button type="button" class="exLoad flex items-center gap-2 flex-1 text-left">
+            <span class="inline-block w-2 h-2 rounded-full {% if e.kind == 'negative' %}bg-rose-400{% else %}bg-emerald-400{% endif %}"></span>
+            <span class="font-semibold text-white">{{ e.symbol }}</span>
+            <span class="text-[11px] text-slate-400">{{ e.timeframe }}</span>
+            <span class="text-[11px] text-amber-300/80">&#8982; {{ e.n_bars or '?' }}</span>
+            {% if e.label %}<span class="text-[11px] text-slate-500">&middot; {{ e.label }}</span>{% endif %}
+          </button>
+          <button type="button" class="exDel text-[11px] text-slate-600 hover:text-rose-300" title="Delete example">&times;</button>
+        </div>
         {% endfor %}
-      </select>
-    </div>
-    <button id="loadBtn" class="rounded bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 text-sm font-medium">Load</button>
-    <div class="w-px h-8 bg-slate-700 mx-1"></div>
-    <button id="markBtn" class="hidden rounded border border-amber-500/50 text-amber-300 hover:bg-amber-500/10 px-3 py-1.5 text-sm">Mark region</button>
-    <button id="drawBtn" class="rounded border border-violet-500/60 text-violet-300 hover:bg-violet-500/10 px-3 py-1.5 text-sm">&#9651; Draw triangle</button>
-    <button id="findBtn" class="rounded border border-cyan-500/60 text-cyan-300 hover:bg-cyan-500/10 px-3 py-1.5 text-sm" title="Run the geometric detector on this chart and overlay what it flags">&#9678; Find pattern</button>
-    {# draw-mode actions (shown only while drawing) #}
-    <span id="drawActions" class="hidden flex items-center gap-2">
-      <input id="drawLabel" placeholder="label (optional)" class="w-32 rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-xs focus:border-emerald-500 outline-none">
-      <button id="savePosBtn" class="rounded bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 text-sm font-medium">&#9650; Save positive</button>
-      <button id="saveNegBtn" class="rounded border border-rose-500/50 text-rose-300 hover:bg-rose-500/10 px-3 py-1.5 text-sm">&#10007; Reject (negative)</button>
-      <button id="cancelDrawBtn" class="text-[11px] text-slate-500 hover:text-slate-300">cancel</button>
-    </span>
-    <span id="markInfo" class="text-xs text-slate-400"></span>
-    <a id="clearMark" href="#" class="text-[11px] text-slate-500 hover:text-rose-300 hidden">clear</a>
-    <span id="chartStatus" class="ml-auto text-xs text-slate-500"></span>
-  </div>
-  <div id="chart" class="relative" style="height:440px;"></div>
-  {# D5 — detector overlay: what the geometric detector flags on this chart #}
-  <div id="detResults" class="hidden mt-2 rounded-lg border border-cyan-500/25 bg-cyan-500/5 p-2">
-    <div class="flex items-center gap-2 mb-1">
-      <span class="text-xs font-semibold text-cyan-300">&#9678; Detector</span>
-      <span id="detSummary" class="text-[11px] text-slate-400"></span>
-      <a id="detClear" href="#" class="ml-auto text-[11px] text-slate-500 hover:text-rose-300">clear</a>
-    </div>
-    <div id="detList" class="flex flex-wrap gap-1.5"></div>
-    <p class="text-[10px] text-slate-500 mt-1">Click a flag to zoom the chart to that window and eyeball it &mdash; this is the visual precision/recall check (offline, never a live signal).</p>
-  </div>
-  <p class="text-[11px] text-slate-500 mt-1"><b>&#9651; Draw triangle</b>: drag the <span class="text-rose-300">resistance</span> (top) and <span class="text-emerald-300">support</span> (bottom) handles &mdash; each snaps to a candle's high/low. <b>Save positive</b> if it's an ascending triangle, <b>Reject</b> if it's a near-miss. You never type numbers &mdash; the shape you draw is the label. Saved examples appear in the gallery below and redraw when reloaded.</p>
-</section>
+      </div>
+      <p id="exEmpty" class="text-[11px] text-slate-500 {% if examples %}hidden{% endif %}">No examples yet — draw a triangle and save it positive/counter.</p>
+    </section>
+  </aside>
+</div>
 
-{# ---------------- saved examples gallery ---------------- #}
-<section id="gallery" data-pattern="{{ p.id }}" class="rounded-lg border border-slate-800 bg-slate-900/40 p-3 mb-4">
-  <div class="flex items-center gap-2 mb-2">
-    <h2 class="text-sm font-semibold text-white">Saved examples</h2>
-    <span class="text-[11px] text-slate-500">click one to reload its chart + marked region</span>
-    <span id="exCount" class="ml-auto text-[11px] text-slate-500">{{ examples|length }}</span>
-  </div>
-  <div id="exList" class="flex flex-wrap gap-2">
-    {% for e in examples %}
-    <div class="exItem group flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-950/40 px-2.5 py-1.5 text-sm hover:border-sky-500/60 transition"
-         data-id="{{ e.id }}" data-symbol="{{ e.symbol }}" data-tf="{{ e.timeframe }}"
-         data-start="{{ e.start_t }}" data-end="{{ e.end_t }}"
-         data-kind="{{ e.kind or 'positive' }}" data-geometry='{{ e.geometry | tojson if e.geometry else "" }}'>
-      <button type="button" class="exLoad flex items-center gap-2">
-        <span class="inline-block w-2 h-2 rounded-full {% if e.kind == 'negative' %}bg-rose-400{% else %}bg-emerald-400{% endif %}"></span>
-        <span class="font-semibold text-white">{{ e.symbol }}</span>
-        <span class="text-[11px] text-slate-400">{{ e.timeframe }}</span>
-        <span class="text-[11px] text-amber-300/80">&#8982; {{ e.n_bars or '?' }} bars</span>
-        {% if e.label %}<span class="text-[11px] text-slate-500">&middot; {{ e.label }}</span>{% endif %}
-      </button>
-      <button type="button" class="exDel text-[11px] text-slate-600 hover:text-rose-300" title="Delete example">&times;</button>
-    </div>
-    {% endfor %}
-  </div>
-  <p id="exEmpty" class="text-[11px] text-slate-500 {% if examples %}hidden{% endif %}">No saved examples yet &mdash; mark a region and hit &#9733; Save example.</p>
-</section>
-
-{# ---------------- teaching chat ---------------- #}
-<section id="chatpanel" data-pattern="{{ p.id }}"
-         class="rounded-lg border border-slate-800 bg-slate-900/40 p-3 flex flex-col" style="max-height:60vh">
-  <h2 class="text-sm font-semibold text-white mb-2">Teaching chat
-    <span class="text-[11px] text-slate-500 font-normal">· explain the marked pattern; I'll learn to define it</span></h2>
-
-  <div id="chatlog" class="flex-1 overflow-y-auto space-y-3 pr-1 mb-2" style="min-height:160px">
-    <p id="chatempty" class="text-slate-500 text-sm {% if lessons %}hidden{% endif %}">
-      Load a chart, mark the pattern, and describe it — e.g. “this is a bull flag: a sharp
-      pole, then a tight downward-drifting consolidation on falling volume, then breakout.”
-    </p>
-    {% for m in lessons %}
-    <div class="flex {% if m.role == 'user' %}justify-end{% endif %}">
-      <div class="max-w-[85%] rounded-lg px-3 py-2 text-sm
-        {% if m.role == 'user' %}whitespace-pre-wrap bg-emerald-600/20 border border-emerald-600/30 text-slate-100{% else %}md-body bg-slate-800/60 border border-slate-700 text-slate-200{% endif %}"
-        {% if m.role != 'user' %}data-md{% endif %}>{{ m.content }}{% if m.marked %}<div class="text-[10px] text-amber-300/80 mt-1">⌖ {{ m.marked.symbol }} · {{ m.marked.timeframe }} · {{ m.marked.n }} bars</div>{% endif %}</div>
-    </div>
-    {% endfor %}
-    <span id="bottom"></span>
-  </div>
-
-  <form id="chatform" method="post" action="/patterns/{{ p.id }}/chat" class="flex items-end gap-2">
-    <input type="hidden" name="symbol" id="f_symbol"><input type="hidden" name="tf" id="f_tf">
-    <input type="hidden" name="start" id="f_start"><input type="hidden" name="end" id="f_end">
-    <textarea id="chatinput" name="message" rows="2" required {% if not chat_ready %}disabled{% endif %}
-              placeholder="{% if chat_ready %}Describe the pattern in the marked region…  (Enter to send){% else %}Chat not configured{% endif %}"
-              class="flex-1 rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm focus:border-emerald-500 outline-none resize-none"></textarea>
-    <button id="chatsend" {% if not chat_ready %}disabled{% endif %}
-            class="rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 px-4 py-2 text-sm font-medium">Send</button>
-  </form>
-</section>
-
-<style>
-  .md-body { line-height: 1.5; }
-  .md-body > :first-child { margin-top: 0; } .md-body > :last-child { margin-bottom: 0; }
-  .md-body p { margin: 0 0 .5rem; }
-  .md-body ul, .md-body ol { margin: .25rem 0 .5rem; padding-left: 1.25rem; }
-  .md-body ul { list-style: disc; } .md-body ol { list-style: decimal; }
-  .md-body li { margin: .15rem 0; }
-  .md-body h1, .md-body h2, .md-body h3 { font-weight: 600; color: #fff; margin: .6rem 0 .3rem; }
-  .md-body h1 { font-size: 1.02rem; } .md-body h2 { font-size: .97rem; } .md-body h3 { font-size: .92rem; }
-  .md-body strong { color: #fff; } .md-body a { color: #5eead4; text-decoration: underline; }
-  .md-body code { background: rgba(148,163,184,.16); padding: .05rem .3rem; border-radius: .25rem; font-size: .85em; }
-  .md-body pre { background: rgba(2,6,23,.6); border: 1px solid rgba(148,163,184,.2); border-radius: .4rem; padding: .55rem; overflow-x: auto; margin: .3rem 0 .55rem; }
-  .md-body pre code { background: none; padding: 0; font-size: .82em; }
-  .md-body table { border-collapse: collapse; margin: .3rem 0; font-size: .9em; }
-  .md-body th, .md-body td { border: 1px solid rgba(148,163,184,.25); padding: .2rem .45rem; }
-  @keyframes th-ell { 0% { content:''; } 25% { content:'.'; } 50% { content:'..'; } 75%,100% { content:'...'; } }
-  .th-dots::after { content:''; display:inline-block; width:1.1em; text-align:left; animation: th-ell 1.2s steps(1,end) infinite; }
-</style>
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 <script>
 (function () {
-  // ---------- chart ----------
   var wrap = document.getElementById('chartwrap');
-  // Derive the pattern id from the URL (/patterns/<id>) — robust even if the
-  // data-pattern attribute is empty/stale. Falls back to the attribute.
   var pid = (location.pathname.match(/\/patterns\/(\d+)/) || [])[1] || wrap.dataset.pattern || '';
   var el = document.getElementById('chart');
   var symInput = document.getElementById('symInput');
   var tfSelect = document.getElementById('tfSelect');
   var status = document.getElementById('chartStatus');
-  var markBtn = document.getElementById('markBtn');
-  var saveExBtn = document.getElementById('saveExBtn');
+  var markBtn = null;   // legacy click-to-mark removed; drawing is the only label
   var markInfo = document.getElementById('markInfo');
   var clearMark = document.getElementById('clearMark');
 
+  var RD = {{ readiness | tojson }};
+  var THR0 = {{ detector.thresholds | tojson }};
+
+  // ---------- chart ----------
   var chart = LightweightCharts.createChart(el, {
-    width: el.clientWidth || el.offsetWidth || 800,
-    height: 440,
+    width: el.clientWidth || el.offsetWidth || 800, height: 440,
     layout: { background: { color: '#0f172a' }, textColor: '#94a3b8' },
     grid: { vertLines: { color: 'rgba(148,163,184,0.08)' }, horzLines: { color: 'rgba(148,163,184,0.08)' } },
     rightPriceScale: { borderColor: 'rgba(148,163,184,0.2)' },
@@ -173,16 +181,14 @@
     upColor: '#10b981', downColor: '#ef4444', borderVisible: false,
     wickUpColor: '#10b981', wickDownColor: '#ef4444'
   });
-  // keep the chart width synced to the container (explicit sizing — autoSize can
-  // resolve to a 0-height canvas in some layouts, hiding the candles).
   function syncSize() { chart.applyOptions({ width: el.clientWidth || el.offsetWidth || 800, height: 440 }); }
   window.addEventListener('resize', syncSize);
   if (window.ResizeObserver) { new ResizeObserver(syncSize).observe(el); }
-  setTimeout(syncSize, 50);   // one tick after layout settles
+  setTimeout(syncSize, 50);
 
-  var loaded = [];            // [{time,t,open,...}]
-  var timeToIso = new Map();  // normalized LWC time -> ISO t
-  var marking = false, markStart = null, markEnd = null;  // {time, iso}
+  var loaded = [];
+  var timeToIso = new Map();
+  var marking = false, markStart = null, markEnd = null;
 
   function normTime(t) {
     if (t && typeof t === 'object' && 'year' in t) {
@@ -210,11 +216,137 @@
     } catch (e) { status.textContent = 'load failed'; }
   }
 
-  // ---- D5: detector overlay (visual evaluation of the geometric detector) ----
+  // ---------- readiness + detector cards ----------
+  var statusBadge = document.getElementById('statusBadge');
+  var rdPos = document.getElementById('rdPos'), rdNeg = document.getElementById('rdNeg');
+  var rdPass = document.getElementById('rdPass'), rdBar = document.getElementById('rdBar');
+  var rdHint = document.getElementById('rdHint'), rdHintTop = document.getElementById('rdHintTop');
+  var calibBtn = document.getElementById('calibBtn'), promoteBtn = document.getElementById('promoteBtn');
+  var reopenBtn = document.getElementById('reopenBtn'), scanBtn = document.getElementById('scanBtn');
+  var detVer = document.getElementById('detVer'), thrChips = document.getElementById('thrChips');
+
+  function badgeClass(st) {
+    return st === 'ready' ? 'border-emerald-500/50 text-emerald-300'
+      : st === 'learning' ? 'border-sky-500/50 text-sky-300'
+      : 'border-slate-600 text-slate-400';
+  }
+  function renderReadiness(r) {
+    RD = r;
+    statusBadge.textContent = r.status;
+    statusBadge.className = 'text-[10px] uppercase px-1.5 py-0.5 rounded border ' + badgeClass(r.status);
+    rdPos.textContent = r.pos; rdNeg.textContent = r.neg;
+    var pct = (r.pass_rate == null) ? null : Math.round(r.pass_rate * 100);
+    rdPass.textContent = (pct == null) ? '—' : (pct + '%');
+    rdPass.className = 'text-lg font-semibold ' + (pct == null ? '' : (pct >= Math.round(r.promote_pass * 100) ? 'text-emerald-300' : 'text-amber-300'));
+    rdBar.style.width = (pct == null ? 0 : pct) + '%';
+    rdHint.textContent = r.hint; if (rdHintTop) rdHintTop.textContent = r.hint;
+    calibBtn.disabled = !(r.can_calibrate && r.engine_ok);
+    calibBtn.title = r.engine_ok ? '' : 'calibration engine unavailable on this host';
+    promoteBtn.classList.toggle('hidden', r.ready);
+    reopenBtn.classList.toggle('hidden', !r.ready);
+    promoteBtn.disabled = !r.can_promote;
+    scanBtn.disabled = !r.ready;
+  }
+  var THR_LABELS = { res_r2_min: 'res R²≥', sup_slope_min_atrpct_per_bar: 'sup slope≥',
+    sup_r2_min: 'sup R²≥', res_slope_max_atrpct_per_bar: 'res flat≤',
+    contraction_max: 'contr≤', score_min: 'fire≥' };
+  function renderThresholds(thr) {
+    if (!thr || !Object.keys(thr).length) { thrChips.innerHTML = '<span class="text-[11px] text-slate-500">seed defaults — not yet calibrated</span>'; return; }
+    var keys = Object.keys(THR_LABELS).filter(function (k) { return k in thr; });
+    thrChips.innerHTML = keys.map(function (k) {
+      return '<span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800/70 text-slate-300 font-mono">' + THR_LABELS[k] + ' ' + (+thr[k]).toFixed(2) + '</span>';
+    }).join('');
+  }
+  function recountReadiness() {
+    var items = exList.querySelectorAll('.exItem'), pos = 0, neg = 0;
+    items.forEach(function (it) { (it.dataset.kind === 'negative') ? neg++ : pos++; });
+    RD.pos = pos; RD.neg = neg;
+    RD.can_calibrate = pos >= RD.min_pos && neg >= RD.min_neg;
+    renderReadiness(RD);
+  }
+
+  calibBtn.addEventListener('click', async function () {
+    if (calibBtn.disabled) return;
+    var old = calibBtn.textContent; calibBtn.disabled = true; calibBtn.textContent = 'calibrating…';
+    try {
+      var d = await (await fetch('/patterns/' + pid + '/calibrate', { method: 'POST' })).json();
+      if (!d.ok) { status.textContent = d.error || 'calibrate failed'; }
+      else {
+        renderReadiness(d.readiness); renderThresholds(d.thresholds);
+        if (d.thresholds && d.thresholds.score_min != null) detVer.textContent = (RD.version || 'fitted');
+        var sk = d.skipped ? (' · ' + d.skipped + ' skipped') : '';
+        status.textContent = 'calibrated · suite ' + Math.round(d.suite.pass_rate * 100) + '% (' + d.n_pos + '✓/' + d.n_neg + '✗' + sk + ')';
+      }
+    } catch (e) { status.textContent = 'calibrate error'; }
+    finally { calibBtn.textContent = old; renderReadiness(RD); }
+  });
+  promoteBtn.addEventListener('click', async function () {
+    if (promoteBtn.disabled) return;
+    promoteBtn.disabled = true;
+    try {
+      var d = await (await fetch('/patterns/' + pid + '/promote', { method: 'POST' })).json();
+      if (d.ok) { renderReadiness(d.readiness); status.textContent = 'promoted — live for universe scans'; }
+      else { status.textContent = d.error || 'cannot promote'; }
+    } catch (e) { status.textContent = 'promote error'; }
+    finally { renderReadiness(RD); }
+  });
+  reopenBtn.addEventListener('click', async function () {
+    try {
+      var d = await (await fetch('/patterns/' + pid + '/reopen', { method: 'POST' })).json();
+      if (d.ok) { renderReadiness(d.readiness); status.textContent = 'reopened for editing'; }
+    } catch (e) { status.textContent = 'reopen error'; }
+  });
+
+  // ---------- universe scan ----------
+  var scanResults = document.getElementById('scanResults'), scanList = document.getElementById('scanList');
+  var scanSummary = document.getElementById('scanSummary');
+  scanBtn.addEventListener('click', async function () {
+    if (scanBtn.disabled) return;
+    var tf = tfSelect.value, old = scanBtn.textContent; scanBtn.disabled = true; scanBtn.textContent = 'scanning…';
+    scanResults.classList.remove('hidden'); scanList.innerHTML = '<div class="text-[11px] text-slate-500">scanning…</div>'; scanSummary.textContent = '';
+    try {
+      var d = await (await fetch('/patterns/' + pid + '/scan?tf=' + tf + '&_=' + Date.now(), { cache: 'no-store' })).json();
+      if (!d.ok) { scanList.innerHTML = '<div class="text-[11px] text-rose-300">' + (d.error || 'scan failed') + '</div>'; return; }
+      scanSummary.textContent = d.count + ' hit' + (d.count === 1 ? '' : 's') + ' · ' + d.scanned + ' symbols' + (d.capped ? (' (capped of ' + d.universe + ')') : '');
+      if (!d.count) { scanList.innerHTML = '<div class="text-[11px] text-slate-500">nothing flagged in the sample</div>'; return; }
+      scanList.innerHTML = '';
+      d.matches.forEach(function (m) {
+        var pct = Math.round(m.score * 100);
+        var b = document.createElement('button');
+        b.className = 'flex items-center gap-2 w-full text-left rounded border border-slate-700 bg-slate-950/40 px-2 py-1 text-[11px] hover:border-cyan-500/60 transition';
+        b.innerHTML = '<span class="font-mono text-cyan-300">' + pct + '%</span><span class="font-semibold text-white">' + m.symbol + '</span><span class="text-slate-500">' + (m.start_t || '').slice(0, 10) + '</span>';
+        b.addEventListener('click', async function () {
+          symInput.value = m.symbol; tfSelect.value = d.tf; setMode('test'); await load();
+          try { chart.timeScale().setVisibleRange({ from: m.start_time, to: m.end_time }); } catch (e) {}
+          status.textContent = m.symbol + ' · detector ' + pct + '%';
+        });
+        scanList.appendChild(b);
+      });
+    } catch (e) { scanList.innerHTML = '<div class="text-[11px] text-rose-300">scan error</div>'; }
+    finally { scanBtn.textContent = old; renderReadiness(RD); }
+  });
+  document.getElementById('scanClear').addEventListener('click', function (e) { e.preventDefault(); scanResults.classList.add('hidden'); scanList.innerHTML = ''; });
+
+  // ---------- D5: detector overlay + correction loop ----------
   var detResults = document.getElementById('detResults');
   var detList = document.getElementById('detList');
   var detSummary = document.getElementById('detSummary');
   var findBtn = document.getElementById('findBtn');
+
+  async function teachFromMatch(m, kind, btn) {
+    if (btn) btn.disabled = true;
+    try {
+      var body = new URLSearchParams({
+        symbol: (symInput.value || '').trim().toUpperCase(), tf: tfSelect.value,
+        start: m.start_t, end: m.end_t, kind: kind,
+        note: 'from detector ' + (kind === 'negative' ? 'misfire' : 'confirm')
+      });
+      var d = await (await fetch('/patterns/' + pid + '/examples.json', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body })).json();
+      if (d.ok && d.example) { exList.appendChild(exItemHtml(d.example)); refreshCount(); recountReadiness(); status.textContent = 'added ' + kind + ' example from detector'; if (btn) { btn.textContent = kind === 'negative' ? '✗ added' : '✓ added'; } }
+      else { status.textContent = d.error || 'could not add'; if (btn) btn.disabled = false; }
+    } catch (e) { status.textContent = 'network error'; if (btn) btn.disabled = false; }
+  }
+
   async function findPattern() {
     var sym = (symInput.value || '').trim().toUpperCase();
     var tf = tfSelect.value;
@@ -225,29 +357,34 @@
       var d = await res.json();
       detList.innerHTML = '';
       if (!d.ok) { detSummary.textContent = 'detector error: ' + (d.error || '?'); detResults.classList.remove('hidden'); return; }
-      detSummary.textContent = d.count + ' region' + (d.count === 1 ? '' : 's') + ' flagged'
-        + (d.detector ? ' · ' + d.detector + ' ' + (d.version || '') : '');
+      detSummary.textContent = d.count + ' region' + (d.count === 1 ? '' : 's') + ' flagged' + (d.detector ? ' · ' + d.detector + ' ' + (d.version || '') : '');
       if (!d.count) {
-        var none = document.createElement('span');
-        none.className = 'text-[11px] text-slate-500'; none.textContent = 'nothing flagged on this window';
-        detList.appendChild(none);
+        detList.innerHTML = '<span class="text-[11px] text-slate-500">nothing flagged on this window</span>';
       }
       (d.matches || []).slice().sort(function (a, b) { return b.score - a.score; }).forEach(function (m) {
         var pct = Math.round(m.score * 100);
-        var b = document.createElement('button');
-        b.className = 'flex items-center gap-1.5 rounded border border-cyan-600/40 bg-cyan-950/30 px-2 py-1 text-[11px] hover:border-cyan-400 transition';
-        b.innerHTML = '<span class="font-semibold text-cyan-300">' + pct + '%</span>'
+        var row = document.createElement('div');
+        row.className = 'flex items-center gap-2 rounded border border-cyan-600/30 bg-cyan-950/20 px-2 py-1 text-[11px]';
+        var zoom = document.createElement('button');
+        zoom.className = 'flex items-center gap-1.5 flex-1 text-left hover:text-cyan-200';
+        zoom.innerHTML = '<span class="font-semibold text-cyan-300">' + pct + '%</span>'
           + '<span class="text-slate-400">' + (m.start_t || '').slice(5, 16) + '</span>'
           + '<span class="text-slate-600">&rarr;</span>'
           + '<span class="text-slate-400">' + (m.end_t || '').slice(5, 16) + '</span>';
-        b.title = JSON.stringify(m.notes || {});
-        b.addEventListener('click', function () {
+        zoom.title = JSON.stringify(m.notes || {});
+        zoom.addEventListener('click', function () {
           try { chart.timeScale().setVisibleRange({ from: m.start_time, to: m.end_time }); } catch (e) {}
           var nt = m.notes || {};
-          status.textContent = 'detector ' + pct + '% · touches ' + nt.n_touch_res + '/' + nt.n_touch_sup
-            + ' · contr ' + nt.contraction + ' · apex ' + nt.apex_bars + ' bars';
+          status.textContent = 'detector ' + pct + '% · touches ' + nt.n_touch_res + '/' + nt.n_touch_sup + ' · contr ' + nt.contraction + ' · apex ' + nt.apex_bars + ' bars';
         });
-        detList.appendChild(b);
+        var ok = document.createElement('button');
+        ok.className = 'rounded border border-emerald-500/50 text-emerald-300 hover:bg-emerald-500/10 px-1.5'; ok.textContent = '✓'; ok.title = 'correct — save as a positive example';
+        ok.addEventListener('click', function () { teachFromMatch(m, 'positive', ok); });
+        var no = document.createElement('button');
+        no.className = 'rounded border border-rose-500/50 text-rose-300 hover:bg-rose-500/10 px-1.5'; no.textContent = '✗'; no.title = 'wrong — save as a counter-example';
+        no.addEventListener('click', function () { teachFromMatch(m, 'negative', no); });
+        row.appendChild(zoom); row.appendChild(ok); row.appendChild(no);
+        detList.appendChild(row);
       });
       detResults.classList.remove('hidden');
     } catch (e) {
@@ -255,24 +392,13 @@
     } finally { findBtn.disabled = false; findBtn.textContent = old; }
   }
   if (findBtn) findBtn.addEventListener('click', findPattern);
-  var detClear = document.getElementById('detClear');
-  if (detClear) detClear.addEventListener('click', function (e) {
-    e.preventDefault(); detResults.classList.add('hidden'); detList.innerHTML = '';
-  });
+  document.getElementById('detClear').addEventListener('click', function (e) { e.preventDefault(); detResults.classList.add('hidden'); detList.innerHTML = ''; });
 
+  // ---------- region markers (used to redraw legacy non-geometry examples) ----------
   function clearMarking() {
     marking = false; markStart = null; markEnd = null;
     series.setMarkers([]); markInfo.textContent = ''; clearMark.classList.add('hidden');
-    markBtn.classList.remove('bg-amber-500/20');
-    setMarkFields();
-  }
-  function setMarkFields() {
-    var done = !!(markStart && markEnd);
-    document.getElementById('f_symbol').value = done ? (symInput.value || '').trim().toUpperCase() : '';
-    document.getElementById('f_tf').value = done ? tfSelect.value : '';
-    document.getElementById('f_start').value = done ? markStart.iso : '';
-    document.getElementById('f_end').value = done ? markEnd.iso : '';
-    if (saveExBtn) saveExBtn.disabled = !done;   // can only save a complete region
+    if (markBtn) markBtn.classList.remove('bg-amber-500/20');
   }
   function barsInRange() {
     if (!(markStart && markEnd)) return 0;
@@ -285,42 +411,13 @@
     if (markEnd) ms.push({ time: markEnd.time, position: 'belowBar', color: '#f59e0b', shape: 'arrowUp', text: 'B' });
     series.setMarkers(ms);
   }
-
-  markBtn.addEventListener('click', function () {
-    marking = !marking; markStart = null; markEnd = null; series.setMarkers([]);
-    markBtn.classList.toggle('bg-amber-500/20', marking);
-    markInfo.textContent = marking ? 'click the chart: start of the pattern…' : '';
-    clearMark.classList.add('hidden'); setMarkFields();
-  });
-  clearMark.addEventListener('click', function (e) { e.preventDefault(); clearMarking(); });
-
-  chart.subscribeClick(function (param) {
-    if (!marking || !param.time) return;
-    var key = String(normTime(param.time));
-    var iso = timeToIso.get(key);
-    if (!iso) return;
-    if (!markStart) {
-      markStart = { time: param.time, iso: iso };
-      markInfo.textContent = 'now click the END of the pattern…';
-      refreshMarkers();
-    } else if (!markEnd) {
-      markEnd = { time: param.time, iso: iso };
-      marking = false; markBtn.classList.remove('bg-amber-500/20');
-      refreshMarkers();
-      markInfo.textContent = '⌖ marked ' + barsInRange() + ' bars';
-      clearMark.classList.remove('hidden');
-      setMarkFields();
-    }
-  });
+  if (clearMark) clearMark.addEventListener('click', function (e) { e.preventDefault(); clearMarking(); });
 
   document.getElementById('loadBtn').addEventListener('click', load);
   symInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); load(); } });
   tfSelect.addEventListener('change', load);
-  if ((wrap.dataset.symbol || '').trim()) load();   // reopen where we left off
 
   // ---------- saved examples gallery ----------
-  // Re-apply a marked region (ISO start/end) onto the currently-loaded bars:
-  // find the loaded bars at/after start and at/before end, set the A/B markers.
   function applyMarkedRegion(startIso, endIso) {
     if (!loaded.length) return false;
     var a = startIso, b = endIso; if (a > b) { var t = a; a = b; b = t; }
@@ -328,63 +425,49 @@
     for (var i = 0; i < loaded.length; i++) { if (loaded[i].t >= a) { sBar = loaded[i]; break; } }
     for (var j = loaded.length - 1; j >= 0; j--) { if (loaded[j].t <= b) { eBar = loaded[j]; break; } }
     if (!sBar || !eBar) return false;
-    marking = false; markBtn.classList.remove('bg-amber-500/20');
-    markStart = { time: sBar.time, iso: sBar.t };
-    markEnd = { time: eBar.time, iso: eBar.t };
-    refreshMarkers();
-    markInfo.textContent = '⦂ marked ' + barsInRange() + ' bars';
-    clearMark.classList.remove('hidden');
-    setMarkFields();
-    return true;
+    markStart = { time: sBar.time, iso: sBar.t }; markEnd = { time: eBar.time, iso: eBar.t };
+    refreshMarkers(); markInfo.textContent = '⦂ marked ' + barsInRange() + ' bars';
+    clearMark.classList.remove('hidden'); return true;
   }
 
   var exList = document.getElementById('exList');
   var exCount = document.getElementById('exCount');
   var exEmpty = document.getElementById('exEmpty');
-  var saveExBtn2 = saveExBtn;
 
   function exItemHtml(ex) {
     var d = document.createElement('div');
-    d.className = 'exItem group flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-950/40 px-2.5 py-1.5 text-sm hover:border-sky-500/60 transition';
+    d.className = 'exItem group flex items-center gap-2 rounded border border-slate-700 bg-slate-950/40 px-2 py-1.5 text-sm hover:border-sky-500/60 transition';
     d.dataset.id = ex.id; d.dataset.symbol = ex.symbol; d.dataset.tf = ex.timeframe;
     d.dataset.start = ex.start; d.dataset.end = ex.end;
     d.dataset.kind = ex.kind || 'positive';
     d.dataset.geometry = ex.geometry ? JSON.stringify(ex.geometry) : '';
     var neg = (ex.kind === 'negative');
-    var dot = '<span class="inline-block w-2 h-2 rounded-full ' + (neg ? 'bg-rose-400' : 'bg-emerald-400') + '" title="' + (neg ? 'negative (near-miss)' : 'positive') + '"></span>';
+    var dot = '<span class="inline-block w-2 h-2 rounded-full ' + (neg ? 'bg-rose-400' : 'bg-emerald-400') + '" title="' + (neg ? 'counter (near-miss)' : 'positive') + '"></span>';
     var label = ex.label ? ('<span class="text-[11px] text-slate-500">· ' + ex.label + '</span>') : '';
-    d.innerHTML = '<button type="button" class="exLoad flex items-center gap-2">' + dot +
+    d.innerHTML = '<button type="button" class="exLoad flex items-center gap-2 flex-1 text-left">' + dot +
       '<span class="font-semibold text-white">' + ex.symbol + '</span>' +
       '<span class="text-[11px] text-slate-400">' + ex.timeframe + '</span>' +
-      '<span class="text-[11px] text-amber-300/80">⋆ ' + (ex.n || '?') + ' bars</span>' +
+      '<span class="text-[11px] text-amber-300/80">⋆ ' + (ex.n || '?') + '</span>' +
       label + '</button>' +
       '<button type="button" class="exDel text-[11px] text-slate-600 hover:text-rose-300" title="Delete example">×</button>';
     return d;
   }
   function refreshCount() {
     var n = exList.querySelectorAll('.exItem').length;
-    exCount.textContent = n;
-    exEmpty.classList.toggle('hidden', n > 0);
+    exCount.textContent = n; exEmpty.classList.toggle('hidden', n > 0);
   }
-
   async function loadExample(item) {
-    symInput.value = item.dataset.symbol;
-    tfSelect.value = item.dataset.tf;
-    await load();                                  // reload that ticker+timeframe
+    symInput.value = item.dataset.symbol; tfSelect.value = item.dataset.tf;
+    setMode('teach'); await load();
     var geo = null; try { geo = item.dataset.geometry ? JSON.parse(item.dataset.geometry) : null; } catch (e) {}
-    if (geo && geo.resistance && geo.support) {
-      showGeometry(geo);                           // redraw the drawn trendlines
-    } else if (!applyMarkedRegion(item.dataset.start, item.dataset.end)) {
-      status.textContent += ' (region outside the loaded window)';
-    }
+    if (geo && geo.resistance && geo.support) { showGeometry(geo); }
+    else if (!applyMarkedRegion(item.dataset.start, item.dataset.end)) { status.textContent += ' (region outside the loaded window)'; }
     document.getElementById('chartwrap').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
   async function deleteExample(item) {
     var id = item.dataset.id;
-    try {
-      await fetch('/patterns/' + pid + '/examples/' + id + '/delete', { method: 'POST' });
-      item.remove(); refreshCount();
-    } catch (e) { /* leave it; user can retry */ }
+    try { await fetch('/patterns/' + pid + '/examples/' + id + '/delete', { method: 'POST' }); item.remove(); refreshCount(); recountReadiness(); }
+    catch (e) {}
   }
   exList.addEventListener('click', function (e) {
     var item = e.target.closest('.exItem'); if (!item) return;
@@ -392,29 +475,7 @@
     else if (e.target.closest('.exLoad')) { loadExample(item); }
   });
 
-  if (saveExBtn2) saveExBtn2.addEventListener('click', async function () {
-    if (saveExBtn2.disabled || !(markStart && markEnd)) return;
-    var label = (prompt('Label for this example (optional):', '') || '').trim();
-    saveExBtn2.disabled = true;
-    try {
-      var body = new URLSearchParams({
-        symbol: (symInput.value || '').trim().toUpperCase(), tf: tfSelect.value,
-        start: markStart.iso, end: markEnd.iso, label: label
-      });
-      var res = await fetch('/patterns/' + pid + '/examples.json',
-        { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body });
-      var d = await res.json();
-      if (d.ok && d.example) { exList.appendChild(exItemHtml(d.example)); refreshCount(); }
-      else { alert(d.error || 'Could not save example.'); }
-    } catch (e) { alert('Network error saving example.'); }
-    finally { saveExBtn2.disabled = !(markStart && markEnd); }
-  });
-
   // ---------- draw triangle (drag-to-label; the user never types numbers) ----------
-  // Two trendlines (resistance/support), each with 2 draggable handles that SNAP
-  // to a candle's high (resistance) / low (support). The drawn shape IS the label:
-  // saved geometry -> the calibrator derives slope/R²/touches from it. The same
-  // series also re-draw a saved example's geometry on reload.
   var drawBtn = document.getElementById('drawBtn');
   var drawActions = document.getElementById('drawActions');
   var savePosBtn = document.getElementById('savePosBtn');
@@ -468,7 +529,7 @@
     if (!loaded.length) { status.textContent = 'load a chart first'; return; }
     drawing = true; drawBtn.classList.add('bg-violet-500/20'); drawActions.classList.remove('hidden');
     clearDraw();
-    var n = loaded.length, iA = Math.max(0, n - 30), iB = n - 3;   // sensible starting anchors
+    var n = loaded.length, iA = Math.max(0, n - 30), iB = n - 3;
     addHandle('res', loaded[iA]); addHandle('res', loaded[iB]);
     addHandle('sup', loaded[iA]); addHandle('sup', loaded[iB]);
     redrawLines(); positionDots();
@@ -487,7 +548,6 @@
       support: { t0: ss[0].bar.t, p0: ss[0].bar.low, t1: ss[1].bar.t, p1: ss[1].bar.low }
     };
   }
-  // re-draw a saved example's geometry (read-only) on reload
   function isoToLwcTime(iso) { var best = null; for (var i = 0; i < loaded.length; i++) { if (loaded[i].t === iso) return loaded[i].time; if (loaded[i].t <= iso) best = loaded[i]; } return best ? best.time : null; }
   function showGeometry(geo) {
     endDraw(); ensureLines();
@@ -506,9 +566,8 @@
         symbol: (symInput.value || '').trim().toUpperCase(), tf: tfSelect.value,
         start: ts[0], end: ts[ts.length - 1], kind: kind, geometry: JSON.stringify(g), label: label.trim()
       });
-      var res = await fetch('/patterns/' + pid + '/examples.json', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body });
-      var d = await res.json();
-      if (d.ok && d.example) { exList.appendChild(exItemHtml(d.example)); refreshCount(); endDraw(); status.textContent = 'saved ' + kind + ' example'; }
+      var d = await (await fetch('/patterns/' + pid + '/examples.json', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body })).json();
+      if (d.ok && d.example) { exList.appendChild(exItemHtml(d.example)); refreshCount(); recountReadiness(); endDraw(); status.textContent = 'saved ' + kind + ' example'; }
       else { status.textContent = d.error || 'could not save'; }
     } catch (e) { status.textContent = 'network error saving'; }
     finally { if (savePosBtn) savePosBtn.disabled = false; if (saveNegBtn) saveNegBtn.disabled = false; }
@@ -520,64 +579,27 @@
   chart.timeScale().subscribeVisibleLogicalRangeChange(positionDots);
   if (window.ResizeObserver) { try { new ResizeObserver(positionDots).observe(el); } catch (e) {} }
 
-  // ---------- chat ----------
-  if (!window.marked || !window.DOMPurify) return;
-  var log = document.getElementById('chatlog'), bottom = document.getElementById('bottom');
-  var form = document.getElementById('chatform'), input = document.getElementById('chatinput'), sendBtn = document.getElementById('chatsend');
-  function md(t) { return DOMPurify.sanitize(marked.parse((t || '').trim())); }
-  function toBottom() { bottom.scrollIntoView({ block: 'end' }); }
-  document.querySelectorAll('#chatlog [data-md]').forEach(function (e2) {
-    // re-render markdown but keep the trailing marked badge (a child div) intact
-    var badge = e2.querySelector('div');
-    var raw = badge ? e2.childNodes[0].textContent : e2.textContent;
-    e2.innerHTML = md(raw); if (badge) e2.appendChild(badge);
-  });
-  toBottom();
+  // ---------- mode toggle (Teach / Test) ----------
+  var teachTab = document.getElementById('teachTab'), testTab = document.getElementById('testTab');
+  var teachBar = document.getElementById('teachBar'), testBar = document.getElementById('testBar');
+  var mode = 'teach';
+  function setMode(m) {
+    mode = m;
+    teachTab.className = 'px-3 py-1.5 flex items-center gap-1.5 ' + (m === 'teach' ? 'bg-violet-600 text-white' : 'text-slate-400');
+    testTab.className = 'px-3 py-1.5 flex items-center gap-1.5 ' + (m === 'test' ? 'bg-cyan-600 text-white' : 'text-slate-400');
+    teachBar.classList.toggle('hidden', m !== 'teach');
+    testBar.classList.toggle('hidden', m !== 'test');
+    if (m !== 'teach') endDraw();
+    if (m !== 'test') { detResults.classList.add('hidden'); }
+  }
+  teachTab.addEventListener('click', function () { setMode('teach'); });
+  testTab.addEventListener('click', function () { setMode('test'); });
 
-  function bubble(role, text, isMd, markTag) {
-    var w = document.createElement('div'); w.className = 'flex' + (role === 'user' ? ' justify-end' : '');
-    var i = document.createElement('div');
-    i.className = 'max-w-[85%] rounded-lg px-3 py-2 text-sm ' + (role === 'user'
-      ? 'whitespace-pre-wrap bg-emerald-600/20 border border-emerald-600/30 text-slate-100'
-      : 'md-body bg-slate-800/60 border border-slate-700 text-slate-200');
-    if (isMd) { i.innerHTML = md(text); } else { i.textContent = text; }
-    if (markTag) { var b = document.createElement('div'); b.className = 'text-[10px] text-amber-300/80 mt-1'; b.textContent = '⌖ ' + markTag; i.appendChild(b); }
-    w.appendChild(i); log.insertBefore(w, bottom); return w;
-  }
-  function thinking() {
-    var w = document.createElement('div'); w.className = 'flex';
-    w.innerHTML = '<div class="max-w-[85%] rounded-lg px-3 py-2 text-sm bg-slate-800/60 border border-slate-700 text-slate-400">' +
-      '<span class="th-dots">Learning</span> <span class="th-el text-slate-500">0s</span></div>';
-    log.insertBefore(w, bottom); return w;
-  }
-  function autosize() { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 160) + 'px'; }
-  input.addEventListener('input', autosize);
-
-  var busy = false;
-  async function send() {
-    var msg = (input.value || '').trim(); if (!msg || busy || input.disabled) return;
-    busy = true;
-    var empty = document.getElementById('chatempty'); if (empty) empty.classList.add('hidden');
-    var hasMark = !!(markStart && markEnd);
-    var markTag = hasMark ? ((symInput.value || '').trim().toUpperCase() + ' · ' + tfSelect.value + ' · ' + barsInRange() + ' bars') : '';
-    input.value = ''; autosize(); input.disabled = true; sendBtn.disabled = true;
-    bubble('user', msg, false, markTag); toBottom();
-    var t0 = Date.now(); var ind = thinking(); toBottom();
-    var timer = setInterval(function () { var e3 = ind.querySelector('.th-el'); if (e3) e3.textContent = Math.round((Date.now() - t0) / 1000) + 's'; }, 1000);
-    try {
-      var body = new URLSearchParams({ message: msg });
-      if (hasMark) { body.set('symbol', symInput.value.trim().toUpperCase()); body.set('tf', tfSelect.value); body.set('start', markStart.iso); body.set('end', markEnd.iso); }
-      var res = await fetch('/patterns/' + pid + '/chat.json', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body });
-      var data = {}; try { data = await res.json(); } catch (e) {}
-      ind.remove(); clearInterval(timer);
-      bubble('assistant', data.content || '⚠️ Empty reply — try again.', true);
-    } catch (e) {
-      ind.remove(); clearInterval(timer);
-      bubble('assistant', '⚠️ Network error — try again.', false);
-    } finally { input.disabled = false; sendBtn.disabled = false; busy = false; input.focus(); toBottom(); }
-  }
-  form.addEventListener('submit', function (e) { e.preventDefault(); send(); });
-  input.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
+  // ---------- init ----------
+  setMode('teach');
+  renderReadiness(RD);
+  renderThresholds(THR0);
+  if ((wrap.dataset.symbol || '').trim()) load();   // reopen where we left off
 })();
 </script>
 {% endblock %}

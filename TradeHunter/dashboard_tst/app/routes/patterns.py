@@ -1,15 +1,15 @@
 """Pattern Trainer — teach a chart pattern by example on a real (parquet-backed)
-chart, then (later phases) generate a Markdown spec + a Python detector and scan
-the universe for it.
+chart, then calibrate + run a geometric detector and scan the universe for it.
 
 Architecture (see PATTERN_TRAINER_DESIGN.md):
-  - Chart data is loaded FROM PARQUET (daily/3min/1min) via resources.bars_store.
+  - Chart data is loaded FROM PARQUET (daily/3min/5min) via resources.bars_store.
     This is an OFFLINE training tool, so parquet is the correct source (see the
     CARVE-OUT in CLAUDE.md's parquet scope rule).
-  - The teaching chat injects the marked region's OHLCV into the prompt
-    (services/pattern_llm.py, DeepSeek-direct) — the model reasons over the bars.
-  - Phase 1 (this file): page + chart + teaching chat. Phase 2: generate
-    pattern.md + detect.py. Phase 3: the "Find pattern" universe scan.
+  - Labels are DRAWN, not typed: you draw the triangle on the region that shows
+    the pattern; saved positives/negatives feed the D4 calibration loop. (The old
+    free-text "teaching chat" was removed once drawing became the canonical label.)
+  - "Find pattern" (D5) runs the implemented geometric detector
+    (strategy/patterns/<slug>/detect.py) over the chart and overlays its matches.
 """
 from __future__ import annotations
 
@@ -28,13 +28,12 @@ from ..db import get_db
 from ..models import (
     PT_ARCHIVED,
     PT_LEARNING,
+    PT_READY,
     Pattern,
     PatternExample,
-    PatternLesson,
     User,
 )
 from ..security import require_user
-from ..services import pattern_llm
 
 # Make the sibling resources/ package importable (parquet bars store live there).
 _TRADEHUNTER_ROOT = Path(__file__).resolve().parents[3]
@@ -67,6 +66,22 @@ def _detector_for(slug: str):
         except Exception:
             pass
     return _at_detect
+
+
+try:
+    # The D2/D4 calibration engine — features, threshold fitter, validation gate.
+    # Lazy/guarded so the page still renders if the strategy package is missing.
+    from strategy.patterns import _features as _pat_features  # noqa: E402
+    from strategy.patterns import _calibrate as _pat_calibrate  # noqa: E402
+    from strategy.patterns import _validate as _pat_validate  # noqa: E402
+except Exception:  # pragma: no cover
+    _pat_features = _pat_calibrate = _pat_validate = None
+
+# Gating constants for the Teach -> Calibrate -> Promote loop.
+_CALIB_MIN_POS = 3      # need a few confirmed positives to fit a boundary
+_CALIB_MIN_NEG = 2      # ...and a few rejected near-misses (both classes required)
+_PROMOTE_PASS = 0.80    # validation-suite pass-rate required before going live
+_CALIB_MIN_BARS = 10    # an example window below this can't be featurised/fired
 
 router = APIRouter(prefix="/patterns", tags=["patterns"])
 templates = Jinja2Templates(
@@ -144,6 +159,75 @@ def _load_window(symbol: str, tf: str, start: str | None, end: str | None) -> li
     return bars[-_MAX_BARS.get(tf, 5000):]
 
 
+def _example_counts(p: Pattern) -> tuple[int, int]:
+    pos = sum(1 for e in p.examples if (e.kind or "positive") != "negative")
+    neg = sum(1 for e in p.examples if (e.kind or "positive") == "negative")
+    return pos, neg
+
+
+def _readiness(p: Pattern) -> dict:
+    """The pattern's position in the Teach -> Calibrate -> Test -> Promote loop,
+    plus the single next action. Drives the trainer's readiness card + the gating
+    of the Calibrate / Promote / Scan buttons."""
+    pos, neg = _example_counts(p)
+    calibrated = bool(p.detector_thresholds)
+    pass_rate = p.calib_pass_rate
+    ready = p.status == PT_READY
+    can_calibrate = pos >= _CALIB_MIN_POS and neg >= _CALIB_MIN_NEG
+    passing = pass_rate is not None and pass_rate >= _PROMOTE_PASS
+    can_promote = calibrated and passing and not ready
+
+    if ready:
+        hint = "Live — promoted; run it across the universe."
+    elif not can_calibrate:
+        need = []
+        if pos < _CALIB_MIN_POS:
+            need.append(f"{_CALIB_MIN_POS - pos} more positive")
+        if neg < _CALIB_MIN_NEG:
+            need.append(f"{_CALIB_MIN_NEG - neg} more counter")
+        hint = "Teach " + " and ".join(need) + " example(s) to unlock calibration."
+    elif not calibrated:
+        hint = "Calibrate the detector from your examples."
+    elif not passing:
+        hint = (f"Suite at {round((pass_rate or 0) * 100)}% — correct the misfires "
+                f"and recalibrate to reach {round(_PROMOTE_PASS * 100)}%.")
+    else:
+        hint = "Calibrated and passing — promote to scan the universe."
+
+    return {
+        "pos": pos, "neg": neg, "calibrated": calibrated,
+        "pass_rate": pass_rate, "can_calibrate": can_calibrate,
+        "passing": passing, "can_promote": can_promote, "ready": ready,
+        "status": p.status, "min_pos": _CALIB_MIN_POS, "min_neg": _CALIB_MIN_NEG,
+        "promote_pass": _PROMOTE_PASS, "hint": hint,
+        "version": p.detector_version,
+        "calib_at": p.calib_at.isoformat() if p.calib_at else None,
+        "engine_ok": all((_pat_features, _pat_calibrate, _pat_validate)),
+    }
+
+
+def _build_labeled(p: Pattern):
+    """Turn the saved examples into (labeled feature set, suite cases) for the
+    calibrator + validator. Each example's window is re-loaded from parquet and
+    featurised; positives -> label 1, counters -> label 0. Windows too short to
+    featurise are skipped. Returns (labeled, cases, skipped)."""
+    labeled: list[dict] = []
+    cases: dict = {"positives": [], "negatives": []}
+    skipped = 0
+    for e in p.examples:
+        bars = _load_window(e.symbol, e.timeframe, e.start_t, e.end_t)
+        if len(bars) < _CALIB_MIN_BARS:
+            skipped += 1
+            continue
+        feats = _pat_features.window_features(bars)
+        label = 0 if (e.kind or "positive") == "negative" else 1
+        labeled.append({"features": feats, "label": label,
+                        "symbol": e.symbol, "t": e.start_t})
+        bucket = "negatives" if label == 0 else "positives"
+        cases[bucket].append({"bars": bars, "id": f"{e.symbol}:{e.start_t}"})
+    return labeled, cases, skipped
+
+
 # --------------------------------------------------------------------------- #
 # Pages
 # --------------------------------------------------------------------------- #
@@ -157,7 +241,6 @@ def patterns_home(request: Request, user: User = Depends(require_user),
     return templates.TemplateResponse(
         request, "patterns.html",
         {"user": user, "patterns": patterns,
-         "chat_ready": pattern_llm.is_configured(),
          "bars_ok": bars_store is not None},
     )
 
@@ -181,12 +264,17 @@ def create_pattern(request: Request, name: str = Form(...),
 def pattern_detail(pattern_id: int, request: Request,
                    user: User = Depends(require_user), db: Session = Depends(get_db)):
     p = _get_pattern(db, pattern_id, user)
+    det = _detector_for(p.slug)
     return templates.TemplateResponse(
         request, "pattern_detail.html",
-        {"user": user, "p": p, "lessons": p.lessons, "examples": p.examples,
+        {"user": user, "p": p, "examples": p.examples,
          "timeframes": _TIMEFRAMES,
-         "chat_ready": pattern_llm.is_configured(),
-         "bars_ok": bars_store is not None},
+         "bars_ok": bars_store is not None,
+         "readiness": _readiness(p),
+         "detector": {
+             "version": getattr(det, "__version__", None) if det else None,
+             "thresholds": p.detector_thresholds or {},
+         }},
     )
 
 
@@ -252,7 +340,14 @@ def pattern_detect(pattern_id: int,
         return JSONResponse({"ok": True, "symbol": symbol.upper().strip(), "tf": tf,
                              "count": 0, "matches": []}, headers={"Cache-Control": "no-store"})
     try:
-        matches = det.detect(raw)
+        # run with the pattern's CALIBRATED thresholds once it has them, so the
+        # overlay reflects what the user actually taught (not just seed defaults).
+        if p.detector_thresholds:
+            matches = det.detect(raw, thresholds=p.detector_thresholds)
+        else:
+            matches = det.detect(raw)
+    except TypeError:
+        matches = det.detect(raw)            # detector without a thresholds kwarg
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({"ok": False, "error": repr(exc), "matches": []},
                             status_code=500)
@@ -267,75 +362,6 @@ def pattern_detect(pattern_id: int,
          "count": len(out), "matches": out},
         headers={"Cache-Control": "no-store"},
     )
-
-
-# --------------------------------------------------------------------------- #
-# Teaching chat
-# --------------------------------------------------------------------------- #
-def _marked_context(symbol: str | None, tf: str | None,
-                    start: str | None, end: str | None) -> dict | None:
-    """Re-load the marked region's bars from parquet for prompt injection."""
-    if not (symbol and tf and start and end):
-        return None
-    bars = _load_window(symbol, tf, start, end)
-    if not bars:
-        return None
-    return {"symbol": symbol.upper().strip(), "timeframe": tf, "bars": bars,
-            "start": start, "end": end, "n": len(bars)}
-
-
-def _do_chat(db: Session, p: Pattern, msg: str, ctx: dict | None) -> dict:
-    next_seq = (max((m.seq for m in p.lessons), default=-1)) + 1
-    marked_meta = None
-    if ctx:
-        marked_meta = {"symbol": ctx["symbol"], "timeframe": ctx["timeframe"],
-                       "start": ctx["start"], "end": ctx["end"], "n": ctx["n"]}
-    db.add(PatternLesson(pattern_id=p.id, seq=next_seq, role="user",
-                         content=msg, marked=marked_meta))
-    db.commit()
-
-    history = [{"role": m.role, "content": m.content}
-               for m in db.query(PatternLesson)
-               .filter(PatternLesson.pattern_id == p.id)
-               .order_by(PatternLesson.seq).all()]
-    reply = pattern_llm.chat(history, context=ctx)
-
-    db.add(PatternLesson(pattern_id=p.id, seq=next_seq + 1, role="assistant",
-                         content=reply["content"]))
-    db.commit()
-    return reply
-
-
-@router.post("/{pattern_id}/chat.json")
-def post_chat_json(pattern_id: int,
-                   message: str = Form(...),
-                   symbol: str = Form(""), tf: str = Form(""),
-                   start: str = Form(""), end: str = Form(""),
-                   user: User = Depends(require_user), db: Session = Depends(get_db)):
-    p = _get_pattern(db, pattern_id, user)
-    msg = message.strip()
-    if not msg:
-        return JSONResponse({"ok": False, "content": "", "error": "empty message"},
-                            status_code=400)
-    ctx = _marked_context(symbol or None, tf or None, start or None, end or None)
-    reply = _do_chat(db, p, msg, ctx)
-    return JSONResponse({"ok": bool(reply.get("ok", True)),
-                         "content": reply.get("content", ""),
-                         "marked": bool(ctx)})
-
-
-@router.post("/{pattern_id}/chat")
-def post_chat(pattern_id: int, message: str = Form(...),
-              symbol: str = Form(""), tf: str = Form(""),
-              start: str = Form(""), end: str = Form(""),
-              user: User = Depends(require_user), db: Session = Depends(get_db)):
-    """No-JS fallback (full-page POST)."""
-    p = _get_pattern(db, pattern_id, user)
-    msg = message.strip()
-    if msg:
-        ctx = _marked_context(symbol or None, tf or None, start or None, end or None)
-        _do_chat(db, p, msg, ctx)
-    return RedirectResponse(url=f"/patterns/{p.id}#bottom", status_code=303)
 
 
 # --------------------------------------------------------------------------- #
@@ -421,3 +447,138 @@ def archive_pattern(pattern_id: int, user: User = Depends(require_user),
     p.status = PT_ARCHIVED
     db.commit()
     return RedirectResponse(url="/patterns", status_code=303)
+
+
+# --------------------------------------------------------------------------- #
+# Calibrate / Promote — the Teach -> Calibrate -> Test -> Promote loop
+# --------------------------------------------------------------------------- #
+@router.post("/{pattern_id}/calibrate")
+def calibrate_pattern(pattern_id: int, user: User = Depends(require_user),
+                      db: Session = Depends(get_db)):
+    """Fit the detector's thresholds to this pattern's drawn examples (D4): derive
+    per-feature cutoffs + score weights from the positive/counter clouds, pick a
+    fire cutoff, then run the validation suite (positives must fire, counters must
+    stay quiet) and store the pass-rate. Returns the new readiness + suite so the
+    page can update without a reload. Idempotent — rerun after adding examples."""
+    p = _get_pattern(db, pattern_id, user)
+    det = _detector_for(p.slug)
+    if not (det and _pat_features and _pat_calibrate and _pat_validate):
+        return JSONResponse({"ok": False, "error": "calibration engine unavailable"},
+                            status_code=503)
+    pos, neg = _example_counts(p)
+    if pos < _CALIB_MIN_POS or neg < _CALIB_MIN_NEG:
+        return JSONResponse(
+            {"ok": False, "error": f"need >={_CALIB_MIN_POS} positive and "
+             f">={_CALIB_MIN_NEG} counter-examples to calibrate"},
+            status_code=400)
+
+    labeled, cases, skipped = _build_labeled(p)
+    n_pos = sum(1 for r in labeled if r["label"] == 1)
+    n_neg = sum(1 for r in labeled if r["label"] == 0)
+    if n_pos < 1 or n_neg < 1:
+        return JSONResponse(
+            {"ok": False, "error": "examples resolved to too few bars — re-draw "
+             "wider regions"}, status_code=400)
+
+    thr = _pat_calibrate.fit_thresholds(labeled)
+    try:
+        thr["score_min"] = round(
+            _pat_calibrate.fit_score_cutoff(labeled, det, target="balanced"), 4)
+    except Exception:  # noqa: BLE001 - keep seed score_min on any scorer hiccup
+        pass
+
+    def _calibrated_detect(bars):
+        return det.detect(bars, thresholds=thr)
+
+    suite = _pat_validate.run_calibration_suite(_calibrated_detect, cases)
+
+    p.detector_thresholds = thr
+    p.detector_version = getattr(det, "__version__", None)
+    p.calib_pass_rate = suite["pass_rate"]
+    p.calib_at = _dt.datetime.now(_dt.timezone.utc)
+    db.commit()
+
+    return JSONResponse({
+        "ok": True, "readiness": _readiness(p), "suite": suite,
+        "separation": thr.get("_separation", {}),
+        "score_min": thr.get("score_min"),
+        "thresholds": {k: v for k, v in thr.items() if not k.startswith("_")},
+        "skipped": skipped, "n_pos": n_pos, "n_neg": n_neg,
+    })
+
+
+@router.post("/{pattern_id}/promote")
+def promote_pattern(pattern_id: int, user: User = Depends(require_user),
+                    db: Session = Depends(get_db)):
+    """Flip a calibrated, passing pattern to `ready` (live for universe scans).
+    Gated on readiness so an uncalibrated/failing detector can't go live."""
+    p = _get_pattern(db, pattern_id, user)
+    r = _readiness(p)
+    if not r["can_promote"]:
+        return JSONResponse({"ok": False, "error": r["hint"]}, status_code=400)
+    p.status = PT_READY
+    db.commit()
+    return JSONResponse({"ok": True, "readiness": _readiness(p)})
+
+
+@router.post("/{pattern_id}/reopen")
+def reopen_pattern(pattern_id: int, user: User = Depends(require_user),
+                   db: Session = Depends(get_db)):
+    """Send a `ready` pattern back to `learning` so the user can keep teaching /
+    recalibrating. Keeps the fitted thresholds intact."""
+    p = _get_pattern(db, pattern_id, user)
+    p.status = PT_LEARNING
+    db.commit()
+    return JSONResponse({"ok": True, "readiness": _readiness(p)})
+
+
+@router.get("/{pattern_id}/scan")
+def scan_universe(pattern_id: int,
+                  tf: str = Query("daily"),
+                  limit: int = Query(25),
+                  user: User = Depends(require_user), db: Session = Depends(get_db)):
+    """Run the calibrated detector across a CAPPED sample of the parquet universe
+    — the Phase-3 'Find pattern' scan, kept synchronous + bounded for now (a full
+    ~1500-symbol queued scan with progress is a later build). Honest about the cap
+    in the response so the UI never implies full coverage. Ready patterns only."""
+    p = _get_pattern(db, pattern_id, user)
+    if p.status != PT_READY:
+        return JSONResponse({"ok": False, "error": "promote the pattern first"},
+                            status_code=400)
+    if tf not in _TIMEFRAMES:
+        tf = _TIMEFRAMES[0]
+    det = _detector_for(p.slug)
+    if det is None or bars_store is None:
+        return JSONResponse({"ok": False, "error": "detector/bars unavailable",
+                             "matches": []}, status_code=503)
+    try:
+        symbols = list(bars_store.list_symbols(timeframe=tf))
+    except Exception:  # noqa: BLE001
+        try:
+            symbols = list(bars_store.list_symbols(tf))
+        except Exception:
+            symbols = []
+    cap = max(1, min(int(limit or 25), 50))
+    sample = sorted(symbols)[:cap]
+    matches: list[dict] = []
+    for sym in sample:
+        bars = _load_window(sym, tf, None, None)
+        if len(bars) < _CALIB_MIN_BARS:
+            continue
+        try:
+            found = det.detect(bars, thresholds=p.detector_thresholds or None)
+        except TypeError:
+            found = det.detect(bars)
+        except Exception:  # noqa: BLE001
+            continue
+        for m in found:
+            matches.append({"symbol": sym, "score": m["score"],
+                            "start_t": m["start_t"], "end_t": m["end_t"],
+                            "start_time": _to_lwc_time(m["start_t"], tf),
+                            "end_time": _to_lwc_time(m["end_t"], tf)})
+    matches.sort(key=lambda m: m["score"], reverse=True)
+    return JSONResponse({
+        "ok": True, "tf": tf, "scanned": len(sample),
+        "universe": len(symbols), "capped": len(symbols) > len(sample),
+        "count": len(matches), "matches": matches[:60],
+    }, headers={"Cache-Control": "no-store"})

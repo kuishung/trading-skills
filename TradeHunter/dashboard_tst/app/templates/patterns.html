@@ -4,9 +4,10 @@
 <div class="mb-5">
   <h1 class="text-2xl font-semibold">Pattern Trainer</h1>
   <p class="text-slate-400 text-sm mt-1 max-w-3xl">
-    Teach the assistant a chart pattern by example: load a real chart from the price-history
-    store (daily / 3m / 1m), mark the region that shows the pattern, and explain it in chat.
-    Once it has learned, it produces a pattern spec + a detector you can run across the universe.
+    Teach a chart pattern by example: load a real chart from the price-history store
+    (daily / 3m / 5m) and <em>draw the triangle</em> on the region that shows the pattern —
+    the drawn geometry is the label. Saved positives/negatives calibrate the geometric
+    detector you can then run across the universe with <strong>Find pattern</strong>.
   </p>
 </div>
 
@@ -14,12 +15,6 @@
 <div class="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-200/90">
   ⚠️ The price-history store isn't reachable on this host — charts won't load. Confirm
   <code class="text-amber-100">data_root</code> points at the parquet store and <code>pyarrow</code> is installed.
-</div>
-{% endif %}
-{% if not chat_ready %}
-<div class="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-200/90">
-  ⚠️ The teaching chat isn't configured — set <code class="text-amber-100">TST_DEEPSEEK_API_KEY</code>
-  in <code>app/.env</code>. You can still create patterns; chat works once it's set.
 </div>
 {% endif %}
 
