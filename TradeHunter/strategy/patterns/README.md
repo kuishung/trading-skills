@@ -41,9 +41,13 @@ the files here are a rendered projection written when you "Save what you learned
   no-lookahead), execution wiring, and where ML enters later (narrow/optional).
 - **`__init__.py`** — package docstring stating the 4 layers + the calibration
   loop; records that this framework SUPERSEDES the ad-hoc "LLM emits detect.py".
-- **`_geometry.py`** (L1) — swings + line fit + touches + convergence +
-  contraction + ATR. Pattern-agnostic measurement; ticker-relative; no lookahead.
-- **`_features.py`** (L2) — window → scale-invariant feature vector (`FEATURE_KEYS`).
+- **`_geometry.py`** (L1, **IMPLEMENTED D1**) — swings + line fit + touches +
+  convergence + contraction + ATR. Pattern-agnostic measurement; ticker-relative;
+  no lookahead. Pure Python (no numpy). Convention: lines fit with the window's
+  last bar at x=0, so `convergence` returns bars-ahead-to-apex directly.
+- **`_features.py`** (L2, **IMPLEMENTED D2**) — window → scale-invariant feature
+  vector (`FEATURE_KEYS`); slopes in ATR-multiples/bar; degrades gracefully when
+  a window lacks ≥2 swing highs/lows.
 - **`_harvester.py`** (D3) — review-queue candidate sources: loose high-recall
   `harvest` sweep, `active_learning_rank` (hardest cases), and `random_sample`
   (random ticker+window → run detect → qualify; catches the detector's FALSE
@@ -53,12 +57,26 @@ the files here are a rendered projection written when you "Save what you learned
 - **`_validate.py`** (D4) — calibration suite + walk-forward + held-out tickers +
   no-lookahead probe.
 - **`ascending_triangle/`** — first pattern. `detect.py` (L3 rule scorer +
-  `SEED_THRESHOLDS`) + `pattern.md` (the human spec). Detector body is a stub
-  (build phase D2); spec + seed thresholds are recorded.
-- All skeleton modules import cleanly; stub bodies `raise NotImplementedError`
-  tagged with their build phase (D1–D4), so the skeleton doubles as the build map.
+  `SEED_THRESHOLDS`, **IMPLEMENTED D2**: slides windows → features → soft-scored
+  rules → NMS → explainable matches) + `pattern.md` (the human spec).
+- Remaining stubs (`_harvester` D3, `_calibrate`/`_validate` D4) still
+  `raise NotImplementedError` tagged with their build phase, so the skeleton
+  doubles as the build map. **D1–D2 are now implemented + verified** (synthetic
+  triangle scores ~0.97; runs on real parquet — NVDA/AAPL/AMD).
 
 ## Changelog
+- **2026-06-16** — **D1 + D2 implemented + verified.** `_geometry` (ATR, fractal
+  swings with no-lookahead + ATR-prominence, least-squares line fit/R², touches,
+  convergence, contraction) and `_features.window_features` are now real pure
+  functions; `ascending_triangle/detect.py` is a working geometric rule-scorer
+  (sliding windows → soft sub-scores → geometric-mean → non-max suppression →
+  explainable `notes`). Verified: a synthetic ascending triangle scores ~0.97 and
+  the detector runs on real parquet (NVDA/AAPL/AMD) producing a handful of
+  explainable candidates each. Fixed a coordinate bug found in verification
+  (touches were evaluated at absolute bar-index against window-relative lines →
+  always 0; now evaluated in the line's coordinate space). Seed thresholds
+  unchanged — precision tuning is D4 (calibration from gallery labels). Next: D3
+  harvester (feed the review queue) then D4 calibrate/validate.
 - **2026-06-16** — Added **`_harvester.random_sample`** + a "Candidate sources"
   section to `DETECTOR_DESIGN.md`: the review queue is fed by harvest +
   active-learning + **random sampling** (random ticker+window → run detect →
