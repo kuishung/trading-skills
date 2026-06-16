@@ -45,6 +45,7 @@
         <button id="teachTab" class="px-3 py-1.5 flex items-center gap-1.5">&#9651; Teach</button>
         <button id="testTab" class="px-3 py-1.5 flex items-center gap-1.5 text-slate-400">&#9678; Test</button>
       </div>
+      <span id="emaLegend" class="text-[11px] ml-2"></span>
       <span id="chartStatus" class="ml-auto text-xs text-slate-500"></span>
     </div>
 
@@ -78,7 +79,7 @@
         <a id="detClear" href="#" class="ml-auto text-[11px] text-slate-500 hover:text-rose-300">clear</a>
       </div>
       <div id="detList" class="flex flex-col gap-1.5"></div>
-      <p class="text-[10px] text-slate-500 mt-1">The strongest match is drawn on the chart as <span class="text-cyan-300">cyan dashed trend-lines</span>; click any row to draw + zoom to it. &#10003;&nbsp;correct / &#10007;&nbsp;wrong saves it as an example so the next calibration is sharper. Offline check — never a live signal.</p>
+      <p class="text-[10px] text-slate-500 mt-1">Each match draws <span class="text-amber-300">resistance</span> (flat top), the <span class="text-cyan-300">ascending support</span> (tightening range), and a <span class="text-emerald-300">break&nbsp;&uarr;</span> marker on the first candle to close above resistance. Strongest match auto-draws; click any row to draw + zoom. &#10003;&nbsp;correct / &#10007;&nbsp;wrong saves it as an example. Offline check — never a live signal.</p>
     </div>
   </section>
 
@@ -211,6 +212,7 @@
       timeToIso.clear();
       loaded.forEach(function (b) { timeToIso.set(String(normTime(b.time)), b.t); });
       series.setData(loaded.map(function (b) { return { time: b.time, open: b.open, high: b.high, low: b.low, close: b.close }; }));
+      drawEmas(tf);
       chart.timeScale().fitContent();
       status.textContent = sym + ' · ' + tf + ' · ' + d.count + ' bars';
     } catch (e) { status.textContent = 'load failed'; }
@@ -586,24 +588,101 @@
   chart.timeScale().subscribeVisibleLogicalRangeChange(positionDots);
   if (window.ResizeObserver) { try { new ResizeObserver(positionDots).observe(el); } catch (e) {} }
 
-  // ---------- detector overlay lines (cyan dashed — shows WHICH portion fired) ----------
-  var detResLine = null, detSupLine = null;
+  // ---------- detector overlay (shows WHICH portion fired + the break-up) ----------
+  // Draws the detector's two trend-lines over the matched window and marks the
+  // breakout candle: 1) flat resistance, 2) the rising support that tightens the
+  // range toward the apex, 3) the first candle that closes ABOVE resistance,
+  // extended forward. The breakout is a post-hoc visual annotation over already-
+  // loaded history (offline review) — the detector itself stays no-lookahead.
+  var detResLine = null, detSupLine = null, detApexLine = null, detMarker = false;
   function clearDetectorLines() {
     if (detResLine) { chart.removeSeries(detResLine); detResLine = null; }
     if (detSupLine) { chart.removeSeries(detSupLine); detSupLine = null; }
+    if (detApexLine) { chart.removeSeries(detApexLine); detApexLine = null; }
+    if (detMarker) { series.setMarkers([]); detMarker = false; }
+  }
+  function _idxOfT(iso) { for (var i = 0; i < loaded.length; i++) { if (loaded[i].t === iso) return i; } return -1; }
+  // first candle AFTER the window whose close clears the flat-top resistance
+  // ceiling. Traders read the break as a close above the horizontal ceiling, not
+  // above an ever-rising fitted line — so use the ceiling level, search the apex
+  // region (~2x the window) ahead.
+  function findBreakout(res) {
+    var i0 = _idxOfT(res.t0), i1 = _idxOfT(res.t1);
+    if (i1 < 0) return null;
+    var ceiling = Math.max(res.p0, res.p1);             // the flat top
+    var span = (i0 >= 0 && i1 > i0) ? (i1 - i0) : 30;
+    var stop = Math.min(loaded.length, i1 + Math.max(40, 2 * span) + 1);
+    for (var k = i1 + 1; k < stop; k++) {
+      if (loaded[k].close > ceiling) return loaded[k];   // breakout up
+    }
+    return null;
   }
   function drawDetectorLines(lines) {
     clearDetectorLines();
     if (!lines) return;
-    function mk() { return chart.addLineSeries({ color: '#22d3ee', lineWidth: 2, lineStyle: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false }); }
+    function mk(color) { return chart.addLineSeries({ color: color, lineWidth: 2, lineStyle: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false }); }
     if (lines.resistance) {
       var rt0 = isoToLwcTime(lines.resistance.t0), rt1 = isoToLwcTime(lines.resistance.t1);
-      if (rt0 != null && rt1 != null) { detResLine = mk(); detResLine.setData([{ time: rt0, value: lines.resistance.p0 }, { time: rt1, value: lines.resistance.p1 }]); }
+      if (rt0 != null && rt1 != null) { detResLine = mk('#f59e0b'); detResLine.setData([{ time: rt0, value: lines.resistance.p0 }, { time: rt1, value: lines.resistance.p1 }]); }  // resistance = amber
     }
     if (lines.support) {
       var st0 = isoToLwcTime(lines.support.t0), st1 = isoToLwcTime(lines.support.t1);
-      if (st0 != null && st1 != null) { detSupLine = mk(); detSupLine.setData([{ time: st0, value: lines.support.p0 }, { time: st1, value: lines.support.p1 }]); }
+      if (st0 != null && st1 != null) { detSupLine = mk('#22d3ee'); detSupLine.setData([{ time: st0, value: lines.support.p0 }, { time: st1, value: lines.support.p1 }]); }  // ascending support = cyan
     }
+    // breakout candle (extend resistance to its apex, find the first close above)
+    if (lines.resistance) {
+      var bo = findBreakout(lines.resistance);
+      if (bo) {
+        series.setMarkers([{ time: bo.time, position: 'aboveBar', color: '#34d399', shape: 'arrowDown', text: 'break ↑' }]);
+        detMarker = true;
+      }
+    }
+  }
+
+  // ---------- EMAs (fast = red, mid = green, slow = purple) ----------
+  // Computed client-side from the loaded closes; seeded with the SMA of the first
+  // `period` bars (TradingView convention) so the early tail isn't skewed. The
+  // period set depends on timeframe: daily = 20/50/200, intraday (3m/5m) = 6/18/50.
+  var emaLegend = document.getElementById('emaLegend');
+  var emaSeries = [];
+  var EMA_RED = '#ef4444', EMA_GREEN = '#22c55e', EMA_PURPLE = '#a855f7';
+  var EMA_SETS = {
+    daily: [[20, EMA_RED], [50, EMA_GREEN], [200, EMA_PURPLE]],
+    intraday: [[6, EMA_RED], [18, EMA_GREEN], [50, EMA_PURPLE]]
+  };
+  function emaDefsFor(tf) { return tf === 'daily' ? EMA_SETS.daily : EMA_SETS.intraday; }
+  function ema(values, period) {
+    var k = 2 / (period + 1), out = [], prev = null;
+    for (var i = 0; i < values.length; i++) {
+      if (i < period - 1) { out.push(null); continue; }
+      if (prev === null) {
+        var s = 0; for (var j = i - period + 1; j <= i; j++) s += values[j];
+        prev = s / period; out.push(prev); continue;
+      }
+      prev = values[i] * k + prev * (1 - k); out.push(prev);
+    }
+    return out;
+  }
+  function clearEmas() {
+    emaSeries.forEach(function (e) { try { chart.removeSeries(e); } catch (x) {} });
+    emaSeries = [];
+    if (emaLegend) emaLegend.innerHTML = '';
+  }
+  function drawEmas(tf) {
+    clearEmas();
+    if (!loaded.length) return;
+    var closes = loaded.map(function (b) { return b.close; });
+    var leg = [];
+    emaDefsFor(tf).forEach(function (d) {
+      var period = d[0], color = d[1];
+      var vals = ema(closes, period), data = [];
+      for (var i = 0; i < vals.length; i++) { if (vals[i] != null) data.push({ time: loaded[i].time, value: vals[i] }); }
+      if (!data.length) return;
+      var ls = chart.addLineSeries({ color: color, lineWidth: 1, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
+      ls.setData(data); emaSeries.push(ls);
+      leg.push('<span style="color:' + color + '">&#9632;</span> EMA' + period);
+    });
+    if (emaLegend) emaLegend.innerHTML = leg.join(' &nbsp;');
   }
 
   // ---------- mode toggle (Teach / Test) ----------

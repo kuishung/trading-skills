@@ -124,6 +124,32 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-16 — v3.02: Pattern Trainer — EMAs on all timeframes, unified colours
+- EMAs now draw on **daily too** and share one colour scheme by speed —
+  **fast = red, mid = green, slow = purple** — with timeframe-specific periods:
+  **daily = EMA20/50/200**, **intraday (3m/5m) = EMA6/18/50**. (Recolours the
+  intraday EMAs from the v3.01 blue/red/green to red/green/purple.) Toolbar legend
+  shows the active set. Still client-side, SMA-seeded, recomputed per load.
+
+### 2026-06-16 — v3.01: Pattern Trainer — EMA overlays on intraday charts
+- 3-min / 5-min charts now draw **EMA6 (blue), EMA18 (red), EMA50 (green)** with a
+  colour legend in the toolbar. Computed client-side from the loaded closes, seeded
+  with the SMA of the first `period` bars (TradingView convention) so the early tail
+  isn't skewed. Drawn only on the intraday timeframes; cleared on daily and
+  recomputed on every chart load. Frontend-only.
+
+### 2026-06-16 — v3.00: Pattern Trainer — full triangle anatomy on a match (+ breakout)
+- Clicking a detection now draws the three things a trader reads: (1) the
+  **resistance** (flat top, amber), (2) the **ascending support** that tightens the
+  range toward the apex (cyan), and (3) a **break ↑ marker** on the first candle
+  that closes above the resistance line — found by extending resistance forward over
+  the loaded history and scanning the apex region only. Frontend-only (reuses the
+  `lines` the detector already returns in v2.99); the breakout is a post-hoc visual
+  annotation over stored bars, so the detector itself stays no-lookahead.
+- Resistance recoloured amber (was cyan) so the flat top and the rising support read
+  as two distinct lines. Breakout marker clears with the rest of the overlay (Find-
+  again / clear / reload / leaving Test).
+
 ### 2026-06-16 — v2.99: Pattern Trainer — Find pattern draws WHERE it matched
 - Fixed: `Find pattern` listed flagged windows + zoomed, but never showed *which
   portion* of the chart or *what shape* the detector saw — so a hit was an opaque
