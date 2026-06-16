@@ -159,6 +159,60 @@ def _load_window(symbol: str, tf: str, start: str | None, end: str | None) -> li
     return bars[-_MAX_BARS.get(tf, 5000):]
 
 
+def _ema(values: list[float], period: int) -> list:
+    """EMA seeded with the SMA of the first `period` values (None before that) —
+    matches the chart's client-side EMA exactly. Pure."""
+    out: list = [None] * len(values)
+    if period <= 0 or len(values) < period:
+        return out
+    k = 2.0 / (period + 1)
+    prev = sum(values[:period]) / period
+    out[period - 1] = prev
+    for i in range(period, len(values)):
+        prev = values[i] * k + prev * (1.0 - k)
+        out[i] = prev
+    return out
+
+
+def _ema_periods(tf: str) -> tuple[int, int]:
+    """(mid, slow) EMA periods for the trend gate — the same EMAs drawn on the
+    chart (daily 50/200, intraday 18/50)."""
+    return (50, 200) if tf == "daily" else (18, 50)
+
+
+def _filter_uptrend(bars: list[dict], matches: list[dict], tf: str) -> list[dict]:
+    """Keep only matches whose window ends in an UPTREND, judged by the EMAs drawn
+    on the chart: last close above the slow EMA, mid EMA above the slow EMA, and the
+    slow EMA rising. An ascending triangle is a bullish continuation, so this drops
+    the geometrically-similar shapes that form in downtrends/ranges. Falls back to
+    the mid EMA when there isn't enough history to seed the slow EMA (keeps the match
+    if neither EMA is available)."""
+    if not matches:
+        return matches
+    closes = [float(b["c"]) for b in bars]
+    idx = {b["t"]: i for i, b in enumerate(bars)}
+    mid_p, slow_p = _ema_periods(tf)
+    ema_mid, ema_slow = _ema(closes, mid_p), _ema(closes, slow_p)
+    look = 10
+    kept = []
+    for m in matches:
+        i = idx.get(m["end_t"])
+        if i is None:
+            kept.append(m)
+            continue
+        c, mid, slow = closes[i], ema_mid[i], ema_slow[i]
+        if slow is not None:
+            rising = i >= look and ema_slow[i - look] is not None and slow > ema_slow[i - look]
+            up = (c > slow) and (mid is None or mid > slow) and rising
+        elif mid is not None:
+            up = c > mid
+        else:
+            up = True   # not enough history to judge — don't filter it out
+        if up:
+            kept.append(m)
+    return kept
+
+
 def _example_counts(p: Pattern) -> tuple[int, int]:
     pos = sum(1 for e in p.examples if (e.kind or "positive") != "negative")
     neg = sum(1 for e in p.examples if (e.kind or "positive") == "negative")
@@ -320,6 +374,7 @@ def pattern_bars(pattern_id: int,
 def pattern_detect(pattern_id: int,
                    symbol: str = Query(...),
                    tf: str = Query("daily"),
+                   trend: str = Query("up"),   # "up" = uptrend-only (EMA gate); "any" = no filter
                    user: User = Depends(require_user), db: Session = Depends(get_db)):
     """Run the pattern's geometric detector over the same parquet window the chart
     shows, and return its matches (with Lightweight-Charts time values) so the
@@ -351,6 +406,9 @@ def pattern_detect(pattern_id: int,
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({"ok": False, "error": repr(exc), "matches": []},
                             status_code=500)
+    n_raw = len(matches)
+    if trend == "up":   # ascending triangle is a continuation — only fire in uptrends
+        matches = _filter_uptrend(raw, matches, tf)
     out = [{**m,
             "start_time": _to_lwc_time(m["start_t"], tf),
             "end_time": _to_lwc_time(m["end_t"], tf)} for m in matches]
@@ -359,6 +417,7 @@ def pattern_detect(pattern_id: int,
     return JSONResponse(
         {"ok": True, "symbol": symbol.upper().strip(), "tf": tf,
          "detector": detector_name, "version": getattr(det, "__version__", "?"),
+         "trend": trend, "n_raw": n_raw,
          "count": len(out), "matches": out},
         headers={"Cache-Control": "no-store"},
     )
@@ -571,6 +630,7 @@ def scan_universe(pattern_id: int,
             found = det.detect(bars)
         except Exception:  # noqa: BLE001
             continue
+        found = _filter_uptrend(bars, found, tf)   # uptrend-only, same EMA gate as Find
         for m in found:
             matches.append({"symbol": sym, "score": m["score"],
                             "start_t": m["start_t"], "end_t": m["end_t"],

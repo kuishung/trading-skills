@@ -124,7 +124,24 @@ surface takes shape.
 
 ## Changelog
 
-### 2026-06-16 — v3.02: Pattern Trainer — EMAs on all timeframes, unified colours
+### 2026-06-16 — v3.04: Pattern Trainer — Find pattern is uptrend-only (EMA gate)
+- An ascending triangle is a bullish continuation, so Find pattern (and the universe
+  scan) now keep only matches whose window ends in an **uptrend**, judged by the same
+  EMAs drawn on the chart (`_filter_uptrend`): last close above the slow EMA, mid EMA
+  above slow EMA, and the slow EMA rising (daily 50/200, intraday 18/50). Falls back
+  to the mid EMA when there isn't enough history to seed the slow one. `/detect` takes
+  `?trend=up|any` (default `up`); the results header shows "uptrend only (EMA)" and how
+  many off-trend matches were hidden. Geometry detector stays unchanged — this is a
+  context gate at the application layer.
+
+### 2026-06-16 — v3.03: Pattern Trainer — extended hours shown on intraday charts
+- The 3m/5m parquet already includes pre-market (04:00–09:30 ET) + after-hours
+  (16:00–20:00 ET), but those candles were indistinguishable from the regular
+  session. Now extended-hours candles are **dimmed to muted slate** (lighter=up,
+  darker=down) while regular hours stay vivid green/red, with an "ext hrs" swatch
+  in the toolbar legend. RTH classified per-bar by ET time via `Intl`
+  (`America/New_York`, DST-correct: regular = 09:30–16:00 ET). Daily unaffected.
+  Frontend-only. (Verified the split on a real day: 110 pre / 130 RTH / 80 AH.)
 - EMAs now draw on **daily too** and share one colour scheme by speed —
   **fast = red, mid = green, slow = purple** — with timeframe-specific periods:
   **daily = EMA20/50/200**, **intraday (3m/5m) = EMA6/18/50**. (Recolours the

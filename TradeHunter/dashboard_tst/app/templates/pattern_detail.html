@@ -211,7 +211,7 @@
       loaded = d.bars;
       timeToIso.clear();
       loaded.forEach(function (b) { timeToIso.set(String(normTime(b.time)), b.t); });
-      series.setData(loaded.map(function (b) { return { time: b.time, open: b.open, high: b.high, low: b.low, close: b.close }; }));
+      series.setData(loaded.map(function (b) { return candlePoint(b, tf); }));
       drawEmas(tf);
       chart.timeScale().fitContent();
       status.textContent = sym + ' · ' + tf + ' · ' + d.count + ' bars';
@@ -360,7 +360,10 @@
       clearDetectorLines();
       detList.innerHTML = '';
       if (!d.ok) { detSummary.textContent = 'detector error: ' + (d.error || '?'); detResults.classList.remove('hidden'); return; }
-      detSummary.textContent = d.count + ' region' + (d.count === 1 ? '' : 's') + ' flagged' + (d.detector ? ' · ' + d.detector + ' ' + (d.version || '') : '');
+      detSummary.textContent = d.count + ' region' + (d.count === 1 ? '' : 's') + ' flagged'
+        + (d.trend === 'up' ? ' · uptrend only (EMA)' : '')
+        + (d.n_raw != null && d.n_raw > d.count ? ' · ' + (d.n_raw - d.count) + ' off-trend hidden' : '')
+        + (d.detector ? ' · ' + d.detector + ' ' + (d.version || '') : '');
       if (!d.count) {
         detList.innerHTML = '<span class="text-[11px] text-slate-500">nothing flagged on this window</span>';
       }
@@ -639,6 +642,28 @@
     }
   }
 
+  // ---------- session shading (extended hours on intraday charts) ----------
+  // Intraday parquet includes pre-market (04:00–09:30 ET) + after-hours
+  // (16:00–20:00 ET). Regular hours stay vivid green/red; extended-hours candles
+  // are dimmed to muted slate (lighter = up, darker = down) so the session is
+  // visible. ET conversion via Intl handles DST automatically.
+  var _etFmt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: false });
+  function _etMinutes(iso) {
+    var p = _etFmt.formatToParts(new Date(iso)), h = 0, m = 0;
+    for (var i = 0; i < p.length; i++) { if (p[i].type === 'hour') h = +p[i].value; else if (p[i].type === 'minute') m = +p[i].value; }
+    if (h === 24) h = 0;
+    return h * 60 + m;
+  }
+  function isRTH(iso) { var m = _etMinutes(iso); return m >= 570 && m < 960; }   // 09:30–16:00 ET
+  function candlePoint(b, tf) {
+    var pt = { time: b.time, open: b.open, high: b.high, low: b.low, close: b.close };
+    if (tf !== 'daily' && !isRTH(b.t)) {
+      var c = (b.close >= b.open) ? '#64748b' : '#334155';   // ext-hours: muted slate
+      pt.color = c; pt.borderColor = c; pt.wickColor = c;
+    }
+    return pt;
+  }
+
   // ---------- EMAs (fast = red, mid = green, slow = purple) ----------
   // Computed client-side from the loaded closes; seeded with the SMA of the first
   // `period` bars (TradingView convention) so the early tail isn't skewed. The
@@ -682,6 +707,7 @@
       ls.setData(data); emaSeries.push(ls);
       leg.push('<span style="color:' + color + '">&#9632;</span> EMA' + period);
     });
+    if (tf !== 'daily') leg.push('<span style="color:#64748b">&#9632;</span> ext&nbsp;hrs');
     if (emaLegend) emaLegend.innerHTML = leg.join(' &nbsp;');
   }
 
