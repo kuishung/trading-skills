@@ -478,12 +478,15 @@ class Pattern(Base):
 
 
 class PatternExample(Base):
-    """A saved teaching example: one marked chart region (symbol/timeframe/
-    time-range) the user pointed at while teaching this pattern. Unlike the
-    per-turn `PatternLesson.marked`, an example is a first-class, named,
-    reloadable artifact — the page lists them in a gallery and clicking one
-    reloads that ticker+timeframe and redraws the marked box. Builds a
-    per-pattern training set the detector generator (Phase 2) can cite."""
+    """A saved teaching example for a pattern: a chart region the user DREW (or
+    corrected) on the chart by direct manipulation — never typed. The canonical
+    labelling UX is drag-to-label (DETECTOR_DESIGN.md): the user drags the
+    resistance + support trendlines on the chart; the geometry is stored here and
+    the numeric features are DERIVED from it (the user never types thresholds).
+
+    `kind` is the label polarity (positive = is the pattern; negative = a rejected
+    near-miss — both are needed to calibrate). `geometry` is the drawn shape
+    (trendline endpoints) the calibrator reads features from."""
 
     __tablename__ = "pattern_examples"
 
@@ -491,9 +494,14 @@ class PatternExample(Base):
     pattern_id = Column(Integer, ForeignKey("patterns.id"), nullable=False, index=True)
     symbol = Column(String(20), nullable=False)
     timeframe = Column(String(8), nullable=False)            # daily | 5min | 3min | 1min
-    start_t = Column(String(32), nullable=False)             # ISO bound (bars_store)
+    start_t = Column(String(32), nullable=False)             # ISO window bound
     end_t = Column(String(32), nullable=False)
     n_bars = Column(Integer, nullable=True)
+    # label polarity — the calibration bridge (positives + rejected near-misses)
+    kind = Column(String(10), nullable=False, default="positive")  # positive | negative
+    # the drawn shape: {"resistance": {t0,p0,t1,p1}, "support": {t0,p0,t1,p1}}.
+    # Features (slope/R²/touches/contraction) are computed FROM this, not typed.
+    geometry = Column(JSON, nullable=True)
     label = Column(String(120), nullable=True)               # optional user label
     note = Column(Text, nullable=True)
     created_at = Column(DateTime, default=_utcnow)

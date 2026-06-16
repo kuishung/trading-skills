@@ -37,14 +37,21 @@
     </div>
     <button id="loadBtn" class="rounded bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 text-sm font-medium">Load</button>
     <div class="w-px h-8 bg-slate-700 mx-1"></div>
-    <button id="markBtn" class="rounded border border-amber-500/50 text-amber-300 hover:bg-amber-500/10 px-3 py-1.5 text-sm">Mark region</button>
-    <button id="saveExBtn" disabled class="rounded border border-sky-500/50 text-sky-300 hover:bg-sky-500/10 disabled:opacity-40 disabled:hover:bg-transparent px-3 py-1.5 text-sm">&#9733; Save example</button>
+    <button id="markBtn" class="hidden rounded border border-amber-500/50 text-amber-300 hover:bg-amber-500/10 px-3 py-1.5 text-sm">Mark region</button>
+    <button id="drawBtn" class="rounded border border-violet-500/60 text-violet-300 hover:bg-violet-500/10 px-3 py-1.5 text-sm">&#9651; Draw triangle</button>
+    {# draw-mode actions (shown only while drawing) #}
+    <span id="drawActions" class="hidden flex items-center gap-2">
+      <input id="drawLabel" placeholder="label (optional)" class="w-32 rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-xs focus:border-emerald-500 outline-none">
+      <button id="savePosBtn" class="rounded bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 text-sm font-medium">&#9650; Save positive</button>
+      <button id="saveNegBtn" class="rounded border border-rose-500/50 text-rose-300 hover:bg-rose-500/10 px-3 py-1.5 text-sm">&#10007; Reject (negative)</button>
+      <button id="cancelDrawBtn" class="text-[11px] text-slate-500 hover:text-slate-300">cancel</button>
+    </span>
     <span id="markInfo" class="text-xs text-slate-400"></span>
     <a id="clearMark" href="#" class="text-[11px] text-slate-500 hover:text-rose-300 hidden">clear</a>
     <span id="chartStatus" class="ml-auto text-xs text-slate-500"></span>
   </div>
-  <div id="chart" style="height:440px;"></div>
-  <p class="text-[11px] text-slate-500 mt-1">Click <b>Mark region</b>, then click the chart twice (start &amp; end of the pattern). Send the marked bars to the chat, or <b>&#9733; Save example</b> to keep this ticker+region in the gallery below &mdash; it reloads and redraws the box next time.</p>
+  <div id="chart" class="relative" style="height:440px;"></div>
+  <p class="text-[11px] text-slate-500 mt-1"><b>&#9651; Draw triangle</b>: drag the <span class="text-rose-300">resistance</span> (top) and <span class="text-emerald-300">support</span> (bottom) handles &mdash; each snaps to a candle's high/low. <b>Save positive</b> if it's an ascending triangle, <b>Reject</b> if it's a near-miss. You never type numbers &mdash; the shape you draw is the label. Saved examples appear in the gallery below and redraw when reloaded.</p>
 </section>
 
 {# ---------------- saved examples gallery ---------------- #}
@@ -58,8 +65,10 @@
     {% for e in examples %}
     <div class="exItem group flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-950/40 px-2.5 py-1.5 text-sm hover:border-sky-500/60 transition"
          data-id="{{ e.id }}" data-symbol="{{ e.symbol }}" data-tf="{{ e.timeframe }}"
-         data-start="{{ e.start_t }}" data-end="{{ e.end_t }}">
+         data-start="{{ e.start_t }}" data-end="{{ e.end_t }}"
+         data-kind="{{ e.kind or 'positive' }}" data-geometry='{{ e.geometry | tojson if e.geometry else "" }}'>
       <button type="button" class="exLoad flex items-center gap-2">
+        <span class="inline-block w-2 h-2 rounded-full {% if e.kind == 'negative' %}bg-rose-400{% else %}bg-emerald-400{% endif %}"></span>
         <span class="font-semibold text-white">{{ e.symbol }}</span>
         <span class="text-[11px] text-slate-400">{{ e.timeframe }}</span>
         <span class="text-[11px] text-amber-300/80">&#8982; {{ e.n_bars or '?' }} bars</span>
@@ -278,8 +287,12 @@
     d.className = 'exItem group flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-950/40 px-2.5 py-1.5 text-sm hover:border-sky-500/60 transition';
     d.dataset.id = ex.id; d.dataset.symbol = ex.symbol; d.dataset.tf = ex.timeframe;
     d.dataset.start = ex.start; d.dataset.end = ex.end;
+    d.dataset.kind = ex.kind || 'positive';
+    d.dataset.geometry = ex.geometry ? JSON.stringify(ex.geometry) : '';
+    var neg = (ex.kind === 'negative');
+    var dot = '<span class="inline-block w-2 h-2 rounded-full ' + (neg ? 'bg-rose-400' : 'bg-emerald-400') + '" title="' + (neg ? 'negative (near-miss)' : 'positive') + '"></span>';
     var label = ex.label ? ('<span class="text-[11px] text-slate-500">· ' + ex.label + '</span>') : '';
-    d.innerHTML = '<button type="button" class="exLoad flex items-center gap-2">' +
+    d.innerHTML = '<button type="button" class="exLoad flex items-center gap-2">' + dot +
       '<span class="font-semibold text-white">' + ex.symbol + '</span>' +
       '<span class="text-[11px] text-slate-400">' + ex.timeframe + '</span>' +
       '<span class="text-[11px] text-amber-300/80">⋆ ' + (ex.n || '?') + ' bars</span>' +
@@ -297,7 +310,10 @@
     symInput.value = item.dataset.symbol;
     tfSelect.value = item.dataset.tf;
     await load();                                  // reload that ticker+timeframe
-    if (!applyMarkedRegion(item.dataset.start, item.dataset.end)) {
+    var geo = null; try { geo = item.dataset.geometry ? JSON.parse(item.dataset.geometry) : null; } catch (e) {}
+    if (geo && geo.resistance && geo.support) {
+      showGeometry(geo);                           // redraw the drawn trendlines
+    } else if (!applyMarkedRegion(item.dataset.start, item.dataset.end)) {
       status.textContent += ' (region outside the loaded window)';
     }
     document.getElementById('chartwrap').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -332,6 +348,116 @@
     } catch (e) { alert('Network error saving example.'); }
     finally { saveExBtn2.disabled = !(markStart && markEnd); }
   });
+
+  // ---------- draw triangle (drag-to-label; the user never types numbers) ----------
+  // Two trendlines (resistance/support), each with 2 draggable handles that SNAP
+  // to a candle's high (resistance) / low (support). The drawn shape IS the label:
+  // saved geometry -> the calibrator derives slope/R²/touches from it. The same
+  // series also re-draw a saved example's geometry on reload.
+  var drawBtn = document.getElementById('drawBtn');
+  var drawActions = document.getElementById('drawActions');
+  var savePosBtn = document.getElementById('savePosBtn');
+  var saveNegBtn = document.getElementById('saveNegBtn');
+  var cancelDrawBtn = document.getElementById('cancelDrawBtn');
+  var resLine = null, supLine = null, dHandles = [], drawing = false;
+
+  function priceAt(bar, side) { return side === 'res' ? bar.high : bar.low; }
+  function ensureLines() {
+    if (!resLine) resLine = chart.addLineSeries({ color: '#f43f5e', lineWidth: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
+    if (!supLine) supLine = chart.addLineSeries({ color: '#10b981', lineWidth: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
+  }
+  function sideHandles(side) { return dHandles.filter(function (h) { return h.side === side; }).sort(function (a, b) { return a.bar.time < b.bar.time ? -1 : 1; }); }
+  function redrawLines() {
+    ensureLines();
+    resLine.setData(sideHandles('res').map(function (h) { return { time: h.bar.time, value: h.bar.high }; }));
+    supLine.setData(sideHandles('sup').map(function (h) { return { time: h.bar.time, value: h.bar.low }; }));
+  }
+  function positionDots() {
+    var ts = chart.timeScale();
+    dHandles.forEach(function (h) {
+      var x = ts.timeToCoordinate(h.bar.time), y = series.priceToCoordinate(priceAt(h.bar, h.side));
+      if (x == null || y == null) { h.dot.style.display = 'none'; }
+      else { h.dot.style.display = ''; h.dot.style.left = x + 'px'; h.dot.style.top = y + 'px'; }
+    });
+  }
+  function nearestBarByX(x) {
+    var ts = chart.timeScale(), best = null, bd = 1e9;
+    for (var i = 0; i < loaded.length; i++) { var cx = ts.timeToCoordinate(loaded[i].time); if (cx == null) continue; var d = Math.abs(cx - x); if (d < bd) { bd = d; best = loaded[i]; } }
+    return best;
+  }
+  function addHandle(side, bar) {
+    var dot = document.createElement('div');
+    dot.style.cssText = 'position:absolute;width:13px;height:13px;margin:-7px 0 0 -7px;border-radius:50%;border:2px solid #fff;cursor:grab;z-index:5;touch-action:none;background:' + (side === 'res' ? '#f43f5e' : '#10b981') + ';';
+    el.appendChild(dot);
+    var h = { side: side, bar: bar, dot: dot };
+    dot.addEventListener('pointerdown', function (ev) {
+      ev.preventDefault(); dot.style.cursor = 'grabbing';
+      function move(e) { var r = el.getBoundingClientRect(); var b = nearestBarByX(e.clientX - r.left); if (b) { h.bar = b; redrawLines(); positionDots(); } }
+      function up() { dot.style.cursor = 'grab'; window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); }
+      window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+    });
+    dHandles.push(h);
+  }
+  function clearDraw() {
+    dHandles.forEach(function (h) { h.dot.remove(); }); dHandles = [];
+    if (resLine) { chart.removeSeries(resLine); resLine = null; }
+    if (supLine) { chart.removeSeries(supLine); supLine = null; }
+  }
+  function startDraw() {
+    if (!loaded.length) { status.textContent = 'load a chart first'; return; }
+    drawing = true; drawBtn.classList.add('bg-violet-500/20'); drawActions.classList.remove('hidden');
+    clearDraw();
+    var n = loaded.length, iA = Math.max(0, n - 30), iB = n - 3;   // sensible starting anchors
+    addHandle('res', loaded[iA]); addHandle('res', loaded[iB]);
+    addHandle('sup', loaded[iA]); addHandle('sup', loaded[iB]);
+    redrawLines(); positionDots();
+  }
+  function endDraw() {
+    drawing = false;
+    if (drawBtn) drawBtn.classList.remove('bg-violet-500/20');
+    if (drawActions) drawActions.classList.add('hidden');
+    clearDraw();
+  }
+  function currentGeometry() {
+    var rs = sideHandles('res'), ss = sideHandles('sup');
+    if (rs.length < 2 || ss.length < 2) return null;
+    return {
+      resistance: { t0: rs[0].bar.t, p0: rs[0].bar.high, t1: rs[1].bar.t, p1: rs[1].bar.high },
+      support: { t0: ss[0].bar.t, p0: ss[0].bar.low, t1: ss[1].bar.t, p1: ss[1].bar.low }
+    };
+  }
+  // re-draw a saved example's geometry (read-only) on reload
+  function isoToLwcTime(iso) { var best = null; for (var i = 0; i < loaded.length; i++) { if (loaded[i].t === iso) return loaded[i].time; if (loaded[i].t <= iso) best = loaded[i]; } return best ? best.time : null; }
+  function showGeometry(geo) {
+    endDraw(); ensureLines();
+    var rt0 = isoToLwcTime(geo.resistance.t0), rt1 = isoToLwcTime(geo.resistance.t1);
+    var st0 = isoToLwcTime(geo.support.t0), st1 = isoToLwcTime(geo.support.t1);
+    if (rt0 != null && rt1 != null) resLine.setData([{ time: rt0, value: geo.resistance.p0 }, { time: rt1, value: geo.resistance.p1 }]);
+    if (st0 != null && st1 != null) supLine.setData([{ time: st0, value: geo.support.p0 }, { time: st1, value: geo.support.p1 }]);
+  }
+  async function saveDrawn(kind) {
+    var g = currentGeometry(); if (!g) { status.textContent = 'draw the triangle first'; return; }
+    var ts = [g.resistance.t0, g.resistance.t1, g.support.t0, g.support.t1].sort();
+    var label = (document.getElementById('drawLabel') || {}).value || '';
+    if (savePosBtn) savePosBtn.disabled = true; if (saveNegBtn) saveNegBtn.disabled = true;
+    try {
+      var body = new URLSearchParams({
+        symbol: (symInput.value || '').trim().toUpperCase(), tf: tfSelect.value,
+        start: ts[0], end: ts[ts.length - 1], kind: kind, geometry: JSON.stringify(g), label: label.trim()
+      });
+      var res = await fetch('/patterns/' + pid + '/examples.json', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body });
+      var d = await res.json();
+      if (d.ok && d.example) { exList.appendChild(exItemHtml(d.example)); refreshCount(); endDraw(); status.textContent = 'saved ' + kind + ' example'; }
+      else { status.textContent = d.error || 'could not save'; }
+    } catch (e) { status.textContent = 'network error saving'; }
+    finally { if (savePosBtn) savePosBtn.disabled = false; if (saveNegBtn) saveNegBtn.disabled = false; }
+  }
+  if (drawBtn) drawBtn.addEventListener('click', function () { drawing ? endDraw() : startDraw(); });
+  if (cancelDrawBtn) cancelDrawBtn.addEventListener('click', endDraw);
+  if (savePosBtn) savePosBtn.addEventListener('click', function () { saveDrawn('positive'); });
+  if (saveNegBtn) saveNegBtn.addEventListener('click', function () { saveDrawn('negative'); });
+  chart.timeScale().subscribeVisibleLogicalRangeChange(positionDots);
+  if (window.ResizeObserver) { try { new ResizeObserver(positionDots).observe(el); } catch (e) {} }
 
   // ---------- chat ----------
   if (!window.marked || !window.DOMPurify) return;

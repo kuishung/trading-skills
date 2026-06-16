@@ -70,6 +70,13 @@ def detect(bars: list[dict]) -> list[dict]:
   high-recall sweep of the parquet universe surfacing candidate windows for
   confirm/reject review (the calibration/eval input), NOT a live-signal scan.
   See `DETECTOR_DESIGN.md` (D3–D5).
+- **Review-queue candidate sources (3):** the queue is fed by (a) pre-filter
+  harvest, (b) active-learning (hardest cases), and (c) a **"Random sample"**
+  button / auto-feed (`_harvester.random_sample`) — pick a random ticker+window,
+  run `detect()`, qualify/correct → calibrate. Random is what catches the
+  detector's **false negatives** (missed patterns the pre-filter can never
+  surface); low-yield for positives, so it complements (a)/(b). All land on the
+  same drag-to-label surface. See `DETECTOR_DESIGN.md` "Candidate sources".
 
 ## Open items / follow-ups
 - **Marking precision:** Phase 1 marks by two clicks (start/end bar). A drag-box

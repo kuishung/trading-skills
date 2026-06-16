@@ -124,6 +124,28 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-16 — v2.95: Pattern Trainer — drag-to-label triangle tool (zero text)
+- The canonical labelling UX is now **direct manipulation, never typing** (user:
+  "I need to drag from the chart… inputting text is confusing"). **Draw triangle**
+  puts two trendlines on the chart — **resistance** (red) and **support** (green)
+  — each with **draggable handles that snap to a candle's high/low**. The shape you
+  draw IS the label; the calibrator derives slope/R²/touches FROM the geometry —
+  you never type a threshold. **Save positive** (it's the pattern) / **Reject
+  (negative)** (a near-miss) — both polarities feed calibration.
+- Saved examples now carry **`kind`** (positive/negative, shown as a green/rose
+  dot) + the drawn **`geometry`**; clicking one reloads the ticker and **redraws
+  its trendlines**. (Migration `b4c5d6e7f8a9` adds `kind` + `geometry` JSON to
+  `pattern_examples`; up/down verified, ORM round-trip verified.)
+- Drag layer is custom (lightweight-charts has no native draggable lines): HTML
+  handles positioned via `timeToCoordinate`/`priceToCoordinate`, pointer-drag →
+  `nearestBarByX` snap → live `setData` redraw, repositioned on zoom/pan. The old
+  2-click "Mark region" is hidden (kept for the chat path); "Save example" is
+  replaced by the draw flow. Files: `models.py`, migration, `routes/patterns.py`
+  (`save_example` takes `kind`+`geometry`, `_parse_geometry` validates), and
+  `templates/pattern_detail.html`. Backs `strategy/patterns/DETECTOR_DESIGN.md`'s
+  drag-to-label model. (NOTE: real mouse-drag feel needs a human eye — headless
+  preview can't perform true drag gestures.)
+
 ### 2026-06-16 — v2.94: Pattern Trainer — saved-examples gallery + ROOT-CAUSE fix for the empty-`p` bug
 - **New: saved-examples gallery** (user request — "save every example; when I load
   it again it shows up"). Mark a ticker+region, hit **★ Save example**, and it's

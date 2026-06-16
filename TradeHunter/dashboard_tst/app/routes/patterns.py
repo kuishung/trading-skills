@@ -14,6 +14,7 @@ Architecture (see PATTERN_TRAINER_DESIGN.md):
 from __future__ import annotations
 
 import datetime as _dt
+import json as _json
 import re
 import sys
 from pathlib import Path
@@ -276,18 +277,43 @@ def post_chat(pattern_id: int, message: str = Form(...),
 def _example_json(e: PatternExample) -> dict:
     return {"id": e.id, "symbol": e.symbol, "timeframe": e.timeframe,
             "start": e.start_t, "end": e.end_t, "n": e.n_bars,
+            "kind": e.kind or "positive", "geometry": e.geometry,
             "label": e.label or "", "note": e.note or ""}
+
+
+def _parse_geometry(raw: str) -> dict | None:
+    """Validate the drawn-trendline geometry JSON from the chart. Shape:
+    {"resistance": {t0,p0,t1,p1}, "support": {t0,p0,t1,p1}} with numeric prices
+    and ISO/string times. Returns the cleaned dict or None (no/!valid geometry)."""
+    if not raw:
+        return None
+    try:
+        g = _json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    out = {}
+    for side in ("resistance", "support"):
+        s = g.get(side) or {}
+        try:
+            out[side] = {"t0": str(s["t0"]), "p0": float(s["p0"]),
+                         "t1": str(s["t1"]), "p1": float(s["p1"])}
+        except (KeyError, TypeError, ValueError):
+            return None
+    return out
 
 
 @router.post("/{pattern_id}/examples.json")
 def save_example(pattern_id: int,
                  symbol: str = Form(...), tf: str = Form(...),
                  start: str = Form(...), end: str = Form(...),
+                 kind: str = Form("positive"), geometry: str = Form(""),
                  label: str = Form(""), note: str = Form(""),
                  user: User = Depends(require_user), db: Session = Depends(get_db)):
-    """Save the currently-marked region as a reloadable example. Validates the
-    region against the parquet store (must resolve to at least one bar) so we
-    never persist an empty/garbage range."""
+    """Save a drawn example. The user DRAWS the resistance + support lines on the
+    chart (drag, never type); `geometry` carries those trendline endpoints and the
+    numeric features are derived from it later by the calibrator. `kind` is the
+    label polarity (positive | negative). Validates the region resolves to >=1
+    parquet bar so we never persist an empty range."""
     p = _get_pattern(db, pattern_id, user)
     sym = symbol.upper().strip()[:20]
     if tf not in _TIMEFRAMES:
@@ -296,11 +322,13 @@ def save_example(pattern_id: int,
     bars = _load_window(sym, tf, a, b)
     if not bars:
         return JSONResponse(
-            {"ok": False, "error": "no bars in that range — re-mark the region"},
+            {"ok": False, "error": "no bars in that range — re-draw the pattern"},
             status_code=400,
         )
+    knd = "negative" if (kind or "").strip().lower() == "negative" else "positive"
     e = PatternExample(pattern_id=p.id, symbol=sym, timeframe=tf,
                        start_t=a, end_t=b, n_bars=len(bars),
+                       kind=knd, geometry=_parse_geometry(geometry),
                        label=(label.strip()[:120] or None),
                        note=(note.strip()[:2000] or None))
     db.add(e)
