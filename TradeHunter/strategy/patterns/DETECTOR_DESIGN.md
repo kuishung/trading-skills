@@ -118,6 +118,33 @@ see no-lookahead.
    only bars ≤ that window's last close. `_validate.py` includes a lookahead probe
    (re-run incrementally bar-by-bar; a detection must never reference a future t).
 
+## Candidate sources for the review queue (user, 2026-06-16)
+
+The trainer's review queue (where the user confirms/rejects/corrects) is fed by
+THREE sources, all landing on the same drag-to-label surface:
+
+1. **Pre-filter harvest** (`_harvester`) — loose high-recall sweep → near-triangles.
+   Efficient for gathering POSITIVES + the decision boundary.
+2. **Active-learning** (`_harvester.active_learning_rank`) — the hardest cases
+   (score nearest the cutoff) so limited labelling effort is spent best.
+3. **Random sampling** — pick a random ticker + window from the parquet universe,
+   run `detect()`, show whatever it found (or "nothing detected — draw it if you
+   see one"). A **"Random sample"** button + optional auto-feed in the trainer.
+
+**Why random matters — it catches the detector's FALSE NEGATIVES.** The harvester
+only surfaces windows that PASS the pre-filter, so it can never show a clean
+triangle the detector *missed*. Random raw charts expose exactly those misses
+(recall failures) and give unbiased negatives, reducing the bias of only ever
+judging what the detector already likes. **Honest tradeoff:** most random windows
+aren't the pattern, so pure-random is LOW-YIELD for positives — it complements,
+not replaces, (1)/(2). Use a mix: mostly pre-filter/active-learning, salted with
+random for coverage + miss-detection.
+
+Random sampling works in BOTH phases: before `detect()` exists (random chart →
+draw a seed positive from scratch), and after (random chart → detector proposes →
+correct or reject — now also testing recall). All offline/parquet (calibration),
+never live.
+
 ## Role of the historical universe — calibrate + evaluate, NOT live-scan
 
 (User intent, 2026-06-16: "use the parquet universe to calibrate and learn from

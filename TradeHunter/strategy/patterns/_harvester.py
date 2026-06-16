@@ -39,3 +39,21 @@ def active_learning_rank(candidates: list[dict], detector) -> list[dict]:
     the decision threshold) first, plus a sample of high-confidence ones to
     catch silent failures. D4."""
     raise NotImplementedError("D4: active-learning ranking")
+
+
+def random_sample(symbols: list[str], timeframe: str, *, window_bars: int = 40,
+                  detector=None, rng_seed: int | None = None) -> dict:
+    """Pick a RANDOM ticker + window from the parquet universe and (if `detector`
+    given) run it, returning {symbol, timeframe, start_t, end_t, bars, detection}.
+
+    Why random in addition to the pre-filter harvest: the harvester only surfaces
+    windows that PASS the loose filter, so it can never show a clean pattern the
+    detector MISSED. Random raw charts expose those false negatives (recall
+    failures) + give unbiased negatives. Low-yield for positives on its own, so
+    it's a COMPLEMENT to harvest/active-learning, not a replacement
+    (DETECTOR_DESIGN.md "Candidate sources"). Works pre-detector too (random chart
+    to draw a seed positive on). Offline/parquet only. D3.
+
+    NB: `rng_seed` is passed in (workflows/replays must be reproducible); this
+    module does not call an ambient RNG."""
+    raise NotImplementedError("D3: random universe sampling")

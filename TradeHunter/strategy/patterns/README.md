@@ -44,8 +44,10 @@ the files here are a rendered projection written when you "Save what you learned
 - **`_geometry.py`** (L1) — swings + line fit + touches + convergence +
   contraction + ATR. Pattern-agnostic measurement; ticker-relative; no lookahead.
 - **`_features.py`** (L2) — window → scale-invariant feature vector (`FEATURE_KEYS`).
-- **`_harvester.py`** (D3) — loose high-recall sweep of the parquet universe →
-  candidate windows for review; active-learning ranking. Background batch job.
+- **`_harvester.py`** (D3) — review-queue candidate sources: loose high-recall
+  `harvest` sweep, `active_learning_rank` (hardest cases), and `random_sample`
+  (random ticker+window → run detect → qualify; catches the detector's FALSE
+  NEGATIVES that the pre-filter can't surface). Background/offline (parquet).
 - **`_calibrate.py`** (D4) — fit thresholds to the user's labelled set (the
   "smart from examples" step); portable thresholds dict.
 - **`_validate.py`** (D4) — calibration suite + walk-forward + held-out tickers +
@@ -57,6 +59,13 @@ the files here are a rendered projection written when you "Save what you learned
   tagged with their build phase (D1–D4), so the skeleton doubles as the build map.
 
 ## Changelog
+- **2026-06-16** — Added **`_harvester.random_sample`** + a "Candidate sources"
+  section to `DETECTOR_DESIGN.md`: the review queue is fed by harvest +
+  active-learning + **random sampling** (random ticker+window → run detect →
+  qualify/calibrate). Random is what catches the detector's FALSE NEGATIVES the
+  pre-filter can never surface; low-yield for positives, so it complements the
+  other two. (User, 2026-06-16: "randomly allow trainer call the detector to
+  detect a pattern and calibrate on it.")
 - **2026-06-16** — **Skeleton of the systematic pattern-recognition framework
   laid down** (the package above), making `DETECTOR_DESIGN.md`'s 4-layer +
   harvest→label→fit→validate approach the structure of record. This SUPERSEDES
