@@ -182,4 +182,22 @@ def detect(bars: list[dict], thresholds: dict | None = None) -> list[dict]:
 
     kept.sort(key=lambda m: m["start_idx"])
     return [{"start_t": m["start_t"], "end_t": m["end_t"],
-             "score": round(m["score"], 4), "notes": m["notes"]} for m in kept]
+             "score": round(m["score"], 4), "notes": m["notes"],
+             "lines": _lines_for(bars, m["start_idx"], m["end_idx"])} for m in kept]
+
+
+def _lines_for(bars: list[dict], a: int, b: int) -> dict | None:
+    """The fitted resistance/support trendline endpoints for a kept window, in the
+    {side: {t0,p0,t1,p1}} shape the chart draws — so a match can be drawn over the
+    bars (the 'which portion?' overlay), not just zoomed to. Computed only for kept
+    matches (post-NMS), so it adds negligible cost."""
+    wl = feat.window_lines(bars[a:b + 1])
+    if not wl:
+        return None
+    t0, t1 = bars[a]["t"], bars[b]["t"]
+    out: dict = {}
+    for side in ("resistance", "support"):
+        e = wl.get(side)
+        if e:
+            out[side] = {"t0": t0, "p0": e["p0"], "t1": t1, "p1": e["p1"]}
+    return out or None

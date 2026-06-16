@@ -78,7 +78,7 @@
         <a id="detClear" href="#" class="ml-auto text-[11px] text-slate-500 hover:text-rose-300">clear</a>
       </div>
       <div id="detList" class="flex flex-col gap-1.5"></div>
-      <p class="text-[10px] text-slate-500 mt-1">Click a row to zoom; &#10003;&nbsp;correct / &#10007;&nbsp;wrong saves it as an example so the next calibration is sharper. Offline check — never a live signal.</p>
+      <p class="text-[10px] text-slate-500 mt-1">The strongest match is drawn on the chart as <span class="text-cyan-300">cyan dashed trend-lines</span>; click any row to draw + zoom to it. &#10003;&nbsp;correct / &#10007;&nbsp;wrong saves it as an example so the next calibration is sharper. Offline check — never a live signal.</p>
     </div>
   </section>
 
@@ -202,7 +202,7 @@
     var tf = tfSelect.value;
     if (!sym) { status.textContent = 'enter a ticker'; return; }
     status.textContent = 'loading…';
-    clearMarking();
+    clearMarking(); clearDetectorLines();
     try {
       var res = await fetch('/patterns/' + pid + '/bars?symbol=' + encodeURIComponent(sym) + '&tf=' + tf + '&_=' + Date.now(), { cache: 'no-store' });
       var d = await res.json();
@@ -355,13 +355,15 @@
     try {
       var res = await fetch('/patterns/' + pid + '/detect?symbol=' + encodeURIComponent(sym) + '&tf=' + tf + '&_=' + Date.now(), { cache: 'no-store' });
       var d = await res.json();
+      clearDetectorLines();
       detList.innerHTML = '';
       if (!d.ok) { detSummary.textContent = 'detector error: ' + (d.error || '?'); detResults.classList.remove('hidden'); return; }
       detSummary.textContent = d.count + ' region' + (d.count === 1 ? '' : 's') + ' flagged' + (d.detector ? ' · ' + d.detector + ' ' + (d.version || '') : '');
       if (!d.count) {
         detList.innerHTML = '<span class="text-[11px] text-slate-500">nothing flagged on this window</span>';
       }
-      (d.matches || []).slice().sort(function (a, b) { return b.score - a.score; }).forEach(function (m) {
+      var sorted = (d.matches || []).slice().sort(function (a, b) { return b.score - a.score; });
+      sorted.forEach(function (m) {
         var pct = Math.round(m.score * 100);
         var row = document.createElement('div');
         row.className = 'flex items-center gap-2 rounded border border-cyan-600/30 bg-cyan-950/20 px-2 py-1 text-[11px]';
@@ -373,6 +375,7 @@
           + '<span class="text-slate-400">' + (m.end_t || '').slice(5, 16) + '</span>';
         zoom.title = JSON.stringify(m.notes || {});
         zoom.addEventListener('click', function () {
+          drawDetectorLines(m.lines);
           try { chart.timeScale().setVisibleRange({ from: m.start_time, to: m.end_time }); } catch (e) {}
           var nt = m.notes || {};
           status.textContent = 'detector ' + pct + '% · touches ' + nt.n_touch_res + '/' + nt.n_touch_sup + ' · contr ' + nt.contraction + ' · apex ' + nt.apex_bars + ' bars';
@@ -386,13 +389,17 @@
         row.appendChild(zoom); row.appendChild(ok); row.appendChild(no);
         detList.appendChild(row);
       });
+      if (sorted.length) {   // immediately show the strongest match so you see WHERE
+        drawDetectorLines(sorted[0].lines);
+        try { chart.timeScale().setVisibleRange({ from: sorted[0].start_time, to: sorted[0].end_time }); } catch (e) {}
+      }
       detResults.classList.remove('hidden');
     } catch (e) {
       detSummary.textContent = 'scan failed'; detResults.classList.remove('hidden');
     } finally { findBtn.disabled = false; findBtn.textContent = old; }
   }
   if (findBtn) findBtn.addEventListener('click', findPattern);
-  document.getElementById('detClear').addEventListener('click', function (e) { e.preventDefault(); detResults.classList.add('hidden'); detList.innerHTML = ''; });
+  document.getElementById('detClear').addEventListener('click', function (e) { e.preventDefault(); detResults.classList.add('hidden'); detList.innerHTML = ''; clearDetectorLines(); });
 
   // ---------- region markers (used to redraw legacy non-geometry examples) ----------
   function clearMarking() {
@@ -579,6 +586,26 @@
   chart.timeScale().subscribeVisibleLogicalRangeChange(positionDots);
   if (window.ResizeObserver) { try { new ResizeObserver(positionDots).observe(el); } catch (e) {} }
 
+  // ---------- detector overlay lines (cyan dashed — shows WHICH portion fired) ----------
+  var detResLine = null, detSupLine = null;
+  function clearDetectorLines() {
+    if (detResLine) { chart.removeSeries(detResLine); detResLine = null; }
+    if (detSupLine) { chart.removeSeries(detSupLine); detSupLine = null; }
+  }
+  function drawDetectorLines(lines) {
+    clearDetectorLines();
+    if (!lines) return;
+    function mk() { return chart.addLineSeries({ color: '#22d3ee', lineWidth: 2, lineStyle: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false }); }
+    if (lines.resistance) {
+      var rt0 = isoToLwcTime(lines.resistance.t0), rt1 = isoToLwcTime(lines.resistance.t1);
+      if (rt0 != null && rt1 != null) { detResLine = mk(); detResLine.setData([{ time: rt0, value: lines.resistance.p0 }, { time: rt1, value: lines.resistance.p1 }]); }
+    }
+    if (lines.support) {
+      var st0 = isoToLwcTime(lines.support.t0), st1 = isoToLwcTime(lines.support.t1);
+      if (st0 != null && st1 != null) { detSupLine = mk(); detSupLine.setData([{ time: st0, value: lines.support.p0 }, { time: st1, value: lines.support.p1 }]); }
+    }
+  }
+
   // ---------- mode toggle (Teach / Test) ----------
   var teachTab = document.getElementById('teachTab'), testTab = document.getElementById('testTab');
   var teachBar = document.getElementById('teachBar'), testBar = document.getElementById('testBar');
@@ -590,7 +617,7 @@
     teachBar.classList.toggle('hidden', m !== 'teach');
     testBar.classList.toggle('hidden', m !== 'test');
     if (m !== 'teach') endDraw();
-    if (m !== 'test') { detResults.classList.add('hidden'); }
+    if (m !== 'test') { detResults.classList.add('hidden'); clearDetectorLines(); }
   }
   teachTab.addEventListener('click', function () { setMode('teach'); });
   testTab.addEventListener('click', function () { setMode('test'); });

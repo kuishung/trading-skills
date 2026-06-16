@@ -105,3 +105,28 @@ def window_features(bars: list[dict]) -> dict:
     feats["atr_pct"] = (atr_val / last_close) if last_close else 0.0
     feats["breakout_room"] = ((res.at(0) - last_close) / atr_val) if (res and atr_val > 0) else 0.0
     return feats
+
+
+def window_lines(bars: list[dict]) -> dict | None:
+    """Endpoint PRICES of the fitted resistance/support trendlines across the
+    window — for the UI to draw what the detector actually 'saw' (so a flagged
+    region is visible on the chart, not just a score). `p0` is the line's price at
+    the window's FIRST bar, `p1` at its LAST bar (both extrapolated from the same
+    least-squares fit window_features uses). Returns
+    {"resistance": {p0,p1} | None, "support": {p0,p1} | None}, or None if the
+    window is too short to fit. The caller pairs these with the window's first/last
+    timestamps. Pure, no I/O — mirrors window_features' line fitting exactly."""
+    n = len(bars)
+    if n < 4:
+        return None
+    last = n - 1
+    sw = geo.swings(bars, left=_SW_LEFT, right=_SW_RIGHT, prominence_atr=_SW_PROM_ATR)
+    rel_highs = [geo.Swing(s.idx - last, s.t, s.price, s.kind) for s in sw if s.kind == "high"]
+    rel_lows = [geo.Swing(s.idx - last, s.t, s.price, s.kind) for s in sw if s.kind == "low"]
+    res = geo.fit_line([(s.idx, s.price) for s in rel_highs]) if len(rel_highs) >= 2 else None
+    sup = geo.fit_line([(s.idx, s.price) for s in rel_lows]) if len(rel_lows) >= 2 else None
+
+    def ends(line):
+        return None if not line else {"p0": round(line.at(-last), 6), "p1": round(line.at(0), 6)}
+
+    return {"resistance": ends(res), "support": ends(sup)}

@@ -124,6 +124,21 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-16 — v2.99: Pattern Trainer — Find pattern draws WHERE it matched
+- Fixed: `Find pattern` listed flagged windows + zoomed, but never showed *which
+  portion* of the chart or *what shape* the detector saw — so a hit was an opaque
+  score. Now each match carries the detector's fitted trend-line endpoints and the
+  chart **draws them as cyan dashed resistance/support lines** over the matched
+  window (same renderer as your drawn triangle). The strongest match draws + zooms
+  automatically on Find; clicking any row redraws + zooms to it. Lines clear on
+  Find-again, clear, chart reload, and leaving Test mode.
+- Backend: `strategy/patterns/_features.window_lines()` returns the fitted
+  resistance/support endpoint prices (first/last bar, extrapolated from the same
+  least-squares fit), and `ascending_triangle/detect.py` attaches a `lines`
+  ({side:{t0,p0,t1,p1}}) field to every kept match (computed post-NMS, negligible
+  cost). `/detect` passes it through. Verified on real parquet (AAPL daily: flat
+  resistance 224→237, rising support 191→226 — a clean ascending triangle).
+
 ### 2026-06-16 — v2.98: Pattern Trainer — rebuilt around the calibration loop
 - Reorganised the whole detail page from a button-pile into the **Teach → Calibrate
   → Test → Promote** loop (the page is a calibration loop, not a form). New layout:

@@ -72,6 +72,14 @@ the files here are a rendered projection written when you "Save what you learned
   triangle scores ~0.97; runs on real parquet — NVDA/AAPL/AMD).
 
 ## Changelog
+- **2026-06-16** — **`_features.window_lines()` + detector `lines` output.**
+  `window_lines(bars)` returns the fitted resistance/support trend-line endpoint
+  prices (price at the window's first + last bar, extrapolated from the same
+  least-squares fit `window_features` uses); `ascending_triangle.detect()` now
+  attaches a `lines` field ({side:{t0,p0,t1,p1}}) to every kept match so the
+  Pattern Trainer can DRAW what the detector saw on the chart (the "which portion
+  fired?" overlay), not just report a score. Computed post-NMS for kept matches
+  only. Pairs with dashboard_tst v2.99.
 - **2026-06-16** — **D3 + D4 implemented + verified.** `_harvester` (loose
   `harvest` sweep + `loose_prefilter`, `active_learning_rank`, `random_sample`)
   and `_calibrate` (`fit_thresholds` with walk-forward holdout, `feature_separation`
