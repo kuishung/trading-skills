@@ -20,16 +20,18 @@
     *::-webkit-scrollbar-thumb { background: transparent; border-radius: 9999px; }
     *:hover::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.35); }
     *::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,0.6); }
+    /* DARK theme (default) — the app's native design */
     body {
-      background-color: #f1f5f9;
+      background-color: #020617;
       background-image:
-        radial-gradient(60rem 42rem at 50% -10%, rgba(16,185,129,0.08), transparent 62%),
-        radial-gradient(45rem 30rem at 92% 2%, rgba(56,189,248,0.07), transparent 68%),
-        linear-gradient(rgba(148,163,184,0.07) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(148,163,184,0.07) 1px, transparent 1px),
-        linear-gradient(180deg, #ffffff 0%, #eef2f7 60%);
+        radial-gradient(60rem 42rem at 50% -10%, rgba(16,185,129,0.22), transparent 62%),
+        radial-gradient(45rem 30rem at 92% 2%, rgba(56,189,248,0.12), transparent 68%),
+        linear-gradient(rgba(148,163,184,0.09) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(148,163,184,0.09) 1px, transparent 1px),
+        linear-gradient(180deg, #0c1424 0%, #020617 55%);
       background-size: 100% 100%, 100% 100%, 38px 38px, 38px 38px, 100% 100%;
       background-attachment: fixed;
+      color: #e2e8f0;
     }
     summary::-webkit-details-marker { display: none; }
     summary { list-style: none; }
@@ -38,47 +40,55 @@
     .th-blink { animation: th-blink 1.2s steps(1, end) infinite; }
 
     /* ============================================================
-       LIGHT THEME — centralized remap of the app's dark utility
-       classes to light values (so we don't edit every template).
-       !important wins over the Tailwind CDN utilities. Reverting =
-       delete this block + restore the dark body bg + body class.
+       LIGHT THEME — applied only under <html class="light"> (toggled
+       by the header sun/moon button, persisted in localStorage). DARK
+       = the templates' native dark classes; LIGHT = these remaps.
+       Scoped via CSS nesting so the whole block flips on the toggle.
        ============================================================ */
-    /* surfaces: darkest dark -> white, then progressively light */
-    .bg-slate-950, .bg-slate-950\/80, .bg-slate-950\/60, .bg-slate-950\/50, .bg-slate-950\/40 { background-color:#ffffff !important; }
-    .bg-slate-900, .bg-slate-900\/60, .bg-slate-900\/50, .bg-slate-900\/40 { background-color:#f8fafc !important; }
-    .bg-slate-800, .bg-slate-800\/70, .bg-slate-800\/60, .bg-slate-800\/40 { background-color:#f1f5f9 !important; }
-    .bg-slate-700, .bg-slate-700\/50, .bg-slate-700\/40, .bg-slate-700\/30 { background-color:#e2e8f0 !important; }
-    .bg-slate-600 { background-color:#cbd5e1 !important; }
-    /* text: light-on-dark -> dark-on-light */
-    .text-white, .text-slate-100, .text-slate-200 { color:#0f172a !important; }
-    .text-slate-300 { color:#1e293b !important; }
-    .text-slate-400 { color:#334155 !important; }
-    .text-slate-500 { color:#475569 !important; }
-    .text-slate-600 { color:#64748b !important; }
-    /* borders */
-    .border-slate-800, .border-slate-800\/60 { border-color:#e2e8f0 !important; }
-    .border-slate-700, .border-slate-600 { border-color:#cbd5e1 !important; }
-    /* colored accent TEXT (the -300 shades were tuned for a dark bg) -> deeper
-       shades so they stay legible on white. backgrounds like *-500/15 stay (light tint). */
-    .text-orange-300 { color:#ea580c !important; } .text-emerald-300 { color:#059669 !important; }
-    .text-cyan-300 { color:#0891b2 !important; }   .text-rose-300 { color:#e11d48 !important; }
-    .text-sky-300 { color:#0284c7 !important; }    .text-amber-300 { color:#b45309 !important; }
-    .text-violet-300 { color:#7c3aed !important; } .text-purple-300 { color:#9333ea !important; }
-    .text-emerald-400 { color:#059669 !important; } .text-cyan-400 { color:#0891b2 !important; }
-    /* HOVER variants — were missed, so hover went dark-on-dark (invisible). */
-    .hover\:bg-slate-800:hover, .hover\:bg-slate-800\/70:hover, .hover\:bg-slate-800\/40:hover { background-color:#f1f5f9 !important; }
-    .hover\:bg-slate-700\/30:hover { background-color:#e2e8f0 !important; }
-    .hover\:bg-slate-600:hover { background-color:#cbd5e1 !important; }
-    .hover\:text-slate-100:hover, .hover\:text-slate-300:hover { color:#0f172a !important; }
-    .hover\:text-orange-300:hover { color:#ea580c !important; }
-    .hover\:text-emerald-300:hover, .hover\:text-emerald-400:hover, .hover\:text-emerald-200:hover { color:#059669 !important; }
-    .hover\:text-rose-300:hover, .hover\:text-rose-400:hover, .hover\:text-rose-200:hover { color:#e11d48 !important; }
-    .hover\:text-cyan-200:hover { color:#0891b2 !important; }
-    .hover\:text-sky-300:hover { color:#0284c7 !important; }
-    .hover\:text-indigo-200:hover { color:#4f46e5 !important; }
+    html.light body {
+      background-color: #f1f5f9;
+      background-image:
+        radial-gradient(60rem 42rem at 50% -10%, rgba(16,185,129,0.08), transparent 62%),
+        radial-gradient(45rem 30rem at 92% 2%, rgba(56,189,248,0.07), transparent 68%),
+        linear-gradient(rgba(148,163,184,0.07) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(148,163,184,0.07) 1px, transparent 1px),
+        linear-gradient(180deg, #ffffff 0%, #eef2f7 60%);
+      color: #0f172a;
+    }
+    html.light {
+      .bg-slate-950, .bg-slate-950\/80, .bg-slate-950\/60, .bg-slate-950\/50, .bg-slate-950\/40 { background-color:#ffffff !important; }
+      .bg-slate-900, .bg-slate-900\/60, .bg-slate-900\/50, .bg-slate-900\/40 { background-color:#f8fafc !important; }
+      .bg-slate-800, .bg-slate-800\/70, .bg-slate-800\/60, .bg-slate-800\/40 { background-color:#f1f5f9 !important; }
+      .bg-slate-700, .bg-slate-700\/50, .bg-slate-700\/40, .bg-slate-700\/30 { background-color:#e2e8f0 !important; }
+      .bg-slate-600 { background-color:#cbd5e1 !important; }
+      .text-white, .text-slate-100, .text-slate-200 { color:#0f172a !important; }
+      .text-slate-300 { color:#1e293b !important; }
+      .text-slate-400 { color:#334155 !important; }
+      .text-slate-500 { color:#475569 !important; }
+      .text-slate-600 { color:#64748b !important; }
+      .border-slate-800, .border-slate-800\/60 { border-color:#e2e8f0 !important; }
+      .border-slate-700, .border-slate-600 { border-color:#cbd5e1 !important; }
+      .text-orange-300 { color:#ea580c !important; } .text-emerald-300 { color:#059669 !important; }
+      .text-cyan-300 { color:#0891b2 !important; }   .text-rose-300 { color:#e11d48 !important; }
+      .text-sky-300 { color:#0284c7 !important; }    .text-amber-300 { color:#b45309 !important; }
+      .text-violet-300 { color:#7c3aed !important; } .text-purple-300 { color:#9333ea !important; }
+      .text-emerald-400 { color:#059669 !important; } .text-cyan-400 { color:#0891b2 !important; }
+      .hover\:bg-slate-800:hover, .hover\:bg-slate-800\/70:hover, .hover\:bg-slate-800\/40:hover { background-color:#f1f5f9 !important; }
+      .hover\:bg-slate-700\/30:hover { background-color:#e2e8f0 !important; }
+      .hover\:bg-slate-600:hover { background-color:#cbd5e1 !important; }
+      .hover\:text-slate-100:hover, .hover\:text-slate-300:hover { color:#0f172a !important; }
+      .hover\:text-orange-300:hover { color:#ea580c !important; }
+      .hover\:text-emerald-300:hover, .hover\:text-emerald-400:hover, .hover\:text-emerald-200:hover { color:#059669 !important; }
+      .hover\:text-rose-300:hover, .hover\:text-rose-400:hover, .hover\:text-rose-200:hover { color:#e11d48 !important; }
+      .hover\:text-cyan-200:hover { color:#0891b2 !important; }
+      .hover\:text-sky-300:hover { color:#0284c7 !important; }
+      .hover\:text-indigo-200:hover { color:#4f46e5 !important; }
+    }
   </style>
+  {# set the theme class on <html> before paint (default light; persisted choice wins) #}
+  <script>(function(){try{var t=localStorage.getItem('theme');if(t==='dark')document.documentElement.classList.remove('light');else document.documentElement.classList.add('light');}catch(e){document.documentElement.classList.add('light');}})();</script>
 </head>
-<body class="bg-white text-slate-900 min-h-screen lg:h-screen lg:overflow-hidden">
+<body class="min-h-screen lg:h-screen lg:overflow-hidden">
 {% if user %}
   {# nav highlight helper — named nav_path (NOT 'p') so it can't shadow a child
      template's own `p` context var inside {% block content %}. pattern_detail
@@ -153,6 +163,19 @@
         <span class="hidden sm:inline text-white">Nous Hermes</span>
       </a>
 
+      {# dark / light theme toggle — flips <html class="light">, persisted in localStorage #}
+      <button type="button" id="themeToggle" title="Toggle dark / light" aria-label="Toggle dark / light theme"
+              class="shrink-0 rounded-lg p-1.5 text-slate-300 hover:bg-slate-800/70 hover:text-orange-300 transition">
+        {# sun (shown in light mode) #}
+        <svg id="themeIconSun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="hidden">
+          <circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>
+        </svg>
+        {# moon (shown in dark mode) #}
+        <svg id="themeIconMoon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="hidden">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+      </button>
+
       {# user menu (right) #}
       <details class="relative shrink-0">
         <summary class="cursor-pointer flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-slate-800/70">
@@ -204,6 +227,26 @@
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') document.querySelectorAll('header details[open]').forEach(function (d) { d.removeAttribute('open'); });
   });
+
+  // Dark / light theme toggle. The <head> bootstrap already set the initial
+  // class (default light); here we sync the icon and wire the button to flip
+  // + persist. Dark = the app's native classes; light = the base.html remap.
+  (function () {
+    function syncIcon() {
+      var light = document.documentElement.classList.contains('light');
+      var sun = document.getElementById('themeIconSun');
+      var moon = document.getElementById('themeIconMoon');
+      if (sun) sun.classList.toggle('hidden', !light);   // sun shows in light mode
+      if (moon) moon.classList.toggle('hidden', light);  // moon shows in dark mode
+    }
+    syncIcon();
+    var btn = document.getElementById('themeToggle');
+    if (btn) btn.addEventListener('click', function () {
+      var light = document.documentElement.classList.toggle('light');
+      try { localStorage.setItem('theme', light ? 'light' : 'dark'); } catch (e) {}
+      syncIcon();
+    });
+  })();
 </script>
 </body>
 </html>

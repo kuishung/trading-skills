@@ -5,28 +5,18 @@
 {% set tv_symbol = (chart_exchange ~ ':' ~ chart_symbol) if chart_exchange else chart_symbol %}
 {# one connected panel: TradingView single-quote header -> price chart -> band #}
 <div id="chart" class="rounded-lg border border-slate-800 bg-slate-900 overflow-hidden {% if chart_fill %}flex flex-col lg:flex-1 lg:min-h-0{% endif %}">
-  {# TradingView header — SINGLE-QUOTE widget: symbol + price + change ONLY.
-     (The symbol-info widget was dropped because it forced an Upcoming Earnings/
-     EPS/Market Cap/P/E fundamentals row with no option to hide it.)
-     Height-capped + overflow-hidden so the widget's tall empty space below the
-     quote is cropped — no wasted gap before the chart. #}
-  <div class="tvq-header border-b border-slate-800 {% if chart_fill %}shrink-0{% endif %} overflow-hidden flex items-stretch" style="height:3.5rem">
-    <div class="tradingview-widget-container flex-1 min-w-0">
-      <div class="tradingview-widget-container__widget"></div>
-      <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-single-quote.js" async>
-      {
-      "symbol": "{{ tv_symbol }}",
-      "width": "100%",
-      "locale": "en",
-      "colorTheme": "light",
-      "isTransparent": true
-      }
-      </script>
-    </div>
+  {# Slim ONE-LINE header: ticker · company name · price · change — all inline.
+     Name/price/change are filled live by the chart script from /prices (Yahoo
+     chart meta). The ticker links out to the TradingView chart. #}
+  <div class="tvq-header border-b border-slate-800 {% if chart_fill %}shrink-0{% endif %} flex items-center gap-2 px-3" style="height:2.5rem">
+    <a href="https://www.tradingview.com/symbols/{{ tv_symbol|replace(':','-') }}/" target="_blank" rel="noopener"
+       class="font-semibold text-slate-100 hover:text-orange-300 shrink-0" title="Open {{ chart_symbol }} on TradingView">{{ chart_symbol }}</a>
+    <span id="chartName" class="text-sm text-slate-500 truncate min-w-0"></span>
+    <span id="chartPrice" class="ml-auto tabular-nums font-semibold text-slate-100 shrink-0"></span>
+    <span id="chartChg" class="tabular-nums text-sm shrink-0"></span>
     {% if chart_status_slot is defined and chart_status_slot %}
-    {# Studies: the study's status strip (badge + controls) docks here, next to
-       the ticker quote — JS moves #statusPanel in (lg only) #}
-    <div id="chartStatusSlot" class="shrink-0 max-w-[62%] overflow-hidden hidden lg:flex items-center px-3"></div>
+    {# Studies: the study's status strip docks here — JS moves #statusPanel in (lg only) #}
+    <div id="chartStatusSlot" class="shrink-0 max-w-[40%] overflow-hidden hidden lg:flex items-center pl-2"></div>
     {% endif %}
   </div>
   {# price chart #}
@@ -113,6 +103,24 @@
     .then(function (r) { return r.json(); })
     .then(function (d) {
       var bars = (d && d.bars) || [];
+      // ---- one-line header: name · price · change (from quote meta, bars fallback) ----
+      (function () {
+        var q = d && d.quote, nmEl = document.getElementById('chartName'),
+            prEl = document.getElementById('chartPrice'), cgEl = document.getElementById('chartChg');
+        var price = q && q.price != null ? q.price : (bars.length ? bars[bars.length - 1].close : null);
+        var chg = q && q.change != null ? q.change : null, pct = q && q.change_pct != null ? q.change_pct : null;
+        if (chg == null && bars.length > 1) {
+          var prev = bars[bars.length - 2].close; chg = bars[bars.length - 1].close - prev;
+          pct = prev ? (chg / prev * 100) : null;
+        }
+        if (nmEl && q && q.name) nmEl.textContent = q.name;
+        if (prEl && price != null) prEl.textContent = (typeof price === 'number' ? price.toFixed(2) : price);
+        if (cgEl && chg != null) {
+          var up = chg >= 0;
+          cgEl.textContent = (up ? '+' : '') + chg.toFixed(2) + (pct != null ? ' (' + (up ? '+' : '') + pct.toFixed(2) + '%)' : '');
+          cgEl.className = 'tabular-nums text-sm shrink-0 ' + (up ? 'text-emerald-500' : 'text-rose-500');
+        }
+      })();
       // next earnings: date + "in N days / ~M weeks" (independent of candles)
       (function () {
         var ne = d && d.next_earnings, neEl = document.getElementById('nextEarnings');
@@ -125,9 +133,10 @@
         neEl.textContent = ' · next ' + ne.date + ' (' + when + ')';
       })();
       if (!bars.length) { empty(); return; }
+      var _light = document.documentElement.classList.contains('light');
       var chart = LightweightCharts.createChart(el, {
         autoSize: true,
-        layout: { background: { color: '#ffffff' }, textColor: '#334155' },
+        layout: { background: { color: _light ? '#ffffff' : '#0b1220' }, textColor: _light ? '#334155' : '#94a3b8' },
         grid: { vertLines: { color: 'rgba(148,163,184,0.18)' }, horzLines: { color: 'rgba(148,163,184,0.18)' } },
         rightPriceScale: { borderColor: 'rgba(148,163,184,0.35)' },
         timeScale: { borderColor: 'rgba(148,163,184,0.35)' }

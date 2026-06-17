@@ -567,13 +567,14 @@ def matp_prices(symbol: str, user: User = Depends(require_user)):
     """Daily OHLC for the price chart (lightweight-charts shape), fetched LIVE
     from Yahoo (cached ~10 min), plus the next earnings date (cached, soft-fail).
     Returns an empty list / null on any failure so the chart degrades gracefully."""
-    from ..services.prices import fetch_daily_ohlc, fetch_next_earnings
+    from ..services.prices import fetch_daily_ohlc, fetch_next_earnings, fetch_quote
 
     sym = symbol.strip().upper()
     return {
         "symbol": sym,
         "bars": fetch_daily_ohlc(sym),
         "next_earnings": fetch_next_earnings(sym),
+        "quote": fetch_quote(sym),     # {name, price, change, change_pct} for the header
     }
 
 

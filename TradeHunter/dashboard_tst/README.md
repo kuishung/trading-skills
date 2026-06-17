@@ -124,6 +124,37 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-17 — v3.29: Dark / light theme toggle (persisted, contrast-safe both ways)
+- The whole dashboard can now switch between **dark and light** via a sun/moon
+  **toggle button** in the header (between the Nous Hermes pill and the user menu).
+  Choice persists in `localStorage` (`theme`), default **light** (no regression for
+  existing users). `base.html` sets `<html class="light">` from a tiny `<head>`
+  bootstrap **before paint** (no flash-of-wrong-theme).
+- Reworked the theme CSS in `base.html`: **dark is now the default** (the app's native
+  Tailwind classes), and the whole light remap is **scoped under `html.light { … }`**
+  (CSS nesting) so the toggle flips the entire block at once. Restored the dark body
+  gradient as default + `html.light body` for the light gradient. `<body>` no longer
+  hard-codes `bg-white text-slate-900` — theme colour comes from the scoped CSS.
+  Both modes keep contrasted fonts (dark = light text on dark; light = dark text on
+  light, the existing `!important` remaps incl. hover variants).
+- **Price chart follows the theme** (`_price_chart.html`): chart background/text pick
+  white/`#334155` in light vs `#0b1220`/`#94a3b8` in dark at creation (was hard white),
+  so a dark dashboard no longer shows a white chart. (Re-colour applies on next chart
+  load after a toggle.)
+- Also folded in the two watchlist tweaks: **ticker name fully shown** (`_wl_macros.html`
+  sym col `minmax(3.8rem,1fr)` + `whitespace-nowrap`) and the **"Dropped from filter"
+  list removed** (`_watchlist.html`).
+- Verified: templates parse (jinja), both `base.html` scripts + the chart script pass
+  `node --check`, `app/__init__.py` compiles.
+
+### 2026-06-17 — v3.28: Chart header is one slim line (ticker · name · price · change)
+- Replaced the 2-row TradingView single-quote widget with a **custom single-line
+  header**: `ticker` (links to TradingView) · `company name` · `price` · `change%`,
+  all inline at 2.5rem. Name/price/change are pulled live from Yahoo's chart meta via
+  new `prices.fetch_quote()` (cached ~1 min, soft-fail), returned from `/matp/{sym}/
+  prices` as `quote`, and filled by the chart script (bars fallback if no quote).
+  Verified live (AAPL → "Apple Inc." 299.24 +0.95%); JS passes `node --check`.
+
 ### 2026-06-17 — v3.27: Watchlist font up; slimmer light chart header
 - **Watchlist font increased** (`_wl_macros.html` `ticker_grid`): rows `text-[11px]`→
   `text-[13px]`, header `[9px]`→`[10px]`, trend `[10px]`→`[12px]`; widened the

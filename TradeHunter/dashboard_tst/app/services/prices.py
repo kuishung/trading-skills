@@ -42,6 +42,48 @@ def fetch_daily_ohlc(symbol: str, *, rng: str = "2y") -> list[dict]:
     return bars
 
 
+_QCACHE: dict = {}
+_QTTL = 60  # quote header is intraday-ish; refresh ~every minute
+
+
+def fetch_quote(symbol: str) -> dict | None:
+    """Light quote for the chart header: {name, price, change, change_pct} from the
+    Yahoo chart meta (same source as the bars, separate 1d call). Cached ~1 min.
+    None on failure (header then just shows the ticker)."""
+    sym = symbol.strip().upper()
+    if not sym:
+        return None
+    n = time.time()
+    hit = _QCACHE.get(sym)
+    if hit and hit[0] > n:
+        return hit[1]
+    headers = {"User-Agent": _UA}
+    for host in _HOSTS:
+        try:
+            r = httpx.get(f"https://{host}/v8/finance/chart/{sym}",
+                          params={"range": "1d", "interval": "1d"}, headers=headers, timeout=8.0)
+            r.raise_for_status()
+            res = (r.json().get("chart", {}).get("result") or [None])[0]
+            if not res:
+                continue
+            m = res.get("meta") or {}
+            price = m.get("regularMarketPrice")
+            prev = m.get("chartPreviousClose") or m.get("previousClose")
+            chg = (price - prev) if (price is not None and prev) else None
+            pct = (chg / prev * 100.0) if (chg is not None and prev) else None
+            q = {
+                "name": m.get("longName") or m.get("shortName") or "",
+                "price": round(price, 2) if price is not None else None,
+                "change": round(chg, 2) if chg is not None else None,
+                "change_pct": round(pct, 2) if pct is not None else None,
+            }
+            _QCACHE[sym] = (n + _QTTL, q)
+            return q
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
+
 # --- Next earnings date (Yahoo calendarEvents) ------------------------------
 # Yahoo's quoteSummary now requires a consent cookie + a matching crumb. We do
 # that handshake once (cached ~1h) and reuse it across symbols. Everything is

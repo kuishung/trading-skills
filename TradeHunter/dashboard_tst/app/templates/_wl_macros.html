@@ -21,7 +21,7 @@
    columns line up pixel-for-pixel (separate grids with `auto` cols would drift).
    Sym flexes (truncates); Trend/Sig/Price/MATP/MBP are fixed widths. Defined
    INSIDE the macro so it's in scope even when imported into another template. #}
-{% set GRIDCSS = "display:grid;grid-template-columns:minmax(0,1fr) 2.6rem 3rem 3.4rem 3.4rem 3.4rem;column-gap:0.3rem;align-items:center" %}
+{% set GRIDCSS = "display:grid;grid-template-columns:minmax(3.8rem,1fr) 2.6rem 3rem 3.4rem 3.4rem 3.4rem;column-gap:0.3rem;align-items:center" %}
 <div style="{{ GRIDCSS }}" class="px-2 pt-1 text-[10px] uppercase tracking-wide text-slate-600">
   <span>Sym</span>
   <span class="text-center">Trend</span>
@@ -36,7 +36,7 @@
 <a href="/matp?symbol={{ lv.symbol }}{% if wl %}&wl={{ wl }}{% endif %}"
    style="{{ GRIDCSS }}"
    class="px-2 py-1 rounded {% if sel_sym == lv.symbol %}bg-emerald-500/15{% else %}hover:bg-slate-800/70{% endif %}">
-  <span class="text-[13px] font-medium truncate {% if sel_sym == lv.symbol %}text-emerald-300{% else %}text-white{% endif %}">{{ lv.symbol }}{% if lv.symbol in open_symbols %} <span class="text-amber-400">&#8635;</span>{% endif %}</span>
+  <span class="text-[13px] font-medium whitespace-nowrap {% if sel_sym == lv.symbol %}text-emerald-300{% else %}text-white{% endif %}">{{ lv.symbol }}{% if lv.symbol in open_symbols %} <span class="text-amber-400">&#8635;</span>{% endif %}</span>
   <span class="text-center text-[12px]">{{ trend_badge(lr.get("trend") or lv.trend) }}</span>
   <span class="text-center">{{ signal_badge(lr.get("signal") or lv.signal) }}</span>
   <span class="text-right text-[13px] tabular-nums {% if cur is not none and lv.mbp is not none and cur > lv.mbp %}text-rose-300{% else %}text-white{% endif %}">{{ "%.2f"|format(cur) if cur is not none else "-" }}</span>
