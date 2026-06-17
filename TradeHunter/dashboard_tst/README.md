@@ -124,6 +124,21 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-17 — v3.19: Light (white) theme
+- Flipped the dashboard from dark to a **white/light theme** via a **centralized remap
+  in `base.html`** — one `<style>` block `!important`-overrides the ~30 dark utility
+  classes the templates use (surfaces dark→white, text light→dark, borders, and the
+  colored accent `-300` text → deeper shades for contrast on white). Body background +
+  `<body>` class flipped to light too. No per-template edits — fully reversible by
+  deleting that block. First pass; some accent/contrast spots may need tuning once seen.
+
+### 2026-06-17 — v3.18: Fix — nav dropdowns were clipped by the nav's overflow-x
+- The grouped-nav dropdown panels were invisible because the `<nav>` had
+  `overflow-x-auto`, which forces a clipping box (when one overflow axis is `auto`
+  the other can't stay `visible`), cutting off the absolutely-positioned panels.
+  Removed the overflow (added `flex-wrap` for safety on narrow screens) — the few
+  grouped items fit without horizontal scrolling and the dropdowns now show.
+
 ### 2026-06-17 — v3.17: Navigation regrouped into categories
 - The flat top-nav is now **grouped dropdowns** by trading horizon (user IA):
   **Investing** (Macro / Company → `/research?kind=…`), **Swing & Trend**

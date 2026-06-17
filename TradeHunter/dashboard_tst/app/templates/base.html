@@ -21,13 +21,13 @@
     *:hover::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.35); }
     *::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,0.6); }
     body {
-      background-color: #020617;
+      background-color: #f1f5f9;
       background-image:
-        radial-gradient(60rem 42rem at 50% -10%, rgba(16,185,129,0.22), transparent 62%),
-        radial-gradient(45rem 30rem at 92% 2%, rgba(56,189,248,0.12), transparent 68%),
-        linear-gradient(rgba(148,163,184,0.09) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(148,163,184,0.09) 1px, transparent 1px),
-        linear-gradient(180deg, #0c1424 0%, #020617 55%);
+        radial-gradient(60rem 42rem at 50% -10%, rgba(16,185,129,0.08), transparent 62%),
+        radial-gradient(45rem 30rem at 92% 2%, rgba(56,189,248,0.07), transparent 68%),
+        linear-gradient(rgba(148,163,184,0.07) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(148,163,184,0.07) 1px, transparent 1px),
+        linear-gradient(180deg, #ffffff 0%, #eef2f7 60%);
       background-size: 100% 100%, 100% 100%, 38px 38px, 38px 38px, 100% 100%;
       background-attachment: fixed;
     }
@@ -36,9 +36,38 @@
     /* Nous Hermes pill liveness dot — blink so it reads as a live indicator */
     @keyframes th-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.15; } }
     .th-blink { animation: th-blink 1.2s steps(1, end) infinite; }
+
+    /* ============================================================
+       LIGHT THEME — centralized remap of the app's dark utility
+       classes to light values (so we don't edit every template).
+       !important wins over the Tailwind CDN utilities. Reverting =
+       delete this block + restore the dark body bg + body class.
+       ============================================================ */
+    /* surfaces: darkest dark -> white, then progressively light */
+    .bg-slate-950, .bg-slate-950\/80, .bg-slate-950\/60, .bg-slate-950\/50, .bg-slate-950\/40 { background-color:#ffffff !important; }
+    .bg-slate-900, .bg-slate-900\/60, .bg-slate-900\/50, .bg-slate-900\/40 { background-color:#f8fafc !important; }
+    .bg-slate-800, .bg-slate-800\/70, .bg-slate-800\/60, .bg-slate-800\/40 { background-color:#f1f5f9 !important; }
+    .bg-slate-700, .bg-slate-700\/50, .bg-slate-700\/40, .bg-slate-700\/30 { background-color:#e2e8f0 !important; }
+    .bg-slate-600 { background-color:#cbd5e1 !important; }
+    /* text: light-on-dark -> dark-on-light */
+    .text-white, .text-slate-100, .text-slate-200 { color:#0f172a !important; }
+    .text-slate-300 { color:#1e293b !important; }
+    .text-slate-400 { color:#334155 !important; }
+    .text-slate-500 { color:#475569 !important; }
+    .text-slate-600 { color:#64748b !important; }
+    /* borders */
+    .border-slate-800, .border-slate-800\/60 { border-color:#e2e8f0 !important; }
+    .border-slate-700, .border-slate-600 { border-color:#cbd5e1 !important; }
+    /* colored accent TEXT (the -300 shades were tuned for a dark bg) -> deeper
+       shades so they stay legible on white. backgrounds like *-500/15 stay (light tint). */
+    .text-orange-300 { color:#ea580c !important; } .text-emerald-300 { color:#059669 !important; }
+    .text-cyan-300 { color:#0891b2 !important; }   .text-rose-300 { color:#e11d48 !important; }
+    .text-sky-300 { color:#0284c7 !important; }    .text-amber-300 { color:#b45309 !important; }
+    .text-violet-300 { color:#7c3aed !important; } .text-purple-300 { color:#9333ea !important; }
+    .text-emerald-400 { color:#059669 !important; } .text-cyan-400 { color:#0891b2 !important; }
   </style>
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen lg:h-screen lg:overflow-hidden">
+<body class="bg-white text-slate-900 min-h-screen lg:h-screen lg:overflow-hidden">
 {% if user %}
   {# nav highlight helper — named nav_path (NOT 'p') so it can't shadow a child
      template's own `p` context var inside {% block content %}. pattern_detail
@@ -60,7 +89,9 @@
         <span class="hidden sm:block leading-none">TradeHunter
           <span class="text-slate-300 text-sm font-semibold">v{{ version }}</span></span>
       </a>
-      <nav class="flex items-center gap-1 text-sm min-w-0 overflow-x-auto">
+      {# NB: no overflow-x here — overflow-x:auto would clip the dropdown panels.
+         The few grouped items fit without scrolling. #}
+      <nav class="flex items-center gap-1 text-sm min-w-0 flex-wrap">
         {# grouped categories as dropdowns: Investing / Swing & Trend / Intraday #}
         {% for group, items in nav_groups %}
         {% set ns = namespace(active=false) %}
