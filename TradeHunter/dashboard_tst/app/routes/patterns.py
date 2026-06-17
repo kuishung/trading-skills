@@ -74,8 +74,9 @@ try:
     from strategy.patterns import _features as _pat_features  # noqa: E402
     from strategy.patterns import _calibrate as _pat_calibrate  # noqa: E402
     from strategy.patterns import _validate as _pat_validate  # noqa: E402
+    from strategy.patterns import _geometry as _pat_geo  # noqa: E402
 except Exception:  # pragma: no cover
-    _pat_features = _pat_calibrate = _pat_validate = None
+    _pat_features = _pat_calibrate = _pat_validate = _pat_geo = None
 
 # Gating constants for the Teach -> Calibrate -> Promote loop.
 _CALIB_MIN_POS = 3      # need a few confirmed positives to fit a boundary
@@ -211,6 +212,95 @@ def _filter_uptrend(bars: list[dict], matches: list[dict], tf: str) -> list[dict
         if up:
             kept.append(m)
     return kept
+
+
+try:
+    from zoneinfo import ZoneInfo
+    _ET_TZ = ZoneInfo("America/New_York")
+except Exception:  # pragma: no cover
+    _ET_TZ = None
+
+
+def _is_rth(iso: str) -> bool:
+    """True if the bar's Eastern time is within regular trading hours
+    (09:30–16:00 ET). DST handled by zoneinfo. Falls back to True if zoneinfo is
+    unavailable so we never silently drop everything."""
+    if _ET_TZ is None:
+        return True
+    try:
+        dt = _dt.datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(_ET_TZ)
+    except Exception:  # noqa: BLE001
+        return True
+    m = dt.hour * 60 + dt.minute
+    return 570 <= m < 960
+
+
+def _rth_bars(bars: list[dict], tf: str) -> list[dict]:
+    """Detection runs on REGULAR-HOURS bars only (intraday): extended hours are for
+    visual session separation, not pattern detection. Daily is RTH by nature."""
+    if tf == "daily":
+        return bars
+    return [b for b in bars if _is_rth(b["t"])]
+
+
+def _filter_valid_triangle(bars: list[dict], matches: list[dict]) -> list[dict]:
+    """Drop matches that aren't valid ascending triangles: if price CLOSES below the
+    rising support line anywhere inside the window (beyond a small tolerance), the
+    support was breached — a breakdown, not a triangle that breaks resistance UP.
+    The support line is the fitted {support:{t0,p0,t1,p1}} carried on each match."""
+    idx = {b["t"]: i for i, b in enumerate(bars)}
+    out = []
+    for m in matches:
+        sup = (m.get("lines") or {}).get("support")
+        i0, i1 = idx.get(m["start_t"]), idx.get(m["end_t"])
+        if not sup or i0 is None or i1 is None or i1 <= i0:
+            out.append(m)
+            continue
+        p0, p1, span = sup["p0"], sup["p1"], (i1 - i0)
+        breached = False
+        for i in range(i0, i1 + 1):
+            sv = p0 + (p1 - p0) * ((i - i0) / span)
+            if bars[i]["c"] < sv * 0.998:      # 0.2% below the rising support = breach
+                breached = True
+                break
+        if not breached:
+            out.append(m)
+    return out
+
+
+def _filter_min_height(bars: list[dict], matches: list[dict], min_atr: float) -> list[dict]:
+    """Drop matches whose triangle HEIGHT (resistance ceiling − lowest low in the
+    window) is smaller than `min_atr` × ATR — tiny/flat patterns are noise. ATR is
+    measured on the match window so the threshold is ticker-relative."""
+    if min_atr <= 0 or _pat_geo is None:
+        return matches
+    idx = {b["t"]: i for i, b in enumerate(bars)}
+    out = []
+    for m in matches:
+        i0, i1 = idx.get(m["start_t"]), idx.get(m["end_t"])
+        if i0 is None or i1 is None or i1 <= i0:
+            out.append(m)
+            continue
+        window = bars[i0:i1 + 1]
+        atr = _pat_geo.atr(window)
+        res = (m.get("lines") or {}).get("resistance")
+        ceiling = max(res["p0"], res["p1"]) if res else max(b["h"] for b in window)
+        low = min(b["l"] for b in window)
+        if atr > 0 and (ceiling - low) / atr >= min_atr:
+            out.append(m)
+    return out
+
+
+def _apply_rules(raw, matches, tf, *, valid, trend, min_height_atr):
+    """Apply the user-toggled detection rules in order, returning the kept matches.
+    Each is independently engaged from the rules panel; order is cheap→strong."""
+    if valid:
+        matches = _filter_valid_triangle(raw, matches)
+    if trend == "up":
+        matches = _filter_uptrend(raw, matches, tf)
+    if min_height_atr and min_height_atr > 0:
+        matches = _filter_min_height(raw, matches, min_height_atr)
+    return matches
 
 
 def _example_counts(p: Pattern) -> tuple[int, int]:
@@ -374,11 +464,16 @@ def pattern_bars(pattern_id: int,
 def pattern_detect(pattern_id: int,
                    symbol: str = Query(...),
                    tf: str = Query("daily"),
-                   trend: str = Query("up"),   # "up" = uptrend-only (EMA gate); "any" = no filter
+                   # ---- detection rules (each toggled from the rules panel) ----
+                   rth: int = Query(1),               # 1 = detect on regular-hours bars only
+                   trend: str = Query("up"),          # "up" = uptrend-only (EMA gate); "any" = off
+                   valid: int = Query(1),             # 1 = drop support-breach breakdowns
+                   min_height_atr: float = Query(0.0),  # >0 = require height >= N x ATR
+                   score_min: float = Query(-1.0),    # >=0 = override the detector's fire cutoff
                    user: User = Depends(require_user), db: Session = Depends(get_db)):
-    """Run the pattern's geometric detector over the same parquet window the chart
-    shows, and return its matches (with Lightweight-Charts time values) so the
-    frontend can overlay them — the D5 'visually evaluate precision/recall' loop.
+    """Run the pattern's geometric detector over the chart's window and return its
+    matches (with Lightweight-Charts time values) for the overlay. The detection
+    rules are engaged/adjusted from the rules panel and passed here as query params.
     Read-only / offline; never a live signal."""
     p = _get_pattern(db, pattern_id, user)
     if tf not in _TIMEFRAMES:
@@ -390,25 +485,24 @@ def pattern_detect(pattern_id: int,
     if det is None:
         return JSONResponse({"ok": False, "error": "detector unavailable", "matches": []},
                             status_code=503)
-    raw = _load_window(symbol, tf, None, None)
+    full = _load_window(symbol, tf, None, None)
+    raw = _rth_bars(full, tf) if rth else full          # RTH-only rule
     if not raw:
         return JSONResponse({"ok": True, "symbol": symbol.upper().strip(), "tf": tf,
                              "count": 0, "matches": []}, headers={"Cache-Control": "no-store"})
+    thr = dict(p.detector_thresholds or {})
+    if score_min is not None and score_min >= 0:        # min-score rule (override fire cutoff)
+        thr["score_min"] = float(score_min)
     try:
-        # run with the pattern's CALIBRATED thresholds once it has them, so the
-        # overlay reflects what the user actually taught (not just seed defaults).
-        if p.detector_thresholds:
-            matches = det.detect(raw, thresholds=p.detector_thresholds)
-        else:
-            matches = det.detect(raw)
+        matches = det.detect(raw, thresholds=thr) if thr else det.detect(raw)
     except TypeError:
         matches = det.detect(raw)            # detector without a thresholds kwarg
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({"ok": False, "error": repr(exc), "matches": []},
                             status_code=500)
     n_raw = len(matches)
-    if trend == "up":   # ascending triangle is a continuation — only fire in uptrends
-        matches = _filter_uptrend(raw, matches, tf)
+    matches = _apply_rules(raw, matches, tf, valid=bool(valid), trend=trend,
+                           min_height_atr=min_height_atr)
     out = [{**m,
             "start_time": _to_lwc_time(m["start_t"], tf),
             "end_time": _to_lwc_time(m["end_t"], tf)} for m in matches]
@@ -621,7 +715,7 @@ def scan_universe(pattern_id: int,
     sample = sorted(symbols)[:cap]
     matches: list[dict] = []
     for sym in sample:
-        bars = _load_window(sym, tf, None, None)
+        bars = _rth_bars(_load_window(sym, tf, None, None), tf)   # detect on RTH only
         if len(bars) < _CALIB_MIN_BARS:
             continue
         try:
@@ -630,7 +724,8 @@ def scan_universe(pattern_id: int,
             found = det.detect(bars)
         except Exception:  # noqa: BLE001
             continue
-        found = _filter_uptrend(bars, found, tf)   # uptrend-only, same EMA gate as Find
+        found = _filter_valid_triangle(bars, found)   # drop support-breach breakdowns
+        found = _filter_uptrend(bars, found, tf)       # uptrend-only, same EMA gate as Find
         for m in found:
             matches.append({"symbol": sym, "score": m["score"],
                             "start_t": m["start_t"], "end_t": m["end_t"],

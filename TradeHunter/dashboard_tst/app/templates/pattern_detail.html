@@ -66,7 +66,18 @@
         <span class="text-xs font-semibold text-cyan-300">&#9678; Detector</span>
         <a id="detClear" href="#" class="ml-auto text-[11px] text-slate-500 hover:text-rose-300">clear</a>
       </div>
-      <button id="findBtn" class="w-full rounded bg-cyan-600 hover:bg-cyan-500 px-3 py-1.5 text-sm font-medium" title="Run the geometric detector on this chart">&#9678; Find pattern</button>
+      {# detection rules — tick to engage, adjust the values; applied on Find #}
+      <div class="text-[11px] text-slate-300 mb-2 space-y-1">
+        <div class="text-[10px] uppercase tracking-wide text-slate-500">Rules</div>
+        <label class="flex items-center gap-2"><input type="checkbox" id="ruleRth" checked class="accent-cyan-500"> RTH only</label>
+        <label class="flex items-center gap-2"><input type="checkbox" id="ruleUptrend" checked class="accent-cyan-500"> Uptrend (EMA)</label>
+        <label class="flex items-center gap-2"><input type="checkbox" id="ruleValid" checked class="accent-cyan-500"> No support breach</label>
+        <label class="flex items-center gap-2"><input type="checkbox" id="ruleHeight" checked class="accent-cyan-500"> Min height
+          <input type="number" id="valHeight" value="0.2" step="0.1" min="0" class="w-14 rounded bg-slate-950/60 border border-slate-700 px-1 py-0.5 text-[11px] text-right"> &times;ATR</label>
+        <label class="flex items-center gap-2"><input type="checkbox" id="ruleScore" class="accent-cyan-500"> Min score
+          <input type="number" id="valScore" value="0.60" step="0.05" min="0" max="1" class="w-14 rounded bg-slate-950/60 border border-slate-700 px-1 py-0.5 text-[11px] text-right"></label>
+      </div>
+      <button id="findBtn" class="w-full rounded bg-cyan-600 hover:bg-cyan-500 px-3 py-1.5 text-sm font-medium" title="Run the geometric detector on this chart with the rules above">&#9678; Find pattern</button>
       <div id="detResults" class="hidden mt-2">
         <div id="detSummary" class="text-[11px] text-slate-400 mb-1"></div>
         <div id="detList" class="flex flex-col gap-1.5 max-h-80 overflow-y-auto"></div>
@@ -201,6 +212,7 @@
       loaded.forEach(function (b) { timeToIso.set(String(normTime(b.time)), b.t); });
       renderCandles();
       drawEmas(tf);
+      buildSessionLines(tf);
       chart.timeScale().fitContent();
       status.textContent = sym + ' · ' + tf + ' · ' + d.count + ' bars';
     } catch (e) { status.textContent = 'load failed'; }
@@ -343,7 +355,13 @@
     if (!sym) { status.textContent = 'enter a ticker'; return; }
     var old = findBtn.textContent; findBtn.disabled = true; findBtn.textContent = 'scanning…';
     try {
-      var res = await fetch('/patterns/' + pid + '/detect?symbol=' + encodeURIComponent(sym) + '&tf=' + tf + '&_=' + Date.now(), { cache: 'no-store' });
+      var qp = new URLSearchParams({ symbol: sym, tf: tf, _: String(Date.now()) });
+      qp.set('rth', document.getElementById('ruleRth').checked ? '1' : '0');
+      qp.set('trend', document.getElementById('ruleUptrend').checked ? 'up' : 'any');
+      qp.set('valid', document.getElementById('ruleValid').checked ? '1' : '0');
+      qp.set('min_height_atr', document.getElementById('ruleHeight').checked ? (document.getElementById('valHeight').value || '0') : '0');
+      qp.set('score_min', document.getElementById('ruleScore').checked ? (document.getElementById('valScore').value || '0.6') : '-1');
+      var res = await fetch('/patterns/' + pid + '/detect?' + qp.toString(), { cache: 'no-store' });
       var d = await res.json();
       clearOverlay();
       detList.innerHTML = '';
@@ -594,8 +612,9 @@
   if (cancelDrawBtn) cancelDrawBtn.addEventListener('click', endDraw);
   if (savePosBtn) savePosBtn.addEventListener('click', function () { saveDrawn('positive'); });
   if (saveNegBtn) saveNegBtn.addEventListener('click', function () { saveDrawn('negative'); });
-  chart.timeScale().subscribeVisibleLogicalRangeChange(positionDots);
-  if (window.ResizeObserver) { try { new ResizeObserver(positionDots).observe(el); } catch (e) {} }
+  function _reposition() { positionDots(); positionSessionLines(); }
+  chart.timeScale().subscribeVisibleLogicalRangeChange(_reposition);
+  if (window.ResizeObserver) { try { new ResizeObserver(_reposition).observe(el); } catch (e) {} }
 
   // ---------- detector overlay (highlight matched bars + draw the anatomy) ----------
   // Selecting a detection: (1) the pattern's bars keep full colour while every other
@@ -614,38 +633,63 @@
     if (hiRange) { hiRange = null; renderCandles(); }   // un-highlight → restore candles
   }
   function _idxOfT(iso) { for (var i = 0; i < loaded.length; i++) { if (loaded[i].t === iso) return i; } return -1; }
-  // first candle AFTER the window to close above the flat-top resistance ceiling.
-  function findBreakout(res) {
+  // First RTH candle near the apex to close above the flat-top ceiling. Searches
+  // only up to (just past) the apex/tip, and skips extended-hours bars on intraday.
+  function findBreakout(res, apexIdx) {
     var i0 = _idxOfT(res.t0), i1 = _idxOfT(res.t1);
     if (i1 < 0) return null;
     var ceiling = Math.max(res.p0, res.p1);
     var span = (i0 >= 0 && i1 > i0) ? (i1 - i0) : 30;
-    var stop = Math.min(loaded.length, i1 + Math.max(40, 2 * span) + 1);
-    for (var k = i1 + 1; k < stop; k++) { if (loaded[k].close > ceiling) return loaded[k]; }
+    var hardStop = Math.min(loaded.length, i1 + Math.max(40, 2 * span) + 1);
+    var stop = (apexIdx && apexIdx > i1) ? Math.min(hardStop, apexIdx + Math.max(3, Math.round(span * 0.4))) : hardStop;
+    var intraday = tfSelect.value !== 'daily';
+    for (var k = i1 + 1; k < stop; k++) {
+      if (intraday && !isRTH(loaded[k].t)) continue;     // breakout must be an RTH bar
+      if (loaded[k].close > ceiling) return loaded[k];
+    }
     return null;
   }
-  // Draw the anatomy: a HORIZONTAL resistance at the break ceiling (start → break
-  // candle), the ASCENDING support (fitted, sloped), and the break ↑ marker.
+  // Draw the anatomy CONVERGING to the tip (apex): a HORIZONTAL resistance at the
+  // break ceiling and an ASCENDING support that rises to meet it at the tip; the
+  // break ↑ marker is the first RTH close above resistance at the tip.
   function drawAnatomy(lines) {
     _removeOverlay();
-    if (!lines) return;
-    if (lines.resistance) {
-      var res = lines.resistance, ceiling = Math.max(res.p0, res.p1);
-      var t0 = isoToLwcTime(res.t0), bo = findBreakout(res);
-      var tEnd = bo ? bo.time : isoToLwcTime(res.t1);
-      if (t0 != null && tEnd != null) {
-        detResLine = chart.addLineSeries({ color: '#f59e0b', lineWidth: 2, lineStyle: 0, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
-        detResLine.setData([{ time: t0, value: ceiling }, { time: tEnd, value: ceiling }]);   // strictly horizontal
+    if (!lines || !lines.resistance) return;
+    var res = lines.resistance, sup = lines.support, ceiling = Math.max(res.p0, res.p1);
+    // apex = where the ascending support, extended, reaches the ceiling
+    var apexIdx = -1, apexTime = null;
+    if (sup) {
+      var si0 = _idxOfT(sup.t0), si1 = _idxOfT(sup.t1);
+      if (si0 >= 0 && si1 > si0) {
+        var slope = (sup.p1 - sup.p0) / (si1 - si0);
+        if (slope > 0) {
+          apexIdx = Math.round(Math.max(si1, Math.min(loaded.length - 1, si1 + (ceiling - sup.p1) / slope)));
+          apexTime = loaded[apexIdx] ? loaded[apexIdx].time : null;
+        }
       }
-      if (bo) { series.setMarkers([{ time: bo.time, position: 'aboveBar', color: '#34d399', shape: 'arrowDown', text: 'break ↑' }]); detMarker = true; }
     }
-    if (lines.support) {
-      var st0 = isoToLwcTime(lines.support.t0), st1 = isoToLwcTime(lines.support.t1);
-      if (st0 != null && st1 != null) {
+    var bo = findBreakout(res, apexIdx);
+    var t0 = isoToLwcTime(res.t0);
+    var resTip, supEnd;
+    if (apexTime != null) {                          // converge to the tip
+      var tip = bo ? bo.time : apexTime;
+      resTip = tip; supEnd = { time: tip, value: ceiling };
+    } else {                                         // no clean apex → draw fitted ends
+      resTip = bo ? bo.time : isoToLwcTime(res.t1);
+      supEnd = sup ? { time: isoToLwcTime(sup.t1), value: sup.p1 } : null;
+    }
+    if (t0 != null && resTip != null) {
+      detResLine = chart.addLineSeries({ color: '#f59e0b', lineWidth: 2, lineStyle: 0, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
+      detResLine.setData([{ time: t0, value: ceiling }, { time: resTip, value: ceiling }]);   // strictly horizontal
+    }
+    if (sup && supEnd && supEnd.time != null) {
+      var st0 = isoToLwcTime(sup.t0);
+      if (st0 != null) {
         detSupLine = chart.addLineSeries({ color: '#22d3ee', lineWidth: 2, lineStyle: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
-        detSupLine.setData([{ time: st0, value: lines.support.p0 }, { time: st1, value: lines.support.p1 }]);   // ascending
+        detSupLine.setData([{ time: st0, value: sup.p0 }, { time: supEnd.time, value: supEnd.value }]);   // ascending → tip
       }
     }
+    if (bo) { series.setMarkers([{ time: bo.time, position: 'aboveBar', color: '#34d399', shape: 'arrowDown', text: 'break ↑' }]); detMarker = true; }
   }
   // Select a match: highlight its bars (grey the rest), draw the anatomy, zoom.
   function selectMatch(m) {
@@ -655,11 +699,11 @@
     try { chart.timeScale().setVisibleRange({ from: m.start_time, to: m.end_time }); } catch (e) {}
   }
 
-  // ---------- session shading (extended hours on intraday charts) ----------
+  // ---------- session helpers (extended hours on intraday charts) ----------
   // Intraday parquet includes pre-market (04:00–09:30 ET) + after-hours
-  // (16:00–20:00 ET). Regular hours stay vivid green/red; extended-hours candles
-  // are dimmed to muted slate (lighter = up, darker = down) so the session is
-  // visible. ET conversion via Intl handles DST automatically.
+  // (16:00–20:00 ET). `isRTH` classifies each bar by ET time (Intl handles DST);
+  // extended hours are drawn as vertical session lines (further below), not by
+  // shading candles.
   var _etFmt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: false });
   function _etMinutes(iso) {
     var p = _etFmt.formatToParts(new Date(iso)), h = 0, m = 0;
@@ -668,24 +712,50 @@
     return h * 60 + m;
   }
   function isRTH(iso) { var m = _etMinutes(iso); return m >= 570 && m < 960; }   // 09:30–16:00 ET
-  // (Re)draw the candles applying whichever shading is active:
-  //  - a detection is selected (hiRange) → pattern bars full colour, the rest grey;
-  //  - otherwise, on intraday, extended-hours candles are dimmed so the session shows.
+  // (Re)draw the candles. When a detection is selected (hiRange), the pattern's bars
+  // keep full colour and every other bar greys out. Extended hours are shown via the
+  // vertical session lines below — NOT candle shading — so candle colour stays free
+  // for the pattern highlight.
   function renderCandles() {
-    var tf = tfSelect.value;
     series.setData(loaded.map(function (b) {
       var pt = { time: b.time, open: b.open, high: b.high, low: b.low, close: b.close };
-      if (hiRange) {
-        if (!(b.t >= hiRange.a && b.t <= hiRange.b)) {
-          var g = (b.close >= b.open) ? '#475569' : '#334155';   // off-pattern: grey out
-          pt.color = g; pt.borderColor = g; pt.wickColor = g;
-        }
-      } else if (tf !== 'daily' && !isRTH(b.t)) {
-        var c = (b.close >= b.open) ? '#64748b' : '#334155';      // extended hours: muted slate
-        pt.color = c; pt.borderColor = c; pt.wickColor = c;
+      if (hiRange && !(b.t >= hiRange.a && b.t <= hiRange.b)) {
+        var g = (b.close >= b.open) ? '#475569' : '#334155';   // off-pattern: grey out
+        pt.color = g; pt.borderColor = g; pt.wickColor = g;
       }
       return pt;
     }));
+  }
+
+  // ---------- extended-hours session lines (vertical DOM overlays) ----------
+  // Lightweight Charts has no native vertical line, so we overlay thin dashed divs
+  // on the chart at each RTH boundary: green at the 09:30 ET open, red at the 16:00
+  // ET close. Pre-market sits left of a green line, after-hours right of a red one.
+  // Repositioned on pan/zoom/resize. Intraday only (daily has no sessions).
+  var sessionLines = [];
+  function clearSessionLines() { sessionLines.forEach(function (s) { s.div.remove(); }); sessionLines = []; }
+  function addSessionLine(bar, color) {
+    var d = document.createElement('div');
+    d.style.cssText = 'position:absolute;top:0;bottom:26px;width:0;border-left:1px dashed ' + color + ';z-index:2;pointer-events:none;';
+    el.appendChild(d);
+    sessionLines.push({ bar: bar, div: d });
+  }
+  function positionSessionLines() {
+    var ts = chart.timeScale();
+    sessionLines.forEach(function (s) {
+      var x = ts.timeToCoordinate(s.bar.time);
+      if (x == null) { s.div.style.display = 'none'; } else { s.div.style.display = ''; s.div.style.left = x + 'px'; }
+    });
+  }
+  function buildSessionLines(tf) {
+    clearSessionLines();
+    if (tf === 'daily' || !loaded.length) return;
+    for (var i = 1; i < loaded.length; i++) {
+      var prev = isRTH(loaded[i - 1].t), cur = isRTH(loaded[i].t);
+      if (cur && !prev) addSessionLine(loaded[i], 'rgba(52,211,153,0.45)');        // 09:30 open
+      else if (!cur && prev) addSessionLine(loaded[i], 'rgba(248,113,113,0.40)');  // 16:00 close
+    }
+    positionSessionLines();
   }
 
   // ---------- EMAs (fast = red, mid = green, slow = purple) ----------
@@ -731,7 +801,7 @@
       ls.setData(data); emaSeries.push(ls);
       leg.push('<span style="color:' + color + '">&#9632;</span> EMA' + period);
     });
-    if (tf !== 'daily') leg.push('<span style="color:#64748b">&#9632;</span> ext&nbsp;hrs');
+    if (tf !== 'daily') leg.push('ext&nbsp;hrs <span style="color:#34d399">&#124;</span>open <span style="color:#f87171">&#124;</span>close');
     if (emaLegend) emaLegend.innerHTML = leg.join(' &nbsp;');
   }
 

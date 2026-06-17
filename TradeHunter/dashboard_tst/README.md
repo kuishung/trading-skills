@@ -124,7 +124,49 @@ surface takes shape.
 
 ## Changelog
 
-### 2026-06-16 — v3.06: Pattern Trainer — single-pane layout, big chart, horizontal-R teaching
+### 2026-06-16 — v3.09: Pattern Trainer — on-screen detection rules (tick + adjust)
+- New **Rules panel** in the detector card: each detection rule has a **checkbox to
+  engage/disengage** it and, where relevant, an **adjustable value** — applied on
+  Find. Rules: **RTH only**, **Uptrend (EMA)**, **No support breach**, **Min height
+  ≥ N ×ATR** (default 0.2, editable), **Min score ≥ N** (off by default, overrides
+  the fire cutoff). The Find request passes them as query params; the backend
+  `pattern_detect` accepts `rth/trend/valid/min_height_atr/score_min` and runs them
+  through `_apply_rules`.
+- New `_filter_min_height` rule (resistance ceiling − lowest low, over window ATR;
+  ticker-relative). Note: 0.2 ×ATR filters little (real triangles run 1–3 ×ATR tall)
+  — the value is adjustable precisely so you can raise it until it bites.
+- Backend `_geometry` imported for ATR. Verified: detect→rules chain runs on real
+  parquet; rendered JS passes `node --check`.
+
+### 2026-06-16 — v3.08: Pattern Trainer — RTH-only detection, triangle validity, apex tip
+- **Detection now runs on regular-hours bars only** (`_rth_bars` + `_is_rth`,
+  zoneinfo/DST): intraday Find/scan filter out pre-market + after-hours before
+  detecting. Extended hours remain purely for the vertical session-separation lines.
+- **Triangle validity gate** (`_filter_valid_triangle`): a match is dropped if price
+  CLOSES below the rising support line anywhere in the window (0.2% tol) — that's a
+  support breach / breakdown, not a valid ascending triangle. Applied in /detect +
+  /scan, after the geometry detector, before the uptrend gate. (NVDA 3m: 18 raw → 12
+  valid → 7 uptrend.)
+- **Overlay converges to the tip:** the ascending support now rises to meet the
+  horizontal resistance at the **apex (tip)**, and the break ↑ marker is the first
+  **RTH** close above resistance **near the tip** (search bounded to the apex region,
+  extended-hours bars skipped). Frontend `findBreakout`/`drawAnatomy` reworked.
+
+### 2026-06-16 — v3.07: Pattern Trainer — extended-hours vertical session lines
+- Replaced the extended-hours candle dimming with **vertical session lines** drawn as
+  DOM overlays (Lightweight Charts has no native vertical line): green at the 09:30 ET
+  open, red at the 16:00 ET close, so pre-market sits left of green and after-hours
+  right of red. Repositioned on pan/zoom/resize. This frees candle colour entirely for
+  the pattern highlight (per the earlier request). Daily has no session lines.
+- Extended hours are now drawn as **vertical session lines** (the user's ask),
+  replacing the candle-dimming: a **green dashed line at the 09:30 ET open** and a
+  **red dashed line at the 16:00 ET close** of each day, so pre-market sits left of a
+  green line and after-hours right of a red one. Implemented as thin DOM overlays on
+  the chart (Lightweight Charts has no native vertical line) — same technique as the
+  draw handles — repositioned on pan/zoom/resize. Intraday only.
+- Dropped the extended-hours candle-dimming so candle colour is reserved purely for
+  the pattern highlight (as originally requested). Legend updated. Frontend-only;
+  rendered JS passes `node --check`.
 - Dropped the **Teach/Test toggle**. One layout: a **big chart** (600px, now 3/4 width
   on a 4-col grid) with the **Detector / Find pattern panel moved to the upper-right**;
   teaching controls (Draw triangle → Save positive/counter) live inline in the toolbar.
