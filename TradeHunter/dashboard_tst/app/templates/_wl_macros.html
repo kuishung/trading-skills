@@ -3,8 +3,9 @@
 
 {% macro trend_badge(t) %}
   {% set tl = (t or "")|string|lower %}
-  {% if tl.startswith("up") %}<span class="text-emerald-400">&#9650; up</span>
-  {% elif tl.startswith("down") %}<span class="text-rose-400">&#9660; down</span>
+  {% if "strong" in tl %}<span class="text-emerald-400" title="strong uptrend — EMA20 &gt; EMA50 &gt; EMA200">&#9650;&#9650;</span>
+  {% elif tl.startswith("up") %}<span class="text-emerald-400" title="uptrend — EMA20 &gt; EMA50">&#9650; up</span>
+  {% elif tl.startswith("down") %}<span class="text-rose-400" title="downtrend — EMA20 &lt; EMA50 &lt; EMA200">&#9660; down</span>
   {% elif tl.startswith("side") or tl.startswith("flat") %}<span class="text-amber-400">&#8212; flat</span>
   {% else %}<span class="text-slate-600">&middot;</span>{% endif %}
 {% endmacro %}

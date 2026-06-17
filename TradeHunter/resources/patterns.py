@@ -323,6 +323,46 @@ def trend(
     }
 
 
+def ema_stack_trend(
+    bars: list[dict],
+    *,
+    fast: int = 20,
+    mid: int = 50,
+    slow: int = 200,
+) -> dict:
+    """Daily EMA-STACK trend classification (MATP / swing & trend board).
+
+    Based on the relative stacking of EMA(fast)/EMA(mid)/EMA(slow) on closes:
+
+      "strong_up"  EMA20 > EMA50 > EMA200    full bullish stack
+      "up"         EMA20 > EMA50             fast above mid (stack not yet full)
+      "down"       EMA20 < EMA50 < EMA200    full bearish stack
+      "sideways"   anything else
+      "unknown"    fewer than `slow` bars (EMA200 not seeded)
+
+    Distinct from trend() above, which is an EMA20-SLOPE rule used on intraday
+    bars by GUNS/DITP — do NOT route intraday strategies through this. This is the
+    stacking rule defined for the trend & swing board; it mirrors the MATP skill's
+    classify_trend so the dashboard and the agent's stored trend stay consistent.
+    """
+    if len(bars) < slow:
+        return {"direction": "unknown",
+                "reason": f"need >= {slow} bars, have {len(bars)}"}
+    closes = [b["c"] for b in bars]
+    e20 = ema(closes, fast)[-1]
+    e50 = ema(closes, mid)[-1]
+    e200 = ema(closes, slow)[-1]
+    if e20 > e50 > e200:
+        direction = "strong_up"
+    elif e20 > e50:
+        direction = "up"
+    elif e20 < e50 < e200:
+        direction = "down"
+    else:
+        direction = "sideways"
+    return {"direction": direction, "ema20": e20, "ema50": e50, "ema200": e200}
+
+
 # =====================================================================
 # Higher-highs / higher-lows sequence analysis
 # =====================================================================

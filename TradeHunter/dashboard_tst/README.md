@@ -124,6 +124,34 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-17 — v3.35: Downtrend tickers are disqualified too (not just Price > MBP)
+- The watchlist's **Disqualified** bucket (`matp.py` `matp_watchlist`) now holds a ticker
+  if `price > MBP` **OR** it's in a **downtrend** (EMA20<EMA50<EMA200, from the live
+  EMA-stack trend, falling back to the stored trend). No long setup either way.
+- Section header relabelled **"Disqualified · Price > MBP or downtrend"**
+  (`_watchlist.html`). The existing trend badge (▼ down) / red price already show which
+  reason applies per row.
+- Verified: matp.py compiles, template parses, app imports clean.
+
+### 2026-06-17 — v3.34: Live trend uses the EMA-stack rule (strong uptrend tier)
+- The watchlist's **live** trend badge previously came from `patterns.trend()` (an
+  EMA20-**slope** rule). It now uses the new `patterns.ema_stack_trend()` (`resources/`)
+  per the user's rule:
+  - **strong uptrend** — EMA20 > EMA50 > EMA200 (badge `▲▲`, tooltip)
+  - **uptrend** — EMA20 > EMA50 (badge `▲ up`)
+  - **downtrend** — EMA20 < EMA50 < EMA200 (badge `▼ down`)
+  - **sideways** — otherwise (`— flat`); **unknown** if < 200 daily bars
+- `_ticker_analysis` (`matp.py`) routes through the stack rule; the bounce signal
+  (HOT/WARM/WATCHING) now fires for both `up` and `strong_up`. `trend_badge`
+  (`_wl_macros.html`) renders the new tiers and still maps the agent's stored labels
+  (Uptrend/Downtrend/Sideways). The dashboard fetches 2y of daily bars, so EMA200 is
+  well seeded.
+- Note: the agent's stored trend (MATP skill `classify_trend`, runs on the Nous box)
+  still uses its stricter close+slope rule and is only the fallback when live data is
+  unavailable — align it separately if exact agreement on the fallback is wanted.
+- Verified: `patterns.py` + `matp.py` compile, `ema_stack_trend` returns the right tier
+  on synthetic series, `trend_badge` renders all runtime/stored values, app imports clean.
+
 ### 2026-06-17 — v3.33: Clicking a watchlist ticker swaps only the chart (no full reload)
 - **Problem:** clicking a ticker did a full-page navigation to `/matp?symbol=…`, which
   re-lazy-loaded the whole watchlist and re-ran `_watchlist_signals()` (live trend/signal

@@ -215,11 +215,15 @@ def matp_watchlist(
         stamps = [lv.as_of for lv in shown if lv.as_of is not None]
         wl_refreshed = max(stamps) if stamps else None
 
-    # split: disqualified = live price ABOVE the max-buy price (MBP)
+    # split: disqualified = live price ABOVE the max-buy price (MBP) OR the ticker
+    # is in a downtrend (EMA20<EMA50<EMA200) — no long setup either way.
     qualified, disqualified = [], []
     for lv in shown:
-        cur = live.get(lv.symbol, {}).get("current")
-        if cur is not None and lv.mbp is not None and cur > lv.mbp:
+        lr = live.get(lv.symbol, {})
+        cur = lr.get("current")
+        above_mbp = cur is not None and lv.mbp is not None and cur > lv.mbp
+        is_down = str(lr.get("trend") or lv.trend or "").lower().startswith("down")
+        if above_mbp or is_down:
             disqualified.append(lv)
         else:
             qualified.append(lv)
@@ -501,19 +505,25 @@ def _ticker_analysis(symbol: str) -> dict:
         ]
         from resources import patterns
 
-        d = (patterns.trend(bars) or {}).get("direction")          # up/down/sideways
+        # EMA-stack trend: strong_up (EMA20>EMA50>EMA200) / up (EMA20>EMA50) /
+        # down (EMA20<EMA50<EMA200) / sideways. (trend() above is the intraday
+        # slope rule — not used here.)
+        d = (patterns.ema_stack_trend(bars) or {}).get("direction")
+        is_up = d in ("up", "strong_up")
         consol = (patterns.consolidation(bars) or {}).get("is_consol")
         flag = (patterns.bull_flag(bars) or {}).get("detected")
         out["trend"] = d
-        if d == "up" and flag:
+        if is_up and flag:
             out["signal"] = "HOT"
-        elif d == "up" and consol:
+        elif is_up and consol:
             out["signal"] = "WARM"
-        elif d == "up":
+        elif is_up:
             out["signal"] = "WATCHING"
         pats = []
-        if d in ("up", "down", "sideways"):
-            pats.append({"name": "Trend", "value": d, "good": d == "up"})
+        _trend_label = {"strong_up": "strong uptrend", "up": "uptrend",
+                        "down": "downtrend", "sideways": "sideways"}
+        if d in _trend_label:
+            pats.append({"name": "Trend", "value": _trend_label[d], "good": is_up})
         if consol:
             pats.append({"name": "Consolidation", "value": "tight range", "good": True})
         if flag:

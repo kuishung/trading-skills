@@ -56,6 +56,15 @@ treating any "missing" feature as a bug.
 
 ## Changelog
 
+### 2026-06-17 — `patterns.py`: added `ema_stack_trend()` (daily EMA-stack trend)
+- New `ema_stack_trend(bars)` classifier for the MATP / swing & trend board:
+  `strong_up` (EMA20>EMA50>EMA200) / `up` (EMA20>EMA50) / `down` (EMA20<EMA50<EMA200) /
+  `sideways`, and `unknown` if < 200 bars. **Additive** — the existing EMA20-slope
+  `trend()` (used intraday by GUNS/DITP) is untouched; do not route intraday strategies
+  through the stack rule. Mirrors the MATP skill's `classify_trend` so the dashboard's
+  live trend agrees with the agent's stored trend. Consumed by `dashboard_tst`
+  `matp.py::_ticker_analysis` (see dashboard_tst v3.34).
+
 ### 2026-06-11 — `ibkr_history.py`: bulk_update runs TIMEFRAME-MAJOR (caller order = priority)
 - `bulk_update` now iterates `for tf in timeframes: for sym in symbols:` instead
   of symbol-major — ALL symbols of the first timeframe complete before the next

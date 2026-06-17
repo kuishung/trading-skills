@@ -13,7 +13,7 @@
 
 {% if disqualified %}
 <details class="mt-2 rounded-lg border border-rose-500/30 bg-rose-500/5" open>
-  <summary class="cursor-pointer px-3 py-2 text-xs text-rose-300 select-none">Disqualified &middot; Price &gt; MBP ({{ disqualified|length }})</summary>
+  <summary class="cursor-pointer px-3 py-2 text-xs text-rose-300 select-none">Disqualified &middot; Price &gt; MBP or downtrend ({{ disqualified|length }})</summary>
   <div class="px-1 pb-2 opacity-90">{{ ticker_grid(disqualified, open_symbols, sel_sym, live, wl) }}</div>
 </details>
 {% endif %}
