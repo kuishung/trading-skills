@@ -124,6 +124,54 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-17 — v3.13: Pattern Trainer — measured-move target + H at the base
+- Matches the user's reference diagram: **H** is now defined as resistance − the
+  **rising support at the LEFT base** (`sup.p0`), not ceiling − lowest-low — both the
+  `_filter_min_height` rule and the overlay use this.
+- The overlay now draws the **measured-move target** as a dashed grey level at
+  **breakout + H** (with the price on the axis), completing the anatomy: flat
+  resistance, ascending support, break ↑ marker, and the projected target. Cleared
+  with the rest of the overlay. Verified H on real parquet (AAPL 232.9−190.9 = 42.0);
+  rendered JS passes `node --check`.
+
+### 2026-06-17 — v3.12: Pattern Trainer — volume / time-of-day / touches rules (spec gaps)
+- Four new tickable+adjustable detection rules closing the gaps vs the canonical
+  ascending-triangle spec (`strategy/patterns/ascending_triangle/pattern.md`):
+  - **Volume contracts into apex** (`_filter_vol_contraction`): last-third mean
+    volume ≤ first-third (the spring winding up).
+  - **Breakout volume** ≥ N×20-bar avg (`_filter_breakout_volume`, default 1.5):
+    the expansion that separates a real break from the thin-volume fakeout; drops
+    matches that never broke out.
+  - **Skip open/lunch/close** (`_filter_time_of_day`, intraday): drop breakouts in
+    09:30–10:00 / 12:00–13:00 / 15:45–16:00 ET.
+  - **Min touches/line** ≥ N (`_filter_min_touches`, default 3, **off** by default —
+    3 is demanding and zeroes most symbols on seed thresholds).
+- `pattern_detect` takes `vol_contract/breakout_vol/time_filter/min_touches`;
+  `_apply_rules` + shared `_breakout_idx`/`_et_minutes` helpers. Verified each filter
+  discriminates on real parquet; rendered JS passes `node --check`.
+
+### 2026-06-16 — v3.11: Pattern Trainer — uptrend = EMA stack; draw-tool robustness
+- **Uptrend gate is now the bullish EMA stack**: `fast > mid > slow` (intraday
+  **EMA6>18>50**, daily **EMA20>50>200**) — an ascending triangle forms obviously in
+  that regime. `_filter_uptrend` rewritten + `_ema_periods` returns (fast, mid, slow);
+  falls back to mid>slow when fast can't be seeded. (NVDA 3m 18→8, AAPL daily 3→2.)
+- **Draw tool** renamed **"Draw ascending triangle"** (horizontal resistance +
+  ascending support; Save teaches it as the pattern), and `startDraw` now **auto-loads
+  the typed ticker** if no chart is loaded — the most common "can't draw" cause was an
+  empty chart silently no-op'ing. Clear status hint once handles appear.
+
+### 2026-06-16 — v3.10: Pattern Trainer — resistance sits on the top wick (never cuts a body)
+- The detector's horizontal resistance is now a strict level at the window's **highest
+  high**, so the line **touches the top candle wick** instead of the least-squares
+  average (which floated below the wicks). Fixed in `strategy/patterns/_features.py`
+  `window_lines` (resistance p0==p1==max high); the min-height rule uses that level.
+- The **drawn overlay** computes its ceiling from the **displayed** candles
+  (`_maxHighIn` = max high over all loaded bars in the window, incl. extended hours),
+  not the RTH-only backend value — because high ≥ open/close for every candle, the line
+  is guaranteed to **never cut through a candle body** even when an extended-hours bar
+  in the window spikes above the RTH high. `findBreakout` uses the same ceiling.
+  Support unchanged (fitted ascending line).
+
 ### 2026-06-16 — v3.09: Pattern Trainer — on-screen detection rules (tick + adjust)
 - New **Rules panel** in the detector card: each detection rule has a **checkbox to
   engage/disengage** it and, where relevant, an **adjustable value** — applied on

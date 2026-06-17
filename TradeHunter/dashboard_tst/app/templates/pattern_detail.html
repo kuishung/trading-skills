@@ -41,7 +41,7 @@
       <button id="loadBtn" class="rounded bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 text-sm font-medium">Load</button>
       <div class="w-px h-8 bg-slate-700 mx-1"></div>
       {# teaching = adjust the lines directly on the chart (no mode switch) #}
-      <button id="drawBtn" class="rounded border border-violet-500/60 text-violet-300 hover:bg-violet-500/10 px-3 py-1.5 text-sm">&#9651; Draw triangle</button>
+      <button id="drawBtn" class="rounded border border-violet-500/60 text-violet-300 hover:bg-violet-500/10 px-3 py-1.5 text-sm" title="Draw a horizontal resistance + ascending support; Save teaches it as an ascending triangle">&#9651; Draw ascending triangle</button>
       <span id="drawActions" class="hidden flex items-center gap-2">
         <input id="drawLabel" placeholder="label (optional)" class="w-32 rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-xs focus:border-emerald-500 outline-none">
         <button id="savePosBtn" class="rounded bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 text-sm font-medium">&#9650; Save positive</button>
@@ -76,12 +76,18 @@
           <input type="number" id="valHeight" value="0.2" step="0.1" min="0" class="w-14 rounded bg-slate-950/60 border border-slate-700 px-1 py-0.5 text-[11px] text-right"> &times;ATR</label>
         <label class="flex items-center gap-2"><input type="checkbox" id="ruleScore" class="accent-cyan-500"> Min score
           <input type="number" id="valScore" value="0.60" step="0.05" min="0" max="1" class="w-14 rounded bg-slate-950/60 border border-slate-700 px-1 py-0.5 text-[11px] text-right"></label>
+        <label class="flex items-center gap-2"><input type="checkbox" id="ruleTouches" class="accent-cyan-500"> Min touches/line
+          <input type="number" id="valTouches" value="3" step="1" min="2" class="w-12 rounded bg-slate-950/60 border border-slate-700 px-1 py-0.5 text-[11px] text-right"></label>
+        <label class="flex items-center gap-2"><input type="checkbox" id="ruleVolContract" class="accent-cyan-500"> Volume contracts into apex</label>
+        <label class="flex items-center gap-2"><input type="checkbox" id="ruleBreakoutVol" class="accent-cyan-500"> Breakout volume
+          <input type="number" id="valBreakoutVol" value="1.5" step="0.1" min="0" class="w-12 rounded bg-slate-950/60 border border-slate-700 px-1 py-0.5 text-[11px] text-right"> &times;avg</label>
+        <label class="flex items-center gap-2"><input type="checkbox" id="ruleTimeOfDay" class="accent-cyan-500"> Skip open/lunch/close <span class="text-[10px] text-slate-500">(intraday)</span></label>
       </div>
       <button id="findBtn" class="w-full rounded bg-cyan-600 hover:bg-cyan-500 px-3 py-1.5 text-sm font-medium" title="Run the geometric detector on this chart with the rules above">&#9678; Find pattern</button>
       <div id="detResults" class="hidden mt-2">
         <div id="detSummary" class="text-[11px] text-slate-400 mb-1"></div>
         <div id="detList" class="flex flex-col gap-1.5 max-h-80 overflow-y-auto"></div>
-        <p class="text-[10px] text-slate-500 mt-1">Selecting a match <b>highlights its candles</b> (rest grey), draws the <span class="text-amber-300">horizontal resistance</span> + <span class="text-cyan-300">ascending support</span> and a <span class="text-emerald-300">break&nbsp;&uarr;</span> marker, and zooms in. &#10003;&nbsp;/&nbsp;&#10007; saves it as an example.</p>
+        <p class="text-[10px] text-slate-500 mt-1">Selecting a match <b>highlights its candles</b> (rest grey), draws the <span class="text-amber-300">horizontal resistance</span> + <span class="text-cyan-300">ascending support</span>, a <span class="text-emerald-300">break&nbsp;&uarr;</span> marker, and the dashed <span class="text-slate-400">measured-move target</span> (breakout&nbsp;+&nbsp;H, where H = resistance − support at the base), then zooms in. &#10003;&nbsp;/&nbsp;&#10007; saves it as an example.</p>
       </div>
     </section>
 
@@ -361,6 +367,10 @@
       qp.set('valid', document.getElementById('ruleValid').checked ? '1' : '0');
       qp.set('min_height_atr', document.getElementById('ruleHeight').checked ? (document.getElementById('valHeight').value || '0') : '0');
       qp.set('score_min', document.getElementById('ruleScore').checked ? (document.getElementById('valScore').value || '0.6') : '-1');
+      qp.set('min_touches', document.getElementById('ruleTouches').checked ? (document.getElementById('valTouches').value || '3') : '0');
+      qp.set('vol_contract', document.getElementById('ruleVolContract').checked ? '1' : '0');
+      qp.set('breakout_vol', document.getElementById('ruleBreakoutVol').checked ? (document.getElementById('valBreakoutVol').value || '1.5') : '0');
+      qp.set('time_filter', document.getElementById('ruleTimeOfDay').checked ? '1' : '0');
       var res = await fetch('/patterns/' + pid + '/detect?' + qp.toString(), { cache: 'no-store' });
       var d = await res.json();
       clearOverlay();
@@ -559,8 +569,11 @@
     if (resLine) { chart.removeSeries(resLine); resLine = null; }
     if (supLine) { chart.removeSeries(supLine); supLine = null; }
   }
-  function startDraw() {
-    if (!loaded.length) { status.textContent = 'load a chart first'; return; }
+  async function startDraw() {
+    if (!loaded.length) {                       // auto-load the typed ticker so the
+      if ((symInput.value || '').trim()) { await load(); }   // draw never silently no-ops
+      if (!loaded.length) { status.textContent = '⚠ enter a ticker and Load a chart first'; return; }
+    }
     drawing = true; drawBtn.classList.add('bg-violet-500/20'); drawActions.classList.remove('hidden');
     clearDraw();
     var n = loaded.length, iA = Math.max(0, n - 30), iB = n - 3;
@@ -568,6 +581,7 @@
     resPrice = Math.max.apply(null, loaded.slice(iA, iB + 1).map(function (b) { return b.high; }));   // flat top starts at the window high
     addResHandle();
     redrawLines(); positionDots();
+    status.textContent = 'drag the amber resistance up/down + the cyan support onto the lows, then Save';
   }
   function endDraw() {
     drawing = false;
@@ -622,10 +636,11 @@
   // HORIZONTAL resistance at the break ceiling, (3) the ASCENDING support (tightening
   // range), (4) a break ↑ marker on the first candle to close above resistance.
   // Post-hoc visual annotation over loaded history — the detector stays no-lookahead.
-  var detResLine = null, detSupLine = null, detMarker = false, hiRange = null;   // hiRange = selected window {a,b} ISO
+  var detResLine = null, detSupLine = null, detTargetLine = null, detMarker = false, hiRange = null;   // hiRange = selected window {a,b} ISO
   function _removeOverlay() {
     if (detResLine) { chart.removeSeries(detResLine); detResLine = null; }
     if (detSupLine) { chart.removeSeries(detSupLine); detSupLine = null; }
+    if (detTargetLine) { chart.removeSeries(detTargetLine); detTargetLine = null; }
     if (detMarker) { series.setMarkers([]); detMarker = false; }
   }
   function clearOverlay() {
@@ -633,12 +648,22 @@
     if (hiRange) { hiRange = null; renderCandles(); }   // un-highlight → restore candles
   }
   function _idxOfT(iso) { for (var i = 0; i < loaded.length; i++) { if (loaded[i].t === iso) return i; } return -1; }
+  // Highest high among the DISPLAYED candles in [t0,t1] — incl. extended hours. Since
+  // high >= open/close for every candle, a line at this level touches the top wick and
+  // can never cut through a candle body.
+  function _maxHighIn(t0, t1) {
+    var hi = null;
+    for (var i = 0; i < loaded.length; i++) {
+      if (loaded[i].t >= t0 && loaded[i].t <= t1 && (hi == null || loaded[i].high > hi)) hi = loaded[i].high;
+    }
+    return hi;
+  }
   // First RTH candle near the apex to close above the flat-top ceiling. Searches
   // only up to (just past) the apex/tip, and skips extended-hours bars on intraday.
-  function findBreakout(res, apexIdx) {
+  function findBreakout(res, apexIdx, ceiling) {
     var i0 = _idxOfT(res.t0), i1 = _idxOfT(res.t1);
     if (i1 < 0) return null;
-    var ceiling = Math.max(res.p0, res.p1);
+    if (ceiling == null) ceiling = Math.max(res.p0, res.p1);
     var span = (i0 >= 0 && i1 > i0) ? (i1 - i0) : 30;
     var hardStop = Math.min(loaded.length, i1 + Math.max(40, 2 * span) + 1);
     var stop = (apexIdx && apexIdx > i1) ? Math.min(hardStop, apexIdx + Math.max(3, Math.round(span * 0.4))) : hardStop;
@@ -655,7 +680,9 @@
   function drawAnatomy(lines) {
     _removeOverlay();
     if (!lines || !lines.resistance) return;
-    var res = lines.resistance, sup = lines.support, ceiling = Math.max(res.p0, res.p1);
+    var res = lines.resistance, sup = lines.support;
+    var ceiling = _maxHighIn(res.t0, res.t1);            // top wick of the displayed candles
+    if (ceiling == null) ceiling = Math.max(res.p0, res.p1);
     // apex = where the ascending support, extended, reaches the ceiling
     var apexIdx = -1, apexTime = null;
     if (sup) {
@@ -668,7 +695,7 @@
         }
       }
     }
-    var bo = findBreakout(res, apexIdx);
+    var bo = findBreakout(res, apexIdx, ceiling);
     var t0 = isoToLwcTime(res.t0);
     var resTip, supEnd;
     if (apexTime != null) {                          // converge to the tip
@@ -690,6 +717,18 @@
       }
     }
     if (bo) { series.setMarkers([{ time: bo.time, position: 'aboveBar', color: '#34d399', shape: 'arrowDown', text: 'break ↑' }]); detMarker = true; }
+    // measured move: H = ceiling − rising support at the LEFT base; target = breakout + H
+    if (bo && sup) {
+      var H = ceiling - sup.p0;
+      if (H > 0) {
+        var boIdx = _idxOfT(bo.t);
+        var spanS = (si0 >= 0 && si1 > si0) ? (si1 - si0) : 20;
+        var endIdx = Math.min(loaded.length - 1, (boIdx >= 0 ? boIdx : 0) + Math.max(10, spanS));
+        var tEnd = loaded[endIdx] ? loaded[endIdx].time : bo.time;
+        detTargetLine = chart.addLineSeries({ color: '#94a3b8', lineWidth: 1, lineStyle: 2, lastValueVisible: true, priceLineVisible: false, crosshairMarkerVisible: false, title: 'target' });
+        detTargetLine.setData([{ time: bo.time, value: bo.close + H }, { time: tEnd, value: bo.close + H }]);   // breakout + H
+      }
+    }
   }
   // Select a match: highlight its bars (grey the rest), draw the anatomy, zoom.
   function selectMatch(m) {

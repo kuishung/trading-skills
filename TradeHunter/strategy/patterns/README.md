@@ -72,6 +72,17 @@ the files here are a rendered projection written when you "Save what you learned
   triangle scores ~0.97; runs on real parquet — NVDA/AAPL/AMD).
 
 ## Changelog
+- **2026-06-17** — **`ascending_triangle/pattern.md` replaced with the user's canonical
+  definition** (flat-top tolerance, 2–3 touches, breakout 50–75% to apex, volume
+  contraction + breakout-volume expansion, intraday/time-of-day + HTF-trend filters,
+  measured move, false-breakout screens) + a **detector-coverage table** mapping each
+  criterion to what `detect.py`/the rules panel enforce vs the open gaps (volume +
+  time-of-day). The gaps are now wired as dashboard rules (dashboard_tst v3.12).
+- **2026-06-16** — **`window_lines` resistance = horizontal at the top wick.** The
+  resistance endpoint prices are now a strict horizontal level at the window's highest
+  high (`p0==p1==max high`) so the drawn line sits ON the top candle wicks, not the
+  least-squares average (which floated below). Support unchanged (fitted ascending).
+  Display/breakout/min-height all read this wick level. Pairs with dashboard_tst v3.10.
 - **2026-06-16** — **`_features.window_lines()` + detector `lines` output.**
   `window_lines(bars)` returns the fitted resistance/support trend-line endpoint
   prices (price at the window's first + last bar, extrapolated from the same

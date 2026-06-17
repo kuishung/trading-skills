@@ -108,25 +108,26 @@ def window_features(bars: list[dict]) -> dict:
 
 
 def window_lines(bars: list[dict]) -> dict | None:
-    """Endpoint PRICES of the fitted resistance/support trendlines across the
-    window — for the UI to draw what the detector actually 'saw' (so a flagged
-    region is visible on the chart, not just a score). `p0` is the line's price at
-    the window's FIRST bar, `p1` at its LAST bar (both extrapolated from the same
-    least-squares fit window_features uses). Returns
-    {"resistance": {p0,p1} | None, "support": {p0,p1} | None}, or None if the
-    window is too short to fit. The caller pairs these with the window's first/last
-    timestamps. Pure, no I/O — mirrors window_features' line fitting exactly."""
+    """Endpoint PRICES of the resistance/support lines across the window — for the
+    UI to draw what the detector 'saw'. Returns {"resistance": {p0,p1} | None,
+    "support": {p0,p1} | None}, or None if the window is too short. The caller pairs
+    these with the window's first/last timestamps. Pure, no I/O.
+
+    RESISTANCE is a STRICT HORIZONTAL level at the window's **highest high** (p0==p1),
+    so the line sits ON the top candle wicks — not the least-squares average, which
+    floats below the wicks. SUPPORT stays the fitted ascending line (p0 at the first
+    bar, p1 at the last, extrapolated from the same least-squares fit
+    window_features scores on)."""
     n = len(bars)
     if n < 4:
         return None
     last = n - 1
     sw = geo.swings(bars, left=_SW_LEFT, right=_SW_RIGHT, prominence_atr=_SW_PROM_ATR)
-    rel_highs = [geo.Swing(s.idx - last, s.t, s.price, s.kind) for s in sw if s.kind == "high"]
     rel_lows = [geo.Swing(s.idx - last, s.t, s.price, s.kind) for s in sw if s.kind == "low"]
-    res = geo.fit_line([(s.idx, s.price) for s in rel_highs]) if len(rel_highs) >= 2 else None
     sup = geo.fit_line([(s.idx, s.price) for s in rel_lows]) if len(rel_lows) >= 2 else None
 
-    def ends(line):
-        return None if not line else {"p0": round(line.at(-last), 6), "p1": round(line.at(0), 6)}
+    top = round(max(float(b["h"]) for b in bars), 6)   # the resistance ceiling = top wick
+    res_ends = {"p0": top, "p1": top}                  # strictly horizontal, touches the wick
+    sup_ends = None if not sup else {"p0": round(sup.at(-last), 6), "p1": round(sup.at(0), 6)}
 
-    return {"resistance": ends(res), "support": ends(sup)}
+    return {"resistance": res_ends, "support": sup_ends}

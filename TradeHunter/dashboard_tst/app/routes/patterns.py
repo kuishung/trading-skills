@@ -175,40 +175,40 @@ def _ema(values: list[float], period: int) -> list:
     return out
 
 
-def _ema_periods(tf: str) -> tuple[int, int]:
-    """(mid, slow) EMA periods for the trend gate — the same EMAs drawn on the
-    chart (daily 50/200, intraday 18/50)."""
-    return (50, 200) if tf == "daily" else (18, 50)
+def _ema_periods(tf: str) -> tuple[int, int, int]:
+    """(fast, mid, slow) EMA periods for the trend gate — the same EMAs drawn on the
+    chart (daily 20/50/200, intraday 6/18/50)."""
+    return (20, 50, 200) if tf == "daily" else (6, 18, 50)
 
 
 def _filter_uptrend(bars: list[dict], matches: list[dict], tf: str) -> list[dict]:
-    """Keep only matches whose window ends in an UPTREND, judged by the EMAs drawn
-    on the chart: last close above the slow EMA, mid EMA above the slow EMA, and the
-    slow EMA rising. An ascending triangle is a bullish continuation, so this drops
-    the geometrically-similar shapes that form in downtrends/ranges. Falls back to
-    the mid EMA when there isn't enough history to seed the slow EMA (keeps the match
-    if neither EMA is available)."""
+    """Keep only matches whose window ends in an UPTREND, defined as the **bullish
+    EMA stack** drawn on the chart: fast EMA > mid EMA > slow EMA (intraday 6>18>50,
+    daily 20>50>200). An ascending triangle forms obviously in this regime, so the
+    stack drops the geometrically-similar shapes that appear in downtrends/ranges.
+    Falls back to mid>slow when there isn't enough history to seed the fast EMA, and
+    keeps the match if too little history to judge at all."""
     if not matches:
         return matches
     closes = [float(b["c"]) for b in bars]
     idx = {b["t"]: i for i, b in enumerate(bars)}
-    mid_p, slow_p = _ema_periods(tf)
-    ema_mid, ema_slow = _ema(closes, mid_p), _ema(closes, slow_p)
-    look = 10
+    fast_p, mid_p, slow_p = _ema_periods(tf)
+    ema_fast = _ema(closes, fast_p)
+    ema_mid = _ema(closes, mid_p)
+    ema_slow = _ema(closes, slow_p)
     kept = []
     for m in matches:
         i = idx.get(m["end_t"])
         if i is None:
             kept.append(m)
             continue
-        c, mid, slow = closes[i], ema_mid[i], ema_slow[i]
-        if slow is not None:
-            rising = i >= look and ema_slow[i - look] is not None and slow > ema_slow[i - look]
-            up = (c > slow) and (mid is None or mid > slow) and rising
-        elif mid is not None:
-            up = c > mid
+        f, mid, slow = ema_fast[i], ema_mid[i], ema_slow[i]
+        if f is not None and mid is not None and slow is not None:
+            up = f > mid > slow                 # bullish EMA stack
+        elif mid is not None and slow is not None:
+            up = mid > slow                     # not enough history for fast → looser
         else:
-            up = True   # not enough history to judge — don't filter it out
+            up = True                           # too little history to judge
         if up:
             kept.append(m)
     return kept
@@ -284,14 +284,115 @@ def _filter_min_height(bars: list[dict], matches: list[dict], min_atr: float) ->
         window = bars[i0:i1 + 1]
         atr = _pat_geo.atr(window)
         res = (m.get("lines") or {}).get("resistance")
+        sup = (m.get("lines") or {}).get("support")
         ceiling = max(res["p0"], res["p1"]) if res else max(b["h"] for b in window)
-        low = min(b["l"] for b in window)
-        if atr > 0 and (ceiling - low) / atr >= min_atr:
+        base = sup["p0"] if sup else min(b["l"] for b in window)   # H is at the LEFT base
+        if atr > 0 and (ceiling - base) / atr >= min_atr:          # H = resistance − rising support there
             out.append(m)
     return out
 
 
-def _apply_rules(raw, matches, tf, *, valid, trend, min_height_atr):
+def _et_minutes(iso: str):
+    """Minutes-since-midnight in ET (DST-aware) for a bar timestamp, or None."""
+    if _ET_TZ is None:
+        return None
+    try:
+        dt = _dt.datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(_ET_TZ)
+    except Exception:  # noqa: BLE001
+        return None
+    return dt.hour * 60 + dt.minute
+
+
+def _breakout_idx(bars: list[dict], m: dict):
+    """Index of the first bar after the window to CLOSE above the resistance ceiling
+    (the wick-level top), searched over the apex region (~2× the window). None if no
+    breakout — mirrors the chart's findBreakout."""
+    idx = {b["t"]: i for i, b in enumerate(bars)}
+    i0, i1 = idx.get(m["start_t"]), idx.get(m["end_t"])
+    if i0 is None or i1 is None or i1 <= i0:
+        return None
+    res = (m.get("lines") or {}).get("resistance")
+    window = bars[i0:i1 + 1]
+    ceiling = max(res["p0"], res["p1"]) if res else max(b["h"] for b in window)
+    span, n = i1 - i0, len(bars)
+    stop = min(n, i1 + max(40, 2 * span) + 1)
+    for k in range(i1 + 1, stop):
+        if bars[k]["c"] > ceiling:
+            return k
+    return None
+
+
+def _filter_vol_contraction(bars: list[dict], matches: list[dict]) -> list[dict]:
+    """Keep matches whose volume CONTRACTS into the apex: mean volume over the last
+    third of the window <= mean over the first third (the 'spring winding up')."""
+    idx = {b["t"]: i for i, b in enumerate(bars)}
+    out = []
+    for m in matches:
+        i0, i1 = idx.get(m["start_t"]), idx.get(m["end_t"])
+        if i0 is None or i1 is None or i1 <= i0:
+            out.append(m)
+            continue
+        window = bars[i0:i1 + 1]
+        third = max(1, len(window) // 3)
+        first = sum(float(b["v"]) for b in window[:third]) / third
+        last = sum(float(b["v"]) for b in window[-third:]) / third
+        if last <= first:
+            out.append(m)
+    return out
+
+
+def _filter_breakout_volume(bars: list[dict], matches: list[dict], mult: float) -> list[dict]:
+    """Keep matches whose BREAKOUT candle volume >= `mult` × the trailing 20-bar
+    average — the expansion that separates a real break from the thin-volume fakeout.
+    Matches with no breakout in the apex region are dropped (never resolved up)."""
+    if mult <= 0:
+        return matches
+    out = []
+    for m in matches:
+        k = _breakout_idx(bars, m)
+        if k is None:
+            continue
+        prior = bars[max(0, k - 20):k]
+        avg = (sum(float(b["v"]) for b in prior) / len(prior)) if prior else 0.0
+        if avg > 0 and float(bars[k]["v"]) >= mult * avg:
+            out.append(m)
+    return out
+
+
+def _filter_time_of_day(bars: list[dict], matches: list[dict], tf: str) -> list[dict]:
+    """Intraday: drop matches whose BREAKOUT lands in a low-reliability window — the
+    first 30 min (09:30–10:00), the lunch lull (12:00–13:00), or the last 15 min
+    (15:45–16:00) ET. Daily passes through (no intraday session)."""
+    if tf == "daily" or _ET_TZ is None:
+        return matches
+
+    def _bad(mm):
+        return (570 <= mm < 600) or (720 <= mm < 780) or (945 <= mm < 960)
+
+    out = []
+    for m in matches:
+        k = _breakout_idx(bars, m)
+        if k is None:
+            out.append(m)               # no breakout → time-of-day n/a, keep
+            continue
+        mm = _et_minutes(bars[k]["t"])
+        if mm is None or not _bad(mm):
+            out.append(m)
+    return out
+
+
+def _filter_min_touches(matches: list[dict], n: int) -> list[dict]:
+    """Keep matches with >= `n` swing touches on BOTH the resistance and support line
+    (the detector records the counts in each match's notes)."""
+    if n <= 0:
+        return matches
+    return [m for m in matches
+            if int((m.get("notes") or {}).get("n_touch_res", 0)) >= n
+            and int((m.get("notes") or {}).get("n_touch_sup", 0)) >= n]
+
+
+def _apply_rules(raw, matches, tf, *, valid, trend, min_height_atr,
+                 vol_contract=False, breakout_vol=0.0, time_filter=False, min_touches=0):
     """Apply the user-toggled detection rules in order, returning the kept matches.
     Each is independently engaged from the rules panel; order is cheap→strong."""
     if valid:
@@ -300,6 +401,14 @@ def _apply_rules(raw, matches, tf, *, valid, trend, min_height_atr):
         matches = _filter_uptrend(raw, matches, tf)
     if min_height_atr and min_height_atr > 0:
         matches = _filter_min_height(raw, matches, min_height_atr)
+    if min_touches and min_touches > 0:
+        matches = _filter_min_touches(matches, min_touches)
+    if vol_contract:
+        matches = _filter_vol_contraction(raw, matches)
+    if breakout_vol and breakout_vol > 0:
+        matches = _filter_breakout_volume(raw, matches, breakout_vol)
+    if time_filter:
+        matches = _filter_time_of_day(raw, matches, tf)
     return matches
 
 
@@ -470,6 +579,10 @@ def pattern_detect(pattern_id: int,
                    valid: int = Query(1),             # 1 = drop support-breach breakdowns
                    min_height_atr: float = Query(0.0),  # >0 = require height >= N x ATR
                    score_min: float = Query(-1.0),    # >=0 = override the detector's fire cutoff
+                   vol_contract: int = Query(0),      # 1 = require volume contracting into apex
+                   breakout_vol: float = Query(0.0),  # >0 = require break vol >= N x 20-bar avg
+                   time_filter: int = Query(0),       # 1 = drop opens/lunch/close breakouts (intraday)
+                   min_touches: int = Query(0),       # >0 = require >= N touches per line
                    user: User = Depends(require_user), db: Session = Depends(get_db)):
     """Run the pattern's geometric detector over the chart's window and return its
     matches (with Lightweight-Charts time values) for the overlay. The detection
@@ -502,7 +615,9 @@ def pattern_detect(pattern_id: int,
                             status_code=500)
     n_raw = len(matches)
     matches = _apply_rules(raw, matches, tf, valid=bool(valid), trend=trend,
-                           min_height_atr=min_height_atr)
+                           min_height_atr=min_height_atr, vol_contract=bool(vol_contract),
+                           breakout_vol=breakout_vol, time_filter=bool(time_filter),
+                           min_touches=min_touches)
     out = [{**m,
             "start_time": _to_lwc_time(m["start_t"], tf),
             "end_time": _to_lwc_time(m["end_t"], tf)} for m in matches]
