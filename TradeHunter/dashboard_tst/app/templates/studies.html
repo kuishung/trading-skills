@@ -177,22 +177,22 @@
 </div>
 
 <style>
-  /* ——— scroll-compact chart (lg only): full chart ⇄ proportional ¼ chart ———
-     Compact scales the chart PROPORTIONALLY (half width × half height = ¼
-     area, keeping its shape) instead of squashing it into a full-width
-     ribbon; the trade-levels panel docks into the freed width beside it. */
+  /* ——— scroll-compact chart (lg only): full chart ⇄ ¾-width chart ———
+     Compact shrinks the chart to 3/4 of the middle panel (and a shorter
+     height) instead of squashing it into a full-width ribbon; the
+     trade-levels / support-resistance panel docks into the freed 1/4 beside it. */
   @media (min-width: 1024px) {
     /* no scroll anchoring: reparenting the panels out of the scroll zone must
        NOT make the browser "compensate" scrollTop back to 0 (would instantly
        un-compact and flicker) */
     #scrollZone { overflow-anchor: none; }
     /* chart floor (user, 2026-06-11): never smaller than 12cm × 8cm — the
-       compact 50%/32vh proportions apply only where they stay above that */
+       compact ¾/32vh proportions apply only where they stay above that */
     #chartZone { height: 56vh; min-height: 8cm; gap: 0;
                  transition: height .55s cubic-bezier(.33,.1,.2,1), gap .55s cubic-bezier(.33,.1,.2,1); }
     #studyMain.compact #chartZone { height: 32vh; gap: .5rem; }
     #chartHost { flex: 0 0 auto; width: 100%; transition: width .55s cubic-bezier(.33,.1,.2,1); }
-    #studyMain.compact #chartHost { width: 50%; min-width: 12cm; }
+    #studyMain.compact #chartHost { width: 75%; min-width: 12cm; }
     /* side dock fills the width the chart gives up */
     #sideCol { flex: 1 1 0; min-width: 0; opacity: 0; overflow: hidden;
                transition: opacity .3s ease .12s; }
@@ -204,8 +204,8 @@
        half-width header without cropping */
     #studyMain.compact .chart-legend { display: none; }
     #studyMain.compact #chartStatusSlot .st-extra { display: none; }
-    /* trade-levels grid: 3-up when docked in the side column */
-    #sideCol .lv-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    /* trade-levels grid: 2-up when docked in the narrower (1/4-width) side column */
+    #sideCol .lv-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     /* anti-flicker: guarantee the scroll zone stays scrollable while compact */
     #studyMain.compact #szSpacer { height: 10rem; }
   }

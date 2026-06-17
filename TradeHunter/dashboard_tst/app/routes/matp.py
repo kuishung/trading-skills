@@ -200,6 +200,17 @@ def matp_watchlist(
 
     live = _watchlist_signals([lv.symbol for lv in shown])
 
+    # "Refreshed" stamp for this watchlist: for a Finviz-filter watchlist it's
+    # the filter's last completed run (advanced by the scheduled MATP run); for
+    # All / Selective it falls back to the newest ticker as_of in the set.
+    wl_refreshed = None
+    if sel_wl in valid_ids:
+        f = next((x for x in active_filters if str(x.id) == sel_wl), None)
+        wl_refreshed = f.last_run_at if f else None
+    if wl_refreshed is None:
+        stamps = [lv.as_of for lv in shown if lv.as_of is not None]
+        wl_refreshed = max(stamps) if stamps else None
+
     # split: disqualified = live price ABOVE the max-buy price (MBP)
     qualified, disqualified = [], []
     for lv in shown:
@@ -221,6 +232,7 @@ def matp_watchlist(
             "sel_sym": (sym or "").strip().upper(),
             "sel_wl": sel_wl,
             "live": live,
+            "wl_refreshed": wl_refreshed,
         },
     )
 

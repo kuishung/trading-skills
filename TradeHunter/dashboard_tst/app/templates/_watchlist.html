@@ -2,6 +2,11 @@
    qualified, disqualified, dropped, open_symbols, sel_sym, live #}
 {% from "_wl_macros.html" import ticker_grid %}
 {% set wl = sel_wl or "" %}
+{% if wl_refreshed %}
+<div class="px-2 pt-1 pb-1 text-[11px] text-slate-500" title="Last completed refresh for this watchlist (UTC)">
+  Refreshed {{ wl_refreshed.strftime("%Y-%m-%d %H:%M") }} UTC
+</div>
+{% endif %}
 {% if qualified %}{{ ticker_grid(qualified, open_symbols, sel_sym, live, wl) }}
 {% elif not disqualified %}<p class="text-xs text-slate-500 px-2 py-2">No tickers here yet.</p>{% endif %}
 

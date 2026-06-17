@@ -485,10 +485,15 @@ def ingest_matp(
         if payload.filter_id is not None:
             f = db.get(FinvizFilter, payload.filter_id)
             filter_desc = f.description if f else None
-            # advance the filter's run schedule on a completed run
-            if f is not None and (RUN_INTERVALS.get(f.run_interval)):
+            # stamp the filter on a completed run. last_run_at advances on EVERY
+            # finished run (scheduled or manual / "off"); next_run_at only when the
+            # filter is on a schedule. Decoupled so the watchlist's "last refreshed"
+            # date is trustworthy regardless of interval.
+            if f is not None:
                 f.last_run_at = now
-                f.next_run_at = now + timedelta(days=RUN_INTERVALS[f.run_interval])
+                iv = RUN_INTERVALS.get(f.run_interval)
+                if iv:
+                    f.next_run_at = now + timedelta(days=iv)
                 db.commit()
         from ..services.matp_archive import save_run
 

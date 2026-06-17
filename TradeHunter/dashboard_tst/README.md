@@ -124,6 +124,31 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-17 — v3.31: Studies compact chart is 3/4 of the panel (S/R dock takes 1/4)
+- On the Studies / curate page, the scroll-compact chart now shrinks to **75%** of the
+  middle panel (was 50%), so the chart stays large when reduced and the trade-levels /
+  support-resistance panel docks into the remaining **1/4** (`studies.html`
+  `#studyMain.compact #chartHost { width: 75% }`).
+- The docked trade-levels grid drops from **3-up to 2-up** so the numbers stay readable
+  in the narrower 1/4 column (`#sideCol .lv-grid`).
+
+### 2026-06-17 — v3.30: Watchlist "Refreshed" date + reliable filter last-run stamp
+- **Screener watchlist now shows a "Refreshed <date> UTC" line** at the top of the
+  grid (`_watchlist.html`), so a watchlist's freshness is visible without opening a
+  chart. Source (`matp.py` `matp_watchlist`): for a Finviz-filter watchlist it's the
+  filter's `last_run_at` (advanced when the scheduled MATP run completes); for All /
+  Selective it falls back to the newest ticker `as_of` in the set.
+- **`last_run_at` decoupled from the schedule gate** (`api.py` `/matp` finalize): it
+  used to advance only when `RUN_INTERVALS.get(interval)` was truthy, so a finished run
+  on an `off`/manual filter never stamped a date. Now **every** completed filter run
+  (`final=True` + `filter_id`) sets `last_run_at = now`; `next_run_at` still only moves
+  when the filter is on a schedule. Makes the watchlist date trustworthy regardless of
+  interval.
+- **Data Ingest page** (`finviz.html`) now shows the `last …` date even for `off`
+  filters (it updates now), not just scheduled ones.
+- Verified: api.py/matp.py compile, templates parse, `_watchlist.html` renders the date,
+  app imports clean.
+
 ### 2026-06-17 — v3.29: Dark / light theme toggle (persisted, contrast-safe both ways)
 - The whole dashboard can now switch between **dark and light** via a sun/moon
   **toggle button** in the header (between the Nous Hermes pill and the user menu).

@@ -88,10 +88,10 @@
         {% else %}
         <span class="text-slate-400 text-xs">{{ f.run_interval }}</span>
         {% endif %}
-        {% if f.run_interval != "off" %}
+        {% if f.run_interval != "off" or f.last_run_at %}
         <div class="text-[11px] text-slate-500 mt-0.5">
-          {% if f.next_run_at %}next {{ f.next_run_at.strftime("%Y-%m-%d") }}{% else %}due now{% endif %}
-          {% if f.last_run_at %} &middot; last {{ f.last_run_at.strftime("%Y-%m-%d") }}{% endif %}
+          {% if f.run_interval != "off" %}{% if f.next_run_at %}next {{ f.next_run_at.strftime("%Y-%m-%d") }}{% else %}due now{% endif %}{% endif %}
+          {% if f.last_run_at %}{% if f.run_interval != "off" %} &middot; {% endif %}last {{ f.last_run_at.strftime("%Y-%m-%d") }}{% endif %}
         </div>
         {% endif %}
       </td>
