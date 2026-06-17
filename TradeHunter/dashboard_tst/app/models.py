@@ -63,6 +63,9 @@ class User(Base):
     picture = Column(String(512), nullable=True)
     role = Column(String(20), nullable=False, default="member")   # member | admin
     status = Column(String(20), nullable=False, default=PENDING)  # pending | approved | disabled
+    # per-user menu access — JSON list of menu keys (app/menus.py). NULL = all
+    # (back-compat / default-open); admin sets an explicit subset to restrict.
+    menu_access = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=_utcnow)
     approved_at = Column(DateTime, nullable=True)
 

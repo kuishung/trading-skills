@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..db import get_db
+from ..menus import ALL_KEYS, MENUS, allowed_keys
 from ..models import APPROVED, DISABLED, PENDING, ROLE_MEMBER, ROLES, User
 from ..security import hash_password, require_admin
 from ..services import discord
@@ -61,6 +62,8 @@ def admin_home(
             "auth_mode": settings.auth_mode,
             "is_google_auth": settings.is_google_auth,
             "discord_configured": discord.configured(),
+            "menus": MENUS,                                  # (key,label,group,href)
+            "menu_allowed": {u.id: allowed_keys(u) for u in members},  # per-user granted set
         },
     )
 
@@ -149,6 +152,23 @@ def set_role(
     # validate role; don't let an admin change their own role (lockout guard)
     if u and u.id != admin.id and role in ROLES:
         u.role = role
+        db.commit()
+    return RedirectResponse(url="/admin", status_code=303)
+
+
+@router.post("/users/{uid}/menus")
+def set_menus(
+    uid: int,
+    keys: list[str] = Form(default=[]),    # checked menu keys (unchecked = absent)
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Set a user's per-page menu access (app/menus.py keys). An explicit empty list
+    = no access; the granted subset hides everything else + blocks the URLs. Has no
+    effect on admins/moderators (they always see all). Members only."""
+    u = _get(db, uid)
+    if u is not None:
+        u.menu_access = [k for k in keys if k in ALL_KEYS]
         db.commit()
     return RedirectResponse(url="/admin", status_code=303)
 

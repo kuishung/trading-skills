@@ -24,6 +24,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import __version__ as APP_VERSION
+from . import menus
 from ._build import BUILD
 from .config import settings
 from .db import SessionLocal, init_db
@@ -56,7 +57,9 @@ for _routes_mod in (
     research_routes, patterns_routes, strategy_routes, portfolio_routes,
 ):
     _routes_mod.templates.env.globals["version"] = APP_VERSION
+    _routes_mod.templates.env.globals["nav_for"] = menus.nav_for   # access-filtered nav
 templates.env.globals["version"] = APP_VERSION
+templates.env.globals["nav_for"] = menus.nav_for
 
 
 def _bootstrap_admin_password() -> None:
@@ -135,17 +138,18 @@ def create_app() -> FastAPI:
     app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="static")
 
     app.include_router(auth_routes.router)
-    app.include_router(matp_routes.router)
-    app.include_router(studies_routes.router)
-    app.include_router(finviz_routes.router)
+    # page routers carry a per-menu access guard (blocks direct URLs; nav hides them too)
+    app.include_router(matp_routes.router, dependencies=[Depends(menus.require_menu("matp"))])
+    app.include_router(studies_routes.router, dependencies=[Depends(menus.require_menu("studies"))])
+    app.include_router(finviz_routes.router, dependencies=[Depends(menus.require_menu("screener"))])
     app.include_router(feedback_routes.router)
     app.include_router(admin_routes.router)
     app.include_router(agent_routes.router)
     app.include_router(api_routes.router)
     app.include_router(pipeline_routes.router)
-    app.include_router(research_routes.router)
-    app.include_router(strategy_routes.router)
-    app.include_router(portfolio_routes.router)
+    app.include_router(research_routes.router, dependencies=[Depends(menus.require_menu("macro", "company"))])
+    app.include_router(strategy_routes.router, dependencies=[Depends(menus.require_menu("strategy"))])
+    app.include_router(portfolio_routes.router, dependencies=[Depends(menus.require_menu("portfolio"))])
     # Pattern Trainer aborted (user, 2026-06-17): removed from the dashboard menu and
     # the routes disabled. Code/templates/models kept intact — re-enable by
     # uncommenting this line (and restoring the ('/patterns','Patterns') nav entry).

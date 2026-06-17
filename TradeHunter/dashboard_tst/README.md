@@ -124,7 +124,31 @@ surface takes shape.
 
 ## Changelog
 
-### 2026-06-17 — v3.19: Light (white) theme
+### 2026-06-17 — v3.21: Nav dropdown fixes (close-on-click-away + light-theme hover)
+- **Dropdowns now close** when you open another or click away (and on Escape). Native
+  `<details>` stay open otherwise — added a capture-phase document click handler that
+  closes any other open `header details[open]`.
+- **Light-theme hover fixed**: the `hover:` variants (`hover:bg-slate-800`,
+  `hover:text-slate-100/300`, accent `-300` hovers) weren't in the v3.19 remap, so on
+  hover the background went dark and text dark → "black, can't read the words". Added
+  the hover-state overrides (bg → light, text → dark / deep accent).
+
+### 2026-06-17 — v3.20: Per-user menu access (admin-controlled)
+- New **per-page menu access control**. The admin grants each member which menus they
+  can use; ungranted menus are **hidden from the nav AND blocked at the URL** (303
+  redirect to their first allowed page). Admins/moderators always see everything.
+- `app/menus.py` is the single registry (key/label/group/href) + helpers:
+  `allowed_keys(user)` (admin/mod → all; member `menu_access=None` → all for
+  back-compat; else the stored list), `user_can`, `nav_for(user)` (the access-filtered
+  grouped nav, registered as a Jinja global), and `require_menu(*keys)` (route-guard
+  dependency).
+- `base.html` renders the nav from `nav_for(user)`. Guards applied centrally via
+  `include_router(dependencies=[Depends(menus.require_menu(...))])` on matp/studies/
+  finviz(screener)/research(macro|company)/strategy/portfolio.
+- DB: `users.menu_access` JSON list (Alembic `d6e7f8a9b0c1`, nullable, default-open).
+  Admin console gains a **Menus** column — a per-member checkbox dropdown (`POST
+  /admin/users/{id}/menus`) showing `granted/total`. Verified: migration up, access
+  logic, nav filtering, and admin form all render.
 - Flipped the dashboard from dark to a **white/light theme** via a **centralized remap
   in `base.html`** — one `<style>` block `!important`-overrides the ~30 dark utility
   classes the templates use (surfaces dark→white, text light→dark, borders, and the
