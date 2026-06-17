@@ -1,0 +1,15 @@
+{# Local-time helper. Server stamps are UTC; we emit an ISO-UTC <time> element
+   that the base.html `localtime` script rewrites to the VIEWER's local timezone
+   (and re-runs after HTMX swaps). With JS off, the UTC text is the fallback.
+
+   The trailing 'Z' is appended explicitly so the browser parses the value as
+   UTC even when SQLite hands the datetime back naive (no tzinfo) — without it,
+   `new Date("2026-06-17T13:13:00")` would be read as LOCAL and double-shift.
+
+   Usage:  {% from "_time.html" import localtime %}  {{ localtime(some_dt) }}
+           {{ localtime(some_dt, date_only=True) }}   -> date with no clock #}
+{% macro localtime(dt, date_only=False) -%}
+{%- if dt -%}
+<time class="localtime"{% if date_only %} data-localdate="1"{% endif %} datetime="{{ dt.strftime('%Y-%m-%dT%H:%M:%SZ') }}">{% if date_only %}{{ dt.strftime('%Y-%m-%d') }}{% else %}{{ dt.strftime('%Y-%m-%d %H:%M') }} UTC{% endif %}</time>
+{%- else -%}-{%- endif -%}
+{%- endmacro %}

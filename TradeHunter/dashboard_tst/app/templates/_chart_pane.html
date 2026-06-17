@@ -1,0 +1,19 @@
+{# Chart pane for the MATP board. Rendered inline on first page load AND swapped
+   in via HTMX (GET /matp/chart) when a watchlist ticker is clicked — so picking a
+   ticker updates ONLY the chart, never reloads (and re-runs live-signal detection
+   for) the whole watchlist. Context: sel, sel_band, sel_patterns, user. #}
+{% if sel %}
+  {% set chart_symbol = sel.symbol %}
+  {% set chart_exchange = sel.exchange %}
+  {% set chart_matp = sel.matp %}
+  {% set chart_mbp = sel.mbp %}
+  {% set chart_as_of = sel.as_of %}
+  {% set chart_earnings = sel.last_earnings_date %}
+  {% set chart_band = sel_band %}
+  {% set chart_patterns = sel_patterns %}
+  {% set chart_fill = true %}
+  {% set chart_curatable = true %}
+  {% include "_price_chart.html" %}
+{% else %}
+<div class="flex-1 flex items-center justify-center text-slate-500 text-sm">No tickers yet &mdash; run a watchlist to populate.</div>
+{% endif %}

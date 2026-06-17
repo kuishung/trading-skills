@@ -45,6 +45,33 @@ templates = Jinja2Templates(
 )
 
 
+def _chart_context(db: Session, sel) -> dict:
+    """The selected ticker's consensus band + analyst summary + runtime patterns.
+    Shared by the full board (matp_home) and the lazy chart-pane swap (matp_chart)
+    so clicking a ticker recomputes only THAT ticker, never the whole watchlist."""
+    sel_band, sel_targets, sel_patterns = None, [], []
+    if sel is not None:
+        sel_targets = _ticker_targets(db, sel.symbol, sel.last_earnings_date)
+        analysis = _ticker_analysis(sel.symbol)
+        sel_patterns = analysis["patterns"]
+        latest = (
+            db.query(MATPHistory)
+            .filter(MATPHistory.symbol == sel.symbol)
+            .order_by(MATPHistory.as_of.desc())
+            .first()
+        )
+        if latest is not None:
+            incl = [
+                {"brokerage": t["brokerage"], "price": t["target_price"]}
+                for t in sel_targets if t["included"]
+            ]
+            sel_band = _build_band(
+                latest.target_low, latest.target_high, sel.mbp, sel.matp,
+                analysts=incl, current=analysis["current"],
+            )
+    return {"sel_band": sel_band, "sel_targets": sel_targets, "sel_patterns": sel_patterns}
+
+
 @router.get("", response_class=HTMLResponse)
 def matp_home(
     request: Request,
@@ -105,28 +132,7 @@ def matp_home(
         sel = shown_tickers[0] if shown_tickers else (active[0] if active else None)
 
     # selected ticker's consensus band + analyst summary + live analysis
-    sel_band = None
-    sel_targets = []
-    sel_patterns = []
-    if sel is not None:
-        sel_targets = _ticker_targets(db, sel.symbol, sel.last_earnings_date)
-        analysis = _ticker_analysis(sel.symbol)
-        sel_patterns = analysis["patterns"]
-        latest = (
-            db.query(MATPHistory)
-            .filter(MATPHistory.symbol == sel.symbol)
-            .order_by(MATPHistory.as_of.desc())
-            .first()
-        )
-        if latest is not None:
-            incl = [
-                {"brokerage": t["brokerage"], "price": t["target_price"]}
-                for t in sel_targets if t["included"]
-            ]
-            sel_band = _build_band(
-                latest.target_low, latest.target_high, sel.mbp, sel.matp,
-                analysts=incl, current=analysis["current"],
-            )
+    ctx = _chart_context(db, sel)
 
     return templates.TemplateResponse(
         request,
@@ -142,9 +148,7 @@ def matp_home(
             "open_filter_ids": open_filter_ids,
             "sel_wl": sel_wl,
             "sel": sel,
-            "sel_band": sel_band,
-            "sel_targets": sel_targets,
-            "sel_patterns": sel_patterns,
+            **ctx,
         },
     )
 
@@ -234,6 +238,26 @@ def matp_watchlist(
             "live": live,
             "wl_refreshed": wl_refreshed,
         },
+    )
+
+
+@router.get("/chart", response_class=HTMLResponse)
+def matp_chart(
+    request: Request,
+    symbol: str,
+    wl: str | None = None,      # kept for the pushed URL only; not used server-side
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Just the chart pane for ONE ticker. Swapped into #chartPane via HTMX when a
+    watchlist row is clicked, so selecting a ticker recomputes only that ticker —
+    not the whole watchlist's live trend/signal grid (the slow part)."""
+    sym = (symbol or "").strip().upper()
+    sel = db.query(MATPLevel).filter(MATPLevel.symbol == sym).first()
+    return templates.TemplateResponse(
+        request,
+        "_chart_pane.html",
+        {"user": user, "sel": sel, **_chart_context(db, sel)},
     )
 
 

@@ -108,28 +108,42 @@
     </div>
   </aside>
 
-  {# RIGHT: chart panel — fills the screen (chart canvas takes the remaining height) #}
-  <div class="lg:flex-1 min-w-0 lg:h-full flex flex-col lg:min-h-0 mt-4 lg:mt-0">
-    {% if sel %}
-      {% set chart_symbol = sel.symbol %}
-      {% set chart_exchange = sel.exchange %}
-      {% set chart_matp = sel.matp %}
-      {% set chart_mbp = sel.mbp %}
-      {% set chart_as_of = sel.as_of %}
-      {% set chart_earnings = sel.last_earnings_date %}
-      {% set chart_band = sel_band %}
-      {% set chart_patterns = sel_patterns %}
-      {% set chart_fill = true %}
-      {% set chart_curatable = true %}
-      {% include "_price_chart.html" %}
-    {% else %}
-    <div class="flex-1 flex items-center justify-center text-slate-500 text-sm">No tickers yet &mdash; run a watchlist to populate.</div>
-    {% endif %}
+  {# RIGHT: chart panel — fills the screen (chart canvas takes the remaining
+     height). Clicking a watchlist row HTMX-swaps ONLY this pane (#chartPane), so
+     the watchlist (and its live-signal recompute) doesn't reload every click. #}
+  <div id="chartPane" class="lg:flex-1 min-w-0 lg:h-full flex flex-col lg:min-h-0 mt-4 lg:mt-0">
+    {% include "_chart_pane.html" %}
   </div>
 </div>{# /lg:flex 3-pane #}
 </div>{# /h-full flex-col #}
 
 {% include "_at_modal.html" %}
+
+<script>
+  // Move the "selected" highlight to the clicked watchlist row immediately. The
+  // chart pane HTMX-swaps on click, but the watchlist DOM is left intact (that's
+  // the point), so we re-skin the rows here. Toggles the SAME Tailwind classes the
+  // server renders, so the light/dark remap keeps working. Delegated on document
+  // so it survives the watchlist's own lazy (re)loads.
+  (function () {
+    function selectRow(row) {
+      document.querySelectorAll('a.wl-row').forEach(function (r) {
+        var sym = r.querySelector('.wl-sym');
+        if (r === row) {
+          r.classList.add('bg-emerald-500/15'); r.classList.remove('hover:bg-slate-800/70');
+          if (sym) { sym.classList.add('text-emerald-300'); sym.classList.remove('text-white'); }
+        } else if (r.classList.contains('bg-emerald-500/15')) {
+          r.classList.remove('bg-emerald-500/15'); r.classList.add('hover:bg-slate-800/70');
+          if (sym) { sym.classList.remove('text-emerald-300'); sym.classList.add('text-white'); }
+        }
+      });
+    }
+    document.addEventListener('click', function (e) {
+      var row = e.target.closest ? e.target.closest('a.wl-row') : null;
+      if (row) selectRow(row);
+    });
+  })();
+</script>
 
 {% if open_reqs %}
 {# a run is active: refresh so newly-processed tickers appear (URL keeps ?symbol) #}

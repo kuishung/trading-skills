@@ -1,10 +1,11 @@
 {# Lazy-loaded watchlist grid (runtime trend/signal/price). Context:
    qualified, disqualified, dropped, open_symbols, sel_sym, live #}
 {% from "_wl_macros.html" import ticker_grid %}
+{% from "_time.html" import localtime %}
 {% set wl = sel_wl or "" %}
 {% if wl_refreshed %}
-<div class="px-2 pt-1 pb-1 text-[11px] text-slate-500" title="Last completed refresh for this watchlist (UTC)">
-  Refreshed {{ wl_refreshed.strftime("%Y-%m-%d %H:%M") }} UTC
+<div class="px-2 pt-1 pb-1 text-[11px] text-slate-500" title="Last completed refresh for this watchlist">
+  Refreshed {{ localtime(wl_refreshed) }}
 </div>
 {% endif %}
 {% if qualified %}{{ ticker_grid(qualified, open_symbols, sel_sym, live, wl) }}

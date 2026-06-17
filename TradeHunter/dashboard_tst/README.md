@@ -124,6 +124,40 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-17 — v3.33: Clicking a watchlist ticker swaps only the chart (no full reload)
+- **Problem:** clicking a ticker did a full-page navigation to `/matp?symbol=…`, which
+  re-lazy-loaded the whole watchlist and re-ran `_watchlist_signals()` (live trend/signal
+  detection, Yahoo fetch per name) for **every** ticker — so every click reloaded the
+  whole watchlist.
+- **Fix:** ticker rows now HTMX-swap **only** the chart pane. New `GET /matp/chart`
+  endpoint (`matp.py`) renders the new `_chart_pane.html` partial for one symbol, and the
+  shared `_chart_context()` helper recomputes only the selected ticker's band/patterns
+  (matp_home reuses it). Rows carry `hx-get` → `#chartPane` + `hx-push-url` (URL still
+  updates; href kept as no-JS / middle-click fallback). Route declared before `/{symbol}`
+  so it isn't shadowed.
+- The watchlist DOM is left intact, so a small delegated script (`matp.html`) moves the
+  "selected" highlight to the clicked row by toggling the same Tailwind classes the server
+  renders (keeps the light/dark remap working).
+- Result: selecting a ticker is now a single small request for that ticker's chart, not a
+  whole-watchlist recompute. `_wl_macros.html` `ticker_grid` is used only by the MATP
+  watchlist, so the change is scoped there.
+- Verified: matp.py compiles, templates parse, `_chart_pane.html` renders a full chart
+  pane (+ no-ticker fallback), all matp.html scripts pass `node --check`, app imports clean.
+
+### 2026-06-17 — v3.32: Dashboard timestamps render in the viewer's local time
+- Server stamps are UTC, but every user now reads dashboard times in **their own
+  local timezone**. New reusable macro `_time.html` `localtime(dt, date_only=False)`
+  emits `<time class="localtime" datetime="<ISO-UTC>">…UTC</time>` (trailing `Z` forces
+  UTC parsing even when SQLite returns the datetime naive); a global script in
+  `base.html` rewrites those elements to `toLocaleString()` in the browser and re-runs
+  after HTMX swaps (lazy-loaded panels). JS-off fallback = the UTC text.
+- Applied to the MATP-area timestamps: screener watchlist **Refreshed** (`_watchlist.html`),
+  chart **calculated** (`_price_chart.html`), targets **Extracted** (`_targets_modal.html`),
+  and the detail page **Updated** + MATP-history table (`matp_detail.html`). Hover shows
+  the full local time + timezone.
+- Other pages' timestamps (agent, research, studies chat) can adopt the same macro on
+  request — the mechanism is global.
+
 ### 2026-06-17 — v3.31: Studies compact chart is 3/4 of the panel (S/R dock takes 1/4)
 - On the Studies / curate page, the scroll-compact chart now shrinks to **75%** of the
   middle panel (was 50%), so the chart stays large when reduced and the trade-levels /
