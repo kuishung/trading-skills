@@ -717,6 +717,26 @@ def archive_pattern(pattern_id: int, user: User = Depends(require_user),
     return RedirectResponse(url="/patterns", status_code=303)
 
 
+@router.post("/{pattern_id}/reset")
+def reset_pattern(pattern_id: int, user: User = Depends(require_user),
+                  db: Session = Depends(get_db)):
+    """Full reset — a blank slate to re-teach from scratch: delete ALL saved teaching
+    examples (positives + counters), clear the fitted calibration (back to seed
+    thresholds), and set status back to `learning`. The code/spec (detect.py,
+    pattern.md) is untouched. Destructive on the pattern's DB state; confirmed in UI."""
+    p = _get_pattern(db, pattern_id, user)
+    n = len(p.examples)
+    for e in list(p.examples):
+        db.delete(e)
+    p.detector_thresholds = None
+    p.detector_version = None
+    p.calib_pass_rate = None
+    p.calib_at = None
+    p.status = PT_LEARNING
+    db.commit()
+    return JSONResponse({"ok": True, "deleted_examples": n, "readiness": _readiness(p)})
+
+
 # --------------------------------------------------------------------------- #
 # Calibrate / Promote — the Teach -> Calibrate -> Test -> Promote loop
 # --------------------------------------------------------------------------- #

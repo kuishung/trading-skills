@@ -37,7 +37,9 @@ from .routes import finviz as finviz_routes
 from .routes import matp as matp_routes
 from .routes import patterns as patterns_routes
 from .routes import pipeline as pipeline_routes
+from .routes import portfolio as portfolio_routes
 from .routes import research as research_routes
+from .routes import strategy as strategy_routes
 from .routes import studies as studies_routes
 from .security import current_user, hash_password
 
@@ -51,7 +53,7 @@ templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
 for _routes_mod in (
     auth_routes, matp_routes, studies_routes,
     finviz_routes, feedback_routes, admin_routes, agent_routes, pipeline_routes,
-    research_routes, patterns_routes,
+    research_routes, patterns_routes, strategy_routes, portfolio_routes,
 ):
     _routes_mod.templates.env.globals["version"] = APP_VERSION
 templates.env.globals["version"] = APP_VERSION
@@ -142,7 +144,12 @@ def create_app() -> FastAPI:
     app.include_router(api_routes.router)
     app.include_router(pipeline_routes.router)
     app.include_router(research_routes.router)
-    app.include_router(patterns_routes.router)
+    app.include_router(strategy_routes.router)
+    app.include_router(portfolio_routes.router)
+    # Pattern Trainer aborted (user, 2026-06-17): removed from the dashboard menu and
+    # the routes disabled. Code/templates/models kept intact — re-enable by
+    # uncommenting this line (and restoring the ('/patterns','Patterns') nav entry).
+    # app.include_router(patterns_routes.router)
 
     @app.get("/health")
     def health():

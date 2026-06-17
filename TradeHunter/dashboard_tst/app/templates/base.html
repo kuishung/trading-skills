@@ -45,14 +45,12 @@
      passes a Pattern as `p`; while this was named `p`, every {{ p.name }} there
      resolved against this URL string -> all fields rendered blank. Keep distinct. #}
   {% set nav_path = request.url.path %}
-  {% set nav = [
-    ('/matp', 'MATP'),
-    ('/studies', 'Studies'),
-    ('/finviz', 'Data Ingest'),
-    ('/patterns', 'Patterns'),
-    ('/research', 'Research'),
-    ('/profile', 'Profile'),
+  {% set nav_groups = [
+    ('Investing',     [('/research?kind=macro', 'Macro'), ('/research?kind=company', 'Company')]),
+    ('Swing & Trend', [('/matp', 'MATP'), ('/studies', 'Studies')]),
+    ('Intraday',      [('/finviz', 'Screener'), ('/strategy', 'Strategy')]),
   ] %}
+  {% set nav_singles = [('/portfolio', 'My Portfolio')] %}
   <div class="flex flex-col min-h-screen lg:h-screen">
 
     {# ---------------- top bar (nav relocated here) ---------------- #}
@@ -63,12 +61,30 @@
           <span class="text-slate-300 text-sm font-semibold">v{{ version }}</span></span>
       </a>
       <nav class="flex items-center gap-1 text-sm min-w-0 overflow-x-auto">
-        {% for href, label in nav %}
+        {# grouped categories as dropdowns: Investing / Swing & Trend / Intraday #}
+        {% for group, items in nav_groups %}
+        {% set ns = namespace(active=false) %}
+        {% for href, label in items %}{% if nav_path.startswith(href.split('?')[0]) %}{% set ns.active = true %}{% endif %}{% endfor %}
+        <details class="relative shrink-0">
+          <summary class="cursor-pointer list-none rounded-lg px-3 py-1.5 whitespace-nowrap transition flex items-center gap-1
+                          {% if ns.active %}bg-orange-500/15 text-orange-300{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-orange-300{% endif %}">
+            {{ group }}
+            <svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor" class="text-slate-500"><path d="M5.5 7.5 10 12l4.5-4.5z"/></svg>
+          </summary>
+          <div class="absolute left-0 mt-2 w-44 rounded-lg border border-slate-800 bg-slate-900 shadow-xl py-1 z-30">
+            {% for href, label in items %}
+            <a href="{{ href }}" class="block px-3 py-2 text-sm whitespace-nowrap
+                    {% if nav_path.startswith(href.split('?')[0]) %}text-orange-300{% else %}text-slate-300 hover:bg-slate-800 hover:text-orange-300{% endif %}">{{ label }}</a>
+            {% endfor %}
+          </div>
+        </details>
+        {% endfor %}
+        {# single top-level items (My Portfolio) #}
+        {% for href, label in nav_singles %}
         <a href="{{ href }}"
            class="rounded-lg px-3 py-1.5 whitespace-nowrap transition
                   {% if nav_path.startswith(href) %}bg-orange-500/15 text-orange-300{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-orange-300{% endif %}">{{ label }}</a>
         {% endfor %}
-        {# 'Agent' nav item removed — the Nous Hermes pill (right) already links to /agent #}
         {% if user.is_admin %}
         <a href="/admin"
            class="rounded-lg px-3 py-1.5 whitespace-nowrap transition
@@ -103,6 +119,7 @@
             <div class="text-sm text-slate-200 truncate">{{ user.display_name or user.email }}</div>
             <div class="text-xs text-slate-500">{{ user.role_label }}{% if user.email and user.display_name %} &middot; {{ user.email }}{% endif %}</div>
           </div>
+          <a href="/profile" class="block px-3 py-2 text-sm text-slate-300 hover:bg-slate-800 hover:text-orange-300">Profile</a>
           <form method="post" action="/logout">
             <button class="w-full text-left px-3 py-2 text-sm text-slate-300 hover:bg-slate-800 hover:text-rose-400 flex items-center gap-2">
               <svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor"><path d="M3 3h7v2H5v10h5v2H3zM13 6l5 4-5 4v-3H8V9h5z"/></svg>

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
@@ -59,16 +59,20 @@ def _get_topic(db: Session, topic_id: int, user: User) -> ResearchTopic:
 @router.get("", response_class=HTMLResponse)
 def research_home(
     request: Request,
+    kind: str = Query(""),    # Investing > Macro / Company filter the list by kind
     user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ):
     q = db.query(ResearchTopic)
     if not user.can_moderate:
         q = q.filter(ResearchTopic.owner_id == user.id)
+    if kind in _KINDS:
+        q = q.filter(ResearchTopic.kind == kind)
     topics = q.order_by(ResearchTopic.updated_at.desc()).all()
     return templates.TemplateResponse(
         request, "research.html",
         {"user": user, "topics": topics, "kinds": _KINDS,
+         "active_kind": kind if kind in _KINDS else "",
          "chat_ready": research_llm.is_configured(),
          "chat_mode": research_llm.chat_mode()},
     )

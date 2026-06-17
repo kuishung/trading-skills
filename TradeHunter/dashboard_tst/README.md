@@ -124,6 +124,36 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-17 — v3.17: Navigation regrouped into categories
+- The flat top-nav is now **grouped dropdowns** by trading horizon (user IA):
+  **Investing** (Macro / Company → `/research?kind=…`), **Swing & Trend**
+  (MATP / Studies), **Intraday** (Screener=`/finviz` renamed / Strategy), and a
+  top-level **My Portfolio**. Each group is a `<details>` dropdown; the active group
+  highlights from the current path.
+- New placeholder pages + routes: **`/strategy`** (Intraday — the Finviz→levels→Alpaca
+  pipeline home) and **`/portfolio`** (Alpaca account view) — both "under construction"
+  shells (`strategy.html`). Registered in `main.py` (+ version-globals).
+- `research` route takes `?kind=macro|company` to filter the list (drives Macro/Company).
+- Profile moved into the user dropdown (kept reachable). "Data Ingest" label → "Screener".
+- Per user request: removed the **Patterns** entry from the nav menu (`base.html`) and
+  **disabled the patterns router** (`main.py` `include_router` commented out → routes
+  no longer registered, `/patterns*` 404s). The code, templates, models, and the
+  `strategy/patterns` detector engine are **kept intact** — re-enable by uncommenting
+  the one `include_router` line and restoring the nav entry.
+
+### 2026-06-17 — v3.15: Pattern Trainer — draw spawns in the visible range
+- "Draw ascending triangle" now places its handles inside the chart's **currently
+  visible range** (`getVisibleLogicalRange`, at ~20%/70% across it), not the last ~30
+  bars — so the triangle appears where you're looking even after scrolling back.
+  Falls back to the recent window if the view is empty/too narrow.
+
+### 2026-06-17 — v3.14: Pattern Trainer — Reset (start over) button
+- New **`POST /patterns/{id}/reset`** + a **Reset (start over)** button in the
+  calibration card: deletes ALL saved examples, clears the fitted calibration (back
+  to seed thresholds), and sets status to `learning` — a blank slate to re-teach.
+  Confirms first; the code/spec (`detect.py`, `pattern.md`) is untouched. UI clears
+  the gallery, readiness, and threshold chips on success.
+
 ### 2026-06-17 — v3.13: Pattern Trainer — measured-move target + H at the base
 - Matches the user's reference diagram: **H** is now defined as resistance − the
   **rising support at the LEFT base** (`sup.p0`), not ceiling − lowest-low — both the

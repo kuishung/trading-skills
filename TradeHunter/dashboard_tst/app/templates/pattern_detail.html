@@ -128,6 +128,9 @@
         </div>
         <div id="scanList" class="flex flex-col gap-1 max-h-64 overflow-y-auto"></div>
       </div>
+      <div class="mt-2 pt-2 border-t border-slate-800 text-right">
+        <button id="resetBtn" class="text-[11px] text-slate-500 hover:text-rose-300" title="Delete all examples + calibration and start over">&#8635; Reset (start over)</button>
+      </div>
     </section>
 
     {# ---- saved examples gallery ---- #}
@@ -303,6 +306,18 @@
       var d = await (await fetch('/patterns/' + pid + '/reopen', { method: 'POST' })).json();
       if (d.ok) { renderReadiness(d.readiness); status.textContent = 'reopened for editing'; }
     } catch (e) { status.textContent = 'reopen error'; }
+  });
+  document.getElementById('resetBtn').addEventListener('click', async function () {
+    if (!confirm('Reset this pattern? Deletes ALL saved examples and the calibration, back to a blank slate. This cannot be undone.')) return;
+    try {
+      var d = await (await fetch('/patterns/' + pid + '/reset', { method: 'POST' })).json();
+      if (!d.ok) { status.textContent = d.error || 'reset failed'; return; }
+      exList.querySelectorAll('.exItem').forEach(function (it) { it.remove(); });   // clear gallery
+      refreshCount();
+      renderReadiness(d.readiness); renderThresholds(null); detVer.textContent = 'seed';
+      clearOverlay();
+      status.textContent = 'reset — ' + (d.deleted_examples || 0) + ' examples deleted, calibration cleared';
+    } catch (e) { status.textContent = 'reset error'; }
   });
 
   // ---------- universe scan ----------
@@ -576,9 +591,19 @@
     }
     drawing = true; drawBtn.classList.add('bg-violet-500/20'); drawActions.classList.remove('hidden');
     clearDraw();
-    var n = loaded.length, iA = Math.max(0, n - 30), iB = n - 3;
+    var n = loaded.length;
+    // place the handles inside the CURRENTLY VISIBLE range, not the last bars — so the
+    // triangle spawns where you're looking even if you've scrolled back.
+    var vr = null; try { vr = chart.timeScale().getVisibleLogicalRange(); } catch (e) {}
+    var lo = vr ? Math.max(0, Math.ceil(vr.from)) : Math.max(0, n - 30);
+    var hi = vr ? Math.min(n - 1, Math.floor(vr.to)) : (n - 1);
+    if (hi - lo < 4) { lo = Math.max(0, n - 30); hi = n - 1; }   // view too narrow/empty → fall back
+    var span = hi - lo;
+    var iA = Math.min(n - 1, Math.round(lo + span * 0.2));
+    var iB = Math.min(n - 1, Math.round(lo + span * 0.7));
+    if (iB <= iA) iB = Math.min(n - 1, iA + 1);
     addSupHandle(loaded[iA]); addSupHandle(loaded[iB]);
-    resPrice = Math.max.apply(null, loaded.slice(iA, iB + 1).map(function (b) { return b.high; }));   // flat top starts at the window high
+    resPrice = Math.max.apply(null, loaded.slice(iA, iB + 1).map(function (b) { return b.high; }));   // flat top starts at the visible high
     addResHandle();
     redrawLines(); positionDots();
     status.textContent = 'drag the amber resistance up/down + the cyan support onto the lows, then Save';
