@@ -124,6 +124,32 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-16 — v3.06: Pattern Trainer — single-pane layout, big chart, horizontal-R teaching
+- Dropped the **Teach/Test toggle**. One layout: a **big chart** (600px, now 3/4 width
+  on a 4-col grid) with the **Detector / Find pattern panel moved to the upper-right**;
+  teaching controls (Draw triangle → Save positive/counter) live inline in the toolbar.
+- **Teaching is now adjust-the-lines**: the resistance is a **strict horizontal** line
+  you drag up/down to set the flat break level; the **ascending support** is two
+  handles snapping to the rising lows (the tightening range). Saved geometry has
+  `resistance.p0 == p1` (horizontal). The draw handles were reworked accordingly
+  (`addResHandle` = vertical price drag via `coordinateToPrice`; `addSupHandle` = snap
+  to bar low).
+- The detection overlay (`drawAnatomy`) now redraws the same anatomy: horizontal
+  resistance (break level) + ascending support + break ↑ marker, with the matched
+  candles highlighted and the rest greyed. Uptrend-only EMA gate (v3.04) unchanged.
+- Frontend-only; rendered JS passes `node --check`. (Needs live testing on deploy.)
+- Reworked the detection overlay around the user's feedback. Selecting a match now
+  **highlights the pattern's candles in full colour and greys out every other bar**
+  (`renderCandles` + `hiRange`) — the clearest "which portion is the pattern" signal —
+  and the chart **zooms to it**. The overlay is now a **single horizontal resistance
+  line** at the break-out ceiling (start → break candle) plus the `break ↑` marker;
+  the **support line was dropped** per request. Extended-hours dimming remains the
+  resting-state shading (when no match is selected); when a match is selected the
+  highlight takes over. Uptrend-only EMA gate (v3.04) unchanged and still applied.
+- Note: true vertical session lines / TV-style ETH background bands aren't natively
+  supported by Lightweight Charts, so ETH stays candle-shaded at rest — a custom
+  chart primitive would be needed for literal vertical lines (flagged, not built).
+
 ### 2026-06-16 — v3.04: Pattern Trainer — Find pattern is uptrend-only (EMA gate)
 - An ascending triangle is a bullish continuation, so Find pattern (and the universe
   scan) now keep only matches whose window ends in an **uptrend**, judged by the same

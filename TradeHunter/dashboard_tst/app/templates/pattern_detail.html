@@ -18,12 +18,12 @@
   </div>
 </div>
 
-<div class="grid lg:grid-cols-3 gap-4">
+<div class="grid lg:grid-cols-4 gap-4">
 
-  {# ============================= chart workspace ============================= #}
+  {# ============================= chart workspace (big) ============================= #}
   <section id="chartwrap" data-pattern="{{ p.id }}"
            data-symbol="{{ p.chart_symbol or '' }}" data-tf="{{ p.chart_timeframe or 'daily' }}"
-           class="lg:col-span-2 rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+           class="lg:col-span-3 rounded-lg border border-slate-800 bg-slate-900/40 p-3">
     <div class="flex flex-wrap items-end gap-2 mb-2">
       <div>
         <label class="block text-[11px] text-slate-500 mb-1">Ticker</label>
@@ -40,17 +40,7 @@
       </div>
       <button id="loadBtn" class="rounded bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 text-sm font-medium">Load</button>
       <div class="w-px h-8 bg-slate-700 mx-1"></div>
-      {# the one mode switch — Teach (draw examples) vs Test (run the detector) #}
-      <div class="inline-flex rounded-lg border border-slate-700 overflow-hidden text-sm">
-        <button id="teachTab" class="px-3 py-1.5 flex items-center gap-1.5">&#9651; Teach</button>
-        <button id="testTab" class="px-3 py-1.5 flex items-center gap-1.5 text-slate-400">&#9678; Test</button>
-      </div>
-      <span id="emaLegend" class="text-[11px] ml-2"></span>
-      <span id="chartStatus" class="ml-auto text-xs text-slate-500"></span>
-    </div>
-
-    {# --- TEACH bar: draw the triangle, save as a positive/counter example --- #}
-    <div id="teachBar" class="flex flex-wrap items-center gap-2 mb-2">
+      {# teaching = adjust the lines directly on the chart (no mode switch) #}
       <button id="drawBtn" class="rounded border border-violet-500/60 text-violet-300 hover:bg-violet-500/10 px-3 py-1.5 text-sm">&#9651; Draw triangle</button>
       <span id="drawActions" class="hidden flex items-center gap-2">
         <input id="drawLabel" placeholder="label (optional)" class="w-32 rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-xs focus:border-emerald-500 outline-none">
@@ -60,31 +50,29 @@
       </span>
       <span id="markInfo" class="text-xs text-slate-400"></span>
       <a id="clearMark" href="#" class="text-[11px] text-slate-500 hover:text-rose-300 hidden">clear</a>
-      <span class="text-[11px] text-slate-500">drag the <span class="text-rose-300">resistance</span> + <span class="text-emerald-300">support</span> handles onto the shape — the drawing is the label.</span>
+      <span id="emaLegend" class="text-[11px] ml-2"></span>
+      <span id="chartStatus" class="ml-auto text-xs text-slate-500"></span>
     </div>
-
-    {# --- TEST bar: run the detector on this chart, then correct its misfires --- #}
-    <div id="testBar" class="hidden flex flex-wrap items-center gap-2 mb-2">
-      <button id="findBtn" class="rounded border border-cyan-500/60 text-cyan-300 hover:bg-cyan-500/10 px-3 py-1.5 text-sm" title="Run the geometric detector on this chart and overlay what it flags">&#9678; Find pattern</button>
-      <span class="text-[11px] text-slate-500">runs your <b>calibrated</b> detector on this chart — mark each hit &#10003;&nbsp;correct or &#10007;&nbsp;wrong to feed calibration.</span>
-    </div>
-
-    <div id="chart" class="relative" style="height:440px;"></div>
-
-    {# detector overlay results (Test mode) #}
-    <div id="detResults" class="hidden mt-2 rounded-lg border border-cyan-500/25 bg-cyan-500/5 p-2">
-      <div class="flex items-center gap-2 mb-1">
-        <span class="text-xs font-semibold text-cyan-300">&#9678; Detector</span>
-        <span id="detSummary" class="text-[11px] text-slate-400"></span>
-        <a id="detClear" href="#" class="ml-auto text-[11px] text-slate-500 hover:text-rose-300">clear</a>
-      </div>
-      <div id="detList" class="flex flex-col gap-1.5"></div>
-      <p class="text-[10px] text-slate-500 mt-1">Each match draws <span class="text-amber-300">resistance</span> (flat top), the <span class="text-cyan-300">ascending support</span> (tightening range), and a <span class="text-emerald-300">break&nbsp;&uarr;</span> marker on the first candle to close above resistance. Strongest match auto-draws; click any row to draw + zoom. &#10003;&nbsp;correct / &#10007;&nbsp;wrong saves it as an example. Offline check — never a live signal.</p>
-    </div>
+    <p class="text-[11px] text-slate-500 mb-2">Teach by adjusting the lines: drag the <span class="text-amber-300">horizontal resistance</span> (the flat break level) up/down, and the <span class="text-cyan-300">ascending support</span> handles onto the rising lows. Then <b>Save positive</b> / <b>counter</b>.</p>
+    <div id="chart" class="relative" style="height:600px;"></div>
   </section>
 
-  {# ================================ brain sidebar ================================ #}
-  <aside class="flex flex-col gap-4">
+  {# ================================ right column ================================ #}
+  <aside class="lg:col-span-1 flex flex-col gap-4">
+
+    {# ---- detector / Find panel (upper right) ---- #}
+    <section class="rounded-lg border border-cyan-500/30 bg-cyan-500/5 p-3">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="text-xs font-semibold text-cyan-300">&#9678; Detector</span>
+        <a id="detClear" href="#" class="ml-auto text-[11px] text-slate-500 hover:text-rose-300">clear</a>
+      </div>
+      <button id="findBtn" class="w-full rounded bg-cyan-600 hover:bg-cyan-500 px-3 py-1.5 text-sm font-medium" title="Run the geometric detector on this chart">&#9678; Find pattern</button>
+      <div id="detResults" class="hidden mt-2">
+        <div id="detSummary" class="text-[11px] text-slate-400 mb-1"></div>
+        <div id="detList" class="flex flex-col gap-1.5 max-h-80 overflow-y-auto"></div>
+        <p class="text-[10px] text-slate-500 mt-1">Selecting a match <b>highlights its candles</b> (rest grey), draws the <span class="text-amber-300">horizontal resistance</span> + <span class="text-cyan-300">ascending support</span> and a <span class="text-emerald-300">break&nbsp;&uarr;</span> marker, and zooms in. &#10003;&nbsp;/&nbsp;&#10007; saves it as an example.</p>
+      </div>
+    </section>
 
     {# ---- readiness card ---- #}
     <section class="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
@@ -105,10 +93,10 @@
       <div id="rdHint" class="text-[11px] text-slate-400">{{ readiness.hint }}</div>
     </section>
 
-    {# ---- detector card ---- #}
+    {# ---- calibration card ---- #}
     <section class="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
       <div class="flex items-baseline gap-2 mb-2">
-        <span class="text-xs font-semibold text-white">&#9881; Detector</span>
+        <span class="text-xs font-semibold text-white">&#9881; Calibration</span>
         <span id="detVer" class="text-[11px] text-slate-500 font-mono">{{ detector.version or 'seed' }}</span>
       </div>
       <div id="thrChips" class="flex flex-wrap gap-1 mb-3"></div>
@@ -172,7 +160,7 @@
 
   // ---------- chart ----------
   var chart = LightweightCharts.createChart(el, {
-    width: el.clientWidth || el.offsetWidth || 800, height: 440,
+    width: el.clientWidth || el.offsetWidth || 800, height: 600,
     layout: { background: { color: '#0f172a' }, textColor: '#94a3b8' },
     grid: { vertLines: { color: 'rgba(148,163,184,0.08)' }, horzLines: { color: 'rgba(148,163,184,0.08)' } },
     rightPriceScale: { borderColor: 'rgba(148,163,184,0.2)' },
@@ -182,7 +170,7 @@
     upColor: '#10b981', downColor: '#ef4444', borderVisible: false,
     wickUpColor: '#10b981', wickDownColor: '#ef4444'
   });
-  function syncSize() { chart.applyOptions({ width: el.clientWidth || el.offsetWidth || 800, height: 440 }); }
+  function syncSize() { chart.applyOptions({ width: el.clientWidth || el.offsetWidth || 800, height: 600 }); }
   window.addEventListener('resize', syncSize);
   if (window.ResizeObserver) { new ResizeObserver(syncSize).observe(el); }
   setTimeout(syncSize, 50);
@@ -203,7 +191,7 @@
     var tf = tfSelect.value;
     if (!sym) { status.textContent = 'enter a ticker'; return; }
     status.textContent = 'loading…';
-    clearMarking(); clearDetectorLines();
+    clearMarking(); _removeOverlay(); hiRange = null;
     try {
       var res = await fetch('/patterns/' + pid + '/bars?symbol=' + encodeURIComponent(sym) + '&tf=' + tf + '&_=' + Date.now(), { cache: 'no-store' });
       var d = await res.json();
@@ -211,7 +199,7 @@
       loaded = d.bars;
       timeToIso.clear();
       loaded.forEach(function (b) { timeToIso.set(String(normTime(b.time)), b.t); });
-      series.setData(loaded.map(function (b) { return candlePoint(b, tf); }));
+      renderCandles();
       drawEmas(tf);
       chart.timeScale().fitContent();
       status.textContent = sym + ' · ' + tf + ' · ' + d.count + ' bars';
@@ -318,7 +306,7 @@
         b.className = 'flex items-center gap-2 w-full text-left rounded border border-slate-700 bg-slate-950/40 px-2 py-1 text-[11px] hover:border-cyan-500/60 transition';
         b.innerHTML = '<span class="font-mono text-cyan-300">' + pct + '%</span><span class="font-semibold text-white">' + m.symbol + '</span><span class="text-slate-500">' + (m.start_t || '').slice(0, 10) + '</span>';
         b.addEventListener('click', async function () {
-          symInput.value = m.symbol; tfSelect.value = d.tf; setMode('test'); await load();
+          symInput.value = m.symbol; tfSelect.value = d.tf; await load();
           try { chart.timeScale().setVisibleRange({ from: m.start_time, to: m.end_time }); } catch (e) {}
           status.textContent = m.symbol + ' · detector ' + pct + '%';
         });
@@ -357,7 +345,7 @@
     try {
       var res = await fetch('/patterns/' + pid + '/detect?symbol=' + encodeURIComponent(sym) + '&tf=' + tf + '&_=' + Date.now(), { cache: 'no-store' });
       var d = await res.json();
-      clearDetectorLines();
+      clearOverlay();
       detList.innerHTML = '';
       if (!d.ok) { detSummary.textContent = 'detector error: ' + (d.error || '?'); detResults.classList.remove('hidden'); return; }
       detSummary.textContent = d.count + ' region' + (d.count === 1 ? '' : 's') + ' flagged'
@@ -380,8 +368,7 @@
           + '<span class="text-slate-400">' + (m.end_t || '').slice(5, 16) + '</span>';
         zoom.title = JSON.stringify(m.notes || {});
         zoom.addEventListener('click', function () {
-          drawDetectorLines(m.lines);
-          try { chart.timeScale().setVisibleRange({ from: m.start_time, to: m.end_time }); } catch (e) {}
+          selectMatch(m);
           var nt = m.notes || {};
           status.textContent = 'detector ' + pct + '% · touches ' + nt.n_touch_res + '/' + nt.n_touch_sup + ' · contr ' + nt.contraction + ' · apex ' + nt.apex_bars + ' bars';
         });
@@ -394,17 +381,14 @@
         row.appendChild(zoom); row.appendChild(ok); row.appendChild(no);
         detList.appendChild(row);
       });
-      if (sorted.length) {   // immediately show the strongest match so you see WHERE
-        drawDetectorLines(sorted[0].lines);
-        try { chart.timeScale().setVisibleRange({ from: sorted[0].start_time, to: sorted[0].end_time }); } catch (e) {}
-      }
+      if (sorted.length) selectMatch(sorted[0]);   // auto-show the strongest match
       detResults.classList.remove('hidden');
     } catch (e) {
       detSummary.textContent = 'scan failed'; detResults.classList.remove('hidden');
     } finally { findBtn.disabled = false; findBtn.textContent = old; }
   }
   if (findBtn) findBtn.addEventListener('click', findPattern);
-  document.getElementById('detClear').addEventListener('click', function (e) { e.preventDefault(); detResults.classList.add('hidden'); detList.innerHTML = ''; clearDetectorLines(); });
+  document.getElementById('detClear').addEventListener('click', function (e) { e.preventDefault(); detResults.classList.add('hidden'); detList.innerHTML = ''; clearOverlay(); });
 
   // ---------- region markers (used to redraw legacy non-geometry examples) ----------
   function clearMarking() {
@@ -470,7 +454,7 @@
   }
   async function loadExample(item) {
     symInput.value = item.dataset.symbol; tfSelect.value = item.dataset.tf;
-    setMode('teach'); await load();
+    await load();
     var geo = null; try { geo = item.dataset.geometry ? JSON.parse(item.dataset.geometry) : null; } catch (e) {}
     if (geo && geo.resistance && geo.support) { showGeometry(geo); }
     else if (!applyMarkedRegion(item.dataset.start, item.dataset.end)) { status.textContent += ' (region outside the loaded window)'; }
@@ -493,47 +477,67 @@
   var savePosBtn = document.getElementById('savePosBtn');
   var saveNegBtn = document.getElementById('saveNegBtn');
   var cancelDrawBtn = document.getElementById('cancelDrawBtn');
-  var resLine = null, supLine = null, dHandles = [], drawing = false;
+  var resLine = null, supLine = null, supHandles = [], resHandle = null, resPrice = null, drawing = false;
 
-  function priceAt(bar, side) { return side === 'res' ? bar.high : bar.low; }
+  // Two-line teaching tool: a STRICT HORIZONTAL resistance (drag up/down to set the
+  // flat break level) + an ASCENDING support (two handles snapping to bar lows,
+  // defining the rising / tightening range). The drawn geometry IS the label.
   function ensureLines() {
-    if (!resLine) resLine = chart.addLineSeries({ color: '#f43f5e', lineWidth: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
-    if (!supLine) supLine = chart.addLineSeries({ color: '#10b981', lineWidth: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
+    if (!resLine) resLine = chart.addLineSeries({ color: '#f59e0b', lineWidth: 2, lineStyle: 0, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });  // resistance = amber, horizontal
+    if (!supLine) supLine = chart.addLineSeries({ color: '#22d3ee', lineWidth: 2, lineStyle: 0, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });  // support = cyan, ascending
   }
-  function sideHandles(side) { return dHandles.filter(function (h) { return h.side === side; }).sort(function (a, b) { return a.bar.time < b.bar.time ? -1 : 1; }); }
+  function supSorted() { return supHandles.slice().sort(function (a, b) { return a.bar.time < b.bar.time ? -1 : 1; }); }
   function redrawLines() {
     ensureLines();
-    resLine.setData(sideHandles('res').map(function (h) { return { time: h.bar.time, value: h.bar.high }; }));
-    supLine.setData(sideHandles('sup').map(function (h) { return { time: h.bar.time, value: h.bar.low }; }));
+    var ss = supSorted();
+    supLine.setData(ss.map(function (h) { return { time: h.bar.time, value: h.bar.low }; }));
+    if (ss.length >= 2 && resPrice != null) {
+      resLine.setData([{ time: ss[0].bar.time, value: resPrice }, { time: ss[ss.length - 1].bar.time, value: resPrice }]);   // strictly horizontal
+    } else { resLine.setData([]); }
   }
+  function _setDot(dot, x, y) { if (x == null || y == null) { dot.style.display = 'none'; } else { dot.style.display = ''; dot.style.left = x + 'px'; dot.style.top = y + 'px'; } }
   function positionDots() {
     var ts = chart.timeScale();
-    dHandles.forEach(function (h) {
-      var x = ts.timeToCoordinate(h.bar.time), y = series.priceToCoordinate(priceAt(h.bar, h.side));
-      if (x == null || y == null) { h.dot.style.display = 'none'; }
-      else { h.dot.style.display = ''; h.dot.style.left = x + 'px'; h.dot.style.top = y + 'px'; }
-    });
+    supHandles.forEach(function (h) { _setDot(h.dot, ts.timeToCoordinate(h.bar.time), series.priceToCoordinate(h.bar.low)); });
+    if (resHandle && resPrice != null) {
+      var ss = supSorted();
+      var bt = ss.length ? ss[ss.length - 1].bar.time : (loaded.length ? loaded[loaded.length - 1].time : null);
+      _setDot(resHandle.dot, bt != null ? ts.timeToCoordinate(bt) : null, series.priceToCoordinate(resPrice));
+    }
   }
   function nearestBarByX(x) {
     var ts = chart.timeScale(), best = null, bd = 1e9;
     for (var i = 0; i < loaded.length; i++) { var cx = ts.timeToCoordinate(loaded[i].time); if (cx == null) continue; var d = Math.abs(cx - x); if (d < bd) { bd = d; best = loaded[i]; } }
     return best;
   }
-  function addHandle(side, bar) {
+  function _mkDot(color) {
     var dot = document.createElement('div');
-    dot.style.cssText = 'position:absolute;width:13px;height:13px;margin:-7px 0 0 -7px;border-radius:50%;border:2px solid #fff;cursor:grab;z-index:5;touch-action:none;background:' + (side === 'res' ? '#f43f5e' : '#10b981') + ';';
-    el.appendChild(dot);
-    var h = { side: side, bar: bar, dot: dot };
+    dot.style.cssText = 'position:absolute;width:13px;height:13px;margin:-7px 0 0 -7px;border-radius:50%;border:2px solid #fff;cursor:grab;z-index:5;touch-action:none;background:' + color + ';';
+    el.appendChild(dot); return dot;
+  }
+  function addSupHandle(bar) {
+    var dot = _mkDot('#22d3ee'), h = { bar: bar, dot: dot };
     dot.addEventListener('pointerdown', function (ev) {
       ev.preventDefault(); dot.style.cursor = 'grabbing';
       function move(e) { var r = el.getBoundingClientRect(); var b = nearestBarByX(e.clientX - r.left); if (b) { h.bar = b; redrawLines(); positionDots(); } }
       function up() { dot.style.cursor = 'grab'; window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); }
       window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
     });
-    dHandles.push(h);
+    supHandles.push(h);
+  }
+  function addResHandle() {
+    var dot = _mkDot('#f59e0b'); resHandle = { dot: dot };
+    dot.addEventListener('pointerdown', function (ev) {
+      ev.preventDefault(); dot.style.cursor = 'grabbing';
+      function move(e) { var r = el.getBoundingClientRect(); var pr = series.coordinateToPrice(e.clientY - r.top); if (pr != null) { resPrice = pr; redrawLines(); positionDots(); } }   // vertical drag → flat level
+      function up() { dot.style.cursor = 'grab'; window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); }
+      window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+    });
   }
   function clearDraw() {
-    dHandles.forEach(function (h) { h.dot.remove(); }); dHandles = [];
+    supHandles.forEach(function (h) { h.dot.remove(); }); supHandles = [];
+    if (resHandle) { resHandle.dot.remove(); resHandle = null; }
+    resPrice = null;
     if (resLine) { chart.removeSeries(resLine); resLine = null; }
     if (supLine) { chart.removeSeries(supLine); supLine = null; }
   }
@@ -542,8 +546,9 @@
     drawing = true; drawBtn.classList.add('bg-violet-500/20'); drawActions.classList.remove('hidden');
     clearDraw();
     var n = loaded.length, iA = Math.max(0, n - 30), iB = n - 3;
-    addHandle('res', loaded[iA]); addHandle('res', loaded[iB]);
-    addHandle('sup', loaded[iA]); addHandle('sup', loaded[iB]);
+    addSupHandle(loaded[iA]); addSupHandle(loaded[iB]);
+    resPrice = Math.max.apply(null, loaded.slice(iA, iB + 1).map(function (b) { return b.high; }));   // flat top starts at the window high
+    addResHandle();
     redrawLines(); positionDots();
   }
   function endDraw() {
@@ -553,11 +558,12 @@
     clearDraw();
   }
   function currentGeometry() {
-    var rs = sideHandles('res'), ss = sideHandles('sup');
-    if (rs.length < 2 || ss.length < 2) return null;
+    var ss = supSorted();
+    if (ss.length < 2 || resPrice == null) return null;
+    var t0 = ss[0].bar.t, t1 = ss[ss.length - 1].bar.t;
     return {
-      resistance: { t0: rs[0].bar.t, p0: rs[0].bar.high, t1: rs[1].bar.t, p1: rs[1].bar.high },
-      support: { t0: ss[0].bar.t, p0: ss[0].bar.low, t1: ss[1].bar.t, p1: ss[1].bar.low }
+      resistance: { t0: t0, p0: resPrice, t1: t1, p1: resPrice },          // strictly horizontal
+      support: { t0: t0, p0: ss[0].bar.low, t1: t1, p1: ss[ss.length - 1].bar.low }
     };
   }
   function isoToLwcTime(iso) { var best = null; for (var i = 0; i < loaded.length; i++) { if (loaded[i].t === iso) return loaded[i].time; if (loaded[i].t <= iso) best = loaded[i]; } return best ? best.time : null; }
@@ -591,55 +597,62 @@
   chart.timeScale().subscribeVisibleLogicalRangeChange(positionDots);
   if (window.ResizeObserver) { try { new ResizeObserver(positionDots).observe(el); } catch (e) {} }
 
-  // ---------- detector overlay (shows WHICH portion fired + the break-up) ----------
-  // Draws the detector's two trend-lines over the matched window and marks the
-  // breakout candle: 1) flat resistance, 2) the rising support that tightens the
-  // range toward the apex, 3) the first candle that closes ABOVE resistance,
-  // extended forward. The breakout is a post-hoc visual annotation over already-
-  // loaded history (offline review) — the detector itself stays no-lookahead.
-  var detResLine = null, detSupLine = null, detApexLine = null, detMarker = false;
-  function clearDetectorLines() {
+  // ---------- detector overlay (highlight matched bars + draw the anatomy) ----------
+  // Selecting a detection: (1) the pattern's bars keep full colour while every other
+  // candle greys out (so you SEE which portion is the pattern), (2) the STRICT
+  // HORIZONTAL resistance at the break ceiling, (3) the ASCENDING support (tightening
+  // range), (4) a break ↑ marker on the first candle to close above resistance.
+  // Post-hoc visual annotation over loaded history — the detector stays no-lookahead.
+  var detResLine = null, detSupLine = null, detMarker = false, hiRange = null;   // hiRange = selected window {a,b} ISO
+  function _removeOverlay() {
     if (detResLine) { chart.removeSeries(detResLine); detResLine = null; }
     if (detSupLine) { chart.removeSeries(detSupLine); detSupLine = null; }
-    if (detApexLine) { chart.removeSeries(detApexLine); detApexLine = null; }
     if (detMarker) { series.setMarkers([]); detMarker = false; }
   }
+  function clearOverlay() {
+    _removeOverlay();
+    if (hiRange) { hiRange = null; renderCandles(); }   // un-highlight → restore candles
+  }
   function _idxOfT(iso) { for (var i = 0; i < loaded.length; i++) { if (loaded[i].t === iso) return i; } return -1; }
-  // first candle AFTER the window whose close clears the flat-top resistance
-  // ceiling. Traders read the break as a close above the horizontal ceiling, not
-  // above an ever-rising fitted line — so use the ceiling level, search the apex
-  // region (~2x the window) ahead.
+  // first candle AFTER the window to close above the flat-top resistance ceiling.
   function findBreakout(res) {
     var i0 = _idxOfT(res.t0), i1 = _idxOfT(res.t1);
     if (i1 < 0) return null;
-    var ceiling = Math.max(res.p0, res.p1);             // the flat top
+    var ceiling = Math.max(res.p0, res.p1);
     var span = (i0 >= 0 && i1 > i0) ? (i1 - i0) : 30;
     var stop = Math.min(loaded.length, i1 + Math.max(40, 2 * span) + 1);
-    for (var k = i1 + 1; k < stop; k++) {
-      if (loaded[k].close > ceiling) return loaded[k];   // breakout up
-    }
+    for (var k = i1 + 1; k < stop; k++) { if (loaded[k].close > ceiling) return loaded[k]; }
     return null;
   }
-  function drawDetectorLines(lines) {
-    clearDetectorLines();
+  // Draw the anatomy: a HORIZONTAL resistance at the break ceiling (start → break
+  // candle), the ASCENDING support (fitted, sloped), and the break ↑ marker.
+  function drawAnatomy(lines) {
+    _removeOverlay();
     if (!lines) return;
-    function mk(color) { return chart.addLineSeries({ color: color, lineWidth: 2, lineStyle: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false }); }
     if (lines.resistance) {
-      var rt0 = isoToLwcTime(lines.resistance.t0), rt1 = isoToLwcTime(lines.resistance.t1);
-      if (rt0 != null && rt1 != null) { detResLine = mk('#f59e0b'); detResLine.setData([{ time: rt0, value: lines.resistance.p0 }, { time: rt1, value: lines.resistance.p1 }]); }  // resistance = amber
+      var res = lines.resistance, ceiling = Math.max(res.p0, res.p1);
+      var t0 = isoToLwcTime(res.t0), bo = findBreakout(res);
+      var tEnd = bo ? bo.time : isoToLwcTime(res.t1);
+      if (t0 != null && tEnd != null) {
+        detResLine = chart.addLineSeries({ color: '#f59e0b', lineWidth: 2, lineStyle: 0, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
+        detResLine.setData([{ time: t0, value: ceiling }, { time: tEnd, value: ceiling }]);   // strictly horizontal
+      }
+      if (bo) { series.setMarkers([{ time: bo.time, position: 'aboveBar', color: '#34d399', shape: 'arrowDown', text: 'break ↑' }]); detMarker = true; }
     }
     if (lines.support) {
       var st0 = isoToLwcTime(lines.support.t0), st1 = isoToLwcTime(lines.support.t1);
-      if (st0 != null && st1 != null) { detSupLine = mk('#22d3ee'); detSupLine.setData([{ time: st0, value: lines.support.p0 }, { time: st1, value: lines.support.p1 }]); }  // ascending support = cyan
-    }
-    // breakout candle (extend resistance to its apex, find the first close above)
-    if (lines.resistance) {
-      var bo = findBreakout(lines.resistance);
-      if (bo) {
-        series.setMarkers([{ time: bo.time, position: 'aboveBar', color: '#34d399', shape: 'arrowDown', text: 'break ↑' }]);
-        detMarker = true;
+      if (st0 != null && st1 != null) {
+        detSupLine = chart.addLineSeries({ color: '#22d3ee', lineWidth: 2, lineStyle: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
+        detSupLine.setData([{ time: st0, value: lines.support.p0 }, { time: st1, value: lines.support.p1 }]);   // ascending
       }
     }
+  }
+  // Select a match: highlight its bars (grey the rest), draw the anatomy, zoom.
+  function selectMatch(m) {
+    hiRange = { a: m.start_t, b: m.end_t };
+    renderCandles();              // colour the pattern bars, grey everything else
+    drawAnatomy(m.lines);         // horizontal resistance + ascending support + marker (after setData)
+    try { chart.timeScale().setVisibleRange({ from: m.start_time, to: m.end_time }); } catch (e) {}
   }
 
   // ---------- session shading (extended hours on intraday charts) ----------
@@ -655,13 +668,24 @@
     return h * 60 + m;
   }
   function isRTH(iso) { var m = _etMinutes(iso); return m >= 570 && m < 960; }   // 09:30–16:00 ET
-  function candlePoint(b, tf) {
-    var pt = { time: b.time, open: b.open, high: b.high, low: b.low, close: b.close };
-    if (tf !== 'daily' && !isRTH(b.t)) {
-      var c = (b.close >= b.open) ? '#64748b' : '#334155';   // ext-hours: muted slate
-      pt.color = c; pt.borderColor = c; pt.wickColor = c;
-    }
-    return pt;
+  // (Re)draw the candles applying whichever shading is active:
+  //  - a detection is selected (hiRange) → pattern bars full colour, the rest grey;
+  //  - otherwise, on intraday, extended-hours candles are dimmed so the session shows.
+  function renderCandles() {
+    var tf = tfSelect.value;
+    series.setData(loaded.map(function (b) {
+      var pt = { time: b.time, open: b.open, high: b.high, low: b.low, close: b.close };
+      if (hiRange) {
+        if (!(b.t >= hiRange.a && b.t <= hiRange.b)) {
+          var g = (b.close >= b.open) ? '#475569' : '#334155';   // off-pattern: grey out
+          pt.color = g; pt.borderColor = g; pt.wickColor = g;
+        }
+      } else if (tf !== 'daily' && !isRTH(b.t)) {
+        var c = (b.close >= b.open) ? '#64748b' : '#334155';      // extended hours: muted slate
+        pt.color = c; pt.borderColor = c; pt.wickColor = c;
+      }
+      return pt;
+    }));
   }
 
   // ---------- EMAs (fast = red, mid = green, slow = purple) ----------
@@ -711,24 +735,7 @@
     if (emaLegend) emaLegend.innerHTML = leg.join(' &nbsp;');
   }
 
-  // ---------- mode toggle (Teach / Test) ----------
-  var teachTab = document.getElementById('teachTab'), testTab = document.getElementById('testTab');
-  var teachBar = document.getElementById('teachBar'), testBar = document.getElementById('testBar');
-  var mode = 'teach';
-  function setMode(m) {
-    mode = m;
-    teachTab.className = 'px-3 py-1.5 flex items-center gap-1.5 ' + (m === 'teach' ? 'bg-violet-600 text-white' : 'text-slate-400');
-    testTab.className = 'px-3 py-1.5 flex items-center gap-1.5 ' + (m === 'test' ? 'bg-cyan-600 text-white' : 'text-slate-400');
-    teachBar.classList.toggle('hidden', m !== 'teach');
-    testBar.classList.toggle('hidden', m !== 'test');
-    if (m !== 'teach') endDraw();
-    if (m !== 'test') { detResults.classList.add('hidden'); clearDetectorLines(); }
-  }
-  teachTab.addEventListener('click', function () { setMode('teach'); });
-  testTab.addEventListener('click', function () { setMode('test'); });
-
   // ---------- init ----------
-  setMode('teach');
   renderReadiness(RD);
   renderThresholds(THR0);
   if ((wrap.dataset.symbol || '').trim()) load();   // reopen where we left off
