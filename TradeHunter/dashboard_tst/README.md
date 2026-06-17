@@ -124,6 +124,24 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-17 — v3.37: Active-runs panel time shows local (+ time-only localtime mode)
+- The active-runs panel ("waiting for the agent … · Admin · 14:23") rendered
+  `r.created_at` as raw UTC `%H:%M`. Now uses the localtime macro so it shows the
+  viewer's local clock (`_runs_panel.html`).
+- Added a **`time_only=True`** mode to `_time.html` `localtime()` (emits
+  `data-localtime`); `base.html` formats those as `{hour, minute}` local — for compact
+  "today" timestamps with no date. (Full + `date_only` modes unchanged.)
+- Verified: templates parse, the macro renders all three modes, base.html scripts pass
+  `node --check`.
+
+### 2026-06-17 — v3.36: Watchlist defaults to All on every fresh visit
+- A bare `/matp` previously **restored the last-used filter from localStorage** (an
+  early-paint redirect). Removed that — the board now always opens on **All** (server
+  default `sel_wl="all"`). Picking a filter still works (adds `?wl=` for that view) but
+  is no longer remembered across fresh visits (`matp.html`).
+- Dropped the now-unused `localStorage('matp_wl')` write from the selector.
+- Verified: matp.html parses; app unchanged server-side.
+
 ### 2026-06-17 — v3.35: Downtrend tickers are disqualified too (not just Price > MBP)
 - The watchlist's **Disqualified** bucket (`matp.py` `matp_watchlist`) now holds a ticker
   if `price > MBP` **OR** it's in a **downtrend** (EMA20<EMA50<EMA200, from the live

@@ -257,9 +257,10 @@
       if (el.dataset.localized) return;            // idempotent across re-runs
       var d = new Date(el.getAttribute('datetime') || '');
       if (isNaN(d.getTime())) return;
-      var opt = el.dataset.localdate
-        ? { year: 'numeric', month: 'short', day: 'numeric' }
-        : { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+      var opt;
+      if (el.dataset.localdate) opt = { year: 'numeric', month: 'short', day: 'numeric' };
+      else if (el.dataset.localtime) opt = { hour: '2-digit', minute: '2-digit' };
+      else opt = { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
       el.textContent = d.toLocaleString(undefined, opt);
       el.title = d.toString();                     // full local time + tz on hover
       el.dataset.localized = '1';

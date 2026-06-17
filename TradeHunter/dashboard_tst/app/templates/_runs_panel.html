@@ -2,6 +2,7 @@
    progress — it shows a quiet status and polls just often enough to notice the
    run finishing, then reloads the board ONCE. Context: items, poll_in, wl, sym,
    completed, reload_url. #}
+{% from "_time.html" import localtime %}
 {% if items %}
 {% if poll_in %}
 {# self-poller: schedule exactly one calm next poll (carries wl/sym so the board
@@ -32,7 +33,7 @@
       <div class="text-[11px] {% if it.stale %}text-rose-300{% else %}text-slate-500{% endif %}">
         {% if r.status == 'running' %}working&hellip;{% else %}waiting for the agent (polls ~10&nbsp;min){% endif %}
         &middot; {{ r.requester.display_name if r.requester else "someone" }}
-        &middot; {{ r.created_at.strftime("%H:%M") if r.created_at else "" }}
+        &middot; {{ localtime(r.created_at, time_only=True) }}
       </div>
       {% if r.note %}
       <div class="text-[11px] text-slate-400 italic mt-0.5">&ldquo;{{ r.note }}&rdquo;</div>
