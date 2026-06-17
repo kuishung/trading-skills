@@ -42,7 +42,7 @@ from .routes import portfolio as portfolio_routes
 from .routes import research as research_routes
 from .routes import strategy as strategy_routes
 from .routes import studies as studies_routes
-from .security import current_user, hash_password
+from .security import current_user, hash_password, require_admin
 
 log = logging.getLogger("dashboard_tst")
 
@@ -141,7 +141,8 @@ def create_app() -> FastAPI:
     # page routers carry a per-menu access guard (blocks direct URLs; nav hides them too)
     app.include_router(matp_routes.router, dependencies=[Depends(menus.require_menu("matp"))])
     app.include_router(studies_routes.router, dependencies=[Depends(menus.require_menu("studies"))])
-    app.include_router(finviz_routes.router, dependencies=[Depends(menus.require_menu("screener"))])
+    # Data Ingest (Finviz filter manager) is ADMIN-ONLY now — lives under Settings.
+    app.include_router(finviz_routes.router, dependencies=[Depends(require_admin)])
     app.include_router(feedback_routes.router)
     app.include_router(admin_routes.router)
     app.include_router(agent_routes.router)

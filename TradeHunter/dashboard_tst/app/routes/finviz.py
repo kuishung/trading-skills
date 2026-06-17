@@ -16,8 +16,22 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import RUN_INTERVALS, FinvizFilter, User
+from ..models import RUN_INTERVALS, FinvizFilter, MATPLevel, User
 from ..security import require_moderator, require_user
+
+
+def _selective_tickers(db: Session) -> list[str]:
+    """Ad-hoc 'individual' watchlist tickers — active MATPLevels with NO source
+    filter (filter_id is None), i.e. the names a user keyed in by hand. These ride
+    along in the routine MATP refresh (exposed via /api/filters)."""
+    rows = (
+        db.query(MATPLevel)
+        .filter(MATPLevel.filter_id.is_(None),
+                (MATPLevel.status == "active") | (MATPLevel.status.is_(None)))
+        .order_by(MATPLevel.symbol)
+        .all()
+    )
+    return [r.symbol for r in rows]
 
 router = APIRouter(prefix="/finviz", tags=["finviz"])
 templates = Jinja2Templates(
@@ -126,6 +140,7 @@ def finviz_home(
         {
             "user": user,
             "filters": filters,
+            "selective": _selective_tickers(db),     # ad-hoc manual watchlist tickers
             "can_edit": user.can_moderate,
             "intervals": list(RUN_INTERVALS.keys()),
             "ingest": ingest,

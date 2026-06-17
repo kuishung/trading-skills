@@ -370,6 +370,7 @@ def _ticker_targets(db: Session, sym: str, earn):
             "brokerage": t.brokerage,
             "target_price": t.target_price,
             "target_date": t.target_date,
+            "as_of": t.as_of,                       # when WE extracted/recorded it
             "included": bool(earn and t.target_date and t.target_date > earn),
         }
         for t in rows

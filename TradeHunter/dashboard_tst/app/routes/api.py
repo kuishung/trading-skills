@@ -51,20 +51,39 @@ def require_api_key(x_api_key: str | None = Header(default=None)) -> bool:
 
 
 # ---------------------------------------------------------------------------
+def _manual_tickers(db: Session) -> list[str]:
+    """Ad-hoc 'individual' watchlist symbols — active MATPLevels with no source
+    filter. The agent should refresh these alongside the screen filters (no URL)."""
+    rows = (
+        db.query(MATPLevel)
+        .filter(MATPLevel.filter_id.is_(None),
+                (MATPLevel.status == "active") | (MATPLevel.status.is_(None)))
+        .order_by(MATPLevel.symbol)
+        .all()
+    )
+    return [r.symbol for r in rows]
+
+
 @router.get("/filters")
 def list_active_filters(_: bool = Depends(require_api_key), db: Session = Depends(get_db)):
-    """The active Finviz screener filters whose tickers the agent should refresh."""
+    """The active Finviz screener filters whose tickers the agent should refresh,
+    plus `manual_tickers` — ad-hoc names (no source filter) to refresh too."""
     rows = db.query(FinvizFilter).filter(FinvizFilter.is_active.is_(True)).all()
     # `id` lets the agent post each run back with filter_id so we can diff the
     # universe (mark tickers that fell out of the screen as 'dropped').
-    return {"filters": [{"id": f.id, "description": f.description, "url": f.url} for f in rows]}
+    return {
+        "filters": [{"id": f.id, "description": f.description, "url": f.url} for f in rows],
+        "manual_tickers": _manual_tickers(db),
+    }
 
 
 @router.get("/due-filters")
 def due_filters(_: bool = Depends(require_api_key), db: Session = Depends(get_db)):
     """Active filters whose SCHEDULE is due (next_run_at <= now). The agent runs
     these full-universe on its poll cron; the finalizing /api/matp push advances
-    each filter's schedule. Interval is set per filter in the dashboard."""
+    each filter's schedule. Interval is set per filter in the dashboard.
+    `manual_tickers` (ad-hoc, no-filter names) are returned so a routine poll
+    refreshes them too."""
     now = _dt.datetime.now(_dt.timezone.utc)
     rows = (
         db.query(FinvizFilter)
@@ -78,7 +97,7 @@ def due_filters(_: bool = Depends(require_api_key), db: Session = Depends(get_db
             nxt = nxt.replace(tzinfo=_dt.timezone.utc)
         if nxt is None or nxt <= now:
             due.append({"id": f.id, "description": f.description, "url": f.url, "interval": f.run_interval})
-    return {"filters": due}
+    return {"filters": due, "manual_tickers": _manual_tickers(db) if due else []}
 
 
 # ---------------------------------------------------------------------------

@@ -124,6 +124,52 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-17 — v3.27: Watchlist font up; slimmer light chart header
+- **Watchlist font increased** (`_wl_macros.html` `ticker_grid`): rows `text-[11px]`→
+  `text-[13px]`, header `[9px]`→`[10px]`, trend `[10px]`→`[12px]`; widened the
+  numeric columns so larger numbers still fit.
+- **Chart header slimmer + light**: the TradingView single-quote header dropped from
+  5.5rem → 3.5rem and switched `colorTheme` dark→light to match the white theme.
+  (A true single-line custom header w/ company name would need a name-lookup — left
+  as a follow-up.)
+
+### 2026-06-17 — v3.26: Selective (ad-hoc) tickers listed + in the routine refresh
+- The Finviz Filter tab now lists the **Selective tickers** — the ad-hoc 'individual'
+  watchlist names (active `MATPLevel`s with no source filter) the user keyed in from the
+  screener — as chips with a count.
+- Those tickers are exposed to the routine refresh: `GET /api/filters` and
+  `/api/due-filters` now return a **`manual_tickers`** list so the agent refreshes them
+  alongside the screen filters. (Agent follow-up: the matp skill must read
+  `manual_tickers` and refresh them directly — they have no screen URL.)
+
+### 2026-06-17 — v3.25: Analyst targets show when each was extracted
+- The MATP analyst-targets pop-out (`_targets_modal.html`) gains an **Extracted**
+  column = `MATPTarget.as_of` (when our system first recorded/extracted the target),
+  distinct from **Issued** (the analyst's `target_date`). Shows the date, with the
+  full `YYYY-MM-DD HH:MM UTC` on hover; "-" when unknown. `_ticker_targets` now carries
+  `as_of`.
+
+### 2026-06-17 — v3.24: Data Ingest split into tabs
+- Restructured the Data Ingest page into three tabs: **Finviz Filter** (the saved
+  screener filters), **Market Data** (Price Data History + Ticker Profile, kept
+  together), and **EDGAR Filings**. Client-side tab switching (deep-linkable via
+  `#finviz/#market/#edgar`). Removed the **"Universe health by category"** block from
+  Price Data History per request. Verified empty + populated branches render and the
+  tab JS passes `node --check`.
+
+### 2026-06-17 — v3.23: Data Ingest moved to an admin-only Settings menu
+- "Data Ingest" (the `/finviz` filter manager) is now **admin-only**: removed from the
+  Intraday menu, placed under a new admin-only **Settings ▾** dropdown in the nav (next
+  to Admin), and the route is locked with `require_admin` (members/moderators get the
+  standard 403). Dropped the `screener` key from the member-grantable menu registry
+  (Intraday now = Strategy only). Verified: members can't see or reach it; admins can.
+
+### 2026-06-17 — v3.22: Price chart goes light (match the white theme)
+- The Lightweight-Charts price chart (`_price_chart.html`, MATP/Studies) now uses a
+  **white background** + slate text + lighter grid/axis borders, to match the v3.19
+  light theme (was `#0f172a` dark). Candle/EMA/MATP-MBP colours unchanged (all read
+  fine on white). Also flipped the hidden Pattern Trainer chart for consistency.
+
 ### 2026-06-17 — v3.21: Nav dropdown fixes (close-on-click-away + light-theme hover)
 - **Dropdowns now close** when you open another or click away (and on Escape). Native
   `<details>` stay open otherwise — added a capture-phase document click handler that

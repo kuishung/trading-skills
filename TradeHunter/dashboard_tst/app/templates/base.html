@@ -126,6 +126,18 @@
                   {% if nav_path.startswith(href) %}bg-orange-500/15 text-orange-300{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-orange-300{% endif %}">{{ label }}</a>
         {% endfor %}
         {% if user.is_admin %}
+        {# admin-only Settings dropdown — holds Data Ingest (Finviz filter manager) #}
+        <details class="relative shrink-0">
+          <summary class="cursor-pointer list-none rounded-lg px-3 py-1.5 whitespace-nowrap transition flex items-center gap-1
+                          {% if nav_path.startswith('/finviz') %}bg-orange-500/15 text-orange-300{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-orange-300{% endif %}">
+            Settings
+            <svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor" class="text-slate-500"><path d="M5.5 7.5 10 12l4.5-4.5z"/></svg>
+          </summary>
+          <div class="absolute left-0 mt-2 w-44 rounded-lg border border-slate-800 bg-slate-900 shadow-xl py-1 z-30">
+            <a href="/finviz" class="block px-3 py-2 text-sm whitespace-nowrap
+                    {% if nav_path.startswith('/finviz') %}text-orange-300{% else %}text-slate-300 hover:bg-slate-800 hover:text-orange-300{% endif %}">Data Ingest</a>
+          </div>
+        </details>
         <a href="/admin"
            class="rounded-lg px-3 py-1.5 whitespace-nowrap transition
                   {% if nav_path.startswith('/admin') %}bg-orange-500/15 text-orange-300{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-orange-300{% endif %}">Admin</a>

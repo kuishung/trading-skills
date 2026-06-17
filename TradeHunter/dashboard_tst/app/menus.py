@@ -19,10 +19,11 @@ MENUS = [
     ("company",   "Company",      "Investing",     "/research?kind=company"),
     ("matp",      "MATP",         "Swing & Trend", "/matp"),
     ("studies",   "Studies",      "Swing & Trend", "/studies"),
-    ("screener",  "Screener",     "Intraday",      "/finviz"),
     ("strategy",  "Strategy",     "Intraday",      "/strategy"),
     ("portfolio", "My Portfolio", None,            "/portfolio"),
 ]
+# NB: /finviz ("Data Ingest") is NOT here — it's admin-only (rendered in base.html's
+# Settings dropdown, guarded by require_admin), not a member-grantable menu.
 ALL_KEYS = [m[0] for m in MENUS]
 LABELS = {m[0]: m[1] for m in MENUS}
 
