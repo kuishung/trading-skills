@@ -53,7 +53,7 @@ templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
 # Expose the build version as a Jinja global on every templates env, so the
 # sidebar logo (base.html) shows "v<version>" without each route passing it.
 for _routes_mod in (
-    auth_routes, matp_routes, studies_routes,
+    auth_routes, today_routes, matp_routes, studies_routes,
     finviz_routes, feedback_routes, admin_routes, agent_routes, pipeline_routes,
     research_routes, patterns_routes, strategy_routes, portfolio_routes,
 ):

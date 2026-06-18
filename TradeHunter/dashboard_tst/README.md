@@ -124,6 +124,17 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-18 — v3.41: HOTFIX — Today Overview 500'd on login
+- v3.39's new `today` route module has its own `Jinja2Templates`, but it was **missing
+  from the loop in `main.py` that injects the `nav_for`/`version` Jinja globals** into
+  each route's env. Rendering `base.html` (which calls `nav_for(user)`) therefore raised
+  → every login 500'd, because `/today` is now the landing. Added `today_routes` to that
+  loop.
+- Why earlier checks missed it: offline `get_template()` only **parses**, and
+  `import app.main` doesn't **render** — the missing global only surfaces at render time.
+  Now verified by rendering `/today` through the route's real env (nav_for present,
+  full page renders).
+
 ### 2026-06-18 — v3.40: Selective tickers are schedulable (own refresh cadence)
 - The ad-hoc **Selective tickers** set (active MATPLevels with `filter_id` NULL) now has
   its **own** scheduled MATP refresh, independent of any Finviz filter being due.
