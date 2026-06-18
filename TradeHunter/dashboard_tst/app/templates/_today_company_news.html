@@ -1,0 +1,16 @@
+{# Company news card body. Context: news = [{title, link, symbol, ago}]. #}
+{% if news %}
+<ul class="space-y-2 text-sm max-h-80 overflow-y-auto pr-1">
+  {% for n in news %}
+  <li class="leading-snug">
+    <a href="{{ n.link }}" target="_blank" rel="noopener" class="text-slate-200 hover:text-orange-300">{{ n.title }}</a>
+    <div class="text-[10px] text-slate-500">
+      {% if n.symbol %}<span class="text-emerald-400/80 font-medium">{{ n.symbol }}</span>{% endif %}
+      {% if n.ago %}<span class="ml-1">&middot; {{ n.ago }}</span>{% endif %}
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<div class="flex-1 flex items-center justify-center text-xs text-slate-500 py-6 text-center px-2">No watchlist news &mdash; add tickers on the MATP page.</div>
+{% endif %}

@@ -16,6 +16,10 @@
 </section>
 {% endmacro %}
 
+{% macro loading() %}
+<div class="flex-1 flex items-center justify-center text-xs text-slate-500 py-6">Loading&hellip;</div>
+{% endmacro %}
+
 {% macro soon(phase) %}
 <div class="flex-1 flex flex-col items-center justify-center text-center py-8 text-slate-500">
   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" class="mb-2 opacity-60"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
@@ -30,11 +34,17 @@
 
 <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 auto-rows-min">
 
-  {% call card("Market sentiment", "Fear &amp; Greed · VIX") %}{{ soon("Phase 1") }}{% endcall %}
+  {% call card("Market sentiment", "Fear &amp; Greed · VIX") %}
+  <div class="flex-1" hx-get="/today/sentiment" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
+  {% endcall %}
 
-  {% call card("Market news", "live feed") %}{{ soon("Phase 1") }}{% endcall %}
+  {% call card("Market news", "live feed") %}
+  <div class="flex-1" hx-get="/today/news" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
+  {% endcall %}
 
-  {% call card("Company news", "your watchlist") %}{{ soon("Phase 1") }}{% endcall %}
+  {% call card("Company news", "your watchlist") %}
+  <div class="flex-1" hx-get="/today/company-news" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
+  {% endcall %}
 
   {# ETF rotation (RRG) — the centerpiece; spans two columns on wide screens. #}
   {% call card("ETF rotation (RRG)", "sector SPDRs vs SPY", "xl:col-span-2") %}{{ soon("Phase 3") }}{% endcall %}

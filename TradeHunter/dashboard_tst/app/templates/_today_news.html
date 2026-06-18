@@ -1,0 +1,13 @@
+{# Market news card body. Context: news = [{title, link, source, ago}]. #}
+{% if news %}
+<ul class="space-y-2 text-sm max-h-80 overflow-y-auto pr-1">
+  {% for n in news %}
+  <li class="leading-snug">
+    <a href="{{ n.link }}" target="_blank" rel="noopener" class="text-slate-200 hover:text-orange-300">{{ n.title }}</a>
+    {% if n.ago %}<span class="text-[10px] text-slate-500 ml-1">&middot; {{ n.ago }}</span>{% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<div class="flex-1 flex items-center justify-center text-xs text-slate-500 py-6">No market news right now.</div>
+{% endif %}

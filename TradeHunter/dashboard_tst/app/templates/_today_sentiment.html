@@ -1,0 +1,30 @@
+{# Market sentiment card body: CNN Fear & Greed gauge + VIX. Context: fg, vix. #}
+{% if fg or vix %}
+<div class="space-y-3">
+  {% if fg %}
+  {% set sc = fg.score %}
+  {% set tone = 'text-rose-400' if sc < 25 else ('text-amber-400' if sc < 45 else ('text-slate-300' if sc < 55 else ('text-emerald-400' if sc < 75 else 'text-emerald-300'))) %}
+  {% set bar = 'bg-rose-500' if sc < 25 else ('bg-amber-500' if sc < 45 else ('bg-slate-400' if sc < 55 else 'bg-emerald-500')) %}
+  <div>
+    <div class="flex items-baseline justify-between">
+      <span class="text-3xl font-bold {{ tone }} tabular-nums">{{ sc }}</span>
+      <span class="text-xs uppercase tracking-wide {{ tone }}">{{ fg.rating or "—" }}</span>
+    </div>
+    <div class="mt-1 h-2 rounded bg-slate-800 overflow-hidden">
+      <div class="h-full {{ bar }}" style="width: {{ sc }}%"></div>
+    </div>
+    <div class="text-[10px] text-slate-500 mt-1">CNN Fear &amp; Greed &middot; 0 = extreme fear, 100 = extreme greed</div>
+  </div>
+  {% endif %}
+  {% if vix %}
+  <div class="flex items-baseline justify-between {% if fg %}border-t border-slate-800 pt-2{% endif %}">
+    <span class="text-sm text-slate-400">VIX <span class="text-[10px] text-slate-600">volatility</span></span>
+    <span class="text-sm tabular-nums text-slate-200">{{ "%.2f"|format(vix.price) }}
+      <span class="{{ 'text-rose-400' if (vix.change or 0) > 0 else 'text-emerald-400' }}">{{ "%+.1f"|format(vix.change_pct or 0) }}%</span>
+    </span>
+  </div>
+  {% endif %}
+</div>
+{% else %}
+<div class="flex-1 flex items-center justify-center text-xs text-slate-500 py-6">Sentiment unavailable right now.</div>
+{% endif %}

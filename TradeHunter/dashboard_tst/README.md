@@ -124,6 +124,22 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-18 — v3.42: Today Overview Phase 1 — sentiment + market news + company news
+- Three placeholder cards are now **live**, each lazy-loaded via HTMX into its own
+  endpoint so a slow source never blocks the page:
+  - **Market sentiment** — CNN Fear & Greed gauge (score + rating + zone-coloured bar)
+    + the VIX level (`/today/sentiment`).
+  - **Market news** — broad-market headlines via Yahoo RSS (^GSPC) (`/today/news`).
+  - **Company news** — per-ticker Yahoo RSS headlines for the active watchlist
+    (signals first), merged newest-first (`/today/company-news`).
+- New `services/market.py`: `fear_greed()`, `market_news()`, `company_news()` — all
+  **live** (httpx + stdlib XML/email parsing, no new deps), 10-min TTL cache, soft-fail
+  to None/[] so a dead feed shows a friendly message instead of 500. Company news uses a
+  bounded thread pool, cached per symbol. VIX reuses `prices.fetch_quote("^VIX")`.
+- Verified live: Fear & Greed + VIX + 12 market + 12 company headlines fetched and
+  rendered; full page renders; compiles; app imports.
+- Remaining: Phase 2 (ETF service → correlation → leaders), Phase 3 (RRG).
+
 ### 2026-06-18 — v3.41: HOTFIX — Today Overview 500'd on login
 - v3.39's new `today` route module has its own `Jinja2Templates`, but it was **missing
   from the loop in `main.py` that injects the `nav_for`/`version` Jinja globals** into
