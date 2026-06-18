@@ -16,7 +16,13 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import RUN_INTERVALS, FinvizFilter, MATPLevel, User
+from ..models import (
+    RUN_INTERVALS,
+    FinvizFilter,
+    MATPLevel,
+    User,
+    get_selective_schedule,
+)
 from ..security import require_moderator, require_user
 
 
@@ -141,6 +147,7 @@ def finviz_home(
             "user": user,
             "filters": filters,
             "selective": _selective_tickers(db),     # ad-hoc manual watchlist tickers
+            "selective_sched": get_selective_schedule(db),  # their own refresh cadence
             "can_edit": user.can_moderate,
             "intervals": list(RUN_INTERVALS.keys()),
             "ingest": ingest,
@@ -166,6 +173,23 @@ def set_interval(
     if f is not None and interval in RUN_INTERVALS:
         f.run_interval = interval
         f.next_run_at = None  # due now (then advances on the next completed run)
+        db.commit()
+    return RedirectResponse(url="/finviz", status_code=303)
+
+
+@router.post("/selective/interval")
+def set_selective_interval(
+    interval: str = Form(...),
+    mod: User = Depends(require_moderator),
+    db: Session = Depends(get_db),
+):
+    """Set the cadence for the whole Selective-tickers set. Like a filter: setting
+    an interval makes it due now (next_run_at cleared); it advances on the next
+    completed selective run (POSTed by the agent to /api/selective)."""
+    if interval in RUN_INTERVALS:
+        sched = get_selective_schedule(db)
+        sched.run_interval = interval
+        sched.next_run_at = None  # due now
         db.commit()
     return RedirectResponse(url="/finviz", status_code=303)
 

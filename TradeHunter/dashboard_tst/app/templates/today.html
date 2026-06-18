@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Today Overview &middot; TradeHunter{% endblock %}
+{% block main_class %}flex-1 w-full px-4 py-4 overflow-y-auto{% endblock %}
+
+{% block content %}
+{# Today Overview — post-login landing. Responsive card grid; each card is a
+   market highlight. Phase 0: economic-calendar embed is live; the rest are
+   styled placeholders whose lazy endpoints arrive in later phases. #}
+{% macro card(title, sub="", span="") %}
+<section class="rounded-xl border border-slate-800 bg-slate-900/40 p-4 flex flex-col min-w-0 {{ span }}">
+  <div class="flex items-baseline justify-between mb-3 shrink-0">
+    <h2 class="text-sm font-semibold text-slate-200">{{ title }}</h2>
+    {% if sub %}<span class="text-[11px] text-slate-500">{{ sub }}</span>{% endif %}
+  </div>
+  {{ caller() }}
+</section>
+{% endmacro %}
+
+{% macro soon(phase) %}
+<div class="flex-1 flex flex-col items-center justify-center text-center py-8 text-slate-500">
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" class="mb-2 opacity-60"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+  <div class="text-xs">Coming in {{ phase }}</div>
+</div>
+{% endmacro %}
+
+<div class="flex items-baseline gap-3 mb-4">
+  <h1 class="text-xl font-semibold text-slate-100">Today Overview</h1>
+  <span id="todayDate" class="text-sm text-slate-500"></span>
+</div>
+
+<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 auto-rows-min">
+
+  {% call card("Market sentiment", "Fear &amp; Greed · VIX") %}{{ soon("Phase 1") }}{% endcall %}
+
+  {% call card("Market news", "live feed") %}{{ soon("Phase 1") }}{% endcall %}
+
+  {% call card("Company news", "your watchlist") %}{{ soon("Phase 1") }}{% endcall %}
+
+  {# ETF rotation (RRG) — the centerpiece; spans two columns on wide screens. #}
+  {% call card("ETF rotation (RRG)", "sector SPDRs vs SPY", "xl:col-span-2") %}{{ soon("Phase 3") }}{% endcall %}
+
+  {# Economic calendar — LIVE (embedded TradingView widget, US, high/medium impact). #}
+  {% call card("Economic calendar", "US · today") %}
+  <div class="flex-1 min-h-[460px]">
+    <div class="tradingview-widget-container h-full" id="tvEconCal"></div>
+  </div>
+  {% endcall %}
+
+  {% call card("ETF leaders", "relative strength") %}{{ soon("Phase 2") }}{% endcall %}
+
+  {% call card("Correlation", "60-day returns") %}{{ soon("Phase 2") }}{% endcall %}
+
+</div>
+
+<script>
+  // Local date in the header.
+  (function () {
+    var el = document.getElementById('todayDate');
+    if (el) el.textContent = new Date().toLocaleDateString(undefined,
+      { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  })();
+
+  // Economic-calendar embed (TradingView free widget). Themed to match the
+  // dashboard's current light/dark mode; transparent so it blends into the card.
+  (function () {
+    var host = document.getElementById('tvEconCal');
+    if (!host) return;
+    var light = document.documentElement.classList.contains('light');
+    var s = document.createElement('script');
+    s.src = 'https://s3.tradingview.com/external-embedding/embed-widget-events.js';
+    s.async = true;
+    s.innerHTML = JSON.stringify({
+      colorTheme: light ? 'light' : 'dark',
+      isTransparent: true,
+      width: '100%',
+      height: 460,
+      locale: 'en',
+      importanceFilter: '0,1',
+      countryFilter: 'us'
+    });
+    host.appendChild(s);
+  })();
+</script>
+{% endblock %}

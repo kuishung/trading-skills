@@ -127,6 +127,12 @@ Edit files here, redeploy (scp / git pull → `bash install.sh`), then re-test w
 recreate the cron job unless the schedule or delivery target changes.
 
 ## Changelog
+- **2026-06-18** — Documented the **Selective-tickers schedule contract** in
+  `skills/markets/matp/SKILL.md`: `/api/due-filters` now returns a `selective`
+  `{due, interval, tickers}` object, and a closing `/api/matp` push with
+  `selective:true`+`final:true` (no `filter_id`/`prune`) advances that schedule.
+  **Action needed on next agent run:** the matp skill must refresh `selective.tickers`
+  when `selective.due` is true (dashboard side shipped in dashboard_tst v3.40).
 - **2026-06-15** — Added the **`markets/research-planning` skill (v1.0.0)** + the
   **`research_runner/` LAN shim** — the agent-grounded chat behind TradeHunter's
   Research page. The dashboard is outbound-only, so for the planning chat it now

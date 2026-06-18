@@ -124,6 +124,51 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-06-18 — v3.40: Selective tickers are schedulable (own refresh cadence)
+- The ad-hoc **Selective tickers** set (active MATPLevels with `filter_id` NULL) now has
+  its **own** scheduled MATP refresh, independent of any Finviz filter being due.
+- **Data:** new singleton `SelectiveSchedule` (`models.py`, id=1, `run_interval` /
+  `last_run_at` / `next_run_at`) + Alembic migration `e7f8a9b0c1d2` (head was
+  `d6e7f8a9b0c1`); `get_selective_schedule()` lazily creates the row. Portable ORM only.
+- **UI:** the Selective set moved from a card at the bottom to a **pinned card at the top
+  of the Finviz Filter panel** with the same interval dropdown (off/daily/weekly/monthly/
+  quarterly) + next/last (`finviz.html`); new `POST /finviz/selective/interval` route sets
+  the cadence (due-now on change, like a filter).
+- **Agent contract:** `/api/due-filters` now returns a `selective` object
+  `{due, interval, tickers}`; `manual_tickers` is returned when a filter **or** the
+  selective schedule is due. `MatpIngest` gained a `selective` flag — the agent's closing
+  push with `selective:true`+`final:true` (no `filter_id`/`prune`) **advances the selective
+  schedule**, mirroring filter runs. Contract documented in the matp `SKILL.md`.
+- **Follow-up (Nous box):** the matp skill must act on `selective.due` — that's a separate
+  agent deploy; until then the schedule is stored/shown but not auto-run.
+- Verified: models/api/finviz compile, migration imports, finviz.html parses, app imports
+  (create_all adds the table), and a singleton lifecycle test (create → due → advance →
+  still one row) passes.
+
+### 2026-06-18 — v3.39: Today Overview landing page (Phase 0 scaffold)
+- New **Today Overview** page (`/today`, `routes/today.py` + `today.html`) — now the
+  **post-login landing for all approved users** (flipped the redirects in `auth.py` ×2
+  and the root route in `main.py` from `/matp` to `/today`).
+- Added as the **first** nav item (`menus.py`); it's **always granted** (special-cased
+  in `allowed_keys`) so the per-user menu ACL can't revoke the landing.
+- Responsive card grid with 7 highlight cards. **Live now:** the embedded TradingView
+  **economic calendar** (US, high/medium impact, themed to the dashboard's light/dark).
+  The other six — market sentiment, market news, company news, ETF rotation (RRG), ETF
+  leaders, correlation — are styled placeholders; their lazy endpoints land in later
+  phases. All data will be fetched LIVE (Yahoo/httpx), never parquet.
+- Roadmap: Phase 1 = news + sentiment (Fear&Greed/VIX) + company news; Phase 2 = ETF
+  service → correlation heatmap → ETF leaders; Phase 3 = RRG quadrant graph (sector
+  SPDRs vs SPY).
+- Verified: routes/menus/auth compile, today.html parses, its script passes
+  `node --check`, `today` stays granted for a restricted member, app imports clean.
+
+### 2026-06-17 — v3.38: Agent-page run time shows local too
+- The /agent "working now" panel (`_agent_runs.html`) rendered the run's `created_at`
+  as raw UTC `%H:%M` ("… · Admin · 14:23"); now uses the localtime `time_only` macro so
+  it shows the viewer's local clock. (The "online · 3m ago" + `next_run` strings are
+  relative / agent-supplied, so they're unchanged.)
+- Verified: template parses, app imports clean.
+
 ### 2026-06-17 — v3.37: Active-runs panel time shows local (+ time-only localtime mode)
 - The active-runs panel ("waiting for the agent … · Admin · 14:23") rendered
   `r.created_at` as raw UTC `%H:%M`. Now uses the localtime macro so it shows the

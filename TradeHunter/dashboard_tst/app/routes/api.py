@@ -34,6 +34,7 @@ from ..models import (
     MATPLevel,
     MATPRefreshRequest,
     MATPTarget,
+    get_selective_schedule,
 )
 from ..services import discord
 
@@ -97,7 +98,24 @@ def due_filters(_: bool = Depends(require_api_key), db: Session = Depends(get_db
             nxt = nxt.replace(tzinfo=_dt.timezone.utc)
         if nxt is None or nxt <= now:
             due.append({"id": f.id, "description": f.description, "url": f.url, "interval": f.run_interval})
-    return {"filters": due, "manual_tickers": _manual_tickers(db) if due else []}
+
+    # the Selective set has its OWN schedule (independent of any filter being due).
+    sched = get_selective_schedule(db)
+    snxt = sched.next_run_at
+    if snxt is not None and snxt.tzinfo is None:
+        snxt = snxt.replace(tzinfo=_dt.timezone.utc)
+    selective_due = sched.run_interval != "off" and (snxt is None or snxt <= now)
+
+    manual = _manual_tickers(db)
+    return {
+        "filters": due,
+        # manual tickers ride along when a filter is due OR when the selective
+        # schedule itself fires.
+        "manual_tickers": manual if (due or selective_due) else [],
+        # the agent runs the selective set when due, then posts /api/matp with
+        # selective=true (final) so its schedule advances.
+        "selective": {"due": selective_due, "interval": sched.run_interval, "tickers": manual},
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -364,6 +382,9 @@ class MatpIngest(BaseModel):
     # final=False (no archive, no prune) so the table fills live; the closing
     # push sets final=True (+ prune=True) — that one is archived as the run file.
     final: bool = True
+    # Set on the closing push of a SELECTIVE run (the ad-hoc no-filter set ran
+    # because its own schedule was due) so we advance the selective schedule.
+    selective: bool = False
 
 
 @router.post("/matp")
@@ -495,6 +516,14 @@ def ingest_matp(
                 if iv:
                     f.next_run_at = now + timedelta(days=iv)
                 db.commit()
+        # selective run finished -> advance the selective schedule the same way.
+        if payload.selective:
+            sched = get_selective_schedule(db)
+            sched.last_run_at = now
+            siv = RUN_INTERVALS.get(sched.run_interval)
+            if siv:
+                sched.next_run_at = now + timedelta(days=siv)
+            db.commit()
         from ..services.matp_archive import save_run
 
         archived = save_run(payload, now, filter_desc=filter_desc)

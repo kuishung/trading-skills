@@ -14,7 +14,10 @@ from .models import User
 from .security import require_user
 
 # (key, label, group, href). group None = a top-level single item. List = nav order.
+# "today" is the universal post-login landing — always granted (see allowed_keys),
+# so it is NOT a member-revocable menu even though it appears in the nav.
 MENUS = [
+    ("today",     "Today Overview", None,          "/today"),
     ("macro",     "Macro",        "Investing",     "/research?kind=macro"),
     ("company",   "Company",      "Investing",     "/research?kind=company"),
     ("matp",      "MATP",         "Swing & Trend", "/matp"),
@@ -38,7 +41,8 @@ def allowed_keys(user: User) -> set:
     acc = getattr(user, "menu_access", None)
     if acc is None:
         return set(ALL_KEYS)
-    return set(acc) & set(ALL_KEYS)
+    # "today" is the landing page — always accessible, never revocable.
+    return (set(acc) & set(ALL_KEYS)) | {"today"}
 
 
 def user_can(user: User, *keys: str) -> bool:

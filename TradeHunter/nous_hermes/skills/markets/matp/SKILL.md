@@ -170,6 +170,24 @@ about a week later. If `/api/due-filters` returns an empty list, nothing is due 
 do nothing. (The per-filter interval is configured by moderators in the
 TradeHunter Finviz page; you just run whatever is due.)
 
+### Selective tickers (own schedule, same poll)
+The `/api/due-filters` response now also carries a `selective` object — the ad-hoc
+"Selective tickers" set (names with no source filter) has its **own** schedule,
+independent of any filter:
+```
+-> {"filters":[...], "manual_tickers":[...],
+    "selective": {"due": true, "interval": "weekly", "tickers": ["AAPL","NVDA", ...]}}
+```
+When `selective.due` is **true**, refresh `selective.tickers` (Stages 2-5 each, as a
+plain multi-ticker run) and send a closing push to `/api/matp` with the full item
+list, **`selective:true` + `final:true`, and NO `filter_id` and NO `prune`** (these
+stay ungrouped "Selective" names — pruning/`filter_id` would wrongly re-bucket them).
+That closing push **advances the selective schedule** (TradeHunter sets its
+`last_run_at`/`next_run_at` from `interval`), exactly like a filter. If
+`selective.due` is false, leave them alone. (`manual_tickers` is still returned for
+back-compat — it's the same list, populated when a filter is due or the selective
+schedule is due.)
+
 ---
 
 ## Procedure

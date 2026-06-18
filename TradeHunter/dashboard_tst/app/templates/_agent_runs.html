@@ -7,6 +7,7 @@
    The self-poller is ALWAYS present (even when idle) so the panel refreshes
    periodically and a newly-queued run appears without a manual page reload —
    unlike the calm matp-board panel, which goes fully silent when nothing runs. #}
+{% from "_time.html" import localtime %}
 <div hx-get="/agent/active" hx-trigger="load delay:{{ poll_in or 15 }}s"
      hx-target="#agent-active" hx-swap="innerHTML"></div>
 
@@ -45,7 +46,7 @@
           waiting for the agent to claim it{% if it.waited is not none %} &middot; {{ it.waited }}m{% endif %}
         {% endif %}
         &middot; {{ r.requester.display_name if r.requester else "someone" }}
-        {% if r.created_at %} &middot; {{ r.created_at.strftime("%H:%M") }}{% endif %}
+        {% if r.created_at %} &middot; {{ localtime(r.created_at, time_only=True) }}{% endif %}
       </div>
       {% if r.note %}<div class="text-[11px] text-slate-400 italic mt-0.5">&ldquo;{{ r.note }}&rdquo;</div>{% endif %}
       {% if it.stale %}

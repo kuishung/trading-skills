@@ -261,8 +261,33 @@ class FinvizFilter(Base):
     author = relationship("User")
 
 
+class SelectiveSchedule(Base):
+    """Singleton schedule for the 'Selective tickers' set — the ad-hoc MATPLevel
+    rows with filter_id NULL (names keyed in by hand). Mirrors FinvizFilter's
+    scheduling fields so the agent's poll can refresh the manual tickers on their
+    OWN cadence, independent of whether any Finviz filter is due. Exactly one row
+    (id=1; see get_selective_schedule). New table -> create_all adds it safely."""
+
+    __tablename__ = "selective_schedule"
+
+    id = Column(Integer, primary_key=True)
+    run_interval = Column(String(12), nullable=False, default="off")  # off|daily|weekly|monthly|quarterly
+    last_run_at = Column(DateTime, nullable=True)
+    next_run_at = Column(DateTime, nullable=True, index=True)
+
+
 # interval -> days; the agent runs a filter when next_run_at <= now.
 RUN_INTERVALS = {"off": None, "daily": 1, "weekly": 7, "monthly": 30, "quarterly": 91}
+
+
+def get_selective_schedule(db):
+    """Fetch (or lazily create) the single Selective-tickers schedule row."""
+    row = db.get(SelectiveSchedule, 1)
+    if row is None:
+        row = SelectiveSchedule(id=1, run_interval="off")
+        db.add(row)
+        db.commit()
+    return row
 
 
 class AgentHeartbeat(Base):
