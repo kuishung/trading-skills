@@ -208,8 +208,10 @@
   })();
 </script>
 
-{% if open_reqs %}
-{# a run is active: refresh so newly-processed tickers appear (URL keeps ?symbol) #}
-<script>setTimeout(function () { location.reload(); }, 20000);</script>
-{% endif %}
+{# No blunt full-page reload here. The runs panel (_runs_panel.html / _runs_context)
+   is the single source of auto-refresh: it polls only while a run is genuinely
+   active, reloads just the board ONCE when a run completes, and STOPS when a run
+   goes stale (agent not polling). The old `setTimeout(location.reload, 20000)` had
+   no staleness check, so a stuck `pending` request hard-reloaded the whole page
+   every 20s forever — removed. #}
 {% endblock %}

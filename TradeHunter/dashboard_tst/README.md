@@ -124,6 +124,17 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-07-18 — v3.45: FIX — MATP page hard-reloaded every 20s forever
+- Removed the blunt full-page `setTimeout(location.reload, 20000)` in `matp.html`
+  (gated on `open_reqs`). It had **no staleness check**, so a MATP refresh request
+  stuck in `pending` (agent not polling the queue) hard-reloaded the whole page
+  every 20s indefinitely.
+- Auto-refresh is now solely the runs panel (`_runs_panel.html` / `_runs_context`),
+  which was already staleness-aware: it polls only while a run is genuinely active
+  (5–10s), reloads **just the board** once a run completes, and sets `poll_in=0`
+  (STOP) when a run goes stale. Net: the board still updates when a run finishes,
+  but a stuck request no longer refreshes the page in a loop.
+
 ### 2026-07-18 — v3.44: "Plot on TV" — draw MATP/MBP on the user's own TradingView
 - New per-user action on `/matp`: click a ticker's **⧉** (per watchlist row) or the
   **▧ Plot on TV** button in the chart-pane toolbar → the ticker's **MATP + MBP**
