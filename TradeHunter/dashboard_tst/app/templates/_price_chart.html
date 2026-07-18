@@ -25,14 +25,27 @@
     {# zoom toolbar: 6M (default) / 1Y / 1.5Y / 2Y. Each shows the lookback in the
        left ~2/3 with the right ~1/3 blank (room ahead of current price). #}
     <div class="flex items-center justify-between gap-1 mb-1 {% if chart_fill %}shrink-0{% endif %}">
-      {# Curate -> create/open a study for this ticker (moderators, only where curatable) #}
-      {% if chart_curatable is defined and chart_curatable and user and user.can_moderate %}
-      <form method="post" action="/studies/curate" class="inline">
-        <input type="hidden" name="symbol" value="{{ chart_symbol }}">
-        <button type="submit" class="text-[11px] px-2 py-0.5 rounded border border-violet-500/50 text-violet-300 hover:bg-violet-500/15 transition"
-                title="Curate {{ chart_symbol }} — create/open a study to mark support, resistance, entry, stop & R:R">&#128203; Curate</button>
-      </form>
-      {% else %}<span></span>{% endif %}
+      {# left cluster: Curate (moderators) + Plot-on-TV (MATP board) #}
+      <div class="flex items-center gap-1">
+        {# Curate -> create/open a study for this ticker (moderators, only where curatable) #}
+        {% if chart_curatable is defined and chart_curatable and user and user.can_moderate %}
+        <form method="post" action="/studies/curate" class="inline">
+          <input type="hidden" name="symbol" value="{{ chart_symbol }}">
+          <button type="submit" class="text-[11px] px-2 py-0.5 rounded border border-violet-500/50 text-violet-300 hover:bg-violet-500/15 transition"
+                  title="Curate {{ chart_symbol }} — create/open a study to mark support, resistance, entry, stop & R:R">&#128203; Curate</button>
+        </form>
+        {% endif %}
+        {# Plot MATP/MBP on the user's OWN TradingView via the local TV bridge. Shown only where the
+           board opts in (chart_tv_plot) and levels exist. Shares the .tv-plot capture handler in matp.html. #}
+        {% if chart_tv_plot is defined and chart_tv_plot and chart_matp is not none %}
+        <span class="tv-plot cursor-pointer text-[11px] px-2 py-0.5 rounded border border-orange-500/50 text-orange-300 hover:bg-orange-500/15 transition select-none"
+              role="button" tabindex="0"
+              title="Plot MATP &amp; MBP on your TradingView (needs the local TV bridge running)"
+              data-sym="{{ chart_symbol }}" data-exch="{{ chart_exchange or '' }}"
+              data-matp="{{ '%.2f'|format(chart_matp) if chart_matp is not none else '' }}"
+              data-mbp="{{ '%.2f'|format(chart_mbp) if chart_mbp is not none else '' }}">&#9639; Plot on TV</span>
+        {% endif %}
+      </div>
       <div class="flex items-center gap-1">
         <button type="button" class="zoombtn text-[11px] px-2 py-0.5 rounded border border-emerald-500/60 text-emerald-300 bg-emerald-500/10 transition" data-months="6">6M</button>
         <button type="button" class="zoombtn text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 transition hover:border-emerald-500 hover:text-emerald-300" data-months="12">1Y</button>

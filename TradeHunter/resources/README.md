@@ -56,6 +56,14 @@ treating any "missing" feature as a bug.
 
 ## Changelog
 
+### 2026-07-18 — added `tradingview-mcp/bridge/` (TV Bridge)
+- New zero-dependency local sidecar under the vendored TV MCP:
+  `tradingview-mcp/bridge/tv_bridge.mjs` + `launch_tv_bridge.bat`. Lets the
+  TradeHunter `/matp` page draw MATP/MBP levels on the user's **own** TradingView
+  (web, in Chrome) via CDP — each user runs it locally, so the server never touches
+  a TV. Reuses the MCP's chart calls; needs Node ≥ 22 (no `npm install`). Powers
+  `dashboard_tst` v3.44. Details: `tradingview-mcp/bridge/README.md`.
+
 ### 2026-06-17 — `patterns.py`: added `ema_stack_trend()` (daily EMA-stack trend)
 - New `ema_stack_trend(bars)` classifier for the MATP / swing & trend board:
   `strong_up` (EMA20>EMA50>EMA200) / `up` (EMA20>EMA50) / `down` (EMA20<EMA50<EMA200) /

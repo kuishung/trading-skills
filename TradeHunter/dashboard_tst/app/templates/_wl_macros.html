@@ -22,7 +22,7 @@
    columns line up pixel-for-pixel (separate grids with `auto` cols would drift).
    Sym flexes (truncates); Trend/Sig/Price/MATP/MBP are fixed widths. Defined
    INSIDE the macro so it's in scope even when imported into another template. #}
-{% set GRIDCSS = "display:grid;grid-template-columns:minmax(3.8rem,1fr) 2.6rem 3rem 3.4rem 3.4rem 3.4rem;column-gap:0.3rem;align-items:center" %}
+{% set GRIDCSS = "display:grid;grid-template-columns:minmax(3.8rem,1fr) 2.6rem 3rem 3.4rem 3.4rem 3.4rem 1.4rem;column-gap:0.3rem;align-items:center" %}
 <div style="{{ GRIDCSS }}" class="px-2 pt-1 text-[10px] uppercase tracking-wide text-slate-600">
   <span>Sym</span>
   <span class="text-center">Trend</span>
@@ -30,6 +30,7 @@
   <span class="text-right">Price</span>
   <span class="text-right">MATP</span>
   <span class="text-right">MBP</span>
+  <span class="text-center" title="Plot MATP &amp; MBP on your TradingView">&#9639;</span>
 </div>
 {% for lv in tickers %}
 {% set lr = live.get(lv.symbol, {}) if live else {} %}
@@ -47,6 +48,16 @@
   <span class="text-right text-[13px] tabular-nums {% if cur is not none and lv.mbp is not none and cur > lv.mbp %}text-rose-300{% else %}text-white{% endif %}">{{ "%.2f"|format(cur) if cur is not none else "-" }}</span>
   <span class="text-right text-[13px] text-orange-300 tabular-nums">{{ "%.2f"|format(lv.matp) if lv.matp is not none else "-" }}</span>
   <span class="text-right text-[13px] text-green-500 tabular-nums">{{ "%.2f"|format(lv.mbp) if lv.mbp is not none else "-" }}</span>
+  {# Plot MATP/MBP on the user's OWN TradingView via the local TV bridge (127.0.0.1:9223).
+     A <span> (not <button>) so it's valid inside the row <a>; the capture-phase handler
+     in matp.html intercepts it (stopPropagation) so it never triggers the row's chart load. #}
+  <span class="tv-plot cursor-pointer text-center text-[13px] leading-none text-slate-600 hover:text-orange-300 transition select-none"
+        role="button" tabindex="0"
+        title="Plot MATP &amp; MBP on your TradingView"
+        data-sym="{{ lv.symbol }}"
+        data-exch="{{ lv.exchange or '' }}"
+        data-matp="{{ '%.2f'|format(lv.matp) if lv.matp is not none else '' }}"
+        data-mbp="{{ '%.2f'|format(lv.mbp) if lv.mbp is not none else '' }}">&#9639;</span>
 </a>
 {% endfor %}
 {% endmacro %}

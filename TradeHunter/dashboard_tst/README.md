@@ -124,6 +124,47 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-07-18 — v3.44: "Plot on TV" — draw MATP/MBP on the user's own TradingView
+- New per-user action on `/matp`: click a ticker's **⧉** (per watchlist row) or the
+  **▧ Plot on TV** button in the chart-pane toolbar → the ticker's **MATP + MBP**
+  levels are drawn as two labelled horizontal lines on that user's **own**
+  TradingView (web, in Chrome).
+- **How it works (no server access to TV):** each user runs a tiny local **TV bridge**
+  (`resources/tradingview-mcp/bridge/tv_bridge.mjs`, zero-dependency Node) on their
+  own machine. The browser `fetch`es `http://127.0.0.1:9223/plot?symbol=…&matp=…&mbp=…`;
+  the bridge drives that user's Chrome over CDP (reusing the TradingView MCP's chart
+  API). The Hermes server never touches a TV — every user only ever plots on their own
+  chart. Portable: the bridge + `launch_tv_bridge.bat` travel with the repo; nothing to
+  `npm install`.
+- **Idempotent:** the bridge tracks the line ids it created per symbol and removes its
+  own previous MATP/MBP lines before redrawing — clicking again **refreshes** the two
+  lines in place, never stacks duplicates, and never touches the user's manual drawings.
+- Templates: `_wl_macros.html` (per-row `.tv-plot` span + 7th grid column),
+  `_price_chart.html` (chart-pane `Plot on TV` button, gated on `chart_tv_plot`),
+  `_chart_pane.html` (sets `chart_tv_plot`), `matp.html` (`window.plotOnTV` + a
+  capture-phase click handler that preempts the row's HTMX navigation, plus a toast).
+- Bridge setup + the "Chrome already running" gotcha: see
+  `resources/tradingview-mcp/bridge/README.md`.
+
+### 2026-06-18 — v3.43: Today Overview Phases 2 & 3 — ETF leaders + correlation + RRG (page complete)
+- The last three placeholder cards are now **live**, completing the Today Overview:
+  - **ETF leaders** (`/today/etf-leaders`) — 11 US sector SPDRs ranked by 1-month
+    relative strength vs SPY, with 1w/1m/3m returns + a leading/lagging marker.
+  - **Correlation** (`/today/correlation`) — 60-day daily-return Pearson heatmap across
+    SPY + all sectors (12×12, green=together / red=inverse).
+  - **ETF rotation (RRG)** (`/today/rrg`) — JdK-style RS-Ratio / RS-Momentum quadrant
+    graph (Leading/Weakening/Lagging/Improving) with per-sector weekly tails, drawn as an
+    auto-scaled client-side SVG.
+- New `services/etf.py`: one parallel, ~15-min-cached **aligned daily-close fetch**
+  (SPY + 11 ETFs, live via Yahoo) feeds `etf_leaders()`, `correlation_matrix()`, `rrg()`.
+  **Pure Python** (Pearson, rolling z-scores, weekly resample) — no numpy/pandas, so
+  **no new Hermes dependency**. Soft-fail to friendly messages.
+- Verified live: 501 aligned dates fetched in ~1.5s; XLK leading; SPY–XLE corr −0.46;
+  11 ETFs plotted with quadrants. RRG SVG script passes `node --check`; full page renders;
+  app imports.
+- **Today Overview is now feature-complete** (calendar + sentiment + 2 news feeds + ETF
+  leaders + correlation + RRG). All data live; nothing reads parquet.
+
 ### 2026-06-18 — v3.42: Today Overview Phase 1 — sentiment + market news + company news
 - Three placeholder cards are now **live**, each lazy-loaded via HTMX into its own
   endpoint so a slow source never blocks the page:
