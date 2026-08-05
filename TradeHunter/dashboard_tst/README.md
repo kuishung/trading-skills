@@ -124,6 +124,22 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-07-18 — v3.47: faster watchlist load + resizable watchlist/chart split
+- **Watchlist load speedup.** The grid was re-deriving trend/signal by fetching
+  **2 years of daily bars from Yahoo per ticker** + running pattern detectors on every
+  load (dozens of heavy calls on the "All" board; in-memory cache cold-starts each
+  deploy). New `_watchlist_signals_fast()` takes trend/signal from the **stored
+  MATPLevel** values (the agent already computes them) and fetches only the
+  **lightweight 1-day quote** for the current price. The qualified/disqualified split
+  (price > MBP, downtrend) still works — it only needs price + trend. Each ticker goes
+  from "2y history + 3 detectors" to one tiny quote call. (The old
+  `_watchlist_signals`/`_ticker_analysis` stay for the single-ticker chart detail +
+  Studies page.)
+- **Resizable watchlist ↔ chart.** The MATP watchlist rail is no longer a fixed 20rem —
+  drag the handle between it and the chart to widen it (so the full column set, incl.
+  the new TV/delete buttons, is visible). Width persists in `localStorage`;
+  double-click the handle to reset. Desktop only (`matp.html`).
+
 ### 2026-07-18 — v3.46: delete a ticker from the MATP watchlist (moderators)
 - Each watchlist row now has a **`×` delete button** (moderators/admins only) to
   remove that ticker from the MATP board. New `POST /matp/{symbol}/delete`

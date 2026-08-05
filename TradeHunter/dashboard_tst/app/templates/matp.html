@@ -77,11 +77,11 @@
   </div>
 </details>
 
-<div class="lg:flex lg:gap-4 lg:flex-1 lg:min-h-0">
+<div class="lg:flex lg:flex-1 lg:min-h-0">
   {# MIDDLE: watchlist panel — lazy-loads the grid with runtime trend/signal.
-     The active-runs panel sits on top of THIS column (narrow), not spanning
-     across to the chart. #}
-  <aside class="hidden lg:flex lg:flex-col lg:w-80 lg:shrink-0 lg:h-full">
+     Width is user-adjustable via the drag handle (#wlResizer); the chosen width is
+     remembered in localStorage. Default 20rem. The active-runs panel sits on top. #}
+  <aside id="wlAside" class="hidden lg:flex lg:flex-col lg:shrink-0 lg:h-full" style="width:20rem">
     <div id="runsbox" class="shrink-0 empty:hidden mb-2"
          hx-get="/matp/runs?wl={{ sel_wl }}&sym={{ sel.symbol if sel else '' }}" hx-trigger="load" hx-swap="innerHTML"></div>
     <div id="wlbox" class="flex-1 min-h-0 overflow-y-auto pr-1"
@@ -90,9 +90,13 @@
     </div>
   </aside>
 
-  {# RIGHT: chart panel — fills the screen (chart canvas takes the remaining
-     height). Clicking a watchlist row HTMX-swaps ONLY this pane (#chartPane), so
-     the watchlist (and its live-signal recompute) doesn't reload every click. #}
+  {# Drag handle to resize the watchlist vs chart (desktop only). #}
+  <div id="wlResizer" role="separator" aria-orientation="vertical"
+       title="Drag to resize the watchlist"
+       class="hidden lg:block lg:shrink-0 w-1.5 mx-1.5 cursor-col-resize rounded bg-slate-800 hover:bg-emerald-600/60 transition-colors"></div>
+
+  {# RIGHT: chart panel — fills the remaining width. Clicking a watchlist row
+     HTMX-swaps ONLY this pane (#chartPane), so the watchlist doesn't reload. #}
   <div id="chartPane" class="lg:flex-1 min-w-0 lg:h-full flex flex-col lg:min-h-0 mt-4 lg:mt-0">
     {% include "_chart_pane.html" %}
   </div>
@@ -240,4 +244,48 @@
    goes stale (agent not polling). The old `setTimeout(location.reload, 20000)` had
    no staleness check, so a stuck `pending` request hard-reloaded the whole page
    every 20s forever — removed. #}
+
+<script>
+  // ── Resizable watchlist ↔ chart split (desktop) ───────────────────────────
+  // Drag #wlResizer to set the watchlist width; remembered in localStorage so it
+  // survives reloads (and HTMX swaps, since this markup isn't replaced).
+  // Double-click the handle resets to the default width.
+  (function () {
+    var aside = document.getElementById('wlAside');
+    var resizer = document.getElementById('wlResizer');
+    if (!aside || !resizer) return;
+    var KEY = 'matp_wl_width_px';
+    var MIN = 220, MAX = 900;
+
+    var saved = parseInt(localStorage.getItem(KEY), 10);
+    if (saved && saved >= MIN && saved <= MAX) aside.style.width = saved + 'px';
+
+    var dragging = false;
+    function onMove(clientX) {
+      var left = aside.getBoundingClientRect().left;
+      var w = Math.max(MIN, Math.min(clientX - left, MAX));
+      aside.style.width = w + 'px';
+    }
+    function start(e) {
+      dragging = true;
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+      e.preventDefault();
+    }
+    function end() {
+      if (!dragging) return;
+      dragging = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      localStorage.setItem(KEY, parseInt(aside.style.width, 10) || 320);
+    }
+    resizer.addEventListener('mousedown', start);
+    window.addEventListener('mousemove', function (e) { if (dragging) onMove(e.clientX); });
+    window.addEventListener('mouseup', end);
+    resizer.addEventListener('touchstart', function (e) { start(e); }, { passive: false });
+    window.addEventListener('touchmove', function (e) { if (dragging && e.touches[0]) onMove(e.touches[0].clientX); }, { passive: true });
+    window.addEventListener('touchend', end);
+    resizer.addEventListener('dblclick', function () { aside.style.width = '20rem'; localStorage.removeItem(KEY); });
+  })();
+</script>
 {% endblock %}

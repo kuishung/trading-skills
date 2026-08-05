@@ -202,7 +202,7 @@ def matp_watchlist(
     else:
         shown = list(active)
 
-    live = _watchlist_signals([lv.symbol for lv in shown])
+    live = _watchlist_signals_fast(shown)
 
     # "Refreshed" stamp for this watchlist: for a Finviz-filter watchlist it's
     # the filter's last completed run (advanced by the scheduled MATP run); for
@@ -580,6 +580,53 @@ def _watchlist_signals(symbols) -> dict:
                 out[s] = r
     except Exception:
         out = {s: {"trend": None, "signal": None, "current": None} for s in syms}
+    return out
+
+
+def _watchlist_signals_fast(levels) -> dict:
+    """FAST {symbol: {trend, signal, current}} for the watchlist grid.
+
+    The slow path (_watchlist_signals) fetches 2 YEARS of daily bars from Yahoo per
+    ticker and re-runs trend/pattern detection — dozens of heavy calls on the "All"
+    board, and the in-memory cache cold-starts on every restart. That's what makes
+    the watchlist crawl.
+
+    This path takes trend + signal from the STORED MATPLevel values (the Nous agent
+    already computes them on its runs) and fetches ONLY the current price — via the
+    lightweight 1-day quote (fetch_quote, 60s cache), not a 2y history + recompute.
+    The qualified/disqualified split (price > MBP, downtrend) stays accurate because
+    it needs exactly those two things: a live price and the trend. Each ticker goes
+    from "download 2y + run 3 detectors" to "one tiny quote call". Soft-fail per sym.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from ..services.prices import fetch_quote
+
+    by_sym: dict = {}
+    for lv in levels:
+        if lv.symbol and lv.symbol not in by_sym:
+            by_sym[lv.symbol] = lv
+    if not by_sym:
+        return {}
+
+    def work(sym_lv):
+        sym, lv = sym_lv
+        cur = None
+        try:
+            q = fetch_quote(sym)
+            if q:
+                cur = q.get("price")
+        except Exception:
+            pass
+        return sym, {"trend": lv.trend, "signal": lv.signal, "current": cur}
+
+    out: dict = {}
+    try:
+        with ThreadPoolExecutor(max_workers=12) as ex:
+            for sym, r in ex.map(work, list(by_sym.items())):
+                out[sym] = r
+    except Exception:
+        out = {sym: {"trend": lv.trend, "signal": lv.signal, "current": None}
+               for sym, lv in by_sym.items()}
     return out
 
 
