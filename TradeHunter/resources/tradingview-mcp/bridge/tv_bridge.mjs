@@ -29,7 +29,12 @@
 // -----------------------------------------------------------------------------
 
 import http from 'node:http';
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
+const BRIDGE_VERSION = '1.1.0'; // features: auto-launch, autosave, PNA header, locked lines (frozen+disableSelection), label-based de-dupe
 const BRIDGE_PORT = Number(process.env.TH_TV_BRIDGE_PORT || 9223);
 const CDP_PORT = Number(process.env.TH_TV_CDP_PORT || 9222);
 const CDP_HOST = process.env.TH_TV_CDP_HOST || '127.0.0.1';
@@ -62,51 +67,133 @@ async function findTvTarget() {
   return t;
 }
 
-// Evaluate an expression in the TV page. awaitPromise=true so a Promise result
-// resolves before we read it. One fresh WebSocket per call — simple + robust.
-function cdpEval(expression, awaitPromise = true, timeoutMs = 9000) {
+// Evaluate an expression on a specific CDP target. One fresh WebSocket per call.
+function evalOnTarget(target, expression, awaitPromise = true, timeoutMs = 9000) {
   return new Promise((resolve, reject) => {
-    findTvTarget()
-      .then((target) => {
-        let settled = false;
-        const ws = new WebSocket(target.webSocketDebuggerUrl);
-        const finish = (fn, arg) => {
-          if (settled) return;
-          settled = true;
-          try { ws.close(); } catch { /* ignore */ }
-          fn(arg);
-        };
-        const timer = setTimeout(
-          () => finish(reject, new Error('CDP eval timed out (chart not ready?)')),
-          timeoutMs
-        );
-        ws.addEventListener('open', () => {
-          ws.send(JSON.stringify({
-            id: 1,
-            method: 'Runtime.evaluate',
-            params: { expression, returnByValue: true, awaitPromise },
-          }));
-        });
-        ws.addEventListener('message', (ev) => {
-          let msg;
-          try { msg = JSON.parse(ev.data); } catch { return; }
-          if (msg.id !== 1) return;
-          clearTimeout(timer);
-          if (msg.error) return finish(reject, new Error(msg.error.message || 'CDP error'));
-          const r = msg.result;
-          if (r && r.exceptionDetails) {
-            const d = r.exceptionDetails;
-            return finish(reject, new Error(d.exception?.description || d.text || 'JS eval error'));
-          }
-          finish(resolve, r && r.result ? r.result.value : undefined);
-        });
-        ws.addEventListener('error', () => {
-          clearTimeout(timer);
-          finish(reject, new Error('CDP WebSocket error'));
-        });
-      })
-      .catch(reject);
+    let settled = false;
+    const ws = new WebSocket(target.webSocketDebuggerUrl);
+    const finish = (fn, arg) => {
+      if (settled) return;
+      settled = true;
+      try { ws.close(); } catch { /* ignore */ }
+      fn(arg);
+    };
+    const timer = setTimeout(
+      () => finish(reject, new Error('CDP eval timed out (chart not ready?)')),
+      timeoutMs
+    );
+    ws.addEventListener('open', () => {
+      ws.send(JSON.stringify({
+        id: 1,
+        method: 'Runtime.evaluate',
+        params: { expression, returnByValue: true, awaitPromise },
+      }));
+    });
+    ws.addEventListener('message', (ev) => {
+      let msg;
+      try { msg = JSON.parse(ev.data); } catch { return; }
+      if (msg.id !== 1) return;
+      clearTimeout(timer);
+      if (msg.error) return finish(reject, new Error(msg.error.message || 'CDP error'));
+      const r = msg.result;
+      if (r && r.exceptionDetails) {
+        const d = r.exceptionDetails;
+        return finish(reject, new Error(d.exception?.description || d.text || 'JS eval error'));
+      }
+      finish(resolve, r && r.result ? r.result.value : undefined);
+    });
+    ws.addEventListener('error', () => {
+      clearTimeout(timer);
+      finish(reject, new Error('CDP WebSocket error'));
+    });
   });
+}
+
+const API_READY_EXPR = '!!(window.TradingViewApi && window.TradingViewApi._activeChartWidgetWV)';
+
+// Locate a Chrome (or Edge) executable to auto-launch on Windows.
+function findBrowserPath() {
+  const pf = process.env['ProgramFiles'] || 'C:\\Program Files';
+  const pfx = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+  const lad = process.env['LOCALAPPDATA'] || '';
+  const cands = [
+    process.env.TH_CHROME,
+    path.join(pf, 'Google/Chrome/Application/chrome.exe'),
+    path.join(pfx, 'Google/Chrome/Application/chrome.exe'),
+    lad && path.join(lad, 'Google/Chrome/Application/chrome.exe'),
+    path.join(pfx, 'Microsoft/Edge/Application/msedge.exe'),
+    path.join(pf, 'Microsoft/Edge/Application/msedge.exe'),
+  ].filter(Boolean);
+  return cands.find((p) => { try { return fs.existsSync(p); } catch { return false; } }) || null;
+}
+
+function launchBrowser() {
+  const browser = findBrowserPath();
+  if (!browser) {
+    throw new Error('No TradingView tab, and no Chrome/Edge found to auto-launch. Run launch_tv_bridge.bat, or set TH_CHROME to your browser exe.');
+  }
+  const userDataDir = process.env.TH_TV_USER_DATA_DIR
+    || path.join(process.env['LOCALAPPDATA'] || os.tmpdir(), 'TradeHunterTV');
+  console.log('[tv-bridge] auto-launching browser:', browser, '(profile:', userDataDir + ')');
+  spawn(browser, [
+    `--remote-debugging-port=${CDP_PORT}`,
+    `--user-data-dir=${userDataDir}`,
+    'https://www.tradingview.com/chart/',
+  ], { detached: true, stdio: 'ignore' }).unref();
+}
+
+// Poll until a TradingView tab exists AND its chart API is loaded.
+async function waitForReadyTarget(timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const t = await findTvTarget();
+      const ready = await evalOnTarget(t, API_READY_EXPR, false, 3000).catch(() => false);
+      if (ready) return t;
+    } catch { /* not up yet */ }
+    await new Promise((r) => setTimeout(r, 700));
+  }
+  return null;
+}
+
+// Is Chrome's debug port reachable at all (regardless of whether a TV tab exists)?
+async function cdpPortUp() {
+  try { await fetch(`http://${CDP_HOST}:${CDP_PORT}/json/version`); return true; }
+  catch { return false; }
+}
+
+// Guarantee a ready TradingView tab, launching the browser if none is running.
+// This is what makes "Plot on TV" work even after you've closed Chrome — as long
+// as the bridge itself is running.
+let launching = null;
+async function ensureChrome() {
+  // fast path: already ready
+  let t = await waitForReadyTarget(1200);
+  if (t) return t;
+
+  if (await cdpPortUp()) {
+    // Chrome is up (debug port open) but the chart isn't ready yet — give it longer.
+    t = await waitForReadyTarget(20000);
+    if (t) return t;
+    throw new Error('A debug Chrome is running but TradingView did not become ready. Open a tradingview.com/chart tab in it.');
+  }
+
+  // No debug Chrome at all — launch it (once, even under concurrent clicks).
+  if (!launching) {
+    launching = (async () => {
+      launchBrowser();
+      return waitForReadyTarget(28000);
+    })().finally(() => { launching = null; });
+  }
+  t = await launching;
+  if (t) return t;
+  throw new Error('Launched the browser but TradingView did not become ready in time — try the plot again in a few seconds.');
+}
+
+// Evaluate in the TV page, auto-launching Chrome if needed.
+async function cdpEval(expression, awaitPromise = true, timeoutMs = 12000) {
+  const target = await ensureChrome();
+  return evalOnTarget(target, expression, awaitPromise, timeoutMs);
 }
 
 // --- The plot expression (runs inside the TV page) ---------------------------
@@ -132,9 +219,22 @@ function buildPlotExpr({ symbol, matp, mbp }) {
 
       function draw() {
         var api = ${CHART_API};
-        // 1) remove OUR previous lines for this symbol (leaves manual drawings alone)
-        var prev = window.__TH_LINES[KEY] || [];
-        prev.forEach(function (id) { try { api.removeEntity(id); } catch (e) {} });
+        // 1) remove OUR previous MATP/MBP lines on the CURRENT symbol by reading each
+        //    horizontal line's label. This checks the chart itself, so it works even
+        //    after TV was closed/reopened (the in-page id map is gone, but the saved
+        //    lines came back with the layout) — no more duplicates. Manual drawings are
+        //    left alone; only lines labelled "MATP <n>" / "MBP <n>" (ours) are removed.
+        //    TV scopes drawings per symbol, so getAllShapes() here only sees this symbol.
+        var MINE = /^(MATP|MBP)\s+[0-9.]/;
+        api.getAllShapes().forEach(function (s) {
+          if (s.name !== 'horizontal_line') return;
+          try {
+            var sh = api.getShapeById(s.id);
+            var props = sh && (sh.getProperties ? sh.getProperties() : (sh.properties ? sh.properties() : null));
+            var txt = props && props.text;
+            if (txt && MINE.test(String(txt))) api.removeEntity(s.id);
+          } catch (e) { /* skip */ }
+        });
         window.__TH_LINES[KEY] = [];
         // 2) pick a visible bar time for the anchor point (line spans the chart anyway)
         var t;
@@ -145,6 +245,9 @@ function buildPlotExpr({ symbol, matp, mbp }) {
         function line(price, color, label) {
           api.createShape({ time: t, price: price }, {
             shape: 'horizontal_line',
+            disableSelection: true,   // can't be grabbed/selected. (The create-time
+                                      // lock/frozen option is ignored by TV — the real
+                                      // lock is set via setProperties below.)
             overrides: { linecolor: color, linewidth: 2, linestyle: 0,
                          showLabel: true, textcolor: color, fontsize: 11,
                          horzLabelsAlign: 'right', text: label },
@@ -157,7 +260,23 @@ function buildPlotExpr({ symbol, matp, mbp }) {
           var after = api.getAllShapes().map(function (s) { return s.id; });
           var added = after.filter(function (id) { return before.indexOf(id) < 0; });
           window.__TH_LINES[KEY] = (window.__TH_LINES[KEY] || []).concat(added);
-          resolve({ ok: true, symbol: SYM, added: added.length, total: after.length });
+          // Lock (freeze) the lines we just drew so they can't be moved/edited. frozen
+          // must be set AFTER creation (the create-time option is a no-op). removeEntity
+          // still works on frozen lines, so the replace-not-duplicate redraw is unaffected.
+          added.forEach(function (id) {
+            try { var sh = api.getShapeById(id); if (sh && sh.setProperties) sh.setProperties({ frozen: true }); } catch (e) {}
+          });
+          // Persist to the account layout so the lines survive a reload and show up
+          // wherever the user opens this layout. autosave() is TradingView's own
+          // silent debounced save (no "Save as" dialog); only actually persists when
+          // logged in AND on a saved/named layout. Fall back to saveChart().
+          var saved = false;
+          try {
+            var A = window.TradingViewApi;
+            if (A && typeof A.autosave === 'function') { A.autosave(); saved = true; }
+            else if (A && typeof A.saveChart === 'function') { A.saveChart(); saved = true; }
+          } catch (e) {}
+          resolve({ ok: true, symbol: SYM, added: added.length, total: after.length, saved: saved });
         }, 350);
       }
 
@@ -187,6 +306,7 @@ function send(res, code, obj, cors) {
     'Access-Control-Allow-Origin': cors || '*',
     'Access-Control-Allow-Methods': 'GET, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Private-Network': 'true',
     'Cache-Control': 'no-store',
   });
   res.end(body);
@@ -202,10 +322,14 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://127.0.0.1:${BRIDGE_PORT}`);
 
   if (req.method === 'OPTIONS') {
+    // Chrome Private Network Access: a public origin (app.tradehunter.net) calling a
+    // local address (127.0.0.1) sends a preflight with Access-Control-Request-Private-
+    // Network: true and REQUIRES this allow header back, or the fetch is blocked.
     res.writeHead(204, {
       'Access-Control-Allow-Origin': origin,
       'Access-Control-Allow-Methods': 'GET, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Allow-Private-Network': 'true',
     });
     return res.end();
   }
@@ -214,9 +338,9 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/health') {
     try {
       const t = await findTvTarget();
-      return send(res, 200, { ok: true, bridge: 'up', tv_tab: t.url }, origin);
+      return send(res, 200, { ok: true, bridge: 'up', version: BRIDGE_VERSION, tv_tab: t.url }, origin);
     } catch (e) {
-      return send(res, 200, { ok: false, bridge: 'up', tv_tab: null, error: e.message }, origin);
+      return send(res, 200, { ok: false, bridge: 'up', version: BRIDGE_VERSION, tv_tab: null, error: e.message }, origin);
     }
   }
 
@@ -237,10 +361,13 @@ const server = http.createServer(async (req, res) => {
     const tvSym = exchange ? `${exchange}:${symbol}` : symbol;
 
     try {
+      console.log(`[tv-bridge] plot ${tvSym} matp=${matp} mbp=${mbp} …`);
       const result = await cdpEval(buildPlotExpr({ symbol: tvSym, matp, mbp }));
+      console.log(`[tv-bridge] plot ${tvSym} ->`, JSON.stringify(result));
       if (nav) return sendHtml(res, htmlResult(!!(result && result.ok), (result && result.error) || '', symbol));
       return send(res, 200, result || { ok: false, error: 'no result' }, origin);
     } catch (e) {
+      console.error(`[tv-bridge] plot ${tvSym} ERROR:`, e.message);
       if (nav) return sendHtml(res, htmlResult(false, e.message, symbol));
       return send(res, 502, { ok: false, error: e.message }, origin);
     }
@@ -260,7 +387,7 @@ function htmlResult(ok, err, sym) {
 }
 
 server.listen(BRIDGE_PORT, '127.0.0.1', () => {
-  console.log(`[tv-bridge] listening on http://127.0.0.1:${BRIDGE_PORT}`);
+  console.log(`[tv-bridge] v${BRIDGE_VERSION} listening on http://127.0.0.1:${BRIDGE_PORT}`);
   console.log(`[tv-bridge] will drive Chrome CDP at ${CDP_HOST}:${CDP_PORT} (open a tradingview.com/chart tab there)`);
   console.log('[tv-bridge] endpoints: /health  /plot?symbol=NVDA&exchange=NASDAQ&matp=180.5&mbp=165.0');
 });

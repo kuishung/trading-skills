@@ -85,6 +85,23 @@ behind. Just clear those two lines by hand, or re-plot after they're gone.)
 
 ## Changelog
 
+### 2026-07-18 — v1.1.0: auto-launch, locked lines, reliable de-dupe, PNA, autosave
+- **Auto-launch Chrome on demand** — if no debug Chrome is found when you click "Plot
+  on TV", the bridge launches one itself (dedicated `TradeHunterTV` profile, port 9222).
+  So you can close Chrome freely; the next plot brings it back. New `bridge_only.bat` +
+  Startup shortcut keep just the bridge running, Chrome opens when needed.
+- **Locked lines** — MATP/MBP now draw with `disableSelection:true` + a post-create
+  `setProperties({frozen:true})` (the create-time lock option is a no-op on TV), so they
+  can't be dragged/edited. `removeEntity` still works on them, so redraw is unaffected.
+- **De-dupe by chart label** — before drawing, the bridge scans the chart for existing
+  `MATP …`/`MBP …` lines and removes them. This reads the chart itself, so it survives a
+  TV close/reopen (the old in-memory id map didn't) → no more duplicate lines.
+- **Private-Network-Access header** — `Access-Control-Allow-Private-Network: true` on the
+  preflight, so the fetch from `https://app.tradehunter.net` to `http://127.0.0.1:9223`
+  isn't blocked (no more window.open fallback popup).
+- **autosave()** after drawing so lines persist to the account layout (when logged in on a
+  named layout). Version stamped (`/health` + startup log report `v1.1.0`).
+
 ### 2026-07-18 — v1.0.0: initial TV bridge
 - Added `tv_bridge.mjs` (zero-dep CDP sidecar) + `launch_tv_bridge.bat`.
 - Powers the `dashboard_tst` v3.44 `/matp` "Plot on TV" feature. Draws MATP (orange)

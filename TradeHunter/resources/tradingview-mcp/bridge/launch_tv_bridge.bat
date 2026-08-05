@@ -31,18 +31,17 @@ if not defined CHROME (
 )
 
 REM --- profile choice --------------------------------------------------------
-REM  DEFAULT below = your NORMAL Chrome profile (reuses your existing TV login),
-REM  which is what you picked ("based on the user who logs into TradeHunter").
-REM  IMPORTANT gotcha: if Chrome is ALREADY running on this profile, Windows
-REM  just forwards the new tab to the existing process and the debug port is
-REM  NOT opened. If "Plot on TV" says it can't reach the port: fully quit Chrome
-REM  first, then re-run this .bat  (or add --remote-debugging-port=9222 to your
-REM  everyday Chrome shortcut so it's always on).
+REM  DEFAULT = a DEDICATED "TradeHunterTV" profile that runs ALONGSIDE your normal
+REM  Chrome and ALWAYS opens the debug port (a normal-profile launch fails to open
+REM  the port when Chrome is already running / has a background process). Log into
+REM  TradingView ONCE in this window; the login persists in this profile, and your
+REM  layouts are account-side so they show up in your normal Chrome too.
 REM
-REM  Prefer a dedicated, always-works profile that runs ALONGSIDE your normal
-REM  Chrome (log into TV once in it)? Uncomment the next line:
-REM  set "TH_USER_DATA=--user-data-dir=%LocalAppData%\TradeHunterTV"
-set "TH_USER_DATA=%TH_USER_DATA%"
+REM  Want to use your EVERYDAY Chrome profile/login instead (no second window)?
+REM  Comment the line below AND add --remote-debugging-port=9222 to your everyday
+REM  Chrome shortcut (and turn OFF chrome://settings/system "continue running
+REM  background apps" so a full close actually frees the port).
+set "TH_USER_DATA=--user-data-dir=%LocalAppData%\TradeHunterTV"
 
 if defined CHROME (
   echo [tv-bridge] Launching Chrome with remote debugging on port 9222...
