@@ -124,6 +124,18 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-07-18 — v3.46: delete a ticker from the MATP watchlist (moderators)
+- Each watchlist row now has a **`×` delete button** (moderators/admins only) to
+  remove that ticker from the MATP board. New `POST /matp/{symbol}/delete`
+  (`require_moderator`) hard-deletes the `MATPLevel` row and returns JSON; the
+  front-end drops just that row (no list reload). `MATPHistory` is kept.
+- A Finviz-filter ticker can reappear on the next filter run (manual removal, not a
+  permanent block); a Selective/individual ticker stays gone until re-added.
+- Templates: `_wl_macros.html` `ticker_grid` gains a `can_delete` arg → a trailing
+  delete column + per-row `.wl-del` button; `_watchlist.html` passes
+  `user.can_moderate`; `matp.html` adds a capture-phase `.wl-del` handler (confirm →
+  POST → remove row) that preempts the row's HTMX chart-load, mirroring the TV button.
+
 ### 2026-07-18 — v3.45: FIX — MATP page hard-reloaded every 20s forever
 - Removed the blunt full-page `setTimeout(location.reload, 20000)` in `matp.html`
   (gated on `open_reqs`). It had **no staleness check**, so a MATP refresh request

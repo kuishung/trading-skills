@@ -17,12 +17,13 @@
   {% else %}<span class="text-slate-700">&middot;</span>{% endif %}
 {% endmacro %}
 
-{% macro ticker_grid(tickers, open_symbols, sel_sym, live, wl="") %}
+{% macro ticker_grid(tickers, open_symbols, sel_sym, live, wl="", can_delete=false) %}
 {# Shared column template — used VERBATIM by the header and every row so the
    columns line up pixel-for-pixel (separate grids with `auto` cols would drift).
-   Sym flexes (truncates); Trend/Sig/Price/MATP/MBP are fixed widths. Defined
-   INSIDE the macro so it's in scope even when imported into another template. #}
-{% set GRIDCSS = "display:grid;grid-template-columns:minmax(3.8rem,1fr) 2.6rem 3rem 3.4rem 3.4rem 3.4rem 1.4rem;column-gap:0.3rem;align-items:center" %}
+   Sym flexes (truncates); Trend/Sig/Price/MATP/MBP are fixed widths. A trailing
+   1.3rem delete column is added only for moderators (can_delete). Defined INSIDE
+   the macro so it's in scope even when imported into another template. #}
+{% set GRIDCSS = "display:grid;grid-template-columns:minmax(3.4rem,1fr) 2.4rem 2.9rem 3.2rem 3.2rem 3.2rem 1.3rem" ~ (" 1.3rem" if can_delete else "") ~ ";column-gap:0.25rem;align-items:center" %}
 <div style="{{ GRIDCSS }}" class="px-2 pt-1 text-[10px] uppercase tracking-wide text-slate-600">
   <span>Sym</span>
   <span class="text-center">Trend</span>
@@ -31,6 +32,7 @@
   <span class="text-right">MATP</span>
   <span class="text-right">MBP</span>
   <span class="text-center" title="Plot MATP &amp; MBP on your TradingView">&#9639;</span>
+  {% if can_delete %}<span class="text-center" title="Remove from watchlist">&times;</span>{% endif %}
 </div>
 {% for lv in tickers %}
 {% set lr = live.get(lv.symbol, {}) if live else {} %}
@@ -58,6 +60,14 @@
         data-exch="{{ lv.exchange or '' }}"
         data-matp="{{ '%.2f'|format(lv.matp) if lv.matp is not none else '' }}"
         data-mbp="{{ '%.2f'|format(lv.mbp) if lv.mbp is not none else '' }}">&#9639;</span>
+  {# Delete (moderators only) — removes the ticker from the watchlist. The capture-phase
+     handler in matp.html stops it from also triggering the row's chart load. #}
+  {% if can_delete %}
+  <span class="wl-del cursor-pointer text-center text-[13px] leading-none text-slate-600 hover:text-rose-400 transition select-none"
+        role="button" tabindex="0"
+        title="Remove {{ lv.symbol }} from watchlist"
+        data-sym="{{ lv.symbol }}">&times;</span>
+  {% endif %}
 </a>
 {% endfor %}
 {% endmacro %}

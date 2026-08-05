@@ -370,6 +370,30 @@ def retry_run(
     )
 
 
+@router.post("/{symbol}/delete")
+def delete_ticker(
+    symbol: str,
+    user: User = Depends(require_moderator),
+    db: Session = Depends(get_db),
+):
+    """Remove a ticker from the MATP watchlist (moderators+).
+
+    Hard-deletes the MATPLevel row(s) for the symbol — that row IS the watchlist
+    entry. MATPHistory is kept as a record. A Finviz-filter ticker can reappear on
+    the next filter run (this is a manual removal, not a permanent block); a
+    Selective/individual ticker stays gone until re-added. Returns JSON so the
+    front-end can drop just that row without reloading the list.
+    """
+    sym = (symbol or "").strip().upper()
+    rows = db.query(MATPLevel).filter(MATPLevel.symbol == sym).all()
+    n = len(rows)
+    for r in rows:
+        db.delete(r)
+    if n:
+        db.commit()
+    return {"ok": True, "symbol": sym, "deleted": n}
+
+
 def _build_chart(points, width=600, height=170, pad=28):
     """points: list of (date_str, value) ascending by time. Returns an SVG-ready
     dict (polyline + area path + dots) or None if <2 points."""

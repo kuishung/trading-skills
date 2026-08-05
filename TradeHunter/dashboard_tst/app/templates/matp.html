@@ -205,6 +205,32 @@
         e.preventDefault(); e.stopPropagation(); window.plotOnTV(e.target);
       }
     }, true);
+
+    // ── Delete a ticker from the watchlist (moderators) ───────────────────────
+    // Capture-phase so it preempts the row <a>'s HTMX chart-load. Confirms, POSTs
+    // to /matp/<sym>/delete, then removes just that row (no full list reload).
+    function deleteTicker(el) {
+      var sym = ((el.dataset && el.dataset.sym) || '').trim();
+      if (!sym) return;
+      if (!confirm('Remove ' + sym + ' from the watchlist?')) return;
+      var row = el.closest ? el.closest('a.wl-row') : null;
+      el.style.opacity = '0.4';
+      fetch('/matp/' + encodeURIComponent(sym) + '/delete', { method: 'POST' })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json().catch(function () { return {}; }); })
+        .then(function () { if (row) row.remove(); else location.reload(); })
+        .catch(function () { el.style.opacity = ''; alert('Could not remove ' + sym + ' — you must be signed in as a moderator.'); });
+    }
+    document.addEventListener('click', function (e) {
+      var el = e.target.closest ? e.target.closest('.wl-del') : null;
+      if (!el) return;
+      e.preventDefault(); e.stopPropagation();
+      deleteTicker(el);
+    }, true);
+    document.addEventListener('keydown', function (e) {
+      if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('wl-del')) {
+        e.preventDefault(); e.stopPropagation(); deleteTicker(e.target);
+      }
+    }, true);
   })();
 </script>
 
