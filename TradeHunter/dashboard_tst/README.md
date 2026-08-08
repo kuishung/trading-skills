@@ -124,6 +124,12 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-07-18 — v3.49: HOTFIX — Company Analysis page 500'd (missing Jinja globals)
+- `company_analysis_routes` was missing from `main.py`'s Jinja-globals loop, so its
+  template env had no `nav_for`/`version` → the `/company-analysis` page 500'd on render.
+  Added it to the loop. (The nav item itself is correct for admins/moderators; a member
+  needs the `company_analysis` menu granted to see it.)
+
 ### 2026-07-18 — v3.48: Company Analysis page (Phase 1 scaffold)
 - New **Investing → Company Analysis** page (`/company-analysis`): a per-ticker dossier with
   5 fixed sections — **Business Model, Business Segment, Competitive Analysis, Suppliers,

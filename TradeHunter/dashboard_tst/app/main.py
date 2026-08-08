@@ -57,6 +57,7 @@ for _routes_mod in (
     auth_routes, today_routes, matp_routes, studies_routes,
     finviz_routes, feedback_routes, admin_routes, agent_routes, pipeline_routes,
     research_routes, patterns_routes, strategy_routes, portfolio_routes,
+    company_analysis_routes,
 ):
     _routes_mod.templates.env.globals["version"] = APP_VERSION
     _routes_mod.templates.env.globals["nav_for"] = menus.nav_for   # access-filtered nav
