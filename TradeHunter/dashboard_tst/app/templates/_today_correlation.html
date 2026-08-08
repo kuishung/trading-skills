@@ -1,0 +1,29 @@
+{# Correlation heatmap card body. Context: labels=[...], matrix=[[...]], window. #}
+{% if matrix %}
+<div class="overflow-auto max-h-80 pr-1">
+  <table class="border-collapse text-[9px]" style="border-spacing:0">
+    <thead>
+      <tr>
+        <th class="sticky left-0 z-10 bg-slate-900/95 p-1"></th>
+        {% for c in labels %}<th class="p-1 font-medium text-slate-400">{{ c }}</th>{% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for i in range(labels|length) %}
+      <tr>
+        <th class="sticky left-0 z-10 bg-slate-900/95 p-1 text-right font-medium text-slate-400 whitespace-nowrap">{{ labels[i] }}</th>
+        {% for j in range(labels|length) %}
+        {% set v = matrix[i][j] %}
+        <td class="text-center tabular-nums {{ 'text-slate-900' if v >= 0.6 else 'text-slate-200' }}"
+            style="width:26px;height:22px;background:{% if v >= 0 %}rgba(16,185,129,{{ '%.2f'|format(v*0.85) }}){% else %}rgba(244,63,94,{{ '%.2f'|format(-v*0.85) }}){% endif %}"
+            title="{{ labels[i] }} · {{ labels[j] }} = {{ v }}">{{ "%.0f"|format(v*100) }}</td>
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<div class="text-[10px] text-slate-500 mt-2">{{ window }}-day daily-return correlation · <span class="text-emerald-400">green</span> = move together, <span class="text-rose-400">red</span> = inversely. Values ×100.</div>
+{% else %}
+<div class="flex-1 flex items-center justify-center text-xs text-slate-500 py-6">Correlation data unavailable right now.</div>
+{% endif %}

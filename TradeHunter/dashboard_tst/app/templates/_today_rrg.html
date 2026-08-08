@@ -1,0 +1,68 @@
+{# RRG card body. Context: points={sym:{name,tail:[{x,y}]}}, quad={sym:label}.
+   Drawn client-side into an auto-scaled SVG (the tails cluster near 100). #}
+{% if points %}
+<div id="rrgBox" class="flex-1 min-h-[320px] w-full"></div>
+<div class="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-slate-500 mt-2">
+  <span><span class="inline-block w-2 h-2 rounded-full align-middle mr-1" style="background:#10b981"></span>Leading</span>
+  <span><span class="inline-block w-2 h-2 rounded-full align-middle mr-1" style="background:#f59e0b"></span>Weakening</span>
+  <span><span class="inline-block w-2 h-2 rounded-full align-middle mr-1" style="background:#ef4444"></span>Lagging</span>
+  <span><span class="inline-block w-2 h-2 rounded-full align-middle mr-1" style="background:#3b82f6"></span>Improving</span>
+  <span class="text-slate-600">· sector SPDRs vs SPY · weekly</span>
+</div>
+<script>
+(function () {
+  var DATA = {{ points|tojson }};
+  var box = document.getElementById('rrgBox');
+  if (!box) return;
+  var syms = Object.keys(DATA);
+  if (!syms.length) { box.innerHTML = '<div class="text-xs text-slate-500 py-6 text-center">Not enough history for RRG.</div>'; return; }
+
+  var COL = { Leading: '#10b981', Weakening: '#f59e0b', Lagging: '#ef4444', Improving: '#3b82f6' };
+  function quad(x, y) { return x >= 100 ? (y >= 100 ? 'Leading' : 'Weakening') : (y >= 100 ? 'Improving' : 'Lagging'); }
+
+  // square, symmetric range around 100 so quadrants stay centred
+  var dev = 0.6;
+  syms.forEach(function (s) { DATA[s].tail.forEach(function (p) { dev = Math.max(dev, Math.abs(p.x - 100), Math.abs(p.y - 100)); }); });
+  dev *= 1.25;
+  var lo = 100 - dev, hi = 100 + dev;
+  var W = 480, H = 360, pad = 26;
+  function X(x) { return pad + (x - lo) / (hi - lo) * (W - 2 * pad); }
+  function Y(y) { return H - pad - (y - lo) / (hi - lo) * (H - 2 * pad); }
+  var cx = X(100), cy = Y(100);
+  var light = document.documentElement.classList.contains('light');
+  var axis = light ? '#94a3b8' : '#475569';
+  var txt = light ? '#475569' : '#94a3b8';
+
+  var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">';
+  // quadrant tints
+  s += '<rect x="' + cx + '" y="' + pad + '" width="' + (W - pad - cx) + '" height="' + (cy - pad) + '" fill="#10b981" opacity="0.06"/>';
+  s += '<rect x="' + cx + '" y="' + cy + '" width="' + (W - pad - cx) + '" height="' + (H - pad - cy) + '" fill="#f59e0b" opacity="0.06"/>';
+  s += '<rect x="' + pad + '" y="' + cy + '" width="' + (cx - pad) + '" height="' + (H - pad - cy) + '" fill="#ef4444" opacity="0.06"/>';
+  s += '<rect x="' + pad + '" y="' + pad + '" width="' + (cx - pad) + '" height="' + (cy - pad) + '" fill="#3b82f6" opacity="0.06"/>';
+  // crosshair at (100,100)
+  s += '<line x1="' + cx + '" y1="' + pad + '" x2="' + cx + '" y2="' + (H - pad) + '" stroke="' + axis + '" stroke-width="1" stroke-dasharray="3 3"/>';
+  s += '<line x1="' + pad + '" y1="' + cy + '" x2="' + (W - pad) + '" y2="' + cy + '" stroke="' + axis + '" stroke-width="1" stroke-dasharray="3 3"/>';
+  // corner labels
+  s += '<text x="' + (W - pad - 4) + '" y="' + (pad + 11) + '" text-anchor="end" font-size="10" fill="#10b981">Leading</text>';
+  s += '<text x="' + (W - pad - 4) + '" y="' + (H - pad - 4) + '" text-anchor="end" font-size="10" fill="#f59e0b">Weakening</text>';
+  s += '<text x="' + (pad + 4) + '" y="' + (H - pad - 4) + '" font-size="10" fill="#ef4444">Lagging</text>';
+  s += '<text x="' + (pad + 4) + '" y="' + (pad + 11) + '" font-size="10" fill="#3b82f6">Improving</text>';
+
+  syms.forEach(function (sym) {
+    var tail = DATA[sym].tail, c = COL[quad(tail[tail.length - 1].x, tail[tail.length - 1].y)];
+    if (tail.length > 1) {
+      var pts = tail.map(function (p) { return X(p.x).toFixed(1) + ',' + Y(p.y).toFixed(1); }).join(' ');
+      s += '<polyline points="' + pts + '" fill="none" stroke="' + c + '" stroke-width="1.5" opacity="0.45"/>';
+      for (var i = 0; i < tail.length - 1; i++) s += '<circle cx="' + X(tail[i].x).toFixed(1) + '" cy="' + Y(tail[i].y).toFixed(1) + '" r="1.6" fill="' + c + '" opacity="0.4"/>';
+    }
+    var h = tail[tail.length - 1];
+    s += '<circle cx="' + X(h.x).toFixed(1) + '" cy="' + Y(h.y).toFixed(1) + '" r="4" fill="' + c + '"/>';
+    s += '<text x="' + (X(h.x) + 6).toFixed(1) + '" y="' + (Y(h.y) + 3).toFixed(1) + '" font-size="10" font-weight="600" fill="' + txt + '">' + sym + '</text>';
+  });
+  s += '</svg>';
+  box.innerHTML = s;
+})();
+</script>
+{% else %}
+<div class="flex-1 flex items-center justify-center text-xs text-slate-500 py-6 text-center px-2">Not enough history to compute RRG right now.</div>
+{% endif %}

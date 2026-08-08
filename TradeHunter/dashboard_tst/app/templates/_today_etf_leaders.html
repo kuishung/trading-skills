@@ -1,0 +1,45 @@
+{# ETF leaders card body. Context: rows=[{symbol,name,r1w,r1m,r3m,rs1m,leading}], spy. #}
+{% macro pct(v) %}{% if v is none %}<span class="text-slate-600">–</span>{% else %}<span class="{{ 'text-emerald-400' if v >= 0 else 'text-rose-400' }}">{{ "%+.1f"|format(v*100) }}%</span>{% endif %}{% endmacro %}
+{% if rows %}
+<div class="max-h-80 overflow-y-auto pr-1">
+  <table class="w-full text-xs">
+    <thead class="text-[10px] uppercase tracking-wide text-slate-500">
+      <tr>
+        <th class="text-left font-normal pb-1">Sector</th>
+        <th class="text-right font-normal pb-1">1w</th>
+        <th class="text-right font-normal pb-1">1m</th>
+        <th class="text-right font-normal pb-1">3m</th>
+        <th class="text-right font-normal pb-1" title="1-month return vs SPY">vs SPY</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr class="border-t border-slate-800/70">
+        <td class="py-1">
+          <span class="font-semibold text-slate-200">{{ r.symbol }}</span>
+          <span class="text-slate-500">{{ r.name }}</span>
+          {% if r.leading %}<span class="ml-1 text-emerald-400" title="outperforming SPY (1m)">▲</span>{% else %}<span class="ml-1 text-rose-400/70" title="lagging SPY (1m)">▼</span>{% endif %}
+        </td>
+        <td class="py-1 text-right tabular-nums">{{ pct(r.r1w) }}</td>
+        <td class="py-1 text-right tabular-nums">{{ pct(r.r1m) }}</td>
+        <td class="py-1 text-right tabular-nums">{{ pct(r.r3m) }}</td>
+        <td class="py-1 text-right tabular-nums font-medium">{{ pct(r.rs1m) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+    {% if spy %}
+    <tfoot>
+      <tr class="border-t border-slate-700 text-slate-400">
+        <td class="py-1"><span class="font-semibold">SPY</span> <span class="text-slate-600">benchmark</span></td>
+        <td class="py-1 text-right tabular-nums">{{ pct(spy.r1w) }}</td>
+        <td class="py-1 text-right tabular-nums">{{ pct(spy.r1m) }}</td>
+        <td class="py-1 text-right tabular-nums">{{ pct(spy.r3m) }}</td>
+        <td class="py-1 text-right text-slate-600">—</td>
+      </tr>
+    </tfoot>
+    {% endif %}
+  </table>
+</div>
+{% else %}
+<div class="flex-1 flex items-center justify-center text-xs text-slate-500 py-6">ETF data unavailable right now.</div>
+{% endif %}

@@ -79,3 +79,27 @@ def today_company_news(
     return templates.TemplateResponse(
         request, "_today_company_news.html", {"news": company_news(syms)},
     )
+
+
+@router.get("/etf-leaders", response_class=HTMLResponse)
+def today_etf_leaders(request: Request, user: User = Depends(require_user)):
+    """Sector-ETF relative strength ranking (vs SPY)."""
+    from ..services.etf import etf_leaders
+
+    return templates.TemplateResponse(request, "_today_etf_leaders.html", etf_leaders())
+
+
+@router.get("/correlation", response_class=HTMLResponse)
+def today_correlation(request: Request, user: User = Depends(require_user)):
+    """60-day daily-return correlation heatmap across SPY + sector ETFs."""
+    from ..services.etf import correlation_matrix
+
+    return templates.TemplateResponse(request, "_today_correlation.html", correlation_matrix())
+
+
+@router.get("/rrg", response_class=HTMLResponse)
+def today_rrg(request: Request, user: User = Depends(require_user)):
+    """Relative Rotation Graph — sector ETFs vs SPY (RS-Ratio / RS-Momentum)."""
+    from ..services.etf import rrg
+
+    return templates.TemplateResponse(request, "_today_rrg.html", rrg())

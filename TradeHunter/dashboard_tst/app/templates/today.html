@@ -47,7 +47,9 @@
   {% endcall %}
 
   {# ETF rotation (RRG) — the centerpiece; spans two columns on wide screens. #}
-  {% call card("ETF rotation (RRG)", "sector SPDRs vs SPY", "xl:col-span-2") %}{{ soon("Phase 3") }}{% endcall %}
+  {% call card("ETF rotation (RRG)", "sector SPDRs vs SPY", "xl:col-span-2") %}
+  <div class="flex-1" hx-get="/today/rrg" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
+  {% endcall %}
 
   {# Economic calendar — LIVE (embedded TradingView widget, US, high/medium impact). #}
   {% call card("Economic calendar", "US · today") %}
@@ -56,9 +58,13 @@
   </div>
   {% endcall %}
 
-  {% call card("ETF leaders", "relative strength") %}{{ soon("Phase 2") }}{% endcall %}
+  {% call card("ETF leaders", "relative strength") %}
+  <div class="flex-1" hx-get="/today/etf-leaders" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
+  {% endcall %}
 
-  {% call card("Correlation", "60-day returns") %}{{ soon("Phase 2") }}{% endcall %}
+  {% call card("Correlation", "60-day returns") %}
+  <div class="flex-1" hx-get="/today/correlation" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
+  {% endcall %}
 
 </div>
 
