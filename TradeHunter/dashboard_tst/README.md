@@ -124,6 +124,22 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-07-18 — v3.48: Company Analysis page (Phase 1 scaffold)
+- New **Investing → Company Analysis** page (`/company-analysis`): a per-ticker dossier with
+  5 fixed sections — **Business Model, Business Segment, Competitive Analysis, Suppliers,
+  Key Metrics (KPI)**. Full design: `COMPANY_ANALYSIS_DESIGN.md`.
+- New `CompanyAnalysis` model (one row per symbol+section: `body`, structured `content`,
+  `sources`, `source_kind`, `confidence`, `industry`, `as_of`). Table auto-created via
+  `create_all` (Alembic still the open gap before prod data).
+- Phase 1: page + nav (`company_analysis` menu key) + moderator-editable sections + ticker
+  search (reuses MATP's search) + provenance/confidence badges. **Suppliers** is designed as a
+  tiered value chain (tier-1 filing-cited / tier-2 industry-knowledge inference); **KPI** as an
+  industry peer scorecard — both filled by the agent in Phase 2.
+- Agent-push endpoint `POST /api/company-analysis/{symbol}/{section}` (X-API-Key) ready for the
+  Nous agent to generate sections from EDGAR + industry knowledge (mirrors the MATP push pattern).
+- Files: `models.py`, `routes/company_analysis.py`, `routes/api.py`, `menus.py`, `main.py`,
+  `templates/company_analysis.html`.
+
 ### 2026-07-18 — v3.47: faster watchlist load + resizable watchlist/chart split
 - **Watchlist load speedup.** The grid was re-deriving trend/signal by fetching
   **2 years of daily bars from Yahoo per ticker** + running pattern detectors on every

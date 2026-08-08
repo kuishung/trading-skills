@@ -561,3 +561,42 @@ class PatternLesson(Base):
     created_at = Column(DateTime, default=_utcnow)
 
     pattern = relationship("Pattern", back_populates="lessons")
+
+
+# ── Company Analysis (per-ticker dossier) ──────────────────────────────────────
+# See dashboard_tst/COMPANY_ANALYSIS_DESIGN.md. One row per (symbol, section):
+# a fixed-section, sourced, per-ticker analysis. Content is agent-generated (from
+# EDGAR + industry knowledge) or moderator-edited; every section carries provenance.
+CA_BUSINESS_MODEL = "business_model"
+CA_SEGMENT = "segment"
+CA_COMPETITIVE = "competitive"
+CA_SUPPLIERS = "suppliers"
+CA_KPI = "kpi"
+CA_SECTIONS = (CA_BUSINESS_MODEL, CA_SEGMENT, CA_COMPETITIVE, CA_SUPPLIERS, CA_KPI)
+CA_SECTION_LABELS = {
+    CA_BUSINESS_MODEL: "Business Model",
+    CA_SEGMENT: "Business Segment",
+    CA_COMPETITIVE: "Competitive Analysis",
+    CA_SUPPLIERS: "Suppliers",
+    CA_KPI: "Key Metrics (KPI)",
+}
+
+
+class CompanyAnalysis(Base):
+    __tablename__ = "company_analysis"
+
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), nullable=False, index=True)
+    section = Column(String(32), nullable=False)   # one of CA_SECTIONS
+    body = Column(Text, nullable=True)             # long-form prose (qualitative sections)
+    content = Column(JSON, nullable=True)          # structured payload (tables/lists/tiers/scorecard)
+    sources = Column(JSON, nullable=True)          # [{title, url, accession, kind}]
+    source_kind = Column(String(16), nullable=False, default="manual")  # manual | agent | feed
+    confidence = Column(String(16), nullable=True)  # high | medium | low (esp. inferred tier-2)
+    industry = Column(String(80), nullable=True)   # classified industry (drives templates/peers)
+    as_of = Column(DateTime, default=_utcnow)
+    updated_by = Column(String(120), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("symbol", "section", name="uq_company_analysis_symbol_section"),
+    )

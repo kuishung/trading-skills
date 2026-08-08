@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% from "_time.html" import localtime %}
+{% block title %}Company Analysis &middot; TradeHunter{% endblock %}
+{% block main_class %}flex-1 min-h-0 overflow-y-auto w-full px-4 py-6 max-w-5xl mx-auto{% endblock %}
+
+{% block content %}
+<div class="flex flex-col gap-4">
+
+  {# ── Header + ticker picker ── #}
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <h1 class="text-lg font-semibold text-slate-100">Company Analysis</h1>
+      <p class="text-xs text-slate-500">Per-ticker dossier — business model, segments, competition, suppliers &amp; industry KPIs.</p>
+    </div>
+    <form method="get" action="/company-analysis" class="flex items-center gap-2">
+      <input name="symbol" id="caTicker" list="caTickerOptions" value="{{ symbol or '' }}"
+             placeholder="ticker…" autocomplete="off"
+             class="w-40 rounded bg-slate-950/60 border border-slate-700 px-2 py-1 text-sm uppercase focus:border-emerald-500 outline-none">
+      <datalist id="caTickerOptions"></datalist>
+      <button class="text-xs px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 font-medium">Analyze</button>
+    </form>
+  </div>
+
+  {% if not symbol %}
+    {# ── Landing: prompt + recently-analyzed ── #}
+    <div class="rounded-lg border border-slate-800 bg-slate-900/40 p-6 text-center">
+      <p class="text-slate-400 text-sm">Enter a ticker above to view its analysis.</p>
+    </div>
+    {% if recent %}
+    <div class="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+      <div class="text-[11px] uppercase tracking-wide text-slate-500 mb-2">Recently analyzed</div>
+      <div class="flex flex-wrap gap-2">
+        {% for sym in recent %}
+        <a href="/company-analysis?symbol={{ sym }}"
+           class="text-xs px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">{{ sym }}</a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+  {% else %}
+    {# ── Dossier: one card per section ── #}
+    <h2 class="text-base font-semibold text-emerald-300">{{ symbol }}</h2>
+
+    {% for key, label, row in sections %}
+    <section class="rounded-lg border border-slate-800 bg-slate-900/40">
+      <div class="flex items-center justify-between gap-2 px-4 py-2 border-b border-slate-800">
+        <h3 class="text-sm font-medium text-slate-100">{{ label }}</h3>
+        <div class="flex items-center gap-2 text-[10px]">
+          {% if row and row.source_kind %}
+            {% if row.source_kind == 'agent' %}<span class="px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300">agent</span>
+            {% elif row.source_kind == 'manual' %}<span class="px-1.5 py-0.5 rounded bg-slate-600/30 text-slate-300">manual</span>
+            {% else %}<span class="px-1.5 py-0.5 rounded bg-slate-600/30 text-slate-300">{{ row.source_kind }}</span>{% endif %}
+          {% endif %}
+          {% if row and row.confidence %}
+            {% set cc = {'high':'bg-emerald-500/15 text-emerald-300','medium':'bg-amber-500/15 text-amber-300','low':'bg-rose-500/15 text-rose-300'} %}
+            <span class="px-1.5 py-0.5 rounded {{ cc.get(row.confidence, 'bg-slate-600/30 text-slate-300') }}" title="confidence">{{ row.confidence }}</span>
+          {% endif %}
+          {% if row and row.as_of %}<span class="text-slate-500">{{ localtime(row.as_of) }}</span>{% endif %}
+        </div>
+      </div>
+
+      <div class="px-4 py-3">
+        {% if row and (row.body or row.content) %}
+          {% if row.body %}<div class="text-sm text-slate-300 whitespace-pre-wrap leading-relaxed">{{ row.body }}</div>{% endif %}
+          {% if row.content %}<pre class="mt-2 text-[11px] text-slate-400 bg-slate-950/50 rounded p-2 overflow-x-auto">{{ row.content | tojson(indent=2) }}</pre>{% endif %}
+          {% if row.sources %}
+          <div class="mt-2 text-[11px] text-slate-500">
+            <span class="uppercase tracking-wide">Sources:</span>
+            {% for s in row.sources %}<a href="{{ s.url or '#' }}" target="_blank" rel="noopener" class="text-emerald-400 hover:underline ml-1">{{ s.title or s.accession or s.url }}</a>{% endfor %}
+          </div>
+          {% endif %}
+        {% else %}
+          <p class="text-xs text-slate-600 italic">Not yet generated — {% if user.can_moderate %}add it below, or the agent will fill it.{% else %}pending the analysis agent.{% endif %}</p>
+        {% endif %}
+
+        {% if user.can_moderate %}
+        <details class="mt-3 group">
+          <summary class="cursor-pointer text-[11px] text-slate-500 hover:text-emerald-300 select-none">&#9998; Edit {{ label }}</summary>
+          <form method="post" action="/company-analysis/{{ symbol }}/{{ key }}" class="mt-2 flex flex-col gap-2">
+            <textarea name="body" rows="6"
+                      class="w-full rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm text-slate-200 focus:border-emerald-500 outline-none"
+                      placeholder="{{ label }} — write or paste (agent pushes structured content via API)…">{{ row.body if row else '' }}</textarea>
+            <div><button class="text-xs px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 font-medium">Save</button></div>
+          </form>
+        </details>
+        {% endif %}
+      </div>
+    </section>
+    {% endfor %}
+  {% endif %}
+</div>
+
+<script>
+(function () {
+  var inp = document.getElementById('caTicker');
+  var dl = document.getElementById('caTickerOptions');
+  if (!inp || !dl) return;
+  var t;
+  inp.addEventListener('input', function () {
+    var q = inp.value.trim();
+    clearTimeout(t);
+    if (q.length < 1) { dl.innerHTML = ''; return; }
+    t = setTimeout(function () {
+      fetch('/matp/ticker-search?q=' + encodeURIComponent(q))
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          dl.innerHTML = '';
+          (d.results || []).forEach(function (it) {
+            var o = document.createElement('option');
+            o.value = it.symbol;
+            o.label = it.symbol + ' — ' + (it.name || '');
+            dl.appendChild(o);
+          });
+        }).catch(function () {});
+    }, 200);
+  });
+})();
+</script>
+{% endblock %}

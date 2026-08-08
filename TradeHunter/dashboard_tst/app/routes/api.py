@@ -25,8 +25,10 @@ from datetime import timedelta
 from ..config import settings
 from ..db import get_db
 from ..models import (
+    CA_SECTIONS,
     RUN_INTERVALS,
     AgentHeartbeat,
+    CompanyAnalysis,
     EdgarIngestHealth,
     FinvizFilter,
     IngestHealth,
@@ -34,6 +36,7 @@ from ..models import (
     MATPLevel,
     MATPRefreshRequest,
     MATPTarget,
+    _utcnow,
     get_selective_schedule,
 )
 from ..services import discord
@@ -533,3 +536,46 @@ def ingest_matp(
         "history_appended": appended, "targets_added": targets_added,
         "dropped": dropped, "archived": archived,
     }
+
+
+# ── Company Analysis push (agent → platform) ───────────────────────────────────
+class CompanyAnalysisIn(BaseModel):
+    body: str | None = None            # long-form prose (qualitative sections)
+    content: dict | list | None = None  # structured payload (tables/lists/tiers/scorecard)
+    sources: list | None = None         # [{title, url, accession, kind}]
+    confidence: str | None = None       # high | medium | low (esp. inferred tier-2)
+    industry: str | None = None
+
+
+@router.post("/company-analysis/{symbol}/{section}")
+def push_company_analysis(
+    symbol: str,
+    section: str,
+    payload: CompanyAnalysisIn = Body(...),
+    _: bool = Depends(require_api_key),
+    db: Session = Depends(get_db),
+):
+    """The Nous agent pushes a generated section (from EDGAR + industry knowledge).
+    Upsert by (symbol, section). See dashboard_tst/COMPANY_ANALYSIS_DESIGN.md."""
+    sym = (symbol or "").strip().upper()
+    if section not in CA_SECTIONS:
+        raise HTTPException(status_code=400, detail=f"unknown section: {section}")
+    row = (
+        db.query(CompanyAnalysis)
+        .filter(CompanyAnalysis.symbol == sym, CompanyAnalysis.section == section)
+        .first()
+    )
+    if row is None:
+        row = CompanyAnalysis(symbol=sym, section=section)
+        db.add(row)
+    row.body = payload.body
+    row.content = payload.content
+    row.sources = payload.sources
+    row.confidence = payload.confidence
+    if payload.industry:
+        row.industry = payload.industry
+    row.source_kind = "agent"
+    row.as_of = _utcnow()
+    row.updated_by = "nous_hermes"
+    db.commit()
+    return {"ok": True, "symbol": sym, "section": section}

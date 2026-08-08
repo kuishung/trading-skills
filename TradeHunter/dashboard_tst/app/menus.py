@@ -20,9 +20,11 @@ MENUS = [
     ("today",     "Today Overview", None,          "/today"),
     ("macro",     "Macro",        "Investing",     "/research?kind=macro"),
     ("company",   "Company",      "Investing",     "/research?kind=company"),
+    ("company_analysis", "Company Analysis", "Investing", "/company-analysis"),
     ("matp",      "MATP",         "Swing & Trend", "/matp"),
     ("studies",   "Studies",      "Swing & Trend", "/studies"),
     ("strategy",  "Strategy",     "Intraday",      "/strategy"),
+    ("patterns",  "Patterns",     "Intraday",      "/patterns"),
     ("portfolio", "My Portfolio", None,            "/portfolio"),
 ]
 # NB: /finviz ("Data Ingest") is NOT here — it's admin-only (rendered in base.html's

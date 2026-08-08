@@ -33,6 +33,7 @@ from .routes import admin as admin_routes
 from .routes import agent as agent_routes
 from .routes import api as api_routes
 from .routes import auth as auth_routes
+from .routes import company_analysis as company_analysis_routes
 from .routes import feedback as feedback_routes
 from .routes import finviz as finviz_routes
 from .routes import matp as matp_routes
@@ -144,6 +145,7 @@ def create_app() -> FastAPI:
     # page routers carry a per-menu access guard (blocks direct URLs; nav hides them too)
     app.include_router(matp_routes.router, dependencies=[Depends(menus.require_menu("matp"))])
     app.include_router(studies_routes.router, dependencies=[Depends(menus.require_menu("studies"))])
+    app.include_router(company_analysis_routes.router, dependencies=[Depends(menus.require_menu("company_analysis"))])
     # Data Ingest (Finviz filter manager) is ADMIN-ONLY now — lives under Settings.
     app.include_router(finviz_routes.router, dependencies=[Depends(require_admin)])
     app.include_router(feedback_routes.router)
@@ -154,10 +156,12 @@ def create_app() -> FastAPI:
     app.include_router(research_routes.router, dependencies=[Depends(menus.require_menu("macro", "company"))])
     app.include_router(strategy_routes.router, dependencies=[Depends(menus.require_menu("strategy"))])
     app.include_router(portfolio_routes.router, dependencies=[Depends(menus.require_menu("portfolio"))])
-    # Pattern Trainer aborted (user, 2026-06-17): removed from the dashboard menu and
-    # the routes disabled. Code/templates/models kept intact — re-enable by
-    # uncommenting this line (and restoring the ('/patterns','Patterns') nav entry).
-    # app.include_router(patterns_routes.router)
+    # Pattern Trainer — re-enabled 2026-06-17 (user is re-learning the ascending-
+    # triangle detector). Menu-gated like the other pages; the ('patterns',...)
+    # entry in menus.py restores the nav + access. (Was briefly aborted earlier the
+    # same day; detector/calibrate engine verified working before re-enabling.)
+    app.include_router(patterns_routes.router,
+                       dependencies=[Depends(menus.require_menu("patterns"))])
 
     @app.get("/health")
     def health():
