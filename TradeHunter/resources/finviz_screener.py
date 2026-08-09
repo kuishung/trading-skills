@@ -164,7 +164,8 @@ def _extract_symbols(html: str) -> list[str]:
 # `data-boxover-ticker="SYM" data-boxover-company="..." data-boxover-industry="X"`.
 # Non-greedy [^>]*? stays inside the same tag. Appears twice per row (dedup on sym).
 _TICKER_INDUSTRY_RE = re.compile(
-    r'data-boxover-ticker="([A-Z][A-Z0-9.]{0,9})"[^>]*?data-boxover-industry="([^"]*)"'
+    r'data-boxover-ticker="([A-Z][A-Z0-9.]{0,9})"\s+data-boxover-company="([^"]*)"'
+    r'[^>]*?data-boxover-industry="([^"]*)"'
 )
 _MEM_CACHE_IND: dict[str, tuple[float, list[dict]]] = {}
 
@@ -194,12 +195,13 @@ def fetch_ticker_industries(
             break
         price_map = {r["symbol"]: r.get("price") for r in _extract_rows(html)}
         new_on_page = 0
-        for sym, ind in _TICKER_INDUSTRY_RE.findall(html):
+        for sym, company, ind in _TICKER_INDUSTRY_RE.findall(html):
             sym = sym.upper()
             if sym in seen:
                 continue
             seen.add(sym)
-            out.append({"symbol": sym, "industry": (ind or "").strip() or "Other",
+            out.append({"symbol": sym, "company": (company or "").strip(),
+                        "industry": (ind or "").strip() or "Other",
                         "price": price_map.get(sym)})
             new_on_page += 1
         if new_on_page == 0:

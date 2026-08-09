@@ -17,7 +17,7 @@
    instead of navigating away to the Watchlist. #}
 <div title="{{ r.symbol }} — click to see its industries"
      hx-get="/sector/industries?sector={{ r.symbol }}" hx-target="#industryPanel" hx-swap="innerHTML"
-     style="{{ GRID }}" class="wl-sector cursor-pointer px-1 py-1 rounded hover:bg-slate-800/60 transition">
+     style="{{ GRID }}" class="wl-sector cursor-pointer px-1 py-1 rounded hover:bg-emerald-500/10 transition">
   <span class="text-[12px] text-slate-200 truncate">{{ r.name }}</span>
   <span class="text-right text-[12px]">{{ pct(r.rets['1M']) }}</span>
   <span class="text-right text-[12px]">{{ pct(r.rets['2M']) }}</span>

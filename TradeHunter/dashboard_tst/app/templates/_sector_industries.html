@@ -1,23 +1,28 @@
-{# Industries in a sector, grouped. Context: sector, name, industries [{name,tickers}], n. #}
+{# Industries in a sector, grouped. Context: sector, name, industries [{name,tickers:[{symbol,company,price}]}], n. #}
 {% if not industries %}
 <p class="text-xs text-slate-600 py-3">
   {% if sector %}No industries found for {{ name }} — try again shortly.{% else %}Select a sector above to list its tickers grouped by industry.{% endif %}
 </p>
 {% else %}
 <div class="text-[11px] text-slate-500 mb-2">{{ name }} &middot; {{ n }} tickers &middot; {{ industries|length }} industries</div>
+{% set COLS = "display:grid;grid-template-columns:3rem 1fr 3.6rem;column-gap:0.3rem;align-items:center" %}
 <div class="space-y-1">
   {% for ind in industries %}
   <details class="rounded border border-slate-800 bg-slate-950/30" {% if loop.index <= 3 %}open{% endif %}>
-    <summary class="cursor-pointer px-2 py-1 flex items-center justify-between hover:bg-slate-800/40 rounded select-none">
-      <span class="text-[12px] text-slate-200 truncate">{{ ind.name }}</span>
+    <summary class="cursor-pointer px-2 py-1 flex items-center justify-between hover:bg-emerald-500/10 rounded select-none">
+      <span class="text-[12px] font-bold text-slate-100 truncate">{{ ind.name }}</span>
       <span class="text-[11px] text-slate-500 ml-2 shrink-0">{{ ind.tickers|length }}</span>
     </summary>
-    <div class="px-2 pb-2 pt-1 space-y-0.5">
+    <div class="px-1 pb-2 pt-1">
+      <div style="{{ COLS }}" class="px-1 pb-0.5 text-[10px] uppercase tracking-wide text-slate-600 border-b border-slate-800/70">
+        <span>Ticker</span><span>Full Name</span><span class="text-right">Last</span>
+      </div>
       {% for t in ind.tickers %}
       <a href="/company-analysis?symbol={{ t.symbol }}" title="Company Analysis for {{ t.symbol }}"
-         class="flex items-center justify-between px-1 py-0.5 rounded hover:bg-slate-800/60 hover:text-emerald-300 transition">
-        <span class="text-[12px] text-slate-300">{{ t.symbol }}</span>
-        <span class="text-[11px] text-slate-400 tabular-nums">{{ '%.2f'|format(t.price) if t.price is not none else '-' }}</span>
+         style="{{ COLS }}" class="px-1 py-0.5 rounded hover:bg-emerald-500/10 hover:text-emerald-300 transition">
+        <span class="text-[12px] font-medium text-slate-200">{{ t.symbol }}</span>
+        <span class="text-[11px] text-slate-400 truncate" title="{{ t.company }}">{{ t.company or '&mdash;' }}</span>
+        <span class="text-right text-[11px] text-slate-300 tabular-nums">{{ '%.2f'|format(t.price) if t.price is not none else '-' }}</span>
       </a>
       {% endfor %}
     </div>

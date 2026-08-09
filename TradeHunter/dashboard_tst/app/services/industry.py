@@ -44,7 +44,11 @@ def sector_industries(sector: str) -> dict:
     groups: dict = {}
     for r in rows:
         ind = _html.unescape((r.get("industry") or "Other").strip()) or "Other"
-        groups.setdefault(ind, []).append({"symbol": r["symbol"], "price": r.get("price")})
+        groups.setdefault(ind, []).append({
+            "symbol": r["symbol"],
+            "company": _html.unescape((r.get("company") or "").strip()),
+            "price": r.get("price"),
+        })
     industries = [
         {"name": k, "tickers": sorted(v, key=lambda t: t["symbol"])}
         for k, v in sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0]))

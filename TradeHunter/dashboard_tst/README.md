@@ -124,6 +124,16 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-07-18 — v3.55: Sector & Industry — industry table + RRG show/hide + history dots
+- **Industry drill-down is now a table** — columns **Ticker · Full Name · Last Price** — with the
+  industry name **bold**. `fetch_ticker_industries()` also returns `company` (from
+  `data-boxover-company`); surfaced per ticker.
+- **Lighter hover** on sector + industry + ticker rows (emerald tint, not grey).
+- **RRG sector show/hide** — a legend of "Name (SYM)" chips; click to toggle each sector on the chart.
+- **RRG slider = time history** — a tick per week + first/last week dates under the slider.
+- **RRG plots a dot at every history point** (faint full path up to the scrub position) with the
+  recent tail emphasized.
+
 ### 2026-07-18 — v3.54: Sector & Industry left-column polish
 - Panels renamed: **Sector performance → Sector**, **Industries → Industry**.
 - Both panels are now **fixed-height and scroll internally** (`max-h` + `overflow-y-auto`);

@@ -1,9 +1,10 @@
-{# Interactive RRG — scrubbable tail. Context: weeks [labels], sectors [{symbol,name,pts:[{x,y}]}]. #}
+{# Interactive RRG — scrubbable tail + per-sector show/hide. Context: weeks [labels], sectors [{symbol,name,pts:[{x,y}]}]. #}
 <script type="application/json" id="rrgData">{{ {"weeks": weeks, "sectors": sectors} | tojson }}</script>
 
 {% if not sectors %}
 <div class="text-xs text-slate-600 py-6 text-center">Couldn't load RRG data — try again shortly.</div>
 {% else %}
+<div id="rrgLegend" class="flex flex-wrap gap-1 mb-2 text-[10px]"></div>
 <div class="flex items-center gap-3 mb-2 text-[11px] text-slate-400 flex-wrap">
   <label class="flex items-center gap-1">Tail
     <input id="rrgTail" type="number" min="1" max="12" value="5"
@@ -13,7 +14,9 @@
   <span class="ml-auto">Week ending: <span id="rrgWeek" class="text-slate-200 tabular-nums"></span></span>
 </div>
 <div id="rrgSvg" class="w-full"></div>
-<input id="rrgSlider" type="range" min="0" max="0" value="0" class="w-full mt-2 accent-emerald-500 cursor-pointer">
+<input id="rrgSlider" type="range" min="0" max="0" value="0" step="1" list="rrgTicks" class="w-full mt-2 accent-emerald-500 cursor-pointer">
+<datalist id="rrgTicks"></datalist>
+<div class="flex justify-between text-[10px] text-slate-600 mt-0.5"><span id="rrgFirst"></span><span id="rrgLast"></span></div>
 {% endif %}
 
 <script>
@@ -25,14 +28,17 @@
       slider = document.getElementById('rrgSlider'),
       tailInp = document.getElementById('rrgTail'),
       playBtn = document.getElementById('rrgPlay'),
-      weekLbl = document.getElementById('rrgWeek');
+      weekLbl = document.getElementById('rrgWeek'),
+      legend = document.getElementById('rrgLegend'),
+      ticks = document.getElementById('rrgTicks');
   if (!svgBox || !sectors.length || !weeks.length) return;
 
   var COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#14b8a6','#3b82f6','#6366f1','#a855f7','#ec4899','#84cc16','#06b6d4'];
   var W = 560, H = 440, mL = 46, mR = 16, mT = 16, mB = 28;
   var pw = W - mL - mR, ph = H - mT - mB;
+  var hidden = {};   // symbol -> true when hidden
+  function col(i) { return COLORS[i % COLORS.length]; }
 
-  // stable data range across the whole scrub, centred on 100
   var xs = [], ys = [];
   sectors.forEach(function (s) { s.pts.forEach(function (p) { xs.push(p.x); ys.push(p.y); }); });
   function rng(a) { var lo = Math.min.apply(null, a), hi = Math.max.apply(null, a); var d = Math.max(hi - 100, 100 - lo, 1.5) * 1.15; return [100 - d, 100 + d]; }
@@ -42,6 +48,24 @@
   function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
 
   slider.max = weeks.length - 1; slider.value = weeks.length - 1;
+  document.getElementById('rrgFirst').textContent = weeks[0] || '';
+  document.getElementById('rrgLast').textContent = weeks[weeks.length - 1] || '';
+  // slider tick per week (progress bar shows the time history)
+  weeks.forEach(function (_, i) { var o = document.createElement('option'); o.value = i; ticks.appendChild(o); });
+
+  // legend: Name (SYM) chip per sector, click to show/hide
+  sectors.forEach(function (sec, i) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'px-1.5 py-0.5 rounded border border-slate-700 hover:border-slate-500 transition select-none';
+    b.innerHTML = '<span style="color:' + col(i) + '">' + esc(sec.name) + ' (' + esc(sec.symbol) + ')</span>';
+    b.addEventListener('click', function () {
+      if (hidden[sec.symbol]) { delete hidden[sec.symbol]; b.style.opacity = ''; }
+      else { hidden[sec.symbol] = true; b.style.opacity = '0.35'; }
+      draw();
+    });
+    legend.appendChild(b);
+  });
 
   function draw() {
     var tail = Math.max(1, Math.min(12, parseInt(tailInp.value, 10) || 5));
@@ -49,35 +73,35 @@
     weekLbl.textContent = weeks[end] || '';
     var x100 = px(100), y100 = py(100), xR = mL + pw, yB = mT + ph;
     var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" class="w-full" style="max-height:58vh" preserveAspectRatio="xMidYMid meet" font-family="system-ui,sans-serif">';
-    // quadrant fills
     s += '<rect x="' + x100 + '" y="' + mT + '" width="' + (xR - x100) + '" height="' + (y100 - mT) + '" fill="#22c55e" opacity="0.06"/>';
     s += '<rect x="' + mL + '" y="' + mT + '" width="' + (x100 - mL) + '" height="' + (y100 - mT) + '" fill="#3b82f6" opacity="0.06"/>';
     s += '<rect x="' + x100 + '" y="' + y100 + '" width="' + (xR - x100) + '" height="' + (yB - y100) + '" fill="#eab308" opacity="0.06"/>';
     s += '<rect x="' + mL + '" y="' + y100 + '" width="' + (x100 - mL) + '" height="' + (yB - y100) + '" fill="#ef4444" opacity="0.06"/>';
-    // quadrant labels
     s += '<text x="' + (xR - 4) + '" y="' + (mT + 12) + '" text-anchor="end" font-size="10" fill="#22c55e">Leading</text>';
     s += '<text x="' + (mL + 4) + '" y="' + (mT + 12) + '" font-size="10" fill="#3b82f6">Improving</text>';
     s += '<text x="' + (xR - 4) + '" y="' + (yB - 4) + '" text-anchor="end" font-size="10" fill="#eab308">Weakening</text>';
     s += '<text x="' + (mL + 4) + '" y="' + (yB - 4) + '" font-size="10" fill="#ef4444">Lagging</text>';
-    // centre axes
     s += '<line x1="' + x100 + '" y1="' + mT + '" x2="' + x100 + '" y2="' + yB + '" stroke="#475569" stroke-dasharray="3 3"/>';
     s += '<line x1="' + mL + '" y1="' + y100 + '" x2="' + xR + '" y2="' + y100 + '" stroke="#475569" stroke-dasharray="3 3"/>';
     s += '<text x="' + (mL + pw / 2) + '" y="' + (H - 6) + '" text-anchor="middle" font-size="10" fill="#64748b">RS-Ratio</text>';
     s += '<text x="12" y="' + (mT + ph / 2) + '" text-anchor="middle" font-size="10" fill="#64748b" transform="rotate(-90 12 ' + (mT + ph / 2) + ')">RS-Momentum</text>';
-    // sectors
     sectors.forEach(function (sec, i) {
-      var col = COLORS[i % COLORS.length];
-      var a = Math.max(0, end - tail + 1);
-      var seg = sec.pts.slice(a, end + 1);
-      if (!seg.length) return;
-      s += '<polyline points="' + seg.map(function (p) { return px(p.x) + ',' + py(p.y); }).join(' ') + '" fill="none" stroke="' + col + '" stroke-width="1.5" opacity="0.7"/>';
+      if (hidden[sec.symbol]) return;
+      var c = col(i);
+      // full history up to `end`: faint path + a dot at EVERY point
+      var full = sec.pts.slice(0, end + 1);
+      if (!full.length) return;
+      if (full.length > 1) s += '<polyline points="' + full.map(function (p) { return px(p.x) + ',' + py(p.y); }).join(' ') + '" fill="none" stroke="' + c + '" stroke-width="1" opacity="0.22"/>';
+      full.forEach(function (p) { s += '<circle cx="' + px(p.x) + '" cy="' + py(p.y) + '" r="1.6" fill="' + c + '" opacity="0.3"/>'; });
+      // emphasized tail (last `tail` weeks)
+      var a = Math.max(0, end - tail + 1), seg = sec.pts.slice(a, end + 1);
+      s += '<polyline points="' + seg.map(function (p) { return px(p.x) + ',' + py(p.y); }).join(' ') + '" fill="none" stroke="' + c + '" stroke-width="1.8" opacity="0.9"/>';
       seg.forEach(function (p, j) {
-        var r = (j === seg.length - 1) ? 4 : 2;
-        var op = (0.35 + 0.65 * (j / (seg.length - 1 || 1))).toFixed(2);
-        s += '<circle cx="' + px(p.x) + '" cy="' + py(p.y) + '" r="' + r + '" fill="' + col + '" opacity="' + op + '"/>';
+        var r = (j === seg.length - 1) ? 4 : 2.5;
+        s += '<circle cx="' + px(p.x) + '" cy="' + py(p.y) + '" r="' + r + '" fill="' + c + '"/>';
       });
       var h = seg[seg.length - 1];
-      s += '<text x="' + (px(h.x) + 6) + '" y="' + (py(h.y) + 3) + '" font-size="10" font-weight="600" fill="' + col + '">' + esc(sec.symbol) + '</text>';
+      s += '<text x="' + (px(h.x) + 6) + '" y="' + (py(h.y) + 3) + '" font-size="10" font-weight="600" fill="' + c + '">' + esc(sec.symbol) + '</text>';
     });
     s += '</svg>';
     svgBox.innerHTML = s;
