@@ -4,9 +4,9 @@
 
 {% block content %}
 {# Sector & Industry — the "where to focus" step of the top-down funnel.
-   LEFT: per-sector 1/2/4/8-month returns (HTMX /sector/returns).
-   RIGHT: sector rotation, reusing the /today/* cards (RRG / leaders / correlation).
-   Industry-KPI peer scorecard is stubbed for Phase 2 (agent). #}
+   LEFT column: sector returns (1/2/4/8mo) + (coming) an industry drill-down.
+   CENTER: interactive RRG (native, scrubbable 5-week tail) + a StockCharts link-out.
+   BELOW: ETF leaders + correlation. Industry-KPI peer scorecard is Phase 2 (agent). #}
 {% macro card(title, sub="", span="") %}
 <section class="rounded-xl border border-slate-800 bg-slate-900/40 p-4 flex flex-col min-w-0 {{ span }}">
   <div class="flex items-baseline justify-between mb-3 shrink-0">
@@ -27,8 +27,8 @@
 
 <div class="lg:flex lg:gap-4 lg:items-start">
 
-  {# ── LEFT: sector performance panel (1 / 2 / 4 / 8 month) ── #}
-  <aside class="lg:w-80 lg:shrink-0 mb-4 lg:mb-0">
+  {# ── LEFT column: sector returns + (coming) industry drill-down ── #}
+  <aside class="lg:w-80 lg:shrink-0 space-y-4 mb-4 lg:mb-0">
     <section class="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
       <div class="flex items-baseline justify-between mb-2">
         <h2 class="text-sm font-semibold text-slate-200">Sector performance</h2>
@@ -36,30 +36,41 @@
       </div>
       <div hx-get="/sector/returns" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
     </section>
+
+    <section class="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
+      <div class="flex items-baseline justify-between mb-2">
+        <h2 class="text-sm font-semibold text-slate-200">Industries</h2>
+        <span class="text-[11px] text-slate-500">by sector</span>
+      </div>
+      <p class="text-xs text-slate-600 py-3">Select a sector above to list its tickers grouped by industry. <span class="text-slate-500">(coming next)</span></p>
+    </section>
   </aside>
 
-  {# ── RIGHT: sector rotation cards ── #}
-  <div class="flex-1 min-w-0 grid grid-cols-1 xl:grid-cols-2 gap-4 auto-rows-min">
+  {# ── CENTER / main: interactive RRG (centerpiece) + rotation cards ── #}
+  <div class="flex-1 min-w-0 space-y-4">
 
-    {% call card("ETF rotation (RRG)", "sector SPDRs vs SPY", "xl:col-span-2") %}
-    <div class="flex-1" hx-get="/today/rrg" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
-    {% endcall %}
+    <section class="rounded-xl border border-slate-800 bg-slate-900/40 p-4 flex flex-col min-w-0">
+      <div class="flex items-center justify-between gap-2 mb-3 shrink-0">
+        <div>
+          <h2 class="text-sm font-semibold text-slate-200">Relative Rotation Graph</h2>
+          <span class="text-[11px] text-slate-500">sector SPDRs vs SPY &middot; weekly &middot; drag the slider to move the tail</span>
+        </div>
+        <a href="https://stockcharts.com/freecharts/rrg/" target="_blank" rel="noopener"
+           class="text-[11px] px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition whitespace-nowrap"
+           title="Open the interactive RRG on StockCharts">Open on StockCharts &#8599;</a>
+      </div>
+      <div class="flex-1" hx-get="/sector/rrg" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
+    </section>
 
-    {% call card("ETF leaders", "relative strength") %}
-    <div class="flex-1" hx-get="/today/etf-leaders" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
-    {% endcall %}
+    <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 auto-rows-min">
+      {% call card("ETF leaders", "relative strength") %}
+      <div class="flex-1" hx-get="/today/etf-leaders" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
+      {% endcall %}
 
-    {% call card("Correlation", "60-day returns") %}
-    <div class="flex-1" hx-get="/today/correlation" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
-    {% endcall %}
-
-    {% call card("Industry KPIs", "peer scorecard", "xl:col-span-2") %}
-    <div class="flex-1 flex flex-col items-center justify-center text-center py-8 text-slate-500">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" class="mb-2 opacity-60"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-      <div class="text-xs">Industry peer scorecards — coming with the analysis agent</div>
-      <a href="/company-analysis" class="text-[11px] text-emerald-400 hover:underline mt-1">See per-company analysis &rarr;</a>
+      {% call card("Correlation", "60-day returns") %}
+      <div class="flex-1" hx-get="/today/correlation" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
+      {% endcall %}
     </div>
-    {% endcall %}
 
   </div>
 </div>

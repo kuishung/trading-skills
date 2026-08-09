@@ -226,3 +226,60 @@ def rrg(tail: int = 8, win: int = 12) -> dict:
     out = {"points": points, "quad": quad}
     _cache["rrg"] = (time.time() + _TTL, out)
     return out
+
+
+def _week_labels(dates: list[str]) -> list[str]:
+    """Ordered last-daily-date per ISO week (matches _weekly's ordering)."""
+    wk: dict = {}
+    order: list = []
+    for d in dates:
+        y, w, _ = date.fromisoformat(d).isocalendar()
+        key = (y, w)
+        if key not in wk:
+            order.append(key)
+        wk[key] = d
+    return [wk[k] for k in order]
+
+
+def rrg_series(win: int = 12, weeks: int = 26) -> dict:
+    """Full weekly (RS-Ratio, RS-Momentum) series per sector for the INTERACTIVE RRG
+    (scrubbable tail). Every sector is aligned to the same week axis; the frontend
+    picks the tail length + end-week. Returns the last `weeks` weekly points."""
+    hit = _cache.get("rrg_series")
+    if hit and hit[0] > time.time():
+        return hit[1]
+    a = _aligned()
+    closes, dates = a["closes"], a["dates"]
+    wbench = _weekly(dates, closes.get(BENCHMARK, []))
+    wlabels = _week_labels(dates)
+
+    tmp: list = []
+    m_common: int | None = None
+    for sym, name in ETF_UNIVERSE:
+        wser = _weekly(dates, closes.get(sym, []))
+        n = min(len(wser), len(wbench), len(wlabels))
+        if n < win + 3:
+            continue
+        wser, wb, labs = wser[-n:], wbench[-n:], wlabels[-n:]
+        rs = [100.0 * wser[i] / wb[i] if wb[i] else 100.0 for i in range(n)]
+        ratio = _rolling_z100(rs, win)
+        roc = [ratio[i] - ratio[i - 1] for i in range(1, len(ratio))]
+        mom = _rolling_z100(roc, win)
+        m = min(len(ratio), len(mom))
+        if m < 2:
+            continue
+        rr, mm = ratio[-m:], mom[-m:]
+        pts = [{"x": round(rr[i], 2), "y": round(mm[i], 2)} for i in range(m)]
+        tmp.append({"symbol": sym, "name": name, "pts": pts, "labs": labs[-m:]})
+        m_common = m if m_common is None else min(m_common, m)
+
+    keep = min(m_common or 0, weeks)
+    week_axis: list = []
+    sectors: list = []
+    for t in tmp:
+        if not week_axis:
+            week_axis = t["labs"][-keep:]
+        sectors.append({"symbol": t["symbol"], "name": t["name"], "pts": t["pts"][-keep:]})
+    out = {"weeks": week_axis, "sectors": sectors}
+    _cache["rrg_series"] = (time.time() + _TTL, out)
+    return out

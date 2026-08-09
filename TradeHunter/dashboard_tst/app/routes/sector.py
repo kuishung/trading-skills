@@ -33,3 +33,12 @@ def sector_returns_panel(request: Request, user: User = Depends(require_user)):
     from ..services.etf import sector_returns
 
     return templates.TemplateResponse(request, "_sector_returns.html", sector_returns())
+
+
+@router.get("/rrg", response_class=HTMLResponse)
+def sector_rrg(request: Request, user: User = Depends(require_user)):
+    """Interactive RRG fragment: full weekly RS-Ratio/RS-Momentum series per sector,
+    with a scrubbable tail (HTMX-loaded into the center card)."""
+    from ..services.etf import rrg_series
+
+    return templates.TemplateResponse(request, "_sector_rrg.html", rrg_series())

@@ -124,6 +124,18 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-07-18 — v3.52: Sector & Industry — native interactive RRG (scrubbable tail) + StockCharts link
+- New **native interactive RRG** as the centerpiece of `/sector`: 11 sector SPDRs on the
+  RS-Ratio/RS-Momentum quadrant (weekly), with a **movable tail** (default 5 weeks, 1–12) and a
+  **week slider + ▶ play** so you can scrub through the rotation over time. Pure SVG + JS.
+- StockCharts embedding is **blocked** by their headers (`X-Frame-Options: SAMEORIGIN`,
+  `CSP frame-ancestors 'self'`), so instead there's an **"Open on StockCharts ↗"** link-out button
+  on the RRG card.
+- `services/etf.rrg_series()` (full weekly RS-Ratio/RS-Momentum series per sector, aligned to a
+  common week axis, last 26 wks) + `GET /sector/rrg` + `_sector_rrg.html`.
+- `sector.html` restructured: left column (sector returns + Industries stub), center RRG, ETF
+  leaders + correlation below.
+
 ### 2026-07-18 — v3.51: Sector & Industry — left panel of sector returns (1/2/4/8 month)
 - Added a **left panel** to the Sector & Industry page: a **sector-performance table** with
   each SPDR sector's total return over **1M / 2M / 4M / 8M** (color-coded, sorted by 1M
