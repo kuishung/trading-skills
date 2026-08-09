@@ -16,12 +16,12 @@ from datetime import date
 
 from .prices import fetch_daily_ohlc
 
-# (symbol, short label) — the 11 SPDR sectors.
+# (symbol, full sector name) — the 11 SPDR sectors.
 ETF_UNIVERSE = [
     ("XLK", "Technology"), ("XLF", "Financials"), ("XLE", "Energy"),
-    ("XLV", "Health Care"), ("XLI", "Industrials"), ("XLY", "Cons Disc"),
-    ("XLP", "Cons Staples"), ("XLU", "Utilities"), ("XLB", "Materials"),
-    ("XLRE", "Real Estate"), ("XLC", "Comm Svcs"),
+    ("XLV", "Health Care"), ("XLI", "Industrials"), ("XLY", "Consumer Discretionary"),
+    ("XLP", "Consumer Staples"), ("XLU", "Utilities"), ("XLB", "Materials"),
+    ("XLRE", "Real Estate"), ("XLC", "Communication Services"),
 ]
 BENCHMARK = "SPY"
 _TTL = 900.0  # 15 min

@@ -29,20 +29,21 @@
 
   {# ── LEFT column: sector returns + (coming) industry drill-down ── #}
   <aside class="lg:w-80 lg:shrink-0 space-y-4 mb-4 lg:mb-0">
-    <section class="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
-      <div class="flex items-baseline justify-between mb-2">
-        <h2 class="text-sm font-semibold text-slate-200">Sector performance</h2>
+    <section class="rounded-xl border border-slate-800 bg-slate-900/40 p-3 flex flex-col">
+      <div class="flex items-baseline justify-between mb-2 shrink-0">
+        <h2 class="text-sm font-semibold text-slate-200">Sector</h2>
         <span class="text-[11px] text-slate-500">total return</span>
       </div>
-      <div hx-get="/sector/returns" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
+      {# fixed-height, scrolls internally; scrollbar is invisible-until-hover (base.html) #}
+      <div class="max-h-[38vh] overflow-y-auto pr-1" hx-get="/sector/returns" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
     </section>
 
-    <section class="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
-      <div class="flex items-baseline justify-between mb-2">
-        <h2 class="text-sm font-semibold text-slate-200">Industries</h2>
+    <section class="rounded-xl border border-slate-800 bg-slate-900/40 p-3 flex flex-col">
+      <div class="flex items-baseline justify-between mb-2 shrink-0">
+        <h2 class="text-sm font-semibold text-slate-200">Industry</h2>
         <span class="text-[11px] text-slate-500">by sector</span>
       </div>
-      <div id="industryPanel">
+      <div id="industryPanel" class="max-h-[46vh] overflow-y-auto pr-1">
         <p class="text-xs text-slate-600 py-3">Select a sector above to list its tickers grouped by industry.</p>
       </div>
     </section>
@@ -76,4 +77,21 @@
 
   </div>
 </div>
+
+<script>
+  // Keep the clicked sector highlighted. Delegated on document so it survives the
+  // returns panel's HTMX load; the sector rows aren't reloaded when the industry
+  // panel swaps, so the selection persists.
+  (function () {
+    document.addEventListener('click', function (e) {
+      var row = e.target.closest ? e.target.closest('.wl-sector') : null;
+      if (!row) return;
+      document.querySelectorAll('.wl-sector').forEach(function (r) {
+        var on = (r === row);
+        r.classList.toggle('bg-emerald-500/15', on);
+        r.classList.toggle('text-emerald-300', on);
+      });
+    });
+  })();
+</script>
 {% endblock %}

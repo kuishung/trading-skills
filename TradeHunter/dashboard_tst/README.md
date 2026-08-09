@@ -124,6 +124,17 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-07-18 — v3.54: Sector & Industry left-column polish
+- Panels renamed: **Sector performance → Sector**, **Industries → Industry**.
+- Both panels are now **fixed-height and scroll internally** (`max-h` + `overflow-y-auto`);
+  scrollbars are invisible-until-hover (inherited from `base.html`).
+- **Clicked sector stays highlighted** (delegated selected-state; persists across the
+  industry-panel swap).
+- Sector rows use **full sector names** (Consumer Discretionary / Consumer Staples /
+  Communication Services); `ETF_UNIVERSE` labels updated (also flows to ETF leaders/RRG).
+- Industry drill-down lists tickers **with last price** — `fetch_ticker_industries()` now also
+  returns `price` (from the Finviz TS block), surfaced per ticker in the collapsible industry list.
+
 ### 2026-07-18 — v3.53: Sector & Industry — industry drill-down (click a sector → tickers by industry)
 - Clicking a sector in the left **Sector performance** panel now loads that sector's tickers
   **grouped by industry** into the **Industries** panel below it (HTMX) — instead of navigating

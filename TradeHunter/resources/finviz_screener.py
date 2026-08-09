@@ -192,13 +192,15 @@ def fetch_ticker_industries(
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as exc:
             sys.stderr.write(f"[finviz_screener] industry page {offset} failed: {exc}\n")
             break
+        price_map = {r["symbol"]: r.get("price") for r in _extract_rows(html)}
         new_on_page = 0
         for sym, ind in _TICKER_INDUSTRY_RE.findall(html):
             sym = sym.upper()
             if sym in seen:
                 continue
             seen.add(sym)
-            out.append({"symbol": sym, "industry": (ind or "").strip() or "Other"})
+            out.append({"symbol": sym, "industry": (ind or "").strip() or "Other",
+                        "price": price_map.get(sym)})
             new_on_page += 1
         if new_on_page == 0:
             break

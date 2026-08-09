@@ -12,10 +12,13 @@
       <span class="text-[12px] text-slate-200 truncate">{{ ind.name }}</span>
       <span class="text-[11px] text-slate-500 ml-2 shrink-0">{{ ind.tickers|length }}</span>
     </summary>
-    <div class="px-2 pb-2 pt-1 flex flex-wrap gap-1">
+    <div class="px-2 pb-2 pt-1 space-y-0.5">
       {% for t in ind.tickers %}
-      <a href="/company-analysis?symbol={{ t }}" title="Company Analysis for {{ t }}"
-         class="text-[11px] px-1.5 py-0.5 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">{{ t }}</a>
+      <a href="/company-analysis?symbol={{ t.symbol }}" title="Company Analysis for {{ t.symbol }}"
+         class="flex items-center justify-between px-1 py-0.5 rounded hover:bg-slate-800/60 hover:text-emerald-300 transition">
+        <span class="text-[12px] text-slate-300">{{ t.symbol }}</span>
+        <span class="text-[11px] text-slate-400 tabular-nums">{{ '%.2f'|format(t.price) if t.price is not none else '-' }}</span>
+      </a>
       {% endfor %}
     </div>
   </details>
