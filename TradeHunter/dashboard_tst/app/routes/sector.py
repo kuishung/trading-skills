@@ -25,3 +25,11 @@ templates = Jinja2Templates(
 @router.get("", response_class=HTMLResponse)
 def sector_home(request: Request, user: User = Depends(require_user)):
     return templates.TemplateResponse(request, "sector.html", {"user": user})
+
+
+@router.get("/returns", response_class=HTMLResponse)
+def sector_returns_panel(request: Request, user: User = Depends(require_user)):
+    """Left-panel fragment: per-sector 1/2/4/8-month returns (HTMX-loaded)."""
+    from ..services.etf import sector_returns
+
+    return templates.TemplateResponse(request, "_sector_returns.html", sector_returns())

@@ -124,6 +124,14 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-07-18 — v3.51: Sector & Industry — left panel of sector returns (1/2/4/8 month)
+- Added a **left panel** to the Sector & Industry page: a **sector-performance table** with
+  each SPDR sector's total return over **1M / 2M / 4M / 8M** (color-coded, sorted by 1M
+  desc, with an SPY benchmark row; rows link to the ticker on the Watchlist).
+- New `services/etf.sector_returns()` (approx trading-day lookbacks 21/42/84/168; reuses the
+  shared ~15-min-cached aligned closes) + `GET /sector/returns` fragment + `_sector_returns.html`.
+- `sector.html` restructured to left panel + right rotation-cards grid.
+
 ### 2026-07-18 — v3.50: nav revamp — top-down funnel (Macro → Sector & Industry → Company → Watchlist → Portfolio)
 - Reworked the top nav to **5 flat top-level menus**: **Macro** (`/research?kind=macro`),
   **Sector & Industry** (`/sector`, new), **Company** (`/company-analysis` — the dossier),

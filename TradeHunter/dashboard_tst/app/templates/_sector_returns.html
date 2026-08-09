@@ -1,0 +1,38 @@
+{# Sector returns panel — per-sector 1/2/4/8-month total return. Context:
+   windows (["1M","2M","4M","8M"]), rows [{symbol,name,rets}], spy. #}
+{% macro pct(v) %}
+{%- if v is none -%}<span class="text-slate-600">&ndash;</span>
+{%- else -%}<span class="{{ 'text-emerald-400' if v >= 0 else 'text-rose-400' }} tabular-nums">{{ '%+.1f'|format(v * 100) }}%</span>
+{%- endif -%}
+{% endmacro %}
+{% set GRID = "display:grid;grid-template-columns:minmax(4.5rem,1fr) 3rem 3rem 3rem 3rem;column-gap:0.3rem;align-items:center" %}
+
+<div style="{{ GRID }}" class="px-1 pb-1 text-[10px] uppercase tracking-wide text-slate-500 border-b border-slate-800">
+  <span>Sector</span>
+  {% for w in windows %}<span class="text-right">{{ w }}</span>{% endfor %}
+</div>
+
+{% for r in rows %}
+<a href="/matp?symbol={{ r.symbol }}" title="{{ r.symbol }}"
+   style="{{ GRID }}" class="px-1 py-1 rounded hover:bg-slate-800/60 transition">
+  <span class="text-[12px] text-slate-200 truncate">{{ r.name }}</span>
+  <span class="text-right text-[12px]">{{ pct(r.rets['1M']) }}</span>
+  <span class="text-right text-[12px]">{{ pct(r.rets['2M']) }}</span>
+  <span class="text-right text-[12px]">{{ pct(r.rets['4M']) }}</span>
+  <span class="text-right text-[12px]">{{ pct(r.rets['8M']) }}</span>
+</a>
+{% endfor %}
+
+{% if spy %}
+<div style="{{ GRID }}" class="px-1 py-1 mt-1 border-t border-slate-800 text-slate-400">
+  <span class="text-[12px] font-medium">{{ spy.name }}</span>
+  <span class="text-right text-[12px]">{{ pct(spy.rets['1M']) }}</span>
+  <span class="text-right text-[12px]">{{ pct(spy.rets['2M']) }}</span>
+  <span class="text-right text-[12px]">{{ pct(spy.rets['4M']) }}</span>
+  <span class="text-right text-[12px]">{{ pct(spy.rets['8M']) }}</span>
+</div>
+{% endif %}
+
+{% if not rows %}
+<p class="text-xs text-slate-600 px-1 py-3">Couldn't load sector data — try again shortly.</p>
+{% endif %}

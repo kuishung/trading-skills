@@ -101,6 +101,37 @@ def etf_leaders() -> dict:
     return out
 
 
+# ----------------------------------------------------- sector returns (1/2/4/8mo)
+# Approx trading-day lookbacks: 1mo~21, 2mo~42, 4mo~84, 8mo~168.
+_RET_WINDOWS = [("1M", 21), ("2M", 42), ("4M", 84), ("8M", 168)]
+
+
+def sector_returns() -> dict:
+    """Per-sector total return over 1 / 2 / 4 / 8 months, for the Sector & Industry
+    left panel. Sorted by 1-month return (leaders first); includes an SPY row.
+    Reuses the shared ~15-min-cached aligned closes. Soft-fail."""
+    hit = _cache.get("sector_returns")
+    if hit and hit[0] > time.time():
+        return hit[1]
+    closes = _aligned()["closes"]
+
+    def _row(sym, name):
+        c = closes.get(sym, [])
+        return {"symbol": sym, "name": name,
+                "rets": {lbl: _ret(c, lb) for lbl, lb in _RET_WINDOWS}}
+
+    rows = [_row(sym, name) for sym, name in ETF_UNIVERSE]
+    rows.sort(key=lambda r: (r["rets"].get("1M") if r["rets"].get("1M") is not None else -99),
+              reverse=True)
+    out = {
+        "windows": [lbl for lbl, _ in _RET_WINDOWS],
+        "rows": rows,
+        "spy": _row(BENCHMARK, "S&P 500"),
+    }
+    _cache["sector_returns"] = (time.time() + _TTL, out)
+    return out
+
+
 # -------------------------------------------------------------- correlation
 def correlation_matrix(window: int = 60) -> dict:
     """60-day daily-return Pearson correlation across SPY + every sector ETF."""
