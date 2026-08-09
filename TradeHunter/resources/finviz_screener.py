@@ -160,6 +160,54 @@ def _extract_symbols(html: str) -> list[str]:
     return out
 
 
+# Ticker + its industry from the v=111 overview: both live in one <td> tag as
+# `data-boxover-ticker="SYM" data-boxover-company="..." data-boxover-industry="X"`.
+# Non-greedy [^>]*? stays inside the same tag. Appears twice per row (dedup on sym).
+_TICKER_INDUSTRY_RE = re.compile(
+    r'data-boxover-ticker="([A-Z][A-Z0-9.]{0,9})"[^>]*?data-boxover-industry="([^"]*)"'
+)
+_MEM_CACHE_IND: dict[str, tuple[float, list[dict]]] = {}
+
+
+def fetch_ticker_industries(
+    url: str, *, max_pages: int = 40, cache_ttl_s: int = 3600, force_refresh: bool = False,
+) -> list[dict]:
+    """Walk a Finviz screener URL (must use the v=111 overview view) and return
+    [{symbol, industry}] across all pages, deduped by symbol. Reuses the same
+    fetch/pagination as fetch_screener_symbols; in-process cached by URL. Empty
+    list on failure. Lets callers group a sector's tickers by industry."""
+    if not url or not url.strip():
+        return []
+    base = _normalize_url(url.strip())
+    if not force_refresh:
+        hit = _MEM_CACHE_IND.get(base)
+        if hit is not None and (time.time() - hit[0]) <= cache_ttl_s:
+            return [dict(r) for r in hit[1]]
+    out: list[dict] = []
+    seen: set[str] = set()
+    for page_idx in range(max_pages):
+        offset = 1 + page_idx * _ROWS_PER_PAGE
+        try:
+            html = _fetch_page(_page_url(base, offset))
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as exc:
+            sys.stderr.write(f"[finviz_screener] industry page {offset} failed: {exc}\n")
+            break
+        new_on_page = 0
+        for sym, ind in _TICKER_INDUSTRY_RE.findall(html):
+            sym = sym.upper()
+            if sym in seen:
+                continue
+            seen.add(sym)
+            out.append({"symbol": sym, "industry": (ind or "").strip() or "Other"})
+            new_on_page += 1
+        if new_on_page == 0:
+            break
+        time.sleep(_PAGE_SLEEP_S)
+    if out:
+        _MEM_CACHE_IND[base] = (time.time(), out)
+    return out
+
+
 def _extract_rows(html: str) -> list[dict]:
     """Return per-row dicts {symbol, price, volume} from the TS comment
     block at the bottom of the page. Float-parses price + volume;

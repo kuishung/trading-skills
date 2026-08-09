@@ -42,3 +42,14 @@ def sector_rrg(request: Request, user: User = Depends(require_user)):
     from ..services.etf import rrg_series
 
     return templates.TemplateResponse(request, "_sector_rrg.html", rrg_series())
+
+
+@router.get("/industries", response_class=HTMLResponse)
+def sector_industries_panel(
+    request: Request, sector: str = "", user: User = Depends(require_user)
+):
+    """Fragment: the picked sector's tickers grouped by industry (HTMX-loaded into
+    the left-column Industries panel when a sector row is clicked)."""
+    from ..services.industry import sector_industries
+
+    return templates.TemplateResponse(request, "_sector_industries.html", sector_industries(sector))

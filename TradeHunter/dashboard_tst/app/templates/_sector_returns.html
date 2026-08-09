@@ -13,14 +13,17 @@
 </div>
 
 {% for r in rows %}
-<a href="/matp?symbol={{ r.symbol }}" title="{{ r.symbol }}"
-   style="{{ GRID }}" class="px-1 py-1 rounded hover:bg-slate-800/60 transition">
+{# Click a sector -> load its industries into the left-column #industryPanel (HTMX),
+   instead of navigating away to the Watchlist. #}
+<div title="{{ r.symbol }} — click to see its industries"
+     hx-get="/sector/industries?sector={{ r.symbol }}" hx-target="#industryPanel" hx-swap="innerHTML"
+     style="{{ GRID }}" class="wl-sector cursor-pointer px-1 py-1 rounded hover:bg-slate-800/60 transition">
   <span class="text-[12px] text-slate-200 truncate">{{ r.name }}</span>
   <span class="text-right text-[12px]">{{ pct(r.rets['1M']) }}</span>
   <span class="text-right text-[12px]">{{ pct(r.rets['2M']) }}</span>
   <span class="text-right text-[12px]">{{ pct(r.rets['4M']) }}</span>
   <span class="text-right text-[12px]">{{ pct(r.rets['8M']) }}</span>
-</a>
+</div>
 {% endfor %}
 
 {% if spy %}

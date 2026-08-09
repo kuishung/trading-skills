@@ -124,6 +124,17 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-07-18 — v3.53: Sector & Industry — industry drill-down (click a sector → tickers by industry)
+- Clicking a sector in the left **Sector performance** panel now loads that sector's tickers
+  **grouped by industry** into the **Industries** panel below it (HTMX) — instead of navigating
+  to the Watchlist. Each ticker links to its Company Analysis.
+- `resources/finviz_screener.fetch_ticker_industries()` — new (pure addition): parses the
+  `data-boxover-industry` attribute from the Finviz v=111 overview, paginated + 1h cached →
+  `[{symbol, industry}]`.
+- `services/industry.sector_industries()`: SPDR→Finviz-sector map, groups tickers by industry
+  (HTML-unescaped, sorted by count). `GET /sector/industries?sector=XLK` + `_sector_industries.html`.
+- `_sector_returns.html` rows rewired from `/matp` link → HTMX into `#industryPanel`.
+
 ### 2026-07-18 — v3.52: Sector & Industry — native interactive RRG (scrubbable tail) + StockCharts link
 - New **native interactive RRG** as the centerpiece of `/sector`: 11 sector SPDRs on the
   RS-Ratio/RS-Momentum quadrant (weekly), with a **movable tail** (default 5 weeks, 1–12) and a

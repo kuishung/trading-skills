@@ -56,6 +56,13 @@ treating any "missing" feature as a bug.
 
 ## Changelog
 
+### 2026-07-18 — `finviz_screener.py`: added `fetch_ticker_industries()`
+- New public function (pure addition, existing `fetch_screener_symbols` untouched):
+  walks a Finviz v=111 overview URL and returns `[{symbol, industry}]` by parsing the
+  `data-boxover-ticker` / `data-boxover-industry` attribute pair, paginated + 1h in-process
+  cache. Consumed by `dashboard_tst`'s Sector & Industry drill-down (group a sector's
+  tickers by industry).
+
 ### 2026-07-18 — added `tradingview-mcp/bridge/` (TV Bridge)
 - New zero-dependency local sidecar under the vendored TV MCP:
   `tradingview-mcp/bridge/tv_bridge.mjs` + `launch_tv_bridge.bat`. Lets the
