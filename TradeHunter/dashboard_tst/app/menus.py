@@ -14,22 +14,23 @@ from .models import User
 from .security import require_user
 
 # (key, label, group, href). group None = a top-level single item. List = nav order.
-# "today" is the universal post-login landing — always granted (see allowed_keys),
-# so it is NOT a member-revocable menu even though it appears in the nav.
+# Revamped 2026-07-18 to a top-down investing funnel (user): Macro -> Sector &
+# Industry -> Company -> Watchlist -> Portfolio. All 5 are flat top-level items.
 MENUS = [
-    ("today",     "Today Overview", None,          "/today"),
-    ("macro",     "Macro",        "Investing",     "/research?kind=macro"),
-    ("company",   "Company",      "Investing",     "/research?kind=company"),
-    ("company_analysis", "Company Analysis", "Investing", "/company-analysis"),
-    ("matp",      "MATP",         "Swing & Trend", "/matp"),
-    ("studies",   "Studies",      "Swing & Trend", "/studies"),
-    ("strategy",  "Strategy",     "Intraday",      "/strategy"),
-    ("patterns",  "Patterns",     "Intraday",      "/patterns"),
-    ("portfolio", "My Portfolio", None,            "/portfolio"),
+    ("macro",            "Macro",             None, "/research?kind=macro"),
+    ("sector",           "Sector & Industry", None, "/sector"),
+    ("company_analysis", "Company",           None, "/company-analysis"),
+    ("matp",             "Watchlist",         None, "/matp"),
+    ("portfolio",        "Portfolio",         None, "/portfolio"),
 ]
-# NB: /finviz ("Data Ingest") is NOT here — it's admin-only (rendered in base.html's
-# Settings dropdown, guarded by require_admin), not a member-grantable menu.
-ALL_KEYS = [m[0] for m in MENUS]
+# Routes that stay ACCESSIBLE (granted + reachable by URL) but are no longer shown
+# in the top nav after the revamp. Kept in ALL_KEYS so their require_menu() guards
+# still pass; simply not rendered by nav_for. "today" is the post-login landing
+# (always granted); "company" is the research chat (kind=company); studies/strategy/
+# patterns are de-emphasized. Re-add to MENUS to resurface any of them.
+HIDDEN_KEYS = ["today", "company", "studies", "strategy", "patterns"]
+# NB: /finviz ("Data Ingest") is admin-only (base.html Settings dropdown), not here.
+ALL_KEYS = [m[0] for m in MENUS] + HIDDEN_KEYS
 LABELS = {m[0]: m[1] for m in MENUS}
 
 

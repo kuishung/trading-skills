@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Sector &amp; Industry &middot; TradeHunter{% endblock %}
+{% block main_class %}flex-1 w-full px-4 py-4 overflow-y-auto{% endblock %}
+
+{% block content %}
+{# Sector & Industry — the "where to focus" step of the top-down funnel. Sector
+   rotation reuses the /today/* fragment endpoints (etf-leaders / rrg / correlation);
+   the Industry KPI view is Phase 2 (agent peer scorecards). #}
+{% macro card(title, sub="", span="") %}
+<section class="rounded-xl border border-slate-800 bg-slate-900/40 p-4 flex flex-col min-w-0 {{ span }}">
+  <div class="flex items-baseline justify-between mb-3 shrink-0">
+    <h2 class="text-sm font-semibold text-slate-200">{{ title }}</h2>
+    {% if sub %}<span class="text-[11px] text-slate-500">{{ sub }}</span>{% endif %}
+  </div>
+  {{ caller() }}
+</section>
+{% endmacro %}
+{% macro loading() %}
+<div class="flex-1 flex items-center justify-center text-xs text-slate-500 py-6">Loading&hellip;</div>
+{% endmacro %}
+
+<div class="flex items-baseline gap-3 mb-1">
+  <h1 class="text-xl font-semibold text-slate-100">Sector &amp; Industry</h1>
+</div>
+<p class="text-xs text-slate-500 mb-4">Sector rotation &amp; relative strength — where to focus, before drilling into a company.</p>
+
+{# ── Sector rotation ── #}
+<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 auto-rows-min">
+
+  {# RRG — the centerpiece; spans two columns on wide screens. #}
+  {% call card("ETF rotation (RRG)", "sector SPDRs vs SPY", "xl:col-span-2") %}
+  <div class="flex-1" hx-get="/today/rrg" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
+  {% endcall %}
+
+  {% call card("ETF leaders", "relative strength") %}
+  <div class="flex-1" hx-get="/today/etf-leaders" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
+  {% endcall %}
+
+  {% call card("Correlation", "60-day returns") %}
+  <div class="flex-1" hx-get="/today/correlation" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
+  {% endcall %}
+
+  {# Industry KPI — Phase 2 (agent-computed peer scorecards per industry). #}
+  {% call card("Industry KPIs", "peer scorecard") %}
+  <div class="flex-1 flex flex-col items-center justify-center text-center py-8 text-slate-500">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" class="mb-2 opacity-60"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+    <div class="text-xs">Industry peer scorecards — coming with the analysis agent</div>
+    <a href="/company-analysis" class="text-[11px] text-emerald-400 hover:underline mt-1">See per-company analysis &rarr;</a>
+  </div>
+  {% endcall %}
+
+</div>
+{% endblock %}

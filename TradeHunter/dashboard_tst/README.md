@@ -124,6 +124,18 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-07-18 — v3.50: nav revamp — top-down funnel (Macro → Sector & Industry → Company → Watchlist → Portfolio)
+- Reworked the top nav to **5 flat top-level menus**: **Macro** (`/research?kind=macro`),
+  **Sector & Industry** (`/sector`, new), **Company** (`/company-analysis` — the dossier),
+  **Watchlist** (`/matp`, renamed from MATP), **Portfolio** (`/portfolio`).
+- New **`HIDDEN_KEYS`** in `menus.py`: Today (landing), Company-research (kind=company),
+  Studies, Strategy, Patterns stay **granted + reachable by URL** but off the nav — kept in
+  `ALL_KEYS` so their `require_menu()` guards still pass. Re-add to `MENUS` to resurface.
+- New **Sector & Industry** page (`routes/sector.py` + `sector.html`): sector rotation
+  reuses the existing `/today/*` cards (ETF rotation/RRG, ETF leaders, correlation) via HTMX;
+  an Industry-KPI peer scorecard card is stubbed for Phase 2 (agent).
+- `main.py`: register the sector router (+ menu guard + Jinja globals).
+
 ### 2026-07-18 — v3.49: HOTFIX — Company Analysis page 500'd (missing Jinja globals)
 - `company_analysis_routes` was missing from `main.py`'s Jinja-globals loop, so its
   template env had no `nav_for`/`version` → the `/company-analysis` page 500'd on render.

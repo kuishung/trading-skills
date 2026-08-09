@@ -41,6 +41,7 @@ from .routes import patterns as patterns_routes
 from .routes import pipeline as pipeline_routes
 from .routes import portfolio as portfolio_routes
 from .routes import research as research_routes
+from .routes import sector as sector_routes
 from .routes import strategy as strategy_routes
 from .routes import studies as studies_routes
 from .routes import today as today_routes
@@ -57,7 +58,7 @@ for _routes_mod in (
     auth_routes, today_routes, matp_routes, studies_routes,
     finviz_routes, feedback_routes, admin_routes, agent_routes, pipeline_routes,
     research_routes, patterns_routes, strategy_routes, portfolio_routes,
-    company_analysis_routes,
+    company_analysis_routes, sector_routes,
 ):
     _routes_mod.templates.env.globals["version"] = APP_VERSION
     _routes_mod.templates.env.globals["nav_for"] = menus.nav_for   # access-filtered nav
@@ -147,6 +148,7 @@ def create_app() -> FastAPI:
     app.include_router(matp_routes.router, dependencies=[Depends(menus.require_menu("matp"))])
     app.include_router(studies_routes.router, dependencies=[Depends(menus.require_menu("studies"))])
     app.include_router(company_analysis_routes.router, dependencies=[Depends(menus.require_menu("company_analysis"))])
+    app.include_router(sector_routes.router, dependencies=[Depends(menus.require_menu("sector"))])
     # Data Ingest (Finviz filter manager) is ADMIN-ONLY now — lives under Settings.
     app.include_router(finviz_routes.router, dependencies=[Depends(require_admin)])
     app.include_router(feedback_routes.router)
