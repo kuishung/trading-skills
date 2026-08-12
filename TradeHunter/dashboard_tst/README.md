@@ -124,6 +124,12 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-07-18 — v3.56: RRG — full-name head labels + slanted per-week date axis
+- RRG head labels now read **"Full Sector Name (TICKER)"** (e.g. "Technology (XLK)") instead of
+  just the symbol.
+- Under the slider, a **date label per week**, slanted (−55°) so all weeks fit — the progress bar
+  reads as a dated time axis (MM-DD; full ISO date on hover).
+
 ### 2026-07-18 — v3.55: Sector & Industry — industry table + RRG show/hide + history dots
 - **Industry drill-down is now a table** — columns **Ticker · Full Name · Last Price** — with the
   industry name **bold**. `fetch_ticker_industries()` also returns `company` (from

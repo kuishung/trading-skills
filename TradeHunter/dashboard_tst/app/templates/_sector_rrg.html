@@ -16,7 +16,8 @@
 <div id="rrgSvg" class="w-full"></div>
 <input id="rrgSlider" type="range" min="0" max="0" value="0" step="1" list="rrgTicks" class="w-full mt-2 accent-emerald-500 cursor-pointer">
 <datalist id="rrgTicks"></datalist>
-<div class="flex justify-between text-[10px] text-slate-600 mt-0.5"><span id="rrgFirst"></span><span id="rrgLast"></span></div>
+{# per-week date labels under the slider, slanted so they don't overlap #}
+<div id="rrgAxis" class="w-full flex justify-between" style="height:38px;padding:0 4px;overflow:hidden"></div>
 {% endif %}
 
 <script>
@@ -48,10 +49,16 @@
   function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
 
   slider.max = weeks.length - 1; slider.value = weeks.length - 1;
-  document.getElementById('rrgFirst').textContent = weeks[0] || '';
-  document.getElementById('rrgLast').textContent = weeks[weeks.length - 1] || '';
-  // slider tick per week (progress bar shows the time history)
-  weeks.forEach(function (_, i) { var o = document.createElement('option'); o.value = i; ticks.appendChild(o); });
+  // slider tick per week + a slanted date label per week (progress bar = time history)
+  var axis = document.getElementById('rrgAxis');
+  weeks.forEach(function (w, i) {
+    var o = document.createElement('option'); o.value = i; ticks.appendChild(o);
+    var sp = document.createElement('span');
+    sp.textContent = (w || '').slice(5);   // MM-DD
+    sp.title = w || '';
+    sp.style.cssText = 'font-size:9px;line-height:1;color:#64748b;white-space:nowrap;flex:0 0 auto;transform:rotate(-55deg);transform-origin:center';
+    axis.appendChild(sp);
+  });
 
   // legend: Name (SYM) chip per sector, click to show/hide
   sectors.forEach(function (sec, i) {
@@ -101,7 +108,7 @@
         s += '<circle cx="' + px(p.x) + '" cy="' + py(p.y) + '" r="' + r + '" fill="' + c + '"/>';
       });
       var h = seg[seg.length - 1];
-      s += '<text x="' + (px(h.x) + 6) + '" y="' + (py(h.y) + 3) + '" font-size="10" font-weight="600" fill="' + c + '">' + esc(sec.symbol) + '</text>';
+      s += '<text x="' + (px(h.x) + 6) + '" y="' + (py(h.y) + 3) + '" font-size="10" font-weight="600" fill="' + c + '">' + esc(sec.name + ' (' + sec.symbol + ')') + '</text>';
     });
     s += '</svg>';
     svgBox.innerHTML = s;
