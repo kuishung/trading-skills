@@ -66,6 +66,8 @@ class User(Base):
     # per-user menu access — JSON list of menu keys (app/menus.py). NULL = all
     # (back-compat / default-open); admin sets an explicit subset to restrict.
     menu_access = Column(JSON, nullable=True)
+    # per-user UI preferences (JSON blob), e.g. {"rrg_sectors": ["XLK","XLF"]}.
+    prefs = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=_utcnow)
     approved_at = Column(DateTime, nullable=True)
 

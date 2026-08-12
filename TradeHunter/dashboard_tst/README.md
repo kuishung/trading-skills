@@ -124,6 +124,13 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-07-18 — v3.57: RRG — remember each user's sector selection (server-side)
+- The RRG sector **show/hide selection now persists per user** (survives reload + across
+  devices). New `User.prefs` JSON column (Alembic `a0b1c2d3e4f5`) stores `{"rrg_sectors":[...]}`
+  = the visible sector symbols.
+- `GET /sector/rrg` seeds the legend/chart from the saved selection; `POST /sector/rrg/prefs`
+  (debounced) saves it on every toggle. Default (no pref) = all sectors visible.
+
 ### 2026-07-18 — v3.56: RRG — full-name head labels + slanted per-week date axis
 - RRG head labels now read **"Full Sector Name (TICKER)"** (e.g. "Technology (XLK)") instead of
   just the symbol.

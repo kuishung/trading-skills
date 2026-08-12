@@ -9,10 +9,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Body, Depends, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+from sqlalchemy.orm import Session
 
+from ..db import get_db
 from ..models import User
 from ..security import require_user
 
@@ -38,10 +40,36 @@ def sector_returns_panel(request: Request, user: User = Depends(require_user)):
 @router.get("/rrg", response_class=HTMLResponse)
 def sector_rrg(request: Request, user: User = Depends(require_user)):
     """Interactive RRG fragment: full weekly RS-Ratio/RS-Momentum series per sector,
-    with a scrubbable tail (HTMX-loaded into the center card)."""
+    with a scrubbable tail (HTMX-loaded into the center card). Initializes the
+    sector show/hide state from the user's saved preference."""
     from ..services.etf import rrg_series
 
-    return templates.TemplateResponse(request, "_sector_rrg.html", rrg_series())
+    ctx = rrg_series()
+    prefs = getattr(user, "prefs", None) or {}
+    # list of VISIBLE sector symbols; None => all visible (default).
+    ctx["visible"] = prefs.get("rrg_sectors")
+    return templates.TemplateResponse(request, "_sector_rrg.html", ctx)
+
+
+@router.post("/rrg/prefs")
+def sector_rrg_prefs(
+    payload: dict = Body(...),
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Persist the user's RRG sector show/hide selection (list of VISIBLE symbols)."""
+    syms = payload.get("sectors")
+    u = db.get(User, user.id)
+    if u is None:
+        return {"ok": False}
+    prefs = dict(u.prefs or {})
+    if isinstance(syms, list):
+        prefs["rrg_sectors"] = [str(s).strip().upper() for s in syms if s][:20]
+    else:
+        prefs.pop("rrg_sectors", None)
+    u.prefs = prefs
+    db.commit()
+    return {"ok": True}
 
 
 @router.get("/industries", response_class=HTMLResponse)

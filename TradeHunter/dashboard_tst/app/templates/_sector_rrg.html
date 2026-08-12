@@ -1,5 +1,5 @@
 {# Interactive RRG — scrubbable tail + per-sector show/hide. Context: weeks [labels], sectors [{symbol,name,pts:[{x,y}]}]. #}
-<script type="application/json" id="rrgData">{{ {"weeks": weeks, "sectors": sectors} | tojson }}</script>
+<script type="application/json" id="rrgData">{{ {"weeks": weeks, "sectors": sectors, "visible": visible} | tojson }}</script>
 
 {% if not sectors %}
 <div class="text-xs text-slate-600 py-6 text-center">Couldn't load RRG data — try again shortly.</div>
@@ -37,7 +37,25 @@
   var COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#14b8a6','#3b82f6','#6366f1','#a855f7','#ec4899','#84cc16','#06b6d4'];
   var W = 560, H = 440, mL = 46, mR = 16, mT = 16, mB = 28;
   var pw = W - mL - mR, ph = H - mT - mB;
-  var hidden = {};   // symbol -> true when hidden
+  // show/hide state, seeded from the user's saved preference (data.visible = list of
+  // VISIBLE symbols, or null = all visible).
+  var hidden = {};
+  if (Array.isArray(data.visible)) {
+    var visSet = {};
+    data.visible.forEach(function (v) { visSet[String(v).toUpperCase()] = true; });
+    sectors.forEach(function (s) { if (!visSet[String(s.symbol).toUpperCase()]) hidden[s.symbol] = true; });
+  }
+  var saveTimer = null;
+  function savePrefs() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(function () {
+      var vis = sectors.filter(function (s) { return !hidden[s.symbol]; }).map(function (s) { return s.symbol; });
+      fetch('/sector/rrg/prefs', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sectors: vis })
+      }).catch(function () {});
+    }, 400);
+  }
   function col(i) { return COLORS[i % COLORS.length]; }
 
   var xs = [], ys = [];
@@ -66,10 +84,12 @@
     b.type = 'button';
     b.className = 'px-1.5 py-0.5 rounded border border-slate-700 hover:border-slate-500 transition select-none';
     b.innerHTML = '<span style="color:' + col(i) + '">' + esc(sec.name) + ' (' + esc(sec.symbol) + ')</span>';
+    b.style.opacity = hidden[sec.symbol] ? '0.35' : '';
     b.addEventListener('click', function () {
       if (hidden[sec.symbol]) { delete hidden[sec.symbol]; b.style.opacity = ''; }
       else { hidden[sec.symbol] = true; b.style.opacity = '0.35'; }
       draw();
+      savePrefs();
     });
     legend.appendChild(b);
   });
