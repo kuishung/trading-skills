@@ -76,8 +76,25 @@ def sector_rrg_prefs(
 def sector_industries_panel(
     request: Request, sector: str = "", user: User = Depends(require_user)
 ):
-    """Fragment: the picked sector's tickers grouped by industry (HTMX-loaded into
-    the left-column Industries panel when a sector row is clicked)."""
+    """Fragment: the picked sector's INDUSTRY HEADERS (name + count), rendered as
+    child rows under the sector in the 'Sector and Industry' tree. Clicking an
+    industry loads its symbols into the Symbol panel."""
     from ..services.industry import sector_industries
 
-    return templates.TemplateResponse(request, "_sector_industries.html", sector_industries(sector))
+    return templates.TemplateResponse(request, "_sector_industry_headers.html", sector_industries(sector))
+
+
+@router.get("/symbols", response_class=HTMLResponse)
+def sector_symbols_panel(
+    request: Request, sector: str = "", industry: str = "", user: User = Depends(require_user)
+):
+    """Fragment: the tickers of one selected sector+industry (Symbol / Full Name /
+    Last Price), rendered into the bottom Symbol panel."""
+    from ..services.industry import sector_industries
+
+    data = sector_industries(sector)
+    match = next((i for i in data["industries"] if i["name"] == industry), None)
+    return templates.TemplateResponse(request, "_sector_symbols.html", {
+        "sector": data["sector"], "sector_name": data["name"],
+        "industry": industry, "tickers": (match["tickers"] if match else []),
+    })

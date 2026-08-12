@@ -124,6 +124,15 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-07-18 — v3.60: Sector & Industry — 3-level tree (Sector → Industry → Symbol)
+- The left column is now a drill-down tree. **Top panel "Sector and Industry"**: click a sector
+  → its **industry headers** (name + count) expand as **child rows right under it** (HTMX into a
+  sibling `.sector-children`). **Bottom panel "Symbol"**: click an industry → its tickers
+  (Ticker / Full Name / Last Price) list there.
+- New `GET /sector/symbols?sector=&industry=` + `_sector_industry_headers.html` +
+  `_sector_symbols.html`; `/sector/industries` now returns headers only. Sector *and* industry
+  each keep a persistent selected highlight.
+
 ### 2026-07-18 — v3.59: faster industry load (cold ~20s → ~6s)
 - The industry scrape now **sorts by market cap** (`o=-marketcap`), caps to the **top ~100
   names** (5 pages), and uses a **shorter courtesy sleep** (0.3s) via a new `page_sleep_s`

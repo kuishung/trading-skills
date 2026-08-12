@@ -1,0 +1,20 @@
+{# Symbols of the selected sector+industry. Context: sector, sector_name, industry, tickers [{symbol,company,price}]. #}
+{% if not tickers %}
+<p class="text-xs text-slate-600 py-3">
+  {% if industry %}No symbols for {{ industry }}.{% else %}Select an industry above to list its symbols.{% endif %}
+</p>
+{% else %}
+<div class="text-[11px] text-slate-500 mb-2">{{ sector_name }} &middot; <span class="text-slate-300">{{ industry }}</span> &middot; {{ tickers|length }} symbols</div>
+{% set COLS = "display:grid;grid-template-columns:3rem 1fr 3.6rem;column-gap:0.3rem;align-items:center" %}
+<div style="{{ COLS }}" class="px-1 pb-0.5 text-[10px] uppercase tracking-wide text-slate-600 border-b border-slate-800/70">
+  <span>Ticker</span><span>Full Name</span><span class="text-right">Last</span>
+</div>
+{% for t in tickers %}
+<a href="/company-analysis?symbol={{ t.symbol }}" title="Company Analysis for {{ t.symbol }}"
+   style="{{ COLS }}" class="px-1 py-0.5 rounded hover:bg-emerald-500/10 hover:text-emerald-300 transition">
+  <span class="text-[12px] font-medium text-slate-200">{{ t.symbol }}</span>
+  <span class="text-[11px] text-slate-400 truncate" title="{{ t.company }}">{{ t.company or '&mdash;' }}</span>
+  <span class="text-right text-[11px] text-slate-300 tabular-nums">{{ '%.2f'|format(t.price) if t.price is not none else '-' }}</span>
+</a>
+{% endfor %}
+{% endif %}

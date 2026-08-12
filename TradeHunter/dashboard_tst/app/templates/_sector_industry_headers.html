@@ -1,0 +1,14 @@
+{# Industry HEADERS for a sector (children under the sector row). Context: sector, name, industries [{name,tickers}], n. #}
+{% if not industries %}
+<p class="text-[11px] text-slate-600 px-2 py-1">No industries found.</p>
+{% else %}
+{% for ind in industries %}
+<div class="wl-industry cursor-pointer px-2 py-0.5 rounded flex items-center justify-between hover:bg-emerald-500/10 transition"
+     hx-get="/sector/symbols?sector={{ sector }}&industry={{ ind.name | urlencode }}"
+     hx-target="#symbolPanel" hx-swap="innerHTML"
+     title="{{ ind.name }} — list symbols">
+  <span class="text-[12px] font-bold text-slate-200 truncate">{{ ind.name }}</span>
+  <span class="text-[11px] text-slate-500 ml-2 shrink-0">{{ ind.tickers|length }}</span>
+</div>
+{% endfor %}
+{% endif %}
