@@ -124,6 +124,14 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-07-18 — v3.59: faster industry load (cold ~20s → ~6s)
+- The industry scrape now **sorts by market cap** (`o=-marketcap`), caps to the **top ~100
+  names** (5 pages), and uses a **shorter courtesy sleep** (0.3s) via a new `page_sleep_s`
+  arg on `fetch_ticker_industries`. Cold load drops from ~20s to ~6s; cached loads are instant
+  (disk cache) — and the startup pre-warm now finishes in ~1 min, after which every click is
+  instant (cache persists across restarts). Note: panel shows the top ~100 by market cap per
+  sector (widen by raising `max_pages` in `services/industry.py`).
+
 ### 2026-07-18 — v3.58: Sector page speed + font-size control + RRG tail-only
 - **Faster loads.** The Sector & Industry data is near-fixed but was re-fetched on every cold
   start. Now: (1) `finviz_screener.fetch_ticker_industries()` **persists to disk** (6h) so the

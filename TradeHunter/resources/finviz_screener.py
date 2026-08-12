@@ -197,7 +197,8 @@ def _write_ind_cache(path: Path, url: str, rows: list[dict]) -> None:
 
 
 def fetch_ticker_industries(
-    url: str, *, max_pages: int = 40, cache_ttl_s: int = 3600, force_refresh: bool = False,
+    url: str, *, max_pages: int = 40, cache_ttl_s: int = 3600,
+    page_sleep_s: float | None = None, force_refresh: bool = False,
 ) -> list[dict]:
     """Walk a Finviz screener URL (must use the v=111 overview view) and return
     [{symbol, industry}] across all pages, deduped by symbol. Reuses the same
@@ -237,7 +238,7 @@ def fetch_ticker_industries(
             new_on_page += 1
         if new_on_page == 0:
             break
-        time.sleep(_PAGE_SLEEP_S)
+        time.sleep(page_sleep_s if page_sleep_s is not None else _PAGE_SLEEP_S)
     if out:
         _MEM_CACHE_IND[base] = (time.time(), out)
         _write_ind_cache(disk, base, out)

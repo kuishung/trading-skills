@@ -33,12 +33,14 @@ def sector_industries(sector: str) -> dict:
     fkey = _SPDR_TO_FINVIZ.get(sym)
     if not fkey:
         return {"sector": sym, "name": _SECTOR_NAMES.get(sym, sym), "industries": [], "n": 0}
-    # cap_midover = mid-cap and above — keeps the panel to notable/liquid names
-    # instead of hundreds of micro-caps. (Adjust the cap filter to widen/narrow.)
-    url = f"https://finviz.com/screener.ashx?v=111&f={fkey},cap_midover"
+    # cap_midover = mid-cap and above (notable/liquid names, not micro-caps).
+    # o=-marketcap => biggest first, so a small page cap still yields the names that
+    # matter. Capping pages + a short courtesy sleep keeps even a COLD load ~fast
+    # (~5s vs ~20s); results are disk-cached (6h) so later loads are instant.
+    url = f"https://finviz.com/screener.ashx?v=111&f={fkey},cap_midover&o=-marketcap"
     try:
         from resources import finviz_screener
-        rows = finviz_screener.fetch_ticker_industries(url)
+        rows = finviz_screener.fetch_ticker_industries(url, max_pages=5, page_sleep_s=0.3)
     except Exception:  # noqa: BLE001
         rows = []
     groups: dict = {}
