@@ -176,6 +176,29 @@
         </svg>
       </button>
 
+      {# font-size adjuster — scales the whole rem-based UI via the root font-size #}
+      <div class="flex items-center gap-0.5 shrink-0" title="Adjust text size">
+        <button type="button" data-fs="-1" class="fs-btn w-6 h-6 rounded border border-slate-700 text-slate-400 hover:text-orange-300 hover:border-orange-500 text-xs leading-none">A&minus;</button>
+        <button type="button" data-fs="0" class="fs-btn px-1 h-6 rounded border border-slate-700 text-slate-500 hover:text-orange-300 hover:border-orange-500 text-[10px] leading-none" title="Reset">A</button>
+        <button type="button" data-fs="1" class="fs-btn w-6 h-6 rounded border border-slate-700 text-slate-400 hover:text-orange-300 hover:border-orange-500 text-sm leading-none">A+</button>
+      </div>
+      <script>
+        (function () {
+          var KEY = 'th_font_px', MIN = 12, MAX = 20, DEF = 16;
+          function apply(v) { document.documentElement.style.fontSize = v + 'px'; }
+          var cur = parseInt(localStorage.getItem(KEY), 10);
+          if (!(cur >= MIN && cur <= MAX)) cur = DEF;
+          apply(cur);
+          document.addEventListener('click', function (e) {
+            var b = e.target.closest ? e.target.closest('.fs-btn') : null;
+            if (!b) return;
+            var step = parseInt(b.getAttribute('data-fs'), 10);
+            cur = (step === 0) ? DEF : Math.max(MIN, Math.min(MAX, cur + step));
+            apply(cur); localStorage.setItem(KEY, cur);
+          });
+        })();
+      </script>
+
       {# user menu (right) #}
       <details class="relative shrink-0">
         <summary class="cursor-pointer flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-slate-800/70">

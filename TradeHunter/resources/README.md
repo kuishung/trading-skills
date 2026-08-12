@@ -56,6 +56,11 @@ treating any "missing" feature as a bug.
 
 ## Changelog
 
+### 2026-07-18 — `finviz_screener.py`: `fetch_ticker_industries()` disk cache
+- Added a 6h **disk cache** (`state/cache/finviz_ind_<sha1>.json`) to `fetch_ticker_industries`
+  so the near-fixed sector→industry classification survives process restarts (no re-scrape of a
+  ~18-page sector every cold start). Mem layer unchanged.
+
 ### 2026-07-18 — `finviz_screener.py`: added `fetch_ticker_industries()`
 - New public function (pure addition, existing `fetch_screener_symbols` untouched):
   walks a Finviz v=111 overview URL and returns `[{symbol, company, industry, price}]` —

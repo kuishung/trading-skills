@@ -124,6 +124,17 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-07-18 — v3.58: Sector page speed + font-size control + RRG tail-only
+- **Faster loads.** The Sector & Industry data is near-fixed but was re-fetched on every cold
+  start. Now: (1) `finviz_screener.fetch_ticker_industries()` **persists to disk** (6h) so the
+  ~18-page sector scrape survives restarts → industry panel loads instantly after the first
+  fetch; (2) a **background pre-warm** on startup fills the ETF aligned-closes (Sector returns +
+  RRG) and all 11 sector industry maps (disk-cache-aware), so users don't wait.
+- **Font-size adjuster** top-right (A− / A / A+) — scales the whole rem-based UI via the root
+  font-size; remembered in localStorage.
+- **RRG shows only the tail** (per the Tail setting) — removed the faint full-history path/dots.
+- **Industry list** drops the grey card background to match the Sector panel's clean style.
+
 ### 2026-07-18 — v3.57: RRG — remember each user's sector selection (server-side)
 - The RRG sector **show/hide selection now persists per user** (survives reload + across
   devices). New `User.prefs` JSON column (Alembic `a0b1c2d3e4f5`) stores `{"rrg_sectors":[...]}`

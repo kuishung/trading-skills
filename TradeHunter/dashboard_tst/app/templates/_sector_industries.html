@@ -8,7 +8,7 @@
 {% set COLS = "display:grid;grid-template-columns:3rem 1fr 3.6rem;column-gap:0.3rem;align-items:center" %}
 <div class="space-y-1">
   {% for ind in industries %}
-  <details class="rounded border border-slate-800 bg-slate-950/30" {% if loop.index <= 3 %}open{% endif %}>
+  <details class="rounded border border-slate-800/60" {% if loop.index <= 3 %}open{% endif %}>
     <summary class="cursor-pointer px-2 py-1 flex items-center justify-between hover:bg-emerald-500/10 rounded select-none">
       <span class="text-[12px] font-bold text-slate-100 truncate">{{ ind.name }}</span>
       <span class="text-[11px] text-slate-500 ml-2 shrink-0">{{ ind.tickers|length }}</span>

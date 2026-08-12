@@ -168,6 +168,32 @@ _TICKER_INDUSTRY_RE = re.compile(
     r'[^>]*?data-boxover-industry="([^"]*)"'
 )
 _MEM_CACHE_IND: dict[str, tuple[float, list[dict]]] = {}
+# Industry rows are near-fixed classification; persist to disk so a cold start
+# (restart) doesn't re-scrape the whole sector. Longer TTL than the mem layer.
+_IND_DISK_TTL_S = 6 * 3600
+
+
+def _ind_cache_path(url: str) -> Path:
+    return CACHE_DIR / f"finviz_ind_{hashlib.sha1(url.encode('utf-8')).hexdigest()[:12]}.json"
+
+
+def _read_ind_cache(path: Path, ttl_s: int) -> list[dict] | None:
+    try:
+        d = json.loads(path.read_text(encoding="utf-8"))
+        if (time.time() - float(d["fetched_at"])) > ttl_s:
+            return None
+        return list(d.get("rows") or [])
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _write_ind_cache(path: Path, url: str, rows: list[dict]) -> None:
+    try:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"fetched_at": time.time(), "url": url, "rows": rows}),
+                        encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def fetch_ticker_industries(
@@ -180,10 +206,15 @@ def fetch_ticker_industries(
     if not url or not url.strip():
         return []
     base = _normalize_url(url.strip())
+    disk = _ind_cache_path(base)
     if not force_refresh:
         hit = _MEM_CACHE_IND.get(base)
         if hit is not None and (time.time() - hit[0]) <= cache_ttl_s:
             return [dict(r) for r in hit[1]]
+        drows = _read_ind_cache(disk, _IND_DISK_TTL_S)
+        if drows is not None:
+            _MEM_CACHE_IND[base] = (time.time(), drows)
+            return [dict(r) for r in drows]
     out: list[dict] = []
     seen: set[str] = set()
     for page_idx in range(max_pages):
@@ -209,6 +240,7 @@ def fetch_ticker_industries(
         time.sleep(_PAGE_SLEEP_S)
     if out:
         _MEM_CACHE_IND[base] = (time.time(), out)
+        _write_ind_cache(disk, base, out)
     return out
 
 

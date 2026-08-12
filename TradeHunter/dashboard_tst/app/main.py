@@ -123,6 +123,26 @@ async def lifespan(app: FastAPI):
         log.warning(
             "TST_SECRET_KEY is the insecure default. Set a real secret before exposing this app."
         )
+    # Pre-warm the Sector & Industry data in the background so it loads instantly:
+    # ETF aligned closes (Yahoo, cheap) + all 11 sector industry maps (disk-cached,
+    # so this only re-scrapes when the 6h cache is stale). Daemon; soft-fail.
+    import threading
+
+    def _prewarm_sectors():
+        try:
+            from .services.etf import ETF_UNIVERSE, rrg_series, sector_returns
+            sector_returns()
+            rrg_series()
+            from .services.industry import sector_industries
+            for _sym, _ in ETF_UNIVERSE:
+                try:
+                    sector_industries(_sym)
+                except Exception:  # noqa: BLE001
+                    pass
+        except Exception:  # noqa: BLE001
+            pass
+
+    threading.Thread(target=_prewarm_sectors, daemon=True, name="prewarm-sectors").start()
     yield
 
 

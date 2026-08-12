@@ -115,13 +115,9 @@
     sectors.forEach(function (sec, i) {
       if (hidden[sec.symbol]) return;
       var c = col(i);
-      // full history up to `end`: faint path + a dot at EVERY point
-      var full = sec.pts.slice(0, end + 1);
-      if (!full.length) return;
-      if (full.length > 1) s += '<polyline points="' + full.map(function (p) { return px(p.x) + ',' + py(p.y); }).join(' ') + '" fill="none" stroke="' + c + '" stroke-width="1" opacity="0.22"/>';
-      full.forEach(function (p) { s += '<circle cx="' + px(p.x) + '" cy="' + py(p.y) + '" r="1.6" fill="' + c + '" opacity="0.3"/>'; });
-      // emphasized tail (last `tail` weeks)
+      // ONLY the tail (last `tail` weeks up to the scrub position) — no faint full history.
       var a = Math.max(0, end - tail + 1), seg = sec.pts.slice(a, end + 1);
+      if (!seg.length) return;
       s += '<polyline points="' + seg.map(function (p) { return px(p.x) + ',' + py(p.y); }).join(' ') + '" fill="none" stroke="' + c + '" stroke-width="1.8" opacity="0.9"/>';
       seg.forEach(function (p, j) {
         var r = (j === seg.length - 1) ? 4 : 2.5;
