@@ -298,6 +298,10 @@ def rrg_series(win: int = 12, weeks: int = 26) -> dict:
     # agrees with the Sector & Industry panel and the leaders table.
     rank = {s: i for i, s in enumerate(leader_order())}
     sectors.sort(key=lambda s: rank.get(s["symbol"], 99))
-    out = {"weeks": week_axis, "sectors": sectors}
+    # Benchmark weekly closes for the scrubber sparkline (same `keep` weeks as the
+    # week axis, so the highlighted tail lines up with the slider). wbench shares the
+    # weekly calendar with wlabels, so its last `keep` values align with week_axis.
+    bench = [round(v, 2) for v in wbench[-keep:]] if keep else []
+    out = {"weeks": week_axis, "sectors": sectors, "bench": bench, "bench_name": BENCHMARK}
     _cache["rrg_series"] = (time.time() + _TTL, out)
     return out

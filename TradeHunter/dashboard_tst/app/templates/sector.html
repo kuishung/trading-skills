@@ -22,28 +22,36 @@
 
 <div class="lg:flex lg:gap-4 lg:items-stretch lg:h-[calc(100vh-6rem)]">
 
-  {# ── LEFT column: sector returns + (coming) industry drill-down ──
-     Fixed-height flex column on lg: the Sector/Industry panel takes the top
-     1/3 (flex-[1]), the Symbol panel the bottom 2/3 (flex-[2]); each scrolls
-     internally. On mobile the panels stack and cap at a sensible vh. #}
-  <aside class="lg:w-80 lg:shrink-0 flex flex-col gap-4 mb-4 lg:mb-0 lg:h-full lg:min-h-0">
-    <section class="rounded-xl border border-slate-800 bg-slate-900/40 p-3 flex flex-col min-h-0 lg:flex-[1]">
-      <div class="flex items-baseline justify-between mb-2 shrink-0">
-        <h2 class="text-sm font-semibold text-slate-200">Sector and Industry</h2>
-        <span class="text-[11px] text-slate-500">click to drill down</span>
+  {# ── LEFT column: ONE panel holding Sector & Industry (top) and Symbol (bottom),
+     split 50:50 by default with a DRAGGABLE divider between them (drag to resize).
+     Each pane scrolls internally; the split ratio persists in localStorage. #}
+  <aside class="lg:w-80 lg:shrink-0 flex flex-col mb-4 lg:mb-0 lg:h-full lg:min-h-0">
+    <section id="siPanel" class="rounded-xl border border-slate-800 bg-slate-900/40 p-2 flex flex-col min-h-0 flex-1 w-full">
+      {# top pane: Sector & Industry #}
+      <div id="siTop" class="flex flex-col min-h-[240px] lg:min-h-0" style="flex:1 1 0">
+        <div class="flex items-baseline justify-between mb-1 px-1 shrink-0">
+          <h2 class="text-sm font-semibold text-slate-200">Sector &amp; Industry</h2>
+          <span class="text-[11px] text-slate-500">click to drill down</span>
+        </div>
+        {# sector rows; clicking one expands its industry headers below it. Scrolls
+           internally (scrollbar invisible-until-hover, base.html). #}
+        <div class="flex-1 min-h-0 overflow-y-auto pr-1" hx-get="/sector/returns" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
       </div>
-      {# sector rows; clicking one expands its industry headers below it. Fills
-         its 1/3 slice, scrolls internally (scrollbar invisible-until-hover, base.html). #}
-      <div class="flex-1 min-h-0 max-h-[40vh] lg:max-h-none overflow-y-auto pr-1" hx-get="/sector/returns" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
-    </section>
 
-    <section class="rounded-xl border border-slate-800 bg-slate-900/40 p-3 flex flex-col min-h-0 lg:flex-[2]">
-      <div class="flex items-baseline justify-between mb-2 shrink-0">
-        <h2 class="text-sm font-semibold text-slate-200">Symbol</h2>
-        <span class="text-[11px] text-slate-500">selected industry</span>
-      </div>
-      <div id="symbolPanel" class="flex-1 min-h-0 max-h-[60vh] lg:max-h-none overflow-y-auto pr-1">
-        <p class="text-xs text-slate-600 py-3">Select a sector, then an industry, to list its symbols.</p>
+      {# draggable divider between the two panes #}
+      <div id="siDivider" role="separator" aria-orientation="horizontal"
+           class="shrink-0 my-1 h-1.5 rounded cursor-row-resize bg-slate-700/60 hover:bg-emerald-500/60 transition"
+           title="Drag to resize"></div>
+
+      {# bottom pane: Symbol #}
+      <div id="siBottom" class="flex flex-col min-h-[240px] lg:min-h-0" style="flex:1 1 0">
+        <div class="flex items-baseline justify-between mb-1 px-1 shrink-0">
+          <h2 class="text-sm font-semibold text-slate-200">Symbol</h2>
+          <span class="text-[11px] text-slate-500">selected industry</span>
+        </div>
+        <div id="symbolPanel" class="flex-1 min-h-0 overflow-y-auto pr-1">
+          <p class="text-xs text-slate-600 py-3 px-1">Select a sector, then an industry, to list its symbols.</p>
+        </div>
       </div>
     </section>
   </aside>
@@ -56,13 +64,15 @@
       <div class="flex items-center justify-between gap-2 mb-3 shrink-0">
         <div>
           <h2 class="text-sm font-semibold text-slate-200">Relative Rotation Graph</h2>
-          <span class="text-[11px] text-slate-500">sector SPDRs vs SPY &middot; weekly &middot; drag the slider to move the tail</span>
+          <span class="text-[11px] text-slate-500">sector SPDRs vs SPY &middot; weekly &middot; drag the scrubber to move the tail</span>
         </div>
         <a href="https://stockcharts.com/freecharts/rrg/" target="_blank" rel="noopener"
            class="text-[11px] px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition whitespace-nowrap"
            title="Open the interactive RRG on StockCharts">Open on StockCharts &#8599;</a>
       </div>
-      <div class="flex-1 min-h-0 overflow-y-auto pr-1" hx-get="/sector/rrg" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
+      {# fills the card so the chart fits the panel window (the fragment is a flex column,
+         the quadrant SVG flexes, the scrubber + leaders sit at the bottom). #}
+      <div class="flex-1 min-h-0 overflow-hidden flex flex-col" hx-get="/sector/rrg" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
     </section>
   </div>
 </div>
@@ -85,6 +95,52 @@
       var ind = e.target.closest ? e.target.closest('.wl-industry') : null;
       if (ind) { selectAmong('.wl-industry', ind); }
     });
+  })();
+
+  // Draggable divider between the Sector & Industry (top) and Symbol (bottom) panes.
+  // Adjusts their flex-grow ratio; default 50:50; the ratio persists in localStorage.
+  (function () {
+    var panel = document.getElementById('siPanel'),
+        top = document.getElementById('siTop'),
+        div = document.getElementById('siDivider'),
+        bot = document.getElementById('siBottom');
+    if (!panel || !top || !div || !bot) return;
+    var KEY = 'sectorSiSplit';
+    function apply(frac) {
+      frac = Math.max(0.15, Math.min(0.85, frac));
+      top.style.flex = frac + ' 1 0';
+      bot.style.flex = (1 - frac) + ' 1 0';
+    }
+    var saved = parseFloat(localStorage.getItem(KEY));
+    apply(isNaN(saved) ? 0.5 : saved);
+
+    var dragging = false;
+    function onMove(e) {
+      if (!dragging) return;
+      var r = panel.getBoundingClientRect();
+      var cy = (e.touches && e.touches[0]) ? e.touches[0].clientY : e.clientY;
+      var frac = (cy - r.top) / Math.max(1, r.height);
+      apply(frac);
+      e.preventDefault();
+    }
+    function onUp() {
+      if (!dragging) return;
+      dragging = false;
+      document.body.style.userSelect = '';
+      // read back the applied top fraction and persist it
+      var f = parseFloat(top.style.flex) || 0.5;
+      localStorage.setItem(KEY, String(Math.max(0.15, Math.min(0.85, f))));
+    }
+    div.addEventListener('pointerdown', function (e) {
+      dragging = true;
+      document.body.style.userSelect = 'none';
+      try { div.setPointerCapture(e.pointerId); } catch (_) {}
+    });
+    div.addEventListener('pointermove', onMove);
+    div.addEventListener('pointerup', onUp);
+    div.addEventListener('pointercancel', onUp);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
   })();
 </script>
 {% endblock %}

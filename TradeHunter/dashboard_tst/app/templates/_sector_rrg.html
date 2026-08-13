@@ -1,93 +1,110 @@
-{# Interactive RRG — scrubbable tail + per-sector show/hide. Context: weeks [labels], sectors [{symbol,name,pts:[{x,y}]}]. #}
-<script type="application/json" id="rrgData">{{ {"weeks": weeks, "sectors": sectors, "visible": visible} | tojson }}</script>
+{# Interactive RRG — scrubbable tail + per-sector show/hide. Context:
+   weeks [labels], sectors [{symbol,name,pts:[{x,y}]}], bench [weekly closes],
+   bench_name, visible, leaders, leaders_spy.
+   Layout fills the RRG card: the quadrant chart flexes to fit; below it a
+   StockCharts-style scrubber (benchmark sparkline + colored range bar). #}
+<script type="application/json" id="rrgData">{{ {"weeks": weeks, "sectors": sectors, "bench": bench, "bench_name": bench_name, "visible": visible} | tojson }}</script>
 
 {% if not sectors %}
 <div class="text-xs text-slate-600 py-6 text-center">Couldn't load RRG data — try again shortly.</div>
 {% else %}
-<div id="rrgLegend" class="flex flex-wrap gap-1 mb-2 text-[10px]"></div>
-<div class="flex items-center gap-3 mb-2 text-[11px] text-slate-400 flex-wrap">
-  <label class="flex items-center gap-1">Tail
-    <input id="rrgTail" type="number" min="1" max="12" value="5"
-           class="w-12 rounded bg-slate-950/60 border border-slate-700 px-1 py-0.5 text-slate-200 tabular-nums"> wks
-  </label>
-  <button id="rrgPlay" type="button" class="px-2 py-0.5 rounded border border-slate-700 hover:border-emerald-500 hover:text-emerald-300 transition">&#9654; Play</button>
-  <span class="ml-auto">Week ending: <span id="rrgWeek" class="text-slate-200 tabular-nums"></span></span>
-</div>
-<div id="rrgSvg" class="w-full"></div>
-<input id="rrgSlider" type="range" min="0" max="0" value="0" step="1" list="rrgTicks" class="w-full mt-2 accent-emerald-500 cursor-pointer">
-<datalist id="rrgTicks"></datalist>
-{# per-week date labels under the slider, slanted so they don't overlap #}
-<div id="rrgAxis" class="w-full flex justify-between" style="height:38px;padding:0 4px;overflow:hidden"></div>
-
-{# Leaders — relative strength vs SPY. Collapsed by default; click to expand.
-   Same ranking (etf_leaders, by 1-month RS) that orders the RRG list above. #}
-{% if leaders %}
-{% macro lpct(v) %}{% if v is none %}<span class="text-slate-600">–</span>{% else %}<span class="{{ 'text-emerald-400' if v >= 0 else 'text-rose-400' }}">{{ "%+.1f"|format(v*100) }}%</span>{% endif %}{% endmacro %}
-<details class="mt-3 group border-t border-slate-800 pt-2">
-  <summary class="cursor-pointer select-none list-none flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-emerald-300 transition">
-    <span class="inline-block text-[9px] transition-transform group-open:rotate-90">&#9654;</span>
-    Leaders <span class="text-slate-600">&middot; relative strength vs SPY &middot; ranked</span>
-  </summary>
-  <div class="mt-2 max-h-72 overflow-y-auto pr-1">
-    <table class="w-full text-xs">
-      <thead class="text-[10px] uppercase tracking-wide text-slate-500">
-        <tr>
-          <th class="text-left font-normal pb-1">Sector</th>
-          <th class="text-right font-normal pb-1">1w</th>
-          <th class="text-right font-normal pb-1">1m</th>
-          <th class="text-right font-normal pb-1">3m</th>
-          <th class="text-right font-normal pb-1" title="1-month return vs SPY">vs SPY</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for r in leaders %}
-        <tr class="border-t border-slate-800/70">
-          <td class="py-1">
-            <span class="font-semibold text-slate-200">{{ r.symbol }}</span>
-            <span class="text-slate-500">{{ r.name }}</span>
-            {% if r.leading %}<span class="ml-1 text-emerald-400" title="outperforming SPY (1m)">&#9650;</span>{% else %}<span class="ml-1 text-rose-400/70" title="lagging SPY (1m)">&#9660;</span>{% endif %}
-          </td>
-          <td class="py-1 text-right tabular-nums">{{ lpct(r.r1w) }}</td>
-          <td class="py-1 text-right tabular-nums">{{ lpct(r.r1m) }}</td>
-          <td class="py-1 text-right tabular-nums">{{ lpct(r.r3m) }}</td>
-          <td class="py-1 text-right tabular-nums font-medium">{{ lpct(r.rs1m) }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-      {% if leaders_spy %}
-      <tfoot>
-        <tr class="border-t border-slate-700 text-slate-400">
-          <td class="py-1"><span class="font-semibold">SPY</span> <span class="text-slate-600">benchmark</span></td>
-          <td class="py-1 text-right tabular-nums">{{ lpct(leaders_spy.r1w) }}</td>
-          <td class="py-1 text-right tabular-nums">{{ lpct(leaders_spy.r1m) }}</td>
-          <td class="py-1 text-right tabular-nums">{{ lpct(leaders_spy.r3m) }}</td>
-          <td class="py-1 text-right text-slate-600">—</td>
-        </tr>
-      </tfoot>
-      {% endif %}
-    </table>
+<div class="flex flex-col h-full min-h-0">
+  <div id="rrgLegend" class="flex flex-wrap gap-1 mb-2 text-[10px] shrink-0"></div>
+  <div class="flex items-center gap-3 mb-2 text-[11px] text-slate-400 flex-wrap shrink-0">
+    <label class="flex items-center gap-1">Tail
+      <input id="rrgTail" type="number" min="1" max="12" value="5"
+             class="w-12 rounded bg-slate-950/60 border border-slate-700 px-1 py-0.5 text-slate-200 tabular-nums"> wks
+    </label>
+    <button id="rrgPlay" type="button" class="px-2 py-0.5 rounded border border-slate-700 hover:border-emerald-500 hover:text-emerald-300 transition">&#9654; Play</button>
   </div>
-</details>
-{% endif %}
+  {# the quadrant chart — flexes to fill the panel window #}
+  <div id="rrgSvg" class="w-full flex-1 min-h-0"></div>
+
+  {# ── scrubber: benchmark sparkline with the tail window highlighted + a colored
+       range bar. Click / drag anywhere on it to move the tail's end week. ── #}
+  <div id="rrgScrub" class="shrink-0 mt-2 select-none">
+    <div class="flex items-baseline gap-2 mb-1">
+      <span id="rrgPrice" class="text-sm font-semibold text-slate-200 tabular-nums"></span>
+      <span id="rrgTitle" class="text-[11px] text-slate-400"></span>
+    </div>
+    <div id="rrgSpark" class="w-full" style="height:60px"></div>
+    <div id="rrgBar" class="w-full mt-1"></div>
+  </div>
+
+  {# Leaders — relative strength vs SPY. Collapsed by default; click to expand.
+     Same ranking (etf_leaders, by 1-month RS) that orders the RRG list above. #}
+  {% if leaders %}
+  {% macro lpct(v) %}{% if v is none %}<span class="text-slate-600">–</span>{% else %}<span class="{{ 'text-emerald-400' if v >= 0 else 'text-rose-400' }}">{{ "%+.1f"|format(v*100) }}%</span>{% endif %}{% endmacro %}
+  <details class="shrink-0 mt-3 group border-t border-slate-800 pt-2">
+    <summary class="cursor-pointer select-none list-none flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-emerald-300 transition">
+      <span class="inline-block text-[9px] transition-transform group-open:rotate-90">&#9654;</span>
+      Leaders <span class="text-slate-600">&middot; relative strength vs SPY &middot; ranked</span>
+    </summary>
+    <div class="mt-2 max-h-56 overflow-y-auto pr-1">
+      <table class="w-full text-xs">
+        <thead class="text-[10px] uppercase tracking-wide text-slate-500">
+          <tr>
+            <th class="text-left font-normal pb-1">Sector</th>
+            <th class="text-right font-normal pb-1">1w</th>
+            <th class="text-right font-normal pb-1">1m</th>
+            <th class="text-right font-normal pb-1">3m</th>
+            <th class="text-right font-normal pb-1" title="1-month return vs SPY">vs SPY</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in leaders %}
+          <tr class="border-t border-slate-800/70">
+            <td class="py-1">
+              <span class="font-semibold text-slate-200">{{ r.symbol }}</span>
+              <span class="text-slate-500">{{ r.name }}</span>
+              {% if r.leading %}<span class="ml-1 text-emerald-400" title="outperforming SPY (1m)">&#9650;</span>{% else %}<span class="ml-1 text-rose-400/70" title="lagging SPY (1m)">&#9660;</span>{% endif %}
+            </td>
+            <td class="py-1 text-right tabular-nums">{{ lpct(r.r1w) }}</td>
+            <td class="py-1 text-right tabular-nums">{{ lpct(r.r1m) }}</td>
+            <td class="py-1 text-right tabular-nums">{{ lpct(r.r3m) }}</td>
+            <td class="py-1 text-right tabular-nums font-medium">{{ lpct(r.rs1m) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        {% if leaders_spy %}
+        <tfoot>
+          <tr class="border-t border-slate-700 text-slate-400">
+            <td class="py-1"><span class="font-semibold">SPY</span> <span class="text-slate-600">benchmark</span></td>
+            <td class="py-1 text-right tabular-nums">{{ lpct(leaders_spy.r1w) }}</td>
+            <td class="py-1 text-right tabular-nums">{{ lpct(leaders_spy.r1m) }}</td>
+            <td class="py-1 text-right tabular-nums">{{ lpct(leaders_spy.r3m) }}</td>
+            <td class="py-1 text-right text-slate-600">—</td>
+          </tr>
+        </tfoot>
+        {% endif %}
+      </table>
+    </div>
+  </details>
+  {% endif %}
+</div>
 {% endif %}
 
 <script>
 (function () {
   var el = document.getElementById('rrgData'); if (!el) return;
   var data; try { data = JSON.parse(el.textContent); } catch (e) { return; }
-  var weeks = data.weeks || [], sectors = data.sectors || [];
+  var weeks = data.weeks || [], sectors = data.sectors || [],
+      bench = data.bench || [], benchName = data.bench_name || 'SPY';
   var svgBox = document.getElementById('rrgSvg'),
-      slider = document.getElementById('rrgSlider'),
       tailInp = document.getElementById('rrgTail'),
       playBtn = document.getElementById('rrgPlay'),
-      weekLbl = document.getElementById('rrgWeek'),
       legend = document.getElementById('rrgLegend'),
-      ticks = document.getElementById('rrgTicks');
+      spark = document.getElementById('rrgSpark'),
+      bar = document.getElementById('rrgBar'),
+      titleEl = document.getElementById('rrgTitle'),
+      priceEl = document.getElementById('rrgPrice');
   if (!svgBox || !sectors.length || !weeks.length) return;
 
   var COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#14b8a6','#3b82f6','#6366f1','#a855f7','#ec4899','#84cc16','#06b6d4'];
   var W = 560, H = 440, mL = 46, mR = 16, mT = 16, mB = 28;
   var pw = W - mL - mR, ph = H - mT - mB;
+  var endIdx = weeks.length - 1;   // scrub position (index into weeks); replaces the old range input
+
   // show/hide state, seeded from the user's saved preference (data.visible = list of
   // VISIBLE symbols, or null = all visible).
   var hidden = {};
@@ -108,6 +125,7 @@
     }, 400);
   }
   function col(i) { return COLORS[i % COLORS.length]; }
+  function curTail() { return Math.max(1, Math.min(12, parseInt(tailInp.value, 10) || 5)); }
 
   var xs = [], ys = [];
   sectors.forEach(function (s) { s.pts.forEach(function (p) { xs.push(p.x); ys.push(p.y); }); });
@@ -116,18 +134,6 @@
   function px(x) { return mL + (x - xr[0]) / (xr[1] - xr[0]) * pw; }
   function py(y) { return mT + (1 - (y - yr[0]) / (yr[1] - yr[0])) * ph; }
   function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
-
-  slider.max = weeks.length - 1; slider.value = weeks.length - 1;
-  // slider tick per week + a slanted date label per week (progress bar = time history)
-  var axis = document.getElementById('rrgAxis');
-  weeks.forEach(function (w, i) {
-    var o = document.createElement('option'); o.value = i; ticks.appendChild(o);
-    var sp = document.createElement('span');
-    sp.textContent = (w || '').slice(5);   // MM-DD
-    sp.title = w || '';
-    sp.style.cssText = 'font-size:9px;line-height:1;color:#64748b;white-space:nowrap;flex:0 0 auto;transform:rotate(-55deg);transform-origin:center';
-    axis.appendChild(sp);
-  });
 
   // legend: Name (SYM) chip per sector, click to show/hide
   sectors.forEach(function (sec, i) {
@@ -146,11 +152,11 @@
   });
 
   function draw() {
-    var tail = Math.max(1, Math.min(12, parseInt(tailInp.value, 10) || 5));
-    var end = Math.max(0, Math.min(weeks.length - 1, parseInt(slider.value, 10) || 0));
-    weekLbl.textContent = weeks[end] || '';
+    var tail = curTail();
+    var end = Math.max(0, Math.min(weeks.length - 1, endIdx));
     var x100 = px(100), y100 = py(100), xR = mL + pw, yB = mT + ph;
-    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" class="w-full" style="max-height:50vh" preserveAspectRatio="xMidYMid meet" font-family="system-ui,sans-serif">';
+    // fill the panel: the SVG stretches to its container (flex-1) via width/height 100%.
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="100%" style="display:block" preserveAspectRatio="xMidYMid meet" font-family="system-ui,sans-serif">';
     s += '<rect x="' + x100 + '" y="' + mT + '" width="' + (xR - x100) + '" height="' + (y100 - mT) + '" fill="#22c55e" opacity="0.06"/>';
     s += '<rect x="' + mL + '" y="' + mT + '" width="' + (x100 - mL) + '" height="' + (y100 - mT) + '" fill="#3b82f6" opacity="0.06"/>';
     s += '<rect x="' + x100 + '" y="' + y100 + '" width="' + (xR - x100) + '" height="' + (yB - y100) + '" fill="#eab308" opacity="0.06"/>';
@@ -179,23 +185,89 @@
     });
     s += '</svg>';
     svgBox.innerHTML = s;
+    drawScrub(end, tail);
   }
 
+  // ── scrubber: benchmark sparkline (tail highlighted) + colored range bar ──
+  function drawScrub(end, tail) {
+    var N = weeks.length; if (!N) return;
+    var tailStart = Math.max(0, end - tail + 1);
+    if (priceEl) priceEl.textContent = bench.length ? ('$' + Number(bench[Math.min(end, bench.length - 1)]).toFixed(2)) : '';
+    if (titleEl) titleEl.textContent = benchName + ' · ' + tail + ' weeks ending ' + (weeks[end] || '');
+
+    if (spark && bench.length > 1) {
+      var w = spark.clientWidth || 480, h = 60, pad = 3;
+      var ser = bench.slice(0, N);
+      var lo = Math.min.apply(null, ser), hi = Math.max.apply(null, ser), span = (hi - lo) || 1;
+      var sx = function (i) { return pad + (N > 1 ? i / (N - 1) : 0) * (w - 2 * pad); };
+      var sy = function (v) { return pad + (1 - (v - lo) / span) * (h - 2 * pad); };
+      var pts = ser.map(function (v, i) { return sx(i) + ',' + sy(v); });
+      var areaAll = 'M ' + pts.join(' L ') + ' L ' + sx(N - 1) + ',' + (h - pad) + ' L ' + sx(0) + ',' + (h - pad) + ' Z';
+      var tp = [];
+      for (var i = tailStart; i <= end; i++) tp.push(sx(i) + ',' + sy(ser[i]));
+      var s = '<svg viewBox="0 0 ' + w + ' ' + h + '" width="100%" height="' + h + '" preserveAspectRatio="none" style="display:block">';
+      s += '<path d="' + areaAll + '" fill="#64748b" opacity="0.16"/>';
+      s += '<polyline points="' + pts.join(' ') + '" fill="none" stroke="#94a3b8" stroke-width="1"/>';
+      if (tp.length) {
+        s += '<path d="M ' + tp.join(' L ') + ' L ' + sx(end) + ',' + (h - pad) + ' L ' + sx(tailStart) + ',' + (h - pad) + ' Z" fill="#334155" opacity="0.6"/>';
+        s += '<polyline points="' + tp.join(' ') + '" fill="none" stroke="#e2e8f0" stroke-width="1.5"/>';
+        s += '<line x1="' + sx(tailStart) + '" y1="0" x2="' + sx(tailStart) + '" y2="' + h + '" stroke="#64748b" stroke-width="1"/>';
+      }
+      s += '<line x1="' + sx(end) + '" y1="0" x2="' + sx(end) + '" y2="' + h + '" stroke="#e2e8f0" stroke-width="1"/>';
+      s += '</svg>';
+      spark.innerHTML = s;
+    }
+
+    if (bar) {
+      var pB = function (i) { return (N > 1 ? i / (N - 1) : 0) * 100; };
+      var g0 = pB(tailStart), g1 = pB(end);
+      var s2 = '<div style="position:relative;height:12px;border-radius:6px;overflow:hidden;background:#1e293b;cursor:pointer">';
+      s2 += '<div style="position:absolute;left:0;top:0;bottom:0;width:' + g0 + '%;background:#6366f1;opacity:0.5"></div>';
+      s2 += '<div style="position:absolute;left:' + g0 + '%;top:0;bottom:0;width:' + Math.max(0, g1 - g0) + '%;background:#22c55e;opacity:0.75"></div>';
+      s2 += '<div style="position:absolute;left:calc(' + g1 + '% - 1px);top:-2px;bottom:-2px;width:2px;background:#e2e8f0"></div>';
+      s2 += '</div>';
+      bar.innerHTML = s2;
+    }
+  }
+
+  // click / drag anywhere on the sparkline or range bar to move the tail's end week
+  function scrubFrom(container, ev) {
+    var r = container.getBoundingClientRect();
+    var cx = (ev.touches && ev.touches[0]) ? ev.touches[0].clientX : ev.clientX;
+    var frac = (cx - r.left) / Math.max(1, r.width);
+    frac = Math.max(0, Math.min(1, frac));
+    endIdx = Math.round(frac * (weeks.length - 1));
+    draw();
+  }
+  [spark, bar].forEach(function (c) {
+    if (!c) return;
+    var dragging = false;
+    c.style.cursor = 'pointer';
+    c.addEventListener('pointerdown', function (e) { dragging = true; try { c.setPointerCapture(e.pointerId); } catch (_) {} scrubFrom(c, e); });
+    c.addEventListener('pointermove', function (e) { if (dragging) scrubFrom(c, e); });
+    c.addEventListener('pointerup', function () { dragging = false; });
+    c.addEventListener('pointercancel', function () { dragging = false; });
+  });
+
   var timer = null;
-  slider.addEventListener('input', draw);
   tailInp.addEventListener('input', draw);
   playBtn.addEventListener('click', function () {
     if (timer) { clearInterval(timer); timer = null; playBtn.innerHTML = '&#9654; Play'; return; }
     playBtn.innerHTML = '&#10073;&#10073; Pause';
-    var tail = Math.max(1, Math.min(12, parseInt(tailInp.value, 10) || 5));
+    var tail = curTail();
     var i = Math.max(0, tail - 1);
-    slider.value = i; draw();
+    endIdx = i; draw();
     timer = setInterval(function () {
       i++;
       if (i > weeks.length - 1) { clearInterval(timer); timer = null; playBtn.innerHTML = '&#9654; Play'; return; }
-      slider.value = i; draw();
+      endIdx = i; draw();
     }, 450);
   });
+
+  // redraw the scrubber on resize (sparkline width is measured from the DOM)
+  var rzTimer = null;
+  window.addEventListener('resize', function () { clearTimeout(rzTimer); rzTimer = setTimeout(draw, 150); });
+
   draw();
 })();
 </script>

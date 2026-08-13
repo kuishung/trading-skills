@@ -124,6 +124,22 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-08-13 — v3.63: Sector page — one resizable left panel, RRG fills window, StockCharts-style scrubber
+- **Left column = ONE panel, 50:50, draggable divider.** The two cards (Sector & Industry,
+  Symbol) merged into a single `#siPanel`; a `#siDivider` (`cursor-row-resize`) between the two
+  panes adjusts their flex-grow ratio (default 50:50, clamped 15–85%). The ratio persists in
+  `localStorage['sectorSiSplit']`. Each pane still scrolls internally.
+- **RRG chart fits the panel window.** The fragment is now a flex column filling the card; the
+  quadrant SVG is `flex-1` with `width/height 100%` + `preserveAspectRatio` (was a fixed `vh`
+  cap), so it scales to the available space instead of overflowing/scrolling.
+- **StockCharts-style scrubber replaces the plain slider.** Below the chart: a benchmark
+  (SPY) **weekly sparkline** with the selected **tail window highlighted** (darker area +
+  divider line), a **`$price  ·  N weeks ending <date>`** title, and a **blue→green range bar**
+  (blue = weeks before the tail, green = the tail window, white handle at the end week).
+  Click / drag anywhere on the sparkline or bar to move the tail's end week; Tail input + Play
+  still work. `rrg_series()` now also returns the benchmark weekly closes (`bench`, `bench_name`)
+  aligned to the week axis.
+
 ### 2026-08-13 — v3.62: Sector page — leader-ordered everywhere, fits the viewport
 - **Left column 1/3 · 2/3 split.** The left `<aside>` is a fixed-height flex column: the
   **"Sector and Industry"** panel takes the top **1/3** (`lg:flex-[1]`) and the **"Symbol"**
