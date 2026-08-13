@@ -1,0 +1,24 @@
+{# Inline Chart-tab fragment for one ticker. Same chart as the Watchlist (EMA
+   20/50/200 + MATP/MBP lines + analyst band when on the board); a plain price
+   chart otherwise. Context: symbol, sel, sel_band, sel_patterns, user. #}
+<div class="flex items-center justify-between gap-2 mb-2 shrink-0">
+  <h2 class="text-sm font-semibold text-slate-200">{{ symbol }} <span class="text-[11px] text-slate-500">chart</span></h2>
+  <a href="/company-analysis?symbol={{ symbol }}"
+     class="text-[11px] px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition whitespace-nowrap"
+     title="Open the full company page — chart + EDGAR filings + analysis">Full company page &#8594;</a>
+</div>
+{% set chart_symbol = symbol %}
+{% set chart_exchange = sel.exchange if sel else None %}
+{% set chart_matp = sel.matp if sel else None %}
+{% set chart_mbp = sel.mbp if sel else None %}
+{% set chart_as_of = sel.as_of if sel else None %}
+{% set chart_earnings = sel.last_earnings_date if sel else None %}
+{% set chart_band = sel_band %}
+{% set chart_patterns = sel_patterns %}
+{% set chart_fill = true %}
+{% set chart_curatable = false %}
+{% set chart_tv_plot = false %}
+{% include "_price_chart.html" %}
+{% if not sel %}
+<p class="text-[11px] text-slate-500 mt-1 shrink-0">No analyst / MATP data for {{ symbol }} — showing price only.</p>
+{% endif %}

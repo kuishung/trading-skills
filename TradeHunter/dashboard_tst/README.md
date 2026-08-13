@@ -129,6 +129,21 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-14 — v3.70: Sector page — Chart tab (inline, no new window) + faster chart load
+- **Cancelled the new-window behaviour.** Symbol-panel ticker rows no longer open the Company page
+  in a new tab (`target="_blank"` gone). The center column is now **two tabs — "Relative Rotation"
+  and "Chart"**; clicking a ticker **switches to the Chart tab and loads that ticker's chart inline**
+  (same lightweight-charts chart as the Watchlist: EMA20/50/200 + MATP/MBP lines + analyst band when
+  on the board; price-only otherwise). A "Full company page →" link opens the full dossier.
+- New `GET /sector/chart?symbol=X` → `_sector_chart.html` (reuses matp's `_chart_context`). The
+  analyst-targets modal is included once on the page.
+- **Faster chart load:** (1) the lightweight-charts library is **preloaded once** on the sector
+  page (the old new-window path re-fetched it from the CDN every open); (2) **price cache is warmed
+  on ticker hover** (`/matp/<sym>/prices`), so the chart's data is ready by click; (3) no full-page
+  reload / EDGAR/company queries — just the chart fragment.
+- Panes toggle via inline `display` (not the `hidden` class) — `hidden`+`flex` on one element
+  conflicted and left the RRG 0-sized on tab-return; the RRG now re-fills correctly when reselected.
+
 ### 2026-08-14 — v3.69: Sector page — faster industry load (hover-prefetch + periodic re-warm)
 - **Prefetch on hover:** hovering a sector row fires `/sector/industries` in the background so the
   cache is warm by the time you click — the click then returns from cache instantly (verified: a

@@ -133,6 +133,30 @@ def sector_symbols_panel(
     })
 
 
+@router.get("/chart", response_class=HTMLResponse)
+def sector_chart(
+    request: Request,
+    symbol: str,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """The inline Chart tab fragment for ONE ticker — the same watchlist chart
+    (EMA20/50/200 + MATP/MBP lines + analyst band when the ticker is on the MATP
+    board; a plain price chart otherwise). Rendered into #sectorChartBody when a
+    Symbol-panel ticker is clicked, so the chart shows in-page (no new window).
+    Reuses matp's _chart_context so it matches the Watchlist exactly."""
+    from ..models import MATPLevel
+    from .matp import _chart_context
+
+    sym = (symbol or "").strip().upper()
+    sel = db.query(MATPLevel).filter(MATPLevel.symbol == sym).first()
+    cc = _chart_context(db, sel)
+    return templates.TemplateResponse(request, "_sector_chart.html", {
+        "user": user, "symbol": sym, "sel": sel,
+        "sel_band": cc["sel_band"], "sel_patterns": cc["sel_patterns"],
+    })
+
+
 @router.get("/filter", response_class=HTMLResponse)
 def sector_filter_control(request: Request, user: User = Depends(require_user)):
     """The Symbol-panel filter control (toggle button + URL form), reflecting the

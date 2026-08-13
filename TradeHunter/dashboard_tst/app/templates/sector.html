@@ -58,11 +58,19 @@
     </section>
   </aside>
 
-  {# ── CENTER / main: the interactive RRG (centerpiece), fills the column height.
-     ETF leaders + Correlation cards are gone — leaders now live as a collapsed,
-     click-to-expand table INSIDE the RRG card (and drive its list ordering). #}
+  {# ── CENTER / main: two TABS — the RRG (default) and a Chart tab. Clicking a
+     ticker in the Symbol panel switches to Chart and loads that ticker's chart
+     INLINE (no new window). Both panes fill the column height. #}
   <div class="flex-1 min-w-0 flex flex-col min-h-0 mt-4 lg:mt-0">
-    <section class="rounded-xl border border-slate-800 bg-slate-900/40 p-4 flex flex-col min-w-0 flex-1 min-h-0">
+    {# tab bar #}
+    <div class="flex items-center gap-1 mb-2 shrink-0 border-b border-slate-800">
+      <button type="button" class="ctab text-xs px-3 py-1.5 -mb-px border-b-2 transition" data-tab="rrg">Relative Rotation</button>
+      <button type="button" class="ctab text-xs px-3 py-1.5 -mb-px border-b-2 transition" data-tab="chart">Chart</button>
+      <span id="chartTabTicker" class="ml-auto text-[11px] text-slate-500 pr-1"></span>
+    </div>
+
+    {# RRG pane #}
+    <section id="tabPane-rrg" class="rounded-xl border border-slate-800 bg-slate-900/40 p-4 flex flex-col min-w-0 flex-1 min-h-0">
       <div class="flex items-center justify-between gap-2 mb-3 shrink-0">
         <div>
           <h2 class="text-sm font-semibold text-slate-200">Relative Rotation Graph</h2>
@@ -76,8 +84,22 @@
          the quadrant SVG flexes, the scrubber + leaders sit at the bottom). #}
       <div class="flex-1 min-h-0 overflow-hidden flex flex-col" hx-get="/sector/rrg" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
     </section>
+
+    {# Chart pane — hidden until a ticker is clicked / the tab is selected #}
+    <section id="tabPane-chart" class="hidden rounded-xl border border-slate-800 bg-slate-900/40 p-4 flex flex-col min-w-0 flex-1 min-h-0">
+      <div id="sectorChartBody" class="flex-1 min-h-0 overflow-y-auto flex flex-col">
+        <div class="flex-1 flex items-center justify-center text-xs text-slate-500 text-center px-4">Click a ticker in the Symbol panel to load its chart here.</div>
+      </div>
+    </section>
   </div>
 </div>
+
+{# preload the chart library ONCE so the Chart tab renders instantly on first click
+   (avoids the per-open CDN fetch the old new-window path paid every time). #}
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+
+{# analyst-targets pop-out, used by the Chart tab's "Analyst targets →" button #}
+{% include "_at_modal.html" %}
 
 <script>
   // Keep the clicked sector highlighted. Delegated on document so it survives the
@@ -97,6 +119,58 @@
       var ind = e.target.closest ? e.target.closest('.wl-industry') : null;
       if (ind) { selectAmong('.wl-industry', ind); }
     });
+  })();
+
+  // ── Center tabs (Relative Rotation | Chart) ──────────────────────────────
+  (function () {
+    function setTab(name) {
+      // control display inline (not via the `hidden` class) — `hidden` and `flex`
+      // on the same element conflict, which left the RRG pane 0-sized on re-show.
+      document.querySelectorAll('[id^="tabPane-"]').forEach(function (p) {
+        p.style.display = (p.id === 'tabPane-' + name) ? 'flex' : 'none';
+      });
+      document.querySelectorAll('.ctab').forEach(function (b) {
+        var on = b.getAttribute('data-tab') === name;
+        b.classList.toggle('border-emerald-500', on);
+        b.classList.toggle('text-emerald-300', on);
+        b.classList.toggle('border-transparent', !on);
+        b.classList.toggle('text-slate-400', !on);
+      });
+      // the RRG measures its container on resize; nudge it when its pane reappears
+      if (name === 'rrg') window.dispatchEvent(new Event('resize'));
+    }
+    window._sectorSetTab = setTab;
+    document.querySelectorAll('.ctab').forEach(function (b) {
+      b.addEventListener('click', function () { setTab(b.getAttribute('data-tab')); });
+    });
+    setTab('rrg');
+
+    // Clicking a ticker: switch to the Chart tab + highlight it. The row's own
+    // hx-get loads the chart fragment into #sectorChartBody.
+    document.addEventListener('click', function (e) {
+      var t = e.target.closest ? e.target.closest('.wl-ticker') : null;
+      if (!t) return;
+      document.querySelectorAll('.wl-ticker').forEach(function (r) {
+        r.classList.toggle('bg-emerald-500/15', r === t);
+        r.classList.toggle('text-emerald-300', r === t);
+      });
+      var lbl = document.getElementById('chartTabTicker');
+      if (lbl) lbl.textContent = t.getAttribute('data-sym') || '';
+      setTab('chart');
+    });
+
+    // Warm the price cache on ticker HOVER so the chart appears instantly on click
+    // (the chart's /prices fetch then hits the cache). Deduped per symbol.
+    var warmedPx = {};
+    document.addEventListener('mouseover', function (e) {
+      var t = e.target.closest ? e.target.closest('.wl-ticker') : null;
+      if (!t) return;
+      var sym = t.getAttribute('data-sym');
+      if (!sym || warmedPx[sym]) return;
+      warmedPx[sym] = true;
+      fetch('/matp/' + encodeURIComponent(sym) + '/prices', { credentials: 'same-origin' })
+        .catch(function () { delete warmedPx[sym]; });
+    }, { passive: true });
   })();
 
   // Prefetch a sector's industry list on HOVER so the click is instant. The server

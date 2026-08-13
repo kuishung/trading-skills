@@ -10,12 +10,12 @@
   <span>Ticker</span><span>Full Name</span><span class="text-right">Last</span>
 </div>
 {% for t in tickers %}
-<a href="/company-analysis?symbol={{ t.symbol }}" target="_blank" rel="noopener"
-   title="Open {{ t.symbol }} chart + company analysis in a new window"
-   style="{{ COLS }}" class="px-1 py-0.5 rounded hover:bg-emerald-500/10 hover:text-emerald-300 transition">
+<div data-sym="{{ t.symbol }}" title="Show {{ t.symbol }} chart"
+     hx-get="/sector/chart?symbol={{ t.symbol }}" hx-target="#sectorChartBody" hx-swap="innerHTML"
+     style="{{ COLS }}" class="wl-ticker cursor-pointer px-1 py-0.5 rounded hover:bg-emerald-500/10 hover:text-emerald-300 transition">
   <span class="text-[12px] font-medium text-slate-200">{{ t.symbol }}</span>
   <span class="text-[11px] text-slate-400 truncate" title="{{ t.company }}">{{ t.company or '&mdash;' }}</span>
   <span class="text-right text-[11px] text-slate-300 tabular-nums">{{ '%.2f'|format(t.price) if t.price is not none else '-' }}</span>
-</a>
+</div>
 {% endfor %}
 {% endif %}
