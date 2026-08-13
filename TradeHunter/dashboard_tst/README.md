@@ -124,6 +124,11 @@ surface takes shape.
 
 ## Changelog
 
+> **Release rule:** every changelog bump here MUST also bump `app/__init__.py`
+> `__version__` — that constant is the version shown on the login page / nav / `/status`
+> (it is NOT derived from git). They drifted (README hit v3.66 while the app still
+> reported 3.60); keep them in lockstep.
+
 ### 2026-08-13 — v3.67: Company page — downloaded EDGAR earnings filings card
 - The Company page (`/company-analysis?symbol=X`) now shows an **"Earnings filings · EDGAR"** card
   (above the analysis dossier) listing what the server has downloaded for the ticker: **status**
