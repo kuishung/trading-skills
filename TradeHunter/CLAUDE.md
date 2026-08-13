@@ -64,9 +64,20 @@ Dropbox. Workflow:
      other PC manually, or move the change into config.example.json
      so it travels with the repo."
 
-3. **During a session**, before suggesting "let's commit":
-   - Confirm working tree state once more.
-   - Do not auto-commit. The user always says "commit" explicitly.
+3. **During a session** (auto-commit rule — user, set 2026-08-13:
+   *"always commit and push no need to ask"*):
+   - **Auto-commit + push after completing a piece of work.** Once a change
+     is done and verified, run the full sequence yourself —
+     smoke/verify → `git status` → stage the files you changed → `git commit`
+     → `git push` — WITHOUT waiting for the user to say "commit". This
+     REVERSES the old "never auto-commit" rule.
+   - Stage only the files you actually changed (never blanket `git add -A`;
+     the working tree carries untracked cruft — `*.tmp.*`, loose `.jpg`s —
+     that must NOT be committed).
+   - Still confirm the working tree state before staging, and still update
+     the relevant folder README changelog in the same commit.
+   - config.json / .env edits are gitignored — remind the user those live
+     only on this PC (mirror manually or move to `*.example.json`).
 
 Trigger phrases that activate session-start handoff verification:
   "i continue here", "continue from where we left off", "sync the
@@ -377,7 +388,7 @@ The user is a self-directed intraday US-equities trader operating from **Malaysi
 - Prefers ritualized, twice-daily confirmation patterns over single-shot analysis.
 - Delivers alerts to himself via Telegram (creds resolved via VAULT lookup, see above).
 - Uses TradingView Desktop with paid sub for chart analysis alongside the bot.
-- Will not auto-commit — the user always says "commit" explicitly.
+- Auto-commit + push after completing work — no need to ask (user, 2026-08-13). See the session-workflow auto-commit rule above.
 
 ## Vendored MCP servers and tools
 
@@ -731,6 +742,6 @@ installed.)
 - Don't put strategy-specific logic in `resources/` or `execution/`.
 - Don't put global risk numbers in a strategy module.
 - Don't skip the `strategy_off_skipped` journal event.
-- Don't auto-commit. User always says "commit" or "push" explicitly to initiate the sequence. **But once they do, commit + push are bundled — never stop at commit and wait for a separate "push" instruction.** The user added this rule on 2026-05-23: *"after i confirm and commit you to perform certain things, always push to git after you have done so"*. Translation: when an explicit `commit` / `push` request lands, run smoke check → `git status` → stage → `git commit` → `git push` as ONE operation. Don't make the user say "push" after "commit", and don't make them say "commit" after authorising work — the explicit request covers both halves.
+- **Auto-commit + push after completing work — no need to ask (user, set 2026-08-13: *"always commit and push no need to ask"*).** This SUPERSEDES the earlier "don't auto-commit / wait for an explicit commit" rule. Once a change is done and verified, run the full sequence yourself: smoke/verify → `git status` → stage ONLY the files you changed (never blanket `git add -A` — untracked cruft like `*.tmp.*` and loose `.jpg`s must stay out) → `git commit` → `git push`, as ONE bundled operation. Commit + push are always bundled — never stop at commit. Still update the relevant folder README changelog in the same commit (per the per-folder convention). The 2026-05-23 rule (*"after i confirm and commit you to perform certain things, always push to git after you have done so"*) still holds — push always follows commit — it's just now unconditional rather than gated on an explicit request.
 - Don't break the cross-PC sync invariant: if you put a file outside `TradeHunter/`, the user's other PCs won't see it.
 - **Don't carve "external tools" exceptions to the day-one rule.** MCP servers, helper utilities, third-party libraries — they all go inside `TradeHunter/` (typically vendored into `resources/`). If a fresh clone needs `npm install` or `pip install`, that's fine — those are per-PC artifacts and gitignored. But the SOURCE must travel with the folder. (Mistake made + corrected on 2026-05-21: TradingView MCP was first cloned to `~/Dropbox/Claude/mcp-servers/`; user rejected the location and the code was moved to `resources/tradingview-mcp/`.)
