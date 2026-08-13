@@ -1,12 +1,8 @@
 {# Inline Chart-tab fragment for one ticker. Same chart as the Watchlist (EMA
    20/50/200 + MATP/MBP lines + analyst band when on the board); a plain price
-   chart otherwise. Context: symbol, sel, sel_band, sel_patterns, user. #}
-<div class="flex items-center justify-between gap-2 mb-2 shrink-0">
-  <h2 class="text-sm font-semibold text-slate-200">{{ symbol }} <span class="text-[11px] text-slate-500">chart</span></h2>
-  <a href="/company-analysis?symbol={{ symbol }}"
-     class="text-[11px] px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition whitespace-nowrap"
-     title="Open the full company page — chart + EDGAR filings + analysis">Full company page &#8594;</a>
-</div>
+   chart otherwise. Context: symbol, sel, sel_band, sel_patterns, user.
+   No title row — the chart's own header already shows the ticker + company name;
+   the "Full company page" link sits at the bottom-right instead. #}
 {% set chart_symbol = symbol %}
 {% set chart_exchange = sel.exchange if sel else None %}
 {% set chart_matp = sel.matp if sel else None %}
@@ -22,3 +18,9 @@
 {% if not sel %}
 <p class="text-[11px] text-slate-500 mt-1 shrink-0">No analyst / MATP data for {{ symbol }} — showing price only.</p>
 {% endif %}
+{# escape hatch to the full dossier — bottom-right of the pane #}
+<div class="shrink-0 mt-2 flex justify-end">
+  <a href="/company-analysis?symbol={{ symbol }}"
+     class="text-[11px] px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition whitespace-nowrap"
+     title="Open the full company page — chart + EDGAR filings + analysis">Full company page &#8594;</a>
+</div>

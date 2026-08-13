@@ -129,6 +129,11 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-14 — v3.71: Chart tab — drop redundant title, move "Full company page" link
+- Removed the `"<ticker> chart"` title row from `_sector_chart.html` — the chart's own header
+  already shows the ticker + company name (was a double ticker). Moved the **"Full company page →"**
+  link to the **bottom-right** of the pane.
+
 ### 2026-08-14 — v3.70: Sector page — Chart tab (inline, no new window) + faster chart load
 - **Cancelled the new-window behaviour.** Symbol-panel ticker rows no longer open the Company page
   in a new tab (`target="_blank"` gone). The center column is now **two tabs — "Relative Rotation"
