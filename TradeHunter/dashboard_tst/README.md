@@ -124,6 +124,16 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-08-13 — v3.64: RRG chart truly fills the panel (was small + centered)
+- The quadrant SVG used a fixed `560×440` viewBox with `preserveAspectRatio="meet"`, so in a
+  wide-but-short container it scaled to the *height* and letterboxed — small, centered. Now the
+  viewBox is **measured from the container** each draw (`measure()`), drawn at the container's
+  real px size with `preserveAspectRatio="none"` (aspect matches → no distortion), so it fills
+  the whole panel (verified 878×306, 100% width & height).
+- Added a **ResizeObserver** on the chart box (+ deferred first-paint redraws) so it re-fills on
+  window/panel resize and when the Leaders panel expands/collapses — guarded against redraw loops
+  (the box is flex-sized, not content-sized).
+
 ### 2026-08-13 — v3.63: Sector page — one resizable left panel, RRG fills window, StockCharts-style scrubber
 - **Left column = ONE panel, 50:50, draggable divider.** The two cards (Sector & Industry,
   Symbol) merged into a single `#siPanel`; a `#siDivider` (`cursor-row-resize`) between the two

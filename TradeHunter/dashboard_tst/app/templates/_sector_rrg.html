@@ -101,8 +101,16 @@
   if (!svgBox || !sectors.length || !weeks.length) return;
 
   var COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#14b8a6','#3b82f6','#6366f1','#a855f7','#ec4899','#84cc16','#06b6d4'];
-  var W = 560, H = 440, mL = 46, mR = 16, mT = 16, mB = 28;
-  var pw = W - mL - mR, ph = H - mT - mB;
+  // W/H are measured from the container each draw so the chart FILLS the panel
+  // (no letterboxing); margins are fixed. pw/ph/W/H get recomputed in measure().
+  var mL = 46, mR = 16, mT = 16, mB = 28;
+  var W = 560, H = 440, pw = W - mL - mR, ph = H - mT - mB;
+  function measure() {
+    var r = svgBox.getBoundingClientRect();
+    W = Math.max(340, Math.round(r.width || 560));
+    H = Math.max(240, Math.round(r.height || 440));
+    pw = W - mL - mR; ph = H - mT - mB;
+  }
   var endIdx = weeks.length - 1;   // scrub position (index into weeks); replaces the old range input
 
   // show/hide state, seeded from the user's saved preference (data.visible = list of
@@ -152,11 +160,13 @@
   });
 
   function draw() {
+    measure();
     var tail = curTail();
     var end = Math.max(0, Math.min(weeks.length - 1, endIdx));
     var x100 = px(100), y100 = py(100), xR = mL + pw, yB = mT + ph;
-    // fill the panel: the SVG stretches to its container (flex-1) via width/height 100%.
-    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="100%" style="display:block" preserveAspectRatio="xMidYMid meet" font-family="system-ui,sans-serif">';
+    // fill the panel: viewBox is measured from the container, so the drawing occupies
+    // the whole area (no letterboxing / centering). aspect matches → no distortion.
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="100%" style="display:block" preserveAspectRatio="none" font-family="system-ui,sans-serif">';
     s += '<rect x="' + x100 + '" y="' + mT + '" width="' + (xR - x100) + '" height="' + (y100 - mT) + '" fill="#22c55e" opacity="0.06"/>';
     s += '<rect x="' + mL + '" y="' + mT + '" width="' + (x100 - mL) + '" height="' + (y100 - mT) + '" fill="#3b82f6" opacity="0.06"/>';
     s += '<rect x="' + x100 + '" y="' + y100 + '" width="' + (xR - x100) + '" height="' + (yB - y100) + '" fill="#eab308" opacity="0.06"/>';
@@ -264,10 +274,28 @@
     }, 450);
   });
 
-  // redraw the scrubber on resize (sparkline width is measured from the DOM)
+  // redraw on window resize (sparkline + chart width are measured from the DOM)
   var rzTimer = null;
   window.addEventListener('resize', function () { clearTimeout(rzTimer); rzTimer = setTimeout(draw, 150); });
 
+  // redraw when the chart container itself resizes (panel/divider changes, leaders
+  // expand/collapse). Guarded so the innerHTML swap can't re-trigger it in a loop —
+  // svgBox is sized by flex, not by its SVG content (which is width/height 100%).
+  if (window.ResizeObserver) {
+    var lastW = 0, lastH = 0, roTimer = null;
+    var ro = new ResizeObserver(function () {
+      var r = svgBox.getBoundingClientRect();
+      var w = Math.round(r.width), h = Math.round(r.height);
+      if (Math.abs(w - lastW) < 2 && Math.abs(h - lastH) < 2) return;
+      lastW = w; lastH = h;
+      clearTimeout(roTimer); roTimer = setTimeout(draw, 60);
+    });
+    ro.observe(svgBox);
+  }
+
   draw();
+  // settle the fill once layout is final (fonts / scrubber / flex have their final sizes)
+  setTimeout(draw, 120);
+  requestAnimationFrame(function () { requestAnimationFrame(draw); });
 })();
 </script>
