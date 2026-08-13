@@ -45,9 +45,11 @@
 
       {# bottom pane: Symbol #}
       <div id="siBottom" class="flex flex-col min-h-[240px] lg:min-h-0" style="flex:1 1 0">
-        <div class="flex items-baseline justify-between mb-1 px-1 shrink-0">
-          <h2 class="text-sm font-semibold text-slate-200">Symbol</h2>
-          <span class="text-[11px] text-slate-500">selected industry</span>
+        <div class="flex items-start justify-between gap-2 mb-1 px-1 shrink-0">
+          <h2 class="text-sm font-semibold text-slate-200 pt-0.5">Symbol</h2>
+          {# Finviz filter control — loads the user's saved filter; applying it re-fetches
+             the selected industry's symbols (see the sector-filter-changed listener below). #}
+          <div class="min-w-0" hx-get="/sector/filter" hx-trigger="load" hx-swap="innerHTML"></div>
         </div>
         <div id="symbolPanel" class="flex-1 min-h-0 overflow-y-auto pr-1">
           <p class="text-xs text-slate-600 py-3 px-1">Select a sector, then an industry, to list its symbols.</p>
@@ -96,6 +98,16 @@
       if (ind) { selectAmong('.wl-industry', ind); }
     });
   })();
+
+  // When the Symbol-panel Finviz filter changes, re-fetch the currently-selected
+  // industry's symbols so the list updates immediately (server reads the saved filter).
+  document.body.addEventListener('sector-filter-changed', function () {
+    var sel = document.querySelector('.wl-industry.text-emerald-300');
+    if (sel && window.htmx) {
+      var url = sel.getAttribute('hx-get');
+      if (url) htmx.ajax('GET', url, { target: '#symbolPanel', swap: 'innerHTML' });
+    }
+  });
 
   // Draggable divider between the Sector & Industry (top) and Symbol (bottom) panes.
   // Adjusts their flex-grow ratio; default 50:50; the ratio persists in localStorage.

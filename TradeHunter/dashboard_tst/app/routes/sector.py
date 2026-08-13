@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Body, Depends, Request
+from fastapi import APIRouter, Body, Depends, Form, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
@@ -22,6 +22,28 @@ router = APIRouter(prefix="/sector", tags=["sector"])
 templates = Jinja2Templates(
     directory=str(Path(__file__).resolve().parent.parent / "templates")
 )
+
+
+def _sector_filter_url(user: User) -> str:
+    """The user's saved Finviz screener URL for the Symbol-panel filter ('' if none)."""
+    prefs = getattr(user, "prefs", None) or {}
+    return prefs.get("sector_finviz_filter") or ""
+
+
+def _sector_extra_filters(user: User) -> str:
+    """The sanitized Finviz `f=` criteria codes from the user's saved filter URL."""
+    from ..services.industry import parse_finviz_filters
+
+    return parse_finviz_filters(_sector_filter_url(user))
+
+
+def _filter_fragment(request: Request, user: User) -> HTMLResponse:
+    url = _sector_filter_url(user)
+    codes = _sector_extra_filters(user)
+    return templates.TemplateResponse(
+        request, "_sector_filter.html",
+        {"user": user, "filter_url": url, "codes": codes},
+    )
 
 
 @router.get("", response_class=HTMLResponse)
@@ -83,10 +105,14 @@ def sector_industries_panel(
 ):
     """Fragment: the picked sector's INDUSTRY HEADERS (name + count), rendered as
     child rows under the sector in the 'Sector and Industry' tree. Clicking an
-    industry loads its symbols into the Symbol panel."""
+    industry loads its symbols into the Symbol panel. Honours the user's active
+    Symbol-panel Finviz filter so the counts reflect only matching tickers."""
     from ..services.industry import sector_industries
 
-    return templates.TemplateResponse(request, "_sector_industry_headers.html", sector_industries(sector))
+    return templates.TemplateResponse(
+        request, "_sector_industry_headers.html",
+        sector_industries(sector, _sector_extra_filters(user)),
+    )
 
 
 @router.get("/symbols", response_class=HTMLResponse)
@@ -94,12 +120,49 @@ def sector_symbols_panel(
     request: Request, sector: str = "", industry: str = "", user: User = Depends(require_user)
 ):
     """Fragment: the tickers of one selected sector+industry (Symbol / Full Name /
-    Last Price), rendered into the bottom Symbol panel."""
+    Last Price), rendered into the bottom Symbol panel. When the user has an active
+    Finviz filter, only tickers matching the criteria (within the industry) show."""
     from ..services.industry import sector_industries
 
-    data = sector_industries(sector)
+    data = sector_industries(sector, _sector_extra_filters(user))
     match = next((i for i in data["industries"] if i["name"] == industry), None)
     return templates.TemplateResponse(request, "_sector_symbols.html", {
         "sector": data["sector"], "sector_name": data["name"],
         "industry": industry, "tickers": (match["tickers"] if match else []),
+        "filtered": data.get("filtered", False),
     })
+
+
+@router.get("/filter", response_class=HTMLResponse)
+def sector_filter_control(request: Request, user: User = Depends(require_user)):
+    """The Symbol-panel filter control (toggle button + URL form), reflecting the
+    user's currently-saved Finviz screener filter. Loaded into the Symbol pane header."""
+    return _filter_fragment(request, user)
+
+
+@router.post("/filter", response_class=HTMLResponse)
+def sector_set_filter(
+    request: Request,
+    url: str = Form(""),
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Save (or clear, when empty / no criteria) the user's Symbol-panel Finviz
+    filter URL. Returns the refreshed control and fires `sector-filter-changed` so
+    the page re-fetches the currently-selected industry's (now filtered) symbols."""
+    from ..services.industry import parse_finviz_filters
+
+    u = db.get(User, user.id)
+    if u is None:
+        return _filter_fragment(request, user)
+    prefs = dict(u.prefs or {})
+    codes = parse_finviz_filters(url)
+    if codes:
+        prefs["sector_finviz_filter"] = url.strip()
+    else:
+        prefs.pop("sector_finviz_filter", None)
+    u.prefs = prefs
+    db.commit()
+    resp = _filter_fragment(request, u)
+    resp.headers["HX-Trigger"] = "sector-filter-changed"
+    return resp

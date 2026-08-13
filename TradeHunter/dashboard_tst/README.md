@@ -124,6 +124,21 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-08-13 — v3.66: Sector Symbol panel — Finviz criteria filter
+- New **"☰ Filter"** control in the Symbol pane header (`_sector_filter.html`, loaded via
+  `GET /sector/filter`). Paste a **Finviz screener URL**; its `f=` criteria codes are extracted +
+  sanitized (`parse_finviz_filters` in `services/industry.py` — drops `sec_`/`ind_`, keeps only
+  plain finviz tokens; we never fetch the pasted URL, only reuse its codes → no SSRF) and saved
+  per-user in `prefs['sector_finviz_filter']`.
+- `sector_industries(sector, extra_filters)` ANDs the criteria into the sector screener query
+  (dropping the default `cap_midover` so the user's criteria fully govern; walks a few more pages
+  since filtered sets are smaller). Both `/sector/industries` (header counts) and `/sector/symbols`
+  (the ticker list) honour it, so **clicking an industry shows only tickers matching the criteria**.
+- `POST /sector/filter` saves/clears the filter and fires `HX-Trigger: sector-filter-changed`; a
+  listener in `sector.html` re-fetches the currently-selected industry's symbols so the list
+  updates live. The Symbol-list header shows a **"· filtered"** badge; empty results read
+  "No symbols match the filter". Verified: XLK Semiconductors 24 → 2 under `fa_pe_u25,ta_sma50_pa`.
+
 ### 2026-08-13 — v3.65: Sector symbol → new-window chart + company analysis
 - Clicking a ticker in the Sector page's **Symbol** panel now opens the Company page in a
   **new window** (`target="_blank"` on the rows in `_sector_symbols.html`).

@@ -1,0 +1,31 @@
+{# Symbol-panel Finviz filter control. Context: filter_url, codes.
+   Toggle button reveals a form to paste a Finviz screener URL; its criteria are
+   ANDed into the sector/industry drill-down so only matching tickers show. #}
+<div id="symFilter" class="min-w-0">
+  <div class="flex items-center gap-1.5 justify-end">
+    {% if codes %}<span class="text-[10px] text-emerald-400/80 truncate max-w-[8rem]" title="{{ codes }}">{{ codes.split(',')|length }} criteria</span>{% endif %}
+    <button type="button"
+            onclick="var f=this.closest('#symFilter').querySelector('#symFilterForm'); f.classList.toggle('hidden');"
+            class="text-[11px] px-2 py-0.5 rounded border transition whitespace-nowrap
+                   {{ 'border-emerald-500/60 text-emerald-300 bg-emerald-500/10' if codes else 'border-slate-700 text-slate-400' }}
+                   hover:border-emerald-500 hover:text-emerald-300"
+            title="Filter this industry's symbols by a Finviz screener">
+      &#9776; Filter{% if codes %} &middot; on{% endif %}
+    </button>
+  </div>
+
+  <form id="symFilterForm" class="{% if not codes %}hidden {% endif %}mt-1.5 flex flex-col gap-1.5"
+        hx-post="/sector/filter" hx-target="#symFilter" hx-swap="outerHTML">
+    <input name="url" value="{{ filter_url }}" autocomplete="off"
+           placeholder="paste a Finviz screener URL…"
+           class="w-full rounded bg-slate-950/60 border border-slate-700 px-2 py-1 text-[11px] text-slate-200 focus:border-emerald-500 outline-none">
+    <div class="flex items-center gap-1.5">
+      <button type="submit"
+              class="text-[11px] px-2.5 py-0.5 rounded bg-emerald-600 hover:bg-emerald-500 font-medium text-white">Apply</button>
+      <button type="button" hx-post="/sector/filter" hx-vals='{"url":""}'
+              hx-target="#symFilter" hx-swap="outerHTML"
+              class="text-[11px] px-2.5 py-0.5 rounded border border-slate-700 text-slate-400 hover:border-rose-500 hover:text-rose-300 transition">Clear</button>
+      <span class="text-[10px] text-slate-600 leading-tight">criteria only — sector &amp; industry are set for you</span>
+    </div>
+  </form>
+</div>
