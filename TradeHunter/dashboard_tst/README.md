@@ -129,6 +129,17 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-13 — v3.68: Company page — list each downloaded EDGAR filing
+- The Earnings-filings card now **lists every filing on file** (newest-first table): **period**
+  (e.g. 2025-Q2), **form** (10-Q / 10-K badge), **file formats** (HTML · MD), and **when it was
+  downloaded** — not just the aggregate summary.
+- The reporter (`deploy/report_edgar_health.py` `_scan_ticker`) now rolls up a per-filing list
+  (`filings: [{period, form, html, md, epoch}]`, capped 24, newest-first) alongside the existing
+  aggregates; `edgar_health.ticker_status` passes it through with a human "downloaded N ago".
+  **NOTE:** the list only populates after the EDGAR reporter is re-deployed + re-run on its host
+  (AI-Hermes / Nous agent) so it pushes the new `filings` field; older reports fall back to the
+  summary. Serving the filing *contents* still needs a separate path (files live on AI-Hermes).
+
 ### 2026-08-13 — v3.67: Company page — downloaded EDGAR earnings filings card
 - The Company page (`/company-analysis?symbol=X`) now shows an **"Earnings filings · EDGAR"** card
   (above the analysis dossier) listing what the server has downloaded for the ticker: **status**

@@ -101,6 +101,9 @@ def _scan_ticker(dir_path: str) -> dict:
     newest = 0.0
     html = md = 0
     md_max = 0
+    # Per-filing rollup so the Company page can LIST each filing (not just aggregates).
+    # Keyed by (year, period); a filing usually has an .html + a .md.
+    filings: dict[tuple[int, str], dict] = {}
     try:
         for e in os.scandir(dir_path):
             if not e.is_file():
@@ -133,6 +136,17 @@ def _scan_ticker(dir_path: str) -> dict:
                 has_10k = True
             else:
                 q_by_year.setdefault(yr, set()).add(int(per[1]))
+            f = filings.setdefault(
+                (yr, per),
+                {"year": yr, "period": per, "form": "Q", "html": 0, "md": 0, "epoch": 0.0},
+            )
+            if per == "FY" or form == "K":
+                f["form"] = "K"
+            if low.endswith((".html", ".htm")):
+                f["html"] += 1
+            elif low.endswith(".md"):
+                f["md"] += 1
+            f["epoch"] = max(f["epoch"], st.st_mtime)
     except OSError:
         pass
 
@@ -141,6 +155,19 @@ def _scan_ticker(dir_path: str) -> dict:
     # the .md is absent (md==0) or it's an empty stub (largest .md < threshold).
     # Both mean "not readable in Obsidian" and want the same fix (regenerate MD).
     stub_md = bool(html and (md == 0 or md_max < _STUB_MAX_BYTES))
+    # newest-first list of filings (cap so a long-history ticker stays small on the wire)
+    def _ford(f: dict) -> tuple[int, int]:
+        return (f["year"], 4 if f["period"] == "FY" else int(f["period"][1]))
+    filings_out = [
+        {
+            "period": f"{f['year']}-{f['period']}",
+            "form": "10-K" if f["form"] == "K" else "10-Q",
+            "html": f["html"],
+            "md": f["md"],
+            "epoch": round(f["epoch"], 0) if f["epoch"] else 0,
+        }
+        for f in sorted(filings.values(), key=_ford, reverse=True)[:24]
+    ]
     return {
         "latest_period": period_label,
         "newest_epoch": round(newest, 0) if newest else 0,
@@ -150,6 +177,7 @@ def _scan_ticker(dir_path: str) -> dict:
         "has_10k": has_10k,
         "missing": _missing_quarters(q_by_year),
         "n_quarters": sum(len(v) for v in q_by_year.values()),
+        "filings": filings_out,
     }
 
 

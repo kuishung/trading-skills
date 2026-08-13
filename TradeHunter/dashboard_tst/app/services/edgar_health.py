@@ -72,6 +72,19 @@ def ticker_status(report: dict, symbol: str, received_at=None) -> dict | None:
     if received_at is not None:
         ra = received_at if received_at.tzinfo else received_at.replace(tzinfo=_dt.timezone.utc)
         rec_ago = _ago((_dt.datetime.now(_dt.timezone.utc) - ra).total_seconds())
+    # Per-filing list (newest-first) when the reporter provides it; each is
+    # {period, form, html, md, epoch} -> add a human "ago". Older reports that
+    # predate this field just omit it (the card falls back to the summary).
+    filings = []
+    for f in (t.get("filings") or []):
+        fe = f.get("epoch") or 0
+        filings.append({
+            "period": f.get("period"),
+            "form": f.get("form"),
+            "html": int(f.get("html") or 0),
+            "md": int(f.get("md") or 0),
+            "ago": _ago(now - fe) if fe else None,
+        })
     return {
         "ticker": sym,
         "status": status,
@@ -83,6 +96,7 @@ def ticker_status(report: dict, symbol: str, received_at=None) -> dict | None:
         "md": int(t.get("md") or 0),
         "stub_md": bool(t.get("stub_md")),
         "missing": list(t.get("missing") or []),
+        "filings": filings,
         "newest_ago": _ago(now - ne) if ne else None,
         "received_ago": rec_ago,
         "host": report.get("host"),
