@@ -41,13 +41,18 @@ def sector_returns_panel(request: Request, user: User = Depends(require_user)):
 def sector_rrg(request: Request, user: User = Depends(require_user)):
     """Interactive RRG fragment: full weekly RS-Ratio/RS-Momentum series per sector,
     with a scrubbable tail (HTMX-loaded into the center card). Initializes the
-    sector show/hide state from the user's saved preference."""
-    from ..services.etf import rrg_series
+    sector show/hide state from the user's saved preference. Also carries the
+    leaders table (relative strength vs SPY) for the collapsed, click-to-expand
+    panel below the chart — same source that orders the RRG list."""
+    from ..services.etf import etf_leaders, rrg_series
 
     ctx = rrg_series()
     prefs = getattr(user, "prefs", None) or {}
     # list of VISIBLE sector symbols; None => all visible (default).
     ctx["visible"] = prefs.get("rrg_sectors")
+    lead = etf_leaders()
+    ctx["leaders"] = lead.get("rows") or []
+    ctx["leaders_spy"] = lead.get("spy")
     return templates.TemplateResponse(request, "_sector_rrg.html", ctx)
 
 

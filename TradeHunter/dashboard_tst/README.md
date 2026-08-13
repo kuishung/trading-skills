@@ -124,6 +124,27 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-08-13 — v3.62: Sector page — leader-ordered everywhere, fits the viewport
+- **Left column 1/3 · 2/3 split.** The left `<aside>` is a fixed-height flex column: the
+  **"Sector and Industry"** panel takes the top **1/3** (`lg:flex-[1]`) and the **"Symbol"**
+  panel the bottom **2/3** (`lg:flex-[2]`), each scrolling internally (replaces the old
+  `max-h-[52vh]` / `max-h-[40vh]` caps). Mobile keeps a `40vh` / `60vh` fallback.
+- **Page heading dropped.** Removed the redundant **"Sector & Industry" `<h1>`** + description
+  line — the nav menu already names the page — reclaiming that vertical space.
+- **ETF leaders + Correlation cards removed.** The center column is now just the RRG, which
+  fills the column height. The **ETF leaders table moved INTO the RRG card** as a collapsed
+  `<details>` (click *"Leaders · relative strength vs SPY · ranked"* to expand) below the chart.
+  `/sector/rrg` now also carries `etf_leaders()` rows; `/today/etf-leaders` + `/today/correlation`
+  endpoints are untouched (still used by the Today page).
+- **One leader ordering, everywhere.** New `etf.leader_order()` (rank = 1-month relative
+  strength vs SPY, leaders-first) is the single source of truth: the **RRG list/legend**, the
+  **Sector & Industry panel**, and the **collapsed leaders table** all sort by it, so they
+  always agree. `sector_returns()` no longer sorts by raw 1M return; `rrg_series()` reorders
+  its sectors to match.
+- **Fits the viewport.** The page row is `lg:h-[calc(100vh-6rem)]` with `overflow-hidden` main
+  — no page scroll; each panel (and the expanded leaders table) scrolls internally. RRG SVG
+  capped at `50vh` so chart + controls + slider + axis fit without clipping.
+
 ### 2026-07-18 — v3.60: Sector & Industry — 3-level tree (Sector → Industry → Symbol)
 - The left column is now a drill-down tree. **Top panel "Sector and Industry"**: click a sector
   → its **industry headers** (name + count) expand as **child rows right under it** (HTMX into a

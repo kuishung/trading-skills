@@ -101,6 +101,19 @@ def etf_leaders() -> dict:
     return out
 
 
+def leader_order() -> list[str]:
+    """Sector symbols ranked leaders-first by 1-month relative strength vs SPY.
+    Single source of truth for 'leader' ordering across the whole Sector page —
+    the RRG legend/list, the Sector & Industry panel, and the leaders table all
+    key off this so they agree. Sectors that couldn't be ranked (insufficient
+    history) fall to the end in universe order. Cheap: reads the cached leaders."""
+    order = [r["symbol"] for r in etf_leaders().get("rows", [])]
+    for sym, _ in ETF_UNIVERSE:
+        if sym not in order:
+            order.append(sym)
+    return order
+
+
 # ----------------------------------------------------- sector returns (1/2/4/8mo)
 # Approx trading-day lookbacks: 1mo~21, 2mo~42, 4mo~84, 8mo~168.
 _RET_WINDOWS = [("1M", 21), ("2M", 42), ("4M", 84), ("8M", 168)]
@@ -108,7 +121,8 @@ _RET_WINDOWS = [("1M", 21), ("2M", 42), ("4M", 84), ("8M", 168)]
 
 def sector_returns() -> dict:
     """Per-sector total return over 1 / 2 / 4 / 8 months, for the Sector & Industry
-    left panel. Sorted by 1-month return (leaders first); includes an SPY row.
+    left panel. Ordered leaders-first by relative strength vs SPY (shared
+    leader_order(), so this panel agrees with the RRG list); includes an SPY row.
     Reuses the shared ~15-min-cached aligned closes. Soft-fail."""
     hit = _cache.get("sector_returns")
     if hit and hit[0] > time.time():
@@ -121,8 +135,8 @@ def sector_returns() -> dict:
                 "rets": {lbl: _ret(c, lb) for lbl, lb in _RET_WINDOWS}}
 
     rows = [_row(sym, name) for sym, name in ETF_UNIVERSE]
-    rows.sort(key=lambda r: (r["rets"].get("1M") if r["rets"].get("1M") is not None else -99),
-              reverse=True)
+    rank = {s: i for i, s in enumerate(leader_order())}
+    rows.sort(key=lambda r: rank.get(r["symbol"], 99))
     out = {
         "windows": [lbl for lbl, _ in _RET_WINDOWS],
         "rows": rows,
@@ -280,6 +294,10 @@ def rrg_series(win: int = 12, weeks: int = 26) -> dict:
         if not week_axis:
             week_axis = t["labs"][-keep:]
         sectors.append({"symbol": t["symbol"], "name": t["name"], "pts": t["pts"][-keep:]})
+    # Order the RRG list leaders-first (shared leader_order()), so the legend/list
+    # agrees with the Sector & Industry panel and the leaders table.
+    rank = {s: i for i, s in enumerate(leader_order())}
+    sectors.sort(key=lambda s: rank.get(s["symbol"], 99))
     out = {"weeks": week_axis, "sectors": sectors}
     _cache["rrg_series"] = (time.time() + _TTL, out)
     return out

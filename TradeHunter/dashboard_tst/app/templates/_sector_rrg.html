@@ -18,6 +18,57 @@
 <datalist id="rrgTicks"></datalist>
 {# per-week date labels under the slider, slanted so they don't overlap #}
 <div id="rrgAxis" class="w-full flex justify-between" style="height:38px;padding:0 4px;overflow:hidden"></div>
+
+{# Leaders — relative strength vs SPY. Collapsed by default; click to expand.
+   Same ranking (etf_leaders, by 1-month RS) that orders the RRG list above. #}
+{% if leaders %}
+{% macro lpct(v) %}{% if v is none %}<span class="text-slate-600">–</span>{% else %}<span class="{{ 'text-emerald-400' if v >= 0 else 'text-rose-400' }}">{{ "%+.1f"|format(v*100) }}%</span>{% endif %}{% endmacro %}
+<details class="mt-3 group border-t border-slate-800 pt-2">
+  <summary class="cursor-pointer select-none list-none flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-emerald-300 transition">
+    <span class="inline-block text-[9px] transition-transform group-open:rotate-90">&#9654;</span>
+    Leaders <span class="text-slate-600">&middot; relative strength vs SPY &middot; ranked</span>
+  </summary>
+  <div class="mt-2 max-h-72 overflow-y-auto pr-1">
+    <table class="w-full text-xs">
+      <thead class="text-[10px] uppercase tracking-wide text-slate-500">
+        <tr>
+          <th class="text-left font-normal pb-1">Sector</th>
+          <th class="text-right font-normal pb-1">1w</th>
+          <th class="text-right font-normal pb-1">1m</th>
+          <th class="text-right font-normal pb-1">3m</th>
+          <th class="text-right font-normal pb-1" title="1-month return vs SPY">vs SPY</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in leaders %}
+        <tr class="border-t border-slate-800/70">
+          <td class="py-1">
+            <span class="font-semibold text-slate-200">{{ r.symbol }}</span>
+            <span class="text-slate-500">{{ r.name }}</span>
+            {% if r.leading %}<span class="ml-1 text-emerald-400" title="outperforming SPY (1m)">&#9650;</span>{% else %}<span class="ml-1 text-rose-400/70" title="lagging SPY (1m)">&#9660;</span>{% endif %}
+          </td>
+          <td class="py-1 text-right tabular-nums">{{ lpct(r.r1w) }}</td>
+          <td class="py-1 text-right tabular-nums">{{ lpct(r.r1m) }}</td>
+          <td class="py-1 text-right tabular-nums">{{ lpct(r.r3m) }}</td>
+          <td class="py-1 text-right tabular-nums font-medium">{{ lpct(r.rs1m) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      {% if leaders_spy %}
+      <tfoot>
+        <tr class="border-t border-slate-700 text-slate-400">
+          <td class="py-1"><span class="font-semibold">SPY</span> <span class="text-slate-600">benchmark</span></td>
+          <td class="py-1 text-right tabular-nums">{{ lpct(leaders_spy.r1w) }}</td>
+          <td class="py-1 text-right tabular-nums">{{ lpct(leaders_spy.r1m) }}</td>
+          <td class="py-1 text-right tabular-nums">{{ lpct(leaders_spy.r3m) }}</td>
+          <td class="py-1 text-right text-slate-600">—</td>
+        </tr>
+      </tfoot>
+      {% endif %}
+    </table>
+  </div>
+</details>
+{% endif %}
 {% endif %}
 
 <script>
@@ -99,7 +150,7 @@
     var end = Math.max(0, Math.min(weeks.length - 1, parseInt(slider.value, 10) || 0));
     weekLbl.textContent = weeks[end] || '';
     var x100 = px(100), y100 = py(100), xR = mL + pw, yB = mT + ph;
-    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" class="w-full" style="max-height:58vh" preserveAspectRatio="xMidYMid meet" font-family="system-ui,sans-serif">';
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" class="w-full" style="max-height:50vh" preserveAspectRatio="xMidYMid meet" font-family="system-ui,sans-serif">';
     s += '<rect x="' + x100 + '" y="' + mT + '" width="' + (xR - x100) + '" height="' + (y100 - mT) + '" fill="#22c55e" opacity="0.06"/>';
     s += '<rect x="' + mL + '" y="' + mT + '" width="' + (x100 - mL) + '" height="' + (y100 - mT) + '" fill="#3b82f6" opacity="0.06"/>';
     s += '<rect x="' + x100 + '" y="' + y100 + '" width="' + (xR - x100) + '" height="' + (yB - y100) + '" fill="#eab308" opacity="0.06"/>';
