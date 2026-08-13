@@ -124,6 +124,18 @@ surface takes shape.
 
 ## Changelog
 
+### 2026-08-13 — v3.67: Company page — downloaded EDGAR earnings filings card
+- The Company page (`/company-analysis?symbol=X`) now shows an **"Earnings filings · EDGAR"** card
+  (above the analysis dossier) listing what the server has downloaded for the ticker: **status**
+  (COMPLETE / GAPS / STUB badge), **latest period**, **quarters on file**, **10-K yes/no**,
+  **HTML/MD file counts**, **newest-file freshness**, plus **missing quarters** and a stub-MD warning
+  when applicable. Untracked tickers read "No earnings filings downloaded yet."
+- Data comes from the pushed `EdgarIngestHealth` report (AI-Hermes scans the corpus and POSTs an
+  inventory to `/api/ingest/edgar`; the files themselves live on that box). New
+  `edgar_health.ticker_status(report, symbol, received_at)` returns one ticker's row (COMPLETE
+  included, unlike `report_to_display` which lists only actionable rows); `company_analysis.py`
+  looks up the latest report and passes it as `edgar`.
+
 ### 2026-08-13 — v3.66: Sector Symbol panel — Finviz criteria filter
 - New **"☰ Filter"** control in the Symbol pane header (`_sector_filter.html`, loaded via
   `GET /sector/filter`). Paste a **Finviz screener URL**; its `f=` criteria codes are extracted +

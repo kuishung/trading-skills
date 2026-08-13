@@ -57,6 +57,37 @@
     <p class="text-[11px] text-slate-500 -mt-2">No analyst / MATP data for {{ symbol }} yet — showing price only.</p>
     {% endif %}
 
+    {# ── Earnings filings the server has downloaded (EDGAR corpus on AI-Hermes) ── #}
+    <section class="rounded-lg border border-slate-800 bg-slate-900/40">
+      <div class="flex items-center justify-between gap-2 px-4 py-2 border-b border-slate-800">
+        <h3 class="text-sm font-medium text-slate-100">Earnings filings <span class="text-[11px] text-slate-500">&middot; EDGAR (SEC 10-Q / 10-K)</span></h3>
+        {% if edgar %}
+        {% set etier = {0: 'bg-emerald-500/15 text-emerald-300', 1: 'bg-amber-500/15 text-amber-300', 2: 'bg-rose-500/15 text-rose-300'} %}
+        <span class="text-[10px] px-1.5 py-0.5 rounded {{ etier.get(edgar.tier, 'bg-slate-600/30 text-slate-300') }}" title="ingest status">{{ edgar.status }}</span>
+        {% endif %}
+      </div>
+      <div class="px-4 py-3 text-sm text-slate-300">
+        {% if edgar %}
+        <div class="flex flex-wrap gap-x-6 gap-y-1">
+          <div><span class="text-slate-500">Latest period:</span> <span class="tabular-nums text-slate-100">{{ edgar.latest_period or '—' }}</span></div>
+          <div><span class="text-slate-500">Quarters on file:</span> <span class="tabular-nums">{{ edgar.n_quarters }}</span> 10-Q</div>
+          <div><span class="text-slate-500">Annual 10-K:</span> {% if edgar.has_10k %}<span class="text-emerald-300">yes</span>{% else %}<span class="text-rose-300">no</span>{% endif %}</div>
+          <div><span class="text-slate-500">Files:</span> <span class="tabular-nums">{{ edgar.html }}</span> HTML &middot; <span class="tabular-nums">{{ edgar.md }}</span> MD</div>
+          {% if edgar.newest_ago %}<div><span class="text-slate-500">Newest:</span> {{ edgar.newest_ago }}</div>{% endif %}
+        </div>
+        {% if edgar.missing %}
+        <div class="mt-2 text-[11px] text-rose-300">Missing quarters: {{ edgar.missing|join(', ') }}</div>
+        {% endif %}
+        {% if edgar.stub_md %}
+        <div class="mt-1 text-[11px] text-amber-300">Markdown body is a stub — regenerate for readable text.</div>
+        {% endif %}
+        <div class="mt-2 text-[10px] text-slate-600">Stored on {{ edgar.host or 'the research server' }}{% if edgar.received_ago %} &middot; inventory reported {{ edgar.received_ago }}{% endif %}. The analysis below is generated from these filings.</div>
+        {% else %}
+        <p class="text-xs text-slate-600 italic">No earnings filings downloaded for {{ symbol }} yet.</p>
+        {% endif %}
+      </div>
+    </section>
+
     {# ── Dossier: one card per section ── #}
     <h2 class="text-base font-semibold text-emerald-300 mt-2">{{ symbol }} &middot; Company analysis</h2>
 

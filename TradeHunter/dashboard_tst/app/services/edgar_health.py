@@ -50,6 +50,46 @@ def _classify(t: dict) -> str:
     return "COMPLETE"
 
 
+def ticker_status(report: dict, symbol: str, received_at=None) -> dict | None:
+    """Display facts for ONE ticker's downloaded EDGAR earnings filings, for the
+    Company page — or ``None`` if the corpus doesn't track this ticker. Unlike
+    ``report_to_display`` (which lists only the actionable, non-COMPLETE rows), this
+    returns the row for any ticker, COMPLETE included."""
+    if not report or not symbol:
+        return None
+    sym = str(symbol).strip().upper()
+    t = next(
+        (x for x in (report.get("tickers") or [])
+         if str(x.get("ticker") or "").upper() == sym),
+        None,
+    )
+    if t is None:
+        return None
+    now = time.time()
+    status = _classify(t)
+    ne = t.get("newest_epoch") or 0
+    rec_ago = None
+    if received_at is not None:
+        ra = received_at if received_at.tzinfo else received_at.replace(tzinfo=_dt.timezone.utc)
+        rec_ago = _ago((_dt.datetime.now(_dt.timezone.utc) - ra).total_seconds())
+    return {
+        "ticker": sym,
+        "status": status,
+        "tier": _STATUS_TIER.get(status, 0),
+        "latest_period": t.get("latest_period"),
+        "n_quarters": int(t.get("n_quarters") or 0),
+        "has_10k": bool(t.get("has_10k")),
+        "html": int(t.get("html") or 0),
+        "md": int(t.get("md") or 0),
+        "stub_md": bool(t.get("stub_md")),
+        "missing": list(t.get("missing") or []),
+        "newest_ago": _ago(now - ne) if ne else None,
+        "received_ago": rec_ago,
+        "host": report.get("host"),
+        "root": report.get("root"),
+    }
+
+
 def report_to_display(report: dict, received_at) -> dict:
     """Turn a PUSHED EDGAR report into display data: per-ticker status, the
     actionable (non-COMPLETE) rows worst-first, and aggregate counts/tier."""

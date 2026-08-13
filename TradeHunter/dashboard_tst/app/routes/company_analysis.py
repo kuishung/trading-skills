@@ -21,6 +21,7 @@ from ..models import (
     CA_SECTIONS,
     CA_SECTION_LABELS,
     CompanyAnalysis,
+    EdgarIngestHealth,
     MATPLevel,
     User,
     _utcnow,
@@ -63,6 +64,19 @@ def company_analysis_home(
 
         cc = _chart_context(db, sel)
         sel_band, sel_patterns = cc["sel_band"], cc["sel_patterns"]
+    # Downloaded EDGAR earnings filings for this ticker (pushed by AI-Hermes; the
+    # corpus files live there, we surface the inventory/status here).
+    edgar = None
+    if sym:
+        from ..services.edgar_health import ticker_status
+
+        erow = (
+            db.query(EdgarIngestHealth)
+            .order_by(EdgarIngestHealth.received_at.desc())
+            .first()
+        )
+        if erow and erow.report:
+            edgar = ticker_status(erow.report, sym, erow.received_at)
     return templates.TemplateResponse(
         request,
         "company_analysis.html",
@@ -74,6 +88,7 @@ def company_analysis_home(
             "sel": sel,
             "sel_band": sel_band,
             "sel_patterns": sel_patterns,
+            "edgar": edgar,
         },
     )
 
