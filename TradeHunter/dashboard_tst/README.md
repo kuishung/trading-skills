@@ -124,7 +124,18 @@ surface takes shape.
 
 ## Changelog
 
-### 2026-08-13 — v3.64: RRG chart truly fills the panel (was small + centered)
+### 2026-08-13 — v3.65: Sector symbol → new-window chart + company analysis
+- Clicking a ticker in the Sector page's **Symbol** panel now opens the Company page in a
+  **new window** (`target="_blank"` on the rows in `_sector_symbols.html`).
+- The **Company page (`/company-analysis?symbol=X`) now shows the Watchlist chart at the top** —
+  the same lightweight-charts candlestick with EMA20/50/200, **MATP & MBP** level lines, earnings
+  badges, zoom controls, and (when available) the **analyst band + "Analyst targets →"** modal —
+  followed by the company-analysis dossier sections below. `company_analysis.py` builds the chart
+  context via matp's `_chart_context` (MATPLevel lookup + band), so it matches the Watchlist exactly.
+- `_price_chart.html` guard relaxed from `chart_symbol and chart_matp is not none` → `chart_symbol`,
+  so a ticker **not** on the MATP board still renders a **price-only** chart (MATP/MBP lines, the band,
+  and "Plot on TV" stay conditional on their data). Safe for the other callers — `studies.html` and
+  the MATP board already gate the include on `matp is not none` / `sel`.
 - The quadrant SVG used a fixed `560×440` viewBox with `preserveAspectRatio="meet"`, so in a
   wide-but-short container it scaled to the *height* and letterboxed — small, centered. Now the
   viewBox is **measured from the container** each draw (`measure()`), drawn at the container's

@@ -39,8 +39,26 @@
     {% endif %}
 
   {% else %}
+    {# ── Chart (same as the Watchlist) — MATP/MBP level lines + analyst band when the
+       ticker is on the board; a plain price chart otherwise. ── #}
+    {% set chart_symbol = symbol %}
+    {% set chart_exchange = sel.exchange if sel else None %}
+    {% set chart_matp = sel.matp if sel else None %}
+    {% set chart_mbp = sel.mbp if sel else None %}
+    {% set chart_as_of = sel.as_of if sel else None %}
+    {% set chart_earnings = sel.last_earnings_date if sel else None %}
+    {% set chart_band = sel_band %}
+    {% set chart_patterns = sel_patterns %}
+    {% set chart_fill = false %}
+    {% set chart_curatable = false %}
+    {% set chart_tv_plot = false %}
+    {% include "_price_chart.html" %}
+    {% if not sel %}
+    <p class="text-[11px] text-slate-500 -mt-2">No analyst / MATP data for {{ symbol }} yet — showing price only.</p>
+    {% endif %}
+
     {# ── Dossier: one card per section ── #}
-    <h2 class="text-base font-semibold text-emerald-300">{{ symbol }}</h2>
+    <h2 class="text-base font-semibold text-emerald-300 mt-2">{{ symbol }} &middot; Company analysis</h2>
 
     {% for key, label, row in sections %}
     <section class="rounded-lg border border-slate-800 bg-slate-900/40">
@@ -90,6 +108,9 @@
     {% endfor %}
   {% endif %}
 </div>
+
+{# analyst-targets pop-out, triggered by the chart's "Analyst targets →" button #}
+{% if symbol %}{% include "_at_modal.html" %}{% endif %}
 
 <script>
 (function () {

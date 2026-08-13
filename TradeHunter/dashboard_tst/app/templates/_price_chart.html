@@ -2,7 +2,10 @@
    Context: chart_symbol, chart_matp, chart_mbp. Optional: chart_detail_link
    (show an "open full detail" link when rendered on the board). #}
 {% from "_time.html" import localtime %}
-{% if chart_symbol and chart_matp is not none %}
+{# Renders whenever a symbol is given. MATP/MBP lines, the "Plot on TV" button and the
+   analyst band only appear when their data exists (chart_matp / chart_band), so a symbol
+   with no MATP row still gets a plain price chart (used by the Company page). #}
+{% if chart_symbol %}
 {% set tv_symbol = (chart_exchange ~ ':' ~ chart_symbol) if chart_exchange else chart_symbol %}
 {# one connected panel: TradingView single-quote header -> price chart -> band #}
 <div id="chart" class="rounded-lg border border-slate-800 bg-slate-900 overflow-hidden {% if chart_fill %}flex flex-col lg:flex-1 lg:min-h-0{% endif %}">

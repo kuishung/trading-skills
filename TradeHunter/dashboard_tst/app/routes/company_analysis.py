@@ -21,6 +21,7 @@ from ..models import (
     CA_SECTIONS,
     CA_SECTION_LABELS,
     CompanyAnalysis,
+    MATPLevel,
     User,
     _utcnow,
 )
@@ -51,6 +52,17 @@ def company_analysis_home(
     sym = (symbol or "").strip().upper()
     sections = _sections_for(db, sym) if sym else []
     recent = sorted({r[0] for r in db.query(CompanyAnalysis.symbol).distinct().all()})
+    # Watchlist-style chart at the top: MATP/MBP level lines + analyst band when the
+    # ticker is in the MATP board; otherwise a plain price chart (sel=None → the
+    # template renders price-only). Reuses matp's _chart_context so the band/patterns
+    # match the Watchlist exactly.
+    sel, sel_band, sel_patterns = None, None, []
+    if sym:
+        sel = db.query(MATPLevel).filter(MATPLevel.symbol == sym).first()
+        from .matp import _chart_context
+
+        cc = _chart_context(db, sel)
+        sel_band, sel_patterns = cc["sel_band"], cc["sel_patterns"]
     return templates.TemplateResponse(
         request,
         "company_analysis.html",
@@ -59,6 +71,9 @@ def company_analysis_home(
             "symbol": sym,
             "sections": sections,
             "recent": recent,
+            "sel": sel,
+            "sel_band": sel_band,
+            "sel_patterns": sel_patterns,
         },
     )
 
