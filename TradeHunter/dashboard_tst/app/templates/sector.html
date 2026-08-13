@@ -99,9 +99,43 @@
     });
   })();
 
+  // Prefetch a sector's industry list on HOVER so the click is instant. The server
+  // caches sector_industries(), so warming it on mouseenter means the subsequent
+  // click (and the industry->symbols click, same cache) returns immediately even
+  // when the sector was cold. Deduped per URL; cleared when the filter changes
+  // (filtered results are a different server cache key).
+  (function () {
+    var warmed = {};
+    function warm(url) {
+      if (!url || warmed[url]) return;
+      warmed[url] = true;
+      fetch(url, { credentials: 'same-origin', headers: { 'HX-Request': 'true' } })
+        .catch(function () { delete warmed[url]; });
+    }
+    document.addEventListener('mouseover', function (e) {
+      var row = e.target.closest ? e.target.closest('.wl-sector') : null;
+      if (row) warm(row.getAttribute('hx-get'));
+    }, { passive: true });
+    // expose so the filter-change handler can reset the warm cache
+    window._sectorClearWarm = function () { warmed = {}; };
+  })();
+
+  // Instant "Loading…" feedback in the drill-down targets while a scrape is in flight
+  // (the cold path). Replaced by the real content on swap.
+  document.body.addEventListener('htmx:beforeRequest', function (e) {
+    var t = e.detail && e.detail.target;
+    if (!t || !t.classList) return;
+    if (t.classList.contains('sector-children')) {
+      t.innerHTML = '<p class="text-[11px] text-slate-600 px-2 py-1">Loading industries&hellip;</p>';
+    } else if (t.id === 'symbolPanel') {
+      t.innerHTML = '<p class="text-xs text-slate-600 py-3 px-1">Loading symbols&hellip;</p>';
+    }
+  });
+
   // When the Symbol-panel Finviz filter changes, re-fetch the currently-selected
   // industry's symbols so the list updates immediately (server reads the saved filter).
   document.body.addEventListener('sector-filter-changed', function () {
+    if (window._sectorClearWarm) window._sectorClearWarm();  // filtered = different cache
     var sel = document.querySelector('.wl-industry.text-emerald-300');
     if (sel && window.htmx) {
       var url = sel.getAttribute('hx-get');

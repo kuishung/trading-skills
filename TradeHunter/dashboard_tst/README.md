@@ -129,6 +129,17 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-14 — v3.69: Sector page — faster industry load (hover-prefetch + periodic re-warm)
+- **Prefetch on hover:** hovering a sector row fires `/sector/industries` in the background so the
+  cache is warm by the time you click — the click then returns from cache instantly (verified: a
+  hover fires the request with no click; a second hover is deduped). Cleared on filter change
+  (filtered = a different server cache key).
+- **Instant "Loading…" feedback** in the industry-children and Symbol targets while a cold scrape
+  runs (`htmx:beforeRequest`), so a cold click never looks frozen.
+- **Periodic re-warm:** the startup pre-warm now loops every ~5h (was startup-only), keeping the 6h
+  Finviz disk cache from ever expiring under a long-running server — the first click after 6h used
+  to pay a ~6s cold scrape.
+
 ### 2026-08-13 — v3.68: Company page — list each downloaded EDGAR filing
 - The Earnings-filings card now **lists every filing on file** (newest-first table): **period**
   (e.g. 2025-Q2), **form** (10-Q / 10-K badge), **file formats** (HTML · MD), and **when it was

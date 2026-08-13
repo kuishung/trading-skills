@@ -125,22 +125,30 @@ async def lifespan(app: FastAPI):
         )
     # Pre-warm the Sector & Industry data in the background so it loads instantly:
     # ETF aligned closes (Yahoo, cheap) + all 11 sector industry maps (disk-cached,
-    # so this only re-scrapes when the 6h cache is stale). Daemon; soft-fail.
+    # so this only re-scrapes when the 6h cache is stale). Runs at startup AND every
+    # ~5h thereafter, so the 6h Finviz cache never expires under a long-running
+    # server (was startup-only -> the first click after 6h paid a cold ~6s scrape).
+    # Daemon; soft-fail.
     import threading
+    import time as _time
+
+    _REWARM_EVERY_S = 5 * 3600  # < the 6h finviz disk-cache TTL, so it never goes cold
 
     def _prewarm_sectors():
-        try:
-            from .services.etf import ETF_UNIVERSE, rrg_series, sector_returns
-            sector_returns()
-            rrg_series()
-            from .services.industry import sector_industries
-            for _sym, _ in ETF_UNIVERSE:
-                try:
-                    sector_industries(_sym)
-                except Exception:  # noqa: BLE001
-                    pass
-        except Exception:  # noqa: BLE001
-            pass
+        while True:
+            try:
+                from .services.etf import ETF_UNIVERSE, rrg_series, sector_returns
+                sector_returns()
+                rrg_series()
+                from .services.industry import sector_industries
+                for _sym, _ in ETF_UNIVERSE:
+                    try:
+                        sector_industries(_sym)
+                    except Exception:  # noqa: BLE001
+                        pass
+            except Exception:  # noqa: BLE001
+                pass
+            _time.sleep(_REWARM_EVERY_S)
 
     threading.Thread(target=_prewarm_sectors, daemon=True, name="prewarm-sectors").start()
     yield
