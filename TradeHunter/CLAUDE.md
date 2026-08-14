@@ -640,6 +640,14 @@ it — memory files don't sync across PCs.
 platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
 `dashboard_tst/DEPLOY.md`. Key facts (so any session/PC recalls them):
 
+- **IN-PROGRESS DESIGN (resume across PCs):** `dashboard_tst/COMPANY_INTELLIGENCE_DESIGN.md`
+  — Obsidian-backed per-company analysis + per-quarter metric alerts (e.g. NVDA FCF
+  depleting → in-app alert). Status: DISCUSSION, not started. Decisions locked so far:
+  separate Obsidian vault · metrics from FREE market data (SEC companyfacts / yfinance,
+  no LLM for the numbers) · in-app alerts only. Two OPEN questions before building:
+  (1) where the vault lives + who writes it (synced-to-Hermes vs laptop-only),
+  (2) LLM narrative in the note yes/no. Read that doc to continue.
+
 - **Stack:** FastAPI app under `dashboard_tst/app/` (uvicorn), SQLAlchemy →
   **SQLite file `tst.db`** (no DB server; swap to Postgres later via
   `TST_DATABASE_URL`). Config via `app/.env` (gitignored, per-PC), loaded by
