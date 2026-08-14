@@ -86,22 +86,31 @@ def list_filings(symbol: str) -> list[dict]:
     ]
 
 
-def read_report(symbol: str, period: str) -> dict | None:
-    """The cleaned Markdown body (preferred) for one filing, resolved from the folder
-    listing so only real files are read. Returns {period, form, name, text} or None."""
+def filing_meta(symbol: str, period: str) -> dict | None:
+    """Metadata for ONE period's filing (resolved from the folder listing):
+    {period, form, has_html, has_md, html_name, md_name} or None if not present."""
     want = (period or "").strip().upper()
     for f in _scan(symbol).values():
-        if f"{f['year']}-{f['period']}" != want:
-            continue
-        name = f["md"] or f["html"]
-        if not name:
-            return None
-        path = os.path.join(_ticker_dir(symbol), name)
-        try:
-            with open(path, "r", encoding="utf-8", errors="replace") as fh:
-                text = fh.read()
-        except OSError:
-            return None
-        return {"period": want, "form": f["form"], "name": name,
-                "text": text, "is_html": name.lower().endswith((".html", ".htm"))}
+        if f"{f['year']}-{f['period']}" == want:
+            return {"period": want, "form": f["form"],
+                    "has_html": bool(f["html"]), "has_md": bool(f["md"]),
+                    "html_name": f["html"], "md_name": f["md"]}
     return None
+
+
+def read_file(symbol: str, period: str, kind: str) -> str | None:
+    """Raw text of one filing's ``html`` or ``md`` file for a period. The filename is
+    resolved from the folder listing (never taken from the request), so only real
+    corpus files are read — no path traversal."""
+    meta = filing_meta(symbol, period)
+    if not meta:
+        return None
+    name = meta["html_name"] if kind == "html" else meta["md_name"]
+    if not name:
+        return None
+    path = os.path.join(_ticker_dir(symbol), name)
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+    except OSError:
+        return None

@@ -1,18 +1,27 @@
-{# One EDGAR filing's body in the Earnings-tab viewer. Context: symbol, period, report
-   ({period, form, name, text, is_html} or None). #}
-{% if report %}
+{# One EDGAR filing in the Earnings-tab viewer. Context: symbol, period, meta
+   ({period, form, has_html, has_md} or None), md_text (only when there's no HTML). #}
+{% if meta %}
 <div class="flex items-center justify-between gap-2 mb-2 shrink-0">
-  <h4 class="text-sm font-medium text-emerald-300">{{ symbol }} {{ report.period }}
-    <span class="ml-1 text-[10px] px-1.5 py-0.5 rounded {{ 'bg-violet-500/15 text-violet-300' if report.form == '10-K' else 'bg-sky-500/15 text-sky-300' }}">{{ report.form }}</span>
+  <h4 class="text-sm font-medium text-emerald-300">{{ symbol }} {{ meta.period }}
+    <span class="ml-1 text-[10px] px-1.5 py-0.5 rounded {{ 'bg-violet-500/15 text-violet-300' if meta.form == '10-K' else 'bg-sky-500/15 text-sky-300' }}">{{ meta.form }}</span>
   </h4>
-  <span class="text-[10px] text-slate-600 truncate max-w-[50%]" title="{{ report.name }}">{{ report.name }}</span>
+  {% if meta.has_html %}
+  <a href="/company-analysis/{{ symbol }}/report.html?period={{ period }}" target="_blank" rel="noopener"
+     class="text-[10px] text-slate-500 hover:text-emerald-300 transition">open full &#8599;</a>
+  {% endif %}
 </div>
-{% if report.is_html %}
-{# raw SEC HTML — isolate in a sandboxed iframe so its markup/scripts can't touch the app #}
-<iframe sandbox="" srcdoc="{{ report.text | e }}" class="w-full flex-1 min-h-[50vh] rounded border border-slate-800 bg-white"></iframe>
+{% if meta.has_html %}
+{# real SEC HTML with its own tables/formatting — isolated in a sandboxed iframe
+   (no scripts) and served under a script-blocking CSP. #}
+<iframe src="/company-analysis/{{ symbol }}/report.html?period={{ period }}"
+        sandbox="" title="{{ symbol }} {{ meta.period }} {{ meta.form }} filing"
+        class="w-full flex-1 min-h-[55vh] rounded border border-slate-800 bg-white"></iframe>
+{% elif md_text %}
+{# no HTML on file — fall back to the cleaned Markdown body #}
+<div class="text-[13px] text-slate-300 whitespace-pre-wrap leading-relaxed flex-1 min-h-0 overflow-y-auto rounded border border-slate-800 bg-slate-950/40 p-3">{{ md_text }}</div>
 {% else %}
-<div class="text-[13px] text-slate-300 whitespace-pre-wrap leading-relaxed flex-1 min-h-0 overflow-y-auto rounded border border-slate-800 bg-slate-950/40 p-3">{{ report.text }}</div>
+<p class="text-xs text-slate-500 italic">No readable body on file for {{ symbol }} {{ meta.period }}.</p>
 {% endif %}
 {% else %}
-<p class="text-xs text-slate-500 italic">Couldn't load {{ symbol }} {{ period }} — the report body isn't on this server (the corpus lives on the research box).</p>
+<p class="text-xs text-slate-500 italic">Couldn't load {{ symbol }} {{ period }} — the report isn't on this server (the corpus lives on the research box).</p>
 {% endif %}

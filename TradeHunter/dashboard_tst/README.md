@@ -129,6 +129,16 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-14 — v3.73: Earnings tab — render the HTML filing (proper formatting)
+- The report viewer now prefers the **HTML filing** (real tables + formatting) over the plain
+  Markdown. Served via new `GET /company-analysis/{symbol}/report.html` and shown in a
+  **sandboxed `<iframe>`** (`sandbox=""`) under a **script-blocking CSP**
+  (`script-src 'none'; object-src 'none'; base-uri 'none'`), so the untrusted SEC markup renders
+  but can't execute or touch the app. An "open full ↗" link opens it in a new tab.
+- Markdown is now the **fallback** (shown only when a filing has no HTML on file).
+- `edgar_reports.py`: `read_report` → `filing_meta` + `read_file(kind)` (filename still resolved
+  from the folder listing → no path traversal).
+
 ### 2026-08-14 — v3.72: Company page — Earnings-report tab (read the filing bodies)
 - The Company page is now **tabbed: "Earnings reports" (default) | "Company analysis"**. The chart
   stays on top; the EDGAR inventory card + dossier sections split into the two tabs.

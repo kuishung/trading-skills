@@ -111,16 +111,41 @@ def company_report(
     period: str,
     user: User = Depends(require_user),
 ):
-    """Render ONE downloaded EDGAR filing's body (the cleaned Markdown) into the
-    Earnings-tab viewer. Reads from the local corpus; resolves (symbol, period) to a
-    real file so only corpus files are served."""
-    from ..services.edgar_reports import read_report
+    """The Earnings-tab viewer for ONE filing. Prefers the HTML filing (shown with
+    its real formatting in a sandboxed iframe); falls back to the cleaned Markdown."""
+    from ..services.edgar_reports import filing_meta, read_file
 
-    rep = read_report(symbol, period)
+    sym = (symbol or "").strip().upper()
+    meta = filing_meta(sym, period)
+    # only read the MD text inline when there's no HTML to iframe
+    md_text = read_file(sym, period, "md") if (meta and not meta["has_html"]) else None
     return templates.TemplateResponse(
         request, "_edgar_report.html",
-        {"symbol": (symbol or "").strip().upper(), "period": period, "report": rep},
+        {"symbol": sym, "period": period, "meta": meta, "md_text": md_text},
     )
+
+
+@router.get("/{symbol}/report.html", response_class=HTMLResponse)
+def company_report_html(
+    symbol: str,
+    period: str,
+    user: User = Depends(require_user),
+):
+    """Serve ONE filing's raw HTML for the viewer's sandboxed <iframe src>. A strict
+    CSP blocks scripts/objects, and the iframe is sandboxed too, so the untrusted SEC
+    markup renders (tables, styling) but can't execute or reach the app."""
+    from ..services.edgar_reports import read_file
+
+    html = read_file((symbol or "").strip().upper(), period, "html")
+    if html is None:
+        return HTMLResponse(
+            "<p style='font:14px system-ui;padding:1rem;color:#64748b'>Report HTML not found.</p>",
+            status_code=404,
+        )
+    return HTMLResponse(html, headers={
+        "Content-Security-Policy": "script-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'",
+        "X-Content-Type-Options": "nosniff",
+    })
 
 
 @router.post("/{symbol}/{section}")
