@@ -77,6 +77,15 @@ def company_analysis_home(
         )
         if erow and erow.report:
             edgar = ticker_status(erow.report, sym, erow.received_at)
+    # The LOCAL corpus (readable report bodies) for the Earnings tab — present when
+    # the server has the QuarterlyReport folder synced (cfg.edgar_dir). Empty -> the
+    # tab lists the pushed inventory only.
+    local_filings, corpus_ok = [], False
+    if sym:
+        from ..services.edgar_reports import corpus_available, list_filings
+
+        corpus_ok = corpus_available()
+        local_filings = list_filings(sym)
     return templates.TemplateResponse(
         request,
         "company_analysis.html",
@@ -89,7 +98,28 @@ def company_analysis_home(
             "sel_band": sel_band,
             "sel_patterns": sel_patterns,
             "edgar": edgar,
+            "local_filings": local_filings,
+            "corpus_ok": corpus_ok,
         },
+    )
+
+
+@router.get("/{symbol}/report", response_class=HTMLResponse)
+def company_report(
+    request: Request,
+    symbol: str,
+    period: str,
+    user: User = Depends(require_user),
+):
+    """Render ONE downloaded EDGAR filing's body (the cleaned Markdown) into the
+    Earnings-tab viewer. Reads from the local corpus; resolves (symbol, period) to a
+    real file so only corpus files are served."""
+    from ..services.edgar_reports import read_report
+
+    rep = read_report(symbol, period)
+    return templates.TemplateResponse(
+        request, "_edgar_report.html",
+        {"symbol": (symbol or "").strip().upper(), "period": period, "report": rep},
     )
 
 

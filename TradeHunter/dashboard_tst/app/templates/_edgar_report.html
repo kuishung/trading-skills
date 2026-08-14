@@ -1,0 +1,18 @@
+{# One EDGAR filing's body in the Earnings-tab viewer. Context: symbol, period, report
+   ({period, form, name, text, is_html} or None). #}
+{% if report %}
+<div class="flex items-center justify-between gap-2 mb-2 shrink-0">
+  <h4 class="text-sm font-medium text-emerald-300">{{ symbol }} {{ report.period }}
+    <span class="ml-1 text-[10px] px-1.5 py-0.5 rounded {{ 'bg-violet-500/15 text-violet-300' if report.form == '10-K' else 'bg-sky-500/15 text-sky-300' }}">{{ report.form }}</span>
+  </h4>
+  <span class="text-[10px] text-slate-600 truncate max-w-[50%]" title="{{ report.name }}">{{ report.name }}</span>
+</div>
+{% if report.is_html %}
+{# raw SEC HTML — isolate in a sandboxed iframe so its markup/scripts can't touch the app #}
+<iframe sandbox="" srcdoc="{{ report.text | e }}" class="w-full flex-1 min-h-[50vh] rounded border border-slate-800 bg-white"></iframe>
+{% else %}
+<div class="text-[13px] text-slate-300 whitespace-pre-wrap leading-relaxed flex-1 min-h-0 overflow-y-auto rounded border border-slate-800 bg-slate-950/40 p-3">{{ report.text }}</div>
+{% endif %}
+{% else %}
+<p class="text-xs text-slate-500 italic">Couldn't load {{ symbol }} {{ period }} — the report body isn't on this server (the corpus lives on the research box).</p>
+{% endif %}

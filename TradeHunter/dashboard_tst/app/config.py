@@ -81,6 +81,13 @@ class Settings:
         default_factory=lambda: os.environ.get("TST_PRICE_HISTORY_DIR")
     )
 
+    # EDGAR quarterly-report corpus root — per-ticker folders of 10-Q/10-K files
+    # (html + cleaned .md), for the Company page's Earnings-report tab. On
+    # Hermes/AI-Hermes this is the Resilio-synced
+    # C:\HermesSync\MarketResearch\QuarterlyReport. When unset/unreadable the tab
+    # falls back to the pushed EdgarIngestHealth inventory (list only, no bodies).
+    edgar_dir: str | None = field(default_factory=lambda: os.environ.get("TST_EDGAR_DIR"))
+
     # Discord: outbound webhook URL for collaboration notifications (e.g. a MATP
     # refresh completing posts a summary to a channel). Unset -> notifications
     # are silently skipped. Create it in Discord: Server Settings -> Integrations

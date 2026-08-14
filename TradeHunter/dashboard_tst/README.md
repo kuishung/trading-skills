@@ -129,6 +129,19 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-14 — v3.72: Company page — Earnings-report tab (read the filing bodies)
+- The Company page is now **tabbed: "Earnings reports" (default) | "Company analysis"**. The chart
+  stays on top; the EDGAR inventory card + dossier sections split into the two tabs.
+- The **Earnings reports** tab reads the **local EDGAR corpus** (`cfg.edgar_dir` /
+  `TST_EDGAR_DIR`, default `C:\HermesSync\MarketResearch\QuarterlyReport`): a period list
+  (10-Q/10-K, newest-first) with the **latest report auto-loaded** into an inline viewer; click any
+  period to read its body (cleaned Markdown; raw HTML shown in a sandboxed iframe).
+- New `services/edgar_reports.py` (`corpus_available`, `list_filings`, `read_report` — resolves
+  (symbol, period) to a real file, so no path traversal) + `GET /company-analysis/{symbol}/report`.
+  New `config.edgar_dir`. When the corpus isn't on the server, the tab falls back to the pushed
+  inventory list with a note. **NOTE:** set `TST_EDGAR_DIR` in Hermes `app/.env` to the synced
+  corpus path for the bodies to render.
+
 ### 2026-08-14 — v3.71: Chart tab — drop redundant title, move "Full company page" link
 - Removed the `"<ticker> chart"` title row from `_sector_chart.html` — the chart's own header
   already shows the ticker + company name (was a double ticker). Moved the **"Full company page →"**

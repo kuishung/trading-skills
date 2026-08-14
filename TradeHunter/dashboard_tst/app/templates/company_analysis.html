@@ -57,7 +57,15 @@
     <p class="text-[11px] text-slate-500 -mt-2">No analyst / MATP data for {{ symbol }} yet — showing price only.</p>
     {% endif %}
 
-    {# ── Earnings filings the server has downloaded (EDGAR corpus on AI-Hermes) ── #}
+    {# ── Tabs: Earnings reports (default) | Company analysis ── #}
+    <div class="flex items-center gap-1 mt-3 border-b border-slate-800">
+      <button type="button" class="catab text-xs px-3 py-1.5 -mb-px border-b-2 transition" data-tab="earnings">Earnings reports</button>
+      <button type="button" class="catab text-xs px-3 py-1.5 -mb-px border-b-2 transition" data-tab="analysis">Company analysis</button>
+    </div>
+
+    {# ── Earnings reports tab ── #}
+    <div id="caTab-earnings" class="ca-tab flex flex-col gap-4 mt-3">
+    {# inventory status card #}
     <section class="rounded-lg border border-slate-800 bg-slate-900/40">
       <div class="flex items-center justify-between gap-2 px-4 py-2 border-b border-slate-800">
         <h3 class="text-sm font-medium text-slate-100">Earnings filings <span class="text-[11px] text-slate-500">&middot; EDGAR (SEC 10-Q / 10-K)</span></h3>
@@ -108,16 +116,43 @@
         {% if edgar.stub_md %}
         <div class="mt-1 text-[11px] text-amber-300">Markdown body is a stub — regenerate for readable text.</div>
         {% endif %}
-        <div class="mt-2 text-[10px] text-slate-600">Stored on {{ edgar.host or 'the research server' }}{% if edgar.received_ago %} &middot; inventory reported {{ edgar.received_ago }}{% endif %}. The analysis below is generated from these filings.</div>
+        <div class="mt-2 text-[10px] text-slate-600">Stored on {{ edgar.host or 'the research server' }}{% if edgar.received_ago %} &middot; inventory reported {{ edgar.received_ago }}{% endif %}. The Company-analysis tab is generated from these filings.</div>
         {% else %}
         <p class="text-xs text-slate-600 italic">No earnings filings downloaded for {{ symbol }} yet.</p>
         {% endif %}
       </div>
     </section>
 
-    {# ── Dossier: one card per section ── #}
-    <h2 class="text-base font-semibold text-emerald-300 mt-2">{{ symbol }} &middot; Company analysis</h2>
+    {# readable quarterly reports from the LOCAL corpus (cfg.edgar_dir) — click a
+       period to read the filing body; the latest auto-loads. #}
+    {% if local_filings %}
+    <section class="rounded-lg border border-slate-800 bg-slate-900/40 overflow-hidden">
+      <div class="px-4 py-2 border-b border-slate-800 text-sm font-medium text-slate-100">Quarterly reports <span class="text-[11px] text-slate-500">&middot; click a period to read the filing</span></div>
+      <div class="flex flex-col lg:flex-row">
+        <div class="lg:w-48 lg:shrink-0 lg:border-r border-slate-800 max-h-52 lg:max-h-[62vh] overflow-y-auto p-2 flex flex-col gap-0.5">
+          {% for f in local_filings %}
+          <button type="button" class="ca-report text-left px-2 py-1 rounded hover:bg-emerald-500/10 transition flex items-center justify-between gap-2"
+                  hx-get="/company-analysis/{{ symbol }}/report?period={{ f.period }}" hx-target="#reportViewer" hx-swap="innerHTML"
+                  {% if loop.first %}hx-trigger="load, click"{% endif %}>
+            <span class="text-[12px] text-slate-200 tabular-nums">{{ f.period }}</span>
+            <span class="text-[10px] px-1.5 py-0.5 rounded {{ 'bg-violet-500/15 text-violet-300' if f.form == '10-K' else 'bg-sky-500/15 text-sky-300' }}">{{ f.form }}</span>
+          </button>
+          {% endfor %}
+        </div>
+        <div id="reportViewer" class="flex-1 min-w-0 flex flex-col p-3 max-h-[62vh] overflow-hidden">
+          <p class="text-xs text-slate-500 m-auto">Loading the latest report&hellip;</p>
+        </div>
+      </div>
+    </section>
+    {% elif corpus_ok %}
+    <p class="text-xs text-slate-600 italic px-1">No readable report files on this server for {{ symbol }} yet.</p>
+    {% elif edgar %}
+    <p class="text-[11px] text-slate-600 px-1">Report bodies aren't on this server yet (corpus dir not configured/synced) — the inventory above is what the research box holds.</p>
+    {% endif %}
+    </div>{# /caTab-earnings #}
 
+    {# ── Company analysis tab ── #}
+    <div id="caTab-analysis" class="ca-tab flex flex-col gap-4 mt-3" style="display:none">
     {% for key, label, row in sections %}
     <section class="rounded-lg border border-slate-800 bg-slate-900/40">
       <div class="flex items-center justify-between gap-2 px-4 py-2 border-b border-slate-800">
@@ -164,6 +199,34 @@
       </div>
     </section>
     {% endfor %}
+    </div>{# /caTab-analysis #}
+
+    <script>
+    (function () {
+      function setTab(name) {
+        document.querySelectorAll('.ca-tab').forEach(function (p) {
+          p.style.display = (p.id === 'caTab-' + name) ? 'flex' : 'none';
+        });
+        document.querySelectorAll('.catab').forEach(function (b) {
+          var on = b.getAttribute('data-tab') === name;
+          b.classList.toggle('border-emerald-500', on);
+          b.classList.toggle('text-emerald-300', on);
+          b.classList.toggle('border-transparent', !on);
+          b.classList.toggle('text-slate-400', !on);
+        });
+      }
+      document.querySelectorAll('.catab').forEach(function (b) {
+        b.addEventListener('click', function () { setTab(b.getAttribute('data-tab')); });
+      });
+      document.addEventListener('click', function (e) {
+        var r = e.target.closest ? e.target.closest('.ca-report') : null;
+        if (r) document.querySelectorAll('.ca-report').forEach(function (x) {
+          x.classList.toggle('bg-emerald-500/15', x === r);
+        });
+      });
+      setTab('earnings');
+    })();
+    </script>
   {% endif %}
 </div>
 
