@@ -23,6 +23,16 @@ Last updated 2026-08-14.
    LLM-reading the filings, NOT a paid API).
 4. **Alerts:** **in-app only** — a badge/notice on the Company page. No
    Telegram/Discord for now.
+5. **Vault SITS ON THE SERVER, shared by ALL users** (user, 2026-08-14): it is NOT
+   a personal laptop-Obsidian sync — it's a **shared platform knowledge base** that
+   every member reads through the web app. So the vault lives in the server-side
+   shared tree (`HermesSync`, reachable by both the Hermes dashboard and the Nous
+   agent), and the Company page renders the note to all users. (The MD/Obsidian
+   format keeps it portable + editable; someone with access to the folder can still
+   open it in Obsidian directly, but the PRIMARY consumer is the web app.)
+6. **LLM narrative = YES** (user, 2026-08-14): the per-company note includes an
+   LLM-written "what changed this quarter" commentary — so the **Nous agent** (LLM +
+   corpus access) is the writer, not the dashboard.
 
 ## Refined architecture (given those choices)
 
@@ -69,18 +79,32 @@ messaging. Much lighter than the first (agent-based) sketch.
   report viewer shipped in v3.72), so it's the canonical reference "reused
   whenever analysis is made."
 
-## OPEN QUESTIONS (resume here)
+## Finalised topology (both open questions now RESOLVED)
 
-1. **Where does the separate vault physically live, and which machine writes it?**
-   - If **synced to Hermes** (Resilio/Dropbox, like `HermesSync`): the dashboard
-     itself can write `Companies/<TICKER>.md` and it appears in Obsidian
-     automatically. Simplest; app stays the single writer.
-   - If **laptop-only** (where Obsidian runs): the Hermes dashboard can't reach
-     it — note-writing must run on the laptop or via a sync. Adds a moving part.
-2. **LLM-written narrative in the note — yes or no?** Metrics + alerts work fully
-   WITHOUT it (all deterministic + free). LLM commentary ("what changed this
-   quarter, is FCF quality deteriorating") is the one place the agent/LLM
-   re-enters if wanted.
+- **Vault:** a shared, server-side Obsidian vault in the `HermesSync` tree, e.g.
+  `HermesSync/Vault/Companies/<TICKER>.md`. Config `TST_OBSIDIAN_DIR` (on Hermes ->
+  `C:\HermesSync\Vault`). Reachable by the Nous agent (writes it, via cifs
+  `/mnt/hermes_sync`) AND the Hermes dashboard (reads it, serves to all members).
+- **Writer = Nous agent.** Per new filing: (1) pull free metrics (SEC companyfacts
+  / yfinance), (2) generate the LLM "what changed" narrative, (3) write/update
+  `Companies/<TICKER>.md` (frontmatter + narrative + per-quarter metrics table +
+  `[[wikilinks]]` to the corpus filings), (4) POST structured metrics to the
+  dashboard (`/api/company-metrics`).
+- **Reader = the web app, for ALL users.** The Company page renders the note (like
+  the v3.72/73 report viewer) + a Metrics tab (FCF sparkline + in-app alert badge).
+- **Access model:** view = all members (shared knowledge base); edit = moderators
+  (matches the existing company_analysis role model) or agent-authored. NOT
+  per-user — one shared note per company.
+
+### Remaining smaller decisions (not blockers)
+
+1. **Exact vault path** under HermesSync (`HermesSync/Vault` vs a subfolder of an
+   existing vault) + confirm the Nous agent's cifs mount can write there.
+2. **Which LLM** for the narrative (reuse the agent's existing model; DeepSeek is
+   already wired for Research). Keep the narrative short + cite the filing.
+3. **Metric set v1** (start: revenue, operating cash flow, FCF, net income,
+   gross/operating margin, cash, debt, shares out, EPS) + alert rules v1
+   (declining-N-quarters, YoY-drop-%, turned-negative).
 
 ## Suggested phased rollout (when we proceed)
 
