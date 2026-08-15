@@ -88,6 +88,16 @@ class Settings:
     # falls back to the pushed EdgarIngestHealth inventory (list only, no bodies).
     edgar_dir: str | None = field(default_factory=lambda: os.environ.get("TST_EDGAR_DIR"))
 
+    # SEC requires a descriptive User-Agent (name + contact email) on every
+    # data.sec.gov request, or it 403s. Used by services/sec_xbrl.py (companyfacts
+    # -> the Financials trend charts + ratios). Override via TST_SEC_USER_AGENT.
+    sec_user_agent: str = field(
+        default_factory=lambda: os.environ.get(
+            "TST_SEC_USER_AGENT",
+            "TradeHunter Financials (contact: admin@tradehunter.net)",
+        )
+    )
+
     # Discord: outbound webhook URL for collaboration notifications (e.g. a MATP
     # refresh completing posts a summary to a channel). Unset -> notifications
     # are silently skipped. Create it in Discord: Server Settings -> Integrations

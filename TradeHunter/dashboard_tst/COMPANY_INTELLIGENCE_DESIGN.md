@@ -172,6 +172,33 @@ guidance cuts / kitchen-sink quarters.
    synced vault; dashboard renders it.
 3. Optional LLM narrative in the note; more metrics + richer alert rules.
 
+## SCOPE UPDATE (user, 2026-08-15): build the FULL GuruFocus-style quant suite
+
+The user chose to **replicate the full financial suite in-app** (Financials trend
+charts + Profitability / Debt-&-Liquidity / Efficiency / Financial / Price ratio
+tables with per-year + Current + 5Y/10Y-Avg columns), on top of (not instead of)
+the qualitative earnings/guidance layer. Honest limits flagged + accepted: a few
+tier-3 items can't be exactly reproduced from free data — **Forward PE / PEG**
+(need analyst estimates), **"PE/PEG without NRI"** (GuruFocus-proprietary NRI
+adjustment), a precise **WACC** (assumption-based), **historical share float**
+(paid). These are computed with a documented free method where possible, else
+marked n/a — never faked.
+
+### Build log
+
+- **Phase A — SEC XBRL data layer: DONE + verified.** `app/config.py::sec_user_agent`
+  (SEC requires a UA) + `app/services/sec_xbrl.py`: ticker→CIK, companyfacts fetch
+  (12h cache), candidate-tag fallbacks, `annual_financials(symbol)` → per-fiscal-year
+  base line items + derived ratios. **Fiscal year keyed by period-END year** (not the
+  XBRL `fy` tag, which is offset for Jan-ending years like NVDA). Return/efficiency
+  ratios use **average balances** (begin+end)/2. Verified vs GuruFocus on NVDA:
+  **margins, ROE, ROA match exactly**; revenue/NI correct; CCC within ~5–8 days
+  (day-count convention — minor, to refine).
+- **Next — Phase B:** the two Trend-Chart sections (10 metrics + margins + returns;
+  Line/Bar · Annual/Quarterly · TTM) as a Financials tab. Then Phase C ratio tables,
+  Phase D price/market ratios. Quarterly + TTM (needs Q4 = FY − 9mo derivation) and
+  5Y/10Y-avg columns are follow-ups in the data layer.
+
 ## Reuse / prior art in the repo
 
 - Earnings-tab report reader (v3.72): `services/edgar_reports.py`,
