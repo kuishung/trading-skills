@@ -194,9 +194,65 @@ def company_financials(
             out.append({"name": name, "color": color, "data": row})
         panels.append({"title": title, "fmt": fmt, "series": out})
 
+    # ── ratio tables (per-year + Current + 5Y/10Y avg) ──
+    ratios = d.get("ratios", {})
+
+    def stat(metric):
+        r = ratios.get(metric, {})
+        cur = r.get(years[-1]) if years else None
+
+        def avgn(n):
+            vals = [r[fy] for fy in years[-n:] if r.get(fy) is not None]
+            return round(sum(vals) / len(vals), 2) if vals else None
+        return {
+            "by_year": {fy: r.get(fy) for fy in years},
+            "current": cur, "avg5": avgn(5), "avg10": avgn(10),
+        }
+
+    tables = []
+    for title, rows in _RATIO_TABLES:
+        tables.append({"title": title, "rows": [
+            {"label": label, "fmt": fmt, **stat(metric)} for (label, metric, fmt) in rows
+        ]})
+
     return templates.TemplateResponse(request, "_financials_tab.html", {
-        "symbol": sym, "years": years, "panels": panels, "has_data": bool(years),
+        "symbol": sym, "years": years, "panels": panels,
+        "tables": tables, "has_data": bool(years),
     })
+
+
+# ratio tables: (section title, [(row label, metric, fmt)]). fmt: pct / x (ratio) / d (days).
+_RATIO_TABLES = [
+    ("Profitability Ratios", [
+        ("Gross Profit Margin %", "gross_margin", "pct"),
+        ("Operating Profit Margin %", "operating_margin", "pct"),
+        ("Net Profit Margin %", "net_margin", "pct"),
+        ("Operating Cash Flow Margin %", "ocf_margin", "pct"),
+        ("Free Cash Flow Margin %", "fcf_margin", "pct"),
+        ("Return on Assets (ROA) %", "roa", "pct"),
+        ("Return on Equity (ROE) %", "roe", "pct"),
+        ("Return on Invested Capital (ROIC) %", "roic", "pct"),
+    ]),
+    ("Debt & Liquidity Ratios", [
+        ("Cash Ratio", "cash_ratio", "x"),
+        ("Current Ratio", "current_ratio", "x"),
+        ("Interest Coverage", "interest_coverage", "x"),
+        ("Total Debt / EBITDA", "debt_to_ebitda", "x"),
+    ]),
+    ("Efficiency Ratios", [
+        ("Asset Turnover", "asset_turnover", "x"),
+        ("Fixed Asset Turnover", "fixed_asset_turnover", "x"),
+        ("Inventory Turnover", "inventory_turnover", "x"),
+        ("Receivables Turnover", "receivables_turnover", "x"),
+        ("Days Inventory Outstanding", "dio", "d"),
+        ("Days Sales Outstanding", "dso", "d"),
+        ("Days Payables Outstanding", "dpo", "d"),
+        ("Cash Conversion Cycle", "ccc", "d"),
+        ("CapEx to Revenue", "capex_to_revenue", "x"),
+        ("CapEx to Operating Cash Flow", "capex_to_ocf", "x"),
+        ("CapEx to Operating Income", "capex_to_opinc", "x"),
+    ]),
+]
 
 
 @router.get("/{symbol}/report.html", response_class=HTMLResponse)

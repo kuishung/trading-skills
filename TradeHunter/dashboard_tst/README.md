@@ -129,6 +129,18 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-15 — v3.75: Financials tab — ratio tables (Profitability / Debt & Liquidity / Efficiency)
+- Below the trend charts, three **ratio tables** with per-fiscal-year columns + **Current + 5Y Avg
+  + 10Y Avg** (horizontal-scroll, sticky ratio column): Profitability (gross/op/net margin, OCF/FCF
+  margin, ROA/ROE/ROIC), Debt & Liquidity (cash/current ratio, interest coverage, debt/EBITDA),
+  Efficiency (asset/fixed-asset/inventory/receivables turnover, DIO/DSO/DPO, CCC, capex ratios).
+- Added ROIC + turnover ratios to `sec_xbrl.py`. Verified vs GuruFocus on NVDA: **current ratio,
+  debt/EBITDA, inventory & receivables turnover, and 5Y/10Y averages match exactly** (margins /
+  ROE / ROA already did).
+- Known refinements (provider-specific conventions / XBRL tag drift): interest coverage, fixed-asset
+  turnover, cash ratio for the newest year (short-term-investments tag), DPO/CCC (~few-day gap), and
+  "Current" = latest FY until quarterly/TTM lands.
+
 ### 2026-08-15 — v3.74: Company page — Financials tab (SEC XBRL trend charts)
 - New **"Financials" tab** on the Company page: 8 trend-chart panels from **SEC EDGAR XBRL**
   (free) — Revenue/Operating/Net Income · Cash Flow (OCF/FCF/NI/SBC) · Cash & Debt · Shares

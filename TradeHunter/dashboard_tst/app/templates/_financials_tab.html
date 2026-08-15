@@ -22,6 +22,38 @@
     </section>
     {% endfor %}
   </div>
+
+  {# ── ratio tables: per-year + Current + 5Y/10Y avg ── #}
+  {% macro rf(v, fmt) %}{% if v is none %}<span class="text-slate-600">&ndash;</span>{% elif fmt == 'pct' %}{{ '%.2f'|format(v) }}%{% elif fmt == 'd' %}{{ '%.1f'|format(v) }}{% else %}{{ '%.2f'|format(v) }}{% endif %}{% endmacro %}
+  {% for t in tables %}
+  <section class="rounded-lg border border-slate-800 bg-slate-900/40 mt-4">
+    <div class="px-4 py-2 border-b border-slate-800 text-sm font-medium text-slate-100">{{ t.title }}</div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-xs whitespace-nowrap">
+        <thead class="text-[10px] uppercase tracking-wide text-slate-500">
+          <tr>
+            <th class="text-left font-normal px-4 py-1.5 sticky left-0 bg-slate-900 z-10">Ratio</th>
+            {% for fy in years %}<th class="text-right font-normal px-2 py-1.5">{{ fy }}</th>{% endfor %}
+            <th class="text-right font-normal px-2 py-1.5 text-emerald-400">Current</th>
+            <th class="text-right font-normal px-2 py-1.5">5Y Avg</th>
+            <th class="text-right font-normal px-2 py-1.5">10Y Avg</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in t.rows %}
+          <tr class="border-t border-slate-800/60">
+            <td class="text-left px-4 py-1.5 text-slate-300 sticky left-0 bg-slate-900 z-10">{{ row.label }}</td>
+            {% for fy in years %}<td class="text-right px-2 py-1.5 tabular-nums text-slate-400">{{ rf(row.by_year.get(fy), row.fmt) }}</td>{% endfor %}
+            <td class="text-right px-2 py-1.5 tabular-nums text-emerald-300 font-medium">{{ rf(row.current, row.fmt) }}</td>
+            <td class="text-right px-2 py-1.5 tabular-nums text-slate-400">{{ rf(row.avg5, row.fmt) }}</td>
+            <td class="text-right px-2 py-1.5 tabular-nums text-slate-400">{{ rf(row.avg10, row.fmt) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endfor %}
 </div>
 
 <script>

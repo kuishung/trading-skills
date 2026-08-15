@@ -54,6 +54,7 @@ _BASE = {
     "equity": (["StockholdersEquity",
                 "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"], "stock"),
     "ppe_net": (["PropertyPlantAndEquipmentNet"], "stock"),
+    "income_tax": (["IncomeTaxExpenseBenefit"], "flow"),
 }
 
 
@@ -238,10 +239,29 @@ def annual_financials(symbol: str) -> dict:
         put("dpo", fy, dpo)
         if dio is not None and dso is not None and dpo is not None:
             put("ccc", fy, dio + dso - dpo)
+        # turnovers (average balances)
+        put("inventory_turnover", fy, _safe_div(cogs, avg("inventory", fy)))
+        put("receivables_turnover", fy, _safe_div(rev, avg("receivables", fy)))
+        put("payables_turnover", fy, _safe_div(cogs, avg("payables", fy)))
+        put("fixed_asset_turnover", fy, _safe_div(rev, avg("ppe_net", fy)))
         # capex intensity
         put("capex_to_revenue", fy, _safe_div(capex, rev))
         put("capex_to_ocf", fy, _safe_div(capex, ocf))
         put("capex_to_opinc", fy, _safe_div(capex, oi))
+        # ROIC = NOPAT / avg invested capital (debt + equity). NOPAT = op income x
+        # (1 - effective tax rate), tax rate from tax / pretax (pretax = NI + tax).
+        eq = g("equity", fy)
+        inv_cap = ((debt or 0) + eq) if eq is not None else None
+        if inv_cap is not None:
+            series.setdefault("invested_capital", {})[fy] = inv_cap
+        tax = g("income_tax", fy)
+        nopat = None
+        if oi is not None:
+            if tax is not None and ni is not None and (ni + tax):
+                nopat = oi * (1 - tax / (ni + tax))
+            else:
+                nopat = oi
+        put("roic", fy, _pct(_safe_div(nopat, avg("invested_capital", fy))))
         # store derived level series too (for the trend charts)
         if fcf is not None:
             series.setdefault("fcf", {})[fy] = fcf
