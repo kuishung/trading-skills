@@ -1,0 +1,97 @@
+{# Financials trend charts (annual), from SEC EDGAR XBRL. Context: symbol, years,
+   panels [{title, fmt, series:[{name,color,data}]}], has_data. #}
+{% if not has_data %}
+<p class="text-xs text-slate-500 italic py-4">No SEC XBRL financials found for {{ symbol }} (not a US filer, or no XBRL history).</p>
+{% else %}
+<div id="finWrap">
+  <div class="flex items-center justify-between gap-3 flex-wrap mb-3">
+    <p class="text-[11px] text-slate-500">All USD figures in millions · fiscal years · source: SEC EDGAR XBRL</p>
+    <div class="inline-flex rounded-lg border border-slate-700 overflow-hidden text-xs">
+      <button type="button" class="finmode px-3 py-1 transition" data-mode="line">Line Chart</button>
+      <button type="button" class="finmode px-3 py-1 transition border-l border-slate-700" data-mode="bar">Bar Chart</button>
+    </div>
+  </div>
+
+  <script type="application/json" id="finData">{{ {"years": years, "panels": panels} | tojson }}</script>
+
+  <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+    {% for p in panels %}
+    <section class="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
+      <h3 class="text-xs font-medium text-slate-300 mb-2">{{ p.title }}</h3>
+      <div style="height:250px"><canvas class="finchart" data-idx="{{ loop.index0 }}"></canvas></div>
+    </section>
+    {% endfor %}
+  </div>
+</div>
+
+<script>
+(function () {
+  var el = document.getElementById('finData'); if (!el || !window.Chart) return;
+  var data; try { data = JSON.parse(el.textContent); } catch (e) { return; }
+  var years = (data.years || []).map(String), panels = data.panels || [];
+  var charts = [], mode = 'line';
+  var light = document.documentElement.classList.contains('light');
+  var grid = light ? 'rgba(100,116,139,0.15)' : 'rgba(148,163,184,0.14)';
+  var tick = light ? '#475569' : '#94a3b8';
+
+  function fmtVal(fmt, v) {
+    if (v === null || v === undefined) return '—';
+    if (fmt === 'pct') return v.toFixed(2) + '%';
+    if (fmt === 'days') return v.toFixed(1);
+    // usd / shares (already in millions)
+    var a = Math.abs(v);
+    if (a >= 1000) return (v / 1000).toLocaleString(undefined, {maximumFractionDigits: 1}) + 'k';
+    return v.toLocaleString(undefined, {maximumFractionDigits: 1});
+  }
+
+  function build() {
+    charts.forEach(function (c) { c.destroy(); }); charts = [];
+    document.querySelectorAll('.finchart').forEach(function (cv) {
+      var p = panels[+cv.getAttribute('data-idx')]; if (!p) return;
+      var ds = p.series.map(function (s) {
+        return {
+          label: s.name, data: s.data,
+          borderColor: s.color, backgroundColor: mode === 'bar' ? s.color + 'cc' : s.color,
+          pointBackgroundColor: s.color, borderWidth: 2, pointRadius: mode === 'line' ? 2.5 : 0,
+          tension: 0.25, spanGaps: true
+        };
+      });
+      charts.push(new Chart(cv, {
+        type: mode,
+        data: { labels: years, datasets: ds },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: { labels: { color: tick, boxWidth: 10, font: { size: 10 } } },
+            tooltip: { callbacks: { label: function (ctx) {
+              return ctx.dataset.label + ': ' + fmtVal(p.fmt, ctx.parsed.y);
+            } } }
+          },
+          scales: {
+            x: { grid: { color: grid }, ticks: { color: tick, font: { size: 10 } } },
+            y: { grid: { color: grid }, ticks: { color: tick, font: { size: 10 },
+              callback: function (v) { return fmtVal(p.fmt, v); } } }
+          }
+        }
+      }));
+    });
+  }
+
+  function setMode(m) {
+    mode = m;
+    document.querySelectorAll('.finmode').forEach(function (b) {
+      var on = b.getAttribute('data-mode') === m;
+      b.classList.toggle('bg-emerald-500/15', on);
+      b.classList.toggle('text-emerald-300', on);
+      b.classList.toggle('text-slate-400', !on);
+    });
+    build();
+  }
+  document.querySelectorAll('.finmode').forEach(function (b) {
+    b.addEventListener('click', function () { setMode(b.getAttribute('data-mode')); });
+  });
+  setMode('line');
+})();
+</script>
+{% endif %}

@@ -129,6 +129,18 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-15 — v3.74: Company page — Financials tab (SEC XBRL trend charts)
+- New **"Financials" tab** on the Company page: 8 trend-chart panels from **SEC EDGAR XBRL**
+  (free) — Revenue/Operating/Net Income · Cash Flow (OCF/FCF/NI/SBC) · Cash & Debt · Shares
+  Outstanding · Cash Conversion Cycle · Revenue vs Net AR · Margins · Returns (ROE/ROA). **Line/Bar
+  toggle** (Chart.js). Loaded on first tab activation; SEC fetch cached 12h.
+- `services/sec_xbrl.py` (Phase A) feeds it; `GET /company-analysis/{symbol}/financials` shapes
+  the panels. Verified vs GuruFocus on NVDA: revenue/NI/margins/ROE/ROA match; e.g. revenue
+  FY22-26 = 26.9/27.0/60.9/130.5/215.9 B.
+- **Still to come (phased):** Annual/Quarterly toggle + TTM (needs Q4 derivation), the ratio
+  tables (Profitability/Debt/Efficiency), price/market ratios (Beta, PE/PS/PB), and share float
+  (market data). ROIC deferred to the ratio phase.
+
 ### 2026-08-14 — v3.73: Earnings tab — render the HTML filing (proper formatting)
 - The report viewer now prefers the **HTML filing** (real tables + formatting) over the plain
   Markdown. Served via new `GET /company-analysis/{symbol}/report.html` and shown in a

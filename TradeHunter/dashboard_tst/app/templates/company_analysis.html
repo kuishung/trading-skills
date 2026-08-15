@@ -57,10 +57,19 @@
     <p class="text-[11px] text-slate-500 -mt-2">No analyst / MATP data for {{ symbol }} yet — showing price only.</p>
     {% endif %}
 
-    {# ── Tabs: Earnings reports (default) | Company analysis ── #}
+    {# ── Tabs: Financials | Earnings reports | Company analysis ── #}
     <div class="flex items-center gap-1 mt-3 border-b border-slate-800">
+      <button type="button" class="catab text-xs px-3 py-1.5 -mb-px border-b-2 transition" data-tab="financials">Financials</button>
       <button type="button" class="catab text-xs px-3 py-1.5 -mb-px border-b-2 transition" data-tab="earnings">Earnings reports</button>
       <button type="button" class="catab text-xs px-3 py-1.5 -mb-px border-b-2 transition" data-tab="analysis">Company analysis</button>
+    </div>
+
+    {# ── Financials tab (SEC XBRL trend charts) — loaded on first activation
+       (JS-triggered in the tab script, so Chart.js builds into a visible canvas) ── #}
+    <div id="caTab-financials" class="ca-tab flex flex-col gap-4 mt-3" style="display:none">
+      <div id="finLazy" data-src="/company-analysis/{{ symbol }}/financials">
+        <p class="text-xs text-slate-500 py-4">Loading financials from SEC EDGAR&hellip;</p>
+      </div>
     </div>
 
     {# ── Earnings reports tab ── #}
@@ -214,6 +223,15 @@
           b.classList.toggle('border-transparent', !on);
           b.classList.toggle('text-slate-400', !on);
         });
+        // Financials tab: load the charts on first activation (so Chart.js builds
+        // into a VISIBLE canvas). SEC fetch is cached server-side.
+        if (name === 'financials') {
+          var lazy = document.getElementById('finLazy');
+          if (lazy && lazy.getAttribute('data-src') && !lazy.getAttribute('data-loaded')) {
+            lazy.setAttribute('data-loaded', '1');
+            window.htmx && htmx.ajax('GET', lazy.getAttribute('data-src'), { target: '#finLazy', swap: 'innerHTML' });
+          }
+        }
       }
       document.querySelectorAll('.catab').forEach(function (b) {
         b.addEventListener('click', function () { setTab(b.getAttribute('data-tab')); });
@@ -231,7 +249,10 @@
 </div>
 
 {# analyst-targets pop-out, triggered by the chart's "Analyst targets →" button #}
-{% if symbol %}{% include "_at_modal.html" %}{% endif %}
+{% if symbol %}{% include "_at_modal.html" %}
+{# Chart.js for the Financials tab trend charts (loaded once) #}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+{% endif %}
 
 <script>
 (function () {

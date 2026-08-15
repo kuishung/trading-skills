@@ -125,6 +125,80 @@ def company_report(
     )
 
 
+# Financials trend-chart panels (annual). Each: (title, fmt, [(series name, color, metric)]).
+# metric is looked up in ratios first, then level series. fmt: usd (millions) / shares
+# (millions) / pct / days.
+_FIN_PANELS = [
+    ("Revenue · Operating · Net Income", "usd", [
+        ("Revenue", "#3b82f6", "revenue"),
+        ("Operating Income", "#f97316", "operating_income"),
+        ("Net Income", "#84cc16", "net_income")]),
+    ("Cash Flow", "usd", [
+        ("Net Operating Cash Flow", "#f97316", "ocf"),
+        ("Free Cash Flow", "#84cc16", "fcf"),
+        ("Net Income", "#22c55e", "net_income"),
+        ("Stock-Based Comp", "#ec4899", "sbc")]),
+    ("Cash & Debt", "usd", [
+        ("Cash & ST Investments", "#22c55e", "cash_and_sti"),
+        ("Total Debt", "#ef4444", "total_debt")]),
+    ("Shares Outstanding", "shares", [
+        ("Shares Outstanding", "#eab308", "shares_out")]),
+    ("Cash Conversion Cycle", "days", [
+        ("Cash Conversion Cycle", "#a855f7", "ccc")]),
+    ("Revenue vs Net Accounts Receivable", "usd", [
+        ("Revenue", "#3b82f6", "revenue"),
+        ("Net Accounts Receivable", "#f472b6", "receivables")]),
+    ("Margins", "pct", [
+        ("Gross Margin", "#3b82f6", "gross_margin"),
+        ("Operating Margin", "#f97316", "operating_margin"),
+        ("Net Margin", "#84cc16", "net_margin")]),
+    ("Returns", "pct", [
+        ("ROE", "#3b82f6", "roe"),
+        ("ROA", "#f59e0b", "roa")]),
+]
+
+
+@router.get("/{symbol}/financials", response_class=HTMLResponse)
+def company_financials(
+    request: Request,
+    symbol: str,
+    user: User = Depends(require_user),
+):
+    """The Financials tab: trend-chart panels built from SEC EDGAR XBRL
+    (services/sec_xbrl.annual_financials). Lazy-loaded when the tab is first shown."""
+    from ..services.sec_xbrl import annual_financials
+
+    sym = (symbol or "").strip().upper()
+    try:
+        d = annual_financials(sym)
+    except Exception:  # noqa: BLE001
+        d = {"symbol": sym, "years": [], "series": {}, "ratios": {}}
+    years = d.get("years", [])
+
+    def val(metric, fy):
+        r = d.get("ratios", {}).get(metric)
+        if r is not None and fy in r:
+            return r[fy]
+        return d.get("series", {}).get(metric, {}).get(fy)
+
+    panels = []
+    for title, fmt, sers in _FIN_PANELS:
+        out = []
+        for name, color, metric in sers:
+            row = []
+            for fy in years:
+                v = val(metric, fy)
+                if v is not None and fmt in ("usd", "shares"):
+                    v = round(v / 1e6, 2)  # -> millions
+                row.append(v)
+            out.append({"name": name, "color": color, "data": row})
+        panels.append({"title": title, "fmt": fmt, "series": out})
+
+    return templates.TemplateResponse(request, "_financials_tab.html", {
+        "symbol": sym, "years": years, "panels": panels, "has_data": bool(years),
+    })
+
+
 @router.get("/{symbol}/report.html", response_class=HTMLResponse)
 def company_report_html(
     symbol: str,
