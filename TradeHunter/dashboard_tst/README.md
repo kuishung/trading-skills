@@ -129,6 +129,11 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-15 — v3.79: Company page — price chart moved into a "Chart" tab
+- The Watchlist-style price chart is no longer pinned at the top; it's now the **default "Chart"
+  tab** on the Company page (tab order: Chart · Financials · Earnings reports · Company analysis).
+  Chart is the default so lightweight-charts builds into a visible canvas; survives tab-switching.
+
 ### 2026-08-15 — v3.78: Financials — Price & Financial ratios (Beta, WACC, PE/PS/PB)
 - New `services/valuation.py`: mixes SEC fundamentals with **live Yahoo prices** (free) →
   **Beta** (2y daily vs SPY), current + historical **PE / PS / PB**, a **WACC estimate**, and

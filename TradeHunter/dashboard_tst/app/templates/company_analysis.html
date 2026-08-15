@@ -39,8 +39,17 @@
     {% endif %}
 
   {% else %}
-    {# ── Chart (same as the Watchlist) — MATP/MBP level lines + analyst band when the
-       ticker is on the board; a plain price chart otherwise. ── #}
+    {# ── Tabs: Chart | Financials | Earnings reports | Company analysis ── #}
+    <div class="flex items-center gap-1 mt-1 border-b border-slate-800">
+      <button type="button" class="catab text-xs px-3 py-1.5 -mb-px border-b-2 transition" data-tab="chart">Chart</button>
+      <button type="button" class="catab text-xs px-3 py-1.5 -mb-px border-b-2 transition" data-tab="financials">Financials</button>
+      <button type="button" class="catab text-xs px-3 py-1.5 -mb-px border-b-2 transition" data-tab="earnings">Earnings reports</button>
+      <button type="button" class="catab text-xs px-3 py-1.5 -mb-px border-b-2 transition" data-tab="analysis">Company analysis</button>
+    </div>
+
+    {# ── Chart tab (default) — same chart as the Watchlist: MATP/MBP level lines +
+       analyst band when the ticker is on the board; a plain price chart otherwise. ── #}
+    <div id="caTab-chart" class="ca-tab flex flex-col gap-4 mt-3">
     {% set chart_symbol = symbol %}
     {% set chart_exchange = sel.exchange if sel else None %}
     {% set chart_matp = sel.matp if sel else None %}
@@ -56,12 +65,6 @@
     {% if not sel %}
     <p class="text-[11px] text-slate-500 -mt-2">No analyst / MATP data for {{ symbol }} yet — showing price only.</p>
     {% endif %}
-
-    {# ── Tabs: Financials | Earnings reports | Company analysis ── #}
-    <div class="flex items-center gap-1 mt-3 border-b border-slate-800">
-      <button type="button" class="catab text-xs px-3 py-1.5 -mb-px border-b-2 transition" data-tab="financials">Financials</button>
-      <button type="button" class="catab text-xs px-3 py-1.5 -mb-px border-b-2 transition" data-tab="earnings">Earnings reports</button>
-      <button type="button" class="catab text-xs px-3 py-1.5 -mb-px border-b-2 transition" data-tab="analysis">Company analysis</button>
     </div>
 
     {# ── Financials tab (SEC XBRL trend charts) — loaded on first activation
@@ -73,7 +76,7 @@
     </div>
 
     {# ── Earnings reports tab ── #}
-    <div id="caTab-earnings" class="ca-tab flex flex-col gap-4 mt-3">
+    <div id="caTab-earnings" class="ca-tab flex flex-col gap-4 mt-3" style="display:none">
     {# inventory status card #}
     <section class="rounded-lg border border-slate-800 bg-slate-900/40">
       <div class="flex items-center justify-between gap-2 px-4 py-2 border-b border-slate-800">
@@ -242,7 +245,7 @@
           x.classList.toggle('bg-emerald-500/15', x === r);
         });
       });
-      setTab('earnings');
+      setTab('chart');
     })();
     </script>
   {% endif %}
