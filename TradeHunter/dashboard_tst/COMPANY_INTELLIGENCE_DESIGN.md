@@ -102,9 +102,67 @@ messaging. Much lighter than the first (agent-based) sketch.
    existing vault) + confirm the Nous agent's cifs mount can write there.
 2. **Which LLM** for the narrative (reuse the agent's existing model; DeepSeek is
    already wired for Research). Keep the narrative short + cite the filing.
-3. **Metric set v1** (start: revenue, operating cash flow, FCF, net income,
-   gross/operating margin, cash, debt, shares out, EPS) + alert rules v1
-   (declining-N-quarters, YoY-drop-%, turned-negative).
+3. **Metric set + alert rules + LLM checklist** — now PINNED, see
+   "Analyst framework" below.
+
+## Analyst framework → metric set, alerts, LLM checklist (pinned 2026-08-15)
+
+What a financial analyst studies in an earnings report, mapped to how the system
+handles it. The split is the architecture: **quantitative → structured data +
+alerts (no LLM); qualitative → LLM narrative.**
+
+### Data sourcing (structured, free)
+
+- **Primary: SEC EDGAR XBRL `companyfacts` API** — `data.sec.gov/api/xbrl/
+  companyfacts/CIK##########.json`. Free, no key. Every XBRL-tagged line item from
+  the 10-K/10-Q (same filings as the corpus). Coverage strong since ~2009.
+- **Pull RAW line items and compute ratios ourselves** (exact, free, no rate cap,
+  formula documented) rather than trusting a provider's pre-computed ratios.
+- Fallbacks: **yfinance** (has FCF directly, scraped/fragile), **FMP** free tier
+  (pre-computed ratios, ~250 calls/day cap).
+- **NOT in XBRL → LLM/press-release:** non-GAAP/"adjusted" figures (in the 8-K
+  earnings release, not the 10-Q), guidance, MD&A narrative, risk-factor changes.
+
+### v1 metric set (structured; base line items + derived ratios)
+
+Base (from XBRL): revenue, operating cash flow (OCF), capex, net income, gross
+profit, operating income, cash & equivalents, total debt, diluted shares
+outstanding, diluted EPS, inventory, receivables, EBITDA, interest expense.
+
+Derived (computed): **FCF = OCF − capex**, FCF margin, **FCF conversion = FCF/NI**,
+gross/operating/net margin, revenue growth YoY & QoQ, **OCF-vs-NI gap** (earnings
+quality), net debt, **net debt/EBITDA**, **interest coverage**, **DSO** (receivables
+days), **DIO** (inventory days), YoY share-count change (dilution).
+
+### v1 alert rules (in-app badge)
+
+- **FCF depleting** — declining N quarters in a row (the driving example), or FCF
+  turned negative, or FCF conversion < threshold.
+- **Earnings quality** — OCF < net income (cash not backing profit).
+- **Margin compression** — gross/operating margin down YoY > X pp.
+- **Growth deceleration** — revenue growth YoY falling N quarters.
+- **Leverage stress** — net debt/EBITDA rising above threshold, or interest
+  coverage falling below.
+- **Dilution** — diluted share count up > X% YoY.
+- **Working-capital drag** — receivables or inventory growing faster than revenue.
+All rules per-ticker, editable in the UI; thresholds have sensible defaults.
+
+### LLM narrative — section checklist (qualitative only)
+
+The agent reads only the parts that carry the "why" (not the whole multi-MB
+filing): **MD&A**, the **cash-flow & income statements** (to explain the metric
+deltas), **balance-sheet notes**, **segment/geographic notes**, **forward
+guidance**, **GAAP↔non-GAAP reconciliation**, and **changed risk factors**. Output:
+a short "what changed this quarter and why it matters," explicitly flagging the
+qualitative red flags the numbers can't show (e.g. "FCF fell because capex doubled
+for new fabs; management guided capex higher again"). Cite the filing/period.
+
+### Red flags the system watches (numeric = alert; qualitative = LLM)
+
+Declining FCF while net income rises · OCF diverging below NI · widening
+GAAP↔non-GAAP gap · recurring "one-time" charges · rising share count ·
+inventory/receivables outrunning sales · deteriorating interest coverage ·
+guidance cuts / kitchen-sink quarters.
 
 ## Suggested phased rollout (when we proceed)
 
