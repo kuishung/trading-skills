@@ -1,0 +1,42 @@
+{# Company Overview snapshot. Context: symbol, ov {name, description, sector,
+   industry, sections:[{title, items:[{label,value,fmt}]}]}. #}
+{% macro ff(v, fmt) %}
+{%- if v is none or v == '' -%}<span class="text-slate-600">&ndash;</span>
+{%- elif fmt == 'usd_m' -%}{{ '{:,.2f}'.format(v / 1e6) }}M
+{%- elif fmt == 'shares_m' -%}{{ '{:,.2f}'.format(v / 1e6) }}M
+{%- elif fmt == 'pct' -%}{{ '%.2f'|format(v) }}%
+{%- elif fmt in ('num2', 'num', 'price') -%}{{ '%.2f'|format(v) }}
+{%- else -%}{{ v }}
+{%- endif -%}
+{% endmacro %}
+
+{% if not ov.sections %}
+<p class="text-xs text-slate-500 italic py-4">No overview data for {{ symbol }} right now.</p>
+{% else %}
+
+{% if ov.description %}
+<section class="rounded-lg border border-slate-800 bg-slate-900/40 p-4">
+  <div class="flex flex-wrap items-baseline gap-x-4 gap-y-1 mb-2">
+    <h3 class="text-sm font-semibold text-slate-100">{{ ov.name or symbol }}</h3>
+    {% if ov.sector %}<span class="text-[11px] text-slate-400">{{ ov.sector }}{% if ov.industry %} &middot; {{ ov.industry }}{% endif %}</span>{% endif %}
+  </div>
+  <p class="text-[13px] text-slate-300 leading-relaxed">{{ ov.description }}</p>
+</section>
+{% endif %}
+
+<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mt-4">
+  {% for s in ov.sections %}
+  <section class="rounded-lg border border-slate-800 bg-slate-900/40 self-start">
+    <div class="px-4 py-2 border-b border-slate-800 text-sm font-medium text-slate-100">{{ s.title }}</div>
+    <div class="divide-y divide-slate-800/60">
+      {% for it in s['rows'] %}
+      <div class="flex items-center justify-between gap-3 px-4 py-1.5 text-xs">
+        <span class="text-slate-400">{{ it.label }}</span>
+        <span class="text-slate-200 tabular-nums text-right whitespace-nowrap">{{ ff(it.value, it.fmt) }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endfor %}
+</div>
+{% endif %}

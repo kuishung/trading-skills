@@ -104,6 +104,27 @@ def company_analysis_home(
     )
 
 
+@router.get("/{symbol}/overview", response_class=HTMLResponse)
+def company_overview(
+    request: Request,
+    symbol: str,
+    user: User = Depends(require_user),
+):
+    """The Overview tab — a snapshot combining SEC XBRL fundamentals + Yahoo profile /
+    market data. Lazy-loaded on first tab activation."""
+    from ..services.sec_xbrl import annual_financials, quarterly_financials
+    from ..services.overview import overview
+
+    sym = (symbol or "").strip().upper()
+    try:
+        a = annual_financials(sym)
+        q = quarterly_financials(sym)
+        ov = overview(sym, a, q.get("ttm", {}))
+    except Exception:  # noqa: BLE001
+        ov = {"symbol": sym, "sections": [], "description": None}
+    return templates.TemplateResponse(request, "_overview_tab.html", {"symbol": sym, "ov": ov})
+
+
 @router.get("/{symbol}/report", response_class=HTMLResponse)
 def company_report(
     request: Request,

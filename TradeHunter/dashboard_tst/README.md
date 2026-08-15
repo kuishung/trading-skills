@@ -129,6 +129,17 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-15 — v3.80: Company page — Overview tab (snapshot)
+- New **Overview** tab (now the default), a company snapshot combining **SEC XBRL fundamentals +
+  Yahoo profile/market data** (`services/overview.py`): Description + Sector/Industry, Key Statistics,
+  Financial Snapshot (TTM), Growth, Financial Strength, Efficiency, Profitability, Valuation, Market
+  Information, Dividends. Lazy-loaded, cached ~1h.
+- Yahoo quoteSummary (via `prices._yahoo_session`) supplies profile/float/forward-PE/PEG/dividends;
+  the rest computed by the SEC engine + valuation. Fixed net-income tag drift (`ProfitLoss` fallback
+  — AVGO). Verified vs sample on AVGO: Revenue $75,465M, Net Income $29,317M, Net Margin 38.85%,
+  Beta 1.47, Forward PE 20.12 — all match.
+- Tab order: **Overview · Financial · Chart · Earnings reports · Company analysis**.
+
 ### 2026-08-15 — v3.79: Company page — price chart moved into a "Chart" tab
 - The Watchlist-style price chart is no longer pinned at the top; it's now the **default "Chart"
   tab** on the Company page (tab order: Chart · Financials · Earnings reports · Company analysis).

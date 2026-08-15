@@ -32,7 +32,7 @@ _BASE = {
     "cost_of_revenue": (["CostOfRevenue", "CostOfGoodsAndServicesSold"], "flow"),
     "gross_profit": (["GrossProfit"], "flow"),
     "operating_income": (["OperatingIncomeLoss"], "flow"),
-    "net_income": (["NetIncomeLoss"], "flow"),
+    "net_income": (["NetIncomeLoss", "ProfitLoss"], "flow"),
     "ocf": (["NetCashProvidedByUsedInOperatingActivities",
              "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"], "flow"),
     "capex": (["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets"], "flow"),

@@ -39,17 +39,25 @@
     {% endif %}
 
   {% else %}
-    {# ── Tabs: Chart | Financials | Earnings reports | Company analysis ── #}
-    <div class="flex items-center gap-1 mt-1 border-b border-slate-800">
+    {# ── Tabs: Overview | Financial | Chart | Earnings reports | Company analysis ── #}
+    <div class="flex items-center gap-1 mt-1 border-b border-slate-800 flex-wrap">
+      <button type="button" class="catab text-xs px-3 py-1.5 -mb-px border-b-2 transition" data-tab="overview">Overview</button>
+      <button type="button" class="catab text-xs px-3 py-1.5 -mb-px border-b-2 transition" data-tab="financials">Financial</button>
       <button type="button" class="catab text-xs px-3 py-1.5 -mb-px border-b-2 transition" data-tab="chart">Chart</button>
-      <button type="button" class="catab text-xs px-3 py-1.5 -mb-px border-b-2 transition" data-tab="financials">Financials</button>
       <button type="button" class="catab text-xs px-3 py-1.5 -mb-px border-b-2 transition" data-tab="earnings">Earnings reports</button>
       <button type="button" class="catab text-xs px-3 py-1.5 -mb-px border-b-2 transition" data-tab="analysis">Company analysis</button>
     </div>
 
-    {# ── Chart tab (default) — same chart as the Watchlist: MATP/MBP level lines +
+    {# ── Overview tab (default) — snapshot, lazy-loaded on first activation ── #}
+    <div id="caTab-overview" class="ca-tab flex flex-col gap-4 mt-3">
+      <div id="ovLazy" data-src="/company-analysis/{{ symbol }}/overview">
+        <p class="text-xs text-slate-500 py-4">Loading overview&hellip;</p>
+      </div>
+    </div>
+
+    {# ── Chart tab — same chart as the Watchlist: MATP/MBP level lines +
        analyst band when the ticker is on the board; a plain price chart otherwise. ── #}
-    <div id="caTab-chart" class="ca-tab flex flex-col gap-4 mt-3">
+    <div id="caTab-chart" class="ca-tab flex flex-col gap-4 mt-3" style="display:none">
     {% set chart_symbol = symbol %}
     {% set chart_exchange = sel.exchange if sel else None %}
     {% set chart_matp = sel.matp if sel else None %}
@@ -226,13 +234,14 @@
           b.classList.toggle('border-transparent', !on);
           b.classList.toggle('text-slate-400', !on);
         });
-        // Financials tab: load the charts on first activation (so Chart.js builds
-        // into a VISIBLE canvas). SEC fetch is cached server-side.
-        if (name === 'financials') {
-          var lazy = document.getElementById('finLazy');
+        // Lazy-load Overview + Financials on first activation (Chart.js/data build
+        // into a VISIBLE pane). Fetches are cached server-side.
+        var lazyId = name === 'overview' ? 'ovLazy' : (name === 'financials' ? 'finLazy' : null);
+        if (lazyId) {
+          var lazy = document.getElementById(lazyId);
           if (lazy && lazy.getAttribute('data-src') && !lazy.getAttribute('data-loaded')) {
             lazy.setAttribute('data-loaded', '1');
-            window.htmx && htmx.ajax('GET', lazy.getAttribute('data-src'), { target: '#finLazy', swap: 'innerHTML' });
+            window.htmx && htmx.ajax('GET', lazy.getAttribute('data-src'), { target: '#' + lazyId, swap: 'innerHTML' });
           }
         }
       }
@@ -245,7 +254,7 @@
           x.classList.toggle('bg-emerald-500/15', x === r);
         });
       });
-      setTab('chart');
+      setTab('overview');
     })();
     </script>
   {% endif %}
