@@ -129,6 +129,16 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-15 — v3.77: Financials — Annual/Quarterly toggle + TTM
+- **Quarterly data + TTM.** New `sec_xbrl.quarterly_financials()`: single-quarter flows via YTD
+  differencing (Q4 = FY − 9-month; derives the in-progress FY's start so the latest quarter shows),
+  quarter-end balance-sheet values, rolling-TTM ROE/ROA/CCC, and a **TTM column** (flows = sum of
+  last 4 quarters; stocks = latest).
+- **Financials tab now has an Annual/Quarterly toggle** (alongside Line/Bar); every chart gets a
+  **TTM point**, and the ratio tables' **"Current" column is now true TTM**.
+- Verified vs GuruFocus on NVDA: quarterly revenue (Apr'26 $81.6B), **TTM revenue $253.5B, TTM net
+  margin 62.97%, TTM ROE 114.29% — all exact**.
+
 ### 2026-08-15 — v3.76: Financials — per-year tag-drift merge (interest coverage now exact)
 - `sec_xbrl.py` now **merges each metric across its candidate XBRL tags per fiscal year**
   (`_annual_merged`), so a company that switches the tag it uses for a line item mid-history is

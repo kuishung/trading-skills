@@ -164,42 +164,86 @@ def company_financials(
     symbol: str,
     user: User = Depends(require_user),
 ):
-    """The Financials tab: trend-chart panels built from SEC EDGAR XBRL
-    (services/sec_xbrl.annual_financials). Lazy-loaded when the tab is first shown."""
-    from ..services.sec_xbrl import annual_financials
+    """The Financials tab: trend-chart panels (Annual + Quarterly, each with a TTM
+    point) + ratio tables (per-year + Current[TTM] + 5Y/10Y avg), all from SEC EDGAR
+    XBRL. Lazy-loaded when the tab is first shown."""
+    from ..services.sec_xbrl import annual_financials, quarterly_financials
 
     sym = (symbol or "").strip().upper()
     try:
-        d = annual_financials(sym)
+        a = annual_financials(sym)
     except Exception:  # noqa: BLE001
-        d = {"symbol": sym, "years": [], "series": {}, "ratios": {}}
-    years = d.get("years", [])
+        a = {"symbol": sym, "years": [], "series": {}, "ratios": {}}
+    try:
+        q = quarterly_financials(sym)
+    except Exception:  # noqa: BLE001
+        q = {"quarters": [], "labels": [], "series": {}, "ttm": {}}
+    years = a.get("years", [])
+    qt = q.get("ttm", {})
 
-    def val(metric, fy):
-        r = d.get("ratios", {}).get(metric)
+    def _d(x, y):
+        return (x / y) if (x is not None and y) else None
+
+    def aval(metric, fy):
+        r = a.get("ratios", {}).get(metric)
         if r is not None and fy in r:
             return r[fy]
-        return d.get("series", {}).get(metric, {}).get(fy)
+        return a.get("series", {}).get(metric, {}).get(fy)
 
-    panels = []
-    for title, fmt, sers in _FIN_PANELS:
-        out = []
-        for name, color, metric in sers:
-            row = []
-            for fy in years:
-                v = val(metric, fy)
-                if v is not None and fmt in ("usd", "shares"):
-                    v = round(v / 1e6, 2)  # -> millions
-                row.append(v)
-            out.append({"name": name, "color": color, "data": row})
-        panels.append({"title": title, "fmt": fmt, "series": out})
+    def qval(metric, e):
+        return q.get("series", {}).get(metric, {}).get(e)
 
-    # ── ratio tables (per-year + Current + 5Y/10Y avg) ──
-    ratios = d.get("ratios", {})
+    def ttmv(metric):
+        # TTM value: margins from summed TTM flows; level flows/latest-stocks from the
+        # quarterly TTM dict; rolling ratios (roe/roa/ccc) from the latest quarter.
+        if metric in ("gross_margin", "operating_margin", "net_margin", "ocf_margin", "fcf_margin"):
+            rev = qt.get("revenue")
+            gp = qt.get("gross_profit")
+            if gp is None and rev is not None and qt.get("cost_of_revenue") is not None:
+                gp = rev - qt["cost_of_revenue"]
+            num = {"gross_margin": gp, "operating_margin": qt.get("operating_income"),
+                   "net_margin": qt.get("net_income"), "ocf_margin": qt.get("ocf"),
+                   "fcf_margin": qt.get("fcf")}[metric]
+            v = _d(num, rev)
+            return round(v * 100, 2) if v is not None else None
+        if metric in qt:
+            return qt[metric]
+        qs = q.get("quarters") or []
+        return q.get("series", {}).get(metric, {}).get(qs[-1]) if qs else None
 
+    def build(get, keys):
+        panels = []
+        for title, fmt, sers in _FIN_PANELS:
+            out = []
+            for name, color, metric in sers:
+                row = []
+                for k in keys:
+                    v = ttmv(metric) if k == "__TTM__" else get(metric, k)
+                    if v is not None and fmt in ("usd", "shares"):
+                        v = round(v / 1e6, 2)  # -> millions
+                    row.append(v)
+                out.append({"name": name, "color": color, "data": row})
+            panels.append({"title": title, "fmt": fmt, "series": out})
+        return panels
+
+    q_ends = q.get("quarters") or []
+    chart = {
+        "annual": {
+            "labels": [str(y) for y in years] + (["TTM"] if years else []),
+            "panels": build(aval, years + (["__TTM__"] if years else [])),
+        },
+        "quarterly": {
+            "labels": (q.get("labels") or []) + (["TTM"] if q_ends else []),
+            "panels": build(qval, q_ends + (["__TTM__"] if q_ends else [])),
+        },
+    }
+
+    # ── ratio tables (per-year + Current[TTM] + 5Y/10Y avg) ──
     def stat(metric):
-        r = ratios.get(metric, {})
-        cur = r.get(years[-1]) if years else None
+        r = a.get("ratios", {}).get(metric, {})
+        cur = ttmv(metric)
+        if cur is None:
+            cur = r.get(years[-1]) if years else None
 
         def avgn(n):
             vals = [r[fy] for fy in years[-n:] if r.get(fy) is not None]
@@ -216,7 +260,7 @@ def company_financials(
         ]})
 
     return templates.TemplateResponse(request, "_financials_tab.html", {
-        "symbol": sym, "years": years, "panels": panels,
+        "symbol": sym, "years": years, "chart": chart,
         "tables": tables, "has_data": bool(years),
     })
 

@@ -296,3 +296,178 @@ def annual_financials(symbol: str) -> dict:
 
 def _pct(x):
     return None if x is None else x * 100.0
+
+
+# ── Quarterly ─────────────────────────────────────────────────────────────────
+def _q_flow(concept: dict) -> dict[str, float]:
+    """Single-quarter flow values keyed by quarter-END date. Flows are reported
+    year-to-date (cumulative from the fiscal-year start) — esp. cash-flow items — so
+    we take the cumulative series per fiscal year and difference it (Q_n = YTD_n −
+    YTD_{n-1}); Q4 falls out as FY − 9-month. Handles both income (3-mo tagged) and
+    cash-flow (YTD-only) items uniformly."""
+    if not concept:
+        return {}
+    pts = []
+    for arr in concept.get("units", {}).values():
+        for v in arr:
+            if "start" in v and "end" in v and v.get("val") is not None:
+                try:
+                    dur = _days(v["start"], v["end"])
+                except Exception:  # noqa: BLE001
+                    continue
+                pts.append((v["start"], v["end"], dur, float(v["val"]), v.get("filed", "")))
+    fy_starts = {s for (s, e, dur, val, f) in pts if 300 <= dur <= 400}
+    # also the CURRENT (in-progress) fiscal year's start — the day after each known
+    # fiscal-year end — so the latest quarters get picked up before the FY 10-K exists.
+    from datetime import timedelta
+    for (s, e, dur, val, f) in pts:
+        if 300 <= dur <= 400:
+            try:
+                fy_starts.add((date.fromisoformat(e) + timedelta(days=1)).isoformat())
+            except Exception:  # noqa: BLE001
+                pass
+    cum: dict[str, dict[str, tuple]] = {}  # fy_start -> {end: (filed, val)}
+    for (s, e, dur, val, f) in pts:
+        if s in fy_starts and 60 <= dur <= 400:
+            g = cum.setdefault(s, {})
+            if e not in g or f > g[e][0]:
+                g[e] = (f, val)
+    out: dict[str, float] = {}
+    for s, ends in cum.items():
+        prev = 0.0
+        for e, (f, val) in sorted(ends.items()):
+            out[e] = round(val - prev, 2)
+            prev = val
+    return out
+
+
+def _q_stock(concept: dict) -> dict[str, float]:
+    """Balance-sheet (instant) values keyed by quarter-END date."""
+    if not concept:
+        return {}
+    best: dict[str, tuple] = {}
+    for arr in concept.get("units", {}).values():
+        for v in arr:
+            if "end" in v and "start" not in v and v.get("val") is not None:
+                e, f = v["end"], v.get("filed", "")
+                if e not in best or f > best[e][0]:
+                    best[e] = (f, float(v["val"]))
+    return {e: val for e, (f, val) in best.items()}
+
+
+def _q_merged(facts: dict, candidates: list[str], kind: str) -> dict[str, float]:
+    ug = facts.get("facts", {}).get("us-gaap", {})
+    merged: dict[str, float] = {}
+    for c in candidates:
+        concept = ug.get(c)
+        if not concept:
+            continue
+        s = _q_flow(concept) if kind == "flow" else _q_stock(concept)
+        for e, val in s.items():
+            merged.setdefault(e, val)
+    return merged
+
+
+def quarterly_financials(symbol: str, n: int = 13) -> dict:
+    """Last ~n quarters of base line items (single-quarter flows + quarter-end stocks)
+    keyed by quarter-END date, plus a TTM column (flows = sum of last 4 quarters;
+    stocks = latest). {'symbol','quarters':[end...],'labels':[...],'series':{m:{end:v}},
+    'ttm':{metric:val}}. Cached ~12h."""
+    sym = (symbol or "").strip().upper()
+    key = f"q:{sym}"
+    with _lock:
+        hit = _cache.get(key)
+    if hit and hit[0] > time.time():
+        return hit[1]
+    out = {"symbol": sym, "quarters": [], "labels": [], "series": {}, "ttm": {}}
+    try:
+        facts = _companyfacts(sym)
+    except Exception:  # noqa: BLE001
+        facts = {}
+    if not facts:
+        with _lock:
+            _cache[key] = (time.time() + 300, out)
+        return out
+
+    series: dict[str, dict[str, float]] = {}
+    for name, (cands, kind) in _BASE.items():
+        series[name] = _q_merged(facts, cands, kind)
+    dei = facts.get("facts", {}).get("dei", {}).get("EntityCommonStockSharesOutstanding")
+    series["shares_out"] = _q_stock(dei) if dei else {}
+
+    # the union of quarter-end dates that have a revenue value (the reliable spine)
+    ends = sorted(series.get("revenue", {}).keys())[-n:]
+    if not ends:
+        with _lock:
+            _cache[key] = (time.time() + 300, out)
+        return out
+
+    def g(name, e):
+        return series.get(name, {}).get(e)
+
+    # derived per-quarter level series
+    for e in ends:
+        ocf, capex = g("ocf", e), g("capex", e)
+        if ocf is not None and capex is not None:
+            series.setdefault("fcf", {})[e] = round(ocf - capex, 2)
+        cash, sti = g("cash", e), g("sti", e)
+        if cash is not None or sti is not None:
+            series.setdefault("cash_and_sti", {})[e] = round((cash or 0) + (sti or 0), 2)
+        dn, dc = g("debt_noncurrent", e), g("debt_current", e)
+        if dn is not None or dc is not None:
+            series.setdefault("total_debt", {})[e] = round((dn or 0) + (dc or 0), 2)
+        rev = g("revenue", e)
+        series.setdefault("gross_margin", {})[e] = _pct(_safe_div(
+            (g("gross_profit", e) if g("gross_profit", e) is not None
+             else (rev - g("cost_of_revenue", e)) if (rev is not None and g("cost_of_revenue", e) is not None) else None), rev))
+        series.setdefault("operating_margin", {})[e] = _pct(_safe_div(g("operating_income", e), rev))
+        series.setdefault("net_margin", {})[e] = _pct(_safe_div(g("net_income", e), rev))
+
+    # rolling-TTM ratios per quarter (ROE/ROA on trailing-4 NI; CCC on TTM flows +
+    # quarter-end average balances) so the Returns/CCC panels work in quarterly mode
+    for i, e in enumerate(ends):
+        if i < 3:
+            continue
+        w = ends[i - 3:i + 1]
+
+        def tsum(m):
+            vs = [series.get(m, {}).get(x) for x in w]
+            return sum(vs) if all(v is not None for v in vs) else None
+
+        def avgq(m):
+            cur = g(m, e)
+            prev = g(m, ends[i - 4]) if i >= 4 else None
+            return (cur + prev) / 2.0 if (cur is not None and prev is not None) else cur
+
+        ni, rev, cogs = tsum("net_income"), tsum("revenue"), tsum("cost_of_revenue")
+        roe = _pct(_safe_div(ni, avgq("equity")))
+        roa = _pct(_safe_div(ni, avgq("total_assets")))
+        if roe is not None:
+            series.setdefault("roe", {})[e] = roe
+        if roa is not None:
+            series.setdefault("roa", {})[e] = roa
+        inv, rec, pay = avgq("inventory"), avgq("receivables"), avgq("payables")
+        dio = _safe_div(365.0, _safe_div(cogs, inv)) if (cogs and inv) else None
+        dso = _safe_div(365.0, _safe_div(rev, rec)) if (rev and rec) else None
+        dpo = _safe_div(365.0, _safe_div(cogs, pay)) if (cogs and pay) else None
+        if None not in (dio, dso, dpo):
+            series.setdefault("ccc", {})[e] = dio + dso - dpo
+
+    # TTM: flows = sum last 4 quarters; stocks = latest quarter value
+    flow_names = {n for n, (c, k) in _BASE.items() if k == "flow"} | {"fcf"}
+    last4 = ends[-4:]
+    ttm: dict[str, float] = {}
+    for name in list(series.keys()):
+        if name in flow_names:
+            vals = [series[name].get(e) for e in last4]
+            if all(v is not None for v in vals) and len(vals) == 4:
+                ttm[name] = round(sum(vals), 2)
+        else:
+            v = series.get(name, {}).get(ends[-1])
+            if v is not None:
+                ttm[name] = v
+    labels = [f"{date.fromisoformat(e).strftime('%b')} '{e[2:4]}" for e in ends]
+    out = {"symbol": sym, "quarters": ends, "labels": labels, "series": series, "ttm": ttm}
+    with _lock:
+        _cache[key] = (time.time() + _TTL, out)
+    return out

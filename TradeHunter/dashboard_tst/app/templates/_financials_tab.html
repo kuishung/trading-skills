@@ -1,21 +1,25 @@
-{# Financials trend charts (annual), from SEC EDGAR XBRL. Context: symbol, years,
-   panels [{title, fmt, series:[{name,color,data}]}], has_data. #}
+{# Financials trend charts + ratio tables, from SEC EDGAR XBRL. Context: symbol,
+   years, chart {annual:{labels,panels}, quarterly:{labels,panels}}, tables, has_data.
+   panel = {title, fmt, series:[{name,color,data}]}. #}
 {% if not has_data %}
 <p class="text-xs text-slate-500 italic py-4">No SEC XBRL financials found for {{ symbol }} (not a US filer, or no XBRL history).</p>
 {% else %}
 <div id="finWrap">
   <div class="flex items-center justify-between gap-3 flex-wrap mb-3">
-    <p class="text-[11px] text-slate-500">All USD figures in millions · fiscal years · source: SEC EDGAR XBRL</p>
+    <p class="text-[11px] text-slate-500">All USD figures in millions · TTM = trailing 12 months · source: SEC EDGAR XBRL</p>
     <div class="inline-flex rounded-lg border border-slate-700 overflow-hidden text-xs">
       <button type="button" class="finmode px-3 py-1 transition" data-mode="line">Line Chart</button>
       <button type="button" class="finmode px-3 py-1 transition border-l border-slate-700" data-mode="bar">Bar Chart</button>
+      <span class="w-px bg-slate-700"></span>
+      <button type="button" class="finperiod px-3 py-1 transition border-l border-slate-700" data-period="annual">Annual</button>
+      <button type="button" class="finperiod px-3 py-1 transition border-l border-slate-700" data-period="quarterly">Quarterly</button>
     </div>
   </div>
 
-  <script type="application/json" id="finData">{{ {"years": years, "panels": panels} | tojson }}</script>
+  <script type="application/json" id="finData">{{ {"chart": chart} | tojson }}</script>
 
   <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
-    {% for p in panels %}
+    {% for p in chart.annual.panels %}
     <section class="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
       <h3 class="text-xs font-medium text-slate-300 mb-2">{{ p.title }}</h3>
       <div style="height:250px"><canvas class="finchart" data-idx="{{ loop.index0 }}"></canvas></div>
@@ -60,8 +64,9 @@
 (function () {
   var el = document.getElementById('finData'); if (!el || !window.Chart) return;
   var data; try { data = JSON.parse(el.textContent); } catch (e) { return; }
-  var years = (data.years || []).map(String), panels = data.panels || [];
-  var charts = [], mode = 'line';
+  var chart = data.chart || {};
+  var charts = [], mode = 'line', period = 'annual';
+  function ds() { return chart[period] || chart.annual || { labels: [], panels: [] }; }
   var light = document.documentElement.classList.contains('light');
   var grid = light ? 'rgba(100,116,139,0.15)' : 'rgba(148,163,184,0.14)';
   var tick = light ? '#475569' : '#94a3b8';
@@ -78,9 +83,10 @@
 
   function build() {
     charts.forEach(function (c) { c.destroy(); }); charts = [];
+    var cur = ds(), labels = (cur.labels || []).map(String), panels = cur.panels || [];
     document.querySelectorAll('.finchart').forEach(function (cv) {
       var p = panels[+cv.getAttribute('data-idx')]; if (!p) return;
-      var ds = p.series.map(function (s) {
+      var dsets = p.series.map(function (s) {
         return {
           label: s.name, data: s.data,
           borderColor: s.color, backgroundColor: mode === 'bar' ? s.color + 'cc' : s.color,
@@ -90,7 +96,7 @@
       });
       charts.push(new Chart(cv, {
         type: mode,
-        data: { labels: years, datasets: ds },
+        data: { labels: labels, datasets: dsets },
         options: {
           responsive: true, maintainAspectRatio: false,
           interaction: { mode: 'index', intersect: false },
@@ -120,8 +126,27 @@
     });
     build();
   }
+  function setPeriod(pr) {
+    period = pr;
+    document.querySelectorAll('.finperiod').forEach(function (b) {
+      var on = b.getAttribute('data-period') === pr;
+      b.classList.toggle('bg-emerald-500/15', on);
+      b.classList.toggle('text-emerald-300', on);
+      b.classList.toggle('text-slate-400', !on);
+    });
+    build();
+  }
   document.querySelectorAll('.finmode').forEach(function (b) {
     b.addEventListener('click', function () { setMode(b.getAttribute('data-mode')); });
+  });
+  document.querySelectorAll('.finperiod').forEach(function (b) {
+    b.addEventListener('click', function () { setPeriod(b.getAttribute('data-period')); });
+  });
+  // set active states without rebuilding twice
+  document.querySelectorAll('.finperiod').forEach(function (b) {
+    var on = b.getAttribute('data-period') === 'annual';
+    b.classList.toggle('bg-emerald-500/15', on); b.classList.toggle('text-emerald-300', on);
+    b.classList.toggle('text-slate-400', !on);
   });
   setMode('line');
 })();
