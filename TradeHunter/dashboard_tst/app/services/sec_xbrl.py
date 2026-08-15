@@ -288,7 +288,22 @@ def annual_financials(symbol: str) -> dict:
         if cs is not None:
             series.setdefault("cash_and_sti", {})[fy] = cs
 
-    out = {"symbol": sym, "years": years, "series": series, "ratios": ratios}
+    # fiscal-year END dates (for pricing historical valuation ratios at the right day)
+    fy_end: dict[int, str] = {}
+    rev_c = _concept(facts, _BASE["revenue"][0])
+    if rev_c:
+        for arr in rev_c.get("units", {}).values():
+            for v in arr:
+                if v.get("fp") == "FY" and "start" in v and "end" in v:
+                    try:
+                        if 300 <= _days(v["start"], v["end"]) <= 400:
+                            yr = date.fromisoformat(v["end"]).year
+                            if v["end"] > fy_end.get(yr, ""):
+                                fy_end[yr] = v["end"]
+                    except Exception:  # noqa: BLE001
+                        pass
+
+    out = {"symbol": sym, "years": years, "series": series, "ratios": ratios, "fy_end": fy_end}
     with _lock:
         _cache[key] = (time.time() + _TTL, out)
     return out

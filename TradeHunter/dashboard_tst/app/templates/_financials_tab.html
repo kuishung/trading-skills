@@ -27,6 +27,20 @@
     {% endfor %}
   </div>
 
+  {# ── Financial ratios strip: Beta / WACC / Market cap / Price ── #}
+  {% if valuation and (valuation.beta is not none or valuation.market_cap is not none) %}
+  <section class="rounded-lg border border-slate-800 bg-slate-900/40 mt-4 px-4 py-3">
+    <div class="text-sm font-medium text-slate-100 mb-2">Financial Ratios</div>
+    <div class="flex flex-wrap gap-x-8 gap-y-1 text-xs">
+      <div><span class="text-slate-500">Market Cap</span> <span class="text-slate-200 tabular-nums">{% if valuation.market_cap %}${{ '%.0f'|format(valuation.market_cap/1e9) }}B{% else %}–{% endif %}</span></div>
+      <div><span class="text-slate-500">Price</span> <span class="text-slate-200 tabular-nums">{% if valuation.price %}${{ '%.2f'|format(valuation.price) }}{% else %}–{% endif %}</span></div>
+      <div><span class="text-slate-500">Beta (2y)</span> <span class="text-slate-200 tabular-nums">{{ valuation.beta if valuation.beta is not none else '–' }}</span></div>
+      <div><span class="text-slate-500">WACC (est.)</span> <span class="text-slate-200 tabular-nums">{% if valuation.wacc is not none %}{{ '%.2f'|format(valuation.wacc) }}%{% else %}–{% endif %}</span></div>
+    </div>
+    <p class="text-[10px] text-slate-600 mt-2">Beta from 2y daily returns vs SPY; WACC is an estimate (risk-free 4.3% + β·5% ERP). Forward PE / PEG / “without-NRI” variants need analyst estimates or a proprietary adjustment — not shown.</p>
+  </section>
+  {% endif %}
+
   {# ── ratio tables: per-year + Current + 5Y/10Y avg ── #}
   {% macro rf(v, fmt) %}{% if v is none %}<span class="text-slate-600">&ndash;</span>{% elif fmt == 'pct' %}{{ '%.2f'|format(v) }}%{% elif fmt == 'd' %}{{ '%.1f'|format(v) }}{% else %}{{ '%.2f'|format(v) }}{% endif %}{% endmacro %}
   {% for t in tables %}

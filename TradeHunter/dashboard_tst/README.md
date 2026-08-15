@@ -129,6 +129,18 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-15 — v3.78: Financials — Price & Financial ratios (Beta, WACC, PE/PS/PB)
+- New `services/valuation.py`: mixes SEC fundamentals with **live Yahoo prices** (free) →
+  **Beta** (2y daily vs SPY), current + historical **PE / PS / PB**, a **WACC estimate**, and
+  market cap. Historical ratios are **split-adjusted** (detects a stock split as a ~integer
+  jump in share count — e.g. NVDA's 10:1 — and scales earlier years so price×shares stays
+  consistent). `sec_xbrl` now also returns fiscal-year END dates for correct historical pricing.
+- Financials tab: a **Price Ratios** table (PE/PS/PB, per-year + Current + 5Y/10Y) and a
+  **Financial Ratios** strip (Market Cap, Price, Beta, WACC).
+- Verified vs GuruFocus on NVDA: current PE 34.28 (34.50), PS 21.58 (21.66); historical PB
+  2024=35.5/2026=28.99 (34.99/29.00). **Tier-3 honestly excluded** (marked in a note): Forward
+  PE, PEG, "without-NRI". Beta (1.91 vs 2.22) & WACC (13.83% vs 18.01%) differ by lookback/assumptions.
+
 ### 2026-08-15 — v3.77: Financials — Annual/Quarterly toggle + TTM
 - **Quarterly data + TTM.** New `sec_xbrl.quarterly_financials()`: single-quarter flows via YTD
   differencing (Q4 = FY − 9-month; derives the in-progress FY's start so the latest quarter shows),

@@ -259,9 +259,35 @@ def company_financials(
             {"label": label, "fmt": fmt, **stat(metric)} for (label, metric, fmt) in rows
         ]})
 
+    # ── Price ratios (PE/PS/PB) — SEC fundamentals × live Yahoo prices ──
+    valn = {}
+    try:
+        from ..services.valuation import valuation
+        valn = valuation(sym, a, qt)
+    except Exception:  # noqa: BLE001
+        valn = {}
+    by_year_v = valn.get("by_year", {})
+    cur_v = valn.get("current", {})
+
+    def pr_stat(k):
+        by = {fy: by_year_v.get(fy, {}).get(k) for fy in years}
+        cur = cur_v.get(k)
+
+        def avgn(n):
+            vals = [by[fy] for fy in years[-n:] if by.get(fy) is not None]
+            return round(sum(vals) / len(vals), 2) if vals else None
+        return {"by_year": by, "current": cur, "avg5": avgn(5), "avg10": avgn(10)}
+
+    if by_year_v or cur_v:
+        tables.append({"title": "Price Ratios", "rows": [
+            {"label": "Price / Earnings (PE)", "fmt": "x", **pr_stat("pe")},
+            {"label": "Price / Sales (PS)", "fmt": "x", **pr_stat("ps")},
+            {"label": "Price / Book (PB)", "fmt": "x", **pr_stat("pb")},
+        ]})
+
     return templates.TemplateResponse(request, "_financials_tab.html", {
         "symbol": sym, "years": years, "chart": chart,
-        "tables": tables, "has_data": bool(years),
+        "tables": tables, "has_data": bool(years), "valuation": valn,
     })
 
 

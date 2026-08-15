@@ -13,4 +13,4 @@ process (the execution plane lives trusted-side).
 
 # Hand-maintained release version, shown as "build vX.Y" on the login page
 # (easier to track than a git SHA). Bump on each meaningful release.
-__version__ = "3.77"
+__version__ = "3.78"
