@@ -1,0 +1,95 @@
+{# Intrinsic Value. Context: symbol, iv {price, fair, fair_upside, bars:[{label,
+   value, kind, upside}], other:[{label,value,fmt}], assumptions}. #}
+{% macro vf(v, fmt) %}
+{%- if v is none -%}<span class="text-slate-600">&ndash;</span>
+{%- elif fmt == 'usd_m' -%}{{ '{:,.0f}'.format(v / 1e6) }}M
+{%- elif fmt == 'pct' -%}{{ '%.2f'|format(v) }}%
+{%- else -%}{{ '%.2f'|format(v) }}
+{%- endif -%}
+{% endmacro %}
+
+{% if not iv.bars %}
+<p class="text-xs text-slate-500 italic py-4">No intrinsic-value estimate for {{ symbol }} (needs positive earnings/FCF + price).</p>
+{% else %}
+<section class="rounded-lg border border-slate-800 bg-slate-900/40 p-4">
+  <div class="flex items-baseline justify-between gap-3 flex-wrap mb-3">
+    <h3 class="text-sm font-semibold text-slate-100">Valuation Chart</h3>
+    <div class="text-xs text-slate-400">
+      Stock price <span class="text-slate-100 tabular-nums">${{ '%.2f'|format(iv.price) if iv.price else '–' }}</span>
+      {% if iv.fair %}&middot; Fair Value (blended) <span class="{{ 'text-emerald-300' if iv.fair_upside and iv.fair_upside > 0 else 'text-rose-300' }} tabular-nums">${{ '%.2f'|format(iv.fair) }}</span>
+      <span class="{{ 'text-emerald-400' if iv.fair_upside and iv.fair_upside > 0 else 'text-rose-400' }}">({{ '%+.1f'|format(iv.fair_upside) }}%)</span>{% endif %}
+    </div>
+  </div>
+  <script type="application/json" id="ivData">{{ {"bars": iv.bars, "price": iv.price} | tojson }}</script>
+  <div style="height:{{ 44 * iv.bars|length + 40 }}px"><canvas id="ivChart"></canvas></div>
+  <p class="text-[10px] text-slate-600 mt-2">Green = estimate above the current price (undervalued), red = below (overvalued). {{ iv.assumptions }}.</p>
+</section>
+
+{% if iv.other %}
+<section class="rounded-lg border border-slate-800 bg-slate-900/40 mt-4">
+  <div class="px-4 py-2 border-b border-slate-800 text-sm font-medium text-slate-100">Other Valuation Ratios</div>
+  <div class="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 divide-slate-800/60">
+    {% for it in iv.other %}
+    <div class="flex items-center justify-between gap-3 px-4 py-1.5 text-xs border-t border-slate-800/40">
+      <span class="text-slate-400">{{ it.label }}</span>
+      <span class="text-slate-200 tabular-nums">{{ vf(it.value, it.fmt) }}</span>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<p class="text-[10px] text-slate-600 mt-3">
+  These are <span class="text-slate-400">TradeHunter's own</span> DCF + mean-multiple estimates from
+  SEC fundamentals — <span class="text-slate-400">not</span> GuruFocus's proprietary
+  <span class="text-slate-400">OracleValue™</span> or “without-NRI” figures (undisclosed methodology,
+  deliberately omitted). Estimates are not investment advice.
+</p>
+
+<script>
+(function () {
+  var el = document.getElementById('ivData'); if (!el || !window.Chart) return;
+  var data; try { data = JSON.parse(el.textContent); } catch (e) { return; }
+  var bars = data.bars || [], price = data.price || 0;
+  var light = document.documentElement.classList.contains('light');
+  var tick = light ? '#475569' : '#94a3b8', grid = 'rgba(148,163,184,0.14)';
+  var color = bars.map(function (b) {
+    if (b.kind === 'fair') return '#eab308';
+    return (b.value >= price) ? '#22c55e' : '#ef4444';
+  });
+  var ctx = document.getElementById('ivChart'); if (!ctx) return;
+  // vertical price line
+  var priceLine = {
+    id: 'priceLine',
+    afterDraw: function (chart) {
+      if (!price) return;
+      var x = chart.scales.x.getPixelForValue(price);
+      var yA = chart.scales.y;
+      var c = chart.ctx;
+      c.save(); c.strokeStyle = '#e2e8f0'; c.lineWidth = 1; c.setLineDash([4, 3]);
+      c.beginPath(); c.moveTo(x, yA.top); c.lineTo(x, yA.bottom); c.stroke(); c.restore();
+    }
+  };
+  new Chart(ctx, {
+    type: 'bar',
+    data: { labels: bars.map(function (b) { return b.label; }),
+      datasets: [{ data: bars.map(function (b) { return b.value; }), backgroundColor: color, borderWidth: 0 }] },
+    options: {
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: function (c) {
+          var b = bars[c.dataIndex];
+          return '$' + c.parsed.x.toLocaleString(undefined, {maximumFractionDigits: 2}) + '  (' + (b.upside >= 0 ? '+' : '') + b.upside + '%)';
+        } } }
+      },
+      scales: {
+        x: { grid: { color: grid }, ticks: { color: tick, font: { size: 10 }, callback: function (v) { return '$' + v.toLocaleString(); } } },
+        y: { grid: { display: false }, ticks: { color: tick, font: { size: 10 } } }
+      }
+    },
+    plugins: [priceLine]
+  });
+})();
+</script>
+{% endif %}

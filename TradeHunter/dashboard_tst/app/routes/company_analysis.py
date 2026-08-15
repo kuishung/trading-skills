@@ -125,6 +125,29 @@ def company_overview(
     return templates.TemplateResponse(request, "_overview_tab.html", {"symbol": sym, "ov": ov})
 
 
+@router.get("/{symbol}/intrinsic", response_class=HTMLResponse)
+def company_intrinsic(
+    request: Request,
+    symbol: str,
+    user: User = Depends(require_user),
+):
+    """The Intrinsic Value tab — DCF models + multiple-based fair values (our own,
+    documented assumptions; GuruFocus's OracleValue/without-NRI are omitted)."""
+    from ..services.sec_xbrl import annual_financials, quarterly_financials
+    from ..services.valuation import valuation
+    from ..services.intrinsic import intrinsic
+
+    sym = (symbol or "").strip().upper()
+    try:
+        a = annual_financials(sym)
+        q = quarterly_financials(sym)
+        v = valuation(sym, a, q.get("ttm", {}))
+        iv = intrinsic(sym, a, q.get("ttm", {}), v)
+    except Exception:  # noqa: BLE001
+        iv = {"symbol": sym, "bars": [], "other": [], "price": None, "fair": None}
+    return templates.TemplateResponse(request, "_intrinsic_tab.html", {"symbol": sym, "iv": iv})
+
+
 @router.get("/{symbol}/report", response_class=HTMLResponse)
 def company_report(
     request: Request,

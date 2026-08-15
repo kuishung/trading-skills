@@ -129,6 +129,19 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-15 — v3.82: Company page — Intrinsic Value tab
+- New **Intrinsic Value** tab: a **valuation bar chart** comparing several fair-value estimates
+  against the current price (green = above price/undervalued, red = below; dashed price line), plus
+  an **Other Valuation Ratios** grid (EV/Revenue, EV/EBIT, EV/FCF, earnings/FCF yield, mean-multiple
+  values, Rule of 40).
+- New `services/intrinsic.py`: a documented **2-stage DCF** (10y growth + 10y terminal, 12% discount,
+  4% terminal growth, growth capped 20%) on EPS + FCF/share, **mean-multiple fair values** (avg
+  historical PE/PS/PB × current per-share), and a **blended Fair Value**.
+- **Honest scope:** these are TradeHunter's own estimates from SEC data — GuruFocus's proprietary
+  **OracleValue™** and **"without-NRI"** figures are deliberately omitted (undisclosed methodology).
+  Our conservative DCF runs lower than GuruFocus's aggressive-growth model by design.
+- Tab order: Overview · Financial · **Intrinsic Value** · Chart · Earnings reports · Company analysis.
+
 ### 2026-08-15 — v3.81: Financials tab — detailed statements (Income / Balance / Cash Flow)
 - New `services/statements.py`: the three financial statements as line items from SEC XBRL, with
   **Income Statement / Balance Sheet / Cash Flow sub-tabs**, an **Annual/Quarterly** toggle, and a
