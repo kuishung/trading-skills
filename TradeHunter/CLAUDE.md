@@ -699,10 +699,12 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
   invisible-until-hover scrollbar styling. Do not remove these `base.html`
   rules.
 
-**Post-push rule (user, set 2026-05-30; reinforced 2026-06-01):** EVERY time a
-push happens, ALSO give the user the **complete, in-order, copy-paste deploy
-script(s)** — the whole thing, every time, so they never have to reassemble it
-or trial-and-error it. **Every script MUST be labelled with WHICH MACHINE +
+**Post-push rule (user, set 2026-05-30; reinforced 2026-06-01 and 2026-08-15):**
+EVERY time a push happens, ALSO give the user the **complete, in-order, copy-paste
+deploy script(s)** — the whole thing, every time, so they never have to reassemble
+it or trial-and-error it. **This includes bare "push" confirmations where the
+commit already happened, and any turn where `git push` runs — no exceptions.**
+The user reinforced 2026-08-15: *"always give me the powershell script after push"*. **Every script MUST be labelled with WHICH MACHINE +
 which terminal it runs in** (Laptop / Hermes / Nous agent — see the three-machine
 table above), and **if it runs on a machine reached via SSH (the Nous agent),
 the script MUST begin with the SSH login line** (`ssh administrator@192.168.1.163`)
