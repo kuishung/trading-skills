@@ -306,9 +306,18 @@ def company_financials(
             {"label": "Price / Book (PB)", "fmt": "x", **pr_stat("pb")},
         ]})
 
+    # detailed financial statements (Income / Balance / Cash Flow)
+    stmts = {}
+    try:
+        from ..services.statements import statements
+        stmts = statements(sym).get("statements", {})
+    except Exception:  # noqa: BLE001
+        stmts = {}
+
     return templates.TemplateResponse(request, "_financials_tab.html", {
         "symbol": sym, "years": years, "chart": chart,
         "tables": tables, "has_data": bool(years), "valuation": valn,
+        "statements": stmts,
     })
 
 

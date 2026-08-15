@@ -129,6 +129,17 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-15 — v3.81: Financials tab — detailed statements (Income / Balance / Cash Flow)
+- New `services/statements.py`: the three financial statements as line items from SEC XBRL, with
+  **Income Statement / Balance Sheet / Cash Flow sub-tabs**, an **Annual/Quarterly** toggle, and a
+  **TTM** column. Reuses sec_xbrl's fetch + per-year/quarter merge; computes subtotals (Gross Profit,
+  EBITDA, FCF) and per-share rows via direct 3-month extraction; EPS TTM = NI_ttm / diluted shares.
+- Rendered below the trend charts + ratio tables in the Financials tab.
+- Verified vs sample on AVGO: Revenue 35,819/51,574/63,887/75,465, Net Income TTM 29,317, EBITDA,
+  Total Assets 72,861/165,645/171,092, OCF TTM 33,622, FCF TTM 32,762, EPS TTM 6.01, Shares 4,876 —
+  all match. (Op-income / COGS differ slightly where the provider reclassifies intangible
+  amortization — we show as-reported XBRL.)
+
 ### 2026-08-15 — v3.80: Company page — Overview tab (snapshot)
 - New **Overview** tab (now the default), a company snapshot combining **SEC XBRL fundamentals +
   Yahoo profile/market data** (`services/overview.py`): Description + Sector/Industry, Key Statistics,

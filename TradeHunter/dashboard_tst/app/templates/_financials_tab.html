@@ -72,6 +72,46 @@
     </div>
   </section>
   {% endfor %}
+
+  {# ── Detailed financial statements: Income / Balance / Cash Flow ── #}
+  {% if statements %}
+  {% macro sf(v, fmt) %}{% if v is none %}<span class="text-slate-600">&ndash;</span>{% elif fmt == 'eps' %}{{ '%.2f'|format(v) }}{% else %}{{ '{:,.0f}'.format(v / 1e6) }}{% endif %}{% endmacro %}
+  <section class="rounded-lg border border-slate-800 bg-slate-900/40 mt-6 overflow-hidden">
+    <div class="flex items-center justify-between gap-3 flex-wrap px-4 py-2 border-b border-slate-800">
+      <div class="inline-flex text-xs gap-1">
+        <button type="button" class="stmt-tab px-2.5 py-1 rounded transition" data-stmt="income">Income Statement</button>
+        <button type="button" class="stmt-tab px-2.5 py-1 rounded transition" data-stmt="balance">Balance Sheet</button>
+        <button type="button" class="stmt-tab px-2.5 py-1 rounded transition" data-stmt="cashflow">Cash Flow</button>
+      </div>
+      <div class="inline-flex rounded-lg border border-slate-700 overflow-hidden text-xs">
+        <button type="button" class="stmt-period px-3 py-1 transition" data-period="annual">Annual</button>
+        <button type="button" class="stmt-period px-3 py-1 transition border-l border-slate-700" data-period="quarterly">Quarterly</button>
+      </div>
+    </div>
+    {% for skey, s in statements.items() %}
+    {% for period in ['annual', 'quarterly'] %}
+    <div class="stmt-table overflow-x-auto" data-stmt="{{ skey }}" data-period="{{ period }}" style="display:none">
+      <table class="w-full text-xs whitespace-nowrap">
+        <thead class="text-[10px] uppercase tracking-wide text-slate-500">
+          <tr>
+            <th class="text-left font-normal px-4 py-1.5 sticky left-0 bg-slate-900 z-10">{{ s.title }} (USD M)</th>
+            {% for p in s[period + '_periods'] %}<th class="text-right font-normal px-3 py-1.5 {{ 'text-emerald-400' if p == 'TTM' }}">{{ p }}</th>{% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in s['rows'] %}
+          <tr class="border-t border-slate-800/50 {{ 'font-semibold text-slate-100' if row.bold else 'text-slate-400' }}">
+            <td class="text-left px-4 py-1.5 sticky left-0 bg-slate-900 z-10 {{ 'text-slate-100' if row.bold else 'text-slate-300' }}">{{ row.label }}</td>
+            {% for v in row[period] %}<td class="text-right px-3 py-1.5 tabular-nums">{{ sf(v, row.fmt) }}</td>{% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endfor %}
+    {% endfor %}
+  </section>
+  {% endif %}
 </div>
 
 <script>
@@ -163,6 +203,36 @@
     b.classList.toggle('text-slate-400', !on);
   });
   setMode('line');
+})();
+</script>
+
+<script>
+(function () {
+  // Detailed-statements sub-tab (income/balance/cashflow) + period (annual/quarterly)
+  var tables = document.querySelectorAll('.stmt-table'); if (!tables.length) return;
+  var stmt = 'income', period = 'annual';
+  function apply() {
+    tables.forEach(function (t) {
+      t.style.display = (t.getAttribute('data-stmt') === stmt && t.getAttribute('data-period') === period) ? '' : 'none';
+    });
+    document.querySelectorAll('.stmt-tab').forEach(function (b) {
+      var on = b.getAttribute('data-stmt') === stmt;
+      b.classList.toggle('bg-emerald-500/15', on); b.classList.toggle('text-emerald-300', on);
+      b.classList.toggle('text-slate-400', !on);
+    });
+    document.querySelectorAll('.stmt-period').forEach(function (b) {
+      var on = b.getAttribute('data-period') === period;
+      b.classList.toggle('bg-emerald-500/15', on); b.classList.toggle('text-emerald-300', on);
+      b.classList.toggle('text-slate-400', !on);
+    });
+  }
+  document.querySelectorAll('.stmt-tab').forEach(function (b) {
+    b.addEventListener('click', function () { stmt = b.getAttribute('data-stmt'); apply(); });
+  });
+  document.querySelectorAll('.stmt-period').forEach(function (b) {
+    b.addEventListener('click', function () { period = b.getAttribute('data-period'); apply(); });
+  });
+  apply();
 })();
 </script>
 {% endif %}
