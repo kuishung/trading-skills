@@ -37,12 +37,14 @@ _BASE = {
              "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"], "flow"),
     "capex": (["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets"], "flow"),
     "sbc": (["ShareBasedCompensation", "ShareBasedCompensationExpense"], "flow"),
-    "interest_expense": (["InterestExpense", "InterestExpenseDebt", "InterestAndDebtExpense"], "flow"),
+    "interest_expense": (["InterestExpense", "InterestExpenseNonoperating",
+                          "InterestExpenseDebt", "InterestAndDebtExpense"], "flow"),
     "dep_amort": (["DepreciationDepletionAndAmortization", "DepreciationAmortizationAndAccretionNet",
                    "DepreciationAndAmortization"], "flow"),
     "cash": (["CashAndCashEquivalentsAtCarryingValue"], "stock"),
     "sti": (["ShortTermInvestments", "MarketableSecuritiesCurrent",
-             "AvailableForSaleSecuritiesCurrent", "OtherShortTermInvestments"], "stock"),
+             "AvailableForSaleSecuritiesCurrent", "OtherShortTermInvestments",
+             "AvailableForSaleSecuritiesDebtMaturitiesWithinOneYearFairValue"], "stock"),
     "debt_noncurrent": (["LongTermDebtNoncurrent"], "stock"),
     "debt_current": (["LongTermDebtCurrent", "DebtCurrent"], "stock"),
     "inventory": (["InventoryNet"], "stock"),
@@ -111,6 +113,21 @@ def _concept(facts: dict, candidates: list[str]) -> dict | None:
     return None
 
 
+def _annual_merged(facts: dict, candidates: list[str], kind: str) -> dict[int, float]:
+    """Per-year union across candidate concepts, higher-priority (earlier) candidate
+    winning each year. Handles XBRL tag drift where a company switches the tag it uses
+    for a line item between fiscal years (e.g. NVDA's short-term-investments tag)."""
+    ug = facts.get("facts", {}).get("us-gaap", {})
+    merged: dict[int, float] = {}
+    for c in candidates:
+        concept = ug.get(c)
+        if not concept:
+            continue
+        for yr, val in _annual_series(concept, kind).items():
+            merged.setdefault(yr, val)
+    return merged
+
+
 def _annual_series(concept: dict, kind: str) -> dict[int, float]:
     """{fiscal_year: value} from a concept's datapoints, keyed by the YEAR THE PERIOD
     ENDS (matches how data tools label fiscal years — NVDA's year ended Jan-2024 is
@@ -169,7 +186,7 @@ def annual_financials(symbol: str) -> dict:
 
     series: dict[str, dict[int, float]] = {}
     for name, (cands, kind) in _BASE.items():
-        series[name] = _annual_series(_concept(facts, cands), kind)
+        series[name] = _annual_merged(facts, cands, kind)
 
     # shares outstanding from the dei taxonomy (instant)
     dei = facts.get("facts", {}).get("dei", {}).get("EntityCommonStockSharesOutstanding")

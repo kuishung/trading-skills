@@ -129,6 +129,14 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-15 — v3.76: Financials — per-year tag-drift merge (interest coverage now exact)
+- `sec_xbrl.py` now **merges each metric across its candidate XBRL tags per fiscal year**
+  (`_annual_merged`), so a company that switches the tag it uses for a line item mid-history is
+  handled. Expanded short-term-investments + interest-expense candidate tags.
+- Result on NVDA: **interest coverage now matches GuruFocus exactly** (128.30 / 329.77 / 503.42);
+  cash ratio's newest year improved (still slightly low — NVDA splits FY26 ST-investments across
+  debt-maturity tags). Fixed-asset turnover convention still to refine.
+
 ### 2026-08-15 — v3.75: Financials tab — ratio tables (Profitability / Debt & Liquidity / Efficiency)
 - Below the trend charts, three **ratio tables** with per-fiscal-year columns + **Current + 5Y Avg
   + 10Y Avg** (horizontal-scroll, sticky ratio column): Profitability (gross/op/net margin, OCF/FCF
