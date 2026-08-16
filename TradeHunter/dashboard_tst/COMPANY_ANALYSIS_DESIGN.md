@@ -104,8 +104,10 @@ classify industry → apply that industry's supply-chain / KPI template
   `POST /api/company-analysis/{symbol}/{section}` (X-API-Key). Refreshes per-section on its
   own cadence.
 - **Moderator-edited** (Phase 1): moderators can write/paste each qualitative section
-  directly, so the page is useful **before** the agent is back (the Nous agent is currently
-  down — broken venv + full disk).
+  directly, so the page is useful **before** the agent is back. (The Nous agent was down
+  from 2026-08-06 to 2026-08-16 — a disk-full cleanup deleted uv's managed Python out from
+  under the agent's venv. **Fixed 2026-08-16**; root cause + runbook in
+  `nous_hermes/README.md` → "Troubleshooting".)
 - **KPI** (Phase 1): the ticker's own metrics + industry label render immediately from live
   data; the **peer benchmark** (percentile/median) is agent-computed (Phase 2).
 

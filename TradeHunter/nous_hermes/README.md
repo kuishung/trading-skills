@@ -121,6 +121,69 @@ Prereq: `hermes setup` has been run and the Telegram gateway is configured
    hermes cron remove <job_id>
    ```
 
+## Troubleshooting — the agent is silent / `hermes` won't run
+
+**Symptom seen 2026-08-16** (agent dead since 2026-08-06, ten days unnoticed):
+
+```
+$ hermes cron list
+/home/administrator/.local/bin/hermes: .../venv/bin/hermes:
+  .../venv/bin/python3: bad interpreter: No such file or directory
+```
+
+**Root cause:** the agent's venv does NOT contain its own interpreter — it symlinks
+one from **uv's managed Python** (`~/.local/share/uv/python/cpython-3.11-…`). When the
+box ran out of disk, that whole uv tree (and the `uv` binary) was deleted to reclaim
+space. The symlink dangled, so:
+- every console script in the venv died (`hermes`, `hermes-agent`, …),
+- `hermes-gateway.service` (a **`--user`** unit running `venv/bin/python -m
+  hermes_cli.main gateway run`) crash-looped every 5s — restart counter reached
+  **170,904**,
+- the agent's `execute_code` tool had already been failing for hours before that,
+  because it shells out to the same `venv/bin/python`.
+
+**What survives this** (do NOT rebuild them): `~/.hermes/.env`, `~/.hermes/cron/jobs.json`,
+`~/.hermes/skills/`, the agent source tree, and `venv/lib/python3.11/site-packages`.
+
+**Fix — restore the interpreter, don't rebuild the venv.** `site-packages` is built for
+3.11, so reinstalling the same MINOR version keeps every dependency valid:
+
+```bash
+systemctl --user stop hermes-gateway.service
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+uv python install 3.11
+# derive the new path — uv's directory name carries the PATCH version and changes
+P=$(ls -d ~/.local/share/uv/python/cpython-3.11*/ | head -1)
+ln -sfn "${P}bin/python3.11" ~/.hermes/hermes-agent/venv/bin/python
+sed -i "s|^home = .*|home = ${P}bin|" ~/.hermes/hermes-agent/venv/pyvenv.cfg
+~/.hermes/hermes-agent/venv/bin/python -V && hermes --version
+systemctl --user start hermes-gateway.service
+```
+
+`venv/bin/python3` and `python3.11` are relative symlinks to `python`, so fixing
+`python` fixes all three. Rebuilding on the system Python (3.10) instead would strand
+the whole `python3.11` site-packages tree — don't.
+
+**Diagnosis order for next time** (each step rules out a layer):
+```bash
+hermes --version                                     # CLI / interpreter alive?
+systemctl --user status hermes-gateway.service       # NOTE: --user, not system scope
+journalctl --user -u hermes-gateway.service -n 20
+ls -la ~/.hermes/hermes-agent/venv/bin/python        # dangling symlink?
+tail -30 ~/.hermes/logs/errors.log                   # agent-level failures
+ls -la ~/.hermes/logs/                               # mtimes = when each layer died
+```
+
+### The heartbeat does NOT prove the agent works
+
+`heartbeat.sh` runs from **system cron** as plain bash (`jq` + `curl`), deliberately
+decoupled from the LLM so model glitches can't derail it (2026-06-01). The cost of that
+decoupling: it kept POSTing happily for the entire ten days the agent was dead, so
+TradeHunter's `/agent` page showed green throughout. **A green agent pill means "the box
+is powered on", not "the agent can run."** If you want it to mean the latter, have
+`heartbeat.sh` shell out to `hermes --version` and report the exit status.
+
 ## Updating the skill
 Edit files here, redeploy (scp / git pull → `bash install.sh`), then re-test with
 `/premarket-briefing`. Skill changes are picked up on next invocation; no need to
