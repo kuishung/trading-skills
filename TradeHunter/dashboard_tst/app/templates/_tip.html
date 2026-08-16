@@ -1,0 +1,18 @@
+{# Hover-tooltip helper for metric labels.
+
+   {% import "_tip.html" as T %}  then  {{ T.tip(row.label) }}
+
+   Looks the label up in services/glossary.py (exposed as the `gloss` Jinja
+   global in main.py). Known label -> a dotted-underline span carrying the
+   definition in data-tip, which base.html's single floating tooltip renders on
+   hover/focus. Unknown label -> plain text, no affordance: a missing tooltip is
+   correct, a wrong one is not. #}
+
+{% macro tip(label) -%}
+{%- set d = gloss(label) -%}
+{%- if d -%}
+<span class="th-help" tabindex="0" data-tip="{{ d }}">{{ label }}</span>
+{%- else -%}
+{{ label }}
+{%- endif -%}
+{%- endmacro %}

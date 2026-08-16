@@ -129,6 +129,31 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-16 — v3.83: Overview + Financials — hover tooltips explaining every figure
+- User request: *"in overview and financial, i need … when mouse hover … a tooltip to explain
+  what is the meaning of each of the description … to give user a more easier understanding
+  how to read the figure."*
+- New `services/glossary.py`: ~120 plain-English definitions keyed by **normalised** label
+  (lowercase, parentheticals + `%` stripped), so one entry serves every variant of a row —
+  `Gross Profit Margin (TTM)`, `(5Y Avg)` and `Gross Profit Margin %` all resolve to the same
+  text. House style is "what it is, then how to read it" (which direction is good, what a
+  typical value looks like). `describe(label)` returns `None` for an unknown label and the
+  template then renders it plainly — **a missing tooltip is correct, a wrong one is not**.
+- New `templates/_tip.html` macro `T.tip(label)` + `gloss` registered as a Jinja global in
+  `main.py` (same mechanism as `nav_for`), so any template can opt in with one call.
+- `base.html`: a **single** floating `#thTip` element positioned `fixed` by a delegated
+  hover/focus handler at the bottom of the file. Deliberately not an absolutely-positioned
+  child of the label — the ratio and statement tables live inside `overflow-x-auto` wrappers,
+  which would clip it. Delegation on `document` also means it works for the lazily HTMX-swapped
+  tab bodies with no re-binding. Flips above/below and clamps to the viewport; hides on scroll,
+  resize and Escape. Keyboard-accessible (`tabindex="0"` + `focusin`), theme-aware (dark +
+  `html.light`), dotted-underline affordance so users know an explanation exists.
+- Wired into **Overview** (all 9 section row labels) and **Financials** (chart panel titles,
+  the Beta/WACC/Market-Cap strip, all four ratio tables, and all three statement tables).
+- Verified: coverage script confirms **158/158** rendered labels resolve to a definition;
+  all four templates compile; unknown labels render as plain text with no tooltip; app factory
+  boots with 122 routes and the `gloss` global present on the route env.
+
 ### 2026-08-15 — v3.82: Company page — Intrinsic Value tab
 - New **Intrinsic Value** tab: a **valuation bar chart** comparing several fair-value estimates
   against the current price (green = above price/undervalued, red = below; dashed price line), plus

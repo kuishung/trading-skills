@@ -26,6 +26,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from . import __version__ as APP_VERSION
 from . import menus
 from ._build import BUILD
+from .services.glossary import describe as _gloss
 from .config import settings
 from .db import SessionLocal, init_db
 from .models import APPROVED, User
@@ -62,8 +63,10 @@ for _routes_mod in (
 ):
     _routes_mod.templates.env.globals["version"] = APP_VERSION
     _routes_mod.templates.env.globals["nav_for"] = menus.nav_for   # access-filtered nav
+    _routes_mod.templates.env.globals["gloss"] = _gloss            # metric-label tooltips
 templates.env.globals["version"] = APP_VERSION
 templates.env.globals["nav_for"] = menus.nav_for
+templates.env.globals["gloss"] = _gloss
 
 
 def _bootstrap_admin_password() -> None:

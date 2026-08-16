@@ -1,5 +1,8 @@
 {# Company Overview snapshot. Context: symbol, ov {name, description, sector,
-   industry, sections:[{title, items:[{label,value,fmt}]}]}. #}
+   industry, sections:[{title, items:[{label,value,fmt}]}]}.
+   Row labels are wrapped by T.tip() -> a hover tooltip explaining what the
+   figure means (services/glossary.py). #}
+{% import "_tip.html" as T %}
 {% macro ff(v, fmt) %}
 {%- if v is none or v == '' -%}<span class="text-slate-600">&ndash;</span>
 {%- elif fmt == 'usd_m' -%}{{ '{:,.2f}'.format(v / 1e6) }}M
@@ -31,7 +34,7 @@
     <div class="divide-y divide-slate-800/60">
       {% for it in s['rows'] %}
       <div class="flex items-center justify-between gap-3 px-4 py-1.5 text-xs">
-        <span class="text-slate-400">{{ it.label }}</span>
+        <span class="text-slate-400">{{ T.tip(it.label) }}</span>
         <span class="text-slate-200 tabular-nums text-right whitespace-nowrap">{{ ff(it.value, it.fmt) }}</span>
       </div>
       {% endfor %}

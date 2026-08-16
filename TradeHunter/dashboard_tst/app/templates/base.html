@@ -35,6 +35,33 @@
     }
     summary::-webkit-details-marker { display: none; }
     summary { list-style: none; }
+
+    /* ── metric-label tooltips (templates/_tip.html + services/glossary.py) ──
+       A SINGLE floating #thTip element is positioned fixed by the script at the
+       bottom of this file. It must not live inside the label's own container:
+       the ratio/statement tables sit in `overflow-x-auto` wrappers, which would
+       clip an absolutely-positioned tooltip. Fixed + body-level escapes that. */
+    .th-help {
+      border-bottom: 1px dotted rgba(148,163,184,0.55);
+      cursor: help; outline: none;
+    }
+    .th-help:hover, .th-help:focus-visible { border-bottom-color: rgba(16,185,129,0.9); }
+    .th-help:focus-visible { border-radius: 2px; box-shadow: 0 0 0 2px rgba(16,185,129,0.35); }
+    #thTip {
+      position: fixed; z-index: 90; max-width: 21rem; width: max-content;
+      padding: 0.5rem 0.65rem; border-radius: 0.5rem;
+      background: #0b1220; color: #e2e8f0;
+      border: 1px solid rgba(148,163,184,0.28);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.55);
+      font-size: 12px; line-height: 1.5;
+      opacity: 0; pointer-events: none; transition: opacity 120ms ease;
+    }
+    #thTip.on { opacity: 1; }
+    html.light #thTip {
+      background: #ffffff; color: #0f172a;
+      border-color: #cbd5e1; box-shadow: 0 10px 30px rgba(15,23,42,0.18);
+    }
+    html.light .th-help { border-bottom-color: rgba(71,85,105,0.5); }
     /* Nous Hermes pill liveness dot — blink so it reads as a live indicator */
     @keyframes th-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.15; } }
     .th-blink { animation: th-blink 1.2s steps(1, end) infinite; }
@@ -292,6 +319,61 @@
     run();
     document.addEventListener('htmx:afterSwap', function () { run(); });
     document.addEventListener('htmx:load', function () { run(); });
+  })();
+
+  // Metric-label tooltips. ONE floating element, positioned fixed, driven by
+  // event delegation on document -- so it works for content HTMX swaps in later
+  // (the Overview / Financials tabs load lazily) with no re-binding, and can't
+  // be clipped by the tables' overflow-x-auto wrappers.
+  (function () {
+    var tip = document.createElement('div');
+    tip.id = 'thTip';
+    tip.setAttribute('role', 'tooltip');
+    document.body.appendChild(tip);
+    var active = null;
+
+    function place(el) {
+      var r = el.getBoundingClientRect();
+      var t = tip.getBoundingClientRect();
+      var pad = 8;
+      // prefer above; flip below when there isn't room
+      var top = r.top - t.height - pad;
+      if (top < pad) top = r.bottom + pad;
+      // centre on the label, then clamp inside the viewport
+      var left = r.left + r.width / 2 - t.width / 2;
+      left = Math.max(pad, Math.min(left, window.innerWidth - t.width - pad));
+      tip.style.top = Math.round(top) + 'px';
+      tip.style.left = Math.round(left) + 'px';
+    }
+
+    function show(el) {
+      var txt = el.getAttribute('data-tip');
+      if (!txt) return;
+      active = el;
+      tip.textContent = txt;
+      tip.style.top = '-9999px';                 // measure off-screen first
+      tip.classList.add('on');
+      place(el);
+    }
+    function hide() { active = null; tip.classList.remove('on'); }
+
+    document.addEventListener('mouseover', function (e) {
+      var el = e.target.closest && e.target.closest('[data-tip]');
+      if (el && el !== active) show(el);
+    });
+    document.addEventListener('mouseout', function (e) {
+      var el = e.target.closest && e.target.closest('[data-tip]');
+      if (el && el === active) hide();
+    });
+    document.addEventListener('focusin', function (e) {
+      var el = e.target.closest && e.target.closest('[data-tip]');
+      if (el) show(el);
+    });
+    document.addEventListener('focusout', hide);
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') hide(); });
+    // any scroll (page or an inner table) invalidates the anchor position
+    window.addEventListener('scroll', hide, true);
+    window.addEventListener('resize', hide);
   })();
 </script>
 </body>
