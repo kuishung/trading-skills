@@ -63,6 +63,24 @@ reading experience, not the signal.**
 | 5 | Live vs historical data path | **Two paths, same metric** — see below. |
 | 6 | Alerts | **In-app only**, consistent with `COMPANY_INTELLIGENCE_DESIGN.md`. |
 | 7 | Computed values | **Never stored as analysis.** Live tiles derive on render; the agent push API cannot set them (already true in v3.94). |
+| 8 | **Thesis ownership** | **Research-grounded, drafted from public-domain literature, moderator-approved.** User, 2026-08-16: *"you will look into the public domain papers and give me the thesis."* Not moderator opinion, not LLM free-association — every claimed macro relationship cites a published source. See "Research grounding". |
+
+### Decision 8 — the thesis is sourced, not asserted
+
+The relationships a macro thesis leans on ("an inverted curve precedes
+recessions", "tight financial conditions fatten the left tail of growth") are
+**empirical claims that have been studied for decades**. Restating them from an
+LLM's latent memory is how you inherit its errors silently. So each thesis
+element carries a citation, and the reader can follow it.
+
+This closes the loop with Decision 2: probabilities come from measured episodes,
+and the *mechanism* those episodes are framed by comes from published work.
+Neither is the model's opinion.
+
+**Design consequence:** `MacroScenario.narrative` gains a required `citations`
+JSON field (`[{title, authors, year, url, kind}]`), rendered under the scenario.
+An uncited scenario is a draft, not publishable — the same bar `CompanyAnalysis`
+sets with its `sources` + `confidence` fields.
 
 ### Decision 5 — the two-path rule (important, will otherwise be re-litigated)
 
@@ -142,6 +160,64 @@ when wiring** — these are from recall, not lookup.
 ISM is deliberately absent: the headline series is licence-restricted and not
 reliably free from FRED. `INDPRO` is the robust free substitute.
 
+## Research grounding
+
+The corpus is deliberately **public-domain / open access**, so the citation chain
+never dead-ends at a paywall a member can't follow:
+
+| Body | What | Access |
+|---|---|---|
+| **Federal Reserve system** — Board FEDS Notes, NY Fed Staff Reports + Liberty Street, SF Fed Economic Letter, Chicago Fed, St. Louis Fed | the core macro-finance literature | free, US-government work |
+| **NBER working papers** | the canonical versions of most of the above | abstracts free; many preprints posted by authors |
+| **BIS, IMF, ECB working papers** | international + policy transmission | free |
+| **arXiv q-fin** | newer quantitative work | free, open |
+
+### The pattern worth exploiting: the best frameworks ship with their data
+
+Several foundational papers are published *alongside a maintained free series*.
+That collapses citation and indicator into one object — the thesis cites the
+paper, the chart plots the authors' own series. Verified 2026-08-16:
+
+| Framework | Paper | Data | Feeds |
+|---|---|---|---|
+| **ACM term premium** | Adrian, Crump & Moench, *Pricing the Term Structure with Linear Regressions*, JFE 2013 | NY Fed, **daily back to 1961**, updated weekly | Monetary policy & rates |
+| **Economic Policy Uncertainty** | Baker, Bloom & Davis, *Measuring Economic Policy Uncertainty*, NBER w21633 / QJE | FRED `USEPUINDXD` (daily) + policyuncertainty.com | **Global & geopolitical** |
+| **Vulnerable Growth / growth-at-risk** | Adrian, Boyarchenko & Giannone, *Vulnerable Growth*, AER 109(4) 2019 | NY Fed Staff Report 794; replication data on openICPSR | the scenario framework itself |
+| **NFCI** | Chicago Fed, published methodology | FRED `NFCI` / `ANFCI` | Market internals, Liquidity |
+
+**Two of these change the design materially:**
+
+1. **ACM fixes the policy-path proxy problem.** The doc above settles for `DGS2`
+   because CME FedWatch has no free history. ACM is better: it *decomposes* the
+   10y into expected short rates versus term premium — separating "the market
+   expects cuts" from "investors demand more compensation for duration". That is
+   the actual question the Monetary policy & rates topic asks, and it's free,
+   daily, and 60+ years deep.
+2. **EPU rescues Global & geopolitical**, which this doc had written off as
+   "thin by nature". A peer-reviewed, newspaper-derived uncertainty index, free
+   on FRED, with global and monetary-policy variants. That topic gets a real
+   tracked series after all.
+
+### Vulnerable Growth is the frame for "possible outcomes"
+
+Worth calling out because it matches the user's ask almost exactly. The paper
+models the **conditional distribution** of GDP growth given financial
+conditions, and finds the asymmetry: as conditions tighten, the *lower* quantiles
+of growth fall sharply while the *upper* quantiles stay roughly stable.
+Downside risk expands; upside doesn't.
+
+Three consequences for this design:
+
+- Scenarios should be **quantiles of a distribution**, not three equally-weighted
+  stories. "Base / alt / tail" is a discretisation of a distribution, and saying
+  so keeps it honest.
+- It justifies, with a citation, the claim made earlier from intuition: **the
+  tail matters more than the median for sizing.** That's the paper's central
+  finding, not a heuristic.
+- It gives a principled reason to put financial-conditions indicators (NFCI, HY
+  spreads) at the centre of the Market internals topic — they are the
+  *conditioning variable* that moves the whole distribution.
+
 ## Episode studies — where probabilities actually come from
 
 Define a regime as **indicator conditions**, scan history for matching windows,
@@ -189,11 +265,11 @@ is more decision-relevant than the median.
 
 ## Open decisions
 
-1. **Who owns the thesis** — moderator writes and the agent only feeds data, or
-   the agent drafts and a moderator approves? Changes the trust model more than
-   any other choice here. *(asked 2026-08-16, unanswered)*
-2. **Indicator set** — accept the proposal above, or user-specified? It's a
-   trading judgement, so the user's call. *(asked, unanswered)*
+1. ~~Who owns the thesis~~ — **ANSWERED 2026-08-16**: research-grounded from
+   public-domain papers, moderator-approved. See Decision 8.
+2. **Indicator set** — accept the proposal above (now amended by the
+   research-grounded additions: ACM term premium, EPU, NFCI), or user-specified?
+   It's a trading judgement, so the user's call. *(asked, unanswered)*
 3. **Review cadence** — weekly per topic, or event-driven (a print lands, a
    trigger fires)? Event-driven is cheaper and more meaningful; weekly is more
    predictable.
@@ -201,6 +277,13 @@ is more decision-relevant than the median.
    avoids the structurally different 1970s-80s) is the suggested default.
 
 ## Changelog
+- 2026-08-16 — **Decision 8** (thesis ownership) answered: research-grounded from
+  public-domain literature, moderator-approved, every scenario carrying citations.
+  Added the "Research grounding" section. Three frameworks verified against source
+  the same day — ACM term premium, Baker-Bloom-Davis EPU, Adrian-Boyarchenko-Giannone
+  Vulnerable Growth — two of which materially change the design: ACM replaces the `DGS2`
+  policy-path proxy, and EPU gives Global & geopolitical the tracked series this doc
+  had written off as unavailable.
 - 2026-08-16 — initial design. Written after the user asked for continuous study
   + trend monitoring + outcomes/implications per macro topic, and then for the
   data sourcing. Records the two-path parquet/live rule and the
