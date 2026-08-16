@@ -1,0 +1,98 @@
+{# Right pane: one macro topic. Context: sec {key,label,blurb,row,cross,tone}, user. #}
+{% from "_time.html" import localtime %}
+{% set can_edit = user and user.can_moderate %}
+
+<section class="rounded-lg border border-slate-800 bg-slate-900/40">
+  <div class="px-4 py-3 border-b border-slate-800 flex items-baseline justify-between gap-3 flex-wrap">
+    <div>
+      <h2 class="text-sm font-medium text-slate-100">{{ sec.label }}</h2>
+      <p class="text-[11px] text-slate-500 mt-0.5">{{ sec.blurb }}</p>
+    </div>
+    {% if sec.row and sec.row.as_of %}
+    <div class="text-[11px] text-slate-500 text-right">
+      updated {{ localtime(sec.row.as_of) }}
+      <div class="text-[10px] text-slate-600">
+        {{ sec.row.source_kind }}{% if sec.row.confidence %} &middot; {{ sec.row.confidence }} confidence{% endif %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  {# ── computed tiles (live) ── #}
+  {% if sec.cross %}
+  <div class="px-4 py-3 border-b border-slate-800">
+    <div class="flex items-center gap-3 flex-wrap mb-2">
+      <span class="text-[10px] uppercase tracking-wide text-slate-600">Live cross-asset</span>
+      {% if sec.tone and sec.tone.tone != 'unknown' %}
+      <span class="text-[11px] px-1.5 py-0.5 rounded
+        {% if sec.tone.tone == 'risk-on' %}bg-emerald-500/15 text-emerald-300
+        {% elif sec.tone.tone == 'risk-off' %}bg-rose-500/15 text-rose-300
+        {% else %}bg-slate-700/40 text-slate-300{% endif %}">{{ sec.tone.tone }}</span>
+      <span class="text-[10px] text-slate-600">{{ sec.tone.on }} risk-on vs {{ sec.tone.off }} risk-off today</span>
+      {% endif %}
+    </div>
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      {% for c in sec.cross %}
+      <div class="rounded border border-slate-800 bg-slate-950/40 px-2.5 py-2">
+        <div class="text-[11px] text-slate-400 truncate" title="{{ c.symbol }}">{{ c.label }}</div>
+        <div class="text-[13px] tabular-nums text-slate-100">{{ '%.2f'|format(c.price) if c.price is not none else '—' }}</div>
+        <div class="text-[11px] tabular-nums
+          {% if c.change_pct is none %}text-slate-600
+          {% elif c.change_pct > 0 %}text-emerald-400{% elif c.change_pct < 0 %}text-rose-400
+          {% else %}text-slate-400{% endif %}">
+          {% if c.change_pct is not none %}{{ '%+.2f'|format(c.change_pct) }}%{% else %}&mdash;{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    <p class="text-[10px] text-slate-600 mt-2">
+      Live quotes, ~2 min cache. The risk tally counts same-day direction across the
+      risk-directional names only (yields, gold and oil are excluded — their direction
+      doesn't map to risk appetite without context). It's a tally, not a regime model.
+    </p>
+  </div>
+  {% endif %}
+
+  {# ── written analysis ── #}
+  <div class="px-4 py-3">
+    {% if sec.row and sec.row.body %}
+    <div class="text-[13px] text-slate-300 leading-relaxed whitespace-pre-wrap">{{ sec.row.body }}</div>
+    {% if sec.row.sources %}
+    <div class="mt-3 text-[11px] text-slate-500">
+      Sources:
+      {% for s in sec.row.sources %}
+        <a href="{{ s.url }}" target="_blank" rel="noopener noreferrer"
+           class="text-sky-400 hover:underline ml-1">{{ s.title or s.url }}</a>{% if not loop.last %},{% endif %}
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% else %}
+    <p class="text-xs text-slate-500 italic py-2">
+      No analysis written for this topic yet.
+      {% if can_edit %}Write one below,{% else %}A moderator or the research agent fills this in;{% endif %}
+      or ask a question on <a href="/research?kind=macro" class="text-emerald-400 hover:underline">Research</a>.
+    </p>
+    {% endif %}
+  </div>
+
+  {% if can_edit %}
+  <details class="border-t border-slate-800">
+    <summary class="cursor-pointer px-4 py-2 text-xs text-slate-400 hover:text-slate-200 select-none">
+      {% if sec.row and sec.row.body %}Edit analysis{% else %}Write analysis{% endif %}
+    </summary>
+    <form method="post" action="/macro/section/{{ sec.key }}" class="px-4 pb-4 space-y-2">
+      <textarea name="body" rows="10" placeholder="What matters in this topic right now, and what it implies for exposure…"
+                class="w-full rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-[13px] leading-relaxed focus:border-emerald-500 outline-none">{{ sec.row.body if sec.row and sec.row.body else '' }}</textarea>
+      <div class="flex items-center gap-2 flex-wrap">
+        <select name="confidence" class="rounded bg-slate-950/60 border border-slate-700 px-2 py-1 text-xs focus:border-emerald-500 outline-none">
+          <option value="">confidence…</option>
+          {% for c in ('high', 'medium', 'low') %}
+          <option value="{{ c }}" {% if sec.row and sec.row.confidence == c %}selected{% endif %}>{{ c }}</option>
+          {% endfor %}
+        </select>
+        <button class="rounded bg-emerald-600 hover:bg-emerald-500 px-3 py-1 text-xs font-medium">Save</button>
+      </div>
+    </form>
+  </details>
+  {% endif %}
+</section>

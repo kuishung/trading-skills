@@ -612,6 +612,57 @@ class CompanyAnalysis(Base):
     )
 
 
+# Macro board sections — the fixed top-down taxonomy behind /macro. Ordered;
+# the left rail renders them in this order and the keys are the URL segments.
+MACRO_SECTIONS = (
+    "policy_rates",
+    "growth_inflation",
+    "internals",
+    "cross_asset",
+    "global_geo",
+    "liquidity",
+)
+MACRO_SECTION_LABELS = {
+    "policy_rates": "Monetary policy & rates",
+    "growth_inflation": "Growth & inflation data",
+    "internals": "Market internals",
+    "cross_asset": "Cross-asset signals",
+    "global_geo": "Global & geopolitical",
+    "liquidity": "Liquidity & positioning",
+}
+MACRO_SECTION_BLURBS = {
+    "policy_rates": "FOMC path, the curve, real yields",
+    "growth_inflation": "CPI/PCE, payrolls, ISM, GDP",
+    "internals": "VIX, breadth, credit spreads",
+    "cross_asset": "Dollar, bonds, commodities",
+    "global_geo": "Overnight tape, central banks, policy risk",
+    "liquidity": "Balance sheet, issuance, seasonality",
+}
+
+
+class MacroAnalysis(Base):
+    """One row per macro SECTION — the written analysis behind the /macro board.
+
+    Same shape and lifecycle as CompanyAnalysis (agent-pushed or
+    moderator-edited, carrying provenance), minus the symbol: macro sections are
+    a fixed global taxonomy, not per-ticker. The computed parts of a section (the
+    cross-asset strip, breadth) are NOT stored here — they're derived live on
+    render, so they can never go stale in the database.
+    """
+
+    __tablename__ = "macro_analysis"
+
+    id = Column(Integer, primary_key=True)
+    section = Column(String(32), unique=True, nullable=False, index=True)  # MACRO_SECTIONS
+    body = Column(Text, nullable=True)             # long-form prose
+    content = Column(JSON, nullable=True)          # structured payload (tables/lists)
+    sources = Column(JSON, nullable=True)          # [{title, url, kind}]
+    source_kind = Column(String(16), nullable=False, default="manual")  # manual | agent | feed
+    confidence = Column(String(16), nullable=True)  # high | medium | low
+    as_of = Column(DateTime, default=_utcnow)
+    updated_by = Column(String(120), nullable=True)
+
+
 class UserWatchlist(Base):
     """A ticker one user has starred — the per-user "My Watchlist".
 

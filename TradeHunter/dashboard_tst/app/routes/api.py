@@ -121,6 +121,49 @@ def due_filters(_: bool = Depends(require_api_key), db: Session = Depends(get_db
     }
 
 
+class MacroAnalysisIn(BaseModel):
+    body: str | None = None
+    content: dict | None = None
+    sources: list[dict] | None = None
+    confidence: str | None = None
+
+
+@router.post("/macro/{section}")
+def push_macro_analysis(
+    section: str,
+    payload: MacroAnalysisIn,
+    _: bool = Depends(require_api_key),
+    db: Session = Depends(get_db),
+):
+    """The Nous agent pushes a macro section's written analysis here.
+
+    Mirrors /api/company-analysis: the agent does the research (calendar, policy
+    narrative, geopolitics — the judgement parts), this process only validates and
+    stores. The computed tiles on the board are derived live and are NOT settable
+    here, so the agent can never overwrite a live number with a stale one."""
+    from ..models import MACRO_SECTIONS, MacroAnalysis
+
+    key = (section or "").strip()
+    if key not in MACRO_SECTIONS:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"unknown section '{key}' (expected one of {', '.join(MACRO_SECTIONS)})",
+        )
+    row = db.query(MacroAnalysis).filter(MacroAnalysis.section == key).first()
+    if row is None:
+        row = MacroAnalysis(section=key)
+        db.add(row)
+    row.body = payload.body
+    row.content = payload.content
+    row.sources = payload.sources
+    row.confidence = payload.confidence
+    row.source_kind = "agent"
+    row.as_of = _utcnow()
+    row.updated_by = "nous_hermes"
+    db.commit()
+    return {"ok": True, "section": key}
+
+
 @router.get("/matp-queue")
 def matp_queue(
     due_only: bool = True,

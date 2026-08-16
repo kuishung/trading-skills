@@ -129,6 +129,37 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-16 — v3.94: Macro board — two-pane, six canonical topics (Phase 1)
+- User request: *"in the macro I want a tab on the left to show the topics and the right side
+  will be the analysis of the relevant topic."* Confirmed with the user that the rail holds a
+  **fixed taxonomy**, not user-created topics — this is a board you read the same way every
+  morning. Free-form macro research stays on `/research?kind=macro`, linked from the board.
+- **Macro nav now points at `/macro`** (was `/research?kind=macro`). New `routes/macro.py`,
+  gated by `require_menu("macro")` like its siblings.
+- **Left rail** = the six topics from the agreed mindmap (`MACRO_SECTIONS`): Monetary policy
+  & rates · Growth & inflation · Market internals · Cross-asset signals · Global &
+  geopolitical · Liquidity & positioning. Each shows a blurb, last-updated date, and a marker
+  when nothing is written yet. Right pane swaps via HTMX, so switching topics never
+  re-fetches another section's live tiles.
+- **Each section = computed tiles + written analysis.** New `MacroAnalysis` model + migration
+  `d3e4f5a6b7c8` (one row per section; same provenance/confidence shape as `CompanyAnalysis`,
+  minus the symbol). Moderator-editable here, agent-pushable via **`POST /api/macro/{section}`**
+  — which rejects an unknown section with 400 rather than silently creating a row.
+- **The computed part is never stored.** The cross-asset strip (VIX, DXY, 10y, TLT, HYG, GLD,
+  USO, SPX) is derived live on render, so a stale DB row can't masquerade as a current number,
+  and the agent's push API deliberately cannot set it.
+- **Data-source rule honoured:** the board is a live/operational view, so every number is
+  fetched live (Yahoo via `services/prices`). It never touches the parquet store — including
+  the future breadth gauge, which will use `resources/yf_daily_bars` (in-memory, no disk) for
+  exactly that reason.
+- The risk tally is labelled honestly as *"a tally, not a regime model"*, and excludes
+  yields/gold/oil whose direction doesn't map to risk appetite without context.
+- Phase 2 (not built): breadth gauge for Market internals, economic-calendar tile for Growth
+  & inflation, agent-generated narratives for the judgement sections.
+- Verified: all six topics render; an unknown section falls back rather than 500ing; moderator
+  edit stores body/confidence/provenance; a **member can read but neither sees nor can POST**
+  an edit; agent push tags `source_kind=agent` and rejects both an unknown section and a bad key.
+
 ### 2026-08-16 — v3.93: name the outstanding tickers (a bar parked at 94% isn't "stuck")
 - Reported: the catch-up bar reached 76/81 and stopped. The agent was fine — but the panel
   gave no way to tell "stuck" from "finished as far as it can", which is a flaw in the

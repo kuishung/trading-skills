@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Macro &middot; TradeHunter{% endblock %}
+{% block content %}
+{% from "_time.html" import localtime %}
+
+<div class="flex items-baseline justify-between gap-3 mb-1">
+  <h1 class="text-2xl font-semibold">Macro</h1>
+  <span class="text-xs text-slate-500">top-down &middot; what moves everything</span>
+</div>
+<p class="text-slate-400 mb-5 text-sm">
+  The six topics that set the weather for every position. Pick one on the left; its analysis
+  is on the right. For free-form macro questions, use
+  <a href="/research?kind=macro" class="text-emerald-400 hover:underline">Research</a>.
+</p>
+
+{# Two panes. The rail is a fixed taxonomy — same six every morning — so the left
+   side is navigation, not a list that grows. Right pane swaps via HTMX so
+   switching topics never re-fetches the other sections' live tiles. #}
+<div class="grid grid-cols-1 lg:grid-cols-[16rem_1fr] gap-4 items-start">
+
+  <nav class="rounded-lg border border-slate-800 bg-slate-900/40 overflow-hidden lg:sticky lg:top-4">
+    {% for r in rail %}
+    <a href="/macro?section={{ r.key }}"
+       hx-get="/macro/section/{{ r.key }}" hx-target="#macroPane" hx-swap="innerHTML"
+       hx-push-url="/macro?section={{ r.key }}"
+       class="macro-tab block px-3 py-2.5 border-l-2 transition
+              {% if r.active %}border-emerald-400 bg-emerald-500/10{% else %}border-transparent hover:bg-slate-800/50{% endif %}
+              {% if not loop.first %}border-t border-t-slate-800/60{% endif %}">
+      <div class="flex items-center gap-2">
+        <span class="text-[13px] {% if r.active %}text-emerald-300 font-medium{% else %}text-slate-200{% endif %}">{{ r.label }}</span>
+        {% if not r.has_analysis %}
+        <span class="ml-auto text-[10px] text-slate-600" title="No analysis written yet">&mdash;</span>
+        {% endif %}
+      </div>
+      <div class="text-[11px] text-slate-500 mt-0.5">{{ r.blurb }}</div>
+      {% if r.as_of %}<div class="text-[10px] text-slate-600 mt-0.5">{{ localtime(r.as_of, date_only=true) }}</div>{% endif %}
+    </a>
+    {% endfor %}
+  </nav>
+
+  <div id="macroPane">{% include "_macro_section.html" %}</div>
+</div>
+
+<script>
+// Paint the active rail item on swap — the fragment replaces only the right pane,
+// so the rail's own highlight has to be updated here.
+document.body.addEventListener('htmx:afterOnLoad', function (e) {
+  var t = e.detail && e.detail.elt;
+  if (!t || !t.classList || !t.classList.contains('macro-tab')) return;
+  document.querySelectorAll('.macro-tab').forEach(function (a) {
+    var on = a === t;
+    a.classList.toggle('border-emerald-400', on);
+    a.classList.toggle('bg-emerald-500/10', on);
+    a.classList.toggle('border-transparent', !on);
+    a.classList.toggle('hover:bg-slate-800/50', !on);
+    var lbl = a.querySelector('span');
+    if (lbl) {
+      lbl.classList.toggle('text-emerald-300', on);
+      lbl.classList.toggle('font-medium', on);
+      lbl.classList.toggle('text-slate-200', !on);
+    }
+  });
+});
+</script>
+{% endblock %}

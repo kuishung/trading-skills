@@ -17,7 +17,9 @@ from .security import require_user
 # Revamped 2026-07-18 to a top-down investing funnel (user): Macro -> Sector &
 # Industry -> Company -> Watchlist -> Portfolio. All 5 are flat top-level items.
 MENUS = [
-    ("macro",            "Macro",             None, "/research?kind=macro"),
+    # /macro = the fixed six-topic board (2026-08-16). Free-form macro research
+    # still lives at /research?kind=macro, linked from the board.
+    ("macro",            "Macro",             None, "/macro"),
     ("sector",           "Sector & Industry", None, "/sector"),
     ("company_analysis", "Company",           None, "/company-analysis"),
     ("matp",             "Watchlist",         None, "/matp"),
