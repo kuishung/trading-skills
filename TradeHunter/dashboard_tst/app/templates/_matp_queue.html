@@ -15,9 +15,19 @@
   {% if c.errors %}
   <div class="text-rose-300">{{ c.errors }} filter{{ 's' if c.errors != 1 }} failed to resolve</div>
   {% endif %}
-  <form method="post" action="/finviz/queue/refresh" class="ml-auto">
-    <button class="text-xs px-2.5 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">&#8635; Re-resolve</button>
-  </form>
+  <div class="ml-auto flex items-center gap-2">
+    {# Two DIFFERENT actions — the labels say which is which, because one is free
+       and the other spends agent tokens. #}
+    <form method="post" action="/finviz/queue/refresh">
+      <button title="Re-read each screener's ticker membership from Finviz. Computes nothing — no MATP is calculated."
+              class="text-xs px-2.5 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">&#8635; Re-scan filters</button>
+    </form>
+    <form method="post" action="/finviz/queue/recalc-all"
+          onsubmit="return confirm('Recalculate MATP/MBP for all {{ c.tickers }} tickers?\n\nThis marks every filter due, so the agent runs the whole deduplicated queue on its next poll (~10 min). Each ticker is computed once.');">
+      <button title="Queue a MATP/MBP recalculation for every ticker in this list"
+              class="text-xs px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 font-medium">&#8635; Recalculate all</button>
+    </form>
+  </div>
 </div>
 
 {# ── container summary: what each filter contributes ── #}
@@ -75,6 +85,7 @@
           <th class="text-right font-normal px-3 py-1.5">MATP</th>
           <th class="text-right font-normal px-3 py-1.5">MBP</th>
           <th class="text-left font-normal px-3 py-1.5">Calculated Date</th>
+          <th class="text-center font-normal px-2 py-1.5" title="Queue a MATP/MBP recalculation for this ticker">Recalc</th>
           <th class="text-right font-normal px-3 py-1.5">In filters</th>
           <th class="text-left font-normal px-3 py-1.5">Held by</th>
         </tr>
@@ -90,6 +101,17 @@
           <td class="text-left px-3 py-1.5 text-slate-500">
             {% if t.as_of %}{{ localtime(t.as_of, date_only=true) }}
             {% else %}<span class="text-amber-400/80" title="No MATP run has covered this ticker yet">not yet calculated</span>{% endif %}
+          </td>
+          {# Per-ticker recalc. Enqueues an agent request (the dashboard runs no
+             LLM); the handler in finviz.html paints the queued state. #}
+          <td class="text-center px-2 py-1.5">
+            <button type="button"
+                    class="mq-recalc text-[13px] leading-none px-1.5 py-0.5 rounded transition
+                           {% if t.queued %}text-amber-300 cursor-default{% else %}text-slate-600 hover:text-emerald-300 hover:bg-emerald-500/10{% endif %}"
+                    data-sym="{{ t.symbol }}"
+                    {% if t.queued %}data-queued="1"{% endif %}
+                    title="{% if t.queued %}{{ t.symbol }} is already queued for recalculation{% else %}Recalculate MATP/MBP for {{ t.symbol }}{% endif %}"
+            >{% if t.queued %}&#8987;{% else %}&#8635;{% endif %}</button>
           </td>
           <td class="text-right px-3 py-1.5 tabular-nums {% if t.n_sources > 1 %}text-amber-300 font-medium{% else %}text-slate-500{% endif %}">{{ t.n_sources }}</td>
           <td class="text-left px-3 py-1.5">

@@ -129,6 +129,31 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-16 — v3.89: MATP Tickers — recalculate buttons (per ticker + whole queue)
+- User request: a button to recalculate MATP/MBP from the MATP Tickers tab.
+- **Per ticker** — a ↻ in each row → `POST /finviz/queue/recalc`, which reuses the existing
+  `matp._enqueue` refresh-request queue the agent drains on its ~10-min poll. The dashboard
+  computes nothing itself (no LLM, no scraping — unchanged). `_enqueue` refuses a duplicate
+  while one is open, so a double-click is a no-op; `build_queue` now returns a `queued` flag
+  so an already-queued ticker renders ⌛ instead of an inert button.
+- **Whole queue** — "Recalculate all" → `POST /finviz/queue/recalc-all`. Deliberately does
+  **NOT** enqueue one request per ticker: that would be ~81 rows and would **bypass the
+  dedup this tab exists to provide**. Instead it clears `next_run_at` on every *scheduled*
+  active filter (and the selective set), i.e. marks them due via the same mechanism the
+  schedule uses — so the agent pulls `/api/matp-queue` and works the deduplicated union once.
+  Filters set to `off` are left untouched. Confirm dialog states the ticker count, since this
+  spends agent tokens.
+- Renamed the sibling button **Re-resolve → "Re-scan filters"** with a tooltip, after the
+  user asked what it meant. The two now read as clearly different actions: one re-reads
+  Finviz membership (free, computes nothing), the other queues real MATP work.
+- The row handler is delegated on `document` in `finviz.html`, not shipped inside the
+  fragment — the panel is swapped via `innerHTML`, which does not execute embedded scripts,
+  so a fragment-local handler would silently never bind.
+- Verified: enqueues exactly one pending request; a second click doesn't duplicate; the
+  queued flag renders; recalc-all marks scheduled filters + selective due, leaves `off`
+  filters untouched, creates **zero** per-ticker requests, and the agent endpoint still
+  returns a duplicate-free work list afterwards.
+
 ### 2026-08-16 — v3.88: the agent pill now reflects MEASURED health, not just liveness
 - **Why:** the Nous agent was dead for ten days (2026-08-06 → 08-16) and the `/agent` pill
   stayed green the entire time. `heartbeat.sh` runs from system cron, decoupled from the

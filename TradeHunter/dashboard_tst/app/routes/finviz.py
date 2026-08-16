@@ -181,11 +181,61 @@ def matp_queue_panel(
 
 @router.post("/queue/refresh")
 def matp_queue_refresh(mod: User = Depends(require_moderator), db: Session = Depends(get_db)):
-    """Force a re-resolve of every filter's membership (bypasses both caches)."""
+    """Re-read each screener's ticker MEMBERSHIP from Finviz (bypasses the 15-min
+    in-process and 1-hour disk caches). Computes nothing — no MATP is calculated
+    and no agent work is queued; see /queue/recalc for that."""
     from ..services.matp_queue import build_queue
 
     build_queue(db, force_refresh=True)
     # back to the tab the user was on (the tab script reads location.hash)
+    return RedirectResponse(url="/finviz#queue", status_code=303)
+
+
+@router.post("/queue/recalc")
+def matp_queue_recalc_one(
+    symbol: str = Form(...),
+    mod: User = Depends(require_moderator),
+    db: Session = Depends(get_db),
+):
+    """Queue a MATP/MBP recalculation for ONE ticker.
+
+    Reuses the existing refresh-request queue that the Nous agent drains on its
+    ~10-minute poll — this endpoint does no computation itself (TradeHunter runs
+    no LLM and does no scraping). `_enqueue` refuses to create a duplicate while
+    one is already open, so double-clicking is harmless."""
+    from .matp import _enqueue
+
+    sym = (symbol or "").strip().upper()
+    if not sym:
+        return {"ok": False, "error": "no symbol"}
+    queued = _enqueue(db, "ticker", symbol=sym, user=mod)
+    return {"ok": True, "symbol": sym, "queued": queued,
+            "note": "queued" if queued else "already queued"}
+
+
+@router.post("/queue/recalc-all")
+def matp_queue_recalc_all(
+    mod: User = Depends(require_moderator), db: Session = Depends(get_db)
+):
+    """Recalculate the WHOLE queue on the agent's next poll.
+
+    Deliberately does NOT enqueue one request per ticker — that would be ~81 rows
+    and would bypass the dedup entirely. Instead it marks every active filter (and
+    the selective set) as DUE by clearing `next_run_at`, which is the same
+    mechanism the schedule uses. The agent then pulls /api/matp-queue and works
+    the deduplicated union once, so an overlapping ticker is still computed a
+    single time."""
+    from ..models import get_selective_schedule
+
+    n = 0
+    for f in db.query(FinvizFilter).filter(FinvizFilter.is_active.is_(True)).all():
+        if f.run_interval != "off":
+            f.next_run_at = None      # due now
+            n += 1
+    sched = get_selective_schedule(db)
+    if sched.run_interval != "off":
+        sched.next_run_at = None
+    db.commit()
     return RedirectResponse(url="/finviz#queue", status_code=303)
 
 

@@ -428,6 +428,36 @@
             'text-rose-200 hover:bg-rose-500/10 transition">Retry</button></div>';
         });
     };
+    // Per-ticker "recalculate MATP" button in the queue table. Delegated on
+    // document because the panel is swapped in via innerHTML, which does NOT
+    // execute scripts inside the fragment — a handler shipped with the fragment
+    // would silently never bind.
+    document.addEventListener('click', function (e) {
+      var btn = e.target.closest ? e.target.closest('.mq-recalc') : null;
+      if (!btn || btn.dataset.queued || btn._busy) return;
+      e.preventDefault();
+      var sym = (btn.dataset.sym || '').trim();
+      if (!sym) return;
+      btn._busy = true;
+      btn.style.opacity = '0.5';
+      var body = new URLSearchParams(); body.append('symbol', sym);
+      fetch('/finviz/queue/recalc', { method: 'POST', body: body })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function (j) {
+          // paint the queued state; the agent picks it up on its next poll
+          btn.dataset.queued = '1';
+          btn.innerHTML = '&#8987;';
+          btn.classList.remove('text-slate-600', 'hover:text-emerald-300', 'hover:bg-emerald-500/10');
+          btn.classList.add('text-amber-300', 'cursor-default');
+          btn.title = sym + ' queued for recalculation';
+          window.thToast && window.thToast(
+            sym + (j.queued ? ' queued for MATP recalculation' : ' was already queued'), 'ok');
+        })
+        .catch(function (err) {
+          window.thToast && window.thToast('Could not queue ' + sym + ': ' + err.message, 'err');
+        })
+        .finally(function () { btn._busy = false; btn.style.opacity = ''; });
+    });
     tabs.forEach(function (t) { t.addEventListener('click', function () { activate(t.dataset.tab); }); });
     var init = (location.hash || '').replace('#', '');
     activate(names.indexOf(init) >= 0 ? init : 'finviz');

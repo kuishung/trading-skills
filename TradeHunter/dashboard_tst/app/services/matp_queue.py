@@ -26,7 +26,7 @@ import time
 
 from sqlalchemy.orm import Session
 
-from ..models import FinvizFilter, MATPLevel, get_selective_schedule
+from ..models import FinvizFilter, MATPLevel, MATPRefreshRequest, get_selective_schedule
 from . import resources_bridge
 
 # Resolved-membership cache: filter_id -> (expires_at, [symbols], error|None).
@@ -151,6 +151,18 @@ def build_queue(db: Session, *, due_only: bool = False,
         for lv in db.query(MATPLevel).filter(MATPLevel.symbol.in_(syms)).all():
             levels[lv.symbol] = lv
 
+    # symbols with a recalculation already queued/running, so the UI can show
+    # "queued" instead of offering a button that would be a no-op (_enqueue
+    # refuses to create a duplicate open request).
+    pending = {
+        r.symbol
+        for r in db.query(MATPRefreshRequest)
+        .filter(MATPRefreshRequest.scope == "ticker",
+                MATPRefreshRequest.status.in_(("pending", "running")))
+        .all()
+        if r.symbol
+    }
+
     tickers = []
     for sym in sorted(membership):
         srcs = membership[sym]
@@ -164,6 +176,7 @@ def build_queue(db: Session, *, due_only: bool = False,
             "mbp": getattr(lv, "mbp", None),
             "as_of": getattr(lv, "as_of", None),
             "has_matp": lv is not None and getattr(lv, "matp", None) is not None,
+            "queued": sym in pending,
         })
 
     n_unique = len(tickers)
