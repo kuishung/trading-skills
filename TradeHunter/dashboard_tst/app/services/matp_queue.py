@@ -132,7 +132,16 @@ def progress(db: Session) -> dict:
             as_of = as_of.replace(tzinfo=_dt.timezone.utc)
         return as_of >= cutoff
 
-    done = sum(1 for t in tickers if _fresh(t["as_of"]))
+    fresh = [t for t in tickers if _fresh(t["as_of"])]
+    done = len(fresh)
+    # WHICH tickers are outstanding — without this the bar can park below 100%
+    # with no way to tell whether the agent is stuck or those tickers simply
+    # cannot be computed. Some never will be: MarketBeat has no post-earnings
+    # analyst targets for thin-coverage names, recent IPOs, or symbols that don't
+    # resolve, and the skill correctly skips those rather than inventing a median.
+    # So 100% is not always attainable, and the UI has to say so.
+    outstanding = [t for t in tickers if not _fresh(t["as_of"])]
+    never = [t["symbol"] for t in outstanding if t["as_of"] is None]
     filters_due = sum(1 for f in q["filters"] if f.get("due"))
     pending = sum(1 for t in tickers if t.get("queued"))
     active = bool(filters_due or pending or q["selective"].get("due"))
@@ -143,6 +152,8 @@ def progress(db: Session) -> dict:
         "filters_due": filters_due,
         "pending": pending,
         "active": active,
+        "remaining": [t["symbol"] for t in outstanding],
+        "never": never,          # never calculated at all (vs merely stale)
         # poll briskly while work is outstanding, calmly otherwise
         "poll_in": 15 if active else 90,
     }

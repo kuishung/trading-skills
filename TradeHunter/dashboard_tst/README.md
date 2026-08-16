@@ -129,6 +129,20 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-16 — v3.93: name the outstanding tickers (a bar parked at 94% isn't "stuck")
+- Reported: the catch-up bar reached 76/81 and stopped. The agent was fine — but the panel
+  gave no way to tell "stuck" from "finished as far as it can", which is a flaw in the
+  metric I shipped in v3.92: **100% is not always attainable**, so a bar that implies it is
+  will eventually read as broken.
+- `progress()` now returns `remaining` (the outstanding symbols) and `never` (those with no
+  MATP at all, vs merely stale). The panel lists them — up to 12, then `+N more` — with the
+  never-calculated ones in amber.
+- The explainer now states plainly that a few tickers **may never complete**: MarketBeat has
+  no post-earnings analyst targets for thin-coverage names or recent IPOs, and the skill
+  skips those rather than inventing a median. So the bar legitimately settling below 100%
+  is an expected outcome, not a failure.
+- Turns "why is it stuck at 94%?" into five ticker symbols you can look at and judge.
+
 ### 2026-08-16 — v3.92: MATP catch-up progress bar + the agent pill blinks on scheduled work
 Both reported together, and both the same root cause: **"Recalculate all" marks filters DUE
 rather than creating refresh requests**, and every existing progress surface (the `/agent`

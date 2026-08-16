@@ -35,15 +35,30 @@
          style="width: {{ p.pct }}%"></div>
   </div>
 
+  {# Name the stragglers. A bar parked below 100% with no explanation reads as
+     broken; most of the time these are tickers MarketBeat has no post-earnings
+     analyst coverage for, which will never complete no matter how long you wait. #}
+  {% if p.remaining %}
+  <div class="mt-2 text-[11px]">
+    <span class="text-slate-500">{{ p.remaining|length }} outstanding:</span>
+    {% for sym in p.remaining[:12] %}<span class="inline-block rounded bg-slate-800 {{ 'text-amber-300' if sym in p.never else 'text-slate-400' }} px-1.5 py-0.5 ml-1"
+      title="{{ 'Never calculated' if sym in p.never else 'Has an older MATP; not refreshed in this cycle' }}">{{ sym }}</span>{% endfor %}
+    {% if p.remaining|length > 12 %}<span class="text-slate-600 ml-1">+{{ p.remaining|length - 12 }} more</span>{% endif %}
+  </div>
+  {% endif %}
+
   <p class="text-[10px] text-slate-600 mt-1.5">
-    {% if p.active %}
+    {% if p.pct >= 100 %}
+      Every ticker in the queue has a fresh MATP.
+    {% elif p.active %}
       The agent works this queue on its ~10-minute poll and has a per-run call budget, so a
       large catch-up completes over several polls — the bar advances as results land.
-    {% elif p.pct >= 100 %}
-      Every ticker in the queue has a fresh MATP.
+      <b class="text-slate-500">A few tickers may never complete:</b> MarketBeat has no
+      post-earnings analyst targets for thin-coverage names or recent IPOs, and those are
+      skipped rather than guessed — so the bar can legitimately settle below 100%.
     {% else %}
       Nothing queued. Use <b class="text-slate-500">Recalculate all</b> above, or the
-      &#8635; on a row, to request new calculations.
+      &#8635; on a row, to request new calculations for the outstanding tickers.
     {% endif %}
   </p>
 </div>
