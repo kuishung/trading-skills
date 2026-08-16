@@ -129,6 +129,27 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-16 — v3.92: MATP catch-up progress bar + the agent pill blinks on scheduled work
+Both reported together, and both the same root cause: **"Recalculate all" marks filters DUE
+rather than creating refresh requests**, and every existing progress surface (the `/agent`
+"working now" panel, the nav pill's blink) only ever tracked *ticker-scope requests*. So the
+agent could have a whole queue to work through while the UI sat perfectly still.
+- **Progress bar** on MATP Tickers (`services/matp_queue.progress` + `_matp_progress.html`,
+  `GET /finviz/queue/progress`). It measures the **outcome** — tickers whose MATP was
+  recalculated in the last 24h, out of the queue total — not the process. That's deliberate:
+  the agent drains the queue across several ~10-minute polls under a per-run API-call budget,
+  so no single run has a percentage to report, but "N of M recalculated" stays true however
+  many runs it takes. Shows the waiting-filter and queued-request counts alongside.
+- **Self-polling**: every 15s while work is outstanding, 90s when idle, so the bar advances
+  without a reload and doesn't hammer the server when there's nothing happening. Cheap —
+  reuses `build_queue`'s caches, so it never re-scrapes Finviz.
+- **Nav pill now blinks on scheduled work too**, not just on open ticker requests
+  (`agent_pill` consults `matp_queue.progress(...)["active"]`, soft-failing so a Finviz
+  hiccup can never break the nav).
+- Verified on the exact reported case — a due filter with **zero** refresh requests: reads
+  active, pill blinks, bar renders 2/4 at 50% naming the waiting filter, advances to 100% as
+  tickers get fresh MATPs, and blink + fast-poll both stop when the work completes.
+
 ### 2026-08-16 — v3.91: Containers table shows Last run (proof a recalculate was picked up)
 - User asked, after clicking Recalculate all: *"how do I know the cron is running?"* — a fair
   question, because there was **no answer in the dashboard**. That action mostly marks filters

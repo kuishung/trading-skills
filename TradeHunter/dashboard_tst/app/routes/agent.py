@@ -173,6 +173,18 @@ def agent_pill(
     # should blink as soon as it's queued and stop when it finishes or goes
     # stale. Reuses _active_run_items' staleness so a stuck run stops blinking.
     working = any(not it["stale"] for it in _active_run_items(db))
+    # ALSO blink when SCHEDULED MATP work is outstanding. "Recalculate all" (and
+    # the ordinary schedule) marks filters DUE rather than creating refresh
+    # requests, so the check above sees nothing and the pill sat still while the
+    # agent had a whole queue to work through — the user reported exactly that.
+    # Soft-fail: a Finviz resolve hiccup must never break the nav pill.
+    try:
+        from ..services.matp_queue import progress as _queue_progress
+
+        if _queue_progress(db)["active"]:
+            working = True
+    except Exception:  # noqa: BLE001
+        pass
     # Poll faster while working so the blink starts/stops promptly; calm idle.
     poll_in = 5 if working else 15
     return templates.TemplateResponse(

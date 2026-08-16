@@ -1,0 +1,49 @@
+{# MATP catch-up progress bar. Context: p {total, done, pct, filters_due,
+   pending, active, poll_in}.
+
+   "Done" = tickers whose MATP was recalculated in the last 24h. That is the only
+   honest progress signal available: the agent works the deduplicated queue with a
+   per-run API budget (~60 calls), so a large catch-up spans SEVERAL 10-minute
+   polls and pushes results incrementally — there is no single run whose % we
+   could report. Counting freshly-stamped tickers measures the outcome instead of
+   the process, and it keeps working no matter how many runs it takes.
+
+   Self-polls (fast while work is outstanding, slow when idle) so the bar advances
+   without a page reload. #}
+<div hx-get="/finviz/queue/progress" hx-trigger="load delay:{{ p.poll_in }}s"
+     hx-target="#mqProgress" hx-swap="innerHTML"></div>
+
+<div class="rounded-lg border {{ 'border-emerald-500/30 bg-emerald-500/5' if p.active else 'border-slate-800 bg-slate-900/40' }} px-4 py-3">
+  <div class="flex items-center flex-wrap gap-x-3 gap-y-1 mb-2">
+    <span class="text-sm font-medium {{ 'text-emerald-300' if p.active else 'text-slate-300' }}">
+      {% if p.active %}&#9679; Recalculation in progress{% else %}Recalculation status{% endif %}
+    </span>
+    <span class="text-[11px] text-slate-500">
+      {{ p.done }} / {{ p.total }} tickers calculated in the last 24h
+    </span>
+    {% if p.filters_due %}
+    <span class="text-[11px] text-amber-300">{{ p.filters_due }} filter{{ 's' if p.filters_due != 1 }} waiting for the agent</span>
+    {% endif %}
+    {% if p.pending %}
+    <span class="text-[11px] text-sky-300">{{ p.pending }} individual request{{ 's' if p.pending != 1 }} queued</span>
+    {% endif %}
+    <span class="ml-auto text-sm tabular-nums {{ 'text-emerald-300' if p.pct >= 100 else 'text-slate-400' }}">{{ p.pct }}%</span>
+  </div>
+
+  <div class="h-2 w-full rounded-full bg-slate-800 overflow-hidden">
+    <div class="h-full rounded-full transition-all duration-700 {{ 'bg-emerald-500' if p.pct >= 100 else 'bg-emerald-500/70' }}"
+         style="width: {{ p.pct }}%"></div>
+  </div>
+
+  <p class="text-[10px] text-slate-600 mt-1.5">
+    {% if p.active %}
+      The agent works this queue on its ~10-minute poll and has a per-run call budget, so a
+      large catch-up completes over several polls — the bar advances as results land.
+    {% elif p.pct >= 100 %}
+      Every ticker in the queue has a fresh MATP.
+    {% else %}
+      Nothing queued. Use <b class="text-slate-500">Recalculate all</b> above, or the
+      &#8635; on a row, to request new calculations.
+    {% endif %}
+  </p>
+</div>

@@ -107,6 +107,47 @@ def manual_symbols(db: Session) -> list[str]:
     return [r.symbol for r in rows]
 
 
+def progress(db: Session) -> dict:
+    """Catch-up progress for the MATP Tickers page.
+
+    Measures the OUTCOME (how many queue tickers now carry a fresh MATP), not the
+    process. The agent drains the deduplicated queue across several ~10-minute
+    polls under a per-run API budget, so no single run has a percentage we could
+    report — but "N of M recalculated in the last 24h" is true regardless of how
+    many runs it takes, and keeps advancing while they happen.
+
+    `active` drives both the fast poll cadence and the nav pill's blink: work is
+    outstanding when a filter/selective schedule is due or a ticker request is
+    open. Reuses build_queue's caches, so polling this is cheap.
+    """
+    q = build_queue(db, due_only=False)
+    tickers = q["tickers"]
+    total = len(tickers)
+    cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=24)
+
+    def _fresh(as_of) -> bool:
+        if as_of is None:
+            return False
+        if as_of.tzinfo is None:
+            as_of = as_of.replace(tzinfo=_dt.timezone.utc)
+        return as_of >= cutoff
+
+    done = sum(1 for t in tickers if _fresh(t["as_of"]))
+    filters_due = sum(1 for f in q["filters"] if f.get("due"))
+    pending = sum(1 for t in tickers if t.get("queued"))
+    active = bool(filters_due or pending or q["selective"].get("due"))
+    return {
+        "total": total,
+        "done": done,
+        "pct": int(round(done * 100 / total)) if total else 0,
+        "filters_due": filters_due,
+        "pending": pending,
+        "active": active,
+        # poll briskly while work is outstanding, calmly otherwise
+        "poll_in": 15 if active else 90,
+    }
+
+
 def build_queue(db: Session, *, due_only: bool = False,
                 force_refresh: bool = False) -> dict:
     """The deduplicated MATP work queue.

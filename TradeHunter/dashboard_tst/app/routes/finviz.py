@@ -191,6 +191,21 @@ def matp_queue_refresh(mod: User = Depends(require_moderator), db: Session = Dep
     return RedirectResponse(url="/finviz#queue", status_code=303)
 
 
+@router.get("/queue/progress", response_class=HTMLResponse)
+def matp_queue_progress(
+    request: Request,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Self-polling progress bar for the MATP catch-up. Cheap: reuses the
+    build_queue caches, so this can poll every 15s without re-scraping Finviz."""
+    from ..services.matp_queue import progress
+
+    return templates.TemplateResponse(
+        request, "_matp_progress.html", {"user": user, "p": progress(db)}
+    )
+
+
 @router.post("/queue/recalc")
 def matp_queue_recalc_one(
     symbol: str = Form(...),
