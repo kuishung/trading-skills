@@ -1,11 +1,24 @@
 {# Inner content of the nav "Nous Hermes" pill (swapped into the <a> by HTMX).
-   Context: has_beat, online, status_text, working, poll_in.
+   Context: has_beat, online, status_text, working, poll_in, verdict.
 
-   The dot BLINKS while the agent has a live MATP run (queued or running)
-   (`working`); otherwise it's static. Self-polls (faster while working) so the
-   blink starts/stops promptly — swaps the whole pill, carrying the next poll. #}
+   Colour = MEASURED health, not just liveness (see routes/agent.py::health_view):
+     emerald  online + agent verified able to run
+     amber    online but degraded (agent can't run / gateway down / disk full),
+              OR health not reported at all (older heartbeat.sh)
+     rose     had a beat, now stale
+     slate    never seen a beat
+   The amber-for-unknown case is deliberate: a green dot that only meant "the box
+   is powered on" is what let a ten-day agent outage pass unnoticed (2026-08-06).
+
+   The dot BLINKS while the agent has a live MATP run (`working`); it also blinks
+   when degraded, so a real fault draws the eye. Self-polls (faster while
+   working) — swaps the whole pill, carrying the next poll. #}
+{% set state = (verdict.state if verdict else 'unknown') %}
+{% set dot = 'bg-emerald-400' if (online and state == 'ok')
+             else ('bg-amber-400' if online
+             else ('bg-rose-500' if has_beat else 'bg-slate-600')) %}
 <div hx-get="/agent/pill" hx-trigger="load delay:{{ poll_in or 15 }}s"
      hx-target="#agentpill" hx-swap="innerHTML"></div>
-<span class="{% if working %}th-blink {% endif %}h-2 w-2 rounded-full shrink-0 {{ 'bg-emerald-400' if online else ('bg-rose-500' if has_beat else 'bg-slate-600') }}"
-      title="Nous Hermes agent · {{ status_text }}{% if working %} · MATP run active{% endif %}"></span>
+<span class="{% if working or state == 'degraded' %}th-blink {% endif %}h-2 w-2 rounded-full shrink-0 {{ dot }}"
+      title="Nous Hermes agent &middot; {{ status_text }}{% if working %} &middot; MATP run active{% endif %}"></span>
 <span class="hidden sm:inline text-white">Nous Hermes</span>

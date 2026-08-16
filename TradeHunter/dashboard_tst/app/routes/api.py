@@ -176,6 +176,23 @@ class CronJobIn(BaseModel):
     active: bool | None = None
 
 
+class AgentHealthIn(BaseModel):
+    """Measured health from heartbeat.sh — see nous_hermes/heartbeat.sh.
+
+    `agent_ok` is the load-bearing field: it means `hermes --version` actually
+    ran, i.e. the venv interpreter and CLI are intact. A beat WITHOUT this object
+    only proves the box is powered on (which is how the 2026-08-06 outage hid for
+    ten days), so the UI renders a missing health object as "not reported" rather
+    than as healthy."""
+    agent_ok: bool | None = None
+    agent_error: str | None = None
+    agent_version: str | None = None
+    gateway: str | None = None        # systemctl --user is-active <unit>
+    disk_pct: int | None = None       # root filesystem % used (-1 = unknown)
+    disk_free: str | None = None      # human-readable, e.g. "89G"
+    disk_path: str | None = None
+
+
 class HeartbeatIn(BaseModel):
     agent: str = "nous_hermes"
     version: str | None = None
@@ -183,6 +200,7 @@ class HeartbeatIn(BaseModel):
     cron_jobs: list[CronJobIn] | None = None  # structured, with full prompts
     host: str | None = None
     polled_at: str | None = None      # ISO-8601 from the agent's own clock
+    health: AgentHealthIn | None = None
 
 
 @router.post("/agent/heartbeat")
@@ -211,6 +229,11 @@ def agent_heartbeat(
         if payload.cron_jobs is not None else None
     )
     row.host = payload.host
+    # None (older heartbeat.sh) leaves the previous value alone rather than
+    # wiping it — but the UI ages health out on its own, so a downgraded script
+    # can't leave a stale "healthy" showing forever.
+    if payload.health is not None:
+        row.health = payload.health.model_dump()
     row.polled_at = polled
     row.received_at = now
     db.commit()

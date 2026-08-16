@@ -312,6 +312,14 @@ class AgentHeartbeat(Base):
     #   [{"id","schedule","skills","prompt","next_run","active"}]
     cron_jobs = Column(JSON, nullable=True)
     host = Column(String(120), nullable=True)     # optional hostname
+    # MEASURED health from heartbeat.sh (added 2026-08-16):
+    #   {agent_ok, agent_error, agent_version, gateway, disk_pct, disk_free, disk_path}
+    # A beat proves the BOX is up; this proves the AGENT can actually run. The
+    # 2026-08-06 outage stayed invisible for ten days precisely because the beat
+    # kept landing while the agent was dead. None = an older heartbeat.sh that
+    # doesn't report health yet -> the UI shows "health not reported", never a
+    # false green.
+    health = Column(JSON, nullable=True)
     polled_at = Column(DateTime, nullable=True)   # agent's own clock at send
     received_at = Column(DateTime, default=_utcnow)  # server clock on receipt
 

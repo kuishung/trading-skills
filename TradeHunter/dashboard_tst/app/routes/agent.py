@@ -32,6 +32,54 @@ STALE_AFTER = _dt.timedelta(minutes=25)
 # MATP refresh-request states that mean "the agent hasn't finished this yet".
 _OPEN_STATES = ("pending", "running")
 
+# Root-disk usage at which we call the box degraded. The 2026-08-06 outage began
+# with the disk at 100%, and the cleanup that freed it deleted uv's managed
+# Python out from under the agent's venv — so disk pressure IS an agent risk,
+# not just a housekeeping note.
+DISK_WARN_PCT = 90
+
+
+def health_view(health: dict | None, online: bool) -> dict:
+    """Turn a reported health object into a display verdict.
+
+    Three states, and the distinction matters:
+      ok        - beat is live AND the agent was measured able to run
+      degraded  - beat is live but something is measurably wrong (agent can't
+                  run, gateway not active, disk over the line)
+      unknown   - beat is live but the agent is on an older heartbeat.sh that
+                  reports no health. We deliberately do NOT show this as healthy:
+                  that exact false-green hid a ten-day outage. It resolves as
+                  soon as the new heartbeat.sh is deployed.
+    """
+    if not online:
+        return {"state": "offline", "reasons": [], "reported": bool(health)}
+    if not health:
+        return {
+            "state": "unknown",
+            "reasons": ["health not reported — agent is on an older heartbeat.sh"],
+            "reported": False,
+        }
+    reasons = []
+    if health.get("agent_ok") is False:
+        reasons.append("`hermes` cannot run: " + (health.get("agent_error") or "unknown error"))
+    gw = (health.get("gateway") or "").strip()
+    # "unknown" means the probe could not MEASURE the unit (e.g. no user bus in
+    # a cron session), which is not evidence of a fault — treating it as one
+    # would light the pill amber forever and train everyone to ignore it.
+    if gw and gw not in ("active", "unknown"):
+        # "activating" is the crash-loop signature — systemd restarting forever.
+        reasons.append(
+            f"gateway {gw}" + (" (crash-looping)" if gw == "activating" else "")
+        )
+    pct = health.get("disk_pct")
+    if isinstance(pct, int) and pct >= DISK_WARN_PCT:
+        reasons.append(f"disk {pct}% full")
+    return {
+        "state": "degraded" if reasons else "ok",
+        "reasons": reasons,
+        "reported": True,
+    }
+
 
 def _fmt_ago(ts: _dt.datetime | None, now: _dt.datetime) -> str:
     if ts is None:
@@ -72,6 +120,7 @@ def agent_status(
             ln for ln in (r.crons or "").splitlines()
             if ln.strip() and not ln.strip().startswith("#")
         ]
+        h = r.health if isinstance(r.health, dict) else None
         agents.append({
             "agent": r.agent,
             "version": r.version,
@@ -80,6 +129,8 @@ def agent_status(
             "seen_ago": _fmt_ago(recv, now),
             "jobs": jobs,
             "cron_lines": cron_lines,
+            "health": h,
+            "verdict": health_view(h, online),
         })
     return templates.TemplateResponse(
         request, "agent.html", {"user": user, "agents": agents}
@@ -103,10 +154,18 @@ def agent_pill(
     if recv is not None and recv.tzinfo is None:
         recv = recv.replace(tzinfo=_dt.timezone.utc)
     online = recv is not None and (now - recv) <= STALE_AFTER
+    verdict = health_view(
+        r.health if (r is not None and isinstance(r.health, dict)) else None, online
+    )
     if r is None:
         status_text = "no heartbeat yet"
     else:
         status_text = ("online" if online else "stale") + " · " + _fmt_ago(recv, now)
+        # A live beat is NOT the same as a working agent — say which.
+        if verdict["state"] == "degraded":
+            status_text += " · DEGRADED: " + "; ".join(verdict["reasons"])
+        elif verdict["state"] == "unknown":
+            status_text += " · health not reported"
     # Does the agent have a LIVE MATP run (queued OR running, not stale)? The
     # pill blinks while this is true. We deliberately include 'pending' — not
     # just 'running' — because the agent's running-status report can lag or fail
@@ -120,7 +179,7 @@ def agent_pill(
         request, "_agent_pill.html",
         {
             "has_beat": r is not None, "online": online, "status_text": status_text,
-            "working": working, "poll_in": poll_in,
+            "working": working, "poll_in": poll_in, "verdict": verdict,
         },
     )
 

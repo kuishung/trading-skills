@@ -129,6 +129,32 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-16 — v3.88: the agent pill now reflects MEASURED health, not just liveness
+- **Why:** the Nous agent was dead for ten days (2026-08-06 → 08-16) and the `/agent` pill
+  stayed green the entire time. `heartbeat.sh` runs from system cron, decoupled from the
+  LLM by design, so a landing beat only ever proved *"the Linux box is powered on."*
+- `heartbeat.sh` now reports a **`health`** object — `agent_ok`/`agent_error`
+  (`hermes --version`, the probe that would have caught it), `gateway`
+  (`systemctl --user is-active`), `disk_pct`/`disk_free`. New `agent_heartbeats.health`
+  JSON column, migration `c2d3e4f5a6b7`.
+- New `routes/agent.py::health_view` → four states: **green** live beat *and* agent verified
+  runnable · **amber** degraded (each reason named) or health-not-reported · **rose** stale ·
+  **slate** never seen. The pill blinks when degraded, and the reasons ride in its tooltip;
+  `/agent` gets a health card with the CLI/gateway/disk detail.
+- **Amber-for-unreported is deliberate.** An agent on an older `heartbeat.sh` must never
+  render as healthy — that false green *is* the bug. It self-resolves on redeploy.
+- **Anti-false-alarm:** anything unmeasurable (`gateway: unknown`, `disk_pct: -1`) counts as
+  *not a fault*. And the script now sets `PATH`+`XDG_RUNTIME_DIR`, without which cron's
+  minimal environment made `hermes` "not found" and `systemctl --user` bus-less — every beat
+  would have reported a false fault on a healthy box, which is worse than the original
+  silence because nobody trusts a pill that cries wolf. (That also fixes the pre-existing
+  `hermes cron list` call, silently empty under cron all along.)
+- Verified by replaying the exact Aug-6 state — beat landing, `agent_ok:false`, gateway
+  `activating`, disk 100% — which now reads **DEGRADED** naming all three causes; plus each
+  fault degrading independently, unmeasurable values not alarming, and an old health-less
+  beat rendering amber rather than green.
+- **Requires redeploying `heartbeat.sh` on the agent box** (`bash nous_hermes/install.sh`).
+
 ### 2026-08-16 — v3.87: "MATP Tickers" tab — rename, column order, and a visible failure path
 - Renamed the tab **All Tickers → MATP Tickers** (user).
 - Column order now leads with what the tab is for: **Ticker · MATP · MBP · Calculated Date**,

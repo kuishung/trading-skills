@@ -25,6 +25,50 @@
       </div>
     </div>
 
+    {# ---- MEASURED HEALTH ----
+       A heartbeat proves the box is powered on. These probes prove the AGENT can
+       actually run. Both are shown because the difference is what hid the
+       2026-08-06 outage for ten days. #}
+    {% set v = a.verdict %}
+    {% set h = a.health %}
+    {% if v and v.state != 'offline' %}
+    <div class="rounded-lg border {{ 'border-emerald-500/30 bg-emerald-500/5' if v.state == 'ok'
+                                     else 'border-amber-500/40 bg-amber-500/5' }} px-4 py-3">
+      <div class="flex items-center flex-wrap gap-x-3 gap-y-1">
+        <span class="text-sm font-medium {{ 'text-emerald-300' if v.state == 'ok' else 'text-amber-300' }}">
+          {% if v.state == 'ok' %}&#10003; Agent healthy
+          {% elif v.state == 'degraded' %}&#9888; Degraded
+          {% else %}&#9888; Health not reported{% endif %}
+        </span>
+        {% if v.state == 'ok' %}<span class="text-[11px] text-slate-500">heartbeat live and <code class="text-slate-400">hermes</code> verified runnable</span>{% endif %}
+      </div>
+      {% if v.reasons %}
+      <ul class="mt-1.5 space-y-0.5 text-xs text-amber-200/90">
+        {% for reason in v.reasons %}<li>&bull; {{ reason }}</li>{% endfor %}
+      </ul>
+      {% endif %}
+      {% if v.state == 'unknown' %}
+      <p class="text-[11px] text-slate-500 mt-1">
+        Deploy the current <code class="text-slate-400">heartbeat.sh</code>
+        (<code class="text-slate-400">bash nous_hermes/install.sh</code> on the agent box) and this
+        becomes a real health check instead of a liveness ping.
+      </p>
+      {% endif %}
+      {% if h %}
+      <div class="flex flex-wrap gap-x-6 gap-y-1 mt-2 text-[11px]">
+        <span class="text-slate-500">CLI
+          <b class="{{ 'text-emerald-300' if h.agent_ok else 'text-rose-300' }}">{{ 'runnable' if h.agent_ok else 'FAILING' }}</b></span>
+        {% if h.gateway %}<span class="text-slate-500">gateway
+          <b class="{{ 'text-emerald-300' if h.gateway == 'active' else 'text-rose-300' }}">{{ h.gateway }}</b></span>{% endif %}
+        {% if h.disk_pct is not none and h.disk_pct >= 0 %}<span class="text-slate-500">disk
+          <b class="{{ 'text-rose-300' if h.disk_pct >= 90 else 'text-slate-300' }}">{{ h.disk_pct }}%</b>
+          {% if h.disk_free %}<span class="text-slate-600">({{ h.disk_free }} free)</span>{% endif %}</span>{% endif %}
+        {% if h.agent_version %}<span class="text-slate-600">{{ h.agent_version }}</span>{% endif %}
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
     {# live "working now" panel — active MATP runs + moving progress bar (once) #}
     {% if loop.first %}
     <div id="agent-active" hx-get="/agent/active" hx-trigger="load" hx-swap="innerHTML"></div>

@@ -175,14 +175,37 @@ tail -30 ~/.hermes/logs/errors.log                   # agent-level failures
 ls -la ~/.hermes/logs/                               # mtimes = when each layer died
 ```
 
-### The heartbeat does NOT prove the agent works
+### The heartbeat now MEASURES health (fixed 2026-08-16)
 
 `heartbeat.sh` runs from **system cron** as plain bash (`jq` + `curl`), deliberately
 decoupled from the LLM so model glitches can't derail it (2026-06-01). The cost of that
-decoupling: it kept POSTing happily for the entire ten days the agent was dead, so
-TradeHunter's `/agent` page showed green throughout. **A green agent pill means "the box
-is powered on", not "the agent can run."** If you want it to mean the latter, have
-`heartbeat.sh` shell out to `hermes --version` and report the exit status.
+decoupling used to be that a beat proved only *"the box is powered on"* — it kept POSTing
+happily for the entire ten days the agent was dead, so TradeHunter's `/agent` page showed
+green throughout.
+
+It now also reports a `health` object, so a green pill means **the agent can actually run**:
+
+| field | probe | why |
+|---|---|---|
+| `agent_ok` / `agent_error` | `hermes --version` (25s timeout) | exercises the venv interpreter + CLI — **exactly what broke on 2026-08-06** |
+| `gateway` | `systemctl --user is-active hermes-gateway.service` | `activating` = the crash-loop signature |
+| `disk_pct` / `disk_free` | `df -P /` | disk pressure is what started the whole chain |
+
+Dashboard side (`routes/agent.py::health_view`): **green** = live beat *and* agent verified
+runnable · **amber** = degraded, with the reasons named, or health not reported at all ·
+**rose** = beat gone stale · **slate** = never seen. Amber-for-unreported is deliberate —
+an older `heartbeat.sh` must never render as healthy, since that false green is the whole bug.
+
+**Two cron-environment requirements** (the script sets both; don't remove them). Cron gives
+you `/usr/bin:/bin` and no login session, so without them the probes can't measure and every
+beat would report a false fault — worse than silence, because a pill that cries wolf gets
+ignored:
+- `PATH` must include `~/.local/bin` or `hermes` is "not found" (this also fixes
+  `hermes cron list`, which had been silently returning empty under cron).
+- `XDG_RUNTIME_DIR` must be set or `systemctl --user` can't reach the user bus.
+
+Anything genuinely unmeasurable (`gateway: unknown`, `disk_pct: -1`) is treated as **not a
+fault** rather than a failure, for the same anti-noise reason.
 
 ## Updating the skill
 Edit files here, redeploy (scp / git pull → `bash install.sh`), then re-test with
@@ -190,6 +213,15 @@ Edit files here, redeploy (scp / git pull → `bash install.sh`), then re-test w
 recreate the cron job unless the schedule or delivery target changes.
 
 ## Changelog
+- **2026-08-16** — **`heartbeat.sh` now measures agent health, not just liveness.**
+  Adds a `health` object to the beat: `agent_ok`/`agent_error` (from `hermes --version`),
+  `gateway` (`systemctl --user is-active`), and `disk_pct`/`disk_free`. Motivated by the
+  2026-08-06 outage, which hid for ten days behind a green pill that only ever meant "the
+  box is powered on". Also sets `PATH` (`~/.local/bin`) and `XDG_RUNTIME_DIR` because cron's
+  minimal environment made both probes — and the pre-existing `hermes cron list` — silently
+  unmeasurable. Pairs with dashboard_tst v3.88 (`agent_heartbeats.health` + the amber
+  degraded state). **Redeploy with `bash nous_hermes/install.sh`;** until then the dashboard
+  shows "health not reported" rather than a false green.
 - **2026-08-16** — `markets/matp` skill → **v1.8.0**: Stage 1 now reads the new
   **deduplicated queue** at `GET /api/matp-queue` instead of expanding each due
   filter's Finviz URL itself. Screener filters overlap, so the old per-filter walk
