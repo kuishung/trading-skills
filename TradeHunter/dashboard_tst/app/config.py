@@ -98,6 +98,12 @@ class Settings:
         )
     )
 
+    # FRED (St. Louis Fed) — the macro-series source behind the Macro board's
+    # tracked indicators. Free key, register at fred.stlouisfed.org (instant).
+    # Unset -> FRED-sourced indicators report "not configured" and the
+    # Yahoo-sourced ones still work; nothing breaks.
+    fred_api_key: str | None = field(default_factory=lambda: os.environ.get("TST_FRED_API_KEY"))
+
     # Discord: outbound webhook URL for collaboration notifications (e.g. a MATP
     # refresh completing posts a summary to a channel). Unset -> notifications
     # are silently skipped. Create it in Discord: Server Settings -> Integrations

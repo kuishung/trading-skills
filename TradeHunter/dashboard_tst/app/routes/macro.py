@@ -70,6 +70,14 @@ def _section_ctx(db: Session, key: str) -> dict:
             ctx["tone"] = risk_tone(ctx["cross"])
         except Exception:  # noqa: BLE001
             ctx["cross"] = None
+    # Tracked indicator series — the trend layer (MACRO_STUDY_DESIGN Phase A).
+    # Soft-fail: an empty or broken series must not blank the written analysis.
+    try:
+        from ..services.indicators import section_summaries
+
+        ctx["indicators"] = section_summaries(db, key)
+    except Exception:  # noqa: BLE001
+        ctx["indicators"] = []
     return ctx
 
 
@@ -81,6 +89,15 @@ def macro_home(
     db: Session = Depends(get_db),
 ):
     key = (section or "").strip() if (section or "").strip() in MACRO_SECTIONS else MACRO_SECTIONS[0]
+    # First visit populates the indicator definitions. Idempotent, and after the
+    # first run it's a single COUNT — cheaper than a startup hook and it can
+    # never clobber a user's edits to the set.
+    try:
+        from ..services.indicators import ensure_seeded
+
+        ensure_seeded(db)
+    except Exception:  # noqa: BLE001
+        pass
     return templates.TemplateResponse(request, "macro.html", {
         "user": user, "rail": _rail(db, key), "sec": _section_ctx(db, key),
     })
@@ -100,6 +117,33 @@ def macro_section(
     return templates.TemplateResponse(request, "_macro_section.html", {
         "user": user, "sec": _section_ctx(db, key),
     })
+
+
+@router.post("/section/{key}/refresh")
+def macro_section_refresh(
+    key: str,
+    mod: User = Depends(require_moderator),
+    db: Session = Depends(get_db),
+):
+    """Backfill/refresh this section's indicator series from source.
+
+    Idempotent — existing observations are left alone, so a re-run only fills
+    gaps and appends. Returns per-indicator results so a missing FRED key or a
+    dead series is visible rather than silently producing an empty chart."""
+    if key not in MACRO_SECTIONS:
+        return {"ok": False, "error": "unknown section"}
+    from ..services.indicators import ensure_seeded, refresh_section
+
+    ensure_seeded(db)
+    results = refresh_section(db, key)
+    added = sum(r.get("added", 0) for r in results)
+    failed = [r for r in results if not r.get("ok")]
+    return {
+        "ok": True, "section": key, "added": added,
+        "indicators": len(results), "failed": failed,
+        "note": (f"{added} new observations across {len(results)} indicators"
+                 + (f"; {len(failed)} failed" if failed else "")),
+    }
 
 
 @router.post("/section/{key}")

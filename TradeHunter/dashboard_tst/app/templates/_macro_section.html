@@ -53,6 +53,61 @@
   </div>
   {% endif %}
 
+  {# ── tracked indicators: the TREND layer (never a bare snapshot) ── #}
+  {% if sec.indicators %}
+  <div class="px-4 py-3 border-b border-slate-800">
+    <div class="flex items-center gap-3 flex-wrap mb-2">
+      <span class="text-[10px] uppercase tracking-wide text-slate-600">Tracked indicators</span>
+      {% if can_edit %}
+      <button type="button" id="macroRefresh" data-key="{{ sec.key }}"
+              class="ml-auto text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 transition"
+              title="Backfill / update these series from source">&#8635; Refresh series</button>
+      {% endif %}
+    </div>
+    <div class="space-y-1">
+      {% for s in sec.indicators %}
+      {% set i = s.ind %}
+      <div class="grid grid-cols-[1fr_7.5rem_5rem_5rem] gap-2 items-center px-2 py-1.5 rounded hover:bg-slate-800/40 transition">
+        <div class="min-w-0">
+          <div class="text-[12px] text-slate-200 truncate" title="{{ i.source }}:{{ i.source_ref }}">{{ i.label }}</div>
+          {% if i.note %}<div class="text-[10px] text-slate-600 truncate" title="{{ i.note }}">{{ i.note }}</div>{% endif %}
+        </div>
+        <div class="text-right">
+          {% if s.spark %}
+          <svg viewBox="0 0 120 28" width="120" height="28" class="inline-block align-middle" aria-hidden="true">
+            <polyline points="{{ s.spark }}" fill="none" stroke="currentColor"
+                      class="text-slate-500" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round"/>
+          </svg>
+          {% else %}<span class="text-[10px] text-slate-700">no series</span>{% endif %}
+        </div>
+        <div class="text-right">
+          <div class="text-[13px] tabular-nums text-slate-100">
+            {% if s.latest is not none %}{{ '%.2f'|format(s.latest) }}{% if i.unit %}<span class="text-[10px] text-slate-500">{{ i.unit }}</span>{% endif %}{% else %}&mdash;{% endif %}
+          </div>
+          {% if s.as_of %}<div class="text-[10px] text-slate-600">{{ s.as_of.strftime('%Y-%m-%d') }}</div>{% endif %}
+        </div>
+        {# Change vs 12m — the point of the trend layer. Colour is direction only;
+           whether "up" is good depends on the indicator, so we don't imply it. #}
+        <div class="text-right text-[11px] tabular-nums">
+          {% if s.chg_12m is not none %}
+          <span class="{{ 'text-emerald-400' if s.chg_12m > 0 else ('text-rose-400' if s.chg_12m < 0 else 'text-slate-400') }}">{{ '%+.2f'|format(s.chg_12m) }}</span>
+          <div class="text-[10px] text-slate-600">vs 12m</div>
+          {% elif s.chg_3m is not none %}
+          <span class="{{ 'text-emerald-400' if s.chg_3m > 0 else 'text-rose-400' }}">{{ '%+.2f'|format(s.chg_3m) }}</span>
+          <div class="text-[10px] text-slate-600">vs 3m</div>
+          {% else %}<span class="text-slate-700">&mdash;</span>{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    <p class="text-[10px] text-slate-600 mt-2">
+      Levels are stored raw; YoY / MoM are derived on read. Sparkline shows the last
+      ~60 observations. Colour marks direction only &mdash; whether a rise is good
+      depends on the indicator.
+    </p>
+  </div>
+  {% endif %}
+
   {# ── written analysis ── #}
   <div class="px-4 py-3">
     {% if sec.row and sec.row.body %}

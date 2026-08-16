@@ -129,6 +129,32 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-16 — v3.95: Macro study Phase A — tracked indicator series
+- `MACRO_STUDY_DESIGN.md` Phase A: every macro topic now shows a **trend**, not a snapshot.
+- New `MacroIndicator` (definition) + `MacroReading` (observations) + migration
+  `e4f5a6b7c8d9`. **Definitions live in the DB, seeded from `services/indicators.SEED`** —
+  the indicator set is a trading judgement, so it must be revisable without a deploy. Seed
+  runs once on an empty table and never overwrites a later edit.
+- **21 indicators across all six topics**, including the three the research pass added:
+  ACM-style rate decomposition inputs, Chicago Fed **NFCI** (the conditioning variable in
+  *Vulnerable Growth*), and **Baker-Bloom-Davis EPU** — which gives Global & geopolitical the
+  hard series the design doc had written off as unavailable.
+- New FRED adapter + `TST_FRED_API_KEY` (free key). Yahoo history comes through
+  `resources/yf_daily_bars` — **in-memory, never parquet**, per the two-path rule: this board
+  is a live view, so only *historical study* may read the parquet store.
+- **Raw levels are stored; YoY/MoM are derived on read.** The store stays source-of-truth, a
+  transform can be corrected without re-fetching, and two indicators can share one series.
+- Server-rendered **sparkline** (inline SVG polyline, no chart library) + latest value +
+  change vs 12m/3m. Colour marks *direction only* — whether a rise is good depends on the
+  indicator, so the UI doesn't imply it.
+- Moderator **"Refresh series"** per section → `POST /macro/section/{key}/refresh`. Idempotent
+  (fills gaps, appends, never duplicates). A missing FRED key or dead series is **reported per
+  indicator**, not silently rendered as an empty chart.
+- Verified: seed is idempotent; all 6 topics covered; re-refresh adds 0 rows; YoY computed on
+  read while the store holds the raw level; sparkline emits 60 points inside its viewBox; an
+  empty series returns None rather than throwing; unknown section rejected; missing FRED key
+  surfaces an explicit error.
+
 ### 2026-08-16 — `MACRO_STUDY_DESIGN.md` (design only, no code)
 - Blueprint for turning each `/macro` topic into a **continuous study**: tracked indicator
   series, framed scenarios, stated implications, and mechanical trigger monitoring.

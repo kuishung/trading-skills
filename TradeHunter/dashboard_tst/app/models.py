@@ -663,6 +663,52 @@ class MacroAnalysis(Base):
     updated_by = Column(String(120), nullable=True)
 
 
+class MacroIndicator(Base):
+    """Definition of ONE tracked macro series — the "Track" step of the study loop.
+
+    Definitions live in the DB (not code) so the indicator set is a trading
+    judgement the user can revise without a deploy. See MACRO_STUDY_DESIGN.md.
+    """
+
+    __tablename__ = "macro_indicators"
+
+    id = Column(Integer, primary_key=True)
+    key = Column(String(40), unique=True, nullable=False, index=True)   # e.g. "t10y2y"
+    section = Column(String(32), nullable=False, index=True)            # MACRO_SECTIONS
+    label = Column(String(120), nullable=False)
+    source = Column(String(12), nullable=False)        # fred | yahoo | computed
+    source_ref = Column(String(60), nullable=True)     # FRED series id / Yahoo symbol
+    unit = Column(String(20), nullable=True)           # %, index, $bn …
+    # How to READ the stored level. Readings always hold the raw source value;
+    # transforms are applied at read time so the store stays source-of-truth.
+    transform = Column(String(10), nullable=False, default="level")     # level | yoy | mom
+    higher_is = Column(String(12), nullable=True)      # risk_on | risk_off | neutral
+    note = Column(Text, nullable=True)                 # provenance / caveat shown in the UI
+    sort = Column(Integer, nullable=False, default=0)
+    active = Column(Boolean, nullable=False, default=True)
+
+
+class MacroReading(Base):
+    """One observation of one indicator — the series behind the sparkline.
+
+    Same shape as MATPHistory (the proven time-series pattern here). `vintage`
+    carries the as-published date for revisable macro data so a future
+    point-in-time backfill can avoid lookahead; null = final/unrevised.
+    """
+
+    __tablename__ = "macro_readings"
+
+    id = Column(Integer, primary_key=True)
+    indicator_key = Column(String(40), nullable=False, index=True)
+    as_of = Column(DateTime, nullable=False, index=True)
+    value = Column(Float, nullable=False)
+    vintage = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("indicator_key", "as_of", name="uq_macro_reading_key_asof"),
+    )
+
+
 class UserWatchlist(Base):
     """A ticker one user has starred — the per-user "My Watchlist".
 
