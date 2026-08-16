@@ -132,6 +132,11 @@ def matp_home(
     if symbol:
         sym = symbol.strip().upper()
         sel = next((lv for lv in all_levels if lv.symbol == sym), None)
+        # Explicitly asked for a ticker with no MATPLevel row (e.g. one starred
+        # into My Watchlist before an MATP run covered it): chart THAT ticker
+        # price-only, rather than silently falling through to a different one.
+        if sel is None and sym:
+            sel = uwl.PlaceholderLevel(sym)
     if sel is None:
         sel = shown_tickers[0] if shown_tickers else (active[0] if active else None)
 
@@ -303,6 +308,14 @@ def matp_chart(
     not the whole watchlist's live trend/signal grid (the slow part)."""
     sym = (symbol or "").strip().upper()
     sel = db.query(MATPLevel).filter(MATPLevel.symbol == sym).first()
+    # A ticker can be on the board WITHOUT an MATPLevel row — e.g. starred into
+    # My Watchlist from the Sector or Company page before any MATP run has covered
+    # it. Without this fallback the pane rendered its "No tickers yet — run a
+    # watchlist to populate" empty state, which read as "your watchlist is broken".
+    # Fall back to the same placeholder the grid uses: a price-only chart with no
+    # MATP/MBP lines (identical to how the Company page charts an uncovered ticker).
+    if sel is None and sym:
+        sel = uwl.PlaceholderLevel(sym)
     return templates.TemplateResponse(
         request,
         "_chart_pane.html",

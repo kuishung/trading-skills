@@ -129,6 +129,22 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-16 — v3.86: fix — charting a My Watchlist ticker with no MATP row yet
+- Reported: starring a ticker that no MATP run has covered, then opening it, showed
+  *"No tickers yet — run a watchlist to populate."*
+- Cause: v3.84 taught the watchlist **grid** to tolerate an uncovered ticker (via
+  `PlaceholderLevel`) but not the **chart**. `matp_chart` looked the symbol up in
+  `MATPLevel`, got `None`, and `_chart_pane.html` fell through to its no-selection empty
+  state. `matp_home` had the same hole and was worse — with `?symbol=` set to an uncovered
+  ticker it silently charted a *different* one.
+- Fix: both now fall back to the same `PlaceholderLevel` the grid uses, so the ticker
+  charts **price-only** with no MATP/MBP lines — exactly how the Company page already
+  charts a ticker outside the MATP board.
+- The empty state is preserved where it's actually correct (no symbol selected at all).
+- Regression-tested: uncovered ticker charts via both the HTMX swap and the full board;
+  a covered ticker is unchanged; a blank symbol still shows the empty state; the grid
+  still lists the uncovered ticker.
+
 ### 2026-08-16 — v3.85: Data Ingest — "All Tickers" tab = the DEDUPLICATED MATP queue
 - User request: screener filters overlap, so the same ticker was getting its MATP
   recomputed once per filter that held it — wasted token cost. *"add a tab for all the
