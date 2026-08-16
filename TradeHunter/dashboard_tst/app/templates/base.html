@@ -321,6 +321,96 @@
     document.addEventListener('htmx:load', function () { run(); });
   })();
 
+  // ── My Watchlist (per-user stars) ─────────────────────────────────────────
+  // One delegated handler for every surface: the .wl-star toggle in the MATP
+  // grid, and the .wl-add "Add to Watchlist" buttons on Sector & Industry and
+  // the Company page. CAPTURE phase, because in the MATP grid the star lives
+  // inside the row <a> — without stopPropagation the click would also load the
+  // chart. Optimistic paint, reverted if the POST fails.
+  (function () {
+    function post(url, sym) {
+      var body = new URLSearchParams(); body.append('symbol', sym);
+      return fetch(url, { method: 'POST', body: body })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
+    }
+
+    function paintStar(el, on) {
+      el.innerHTML = on ? '&#9733;' : '&#9734;';
+      el.setAttribute('aria-pressed', on ? 'true' : 'false');
+      el.classList.toggle('text-amber-300', on);
+      el.classList.toggle('text-slate-700', !on);
+      el.classList.toggle('hover:text-amber-300', !on);
+      var sym = (el.dataset && el.dataset.sym) || '';
+      el.title = (on ? 'Remove ' + sym + ' from' : 'Add ' + sym + ' to') + ' My Watchlist';
+    }
+
+    function toggleStar(el) {
+      var sym = ((el.dataset && el.dataset.sym) || '').trim();
+      if (!sym || el._busy) return;
+      el._busy = true;
+      var was = el.getAttribute('aria-pressed') === 'true';
+      paintStar(el, !was);                                  // optimistic
+      post('/matp/my/toggle', sym)
+        .then(function (j) { paintStar(el, !!j.starred); })
+        .catch(function () { paintStar(el, was); window.thToast && window.thToast('Could not update My Watchlist', 'err'); })
+        .finally(function () { el._busy = false; });
+    }
+
+    // "Add to Watchlist" button — add-only, then show it's done.
+    function addToWatchlist(el) {
+      var sym = ((el.dataset && el.dataset.sym) || '').trim();
+      if (!sym || el._busy) return;
+      el._busy = true;
+      var label = el.querySelector('.wl-add-label') || el;
+      var prev = label.textContent;
+      post('/matp/my/add', sym)
+        .then(function () {
+          label.textContent = '★ On My Watchlist';
+          el.classList.add('text-amber-300', 'border-amber-500/60');
+          el.classList.remove('text-slate-300', 'border-slate-700');
+          window.thToast && window.thToast(sym + ' added to My Watchlist', 'ok');
+        })
+        .catch(function () {
+          label.textContent = prev;
+          window.thToast && window.thToast('Could not add ' + sym, 'err');
+        })
+        .finally(function () { el._busy = false; });
+    }
+
+    document.addEventListener('click', function (e) {
+      var star = e.target.closest ? e.target.closest('.wl-star') : null;
+      if (star) { e.preventDefault(); e.stopPropagation(); toggleStar(star); return; }
+      var add = e.target.closest ? e.target.closest('.wl-add') : null;
+      if (add) { e.preventDefault(); e.stopPropagation(); addToWatchlist(add); }
+    }, true);
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      var t = e.target;
+      if (t.classList && t.classList.contains('wl-star')) { e.preventDefault(); e.stopPropagation(); toggleStar(t); }
+      else if (t.classList && t.classList.contains('wl-add')) { e.preventDefault(); e.stopPropagation(); addToWatchlist(t); }
+    }, true);
+  })();
+
+  // Small shared toast (also used by the watchlist handlers above).
+  window.thToast = function (msg, kind) {
+    var t = document.getElementById('thToast');
+    if (!t) {
+      t = document.createElement('div');
+      t.id = 'thToast';
+      t.style.cssText = 'position:fixed;left:50%;bottom:1.25rem;transform:translateX(-50%);' +
+        'z-index:95;padding:.5rem .9rem;border-radius:.5rem;font-size:12px;font-weight:500;' +
+        'box-shadow:0 6px 24px rgba(0,0,0,.4);transition:opacity .25s;pointer-events:none;opacity:0';
+      document.body.appendChild(t);
+    }
+    var c = { ok: ['#052e16', '#86efac', '1px solid rgba(34,197,94,.4)'],
+              err: ['#3b0d0d', '#fca5a5', '1px solid rgba(239,68,68,.45)'] }[kind]
+            || ['#0f172a', '#cbd5e1', '1px solid rgba(148,163,184,.35)'];
+    t.style.background = c[0]; t.style.color = c[1]; t.style.border = c[2];
+    t.textContent = msg; t.style.opacity = '1';
+    clearTimeout(t._hide);
+    t._hide = setTimeout(function () { t.style.opacity = '0'; }, 2400);
+  };
+
   // Metric-label tooltips. ONE floating element, positioned fixed, driven by
   // event delegation on document -- so it works for content HTMX swaps in later
   // (the Overview / Financials tabs load lazily) with no re-binding, and can't

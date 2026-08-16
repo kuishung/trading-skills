@@ -17,14 +17,17 @@
   {% else %}<span class="text-slate-700">&middot;</span>{% endif %}
 {% endmacro %}
 
-{% macro ticker_grid(tickers, open_symbols, sel_sym, live, wl="", can_delete=false) %}
+{% macro ticker_grid(tickers, open_symbols, sel_sym, live, wl="", can_delete=false, my_syms=None) %}
 {# Shared column template — used VERBATIM by the header and every row so the
    columns line up pixel-for-pixel (separate grids with `auto` cols would drift).
-   Sym flexes (truncates); Trend/Sig/Price/MATP/MBP are fixed widths. A trailing
-   1.3rem delete column is added only for moderators (can_delete). Defined INSIDE
-   the macro so it's in scope even when imported into another template. #}
-{% set GRIDCSS = "display:grid;grid-template-columns:minmax(3.4rem,1fr) 2.4rem 2.9rem 3.2rem 3.2rem 3.2rem 1.3rem" ~ (" 1.3rem" if can_delete else "") ~ ";column-gap:0.25rem;align-items:center" %}
+   Sym flexes (truncates); Trend/Sig/Price/MATP/MBP are fixed widths. A leading
+   1.2rem STAR column (My Watchlist toggle, every user) and a trailing 1.3rem
+   delete column (moderators only) bracket the row. Defined INSIDE the macro so
+   it's in scope even when imported into another template. #}
+{% set _my = my_syms or [] %}
+{% set GRIDCSS = "display:grid;grid-template-columns:1.2rem minmax(3.4rem,1fr) 2.4rem 2.9rem 3.2rem 3.2rem 3.2rem 1.3rem" ~ (" 1.3rem" if can_delete else "") ~ ";column-gap:0.25rem;align-items:center" %}
 <div style="{{ GRIDCSS }}" class="px-2 pt-1 text-[10px] uppercase tracking-wide text-slate-600">
+  <span class="text-center" title="My Watchlist">&#9733;</span>
   <span>Sym</span>
   <span class="text-center">Trend</span>
   <span class="text-center">Sig</span>
@@ -44,6 +47,14 @@
    data-sym="{{ lv.symbol }}"
    style="{{ GRIDCSS }}"
    class="wl-row px-2 py-1 rounded {% if sel_sym == lv.symbol %}bg-emerald-500/15{% else %}hover:bg-slate-800/70{% endif %}">
+  {# My Watchlist star. A <span> (not <button>) so it stays valid inside the row
+     <a>; the capture-phase handler in base.html intercepts it so clicking the
+     star never also loads the chart. #}
+  {% set _on = lv.symbol in _my %}
+  <span class="wl-star cursor-pointer text-center text-[13px] leading-none select-none transition {% if _on %}text-amber-300{% else %}text-slate-700 hover:text-amber-300{% endif %}"
+        role="button" tabindex="0" aria-pressed="{{ 'true' if _on else 'false' }}"
+        title="{{ 'Remove ' ~ lv.symbol ~ ' from My Watchlist' if _on else 'Add ' ~ lv.symbol ~ ' to My Watchlist' }}"
+        data-sym="{{ lv.symbol }}">{% if _on %}&#9733;{% else %}&#9734;{% endif %}</span>
   <span class="wl-sym text-[13px] font-medium whitespace-nowrap {% if sel_sym == lv.symbol %}text-emerald-300{% else %}text-white{% endif %}">{{ lv.symbol }}{% if lv.symbol in open_symbols %} <span class="text-amber-400">&#8635;</span>{% endif %}</span>
   <span class="text-center text-[12px]">{{ trend_badge(lr.get("trend") or lv.trend) }}</span>
   <span class="text-center">{{ signal_badge(lr.get("signal") or lv.signal) }}</span>

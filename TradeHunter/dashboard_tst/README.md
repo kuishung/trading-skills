@@ -129,6 +129,38 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-16 — v3.84: My Watchlist (per-user starred tickers)
+- User request: a **"My Watchlist"** on the Watchlist page, unique per user, with an
+  **"Add to Watchlist"** control on Sector & Industry / Company.
+- New `UserWatchlist` model + migration `b1c2d3e4f5a6` — `(user_id, symbol, note,
+  created_at)`, unique `(user_id, symbol)`, FK cascade on user delete. Deliberately
+  **symbols only**: a ticker's market data stays in the shared `MATPLevel`, so starring
+  never duplicates market data.
+- New `services/user_watchlist.py` — the single place per-user scoping is enforced
+  (every read/write filters on `user_id`). Portable ORM only (query-then-write, no
+  SQLite upsert) per the data-handling rule. `add`/`remove` are idempotent so a
+  double-click can't 500.
+- **Starring a ticker with no MATP row works**: `PlaceholderLevel` supplies the exact
+  attribute surface the grid + `_chart_context` read, so a symbol starred straight off
+  the Sector page renders with a live price and blank MATP/MBP until an MATP run covers
+  it — instead of being silently dropped.
+- `/matp?wl=mine` (+ the lazy `/matp/watchlist?wl=mine`) is the new board view; the
+  selector gains **★ My Watchlist (n)**. Ordered newest-star-first so a just-added
+  ticker lands where the user expects. Empty state points at where to add from.
+- New `POST /matp/my/toggle` and `POST /matp/my/add`, declared **before** the `/{symbol}`
+  routes so "my" isn't captured as a ticker by the catch-all.
+- UI: a ★/☆ column in the watchlist grid and on every Sector & Industry symbol row, plus
+  an **Add to Watchlist** button on the Company page header (pre-filled from the user's
+  list). One delegated capture-phase handler in `base.html` drives all of them — capture
+  phase because the star sits inside the row `<a>`, and without `stopPropagation` the
+  click would also load the chart. Optimistic paint, reverted on failure; new shared
+  `window.thToast`.
+- Verified against a throwaway SQLite DB: migration chain applies and creates the table;
+  the unique constraint is enforced at DB level; alice's and bob's lists stay disjoint
+  (removing bob's star leaves alice's intact); placeholder vs real row both render;
+  toggle/add round-trip; `?wl=mine` renders; **no cross-user leakage** in the rendered
+  board.
+
 ### 2026-08-16 — v3.83: Overview + Financials — hover tooltips explaining every figure
 - User request: *"in overview and financial, i need … when mouse hover … a tooltip to explain
   what is the meaning of each of the description … to give user a more easier understanding

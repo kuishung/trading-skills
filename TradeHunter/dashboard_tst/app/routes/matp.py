@@ -28,6 +28,7 @@ from ..models import (
 )
 from ..security import require_moderator, require_user
 from ..services import discord
+from ..services import user_watchlist as uwl
 
 # request states that mean "the agent hasn't finished this yet"
 _OPEN_STATES = ("pending", "running")
@@ -110,11 +111,14 @@ def matp_home(
         by_filter.setdefault(lv.filter_id, []).append(lv)
     unfiled = by_filter.get(None, [])
 
-    # selected watchlist: ?wl = all | individual | <filter_id>. "all" shows every
-    # active ticker; "individual" shows the ad-hoc (no-filter) tickers.
+    # selected watchlist: ?wl = all | mine | individual | <filter_id>. "all" shows
+    # every active ticker; "mine" is this user's own starred list; "individual"
+    # shows the ad-hoc (no-filter) tickers.
     valid_ids = {str(f.id) for f in active_filters}
     sel_wl = (wl or "all").strip()
-    if sel_wl == "individual":
+    if sel_wl == "mine":
+        shown_tickers = uwl.levels_for(db, user, all_levels)
+    elif sel_wl == "individual":
         shown_tickers = list(unfiled)
     elif sel_wl in valid_ids:
         shown_tickers = list(by_filter.get(int(sel_wl), []))
@@ -148,6 +152,7 @@ def matp_home(
             "open_filter_ids": open_filter_ids,
             "sel_wl": sel_wl,
             "sel": sel,
+            "my_count": len(uwl.symbols(db, user)),
             **ctx,
         },
     )
@@ -160,6 +165,43 @@ def ticker_search(q: str = "", user: User = Depends(require_user)):
     from ..services.prices import search_tickers
 
     return {"results": search_tickers(q)}
+
+
+# ── My Watchlist (per-user stars) ────────────────────────────────────────────
+# Declared BEFORE the "/{symbol}" routes below, otherwise "my" would be captured
+# as a ticker symbol by the catch-all.
+
+@router.post("/my/toggle")
+def my_watchlist_toggle(
+    symbol: str = Form(...),
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Star / unstar a ticker on THIS user's watchlist. Idempotent per state, so
+    a double-click can't 500. Returns the new state for the UI to paint."""
+    sym = (symbol or "").strip().upper()
+    if not sym:
+        return {"ok": False, "error": "no symbol"}
+    starred = uwl.toggle(db, user, sym)
+    return {"ok": True, "symbol": sym, "starred": starred,
+            "count": len(uwl.symbols(db, user))}
+
+
+@router.post("/my/add")
+def my_watchlist_add(
+    symbol: str = Form(...),
+    note: str | None = Form(None),
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Add-only (the "Add to Watchlist" buttons on Sector & Industry and the
+    Company page). Already-present is a success, not an error."""
+    sym = (symbol or "").strip().upper()
+    if not sym:
+        return {"ok": False, "error": "no symbol"}
+    added = uwl.add(db, user, sym, note)
+    return {"ok": True, "symbol": sym, "added": added, "starred": True,
+            "count": len(uwl.symbols(db, user))}
 
 
 @router.get("/watchlist", response_class=HTMLResponse)
@@ -195,7 +237,9 @@ def matp_watchlist(
 
     valid_ids = {str(f.id) for f in active_filters}
     sel_wl = (wl or "all").strip()
-    if sel_wl == "individual":
+    if sel_wl == "mine":
+        shown = uwl.levels_for(db, user, all_levels)
+    elif sel_wl == "individual":
         shown = list(unfiled)
     elif sel_wl in valid_ids:
         shown = list(by_filter.get(int(sel_wl), []))
@@ -241,6 +285,7 @@ def matp_watchlist(
             "sel_wl": sel_wl,
             "live": live,
             "wl_refreshed": wl_refreshed,
+            "my_syms": uwl.symbol_set(db, user),
         },
     )
 

@@ -602,3 +602,32 @@ class CompanyAnalysis(Base):
     __table_args__ = (
         UniqueConstraint("symbol", "section", name="uq_company_analysis_symbol_section"),
     )
+
+
+class UserWatchlist(Base):
+    """A ticker one user has starred — the per-user "My Watchlist".
+
+    Deliberately just (user, symbol): the ticker's DATA (MATP/MBP, trend, signal)
+    still lives in MATPLevel, shared by everyone. This table only records WHOSE
+    list a symbol is on, so starring never duplicates market data and a symbol
+    with no MATPLevel row yet can still be tracked (the board renders it with a
+    live price and blank target columns until an MATP run fills it in).
+
+    Scoping is by user_id on every read and write — one member can never see or
+    modify another's list. Cascade-deletes with the user.
+    """
+
+    __tablename__ = "user_watchlist"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
+                     nullable=False, index=True)
+    symbol = Column(String(20), nullable=False, index=True)
+    note = Column(Text, nullable=True)          # optional "why I'm watching this"
+    created_at = Column(DateTime, default=_utcnow)
+
+    user = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "symbol", name="uq_user_watchlist_user_symbol"),
+    )

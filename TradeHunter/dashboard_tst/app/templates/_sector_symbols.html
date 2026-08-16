@@ -5,14 +5,22 @@
 </p>
 {% else %}
 <div class="text-[11px] text-slate-500 mb-2">{{ sector_name }} &middot; <span class="text-slate-300">{{ industry }}</span> &middot; {{ tickers|length }} symbols{% if filtered %} &middot; <span class="text-emerald-400/80">filtered</span>{% endif %}</div>
-{% set COLS = "display:grid;grid-template-columns:3rem 1fr 3.6rem;column-gap:0.3rem;align-items:center" %}
+{# Leading star column = add/remove this ticker on MY watchlist (handler in
+   base.html). It sits inside the row, so the capture-phase handler stops the
+   click from also swapping the chart. #}
+{% set COLS = "display:grid;grid-template-columns:1.2rem 3rem 1fr 3.6rem;column-gap:0.3rem;align-items:center" %}
 <div style="{{ COLS }}" class="px-1 pb-0.5 text-[10px] uppercase tracking-wide text-slate-600 border-b border-slate-800/70">
-  <span>Ticker</span><span>Full Name</span><span class="text-right">Last</span>
+  <span class="text-center" title="My Watchlist">&#9733;</span><span>Ticker</span><span>Full Name</span><span class="text-right">Last</span>
 </div>
 {% for t in tickers %}
+{% set _on = my_syms and t.symbol in my_syms %}
 <div data-sym="{{ t.symbol }}" title="Show {{ t.symbol }} chart"
      hx-get="/sector/chart?symbol={{ t.symbol }}" hx-target="#sectorChartBody" hx-swap="innerHTML"
      style="{{ COLS }}" class="wl-ticker cursor-pointer px-1 py-0.5 rounded hover:bg-emerald-500/10 hover:text-emerald-300 transition">
+  <span class="wl-star cursor-pointer text-center text-[12px] leading-none select-none transition {% if _on %}text-amber-300{% else %}text-slate-700 hover:text-amber-300{% endif %}"
+        role="button" tabindex="0" aria-pressed="{{ 'true' if _on else 'false' }}"
+        title="{{ 'Remove ' ~ t.symbol ~ ' from My Watchlist' if _on else 'Add ' ~ t.symbol ~ ' to My Watchlist' }}"
+        data-sym="{{ t.symbol }}">{% if _on %}&#9733;{% else %}&#9734;{% endif %}</span>
   <span class="text-[12px] font-medium text-slate-200">{{ t.symbol }}</span>
   <span class="text-[11px] text-slate-400 truncate" title="{{ t.company }}">{{ t.company or '&mdash;' }}</span>
   <span class="text-right text-[11px] text-slate-300 tabular-nums">{{ '%.2f'|format(t.price) if t.price is not none else '-' }}</span>

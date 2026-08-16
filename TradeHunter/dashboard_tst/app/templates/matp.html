@@ -18,6 +18,8 @@
     <select onchange="location.href='/matp?wl='+this.value"
             class="rounded bg-slate-950/60 border border-slate-700 px-2 py-1 text-sm focus:border-emerald-500 outline-none">
       <option value="all" {% if sel_wl == "all" %}selected{% endif %}>All</option>
+      {# per-user starred list — see services/user_watchlist.py #}
+      <option value="mine" {% if sel_wl == "mine" %}selected{% endif %}>&#9733; My Watchlist{% if my_count %} ({{ my_count }}){% endif %}</option>
       {% for f in active_filters %}<option value="{{ f.id }}" {% if sel_wl == f.id|string %}selected{% endif %}>{{ f.description }}{% if f.id in open_filter_ids %} — queued{% endif %}</option>{% endfor %}
       <option value="individual" {% if sel_wl == "individual" %}selected{% endif %}>Selective Tickers</option>
     </select>

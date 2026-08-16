@@ -100,8 +100,16 @@ def company_analysis_home(
             "edgar": edgar,
             "local_filings": local_filings,
             "corpus_ok": corpus_ok,
+            # drives the header's Add-to-Watchlist button state
+            "is_starred": _is_starred(db, user, sym) if sym else False,
         },
     )
+
+
+def _is_starred(db: Session, user: User, symbol: str) -> bool:
+    from ..services import user_watchlist as uwl
+
+    return uwl.is_starred(db, user, symbol)
 
 
 @router.get("/{symbol}/overview", response_class=HTMLResponse)

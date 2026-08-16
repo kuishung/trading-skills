@@ -117,12 +117,15 @@ def sector_industries_panel(
 
 @router.get("/symbols", response_class=HTMLResponse)
 def sector_symbols_panel(
-    request: Request, sector: str = "", industry: str = "", user: User = Depends(require_user)
+    request: Request, sector: str = "", industry: str = "",
+    user: User = Depends(require_user), db: Session = Depends(get_db),
 ):
     """Fragment: the tickers of one selected sector+industry (Symbol / Full Name /
     Last Price), rendered into the bottom Symbol panel. When the user has an active
-    Finviz filter, only tickers matching the criteria (within the industry) show."""
+    Finviz filter, only tickers matching the criteria (within the industry) show.
+    Each row carries a My-Watchlist star, pre-filled from this user's list."""
     from ..services.industry import sector_industries
+    from ..services import user_watchlist as uwl
 
     data = sector_industries(sector, _sector_extra_filters(user))
     match = next((i for i in data["industries"] if i["name"] == industry), None)
@@ -130,6 +133,7 @@ def sector_symbols_panel(
         "sector": data["sector"], "sector_name": data["name"],
         "industry": industry, "tickers": (match["tickers"] if match else []),
         "filtered": data.get("filtered", False),
+        "my_syms": uwl.symbol_set(db, user),
     })
 
 
