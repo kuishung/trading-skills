@@ -129,6 +129,32 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-16 — v3.90: "Recalculate all" really means all + member-added tickers self-queue
+Two gaps closed, both cases where a ticker could sit uncalculated forever:
+
+- **Member-added tickers auto-calculate.** A ticker starred into My Watchlist from the
+  Sector or Company page belongs to no screener and isn't a "selective" name, so nothing
+  in the pipeline would ever compute it — its MATP/MBP read "not yet calculated"
+  permanently. `matp_queue.watchlist_uncovered()` now pulls **starred tickers that have no
+  MATP on record** into the queue **unconditionally** (not only when a filter is due):
+  a ticker with no value at all can't wait on a screener schedule it isn't part of. The set
+  is **self-limiting** — once a ticker has an MATP it drops out, so this only ever covers
+  the first calculation. Shown as a ★ member watchlist chip and a header counter.
+- **"Recalculate all" covered only *scheduled* filters.** Any ticker whose only container
+  was a filter set to `off` was silently skipped, so "all" didn't mean all. It now does two
+  passes: clear `next_run_at` on scheduled filters + selective (the bulk, deduplicated
+  through `/api/matp-queue`), then enqueue individual requests for exactly the tickers the
+  scheduled pass cannot reach. The two sets are disjoint by construction, so **nothing is
+  computed twice** — verified by asserting an off-schedule ticker IS queued individually
+  while a scheduled-path ticker is NOT.
+- `off` filters keep their schedule — "recalculate now" must not silently switch a filter
+  back on.
+- The button is now JS-driven and reports what it actually did ("N tickers queued — 1
+  filter(s) marked due, 2 ticker(s) requested individually"); a redirect discarded that.
+- Verified end-to-end: a starred ticker with no MATP is queued even when nothing is
+  scheduled and drops out once calculated; a starred ticker that already has MATP is not
+  re-queued; every ticker in the list ends up covered exactly once.
+
 ### 2026-08-16 — v3.89: MATP Tickers — recalculate buttons (per ticker + whole queue)
 - User request: a button to recalculate MATP/MBP from the MATP Tickers tab.
 - **Per ticker** — a ↻ in each row → `POST /finviz/queue/recalc`, which reuses the existing

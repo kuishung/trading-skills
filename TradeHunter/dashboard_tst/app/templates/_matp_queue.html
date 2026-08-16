@@ -12,6 +12,10 @@
   <div><span class="text-slate-500">Duplicate runs avoided</span>
     <b class="text-emerald-300 tabular-nums ml-1">{{ c.saved }}</b>
     <span class="text-slate-600">of {{ c.rows_before_dedup }} raw rows</span></div>
+  {% if c.watchlist_new %}
+  <div><span class="text-slate-500">Member-added, never calculated</span>
+    <b class="text-sky-300 tabular-nums ml-1">{{ c.watchlist_new }}</b></div>
+  {% endif %}
   {% if c.errors %}
   <div class="text-rose-300">{{ c.errors }} filter{{ 's' if c.errors != 1 }} failed to resolve</div>
   {% endif %}
@@ -22,11 +26,9 @@
       <button title="Re-read each screener's ticker membership from Finviz. Computes nothing — no MATP is calculated."
               class="text-xs px-2.5 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">&#8635; Re-scan filters</button>
     </form>
-    <form method="post" action="/finviz/queue/recalc-all"
-          onsubmit="return confirm('Recalculate MATP/MBP for all {{ c.tickers }} tickers?\n\nThis marks every filter due, so the agent runs the whole deduplicated queue on its next poll (~10 min). Each ticker is computed once.');">
-      <button title="Queue a MATP/MBP recalculation for every ticker in this list"
-              class="text-xs px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 font-medium">&#8635; Recalculate all</button>
-    </form>
+    <button type="button" id="mqRecalcAll" data-count="{{ c.tickers }}"
+            title="Queue a MATP/MBP recalculation for every ticker in this list"
+            class="text-xs px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 font-medium">&#8635; Recalculate all</button>
   </div>
 </div>
 
@@ -115,11 +117,11 @@
           </td>
           <td class="text-right px-3 py-1.5 tabular-nums {% if t.n_sources > 1 %}text-amber-300 font-medium{% else %}text-slate-500{% endif %}">{{ t.n_sources }}</td>
           <td class="text-left px-3 py-1.5">
-            {% if t.manual and not t.filters %}<span class="text-slate-500 italic">selective</span>
-            {% else %}
-              {% for f in t.filters %}<span class="inline-block rounded bg-slate-800 text-slate-400 px-1.5 py-0.5 mr-1 mb-0.5">{{ f.description }}</span>{% endfor %}
-              {% if t.manual %}<span class="inline-block rounded bg-slate-800 text-slate-500 px-1.5 py-0.5 italic">+ selective</span>{% endif %}
-            {% endif %}
+            {% for f in t.filters %}<span class="inline-block rounded bg-slate-800 text-slate-400 px-1.5 py-0.5 mr-1 mb-0.5">{{ f.description }}</span>{% endfor %}
+            {% if t.manual %}<span class="inline-block rounded bg-slate-800 text-slate-500 px-1.5 py-0.5 mr-1 italic">selective</span>{% endif %}
+            {% if t.watchlist %}<span class="inline-block rounded bg-sky-500/15 text-sky-300 px-1.5 py-0.5 mr-1"
+                  title="Starred by a member and has no MATP on record — queued automatically for its first calculation">&#9733; member watchlist</span>{% endif %}
+            {% if not t.filters and not t.manual and not t.watchlist %}<span class="text-slate-600">&mdash;</span>{% endif %}
           </td>
         </tr>
         {% endfor %}

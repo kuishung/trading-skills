@@ -428,6 +428,31 @@
             'text-rose-200 hover:bg-rose-500/10 transition">Retry</button></div>';
         });
     };
+    // "Recalculate all" — reports back what it actually queued (a redirect would
+    // lose that, and "N filters marked due + M individually" is the useful part).
+    document.addEventListener('click', function (e) {
+      var btn = e.target.closest ? e.target.closest('#mqRecalcAll') : null;
+      if (!btn || btn._busy) return;
+      e.preventDefault();
+      var n = btn.dataset.count || '?';
+      if (!confirm('Recalculate MATP/MBP for all ' + n + ' tickers?\n\n' +
+                   'Each ticker is computed ONCE no matter how many filters hold it. ' +
+                   'The agent picks this up on its next poll (~10 min).')) return;
+      btn._busy = true;
+      var old = btn.innerHTML;
+      btn.innerHTML = 'Queuing…';
+      fetch('/finviz/queue/recalc-all', { method: 'POST' })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function (j) {
+          window.thToast && window.thToast(j.note || 'Queued', 'ok');
+          loadQueue();                       // repaint rows with their queued state
+        })
+        .catch(function (err) {
+          window.thToast && window.thToast('Could not queue: ' + err.message, 'err');
+        })
+        .finally(function () { btn._busy = false; btn.innerHTML = old; });
+    });
+
     // Per-ticker "recalculate MATP" button in the queue table. Delegated on
     // document because the panel is swapped in via innerHTML, which does NOT
     // execute scripts inside the fragment — a handler shipped with the fragment

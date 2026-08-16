@@ -26,7 +26,8 @@ import time
 
 from sqlalchemy.orm import Session
 
-from ..models import FinvizFilter, MATPLevel, MATPRefreshRequest, get_selective_schedule
+from ..models import (FinvizFilter, MATPLevel, MATPRefreshRequest, UserWatchlist,
+                      get_selective_schedule)
 from . import resources_bridge
 
 # Resolved-membership cache: filter_id -> (expires_at, [symbols], error|None).
@@ -67,6 +68,31 @@ def _is_due(next_run_at, now: _dt.datetime) -> bool:
     if next_run_at.tzinfo is None:
         next_run_at = next_run_at.replace(tzinfo=_dt.timezone.utc)
     return next_run_at <= now
+
+
+def watchlist_uncovered(db: Session) -> set[str]:
+    """Symbols a MEMBER starred that have no MATP on record yet.
+
+    A ticker added from the Sector or Company page lands on someone's My Watchlist
+    but belongs to no screener and isn't a "selective" name, so nothing in the
+    scheduled pipeline would ever compute it — its MATP/MBP columns would read
+    "not yet calculated" forever. These are therefore pulled into the queue
+    UNCONDITIONALLY (not only when a filter is due): a ticker with no value at all
+    can't sensibly wait on a screener schedule it isn't part of.
+
+    The set is self-limiting — once a ticker HAS an MATP it drops out of here, so
+    this only ever covers the first calculation. Afterwards it refreshes through
+    whatever container it belongs to, or on demand via the Recalc button.
+    """
+    starred = {s for (s,) in db.query(UserWatchlist.symbol).distinct().all() if s}
+    if not starred:
+        return set()
+    have = {
+        lv.symbol
+        for lv in db.query(MATPLevel).filter(MATPLevel.symbol.in_(starred)).all()
+        if lv.matp is not None
+    }
+    return {_clean(s) for s in (starred - have)}
 
 
 def manual_symbols(db: Session) -> list[str]:
@@ -144,6 +170,15 @@ def build_queue(db: Session, *, due_only: bool = False,
             rows_before_dedup += 1
             membership.setdefault(s, [])
 
+    # Member-starred tickers with NO MATP yet — always included, even when nothing
+    # is due, because they belong to no container that could ever become due.
+    # See watchlist_uncovered(): the set empties itself as they get computed.
+    watchlist_set = watchlist_uncovered(db)
+    for s in watchlist_set:
+        if s and s not in membership:
+            rows_before_dedup += 1
+        membership.setdefault(s, [])
+
     # attach what we already know about each symbol (last computed MATP)
     syms = list(membership.keys())
     levels = {}
@@ -177,6 +212,8 @@ def build_queue(db: Session, *, due_only: bool = False,
             "as_of": getattr(lv, "as_of", None),
             "has_matp": lv is not None and getattr(lv, "matp", None) is not None,
             "queued": sym in pending,
+            # starred by a member and never calculated -> pulled in automatically
+            "watchlist": sym in watchlist_set,
         })
 
     n_unique = len(tickers)
@@ -194,5 +231,7 @@ def build_queue(db: Session, *, due_only: bool = False,
             "overlapped": overlapped,
             "filters": len(active),
             "errors": n_errors,
+            # member-starred tickers awaiting their FIRST calculation
+            "watchlist_new": len(watchlist_set),
         },
     }

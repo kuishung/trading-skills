@@ -217,26 +217,57 @@ def matp_queue_recalc_one(
 def matp_queue_recalc_all(
     mod: User = Depends(require_moderator), db: Session = Depends(get_db)
 ):
-    """Recalculate the WHOLE queue on the agent's next poll.
+    """Recalculate EVERY ticker in the list, each exactly once.
 
-    Deliberately does NOT enqueue one request per ticker — that would be ~81 rows
-    and would bypass the dedup entirely. Instead it marks every active filter (and
-    the selective set) as DUE by clearing `next_run_at`, which is the same
-    mechanism the schedule uses. The agent then pulls /api/matp-queue and works
-    the deduplicated union once, so an overlapping ticker is still computed a
-    single time."""
+    Two mechanisms, because one alone doesn't cover everything:
+
+    1. **Scheduled containers** — clear `next_run_at` on every active filter with
+       a schedule (and on the selective set), marking them due through the same
+       path the schedule uses. The agent then pulls /api/matp-queue and works the
+       deduplicated union in one pass. This is how the bulk gets done, and it is
+       why we do NOT simply enqueue one request per ticker: that would be ~81 rows
+       and would bypass the deduplication this tab exists to provide.
+
+    2. **Tickers no scheduled run would reach** — a ticker whose only containers
+       are filters set to `run_interval="off"` is invisible to step 1, so "all"
+       would quietly not mean all. Those get an individual ticker request. They're
+       disjoint from the step-1 set by construction, so nothing is computed twice.
+
+    Filters set to `off` keep their schedule — "recalculate now" must not silently
+    switch a filter back on.
+    """
     from ..models import get_selective_schedule
+    from ..services.matp_queue import build_queue
 
-    n = 0
+    from .matp import _enqueue
+
+    n_filters = 0
     for f in db.query(FinvizFilter).filter(FinvizFilter.is_active.is_(True)).all():
         if f.run_interval != "off":
             f.next_run_at = None      # due now
-            n += 1
+            n_filters += 1
     sched = get_selective_schedule(db)
     if sched.run_interval != "off":
         sched.next_run_at = None
     db.commit()
-    return RedirectResponse(url="/finviz#queue", status_code=303)
+
+    # Whatever the (now-due) scheduled run will NOT reach, request individually.
+    everything = {t["symbol"] for t in build_queue(db, due_only=False)["tickers"]}
+    covered = {t["symbol"] for t in build_queue(db, due_only=True)["tickers"]}
+    missed = sorted(everything - covered)
+    n_tickers = sum(1 for s in missed if _enqueue(db, "ticker", symbol=s, user=mod))
+
+    return {
+        "ok": True,
+        "filters_due": n_filters,
+        "tickers_queued": n_tickers,
+        "total": len(everything),
+        "note": (
+            f"{len(everything)} tickers queued — {n_filters} filter(s) marked due"
+            + (f", {n_tickers} ticker(s) requested individually" if n_tickers else "")
+            + ". The agent picks these up on its next poll (~10 min)."
+        ),
+    }
 
 
 @router.post("/filters/{fid}/interval")
