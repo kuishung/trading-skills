@@ -127,6 +127,16 @@ Edit files here, redeploy (scp / git pull → `bash install.sh`), then re-test w
 recreate the cron job unless the schedule or delivery target changes.
 
 ## Changelog
+- **2026-08-16** — `markets/matp` skill → **v1.8.0**: Stage 1 now reads the new
+  **deduplicated queue** at `GET /api/matp-queue` instead of expanding each due
+  filter's Finviz URL itself. Screener filters overlap, so the old per-filter walk
+  recomputed a ticker once per filter that held it — three containers holding NVDA
+  meant three MarketBeat browse sessions and three model passes for one answer.
+  TradeHunter now resolves the memberships, unions them, and hands the agent **one
+  row per unique ticker** (each carrying `filter_ids`, so per-filter attribution and
+  `prune` drift tracking still work). **Action needed on next agent run:** use
+  `/api/matp-queue`; do NOT expand the filter URLs yourself. `/api/due-filters` still
+  works for back-compat. Pairs with dashboard_tst v3.85 (the "All Tickers" tab).
 - **2026-06-18** — Documented the **Selective-tickers schedule contract** in
   `skills/markets/matp/SKILL.md`: `/api/due-filters` now returns a `selective`
   `{due, interval, tickers}` object, and a closing `/api/matp` push with

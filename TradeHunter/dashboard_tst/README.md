@@ -129,6 +129,37 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-16 — v3.85: Data Ingest — "All Tickers" tab = the DEDUPLICATED MATP queue
+- User request: screener filters overlap, so the same ticker was getting its MATP
+  recomputed once per filter that held it — wasted token cost. *"add a tab for all the
+  tickers … the Screener only as a container … MATP calculation will not run multiple
+  times."*
+- **Inverts who owns the ticker list.** New `services/matp_queue.py` resolves each active
+  filter's Finviz URL to its membership (shared `resources.finviz_screener`, 1h disk cache
+  + 15min in-process), unions them with the selective names, and dedupes to **one row per
+  symbol**. A screener is now purely a container; the union is the work list.
+- New **All Tickers** tab on Data Ingest: header counters (unique tickers · in >1 filter ·
+  **duplicate runs avoided** out of raw rows), a Containers table showing what each filter
+  contributes and whether it's due, and the queue itself — one row per ticker with the
+  containers holding it (overlapping rows highlighted), last MATP/MBP and when it was last
+  computed. Moderators get a "Re-resolve" button that bypasses both caches.
+- New agent endpoint **`GET /api/matp-queue`** returning the deduped list, each entry
+  carrying `filter_ids` so per-filter attribution and drift tracking still work, plus
+  `advance_filter_ids` and `filter_errors`. `/api/filters` + `/api/due-filters` are
+  untouched, so an agent still running the old skill keeps working.
+- Agent skill `nous_hermes/markets/matp` → **v1.8.0**: Stage 1 now reads the queue endpoint
+  and computes each ticker exactly once. The old skill only *suggested* deduping ("you MAY
+  compute once per unique ticker") — advisory text an LLM routinely ignored; now the
+  structure enforces it.
+- **Tab loads lazily on first open**, not on page load — building the queue resolves every
+  filter's Finviz membership, which must not run on every `/finviz` visit.
+- A filter whose URL can't be resolved is reported (`unresolved` in the Containers table,
+  `filter_errors` in the API) and contributes zero tickers, rather than breaking the queue.
+- Verified offline with stubbed Finviz over 3 overlapping filters + 1 broken one: 11 raw
+  rows → 8 unique (**3 duplicate MATP runs avoided**); NVDA appears once attributed to all
+  3 containers; an off-schedule container is excluded under `due_only`; the endpoint never
+  returns a duplicate symbol; bad API key rejected.
+
 ### 2026-08-16 — v3.84: My Watchlist (per-user starred tickers)
 - User request: a **"My Watchlist"** on the Watchlist page, unique per user, with an
   **"Add to Watchlist"** control on Sector & Industry / Company.

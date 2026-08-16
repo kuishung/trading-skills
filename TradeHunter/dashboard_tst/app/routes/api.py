@@ -121,6 +121,48 @@ def due_filters(_: bool = Depends(require_api_key), db: Session = Depends(get_db
     }
 
 
+@router.get("/matp-queue")
+def matp_queue(
+    due_only: bool = True,
+    _: bool = Depends(require_api_key),
+    db: Session = Depends(get_db),
+):
+    """The DEDUPLICATED list of tickers to compute MATP for — the agent's work list.
+
+    Replaces "walk each due filter's universe" (which recomputed a ticker once per
+    filter that contained it). Screener filters are containers; this endpoint
+    unions their memberships, dedupes to one row per symbol, and returns that.
+    A ticker in three filters is computed ONCE.
+
+    Each entry carries `filter_ids` so the agent can still post per-filter
+    attribution, and `advance_filter_ids` lists the filters whose schedule this
+    run should advance when it finalizes.
+
+    `due_only=false` returns the full union regardless of schedule (for ad-hoc runs).
+    """
+    from ..services.matp_queue import build_queue
+
+    q = build_queue(db, due_only=due_only)
+    return {
+        "tickers": [
+            {"symbol": t["symbol"],
+             "filter_ids": [f["id"] for f in t["filters"]],
+             "manual": t["manual"]}
+            for t in q["tickers"]
+        ],
+        "count": q["counts"]["tickers"],
+        "duplicates_avoided": q["counts"]["saved"],
+        "advance_filter_ids": [f["id"] for f in q["filters"] if f.get("due")],
+        "selective": q["selective"],
+        # surfaced so a filter whose URL failed to resolve is visible to the agent
+        # (and in its run notes) rather than silently contributing zero tickers
+        "filter_errors": [
+            {"id": f["id"], "description": f["description"], "error": f["error"]}
+            for f in q["filters"] if f.get("error")
+        ],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Agent heartbeat — the outbound-only Nous Hermes agent self-reports liveness +
 # its crontab on each poll. TradeHunter can't reach into the Linux box, so this

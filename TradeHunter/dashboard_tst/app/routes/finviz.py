@@ -160,6 +160,35 @@ def finviz_home(
     )
 
 
+@router.get("/queue", response_class=HTMLResponse)
+def matp_queue_panel(
+    request: Request,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Fragment: the deduplicated MATP work queue (the "All Tickers" tab).
+
+    Lazy-loaded because building it resolves every active filter's Finviz URL to
+    its ticker membership. That walk is disk-cached for an hour by
+    resources.finviz_screener, and cached again in-process for 15 min, so only a
+    cold first load is slow."""
+    from ..services.matp_queue import build_queue
+
+    return templates.TemplateResponse(
+        request, "_matp_queue.html", {"user": user, "q": build_queue(db)}
+    )
+
+
+@router.post("/queue/refresh")
+def matp_queue_refresh(mod: User = Depends(require_moderator), db: Session = Depends(get_db)):
+    """Force a re-resolve of every filter's membership (bypasses both caches)."""
+    from ..services.matp_queue import build_queue
+
+    build_queue(db, force_refresh=True)
+    # back to the tab the user was on (the tab script reads location.hash)
+    return RedirectResponse(url="/finviz#queue", status_code=303)
+
+
 @router.post("/filters/{fid}/interval")
 def set_interval(
     fid: int,

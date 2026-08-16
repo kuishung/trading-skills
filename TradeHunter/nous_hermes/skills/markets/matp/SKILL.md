@@ -1,6 +1,6 @@
 ---
 name: matp
-version: 1.7.1
+version: 1.8.0
 description: Compute the faithful Median Analyst Target Price (MATP) + Max Buy Price (MBP) for TradeHunter and push the results to the platform. Use when asked to "refresh MATP", "run MATP", "update target prices", or on the scheduled cron. Reads the active Finviz screener filters from TradeHunter's API, expands them to a ticker universe, and for each ticker looks up the latest earnings date + analyst price targets on MarketBeat, keeps only targets issued AFTER the latest earnings, computes the median (MATP) and MBP = MATP/1.15, then POSTs the rows to TradeHunter's /api/matp endpoint. Does NOT write CSV / Google Sheets / Telegram -- output is the API push only.
 ---
 
@@ -155,20 +155,34 @@ For each request:
 Idempotent: if the queue is empty, do nothing. TradeHunter de-dupes requests, so
 you'll never see two open requests for the same target.
 
-### Scheduled filters (same poll)
-On the SAME poll, also run any Finviz filters whose schedule is due:
+### Scheduled work — the DEDUPLICATED queue (use this; it is the token-saver)
+On the SAME poll, ask TradeHunter for the deduplicated list of tickers to compute:
 ```
-GET {TRADEHUNTER_URL}/api/due-filters     header: X-API-Key: {TST_INGEST_API_KEY}
--> {"filters":[{"id":1,"description":"...","url":"https://finviz.com/...","interval":"weekly"}, ...]}
+GET {TRADEHUNTER_URL}/api/matp-queue      header: X-API-Key: {TST_INGEST_API_KEY}
+-> {"tickers":[{"symbol":"NVDA","filter_ids":[1,3],"manual":false}, ...],
+    "count": 240, "duplicates_avoided": 63,
+    "advance_filter_ids":[1,3], "selective":{"due":true,...},
+    "filter_errors":[...]}
 ```
-For each due filter, run the **full universe** (Stages 1-5 on its `filter_url`)
-and push as a filter run — incremental `final:false` pushes while you work, then
-a closing push with `filter_id` + `prune:true` + `final:true`. That closing push
-**advances the filter's schedule** automatically (TradeHunter sets its
-`last_run_at`/`next_run_at` from its interval), so a filter set to "weekly" reruns
-about a week later. If `/api/due-filters` returns an empty list, nothing is due —
-do nothing. (The per-filter interval is configured by moderators in the
-TradeHunter Finviz page; you just run whatever is due.)
+**Screener filters are only CONTAINERS.** TradeHunter resolves each active
+filter's Finviz URL itself, unions the memberships, and returns **one row per
+unique ticker**. Compute MATP **exactly once per entry in `tickers`** — never once
+per filter. A ticker held by three filters appears once, with all three ids in
+`filter_ids`; push it back once, attributed to those ids. This is the whole point
+of the endpoint: it is what stops the same ticker burning three MarketBeat browse
+sessions and three model passes.
+
+Do **not** expand the Finviz URLs yourself when using this endpoint — the
+membership has already been resolved for you.
+
+When you finish, send the closing push with `final:true` and
+`advance_filter_ids` echoed back as the filters to advance (or push per
+`filter_id` with `prune:true` as before for drift tracking). `filter_errors`
+lists filters whose URL could not be resolved this cycle — mention them in your
+run note; they contributed no tickers.
+
+*Legacy path (still supported, do not prefer):* `GET /api/due-filters` returns the
+per-filter list and requires you to expand each URL and dedupe by hand.
 
 ### Selective tickers (own schedule, same poll)
 The `/api/due-filters` response now also carries a `selective` object — the ad-hoc
@@ -192,17 +206,27 @@ schedule is due.)
 
 ## Procedure
 
-### Stage 1 — Get the universe (active Finviz filters)
+### Stage 1 — Get the universe
+
+**Preferred — the deduplicated queue (one browse + one model pass per ticker):**
+```
+GET {TRADEHUNTER_URL}/api/matp-queue     header: X-API-Key: {TST_INGEST_API_KEY}
+```
+Returns one entry per **unique** ticker, each carrying the `filter_ids` of every
+container that holds it. Work straight down that list — no Finviz paging, no
+manual dedupe, no ticker computed twice. Carry `filter_ids` through to Stage 5 so
+per-filter attribution and drift tracking still work.
+
+**Legacy — raw filters (only if the queue endpoint is unavailable):**
 ```
 GET {TRADEHUNTER_URL}/api/filters     header: X-API-Key: {TST_INGEST_API_KEY}
 ```
 Returns `{"filters":[{"id","description","url"}, ...]}`. For each filter `url`,
 open it in the browser and extract every ticker (with exchange). Finviz
 paginates 20/page via `&r=21`, `&r=41`, ... — page through to the reported
-total. **Keep the per-filter ticker set** (which `id` each ticker came from) —
-you push back per filter so TradeHunter can track drift. You MAY compute MATP
-once per unique ticker and cache it (a ticker in two filters is fetched once),
-but the PUSH is per-filter (Stage 5).
+total. **Keep the per-filter ticker set** (which `id` each ticker came from).
+On this path you MUST dedupe across filters yourself before computing — compute
+MATP once per unique ticker and reuse it for every filter that holds it.
 
 (Ad-hoc mode: skip this; use the tickers the user named. No `filter_id`, no
 `prune` — see Stage 5.)

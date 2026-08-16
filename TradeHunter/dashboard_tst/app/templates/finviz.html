@@ -7,8 +7,26 @@
 {# ---------------- tabs ---------------- #}
 <div class="flex gap-1 border-b border-slate-800 mb-5" role="tablist">
   <button type="button" data-tab="finviz" class="di-tab px-3 py-2 text-sm border-b-2 border-transparent text-slate-400">Finviz Filter</button>
+  <button type="button" data-tab="queue" class="di-tab px-3 py-2 text-sm border-b-2 border-transparent text-slate-400">All Tickers</button>
   <button type="button" data-tab="market" class="di-tab px-3 py-2 text-sm border-b-2 border-transparent text-slate-400">Market Data</button>
   <button type="button" data-tab="edgar" class="di-tab px-3 py-2 text-sm border-b-2 border-transparent text-slate-400">EDGAR Filings</button>
+</div>
+
+{# ======================== All Tickers (the deduplicated MATP queue) ========================
+   Filters are CONTAINERS; this is the actual work list. Lazy-loaded because
+   resolving each screener URL walks Finviz pages (1h disk-cached). #}
+<div data-panel="queue">
+  <p class="text-slate-400 text-sm mb-3">
+    Every ticker scheduled for MATP calculation, <b class="text-slate-300">deduplicated</b>.
+    A screener filter is only a container — a ticker held by several filters is computed
+    <b class="text-slate-300">once</b>, not once per filter.
+  </p>
+  {# No hx-trigger="load": that would resolve every filter's Finviz membership on
+     EVERY /finviz visit, even with this tab closed. The tab script below fetches
+     it the first time the tab is actually opened. #}
+  <div id="queueBox">
+    <p class="text-xs text-slate-500 py-4">Resolving screener memberships&hellip; (first load walks Finviz; cached for an hour)</p>
+  </div>
 </div>
 
 {# ======================== Finviz Filter ======================== #}
@@ -372,6 +390,12 @@
         t.classList.toggle('text-slate-400', !on);
       });
       panels.forEach(function (p) { p.classList.toggle('hidden', p.dataset.panel !== name); });
+      // The All Tickers queue is fetched on FIRST open only — building it resolves
+      // every active filter's Finviz membership, so it must not run on page load.
+      if (name === 'queue' && !activate._queueLoaded) {
+        activate._queueLoaded = true;
+        if (window.htmx) htmx.ajax('GET', '/finviz/queue', { target: '#queueBox', swap: 'innerHTML' });
+      }
       try { history.replaceState(null, '', '#' + name); } catch (e) {}
     }
     tabs.forEach(function (t) { t.addEventListener('click', function () { activate(t.dataset.tab); }); });

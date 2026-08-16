@@ -1,0 +1,109 @@
+{# The deduplicated MATP work queue. Context: q (services/matp_queue.build_queue). #}
+{% from "_time.html" import localtime %}
+{% set c = q.counts %}
+
+<div class="flex flex-wrap items-center gap-x-6 gap-y-2 mb-4 rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3 text-xs">
+  <div><span class="text-slate-500">Tickers to compute</span>
+    <b class="text-slate-100 tabular-nums text-sm ml-1">{{ c.tickers }}</b></div>
+  <div><span class="text-slate-500">Across filters</span>
+    <b class="text-slate-300 tabular-nums ml-1">{{ c.filters }}</b></div>
+  <div><span class="text-slate-500">In &gt;1 filter</span>
+    <b class="text-amber-300 tabular-nums ml-1">{{ c.overlapped }}</b></div>
+  <div><span class="text-slate-500">Duplicate runs avoided</span>
+    <b class="text-emerald-300 tabular-nums ml-1">{{ c.saved }}</b>
+    <span class="text-slate-600">of {{ c.rows_before_dedup }} raw rows</span></div>
+  {% if c.errors %}
+  <div class="text-rose-300">{{ c.errors }} filter{{ 's' if c.errors != 1 }} failed to resolve</div>
+  {% endif %}
+  <form method="post" action="/finviz/queue/refresh" class="ml-auto">
+    <button class="text-xs px-2.5 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">&#8635; Re-resolve</button>
+  </form>
+</div>
+
+{# ── container summary: what each filter contributes ── #}
+<div class="mb-4 rounded-lg border border-slate-800 bg-slate-900/40 overflow-hidden">
+  <div class="px-4 py-2 border-b border-slate-800 text-sm font-medium text-slate-100">Containers</div>
+  <div class="overflow-x-auto">
+    <table class="w-full text-xs whitespace-nowrap">
+      <thead class="text-[10px] uppercase tracking-wide text-slate-500">
+        <tr>
+          <th class="text-left font-normal px-4 py-1.5">Filter</th>
+          <th class="text-left font-normal px-3 py-1.5">Schedule</th>
+          <th class="text-right font-normal px-3 py-1.5">Tickers</th>
+          <th class="text-left font-normal px-3 py-1.5">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for f in q.filters %}
+        <tr class="border-t border-slate-800/60">
+          <td class="text-left px-4 py-1.5 text-slate-300">{{ f.description }}</td>
+          <td class="text-left px-3 py-1.5 text-slate-500">{{ f.interval }}</td>
+          <td class="text-right px-3 py-1.5 tabular-nums text-slate-400">{{ f.n_symbols if f.n_symbols is not none else '—' }}</td>
+          <td class="text-left px-3 py-1.5">
+            {% if f.error %}<span class="text-rose-300" title="{{ f.error }}">unresolved</span>
+            {% elif f.due %}<span class="text-emerald-300">due</span>
+            {% else %}<span class="text-slate-600">scheduled</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        {% if q.selective.n %}
+        <tr class="border-t border-slate-800/60">
+          <td class="text-left px-4 py-1.5 text-slate-400 italic">Selective tickers (no container)</td>
+          <td class="text-left px-3 py-1.5 text-slate-500">{{ q.selective.interval }}</td>
+          <td class="text-right px-3 py-1.5 tabular-nums text-slate-400">{{ q.selective.n }}</td>
+          <td class="text-left px-3 py-1.5">{% if q.selective.due %}<span class="text-emerald-300">due</span>{% else %}<span class="text-slate-600">scheduled</span>{% endif %}</td>
+        </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ── the queue itself: one row per unique ticker ── #}
+{% if not q.tickers %}
+<p class="text-xs text-slate-500 italic py-4">No tickers in the queue — add an active Finviz filter above, or add selective tickers on the Watchlist page.</p>
+{% else %}
+<div class="rounded-lg border border-slate-800 bg-slate-900/40 overflow-hidden">
+  <div class="px-4 py-2 border-b border-slate-800 text-sm font-medium text-slate-100">
+    MATP queue &middot; <span class="text-slate-400 font-normal">{{ q.tickers|length }} unique tickers, each computed once</span>
+  </div>
+  <div class="overflow-x-auto max-h-[32rem] overflow-y-auto">
+    <table class="w-full text-xs whitespace-nowrap">
+      <thead class="text-[10px] uppercase tracking-wide text-slate-500 sticky top-0 bg-slate-900 z-10">
+        <tr>
+          <th class="text-left font-normal px-4 py-1.5">Ticker</th>
+          <th class="text-right font-normal px-3 py-1.5">In filters</th>
+          <th class="text-left font-normal px-3 py-1.5">Held by</th>
+          <th class="text-right font-normal px-3 py-1.5">MATP</th>
+          <th class="text-right font-normal px-3 py-1.5">MBP</th>
+          <th class="text-left font-normal px-3 py-1.5">Last computed</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in q.tickers %}
+        <tr class="border-t border-slate-800/50 {% if t.n_sources > 1 %}bg-amber-500/5{% endif %}">
+          <td class="text-left px-4 py-1.5">
+            <a href="/company-analysis?symbol={{ t.symbol }}" class="text-slate-100 font-medium hover:text-emerald-300">{{ t.symbol }}</a>
+          </td>
+          <td class="text-right px-3 py-1.5 tabular-nums {% if t.n_sources > 1 %}text-amber-300 font-medium{% else %}text-slate-500{% endif %}">{{ t.n_sources }}</td>
+          <td class="text-left px-3 py-1.5">
+            {% if t.manual and not t.filters %}<span class="text-slate-500 italic">selective</span>
+            {% else %}
+              {% for f in t.filters %}<span class="inline-block rounded bg-slate-800 text-slate-400 px-1.5 py-0.5 mr-1 mb-0.5">{{ f.description }}</span>{% endfor %}
+              {% if t.manual %}<span class="inline-block rounded bg-slate-800 text-slate-500 px-1.5 py-0.5 italic">+ selective</span>{% endif %}
+            {% endif %}
+          </td>
+          <td class="text-right px-3 py-1.5 tabular-nums text-orange-300">{{ '%.2f'|format(t.matp) if t.matp is not none else '—' }}</td>
+          <td class="text-right px-3 py-1.5 tabular-nums text-green-500">{{ '%.2f'|format(t.mbp) if t.mbp is not none else '—' }}</td>
+          <td class="text-left px-3 py-1.5 text-slate-500">{% if t.as_of %}{{ localtime(t.as_of) }}{% else %}<span class="text-amber-400/80">never</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+<p class="text-[10px] text-slate-600 mt-2">
+  Highlighted rows are held by more than one filter — previously each of those would have triggered a separate MATP calculation.
+  The agent reads this same list from <code class="text-slate-500">GET /api/matp-queue</code>.
+</p>
+{% endif %}
