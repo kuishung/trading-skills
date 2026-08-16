@@ -129,6 +129,27 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-16 — `MACRO_STUDY_DESIGN.md` (design only, no code)
+- Blueprint for turning each `/macro` topic into a **continuous study**: tracked indicator
+  series, framed scenarios, stated implications, and mechanical trigger monitoring.
+- Two rules everything hangs off: **scenarios carry numeric triggers** tied to tracked
+  indicators (otherwise the agent just re-decides weekly and calls the drift analysis), and
+  **probabilities are measured from historical episodes or not shown** — an LLM-asserted
+  "65%" renders as a measurement when it's an invention. Same refusal as the Intrinsic Value
+  page declining to fake OracleValue™.
+- Records the **two-path data rule**: "what is breadth today?" → live; "what was breadth
+  2015-2026?" → parquet. Both are correct under the CLAUDE.md carve-out; written down so it
+  isn't re-litigated next session.
+- Sourcing settled: Yahoo (have it) + **FRED** (new adapter, free key, decades, ALFRED
+  vintages) + parquet for computed history + CFTC COT later. Two gaps stated honestly —
+  FedWatch implied cuts (proxy with `DGS2`, labelled) and consensus estimates (stay with the
+  agent's web research).
+- Four methodology traps designed against up front: overlapping windows aren't independent
+  observations, macro data is revised (lookahead), the parquet universe is today's
+  constituents (survivorship), and regimes change.
+- Phases A–E, plus four open decisions left explicitly unanswered (thesis ownership,
+  indicator set, cadence, sample window) rather than assumed.
+
 ### 2026-08-16 — v3.94: Macro board — two-pane, six canonical topics (Phase 1)
 - User request: *"in the macro I want a tab on the left to show the topics and the right side
   will be the analysis of the relevant topic."* Confirmed with the user that the rail holds a
