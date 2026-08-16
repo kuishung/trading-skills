@@ -145,7 +145,8 @@ def build_queue(db: Session, *, due_only: bool = False,
         if due_only and not due:
             filt_rows.append({"id": f.id, "description": f.description,
                               "interval": f.run_interval, "due": False,
-                              "n_symbols": None, "error": None})
+                              "n_symbols": None, "error": None,
+                              "last_run_at": f.last_run_at, "next_run_at": f.next_run_at})
             continue
         syms, err = filter_symbols(f, force_refresh=force_refresh)
         if err:
@@ -153,9 +154,14 @@ def build_queue(db: Session, *, due_only: bool = False,
         rows_before_dedup += len(syms)
         for s in syms:
             membership.setdefault(s, []).append({"id": f.id, "description": f.description})
+        # last_run_at/next_run_at are the ONLY visible proof that a "Recalculate
+        # all" was actually picked up: that action marks filters due rather than
+        # creating refresh requests, so the /agent "working now" panel (which
+        # tracks ticker requests) stays empty and would otherwise look idle.
         filt_rows.append({"id": f.id, "description": f.description,
                           "interval": f.run_interval, "due": due,
-                          "n_symbols": len(syms), "error": err})
+                          "n_symbols": len(syms), "error": err,
+                          "last_run_at": f.last_run_at, "next_run_at": f.next_run_at})
 
     # manual / selective names ride along (they have no container)
     manual = manual_symbols(db)

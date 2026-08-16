@@ -43,6 +43,7 @@
           <th class="text-left font-normal px-3 py-1.5">Schedule</th>
           <th class="text-right font-normal px-3 py-1.5">Tickers</th>
           <th class="text-left font-normal px-3 py-1.5">Status</th>
+          <th class="text-left font-normal px-3 py-1.5">Last run</th>
         </tr>
       </thead>
       <tbody>
@@ -53,8 +54,13 @@
           <td class="text-right px-3 py-1.5 tabular-nums text-slate-400">{{ f.n_symbols if f.n_symbols is not none else '—' }}</td>
           <td class="text-left px-3 py-1.5">
             {% if f.error %}<span class="text-rose-300" title="{{ f.error }}">unresolved</span>
-            {% elif f.due %}<span class="text-emerald-300">due</span>
+            {% elif f.due %}<span class="text-emerald-300" title="Queued — the agent runs this on its next poll (~10 min)">due &middot; waiting for agent</span>
             {% else %}<span class="text-slate-600">scheduled</span>{% endif %}
+          </td>
+          {# "Last run" is the proof a Recalculate-all was picked up: the agent
+             advances it when it finishes, flipping Status back to 'scheduled'. #}
+          <td class="text-left px-3 py-1.5 text-slate-500">
+            {% if f.last_run_at %}{{ localtime(f.last_run_at) }}{% else %}<span class="text-slate-600">never</span>{% endif %}
           </td>
         </tr>
         {% endfor %}
@@ -63,7 +69,8 @@
           <td class="text-left px-4 py-1.5 text-slate-400 italic">Selective tickers (no container)</td>
           <td class="text-left px-3 py-1.5 text-slate-500">{{ q.selective.interval }}</td>
           <td class="text-right px-3 py-1.5 tabular-nums text-slate-400">{{ q.selective.n }}</td>
-          <td class="text-left px-3 py-1.5">{% if q.selective.due %}<span class="text-emerald-300">due</span>{% else %}<span class="text-slate-600">scheduled</span>{% endif %}</td>
+          <td class="text-left px-3 py-1.5">{% if q.selective.due %}<span class="text-emerald-300">due &middot; waiting for agent</span>{% else %}<span class="text-slate-600">scheduled</span>{% endif %}</td>
+          <td class="text-left px-3 py-1.5 text-slate-600">&mdash;</td>
         </tr>
         {% endif %}
       </tbody>

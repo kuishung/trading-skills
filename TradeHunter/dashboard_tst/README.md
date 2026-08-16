@@ -129,6 +129,19 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-16 — v3.91: Containers table shows Last run (proof a recalculate was picked up)
+- User asked, after clicking Recalculate all: *"how do I know the cron is running?"* — a fair
+  question, because there was **no answer in the dashboard**. That action mostly marks filters
+  **due** rather than creating refresh requests, and the `/agent` "working now" panel only
+  tracks ticker-scope requests — so it stays empty and the whole thing looks idle even when
+  work is correctly queued. Answering required SSH-ing in for `hermes cron list`, which is
+  exactly what the dashboard-visibility rule exists to prevent.
+- Containers table gains a **Last run** column (`FinvizFilter.last_run_at`, viewer-local), and
+  the due state now reads **"due · waiting for agent"** rather than a bare "due".
+- Together they make the cycle legible without leaving the page: click → status flips to
+  *due · waiting for agent* → the agent completes → Last run advances and status returns to
+  *scheduled*. A Last run that never advances is now a visible symptom rather than silence.
+
 ### 2026-08-16 — v3.90: "Recalculate all" really means all + member-added tickers self-queue
 Two gaps closed, both cases where a ticker could sit uncalculated forever:
 
