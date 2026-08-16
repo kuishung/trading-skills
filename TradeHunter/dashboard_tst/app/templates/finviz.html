@@ -7,25 +7,28 @@
 {# ---------------- tabs ---------------- #}
 <div class="flex gap-1 border-b border-slate-800 mb-5" role="tablist">
   <button type="button" data-tab="finviz" class="di-tab px-3 py-2 text-sm border-b-2 border-transparent text-slate-400">Finviz Filter</button>
-  <button type="button" data-tab="queue" class="di-tab px-3 py-2 text-sm border-b-2 border-transparent text-slate-400">All Tickers</button>
+  <button type="button" data-tab="queue" class="di-tab px-3 py-2 text-sm border-b-2 border-transparent text-slate-400">MATP Tickers</button>
   <button type="button" data-tab="market" class="di-tab px-3 py-2 text-sm border-b-2 border-transparent text-slate-400">Market Data</button>
   <button type="button" data-tab="edgar" class="di-tab px-3 py-2 text-sm border-b-2 border-transparent text-slate-400">EDGAR Filings</button>
 </div>
 
-{# ======================== All Tickers (the deduplicated MATP queue) ========================
+{# ======================== MATP Tickers (the deduplicated MATP queue) ========================
    Filters are CONTAINERS; this is the actual work list. Lazy-loaded because
    resolving each screener URL walks Finviz pages (1h disk-cached). #}
 <div data-panel="queue">
   <p class="text-slate-400 text-sm mb-3">
-    Every ticker scheduled for MATP calculation, <b class="text-slate-300">deduplicated</b>.
-    A screener filter is only a container — a ticker held by several filters is computed
-    <b class="text-slate-300">once</b>, not once per filter.
+    Every ticker scheduled for MATP calculation, <b class="text-slate-300">deduplicated</b>, with its
+    MATP, MBP and calculated date. A screener filter is only a container — a ticker held by
+    several filters is computed <b class="text-slate-300">once</b>, not once per filter.
   </p>
   {# No hx-trigger="load": that would resolve every filter's Finviz membership on
      EVERY /finviz visit, even with this tab closed. The tab script below fetches
      it the first time the tab is actually opened. #}
   <div id="queueBox">
-    <p class="text-xs text-slate-500 py-4">Resolving screener memberships&hellip; (first load walks Finviz; cached for an hour)</p>
+    <p class="text-xs text-slate-500 py-4">
+      <span class="inline-block animate-pulse">Resolving screener memberships&hellip;</span>
+      <span class="text-slate-600">first load walks each Finviz screen at ~1 page/sec, so it can take up to a minute; cached for an hour afterwards.</span>
+    </p>
   </div>
 </div>
 
@@ -390,14 +393,41 @@
         t.classList.toggle('text-slate-400', !on);
       });
       panels.forEach(function (p) { p.classList.toggle('hidden', p.dataset.panel !== name); });
-      // The All Tickers queue is fetched on FIRST open only — building it resolves
+      // The MATP Tickers queue is fetched on FIRST open only — building it resolves
       // every active filter's Finviz membership, so it must not run on page load.
+      // htmx does NOT swap on an error response, so without an explicit failure
+      // path a 500/timeout would leave the "Resolving…" placeholder up forever.
       if (name === 'queue' && !activate._queueLoaded) {
         activate._queueLoaded = true;
-        if (window.htmx) htmx.ajax('GET', '/finviz/queue', { target: '#queueBox', swap: 'innerHTML' });
+        loadQueue();
       }
       try { history.replaceState(null, '', '#' + name); } catch (e) {}
     }
+    // Fetch the MATP-queue panel with an explicit failure path. Plain fetch (not
+    // htmx.ajax) so a non-2xx is visible instead of silently leaving the
+    // placeholder in place, which is what a stuck "Resolving…" panel looks like.
+    window.loadQueue = function loadQueue() {
+      var box = document.getElementById('queueBox');
+      if (!box) return;
+      fetch('/finviz/queue', { headers: { 'HX-Request': 'true' } })
+        .then(function (r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + r.statusText);
+          return r.text();
+        })
+        .then(function (html) {
+          box.innerHTML = html;
+          if (window.htmx) htmx.process(box);
+        })
+        .catch(function (err) {
+          box.innerHTML =
+            '<div class="rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-xs text-rose-200">' +
+            '<b>Could not build the MATP queue.</b> ' + String(err.message || err) +
+            '<div class="text-rose-300/70 mt-1">Usually a Finviz fetch failing or timing out on the server. ' +
+            'The saved filters are unaffected — nothing was changed.</div>' +
+            '<button type="button" onclick="loadQueue()" class="mt-2 px-2.5 py-1 rounded border border-rose-400/50 ' +
+            'text-rose-200 hover:bg-rose-500/10 transition">Retry</button></div>';
+        });
+    };
     tabs.forEach(function (t) { t.addEventListener('click', function () { activate(t.dataset.tab); }); });
     var init = (location.hash || '').replace('#', '');
     activate(names.indexOf(init) >= 0 ? init : 'finviz');

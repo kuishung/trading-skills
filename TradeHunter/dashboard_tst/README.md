@@ -129,6 +129,22 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-16 — v3.87: "MATP Tickers" tab — rename, column order, and a visible failure path
+- Renamed the tab **All Tickers → MATP Tickers** (user).
+- Column order now leads with what the tab is for: **Ticker · MATP · MBP · Calculated Date**,
+  with the container info (In filters · Held by) after. "Calculated Date" renders date-only
+  in the viewer's timezone; a ticker no run has covered reads **"not yet calculated"**
+  instead of a bare "never".
+- **Fixed a silent-failure trap.** The panel is fetched on first tab open, and htmx does
+  **not** swap on an error response — so a 500 or a timeout left the "Resolving screener
+  memberships…" placeholder up forever, indistinguishable from "still loading". (This is
+  what the reported screenshot showed.) Swapped `htmx.ajax` for a plain `fetch` with an
+  explicit `.catch`: a failure now renders the actual error, notes that the saved filters
+  were not touched, and offers **Retry**.
+- The loading copy now states why it can be slow (each Finviz screen walks at ~1 page/sec
+  on a cold load, cached for an hour after), so a genuinely slow first load doesn't look
+  like a hang either.
+
 ### 2026-08-16 — v3.86: fix — charting a My Watchlist ticker with no MATP row yet
 - Reported: starring a ticker that no MATP run has covered, then opening it, showed
   *"No tickers yet — run a watchlist to populate."*
