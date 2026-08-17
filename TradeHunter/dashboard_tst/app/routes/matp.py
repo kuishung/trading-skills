@@ -40,6 +40,33 @@ _SIGNAL_RANK = {"HOT": 0, "WARM": 1, "WATCHING": 2}
 def _signal_key(lv):
     return (_SIGNAL_RANK.get((lv.signal or "").upper(), 3), lv.symbol)
 
+
+def _valid_symbol(sym: str) -> bool:
+    """Same shape check the ad-hoc Run box uses — a US ticker, not free text."""
+    return bool(sym) and 1 <= len(sym) <= 6 and all(c.isalpha() or c in ".-" for c in sym)
+
+
+def _ensure_first_calc(db: Session, user: User, sym: str) -> bool:
+    """Queue the FIRST MATP/MBP calculation for a ticker that has none.
+
+    A ticker starred from anywhere on the platform belongs to no screener, so
+    nothing in the scheduled pipeline is obliged to compute it promptly — its
+    MATP/MBP columns read "-" until some cycle happens to pick it up. Requesting
+    it explicitly is the same thing the row's manual refresh does, so the agent's
+    next poll (~10 min) computes it and the row fills in.
+
+    Only for tickers with NO median on record: a ticker that already has one is
+    refreshed on its normal cadence, and re-requesting it on every star would
+    burn a MarketBeat browse per click. `_enqueue` additionally refuses to create
+    a duplicate open request, so repeated stars can't pile up requests.
+    """
+    if not _valid_symbol(sym):
+        return False
+    lv = db.query(MATPLevel).filter(MATPLevel.symbol == sym).first()
+    if lv is not None and lv.matp is not None:
+        return False
+    return _enqueue(db, "ticker", symbol=sym, user=user)
+
 router = APIRouter(prefix="/matp", tags=["matp"])
 templates = Jinja2Templates(
     directory=str(Path(__file__).resolve().parent.parent / "templates")
@@ -188,7 +215,10 @@ def my_watchlist_toggle(
     if not sym:
         return {"ok": False, "error": "no symbol"}
     starred = uwl.toggle(db, user, sym)
-    return {"ok": True, "symbol": sym, "starred": starred,
+    # Starring a ticker nobody has ever computed queues that first calculation —
+    # otherwise the row would show "-" for MATP/MBP indefinitely.
+    queued = _ensure_first_calc(db, user, sym) if starred else False
+    return {"ok": True, "symbol": sym, "starred": starred, "queued": queued,
             "count": len(uwl.symbols(db, user))}
 
 
@@ -205,21 +235,16 @@ def my_watchlist_add(
     if not sym:
         return {"ok": False, "error": "no symbol"}
     added = uwl.add(db, user, sym, note)
+    queued = _ensure_first_calc(db, user, sym)
     return {"ok": True, "symbol": sym, "added": added, "starred": True,
-            "count": len(uwl.symbols(db, user))}
+            "queued": queued, "count": len(uwl.symbols(db, user))}
 
 
-@router.get("/watchlist", response_class=HTMLResponse)
-def matp_watchlist(
-    request: Request,
-    wl: str | None = None,    # all | individual | <filter_id>
-    sym: str | None = None,
-    user: User = Depends(require_user),
-    db: Session = Depends(get_db),
-):
-    """Lazy-loaded watchlist grid with RUNTIME trend/signal + a price>MBP split.
-    Loaded via HTMX after the page renders so computing live signals never
-    freezes the main view (cached + bounded concurrency)."""
+def _watchlist_context(
+    db: Session, user: User, wl: str | None, sym: str | None
+) -> dict:
+    """Everything `_watchlist.html` renders. Split out from the GET handler so
+    the + quick-add POST can re-render the same panel from its own response."""
     all_levels = db.query(MATPLevel).all()
     active = sorted(
         [lv for lv in all_levels if (lv.status or "active") == "active"], key=_signal_key
@@ -277,22 +302,65 @@ def matp_watchlist(
         else:
             qualified.append(lv)
 
+    return {
+        "user": user,
+        "qualified": qualified,
+        "disqualified": disqualified,
+        "dropped": dropped,
+        "open_symbols": open_symbols,
+        "sel_sym": (sym or "").strip().upper(),
+        "sel_wl": sel_wl,
+        "live": live,
+        "wl_refreshed": wl_refreshed,
+        "my_syms": uwl.symbol_set(db, user),
+    }
+
+
+@router.get("/watchlist", response_class=HTMLResponse)
+def matp_watchlist(
+    request: Request,
+    wl: str | None = None,    # all | mine | individual | <filter_id>
+    sym: str | None = None,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Lazy-loaded watchlist grid with RUNTIME trend/signal + a price>MBP split.
+    Loaded via HTMX after the page renders so computing live signals never
+    freezes the main view (cached + bounded concurrency)."""
     return templates.TemplateResponse(
-        request,
-        "_watchlist.html",
-        {
-            "user": user,
-            "qualified": qualified,
-            "disqualified": disqualified,
-            "dropped": dropped,
-            "open_symbols": open_symbols,
-            "sel_sym": (sym or "").strip().upper(),
-            "sel_wl": sel_wl,
-            "live": live,
-            "wl_refreshed": wl_refreshed,
-            "my_syms": uwl.symbol_set(db, user),
-        },
+        request, "_watchlist.html", _watchlist_context(db, user, wl, sym)
     )
+
+
+@router.post("/my/quick-add", response_class=HTMLResponse)
+def my_watchlist_quick_add(
+    request: Request,
+    symbol: str = Form(...),
+    wl: str = Form("mine"),
+    sym: str = Form(""),
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """The + box on My Watchlist: star a ticker and compute it if it's new.
+
+    My Watchlist is the one list a member fills themselves, so it's also the one
+    place a ticker can arrive with no MATP/MBP at all. Adding therefore does both
+    halves of what the user means by "add": the star, and — when nothing has ever
+    computed that symbol — the first MATP/MBP calculation (see _ensure_first_calc).
+
+    Returns the re-rendered panel rather than JSON so the new row appears at once,
+    already carrying the amber queued marker; `HX-Trigger: refreshRuns` wakes the
+    runs panel above it, which would otherwise have stopped polling while idle.
+    """
+    s = (symbol or "").strip().upper()
+    if _valid_symbol(s):
+        uwl.add(db, user, s)
+        _ensure_first_calc(db, user, s)
+    resp = templates.TemplateResponse(
+        request, "_watchlist.html", _watchlist_context(db, user, wl or "mine", sym)
+    )
+    resp.headers["HX-Trigger"] = "refreshRuns"
+    return resp
 
 
 @router.get("/chart", response_class=HTMLResponse)

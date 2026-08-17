@@ -351,7 +351,13 @@
       var was = el.getAttribute('aria-pressed') === 'true';
       paintStar(el, !was);                                  // optimistic
       post('/matp/my/toggle', sym)
-        .then(function (j) { paintStar(el, !!j.starred); })
+        .then(function (j) {
+          paintStar(el, !!j.starred);
+          // Starring a ticker nobody has computed queues its first MATP/MBP run
+          // (routes/matp.py::_ensure_first_calc) — say so, or the "-" columns
+          // look like the star did nothing.
+          if (j.queued) window.thToast && window.thToast(sym + ' starred — calculating MATP/MBP…', 'ok');
+        })
         .catch(function () { paintStar(el, was); window.thToast && window.thToast('Could not update My Watchlist', 'err'); })
         .finally(function () { el._busy = false; });
     }
@@ -364,11 +370,12 @@
       var label = el.querySelector('.wl-add-label') || el;
       var prev = label.textContent;
       post('/matp/my/add', sym)
-        .then(function () {
+        .then(function (j) {
           label.textContent = '★ On My Watchlist';
           el.classList.add('text-amber-300', 'border-amber-500/60');
           el.classList.remove('text-slate-300', 'border-slate-700');
-          window.thToast && window.thToast(sym + ' added to My Watchlist', 'ok');
+          window.thToast && window.thToast(
+            sym + ' added to My Watchlist' + (j && j.queued ? ' — calculating MATP/MBP…' : ''), 'ok');
         })
         .catch(function () {
           label.textContent = prev;

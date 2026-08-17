@@ -67,6 +67,49 @@
     }, 200);
   });
 })();
+
+// Same typeahead for the + box on My Watchlist. That input lives inside the
+// HTMX-swapped watchlist fragment (and is rendered twice — desktop aside +
+// mobile <details>), so it is bound by DELEGATION and given its own <datalist>
+// created on demand. A template-side id would collide between the two panels.
+(function () {
+  var seq = 0, t;
+  document.addEventListener('input', function (e) {
+    var inp = e.target;
+    if (!inp.classList || !inp.classList.contains('wl-add-input')) return;
+    if (!inp._dl) {
+      var dl = document.createElement('datalist');
+      dl.id = 'wlAddOpts' + (++seq);
+      inp.parentNode.insertBefore(dl, inp.nextSibling);
+      inp.setAttribute('list', dl.id);
+      inp._dl = dl;
+    }
+    var q = inp.value.trim();
+    clearTimeout(t);
+    if (q.length < 1) { inp._dl.innerHTML = ''; return; }
+    t = setTimeout(function () {
+      fetch('/matp/ticker-search?q=' + encodeURIComponent(q))
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          inp._dl.innerHTML = '';
+          (d.results || []).forEach(function (it) {
+            var o = document.createElement('option');
+            o.value = it.symbol;
+            o.label = it.symbol + ' — ' + it.name;
+            o.textContent = it.name;
+            inp._dl.appendChild(o);
+          });
+        }).catch(function () {});
+    }, 200);
+  });
+  // Clear the box after a successful add so the next ticker can be typed straight
+  // away (the swap replaces the panel, but a stale value would survive in Safari's
+  // form restoration and read as "did it add?").
+  document.addEventListener('htmx:afterSwap', function (e) {
+    var f = e.target.querySelector ? e.target.querySelector('.wl-add-input') : null;
+    if (f) f.value = '';
+  });
+})();
 </script>
 
 {% set wl_url = "/matp/watchlist?wl=" ~ (sel_wl or "") ~ "&sym=" ~ (sel.symbol if sel else "") %}
@@ -84,8 +127,12 @@
      Width is user-adjustable via the drag handle (#wlResizer); the chosen width is
      remembered in localStorage. Default 20rem. The active-runs panel sits on top. #}
   <aside id="wlAside" class="hidden lg:flex lg:flex-col lg:shrink-0 lg:h-full" style="width:20rem">
+    {# `refreshRuns from:body` — the + quick-add returns that HX-Trigger, so a
+       newly queued first calculation shows up here immediately. Without it the
+       panel would stay blank until its own poll, which STOPS while idle. #}
     <div id="runsbox" class="shrink-0 empty:hidden mb-2"
-         hx-get="/matp/runs?wl={{ sel_wl }}&sym={{ sel.symbol if sel else '' }}" hx-trigger="load" hx-swap="innerHTML"></div>
+         hx-get="/matp/runs?wl={{ sel_wl }}&sym={{ sel.symbol if sel else '' }}"
+         hx-trigger="load, refreshRuns from:body" hx-swap="innerHTML"></div>
     <div id="wlbox" class="flex-1 min-h-0 overflow-y-auto pr-1"
          hx-get="{{ wl_url }}" hx-trigger="load" hx-swap="innerHTML">
       <div class="text-xs text-slate-500 px-2 py-3">Loading watchlist&hellip;</div>

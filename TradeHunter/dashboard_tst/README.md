@@ -129,6 +129,30 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-17 — v3.97: My Watchlist gets a **+**, and adding computes MATP/MBP
+- **`+` add box on My Watchlist** (`_watchlist.html`, shown only when `wl == "mine"`).
+  My Watchlist is the one list a member fills themselves, so it's the only one that
+  needs an add control — the others are screener containers. Same Yahoo typeahead as
+  the board's Run box, bound by delegation (the input lives in an HTMX-swapped fragment
+  and is rendered twice — desktop aside + mobile `<details>`).
+- **Adding a ticker with no MATP queues its first calculation**
+  (`routes/matp.py::_ensure_first_calc`). A starred ticker belongs to no screener, so
+  nothing in the scheduled pipeline was obliged to compute it promptly and its MATP/MBP
+  columns read "-" until some cycle happened to reach it. Now the add itself requests it,
+  and the agent's next poll (~10 min) fills the row. Applies to **every** star path —
+  the `+` box, the ☆ in the grid, and "Add to Watchlist" on Sector / Company — so the
+  behaviour doesn't depend on which surface you used.
+- Only for tickers with **no median on record**: one that already has a value refreshes
+  on its normal cadence, and re-requesting on every star would burn a MarketBeat browse
+  per click. `_enqueue` also refuses duplicate open requests, so repeated adds can't pile up.
+- `/matp/my/quick-add` returns the **re-rendered panel** (not JSON) so the new row appears
+  at once carrying its amber queued marker, plus `HX-Trigger: refreshRuns` to wake the runs
+  panel above it — that panel stops polling while idle and would otherwise stay blank.
+  The fragment is wrapped in `.wl-panel` and targeted with `closest .wl-panel`, because a
+  shared id would let the mobile panel swap the desktop one.
+- `/matp/my/add` + `/matp/my/toggle` now return `queued`, and `base.html` toasts
+  "calculating MATP/MBP…" when it's true.
+
 ### 2026-08-17 — v3.96: `deploy/matp_diag.py` — why the recalculation never finishes
 - New read-only diagnostic (`deploy/matp_diag.py`) for the question the MATP progress
   panel cannot answer: **the bar parks below 100% and the green "Recalculation in

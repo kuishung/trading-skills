@@ -1,8 +1,32 @@
 {# Lazy-loaded watchlist grid (runtime trend/signal/price). Context:
-   qualified, disqualified, dropped, open_symbols, sel_sym, live #}
+   qualified, disqualified, dropped, open_symbols, sel_sym, live
+
+   Wrapped in .wl-panel so the + quick-add form can re-render THIS panel via
+   `hx-target="closest .wl-panel"` — the desktop aside and the mobile <details>
+   both render this fragment, and a shared id would make one swap the other. #}
+<div class="wl-panel">
 {% from "_wl_macros.html" import ticker_grid %}
 {% from "_time.html" import localtime %}
 {% set wl = sel_wl or "" %}
+
+{# My Watchlist is the one list the member fills themselves — so it's the one
+   that needs an add control. Adding also computes MATP/MBP when the ticker has
+   none (routes/matp.py::_ensure_first_calc), which is why the hint says so. #}
+{% if wl == "mine" %}
+<form class="px-2 pt-1 pb-1.5 flex items-center gap-1.5"
+      hx-post="/matp/my/quick-add" hx-target="closest .wl-panel" hx-swap="outerHTML">
+  <input type="hidden" name="wl" value="mine">
+  <input type="hidden" name="sym" value="{{ sel_sym }}">
+  <input name="symbol" class="wl-add-input flex-1 min-w-0 rounded bg-slate-950/60 border border-slate-700 px-2 py-1 text-xs focus:border-emerald-500 outline-none"
+         placeholder="add ticker&hellip;" autocomplete="off" required
+         maxlength="6" pattern="[A-Za-z.\-]{1,6}"
+         title="US ticker symbol, e.g. NVDA">
+  <button type="submit"
+          class="shrink-0 w-6 h-6 rounded border border-slate-700 text-slate-300 leading-none text-sm hover:border-emerald-500 hover:text-emerald-300 transition"
+          title="Add to My Watchlist (and calculate MATP/MBP if it has none)">+</button>
+</form>
+{% endif %}
+
 {% if wl_refreshed %}
 <div class="px-2 pt-1 pb-1 text-[11px] text-slate-500" title="Last completed refresh for this watchlist">
   Refreshed {{ localtime(wl_refreshed) }}
@@ -13,8 +37,10 @@
 {% elif not disqualified %}
   {% if wl == "mine" %}
   <p class="text-xs text-slate-500 px-2 py-3 leading-relaxed">
-    Your watchlist is empty. Tap the &#9734; next to any ticker here, or use
-    <span class="text-slate-300">Add to Watchlist</span> on the
+    Your watchlist is empty. Type a ticker in the box above and press
+    <span class="text-slate-300">+</span> &mdash; one with no MATP yet is queued
+    for its first calculation. You can also tap the &#9734; next to any ticker
+    here, or use <span class="text-slate-300">Add to Watchlist</span> on the
     <a href="/sector" class="text-emerald-400 hover:underline">Sector &amp; Industry</a> or
     <a href="/company-analysis" class="text-emerald-400 hover:underline">Company</a> page.
   </p>
@@ -29,3 +55,4 @@
 {% endif %}
 
 {# "Dropped from filter" list removed per request. #}
+</div>{# /.wl-panel #}
