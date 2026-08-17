@@ -213,6 +213,19 @@ Edit files here, redeploy (scp / git pull → `bash install.sh`), then re-test w
 recreate the cron job unless the schedule or delivery target changes.
 
 ## Changelog
+- **2026-08-17** — `markets/matp` skill → **v1.9.0**: work the queue **in the order
+  given**, and check that the cycle actually closed. `/api/matp-queue` now returns
+  tickers **neediest-first** (never computed → stalest → alphabetical), carries each
+  ticker's **`exchange`** (stop guessing NASDAQ vs NYSE in the MarketBeat URL, a wrong
+  guess fails identically on every poll), and `/api/matp` now **honours
+  `advance_filter_ids`** — the field the skill was already told to echo, which the server
+  had no model field for and silently dropped. Symptom that forced this: five tickers
+  (ADMA, FTI, HL, SSRM, YOU) sat uncomputed for over a day while 76 already-fresh names
+  were recomputed around them, and the board read "Recalculation in progress" permanently
+  because no filter's `next_run_at` ever advanced. The closing push's response now returns
+  `advanced_filters`; an empty list when ids were sent means the cycle did NOT close and
+  belongs in the run note. Pairs with dashboard_tst v3.98. **Redeploy with
+  `bash nous_hermes/install.sh`.**
 - **2026-08-16** — **`heartbeat.sh` now measures agent health, not just liveness.**
   Adds a `health` object to the beat: `agent_ok`/`agent_error` (from `hermes --version`),
   `gateway` (`systemctl --user is-active`), and `disk_pct`/`disk_free`. Motivated by the

@@ -268,6 +268,9 @@ def build_queue(db: Session, *, due_only: bool = False,
             "matp": getattr(lv, "matp", None),
             "mbp": getattr(lv, "mbp", None),
             "as_of": getattr(lv, "as_of", None),
+            # last known listing venue — the agent needs it to build the right
+            # MarketBeat URL rather than guessing NASDAQ vs NYSE
+            "exchange": getattr(lv, "exchange", None),
             "has_matp": lv is not None and getattr(lv, "matp", None) is not None,
             "queued": sym in pending,
             # starred by a member and never calculated -> pulled in automatically

@@ -167,6 +167,7 @@ def push_macro_analysis(
 @router.get("/matp-queue")
 def matp_queue(
     due_only: bool = True,
+    stale_hours: int = 0,
     _: bool = Depends(require_api_key),
     db: Session = Depends(get_db),
 ):
@@ -181,17 +182,58 @@ def matp_queue(
     attribution, and `advance_filter_ids` lists the filters whose schedule this
     run should advance when it finalizes.
 
+    **Order is the scheduling policy.** The agent works this list top-down under a
+    per-run call budget, so whatever sits at the bottom of an 81-name list is never
+    reached when the budget runs out — and since the next poll returns the same list
+    from the top, those names are starved indefinitely (observed: five tickers
+    untouched for a day while 76 others refreshed). The list is therefore returned
+    NEEDIEST-FIRST: never computed, then stalest, then alphabetical. Every poll now
+    spends its budget on what is actually missing, and the tail drains.
+
+    Deliberately ordered rather than FILTERED: a closing push with `prune:true` marks
+    same-filter tickers absent from the payload as `dropped`, so serving a partial
+    universe here would silently delete rows. Ordering is safe; truncation is not.
+
+    `stale_hours` (default 0 = off) additionally tags each entry with `stale`, so an
+    agent that wants to stop early knows where the already-fresh tail begins.
+
     `due_only=false` returns the full union regardless of schedule (for ad-hoc runs).
     """
     from ..services.matp_queue import build_queue
 
     q = build_queue(db, due_only=due_only)
+    cutoff = (
+        _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=stale_hours)
+        if stale_hours > 0 else None
+    )
+
+    def _as_of(t):
+        ts = t.get("as_of")
+        if ts is not None and ts.tzinfo is None:
+            ts = ts.replace(tzinfo=_dt.timezone.utc)
+        return ts
+
+    def _priority(t):
+        # (never computed first, then oldest first, then stable alphabetical)
+        ts = _as_of(t)
+        return (1 if ts is not None else 0, ts or _dt.datetime.min.replace(
+            tzinfo=_dt.timezone.utc), t["symbol"])
+
+    ordered = sorted(q["tickers"], key=_priority)
     return {
         "tickers": [
             {"symbol": t["symbol"],
              "filter_ids": [f["id"] for f in t["filters"]],
-             "manual": t["manual"]}
-            for t in q["tickers"]
+             "manual": t["manual"],
+             # exchange (when known) so the agent builds the right MarketBeat URL
+             # instead of guessing NASDAQ vs NYSE for it
+             "exchange": t.get("exchange"),
+             "as_of": _as_of(t).isoformat() if _as_of(t) else None,
+             "never_computed": _as_of(t) is None,
+             "stale": (cutoff is not None
+                       and (_as_of(t) is None or _as_of(t) < cutoff)),
+             }
+            for t in ordered
         ],
         "count": q["counts"]["tickers"],
         "duplicates_avoided": q["counts"]["saved"],
@@ -489,6 +531,15 @@ class MatpIngest(BaseModel):
     # Per-ticker ad-hoc refreshes leave filter_id unset / prune=False.
     filter_id: int | None = None
     prune: bool = False
+    # Schedules to advance on the closing push. The DEDUPLICATED queue path
+    # (/api/matp-queue) computes ONE merged universe covering several filters, so
+    # there is no single `filter_id` to stamp — /api/matp-queue hands back
+    # `advance_filter_ids` and the agent echoes it here. Without this field the
+    # server silently dropped it (Pydantic ignores unknown keys), nothing ever
+    # advanced `next_run_at`, and every filter stayed permanently due: the banner
+    # read "Recalculation in progress" forever and the 10-minute cron re-ran the
+    # same union endlessly. `filter_id` still works for single-filter runs.
+    advance_filter_ids: list[int] = Field(default_factory=list)
     # Incremental population: the agent pushes processed tickers as it goes with
     # final=False (no archive, no prune) so the table fills live; the closing
     # push sets final=True (+ prune=True) — that one is archived as the run file.
@@ -612,21 +663,37 @@ def ingest_matp(
     # only on the finalizing push (so incremental population doesn't spam files).
     # Soft-fail: archiving must never break ingest.
     archived = None
+    advanced: list[int] = []
     if payload.final:
         filter_desc = None
-        if payload.filter_id is not None:
-            f = db.get(FinvizFilter, payload.filter_id)
-            filter_desc = f.description if f else None
-            # stamp the filter on a completed run. last_run_at advances on EVERY
-            # finished run (scheduled or manual / "off"); next_run_at only when the
-            # filter is on a schedule. Decoupled so the watchlist's "last refreshed"
-            # date is trustworthy regardless of interval.
-            if f is not None:
-                f.last_run_at = now
-                iv = RUN_INTERVALS.get(f.run_interval)
-                if iv:
-                    f.next_run_at = now + timedelta(days=iv)
-                db.commit()
+
+        def _advance(fid: int) -> str | None:
+            """Stamp a filter as run. last_run_at advances on EVERY finished run
+            (scheduled or manual / "off"); next_run_at only when the filter is on
+            a schedule. Decoupled so the watchlist's "last refreshed" date is
+            trustworthy regardless of interval."""
+            f = db.get(FinvizFilter, fid)
+            if f is None:
+                return None
+            f.last_run_at = now
+            iv = RUN_INTERVALS.get(f.run_interval)
+            if iv:
+                f.next_run_at = now + timedelta(days=iv)
+            advanced.append(fid)
+            return f.description
+
+        # Every filter this run covered — the singular `filter_id` (one-filter
+        # run) plus `advance_filter_ids` (the deduplicated multi-filter queue).
+        # Deduped so passing both doesn't double-stamp.
+        for fid in dict.fromkeys(
+            ([payload.filter_id] if payload.filter_id is not None else [])
+            + list(payload.advance_filter_ids or [])
+        ):
+            desc = _advance(fid)
+            if fid == payload.filter_id:
+                filter_desc = desc
+        if advanced:
+            db.commit()
         # selective run finished -> advance the selective schedule the same way.
         if payload.selective:
             sched = get_selective_schedule(db)
@@ -642,7 +709,9 @@ def ingest_matp(
     return {
         "ok": True, "upserted": upserted,
         "history_appended": appended, "targets_added": targets_added,
-        "dropped": dropped, "archived": archived,
+        # echoed back so a run that thinks it closed a cycle can SEE whether the
+        # schedules actually moved (the silent-drop bug gave no such signal)
+        "dropped": dropped, "archived": archived, "advanced_filters": advanced,
     }
 
 

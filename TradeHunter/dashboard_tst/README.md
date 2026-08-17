@@ -129,6 +129,32 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-17 — v3.98: the MATP cycle can now actually finish
+Five tickers (ADMA, FTI, HL, SSRM, YOU) stayed outstanding for more than a day while 76
+others refreshed around them, and the banner read "Recalculation in progress" permanently.
+Two independent defects, both fixed here:
+- **`advance_filter_ids` was silently dropped.** `/api/matp-queue` returns it and the agent
+  skill is told to echo it on the closing push, but `MatpIngest` had no such field — Pydantic
+  ignores unknown keys, and only the singular `filter_id` advanced a schedule. On the
+  deduplicated path (one merged universe covering several filters) **nothing** ever advanced
+  `next_run_at`: filters stayed due forever, `progress.active` stayed true forever, and the
+  10-minute cron re-ran the same 81-name union endlessly. The field now exists and every id
+  in it is stamped (deduped against `filter_id`); the response echoes `advanced_filters` so a
+  run can SEE whether the cycle closed instead of assuming it.
+- **The queue had no priority.** It returned every ticker of every due filter in alphabetical
+  order regardless of freshness, so a budget-limited poll spent itself on already-fresh names
+  and the tail was never reached — and the next poll handed back the identical list from the
+  top. `/api/matp-queue` now returns **neediest-first**: never computed → stalest → alphabetical.
+  Deliberately ORDERED, not filtered: a closing push with `prune:true` marks same-filter
+  tickers absent from the payload as `dropped`, so serving a partial universe would silently
+  delete rows. Optional `stale_hours` tags each entry `stale` for an agent that wants to stop
+  early; each entry also carries `as_of` + `never_computed`.
+- Entries now include **`exchange`** (from the last known MATPLevel) so the agent builds the
+  right MarketBeat URL instead of guessing NASDAQ vs NYSE — a wrong guess fails identically on
+  every poll, which is one way a specific ticker can never complete.
+- Pairs with `nous_hermes` `markets/matp` **v1.9.0** (work the list in the order given; check
+  `advanced_filters`). The ordering fix needs no agent redeploy — it is server-side.
+
 ### 2026-08-17 — v3.97: My Watchlist gets a **+**, and adding computes MATP/MBP
 - **`+` add box on My Watchlist** (`_watchlist.html`, shown only when `wl == "mine"`).
   My Watchlist is the one list a member fills themselves, so it's the only one that

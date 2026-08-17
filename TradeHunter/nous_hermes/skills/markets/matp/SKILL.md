@@ -1,6 +1,6 @@
 ---
 name: matp
-version: 1.8.0
+version: 1.9.0
 description: Compute the faithful Median Analyst Target Price (MATP) + Max Buy Price (MBP) for TradeHunter and push the results to the platform. Use when asked to "refresh MATP", "run MATP", "update target prices", or on the scheduled cron. Reads the active Finviz screener filters from TradeHunter's API, expands them to a ticker universe, and for each ticker looks up the latest earnings date + analyst price targets on MarketBeat, keeps only targets issued AFTER the latest earnings, computes the median (MATP) and MBP = MATP/1.15, then POSTs the rows to TradeHunter's /api/matp endpoint. Does NOT write CSV / Google Sheets / Telegram -- output is the API push only.
 ---
 
@@ -159,11 +159,25 @@ you'll never see two open requests for the same target.
 On the SAME poll, ask TradeHunter for the deduplicated list of tickers to compute:
 ```
 GET {TRADEHUNTER_URL}/api/matp-queue      header: X-API-Key: {TST_INGEST_API_KEY}
--> {"tickers":[{"symbol":"NVDA","filter_ids":[1,3],"manual":false}, ...],
+-> {"tickers":[{"symbol":"NVDA","filter_ids":[1,3],"manual":false,
+                "exchange":"NASDAQ","as_of":null,"never_computed":true,"stale":true}, ...],
     "count": 240, "duplicates_avoided": 63,
     "advance_filter_ids":[1,3], "selective":{"due":true,...},
     "filter_errors":[...]}
 ```
+
+**WORK THE LIST IN THE ORDER GIVEN — top to bottom.** It is returned
+neediest-first: `never_computed` tickers, then the stalest, then alphabetical.
+That order IS the scheduling policy. When your call budget runs out mid-list you
+will have spent it on the tickers that actually lack a value; restarting at the
+top next poll then continues down the same priority. (Working it in any other
+order — alphabetically, or "whatever looks interesting" — recreates the bug this
+ordering fixed: five tickers went a full day uncomputed while 76 already-fresh
+ones were recomputed around them.)
+
+Use each entry's **`exchange`** for the MarketBeat URL when it is non-null,
+instead of guessing NASDAQ vs NYSE. A wrong guess fails the same way on every
+poll, so a mis-guessed ticker never completes.
 **Screener filters are only CONTAINERS.** TradeHunter resolves each active
 filter's Finviz URL itself, unions the memberships, and returns **one row per
 unique ticker**. Compute MATP **exactly once per entry in `tickers`** — never once
@@ -177,9 +191,17 @@ membership has already been resolved for you.
 
 When you finish, send the closing push with `final:true` and
 `advance_filter_ids` echoed back as the filters to advance (or push per
-`filter_id` with `prune:true` as before for drift tracking). `filter_errors`
-lists filters whose URL could not be resolved this cycle — mention them in your
-run note; they contributed no tickers.
+`filter_id` with `prune:true` as before for drift tracking). **Check the
+response's `advanced_filters`** — it lists the schedules that actually moved. If
+it comes back empty when you sent ids, the cycle did NOT close: those filters
+stay due, you will be handed the same universe on the next poll, and the
+dashboard will keep saying "Recalculation in progress" forever. Say so in your
+run note rather than reporting a clean finish. (That silent failure was real
+until 2026-08-17: the server had no `advance_filter_ids` field, so the ids were
+dropped and nothing ever advanced.)
+
+`filter_errors` lists filters whose URL could not be resolved this cycle —
+mention them in your run note; they contributed no tickers.
 
 *Legacy path (still supported, do not prefer):* `GET /api/due-filters` returns the
 per-filter list and requires you to expand each URL and dedupe by hand.
