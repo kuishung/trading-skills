@@ -129,6 +129,26 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-17 — v3.96: `deploy/matp_diag.py` — why the recalculation never finishes
+- New read-only diagnostic (`deploy/matp_diag.py`) for the question the MATP progress
+  panel cannot answer: **the bar parks below 100% and the green "Recalculation in
+  progress" banner never turns off.** Prints the progress numbers, every filter's
+  `run_interval` / `last_run_at` / `next_run_at` + computed DUE flag, the agent
+  heartbeat, open refresh requests, and a per-ticker deep-dive (queue membership,
+  `matp_levels` row, history, past requests). Run on Hermes against the production
+  `tst.db`; symbols optional (defaults to whatever the panel calls outstanding).
+- **Why it was needed** — four very different causes look identical on the bar: never
+  attempted (per-poll budget), attempted and skipped (no post-earnings coverage), has a
+  value older than the 24h window, or the cycle never closes because no filter schedule
+  advanced. Only the DB distinguishes them.
+- Investigation notes (fixes not yet applied): `/api/matp-queue` returns
+  `advance_filter_ids` and `nous_hermes` `matp/SKILL.md` tells the agent to echo it on the
+  closing push, but `MatpIngest` has no such field — Pydantic drops it, and only the
+  singular `filter_id` advances a schedule. On the deduplicated path nothing advances
+  `next_run_at`, so filters stay due forever and the agent re-runs the same union every
+  10 minutes. Separately the queue has no staleness/limit parameter, so a budget-limited
+  poll re-does already-fresh tickers instead of draining the outstanding tail.
+
 ### 2026-08-16 — v3.95: Macro study Phase A — tracked indicator series
 - `MACRO_STUDY_DESIGN.md` Phase A: every macro topic now shows a **trend**, not a snapshot.
 - New `MacroIndicator` (definition) + `MacroReading` (observations) + migration
