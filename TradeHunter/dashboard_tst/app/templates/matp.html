@@ -181,84 +181,10 @@
 </script>
 
 <script>
-  // ── "Plot on TV" — draw MATP/MBP on the user's OWN TradingView ─────────────
-  // Talks to the local TV bridge (resources/tradingview-mcp/bridge/tv_bridge.mjs)
-  // running on THIS user's machine at 127.0.0.1:9223, which drives their own
-  // Chrome/TradingView over CDP. The server never touches a TV — each user only
-  // ever plots on their own chart.
-  //
-  // Handler is CAPTURE-phase on document so it preempts the row <a>'s HTMX click
-  // (stopPropagation) — clicking the ⧉ plots the ticker instead of loading its
-  // chart. Survives HTMX re-renders of the watchlist / chart pane (bound once).
+  // NOTE: the "Plot on TV" handler used to live here. It moved to base.html on
+  // 2026-08-17 because .tv-plot now also appears on Sector & Industry's chart,
+  // and a page-local handler meant the button did nothing off the MATP board.
   (function () {
-    var BRIDGE = 'http://127.0.0.1:9223';
-
-    function toast(msg, kind) {
-      var t = document.getElementById('tvToast');
-      if (!t) {
-        t = document.createElement('div');
-        t.id = 'tvToast';
-        t.style.cssText = 'position:fixed;left:50%;bottom:1.25rem;transform:translateX(-50%);' +
-          'z-index:60;padding:.5rem .9rem;border-radius:.5rem;font-size:12px;font-weight:500;' +
-          'box-shadow:0 6px 24px rgba(0,0,0,.4);transition:opacity .25s;pointer-events:none;opacity:0';
-        document.body.appendChild(t);
-      }
-      var colors = {
-        ok:   ['#052e16', '#86efac', '1px solid rgba(34,197,94,.4)'],
-        err:  ['#3b0d0d', '#fca5a5', '1px solid rgba(239,68,68,.45)'],
-        info: ['#0f172a', '#cbd5e1', '1px solid rgba(148,163,184,.35)']
-      }[kind] || ['#0f172a', '#cbd5e1', '1px solid rgba(148,163,184,.35)'];
-      t.style.background = colors[0]; t.style.color = colors[1]; t.style.border = colors[2];
-      t.textContent = msg;
-      t.style.opacity = '1';
-      clearTimeout(t._hide);
-      t._hide = setTimeout(function () { t.style.opacity = '0'; }, 2600);
-    }
-
-    window.plotOnTV = function (el) {
-      var d = el.dataset || {};
-      var sym = (d.sym || '').trim();
-      if (!sym) return;
-      var qs = '?symbol=' + encodeURIComponent(sym);
-      if (d.exch)  qs += '&exchange=' + encodeURIComponent(d.exch);
-      if (d.matp)  qs += '&matp=' + encodeURIComponent(d.matp);
-      if (d.mbp)   qs += '&mbp='  + encodeURIComponent(d.mbp);
-      var url = BRIDGE + '/plot' + qs;
-
-      el.style.opacity = '0.5';
-      var restore = function () { el.style.opacity = ''; };
-
-      fetch(url, { method: 'GET', mode: 'cors', cache: 'no-store' })
-        .then(function (r) { return r.json(); })
-        .then(function (j) {
-          restore();
-          if (j && j.ok) toast('Plotted ' + sym + ' MATP/MBP on your TradingView ✓', 'ok');
-          else toast('Bridge: ' + ((j && j.error) || 'could not plot ' + sym), 'err');
-        })
-        .catch(function () {
-          // Direct fetch failed (bridge down, or a browser blocked the loopback call).
-          // Fall back to a top-level navigation (not mixed-content-blocked) that
-          // self-closes. If the bridge is simply not running, this tab shows the error.
-          restore();
-          window.open(url + '&nav=1', 'th_tv_plot', 'width=340,height=180');
-          toast('Sent ' + sym + ' to the TV bridge…', 'info');
-        });
-    };
-
-    function handle(e) {
-      var el = e.target.closest ? e.target.closest('.tv-plot') : null;
-      if (!el) return;
-      e.preventDefault();
-      e.stopPropagation();   // capture-phase: stops the row <a> HTMX from firing
-      window.plotOnTV(el);
-    }
-    document.addEventListener('click', handle, true);   // capture
-    document.addEventListener('keydown', function (e) {
-      if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('tv-plot')) {
-        e.preventDefault(); e.stopPropagation(); window.plotOnTV(e.target);
-      }
-    }, true);
-
     // ── Delete a ticker from the watchlist (moderators) ───────────────────────
     // Capture-phase so it preempts the row <a>'s HTMX chart-load. Confirms, POSTs
     // to /matp/<sym>/delete, then removes just that row (no full list reload).

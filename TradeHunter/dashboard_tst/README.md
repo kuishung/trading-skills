@@ -129,6 +129,22 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-17 — v3.99: Plot on TV on the Sector & Industry chart
+- The Chart tab on `/sector` now carries the **⧉ Plot on TV** control
+  (`_sector_chart.html` sets `chart_tv_plot`). That chart is where you land after
+  drilling sector → industry → ticker, so "put this on my TradingView" is the next
+  move and previously meant retyping the symbol by hand.
+- **The handler moved from `matp.html` to `base.html`.** It was page-local, so simply
+  rendering the button anywhere else would have produced a control that silently did
+  nothing. It now uses the shared `thToast` instead of its own private toast element,
+  and every page inherits it (same delegation model as the ☆ star handler). `matp.html`
+  keeps only its watchlist-delete handler.
+- **Works without a MATP too.** The gate was `chart_tv_plot AND chart_matp is not none`,
+  which would have hidden the button for most Sector tickers. The bridge treats null
+  levels as "draw nothing" and still switches the chart to the symbol, so the button now
+  shows either way and self-describes: **Plot on TV** with levels, **Open on TV** without.
+  The MATP board's placeholder tickers (starred, not yet computed) gain the same.
+
 ### 2026-08-17 — v3.98: the MATP cycle can now actually finish
 Five tickers (ADMA, FTI, HL, SSRM, YOU) stayed outstanding for more than a day while 76
 others refreshed around them, and the banner read "Recalculation in progress" permanently.

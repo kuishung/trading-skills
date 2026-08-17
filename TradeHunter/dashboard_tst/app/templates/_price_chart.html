@@ -38,15 +38,18 @@
                   title="Curate {{ chart_symbol }} — create/open a study to mark support, resistance, entry, stop & R:R">&#128203; Curate</button>
         </form>
         {% endif %}
-        {# Plot MATP/MBP on the user's OWN TradingView via the local TV bridge. Shown only where the
-           board opts in (chart_tv_plot) and levels exist. Shares the .tv-plot capture handler in matp.html. #}
-        {% if chart_tv_plot is defined and chart_tv_plot and chart_matp is not none %}
+        {# Send this ticker to the user's OWN TradingView via the local TV bridge. Shown wherever the
+           board opts in (chart_tv_plot). Shares the .tv-plot capture handler in base.html.
+           With MATP on record it draws the MATP/MBP lines; WITHOUT one it still switches the chart
+           to the symbol (the bridge treats null levels as "draw nothing"), which is the useful
+           action from Sector & Industry where most tickers have no MATP yet — hence the two labels. #}
+        {% if chart_tv_plot is defined and chart_tv_plot %}
         <span class="tv-plot cursor-pointer text-[11px] px-2 py-0.5 rounded border border-orange-500/50 text-orange-300 hover:bg-orange-500/15 transition select-none"
               role="button" tabindex="0"
-              title="Plot MATP &amp; MBP on your TradingView (needs the local TV bridge running)"
+              title="{{ 'Plot MATP &amp; MBP on your TradingView' if chart_matp is not none else 'Open ' ~ chart_symbol ~ ' on your TradingView' }} (needs the local TV bridge running)"
               data-sym="{{ chart_symbol }}" data-exch="{{ chart_exchange or '' }}"
               data-matp="{{ '%.2f'|format(chart_matp) if chart_matp is not none else '' }}"
-              data-mbp="{{ '%.2f'|format(chart_mbp) if chart_mbp is not none else '' }}">&#9639; Plot on TV</span>
+              data-mbp="{{ '%.2f'|format(chart_mbp) if chart_mbp is not none else '' }}">&#9639; {{ 'Plot on TV' if chart_matp is not none else 'Open on TV' }}</span>
         {% endif %}
       </div>
       <div class="flex items-center gap-1">

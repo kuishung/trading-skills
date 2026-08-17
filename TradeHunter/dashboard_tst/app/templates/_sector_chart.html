@@ -13,7 +13,11 @@
 {% set chart_patterns = sel_patterns %}
 {% set chart_fill = true %}
 {% set chart_curatable = false %}
-{% set chart_tv_plot = false %}
+{# Plot on TV from here too: this chart is where you land after drilling
+   sector -> industry -> ticker, and "put that on my TradingView" is the next
+   move. Works for a ticker with no MATP as well — the bridge then just switches
+   the chart to the symbol (see base.html::plotOnTV). #}
+{% set chart_tv_plot = true %}
 {% include "_price_chart.html" %}
 {% if not sel %}
 <p class="text-[11px] text-slate-500 mt-1 shrink-0">No analyst / MATP data for {{ symbol }} — showing price only.</p>

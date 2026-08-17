@@ -418,6 +418,70 @@
     t._hide = setTimeout(function () { t.style.opacity = '0'; }, 2400);
   };
 
+  // ── "Plot on TV" — draw MATP/MBP on the user's OWN TradingView ─────────────
+  // Talks to the local TV bridge (resources/tradingview-mcp/bridge/tv_bridge.mjs)
+  // running on THIS user's machine at 127.0.0.1:9223, which drives their own
+  // Chrome/TradingView over CDP. The server never touches a TV — each user only
+  // ever plots on their own chart.
+  //
+  // Lives in base.html (moved from matp.html 2026-08-17) because .tv-plot now
+  // appears on Sector & Industry's chart too, and a page-local handler meant the
+  // button silently did nothing anywhere but the MATP board.
+  //
+  // CAPTURE phase on document so it preempts an enclosing row <a>'s HTMX click
+  // (the watchlist grid puts the control inside the row link). Survives HTMX
+  // re-renders because it's delegated, not bound to the element.
+  (function () {
+    var BRIDGE = 'http://127.0.0.1:9223';
+
+    window.plotOnTV = function (el) {
+      var d = el.dataset || {};
+      var sym = (d.sym || '').trim();
+      if (!sym) return;
+      var qs = '?symbol=' + encodeURIComponent(sym);
+      if (d.exch) qs += '&exchange=' + encodeURIComponent(d.exch);
+      if (d.matp) qs += '&matp=' + encodeURIComponent(d.matp);
+      if (d.mbp)  qs += '&mbp='  + encodeURIComponent(d.mbp);
+      var url = BRIDGE + '/plot' + qs;
+      // No MATP on record: the bridge still switches the chart to the symbol and
+      // simply draws no lines, which is the useful thing from the Sector page.
+      var what = d.matp ? ' MATP/MBP' : '';
+
+      el.style.opacity = '0.5';
+      var restore = function () { el.style.opacity = ''; };
+
+      fetch(url, { method: 'GET', mode: 'cors', cache: 'no-store' })
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+          restore();
+          if (j && j.ok) window.thToast(sym + what + ' on your TradingView ✓', 'ok');
+          else window.thToast('Bridge: ' + ((j && j.error) || 'could not plot ' + sym), 'err');
+        })
+        .catch(function () {
+          // Direct fetch failed (bridge down, or the browser blocked the loopback
+          // call). Fall back to a top-level navigation (not mixed-content-blocked)
+          // that self-closes. If the bridge simply isn't running, that tab shows why.
+          restore();
+          window.open(url + '&nav=1', 'th_tv_plot', 'width=340,height=180');
+          window.thToast('Sent ' + sym + ' to the TV bridge…', 'info');
+        });
+    };
+
+    document.addEventListener('click', function (e) {
+      var el = e.target.closest ? e.target.closest('.tv-plot') : null;
+      if (!el) return;
+      e.preventDefault();
+      e.stopPropagation();   // capture-phase: stops an enclosing row <a> from firing
+      window.plotOnTV(el);
+    }, true);
+    document.addEventListener('keydown', function (e) {
+      if ((e.key === 'Enter' || e.key === ' ') && e.target.classList
+          && e.target.classList.contains('tv-plot')) {
+        e.preventDefault(); e.stopPropagation(); window.plotOnTV(e.target);
+      }
+    }, true);
+  })();
+
   // Metric-label tooltips. ONE floating element, positioned fixed, driven by
   // event delegation on document -- so it works for content HTMX swaps in later
   // (the Overview / Financials tabs load lazily) with no re-binding, and can't
