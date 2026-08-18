@@ -4,9 +4,11 @@
 {% block main_class %}flex-1 lg:min-h-0 w-full px-4 py-3 overflow-y-auto lg:overflow-hidden{% endblock %}
 
 {% block content %}
-{# Default watchlist = All. A bare /matp (no ?wl=) shows every filter's tickers
-   (server default sel_wl="all"); picking a filter just adds ?wl= for that view —
-   it is NOT remembered across fresh visits, so the board always opens on All. #}
+{# Default watchlist = MY WATCHLIST. A bare /matp (the nav's "Watchlist" link)
+   opens on the user's own starred list (routes/matp.py::_default_wl), falling
+   back to All only for a user who hasn't starred anything yet. Picking another
+   watchlist just adds ?wl= for that view — it is NOT remembered across fresh
+   visits, so the board always opens back on My Watchlist. #}
 <div class="lg:h-full flex flex-col">
 
 {# ── Run panel (separate): watchlist selector (changes the shown tickers) + ad-hoc ticker ── #}

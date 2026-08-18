@@ -129,6 +129,20 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-18 — v4.01: the nav's "Watchlist" opens MY Watchlist
+- A bare `/matp` — which is exactly what the nav's **Watchlist** link is — used to land on
+  **All**, the union of every screener. That's the research universe, not the user's list;
+  clicking "Watchlist" should show *your* watchlist. It now defaults to **mine**
+  (`routes/matp.py::_default_wl`).
+- **Falls back to All for a user who has starred nothing yet**, so a new member doesn't land
+  on an empty board with no sense of what the platform holds. The fallback stops applying the
+  moment they star one ticker.
+- An explicit `?wl=` is still honoured everywhere (the selector, filter links, chart links) —
+  this only decides the default. Still not remembered across visits: a fresh `/matp` always
+  opens back on My Watchlist.
+- The lazy `/matp/watchlist` fragment shares the same default, otherwise the panel would have
+  rendered All underneath a page whose selector said "mine".
+
 ### 2026-08-18 — v4.00: charts open ~10x faster (they were never parquet)
 Answering "are the charts reading parquet? it feels slow" — **no.** `/matp/{sym}/prices`
 has always fetched live from the free Yahoo chart API (`services/prices.py`); the only

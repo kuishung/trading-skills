@@ -73,6 +73,22 @@ templates = Jinja2Templates(
 )
 
 
+def _default_wl(db: Session, user: User) -> str:
+    """Which watchlist a bare /matp opens on.
+
+    The nav's "Watchlist" link has no ?wl=, and it used to land on **All** — the
+    union of every screener, which is the research universe, not the user's own
+    list. Clicking "Watchlist" should show YOUR watchlist, so a bare visit now
+    opens on **mine**.
+
+    Falls back to All for a user who hasn't starred anything yet: a brand-new
+    member would otherwise land on an empty board with no sense of what the
+    platform holds. The fallback stops applying the moment they star one ticker.
+    An explicit ?wl= is always honoured — this only decides the default.
+    """
+    return "mine" if uwl.symbols(db, user) else "all"
+
+
 def _chart_context(db: Session, sel) -> dict:
     """The selected ticker's consensus band + analyst summary + runtime patterns.
     Shared by the full board (matp_home) and the lazy chart-pane swap (matp_chart)
@@ -140,9 +156,10 @@ def matp_home(
 
     # selected watchlist: ?wl = all | mine | individual | <filter_id>. "all" shows
     # every active ticker; "mine" is this user's own starred list; "individual"
-    # shows the ad-hoc (no-filter) tickers.
+    # shows the ad-hoc (no-filter) tickers. No ?wl= at all (the nav link) opens
+    # on the user's own watchlist — see _default_wl.
     valid_ids = {str(f.id) for f in active_filters}
-    sel_wl = (wl or "all").strip()
+    sel_wl = (wl or _default_wl(db, user)).strip()
     if sel_wl == "mine":
         shown_tickers = uwl.levels_for(db, user, all_levels)
     elif sel_wl == "individual":
@@ -266,7 +283,7 @@ def _watchlist_context(
     unfiled = by_filter.get(None, [])
 
     valid_ids = {str(f.id) for f in active_filters}
-    sel_wl = (wl or "all").strip()
+    sel_wl = (wl or _default_wl(db, user)).strip()
     if sel_wl == "mine":
         shown = uwl.levels_for(db, user, all_levels)
     elif sel_wl == "individual":
