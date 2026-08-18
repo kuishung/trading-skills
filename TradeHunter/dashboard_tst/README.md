@@ -129,6 +129,39 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-19 — v4.02: TradingView-style skin across the whole app
+User ask: *"the font style and size and appearance of the whole TradeHunter … apply the
+same to make the whole app resemblance tradingview including its controls … including the
+icon style and size."*
+
+Implemented as a **token + utility-remap layer** in `base.html`, not by editing 25
+templates. The pages are built from Tailwind utilities (`slate-*` surfaces, `rounded-lg/xl`,
+`emerald-*` accents), so remapping those utilities restyles everything at once and leaves the
+markup readable. Retune by editing the `--tv-*` tokens; nothing downstream hardcodes a colour.
+
+- **Typography** — TradingView's stack (`-apple-system, BlinkMacSystemFont, "Trebuchet MS",
+  Roboto, Ubuntu, …`), 14px UI / 12–13px secondary, tabular numerals everywhere so digits
+  don't jitter between rows. `html{font-size:110%}` → **100%**: TV's UI is deliberately
+  compact and the old 10% upscale fought that. One line to revert if it reads too small.
+- **Surfaces** — the gradient + grid-paper wallpaper is gone. Flat neutral ramp: `#131722`
+  page, `#1e222d` panel, `#2a2e39` border/hover, `#d1d4dc` text, `#787b86` muted.
+- **Geometry** — 4px control radius, 6px panel radius (TV is square-ish, not pill-round);
+  `rounded-full` is left alone so dots and progress tracks keep their shape.
+- **Controls** — styled by ELEMENT (`button`, `input`, `select`, `textarea`, `summary`) so
+  every form in the app inherits: compact, flat, 500-weight labels, solid blue primary,
+  ghost hover, and a single accent hairline for focus instead of a glow.
+- **Icons** — the app mixes inline `<svg>` with glyph characters (★ ↻ ⧉ ×). Both are
+  normalised: `font-variant-emoji: text` so glyphs render monochrome rather than as colour
+  emoji, one 16px size, `#b2b5be` muted → bright on hover, TV amber for a starred row, TV
+  red for delete-on-hover.
+- **Accents split by ROLE, deliberately.** `bg-emerald-*` (things you press) → TradingView
+  blue `#2962ff`; `text-emerald-*` (values and trend readouts) → TradingView green `#26a69a`,
+  with `text-rose-*` → `#ef5350`. Without that split the restyle would have destroyed the
+  green-up/red-down meaning every board here depends on. Nav's active pill moves from orange
+  to blue, as on TV.
+- The layer is inserted **before** the light-theme block, so `html.light` still wins and the
+  sun/moon toggle keeps working.
+
 ### 2026-08-18 — v4.01: the nav's "Watchlist" opens MY Watchlist
 - A bare `/matp` — which is exactly what the nav's **Watchlist** link is — used to land on
   **All**, the union of every screener. That's the research universe, not the user's list;

@@ -67,6 +67,174 @@
     .th-blink { animation: th-blink 1.2s steps(1, end) infinite; }
 
     /* ============================================================
+       TRADINGVIEW-STYLE DESIGN LAYER  (added 2026-08-19)
+       ------------------------------------------------------------
+       User ask: "make the whole app resemble TradingView -- font, size,
+       appearance, controls, icon style and size."
+
+       Done as a TOKEN + UTILITY-REMAP layer rather than by editing every
+       template: the pages are built from Tailwind utilities (slate
+       surfaces, rounded-lg/xl, emerald accents), so remapping those
+       utilities restyles all ~25 templates at once and keeps the markup
+       readable. Retune the look by editing the tokens below -- nothing
+       downstream hardcodes these colours.
+
+       What TradingView's UI actually is, and what we take:
+         * flat dark surfaces, NO gradient / glow / grid wallpaper
+         * one dense neutral ramp (#131722 page, #1e222d panel,
+           #2a2e39 border+hover, #d1d4dc text, #787b86 muted)
+         * small radii (4px controls, 6px panels) -- not pill-round
+         * 14px UI text, 12-13px secondary, tabular numerals
+         * blue #2962ff for ACTIONS; green/red kept for MARKET DIRECTION
+           (that split is why the accent remap below is done by class
+           ROLE: bg-emerald-* = action, text-emerald-* = data)
+         * thin monochrome icons ~16px, muted until hover
+       ============================================================ */
+    :root {
+      --tv-page:      #131722;   /* app background             */
+      --tv-panel:     #1e222d;   /* cards, dropdowns, headers  */
+      --tv-panel-2:   #181b26;   /* inset / deeper surface     */
+      --tv-hover:     #2a2e39;   /* hover surface              */
+      --tv-border:    #2a2e39;
+      --tv-border-2:  #363a45;   /* stronger divider / inputs  */
+      --tv-text:      #d1d4dc;
+      --tv-text-hi:   #f0f3fa;
+      --tv-muted:     #787b86;
+      --tv-icon:      #b2b5be;
+      --tv-accent:    #2962ff;   /* primary action             */
+      --tv-accent-hi: #1e53e5;
+      --tv-accent-tx: #5b8dff;   /* accent on dark text        */
+      --tv-up:        #26a69a;   /* market green               */
+      --tv-down:      #ef5350;   /* market red                 */
+      --tv-r-ctl:     4px;       /* control radius             */
+      --tv-r-panel:   6px;       /* panel radius               */
+      --tv-font: -apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto,
+                 Ubuntu, "Segoe UI", Helvetica, Arial, sans-serif;
+    }
+
+    /* --- typography: TradingView's stack at its density --------------
+       The old `html{font-size:110%}` scaled every rem up ~10%; TV's UI is
+       deliberately compact, so this goes back to 100% and lets 14px/12px
+       carry the hierarchy. Revert by restoring 110% on this line alone. */
+    html { font-size: 100%; }
+    body {
+      font-family: var(--tv-font);
+      font-size: 14px;
+      line-height: 1.45;
+      -webkit-font-smoothing: antialiased;
+    }
+    /* digits never jitter between rows (TV's tables are all tabular) */
+    .tabular-nums, table, input[type="number"] { font-variant-numeric: tabular-nums; }
+
+    /* --- flat surfaces: drop the gradient + grid wallpaper ----------- */
+    body {
+      background-color: var(--tv-page) !important;
+      background-image: none !important;
+      color: var(--tv-text);
+    }
+
+    /* --- neutral ramp: slate utilities -> TradingView greys ----------
+       Only the shades the templates actually use. !important because a
+       Tailwind utility ships at the same specificity. */
+    .bg-slate-950, .bg-slate-950\/80, .bg-slate-950\/60,
+    .bg-slate-950\/50, .bg-slate-950\/40 { background-color: var(--tv-panel-2) !important; }
+    .bg-slate-900, .bg-slate-900\/60, .bg-slate-900\/50,
+    .bg-slate-900\/40 { background-color: var(--tv-panel) !important; }
+    .bg-slate-800, .bg-slate-800\/70, .bg-slate-800\/60,
+    .bg-slate-800\/40 { background-color: var(--tv-hover) !important; }
+    .bg-slate-700, .bg-slate-700\/50, .bg-slate-700\/40,
+    .bg-slate-700\/30 { background-color: var(--tv-border-2) !important; }
+    .hover\:bg-slate-800\/70:hover, .hover\:bg-slate-800:hover,
+    .hover\:bg-slate-800\/40:hover { background-color: var(--tv-hover) !important; }
+
+    .border-slate-800, .border-slate-700, .border-slate-600 { border-color: var(--tv-border) !important; }
+    .text-white, .text-slate-100, .text-slate-200 { color: var(--tv-text-hi) !important; }
+    .text-slate-300, .text-slate-400 { color: var(--tv-text) !important; }
+    .text-slate-500, .text-slate-600, .text-slate-700 { color: var(--tv-muted) !important; }
+
+    /* --- accents by ROLE ---------------------------------------------
+       bg-emerald-*   = something you press   -> TradingView blue
+       text-emerald-* = a value / trend read  -> TradingView green
+       Keeping that split is what stops the restyle from destroying the
+       green-up / red-down meaning every board here depends on. */
+    .bg-emerald-600, .bg-emerald-500, .bg-emerald-700 { background-color: var(--tv-accent) !important; }
+    .hover\:bg-emerald-500:hover, .hover\:bg-emerald-600:hover { background-color: var(--tv-accent-hi) !important; }
+    .text-emerald-300, .text-emerald-400, .text-emerald-500 { color: var(--tv-up) !important; }
+    .border-emerald-500, .border-emerald-500\/60, .border-emerald-500\/50,
+    .border-emerald-500\/30 { border-color: var(--tv-accent) !important; }
+    .hover\:border-emerald-500:hover { border-color: var(--tv-accent) !important; }
+    .text-rose-300, .text-rose-400, .text-red-400 { color: var(--tv-down) !important; }
+    /* nav marks the current section in blue, the way TV does */
+    .bg-orange-500\/15 { background-color: rgba(41,98,255,0.16) !important; }
+    .text-orange-300 { color: var(--tv-accent-tx) !important; }
+    .hover\:text-orange-300:hover { color: var(--tv-text-hi) !important; }
+
+    /* --- geometry: TradingView is square-ish, not pill-round --------- */
+    .rounded-xl { border-radius: var(--tv-r-panel) !important; }
+    .rounded-lg, .rounded-md, .rounded { border-radius: var(--tv-r-ctl) !important; }
+    .rounded-full { border-radius: 9999px !important; }   /* dots/avatars keep their shape */
+
+    /* --- controls ----------------------------------------------------
+       Compact and flat: 4px radius, 500-weight label, a solid blue
+       primary, everything else a ghost that only shows a surface on
+       hover. Styled by ELEMENT so every form in the app inherits it
+       without template edits. */
+    button, [type="submit"], [role="button"], summary {
+      font-family: inherit;
+      font-weight: 500;
+      border-radius: var(--tv-r-ctl);
+      transition: background-color .12s ease, color .12s ease, border-color .12s ease;
+    }
+    input, select, textarea {
+      font-family: inherit;
+      font-size: 13px;
+      border-radius: var(--tv-r-ctl) !important;
+      background-color: var(--tv-page) !important;
+      border: 1px solid var(--tv-border-2) !important;
+      color: var(--tv-text) !important;
+    }
+    input::placeholder, textarea::placeholder { color: var(--tv-muted); }
+    input:focus, select:focus, textarea:focus {
+      outline: none;
+      border-color: var(--tv-accent) !important;
+      box-shadow: 0 0 0 1px var(--tv-accent);
+    }
+    :focus-visible { outline: none; box-shadow: 0 0 0 2px rgba(41,98,255,0.55); }
+    #thTip {
+      border-radius: var(--tv-r-panel);
+      background: var(--tv-panel) !important;
+      border-color: var(--tv-border-2) !important;
+      font-size: 12px;
+    }
+
+    /* --- icons -------------------------------------------------------
+       TradingView's are thin, monochrome, ~16px, muted until hover. Ours
+       are a mix of inline <svg> and glyph characters (star, refresh,
+       plot, close), so both are normalised:
+         * glyphs render as TEXT, not colour emoji (font-variant-emoji)
+         * one size, one muted colour, one hover colour
+         * svg stays crisp at small sizes */
+    svg { shape-rendering: geometricPrecision; }
+    .wl-star, .wl-del, .th-icon {
+      font-variant-emoji: text;
+      font-size: 16px;
+      line-height: 1;
+      color: var(--tv-icon);
+    }
+    .wl-star:hover, .th-icon:hover { color: var(--tv-text-hi); }
+    .wl-star[aria-pressed="true"] { color: #f7a600; }   /* TV amber = starred */
+    .wl-del:hover { color: var(--tv-down); }
+    /* the grid's bare-glyph plot control vs the chart toolbar's labelled
+       pill: size the glyph as an icon, leave the pill as a button */
+    .tv-plot { color: var(--tv-icon); font-variant-emoji: text; }
+    .tv-plot:not([class*="px-2"]) { font-size: 16px; line-height: 1; }
+    .tv-plot:hover { color: var(--tv-text-hi); }
+
+    /* --- tables: dense rows, hairline dividers, muted headers -------- */
+    table { font-size: 13px; }
+    thead th { color: var(--tv-muted); font-weight: 500; }
+
+    /* ============================================================
        LIGHT THEME — applied only under <html class="light"> (toggled
        by the header sun/moon button, persisted in localStorage). DARK
        = the templates' native dark classes; LIGHT = these remaps.
