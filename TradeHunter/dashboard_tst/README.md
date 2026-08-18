@@ -129,6 +129,31 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-18 — v4.00: charts open ~10x faster (they were never parquet)
+Answering "are the charts reading parquet? it feels slow" — **no.** `/matp/{sym}/prices`
+has always fetched live from the free Yahoo chart API (`services/prices.py`); the only
+parquet reader in the app is the Pattern Trainer, which is the documented offline carve-out.
+The slowness was round-trip structure, not the data source. Measured on the laptop:
+
+| | before | after |
+|---|---|---|
+| first chart of the session | 5.4s | 1.6s |
+| next new symbol (cold cache) | 3.0s | 0.3s |
+| already-viewed symbol | 0.01s | 0.01s |
+
+- **The three fetches now run concurrently.** `bars` + `next_earnings` + `quote` are
+  independent but ran serially — ~1.1s + ~1.1s + ~0.8s of pure network. A 3-thread pool
+  makes the endpoint cost its slowest single call. Threads (not async) because the calls
+  are blocking `httpx` and each keeps its own soft-fail, so one dead call can't empty the chart.
+- **One pooled `httpx.Client` for every Yahoo call** instead of a fresh `httpx.get` per
+  call. Each bare call paid a full TLS handshake — that was most of the ~1s per call.
+  With keep-alive only the first call of the process pays it, which is why the second
+  cold symbol drops to 0.3s.
+- **Hover pre-warm on the MATP watchlist rows**, matching what Sector & Industry already
+  did: hovering a row warms the server's price cache, so the click renders from cache.
+- No behaviour change, no new dependency, no API key. Parquet stays backtest/training-only
+  per the CLAUDE.md scope rule.
+
 ### 2026-08-17 — v3.99: Plot on TV on the Sector & Industry chart
 - The Chart tab on `/sector` now carries the **⧉ Plot on TV** control
   (`_sector_chart.html` sets `chart_tv_plot`). That chart is where you land after

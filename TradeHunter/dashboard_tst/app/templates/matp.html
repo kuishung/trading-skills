@@ -177,6 +177,23 @@
       var row = e.target.closest ? e.target.closest('a.wl-row') : null;
       if (row) selectRow(row);
     });
+
+    // Warm the price cache on HOVER so the chart is already there on click. The
+    // server's Yahoo cache is per-symbol and cold on first view (~0.3s of round
+    // trip even pooled + parallel); hovering pays that while the user is still
+    // moving the mouse, so the click renders from cache (~10ms). Deduped per
+    // symbol, and failures are ignored — this is a nicety, never a dependency.
+    // Same trick the Sector & Industry symbol list already uses.
+    var warmedPx = {};
+    document.addEventListener('mouseover', function (e) {
+      var row = e.target.closest ? e.target.closest('a.wl-row') : null;
+      if (!row) return;
+      var sym = row.getAttribute('data-sym');
+      if (!sym || warmedPx[sym]) return;
+      warmedPx[sym] = true;
+      fetch('/matp/' + encodeURIComponent(sym) + '/prices', { credentials: 'same-origin' })
+        .catch(function () { delete warmedPx[sym]; });
+    }, { passive: true });
   })();
 </script>
 

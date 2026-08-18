@@ -808,17 +808,41 @@ def _build_band(low, high, mbp, matp, analysts=None, current=None):
 @router.get("/{symbol}/prices")
 def matp_prices(symbol: str, user: User = Depends(require_user)):
     """Daily OHLC for the price chart (lightweight-charts shape), fetched LIVE
-    from Yahoo (cached ~10 min), plus the next earnings date (cached, soft-fail).
-    Returns an empty list / null on any failure so the chart degrades gracefully."""
+    from Yahoo (cached ~10 min), plus the next earnings date and a header quote.
+    Returns an empty list / null on any failure so the chart degrades gracefully.
+
+    The three fetches are INDEPENDENT, so they run concurrently. Serially they
+    were ~1.1s + ~1.1s + ~0.8s of pure Yahoo round-trip — measured 3-5s for a
+    cold chart, which is what made opening a ticker feel slow. In parallel the
+    endpoint costs about as much as its slowest single call. (Warm cache is
+    ~10ms either way; this is entirely about the first view of a symbol.)
+
+    Threads, not async: the underlying calls are blocking httpx and each one
+    soft-fails on its own, so a thread pool keeps the failure isolation the
+    sequential version had.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
     from ..services.prices import fetch_daily_ohlc, fetch_next_earnings, fetch_quote
 
     sym = symbol.strip().upper()
-    return {
-        "symbol": sym,
-        "bars": fetch_daily_ohlc(sym),
-        "next_earnings": fetch_next_earnings(sym),
-        "quote": fetch_quote(sym),     # {name, price, change, change_pct} for the header
-    }
+
+    def _safe(fn, default):
+        try:
+            return fn(sym)
+        except Exception:  # noqa: BLE001  — one dead call must not empty the chart
+            return default
+
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        bars = ex.submit(_safe, fetch_daily_ohlc, [])
+        earn = ex.submit(_safe, fetch_next_earnings, None)
+        quote = ex.submit(_safe, fetch_quote, None)
+        return {
+            "symbol": sym,
+            "bars": bars.result(),
+            "next_earnings": earn.result(),
+            "quote": quote.result(),   # {name, price, change, change_pct} for the header
+        }
 
 
 @router.get("/{symbol}", response_class=HTMLResponse)

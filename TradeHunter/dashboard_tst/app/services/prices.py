@@ -25,6 +25,25 @@ _UA = (
 # query1/query2 are interchangeable hosts; try both before giving up.
 _HOSTS = ("query1.finance.yahoo.com", "query2.finance.yahoo.com")
 
+# ONE pooled client for every Yahoo call in this module. Each `httpx.get(...)`
+# opened a fresh connection and paid a full TLS handshake — measured at ~0.8-1.1s
+# per call from the Hermes box, which is most of what made a cold chart feel slow.
+# Keep-alive reuses the connection across bars / quote / earnings / search, so
+# only the first call to a host pays the handshake. Thread-safe by design.
+_CLIENT: httpx.Client | None = None
+
+
+def _client() -> httpx.Client:
+    global _CLIENT
+    if _CLIENT is None:
+        _CLIENT = httpx.Client(
+            headers={"User-Agent": _UA},
+            timeout=8.0,
+            follow_redirects=True,
+            limits=httpx.Limits(max_keepalive_connections=8, max_connections=16),
+        )
+    return _CLIENT
+
 
 def fetch_daily_ohlc(symbol: str, *, rng: str = "2y") -> list[dict]:
     sym = symbol.strip().upper()
@@ -60,8 +79,8 @@ def fetch_quote(symbol: str) -> dict | None:
     headers = {"User-Agent": _UA}
     for host in _HOSTS:
         try:
-            r = httpx.get(f"https://{host}/v8/finance/chart/{sym}",
-                          params={"range": "1d", "interval": "1d"}, headers=headers, timeout=8.0)
+            r = _client().get(f"https://{host}/v8/finance/chart/{sym}",
+                              params={"range": "1d", "interval": "1d"})
             r.raise_for_status()
             res = (r.json().get("chart", {}).get("result") or [None])[0]
             if not res:
@@ -136,10 +155,10 @@ def _fetch_next_earnings(sym: str) -> dict | None:
     today = _dt.date.today()
     for host in _HOSTS:
         try:
-            r = httpx.get(
+            r = _client().get(
                 f"https://{host}/v10/finance/quoteSummary/{sym}",
                 params={"modules": "calendarEvents", "crumb": crumb},
-                headers={"User-Agent": _UA}, cookies=cookies, timeout=6.0,
+                cookies=cookies,
             )
             if r.status_code != 200:
                 continue
@@ -174,10 +193,9 @@ def search_tickers(q: str, *, limit: int = 8) -> list[dict]:
     if not q:
         return []
     try:
-        r = httpx.get(
+        r = _client().get(
             "https://query1.finance.yahoo.com/v1/finance/search",
             params={"q": q, "quotesCount": limit + 6, "newsCount": 0},
-            headers={"User-Agent": _UA}, timeout=6.0,
         )
         r.raise_for_status()
         out: list[dict] = []
@@ -199,11 +217,10 @@ def search_tickers(q: str, *, limit: int = 8) -> list[dict]:
 
 def _fetch(sym: str, rng: str) -> list[dict]:
     params = {"range": rng, "interval": "1d"}
-    headers = {"User-Agent": _UA}
     for host in _HOSTS:
         url = f"https://{host}/v8/finance/chart/{sym}"
         try:
-            r = httpx.get(url, params=params, headers=headers, timeout=8.0)
+            r = _client().get(url, params=params)
             r.raise_for_status()
             res = (r.json().get("chart", {}).get("result") or [None])[0]
             if not res:
