@@ -12,13 +12,17 @@
   <div class="flex items-baseline gap-3 mb-3 shrink-0">
     <h1 class="text-xl font-semibold text-slate-100">Calendar</h1>
     <span class="text-sm text-slate-500">
-      {% if tab == "economic" %}scheduled macro releases &middot; actual vs forecast
+      {% if tab == "month" %}the month at a glance &middot; releases and reports on one grid
+      {% elif tab == "economic" %}scheduled macro releases &middot; actual vs forecast
       {% else %}who reports, and when &middot; US market dates{% endif %}
     </span>
   </div>
 
   {# tabs #}
   <div class="flex items-center gap-1 mb-2 shrink-0 border-b border-slate-800">
+    <a href="/calendar/month"
+       class="text-xs px-3 py-1.5 -mb-px border-b-2 transition
+              {% if tab == 'month' %}border-emerald-500 text-emerald-300{% else %}border-transparent text-slate-400 hover:text-slate-200{% endif %}">Month</a>
     <a href="/calendar/economic"
        class="text-xs px-3 py-1.5 -mb-px border-b-2 transition
               {% if tab == 'economic' %}border-emerald-500 text-emerald-300{% else %}border-transparent text-slate-400 hover:text-slate-200{% endif %}">Economic</a>

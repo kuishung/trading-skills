@@ -187,7 +187,7 @@ def create_app() -> FastAPI:
     # key so granting just one of the two still opens the page it belongs to.
     app.include_router(
         calendar_routes.router,
-        dependencies=[Depends(menus.require_menu("calendar_economic", "calendar_earnings"))],
+        dependencies=[Depends(menus.require_menu("calendar_month", "calendar_economic", "calendar_earnings"))],
     )
     # Data Ingest (Finviz filter manager) is ADMIN-ONLY now — lives under Settings.
     app.include_router(finviz_routes.router, dependencies=[Depends(require_admin)])

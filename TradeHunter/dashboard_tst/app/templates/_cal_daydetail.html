@@ -1,0 +1,113 @@
+{# The day panel of the month view — the selected day in full (today by default).
+
+   The grid can only afford two lines per cell, so this is where the day is
+   actually readable: every release with its actual / forecast / previous, and
+   every reporter with its consensus EPS. Same two colours as the grid, so the
+   eye carries the mapping across.
+
+   Context: sel (date), today, sel_econ, sel_earn, my_syms. #}
+{% from "_time.html" import localtime %}
+
+<div class="p-3 flex flex-col gap-4">
+
+  <div class="flex items-baseline justify-between gap-2">
+    <h3 class="text-sm font-semibold text-slate-100">{{ sel.strftime("%a, %d %b %Y") }}</h3>
+    {% if sel == today %}
+    <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-600 text-slate-50 font-semibold">TODAY</span>
+    {% endif %}
+  </div>
+
+  {# ── economic ── #}
+  <section>
+    <h4 class="flex items-center gap-1.5 text-[11px] uppercase tracking-wide mb-1.5">
+      <span class="w-2.5 h-2.5 rounded-sm bg-sky-500/40 border border-sky-500/60"></span>
+      <span class="text-sky-300">Economic</span>
+      <span class="text-slate-600 tabular-nums">{{ sel_econ | length }}</span>
+    </h4>
+    {% if econ_failed %}
+      <p class="text-[11px] text-slate-500">The releases feed didn't answer.</p>
+    {% elif not sel_econ %}
+      <p class="text-[11px] text-slate-600">No releases on this day.</p>
+    {% else %}
+      <div class="flex flex-col gap-1.5">
+      {% for e in sel_econ | sort(attribute="when") %}
+        <div class="rounded border border-slate-800 bg-slate-900/40 px-2 py-1.5">
+          <div class="flex items-baseline gap-1.5">
+            <span class="text-[11px] text-slate-400 tabular-nums whitespace-nowrap">{{ localtime(e.when, time_only=True) }}</span>
+            {% if e.importance == 1 %}<span class="text-rose-400 text-[9px]" title="High impact">&#9679;&#9679;&#9679;</span>
+            {% elif e.importance == 0 %}<span class="text-amber-400 text-[9px]" title="Medium impact">&#9679;&#9679;</span>
+            {% else %}<span class="text-slate-600 text-[9px]" title="Low impact">&#9679;</span>{% endif %}
+            <span class="text-[10px] text-slate-500" title="{{ e.country_label }}">{{ e.country }}</span>
+          </div>
+          <div class="text-[12px] text-slate-200 leading-snug">
+            {% if e.comment %}<span class="th-help" tabindex="0" data-tip="{{ e.comment }}">{{ e.title }}</span>
+            {% else %}{{ e.title }}{% endif %}
+            {% if e.period %}<span class="text-[10px] text-slate-500">{{ e.period }}</span>{% endif %}
+          </div>
+          {% if e.actual or e.forecast or e.previous %}
+          <div class="flex items-baseline gap-3 mt-0.5 text-[11px] tabular-nums">
+            <span class="{% if e.surprise == 1 %}text-emerald-400{% elif e.surprise == -1 %}text-rose-400{% else %}text-slate-200{% endif %}">
+              <span class="text-slate-600">act</span> {{ e.actual or "—" }}</span>
+            <span class="text-slate-400"><span class="text-slate-600">fc</span> {{ e.forecast or "—" }}</span>
+            <span class="text-slate-500"><span class="text-slate-600">prev</span> {{ e.previous or "—" }}</span>
+          </div>
+          {% endif %}
+        </div>
+      {% endfor %}
+      </div>
+    {% endif %}
+  </section>
+
+  {# ── earnings ── #}
+  <section>
+    <h4 class="flex items-center gap-1.5 text-[11px] uppercase tracking-wide mb-1.5">
+      <span class="w-2.5 h-2.5 rounded-sm bg-amber-500/40 border border-amber-500/60"></span>
+      <span class="text-amber-300">Earnings</span>
+      <span class="text-slate-600 tabular-nums">{{ sel_earn | length }}</span>
+    </h4>
+    {% if earn_failed %}
+      <p class="text-[11px] text-slate-500">The earnings feed didn't answer.</p>
+    {% elif not sel_earn %}
+      <p class="text-[11px] text-slate-600">
+        {% if sel.weekday() >= 5 %}No US companies report at the weekend.
+        {% else %}No companies report on this day (with these filters).{% endif %}</p>
+    {% else %}
+      <div class="flex flex-col gap-1">
+      {% for r in sel_earn[:40] %}
+        {% set starred = r.symbol in my_syms %}
+        <div class="rounded border border-slate-800 {% if starred %}bg-amber-500/5{% else %}bg-slate-900/40{% endif %}
+                    px-2 py-1.5 flex items-start gap-2">
+          <span class="wl-star cursor-pointer select-none text-[13px] leading-none mt-0.5 transition
+                       {% if starred %}text-amber-300{% else %}text-slate-700 hover:text-amber-300{% endif %}"
+                role="button" tabindex="0" aria-pressed="{{ 'true' if starred else 'false' }}"
+                data-sym="{{ r.symbol }}"
+                title="{{ ('Remove ' ~ r.symbol ~ ' from') if starred else ('Add ' ~ r.symbol ~ ' to') }} My Watchlist"
+          >{% if starred %}&#9733;{% else %}&#9734;{% endif %}</span>
+          <div class="min-w-0 flex-1">
+            <div class="flex items-baseline gap-1.5">
+              <a href="/company-analysis?symbol={{ r.symbol }}"
+                 class="text-[13px] font-medium hover:text-emerald-300 {% if starred %}text-amber-300{% else %}text-white{% endif %}"
+                 title="Company Analysis for {{ r.symbol }}">{{ r.symbol }}</a>
+              {% if r.when == "pre" %}<span class="text-[9px] px-1 py-0.5 rounded bg-sky-500/15 text-sky-300" title="Before the open">BMO</span>
+              {% elif r.when == "post" %}<span class="text-[9px] px-1 py-0.5 rounded bg-violet-500/15 text-violet-300" title="After the close">AMC</span>
+              {% else %}<span class="text-[9px] px-1 py-0.5 rounded bg-slate-700/40 text-slate-400" title="Time not supplied">TBD</span>{% endif %}
+              <span class="ml-auto text-[11px] text-slate-500 tabular-nums whitespace-nowrap">{{ r.market_cap_disp or "" }}</span>
+            </div>
+            <div class="text-[11px] text-slate-400 truncate">{{ r.name }}</div>
+            <div class="flex items-baseline gap-3 text-[11px] tabular-nums">
+              <span class="text-slate-200"><span class="text-slate-600">est</span> {{ r.eps_forecast or "—" }}</span>
+              <span class="text-slate-400"><span class="text-slate-600">yr ago</span> {{ r.last_year_eps or "—" }}</span>
+              {% if r.fiscal_quarter %}<span class="text-slate-600">{{ r.fiscal_quarter }}</span>{% endif %}
+            </div>
+          </div>
+        </div>
+      {% endfor %}
+      </div>
+      {% if sel_earn | length > 40 %}
+      <p class="text-[10px] text-slate-600 mt-1">
+        Showing the 40 biggest of {{ sel_earn | length }} — narrow it with the market-cap filter.</p>
+      {% endif %}
+    {% endif %}
+  </section>
+
+</div>

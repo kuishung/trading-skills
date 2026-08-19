@@ -8,7 +8,7 @@
 {% import "_cal_controls.html" as C %}
 
 <div class="shrink-0 flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 border-b border-slate-800">
-  {{ C.datenav(url, anchor, start, end, rng, today, prev_day, next_day) }}
+  {{ C.datenav(url, anchor, start, end, rng, today, prev_day, next_day, ranges) }}
 
   {# market-cap floor — a full day is ~200 names, most of them micro-caps #}
   <div class="flex items-center gap-1">
@@ -26,6 +26,23 @@
 <div class="flex-1 min-h-0 overflow-y-auto">
   {% if failed %}
     {{ C.empty("The earnings feed didn't answer. Try again in a minute.") }}
+
+  {# ── MONTH: the wall-calendar grid. Each cell lists that day's biggest names,
+     watchlist ones in amber; the date number (and "+N more") open the Day view. #}
+  {% elif rng == "month" %}
+    {% call(d, items) C.monthgrid(weeks, by_date, today, url, anchor.month) %}
+      {% for r in items[:4] %}
+      <div class="flex items-center gap-1 text-[10px] leading-tight min-w-0">
+        <span class="shrink-0 {% if r.when == 'pre' %}text-sky-400{% elif r.when == 'post' %}text-violet-400{% else %}text-slate-600{% endif %}"
+              title="{{ r.when_label }}">&#9679;</span>
+        <a href="/company-analysis?symbol={{ r.symbol }}"
+           class="truncate hover:text-emerald-300 {% if r.symbol in my_syms %}text-amber-300{% else %}text-slate-300{% endif %}"
+           title="{{ r.name }} · {{ r.when_label }}{% if r.market_cap_disp %} · {{ r.market_cap_disp }}{% endif %}{% if r.eps_forecast %} · EPS est. {{ r.eps_forecast }}{% endif %}">{{ r.symbol }}</a>
+      </div>
+      {% endfor %}
+      {{ C.more(url, d, (items | length) - 4) }}
+    {% endcall %}
+
   {% elif n_total == 0 %}
     {{ C.empty("No earnings match these filters " ~ ("this week." if rng == "week" else "on this day.")) }}
   {% else %}

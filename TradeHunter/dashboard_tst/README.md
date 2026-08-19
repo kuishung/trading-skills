@@ -129,6 +129,34 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-19 — v4.05: Month view — both calendars on one grid, today highlighted
+User ask: *"the calendar i need it to be month view with today highlighted"*, then
+*"i need the view to be like this [Google Calendar month view] with Economic and earnings
+calendar in different colour, and with a panel to show today highlight in details"*.
+
+- **New landing page `/calendar/month`** (`/calendar` redirects here; nav dropdown gains
+  "Month View" as its first item). A Google-Calendar-style wall calendar: seven Mon-first
+  columns, whole weeks, neighbouring months dimmed, weekends shaded.
+- **Both feeds on ONE grid, colour-coded** — economic releases in **sky**, earnings in
+  **amber**, as filled pills. That is the question a month view answers: what happens to
+  the market on each day, not "what does source X have". A legend in the toolbar doubles as
+  the month's totals.
+- **Today** carries a filled blue date badge (the app's accent), so it reads at a glance
+  and never gets confused with the **selected** day, which gets the ring instead.
+- **Day panel on the right** — the selected day in full (today by default): every release
+  with impact, country, actual / forecast / previous, and every reporter with BMO/AMC,
+  market cap, consensus EPS and last year's EPS, each with the My-Watchlist star. Clicking
+  any day re-renders the panel around it; the cached feeds make that instant.
+- Filters live in one toolbar, each group labelled in **its own colour** since both own an
+  "All": Econ = importance + country pills, Earn = market-cap floor + watchlist-only.
+- The Economic and Earnings tabs keep their own **Day / Week / Month** switch and their
+  deep tables; month is the default range there too.
+- Nasdaq is one HTTP call per day, so multi-day ranges skip Sat/Sun — a month costs 22
+  calls instead of 31, and those cells are empty either way. Cached, so paging back is free.
+- Day-mode check on the way in: `text-white` is remapped by the light theme, so the white
+  numeral on today's blue badge came out near-black. It uses `text-slate-50` (not remapped)
+  and now reads correctly in both themes.
+
 ### 2026-08-19 — v4.04: Calendar menu (Economic + Earnings)
 User ask: *"I want a calendar menu and Economic calendar and also earning calendar will be
 shown."*

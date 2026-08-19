@@ -23,6 +23,7 @@ MENUS = [
     # Calendar — the only GROUPED entry: two sibling pages (what the world
     # prints, and who reports) that belong under one nav dropdown. Added
     # 2026-08-19 on user request.
+    ("calendar_month",    "Month View",        "Calendar", "/calendar/month"),
     ("calendar_economic", "Economic Calendar", "Calendar", "/calendar/economic"),
     ("calendar_earnings", "Earnings Calendar", "Calendar", "/calendar/earnings"),
     ("sector",           "Sector & Industry", None, "/sector"),

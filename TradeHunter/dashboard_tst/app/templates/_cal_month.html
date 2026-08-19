@@ -1,0 +1,88 @@
+{# Combined month view (routes/calendar.py::month_panel).
+
+   ONE wall calendar carrying BOTH feeds, colour-coded — economic releases in
+   sky, earnings in amber — because that is the question a month view answers:
+   what happens to the market on each day, not "what does source X have". The
+   dedicated Economic / Earnings tabs stay for the deep, filterable lists.
+
+   Clicking any day SELECTS it: the panel re-renders with that day ringed and the
+   detail column on the right filled in. Today keeps its filled date badge
+   throughout, so "today" and "the day I'm reading" never get confused. #}
+{% import "_cal_controls.html" as C %}
+{% from "_time.html" import localtime %}
+
+<div class="shrink-0 flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 border-b border-slate-800">
+  {{ C.datenav(url, anchor, start, end, "month", today, prev_day, next_day, []) }}
+
+  {# Two filter groups sit side by side and both own an "All", so each is
+     labelled in ITS OWN colour — the same sky/amber mapping as the grid. #}
+  <div class="flex items-center gap-1">
+    <span class="text-[10px] uppercase tracking-wide text-sky-300 mr-0.5">Econ</span>
+    {% for key, label, _min in importance_filters %}{{ C.pill(url(imp=key), label, imp == key,
+      "Economic releases: " ~ label) }}{% endfor %}
+  </div>
+  <div class="flex items-center gap-1">
+    <span class="text-[10px] uppercase tracking-wide text-amber-300 mr-0.5">Earn</span>
+    {% for key, label, _floor in cap_filters %}{{ C.pill(url(cap=key), label, cap == key,
+      "Earnings: companies " ~ label) }}{% endfor %}
+    {{ C.pill(url(mine=(0 if mine else 1)), "&#9733;" | safe, mine, "Earnings: only tickers on My Watchlist") }}
+  </div>
+  {# countries — each pill toggles itself in/out #}
+  <div class="flex items-center gap-1 flex-wrap">
+    {% for code, name in countries_all %}
+      {% if code in picked %}
+        {{ C.pill(url(countries=((picked | reject("equalto", code) | list) | join(","))), code, true, "Hide " ~ name) }}
+      {% else %}
+        {{ C.pill(url(countries=((picked + [code]) | join(","))), code, false, "Show " ~ name) }}
+      {% endif %}
+    {% endfor %}
+  </div>
+
+  {# legend doubles as the month's totals #}
+  <span class="ml-auto flex items-center gap-3 text-[11px] whitespace-nowrap">
+    <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-sky-500/40 border border-sky-500/60"></span>
+      <span class="text-slate-400">Economic</span> <span class="text-slate-500 tabular-nums">{{ n_econ }}</span></span>
+    <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-amber-500/40 border border-amber-500/60"></span>
+      <span class="text-slate-400">Earnings</span> <span class="text-slate-500 tabular-nums">{{ n_earn }}</span></span>
+  </span>
+</div>
+
+<div class="flex-1 min-h-0 flex flex-col lg:flex-row">
+
+  {# ── the calendar ── #}
+  <div class="flex-1 min-h-0 overflow-y-auto">
+    {% if failed %}
+      {{ C.empty("Neither calendar feed answered. Try again in a minute.") }}
+    {% else %}
+      {% call(d, cell) C.monthgrid(weeks, by_date, today, url, anchor.month, cell_href, sel, counts) %}
+        {% set econ = cell.econ or [] %}
+        {% set earn = cell.earn or [] %}
+        {% for e in econ[:2] %}
+          {{ C.chip("econ", e.title,
+                    e.title ~ (" (" ~ e.period ~ ")" if e.period else "") ~ " · " ~ e.country_label
+                    ~ " · " ~ e.impact ~ " impact",
+                    localtime(e.when, time_only=True)) }}
+        {% endfor %}
+        {% for r in earn[:2] %}
+          {{ C.chip("earn", r.symbol,
+                    r.name ~ " · " ~ r.when_label ~ (" · " ~ r.market_cap_disp if r.market_cap_disp else ""),
+                    ("BMO" if r.when == "pre" else "AMC" if r.when == "post" else "")) }}
+        {% endfor %}
+        {{ C.more(url, d, (econ | length) + (earn | length) - (econ[:2] | length) - (earn[:2] | length),
+                  cell_href(d)) }}
+      {% endcall %}
+    {% endif %}
+  </div>
+
+  {# ── the day panel: the selected day (today by default) in full ── #}
+  <aside class="lg:w-80 xl:w-96 lg:shrink-0 min-h-0 overflow-y-auto
+                border-t lg:border-t-0 lg:border-l border-slate-800">
+    {% include "_cal_daydetail.html" %}
+  </aside>
+
+</div>
+
+<div class="shrink-0 px-3 py-1.5 border-t border-slate-800 text-[10px] text-slate-600 flex items-center justify-between gap-2">
+  <span>Click a day to read it &middot; times in your timezone, days by US market date (ET)</span>
+  <span>TradingView economic calendar &middot; Nasdaq earnings calendar &middot; live</span>
+</div>

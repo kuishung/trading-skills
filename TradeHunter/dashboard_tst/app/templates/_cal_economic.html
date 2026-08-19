@@ -9,7 +9,7 @@
 {% from "_time.html" import localtime %}
 
 <div class="shrink-0 flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 border-b border-slate-800">
-  {{ C.datenav(url, anchor, start, end, rng, today, prev_day, next_day) }}
+  {{ C.datenav(url, anchor, start, end, rng, today, prev_day, next_day, ranges) }}
 
   {# importance — TradingView's own 3-level scale #}
   <div class="flex items-center gap-1">
@@ -36,6 +36,22 @@
 <div class="flex-1 min-h-0 overflow-y-auto">
   {% if failed %}
     {{ C.empty("The calendar feed didn't answer. Try again in a minute.") }}
+
+  {# ── MONTH: the wall-calendar grid. Each cell shows the loudest releases of
+     that day; the date number (and "+N more") drill into the Day view. #}
+  {% elif rng == "month" %}
+    {% call(d, items) C.monthgrid(weeks, by_date, today, url, anchor.month) %}
+      {% for e in items[:3] %}
+      <div class="text-[10px] leading-tight truncate
+                  {% if e.importance == 1 %}text-rose-300{% elif e.importance == 0 %}text-slate-300{% else %}text-slate-500{% endif %}"
+           title="{{ e.title }}{% if e.period %} ({{ e.period }}){% endif %} · {{ e.country_label }} · {{ e.impact }} impact{% if e.actual %} · actual {{ e.actual }}{% endif %}{% if e.forecast %} · forecast {{ e.forecast }}{% endif %}">
+        <span class="text-slate-500 tabular-nums">{{ localtime(e.when, time_only=True) }}</span>
+        {{ e.title }}
+      </div>
+      {% endfor %}
+      {{ C.more(url, d, (items | length) - 3) }}
+    {% endcall %}
+
   {% elif not days %}
     {{ C.empty("No releases match these filters " ~ ("this week." if rng == "week" else "on this day.")) }}
   {% else %}

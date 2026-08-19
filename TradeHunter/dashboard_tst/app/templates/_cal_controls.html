@@ -8,7 +8,7 @@
    with the params you want to change, e.g. url(day=prev_day) or url(range='week').
 
    Usage:  {% import "_cal_controls.html" as C %}
-           {{ C.datenav(url, anchor, start, end, rng, today, prev_day, next_day) }}
+           {{ C.datenav(url, anchor, start, end, rng, today, prev_day, next_day, ranges) }}
            {{ C.pill(url(imp='high'), 'High only', imp == 'high') }} #}
 
 {% macro pill(href, label, active, title="") -%}
@@ -26,8 +26,8 @@
                hover:text-slate-200 hover:border-slate-600 transition">{{ glyph }}</button>
 {%- endmacro %}
 
-{# Date stepper + the Day/Week switch + a plain-English label of what's shown. #}
-{% macro datenav(url, anchor, start, end, rng, today, prev_day, next_day) -%}
+{# Date stepper + the Day/Week/Month switch + a plain-English label of what's shown. #}
+{% macro datenav(url, anchor, start, end, rng, today, prev_day, next_day, ranges) -%}
 <div class="flex items-center gap-1.5">
   {{ step(url(day=prev_day), "‹", "Previous " ~ rng) }}
   {{ step(url(day=next_day), "›", "Next " ~ rng) }}
@@ -36,17 +36,89 @@
           class="text-[11px] px-2 py-1 rounded border border-slate-700 text-slate-400
                  hover:text-slate-200 hover:border-slate-600 transition">Today</button>
   <span class="text-sm text-slate-200 font-medium ml-1 whitespace-nowrap">
-    {% if rng == "week" %}{{ start.strftime("%d %b") }} &ndash; {{ end.strftime("%d %b %Y") }}
+    {% if rng == "month" %}{{ anchor.strftime("%B %Y") }}
+    {% elif rng == "week" %}{{ start.strftime("%d %b") }} &ndash; {{ end.strftime("%d %b %Y") }}
     {% else %}{{ anchor.strftime("%a, %d %b %Y") }}{% endif %}
   </span>
   {% if rng == "day" and anchor == today %}
-  <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300">today</span>
+  <span class="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/15 text-orange-300">today</span>
   {% endif %}
 </div>
 <div class="flex items-center gap-1">
-  {{ pill(url(range="day", day=anchor.isoformat()), "Day", rng == "day") }}
-  {{ pill(url(range="week", day=anchor.isoformat()), "Week", rng == "week") }}
+  {% for key, label in ranges %}{{ pill(url(range=key, day=anchor.isoformat()), label, rng == key) }}{% endfor %}
 </div>
+{%- endmacro %}
+
+{# ── Month grid ──────────────────────────────────────────────────────────────
+   A real wall calendar: seven Mon-first columns, whole weeks, neighbouring
+   months dimmed, TODAY carrying a filled date badge. The grid is the overview;
+   clicking a date opens the detail (which day view, and whether a day can be
+   SELECTED, is the caller's business — see `cell_href` / `sel`).
+
+   `by_date` maps date -> that day's rows, `counts` an optional date -> total
+   when a cell's rows aren't a plain list. The caller renders the cell body:
+
+     {% call(d, items) C.monthgrid(weeks, by_date, today, url, anchor.month) %}
+       ...cell contents for one day...
+     {% endcall %}                                                            #}
+{% macro monthgrid(weeks, by_date, today, url, month, cell_href=None, sel=None, counts=None) -%}
+<div class="p-2">
+  {# weekday strip — Mon-first, like the rest of the app's week ranges #}
+  <div class="grid grid-cols-7 gap-1 mb-1">
+    {% for wd in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] %}
+    <div class="text-[10px] uppercase tracking-wide text-slate-600 text-center">{{ wd }}</div>
+    {% endfor %}
+  </div>
+  {% for week in weeks %}
+  <div class="grid grid-cols-7 gap-1 mb-1">
+    {% for d in week %}
+    {% set items = by_date.get(d) or [] %}
+    {% set outside = d.month != month %}
+    {% set href = cell_href(d) if cell_href else url(range='day', day=d.isoformat()) %}
+    {% set n = (counts.get(d) if counts else (items | length)) or 0 %}
+    {# SELECTED day gets the ring; TODAY gets the filled date badge. Two different
+       states, so they must not share a colour — a selected day that looks like
+       today would make the grid lie about the date. #}
+    <div class="rounded border p-1 flex flex-col gap-0.5 min-h-[6.5rem] overflow-hidden
+                {% if sel and d == sel %}border-emerald-500 bg-orange-500/15
+                {% elif outside %}border-slate-800 bg-slate-900/40 opacity-40
+                {% elif d.weekday() >= 5 %}border-slate-800 bg-slate-950/40
+                {% else %}border-slate-800 bg-slate-900/40{% endif %}">
+      <div class="flex items-center justify-between gap-1 shrink-0">
+        {# the date badge: a filled pill on today, plain digits otherwise #}
+        <button type="button" hx-get="{{ href }}" hx-target="#calPanel" hx-swap="innerHTML"
+                title="{{ d.strftime('%A, %d %b %Y') }}"
+                class="text-[11px] leading-none tabular-nums transition
+                       {% if d == today %}w-5 h-5 rounded-full bg-emerald-600 text-slate-50 font-semibold
+                                          flex items-center justify-center shrink-0
+                       {% else %}rounded px-1 py-0.5 text-slate-400 hover:text-slate-100{% endif %}"
+                >{{ d.day }}</button>
+        {% if n %}<span class="text-[9px] text-slate-600 tabular-nums">{{ n }}</span>{% endif %}
+      </div>
+      {{ caller(d, items) }}
+    </div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+</div>
+{%- endmacro %}
+
+{# "+N more" — opens the day, so nothing a cell truncates is unreachable. #}
+{% macro more(url, d, n, href=None) -%}
+{% if n > 0 %}
+<button type="button" hx-get="{{ href if href else url(range='day', day=d.isoformat()) }}"
+        hx-target="#calPanel" hx-swap="innerHTML"
+        class="text-[10px] text-slate-500 hover:text-emerald-300 transition text-left mt-auto shrink-0"
+        >+{{ n }} more</button>
+{% endif %}
+{%- endmacro %}
+
+{# One event pill, Google-Calendar style: a filled bar the width of the cell.
+   `tone` is the source's colour — "econ" (sky) or "earn" (amber). #}
+{% macro chip(tone, label, title="", pre=None) -%}
+<div class="rounded px-1 py-0.5 text-[10px] leading-tight truncate shrink-0
+            {% if tone == 'econ' %}bg-sky-500/15 text-sky-300{% else %}bg-amber-500/15 text-amber-300{% endif %}"
+     {% if title %}title="{{ title }}"{% endif %}>{% if pre %}<span class="opacity-70 tabular-nums">{{ pre }}</span> {% endif %}{{ label }}</div>
 {%- endmacro %}
 
 {# Sticky per-day header inside the scroll area. #}
@@ -59,7 +131,7 @@
             flex items-baseline justify-between gap-2">
   <span class="text-xs font-semibold text-slate-200">
     {{ d.strftime("%A, %d %b %Y") }}
-    {% if d == today %}<span class="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300">today</span>{% endif %}
+    {% if d == today %}<span class="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-orange-500/15 text-orange-300">today</span>{% endif %}
   </span>
   {% if right %}<span class="text-[11px] text-slate-500">{{ right }}</span>{% endif %}
 </div>
