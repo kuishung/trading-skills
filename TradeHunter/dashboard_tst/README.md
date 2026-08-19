@@ -129,6 +129,23 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-19 — v4.03: day mode was still black (v4.02 regression)
+- **Bug:** in day mode the page — and the watchlist, which shows the page through it —
+  stayed black. v4.02 set `body { background-color: var(--tv-page) !important }`, and the
+  light theme's `html.light body { background-color:#f1f5f9 }` had no `!important`, so the
+  dark rule won regardless of specificity. Same for inputs and the tooltip.
+- **Fix:** stop fighting on specificity. Every rule in the TV layer already reads a
+  `--tv-*` token, so `html.light` now overrides the TOKENS with TradingView's light palette
+  (`#ffffff` page, `#f8f9fd` panel, `#e0e3eb` border, `#131722` text, `#089981`/`#f23645`
+  for up/down) and the whole skin flips by itself.
+- The old light-theme remaps were retuned to the same tokens, so day mode looks like
+  TradingView too rather than like a second app: flat white, no wallpaper, blue nav pill,
+  day-mode form controls.
+- `rounded-2xl`/`rounded-3xl` were missed in v4.02 and stayed 16px — now 6px like the rest.
+- Verified in a real browser via computed styles, both modes: dark `#131722` page /
+  `#1e222d` panel / `#d1d4dc` text; light `#ffffff` / `#f8f9fd` / `#131722`; 6px cards,
+  4px controls, no wallpaper in either.
+
 ### 2026-08-19 — v4.02: TradingView-style skin across the whole app
 User ask: *"the font style and size and appearance of the whole TradeHunter … apply the
 same to make the whole app resemblance tradingview including its controls … including the

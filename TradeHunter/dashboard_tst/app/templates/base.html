@@ -170,7 +170,7 @@
     .hover\:text-orange-300:hover { color: var(--tv-text-hi) !important; }
 
     /* --- geometry: TradingView is square-ish, not pill-round --------- */
-    .rounded-xl { border-radius: var(--tv-r-panel) !important; }
+    .rounded-3xl, .rounded-2xl, .rounded-xl { border-radius: var(--tv-r-panel) !important; }
     .rounded-lg, .rounded-md, .rounded { border-radius: var(--tv-r-ctl) !important; }
     .rounded-full { border-radius: 9999px !important; }   /* dots/avatars keep their shape */
 
@@ -234,50 +234,81 @@
     table { font-size: 13px; }
     thead th { color: var(--tv-muted); font-weight: 500; }
 
+    /* --- DAY MODE tokens -------------------------------------------
+       Every rule in the layer above reads a --tv-* token, so overriding
+       the tokens here flips the whole skin to TradingView's LIGHT theme
+       without a single specificity fight. This is also the v4.02 day-mode
+       bug fix: those rules carry !important and were beating the light
+       theme's plain declarations, so the page (and the watchlist, which
+       shows the page through it) stayed black in day mode. */
+    html.light {
+      --tv-page:      #ffffff;
+      --tv-panel:     #f8f9fd;
+      --tv-panel-2:   #ffffff;
+      --tv-hover:     #f0f3fa;
+      --tv-border:    #e0e3eb;
+      --tv-border-2:  #d1d4dc;
+      --tv-text:      #131722;
+      --tv-text-hi:   #0c0e15;
+      --tv-muted:     #787b86;
+      --tv-icon:      #5d606b;
+      --tv-accent:    #2962ff;
+      --tv-accent-hi: #1e53e5;
+      --tv-accent-tx: #2962ff;
+      --tv-up:        #089981;   /* TV's light-theme green is deeper  */
+      --tv-down:      #f23645;   /* ...and its red is more saturated  */
+    }
+
     /* ============================================================
        LIGHT THEME — applied only under <html class="light"> (toggled
        by the header sun/moon button, persisted in localStorage). DARK
        = the templates' native dark classes; LIGHT = these remaps.
        Scoped via CSS nesting so the whole block flips on the toggle.
        ============================================================ */
+    /* Flat white, no wallpaper - day mode gets the same flat treatment the
+       dark side got. !important so it can never lose to the layer above. */
     html.light body {
-      background-color: #f1f5f9;
-      background-image:
-        radial-gradient(60rem 42rem at 50% -10%, rgba(16,185,129,0.08), transparent 62%),
-        radial-gradient(45rem 30rem at 92% 2%, rgba(56,189,248,0.07), transparent 68%),
-        linear-gradient(rgba(148,163,184,0.07) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(148,163,184,0.07) 1px, transparent 1px),
-        linear-gradient(180deg, #ffffff 0%, #eef2f7 60%);
-      color: #0f172a;
+      background-color: var(--tv-page) !important;
+      background-image: none !important;
+      color: var(--tv-text) !important;
     }
     html.light {
-      .bg-slate-950, .bg-slate-950\/80, .bg-slate-950\/60, .bg-slate-950\/50, .bg-slate-950\/40 { background-color:#ffffff !important; }
-      .bg-slate-900, .bg-slate-900\/60, .bg-slate-900\/50, .bg-slate-900\/40 { background-color:#f8fafc !important; }
-      .bg-slate-800, .bg-slate-800\/70, .bg-slate-800\/60, .bg-slate-800\/40 { background-color:#f1f5f9 !important; }
-      .bg-slate-700, .bg-slate-700\/50, .bg-slate-700\/40, .bg-slate-700\/30 { background-color:#e2e8f0 !important; }
-      .bg-slate-600 { background-color:#cbd5e1 !important; }
-      .text-white, .text-slate-100, .text-slate-200 { color:#0f172a !important; }
-      .text-slate-300 { color:#1e293b !important; }
-      .text-slate-400 { color:#334155 !important; }
-      .text-slate-500 { color:#475569 !important; }
-      .text-slate-600 { color:#64748b !important; }
-      .border-slate-800, .border-slate-800\/60 { border-color:#e2e8f0 !important; }
-      .border-slate-700, .border-slate-600 { border-color:#cbd5e1 !important; }
-      .text-orange-300 { color:#ea580c !important; } .text-emerald-300 { color:#059669 !important; }
-      .text-cyan-300 { color:#0891b2 !important; }   .text-rose-300 { color:#e11d48 !important; }
+      .bg-slate-950, .bg-slate-950\/80, .bg-slate-950\/60, .bg-slate-950\/50, .bg-slate-950\/40 { background-color:var(--tv-panel-2) !important; }
+      .bg-slate-900, .bg-slate-900\/60, .bg-slate-900\/50, .bg-slate-900\/40 { background-color:var(--tv-panel) !important; }
+      .bg-slate-800, .bg-slate-800\/70, .bg-slate-800\/60, .bg-slate-800\/40 { background-color:var(--tv-hover) !important; }
+      .bg-slate-700, .bg-slate-700\/50, .bg-slate-700\/40, .bg-slate-700\/30 { background-color:var(--tv-border) !important; }
+      .bg-slate-600 { background-color:var(--tv-border-2) !important; }
+      .text-white, .text-slate-100, .text-slate-200 { color:var(--tv-text-hi) !important; }
+      .text-slate-300 { color:var(--tv-text) !important; }
+      .text-slate-400 { color:var(--tv-text) !important; }
+      .text-slate-500 { color:var(--tv-muted) !important; }
+      .text-slate-600 { color:var(--tv-muted) !important; }
+      .border-slate-800, .border-slate-800\/60 { border-color:var(--tv-border) !important; }
+      .border-slate-700, .border-slate-600 { border-color:var(--tv-border-2) !important; }
+      .text-orange-300 { color:var(--tv-accent-tx) !important; } .text-emerald-300 { color:var(--tv-up) !important; }
+      .text-cyan-300 { color:#0891b2 !important; }   .text-rose-300 { color:var(--tv-down) !important; }
       .text-sky-300 { color:#0284c7 !important; }    .text-amber-300 { color:#b45309 !important; }
       .text-violet-300 { color:#7c3aed !important; } .text-purple-300 { color:#9333ea !important; }
-      .text-emerald-400 { color:#059669 !important; } .text-cyan-400 { color:#0891b2 !important; }
-      .hover\:bg-slate-800:hover, .hover\:bg-slate-800\/70:hover, .hover\:bg-slate-800\/40:hover { background-color:#f1f5f9 !important; }
-      .hover\:bg-slate-700\/30:hover { background-color:#e2e8f0 !important; }
-      .hover\:bg-slate-600:hover { background-color:#cbd5e1 !important; }
-      .hover\:text-slate-100:hover, .hover\:text-slate-300:hover { color:#0f172a !important; }
-      .hover\:text-orange-300:hover { color:#ea580c !important; }
-      .hover\:text-emerald-300:hover, .hover\:text-emerald-400:hover, .hover\:text-emerald-200:hover { color:#059669 !important; }
-      .hover\:text-rose-300:hover, .hover\:text-rose-400:hover, .hover\:text-rose-200:hover { color:#e11d48 !important; }
+      .text-emerald-400 { color:var(--tv-up) !important; } .text-cyan-400 { color:#0891b2 !important; }
+      .hover\:bg-slate-800:hover, .hover\:bg-slate-800\/70:hover, .hover\:bg-slate-800\/40:hover { background-color:var(--tv-hover) !important; }
+      .hover\:bg-slate-700\/30:hover { background-color:var(--tv-border) !important; }
+      .hover\:bg-slate-600:hover { background-color:var(--tv-border-2) !important; }
+      .hover\:text-slate-100:hover, .hover\:text-slate-300:hover { color:var(--tv-text-hi) !important; }
+      .hover\:text-orange-300:hover { color:var(--tv-accent-tx) !important; }
+      .hover\:text-emerald-300:hover, .hover\:text-emerald-400:hover, .hover\:text-emerald-200:hover { color:var(--tv-up) !important; }
+      .hover\:text-rose-300:hover, .hover\:text-rose-400:hover, .hover\:text-rose-200:hover { color:var(--tv-down) !important; }
       .hover\:text-cyan-200:hover { color:#0891b2 !important; }
       .hover\:text-sky-300:hover { color:#0284c7 !important; }
       .hover\:text-indigo-200:hover { color:#4f46e5 !important; }
+      /* the nav's active pill, tinted for a white background */
+      .bg-orange-500\/15 { background-color:rgba(41,98,255,0.10) !important; }
+      /* form controls: the layer above paints these dark via tokens, but the
+         border/shadow need the day values too */
+      input, select, textarea { background-color:var(--tv-page) !important;
+                                border-color:var(--tv-border-2) !important;
+                                color:var(--tv-text) !important; }
+      /* chart-pane and card surfaces that use a bare white/black overlay */
+      .bg-black\/20, .bg-black\/30, .bg-black\/40 { background-color:var(--tv-hover) !important; }
     }
   </style>
   {# set the theme class on <html> before paint (default light; persisted choice wins) #}
