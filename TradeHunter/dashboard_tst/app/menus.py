@@ -20,12 +20,12 @@ MENUS = [
     # /macro = the fixed six-topic board (2026-08-16). Free-form macro research
     # still lives at /research?kind=macro, linked from the board.
     ("macro",            "Macro",             None, "/macro"),
-    # Calendar — the only GROUPED entry: two sibling pages (what the world
-    # prints, and who reports) that belong under one nav dropdown. Added
-    # 2026-08-19 on user request.
-    ("calendar_month",    "Month View",        "Calendar", "/calendar/month"),
-    ("calendar_economic", "Economic Calendar", "Calendar", "/calendar/economic"),
-    ("calendar_earnings", "Earnings Calendar", "Calendar", "/calendar/earnings"),
+    # Calendar — ONE page: the combined month grid (releases + earnings on the
+    # same wall calendar, with a day-detail panel). The standalone Economic and
+    # Earnings pages were removed 2026-08-20 (user) — the month view already
+    # carries both feeds. The key stays "calendar_month" so existing per-user
+    # menu grants keep working.
+    ("calendar_month",    "Calendar",          None, "/calendar/month"),
     ("sector",           "Sector & Industry", None, "/sector"),
     ("company_analysis", "Company",           None, "/company-analysis"),
     ("matp",             "Watchlist",         None, "/matp"),

@@ -129,6 +129,36 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-20 — v4.06: Calendar is month-view only; RRG scrubber shows its period
+User asks: *"the calendar only use the month view. remove the economic calendar and the
+earnings calendar"* and *"in the sector and industry. the bottom progress control i need
+to show the period within the control"*.
+
+**Calendar — one page.**
+- **Removed `/calendar/economic` and `/calendar/earnings`** (pages + panels + the
+  `_cal_economic.html` / `_cal_earnings.html` fragments). The month view already carries
+  both feeds on one grid and its day panel gives the same per-release / per-reporter
+  detail the tabs did, so the tabs were a second way to read the same data.
+- **Nav collapses from a dropdown to a flat "Calendar" item** pointing at
+  `/calendar/month`. The menu KEY stays `calendar_month` so per-user menu grants that
+  already name it keep working; `calendar_economic` / `calendar_earnings` grants are
+  simply ignored (a member granted ONLY one of those two loses calendar access and needs
+  re-granting in `/admin`).
+- Router guard narrows to `require_menu("calendar_month")`; the tab strip is gone from
+  `calendar.html`; the Today card's "open the full calendar" link now points at the month.
+- **Range machinery deleted with them** — `RANGES` / `_norm_range` / `_span`, the
+  Day/Week/Month switch in `datenav`, and the `dayhead` macro (only the removed day
+  tables used it). `_step` is month-only now.
+
+**Sector & Industry — the scrubber states its own period.**
+- The bottom range bar under the RRG now renders the **tail window INSIDE the control**
+  ("24 Jul – 19 Aug", or a single date when tail = 1 wk), centred on the green segment
+  when it fits and otherwise as a chip pinned beside the handle, clamped to the track.
+- The **scrub range's own bounds** (first / last week) sit at the bar's edges, dropped
+  automatically when the period label would collide with them.
+- Bar grew 12px → 20px to fit 10px type. Label widths are approximated arithmetically
+  rather than measured, so the drag stays layout-thrash-free.
+
 ### 2026-08-19 — v4.05: Month view — both calendars on one grid, today highlighted
 User ask: *"the calendar i need it to be month view with today highlighted"*, then
 *"i need the view to be like this [Google Calendar month view] with Economic and earnings

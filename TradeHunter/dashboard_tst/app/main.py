@@ -183,11 +183,10 @@ def create_app() -> FastAPI:
     app.include_router(company_analysis_routes.router, dependencies=[Depends(menus.require_menu("company_analysis"))])
     app.include_router(sector_routes.router, dependencies=[Depends(menus.require_menu("sector"))])
     app.include_router(macro_routes.router, dependencies=[Depends(menus.require_menu("macro"))])
-    # Calendar (Economic + Earnings) — one router, gated on EITHER calendar menu
-    # key so granting just one of the two still opens the page it belongs to.
+    # Calendar — the combined month view (economic releases + earnings on one grid).
     app.include_router(
         calendar_routes.router,
-        dependencies=[Depends(menus.require_menu("calendar_month", "calendar_economic", "calendar_earnings"))],
+        dependencies=[Depends(menus.require_menu("calendar_month"))],
     )
     # Data Ingest (Finviz filter manager) is ADMIN-ONLY now — lives under Settings.
     app.include_router(finviz_routes.router, dependencies=[Depends(require_admin)])

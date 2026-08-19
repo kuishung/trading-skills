@@ -231,13 +231,63 @@
     if (bar) {
       var pB = function (i) { return (N > 1 ? i / (N - 1) : 0) * 100; };
       var g0 = pB(tailStart), g1 = pB(end);
-      var s2 = '<div style="position:relative;height:12px;border-radius:6px;overflow:hidden;background:#1e293b;cursor:pointer">';
+      // The bar carries its own PERIOD label, so the window you are looking at is
+      // readable without leaving the control (the caption above it is the summary;
+      // this is the thing your eye is already on while dragging). Taller than the
+      // old 12px hairline because 10px type has to fit inside it.
+      var H = 20, bw = bar.clientWidth || 480;
+      var win = (tailStart === end) ? fmtDay(weeks[end])
+                                    : (fmtDay(weeks[tailStart]) + ' – ' + fmtDay(weeks[end]));
+      var winPx = txtPx(win) + 12, segPx = Math.max(0, (g1 - g0) / 100 * bw);
+      var s2 = '<div style="position:relative;height:' + H + 'px;border-radius:6px;overflow:hidden;background:#1e293b;cursor:pointer">';
       s2 += '<div style="position:absolute;left:0;top:0;bottom:0;width:' + g0 + '%;background:#6366f1;opacity:0.5"></div>';
       s2 += '<div style="position:absolute;left:' + g0 + '%;top:0;bottom:0;width:' + Math.max(0, g1 - g0) + '%;background:#22c55e;opacity:0.75"></div>';
       s2 += '<div style="position:absolute;left:calc(' + g1 + '% - 1px);top:-2px;bottom:-2px;width:2px;background:#e2e8f0"></div>';
+      // the tail window, centred on the green segment when it fits — otherwise a
+      // chip pinned beside the handle, clamped so it never spills off the track.
+      var atPct, chip;
+      if (segPx >= winPx) {
+        atPct = (g0 + g1) / 2; chip = '';
+      } else {
+        var halfPct = (winPx / 2) / bw * 100;
+        atPct = Math.min(100 - halfPct, Math.max(halfPct, g1 - halfPct - 1));
+        chip = 'background:rgba(15,23,42,0.75);border-radius:4px;padding:0 4px;';
+      }
+      s2 += scrubLabel(atPct, win, '#f8fafc', 600, chip);
+      // The scrub range's own bounds — first / last week — so the control also says
+      // how far you can drag. Dropped when the period label would collide.
+      var midPx = atPct / 100 * bw, halfWinPx = winPx / 2;
+      var lo = fmtDay(weeks[0]), hi = fmtDay(weeks[N - 1]);
+      if (midPx - halfWinPx > txtPx(lo) + 12) s2 += scrubEdge('left', lo);
+      if (midPx + halfWinPx < bw - txtPx(hi) - 12) s2 += scrubEdge('right', hi);
       s2 += '</div>';
       bar.innerHTML = s2;
     }
+  }
+
+  // ── scrubber label helpers ──
+  // "2026-08-14" -> "14 Aug". The year is in the caption above; inside a 20px bar
+  // it would only cost room the dates need.
+  var MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  function fmtDay(iso) {
+    if (!iso) return '';
+    var p = String(iso).split('-');
+    if (p.length < 3) return String(iso);
+    return String(Number(p[2])) + ' ' + (MON[Number(p[1]) - 1] || p[1]);
+  }
+  // Approximate rendered width of 10px type — good enough to decide whether a
+  // label fits, and it costs no layout pass (this runs on every drag frame).
+  function txtPx(t) { return String(t).length * 5.6; }
+  function scrubLabel(pct, text, color, weight, extra) {
+    return '<div style="position:absolute;left:' + pct + '%;top:0;bottom:0;transform:translateX(-50%);'
+         + 'display:flex;align-items:center;font-size:10px;line-height:1;white-space:nowrap;'
+         + 'pointer-events:none;color:' + color + ';font-weight:' + weight + ';'
+         + 'text-shadow:0 1px 2px rgba(2,6,23,0.65);' + (extra || '') + '">' + text + '</div>';
+  }
+  function scrubEdge(side, text) {
+    return '<div style="position:absolute;' + side + ':5px;top:0;bottom:0;display:flex;align-items:center;'
+         + 'font-size:9px;line-height:1;white-space:nowrap;pointer-events:none;color:#cbd5e1;opacity:0.7;'
+         + 'text-shadow:0 1px 2px rgba(2,6,23,0.65)">' + text + '</div>';
   }
 
   // click / drag anywhere on the sparkline or range bar to move the tail's end week

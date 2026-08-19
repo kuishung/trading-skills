@@ -3,7 +3,8 @@
    ONE wall calendar carrying BOTH feeds, colour-coded — economic releases in
    sky, earnings in amber — because that is the question a month view answers:
    what happens to the market on each day, not "what does source X have". The
-   dedicated Economic / Earnings tabs stay for the deep, filterable lists.
+   day panel on the right carries the full detail the old Economic / Earnings
+   tabs used to (removed 2026-08-20).
 
    Clicking any day SELECTS it: the panel re-renders with that day ringed and the
    detail column on the right filled in. Today keeps its filled date badge
@@ -12,7 +13,7 @@
 {% from "_time.html" import localtime %}
 
 <div class="shrink-0 flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 border-b border-slate-800">
-  {{ C.datenav(url, anchor, start, end, "month", today, prev_day, next_day, []) }}
+  {{ C.datenav(url, anchor, today, prev_day, next_day) }}
 
   {# Two filter groups sit side by side and both own an "All", so each is
      labelled in ITS OWN colour — the same sky/amber mapping as the grid. #}

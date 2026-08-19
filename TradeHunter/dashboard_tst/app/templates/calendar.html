@@ -1,34 +1,21 @@
 {% extends "base.html" %}
-{% block title %}{{ "Economic" if tab == "economic" else "Earnings" }} Calendar &middot; TradeHunter{% endblock %}
+{% block title %}Calendar &middot; TradeHunter{% endblock %}
 {% block main_class %}flex-1 w-full px-4 py-4 overflow-hidden{% endblock %}
 
 {% block content %}
-{# Calendar shell — one page for both tabs (routes/calendar.py). The tabs are real
-   links (each tab is its own URL, shareable and bookmarkable); the panel inside
-   lazy-loads so a slow upstream feed never blocks the page. Everything fits the
-   viewport: the panel scrolls internally, the page does not. #}
+{# Calendar shell — the month view (routes/calendar.py). The panel lazy-loads so
+   a slow upstream feed never blocks the page render, and it carries its own
+   controls + state in the query string, so a reload or a shared URL reproduces
+   exactly what you were looking at. Everything fits the viewport: the panel
+   scrolls internally, the page does not.
+
+   The standalone Economic / Earnings tabs were removed 2026-08-20 (user) — both
+   feeds live on this one grid. #}
 <div class="flex flex-col h-[calc(100vh-6rem)] min-h-0">
 
   <div class="flex items-baseline gap-3 mb-3 shrink-0">
     <h1 class="text-xl font-semibold text-slate-100">Calendar</h1>
-    <span class="text-sm text-slate-500">
-      {% if tab == "month" %}the month at a glance &middot; releases and reports on one grid
-      {% elif tab == "economic" %}scheduled macro releases &middot; actual vs forecast
-      {% else %}who reports, and when &middot; US market dates{% endif %}
-    </span>
-  </div>
-
-  {# tabs #}
-  <div class="flex items-center gap-1 mb-2 shrink-0 border-b border-slate-800">
-    <a href="/calendar/month"
-       class="text-xs px-3 py-1.5 -mb-px border-b-2 transition
-              {% if tab == 'month' %}border-emerald-500 text-emerald-300{% else %}border-transparent text-slate-400 hover:text-slate-200{% endif %}">Month</a>
-    <a href="/calendar/economic"
-       class="text-xs px-3 py-1.5 -mb-px border-b-2 transition
-              {% if tab == 'economic' %}border-emerald-500 text-emerald-300{% else %}border-transparent text-slate-400 hover:text-slate-200{% endif %}">Economic</a>
-    <a href="/calendar/earnings"
-       class="text-xs px-3 py-1.5 -mb-px border-b-2 transition
-              {% if tab == 'earnings' %}border-emerald-500 text-emerald-300{% else %}border-transparent text-slate-400 hover:text-slate-200{% endif %}">Earnings</a>
+    <span class="text-sm text-slate-500">the month at a glance &middot; releases and reports on one grid</span>
   </div>
 
   <section class="rounded-xl border border-slate-800 bg-slate-900/40 flex-1 min-h-0 flex flex-col overflow-hidden">
