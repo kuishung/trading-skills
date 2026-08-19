@@ -16,6 +16,11 @@
              class="w-12 rounded bg-slate-950/60 border border-slate-700 px-1 py-0.5 text-slate-200 tabular-nums"> wks
     </label>
     <button id="rrgPlay" type="button" class="px-2 py-0.5 rounded border border-slate-700 hover:border-emerald-500 hover:text-emerald-300 transition">&#9654; Play</button>
+    {# Fit clears a manual zoom/pan and hands the axes back to auto-fit. Dimmed while
+       already auto-fitted, so it doubles as the "am I zoomed?" indicator. #}
+    <button id="rrgFit" type="button" title="Reset zoom — fit the visible tails"
+            class="px-2 py-0.5 rounded border border-slate-700 hover:border-emerald-500 hover:text-emerald-300 transition">&#10530; Fit</button>
+    <span class="text-slate-600">scroll to zoom &middot; drag to pan</span>
   </div>
   {# the quadrant chart — flexes to fill the panel window #}
   <div id="rrgSvg" class="w-full flex-1 min-h-0"></div>
@@ -93,6 +98,7 @@
   var svgBox = document.getElementById('rrgSvg'),
       tailInp = document.getElementById('rrgTail'),
       playBtn = document.getElementById('rrgPlay'),
+      fitBtn = document.getElementById('rrgFit'),
       legend = document.getElementById('rrgLegend'),
       spark = document.getElementById('rrgSpark'),
       bar = document.getElementById('rrgBar'),
@@ -157,8 +163,13 @@
     return [100 - Math.ceil(d / st) * st, 100 + Math.ceil(d / st) * st];
   }
   var xr = [99, 101], yr = [99, 101];
+  // null = axes auto-fit the visible tails; otherwise the user's zoom/pan window.
+  var zoom = null;
   function px(x) { return mL + (x - xr[0]) / (xr[1] - xr[0]) * pw; }
   function py(y) { return mT + (1 - (y - yr[0]) / (yr[1] - yr[0])) * ph; }
+  // inverse of px/py — pixel (viewBox) coordinate back to an axis value
+  function ux(v) { return xr[0] + (v - mL) / pw * (xr[1] - xr[0]); }
+  function uy(v) { return yr[0] + (1 - (v - mT) / ph) * (yr[1] - yr[0]); }
   function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
 
   // Axis ticks: a "nice" step (0.25/0.5/1/2/5) giving ~6 gridlines across the range,
@@ -212,8 +223,13 @@
       if (hidden[sec.symbol]) return;
       sec.pts.slice(Math.max(0, end - tail + 1), end + 1).forEach(function (p) { vx.push(p.x); vy.push(p.y); });
     });
-    xr = rng(vx); yr = rng(vy);
-    var x100 = px(100), y100 = py(100), xR = mL + pw, yB = mT + ph;
+    if (zoom) { xr = zoom.xr.slice(); yr = zoom.yr.slice(); }
+    else { xr = rng(vx); yr = rng(vy); }
+    fitBtn.style.opacity = zoom ? '' : '0.4';
+    var xR = mL + pw, yB = mT + ph;
+    // Zoomed/panned, 100 can sit outside the window — clamp the cross so the quadrant
+    // bands still paint the right halves instead of overflowing the plot.
+    var x100 = Math.max(mL, Math.min(xR, px(100))), y100 = Math.max(mT, Math.min(yB, py(100)));
     // fill the panel: viewBox is measured from the container, so the drawing occupies
     // the whole area (no letterboxing / centering). aspect matches → no distortion.
     var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="100%" style="display:block" preserveAspectRatio="none" font-family="system-ui,sans-serif">';
@@ -377,6 +393,53 @@
     c.addEventListener('pointerup', function () { dragging = false; });
     c.addEventListener('pointercancel', function () { dragging = false; });
   });
+
+  // ── zoom + pan ─────────────────────────────────────────────────────────────
+  // The chart is no longer a fixed auto-fit frame: the wheel zooms about the cursor
+  // (so the point under the pointer stays put) and dragging pans. Both write `zoom`,
+  // which draw() then uses instead of the auto-fit range; Fit clears it.
+  var MIN_HALF = 0.05, MAX_HALF = 400;   // guard rails on how far zoom can run
+  function setZoom(nxr, nyr) {
+    var hx = (nxr[1] - nxr[0]) / 2, hy = (nyr[1] - nyr[0]) / 2;
+    if (hx < MIN_HALF || hy < MIN_HALF || hx > MAX_HALF || hy > MAX_HALF) return;
+    zoom = { xr: nxr, yr: nyr };
+    draw();
+  }
+  function at(ev) {
+    var r = svgBox.getBoundingClientRect();
+    // W/H are measured FROM this box each draw, so viewBox units are CSS pixels 1:1
+    return [ev.clientX - r.left, ev.clientY - r.top];
+  }
+  svgBox.addEventListener('wheel', function (e) {
+    e.preventDefault();                    // the panel must not scroll under the chart
+    var p = at(e), ax = ux(p[0]), ay = uy(p[1]);
+    var f = e.deltaY > 0 ? 1.12 : 1 / 1.12;
+    setZoom([ax + (xr[0] - ax) * f, ax + (xr[1] - ax) * f],
+            [ay + (yr[0] - ay) * f, ay + (yr[1] - ay) * f]);
+  }, { passive: false });
+
+  var panning = null;
+  svgBox.style.cursor = 'grab';
+  svgBox.addEventListener('pointerdown', function (e) {
+    panning = at(e);
+    svgBox.style.cursor = 'grabbing';
+    try { svgBox.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+  svgBox.addEventListener('pointermove', function (e) {
+    if (!panning) return;
+    var p = at(e);
+    var dx = (p[0] - panning[0]) / pw * (xr[1] - xr[0]);
+    var dy = (p[1] - panning[1]) / ph * (yr[1] - yr[0]);
+    panning = p;
+    // drag right -> the view moves left; drag down -> the view moves up (y is inverted)
+    setZoom([xr[0] - dx, xr[1] - dx], [yr[0] + dy, yr[1] + dy]);
+  });
+  function endPan() { panning = null; svgBox.style.cursor = 'grab'; }
+  svgBox.addEventListener('pointerup', endPan);
+  svgBox.addEventListener('pointercancel', endPan);
+  svgBox.addEventListener('pointerleave', endPan);
+  svgBox.addEventListener('dblclick', function () { zoom = null; draw(); });
+  fitBtn.addEventListener('click', function () { zoom = null; draw(); });
 
   var timer = null;
   tailInp.addEventListener('input', draw);

@@ -129,6 +129,28 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-20 — v4.09: the RRG zooms and pans
+User: *"the chart should be able to scroll in or scroll out and not a fixed chart"*.
+
+The RRG's axes were auto-fit only — you saw whatever frame the visible tails implied
+and could not get closer. Now (`_sector_rrg.html`):
+
+- **Wheel zooms about the cursor.** The point under the pointer stays put (verified: 1px
+  drift over four zoom steps), which is what makes zooming feel like a chart rather than
+  a resize. `preventDefault` on a non-passive listener, so the panel behind it never
+  scrolls out from under you.
+- **Drag pans**, 1:1 with the cursor. Pointer capture, so a fast drag doesn't lose the
+  chart.
+- **Fit resets to auto-fit** — and the button is dimmed while auto-fitted, so it doubles
+  as the "am I zoomed?" indicator. Double-clicking the chart does the same.
+- Zoom/pan write a `zoom` window that `draw()` uses instead of the auto-fit range; every
+  other control (tail length, Play, show/hide, the scrubber) keeps working inside it.
+- **The quadrant cross is clamped to the plot.** Zoomed or panned far enough, 100/100
+  leaves the frame; the coloured quadrant bands now collapse to zero width/height at the
+  edge instead of overflowing (verified: no malformed rects when panned off-cross).
+- Guard rails on the zoom range (half-width 0.05 to 400) so it can't be scrolled into a
+  degenerate or meaningless frame.
+
 ### 2026-08-20 — v4.08: RRG axes are percentage deviations, calibrated to a reference
 User: *"still not working correctly"*, with an Optuma weekly sector RRG for the same
 date and — decisively — a tooltip reading **Health Care · 2026-06-12 · Ratio 92.918219 ·
