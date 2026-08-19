@@ -22,6 +22,23 @@
 {% endmacro %}
 {% set GRID = "display:grid;grid-template-columns:minmax(4.5rem,1fr) 3rem 3rem 3rem 3rem;column-gap:0.3rem;align-items:center" %}
 
+{# Timeframe switch — the quadrants below are computed on THIS timeframe, and a
+   sector genuinely sits in different quadrants daily vs weekly. The RRG tab embeds
+   Optuma's chart and is cross-origin, so we can't read which timeframe it is on;
+   set this to match it. Defaults to Daily because that is the embed's own default. #}
+<div class="flex items-center gap-1 px-1 pb-1.5">
+  <span class="text-[10px] uppercase tracking-wide text-slate-500">Rotation</span>
+  {% for key, lbl in [("daily", "Daily"), ("weekly", "Weekly")] %}
+  <button type="button" hx-get="/sector/returns?tf={{ key }}"
+          hx-target="closest .si-returns" hx-swap="innerHTML"
+          title="Group by the {{ lbl|lower }} RRG — match this to the timeframe set on the chart"
+          class="text-[10px] px-1.5 py-0.5 rounded border transition
+                 {% if timeframe == key %}border-emerald-500/60 bg-emerald-500/15 text-emerald-300
+                 {% else %}border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-600{% endif %}">{{ lbl }}</button>
+  {% endfor %}
+  <span class="ml-auto text-[10px] text-slate-600">match the chart</span>
+</div>
+
 <div style="{{ GRID }}" class="px-1 pb-1 text-[10px] uppercase tracking-wide text-slate-500 border-b border-slate-800">
   <span>Sector</span>
   {% for w in windows %}<span class="text-right">{{ w }}</span>{% endfor %}

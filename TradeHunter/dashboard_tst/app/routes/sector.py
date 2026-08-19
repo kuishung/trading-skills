@@ -52,11 +52,21 @@ def sector_home(request: Request, user: User = Depends(require_user)):
 
 
 @router.get("/returns", response_class=HTMLResponse)
-def sector_returns_panel(request: Request, user: User = Depends(require_user)):
-    """Left-panel fragment: per-sector 1/2/4/8-month returns (HTMX-loaded)."""
+def sector_returns_panel(
+    request: Request, tf: str = "daily", user: User = Depends(require_user)
+):
+    """Left-panel fragment: per-sector 1/2/4/8-month returns, grouped by RRG quadrant.
+
+    `tf` picks the RRG timeframe the grouping uses. It matters: the same sector sits
+    in different quadrants daily vs weekly, and the RRG tab embeds Optuma's chart
+    (cross-origin — we can't read which timeframe it is on), so the reader has to be
+    able to point this panel at the same one.
+    """
     from ..services.etf import sector_returns
 
-    return templates.TemplateResponse(request, "_sector_returns.html", sector_returns())
+    ctx = sector_returns(timeframe=tf)
+    ctx["user"] = user
+    return templates.TemplateResponse(request, "_sector_returns.html", ctx)
 
 
 @router.get("/rrg", response_class=HTMLResponse)

@@ -31,11 +31,11 @@
       <div id="siTop" class="flex flex-col min-h-[240px] lg:min-h-0" style="flex:1 1 0">
         <div class="flex items-baseline justify-between mb-1 px-1 shrink-0">
           <h2 class="text-sm font-semibold text-slate-200">Sector &amp; Industry</h2>
-          <span class="text-[11px] text-slate-500">click to drill down</span>
+          <span class="text-[11px] text-slate-500">grouped by rotation &middot; click to drill down</span>
         </div>
         {# sector rows; clicking one expands its industry headers below it. Scrolls
            internally (scrollbar invisible-until-hover, base.html). #}
-        <div class="flex-1 min-h-0 overflow-y-auto pr-1" hx-get="/sector/returns" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
+        <div class="si-returns flex-1 min-h-0 overflow-y-auto pr-1" hx-get="/sector/returns" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
       </div>
 
       {# draggable divider between the two panes #}

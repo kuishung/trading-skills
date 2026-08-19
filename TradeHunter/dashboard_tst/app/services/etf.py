@@ -124,12 +124,14 @@ def leader_order() -> list[str]:
 _RET_WINDOWS = [("1M", 21), ("2M", 42), ("4M", 84), ("8M", 168)]
 
 
-def sector_returns() -> dict:
+def sector_returns(timeframe: str = "daily") -> dict:
     """Per-sector total return over 1 / 2 / 4 / 8 months, for the Sector & Industry
     left panel. Ordered leaders-first by relative strength vs SPY (shared
     leader_order(), so this panel agrees with the RRG list); includes an SPY row.
     Reuses the shared ~15-min-cached aligned closes. Soft-fail."""
-    hit = _cache.get("sector_returns")
+    timeframe = timeframe if timeframe in TIMEFRAMES else "daily"
+    ck = f"sector_returns_{timeframe}"
+    hit = _cache.get(ck)
     if hit and hit[0] > time.time():
         return hit[1]
     closes = _aligned()["closes"]
@@ -149,7 +151,7 @@ def sector_returns() -> dict:
     # can therefore disagree with the embed by one quadrant. Soft-fail: no RRG data
     # just means no badges, never a broken panel.
     try:
-        r = rrg()
+        r = rrg(timeframe=timeframe)
         pts, quad = r["points"], r["quad"]
     except Exception:  # noqa: BLE001
         pts, quad = {}, {}
@@ -175,9 +177,10 @@ def sector_returns() -> dict:
         "windows": [lbl for lbl, _ in _RET_WINDOWS],
         "rows": rows,
         "groups": groups,
+        "timeframe": timeframe,
         "spy": _row(BENCHMARK, "S&P 500"),
     }
-    _cache["sector_returns"] = (time.time() + _TTL, out)
+    _cache[ck] = (time.time() + _TTL, out)
     return out
 
 
@@ -261,6 +264,35 @@ RRG_MOM_LAG = 13     # weeks - rate-of-change window for momentum (a quarter)
 RRG_WARMUP = 3 * RRG_RATIO_WIN
 RRG_MIN_WEEKS = RRG_WARMUP + RRG_MOM_LAG + 12
 
+# DAILY parameters. A timeframe is not a cosmetic switch on an RRG — it changes which
+# quadrant a sector is in, because the same rotation looks different measured over
+# days versus weeks. Technology reads Weakening on the weekly and Leading on the
+# daily right now, and that is not a contradiction, it is the point of the timeframe.
+# The embedded Optuma chart defaults to 1 Day, so a weekly-only panel next to it
+# disagreed for a reason that had nothing to do with the maths.
+#
+# These are calibrated the same way the weekly ones were — against what the vendor's
+# chart actually shows — and carry the same caveat: their daily settings are
+# proprietary, so treat agreement as close, not exact.
+RRG_DAILY = {"win": 10, "smooth": 5, "lag": 13}
+RRG_WEEKLY = {"win": RRG_RATIO_WIN, "smooth": RRG_SMOOTH, "lag": RRG_MOM_LAG}
+TIMEFRAMES = ("daily", "weekly")
+
+
+def _rrg_params(timeframe: str) -> dict:
+    return RRG_DAILY if timeframe == "daily" else RRG_WEEKLY
+
+
+def _rrg_series_for(sym: str, closes: dict, dates: list, timeframe: str):
+    """(RS-Ratio, RS-Momentum) for one symbol on the requested timeframe."""
+    p = _rrg_params(timeframe)
+    if timeframe == "daily":
+        ser, bench = closes.get(sym, []), closes.get(BENCHMARK, [])
+    else:
+        ser = _weekly(dates, closes.get(sym, []))
+        bench = _weekly(dates, closes.get(BENCHMARK, []))
+    return _jdk(ser, bench, win=p["win"], smooth=p["smooth"], lag=p["lag"])
+
 
 def _ema(series: list[float], n: int) -> list[float]:
     """Exponential moving average, same length as the input (seeded on the first value)."""
@@ -282,14 +314,15 @@ def _jdk(wser: list[float], wbench: list[float],
     not the same length - callers take the last `min(len(a), len(b))` of each,
     which keeps them aligned.
     """
+    warmup = 3 * win
     n = min(len(wser), len(wbench))
-    if n < RRG_MIN_WEEKS:
+    if n < warmup + lag + 12:
         return [], []
     a, b = wser[-n:], wbench[-n:]
     rs = [100.0 * a[i] / b[i] if b[i] else 100.0 for i in range(n)]
     base = _ema(rs, win)
     ratio = _ema([100.0 * rs[i] / base[i] if base[i] else 100.0 for i in range(n)], smooth)
-    ratio = ratio[RRG_WARMUP:]
+    ratio = ratio[warmup:]
     if len(ratio) <= lag:
         return ratio, []
     mom = [100.0 * ratio[i] / ratio[i - lag] if ratio[i - lag] else 100.0
@@ -313,22 +346,20 @@ def _quadrant(x: float, y: float) -> str:
     return "Lagging"
 
 
-def rrg(tail: int = 8, win: int = RRG_RATIO_WIN) -> dict:
+def rrg(tail: int = 8, timeframe: str = "weekly") -> dict:
     """JdK-style Relative Rotation: per ETF a tail of (RS-Ratio, RS-Momentum) points
     vs SPY on weekly data, plus its current quadrant. Both axes centre on 100."""
-    hit = _cache.get("rrg")
+    timeframe = timeframe if timeframe in TIMEFRAMES else "weekly"
+    ck = f"rrg_{timeframe}"
+    hit = _cache.get(ck)
     if hit and hit[0] > time.time():
         return hit[1]
     a = _aligned()
     closes, dates = a["closes"], a["dates"]
-    wbench = _weekly(dates, closes.get(BENCHMARK, []))
     points: dict = {}
     quad: dict = {}
     for sym, name in ETF_UNIVERSE:
-        wser = _weekly(dates, closes.get(sym, []))
-        if min(len(wser), len(wbench)) < RRG_MIN_WEEKS + tail:
-            continue
-        ratio, mom = _jdk(wser, wbench, win=win)
+        ratio, mom = _rrg_series_for(sym, closes, dates, timeframe)
         m = min(len(ratio), len(mom))
         if m < 1:
             continue
@@ -338,8 +369,8 @@ def rrg(tail: int = 8, win: int = RRG_RATIO_WIN) -> dict:
         if pts:
             points[sym] = {"name": name, "tail": pts}
             quad[sym] = _quadrant(pts[-1]["x"], pts[-1]["y"])
-    out = {"points": points, "quad": quad}
-    _cache["rrg"] = (time.time() + _TTL, out)
+    out = {"points": points, "quad": quad, "timeframe": timeframe}
+    _cache[ck] = (time.time() + _TTL, out)
     return out
 
 

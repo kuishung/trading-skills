@@ -129,6 +129,31 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-20 — v4.12: the Sector panel gets a Daily / Weekly rotation switch
+User, reading the embedded chart: *"if we look at the leading quadrant in the RRG chart,
+Technology / Healthcare / Material / Energy are leading"* — while our panel had Technology
+and Energy in **Weakening** and Materials in **Lagging**.
+
+**It was a timeframe mismatch, not a formula error.** The panel computed quadrants
+**weekly**; the embedded Optuma chart defaults to **1 Day**. Recomputing on daily bars
+moves Technology, Health Care and Energy into Leading — three of the four the user read
+off the chart — so the two panels were describing different questions, not disagreeing
+about the answer. A timeframe is not a cosmetic switch on an RRG: the same sector
+genuinely occupies different quadrants daily vs weekly, and that is the point of it.
+
+- **Daily / Weekly toggle** on the Sector & Industry panel (`/sector/returns?tf=`),
+  defaulting to **Daily** because that is the embed's own default. The chart is
+  cross-origin so we cannot detect which timeframe it is on — the switch, and the
+  "match the chart" hint next to it, are how the two get lined up.
+- `rrg()` and `sector_returns()` both take a `timeframe`, cached per timeframe.
+  `_jdk()` now derives its warm-up from the window it is actually handed instead of the
+  weekly constant, so daily parameters aren't silently held to a weekly minimum.
+- Daily parameters (`RRG_DAILY`) are calibrated the same way the weekly ones were —
+  against what the vendor's chart shows — and carry the same caveat: their daily
+  settings are proprietary, so agreement is close, not exact. On our numbers Materials
+  sits at (99.7, 99.4), just short of the Leading corner rather than inside it; our data
+  also ends a day behind the live embed, which is enough to move a borderline sector.
+
 ### 2026-08-20 — v4.11: the Sector listing is grouped by RRG quadrant
 User: *"the sector and industry listing panel does not follow the chart"* — after the RRG
 tab became the Optuma embed, the left panel was still just a 1-month-return ranking with
