@@ -1,5 +1,20 @@
-{# Sector returns panel — per-sector 1/2/4/8-month total return. Context:
-   windows (["1M","2M","4M","8M"]), rows [{symbol,name,rets}], spy. #}
+{# Sector returns panel — per-sector 1/2/4/8-month total return, GROUPED BY RRG
+   QUADRANT so the panel reads the way the chart does: Leading first, then Improving,
+   Weakening, Lagging, each group ordered by RS-Ratio.
+
+   The chart in the RRG tab is Optuma's embed and is cross-origin, so this panel cannot
+   follow the chart's own selection — these quadrants come from our rrg(). A sector
+   sitting right on a 100 line can therefore differ from the embed by one quadrant;
+   the badge tooltip says so.
+
+   Context: windows (["1M","2M","4M","8M"]), groups [{key, rows}], rows, spy. #}
+{# quadrant -> [text colour, dot colour, meaning] — the same mapping the RRG chart uses #}
+{% set QCOLOR = {
+  "Leading":   ["text-emerald-300", "bg-emerald-400", "strong and still strengthening"],
+  "Improving": ["text-sky-300",     "bg-sky-400",     "still weak, but strengthening"],
+  "Weakening": ["text-amber-300",   "bg-amber-400",   "still strong, but fading"],
+  "Lagging":   ["text-rose-300",    "bg-rose-400",    "weak and still weakening"]
+} %}
 {% macro pct(v) %}
 {%- if v is none -%}<span class="text-slate-600">&ndash;</span>
 {%- else -%}<span class="{{ 'text-emerald-400' if v >= 0 else 'text-rose-400' }} tabular-nums">{{ '%+.1f'|format(v * 100) }}%</span>
@@ -12,15 +27,28 @@
   {% for w in windows %}<span class="text-right">{{ w }}</span>{% endfor %}
 </div>
 
-{% for r in rows %}
+{% for g in (groups or [{"key": none, "rows": rows}]) %}
+{% set c = QCOLOR.get(g.key) %}
+{# quadrant header — one per non-empty group, so the four rotation states are visible
+   without reading every badge #}
+<div class="flex items-center gap-1.5 px-1 pt-2 pb-0.5">
+  {% if c %}<span class="w-1.5 h-1.5 rounded-full {{ c[1] }}"></span>{% endif %}
+  <span class="text-[10px] uppercase tracking-wide {{ c[0] if c else 'text-slate-500' }}">{{ g.key or "Unranked" }}</span>
+  {% if c %}<span class="text-[10px] text-slate-600 truncate">{{ c[2] }}</span>{% endif %}
+  <span class="ml-auto text-[10px] text-slate-600 tabular-nums">{{ g.rows | length }}</span>
+</div>
+{% for r in g.rows %}
 {# Click a sector -> expand its industry headers as children right below it (HTMX
    into the sibling .sector-children). Clicking an industry loads its symbols into
    the bottom Symbol panel. #}
 <div class="sector-group">
-  <div title="{{ r.symbol }} — click to see its industries"
+  <div title="{{ r.symbol }}{% if r.quadrant %} — {{ r.quadrant }}{% if r.rs_ratio %} (RS-Ratio {{ '%.1f'|format(r.rs_ratio) }}, RS-Momentum {{ '%.1f'|format(r.rs_mom) }}, our own calculation — the embedded chart may differ near a 100 line){% endif %}{% endif %} — click to see its industries"
        hx-get="/sector/industries?sector={{ r.symbol }}" hx-target="next .sector-children" hx-swap="innerHTML"
        style="{{ GRID }}" class="wl-sector cursor-pointer px-1 py-1 rounded hover:bg-emerald-500/10 transition">
-    <span class="text-[12px] text-slate-200 truncate">{{ r.name }}</span>
+    <span class="text-[12px] text-slate-200 truncate flex items-center gap-1">
+      {% if c %}<span class="w-1.5 h-1.5 rounded-full {{ c[1] }} shrink-0"></span>{% endif %}
+      <span class="truncate">{{ r.name }}</span>
+    </span>
     <span class="text-right text-[12px]">{{ pct(r.rets['1M']) }}</span>
     <span class="text-right text-[12px]">{{ pct(r.rets['2M']) }}</span>
     <span class="text-right text-[12px]">{{ pct(r.rets['4M']) }}</span>
@@ -28,6 +56,7 @@
   </div>
   <div class="sector-children pl-3"></div>
 </div>
+{% endfor %}
 {% endfor %}
 
 {% if spy %}

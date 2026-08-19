@@ -142,9 +142,39 @@ def sector_returns() -> dict:
     rows = [_row(sym, name) for sym, name in ETF_UNIVERSE]
     rank = {s: i for i, s in enumerate(leader_order())}
     rows.sort(key=lambda r: rank.get(r["symbol"], 99))
+
+    # Attach each sector's RRG quadrant so the panel reads the way the chart does.
+    # The RRG chart itself is Optuma's embed (cross-origin — we can't read what it
+    # shows), so these come from our own rrg(); a sector sitting right on a 100 line
+    # can therefore disagree with the embed by one quadrant. Soft-fail: no RRG data
+    # just means no badges, never a broken panel.
+    try:
+        r = rrg()
+        pts, quad = r["points"], r["quad"]
+    except Exception:  # noqa: BLE001
+        pts, quad = {}, {}
+    for row in rows:
+        tail = (pts.get(row["symbol"]) or {}).get("tail") or []
+        row["quadrant"] = quad.get(row["symbol"])
+        row["rs_ratio"] = tail[-1]["x"] if tail else None
+        row["rs_mom"] = tail[-1]["y"] if tail else None
+
+    # Grouped leaders-first in rotation-strength order, each group sorted by RS-Ratio.
+    # Anything without RRG data falls into a trailing untagged group.
+    groups = []
+    for key in QUADRANTS:
+        members = [r2 for r2 in rows if r2["quadrant"] == key]
+        members.sort(key=lambda r2: (r2["rs_ratio"] is None, -(r2["rs_ratio"] or 0)))
+        if members:
+            groups.append({"key": key, "rows": members})
+    rest = [r2 for r2 in rows if r2["quadrant"] not in QUADRANTS]
+    if rest:
+        groups.append({"key": None, "rows": rest})
+
     out = {
         "windows": [lbl for lbl, _ in _RET_WINDOWS],
         "rows": rows,
+        "groups": groups,
         "spy": _row(BENCHMARK, "S&P 500"),
     }
     _cache["sector_returns"] = (time.time() + _TTL, out)
@@ -265,6 +295,12 @@ def _jdk(wser: list[float], wbench: list[float],
     mom = [100.0 * ratio[i] / ratio[i - lag] if ratio[i - lag] else 100.0
            for i in range(lag, len(ratio))]
     return ratio, mom
+
+
+# Display order for the four RRG quadrants: strongest rotation state first. This is
+# reading order for the sector panel, not the clockwise rotation cycle — a reader wants
+# "who is strong now" at the top, not where the cycle happens to start.
+QUADRANTS = ["Leading", "Improving", "Weakening", "Lagging"]
 
 
 def _quadrant(x: float, y: float) -> str:

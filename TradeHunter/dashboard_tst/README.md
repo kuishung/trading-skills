@@ -129,6 +129,28 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-20 — v4.11: the Sector listing is grouped by RRG quadrant
+User: *"the sector and industry listing panel does not follow the chart"* — after the RRG
+tab became the Optuma embed, the left panel was still just a 1-month-return ranking with
+nothing tying it to the rotation on screen.
+
+**Constraint, stated up front:** the embed is cross-origin, so the panel *cannot* follow
+the chart's own selection — we can neither read what Optuma has selected nor drive it.
+So the panel mirrors the rotation using our own `rrg()` instead.
+
+- The Sector & Industry list is now **grouped by quadrant** — Leading, Improving,
+  Weakening, Lagging — each group ordered by RS-Ratio, with a coloured dot per row and a
+  group header carrying the count and a plain-English gloss ("still strong, but fading").
+  Colours match the quadrant bands on the chart.
+- Row tooltips carry the sector's RS-Ratio / RS-Momentum **and say the numbers are ours**,
+  so a sector sitting right on a 100 line that disagrees with the embed reads as a known
+  limitation rather than a bug.
+- Verified against the reference chart: all five unambiguously-labelled sectors group
+  where the reference puts them (Health Care + Financials Leading, Technology Weakening,
+  Industrials Improving, Communication Services Lagging).
+- Grouping is soft-fail — if `rrg()` can't produce data the rows fall into one "Unranked"
+  group and the panel keeps working. The industry drill-down is untouched.
+
 ### 2026-08-20 — v4.10: the Sector RRG panel embeds the official Optuma RRG
 User: *"your formula is wrong — take Technology for example"*, then *"can you just put
 this website to replace in the panel"* (https://rrg.optuma.com/).
