@@ -1,0 +1,74 @@
+{# Shared controls for both calendar panels.
+
+   Every control is a BUTTON carrying hx-get for the panel endpoint and swapping
+   #calPanel — the panel returns its own controls, so one round-trip re-renders
+   the whole thing with the new state. No client-side state to drift.
+
+   `url` is the closure the route passes in (routes/calendar.py::_urls): call it
+   with the params you want to change, e.g. url(day=prev_day) or url(range='week').
+
+   Usage:  {% import "_cal_controls.html" as C %}
+           {{ C.datenav(url, anchor, start, end, rng, today, prev_day, next_day) }}
+           {{ C.pill(url(imp='high'), 'High only', imp == 'high') }} #}
+
+{% macro pill(href, label, active, title="") -%}
+<button type="button" hx-get="{{ href }}" hx-target="#calPanel" hx-swap="innerHTML"
+        {% if title %}title="{{ title }}"{% endif %}
+        class="text-[11px] px-2 py-1 rounded border transition whitespace-nowrap
+               {% if active %}border-emerald-500/60 bg-emerald-500/15 text-emerald-300
+               {% else %}border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-600{% endif %}">{{ label }}</button>
+{%- endmacro %}
+
+{% macro step(href, glyph, title) -%}
+<button type="button" hx-get="{{ href }}" hx-target="#calPanel" hx-swap="innerHTML"
+        title="{{ title }}" aria-label="{{ title }}"
+        class="w-6 h-6 rounded border border-slate-700 text-slate-400 leading-none
+               hover:text-slate-200 hover:border-slate-600 transition">{{ glyph }}</button>
+{%- endmacro %}
+
+{# Date stepper + the Day/Week switch + a plain-English label of what's shown. #}
+{% macro datenav(url, anchor, start, end, rng, today, prev_day, next_day) -%}
+<div class="flex items-center gap-1.5">
+  {{ step(url(day=prev_day), "‹", "Previous " ~ rng) }}
+  {{ step(url(day=next_day), "›", "Next " ~ rng) }}
+  <button type="button" hx-get="{{ url(day=today.isoformat()) }}" hx-target="#calPanel" hx-swap="innerHTML"
+          title="Jump to today (US market date)"
+          class="text-[11px] px-2 py-1 rounded border border-slate-700 text-slate-400
+                 hover:text-slate-200 hover:border-slate-600 transition">Today</button>
+  <span class="text-sm text-slate-200 font-medium ml-1 whitespace-nowrap">
+    {% if rng == "week" %}{{ start.strftime("%d %b") }} &ndash; {{ end.strftime("%d %b %Y") }}
+    {% else %}{{ anchor.strftime("%a, %d %b %Y") }}{% endif %}
+  </span>
+  {% if rng == "day" and anchor == today %}
+  <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300">today</span>
+  {% endif %}
+</div>
+<div class="flex items-center gap-1">
+  {{ pill(url(range="day", day=anchor.isoformat()), "Day", rng == "day") }}
+  {{ pill(url(range="week", day=anchor.isoformat()), "Week", rng == "week") }}
+</div>
+{%- endmacro %}
+
+{# Sticky per-day header inside the scroll area. #}
+{% macro dayhead(d, today, right="") -%}
+{# bg-slate-950 (not /95): the skin layers in base.html only remap the slate
+   opacities they know about, so an off-list one like bg-slate-950/95 would stay
+   near-black in day mode. Opaque is right for a sticky header anyway — rows
+   must not bleed through it. #}
+<div class="sticky top-0 z-10 bg-slate-950 px-3 py-1.5 border-y border-slate-800
+            flex items-baseline justify-between gap-2">
+  <span class="text-xs font-semibold text-slate-200">
+    {{ d.strftime("%A, %d %b %Y") }}
+    {% if d == today %}<span class="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300">today</span>{% endif %}
+  </span>
+  {% if right %}<span class="text-[11px] text-slate-500">{{ right }}</span>{% endif %}
+</div>
+{%- endmacro %}
+
+{% macro empty(msg) -%}
+<div class="flex-1 flex flex-col items-center justify-center text-center py-10 text-slate-500">
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" class="mb-2 opacity-60">
+    <rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>
+  <div class="text-xs">{{ msg }}</div>
+</div>
+{%- endmacro %}

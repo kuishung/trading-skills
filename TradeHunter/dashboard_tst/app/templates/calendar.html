@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}{{ "Economic" if tab == "economic" else "Earnings" }} Calendar &middot; TradeHunter{% endblock %}
+{% block main_class %}flex-1 w-full px-4 py-4 overflow-hidden{% endblock %}
+
+{% block content %}
+{# Calendar shell — one page for both tabs (routes/calendar.py). The tabs are real
+   links (each tab is its own URL, shareable and bookmarkable); the panel inside
+   lazy-loads so a slow upstream feed never blocks the page. Everything fits the
+   viewport: the panel scrolls internally, the page does not. #}
+<div class="flex flex-col h-[calc(100vh-6rem)] min-h-0">
+
+  <div class="flex items-baseline gap-3 mb-3 shrink-0">
+    <h1 class="text-xl font-semibold text-slate-100">Calendar</h1>
+    <span class="text-sm text-slate-500">
+      {% if tab == "economic" %}scheduled macro releases &middot; actual vs forecast
+      {% else %}who reports, and when &middot; US market dates{% endif %}
+    </span>
+  </div>
+
+  {# tabs #}
+  <div class="flex items-center gap-1 mb-2 shrink-0 border-b border-slate-800">
+    <a href="/calendar/economic"
+       class="text-xs px-3 py-1.5 -mb-px border-b-2 transition
+              {% if tab == 'economic' %}border-emerald-500 text-emerald-300{% else %}border-transparent text-slate-400 hover:text-slate-200{% endif %}">Economic</a>
+    <a href="/calendar/earnings"
+       class="text-xs px-3 py-1.5 -mb-px border-b-2 transition
+              {% if tab == 'earnings' %}border-emerald-500 text-emerald-300{% else %}border-transparent text-slate-400 hover:text-slate-200{% endif %}">Earnings</a>
+  </div>
+
+  <section class="rounded-xl border border-slate-800 bg-slate-900/40 flex-1 min-h-0 flex flex-col overflow-hidden">
+    {# The panel fragment carries its OWN controls, so every control simply
+       re-requests this endpoint and swaps the whole thing back in. #}
+    <div id="calPanel" class="flex-1 min-h-0 flex flex-col"
+         hx-get="{{ panel_url }}" hx-trigger="load" hx-swap="innerHTML">
+      <div class="flex-1 flex items-center justify-center text-xs text-slate-500 py-8">Loading&hellip;</div>
+    </div>
+  </section>
+
+</div>
+{% endblock %}

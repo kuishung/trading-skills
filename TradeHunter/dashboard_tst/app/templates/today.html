@@ -51,8 +51,12 @@
   <div class="flex-1" hx-get="/today/rrg" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
   {% endcall %}
 
-  {# Economic calendar — LIVE (embedded TradingView widget, US, high/medium impact). #}
+  {# Economic calendar — LIVE (embedded TradingView widget, US, high/medium impact).
+     The full calendar (our own rows, filterable, plus the earnings tab) is the
+     Calendar menu; this card is the at-a-glance version, so it links there. #}
   {% call card("Economic calendar", "US · today") %}
+  <a href="/calendar/economic"
+     class="shrink-0 mb-2 text-[11px] text-slate-400 hover:text-emerald-300 transition">Open the full calendar &rarr;</a>
   <div class="flex-1 min-h-[460px]">
     <div class="tradingview-widget-container h-full" id="tvEconCal"></div>
   </div>

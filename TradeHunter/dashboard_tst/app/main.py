@@ -34,6 +34,7 @@ from .routes import admin as admin_routes
 from .routes import agent as agent_routes
 from .routes import api as api_routes
 from .routes import auth as auth_routes
+from .routes import calendar as calendar_routes
 from .routes import company_analysis as company_analysis_routes
 from .routes import macro as macro_routes
 from .routes import feedback as feedback_routes
@@ -60,7 +61,7 @@ for _routes_mod in (
     auth_routes, today_routes, matp_routes, studies_routes,
     finviz_routes, feedback_routes, admin_routes, agent_routes, pipeline_routes,
     research_routes, patterns_routes, strategy_routes, portfolio_routes,
-    company_analysis_routes, sector_routes, macro_routes,
+    company_analysis_routes, sector_routes, macro_routes, calendar_routes,
 ):
     _routes_mod.templates.env.globals["version"] = APP_VERSION
     _routes_mod.templates.env.globals["nav_for"] = menus.nav_for   # access-filtered nav
@@ -182,6 +183,12 @@ def create_app() -> FastAPI:
     app.include_router(company_analysis_routes.router, dependencies=[Depends(menus.require_menu("company_analysis"))])
     app.include_router(sector_routes.router, dependencies=[Depends(menus.require_menu("sector"))])
     app.include_router(macro_routes.router, dependencies=[Depends(menus.require_menu("macro"))])
+    # Calendar (Economic + Earnings) — one router, gated on EITHER calendar menu
+    # key so granting just one of the two still opens the page it belongs to.
+    app.include_router(
+        calendar_routes.router,
+        dependencies=[Depends(menus.require_menu("calendar_economic", "calendar_earnings"))],
+    )
     # Data Ingest (Finviz filter manager) is ADMIN-ONLY now — lives under Settings.
     app.include_router(finviz_routes.router, dependencies=[Depends(require_admin)])
     app.include_router(feedback_routes.router)

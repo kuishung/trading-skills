@@ -20,6 +20,11 @@ MENUS = [
     # /macro = the fixed six-topic board (2026-08-16). Free-form macro research
     # still lives at /research?kind=macro, linked from the board.
     ("macro",            "Macro",             None, "/macro"),
+    # Calendar — the only GROUPED entry: two sibling pages (what the world
+    # prints, and who reports) that belong under one nav dropdown. Added
+    # 2026-08-19 on user request.
+    ("calendar_economic", "Economic Calendar", "Calendar", "/calendar/economic"),
+    ("calendar_earnings", "Earnings Calendar", "Calendar", "/calendar/earnings"),
     ("sector",           "Sector & Industry", None, "/sector"),
     ("company_analysis", "Company",           None, "/company-analysis"),
     ("matp",             "Watchlist",         None, "/matp"),
@@ -55,23 +60,33 @@ def user_can(user: User, *keys: str) -> bool:
 
 
 def nav_for(user: User):
-    """Grouped nav filtered to the user's allowed menus, for base.html. Returns
-    (groups, singles): groups = [(group_label, [(href,label),...]),...] in registry
-    order; singles = [(href,label),...]."""
+    """The nav bar for base.html: the user's allowed menus IN REGISTRY ORDER, with
+    grouped entries collapsed into a dropdown at the position of their first item.
+
+    Returns a flat list of dicts, either
+      ``{"kind": "item",  "href": ..., "label": ...}`` or
+      ``{"kind": "group", "label": ..., "items": [(href, label), ...]}``.
+
+    Order matters here: MENUS is the top-down investing funnel, so a dropdown has
+    to sit where its entries sit in that funnel. (The previous shape returned
+    groups and singles separately, which forced base.html to render every
+    dropdown before every single item regardless of MENUS order.)
+    """
     allow = allowed_keys(user)
-    singles, order, bucket = [], [], {}
+    out: list[dict] = []
+    at: dict[str, dict] = {}
     for key, label, group, href in MENUS:
         if key not in allow:
             continue
         if group is None:
-            singles.append((href, label))
+            out.append({"kind": "item", "href": href, "label": label})
+        elif group in at:
+            at[group]["items"].append((href, label))
         else:
-            if group not in bucket:
-                bucket[group] = []
-                order.append(group)
-            bucket[group].append((href, label))
-    groups = [(g, bucket[g]) for g in order]
-    return groups, singles
+            entry = {"kind": "group", "label": group, "items": [(href, label)]}
+            at[group] = entry
+            out.append(entry)
+    return out
 
 
 def require_menu(*keys: str):

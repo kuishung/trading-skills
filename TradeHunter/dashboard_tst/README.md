@@ -129,6 +129,42 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-19 — v4.04: Calendar menu (Economic + Earnings)
+User ask: *"I want a calendar menu and Economic calendar and also earning calendar will be
+shown."*
+
+- **New nav group "Calendar"** (`menus.py`) with two pages: **Economic Calendar**
+  (`/calendar/economic`) and **Earnings Calendar** (`/calendar/earnings`). It sits between
+  Macro and Sector & Industry in the funnel. Both keys are grantable per-member in the
+  admin console like every other menu.
+- **`services/calendars.py`** (new) — live, key-less, cached, soft-fail:
+  - economic rows from **TradingView's own economic-calendar feed** (the data behind the
+    widget already embedded on Today). Taking the JSON instead of the iframe is the point:
+    it lets us group by market day, filter by country + importance, and theme it like the
+    rest of the app.
+  - earnings rows from **Nasdaq's public calendar API**, one call per day (a week view
+    fans its calls out concurrently).
+  - 5-min / 30-min TTL caches; a dead source renders the empty state, never a 500.
+- **Economic page** — time (viewer's timezone), importance dots, country, event (hover for
+  TradingView's own description), actual / forecast / previous. Actual is tinted green
+  above forecast and red below — labelled in the tooltip as DIRECTION only, because above
+  forecast is bullish for payrolls and bearish for jobless claims. Filters: Day/Week,
+  High-only / Medium+ / All, and eight country pills.
+- **Earnings page** — BMO/AMC/TBD, symbol (links to Company Analysis), company, market cap,
+  consensus EPS, number of estimates, last year's EPS, fiscal quarter. Sorted biggest-first
+  (a full day is ~200 names). Filters: Day/Week, market-cap floor, and **My watchlist only**;
+  every row carries the standard My-Watchlist star, and starred names are tinted.
+- Days are grouped by **US market date (ET)**, clock times render in the viewer's timezone —
+  the reader is in Malaysia, where the US session straddles local midnight.
+- **`nav_for()` now returns MENUS order**, one flat list of items and groups, instead of
+  (groups, singles). The old shape forced base.html to render every dropdown before every
+  single item, which would have thrown "Calendar" to the front of the funnel.
+- Today board's economic-calendar card now links to the full page.
+- Verified in a real browser: both tabs, day + week, every filter, the star toggle, and
+  light + dark. One day-mode bug caught and fixed on the way in — the sticky day header
+  used `bg-slate-950/95`, an opacity the base.html skin layers don't remap, so it stayed
+  near-black in light mode (the same failure class as v4.03). It is `bg-slate-950` now.
+
 ### 2026-08-19 — v4.03: day mode was still black (v4.02 regression)
 - **Bug:** in day mode the page — and the watchlist, which shows the page through it —
   stayed black. v4.02 set `body { background-color: var(--tv-page) !important }`, and the

@@ -321,10 +321,10 @@
      passes a Pattern as `p`; while this was named `p`, every {{ p.name }} there
      resolved against this URL string -> all fields rendered blank. Keep distinct. #}
   {% set nav_path = request.url.path %}
-  {# nav filtered to the user's granted menus (app/menus.py nav_for) #}
-  {% set nav_data = nav_for(user) %}
-  {% set nav_groups = nav_data[0] %}
-  {% set nav_singles = nav_data[1] %}
+  {# nav filtered to the user's granted menus, IN MENUS ORDER (app/menus.py
+     nav_for) — a flat list where each entry is either a single item or a group
+     that renders as a dropdown at its own position in the funnel. #}
+  {% set nav_items = nav_for(user) %}
   <div class="flex flex-col min-h-screen lg:h-screen">
 
     {# ---------------- top bar (nav relocated here) ---------------- #}
@@ -337,14 +337,16 @@
       {# NB: no overflow-x here — overflow-x:auto would clip the dropdown panels.
          The few grouped items fit without scrolling. #}
       <nav class="flex items-center gap-1 text-sm min-w-0 flex-wrap">
-        {# grouped categories as dropdowns: Investing / Swing & Trend / Intraday #}
-        {% for group, items in nav_groups %}
+        {% for entry in nav_items %}
+        {% if entry.kind == 'group' %}
+        {# a grouped category (e.g. Calendar) renders as a dropdown #}
+        {% set items = entry['items'] %}
         {% set ns = namespace(active=false) %}
         {% for href, label in items %}{% if nav_path.startswith(href.split('?')[0]) %}{% set ns.active = true %}{% endif %}{% endfor %}
         <details class="relative shrink-0">
           <summary class="cursor-pointer list-none rounded-lg px-3 py-1.5 whitespace-nowrap transition flex items-center gap-1
                           {% if ns.active %}bg-orange-500/15 text-orange-300{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-orange-300{% endif %}">
-            {{ group }}
+            {{ entry.label }}
             <svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor" class="text-slate-500"><path d="M5.5 7.5 10 12l4.5-4.5z"/></svg>
           </summary>
           <div class="absolute left-0 mt-2 w-44 rounded-lg border border-slate-800 bg-slate-900 shadow-xl py-1 z-30">
@@ -354,12 +356,12 @@
             {% endfor %}
           </div>
         </details>
-        {% endfor %}
-        {# single top-level items (My Portfolio) #}
-        {% for href, label in nav_singles %}
-        <a href="{{ href }}"
+        {% else %}
+        {# a single top-level item (Macro, Sector & Industry, ...) #}
+        <a href="{{ entry.href }}"
            class="rounded-lg px-3 py-1.5 whitespace-nowrap transition
-                  {% if nav_path.startswith(href) %}bg-orange-500/15 text-orange-300{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-orange-300{% endif %}">{{ label }}</a>
+                  {% if nav_path.startswith(entry.href) %}bg-orange-500/15 text-orange-300{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-orange-300{% endif %}">{{ entry.label }}</a>
+        {% endif %}
         {% endfor %}
         {% if user.is_admin %}
         {# admin-only Settings dropdown — holds Data Ingest (Finviz filter manager) #}
