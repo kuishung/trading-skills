@@ -197,6 +197,55 @@ def _rolling_z100(series: list[float], win: int) -> list[float]:
     return out
 
 
+def _sma(series: list[float], n: int) -> list[float]:
+    """Trailing simple moving average (returns len(series) - n + 1 points)."""
+    if n <= 1:
+        return list(series)
+    return [sum(series[i - n + 1:i + 1]) / n for i in range(n - 1, len(series))]
+
+
+# JdK RS-Ratio / RS-Momentum parameters (weekly bars).
+#
+# SMOOTHING IS NOT COSMETIC — it is what makes an RRG an RRG. Without it the tail
+# reverses direction almost every week: measured on live data, the unsmoothed
+# series turned an average of 119° between consecutive tail segments (a zigzag),
+# where the commercial charts (Optuma / StockCharts) draw slow arcs. The RS line
+# is smoothed BEFORE normalising and the normalised output is smoothed again;
+# that lands at ~25°, i.e. a rotation you can actually read. Momentum is the rate
+# of change of the RATIO over RRG_MOM_LAG weeks — a 1-week difference of a
+# z-score is nearly pure noise, which is the other half of the old zigzag.
+#
+# The cost is lag (~4 weeks). That is the accepted trade for this tool: an RRG
+# answers "which way is this sector rotating", not "what happened last Friday".
+RRG_WIN = 20        # normalisation window (weeks) for the z-score
+RRG_SMOOTH = 4      # SMA applied to the RS line and again to the normalised output
+RRG_MOM_LAG = 4     # weeks over which RS-Ratio's rate of change is measured
+RRG_MIN_WEEKS = RRG_WIN + 2 * RRG_SMOOTH + RRG_MOM_LAG + 3
+
+
+def _jdk(wser: list[float], wbench: list[float],
+         win: int = RRG_WIN, smooth: int = RRG_SMOOTH,
+         lag: int = RRG_MOM_LAG) -> tuple[list[float], list[float]]:
+    """(RS-Ratio, RS-Momentum) for one symbol against the benchmark, weekly.
+
+    Both lists are RIGHT-aligned (they end on the same, most recent week) but are
+    not necessarily the same length — callers take the last `min(len(a), len(b))`
+    of each, which keeps them aligned.
+    """
+    n = min(len(wser), len(wbench))
+    if n < 2:
+        return [], []
+    a, b = wser[-n:], wbench[-n:]
+    rs = [100.0 * a[i] / b[i] if b[i] else 100.0 for i in range(n)]
+    ratio = _sma(_rolling_z100(_sma(rs, smooth), win), smooth)
+    if len(ratio) <= lag:
+        return ratio, []
+    roc = [100.0 * ratio[i] / ratio[i - lag] if ratio[i - lag] else 100.0
+           for i in range(lag, len(ratio))]
+    mom = _sma(_rolling_z100(roc, win), smooth)
+    return ratio, mom
+
+
 def _quadrant(x: float, y: float) -> str:
     if x >= 100 and y >= 100:
         return "Leading"
@@ -207,7 +256,7 @@ def _quadrant(x: float, y: float) -> str:
     return "Lagging"
 
 
-def rrg(tail: int = 8, win: int = 12) -> dict:
+def rrg(tail: int = 8, win: int = RRG_WIN) -> dict:
     """JdK-style Relative Rotation: per ETF a tail of (RS-Ratio, RS-Momentum) points
     vs SPY on weekly data, plus its current quadrant. Both axes centre on 100."""
     hit = _cache.get("rrg")
@@ -220,14 +269,9 @@ def rrg(tail: int = 8, win: int = 12) -> dict:
     quad: dict = {}
     for sym, name in ETF_UNIVERSE:
         wser = _weekly(dates, closes.get(sym, []))
-        n = min(len(wser), len(wbench))
-        if n < win + tail + 2:
+        if min(len(wser), len(wbench)) < RRG_MIN_WEEKS + tail:
             continue
-        wser, wb = wser[-n:], wbench[-n:]
-        rs = [100.0 * wser[i] / wb[i] for i in range(n) if wb[i]]
-        ratio = _rolling_z100(rs, win)
-        roc = [ratio[i] - ratio[i - 1] for i in range(1, len(ratio))]
-        mom = _rolling_z100(roc, win)
+        ratio, mom = _jdk(wser, wbench, win=win)
         m = min(len(ratio), len(mom))
         if m < 1:
             continue
@@ -255,7 +299,7 @@ def _week_labels(dates: list[str]) -> list[str]:
     return [wk[k] for k in order]
 
 
-def rrg_series(win: int = 12, weeks: int = 26) -> dict:
+def rrg_series(win: int = RRG_WIN, weeks: int = 26) -> dict:
     """Full weekly (RS-Ratio, RS-Momentum) series per sector for the INTERACTIVE RRG
     (scrubbable tail). Every sector is aligned to the same week axis; the frontend
     picks the tail length + end-week. Returns the last `weeks` weekly points."""
@@ -272,13 +316,10 @@ def rrg_series(win: int = 12, weeks: int = 26) -> dict:
     for sym, name in ETF_UNIVERSE:
         wser = _weekly(dates, closes.get(sym, []))
         n = min(len(wser), len(wbench), len(wlabels))
-        if n < win + 3:
+        if n < RRG_MIN_WEEKS:
             continue
-        wser, wb, labs = wser[-n:], wbench[-n:], wlabels[-n:]
-        rs = [100.0 * wser[i] / wb[i] if wb[i] else 100.0 for i in range(n)]
-        ratio = _rolling_z100(rs, win)
-        roc = [ratio[i] - ratio[i - 1] for i in range(1, len(ratio))]
-        mom = _rolling_z100(roc, win)
+        wser, labs = wser[-n:], wlabels[-n:]
+        ratio, mom = _jdk(wser, wbench[-n:], win=win)
         m = min(len(ratio), len(mom))
         if m < 2:
             continue

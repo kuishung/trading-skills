@@ -129,6 +129,37 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-20 — v4.07: RRG rebuilt to behave like a real RRG
+User: *"the real RRG chart look different from the one you have created"* (side-by-side
+with an Optuma-powered SPDR sector RRG). It did, and the cause was measurable, not
+cosmetic.
+
+**The defect.** Our JdK series had no smoothing anywhere: RS-Ratio was a raw 12-week
+rolling z-score of RS, and RS-Momentum was the **1-week difference** of that z-score,
+re-normalised. Measured on live data, consecutive tail segments turned an average of
+**119°** — the tail reversed direction almost every week, which is the zigzag the user
+saw. Commercial RRGs draw slow arcs.
+
+**The maths** (`services/etf.py`, new `_jdk()` shared by `rrg()` and `rrg_series()`):
+- RS line smoothed (SMA 4) **before** normalising; the normalised output smoothed again.
+- Momentum is now the rate of change of RS-Ratio over **4 weeks**, not 1, then
+  normalised and smoothed the same way.
+- Normalisation window 12 → **20 weeks**. Constants are named (`RRG_WIN`, `RRG_SMOOTH`,
+  `RRG_MOM_LAG`) with the reasoning in a comment, since they are the whole character of
+  the chart.
+- Result: mean turn **119° → 25°**, still 54 weekly points of history for the scrubber.
+  The cost is ~4 weeks of lag, which is the accepted trade for a rotation tool.
+
+**The rendering** (`_sector_rrg.html`):
+- Tails draw as a **Catmull-Rom spline** (cubic Béziers), like the commercial charts.
+  The observation dots still sit on the real points, so the curve never implies data
+  that isn't there. The head gets a ring so overlapping heads stay separable.
+- **Numbered axes** — value gridlines + tick labels on both axes (they had none, so you
+  couldn't read how far from 100 a sector actually was).
+- **Axes auto-fit the visible tails** instead of the full 26-week history, so the chart
+  fills its frame (measured 37% → 67% of plot width). Half-widths snap up to a whole
+  tick so the axes don't twitch on every scrub frame, and both axes stay centred on 100.
+
 ### 2026-08-20 — v4.06: Calendar is month-view only; RRG scrubber shows its period
 User asks: *"the calendar only use the month view. remove the economic calendar and the
 earnings calendar"* and *"in the sector and industry. the bottom progress control i need
