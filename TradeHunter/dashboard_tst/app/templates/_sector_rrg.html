@@ -149,10 +149,11 @@
     if (!a.length) return [99, 101];
     var lo = Math.min.apply(null, a), hi = Math.max.apply(null, a);
     var d = Math.max(hi - 100, 100 - lo, 0.5) * 1.18;
-    // Snap the half-width UP to a whole tick. Without this the axes twitch on every
-    // scrub frame as the extremes shift by hundredths; snapped, they only step when
-    // the data genuinely outgrows the current frame.
-    var st = niceStep(d);
+    // Snap the half-width UP to a HALF tick. Snapping stops the axes twitching on
+    // every scrub frame (the extremes shift by hundredths), but snapping to a whole
+    // tick wasted up to 40% of the frame once the ranges widened — half a tick keeps
+    // the axes stable and the tails filling the plot.
+    var st = niceStep(d) / 2;
     return [100 - Math.ceil(d / st) * st, 100 + Math.ceil(d / st) * st];
   }
   var xr = [99, 101], yr = [99, 101];

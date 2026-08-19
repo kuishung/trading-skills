@@ -129,6 +129,48 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-20 — v4.08: RRG axes are percentage deviations, calibrated to a reference
+User: *"still not working correctly"*, with an Optuma weekly sector RRG for the same
+date and — decisively — a tooltip reading **Health Care · 2026-06-12 · Ratio 92.918219 ·
+Momentum 96.380097**. That single number settled it: **a z-score cannot produce 92.9.**
+
+**The real defect (which v4.07 did not fix).** Both axes were a rolling z-score, which
+is bounded at roughly ±2.5 by construction. Every sector therefore sat in a 97.5–102.5
+blob no matter what the market did, while the reference runs 88–120 — because the real
+axes are **percentage deviations**, which are unbounded. v4.07 smoothed the zigzag but
+left the wrong measure underneath.
+
+**Now:**
+```
+RS          = 100 * price / benchmark, smoothed  (SMA 6 weeks)
+RS-Ratio    = 100 * RS / SMA(RS, 26 weeks)          -> "N% above/below its own norm"
+RS-Momentum = 100 * RS-Ratio / RS-Ratio[-13 weeks]  -> the ratio's rate of change
+```
+- Windows were **calibrated** against the reference chart, scoring quadrant agreement
+  and tail smoothness together. Result: **5 of 5** unambiguously-labelled sectors land in
+  the same quadrant as the reference, and RS-Ratio matches within ~1.5 points on all five
+  (XLK 105.2 vs 104.8, XLF 102.5 vs 101.2, XLC 91.3 vs 92.8). The chosen triple sits in a
+  broad plateau (smooth 5–6, win 20–32, lag 10–13 all score 5/5), so it is not a
+  knife-edge fit.
+- **Why calibrated and not copied:** the JdK formula is licensed from RRG Research;
+  StockCharts' ChartSchool page (which the user supplied) documents the semantics and
+  deliberately omits the maths. The two things it does state, we match — normalisation
+  around 100, and momentum being the rate of change *of* RS-Ratio. Its "~50 weekly bars
+  before the indicator is valid" is the same order as our `RRG_MIN_WEEKS` (47).
+- Exact coordinates were never reachable: the reference plots the **UCITS** share classes
+  (SXLV et al) against a UCITS benchmark — a different price series from the US-listed
+  SPDRs we fetch.
+- **Smoothing stays, and stays on the RS line.** v4.07's momentum smoothing was dropped:
+  it improved coordinate RMSE but pushed borderline sectors across the 100 line, costing
+  quadrant agreement (5/5 → 3/5). Quadrant is what a reader acts on. Dropping the RS
+  smoothing entirely was tried and reverted — the numerator is raw weekly RS, which
+  genuinely moves several percent a week, and without it the tail turns 92° per segment.
+- Dead z-score helpers (`_rolling_z100`, `_sma`) removed.
+
+**Rendering:** axis half-widths now snap to a HALF tick instead of a whole one — with the
+wider ranges, whole-tick snapping wasted up to 40% of the frame. Fill went 65% → 78% of
+plot width while the axes stay stable under scrubbing.
+
 ### 2026-08-20 — v4.07: RRG rebuilt to behave like a real RRG
 User: *"the real RRG chart look different from the one you have created"* (side-by-side
 with an Optuma-powered SPDR sector RRG). It did, and the cause was measurable, not

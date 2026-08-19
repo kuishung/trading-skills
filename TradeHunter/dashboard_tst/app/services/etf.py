@@ -186,63 +186,67 @@ def _weekly(dates: list[str], series: list[float]) -> list[float]:
     return [wk[k] for k in order]
 
 
-def _rolling_z100(series: list[float], win: int) -> list[float]:
-    """Rolling z-score recentred at 100 (the RRG convention)."""
-    out: list[float] = []
-    for i in range(win - 1, len(series)):
-        w = series[i - win + 1:i + 1]
-        m = sum(w) / win
-        sd = (sum((x - m) ** 2 for x in w) / win) ** 0.5
-        out.append(100.0 + (0.0 if sd == 0 else (series[i] - m) / sd))
-    return out
-
-
-def _sma(series: list[float], n: int) -> list[float]:
-    """Trailing simple moving average (returns len(series) - n + 1 points)."""
-    if n <= 1:
-        return list(series)
-    return [sum(series[i - n + 1:i + 1]) / n for i in range(n - 1, len(series))]
-
-
 # JdK RS-Ratio / RS-Momentum parameters (weekly bars).
 #
-# SMOOTHING IS NOT COSMETIC — it is what makes an RRG an RRG. Without it the tail
-# reverses direction almost every week: measured on live data, the unsmoothed
-# series turned an average of 119° between consecutive tail segments (a zigzag),
-# where the commercial charts (Optuma / StockCharts) draw slow arcs. The RS line
-# is smoothed BEFORE normalising and the normalised output is smoothed again;
-# that lands at ~25°, i.e. a rotation you can actually read. Momentum is the rate
-# of change of the RATIO over RRG_MOM_LAG weeks — a 1-week difference of a
-# z-score is nearly pure noise, which is the other half of the old zigzag.
+#   RS          = 100 * price / benchmark, then smoothed (SMA RRG_SMOOTH)
+#   RS-Ratio    = 100 * RS / SMA(RS, RRG_RATIO_WIN)
+#   RS-Momentum = 100 * RS-Ratio / RS-Ratio[-RRG_MOM_LAG]
 #
-# The cost is lag (~4 weeks). That is the accepted trade for this tool: an RRG
-# answers "which way is this sector rotating", not "what happened last Friday".
-RRG_WIN = 20        # normalisation window (weeks) for the z-score
-RRG_SMOOTH = 4      # SMA applied to the RS line and again to the normalised output
-RRG_MOM_LAG = 4     # weeks over which RS-Ratio's rate of change is measured
-RRG_MIN_WEEKS = RRG_WIN + 2 * RRG_SMOOTH + RRG_MOM_LAG + 3
+# BOTH AXES ARE PERCENTAGE DEVIATIONS, NOT Z-SCORES — this is what makes an RRG
+# readable and it was the original defect here. A rolling z-score is bounded at
+# roughly +/-2.5 by construction, so every sector sat in a 97.5-102.5 blob no matter
+# what the market did; the commercial charts run 88-120 because a percentage
+# deviation is unbounded (a sector 12% above its own norm reads 112).
+#
+# The SMOOTH step is not cosmetic and cannot be dropped just because the ratio's
+# denominator is a slow SMA: the NUMERATOR is raw weekly RS, which genuinely moves
+# several percent a week (XLV moved +7% vs SPY in the week to 2026-06-26), so
+# without it the tail reverses direction almost every week -- measured at 92 degrees
+# average turn between segments, versus 28 with it.
+#
+# Windows were calibrated against a reference Optuma weekly sector RRG for the same
+# date, scoring BOTH quadrant agreement and tail smoothness: this triple puts all
+# five unambiguously-labelled sectors in the SAME QUADRANT as the reference and
+# gives the closest spread to it. It sits inside a broad plateau (smooth 5-6, win
+# 20-32, lag 10-13 all score 5/5), so it is not a knife-edge fit.
+#
+# Why calibrate rather than copy: the JdK formula is licensed from RRG Research and
+# StockCharts' own ChartSchool page documents only the SEMANTICS, never the maths.
+# What it does state, we match -- values normalise around 100, and RS-Momentum is
+# the rate of change OF RS-Ratio. It also wants ~50 weekly bars before the indicator
+# is valid, the same order as RRG_MIN_WEEKS. Exact coordinate agreement is not
+# expected anyway: the reference plots the UCITS share classes (SXLV et al) against
+# a UCITS benchmark, a different price series from the US-listed SPDRs we fetch.
+RRG_SMOOTH = 6       # weeks - SMA on the RS line before it is normalised
+RRG_RATIO_WIN = 26   # weeks - the SMA that RS is measured against (half a year)
+RRG_MOM_LAG = 13     # weeks - rate-of-change window for momentum (a quarter)
+RRG_MIN_WEEKS = RRG_SMOOTH + RRG_RATIO_WIN + RRG_MOM_LAG + 2
 
 
 def _jdk(wser: list[float], wbench: list[float],
-         win: int = RRG_WIN, smooth: int = RRG_SMOOTH,
+         win: int = RRG_RATIO_WIN, smooth: int = RRG_SMOOTH,
          lag: int = RRG_MOM_LAG) -> tuple[list[float], list[float]]:
     """(RS-Ratio, RS-Momentum) for one symbol against the benchmark, weekly.
 
     Both lists are RIGHT-aligned (they end on the same, most recent week) but are
-    not necessarily the same length — callers take the last `min(len(a), len(b))`
-    of each, which keeps them aligned.
+    not the same length - callers take the last `min(len(a), len(b))` of each,
+    which keeps them aligned.
     """
     n = min(len(wser), len(wbench))
     if n < 2:
         return [], []
     a, b = wser[-n:], wbench[-n:]
     rs = [100.0 * a[i] / b[i] if b[i] else 100.0 for i in range(n)]
-    ratio = _sma(_rolling_z100(_sma(rs, smooth), win), smooth)
+    if smooth > 1:
+        rs = [sum(rs[i - smooth + 1:i + 1]) / smooth for i in range(smooth - 1, len(rs))]
+    if len(rs) < win + 1:
+        return [], []
+    ratio = [100.0 * rs[i] / m if m else 100.0
+             for i, m in ((i, sum(rs[i - win + 1:i + 1]) / win) for i in range(win - 1, len(rs)))]
     if len(ratio) <= lag:
         return ratio, []
-    roc = [100.0 * ratio[i] / ratio[i - lag] if ratio[i - lag] else 100.0
+    mom = [100.0 * ratio[i] / ratio[i - lag] if ratio[i - lag] else 100.0
            for i in range(lag, len(ratio))]
-    mom = _sma(_rolling_z100(roc, win), smooth)
     return ratio, mom
 
 
@@ -256,7 +260,7 @@ def _quadrant(x: float, y: float) -> str:
     return "Lagging"
 
 
-def rrg(tail: int = 8, win: int = RRG_WIN) -> dict:
+def rrg(tail: int = 8, win: int = RRG_RATIO_WIN) -> dict:
     """JdK-style Relative Rotation: per ETF a tail of (RS-Ratio, RS-Momentum) points
     vs SPY on weekly data, plus its current quadrant. Both axes centre on 100."""
     hit = _cache.get("rrg")
@@ -299,7 +303,7 @@ def _week_labels(dates: list[str]) -> list[str]:
     return [wk[k] for k in order]
 
 
-def rrg_series(win: int = RRG_WIN, weeks: int = 26) -> dict:
+def rrg_series(win: int = RRG_RATIO_WIN, weeks: int = 26) -> dict:
     """Full weekly (RS-Ratio, RS-Momentum) series per sector for the INTERACTIVE RRG
     (scrubbable tail). Every sector is aligned to the same week axis; the frontend
     picks the tail length + end-week. Returns the last `weeks` weekly points."""
