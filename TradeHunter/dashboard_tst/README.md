@@ -129,6 +129,45 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-20 — v4.10: the Sector RRG panel embeds the official Optuma RRG
+User: *"your formula is wrong — take Technology for example"*, then *"can you just put
+this website to replace in the panel"* (https://rrg.optuma.com/).
+
+**Technology was the proof.** Our heads were in the right quadrants, but the TAILS
+travelled ~4x too far: XLK crossed 9.4 RS-Ratio points in 10 weeks where the reference
+crosses 2.3. The cause was real data, not a bug — XLK genuinely swings ±3% against SPY
+in a week — but it exposed that head accuracy and tail dynamics could not both be had
+from a plain ratio-to-SMA: smoothing enough to calm the tail lagged the heads across the
+100 lines (quadrant agreement 5/5 → 2/5).
+
+**Panel now shows the vendor's own chart.** Optuma *is* the RRG vendor — JdK RS-Ratio and
+RS-Momentum are licensed from RRG Research — so the panel embeds
+`https://rrg.optuma.com/` in an iframe instead of our approximation of their indicator.
+Verified before building: the site sends no `X-Frame-Options` and no CSP, and does not
+frame-bust. Deliberately NOT sandboxed — without `allow-same-origin` it loses the
+localStorage that remembers your settings.
+- **One-time setup per browser:** it opens on *SPDR MSCI Europe Sectors*. Pick
+  **SPDR S&P US Sectors ETF** and **1 Week** from its own menus once; it stores both in
+  localStorage (`statestreet_symbol_list` / `statestreet_time_frame`) and remembers.
+  There is no deep-link — their app parses no URL parameters, so this cannot be
+  preset from our side.
+- Cost of the swap, stated plainly: the scrubber, tail control, Play, per-sector
+  show/hide, zoom/pan and the Leaders table were ours and do not exist in the embed.
+  `/sector/rrg` and `_sector_rrg.html` are left in place, so reverting is a template edit.
+
+**Our own RRG maths improved anyway** (still powering the Today Overview card):
+- Construction changed from ratio-to-SMA to **`RS-Ratio = EMA(100 * RS / EMA(RS,20), 14)`**
+  — the same shape the open-source TradingView script uses. EMA gives more noise reduction
+  per unit of lag, and post-smoothing the *ratio* rather than the RS line keeps the head
+  put. Against the reference: mean head error **5.5 → 1.5 points**, excess tail travel cut
+  to about a third, still **5/5** quadrant agreement. XLK now reads 104.0/99.2 against the
+  reference's 104.3/98.6.
+- History deepened **2y → 5y** (105 → 262 weekly bars) so the EMA warm-up (3× the
+  baseline) is discarded rather than plotted.
+- **`prices._CACHE` is now keyed on (symbol, range)**, not symbol alone. It was a real
+  bug: the RRG asking for 5y could be served the chart's cached 2y, silently shortening
+  its own lookback.
+
 ### 2026-08-20 — v4.09: the RRG zooms and pans
 User: *"the chart should be able to scroll in or scroll out and not a fixed chart"*.
 

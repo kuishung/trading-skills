@@ -16,7 +16,7 @@ import time
 
 import httpx
 
-_CACHE: dict[str, tuple[float, list[dict]]] = {}
+_CACHE: dict[tuple[str, str], tuple[float, list[dict]]] = {}
 _TTL = 600.0  # seconds — analyst-target charts don't need sub-10-min freshness
 _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -50,14 +50,18 @@ def fetch_daily_ohlc(symbol: str, *, rng: str = "2y") -> list[dict]:
     if not sym:
         return []
     now = time.time()
-    hit = _CACHE.get(sym)
+    # Key on (symbol, range): the RRG asks for a long history while the chart asks
+    # for 2y, and a symbol-only key served whichever landed first — so the RRG could
+    # silently get 2y of bars and quietly shorten its own lookback window.
+    key = (sym, rng)
+    hit = _CACHE.get(key)
     if hit and hit[0] > now:
         return hit[1]
 
     bars = _fetch(sym, rng)
     # Only cache non-empty results, so a transient failure isn't sticky.
     if bars:
-        _CACHE[sym] = (now + _TTL, bars)
+        _CACHE[key] = (now + _TTL, bars)
     return bars
 
 

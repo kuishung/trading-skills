@@ -74,15 +74,25 @@
       <div class="flex items-center justify-between gap-2 mb-3 shrink-0">
         <div>
           <h2 class="text-sm font-semibold text-slate-200">Relative Rotation Graph</h2>
-          <span class="text-[11px] text-slate-500">sector SPDRs vs SPY &middot; weekly &middot; drag the scrubber to move the tail</span>
+          {# Optuma IS the RRG vendor — JdK RS-Ratio / RS-Momentum are licensed from RRG
+             Research, so this shows the real indicator rather than our approximation of
+             it. First visit: pick "SPDR S&P US Sectors ETF" + "1 Week" from its own
+             Universe / timeframe menus. It stores that choice in localStorage, so it
+             sticks per browser and you only choose once. #}
+          <span class="text-[11px] text-slate-500">the official Optuma RRG &middot; set Universe to
+            <span class="text-slate-400">SPDR S&amp;P US Sectors ETF</span> once — it remembers</span>
         </div>
-        <a href="https://stockcharts.com/freecharts/rrg/" target="_blank" rel="noopener"
+        <a href="https://rrg.optuma.com/" target="_blank" rel="noopener"
            class="text-[11px] px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition whitespace-nowrap"
-           title="Open the interactive RRG on StockCharts">Open on StockCharts &#8599;</a>
+           title="Open the Optuma RRG in a new tab">Open full size &#8599;</a>
       </div>
-      {# fills the card so the chart fits the panel window (the fragment is a flex column,
-         the quadrant SVG flexes, the scrubber + leaders sit at the bottom). #}
-      <div class="flex-1 min-h-0 overflow-hidden flex flex-col" hx-get="/sector/rrg" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
+      {# The vendor's own app, embedded. It sets no X-Frame-Options / CSP and does not
+         frame-bust, so it runs here as it does standalone. NOT sandboxed on purpose:
+         without allow-same-origin it loses the localStorage that remembers the universe.
+         Loaded lazily so switching to the Chart tab doesn't pay for it. #}
+      <iframe src="https://rrg.optuma.com/" title="Relative Rotation Graph — Optuma"
+              loading="lazy" referrerpolicy="no-referrer-when-downgrade"
+              class="flex-1 min-h-0 w-full rounded-lg bg-white border-0"></iframe>
     </section>
 
     {# Chart pane — hidden until a ticker is clicked / the tab is selected #}
