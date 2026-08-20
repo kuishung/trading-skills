@@ -18,12 +18,12 @@
   {# Two filter groups sit side by side and both own an "All", so each is
      labelled in ITS OWN colour — the same sky/amber mapping as the grid. #}
   <div class="flex items-center gap-1">
-    <span class="text-[10px] uppercase tracking-wide text-sky-300 mr-0.5">Econ</span>
+    <span class="text-[11px] uppercase tracking-wide text-sky-300 mr-0.5">Econ</span>
     {% for key, label, _min in importance_filters %}{{ C.pill(url(imp=key), label, imp == key,
       "Economic releases: " ~ label) }}{% endfor %}
   </div>
   <div class="flex items-center gap-1">
-    <span class="text-[10px] uppercase tracking-wide text-amber-300 mr-0.5">Earn</span>
+    <span class="text-[11px] uppercase tracking-wide text-amber-300 mr-0.5">Earn</span>
     {% for key, label, _floor in cap_filters %}{{ C.pill(url(cap=key), label, cap == key,
       "Earnings: companies " ~ label) }}{% endfor %}
     {{ C.pill(url(mine=(0 if mine else 1)), "&#9733;" | safe, mine, "Earnings: only tickers on My Watchlist") }}
@@ -40,7 +40,7 @@
   </div>
 
   {# legend doubles as the month's totals #}
-  <span class="ml-auto flex items-center gap-3 text-[11px] whitespace-nowrap">
+  <span class="ml-auto flex items-center gap-3 text-[12px] whitespace-nowrap">
     <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-sky-500/40 border border-sky-500/60"></span>
       <span class="text-slate-400">Economic</span> <span class="text-slate-500 tabular-nums">{{ n_econ }}</span></span>
     <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-amber-500/40 border border-amber-500/60"></span>
@@ -65,9 +65,13 @@
                     localtime(e.when, time_only=True)) }}
         {% endfor %}
         {% for r in earn[:2] %}
+          {# ALWAYS carry a session marker. "tbd" used to render as an empty prefix, so a
+             cell showed a bare ticker and you couldn't tell whether the time was unknown
+             or simply not displayed. Nasdaq also drops the time on past dates, which made
+             most of the grid blank. #}
           {{ C.chip("earn", r.symbol,
                     r.name ~ " · " ~ r.when_label ~ (" · " ~ r.market_cap_disp if r.market_cap_disp else ""),
-                    ("BMO" if r.when == "pre" else "AMC" if r.when == "post" else "")) }}
+                    ("BMO" if r.when == "pre" else "AMC" if r.when == "post" else "TBD")) }}
         {% endfor %}
         {{ C.more(url, d, (econ | length) + (earn | length) - (econ[:2] | length) - (earn[:2] | length),
                   cell_href(d)) }}
@@ -83,7 +87,7 @@
 
 </div>
 
-<div class="shrink-0 px-3 py-1.5 border-t border-slate-800 text-[10px] text-slate-600 flex items-center justify-between gap-2">
+<div class="shrink-0 px-3 py-1.5 border-t border-slate-800 text-[11px] text-slate-600 flex items-center justify-between gap-2">
   <span>Click a day to read it &middot; times in your timezone, days by US market date (ET)</span>
   <span>TradingView economic calendar &middot; Nasdaq earnings calendar &middot; live</span>
 </div>

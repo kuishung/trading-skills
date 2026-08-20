@@ -129,6 +129,27 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-20 — v4.13: earnings always show BMO / AMC / TBD, and the calendar reads bigger
+User: *"in the calendar, the earnings list show BMO or AMC — and the font size enlarge it"*.
+
+**Session marker.** The month grid only printed a marker when the source gave `pre` or
+`post`; `tbd` rendered as an empty prefix, so the cell showed a bare ticker and you
+couldn't tell whether the time was unknown or simply not shown. Nasdaq also drops the
+time on PAST dates, which left most of the grid unmarked. Cells now always carry
+**BMO / AMC / TBD**. The day panel's badges gained weight, padding and fuller tooltips
+("Before the open — reports before the market opens").
+
+**Type.** One consistent step up across the whole calendar surface, and the grid cells
+grew with it (`min-h` 6.5rem → 8rem, measured 104px → 130px) so nothing clips:
+- grid chips 10 → **12px**, date badges 11 → **13px** (today's filled badge 20 → 24px),
+  per-cell counts 9 → **11px**, "+N more" 10 → **11px**, weekday strip 10 → **11px**
+- month label `text-sm` → **`text-base`**; filter pills 11 → **12px**
+- day panel: heading `text-sm` → **`text-base`**, release titles 12 → **13px**, tickers
+  13 → **14px**, times/values/company names 11 → **12px**, impact dots 9 → **11px**,
+  BMO/AMC/TBD badges 9 → **11px**, the watchlist star 13 → **15px**
+- Verified rendered: chips read "TBD PLTR" at 12px, badges at 11px, tickers at 14px, and
+  no day cell overflows its box.
+
 ### 2026-08-20 — v4.12: the Sector panel gets a Daily / Weekly rotation switch
 User, reading the embedded chart: *"if we look at the leading quadrant in the RRG chart,
 Technology / Healthcare / Material / Energy are leading"* — while our panel had Technology

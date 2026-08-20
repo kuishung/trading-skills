@@ -14,7 +14,7 @@
 {% macro pill(href, label, active, title="") -%}
 <button type="button" hx-get="{{ href }}" hx-target="#calPanel" hx-swap="innerHTML"
         {% if title %}title="{{ title }}"{% endif %}
-        class="text-[11px] px-2 py-1 rounded border transition whitespace-nowrap
+        class="text-[12px] px-2 py-1 rounded border transition whitespace-nowrap
                {% if active %}border-emerald-500/60 bg-emerald-500/15 text-emerald-300
                {% else %}border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-600{% endif %}">{{ label }}</button>
 {%- endmacro %}
@@ -35,7 +35,7 @@
           title="Jump to today (US market date)"
           class="text-[11px] px-2 py-1 rounded border border-slate-700 text-slate-400
                  hover:text-slate-200 hover:border-slate-600 transition">Today</button>
-  <span class="text-sm text-slate-200 font-medium ml-1 whitespace-nowrap">{{ anchor.strftime("%B %Y") }}</span>
+  <span class="text-base text-slate-200 font-medium ml-1 whitespace-nowrap">{{ anchor.strftime("%B %Y") }}</span>
 </div>
 {%- endmacro %}
 
@@ -56,7 +56,7 @@
   {# weekday strip — Mon-first, like the rest of the app's week ranges #}
   <div class="grid grid-cols-7 gap-1 mb-1">
     {% for wd in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] %}
-    <div class="text-[10px] uppercase tracking-wide text-slate-600 text-center">{{ wd }}</div>
+    <div class="text-[11px] uppercase tracking-wide text-slate-600 text-center">{{ wd }}</div>
     {% endfor %}
   </div>
   {% for week in weeks %}
@@ -69,7 +69,7 @@
     {# SELECTED day gets the ring; TODAY gets the filled date badge. Two different
        states, so they must not share a colour — a selected day that looks like
        today would make the grid lie about the date. #}
-    <div class="rounded border p-1 flex flex-col gap-0.5 min-h-[6.5rem] overflow-hidden
+    <div class="rounded border p-1 flex flex-col gap-0.5 min-h-[8rem] overflow-hidden
                 {% if sel and d == sel %}border-emerald-500 bg-orange-500/15
                 {% elif outside %}border-slate-800 bg-slate-900/40 opacity-40
                 {% elif d.weekday() >= 5 %}border-slate-800 bg-slate-950/40
@@ -78,12 +78,12 @@
         {# the date badge: a filled pill on today, plain digits otherwise #}
         <button type="button" hx-get="{{ href }}" hx-target="#calPanel" hx-swap="innerHTML"
                 title="{{ d.strftime('%A, %d %b %Y') }}"
-                class="text-[11px] leading-none tabular-nums transition
-                       {% if d == today %}w-5 h-5 rounded-full bg-emerald-600 text-slate-50 font-semibold
+                class="text-[13px] leading-none tabular-nums transition
+                       {% if d == today %}w-6 h-6 rounded-full bg-emerald-600 text-slate-50 font-semibold
                                           flex items-center justify-center shrink-0
                        {% else %}rounded px-1 py-0.5 text-slate-400 hover:text-slate-100{% endif %}"
                 >{{ d.day }}</button>
-        {% if n %}<span class="text-[9px] text-slate-600 tabular-nums">{{ n }}</span>{% endif %}
+        {% if n %}<span class="text-[11px] text-slate-600 tabular-nums">{{ n }}</span>{% endif %}
       </div>
       {{ caller(d, items) }}
     </div>
@@ -98,7 +98,7 @@
 {% if n > 0 %}
 <button type="button" hx-get="{{ href if href else url(day=d.isoformat()) }}"
         hx-target="#calPanel" hx-swap="innerHTML"
-        class="text-[10px] text-slate-500 hover:text-emerald-300 transition text-left mt-auto shrink-0"
+        class="text-[11px] text-slate-500 hover:text-emerald-300 transition text-left mt-auto shrink-0"
         >+{{ n }} more</button>
 {% endif %}
 {%- endmacro %}
@@ -106,7 +106,7 @@
 {# One event pill, Google-Calendar style: a filled bar the width of the cell.
    `tone` is the source's colour — "econ" (sky) or "earn" (amber). #}
 {% macro chip(tone, label, title="", pre=None) -%}
-<div class="rounded px-1 py-0.5 text-[10px] leading-tight truncate shrink-0
+<div class="rounded px-1.5 py-0.5 text-[12px] leading-tight truncate shrink-0
             {% if tone == 'econ' %}bg-sky-500/15 text-sky-300{% else %}bg-amber-500/15 text-amber-300{% endif %}"
      {% if title %}title="{{ title }}"{% endif %}>{% if pre %}<span class="opacity-70 tabular-nums">{{ pre }}</span> {% endif %}{{ label }}</div>
 {%- endmacro %}
