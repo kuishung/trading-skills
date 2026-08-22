@@ -195,6 +195,36 @@
     }
     function yOf(price) { return series.priceToCoordinate(price); }
 
+    /** Wilder's ATR(14) off the loaded daily bars — the risk unit a trade setup is
+        sized in. Returns null if there isn't enough history to seed the average. */
+    function atr14(period) {
+      period = period || 14;
+      if (bars.length < period + 1) return null;
+      var trs = [], i;
+      for (i = 1; i < bars.length; i++) {
+        var hi = bars[i].high, lo = bars[i].low, pc = bars[i - 1].close;
+        if (hi == null || lo == null || pc == null) return null;
+        trs.push(Math.max(hi - lo, Math.abs(hi - pc), Math.abs(lo - pc)));
+      }
+      if (trs.length < period) return null;
+      var sum = 0;
+      for (i = 0; i < period; i++) sum += trs[i];
+      var a = sum / period;
+      for (i = period; i < trs.length; i++) a = (a * (period - 1) + trs[i]) / period;
+      return a;
+    }
+    function fmt(v) { return v.toFixed(2); }
+    /** Small filled price tag, clamped so it can't ride off the top or bottom edge. */
+    function tag(ctx, x, y, text, bg, h) {
+      var yy = Math.max(8, Math.min(h - 8, y));
+      ctx.font = '10px ui-sans-serif,system-ui,sans-serif';
+      var w = ctx.measureText(text).width + 8;
+      ctx.fillStyle = bg;
+      ctx.fillRect(x, yy - 7, w, 14);
+      ctx.fillStyle = '#0b1220';
+      ctx.fillText(text, x + 4, yy + 3.5);
+    }
+
     // ---- canvas overlay --------------------------------------------------
     el.style.position = 'relative';
     var cv = document.createElement('canvas');
@@ -205,6 +235,45 @@
       ctx.save();
       ctx.strokeStyle = ACCENT;
       ctx.lineWidth = sel ? 3 : 1.5;
+      if (d.type === 'trade') {
+        // TradingView-style position box: a red risk zone entry->stop, a green
+        // reward zone entry->target, and the entry line between them.
+        var tx1 = xOf(d.a), tx2 = xOf(d.b);
+        var ye = yOf(d.a.p), ys = yOf(d.sl), yp = yOf(d.pt);
+        if (tx1 == null || tx2 == null || ye == null || ys == null || yp == null) { ctx.restore(); return; }
+        var TL = Math.min(tx1, tx2), TW = Math.abs(tx2 - tx1);
+        ctx.fillStyle = 'rgba(16,185,129,0.14)';
+        ctx.fillRect(TL, Math.min(ye, yp), TW, Math.abs(yp - ye));
+        ctx.fillStyle = 'rgba(239,68,68,0.16)';
+        ctx.fillRect(TL, Math.min(ye, ys), TW, Math.abs(ys - ye));
+        ctx.lineWidth = sel ? 2 : 1.2;
+        ctx.strokeStyle = 'rgba(16,185,129,0.85)';
+        ctx.strokeRect(TL, Math.min(ye, yp), TW, Math.abs(yp - ye));
+        ctx.strokeStyle = 'rgba(239,68,68,0.85)';
+        ctx.strokeRect(TL, Math.min(ye, ys), TW, Math.abs(ys - ye));
+        ctx.strokeStyle = ACCENT;
+        ctx.lineWidth = sel ? 2.5 : 1.6;
+        ctx.beginPath(); ctx.moveTo(TL, ye); ctx.lineTo(TL + TW, ye); ctx.stroke();
+        var risk = Math.abs(d.a.p - d.sl);
+        var rr = risk > 0 ? Math.abs(d.pt - d.a.p) / risk : 0;
+        tag(ctx, TL + 4, ye, 'Entry ' + fmt(d.a.p), ACCENT, h);
+        tag(ctx, TL + 4, ys, 'SL ' + fmt(d.sl) + '  \u22121R', '#f87171', h);
+        tag(ctx, TL + 4, yp, 'PT ' + fmt(d.pt) + '  ' + rr.toFixed(1) + 'R', '#34d399', h);
+        if (sel) {
+          var hs = [[tx1, ye], [tx2, ys], [tx2, yp], [tx2, ye]];
+          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = ACCENT;
+          hs.forEach(function (pp) {
+            ctx.beginPath();
+            ctx.arc(pp[0], pp[1], 4, 0, Math.PI * 2);
+            ctx.fillStyle = light ? '#ffffff' : '#0b1220';
+            ctx.fill();
+            ctx.stroke();
+          });
+        }
+        ctx.restore();
+        return;
+      }
       if (d.type === 'hline') {
         var y = yOf(d.p);
         if (y == null) { ctx.restore(); return; }
@@ -279,6 +348,14 @@
           if (yy != null && Math.abs(yy - y) <= HIT) return i;
           continue;
         }
+        if (d.type === 'trade') {
+          var ax = xOf(d.a), bx = xOf(d.b);
+          var ey = yOf(d.a.p), sy = yOf(d.sl), py = yOf(d.pt);
+          if (ax == null || bx == null || ey == null || sy == null || py == null) continue;
+          if (x >= Math.min(ax, bx) - HIT && x <= Math.max(ax, bx) + HIT &&
+              y >= Math.min(sy, py) - HIT && y <= Math.max(sy, py) + HIT) return i;
+          continue;
+        }
         var x1 = xOf(d.a), y1 = yOf(d.a.p), x2 = xOf(d.b), y2 = yOf(d.b.p);
         if (x1 == null || x2 == null || y1 == null || y2 == null) continue;
         if (d.type === 'tline') {
@@ -300,6 +377,7 @@
       { id: 'hline', ch: '─', t: 'Horizontal line — click at a price' },
       { id: 'tline', ch: '╱', t: 'Trend line — drag from A to B' },
       { id: 'rect', ch: '▭', t: 'Rectangle zone — drag a box' },
+      { id: 'trade', ch: '⚑', t: 'Trade setup — click a price: entry there, stop 1\u00d7 ATR(14) away, target at 2R' },
       { id: 'erase', ch: '⌫', t: 'Eraser — click a drawing to delete it' },
       { id: 'clear', ch: '✕', t: 'Delete ALL drawings on this chart' }
     ];
@@ -448,7 +526,8 @@
       var head = document.createElement('div');
       head.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:6px;font-weight:600;';
       var ttl = document.createElement('span');
-      ttl.textContent = d.type === 'hline' ? 'Horizontal line' : (d.type === 'tline' ? 'Trend line' : 'Rectangle');
+      ttl.textContent = d.type === 'hline' ? 'Horizontal line'
+        : (d.type === 'tline' ? 'Trend line' : (d.type === 'trade' ? 'Trade setup' : 'Rectangle'));
       var closeX = document.createElement('span');
       closeX.textContent = '✕';
       closeX.title = 'Close (Esc)';
@@ -479,6 +558,17 @@
         var fp = mkInput('number', d.p.toFixed(2), step);
         r0.appendChild(fp);
         fields.push({ price: fp });
+      } else if (d.type === 'trade') {
+        var rd = row('Date');
+        var fdt = mkInput('date', dateOfPoint(d.a), null);
+        rd.appendChild(fdt);
+        var re = row('Entry'); var fe = mkInput('number', d.a.p.toFixed(2), step); re.appendChild(fe);
+        var rs = row('Stop');  var fs = mkInput('number', d.sl.toFixed(2), step); rs.appendChild(fs);
+        var rt = row('Target'); var ftg = mkInput('number', d.pt.toFixed(2), step); rt.appendChild(ftg);
+        var rrEl = document.createElement('div');
+        rrEl.style.cssText = 'margin-top:2px;opacity:.75;';
+        panel.appendChild(rrEl);
+        fields.push({ trade: true, date: fdt, entry: fe, sl: fs, pt: ftg, rrEl: rrEl });
       } else {
         [['Point 1', 'a'], ['Point 2', 'b']].forEach(function (spec) {
           var r = row(spec[0]);
@@ -492,12 +582,36 @@
         });
       }
 
+      /** Risk/reward readout under the trade fields. */
+      function showRR(cur) {
+        var f = fields[0];
+        if (!f || !f.rrEl) return;
+        var risk = Math.abs(cur.a.p - cur.sl);
+        var rr = risk > 0 ? Math.abs(cur.pt - cur.a.p) / risk : 0;
+        var dir = cur.pt >= cur.a.p ? 'Long' : 'Short';
+        f.rrEl.textContent = dir + ' \u00b7 risk ' + risk.toFixed(2) + ' \u00b7 ' + rr.toFixed(2) + 'R';
+      }
+
       function apply() {
         var cur = drawings[panelIdx];
         if (!cur) return;
         if (cur.type === 'hline') {
           var v = parseFloat(fields[0].price.value);
           if (isFinite(v)) cur.p = v;
+        } else if (cur.type === 'trade') {
+          var f = fields[0];
+          var ev = parseFloat(f.entry.value), sv = parseFloat(f.sl.value), tv = parseFloat(f.pt.value);
+          if (f.date.value) {
+            // moving the date slides the whole box, preserving its width in bars
+            var span = logicalOf(cur.b) - logicalOf(cur.a);
+            var np = pointFromDate(f.date.value, cur.a.p);
+            cur.a = np;
+            cur.b = logicalToPoint(logicalOf(np) + span, np.p);
+          }
+          if (isFinite(ev)) cur.a.p = ev;
+          if (isFinite(sv)) cur.sl = sv;
+          if (isFinite(tv)) cur.pt = tv;
+          showRR(cur);
         } else {
           fields.forEach(function (f) {
             var pv = parseFloat(f.price.value);
@@ -508,9 +622,12 @@
         redraw();
         save();
       }
+      // field sets differ by shape (hline: price; tline/rect: date+price per point;
+      // trade: date+entry+sl+pt), so wire whichever inputs this one actually has
       fields.forEach(function (f) {
-        if (f.date) f.date.addEventListener('input', apply);
-        f.price.addEventListener('input', apply);
+        [f.date, f.price, f.entry, f.sl, f.pt].forEach(function (inp) {
+          if (inp) inp.addEventListener('input', apply);
+        });
       });
 
       panelRefresh = function () {
@@ -518,11 +635,22 @@
         if (!cur) return;
         function put(inp, v) { if (inp && document.activeElement !== inp) inp.value = v; }
         if (cur.type === 'hline') { put(fields[0].price, cur.p.toFixed(2)); return; }
+        if (cur.type === 'trade') {
+          var f = fields[0];
+          put(f.date, dateOfPoint(cur.a));
+          put(f.entry, cur.a.p.toFixed(2));
+          put(f.sl, cur.sl.toFixed(2));
+          put(f.pt, cur.pt.toFixed(2));
+          showRR(cur);
+          return;
+        }
         fields.forEach(function (f) {
           put(f.date, dateOfPoint(cur[f.key]));
           put(f.price, cur[f.key].p.toFixed(2));
         });
       };
+
+      if (d.type === 'trade') showRR(d);
 
       var del = document.createElement('button');
       del.type = 'button';
@@ -566,6 +694,13 @@
     var grab = null, hoverIdx = -1, hoverPart = null;
 
     function corners(d) {
+      if (d.type === 'trade') {
+        var ax = xOf(d.a), bx = xOf(d.b);
+        var ey = yOf(d.a.p), sy = yOf(d.sl), py = yOf(d.pt);
+        if (ax == null || bx == null || ey == null || sy == null || py == null) return null;
+        return [{ x: ax, y: ey, part: 'entry' }, { x: bx, y: sy, part: 'sl' },
+                { x: bx, y: py, part: 'pt' }, { x: bx, y: ey, part: 'x2' }];
+      }
       var x1 = xOf(d.a), y1 = yOf(d.a.p), x2 = xOf(d.b), y2 = yOf(d.b.p);
       if (x1 == null || y1 == null || x2 == null || y2 == null) return null;
       if (d.type === 'tline') return [{ x: x1, y: y1, part: 'a' }, { x: x2, y: y2, part: 'b' }];
@@ -621,8 +756,39 @@
       var q = local(ev), d = drawings[grab.idx];
       if (!d) { endGrab(); return; }
       if (d.type === 'hline') {
-        var pr = series.coordinateToPrice(q.y);
-        if (pr != null) d.p = pr;
+        var pr0 = series.coordinateToPrice(q.y);
+        if (pr0 != null) d.p = pr0;
+      } else if (d.type === 'trade') {
+        var tp = series.coordinateToPrice(q.y), tl = ts.coordinateToLogical(q.x);
+        if (grab.part === 'body') {
+          if (tp == null || tl == null) return;
+          var tdl = tl - grab.l0, tdp = tp - grab.p0;
+          d.a = logicalToPoint(logicalOf(grab.orig.a) + tdl, grab.orig.a.p + tdp);
+          d.b = logicalToPoint(logicalOf(grab.orig.b) + tdl, grab.orig.b.p + tdp);
+          d.sl = grab.orig.sl + tdp;
+          d.pt = grab.orig.pt + tdp;
+        } else if (grab.part === 'entry') {
+          var ep = toPoint(q.x, q.y);
+          if (!ep) return;
+          d.a = ep;                       // stop and target hold their prices
+        } else if (grab.part === 'sl') {
+          if (tp == null) return;
+          // Moving the stop resizes R, so the target RIDES ALONG at the same
+          // R-multiple — that keeps a 2R setup a 2R setup while you hunt for the
+          // right stop. Drag the PT handle itself to change the multiple.
+          var oRisk = Math.abs(grab.orig.a.p - grab.orig.sl);
+          var mult = oRisk > 0 ? Math.abs(grab.orig.pt - grab.orig.a.p) / oRisk : 2;
+          var dir = grab.orig.pt >= grab.orig.a.p ? 1 : -1;
+          d.sl = tp;
+          d.pt = d.a.p + dir * mult * Math.abs(d.a.p - tp);
+        } else if (grab.part === 'pt') {
+          if (tp == null) return;
+          d.pt = tp;
+        } else if (grab.part === 'x2') {
+          var xp = toPoint(q.x, q.y);
+          if (!xp) return;
+          d.b = { t: xp.t, o: xp.o, p: d.a.p };
+        }
       } else if (grab.part === 'body') {
         var l = ts.coordinateToLogical(q.x), p = series.coordinateToPrice(q.y);
         if (l == null || p == null) return;
@@ -730,6 +896,31 @@
       if (tool === 'hline') {
         var p = series.coordinateToPrice(q.y);
         if (p != null) { drawings.push({ type: 'hline', p: p }); save(); }
+        setTool('cursor');
+        return;
+      }
+      if (tool === 'trade') {
+        // Entry at the pointer's price; risk = 1 ATR(14); target = 2R. Sizing the
+        // stop off ATR keeps the setup ticker-relative — the same click works on a
+        // $4 name and a $700 one without retuning.
+        var ep = series.coordinateToPrice(q.y), el0 = ts.coordinateToLogical(q.x);
+        var atr = atr14(14);
+        if (ep == null || el0 == null) { setTool('cursor'); return; }
+        if (!atr) {
+          alert('Not enough price history loaded to compute ATR(14) for ' + symbol + '.');
+          setTool('cursor');
+          return;
+        }
+        var aPt = logicalToPoint(el0, ep);
+        drawings.push({
+          type: 'trade',
+          a: aPt,
+          b: logicalToPoint(el0 + 20, ep),      // 20 bars wide by default; drag to resize
+          sl: ep - atr,
+          pt: ep + 2 * atr
+        });
+        selected = drawings.length - 1;
+        save();
         setTool('cursor');
         return;
       }

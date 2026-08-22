@@ -129,6 +129,58 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-22 — v4.18: ATR-sized trade setups on the chart
+User: *"i want a control to place entry at mouse point price level and it will use ATR(14)
+as stop loss and PT level at 2x … once placed it will show on chart and can be adjusted
+with mouse move and then Entry SL and PT will be shown"*.
+
+New **⚑ Trade setup** tool. Click a price and you get a TradingView-style position box:
+
+- **Entry** at the clicked price.
+- **Stop** one **ATR(14)** away (Wilder's smoothing, computed client-side off the loaded
+  daily bars — verified against an independent calculation: ATR 42.2492 on FN, stop landed
+  exactly `entry − ATR`).
+- **Target** at **2R**.
+- Rendered as a red risk zone entry→stop and a green reward zone entry→target, with the
+  entry line between them and all three levels labelled — `Entry 534.24`, `SL 491.99 −1R`,
+  `PT 618.74 2.0R`. The R-multiple in the target label is live, so a hand-adjusted box
+  always states what it is actually worth.
+
+Sizing the stop off ATR is the point: it keeps the setup **ticker-relative** per the
+platform's normalisation rule, so the same click behaves sensibly on a $4 name and a $700
+one with no retuning.
+
+**Four drag handles**, each with a distinct job:
+
+| handle | does |
+|---|---|
+| Entry (left edge) | moves entry only — stop and target hold their prices |
+| Stop (right edge, lower) | moves the stop **and carries the target along at the same R-multiple** |
+| Target (right edge, upper) | moves the target only, changing R freely |
+| Right edge (middle) | widens/narrows the box |
+| body | slides the whole setup, all three levels together |
+
+The stop handle's behaviour is the deliberate one: moving a stop resizes R, and a trader
+hunting for the right stop wants a 2R setup to *stay* 2R. Drag the target itself when the
+multiple is what you mean to change. Verified: stop 491.99 → 436.67 pulled the target
+618.74 → 729.38, holding exactly 2.000R; a body drag moved all three by an identical
+72.273 and preserved the multiple; a target-only edit moved R freely to 0.674.
+
+**Coordinate editor** (double-click the box) gains a trade layout — Date / Entry / Stop /
+Target, plus a live `Long · risk 97.57 · 0.67R` readout. Editing the date slides the box
+while preserving its width in bars.
+
+Setups persist through the same server-side store as the other drawings, so they travel
+with the account. `chart_drawings` needed no migration — the shape list is a JSON column —
+but `routes/drawings.py` learned the new type: `trade` requires both anchor points **and**
+finite `sl`/`pt`, so a partial or malformed setup is rejected rather than stored and
+replayed as a broken box.
+
+**Bug found and fixed while testing:** the editor wired its input listeners as
+`f.price.addEventListener(...)`, which threw for a trade's field set (`entry`/`sl`/`pt`,
+no `price`) and aborted the panel before it was ever attached — double-clicking a setup
+did nothing. It now wires whichever inputs the shape actually has.
+
 ### 2026-08-22 — v4.17: drag drawings directly on the chart
 User: *"for trend line i need to be able to adjust on the chart"*. Typing coordinates
 (v4.16) is precise but slow; a trend line usually wants nudging by eye. With the cursor

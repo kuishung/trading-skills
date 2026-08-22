@@ -26,7 +26,7 @@ from ..security import require_user
 
 router = APIRouter(prefix="/drawings", tags=["drawings"])
 
-SHAPE_TYPES = ("hline", "tline", "rect")
+SHAPE_TYPES = ("hline", "tline", "rect", "trade")
 MAX_SHAPES = 200          # a chart past this is noise, not analysis
 MAX_SYMBOL_LEN = 20
 
@@ -68,6 +68,13 @@ def _clean_shapes(raw) -> list[dict]:
                 out.append({"type": "hline", "p": p})
             continue
         a, b = _clean_point(s.get("a")), _clean_point(s.get("b"))
+        if s["type"] == "trade":
+            # a = entry anchor (a.p IS the entry price), b = the box's right edge;
+            # sl / pt are plain prices. All four must be present to be usable.
+            sl, pt = _num(s.get("sl")), _num(s.get("pt"))
+            if a and b and sl is not None and pt is not None:
+                out.append({"type": "trade", "a": a, "b": b, "sl": sl, "pt": pt})
+            continue
         if a and b:
             out.append({"type": s["type"], "a": a, "b": b})
     return out

@@ -751,6 +751,7 @@ class ChartDrawing(Base):
     Shape schema (validated server-side in routes/drawings.py):
       {"type": "hline", "p": <price>}
       {"type": "tline"|"rect", "a": {t, o, p}, "b": {t, o, p}}
+      {"type": "trade", "a": {t, o, p=entry}, "b": {t, o, p}, "sl": <price>, "pt": <price>}
     where a point is date-anchored: ``t`` = the nearest candle's date, ``o`` = a
     fractional offset in bar-units from it, ``p`` = the price. Anchoring to a
     DATE (not a logical bar index) keeps a shape glued to the same spot when
