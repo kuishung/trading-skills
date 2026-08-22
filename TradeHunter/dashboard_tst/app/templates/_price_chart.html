@@ -118,6 +118,283 @@
     var ls = chart.addLineSeries({ color: color, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
     ls.setData(data);
   }
+  // ---- drawing tools (canvas overlay on top of the chart) ---------------
+  // lightweight-charts ships no drawing primitives, so we overlay a <canvas>
+  // and paint the user's shapes ourselves. A point is stored as {t, o, p}:
+  // t = the DATE of the nearest candle, o = a fractional offset in bar-units
+  // from that candle (so a point between bars, or out in the blank space to
+  // the right, still round-trips), p = the price. Anchoring to a DATE rather
+  // than a logical bar index means drawings stay glued to the same spot when
+  // tomorrow's bar arrives or the history window slides. Persisted per-symbol
+  // in localStorage, so they survive navigating away and back.
+  function setupDrawing(chart, series, el, bars, symbol) {
+    var KEY = 'tstDraw:' + symbol;
+    var light = document.documentElement.classList.contains('light');
+    var ACCENT = '#38bdf8', HIT = 6;
+    var drawings = [], pending = null, tool = 'cursor', selected = -1, hovered = false;
+    var dragging = false, downAt = null, raf = 0;
+
+    try {
+      var raw = localStorage.getItem(KEY);
+      if (raw) { var arr = JSON.parse(raw); if (Array.isArray(arr)) drawings = arr; }
+    } catch (e) {}
+    function save() { try { localStorage.setItem(KEY, JSON.stringify(drawings)); } catch (e) {} }
+
+    // ---- date-anchored coordinates <-> pixels ---------------------------
+    var ts = chart.timeScale();
+    function idxOfTime(t) {
+      if (!bars.length) return -1;
+      var lo = 0, hi = bars.length - 1;
+      if (t <= bars[0].time) return 0;
+      if (t >= bars[hi].time) return hi;
+      while (lo <= hi) {
+        var mid = (lo + hi) >> 1;
+        if (bars[mid].time === t) return mid;
+        if (bars[mid].time < t) lo = mid + 1; else hi = mid - 1;
+      }
+      return Math.max(0, Math.min(bars.length - 1, lo));
+    }
+    function toPoint(x, y) {
+      var l = ts.coordinateToLogical(x), p = series.coordinateToPrice(y);
+      if (l == null || p == null) return null;
+      var last = bars.length - 1, i = Math.round(l);
+      if (i < 0) i = 0;
+      if (i > last) i = last;
+      return { t: bars[i].time, o: l - i, p: p };
+    }
+    function xOf(pt) {
+      var i = idxOfTime(pt.t);
+      return i < 0 ? null : ts.logicalToCoordinate(i + (pt.o || 0));
+    }
+    function yOf(price) { return series.priceToCoordinate(price); }
+
+    // ---- canvas overlay --------------------------------------------------
+    el.style.position = 'relative';
+    var cv = document.createElement('canvas');
+    cv.style.cssText = 'position:absolute;inset:0;z-index:2;pointer-events:none;';
+    el.appendChild(cv);
+
+    function paint(ctx, d, w, h, sel) {
+      ctx.save();
+      ctx.strokeStyle = ACCENT;
+      ctx.lineWidth = sel ? 3 : 1.5;
+      if (d.type === 'hline') {
+        var y = yOf(d.p);
+        if (y == null) { ctx.restore(); return; }
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+        var txt = d.p.toFixed(2);
+        ctx.font = '10px ui-sans-serif,system-ui,sans-serif';
+        var tw = ctx.measureText(txt).width + 8;
+        ctx.fillStyle = ACCENT;
+        ctx.fillRect(w - tw - 2, y - 7, tw, 14);
+        ctx.fillStyle = '#0b1220';
+        ctx.fillText(txt, w - tw + 2, y + 3.5);
+      } else {
+        var x1 = xOf(d.a), y1 = yOf(d.a.p), x2 = xOf(d.b), y2 = yOf(d.b.p);
+        if (x1 == null || x2 == null || y1 == null || y2 == null) { ctx.restore(); return; }
+        if (d.type === 'tline') {
+          ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+        } else {
+          var L = Math.min(x1, x2), T = Math.min(y1, y2);
+          var W = Math.abs(x2 - x1), H = Math.abs(y2 - y1);
+          ctx.fillStyle = 'rgba(56,189,248,0.10)';
+          ctx.fillRect(L, T, W, H);
+          ctx.strokeRect(L, T, W, H);
+        }
+        if (sel) {
+          ctx.fillStyle = ACCENT;
+          [[x1, y1], [x2, y2]].forEach(function (pp) {
+            ctx.beginPath(); ctx.arc(pp[0], pp[1], 3.5, 0, Math.PI * 2); ctx.fill();
+          });
+        }
+      }
+      ctx.restore();
+    }
+    function redraw() {
+      var w = el.clientWidth, h = el.clientHeight;
+      if (!w || !h) return;
+      var dpr = window.devicePixelRatio || 1;
+      if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+        cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+        cv.style.width = w + 'px'; cv.style.height = h + 'px';
+      }
+      var ctx = cv.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      drawings.forEach(function (d, i) { paint(ctx, d, w, h, i === selected); });
+      if (pending) paint(ctx, pending, w, h, true);
+    }
+    function schedule() {
+      if (raf) return;
+      raf = requestAnimationFrame(function () { raf = 0; redraw(); });
+    }
+
+    // ---- hit testing -----------------------------------------------------
+    function distSeg(px, py, x1, y1, x2, y2) {
+      var dx = x2 - x1, dy = y2 - y1, len = dx * dx + dy * dy;
+      var t = len ? ((px - x1) * dx + (py - y1) * dy) / len : 0;
+      t = Math.max(0, Math.min(1, t));
+      var ax = px - (x1 + t * dx), ay = py - (y1 + t * dy);
+      return Math.sqrt(ax * ax + ay * ay);
+    }
+    function hit(x, y) {
+      for (var i = drawings.length - 1; i >= 0; i--) {
+        var d = drawings[i];
+        if (d.type === 'hline') {
+          var yy = yOf(d.p);
+          if (yy != null && Math.abs(yy - y) <= HIT) return i;
+          continue;
+        }
+        var x1 = xOf(d.a), y1 = yOf(d.a.p), x2 = xOf(d.b), y2 = yOf(d.b.p);
+        if (x1 == null || x2 == null || y1 == null || y2 == null) continue;
+        if (d.type === 'tline') {
+          if (distSeg(x, y, x1, y1, x2, y2) <= HIT) return i;
+        } else {
+          var L = Math.min(x1, x2), R = Math.max(x1, x2);
+          var T = Math.min(y1, y2), B = Math.max(y1, y2);
+          if (x >= L - HIT && x <= R + HIT && y >= T - HIT && y <= B + HIT &&
+              (Math.abs(x - L) <= HIT || Math.abs(x - R) <= HIT ||
+               Math.abs(y - T) <= HIT || Math.abs(y - B) <= HIT)) return i;
+        }
+      }
+      return -1;
+    }
+
+    // ---- toolbar ---------------------------------------------------------
+    var TOOLS = [
+      { id: 'cursor', ch: '↖', t: 'Cursor — pan/zoom; click a drawing to select, Del to remove (Esc)' },
+      { id: 'hline', ch: '─', t: 'Horizontal line — click at a price' },
+      { id: 'tline', ch: '╱', t: 'Trend line — drag from A to B' },
+      { id: 'rect', ch: '▭', t: 'Rectangle zone — drag a box' },
+      { id: 'erase', ch: '⌫', t: 'Eraser — click a drawing to delete it' },
+      { id: 'clear', ch: '✕', t: 'Delete ALL drawings on this chart' }
+    ];
+    var bar = document.createElement('div');
+    bar.style.cssText = 'position:absolute;left:4px;top:4px;z-index:4;display:flex;' +
+      'flex-direction:column;gap:2px;opacity:.45;transition:opacity .15s;';
+    var btns = {};
+    TOOLS.forEach(function (tl) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = tl.ch;
+      b.title = tl.t;
+      b.style.cssText = 'width:22px;height:22px;line-height:1;font-size:12px;border-radius:4px;' +
+        'display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;' +
+        'background:' + (light ? 'rgba(255,255,255,.92)' : 'rgba(15,23,42,.85)') + ';' +
+        'border:1px solid rgba(148,163,184,.35);color:' + (light ? '#475569' : '#94a3b8') + ';';
+      b.addEventListener('click', function (ev) {
+        ev.stopPropagation(); ev.preventDefault();
+        if (tl.id === 'clear') {
+          if (drawings.length && confirm('Delete all ' + drawings.length + ' drawing(s) on ' + symbol + '?')) {
+            drawings = []; selected = -1; save(); redraw();
+          }
+          return;
+        }
+        setTool(tool === tl.id ? 'cursor' : tl.id);
+      });
+      // the toolbar sits over the chart: don't let its clicks reach the canvas
+      b.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); });
+      bar.appendChild(b);
+      btns[tl.id] = b;
+    });
+    bar.addEventListener('mouseenter', function () { bar.style.opacity = '1'; });
+    bar.addEventListener('mouseleave', function () { bar.style.opacity = (tool === 'cursor') ? '.45' : '1'; });
+    el.appendChild(bar);
+
+    function updateBtns() {
+      TOOLS.forEach(function (tl) {
+        var on = (tl.id === tool);
+        btns[tl.id].style.borderColor = on ? 'rgba(16,185,129,.8)' : 'rgba(148,163,184,.35)';
+        btns[tl.id].style.color = on ? '#34d399' : (light ? '#475569' : '#94a3b8');
+      });
+      bar.style.opacity = (tool === 'cursor') ? '.45' : '1';
+    }
+    function setTool(t) {
+      tool = t; pending = null; dragging = false;
+      if (t !== 'cursor') selected = -1;
+      // while dragging out a line/box the chart must NOT pan under the pointer
+      var drawMode = (t === 'tline' || t === 'rect');
+      chart.applyOptions({ handleScroll: !drawMode, handleScale: !drawMode });
+      el.style.cursor = (t === 'cursor') ? '' : 'crosshair';
+      updateBtns(); redraw();
+    }
+
+    // ---- pointer handling -------------------------------------------------
+    // The canvas is pointer-events:none and we listen on the chart container
+    // instead, so lightweight-charts keeps drawing its own crosshair while the
+    // user draws.
+    function local(ev) {
+      var r = el.getBoundingClientRect();
+      return { x: ev.clientX - r.left, y: ev.clientY - r.top };
+    }
+    el.addEventListener('pointerdown', function (ev) {
+      downAt = local(ev);
+      if (tool !== 'tline' && tool !== 'rect') return;
+      var a = toPoint(downAt.x, downAt.y);
+      if (!a) return;
+      pending = { type: tool, a: a, b: a };
+      dragging = true;
+      ev.preventDefault();
+    });
+    el.addEventListener('pointermove', function (ev) {
+      // schedule() unconditionally: dragging the PRICE SCALE (also inside el)
+      // rescales without firing a logical-range change, and the overlay has to
+      // follow it.
+      if (dragging && pending) {
+        var q = local(ev), b = toPoint(q.x, q.y);
+        if (b) pending.b = b;
+      }
+      schedule();
+    });
+    el.addEventListener('pointerup', function (ev) {
+      if (!dragging) return;
+      dragging = false;
+      var q = local(ev);
+      var moved = downAt && (Math.abs(q.x - downAt.x) > 4 || Math.abs(q.y - downAt.y) > 4);
+      if (pending && moved) { drawings.push(pending); save(); }
+      pending = null;
+      setTool('cursor');   // one shape per tool pick, then back to the cursor
+    });
+    el.addEventListener('click', function (ev) {
+      var q = local(ev);
+      if (downAt && (Math.abs(q.x - downAt.x) > 4 || Math.abs(q.y - downAt.y) > 4)) return;  // that was a drag
+      if (tool === 'hline') {
+        var p = series.coordinateToPrice(q.y);
+        if (p != null) { drawings.push({ type: 'hline', p: p }); save(); }
+        setTool('cursor');
+        return;
+      }
+      var i = hit(q.x, q.y);
+      if (tool === 'erase') {
+        if (i >= 0) { drawings.splice(i, 1); selected = -1; save(); redraw(); }
+        return;
+      }
+      selected = i;
+      redraw();
+    });
+    el.addEventListener('mouseenter', function () { hovered = true; });
+    el.addEventListener('mouseleave', function () { hovered = false; });
+    // Document-level so Del/Esc work without the chart being focusable. The MATP
+    // board swaps this whole pane in via HTMX on every ticker click, so the
+    // listener unbinds itself once its chart is off the DOM.
+    function onKey(ev) {
+      if (!el.isConnected) { document.removeEventListener('keydown', onKey); return; }
+      if (!hovered) return;                       // only when the chart is under the pointer
+      if (ev.key === 'Escape') { setTool('cursor'); return; }
+      if ((ev.key === 'Delete' || ev.key === 'Backspace') && selected >= 0) {
+        drawings.splice(selected, 1); selected = -1; save(); redraw();
+        ev.preventDefault();
+      }
+    }
+    document.addEventListener('keydown', onKey);
+
+    // keep the overlay glued to the candles through pan / zoom / autoscale / resize
+    ts.subscribeVisibleLogicalRangeChange(schedule);
+    if (window.ResizeObserver) { try { new ResizeObserver(schedule).observe(el); } catch (e) {} }
+    updateBtns();
+    redraw();
+    setTimeout(redraw, 0);
+  }
   if (!window.LightweightCharts || !el) { empty(); return; }
   fetch('/matp/{{ chart_symbol }}/prices')
     .then(function (r) { return r.json(); })
@@ -159,7 +436,16 @@
         layout: { background: { color: _light ? '#ffffff' : '#0b1220' }, textColor: _light ? '#334155' : '#94a3b8' },
         grid: { vertLines: { color: 'rgba(148,163,184,0.18)' }, horzLines: { color: 'rgba(148,163,184,0.18)' } },
         rightPriceScale: { borderColor: 'rgba(148,163,184,0.35)' },
-        timeScale: { borderColor: 'rgba(148,163,184,0.35)' }
+        timeScale: { borderColor: 'rgba(148,163,184,0.35)' },
+        // Crosshair FOLLOWS THE POINTER. lightweight-charts defaults to
+        // CrosshairMode.Magnet, which snaps the horizontal line (and its price
+        // label) to the nearest OHLC of the hovered candle — so the price you
+        // read was the candle's, not where you pointed. Normal = free-moving.
+        crosshair: {
+          mode: (LightweightCharts.CrosshairMode && LightweightCharts.CrosshairMode.Normal) || 0,
+          vertLine: { color: 'rgba(148,163,184,0.65)', width: 1, style: 3, labelBackgroundColor: '#0f766e' },
+          horzLine: { color: 'rgba(148,163,184,0.65)', width: 1, style: 3, labelBackgroundColor: '#0f766e' }
+        }
       });
       var s = chart.addCandlestickSeries({
         upColor: '#10b981', downColor: '#ef4444', borderVisible: false,
@@ -278,6 +564,9 @@
       // default: 6M
       showRange(6);
       setActive(6);
+
+      // drawing toolbar — non-essential, must never take the candles down
+      try { setupDrawing(chart, s, el, bars, {{ chart_symbol|tojson }}); } catch (e) {}
     })
     .catch(empty);
 })();

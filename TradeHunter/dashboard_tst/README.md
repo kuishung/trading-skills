@@ -129,6 +129,62 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-22 — v4.14: the crosshair follows the pointer, and both charts get drawing tools
+User: *"in the chart in company and also watchlist, when mouse move in the chart the
+horizontal line do not follow the candle level, make the price level according to the
+mouse point. also in both chart add the drawing control"*.
+
+Both surfaces render the **same** `_price_chart.html`, so one edit covers the Company
+page's Chart tab and the Watchlist (MATP board) pane — and, for free, `matp_detail`,
+`studies` and the Sector chart.
+
+**Crosshair.** lightweight-charts defaults to `CrosshairMode.Magnet`, which snaps the
+horizontal line *and its price label* to the nearest OHLC of the hovered candle — so the
+price you read was the candle's, not where you pointed. Now `CrosshairMode.Normal`: the
+line tracks the pointer exactly. Verified on FN — pointing well below the 07 May candle
+reads **288.25** (the pointer's price), where magnet mode reported the candle's ~600.
+
+**Drawing tools.** lightweight-charts ships no drawing primitives, so a `<canvas>` overlay
+sits above the chart and paints the shapes. A 6-button toolbar rides the chart's left edge
+(45% opacity until hovered / a tool is armed):
+
+| | tool | how |
+|---|---|---|
+| ↖ | Cursor | pan/zoom; click a shape to select it, `Del` removes it |
+| ─ | Horizontal line | click at a price — carries a price tag on the right edge |
+| ╱ | Trend line | drag A → B |
+| ▭ | Rectangle zone | drag a box (translucent fill) |
+| ⌫ | Eraser | click a shape to delete it |
+| ✕ | Delete all | clears the symbol's drawings (confirms first) |
+
+Picking a tool draws **one** shape, then snaps back to Cursor; `Esc` cancels. While a
+trend line or box is being dragged the chart's own scroll/scale are switched off so the
+candles don't slide under the pointer.
+
+**Why points are date-anchored.** A shape stores `{t, o, p}` — `t` = the DATE of the
+nearest candle, `o` = a fractional offset in bar-units from it (so a point between bars,
+or out in the blank space to the right, still round-trips), `p` = the price. Anchoring to
+a date rather than a logical bar index means drawings stay glued to the same spot when
+tomorrow's bar arrives or the history window slides. Drawings persist per-symbol in
+`localStorage` (`tstDraw:<SYM>`) — device-local, no schema change, no server round-trip.
+
+**Implementation notes.**
+- The overlay is `pointer-events:none` and the handlers live on the chart container, so
+  lightweight-charts keeps drawing its own crosshair while you draw.
+- Redraw is rAF-throttled and hangs off `subscribeVisibleLogicalRangeChange`, a
+  `ResizeObserver`, and `pointermove` — the last one because dragging the *price scale*
+  rescales without firing a logical-range change.
+- The `keydown` listener unbinds itself once its chart leaves the DOM: the MATP board
+  swaps the whole pane in via HTMX on every ticker click.
+- The Company page's Chart tab starts `display:none`; the ResizeObserver sizes and paints
+  the overlay when the tab is first opened.
+
+**Verified** on the running dev app (port 8011): 6 buttons present on both pages; hline /
+trend line / rectangle each create + persist; the eraser removes only the shape under the
+pointer (empty-space click deletes nothing); a click-without-drag never leaves a
+zero-length line; shapes survive a reload and re-render (7 649 painted px at 6M →
+3 006 at 2Y, i.e. they track the zoom). No JS console errors.
+
 ### 2026-08-20 — v4.13: earnings always show BMO / AMC / TBD, and the calendar reads bigger
 User: *"in the calendar, the earnings list show BMO or AMC — and the font size enlarge it"*.
 
