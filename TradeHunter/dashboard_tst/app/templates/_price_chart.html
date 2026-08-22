@@ -1092,7 +1092,25 @@
         var swEl = document.getElementById('atrSwatch');
         if (!valEl) return;
         var lastClose = bars[bars.length - 1].close;
+
+        // ---- the reading, ON the chart -----------------------------------
+        // The legend chip below the plot was too easy to miss, so the value is
+        // also stated in plain words over the candles. Top-left, clear of the
+        // drawing toolbar (which occupies x 4..26px), and pointer-events:none so
+        // it can never swallow a click meant for a shape underneath.
+        el.style.position = 'relative';
+        var atrTag = document.createElement('div');
+        atrTag.style.cssText = 'position:absolute;left:32px;top:4px;z-index:3;pointer-events:none;' +
+          'font:600 11px/1.2 ui-sans-serif,system-ui,sans-serif;padding:2px 6px;border-radius:4px;' +
+          'white-space:nowrap;color:' + (_light ? '#a16207' : '#eab308') + ';' +
+          'background:' + (_light ? 'rgba(255,255,255,.85)' : 'rgba(15,23,42,.72)') + ';';
+        el.appendChild(atrTag);
+        function showTag(v) {
+          atrTag.textContent = 'ATR (14) = ' + (v == null ? 'n/a' : v.toFixed(2));
+        }
+
         function show(v, c) {
+          showTag(v);
           if (v == null) { valEl.textContent = '-'; return; }
           // ATR as a % of price is what makes it comparable across tickers
           valEl.textContent = v.toFixed(2) + (c ? ' \u00b7 ' + (v / c * 100).toFixed(1) + '%' : '');

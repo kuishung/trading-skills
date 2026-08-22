@@ -129,6 +129,23 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-22 - v4.20: ATR(14) stated in words on the chart
+User: *"i just need the wording ATR (14) = x to be shown on chart"*. v4.19 put the number in
+the legend chip **below** the plot, which is easy to miss - the reading is now printed over
+the candles as **`ATR (14) = 42.25`**.
+
+Top-left of the plot area at `left:32px`, deliberately clear of the drawing toolbar (which
+occupies x 4..26px), and `pointer-events:none` so the label can never swallow a click meant
+for a shape underneath it. Amber to match the plotted line, on a translucent plate so it
+stays readable over candles in both themes.
+
+It shares the same `show()` path as the legend chip, so it tracks the crosshair (verified:
+`ATR (14) = 41.83` on an older bar, back to `= 42.25` when the pointer leaves) and can
+never disagree with the chip or with the stop distance the trade tool uses.
+
+The plotted ATR line and the legend chip (which also carries ATR as a % of price) are
+unchanged - the line is still toggleable by clicking the chip.
+
 ### 2026-08-22 — v4.19: ATR(14) shown on the chart
 User: *"i need the ATR (14) to be shown on chart"* — v4.18 sized trade stops off ATR(14)
 but never showed the number, so you had to trust it blind.
