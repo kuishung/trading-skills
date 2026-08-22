@@ -229,9 +229,16 @@
           ctx.strokeRect(L, T, W, H);
         }
         if (sel) {
-          ctx.fillStyle = ACCENT;
-          [[x1, y1], [x2, y2]].forEach(function (pp) {
-            ctx.beginPath(); ctx.arc(pp[0], pp[1], 3.5, 0, Math.PI * 2); ctx.fill();
+          // grab handles — hollow so the anchor point stays readable under them
+          var pts = d.type === 'tline' ? [[x1, y1], [x2, y2]]
+            : [[x1, y1], [x2, y2], [x1, y2], [x2, y1]];
+          ctx.lineWidth = 1.5;
+          pts.forEach(function (pp) {
+            ctx.beginPath();
+            ctx.arc(pp[0], pp[1], 4, 0, Math.PI * 2);
+            ctx.fillStyle = light ? '#ffffff' : '#0b1220';
+            ctx.fill();
+            ctx.stroke();
           });
         }
       }
@@ -248,7 +255,7 @@
       var ctx = cv.getContext('2d');
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
-      drawings.forEach(function (d, i) { paint(ctx, d, w, h, i === selected); });
+      drawings.forEach(function (d, i) { paint(ctx, d, w, h, i === selected || i === hoverIdx); });
       if (pending) paint(ctx, pending, w, h, true);
     }
     function schedule() {
@@ -356,6 +363,7 @@
     }
     function setTool(t) {
       tool = t; pending = null; dragging = false;
+      hoverIdx = -1; hoverPart = null;
       if (t !== 'cursor') { selected = -1; closePanel(); }
       // while dragging out a line/box the chart must NOT pan under the pointer
       var drawMode = (t === 'tline' || t === 'rect');
@@ -402,11 +410,14 @@
       return { t: bars[idxOfTime(dateStr)].time, o: 0, p: price };   // snaps to the nearest bar
     }
 
-    var panel = null, panelIdx = -1;
+    var panel = null, panelIdx = -1, panelRefresh = null;
     function closePanel() {
       if (panel && panel.parentNode) panel.parentNode.removeChild(panel);
-      panel = null; panelIdx = -1;
+      panel = null; panelIdx = -1; panelRefresh = null;
     }
+    /** Push the shape's live values back into the open editor (used while dragging
+        on the chart) — never clobbering the field the user is actually typing in. */
+    function refreshPanel() { if (panel && panelRefresh) panelRefresh(); }
     function mkInput(type, value, step) {
       var i = document.createElement('input');
       i.type = type;
@@ -502,6 +513,17 @@
         f.price.addEventListener('input', apply);
       });
 
+      panelRefresh = function () {
+        var cur = drawings[panelIdx];
+        if (!cur) return;
+        function put(inp, v) { if (inp && document.activeElement !== inp) inp.value = v; }
+        if (cur.type === 'hline') { put(fields[0].price, cur.p.toFixed(2)); return; }
+        fields.forEach(function (f) {
+          put(f.date, dateOfPoint(cur[f.key]));
+          put(f.price, cur[f.key].p.toFixed(2));
+        });
+      };
+
       var del = document.createElement('button');
       del.type = 'button';
       del.textContent = 'Delete';
@@ -533,6 +555,122 @@
       openPanel(i, q.x, q.y);
     });
 
+    // ---- direct manipulation: drag a shape's handles on the chart ----------
+    // With the cursor tool, grabbing an endpoint moves that end; grabbing the
+    // body slides the whole shape. Endpoints are re-derived from the pointer, so
+    // a dragged end lands exactly where it is dropped. A body drag instead
+    // TRANSLATES both points by the pointer's delta in (logical, price) space —
+    // measured against the shape as it was at mousedown, so the drag can't
+    // accumulate rounding drift over a long slide.
+    var GRIP = 7;                       // px radius that counts as "on the handle"
+    var grab = null, hoverIdx = -1, hoverPart = null;
+
+    function corners(d) {
+      var x1 = xOf(d.a), y1 = yOf(d.a.p), x2 = xOf(d.b), y2 = yOf(d.b.p);
+      if (x1 == null || y1 == null || x2 == null || y2 == null) return null;
+      if (d.type === 'tline') return [{ x: x1, y: y1, part: 'a' }, { x: x2, y: y2, part: 'b' }];
+      // rectangle: a and b are opposite corners; the other two mix their axes
+      return [{ x: x1, y: y1, part: 'a' }, { x: x2, y: y2, part: 'b' },
+              { x: x1, y: y2, part: 'ab' }, { x: x2, y: y1, part: 'ba' }];
+    }
+
+    /** Topmost {idx, part} under the pointer, handles taking priority over bodies. */
+    function hitPart(x, y) {
+      for (var i = drawings.length - 1; i >= 0; i--) {
+        var d = drawings[i];
+        if (d.type === 'hline') continue;
+        var cs = corners(d);
+        if (!cs) continue;
+        for (var k = 0; k < cs.length; k++) {
+          var dx = x - cs[k].x, dy = y - cs[k].y;
+          if (Math.sqrt(dx * dx + dy * dy) <= GRIP) return { idx: i, part: cs[k].part };
+        }
+      }
+      var b = hit(x, y);
+      return b >= 0 ? { idx: b, part: 'body' } : null;
+    }
+
+    function logicalOf(pt) { return idxOfTime(pt.t) + (pt.o || 0); }
+    function logicalToPoint(l, price) {
+      var last = bars.length - 1, i = Math.round(l);
+      if (i < 0) i = 0;
+      if (i > last) i = last;
+      return { t: bars[i].time, o: l - i, p: price };
+    }
+
+    function beginGrab(g, x, y) {
+      var d = drawings[g.idx];
+      if (!d) return false;
+      var l = ts.coordinateToLogical(x), pr = series.coordinateToPrice(y);
+      if (l == null || pr == null) return false;
+      grab = {
+        idx: g.idx, part: g.part, l0: l, p0: pr,
+        orig: JSON.parse(JSON.stringify(d))       // snapshot: body drags measure from here
+      };
+      selected = g.idx;
+      chart.applyOptions({ handleScroll: false, handleScale: false });
+      el.style.cursor = 'grabbing';
+      document.addEventListener('pointermove', onGrabMove);
+      document.addEventListener('pointerup', onGrabUp);
+      return true;
+    }
+
+    function onGrabMove(ev) {
+      if (!grab) return;
+      if (!el.isConnected) { endGrab(); return; }     // pane swapped out mid-drag
+      var q = local(ev), d = drawings[grab.idx];
+      if (!d) { endGrab(); return; }
+      if (d.type === 'hline') {
+        var pr = series.coordinateToPrice(q.y);
+        if (pr != null) d.p = pr;
+      } else if (grab.part === 'body') {
+        var l = ts.coordinateToLogical(q.x), p = series.coordinateToPrice(q.y);
+        if (l == null || p == null) return;
+        var dl = l - grab.l0, dp = p - grab.p0;
+        d.a = logicalToPoint(logicalOf(grab.orig.a) + dl, grab.orig.a.p + dp);
+        d.b = logicalToPoint(logicalOf(grab.orig.b) + dl, grab.orig.b.p + dp);
+      } else {
+        var np = toPoint(q.x, q.y);
+        if (!np) return;
+        if (grab.part === 'a') d.a = np;
+        else if (grab.part === 'b') d.b = np;
+        // mixed rectangle corners: one axis from each stored point
+        else if (grab.part === 'ab') { d.a = { t: np.t, o: np.o, p: d.a.p }; d.b = { t: d.b.t, o: d.b.o, p: np.p }; }
+        else if (grab.part === 'ba') { d.b = { t: np.t, o: np.o, p: d.b.p }; d.a = { t: d.a.t, o: d.a.o, p: np.p }; }
+      }
+      refreshPanel();
+      schedule();
+      ev.preventDefault();
+    }
+
+    function onGrabUp() {
+      if (!grab) return;
+      endGrab();
+      save();                                   // one write per drag, not per frame
+      redraw();
+    }
+
+    function endGrab() {
+      grab = null;
+      document.removeEventListener('pointermove', onGrabMove);
+      document.removeEventListener('pointerup', onGrabUp);
+      var drawMode = (tool === 'tline' || tool === 'rect');
+      chart.applyOptions({ handleScroll: !drawMode, handleScale: !drawMode });
+      el.style.cursor = (tool === 'cursor') ? '' : 'crosshair';
+    }
+
+    /** Hover feedback: show the shape's handles and hint what a drag would do. */
+    function updateHover(x, y) {
+      if (grab || tool !== 'cursor') return;
+      var h = hitPart(x, y);
+      var idx = h ? h.idx : -1, part = h ? h.part : null;
+      if (idx !== hoverIdx || part !== hoverPart) {
+        hoverIdx = idx; hoverPart = part;
+        el.style.cursor = !h ? '' : (part === 'body' ? 'move' : 'grab');
+        schedule();
+      }
+    }
+
     // ---- pointer handling -------------------------------------------------
     // The canvas is pointer-events:none and we listen on the chart container
     // instead, so lightweight-charts keeps drawing its own crosshair while the
@@ -543,6 +681,12 @@
     }
     el.addEventListener('pointerdown', function (ev) {
       downAt = local(ev);
+      if (tool === 'cursor') {
+        // grabbing a handle (or a shape's body) beats panning the chart
+        var g = hitPart(downAt.x, downAt.y);
+        if (g && beginGrab(g, downAt.x, downAt.y)) { ev.preventDefault(); }
+        return;
+      }
       if (tool !== 'tline' && tool !== 'rect') return;
       var a = toPoint(downAt.x, downAt.y);
       if (!a) return;
@@ -557,6 +701,9 @@
       if (dragging && pending) {
         var q = local(ev), b = toPoint(q.x, q.y);
         if (b) pending.b = b;
+      } else if (!grab) {
+        var h = local(ev);
+        updateHover(h.x, h.y);
       }
       schedule();
     });
@@ -565,13 +712,21 @@
       dragging = false;
       var q = local(ev);
       var moved = downAt && (Math.abs(q.x - downAt.x) > 4 || Math.abs(q.y - downAt.y) > 4);
-      if (pending && moved) { drawings.push(pending); save(); }
+      if (pending && moved) {
+        // land the far end on the RELEASE point, not on the last pointermove —
+        // otherwise the shape stops a few px short of where it was dropped
+        var endPt = toPoint(q.x, q.y);
+        if (endPt) pending.b = endPt;
+        drawings.push(pending);
+        save();
+      }
       pending = null;
       setTool('cursor');   // one shape per tool pick, then back to the cursor
     });
     el.addEventListener('click', function (ev) {
       var q = local(ev);
       if (downAt && (Math.abs(q.x - downAt.x) > 4 || Math.abs(q.y - downAt.y) > 4)) return;  // that was a drag
+      if (grab) return;
       if (tool === 'hline') {
         var p = series.coordinateToPrice(q.y);
         if (p != null) { drawings.push({ type: 'hline', p: p }); save(); }

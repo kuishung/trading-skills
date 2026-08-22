@@ -129,6 +129,37 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-22 — v4.17: drag drawings directly on the chart
+User: *"for trend line i need to be able to adjust on the chart"*. Typing coordinates
+(v4.16) is precise but slow; a trend line usually wants nudging by eye. With the cursor
+tool, shapes are now **directly manipulable**:
+
+- **Grab an endpoint** → that end follows the pointer (`grab` / `grabbing` cursor).
+- **Grab the body** → the whole shape slides (`move` cursor).
+- Hovering a shape reveals its handles, so it's discoverable without clicking first.
+- Rectangles expose **all four corners**, including the two mixed ones, which move one
+  axis from each stored point (verified: dragging the (a.x, b.y) corner changes a's date
+  and b's price and leaves the other two alone).
+- Horizontal lines drag vertically by their body.
+
+**Why body drags snapshot the shape.** An endpoint drag re-derives the point from the
+pointer, so it lands exactly where dropped. A body drag instead translates BOTH points by
+the pointer's delta in (logical, price) space, measured against a snapshot taken at
+mousedown — applying per-frame deltas would accumulate rounding drift over a long slide.
+Verified: a vertical body drag moved both ends by an identical 57.818 and left the dates
+untouched.
+
+Handles beat panning: while a drag is live the chart's own scroll/scale are off, so the
+candles don't slide out from under the shape, and pointermove/up are bound on `document`
+so the drag survives the pointer leaving the chart. One save per drag (on release), not
+one per frame. An open coordinate editor updates live as you drag — without clobbering
+whichever field currently has focus. A completed drag is not mistaken for a selection
+click.
+
+**Also fixed:** a newly drawn shape now lands its far end on the **release** point rather
+than on the last `pointermove`, so it no longer stops a few pixels short of where it was
+dropped.
+
 ### 2026-08-22 — v4.16: numeric coordinate editor for chart drawings
 User: *"the lines that I drawn on the chart i need to be able to set the coordinate like
 tradingview"*. **Double-click any shape** with the cursor tool and a small editor opens on
