@@ -126,7 +126,11 @@
   // the right, still round-trips), p = the price. Anchoring to a DATE rather
   // than a logical bar index means drawings stay glued to the same spot when
   // tomorrow's bar arrives or the history window slides. Persisted per-symbol
-  // in localStorage, so they survive navigating away and back.
+  // ON THE SERVER (/drawings/<SYM>, scoped to the signed-in user), so they
+  // follow the member to any PC or browser. localStorage is kept only as an
+  // instant local mirror: it absorbs the write before the debounced PUT lands,
+  // so a network hiccup can't lose work, and it seeds the one-time migration
+  // for drawings made back when the overlay was localStorage-only.
   function setupDrawing(chart, series, el, bars, symbol) {
     var KEY = 'tstDraw:' + symbol;
     var light = document.documentElement.classList.contains('light');
@@ -134,11 +138,34 @@
     var drawings = [], pending = null, tool = 'cursor', selected = -1, hovered = false;
     var dragging = false, downAt = null, raf = 0;
 
-    try {
-      var raw = localStorage.getItem(KEY);
-      if (raw) { var arr = JSON.parse(raw); if (Array.isArray(arr)) drawings = arr; }
-    } catch (e) {}
-    function save() { try { localStorage.setItem(KEY, JSON.stringify(drawings)); } catch (e) {} }
+    var URL_ = '/drawings/' + encodeURIComponent(symbol);
+    var saveTimer = 0;
+
+    function cacheLocal() { try { localStorage.setItem(KEY, JSON.stringify(drawings)); } catch (e) {} }
+    function readLocal() {
+      try {
+        var a = JSON.parse(localStorage.getItem(KEY) || 'null');
+        return Array.isArray(a) ? a : null;
+      } catch (e) { return null; }
+    }
+    function pushToServer() {
+      setSaveState('saving');
+      fetch(URL_, {
+        method: 'PUT', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shapes: drawings })
+      }).then(function (r) {
+        if (!r.ok) throw new Error(r.status);
+        setSaveState('idle');
+      }).catch(function () { setSaveState('error'); });
+    }
+    // Local mirror is written SYNCHRONOUSLY so nothing is ever lost; the server
+    // write is debounced because erasing/clearing fires save() in bursts.
+    function save() {
+      cacheLocal();
+      if (saveTimer) clearTimeout(saveTimer);
+      saveTimer = setTimeout(function () { saveTimer = 0; pushToServer(); }, 400);
+    }
 
     // ---- date-anchored coordinates <-> pixels ---------------------------
     var ts = chart.timeScale();
@@ -297,8 +324,25 @@
       bar.appendChild(b);
       btns[tl.id] = b;
     });
+    // save-status pip: amber while the PUT is in flight, rose if it failed (the
+    // shapes are then on this device only). Invisible when everything is stored.
+    var pip = document.createElement('span');
+    pip.style.cssText = 'width:6px;height:6px;border-radius:50%;margin:3px auto 0;' +
+      'background:transparent;transition:background .2s;';
+    bar.appendChild(pip);
+    var saveState = 'idle';
+    function setSaveState(s) {
+      saveState = s;
+      pip.style.background = s === 'saving' ? '#f59e0b' : (s === 'error' ? '#f43f5e' : 'transparent');
+      pip.title = s === 'saving' ? 'Saving drawings…'
+        : (s === 'error' ? 'Could not save to the server — these drawings are on this device only' : '');
+      if (s === 'error') bar.style.opacity = '1';   // make a failed save impossible to miss
+    }
+
     bar.addEventListener('mouseenter', function () { bar.style.opacity = '1'; });
-    bar.addEventListener('mouseleave', function () { bar.style.opacity = (tool === 'cursor') ? '.45' : '1'; });
+    bar.addEventListener('mouseleave', function () {
+      bar.style.opacity = (tool === 'cursor' && saveState !== 'error') ? '.45' : '1';
+    });
     el.appendChild(bar);
 
     function updateBtns() {
@@ -307,7 +351,7 @@
         btns[tl.id].style.borderColor = on ? 'rgba(16,185,129,.8)' : 'rgba(148,163,184,.35)';
         btns[tl.id].style.color = on ? '#34d399' : (light ? '#475569' : '#94a3b8');
       });
-      bar.style.opacity = (tool === 'cursor') ? '.45' : '1';
+      bar.style.opacity = (tool === 'cursor' && saveState !== 'error') ? '.45' : '1';
     }
     function setTool(t) {
       tool = t; pending = null; dragging = false;
@@ -394,6 +438,24 @@
     updateBtns();
     redraw();
     setTimeout(redraw, 0);
+
+    // Load this user's stored shapes. If the server has none but this browser
+    // still holds a pre-server localStorage set, adopt and upload it once so
+    // drawings made before this change aren't stranded here.
+    fetch(URL_, { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        var server = (d && Array.isArray(d.shapes)) ? d.shapes : [];
+        if (server.length) { drawings = server; cacheLocal(); redraw(); return; }
+        var local = readLocal();
+        if (local && local.length) { drawings = local; redraw(); pushToServer(); }
+      })
+      .catch(function () {
+        // offline / 401: fall back to the local mirror and flag it as unsaved
+        var local = readLocal();
+        if (local && local.length) { drawings = local; redraw(); }
+        setSaveState('error');
+      });
   }
   if (!window.LightweightCharts || !el) { empty(); return; }
   fetch('/matp/{{ chart_symbol }}/prices')

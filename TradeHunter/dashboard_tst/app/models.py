@@ -736,3 +736,41 @@ class UserWatchlist(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "symbol", name="uq_user_watchlist_user_symbol"),
     )
+
+
+class ChartDrawing(Base):
+    """One user's chart drawings for one symbol — the shapes they drew on the
+    price chart (horizontal lines, trend lines, rectangle zones).
+
+    **One row per (user, symbol), holding the whole shape list as JSON.** The
+    client already edits the list as a unit (draw / erase / clear-all rewrite the
+    array), and nothing ever queries an individual shape, so a row-per-shape
+    would only add write churn and a join for no query benefit. ``JSON`` is a
+    portable column type — same code on SQLite and Postgres.
+
+    Shape schema (validated server-side in routes/drawings.py):
+      {"type": "hline", "p": <price>}
+      {"type": "tline"|"rect", "a": {t, o, p}, "b": {t, o, p}}
+    where a point is date-anchored: ``t`` = the nearest candle's date, ``o`` = a
+    fractional offset in bar-units from it, ``p`` = the price. Anchoring to a
+    DATE (not a logical bar index) keeps a shape glued to the same spot when
+    tomorrow's bar arrives or the history window slides.
+
+    Scoping is by user_id on every read and write — one member can never see or
+    modify another's drawings. Cascade-deletes with the user.
+    """
+
+    __tablename__ = "chart_drawings"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
+                     nullable=False, index=True)
+    symbol = Column(String(20), nullable=False, index=True)
+    shapes = Column(JSON, nullable=False, default=list)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+    user = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "symbol", name="uq_chart_drawing_user_symbol"),
+    )

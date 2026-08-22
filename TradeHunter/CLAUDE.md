@@ -664,9 +664,13 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
   **portable column types** (Integer/Float/String/Text/DateTime/Boolean/JSON);
   avoid SQLite-only behaviours. (4) **Schema changes go through migrations
   (Alembic)** — not just `create_all` — so upgrading a live Postgres DB is
-  low-effort and reversible. (Current code is ORM + `TST_DATABASE_URL`-driven;
-  the open gap is adding Alembic, which should happen before there's real
-  production data to migrate.)
+  low-effort and reversible. (Alembic IS wired up — verified
+  2026-08-22: `dashboard_tst/alembic.ini` + `alembic/versions/`, chained off the
+  `d555dc88d20b` baseline. `app/db.py::init_db()` runs `upgrade head` at startup and
+  handles all three states: fresh DB, already-managed DB, and the legacy `create_all`
+  DB on Hermes (creates missing tables, then stamps the baseline). **So a schema change
+  = a new migration file** chained off the current head — the Hermes deploy then needs
+  no manual migration step.)
 - **Auth:** mode-switchable `TST_AUTH_MODE` — **`google`** (OAuth, prod) or
   `password` (dev/local). New sign-in → **pending**, role **member**; an
   admin **approves** before access (`TST_AUTO_APPROVE=0` default; `=1`

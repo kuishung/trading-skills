@@ -129,6 +129,55 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-22 — v4.15: chart drawings move to the server and travel with the account
+User: *"i want it to stored in server and it will travel"* — v4.14 shipped the drawing
+tools persisting to browser `localStorage`, which stranded every shape on the PC that
+drew it. They now live in the DB, scoped to the signed-in user, so they follow the member
+to any PC or browser.
+
+**Schema.** New `chart_drawings` table — **one row per (user, symbol)** holding the whole
+shape list in a portable `JSON` column, with a unique constraint on `(user_id, symbol)`
+and `ON DELETE CASCADE` from `users`. One row per *shape* was rejected: the client already
+edits the list as a unit (draw / erase / clear-all rewrite the array) and nothing ever
+queries an individual shape, so it would only add write churn and a join. Migration
+`f3a4b5c6d7e8_chart_drawings` (down_revision `e4f5a6b7c8d9`) — applies itself on startup
+via `init_db()`, so the Hermes deploy needs no manual step.
+
+**API** — `app/routes/drawings.py`, registered with no per-menu gate (the chart appears on
+Watchlist, Company, Studies and Sector), `require_user` + `user_id` scoping on every read
+and write:
+- `GET /drawings/{symbol}` → `{"shapes": [...]}`
+- `PUT /drawings/{symbol}` → replaces that symbol's shapes; an empty list DELETES the row
+  rather than storing `[]`, so clearing a chart leaves no residue.
+
+The PUT body is **revalidated server-side** (`_clean_shapes`) rather than trusted — a JSON
+column will swallow anything, and a malformed blob would come back and break that user's
+chart on every load. Non-finite numbers, bools-as-numbers, strings, wrong-shaped points
+and unknown `type` values are dropped; the list is capped at 200 shapes. Upsert is
+query-then-update/insert in portable ORM (no SQLite-only `INSERT OR REPLACE`), per the
+platform's data-handling rule.
+
+**Client.** `localStorage` is demoted from the store to an **instant local mirror**: `save()`
+writes it synchronously so a network hiccup can't lose work, then debounces the `PUT` by
+400 ms (erase/clear fire `save()` in bursts). On load the chart reads the server; if the
+server has nothing but this browser still holds a pre-v4.15 local set, it adopts and
+uploads it once, so drawings made under v4.14 aren't stranded. A save-status pip on the
+toolbar goes amber while the PUT is in flight and rose if it failed (tooltip: "on this
+device only"), forcing the toolbar to full opacity so a failed save can't go unnoticed.
+
+**Verified** on the running dev app: migration applied cleanly at startup; draw → server
+holds `["hline","tline"]`; **`localStorage.clear()` + reload repainted the identical 3 397
+px purely from the server** (the cross-PC proof) and rehydrated the local mirror; erase and
+clear-all propagate (2 → 1 → 0, row deleted). Auth/input: no cookie → **401**, 40-char
+symbol → **400**, lowercase `fn` normalises to `FN`, unknown symbol → empty list.
+Isolation: a second user sees none of the first's shapes, both can hold an `FN` row, and a
+duplicate `(user, symbol)` is rejected by the constraint. Validation fuzz: NaN, ±inf,
+string, bool, missing/!string dates and non-list payloads all reject to 0 kept; 500 shapes
+truncate to 200.
+
+**Not done:** drawings are private to the member — they are not shared on a study or
+visible to other users. Say the word if a study should carry its curator's markup.
+
 ### 2026-08-22 — v4.14: the crosshair follows the pointer, and both charts get drawing tools
 User: *"in the chart in company and also watchlist, when mouse move in the chart the
 horizontal line do not follow the candle level, make the price level according to the
