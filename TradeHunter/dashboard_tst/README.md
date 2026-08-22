@@ -129,6 +129,46 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-22 — v4.16: numeric coordinate editor for chart drawings
+User: *"the lines that I drawn on the chart i need to be able to set the coordinate like
+tradingview"*. **Double-click any shape** with the cursor tool and a small editor opens on
+the chart — TradingView's Coordinates tab, scaled to this chart:
+
+- **Horizontal line** → one `Price` field.
+- **Trend line / Rectangle** → `Point 1` and `Point 2`, each a **date picker + price**.
+- A **Delete** button, `✕` / `Esc` to close.
+
+Edits apply **live** on every keystroke (redraw + the usual debounced save), so the shape
+tracks the numbers as you type. The price field's `step` is derived from the instrument's
+own price (0.10 above $100, 0.05 above $10, else 0.01) so arrow-keying nudges sensibly on
+both a $4 and a $700 name.
+
+**Dates vs the stored anchor.** A point is stored as `{t, o, p}` — anchor date + fractional
+bar offset — but the editor speaks plain calendar dates. `dateOfPoint` / `pointFromDate`
+convert: inside the data range a date maps straight to a bar (and **snaps** to the nearest
+one, since bars are discrete); past the last bar there are no bars to count, so the offset
+is extrapolated in **weekdays** — the same rule the chart's own whitespace tail uses. That
+keeps a point out in the blank space to the right editable. Verified lossless: typing
+`2026-10-15` on a chart whose last bar is `2026-08-21` stores `{t: "2026-08-21", o: 39}`
+and redisplays as `2026-10-15`.
+
+**Interaction guards** — the fiddly part, all verified:
+- Clicks inside the editor are stopped from reaching the chart, so the panel can't reselect
+  a shape or start a drawing underneath itself.
+- **`Backspace`/`Delete` while typing in a field no longer deletes the shape** — the keydown
+  handler bails on `INPUT`/`TEXTAREA`/`SELECT` targets. (Without this, editing a price with
+  the pointer over the chart would silently destroy the drawing.)
+- `Esc` closes the editor first and only then falls through to resetting the tool.
+- The editor follows the selection: clicking another shape retargets it, clicking empty
+  space closes it, and erase / clear-all / picking a drawing tool all dismiss it.
+- It is clamped inside the chart bounds and offset past the left toolbar.
+
+**Verified** on the running dev app: drawn line reads back `2026-05-06 @ 446.31 →
+2026-07-06 @ 561.94`; editing to `2026-04-15 @ 400 → 650` lands exactly those values on the
+server; the hline panel shows a single number field and `555.55` persists; the panel's
+Delete empties the row; Backspace in a field leaves the shape intact. `node --check` on the
+rendered script passes; no new console errors.
+
 ### 2026-08-22 — v4.15: chart drawings move to the server and travel with the account
 User: *"i want it to stored in server and it will travel"* — v4.14 shipped the drawing
 tools persisting to browser `localStorage`, which stranded every shape on the PC that

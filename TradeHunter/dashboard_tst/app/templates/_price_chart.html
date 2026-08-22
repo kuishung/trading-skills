@@ -289,7 +289,7 @@
 
     // ---- toolbar ---------------------------------------------------------
     var TOOLS = [
-      { id: 'cursor', ch: '↖', t: 'Cursor — pan/zoom; click a drawing to select, Del to remove (Esc)' },
+      { id: 'cursor', ch: '↖', t: 'Cursor — pan/zoom; click to select, DOUBLE-CLICK to edit coordinates, Del to remove' },
       { id: 'hline', ch: '─', t: 'Horizontal line — click at a price' },
       { id: 'tline', ch: '╱', t: 'Trend line — drag from A to B' },
       { id: 'rect', ch: '▭', t: 'Rectangle zone — drag a box' },
@@ -313,6 +313,7 @@
         ev.stopPropagation(); ev.preventDefault();
         if (tl.id === 'clear') {
           if (drawings.length && confirm('Delete all ' + drawings.length + ' drawing(s) on ' + symbol + '?')) {
+            closePanel();
             drawings = []; selected = -1; save(); redraw();
           }
           return;
@@ -355,13 +356,182 @@
     }
     function setTool(t) {
       tool = t; pending = null; dragging = false;
-      if (t !== 'cursor') selected = -1;
+      if (t !== 'cursor') { selected = -1; closePanel(); }
       // while dragging out a line/box the chart must NOT pan under the pointer
       var drawMode = (t === 'tline' || t === 'rect');
       chart.applyOptions({ handleScroll: !drawMode, handleScale: !drawMode });
       el.style.cursor = (t === 'cursor') ? '' : 'crosshair';
       updateBtns(); redraw();
     }
+
+    // ---- coordinate editor (double-click a shape, like TradingView) --------
+    // A shape's x is stored as {t, o}: an anchor DATE plus a fractional offset in
+    // bar-units. The editor speaks plain calendar dates instead, so these two
+    // helpers convert. Inside the data range a date maps straight to a bar; past
+    // the last bar (out in the blank space to the right) there are no bars to
+    // count, so we extrapolate WEEKDAYS — the same rule the whitespace tail uses.
+    function weekdayAdvance(dateStr, n) {
+      var d = new Date(dateStr + 'T00:00:00Z'), k = 0;
+      while (k < n && k < 4000) {
+        d.setUTCDate(d.getUTCDate() + 1);
+        var w = d.getUTCDay();
+        if (w !== 0 && w !== 6) k++;
+      }
+      return d.toISOString().slice(0, 10);
+    }
+    function weekdaysBetween(fromStr, toStr) {
+      var d = new Date(fromStr + 'T00:00:00Z'), end = new Date(toStr + 'T00:00:00Z'), n = 0;
+      while (d < end && n < 4000) {
+        d.setUTCDate(d.getUTCDate() + 1);
+        var w = d.getUTCDay();
+        if (w !== 0 && w !== 6) n++;
+      }
+      return n;
+    }
+    function dateOfPoint(pt) {
+      var last = bars.length - 1;
+      var l = idxOfTime(pt.t) + (pt.o || 0);
+      if (l <= last) return bars[Math.max(0, Math.min(last, Math.round(l)))].time;
+      return weekdayAdvance(bars[last].time, Math.round(l - last));
+    }
+    function pointFromDate(dateStr, price) {
+      var last = bars.length - 1;
+      if (dateStr > bars[last].time) {
+        return { t: bars[last].time, o: weekdaysBetween(bars[last].time, dateStr), p: price };
+      }
+      return { t: bars[idxOfTime(dateStr)].time, o: 0, p: price };   // snaps to the nearest bar
+    }
+
+    var panel = null, panelIdx = -1;
+    function closePanel() {
+      if (panel && panel.parentNode) panel.parentNode.removeChild(panel);
+      panel = null; panelIdx = -1;
+    }
+    function mkInput(type, value, step) {
+      var i = document.createElement('input');
+      i.type = type;
+      i.value = value;
+      if (step) i.step = step;
+      i.style.cssText = 'width:100%;box-sizing:border-box;padding:2px 4px;border-radius:3px;' +
+        'font:11px ui-sans-serif,system-ui,sans-serif;color:inherit;' +
+        'background:' + (light ? '#ffffff' : '#0b1220') + ';border:1px solid rgba(148,163,184,.45);';
+      return i;
+    }
+    function openPanel(i, x, y) {
+      closePanel();
+      var d = drawings[i];
+      if (!d) return;
+      panelIdx = i;
+      selected = i;
+
+      panel = document.createElement('div');
+      panel.style.cssText = 'position:absolute;z-index:6;width:210px;padding:8px 9px;border-radius:6px;' +
+        'font:11px/1.4 ui-sans-serif,system-ui,sans-serif;box-shadow:0 6px 20px rgba(0,0,0,.35);' +
+        'background:' + (light ? 'rgba(255,255,255,.98)' : 'rgba(15,23,42,.98)') + ';' +
+        'border:1px solid rgba(148,163,184,.45);color:' + (light ? '#334155' : '#cbd5e1') + ';';
+      // clicks inside the editor must not reach the chart (which would reselect / draw)
+      ['click', 'dblclick', 'pointerdown', 'pointerup', 'pointermove'].forEach(function (evt) {
+        panel.addEventListener(evt, function (e) { e.stopPropagation(); });
+      });
+
+      var head = document.createElement('div');
+      head.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:6px;font-weight:600;';
+      var ttl = document.createElement('span');
+      ttl.textContent = d.type === 'hline' ? 'Horizontal line' : (d.type === 'tline' ? 'Trend line' : 'Rectangle');
+      var closeX = document.createElement('span');
+      closeX.textContent = '✕';
+      closeX.title = 'Close (Esc)';
+      closeX.style.cssText = 'margin-left:auto;cursor:pointer;opacity:.7;';
+      closeX.addEventListener('click', closePanel);
+      head.appendChild(ttl); head.appendChild(closeX);
+      panel.appendChild(head);
+
+      function row(label) {
+        var r = document.createElement('div');
+        r.style.cssText = 'display:grid;grid-template-columns:46px 1fr;gap:5px;align-items:center;margin-bottom:4px;';
+        var l = document.createElement('span');
+        l.textContent = label;
+        l.style.cssText = 'opacity:.7;';
+        r.appendChild(l);
+        panel.appendChild(r);
+        return r;
+      }
+
+      var fields = [];
+      // price step follows the instrument's own scale, so a $4 stock and a $700
+      // one both nudge sensibly with the arrow keys
+      var ref = Math.abs(bars[bars.length - 1].close) || 1;
+      var step = ref >= 100 ? 0.1 : (ref >= 10 ? 0.05 : 0.01);
+
+      if (d.type === 'hline') {
+        var r0 = row('Price');
+        var fp = mkInput('number', d.p.toFixed(2), step);
+        r0.appendChild(fp);
+        fields.push({ price: fp });
+      } else {
+        [['Point 1', 'a'], ['Point 2', 'b']].forEach(function (spec) {
+          var r = row(spec[0]);
+          var w = document.createElement('div');
+          w.style.cssText = 'display:grid;grid-template-columns:1fr 74px;gap:5px;';
+          r.appendChild(w);
+          var fd = mkInput('date', dateOfPoint(d[spec[1]]), null);
+          var fpx = mkInput('number', d[spec[1]].p.toFixed(2), step);
+          w.appendChild(fd); w.appendChild(fpx);
+          fields.push({ key: spec[1], date: fd, price: fpx });
+        });
+      }
+
+      function apply() {
+        var cur = drawings[panelIdx];
+        if (!cur) return;
+        if (cur.type === 'hline') {
+          var v = parseFloat(fields[0].price.value);
+          if (isFinite(v)) cur.p = v;
+        } else {
+          fields.forEach(function (f) {
+            var pv = parseFloat(f.price.value);
+            if (!f.date.value || !isFinite(pv)) return;
+            cur[f.key] = pointFromDate(f.date.value, pv);
+          });
+        }
+        redraw();
+        save();
+      }
+      fields.forEach(function (f) {
+        if (f.date) f.date.addEventListener('input', apply);
+        f.price.addEventListener('input', apply);
+      });
+
+      var del = document.createElement('button');
+      del.type = 'button';
+      del.textContent = 'Delete';
+      del.style.cssText = 'margin-top:6px;width:100%;padding:3px 0;border-radius:4px;cursor:pointer;' +
+        'font:11px ui-sans-serif,system-ui,sans-serif;background:transparent;' +
+        'border:1px solid rgba(244,63,94,.5);color:#fb7185;';
+      del.addEventListener('click', function () {
+        var k = panelIdx;
+        closePanel();
+        drawings.splice(k, 1);
+        selected = -1;
+        save(); redraw();
+      });
+      panel.appendChild(del);
+
+      el.appendChild(panel);
+      // keep the editor fully inside the chart, and clear of the left toolbar
+      var pw = panel.offsetWidth, ph = panel.offsetHeight;
+      panel.style.left = Math.max(32, Math.min((x || 0) + 12, el.clientWidth - pw - 4)) + 'px';
+      panel.style.top = Math.max(4, Math.min((y || 0) + 12, el.clientHeight - ph - 4)) + 'px';
+      redraw();
+    }
+
+    el.addEventListener('dblclick', function (ev) {
+      if (tool !== 'cursor') return;
+      var q = local(ev), i = hit(q.x, q.y);
+      if (i < 0) { closePanel(); return; }
+      ev.preventDefault();
+      openPanel(i, q.x, q.y);
+    });
 
     // ---- pointer handling -------------------------------------------------
     // The canvas is pointer-events:none and we listen on the chart container
@@ -410,10 +580,12 @@
       }
       var i = hit(q.x, q.y);
       if (tool === 'erase') {
-        if (i >= 0) { drawings.splice(i, 1); selected = -1; save(); redraw(); }
+        if (i >= 0) { closePanel(); drawings.splice(i, 1); selected = -1; save(); redraw(); }
         return;
       }
       selected = i;
+      // an open editor follows the selection: retarget it, or close on empty space
+      if (panel) { if (i >= 0) openPanel(i, q.x, q.y); else closePanel(); }
       redraw();
     });
     el.addEventListener('mouseenter', function () { hovered = true; });
@@ -423,9 +595,20 @@
     // listener unbinds itself once its chart is off the DOM.
     function onKey(ev) {
       if (!el.isConnected) { document.removeEventListener('keydown', onKey); return; }
+      // typing a price/date in the editor must never be read as a shape command
+      var tag = ev.target && ev.target.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+        if (ev.key === 'Escape') { closePanel(); el.focus && el.focus(); }
+        return;
+      }
       if (!hovered) return;                       // only when the chart is under the pointer
-      if (ev.key === 'Escape') { setTool('cursor'); return; }
+      if (ev.key === 'Escape') {
+        if (panel) { closePanel(); redraw(); return; }
+        setTool('cursor');
+        return;
+      }
       if ((ev.key === 'Delete' || ev.key === 'Backspace') && selected >= 0) {
+        closePanel();
         drawings.splice(selected, 1); selected = -1; save(); redraw();
         ev.preventDefault();
       }
