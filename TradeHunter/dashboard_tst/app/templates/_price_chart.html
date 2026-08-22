@@ -67,6 +67,11 @@
       <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#a855f7"></span>EMA200</span>
       <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#f97316"></span>MATP <span class="text-orange-300 tabular-nums">{{ "%.2f"|format(chart_matp) if chart_matp is not none else "-" }}</span></span>
       <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#16a34a"></span>MBP <span class="text-green-500 tabular-nums">{{ "%.2f"|format(chart_mbp) if chart_mbp is not none else "-" }}</span></span>
+      {# ATR(14) — the risk unit the trade tool sizes stops with. Click to hide/show the line. #}
+      <span id="atrLegend" class="cursor-pointer select-none hover:text-slate-200 transition"
+            title="Average True Range (14), Wilder — the risk unit the &#9873; trade tool sizes stops with. Tracks the crosshair; click to hide the line.">
+        <span id="atrSwatch" class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#eab308"></span>ATR14 <span id="atrVal" class="text-yellow-300 tabular-nums">-</span>
+      </span>
       {% if chart_as_of %}<span class="text-slate-500">&middot; calculated {{ localtime(chart_as_of) }}</span>{% endif %}
       {% if chart_earnings %}<span class="text-slate-500">&middot; earnings: last {{ chart_earnings }}</span>{% endif %}
       {# next earnings (date + "… from now" countdown) is filled in by the chart script from the live prices feed #}
@@ -112,6 +117,30 @@
     }
     return out;
   }
+  /** Wilder's ATR(14) as a full series: seed with the SMA of the first `period`
+      true ranges, then smooth. Returned as lightweight-charts points so the SAME
+      numbers feed the plotted line, the legend readout and the trade tool's stop
+      distance — they can never disagree. */
+  function atrSeries(bars, period) {
+    period = period || 14;
+    if (bars.length < period + 1) return [];
+    var trs = [], i;
+    for (i = 1; i < bars.length; i++) {
+      var hi = bars[i].high, lo = bars[i].low, pc = bars[i - 1].close;
+      if (hi == null || lo == null || pc == null) return [];
+      trs.push({ t: bars[i].time, v: Math.max(hi - lo, Math.abs(hi - pc), Math.abs(lo - pc)) });
+    }
+    if (trs.length < period) return [];
+    var sum = 0;
+    for (i = 0; i < period; i++) sum += trs[i].v;
+    var a = sum / period;
+    var out = [{ time: trs[period - 1].t, value: a }];
+    for (i = period; i < trs.length; i++) {
+      a = (a * (period - 1) + trs[i].v) / period;
+      out.push({ time: trs[i].t, value: a });
+    }
+    return out;
+  }
   function addEma(chart, bars, period, color) {
     var data = ema(bars, period);
     if (!data.length) return;
@@ -131,7 +160,7 @@
   // instant local mirror: it absorbs the write before the debounced PUT lands,
   // so a network hiccup can't lose work, and it seeds the one-time migration
   // for drawings made back when the overlay was localStorage-only.
-  function setupDrawing(chart, series, el, bars, symbol) {
+  function setupDrawing(chart, series, el, bars, symbol, atrLatest) {
     var KEY = 'tstDraw:' + symbol;
     var light = document.documentElement.classList.contains('light');
     var ACCENT = '#38bdf8', HIT = 6;
@@ -195,24 +224,6 @@
     }
     function yOf(price) { return series.priceToCoordinate(price); }
 
-    /** Wilder's ATR(14) off the loaded daily bars — the risk unit a trade setup is
-        sized in. Returns null if there isn't enough history to seed the average. */
-    function atr14(period) {
-      period = period || 14;
-      if (bars.length < period + 1) return null;
-      var trs = [], i;
-      for (i = 1; i < bars.length; i++) {
-        var hi = bars[i].high, lo = bars[i].low, pc = bars[i - 1].close;
-        if (hi == null || lo == null || pc == null) return null;
-        trs.push(Math.max(hi - lo, Math.abs(hi - pc), Math.abs(lo - pc)));
-      }
-      if (trs.length < period) return null;
-      var sum = 0;
-      for (i = 0; i < period; i++) sum += trs[i];
-      var a = sum / period;
-      for (i = period; i < trs.length; i++) a = (a * (period - 1) + trs[i]) / period;
-      return a;
-    }
     function fmt(v) { return v.toFixed(2); }
     /** Small filled price tag, clamped so it can't ride off the top or bottom edge. */
     function tag(ctx, x, y, text, bg, h) {
@@ -904,7 +915,7 @@
         // stop off ATR keeps the setup ticker-relative — the same click works on a
         // $4 name and a $700 one without retuning.
         var ep = series.coordinateToPrice(q.y), el0 = ts.coordinateToLogical(q.x);
-        var atr = atr14(14);
+        var atr = atrLatest;      // the same number the ATR14 legend shows
         if (ep == null || el0 == null) { setTool('cursor'); return; }
         if (!atr) {
           alert('Not enough price history loaded to compute ATR(14) for ' + symbol + '.');
@@ -1059,6 +1070,55 @@
       addEma(chart, bars, 20, '#ef4444');   // EMA20 red
       addEma(chart, bars, 50, '#22c55e');   // EMA50 green
       addEma(chart, bars, 200, '#a855f7');  // EMA200 purple
+
+      // ---- ATR(14) ------------------------------------------------------
+      // Drawn on its OWN overlay price scale pinned to the bottom band, so it
+      // reads like a sub-pane without compressing the candles (lightweight-charts
+      // v4 has no real multi-pane support). The legend follows the crosshair.
+      var atrData = atrSeries(bars, 14);
+      var atrLatest = atrData.length ? atrData[atrData.length - 1].value : null;
+      var atrLine = null;
+      if (atrData.length) {
+        atrLine = chart.addLineSeries({
+          color: '#eab308', lineWidth: 1, priceScaleId: 'atr',
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false
+        });
+        atrLine.setData(atrData);
+        chart.priceScale('atr').applyOptions({ scaleMargins: { top: 0.86, bottom: 0 } });
+      }
+      (function () {
+        var valEl = document.getElementById('atrVal');
+        var legEl = document.getElementById('atrLegend');
+        var swEl = document.getElementById('atrSwatch');
+        if (!valEl) return;
+        var lastClose = bars[bars.length - 1].close;
+        function show(v, c) {
+          if (v == null) { valEl.textContent = '-'; return; }
+          // ATR as a % of price is what makes it comparable across tickers
+          valEl.textContent = v.toFixed(2) + (c ? ' \u00b7 ' + (v / c * 100).toFixed(1) + '%' : '');
+        }
+        show(atrLatest, lastClose);
+        if (atrLine) {
+          chart.subscribeCrosshairMove(function (param) {
+            var v = null, c = null;
+            if (param && param.seriesData) {
+              var av = param.seriesData.get(atrLine);
+              if (av && av.value != null) v = av.value;
+              var cv = param.seriesData.get(s);
+              if (cv && cv.close != null) c = cv.close;
+            }
+            show(v == null ? atrLatest : v, c == null ? lastClose : c);
+          });
+          var visible = true;
+          legEl.addEventListener('click', function () {
+            visible = !visible;
+            atrLine.applyOptions({ visible: visible });
+            legEl.style.opacity = visible ? '' : '.45';
+            swEl.style.background = visible ? '#eab308' : 'transparent';
+            swEl.style.boxShadow = visible ? '' : 'inset 0 0 0 1px #eab308';
+          });
+        }
+      })();
       if (matp != null) s.createPriceLine({ price: matp, color: '#f97316', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'MATP' });
       if (mbp != null) s.createPriceLine({ price: mbp, color: '#16a34a', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'MBP' });
       // curator's horizontal support / resistance (solid; only on a study chart)
@@ -1157,7 +1217,7 @@
       setActive(6);
 
       // drawing toolbar — non-essential, must never take the candles down
-      try { setupDrawing(chart, s, el, bars, {{ chart_symbol|tojson }}); } catch (e) {}
+      try { setupDrawing(chart, s, el, bars, {{ chart_symbol|tojson }}, atrLatest); } catch (e) {}
     })
     .catch(empty);
 })();

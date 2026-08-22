@@ -129,6 +129,34 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-22 — v4.19: ATR(14) shown on the chart
+User: *"i need the ATR (14) to be shown on chart"* — v4.18 sized trade stops off ATR(14)
+but never showed the number, so you had to trust it blind.
+
+**Plotted.** ATR(14) is drawn as an amber line on its **own overlay price scale** pinned to
+the bottom band (`scaleMargins: {top: 0.86}`). lightweight-charts v4 has no real multi-pane
+support, so this is the way to get a sub-pane read without the indicator's scale
+compressing the candles — the price series keeps its own autoscale untouched.
+
+**Read out.** A legend chip shows the value **and ATR as a % of price** — the % is what
+makes it comparable across tickers (FN reads `42.25 · 9.7%`, NVDA `6.26 · 2.9%` — the same
+ticker-relative logic the stop sizing rests on). The chip **follows the crosshair**, so
+hovering a past bar shows the ATR that applied there, and it reverts to the latest value
+when the pointer leaves the chart. Click the chip to hide/show the line (it dims and the
+swatch hollows out).
+
+**One calculation, not two.** v4.18's ATR lived inside `setupDrawing` and returned only the
+final value; the plotted series needed the whole history. Rather than keep two
+implementations that could silently drift, `atrSeries()` now computes the full Wilder
+series once in the outer scope and the latest value is **passed into** `setupDrawing`. The
+number on the legend and the number the ⚑ tool sizes a stop with are the same number by
+construction — verified: legend `42.25`, stop distance `42.2492`, and the earlier
+independent hand-calculation agrees.
+
+Verified on both surfaces (Watchlist and the Company page's Chart tab): line renders,
+crosshair moves the readout (41.83 · 6.1% on an older bar vs 42.25 · 9.7% latest), toggle
+works both ways, no console errors.
+
 ### 2026-08-22 — v4.18: ATR-sized trade setups on the chart
 User: *"i want a control to place entry at mouse point price level and it will use ATR(14)
 as stop loss and PT level at 2x … once placed it will show on chart and can be adjusted
