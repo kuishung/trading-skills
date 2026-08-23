@@ -61,7 +61,7 @@ def options_tab(symbol: str, request: Request,
     return templates.TemplateResponse(
         request, "_options_tab.html",
         {"user": user, "sym": sym, "bridge_port": BRIDGE_PORT,
-         "dte_min": bull_put.DTE_MIN, "dte_max": bull_put.DTE_MAX},
+         "dte_min": bull_put.DTE_MIN, "dte_max": bull_put.DTE_MAX, "diag": None},
     )
 
 
@@ -86,7 +86,11 @@ def analyze(symbol: str, request: Request,
 
     ctx = {"user": user, "sym": sym, "chain": chain, "iv": iv, "nlv": nlv,
            "spread": None, "earnings": None, "level": None,
-           "nlv_source": payload.get("nlv_source") or "account"}
+           "nlv_source": payload.get("nlv_source") or "account",
+           # what the BROWSER reported when the loopback fetch failed — shown in
+           # the panel, because "not running" and "browser blocked it" are
+           # indistinguishable from the page and guessing between them cost time
+           "diag": payload.get("diag") or None}
 
     if chain.get("ok") and chain.get("spot"):
         earnings = _earnings_date(sym)

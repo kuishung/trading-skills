@@ -129,6 +129,27 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-23 - v4.28: report what the browser actually said, instead of guessing
+Third report of "No IBKR bridge" while the bridge was demonstrably running and answering
+`curl`. The first two fixes were guesses at the cause. They should not have been.
+
+**The real defect was diagnostic, not functional.** Every failure of the loopback fetch —
+bridge not running, Private Network Access, mixed content, an extension, a firewall —
+arrives at the page as the same opaque `TypeError: Failed to fetch`, and the client
+collapsed all of them into the single sentence "No IBKR bridge ... start it". That sentence
+asserts a cause the page cannot possibly know, and it sent the investigation down the wrong
+path twice.
+
+Now the client captures `location.origin`, whether the page is HTTPS, the bridge URL and
+the browser's own error name/message, logs them to the console, and passes them to the
+panel, which renders a **Diagnostics** block. The prose no longer asserts a cause: on an
+HTTPS page it says the call failed and names both possibilities. There is also a direct
+link to `http://127.0.0.1:9224/health`, which splits the two cases in one click — JSON
+means the bridge is up and the browser is refusing the cross-origin call.
+
+Kept because it is still correct and necessary, just not sufficient: the v4.27 Private
+Network Access header.
+
 ### 2026-08-23 - v4.27: bridge answers Chrome's Private Network Access preflight
 Reported: the Options tab said "No IBKR bridge on http://127.0.0.1:9224" from
 **tradehunter.net** while the bridge was running and answering `curl` perfectly.

@@ -19,6 +19,29 @@
     IV history and account size. Start TWS, run
     <code class="text-slate-400">bridge\start_ibkr_bridge.bat</code>, then retry.
   </p>
+  {% if diag %}
+  {# What the BROWSER reported, verbatim. "No bridge" and "the browser refused the
+     call" are indistinguishable from the page, and guessing between them cost two
+     rounds — so show the evidence instead of a conclusion. #}
+  <details class="mt-3 text-[11px]" open>
+    <summary class="cursor-pointer text-slate-400 select-none">Diagnostics</summary>
+    <dl class="mt-1.5 grid grid-cols-[9rem_1fr] gap-x-3 gap-y-0.5 text-slate-400 font-mono">
+      <dt>page origin</dt><dd class="text-slate-300">{{ diag.page_origin }}</dd>
+      <dt>page is HTTPS</dt><dd class="text-slate-300">{{ 'yes' if diag.page_secure else 'no' }}</dd>
+      <dt>bridge URL</dt><dd class="text-slate-300">{{ diag.bridge }}</dd>
+      <dt>error</dt><dd class="text-rose-300">{{ diag.err_name }}: {{ diag.err_message }}</dd>
+    </dl>
+    <p class="mt-2 text-slate-500 leading-relaxed font-normal">
+      Check both in order:
+      <br>1. Is the bridge console window open on THIS PC? Visit
+      <a href="{{ diag.bridge }}/health" target="_blank" rel="noopener" class="text-emerald-400 hover:underline">{{ diag.bridge }}/health</a>
+      &mdash; JSON means it is running, and the problem is the browser blocking the
+      cross-origin call from an HTTPS page.
+      <br>2. If that page loads but this panel still fails, the browser is refusing the
+      loopback call. Report the error above.
+    </p>
+  </details>
+  {% endif %}
   <button type="button" class="mt-3 text-xs px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition"
           onclick="window.thOptionsLoad && window.thOptionsLoad()">Retry</button>
 </div>

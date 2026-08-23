@@ -34,16 +34,38 @@
       .then(function (r) { return r.json(); });
   }
 
-  // The bridge being down is a NORMAL state — it is a program the member starts
-  // when they want options. Shape that failure like a bridge reply so the server
-  // renders the same calm panel it uses for every other unavailable case.
-  function bridgeDown() {
+  // A failed loopback fetch has SEVERAL causes that look identical from here: the
+  // bridge is not running, or the browser refused the call (Private Network
+  // Access, mixed content, an extension). Collapsing them all into "no bridge"
+  // sent us chasing the wrong one twice — so capture what actually happened and
+  // let the panel report it instead of asserting a cause.
+  function describe(err) {
+    var d = {
+      page_origin: location.origin,
+      page_secure: location.protocol === 'https:',
+      bridge: BRIDGE,
+      err_name: (err && err.name) || 'unknown',
+      err_message: (err && err.message) || String(err)
+    };
+    try { console.error('[TradeHunter] bridge fetch failed', d, err); } catch (e) {}
+    return d;
+  }
+
+  function bridgeDown(err) {
+    var d = describe(err);
+    // An HTTPS page reaching http://127.0.0.1 is the case browsers gate; from
+    // plain http (local dev) a failure is almost certainly just "not running".
+    var likely = d.page_secure
+      ? ('This page is HTTPS (' + d.page_origin + ') and the bridge is plain HTTP on ' +
+         'loopback. Either the bridge is not running, or this browser refused the call ' +
+         '(Private Network Access / mixed content / an extension).')
+      : 'The bridge does not appear to be running on this PC.';
     return {
       ok: false,
       source: 'bridge ' + BRIDGE,
-      error: 'No IBKR bridge on ' + BRIDGE + '. Start it on the PC where TWS is ' +
-             'running: dashboard_tst\\bridge\\start_ibkr_bridge.bat — it connects to ' +
-             'your own TWS read-only, and the server never touches your broker session.'
+      diag: d,
+      error: 'Could not reach the IBKR bridge on ' + BRIDGE + '. ' + likely +
+             ' Browser reported — ' + d.err_name + ': ' + d.err_message
     };
   }
 
@@ -67,7 +89,8 @@
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chain: r[0], iv: r[1], nlv: (r[2] || {}).net_liquidation })
+        body: JSON.stringify({ chain: r[0], iv: r[1], nlv: (r[2] || {}).net_liquidation,
+                               diag: (r[0] || {}).diag || null })
       });
     }).then(function (res) { return res.text(); })
       .then(function (html) {
