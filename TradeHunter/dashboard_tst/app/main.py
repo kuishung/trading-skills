@@ -37,6 +37,7 @@ from .routes import auth as auth_routes
 from .routes import calendar as calendar_routes
 from .routes import company_analysis as company_analysis_routes
 from .routes import drawings as drawings_routes
+from .routes import options as options_routes
 from .routes import macro as macro_routes
 from .routes import feedback as feedback_routes
 from .routes import finviz as finviz_routes
@@ -194,6 +195,9 @@ def create_app() -> FastAPI:
     # Chart drawings — used from several pages (Watchlist, Company, Studies,
     # Sector), so no per-menu gate; require_user + user_id scoping live in the router.
     app.include_router(drawings_routes.router)
+    # Options chain (TWS-sourced) — used from the Watchlist pane; require_user
+    # only, no per-menu gate, same as the drawings API.
+    app.include_router(options_routes.router)
     app.include_router(feedback_routes.router)
     app.include_router(admin_routes.router)
     app.include_router(agent_routes.router)

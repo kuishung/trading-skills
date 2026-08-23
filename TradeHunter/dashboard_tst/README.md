@@ -129,6 +129,55 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-23 - v4.21: Options tab on the Watchlist (chain + Greeks from TWS)
+User: *"In the watchlist, I need a tab for option"* then *"i need the data to be obtained
+from TWS where I will turn on"*. Scope agreed as **chain + Greeks** for v1.
+
+**Tabs.** The watchlist's right pane gains a `Chart | Options` strip. Both panes live
+inside the HTMX-swapped fragment, and the active tab is remembered in localStorage and
+re-applied after each swap - so flipping through tickers doesn't bounce you back to the
+chart. The chain is **lazy**: it is only requested when the tab is first opened, because
+every quoted contract costs an IBKR market-data line.
+
+**Data source: TWS / IB Gateway**, not Yahoo. Yahoo's chain endpoint does work (with the
+crumb session) but carries no Greeks; IBKR returns its own option model, which is the same
+surface it quotes against. `app/services/ibkr_options.py`:
+- **A dedicated worker thread owns the asyncio loop and the single `IB` client.**
+  `ib_insync` binds handlers at construction and blocks on its own futures, so driving it
+  from uvicorn's loop is unsafe. Routes submit coroutines with
+  `run_coroutine_threadsafe` and wait with a hard timeout, so an absent or wedged TWS can
+  never pin a web worker.
+- **`ib_insync` is imported lazily** - it pulls `eventkit`, which calls
+  `asyncio.get_event_loop()` at import and therefore dies on Python 3.14 (CLAUDE.md's hard
+  rule). The dashboard venv is 3.12; a machine without the package still serves every other
+  page and only this tab degrades.
+- **clientId 86** - a fresh slot. CLAUDE.md's table already spends 71/80/83/84/85/98/99 and
+  IBKR refuses two sessions on one id.
+- **A strike WINDOW, not the whole chain** (default +/-10 around spot, `TST_IBKR_STRIKE_WINDOW`).
+  Accounts cap concurrent market-data lines (commonly 100); subscribing a full chain would
+  blow it.
+- Falls back to **delayed-frozen** (`reqMarketDataType(4)`) when the account has no live
+  OPRA entitlement, and the header says which mode produced the numbers.
+
+**TWS being off is a normal state**, not an error - the user starts it on demand. Every
+entry point returns a structured result and the tab renders a calm panel naming the exact
+remedy (port, clientId, the API checkbox) plus a Retry button. Verified: 2.3s to fail, and
+the panel renders in ~300ms from cache.
+
+Config (`app/.env`): `TST_IBKR_HOST` / `TST_IBKR_PORT` (7497 TWS paper by default) /
+`TST_IBKR_CLIENT_ID` / `TST_IBKR_STRIKE_WINDOW` / timeouts.
+
+**Bug caught in testing:** the route used the legacy `TemplateResponse(name, context)`
+form; current Starlette reads arg 1 as the request, so the context dict landed where the
+template name belonged and every call 500'd (`unhashable type: 'dict'`). HTMX does not swap
+on a 500, so it presented as the tab hanging on "Loading..." rather than as an error. Now
+request-first, matching the rest of the app.
+
+**Not verified live.** The connect/failure path, routing, template and tab behaviour are
+tested, but the populated chain needs TWS running - which only the user can switch on. Open
+interest is not shown yet (separate generic tick), and ATM IV is the CURRENT level, clearly
+labelled as such: IV percentile/rank needs an IV history nobody is recording yet.
+
 ### 2026-08-22 - v4.20: ATR(14) stated in words on the chart
 User: *"i just need the wording ATR (14) = x to be shown on chart"*. v4.19 put the number in
 the legend chip **below** the plot, which is easy to miss - the reading is now printed over

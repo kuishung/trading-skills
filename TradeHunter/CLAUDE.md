@@ -515,6 +515,7 @@ Each component needs a unique clientId per concurrent IBKR session. The full all
 | 83 | Ingest (legacy / current laptop-based) | Laptop |
 | **84** | **Ingest (production target)** | **Hermes** |
 | **85** | **Hermes health-check probes** | **Hermes** |
+| **86** | **Options chain feed (`dashboard_tst` Options tab)** | **wherever the web app runs** |
 | 98 | Probe / handshake test | Either |
 | 99 | Dashboard probe | Laptop |
 

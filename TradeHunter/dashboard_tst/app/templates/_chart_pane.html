@@ -14,7 +14,69 @@
   {% set chart_fill = true %}
   {% set chart_curatable = true %}
   {% set chart_tv_plot = true %}
-  {% include "_price_chart.html" %}
+
+  {# Chart | Options tabs. Both live inside the swapped pane, so picking another
+     ticker re-renders them together; the JS below re-applies whichever tab was
+     active so browsing tickers doesn't bounce you back to the chart. #}
+  <div class="flex items-center gap-1 mb-2 shrink-0">
+    <button type="button" class="paneTab text-[11px] px-2.5 py-1 rounded border transition border-emerald-500/60 text-emerald-300 bg-emerald-500/10"
+            data-tab="chart">Chart</button>
+    <button type="button" class="paneTab text-[11px] px-2.5 py-1 rounded border transition border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300"
+            data-tab="options">Options</button>
+  </div>
+
+  <div id="tabChart" class="flex flex-col lg:flex-1 lg:min-h-0">
+    {% include "_price_chart.html" %}
+  </div>
+
+  {# Lazy: the chain is only requested when the tab is first opened, because each
+     contract costs an IBKR market-data line. #}
+  <div id="tabOptions" class="hidden flex-col lg:flex-1 lg:min-h-0"
+       data-sym="{{ sel.symbol }}" data-loaded="0">
+    <div class="text-xs text-slate-500 px-1 py-3">Loading options from TWS&hellip;</div>
+  </div>
+
+  <script>
+  (function () {
+    var KEY = 'tstPaneTab';
+    var chart = document.getElementById('tabChart');
+    var opts = document.getElementById('tabOptions');
+    var tabs = document.querySelectorAll('.paneTab');
+    if (!chart || !opts) return;
+
+    function paint(name) {
+      tabs.forEach(function (b) {
+        var on = b.dataset.tab === name;
+        b.className = 'paneTab text-[11px] px-2.5 py-1 rounded border transition ' +
+          (on ? 'border-emerald-500/60 text-emerald-300 bg-emerald-500/10'
+              : 'border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300');
+      });
+      // display:flex, not just removing 'hidden' — the panes are flex columns
+      chart.style.display = (name === 'chart') ? 'flex' : 'none';
+      opts.style.display = (name === 'options') ? 'flex' : 'none';
+      opts.classList.remove('hidden');
+      chart.classList.remove('hidden');
+    }
+
+    function show(name) {
+      paint(name);
+      try { localStorage.setItem(KEY, name); } catch (e) {}
+      if (name === 'options' && opts.dataset.loaded !== '1') {
+        opts.dataset.loaded = '1';
+        window.htmx && htmx.ajax('GET', '/options/' + encodeURIComponent(opts.dataset.sym),
+                                 { target: '#tabOptions', swap: 'innerHTML' });
+      }
+    }
+
+    tabs.forEach(function (b) {
+      b.addEventListener('click', function () { show(b.dataset.tab); });
+    });
+
+    var remembered = 'chart';
+    try { remembered = localStorage.getItem(KEY) || 'chart'; } catch (e) {}
+    show(remembered);
+  })();
+  </script>
 {% else %}
 <div class="flex-1 flex items-center justify-center text-slate-500 text-sm">No tickers yet &mdash; run a watchlist to populate.</div>
 {% endif %}
