@@ -129,6 +129,53 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-23 - v4.23: live-TWS fixes (the options path, actually verified)
+The user switched TWS on, so v4.21/4.22's untested path could finally be run. It was
+broken in four ways that only a real feed exposes. All four are fixed and the whole chain
+-> IV -> selection path is now verified end to end against a live account.
+
+**1. The chain came back starved (the dangerous one).** `reqSecDefOptParams` returns the
+UNION of strikes across every expiration, so most of them do not exist on a monthly - they
+belong to weeklies. Slicing that union and quoting it meant contracts silently failed to
+qualify and only ~5 strikes survived, **which changes which strike looks closest to the
+target delta**: the finder picked a 0.34-delta short put believing it was the closest to
+0.225. Now a generous slice is qualified first (free, no market data) and the
++/-STRIKE_WINDOW strikes that actually exist are quoted. Chain went 5 -> 17 strikes with
+deltas running 0.15-0.92 monotonically, and the 0.20-0.25 band is populated again.
+
+**2. `reqTickersAsync` waits for EVERY contract.** On a delayed feed some strikes never
+populate, so it always burned its whole timeout; batching only serialised those timeouts
+into minutes (a 45s budget blew past 57s). Replaced with: fire all subscriptions, wait ONE
+window, read whatever arrived, cancel the lines. ~44s cold for a full chain.
+
+**3. Entitlement detection latched on noise.** One `modelGreeks` out of 42 was enough to
+conclude "live", leaving the rest of the chain permanently blank. Now it requires a
+majority, and the result is sticky per process so the slow probe happens once instead of
+on every request. The account has **no OPRA subscription** (IBKR error 354) and correctly
+settles on delayed-frozen, which IBKR provides free.
+
+**4. The cache could never hit.** Expiry was stamped `now + TTL` where `now` was captured
+*before* the fetch — a 30s chain request was cached already-expired. Stamped at store time
+now, TTL raised to 45s: repeat loads went 14.2s -> 0.00s.
+
+Also: `chain_for_dte` used to fetch a full quoted chain just to read the expiry list, then
+fetch again. It now lists expirations through a cheap definition-only call and quotes
+exactly one expiry.
+
+**Verified live (NVDA, real account):** IV percentile **47%** from 251 days of IBKR IV
+history in 1.7s (current 39.2%, range 31.6-54.3) - the gate Yahoo could never supply;
+net liquidation **$51,047.57**; expiry auto-picked at **54 DTE**; short put **195P delta
+0.23** with long 195/190 at $0.15 bid/ask; sized to **13 contracts** ($1,001 <= 2% of NLV).
+The trade was correctly **rejected** because NVDA earnings (2026-08-26) land inside the
+Oct 16 expiry — the earnings gate doing exactly its job on real data.
+
+And live in the UI on FN: rejected on two counts — IV percentile 32.3% (below 40) and a
+$3.60/$8.00 bid/ask (far past $0.50) — with every passing rule still shown.
+
+**Config:** TWS here listens on **7496** (live account, Read-Only API enabled in TWS, which
+is a hard guarantee no API client can place an order). `app/.env` on this laptop now sets
+`TST_IBKR_HOST/PORT/CLIENT_ID`; `.env` is gitignored, so Hermes needs the same three lines.
+
 ### 2026-08-23 - v4.22: bull put spread finder + management monitor
 User handed over Khoo's credit-spread playbook and asked for it to "select the trade and
 suggest the pair for me and then to continue monitoring the trade for me", off live TWS

@@ -48,9 +48,18 @@ PORT = int(os.environ.get("TST_IBKR_PORT", "7497"))          # TWS paper
 CLIENT_ID = int(os.environ.get("TST_IBKR_CLIENT_ID", "86"))
 CONNECT_TIMEOUT = float(os.environ.get("TST_IBKR_TIMEOUT", "6"))
 STRIKE_WINDOW = int(os.environ.get("TST_IBKR_STRIKE_WINDOW", "10"))  # each side of spot
-REQUEST_TIMEOUT = float(os.environ.get("TST_IBKR_REQ_TIMEOUT", "25"))
+REQUEST_TIMEOUT = float(os.environ.get("TST_IBKR_REQ_TIMEOUT", "60"))
+QUOTE_WAIT = float(os.environ.get("TST_IBKR_QUOTE_WAIT", "8"))  # one window for all strikes
+# 1=live, 2=frozen, 3=delayed, 4=delayed-frozen. Leave unset to auto-detect:
+# we try live once, and if IBKR answers without an option model (error 354 —
+# "market data is not subscribed"), we drop to delayed-frozen and REMEMBER it
+# for the process, so the slow probe happens once rather than on every request.
+_MKT_TYPE_ENV = os.environ.get("TST_IBKR_MARKET_DATA_TYPE", "").strip()
+_mkt_type: int | None = int(_MKT_TYPE_ENV) if _MKT_TYPE_ENV.isdigit() else None
 
-_CACHE_TTL = 20.0      # option quotes move fast; just enough to absorb re-renders
+_CACHE_TTL = float(os.environ.get("TST_IBKR_CACHE_TTL", "45"))
+# Long enough to make tab switching and the positions refresh cheap, short
+# enough that a quote you act on is not stale. Chains take ~30s to build.
 _cache: dict = {}
 _cache_lock = threading.Lock()
 
@@ -175,79 +184,153 @@ def _row(ticker, right: str) -> dict:
     }
 
 
-async def _fetch(symbol: str, expiry: str | None) -> dict:
-    from ib_insync import Option, Stock
+async def _chain_def(symbol: str):
+    """Contract + spot + listed strikes/expirations. NO option market data.
+
+    Split out because listing expirations used to go through a full chain fetch,
+    which subscribed ~40 option contracts just to read a date list — the single
+    most wasteful thing this module did against a rate-limited API.
+    """
+    from ib_insync import Stock
 
     w = _get_worker()
     await _ensure_connected(w)
     ib = w.ib
 
-    stock = Stock(symbol, "SMART", "USD")
-    qualified = await ib.qualifyContractsAsync(stock)
-    if not qualified:
+    q = await ib.qualifyContractsAsync(Stock(symbol, "SMART", "USD"))
+    if not q:
         raise OptionsUnavailable(f"IBKR does not recognise the symbol {symbol}.")
-    stock = qualified[0]
+    stock = q[0]
 
-    # spot — needed to centre the strike window
     [stk] = await ib.reqTickersAsync(stock)
     spot = stk.marketPrice()
-    if not spot or spot != spot:            # NaN guard
+    if not spot or spot != spot:
         spot = stk.close
     if not spot:
         raise OptionsUnavailable(
-            f"No price for {symbol} — the market may be closed with no frozen data available."
+            f"No price for {symbol} — the market may be closed with no frozen data."
         )
 
     params = await ib.reqSecDefOptParamsAsync(stock.symbol, "", "STK", stock.conId)
     chains = [p for p in params if p.exchange == "SMART"] or list(params)
     if not chains:
         raise OptionsUnavailable(f"IBKR returned no option chain for {symbol}.")
-    chain = chains[0]
+    return stock, float(spot), chains[0]
+
+
+async def _expirations(symbol: str) -> dict:
+    _, spot, chain = await _chain_def(symbol)
+    exps = sorted(chain.expirations)
+    return {"spot": spot,
+            "expirations": [{"value": e, "label": _fmt_expiry(e), "dte": _dte(e)}
+                            for e in exps]}
+
+
+async def _quote(ib, contracts):
+    """Subscribe every contract at once, wait ONE window, read whatever arrived.
+
+    ``reqTickersAsync`` waits until *all* requested contracts have data. On a
+    delayed feed some strikes never populate, so it always burned its full
+    timeout — and batching just serialised those timeouts into minutes. Firing
+    all subscriptions and reading after a single wait costs one window total and
+    keeps the strikes that did answer instead of discarding a whole batch.
+    """
+    for c in contracts:
+        try:
+            ib.reqMktData(c, "", False, False)
+        except Exception:  # noqa: BLE001
+            pass
+    await asyncio.sleep(QUOTE_WAIT)
+    out = []
+    for c in contracts:
+        try:
+            out.append(ib.ticker(c))
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            try:
+                ib.cancelMktData(c)     # release the market-data line
+            except Exception:  # noqa: BLE001
+                pass
+    return [x for x in out if x is not None]
+
+
+async def _fetch(symbol: str, expiry: str | None) -> dict:
+    global _mkt_type
+    from ib_insync import Option
+
+    w = _get_worker()
+    ib = w.ib
+    stock, spot, chain = await _chain_def(symbol)
 
     expirations = sorted(chain.expirations)
     if not expirations:
         raise OptionsUnavailable(f"No listed expirations for {symbol}.")
     chosen = expiry if expiry in expirations else expirations[0]
 
-    # Quote a window of strikes around spot, NOT the whole chain: every contract
-    # consumes a market-data line and accounts are capped (~100 concurrent).
+    # reqSecDefOptParams returns the UNION of strikes across every expiration, so
+    # a monthly expiry only lists a subset of them (the finer strikes belong to
+    # weeklies). Slicing the union directly meant most contracts failed to
+    # qualify and the chain came back with a handful of strikes — which silently
+    # changes which one looks closest to the target delta. So: qualify a GENEROUS
+    # slice first (qualification is free, no market data), then keep the
+    # ±STRIKE_WINDOW strikes that actually exist for this expiry.
     strikes = sorted(chain.strikes)
     nearest = min(range(len(strikes)), key=lambda i: abs(strikes[i] - spot))
-    lo = max(0, nearest - STRIKE_WINDOW)
-    hi = min(len(strikes), nearest + STRIKE_WINDOW + 1)
-    window = strikes[lo:hi]
-    if not window:
+    probe = strikes[max(0, nearest - STRIKE_WINDOW * 3):nearest + STRIKE_WINDOW * 3 + 1]
+    if not probe:
         raise OptionsUnavailable(f"No strikes near {spot:.2f} for {symbol}.")
 
-    contracts = [Option(symbol, chosen, k, r, "SMART", tradingClass=chain.tradingClass)
-                 for k in window for r in ("C", "P")]
-    contracts = await ib.qualifyContractsAsync(*contracts)
-    contracts = [c for c in contracts if getattr(c, "conId", None)]
+    probe_contracts = [Option(symbol, chosen, k, r, "SMART", tradingClass=chain.tradingClass)
+                       for k in probe for r in ("C", "P")]
+    qualified = await ib.qualifyContractsAsync(*probe_contracts)
+    real = sorted({c.strike for c in qualified if getattr(c, "conId", None)})
+    if not real:
+        raise OptionsUnavailable(
+            f"None of the {symbol} {_fmt_expiry(chosen)} contracts qualified — "
+            "the expiry may have no listed strikes near spot."
+        )
+
+    j = min(range(len(real)), key=lambda i: abs(real[i] - spot))
+    window = set(real[max(0, j - STRIKE_WINDOW):j + STRIKE_WINDOW + 1])
+    contracts = [c for c in qualified
+                 if getattr(c, "conId", None) and c.strike in window]
     if not contracts:
         raise OptionsUnavailable(
             f"None of the {symbol} {_fmt_expiry(chosen)} contracts qualified — "
             "the expiry may have no listed strikes near spot."
         )
 
-    tickers = await ib.reqTickersAsync(*contracts)
-    greeks_seen = sum(1 for t in tickers if t.modelGreeks)
-    if not greeks_seen:
-        # No live entitlement -> retry once in delayed-frozen mode
-        ib.reqMarketDataType(4)
-        tickers = await ib.reqTickersAsync(*contracts)
-        greeks_seen = sum(1 for t in tickers if t.modelGreeks)
-        data_mode = "delayed"
+    # Sticky market-data type: probe live ONCE per process, then stay on whatever
+    # actually produced Greeks. Re-probing on every request cost a full slow
+    # round-trip on an account without an OPRA subscription.
+    if _mkt_type is None:
+        ib.reqMarketDataType(1)
+        tickers = await _quote(ib, contracts)
+        got = sum(1 for x in tickers if x.modelGreeks)
+        # require a real majority: one stray model among 40 contracts is noise,
+        # and latching "live" on it leaves the rest of the chain blank forever.
+        if tickers and got >= max(2, len(tickers) // 2):
+            _mkt_type = 1
+        else:
+            _mkt_type = 4                      # delayed-frozen; IBKR offers it free
+            ib.reqMarketDataType(_mkt_type)
+            tickers = await _quote(ib, contracts)
     else:
-        data_mode = "live"
+        ib.reqMarketDataType(_mkt_type)
+        tickers = await _quote(ib, contracts)
+
+    greeks_seen = sum(1 for x in tickers if x.modelGreeks)
+    data_mode = "live" if _mkt_type == 1 else "delayed"
 
     calls, puts = [], []
-    for t in tickers:
-        right = getattr(t.contract, "right", "")
-        (calls if right.startswith("C") else puts).append(_row(t, right))
+    for x in tickers:
+        right = getattr(x.contract, "right", "")
+        (calls if right.startswith("C") else puts).append(_row(x, right))
     calls.sort(key=lambda r: r["strike"])
     puts.sort(key=lambda r: r["strike"])
 
-    # ATM implied vol — the number Khoo's IV-regime rule is read off
+    # ATM implied vol — the level the IV-regime rule is read off
     atm_iv = None
     if calls:
         atm = min(calls, key=lambda r: abs(r["strike"] - spot))
@@ -301,7 +384,9 @@ def get_chain(symbol: str, expiry: str | None = None) -> dict:
                 "error": f"Unexpected error talking to TWS: {type(exc).__name__}: {exc}"}
 
     with _cache_lock:
-        _cache[key] = (now + _CACHE_TTL, out)
+        # time.time() again, NOT the `now` captured before the fetch: a 30s chain
+        # request would otherwise be cached already-expired and never hit.
+        _cache[key] = (time.time() + _CACHE_TTL, out)
     return out
 
 
@@ -390,43 +475,24 @@ def net_liquidation() -> float | None:
 def chain_for_dte(symbol: str, dte_min: int, dte_max: int) -> dict:
     """Chain for the expiry that best fits a DTE window.
 
-    Prefers an expiry inside [dte_min, dte_max]; if none is listed, falls back to
-    the closest one and lets the caller's DTE check report the miss.
+    Lists expirations through the CHEAP definition call (no option market data),
+    picks the target, then quotes exactly that one expiry — previously this cost
+    two full quoted fetches.
     """
-    probe = get_chain(symbol)
-    if not probe.get("ok"):
-        return probe
-    exps = probe.get("expirations") or []
-    inside = [e for e in exps if e.get("dte") is not None and dte_min <= e["dte"] <= dte_max]
-    if inside:
-        target = min(inside, key=lambda e: abs(e["dte"] - (dte_min + dte_max) / 2))
-    else:
-        dated = [e for e in exps if e.get("dte") is not None]
-        if not dated:
-            return probe
-        target = min(dated, key=lambda e: abs(e["dte"] - (dte_min + dte_max) / 2))
-    if target["value"] == probe.get("expiry"):
-        return probe
-    return get_chain(symbol, target["value"])
+    sym = (symbol or "").strip().upper()
+    try:
+        info = _get_worker().submit(_expirations(sym), REQUEST_TIMEOUT)
+    except OptionsUnavailable as exc:
+        return {"ok": False, "error": str(exc), "symbol": sym,
+                "source": f"TWS {HOST}:{PORT}"}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "symbol": sym, "source": f"TWS {HOST}:{PORT}",
+                "error": f"Unexpected error talking to TWS: {type(exc).__name__}: {exc}"}
 
-
-def short_put_delta(symbol: str, expiry_iso: str, strike: float) -> dict:
-    """Live |delta| and DTE for one short put — the input to the management rule.
-
-    Re-resolves from (symbol, expiry, strike) through the normal chain fetch, so
-    it shares the 20s cache and the same TWS-off handling as everything else.
-    """
-    exp = (expiry_iso or "").replace("-", "")
-    chain = get_chain(symbol, exp)
-    if not chain.get("ok"):
-        return {"ok": False, "error": chain.get("error", "no chain"), "delta": None, "dte": None}
-    match = next((p for p in (chain.get("puts") or [])
-                  if abs(p["strike"] - float(strike)) < 1e-6), None)
-    if match is None:
-        return {"ok": False, "delta": None, "dte": chain.get("dte"),
-                "error": (f"{symbol} {expiry_iso} {strike:g}P is outside the "
-                          f"±{STRIKE_WINDOW}-strike window being quoted — "
-                          "raise TST_IBKR_STRIKE_WINDOW to keep it in view.")}
-    d = match.get("delta")
-    return {"ok": True, "delta": abs(d) if d is not None else None,
-            "dte": chain.get("dte"), "mid": match.get("mid"), "error": None}
+    dated = [e for e in info["expirations"] if e.get("dte") is not None]
+    if not dated:
+        return get_chain(sym)
+    inside = [e for e in dated if dte_min <= e["dte"] <= dte_max]
+    pool = inside or dated
+    target = min(pool, key=lambda e: abs(e["dte"] - (dte_min + dte_max) / 2))
+    return get_chain(sym, target["value"])
