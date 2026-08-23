@@ -129,6 +129,63 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-23 - v4.22: bull put spread finder + management monitor
+User handed over Khoo's credit-spread playbook and asked for it to "select the trade and
+suggest the pair for me and then to continue monitoring the trade for me", off live TWS
+data.
+
+**It suggests and monitors. It never places an order** - the fill is the user's action in
+TWS, and nothing in this code submits, modifies or cancels anything.
+
+**`services/bull_put.py` is deliberately PURE** - chain snapshot + IV stats + NLV +
+earnings date in, verdict out. No I/O, no knowledge of TWS. That is the only reason any of
+it is verifiable while TWS is off, and it is: a synthetic-chain suite exercises every rule
+(see the entry below for results).
+
+Entry rules mechanised, each reported pass OR fail so a rejection explains itself:
+| rule | behaviour |
+|---|---|
+| IV percentile >= 40 | **blocking** - and it is real, not a proxy (see below) |
+| no earnings on/before expiry | **blocking** (unknown date warns instead) |
+| 45-60 DTE | **warns only** - a near-miss expiry is still worth showing |
+| short put delta 0.20-0.25 | blocking; picks the strike closest to 0.225, closest-available shown if the band is empty |
+| long put 1-2 strikes below | evaluates both offsets and keeps the better credit/width, liquidity first |
+| bid/ask <= $0.50 per leg | blocking - a wide market eats the credit on the fill |
+| 20% of max loss < 2% of NLV | sets the contract count; blocking if not even one fits |
+
+**IV percentile is genuine.** Yahoo cannot supply it, which is why v4.21 left the gate
+blank. IBKR can: `reqHistoricalData(whatToShow='OPTION_IMPLIED_VOLATILITY')` returns a year
+of daily IV, so percentile and rank are computed from real history on the first request -
+no months of accumulation, no realised-vol stand-in.
+
+Also shown: net credit, width, max loss, breakeven, ~win probability (1-delta), and a
+**risk/return profile at expiry AND at 15 DTE** (the expiry row is arithmetic; the 15-DTE
+row is Black-Scholes at each leg's own IV - the only place a model is used, since every
+entry number comes from real quotes).
+
+**An honest caveat is printed with the size.** "20% of max loss < 2% of NLV" only caps risk
+at 2% *if the delta stop is actually honoured*. In the worked example 46 contracts sit at
+$1,978 on that basis but carry a full max loss of $9,890 - about 10% of NLV. The panel says
+so rather than letting the 2% read as a guarantee.
+
+**Monitor.** New `option_spreads` table (migration `a4b5c6d7e8f9`) records what the user
+opened. Every render re-reads the short-put delta from TWS and grades it: `OK` below 0.35;
+`ADJUST` past the line with >30 DTE (with the roll-down steps spelled out); `CLOSE` past the
+line with <=30 DTE. Rows are user-scoped on read and write.
+
+**Bug caught in review:** the positions list first sat inside the `chain.ok` branch, so a
+dead TWS hid the user's open trades - failing exactly when they most need to see what they
+are holding. It now renders above the chain check, with DTE computed locally so the panel
+stays useful with the feed down.
+
+**Verified without TWS:** every rule and its failure mode (IV too low, no IV history,
+earnings inside the trade, $2.00 bid/ask, account too small, no Greeks, DTE outside the
+window); spread geometry (max profit = credit, max loss = width - credit, breakeven,
+20%-of-max-loss); sizing maximal but under the 2% cap; P/L curves capped at both ends with
+the 15-DTE curve inside the expiry curve; all seven delta/DTE management cases; track and
+mark-closed round-trips; and cross-user scoping (another member cannot close your spread).
+**Not verified:** anything requiring a live TWS session.
+
 ### 2026-08-23 - v4.21: Options tab on the Watchlist (chain + Greeks from TWS)
 User: *"In the watchlist, I need a tab for option"* then *"i need the data to be obtained
 from TWS where I will turn on"*. Scope agreed as **chain + Greeks** for v1.

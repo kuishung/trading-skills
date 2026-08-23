@@ -775,3 +775,37 @@ class ChartDrawing(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "symbol", name="uq_chart_drawing_user_symbol"),
     )
+
+
+class OptionSpread(Base):
+    """A vertical option spread the member is tracking, so the platform can grade
+    it against the management rule every time they look.
+
+    Scope: **tracking, not execution.** Nothing here places, modifies or cancels an
+    order — the fill happens in TWS by the user's own hand. These rows record what
+    they say they opened so the delta line can be watched against it.
+
+    Legs are stored as plain numbers rather than IBKR conIds because the contract
+    is re-resolved from (symbol, expiry, strike) on each refresh anyway, and that
+    keeps a tracked trade readable if TWS is off or the account changes.
+    """
+
+    __tablename__ = "option_spreads"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
+                     nullable=False, index=True)
+    symbol = Column(String(20), nullable=False, index=True)
+    strategy = Column(String(24), nullable=False, default="bull_put")
+    expiry = Column(String(10), nullable=False)          # YYYY-MM-DD
+    short_strike = Column(Float, nullable=False)
+    long_strike = Column(Float, nullable=False)
+    credit = Column(Float, nullable=True)                # per share, at entry
+    contracts = Column(Integer, nullable=False, default=1)
+    entry_delta = Column(Float, nullable=True)           # short-put delta at entry
+    opened_at = Column(DateTime, default=_utcnow)
+    status = Column(String(12), nullable=False, default="open")   # open | closed
+    closed_at = Column(DateTime, nullable=True)
+    note = Column(Text, nullable=True)
+
+    user = relationship("User")

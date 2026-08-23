@@ -1,0 +1,71 @@
+{# Open tracked spreads, each graded against the management rule with a LIVE
+   short-put delta from TWS. Context: items = [{row, delta, dte, error, verdict}].
+
+   Tracking only — nothing here places or cancels an order. "Close" marks the
+   row closed in TradeHunter after the user has closed it themselves in TWS. #}
+
+{% if items %}
+<div class="rounded-lg border border-slate-800 bg-slate-900/50 p-3 mb-3">
+  <div class="flex items-center gap-2 mb-2">
+    <span class="font-semibold text-sm text-slate-100">Open spreads</span>
+    <span class="text-[11px] text-slate-500">{{ items|length }} tracked</span>
+    {% set urgent = items|selectattr('verdict.urgent')|list %}
+    {% if urgent %}
+    <span class="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 text-[11px] font-semibold">
+      {{ urgent|length }} need{% if urgent|length == 1 %}s{% endif %} action
+    </span>
+    {% endif %}
+    <button type="button" class="ml-auto text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition"
+            hx-get="/options/positions/all" hx-target="#optPositions" hx-swap="innerHTML"
+            title="Re-read every short-put delta from TWS">Refresh</button>
+  </div>
+
+  <div class="space-y-1.5">
+    {% for it in items %}
+    {% set r = it.row %}{% set v = it.verdict %}
+    <div class="rounded border p-2 text-[11px]
+                {% if v.state == 'CLOSE' %}border-rose-600/60 bg-rose-500/5
+                {% elif v.state == 'ADJUST' %}border-amber-600/60 bg-amber-500/5
+                {% elif v.state == 'OK' %}border-slate-800
+                {% else %}border-slate-700{% endif %}">
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="font-semibold text-slate-100">{{ r.symbol }}</span>
+        <span class="text-slate-300 tabular-nums">
+          {{ "%g"|format(r.short_strike) }}/{{ "%g"|format(r.long_strike) }}P
+        </span>
+        <span class="text-slate-500 tabular-nums">{{ r.expiry }} &middot; {{ it.dte }}d</span>
+        <span class="text-slate-500 tabular-nums">{{ r.contracts }}x</span>
+        {% if r.credit %}<span class="text-slate-500 tabular-nums">cr ${{ "%.2f"|format(r.credit) }}</span>{% endif %}
+
+        {% if it.delta is not none %}
+        <span class="tabular-nums {% if it.delta >= 0.35 %}text-rose-300 font-semibold{% else %}text-sky-300{% endif %}"
+              title="Live short-put delta. The action line is 0.35-0.40.">&Delta; {{ "%.2f"|format(it.delta) }}</span>
+        {% else %}
+        <span class="text-slate-500">&Delta; n/a</span>
+        {% endif %}
+
+        <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold
+                     {% if v.state == 'CLOSE' %}bg-rose-500/20 text-rose-300
+                     {% elif v.state == 'ADJUST' %}bg-amber-500/20 text-amber-300
+                     {% elif v.state == 'OK' %}bg-emerald-500/15 text-emerald-300
+                     {% else %}bg-slate-700/50 text-slate-300{% endif %}">{{ v.state }}</span>
+
+        <form method="post" action="/options/{{ r.id }}/close" class="ml-auto"
+              hx-post="/options/{{ r.id }}/close" hx-target="#optPositions" hx-swap="innerHTML">
+          <button type="submit" class="text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:border-rose-500 hover:text-rose-300 transition"
+                  title="Mark this spread closed in TradeHunter (close it in TWS yourself first)">Mark closed</button>
+        </form>
+      </div>
+
+      <p class="text-slate-400 mt-1 leading-relaxed">{{ v.action }}</p>
+      {% if it.error %}<p class="text-amber-300/80 mt-0.5">{{ it.error }}</p>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+
+  <p class="text-[10px] text-slate-500 mt-2 leading-relaxed">
+    Deltas are read live from TWS each time this refreshes. Check at least once a day —
+    the rule is that the short delta must not run past 0.35&ndash;0.40.
+  </p>
+</div>
+{% endif %}

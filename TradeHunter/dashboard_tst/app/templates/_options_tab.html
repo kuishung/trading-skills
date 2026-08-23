@@ -2,6 +2,11 @@
    Context: sym, chain (the dict from services.ibkr_options.get_chain).
    Rendered into the watchlist's right-hand pane by HTMX. #}
 
+{# Open tracked spreads. Rendered BEFORE the chain check on purpose: if TWS is
+   off you still need to see what you are holding and how long it has left —
+   hiding your open trades exactly when the feed dies is the wrong failure. #}
+<div id="optPositions" hx-get="/options/positions/all" hx-trigger="load" hx-swap="innerHTML"></div>
+
 {% if not chain.ok %}
 {# TWS off is a NORMAL state (the user starts it on demand), so this is a calm
    panel with the exact remedy — not a red error. #}
@@ -20,6 +25,122 @@
           hx-get="/options/{{ sym }}" hx-target="#tabOptions" hx-swap="innerHTML">Retry</button>
 </div>
 {% else %}
+
+{# ================= Bull put spread finder (Khoo credit-spread rules) =========
+   Grades the 45-60 DTE expiry against every entry rule and, when they pass,
+   names the exact pair to sell. It SUGGESTS — placing the order is the user's
+   action in TWS. ========================================================== #}
+{% if spread %}
+{% set cand = spread.candidate %}
+<div class="rounded-lg border {% if spread.ok %}border-emerald-700/60{% else %}border-slate-700{% endif %} bg-slate-900/50 p-3 mb-3">
+  <div class="flex flex-wrap items-center gap-2 mb-2">
+    <span class="font-semibold text-sm text-slate-100">Bull put spread</span>
+    {% if spread.ok %}
+    <span class="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 text-[11px] font-semibold">SETUP QUALIFIES</span>
+    {% else %}
+    <span class="px-2 py-0.5 rounded bg-slate-700/50 text-slate-300 text-[11px] font-semibold">NOT A SETUP TODAY</span>
+    {% endif %}
+    {% if level and level.trend %}<span class="text-[11px] text-slate-400">trend <span class="text-slate-200">{{ level.trend }}</span></span>{% endif %}
+    {% if level and level.signal %}<span class="text-[11px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300">{{ level.signal }}</span>{% endif %}
+    {% if iv and iv.iv_percentile is not none %}
+    <span class="ml-auto text-[11px] text-slate-400" title="Share of the last {{ iv.n }} trading days with IV below today's. From IBKR's own daily implied-vol history.">
+      IV pct <span class="tabular-nums {% if iv.iv_percentile >= 40 %}text-emerald-300{% else %}text-rose-300{% endif %}">{{ iv.iv_percentile }}%</span>
+      <span class="text-slate-500">(IV {{ iv.iv_current }}%, range {{ iv.iv_low }}&ndash;{{ iv.iv_high }}%)</span>
+    </span>
+    {% elif iv and iv.error %}
+    <span class="ml-auto text-[11px] text-rose-300" title="{{ iv.error }}">IV history unavailable</span>
+    {% endif %}
+  </div>
+
+  {# ---- the rule checklist: shown pass OR fail, so a rejection explains itself ---- #}
+  <ul class="text-[11px] space-y-0.5 mb-2">
+    {% for c in spread.checks %}
+    <li class="flex items-start gap-1.5">
+      <span class="shrink-0 {% if c.ok %}text-emerald-400{% elif c.blocking %}text-rose-400{% else %}text-amber-400{% endif %}">
+        {% if c.ok %}&#10003;{% elif c.blocking %}&#10007;{% else %}!{% endif %}
+      </span>
+      <span class="text-slate-400"><span class="text-slate-300">{{ c.name }}</span> &mdash; {{ c.detail }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+
+  {% if cand %}
+  <div class="rounded border border-slate-800 bg-slate-950/40 p-2 text-[11px]">
+    <div class="font-semibold text-slate-200 mb-1">
+      {% if spread.ok %}Sell{% else %}Closest pair (does not qualify){% endif %}
+      the vertical &mdash; {{ sym }} {{ cand.expiry }} ({{ cand.dte }}d)
+    </div>
+    <div class="grid grid-cols-2 gap-x-4 gap-y-0.5 tabular-nums">
+      <span class="text-slate-400">Sell to open</span><span class="text-rose-300">{{ "%g"|format(cand.short_strike) }} PUT &nbsp;&Delta; {{ cand.short_delta }}</span>
+      <span class="text-slate-400">Buy to open</span><span class="text-emerald-300">{{ "%g"|format(cand.long_strike) }} PUT{% if cand.long_delta %} &nbsp;&Delta; {{ cand.long_delta }}{% endif %}</span>
+      <span class="text-slate-400">Net credit</span><span class="text-slate-200">${{ "%.2f"|format(cand.credit) }} &times; 100 = ${{ "%.0f"|format(cand.max_profit) }}/contract</span>
+      <span class="text-slate-400">Width</span><span class="text-slate-200">${{ "%g"|format(cand.width) }}</span>
+      <span class="text-slate-400">Max loss</span><span class="text-slate-200">${{ "%.0f"|format(cand.max_loss) }}/contract</span>
+      <span class="text-slate-400">Breakeven</span><span class="text-slate-200">{{ cand.breakeven }}</span>
+      <span class="text-slate-400">Win prob (1&minus;&Delta;)</span><span class="text-slate-200">~{{ cand.pop_est }}%</span>
+      <span class="text-slate-400">Quantity</span><span class="text-slate-200">{{ cand.contracts }} contract{% if cand.contracts != 1 %}s{% endif %}</span>
+    </div>
+    <p class="text-slate-500 mt-1.5">Place as a single vertical combo, limit order at the mark, while the market is open.</p>
+    {# Records what you opened so the delta line can be watched. It does NOT send
+       an order — place the fill in TWS yourself, then track it here. #}
+    <form hx-post="/options/track" hx-target="#optPositions" hx-swap="innerHTML" class="mt-2">
+      <input type="hidden" name="symbol" value="{{ sym }}">
+      <input type="hidden" name="expiry" value="{{ cand.expiry }}">
+      <input type="hidden" name="short_strike" value="{{ cand.short_strike }}">
+      <input type="hidden" name="long_strike" value="{{ cand.long_strike }}">
+      <input type="hidden" name="credit" value="{{ cand.credit }}">
+      <input type="hidden" name="entry_delta" value="{{ cand.short_delta }}">
+      <label class="text-slate-400">contracts
+        <input type="number" name="contracts" min="1" max="500" value="{{ cand.contracts if cand.contracts > 0 else 1 }}"
+               class="w-16 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] tabular-nums focus:border-emerald-500 outline-none">
+      </label>
+      <button type="submit" class="ml-1 text-[11px] px-2 py-0.5 rounded border border-emerald-500/50 text-emerald-300 hover:bg-emerald-500/15 transition"
+              title="Track this spread so TradeHunter watches the short-put delta. Does not place an order.">Track this trade</button>
+    </form>
+  </div>
+
+  {# The sizing rule caps risk at 2% of NLV *only if the delta stop is honoured* —
+     the undefended max loss is several times that. Say so plainly. #}
+  {% if cand.contracts and cand.contracts > 0 %}
+  <p class="text-[11px] text-amber-300/90 mt-2 leading-relaxed">
+    &#9888; Sizing follows &ldquo;20% of max loss &lt; 2% of NLV&rdquo; &mdash;
+    <span class="tabular-nums">${{ "%.0f"|format(cand.capital_at_risk) }}</span> at risk on that basis.
+    But {{ cand.contracts }} contracts carry a full max loss of
+    <span class="tabular-nums">${{ "%.0f"|format(cand.max_loss * cand.contracts) }}</span>. The 2% only
+    holds if you actually close at the &Delta;{{ "%.2f"|format(0.35) }} line; a gap through your strikes
+    can cost the full amount.
+  </p>
+  {% endif %}
+
+  {# ---- risk/return profile: at expiry and at 15 DTE ---- #}
+  {% if cand.profile and cand.profile.prices %}
+  {% set pf = cand.profile %}
+  <details class="mt-2">
+    <summary class="cursor-pointer text-[11px] text-slate-400 hover:text-slate-200 select-none">Risk / return profile &#9662;</summary>
+    <div class="mt-1.5 overflow-x-auto">
+      <table class="text-[10px] tabular-nums">
+        <tr class="text-slate-500">
+          <td class="pr-2 text-left">Price</td>
+          {% for p in pf.prices %}{% if loop.index0 % 4 == 0 %}<td class="px-1 text-right">{{ "%g"|format(p) }}</td>{% endif %}{% endfor %}
+        </tr>
+        <tr>
+          <td class="pr-2 text-left text-slate-400">At expiry</td>
+          {% for v in pf.at_expiry %}{% if loop.index0 % 4 == 0 %}<td class="px-1 text-right {% if v >= 0 %}text-emerald-400{% else %}text-rose-400{% endif %}">{{ "%.0f"|format(v) }}</td>{% endif %}{% endfor %}
+        </tr>
+        {% if pf.at_15dte %}
+        <tr>
+          <td class="pr-2 text-left text-slate-400">15 DTE</td>
+          {% for v in pf.at_15dte %}{% if loop.index0 % 4 == 0 %}<td class="px-1 text-right {% if v >= 0 %}text-emerald-400/70{% else %}text-rose-400/70{% endif %}">{{ "%.0f"|format(v) }}</td>{% endif %}{% endfor %}
+        </tr>
+        {% endif %}
+      </table>
+      <p class="text-[10px] text-slate-500 mt-1">P/L in dollars for {{ cand.contracts if cand.contracts > 0 else 1 }} contract(s). The 15-DTE row is modelled (Black&ndash;Scholes at each leg's IV); the expiry row is arithmetic.</p>
+    </div>
+  </details>
+  {% endif %}
+  {% endif %}
+</div>
+{% endif %}
 
 {# ---- header: spot, expiry picker, ATM IV, data mode ---- #}
 <div class="flex flex-wrap items-center gap-2 mb-2 text-xs">

@@ -310,3 +310,123 @@ def status() -> dict:
     global _worker
     connected = bool(_worker and _worker.ib is not None and _worker.ib.isConnected())
     return {"connected": connected, "host": HOST, "port": PORT, "client_id": CLIENT_ID}
+
+
+# ---------------------------------------------------------------- IV regime
+async def _iv_stats(symbol: str) -> dict:
+    """IV percentile / rank from IBKR's own daily implied-vol history.
+
+    This is the piece Yahoo cannot give: ``whatToShow='OPTION_IMPLIED_VOLATILITY'``
+    returns a year of daily IV for the underlying, which is exactly what the
+    buy-vs-sell gate needs. Without it there is no IV percentile at all.
+    """
+    from ib_insync import Stock
+
+    w = _get_worker()
+    await _ensure_connected(w)
+    ib = w.ib
+
+    q = await ib.qualifyContractsAsync(Stock(symbol, "SMART", "USD"))
+    if not q:
+        raise OptionsUnavailable(f"IBKR does not recognise {symbol}.")
+
+    bars = await ib.reqHistoricalDataAsync(
+        q[0], endDateTime="", durationStr="1 Y", barSizeSetting="1 day",
+        whatToShow="OPTION_IMPLIED_VOLATILITY", useRTH=True, formatDate=1,
+    )
+    vals = [b.close for b in (bars or []) if b.close and b.close > 0]
+    if len(vals) < 30:
+        return {"iv_percentile": None, "iv_rank": None, "iv_current": None,
+                "n": len(vals),
+                "note": "Not enough IV history from IBKR to compute a percentile."}
+
+    cur = vals[-1]
+    below = sum(1 for v in vals if v < cur)
+    lo, hi = min(vals), max(vals)
+    return {
+        "iv_current": round(cur * 100, 1),
+        "iv_percentile": round(below / len(vals) * 100, 1),
+        "iv_rank": round((cur - lo) / (hi - lo) * 100, 1) if hi > lo else None,
+        "iv_low": round(lo * 100, 1),
+        "iv_high": round(hi * 100, 1),
+        "n": len(vals),
+        "note": "",
+    }
+
+
+async def _net_liquidation() -> float | None:
+    """Account net liquidation, for the 2%-of-NLV sizing rule."""
+    w = _get_worker()
+    await _ensure_connected(w)
+    rows = await w.ib.accountSummaryAsync()
+    for r in rows:
+        if r.tag == "NetLiquidation":
+            try:
+                return float(r.value)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def iv_stats(symbol: str) -> dict:
+    """IV percentile/rank for one symbol. Never raises."""
+    sym = (symbol or "").strip().upper()
+    try:
+        return {"ok": True, **_get_worker().submit(_iv_stats(sym), REQUEST_TIMEOUT)}
+    except OptionsUnavailable as exc:
+        return {"ok": False, "error": str(exc)}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+
+def net_liquidation() -> float | None:
+    """Account NLV, or None if TWS is off / the account has no summary."""
+    try:
+        return _get_worker().submit(_net_liquidation(), REQUEST_TIMEOUT)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def chain_for_dte(symbol: str, dte_min: int, dte_max: int) -> dict:
+    """Chain for the expiry that best fits a DTE window.
+
+    Prefers an expiry inside [dte_min, dte_max]; if none is listed, falls back to
+    the closest one and lets the caller's DTE check report the miss.
+    """
+    probe = get_chain(symbol)
+    if not probe.get("ok"):
+        return probe
+    exps = probe.get("expirations") or []
+    inside = [e for e in exps if e.get("dte") is not None and dte_min <= e["dte"] <= dte_max]
+    if inside:
+        target = min(inside, key=lambda e: abs(e["dte"] - (dte_min + dte_max) / 2))
+    else:
+        dated = [e for e in exps if e.get("dte") is not None]
+        if not dated:
+            return probe
+        target = min(dated, key=lambda e: abs(e["dte"] - (dte_min + dte_max) / 2))
+    if target["value"] == probe.get("expiry"):
+        return probe
+    return get_chain(symbol, target["value"])
+
+
+def short_put_delta(symbol: str, expiry_iso: str, strike: float) -> dict:
+    """Live |delta| and DTE for one short put — the input to the management rule.
+
+    Re-resolves from (symbol, expiry, strike) through the normal chain fetch, so
+    it shares the 20s cache and the same TWS-off handling as everything else.
+    """
+    exp = (expiry_iso or "").replace("-", "")
+    chain = get_chain(symbol, exp)
+    if not chain.get("ok"):
+        return {"ok": False, "error": chain.get("error", "no chain"), "delta": None, "dte": None}
+    match = next((p for p in (chain.get("puts") or [])
+                  if abs(p["strike"] - float(strike)) < 1e-6), None)
+    if match is None:
+        return {"ok": False, "delta": None, "dte": chain.get("dte"),
+                "error": (f"{symbol} {expiry_iso} {strike:g}P is outside the "
+                          f"±{STRIKE_WINDOW}-strike window being quoted — "
+                          "raise TST_IBKR_STRIKE_WINDOW to keep it in view.")}
+    d = match.get("delta")
+    return {"ok": True, "delta": abs(d) if d is not None else None,
+            "dte": chain.get("dte"), "mid": match.get("mid"), "error": None}
