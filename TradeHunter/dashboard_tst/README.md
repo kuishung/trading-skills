@@ -129,6 +129,25 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-23 - v4.27: bridge answers Chrome's Private Network Access preflight
+Reported: the Options tab said "No IBKR bridge on http://127.0.0.1:9224" from
+**tradehunter.net** while the bridge was running and answering `curl` perfectly.
+
+**Cause: Chrome Private Network Access (104+).** A page on a PUBLIC origin
+(`https://tradehunter.net`) reaching a PRIVATE address (`127.0.0.1`) is preflighted **even
+for a simple GET**, and the browser silently drops the request unless the preflight response
+carries `Access-Control-Allow-Private-Network: true`. The bridge sent correct CORS headers
+but not that one, so every fetch died before it left the browser — indistinguishable, from
+the page's side, from the bridge not running.
+
+**Why my testing missed it:** I only ever drove the tab from `localhost:8011`, which is
+**private-to-private** and never triggers PNA. The bug exists only on the real HTTPS site.
+A reminder that "verified in dev" is not verified for anything whose behaviour depends on
+the origin's public/private classification.
+
+The bridge now echoes the header when the preflight asks for it (and only then). Verified
+by replaying the exact preflight Chrome sends.
+
 ### 2026-08-23 - v4.26: options move to a per-member local bridge (server drops TWS)
 User: *"the TWS is on the user PC not on the server. each user will use login their own TWS
 to use this function."* That invalidates the server-as-IBKR-client design shipped in

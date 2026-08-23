@@ -356,6 +356,15 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "Content-Type")
             self.send_header("Vary", "Origin")
+            # Private Network Access (Chrome 104+). A page on a PUBLIC origin
+            # (https://tradehunter.net) reaching a PRIVATE address (127.0.0.1) is
+            # preflighted even for a simple GET, and the browser drops the request
+            # unless this header comes back. Without it the tab reports "no bridge"
+            # while the bridge is plainly running — and it only shows up from the
+            # real site, because localhost -> localhost is private->private and
+            # never triggers PNA at all.
+            if self.headers.get("Access-Control-Request-Private-Network") == "true":
+                self.send_header("Access-Control-Allow-Private-Network", "true")
         self.end_headers()
 
     def do_GET(self):  # noqa: N802

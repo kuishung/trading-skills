@@ -62,6 +62,16 @@ reachable from the network.
 
 ## Changelog
 
+### 2026-08-23 — Private Network Access preflight
+The tab reported "no bridge" from **tradehunter.net** while the bridge was demonstrably
+running and answering curl. Cause: **Chrome's Private Network Access** (104+). A page on a
+PUBLIC origin reaching a PRIVATE address (127.0.0.1) is preflighted even for a simple GET,
+and the browser drops the request unless the response carries
+`Access-Control-Allow-Private-Network: true`. The bridge now echoes it when asked.
+
+This could not show up in local testing: `localhost:8011 -> 127.0.0.1:9224` is
+private-to-private, which never triggers PNA. Only the real HTTPS site does.
+
 ### 2026-08-23 — created
 Extracted from the server (`app/services/ibkr_options.py`, deleted) when the
 requirement landed that each member uses their own TWS login. Carries over the
