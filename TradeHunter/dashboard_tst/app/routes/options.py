@@ -1,23 +1,26 @@
-"""Options tab — bull put spread finder + chain, for the selected watchlist ticker.
+"""Options tab — bull put spread finder + chain, per member, off THEIR OWN TWS.
 
-One HTMX endpoint returning a fragment, because the tab is swapped into the
-watchlist's right-hand pane rather than being its own page.
+Architecture (changed in v4.26)
+------------------------------
+TWS runs on each member's PC under their own login, so the SERVER never connects
+to a broker. The browser fetches from a bridge on ``127.0.0.1:9224``
+(``dashboard_tst/bridge/ibkr_bridge.py``) and POSTs the result here; this module
+only evaluates rules and renders. Same shape as the TradingView bridge.
 
-Everything the tab needs comes from ONE pass so opening it costs a single TWS
-round-trip: the chain is fetched for the expiry that best fits the 45-60 DTE
-window, and that same snapshot feeds both the spread selection and the table.
+    browser ──fetch──> 127.0.0.1:9224 ──> that member's TWS
+            ──POST───> here: rule evaluation + rendering only
 
-The service never raises on a dead TWS, so this route always renders: either the
-analysis, or a panel explaining exactly what to switch on.
+That is what makes this multi-user: every member is graded against their own
+chain, their own IV history and their own net liquidation, and nobody's broker
+session is reachable from the server.
 
-This SUGGESTS and MONITORS. It never places an order — the fill is the user's
-action in TWS.
+Nothing here places, modifies or cancels an order.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Body, Depends, Form, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
@@ -25,7 +28,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import MATPLevel, OptionSpread, User, _utcnow
 from ..security import require_user
-from ..services import bull_put, ibkr_options
+from ..services import bull_put
 
 router = APIRouter(prefix="/options", tags=["options"])
 
@@ -33,62 +36,80 @@ templates = Jinja2Templates(
     directory=str(Path(__file__).resolve().parent.parent / "templates")
 )
 
+BRIDGE_PORT = 9224      # 9223 is the TradingView bridge
+
 
 def _earnings_date(symbol: str) -> str | None:
-    """Next earnings (ISO) — feeds the 'no earnings inside the trade' gate."""
+    """Next earnings (ISO) — feeds the 'no earnings inside the trade' gate.
+
+    Stays server-side: it is public data with no broker involved, so there is no
+    reason to make every member's bridge fetch it.
+    """
     try:
         from ..services.prices import fetch_next_earnings
 
-        ne = fetch_next_earnings(symbol)
-        return (ne or {}).get("date")
+        return (fetch_next_earnings(symbol) or {}).get("date")
     except Exception:  # noqa: BLE001
         return None
 
 
 @router.get("/{symbol}", response_class=HTMLResponse)
 def options_tab(symbol: str, request: Request,
-                exp: str | None = None,
-                user: User = Depends(require_user),
-                db: Session = Depends(get_db)):
-    """Spread suggestion + chain for `symbol` (optionally a specific expiry)."""
+                user: User = Depends(require_user)):
+    """Shell for the tab. The browser fills it from the member's local bridge."""
     sym = (symbol or "").strip().upper()
+    return templates.TemplateResponse(
+        request, "_options_tab.html",
+        {"user": user, "sym": sym, "bridge_port": BRIDGE_PORT,
+         "dte_min": bull_put.DTE_MIN, "dte_max": bull_put.DTE_MAX},
+    )
 
-    # An explicit expiry means the user is browsing; otherwise aim at 45-60 DTE.
-    if exp:
-        chain = ibkr_options.get_chain(sym, exp)
-    else:
-        chain = ibkr_options.chain_for_dte(sym, bull_put.DTE_MIN, bull_put.DTE_MAX)
 
-    ctx = {"user": user, "sym": sym, "chain": chain,
-           "iv": None, "nlv": None, "spread": None, "earnings": None,
-           "level": None, "nlv_source": None}
+@router.post("/{symbol}/analyze", response_class=HTMLResponse)
+def analyze(symbol: str, request: Request,
+            payload: dict = Body(...),
+            user: User = Depends(require_user),
+            db: Session = Depends(get_db)):
+    """Grade a chain the member's browser fetched from their own TWS.
 
-    if chain.get("ok"):
-        iv = ibkr_options.iv_stats(sym)
-        nlv = ibkr_options.net_liquidation()
+    The body is whatever their bridge returned, so it is treated as untrusted
+    input: every number is re-validated inside ``bull_put.select`` before use.
+    """
+    sym = (symbol or "").strip().upper()
+    chain = payload.get("chain") or {}
+    iv = payload.get("iv") or {}
+    nlv = payload.get("nlv")
+    try:
+        nlv = float(nlv) if nlv is not None else None
+    except (TypeError, ValueError):
+        nlv = None
+
+    ctx = {"user": user, "sym": sym, "chain": chain, "iv": iv, "nlv": nlv,
+           "spread": None, "earnings": None, "level": None,
+           "nlv_source": payload.get("nlv_source") or "account"}
+
+    if chain.get("ok") and chain.get("spot"):
         earnings = _earnings_date(sym)
-        level = db.query(MATPLevel).filter(MATPLevel.symbol == sym).first()
-
-        ctx.update({"iv": iv, "nlv": nlv, "earnings": earnings, "level": level,
-                    "nlv_source": ibkr_options.nlv_source()})
+        ctx["earnings"] = earnings
+        ctx["level"] = db.query(MATPLevel).filter(MATPLevel.symbol == sym).first()
         ctx["spread"] = bull_put.select(
             symbol=sym,
-            spot=chain["spot"],
-            expiry=chain["expiry_label"],
-            dte=chain.get("dte") or 0,
+            spot=float(chain["spot"]),
+            expiry=chain.get("expiry_label") or "",
+            dte=int(chain.get("dte") or 0),
             puts=chain.get("puts") or [],
-            iv_percentile=(iv or {}).get("iv_percentile"),
+            iv_percentile=iv.get("iv_percentile"),
             earnings_date=earnings,
             net_liquidation=nlv,
         )
 
-    return templates.TemplateResponse(request, "_options_tab.html", ctx)
+    return templates.TemplateResponse(request, "_options_analysis.html", ctx)
 
 
 # ---------------------------------------------------------------- tracking
 # Tracking only. Nothing below places, modifies or cancels an order — the fill
-# happens in TWS by the user's own hand; this records what they say they opened
-# so the delta line can be watched against it.
+# happens in TWS by the member's own hand; this records what they say they
+# opened so the delta line can be watched against it.
 
 @router.post("/track", response_class=HTMLResponse)
 def track_spread(request: Request,
@@ -101,15 +122,14 @@ def track_spread(request: Request,
                  entry_delta: float = Form(0.0),
                  user: User = Depends(require_user),
                  db: Session = Depends(get_db)):
-    row = OptionSpread(
+    db.add(OptionSpread(
         user_id=user.id, symbol=symbol.strip().upper(), strategy="bull_put",
         expiry=expiry, short_strike=short_strike, long_strike=long_strike,
         credit=credit or None, contracts=max(1, contracts),
         entry_delta=entry_delta or None, status="open",
-    )
-    db.add(row)
+    ))
     db.commit()
-    return _positions_fragment(request, user, db)
+    return _positions(request, user, db, {})
 
 
 @router.post("/{spread_id}/close", response_class=HTMLResponse)
@@ -118,40 +138,44 @@ def close_spread(spread_id: int, request: Request,
                  db: Session = Depends(get_db)):
     row = (db.query(OptionSpread)
              .filter(OptionSpread.id == spread_id,
-                     OptionSpread.user_id == user.id)     # scoped: never another user's
+                     OptionSpread.user_id == user.id)   # scoped: never another member's
              .one_or_none())
     if row is not None:
         row.status = "closed"
         row.closed_at = _utcnow()
         db.commit()
-    return _positions_fragment(request, user, db)
+    return _positions(request, user, db, {})
 
 
-def _positions_fragment(request: Request, user: User, db: Session) -> HTMLResponse:
-    """Open spreads, each graded against the management rule with a LIVE delta."""
+def _positions(request: Request, user: User, db: Session, deltas: dict) -> HTMLResponse:
+    """Open spreads graded against the management rule.
+
+    ``deltas`` maps spread id -> live |delta|, supplied by the browser from the
+    member's own bridge. Without it the rows still render (DTE is computed here):
+    seeing what you hold must never depend on the feed being up.
+    """
+    import datetime as _d
+
     rows = (db.query(OptionSpread)
               .filter(OptionSpread.user_id == user.id, OptionSpread.status == "open")
               .order_by(OptionSpread.opened_at.desc())
               .all())
     items = []
     for r in rows:
-        live = ibkr_options.short_put_delta(r.symbol, r.expiry, r.short_strike)
-        dte = live.get("dte")
-        if dte is None:
-            try:
-                import datetime as _d
-                dte = (_d.date.fromisoformat(r.expiry) - _d.date.today()).days
-            except ValueError:
-                dte = 0
-        items.append({
-            "row": r,
-            "delta": live.get("delta"),
-            "dte": dte,
-            "error": live.get("error"),
-            "verdict": bull_put.review(short_delta=live.get("delta"), dte=dte),
-        })
+        try:
+            dte = (_d.date.fromisoformat(r.expiry) - _d.date.today()).days
+        except ValueError:
+            dte = 0
+        d = deltas.get(str(r.id), deltas.get(r.id))
+        try:
+            d = abs(float(d)) if d is not None else None
+        except (TypeError, ValueError):
+            d = None
+        items.append({"row": r, "delta": d, "dte": dte, "error": None,
+                      "verdict": bull_put.review(short_delta=d, dte=dte)})
     return templates.TemplateResponse(
-        request, "_options_positions.html", {"user": user, "items": items}
+        request, "_options_positions.html",
+        {"user": user, "items": items, "bridge_port": BRIDGE_PORT},
     )
 
 
@@ -159,4 +183,14 @@ def _positions_fragment(request: Request, user: User, db: Session) -> HTMLRespon
 def positions(request: Request,
               user: User = Depends(require_user),
               db: Session = Depends(get_db)):
-    return _positions_fragment(request, user, db)
+    """Open spreads without live deltas (first paint, and the TWS-off case)."""
+    return _positions(request, user, db, {})
+
+
+@router.post("/positions/grade", response_class=HTMLResponse)
+def positions_grade(request: Request,
+                    payload: dict = Body(...),
+                    user: User = Depends(require_user),
+                    db: Session = Depends(get_db)):
+    """Re-grade open spreads from deltas the browser read off its own bridge."""
+    return _positions(request, user, db, payload.get("deltas") or {})

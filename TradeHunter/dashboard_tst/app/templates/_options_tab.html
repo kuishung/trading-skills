@@ -1,256 +1,132 @@
-{# Options chain + Greeks for the selected ticker, sourced from TWS / IB Gateway.
-   Context: sym, chain (the dict from services.ibkr_options.get_chain).
-   Rendered into the watchlist's right-hand pane by HTMX. #}
+{# Options tab SHELL. Context: sym, bridge_port, dte_min, dte_max.
 
-{# Open tracked spreads. Rendered BEFORE the chain check on purpose: if TWS is
-   off you still need to see what you are holding and how long it has left —
-   hiding your open trades exactly when the feed dies is the wrong failure. #}
+   TWS runs on the MEMBER's own PC, so the server has no broker connection at
+   all. This shell asks the member's local bridge (127.0.0.1:<bridge_port>,
+   dashboard_tst/bridge/ibkr_bridge.py) for their chain / IV history / net
+   liquidation, then POSTs that to the server, which only grades and renders.
+   Same shape as the "Plot on TV" bridge in base.html.
+
+   Browsers permit an HTTPS page to fetch http://127.0.0.1 (loopback counts as a
+   trustworthy origin), which is what makes this work with nothing exposed. #}
+
+{# Open tracked spreads. Rendered first and independently of the bridge: if TWS
+   is off you still need to see what you hold and how long it has left. #}
 <div id="optPositions" hx-get="/options/positions/all" hx-trigger="load" hx-swap="innerHTML"></div>
 
-{% if not chain.ok %}
-{# TWS off is a NORMAL state (the user starts it on demand), so this is a calm
-   panel with the exact remedy — not a red error. #}
-<div class="rounded-lg border border-slate-800 bg-slate-900/40 p-4 text-sm">
-  <div class="flex items-center gap-2 mb-2">
-    <span class="w-2 h-2 rounded-full bg-amber-400 shrink-0"></span>
-    <span class="font-semibold text-slate-200">Options data unavailable</span>
-    <span class="ml-auto text-[11px] text-slate-500">{{ chain.source }}</span>
+<div id="optAnalysis">
+  <div class="rounded-lg border border-slate-800 bg-slate-900/40 p-4 text-sm text-slate-400">
+    <span class="inline-block w-2 h-2 rounded-full bg-sky-400 animate-pulse mr-1.5"></span>
+    Reading {{ sym }} from your IBKR bridge&hellip;
+    <span class="text-[11px] text-slate-500">(a cold chain takes ~40s)</span>
   </div>
-  <p class="text-slate-400 leading-relaxed">{{ chain.error }}</p>
-  <p class="text-[11px] text-slate-500 mt-3 leading-relaxed">
-    Turn on TWS (or IB Gateway) and retry &mdash; chains load on demand, nothing is cached
-    between sessions.
-  </p>
-  <button type="button" class="mt-3 text-xs px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition"
-          hx-get="/options/{{ sym }}" hx-target="#tabOptions" hx-swap="innerHTML">Retry</button>
-</div>
-{% else %}
-
-{# ================= Bull put spread finder (Khoo credit-spread rules) =========
-   Grades the 45-60 DTE expiry against every entry rule and, when they pass,
-   names the exact pair to sell. It SUGGESTS — placing the order is the user's
-   action in TWS. ========================================================== #}
-{% if spread %}
-{% set cand = spread.candidate %}
-<div class="rounded-lg border {% if spread.ok %}border-emerald-700/60{% else %}border-slate-700{% endif %} bg-slate-900/50 p-3 mb-3">
-  <div class="flex flex-wrap items-center gap-2 mb-2">
-    <span class="font-semibold text-sm text-slate-100">Bull put spread</span>
-    {% if spread.ok %}
-    <span class="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 text-[11px] font-semibold">SETUP QUALIFIES</span>
-    {% else %}
-    <span class="px-2 py-0.5 rounded bg-slate-700/50 text-slate-300 text-[11px] font-semibold">NOT A SETUP TODAY</span>
-    {% endif %}
-    {% if level and level.trend %}<span class="text-[11px] text-slate-400">trend <span class="text-slate-200">{{ level.trend }}</span></span>{% endif %}
-    {% if level and level.signal %}<span class="text-[11px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300">{{ level.signal }}</span>{% endif %}
-    {% if iv and iv.iv_percentile is not none %}
-    <span class="ml-auto text-[11px] text-slate-400" title="Share of the last {{ iv.n }} trading days with IV below today's. From IBKR's own daily implied-vol history.">
-      IV pct <span class="tabular-nums {% if iv.iv_percentile >= 40 %}text-emerald-300{% else %}text-rose-300{% endif %}">{{ iv.iv_percentile }}%</span>
-      <span class="text-slate-500">(IV {{ iv.iv_current }}%, range {{ iv.iv_low }}&ndash;{{ iv.iv_high }}%)</span>
-    </span>
-    {% elif iv and iv.error %}
-    <span class="ml-auto text-[11px] text-rose-300" title="{{ iv.error }}">IV history unavailable</span>
-    {% endif %}
-  </div>
-
-  {# ---- the rule checklist: shown pass OR fail, so a rejection explains itself ---- #}
-  <ul class="text-[11px] space-y-0.5 mb-2">
-    {% for c in spread.checks %}
-    <li class="flex items-start gap-1.5">
-      <span class="shrink-0 {% if c.ok %}text-emerald-400{% elif c.blocking %}text-rose-400{% else %}text-amber-400{% endif %}">
-        {% if c.ok %}&#10003;{% elif c.blocking %}&#10007;{% else %}!{% endif %}
-      </span>
-      <span class="text-slate-400"><span class="text-slate-300">{{ c.name }}</span> &mdash; {{ c.detail }}</span>
-    </li>
-    {% endfor %}
-  </ul>
-
-  {% if cand %}
-  <div class="rounded border border-slate-800 bg-slate-950/40 p-2 text-[11px]">
-    <div class="font-semibold text-slate-200 mb-1">
-      {% if spread.ok %}Sell{% else %}Closest pair (does not qualify){% endif %}
-      the vertical &mdash; {{ sym }} {{ cand.expiry }} ({{ cand.dte }}d)
-    </div>
-    <div class="grid grid-cols-2 gap-x-4 gap-y-0.5 tabular-nums">
-      <span class="text-slate-400">Sell to open</span><span class="text-rose-300">{{ "%g"|format(cand.short_strike) }} PUT &nbsp;&Delta; {{ cand.short_delta }}</span>
-      <span class="text-slate-400">Buy to open</span><span class="text-emerald-300">{{ "%g"|format(cand.long_strike) }} PUT{% if cand.long_delta %} &nbsp;&Delta; {{ cand.long_delta }}{% endif %}</span>
-      <span class="text-slate-400">Net credit</span><span class="text-slate-200">${{ "%.2f"|format(cand.credit) }} &times; 100 = ${{ "%.0f"|format(cand.max_profit) }}/contract</span>
-      <span class="text-slate-400">Width</span><span class="text-slate-200">${{ "%g"|format(cand.width) }}</span>
-      <span class="text-slate-400">Max loss</span><span class="text-slate-200">${{ "%.0f"|format(cand.max_loss) }}/contract</span>
-      <span class="text-slate-400">Breakeven</span><span class="text-slate-200">{{ cand.breakeven }}</span>
-      <span class="text-slate-400">Win prob (1&minus;&Delta;)</span><span class="text-slate-200">~{{ cand.pop_est }}%</span>
-      <span class="text-slate-400">Quantity</span><span class="text-slate-200">{{ cand.contracts }} contract{% if cand.contracts != 1 %}s{% endif %}{% if nlv_source == 'override' %} <span class="text-amber-300/90" title="Sized against TST_NLV_OVERRIDE, not the connected account. Keep it current.">(NLV set manually)</span>{% endif %}</span>
-    </div>
-    <p class="text-slate-500 mt-1.5">Place as a single vertical combo, limit order at the mark, while the market is open.</p>
-    {# Records what you opened so the delta line can be watched. It does NOT send
-       an order — place the fill in TWS yourself, then track it here. #}
-    <form hx-post="/options/track" hx-target="#optPositions" hx-swap="innerHTML" class="mt-2">
-      <input type="hidden" name="symbol" value="{{ sym }}">
-      <input type="hidden" name="expiry" value="{{ cand.expiry }}">
-      <input type="hidden" name="short_strike" value="{{ cand.short_strike }}">
-      <input type="hidden" name="long_strike" value="{{ cand.long_strike }}">
-      <input type="hidden" name="credit" value="{{ cand.credit }}">
-      <input type="hidden" name="entry_delta" value="{{ cand.short_delta }}">
-      <label class="text-slate-400">contracts
-        <input type="number" name="contracts" min="1" max="500" value="{{ cand.contracts if cand.contracts > 0 else 1 }}"
-               class="w-16 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] tabular-nums focus:border-emerald-500 outline-none">
-      </label>
-      <button type="submit" class="ml-1 text-[11px] px-2 py-0.5 rounded border border-emerald-500/50 text-emerald-300 hover:bg-emerald-500/15 transition"
-              title="Track this spread so TradeHunter watches the short-put delta. Does not place an order.">Track this trade</button>
-    </form>
-  </div>
-
-  {# The sizing rule caps risk at 2% of NLV *only if the delta stop is honoured* —
-     the undefended max loss is several times that. Say so plainly. #}
-  {% if cand.contracts and cand.contracts > 0 %}
-  <p class="text-[11px] text-amber-300/90 mt-2 leading-relaxed">
-    &#9888; Sizing follows &ldquo;20% of max loss &lt; 2% of NLV&rdquo; &mdash;
-    <span class="tabular-nums">${{ "%.0f"|format(cand.capital_at_risk) }}</span> at risk on that basis.
-    But {{ cand.contracts }} contracts carry a full max loss of
-    <span class="tabular-nums">${{ "%.0f"|format(cand.max_loss * cand.contracts) }}</span>. The 2% only
-    holds if you actually close at the &Delta;{{ "%.2f"|format(0.35) }} line; a gap through your strikes
-    can cost the full amount.
-  </p>
-  {% endif %}
-
-  {# ---- risk/return profile: at expiry and at 15 DTE ---- #}
-  {% if cand.profile and cand.profile.prices %}
-  {% set pf = cand.profile %}
-  <details class="mt-2">
-    <summary class="cursor-pointer text-[11px] text-slate-400 hover:text-slate-200 select-none">Risk / return profile &#9662;</summary>
-    <div class="mt-1.5 overflow-x-auto">
-      <table class="text-[10px] tabular-nums">
-        <tr class="text-slate-500">
-          <td class="pr-2 text-left">Price</td>
-          {% for p in pf.prices %}{% if loop.index0 % 4 == 0 %}<td class="px-1 text-right">{{ "%g"|format(p) }}</td>{% endif %}{% endfor %}
-        </tr>
-        <tr>
-          <td class="pr-2 text-left text-slate-400">At expiry</td>
-          {% for v in pf.at_expiry %}{% if loop.index0 % 4 == 0 %}<td class="px-1 text-right {% if v >= 0 %}text-emerald-400{% else %}text-rose-400{% endif %}">{{ "%.0f"|format(v) }}</td>{% endif %}{% endfor %}
-        </tr>
-        {% if pf.at_15dte %}
-        <tr>
-          <td class="pr-2 text-left text-slate-400">15 DTE</td>
-          {% for v in pf.at_15dte %}{% if loop.index0 % 4 == 0 %}<td class="px-1 text-right {% if v >= 0 %}text-emerald-400/70{% else %}text-rose-400/70{% endif %}">{{ "%.0f"|format(v) }}</td>{% endif %}{% endfor %}
-        </tr>
-        {% endif %}
-      </table>
-      <p class="text-[10px] text-slate-500 mt-1">P/L in dollars for {{ cand.contracts if cand.contracts > 0 else 1 }} contract(s). The 15-DTE row is modelled (Black&ndash;Scholes at each leg's IV); the expiry row is arithmetic.</p>
-    </div>
-  </details>
-  {% endif %}
-  {% endif %}
-</div>
-{% endif %}
-
-{# ---- header: spot, expiry picker, ATM IV, data mode ---- #}
-<div class="flex flex-wrap items-center gap-2 mb-2 text-xs">
-  <span class="font-semibold text-slate-100">{{ chain.symbol }}</span>
-  <span class="text-slate-400">spot <span class="tabular-nums text-slate-200">{{ "%.2f"|format(chain.spot) }}</span></span>
-
-  <label class="flex items-center gap-1 text-slate-400">
-    expiry
-    <select class="rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-xs focus:border-emerald-500 outline-none"
-            hx-get="/options/{{ sym }}" hx-target="#tabOptions" hx-swap="innerHTML"
-            hx-trigger="change" name="exp">
-      {% for e in chain.expirations %}
-      <option value="{{ e.value }}" {% if e.value == chain.expiry %}selected{% endif %}>
-        {{ e.label }}{% if e.dte is not none %} &middot; {{ e.dte }}d{% endif %}
-      </option>
-      {% endfor %}
-    </select>
-  </label>
-
-  {% if chain.atm_iv is not none %}
-  {# ATM IV is the number the IV-regime rule is read off. It is NOT IV percentile
-     — that needs history we don't collect yet — so it is labelled plainly. #}
-  <span class="text-slate-400" title="At-the-money implied volatility for this expiry. This is the CURRENT level, not IV percentile/rank.">
-    ATM IV <span class="tabular-nums text-yellow-300">{{ chain.atm_iv }}%</span>
-  </span>
-  {% endif %}
-
-  <span class="ml-auto flex items-center gap-2">
-    {% if chain.data_mode == 'delayed' %}
-    <span class="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 text-[11px]"
-          title="No live OPRA entitlement on this IBKR account — quotes and Greeks are delayed.">delayed</span>
-    {% else %}
-    <span class="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 text-[11px]">live</span>
-    {% endif %}
-    {% if not chain.greeks_ok %}
-    <span class="px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-300 text-[11px]"
-          title="IBKR returned quotes but no option model — Greeks columns will be blank.">no greeks</span>
-    {% endif %}
-    <span class="text-[11px] text-slate-500">&plusmn;{{ chain.strike_window }} strikes</span>
-  </span>
 </div>
 
-{# ---- chain table: calls | strike | puts, mirrored around the spot row ----
-   Scroll area inherits the invisible-until-hover scrollbar from base.html. #}
-<div class="flex-1 min-h-0 overflow-auto rounded-lg border border-slate-800">
-  <table class="w-full text-[11px] tabular-nums border-collapse">
-    <thead class="sticky top-0 z-10 bg-slate-900 text-slate-400">
-      <tr>
-        <th colspan="7" class="px-2 py-1 text-center border-b border-r border-slate-800 text-emerald-400 font-semibold">CALLS</th>
-        <th class="px-2 py-1 text-center border-b border-slate-800">Strike</th>
-        <th colspan="7" class="px-2 py-1 text-center border-b border-l border-slate-800 text-rose-400 font-semibold">PUTS</th>
-      </tr>
-      <tr class="text-[10px]">
-        {% for h in ['Vol','Vega','Theta','Gamma','Delta','IV','Bid/Ask'] %}
-        <th class="px-1.5 py-1 text-right border-b border-slate-800 font-normal">{{ h }}</th>
-        {% endfor %}
-        <th class="px-2 py-1 text-center border-b border-slate-800"></th>
-        {% for h in ['Bid/Ask','IV','Delta','Gamma','Theta','Vega','Vol'] %}
-        <th class="px-1.5 py-1 text-left border-b border-slate-800 font-normal">{{ h }}</th>
-        {% endfor %}
-      </tr>
-    </thead>
-    <tbody>
-      {% set pmap = {} %}
-      {% for p in chain.puts %}{% set _ = pmap.__setitem__(p.strike, p) %}{% endfor %}
-      {% for c in chain.calls %}
-      {% set p = pmap.get(c.strike) %}
-      {% set itm_c = c.strike < chain.spot %}
-      {% set itm_p = c.strike > chain.spot %}
-      <tr class="hover:bg-slate-800/40">
-        {# calls, read right-to-left toward the strike #}
-        <td class="px-1.5 py-0.5 text-right {% if itm_c %}bg-emerald-500/5{% endif %} text-slate-500">{{ c.volume if c.volume is not none else '' }}</td>
-        <td class="px-1.5 py-0.5 text-right {% if itm_c %}bg-emerald-500/5{% endif %} text-slate-500">{{ c.vega if c.vega is not none else '' }}</td>
-        <td class="px-1.5 py-0.5 text-right {% if itm_c %}bg-emerald-500/5{% endif %} text-slate-500">{{ c.theta if c.theta is not none else '' }}</td>
-        <td class="px-1.5 py-0.5 text-right {% if itm_c %}bg-emerald-500/5{% endif %} text-slate-500">{{ c.gamma if c.gamma is not none else '' }}</td>
-        <td class="px-1.5 py-0.5 text-right {% if itm_c %}bg-emerald-500/5{% endif %} text-sky-300">{{ c.delta if c.delta is not none else '' }}</td>
-        <td class="px-1.5 py-0.5 text-right {% if itm_c %}bg-emerald-500/5{% endif %} text-yellow-300">{{ c.iv if c.iv is not none else '' }}</td>
-        <td class="px-1.5 py-0.5 text-right {% if itm_c %}bg-emerald-500/5{% endif %} border-r border-slate-800 text-slate-200"
-            {% if c.spread_pct is not none %}title="spread {{ c.spread_pct }}% of mid"{% endif %}>
-          {% if c.bid is not none %}{{ "%.2f"|format(c.bid) }}/{{ "%.2f"|format(c.ask) }}{% else %}&mdash;{% endif %}
-        </td>
+<script>
+(function () {
+  var BRIDGE = 'http://127.0.0.1:{{ bridge_port }}';
+  var SYM = {{ sym|tojson }};
+  var DTE_MIN = {{ dte_min }}, DTE_MAX = {{ dte_max }};
+  var box = document.getElementById('optAnalysis');
+  if (!box) return;
 
-        {# strike — the spot row is marked so the money-ness is readable at a glance #}
-        <td class="px-2 py-0.5 text-center font-semibold {% if c.strike == (chain.calls|map(attribute='strike')|list|sort|first) %}{% endif %} text-slate-100 bg-slate-800/40">{{ "%g"|format(c.strike) }}</td>
+  function get(path) {
+    return fetch(BRIDGE + path, { mode: 'cors', cache: 'no-store' })
+      .then(function (r) { return r.json(); });
+  }
 
-        {# puts, read left-to-right away from the strike #}
-        {% if p %}
-        <td class="px-1.5 py-0.5 {% if itm_p %}bg-rose-500/5{% endif %} border-l border-slate-800 text-slate-200"
-            {% if p.spread_pct is not none %}title="spread {{ p.spread_pct }}% of mid"{% endif %}>
-          {% if p.bid is not none %}{{ "%.2f"|format(p.bid) }}/{{ "%.2f"|format(p.ask) }}{% else %}&mdash;{% endif %}
-        </td>
-        <td class="px-1.5 py-0.5 {% if itm_p %}bg-rose-500/5{% endif %} text-yellow-300">{{ p.iv if p.iv is not none else '' }}</td>
-        <td class="px-1.5 py-0.5 {% if itm_p %}bg-rose-500/5{% endif %} text-sky-300">{{ p.delta if p.delta is not none else '' }}</td>
-        <td class="px-1.5 py-0.5 {% if itm_p %}bg-rose-500/5{% endif %} text-slate-500">{{ p.gamma if p.gamma is not none else '' }}</td>
-        <td class="px-1.5 py-0.5 {% if itm_p %}bg-rose-500/5{% endif %} text-slate-500">{{ p.theta if p.theta is not none else '' }}</td>
-        <td class="px-1.5 py-0.5 {% if itm_p %}bg-rose-500/5{% endif %} text-slate-500">{{ p.vega if p.vega is not none else '' }}</td>
-        <td class="px-1.5 py-0.5 {% if itm_p %}bg-rose-500/5{% endif %} text-slate-500">{{ p.volume if p.volume is not none else '' }}</td>
-        {% else %}
-        <td colspan="7" class="px-1.5 py-0.5 border-l border-slate-800 text-slate-600">&mdash;</td>
-        {% endif %}
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
+  // The bridge being down is a NORMAL state — it is a program the member starts
+  // when they want options. Shape that failure like a bridge reply so the server
+  // renders the same calm panel it uses for every other unavailable case.
+  function bridgeDown() {
+    return {
+      ok: false,
+      source: 'bridge ' + BRIDGE,
+      error: 'No IBKR bridge on ' + BRIDGE + '. Start it on the PC where TWS is ' +
+             'running: dashboard_tst\\bridge\\start_ibkr_bridge.bat — it connects to ' +
+             'your own TWS read-only, and the server never touches your broker session.'
+    };
+  }
 
-<p class="text-[11px] text-slate-500 mt-2 leading-relaxed">
-  Greeks are IBKR's own option model, not a local Black&ndash;Scholes. Open interest isn't
-  shown &mdash; it needs a separate generic tick, and every quoted contract costs an IBKR
-  market-data line, which is why only &plusmn;{{ chain.strike_window }} strikes around spot
-  are subscribed.
-</p>
-{% endif %}
+  window.thOptionsLoad = function (expiry) {
+    box.innerHTML = '<div class="rounded-lg border border-slate-800 bg-slate-900/40 p-4 ' +
+      'text-sm text-slate-400"><span class="inline-block w-2 h-2 rounded-full bg-sky-400 ' +
+      'animate-pulse mr-1.5"></span>Reading ' + SYM + ' from your IBKR bridge&hellip;</div>';
+
+    var q = '/chain?symbol=' + encodeURIComponent(SYM) +
+            (expiry ? '&exp=' + encodeURIComponent(expiry)
+                    : '&dte_min=' + DTE_MIN + '&dte_max=' + DTE_MAX);
+
+    // IV history and the balance are independent of the chain, so all three go at
+    // once; a failure in either of those only blanks its own gate.
+    Promise.all([
+      get(q).catch(bridgeDown),
+      get('/iv?symbol=' + encodeURIComponent(SYM)).catch(function () { return {}; }),
+      get('/account').catch(function () { return {}; })
+    ]).then(function (r) {
+      return fetch('/options/' + encodeURIComponent(SYM) + '/analyze', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chain: r[0], iv: r[1], nlv: (r[2] || {}).net_liquidation })
+      });
+    }).then(function (res) { return res.text(); })
+      .then(function (html) {
+        box.innerHTML = html;
+        if (window.htmx) htmx.process(box);      // re-arm hx-* inside the swapped HTML
+        gradePositions();
+      })
+      .catch(function () {
+        box.innerHTML = '<div class="rounded-lg border border-rose-800 bg-rose-500/5 p-4 ' +
+          'text-sm text-rose-300">Could not reach TradeHunter to grade the chain.</div>';
+      });
+  };
+
+  // ---- management rule: deltas come from the member's bridge too ----------
+  // Rows carry their own legs as data-*, so no extra server round-trip is needed
+  // to know what to ask for. Grouped by (symbol, expiry) since one chain covers
+  // every strike in it.
+  function gradePositions() {
+    var host = document.getElementById('optPositions');
+    if (!host) return;
+    var rows = host.querySelectorAll('[data-spread-id]');
+    if (!rows.length) return;
+
+    var groups = {};
+    [].forEach.call(rows, function (el) {
+      var k = el.dataset.symbol + '|' + el.dataset.expiry;
+      (groups[k] = groups[k] || []).push(el);
+    });
+
+    Promise.all(Object.keys(groups).map(function (k) {
+      var parts = k.split('|');
+      return get('/chain?symbol=' + encodeURIComponent(parts[0]) +
+                 '&exp=' + encodeURIComponent(parts[1].replace(/-/g, '')))
+        .then(function (c) { return { key: k, chain: c }; })
+        .catch(function () { return { key: k, chain: null }; });
+    })).then(function (results) {
+      var deltas = {};
+      results.forEach(function (r) {
+        var puts = (r.chain && r.chain.ok && r.chain.puts) || [];
+        groups[r.key].forEach(function (el) {
+          var want = parseFloat(el.dataset.strike);
+          var hit = puts.filter(function (p) { return Math.abs(p.strike - want) < 1e-6; })[0];
+          if (hit && hit.delta != null) deltas[el.dataset.spreadId] = hit.delta;
+        });
+      });
+      if (!Object.keys(deltas).length) return null;
+      return fetch('/options/positions/grade', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deltas: deltas })
+      }).then(function (res) { return res.text(); })
+        .then(function (html) {
+          host.innerHTML = html;
+          if (window.htmx) htmx.process(host);
+        });
+    }).catch(function () { /* leave the un-graded rows in place */ });
+  }
+  window.thGradePositions = gradePositions;
+
+  thOptionsLoad();
+})();
+</script>

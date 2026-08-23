@@ -16,14 +16,16 @@
     </span>
     {% endif %}
     <button type="button" class="ml-auto text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition"
-            hx-get="/options/positions/all" hx-target="#optPositions" hx-swap="innerHTML"
-            title="Re-read every short-put delta from TWS">Refresh</button>
+            onclick="window.thGradePositions && window.thGradePositions()"
+            title="Re-read every short-put delta from your own TWS via the bridge">Refresh</button>
   </div>
 
   <div class="space-y-1.5">
     {% for it in items %}
     {% set r = it.row %}{% set v = it.verdict %}
-    <div class="rounded border p-2 text-[11px]
+    <div data-spread-id="{{ r.id }}" data-symbol="{{ r.symbol }}"
+         data-expiry="{{ r.expiry }}" data-strike="{{ r.short_strike }}"
+         class="rounded border p-2 text-[11px]
                 {% if v.state == 'CLOSE' %}border-rose-600/60 bg-rose-500/5
                 {% elif v.state == 'ADJUST' %}border-amber-600/60 bg-amber-500/5
                 {% elif v.state == 'OK' %}border-slate-800
@@ -64,7 +66,7 @@
   </div>
 
   <p class="text-[10px] text-slate-500 mt-2 leading-relaxed">
-    Deltas are read live from TWS each time this refreshes. Check at least once a day —
+    Deltas are read from YOUR TWS through your local bridge. Check at least once a day —
     the rule is that the short delta must not run past 0.35&ndash;0.40.
   </p>
 </div>

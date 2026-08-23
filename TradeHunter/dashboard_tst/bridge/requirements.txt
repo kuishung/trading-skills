@@ -1,0 +1,7 @@
+# TradeHunter IBKR bridge — install on the PC that runs TWS, with Python 3.12.
+#
+#     py -3.12 -m pip install -r requirements.txt
+#
+# Python 3.14 will NOT work: ib_insync imports eventkit, which calls
+# asyncio.get_event_loop() at import time, and 3.14 removed it.
+ib_insync>=0.9.86

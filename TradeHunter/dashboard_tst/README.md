@@ -129,6 +129,56 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-23 - v4.26: options move to a per-member local bridge (server drops TWS)
+User: *"the TWS is on the user PC not on the server. each user will use login their own TWS
+to use this function."* That invalidates the server-as-IBKR-client design shipped in
+v4.21-4.25, so the broker connection moved off the server entirely.
+
+**Why the old design could not stand.** One server-side session means one account's chain,
+one account's IV history and one account's balance for every member — and sizing is
+"20% of max loss < 2% of NLV", so the wrong NLV silently yields the wrong contract count.
+It also required exposing somebody's TWS to the LAN.
+
+**New shape** — the same one "Plot on TV" already uses:
+
+```
+browser (tradehunter.net) --fetch--> 127.0.0.1:9224 --ib_insync--> that member's TWS
+                          --POST---> server: rule evaluation + rendering only
+```
+
+Browsers allow an HTTPS page to fetch `http://127.0.0.1` (loopback is a trustworthy
+origin), so this needs nothing exposed and no LAN configuration.
+
+- **New `dashboard_tst/bridge/`** — `ibkr_bridge.py` (+ `.bat`, requirements, README) runs
+  on the member's PC. Read-only, no order path. `/health`, `/chain`, `/iv`, `/account`.
+  It carries over every fix earned against the live feed in v4.23/4.24: qualify strikes
+  before quoting, one subscribe-wait-read window, sticky majority-based live/delayed probe,
+  cache stamped at store time, disconnect on exit.
+- **`app/services/ibkr_options.py` deleted**; `ib_insync` removed from the server's
+  requirements. The server now has **no broker dependency at all** — verified by grep.
+- `GET /options/{sym}` returns a shell; the browser gathers chain/IV/NLV from its own
+  bridge and POSTs to **`POST /options/{sym}/analyze`**, which grades and renders. The
+  payload is untrusted input and is re-validated by `bull_put.select`.
+- Position monitoring follows the same route: rows carry their legs as `data-*`, the
+  browser reads deltas from its own bridge and POSTs them to
+  **`POST /options/positions/grade`**. Rows still render with DTE when the bridge is
+  down — seeing what you hold must not depend on the feed.
+
+**Security.** The bridge can read an account, so it answers only allow-listed origins
+(tradehunter.net + localhost dev ports) and binds 127.0.0.1 only. Verified: a request with
+`Origin: https://evil.example` is refused.
+
+**Verified end to end on this PC** (bridge on 9224 -> live TWS on 7496): `/health`,
+`/account` (real NLV **$51,047.57**), `/iv` (percentile **47%** from 251 days), `/chain`
+(17 strikes, deltas 0.15-0.92, delayed mode). Through the browser: FN graded in ~1s from a
+warm bridge — correctly rejected on IV percentile 32.3% and a $3.60/$8.00 bid/ask. With the
+bridge stopped, the tab shows the calm "start the bridge" panel in ~2s. The server-side
+`analyze` endpoint was also driven directly with a real bridge payload and produced the
+full NVDA verdict (earnings inside the expiry -> correctly blocked).
+
+**Every member must now run the bridge** on the PC where their TWS lives; see
+`bridge/README.md`. The server needs no IBKR configuration whatsoever.
+
 ### 2026-08-23 - v4.25: manual net-liquidation override for position sizing
 Reported from Hermes: `WinError 1225` on `127.0.0.1:7496`. Correct behaviour, not a bug —
 TWS runs on the LAPTOP, the web app runs on Hermes, and nothing listens on 7496 there. The
