@@ -34,6 +34,7 @@ Market-data notes
 from __future__ import annotations
 
 import asyncio
+import atexit
 import datetime as _dt
 import os
 import threading
@@ -44,7 +45,13 @@ import time
 # 71 (live bot), 80 (observer), 83/84 (ingest laptop/Hermes), 85 (health probe),
 # 98/99 (probes) — IBKR refuses two sessions on the same id, so do not reuse one.
 HOST = os.environ.get("TST_IBKR_HOST", "127.0.0.1")
-PORT = int(os.environ.get("TST_IBKR_PORT", "7497"))          # TWS paper
+# 7496 = TWS live socket (7497 TWS paper, 4001/4002 IB Gateway live/paper).
+# Defaulting to the LIVE port is safe here and deliberate: this module connects
+# readonly=True and has no order path at all, and the account's real NLV is what
+# the 2%-of-net-liquidation sizing rule has to be computed against. TWS's own
+# "Read-Only API" setting is the second guarantee. The trading bot's separate
+# resources/ibkr_data.py keeps its paper-only guard — that one can place orders.
+PORT = int(os.environ.get("TST_IBKR_PORT", "7496"))
 CLIENT_ID = int(os.environ.get("TST_IBKR_CLIENT_ID", "86"))
 CONNECT_TIMEOUT = float(os.environ.get("TST_IBKR_TIMEOUT", "6"))
 STRIKE_WINDOW = int(os.environ.get("TST_IBKR_STRIKE_WINDOW", "10"))  # each side of spot
@@ -104,6 +111,24 @@ _worker: _Worker | None = None
 _worker_lock = threading.Lock()
 
 
+@atexit.register
+def _disconnect() -> None:
+    """Hand the clientId back to TWS on shutdown.
+
+    TWS keeps a client slot registered when a process dies without disconnecting,
+    and the NEXT connection on that id then fails with an empty, unhelpful error.
+    A restarted uvicorn would hit exactly that, so the slot is released on exit.
+    """
+    w = _worker
+    if w is None or w.ib is None:
+        return
+    try:
+        if w.ib.isConnected():
+            w.ib.disconnect()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _get_worker() -> _Worker:
     global _worker
     with _worker_lock:
@@ -130,12 +155,23 @@ async def _ensure_connected(w: _Worker) -> None:
             HOST, PORT, clientId=CLIENT_ID, timeout=CONNECT_TIMEOUT, readonly=True
         )
     except Exception as exc:  # noqa: BLE001
-        raise OptionsUnavailable(
-            f"No TWS/Gateway on {HOST}:{PORT} (clientId {CLIENT_ID}). "
-            "Start TWS and enable File > Global Configuration > API > "
-            "'Enable ActiveX and Socket Clients', check the socket port matches, "
-            f"and make sure clientId {CLIENT_ID} isn't already in use. Details: {exc}"
-        ) from exc
+        detail = str(exc).strip()
+        if not detail:
+            # connectAsync timing out with nothing to say almost always means the
+            # socket answered but the handshake never completed: the clientId is
+            # still registered from a process that died, or TWS is showing its
+            # "Accept incoming connection attempt?" prompt.
+            hint = (f"TWS answered on {HOST}:{PORT} but the handshake never completed. "
+                    f"Either clientId {CLIENT_ID} is still held by a previous session "
+                    "(restart TWS to release it, or set TST_IBKR_CLIENT_ID to a free "
+                    "number), or TWS is waiting on an 'Accept incoming connection' "
+                    "prompt — check the TWS window.")
+        else:
+            hint = (f"No TWS/Gateway on {HOST}:{PORT} (clientId {CLIENT_ID}). Start TWS "
+                    "and enable File > Global Configuration > API > 'Enable ActiveX and "
+                    "Socket Clients', and check the socket port matches. "
+                    f"Details: {detail}")
+        raise OptionsUnavailable(hint) from exc
 
 
 def _fmt_expiry(yyyymmdd: str) -> str:

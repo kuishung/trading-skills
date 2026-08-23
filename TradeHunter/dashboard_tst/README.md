@@ -129,6 +129,31 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-23 - v4.24: 7496 is the default TWS port, and the clientId is handed back
+User: *"can you use 7496 as the port"*. It is now the built-in default rather than a
+per-PC `.env` line, so a deploy picks it up with no hand-editing — the redundant override
+was removed from this laptop's `.env` and the default verified to connect on its own.
+
+Defaulting to the **live** socket (7497 is TWS paper) is deliberate and safe here: this
+module connects `readonly=True` and has no order path at all, and the 2%-of-net-liquidation
+sizing rule has to be computed against the real account's NLV. TWS's own "Read-Only API"
+setting is the second guarantee. The trading bot's separate `resources/ibkr_data.py` keeps
+its paper-only guard — that one *can* place orders, and nothing here changes it.
+
+**Bug found while testing this, worth more than the port change.** Connecting failed with
+an empty error and the message blamed a missing TWS. The real cause: **clientId 86 was
+still registered inside TWS** by an earlier test process that exited without disconnecting.
+TWS holds the slot, and the next connection on that id dies in the handshake with nothing
+to say. A restarted uvicorn on Hermes would hit exactly this and look like "TWS is off"
+while TWS was plainly running. Two fixes:
+
+- An `atexit` handler now disconnects the client on shutdown, handing the id back.
+  Verified: two consecutive processes on the same clientId both connect (previously the
+  second would hang).
+- An empty exception message is now diagnosed rather than mistranslated — it names the
+  held-clientId case and the TWS "Accept incoming connection attempt?" prompt, instead of
+  telling the user to start software that is already running.
+
 ### 2026-08-23 - v4.23: live-TWS fixes (the options path, actually verified)
 The user switched TWS on, so v4.21/4.22's untested path could finally be run. It was
 broken in four ways that only a real feed exposes. All four are fixed and the whole chain
