@@ -129,6 +129,26 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-23 - v4.30: bridge steps past a held clientId; ticker switching verified
+Checked what happens when another ticker is clicked while the Options tab is open, since
+the tab is swapped wholesale by HTMX on every watchlist click.
+
+**Switching works.** Verified with three tickers in the dev watchlist: the active tab
+persists across the swap (localStorage + re-apply), `#tabOptions` re-targets to the new
+symbol, the shell re-runs against it, and the chart pane stays hidden. No stale symbol, no
+silent fall-back to the Chart tab.
+
+**What it exposed instead:** the bridge reporting *"clientId 86 may still be held by a
+previous session"*. TWS keeps a client slot registered when a process dies without
+disconnecting, and the v4.24 `atexit` handler cannot help there — a force-kill never runs
+it. Telling the member to restart TWS to clear a slot is a bad trade, so the bridge now
+**walks to the next free clientId** (up to 6) and remembers it. Verified by starting a
+second bridge demanding an id the first was holding: TWS answered "clientId 86 already in
+use" and it came up on 87 with live account data.
+
+A genuinely unreachable TWS still fails on the first attempt with its real message
+(connection refused), so the walk never masks the case that needs attention.
+
 ### 2026-08-23 - v4.29: the bridge allow-list was missing the site's actual hostname
 The v4.28 diagnostics paid for themselves on their first run. Reported page origin:
 **`https://app.tradehunter.net`**. The bridge's allow-list contained only the apex,

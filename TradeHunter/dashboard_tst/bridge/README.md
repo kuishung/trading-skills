@@ -62,6 +62,17 @@ reachable from the network.
 
 ## Changelog
 
+### 2026-08-23 — step past a held clientId instead of demanding a TWS restart
+TWS keeps a client slot registered when a process dies without disconnecting — a
+force-kill, a crash, a closed lid — and the next connection on that id dies in the
+handshake with an EMPTY error. The bridge now walks to the next free id (up to 6) and
+remembers it, rather than telling the member to restart TWS. Verified by running a second
+bridge demanding an id the first held: TWS answered "clientId 86 already in use" and it
+came up on 87.
+
+A genuinely unreachable TWS still fails immediately with its real message (connection
+refused), so this never masks the case that actually needs attention.
+
 ### 2026-08-23 — allow the whole platform domain, not one hostname
 The real cause of three rounds of "No IBKR bridge": the site is served from
 **`https://app.tradehunter.net`**, and the allow-list held only the apex

@@ -111,26 +111,58 @@ def worker() -> _Worker:
     return _worker
 
 
+CLIENT_ID_TRIES = 6
+
+
 async def _connect(ib):
+    """Connect, stepping to a free clientId if the configured one is held.
+
+    TWS keeps a client slot registered when a process dies without disconnecting
+    — a force-kill, a crash, a closed laptop lid — and the next connection on
+    that id then dies in the handshake with an EMPTY error message. Making the
+    user restart TWS to clear that is a poor trade, so we simply walk to the next
+    id and remember it. A genuinely unreachable TWS fails on the first try with a
+    real message (connection refused), so this never masks that case.
+    """
     if ib.isConnected():
         return
-    try:
-        await ib.connectAsync(CFG["host"], CFG["port"], clientId=CFG["client_id"],
-                              timeout=8, readonly=True)
-    except Exception as exc:  # noqa: BLE001
-        detail = str(exc).strip()
-        if not detail:
-            raise RuntimeError(
-                f"TWS answered on {CFG['host']}:{CFG['port']} but the handshake never "
-                f"completed. clientId {CFG['client_id']} may still be held by a previous "
-                "session (restart TWS), or TWS is showing an 'Accept incoming connection' "
-                "prompt."
-            ) from exc
-        raise RuntimeError(
-            f"Cannot reach TWS on {CFG['host']}:{CFG['port']}. Start TWS, enable "
-            "File > Global Configuration > API > 'Enable ActiveX and Socket Clients', "
-            f"and check the socket port. Details: {detail}"
-        ) from exc
+
+    first_detail = None
+    base = CFG["client_id"]
+    for n in range(CLIENT_ID_TRIES):
+        cid = base + n
+        try:
+            await ib.connectAsync(CFG["host"], CFG["port"], clientId=cid,
+                                  timeout=8, readonly=True)
+            if n:
+                print(f"  clientId {base} was held by another session; using {cid}")
+                CFG["client_id"] = cid
+            return
+        except Exception as exc:  # noqa: BLE001
+            detail = str(exc).strip()
+            if first_detail is None:
+                first_detail = detail
+            if detail:
+                # A real error (refused, wrong port, TWS down) — no point walking
+                # ids, the socket itself is the problem.
+                raise RuntimeError(
+                    f"Cannot reach TWS on {CFG['host']}:{CFG['port']}. Start TWS, enable "
+                    "File > Global Configuration > API > 'Enable ActiveX and Socket "
+                    f"Clients', and check the socket port. Details: {detail}"
+                ) from exc
+            # empty message => handshake stalled; try the next id
+            try:
+                ib.disconnect()
+            except Exception:  # noqa: BLE001
+                pass
+
+    raise RuntimeError(
+        f"TWS answered on {CFG['host']}:{CFG['port']} but no clientId in "
+        f"{base}-{base + CLIENT_ID_TRIES - 1} completed the handshake. Either TWS is "
+        "showing an 'Accept incoming connection attempt?' prompt (check the TWS "
+        "window), or those ids are all held by dead sessions — restarting TWS "
+        "releases them."
+    )
 
 
 def _fmt(ymd: str) -> str:
