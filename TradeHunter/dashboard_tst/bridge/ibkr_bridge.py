@@ -44,12 +44,31 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 BRIDGE_PORT = 9224          # 9223 is the TradingView bridge
+# Any HTTPS host in the platform's own domain, plus local dev servers. Matching
+# the whole domain rather than one hostname is deliberate: the site is served
+# from app.tradehunter.net, an exact-match list containing only the apex refused
+# it, and the browser reports that refusal as an opaque "TypeError: Failed to
+# fetch" — indistinguishable from the bridge being down.
+ALLOWED_DOMAIN = "tradehunter.net"
 DEFAULT_ALLOWED = [
-    "https://tradehunter.net",
     "http://localhost:8000", "http://127.0.0.1:8000",
     "http://localhost:8010", "http://127.0.0.1:8010",
     "http://localhost:8011", "http://127.0.0.1:8011",
 ]
+
+
+def origin_allowed(origin: str) -> bool:
+    """True for the platform's own HTTPS hosts and explicitly allowed origins."""
+    if origin in CFG["allowed"]:
+        return True
+    try:
+        u = urlparse(origin)
+    except Exception:  # noqa: BLE001
+        return False
+    if u.scheme != "https" or not u.hostname:
+        return False
+    host = u.hostname.lower()
+    return host == ALLOWED_DOMAIN or host.endswith("." + ALLOWED_DOMAIN)
 
 CFG = {"host": "127.0.0.1", "port": 7496, "client_id": 86,
        "strike_window": 10, "quote_wait": 8.0, "allowed": list(DEFAULT_ALLOWED)}
@@ -330,7 +349,7 @@ class Handler(BaseHTTPRequestHandler):
     def _origin_ok(self):
         o = self.headers.get("Origin")
         # No Origin => a direct visit (curl, address bar), not a cross-site read.
-        return (None, True) if o is None else (o, o in CFG["allowed"])
+        return (None, True) if o is None else (o, origin_allowed(o))
 
     def _send(self, code, payload, origin=None):
         body = json.dumps(payload).encode()
@@ -438,7 +457,7 @@ def main():
     srv = ThreadingHTTPServer(("127.0.0.1", a.bridge_port), Handler)
     print(f"TradeHunter IBKR bridge on http://127.0.0.1:{a.bridge_port}")
     print(f"  -> TWS {CFG['host']}:{CFG['port']} (clientId {CFG['client_id']}, read-only)")
-    print(f"  allowed origins: {', '.join(CFG['allowed'])}")
+    print(f"  allowed: https://*.{ALLOWED_DOMAIN} + {', '.join(CFG['allowed'])}")
     print("  Ctrl-C to stop.")
     try:
         srv.serve_forever()

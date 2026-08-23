@@ -682,7 +682,10 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
 - **Pages:** `/matp` (approved-user landing, "under construction" board),
   `/studies`, `/finviz` (moderator-curated saved-filter list — no scan
   here), `/feedback`, `/admin`.
-- **Hosting:** **Hermes (Win Server 2019)** at **`tradehunter.net`** via
+- **Hosting:** **Hermes (Win Server 2019)**. The app is served at
+  **`https://app.tradehunter.net`** (the `app.` subdomain, NOT the apex — recording it
+  loosely as "tradehunter.net" cost a debugging round on 2026-08-23, when the IBKR
+  bridge's origin allow-list held only the apex and refused the real page), via
   **Cloudflare Tunnel** (`cloudflared` dials out; no inbound ports). App runs
   as the **`TST-Dashboard-Web`** scheduled task; code arrives via **git
   pull** (Hermes has NO Dropbox). `.env`/`tst.db` are per-PC and survive

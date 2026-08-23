@@ -62,6 +62,17 @@ reachable from the network.
 
 ## Changelog
 
+### 2026-08-23 — allow the whole platform domain, not one hostname
+The real cause of three rounds of "No IBKR bridge": the site is served from
+**`https://app.tradehunter.net`**, and the allow-list held only the apex
+`https://tradehunter.net`. A non-allow-listed origin gets a 403 with no CORS headers, and
+the browser surfaces that as `TypeError: Failed to fetch` — identical to the bridge being
+down, which is exactly what the panel then claimed.
+
+Now any **HTTPS** host in `tradehunter.net` (apex or subdomain) is accepted. Still refused:
+`https://tradehunter.net.evil.com`, `https://eviltradehunter.net`, and plain-HTTP
+`http://app.tradehunter.net`.
+
 ### 2026-08-23 — Private Network Access preflight
 The tab reported "no bridge" from **tradehunter.net** while the bridge was demonstrably
 running and answering curl. Cause: **Chrome's Private Network Access** (104+). A page on a

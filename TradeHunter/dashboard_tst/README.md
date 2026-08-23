@@ -129,6 +129,24 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-23 - v4.29: the bridge allow-list was missing the site's actual hostname
+The v4.28 diagnostics paid for themselves on their first run. Reported page origin:
+**`https://app.tradehunter.net`**. The bridge's allow-list contained only the apex,
+`https://tradehunter.net`, so every request from the real site was refused with a 403 that
+carries no CORS headers — which the browser reports as `TypeError: Failed to fetch`,
+indistinguishable from the bridge being down.
+
+So all three reports had **one** cause, and it was a hardcoded hostname of mine. The PNA
+header (v4.27) was necessary but not sufficient; the diagnostics (v4.28) were what actually
+found it.
+
+The allow-list now matches **any HTTPS host in `tradehunter.net`** rather than one exact
+string, so a subdomain can never cause this again. Verified refused: `tradehunter.net.evil.com`,
+`eviltradehunter.net`, and plain-HTTP `app.tradehunter.net`.
+
+`CLAUDE.md` recorded the hosting as "tradehunter.net", which is what I built against —
+corrected to `app.tradehunter.net`.
+
 ### 2026-08-23 - v4.28: report what the browser actually said, instead of guessing
 Third report of "No IBKR bridge" while the bridge was demonstrably running and answering
 `curl`. The first two fixes were guesses at the cause. They should not have been.
