@@ -129,6 +129,23 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-23 - v4.25: manual net-liquidation override for position sizing
+Reported from Hermes: `WinError 1225` on `127.0.0.1:7496`. Correct behaviour, not a bug —
+TWS runs on the LAPTOP, the web app runs on Hermes, and nothing listens on 7496 there. The
+fix is topology (point Hermes at the laptop, or use the IB Gateway Hermes already runs),
+but either path exposes the same gap, so it is closed here.
+
+**The gap:** sizing is "20% of max loss < 2% of NLV", and it must be measured against the
+account actually being traded. If the connected session is a **paper** gateway — which is
+what Hermes runs for ingest — the broker returns the *paper* balance, and the contract
+count comes out silently wrong. Nothing about the number looks wrong; it is just not your
+money.
+
+`TST_NLV_OVERRIDE` now wins over the broker value when set, and the suggestion labels the
+quantity **"(NLV set manually)"** so a pinned figure can never read as broker truth. It
+does mean the number is only as current as you keep it — hence the label rather than a
+silent substitution.
+
 ### 2026-08-23 - v4.24: 7496 is the default TWS port, and the clientId is handed back
 User: *"can you use 7496 as the port"*. It is now the built-in default rather than a
 per-PC `.env` line, so a deploy picks it up with no hand-editing — the redundant override

@@ -56,6 +56,15 @@ CLIENT_ID = int(os.environ.get("TST_IBKR_CLIENT_ID", "86"))
 CONNECT_TIMEOUT = float(os.environ.get("TST_IBKR_TIMEOUT", "6"))
 STRIKE_WINDOW = int(os.environ.get("TST_IBKR_STRIKE_WINDOW", "10"))  # each side of spot
 REQUEST_TIMEOUT = float(os.environ.get("TST_IBKR_REQ_TIMEOUT", "60"))
+# Manual net-liquidation override. Position sizing is "20% of max loss < 2% of
+# NLV", so it must be measured against the account you actually trade. If the
+# connected session is a PAPER gateway (or a different account from the one you
+# size against), the broker's NLV is the wrong number — set this and it wins.
+_NLV_ENV = os.environ.get("TST_NLV_OVERRIDE", "").strip()
+try:
+    NLV_OVERRIDE: float | None = float(_NLV_ENV) if _NLV_ENV else None
+except ValueError:
+    NLV_OVERRIDE = None
 QUOTE_WAIT = float(os.environ.get("TST_IBKR_QUOTE_WAIT", "8"))  # one window for all strikes
 # 1=live, 2=frozen, 3=delayed, 4=delayed-frozen. Leave unset to auto-detect:
 # we try live once, and if IBKR answers without an option model (error 354 —
@@ -501,11 +510,23 @@ def iv_stats(symbol: str) -> dict:
 
 
 def net_liquidation() -> float | None:
-    """Account NLV, or None if TWS is off / the account has no summary."""
+    """Account NLV for the sizing rule, or None if unavailable.
+
+    An explicit override wins over the broker value: sizing has to reflect the
+    account you actually trade, which is NOT the connected session when that
+    session is a paper gateway.
+    """
+    if NLV_OVERRIDE is not None:
+        return NLV_OVERRIDE
     try:
         return _get_worker().submit(_net_liquidation(), REQUEST_TIMEOUT)
     except Exception:  # noqa: BLE001
         return None
+
+
+def nlv_source() -> str:
+    """Where the NLV came from, so the UI can say so rather than imply broker truth."""
+    return "override" if NLV_OVERRIDE is not None else "account"
 
 
 def chain_for_dte(symbol: str, dte_min: int, dte_max: int) -> dict:

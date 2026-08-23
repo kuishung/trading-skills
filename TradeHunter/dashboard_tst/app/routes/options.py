@@ -60,7 +60,8 @@ def options_tab(symbol: str, request: Request,
         chain = ibkr_options.chain_for_dte(sym, bull_put.DTE_MIN, bull_put.DTE_MAX)
 
     ctx = {"user": user, "sym": sym, "chain": chain,
-           "iv": None, "nlv": None, "spread": None, "earnings": None, "level": None}
+           "iv": None, "nlv": None, "spread": None, "earnings": None,
+           "level": None, "nlv_source": None}
 
     if chain.get("ok"):
         iv = ibkr_options.iv_stats(sym)
@@ -68,7 +69,8 @@ def options_tab(symbol: str, request: Request,
         earnings = _earnings_date(sym)
         level = db.query(MATPLevel).filter(MATPLevel.symbol == sym).first()
 
-        ctx.update({"iv": iv, "nlv": nlv, "earnings": earnings, "level": level})
+        ctx.update({"iv": iv, "nlv": nlv, "earnings": earnings, "level": level,
+                    "nlv_source": ibkr_options.nlv_source()})
         ctx["spread"] = bull_put.select(
             symbol=sym,
             spot=chain["spot"],

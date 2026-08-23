@@ -78,7 +78,7 @@
       <span class="text-slate-400">Max loss</span><span class="text-slate-200">${{ "%.0f"|format(cand.max_loss) }}/contract</span>
       <span class="text-slate-400">Breakeven</span><span class="text-slate-200">{{ cand.breakeven }}</span>
       <span class="text-slate-400">Win prob (1&minus;&Delta;)</span><span class="text-slate-200">~{{ cand.pop_est }}%</span>
-      <span class="text-slate-400">Quantity</span><span class="text-slate-200">{{ cand.contracts }} contract{% if cand.contracts != 1 %}s{% endif %}</span>
+      <span class="text-slate-400">Quantity</span><span class="text-slate-200">{{ cand.contracts }} contract{% if cand.contracts != 1 %}s{% endif %}{% if nlv_source == 'override' %} <span class="text-amber-300/90" title="Sized against TST_NLV_OVERRIDE, not the connected account. Keep it current.">(NLV set manually)</span>{% endif %}</span>
     </div>
     <p class="text-slate-500 mt-1.5">Place as a single vertical combo, limit order at the mark, while the market is open.</p>
     {# Records what you opened so the delta line can be watched. It does NOT send
