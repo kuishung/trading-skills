@@ -30,6 +30,32 @@ trustworthy origin), which is what makes this work with nothing exposed.
 - `start_ibkr_bridge.bat` — launcher (uses `py -3.12`).
 - `requirements.txt` — just `ib_insync`.
 
+## One-time setup (recommended)
+
+Run on **your PC**, in PowerShell:
+
+```
+powershell -ExecutionPolicy Bypass -File install_bridge.ps1
+```
+
+It does two independent things, neither needing admin rights:
+
+1. **Auto-start** - a shortcut in your Startup folder, so the bridge runs whenever
+   Windows does. This is the real fix for "is the bridge up?", which caused every
+   false "bridge is down" report during development.
+2. **A working "Start the bridge" button** in the web app. A web page *cannot* launch a
+   local program - browsers forbid it, and no amount of code changes that. So this
+   registers a custom URL protocol, `tradehunter://start-bridge` (the mechanism Zoom and
+   Teams links use); the button opens that URL and Windows runs the launcher. Chrome asks
+   permission the first time, which is the point - your machine decides, not the page.
+
+**Security:** the registered command is fixed and the URL argument (`%1`) is deliberately
+**not** passed to the shell. If it were, any website could put arbitrary text after
+`tradehunter://` and land it on a command line. The handler can only ever start this one
+script, with no arguments.
+
+Undo with `.\install_bridge.ps1 -Uninstall`.
+
 ## Install (once, per PC)
 
 ```

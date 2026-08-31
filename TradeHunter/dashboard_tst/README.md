@@ -129,6 +129,36 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-08-23 - v4.31: a "Start the bridge" button, and auto-start on boot
+User: *"i need to button to start bat file"* when the panel reports the bridge is
+unreachable.
+
+**A web page cannot launch a local program.** Browsers forbid it outright and no amount of
+code works around that. What *can* be done is ask the OS: `bridge/install_bridge.ps1`
+registers a custom URL protocol, **`tradehunter://start-bridge`**, the same mechanism Zoom
+and Teams links use. The panel's button opens that URL, Windows runs the launcher, and
+Chrome asks permission the first time - the machine deciding, not the page.
+
+**Security:** the registered command is fixed and the URL argument (`%1`) is deliberately
+NOT forwarded to the shell. Forwarding it would let any website put arbitrary text after
+`tradehunter://` and have it reach a command line. The handler can only start this one
+script, with no arguments.
+
+The button then **polls `/health` for ~30s and loads the chain automatically** once the
+bridge answers, so it behaves like a button rather than something that fires and leaves you
+guessing. If the handler was never installed nothing happens - so after the timeout the
+panel says so and shows the one-time setup command, instead of a dead control.
+
+The same installer also drops a **Startup shortcut**, which is the better fix: every false
+"bridge is down" report in this whole saga came down to the process not running. Both parts
+are optional (`-SkipStartup`, `-SkipProtocol`) and reversible (`-Uninstall`); neither needs
+admin.
+
+**Bug fixed while testing:** the installer failed to parse at all. Windows PowerShell 5.1
+reads a BOM-less `.ps1` as ANSI, so the em-dashes in my comments corrupted the file mid-
+string. It is now ASCII-only *and* written with a BOM. Verified end to end: parses, installs
+both parts, registry command correct with no `%1`, Startup shortcut present.
+
 ### 2026-08-23 - v4.30: bridge steps past a held clientId; ticker switching verified
 Checked what happens when another ticker is clicked while the Options tab is open, since
 the tab is swapped wholesale by HTMX on every watchlist click.

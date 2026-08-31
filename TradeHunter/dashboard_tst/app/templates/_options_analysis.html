@@ -42,8 +42,23 @@
     </p>
   </details>
   {% endif %}
-  <button type="button" class="mt-3 text-xs px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition"
-          onclick="window.thOptionsLoad && window.thOptionsLoad()">Retry</button>
+  <div class="mt-3 flex flex-wrap items-center gap-2">
+    {# Opens tradehunter://start-bridge, which Windows maps to the launcher once
+       bridge/install_bridge.ps1 has been run. The page itself cannot start a
+       program; this asks the OS to. #}
+    <button type="button" class="text-xs px-2 py-1 rounded border border-emerald-500/60 text-emerald-300 hover:bg-emerald-500/15 transition"
+            onclick="window.thStartBridge && window.thStartBridge(this)"
+            title="Asks Windows to run start_ibkr_bridge.bat, then waits for it to come up">Start the bridge</button>
+    <button type="button" class="text-xs px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition"
+            onclick="window.thOptionsLoad && window.thOptionsLoad()">Retry</button>
+  </div>
+  <p id="bridgeStartNote" class="hidden mt-2 text-[11px] text-amber-300/90 leading-relaxed">
+    The bridge did not come up. The button needs a one-time setup on this PC &mdash; run
+    this once in PowerShell, then the button (and auto-start on boot) will work:
+    <code class="block mt-1 text-slate-300">powershell -ExecutionPolicy Bypass -File "{{ bridge_setup_path }}"</code>
+    <span class="text-slate-500">(run it from your TradeHunter folder)</span>
+    Until then, start it by double-clicking <code class="text-slate-300">start_ibkr_bridge.bat</code>.
+  </p>
 </div>
 {% else %}
 

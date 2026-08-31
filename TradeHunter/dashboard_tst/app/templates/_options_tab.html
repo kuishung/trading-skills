@@ -150,6 +150,41 @@
   }
   window.thGradePositions = gradePositions;
 
+  // ---- "Start the bridge" -------------------------------------------------
+  // A web page cannot launch a local program — browsers forbid it, and that is
+  // not something more code can work around. What CAN be done is open a custom
+  // URL that Windows maps to the launcher (the mechanism Zoom/Teams links use),
+  // registered once by bridge/install_bridge.ps1. If the handler isn't installed
+  // nothing happens, so we poll /health afterwards and say so if it never comes
+  // up, rather than leaving a button that silently does nothing.
+  window.thStartBridge = function (btn) {
+    if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
+    try { window.location.href = 'tradehunter://start-bridge'; } catch (e) {}
+
+    var tries = 0;
+    var timer = setInterval(function () {
+      tries++;
+      get('/health').then(function (h) {
+        if (!h || !h.ok) return;
+        clearInterval(timer);
+        if (btn) btn.textContent = 'Bridge up — loading…';
+        thOptionsLoad();                       // it is alive: run the real request
+      }).catch(function () {
+        if (tries >= 15) {                     // ~30s
+          clearInterval(timer);
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Start the bridge';
+          }
+          var note = document.getElementById('bridgeStartNote');
+          if (note) {
+            note.classList.remove('hidden');
+          }
+        }
+      });
+    }, 2000);
+  };
+
   thOptionsLoad();
 })();
 </script>

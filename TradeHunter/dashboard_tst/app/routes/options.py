@@ -37,6 +37,9 @@ templates = Jinja2Templates(
 )
 
 BRIDGE_PORT = 9224      # 9223 is the TradingView bridge
+# Shown in the panel when the "Start the bridge" button finds no URL handler, so
+# the member can run the one-time setup without hunting for the path.
+BRIDGE_SETUP_PATH = r"dashboard_tstridge\install_bridge.ps1"
 
 
 def _earnings_date(symbol: str) -> str | None:
@@ -61,7 +64,8 @@ def options_tab(symbol: str, request: Request,
     return templates.TemplateResponse(
         request, "_options_tab.html",
         {"user": user, "sym": sym, "bridge_port": BRIDGE_PORT,
-         "dte_min": bull_put.DTE_MIN, "dte_max": bull_put.DTE_MAX, "diag": None},
+         "dte_min": bull_put.DTE_MIN, "dte_max": bull_put.DTE_MAX, "diag": None,
+         "bridge_setup_path": BRIDGE_SETUP_PATH},
     )
 
 
@@ -90,7 +94,8 @@ def analyze(symbol: str, request: Request,
            # what the BROWSER reported when the loopback fetch failed — shown in
            # the panel, because "not running" and "browser blocked it" are
            # indistinguishable from the page and guessing between them cost time
-           "diag": payload.get("diag") or None}
+           "diag": payload.get("diag") or None,
+           "bridge_setup_path": BRIDGE_SETUP_PATH}
 
     if chain.get("ok") and chain.get("spot"):
         earnings = _earnings_date(sym)
