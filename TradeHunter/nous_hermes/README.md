@@ -31,6 +31,16 @@ CLI + SSH); this folder is the source of truth that gets deployed there.
     one research topic (macro/company) into a runnable PLAN; reads the EDGAR 10-Q
     corpus at `/mnt/hermes_sync/QuarterlyReport/<TICKER>/…` **on demand** + web.
     Invoked via the research-runner shim (`hermes chat -q … -s research-planning`).
+  - `markets/guidance/` — the **guidance skill** (v1.0.0). Reads each ticker's
+    latest SEC **8-K item 2.02** press release, separates FORWARD GUIDANCE from the
+    quarter's reported RESULTS, writes a per-quarter note + a company hub note into
+    the shared vault at `/mnt/hermes_sync/Vault/Companies/`, and POSTs the structured
+    figures to TradeHunter's `/api/guidance`. Exists because this is a reading task,
+    not a parsing one: a regex extractor scored 7/15 with false positives, since
+    "revenue grew 5.9%" and "we expect revenue growth of 5.9%" are lexically
+    near-identical. Every figure must be quoted from the filing — the API rejects any
+    number that cannot be traced to its own sentence. Needs `TRADEHUNTER_URL` +
+    `TST_INGEST_API_KEY` in `~/.hermes/.env`.
 - `research_runner/` — the **LAN-only HTTP shim** that lets the (outbound-only)
   dashboard get an agent-grounded chat reply over the LAN. `server.py` (stdlib
   `http.server`, token-auth, `POST /chat`) + `research-runner.service` (systemd
@@ -213,6 +223,14 @@ Edit files here, redeploy (scp / git pull → `bash install.sh`), then re-test w
 recreate the cron job unless the schedule or delivery target changes.
 
 ## Changelog
+
+### 2026-09-05 — guidance skill added
+New `skills/markets/guidance/SKILL.md` (v1.0.0). TradeHunter's EDGAR corpus is 10-Q/10-K
+only and contains no forward guidance, so guidance needed a new source: the 8-K item-2.02
+press release. The platform locates the filing and exhibit deterministically; this skill
+does the part that needs reading — telling guidance apart from the results printed beside
+it — and the platform validates every figure against its quoted sentence before storing.
+
 - **2026-08-17** — `markets/matp` skill → **v1.9.0**: work the queue **in the order
   given**, and check that the cycle actually closed. `/api/matp-queue` now returns
   tickers **neediest-first** (never computed → stalest → alphabetical), carries each

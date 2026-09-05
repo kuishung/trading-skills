@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import hmac
+import re
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
@@ -756,3 +757,184 @@ def push_company_analysis(
     row.updated_by = "nous_hermes"
     db.commit()
     return {"ok": True, "symbol": sym, "section": section}
+
+
+# ---------------------------------------------------------------------------
+# GUIDANCE — pushed by the Nous agent's `guidance` skill.
+#
+# Guidance is prose in an 8-K item-2.02 press release, not XBRL and not in the
+# 10-Q corpus, and separating it from the results printed beside it needs
+# semantics ("revenue grew 5.9%" vs "we expect revenue growth of 5.9%" are
+# lexically near-identical). So the agent reads the filing and this endpoint only
+# validates + stores what it returns.
+#
+# Every row must carry the verbatim sentence and the exhibit URL: a guidance
+# figure that cannot be traced to the wording it came from is not auditable, and
+# the check below REJECTS rows whose numbers do not appear in their own sentence
+# so the agent cannot quietly invent one.
+
+class GuidanceRow(BaseModel):
+    symbol: str
+    period: str                      # fiscal period being guided, e.g. "FY2027-Q3"
+    metric: str                      # revenue | gross_margin | eps | opex | ...
+    basis: str | None = None         # GAAP | non-GAAP
+    unit: str | None = None          # USD_B | percent | USD_per_share
+    low: float | None = None
+    mid: float | None = None
+    high: float | None = None
+    sentence: str
+    source_url: str | None = None
+    accession: str | None = None
+    filed: str | None = None
+
+
+class GuidanceIngest(BaseModel):
+    items: list[GuidanceRow] = Field(default_factory=list)
+
+
+def _digits(text: str) -> set[str]:
+    """Number-ish tokens in a string, normalised for comparison."""
+    out = set()
+    for m in re.finditer(r"\d+(?:\.\d+)?", text or ""):
+        v = m.group(0)
+        out.add(v)
+        if "." in v:
+            out.add(v.rstrip("0").rstrip("."))     # 108.0 -> 108
+    return out
+
+
+def _anchored(value: float | None, said: set[str]) -> bool:
+    """Is this figure literally present in the sentence?"""
+    if value is None:
+        return True
+    s = f"{value:g}"
+    return s in said or s.rstrip("0").rstrip(".") in said
+
+
+def _traceable(row: "GuidanceRow") -> bool:
+    """True when the row's figures are anchored in its own sentence.
+
+    The guard that keeps an LLM honest: it may CLASSIFY and STRUCTURE what the
+    filing says, but it may not produce a number the filing does not contain.
+
+    It deliberately does NOT demand that every figure appear verbatim. Issuers
+    guide as "midpoint +/- tolerance" ("$108.0 billion, plus or minus 2%"), so a
+    correct low/high of 105.8/110.2 is DERIVED arithmetic and appears nowhere in
+    the text -- an all-verbatim rule rejected exactly the rows we want. So:
+
+      * a midpoint, when given, must appear verbatim (it is always quoted);
+      * a bare range with no midpoint must have BOTH ends quoted;
+      * a derived low/high around a quoted midpoint is accepted, but must bracket
+        it -- low <= mid <= high -- which catches a garbled derivation.
+    """
+    said = _digits(row.sentence)
+
+    if row.mid is not None:
+        if not _anchored(row.mid, said):
+            return False
+        if row.low is not None and row.low > row.mid:
+            return False
+        if row.high is not None and row.high < row.mid:
+            return False
+        return True
+
+    # no midpoint: this is a stated range, so both ends must be in the wording
+    if row.low is None and row.high is None:
+        return False                      # a guidance row with no figure at all
+    if not _anchored(row.low, said) or not _anchored(row.high, said):
+        return False
+    if row.low is not None and row.high is not None and row.low > row.high:
+        return False
+    return True
+
+
+@router.get("/guidance/universe")
+def guidance_universe(
+    per_sector: int = 50,
+    _: bool = Depends(require_api_key),
+):
+    """The ticker universe the guidance skill should process: top N per sector.
+
+    Sourced from the same Finviz sector screens the Sector page already uses, so
+    the universe cannot drift from what members see in the app.
+    """
+    from ..services.industry import _SPDR_TO_FINVIZ, _SECTOR_NAMES, sector_industries
+
+    n = max(1, min(int(per_sector or 50), 200))
+    out, seen = [], set()
+    for etf in _SPDR_TO_FINVIZ:
+        try:
+            data = sector_industries(etf)
+        except Exception:  # noqa: BLE001
+            continue
+        syms: list[str] = []
+        for ind in data.get("industries", []):
+            syms.extend(ind.get("tickers", []))
+        picked = []
+        for s in syms:
+            s = (s or "").strip().upper()
+            if s and s not in seen:
+                seen.add(s)
+                picked.append(s)
+            if len(picked) >= n:
+                break
+        out.append({"sector": etf, "name": _SECTOR_NAMES.get(etf, etf),
+                    "tickers": picked, "n": len(picked)})
+    return {"per_sector": n, "sectors": out,
+            "total": sum(s["n"] for s in out)}
+
+
+@router.post("/guidance")
+def ingest_guidance(
+    payload: GuidanceIngest,
+    _: bool = Depends(require_api_key),
+    db: Session = Depends(get_db),
+):
+    """Upsert guidance rows on (symbol, period, metric, basis).
+
+    Portable query-then-update/insert, per the platform data-handling rule -- no
+    SQLite-only INSERT OR REPLACE, so the Postgres swap stays a config change.
+    """
+    from ..models import CompanyGuidance
+
+    stored = updated = rejected = 0
+    problems: list[str] = []
+    for it in payload.items:
+        sym = (it.symbol or "").strip().upper()
+        if not sym or not it.metric or not it.period:
+            rejected += 1
+            continue
+        if not (it.sentence or "").strip():
+            rejected += 1
+            problems.append(f"{sym} {it.period} {it.metric}: no source sentence")
+            continue
+        if not _traceable(it):
+            rejected += 1
+            problems.append(
+                f"{sym} {it.period} {it.metric}: figures not found in the quoted sentence")
+            continue
+
+        row = (db.query(CompanyGuidance)
+                 .filter(CompanyGuidance.symbol == sym,
+                         CompanyGuidance.period == it.period,
+                         CompanyGuidance.metric == it.metric,
+                         CompanyGuidance.basis == it.basis)
+                 .one_or_none())
+        if row is None:
+            row = CompanyGuidance(symbol=sym, period=it.period,
+                                  metric=it.metric, basis=it.basis)
+            db.add(row)
+            stored += 1
+        else:
+            updated += 1
+        row.unit = it.unit
+        row.low, row.mid, row.high = it.low, it.mid, it.high
+        row.sentence = it.sentence
+        row.source_url = it.source_url
+        row.accession = it.accession
+        row.filed = it.filed
+        row.updated_at = _dt.datetime.now(_dt.timezone.utc)
+
+    db.commit()
+    return {"ok": True, "stored": stored, "updated": updated,
+            "rejected": rejected, "problems": problems[:20]}

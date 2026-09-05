@@ -88,6 +88,13 @@ class Settings:
     # falls back to the pushed EdgarIngestHealth inventory (list only, no bodies).
     edgar_dir: str | None = field(default_factory=lambda: os.environ.get("TST_EDGAR_DIR"))
 
+    # Shared Obsidian vault root — the company knowledge base (hub note per ticker
+    # + a note per quarter). Server-side and shared by ALL members, not a personal
+    # sync: the Nous agent writes it over cifs, the dashboard reads it. On Hermes
+    # this is C:\HermesSync\Vault.
+    obsidian_dir: str | None = field(
+        default_factory=lambda: os.environ.get("TST_OBSIDIAN_DIR"))
+
     # SEC requires a descriptive User-Agent (name + contact email) on every
     # data.sec.gov request, or it 403s. Used by services/sec_xbrl.py (companyfacts
     # -> the Financials trend charts + ratios). Override via TST_SEC_USER_AGENT.

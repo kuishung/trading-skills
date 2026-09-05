@@ -129,6 +129,49 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-05 - v4.33: guidance knowledge base (server half)
+User: *"i have quarterly report saved in .md file in a server folder ... I want one of the
+tradehunter function is to get guidance and also save into md file ... use obsidian to keep
+these notes ... then I have a continue knowledge base."* Chosen: **top 50 tickers per
+sector** (~550 names), **company hub note + per-quarter notes**.
+
+**The corpus cannot answer this.** The 737-ticker EDGAR corpus is 10-Q/10-K only, and a
+10-Q never contains forward guidance (verified: NVDA 2026-Q1, 135 KB, zero guidance
+sentences). Guidance lives in the **8-K item-2.02** press release, which was not being
+ingested at all.
+
+- **`services/guidance.py`** - deterministic half: rate-limited SEC client, ticker->CIK,
+  item-2.02 discovery, exhibit ranking, HTML->text. Exhibits are ranked rather than
+  name-matched because issuers name them anything (NVDA `q2fy27pr.htm`, HD
+  `hd_exhibit991x08022026.htm`).
+- **`models.CompanyGuidance`** + migration `b5c6d7e8f9a0` - one row per
+  (symbol, period, metric, basis), each carrying the **verbatim sentence** and exhibit URL.
+- **`GET /api/guidance/universe`** - top N per sector, from the same Finviz screens the
+  Sector page uses, so the universe cannot drift from what members see.
+- **`POST /api/guidance`** - ingest, upserted in portable ORM per the data-handling rule.
+- **`services/vault.py`** - renders the shared Obsidian vault: `Companies/<T>.md` hub
+  (guided vs actual per quarter) + `Companies/<T>/<period>.md` per quarter. New
+  `TST_OBSIDIAN_DIR` setting.
+
+**The ingest REJECTS untraceable figures.** An LLM writes these rows, so the endpoint
+verifies each number against the sentence it claims to come from. The rule is not
+all-verbatim, which would be wrong: issuers guide as "midpoint +/- tolerance", so
+"$108.0 billion, plus or minus 2%" legitimately yields a DERIVED low/high of
+105.84/110.16 that appear nowhere in the text. So a quoted midpoint is required, a bare
+range needs both ends quoted, and a derived band must bracket its midpoint. Verified
+against 9 cases including an invented midpoint, an invented range end and a
+non-bracketing band - all rejected with a reason.
+
+**Why an LLM at all** (measured, not assumed): a regex extractor over 15 tickers spanning
+every sector scored **7/15 with false positives**, taking NVDA's operating-expense results
+table for its outlook and WMT's actual revenue growth for guidance. Guidance and results
+sit side by side in the same document in near-identical forms; separating them needs
+semantics. This does not contradict the "quant -> deterministic" rule, which assumed
+XBRL-tagged numbers - guidance is untagged prose.
+
+**Not yet surfaced in the UI** (dashboard-visibility rule): no guidance panel on the
+Company page yet, because no rows exist until the agent runs. Next turn.
+
 ### 2026-09-05 - v4.32: fix the mangled bridge-setup path shipped in v4.31
 `BRIDGE_SETUP_PATH` reached the file as `dashboard_tstridge\install_bridge.ps1` - a
 literal BACKSPACE where `` should have been. The shell heredoc used to write it collapsed

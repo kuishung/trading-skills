@@ -809,3 +809,45 @@ class OptionSpread(Base):
     note = Column(Text, nullable=True)
 
     user = relationship("User")
+
+
+class CompanyGuidance(Base):
+    """One forward-guidance figure a company issued, as stated in an SEC filing.
+
+    Rows are pushed by the Nous agent's ``guidance`` skill, which reads the 8-K
+    item-2.02 press release and separates guidance from results -- a judgement a
+    regex cannot make, since "revenue grew 5.9%" and "we expect revenue growth of
+    5.9%" are lexically near-identical (measured: a regex extractor scored 7/15
+    with false positives on NVDA's and WMT's results tables).
+
+    ``sentence`` and ``source_url`` are NOT decoration: every number must be
+    traceable to the exact wording in the filing it came from, so a figure can be
+    audited -- and so an LLM can never quietly invent one. A row whose value does
+    not appear in its own sentence is a bug, not a rounding difference.
+
+    Grain: one row per (symbol, period, metric, basis). "period" is the fiscal
+    period being GUIDED (e.g. FY2027-Q3), not the period being reported.
+    """
+
+    __tablename__ = "company_guidance"
+
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), nullable=False, index=True)
+    period = Column(String(20), nullable=False)        # guided period, e.g. "FY2027-Q3"
+    filed = Column(String(10), nullable=True)          # filing date, ISO
+    metric = Column(String(40), nullable=False)        # revenue | gross_margin | eps | ...
+    basis = Column(String(20), nullable=True)          # GAAP | non-GAAP | None
+    unit = Column(String(20), nullable=True)           # USD_B | percent | USD_per_share
+    low = Column(Float, nullable=True)
+    mid = Column(Float, nullable=True)
+    high = Column(Float, nullable=True)
+    sentence = Column(Text, nullable=True)             # verbatim source wording
+    source_url = Column(Text, nullable=True)           # exact exhibit URL
+    accession = Column(String(30), nullable=True)      # SEC accession number
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("symbol", "period", "metric", "basis",
+                         name="uq_company_guidance_row"),
+    )
