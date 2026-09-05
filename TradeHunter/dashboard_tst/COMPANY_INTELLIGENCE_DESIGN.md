@@ -199,6 +199,56 @@ marked n/a — never faked.
   Phase D price/market ratios. Quarterly + TTM (needs Q4 = FY − 9mo derivation) and
   5Y/10Y-avg columns are follow-ups in the data layer.
 
+## GUIDANCE layer -- findings from the 2026-09-05 spike
+
+User asked for TradeHunter to *get guidance*, save it as .md, and build an Obsidian
+knowledge base of earnings + guidance per ticker. Universe chosen: **top 50 tickers
+per sector** (11 sectors ~= 550 names). Note layout chosen: **company hub note +
+per-quarter notes**.
+
+### Established by measurement, not assumption
+
+1. **The corpus contains NO guidance.** The 737-ticker EDGAR corpus is 10-Q/10-K
+   only. NVDA 2026-Q1 (135 KB) has zero guidance sentences. Companies never put
+   forward guidance in a 10-Q, so guidance cannot be mined from what we store.
+2. **Guidance IS free and official** -- SEC **8-K item 2.02**, press-release
+   exhibit. Verified live on NVDA: revenue $108.0B +/-2%, gross margin 74.0%
+   +/-50bps, opex ~$9.2B GAAP / $9.0B non-GAAP, FY27 tax 16-18%. No API key.
+3. **Exhibits are NOT predictably named** -- NVDA files `q2fy27pr.htm`, HD files
+   `hd_exhibit991x08022026.htm`. Filename matching misses them; rank every HTML
+   document in the filing and let the extractor decide which carries guidance.
+
+### Why deterministic extraction is NOT sufficient (measured, not assumed)
+
+A regex extractor over a 15-ticker cross-sector sample scored **7/15 with poor
+precision**: it matched NVDA's operating-expense RESULTS table instead of its
+outlook, and read WMT's "Revenue growth of 5.9%" (an actual) as guidance.
+
+The cause is structural, not tuning: **guidance and results sit side by side in the
+same document, in the same prose and table forms.** "Revenue grew 5.9%" and "we
+expect revenue growth of 5.9%" are lexically near-identical. Separating them needs
+semantics.
+
+This does NOT contradict the doc's "quant -> deterministic, qual -> LLM" split.
+That split assumed **XBRL-tagged** numbers. Guidance is not XBRL-tagged -- it is
+free prose in an exhibit -- so it falls on the qualitative side of the same line.
+
+### Recommended architecture
+
+- **Deterministic** (`services/guidance.py`, built and working): rate-limited SEC
+  client, ticker->CIK, item-2.02 discovery, exhibit ranking, HTML->text, and
+  locating the guidance region. Free, no key, no LLM.
+- **LLM** parses that located region into structured rows: metric, fiscal period,
+  low / high / midpoint, GAAP vs non-GAAP basis. Store the structured numbers AND
+  the verbatim sentence + filing URL so every figure is auditable to its source.
+- The LLM must never produce a number absent from the quoted sentence.
+
+### Open decision before building further
+
+Which LLM and where it runs: the **Nous agent** (per this doc's writer=agent
+decision; DeepSeek already wired for Research) versus an LLM call from the Hermes
+dashboard. This gates the backfill for ~550 tickers x ~40 quarters.
+
 ## Reuse / prior art in the repo
 
 - Earnings-tab report reader (v3.72): `services/edgar_reports.py`,
