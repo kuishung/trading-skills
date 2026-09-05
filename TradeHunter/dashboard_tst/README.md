@@ -129,6 +129,23 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-05 - v4.34: vault path corrected - HermesSync\Vault is the SECRETS folder
+The v4.33 deploy note told the user to set TST_OBSIDIAN_DIR=C:\HermesSync\Vault. That is
+**wrong and unsafe**: HermesSync\Vault holds alpaca.env, credentials.txt and
+intraday-premarket.env - it is cfg["vault_dir"] from CLAUDE.md, the credentials store.
+Company notes would have been written through a secrets directory.
+
+Correct root: **HermesSync\MarketResearch\ObsidianVault** (an empty folder that already
+existed for this purpose). Three reasons it is the right one:
+- The Nous agent can only write inside MarketResearch - its cifs mount /mnt/hermes_sync
+  IS //192.168.1.162/MarketResearch.
+- HermesSync itself is the Obsidian vault root (.obsidian/ lives there), so notes under
+  MarketResearch/ObsidianVault show up in the existing vault with no extra setup.
+- It sits beside QuarterlyReport, so the corpus and the notes about it live together.
+
+Fixed in services/vault.py (default), config.py (comment) and the agent SKILL.md, which
+now also warns explicitly not to write to HermesSync/Vault.
+
 ### 2026-09-05 - v4.33: guidance knowledge base (server half)
 User: *"i have quarterly report saved in .md file in a server folder ... I want one of the
 tradehunter function is to get guidance and also save into md file ... use obsidian to keep

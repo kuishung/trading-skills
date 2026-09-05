@@ -26,7 +26,16 @@ import re
 
 from ..config import settings
 
-_DEFAULT_VAULT = r"C:\HermesSync\Vault"
+# MarketResearch/ObsidianVault, deliberately:
+#   * HermesSync\Vault is the CREDENTIALS folder (alpaca.env, credentials.txt)
+#     -- cfg["vault_dir"] in CLAUDE.md. Writing notes there would scatter them
+#     through a secrets directory.
+#   * The Nous agent can only write inside MarketResearch: its cifs mount
+#     /mnt/hermes_sync IS //192.168.1.162/MarketResearch.
+#   * HermesSync itself is the Obsidian vault root (.obsidian/ lives there), so
+#     notes under MarketResearch/ObsidianVault appear in the existing vault with
+#     no extra configuration.
+_DEFAULT_VAULT = r"C:\HermesSync\MarketResearch\ObsidianVault"
 _SAFE = re.compile(r"[^A-Z0-9.\-]")
 
 

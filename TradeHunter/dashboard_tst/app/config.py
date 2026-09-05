@@ -91,7 +91,8 @@ class Settings:
     # Shared Obsidian vault root — the company knowledge base (hub note per ticker
     # + a note per quarter). Server-side and shared by ALL members, not a personal
     # sync: the Nous agent writes it over cifs, the dashboard reads it. On Hermes
-    # this is C:\HermesSync\Vault.
+    # this is C:\HermesSync\MarketResearch\ObsidianVault -- NOT
+    # C:\HermesSync\Vault, which is the credentials folder.
     obsidian_dir: str | None = field(
         default_factory=lambda: os.environ.get("TST_OBSIDIAN_DIR"))
 

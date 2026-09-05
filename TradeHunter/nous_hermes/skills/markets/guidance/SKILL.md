@@ -32,9 +32,17 @@ grep -E '^(TRADEHUNTER_URL|TST_INGEST_API_KEY)=' ~/.hermes/.env
 - `TRADEHUNTER_URL` — e.g. `https://app.tradehunter.net`
 - `TST_INGEST_API_KEY` — sent as the `X-API-Key` header
 
-Vault root on this box: `/mnt/hermes_sync/Vault` (the cifs mount of the shared
-`HermesSync` tree). If that path is not mounted, STOP and report it — do not
-write notes to a local folder, because the dashboard would never see them.
+Vault root on this box: **`/mnt/hermes_sync/ObsidianVault`**.
+
+`/mnt/hermes_sync` is the cifs mount of `//192.168.1.162/MarketResearch` — the only
+share this box can write to, and it sits inside the Obsidian vault root, so notes
+written there appear in Obsidian with no extra setup.
+
+Do **not** write to `HermesSync/Vault`: despite the name that is the CREDENTIALS
+folder (`alpaca.env`, `credentials.txt`), not an Obsidian vault.
+
+If the mount is missing, STOP and report it — never fall back to a local folder,
+because the dashboard would never see those notes.
 
 ## Procedure
 
@@ -138,7 +146,7 @@ not retry unchanged.
 
 ### 6. Write the vault notes
 
-Two files per company, under `/mnt/hermes_sync/Vault/Companies/`:
+Two files per company, under `/mnt/hermes_sync/ObsidianVault/Companies/`:
 
 - `<TICKER>/<period>.md` — that quarter's guidance table plus the verbatim source
   wording, with YAML frontmatter (`ticker`, `period`, `filed`, `source`, `tags`).
