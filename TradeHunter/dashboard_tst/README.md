@@ -129,6 +129,13 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-05 - v4.32: fix the mangled bridge-setup path shipped in v4.31
+`BRIDGE_SETUP_PATH` reached the file as `dashboard_tstridge\install_bridge.ps1` - a
+literal BACKSPACE where `` should have been. The shell heredoc used to write it collapsed
+the escaped backslash, so Python saw `` inside what was no longer protecting it. The
+panel would have shown a corrupted path to anyone whose bridge button failed. Now a plain
+forward-slash string, which needs no escaping at all.
+
 ### 2026-08-23 - v4.31: a "Start the bridge" button, and auto-start on boot
 User: *"i need to button to start bat file"* when the panel reports the bridge is
 unreachable.

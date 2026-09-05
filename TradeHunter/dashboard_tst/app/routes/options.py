@@ -39,7 +39,7 @@ templates = Jinja2Templates(
 BRIDGE_PORT = 9224      # 9223 is the TradingView bridge
 # Shown in the panel when the "Start the bridge" button finds no URL handler, so
 # the member can run the one-time setup without hunting for the path.
-BRIDGE_SETUP_PATH = r"dashboard_tstridge\install_bridge.ps1"
+BRIDGE_SETUP_PATH = "dashboard_tst/bridge/install_bridge.ps1"
 
 
 def _earnings_date(symbol: str) -> str | None:
