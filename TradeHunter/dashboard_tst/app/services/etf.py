@@ -160,6 +160,17 @@ def sector_returns(timeframe: str = "daily") -> dict:
         row["quadrant"] = quad.get(row["symbol"])
         row["rs_ratio"] = tail[-1]["x"] if tail else None
         row["rs_mom"] = tail[-1]["y"] if tail else None
+        # Flag sectors near a quadrant line. The RRG's normalisation is proprietary
+        # (RRG Research / Optuma) and this is an approximation of it, so a sector
+        # close to a boundary can legitimately show one quadrant here and the
+        # neighbouring one on the chart. Measured 2026-09-07: every disagreement
+        # with the real chart was inside 0.75 of the RS-Momentum line, so surfacing
+        # the band explains the mismatches instead of leaving them looking wrong.
+        row["borderline"] = (
+            row["rs_ratio"] is not None and row["rs_mom"] is not None
+            and (abs(row["rs_ratio"] - 100) < BORDERLINE
+                 or abs(row["rs_mom"] - 100) < BORDERLINE)
+        )
 
     # Grouped leaders-first in rotation-strength order, each group sorted by RS-Ratio.
     # Anything without RRG data falls into a trailing untagged group.
@@ -339,6 +350,9 @@ def _jdk(wser: list[float], wbench: list[float],
 # RRG itself, so a sector's position in the list says where it is in the
 # rotation. (Was Leading/Improving/Weakening/Lagging -- strength order, which
 # put the two ends of the cycle next to each other.)
+# How close to a 100 line counts as "could go either way" in the panel.
+BORDERLINE = 1.0
+
 QUADRANTS = ["Leading", "Weakening", "Improving", "Lagging"]
 
 

@@ -129,6 +129,39 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-07 - v4.37: flag sectors sitting on a quadrant line
+Follow-up to v4.36. With the timeframe fixed, Leading matched the user's chart
+(Health Care + Financials) but four sectors still disagreed: Energy, Materials and
+Consumer Discretionary read Improving on the chart, Consumer Staples read Lagging.
+
+**Investigated properly rather than patched.** Two alternatives were built and scored
+against the user's actual Optuma chart (weekly, 4-Sep-2026, 10 legible sectors as ground
+truth):
+
+| variant | quadrants correct | positional RMSE |
+|---|---|---|
+| current EMA (win 20, smooth 14, lag 13) | 6/10 | **2.30** |
+| tuned EMA (win 20, smooth 8, lag 4) | **8/10** | 2.54 |
+| textbook z-score normalisation | 5/10 | - |
+
+**The tuned parameters were NOT shipped.** They win on quadrant labels at that one date
+but are worse positionally and visibly less stable week to week - the signature of fitting
+3 parameters to 10 observations at a single snapshot. Buying two borderline flips with a
+jumpier indicator is a bad trade.
+
+**What was shipped instead: make the uncertainty visible.** Every one of the four
+disagreements was a sector within **0.75 of the RS-Momentum line** (Cons Disc 0.16, Cons
+Staples 0.28, Materials 0.36, Energy 0.73). Sectors within 1.0 of either line now carry an
+amber diamond with the RS values in its tooltip, plus a one-line legend. That converts "the
+panel is wrong" into "this one is on the fence - check the chart", which is the truthful
+statement.
+
+**The honest limit.** JdK RS-Ratio / RS-Momentum is proprietary to RRG Research and
+licensed by Optuma; the exact normalisation is unpublished, so this can only ever
+approximate it. Right now 8 of 11 sectors fall inside the borderline band - our momentum
+axis is less dispersed in the middle than the chart's, which is exactly where the
+disagreements live. That is a real limitation of the approximation, not a bug to tune away.
+
 ### 2026-09-07 - v4.36: the quadrant panel defaulted to the WRONG timeframe
 User: *"in the RRG chart, healthcare financials are in the leading quadrant but it is not
 correctly shown in the left side panel, same goes to other."*

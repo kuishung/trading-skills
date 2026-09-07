@@ -47,6 +47,12 @@
   {% for w in windows %}<span class="text-right">{{ w }}</span>{% endfor %}
 </div>
 
+{# legend for the borderline marker, so the diamond is not a mystery #}
+<p class="text-[10px] text-slate-600 mb-1 px-1 leading-snug">
+  <span class="text-amber-400/80">&#9670;</span> = within 1.0 of a quadrant line; the RRG
+  formula is proprietary, so these can show in the neighbouring quadrant on the chart.
+</p>
+
 {% for g in (groups or [{"key": none, "rows": rows}]) %}
 {% set c = QCOLOR.get(g.key) %}
 {# quadrant header — one per non-empty group, so the four rotation states are visible
@@ -68,6 +74,13 @@
     <span class="text-[12px] text-slate-200 truncate flex items-center gap-1">
       {% if c %}<span class="w-1.5 h-1.5 rounded-full {{ c[1] }} shrink-0"></span>{% endif %}
       <span class="truncate">{{ r.name }}</span>
+      {# Borderline flag. A sector within 1.0 of either 100 line can legitimately sit
+         on the other side of it in the chart -- the RRG's exact normalisation is
+         proprietary and ours only approximates it. Every mismatch reported on
+         2026-09-07 was inside this band, so flagging it turns "the panel is wrong"
+         into "this one is on the fence, check the chart". #}
+      {% if r.borderline %}<span class="shrink-0 text-[10px] text-amber-400/80 cursor-help"
+            title="Sits within 1.0 of a quadrant line (RS-Ratio {{ '%.1f'|format(r.rs_ratio) }}, RS-Momentum {{ '%.1f'|format(r.rs_mom) }}). The RRG's exact formula is proprietary and ours approximates it, so a sector this close to a boundary can show in the neighbouring quadrant on the chart.">&#9670;</span>{% endif %}
     </span>
     <span class="text-right text-[12px]">{{ pct(r.rets['1M']) }}</span>
     <span class="text-right text-[12px]">{{ pct(r.rets['2M']) }}</span>
