@@ -33,10 +33,15 @@ MENUS = [
 ]
 # Routes that stay ACCESSIBLE (granted + reachable by URL) but are no longer shown
 # in the top nav after the revamp. Kept in ALL_KEYS so their require_menu() guards
-# still pass; simply not rendered by nav_for. "today" is the post-login landing
-# (always granted); "company" is the research chat (kind=company); studies/strategy/
-# patterns are de-emphasized. Re-add to MENUS to resurface any of them.
-HIDDEN_KEYS = ["today", "company", "studies", "strategy", "patterns"]
+# still pass; simply not rendered by nav_for. "company" is the research chat
+# (kind=company); studies/strategy/patterns are de-emphasized. Re-add to MENUS to
+# resurface any of them. ("today" was the post-login landing until 2026-09-07, when
+# the page was removed and the Calendar became the landing -- see LANDING below.)
+HIDDEN_KEYS = ["company", "studies", "strategy", "patterns"]
+# Where an approved user lands after sign-in (user, 2026-09-07: "on login go to
+# calendar by default"). Kept here rather than hard-coded at each redirect site so
+# the three of them (index, password login, OAuth callback) cannot drift apart.
+LANDING = "calendar_month"
 # NB: /finviz ("Data Ingest") is admin-only (base.html Settings dropdown), not here.
 ALL_KEYS = [m[0] for m in MENUS] + HIDDEN_KEYS
 LABELS = {m[0]: m[1] for m in MENUS}
@@ -52,8 +57,7 @@ def allowed_keys(user: User) -> set:
     acc = getattr(user, "menu_access", None)
     if acc is None:
         return set(ALL_KEYS)
-    # "today" is the landing page — always accessible, never revocable.
-    return (set(acc) & set(ALL_KEYS)) | {"today"}
+    return set(acc) & set(ALL_KEYS)
 
 
 def user_can(user: User, *keys: str) -> bool:
@@ -88,6 +92,20 @@ def nav_for(user: User):
             at[group] = entry
             out.append(entry)
     return out
+
+
+def landing_for(user: User) -> str:
+    """Where to send an approved user after sign-in.
+
+    The Calendar by default; if this member has not been granted it, their first
+    allowed menu instead. Resolving it HERE rather than redirecting to a fixed URL
+    means a member without calendar access lands on a page they can actually open,
+    instead of bouncing off require_menu's guard.
+    """
+    allow = allowed_keys(user)
+    if LANDING in allow:
+        return dict((m[0], m[3]) for m in MENUS)[LANDING]
+    return next((href for key, label, group, href in MENUS if key in allow), "/")
 
 
 def require_menu(*keys: str):

@@ -1,9 +1,11 @@
 """Sector & Industry — sector rotation (ETF leaders, RRG, correlation) and, later,
 industry KPI / peer views.
 
-The sector-rotation cards reuse the existing /today/* fragment endpoints (etf-leaders,
-correlation, rrg) via HTMX — no data duplication. The industry-KPI view is Phase 2
-(agent-computed peer scorecards; see COMPANY_ANALYSIS_DESIGN.md).
+The rotation cards HTMX-load this router's own fragments (/sector/returns, /sector/rrg,
+/sector/chart) off the shared, cached services.etf helpers — no data duplication. (They
+originally reused /today/* fragments; that page was removed 2026-09-07.) The
+industry-KPI view is Phase 2 (agent-computed peer scorecards; see
+COMPANY_ANALYSIS_DESIGN.md).
 """
 from __future__ import annotations
 

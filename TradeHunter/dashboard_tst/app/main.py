@@ -49,7 +49,6 @@ from .routes import research as research_routes
 from .routes import sector as sector_routes
 from .routes import strategy as strategy_routes
 from .routes import studies as studies_routes
-from .routes import today as today_routes
 from .security import current_user, hash_password, require_admin
 
 log = logging.getLogger("dashboard_tst")
@@ -60,7 +59,7 @@ templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
 # Expose the build version as a Jinja global on every templates env, so the
 # sidebar logo (base.html) shows "v<version>" without each route passing it.
 for _routes_mod in (
-    auth_routes, today_routes, matp_routes, studies_routes,
+    auth_routes, matp_routes, studies_routes,
     finviz_routes, feedback_routes, admin_routes, agent_routes, pipeline_routes,
     research_routes, patterns_routes, strategy_routes, portfolio_routes,
     company_analysis_routes, sector_routes, macro_routes, calendar_routes,
@@ -177,8 +176,6 @@ def create_app() -> FastAPI:
     app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="static")
 
     app.include_router(auth_routes.router)
-    # Today Overview — universal post-login landing (no menu gate; require_user only).
-    app.include_router(today_routes.router)
     # page routers carry a per-menu access guard (blocks direct URLs; nav hides them too)
     app.include_router(matp_routes.router, dependencies=[Depends(menus.require_menu("matp"))])
     app.include_router(studies_routes.router, dependencies=[Depends(menus.require_menu("studies"))])
@@ -235,10 +232,10 @@ def create_app() -> FastAPI:
         # Go straight to the login page for visitors (no marketing landing).
         if user is None:
             return RedirectResponse(url="/login", status_code=303)
-        # Approved members land on the Today Overview; pending/disabled users
-        # see the awaiting-approval page.
+        # Approved members land on their landing page (the Calendar by default);
+        # pending/disabled users see the awaiting-approval page.
         if user.is_approved:
-            return RedirectResponse(url="/today", status_code=303)
+            return RedirectResponse(url=menus.landing_for(user), status_code=303)
         return templates.TemplateResponse(request, "dashboard.html", {"user": user})
 
     return app

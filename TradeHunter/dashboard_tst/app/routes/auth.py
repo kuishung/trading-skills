@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 from .. import __version__
 from ..config import settings
 from ..db import get_db
+from ..menus import landing_for
 from ..models import APPROVED, PENDING, User
 from ..security import login_user, logout_user, verify_password
 
@@ -100,7 +101,8 @@ async def login_password(
             request, "login.html", _login_ctx("Invalid email or password."), status_code=401
         )
     login_user(request, user)
-    return RedirectResponse(url=("/today" if user.is_approved else "/"), status_code=303)
+    return RedirectResponse(
+        url=(landing_for(user) if user.is_approved else "/"), status_code=303)
 
 
 @router.get("/auth/callback", name="auth_callback")
@@ -153,8 +155,10 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
                 user.display_name = name
         db.commit()
         login_user(request, user)
-        # Approved -> MATP page; pending -> home (shows awaiting-approval).
-        return RedirectResponse(url=("/today" if user.is_approved else "/"), status_code=303)
+        # Approved -> their landing page (Calendar by default); pending -> home
+        # (shows awaiting-approval).
+        return RedirectResponse(
+            url=(landing_for(user) if user.is_approved else "/"), status_code=303)
     except Exception:
         log.exception("OAuth callback failed")
         if settings.debug:

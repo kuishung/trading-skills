@@ -5,8 +5,11 @@ US sector SPDRs benchmarked vs SPY. All data is LIVE from Yahoo daily bars
 computed in PURE PYTHON (no numpy/pandas) so there's no extra Hermes dependency;
 results are cached ~15 min and soft-fail. One aligned-close fetch feeds all three:
   - etf_leaders()        relative strength (1w/1m/3m vs SPY), ranked
-  - correlation_matrix() 60-day daily-return correlation heatmap
   - rrg()                JdK-style RS-Ratio / RS-Momentum quadrant tails
+
+(correlation_matrix() lived here too until 2026-09-07; its only caller was the
+/today correlation card, removed with that page. Recover it from git if a
+correlation view is wanted again.)
 """
 from __future__ import annotations
 
@@ -64,20 +67,6 @@ def _ret(series: list[float], lookback: int):
     if len(series) <= lookback or not series[-1 - lookback]:
         return None
     return series[-1] / series[-1 - lookback] - 1.0
-
-
-def _pearson(a: list[float], b: list[float]) -> float:
-    n = min(len(a), len(b))
-    if n < 2:
-        return 0.0
-    a, b = a[-n:], b[-n:]
-    ma, mb = sum(a) / n, sum(b) / n
-    cov = sum((a[i] - ma) * (b[i] - mb) for i in range(n))
-    va = sum((x - ma) ** 2 for x in a)
-    vb = sum((x - mb) ** 2 for x in b)
-    if va <= 0 or vb <= 0:
-        return 0.0
-    return cov / ((va * vb) ** 0.5)
 
 
 # -------------------------------------------------------------- ETF leaders
@@ -302,32 +291,6 @@ def sector_returns(timeframe: str = "daily") -> dict:
         "spy": _row(BENCHMARK, "S&P 500"),
     }
     _cache[ck] = (time.time() + _TTL, out)
-    return out
-
-
-# -------------------------------------------------------------- correlation
-def correlation_matrix(window: int = 60) -> dict:
-    """60-day daily-return Pearson correlation across SPY + every sector ETF."""
-    hit = _cache.get("corr")
-    if hit and hit[0] > time.time():
-        return hit[1]
-    closes = _aligned()["closes"]
-    labels = [BENCHMARK] + [s for s, _ in ETF_UNIVERSE]
-    rets: dict = {}
-    ok = True
-    for s in labels:
-        c = closes.get(s, [])
-        if len(c) < window + 1:
-            ok = False
-            break
-        seg = c[-(window + 1):]
-        rets[s] = [seg[i] / seg[i - 1] - 1.0 for i in range(1, len(seg)) if seg[i - 1]]
-    matrix = []
-    if ok:
-        for ra in labels:
-            matrix.append([round(_pearson(rets[ra], rets[rb]), 2) for rb in labels])
-    out = {"labels": labels, "matrix": matrix, "window": window}
-    _cache["corr"] = (time.time() + _TTL, out)
     return out
 
 

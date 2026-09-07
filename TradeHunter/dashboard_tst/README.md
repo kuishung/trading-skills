@@ -129,6 +129,31 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-07 - v4.41: /today removed; the Calendar is the landing page
+
+User: *"https://app.tradehunter.net/today remove this page. on login go to calendar
+by default."*
+
+The Today Overview and its six lazy card fragments are gone, along with everything
+that existed only to feed them: `routes/today.py`, `today.html`, the six
+`_today_*.html` fragments, **`services/market.py`** (fear & greed, market news,
+company news - no other caller), and **`etf.correlation_matrix()` + `_pearson()`**
+(the correlation card was its only consumer). Recover any of it from git at `779c9fd`
+if it is wanted again. `etf_leaders()` stays - the Sector page still uses it.
+
+**Landing.** The three redirect sites (`/`, password login, OAuth callback) used to
+hard-code `/today` in three places. They now call **`menus.landing_for(user)`**, so
+the destination is defined once: the Calendar (`LANDING = "calendar_month"`), or - if
+that member has not been granted it - their first allowed menu. Resolving it there
+rather than redirecting to a fixed URL means a restricted member lands on a page they
+can actually open instead of bouncing off `require_menu`'s guard.
+
+`"today"` also came out of `HIDDEN_KEYS` and out of `allowed_keys()`, which used to
+force-grant it to every user as the un-revocable landing page.
+
+Verified: `/today` returns 404; `/` redirects to `/calendar/month`; logged out, `/`
+goes to `/login`; a real password login lands on `/calendar/month`.
+
 ### 2026-09-07 - v4.40: Sector ETFs tab follows the panel, and lands on a chart
 
 User: *"in sector etf when the tab is selected always select the first ticker on the
