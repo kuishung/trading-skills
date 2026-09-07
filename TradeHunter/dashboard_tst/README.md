@@ -129,6 +129,33 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-07 - v4.35: sector list in RRG rotation order + a Sector ETFs chart tab
+User: *"the left hand upper list should follow the Leading Weakening Improving and Lagging
+sector in the RRG chart ... and i need a tab for sector chart where the 11 sector ETF under
+SPDR ETF will be shown in the TV chart, duplicate the same control as per the Chart."*
+
+**Quadrant order.** The left panel already grouped by RRG quadrant, but in
+Leading/Improving/Weakening/Lagging - *strength* order, which puts the two ENDS of the
+cycle side by side. RRG rotation is clockwise: Leading -> Weakening -> Lagging ->
+Improving. Listing the groups in that sequence means the panel walks the cycle in the same
+direction as the chart, so a sector's position in the list tells you where it is in the
+rotation. One constant, `QUADRANTS` in `services/etf.py`. The quadrant maths was already
+correct (RS-Ratio/RS-Momentum vs SPY over the 11 SPDR ETFs) and is untouched.
+
+**New "Sector ETFs" tab.** Buttons for the 11 SPDR sector ETFs, charting the selected one.
+It **reuses `/sector/chart` verbatim** rather than reimplementing a chart, so every control
+is identical by construction and the two tabs cannot drift apart - verified: 7 drawing
+tools, ATR(14), all four zoom buttons, Plot-on-TV. The button list is built from
+`ETF_UNIVERSE`, the same constant the RRG and returns panels use, so the tab can never list
+a different set of sectors than the rest of the page.
+
+**The subtle part: only ONE chart may be mounted at a time.** `_price_chart.html` addresses
+its elements by fixed id (`#priceChart`, `#chartName`, ...). Two charts in the DOM - one in
+a hidden pane - would mean a later script grabs the wrong one and the *visible* chart
+silently stops updating. So switching tabs clears the inactive pane and the activated tab
+reloads its own chart (~2s). Verified across Chart <-> Sector ETFs <-> RRG: never more than
+one `#priceChart`, and returning to a tab restores its symbol.
+
 ### 2026-09-05 - v4.34: vault path corrected - HermesSync\Vault is the SECRETS folder
 The v4.33 deploy note told the user to set TST_OBSIDIAN_DIR=C:\HermesSync\Vault. That is
 **wrong and unsafe**: HermesSync\Vault holds alpaca.env, credentials.txt and

@@ -48,7 +48,14 @@ def _filter_fragment(request: Request, user: User) -> HTMLResponse:
 
 @router.get("", response_class=HTMLResponse)
 def sector_home(request: Request, user: User = Depends(require_user)):
-    return templates.TemplateResponse(request, "sector.html", {"user": user})
+    # ETF_UNIVERSE drives the Sector ETFs tab's buttons, so that tab and the RRG /
+    # returns panels can never list a different set of sectors.
+    from ..services.etf import ETF_UNIVERSE
+
+    return templates.TemplateResponse(
+        request, "sector.html",
+        {"user": user, "etfs": [{"symbol": s, "name": n} for s, n in ETF_UNIVERSE]},
+    )
 
 
 @router.get("/returns", response_class=HTMLResponse)

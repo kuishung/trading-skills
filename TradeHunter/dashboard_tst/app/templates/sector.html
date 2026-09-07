@@ -66,6 +66,7 @@
     <div class="flex items-center gap-1 mb-2 shrink-0 border-b border-slate-800">
       <button type="button" class="ctab text-xs px-3 py-1.5 -mb-px border-b-2 transition" data-tab="rrg">Relative Rotation</button>
       <button type="button" class="ctab text-xs px-3 py-1.5 -mb-px border-b-2 transition" data-tab="chart">Chart</button>
+      <button type="button" class="ctab text-xs px-3 py-1.5 -mb-px border-b-2 transition" data-tab="etf">Sector ETFs</button>
       <span id="chartTabTicker" class="ml-auto text-[11px] text-slate-500 pr-1"></span>
     </div>
 
@@ -93,6 +94,23 @@
       <iframe src="https://rrg.optuma.com/" title="Relative Rotation Graph — Optuma"
               loading="lazy" referrerpolicy="no-referrer-when-downgrade"
               class="flex-1 min-h-0 w-full rounded-lg bg-white border-0"></iframe>
+    </section>
+
+    {# Sector ETFs pane — the 11 SPDR sector ETFs on the SAME chart component as the
+       Chart tab, so every control (zoom, drawing tools, ATR, crosshair, Plot-on-TV)
+       behaves identically. It literally reuses /sector/chart rather than
+       reimplementing a chart, so the two tabs can never drift apart. #}
+    <section id="tabPane-etf" class="hidden rounded-xl border border-slate-800 bg-slate-900/40 p-4 flex flex-col min-w-0 flex-1 min-h-0">
+      <div class="flex flex-wrap items-center gap-1 mb-2 shrink-0">
+        {% for e in etfs %}
+        <button type="button" class="etfbtn text-[11px] px-2 py-1 rounded border border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 transition"
+                data-sym="{{ e.symbol }}" title="{{ e.name }}">{{ e.symbol }}</button>
+        {% endfor %}
+        <span class="text-[11px] text-slate-500 ml-1">SPDR S&amp;P US sectors</span>
+      </div>
+      <div id="sectorEtfChartBody" class="flex-1 min-h-0 overflow-y-auto flex flex-col">
+        <div class="flex-1 flex items-center justify-center text-xs text-slate-500 text-center px-4">Pick a sector ETF above to chart it.</div>
+      </div>
     </section>
 
     {# Chart pane — hidden until a ticker is clicked / the tab is selected #}
@@ -148,7 +166,55 @@
       });
       // the RRG measures its container on resize; nudge it when its pane reappears
       if (name === 'rrg') window.dispatchEvent(new Event('resize'));
+
+      // Only ONE chart may exist in the DOM at a time. _price_chart.html addresses
+      // its elements by fixed id (#priceChart, #chartName, ...), so a second chart
+      // left mounted in the hidden pane would be the one a later script found --
+      // the visible chart would then silently stop updating. Clearing the inactive
+      // pane keeps ids unique; the tab reloads its own chart on activation.
+      if (name === 'etf') {
+        clearPane('sectorChartBody', 'Click a ticker in the Symbol panel to load its chart here.');
+        if (etfSym) loadEtf(etfSym);
+      } else if (name === 'chart') {
+        clearPane('sectorEtfChartBody', 'Pick a sector ETF above to chart it.');
+        if (chartSym) loadChart(chartSym);
+      }
     }
+
+    var etfSym = null, chartSym = null;
+
+    function clearPane(id, msg) {
+      var el = document.getElementById(id);
+      if (el) {
+        el.innerHTML = '<div class="flex-1 flex items-center justify-center text-xs ' +
+          'text-slate-500 text-center px-4">' + msg + '</div>';
+      }
+    }
+
+    function loadInto(target, sym) {
+      if (!window.htmx) return;
+      htmx.ajax('GET', '/sector/chart?symbol=' + encodeURIComponent(sym),
+                { target: '#' + target, swap: 'innerHTML' });
+    }
+
+    function loadChart(sym) { chartSym = sym; loadInto('sectorChartBody', sym); }
+
+    function loadEtf(sym) {
+      etfSym = sym;
+      document.querySelectorAll('.etfbtn').forEach(function (b) {
+        var on = b.getAttribute('data-sym') === sym;
+        b.classList.toggle('border-emerald-500', on);
+        b.classList.toggle('text-emerald-300', on);
+        b.classList.toggle('bg-emerald-500/10', on);
+        b.classList.toggle('border-slate-700', !on);
+        b.classList.toggle('text-slate-400', !on);
+      });
+      loadInto('sectorEtfChartBody', sym);
+    }
+
+    document.querySelectorAll('.etfbtn').forEach(function (b) {
+      b.addEventListener('click', function () { loadEtf(b.getAttribute('data-sym')); });
+    });
     window._sectorSetTab = setTab;
     document.querySelectorAll('.ctab').forEach(function (b) {
       b.addEventListener('click', function () { setTab(b.getAttribute('data-tab')); });
@@ -165,7 +231,11 @@
         r.classList.toggle('text-emerald-300', r === t);
       });
       var lbl = document.getElementById('chartTabTicker');
-      if (lbl) lbl.textContent = t.getAttribute('data-sym') || '';
+      var sym = t.getAttribute('data-sym') || '';
+      if (lbl) lbl.textContent = sym;
+      // Remember it: switching tabs clears the pane (unique-id rule above), so the
+      // Chart tab needs to know what to put back when it is re-selected.
+      if (sym) chartSym = sym;
       setTab('chart');
     });
 

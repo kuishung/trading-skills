@@ -333,7 +333,13 @@ def _jdk(wser: list[float], wbench: list[float],
 # Display order for the four RRG quadrants: strongest rotation state first. This is
 # reading order for the sector panel, not the clockwise rotation cycle — a reader wants
 # "who is strong now" at the top, not where the cycle happens to start.
-QUADRANTS = ["Leading", "Improving", "Weakening", "Lagging"]
+# RRG ROTATION order, the way the chart is read: a sector rotates clockwise
+# Leading -> Weakening -> Lagging -> Improving -> Leading. Listing the groups
+# in that sequence means the panel walks the cycle in the same direction as the
+# RRG itself, so a sector's position in the list says where it is in the
+# rotation. (Was Leading/Improving/Weakening/Lagging -- strength order, which
+# put the two ends of the cycle next to each other.)
+QUADRANTS = ["Leading", "Weakening", "Improving", "Lagging"]
 
 
 def _quadrant(x: float, y: float) -> str:
