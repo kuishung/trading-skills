@@ -129,6 +129,42 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-07 - v4.38: the panel now shows the RRG chart's OWN numbers
+User: *"Energy in Improving but in the list it shown in weakening. how do you refer the
+chart RRG chart to the panel. Do not use the old calculation."*
+
+The honest answer to "how do you refer the chart to the panel" was: **it didn't**. The
+panel always computed its own JdK approximation, and JdK RS-Ratio/RS-Momentum is
+proprietary to RRG Research, so an approximation can never be relied on to agree. On
+2026-09-04 it put Energy at 101.89/99.27 (Weakening) where the chart had 98.02/101.34
+(Improving) - a 3.9-point gap on the ratio axis, not a rounding difference.
+
+**New: `rrg_points`** (migration `c6d7e8f9a0b1`) stores the chart's real coordinates, and
+**`POST /api/rrg`** ingests them. `sector_returns()` now prefers a stored point over the
+estimate, per sector, and reports which it used:
+
+- real point -> quadrant recomputed from the chart's own x/y, panel header reads
+  **"quadrants from the RRG chart itself - as of <date>"**, and no borderline markers are
+  drawn (a real coordinate is the chart's answer however close to a line it sits).
+- no stored point -> the estimate, with the v4.37 borderline markers and a header that
+  says it is an estimate.
+
+A stored point REPLACES the estimate rather than blending with it: averaging a real number
+with a guess yields a third number that is neither.
+
+**Verified with the chart's 2026-09-04 values loaded: 0 mismatches across all 10 sectors.**
+Energy, Consumer Discretionary and Materials moved to Improving; Consumer Staples to
+Lagging - exactly the four the user reported.
+
+Ingest rejects impossible coordinates: an RRG point sits near 100 by construction, so
+anything outside 50-150 is a unit or parsing error (verified: 9801.0 rejected by name).
+
+**Two things worth knowing.** The SPDR S&P US Sectors universe has **10 sectors, not 11** -
+Real Estate is not in it, which is why it carries no label on the chart. It therefore stays
+on the estimate and is marked as such, rather than being given a placement the chart never
+makes. And these values are a SNAPSHOT: they do not refresh themselves, so the header
+carries the RRG's own date. When it goes stale, re-post.
+
 ### 2026-09-07 - v4.37: flag sectors sitting on a quadrant line
 Follow-up to v4.36. With the timeframe fixed, Leading matched the user's chart
 (Health Care + Financials) but four sectors still disagreed: Energy, Materials and

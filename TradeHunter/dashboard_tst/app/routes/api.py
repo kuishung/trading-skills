@@ -938,3 +938,76 @@ def ingest_guidance(
     db.commit()
     return {"ok": True, "stored": stored, "updated": updated,
             "rejected": rejected, "problems": problems[:20]}
+
+
+# ---------------------------------------------------------------------------
+# RRG POINTS — the chart's own RS-Ratio / RS-Momentum.
+#
+# The sector panel's built-in JdK calculation only APPROXIMATES the licensed
+# indicator, and near a 100 line the approximation puts sectors in the wrong
+# quadrant (2026-09-04: Energy 101.89/99.27 here vs 98.02/101.34 on the chart —
+# Weakening instead of Improving). Real values posted here take precedence, and
+# the panel labels which source it is showing.
+
+class RRGRow(BaseModel):
+    symbol: str
+    rs_ratio: float
+    rs_momentum: float
+
+
+class RRGIngest(BaseModel):
+    timeframe: str = "weekly"
+    as_of: str
+    source: str = "optuma"
+    items: list[RRGRow] = Field(default_factory=list)
+
+
+@router.post("/rrg")
+def ingest_rrg(
+    payload: RRGIngest,
+    _: bool = Depends(require_api_key),
+    db: Session = Depends(get_db),
+):
+    """Upsert real RRG coordinates on (symbol, timeframe).
+
+    Portable query-then-update/insert per the data-handling rule. Values are
+    sanity-checked: an RRG coordinate sits near 100 by construction, so anything
+    outside 50-150 is a unit or parsing error rather than a reading, and is
+    rejected instead of stored.
+    """
+    from ..models import RRGPoint
+
+    tf = (payload.timeframe or "weekly").strip().lower()
+    if tf not in ("daily", "weekly"):
+        return {"ok": False, "error": "timeframe must be daily or weekly"}
+
+    stored = updated = rejected = 0
+    problems: list[str] = []
+    for it in payload.items:
+        sym = (it.symbol or "").strip().upper()
+        if not sym:
+            rejected += 1
+            continue
+        if not (50.0 <= it.rs_ratio <= 150.0 and 50.0 <= it.rs_momentum <= 150.0):
+            rejected += 1
+            problems.append(f"{sym}: ({it.rs_ratio}, {it.rs_momentum}) is not an RRG coordinate")
+            continue
+        row = (db.query(RRGPoint)
+                 .filter(RRGPoint.symbol == sym, RRGPoint.timeframe == tf)
+                 .one_or_none())
+        if row is None:
+            row = RRGPoint(symbol=sym, timeframe=tf)
+            db.add(row)
+            stored += 1
+        else:
+            updated += 1
+        row.as_of = payload.as_of
+        row.rs_ratio = it.rs_ratio
+        row.rs_momentum = it.rs_momentum
+        row.source = (payload.source or "optuma")[:20]
+        row.updated_at = _dt.datetime.now(_dt.timezone.utc)
+
+    db.commit()
+    return {"ok": True, "timeframe": tf, "as_of": payload.as_of,
+            "stored": stored, "updated": updated, "rejected": rejected,
+            "problems": problems[:10]}

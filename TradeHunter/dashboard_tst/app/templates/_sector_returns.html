@@ -48,10 +48,21 @@
 </div>
 
 {# legend for the borderline marker, so the diamond is not a mystery #}
-<p class="text-[10px] text-slate-600 mb-1 px-1 leading-snug">
-  <span class="text-amber-400/80">&#9670;</span> = within 1.0 of a quadrant line; the RRG
-  formula is proprietary, so these can show in the neighbouring quadrant on the chart.
+{% set real_rows = (rows or []) | selectattr('rrg_source', 'defined')
+                     | rejectattr('rrg_source', 'equalto', 'estimate') | list %}
+{% if real_rows %}
+{# Real chart coordinates: no approximation, so no borderline caveat is needed. #}
+<p class="text-[10px] text-emerald-500/80 mb-1 px-1 leading-snug">
+  quadrants from the RRG chart itself
+  {% if real_rows[0].rrg_as_of %}&middot; as of {{ real_rows[0].rrg_as_of }}{% endif %}
 </p>
+{% else %}
+<p class="text-[10px] text-slate-600 mb-1 px-1 leading-snug">
+  <span class="text-amber-400/80">&#9670;</span> = within 1.0 of a quadrant line. These are
+  our own estimate of the RRG (its formula is proprietary), so flagged sectors can show in
+  the neighbouring quadrant on the chart.
+</p>
+{% endif %}
 
 {% for g in (groups or [{"key": none, "rows": rows}]) %}
 {% set c = QCOLOR.get(g.key) %}

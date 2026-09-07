@@ -851,3 +851,36 @@ class CompanyGuidance(Base):
         UniqueConstraint("symbol", "period", "metric", "basis",
                          name="uq_company_guidance_row"),
     )
+
+
+class RRGPoint(Base):
+    """One sector's REAL RRG coordinate, as published by the RRG chart itself.
+
+    The panel used to always compute its own JdK approximation, and an
+    approximation cannot be relied on to agree with the licensed indicator: on
+    2026-09-04 Energy read Weakening here (101.89 / 99.27) while the chart said
+    Improving (98.02 / 101.34). JdK RS-Ratio / RS-Momentum is proprietary to RRG
+    Research, so the gap is structural, not a tuning problem.
+
+    When a fresh row exists for (symbol, timeframe) the panel uses it and says so;
+    otherwise it falls back to the computed approximation and says THAT. Either
+    way the panel is honest about which number the reader is looking at.
+
+    ``as_of`` is the date the RRG itself is stamped with, not when we stored it --
+    staleness is a property of the data, not of the fetch.
+    """
+
+    __tablename__ = "rrg_points"
+
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), nullable=False, index=True)   # our ETF ticker, e.g. XLE
+    timeframe = Column(String(10), nullable=False)            # daily | weekly
+    as_of = Column(String(10), nullable=False)                # the RRG's own date, ISO
+    rs_ratio = Column(Float, nullable=False)
+    rs_momentum = Column(Float, nullable=False)
+    source = Column(String(20), nullable=False, default="optuma")
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("symbol", "timeframe", name="uq_rrg_point_symbol_tf"),
+    )

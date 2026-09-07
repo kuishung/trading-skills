@@ -124,6 +124,31 @@ def leader_order() -> list[str]:
 _RET_WINDOWS = [("1M", 21), ("2M", 42), ("4M", 84), ("8M", 168)]
 
 
+def real_rrg_points(timeframe: str) -> dict:
+    """{symbol: {rs_ratio, rs_momentum, as_of, source}} from the rrg_points table.
+
+    Soft-fails to {} so the panel keeps working on its own estimate when the table
+    is empty, missing, or the DB is unreachable -- this is an ENHANCEMENT to the
+    panel, never a dependency of it.
+    """
+    try:
+        from ..db import SessionLocal
+        from ..models import RRGPoint
+    except Exception:  # noqa: BLE001
+        return {}
+    db = None
+    try:
+        db = SessionLocal()
+        rows = db.query(RRGPoint).filter(RRGPoint.timeframe == timeframe).all()
+        return {r.symbol: {"rs_ratio": r.rs_ratio, "rs_momentum": r.rs_momentum,
+                           "as_of": r.as_of, "source": r.source} for r in rows}
+    except Exception:  # noqa: BLE001
+        return {}
+    finally:
+        if db is not None:
+            db.close()
+
+
 def sector_returns(timeframe: str = "daily") -> dict:
     """Per-sector total return over 1 / 2 / 4 / 8 months, for the Sector & Industry
     left panel. Ordered leaders-first by relative strength vs SPY (shared
@@ -155,18 +180,36 @@ def sector_returns(timeframe: str = "daily") -> dict:
         pts, quad = r["points"], r["quad"]
     except Exception:  # noqa: BLE001
         pts, quad = {}, {}
+
+    # REAL RRG points, when we have them, beat our own approximation. JdK
+    # RS-Ratio/RS-Momentum is proprietary, so the estimate cannot be trusted near a
+    # 100 line -- on 2026-09-04 it put Energy in Weakening (101.89/99.27) when the
+    # chart had it Improving (98.02/101.34). A stored point replaces the estimate
+    # outright rather than being blended with it; averaging a real number with a
+    # guess produces a third number that is neither.
+    real = real_rrg_points(timeframe)
     for row in rows:
         tail = (pts.get(row["symbol"]) or {}).get("tail") or []
         row["quadrant"] = quad.get(row["symbol"])
         row["rs_ratio"] = tail[-1]["x"] if tail else None
         row["rs_mom"] = tail[-1]["y"] if tail else None
+        row["rrg_source"] = "estimate"
+        row["rrg_as_of"] = None
+
+        hit = real.get(row["symbol"])
+        if hit:
+            row["rs_ratio"] = hit["rs_ratio"]
+            row["rs_mom"] = hit["rs_momentum"]
+            row["quadrant"] = _quadrant(hit["rs_ratio"], hit["rs_momentum"])
+            row["rrg_source"] = hit["source"]
+            row["rrg_as_of"] = hit["as_of"]
         # Flag sectors near a quadrant line. The RRG's normalisation is proprietary
         # (RRG Research / Optuma) and this is an approximation of it, so a sector
         # close to a boundary can legitimately show one quadrant here and the
         # neighbouring one on the chart. Measured 2026-09-07: every disagreement
         # with the real chart was inside 0.75 of the RS-Momentum line, so surfacing
         # the band explains the mismatches instead of leaving them looking wrong.
-        row["borderline"] = (
+        row["borderline"] = row["rrg_source"] == "estimate" and (
             row["rs_ratio"] is not None and row["rs_mom"] is not None
             and (abs(row["rs_ratio"] - 100) < BORDERLINE
                  or abs(row["rs_mom"] - 100) < BORDERLINE)
