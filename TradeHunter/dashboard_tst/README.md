@@ -129,6 +129,44 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-07 - v4.39: the chart's values now SHIP with the code
+
+v4.38 built the mechanism and left the data outside it: the real coordinates had to
+be POSTed to `/api/rrg` by hand, with an API key, on every machine. A deploy is a
+`git pull`, so a pulled-but-unposted Hermes silently fell back to the estimate and
+showed Energy in Weakening again - the exact symptom v4.38 set out to fix, still on
+screen after the deploy. A feature that only works if someone remembers a second,
+undocumented step is not shipped.
+
+**`app/services/rrg_seed.json`** now carries the chart's own numbers in the repo, and
+`real_rrg_points()` merges seed and table with **newest `as_of` wins**:
+
+- pull only -> the seed is used, panel matches the chart, no key and no POST.
+- POST a fresher reading -> it overrides the seed immediately, no deploy.
+- deploy a newer seed -> it overrides a stale posted row.
+
+The seed gets the same 50-150 sanity check as the ingest route, so a mistyped edit is
+ignored rather than believed, and it is read-only (nothing is written at startup).
+
+**Verified on an empty `rrg_points` table: 0 mismatches across all 10 sectors** -
+Leading Financials/Health Care, Weakening Technology, Improving Energy/Cons
+Disc/Materials, the rest Lagging.
+
+**Mixed-source honesty.** With real points loaded the header claimed "quadrants from
+the RRG chart itself" while Real Estate was still an estimate, and its borderline
+diamond had lost its legend along with the estimate banner. The header now names the
+exceptions ("Real Estate is not in that universe - still our own estimate") and the
+per-row tooltip says which source that row used instead of claiming "our own
+calculation" for all eleven.
+
+**Also fixed: `init_db()` could refuse to boot.** It decided the DB was
+migration-managed on the mere EXISTENCE of an `alembic_version` table. A table
+holding no row means nothing is stamped, so it replayed from base against tables that
+already existed and died on `table matp_history already exists` - the app then does
+not start at all. It now decides on the stamped REVISION, so an empty version table
+is treated as unmanaged, which is what it is. Hit locally on 2026-09-07; reachable in
+production via an interrupted stamp, a downgrade, or a copied DB.
+
 ### 2026-09-07 - v4.38: the panel now shows the RRG chart's OWN numbers
 User: *"Energy in Improving but in the list it shown in weakening. how do you refer the
 chart RRG chart to the panel. Do not use the old calculation."*

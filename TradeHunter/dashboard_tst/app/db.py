@@ -36,23 +36,40 @@ def init_db() -> None:
         at the baseline so future migrations apply incrementally. (This is the
         existing Hermes DB: real users/filters, no migration history yet,
         missing only the newer tables.)
+
+    Which state we are in is decided by the STAMPED REVISION, not by whether an
+    alembic_version table exists. A table that exists but holds no row means
+    nothing is stamped, so an upgrade would replay from base against tables that
+    are already there -- "table matp_history already exists", and the app fails to
+    boot. That state is reachable (an interrupted stamp, a downgrade to base, a
+    copied DB) and was hit locally on 2026-09-07; an empty version table is
+    treated as unmanaged, which is what it is.
     """
     from pathlib import Path
 
     from alembic import command
     from alembic.config import Config
-    from sqlalchemy import inspect
+    from sqlalchemy import inspect, text
 
     from . import models  # noqa: F401  (register models on Base)
 
     tables = set(inspect(engine).get_table_names())
+
+    stamped = None
+    if "alembic_version" in tables:
+        try:
+            with engine.connect() as conn:
+                row = conn.execute(text("SELECT version_num FROM alembic_version")).first()
+            stamped = row[0] if row else None
+        except Exception:  # noqa: BLE001
+            stamped = None
 
     dash_root = Path(__file__).resolve().parent.parent  # dashboard_tst/
     cfg = Config(str(dash_root / "alembic.ini"))
     cfg.set_main_option("script_location", str(dash_root / "alembic"))
     cfg.set_main_option("sqlalchemy.url", settings.database_url)
 
-    if "alembic_version" in tables:
+    if stamped:
         command.upgrade(cfg, "head")
     elif "users" in tables:
         # legacy DB built by create_all: add any new tables, then mark baseline.

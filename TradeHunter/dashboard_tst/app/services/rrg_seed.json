@@ -1,0 +1,18 @@
+{
+  "_comment": "Real JdK RS-Ratio / RS-Momentum read off the official Optuma RRG (SPDR S&P US Sectors ETF, weekly, benchmark SPY). Ships in the repo so a plain git-pull deploy makes the sector panel agree with the chart -- no API key, no manual POST. A point stored in the rrg_points table with a NEWER as_of wins over this seed, so posting a fresh reading via POST /api/rrg always takes precedence. When this date goes stale, update it here and it travels to every machine.",
+  "timeframe": "weekly",
+  "as_of": "2026-09-04",
+  "source": "optuma",
+  "points": {
+    "XLC": [93.708322, 99.903986],
+    "XLY": [96.685231, 100.548592],
+    "XLP": [94.955425, 99.879697],
+    "XLE": [98.021320, 101.342014],
+    "XLF": [102.377930, 102.901877],
+    "XLV": [102.053231, 103.269283],
+    "XLI": [98.728691, 99.674193],
+    "XLB": [96.336204, 100.339727],
+    "XLK": [103.676806, 98.440481],
+    "XLU": [93.668881, 98.931066]
+  }
+}

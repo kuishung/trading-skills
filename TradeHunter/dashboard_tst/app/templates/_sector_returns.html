@@ -50,11 +50,22 @@
 {# legend for the borderline marker, so the diamond is not a mystery #}
 {% set real_rows = (rows or []) | selectattr('rrg_source', 'defined')
                      | rejectattr('rrg_source', 'equalto', 'estimate') | list %}
+{% set est_rows = (rows or []) | selectattr('rrg_source', 'defined')
+                    | selectattr('rrg_source', 'equalto', 'estimate') | list %}
 {% if real_rows %}
-{# Real chart coordinates: no approximation, so no borderline caveat is needed. #}
+{# Real chart coordinates: no approximation, so no borderline caveat applies to
+   them. But the claim has to stay precise -- the SPDR S&P US Sectors universe holds
+   10 sectors, and Real Estate is not one of them, so it keeps the estimate. Naming
+   the exceptions is what makes the green line trustworthy, and it also explains the
+   diamond that would otherwise appear with its legend hidden. #}
 <p class="text-[10px] text-emerald-500/80 mb-1 px-1 leading-snug">
   quadrants from the RRG chart itself
   {% if real_rows[0].rrg_as_of %}&middot; as of {{ real_rows[0].rrg_as_of }}{% endif %}
+  {%- if est_rows %}<br>
+  <span class="text-slate-600">{{ est_rows | map(attribute='name') | join(', ') }}
+  {{ 'is' if est_rows | length == 1 else 'are' }} not in that universe &mdash; still our
+  own estimate<span class="text-amber-400/80"> &#9670;</span> = near a quadrant line</span>
+  {%- endif %}
 </p>
 {% else %}
 <p class="text-[10px] text-slate-600 mb-1 px-1 leading-snug">
@@ -79,7 +90,7 @@
    into the sibling .sector-children). Clicking an industry loads its symbols into
    the bottom Symbol panel. #}
 <div class="sector-group">
-  <div title="{{ r.symbol }}{% if r.quadrant %} — {{ r.quadrant }}{% if r.rs_ratio %} (RS-Ratio {{ '%.1f'|format(r.rs_ratio) }}, RS-Momentum {{ '%.1f'|format(r.rs_mom) }}, our own calculation — the embedded chart may differ near a 100 line){% endif %}{% endif %} — click to see its industries"
+  <div title="{{ r.symbol }}{% if r.quadrant %} — {{ r.quadrant }}{% if r.rs_ratio %} (RS-Ratio {{ '%.1f'|format(r.rs_ratio) }}, RS-Momentum {{ '%.1f'|format(r.rs_mom) }}{% if r.rrg_source and r.rrg_source != 'estimate' %}, read off the RRG chart{% if r.rrg_as_of %} on {{ r.rrg_as_of }}{% endif %}{% else %}, our own calculation — the embedded chart may differ near a 100 line{% endif %}){% endif %}{% endif %} — click to see its industries"
        hx-get="/sector/industries?sector={{ r.symbol }}" hx-target="next .sector-children" hx-swap="innerHTML"
        style="{{ GRID }}" class="wl-sector cursor-pointer px-1 py-1 rounded hover:bg-emerald-500/10 transition">
     <span class="text-[12px] text-slate-200 truncate flex items-center gap-1">

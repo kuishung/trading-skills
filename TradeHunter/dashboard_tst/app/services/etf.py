@@ -10,9 +10,11 @@ results are cached ~15 min and soft-fail. One aligned-close fetch feeds all thre
 """
 from __future__ import annotations
 
+import json as _json
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
+from pathlib import Path as _Path
 
 from .prices import fetch_daily_ohlc
 
@@ -124,29 +126,72 @@ def leader_order() -> list[str]:
 _RET_WINDOWS = [("1M", 21), ("2M", 42), ("4M", 84), ("8M", 168)]
 
 
-def real_rrg_points(timeframe: str) -> dict:
-    """{symbol: {rs_ratio, rs_momentum, as_of, source}} from the rrg_points table.
+_SEED_PATH = _Path(__file__).with_name("rrg_seed.json")
+_seed_cache: dict = {}
 
-    Soft-fails to {} so the panel keeps working on its own estimate when the table
-    is empty, missing, or the DB is unreachable -- this is an ENHANCEMENT to the
-    panel, never a dependency of it.
+
+def _seed_rrg_points(timeframe: str) -> dict:
+    """The chart's own values as SHIPPED IN THE REPO (rrg_seed.json).
+
+    A deploy is a git pull, so the values have to travel with the code: making the
+    panel wait for a hand-run POST meant a pulled-but-unseeded Hermes silently fell
+    back to the estimate and showed Energy in Weakening again. Read-only and
+    cached; the same 50-150 sanity check the ingest route applies, so a mis-typed
+    seed is ignored rather than believed.
     """
+    hit = _seed_cache.get("v")
+    if hit is None:
+        try:
+            hit = _json.loads(_SEED_PATH.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            hit = {}
+        _seed_cache["v"] = hit
+    if (hit.get("timeframe") or "weekly") != timeframe:
+        return {}
+    out = {}
+    for sym, xy in (hit.get("points") or {}).items():
+        try:
+            x, y = float(xy[0]), float(xy[1])
+        except Exception:  # noqa: BLE001
+            continue
+        if 50.0 <= x <= 150.0 and 50.0 <= y <= 150.0:
+            out[sym.upper()] = {"rs_ratio": x, "rs_momentum": y,
+                                "as_of": hit.get("as_of") or "",
+                                "source": hit.get("source") or "optuma"}
+    return out
+
+
+def real_rrg_points(timeframe: str) -> dict:
+    """{symbol: {rs_ratio, rs_momentum, as_of, source}} — the chart's real numbers.
+
+    Two sources, newest wins: the seed that ships in the repo, and rows posted to
+    /api/rrg. Posting a fresher reading therefore overrides the seed without a
+    deploy, and a deploy carrying a newer seed overrides a stale posted row.
+
+    Soft-fails to {} so the panel keeps working on its own estimate when both are
+    unavailable -- this is an ENHANCEMENT to the panel, never a dependency of it.
+    """
+    out = _seed_rrg_points(timeframe)
     try:
         from ..db import SessionLocal
         from ..models import RRGPoint
     except Exception:  # noqa: BLE001
-        return {}
+        return out
     db = None
     try:
         db = SessionLocal()
         rows = db.query(RRGPoint).filter(RRGPoint.timeframe == timeframe).all()
-        return {r.symbol: {"rs_ratio": r.rs_ratio, "rs_momentum": r.rs_momentum,
-                           "as_of": r.as_of, "source": r.source} for r in rows}
+        for r in rows:
+            cur = out.get(r.symbol)
+            if cur is None or str(r.as_of or "") >= str(cur["as_of"] or ""):
+                out[r.symbol] = {"rs_ratio": r.rs_ratio, "rs_momentum": r.rs_momentum,
+                                 "as_of": r.as_of, "source": r.source}
     except Exception:  # noqa: BLE001
-        return {}
+        pass
     finally:
         if db is not None:
             db.close()
+    return out
 
 
 def sector_returns(timeframe: str = "daily") -> dict:
