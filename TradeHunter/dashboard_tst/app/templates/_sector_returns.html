@@ -91,6 +91,7 @@
    the bottom Symbol panel. #}
 <div class="sector-group">
   <div title="{{ r.symbol }}{% if r.quadrant %} — {{ r.quadrant }}{% if r.rs_ratio %} (RS-Ratio {{ '%.1f'|format(r.rs_ratio) }}, RS-Momentum {{ '%.1f'|format(r.rs_mom) }}{% if r.rrg_source and r.rrg_source != 'estimate' %}, read off the RRG chart{% if r.rrg_as_of %} on {{ r.rrg_as_of }}{% endif %}{% else %}, our own calculation — the embedded chart may differ near a 100 line{% endif %}){% endif %}{% endif %} — click to see its industries"
+       data-sym="{{ r.symbol }}"
        hx-get="/sector/industries?sector={{ r.symbol }}" hx-target="next .sector-children" hx-swap="innerHTML"
        style="{{ GRID }}" class="wl-sector cursor-pointer px-1 py-1 rounded hover:bg-emerald-500/10 transition">
     <span class="text-[12px] text-slate-200 truncate flex items-center gap-1">

@@ -129,6 +129,34 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-07 - v4.40: Sector ETFs tab follows the panel, and lands on a chart
+
+User: *"in sector etf when the tab is selected always select the first ticker on the
+list and the list is to follow the list in the panel."*
+
+Two things were wrong with that tab. It opened on an empty "Pick a sector ETF above
+to chart it" pane - a click wasted on every visit. And its buttons were in
+`ETF_UNIVERSE` declaration order, which carries no meaning, sitting beside a panel
+ordered by rotation; the two lists disagreed on sight.
+
+- **`panel_symbol_order(timeframe)`** (services/etf.py) returns the panel's order -
+  quadrant groups Leading / Weakening / Improving / Lagging, RS-Ratio within each -
+  and the route builds the buttons from it. Soft-fails to the declared order, and
+  appends any sector the panel dropped so the tab can never silently lose one.
+- **Selecting the tab loads the first button's chart** instead of a prompt. An
+  explicit pick is remembered, so leaving the tab and coming back keeps the sector
+  you chose rather than snapping back to the top.
+- **The order re-syncs when the panel does.** The Daily/Weekly toggle genuinely
+  re-groups the sectors (5 of 11 change quadrant), and the server can only set the
+  order the page was built with, so an `htmx:afterSwap` on the returns fragment
+  re-sorts the buttons. Nodes are MOVED, not rebuilt, so listeners and the highlight
+  survive. An auto-selection follows the new leader; a pinned one stays put.
+
+Verified in the browser: page load panel and buttons identical (XLF XLV XLK XLE XLY
+XLB XLI XLRE XLP XLC XLU); selecting the tab charts XLF with only XLF highlighted;
+switching to Daily re-orders both to XLC-first and the chart follows; after clicking
+XLU it survives both a re-order and a tab round-trip. No console errors.
+
 ### 2026-09-07 - v4.39: the chart's values now SHIP with the code
 
 v4.38 built the mechanism and left the data outside it: the real coordinates had to

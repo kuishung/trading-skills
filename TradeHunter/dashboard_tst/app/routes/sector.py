@@ -49,12 +49,16 @@ def _filter_fragment(request: Request, user: User) -> HTMLResponse:
 @router.get("", response_class=HTMLResponse)
 def sector_home(request: Request, user: User = Depends(require_user)):
     # ETF_UNIVERSE drives the Sector ETFs tab's buttons, so that tab and the RRG /
-    # returns panels can never list a different set of sectors.
-    from ..services.etf import ETF_UNIVERSE
+    # returns panels can never list a different set of sectors. The ORDER comes from
+    # the left panel (weekly, its default) so the tab reads strongest-rotation-first
+    # and the two lists agree on sight; the page then keeps them in sync client-side
+    # when the panel's Daily/Weekly toggle re-groups it.
+    from ..services.etf import ETF_UNIVERSE, panel_symbol_order
 
+    names = dict(ETF_UNIVERSE)
+    etfs = [{"symbol": s, "name": names.get(s, s)} for s in panel_symbol_order("weekly")]
     return templates.TemplateResponse(
-        request, "sector.html",
-        {"user": user, "etfs": [{"symbol": s, "name": n} for s, n in ETF_UNIVERSE]},
+        request, "sector.html", {"user": user, "etfs": etfs},
     )
 
 

@@ -174,14 +174,54 @@
       // pane keeps ids unique; the tab reloads its own chart on activation.
       if (name === 'etf') {
         clearPane('sectorChartBody', 'Click a ticker in the Symbol panel to load its chart here.');
-        if (etfSym) loadEtf(etfSym);
+        // Land on a chart, never on an empty "pick one" pane: the first button is
+        // the panel's top sector, which is the one worth looking at first. An
+        // explicit pick is remembered (etfPinned) so re-entering the tab doesn't
+        // throw away the sector the user chose.
+        var want = (etfPinned && etfSym) || firstEtf();
+        if (want) loadEtf(want, etfPinned);
       } else if (name === 'chart') {
         clearPane('sectorEtfChartBody', 'Pick a sector ETF above to chart it.');
         if (chartSym) loadChart(chartSym);
       }
     }
 
-    var etfSym = null, chartSym = null;
+    var etfSym = null, chartSym = null, etfPinned = false;
+
+    function etfButtons() {
+      return Array.prototype.slice.call(document.querySelectorAll('.etfbtn'));
+    }
+    function firstEtf() {
+      var b = document.querySelector('.etfbtn');
+      return b ? b.getAttribute('data-sym') : null;
+    }
+
+    // Keep the tab's buttons in the LEFT PANEL's order. The panel re-groups when its
+    // Daily/Weekly toggle is used (a sector genuinely changes quadrant between the
+    // two), and the server can only set the order the page was built with -- so the
+    // list is re-sorted here whenever that fragment swaps. Buttons are MOVED, never
+    // rebuilt, so their listeners and the selected highlight survive.
+    function syncEtfOrder() {
+      var buttons = etfButtons();
+      if (!buttons.length) return;
+      var host = buttons[0].parentNode;
+      var bySym = {};
+      buttons.forEach(function (b) { bySym[b.getAttribute('data-sym')] = b; });
+      var order = Array.prototype.slice
+        .call(document.querySelectorAll('.si-returns .wl-sector[data-sym]'))
+        .map(function (r) { return r.getAttribute('data-sym'); });
+      if (!order.length) return;
+      var tail = host.querySelector('span');   // the "SPDR S&P US sectors" caption
+      order.forEach(function (sym) {
+        var b = bySym[sym];
+        if (b) host.insertBefore(b, tail);     // reinserting an existing node moves it
+      });
+      // An auto-selection follows the new leader; a pinned one stays put.
+      if (!etfPinned && document.getElementById('tabPane-etf').style.display !== 'none') {
+        var top = firstEtf();
+        if (top && top !== etfSym) loadEtf(top, false);
+      }
+    }
 
     function clearPane(id, msg) {
       var el = document.getElementById(id);
@@ -199,8 +239,9 @@
 
     function loadChart(sym) { chartSym = sym; loadInto('sectorChartBody', sym); }
 
-    function loadEtf(sym) {
+    function loadEtf(sym, pinned) {
       etfSym = sym;
+      if (pinned) etfPinned = true;
       document.querySelectorAll('.etfbtn').forEach(function (b) {
         var on = b.getAttribute('data-sym') === sym;
         b.classList.toggle('border-emerald-500', on);
@@ -213,7 +254,12 @@
     }
 
     document.querySelectorAll('.etfbtn').forEach(function (b) {
-      b.addEventListener('click', function () { loadEtf(b.getAttribute('data-sym')); });
+      b.addEventListener('click', function () { loadEtf(b.getAttribute('data-sym'), true); });
+    });
+    // the returns panel loads after this script and again on every timeframe switch
+    document.body.addEventListener('htmx:afterSwap', function (e) {
+      var t = e.detail && e.detail.target;
+      if (t && t.classList && t.classList.contains('si-returns')) syncEtfOrder();
     });
     window._sectorSetTab = setTab;
     document.querySelectorAll('.ctab').forEach(function (b) {

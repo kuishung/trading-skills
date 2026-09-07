@@ -161,6 +161,28 @@ def _seed_rrg_points(timeframe: str) -> dict:
     return out
 
 
+def panel_symbol_order(timeframe: str = "weekly") -> list[str]:
+    """Sector symbols in the order the LEFT PANEL lists them.
+
+    That order is rotation-meaningful -- quadrant groups (Leading, Weakening,
+    Improving, Lagging) and RS-Ratio within each -- so the Sector ETFs tab reads
+    strongest-first like the panel beside it instead of in the arbitrary order
+    ETF_UNIVERSE happens to be declared in.
+
+    Soft-fails to the declared order, and always ends up containing every sector:
+    a symbol the panel dropped (a failed price fetch) is appended rather than
+    disappearing from the tab.
+    """
+    try:
+        d = sector_returns(timeframe=timeframe)
+        out = [r["symbol"] for g in (d.get("groups") or []) for r in (g.get("rows") or [])]
+    except Exception:  # noqa: BLE001
+        out = []
+    seen = set(out)
+    out += [s for s, _ in ETF_UNIVERSE if s not in seen]
+    return out
+
+
 def real_rrg_points(timeframe: str) -> dict:
     """{symbol: {rs_ratio, rs_momentum, as_of, source}} — the chart's real numbers.
 
