@@ -129,6 +129,31 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-07 - v4.36: the quadrant panel defaulted to the WRONG timeframe
+User: *"in the RRG chart, healthcare financials are in the leading quadrant but it is not
+correctly shown in the left side panel, same goes to other."*
+
+Real bug, and the report was precise. The panel's route defaulted to `tf="daily"` while
+`services.etf.rrg()` itself defaults to weekly and an RRG is read on weekly. Measured
+across the 11 SPDR sectors on 2026-09-07:
+
+| | Leading quadrant |
+|---|---|
+| **Weekly** (the chart, and what the user saw) | **Financials, Health Care** |
+| **Daily** (what the panel showed) | Communication Services, Financials |
+
+**5 of 11 sectors sat in a different quadrant** depending on the timeframe - Health Care
+was Leading weekly but Lagging daily; Communication Services the exact reverse. On daily
+the RS-Ratio/RS-Momentum values also cluster tightly around 100 (99.0-101.2), so sectors
+flip quadrant on noise.
+
+The calculation was never wrong: our weekly output matches the user's chart sector for
+sector. The **default** was wrong, and it came from a stated but false premise in the
+template - "Defaults to Daily because that is the embed's own default". Both the default
+and that comment are fixed. The Daily/Weekly toggle stays, because the Optuma embed's
+timeframe is per-browser localStorage and cannot be read cross-origin, so the reader still
+needs to be able to match whatever they have set.
+
 ### 2026-09-07 - v4.35: sector list in RRG rotation order + a Sector ETFs chart tab
 User: *"the left hand upper list should follow the Leading Weakening Improving and Lagging
 sector in the RRG chart ... and i need a tab for sector chart where the 11 sector ETF under

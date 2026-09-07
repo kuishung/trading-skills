@@ -25,7 +25,10 @@
 {# Timeframe switch — the quadrants below are computed on THIS timeframe, and a
    sector genuinely sits in different quadrants daily vs weekly. The RRG tab embeds
    Optuma's chart and is cross-origin, so we can't read which timeframe it is on;
-   set this to match it. Defaults to Daily because that is the embed's own default. #}
+   set this to match it. Defaults to WEEKLY -- the timeframe an RRG is normally read
+   on, and the one that agrees with the chart. (It used to default to Daily on the
+   mistaken belief that daily was the embed's default; 5 of 11 sectors sit in a
+   different quadrant on daily, so the panel contradicted the chart beside it.) #}
 <div class="flex items-center gap-1 px-1 pb-1.5">
   <span class="text-[10px] uppercase tracking-wide text-slate-500">Rotation</span>
   {% for key, lbl in [("daily", "Daily"), ("weekly", "Weekly")] %}

@@ -60,14 +60,20 @@ def sector_home(request: Request, user: User = Depends(require_user)):
 
 @router.get("/returns", response_class=HTMLResponse)
 def sector_returns_panel(
-    request: Request, tf: str = "daily", user: User = Depends(require_user)
+    request: Request, tf: str = "weekly", user: User = Depends(require_user)
 ):
     """Left-panel fragment: per-sector 1/2/4/8-month returns, grouped by RRG quadrant.
 
-    `tf` picks the RRG timeframe the grouping uses. It matters: the same sector sits
-    in different quadrants daily vs weekly, and the RRG tab embeds Optuma's chart
-    (cross-origin — we can't read which timeframe it is on), so the reader has to be
-    able to point this panel at the same one.
+    `tf` picks the RRG timeframe the grouping uses, and it matters more than it
+    sounds: measured 2026-09-07, **5 of the 11 sectors sit in a different quadrant
+    daily vs weekly**. Health Care was Leading on weekly and Lagging on daily;
+    Communication Services the reverse.
+
+    Defaults to **weekly**, which is the timeframe the RRG chart is read on and what
+    `services.etf.rrg()` itself defaults to. It previously defaulted to daily on the
+    belief that daily was the embed's default -- it is not, and the panel therefore
+    contradicted the chart beside it for half the sectors. Daily is still available
+    from the toggle for anyone who switches the chart to it.
     """
     from ..services.etf import sector_returns
 
