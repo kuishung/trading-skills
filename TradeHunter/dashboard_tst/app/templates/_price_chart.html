@@ -383,6 +383,13 @@
     }
 
     // ---- toolbar ---------------------------------------------------------
+    // Resting opacity of the drawing toolbar. High enough to read at a glance;
+    // still short of full so the candles behind it stay unambiguous.
+    var BAR_IDLE = '.85';
+    // left:4px + a 30px button = the toolbar ends at x=34; anything that must not
+    // sit under it starts here. Kept as one constant so widening the bar again
+    // cannot leave the ATR tag or the coordinate editor overlapping it.
+    var BAR_RIGHT = 40;
     var TOOLS = [
       { id: 'cursor', ch: '↖', t: 'Cursor — pan/zoom; click to select, DOUBLE-CLICK to edit coordinates, Del to remove' },
       { id: 'hline', ch: '─', t: 'Horizontal line — click at a price' },
@@ -392,19 +399,28 @@
       { id: 'erase', ch: '⌫', t: 'Eraser — click a drawing to delete it' },
       { id: 'clear', ch: '✕', t: 'Delete ALL drawings on this chart' }
     ];
+    // One definition of the idle colours, shared by the initial style and
+    // updateBtns() -- they drifted apart otherwise, and a re-render of the
+    // buttons reset them to the old low-contrast grey.
+    var IDLE_BORDER = 'rgba(148,163,184,.55)';
+    var IDLE_FG = light ? '#334155' : '#cbd5e1';
     var bar = document.createElement('div');
+    // Sized for use, not for hiding (user, 2026-09-07: "make it bigger and clearly
+    // visible"). It used to be 22px glyphs at .45 opacity, which read as chrome you
+    // were meant to ignore -- on a light chart the buttons all but vanished.
     bar.style.cssText = 'position:absolute;left:4px;top:4px;z-index:4;display:flex;' +
-      'flex-direction:column;gap:2px;opacity:.45;transition:opacity .15s;';
+      'flex-direction:column;gap:3px;opacity:' + BAR_IDLE + ';transition:opacity .15s;';
     var btns = {};
     TOOLS.forEach(function (tl) {
       var b = document.createElement('button');
       b.type = 'button';
       b.textContent = tl.ch;
       b.title = tl.t;
-      b.style.cssText = 'width:22px;height:22px;line-height:1;font-size:12px;border-radius:4px;' +
+      b.style.cssText = 'width:30px;height:30px;line-height:1;font-size:16px;border-radius:6px;' +
         'display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;' +
-        'background:' + (light ? 'rgba(255,255,255,.92)' : 'rgba(15,23,42,.85)') + ';' +
-        'border:1px solid rgba(148,163,184,.35);color:' + (light ? '#475569' : '#94a3b8') + ';';
+        'box-shadow:0 1px 3px rgba(0,0,0,.18);' +
+        'background:' + (light ? 'rgba(255,255,255,.97)' : 'rgba(15,23,42,.94)') + ';' +
+        'border:1px solid ' + IDLE_BORDER + ';color:' + IDLE_FG + ';';
       b.addEventListener('click', function (ev) {
         ev.stopPropagation(); ev.preventDefault();
         if (tl.id === 'clear') {
@@ -438,17 +454,20 @@
 
     bar.addEventListener('mouseenter', function () { bar.style.opacity = '1'; });
     bar.addEventListener('mouseleave', function () {
-      bar.style.opacity = (tool === 'cursor' && saveState !== 'error') ? '.45' : '1';
+      bar.style.opacity = (tool === 'cursor' && saveState !== 'error') ? BAR_IDLE : '1';
     });
     el.appendChild(bar);
 
     function updateBtns() {
       TOOLS.forEach(function (tl) {
         var on = (tl.id === tool);
-        btns[tl.id].style.borderColor = on ? 'rgba(16,185,129,.8)' : 'rgba(148,163,184,.35)';
-        btns[tl.id].style.color = on ? '#34d399' : (light ? '#475569' : '#94a3b8');
+        btns[tl.id].style.borderColor = on ? 'rgba(16,185,129,.9)' : IDLE_BORDER;
+        btns[tl.id].style.color = on ? '#34d399' : IDLE_FG;
+        btns[tl.id].style.background = on
+          ? (light ? 'rgba(209,250,229,.95)' : 'rgba(6,78,59,.6)')
+          : (light ? 'rgba(255,255,255,.97)' : 'rgba(15,23,42,.94)');
       });
-      bar.style.opacity = (tool === 'cursor' && saveState !== 'error') ? '.45' : '1';
+      bar.style.opacity = (tool === 'cursor' && saveState !== 'error') ? BAR_IDLE : '1';
     }
     function setTool(t) {
       tool = t; pending = null; dragging = false;
@@ -680,8 +699,9 @@
 
       el.appendChild(panel);
       // keep the editor fully inside the chart, and clear of the left toolbar
+      // (BAR_RIGHT is where that toolbar ends -- it grew on 2026-09-07)
       var pw = panel.offsetWidth, ph = panel.offsetHeight;
-      panel.style.left = Math.max(32, Math.min((x || 0) + 12, el.clientWidth - pw - 4)) + 'px';
+      panel.style.left = Math.max(BAR_RIGHT, Math.min((x || 0) + 12, el.clientWidth - pw - 4)) + 'px';
       panel.style.top = Math.max(4, Math.min((y || 0) + 12, el.clientHeight - ph - 4)) + 'px';
       redraw();
     }
@@ -1096,11 +1116,11 @@
         // ---- the reading, ON the chart -----------------------------------
         // The legend chip below the plot was too easy to miss, so the value is
         // also stated in plain words over the candles. Top-left, clear of the
-        // drawing toolbar (which occupies x 4..26px), and pointer-events:none so
+        // drawing toolbar (which occupies x 4..34px), and pointer-events:none so
         // it can never swallow a click meant for a shape underneath.
         el.style.position = 'relative';
         var atrTag = document.createElement('div');
-        atrTag.style.cssText = 'position:absolute;left:32px;top:4px;z-index:3;pointer-events:none;' +
+        atrTag.style.cssText = 'position:absolute;left:40px;top:4px;z-index:3;pointer-events:none;' +
           'font:600 11px/1.2 ui-sans-serif,system-ui,sans-serif;padding:2px 6px;border-radius:4px;' +
           'white-space:nowrap;color:' + (_light ? '#a16207' : '#eab308') + ';' +
           'background:' + (_light ? 'rgba(255,255,255,.85)' : 'rgba(15,23,42,.72)') + ';';

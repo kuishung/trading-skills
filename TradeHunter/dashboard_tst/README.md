@@ -129,6 +129,33 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-07 - v4.42: the chart's drawing toolbar is legible
+
+User: *"in the sector and industry or the watchlist chart, the toolset in the chart
+icon make it bigger and clearly visible."*
+
+It was 22px buttons with 12px glyphs sitting at **0.45 opacity** - styled like chrome
+you were meant to ignore, and on a light chart the buttons all but disappeared into
+the background.
+
+- buttons **22 -> 30px**, glyphs **12 -> 16px**, 6px radius and a soft shadow so each
+  one reads as a button against the candles
+- resting opacity **0.45 -> 0.85**, and the idle border/text darkened
+  (`#94a3b8 -> #cbd5e1` dark, `#475569 -> #334155` light)
+- the ACTIVE tool now also gets a filled background, not just a green outline
+- idle colours are defined once (`IDLE_BORDER` / `IDLE_FG`) instead of being repeated
+  in the initial style and in `updateBtns()`, where they had already drifted apart -
+  re-rendering a button reset it to the old low-contrast grey
+
+The bar is wider, so everything that must stay clear of it moved with it: the
+coordinate editor and the `ATR (14) =` tag now key off a single **`BAR_RIGHT`**
+constant (40px) rather than two hard-coded 32s.
+
+This lives in `_price_chart.html`, which every chart shares - so Watchlist, Company,
+Studies, Sector ETFs and the MATP detail chart all get it, not just the two pages
+named. Verified in-browser: 30x30px, 16px glyphs, bar opacity 0.85, all 7 tools
+present.
+
 ### 2026-09-07 - v4.41: /today removed; the Calendar is the landing page
 
 User: *"https://app.tradehunter.net/today remove this page. on login go to calendar
