@@ -884,3 +884,41 @@ class RRGPoint(Base):
     __table_args__ = (
         UniqueConstraint("symbol", "timeframe", name="uq_rrg_point_symbol_tf"),
     )
+
+
+class CuratedTicker(Base):
+    """One ticker a member has curated: a dated plan with entry, stop and target.
+
+    This is a WATCH-AND-JUDGE record, not a position. It stores only what the
+    member decided and when -- nothing about what the market subsequently did. The
+    trigger date, whether it is still running, and the P/L are all recomputed from
+    daily bars on every read (``services.curated``), so they can never drift out of
+    sync with prices the way a cached outcome column would, and correcting a level
+    silently re-judges the whole history of that idea.
+
+    ``curated_on`` is the date the call was made and is the anchor for everything:
+    only bars from that day forward can trigger it. Storing it as a string keeps
+    the date arithmetic identical across SQLite and Postgres (the house convention
+    for ISO dates elsewhere in this file).
+
+    Direction is not a column -- it is implied by the levels. A stop below the
+    entry is a long, above it a short. One less field to contradict itself.
+
+    Scoped by user_id on every read and write; cascade-deletes with the user.
+    """
+
+    __tablename__ = "curated_tickers"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
+                     nullable=False, index=True)
+    symbol = Column(String(20), nullable=False, index=True)
+    curated_on = Column(String(10), nullable=False)   # ISO date the call was made
+    entry = Column(Float, nullable=False)
+    stop = Column(Float, nullable=False)
+    target = Column(Float, nullable=False)
+    note = Column(Text, nullable=True)                # optional "why this one"
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+    user = relationship("User")

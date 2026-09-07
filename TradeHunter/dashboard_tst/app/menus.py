@@ -29,7 +29,9 @@ MENUS = [
     ("sector",           "Sector & Industry", None, "/sector"),
     ("company_analysis", "Company",           None, "/company-analysis"),
     ("matp",             "Watchlist",         None, "/matp"),
-    ("portfolio",        "Portfolio",         None, "/portfolio"),
+    # Curated — each member's own dated calls (entry/stop/target), judged from
+    # price history. Replaced the Portfolio placeholder 2026-09-07 (user).
+    ("curated",          "Curated",           None, "/curated"),
 ]
 # Routes that stay ACCESSIBLE (granted + reachable by URL) but are no longer shown
 # in the top nav after the revamp. Kept in ALL_KEYS so their require_menu() guards
@@ -44,6 +46,11 @@ HIDDEN_KEYS = ["company", "studies", "strategy", "patterns"]
 LANDING = "calendar_month"
 # NB: /finviz ("Data Ingest") is admin-only (base.html Settings dropdown), not here.
 ALL_KEYS = [m[0] for m in MENUS] + HIDDEN_KEYS
+# Renamed keys, old -> new. A member's menu_access is a stored list of KEYS, so
+# renaming one would silently revoke access for everyone who had been granted it
+# individually. Translating on read keeps those grants working without a data
+# migration, and without pinning the code to a name the page no longer has.
+LEGACY_KEYS = {"portfolio": "curated"}
 LABELS = {m[0]: m[1] for m in MENUS}
 
 
@@ -57,7 +64,7 @@ def allowed_keys(user: User) -> set:
     acc = getattr(user, "menu_access", None)
     if acc is None:
         return set(ALL_KEYS)
-    return set(acc) & set(ALL_KEYS)
+    return {LEGACY_KEYS.get(k, k) for k in acc} & set(ALL_KEYS)
 
 
 def user_can(user: User, *keys: str) -> bool:

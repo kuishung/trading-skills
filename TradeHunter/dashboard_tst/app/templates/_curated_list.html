@@ -1,0 +1,200 @@
+{# The curated list: add form, totals, then one block per MONTH the calls were made
+   in, newest first. Context: months (from services.curated.by_month), totals, msg,
+   err, today.
+
+   Wrapped in .curated-panel and swapped by outerHTML so every form in here can
+   target `closest .curated-panel` — a class, not an id, so the fragment is safe to
+   render more than once on a page. #}
+<div class="curated-panel">
+
+{% set BADGE = {
+  "waiting": ["border-slate-600 text-slate-400", "waiting", "Entry not reached yet"],
+  "open":    ["border-sky-500/60 text-sky-300 bg-sky-500/10", "open", "Triggered and still running — marked at the last close"],
+  "target":  ["border-emerald-500/60 text-emerald-300 bg-emerald-500/10", "target hit", "Profit target reached"],
+  "stop":    ["border-rose-500/60 text-rose-300 bg-rose-500/10", "stopped", "Stop loss reached"],
+  "invalid": ["border-amber-500/60 text-amber-300 bg-amber-500/10", "check levels", "These levels don't describe a trade"]
+} %}
+{% macro num(v, dp=2) %}
+{%- if v is none -%}<span class="text-slate-600">&ndash;</span>
+{%- else -%}<span class="tabular-nums">{{ ('%.' ~ dp ~ 'f')|format(v) }}</span>{%- endif -%}
+{% endmacro %}
+{% macro signed(v, dp=2, suffix="") %}
+{%- if v is none -%}<span class="text-slate-600">&ndash;</span>
+{%- else -%}<span class="tabular-nums {{ 'text-emerald-400' if v >= 0 else 'text-rose-400' }}">{{ ('%+.' ~ dp ~ 'f')|format(v) }}{{ suffix }}</span>{%- endif -%}
+{% endmacro %}
+
+{# ── add a call ─────────────────────────────────────────────────────────── #}
+<form class="rounded-lg border border-slate-800 bg-slate-900/40 p-3 mb-3"
+      hx-post="/curated/add" hx-target="closest .curated-panel" hx-swap="outerHTML">
+  <div class="flex flex-wrap items-end gap-2">
+    <label class="flex flex-col gap-1">
+      <span class="text-[10px] uppercase tracking-wide text-slate-500">Ticker</span>
+      <input name="symbol" required maxlength="6" pattern="[A-Za-z.\-]{1,6}" autocomplete="off"
+             placeholder="NVDA" title="US ticker symbol"
+             class="w-24 rounded bg-slate-950/60 border border-slate-700 px-2 py-1 text-xs uppercase focus:border-emerald-500 outline-none">
+    </label>
+    <label class="flex flex-col gap-1">
+      <span class="text-[10px] uppercase tracking-wide text-slate-500">Curated on</span>
+      <input type="date" name="curated_on" required value="{{ today }}"
+             title="The date you made this call — only bars from this day on can trigger it"
+             class="w-36 rounded bg-slate-950/60 border border-slate-700 px-2 py-1 text-xs focus:border-emerald-500 outline-none">
+    </label>
+    <label class="flex flex-col gap-1">
+      <span class="text-[10px] uppercase tracking-wide text-slate-500">Entry</span>
+      <input name="entry" required inputmode="decimal" step="any" type="number" placeholder="100.00"
+             class="w-24 rounded bg-slate-950/60 border border-slate-700 px-2 py-1 text-xs tabular-nums focus:border-emerald-500 outline-none">
+    </label>
+    <label class="flex flex-col gap-1">
+      <span class="text-[10px] uppercase tracking-wide text-slate-500">Stop</span>
+      <input name="stop" required inputmode="decimal" step="any" type="number" placeholder="95.00"
+             title="Below the entry for a long, above it for a short — this is what sets the direction"
+             class="w-24 rounded bg-slate-950/60 border border-slate-700 px-2 py-1 text-xs tabular-nums focus:border-emerald-500 outline-none">
+    </label>
+    <label class="flex flex-col gap-1">
+      <span class="text-[10px] uppercase tracking-wide text-slate-500">Target</span>
+      <input name="target" required inputmode="decimal" step="any" type="number" placeholder="110.00"
+             class="w-24 rounded bg-slate-950/60 border border-slate-700 px-2 py-1 text-xs tabular-nums focus:border-emerald-500 outline-none">
+    </label>
+    <label class="flex flex-col gap-1 flex-1 min-w-[10rem]">
+      <span class="text-[10px] uppercase tracking-wide text-slate-500">Note <span class="text-slate-600">(optional)</span></span>
+      <input name="note" maxlength="300" placeholder="why this one"
+             class="w-full rounded bg-slate-950/60 border border-slate-700 px-2 py-1 text-xs focus:border-emerald-500 outline-none">
+    </label>
+    <button type="submit"
+            class="shrink-0 rounded border border-slate-700 px-3 py-1 text-xs text-slate-200 hover:border-emerald-500 hover:text-emerald-300 transition">
+      Curate
+    </button>
+  </div>
+  {% if err %}<p class="text-[11px] text-rose-400 mt-2">{{ err }}</p>{% endif %}
+  {% if msg %}<p class="text-[11px] text-emerald-400 mt-2">{{ msg }}</p>{% endif %}
+</form>
+
+{% if totals.n %}
+{# ── totals ─────────────────────────────────────────────────────────────── #}
+<div class="flex flex-wrap items-center gap-x-5 gap-y-1 px-1 mb-3 text-[11px] text-slate-400">
+  <span><span class="text-slate-200 tabular-nums">{{ totals.n }}</span> curated</span>
+  <span><span class="text-slate-200 tabular-nums">{{ totals.n_waiting }}</span> waiting</span>
+  <span><span class="text-sky-300 tabular-nums">{{ totals.n_open }}</span> open</span>
+  <span><span class="text-slate-200 tabular-nums">{{ totals.n_decided }}</span> closed</span>
+  {% if totals.win_rate is not none %}
+  <span>win rate <span class="text-slate-200 tabular-nums">{{ totals.win_rate }}%</span></span>
+  {% endif %}
+  {% if totals.total_r is not none %}
+  <span>total {{ signed(totals.total_r, 2, "R") }}</span>
+  <span>avg {{ signed(totals.avg_r, 2, "R") }}</span>
+  {% endif %}
+  <span class="ml-auto text-slate-600" title="An entry above the price when you curated it is treated as a breakout (triggers on the day's high); below it as a pullback (triggers on the low). A gap straight through the level still fills — at the open.">how triggers are judged &#9432;</span>
+</div>
+{% endif %}
+
+{# ── one block per month ────────────────────────────────────────────────── #}
+{% for m in months %}
+<section class="rounded-lg border border-slate-800 bg-slate-900/40 mb-3 overflow-hidden">
+  <div class="flex flex-wrap items-baseline gap-x-4 gap-y-1 px-3 py-2 border-b border-slate-800">
+    <h2 class="text-sm font-semibold text-slate-200">{{ m.label }}</h2>
+    <span class="text-[11px] text-slate-500 tabular-nums">{{ m.n }} curated</span>
+    {% if m.n_waiting %}<span class="text-[11px] text-slate-500 tabular-nums">{{ m.n_waiting }} waiting</span>{% endif %}
+    {% if m.n_open %}<span class="text-[11px] text-sky-300 tabular-nums">{{ m.n_open }} open</span>{% endif %}
+    {% if m.win_rate is not none %}
+    <span class="text-[11px] text-slate-500">win rate <span class="text-slate-300 tabular-nums">{{ m.win_rate }}%</span>
+      <span class="text-slate-600">({{ m.n_decided }} closed)</span></span>
+    {% endif %}
+    {% if m.total_r is not none %}
+    <span class="ml-auto text-[11px] text-slate-500">total {{ signed(m.total_r, 2, "R") }}</span>
+    {% endif %}
+  </div>
+
+  {# wide table: scrolls inside its own box so the page never scrolls sideways #}
+  <div class="overflow-x-auto">
+    <table class="w-full text-xs">
+      <thead>
+        <tr class="text-[10px] uppercase tracking-wide text-slate-500 border-b border-slate-800">
+          <th class="text-left font-normal px-3 py-1.5">Ticker</th>
+          <th class="text-left font-normal px-2 py-1.5">Curated</th>
+          <th class="text-right font-normal px-2 py-1.5">Entry</th>
+          <th class="text-right font-normal px-2 py-1.5">Stop</th>
+          <th class="text-right font-normal px-2 py-1.5">Target</th>
+          <th class="text-right font-normal px-2 py-1.5" title="Planned reward-to-risk from your own levels">R:R</th>
+          <th class="text-left font-normal px-2 py-1.5">Status</th>
+          <th class="text-left font-normal px-2 py-1.5">Triggered</th>
+          <th class="text-right font-normal px-2 py-1.5" title="Where it actually filled — the entry level, or the open if it gapped through">Fill</th>
+          <th class="text-right font-normal px-2 py-1.5" title="Exit price if closed, otherwise the last close">Exit / last</th>
+          <th class="text-right font-normal px-2 py-1.5">%</th>
+          <th class="text-right font-normal px-2 py-1.5" title="Result in multiples of the risk you took (fill to stop)">R</th>
+          <th class="px-2 py-1.5"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in m.rows %}{% set e = r.eval %}{% set b = BADGE.get(e.status) %}
+        <tr class="border-b border-slate-800/60 hover:bg-slate-800/30">
+          <td class="px-3 py-1.5">
+            <span class="text-slate-200 font-medium">{{ r.symbol }}</span>
+            {% if e.direction == "short" %}<span class="ml-1 text-[10px] text-amber-400/80" title="Short — your stop is above the entry">S</span>{% endif %}
+            {% if r.note %}<span class="ml-1 text-slate-600 cursor-help" title="{{ r.note }}">&#9432;</span>{% endif %}
+          </td>
+          <td class="px-2 py-1.5 text-slate-400 tabular-nums whitespace-nowrap">{{ r.curated_on }}</td>
+          <td class="px-2 py-1.5 text-right text-slate-300">{{ num(r.entry) }}</td>
+          <td class="px-2 py-1.5 text-right text-slate-400">{{ num(r.stop) }}</td>
+          <td class="px-2 py-1.5 text-right text-slate-400">{{ num(r.target) }}</td>
+          <td class="px-2 py-1.5 text-right text-slate-500">{{ num(e.planned_rr, 1) }}</td>
+          <td class="px-2 py-1.5 whitespace-nowrap">
+            <span class="inline-block px-1.5 py-0.5 rounded border text-[10px] {{ b[0] }} cursor-help"
+                  title="{{ e.note or b[2] }}">{{ b[1] }}</span>
+            {% if e.ambiguous %}<span class="ml-1 text-[10px] text-amber-400/80 cursor-help"
+                  title="Stop and target were both inside one day's range. Daily bars can't say which came first, so this counts as stopped.">&#9670;</span>{% endif %}
+          </td>
+          <td class="px-2 py-1.5 text-slate-400 tabular-nums whitespace-nowrap">
+            {% if e.triggered_on %}{{ e.triggered_on }}
+              {% if e.bars_held %}<span class="text-slate-600">&middot; {{ e.bars_held }}d</span>{% endif %}
+            {% elif e.bars_waiting %}<span class="text-slate-600">{{ e.bars_waiting }}d waiting</span>
+            {% else %}<span class="text-slate-600">&ndash;</span>{% endif %}
+          </td>
+          <td class="px-2 py-1.5 text-right text-slate-400">{{ num(e.fill) }}</td>
+          <td class="px-2 py-1.5 text-right text-slate-300">{{ num(e.exit if e.exit is not none else e.last) }}</td>
+          <td class="px-2 py-1.5 text-right">{{ signed(e.pct, 1, "%") }}</td>
+          <td class="px-2 py-1.5 text-right">{{ signed(e.r_multiple, 2, "R") }}</td>
+          <td class="px-2 py-1.5 text-right whitespace-nowrap">
+            <details class="inline-block text-left">
+              <summary class="list-none cursor-pointer text-slate-500 hover:text-slate-300 select-none" title="Edit levels">&#9998;</summary>
+              {# Inline edit — the same fields as the add form, pre-filled. Editing a
+                 level re-judges the whole history of that call on the next render. #}
+              <form class="absolute z-10 mt-1 -ml-40 flex flex-col gap-1 rounded-lg border border-slate-700 bg-slate-900 p-2 shadow-lg"
+                    hx-post="/curated/{{ r.id }}/edit" hx-target="closest .curated-panel" hx-swap="outerHTML">
+                <div class="flex gap-1">
+                  <input name="symbol" value="{{ r.symbol }}" maxlength="6" class="w-20 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-xs uppercase outline-none focus:border-emerald-500">
+                  <input type="date" name="curated_on" value="{{ r.curated_on }}" class="w-32 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-xs outline-none focus:border-emerald-500">
+                </div>
+                <div class="flex gap-1">
+                  <input name="entry" type="number" step="any" value="{{ r.entry }}" title="Entry" class="w-20 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-xs tabular-nums outline-none focus:border-emerald-500">
+                  <input name="stop" type="number" step="any" value="{{ r.stop }}" title="Stop" class="w-20 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-xs tabular-nums outline-none focus:border-emerald-500">
+                  <input name="target" type="number" step="any" value="{{ r.target }}" title="Target" class="w-20 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-xs tabular-nums outline-none focus:border-emerald-500">
+                </div>
+                <button type="submit" class="rounded border border-slate-700 px-2 py-1 text-xs text-slate-200 hover:border-emerald-500 hover:text-emerald-300 transition">Save</button>
+              </form>
+            </details>
+            <button type="button" class="ml-1 text-slate-600 hover:text-rose-400 transition"
+                    title="Remove {{ r.symbol }} ({{ r.curated_on }})"
+                    hx-post="/curated/{{ r.id }}/delete"
+                    hx-target="closest .curated-panel" hx-swap="outerHTML"
+                    hx-confirm="Remove {{ r.symbol }} curated on {{ r.curated_on }}?">&times;</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endfor %}
+
+{% if not months %}
+<div class="rounded-lg border border-slate-800 bg-slate-900/40 p-6">
+  <p class="text-sm text-slate-400 leading-relaxed max-w-2xl">
+    Nothing curated yet. Add the first one above &mdash; a ticker, the date you are
+    calling it, and the three levels you would actually trade. From then on this page
+    checks those levels against the price history for you and groups the calls by the
+    month you made them.
+  </p>
+</div>
+{% endif %}
+
+</div>

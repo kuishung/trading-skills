@@ -129,6 +129,55 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-07 - v4.43: Curated replaces Portfolio
+
+User: *"Change the Portfolio to Curated. I want a curated list by each individual
+where user can have own curated list ... the ticker, the date when it was curated,
+entry level, Stop Loss, Profit take level ... a date is to see if the curated ticker
+is triggered and monitor the position when triggered ... auto calculate the
+performance ... sorted by month."*
+
+Portfolio was a 31-line under-construction stub, so this is net-new rather than a
+migration. `/curated` is now a real page: **`curated_tickers`** (migration
+`d7e8f9a0b1c2`) stores one row per call - symbol, `curated_on`, entry, stop, target,
+optional note - scoped by `user_id` on every read and write, so a member can never
+see or touch another's list.
+
+**Nothing derived is stored.** Trigger date, status and P/L are recomputed from daily
+bars on every read (`services/curated.py`), so they cannot drift out of sync with
+prices, and correcting a level silently re-judges that call's whole history - proved
+in the browser: raising a stop flipped a row from `open +2.02R` to `stopped -1.00R`
+with a new trigger date.
+
+**How a trigger is judged.** Only bars from `curated_on` forward count. Entry STYLE is
+inferred rather than asked for: an entry above the price when you curated it is a
+breakout (a resting buy-stop, triggering on the day's HIGH); below it is a pullback (a
+buy-limit, triggering on the LOW). Shorts mirror both. This matters - the obvious rule
+"the day's range contains the entry" silently never triggers on a gap THROUGH the
+level, which is exactly the move a breakout is waiting for. Fills honour the gap too:
+a stop order that gapped past its level fills at the open (worse), a limit order fills
+at the open (better), and P/L is measured from that real fill, not the level written
+down.
+
+Direction is not a column - a stop below the entry is a long, above it a short. One
+less field that can contradict the levels. Levels that don't describe a trade (target
+on the losing side, stop == entry) are refused at input with a plain-English reason
+rather than stored and rendered as "invalid" forever.
+
+**Where daily bars can't answer, it says so.** A day whose range contains BOTH stop and
+target counts as stopped and is flagged with a hover marker: intraday order is
+unknowable from daily bars, and assuming the win would flatter every result that ever
+gapped around. Win rate counts only DECIDED calls - an open trade has no outcome yet.
+
+`evaluate()` is pure (bars in, verdict out) and covered by 12 hand-built cases:
+breakout/pullback/short, gaps in both directions, same-bar stop+target, bars before
+the curated date ignored, and both incoherent-plan rejections. All pass.
+
+**Menu.** The nav key changed `portfolio` -> `curated`, which would have silently
+revoked access for any member whose `menu_access` lists the old key, so
+`LEGACY_KEYS` translates it on read - grants keep working with no data migration.
+`strategy.html` stays: /strategy still renders it.
+
 ### 2026-09-07 - v4.42: the chart's drawing toolbar is legible
 
 User: *"in the sector and industry or the watchlist chart, the toolset in the chart
