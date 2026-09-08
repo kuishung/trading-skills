@@ -33,6 +33,13 @@
    library had loaded by then. Preloading removes the race entirely. #}
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 
+<style>
+  /* The row the chart above is showing. A left rule rather than a fill, so it
+     still reads on a hovered row and does not fight the status badges. */
+  tr.cur-charted > td:first-child { box-shadow: inset 2px 0 0 0 #38bdf8; }
+  tr.cur-charted { background: rgba(56, 189, 248, .07); }
+</style>
+
 <script>
   // Only ONE revision-history panel may be open at a time — two rows' worth of
   // version chips on screen makes it ambiguous which set the chart above is
@@ -53,13 +60,42 @@
     htmx.ajax('GET', '/curated/list' + qs, { target: panel, swap: 'outerHTML' });
   });
 
+  // ── revisions as child rows ───────────────────────────────────────────────
+  // The versions of a call are real <tr>s already in the table, hidden. The
+  // chevron just shows and hides them — no request, because the list fragment
+  // already carries them. Delegated on document so it survives every HTMX swap
+  // of the panel.
+  document.addEventListener('click', function (evt) {
+    var t = evt.target.closest ? evt.target.closest('.cur-rev-toggle') : null;
+    if (!t) return;
+    evt.preventDefault();
+    evt.stopPropagation();
+    var id = t.dataset.row;
+    var kids = document.querySelectorAll('tr[data-rev-of="' + id + '"]');
+    if (!kids.length) return;
+    var open = kids[0].hidden;          // about to open
+    kids.forEach(function (k) { k.hidden = !open; });
+    t.innerHTML = open ? '&#9662;' : '&#9656;';   // ▾ / ▸
+    t.title = (open ? 'Hide' : 'Show') + ' the ' + kids.length + ' versions of this call';
+  });
+  document.addEventListener('keydown', function (evt) {
+    if ((evt.key === 'Enter' || evt.key === ' ') && evt.target.classList
+        && evt.target.classList.contains('cur-rev-toggle')) {
+      evt.preventDefault();
+      evt.target.click();
+    }
+  });
+
+  // Mark which row the chart above is showing, so a table of near-identical
+  // versions still says which one you are looking at.
   document.body.addEventListener('htmx:beforeRequest', function (evt) {
-    var t = evt.detail && evt.detail.target;
-    if (!t || !t.classList || !t.classList.contains('cur-hist-body')) return;
-    var wasOpen = t.innerHTML.trim() !== '';
-    document.querySelectorAll('.cur-hist-body').forEach(function (b) { b.innerHTML = ''; });
-    // clicking the same row's history button again just closes it
-    if (wasOpen) evt.preventDefault();
+    var el = evt.detail && evt.detail.elt;
+    if (!el || el.tagName !== 'TR' || !(el.getAttribute('hx-get') || '').indexOf) return;
+    if ((el.getAttribute('hx-get') || '').indexOf('/curated/chart') !== 0) return;
+    document.querySelectorAll('tr.cur-charted').forEach(function (r) {
+      r.classList.remove('cur-charted');
+    });
+    el.classList.add('cur-charted');
   });
 </script>
 {% endblock %}

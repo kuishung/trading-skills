@@ -81,9 +81,23 @@ def _list_context(db: Session, user: User, *, year: str = "", month: str = "",
     # re-sizes every idea at once. Same service the chart's trade-setup editor
     # sizes with, so the quantity on a drawing and on the call it became agree.
     prefs = tp.read(user)
+
+    # Every call's history rides along as child rows under it, so the table can show
+    # how a plan changed without a second request per call. Each revision carries its
+    # OWN planned R:R and share count: the point of reading them side by side is
+    # seeing what each version would have committed.
+    hist = cur.revisions_for_many(
+        db, user, [r["id"] for mo in months for r in mo["rows"]])
     for mo in months:
         for r in mo["rows"]:
             r["size"] = tp.size(r.get("entry"), r.get("stop"), prefs)
+            revs = hist.get(r["id"], [])
+            for rv in revs:
+                risk = abs((rv["entry"] or 0) - (rv["stop"] or 0))
+                rv["planned_rr"] = (abs((rv["target"] or 0) - (rv["entry"] or 0)) / risk
+                                    if risk > 0 else None)
+                rv["size"] = tp.size(rv["entry"], rv["stop"], prefs)
+            r["revisions"] = revs
 
     # The chart pane loads one call on arrival rather than sitting empty — the first
     # row of the newest month on screen. Without it the page opens with a blank
@@ -130,19 +144,11 @@ def curated_list(request: Request, year: str = "", month: str = "", row: str = "
         _list_context(db, user, year=year, month=month, row=row))
 
 
-@router.get("/{row_id}/revisions", response_class=HTMLResponse)
-def curated_revisions(request: Request, row_id: int,
-                      user: User = Depends(require_user),
-                      db: Session = Depends(get_db)):
-    """The edit history of one call. Clicking a revision replays THOSE levels on the
-    chart, which is why each one carries its own entry/stop/target rather than a
-    diff against the current values."""
-    row = cur.get_one(db, user, row_id)
-    if row is None:
-        return HTMLResponse('<p class="text-xs text-slate-500 p-2">Not found.</p>')
-    return templates.TemplateResponse(
-        request, "_curated_revisions.html",
-        {"user": user, "row": row, "revisions": cur.revisions_for(db, user, row_id)})
+# There is no GET /curated/{id}/revisions any more (2026-09-08). A call's versions
+# are CHILD ROWS of the call in the table, rendered with the list from one grouped
+# query (`services.curated.revisions_for_many`) and shown by a chevron — so there is
+# nothing left to fetch on expand. Clicking a child row charts that version through
+# /curated/chart?rev=<id>, which is unchanged.
 
 
 @router.get("/chart", response_class=HTMLResponse)

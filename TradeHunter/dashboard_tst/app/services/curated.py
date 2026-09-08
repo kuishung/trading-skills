@@ -421,6 +421,41 @@ def revisions_for(db, user, row_id: int) -> list[dict]:
     return out
 
 
+def revisions_for_many(db, user, row_ids: list[int]) -> dict[int, list[dict]]:
+    """{call id -> its revisions, newest first} for a whole page of calls.
+
+    One query for the lot, because the table renders every call's history inline as
+    child rows: calling ``revisions_for`` per row would fire a query per row for a
+    list that is already paying a price fetch each. Same shape and same scoping as
+    ``revisions_for`` -- joined through curated_tickers on user_id, so a call this
+    member does not own contributes nothing.
+    """
+    from ..models import CuratedRevision, CuratedTicker
+
+    ids = [i for i in (row_ids or []) if i]
+    if not ids:
+        return {}
+    rows = (db.query(CuratedRevision)
+              .join(CuratedTicker, CuratedTicker.id == CuratedRevision.curated_id)
+              .filter(CuratedRevision.curated_id.in_(ids),
+                      CuratedTicker.user_id == user.id)
+              .order_by(CuratedRevision.created_at.desc(), CuratedRevision.id.desc())
+              .all())
+    grouped: dict[int, list] = {}
+    for r in rows:
+        grouped.setdefault(r.curated_id, []).append(r)
+
+    out: dict[int, list[dict]] = {}
+    for cid, rs in grouped.items():
+        out[cid] = [
+            {"id": r.id, "symbol": r.symbol, "entry": r.entry, "stop": r.stop,
+             "target": r.target, "note": r.note or "", "source": r.source,
+             "created_at": r.created_at, "current": i == 0, "n": len(rs) - i}
+            for i, r in enumerate(rs)
+        ]
+    return out
+
+
 def get_revision(db, user, rev_id: int) -> tuple[dict, dict] | None:
     """(call, revision) for one revision id, or None. Scoped through the call's
     owner, so a guessed revision id belonging to someone else returns nothing."""

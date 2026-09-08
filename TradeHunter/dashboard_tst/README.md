@@ -129,6 +129,33 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-08 - v4.51: revisions are child rows of the call
+
+User: *"i need the revisions to be shown as child item and when clicked will be shown in
+chart."*
+
+The versions of a call were a panel of chips behind a `↻` button — a separate widget with
+its own layout, so comparing three versions meant reading three little pills.
+
+- **Each version is now a `<tr>` under its call**, indented and aligned to the same
+  columns, so you read straight down Entry / Stop / Target to see how the plan moved.
+  A chevron in the ticker cell shows and hides them, and only appears when there is more
+  than the opening version — a lone child row repeating its parent is noise.
+- **Clicking a child row charts that version** (`/curated/chart?rev=`), exactly as
+  clicking the parent charts the current one (`?row=`). The row on the chart is marked
+  with a sky rule down its left edge, because a table of near-identical versions
+  otherwise cannot say which one you are looking at. Each child also gets its own
+  TV-plot control, tagged `#n` for superseded versions.
+- **Each version carries its own R:R and share count** — the point of reading them side
+  by side is seeing what each one would have committed. The trailing columns (triggered /
+  fill / exit / % / R) stay EMPTY on purpose: those are judged from the current levels
+  against real bars, and a superseded version was never traded, so filling them in would
+  invent a result that never happened.
+- **No request on expand.** New `services.curated.revisions_for_many()` fetches every
+  call's history in ONE grouped query with the list, rather than a query per row or a
+  round trip per chevron. `GET /curated/{id}/revisions` and `_curated_revisions.html` are
+  deleted with the chip panel they served.
+
 ### 2026-09-08 - v4.50: revise a call on the Curated chart itself
 
 User: *"in the curated chart when i amend the SL and level it does not show the save

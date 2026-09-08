@@ -2,11 +2,13 @@
    MONTH, newest first. Context: months (services.curated.by_month), totals, msg,
    err, today, years, sel_year, sel_month, counts (12 ints), month_abbr, any_rows,
    prefs (services.trade_prefs.read -> nlv / risk_pct / offset_pct; each row also
-   carries row.size from trade_prefs.size).
+   carries row.size from trade_prefs.size and row.revisions, each of those with its
+   own planned_rr + size).
 
    Wrapped in .curated-panel and swapped by outerHTML so every form in here can
    target `closest .curated-panel` — a class, not an id, so the fragment is safe to
    render more than once on a page. #}
+{% from "_time.html" import localtime %}
 <div class="curated-panel" data-year="{{ sel_year }}" data-month="{{ sel_month }}">
 
 {% set BADGE = {
@@ -201,6 +203,15 @@
             hx-target="#curatedChartBody" hx-swap="innerHTML"
             title="Show {{ r.symbol }} on the chart above">
           <td class="px-3 py-1.5">
+            {# Expander for this call's revisions, which are child rows already in the
+               table below. Carries .cur-actions so the row's own click filter lets it
+               through to its own handler instead of charting the call. Only offered
+               when there is more than the opening version to look at. #}
+            {% if r.revisions | length > 1 %}
+            <span class="cur-actions cur-rev-toggle inline-block w-3 text-slate-500 hover:text-sky-300 cursor-pointer select-none transition"
+                  role="button" tabindex="0" data-row="{{ r.id }}"
+                  title="{{ r.revisions | length }} versions of this call — show them">&#9656;</span>
+            {% else %}<span class="inline-block w-3"></span>{% endif %}
             <span class="text-slate-200 font-medium">{{ r.symbol }}</span>
             {% if e.direction == "short" %}<span class="ml-1 text-[10px] text-amber-400/80" title="Short — your stop is above the entry">S</span>{% endif %}
             {% if r.note %}<span class="ml-1 text-slate-600 cursor-help" title="{{ r.note }}">&#9432;</span>{% endif %}
@@ -247,11 +258,6 @@
                   data-entry="{{ '%.4f'|format(r.entry) }}"
                   data-stop="{{ '%.4f'|format(r.stop) }}"
                   data-target="{{ '%.4f'|format(r.target) }}">&#9639;</span>
-            {# history + chart #}
-            <button type="button" class="cur-hist text-slate-500 hover:text-sky-300 transition"
-                    title="Revision history — click a version to see its Entry / SL / PT on the chart"
-                    hx-get="/curated/{{ r.id }}/revisions"
-                    hx-target="#hist-{{ r.id }}" hx-swap="innerHTML">&#8635;</button>
             <details class="inline-block text-left ml-1">
               <summary class="list-none cursor-pointer text-slate-500 hover:text-slate-300 select-none" title="Edit levels">&#9998;</summary>
               {# Inline edit. There is no date field: the curated date anchors every
@@ -280,8 +286,63 @@
                     hx-confirm="Remove {{ r.symbol }} curated on {{ r.curated_on }}?">&times;</button>
           </td>
         </tr>
-        {# the expanded history + chart for this row; only one is ever filled #}
-        <tr class="cur-hist-row"><td colspan="14" class="p-0"><div id="hist-{{ r.id }}" class="cur-hist-body"></div></td></tr>
+        {# ── this call's versions, as child rows ─────────────────────────────
+           Real <tr>s in the same table rather than a panel of chips, so every
+           version lines up under the column it belongs to and you can read down
+           Entry / Stop / Target to see how the plan moved. Clicking one charts
+           THAT version (`?rev=`), the same way clicking the parent charts the
+           current one (`?row=`).
+
+           Rendered with the list and hidden, not fetched on expand: they come from
+           one grouped query the page already makes, so a round trip per call would
+           buy nothing. Only shown at all when there is more than the opening
+           version — a lone child row saying the same thing as its parent is noise.
+
+           The trailing columns (triggered / fill / exit / % / R) stay EMPTY on
+           purpose. Those are judged from the current levels against real bars; a
+           superseded version was never traded, so filling them in would invent a
+           result that never happened. #}
+        {% if r.revisions | length > 1 %}
+        {% for rv in r.revisions %}
+        <tr class="cur-rev-row border-b border-slate-800/40 bg-slate-950/40 hover:bg-slate-800/30 cursor-pointer text-[11px]"
+            data-rev-of="{{ r.id }}" hidden
+            hx-get="/curated/chart?rev={{ rv.id }}"
+            hx-trigger="click[!event.target.closest('.cur-actions')]"
+            hx-target="#curatedChartBody" hx-swap="innerHTML"
+            title="Show version {{ rv.n }} of {{ r.symbol }} on the chart above">
+          <td class="px-3 py-1 whitespace-nowrap">
+            <span class="text-slate-700 pl-3">&#9492;</span>
+            <span class="tabular-nums {{ 'text-emerald-300' if rv.current else 'text-slate-400' }}">#{{ rv.n }}</span>
+            {% if rv.current %}<span class="ml-1 text-[10px] text-emerald-400/80">current</span>{% endif %}
+            {% if rv.source == 'chart' %}<span class="ml-1 text-sky-400/70" title="Saved from a chart's trade setup">&#9873;</span>
+            {% elif rv.source == 'created' %}<span class="ml-1 text-slate-600" title="The version this call was created with">&#8226;</span>{% endif %}
+          </td>
+          <td class="px-2 py-1 text-slate-500 tabular-nums whitespace-nowrap">{{ localtime(rv.created_at) }}</td>
+          <td class="px-2 py-1 text-right text-slate-400">{{ num(rv.entry) }}</td>
+          <td class="px-2 py-1 text-right text-slate-500">{{ num(rv.stop) }}</td>
+          <td class="px-2 py-1 text-right text-slate-500">{{ num(rv.target) }}</td>
+          <td class="px-2 py-1 text-right text-slate-600">{{ num(rv.planned_rr, 1) }}</td>
+          <td class="px-2 py-1 text-right whitespace-nowrap">
+            {% if rv.size.qty is not none %}
+            <span class="text-slate-400 tabular-nums cursor-help"
+                  title="What this version would have bought: {{ rv.size.qty }} shares &times; {{ '%.2f'|format(rv.entry) }} = {{ '{:,.0f}'.format(rv.size.cost) }}, risking {{ '{:,.0f}'.format(rv.size.risk_budget) }} at {{ '%.2f'|format(rv.size.risk_per_unit) }} per share">{{ '{:,}'.format(rv.size.qty) }}</span>
+            {% else %}<span class="text-slate-700">&ndash;</span>{% endif %}
+          </td>
+          <td class="px-2 py-1 text-slate-600">{% if rv.note %}<span class="cursor-help" title="{{ rv.note }}">&#9432;</span>{% endif %}</td>
+          <td colspan="5" class="px-2 py-1"></td>
+          <td class="cur-actions px-2 py-1 text-right whitespace-nowrap">
+            <span class="tv-plot cursor-pointer text-slate-700 hover:text-orange-300 transition select-none"
+                  role="button" tabindex="0"
+                  title="Plot version {{ rv.n }} of {{ r.symbol }} (Entry {{ '%.2f'|format(rv.entry) }} / SL {{ '%.2f'|format(rv.stop) }} / PT {{ '%.2f'|format(rv.target) }}) on your TradingView"
+                  data-sym="{{ r.symbol }}"
+                  data-entry="{{ '%.4f'|format(rv.entry) }}"
+                  data-stop="{{ '%.4f'|format(rv.stop) }}"
+                  data-target="{{ '%.4f'|format(rv.target) }}"
+                  data-tag="{% if not rv.current %}#{{ rv.n }}{% endif %}">&#9639;</span>
+          </td>
+        </tr>
+        {% endfor %}
+        {% endif %}
         {% endfor %}
       </tbody>
     </table>
