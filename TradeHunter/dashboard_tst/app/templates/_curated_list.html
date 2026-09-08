@@ -194,6 +194,17 @@
           <td class="px-2 py-1.5 text-right">{{ signed(e.pct, 1, "%") }}</td>
           <td class="px-2 py-1.5 text-right">{{ signed(e.r_multiple, 2, "R") }}</td>
           <td class="px-2 py-1.5 text-right whitespace-nowrap">
+            {# Push this call straight to the user's OWN TradingView — symbol plus the
+               three levels as Entry / SL / PT lines. Shares the .tv-plot handler in
+               base.html; no exchange is stored for a curated row, and the bridge lets
+               TradingView resolve the bare ticker. #}
+            <span class="tv-plot cursor-pointer text-slate-600 hover:text-orange-300 transition select-none mr-1"
+                  role="button" tabindex="0"
+                  title="Plot {{ r.symbol }} Entry {{ '%.2f'|format(r.entry) }} / SL {{ '%.2f'|format(r.stop) }} / PT {{ '%.2f'|format(r.target) }} on your TradingView (needs the local TV bridge running)"
+                  data-sym="{{ r.symbol }}"
+                  data-entry="{{ '%.4f'|format(r.entry) }}"
+                  data-stop="{{ '%.4f'|format(r.stop) }}"
+                  data-target="{{ '%.4f'|format(r.target) }}">&#9639;</span>
             {# history + chart #}
             <button type="button" class="cur-hist text-slate-500 hover:text-sky-300 transition"
                     title="Revision history — click a version to see its Entry / SL / PT on the chart"

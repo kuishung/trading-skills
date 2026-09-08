@@ -68,8 +68,13 @@ Fixes (pick one):
 
 - `GET /health` → `{ ok, bridge, tv_tab }` — is the bridge up and can it see a TV tab?
 - `GET /plot?symbol=&exchange=&matp=&mbp=` → sets the symbol and draws/refreshes the
-  two lines. `&nav=1` returns a self-closing HTML page (used by the browser's
+  two board lines. `&nav=1` returns a self-closing HTML page (used by the browser's
   `window.open` fallback if a loopback `fetch` is ever blocked).
+- `GET /plot?symbol=&entry=&stop=&target=[&tag=]` → the same call, additionally drawing
+  a curated trade setup as **Entry / SL / PT** lines (all three required, or none are
+  drawn). `tag` is an optional label suffix, e.g. `#2` for an older revision. Both
+  parameter sets may be sent together; each family is refreshed independently, so a
+  setup survives a later MATP-only plot and vice versa.
 
 Env overrides: `TH_TV_BRIDGE_PORT` (9223), `TH_TV_CDP_PORT` (9222), `TH_TV_CDP_HOST`
 (127.0.0.1).
@@ -77,13 +82,33 @@ Env overrides: `TH_TV_BRIDGE_PORT` (9223), `TH_TV_CDP_PORT` (9222), `TH_TV_CDP_H
 ## Idempotency (no duplicate lines)
 
 The bridge records the shape ids it created **per symbol** on a page global
-(`window.__TH_LINES`) and removes *its own* previous MATP/MBP lines before redrawing.
+(`window.__TH_LINES`) and removes *its own* previous lines before redrawing — matching
+by label, and only within the families this request is about to draw (`MATP`/`MBP`, or
+`Entry`/`SL`/`PT`), so the two never clobber each other.
 So clicking a ticker again **refreshes** the pair in place — never stacks duplicates,
 never touches your manual drawings. (Edge case: if you fully reload the TV tab between
 plots, the in-page tracking resets; a subsequent plot may leave the pre-reload pair
 behind. Just clear those two lines by hand, or re-plot after they're gone.)
 
 ## Changelog
+
+### 2026-09-08 — v1.2.0: plot a curated trade setup (Entry / SL / PT)
+
+Driven by the Curated page's *"show the curated setup on TV"* request.
+
+- **`/plot` accepts a trade setup** — `&entry=..&stop=..&target=..` (all three or none)
+  plus an optional `&tag=` suffix for the label (e.g. `#2` for an older revision).
+  Drawn as Entry sky `#38bdf8` solid, SL red `#f87171` dashed, PT green `#34d399`
+  dashed — the same colours the web app's own chart uses, so the two read identically.
+- **Two independent line families, purged separately.** `MATP`/`MBP` and
+  `Entry`/`SL`/`PT` are now cleaned up on their own. Plotting a setup no longer wipes
+  the MATP lines already on the chart, and "Open on TV" from Sector & Industry no
+  longer wipes a setup you are watching. Re-plotting the same family still replaces
+  rather than stacks, and manual drawings are still never touched.
+- Internally, *what to draw* moved out of the injected page script: `buildLines()`
+  (Node) returns `[{price,color,label,style}]` + the purge list, and `buildPlotExpr()`
+  just draws them. Adding a future line family is now a Node-side change only.
+- Backwards compatible: a MATP-only request behaves exactly as in v1.1.0.
 
 ### 2026-07-18 — v1.1.0: auto-launch, locked lines, reliable de-dupe, PNA, autosave
 - **Auto-launch Chrome on demand** — if no debug Chrome is found when you click "Plot

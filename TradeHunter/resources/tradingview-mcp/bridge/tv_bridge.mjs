@@ -34,7 +34,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const BRIDGE_VERSION = '1.1.0'; // features: auto-launch, autosave, PNA header, locked lines (frozen+disableSelection), label-based de-dupe
+const BRIDGE_VERSION = '1.2.0'; // features: auto-launch, autosave, PNA header, locked lines (frozen+disableSelection), label-based de-dupe, curated setup lines (entry/stop/target)
 const BRIDGE_PORT = Number(process.env.TH_TV_BRIDGE_PORT || 9223);
 const CDP_PORT = Number(process.env.TH_TV_CDP_PORT || 9222);
 const CDP_HOST = process.env.TH_TV_CDP_HOST || '127.0.0.1';
@@ -197,13 +197,22 @@ async function cdpEval(expression, awaitPromise = true, timeoutMs = 12000) {
 }
 
 // --- The plot expression (runs inside the TV page) ---------------------------
-// Removes our own previous MATP/MBP lines for THIS symbol, sets the symbol if
-// needed, then draws the two horizontal lines and records their ids.
+// Removes our own previous lines for THIS symbol, sets the symbol if needed, then
+// draws the requested horizontal lines and records their ids.
+//
+// The caller decides WHICH lines to draw (Node side, buildLines below) and which
+// label families to purge first. Two independent families exist:
+//   MATP / MBP          — the board's levels
+//   Entry / SL / PT     — one curated call's trade setup
+// They are purged separately so that plotting a curated setup does not wipe the
+// MATP lines already on the chart, and "Open on TV" from Sector does not wipe a
+// setup you are watching.
 
-function buildPlotExpr({ symbol, matp, mbp }) {
+function buildPlotExpr({ symbol, lines, purge }) {
   const S = JSON.stringify(symbol);
-  const MATP = matp == null ? 'null' : Number(matp);
-  const MBP = mbp == null ? 'null' : Number(mbp);
+  const LINES = JSON.stringify(lines || []);
+  // purge: array of label prefixes, e.g. ['MATP','MBP'] -> /^(MATP|MBP)\s+[0-9.]/
+  const PURGE = JSON.stringify((purge && purge.length ? purge : ['MATP', 'MBP']).join('|'));
   return `
 (function () {
   return new Promise(function (resolve) {
@@ -211,21 +220,22 @@ function buildPlotExpr({ symbol, matp, mbp }) {
       var chart = ${CHART_API};
       if (!chart) return resolve({ ok: false, error: 'TradingView chart API not available on this tab' });
       var SYM = ${S};
-      var MATP = ${MATP};
-      var MBP = ${MBP};
+      var LINES = ${LINES};          // [{price, color, label, style}]
+      var PURGE = ${PURGE};          // 'MATP|MBP' or 'Entry|SL|PT' or both
       window.__TH_LINES = window.__TH_LINES || {};
       // key cleanup on the bare symbol (ignore EXCHANGE: prefix)
       var KEY = SYM.indexOf(':') >= 0 ? SYM.split(':').pop().toUpperCase() : SYM.toUpperCase();
 
       function draw() {
         var api = ${CHART_API};
-        // 1) remove OUR previous MATP/MBP lines on the CURRENT symbol by reading each
+        // 1) remove OUR previous lines on the CURRENT symbol by reading each
         //    horizontal line's label. This checks the chart itself, so it works even
         //    after TV was closed/reopened (the in-page id map is gone, but the saved
         //    lines came back with the layout) — no more duplicates. Manual drawings are
-        //    left alone; only lines labelled "MATP <n>" / "MBP <n>" (ours) are removed.
+        //    left alone; only lines labelled "<family> <n>" (ours) are removed, and only
+        //    for the families this request is about to redraw (PURGE).
         //    TV scopes drawings per symbol, so getAllShapes() here only sees this symbol.
-        var MINE = /^(MATP|MBP)\s+[0-9.]/;
+        var MINE = new RegExp('^(' + PURGE + ')\\\\s+[0-9.]');
         api.getAllShapes().forEach(function (s) {
           if (s.name !== 'horizontal_line') return;
           try {
@@ -242,20 +252,19 @@ function buildPlotExpr({ symbol, matp, mbp }) {
         catch (e) { t = Math.floor(Date.now() / 1000); }
         // 3) snapshot ids, draw, then diff after a settle to capture the new ids
         var before = api.getAllShapes().map(function (s) { return s.id; });
-        function line(price, color, label) {
+        function line(price, color, label, style) {
           api.createShape({ time: t, price: price }, {
             shape: 'horizontal_line',
             disableSelection: true,   // can't be grabbed/selected. (The create-time
                                       // lock/frozen option is ignored by TV — the real
                                       // lock is set via setProperties below.)
-            overrides: { linecolor: color, linewidth: 2, linestyle: 0,
+            overrides: { linecolor: color, linewidth: 2, linestyle: style || 0,
                          showLabel: true, textcolor: color, fontsize: 11,
                          horzLabelsAlign: 'right', text: label },
             text: label
           });
         }
-        if (MATP != null) line(MATP, '#f97316', 'MATP ' + MATP);
-        if (MBP != null) line(MBP, '#16a34a', 'MBP ' + MBP);
+        LINES.forEach(function (L) { line(L.price, L.color, L.label, L.style); });
         setTimeout(function () {
           var after = api.getAllShapes().map(function (s) { return s.id; });
           var added = after.filter(function (id) { return before.indexOf(id) < 0; });
@@ -295,6 +304,32 @@ function buildPlotExpr({ symbol, matp, mbp }) {
   });
 })()
 `;
+}
+
+// Decide what to draw from the query params. Two independent families:
+//   MATP/MBP        — the board's levels (matp=, mbp=)
+//   Entry/SL/PT     — one curated call's trade setup (entry=, stop=, target=)
+// A request may carry either, both, or neither ("just switch the symbol").
+// Colours match what the web app's own chart paints, so the two read the same:
+// entry sky, stop red, target green — entry solid, stop/target dashed (linestyle 2).
+function buildLines({ matp, mbp, entry, stop, target, tag }) {
+  const lines = [];
+  const purge = [];
+  const px = (n) => (Math.round(n * 100) / 100).toFixed(2);
+  const sfx = tag ? ' ' + tag : '';
+  // MATP/MBP are purged even when null, so a symbol whose MATP was withdrawn stops
+  // showing a stale line. The setup family is only touched when a setup was sent —
+  // otherwise plotting MATP from the board would silently wipe the setup you are watching.
+  purge.push('MATP', 'MBP');
+  if (matp != null) lines.push({ price: matp, color: '#f97316', label: 'MATP ' + matp, style: 0 });
+  if (mbp != null) lines.push({ price: mbp, color: '#16a34a', label: 'MBP ' + mbp, style: 0 });
+  if (entry != null && stop != null && target != null) {
+    purge.push('Entry', 'SL', 'PT');
+    lines.push({ price: entry, color: '#38bdf8', label: 'Entry ' + px(entry) + sfx, style: 0 });
+    lines.push({ price: stop, color: '#f87171', label: 'SL ' + px(stop) + sfx, style: 2 });
+    lines.push({ price: target, color: '#34d399', label: 'PT ' + px(target) + sfx, style: 2 });
+  }
+  return { lines, purge };
 }
 
 // --- HTTP server -------------------------------------------------------------
@@ -351,8 +386,15 @@ const server = http.createServer(async (req, res) => {
     const matpRaw = url.searchParams.get('matp');
     const mbpRaw = url.searchParams.get('mbp');
     const nav = url.searchParams.get('nav') === '1'; // window.open fallback wants HTML
-    const matp = matpRaw != null && matpRaw !== '' && matpRaw !== '-' ? Number(matpRaw) : null;
-    const mbp = mbpRaw != null && mbpRaw !== '' && mbpRaw !== '-' ? Number(mbpRaw) : null;
+    const num = (v) => (v != null && v !== '' && v !== '-' && isFinite(Number(v)) ? Number(v) : null);
+    const matp = num(matpRaw);
+    const mbp = num(mbpRaw);
+    // A curated call's three levels. `tag` is an optional suffix on each label
+    // (e.g. "#2") so an older revision is distinguishable on the chart.
+    const entry = num(url.searchParams.get('entry'));
+    const stop = num(url.searchParams.get('stop'));
+    const target = num(url.searchParams.get('target'));
+    const tag = (url.searchParams.get('tag') || '').trim().slice(0, 12);
 
     if (!symbol) {
       if (nav) return sendHtml(res, htmlResult(false, 'missing symbol'));
@@ -361,8 +403,9 @@ const server = http.createServer(async (req, res) => {
     const tvSym = exchange ? `${exchange}:${symbol}` : symbol;
 
     try {
-      console.log(`[tv-bridge] plot ${tvSym} matp=${matp} mbp=${mbp} …`);
-      const result = await cdpEval(buildPlotExpr({ symbol: tvSym, matp, mbp }));
+      const { lines, purge } = buildLines({ matp, mbp, entry, stop, target, tag });
+      console.log(`[tv-bridge] plot ${tvSym} matp=${matp} mbp=${mbp} setup=${entry != null ? `${entry}/${stop}/${target}` : 'none'} …`);
+      const result = await cdpEval(buildPlotExpr({ symbol: tvSym, lines, purge }));
       console.log(`[tv-bridge] plot ${tvSym} ->`, JSON.stringify(result));
       if (nav) return sendHtml(res, htmlResult(!!(result && result.ok), (result && result.error) || '', symbol));
       return send(res, 200, result || { ok: false, error: 'no result' }, origin);
@@ -389,7 +432,7 @@ function htmlResult(ok, err, sym) {
 server.listen(BRIDGE_PORT, '127.0.0.1', () => {
   console.log(`[tv-bridge] v${BRIDGE_VERSION} listening on http://127.0.0.1:${BRIDGE_PORT}`);
   console.log(`[tv-bridge] will drive Chrome CDP at ${CDP_HOST}:${CDP_PORT} (open a tradingview.com/chart tab there)`);
-  console.log('[tv-bridge] endpoints: /health  /plot?symbol=NVDA&exchange=NASDAQ&matp=180.5&mbp=165.0');
+  console.log('[tv-bridge] endpoints: /health  /plot?symbol=NVDA&exchange=NASDAQ&matp=180.5&mbp=165.0[&entry=..&stop=..&target=..&tag=%232]');
 });
 
 server.on('error', (e) => {

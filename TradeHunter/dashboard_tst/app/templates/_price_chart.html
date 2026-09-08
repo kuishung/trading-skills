@@ -50,12 +50,20 @@
               title="Send the trade setup drawn on this chart to your Curated list, dated today">&#9873; Curate setup</span>
         {% endif %}
         {% if chart_tv_plot is defined and chart_tv_plot %}
+        {# When a curated revision is on this chart (chart_levels), its Entry/SL/PT ride
+           along so the user's own TradingView shows the SAME setup this pane shows —
+           the whole point of opening a call on TV. Without levels the control keeps its
+           old MATP/MBP behaviour. #}
+        {% set _lv = chart_levels if (chart_levels is defined and chart_levels) else None %}
         <span class="tv-plot cursor-pointer text-[11px] px-2 py-0.5 rounded border border-orange-500/50 text-orange-300 hover:bg-orange-500/15 transition select-none"
               role="button" tabindex="0"
-              title="{{ 'Plot MATP &amp; MBP on your TradingView' if chart_matp is not none else 'Open ' ~ chart_symbol ~ ' on your TradingView' }} (needs the local TV bridge running)"
+              title="{{ 'Plot this setup (Entry / SL / PT) on your TradingView' if _lv else ('Plot MATP &amp; MBP on your TradingView' if chart_matp is not none else 'Open ' ~ chart_symbol ~ ' on your TradingView') }} (needs the local TV bridge running)"
               data-sym="{{ chart_symbol }}" data-exch="{{ chart_exchange or '' }}"
               data-matp="{{ '%.2f'|format(chart_matp) if chart_matp is not none else '' }}"
-              data-mbp="{{ '%.2f'|format(chart_mbp) if chart_mbp is not none else '' }}">&#9639; {{ 'Plot on TV' if chart_matp is not none else 'Open on TV' }}</span>
+              data-mbp="{{ '%.2f'|format(chart_mbp) if chart_mbp is not none else '' }}"
+              {% if _lv %}data-entry="{{ '%.4f'|format(_lv.entry) }}" data-stop="{{ '%.4f'|format(_lv.stop) }}"
+              data-target="{{ '%.4f'|format(_lv.target) }}" data-tag="{{ _lv.label or '' }}"{% endif %}
+              >&#9639; {{ 'Plot setup on TV' if _lv else ('Plot on TV' if chart_matp is not none else 'Open on TV') }}</span>
         {% endif %}
       </div>
       <div class="flex items-center gap-1">

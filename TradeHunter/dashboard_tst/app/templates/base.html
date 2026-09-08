@@ -643,10 +643,19 @@
       if (d.exch) qs += '&exchange=' + encodeURIComponent(d.exch);
       if (d.matp) qs += '&matp=' + encodeURIComponent(d.matp);
       if (d.mbp)  qs += '&mbp='  + encodeURIComponent(d.mbp);
+      // A curated call's three levels, when the control carries them (Curated page).
+      // All three or none — the bridge draws a setup only as a complete trade.
+      var hasSetup = d.entry && d.stop && d.target;
+      if (hasSetup) {
+        qs += '&entry=' + encodeURIComponent(d.entry) +
+              '&stop='  + encodeURIComponent(d.stop) +
+              '&target=' + encodeURIComponent(d.target);
+        if (d.tag) qs += '&tag=' + encodeURIComponent(d.tag);
+      }
       var url = BRIDGE + '/plot' + qs;
       // No MATP on record: the bridge still switches the chart to the symbol and
       // simply draws no lines, which is the useful thing from the Sector page.
-      var what = d.matp ? ' MATP/MBP' : '';
+      var what = hasSetup ? (d.matp ? ' setup + MATP/MBP' : ' setup') : (d.matp ? ' MATP/MBP' : '');
 
       el.style.opacity = '0.5';
       var restore = function () { el.style.opacity = ''; };

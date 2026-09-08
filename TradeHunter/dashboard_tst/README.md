@@ -129,6 +129,30 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-08 - v4.46: Curated pushes the setup to your own TradingView
+
+User: *"in the curated i need the TV chart show the curated setup"*
+
+**The TV button now carries the levels.** Until now "Plot on TV" only ever sent a
+symbol plus MATP/MBP, so opening a curated call on TradingView showed the ticker but
+none of the trade you had actually called — you re-drew Entry / SL / PT by hand every
+time.
+
+- `_price_chart.html` — when the pane is showing a curated revision (`chart_levels`),
+  the `.tv-plot` control gains `data-entry` / `data-stop` / `data-target` / `data-tag`
+  and relabels itself **"Plot setup on TV"**. Everywhere else it is unchanged. Levels
+  go over at 4dp so the bridge, not the template, decides display rounding.
+- `_curated_list.html` — every row gets its own small ▧ TV control with that row's three
+  levels, so a call goes to TradingView without first expanding its revision history.
+- `base.html` — `plotOnTV()` forwards the three levels (all-or-nothing: a setup is only
+  ever sent as a complete trade) plus the optional revision tag, and the toast now says
+  *"setup"* / *"setup + MATP/MBP"* so you can tell what actually got drawn.
+
+Colours match what this app's own chart paints — entry sky, stop red, target green —
+so the two charts read identically. Needs TV bridge **v1.2.0** (see
+`resources/tradingview-mcp/bridge/README.md`); an older bridge ignores the new params
+and still plots the symbol.
+
 ### 2026-09-08 - v4.45: a trade setup is built from a support / resistance level
 
 User: *"when click trade setup, the window only show me the support level and the
