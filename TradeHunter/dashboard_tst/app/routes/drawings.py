@@ -73,7 +73,21 @@ def _clean_shapes(raw) -> list[dict]:
             # sl / pt are plain prices. All four must be present to be usable.
             sl, pt = _num(s.get("sl")), _num(s.get("pt"))
             if a and b and sl is not None and pt is not None:
-                out.append({"type": "trade", "a": a, "b": b, "sl": sl, "pt": pt})
+                keep = {"type": "trade", "a": a, "b": b, "sl": sl, "pt": pt}
+                # A setup is now DERIVED from a support/resistance level: lvl is the
+                # level itself, off the percentage the entry sits away from it, kind
+                # which side of price it is. Optional so setups saved before this
+                # existed still load — the editor re-derives lvl from the entry when
+                # it is missing. This whitelist DROPS unknown keys, so anything the
+                # chart wants to persist has to be named here.
+                lvl, off = _num(s.get("lvl")), _num(s.get("off"))
+                if lvl is not None:
+                    keep["lvl"] = lvl
+                if off is not None and 0 <= off <= 20:
+                    keep["off"] = off
+                if s.get("kind") in ("support", "resistance"):
+                    keep["kind"] = s["kind"]
+                out.append(keep)
             continue
         if a and b:
             out.append({"type": s["type"], "a": a, "b": b})
@@ -85,6 +99,51 @@ def _norm_symbol(symbol: str) -> str:
     if not sym or len(sym) > MAX_SYMBOL_LEN:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bad symbol")
     return sym
+
+
+# Declared BEFORE /{symbol}: otherwise "trade-offset" is captured as a ticker and
+# this route is unreachable. (Same ordering trap as matp's /my routes.)
+DEFAULT_ENTRY_OFFSET_PCT = 0.3
+
+
+@router.get("/trade-offset")
+def get_trade_offset(user: User = Depends(require_user)):
+    """How far from a support/resistance level this member's entries sit, in percent.
+
+    Per-user because it is a style, not a fact: one trader wants to be filled 0.1%
+    off the level, another gives it half a percent of room. Stored in User.prefs
+    rather than a new column — it is a single UI preference, and prefs is already
+    where the sector filter lives.
+    """
+    prefs = getattr(user, "prefs", None) or {}
+    try:
+        pct = float(prefs.get("trade_entry_offset_pct"))
+    except (TypeError, ValueError):
+        pct = DEFAULT_ENTRY_OFFSET_PCT
+    if not 0 <= pct <= 20:
+        pct = DEFAULT_ENTRY_OFFSET_PCT
+    return {"pct": pct, "default": DEFAULT_ENTRY_OFFSET_PCT}
+
+
+@router.put("/trade-offset")
+def put_trade_offset(payload: dict = Body(...),
+                     user: User = Depends(require_user),
+                     db: Session = Depends(get_db)):
+    """Remember this member's entry offset. Bounded 0-20%: beyond that the "entry
+    near the level" is no longer near the level, and a fat-fingered 300 would put
+    every future setup somewhere absurd."""
+    try:
+        pct = float(payload.get("pct"))
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "pct must be a number"}
+    if not 0 <= pct <= 20:
+        return {"ok": False, "error": "pct must be between 0 and 20"}
+
+    prefs = dict(getattr(user, "prefs", None) or {})
+    prefs["trade_entry_offset_pct"] = pct
+    user.prefs = prefs          # reassign: SQLAlchemy won't see an in-place mutation
+    db.commit()
+    return {"ok": True, "pct": pct}
 
 
 @router.get("/{symbol}")

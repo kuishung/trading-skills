@@ -129,6 +129,61 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-08 - v4.45: a trade setup is built from a support / resistance level
+
+User: *"when click trade setup, the window only show me the support level and the
+entry stop and target will be adjusted based on the support level ... each user will
+have its own entry from the support or resistance level ... default use 0.3% ... make
+the trade setup window bigger ... remove the vertical lines only use the horizontal
+PT, entry and SL with the colour shading ... the whole chart will auto zoom in."*
+
+**One price in, three out.** The editor no longer takes an entry, a stop and a target
+as three independent numbers. You give it the LEVEL that actually matters -- the
+support you expect to hold or the resistance you expect to cap -- and it derives:
+
+    entry  = level x (1 +/- offset%)      offset defaults to 0.3%
+    stop   = entry -/+ 1 x ATR(14)        (the rule the tool already used)
+    target = entry +/- 2 x ATR(14)        (2R)
+
+Entry, Stop and Target are now shown as RESULTS, not inputs, so the editor can never
+be left holding three numbers that disagree with the level they came from. Which side
+it trades follows from where you clicked -- below price is support (long), above is
+resistance (short) -- and a dropdown flips it when the guess is wrong.
+
+**The offset is per-member**, stored in `User.prefs` and served by
+`GET/PUT /drawings/trade-offset` (bounded 0-20%: past that "near the level" stops
+meaning anything, and a fat-fingered 300 would put every future setup somewhere
+absurd). Editing it in the panel saves it as your default for every setup after.
+The route is declared BEFORE `/{symbol}` -- otherwise "trade-offset" is captured as a
+ticker and the endpoint is unreachable.
+
+**The shape now carries `lvl` / `kind` / `off`.** `drawings.py::_clean_shapes` DROPS
+unknown keys, so these had to be whitelisted or the level would have been silently
+lost on every save. All three are optional: a setup drawn before today has no level,
+so the editor recovers one from its entry rather than breaking.
+
+**Full-width bands, no vertical lines.** The box used to stop at a right edge, which
+drew two verticals that mean nothing -- a stop is a price, not a date -- and gave you
+a width you could drag by accident. The zones now run the whole chart like a price
+line, the labels are 12px on 20px tags instead of 10 on 14, and the level itself is
+drawn dashed. That level tag is right-aligned on purpose: the entry sits a fraction
+of a percent from it, so a left-aligned label landed on top of the Entry tag at
+almost every zoom.
+
+**Hit-testing had to change with it.** The band spans the chart now, so treating its
+interior as the shape would swallow every click aimed at anything underneath. A trade
+setup is selected by clicking near one of its four lines.
+
+**Auto-zoom on placing.** ~45 sessions of bars with about as much empty room to their
+right, so roughly half the plot is the space the bands run through. The setup's
+prices also feed the candle series' autoscale, so the price axis opens to include a
+level rather than drawing it off-screen.
+
+Verified in the browser: placing a setup stored `lvl 56.89 / kind support / off 0.3`
+with entry 57.06 = level x 1.003; typing level 55 moved all three to 55.16 / 54.50 /
+56.49; offset 1.5 moved the entry to 55.82 AND persisted (`{"pct": 1.5}`); switching
+to Resistance flipped it to Short with the stop above and target below.
+
 ### 2026-09-08 - v4.44: curate from a chart, keep every revision, browse by month
 
 User: *"I need it to be able to curate it from the watchlist chart or the sector and

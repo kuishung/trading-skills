@@ -116,6 +116,31 @@
   // symbol's drawings, and would then disagree with the revision it came from.
   // {entry, stop, target, label} or null.
   var curLevels = {{ (chart_levels if (chart_levels is defined and chart_levels) else None)|tojson }};
+  // How far a trade-setup entry sits from its support/resistance level, in
+  // percent. Per-member and remembered server-side (GET/PUT /drawings/trade-offset);
+  // 0.3 until that answers, so the first setup drawn on a cold page is still right.
+  var entryOffsetPct = 0.3;
+  fetch('/drawings/trade-offset', { credentials: 'same-origin' })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (j) { if (j && isFinite(j.pct)) entryOffsetPct = j.pct; })
+    .catch(function () {});
+  var offsetTimer = 0;
+  function saveOffsetPref(pct) {
+    entryOffsetPct = pct;
+    if (offsetTimer) clearTimeout(offsetTimer);
+    offsetTimer = setTimeout(function () {
+      offsetTimer = 0;
+      fetch('/drawings/trade-offset', {
+        method: 'PUT', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pct: pct })
+      }).catch(function () {});
+    }, 500);
+  }
+  // Prices any trade setup on this chart needs kept in view. Filled by the drawing
+  // layer; read by the candle series' autoscale below, so placing a setup pulls the
+  // price axis open to include it instead of drawing it off-screen.
+  var tradeLevels = [];
   function empty() { if (el) el.classList.add('hidden'); if (msg) msg.classList.remove('hidden'); }
   function ema(bars, period) {
     if (bars.length < period) return [];
@@ -236,15 +261,18 @@
     function yOf(price) { return series.priceToCoordinate(price); }
 
     function fmt(v) { return v.toFixed(2); }
-    /** Small filled price tag, clamped so it can't ride off the top or bottom edge. */
-    function tag(ctx, x, y, text, bg, h) {
+    /** Filled price tag, clamped so it can't ride off the top or bottom edge.
+        `big` is used by the trade setup, whose three labels are the point of the
+        drawing and were too small to read at a glance. */
+    function tag(ctx, x, y, text, bg, h, big) {
       var yy = Math.max(8, Math.min(h - 8, y));
-      ctx.font = '10px ui-sans-serif,system-ui,sans-serif';
-      var w = ctx.measureText(text).width + 8;
+      var fs = big ? 12 : 10, ht = big ? 20 : 14, pad = big ? 6 : 4;
+      ctx.font = (big ? '600 ' : '') + fs + 'px ui-sans-serif,system-ui,sans-serif';
+      var w = ctx.measureText(text).width + pad * 2;
       ctx.fillStyle = bg;
-      ctx.fillRect(x, yy - 7, w, 14);
+      ctx.fillRect(x, yy - ht / 2, w, ht);
       ctx.fillStyle = '#0b1220';
-      ctx.fillText(text, x + 4, yy + 3.5);
+      ctx.fillText(text, x + pad, yy + fs * 0.36);
     }
 
     // ---- canvas overlay --------------------------------------------------
@@ -258,36 +286,57 @@
       ctx.strokeStyle = ACCENT;
       ctx.lineWidth = sel ? 3 : 1.5;
       if (d.type === 'trade') {
-        // TradingView-style position box: a red risk zone entry->stop, a green
-        // reward zone entry->target, and the entry line between them.
-        var tx1 = xOf(d.a), tx2 = xOf(d.b);
+        // FULL-WIDTH bands: a red risk zone entry->stop, a green reward zone
+        // entry->target, and the entry line between them. The box used to stop at
+        // a right edge, which drew two vertical lines that mean nothing -- a stop
+        // is a price, not a date, and the box's width was a decoration you could
+        // accidentally drag. Now the levels read straight across the chart, the
+        // way a price line does.
         var ye = yOf(d.a.p), ys = yOf(d.sl), yp = yOf(d.pt);
-        if (tx1 == null || tx2 == null || ye == null || ys == null || yp == null) { ctx.restore(); return; }
-        var TL = Math.min(tx1, tx2), TW = Math.abs(tx2 - tx1);
-        ctx.fillStyle = 'rgba(16,185,129,0.14)';
-        ctx.fillRect(TL, Math.min(ye, yp), TW, Math.abs(yp - ye));
-        ctx.fillStyle = 'rgba(239,68,68,0.16)';
-        ctx.fillRect(TL, Math.min(ye, ys), TW, Math.abs(ys - ye));
-        ctx.lineWidth = sel ? 2 : 1.2;
-        ctx.strokeStyle = 'rgba(16,185,129,0.85)';
-        ctx.strokeRect(TL, Math.min(ye, yp), TW, Math.abs(yp - ye));
-        ctx.strokeStyle = 'rgba(239,68,68,0.85)';
-        ctx.strokeRect(TL, Math.min(ye, ys), TW, Math.abs(ys - ye));
-        ctx.strokeStyle = ACCENT;
-        ctx.lineWidth = sel ? 2.5 : 1.6;
-        ctx.beginPath(); ctx.moveTo(TL, ye); ctx.lineTo(TL + TW, ye); ctx.stroke();
+        if (ye == null || ys == null || yp == null) { ctx.restore(); return; }
+        ctx.fillStyle = 'rgba(16,185,129,0.15)';
+        ctx.fillRect(0, Math.min(ye, yp), w, Math.abs(yp - ye));
+        ctx.fillStyle = 'rgba(239,68,68,0.17)';
+        ctx.fillRect(0, Math.min(ye, ys), w, Math.abs(ys - ye));
+        function band(yy, color, lw) {
+          ctx.strokeStyle = color; ctx.lineWidth = lw;
+          ctx.beginPath(); ctx.moveTo(0, yy); ctx.lineTo(w, yy); ctx.stroke();
+        }
+        band(yp, 'rgba(16,185,129,0.9)', sel ? 2.5 : 1.8);
+        band(ys, 'rgba(239,68,68,0.9)', sel ? 2.5 : 1.8);
+        band(ye, ACCENT, sel ? 3 : 2.2);
         var risk = Math.abs(d.a.p - d.sl);
         var rr = risk > 0 ? Math.abs(d.pt - d.a.p) / risk : 0;
-        tag(ctx, TL + 4, ye, 'Entry ' + fmt(d.a.p), ACCENT, h);
-        tag(ctx, TL + 4, ys, 'SL ' + fmt(d.sl) + '  \u22121R', '#f87171', h);
-        tag(ctx, TL + 4, yp, 'PT ' + fmt(d.pt) + '  ' + rr.toFixed(1) + 'R', '#34d399', h);
+        var lx = BAR_RIGHT + 4;                 // clear of the drawing toolbar
+        tag(ctx, lx, ye, 'Entry ' + fmt(d.a.p), ACCENT, h, true);
+        tag(ctx, lx, ys, 'SL ' + fmt(d.sl) + '  \u22121R', '#f87171', h, true);
+        tag(ctx, lx, yp, 'PT ' + fmt(d.pt) + '  ' + rr.toFixed(1) + 'R', '#34d399', h, true);
+        if (d.lvl != null) {
+          // the level the whole setup hangs off, drawn as a dashed marker
+          var yl = yOf(d.lvl);
+          if (yl != null) {
+            ctx.save();
+            ctx.setLineDash([5, 4]);
+            band(yl, light ? 'rgba(100,116,139,.9)' : 'rgba(148,163,184,.9)', 1.4);
+            ctx.restore();
+            // The level's tag goes on the RIGHT. The entry sits a fraction of a
+            // percent from it by construction, so a left-aligned label would land
+            // on top of the Entry tag at almost every zoom level.
+            var lt = (d.kind === 'resistance' ? 'Resistance ' : 'Support ') + fmt(d.lvl);
+            ctx.font = '600 12px ui-sans-serif,system-ui,sans-serif';
+            var ltw = ctx.measureText(lt).width + 12;
+            tag(ctx, Math.max(lx, w - ltw - 24), yl, lt,
+                light ? '#cbd5e1' : '#94a3b8', h, true);
+          }
+        }
         if (sel) {
-          var hs = [[tx1, ye], [tx2, ys], [tx2, yp], [tx2, ye]];
+          // handles hug the right edge now that there is no box corner to grab
+          var hx = Math.max(20, w - 16);
           ctx.lineWidth = 1.5;
           ctx.strokeStyle = ACCENT;
-          hs.forEach(function (pp) {
+          [[hx, ye], [hx, ys], [hx, yp]].forEach(function (pp) {
             ctx.beginPath();
-            ctx.arc(pp[0], pp[1], 4, 0, Math.PI * 2);
+            ctx.arc(pp[0], pp[1], 5, 0, Math.PI * 2);
             ctx.fillStyle = light ? '#ffffff' : '#0b1220';
             ctx.fill();
             ctx.stroke();
@@ -349,6 +398,36 @@
       drawings.forEach(function (d, i) { paint(ctx, d, w, h, i === selected || i === hoverIdx); });
       if (pending) paint(ctx, pending, w, h, true);
       refreshCurateChip();
+      syncTradeLevels();
+    }
+
+    /** Publish every trade setup's prices so the price axis keeps them in view. */
+    function syncTradeLevels() {
+      var next = [];
+      drawings.forEach(function (d) {
+        if (d.type !== 'trade') return;
+        next.push(d.a.p, d.sl, d.pt);
+        if (d.lvl != null) next.push(d.lvl);
+      });
+      if (next.length !== tradeLevels.length ||
+          next.some(function (v, i) { return v !== tradeLevels[i]; })) {
+        tradeLevels = next;
+      }
+    }
+
+    /** Frame the chart on a newly placed setup: the recent bars plus empty room on
+        the right, which is where the full-width bands and their labels live. The
+        price axis then follows, because the autoscale provider reads tradeLevels. */
+    function zoomToSetup() {
+      try {
+        syncTradeLevels();
+        var last = bars.length - 1;
+        // ~2 months of bars and about as much empty space to their right. Roughly
+        // half the plot ends up being the room the bands run through, which is what
+        // makes the three levels legible instead of squeezed against the last candle.
+        var span = Math.min(bars.length - 1, 45);
+        ts.setVisibleLogicalRange({ from: last - span, to: last + 30 });
+      } catch (e) { /* framing is a nicety; never break the drawing */ }
     }
 
     // ---- "Curate setup" ---------------------------------------------------
@@ -419,11 +498,16 @@
           continue;
         }
         if (d.type === 'trade') {
-          var ax = xOf(d.a), bx = xOf(d.b);
+          // Only NEAR one of the three lines (or the level). The band now spans the
+          // whole chart, so treating its interior as the shape would swallow every
+          // click aimed at anything underneath it.
           var ey = yOf(d.a.p), sy = yOf(d.sl), py = yOf(d.pt);
-          if (ax == null || bx == null || ey == null || sy == null || py == null) continue;
-          if (x >= Math.min(ax, bx) - HIT && x <= Math.max(ax, bx) + HIT &&
-              y >= Math.min(sy, py) - HIT && y <= Math.max(sy, py) + HIT) return i;
+          if (ey == null || sy == null || py == null) continue;
+          var ly = d.lvl != null ? yOf(d.lvl) : null;
+          var near = [ey, sy, py, ly].some(function (yy) {
+            return yy != null && Math.abs(yy - y) <= HIT;
+          });
+          if (near) return i;
           continue;
         }
         var x1 = xOf(d.a), y1 = yOf(d.a.p), x2 = xOf(d.b), y2 = yOf(d.b.p);
@@ -603,8 +687,11 @@
       selected = i;
 
       panel = document.createElement('div');
-      panel.style.cssText = 'position:absolute;z-index:6;width:210px;padding:8px 9px;border-radius:6px;' +
-        'font:11px/1.4 ui-sans-serif,system-ui,sans-serif;box-shadow:0 6px 20px rgba(0,0,0,.35);' +
+      // Wider and roomier than the old 210px box: the trade editor now explains what
+      // it derived, and cramped numbers were the complaint.
+      panel.style.cssText = 'position:absolute;z-index:6;width:' +
+        (d.type === 'trade' ? '300' : '220') + 'px;padding:12px 13px;border-radius:8px;' +
+        'font:12px/1.5 ui-sans-serif,system-ui,sans-serif;box-shadow:0 8px 26px rgba(0,0,0,.4);' +
         'background:' + (light ? 'rgba(255,255,255,.98)' : 'rgba(15,23,42,.98)') + ';' +
         'border:1px solid rgba(148,163,184,.45);color:' + (light ? '#334155' : '#cbd5e1') + ';';
       // clicks inside the editor must not reach the chart (which would reselect / draw)
@@ -627,7 +714,7 @@
 
       function row(label) {
         var r = document.createElement('div');
-        r.style.cssText = 'display:grid;grid-template-columns:46px 1fr;gap:5px;align-items:center;margin-bottom:4px;';
+        r.style.cssText = 'display:grid;grid-template-columns:58px 1fr;gap:7px;align-items:center;margin-bottom:7px;';
         var l = document.createElement('span');
         l.textContent = label;
         l.style.cssText = 'opacity:.7;';
@@ -648,16 +735,54 @@
         r0.appendChild(fp);
         fields.push({ price: fp });
       } else if (d.type === 'trade') {
+        // ONE price is editable here: the level. Entry, stop and target are shown
+        // as what they are -- results -- so there is no way to leave the editor
+        // holding three numbers that no longer agree with the level they came from.
+        ensureLevel(d);
+        var rl = row('Level');
+        var lw = document.createElement('div');
+        lw.style.cssText = 'display:grid;grid-template-columns:1fr 104px;gap:6px;';
+        var flv = mkInput('number', d.lvl.toFixed(2), step);
+        var fkind = document.createElement('select');
+        fkind.style.cssText = 'box-sizing:border-box;padding:3px 4px;border-radius:4px;' +
+          'font:12px ui-sans-serif,system-ui,sans-serif;color:inherit;' +
+          'background:' + (light ? '#ffffff' : '#0b1220') + ';border:1px solid rgba(148,163,184,.45);';
+        [['support', 'Support'], ['resistance', 'Resistance']].forEach(function (o) {
+          var op = document.createElement('option');
+          op.value = o[0]; op.textContent = o[1];
+          if (d.kind === o[0]) op.selected = true;
+          fkind.appendChild(op);
+        });
+        fkind.title = 'Support buys above the level; resistance sells below it';
+        lw.appendChild(flv); lw.appendChild(fkind);
+        rl.appendChild(lw);
+
+        var ro = row('Offset');
+        var ow = document.createElement('div');
+        ow.style.cssText = 'display:grid;grid-template-columns:1fr auto;gap:6px;align-items:center;';
+        var foff = mkInput('number', d.off, '0.05');
+        foff.title = 'How far the entry sits from the level. Saved as your default for ' +
+          'every future setup.';
+        var pctEl = document.createElement('span');
+        pctEl.textContent = '% from level';
+        pctEl.style.cssText = 'opacity:.6;white-space:nowrap;';
+        ow.appendChild(foff); ow.appendChild(pctEl);
+        ro.appendChild(ow);
+
         var rd = row('Date');
         var fdt = mkInput('date', dateOfPoint(d.a), null);
         rd.appendChild(fdt);
-        var re = row('Entry'); var fe = mkInput('number', d.a.p.toFixed(2), step); re.appendChild(fe);
-        var rs = row('Stop');  var fs = mkInput('number', d.sl.toFixed(2), step); rs.appendChild(fs);
-        var rt = row('Target'); var ftg = mkInput('number', d.pt.toFixed(2), step); rt.appendChild(ftg);
+
+        var outEl = document.createElement('div');
+        outEl.style.cssText = 'margin-top:8px;padding-top:8px;display:grid;' +
+          'grid-template-columns:auto 1fr;gap:2px 10px;' +
+          'border-top:1px solid rgba(148,163,184,.28);';
+        panel.appendChild(outEl);
         var rrEl = document.createElement('div');
-        rrEl.style.cssText = 'margin-top:2px;opacity:.75;';
+        rrEl.style.cssText = 'margin-top:6px;opacity:.75;';
         panel.appendChild(rrEl);
-        fields.push({ trade: true, date: fdt, entry: fe, sl: fs, pt: ftg, rrEl: rrEl });
+        fields.push({ trade: true, date: fdt, lvl: flv, off: foff, kind: fkind,
+                      outEl: outEl, rrEl: rrEl });
       } else {
         [['Point 1', 'a'], ['Point 2', 'b']].forEach(function (spec) {
           var r = row(spec[0]);
@@ -671,14 +796,28 @@
         });
       }
 
-      /** Risk/reward readout under the trade fields. */
+      /** The three DERIVED prices, plus the risk/reward readout. */
       function showRR(cur) {
         var f = fields[0];
         if (!f || !f.rrEl) return;
         var risk = Math.abs(cur.a.p - cur.sl);
         var rr = risk > 0 ? Math.abs(cur.pt - cur.a.p) / risk : 0;
         var dir = cur.pt >= cur.a.p ? 'Long' : 'Short';
-        f.rrEl.textContent = dir + ' \u00b7 risk ' + risk.toFixed(2) + ' \u00b7 ' + rr.toFixed(2) + 'R';
+        if (f.outEl) {
+          f.outEl.innerHTML = '';
+          [['Entry', cur.a.p, ACCENT], ['Stop', cur.sl, '#f87171'],
+           ['Target', cur.pt, '#34d399']].forEach(function (spec) {
+            var k = document.createElement('span');
+            k.textContent = spec[0];
+            k.style.cssText = 'opacity:.7;';
+            var v = document.createElement('span');
+            v.textContent = spec[1].toFixed(2);
+            v.style.cssText = 'font-weight:600;text-align:right;color:' + spec[2] + ';';
+            f.outEl.appendChild(k); f.outEl.appendChild(v);
+          });
+        }
+        f.rrEl.textContent = dir + ' \u00b7 risk ' + risk.toFixed(2) + ' \u00b7 ' +
+          rr.toFixed(2) + 'R \u00b7 stop 1\u00d7ATR(14)';
       }
 
       function apply() {
@@ -689,17 +828,22 @@
           if (isFinite(v)) cur.p = v;
         } else if (cur.type === 'trade') {
           var f = fields[0];
-          var ev = parseFloat(f.entry.value), sv = parseFloat(f.sl.value), tv = parseFloat(f.pt.value);
           if (f.date.value) {
-            // moving the date slides the whole box, preserving its width in bars
             var span = logicalOf(cur.b) - logicalOf(cur.a);
             var np = pointFromDate(f.date.value, cur.a.p);
             cur.a = np;
             cur.b = logicalToPoint(logicalOf(np) + span, np.p);
           }
-          if (isFinite(ev)) cur.a.p = ev;
-          if (isFinite(sv)) cur.sl = sv;
-          if (isFinite(tv)) cur.pt = tv;
+          var lv = parseFloat(f.lvl.value), ov = parseFloat(f.off.value);
+          if (isFinite(lv) && lv > 0) cur.lvl = lv;
+          if (isFinite(ov) && ov >= 0 && ov <= 20 && ov !== cur.off) {
+            cur.off = ov;
+            saveOffsetPref(ov);      // an offset you set is the one you meant to keep
+          }
+          if (f.kind.value === 'support' || f.kind.value === 'resistance') {
+            cur.kind = f.kind.value;
+          }
+          deriveTrade(cur);
           showRR(cur);
         } else {
           fields.forEach(function (f) {
@@ -714,9 +858,10 @@
       // field sets differ by shape (hline: price; tline/rect: date+price per point;
       // trade: date+entry+sl+pt), so wire whichever inputs this one actually has
       fields.forEach(function (f) {
-        [f.date, f.price, f.entry, f.sl, f.pt].forEach(function (inp) {
+        [f.date, f.price, f.lvl, f.off].forEach(function (inp) {
           if (inp) inp.addEventListener('input', apply);
         });
+        if (f.kind) f.kind.addEventListener('change', apply);
       });
 
       panelRefresh = function () {
@@ -727,9 +872,9 @@
         if (cur.type === 'trade') {
           var f = fields[0];
           put(f.date, dateOfPoint(cur.a));
-          put(f.entry, cur.a.p.toFixed(2));
-          put(f.sl, cur.sl.toFixed(2));
-          put(f.pt, cur.pt.toFixed(2));
+          if (cur.lvl != null) put(f.lvl, cur.lvl.toFixed(2));
+          put(f.off, cur.off);
+          if (f.kind && document.activeElement !== f.kind) f.kind.value = cur.kind;
           showRR(cur);
           return;
         }
@@ -785,11 +930,13 @@
 
     function corners(d) {
       if (d.type === 'trade') {
-        var ax = xOf(d.a), bx = xOf(d.b);
         var ey = yOf(d.a.p), sy = yOf(d.sl), py = yOf(d.pt);
-        if (ax == null || bx == null || ey == null || sy == null || py == null) return null;
-        return [{ x: ax, y: ey, part: 'entry' }, { x: bx, y: sy, part: 'sl' },
-                { x: bx, y: py, part: 'pt' }, { x: bx, y: ey, part: 'x2' }];
+        if (ey == null || sy == null || py == null) return null;
+        // full-width bands: the grab points live at the right edge. 'x2' is gone
+        // with the box it used to resize.
+        var hx = Math.max(20, el.clientWidth - 16);
+        return [{ x: hx, y: ey, part: 'entry' }, { x: hx, y: sy, part: 'sl' },
+                { x: hx, y: py, part: 'pt' }];
       }
       var x1 = xOf(d.a), y1 = yOf(d.a.p), x2 = xOf(d.b), y2 = yOf(d.b.p);
       if (x1 == null || y1 == null || x2 == null || y2 == null) return null;
@@ -813,6 +960,40 @@
       }
       var b = hit(x, y);
       return b >= 0 ? { idx: b, part: 'body' } : null;
+    }
+
+    // ---- a setup is DERIVED from a level ---------------------------------
+    // The three prices are no longer typed in independently. You mark the level
+    // that matters -- the support you expect to hold, or the resistance you expect
+    // to cap -- and the entry sits a set percentage off it (your own default,
+    // 0.3%), with the stop 1xATR(14) away and the target at 2R. Editing the level
+    // moves all three together, which is what the levels actually depend on.
+    function ensureLevel(d) {
+      // Setups drawn before this existed carry no level; recover one from the
+      // entry so an old drawing opens in the new editor instead of breaking.
+      if (d.kind !== 'support' && d.kind !== 'resistance') {
+        d.kind = (d.pt >= d.a.p) ? 'support' : 'resistance';
+      }
+      if (d.off == null || !isFinite(d.off)) d.off = entryOffsetPct;
+      if (d.lvl == null || !isFinite(d.lvl)) {
+        var o = d.off / 100;
+        d.lvl = d.kind === 'resistance' ? d.a.p / (1 - o) : d.a.p / (1 + o);
+      }
+      return d;
+    }
+    function deriveTrade(d) {
+      ensureLevel(d);
+      var o = d.off / 100;
+      // Fall back to a percentage of price when ATR is unavailable, so the setup
+      // is still coherent rather than collapsing to a zero-width stop.
+      var atr = atrLatest || Math.abs(d.lvl) * 0.02;
+      var dir = d.kind === 'resistance' ? -1 : 1;   // short sells below resistance
+      var entry = d.lvl * (1 + dir * o);
+      d.a = { t: d.a.t, o: d.a.o, p: entry };
+      d.b = { t: d.b.t, o: d.b.o, p: entry };
+      d.sl = entry - dir * atr;
+      d.pt = entry + dir * 2 * atr;
+      return d;
     }
 
     function logicalOf(pt) { return idxOfTime(pt.t) + (pt.o || 0); }
@@ -850,17 +1031,19 @@
         if (pr0 != null) d.p = pr0;
       } else if (d.type === 'trade') {
         var tp = series.coordinateToPrice(q.y), tl = ts.coordinateToLogical(q.x);
-        if (grab.part === 'body') {
-          if (tp == null || tl == null) return;
-          var tdl = tl - grab.l0, tdp = tp - grab.p0;
-          d.a = logicalToPoint(logicalOf(grab.orig.a) + tdl, grab.orig.a.p + tdp);
-          d.b = logicalToPoint(logicalOf(grab.orig.b) + tdl, grab.orig.b.p + tdp);
-          d.sl = grab.orig.sl + tdp;
-          d.pt = grab.orig.pt + tdp;
-        } else if (grab.part === 'entry') {
-          var ep = toPoint(q.x, q.y);
-          if (!ep) return;
-          d.a = ep;                       // stop and target hold their prices
+        if (grab.part === 'body' || grab.part === 'entry') {
+          // Dragging the setup moves the LEVEL it hangs off, and the three prices
+          // are re-derived from it. Moving the entry while leaving the level behind
+          // would make the editor lie about where the entry came from.
+          if (tp == null) return;
+          var tdp = tp - grab.p0;
+          d.lvl = (grab.orig.lvl != null ? grab.orig.lvl : grab.orig.a.p) + tdp;
+          if (tl != null && grab.part === 'body') {
+            var tdl = tl - grab.l0;
+            d.a = logicalToPoint(logicalOf(grab.orig.a) + tdl, d.a.p);
+            d.b = logicalToPoint(logicalOf(grab.orig.b) + tdl, d.a.p);
+          }
+          deriveTrade(d);
         } else if (grab.part === 'sl') {
           if (tp == null) return;
           // Moving the stop resizes R, so the target RIDES ALONG at the same
@@ -874,10 +1057,6 @@
         } else if (grab.part === 'pt') {
           if (tp == null) return;
           d.pt = tp;
-        } else if (grab.part === 'x2') {
-          var xp = toPoint(q.x, q.y);
-          if (!xp) return;
-          d.b = { t: xp.t, o: xp.o, p: d.a.p };
         }
       } else if (grab.part === 'body') {
         var l = ts.coordinateToLogical(q.x), p = series.coordinateToPrice(q.y);
@@ -1001,17 +1180,27 @@
           setTool('cursor');
           return;
         }
+        // You are marking the LEVEL, not the entry: click the support you expect
+        // to hold or the resistance you expect to cap. Which one it is follows from
+        // where you clicked relative to price -- below is support (long), above is
+        // resistance (short) -- and the editor lets you flip it when the guess is
+        // wrong. Entry, stop and target are then derived (see deriveTrade).
+        var lastClose = bars[bars.length - 1].close;
         var aPt = logicalToPoint(el0, ep);
-        drawings.push({
+        var nd = deriveTrade({
           type: 'trade',
           a: aPt,
-          b: logicalToPoint(el0 + 20, ep),      // 20 bars wide by default; drag to resize
-          sl: ep - atr,
-          pt: ep + 2 * atr
+          b: logicalToPoint(el0 + 20, ep),
+          lvl: ep,
+          kind: ep <= lastClose ? 'support' : 'resistance',
+          off: entryOffsetPct,
+          sl: ep, pt: ep
         });
+        drawings.push(nd);
         selected = drawings.length - 1;
         save();
         setTool('cursor');
+        zoomToSetup();
         return;
       }
       var i = hit(q.x, q.y);
@@ -1137,7 +1326,7 @@
           if (r && r.priceRange) {
             [matp, mbp, supp, resis,
              curLevels && curLevels.entry, curLevels && curLevels.stop,
-             curLevels && curLevels.target].forEach(function (v) {
+             curLevels && curLevels.target].concat(tradeLevels).forEach(function (v) {
               if (v != null) {
                 r.priceRange.minValue = Math.min(r.priceRange.minValue, v);
                 r.priceRange.maxValue = Math.max(r.priceRange.maxValue, v);
