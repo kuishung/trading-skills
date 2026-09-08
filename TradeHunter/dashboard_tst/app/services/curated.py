@@ -272,14 +272,18 @@ def list_for(db, user) -> list[dict]:
 
 
 def add(db, user, *, symbol: str, curated_on: str, entry: float, stop: float,
-        target: float, note: str = "") -> tuple[bool, str]:
+        target: float, note: str = "", source: str = "created") -> tuple[bool, str]:
     """Store one curated call. Returns (ok, message).
 
     Validation refuses what cannot be judged later rather than storing it and
     showing "invalid" forever: the three levels must describe a trade, and the
     date must be a real ISO date (it anchors every trigger test).
+
+    An opening revision is written with the call, so its history is complete from
+    the start instead of beginning at the first edit. `source` records where the
+    levels came from -- "chart" when they were drawn with the trade-setup tool.
     """
-    from ..models import CuratedTicker
+    from ..models import CuratedRevision, CuratedTicker
 
     sym = _clean_symbol(symbol)
     if not sym:
@@ -297,15 +301,29 @@ def add(db, user, *, symbol: str, curated_on: str, entry: float, stop: float,
     except ValueError:
         return False, "Curated date must be a real date."
 
-    db.add(CuratedTicker(user_id=user.id, symbol=sym, curated_on=d, entry=entry,
-                         stop=stop, target=target, note=(note or "").strip() or None))
+    note = (note or "").strip() or None
+    row = CuratedTicker(user_id=user.id, symbol=sym, curated_on=d, entry=entry,
+                        stop=stop, target=target, note=note)
+    db.add(row)
+    db.flush()          # need the id before the revision can point at it
+    db.add(CuratedRevision(curated_id=row.id, symbol=sym, entry=entry, stop=stop,
+                           target=target, note=note, source=source))
     db.commit()
     return True, f"{sym} curated."
 
 
 def update(db, user, row_id: int, **fields) -> tuple[bool, str]:
-    """Edit one of this member's curated calls. Same validation as add()."""
-    from ..models import CuratedTicker
+    """Edit one of this member's curated calls, recording the change as history.
+
+    ``curated_on`` is NOT editable. It anchors every trigger test, so moving it
+    would re-judge the call against a window it was never made in -- the one field
+    that must stay honest. Anything passed for it is ignored rather than rejected,
+    so a stale form cannot fail a legitimate edit.
+
+    A revision row is written only when something actually changed; re-submitting
+    identical levels does not manufacture history.
+    """
+    from ..models import CuratedRevision, CuratedTicker
 
     row = (db.query(CuratedTicker)
              .filter(CuratedTicker.id == row_id, CuratedTicker.user_id == user.id)
@@ -321,21 +339,81 @@ def update(db, user, row_id: int, **fields) -> tuple[bool, str]:
     if plan_kind(entry, stop, target) is None:
         return False, ("Those levels don't describe a trade: the stop and the target "
                        "must sit on opposite sides of the entry.")
-    d = (fields.get("curated_on") or row.curated_on).strip()
-    try:
-        _dt.date.fromisoformat(d)
-    except ValueError:
-        return False, "Curated date must be a real date."
     sym = _clean_symbol(fields.get("symbol") or row.symbol)
     if not sym:
         return False, "Enter a ticker."
+    note = ((fields.get("note") or "").strip() or None) if "note" in fields else row.note
 
-    row.symbol, row.curated_on = sym, d
-    row.entry, row.stop, row.target = entry, stop, target
-    if "note" in fields:
-        row.note = (fields.get("note") or "").strip() or None
+    if (sym, entry, stop, target, note) == (row.symbol, row.entry, row.stop,
+                                            row.target, row.note):
+        return True, "No change."
+
+    row.symbol, row.entry, row.stop, row.target, row.note = sym, entry, stop, target, note
+    db.add(CuratedRevision(curated_id=row.id, symbol=sym, entry=entry, stop=stop,
+                           target=target, note=note, source="edit"))
     db.commit()
     return True, f"{sym} updated."
+
+
+def get_one(db, user, row_id: int) -> dict | None:
+    """One of this member's curated calls, or None. Same user scoping as the rest."""
+    from ..models import CuratedTicker
+
+    r = (db.query(CuratedTicker)
+           .filter(CuratedTicker.id == row_id, CuratedTicker.user_id == user.id)
+           .one_or_none())
+    if r is None:
+        return None
+    return {"id": r.id, "symbol": r.symbol, "curated_on": r.curated_on,
+            "entry": r.entry, "stop": r.stop, "target": r.target, "note": r.note or ""}
+
+
+def revisions_for(db, user, row_id: int) -> list[dict]:
+    """The edit history of one call, NEWEST FIRST, with the current version marked.
+
+    Joined through curated_tickers on user_id: a revision is only readable by the
+    member who owns the call it belongs to, so guessing a revision id gets nothing.
+    """
+    from ..models import CuratedRevision, CuratedTicker
+
+    rows = (db.query(CuratedRevision)
+              .join(CuratedTicker, CuratedTicker.id == CuratedRevision.curated_id)
+              .filter(CuratedRevision.curated_id == row_id,
+                      CuratedTicker.user_id == user.id)
+              .order_by(CuratedRevision.created_at.desc(), CuratedRevision.id.desc())
+              .all())
+    out = []
+    for i, r in enumerate(rows):
+        out.append({"id": r.id, "symbol": r.symbol, "entry": r.entry, "stop": r.stop,
+                    "target": r.target, "note": r.note or "", "source": r.source,
+                    "created_at": r.created_at, "current": i == 0,
+                    "n": len(rows) - i})
+    return out
+
+
+def get_revision(db, user, rev_id: int) -> tuple[dict, dict] | None:
+    """(call, revision) for one revision id, or None. Scoped through the call's
+    owner, so a guessed revision id belonging to someone else returns nothing."""
+    from ..models import CuratedRevision, CuratedTicker
+
+    hit = (db.query(CuratedRevision, CuratedTicker)
+             .join(CuratedTicker, CuratedTicker.id == CuratedRevision.curated_id)
+             .filter(CuratedRevision.id == rev_id, CuratedTicker.user_id == user.id)
+             .one_or_none())
+    if hit is None:
+        return None
+    rev, row = hit
+    all_revs = revisions_for(db, user, row.id)
+    meta = next((r for r in all_revs if r["id"] == rev.id), None) or {}
+    return (
+        {"id": row.id, "symbol": row.symbol, "curated_on": row.curated_on,
+         "entry": row.entry, "stop": row.stop, "target": row.target,
+         "note": row.note or ""},
+        {"id": rev.id, "symbol": rev.symbol, "entry": rev.entry, "stop": rev.stop,
+         "target": rev.target, "note": rev.note or "", "source": rev.source,
+         "created_at": rev.created_at,
+         "n": meta.get("n"), "current": bool(meta.get("current"))},
+    )
 
 
 def remove(db, user, row_id: int) -> bool:
@@ -368,3 +446,29 @@ def overall(months: list[dict]) -> dict:
         "total_r": round(sum(rmults), 2) if rmults else None,
         "avg_r": round(sum(rmults) / len(rmults), 2) if rmults else None,
     }
+
+
+MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+              "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def calendar_index(rows: list[dict]) -> dict:
+    """{year: [12 counts]} — how many calls were curated in each month of each year.
+
+    Drives the Jan-Dec tab strip. Every month of a shown year gets a slot even when
+    it is empty: a fixed twelve-tab row is the point, so the reader can see at a
+    glance which months are bare rather than hunting through a variable list.
+    """
+    out: dict = {}
+    for r in rows:
+        d = (r.get("curated_on") or "")
+        if len(d) < 7:
+            continue
+        try:
+            y, m = int(d[:4]), int(d[5:7])
+        except ValueError:
+            continue
+        if not 1 <= m <= 12:
+            continue
+        out.setdefault(y, [0] * 12)[m - 1] += 1
+    return out

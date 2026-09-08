@@ -1,11 +1,11 @@
-{# The curated list: add form, totals, then one block per MONTH the calls were made
-   in, newest first. Context: months (from services.curated.by_month), totals, msg,
-   err, today.
+{# The curated list: add form, year + Jan-Dec tabs, totals, then one block per
+   MONTH, newest first. Context: months (services.curated.by_month), totals, msg,
+   err, today, years, sel_year, sel_month, counts (12 ints), month_abbr, any_rows.
 
    Wrapped in .curated-panel and swapped by outerHTML so every form in here can
    target `closest .curated-panel` — a class, not an id, so the fragment is safe to
    render more than once on a page. #}
-<div class="curated-panel">
+<div class="curated-panel" data-year="{{ sel_year }}" data-month="{{ sel_month }}">
 
 {% set BADGE = {
   "waiting": ["border-slate-600 text-slate-400", "waiting", "Entry not reached yet"],
@@ -26,6 +26,8 @@
 {# ── add a call ─────────────────────────────────────────────────────────── #}
 <form class="rounded-lg border border-slate-800 bg-slate-900/40 p-3 mb-3"
       hx-post="/curated/add" hx-target="closest .curated-panel" hx-swap="outerHTML">
+  <input type="hidden" name="year" value="{{ sel_year }}">
+  <input type="hidden" name="month" value="{{ sel_month }}">
   <div class="flex flex-wrap items-end gap-2">
     <label class="flex flex-col gap-1">
       <span class="text-[10px] uppercase tracking-wide text-slate-500">Ticker</span>
@@ -36,7 +38,7 @@
     <label class="flex flex-col gap-1">
       <span class="text-[10px] uppercase tracking-wide text-slate-500">Curated on</span>
       <input type="date" name="curated_on" required value="{{ today }}"
-             title="The date you made this call — only bars from this day on can trigger it"
+             title="The date you made this call — it anchors every trigger test and cannot be changed later"
              class="w-36 rounded bg-slate-950/60 border border-slate-700 px-2 py-1 text-xs focus:border-emerald-500 outline-none">
     </label>
     <label class="flex flex-col gap-1">
@@ -69,8 +71,46 @@
   {% if msg %}<p class="text-[11px] text-emerald-400 mt-2">{{ msg }}</p>{% endif %}
 </form>
 
+{% if any_rows %}
+{# ── year + Jan-Dec tabs ────────────────────────────────────────────────── #}
+{# All twelve months are always shown, empty ones included and dimmed. A variable
+   list would make "nothing in March" indistinguishable from "March scrolled off". #}
+<div class="flex flex-wrap items-center gap-1 mb-2">
+  {% if years | length > 1 %}
+  <select class="cur-year rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-[11px] text-slate-300 outline-none focus:border-emerald-500 mr-1"
+          hx-get="/curated/list" hx-target="closest .curated-panel" hx-swap="outerHTML"
+          name="year" hx-include="this" title="Year">
+    {% for y in years %}<option value="{{ y }}" {% if y == sel_year %}selected{% endif %}>{{ y }}</option>{% endfor %}
+  </select>
+  {% else %}
+  <span class="text-[11px] text-slate-500 mr-1 tabular-nums">{{ sel_year }}</span>
+  {% endif %}
+
+  <button type="button"
+          hx-get="/curated/list?year={{ sel_year }}" hx-target="closest .curated-panel" hx-swap="outerHTML"
+          class="text-[11px] px-2 py-1 rounded border transition
+                 {% if not sel_month %}border-emerald-500/60 bg-emerald-500/15 text-emerald-300
+                 {% else %}border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-600{% endif %}"
+          title="Every month of {{ sel_year }}">All</button>
+
+  {% for i in range(12) %}
+  {% set n = counts[i] %}
+  <button type="button"
+          hx-get="/curated/list?year={{ sel_year }}&month={{ i + 1 }}"
+          hx-target="closest .curated-panel" hx-swap="outerHTML"
+          class="text-[11px] px-2 py-1 rounded border transition
+                 {% if sel_month == i + 1 %}border-emerald-500/60 bg-emerald-500/15 text-emerald-300
+                 {% elif n %}border-slate-700 text-slate-300 hover:text-slate-100 hover:border-slate-600
+                 {% else %}border-slate-800 text-slate-600 hover:border-slate-700{% endif %}"
+          title="{{ month_abbr[i] }} {{ sel_year }} — {{ n }} curated">
+    {{ month_abbr[i] }}{% if n %} <span class="tabular-nums text-[10px] opacity-70">{{ n }}</span>{% endif %}
+  </button>
+  {% endfor %}
+</div>
+{% endif %}
+
 {% if totals.n %}
-{# ── totals ─────────────────────────────────────────────────────────────── #}
+{# ── totals for what is on screen ───────────────────────────────────────── #}
 <div class="flex flex-wrap items-center gap-x-5 gap-y-1 px-1 mb-3 text-[11px] text-slate-400">
   <span><span class="text-slate-200 tabular-nums">{{ totals.n }}</span> curated</span>
   <span><span class="text-slate-200 tabular-nums">{{ totals.n_waiting }}</span> waiting</span>
@@ -154,15 +194,23 @@
           <td class="px-2 py-1.5 text-right">{{ signed(e.pct, 1, "%") }}</td>
           <td class="px-2 py-1.5 text-right">{{ signed(e.r_multiple, 2, "R") }}</td>
           <td class="px-2 py-1.5 text-right whitespace-nowrap">
-            <details class="inline-block text-left">
+            {# history + chart #}
+            <button type="button" class="cur-hist text-slate-500 hover:text-sky-300 transition"
+                    title="Revision history — click a version to see its Entry / SL / PT on the chart"
+                    hx-get="/curated/{{ r.id }}/revisions"
+                    hx-target="#hist-{{ r.id }}" hx-swap="innerHTML">&#8635;</button>
+            <details class="inline-block text-left ml-1">
               <summary class="list-none cursor-pointer text-slate-500 hover:text-slate-300 select-none" title="Edit levels">&#9998;</summary>
-              {# Inline edit — the same fields as the add form, pre-filled. Editing a
-                 level re-judges the whole history of that call on the next render. #}
-              <form class="absolute z-10 mt-1 -ml-40 flex flex-col gap-1 rounded-lg border border-slate-700 bg-slate-900 p-2 shadow-lg"
+              {# Inline edit. There is no date field: the curated date anchors every
+                 trigger test, so it is fixed for the life of the call. Every change
+                 here is kept as a revision. #}
+              <form class="absolute z-10 mt-1 -ml-44 flex flex-col gap-1 rounded-lg border border-slate-700 bg-slate-900 p-2 shadow-lg"
                     hx-post="/curated/{{ r.id }}/edit" hx-target="closest .curated-panel" hx-swap="outerHTML">
-                <div class="flex gap-1">
+                <input type="hidden" name="year" value="{{ sel_year }}">
+                <input type="hidden" name="month" value="{{ sel_month }}">
+                <div class="flex items-center gap-1">
                   <input name="symbol" value="{{ r.symbol }}" maxlength="6" class="w-20 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-xs uppercase outline-none focus:border-emerald-500">
-                  <input type="date" name="curated_on" value="{{ r.curated_on }}" class="w-32 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-xs outline-none focus:border-emerald-500">
+                  <span class="text-[10px] text-slate-500 whitespace-nowrap" title="The curated date anchors every trigger test and cannot be changed">{{ r.curated_on }} &#128274;</span>
                 </div>
                 <div class="flex gap-1">
                   <input name="entry" type="number" step="any" value="{{ r.entry }}" title="Entry" class="w-20 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-xs tabular-nums outline-none focus:border-emerald-500">
@@ -174,11 +222,13 @@
             </details>
             <button type="button" class="ml-1 text-slate-600 hover:text-rose-400 transition"
                     title="Remove {{ r.symbol }} ({{ r.curated_on }})"
-                    hx-post="/curated/{{ r.id }}/delete"
+                    hx-post="/curated/{{ r.id }}/delete" hx-vals='{"year": "{{ sel_year }}", "month": "{{ sel_month }}"}'
                     hx-target="closest .curated-panel" hx-swap="outerHTML"
                     hx-confirm="Remove {{ r.symbol }} curated on {{ r.curated_on }}?">&times;</button>
           </td>
         </tr>
+        {# the expanded history + chart for this row; only one is ever filled #}
+        <tr class="cur-hist-row"><td colspan="13" class="p-0"><div id="hist-{{ r.id }}" class="cur-hist-body"></div></td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -188,12 +238,19 @@
 
 {% if not months %}
 <div class="rounded-lg border border-slate-800 bg-slate-900/40 p-6">
+  {% if any_rows %}
+  <p class="text-sm text-slate-400">
+    Nothing curated in {{ month_abbr[sel_month - 1] ~ ' ' if sel_month }}{{ sel_year }}.
+    Pick another month above.
+  </p>
+  {% else %}
   <p class="text-sm text-slate-400 leading-relaxed max-w-2xl">
     Nothing curated yet. Add the first one above &mdash; a ticker, the date you are
-    calling it, and the three levels you would actually trade. From then on this page
-    checks those levels against the price history for you and groups the calls by the
-    month you made them.
+    calling it, and the three levels you would actually trade. Or draw a trade setup
+    on the Watchlist or Sector chart and press <span class="text-sky-300">Curate setup</span>,
+    which sends those exact levels here.
   </p>
+  {% endif %}
 </div>
 {% endif %}
 

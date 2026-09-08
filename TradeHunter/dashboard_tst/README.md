@@ -129,6 +129,64 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-08 - v4.44: curate from a chart, keep every revision, browse by month
+
+User: *"I need it to be able to curate it from the watchlist chart or the sector and
+industry chart ... the person of curate it will be able to edit the curation except
+the date and all changes will be tracked as history ... when that revise history is
+click the Entry, SL and PT will be shown in the chart ... I need a Jan to Dec tab."*
+
+**Curate from a chart.** A `Curate setup` chip on the Watchlist and Sector charts
+sends the trade setup you drew (entry, 1xATR stop, 2R target) straight to your
+Curated list, dated TODAY. It stays HIDDEN until a trade setup exists: with no levels
+there is nothing to send, and a button that does nothing teaches people to ignore it.
+It is deliberately labelled "Curate setup", not "Curate" -- the chart already carries
+a violet **Curate** that adds a symbol to STUDIES, and two buttons with one name on
+one toolbar is a trap. `POST /curated/from-chart` reports back on the chip itself,
+including WHY a save was refused; a silent no-op reads as a broken button.
+
+Dating it today is a rule, not a shortcut: back-dating to wherever the setup happens
+to sit on the chart would let a plan drawn over old bars be judged against a move
+that had already happened.
+
+**Every revision is kept** (`curated_revisions`, migration `e8f9a0b1c2d3`). Editing
+used to overwrite the row, quietly rewriting what had actually been decided. The
+opening version is written WITH the call, so history is complete from the start
+rather than beginning at the first edit; existing calls are backfilled by the
+migration for the same reason. Re-submitting identical levels writes nothing -- no
+manufactured history.
+
+**The curated DATE is now immutable** and has been removed from the edit form (it
+shows with a lock instead). It anchors every trigger test; moving it re-judges the
+call against a window it was never made in. This reverses v4.43, where the date was
+editable and its re-judging was described as a feature.
+
+**Clicking a revision replays it.** `GET /curated/chart?rev=` renders the shared
+chart with that version's Entry / SL / PT as read-only price lines -- price lines and
+not a trade drawing, because a drawing would be editable, would be saved against the
+symbol, and would then drift away from the revision it is supposed to be showing. An
+older version is labelled "showing an earlier version": status and P/L in the table
+always come from the CURRENT levels.
+
+**Jan-Dec tabs**, with a year selector when more than one year exists. All twelve
+months always render, empty ones dimmed -- a variable list makes "nothing in March"
+indistinguishable from "March scrolled off". Only the selected slice is priced (each
+row costs a daily-bar fetch), and the totals strip describes what is ON SCREEN, so a
+win rate cannot silently include rows the reader cannot see. Adding a call jumps to
+the tab it belongs to.
+
+**Bug found and fixed while verifying:** the revision chart failed on FIRST open
+every time ("Couldn't load live price data"), then worked on the second. HTMX runs a
+swapped-in fragment's inline script immediately while its external `<script src>` is
+still loading, so `window.LightweightCharts` was undefined and the chart bailed. The
+page now preloads the library once, exactly as the Sector page does.
+
+Verified in the browser end to end: drew a setup on the XLF sector chart, pressed
+Curate setup, and XLF appeared dated today at 54.87 / 54.21 / 56.19 (2.0 R:R); three
+edits produced revisions #1-#3 with a repeat edit reporting "No change."; clicking #1
+put Entry 230 / SL 215 / PT 270 back on the chart; month tabs filtered to a single
+month and the 2025 call stayed out of the 2026 view.
+
 ### 2026-09-07 - v4.43: Curated replaces Portfolio
 
 User: *"Change the Portfolio to Curated. I want a curated list by each individual

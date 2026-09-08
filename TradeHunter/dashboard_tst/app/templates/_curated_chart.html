@@ -1,0 +1,41 @@
+{# One curated revision replayed on a chart. Context: symbol, sel, sel_band,
+   sel_patterns, levels {entry, stop, target, label}, row, rev.
+
+   Same chart component as everywhere else, so the drawing tools, ATR and zoom all
+   behave identically. The revision's three levels arrive as chart_levels and are
+   painted as READ-ONLY price lines — not as an editable trade drawing, which would
+   be saved against the symbol and would then drift away from the revision it is
+   supposed to be showing. #}
+{% set chart_symbol = symbol %}
+{% set chart_exchange = sel.exchange if sel else None %}
+{% set chart_matp = sel.matp if sel else None %}
+{% set chart_mbp = sel.mbp if sel else None %}
+{% set chart_as_of = sel.as_of if sel else None %}
+{% set chart_earnings = sel.last_earnings_date if sel else None %}
+{% set chart_band = sel_band %}
+{% set chart_patterns = sel_patterns %}
+{% set chart_fill = true %}
+{% set chart_curatable = false %}
+{% set chart_curate_setup = false %}
+{% set chart_tv_plot = true %}
+{% set chart_levels = levels %}
+
+<div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1 shrink-0">
+  <span class="text-xs text-slate-300">
+    {{ row.symbol }} <span class="text-slate-500">curated {{ row.curated_on }}</span>
+  </span>
+  <span class="text-[11px] px-1.5 py-0.5 rounded border
+    {% if rev.current %}border-emerald-500/60 text-emerald-300 bg-emerald-500/10{% else %}border-slate-600 text-slate-400{% endif %}">
+    revision {{ rev.n }}{% if rev.current %} &middot; current{% endif %}
+  </span>
+  <span class="text-[11px] text-slate-500 tabular-nums">
+    Entry {{ '%.2f'|format(rev.entry) }} &middot;
+    SL {{ '%.2f'|format(rev.stop) }} &middot;
+    PT {{ '%.2f'|format(rev.target) }}
+  </span>
+  {% if not rev.current %}
+  <span class="text-[11px] text-amber-400/80" title="You are looking at an older version of this call. The status and P/L in the table are always computed from the CURRENT levels.">showing an earlier version</span>
+  {% endif %}
+</div>
+
+{% include "_price_chart.html" %}

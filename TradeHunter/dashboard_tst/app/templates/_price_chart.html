@@ -43,6 +43,12 @@
            With MATP on record it draws the MATP/MBP lines; WITHOUT one it still switches the chart
            to the symbol (the bridge treats null levels as "draw nothing"), which is the useful
            action from Sector & Industry where most tickers have no MATP yet — hence the two labels. #}
+        {% if chart_curate_setup is defined and chart_curate_setup %}
+        <span class="curate-setup cursor-pointer text-[11px] px-2 py-0.5 rounded border border-sky-500/50 text-sky-300 hover:bg-sky-500/15 transition select-none"
+              role="button" tabindex="0" style="display:none"
+              data-sym="{{ chart_symbol }}"
+              title="Send the trade setup drawn on this chart to your Curated list, dated today">&#9873; Curate setup</span>
+        {% endif %}
         {% if chart_tv_plot is defined and chart_tv_plot %}
         <span class="tv-plot cursor-pointer text-[11px] px-2 py-0.5 rounded border border-orange-500/50 text-orange-300 hover:bg-orange-500/15 transition select-none"
               role="button" tabindex="0"
@@ -105,6 +111,11 @@
   var lastEarn = {{ (chart_earnings if chart_earnings else None)|tojson }};  // 'YYYY-MM-DD' or null
   var supp = {{ (chart_support if (chart_support is defined and chart_support is not none) else None)|tojson }};   // curator support level or null
   var resis = {{ (chart_resistance if (chart_resistance is defined and chart_resistance is not none) else None)|tojson }}; // curator resistance level or null
+  // A curated call's three levels, shown READ-ONLY. Deliberately price lines and
+  // not a 'trade' drawing: a drawing would be editable, would be saved to this
+  // symbol's drawings, and would then disagree with the revision it came from.
+  // {entry, stop, target, label} or null.
+  var curLevels = {{ (chart_levels if (chart_levels is defined and chart_levels) else None)|tojson }};
   function empty() { if (el) el.classList.add('hidden'); if (msg) msg.classList.remove('hidden'); }
   function ema(bars, period) {
     if (bars.length < period) return [];
@@ -337,6 +348,54 @@
       ctx.clearRect(0, 0, w, h);
       drawings.forEach(function (d, i) { paint(ctx, d, w, h, i === selected || i === hoverIdx); });
       if (pending) paint(ctx, pending, w, h, true);
+      refreshCurateChip();
+    }
+
+    // ---- "Curate setup" ---------------------------------------------------
+    // The chip only exists on pages that asked for it, and only appears once a
+    // trade setup has been drawn: with no levels there is nothing to curate, and
+    // a button that does nothing teaches people to ignore it.
+    var chip = el.parentElement ? el.parentElement.querySelector('.curate-setup') : null;
+    function currentSetup() {
+      if (selected >= 0 && drawings[selected] && drawings[selected].type === 'trade') {
+        return drawings[selected];
+      }
+      for (var i = drawings.length - 1; i >= 0; i--) {
+        if (drawings[i].type === 'trade') return drawings[i];   // the most recent
+      }
+      return null;
+    }
+    function refreshCurateChip() {
+      if (!chip) return;
+      chip.style.display = currentSetup() ? '' : 'none';
+    }
+    if (chip) {
+      chip.addEventListener('click', function () {
+        var d = currentSetup();
+        if (!d) return;
+        var body = new URLSearchParams({
+          symbol: symbol, entry: d.a.p, stop: d.sl, target: d.pt
+        });
+        var was = chip.textContent;
+        chip.textContent = 'Curating\u2026';
+        fetch('/curated/from-chart', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: body
+        }).then(function (r) { return r.json(); }).then(function (j) {
+          // Say what happened INCLUDING the reason it didn't: a silent no-op here
+          // reads as "the button is broken".
+          chip.textContent = j && j.ok ? '\u2713 Curated' : (j && j.error) || 'Failed';
+          chip.title = j && j.ok
+            ? 'Added to your Curated list on ' + j.curated_on + ' — open Curated to see it'
+            : ((j && j.error) || 'Could not save');
+          setTimeout(function () { chip.textContent = was; }, 2500);
+        }).catch(function () {
+          chip.textContent = 'Failed';
+          setTimeout(function () { chip.textContent = was; }, 2500);
+        });
+      });
+      chip.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); });
     }
     function schedule() {
       if (raf) return;
@@ -1076,7 +1135,9 @@
         autoscaleInfoProvider: function (orig) {
           var r = orig();
           if (r && r.priceRange) {
-            [matp, mbp, supp, resis].forEach(function (v) {
+            [matp, mbp, supp, resis,
+             curLevels && curLevels.entry, curLevels && curLevels.stop,
+             curLevels && curLevels.target].forEach(function (v) {
               if (v != null) {
                 r.priceRange.minValue = Math.min(r.priceRange.minValue, v);
                 r.priceRange.maxValue = Math.max(r.priceRange.maxValue, v);
@@ -1162,6 +1223,14 @@
       // curator's horizontal support / resistance (solid; only on a study chart)
       if (supp != null) s.createPriceLine({ price: supp, color: '#38bdf8', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: 'S' });
       if (resis != null) s.createPriceLine({ price: resis, color: '#e879f9', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: 'R' });
+      // a curated call being replayed: Entry / SL / PT, same colours the trade
+      // setup paints them in, so the two read as the same thing
+      if (curLevels) {
+        var _lbl = curLevels.label ? ' ' + curLevels.label : '';
+        s.createPriceLine({ price: curLevels.entry, color: '#38bdf8', lineWidth: 2, lineStyle: 0, axisLabelVisible: true, title: 'Entry' + _lbl });
+        s.createPriceLine({ price: curLevels.stop, color: '#f87171', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'SL' + _lbl });
+        s.createPriceLine({ price: curLevels.target, color: '#34d399', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'PT' + _lbl });
+      }
 
       // ---- earnings "E" badges pinned to the DATE AXIS (bottom) ----------
       // lightweight-charts markers only attach to a bar's PRICE (above/below the

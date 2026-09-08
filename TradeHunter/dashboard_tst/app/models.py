@@ -922,3 +922,35 @@ class CuratedTicker(Base):
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
     user = relationship("User")
+
+
+class CuratedRevision(Base):
+    """One recorded state of a curated call — the audit trail behind the levels.
+
+    A curated call is a judgement, and judgements get revised: the stop is tightened,
+    the target is moved. Overwriting the row would quietly rewrite what was actually
+    decided, so every version is kept and the CuratedTicker row simply carries the
+    current one. The first revision is written when the call is created, so the
+    history is complete from the start rather than beginning at the first edit.
+
+    ``curated_on`` is deliberately NOT here: the date is the anchor every trigger
+    test is measured from and cannot be revised, so it belongs to the call, not to a
+    version of it. The symbol is stored per revision because a typo in the ticker is
+    a legitimate correction, and the history has to say what it used to read.
+
+    Clicking a revision replays its three levels on the chart, so these rows must
+    keep the numbers as entered, never rounded or normalised.
+    """
+
+    __tablename__ = "curated_revisions"
+
+    id = Column(Integer, primary_key=True)
+    curated_id = Column(Integer, ForeignKey("curated_tickers.id", ondelete="CASCADE"),
+                        nullable=False, index=True)
+    symbol = Column(String(20), nullable=False)
+    entry = Column(Float, nullable=False)
+    stop = Column(Float, nullable=False)
+    target = Column(Float, nullable=False)
+    note = Column(Text, nullable=True)
+    source = Column(String(20), nullable=False, default="edit")  # created | edit | chart
+    created_at = Column(DateTime, default=_utcnow)
