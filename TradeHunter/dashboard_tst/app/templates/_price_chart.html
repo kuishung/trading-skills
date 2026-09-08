@@ -34,6 +34,16 @@
          beside that setup's numbers, not in the chart's global toolbar. The moderators'
          "Curate -> new study" button was removed in the same pass. #}
       <div class="flex items-center gap-1">
+        {# "This ticker is curated." A curated setup is deliberately NOT drawn on the
+           chart (user, 2026-09-08: "do not display curated annotation on chart of the
+           page, only show a icon that the chart has been curated") — the chart is for
+           finding the next idea, not for re-reading the last one. Clicking the badge
+           reveals the latest curated levels as read-only lines; clicking again hides
+           them. Populated and toggled by the drawing layer's JS below. #}
+        {% if chart_curate_setup is defined and chart_curate_setup %}
+        <span class="curated-badge cursor-pointer text-[11px] px-2 py-0.5 rounded border border-sky-500/50 text-sky-300 hover:bg-sky-500/15 transition select-none"
+              role="button" tabindex="0" style="display:none">&#9873; Curated</span>
+        {% endif %}
         {# Send this ticker to the user's OWN TradingView via the local TV bridge. Shown wherever the
            board opts in (chart_tv_plot). Shares the .tv-plot capture handler in base.html.
            With MATP on record it draws the MATP/MBP lines; WITHOUT one it still switches the chart
@@ -122,6 +132,15 @@
   //   riskPct  share of the account a single trade may lose
   // Seeded with the same defaults the server uses, so the first setup drawn on a
   // cold page is already right and does not jump when the fetch lands.
+  // This member's newest curated call on THIS ticker, or null — fetched once from
+  // /curated/for-symbol/<sym> on pages that allow curating. It drives two things:
+  // the "⚑ Curated" badge (present at all, and what it reveals), and whether the
+  // setup editor's button reads "Curate setup" or "Save revision".
+  var curatedCall = null;
+  var curatedShown = false;            // are the curated lines currently painted?
+  var curatedLevels = [];              // prices the autoscale must keep in view
+  var paintCurated = null;             // set once the candle series exists
+  var syncCuratedBadge = null;         // set once the toolbar badge is wired
   var tradePrefs = { off: 0.3, nlv: 0, riskPct: 1 };
   var DEFAULT_RR = 2;          // 1:2 — the target sits at twice the stop distance
   // Set by the drawing layer once it exists, so an editor that happened to open
@@ -481,27 +500,106 @@
       }
       return null;
     }
-    /** POST one setup to the Curated list, reporting the outcome on `btn` itself. */
+    // ---- the "\u2691 Curated" badge -------------------------------------------
+    // Says this ticker already has a call, and reveals its levels on click. The
+    // levels are NOT drawn by default: the chart is for finding the next idea,
+    // and a permanent annotation of the last one is in the way of that.
+    var badge = el.parentElement ? el.parentElement.querySelector('.curated-badge') : null;
+    syncCuratedBadge = function () {
+      if (!badge) return;
+      if (!curatedCall) {
+        badge.style.display = 'none';
+        if (curatedShown && paintCurated) { paintCurated(null); curatedShown = false; }
+        return;
+      }
+      badge.style.display = '';
+      var n = curatedCall.revisions || 1;
+      badge.textContent = curatedShown ? '\u2691 Curated \u2713' : '\u2691 Curated';
+      badge.title = symbol + ' curated ' + curatedCall.curated_on +
+        ' \u00b7 Entry ' + curatedCall.entry.toFixed(2) +
+        ' \u00b7 SL ' + curatedCall.stop.toFixed(2) +
+        ' \u00b7 PT ' + curatedCall.target.toFixed(2) +
+        (n > 1 ? ' \u00b7 ' + n + ' revisions' : '') +
+        '\nClick to ' + (curatedShown ? 'hide' : 'show') + ' these levels on the chart';
+      badge.style.background = curatedShown ? 'rgba(56,189,248,.18)' : '';
+    };
+    /** Ask the server what (if anything) is curated on this ticker, then re-render
+        the badge and any open editor so its button says the right thing. */
+    function refreshCuratedCall() {
+      if (!CAN_CURATE) return Promise.resolve();
+      return fetch('/curated/for-symbol/' + encodeURIComponent(symbol),
+                   { credentials: 'same-origin' })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (j) {
+          curatedCall = (j && j.call) || null;
+          if (curatedShown && paintCurated) paintCurated(curatedCall);
+          if (syncCuratedBadge) syncCuratedBadge();
+          refreshPanel();
+        })
+        .catch(function () {});
+    }
+    if (badge) {
+      badge.addEventListener('click', function () {
+        if (!curatedCall || !paintCurated) return;
+        curatedShown = !curatedShown;
+        paintCurated(curatedShown ? curatedCall : null);
+        syncCuratedBadge();
+      });
+      badge.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); });
+    }
+    refreshCuratedCall();
+
+    /** Send one setup to Curated \u2014 a NEW call, or a revision of the one this ticker
+        already has \u2014 reporting the outcome on `btn` itself. */
     function curateSetup(d, btn) {
       if (!d) return;
-      var body = new URLSearchParams({
-        symbol: symbol, entry: d.a.p, stop: d.sl, target: d.pt
-      });
+      var revising = !!curatedCall;
+      var fields = { symbol: symbol, entry: d.a.p, stop: d.sl, target: d.pt };
+      if (revising) fields.row_id = curatedCall.id;
       var was = btn.textContent;
       btn.disabled = true;
-      btn.textContent = 'Curating\u2026';
+      btn.textContent = revising ? 'Saving\u2026' : 'Curating\u2026';
       fetch('/curated/from-chart', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: body
+        body: new URLSearchParams(fields)
       }).then(function (r) { return r.json(); }).then(function (j) {
         // Say what happened INCLUDING the reason it didn't: a silent no-op here
         // reads as "the button is broken".
-        btn.textContent = j && j.ok ? '\u2713 Curated' : ((j && j.error) || 'Failed');
-        btn.title = j && j.ok
-          ? 'Added to your Curated list on ' + j.curated_on + ' \u2014 open Curated to see it'
-          : ((j && j.error) || 'Could not save');
-        setTimeout(function () { btn.textContent = was; btn.disabled = false; }, 2500);
+        if (!j || !j.ok) {
+          btn.textContent = (j && j.error) || 'Failed';
+          btn.title = (j && j.error) || 'Could not save';
+          setTimeout(function () { btn.textContent = was; btn.disabled = false; }, 2500);
+          return;
+        }
+        btn.textContent = j.revised ? '\u2713 Revision saved' : '\u2713 Curated';
+        btn.title = j.revised
+          ? 'Saved as revision ' + (j.revisions || '') + ' of the call you made on ' +
+            j.curated_on + ' \u2014 open Curated to see its history'
+          : 'Added to your Curated list on ' + j.curated_on +
+            ' \u2014 open Curated to see it';
+        // The setup now lives in Curated, so take the drawing off the chart: what is
+        // curated is shown by the badge, on demand, not left annotating the chart.
+        // Done only on success \u2014 a rejected call must keep the work that produced it.
+        var k = drawings.indexOf(d);
+        setTimeout(function () {
+          if (k >= 0) {
+            drawings.splice(k, 1);
+            if (selected === k) selected = -1;
+            save();
+          }
+          closePanel();
+          refreshCuratedCall().then(function () {
+            // Showing the levels straight away confirms what was stored, and the
+            // badge is then already in its "revealed" state to be clicked off.
+            if (paintCurated && curatedCall) {
+              curatedShown = true;
+              paintCurated(curatedCall);
+              syncCuratedBadge();
+            }
+          });
+          redraw();
+        }, 1200);
       }).catch(function () {
         btn.textContent = 'Failed';
         setTimeout(function () { btn.textContent = was; btn.disabled = false; }, 2500);
@@ -692,14 +790,32 @@
       return { t: bars[idxOfTime(dateStr)].time, o: 0, p: price };   // snaps to the nearest bar
     }
 
-    var panel = null, panelIdx = -1, panelRefresh = null;
+    var panel = null, panelIdx = -1, panelRefresh = null, curateBtn = null;
     function closePanel() {
       if (panel && panel.parentNode) panel.parentNode.removeChild(panel);
-      panel = null; panelIdx = -1; panelRefresh = null;
+      panel = null; panelIdx = -1; panelRefresh = null; curateBtn = null;
+    }
+    /** Label the curate button for what pressing it will actually do. Called when
+        the editor opens AND whenever the ticker's curated state changes, so a call
+        made in this session immediately turns "Curate setup" into "Save revision". */
+    function syncCurateBtn() {
+      if (!curateBtn || curateBtn.disabled) return;   // mid-request: leave its status text
+      if (curatedCall) {
+        curateBtn.textContent = '⚑ Save revision';
+        curateBtn.title = 'Save these levels as a new revision of the ' + symbol +
+          ' call you made on ' + curatedCall.curated_on +
+          '. The curated date does not change, so it is still judged from that day.';
+      } else {
+        curateBtn.textContent = '⚑ Curate setup';
+        curateBtn.title = 'Send these levels to your Curated list, dated today';
+      }
     }
     /** Push the shape's live values back into the open editor (used while dragging
         on the chart) — never clobbering the field the user is actually typing in. */
-    function refreshPanel() { if (panel && panelRefresh) panelRefresh(); }
+    function refreshPanel() {
+      syncCurateBtn();
+      if (panel && panelRefresh) panelRefresh();
+    }
     onPrefsLoaded = refreshPanel;   // late-arriving account value fills the size row
     function mkInput(type, value, step) {
       var i = document.createElement('input');
@@ -1027,14 +1143,19 @@
         selected = -1;
         save(); redraw();
       });
-      // "Curate setup" — the primary action on a finished setup, so it sits above
-      // Delete and reads as the affirmative one. Only on a trade setup, and only
-      // where the page opted in (Watchlist / Sector & Industry).
+      // The primary action on a finished setup, so it sits above Delete and reads
+      // as the affirmative one. Only on a trade setup, and only where the page
+      // opted in (Watchlist / Sector & Industry).
+      //
+      // It has TWO jobs, and says which one it is doing: a ticker with no call yet
+      // gets "Curate setup"; one that already has a call gets "Save revision",
+      // because a second call on the same ticker would compete with the first
+      // rather than replace it, and the levels you just redrew are a change of
+      // mind about the existing idea. A revision keeps the original curated_on, so
+      // the call is still judged from the day it was actually made.
       if (d.type === 'trade' && CAN_CURATE) {
         var cur8 = document.createElement('button');
         cur8.type = 'button';
-        cur8.textContent = '⚑ Curate setup';
-        cur8.title = 'Send these levels to your Curated list, dated today';
         cur8.style.cssText = 'margin-top:9px;width:100%;padding:4px 0;border-radius:4px;cursor:pointer;' +
           'font:11px ui-sans-serif,system-ui,sans-serif;background:rgba(56,189,248,.12);' +
           'border:1px solid rgba(56,189,248,.5);color:#38bdf8;';
@@ -1042,6 +1163,8 @@
           curateSetup(drawings[panelIdx], cur8);
         });
         panel.appendChild(cur8);
+        curateBtn = cur8;
+        syncCurateBtn();
       }
       panel.appendChild(del);
 
@@ -1490,7 +1613,8 @@
           if (r && r.priceRange) {
             [matp, mbp, supp, resis,
              curLevels && curLevels.entry, curLevels && curLevels.stop,
-             curLevels && curLevels.target].concat(tradeLevels).forEach(function (v) {
+             curLevels && curLevels.target]
+              .concat(tradeLevels).concat(curatedLevels).forEach(function (v) {
               if (v != null) {
                 r.priceRange.minValue = Math.min(r.priceRange.minValue, v);
                 r.priceRange.maxValue = Math.max(r.priceRange.maxValue, v);
@@ -1584,6 +1708,36 @@
         s.createPriceLine({ price: curLevels.stop, color: '#f87171', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'SL' + _lbl });
         s.createPriceLine({ price: curLevels.target, color: '#34d399', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'PT' + _lbl });
       }
+
+      // ---- the curated annotation, shown ON DEMAND ------------------------
+      // Same three lines, same colours, but painted only when the ⚑ Curated badge
+      // is clicked and removed when it is clicked again. Price lines rather than a
+      // trade drawing on purpose: what is stored in Curated is a record, and a
+      // drawing would be editable, would be saved against this symbol, and would
+      // then drift away from the call it claims to show.
+      var curatedHandles = [];
+      paintCurated = function (levels) {
+        curatedHandles.forEach(function (h) {
+          try { s.removePriceLine(h); } catch (e) { /* already gone */ }
+        });
+        curatedHandles = [];
+        curatedLevels = [];
+        if (levels) {
+          [['Entry', levels.entry, '#38bdf8', 0], ['SL', levels.stop, '#f87171', 2],
+           ['PT', levels.target, '#34d399', 2]].forEach(function (spec) {
+            if (spec[1] == null || !isFinite(spec[1])) return;
+            curatedHandles.push(s.createPriceLine({
+              price: spec[1], color: spec[2], lineWidth: 2, lineStyle: spec[3],
+              axisLabelVisible: true, title: spec[0] + ' ⚑'
+            }));
+            curatedLevels.push(spec[1]);
+          });
+        }
+        // The autoscale provider above reads curatedLevels, but it only runs when
+        // the scale is recomputed — ask for that, or a line outside the current
+        // range would be drawn off-screen.
+        try { chart.priceScale('right').applyOptions({ autoScale: true }); } catch (e) {}
+      };
 
       // ---- earnings "E" badges pinned to the DATE AXIS (bottom) ----------
       // lightweight-charts markers only attach to a bar's PRICE (above/below the

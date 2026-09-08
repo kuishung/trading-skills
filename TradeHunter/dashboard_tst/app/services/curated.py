@@ -312,6 +312,30 @@ def add(db, user, *, symbol: str, curated_on: str, entry: float, stop: float,
     return True, f"{sym} curated."
 
 
+def latest_for_symbol(db, user, symbol: str) -> dict | None:
+    """This member's most recent curated call on one ticker, or None.
+
+    "Most recent" is by curated date, then id -- the call you would be revising if
+    you changed your mind about this ticker today. A ticker can carry several calls
+    (the same name set up again months later), and the chart deliberately speaks
+    only about the newest: it is the one whose levels are still live.
+    """
+    from ..models import CuratedTicker
+
+    sym = _clean_symbol(symbol)
+    if not sym:
+        return None
+    row = (db.query(CuratedTicker)
+             .filter(CuratedTicker.user_id == user.id, CuratedTicker.symbol == sym)
+             .order_by(CuratedTicker.curated_on.desc(), CuratedTicker.id.desc())
+             .first())
+    if row is None:
+        return None
+    return {"id": row.id, "symbol": row.symbol, "curated_on": row.curated_on,
+            "entry": row.entry, "stop": row.stop, "target": row.target,
+            "note": row.note or ""}
+
+
 def update(db, user, row_id: int, **fields) -> tuple[bool, str]:
     """Edit one of this member's curated calls, recording the change as history.
 
@@ -322,8 +346,14 @@ def update(db, user, row_id: int, **fields) -> tuple[bool, str]:
 
     A revision row is written only when something actually changed; re-submitting
     identical levels does not manufacture history.
+
+    ``source`` says where the new levels came from -- "chart" when they were drawn
+    with the trade-setup tool, "edit" when typed into the table. It is popped out
+    of ``fields`` because it describes the revision, not the call.
     """
     from ..models import CuratedRevision, CuratedTicker
+
+    source = fields.pop("source", "edit")
 
     row = (db.query(CuratedTicker)
              .filter(CuratedTicker.id == row_id, CuratedTicker.user_id == user.id)
@@ -350,7 +380,7 @@ def update(db, user, row_id: int, **fields) -> tuple[bool, str]:
 
     row.symbol, row.entry, row.stop, row.target, row.note = sym, entry, stop, target, note
     db.add(CuratedRevision(curated_id=row.id, symbol=sym, entry=entry, stop=stop,
-                           target=target, note=note, source="edit"))
+                           target=target, note=note, source=source))
     db.commit()
     return True, f"{sym} updated."
 

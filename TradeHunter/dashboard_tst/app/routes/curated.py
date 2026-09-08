@@ -177,29 +177,71 @@ def curated_chart(request: Request, rev: int = 0, row: int = 0,
     })
 
 
+@router.get("/for-symbol/{symbol}")
+def curated_for_symbol(symbol: str,
+                       user: User = Depends(require_user),
+                       db: Session = Depends(get_db)):
+    """This member's newest curated call on one ticker, for the chart to ask about.
+
+    The chart uses the answer for two things: whether to show its "curated" badge
+    (and what the badge reveals when clicked), and whether its setup editor offers
+    `Curate setup` or `Save revision`. Both need the CURRENT levels, so this
+    returns them rather than a bare yes/no.
+    """
+    call = cur.latest_for_symbol(db, user, symbol)
+    if call is None:
+        return {"ok": True, "call": None}
+    revs = cur.revisions_for(db, user, call["id"])
+    return {"ok": True, "call": {**call, "revisions": len(revs)}}
+
+
 @router.post("/from-chart")
 def curated_from_chart(
     symbol: str = Form(...),
     entry: str = Form(...),
     stop: str = Form(...),
     target: str = Form(...),
+    row_id: str = Form(""),
     user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ):
-    """Curate the trade setup drawn on a chart. Returns JSON — the caller is the
-    chart's own chip, which stays on the page and just reports what happened.
+    """Curate the trade setup drawn on a chart, or revise a call already made.
 
-    Dated TODAY, deliberately: this is a call being made now. Back-dating it to
-    where the setup was drawn would let a setup placed over old bars be judged
-    against a move that had already happened.
+    Returns JSON — the caller is the button inside the chart's setup editor, which
+    stays on the page and just reports what happened.
+
+    With `row_id` this is a REVISION of that call: the levels change, its history
+    grows a "chart" entry, and — crucially — `curated_on` does not move. A revised
+    call is still the call you made on the day you made it, so it keeps being judged
+    from that date; a new call would reset that clock and quietly launder a losing
+    idea into a fresh one. Without `row_id` it is a new call, dated TODAY (never
+    back-dated to wherever on the chart the setup was drawn, which would let a setup
+    placed over old bars be judged against a move that had already happened).
     """
+    rid = (row_id or "").strip()
+    if rid:
+        try:
+            rid_int = int(rid)
+        except ValueError:
+            return {"ok": False, "error": "Bad curated id."}
+        ok, message = cur.update(db, user, rid_int, symbol=symbol, entry=entry,
+                                 stop=stop, target=target, source="chart")
+        if not ok:
+            return {"ok": False, "error": message}
+        call = cur.latest_for_symbol(db, user, symbol)
+        revs = cur.revisions_for(db, user, rid_int)
+        return {"ok": True, "revised": True, "row_id": rid_int,
+                "symbol": (symbol or "").strip().upper(),
+                "curated_on": call["curated_on"] if call else "",
+                "revisions": len(revs), "message": message}
+
     today = _dt.date.today().isoformat()
     ok, message = cur.add(db, user, symbol=symbol, curated_on=today, entry=entry,
                           stop=stop, target=target, source="chart",
                           note="from chart trade setup")
     if not ok:
         return {"ok": False, "error": message}
-    return {"ok": True, "symbol": (symbol or "").strip().upper(),
+    return {"ok": True, "revised": False, "symbol": (symbol or "").strip().upper(),
             "curated_on": today, "message": message}
 
 

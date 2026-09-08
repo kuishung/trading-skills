@@ -129,6 +129,36 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-08 - v4.49: a curated chart wears a badge, not an annotation
+
+User: *"when a revision is made on a curated item, show the save button and the revision
+will be saved and shown on the page of that item. when an item is curated and stored from
+the Sector and Industry or the watchlist chart, do not display curated annotation on chart
+of the page, only show a icon that the chart has been curated and when click the icon then
+the latest version of the curated annotation will be shown on chart."*
+
+- **The curated setup comes off the chart.** On a successful curate the trade-setup
+  drawing is deleted and a **`⚑ Curated`** badge appears in the chart toolbar. The chart
+  is for finding the next idea; a permanent annotation of the last one is in the way of
+  that. Clicking the badge paints the latest curated levels as read-only price lines
+  (`Entry ⚑ / SL ⚑ / PT ⚑`, same colours the setup used) and clicking it again hides
+  them; its tooltip carries the levels, the date and the revision count. Price lines, not
+  a drawing — a drawing would be editable and saved against the symbol, and would then
+  drift away from the call it claims to show. The badge is present on load for any
+  already-curated ticker, and the price axis opens to include the lines when shown.
+- **The same button now saves revisions.** In the setup editor it reads `⚑ Curate setup`
+  on a ticker with no call and **`⚑ Save revision`** on one that has, because a second
+  call on the same ticker would compete with the first rather than replace it. A revision
+  keeps the original `curated_on` — the call is still judged from the day it was actually
+  made, and a new call would reset that clock and quietly launder a losing idea into a
+  fresh one. It lands in that item's history on Curated as a `chart` revision.
+- New `GET /curated/for-symbol/{symbol}` (newest call on a ticker, with its current
+  levels and revision count) drives both the badge and the button label.
+  `POST /curated/from-chart` takes an optional `row_id` and revises instead of adding;
+  `services.curated.update()` takes a `source` so a chart-made revision is recorded as
+  one; new `services.curated.latest_for_symbol()`.
+- The drawing is deleted only on SUCCESS — a rejected call keeps the work that produced it.
+
 ### 2026-09-08 - v4.48: curate from the setup box; Curated becomes a chart page
 
 User: *"the Curate Setup should be in the Trade Setup box not the chart left top. Also
