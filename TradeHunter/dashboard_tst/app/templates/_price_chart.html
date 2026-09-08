@@ -40,7 +40,10 @@
            finding the next idea, not for re-reading the last one. Clicking the badge
            reveals the latest curated levels as read-only lines; clicking again hides
            them. Populated and toggled by the drawing layer's JS below. #}
-        {% if chart_curate_setup is defined and chart_curate_setup %}
+        {# Not on the Curated page (chart_curated_row): there the call IS what the
+           chart is showing, so a badge announcing that it exists would be noise. #}
+        {% if chart_curate_setup is defined and chart_curate_setup
+              and not (chart_curated_row is defined and chart_curated_row) %}
         <span class="curated-badge cursor-pointer text-[11px] px-2 py-0.5 rounded border border-sky-500/50 text-sky-300 hover:bg-sky-500/15 transition select-none"
               role="button" tabindex="0" style="display:none">&#9873; Curated</span>
         {% endif %}
@@ -136,6 +139,14 @@
   // /curated/for-symbol/<sym> on pages that allow curating. It drives two things:
   // the "⚑ Curated" badge (present at all, and what it reveals), and whether the
   // setup editor's button reads "Curate setup" or "Save revision".
+  // Set only on the Curated page, where the chart is ABOUT one particular call:
+  // the row it is showing, the date that call was made, and its levels to mount as
+  // an editable setup. Their presence puts the drawing layer in ephemeral mode
+  // (nothing written to /drawings/<symbol>) and points the editor's save at this
+  // row by id — the newest call on the same ticker may be a different idea.
+  var CURATED_ROW = {{ (chart_curated_row if (chart_curated_row is defined and chart_curated_row) else None)|tojson }};
+  var CURATED_ON = {{ (chart_curated_on if (chart_curated_on is defined and chart_curated_on) else None)|tojson }};
+  var SETUP_SEED = {{ (chart_setup_seed if (chart_setup_seed is defined and chart_setup_seed) else None)|tojson }};
   var curatedCall = null;
   var curatedShown = false;            // are the curated lines currently painted?
   var curatedLevels = [];              // prices the autoscale must keep in view
@@ -280,7 +291,16 @@
     }
     // Local mirror is written SYNCHRONOUSLY so nothing is ever lost; the server
     // write is debounced because erasing/clearing fires save() in bursts.
+    //
+    // EPHEMERAL on the Curated page: the setup there is a view of a stored call,
+    // mounted so it can be edited and saved as a revision. Persisting it as a
+    // drawing would put the call's annotation back onto the Watchlist and Sector
+    // charts, which deliberately show only a badge — and would leave a copy that
+    // stops agreeing with the call the moment either is edited. The one save that
+    // means anything there is "Save revision".
+    var EPHEMERAL = !!CURATED_ROW;
     function save() {
+      if (EPHEMERAL) return;
       cacheLocal();
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(function () { saveTimer = 0; pushToServer(); }, 400);
@@ -526,7 +546,9 @@
     /** Ask the server what (if anything) is curated on this ticker, then re-render
         the badge and any open editor so its button says the right thing. */
     function refreshCuratedCall() {
-      if (!CAN_CURATE) return Promise.resolve();
+      // The Curated page already knows which call it is showing, and asking by
+      // ticker could answer with a DIFFERENT one (the newest on this symbol).
+      if (!CAN_CURATE || CURATED_ROW) return Promise.resolve();
       return fetch('/curated/for-symbol/' + encodeURIComponent(symbol),
                    { credentials: 'same-origin' })
         .then(function (r) { return r.ok ? r.json() : null; })
@@ -553,9 +575,12 @@
         already has \u2014 reporting the outcome on `btn` itself. */
     function curateSetup(d, btn) {
       if (!d) return;
-      var revising = !!curatedCall;
+      // On the Curated page the target is fixed: the call this chart is showing.
+      // Elsewhere it is whatever call this ticker already has, if any.
+      var targetRow = CURATED_ROW || (curatedCall && curatedCall.id) || null;
+      var revising = !!targetRow;
       var fields = { symbol: symbol, entry: d.a.p, stop: d.sl, target: d.pt };
-      if (revising) fields.row_id = curatedCall.id;
+      if (revising) fields.row_id = targetRow;
       var was = btn.textContent;
       btn.disabled = true;
       btn.textContent = revising ? 'Saving\u2026' : 'Curating\u2026';
@@ -578,11 +603,22 @@
             j.curated_on + ' \u2014 open Curated to see its history'
           : 'Added to your Curated list on ' + j.curated_on +
             ' \u2014 open Curated to see it';
-        // The setup now lives in Curated, so take the drawing off the chart: what is
-        // curated is shown by the badge, on demand, not left annotating the chart.
-        // Done only on success \u2014 a rejected call must keep the work that produced it.
         var k = drawings.indexOf(d);
         setTimeout(function () {
+          if (CURATED_ROW) {
+            // On the Curated page the setup IS the view of this call, so it stays.
+            // The page reloads around it so the table, the header and the revision
+            // history all show what was just saved.
+            closePanel();
+            document.dispatchEvent(new CustomEvent('tst:curated-revised', {
+              detail: { row_id: CURATED_ROW }
+            }));
+            return;
+          }
+          // Elsewhere the setup now lives in Curated, so take the drawing off the
+          // chart: what is curated is shown by the badge, on demand, not left
+          // annotating the chart. Only on success \u2014 a rejected call must keep the
+          // work that produced it.
           if (k >= 0) {
             drawings.splice(k, 1);
             if (selected === k) selected = -1;
@@ -800,10 +836,11 @@
         made in this session immediately turns "Curate setup" into "Save revision". */
     function syncCurateBtn() {
       if (!curateBtn || curateBtn.disabled) return;   // mid-request: leave its status text
-      if (curatedCall) {
+      var on = CURATED_ROW ? CURATED_ON : (curatedCall && curatedCall.curated_on);
+      if (CURATED_ROW || curatedCall) {
         curateBtn.textContent = '⚑ Save revision';
         curateBtn.title = 'Save these levels as a new revision of the ' + symbol +
-          ' call you made on ' + curatedCall.curated_on +
+          ' call you made on ' + on +
           '. The curated date does not change, so it is still judged from that day.';
       } else {
         curateBtn.textContent = '⚑ Curate setup';
@@ -1534,6 +1571,32 @@
     redraw();
     setTimeout(redraw, 0);
 
+    // On the Curated page the chart carries ONE shape and it is not the user's:
+    // the call being read, mounted as an editable setup so the stop or the level
+    // can be reconsidered and saved as a revision. The symbol's own drawings are
+    // deliberately not loaded — they belong to the Watchlist and Sector charts,
+    // and mixing them in here would make it ambiguous which shape "Save revision"
+    // is about.
+    if (SETUP_SEED) {
+      try {
+        var lastI = bars.length - 1;
+        var seed = deriveTrade({
+          type: 'trade',
+          a: logicalToPoint(Math.max(0, lastI - 30), SETUP_SEED.entry),
+          b: logicalToPoint(Math.max(0, lastI - 30) + 20, SETUP_SEED.entry),
+          // No level was stored with the call (a call is three prices), so let
+          // ensureLevel recover one from the entry at this member's own offset.
+          kind: SETUP_SEED.target >= SETUP_SEED.entry ? 'support' : 'resistance',
+          sl: SETUP_SEED.stop, pt: SETUP_SEED.target
+        });
+        drawings = [seed];
+        selected = 0;
+        redraw();
+        zoomToSetup();
+      } catch (e) { /* a broken seed must never take the chart down */ }
+      return;
+    }
+
     // Load this user's stored shapes. If the server has none but this browser
     // still holds a pre-server localStorage set, adopt and upload it once so
     // drawings made before this change aren't stranded here.
@@ -1702,7 +1765,11 @@
       if (resis != null) s.createPriceLine({ price: resis, color: '#e879f9', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: 'R' });
       // a curated call being replayed: Entry / SL / PT, same colours the trade
       // setup paints them in, so the two read as the same thing
-      if (curLevels) {
+      // Skipped when the same levels are mounted as an editable setup (SETUP_SEED):
+      // two sets of Entry/SL/PT at the same prices, one of which moves as you drag
+      // and one of which does not, reads as a bug. The stored values stay visible
+      // in the header line above the chart.
+      if (curLevels && !SETUP_SEED) {
         var _lbl = curLevels.label ? ' ' + curLevels.label : '';
         s.createPriceLine({ price: curLevels.entry, color: '#38bdf8', lineWidth: 2, lineStyle: 0, axisLabelVisible: true, title: 'Entry' + _lbl });
         s.createPriceLine({ price: curLevels.stop, color: '#f87171', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'SL' + _lbl });

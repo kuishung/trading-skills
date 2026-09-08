@@ -38,6 +38,21 @@
   // version chips on screen makes it ambiguous which set the chart above is
   // showing. (The charts themselves no longer live in here: since 2026-09-08 the
   // page has a single chart pane and the chips swap into it.)
+  // A revision saved from the chart (its setup editor's "Save revision") has to be
+  // visible immediately in the table, the chart header and the history — the point
+  // of saving it here is to see it recorded. One re-render of the whole panel does
+  // all three; `row` pins the chart pane to the call just edited so it doesn't jump
+  // back to the top of the list.
+  document.addEventListener('tst:curated-revised', function (evt) {
+    var panel = document.querySelector('.curated-panel');
+    if (!panel) return;
+    var id = evt.detail && evt.detail.row_id;
+    var qs = '?year=' + encodeURIComponent(panel.dataset.year || '') +
+             '&month=' + encodeURIComponent(panel.dataset.month || '') +
+             (id ? '&row=' + encodeURIComponent(id) : '');
+    htmx.ajax('GET', '/curated/list' + qs, { target: panel, swap: 'outerHTML' });
+  });
+
   document.body.addEventListener('htmx:beforeRequest', function (evt) {
     var t = evt.detail && evt.detail.target;
     if (!t || !t.classList || !t.classList.contains('cur-hist-body')) return;

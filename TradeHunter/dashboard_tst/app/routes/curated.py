@@ -35,7 +35,7 @@ templates = Jinja2Templates(
 
 
 def _list_context(db: Session, user: User, *, year: str = "", month: str = "",
-                  msg: str = "", err: str = "") -> dict:
+                  msg: str = "", err: str = "", row: str = "") -> dict:
     """Everything the list fragment needs. Shared verbatim by the GET and every
     POST, so a form post re-renders exactly what a refresh would show.
 
@@ -88,11 +88,22 @@ def _list_context(db: Session, user: User, *, year: str = "", month: str = "",
     # The chart pane loads one call on arrival rather than sitting empty — the first
     # row of the newest month on screen. Without it the page opens with a blank
     # half-screen and no hint that clicking a row is what fills it.
-    first_id = None
-    for mo in months:
-        if mo["rows"]:
-            first_id = mo["rows"][0]["id"]
-            break
+    #
+    # `row` overrides that: after a revision is saved from the chart the whole panel
+    # is re-rendered, and the chart has to come back on the call that was just
+    # edited rather than jumping to the top of the list. Ignored when that row is
+    # not in the slice on screen, so a stale id can never blank the pane.
+    on_screen = {r["id"] for mo in months for r in mo["rows"]}
+    try:
+        want = int(row)
+    except (TypeError, ValueError):
+        want = 0
+    first_id = want if want in on_screen else None
+    if first_id is None:
+        for mo in months:
+            if mo["rows"]:
+                first_id = mo["rows"][0]["id"]
+                break
 
     return {"user": user, "months": months, "totals": cur.overall(months),
             "msg": msg, "err": err, "today": _dt.date.today().isoformat(),
@@ -111,12 +122,12 @@ def curated_home(request: Request, user: User = Depends(require_user)):
 
 
 @router.get("/list", response_class=HTMLResponse)
-def curated_list(request: Request, year: str = "", month: str = "",
+def curated_list(request: Request, year: str = "", month: str = "", row: str = "",
                  user: User = Depends(require_user),
                  db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         request, "_curated_list.html",
-        _list_context(db, user, year=year, month=month))
+        _list_context(db, user, year=year, month=month, row=row))
 
 
 @router.get("/{row_id}/revisions", response_class=HTMLResponse)
@@ -174,6 +185,13 @@ def curated_chart(request: Request, rev: int = 0, row: int = 0,
         "levels": {"entry": revision["entry"], "stop": revision["stop"],
                    "target": revision["target"],
                    "label": "" if revision["current"] else "#%s" % revision["n"]},
+        # The chart mounts these levels as an EDITABLE trade setup so the stop and
+        # the level can be moved here and saved as a revision of THIS call (user,
+        # 2026-09-08: "in the curated chart when i amend the SL and level it does
+        # not show the save button"). The row id is what the save targets — by id,
+        # not by ticker, because the newest call on this symbol may be a different
+        # one and revising that would rewrite the wrong idea.
+        "row_id": row["id"],
     })
 
 

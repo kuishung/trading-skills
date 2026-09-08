@@ -129,6 +129,39 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-08 - v4.50: revise a call on the Curated chart itself
+
+User: *"in the curated chart when i amend the SL and level it does not show the save
+button and did not record the revisions."*
+
+v4.49 put `Save revision` in the setup editor, but only where a setup could be DRAWN.
+The Curated page painted its call as read-only price lines, so there was nothing to open
+an editor on — the one page whose whole purpose is reconsidering a call was the one place
+you could not.
+
+- **The call now mounts as an editable trade setup** (`chart_setup_seed`). Double-click it
+  and the usual editor opens on the stored levels — Level, Offset, Stop, `:R`, and the
+  sizing block — with `⚑ Save revision` at the bottom. The read-only lines are dropped
+  while the setup is up: two sets of Entry/SL/PT at the same prices, one of which moves as
+  you drag and one of which does not, reads as a bug. The stored values stay in the header.
+- **The seeded setup is ephemeral.** `chart_curated_row` puts the drawing layer in a mode
+  that neither loads the symbol's drawings nor writes any — otherwise reading a call here
+  would silently put its annotation back on the Watchlist and Sector charts, which
+  deliberately show only a badge, and leave a copy that stops agreeing with the call the
+  moment either is edited.
+- **The save targets that row by id**, not "the newest call on this ticker" — the newest
+  may be a different idea, and revising it would rewrite the wrong one. `curated_on` is
+  untouched, as everywhere else.
+- **The page re-renders around the call you edited.** The chart emits
+  `tst:curated-revised`, `curated.html` re-requests the panel, and `GET /curated/list`
+  gained a `row` parameter that pins the chart pane to that call instead of letting it
+  jump back to the top of the list. Table, chart header and revision history update together.
+
+Verified: amending Level 339.75 → 345.00 and SL 325.00 → 332.00 saved revision 3
+(Entry 346.03 / SL 332.00 / PT 374.10, R:R held at 2.0, Qty 142), the header showed
+`revision 3 · current`, the history kept all three, `/drawings/BAP` stayed empty, and the
+Sector chart's badge picked up the new levels.
+
 ### 2026-09-08 - v4.49: a curated chart wears a badge, not an annotation
 
 User: *"when a revision is made on a curated item, show the save button and the revision
