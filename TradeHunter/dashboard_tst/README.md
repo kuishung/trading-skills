@@ -129,6 +129,32 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-08 - v4.52: moving the level restarts the stop at 1xATR
+
+User: *"when the level i change, the SL should be change based on entry - 1 ATR."*
+
+This REVERSES the v4.47 rule that a stop, once set, was absolute and survived the level
+moving. That was defensible — a stop belongs to chart structure — but it meant re-anchoring
+a setup carried over a risk measured against a level you had just left.
+
+- **Anything that moves the level re-seeds the stop** at `entry − 1×ATR(14)`: the Level
+  field, the Offset, the Support/Resistance flip, and dragging the setup on the chart.
+  `deriveTrade()` takes a `resetStop` option and every one of those callers passes it.
+- **Typing a stop, or dragging its handle, still pins it** — and the target re-prices at
+  your R multiple, as before. So the order of work is: put the level where you want it,
+  then tune the stop.
+- Body-drag no longer translates the stop along with the shape (v4.50 did). One rule for
+  "the level moved" is easier to predict than two.
+- `apply()` now knows WHICH field was touched, because after a level move the Stop box on
+  screen holds a number measured against the old level. It is rewritten with the re-seeded
+  stop — without that, the next edit to any other field read the stale value back and
+  silently undid the reset. That bug was caught in testing, not shipped.
+
+Verified on BAP (ATR 10.27): Level 345 → 350 moved Entry to 351.05 and the stop to 340.78
+(= entry − 1 ATR) with the field following; nudging R to 3 left the stop alone; typing
+344.00 pinned it at 7.05/share; the Support → Resistance flip put the stop 1 ATR *above*
+the entry and flipped the readout to Short.
+
 ### 2026-09-08 - v4.51: revisions are child rows of the call
 
 User: *"i need the revisions to be shown as child item and when clicked will be shown in

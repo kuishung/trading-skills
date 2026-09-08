@@ -1076,7 +1076,12 @@
         }
       }
 
-      function apply() {
+      /** `src` is the field the member actually just touched. It matters for one
+          rule: re-anchoring the LEVEL restarts the stop at 1xATR(14) from the new
+          entry, so the Stop box still on screen holds a number measured against a
+          level that no longer exists and must not be read back. Every other field
+          leaves the stop alone. */
+      function apply(src) {
         var cur = drawings[panelIdx];
         if (!cur) return;
         if (cur.type === 'hline') {
@@ -1099,19 +1104,30 @@
           if (f.kind.value === 'support' || f.kind.value === 'resistance') {
             cur.kind = f.kind.value;
           }
-          // Take the typed stop BEFORE deriving, so one apply() settles entry and
-          // stop together and the target is priced off the pair the member can see.
-          var sv = parseFloat(f.sl.value);
-          if (isFinite(sv) && sv > 0) {
-            // The stop must stay on the losing side of the entry — a "stop" past the
-            // entry is a target. Out-of-range input is ignored rather than flipping
-            // the trade's direction behind the member's back.
-            var rightSide = (cur.kind === 'resistance') ? (sv > cur.a.p) : (sv < cur.a.p);
-            if (rightSide) cur.sl = sv;
+          // Did this edit re-anchor the trade? The level itself, the offset the
+          // entry sits at, and which side of price the level is on all move the
+          // entry — and any of them restarts the stop at 1xATR(14).
+          var moved = (src === f.lvl || src === f.off || src === f.kind);
+          if (!moved) {
+            // Take the typed stop BEFORE deriving, so one apply() settles entry and
+            // stop together and the target is priced off the pair the member can see.
+            var sv = parseFloat(f.sl.value);
+            if (isFinite(sv) && sv > 0) {
+              // The stop must stay on the losing side of the entry — a "stop" past
+              // the entry is a target. Out-of-range input is ignored rather than
+              // flipping the trade's direction behind the member's back.
+              var rightSide = (cur.kind === 'resistance') ? (sv > cur.a.p) : (sv < cur.a.p);
+              if (rightSide) cur.sl = sv;
+            }
           }
           var rv = parseFloat(f.rr.value);
           if (isFinite(rv) && rv > 0 && rv <= 100) cur.rr = rv;
-          deriveTrade(cur);
+          deriveTrade(cur, { resetStop: moved });
+          // Put the re-seeded stop back in its box. Without this the field keeps
+          // showing the stop you typed against the OLD level while the trade uses
+          // the new ATR one — and the next edit to any other field would read that
+          // stale number back and silently undo the reset.
+          if (moved && document.activeElement !== f.sl) f.sl.value = cur.sl.toFixed(2);
           // Account value and risk % are preferences, saved the moment they change —
           // they belong to the member, not to this drawing.
           var nv = parseFloat(f.nlv.value);
@@ -1136,9 +1152,9 @@
       // trade: date+entry+sl+pt), so wire whichever inputs this one actually has
       fields.forEach(function (f) {
         [f.date, f.price, f.lvl, f.off, f.sl, f.rr, f.nlv, f.risk].forEach(function (inp) {
-          if (inp) inp.addEventListener('input', apply);
+          if (inp) inp.addEventListener('input', function () { apply(inp); });
         });
-        if (f.kind) f.kind.addEventListener('change', apply);
+        if (f.kind) f.kind.addEventListener('change', function () { apply(f.kind); });
       });
 
       panelRefresh = function () {
@@ -1294,18 +1310,23 @@
       }
       return d;
     }
-    function deriveTrade(d) {
+    // `opts.resetStop` re-seeds the stop at 1xATR(14) from the new entry. Every
+    // caller that MOVES THE LEVEL passes it (user, 2026-09-08: "when the level i
+    // change, the SL should be change based on entry - 1 ATR"): the level is what
+    // the trade hangs off, so re-anchoring it starts the risk over at the ticker's
+    // own volatility rather than carrying a stop that was measured against a level
+    // you have just left. Typing a stop, or dragging its handle, still pins it.
+    function deriveTrade(d, opts) {
       ensureLevel(d);
       var o = d.off / 100;
       var dir = d.kind === 'resistance' ? -1 : 1;   // short sells below resistance
       var entry = d.lvl * (1 + dir * o);
       d.a = { t: d.a.t, o: d.a.o, p: entry };
       d.b = { t: d.b.t, o: d.b.o, p: entry };
-      // Re-seed the stop only when it is missing or has ended up on the wrong side
-      // of the entry (the level was dragged past it) — that is no longer a trade,
-      // and 1xATR(14) is the same ticker-relative default a fresh setup gets.
+      // Also re-seeded when the stop is missing, or has ended up on the WRONG SIDE
+      // of the entry (the level was moved past it) — that is no longer a trade.
       var onLosingSide = (dir > 0) ? (d.sl < entry) : (d.sl > entry);
-      if (d.sl == null || !isFinite(d.sl) || !onLosingSide) {
+      if ((opts && opts.resetStop) || d.sl == null || !isFinite(d.sl) || !onLosingSide) {
         d.sl = entry - dir * (atrLatest || Math.abs(entry) * 0.02);
       }
       d.pt = entry + dir * d.rr * Math.abs(entry - d.sl);
@@ -1354,16 +1375,16 @@
           if (tp == null) return;
           var tdp = tp - grab.p0;
           d.lvl = (grab.orig.lvl != null ? grab.orig.lvl : grab.orig.a.p) + tdp;
-          // Sliding the WHOLE shape takes the stop with it — that is what "move
-          // this setup" means. Re-pricing the level on its own (the editor's Level
-          // field, or the entry handle) leaves the stop on its structure instead.
-          if (grab.part === 'body') d.sl = grab.orig.sl + tdp;
           if (tl != null && grab.part === 'body') {
             var tdl = tl - grab.l0;
             d.a = logicalToPoint(logicalOf(grab.orig.a) + tdl, d.a.p);
             d.b = logicalToPoint(logicalOf(grab.orig.b) + tdl, d.a.p);
           }
-          deriveTrade(d);
+          // Dragging the shape re-anchors the LEVEL, so the stop restarts at
+          // 1xATR(14) below the new entry — the same rule as typing a new level in
+          // the editor. (Until 2026-09-08 a body drag translated the stop along
+          // with it; one rule for "the level moved" is easier to predict than two.)
+          deriveTrade(d, { resetStop: true });
         } else if (grab.part === 'sl') {
           if (tp == null) return;
           // Moving the stop resizes R, so the target RIDES ALONG at the same
