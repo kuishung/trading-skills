@@ -129,6 +129,43 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-08 - v4.47: type your own stop, and get a share count
+
+User: *"in the trade setup i need to be able to manually set the stop loss which will
+auto set the PT based on 1:2 risk ... i need to be able to set user's NLV so that user
+can set 1% or 2% of the NLV to use for the trade and once the entry and SL is set, the
+windows will auto calculate the quantity to buy ... the NLV and the risk % is preset and
+user can amend it in the windows and also can be edited in the curated."*
+
+**The stop became an input, and the plan became a size.** Until now the trade-setup
+editor derived all three prices from the level: the stop was always 1×ATR(14) and could
+only be nudged by dragging its handle on the chart, and nothing anywhere said how many
+shares to buy.
+
+- **Stop is typed, target follows at your R multiple.** The editor gains a `Stop` price
+  field next to an `:R` multiple (2 = the 1:2 default). Typing a stop re-prices the
+  target at `entry ± R × |entry − stop|`, so a 1:2 setup stays 1:2 while you hunt for
+  the right stop. The stop stays an ABSOLUTE price — it belongs to the swing it sits
+  under, so moving the level re-prices the entry and target around it rather than
+  dragging it off its structure. Sliding the whole shape still takes it along, and a
+  level dragged past the stop re-seeds it at 1×ATR rather than leaving an impossible
+  trade. Persisted as `sl` + `rr` (`slDist` was tried first and dropped: it made the
+  Stop field lie about what it meant).
+- **Position size.** A `Position size` block holds the member's account value (NLV) and
+  risk %, and the readout gains `Quantity` plus a line spelling out
+  `qty × entry = cost · risking <budget> (N% of account)`. Size is
+  `NLV × risk% ÷ |entry − stop|`, floored to whole shares — rounding up would spend more
+  of the risk budget than was allowed. No account value on file shows a dash, not a
+  zero: "tell me the account" and "this trade is too big" are different answers.
+- **One set of preferences, two surfaces.** New `app/services/trade_prefs.py` owns the
+  offset / NLV / risk % triple (in `User.prefs`, so no migration) and the sizing maths.
+  `/drawings/trade-offset` becomes `GET|PUT /drawings/trade-prefs` carrying all three.
+  Curated gains a sizing strip and a `Qty` column reading the SAME service via new
+  `POST /curated/prefs` — so the quantity on a drawing and on the call it became are one
+  number by construction. Editing the account in either place moves both.
+- Quantity is DERIVED per read, never stored on a curated row: raising the account
+  re-sizes every open idea at once, which is the point of holding it as a preference.
+
 ### 2026-09-08 - v4.46: Curated pushes the setup to your own TradingView
 
 User: *"in the curated i need the TV chart show the curated setup"*

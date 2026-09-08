@@ -124,26 +124,63 @@
   // symbol's drawings, and would then disagree with the revision it came from.
   // {entry, stop, target, label} or null.
   var curLevels = {{ (chart_levels if (chart_levels is defined and chart_levels) else None)|tojson }};
-  // How far a trade-setup entry sits from its support/resistance level, in
-  // percent. Per-member and remembered server-side (GET/PUT /drawings/trade-offset);
-  // 0.3 until that answers, so the first setup drawn on a cold page is still right.
-  var entryOffsetPct = 0.3;
-  fetch('/drawings/trade-offset', { credentials: 'same-origin' })
+  // This member's trade-sizing preferences, remembered server-side
+  // (GET/PUT /drawings/trade-prefs — see services/trade_prefs.py):
+  //   off      how far a setup's entry sits from its level, in percent
+  //   nlv      account value; 0 = "not told yet" -> quantity stays blank rather
+  //            than being invented from a number the member never gave
+  //   riskPct  share of the account a single trade may lose
+  // Seeded with the same defaults the server uses, so the first setup drawn on a
+  // cold page is already right and does not jump when the fetch lands.
+  var tradePrefs = { off: 0.3, nlv: 0, riskPct: 1 };
+  var DEFAULT_RR = 2;          // 1:2 — the target sits at twice the stop distance
+  // Set by the drawing layer once it exists, so an editor that happened to open
+  // before the preferences landed redraws with the real numbers instead of the seeds.
+  var onPrefsLoaded = null;
+  fetch('/drawings/trade-prefs', { credentials: 'same-origin' })
     .then(function (r) { return r.ok ? r.json() : null; })
-    .then(function (j) { if (j && isFinite(j.pct)) entryOffsetPct = j.pct; })
+    .then(function (j) {
+      if (!j) return;
+      if (isFinite(j.offset_pct)) tradePrefs.off = j.offset_pct;
+      if (isFinite(j.nlv)) tradePrefs.nlv = j.nlv;
+      if (isFinite(j.risk_pct)) tradePrefs.riskPct = j.risk_pct;
+      if (onPrefsLoaded) onPrefsLoaded();
+    })
     .catch(function () {});
-  var offsetTimer = 0;
-  function saveOffsetPref(pct) {
-    entryOffsetPct = pct;
-    if (offsetTimer) clearTimeout(offsetTimer);
-    offsetTimer = setTimeout(function () {
-      offsetTimer = 0;
-      fetch('/drawings/trade-offset', {
+  var prefsTimer = 0, prefsPending = null;
+  /** Remember a preference. Debounced and coalesced: typing "25000" into the NLV
+      field fires five input events, and only the last value is worth a round trip. */
+  function saveTradePrefs(patch) {
+    Object.keys(patch).forEach(function (k) { tradePrefs[k] = patch[k]; });
+    prefsPending = Object.assign(prefsPending || {}, patch);
+    if (prefsTimer) clearTimeout(prefsTimer);
+    prefsTimer = setTimeout(function () {
+      var body = {};
+      if (prefsPending.off != null) body.offset_pct = prefsPending.off;
+      if (prefsPending.nlv != null) body.nlv = prefsPending.nlv;
+      if (prefsPending.riskPct != null) body.risk_pct = prefsPending.riskPct;
+      prefsTimer = 0; prefsPending = null;
+      fetch('/drawings/trade-prefs', {
         method: 'PUT', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pct: pct })
+        body: JSON.stringify(body)
       }).catch(function () {});
     }, 500);
+  }
+  /** How many shares this plan is worth, from the member's own risk budget.
+      risk per unit = |entry - stop|;  budget = NLV x risk %;  qty = budget / rpu.
+      Floored to whole shares — rounding up would spend more than they allowed.
+      Returns null for qty when there is no account value on file or no risk. */
+  function sizeTrade(entry, stop) {
+    var rpu = Math.abs(entry - stop);
+    var out = { rpu: rpu, budget: null, qty: null, cost: null, exposure: null };
+    if (!(rpu > 0) || !(entry > 0)) { out.rpu = null; return out; }
+    if (!(tradePrefs.nlv > 0) || !(tradePrefs.riskPct > 0)) return out;
+    out.budget = tradePrefs.nlv * tradePrefs.riskPct / 100;
+    out.qty = Math.floor(out.budget / rpu);
+    out.cost = out.qty * entry;
+    out.exposure = out.cost / tradePrefs.nlv * 100;
+    return out;
   }
   // Prices any trade setup on this chart needs kept in view. Filled by the drawing
   // layer; read by the candle series' autoscale below, so placing a setup pulls the
@@ -546,7 +583,7 @@
       { id: 'hline', ch: '─', t: 'Horizontal line — click at a price' },
       { id: 'tline', ch: '╱', t: 'Trend line — drag from A to B' },
       { id: 'rect', ch: '▭', t: 'Rectangle zone — drag a box' },
-      { id: 'trade', ch: '⚑', t: 'Trade setup — click a price: entry there, stop 1\u00d7 ATR(14) away, target at 2R' },
+      { id: 'trade', ch: '⚑', t: 'Trade setup — click the support or resistance level: the entry sits your offset off it, stop 1\u00d7 ATR(14) away, target at 2R. Double-click it to type your own stop and size the trade.' },
       { id: 'erase', ch: '⌫', t: 'Eraser — click a drawing to delete it' },
       { id: 'clear', ch: '✕', t: 'Delete ALL drawings on this chart' }
     ];
@@ -677,6 +714,7 @@
     /** Push the shape's live values back into the open editor (used while dragging
         on the chart) — never clobbering the field the user is actually typing in. */
     function refreshPanel() { if (panel && panelRefresh) panelRefresh(); }
+    onPrefsLoaded = refreshPanel;   // late-arriving account value fills the size row
     function mkInput(type, value, step) {
       var i = document.createElement('input');
       i.type = type;
@@ -743,9 +781,10 @@
         r0.appendChild(fp);
         fields.push({ price: fp });
       } else if (d.type === 'trade') {
-        // ONE price is editable here: the level. Entry, stop and target are shown
-        // as what they are -- results -- so there is no way to leave the editor
-        // holding three numbers that no longer agree with the level they came from.
+        // TWO prices are editable here: the level the trade hangs off, and the stop
+        // you are willing to be wrong at. The entry follows from the level (offset)
+        // and the target follows from the stop (R multiple), so the panel can never
+        // be left holding three numbers that disagree with each other.
         ensureLevel(d);
         var rl = row('Level');
         var lw = document.createElement('div');
@@ -777,9 +816,59 @@
         ow.appendChild(foff); ow.appendChild(pctEl);
         ro.appendChild(ow);
 
+        // The stop, typed as a PRICE — the number a trader actually thinks in.
+        // It is stored as a distance from the entry, so moving the level later
+        // slides the stop with it instead of silently changing your risk.
+        var rs = row('Stop');
+        var sw = document.createElement('div');
+        sw.style.cssText = 'display:grid;grid-template-columns:1fr 104px;gap:6px;align-items:center;';
+        var fsl = mkInput('number', d.sl.toFixed(2), step);
+        fsl.title = 'Where this idea is wrong. Typing a stop re-prices the target at ' +
+          'your reward multiple — leave that at 2 for the 1:2 default.';
+        var frr = mkInput('number', +(d.rr).toFixed(2), '0.1');
+        frr.title = 'Reward multiple: the target sits this many times the stop distance ' +
+          'past the entry. 2 = a 1:2 setup.';
+        var rrw = document.createElement('div');
+        rrw.style.cssText = 'display:grid;grid-template-columns:1fr auto;gap:5px;align-items:center;';
+        var rrLbl = document.createElement('span');
+        rrLbl.textContent = ':R';
+        rrLbl.style.cssText = 'opacity:.6;';
+        rrw.appendChild(frr); rrw.appendChild(rrLbl);
+        sw.appendChild(fsl); sw.appendChild(rrw);
+        rs.appendChild(sw);
+
         var rd = row('Date');
         var fdt = mkInput('date', dateOfPoint(d.a), null);
         rd.appendChild(fdt);
+
+        // ---- position sizing -------------------------------------------------
+        // Account value and risk budget are PREFERENCES, not properties of this
+        // drawing: they are shared with the Curated page and remembered for every
+        // future setup, which is why editing them here saves immediately.
+        var szHead = document.createElement('div');
+        szHead.textContent = 'Position size';
+        szHead.style.cssText = 'margin-top:9px;padding-top:8px;font-weight:600;opacity:.85;' +
+          'border-top:1px solid rgba(148,163,184,.28);margin-bottom:6px;';
+        panel.appendChild(szHead);
+
+        var rn = row('Account');
+        var nw = document.createElement('div');
+        nw.style.cssText = 'display:grid;grid-template-columns:1fr 104px;gap:6px;align-items:center;';
+        var fnlv = mkInput('number', tradePrefs.nlv || '', '100');
+        fnlv.placeholder = 'net liq value';
+        fnlv.title = 'Your account value (NLV). Saved as a preference and shared with ' +
+          'the Curated page — every setup sizes off it.';
+        var frisk = mkInput('number', tradePrefs.riskPct, '0.25');
+        frisk.title = 'Percent of the account a single trade may lose. Saved as a ' +
+          'preference and shared with the Curated page.';
+        var rw = document.createElement('div');
+        rw.style.cssText = 'display:grid;grid-template-columns:1fr auto;gap:5px;align-items:center;';
+        var riskLbl = document.createElement('span');
+        riskLbl.textContent = '% risk';
+        riskLbl.style.cssText = 'opacity:.6;white-space:nowrap;';
+        rw.appendChild(frisk); rw.appendChild(riskLbl);
+        nw.appendChild(fnlv); nw.appendChild(rw);
+        rn.appendChild(nw);
 
         var outEl = document.createElement('div');
         outEl.style.cssText = 'margin-top:8px;padding-top:8px;display:grid;' +
@@ -789,8 +878,12 @@
         var rrEl = document.createElement('div');
         rrEl.style.cssText = 'margin-top:6px;opacity:.75;';
         panel.appendChild(rrEl);
+        var szEl = document.createElement('div');
+        szEl.style.cssText = 'margin-top:4px;opacity:.75;';
+        panel.appendChild(szEl);
         fields.push({ trade: true, date: fdt, lvl: flv, off: foff, kind: fkind,
-                      outEl: outEl, rrEl: rrEl });
+                      sl: fsl, rr: frr, nlv: fnlv, risk: frisk,
+                      outEl: outEl, rrEl: rrEl, szEl: szEl });
       } else {
         [['Point 1', 'a'], ['Point 2', 'b']].forEach(function (spec) {
           var r = row(spec[0]);
@@ -804,28 +897,44 @@
         });
       }
 
-      /** The three DERIVED prices, plus the risk/reward readout. */
+      /** The three DERIVED prices, the risk/reward readout, and how much to buy. */
       function showRR(cur) {
         var f = fields[0];
         if (!f || !f.rrEl) return;
         var risk = Math.abs(cur.a.p - cur.sl);
         var rr = risk > 0 ? Math.abs(cur.pt - cur.a.p) / risk : 0;
         var dir = cur.pt >= cur.a.p ? 'Long' : 'Short';
+        var sz = sizeTrade(cur.a.p, cur.sl);
         if (f.outEl) {
           f.outEl.innerHTML = '';
-          [['Entry', cur.a.p, ACCENT], ['Stop', cur.sl, '#f87171'],
-           ['Target', cur.pt, '#34d399']].forEach(function (spec) {
+          var rows = [['Entry', cur.a.p.toFixed(2), ACCENT],
+                      ['Stop', cur.sl.toFixed(2), '#f87171'],
+                      ['Target', cur.pt.toFixed(2), '#34d399']];
+          // Quantity only appears once it can be answered. A dash where a share
+          // count belongs says "tell me the account value"; a 0 would read as
+          // "this trade is too big", which is a different and wrong message.
+          rows.push(['Quantity', sz.qty == null ? '\u2014' : sz.qty.toLocaleString(),
+                     light ? '#0f172a' : '#e2e8f0']);
+          rows.forEach(function (spec) {
             var k = document.createElement('span');
             k.textContent = spec[0];
             k.style.cssText = 'opacity:.7;';
             var v = document.createElement('span');
-            v.textContent = spec[1].toFixed(2);
+            v.textContent = spec[1];
             v.style.cssText = 'font-weight:600;text-align:right;color:' + spec[2] + ';';
             f.outEl.appendChild(k); f.outEl.appendChild(v);
           });
         }
-        f.rrEl.textContent = dir + ' \u00b7 risk ' + risk.toFixed(2) + ' \u00b7 ' +
-          rr.toFixed(2) + 'R \u00b7 stop 1\u00d7ATR(14)';
+        f.rrEl.textContent = dir + ' \u00b7 risk ' + risk.toFixed(2) + '/share \u00b7 ' +
+          rr.toFixed(2) + 'R';
+        if (f.szEl) {
+          f.szEl.textContent = sz.qty == null
+            ? 'Set an account value to size this trade.'
+            : (sz.qty.toLocaleString() + ' \u00d7 ' + cur.a.p.toFixed(2) + ' = ' +
+               Math.round(sz.cost).toLocaleString() + ' \u00b7 risking ' +
+               Math.round(sz.budget).toLocaleString() +
+               ' (' + sz.exposure.toFixed(0) + '% of account)');
+        }
       }
 
       function apply() {
@@ -846,12 +955,33 @@
           if (isFinite(lv) && lv > 0) cur.lvl = lv;
           if (isFinite(ov) && ov >= 0 && ov <= 20 && ov !== cur.off) {
             cur.off = ov;
-            saveOffsetPref(ov);      // an offset you set is the one you meant to keep
+            saveTradePrefs({ off: ov });   // an offset you set is the one you meant to keep
           }
           if (f.kind.value === 'support' || f.kind.value === 'resistance') {
             cur.kind = f.kind.value;
           }
+          // Take the typed stop BEFORE deriving, so one apply() settles entry and
+          // stop together and the target is priced off the pair the member can see.
+          var sv = parseFloat(f.sl.value);
+          if (isFinite(sv) && sv > 0) {
+            // The stop must stay on the losing side of the entry — a "stop" past the
+            // entry is a target. Out-of-range input is ignored rather than flipping
+            // the trade's direction behind the member's back.
+            var rightSide = (cur.kind === 'resistance') ? (sv > cur.a.p) : (sv < cur.a.p);
+            if (rightSide) cur.sl = sv;
+          }
+          var rv = parseFloat(f.rr.value);
+          if (isFinite(rv) && rv > 0 && rv <= 100) cur.rr = rv;
           deriveTrade(cur);
+          // Account value and risk % are preferences, saved the moment they change —
+          // they belong to the member, not to this drawing.
+          var nv = parseFloat(f.nlv.value);
+          if (f.nlv.value === '') nv = 0;
+          if (isFinite(nv) && nv >= 0 && nv !== tradePrefs.nlv) saveTradePrefs({ nlv: nv });
+          var kv = parseFloat(f.risk.value);
+          if (isFinite(kv) && kv >= 0 && kv <= 100 && kv !== tradePrefs.riskPct) {
+            saveTradePrefs({ riskPct: kv });
+          }
           showRR(cur);
         } else {
           fields.forEach(function (f) {
@@ -866,7 +996,7 @@
       // field sets differ by shape (hline: price; tline/rect: date+price per point;
       // trade: date+entry+sl+pt), so wire whichever inputs this one actually has
       fields.forEach(function (f) {
-        [f.date, f.price, f.lvl, f.off].forEach(function (inp) {
+        [f.date, f.price, f.lvl, f.off, f.sl, f.rr, f.nlv, f.risk].forEach(function (inp) {
           if (inp) inp.addEventListener('input', apply);
         });
         if (f.kind) f.kind.addEventListener('change', apply);
@@ -882,6 +1012,10 @@
           put(f.date, dateOfPoint(cur.a));
           if (cur.lvl != null) put(f.lvl, cur.lvl.toFixed(2));
           put(f.off, cur.off);
+          put(f.sl, cur.sl.toFixed(2));
+          put(f.rr, +(cur.rr).toFixed(2));
+          put(f.nlv, tradePrefs.nlv || '');
+          put(f.risk, tradePrefs.riskPct);
           if (f.kind && document.activeElement !== f.kind) f.kind.value = cur.kind;
           showRR(cur);
           return;
@@ -982,25 +1116,37 @@
       if (d.kind !== 'support' && d.kind !== 'resistance') {
         d.kind = (d.pt >= d.a.p) ? 'support' : 'resistance';
       }
-      if (d.off == null || !isFinite(d.off)) d.off = entryOffsetPct;
+      if (d.off == null || !isFinite(d.off)) d.off = tradePrefs.off;
       if (d.lvl == null || !isFinite(d.lvl)) {
         var o = d.off / 100;
         d.lvl = d.kind === 'resistance' ? d.a.p / (1 - o) : d.a.p / (1 + o);
+      }
+      // The TARGET is held as an R-multiple, not a price: that is what makes
+      // "1:2" survive every later change to the stop. The STOP stays an absolute
+      // price, because a stop is anchored to structure — the swing low you put it
+      // under does not move when you nudge the level, and a stop that slid away
+      // from that low would silently stop being the stop you chose.
+      if (d.rr == null || !isFinite(d.rr) || d.rr <= 0) {
+        var oR = Math.abs(d.a.p - d.sl);
+        d.rr = oR > 0 ? Math.abs(d.pt - d.a.p) / oR : DEFAULT_RR;
       }
       return d;
     }
     function deriveTrade(d) {
       ensureLevel(d);
       var o = d.off / 100;
-      // Fall back to a percentage of price when ATR is unavailable, so the setup
-      // is still coherent rather than collapsing to a zero-width stop.
-      var atr = atrLatest || Math.abs(d.lvl) * 0.02;
       var dir = d.kind === 'resistance' ? -1 : 1;   // short sells below resistance
       var entry = d.lvl * (1 + dir * o);
       d.a = { t: d.a.t, o: d.a.o, p: entry };
       d.b = { t: d.b.t, o: d.b.o, p: entry };
-      d.sl = entry - dir * atr;
-      d.pt = entry + dir * 2 * atr;
+      // Re-seed the stop only when it is missing or has ended up on the wrong side
+      // of the entry (the level was dragged past it) — that is no longer a trade,
+      // and 1xATR(14) is the same ticker-relative default a fresh setup gets.
+      var onLosingSide = (dir > 0) ? (d.sl < entry) : (d.sl > entry);
+      if (d.sl == null || !isFinite(d.sl) || !onLosingSide) {
+        d.sl = entry - dir * (atrLatest || Math.abs(entry) * 0.02);
+      }
+      d.pt = entry + dir * d.rr * Math.abs(entry - d.sl);
       return d;
     }
 
@@ -1046,6 +1192,10 @@
           if (tp == null) return;
           var tdp = tp - grab.p0;
           d.lvl = (grab.orig.lvl != null ? grab.orig.lvl : grab.orig.a.p) + tdp;
+          // Sliding the WHOLE shape takes the stop with it — that is what "move
+          // this setup" means. Re-pricing the level on its own (the editor's Level
+          // field, or the entry handle) leaves the stop on its structure instead.
+          if (grab.part === 'body') d.sl = grab.orig.sl + tdp;
           if (tl != null && grab.part === 'body') {
             var tdl = tl - grab.l0;
             d.a = logicalToPoint(logicalOf(grab.orig.a) + tdl, d.a.p);
@@ -1057,14 +1207,15 @@
           // Moving the stop resizes R, so the target RIDES ALONG at the same
           // R-multiple — that keeps a 2R setup a 2R setup while you hunt for the
           // right stop. Drag the PT handle itself to change the multiple.
-          var oRisk = Math.abs(grab.orig.a.p - grab.orig.sl);
-          var mult = oRisk > 0 ? Math.abs(grab.orig.pt - grab.orig.a.p) / oRisk : 2;
-          var dir = grab.orig.pt >= grab.orig.a.p ? 1 : -1;
-          d.sl = tp;
-          d.pt = d.a.p + dir * mult * Math.abs(d.a.p - tp);
+          var dirS = d.kind === 'resistance' ? -1 : 1;
+          var okSide = (dirS > 0) ? (tp < d.a.p) : (tp > d.a.p);
+          if (okSide) { d.sl = tp; deriveTrade(d); }
         } else if (grab.part === 'pt') {
           if (tp == null) return;
-          d.pt = tp;
+          var dirP = d.kind === 'resistance' ? -1 : 1;
+          var risk = Math.abs(d.a.p - d.sl);
+          var mult = risk > 0 ? (tp - d.a.p) * dirP / risk : 0;  // <=0: target behind entry
+          if (mult > 0) { d.rr = mult; deriveTrade(d); }
         }
       } else if (grab.part === 'body') {
         var l = ts.coordinateToLogical(q.x), p = series.coordinateToPrice(q.y);
@@ -1201,8 +1352,11 @@
           b: logicalToPoint(el0 + 20, ep),
           lvl: ep,
           kind: ep <= lastClose ? 'support' : 'resistance',
-          off: entryOffsetPct,
-          sl: ep, pt: ep
+          off: tradePrefs.off,
+          rr: DEFAULT_RR,         // target at 2R
+          // No stop yet: deriveTrade seeds it 1xATR(14) below the derived entry.
+          // Seeding it here off the CLICK price would put it 0.3% away instead.
+          sl: null, pt: null
         });
         drawings.push(nd);
         selected = drawings.length - 1;

@@ -26,6 +26,7 @@ from ..db import get_db
 from ..models import User
 from ..security import require_user
 from ..services import curated as cur
+from ..services import trade_prefs as tp
 
 router = APIRouter(prefix="/curated", tags=["curated"])
 templates = Jinja2Templates(
@@ -67,10 +68,20 @@ def _list_context(db: Session, user: User, *, year: str = "", month: str = "",
         sel = [i for i in sel if (i.get("curated_on") or "")[5:7] == "%02d" % m]
 
     months = cur.by_month(cur.rows_for(sel))
+
+    # Position size is attached here rather than stored on the row: it depends on
+    # the member's CURRENT account value and risk budget, so raising the account
+    # re-sizes every idea at once. Same service the chart's trade-setup editor
+    # sizes with, so the quantity on a drawing and on the call it became agree.
+    prefs = tp.read(user)
+    for mo in months:
+        for r in mo["rows"]:
+            r["size"] = tp.size(r.get("entry"), r.get("stop"), prefs)
+
     return {"user": user, "months": months, "totals": cur.overall(months),
             "msg": msg, "err": err, "today": _dt.date.today().isoformat(),
             "years": years, "sel_year": y, "sel_month": m,
-            "counts": cal.get(y) or [0] * 12,
+            "counts": cal.get(y) or [0] * 12, "prefs": prefs,
             "month_abbr": cur.MONTH_ABBR, "any_rows": bool(items)}
 
 
@@ -162,6 +173,30 @@ def curated_from_chart(
         return {"ok": False, "error": message}
     return {"ok": True, "symbol": (symbol or "").strip().upper(),
             "curated_on": today, "message": message}
+
+
+@router.post("/prefs", response_class=HTMLResponse)
+def curated_prefs(
+    request: Request,
+    nlv: str = Form(""),
+    risk_pct: str = Form(""),
+    year: str = Form(""),
+    month: str = Form(""),
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Change the account value / risk budget from the Curated page and re-render.
+
+    The SAME two preferences the chart's trade-setup editor edits (services/
+    trade_prefs.py) — deliberately not a Curated-only copy, because a member who
+    raises their account there and sees old sizes here would have to guess which
+    number the platform believed. Re-rendering the list is the point: every row's
+    quantity is derived, so they all move at once.
+    """
+    _, err = tp.write(db, user, nlv=nlv, risk_pct=risk_pct)
+    ctx = _list_context(db, user, year=year, month=month,
+                        msg="" if err else "Position sizing updated.", err=err)
+    return templates.TemplateResponse(request, "_curated_list.html", ctx)
 
 
 @router.post("/add", response_class=HTMLResponse)

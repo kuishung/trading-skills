@@ -751,7 +751,16 @@ class ChartDrawing(Base):
     Shape schema (validated server-side in routes/drawings.py):
       {"type": "hline", "p": <price>}
       {"type": "tline"|"rect", "a": {t, o, p}, "b": {t, o, p}}
-      {"type": "trade", "a": {t, o, p=entry}, "b": {t, o, p}, "sl": <price>, "pt": <price>}
+      {"type": "trade", "a": {t, o, p=entry}, "b": {t, o, p}, "sl": <price>,
+       "pt": <price>, "lvl": <price>, "kind": "support"|"resistance",
+       "off": <pct>, "rr": <reward multiple>}
+    A trade setup is DERIVED, not four loose prices: ``lvl`` is the support or
+    resistance it hangs off, ``off`` how far the entry sits from it, and ``rr``
+    the target's multiple of the stop distance. ``sl`` is an absolute price (a
+    stop belongs to chart structure, not to the entry) and ``pt`` the resulting
+    target, stored so a reader that does not re-derive still sees the plan.
+    Everything but a/b is optional — setups saved before this recover it from the
+    prices (routes/drawings.py, _price_chart.html).
     where a point is date-anchored: ``t`` = the nearest candle's date, ``o`` = a
     fractional offset in bar-units from it, ``p`` = the price. Anchoring to a
     DATE (not a logical bar index) keeps a shape glued to the same spot when

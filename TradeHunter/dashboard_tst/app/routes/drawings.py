@@ -4,8 +4,9 @@ The drawing overlay in ``_price_chart.html`` used to persist to browser
 localStorage, which meant the shapes were stranded on whichever PC drew them.
 These two endpoints move them to the DB so they travel with the account.
 
-  GET  /drawings/{symbol}  -> {"shapes": [...]}
-  PUT  /drawings/{symbol}  -> replace this symbol's shapes, returns the stored list
+  GET  /drawings/{symbol}      -> {"shapes": [...]}
+  PUT  /drawings/{symbol}      -> replace this symbol's shapes, returns the stored list
+  GET/PUT /drawings/trade-prefs -> this member's entry offset, account value, risk %
 
 Both are session-authenticated (``require_user``) and scoped by ``user_id`` on
 every read and write — one member can never see or modify another's drawings.
@@ -23,6 +24,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import ChartDrawing, User, _utcnow
 from ..security import require_user
+from ..services import trade_prefs as tp
 
 router = APIRouter(prefix="/drawings", tags=["drawings"])
 
@@ -87,6 +89,13 @@ def _clean_shapes(raw) -> list[dict]:
                     keep["off"] = off
                 if s.get("kind") in ("support", "resistance"):
                     keep["kind"] = s["kind"]
+                # The target is an R-MULTIPLE of the stop distance, not a loose
+                # price — that is what keeps a 1:2 setup at 1:2 when the stop is
+                # retuned. ``pt`` above is the resulting price, kept so a reader
+                # that doesn't re-derive still sees the plan.
+                rr = _num(s.get("rr"))
+                if rr is not None and 0 < rr <= 100:
+                    keep["rr"] = rr
                 out.append(keep)
             continue
         if a and b:
@@ -101,49 +110,41 @@ def _norm_symbol(symbol: str) -> str:
     return sym
 
 
-# Declared BEFORE /{symbol}: otherwise "trade-offset" is captured as a ticker and
+# Declared BEFORE /{symbol}: otherwise "trade-prefs" is captured as a ticker and
 # this route is unreachable. (Same ordering trap as matp's /my routes.)
-DEFAULT_ENTRY_OFFSET_PCT = 0.3
 
 
-@router.get("/trade-offset")
-def get_trade_offset(user: User = Depends(require_user)):
-    """How far from a support/resistance level this member's entries sit, in percent.
+@router.get("/trade-prefs")
+def get_trade_prefs(user: User = Depends(require_user)):
+    """This member's trade-sizing preferences — entry offset, account value, risk %.
 
-    Per-user because it is a style, not a fact: one trader wants to be filled 0.1%
-    off the level, another gives it half a percent of room. Stored in User.prefs
-    rather than a new column — it is a single UI preference, and prefs is already
-    where the sector filter lives.
+    Per-user because they are a style and an account fact, not market data: one
+    trader wants to be filled 0.1% off the level and risk 0.5%, another gives half
+    a percent of room and risks 2%. See services/trade_prefs.py for why they live
+    in User.prefs and why position size is derived from them rather than stored.
+
+    The Curated page reads the same three through the same service, so a quantity
+    shown on a drawing and the quantity shown against the call it became agree by
+    construction.
     """
-    prefs = getattr(user, "prefs", None) or {}
-    try:
-        pct = float(prefs.get("trade_entry_offset_pct"))
-    except (TypeError, ValueError):
-        pct = DEFAULT_ENTRY_OFFSET_PCT
-    if not 0 <= pct <= 20:
-        pct = DEFAULT_ENTRY_OFFSET_PCT
-    return {"pct": pct, "default": DEFAULT_ENTRY_OFFSET_PCT}
+    return {"ok": True, **tp.read(user),
+            "defaults": {"offset_pct": tp.DEFAULT_ENTRY_OFFSET_PCT,
+                         "nlv": tp.DEFAULT_NLV,
+                         "risk_pct": tp.DEFAULT_RISK_PCT}}
 
 
-@router.put("/trade-offset")
-def put_trade_offset(payload: dict = Body(...),
-                     user: User = Depends(require_user),
-                     db: Session = Depends(get_db)):
-    """Remember this member's entry offset. Bounded 0-20%: beyond that the "entry
-    near the level" is no longer near the level, and a fat-fingered 300 would put
-    every future setup somewhere absurd."""
-    try:
-        pct = float(payload.get("pct"))
-    except (TypeError, ValueError):
-        return {"ok": False, "error": "pct must be a number"}
-    if not 0 <= pct <= 20:
-        return {"ok": False, "error": "pct must be between 0 and 20"}
-
-    prefs = dict(getattr(user, "prefs", None) or {})
-    prefs["trade_entry_offset_pct"] = pct
-    user.prefs = prefs          # reassign: SQLAlchemy won't see an in-place mutation
-    db.commit()
-    return {"ok": True, "pct": pct}
+@router.put("/trade-prefs")
+def put_trade_prefs(payload: dict = Body(...),
+                    user: User = Depends(require_user),
+                    db: Session = Depends(get_db)):
+    """Remember whichever of the three were sent. Omitted keys are left alone, so
+    the chart editor can save an offset without having to echo back an account
+    value it never showed."""
+    prefs, err = tp.write(db, user,
+                          offset_pct=payload.get("offset_pct"),
+                          nlv=payload.get("nlv"),
+                          risk_pct=payload.get("risk_pct"))
+    return {"ok": not err, "error": err, **prefs}
 
 
 @router.get("/{symbol}")

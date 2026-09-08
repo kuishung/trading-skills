@@ -1,6 +1,8 @@
 {# The curated list: add form, year + Jan-Dec tabs, totals, then one block per
    MONTH, newest first. Context: months (services.curated.by_month), totals, msg,
-   err, today, years, sel_year, sel_month, counts (12 ints), month_abbr, any_rows.
+   err, today, years, sel_year, sel_month, counts (12 ints), month_abbr, any_rows,
+   prefs (services.trade_prefs.read -> nlv / risk_pct / offset_pct; each row also
+   carries row.size from trade_prefs.size).
 
    Wrapped in .curated-panel and swapped by outerHTML so every form in here can
    target `closest .curated-panel` — a class, not an id, so the fragment is safe to
@@ -69,6 +71,44 @@
   </div>
   {% if err %}<p class="text-[11px] text-rose-400 mt-2">{{ err }}</p>{% endif %}
   {% if msg %}<p class="text-[11px] text-emerald-400 mt-2">{{ msg }}</p>{% endif %}
+</form>
+
+{# ── position sizing ────────────────────────────────────────────────────── #}
+{# The SAME two preferences the chart's trade-setup editor edits (they round-trip
+   through services/trade_prefs.py either way), so the quantity shown on a drawing
+   and the quantity shown against the call it became are one number, not two.
+   Changing either re-renders the whole list, because every Qty below is derived. #}
+<form class="flex flex-wrap items-end gap-2 rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2 mb-3"
+      hx-post="/curated/prefs" hx-target="closest .curated-panel" hx-swap="outerHTML">
+  <input type="hidden" name="year" value="{{ sel_year }}">
+  <input type="hidden" name="month" value="{{ sel_month }}">
+  <label class="flex flex-col gap-1">
+    <span class="text-[10px] uppercase tracking-wide text-slate-500">Account value</span>
+    <input name="nlv" inputmode="decimal" step="any" type="number" min="0" placeholder="net liq"
+           value="{{ '%g'|format(prefs.nlv) if prefs.nlv else '' }}"
+           title="Your account value (NLV). Every quantity on this page is sized off it, and so is the chart's trade-setup editor."
+           class="w-32 rounded bg-slate-950/60 border border-slate-700 px-2 py-1 text-xs tabular-nums focus:border-emerald-500 outline-none">
+  </label>
+  <label class="flex flex-col gap-1">
+    <span class="text-[10px] uppercase tracking-wide text-slate-500">Risk / trade</span>
+    <input name="risk_pct" inputmode="decimal" step="0.25" type="number" min="0" max="100"
+           value="{{ '%g'|format(prefs.risk_pct) }}"
+           title="Percent of the account a single trade may lose. 1% and 2% are the usual choices."
+           class="w-20 rounded bg-slate-950/60 border border-slate-700 px-2 py-1 text-xs tabular-nums focus:border-emerald-500 outline-none">
+  </label>
+  <span class="text-[11px] text-slate-500 pb-1.5">%</span>
+  <button type="submit"
+          class="shrink-0 rounded border border-slate-700 px-3 py-1 text-xs text-slate-200 hover:border-emerald-500 hover:text-emerald-300 transition">
+    Apply
+  </button>
+  <p class="text-[11px] text-slate-500 pb-1.5 leading-snug">
+    {% if prefs.nlv %}
+      Risking <span class="text-slate-300 tabular-nums">{{ '{:,.0f}'.format(prefs.nlv * prefs.risk_pct / 100) }}</span>
+      per trade &mdash; quantity is that budget divided by <span class="text-slate-400">entry &minus; stop</span>.
+    {% else %}
+      Set an account value and every call below gets a share count.
+    {% endif %}
+  </p>
 </form>
 
 {% if any_rows %}
@@ -155,6 +195,7 @@
           <th class="text-right font-normal px-2 py-1.5">Stop</th>
           <th class="text-right font-normal px-2 py-1.5">Target</th>
           <th class="text-right font-normal px-2 py-1.5" title="Planned reward-to-risk from your own levels">R:R</th>
+          <th class="text-right font-normal px-2 py-1.5" title="Shares to buy: your risk budget (account value x risk %) divided by the risk per share (entry - stop), floored to whole shares">Qty</th>
           <th class="text-left font-normal px-2 py-1.5">Status</th>
           <th class="text-left font-normal px-2 py-1.5">Triggered</th>
           <th class="text-right font-normal px-2 py-1.5" title="Where it actually filled — the entry level, or the open if it gapped through">Fill</th>
@@ -177,6 +218,15 @@
           <td class="px-2 py-1.5 text-right text-slate-400">{{ num(r.stop) }}</td>
           <td class="px-2 py-1.5 text-right text-slate-400">{{ num(r.target) }}</td>
           <td class="px-2 py-1.5 text-right text-slate-500">{{ num(e.planned_rr, 1) }}</td>
+          {# Derived from the CURRENT account value, never stored: raising the account
+             above re-sizes every row at once. A dash means "no account value yet",
+             which is a different thing from a size of zero. #}
+          <td class="px-2 py-1.5 text-right whitespace-nowrap">
+            {% if r.size.qty is not none %}
+            <span class="text-slate-200 tabular-nums cursor-help"
+                  title="{{ r.size.qty }} shares &times; {{ '%.2f'|format(r.entry) }} = {{ '{:,.0f}'.format(r.size.cost) }} ({{ '%.0f'|format(r.size.exposure_pct) }}% of the account), risking {{ '{:,.0f}'.format(r.size.risk_budget) }} at {{ '%.2f'|format(r.size.risk_per_unit) }} per share">{{ '{:,}'.format(r.size.qty) }}</span>
+            {% else %}<span class="text-slate-600" title="Set an account value above to size this call">&ndash;</span>{% endif %}
+          </td>
           <td class="px-2 py-1.5 whitespace-nowrap">
             <span class="inline-block px-1.5 py-0.5 rounded border text-[10px] {{ b[0] }} cursor-help"
                   title="{{ e.note or b[2] }}">{{ b[1] }}</span>
@@ -239,7 +289,7 @@
           </td>
         </tr>
         {# the expanded history + chart for this row; only one is ever filled #}
-        <tr class="cur-hist-row"><td colspan="13" class="p-0"><div id="hist-{{ r.id }}" class="cur-hist-body"></div></td></tr>
+        <tr class="cur-hist-row"><td colspan="14" class="p-0"><div id="hist-{{ r.id }}" class="cur-hist-body"></div></td></tr>
         {% endfor %}
       </tbody>
     </table>
