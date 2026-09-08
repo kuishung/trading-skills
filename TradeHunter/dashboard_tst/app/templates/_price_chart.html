@@ -28,27 +28,17 @@
     {# zoom toolbar: 6M (default) / 1Y / 1.5Y / 2Y. Each shows the lookback in the
        left ~2/3 with the right ~1/3 blank (room ahead of current price). #}
     <div class="flex items-center justify-between gap-1 mb-1 {% if chart_fill %}shrink-0{% endif %}">
-      {# left cluster: Curate (moderators) + Plot-on-TV (MATP board) #}
+      {# left cluster: Plot-on-TV. "Curate setup" used to live here too; it moved INTO
+         the trade-setup editor (user, 2026-09-08: "the Curate Setup should be in the
+         Trade Setup box not the chart left top") — it acts on one setup, so it belongs
+         beside that setup's numbers, not in the chart's global toolbar. The moderators'
+         "Curate -> new study" button was removed in the same pass. #}
       <div class="flex items-center gap-1">
-        {# Curate -> create/open a study for this ticker (moderators, only where curatable) #}
-        {% if chart_curatable is defined and chart_curatable and user and user.can_moderate %}
-        <form method="post" action="/studies/curate" class="inline">
-          <input type="hidden" name="symbol" value="{{ chart_symbol }}">
-          <button type="submit" class="text-[11px] px-2 py-0.5 rounded border border-violet-500/50 text-violet-300 hover:bg-violet-500/15 transition"
-                  title="Curate {{ chart_symbol }} — create/open a study to mark support, resistance, entry, stop & R:R">&#128203; Curate</button>
-        </form>
-        {% endif %}
         {# Send this ticker to the user's OWN TradingView via the local TV bridge. Shown wherever the
            board opts in (chart_tv_plot). Shares the .tv-plot capture handler in base.html.
            With MATP on record it draws the MATP/MBP lines; WITHOUT one it still switches the chart
            to the symbol (the bridge treats null levels as "draw nothing"), which is the useful
            action from Sector & Industry where most tickers have no MATP yet — hence the two labels. #}
-        {% if chart_curate_setup is defined and chart_curate_setup %}
-        <span class="curate-setup cursor-pointer text-[11px] px-2 py-0.5 rounded border border-sky-500/50 text-sky-300 hover:bg-sky-500/15 transition select-none"
-              role="button" tabindex="0" style="display:none"
-              data-sym="{{ chart_symbol }}"
-              title="Send the trade setup drawn on this chart to your Curated list, dated today">&#9873; Curate setup</span>
-        {% endif %}
         {% if chart_tv_plot is defined and chart_tv_plot %}
         {# When a curated revision is on this chart (chart_levels), its Entry/SL/PT ride
            along so the user's own TradingView shows the SAME setup this pane shows —
@@ -442,7 +432,6 @@
       ctx.clearRect(0, 0, w, h);
       drawings.forEach(function (d, i) { paint(ctx, d, w, h, i === selected || i === hoverIdx); });
       if (pending) paint(ctx, pending, w, h, true);
-      refreshCurateChip();
       syncTradeLevels();
     }
 
@@ -476,10 +465,13 @@
     }
 
     // ---- "Curate setup" ---------------------------------------------------
-    // The chip only exists on pages that asked for it, and only appears once a
-    // trade setup has been drawn: with no levels there is nothing to curate, and
-    // a button that does nothing teaches people to ignore it.
-    var chip = el.parentElement ? el.parentElement.querySelector('.curate-setup') : null;
+    // Lives INSIDE the trade-setup editor (see openPanel), not in the chart toolbar
+    // (user, 2026-09-08: "the Curate Setup should be in the Trade Setup box not the
+    // chart left top"). It acts on ONE setup, so it belongs beside that setup's own
+    // numbers -- and there it can never be pressed with nothing drawn. Only offered
+    // where the page asked for it: curating is meant to start from the Watchlist or
+    // Sector & Industry chart.
+    var CAN_CURATE = {{ (chart_curate_setup if (chart_curate_setup is defined and chart_curate_setup) else false)|tojson }};
     function currentSetup() {
       if (selected >= 0 && drawings[selected] && drawings[selected].type === 'trade') {
         return drawings[selected];
@@ -489,37 +481,31 @@
       }
       return null;
     }
-    function refreshCurateChip() {
-      if (!chip) return;
-      chip.style.display = currentSetup() ? '' : 'none';
-    }
-    if (chip) {
-      chip.addEventListener('click', function () {
-        var d = currentSetup();
-        if (!d) return;
-        var body = new URLSearchParams({
-          symbol: symbol, entry: d.a.p, stop: d.sl, target: d.pt
-        });
-        var was = chip.textContent;
-        chip.textContent = 'Curating\u2026';
-        fetch('/curated/from-chart', {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: body
-        }).then(function (r) { return r.json(); }).then(function (j) {
-          // Say what happened INCLUDING the reason it didn't: a silent no-op here
-          // reads as "the button is broken".
-          chip.textContent = j && j.ok ? '\u2713 Curated' : (j && j.error) || 'Failed';
-          chip.title = j && j.ok
-            ? 'Added to your Curated list on ' + j.curated_on + ' — open Curated to see it'
-            : ((j && j.error) || 'Could not save');
-          setTimeout(function () { chip.textContent = was; }, 2500);
-        }).catch(function () {
-          chip.textContent = 'Failed';
-          setTimeout(function () { chip.textContent = was; }, 2500);
-        });
+    /** POST one setup to the Curated list, reporting the outcome on `btn` itself. */
+    function curateSetup(d, btn) {
+      if (!d) return;
+      var body = new URLSearchParams({
+        symbol: symbol, entry: d.a.p, stop: d.sl, target: d.pt
       });
-      chip.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); });
+      var was = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Curating\u2026';
+      fetch('/curated/from-chart', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body
+      }).then(function (r) { return r.json(); }).then(function (j) {
+        // Say what happened INCLUDING the reason it didn't: a silent no-op here
+        // reads as "the button is broken".
+        btn.textContent = j && j.ok ? '\u2713 Curated' : ((j && j.error) || 'Failed');
+        btn.title = j && j.ok
+          ? 'Added to your Curated list on ' + j.curated_on + ' \u2014 open Curated to see it'
+          : ((j && j.error) || 'Could not save');
+        setTimeout(function () { btn.textContent = was; btn.disabled = false; }, 2500);
+      }).catch(function () {
+        btn.textContent = 'Failed';
+        setTimeout(function () { btn.textContent = was; btn.disabled = false; }, 2500);
+      });
     }
     function schedule() {
       if (raf) return;
@@ -1041,6 +1027,22 @@
         selected = -1;
         save(); redraw();
       });
+      // "Curate setup" — the primary action on a finished setup, so it sits above
+      // Delete and reads as the affirmative one. Only on a trade setup, and only
+      // where the page opted in (Watchlist / Sector & Industry).
+      if (d.type === 'trade' && CAN_CURATE) {
+        var cur8 = document.createElement('button');
+        cur8.type = 'button';
+        cur8.textContent = '⚑ Curate setup';
+        cur8.title = 'Send these levels to your Curated list, dated today';
+        cur8.style.cssText = 'margin-top:9px;width:100%;padding:4px 0;border-radius:4px;cursor:pointer;' +
+          'font:11px ui-sans-serif,system-ui,sans-serif;background:rgba(56,189,248,.12);' +
+          'border:1px solid rgba(56,189,248,.5);color:#38bdf8;';
+        cur8.addEventListener('click', function () {
+          curateSetup(drawings[panelIdx], cur8);
+        });
+        panel.appendChild(cur8);
+      }
       panel.appendChild(del);
 
       el.appendChild(panel);

@@ -129,6 +129,48 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-08 - v4.48: curate from the setup box; Curated becomes a chart page
+
+User: *"the Curate Setup should be in the Trade Setup box not the chart left top. Also
+remove the Curate first curate button. In the curated page i want to have the TV chart
+on screen. when i click of the curated item, it will show up in the chart. By default
+when the curated is open, it will be the default month selected. remove the first pane;
+on the curated, all curation must be either from the Sector and industry chart or the
+Watchlist chart."*
+
+**Curating now has exactly one door, and it is on a chart.**
+
+- **`Curate setup` moved into the trade-setup editor**, above `Delete`. It acts on one
+  setup, so it belongs beside that setup's own numbers — and there it can never be
+  pressed with nothing drawn, which is why the toolbar chip had to hide and show itself.
+  The moderators' `📋 Curate → new study` button next to it was removed outright;
+  `/studies/curate` still exists and is still reachable from `/studies`.
+  `chart_curatable` is gone from every chart template as dead config.
+- **The hand-typed "add a call" form on Curated is gone**, and `POST /curated/add` with
+  it. Typing three numbers with no chart in front of you is how levels that never made
+  sense got onto the list; every call now arrives through `/curated/from-chart`, so it
+  carries a support/resistance level and an ATR-sized stop. Editing an existing call's
+  levels is untouched — that is a correction, not a new call conjured from nothing.
+- **Curated has a chart pane, always on screen.** Clicking any row puts that call on it
+  (`GET /curated/chart?row=<id>`, resolving to the current revision); the revision chips
+  still swap the same pane by `?rev=<id>`. The chart no longer mounts inside an expanded
+  history row, which means only ONE can exist — `_price_chart.html` addresses `#priceChart`
+  by fixed id, so two would have silently fought over it. The row's `hx-trigger` filters
+  out `.cur-actions`, so the TV / history / edit / delete controls still do their own thing.
+- **Opens on the current month** instead of "All", where today's calls land. An absent
+  `month` now means "first open"; `All` says so explicitly with `month=0`.
+
+**Bug found and fixed while testing this:** SQLite ignores `ON DELETE CASCADE` unless
+`PRAGMA foreign_keys=ON`, and nothing set it — so deleting a curated call left its
+revisions behind, and SQLite's rowid reuse then handed those orphans to the next call
+created. A freshly curated BAP was showing three NVDA revisions in its history, and
+clicking one charted NVDA's levels under BAP's name. `app/db.py` now sets the pragma on
+every SQLite connection (Postgres has always enforced it), and migration
+`a8b9c0d1e2f3` purges what the old behaviour left — both true orphans and the ones
+already adopted, which are identifiable because a revision can never predate the call it
+belongs to. Same latent fault covered `user_watchlist`, `chart_drawings` and
+`curated_tickers` on user deletion.
+
 ### 2026-09-08 - v4.47: type your own stop, and get a share count
 
 User: *"in the trade setup i need to be able to manually set the stop loss which will

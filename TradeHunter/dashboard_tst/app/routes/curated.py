@@ -57,11 +57,18 @@ def _list_context(db: Session, user: User, *, year: str = "", month: str = "",
         y = years[0] if years else _dt.date.today().year
     if years and y not in years:
         y = years[0]
-    try:
-        m = int(month)
-        m = m if 1 <= m <= 12 else 0
-    except (TypeError, ValueError):
-        m = 0
+    # No month asked for = first open of the page: land on THIS month, where today's
+    # calls go (user, 2026-09-08: "by default when the curated is open, it will be the
+    # default month selected"). "All" is a deliberate choice, so it says so with
+    # month=0 rather than by omitting the parameter.
+    if month is None or str(month).strip() == "":
+        m = _dt.date.today().month
+    else:
+        try:
+            m = int(month)
+            m = m if 1 <= m <= 12 else 0
+        except (TypeError, ValueError):
+            m = 0
 
     sel = [i for i in items if (i.get("curated_on") or "")[:4] == str(y)]
     if m:
@@ -78,10 +85,20 @@ def _list_context(db: Session, user: User, *, year: str = "", month: str = "",
         for r in mo["rows"]:
             r["size"] = tp.size(r.get("entry"), r.get("stop"), prefs)
 
+    # The chart pane loads one call on arrival rather than sitting empty — the first
+    # row of the newest month on screen. Without it the page opens with a blank
+    # half-screen and no hint that clicking a row is what fills it.
+    first_id = None
+    for mo in months:
+        if mo["rows"]:
+            first_id = mo["rows"][0]["id"]
+            break
+
     return {"user": user, "months": months, "totals": cur.overall(months),
             "msg": msg, "err": err, "today": _dt.date.today().isoformat(),
             "years": years, "sel_year": y, "sel_month": m,
             "counts": cal.get(y) or [0] * 12, "prefs": prefs,
+            "first_id": first_id,
             "month_abbr": cur.MONTH_ABBR, "any_rows": bool(items)}
 
 
@@ -118,13 +135,24 @@ def curated_revisions(request: Request, row_id: int,
 
 
 @router.get("/chart", response_class=HTMLResponse)
-def curated_chart(request: Request, rev: int = 0,
+def curated_chart(request: Request, rev: int = 0, row: int = 0,
                   user: User = Depends(require_user),
                   db: Session = Depends(get_db)):
-    """One revision replayed on a chart — its own entry/stop/target as read-only
+    """One curated call on the page's chart pane — its entry/stop/target as read-only
     price lines. Declared before the /{row_id}/... routes so "chart" is never read
-    as a row id."""
+    as a row id.
+
+    Two ways in, because they answer different questions: `row` shows a call as it
+    stands NOW (clicking it in the table), `rev` shows one specific version of it
+    (clicking a chip in its history). `row` resolves to the current revision, so
+    both paths render the same fragment from the same data.
+    """
     from ..models import MATPLevel
+
+    if row and not rev:
+        rows = cur.revisions_for(db, user, row)
+        cur_rev = next((r for r in rows if r.get("current")), None) or (rows[0] if rows else None)
+        rev = cur_rev["id"] if cur_rev else 0
 
     hit = cur.get_revision(db, user, rev)
     if hit is None:
@@ -199,36 +227,12 @@ def curated_prefs(
     return templates.TemplateResponse(request, "_curated_list.html", ctx)
 
 
-@router.post("/add", response_class=HTMLResponse)
-def curated_add(
-    request: Request,
-    symbol: str = Form(...),
-    curated_on: str = Form(...),
-    entry: str = Form(...),
-    stop: str = Form(...),
-    target: str = Form(...),
-    note: str = Form(""),
-    year: str = Form(""),
-    month: str = Form(""),
-    user: User = Depends(require_user),
-    db: Session = Depends(get_db),
-):
-    """Add one curated call and re-render the list.
-
-    A rejected entry comes back as a message ON the page rather than a 4xx — the
-    form is inside the fragment being swapped, so an error status would leave the
-    member looking at an unchanged page with no explanation.
-    """
-    ok, message = cur.add(db, user, symbol=symbol, curated_on=curated_on,
-                          entry=entry, stop=stop, target=target, note=note)
-    # Land on the tab the new call belongs to, not the one that happened to be open:
-    # adding a January call while looking at March would otherwise do nothing visible.
-    y, m = year, month
-    if ok and len(curated_on or "") >= 7:
-        y, m = curated_on[:4], curated_on[5:7]
-    ctx = _list_context(db, user, year=y, month=m,
-                        msg=message if ok else "", err="" if ok else message)
-    return templates.TemplateResponse(request, "_curated_list.html", ctx)
+# There is no POST /curated/add: the hand-typed form it served was removed on
+# 2026-09-08 (user: "all curation must be either from the Sector and industry
+# chart or the Watchlist chart"). Calls arrive through /curated/from-chart, so
+# every one of them carries the levels of a setup drawn on a real chart. Editing
+# an existing call's levels is still allowed below — that is a correction to a
+# call already made, not a new one conjured from three typed numbers.
 
 
 @router.post("/{row_id}/edit", response_class=HTMLResponse)

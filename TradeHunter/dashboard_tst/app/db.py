@@ -5,7 +5,7 @@ Postgres in production -- no code change, just the env var.
 """
 from __future__ import annotations
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from .config import settings
@@ -13,6 +13,27 @@ from .config import settings
 _connect_args = {"check_same_thread": False} if settings.is_sqlite else {}
 
 engine = create_engine(settings.database_url, connect_args=_connect_args, future=True)
+
+if settings.is_sqlite:
+    @event.listens_for(engine, "connect")
+    def _sqlite_enforce_foreign_keys(dbapi_conn, _record):  # noqa: ANN001
+        """Make SQLite honour ON DELETE CASCADE, which it ignores by default.
+
+        Every child table here declares ``ondelete="CASCADE"`` and the ORM
+        relationships assume it. SQLite's ``foreign_keys`` pragma is OFF per
+        connection unless asked, so on SQLite those clauses did nothing: deleting
+        a curated call left its revisions behind, deleting a user left their
+        watchlist and drawings behind.
+
+        That is not merely untidy. SQLite reuses the lowest free rowid, so a NEW
+        row can be handed a deleted row's id and inherit its orphans — a freshly
+        curated BAP showing three NVDA revisions in its history, seen locally on
+        2026-09-08. Postgres enforces the same clauses natively and needs nothing.
+        """
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA foreign_keys=ON")
+        cur.close()
+
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 Base = declarative_base()
 

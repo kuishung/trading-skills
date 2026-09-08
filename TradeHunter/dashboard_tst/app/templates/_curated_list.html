@@ -25,53 +25,12 @@
 {%- else -%}<span class="tabular-nums {{ 'text-emerald-400' if v >= 0 else 'text-rose-400' }}">{{ ('%+.' ~ dp ~ 'f')|format(v) }}{{ suffix }}</span>{%- endif -%}
 {% endmacro %}
 
-{# ── add a call ─────────────────────────────────────────────────────────── #}
-<form class="rounded-lg border border-slate-800 bg-slate-900/40 p-3 mb-3"
-      hx-post="/curated/add" hx-target="closest .curated-panel" hx-swap="outerHTML">
-  <input type="hidden" name="year" value="{{ sel_year }}">
-  <input type="hidden" name="month" value="{{ sel_month }}">
-  <div class="flex flex-wrap items-end gap-2">
-    <label class="flex flex-col gap-1">
-      <span class="text-[10px] uppercase tracking-wide text-slate-500">Ticker</span>
-      <input name="symbol" required maxlength="6" pattern="[A-Za-z.\-]{1,6}" autocomplete="off"
-             placeholder="NVDA" title="US ticker symbol"
-             class="w-24 rounded bg-slate-950/60 border border-slate-700 px-2 py-1 text-xs uppercase focus:border-emerald-500 outline-none">
-    </label>
-    <label class="flex flex-col gap-1">
-      <span class="text-[10px] uppercase tracking-wide text-slate-500">Curated on</span>
-      <input type="date" name="curated_on" required value="{{ today }}"
-             title="The date you made this call — it anchors every trigger test and cannot be changed later"
-             class="w-36 rounded bg-slate-950/60 border border-slate-700 px-2 py-1 text-xs focus:border-emerald-500 outline-none">
-    </label>
-    <label class="flex flex-col gap-1">
-      <span class="text-[10px] uppercase tracking-wide text-slate-500">Entry</span>
-      <input name="entry" required inputmode="decimal" step="any" type="number" placeholder="100.00"
-             class="w-24 rounded bg-slate-950/60 border border-slate-700 px-2 py-1 text-xs tabular-nums focus:border-emerald-500 outline-none">
-    </label>
-    <label class="flex flex-col gap-1">
-      <span class="text-[10px] uppercase tracking-wide text-slate-500">Stop</span>
-      <input name="stop" required inputmode="decimal" step="any" type="number" placeholder="95.00"
-             title="Below the entry for a long, above it for a short — this is what sets the direction"
-             class="w-24 rounded bg-slate-950/60 border border-slate-700 px-2 py-1 text-xs tabular-nums focus:border-emerald-500 outline-none">
-    </label>
-    <label class="flex flex-col gap-1">
-      <span class="text-[10px] uppercase tracking-wide text-slate-500">Target</span>
-      <input name="target" required inputmode="decimal" step="any" type="number" placeholder="110.00"
-             class="w-24 rounded bg-slate-950/60 border border-slate-700 px-2 py-1 text-xs tabular-nums focus:border-emerald-500 outline-none">
-    </label>
-    <label class="flex flex-col gap-1 flex-1 min-w-[10rem]">
-      <span class="text-[10px] uppercase tracking-wide text-slate-500">Note <span class="text-slate-600">(optional)</span></span>
-      <input name="note" maxlength="300" placeholder="why this one"
-             class="w-full rounded bg-slate-950/60 border border-slate-700 px-2 py-1 text-xs focus:border-emerald-500 outline-none">
-    </label>
-    <button type="submit"
-            class="shrink-0 rounded border border-slate-700 px-3 py-1 text-xs text-slate-200 hover:border-emerald-500 hover:text-emerald-300 transition">
-      Curate
-    </button>
-  </div>
-  {% if err %}<p class="text-[11px] text-rose-400 mt-2">{{ err }}</p>{% endif %}
-  {% if msg %}<p class="text-[11px] text-emerald-400 mt-2">{{ msg }}</p>{% endif %}
-</form>
+{# The hand-typed "add a call" form was REMOVED on 2026-09-08 (user: "remove the
+   first pane; on the curated, all curation must be either from the Sector and
+   industry chart or the Watchlist chart"). Typing three numbers with no chart in
+   front of you is how levels that never made sense got onto this list; every call
+   now starts as a trade setup drawn on a chart, which is also what gives it a
+   support/resistance level and an ATR-sized stop. #}
 
 {# ── position sizing ────────────────────────────────────────────────────── #}
 {# The SAME two preferences the chart's trade-setup editor edits (they round-trip
@@ -109,7 +68,30 @@
       Set an account value and every call below gets a share count.
     {% endif %}
   </p>
+  {% if err %}<p class="w-full text-[11px] text-rose-400">{{ err }}</p>{% endif %}
+  {% if msg %}<p class="w-full text-[11px] text-emerald-400">{{ msg }}</p>{% endif %}
 </form>
+
+{# ── the chart ──────────────────────────────────────────────────────────── #}
+{# Always on screen (user, 2026-09-08: "in the curated page i want to have the TV
+   chart on screen. when i click of the curated item, it will show up in the
+   chart"). It used to appear only inside an expanded revision row, which meant
+   reading the table and seeing the trade were two different modes.
+
+   ONE chart may exist in the DOM at a time — _price_chart.html addresses
+   #priceChart and friends by fixed id, so a second one would silently steal the
+   scripts of the first. This pane is that one, and the revision chips swap into
+   it rather than mounting their own. It loads the newest call on screen so the
+   page never opens on an empty half-screen. #}
+<div id="curatedChartBody"
+     class="h-[52vh] min-h-[340px] flex flex-col rounded-lg border border-slate-800 bg-slate-900/40 overflow-hidden mb-3"
+     {% if first_id %}hx-get="/curated/chart?row={{ first_id }}" hx-trigger="load" hx-swap="innerHTML"{% endif %}>
+  <div class="flex-1 flex items-center justify-center text-xs text-slate-500 px-6 text-center">
+    {% if first_id %}Loading chart&hellip;{% else %}<span>Nothing to chart in this month &mdash; pick another
+      month below, or curate a setup from the <a href="/matp" class="text-sky-300 hover:underline">Watchlist</a>
+      or <a href="/sector" class="text-sky-300 hover:underline">Sector &amp; Industry</a> chart.</span>{% endif %}
+  </div>
+</div>
 
 {% if any_rows %}
 {# ── year + Jan-Dec tabs ────────────────────────────────────────────────── #}
@@ -126,8 +108,10 @@
   <span class="text-[11px] text-slate-500 mr-1 tabular-nums">{{ sel_year }}</span>
   {% endif %}
 
+  {# month=0 explicitly: an ABSENT month now means "first open, land on this month",
+     so "All" has to say it is all rather than say nothing. #}
   <button type="button"
-          hx-get="/curated/list?year={{ sel_year }}" hx-target="closest .curated-panel" hx-swap="outerHTML"
+          hx-get="/curated/list?year={{ sel_year }}&month=0" hx-target="closest .curated-panel" hx-swap="outerHTML"
           class="text-[11px] px-2 py-1 rounded border transition
                  {% if not sel_month %}border-emerald-500/60 bg-emerald-500/15 text-emerald-300
                  {% else %}border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-600{% endif %}"
@@ -207,7 +191,15 @@
       </thead>
       <tbody>
         {% for r in m.rows %}{% set e = r.eval %}{% set b = BADGE.get(e.status) %}
-        <tr class="border-b border-slate-800/60 hover:bg-slate-800/30">
+        {# Click the row to put this call on the chart above. The trigger filter
+           excludes the actions cell, so the TV / history / edit / delete controls
+           in it still do their own thing instead of also reloading the chart —
+           `.cur-actions` is the one place a click means something else. #}
+        <tr class="border-b border-slate-800/60 hover:bg-slate-800/30 cursor-pointer"
+            hx-get="/curated/chart?row={{ r.id }}"
+            hx-trigger="click[!event.target.closest('.cur-actions')]"
+            hx-target="#curatedChartBody" hx-swap="innerHTML"
+            title="Show {{ r.symbol }} on the chart above">
           <td class="px-3 py-1.5">
             <span class="text-slate-200 font-medium">{{ r.symbol }}</span>
             {% if e.direction == "short" %}<span class="ml-1 text-[10px] text-amber-400/80" title="Short — your stop is above the entry">S</span>{% endif %}
@@ -243,7 +235,7 @@
           <td class="px-2 py-1.5 text-right text-slate-300">{{ num(e.exit if e.exit is not none else e.last) }}</td>
           <td class="px-2 py-1.5 text-right">{{ signed(e.pct, 1, "%") }}</td>
           <td class="px-2 py-1.5 text-right">{{ signed(e.r_multiple, 2, "R") }}</td>
-          <td class="px-2 py-1.5 text-right whitespace-nowrap">
+          <td class="cur-actions px-2 py-1.5 text-right whitespace-nowrap">
             {# Push this call straight to the user's OWN TradingView — symbol plus the
                three levels as Entry / SL / PT lines. Shares the .tv-plot handler in
                base.html; no exchange is stored for a curated row, and the bridge lets
@@ -306,10 +298,13 @@
   </p>
   {% else %}
   <p class="text-sm text-slate-400 leading-relaxed max-w-2xl">
-    Nothing curated yet. Add the first one above &mdash; a ticker, the date you are
-    calling it, and the three levels you would actually trade. Or draw a trade setup
-    on the Watchlist or Sector chart and press <span class="text-sky-300">Curate setup</span>,
-    which sends those exact levels here.
+    Nothing curated yet. Calls start on a chart: open the
+    <a href="/matp" class="text-sky-300 hover:underline">Watchlist</a> or
+    <a href="/sector" class="text-sky-300 hover:underline">Sector &amp; Industry</a> chart,
+    draw a trade setup on the level you are watching with the
+    <span class="text-slate-300">&#9873;</span> tool, then press
+    <span class="text-sky-300">Curate setup</span> in the setup box. The levels you
+    drew arrive here, dated today.
   </p>
   {% endif %}
 </div>

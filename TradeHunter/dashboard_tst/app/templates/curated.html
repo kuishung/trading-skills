@@ -11,11 +11,13 @@
     <span class="text-[11px] text-slate-500">your own list &middot; nobody else sees it</span>
   </div>
   <p class="text-sm text-slate-400 mb-4 leading-relaxed max-w-3xl">
-    Record a ticker the day you call it, with the entry, stop and target you would
-    trade &mdash; here, or by drawing a trade setup on the Watchlist or Sector chart
-    and pressing <span class="text-sky-300">Curate setup</span>. Every time you open
-    this page the levels are checked against the price history since that date, so
-    you can see which calls actually triggered and what they made.
+    Every call here started as a trade setup drawn on the
+    <a href="/matp" class="text-sky-300 hover:underline">Watchlist</a> or
+    <a href="/sector" class="text-sky-300 hover:underline">Sector &amp; Industry</a>
+    chart and sent over with <span class="text-sky-300">Curate setup</span>. Each time
+    you open this page the levels are re-checked against the price history since the
+    day you called it, so you can see which ones actually triggered and what they made.
+    Click a row to put it on the chart.
   </p>
 
   <div hx-get="/curated/list" hx-trigger="load" hx-swap="innerHTML">
@@ -32,11 +34,10 @@
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 
 <script>
-  // Only ONE revision panel may be open at a time. _price_chart.html addresses its
-  // elements by fixed id (#priceChart, #chartName, ...), so a second chart left
-  // mounted in another expanded row would be the one a later script found — the
-  // visible chart would then silently stop updating. Same rule the Sector page's
-  // tabs follow.
+  // Only ONE revision-history panel may be open at a time — two rows' worth of
+  // version chips on screen makes it ambiguous which set the chart above is
+  // showing. (The charts themselves no longer live in here: since 2026-09-08 the
+  // page has a single chart pane and the chips swap into it.)
   document.body.addEventListener('htmx:beforeRequest', function (evt) {
     var t = evt.detail && evt.detail.target;
     if (!t || !t.classList || !t.classList.contains('cur-hist-body')) return;

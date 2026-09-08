@@ -1,8 +1,9 @@
 {# Edit history of one curated call, newest first. Context: row, revisions.
 
-   Clicking a revision loads that version's levels onto the chart below. The rows
-   are buttons rather than links because the chart is swapped in place — the reader
-   is comparing versions of the same idea, not navigating away from it. #}
+   Clicking a revision loads that version's levels onto the page's chart pane
+   (#curatedChartBody, above the table). The rows are buttons rather than links
+   because the chart is swapped in place — the reader is comparing versions of the
+   same idea, not navigating away from it. #}
 <div class="rounded-lg border border-slate-800 bg-slate-950/40 p-2">
   <div class="flex items-baseline justify-between gap-2 mb-1.5 px-1">
     <span class="text-[11px] uppercase tracking-wide text-slate-500">
@@ -39,12 +40,8 @@
   </p>
   {% endif %}
 
-  {# The chart lives inside the expanded row. Only ONE chart may exist in the DOM at
-     a time (_price_chart.html addresses #priceChart by fixed id), so opening another
-     row's history closes this one — see the handler in curated.html. #}
-  <div id="curatedChartBody" class="h-[420px] flex flex-col"
-       hx-get="/curated/chart?rev={{ revisions[0].id if revisions else 0 }}"
-       hx-trigger="load" hx-swap="innerHTML">
-    <div class="flex-1 flex items-center justify-center text-xs text-slate-500">Loading chart&hellip;</div>
-  </div>
+  {# No chart here: the page has ONE chart pane (#curatedChartBody, in
+     _curated_list.html) and these chips swap into it. It used to mount its own,
+     which meant two charts could exist at once — and _price_chart.html addresses
+     #priceChart by fixed id, so the second silently stole the first one's scripts. #}
 </div>
