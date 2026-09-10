@@ -115,23 +115,70 @@
       {# "open TradingView chart" link removed — clicking the ticker name in the TradingView header widget opens it anyway #}
     </div>
   </div>
-  {# analyst band (connected, same panel) #}
-  {% if chart_band %}
-  <div class="p-3 {% if chart_fill %}shrink-0{% endif %}">
-    <div class="flex items-center justify-between gap-2 mb-2">
-      <div class="flex flex-wrap items-center gap-1">
-        {% for pat in chart_patterns or [] %}
-        <span class="text-[11px] px-1.5 py-0.5 rounded {% if pat.good %}bg-emerald-500/15 text-emerald-300{% else %}bg-slate-700/50 text-slate-300{% endif %}">{{ pat.name }}{% if pat.value %}: {{ pat.value }}{% endif %}</span>
-        {% endfor %}
-      </div>
-      <button type="button" hx-get="/matp/{{ chart_symbol }}/targets" hx-target="#atModalBody" hx-swap="innerHTML"
-              onclick="atOpen()" class="shrink-0 text-xs px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Analyst targets &rarr;</button>
+  {# ── pattern chips + analyst-targets button ────────────────────────────────
+     No longer nested inside the `chart_band` test. It used to be, which meant a
+     page that turns the band off (Curated, since v4.56) silently lost its
+     trend/pattern chips too — they have nothing to do with analyst coverage. #}
+  {% if chart_patterns or chart_band %}
+  <div class="px-3 pt-2 {% if chart_fill %}shrink-0{% endif %} flex items-center justify-between gap-2">
+    <div class="flex flex-wrap items-center gap-1">
+      {% for pat in chart_patterns or [] %}
+      <span class="text-[11px] px-1.5 py-0.5 rounded {% if pat.good %}bg-emerald-500/15 text-emerald-300{% else %}bg-slate-700/50 text-slate-300{% endif %}">{{ pat.name }}{% if pat.value %}: {{ pat.value }}{% endif %}</span>
+      {% endfor %}
     </div>
-    {% set band = chart_band %}{% include "_band.html" %}
+    {% if chart_band %}
+    <button type="button" hx-get="/matp/{{ chart_symbol }}/targets" hx-target="#atModalBody" hx-swap="innerHTML"
+            onclick="atOpen()" class="shrink-0 text-xs px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Analyst targets &rarr;</button>
+    {% endif %}
   </div>
+  {% endif %}
+
+  {# ── analyst band, COLLAPSED by default ────────────────────────────────────
+     User, 2026-09-10: "I need MATP and MBP progress bar to be collapsed so that
+     I have more space for the chart." The bar plus its caption cost ~90px of a
+     pane the candles are competing for, and it is reference material — you look
+     at it when you are weighing a target, not every time you open a chart.
+
+     Collapsed, not deleted: the numbers that matter (MBP / MATP / how many
+     targets) stay on the summary line, so the closed state still tells you where
+     consensus sits and the bar is one click away. The open/closed choice is
+     remembered per browser — someone who wants it open keeps it open. #}
+  {% if chart_band %}
+  {% set band = chart_band %}
+  <details id="bandBox" class="px-3 pb-2 {% if chart_fill %}shrink-0{% endif %}">
+    <summary class="cursor-pointer list-none flex items-center gap-2 py-1 text-[11px] text-slate-500 hover:text-slate-300 transition">
+      <span id="bandCaret" class="inline-block transition-transform">&#9656;</span>
+      <span>Analyst range</span>
+      {% if band.mbp is not none %}<span class="text-green-500 tabular-nums">MBP {{ "%.2f"|format(band.mbp) }}</span>{% endif %}
+      {% if band.matp is not none %}<span class="text-orange-400 tabular-nums">MATP {{ "%.2f"|format(band.matp) }}</span>{% endif %}
+      {% if band.n %}<span class="text-slate-600">{{ band.n }} target{{ 's' if band.n != 1 }}</span>{% endif %}
+    </summary>
+    <div class="pt-2">{% include "_band.html" %}</div>
+  </details>
   {% endif %}
 </div>
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<script>
+// ── analyst band: remember open/closed, and let the chart reclaim the space ──
+// The band sits in the same flex column as the candles, so closing it hands its
+// height straight back to the chart — but lightweight-charts only re-measures on
+// a resize event, so without dispatching one the candles keep their old height
+// and leave a gap. Runs per chart render (the fragment is HTMX-swapped), and is
+// defensive about localStorage, which throws in some privacy modes.
+(function () {
+  var box = document.getElementById('bandBox');
+  if (!box) return;
+  var KEY = 'chart_band_open';
+  var caret = document.getElementById('bandCaret');
+  try { box.open = localStorage.getItem(KEY) === '1'; } catch (e) { box.open = false; }
+  if (caret) caret.style.transform = box.open ? 'rotate(90deg)' : '';
+  box.addEventListener('toggle', function () {
+    try { localStorage.setItem(KEY, box.open ? '1' : '0'); } catch (e) {}
+    if (caret) caret.style.transform = box.open ? 'rotate(90deg)' : '';
+    try { window.dispatchEvent(new Event('resize')); } catch (e) {}
+  });
+})();
+</script>
 <script>
 (function () {
   var el = document.getElementById('priceChart');

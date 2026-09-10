@@ -129,6 +129,34 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-10 - v4.57: the analyst band collapses, and the chips stop depending on it
+
+User: *"I need MATP and MBP progress bar to be collapsed so that I have more space for
+the chart."*
+
+- **The band is now a `<details>`, closed by default**, on every chart that has one
+  (Watchlist, Sector, Company). Closing it hands **101px** straight back to the
+  candles — measured at 1280x800 on the Sector chart: **300px open, 401px closed**.
+- **Collapsed, not removed.** The summary line keeps what you actually glance at —
+  `Analyst range · MBP 591.30 · MATP 680.00 · 6 targets` — so the closed state still
+  says where consensus sits, and the shaded bar with its per-analyst lines is one
+  click away. The open/closed choice is remembered per browser, so anyone who wants
+  it open keeps it open.
+- **Toggling dispatches a `resize`.** The band shares a flex column with the chart,
+  so its height goes back to the candles — but lightweight-charts only re-measures on
+  a resize event, and without one the chart kept its old height and left a gap.
+- **Fixes a regression from v4.56:** the pattern/trend chips and the *Analyst targets*
+  button were nested inside the `chart_band` test, so turning the band off on Curated
+  silently took the chips with it. They have nothing to do with analyst coverage. The
+  chips now render whenever there are patterns, on every page; the *Analyst targets*
+  button stays tied to the band, since that is what it opens.
+
+Verified at 1280x800 on the Sector chart: closed by default at 33px with the numbers
+on the summary and the shaded bar hidden; opening restores the bar and drops the
+candles to 300px; closing returns them to 401px, and the choice round-trips through
+localStorage both ways. Curated re-checked: chips present again, band and targets
+button correctly absent, chart still 406px.
+
 ### 2026-09-10 - v4.56: Curated loses its chrome, and its levels stop moving by accident
 
 Three asks on the Curated page, all in the same direction — the page is for reading a
