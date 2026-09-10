@@ -19,7 +19,13 @@
 {% set chart_mbp = sel.mbp if sel else None %}
 {% set chart_as_of = sel.as_of if sel else None %}
 {% set chart_earnings = sel.last_earnings_date if sel else None %}
-{% set chart_band = sel_band %}
+{# No analyst band on this page (user, 2026-09-10: "remove MATP and MBP bar below
+   the chart in the Curated chart"). The band answers "where does the street think
+   this goes?", which is a question for the Watchlist and Company pages. Here the
+   levels on screen are the ones YOU committed to, and a second shaded range under
+   them competed with the setup's own shading for the same glance. The MATP/MBP
+   reference lines on the chart itself are unaffected. #}
+{% set chart_band = none %}
 {% set chart_patterns = sel_patterns %}
 {% set chart_fill = true %}
 {# Floor under the candles. This pane has a FIXED height and carries more furniture
@@ -33,6 +39,13 @@
 {% set chart_curated_row = row_id %}
 {% set chart_curated_on = row.curated_on %}
 {% set chart_setup_seed = {'entry': rev.entry, 'stop': rev.stop, 'target': rev.target} %}
+{# The setup is EDITABLE but not DRAGGABLE here (user, 2026-09-10: "the shaded line
+   should be fixed and not movable by mouse, only changing the value in the box will
+   move the shaded levels"). These levels are a recorded call: nudging one by a pixel
+   is easy to do by accident while panning, and impossible to do precisely. Typing
+   the number is the deliberate act, and it is still one click away — double-click
+   the setup to open the editor. See SETUP_LOCKED in _price_chart.html. #}
+{% set chart_setup_locked = true %}
 
 <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1 shrink-0">
   <span class="text-xs text-slate-300">

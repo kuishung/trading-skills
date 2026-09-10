@@ -129,6 +129,40 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-10 - v4.56: Curated loses its chrome, and its levels stop moving by accident
+
+Three asks on the Curated page, all in the same direction — the page is for reading a
+call, so anything that isn't the call gets out of the way.
+
+- **Heading and description removed** (*"remove the curated heading and
+  description"*). The nav already says which page this is, and the paragraph was
+  written for a first visit; on every visit after that it only pushed the chart down
+  the page. Where a call comes from is still explained in the empty state, which is
+  the one place it's actually needed.
+- **The analyst band is gone from this chart** (*"remove MATP and MBP bar below the
+  chart in the Curated chart"*) — `chart_band = none` in `_curated_chart.html`. That
+  strip answers "where does the street think this goes?", a Watchlist/Company
+  question; here it competed with the setup's own shading for the same glance. The
+  MATP/MBP reference lines drawn on the chart itself are untouched, as is the band on
+  every other page.
+- **The setup is editable but no longer draggable** (*"the shaded line should be fixed
+  and not movable by mouse, only changing the value in the box will move the shaded
+  levels"*). New `chart_setup_locked`, set only by the Curated chart. `beginGrab()`
+  refuses a grab on a `trade` drawing when it's on — body and handles alike — and
+  returns false so the gesture falls through to the chart and the pane still pans.
+  These levels are a recorded call: nudging one by a pixel while panning is easy to do
+  by accident and impossible to do precisely, so typing the number is now the only way
+  to move it. Double-click still opens the editor, and saving a revision is unchanged.
+- **The lock removes the affordance too, not just the action.** The hover cursor no
+  longer turns to `move`/`grab` over a locked setup — offering a grab cursor and then
+  refusing the drag reads as a broken chart rather than a deliberate lock.
+
+Verified in a browser at 1280x800: no `<h1>`, no description text, no "Shaded =
+analyst low-high" strip, chart still 406px with live candles, and `SETUP_LOCKED` true.
+Sweeping 441 hover points across the whole chart, the cursor never once offered
+`move` or `grab` — the setup advertises no drag anywhere. Other pages are unaffected
+by construction: the flag is false there, so both new branches are inert.
+
 ### 2026-09-10 - v4.55: the Curated chart gets its height back
 
 User: *"in the curated page, I need the chart to be expanded. in a smaller screen, it

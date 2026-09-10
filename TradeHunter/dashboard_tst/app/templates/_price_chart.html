@@ -166,6 +166,9 @@
   var CURATED_ROW = {{ (chart_curated_row if (chart_curated_row is defined and chart_curated_row) else None)|tojson }};
   var CURATED_ON = {{ (chart_curated_on if (chart_curated_on is defined and chart_curated_on) else None)|tojson }};
   var SETUP_SEED = {{ (chart_setup_seed if (chart_setup_seed is defined and chart_setup_seed) else None)|tojson }};
+  // Mouse-drag of the trade setup disabled (Curated). The editor's number boxes
+  // remain the way to move a level; see beginGrab().
+  var SETUP_LOCKED = {{ (true if (chart_setup_locked is defined and chart_setup_locked) else false)|tojson }};
   var curatedCall = null;
   var curatedShown = false;            // are the curated lines currently painted?
   var curatedLevels = [];              // prices the autoscale must keep in view
@@ -1363,6 +1366,16 @@
     function beginGrab(g, x, y) {
       var d = drawings[g.idx];
       if (!d) return false;
+      // A LOCKED trade setup (the Curated chart) is selectable but not draggable:
+      // the levels there are a recorded call, and nudging one with the mouse is
+      // both easy to do by accident and impossible to do precisely. Changing a
+      // number in the editor is the only way to move it — see chart_setup_locked.
+      // Returning false leaves the gesture to the chart, so the pane still pans.
+      if (SETUP_LOCKED && d.type === 'trade') {
+        selected = g.idx;
+        schedule();
+        return false;
+      }
       var l = ts.coordinateToLogical(x), pr = series.coordinateToPrice(y);
       if (l == null || pr == null) return false;
       grab = {
@@ -1462,7 +1475,10 @@
       var idx = h ? h.idx : -1, part = h ? h.part : null;
       if (idx !== hoverIdx || part !== hoverPart) {
         hoverIdx = idx; hoverPart = part;
-        el.style.cursor = !h ? '' : (part === 'body' ? 'move' : 'grab');
+        // A locked setup must not advertise a grab/move cursor it will refuse to
+        // honour — that reads as a broken drag rather than a deliberate lock.
+        var locked = h && SETUP_LOCKED && drawings[h.idx] && drawings[h.idx].type === 'trade';
+        el.style.cursor = (!h || locked) ? '' : (part === 'body' ? 'move' : 'grab');
         schedule();
       }
     }

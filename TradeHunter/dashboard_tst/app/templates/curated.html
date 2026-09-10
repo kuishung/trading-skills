@@ -5,21 +5,13 @@
 {# The list is loaded lazily: rendering it fetches daily bars for every distinct
    symbol to work out what triggered. Those fetches are parallel and cached, but the
    page shell should never wait on Yahoo. #}
+{# The <h1> and the explanatory paragraph were REMOVED on 2026-09-10 (user: "remove
+   the curated heading and description"). The nav already says which page this is,
+   and the prose was written for a first visit — on every visit after that it was
+   just pushing the chart below the fold, which is the opposite of what this page is
+   for. Where a call comes from is still explained in the empty state, which is the
+   only place someone actually needs telling. #}
 <div class="max-w-[1400px]">
-  <div class="flex items-baseline justify-between gap-3 mb-1">
-    <h1 class="text-2xl font-semibold">Curated</h1>
-    <span class="text-[11px] text-slate-500">your own list &middot; nobody else sees it</span>
-  </div>
-  <p class="text-sm text-slate-400 mb-4 leading-relaxed max-w-3xl">
-    Every call here started as a trade setup drawn on the
-    <a href="/matp" class="text-sky-300 hover:underline">Watchlist</a> or
-    <a href="/sector" class="text-sky-300 hover:underline">Sector &amp; Industry</a>
-    chart and sent over with <span class="text-sky-300">Curate setup</span>. Each time
-    you open this page the levels are re-checked against the price history since the
-    day you called it, so you can see which ones actually triggered and what they made.
-    Click a row to put it on the chart.
-  </p>
-
   <div hx-get="/curated/list" hx-trigger="load" hx-swap="innerHTML">
     <div class="text-xs text-slate-500 py-8 text-center">Loading your curated list&hellip;</div>
   </div>
