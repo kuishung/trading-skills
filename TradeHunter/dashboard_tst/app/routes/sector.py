@@ -93,6 +93,50 @@ def sector_returns_panel(
     return templates.TemplateResponse(request, "_sector_returns.html", ctx)
 
 
+@router.get("/etf-structure", response_class=HTMLResponse)
+def sector_etf_structure(request: Request, user: User = Depends(require_user)):
+    """Swing-structure monitor for every ETF on the Sector ETFs tab.
+
+    User's rule (2026-09-10): *Higher High, Higher Low = Bullish Trend. Lower High
+    or Lower Low = Momentum Decreased.* Implemented once in
+    `services/structure.py` and read here for all thirteen symbols at once, so the
+    tab answers "which sectors are still making higher lows?" at a glance instead
+    of one chart at a time.
+
+    Grouped by verdict rather than listed in sector order: the useful question is
+    which names sit on each side of the line, and reading that off a mixed list
+    means checking thirteen colours one by one.
+    """
+    from ..services.etf import ETF_UNIVERSE, INDEX_ETFS, panel_symbol_order
+    from ..services.structure import structure_for_many
+
+    names = dict(ETF_UNIVERSE) | dict(INDEX_ETFS)
+    syms = panel_symbol_order("weekly") + [s for s, _ in INDEX_ETFS]
+    res = structure_for_many(syms)
+
+    buckets: dict[str, list] = {"bullish": [], "decelerated": [], "unclear": []}
+    for s in syms:
+        st = res.get(s) or {}
+        buckets.setdefault(st.get("state", "unclear"), []).append({
+            "symbol": s, "name": names.get(s, s),
+            "verdict": st.get("verdict", "Unclear"), "reason": st.get("reason", ""),
+            "high": st.get("high"), "low": st.get("low"),
+        })
+    groups = [
+        {"state": "bullish", "label": "bullish", "rows": buckets["bullish"]},
+        {"state": "decelerated", "label": "decelerated", "rows": buckets["decelerated"]},
+        {"state": "unclear", "label": "unclear", "rows": buckets["unclear"]},
+    ]
+    return templates.TemplateResponse(
+        request, "_sector_structure.html",
+        # 5 min: the underlying structure moves on DAILY bars, so this is about
+        # picking up an intraday break of the last swing soon after it happens,
+        # not about churning. Every symbol is served from the 15-min price cache
+        # in between, so a poll is nearly free.
+        {"user": user, "groups": groups, "poll_in": 300},
+    )
+
+
 @router.get("/rrg", response_class=HTMLResponse)
 def sector_rrg(request: Request, user: User = Depends(require_user)):
     """Interactive RRG fragment: full weekly RS-Ratio/RS-Momentum series per sector,

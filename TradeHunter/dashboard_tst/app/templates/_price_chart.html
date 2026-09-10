@@ -18,6 +18,11 @@
     <span id="chartName" class="text-sm text-slate-500 truncate min-w-0"></span>
     <span id="chartPrice" class="ml-auto tabular-nums font-semibold text-slate-100 shrink-0"></span>
     <span id="chartChg" class="tabular-nums text-sm shrink-0"></span>
+    {# Swing-structure monitor (HH/HL vs LH/LL). Filled by the chart script from
+       /prices `structure` — every chart on the platform therefore monitors it,
+       not just the Sector ETFs tab. Hidden until there is a verdict, so a symbol
+       with too little history shows nothing rather than an empty chip. #}
+    <span id="chartStruct" class="hidden shrink-0 text-[11px] px-1.5 py-0.5 rounded border" title=""></span>
     {% if chart_status_slot is defined and chart_status_slot %}
     {# Studies: the study's status strip docks here — JS moves #statusPanel in (lg only) #}
     <div id="chartStatusSlot" class="shrink-0 max-w-[40%] overflow-hidden hidden lg:flex items-center pl-2"></div>
@@ -1779,6 +1784,49 @@
           });
         }
       })();
+      // ---- swing-structure monitor: HH/HL vs LH/LL ------------------------
+      // The verdict is computed server-side (services/structure.py) from THESE
+      // bars, so the chip and the candles can never disagree. Here we only paint
+      // it: a chip in the header, and a marker on each of the four swings the
+      // verdict was read from — a label saying "lower high" is an assertion
+      // until you can see WHICH high it means.
+      (function () {
+        var st = d && d.structure;
+        var chip = document.getElementById('chartStruct');
+        if (!st || !st.verdict || st.state === 'unclear') return;
+        if (chip) {
+          var skin = st.state === 'bullish'
+            ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+            : 'bg-amber-500/15 text-amber-300 border-amber-500/40';
+          chip.className = 'shrink-0 text-[11px] px-1.5 py-0.5 rounded border ' + skin;
+          chip.textContent = st.verdict;
+          var hi = st.high, lo = st.low;
+          chip.title = st.reason
+            + (hi ? '\nswing highs: ' + hi.prev + ' → ' + hi.last : '')
+            + (lo ? '\nswing lows:  ' + lo.prev + ' → ' + lo.last : '')
+            + '\nConfirmed swings only: the newest pivot needs 5 later bars, so it'
+            + ' lags a few days rather than repainting.';
+        }
+        try {
+          var mk = (st.pivots || []).filter(function (p) { return p.time; }).map(function (p) {
+            var isHigh = p.kind.indexOf('high') >= 0 || p.kind === 'HH' || p.kind === 'LH';
+            var recent = p.kind === 'HH' || p.kind === 'LH' || p.kind === 'HL' || p.kind === 'LL';
+            return {
+              time: p.time,
+              position: isHigh ? 'aboveBar' : 'belowBar',
+              shape: isHigh ? 'arrowDown' : 'arrowUp',
+              // the two DECIDING swings are coloured by verdict; the two prior
+              // ones stay grey — they are the reference, not the signal
+              color: !recent ? '#64748b'
+                    : (st.state === 'bullish' ? '#22c55e' : '#f59e0b'),
+              text: p.kind
+            };
+          });
+          mk.sort(function (a, b) { return a.time < b.time ? -1 : (a.time > b.time ? 1 : 0); });
+          if (mk.length) s.setMarkers(mk);
+        } catch (e) { /* markers are decoration; never break the chart */ }
+      })();
+
       if (matp != null) s.createPriceLine({ price: matp, color: '#f97316', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'MATP' });
       if (mbp != null) s.createPriceLine({ price: mbp, color: '#16a34a', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'MBP' });
       // curator's horizontal support / resistance (solid; only on a study chart)

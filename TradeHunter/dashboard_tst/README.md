@@ -129,6 +129,57 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-10 - v4.54: the chart monitors swing structure (HH/HL vs LH/LL)
+
+User: *"in the sector ETFs I need the system to be able to detect the chart formation.
+I need the chart to always monitor — Higher High, Higher Low = Bullish Trend / Lower High
+or Lower Low = Momentum Deceased."*
+
+- **`services/structure.py`** — the rule, implemented once. `classify(bars)` finds
+  confirmed daily swings via the existing `resources.patterns.find_pivots`
+  (`left=right=5`, the daily setting its own docstring recommends), compares the last
+  two swing highs and the last two swing lows, and returns the verdict plus the four
+  pivots it was read from.
+- **The two halves of the rule are not symmetric, and the code follows that.** Bullish
+  is an AND (higher high *and* higher low); deceleration is an OR (*either* a lower high
+  *or* a lower low). So a leg that prints a higher high but a lower low is NOT bullish —
+  the lower low alone decides it. The classifier tests the OR first. Both asymmetric
+  cases are covered in the verification below.
+- **Kept separate from the EMA-stack `trend`** already on the boards
+  (`Uptrend/Sideways/Downtrend`). They answer different questions and can disagree
+  honestly — price above a rising EMA20 while printing a lower high is exactly the early
+  warning this rule exists to catch, and collapsing them would hide it.
+- **On the chart:** a verdict chip in the header (green *Bullish Trend* / amber
+  *Momentum Decreased*), and a marker on each of the four swings — the two deciding
+  swings coloured by verdict, the two prior ones grey as the reference. A label saying
+  "lower high" is an assertion until you can see *which* high it means. The verdict
+  rides along on `/matp/{sym}/prices`, computed from the bars that response already
+  carries, so it costs **no extra network call** and can never disagree with the candles
+  drawn beside it. Every chart on the platform gets this, not only the Sector tab.
+- **On the Sector ETFs tab:** `/sector/etf-structure` monitors all thirteen symbols at
+  once (11 sectors + SPY/QQQ), grouped bullish / decelerated / unclear rather than listed
+  in sector order — the useful question is which names sit on each side of the line.
+  Each chip carries its evidence in the tooltip (which swings, and what they moved from
+  → to); clicking one charts that ETF as a pinned selection. The strip self-polls every
+  5 min so the monitoring is continuous, as asked, and lives in its own element rather
+  than painting badges onto the ETF buttons — those are re-ordered client-side by
+  `syncEtfOrder()` and deliberately never rebuilt, so an HTMX-swapped monitor owning
+  them would fight that.
+- **Confirmation lag is surfaced, not hidden.** A swing high is only a swing high once
+  5 later bars have printed lower highs, so the newest pivot lags a few days. The
+  alternative repaints — today's high would read as "a higher high" until tomorrow
+  undoes it. Both tooltips say so.
+- Live daily bars throughout (`services.prices`, Yahoo), never parquet — this is an
+  operational "now" view, per the CLAUDE.md scope rule.
+
+Verified — the rule on synthetic zigzags where the answer is known: HH+HL → Bullish
+Trend; LH+LL → Momentum Decreased; **HH but LL → Momentum Decreased**; **LH but HL →
+Momentum Decreased**; too little history → Unclear. And on live data: SPY *lower high
+and lower low* (779.37→775.30, 762.04→759.48), QQQ and XLK *lower high*, XLE and XLV
+*higher high and higher low*. `/sector/etf-structure` renders 13 chips including SPY and
+QQQ; `/matp/SPY/prices` carries the verdict with a timestamp on every pivot (the chart
+markers need one).
+
 ### 2026-09-10 - v4.53: SPY and QQQ on the Sector ETFs tab
 
 User: *"in the sector ETF i need QQQ and SPY to be listed."*

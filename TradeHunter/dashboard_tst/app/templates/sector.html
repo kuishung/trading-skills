@@ -119,6 +119,11 @@
         {% endfor %}
         <span class="text-[11px] text-slate-500 ml-1">index</span>
       </div>
+      {# Swing-structure monitor for ALL of them at once (services/structure.py).
+         Lazy so the tab paints immediately, then self-polls — the ask was for the
+         monitoring to be continuous, not a one-shot render at page load. #}
+      <div id="etfStructure" class="shrink-0 mb-2 min-h-[1.25rem]"
+           hx-get="/sector/etf-structure" hx-trigger="load" hx-swap="innerHTML"></div>
       <div id="sectorEtfChartBody" class="flex-1 min-h-0 overflow-y-auto flex flex-col">
         <div class="flex-1 flex items-center justify-center text-xs text-slate-500 text-center px-4">Pick a sector ETF above to chart it.</div>
       </div>
@@ -249,6 +254,17 @@
     }
 
     function loadChart(sym) { chartSym = sym; loadInto('sectorChartBody', sym); }
+
+    // A chip in the structure strip charts that ETF. Delegated on document because
+    // the strip is HTMX-swapped on every poll — a directly-bound listener would be
+    // thrown away with the old nodes. Treated as a PINNED selection: you clicked a
+    // specific name, so the rotation re-sort must not steal the pane back.
+    document.addEventListener('click', function (e) {
+      var chip = e.target.closest ? e.target.closest('.structchip') : null;
+      if (!chip) return;
+      var sym = chip.getAttribute('data-sym');
+      if (sym) loadEtf(sym, true);
+    });
 
     function loadEtf(sym, pinned) {
       etfSym = sym;

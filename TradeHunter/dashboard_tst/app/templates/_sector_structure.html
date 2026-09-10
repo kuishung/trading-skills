@@ -1,0 +1,37 @@
+{# Swing-structure monitor for every ETF on the tab (11 sectors + SPY/QQQ).
+   Context: groups = [{state, label, rows:[{symbol, name, verdict, reason, high, low}]}],
+   as_of, poll_in.
+
+   Why a strip of its own rather than a badge painted onto each ETF button: the
+   button row is re-ORDERED client-side (syncEtfOrder moves the nodes to follow the
+   left panel's rotation), and those buttons are deliberately never rebuilt so their
+   listeners survive. An HTMX-swapped monitor that owned them would fight that. This
+   strip owns nothing but itself, refreshes on its own clock, and clicking a chip
+   just forwards to the button that already exists.
+
+   Self-polls so it keeps monitoring without a page reload — the user asked for the
+   chart to ALWAYS monitor, so the strip must not be a one-shot render. #}
+<div hx-get="/sector/etf-structure" hx-trigger="load delay:{{ poll_in }}s"
+     hx-target="#etfStructure" hx-swap="innerHTML"></div>
+
+<div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+  {% for g in groups %}
+  {% if g.rows %}
+  <div class="flex flex-wrap items-center gap-1">
+    <span class="text-[10px] uppercase tracking-wide {{ 'text-emerald-400' if g.state == 'bullish' else ('text-amber-400' if g.state == 'decelerated' else 'text-slate-500') }}">{{ g.label }}</span>
+    {% for r in g.rows %}
+    {# title carries the evidence: which swings, and what they moved from -> to.
+       A verdict you cannot audit is just a colour. #}
+    <button type="button" data-sym="{{ r.symbol }}"
+            class="structchip text-[11px] px-1.5 py-0.5 rounded border transition
+                   {% if g.state == 'bullish' %}border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20
+                   {% elif g.state == 'decelerated' %}border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20
+                   {% else %}border-slate-700 text-slate-500 hover:border-slate-600{% endif %}"
+            title="{{ r.name }} — {{ r.verdict }}&#10;{{ r.reason }}{% if r.high %}&#10;swing highs: {{ r.high.prev }} → {{ r.high.last }}{% endif %}{% if r.low %}&#10;swing lows: {{ r.low.prev }} → {{ r.low.last }}{% endif %}">{{ r.symbol }}</button>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% endfor %}
+  <span class="text-[10px] text-slate-600 ml-auto"
+        title="Higher High AND Higher Low = Bullish Trend. Lower High OR Lower Low = Momentum Decreased. Read from CONFIRMED daily swings (a pivot needs 5 bars either side), so it lags a few days rather than repainting.">HH+HL bullish · LH or LL decreased</span>
+</div>

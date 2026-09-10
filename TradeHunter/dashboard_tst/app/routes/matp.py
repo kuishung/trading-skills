@@ -854,11 +854,23 @@ def matp_prices(symbol: str, user: User = Depends(require_user)):
         bars = ex.submit(_safe, fetch_daily_ohlc, [])
         earn = ex.submit(_safe, fetch_next_earnings, None)
         quote = ex.submit(_safe, fetch_quote, None)
+        rows = bars.result()
+        # Swing structure (HH/HL vs LH/LL) rides along on the bars we ALREADY
+        # have — classify() is pure arithmetic over that list, so the chart's
+        # monitor costs no extra network call and can never disagree with the
+        # candles it is drawn on. See services/structure.py for the rule.
+        try:
+            from ..services.structure import classify
+
+            struct = classify(rows)
+        except Exception:  # noqa: BLE001  — a monitor must not break the chart
+            struct = None
         return {
             "symbol": sym,
-            "bars": bars.result(),
+            "bars": rows,
             "next_earnings": earn.result(),
             "quote": quote.result(),   # {name, price, change, change_pct} for the header
+            "structure": struct,
         }
 
 
