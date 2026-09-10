@@ -1,4 +1,5 @@
-"""Per-member trade-sizing preferences: entry offset, account size, risk budget.
+"""Per-member trade preferences: sizing (entry offset, account size, risk budget)
+and the option-spread exit lines the Portfolio monitor grades against.
 
 These three numbers answer "how big is this trade?", and BOTH surfaces that ask
 that question read them from here — the chart's trade-setup editor and the Curated
@@ -37,6 +38,20 @@ MAX_OFFSET_PCT = 20.0
 MAX_NLV = 1e12
 MAX_RISK_PCT = 100.0
 
+# Option-spread exit lines (Portfolio page). These are MANAGEMENT settings, not
+# sizing ones, but they live here for the same reason the others do: one row per
+# user already exists, ``prefs`` is portable JSON, and both the Portfolio monitor
+# and the per-trade override form must read the same defaults or a member's line
+# would mean one thing on the board and another on the row.
+#
+# The defaults are the member's own (delta 0.30 / 20% of max loss), which are
+# TIGHTER than the Adam Khoo playbook's 0.35-0.40 that ``bull_put.review`` still
+# implements for the Options tab. Both are deliberate; see bull_put.ROLL_DELTA.
+DEFAULT_ROLL_DELTA = 0.30
+DEFAULT_LOSS_STOP_PCT = 20.0
+MAX_ROLL_DELTA = 1.0
+MAX_LOSS_STOP_PCT = 100.0
+
 
 def _num(value, default: float, lo: float, hi: float) -> float:
     try:
@@ -57,10 +72,18 @@ def read(user) -> dict:
         "nlv": _num(prefs.get("trade_nlv"), DEFAULT_NLV, 0.0, MAX_NLV),
         "risk_pct": _num(prefs.get("trade_risk_pct"),
                          DEFAULT_RISK_PCT, 0.0, MAX_RISK_PCT),
+        "roll_delta": _num(prefs.get("spread_roll_delta"),
+                           DEFAULT_ROLL_DELTA, 0.0, MAX_ROLL_DELTA),
+        "loss_stop_pct": _num(prefs.get("spread_loss_stop_pct"),
+                              DEFAULT_LOSS_STOP_PCT, 0.0, MAX_LOSS_STOP_PCT),
+        # what spread_monitor.snapshot_rows expects: a fraction, not a percent
+        "loss_fraction": _num(prefs.get("spread_loss_stop_pct"),
+                              DEFAULT_LOSS_STOP_PCT, 0.0, MAX_LOSS_STOP_PCT) / 100.0,
     }
 
 
-def write(db, user, *, offset_pct=None, nlv=None, risk_pct=None) -> tuple[dict, str]:
+def write(db, user, *, offset_pct=None, nlv=None, risk_pct=None,
+          roll_delta=None, loss_stop_pct=None) -> tuple[dict, str]:
     """Update whichever of the three were supplied. Returns (prefs, error).
 
     Out-of-range input is REPORTED, not silently clamped: a member who typed
@@ -87,6 +110,9 @@ def write(db, user, *, offset_pct=None, nlv=None, risk_pct=None) -> tuple[dict, 
     take(offset_pct, "trade_entry_offset_pct", 0.0, MAX_OFFSET_PCT, "Entry offset")
     take(nlv, "trade_nlv", 0.0, MAX_NLV, "Account value")
     take(risk_pct, "trade_risk_pct", 0.0, MAX_RISK_PCT, "Risk per trade")
+    take(roll_delta, "spread_roll_delta", 0.0, MAX_ROLL_DELTA, "Roll delta")
+    take(loss_stop_pct, "spread_loss_stop_pct", 0.0, MAX_LOSS_STOP_PCT,
+         "Loss stop (% of max loss)")
     if err:
         return read(user), err
 

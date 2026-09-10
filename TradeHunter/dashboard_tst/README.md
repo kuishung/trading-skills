@@ -52,9 +52,17 @@ from this dashboard.
   session auth + `require_user`/`require_admin`), `main.py` (app factory,
   admin bootstrap, `/health`, `/status`, `/`), `models.py` also has
   `Feedback`; `routes/` (`auth`, `studies`, `feedback` [the development
-  comment board], admin-only `admin` with the **control-plane-only** swing-bot
+  comment board], `portfolio` [**the member's own open option spreads**, graded
+  daily against their exit lines — `/portfolio`, menu key `positions`], admin-only
+  `admin` with the **control-plane-only** swing-bot
   stubs), `services/` (`black_scholes.py` — working pure-math option
-  pricing/prob-ITM; `resources_bridge.py` — import seam to the shared
+  pricing/prob-ITM; `bull_put.py` — the credit-spread playbook: entry selection
+  plus the pure `monitor()` exit rule (delta line + % of max loss);
+  `option_quotes.py` — **Cboe's public delayed chain WITH GREEKS, server-side**,
+  no key and no broker session, which is what lets the daily sweep run without
+  the member's TWS; `spread_monitor.py` — the I/O half: chain + position ->
+  today's verdict, and the sweep that records it;
+  `resources_bridge.py` — import seam to the shared
   `resources/`/`review/` library, Phase-tagged stubs), `templates/` +
   `static/`, `requirements.txt`, `.env.example`. Deps are per-PC
   (gitignored); the SQLite db (`*.db`) and `.env` are gitignored.
@@ -64,7 +72,13 @@ from this dashboard.
   service task), `update.ps1` (the refresh step: `git pull --ff-only` +
   restart the service — does NOT rely on `--reload`), `setup_hermes_autopull_task.ps1`
   (`TST-Dashboard-Autopull` — polls `update.ps1` every 5 min so pushes
-  auto-deploy), `cloudflared-config.example.yml` (named-tunnel ingress
+  auto-deploy), `portfolio_daily_check.py` + `setup_portfolio_check_task.ps1`
+  (**`TST-Portfolio-Check`** — the daily option-spread monitoring sweep; grades
+  every member's open bull put spreads against their delta and max-loss exit
+  lines and writes one `spread_checks` row per spread per trading day. Runs
+  06:00 local = after the US close, same ET day, on both sides of DST. A task
+  rather than a thread inside uvicorn so it has an exit code and a log),
+  `cloudflared-config.example.yml` (named-tunnel ingress
   template → `localhost:8000`), and `status_check.ps1` (poll `/status` +
   task state). All ASCII-only, parse-clean. Also holds the **push reporters**
   that run where data lives and report into the app: `report_ingest_health.py`
@@ -128,6 +142,77 @@ surface takes shape.
 > `__version__` — that constant is the version shown on the login page / nav / `/status`
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
+
+### 2026-09-10 - v4.58: Portfolio - open spreads, on the Curated chart, checked daily
+
+User: *"I need a portfolio menu ... monitor my trade ... the same chart in the curated,
+per user ... capture my strike price and expiry so that it will mark in the chart ...
+monitor if the delta has reached to 30 then i may want to roll it ... roll or exit if
+I suffer 20% of my max loss ... monitor for me on daily basis."*
+
+**New top-level menu `Portfolio` (`/portfolio`), per member.** A member records the bull
+put spreads they already opened in their own broker; TradeHunter grades each one every
+day against two independent exit lines and says what to do about it.
+
+- **Two exit lines, not one** (`services/bull_put.py` `monitor()`, new and pure):
+  - short-put **delta** reaching the roll line, default **0.30**;
+  - unrealised loss reaching **20% of max loss**.
+  They catch different failures. Delta fires early on a slow drift towards the strike;
+  the loss line fires on a gap that blows through it before delta has had a day to
+  register. Measured on live NVDA data during development: a 0.13-delta position was
+  already down 21% of max loss - delta-only monitoring would have said "hold".
+  Past a line the action still depends on time left: **>30 DTE -> ROLL**, else **CLOSE**.
+  A near-miss renders as **WATCH** rather than silence, because the point of a daily
+  check is to see it coming.
+- **The 20% figure is the sizing rule restated.** `bull_put`'s entry rule already sizes
+  so that 20% of max loss stays under 2% of net liquidation; stopping out there caps the
+  trade's damage at that same 2%. One decision, expressed at entry as size and in flight
+  as a stop.
+- **Quotes come from Cboe's public delayed feed, SERVER-side** (`services/option_quotes.py`,
+  new). It carries real greeks - `delta`, `iv`, bid/ask, open interest - per contract, with
+  no key and no broker session. **This is what makes the daily check possible at all:**
+  the existing TWS bridge lives on `127.0.0.1` and the server can never reach it, so a
+  bridge-only monitor would only ever check on days somebody opened the page. Verified
+  against a broker screen on 2026-09-10: MSFT spot 491.635 to the cent, 460P delta -0.0637.
+  ~15 min delayed, which is irrelevant to a once-a-day management decision.
+- **Per-trade and per-member thresholds.** Defaults live in `User.prefs` via
+  `services/trade_prefs.py` (`spread_roll_delta`, `spread_loss_stop_pct`); a single trade
+  can override both (`option_spreads.roll_delta` / `.loss_stop_pct`). The Options tab's
+  `bull_put.review()` is deliberately UNCHANGED and still implements the playbook's
+  0.35-0.40 - the member's 0.30 is a tighter choice, not a correction, and the page says so.
+- **A daily history, not just a reading** (`spread_checks`, new table). One row per spread
+  per trading day, keyed on the **ET** date because a Malaysian evening is already tomorrow
+  in New York. Upserted, so opening the page ten times does not invent ten observations.
+  "delta 0.28" means little; 0.11 -> 0.14 -> 0.19 -> 0.28 is a trade walking to its strike,
+  and only the series shows it. Rendered as a sparkline on the row and a table in its drawer.
+- **The chart is Curated's chart**, same component and same expand gesture. What it paints
+  is different: **short strike** (rose, solid), **breakeven** (amber, dotted), **long
+  strike** (slate, dashed), and the **expiry as an `EXP` badge on the date axis** next to
+  the earnings `E`. Strikes are price lines, never a drawing - a position is a fact, so
+  nothing on this chart can edit it. The autoscale was taught to keep the strikes in view
+  (`spreadLevels`), since they usually sit well below the recent range.
+- **Nav badge.** `Portfolio` carries a count from every page - rose for at-a-line, sky for
+  approaching, plus an amber `!` when the sweep has not run today. An empty badge means
+  "nothing to do", never "the check never ran". It reads stored rows, never live quotes.
+- **The daily sweep is a scheduled task, not a thread** (`deploy/portfolio_daily_check.py`
+  + `deploy/setup_portfolio_check_task.ps1`). A background task inside uvicorn dies with
+  the worker, doubles up under multiple workers, and is invisible when it fails; a task has
+  an exit code and a log. Runs 06:00 local on Hermes = 17:00-18:00 ET, after the close and
+  still the same ET day, on both sides of the US DST switch.
+- **Nothing here places, modifies or cancels an order.** Tracking only; the fill and the
+  exit happen in the member's own broker, by their own hand.
+
+Bugs found and fixed while building this:
+- `onclick="event.stopPropagation()"` on a row's action buttons also stopped the event
+  reaching the delegated document handler, so the drawer button silently did nothing.
+  Replaced with an HTMX trigger filter (`click[!event.target.closest('.pf-actions')]`),
+  which leaves the event intact.
+- The light theme only remaps the bare `-300` text shades; the action banner had been
+  written at `-100`/`-200` with opacity suffixes and fell through unremapped, rendering
+  pale pink on pink in day mode.
+- Alembic's `env.py` calls `fileConfig()`, which disables existing loggers and resets the
+  root level - the sweep ran correctly and reported nothing.
+- The check-history table's headers were off by one against its columns.
 
 ### 2026-09-10 - v4.57: the analyst band collapses, and the chips stop depending on it
 

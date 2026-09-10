@@ -817,7 +817,64 @@ class OptionSpread(Base):
     closed_at = Column(DateTime, nullable=True)
     note = Column(Text, nullable=True)
 
+    # Per-trade overrides of the member's own exit lines (NULL = use their
+    # default from User.prefs, which itself falls back to the playbook).
+    # Per-trade because the line is a function of the trade, not only of the
+    # trader: a name held through an earnings print earns a tighter delta than
+    # the same member's quiet index spread, and forcing one number on both
+    # guarantees the tighter one gets loosened rather than the loose one tightened.
+    roll_delta = Column(Float, nullable=True)        # e.g. 0.30
+    loss_stop_pct = Column(Float, nullable=True)     # PERCENT of max loss, e.g. 20.0
+
     user = relationship("User")
+    checks = relationship("SpreadCheck", back_populates="spread",
+                          cascade="all, delete-orphan",
+                          order_by="SpreadCheck.checked_on")
+
+
+class SpreadCheck(Base):
+    """One day's monitoring snapshot of one tracked spread.
+
+    Written by the daily sweep (and by any manual refresh) so the Portfolio page
+    can show a HISTORY rather than only a current state. That history is the
+    point: "delta 0.28" means very little on its own and a great deal next to
+    0.11, 0.14, 0.19, 0.28 — the second is a trade walking towards its strike,
+    and only the series shows it.
+
+    Quotes are stored as taken, never recomputed on read, so a row always says
+    what was actually seen that day even after the rules change underneath it.
+
+    One row per (spread, day): a re-check on the same day UPDATES rather than
+    appends, so opening the page ten times does not manufacture ten data points.
+    """
+
+    __tablename__ = "spread_checks"
+    __table_args__ = (UniqueConstraint("spread_id", "checked_on",
+                                       name="uq_spread_check_day"),)
+
+    id = Column(Integer, primary_key=True)
+    spread_id = Column(Integer, ForeignKey("option_spreads.id", ondelete="CASCADE"),
+                       nullable=False, index=True)
+    checked_on = Column(String(10), nullable=False, index=True)   # YYYY-MM-DD (ET)
+
+    spot = Column(Float, nullable=True)
+    short_delta = Column(Float, nullable=True)      # absolute value
+    short_iv = Column(Float, nullable=True)
+    mark = Column(Float, nullable=True)             # cost to close, per share, at mid
+    pl = Column(Float, nullable=True)               # unrealised $, negative = losing
+    loss_pct = Column(Float, nullable=True)         # fraction of MAX loss used, 0..n
+    dte = Column(Integer, nullable=True)
+
+    state = Column(String(10), nullable=False, default="UNKNOWN")  # OK|WATCH|ROLL|CLOSE|UNKNOWN|EXPIRED
+    action = Column(Text, nullable=True)
+    # "cboe" (server sweep) or "bridge" (the member's own TWS). Kept because the
+    # two can legitimately disagree by a hair and a row that cannot say where its
+    # delta came from is a row you cannot argue with.
+    source = Column(String(12), nullable=False, default="cboe")
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
+
+    spread = relationship("OptionSpread", back_populates="checks")
 
 
 class CompanyGuidance(Base):

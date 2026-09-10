@@ -359,8 +359,20 @@
         {% else %}
         {# a single top-level item (Macro, Sector & Industry, ...) #}
         <a href="{{ entry.href }}"
-           class="rounded-lg px-3 py-1.5 whitespace-nowrap transition
-                  {% if nav_path.startswith(entry.href) %}bg-orange-500/15 text-orange-300{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-orange-300{% endif %}">{{ entry.label }}</a>
+           class="relative rounded-lg px-3 py-1.5 whitespace-nowrap transition
+                  {% if nav_path.startswith(entry.href) %}bg-orange-500/15 text-orange-300{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-orange-300{% endif %}">{{ entry.label }}{#
+          #}{% if entry.href == '/portfolio' %}{#
+            An open spread that has reached an exit line is the one thing on this
+            platform that is time-critical: the position is live, and the window to
+            roll rather than close is measured in days. So it gets a count in the
+            nav, visible from every page, rather than waiting to be discovered by
+            someone who happened to open Portfolio.
+
+            Reads STORED checks (/portfolio/badge), never live quotes -- this is
+            polled from every page, and putting a chain fetch behind it would put
+            the whole site behind Cboe.
+          #}<span id="pfNavBadge" hx-get="/portfolio/badge" hx-trigger="load, every 300s"
+                  hx-swap="none" class="contents"></span>{% endif %}</a>
         {% endif %}
         {% endfor %}
         {% if user.is_admin %}
@@ -745,6 +757,51 @@
     // any scroll (page or an inner table) invalidates the anchor position
     window.addEventListener('scroll', hide, true);
     window.addEventListener('resize', hide);
+  })();
+</script>
+
+<script>
+  // ── Portfolio nav badge ───────────────────────────────────────────────────
+  // /portfolio/badge answers with JSON, so the request is made with hx-swap="none"
+  // and painted here. Three states, deliberately distinguishable at a glance:
+  //   rose count   positions AT an exit line -> act today
+  //   sky count    positions APPROACHING one -> nothing to do, but know about it
+  //   amber dot    the last check is older than today -> the number you are
+  //                looking at is stale, which is a different problem from "zero"
+  // A silent failure is the one outcome worth avoiding: an empty badge must mean
+  // "nothing to do", never "the check never ran".
+  (function () {
+    document.body.addEventListener('htmx:afterRequest', function (e) {
+      var el = e.detail && e.detail.elt;
+      if (!el || el.id !== 'pfNavBadge') return;
+      var host = el;
+      host.innerHTML = '';
+      if (!e.detail.successful) return;
+      var d;
+      try { d = JSON.parse(e.detail.xhr.responseText); } catch (err) { return; }
+
+      function chip(text, cls, title) {
+        var b = document.createElement('span');
+        b.textContent = text;
+        b.title = title;
+        b.className = 'ml-1 inline-flex items-center justify-center rounded px-1 ' +
+                      'text-[10px] font-semibold leading-4 align-middle ' + cls;
+        host.appendChild(b);
+      }
+
+      if (d.urgent) {
+        chip(d.urgent, 'bg-rose-500/25 text-rose-300',
+             d.urgent + ' position(s) have reached an exit line');
+      } else if (d.watch) {
+        chip(d.watch, 'bg-sky-500/20 text-sky-300',
+             d.watch + ' position(s) approaching an exit line');
+      }
+      if (d.stale) {
+        chip('!', 'bg-amber-500/25 text-amber-300',
+             'Last checked ' + (d.checked_on || 'never') +
+             ' - the sweep has not run today, so these numbers are stale.');
+      }
+    });
   })();
 </script>
 </body>

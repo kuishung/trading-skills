@@ -193,6 +193,14 @@
   // symbol's drawings, and would then disagree with the revision it came from.
   // {entry, stop, target, label} or null.
   var curLevels = {{ (chart_levels if (chart_levels is defined and chart_levels) else None)|tojson }};
+  // An open option spread being monitored (Portfolio). {short, long, breakeven,
+  // expiry, label} or null. Price lines rather than a drawing for the same reason
+  // curLevels is: these are FACTS about a position that has already been opened,
+  // not an idea being sketched, so they must not be draggable and must not be
+  // saved to this symbol's drawings. The expiry additionally gets a date-axis
+  // badge, because "how much time is left" is half of every management decision
+  // and a horizontal line cannot express it.
+  var SPREAD = {{ (chart_spread if (chart_spread is defined and chart_spread) else None)|tojson }};
   // This member's trade-sizing preferences, remembered server-side
   // (GET/PUT /drawings/trade-prefs — see services/trade_prefs.py):
   //   off      how far a setup's entry sits from its level, in percent
@@ -219,6 +227,10 @@
   var curatedCall = null;
   var curatedShown = false;            // are the curated lines currently painted?
   var curatedLevels = [];              // prices the autoscale must keep in view
+  // Kept SEPARATE from curatedLevels on purpose: paintCurated() empties that array
+  // every time the ⚑ badge is toggled, and an open position's strikes must not
+  // scroll off the chart because someone looked at a curated call.
+  var spreadLevels = [];
   var paintCurated = null;             // set once the candle series exists
   var syncCuratedBadge = null;         // set once the toolbar badge is wired
   var tradePrefs = { off: 0.3, nlv: 0, riskPct: 1 };
@@ -1780,7 +1792,7 @@
             [matp, mbp, supp, resis,
              curLevels && curLevels.entry, curLevels && curLevels.stop,
              curLevels && curLevels.target]
-              .concat(tradeLevels).concat(curatedLevels).forEach(function (v) {
+              .concat(tradeLevels).concat(curatedLevels).concat(spreadLevels).forEach(function (v) {
               if (v != null) {
                 r.priceRange.minValue = Math.min(r.priceRange.minValue, v);
                 r.priceRange.maxValue = Math.max(r.priceRange.maxValue, v);
@@ -1922,6 +1934,41 @@
         s.createPriceLine({ price: curLevels.target, color: '#34d399', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'PT' + _lbl });
       }
 
+      // ---- an open spread's strikes (Portfolio) ---------------------------
+      // Three lines that answer three different questions at a glance:
+      //   short strike  the line price must NOT reach — drawn solid and loudest
+      //   breakeven     where this trade starts losing money (short - credit)
+      //   long strike   where the loss stops growing; the floor you paid for
+      // Colour follows the same grammar as the trade setup (rose = the level that
+      // hurts, slate = structure), so someone who reads one chart reads both.
+      if (SPREAD) {
+        if (SPREAD.short != null && isFinite(SPREAD.short)) {
+          s.createPriceLine({ price: SPREAD.short, color: '#fb7185', lineWidth: 2,
+            lineStyle: 0, axisLabelVisible: true,
+            title: 'Short ' + (+SPREAD.short) + 'P' });
+        }
+        if (SPREAD.breakeven != null && isFinite(SPREAD.breakeven)) {
+          s.createPriceLine({ price: SPREAD.breakeven, color: '#fbbf24', lineWidth: 1,
+            lineStyle: 3, axisLabelVisible: true, title: 'BE' });
+        }
+        if (SPREAD.long != null && isFinite(SPREAD.long)) {
+          s.createPriceLine({ price: SPREAD.long, color: '#94a3b8', lineWidth: 1,
+            lineStyle: 2, axisLabelVisible: true,
+            title: 'Long ' + (+SPREAD.long) + 'P' });
+        }
+        // The strikes are usually well below the recent range, so without this the
+        // autoscale keeps them off-screen and the chart silently answers a
+        // different question than the one it was opened for.
+        try {
+          var _sp = [SPREAD.short, SPREAD.long, SPREAD.breakeven]
+                      .filter(function (v) { return v != null && isFinite(v); });
+          if (_sp.length) {
+            spreadLevels = _sp;
+            chart.priceScale('right').applyOptions({ autoScale: true });
+          }
+        } catch (e) { /* scale hint only */ }
+      }
+
       // ---- the curated annotation, shown ON DEMAND ------------------------
       // Same three lines, same colours, but painted only when the ⚑ Curated badge
       // is clicked and removed when it is clicked again. Price lines rather than a
@@ -1968,23 +2015,46 @@
           if (bi >= 0) earnPts.push({ date: bars[bi].time, color: '#a855f7', label: 'Earnings ' + lastEarn });
         }
         var ne = d && d.next_earnings;
+        // Every FUTURE date that needs a coordinate: the next earnings print, and
+        // an open spread's expiry. The whitespace tail is built once, out to
+        // whichever is furthest, because calling setData twice would throw the
+        // first tail away and leave the earlier badge without a coordinate.
+        var future = [];
         if (ne && ne.date && ne.date > lastT) {
-          var ws = [], cur = new Date(lastT + 'T00:00:00Z'), end = new Date(ne.date + 'T00:00:00Z');
+          future.push({ date: ne.date, color: '#c084fc', text: 'E',
+                        label: 'Next earnings ' + ne.date });
+        }
+        if (SPREAD && SPREAD.expiry && SPREAD.expiry > lastT) {
+          future.push({ date: SPREAD.expiry, color: '#fb7185', text: 'EXP',
+                        label: 'Expiry ' + SPREAD.expiry +
+                               (SPREAD.label ? ' — ' + SPREAD.label : '') });
+        }
+        if (future.length) {
+          var far = future.map(function (f) { return f.date; }).sort().pop();
+          var ws = [], cur = new Date(lastT + 'T00:00:00Z'), end = new Date(far + 'T00:00:00Z');
           while (cur < end) {
             cur.setUTCDate(cur.getUTCDate() + 1);
             var dow = cur.getUTCDay();
             if (dow === 0 || dow === 6) continue;
             ws.push({ time: cur.toISOString().slice(0, 10) });
           }
-          if (!ws.length || ws[ws.length - 1].time !== ne.date) ws.push({ time: ne.date });
-          s.setData(bars.concat(ws));  // whitespace tail so the future date has a coordinate
-          earnPts.push({ date: ne.date, color: '#c084fc', label: 'Next earnings ' + ne.date });
+          if (!ws.length || ws[ws.length - 1].time !== far) ws.push({ time: far });
+          s.setData(bars.concat(ws));  // whitespace tail so future dates have coordinates
+          future.forEach(function (f) { earnPts.push(f); });
+        }
+        // An expiry already in the past still deserves its marker — a spread being
+        // reviewed after the fact is exactly when you want to see where it ended.
+        if (SPREAD && SPREAD.expiry && SPREAD.expiry <= lastT) {
+          var xi = -1;
+          for (var j = 0; j < bars.length; j++) { if (bars[j].time <= SPREAD.expiry) xi = j; else break; }
+          if (xi >= 0) earnPts.push({ date: bars[xi].time, color: '#fb7185', text: 'EXP',
+                                      label: 'Expiry ' + SPREAD.expiry });
         }
         if (earnPts.length) {
           el.style.position = 'relative';
           var badges = earnPts.map(function (p) {
             var b = document.createElement('div');
-            b.textContent = 'E';
+            b.textContent = p.text || 'E';
             b.title = p.label;
             b.style.cssText = 'position:absolute;bottom:30px;transform:translateX(-50%);' +
               'z-index:3;font:700 10px/1 ui-sans-serif,system-ui;color:#fff;background:' +

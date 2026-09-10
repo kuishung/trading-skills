@@ -1,0 +1,56 @@
+{# One tracked spread on the chart. Context: symbol, sel, sel_band, sel_patterns,
+   row (OptionSpread), snap (spread_monitor.snapshot), spread {short, long,
+   breakeven, expiry, label}.
+
+   Same chart component as Curated, so the drawing tools, ATR, zoom and MATP lines
+   all behave identically — deliberately, because a member who learns the chart on
+   one page must not have to relearn it here.
+
+   What is different is what gets painted: an open position's strikes and expiry
+   instead of a call's entry/stop/target. Those are FACTS, so unlike Curated there
+   is no editable setup and no save — nothing on this chart can change what the
+   position is. Editing happens on the row, or in the broker. #}
+{% set chart_symbol = symbol %}
+{% set chart_exchange = sel.exchange if sel else None %}
+{% set chart_matp = sel.matp if sel else None %}
+{% set chart_mbp = sel.mbp if sel else None %}
+{% set chart_as_of = sel.as_of if sel else None %}
+{% set chart_earnings = sel.last_earnings_date if sel else None %}
+{# No analyst band, same reasoning as Curated: the question here is where price is
+   relative to MY strike, and a second shaded range competes with the strike band
+   for the same glance. #}
+{% set chart_band = none %}
+{% set chart_patterns = sel_patterns %}
+{% set chart_fill = true %}
+{% set chart_price_min = 'lg:min-h-[300px]' %}
+{% set chart_tv_plot = true %}
+{% set chart_spread = spread %}
+
+{% set v = snap.verdict or {} %}
+<div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1 shrink-0">
+  <span class="text-xs text-slate-300">
+    {{ row.symbol }}
+    <span class="text-slate-500">{{ '%g'|format(row.short_strike) }}/{{ '%g'|format(row.long_strike) }}P</span>
+  </span>
+  <span class="text-[11px] px-1.5 py-0.5 rounded border
+    {% if v.state == 'CLOSE' %}border-rose-500/60 text-rose-300 bg-rose-500/10
+    {% elif v.state == 'ROLL' %}border-amber-500/60 text-amber-300 bg-amber-500/10
+    {% elif v.state == 'WATCH' %}border-sky-500/60 text-sky-300 bg-sky-500/10
+    {% elif v.state == 'OK' %}border-emerald-500/60 text-emerald-300 bg-emerald-500/10
+    {% else %}border-slate-600 text-slate-400{% endif %}">{{ v.state or 'UNKNOWN' }}</span>
+  <span class="text-[11px] text-slate-500 tabular-nums">
+    {{ row.expiry }} &middot; {{ snap.dte }}d
+    {% if snap.short_delta is not none %}
+      &middot; &Delta; <span class="{% if v.delta_breach %}text-rose-300 font-semibold{% else %}text-slate-400{% endif %}">{{ '%.3f'|format(snap.short_delta) }}</span>
+    {% endif %}
+    {% if snap.pl is not none %}
+      &middot; <span class="{% if snap.pl < 0 %}text-rose-300{% else %}text-emerald-300{% endif %}">{{ '%+.0f'|format(snap.pl) }}</span>
+    {% endif %}
+    &middot; BE {{ '%.2f'|format(snap.breakeven) }}
+  </span>
+  {% if snap.error %}
+  <span class="text-[11px] text-amber-300" title="The chart is price history and is unaffected; only the live spread numbers are missing.">{{ snap.error }}</span>
+  {% endif %}
+</div>
+
+{% include "_price_chart.html" %}

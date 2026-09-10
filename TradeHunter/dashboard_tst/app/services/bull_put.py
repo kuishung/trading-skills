@@ -339,3 +339,118 @@ def review(*, short_delta: float | None, dte: int,
             "action": (f"Short delta {d:.2f} is past {delta_adjust:.2f} with only {dte}d left — "
                        "too late to roll; close the spread and cut the loss."),
             "urgent": True}
+
+
+# ---------------------------------------------------------------- monitoring
+# Two independent exit lines for an OPEN spread, both pure. `review` above is the
+# playbook's delta-only rule and is left exactly as it was, because the Options
+# tab documents those numbers. What the Portfolio page needs is stricter and has
+# a second trigger, so it lives here rather than being smuggled into `review`:
+#
+#   1. DELTA   — short-put delta reaches the roll line (default 0.30).
+#   2. LOSS    — unrealised loss reaches a fraction of MAX loss (default 20%).
+#
+# They are not redundant. Delta answers "is the market coming for my strike?" and
+# fires early, on a slow drift. The loss line answers "how much have I already
+# paid?" and fires on a gap that blows through the strike before delta has had a
+# day to register it. Either one alone leaves a hole.
+#
+# The 20% figure interlocks with the sizing rule at the top of this module: size
+# so that 20% of max loss is under 2% of net liquidation, and stopping out at 20%
+# of max loss caps the trade's damage at that same 2%. The number is one decision
+# expressed twice — at entry as size, in flight as a stop.
+
+ROLL_DELTA = 0.30           # user's own line; the playbook's is 0.35-0.40
+LOSS_STOP_FRACTION = 0.20   # "exit or roll at 20% of max loss"
+
+
+def spread_math(*, short_strike: float, long_strike: float, credit: float,
+                contracts: int = 1) -> dict:
+    """The fixed geometry of a bull put spread — everything that is knowable at
+    entry and never changes afterwards. Separated from the live grading so the
+    numbers on a row are identical whether or not a quote could be fetched."""
+    width = float(short_strike) - float(long_strike)
+    c = float(credit or 0.0)
+    n = max(1, int(contracts or 1))
+    max_profit = c * 100.0 * n
+    max_loss = max(0.0, (width - c)) * 100.0 * n
+    return {"width": width, "credit": c, "contracts": n,
+            "max_profit": max_profit, "max_loss": max_loss,
+            "breakeven": float(short_strike) - c,
+            # what one contract loses at the 20% line — the figure the sizing
+            # rule was built around, restated per contract
+            "risk_20pct": max_loss * LOSS_STOP_FRACTION}
+
+
+def monitor(*, short_delta: float | None, dte: int, pl: float | None,
+            max_loss: float, roll_delta: float = ROLL_DELTA,
+            loss_fraction: float = LOSS_STOP_FRACTION,
+            adjust_dte: int = ADJUST_DTE) -> dict:
+    """Grade one open spread against BOTH exit lines.
+
+    ``pl`` is unrealised profit/loss in dollars (negative = losing), ``max_loss``
+    the dollar max loss from ``spread_math``. Either may be None/0 when no quote
+    was available; the delta line is still graded, and vice versa. Returning
+    ``UNKNOWN`` only when BOTH are missing is deliberate — a monitor that goes
+    dark because one number is late is a monitor you stop trusting.
+
+    Returns ``{state, action, reasons, urgent, delta_breach, loss_breach,
+    loss_pct}`` where state is OK | WATCH | ROLL | CLOSE | UNKNOWN.
+    """
+    d = None if short_delta is None else abs(float(short_delta))
+
+    loss_pct = None
+    if pl is not None and max_loss and max_loss > 0:
+        # only a LOSS consumes the budget; profit is not negative loss here
+        loss_pct = max(0.0, -float(pl)) / float(max_loss)
+
+    if d is None and loss_pct is None:
+        return {"state": "UNKNOWN", "action": "No quote today — nothing to grade.",
+                "reasons": [], "urgent": False, "delta_breach": False,
+                "loss_breach": False, "loss_pct": None}
+
+    delta_breach = d is not None and d >= roll_delta
+    loss_breach = loss_pct is not None and loss_pct >= loss_fraction
+
+    reasons: list[str] = []
+    if delta_breach:
+        reasons.append(f"short delta {d:.2f} reached your {roll_delta:.2f} line")
+    if loss_breach:
+        reasons.append(f"down {loss_pct * 100:.0f}% of max loss "
+                       f"(your line is {loss_fraction * 100:.0f}%)")
+
+    if not reasons:
+        # A near-miss is worth saying out loud: the point of a daily check is to
+        # see it coming, not to be told on the morning it is already too late.
+        near = []
+        if d is not None and d >= roll_delta * 0.8:
+            near.append(f"delta {d:.2f} is closing on {roll_delta:.2f}")
+        if loss_pct is not None and loss_pct >= loss_fraction * 0.5:
+            near.append(f"down {loss_pct * 100:.0f}% of max loss")
+        if near:
+            return {"state": "WATCH", "action": "Approaching a line: " + "; ".join(near) + ".",
+                    "reasons": near, "urgent": False, "delta_breach": False,
+                    "loss_breach": False, "loss_pct": loss_pct}
+        bits = []
+        if d is not None:
+            bits.append(f"delta {d:.2f}")
+        if loss_pct is not None:
+            bits.append(f"{loss_pct * 100:.0f}% of max loss used")
+        return {"state": "OK", "action": "Inside both lines (" + ", ".join(bits) + "). Hold.",
+                "reasons": [], "urgent": False, "delta_breach": False,
+                "loss_breach": False, "loss_pct": loss_pct}
+
+    why = " and ".join(reasons)
+    if dte > adjust_dte:
+        return {"state": "ROLL",
+                "action": (f"{why.capitalize()} with {dte}d left — enough time to roll: "
+                           "buy to close the short put, sell to close the long, then "
+                           "reopen lower and/or further out."),
+                "reasons": reasons, "urgent": True, "delta_breach": delta_breach,
+                "loss_breach": loss_breach, "loss_pct": loss_pct}
+
+    return {"state": "CLOSE",
+            "action": (f"{why.capitalize()} with only {dte}d left — a roll this close to "
+                       "expiry buys little time for the credit it costs; close it."),
+            "reasons": reasons, "urgent": True, "delta_breach": delta_breach,
+            "loss_breach": loss_breach, "loss_pct": loss_pct}

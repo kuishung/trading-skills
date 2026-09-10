@@ -1,0 +1,354 @@
+{# The Portfolio board: every tracked spread with today's quotes and verdict.
+   Context: items [{row, snap, history}], totals, prefs, urgent, watch, status,
+   checked_on, quote_source, focus, form_error.
+
+   Wrapped in .pf-panel and swapped by outerHTML so every form in here can target
+   `closest .pf-panel` — a class, not an id, so the fragment is safe to nest and
+   safe to swap over itself. Same convention as .curated-panel. #}
+<div class="pf-panel" data-status="{{ status }}">
+
+{% if form_error %}
+<div class="mb-2 rounded border border-rose-600/60 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-300">
+  {{ form_error }}
+</div>
+{% endif %}
+
+{# ── action banner ─────────────────────────────────────────────────────────
+   The whole reason this page exists. It sits ABOVE the chart because a member
+   who opens Portfolio and sees nothing at the top should be able to close the
+   tab knowing there is nothing to do — that is the daily ritual working. #}
+{% if urgent %}
+<div class="mb-3 rounded-lg border border-rose-600/60 bg-rose-500/10 px-3 py-2">
+  <div class="flex items-center gap-2 mb-1">
+    <span class="text-sm font-semibold text-rose-300">
+      {{ urgent|length }} position{{ '' if urgent|length == 1 else 's' }} at a line
+    </span>
+    <span class="text-[11px] text-slate-500">checked {{ checked_on }}</span>
+  </div>
+  <ul class="space-y-0.5">
+    {% for it in urgent %}
+    <li class="text-[11px] text-rose-300">
+      <span class="font-semibold">{{ it.row.symbol }}</span>
+      <span class="tabular-nums text-rose-300">{{ '%g'|format(it.row.short_strike) }}/{{ '%g'|format(it.row.long_strike) }}P {{ it.row.expiry }}</span>
+      &mdash; {{ it.snap.verdict.action }}
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% elif items and status == 'open' %}
+<div class="mb-3 rounded-lg border border-emerald-700/40 bg-emerald-500/5 px-3 py-1.5 text-[11px] text-emerald-300">
+  Nothing at a line today.
+  {% if watch %}{{ watch|length }} approaching one &mdash; see the amber row{{ '' if watch|length == 1 else 's' }} below.{% else %}All {{ items|length }} position{{ '' if items|length == 1 else 's' }} inside both lines.{% endif %}
+  <span class="text-slate-500">checked {{ checked_on }}</span>
+</div>
+{% endif %}
+
+{# ── the chart ─────────────────────────────────────────────────────────────
+   Same pane, same component and same expand behaviour as Curated (user: "in the
+   portfolio i need the same chart in the curated"). Clicking a row swaps the
+   position into it; the first open lands on the position that needs attention
+   most, not simply the first one, because that is the one being asked about. #}
+{% set first_id = (urgent[0].row.id if urgent else (watch[0].row.id if watch else (items[0].row.id if items else 0))) %}
+{% set open_id = focus or first_id %}
+<div id="pfChartWrap" class="relative mb-3">
+  <button type="button" id="pfChartExpand"
+          class="absolute right-2 top-1 z-20 text-[11px] px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900/80 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 transition"
+          title="Expand the chart to fill the window (Esc to restore)">&#10530;</button>
+  <div id="pfChartBody"
+       class="h-[68vh] min-h-[460px] flex flex-col rounded-lg border border-slate-800 bg-slate-900/40 overflow-y-auto"
+       {% if open_id %}hx-get="/portfolio/chart?row={{ open_id }}" hx-trigger="load" hx-swap="innerHTML"{% endif %}>
+    <div class="flex-1 flex items-center justify-center text-xs text-slate-500 px-6 text-center">
+      {% if open_id %}Loading chart&hellip;{% else %}
+      <span>No trades tracked yet. Add the spread you have open below &mdash; the strikes
+        and expiry get marked on this chart, and both exit lines are checked every day.</span>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{# ── totals + controls ─────────────────────────────────────────────────── #}
+<div class="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2">
+  <div class="flex items-center gap-1 text-[11px]">
+    <button type="button"
+            class="px-2 py-0.5 rounded border {% if status == 'open' %}border-emerald-500 text-emerald-300{% else %}border-slate-700 text-slate-400 hover:border-slate-500{% endif %}"
+            hx-get="/portfolio/list?status=open" hx-target="closest .pf-panel" hx-swap="outerHTML">Open</button>
+    <button type="button"
+            class="px-2 py-0.5 rounded border {% if status == 'closed' %}border-emerald-500 text-emerald-300{% else %}border-slate-700 text-slate-400 hover:border-slate-500{% endif %}"
+            hx-get="/portfolio/list?status=closed" hx-target="closest .pf-panel" hx-swap="outerHTML">Closed</button>
+  </div>
+
+  {% if items %}
+  <span class="text-[11px] text-slate-500 tabular-nums">
+    {{ totals.count }} position{{ '' if totals.count == 1 else 's' }}
+    &middot; credit <span class="text-emerald-300">${{ '%.0f'|format(totals.credit) }}</span>
+    &middot; max risk <span class="text-rose-300">${{ '%.0f'|format(totals.risk) }}</span>
+    {% if totals.priced %}
+    &middot; open <span class="{% if totals.pl < 0 %}text-rose-300{% else %}text-emerald-300{% endif %}">{{ '%+.0f'|format(totals.pl) }}</span>
+    <span class="text-slate-600" title="Marked at the mid of both legs on a ~15-minute delayed feed. It is a mark, not a fill.">(mark)</span>
+    {% endif %}
+  </span>
+  {% endif %}
+
+  <form class="ml-auto flex items-center gap-1" hx-post="/portfolio/refresh"
+        hx-target="closest .pf-panel" hx-swap="outerHTML">
+    <input type="hidden" name="status" value="{{ status }}">
+    <span class="text-[10px] text-slate-600" title="Cboe's public delayed feed, read server-side. Real greeks, no broker connection needed.">{{ quote_source }}</span>
+    <button type="submit" class="text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition"
+            title="Re-read every chain now, ignoring the 15-minute quote cache">Refresh</button>
+  </form>
+</div>
+
+{# ── positions ─────────────────────────────────────────────────────────── #}
+{% if items %}
+<div class="space-y-1.5 mb-3">
+  {% for it in items %}
+  {% set r = it.row %}{% set sn = it.snap %}{% set v = sn.verdict or {} %}
+  <div class="pf-row rounded border transition
+              {% if v.state == 'CLOSE' %}border-rose-600/60 bg-rose-500/5
+              {% elif v.state == 'ROLL' %}border-amber-600/60 bg-amber-500/5
+              {% elif v.state == 'WATCH' %}border-sky-700/50 bg-sky-500/5
+              {% elif v.state == 'EXPIRED' %}border-slate-700 bg-slate-800/30
+              {% else %}border-slate-800{% endif %}"
+       data-row="{{ r.id }}">
+
+    {# Clicking the row charts the position, EXCEPT inside .pf-actions. The
+       exclusion is an HTMX trigger filter rather than an onclick stopPropagation
+       on the buttons: stopping the event also stops it reaching the delegated
+       document handler that opens the drawer, so the "..." button silently did
+       nothing. Filtering here leaves the event intact and simply tells HTMX to
+       ignore it. #}
+    <div class="flex flex-wrap items-center gap-x-2 gap-y-1 p-2 text-[11px] cursor-pointer"
+         hx-get="/portfolio/chart?row={{ r.id }}" hx-target="#pfChartBody" hx-swap="innerHTML"
+         hx-trigger="click[!event.target.closest('.pf-actions')]"
+         title="Show this position on the chart">
+      <span class="font-semibold text-slate-300">{{ r.symbol }}</span>
+      <span class="text-slate-300 tabular-nums">{{ '%g'|format(r.short_strike) }}/{{ '%g'|format(r.long_strike) }}P</span>
+      <span class="text-slate-500 tabular-nums">{{ r.expiry }}
+        <span class="{% if sn.dte <= 7 and sn.dte >= 0 %}text-amber-300{% endif %}">{{ sn.dte }}d</span>
+      </span>
+      <span class="text-slate-600 tabular-nums">{{ r.contracts }}x</span>
+
+      {% if sn.spot is not none %}
+      <span class="text-slate-500 tabular-nums" title="Underlying, ~15 min delayed">{{ '%.2f'|format(sn.spot) }}</span>
+      {% endif %}
+
+      {# distance to the short strike, in percent — the plainest statement of how
+         much room is left, and the one number that needs no options knowledge #}
+      {% if sn.spot and sn.short_strike %}
+      {% set room = (sn.spot - sn.short_strike) / sn.spot * 100 %}
+      <span class="tabular-nums {% if room < 3 %}text-rose-300{% elif room < 6 %}text-amber-300{% else %}text-slate-500{% endif %}"
+            title="How far the underlying is above your short strike">{{ '%+.1f'|format(room) }}%</span>
+      {% endif %}
+
+      {# delta against ITS OWN line, so a row with a per-trade override is not read
+         against the wrong number #}
+      {% set line = r.roll_delta or prefs.roll_delta %}
+      {% if sn.short_delta is not none %}
+      <span class="tabular-nums px-1 rounded {% if v.delta_breach %}bg-rose-500/20 text-rose-300 font-semibold{% elif sn.short_delta >= line * 0.8 %}text-amber-300{% else %}text-sky-300{% endif %}"
+            title="Short-put delta {{ '%.3f'|format(sn.short_delta) }} against your {{ '%.2f'|format(line) }} roll line">
+        &Delta; {{ '%.2f'|format(sn.short_delta) }}<span class="text-slate-500">/{{ '%.2f'|format(line) }}</span>
+      </span>
+      {% else %}
+      <span class="text-slate-600">&Delta; n/a</span>
+      {% endif %}
+
+      {# loss consumed against the 20% line #}
+      {% set lline = (r.loss_stop_pct or prefs.loss_stop_pct) %}
+      {% if v.loss_pct is not none %}
+      <span class="tabular-nums px-1 rounded {% if v.loss_breach %}bg-rose-500/20 text-rose-300 font-semibold{% elif v.loss_pct * 100 >= lline * 0.5 %}text-amber-300{% else %}text-slate-500{% endif %}"
+            title="{{ '%.0f'|format(v.loss_pct * 100) }}% of your ${{ '%.0f'|format(sn.max_loss) }} max loss is used. Your line is {{ '%g'|format(lline) }}%.">
+        {{ '%.0f'|format(v.loss_pct * 100) }}%<span class="text-slate-500">/{{ '%g'|format(lline) }}%</span>
+      </span>
+      {% endif %}
+
+      {% if sn.pl is not none %}
+      <span class="tabular-nums {% if sn.pl < 0 %}text-rose-300{% else %}text-emerald-300{% endif %}"
+            title="Unrealised, marked at the mid of both legs. Closing now at the worst quotes would be {{ '%+.0f'|format(sn.pl_worst) if sn.pl_worst is not none else 'n/a' }}.">
+        {{ '%+.0f'|format(sn.pl) }}
+      </span>
+      {% endif %}
+
+      <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold
+                   {% if v.state == 'CLOSE' %}bg-rose-500/20 text-rose-300
+                   {% elif v.state == 'ROLL' %}bg-amber-500/20 text-amber-300
+                   {% elif v.state == 'WATCH' %}bg-sky-500/20 text-sky-300
+                   {% elif v.state == 'OK' %}bg-emerald-500/15 text-emerald-300
+                   {% else %}bg-slate-700/50 text-slate-400{% endif %}">{{ v.state or 'UNKNOWN' }}</span>
+
+      {# delta history sparkline — the series is the signal, not the reading #}
+      {% if it.history|length > 1 %}
+      {% set ds = it.history|selectattr('delta')|map(attribute='delta')|list %}
+      {% if ds|length > 1 %}
+      <span class="pf-spark inline-flex items-end gap-px h-3 ml-0.5"
+            title="Short delta over the last {{ ds|length }} checks: {{ ds|map('round', 2)|join(', ') }}">
+        {% set dmax = [ds|max, line]|max %}
+        {% for d in ds %}
+        <i class="w-0.5 rounded-sm {% if d >= line %}bg-rose-400{% else %}bg-slate-500{% endif %}"
+           style="height: {{ [2, (d / dmax * 12)|round|int]|max }}px"></i>
+        {% endfor %}
+      </span>
+      {% endif %}
+      {% endif %}
+
+      <span class="pf-actions ml-auto flex items-center gap-1">
+        <button type="button" class="pf-more text-[10px] px-1.5 py-0.5 rounded border border-slate-700 text-slate-500 hover:border-slate-500 hover:text-slate-300 transition"
+                data-row="{{ r.id }}" title="Exit lines, notes and history for this trade">&hellip;</button>
+        {% if r.status == 'open' %}
+        <button type="submit" class="text-[10px] px-1.5 py-0.5 rounded border border-slate-700 text-slate-400 hover:border-rose-500 hover:text-rose-300 transition"
+                hx-post="/portfolio/{{ r.id }}/close" hx-target="closest .pf-panel" hx-swap="outerHTML"
+                title="Mark closed here after you have closed it in your broker. This changes nothing at the broker.">Mark closed</button>
+        {% else %}
+        <button type="submit" class="text-[10px] px-1.5 py-0.5 rounded border border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 transition"
+                hx-post="/portfolio/{{ r.id }}/reopen" hx-target="closest .pf-panel" hx-swap="outerHTML"
+                title="Put it back on the open board">Reopen</button>
+        {% endif %}
+      </span>
+    </div>
+
+    {% if v.action %}
+    <p class="px-2 pb-1.5 -mt-0.5 text-[11px] leading-relaxed
+              {% if v.urgent %}text-rose-300{% elif v.state == 'WATCH' %}text-sky-300{% else %}text-slate-500{% endif %}">
+      {{ v.action }}
+    </p>
+    {% endif %}
+    {% if sn.error %}
+    <p class="px-2 pb-1.5 text-[11px] text-amber-300">{{ sn.error }}</p>
+    {% endif %}
+
+    {# ── per-trade drawer ───────────────────────────────────────────────── #}
+    <div class="pf-drawer border-t border-slate-800 p-2 space-y-2" data-row="{{ r.id }}" hidden>
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-500 tabular-nums">
+        <span>credit <span class="text-slate-300">${{ '%.2f'|format(sn.credit) }}</span>/sh</span>
+        <span>width <span class="text-slate-300">{{ '%g'|format(sn.width) }}</span></span>
+        <span>max profit <span class="text-emerald-300">${{ '%.0f'|format(sn.max_profit) }}</span></span>
+        <span>max loss <span class="text-rose-300">${{ '%.0f'|format(sn.max_loss) }}</span></span>
+        <span>{{ '%g'|format(r.loss_stop_pct or prefs.loss_stop_pct) }}% of it = <span class="text-amber-300">${{ '%.0f'|format(sn.max_loss * (r.loss_stop_pct or prefs.loss_stop_pct) / 100) }}</span></span>
+        <span>BE <span class="text-slate-300">{{ '%.2f'|format(sn.breakeven) }}</span></span>
+        {% if sn.mark is not none %}<span>mark <span class="text-slate-300">${{ '%.2f'|format(sn.mark) }}</span></span>{% endif %}
+        {% if sn.short_iv is not none %}<span>short IV <span class="text-slate-300">{{ '%.1f'|format(sn.short_iv * 100) }}%</span></span>{% endif %}
+        {% if sn.iv30 is not none %}<span>IV30 <span class="text-slate-300">{{ '%.1f'|format(sn.iv30) }}%</span></span>{% endif %}
+      </div>
+
+      <form class="flex flex-wrap items-end gap-2" hx-post="/portfolio/{{ r.id }}/lines"
+            hx-target="closest .pf-panel" hx-swap="outerHTML">
+        <label class="text-[10px] text-slate-500">Roll at delta
+          <input type="number" step="0.01" min="0" max="1" name="roll_delta" value="{{ r.roll_delta or '' }}"
+                 placeholder="{{ '%.2f'|format(prefs.roll_delta) }}"
+                 class="ml-1 w-16 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
+        </label>
+        <label class="text-[10px] text-slate-500">Exit at % of max loss
+          <input type="number" step="1" min="0" max="100" name="loss_stop_pct" value="{{ r.loss_stop_pct or '' }}"
+                 placeholder="{{ '%g'|format(prefs.loss_stop_pct) }}"
+                 class="ml-1 w-16 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
+        </label>
+        <button type="submit" class="text-[10px] px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Save lines</button>
+        <span class="text-[10px] text-slate-600">blank = your default</span>
+        <button type="submit" class="ml-auto text-[10px] px-2 py-1 rounded border border-slate-800 text-slate-600 hover:border-rose-600 hover:text-rose-300 transition"
+                hx-post="/portfolio/{{ r.id }}/delete" hx-target="closest .pf-panel" hx-swap="outerHTML"
+                hx-confirm="Delete this trade and its check history? This cannot be undone.">Delete</button>
+      </form>
+
+      {% if it.history %}
+      <div class="overflow-x-auto">
+        <table class="w-full text-[10px] tabular-nums">
+          <thead><tr class="text-slate-600 text-left">
+            <th class="pr-3 font-normal">checked</th><th class="pr-3 font-normal">DTE</th>
+            <th class="pr-3 font-normal">spot</th>
+            <th class="pr-3 font-normal" title="Where the quote came from: cboe = the server's daily sweep, bridge = your own TWS">src</th>
+            <th class="pr-3 font-normal">&Delta;</th>
+            <th class="pr-3 font-normal">% max loss</th><th class="pr-3 font-normal">P/L</th>
+            <th class="font-normal">state</th></tr></thead>
+          <tbody>
+          {% for h in it.history|reverse %}
+          <tr class="text-slate-400">
+            <td class="pr-3">{{ h.on }}</td>
+            <td class="pr-3 text-slate-600">{{ h.dte if h.dte is not none else '' }}</td>
+            <td class="pr-3">{{ '%.2f'|format(h.spot) if h.spot is not none else '' }}</td>
+            <td class="pr-3 text-slate-600">{{ h.source }}</td>
+            <td class="pr-3 {% if h.delta and h.delta >= line %}text-rose-300{% endif %}">{{ '%.3f'|format(h.delta) if h.delta is not none else '' }}</td>
+            <td class="pr-3">{{ '%.0f%%'|format(h.loss_pct * 100) if h.loss_pct is not none else '' }}</td>
+            <td class="pr-3 {% if h.pl and h.pl < 0 %}text-rose-300{% elif h.pl %}text-emerald-300{% endif %}">{{ '%+.0f'|format(h.pl) if h.pl is not none else '' }}</td>
+            <td class="text-slate-500">{{ h.state }}</td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="text-[10px] text-slate-600">No checks recorded yet &mdash; the first one lands the next time this page loads or the nightly sweep runs.</p>
+      {% endif %}
+
+      {% if r.note %}<p class="text-[10px] text-slate-500 italic">{{ r.note }}</p>{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% elif status == 'open' %}
+<p class="text-[11px] text-slate-500 mb-3">
+  No open trades tracked. Add one below &mdash; you enter what you already opened in your
+  broker, and TradeHunter checks it against both of your exit lines every day.
+</p>
+{% else %}
+<p class="text-[11px] text-slate-500 mb-3">Nothing closed yet.</p>
+{% endif %}
+
+{# ── add a trade ───────────────────────────────────────────────────────── #}
+<details class="rounded-lg border border-slate-800 bg-slate-900/40 mb-3" {% if not items %}open{% endif %}>
+  <summary class="cursor-pointer select-none px-3 py-2 text-[11px] text-slate-300 hover:text-emerald-300">
+    Track a bull put spread
+  </summary>
+  <form class="p-3 pt-0 flex flex-wrap items-end gap-2" hx-post="/portfolio/add"
+        hx-target="closest .pf-panel" hx-swap="outerHTML">
+    <label class="text-[10px] text-slate-500">Symbol
+      <input name="symbol" required placeholder="MSFT" autocomplete="off"
+             class="mt-0.5 block w-20 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-[11px] text-slate-300 uppercase outline-none focus:border-emerald-500">
+    </label>
+    <label class="text-[10px] text-slate-500">Expiry
+      <input name="expiry" required type="date"
+             class="mt-0.5 block rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
+    </label>
+    <label class="text-[10px] text-slate-500">Short put
+      <input name="short_strike" required type="number" step="0.5" placeholder="460"
+             class="mt-0.5 block w-20 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
+    </label>
+    <label class="text-[10px] text-slate-500">Long put
+      <input name="long_strike" required type="number" step="0.5" placeholder="450"
+             class="mt-0.5 block w-20 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
+    </label>
+    <label class="text-[10px] text-slate-500" title="Net credit PER SHARE, the way the chain quotes it — 0.36, not 36.">Credit /sh
+      <input name="credit" type="number" step="0.01" min="0" placeholder="0.36"
+             class="mt-0.5 block w-20 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
+    </label>
+    <label class="text-[10px] text-slate-500">Contracts
+      <input name="contracts" type="number" step="1" min="1" value="1"
+             class="mt-0.5 block w-16 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
+    </label>
+    <label class="text-[10px] text-slate-500">Note
+      <input name="note" placeholder="optional"
+             class="mt-0.5 block w-36 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
+    </label>
+    <button type="submit" class="px-3 py-1 rounded border border-emerald-600 text-[11px] text-emerald-300 hover:bg-emerald-500/10 transition">Track</button>
+    <p class="basis-full text-[10px] text-slate-600 mt-1">
+      Tracking only &mdash; nothing here places, changes or cancels an order.
+      Enter the trade you already opened in your broker.
+    </p>
+  </form>
+</details>
+
+{# ── default exit lines ────────────────────────────────────────────────── #}
+<form class="flex flex-wrap items-end gap-2 text-[10px] text-slate-500"
+      hx-post="/portfolio/prefs" hx-target="closest .pf-panel" hx-swap="outerHTML">
+  <span class="pb-1">My exit lines:</span>
+  <label>roll when short delta reaches
+    <input type="number" step="0.01" min="0" max="1" name="roll_delta" value="{{ '%.2f'|format(prefs.roll_delta) }}"
+           class="ml-1 w-16 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
+  </label>
+  <label>exit at
+    <input type="number" step="1" min="0" max="100" name="loss_stop_pct" value="{{ '%g'|format(prefs.loss_stop_pct) }}"
+           class="ml-1 w-14 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 outline-none focus:border-emerald-500">% of max loss
+  </label>
+  <button type="submit" class="px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Save</button>
+  <span class="pb-1 text-slate-600" title="Adam Khoo's credit-spread playbook (options-strategies-reference/07-credit-spreads.md) puts the delta line at 0.35-0.40. Yours is tighter, which is a choice, not an error.">playbook: 0.35&ndash;0.40</span>
+</form>
+
+</div>{# /.pf-panel #}

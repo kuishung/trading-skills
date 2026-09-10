@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}Portfolio &middot; TradeHunter{% endblock %}
+
+{% block content %}
+{# The board is loaded lazily: rendering it fetches an option chain per underlying
+   from Cboe, which is a second or two the page shell must never wait on. Same
+   pattern as Curated's list. #}
+<div class="max-w-[1400px]">
+  <div hx-get="/portfolio/list" hx-trigger="load" hx-swap="innerHTML">
+    <div class="text-xs text-slate-500 py-8 text-center">Checking your positions&hellip;</div>
+  </div>
+</div>
+
+{# Preload the chart library ONCE, exactly as Curated and Sector do. The chart
+   partial ships its own <script src>, but when HTMX swaps the fragment in that
+   external script loads ASYNCHRONOUSLY while the fragment's inline script runs
+   immediately — so window.LightweightCharts is undefined and the chart bails.
+   Preloading removes the race. #}
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+
+<style>
+  /* Expanded chart: the pane leaves the page flow and takes the window. Applied to
+     the WRAPPER so the ⤢ button rides along, and driven by a class so restoring is
+     one removal and cannot leave the pane half-sized. Mirrors Curated exactly —
+     a member who learns the gesture on one page must not relearn it here. */
+  #pfChartWrap.pf-max { position: fixed; inset: 0.5rem; z-index: 60; margin: 0; }
+  #pfChartWrap.pf-max > #pfChartBody { height: 100% !important; min-height: 0 !important; }
+  body.pf-max-open { overflow: hidden; }
+
+  .pf-row .pf-spark i { min-height: 2px; }
+</style>
+
+<script>
+  // ── Expand the chart pane to fill the window ──────────────────────────────
+  // Delegated on document because the whole board — button included — is
+  // re-rendered by HTMX on every add, close and refresh; a directly-bound
+  // listener would be thrown away with the old nodes. The expanded state is
+  // remembered so that re-render does not silently collapse the pane you were
+  // working in.
+  (function () {
+    var KEY = 'portfolio_chart_max';
+    function wrap() { return document.getElementById('pfChartWrap'); }
+
+    function paint(on) {
+      var w = wrap();
+      if (!w) return;
+      w.classList.toggle('pf-max', on);
+      document.body.classList.toggle('pf-max-open', on);
+      var b = document.getElementById('pfChartExpand');
+      if (b) {
+        b.innerHTML = on ? '&#10529;' : '&#10530;';
+        b.title = on ? 'Restore the chart (Esc)'
+                     : 'Expand the chart to fill the window (Esc to restore)';
+      }
+      // lightweight-charts sizes itself to its container on a resize event;
+      // without this the candles keep the old width and sit in a corner.
+      try { window.dispatchEvent(new Event('resize')); } catch (e) {}
+    }
+    function set(on) {
+      try { localStorage.setItem(KEY, on ? '1' : '0'); } catch (e) {}
+      paint(on);
+    }
+    function isOn() {
+      try { return localStorage.getItem(KEY) === '1'; } catch (e) { return false; }
+    }
+
+    document.addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('#pfChartExpand') : null;
+      if (!b) return;
+      e.preventDefault();
+      set(!wrap().classList.contains('pf-max'));
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && wrap() && wrap().classList.contains('pf-max')) set(false);
+    });
+    document.addEventListener('htmx:afterSwap', function () { if (isOn()) paint(true); });
+    if (isOn()) paint(true);
+  })();
+
+  // ── Per-trade drawer ──────────────────────────────────────────────────────
+  // The drawer holds the exit-line overrides and the check history. It is a real
+  // element already in the fragment rather than a fetch, because everything in it
+  // was computed for the row above it anyway — a request would only re-derive what
+  // is already on the page.
+  document.addEventListener('click', function (e) {
+    var t = e.target.closest ? e.target.closest('.pf-more') : null;
+    if (!t) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var d = document.querySelector('.pf-drawer[data-row="' + t.dataset.row + '"]');
+    if (!d) return;
+    d.hidden = !d.hidden;
+    t.classList.toggle('border-emerald-600', !d.hidden);
+    t.classList.toggle('text-emerald-300', !d.hidden);
+  });
+
+  // Mark which row the chart above is showing, so a board of near-identical
+  // spreads still says which one you are looking at.
+  document.body.addEventListener('htmx:beforeRequest', function (e) {
+    var el = e.detail && e.detail.elt;
+    if (!el || !el.getAttribute) return;
+    if ((el.getAttribute('hx-get') || '').indexOf('/portfolio/chart') !== 0) return;
+    document.querySelectorAll('.pf-row.pf-charted').forEach(function (r) {
+      r.classList.remove('pf-charted', 'ring-1', 'ring-sky-500/50');
+    });
+    var row = el.closest('.pf-row');
+    if (row) row.classList.add('pf-charted', 'ring-1', 'ring-sky-500/50');
+  });
+</script>
+{% endblock %}

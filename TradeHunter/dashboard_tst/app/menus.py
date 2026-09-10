@@ -32,6 +32,15 @@ MENUS = [
     # Curated — each member's own dated calls (entry/stop/target), judged from
     # price history. Replaced the Portfolio placeholder 2026-09-07 (user).
     ("curated",          "Curated",           None, "/curated"),
+    # Portfolio — the member's OWN open option spreads, monitored daily against
+    # their delta and max-loss exit lines. Added 2026-09-10 (user).
+    #
+    # The key is "positions", not "portfolio", and that is deliberate: LEGACY_KEYS
+    # below still translates a stored "portfolio" grant to "curated", because the
+    # OLD Portfolio placeholder is what became Curated on 2026-09-07. Reusing the
+    # key here would make one stored string mean two different pages, and the
+    # translation would silently hand this page's grants to Curated instead.
+    ("positions",        "Portfolio",         None, "/portfolio"),
 ]
 # Routes that stay ACCESSIBLE (granted + reachable by URL) but are no longer shown
 # in the top nav after the revamp. Kept in ALL_KEYS so their require_menu() guards
