@@ -8,7 +8,7 @@
 {% if chart_symbol %}
 {% set tv_symbol = (chart_exchange ~ ':' ~ chart_symbol) if chart_exchange else chart_symbol %}
 {# one connected panel: TradingView single-quote header -> price chart -> band #}
-<div id="chart" class="rounded-lg border border-slate-800 bg-slate-900 overflow-hidden {% if chart_fill %}flex flex-col lg:flex-1 lg:min-h-0{% endif %}">
+<div id="chart" class="rounded-lg border border-slate-800 bg-slate-900 overflow-hidden {% if chart_fill %}flex flex-col flex-1 min-h-0{% endif %}">
   {# Slim ONE-LINE header: ticker · company name · price · change — all inline.
      Name/price/change are filled live by the chart script from /prices (Yahoo
      chart meta). The ticker links out to the TradingView chart. #}
@@ -29,7 +29,9 @@
     {% endif %}
   </div>
   {# price chart #}
-  <div class="px-3 pt-1.5 pb-3 {% if chart_band %}border-b border-slate-800{% endif %} {% if chart_fill %}lg:flex-1 lg:min-h-0 flex flex-col{% endif %}">
+  {# Same reasoning as the price div below: this wrapper has to be able to GROW at
+     every width, or its flex-1 child can only ever reach its own min-height. #}
+  <div class="px-3 pt-1.5 pb-3 {% if chart_band %}border-b border-slate-800{% endif %} {% if chart_fill %}flex-1 min-h-0 flex flex-col{% endif %}">
     {# zoom toolbar: 6M (default) / 1Y / 1.5Y / 2Y. Each shows the lookback in the
        left ~2/3 with the right ~1/3 blank (room ahead of current price). #}
     <div class="flex items-center justify-between gap-1 mb-1 {% if chart_fill %}shrink-0{% endif %}">
@@ -81,7 +83,19 @@
         <button type="button" class="zoombtn text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 transition hover:border-emerald-500 hover:text-emerald-300" data-months="24">2Y</button>
       </div>
     </div>
-    <div id="priceChart" class="w-full {% if chart_fill %}min-h-[240px] lg:min-h-0 lg:flex-1{% else %}{{ chart_height_class | default('h-[300px] lg:h-[44vh]') }}{% endif %}"></div>
+    {# `lg:min-h-0` lets the candles absorb whatever the furniture above and below
+       leaves over — fine in a tall pane, but in a fixed-height one (Curated) the
+       header, toolbar, legend, pattern chips and analyst band together left the
+       candles about 60px on a laptop. `chart_price_min` puts a FLOOR under the
+       price area for pages that need one; the pane then scrolls instead of the
+       chart itself disappearing. Default keeps every other page as it was. #}
+    {# `flex-1` at EVERY width, not just lg. Below lg the price area used to have no
+       flex-grow at all, so it sat at exactly its 240px floor however much room the
+       pane had — a taller pane made the furniture roomier and left the candles the
+       same postage stamp. That is the "on a smaller screen it gets squeezed" report.
+       min-h-[240px] still guarantees a usable chart when the pane is genuinely
+       short; growth beyond it only happens when the parent actually has the room. #}
+    <div id="priceChart" class="w-full {% if chart_fill %}min-h-[240px] {{ chart_price_min | default('lg:min-h-0') }} flex-1{% else %}{{ chart_height_class | default('h-[300px] lg:h-[44vh]') }}{% endif %}"></div>
     <p id="priceChartMsg" class="text-slate-500 text-sm hidden">Couldn't load live price data for {{ chart_symbol }} right now &mdash; try again shortly.</p>
     <div class="chart-legend flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400 mt-2 {% if chart_fill %}shrink-0{% endif %}">
       <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#ef4444"></span>EMA20</span>

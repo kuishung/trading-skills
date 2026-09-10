@@ -38,9 +38,79 @@
      still reads on a hovered row and does not fight the status badges. */
   tr.cur-charted > td:first-child { box-shadow: inset 2px 0 0 0 #38bdf8; }
   tr.cur-charted { background: rgba(56, 189, 248, .07); }
+
+  /* Expanded chart: the pane leaves the page flow and takes the window. Applied
+     to the WRAPPER so the ⤢ button rides along with it, and driven by a class
+     rather than inline styles so restoring is one removal and can't leave the
+     pane half-sized. The inner body's own h-[68vh] has to be overridden here —
+     a Tailwind utility would otherwise pin it at 68% of the viewport inside a
+     100% container. */
+  #curatedChartWrap.cur-max {
+    position: fixed; inset: 0.5rem; z-index: 60; margin: 0;
+  }
+  #curatedChartWrap.cur-max > #curatedChartBody {
+    height: 100% !important; min-height: 0 !important;
+  }
+  /* the page behind must not scroll under an overlay that covers it */
+  body.cur-max-open { overflow: hidden; }
 </style>
 
 <script>
+  // ── Expand the chart pane to fill the window ────────────────────────────────
+  // User, 2026-09-10: "in the curated page, I need the chart to be expanded. in a
+  // smaller screen, it will be squeezed."
+  //
+  // Delegated on document because the whole list — button included — is re-rendered
+  // by HTMX whenever a month is picked or a revision is saved; a directly-bound
+  // listener would be thrown away with the old nodes. The expanded state is
+  // remembered so that re-render does not silently collapse the pane you were
+  // working in.
+  (function () {
+    var KEY = 'curated_chart_max';
+
+    function wrap() { return document.getElementById('curatedChartWrap'); }
+
+    function paint(on) {
+      var w = wrap();
+      if (!w) return;
+      w.classList.toggle('cur-max', on);
+      document.body.classList.toggle('cur-max-open', on);
+      var b = document.getElementById('curatedChartExpand');
+      if (b) {
+        b.innerHTML = on ? '&#10529;' : '&#10530;';
+        b.title = on ? 'Restore the chart (Esc)'
+                     : 'Expand the chart to fill the window (Esc to restore)';
+      }
+      // lightweight-charts sizes itself to its container on a resize event; without
+      // this the candles keep the old width and sit in a corner of the new box.
+      try { window.dispatchEvent(new Event('resize')); } catch (e) {}
+    }
+
+    function set(on) {
+      try { localStorage.setItem(KEY, on ? '1' : '0'); } catch (e) {}
+      paint(on);
+    }
+
+    function isOn() {
+      try { return localStorage.getItem(KEY) === '1'; } catch (e) { return false; }
+    }
+
+    document.addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('#curatedChartExpand') : null;
+      if (!b) return;
+      e.preventDefault();
+      set(!wrap().classList.contains('cur-max'));
+    });
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && wrap() && wrap().classList.contains('cur-max')) set(false);
+    });
+
+    // Re-apply after every list swap (month change, saved revision, first load).
+    document.addEventListener('htmx:afterSwap', function () { if (isOn()) paint(true); });
+    if (isOn()) paint(true);
+  })();
+
   // Only ONE revision-history panel may be open at a time — two rows' worth of
   // version chips on screen makes it ambiguous which set the chart above is
   // showing. (The charts themselves no longer live in here: since 2026-09-08 the

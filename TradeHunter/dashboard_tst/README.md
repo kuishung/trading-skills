@@ -129,6 +129,40 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-10 - v4.55: the Curated chart gets its height back
+
+User: *"in the curated page, I need the chart to be expanded. in a smaller screen, it
+will be squeezed."*
+
+Measured before touching anything: on a 1280x800 window the Curated pane gave the
+candles about **110px**. The pane is a fixed height and carries more furniture than any
+other chart here — revision header, drawing toolbar, zoom row, EMA/ATR legend, pattern
+chips, analyst band — and the candles were the only part with nothing holding them up.
+
+- **The real small-screen bug: the price area could not grow below `lg`.** It was
+  `min-h-[240px] lg:flex-1`, so under 1024px it had a floor and *no flex-grow at all* —
+  a taller pane made the furniture roomier and left the candles at exactly 240px
+  forever. That is the "on a smaller screen it will be squeezed" report, and it is why
+  making the pane taller alone would not have fixed it. `flex-1` now applies at every
+  width (as does `min-h-0` on the two wrappers above it); the 240px floor still
+  guarantees a usable chart when the pane really is short.
+- **A floor under the candles on this page.** New optional `chart_price_min` on the
+  chart component, set to `lg:min-h-[300px]` by the Curated chart only. Every other page
+  keeps `lg:min-h-0` and is untouched.
+- **The pane scrolls instead of clipping** (`overflow-y-auto`, was `overflow-hidden`) and
+  is taller: `h-[68vh] min-h-[460px]`, was `h-[52vh] min-h-[340px]`. On a short screen
+  the furniture scrolls; the chart keeps its height.
+- **An expand control (⤢)** on the pane: the chart fills the window, Esc or a second
+  click restores it. The choice is remembered, because the whole list re-renders on a
+  month change or a saved revision and silently collapsing the pane you were working in
+  would be worse than not having the button. It fires a `resize` so lightweight-charts
+  re-measures — without that the candles keep the old width in the new box.
+
+Measured after, on the same 1280x800 window: candles **405px** normal, **645px**
+expanded (from ~110px). On a 373px-wide phone viewport: **271px** normal, **498px**
+expanded — where before it was pinned at 240px no matter what. Sector ETFs tab
+re-checked at 401px with its chart intact, so the shared component did not regress.
+
 ### 2026-09-10 - v4.54: the chart monitors swing structure (HH/HL vs LH/LL)
 
 User: *"in the sector ETFs I need the system to be able to detect the chart formation.

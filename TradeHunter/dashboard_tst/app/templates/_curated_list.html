@@ -85,8 +85,18 @@
    scripts of the first. This pane is that one, and the revision chips swap into
    it rather than mounting their own. It loads the newest call on screen so the
    page never opens on an empty half-screen. #}
+{# Taller than it was (52vh/340px), because this pane carries the most furniture of
+   any chart on the platform and the candles were what got squeezed — see the
+   `chart_price_min` floor in _curated_chart.html. `overflow-y-auto` rather than
+   `overflow-hidden` so that on a short screen the furniture scrolls and the chart
+   keeps its height, instead of the chart being clipped away. The ⤢ button expands
+   the pane to the full viewport for a proper look; see curated.html. #}
+<div id="curatedChartWrap" class="relative mb-3">
+  <button type="button" id="curatedChartExpand"
+          class="absolute right-2 top-1 z-20 text-[11px] px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900/80 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 transition"
+          title="Expand the chart to fill the window (Esc to restore)">&#10530;</button>
 <div id="curatedChartBody"
-     class="h-[52vh] min-h-[340px] flex flex-col rounded-lg border border-slate-800 bg-slate-900/40 overflow-hidden mb-3"
+     class="h-[68vh] min-h-[460px] flex flex-col rounded-lg border border-slate-800 bg-slate-900/40 overflow-y-auto"
      {% if first_id %}hx-get="/curated/chart?row={{ first_id }}" hx-trigger="load" hx-swap="innerHTML"{% endif %}>
   <div class="flex-1 flex items-center justify-center text-xs text-slate-500 px-6 text-center">
     {% if first_id %}Loading chart&hellip;{% else %}<span>Nothing to chart in this month &mdash; pick another
@@ -94,6 +104,7 @@
       or <a href="/sector" class="text-sky-300 hover:underline">Sector &amp; Industry</a> chart.</span>{% endif %}
   </div>
 </div>
+</div>{# /#curatedChartWrap #}
 
 {% if any_rows %}
 {# ── year + Jan-Dec tabs ────────────────────────────────────────────────── #}
