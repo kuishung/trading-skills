@@ -129,6 +129,35 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-10 - v4.53: SPY and QQQ on the Sector ETFs tab
+
+User: *"in the sector ETF i need QQQ and SPY to be listed."*
+
+- **`services/etf.py::INDEX_ETFS`** — a new, separate list (`SPY` S&P 500, `QQQ`
+  Nasdaq-100) rendered as a SECOND group of buttons on the tab, after the eleven
+  sectors and after the `SPDR S&P US sectors` caption, which now reads as the divider
+  between the two groups.
+- **Deliberately NOT added to `ETF_UNIVERSE`**, even though that would have been the
+  one-line change. That constant drives three things where an index is wrong rather
+  than merely untidy: `rrg()` / `etf_leaders()` measure every row RELATIVE TO SPY, so
+  SPY's own row would be a flat RS-Ratio of 100 forever and QQQ would rank as a 12th
+  "sector" competing with the eleven it overlaps; `sector_returns()` and the left
+  panel's quadrant grouping feed the tab's button ORDER (`panel_symbol_order`); and
+  `services.industry.sector_industries()` is prewarmed per `ETF_UNIVERSE` symbol,
+  where an index has no industry breakdown. Charting an index is a presentational
+  need, so it got its own list.
+- **The client-side re-sort leaves them alone by construction.** `syncEtfOrder()`
+  keeps the sector buttons in the left panel's rotation order by moving each one
+  *before the first `<span>`*; the index buttons live after that caption and are
+  never in the panel's order list, so they stay put — there is no quadrant to sort
+  an index by. `firstEtf()` (the tab's default selection) still returns a sector.
+- Both chart through the existing `/sector/chart` endpoint with no special-casing —
+  no MATP row simply means the price-only chart, exactly as for any uncovered ticker.
+
+Verified: `/sector` lists 13 buttons (11 sectors in rotation order, then SPY, QQQ)
+with the caption between the groups; `/sector/chart` returns 200 and a chart for SPY,
+QQQ and XLK; `ETF_UNIVERSE` still has exactly 11 symbols and contains neither index.
+
 ### 2026-09-08 - v4.52: moving the level restarts the stop at 1xATR
 
 User: *"when the level i change, the SL should be change based on entry - 1 ATR."*

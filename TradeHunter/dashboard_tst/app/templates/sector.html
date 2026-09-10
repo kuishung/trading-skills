@@ -107,6 +107,17 @@
                 data-sym="{{ e.symbol }}" title="{{ e.name }}">{{ e.symbol }}</button>
         {% endfor %}
         <span class="text-[11px] text-slate-500 ml-1">SPDR S&amp;P US sectors</span>
+        {# Index ETFs as a SECOND group, after the caption. Two reasons they sit
+           here rather than among the sectors: syncEtfOrder() re-sorts the sector
+           buttons into the left panel's rotation order by moving them BEFORE the
+           first <span>, so anything after that caption is left alone (an index has
+           no quadrant to sort by); and the caption then reads as a divider, which
+           is what stops SPY/QQQ from looking like two more sectors. #}
+        {% for e in indexes %}
+        <button type="button" class="etfbtn text-[11px] px-2 py-1 rounded border border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 transition"
+                data-sym="{{ e.symbol }}" title="{{ e.name }}">{{ e.symbol }}</button>
+        {% endfor %}
+        <span class="text-[11px] text-slate-500 ml-1">index</span>
       </div>
       <div id="sectorEtfChartBody" class="flex-1 min-h-0 overflow-y-auto flex flex-col">
         <div class="flex-1 flex items-center justify-center text-xs text-slate-500 text-center px-4">Pick a sector ETF above to chart it.</div>

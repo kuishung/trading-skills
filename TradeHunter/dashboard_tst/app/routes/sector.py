@@ -55,12 +55,17 @@ def sector_home(request: Request, user: User = Depends(require_user)):
     # the left panel (weekly, its default) so the tab reads strongest-rotation-first
     # and the two lists agree on sight; the page then keeps them in sync client-side
     # when the panel's Daily/Weekly toggle re-groups it.
-    from ..services.etf import ETF_UNIVERSE, panel_symbol_order
+    from ..services.etf import ETF_UNIVERSE, INDEX_ETFS, panel_symbol_order
 
     names = dict(ETF_UNIVERSE)
     etfs = [{"symbol": s, "name": names.get(s, s)} for s in panel_symbol_order("weekly")]
+    # SPY / QQQ ride along as a SECOND group on the tab, kept out of the sector list
+    # above so the rotation panel, the RRG and the industry drill-down still see
+    # exactly the 11 sectors (see services/etf.py::INDEX_ETFS). They keep their
+    # declared order — there is no rotation ranking to sort an index by.
+    indexes = [{"symbol": s, "name": n} for s, n in INDEX_ETFS]
     return templates.TemplateResponse(
-        request, "sector.html", {"user": user, "etfs": etfs},
+        request, "sector.html", {"user": user, "etfs": etfs, "indexes": indexes},
     )
 
 

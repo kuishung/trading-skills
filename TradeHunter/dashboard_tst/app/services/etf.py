@@ -29,6 +29,24 @@ ETF_UNIVERSE = [
     ("XLRE", "Real Estate"), ("XLC", "Communication Services"),
 ]
 BENCHMARK = "SPY"
+
+# Index ETFs offered ALONGSIDE the sectors on the Sector ETFs chart tab (user ask,
+# 2026-09-10: "in the sector ETF i need QQQ and SPY to be listed").
+#
+# Deliberately NOT added to ETF_UNIVERSE. That list is the 11 SPDR sectors and it
+# drives three things where an index would be wrong, not just untidy:
+#   * rrg() / etf_leaders() -- every row is measured RELATIVE TO SPY, so SPY's own
+#     row would be a flat RS-Ratio of 100 forever, and QQQ would be ranked as if it
+#     were a 12th sector competing with the 11 it overlaps.
+#   * sector_returns() and the left panel's quadrant grouping, which the tab's
+#     button order is synced to (panel_symbol_order).
+#   * services.industry.sector_industries(), prewarmed per ETF_UNIVERSE symbol --
+#     there is no industry breakdown for an index.
+# Charting them is a separate, purely presentational need, so it gets its own list.
+INDEX_ETFS = [
+    ("SPY", "S&P 500"),
+    ("QQQ", "Nasdaq-100"),
+]
 _TTL = 900.0  # 15 min
 _cache: dict = {}
 
