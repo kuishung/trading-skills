@@ -54,6 +54,136 @@
         <span class="curated-badge cursor-pointer text-[11px] px-2 py-0.5 rounded border border-sky-500/50 text-sky-300 hover:bg-sky-500/15 transition select-none"
               role="button" tabindex="0" style="display:none">&#9873; Curated</span>
         {% endif %}
+        {# Run MATP / MBP for this ticker (user, 2026-09-11: "in the chart, i want a button
+           run to calculate MATP and MBP"). Opt-in per page (chart_matp_run). The button
+           CANNOT compute anything: this app runs no LLM and fetches no analyst targets. It
+           queues the same ticker request the Nous agent already works (POST
+           /matp/<sym>/run) and then watches it (GET /matp/<sym>/run-status), redrawing the
+           MATP/MBP lines in place through #priceChart.__paintMatp when the result lands.
+           The agent polls about every 10 minutes, so "queued" is a real wait, not a hang. #}
+        {% if chart_matp_run is defined and chart_matp_run %}
+        <span class="matp-run cursor-pointer text-[11px] px-2 py-0.5 rounded border border-emerald-500/50 text-emerald-300 hover:bg-emerald-500/15 transition select-none"
+              role="button" tabindex="0" data-sym="{{ chart_symbol }}"
+              data-has="{{ '1' if chart_matp is not none else '' }}"
+              title="Queue a MATP/MBP calculation for {{ chart_symbol }}">&#8635; {{ 'Recalc MATP' if chart_matp is not none else 'Run MATP' }}</span>
+        <script>
+        (function () {
+          // Controller for THIS chart's Run-MATP button. It watches calmly — 30s while
+          // queued, 15s while running — and stops on a finish, a failure, a stuck run
+          // (the agent is probably offline; polling harder won't wake it) or the chart
+          // being swapped out of the page.
+          var btn = document.currentScript && document.currentScript.previousElementSibling;
+          if (!btn || !btn.classList || !btn.classList.contains('matp-run')) btn = document.querySelector('.matp-run');
+          if (!btn) return;
+          var sym = btn.getAttribute('data-sym');
+          var timer = 0, flashTimer = 0, lastStatus = null, busy = false;
+          var BASE = 'matp-run text-[11px] px-2 py-0.5 rounded border transition select-none ';
+          var TONE = {
+            idle: 'cursor-pointer border-emerald-500/50 text-emerald-300 hover:bg-emerald-500/15',
+            wait: 'cursor-default border-amber-500/50 text-amber-300 bg-amber-500/10',
+            ok:   'cursor-pointer border-emerald-500/60 text-emerald-200 bg-emerald-500/15',
+            bad:  'cursor-pointer border-rose-500/50 text-rose-300 hover:bg-rose-500/10'
+          };
+          function paint(tone, label, title) {
+            btn.className = BASE + TONE[tone];
+            btn.textContent = label;
+            if (title) btn.title = title;
+            btn.setAttribute('aria-busy', tone === 'wait' ? 'true' : 'false');
+          }
+          function fmt(v) { return (v == null || !isFinite(v)) ? '-' : Number(v).toFixed(2); }
+          function idle() {
+            paint('idle', btn.getAttribute('data-has') ? '↻ Recalc MATP' : '↻ Run MATP',
+              'Queue a MATP/MBP calculation for ' + sym + '. The research agent picks it up ' +
+              'within about 10 minutes, and the lines on this chart update when it finishes.');
+          }
+          function schedule(ms) { clearTimeout(timer); timer = setTimeout(poll, ms); }
+          function render(s) {
+            if (!s || !s.ok) {
+              paint('bad', '✗ MATP', (s && s.error) || 'Could not reach the MATP queue.');
+              return;
+            }
+            var st = s.status;
+            if (st === 'pending' || st === 'running') {
+              lastStatus = st;
+              if (s.stale) {
+                paint('bad', '⚠ MATP stuck',
+                  (st === 'pending'
+                    ? 'Queued ' + s.waited_min + ' min ago and not picked up'
+                    : 'Running for ' + s.ran_min + ' min with no progress') +
+                  ' — the research agent may be offline (see Agent status). A moderator ' +
+                  'can re-queue it from the Watchlist runs panel.');
+                return;
+              }
+              if (st === 'pending') {
+                paint('wait', '⌛ MATP queued',
+                  'Waiting for the research agent: queued ' + (s.waited_min || 0) +
+                  ' min ago, and it polls about every 10 minutes.');
+                schedule(30000);
+              } else {
+                var prog = s.progress_total ? ' ' + (s.progress_done || 0) + '/' + s.progress_total : '';
+                paint('wait', '⌛ MATP running' + prog, 'The research agent is calculating ' + sym + '…');
+                schedule(15000);
+              }
+              return;
+            }
+            var finishedNow = lastStatus === 'pending' || lastStatus === 'running';
+            lastStatus = st;
+            if (st === 'failed' && finishedNow) {
+              paint('bad', '✗ MATP failed',
+                'The run failed' + (s.note ? ': ' + s.note : '') + '. Click to try again.');
+              return;
+            }
+            if (st === 'done' && finishedNow) {
+              // Redraw in place. The hook is set on the chart element once the candles
+              // exist; if the chart itself failed to load, the new numbers still show
+              // on the next page view.
+              var host = document.getElementById('priceChart');
+              if (host && typeof host.__paintMatp === 'function') host.__paintMatp(s.matp, s.mbp);
+              if (s.matp != null) btn.setAttribute('data-has', '1');
+              if (s.matp != null) {
+                paint('ok', '✓ MATP ' + fmt(s.matp),
+                  'MATP ' + fmt(s.matp) + ' · MBP ' + fmt(s.mbp) + ' — the lines on this ' +
+                  'chart are updated. Reload the page for the analyst band.');
+              } else {
+                paint('ok', '✓ No MATP',
+                  'The run finished without a MATP' + (s.note ? ': ' + s.note : '') +
+                  ' — usually there are no post-earnings analyst targets for this name.');
+              }
+              clearTimeout(flashTimer);
+              flashTimer = setTimeout(function () { if (btn.isConnected) idle(); }, 8000);
+              return;
+            }
+            // A run that finished before this chart was opened has nothing to report.
+            idle();
+          }
+          function poll() {
+            if (!btn.isConnected) { clearTimeout(timer); return; }
+            fetch('/matp/' + encodeURIComponent(sym) + '/run-status', { credentials: 'same-origin' })
+              .then(function (r) { return r.json(); })
+              .then(function (s) { if (btn.isConnected) render(s); })
+              .catch(function () { if (btn.isConnected) schedule(60000); });
+          }
+          function run() {
+            if (busy || btn.getAttribute('aria-busy') === 'true') return;   // a run is already in flight
+            busy = true;
+            paint('wait', '⌛ Queuing…');
+            fetch('/matp/' + encodeURIComponent(sym) + '/run', { method: 'POST', credentials: 'same-origin' })
+              .then(function (r) { return r.json(); })
+              .then(function (s) { busy = false; if (btn.isConnected) render(s); })
+              .catch(function () {
+                busy = false;
+                if (btn.isConnected) paint('bad', '✗ MATP', 'Could not reach the MATP queue.');
+              });
+          }
+          btn.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); run(); });
+          btn.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); run(); }
+          });
+          idle();
+          poll();   // a run someone already queued shows up without a click
+        })();
+        </script>
+        {% endif %}
         {# Send this ticker to the user's OWN TradingView via the local TV bridge. Shown wherever the
            board opts in (chart_tv_plot). Shares the .tv-plot capture handler in base.html.
            With MATP on record it draws the MATP/MBP lines; WITHOUT one it still switches the chart
@@ -101,14 +231,16 @@
       <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#ef4444"></span>EMA20</span>
       <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#22c55e"></span>EMA50</span>
       <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#a855f7"></span>EMA200</span>
-      <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#f97316"></span>MATP <span class="text-orange-300 tabular-nums">{{ "%.2f"|format(chart_matp) if chart_matp is not none else "-" }}</span></span>
-      <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#16a34a"></span>MBP <span class="text-green-500 tabular-nums">{{ "%.2f"|format(chart_mbp) if chart_mbp is not none else "-" }}</span></span>
+      {# ids: the Run-MATP button's redraw hook (#priceChart.__paintMatp) rewrites these
+         numbers in place when a finished run lands. One chart per DOM, so ids are safe. #}
+      <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#f97316"></span>MATP <span id="legendMatp" class="text-orange-300 tabular-nums">{{ "%.2f"|format(chart_matp) if chart_matp is not none else "-" }}</span></span>
+      <span><span class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#16a34a"></span>MBP <span id="legendMbp" class="text-green-500 tabular-nums">{{ "%.2f"|format(chart_mbp) if chart_mbp is not none else "-" }}</span></span>
       {# ATR(14) — the risk unit the trade tool sizes stops with. Click to hide/show the line. #}
       <span id="atrLegend" class="cursor-pointer select-none hover:text-slate-200 transition"
             title="Average True Range (14), Wilder — the risk unit the &#9873; trade tool sizes stops with. Tracks the crosshair; click to hide the line.">
         <span id="atrSwatch" class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#eab308"></span>ATR14 <span id="atrVal" class="text-yellow-300 tabular-nums">-</span>
       </span>
-      {% if chart_as_of %}<span class="text-slate-500">&middot; calculated {{ localtime(chart_as_of) }}</span>{% endif %}
+      {% if chart_as_of %}<span id="legendAsOf" class="text-slate-500">&middot; calculated {{ localtime(chart_as_of) }}</span>{% endif %}
       {% if chart_earnings %}<span class="text-slate-500">&middot; earnings: last {{ chart_earnings }}</span>{% endif %}
       {# next earnings (date + "… from now" countdown) is filled in by the chart script from the live prices feed #}
       <span id="nextEarnings" class="text-violet-300"></span>
@@ -1916,8 +2048,47 @@
         } catch (e) { /* markers are decoration; never break the chart */ }
       })();
 
-      if (matp != null) s.createPriceLine({ price: matp, color: '#f97316', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'MATP' });
-      if (mbp != null) s.createPriceLine({ price: mbp, color: '#16a34a', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'MBP' });
+      // MATP / MBP reference lines. The handles are KEPT so the chart's Run-MATP button
+      // can redraw them in place when a finished run lands (__paintMatp below), instead
+      // of leaving the old lines on screen until the page is reloaded.
+      var matpLine = null, mbpLine = null;
+      function drawMatpLines() {
+        [matpLine, mbpLine].forEach(function (h) {
+          if (h) { try { s.removePriceLine(h); } catch (e) { /* already gone */ } }
+        });
+        matpLine = matp != null ? s.createPriceLine({ price: matp, color: '#f97316', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'MATP' }) : null;
+        mbpLine = mbp != null ? s.createPriceLine({ price: mbp, color: '#16a34a', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'MBP' }) : null;
+      }
+      drawMatpLines();
+      // Called by the toolbar's Run-MATP controller with the values a finished run
+      // wrote. Updates everything on THIS chart that shows MATP/MBP: the two lines, the
+      // variables the autoscale provider reads, the legend numbers, and the chart's own
+      // Plot-on-TV control — found through the chart's panel, never the whole document,
+      // because watchlist rows carry .tv-plot controls of their own. The analyst band is
+      // server-rendered and still needs a reload; the button's tooltip says so.
+      el.__paintMatp = function (newMatp, newMbp) {
+        matp = (newMatp == null || !isFinite(newMatp)) ? null : Number(newMatp);
+        mbp = (newMbp == null || !isFinite(newMbp)) ? null : Number(newMbp);
+        drawMatpLines();
+        var lm = document.getElementById('legendMatp');
+        var lb = document.getElementById('legendMbp');
+        if (lm) lm.textContent = matp != null ? matp.toFixed(2) : '-';
+        if (lb) lb.textContent = mbp != null ? mbp.toFixed(2) : '-';
+        var la = document.getElementById('legendAsOf');
+        if (la && matp != null) la.textContent = '· calculated just now';
+        var tv = el.parentElement ? el.parentElement.querySelector('.tv-plot') : null;
+        if (tv) {
+          tv.setAttribute('data-matp', matp != null ? matp.toFixed(2) : '');
+          tv.setAttribute('data-mbp', mbp != null ? mbp.toFixed(2) : '');
+          // A curated setup on the control (data-entry) keeps its own label.
+          if (!tv.getAttribute('data-entry')) {
+            tv.textContent = '▧ ' + (matp != null ? 'Plot on TV' : 'Open on TV');
+          }
+        }
+        // The autoscale provider reads matp/mbp, but only runs when the scale is
+        // recomputed — ask for that, or a new level outside the range stays off-screen.
+        try { chart.priceScale('right').applyOptions({ autoScale: true }); } catch (e) {}
+      };
       // curator's horizontal support / resistance (solid; only on a study chart)
       if (supp != null) s.createPriceLine({ price: supp, color: '#38bdf8', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: 'S' });
       if (resis != null) s.createPriceLine({ price: resis, color: '#e879f9', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: 'R' });

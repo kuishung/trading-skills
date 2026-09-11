@@ -143,6 +143,47 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-11 - v4.60: Run MATP from the chart
+
+User: *"in the chart, i want a button run to calculate MATP and MBP"*
+
+**A `↻ Run MATP` button in the chart toolbar** (`↻ Recalc MATP` when the ticker already has
+one). It cannot calculate anything itself — this app runs no LLM and fetches no analyst
+targets — so it queues the same ticker request the Nous agent already works, and then
+**watches it**: `⌛ MATP queued` → `⌛ MATP running 1/1` → `✓ MATP 412.50`. When the result lands,
+the chart **redraws its MATP / MBP lines, legend numbers and Plot-on-TV levels in place**, no
+reload (the analyst band is server-rendered and still needs one; the tooltip says so). The
+agent polls about every 10 minutes, so "queued" is a real wait, and the tooltip says that too.
+
+- Opt-in per page (`chart_matp_run`): Watchlist pane, Sector & Industry chart and the holdings
+  pop-out window, Company, Curated, Portfolio. **Not** on the Sector ETFs tab — a fund has no
+  analyst targets, so the agent could never finish the run (`sector._chart_ctx` decides
+  `is_etf`) — and not on `/matp/<sym>`, which already has *Request refresh*.
+- New `POST /matp/<sym>/run` and `GET /matp/<sym>/run-status` (JSON), open to any approved
+  member exactly like the existing `/matp/run-ticker`. Both go through `_enqueue`, so clicks
+  never duplicate: a second click, or a second member, joins the request already in flight.
+- The chart checks the status on load, so a run someone else queued shows up without a click.
+  Polling is calm (30s queued, 15s running) and stops on done, failed, the chart being swapped
+  away, or a **stuck** run — pending 15+ min or running 8+ min without progress, the same rule
+  the Watchlist runs panel uses — which shows `⚠ MATP stuck` and points at Agent status rather
+  than polling an offline agent forever.
+- No agent change: it already processes ticker-scope requests.
+
+**Found in testing and fixed before shipping:** the status query picked "newest by
+`created_at`", while de-duplication looks for any OPEN request. A re-queue rewrites
+`created_at`, so a stuck request could hide behind an older finished run — the button said
+"done" while clicks were (correctly) held on the open request. It now reports the open request
+first, else the newest by id, so the button always describes the request a click would join.
+
+Verified through the real app with login and the agent's API key overridden (dev DB only, test
+rows removed afterwards): queue → de-dupe → bad symbols rejected → the agent's
+`/api/refresh-queue` sees it → running 0/1 → `/api/matp` push + done returns MATP/MBP → a new
+run after done queues again → a 20-min-old pending run is flagged stuck and not duplicated.
+In the browser, on BAP (no MATP on record) with the agent simulated through its real endpoints:
+`↻ Run MATP` → `⌛ MATP queued` → `⌛ MATP running 0/1` → `✓ MATP 400.00`, legend 400.00 / 347.83,
+both lines drawn and Plot on TV relabelled, no reload. XLK renders no button. All 17 inline
+scripts on the rendered pages pass `node --check`.
+
 ### 2026-09-11 - v4.59: Sector ETFs shows what each fund holds
 
 User: *"in the sector ETF tab, i need to have a right panel to show the list of component

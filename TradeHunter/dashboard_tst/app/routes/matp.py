@@ -1023,6 +1023,108 @@ def run_ticker(
     return RedirectResponse(url="/matp", status_code=303)
 
 
+# ---------------------------------------------------------------------------
+# "Run MATP" from any chart (user, 2026-09-11: "in the chart, i want a button run
+# to calculate MATP and MBP"). JSON twins of /run-ticker for the chart toolbar's
+# button. The button cannot compute anything — this process runs no LLM and
+# fetches no analyst targets — so it enqueues the same ticker request the agent
+# already works, and then WATCHES it. Open to any approved member, like /run-ticker.
+# ---------------------------------------------------------------------------
+def _valid_ticker(sym: str) -> bool:
+    """The same shape check /run-ticker applies."""
+    return 1 <= len(sym) <= 6 and all(c.isalpha() or c in ".-" for c in sym)
+
+
+def _run_state(db: Session, sym: str) -> dict:
+    """What the chart's Run-MATP button should show for `sym` right now.
+
+    The ticker request that matters — an OPEN one if there is any, otherwise the most
+    recent — with its age, flagged ``stale`` by the SAME rule the Watchlist runs panel
+    uses (_open_run_items): pending for 15+ min, or running 8+ min without progress,
+    means the agent is probably not polling — so the button stops watching instead
+    of polling forever. Plus the MATP/MBP currently on record, so the button can
+    redraw the chart's lines the moment a finished run lands, without a reload.
+    """
+    # Open request first, exactly what _enqueue looks for before refusing a
+    # duplicate, so the button always describes the request a click would join.
+    # "Newest" is by id, never created_at: a re-queue rewrites created_at, and
+    # ordering on it let a stuck request hide behind an older finished run — the
+    # button then said "done" while _enqueue (correctly) held the open one.
+    base = db.query(MATPRefreshRequest).filter(
+        MATPRefreshRequest.scope == "ticker", MATPRefreshRequest.symbol == sym)
+    r = (
+        base.filter(MATPRefreshRequest.status.in_(_OPEN_STATES))
+        .order_by(MATPRefreshRequest.id.desc()).first()
+        or base.order_by(MATPRefreshRequest.id.desc()).first()
+    )
+    lv = db.query(MATPLevel).filter(MATPLevel.symbol == sym).first()
+    now = _dt.datetime.now(_dt.timezone.utc)
+
+    def _utc(ts):
+        if ts is None:
+            return None
+        return ts.replace(tzinfo=_dt.timezone.utc) if ts.tzinfo is None else ts
+
+    def _mins(ts):
+        ts = _utc(ts)
+        return None if ts is None else max(0, int((now - ts).total_seconds() // 60))
+
+    def _iso(ts):
+        ts = _utc(ts)
+        return None if ts is None else ts.isoformat()
+
+    status_ = r.status if r is not None else "none"
+    waited = _mins(r.created_at) if r is not None else None
+    ran = _mins(r.claimed_at) if r is not None else None
+    stale = r is not None and (
+        (status_ == "pending" and waited is not None and waited >= 15)
+        or (status_ == "running" and ran is not None and ran >= 8 and not r.progress_done)
+    )
+    return {
+        "symbol": sym, "status": status_,
+        "request_id": r.id if r is not None else None,
+        "progress_done": r.progress_done if r is not None else None,
+        "progress_total": r.progress_total if r is not None else None,
+        "note": (r.note or None) if r is not None else None,
+        "waited_min": waited, "ran_min": ran, "stale": bool(stale),
+        "completed_at": _iso(r.completed_at) if r is not None else None,
+        "matp": lv.matp if lv is not None else None,
+        "mbp": lv.mbp if lv is not None else None,
+        "as_of": _iso(lv.as_of) if lv is not None else None,
+    }
+
+
+@router.post("/{symbol}/run")
+def run_matp_from_chart(
+    symbol: str,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Queue a MATP/MBP calculation for one ticker and report its state as JSON.
+
+    ``queued`` is False when an identical request is already open — _enqueue never
+    duplicates — and the state then describes THAT request, so a second click (or a
+    second member) watches the run in flight instead of starting another."""
+    sym = (symbol or "").strip().upper()
+    if not _valid_ticker(sym):
+        return {"ok": False, "error": "Not a US ticker symbol."}
+    queued = _enqueue(db, "ticker", symbol=sym, user=user)
+    return {"ok": True, "queued": queued, **_run_state(db, sym)}
+
+
+@router.get("/{symbol}/run-status")
+def matp_run_status(
+    symbol: str,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """The Run-MATP button's poll: the latest ticker request plus MATP/MBP on record."""
+    sym = (symbol or "").strip().upper()
+    if not _valid_ticker(sym):
+        return {"ok": False, "error": "Not a US ticker symbol."}
+    return {"ok": True, **_run_state(db, sym)}
+
+
 @router.post("/filter/{filter_id}/refresh")
 def request_filter_refresh(
     filter_id: int,

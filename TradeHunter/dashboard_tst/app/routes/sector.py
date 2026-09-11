@@ -239,10 +239,16 @@ def _chart_ctx(db: Session, user: User, symbol: str) -> dict:
     from ..models import MATPLevel
     from .matp import _chart_context
 
+    from ..services.etf import ETF_UNIVERSE, INDEX_ETFS
+
     sym = (symbol or "").strip().upper()
     sel = db.query(MATPLevel).filter(MATPLevel.symbol == sym).first()
     cc = _chart_context(db, sel)
-    return {"user": user, "symbol": sym, "sel": sel,
+    # A fund has no analyst price targets, so the chart's Run-MATP button would only
+    # queue a run the agent can never complete. The Sector ETFs tab charts ETFs
+    # through this same context, so it is decided here, once, for all three views.
+    is_etf = sym in {s for s, _ in ETF_UNIVERSE + INDEX_ETFS}
+    return {"user": user, "symbol": sym, "sel": sel, "is_etf": is_etf,
             "sel_band": cc["sel_band"], "sel_patterns": cc["sel_patterns"]}
 
 

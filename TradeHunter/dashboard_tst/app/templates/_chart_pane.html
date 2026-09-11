@@ -15,6 +15,9 @@
 {# Curate setup -> the member's Curated list (user, 2026-09-08) #}
 {% set chart_curate_setup = true %}
   {% set chart_tv_plot = true %}
+  {# Run MATP from the chart (user, 2026-09-11) — most useful here, where a starred
+     ticker with no MATP on record is charted price-only until its first run. #}
+  {% set chart_matp_run = true %}
 
   {# Chart | Options tabs. Both live inside the swapped pane, so picking another
      ticker re-renders them together; the JS below re-applies whichever tab was

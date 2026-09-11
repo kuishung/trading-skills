@@ -88,6 +88,8 @@
     {% set chart_patterns = sel_patterns %}
     {% set chart_fill = false %}
     {% set chart_tv_plot = false %}
+    {# Run MATP from the chart (user, 2026-09-11) #}
+    {% set chart_matp_run = true %}
     {% include "_price_chart.html" %}
     {% if not sel %}
     <p class="text-[11px] text-slate-500 -mt-2">No analyst / MATP data for {{ symbol }} yet — showing price only.</p>
