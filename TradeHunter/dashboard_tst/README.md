@@ -143,6 +143,26 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-11 - v4.61: Run MATP on the fund chart, and a header-less pop-out
+
+User: *"i did not see the calculate MATP and MBP in the chart in the sector ETFs. Also when i
+click on the ticker with the new windows pop up, do no show the heading and menu"*
+
+- **Sector ETFs fund chart now has `↻ Run MATP` too.** v4.60 hid it for a fund on the reasoning
+  that a fund has no analyst targets; the user wants the button there regardless. Nothing else
+  had to change: the agent already skips a ticker with zero post-earnings targets and the
+  button already reports that as `✓ No MATP`, so the worst case is an honest "nothing found",
+  not a hang. `_sector_chart.html` sets `chart_matp_run = true` unconditionally and
+  `sector._chart_ctx` no longer computes `is_etf`.
+- **The holdings pop-out window is chart-only** — no site header, no menu, no user dropdown.
+  New `chromeless` context flag honoured by `base.html` (the header block is skipped, everything
+  else — Plot-on-TV / watchlist handlers, scrollbar rules, chart library — stays), passed by
+  `/sector/chart-window`. The chart box grows to `100vh - 1.5rem` to use the freed space.
+
+Verified through the app with the login dependency overridden (dev DB): the pop-out renders
+with no `<header>`/`<nav>`/Logout and with the Run MATP + Plot on TV controls; `/sector/chart`
+for XLK now carries Run MATP; `/sector` itself still renders its header.
+
 ### 2026-09-11 - v4.60: Run MATP from the chart
 
 User: *"in the chart, i want a button run to calculate MATP and MBP"*

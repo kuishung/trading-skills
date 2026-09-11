@@ -19,10 +19,12 @@
    move. Works for a ticker with no MATP as well — the bridge then just switches
    the chart to the symbol (see base.html::plotOnTV). #}
 {% set chart_tv_plot = true %}
-{# Run MATP from the chart (user, 2026-09-11) — but not for an ETF: a fund has no
-   analyst price targets, so the agent could never complete the run. The Sector ETFs
-   tab charts ETFs through this same fragment; sector._chart_ctx decides is_etf. #}
-{% set chart_matp_run = not (is_etf is defined and is_etf) %}
+{# Run MATP from the chart (user, 2026-09-11) — on EVERY chart this fragment renders,
+   the Sector ETFs fund chart included. v4.60 hid it for a fund (no analyst targets, so
+   the agent has nothing to median); the user asked for it there anyway ("i did not see
+   the calculate MATP and MBP in the chart in the sector ETFs"). The button already
+   reports that outcome honestly ("✓ No MATP"), so hiding it bought nothing. #}
+{% set chart_matp_run = true %}
 {% include "_price_chart.html" %}
 {% if not sel %}
 <p class="text-[11px] text-slate-500 mt-1 shrink-0">No analyst / MATP data for {{ symbol }} — showing price only.</p>

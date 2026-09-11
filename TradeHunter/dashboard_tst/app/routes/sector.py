@@ -239,16 +239,10 @@ def _chart_ctx(db: Session, user: User, symbol: str) -> dict:
     from ..models import MATPLevel
     from .matp import _chart_context
 
-    from ..services.etf import ETF_UNIVERSE, INDEX_ETFS
-
     sym = (symbol or "").strip().upper()
     sel = db.query(MATPLevel).filter(MATPLevel.symbol == sym).first()
     cc = _chart_context(db, sel)
-    # A fund has no analyst price targets, so the chart's Run-MATP button would only
-    # queue a run the agent can never complete. The Sector ETFs tab charts ETFs
-    # through this same context, so it is decided here, once, for all three views.
-    is_etf = sym in {s for s, _ in ETF_UNIVERSE + INDEX_ETFS}
-    return {"user": user, "symbol": sym, "sel": sel, "is_etf": is_etf,
+    return {"user": user, "symbol": sym, "sel": sel,
             "sel_band": cc["sel_band"], "sel_patterns": cc["sel_patterns"]}
 
 
@@ -258,9 +252,14 @@ def sector_chart_window(request: Request, symbol: str = "",
                         db: Session = Depends(get_db)):
     """A ticker's chart as a full page, opened in its own window from the Sector ETFs
     holdings panel (user, 2026-09-11: "when i click the tickers i will open into a
-    chart into a new window, same chart function")."""
+    chart into a new window, same chart function").
+
+    chromeless: no site header / menu in the pop-out (user, 2026-09-11: "when i click
+    on the ticker with the new windows pop up, do no show the heading and menu") — it
+    is a chart window, not a second copy of the site. base.html honours the flag."""
     return templates.TemplateResponse(
-        request, "sector_chart_window.html", _chart_ctx(db, user, symbol))
+        request, "sector_chart_window.html",
+        {**_chart_ctx(db, user, symbol), "chromeless": True})
 
 
 @router.get("/etf-holdings", response_class=HTMLResponse)

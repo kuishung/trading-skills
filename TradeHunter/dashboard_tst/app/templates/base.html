@@ -328,6 +328,11 @@
   <div class="flex flex-col min-h-screen lg:h-screen">
 
     {# ---------------- top bar (nav relocated here) ---------------- #}
+    {# chromeless: a route may pass chromeless=True to drop the header + menu while
+       keeping everything else base.html provides (Plot-on-TV / watchlist handlers,
+       scrollbar rules, chart library). Used by the Sector ETFs holdings pop-out
+       window (user, 2026-09-11: "do no show the heading and menu"). #}
+    {% if not (chromeless is defined and chromeless) %}
     <header class="shrink-0 z-20 border-b border-slate-800 bg-slate-950/80 backdrop-blur px-3 sm:px-4 py-2 flex items-center gap-3">
       <a href="/" class="flex items-center gap-2 font-semibold tracking-wide shrink-0">
         <img src="/static/logo.svg" alt="" class="h-7 w-7">
@@ -467,6 +472,7 @@
         </div>
       </details>
     </header>
+    {% endif %}
 
     <main class="{% block main_class %}flex-1 min-h-0 overflow-y-auto w-full px-4 py-6 max-w-6xl mx-auto{% endblock %}">
       {% block content %}{% endblock %}

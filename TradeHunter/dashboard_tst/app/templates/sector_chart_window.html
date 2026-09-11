@@ -8,9 +8,12 @@
    has every control the in-page chart has: zoom, drawing tools, ATR, the trade-setup
    editor with Curate setup, and Plot on TV. Extends base.html on purpose: the
    Plot-on-TV and watchlist handlers live there, and a bare page would silently lose
-   them. Full page render, so the chart library loads before the chart script runs
+   them. The route passes chromeless=True, so base.html renders NO header / menu: this
+   is a chart window, not a second copy of the site (user, 2026-09-11). The height
+   below is the viewport less main's own py-3 (1.5rem), so the chart fills the window.
+   Full page render, so the chart library loads before the chart script runs
    (the HTMX preload race documented in curated.html does not apply). #}
-<div class="h-[calc(100vh-6rem)] min-h-[420px] flex flex-col min-h-0 rounded-xl border border-slate-800 bg-slate-900/40 p-3">
+<div class="h-[calc(100vh-1.5rem)] min-h-[420px] flex flex-col min-h-0 rounded-xl border border-slate-800 bg-slate-900/40 p-3">
   {% if symbol %}
   {% include "_sector_chart.html" %}
   {% else %}
