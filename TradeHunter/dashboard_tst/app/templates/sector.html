@@ -124,8 +124,21 @@
          monitoring to be continuous, not a one-shot render at page load. #}
       <div id="etfStructure" class="shrink-0 mb-2 min-h-[1.25rem]"
            hx-get="/sector/etf-structure" hx-trigger="load" hx-swap="innerHTML"></div>
-      <div id="sectorEtfChartBody" class="flex-1 min-h-0 overflow-y-auto flex flex-col">
-        <div class="flex-1 flex items-center justify-center text-xs text-slate-500 text-center px-4">Pick a sector ETF above to chart it.</div>
+      {# Chart LEFT, the fund's holdings RIGHT (user, 2026-09-11: "a right panel to
+         show the list of component tickers in that ETF and sort by performance").
+         The structure strip above stays full-width — it watches every ETF, not
+         just the one charted. A holding opens its chart in a NEW WINDOW, so this
+         pane's ETF chart is never replaced by a holding's, and the one-chart-per-
+         DOM rule (#priceChart is a fixed id) holds with no extra bookkeeping. #}
+      <div class="flex-1 min-h-0 flex flex-col lg:flex-row gap-3">
+        <div id="sectorEtfChartBody" class="flex-1 min-w-0 min-h-0 overflow-y-auto flex flex-col">
+          <div class="flex-1 flex items-center justify-center text-xs text-slate-500 text-center px-4">Pick a sector ETF above to chart it.</div>
+        </div>
+        <aside class="lg:w-80 shrink-0 min-h-0 flex flex-col max-h-[45vh] lg:max-h-none lg:border-l lg:border-slate-800 lg:pl-3">
+          <div id="etfHoldings" class="flex-1 min-h-0 overflow-y-auto pr-1">
+            <p class="text-xs text-slate-600 py-3 px-1">Pick an ETF to list what it holds.</p>
+          </div>
+        </aside>
       </div>
     </section>
 
@@ -278,7 +291,55 @@
         b.classList.toggle('text-slate-400', !on);
       });
       loadInto('sectorEtfChartBody', sym);
+      loadHoldings(sym);
     }
+
+    // ── the fund's holdings, right of the chart ────────────────────────────
+    // Follows whichever ETF is charted. The sort last picked is kept per browser,
+    // so flipping between sector buttons reads every fund on the same clock
+    // instead of snapping back to the default each time.
+    var HOLD_SORT_KEY = 'thEtfHoldingsSort';
+    function holdSort() {
+      try { return localStorage.getItem(HOLD_SORT_KEY) || ''; } catch (e) { return ''; }
+    }
+    function loadHoldings(sym) {
+      var el = document.getElementById('etfHoldings');
+      if (!window.htmx || !el || !sym) return;
+      el.innerHTML = '<p class="text-xs text-slate-500 py-3 px-1">Loading ' + sym + ' holdings&hellip;</p>';
+      var s = holdSort();
+      htmx.ajax('GET', '/sector/etf-holdings?symbol=' + encodeURIComponent(sym) +
+                (s ? '&sort=' + encodeURIComponent(s) : ''),
+                { target: '#etfHoldings', swap: 'innerHTML' });
+    }
+    // One window PER TICKER, named after it: re-clicking a ticker whose chart is
+    // already open brings that window forward instead of stacking a duplicate,
+    // while two different holdings still open side by side for comparison.
+    function openHoldingChart(row) {
+      var sym = row.getAttribute('data-chart-sym');
+      if (!sym) return;
+      var w = window.open('/sector/chart-window?symbol=' + encodeURIComponent(sym),
+                          'th_chart_' + sym.replace(/[^A-Za-z0-9]/g, '_'),
+                          'width=1280,height=860,resizable=yes,scrollbars=yes');
+      if (w) { try { w.focus(); } catch (err) { /* cross-window focus can be refused */ } }
+    }
+    // Delegated on document: the panel is HTMX-swapped on every ETF switch, sort
+    // and performance poll, so directly-bound listeners would be thrown away.
+    document.addEventListener('click', function (e) {
+      var pill = e.target.closest ? e.target.closest('.etf-hold-sort') : null;
+      if (pill) {
+        try { localStorage.setItem(HOLD_SORT_KEY, pill.getAttribute('data-sort') || ''); } catch (err) {}
+        return;                         // the pill's own hx-get does the re-sort
+      }
+      var row = e.target.closest ? e.target.closest('.etf-holding') : null;
+      if (row) openHoldingChart(row);
+    });
+    document.addEventListener('keydown', function (e) {
+      if ((e.key === 'Enter' || e.key === ' ') && e.target.classList &&
+          e.target.classList.contains('etf-holding')) {
+        e.preventDefault();
+        openHoldingChart(e.target);
+      }
+    });
 
     document.querySelectorAll('.etfbtn').forEach(function (b) {
       b.addEventListener('click', function () { loadEtf(b.getAttribute('data-sym'), true); });

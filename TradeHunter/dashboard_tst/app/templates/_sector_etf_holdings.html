@@ -1,0 +1,75 @@
+{# One ETF's holdings, each joined to its performance — the Sector ETFs tab's right
+   panel. Context: services.etf_holdings.components(). Swapped into #etfHoldings.
+
+   The root re-requests ITSELF every 2.5s while perf_state == 'loading' (the index's
+   performance walk is running in the background on a cold cache) and stops the
+   moment the numbers land. Sort pills swap the same root.
+
+   Those two requests RACE unless coordinated, which is what the hx-sync attributes
+   below are for. A poll already in flight when a pill is clicked could land first
+   and swap in a fresh root carrying the OLD sort — the pill's own response then
+   targets a node that is no longer on the page and is thrown away. Seen in testing:
+   1D clicked while loading, the panel stayed on 1W. So a pill REPLACES (aborts) an
+   in-flight poll, and a poll that fires while a pill's request is in flight is
+   DROPPED: the member's click always wins.
+
+   Rows open the ticker's chart in a NEW WINDOW (delegated .etf-holding handler in
+   sector.html), carrying chart_symbol — the Yahoo spelling ("BRK-B"), not the
+   issuer's ("BRK.B"), or the chart would come back empty. #}
+{% macro pct(v) -%}
+{%- if v is none -%}<span class="text-slate-600">&ndash;</span>
+{%- else -%}<span class="tabular-nums {{ 'text-emerald-400' if v > 0 else ('text-rose-400' if v < 0 else 'text-slate-400') }}">{{ '%+.2f'|format(v) }}%</span>
+{%- endif -%}
+{%- endmacro %}
+{% macro txt(v) -%}{{ '–' if v is none else ('%+.2f'|format(v) ~ '%') }}{%- endmacro %}
+<div class="etf-holdings-body"
+     {% if perf_state == 'loading' %}hx-get="/sector/etf-holdings?symbol={{ etf }}&sort={{ sort }}" hx-trigger="load delay:2500ms" hx-target="this" hx-swap="outerHTML" hx-sync="this:drop"{% endif %}>
+  <div class="flex items-baseline justify-between gap-2 px-1">
+    <h3 class="text-sm font-semibold text-slate-200">{{ etf }} <span class="font-normal text-slate-500">holdings</span></h3>
+    {% if rows %}<span class="text-[11px] text-slate-500 tabular-nums">{{ rows | length }}</span>{% endif %}
+  </div>
+  <p class="text-[10px] text-slate-600 px-1 mb-1.5 leading-snug">
+    {{ etf_name }}{% if as_of %} &middot; as of {{ as_of }}{% endif %}{% if source %} &middot; {{ source }}{% endif %}
+    {% if stale %} &middot; <span class="text-amber-400/80" title="The issuer could not be reached, so this is the last good copy">last good copy</span>{% endif %}
+  </p>
+
+  {% if not rows %}
+  <p class="text-xs text-slate-500 py-3 px-1">{{ error or 'No holdings to show.' }}</p>
+  {% else %}
+  <div class="flex flex-wrap items-center gap-1 mb-1.5 px-1">
+    {% for key, _field, label in sorts %}
+    <button type="button"
+            class="etf-hold-sort text-[10px] px-1.5 py-0.5 rounded border transition {% if key == sort %}border-emerald-500/60 bg-emerald-500/15 text-emerald-300{% else %}border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200{% endif %}"
+            data-sort="{{ key }}"
+            hx-get="/sector/etf-holdings?symbol={{ etf }}&sort={{ key }}"
+            hx-target="closest .etf-holdings-body" hx-swap="outerHTML"
+            hx-sync="closest .etf-holdings-body:replace"
+            title="{{ 'Heaviest first — how the fund is built' if key == 'weight' else label ~ ' performance, best first' }}">{{ label }}</button>
+    {% endfor %}
+  </div>
+
+  {% if perf_state == 'loading' %}
+  <p class="text-[10px] text-sky-300/80 px-1 mb-1 leading-snug">Loading performance for the index&hellip; the first view after a restart takes up to ~40s, then it is cached for 15 min.</p>
+  {% elif perf_state == 'failed' %}
+  <p class="text-[10px] text-amber-400/80 px-1 mb-1 leading-snug">Performance is unavailable right now &mdash; showing weights only. It retries on its own.</p>
+  {% endif %}
+
+  {% set COLS = "display:grid;grid-template-columns:3.4rem 1fr 2.6rem 3.9rem;column-gap:0.35rem;align-items:center" %}
+  <div style="{{ COLS }}" class="px-1 pb-0.5 text-[10px] uppercase tracking-wide text-slate-600 border-b border-slate-800/70">
+    <span>Ticker</span><span>Name</span>
+    <span class="text-right" title="Weight in the fund, %">Wt</span>
+    <span class="text-right">{{ perf_label }}</span>
+  </div>
+  {% for r in rows %}
+  <div class="etf-holding cursor-pointer px-1 py-0.5 rounded hover:bg-emerald-500/10 transition"
+       style="{{ COLS }}" role="button" tabindex="0"
+       data-chart-sym="{{ r.chart_symbol }}"
+       title="{{ r.symbol }} &mdash; {{ r.name }}&#10;{{ '%.2f'|format(r.weight) }}% of {{ etf }}{% if r.price is not none %} &middot; last {{ '%.2f'|format(r.price) }}{% endif %}&#10;1D {{ txt(r.chg_1d) }} &middot; 1W {{ txt(r.perf_1w) }} &middot; 1M {{ txt(r.perf_1m) }} &middot; 3M {{ txt(r.perf_3m) }} &middot; YTD {{ txt(r.perf_ytd) }}&#10;Click to open the chart in a new window">
+    <span class="text-[12px] font-medium text-slate-200">{{ r.symbol }}</span>
+    <span class="text-[11px] text-slate-400 truncate">{{ r.name }}</span>
+    <span class="text-right text-[11px] text-slate-500 tabular-nums">{{ '%.1f'|format(r.weight) }}</span>
+    <span class="text-right text-[11px]">{{ pct(r[perf_field]) }}</span>
+  </div>
+  {% endfor %}
+  {% endif %}
+</div>

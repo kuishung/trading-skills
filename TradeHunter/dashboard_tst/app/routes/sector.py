@@ -227,16 +227,46 @@ def sector_chart(
     board; a plain price chart otherwise). Rendered into #sectorChartBody when a
     Symbol-panel ticker is clicked, so the chart shows in-page (no new window).
     Reuses matp's _chart_context so it matches the Watchlist exactly."""
+    return templates.TemplateResponse(
+        request, "_sector_chart.html", _chart_ctx(db, user, symbol))
+
+
+def _chart_ctx(db: Session, user: User, symbol: str) -> dict:
+    """The one chart context that both the inline Chart tab and the pop-out chart
+    window render, so a holding opened in its own window is the SAME chart —
+    MATP/MBP, analyst band, drawing tools, Curate setup, Plot on TV — rather than a
+    lookalike that drifts from it."""
     from ..models import MATPLevel
     from .matp import _chart_context
 
     sym = (symbol or "").strip().upper()
     sel = db.query(MATPLevel).filter(MATPLevel.symbol == sym).first()
     cc = _chart_context(db, sel)
-    return templates.TemplateResponse(request, "_sector_chart.html", {
-        "user": user, "symbol": sym, "sel": sel,
-        "sel_band": cc["sel_band"], "sel_patterns": cc["sel_patterns"],
-    })
+    return {"user": user, "symbol": sym, "sel": sel,
+            "sel_band": cc["sel_band"], "sel_patterns": cc["sel_patterns"]}
+
+
+@router.get("/chart-window", response_class=HTMLResponse)
+def sector_chart_window(request: Request, symbol: str = "",
+                        user: User = Depends(require_user),
+                        db: Session = Depends(get_db)):
+    """A ticker's chart as a full page, opened in its own window from the Sector ETFs
+    holdings panel (user, 2026-09-11: "when i click the tickers i will open into a
+    chart into a new window, same chart function")."""
+    return templates.TemplateResponse(
+        request, "sector_chart_window.html", _chart_ctx(db, user, symbol))
+
+
+@router.get("/etf-holdings", response_class=HTMLResponse)
+def sector_etf_holdings(request: Request, symbol: str = "", sort: str = "",
+                        user: User = Depends(require_user)):
+    """Fragment: what one ETF holds, joined to each holding's performance and sorted
+    — the Sector ETFs tab's right-hand panel. Sources and caching are in
+    services/etf_holdings.py (issuer holdings file + Finviz performance)."""
+    from ..services import etf_holdings as eh
+
+    return templates.TemplateResponse(
+        request, "_sector_etf_holdings.html", eh.components(symbol, sort))
 
 
 @router.get("/filter", response_class=HTMLResponse)

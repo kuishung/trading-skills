@@ -33,6 +33,15 @@ Public API:
         share-class convention (BRK.B not BRK-B) for consistency with
         the rest of the codebase.
 
+    fetch_ticker_industries(url, ...) -> list[dict]
+        v=111 overview -> [{symbol, company, industry, price}].
+
+    fetch_performance_rows(url, ..., cache_only=False) -> list[dict] | None
+        v=141 performance view -> [{symbol, company, mcap, price, chg_1d,
+        perf_1w, perf_1m, perf_3m, perf_6m, perf_ytd, perf_1y}], cells mapped
+        by the header's sort keys. 15-min mem+disk cache; cache_only=True
+        peeks without fetching and returns None on a miss.
+
 CLI:
     py resources/finviz_screener.py <URL>
     py resources/finviz_screener.py <URL> --force-refresh
@@ -241,6 +250,170 @@ def fetch_ticker_industries(
         time.sleep(page_sleep_s if page_sleep_s is not None else _PAGE_SLEEP_S)
     if out:
         _MEM_CACHE_IND[base] = (time.time(), out)
+        _write_ind_cache(disk, base, out)
+    return out
+
+
+# ── Performance view (v=141) ────────────────────────────────────────────────
+# Ticker, company and market cap live in the ticker cell's boxover attributes, as
+# in the overview. The performance NUMBERS do not — they are plain <td> cells — so
+# they are mapped through the header row's sort keys (o=-perf1w, o=-perf4w, ...).
+# Those are Finviz's machine names and far steadier than column positions or
+# display text: a column Finviz adds, drops or reorders cannot shift a number into
+# the wrong field, and a key that disappears simply comes back as None.
+#
+# The symbol is taken from the ATTRIBUTE, never the cell text: the ticker cell also
+# renders a logo-fallback letter, so its text reads "NNVDA" for NVDA.
+# Finviz spells share classes with a DASH ('BRK-B', verified on the live page
+# 2026-09-11), so the ticker class must allow '-'. The first version allowed only
+# dots and silently dropped those rows — BRK.B, the largest holding in XLF, came
+# back with no performance. Callers get the dotted form ('BRK.B') the rest of the
+# codebase and the ETF issuers use; see _extract_perf_rows.
+_PERF_TICKER_RE = re.compile(
+    r'data-boxover-ticker="([A-Z][A-Z0-9.\-]{0,9})"\s+data-boxover-company="([^"]*)"'
+    r'(?:[^>]*?data-boxover-value="([^"]*)")?'
+)
+_THEAD_RE = re.compile(r"<thead>(.*?)</thead>", re.S)
+_TH_RE = re.compile(r"<th[^>]*>.*?</th>", re.S)
+# Each header link carries its column's sort key, with a leading '-' only when that
+# link sorts DESCENDING — which flips with how the page itself is currently sorted.
+# Requiring the dash made every key parse as '' on an ascending page and blanked
+# every field of every row (found 2026-09-11 checking BF.B on o=marketcap). The walks
+# here sort descending, but the parser must not depend on it. Anchored on the query
+# separator so an 'o=' can never be picked out of the middle of a filter value.
+_TH_KEY_RE = re.compile(r"[?&]o=-?([a-z0-9]+)")
+_STYLED_ROW_RE = re.compile(r'<tr class="styled-row[^"]*"[^>]*>(.*?)</tr>', re.S)
+_TD_RE = re.compile(r"<td[^>]*>(.*?)</td>", re.S)
+_TAG_RE = re.compile(r"<[^>]+>")
+_TOTAL_RE = re.compile(r"#\d+ / (\d+) Total")
+
+# Finviz header key -> the field name callers receive.
+_PERF_FIELDS = {
+    "price": "price", "change": "chg_1d",
+    "perf1w": "perf_1w", "perf4w": "perf_1m", "perf13w": "perf_3m",
+    "perf26w": "perf_6m", "perfytd": "perf_ytd", "perf52w": "perf_1y",
+}
+_MEM_CACHE_PERF: dict[str, tuple[float, list[dict]]] = {}
+
+
+def _perf_cache_path(url: str) -> Path:
+    return CACHE_DIR / f"finviz_perf_{hashlib.sha1(url.encode('utf-8')).hexdigest()[:12]}.json"
+
+
+def _num_cell(text: str) -> float | None:
+    """'-2.70%' -> -2.7, '218.36' -> 218.36, '-' / '' -> None."""
+    t = (text or "").strip().replace(",", "").rstrip("%")
+    try:
+        return float(t)
+    except ValueError:
+        return None
+
+
+def _mcap(text: str) -> float | None:
+    """Finviz market cap '5262.48B' -> 5.26248e12 dollars."""
+    t = (text or "").strip().upper()
+    if not t:
+        return None
+    mult = {"T": 1e12, "B": 1e9, "M": 1e6, "K": 1e3}.get(t[-1])
+    try:
+        return float(t[:-1]) * mult if mult else float(t)
+    except ValueError:
+        return None
+
+
+def _extract_perf_rows(html: str) -> list[dict]:
+    """Per-row performance dicts from one v=141 page (see the block comment above)."""
+    head = _THEAD_RE.search(html)
+    if not head:
+        return []
+    keys = []
+    for th in _TH_RE.findall(head.group(1)):
+        m = _TH_KEY_RE.search(th)
+        keys.append(m.group(1) if m else "")
+    out: list[dict] = []
+    for row in _STYLED_ROW_RE.findall(html):
+        tick = _PERF_TICKER_RE.search(row)
+        if not tick:
+            continue
+        cells = [_TAG_RE.sub("", c).strip() for c in _TD_RE.findall(row)]
+        by_key = dict(zip(keys, cells))
+        rec = {"symbol": tick.group(1).upper().replace("-", "."),
+               "company": (tick.group(2) or "").strip(),
+               "mcap": _mcap(tick.group(3) or "")}
+        for fkey, name in _PERF_FIELDS.items():
+            rec[name] = _num_cell(by_key.get(fkey, ""))
+        out.append(rec)
+    return out
+
+
+def fetch_performance_rows(
+    url: str, *, max_pages: int = 40, cache_ttl_s: int = 900,
+    page_sleep_s: float | None = None, force_refresh: bool = False,
+    cache_only: bool = False,
+) -> list[dict] | None:
+    """Walk a Finviz screener URL in the v=141 PERFORMANCE view and return
+    [{symbol, company, mcap, price, chg_1d, perf_1w, perf_1m, perf_3m, perf_6m,
+    perf_ytd, perf_1y}] across all pages, deduped by symbol. Percent fields are
+    plain numbers (-2.7 means -2.7%); a missing value is None.
+
+    Same pagination as the other walkers, but it also stops as soon as it has the
+    "#1 / N Total" count Finviz prints, which saves the extra looped-back page the
+    no-new-symbols sentinel needs.
+
+    Cached in memory and on disk (``state/cache/finviz_perf_<sha1>.json``) with ONE
+    TTL, default 15 min — unlike the industry cache, these numbers move all day. A
+    disk hit keeps its true age rather than being re-stamped as fresh.
+
+    ``cache_only=True`` never touches the network: it returns the cached rows, or
+    None when nothing fresh is cached. That is how a web request can ask "is the
+    S&P 500 walk warm?" without blocking on a ~25-page scrape.
+    """
+    if not url or not url.strip():
+        return None if cache_only else []
+    base = _normalize_url(url.strip())
+    disk = _perf_cache_path(base)
+    if not force_refresh:
+        hit = _MEM_CACHE_PERF.get(base)
+        if hit is not None and (time.time() - hit[0]) <= cache_ttl_s:
+            return [dict(r) for r in hit[1]]
+        try:
+            d = json.loads(disk.read_text(encoding="utf-8"))
+            fetched = float(d["fetched_at"])
+            if (time.time() - fetched) <= cache_ttl_s and d.get("rows"):
+                rows = list(d["rows"])
+                _MEM_CACHE_PERF[base] = (fetched, rows)
+                return [dict(r) for r in rows]
+        except Exception:  # noqa: BLE001
+            pass
+    if cache_only:
+        return None
+
+    out: list[dict] = []
+    seen: set[str] = set()
+    total: int | None = None
+    for page_idx in range(max_pages):
+        offset = 1 + page_idx * _ROWS_PER_PAGE
+        try:
+            html = _fetch_page(_page_url(base, offset))
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as exc:
+            sys.stderr.write(f"[finviz_screener] perf page {offset} failed: {exc}\n")
+            break
+        if total is None:
+            m = _TOTAL_RE.search(html)
+            total = int(m.group(1)) if m else None
+        new_on_page = 0
+        for rec in _extract_perf_rows(html):
+            if rec["symbol"] in seen:
+                continue
+            seen.add(rec["symbol"])
+            out.append(rec)
+            new_on_page += 1
+        if new_on_page == 0 or (total is not None and len(out) >= total):
+            break
+        time.sleep(page_sleep_s if page_sleep_s is not None else _PAGE_SLEEP_S)
+    if out:
+        now = time.time()
+        _MEM_CACHE_PERF[base] = (now, out)
         _write_ind_cache(disk, base, out)
     return out
 

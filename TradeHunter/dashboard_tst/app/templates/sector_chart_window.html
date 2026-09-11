@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}{{ symbol }} &middot; Chart &middot; TradeHunter{% endblock %}
+{% block main_class %}flex-1 w-full px-3 py-3 overflow-hidden{% endblock %}
+
+{% block content %}
+{# A ticker's chart on its own page, opened in a new window from the Sector ETFs
+   holdings panel. It renders _sector_chart.html itself — not a copy — so the pop-out
+   has every control the in-page chart has: zoom, drawing tools, ATR, the trade-setup
+   editor with Curate setup, and Plot on TV. Extends base.html on purpose: the
+   Plot-on-TV and watchlist handlers live there, and a bare page would silently lose
+   them. Full page render, so the chart library loads before the chart script runs
+   (the HTMX preload race documented in curated.html does not apply). #}
+<div class="h-[calc(100vh-6rem)] min-h-[420px] flex flex-col min-h-0 rounded-xl border border-slate-800 bg-slate-900/40 p-3">
+  {% if symbol %}
+  {% include "_sector_chart.html" %}
+  {% else %}
+  <div class="flex-1 flex items-center justify-center text-xs text-slate-500">No ticker given.</div>
+  {% endif %}
+</div>
+{% endblock %}

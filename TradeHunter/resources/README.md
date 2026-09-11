@@ -56,6 +56,32 @@ treating any "missing" feature as a bug.
 
 ## Changelog
 
+### 2026-09-11 — `finviz_screener.py`: added `fetch_performance_rows()` (v=141 performance view)
+- New public function (pure addition; the existing walkers are untouched): walks a Finviz
+  `v=141` URL and returns `[{symbol, company, mcap, price, chg_1d, perf_1w, perf_1m,
+  perf_3m, perf_6m, perf_ytd, perf_1y}]`, percents as plain numbers.
+- Unlike the overview, performance numbers are plain `<td>` cells, so they are mapped through
+  the **header row's sort keys** (`o=-perf1w`, `o=-perf4w`, …) rather than column positions —
+  a column Finviz adds, drops or reorders can't shift a number into the wrong field. The
+  symbol comes from `data-boxover-ticker`, never the cell text, which carries a logo-fallback
+  letter (it reads "NNVDA" for NVDA).
+- Stops at Finviz's own "#1 / N Total" count instead of fetching the looped-back sentinel
+  page. 15-min mem + disk cache (`state/cache/finviz_perf_<sha1>.json`) — one TTL for both,
+  since these numbers move all day — and a disk hit keeps its true age rather than being
+  re-stamped as fresh.
+- `cache_only=True` peeks without touching the network (None on a miss): how a web request
+  asks "is the S&P 500 walk warm?" without blocking on ~25 pages.
+- Two parser bugs found in testing and fixed before shipping: (1) Finviz spells share
+  classes with a DASH (`BRK-B`), so the ticker class accepts `-` and callers receive the
+  dotted `BRK.B` the codebase uses — previously those rows were silently dropped, which left
+  XLF's largest holding without performance; (2) header links carry the sort key with a
+  leading `-` only when the link sorts descending, so requiring the dash blanked every field
+  on an ascending page. The key regex is now `[?&]o=-?([a-z0-9]+)`.
+- Verified live: Nasdaq-100 (`idx_ndx`) 102 rows; the S&P 500 (`idx_sp500`) walk returns all
+  503, including BRK.B and BF.B; ascending and descending pages parse to identical values
+  (BF.B 26.59 / +1.68% / −5.14% on both). The existing walkers are untouched. Consumed by
+  `dashboard_tst` v4.59's Sector ETFs holdings panel.
+
 ### 2026-07-18 — `finviz_screener.py`: `fetch_ticker_industries()` disk cache
 - Added a 6h **disk cache** (`state/cache/finviz_ind_<sha1>.json`) to `fetch_ticker_industries`
   so the near-fixed sector→industry classification survives process restarts (no re-scrape of a

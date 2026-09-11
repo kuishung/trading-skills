@@ -143,6 +143,58 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-11 - v4.59: Sector ETFs shows what each fund holds
+
+User: *"in the sector ETF tab, i need to have a right panel to show the list of component
+tickers in that ETF and sort by performance and when i click the tickers i will open into a
+chart into a new window, same chart function."* (Also asked mid-turn for SPY and QQQ on the
+tab — already there since v4.53.)
+
+**Chart left, the fund's holdings right.** The Sector ETFs pane is now a row: the ETF chart,
+and a panel listing that fund's holdings with weight and a performance column, sorted best
+first by **1D / 1W / 1M / 3M / YTD**, or heaviest first by **Wt**. It follows whichever ETF is
+charted (button, structure chip, or the rotation re-sort), and the sort last picked is kept per
+browser so every fund is read on the same clock. The structure strip stays full-width above both.
+
+- **Real holdings, from the issuer.** State Street's daily workbook for the eleven sector SPDRs
+  and SPY; Invesco's JSON for QQQ. NOT inferred from a screener filter, which would have been one
+  request: Finviz "Technology ∩ S&P 500" returns 86 names against XLK's 73 real holdings, so the
+  panel would have listed stocks the fund doesn't own, with no weights. Parsed with the standard
+  library (an .xlsx is a zip of XML) — `openpyxl` is not a platform dependency. 12h cache, and a
+  blocked issuer serves the last good copy, marked as such, rather than an empty panel.
+- **Performance, from Finviz**, one walk per index (S&P 500 covers every SPDR holding, Nasdaq-100
+  covers QQQ), cached 15 min and shared by all thirteen funds. The S&P walk is ~25 pages, so on a
+  cold cache it runs in a background thread: the panel shows holdings with weights immediately,
+  polls every 2.5s, and swaps the numbers in when they land (~35-40s after a restart, then instant).
+- **Clicking a holding opens its chart in a new window** — `/sector/chart-window`, a full page that
+  renders `_sector_chart.html` itself, so it is the same chart: drawing tools, trade-setup editor
+  with Curate setup, Plot on TV. One window per ticker, named after it, so re-clicking focuses the
+  open window instead of stacking duplicates. Keyboard: Enter/Space on a focused row.
+- New `app/services/etf_holdings.py`, `_sector_etf_holdings.html`, `sector_chart_window.html`;
+  routes `GET /sector/etf-holdings` and `GET /sector/chart-window`, sharing one `_chart_ctx` with
+  the inline Chart tab so the two can't drift.
+
+**Found and fixed while testing, before shipping:**
+- *QQQ listed a futures contract as a holding* (`NQU6`). Invesco's own security-type code is now
+  allow-listed — COM, ADR, DRNY — which also keeps ASML, ARM and PDD. A common-stock-only filter
+  would have silently dropped those three real Nasdaq-100 companies. Backstop in both parsers: a
+  ticker ending in a digit is a contract, never a US equity.
+- *SPY listed a phantom `2602335D`* — a zero-weight Hologic contra placeholder. Tickers not shaped
+  like a US equity are skipped at the one choke point both parsers share.
+- *BRK.B (XLF's largest holding, 11.5%) had no performance.* Finviz spells share classes `BRK-B`
+  and the new parser only allowed dots (fixed in `resources/finviz_screener.py`). The chart links
+  use `BRK-B` too, since that is how Yahoo spells it; the mapping lives in this service, not in the
+  shared price fetch, because a dot on Yahoo can also be an exchange suffix (`RY.TO`).
+- *A sort clicked while the panel was loading could be undone* by an in-flight poll landing after
+  it (1D clicked, panel stayed on 1W). Pills now abort an in-flight poll and a poll is dropped
+  while a pill request is out (`hx-sync`), so the click always wins.
+
+Verified on a live-data harness (FastAPI `dependency_overrides` standing in for login, never
+committed): all 13 funds parse (XLK 73 holdings / 99.93% weight, SPY 503, QQQ 102 — one-for-one
+with Finviz's 102-row Nasdaq-100), XLF 76/76 and SPY 503/503 priced, sort persists across funds,
+1D clicked mid-load stays 1D, and a row click calls `window.open('/sector/chart-window?symbol=NBIS',
+'th_chart_NBIS', …)`, whose page renders the full chart.
+
 ### 2026-09-10 - v4.58: Portfolio - open spreads, on the Curated chart, checked daily
 
 User: *"I need a portfolio menu ... monitor my trade ... the same chart in the curated,
