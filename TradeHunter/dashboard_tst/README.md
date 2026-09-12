@@ -143,6 +143,33 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-12 - v4.63: the app keeps a log file, and a Portfolio diagnostic
+
+User: *"now in the portfolio page there is nothing to show only showing Checking your
+positions..."* (on Hermes, right after the v4.62 deploy).
+
+The board could not be debugged from the laptop: the shell loads and then asks for
+`/portfolio/list`, and whatever that request did on Hermes - a 500, a slow Cboe fetch, a
+migration that did not apply - wrote its evidence to a console the Scheduled Task never
+shows. Locally, v4.62 renders every edge case tried (no credit, expired, unknown ticker,
+prefs never set, the migration replayed from `b9c0d1e2f3a4`), so the cause is in Hermes'
+state, not the page code, and this release makes that state readable.
+
+- **`dashboard.log` next to the app** (`app/main.py` `_attach_file_log`, run first in the
+  lifespan). A 5 MB x3 rotating file mirroring the root logger AND uvicorn's (which does not
+  propagate), so request tracebacks, alembic output and startup warnings land on disk on
+  Hermes. Path was already gitignored. Soft-fail if the directory is not writable.
+- **`deploy/portfolio_diag.py`** (read-only, run on Hermes with the venv python). Prints the
+  DB URL, the alembic stamp against the expected head, every column v4.62 relies on and
+  which are missing, each open spread, how long each Cboe chain fetch takes, and then renders
+  the board in memory per member - printing the full traceback if it fails. Exits 1 on a
+  missing column with the one-line remedy. Same shape as `matp_diag.py`.
+
+Verified locally: on a pre-migration copy of the dev DB the diag reports the stamp
+`b9c0d1e2f3a4`, lists the 12 missing columns and stops cleanly; after `init_db()` it reports
+head `c0d1e2f3a4b5`, fetches MSFT in 1.5 s and renders the member's board in 0.1 s. The file
+log appears on first startup under `TestClient`.
+
 ### 2026-09-12 - v4.62: Portfolio - legs as filled, daily position greeks, take-profit and DTE lines, Discord alerts
 
 User: *"if the user has enter a trade, i need a function to put the trade into portfolio and

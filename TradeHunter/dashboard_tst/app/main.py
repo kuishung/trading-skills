@@ -115,8 +115,38 @@ def _db_ok() -> bool:
         return False
 
 
+def _attach_file_log() -> None:
+    """Mirror the process log (uvicorn's included) into ``dashboard_tst/dashboard.log``.
+
+    On Hermes the app runs under a Scheduled Task with no console and no
+    redirect, so an unhandled exception in a request wrote its traceback to a
+    stderr nobody could read (v4.62 post-deploy: the Portfolio board sat on
+    "Checking your positions" and the only evidence was gone). A rotating file
+    next to the app fixes that permanently; the path is already gitignored.
+    Attached once, to the root logger and to uvicorn's, which does not propagate.
+    """
+    from logging.handlers import RotatingFileHandler
+
+    path = APP_DIR.parent / "dashboard.log"
+    root = logging.getLogger()
+    if any(getattr(h, "baseFilename", None) == str(path) for h in root.handlers):
+        return
+    try:
+        fh = RotatingFileHandler(path, maxBytes=5_000_000, backupCount=3, encoding="utf-8")
+    except OSError as exc:  # read-only dir etc. — never block startup over a log
+        log.warning("file log unavailable at %s: %s", path, exc)
+        return
+    fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s"))
+    fh.setLevel(logging.INFO)
+    root.addHandler(fh)
+    if root.level == logging.NOTSET or root.level > logging.INFO:
+        root.setLevel(logging.INFO)
+    logging.getLogger("uvicorn").addHandler(fh)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _attach_file_log()
     init_db()
     if settings.is_google_auth:
         # google mode: admin is auto-promoted on first sign-in (routes/auth.py).
