@@ -143,6 +143,27 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-12 - v4.65: the launcher frees port 8000 before binding it
+
+Diagnosis of the Portfolio board stuck on "Checking your positions..." on Hermes. The
+v4.64 diagnostic reported the migration at head, every column present, zero spreads, and
+`dashboard.log` showed NO exception across two restarts - while `/portfolio/list` opened
+directly returned a bare `Internal Server Error`. A test under a real uvicorn process
+confirmed the file log does capture request tracebacks, so the failing request was never
+handled by the live process.
+
+That is the orphaned-uvicorn problem already noted in CLAUDE.md, seen from the other side:
+on Windows a second uvicorn can bind a port an orphan still holds, and connections are
+then split between them. An orphan on v4.61 code reads the v4.62 `_portfolio_list.html`
+from disk (Jinja auto-reloads templates) and fails on `prefs.profit_target_pct` /
+`sn.lines`, fields its code never sets - a 500 that only ever reached the orphan's
+console. The shell page and the admin pages happened to be served by the new process.
+
+- **`deploy/run_app.ps1`** now kills every process listening on the app port before
+  launching uvicorn (skipping itself), naming each one with its start time. A restart of
+  the `TST-Dashboard-Web` task is therefore always a clean restart, whichever path
+  restarted it (`update.ps1`, the autopull task, or by hand).
+
 ### 2026-09-12 - v4.64: the log and the Portfolio diagnostic, as admin pages
 
 The Portfolio board was still parked on "Checking your positions..." on Hermes after v4.63,

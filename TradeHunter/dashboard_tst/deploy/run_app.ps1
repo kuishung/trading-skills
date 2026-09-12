@@ -59,6 +59,25 @@ if ($created -or -not $HaveHash) {
     Write-Host "Dependencies up to date; skipping install." -ForegroundColor DarkGray
 }
 
+# Free the port before binding it (v4.65). On Windows a second uvicorn CAN bind
+# a port that an orphaned one still holds (SO_REUSEADDR semantics differ from
+# Linux), and connections are then split between the two at random. An orphan
+# running old code but reading the new templates from disk answers some
+# requests with a bare 500 that never reaches the live process's log - which is
+# exactly how the Portfolio board sat on "Checking your positions" after the
+# v4.62 deploy. Killing every listener here makes a restart mean a restart.
+$stale = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+    Select-Object -ExpandProperty OwningProcess -Unique
+foreach ($procId in $stale) {
+    if ($procId -eq $PID) { continue }
+    $p = Get-Process -Id $procId -ErrorAction SilentlyContinue
+    if ($null -ne $p) {
+        Write-Host ("Killing stale listener on port {0}: {1} (pid {2}, started {3})" -f $Port, $p.ProcessName, $procId, $p.StartTime) -ForegroundColor Yellow
+        Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+    }
+}
+if ($stale) { Start-Sleep -Seconds 2 }
+
 $uargs = @("app.main:app", "--host", $BindHost, "--port", "$Port")
 if ($Reload) { $uargs += "--reload" }
 
