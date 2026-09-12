@@ -18,7 +18,7 @@ import datetime as _dt
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
@@ -66,6 +66,52 @@ def admin_home(
             "menu_allowed": {u.id: allowed_keys(u) for u in members},  # per-user granted set
         },
     )
+
+
+@router.get("/log", response_class=PlainTextResponse)
+def app_log(lines: int = 200, admin: User = Depends(require_admin)):
+    """The tail of ``dashboard.log`` (v4.63), in the browser.
+
+    The app runs on Hermes under a Scheduled Task with no console; the log file
+    is the only record of a request that failed. An admin should be able to read
+    it without RDP - the same reason every other runtime state lives on a page
+    (dashboard-visibility rule).
+    """
+    path = Path(__file__).resolve().parent.parent.parent / "dashboard.log"
+    if not path.exists():
+        return f"{path} does not exist yet (written on first startup of v4.63+)."
+    n = max(10, min(int(lines), 5000))
+    try:
+        with path.open("rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - 400_000))
+            text = f.read().decode("utf-8", "replace")
+    except OSError as exc:
+        return f"cannot read {path}: {exc}"
+    return "\n".join(text.splitlines()[-n:])
+
+
+@router.get("/portfolio-diag", response_class=PlainTextResponse)
+def portfolio_diag(admin: User = Depends(require_admin)):
+    """Run ``deploy/portfolio_diag.py`` in a subprocess and show its output.
+
+    Same interpreter as the app, same database URL (inherited environment), a
+    hard 120 s cap. Read-only - the script SELECTs, renders in memory, and exits.
+    """
+    import subprocess
+    import sys
+
+    dash_root = Path(__file__).resolve().parent.parent.parent
+    script = dash_root / "deploy" / "portfolio_diag.py"
+    try:
+        r = subprocess.run([sys.executable, str(script)], cwd=str(dash_root),
+                           capture_output=True, text=True, timeout=120,
+                           encoding="utf-8", errors="replace")
+    except subprocess.TimeoutExpired as exc:
+        return ("TIMED OUT after 120 s - the Cboe fetch or the render is hanging on this box.\n\n"
+                + (exc.stdout or "") + "\n" + (exc.stderr or ""))
+    return f"exit {r.returncode}\n\n{r.stdout}\n{r.stderr}"
 
 
 @router.post("/discord-test", response_class=HTMLResponse)

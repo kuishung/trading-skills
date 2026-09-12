@@ -143,6 +143,22 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-12 - v4.64: the log and the Portfolio diagnostic, as admin pages
+
+The Portfolio board was still parked on "Checking your positions..." on Hermes after v4.63,
+and reading the evidence meant an RDP session. Per the dashboard-visibility rule, both
+now open in the browser for an Administrator (`app/routes/admin.py`):
+
+- **`/admin/log?lines=200`** - the tail of `dashboard.log` as plain text (10-5000 lines,
+  reads only the last 400 KB of the file).
+- **`/admin/portfolio-diag`** - runs `deploy/portfolio_diag.py` in a subprocess with the
+  app's own interpreter and environment (so the same `TST_DATABASE_URL`), 120 s cap, and
+  returns its output as plain text. Read-only, same as the script.
+
+Verified locally through the app with the admin dependency overridden: `/admin/log`
+returns the tail, `/admin/portfolio-diag` returns exit 0 with the migration state, the MSFT
+fetch time and the per-member render.
+
 ### 2026-09-12 - v4.63: the app keeps a log file, and a Portfolio diagnostic
 
 User: *"now in the portfolio page there is nothing to show only showing Checking your
