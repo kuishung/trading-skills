@@ -41,6 +41,10 @@ MENUS = [
     # key here would make one stored string mean two different pages, and the
     # translation would silently hand this page's grants to Curated instead.
     ("positions",        "Portfolio",         None, "/portfolio"),
+    # Options — a dropdown group (user, 2026-09-13: "Option sub menu Spread").
+    # First entry: the bull put spread screener, Barchart's screen rebuilt on
+    # the platform's own Cboe feed. Room for Flow / Chains later.
+    ("spreads",          "Spread",            "Options", "/spreads"),
 ]
 # Routes that stay ACCESSIBLE (granted + reachable by URL) but are no longer shown
 # in the top nav after the revamp. Kept in ALL_KEYS so their require_menu() guards

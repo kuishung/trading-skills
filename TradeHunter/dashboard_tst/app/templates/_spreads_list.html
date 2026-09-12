@@ -1,0 +1,204 @@
+{# The Spread screen: filter bar + results. Context: rows (SpreadCandidate), f
+   (cleaned filter), symbol, order, desc, focus, scan, scan_on, n_symbols,
+   iv_known, tracked (set of (sym, exp, short, long)), defaults, quote_source,
+   form_error.
+
+   Wrapped in .sp-panel and swapped by outerHTML, same convention as .pf-panel. #}
+{% set I = "rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 outline-none focus:border-emerald-500 tabular-nums" %}
+<div class="sp-panel">
+
+{% if form_error %}
+<div class="mb-2 rounded border border-rose-600/60 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-300">{{ form_error }}</div>
+{% endif %}
+
+{# ── freshness ─────────────────────────────────────────────────────────── #}
+<div class="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2 text-[11px]">
+  <span class="text-sm font-semibold text-slate-200">Bull put spreads</span>
+  {% if scan %}
+  <span class="px-1.5 py-0.5 rounded border {% if scan.scan_on < today_et %}border-amber-600/60 text-amber-300{% else %}border-emerald-700/60 text-emerald-300{% endif %}"
+        title="Scanned {{ scan.symbols }} symbols, {{ scan.priced }} with a usable chain, {{ scan.candidates }} candidate spreads stored, {{ scan.errors }} errors.">
+    scan {{ scan.scan_on }} &middot; {{ scan.priced }}/{{ scan.symbols }} symbols &middot; {{ scan.candidates }} spreads
+  </span>
+  {% else %}
+  <span class="px-1.5 py-0.5 rounded border border-amber-600/60 text-amber-300">No scan yet &mdash; the nightly job has not run. Use Rescan on a symbol below to fill one now.</span>
+  {% endif %}
+  <span class="text-slate-600" title="Cboe's public delayed feed, read server-side once a night for the whole universe. IV percentile is built from the platform's own nightly IV history.">{{ quote_source }}</span>
+</div>
+
+{# ── the chart ─────────────────────────────────────────────────────────── #}
+{% set open_id = focus or (rows[0].id if rows else 0) %}
+<div id="spChartWrap" class="relative mb-3">
+  <button type="button" id="spChartExpand"
+          class="absolute right-2 top-1 z-20 text-[11px] px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900/80 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 transition"
+          title="Expand the chart (Esc to restore)">&#10530;</button>
+  <div id="spChartBody"
+       class="h-[60vh] min-h-[420px] flex flex-col rounded-lg border border-slate-800 bg-slate-900/40 overflow-y-auto"
+       {% if open_id %}hx-get="/spreads/chart?row={{ open_id }}" hx-trigger="load" hx-swap="innerHTML"{% endif %}>
+    <div class="flex-1 flex items-center justify-center text-xs text-slate-500 px-6 text-center">
+      {% if open_id %}Loading chart&hellip;{% else %}Click a row to see it on the chart.{% endif %}
+    </div>
+  </div>
+</div>
+
+{# ── filter bar — Barchart's screen, field for field ───────────────────── #}
+<form class="rounded-lg border border-slate-800 bg-slate-900/40 p-2 mb-2 space-y-1.5"
+      hx-post="/spreads/filter" hx-target="closest .sp-panel" hx-swap="outerHTML">
+  <input type="hidden" name="order" value="{{ order }}"><input type="hidden" name="desc" value="{{ 1 if desc else 0 }}">
+  <div class="flex flex-wrap items-end gap-x-3 gap-y-1.5 text-[10px] text-slate-500">
+    <label title="52-week implied-volatility percentile of the underlying. Built from the platform's nightly IV history; blank until a symbol has {{ 20 }} readings.">IV pct &ge;
+      <input type="number" step="1" min="0" max="100" name="iv_pct_min" value="{{ '%g'|format(f.iv_pct_min) }}" class="ml-1 w-14 {{ I }}">
+    </label>
+    <label class="flex items-center gap-1" title="Show rows whose IV percentile is not known yet (not enough history) rather than hiding them">
+      <input type="checkbox" name="include_no_iv" {% if f.include_no_iv %}checked{% endif %} class="accent-emerald-500"> incl. unknown IV
+    </label>
+    <label>DTE
+      <input type="number" step="1" min="0" name="dte_min" value="{{ f.dte_min }}" class="ml-1 w-12 {{ I }}"> to
+      <input type="number" step="1" min="0" name="dte_max" value="{{ f.dte_max }}" class="w-12 {{ I }}">
+    </label>
+    <label class="flex items-center gap-1" title="Third-Friday expiries only">
+      <input type="checkbox" name="monthly_only" {% if f.monthly_only %}checked{% endif %} class="accent-emerald-500"> monthly only
+    </label>
+    <label title="Short put strike relative to price: (strike - price) / price. -10 = 10% below.">Moneyness %
+      <input type="number" step="0.5" name="moneyness_min" value="{{ '%g'|format(f.moneyness_min) }}" class="ml-1 w-14 {{ I }}"> to
+      <input type="number" step="0.5" name="moneyness_max" value="{{ '%g'|format(f.moneyness_max) }}" class="w-14 {{ I }}">
+    </label>
+    <label title="(1 - short delta) x 100">OTM prob &ge;
+      <input type="number" step="1" min="0" max="100" name="otm_prob_min" value="{{ '%g'|format(f.otm_prob_min) }}" class="ml-1 w-12 {{ I }}">%
+    </label>
+    <label title="Credit as a share of the width. The 2:1 risk-reward floor from the playbook is 33.">Credit/width &ge;
+      <input type="number" step="1" min="0" max="100" name="credit_pct_min" value="{{ '%g'|format(f.credit_pct_min) }}" class="ml-1 w-12 {{ I }}">%
+    </label>
+  </div>
+  <div class="flex flex-wrap items-end gap-x-3 gap-y-1.5 text-[10px] text-slate-500">
+    <span class="text-rose-300 font-semibold w-14">Leg 1 short</span>
+    <label>vol &ge; <input type="number" step="1" min="0" name="short_vol_min" value="{{ f.short_vol_min }}" class="ml-1 w-14 {{ I }}"></label>
+    <label>OI &ge; <input type="number" step="1" min="0" name="short_oi_min" value="{{ f.short_oi_min }}" class="ml-1 w-14 {{ I }}"></label>
+    <label>bid &ge; <input type="number" step="0.01" min="0" name="short_bid_min" value="{{ '%g'|format(f.short_bid_min) }}" class="ml-1 w-14 {{ I }}"></label>
+    <span class="text-slate-300 font-semibold w-14 ml-3">Leg 2 long</span>
+    <label>vol &ge; <input type="number" step="1" min="0" name="long_vol_min" value="{{ f.long_vol_min }}" class="ml-1 w-14 {{ I }}"></label>
+    <label>OI &ge; <input type="number" step="1" min="0" name="long_oi_min" value="{{ f.long_oi_min }}" class="ml-1 w-14 {{ I }}"></label>
+    <label>ask &ge; <input type="number" step="0.01" min="0" name="long_ask_min" value="{{ '%g'|format(f.long_ask_min) }}" class="ml-1 w-14 {{ I }}"></label>
+    <label class="flex items-center gap-1 ml-3" title="Hide spreads whose expiry sits after the next earnings date">
+      <input type="checkbox" name="flag_earnings" {% if f.flag_earnings %}checked{% endif %} class="accent-emerald-500"> exclude earnings
+    </label>
+    <label class="ml-auto">Symbol
+      <input name="symbol" value="{{ symbol }}" placeholder="all" autocomplete="off" class="ml-1 w-16 uppercase {{ I }}">
+    </label>
+    <button type="submit" class="px-3 py-1 rounded border border-emerald-600 text-[11px] text-emerald-300 hover:bg-emerald-500/10 transition">Apply</button>
+    <button type="button" class="px-2 py-1 rounded border border-slate-700 text-[11px] text-slate-400 hover:border-slate-500 transition"
+            hx-post="/spreads/filter/reset" hx-target="closest .sp-panel" hx-swap="outerHTML"
+            title="Back to the Barchart defaults">Reset</button>
+  </div>
+</form>
+
+{# rescan one symbol live #}
+<form class="flex flex-wrap items-center gap-2 mb-2 text-[10px] text-slate-500"
+      hx-post="/spreads/rescan" hx-target="closest .sp-panel" hx-swap="outerHTML">
+  <span>Rescan one symbol now (live chain, replaces its rows in the latest scan):</span>
+  <input name="symbol" value="{{ symbol }}" placeholder="NVDA" required autocomplete="off" class="w-16 uppercase {{ I }}">
+  <button type="submit" class="px-2 py-0.5 rounded border border-slate-700 text-[11px] text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Rescan</button>
+</form>
+
+{# ── results ───────────────────────────────────────────────────────────── #}
+{% macro th(key, label, title='') %}
+{% set active = (order == key) %}
+<th class="pr-2 font-normal whitespace-nowrap cursor-pointer hover:text-slate-300 {% if active %}text-emerald-300{% endif %}"
+    title="{{ title }}"
+    hx-get="/spreads/list?order={{ key }}&desc={{ 0 if (active and desc) else 1 }}&symbol={{ symbol }}"
+    hx-target="closest .sp-panel" hx-swap="outerHTML">{{ label }}{% if active %} {{ ('&#9660;' if desc else '&#9650;')|safe }}{% endif %}</th>
+{% endmacro %}
+
+<div class="flex items-center gap-3 mb-1 text-[11px] text-slate-500 tabular-nums">
+  <span>{{ rows|length }} spread{{ '' if rows|length == 1 else 's' }} on {{ n_symbols }} symbol{{ '' if n_symbols == 1 else 's' }}{% if rows|length >= 500 %} (first 500 &mdash; tighten the filter){% endif %}</span>
+  {% if rows and iv_known < rows|length %}
+  <span class="text-amber-300" title="IV percentile needs about 20 nightly readings per symbol before it is shown. Seed a year of history with deploy/iv_seed_ibkr.py on Hermes, or wait for the nightly scans to accumulate.">IV pct known for {{ iv_known }} of {{ rows|length }}</span>
+  {% endif %}
+</div>
+
+{% if rows %}
+<div class="overflow-x-auto rounded-lg border border-slate-800">
+<table class="w-full text-[11px] tabular-nums">
+  <thead><tr class="text-left text-slate-500 bg-slate-900/60">
+    <th class="pl-2 pr-2 font-normal"></th>
+    {{ th('symbol', 'Symbol') }}
+    {{ th('iv_pct', 'IV pct', '52-week IV percentile of the underlying') }}
+    {{ th('dte', 'DTE') }}
+    <th class="pr-2 font-normal">Expiry</th>
+    <th class="pr-2 font-normal text-rose-300" title="Short put">Leg 1</th>
+    <th class="pr-2 font-normal" title="Long put">Leg 2</th>
+    {{ th('width', 'Width') }}
+    {{ th('moneyness', 'Money %', 'Short strike relative to price') }}
+    {{ th('short_vol', 'L1 vol') }}
+    {{ th('short_oi', 'L1 OI') }}
+    <th class="pr-2 font-normal">L2 vol</th>
+    <th class="pr-2 font-normal">L2 OI</th>
+    <th class="pr-2 font-normal" title="Short put bid">Bid1</th>
+    <th class="pr-2 font-normal" title="Long put ask">Ask2</th>
+    {{ th('credit', 'Credit', 'Bid1 - Ask2, per share') }}
+    {{ th('credit_pct', 'Cr/W %', 'Credit as a share of width. 33 = 2:1 risk-reward.') }}
+    {{ th('max_loss', 'Max loss', 'Per contract') }}
+    <th class="pr-2 font-normal">&Delta;1</th>
+    {{ th('otm_prob', 'OTM %', '(1 - short delta) x 100') }}
+    <th class="pr-2 font-normal">Earn</th>
+    <th class="pr-2 font-normal"></th>
+  </tr></thead>
+  <tbody>
+  {% for r in rows %}
+  {% set have = (r.symbol, r.expiry, r.short_strike, r.long_strike) in tracked %}
+  <tr class="sp-row border-t border-slate-800/80 hover:bg-slate-800/40 cursor-pointer {% if r.id == open_id %}ring-1 ring-emerald-500/60{% endif %}"
+      data-row="{{ r.id }}"
+      hx-get="/spreads/chart?row={{ r.id }}" hx-target="#spChartBody" hx-swap="innerHTML"
+      hx-trigger="click[!event.target.closest('.sp-actions')]" title="Show on the chart">
+    <td class="pl-2 pr-2 text-slate-600">{{ loop.index }}</td>
+    <td class="pr-2 font-semibold text-slate-200">{{ r.symbol }} <span class="text-slate-600 font-normal">{{ '%.2f'|format(r.spot) }}</span></td>
+    <td class="pr-2 {% if r.iv_pct is none %}text-slate-600{% elif r.iv_pct >= 60 %}text-emerald-300{% elif r.iv_pct >= 40 %}text-slate-300{% else %}text-amber-300{% endif %}"
+        title="{% if r.iv_pct is none %}Not enough IV history yet ({{ r.iv_n or 0 }} readings){% else %}From {{ r.iv_n }} readings; IV30 today {{ '%.1f'|format(r.iv30) }}%{% endif %}">
+      {{ '%.0f%%'|format(r.iv_pct) if r.iv_pct is not none else '&mdash;'|safe }}</td>
+    <td class="pr-2">{{ r.dte }}</td>
+    <td class="pr-2 text-slate-400">{{ r.expiry[5:] }}{% if r.monthly %}<span class="text-slate-600" title="monthly"> m</span>{% endif %}</td>
+    <td class="pr-2 text-rose-300">{{ '%g'|format(r.short_strike) }}</td>
+    <td class="pr-2 text-slate-300">{{ '%g'|format(r.long_strike) }}</td>
+    <td class="pr-2">{{ '%g'|format(r.width) }}</td>
+    <td class="pr-2 text-slate-400">{{ '%.1f'|format(r.moneyness) }}</td>
+    <td class="pr-2">{{ r.short_vol }}</td>
+    <td class="pr-2">{{ r.short_oi }}</td>
+    <td class="pr-2 text-slate-400">{{ r.long_vol }}</td>
+    <td class="pr-2 text-slate-400">{{ r.long_oi }}</td>
+    <td class="pr-2">{{ '%.2f'|format(r.short_bid) if r.short_bid is not none else '' }}</td>
+    <td class="pr-2">{{ '%.2f'|format(r.long_ask) if r.long_ask is not none else '' }}</td>
+    <td class="pr-2 text-emerald-300">{{ '%.2f'|format(r.credit) if r.credit is not none else '' }}
+      {% if r.credit_mid is not none %}<span class="text-slate-600" title="at mid">{{ '%.2f'|format(r.credit_mid) }}</span>{% endif %}</td>
+    <td class="pr-2 {% if r.credit_pct is not none and r.credit_pct >= 33 %}text-emerald-300{% elif r.credit_pct is not none and r.credit_pct >= 25 %}text-slate-300{% else %}text-slate-500{% endif %}">{{ '%.0f'|format(r.credit_pct) if r.credit_pct is not none else '' }}</td>
+    <td class="pr-2 text-rose-300/80">{{ '%.0f'|format(r.max_loss) if r.max_loss is not none else '' }}</td>
+    <td class="pr-2">{{ '%.2f'|format(r.short_delta) if r.short_delta is not none else '' }}</td>
+    <td class="pr-2">{{ '%.1f'|format(r.otm_prob) if r.otm_prob is not none else '' }}</td>
+    <td class="pr-2 {% if r.earnings_before_expiry %}text-amber-300{% else %}text-slate-600{% endif %}" title="{% if r.earnings %}Next earnings {{ r.earnings }}{% endif %}">
+      {% if r.earnings_before_expiry %}!{% elif r.earnings %}{{ r.earnings[5:] }}{% endif %}</td>
+    <td class="pr-2 sp-actions whitespace-nowrap">
+      {% if have %}
+      <span class="text-[10px] text-emerald-400" title="Already in your Portfolio">tracked</span>
+      {% else %}
+      <form class="inline" hx-post="/spreads/{{ r.id }}/track" hx-swap="none"
+            hx-confirm="Track {{ r.symbol }} {{ '%g'|format(r.short_strike) }}/{{ '%g'|format(r.long_strike) }}P {{ r.expiry }} in Portfolio at credit {{ '%.2f'|format(r.credit or 0) }}? Enter the contract count next.">
+        <input type="hidden" name="contracts" value="1">
+        <button type="submit" class="text-[10px] px-1.5 py-0.5 rounded border border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 transition"
+                title="Add to Portfolio as a tracked position (1 contract; edit there)">Track</button>
+      </form>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% elif scan %}
+<p class="text-[11px] text-slate-500">Nothing passes this filter on the {{ scan_on }} scan. Loosen a line, or check "incl. unknown IV" if the IV history is still short.</p>
+{% endif %}
+
+<p class="mt-2 text-[10px] text-slate-600">
+  Screening only &mdash; nothing here places an order. Credit is Bid1 &minus; Ask2, what a limit
+  order at the market's prices would collect; the grey figure is the mid. OTM probability is
+  1 &minus; short delta. IV percentile is the share of the last 252 nightly readings below today's IV30.
+</p>
+
+</div>{# /.sp-panel #}

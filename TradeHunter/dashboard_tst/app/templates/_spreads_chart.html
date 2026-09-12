@@ -1,0 +1,35 @@
+{# One screener candidate on the chart. Context: symbol, sel, sel_band,
+   sel_patterns, c (SpreadCandidate), spread {short, long, breakeven, expiry, label}.
+   Same component and the same paint as a Portfolio position: strikes as price
+   lines, expiry as a date-axis badge. Nothing here is editable. #}
+{% set chart_symbol = symbol %}
+{% set chart_exchange = sel.exchange if sel else None %}
+{% set chart_matp = sel.matp if sel else None %}
+{% set chart_mbp = sel.mbp if sel else None %}
+{% set chart_as_of = sel.as_of if sel else None %}
+{% set chart_earnings = sel.last_earnings_date if sel else None %}
+{% set chart_band = none %}
+{% set chart_patterns = sel_patterns %}
+{% set chart_fill = true %}
+{% set chart_price_min = 'lg:min-h-[300px]' %}
+{% set chart_tv_plot = true %}
+{% set chart_matp_run = true %}
+{% set chart_spread = spread %}
+
+<div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1 shrink-0 text-[11px] tabular-nums">
+  <span class="text-xs text-slate-300">{{ c.symbol }}
+    <span class="text-slate-500">{{ '%g'|format(c.short_strike) }}/{{ '%g'|format(c.long_strike) }}P</span>
+  </span>
+  <span class="text-slate-500">{{ c.expiry }} &middot; {{ c.dte }}d{% if c.monthly %} &middot; monthly{% endif %}</span>
+  {% if c.credit is not none %}
+  <span>credit <span class="text-emerald-300">{{ '%.2f'|format(c.credit) }}</span>
+    <span class="text-slate-500">({{ '%.0f'|format(c.credit_pct) }}% of {{ '%g'|format(c.width) }} wide)</span></span>
+  <span>max loss <span class="text-rose-300">${{ '%.0f'|format(c.max_loss) }}</span></span>
+  {% endif %}
+  {% if c.short_delta is not none %}<span>&Delta; <span class="text-slate-300">{{ '%.2f'|format(c.short_delta) }}</span> &middot; OTM {{ '%.0f'|format(c.otm_prob) }}%</span>{% endif %}
+  {% if c.iv_pct is not none %}<span>IV pct <span class="text-slate-300">{{ '%.0f'|format(c.iv_pct) }}</span></span>{% endif %}
+  <span>BE <span class="text-slate-300">{{ '%.2f'|format(spread.breakeven) }}</span></span>
+  {% if c.earnings_before_expiry %}<span class="text-amber-300" title="Earnings {{ c.earnings }} falls before this expiry">earnings {{ c.earnings }}</span>{% endif %}
+</div>
+
+{% include "_price_chart.html" %}

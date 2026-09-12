@@ -31,6 +31,14 @@ def screen_universe(finviz_url: str, *, max_pages: int = 10, force_refresh: bool
     )
 
 
+def sp500_symbols(force_refresh: bool = False) -> list[str]:
+    """Current S&P 500 constituents via the shared resources.sp500 (Wikipedia
+    scrape, 7-day file cache, stdlib only). The spread screener's base universe."""
+    from resources import sp500
+
+    return sp500.get_sp500_symbols(force_refresh=force_refresh)
+
+
 def refresh_matp(symbols: list[str]) -> int:
     """Phase 2: run the resources/MATP pipeline and upsert MATPLevel rows.
     Returns the number of tickers refreshed."""

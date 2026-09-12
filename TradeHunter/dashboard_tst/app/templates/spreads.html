@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Spread &middot; TradeHunter{% endblock %}
+
+{% block content %}
+{# Options > Spread: the bull put spread screener. Results load lazily, and the
+   same failure reporting as Portfolio: if the request dies, the page says so. #}
+<div class="max-w-[1500px]">
+  <div id="spBoard" hx-get="/spreads/list" hx-trigger="load" hx-swap="innerHTML">
+    <div class="text-xs text-slate-500 py-8 text-center">Loading the screen&hellip;
+      <span id="spBoardWait" class="text-slate-600"></span></div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+
+<script>
+(function () {
+  var host = document.getElementById('spBoard');
+  if (!host) return;
+  var t0 = Date.now(), wait = document.getElementById('spBoardWait');
+  var tick = setInterval(function () {
+    if (!wait || !document.body.contains(wait)) { clearInterval(tick); return; }
+    var s = Math.round((Date.now() - t0) / 1000);
+    if (s >= 3) wait.textContent = '(' + s + 's)';
+  }, 1000);
+  function fail(kind, xhr) {
+    clearInterval(tick);
+    var status = xhr ? xhr.status : 0;
+    var body = xhr && xhr.responseText ? xhr.responseText : '';
+    body = body.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 600);
+    host.innerHTML =
+      '<div class="rounded border border-rose-600/60 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-300">' +
+      '<div class="font-semibold">The screen could not load: ' + kind +
+      (status ? ' (HTTP ' + status + ')' : '') + '</div>' +
+      (body ? '<pre class="mt-1 whitespace-pre-wrap text-[10px] text-rose-200/80">' +
+        body.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</pre>' : '') +
+      '<div class="mt-1 text-slate-400">An administrator can read the server log at ' +
+      '<a class="underline" href="/admin/log?lines=150">/admin/log</a>.</div></div>';
+  }
+  host.addEventListener('htmx:responseError', function (e) { fail('server error', e.detail.xhr); });
+  host.addEventListener('htmx:sendError', function (e) { fail('network error', e.detail.xhr); });
+  host.addEventListener('htmx:timeout', function (e) { fail('timed out', e.detail.xhr); });
+
+  // Chart expand / restore, same behaviour as Portfolio.
+  var KEY = 'spreads_chart_max';
+  function apply(max) {
+    var w = document.getElementById('spChartWrap'), b = document.getElementById('spChartBody'),
+        x = document.getElementById('spChartExpand');
+    if (!w || !b) return;
+    if (max) {
+      w.classList.add('fixed', 'inset-0', 'z-40', 'bg-slate-950', 'p-3', 'mb-0');
+      b.classList.remove('h-[60vh]', 'min-h-[420px]'); b.classList.add('h-full');
+      if (x) x.innerHTML = '&#10529;';
+    } else {
+      w.classList.remove('fixed', 'inset-0', 'z-40', 'bg-slate-950', 'p-3', 'mb-0');
+      b.classList.add('h-[60vh]', 'min-h-[420px]'); b.classList.remove('h-full');
+      if (x) x.innerHTML = '&#10530;';
+    }
+    try { localStorage.setItem(KEY, max ? '1' : '0'); } catch (e) {}
+    window.dispatchEvent(new Event('resize'));
+  }
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('#spChartExpand') : null;
+    if (!b) return;
+    var cur = '0'; try { cur = localStorage.getItem(KEY) || '0'; } catch (err) {}
+    apply(cur !== '1');
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') apply(false);
+  });
+  document.addEventListener('htmx:afterSwap', function (e) {
+    if (e.target && e.target.id === 'spBoard') {
+      var cur = '0'; try { cur = localStorage.getItem(KEY) || '0'; } catch (err) {}
+      if (cur === '1') apply(true);
+    }
+    // ring the charted row
+    if (e.target && e.target.id === 'spChartBody') {
+      var id = e.detail && e.detail.requestConfig ? (e.detail.requestConfig.parameters || {}).row : null;
+      var m = e.detail && e.detail.pathInfo && e.detail.pathInfo.requestPath
+        ? /row=(\d+)/.exec(e.detail.pathInfo.requestPath) : null;
+      id = id || (m ? m[1] : null);
+      document.querySelectorAll('.sp-row.ring-1').forEach(function (r) { r.classList.remove('ring-1', 'ring-emerald-500/60'); });
+      if (id) { var r = document.querySelector('.sp-row[data-row="' + id + '"]'); if (r) r.classList.add('ring-1', 'ring-emerald-500/60'); }
+    }
+  });
+})();
+</script>
+{% endblock %}

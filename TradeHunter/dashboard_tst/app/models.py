@@ -13,8 +13,7 @@ from __future__ import annotations
 
 import datetime as _dt
 
-from sqlalchemy import (
-    JSON,
+from sqlalchemy import (Index, JSON,
     Boolean,
     Column,
     DateTime,
@@ -900,6 +899,99 @@ class SpreadCheck(Base):
     created_at = Column(DateTime, default=_utcnow)
 
     spread = relationship("OptionSpread", back_populates="checks")
+
+
+class IVHistory(Base):
+    """One day's 30-day implied volatility for one underlying, in PERCENT.
+
+    The spread screener's IV-percentile column needs a year of these per symbol,
+    and nobody serves that for free per day - Cboe gives today's ``iv30`` only.
+    So the nightly scan files today's reading here for every symbol it touches,
+    and the percentile is computed from this table. ``source`` records where a
+    row came from: ``cboe`` (the nightly scan) or ``ibkr`` (the one-off seeder in
+    deploy/iv_seed_ibkr.py, which backfills a year from IB Gateway on Hermes so
+    the column is right from day one instead of after a year of accumulation).
+    """
+
+    __tablename__ = "iv_history"
+    __table_args__ = (UniqueConstraint("symbol", "on", name="uq_iv_history_day"),)
+
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), nullable=False, index=True)
+    on = Column(String(10), nullable=False, index=True)       # YYYY-MM-DD (ET)
+    iv30 = Column(Float, nullable=False)                      # percent, e.g. 33.7
+    spot = Column(Float, nullable=True)
+    source = Column(String(12), nullable=False, default="cboe")
+    created_at = Column(DateTime, default=_utcnow)
+
+
+class SpreadScan(Base):
+    """One run of the nightly bull-put-spread scan: when, how wide, how it went.
+    The page shows the latest row as its freshness pill."""
+
+    __tablename__ = "spread_scans"
+
+    id = Column(Integer, primary_key=True)
+    scan_on = Column(String(10), nullable=False, index=True)  # ET date the chains describe
+    started_at = Column(DateTime, default=_utcnow)
+    finished_at = Column(DateTime, nullable=True)
+    symbols = Column(Integer, nullable=False, default=0)
+    priced = Column(Integer, nullable=False, default=0)       # symbols with a usable chain
+    candidates = Column(Integer, nullable=False, default=0)
+    errors = Column(Integer, nullable=False, default=0)
+    note = Column(Text, nullable=True)
+
+
+class SpreadCandidate(Base):
+    """One bull put spread the nightly scan found on one underlying.
+
+    Every Barchart "Bull Put Spread" screen column is here as a column, so the
+    page filters with plain WHERE clauses instead of re-deriving numbers, and
+    a candidate reads the same whichever filter found it. Leg 1 is the SHORT
+    put (the one Barchart's Volume/OI/Moneyness "Leg 1" refer to), leg 2 the
+    LONG put below it. Rows are replaced per ``scan_on``; only the last few
+    days are kept.
+    """
+
+    __tablename__ = "spread_candidates"
+    __table_args__ = (
+        Index("ix_spread_cand_scan_symbol", "scan_on", "symbol"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    scan_on = Column(String(10), nullable=False, index=True)
+    symbol = Column(String(20), nullable=False)
+    spot = Column(Float, nullable=False)
+    expiry = Column(String(10), nullable=False)
+    dte = Column(Integer, nullable=False)
+    monthly = Column(Boolean, nullable=False, default=False)  # third-Friday expiry
+    iv30 = Column(Float, nullable=True)                       # percent
+    iv_pct = Column(Float, nullable=True)                     # percentile 0..100, None = not enough history
+    iv_n = Column(Integer, nullable=True)                     # observations behind iv_pct
+
+    short_strike = Column(Float, nullable=False)
+    long_strike = Column(Float, nullable=False)
+    width = Column(Float, nullable=False)
+    moneyness = Column(Float, nullable=False)     # (strike - spot) / spot * 100, negative = OTM put
+    short_bid = Column(Float, nullable=True)
+    short_ask = Column(Float, nullable=True)
+    long_bid = Column(Float, nullable=True)
+    long_ask = Column(Float, nullable=True)
+    credit = Column(Float, nullable=True)         # short_bid - long_ask: what you can actually get
+    credit_mid = Column(Float, nullable=True)     # mid - mid
+    credit_pct = Column(Float, nullable=True)     # credit / width * 100
+    max_loss = Column(Float, nullable=True)       # per contract, $
+    short_delta = Column(Float, nullable=True)    # absolute
+    long_delta = Column(Float, nullable=True)     # absolute
+    otm_prob = Column(Float, nullable=True)       # (1 - short_delta) * 100
+    short_iv = Column(Float, nullable=True)       # fraction as the chain gives it
+    short_vol = Column(Integer, nullable=True)
+    short_oi = Column(Integer, nullable=True)
+    long_vol = Column(Integer, nullable=True)
+    long_oi = Column(Integer, nullable=True)
+    earnings = Column(String(10), nullable=True)  # next earnings date if known
+    earnings_before_expiry = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=_utcnow)
 
 
 class CompanyGuidance(Base):

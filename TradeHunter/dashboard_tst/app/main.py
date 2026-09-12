@@ -46,6 +46,7 @@ from .routes import patterns as patterns_routes
 from .routes import pipeline as pipeline_routes
 from .routes import curated as curated_routes
 from .routes import portfolio as portfolio_routes
+from .routes import spreads as spreads_routes
 from .routes import research as research_routes
 from .routes import sector as sector_routes
 from .routes import strategy as strategy_routes
@@ -63,7 +64,7 @@ for _routes_mod in (
     auth_routes, matp_routes, studies_routes,
     finviz_routes, feedback_routes, admin_routes, agent_routes, pipeline_routes,
     research_routes, patterns_routes, strategy_routes, curated_routes,
-    portfolio_routes,
+    portfolio_routes, spreads_routes,
     company_analysis_routes, sector_routes, macro_routes, calendar_routes,
 ):
     _routes_mod.templates.env.globals["version"] = APP_VERSION
@@ -238,6 +239,9 @@ def create_app() -> FastAPI:
     app.include_router(curated_routes.router, dependencies=[Depends(menus.require_menu("curated"))])
     app.include_router(portfolio_routes.router,
                        dependencies=[Depends(menus.require_menu("positions"))])
+    # Options > Spread — the bull put spread screener (2026-09-13).
+    app.include_router(spreads_routes.router,
+                       dependencies=[Depends(menus.require_menu("spreads"))])
     # Pattern Trainer — re-enabled 2026-06-17 (user is re-learning the ascending-
     # triangle detector). Menu-gated like the other pages; the ('patterns',...)
     # entry in menus.py restores the nav + access. (Was briefly aborted earlier the

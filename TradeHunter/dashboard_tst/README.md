@@ -143,6 +143,65 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-13 - v4.67: Options > Spread - the bull put spread screener
+
+User: *"I want to build this into TradeHunter as Option sub menu Spread and then it will
+come out with a result like barchart ... the scan will be based on the criteria in this"*
+(Barchart's Bull Put Spread screen: IV percentile > 40, DTE 30-45 monthly, leg volume >= 100,
+OI >= 500, moneyness -10..0, bid/ask >= 0.05, OTM probability > 75).
+
+**New menu group `Options` with one entry, `Spread` (`/spreads`)**, menu key `spreads`.
+Barchart's screen rebuilt on the platform's own data, one column per Barchart field, plus
+the credit-to-width column Barchart lacks.
+
+- **Nightly scan** (`services/spread_scan.py`, `deploy/spread_scan.py`, task
+  `TST-Spread-Scan` at 06:30 MYT via `deploy/setup_spread_scan_task.ps1`). Universe = S&P 500
+  (via the `resources_bridge` seam to the roof's stdlib `resources/sp500.py`) + every member's
+  watchlist + the MATP board. Chains from Cboe's delayed feed, four in flight; the database is
+  written from one thread. Stores every bull put spread with DTE 20-60, short put 0-25% below
+  price, long leg = the next 5 listed strikes below - wider than the screen's defaults so the
+  page can loosen a filter without waiting for tomorrow. Rows are replaced per scan day, last 3
+  days kept.
+- **Cboe pacing, found the hard way.** A first full-universe run with four fetches in flight
+  drew **HTTP 429** after ~24 requests in 10 s, and 319 of the next 345 symbols failed. The
+  scan is now **sequential, one chain every 1.5 s**, and `option_quotes.fetch_chain` gained
+  `retries`/`backoff` for 429 (default 0 so a page request never sits through a backoff; the
+  scan passes 3). Re-measured: **60 symbols in 197 s, zero errors**, so ~550 symbols is about
+  30 minutes; the task's ceiling is 90. Candidate volume at that width is ~9,300 rows per 60
+  symbols, ~85k per night, three nights kept.
+- **`build_candidates` is pure** (chain in, rows out) and unit-tested on a synthetic chain:
+  credit = short bid - long ask (what a limit at the market's prices collects), `credit_mid`
+  alongside, `credit_pct` = credit / width, `max_loss` per contract, `otm_prob` =
+  (1 - short delta) x 100, `monthly` = third Friday, `earnings_before_expiry` from the existing
+  Yahoo earnings lookup.
+- **IV percentile from the platform's own history** (`iv_history` table). No free feed serves
+  a year of IV per day; Cboe gives today's `iv30` only. The scan files it nightly per symbol and
+  the percentile is computed over the last 252 readings, shown once a symbol has 20. Until then
+  the column is blank, the row count says "IV pct known for N of M", and the default filter's
+  "incl. unknown IV" keeps those rows visible rather than silently dropping every symbol.
+  **`deploy/iv_seed_ibkr.py`** backfills a year from IB Gateway on Hermes (`py -3.12`,
+  clientId **87**, ~1 s per symbol) so the column is right on day one.
+- **The page** (`routes/spreads.py`, `spreads.html`, `_spreads_list.html`, `_spreads_chart.html`):
+  the filter bar field-for-field with Barchart's, saved per member in `User.prefs["spread_screen"]`
+  (defaults = the user's Barchart settings; Reset restores them); sortable columns; the chart
+  pane above the table with both strikes and breakeven drawn (same component as Portfolio);
+  a freshness pill from `spread_scans`; **Rescan** one symbol live during the day; and
+  **Track**, which turns a row into a Portfolio position with legs (short at bid, long at ask),
+  credit and entry greeks prefilled, then redirects to Portfolio. Rows already tracked say so.
+  Same on-page failure report as Portfolio if the fragment request dies.
+- **Migration `d1e2f3a4b5c6`** (off `c0d1e2f3a4b5`): `iv_history`, `spread_scans`,
+  `spread_candidates`, existence-guarded. Applies at the next app start.
+
+Verified on a scratch copy of the dev DB with live Cboe chains: the synthetic-chain unit
+checks (credit 1.60 on a 10 wide = 16%, max loss $840, OTM 74%, monthly detection, percentile
+needs 20 obs); migration to head; a 3-symbol scan (NVDA + AAPL priced, a bogus ticker counted
+as an error, 665 candidates in 2.5 s); the default filter returning 30 rows, a loosened saved
+filter returning 130 NVDA rows; chart; Track creating the OptionSpread with legs 4.75/3.15,
+credit 1.60, entry deltas 0.40/0.29, 6 contracts, and HX-Redirect to /portfolio; live Rescan of
+MSFT and the error path on a bad symbol; Reset; /spreads/status. Then viewed in the browser on a
+60-symbol scan: the Options dropdown in the nav, the chart with Short 205P / Long 200P / BE drawn,
+the filter bar, and a 59-row table sorted by IV percentile. Test rows removed afterwards.
+
 ### 2026-09-12 - v4.66: tzdata on Windows, and the board says why it failed
 
 User: *"still Checking your positions..."* after the v4.65 clean restart.

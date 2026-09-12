@@ -100,7 +100,8 @@ def _num(v):
     return None if f != f else f          # NaN -> None
 
 
-def fetch_chain(symbol: str, *, ttl: float = _TTL) -> dict:
+def fetch_chain(symbol: str, *, ttl: float = _TTL, retries: int = 0,
+                backoff: float = 20.0) -> dict:
     """The whole delayed chain for one underlying, parsed and indexed.
 
     Returns::
@@ -123,8 +124,16 @@ def fetch_chain(symbol: str, *, ttl: float = _TTL) -> dict:
             return hit[1]
 
     try:
-        r = httpx.get(BASE.format(sym=sym), headers={"User-Agent": _UA},
-                      timeout=30.0, follow_redirects=True)
+        # Cboe's CDN rate-limits bursts with HTTP 429 (measured 2026-09-12: ~24
+        # requests in 10 s tripped it). A page request must not sit through a
+        # backoff, so retries default to 0; the nightly scan passes a few.
+        for attempt in range(max(0, int(retries)) + 1):
+            r = httpx.get(BASE.format(sym=sym), headers={"User-Agent": _UA},
+                          timeout=30.0, follow_redirects=True)
+            if r.status_code == 429 and attempt < retries:
+                time.sleep(backoff * (attempt + 1))
+                continue
+            break
         r.raise_for_status()
         data = r.json()["data"]
     except httpx.HTTPStatusError as exc:
