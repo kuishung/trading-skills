@@ -143,6 +143,72 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-12 - v4.62: Portfolio - legs as filled, daily position greeks, take-profit and DTE lines, Discord alerts
+
+User: *"if the user has enter a trade, i need a function to put the trade into portfolio and
+the system will monitor it ... For option you build the BPS first in which you will want user
+to capture the leg the entered and the price. and the system will update the daily greek and
+user will be able to set a parameter to role the position or action on it."* Then: *"option
+first"* (stock positions deferred to a later release).
+
+Most of this existed since v4.58; this release closes the four gaps between that page and the
+request.
+
+- **Legs captured as filled** (`_portfolio_list.html` entry form, `routes/portfolio.py`
+  `portfolio_add`). Two leg boxes, SELL short put @ price and BUY long put @ price, per share as
+  the broker shows them. The net credit is **derived** (short minus long) and shown live with
+  the dollar credit, max loss and breakeven while typing; the server recomputes it and does not
+  trust the box. A plain net-credit box remains for a member who only knows the net. New
+  columns `option_spreads.short_price` / `long_price`. Validation names the actual mistake:
+  one leg price without the other, or a long put that cost more than the short sold for (a
+  debit, not a bull put spread).
+- **Entry greeks stored as the baseline** (`short_entry_delta`, `long_entry_delta`,
+  `entry_iv`, taken from the Cboe chain at the moment the trade is recorded, best-effort).
+  The drawer shows "at entry: sold 205P @ 4.04, bought 195P @ 2.19, Δ 0.26 / 0.15, IV 33.7%",
+  so the walk from entry delta to today's delta is visible rather than remembered.
+- **Fuller daily greeks** (`spread_monitor.snapshot`, `spread_checks` +5 columns). Every check
+  now also records the long leg's delta and IV, the **net position delta in share-equivalents**
+  (`(long_delta - short_delta) x 100 x contracts`, always positive for a bull put), **position
+  theta in $/day**, and the **share of the credit captured**. Rows show `netΔ +65` and `Θ +14/d`;
+  the totals line sums both across the book; the drawer's history table carries all of them.
+  Verified on the user's live NVDA 205/195P x6: netΔ +65.4, Θ +$14.3/d, mark 1.975 against the
+  1.85 credit = -$75, which is the exact P/L on their moomoo screen.
+- **Two more exit lines, on the winning side** (`bull_put.monitor`, pure; `trade_prefs`;
+  per-trade overrides `profit_target_pct` / `dte_floor`):
+  - **take-profit** - a fraction of the credit captured, default **50%** -> new state **`TAKE`**
+    (emerald, urgent, counted by the nav badge and the banner);
+  - **DTE floor** - days left at which to close or roll regardless of P/L, default **21**
+    -> `CLOSE` on time alone, even with no quote that day.
+  Both have a member default (`spread_profit_target_pct`, `spread_dte_floor` in `User.prefs`)
+  and a per-trade override; **0 switches a winning-side line off** for that member/trade, blank
+  falls back to the default. Near-misses (80% of the target, within 3 days of the floor) render
+  as WATCH like the defensive lines do. **The losing side wins ties**: a spread past both its
+  delta line and its profit target is graded ROLL/CLOSE, never TAKE, because the defensive word
+  is the safer one for a day the quotes are contradicting themselves. Existing rows pick up the
+  defaults automatically - one pre-existing dev-DB spread flipped to TAKE at 58% captured, which
+  is the rule working, not a regression.
+- **The sweep now honours each member's own defaults** (`spread_monitor.sweep` groups rows by
+  user and reads `trade_prefs` per member). Before, the nightly job graded everyone against the
+  playbook constants while the page graded against the member's settings, so the 06:00 verdict
+  and the one on screen could disagree.
+- **Discord push** (`deploy/portfolio_daily_check.py` `_post_discord`, new; `--no-discord` to
+  skip). When the nightly sweep finds anything at a line it posts ONE embed to the existing MATP
+  webhook: defensive rows (CLOSE, then ROLL) before TAKE, each with DTE / Δ / P/L / % of credit
+  or % of max loss and the verdict's instruction, coloured by the worst state, linking to
+  `/portfolio`. Soft-fail; the sweep's exit code never depends on it. Nothing is posted on a
+  quiet day - the absence of a message is the signal that nothing needs doing.
+- **Migration `c0d1e2f3a4b5`** (chained off `b9c0d1e2f3a4`): 7 nullable columns on
+  `option_spreads`, 5 on `spread_checks`, column-existence guarded like its predecessor so the
+  Hermes DB upgrades idempotently at the next app start. No manual step on deploy.
+
+Verified against a scratch copy of the dev DB with the login dependency overridden: migration
+applies to head `c0d1e2f3a4b5`; the NVDA legs post derives credit 1.85 and stores live entry
+greeks; the three validation paths and the net-credit-only path behave; the list renders the
+new cells; prefs and per-trade lines round-trip (0 stored as off, blank clears); a real sweep
+writes the fuller check row; the Discord embed builder orders ROLL before TAKE with the webhook
+stubbed; the badge counts TAKE as urgent; the chart route still resolves. Test rows removed
+afterwards.
+
 ### 2026-09-11 - v4.61: Run MATP on the fund chart, and a header-less pop-out
 
 User: *"i did not see the calculate MATP and MBP in the chart in the sector ETFs. Also when i

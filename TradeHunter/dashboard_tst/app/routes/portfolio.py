@@ -7,10 +7,20 @@ on?" against a chain the member's browser read from their own TWS. This page
 answers the question that comes after: **"is the trade I already have still
 alright, and is today the day to do something about it?"**
 
-Two exit lines are graded every day, per the member's own settings:
+Four exit lines are graded every day, per the member's own settings:
 
-* the short put's **delta** reaching their roll line (default 0.30), and
-* unrealised loss reaching a fraction of **max loss** (default 20%).
+* the short put's **delta** reaching their roll line (default 0.30),
+* unrealised loss reaching a fraction of **max loss** (default 20%),
+* the **profit target** — a fraction of the credit captured (default 50%), and
+* the **DTE floor** — days left at which to close or roll regardless (default 21).
+
+The first two defend the trade; the last two take it off while it is still a
+winner. Each has a member default and a per-trade override.
+
+Legs are captured as the member filled them (v4.62): the short put at its sale
+price and the long put at its cost, per share. The net credit is derived from
+those, and the chain's delta/IV for both legs are stored at entry as the baseline
+every later daily check is read against.
 
 Where the numbers come from
 ---------------------------
@@ -68,7 +78,9 @@ def _history(db: Session, spread_ids: list[int]) -> dict[int, list[dict]]:
         out.setdefault(r.spread_id, []).append({
             "on": r.checked_on, "delta": r.short_delta, "loss_pct": r.loss_pct,
             "pl": r.pl, "state": r.state, "dte": r.dte, "source": r.source,
-            "spot": r.spot,
+            "spot": r.spot, "long_delta": r.long_delta, "net_delta": r.net_delta,
+            "theta": r.theta, "iv": r.short_iv, "profit_pct": r.profit_pct,
+            "mark": r.mark,
         })
     return out
 
@@ -108,6 +120,11 @@ def _list_context(db: Session, user: User, *, status: str = "open",
     urgent = [it for it in items if (it["snap"].get("verdict") or {}).get("urgent")]
     watch = [it for it in items
              if (it["snap"].get("verdict") or {}).get("state") == "WATCH"]
+    # Position-level greeks, summed where every row could be priced.
+    tot_delta = sum(it["snap"]["net_delta"] for it in items
+                    if it["snap"].get("net_delta") is not None)
+    tot_theta = sum(it["snap"]["theta"] for it in items
+                    if it["snap"].get("theta") is not None)
 
     # Portfolio-level totals. Credit received and max loss are certainties; the
     # open P/L is a mark, so it is labelled as one in the template rather than
@@ -122,7 +139,8 @@ def _list_context(db: Session, user: User, *, status: str = "open",
         "user": user, "items": items, "status": status, "prefs": prefs,
         "urgent": urgent, "watch": watch, "focus": focus,
         "totals": {"credit": tot_credit, "risk": tot_risk, "pl": tot_pl,
-                   "priced": priced, "count": len(items)},
+                   "priced": priced, "count": len(items),
+                   "net_delta": tot_delta, "theta": tot_theta},
         "checked_on": spread_monitor.et_today(),
         "quote_source": "Cboe delayed (~15 min)",
     }
@@ -176,12 +194,7 @@ def portfolio_chart(request: Request, row: int = 0,
             'text-slate-500">Trade not found.</div>')
 
     prefs = tp.read(user)
-    snap = spread_monitor.snapshot(
-        symbol=r.symbol, expiry=r.expiry, short_strike=r.short_strike,
-        long_strike=r.long_strike, credit=r.credit or 0.0, contracts=r.contracts or 1,
-        roll_delta=r.roll_delta or prefs["roll_delta"],
-        loss_fraction=(r.loss_stop_pct / 100.0) if r.loss_stop_pct else prefs["loss_fraction"],
-    )
+    snap = spread_monitor.snapshot_rows([r], prefs=prefs)[0]["snap"]
 
     # Same MATP/analyst context the Watchlist, Sector and Curated charts use, so a
     # tracked ticker that is also on the board keeps its MATP/MBP reference lines.
@@ -201,20 +214,60 @@ def portfolio_chart(request: Request, row: int = 0,
     })
 
 
+def _opt_float(v, hi: float, *, allow_zero: bool = False):
+    """An optional numeric form field. Blank/garbage -> None (= use default).
+    ``allow_zero`` lets 0 through, which for the winning-side lines means
+    "switch this line off for this trade"."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    lo_ok = f >= 0 if allow_zero else f > 0
+    return f if lo_ok and f <= hi else None
+
+
+def _entry_greeks(sym: str, expiry: str, short_strike: float, long_strike: float) -> dict:
+    """The chain's delta/IV for both legs right now — the baseline stored with a
+    new trade. Best effort: a chain that cannot be read leaves them None rather
+    than blocking the member from recording a fill they already have."""
+    out = {"short_entry_delta": None, "long_entry_delta": None, "entry_iv": None}
+    try:
+        ch = option_quotes.fetch_chain(sym)
+    except option_quotes.ChainError:
+        return out
+    s = option_quotes.leg(ch, expiry, "P", short_strike)
+    l = option_quotes.leg(ch, expiry, "P", long_strike)
+    if s is not None:
+        out["short_entry_delta"] = None if s.get("delta") is None else abs(s["delta"])
+        out["entry_iv"] = s.get("iv")
+    if l is not None:
+        out["long_entry_delta"] = None if l.get("delta") is None else abs(l["delta"])
+    return out
+
+
 @router.post("/add", response_class=HTMLResponse)
 def portfolio_add(request: Request,
                   symbol: str = Form(...),
                   expiry: str = Form(...),
                   short_strike: float = Form(...),
                   long_strike: float = Form(...),
-                  credit: float = Form(0.0),
+                  short_price: str = Form(""),
+                  long_price: str = Form(""),
+                  credit: str = Form(""),
                   contracts: int = Form(1),
                   roll_delta: str = Form(""),
                   loss_stop_pct: str = Form(""),
+                  profit_target_pct: str = Form(""),
+                  dte_floor: str = Form(""),
                   note: str = Form(""),
                   user: User = Depends(require_user),
                   db: Session = Depends(get_db)):
     """Record a spread the member has already opened in their own broker.
+
+    Legs first: the short put's sale price and the long put's cost, per share, as
+    filled. The credit is DERIVED from those when both are given; the plain
+    credit field remains for a member who only knows the net. If both are given
+    and disagree, the legs win — they are the fills, the net is arithmetic.
 
     Validated here rather than trusted: a long strike above the short is a bear
     put spread, not a bull put one, and silently storing it would grade it with
@@ -229,31 +282,46 @@ def portfolio_add(request: Request,
     if not err and long_strike >= short_strike:
         err = ("For a bull put spread the long put must be BELOW the short put. "
                "Check the two strikes.")
-    if not err and (credit or 0) < 0:
+
+    sp = _opt_float(short_price, 1e6)
+    lp = _opt_float(long_price, 1e6, allow_zero=True)
+    cr = _opt_float(credit, 1e6, allow_zero=True)
+    if not err and (short_price.strip() or long_price.strip()) and (sp is None or lp is None):
+        err = ("Enter BOTH leg prices (what the short put sold for and what the long "
+               "put cost, per share) — or leave both blank and enter the net credit.")
+    if not err and sp is not None and lp is not None:
+        if lp >= sp:
+            err = ("The long put cost more than the short put sold for — that is a "
+                   "debit, not a bull put spread. Check the two prices.")
+        else:
+            cr = round(sp - lp, 4)
+    if not err and cr is None:
+        err = "Enter the two leg prices, or the net credit per share."
+    if not err and cr < 0:
         err = "Credit is what you received; enter it as a positive number."
-    if not err and (credit or 0) >= (short_strike - long_strike):
+    if not err and cr >= (short_strike - long_strike):
         err = ("Credit cannot be more than the width of the spread — that would be "
-               "a risk-free trade. Credit is per share (e.g. 0.36), not per contract.")
+               "a risk-free trade. Prices are per share (e.g. 4.04), not per contract.")
 
     if err:
         ctx = _list_context(db, user)
         ctx["form_error"] = err
         return templates.TemplateResponse(request, "_portfolio_list.html", ctx)
 
-    def _opt(v, hi):
-        try:
-            f = float(v)
-        except (TypeError, ValueError):
-            return None
-        return f if 0 < f <= hi else None
-
+    greeks = _entry_greeks(sym, expiry.strip(), short_strike, long_strike)
     db.add(OptionSpread(
         user_id=user.id, symbol=sym, strategy="bull_put",
         expiry=expiry.strip(), short_strike=short_strike, long_strike=long_strike,
-        credit=credit or None, contracts=max(1, contracts), status="open",
-        roll_delta=_opt(roll_delta, 1.0),
-        loss_stop_pct=_opt(loss_stop_pct, 100.0),
+        short_price=sp, long_price=lp,
+        credit=cr or None, contracts=max(1, contracts), status="open",
+        roll_delta=_opt_float(roll_delta, 1.0),
+        loss_stop_pct=_opt_float(loss_stop_pct, 100.0),
+        profit_target_pct=_opt_float(profit_target_pct, 100.0, allow_zero=True),
+        dte_floor=(None if _opt_float(dte_floor, 365.0, allow_zero=True) is None
+                   else int(float(dte_floor))),
+        entry_delta=greeks["short_entry_delta"],
         note=(note or "").strip() or None,
+        **greeks,
     ))
     db.commit()
     return templates.TemplateResponse(request, "_portfolio_list.html",
@@ -264,11 +332,15 @@ def portfolio_add(request: Request,
 def portfolio_prefs(request: Request,
                     roll_delta: str = Form(""),
                     loss_stop_pct: str = Form(""),
+                    profit_target_pct: str = Form(""),
+                    dte_floor: str = Form(""),
                     user: User = Depends(require_user),
                     db: Session = Depends(get_db)):
     """The member's DEFAULT exit lines, applied to every trade without its own."""
     _, err = tp.write(db, user, roll_delta=roll_delta or None,
-                      loss_stop_pct=loss_stop_pct or None)
+                      loss_stop_pct=loss_stop_pct or None,
+                      profit_target_pct=profit_target_pct or None,
+                      dte_floor=dte_floor or None)
     ctx = _list_context(db, user)
     if err:
         ctx["form_error"] = err
@@ -312,22 +384,22 @@ def portfolio_reopen(spread_id: int, request: Request,
 def portfolio_lines(spread_id: int, request: Request,
                     roll_delta: str = Form(""),
                     loss_stop_pct: str = Form(""),
+                    profit_target_pct: str = Form(""),
+                    dte_floor: str = Form(""),
                     user: User = Depends(require_user),
                     db: Session = Depends(get_db)):
-    """Per-trade exit-line override. Blank clears it back to the member's default."""
+    """Per-trade exit-line override. Blank clears it back to the member's
+    default; 0 on a winning-side line switches that line off for this trade."""
     row = (db.query(OptionSpread)
              .filter(OptionSpread.id == spread_id,
                      OptionSpread.user_id == user.id)
              .one_or_none())
     if row is not None:
-        def _opt(v, hi):
-            try:
-                f = float(v)
-            except (TypeError, ValueError):
-                return None
-            return f if 0 < f <= hi else None
-        row.roll_delta = _opt(roll_delta, 1.0)
-        row.loss_stop_pct = _opt(loss_stop_pct, 100.0)
+        row.roll_delta = _opt_float(roll_delta, 1.0)
+        row.loss_stop_pct = _opt_float(loss_stop_pct, 100.0)
+        row.profit_target_pct = _opt_float(profit_target_pct, 100.0, allow_zero=True)
+        df = _opt_float(dte_floor, 365.0, allow_zero=True)
+        row.dte_floor = None if df is None else int(df)
         db.commit()
     return templates.TemplateResponse(request, "_portfolio_list.html",
                                       _list_context(db, user, focus=spread_id))
@@ -376,7 +448,7 @@ def portfolio_badge(user: User = Depends(require_user),
         latest.setdefault(r.spread_id, r)
     states = [r.state for r in latest.values()]
     return {
-        "urgent": sum(1 for s in states if s in ("ROLL", "CLOSE")),
+        "urgent": sum(1 for s in states if s in ("ROLL", "CLOSE", "TAKE")),
         "watch": sum(1 for s in states if s == "WATCH"),
         "checked_on": max((r.checked_on for r in latest.values()), default=None),
         "stale": bool(latest) and max(r.checked_on for r in latest.values()) < day,

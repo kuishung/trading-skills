@@ -42,7 +42,9 @@ def _dte(expiry: str, today: _dt.date | None = None) -> int:
 def snapshot(*, symbol: str, expiry: str, short_strike: float, long_strike: float,
              credit: float, contracts: int = 1, roll_delta: float | None = None,
              loss_fraction: float | None = None, chain: dict | None = None,
-             today: _dt.date | None = None) -> dict:
+             today: _dt.date | None = None,
+             profit_target: float | None = None,
+             dte_floor: int | None = None) -> dict:
     """Everything the Portfolio row needs for one spread, quotes included.
 
     ``chain`` may be passed in so a sweep fetches each underlying once for all of
@@ -52,6 +54,13 @@ def snapshot(*, symbol: str, expiry: str, short_strike: float, long_strike: floa
     """
     rd = bull_put.ROLL_DELTA if roll_delta is None else float(roll_delta)
     lf = bull_put.LOSS_STOP_FRACTION if loss_fraction is None else float(loss_fraction)
+    # Winning-side lines: None = the playbook default; 0 = switched off.
+    pt = bull_put.PROFIT_TARGET_FRACTION if profit_target is None else float(profit_target)
+    pt = pt if pt > 0 else None
+    df = bull_put.DTE_FLOOR if dte_floor is None else int(dte_floor)
+    df = df if df > 0 else None
+    grade = dict(max_loss=None, roll_delta=rd, loss_fraction=lf,
+                 profit_target=pt, dte_floor=df)
 
     math = bull_put.spread_math(short_strike=short_strike, long_strike=long_strike,
                                 credit=credit, contracts=contracts)
@@ -62,8 +71,12 @@ def snapshot(*, symbol: str, expiry: str, short_strike: float, long_strike: floa
         "short_strike": float(short_strike), "long_strike": float(long_strike),
         **math,
         "spot": None, "short_delta": None, "short_iv": None, "iv30": None,
+        "long_delta": None, "long_iv": None, "net_delta": None, "theta": None,
+        "profit_pct": None,
         "mark": None, "mark_worst": None, "pl": None, "pl_worst": None,
         "short_leg": None, "long_leg": None,
+        "lines": {"roll_delta": rd, "loss_fraction": lf,
+                  "profit_target": pt, "dte_floor": df},
         "source": "cboe", "as_of": None, "error": None,
         "verdict": None,
     }
@@ -74,18 +87,19 @@ def snapshot(*, symbol: str, expiry: str, short_strike: float, long_strike: floa
         out["error"] = "expired"
         out["verdict"] = {
             "state": "EXPIRED", "urgent": False, "reasons": [], "loss_pct": None,
-            "delta_breach": False, "loss_breach": False,
+            "profit_pct": None, "delta_breach": False, "loss_breach": False,
+            "profit_breach": False, "dte_breach": False,
             "action": f"Expired {abs(dte)}d ago. Mark it closed to take it off the board.",
         }
         return out
+    grade["max_loss"] = math["max_loss"]
+    grade["max_profit"] = math["max_profit"]
 
     try:
         ch = chain if chain is not None else option_quotes.fetch_chain(symbol)
     except option_quotes.ChainError as exc:
         out["error"] = str(exc)
-        out["verdict"] = bull_put.monitor(short_delta=None, dte=dte, pl=None,
-                                          max_loss=math["max_loss"],
-                                          roll_delta=rd, loss_fraction=lf)
+        out["verdict"] = bull_put.monitor(short_delta=None, dte=dte, pl=None, **grade)
         return out
 
     out["spot"] = ch.get("spot")
@@ -108,27 +122,36 @@ def snapshot(*, symbol: str, expiry: str, short_strike: float, long_strike: floa
             near = [e for e in exps if e >= _dt.date.today().isoformat()][:4]
             hint = f" — {expiry} is not a listed expiry; nearest: {', '.join(near)}"
         out["error"] = f"not on the chain: {', '.join(missing)}{hint}"
-        out["verdict"] = bull_put.monitor(short_delta=None, dte=dte, pl=None,
-                                          max_loss=math["max_loss"],
-                                          roll_delta=rd, loss_fraction=lf)
+        out["verdict"] = bull_put.monitor(short_delta=None, dte=dte, pl=None, **grade)
         return out
 
     out["short_leg"], out["long_leg"] = s, l
     out["short_delta"] = None if s.get("delta") is None else abs(s["delta"])
     out["short_iv"] = s.get("iv")
+    out["long_delta"] = None if l.get("delta") is None else abs(l["delta"])
+    out["long_iv"] = l.get("iv")
 
     n = math["contracts"]
+    # Position greeks, in the units a trader reads them in. The chain's delta is
+    # signed per share held LONG (a put's is negative); we are short the near put
+    # and long the far one, so the position is -short + long. A bull put spread
+    # therefore always comes out positive delta ("behaves like N long shares")
+    # and, on a normal day, positive theta ("earns $X a day").
+    if s.get("delta") is not None and l.get("delta") is not None:
+        out["net_delta"] = (l["delta"] - s["delta"]) * 100.0 * n
+    if s.get("theta") is not None and l.get("theta") is not None:
+        out["theta"] = (l["theta"] - s["theta"]) * 100.0 * n
     if s.get("mid") is not None and l.get("mid") is not None:
         out["mark"] = s["mid"] - l["mid"]
         out["pl"] = (math["credit"] - out["mark"]) * 100.0 * n
+        if math["credit"] > 0:
+            out["profit_pct"] = (math["credit"] - out["mark"]) / math["credit"]
     if s.get("ask") is not None and l.get("bid") is not None:
         out["mark_worst"] = s["ask"] - l["bid"]
         out["pl_worst"] = (math["credit"] - out["mark_worst"]) * 100.0 * n
 
-    out["verdict"] = bull_put.monitor(
-        short_delta=out["short_delta"], dte=dte, pl=out["pl"],
-        max_loss=math["max_loss"], roll_delta=rd, loss_fraction=lf,
-    )
+    out["verdict"] = bull_put.monitor(short_delta=out["short_delta"], dte=dte,
+                                      pl=out["pl"], **grade)
     return out
 
 
@@ -142,6 +165,9 @@ def snapshot_rows(rows, prefs: dict | None = None,
     prefs = prefs or {}
     rd_default = prefs.get("roll_delta", bull_put.ROLL_DELTA)
     lf_default = prefs.get("loss_fraction", bull_put.LOSS_STOP_FRACTION)
+    pt_default = (prefs["profit_target_pct"] / 100.0 if "profit_target_pct" in prefs
+                  else bull_put.PROFIT_TARGET_FRACTION)
+    df_default = prefs.get("dte_floor", bull_put.DTE_FLOOR)
 
     chains: dict[str, dict | None] = {}
     out = []
@@ -159,6 +185,11 @@ def snapshot_rows(rows, prefs: dict | None = None,
             roll_delta=(r.roll_delta if getattr(r, "roll_delta", None) else rd_default),
             loss_fraction=(r.loss_stop_pct / 100.0
                            if getattr(r, "loss_stop_pct", None) else lf_default),
+            profit_target=(r.profit_target_pct / 100.0
+                           if getattr(r, "profit_target_pct", None) is not None
+                           else pt_default),
+            dte_floor=(r.dte_floor if getattr(r, "dte_floor", None) is not None
+                       else df_default),
             chain=chains[sym], today=today,
         )})
     return out
@@ -206,6 +237,11 @@ def record_check(db, spread, snap: dict, *, source: str = "cboe",
     row.spot = snap.get("spot")
     row.short_delta = snap.get("short_delta")
     row.short_iv = snap.get("short_iv")
+    row.long_delta = snap.get("long_delta")
+    row.long_iv = snap.get("long_iv")
+    row.net_delta = snap.get("net_delta")
+    row.theta = snap.get("theta")
+    row.profit_pct = snap.get("profit_pct")
     row.mark = snap.get("mark")
     row.pl = snap.get("pl")
     row.loss_pct = v.get("loss_pct")
@@ -241,7 +277,18 @@ def sweep(db, *, user_id: int | None = None, on: str | None = None,
     day = on or et_today()
     states: dict[str, int] = {}
     actionable = []
-    for item in snapshot_rows(rows):
+    # Each member's own defaults apply to their rows, exactly as on the page.
+    # Grouped by user so the chain cache still serves one fetch per underlying.
+    from . import trade_prefs as _tp
+
+    items = []
+    by_user: dict[int, list] = {}
+    for r in rows:
+        by_user.setdefault(r.user_id, []).append(r)
+    for uid, urows in by_user.items():
+        items.extend(snapshot_rows(urows, prefs=_tp.read(urows[0].user)))
+
+    for item in items:
         r, snap = item["row"], item["snap"]
         # The sweep records EVERY row, un-priceable ones included. It is the
         # authoritative daily job, so "we tried this position today and could not
@@ -259,6 +306,10 @@ def sweep(db, *, user_id: int | None = None, on: str | None = None,
             actionable.append({
                 "user_id": r.user_id, "symbol": r.symbol, "expiry": r.expiry,
                 "short_strike": r.short_strike, "long_strike": r.long_strike,
+                "contracts": r.contracts, "dte": snap.get("dte"),
+                "short_delta": snap.get("short_delta"), "pl": snap.get("pl"),
+                "profit_pct": snap.get("profit_pct"),
+                "loss_pct": (snap.get("verdict") or {}).get("loss_pct"),
                 "state": st, "action": (snap.get("verdict") or {}).get("action"),
             })
     db.commit()

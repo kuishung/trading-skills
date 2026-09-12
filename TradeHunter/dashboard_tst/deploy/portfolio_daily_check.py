@@ -53,6 +53,8 @@ def main() -> int:
                     help="file the checks under this YYYY-MM-DD instead of today (ET)")
     ap.add_argument("--dry-run", action="store_true",
                     help="grade and print, write nothing")
+    ap.add_argument("--no-discord", action="store_true",
+                    help="skip the Discord post even if a webhook is configured")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -114,12 +116,60 @@ def main() -> int:
                         a["long_strike"], a["expiry"], a["state"], a["action"])
         if not res["actionable"]:
             log.info("nothing at a line")
+
+        # Push copy (v4.62). The in-app badge/banner only reach a member who
+        # opens the site; a spread at a line at 06:00 MYT should reach the phone.
+        # Discord because its webhook is already wired for MATP refreshes —
+        # soft-fail, the sweep's exit code never depends on it.
+        if not args.no_discord and res["actionable"]:
+            from app.services import discord
+            if discord.configured():
+                ok = _post_discord(res)
+                log.info("discord: %s", "posted" if ok else "not posted")
         return 0
     except Exception:  # noqa: BLE001
         log.exception("sweep failed")
         return 1
     finally:
         db.close()
+
+
+def _post_discord(res: dict) -> bool:
+    """One embed for the whole sweep: a line per actionable spread, grouped by
+    state so the defensive ones (ROLL/CLOSE) read before the pleasant one (TAKE)."""
+    from app.config import settings
+    from app.services import discord
+
+    order = {"CLOSE": 0, "ROLL": 1, "TAKE": 2}
+    rows = sorted(res["actionable"], key=lambda a: (order.get(a["state"], 9), a["symbol"]))
+    lines = []
+    for a in rows:
+        bits = []
+        if a.get("dte") is not None:
+            bits.append("%dd" % a["dte"])
+        if a.get("short_delta") is not None:
+            bits.append("Δ %.2f" % a["short_delta"])
+        if a.get("pl") is not None:
+            bits.append("P/L %+.0f" % a["pl"])
+        # a winner is described by its credit captured, a loser by its budget used
+        if a.get("profit_pct") is not None and a["profit_pct"] > 0:
+            bits.append("%.0f%% of credit" % (a["profit_pct"] * 100))
+        elif a.get("loss_pct"):
+            bits.append("%.0f%% of max loss" % (a["loss_pct"] * 100))
+        lines.append("**%s** %s %g/%gP %s ×%s · %s\n%s" % (
+            a["state"], a["symbol"], a["short_strike"], a["long_strike"],
+            a["expiry"], a.get("contracts") or 1, " · ".join(bits), a["action"]))
+    worst = min(order.get(a["state"], 9) for a in rows)
+    color = (discord.COLOR_ROSE if worst == 0
+             else discord.COLOR_AMBER if worst == 1 else discord.COLOR_EMERALD)
+    n = len(rows)
+    return discord.post_embed(
+        title="Portfolio · %d position%s at a line (%s)" % (n, "" if n == 1 else "s",
+                                                             res["checked_on"]),
+        description="\n\n".join(lines)[:4000],
+        url=(settings.public_url.rstrip("/") + "/portfolio") if settings.public_url else None,
+        color=color,
+    )
 
 
 if __name__ == "__main__":

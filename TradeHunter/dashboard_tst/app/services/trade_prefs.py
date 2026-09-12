@@ -51,6 +51,11 @@ DEFAULT_ROLL_DELTA = 0.30
 DEFAULT_LOSS_STOP_PCT = 20.0
 MAX_ROLL_DELTA = 1.0
 MAX_LOSS_STOP_PCT = 100.0
+# Winning-side lines (v4.62). 0 = that line switched off for this member.
+DEFAULT_PROFIT_TARGET_PCT = 50.0    # close once this % of the credit is captured
+DEFAULT_DTE_FLOOR = 21              # close / roll at this many days left
+MAX_PROFIT_TARGET_PCT = 100.0
+MAX_DTE_FLOOR = 365
 
 
 def _num(value, default: float, lo: float, hi: float) -> float:
@@ -79,11 +84,16 @@ def read(user) -> dict:
         # what spread_monitor.snapshot_rows expects: a fraction, not a percent
         "loss_fraction": _num(prefs.get("spread_loss_stop_pct"),
                               DEFAULT_LOSS_STOP_PCT, 0.0, MAX_LOSS_STOP_PCT) / 100.0,
+        "profit_target_pct": _num(prefs.get("spread_profit_target_pct"),
+                                  DEFAULT_PROFIT_TARGET_PCT, 0.0, MAX_PROFIT_TARGET_PCT),
+        "dte_floor": int(_num(prefs.get("spread_dte_floor"),
+                              DEFAULT_DTE_FLOOR, 0.0, MAX_DTE_FLOOR)),
     }
 
 
 def write(db, user, *, offset_pct=None, nlv=None, risk_pct=None,
-          roll_delta=None, loss_stop_pct=None) -> tuple[dict, str]:
+          roll_delta=None, loss_stop_pct=None, profit_target_pct=None,
+          dte_floor=None) -> tuple[dict, str]:
     """Update whichever of the three were supplied. Returns (prefs, error).
 
     Out-of-range input is REPORTED, not silently clamped: a member who typed
@@ -113,6 +123,9 @@ def write(db, user, *, offset_pct=None, nlv=None, risk_pct=None,
     take(roll_delta, "spread_roll_delta", 0.0, MAX_ROLL_DELTA, "Roll delta")
     take(loss_stop_pct, "spread_loss_stop_pct", 0.0, MAX_LOSS_STOP_PCT,
          "Loss stop (% of max loss)")
+    take(profit_target_pct, "spread_profit_target_pct", 0.0, MAX_PROFIT_TARGET_PCT,
+         "Profit target (% of credit)")
+    take(dte_floor, "spread_dte_floor", 0.0, MAX_DTE_FLOOR, "DTE floor")
     if err:
         return read(user), err
 

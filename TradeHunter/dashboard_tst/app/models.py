@@ -825,6 +825,24 @@ class OptionSpread(Base):
     # guarantees the tighter one gets loosened rather than the loose one tightened.
     roll_delta = Column(Float, nullable=True)        # e.g. 0.30
     loss_stop_pct = Column(Float, nullable=True)     # PERCENT of max loss, e.g. 20.0
+    # Two more lines (v4.62), same NULL-means-default convention:
+    #   profit_target_pct — close once this PERCENT of the credit is captured
+    #   dte_floor         — close/roll at this many days left regardless of P/L
+    profit_target_pct = Column(Float, nullable=True)   # e.g. 50.0
+    dte_floor = Column(Integer, nullable=True)         # e.g. 21
+
+    # Per-leg entry capture (v4.62). The member fills each leg at its own price
+    # in the broker; storing both makes the credit a DERIVED number (short minus
+    # long) instead of a typed one, and keeps the fill legible later ("sold the
+    # 205 at 4.04, bought the 195 at 2.19") when the trade is reviewed.
+    short_price = Column(Float, nullable=True)         # per share, what the short leg sold for
+    long_price = Column(Float, nullable=True)          # per share, what the long leg cost
+    # Greeks at entry, taken from the chain when the trade is recorded — the
+    # baseline every later daily check is read against. ``entry_delta`` above is
+    # the older Options-tab field for the short leg; kept for that path.
+    short_entry_delta = Column(Float, nullable=True)   # absolute
+    long_entry_delta = Column(Float, nullable=True)    # absolute
+    entry_iv = Column(Float, nullable=True)            # short leg IV at entry
 
     user = relationship("User")
     checks = relationship("SpreadCheck", back_populates="spread",
@@ -864,8 +882,15 @@ class SpreadCheck(Base):
     pl = Column(Float, nullable=True)               # unrealised $, negative = losing
     loss_pct = Column(Float, nullable=True)         # fraction of MAX loss used, 0..n
     dte = Column(Integer, nullable=True)
+    # Fuller daily greeks (v4.62). Short delta above stays the graded number;
+    # these give the position's whole shape for the day.
+    long_delta = Column(Float, nullable=True)       # absolute
+    net_delta = Column(Float, nullable=True)        # position delta in SHARES (+ = long the stock)
+    theta = Column(Float, nullable=True)            # position theta, $ per day (+ = earning)
+    long_iv = Column(Float, nullable=True)
+    profit_pct = Column(Float, nullable=True)       # fraction of the credit captured, can be < 0
 
-    state = Column(String(10), nullable=False, default="UNKNOWN")  # OK|WATCH|ROLL|CLOSE|UNKNOWN|EXPIRED
+    state = Column(String(10), nullable=False, default="UNKNOWN")  # OK|WATCH|ROLL|CLOSE|TAKE|UNKNOWN|EXPIRED
     action = Column(Text, nullable=True)
     # "cboe" (server sweep) or "bridge" (the member's own TWS). Kept because the
     # two can legitimately disagree by a hair and a row that cannot say where its

@@ -18,18 +18,20 @@
    who opens Portfolio and sees nothing at the top should be able to close the
    tab knowing there is nothing to do — that is the daily ritual working. #}
 {% if urgent %}
-<div class="mb-3 rounded-lg border border-rose-600/60 bg-rose-500/10 px-3 py-2">
+{% set defensive = urgent|rejectattr('snap.verdict.state', 'equalto', 'TAKE')|list %}
+<div class="mb-3 rounded-lg border {% if defensive %}border-rose-600/60 bg-rose-500/10{% else %}border-emerald-600/60 bg-emerald-500/10{% endif %} px-3 py-2">
   <div class="flex items-center gap-2 mb-1">
-    <span class="text-sm font-semibold text-rose-300">
+    <span class="text-sm font-semibold {% if defensive %}text-rose-300{% else %}text-emerald-300{% endif %}">
       {{ urgent|length }} position{{ '' if urgent|length == 1 else 's' }} at a line
     </span>
     <span class="text-[11px] text-slate-500">checked {{ checked_on }}</span>
   </div>
   <ul class="space-y-0.5">
     {% for it in urgent %}
-    <li class="text-[11px] text-rose-300">
-      <span class="font-semibold">{{ it.row.symbol }}</span>
-      <span class="tabular-nums text-rose-300">{{ '%g'|format(it.row.short_strike) }}/{{ '%g'|format(it.row.long_strike) }}P {{ it.row.expiry }}</span>
+    {% set take = it.snap.verdict.state == 'TAKE' %}
+    <li class="text-[11px] {% if take %}text-emerald-300{% else %}text-rose-300{% endif %}">
+      <span class="font-semibold">{{ it.snap.verdict.state }} {{ it.row.symbol }}</span>
+      <span class="tabular-nums">{{ '%g'|format(it.row.short_strike) }}/{{ '%g'|format(it.row.long_strike) }}P {{ it.row.expiry }}</span>
       &mdash; {{ it.snap.verdict.action }}
     </li>
     {% endfor %}
@@ -38,7 +40,7 @@
 {% elif items and status == 'open' %}
 <div class="mb-3 rounded-lg border border-emerald-700/40 bg-emerald-500/5 px-3 py-1.5 text-[11px] text-emerald-300">
   Nothing at a line today.
-  {% if watch %}{{ watch|length }} approaching one &mdash; see the amber row{{ '' if watch|length == 1 else 's' }} below.{% else %}All {{ items|length }} position{{ '' if items|length == 1 else 's' }} inside both lines.{% endif %}
+  {% if watch %}{{ watch|length }} approaching one &mdash; see the amber row{{ '' if watch|length == 1 else 's' }} below.{% else %}All {{ items|length }} position{{ '' if items|length == 1 else 's' }} inside every line.{% endif %}
   <span class="text-slate-500">checked {{ checked_on }}</span>
 </div>
 {% endif %}
@@ -85,6 +87,8 @@
     {% if totals.priced %}
     &middot; open <span class="{% if totals.pl < 0 %}text-rose-300{% else %}text-emerald-300{% endif %}">{{ '%+.0f'|format(totals.pl) }}</span>
     <span class="text-slate-600" title="Marked at the mid of both legs on a ~15-minute delayed feed. It is a mark, not a fill.">(mark)</span>
+    &middot; <span title="Net position delta across every priced spread, in share-equivalents. +84 means the book moves like 84 long shares of the underlyings.">&Delta; <span class="text-slate-300">{{ '%+.0f'|format(totals.net_delta) }}</span></span>
+    &middot; <span title="Net theta: what the book earns (or pays) per calendar day from time decay alone, at today's quotes.">&Theta; <span class="{% if totals.theta < 0 %}text-rose-300{% else %}text-emerald-300{% endif %}">{{ '%+.0f'|format(totals.theta) }}</span>/d</span>
     {% endif %}
   </span>
   {% endif %}
@@ -106,6 +110,7 @@
   <div class="pf-row rounded border transition
               {% if v.state == 'CLOSE' %}border-rose-600/60 bg-rose-500/5
               {% elif v.state == 'ROLL' %}border-amber-600/60 bg-amber-500/5
+              {% elif v.state == 'TAKE' %}border-emerald-500/60 bg-emerald-500/10
               {% elif v.state == 'WATCH' %}border-sky-700/50 bg-sky-500/5
               {% elif v.state == 'EXPIRED' %}border-slate-700 bg-slate-800/30
               {% else %}border-slate-800{% endif %}"
@@ -168,9 +173,31 @@
       </span>
       {% endif %}
 
+      {# profit captured against the take line; only shown once the trade is ahead #}
+      {% set pline = sn.lines.profit_target %}
+      {% if sn.profit_pct is not none and sn.profit_pct > 0 and pline %}
+      <span class="tabular-nums px-1 rounded {% if v.profit_breach %}bg-emerald-500/20 text-emerald-300 font-semibold{% elif sn.profit_pct >= pline * 0.8 %}text-emerald-300{% else %}text-slate-500{% endif %}"
+            title="{{ '%.0f'|format(sn.profit_pct * 100) }}% of the ${{ '%.0f'|format(sn.max_profit) }} credit is captured. Your take line is {{ '%.0f'|format(pline * 100) }}%.">
+        {{ '%.0f'|format(sn.profit_pct * 100) }}%<span class="text-slate-500">/{{ '%.0f'|format(pline * 100) }}% cr</span>
+      </span>
+      {% endif %}
+
+      {# position greeks — the spread as one instrument #}
+      {% if sn.net_delta is not none %}
+      <span class="tabular-nums text-slate-500" title="Net position delta, in share-equivalents: this spread moves like {{ '%.0f'|format(sn.net_delta) }} shares of {{ r.symbol }}. Short {{ '%.2f'|format(sn.short_delta) }} / long {{ '%.2f'|format(sn.long_delta) if sn.long_delta is not none else 'n/a' }} per share.">
+        net&Delta; <span class="text-slate-300">{{ '%+.0f'|format(sn.net_delta) }}</span>
+      </span>
+      {% endif %}
+      {% if sn.theta is not none %}
+      <span class="tabular-nums text-slate-500" title="Position theta: what this spread earns per calendar day from time decay at today's quotes.">
+        &Theta; <span class="{% if sn.theta < 0 %}text-rose-300{% else %}text-emerald-300{% endif %}">{{ '%+.0f'|format(sn.theta) }}</span>/d
+      </span>
+      {% endif %}
+
       <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold
                    {% if v.state == 'CLOSE' %}bg-rose-500/20 text-rose-300
                    {% elif v.state == 'ROLL' %}bg-amber-500/20 text-amber-300
+                   {% elif v.state == 'TAKE' %}bg-emerald-500/25 text-emerald-200
                    {% elif v.state == 'WATCH' %}bg-sky-500/20 text-sky-300
                    {% elif v.state == 'OK' %}bg-emerald-500/15 text-emerald-300
                    {% else %}bg-slate-700/50 text-slate-400{% endif %}">{{ v.state or 'UNKNOWN' }}</span>
@@ -207,7 +234,7 @@
 
     {% if v.action %}
     <p class="px-2 pb-1.5 -mt-0.5 text-[11px] leading-relaxed
-              {% if v.urgent %}text-rose-300{% elif v.state == 'WATCH' %}text-sky-300{% else %}text-slate-500{% endif %}">
+              {% if v.state == 'TAKE' %}text-emerald-300{% elif v.urgent %}text-rose-300{% elif v.state == 'WATCH' %}text-sky-300{% else %}text-slate-500{% endif %}">
       {{ v.action }}
     </p>
     {% endif %}
@@ -217,6 +244,22 @@
 
     {# ── per-trade drawer ───────────────────────────────────────────────── #}
     <div class="pf-drawer border-t border-slate-800 p-2 space-y-2" data-row="{{ r.id }}" hidden>
+      {% if r.short_price is not none or r.short_entry_delta is not none %}
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-500 tabular-nums">
+        <span class="text-slate-600">at entry:</span>
+        {% if r.short_price is not none %}
+        <span>sold <span class="text-slate-300">{{ '%g'|format(r.short_strike) }}P @ {{ '%.2f'|format(r.short_price) }}</span></span>
+        <span>bought <span class="text-slate-300">{{ '%g'|format(r.long_strike) }}P @ {{ '%.2f'|format(r.long_price or 0) }}</span></span>
+        {% endif %}
+        {% if r.short_entry_delta is not none %}
+        <span title="Short-put delta when the trade was recorded; today's is on the row. The gap between them is how far the trade has walked.">&Delta; <span class="text-slate-300">{{ '%.2f'|format(r.short_entry_delta) }}</span>{% if r.long_entry_delta is not none %} / {{ '%.2f'|format(r.long_entry_delta) }}{% endif %}</span>
+        {% endif %}
+        {% if r.entry_iv is not none %}
+        <span title="Short-put IV when recorded. A rising IV alone lifts delta and the mark — a loss that came with rising IV is partly the market repricing, not only the stock moving.">IV <span class="text-slate-300">{{ '%.1f'|format(r.entry_iv * 100) }}%</span></span>
+        {% endif %}
+        <span class="text-slate-600">{{ r.opened_at.strftime('%Y-%m-%d') if r.opened_at else '' }}</span>
+      </div>
+      {% endif %}
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-500 tabular-nums">
         <span>credit <span class="text-slate-300">${{ '%.2f'|format(sn.credit) }}</span>/sh</span>
         <span>width <span class="text-slate-300">{{ '%g'|format(sn.width) }}</span></span>
@@ -226,7 +269,10 @@
         <span>BE <span class="text-slate-300">{{ '%.2f'|format(sn.breakeven) }}</span></span>
         {% if sn.mark is not none %}<span>mark <span class="text-slate-300">${{ '%.2f'|format(sn.mark) }}</span></span>{% endif %}
         {% if sn.short_iv is not none %}<span>short IV <span class="text-slate-300">{{ '%.1f'|format(sn.short_iv * 100) }}%</span></span>{% endif %}
+        {% if sn.long_iv is not none %}<span>long IV <span class="text-slate-300">{{ '%.1f'|format(sn.long_iv * 100) }}%</span></span>{% endif %}
         {% if sn.iv30 is not none %}<span>IV30 <span class="text-slate-300">{{ '%.1f'|format(sn.iv30) }}%</span></span>{% endif %}
+        {% if sn.long_delta is not none %}<span>long &Delta; <span class="text-slate-300">{{ '%.3f'|format(sn.long_delta) }}</span></span>{% endif %}
+        {% if sn.lines.dte_floor %}<span>DTE floor <span class="text-slate-300">{{ sn.lines.dte_floor }}d</span></span>{% endif %}
       </div>
 
       <form class="flex flex-wrap items-end gap-2" hx-post="/portfolio/{{ r.id }}/lines"
@@ -241,8 +287,18 @@
                  placeholder="{{ '%g'|format(prefs.loss_stop_pct) }}"
                  class="ml-1 w-16 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
         </label>
+        <label class="text-[10px] text-slate-500" title="Close once this much of the credit is captured. 0 switches the line off for this trade.">Take at % of credit
+          <input type="number" step="1" min="0" max="100" name="profit_target_pct" value="{{ r.profit_target_pct if r.profit_target_pct is not none else '' }}"
+                 placeholder="{{ '%g'|format(prefs.profit_target_pct) }}"
+                 class="ml-1 w-16 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
+        </label>
+        <label class="text-[10px] text-slate-500" title="Close or roll at this many days left, whatever the P/L. 0 switches the line off for this trade.">Close at DTE
+          <input type="number" step="1" min="0" max="365" name="dte_floor" value="{{ r.dte_floor if r.dte_floor is not none else '' }}"
+                 placeholder="{{ prefs.dte_floor }}"
+                 class="ml-1 w-14 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
+        </label>
         <button type="submit" class="text-[10px] px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Save lines</button>
-        <span class="text-[10px] text-slate-600">blank = your default</span>
+        <span class="text-[10px] text-slate-600">blank = your default &middot; 0 = off</span>
         <button type="submit" class="ml-auto text-[10px] px-2 py-1 rounded border border-slate-800 text-slate-600 hover:border-rose-600 hover:text-rose-300 transition"
                 hx-post="/portfolio/{{ r.id }}/delete" hx-target="closest .pf-panel" hx-swap="outerHTML"
                 hx-confirm="Delete this trade and its check history? This cannot be undone.">Delete</button>
@@ -255,8 +311,15 @@
             <th class="pr-3 font-normal">checked</th><th class="pr-3 font-normal">DTE</th>
             <th class="pr-3 font-normal">spot</th>
             <th class="pr-3 font-normal" title="Where the quote came from: cboe = the server's daily sweep, bridge = your own TWS">src</th>
-            <th class="pr-3 font-normal">&Delta;</th>
-            <th class="pr-3 font-normal">% max loss</th><th class="pr-3 font-normal">P/L</th>
+            <th class="pr-3 font-normal" title="Short-put delta">&Delta;</th>
+            <th class="pr-3 font-normal" title="Long-put delta">l&Delta;</th>
+            <th class="pr-3 font-normal" title="Net position delta, share-equivalents">net&Delta;</th>
+            <th class="pr-3 font-normal" title="Position theta, $/day">&Theta;</th>
+            <th class="pr-3 font-normal" title="Short-put IV">IV</th>
+            <th class="pr-3 font-normal">mark</th>
+            <th class="pr-3 font-normal">% max loss</th>
+            <th class="pr-3 font-normal" title="Share of the credit captured">% cr</th>
+            <th class="pr-3 font-normal">P/L</th>
             <th class="font-normal">state</th></tr></thead>
           <tbody>
           {% for h in it.history|reverse %}
@@ -266,7 +329,13 @@
             <td class="pr-3">{{ '%.2f'|format(h.spot) if h.spot is not none else '' }}</td>
             <td class="pr-3 text-slate-600">{{ h.source }}</td>
             <td class="pr-3 {% if h.delta and h.delta >= line %}text-rose-300{% endif %}">{{ '%.3f'|format(h.delta) if h.delta is not none else '' }}</td>
+            <td class="pr-3 text-slate-500">{{ '%.3f'|format(h.long_delta) if h.long_delta is not none else '' }}</td>
+            <td class="pr-3">{{ '%+.0f'|format(h.net_delta) if h.net_delta is not none else '' }}</td>
+            <td class="pr-3 {% if h.theta and h.theta < 0 %}text-rose-300{% endif %}">{{ '%+.0f'|format(h.theta) if h.theta is not none else '' }}</td>
+            <td class="pr-3 text-slate-500">{{ '%.0f%%'|format(h.iv * 100) if h.iv is not none else '' }}</td>
+            <td class="pr-3">{{ '%.2f'|format(h.mark) if h.mark is not none else '' }}</td>
             <td class="pr-3">{{ '%.0f%%'|format(h.loss_pct * 100) if h.loss_pct is not none else '' }}</td>
+            <td class="pr-3 {% if h.profit_pct and h.profit_pct >= (sn.lines.profit_target or 9) %}text-emerald-300{% endif %}">{{ '%.0f%%'|format(h.profit_pct * 100) if h.profit_pct is not none else '' }}</td>
             <td class="pr-3 {% if h.pl and h.pl < 0 %}text-rose-300{% elif h.pl %}text-emerald-300{% endif %}">{{ '%+.0f'|format(h.pl) if h.pl is not none else '' }}</td>
             <td class="text-slate-500">{{ h.state }}</td>
           </tr>
@@ -293,47 +362,119 @@
 {% endif %}
 
 {# ── add a trade ───────────────────────────────────────────────────────── #}
+{# Legs first (v4.62): the member records each fill as the broker shows it —
+   the short put SOLD at a price, the long put BOUGHT at a price — and the credit
+   is derived from the two. A net-credit box stays for a member who only knows
+   the net. The tiny script below just keeps the derived credit visible while
+   they type; the server recomputes it and does not trust the box. #}
 <details class="rounded-lg border border-slate-800 bg-slate-900/40 mb-3" {% if not items %}open{% endif %}>
   <summary class="cursor-pointer select-none px-3 py-2 text-[11px] text-slate-300 hover:text-emerald-300">
     Track a bull put spread
   </summary>
-  <form class="p-3 pt-0 flex flex-wrap items-end gap-2" hx-post="/portfolio/add"
+  <form class="p-3 pt-0 space-y-2" id="pfAddForm" hx-post="/portfolio/add"
         hx-target="closest .pf-panel" hx-swap="outerHTML">
-    <label class="text-[10px] text-slate-500">Symbol
-      <input name="symbol" required placeholder="MSFT" autocomplete="off"
-             class="mt-0.5 block w-20 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-[11px] text-slate-300 uppercase outline-none focus:border-emerald-500">
-    </label>
-    <label class="text-[10px] text-slate-500">Expiry
-      <input name="expiry" required type="date"
-             class="mt-0.5 block rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
-    </label>
-    <label class="text-[10px] text-slate-500">Short put
-      <input name="short_strike" required type="number" step="0.5" placeholder="460"
-             class="mt-0.5 block w-20 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
-    </label>
-    <label class="text-[10px] text-slate-500">Long put
-      <input name="long_strike" required type="number" step="0.5" placeholder="450"
-             class="mt-0.5 block w-20 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
-    </label>
-    <label class="text-[10px] text-slate-500" title="Net credit PER SHARE, the way the chain quotes it — 0.36, not 36.">Credit /sh
-      <input name="credit" type="number" step="0.01" min="0" placeholder="0.36"
-             class="mt-0.5 block w-20 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
-    </label>
-    <label class="text-[10px] text-slate-500">Contracts
-      <input name="contracts" type="number" step="1" min="1" value="1"
-             class="mt-0.5 block w-16 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
-    </label>
-    <label class="text-[10px] text-slate-500">Note
-      <input name="note" placeholder="optional"
-             class="mt-0.5 block w-36 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
-    </label>
-    <button type="submit" class="px-3 py-1 rounded border border-emerald-600 text-[11px] text-emerald-300 hover:bg-emerald-500/10 transition">Track</button>
-    <p class="basis-full text-[10px] text-slate-600 mt-1">
-      Tracking only &mdash; nothing here places, changes or cancels an order.
-      Enter the trade you already opened in your broker.
+    <div class="flex flex-wrap items-end gap-2">
+      <label class="text-[10px] text-slate-500">Symbol
+        <input name="symbol" required placeholder="NVDA" autocomplete="off"
+               class="mt-0.5 block w-20 uppercase rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
+      </label>
+      <label class="text-[10px] text-slate-500">Expiry
+        <input name="expiry" required type="date"
+               class="mt-0.5 block rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
+      </label>
+      <label class="text-[10px] text-slate-500">Contracts
+        <input name="contracts" type="number" step="1" min="1" value="1"
+               class="mt-0.5 block w-16 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
+      </label>
+      <label class="text-[10px] text-slate-500">Note
+        <input name="note" placeholder="optional"
+               class="mt-0.5 block w-40 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
+      </label>
+    </div>
+
+    <div class="flex flex-wrap items-end gap-x-4 gap-y-2">
+      <div class="flex items-end gap-2 rounded border border-rose-900/50 bg-rose-500/5 px-2 py-1.5">
+        <span class="pb-1 text-[10px] font-semibold text-rose-300 w-10">SELL</span>
+        <label class="text-[10px] text-slate-500">Short put
+          <input name="short_strike" required type="number" step="0.5" placeholder="205"
+                 class="mt-0.5 block w-20 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
+        </label>
+        <label class="text-[10px] text-slate-500" title="What the short put SOLD for, per share (4.04, not 404).">@ price
+          <input name="short_price" type="number" step="0.01" min="0" placeholder="4.04" data-leg="short"
+                 class="mt-0.5 block w-20 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
+        </label>
+      </div>
+      <div class="flex items-end gap-2 rounded border border-slate-700/60 bg-slate-800/30 px-2 py-1.5">
+        <span class="pb-1 text-[10px] font-semibold text-slate-300 w-10">BUY</span>
+        <label class="text-[10px] text-slate-500">Long put
+          <input name="long_strike" required type="number" step="0.5" placeholder="195"
+                 class="mt-0.5 block w-20 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
+        </label>
+        <label class="text-[10px] text-slate-500" title="What the long put COST, per share (2.19, not 219).">@ price
+          <input name="long_price" type="number" step="0.01" min="0" placeholder="2.19" data-leg="long"
+                 class="mt-0.5 block w-20 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
+        </label>
+      </div>
+      <label class="text-[10px] text-slate-500" title="Net credit PER SHARE. Filled in from the two leg prices; type it directly only if you do not have the legs.">Net credit /sh
+        <input name="credit" type="number" step="0.01" min="0" placeholder="1.85" data-leg="credit"
+               class="mt-0.5 block w-20 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
+      </label>
+      <span class="pb-1 text-[10px] text-slate-600" id="pfAddMath"></span>
+    </div>
+
+    <div class="flex flex-wrap items-end gap-2">
+      <span class="pb-1 text-[10px] text-slate-600">Lines for this trade (blank = your defaults):</span>
+      <label class="text-[10px] text-slate-500">roll at &Delta;
+        <input name="roll_delta" type="number" step="0.01" min="0" max="1" placeholder="{{ '%.2f'|format(prefs.roll_delta) }}"
+               class="ml-1 w-16 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
+      </label>
+      <label class="text-[10px] text-slate-500">exit at % max loss
+        <input name="loss_stop_pct" type="number" step="1" min="0" max="100" placeholder="{{ '%g'|format(prefs.loss_stop_pct) }}"
+               class="ml-1 w-14 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
+      </label>
+      <label class="text-[10px] text-slate-500">take at % credit
+        <input name="profit_target_pct" type="number" step="1" min="0" max="100" placeholder="{{ '%g'|format(prefs.profit_target_pct) }}"
+               class="ml-1 w-14 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
+      </label>
+      <label class="text-[10px] text-slate-500">close at DTE
+        <input name="dte_floor" type="number" step="1" min="0" max="365" placeholder="{{ prefs.dte_floor }}"
+               class="ml-1 w-14 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
+      </label>
+      <button type="submit" class="ml-auto px-3 py-1 rounded border border-emerald-600 text-[11px] text-emerald-300 hover:bg-emerald-500/10 transition">Track</button>
+    </div>
+    <p class="text-[10px] text-slate-600">
+      Tracking only &mdash; nothing here places, changes or cancels an order. Enter the
+      trade you already filled in your broker; the chain's delta and IV for both legs
+      are stored with it as the entry baseline.
     </p>
   </form>
 </details>
+<script>
+(function () {
+  var f = document.getElementById('pfAddForm');
+  if (!f || f.dataset.wired) return;
+  f.dataset.wired = '1';
+  var sp = f.querySelector('[data-leg=short]'), lp = f.querySelector('[data-leg=long]'),
+      cr = f.querySelector('[data-leg=credit]'), out = document.getElementById('pfAddMath'),
+      ss = f.querySelector('[name=short_strike]'), ls = f.querySelector('[name=long_strike]'),
+      n = f.querySelector('[name=contracts]');
+  function recalc() {
+    var s = parseFloat(sp.value), l = parseFloat(lp.value);
+    if (!isNaN(s) && !isNaN(l)) {
+      var c = Math.round((s - l) * 100) / 100;
+      cr.value = c > 0 ? c.toFixed(2) : '';
+      cr.readOnly = true;
+    } else { cr.readOnly = false; }
+    var c2 = parseFloat(cr.value), w = parseFloat(ss.value) - parseFloat(ls.value),
+        k = parseInt(n.value || '1', 10);
+    if (!isNaN(c2) && !isNaN(w) && w > 0 && c2 > 0 && c2 < w) {
+      out.textContent = '= $' + Math.round(c2 * 100 * k) + ' credit, max loss $'
+        + Math.round((w - c2) * 100 * k) + ', BE ' + (parseFloat(ss.value) - c2).toFixed(2);
+    } else { out.textContent = ''; }
+  }
+  [sp, lp, cr, ss, ls, n].forEach(function (el) { el.addEventListener('input', recalc); });
+})();
+</script>
 
 {# ── default exit lines ────────────────────────────────────────────────── #}
 <form class="flex flex-wrap items-end gap-2 text-[10px] text-slate-500"
@@ -347,8 +488,16 @@
     <input type="number" step="1" min="0" max="100" name="loss_stop_pct" value="{{ '%g'|format(prefs.loss_stop_pct) }}"
            class="ml-1 w-14 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 outline-none focus:border-emerald-500">% of max loss
   </label>
+  <label title="Close once this much of the credit is captured. 0 = off.">take at
+    <input type="number" step="1" min="0" max="100" name="profit_target_pct" value="{{ '%g'|format(prefs.profit_target_pct) }}"
+           class="ml-1 w-14 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 outline-none focus:border-emerald-500">% of credit
+  </label>
+  <label title="Close or roll at this many days left, whatever the P/L. 0 = off.">close at
+    <input type="number" step="1" min="0" max="365" name="dte_floor" value="{{ prefs.dte_floor }}"
+           class="ml-1 w-14 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 outline-none focus:border-emerald-500"> DTE
+  </label>
   <button type="submit" class="px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Save</button>
-  <span class="pb-1 text-slate-600" title="Adam Khoo's credit-spread playbook (options-strategies-reference/07-credit-spreads.md) puts the delta line at 0.35-0.40. Yours is tighter, which is a choice, not an error.">playbook: 0.35&ndash;0.40</span>
+  <span class="pb-1 text-slate-600" title="Adam Khoo's credit-spread playbook (options-strategies-reference/07-credit-spreads.md): delta line 0.35-0.40, take profit at 50% of the credit, don't hold inside 21 days. Your delta line is tighter, which is a choice, not an error.">playbook: &Delta; 0.35&ndash;0.40 &middot; take 50% &middot; 21 DTE</span>
 </form>
 
 </div>{# /.pf-panel #}

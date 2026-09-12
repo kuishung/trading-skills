@@ -363,6 +363,14 @@ def review(*, short_delta: float | None, dte: int,
 ROLL_DELTA = 0.30           # user's own line; the playbook's is 0.35-0.40
 LOSS_STOP_FRACTION = 0.20   # "exit or roll at 20% of max loss"
 
+# Two more lines (v4.62), on the winning side of the trade. A credit spread that
+# has captured most of its credit is holding the same max loss for the last few
+# cents, and the cents come slowest precisely when gamma is largest — so the
+# playbook's "take 50%" and "don't sit inside three weeks" are both stated as
+# lines the member can move rather than folklore they have to remember.
+PROFIT_TARGET_FRACTION = 0.50   # close once 50% of the credit is captured
+DTE_FLOOR = 21                  # close / roll at 21 days left, whatever the P/L
+
 
 def spread_math(*, short_strike: float, long_strike: float, credit: float,
                 contracts: int = 1) -> dict:
@@ -385,8 +393,11 @@ def spread_math(*, short_strike: float, long_strike: float, credit: float,
 def monitor(*, short_delta: float | None, dte: int, pl: float | None,
             max_loss: float, roll_delta: float = ROLL_DELTA,
             loss_fraction: float = LOSS_STOP_FRACTION,
-            adjust_dte: int = ADJUST_DTE) -> dict:
-    """Grade one open spread against BOTH exit lines.
+            adjust_dte: int = ADJUST_DTE,
+            max_profit: float | None = None,
+            profit_target: float | None = PROFIT_TARGET_FRACTION,
+            dte_floor: int | None = DTE_FLOOR) -> dict:
+    """Grade one open spread against every exit line.
 
     ``pl`` is unrealised profit/loss in dollars (negative = losing), ``max_loss``
     the dollar max loss from ``spread_math``. Either may be None/0 when no quote
@@ -394,23 +405,55 @@ def monitor(*, short_delta: float | None, dte: int, pl: float | None,
     ``UNKNOWN`` only when BOTH are missing is deliberate — a monitor that goes
     dark because one number is late is a monitor you stop trusting.
 
+    Four lines, two on each side of the trade:
+
+    * losing side — short delta at ``roll_delta``; loss at ``loss_fraction`` of
+      max loss. Past either: ``ROLL`` with more than ``adjust_dte`` left, else
+      ``CLOSE``.
+    * winning side — ``profit_target`` (fraction of the credit captured, needs
+      ``max_profit``) -> ``TAKE``; ``dte_floor`` (days left) -> ``CLOSE`` on
+      time alone. ``None`` switches either off.
+
+    The losing side wins ties: a trade that is both past its delta line and past
+    its profit target is a contradiction the quotes will resolve within the day,
+    and the safer word for that day is the defensive one.
+
     Returns ``{state, action, reasons, urgent, delta_breach, loss_breach,
-    loss_pct}`` where state is OK | WATCH | ROLL | CLOSE | UNKNOWN.
+    profit_breach, dte_breach, loss_pct, profit_pct}`` where state is
+    OK | WATCH | ROLL | CLOSE | TAKE | UNKNOWN.
     """
     d = None if short_delta is None else abs(float(short_delta))
 
     loss_pct = None
+    profit_pct = None
     if pl is not None and max_loss and max_loss > 0:
         # only a LOSS consumes the budget; profit is not negative loss here
         loss_pct = max(0.0, -float(pl)) / float(max_loss)
+    if pl is not None and max_profit and max_profit > 0:
+        profit_pct = float(pl) / float(max_profit)     # can be negative
+
+    base = {"reasons": [], "urgent": False, "delta_breach": False,
+            "loss_breach": False, "profit_breach": False, "dte_breach": False,
+            "loss_pct": loss_pct, "profit_pct": profit_pct}
+
+    dte_breach = dte_floor is not None and 0 <= dte <= int(dte_floor)
 
     if d is None and loss_pct is None:
-        return {"state": "UNKNOWN", "action": "No quote today — nothing to grade.",
-                "reasons": [], "urgent": False, "delta_breach": False,
-                "loss_breach": False, "loss_pct": None}
+        if dte_breach:
+            # No quote, but the calendar needs none: time alone says close.
+            return {**base, "state": "CLOSE", "urgent": True, "dte_breach": True,
+                    "reasons": [f"{dte}d left is at your {dte_floor}d floor"],
+                    "action": (f"No quote today, but only {dte}d left — at your "
+                               f"{dte_floor}d floor. Close it, or roll to the next cycle.")}
+        return {**base, "state": "UNKNOWN",
+                "action": "No quote today — nothing to grade."}
 
     delta_breach = d is not None and d >= roll_delta
     loss_breach = loss_pct is not None and loss_pct >= loss_fraction
+    profit_breach = (profit_target is not None and profit_pct is not None
+                     and profit_pct >= float(profit_target))
+    base.update({"delta_breach": delta_breach, "loss_breach": loss_breach,
+                 "profit_breach": profit_breach, "dte_breach": dte_breach})
 
     reasons: list[str] = []
     if delta_breach:
@@ -420,6 +463,27 @@ def monitor(*, short_delta: float | None, dte: int, pl: float | None,
                        f"(your line is {loss_fraction * 100:.0f}%)")
 
     if not reasons:
+        # Winning side. Profit target first: it is the better news and the
+        # cleaner instruction. Then the DTE floor, which says close even when
+        # nothing else does.
+        if profit_breach:
+            return {**base, "state": "TAKE", "urgent": True,
+                    "reasons": [f"{profit_pct * 100:.0f}% of the credit captured"],
+                    "action": (f"{profit_pct * 100:.0f}% of the credit is captured (your "
+                               f"target is {profit_target * 100:.0f}%) with {dte}d left. "
+                               "Buy the spread back and take it — the rest comes slowest "
+                               "and holds the whole max loss to earn it.")}
+        if dte_breach:
+            bits = [f"delta {d:.2f}"] if d is not None else []
+            if profit_pct is not None:
+                bits.append(f"{profit_pct * 100:.0f}% of credit captured")
+            return {**base, "state": "CLOSE", "urgent": True,
+                    "reasons": [f"{dte}d left is at your {dte_floor}d floor"],
+                    "action": (f"{dte}d left, at your {dte_floor}d floor"
+                               + (" (" + ", ".join(bits) + ")" if bits else "")
+                               + ". Close it, or roll to the next cycle — gamma "
+                                 "grows from here and a quiet trade can turn in a day.")}
+
         # A near-miss is worth saying out loud: the point of a daily check is to
         # see it coming, not to be told on the morning it is already too late.
         near = []
@@ -427,30 +491,32 @@ def monitor(*, short_delta: float | None, dte: int, pl: float | None,
             near.append(f"delta {d:.2f} is closing on {roll_delta:.2f}")
         if loss_pct is not None and loss_pct >= loss_fraction * 0.5:
             near.append(f"down {loss_pct * 100:.0f}% of max loss")
+        if (profit_target is not None and profit_pct is not None
+                and profit_pct >= float(profit_target) * 0.8):
+            near.append(f"{profit_pct * 100:.0f}% of credit captured, "
+                        f"target {profit_target * 100:.0f}%")
+        if dte_floor is not None and 0 <= dte <= int(dte_floor) + 3:
+            near.append(f"{dte}d left, floor is {dte_floor}d")
         if near:
-            return {"state": "WATCH", "action": "Approaching a line: " + "; ".join(near) + ".",
-                    "reasons": near, "urgent": False, "delta_breach": False,
-                    "loss_breach": False, "loss_pct": loss_pct}
+            return {**base, "state": "WATCH", "reasons": near,
+                    "action": "Approaching a line: " + "; ".join(near) + "."}
         bits = []
         if d is not None:
             bits.append(f"delta {d:.2f}")
         if loss_pct is not None:
             bits.append(f"{loss_pct * 100:.0f}% of max loss used")
-        return {"state": "OK", "action": "Inside both lines (" + ", ".join(bits) + "). Hold.",
-                "reasons": [], "urgent": False, "delta_breach": False,
-                "loss_breach": False, "loss_pct": loss_pct}
+        if profit_pct is not None:
+            bits.append(f"{profit_pct * 100:.0f}% of credit captured")
+        return {**base, "state": "OK",
+                "action": "Inside every line (" + ", ".join(bits) + "). Hold."}
 
     why = " and ".join(reasons)
     if dte > adjust_dte:
-        return {"state": "ROLL",
+        return {**base, "state": "ROLL", "reasons": reasons, "urgent": True,
                 "action": (f"{why.capitalize()} with {dte}d left — enough time to roll: "
                            "buy to close the short put, sell to close the long, then "
-                           "reopen lower and/or further out."),
-                "reasons": reasons, "urgent": True, "delta_breach": delta_breach,
-                "loss_breach": loss_breach, "loss_pct": loss_pct}
+                           "reopen lower and/or further out.")}
 
-    return {"state": "CLOSE",
+    return {**base, "state": "CLOSE", "reasons": reasons, "urgent": True,
             "action": (f"{why.capitalize()} with only {dte}d left — a roll this close to "
-                       "expiry buys little time for the credit it costs; close it."),
-            "reasons": reasons, "urgent": True, "delta_breach": delta_breach,
-            "loss_breach": loss_breach, "loss_pct": loss_pct}
+                       "expiry buys little time for the credit it costs; close it.")}
