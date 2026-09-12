@@ -143,6 +143,33 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-12 - v4.66: tzdata on Windows, and the board says why it failed
+
+User: *"still Checking your positions..."* after the v4.65 clean restart.
+
+**Root cause found: `tzdata` was never in `requirements.txt`.** `spread_monitor.et_today()`
+calls `ZoneInfo("America/New_York")` on EVERY Portfolio render (it keys the day's check on
+the exchange date, even when there are no rows). Windows ships no system zone database, so
+without the `tzdata` package `zoneinfo` raises `ZoneInfoNotFoundError` and the request dies
+with a bare 500. Every laptop test passed because the laptop happens to have `tzdata`
+installed as a transitive dependency of something else. v4.58's own verification never
+rendered the page on Hermes.
+
+- **`app/requirements.txt` gains `tzdata>=2024.1`.** `run_app.ps1` reinstalls when the
+  file's hash changes, so the next Hermes restart pulls it with no manual step. This also
+  covers the two other `ZoneInfo` callers (`routes/patterns.py`, `services/calendars.py`).
+- **`spread_monitor._et_now()`** wraps the lookup with a rule-based fallback (US DST: second
+  Sunday of March to first Sunday of November, 02:00 local) so the board can never be taken
+  down by a missing zone file again. Tested at 2026-03-08 07:30Z (-4h), 2026-11-01 05:30Z
+  (-4h) and 06:30Z (-5h).
+- **`portfolio.html` now reports a failed board request on the page** - kind, HTTP status,
+  the start of the response body, a link to `/admin/log` - and counts the seconds while it
+  waits, so a slow chain fetch and a dead request look different. Four releases were spent
+  guessing at a failure this loading line hid.
+
+Verified locally: with `ZoneInfo` monkeypatched to raise, `et_today()` returns the same
+date as with tzdata present; both DST edges give the expected offset.
+
 ### 2026-09-12 - v4.65: the launcher frees port 8000 before binding it
 
 Diagnosis of the Portfolio board stuck on "Checking your positions..." on Hermes. The

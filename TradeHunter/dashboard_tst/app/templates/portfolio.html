@@ -6,10 +6,46 @@
    from Cboe, which is a second or two the page shell must never wait on. Same
    pattern as Curated's list. #}
 <div class="max-w-[1400px]">
-  <div hx-get="/portfolio/list" hx-trigger="load" hx-swap="innerHTML">
-    <div class="text-xs text-slate-500 py-8 text-center">Checking your positions&hellip;</div>
+  <div id="pfBoard" hx-get="/portfolio/list" hx-trigger="load" hx-swap="innerHTML">
+    <div class="text-xs text-slate-500 py-8 text-center">Checking your positions&hellip;
+      <span id="pfBoardWait" class="text-slate-600"></span></div>
   </div>
 </div>
+
+{# If the board request fails, SAY SO on the page - status code and the start of
+   the response - instead of leaving the loading line up forever. A member (or a
+   screenshot of their screen) then carries the evidence; v4.62-v4.65 were spent
+   guessing at a failure this page swallowed. Also counts the seconds while it
+   waits, so a slow chain fetch looks different from a dead request. #}
+<script>
+(function () {
+  var host = document.getElementById('pfBoard');
+  if (!host) return;
+  var t0 = Date.now(), wait = document.getElementById('pfBoardWait');
+  var tick = setInterval(function () {
+    if (!wait || !document.body.contains(wait)) { clearInterval(tick); return; }
+    var s = Math.round((Date.now() - t0) / 1000);
+    if (s >= 3) wait.textContent = '(' + s + 's)';
+  }, 1000);
+  function fail(kind, xhr) {
+    clearInterval(tick);
+    var status = xhr ? xhr.status : 0;
+    var body = xhr && xhr.responseText ? xhr.responseText : '';
+    body = body.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 600);
+    host.innerHTML =
+      '<div class="rounded border border-rose-600/60 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-300">' +
+      '<div class="font-semibold">The board could not load: ' + kind +
+      (status ? ' (HTTP ' + status + ')' : '') + '</div>' +
+      (body ? '<pre class="mt-1 whitespace-pre-wrap text-[10px] text-rose-200/80">' +
+        body.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</pre>' : '') +
+      '<div class="mt-1 text-slate-400">An administrator can read the server log at ' +
+      '<a class="underline" href="/admin/log?lines=150">/admin/log</a>.</div></div>';
+  }
+  host.addEventListener('htmx:responseError', function (e) { fail('server error', e.detail.xhr); });
+  host.addEventListener('htmx:sendError', function (e) { fail('network error', e.detail.xhr); });
+  host.addEventListener('htmx:timeout', function (e) { fail('timed out', e.detail.xhr); });
+})();
+</script>
 
 {# Preload the chart library ONCE, exactly as Curated and Sector do. The chart
    partial ships its own <script src>, but when HTMX swaps the fragment in that

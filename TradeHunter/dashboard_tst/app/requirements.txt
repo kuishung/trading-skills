@@ -17,3 +17,6 @@ alembic>=1.13             # database schema migrations (SQLite + Postgres)
 # Production extras (not needed for the SQLite dev scaffold):
 #   psycopg[binary]>=3.1   # when TST_DATABASE_URL points at Postgres
 #   alembic                # schema migrations once models stabilise
+# IANA zone database for zoneinfo on Windows (no system tzdb there). Without it
+# ZoneInfo("America/New_York") raises and every page that asks for ET time 500s.
+tzdata>=2024.1

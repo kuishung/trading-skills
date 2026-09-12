@@ -209,9 +209,36 @@ def et_today() -> str:
     check on the local date would file two checks under one trading day and none
     under the next.
     """
-    from zoneinfo import ZoneInfo
+    return _et_now().date().isoformat()
 
-    return _dt.datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+
+def _et_now() -> _dt.datetime:
+    """Now in New York. ``zoneinfo`` needs the ``tzdata`` package on Windows
+    (there is no system zone database), and on the box that lacked it this call
+    took the whole Portfolio board down with a 500 (v4.62-v4.65, Hermes). The
+    fallback applies US daylight-saving by rule - second Sunday of March to first
+    Sunday of November, 02:00 local - so the date is right even without the
+    package; tzdata is in requirements.txt as well so the fallback stays unused.
+    """
+    try:
+        from zoneinfo import ZoneInfo
+
+        return _dt.datetime.now(ZoneInfo("America/New_York"))
+    except Exception:  # noqa: BLE001 - ZoneInfoNotFoundError, or no zoneinfo at all
+        pass
+    utc = _dt.datetime.now(_dt.timezone.utc)
+    y = utc.year
+
+    def _nth_sunday(month: int, n: int) -> _dt.date:
+        d = _dt.date(y, month, 1)
+        d += _dt.timedelta(days=(6 - d.weekday()) % 7)      # first Sunday
+        return d + _dt.timedelta(weeks=n - 1)
+
+    # DST switches at 02:00 local = 07:00 UTC (EST) going in, 06:00 UTC (EDT) going out
+    start = _dt.datetime.combine(_nth_sunday(3, 2), _dt.time(7), _dt.timezone.utc)
+    end = _dt.datetime.combine(_nth_sunday(11, 1), _dt.time(6), _dt.timezone.utc)
+    offset = -4 if start <= utc < end else -5
+    return utc.astimezone(_dt.timezone(_dt.timedelta(hours=offset)))
 
 
 def record_check(db, spread, snap: dict, *, source: str = "cboe",
