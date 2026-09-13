@@ -143,6 +143,19 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-13 - v4.74: the selected holding really stays selected
+
+User: *"i need the ticker to be stayed selected when new window on the ticket is opened"* -
+the v4.73 mark vanished moments after the click.
+
+Cause: the holdings body is swapped with **outerHTML** (the sort pills, and the performance
+poll that runs every 2.5 s while Finviz numbers load), and htmx fires `htmx:afterSwap` on the
+OLD, detached node - it never bubbles to the page, so the v4.73 restore listener never ran. A
+click during that loading window lost its mark at the next poll. **Now restored on
+`htmx:load`**, which fires on the NEW content already in the DOM. Verified in the browser
+with a click during the loading poll: the mark on AIG survived the poll (checked after 6 s)
+and a re-sort by 1D.
+
 ### 2026-09-13 - v4.73: Sector ETFs holdings - the clicked row stays marked, and today's curated names say so
 
 User: *"in the ticker list of Sector ETF, when a ticker is selected I need to know where I

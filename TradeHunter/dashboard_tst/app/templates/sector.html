@@ -366,8 +366,17 @@
     document.body.addEventListener('htmx:afterSwap', function (e) {
       var t = e.detail && e.detail.target;
       if (t && t.classList && t.classList.contains('si-returns')) syncEtfOrder();
-      // the holdings panel (or its body) was re-rendered: put the mark back
-      if (t && (t.id === 'etfHoldings' || (t.classList && t.classList.contains('etf-holdings-body')))) restoreSelected();
+    });
+    // The holdings body is swapped with outerHTML (sort pills, the performance
+    // poll), and htmx fires afterSwap on the OLD, detached node - it never
+    // bubbles to the page. htmx:load fires on the NEW content, which is in the
+    // DOM, so that is the event to restore the mark on. Cheap enough to run on
+    // every load: one querySelector.
+    document.body.addEventListener('htmx:load', function (e) {
+      var el = e.detail && e.detail.elt;
+      if (!el || !el.querySelector) return;
+      if (el.classList.contains('etf-holdings-body') || el.classList.contains('etf-holding') ||
+          el.querySelector('.etf-holding')) restoreSelected();
     });
     restoreSelected();
     window._sectorSetTab = setTab;
