@@ -143,6 +143,17 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-13 - v4.72: readable chips in the light theme
+
+User: *"I cannot read the green pill wordings"* - the fresh-rebound chip on the Setup sort,
+on the light theme.
+
+`base.html`'s light-theme map recolours `text-emerald-300` / `-400` to the theme's green but
+never the `-200` tints, which the bold chips use on a tinted pill (the Setup sort's fresh
+rebound, Portfolio's `TAKE` state). On a white page that is pale green on pale green.
+**Added `.text-emerald-200/-100`, `.text-rose-200`, `.text-amber-200`, `.text-sky-200` to the
+light map**, so every such chip reads in both themes without per-template fixes.
+
 ### 2026-09-13 - v4.71: Sector ETFs holdings - a Setup sort (EMA stack, EMA rebound, round number)
 
 User: *"in the Sector ETF, the Tickers i need an option to sort by the follow filters: 1.
