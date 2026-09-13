@@ -143,6 +143,21 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-13 - v4.69: the pop-out chart's Analyst targets button works
+
+User: *"in the pop out window of the sector industry of the ticker. When i click the analyst
+target, there is nothing listed?"*
+
+The button does `hx-get /matp/<sym>/targets` into `#atModalBody` and calls `atOpen()`, both
+of which live in `_at_modal.html`. `sector.html` includes that partial; the pop-out
+(`sector_chart_window.html`, v4.61) is a separate full page and never did, so HTMX had no
+target and the click rendered nothing. **`sector_chart_window.html` now includes the modal.**
+Curated / Portfolio / Spread charts are unaffected: they pass `chart_band = none`, so the
+button is not rendered there at all.
+
+Verified through the app: `/sector/chart-window?symbol=NVDA` now carries `#atModal`,
+`#atModalBody` and `atOpen`, and `/matp/NVDA/targets` returns the targets fragment.
+
 ### 2026-09-13 - v4.68: Curated - grouped by trading week, Saturday to Friday
 
 User: *"in the curated, I want to be group by Week of the month. By default Saturday to

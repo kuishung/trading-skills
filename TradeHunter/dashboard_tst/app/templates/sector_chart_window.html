@@ -20,4 +20,8 @@
   <div class="flex-1 flex items-center justify-center text-xs text-slate-500">No ticker given.</div>
   {% endif %}
 </div>
+{# The "Analyst targets" button on the chart loads into #atModalBody. The Sector
+   page includes this modal; the pop-out is its own page and did not, so the click
+   had no target and showed nothing (user, 2026-09-13). #}
+{% include "_at_modal.html" %}
 {% endblock %}
