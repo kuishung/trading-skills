@@ -143,6 +143,28 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-13 - v4.68: Curated - grouped by trading week, Saturday to Friday
+
+User: *"in the curated, I want to be group by Week of the month. By default Saturday to
+Friday is one week, so during the weekend ticker can get to be curated for the coming week
+market."*
+
+- **`services/curated.by_week`** (new; `by_month` kept) groups the rows on screen into
+  Saturday-to-Friday weeks, newest first, with the same per-group summary (decided-only win
+  rate, R total). `week_start(d)` = the Saturday on or before `d`, so a call made on Saturday
+  or Sunday sits under the week that opens on Monday rather than the one that just closed.
+- **Labels are "Week N of Month"**, counted by the Friday the week ends on: the week Sat 29 Aug
+  - Fri 4 Sep is *Week 1 of September*, the way a trader says "first week of the month". Each
+  block shows its date range, and the week containing today carries a **this week** badge and
+  an emerald border, so the weekend's homework visibly lands where Monday's market will read it.
+- The year and Jan-Dec tabs are unchanged: they still slice by the date the call was made, and
+  a week that straddles a month boundary shows its September calls under September.
+
+Verified through the app on a scratch copy of the dev DB with calls dated Sat 12, Sun 13 and
+Wed 9 Sep: September renders *Week 3 of September 2026 (Sat 12 Sep - Fri 18 Sep, this week)*
+holding the weekend pair, then *Week 2*; the All view renders too. Unit-checked the week math
+across a Saturday, Sunday, Monday and Friday and the Aug/Sep boundary.
+
 ### 2026-09-13 - v4.67: Options > Spread - the bull put spread screener
 
 User: *"I want to build this into TradeHunter as Option sub menu Spread and then it will

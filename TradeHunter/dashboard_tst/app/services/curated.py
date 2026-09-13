@@ -231,6 +231,70 @@ def by_month(rows: list[dict]) -> list[dict]:
     return out
 
 
+def week_start(d: "_dt.date") -> "_dt.date":
+    """The SATURDAY that starts the trading week ``d`` belongs to.
+
+    Weeks run Saturday to Friday (user, 2026-09-13): a call curated over the
+    weekend is for the market week that opens on Monday, so it must sit with
+    that week's calls rather than trail the week that just closed. Monday is
+    weekday 0, so Saturday (5) maps to 0 days back, Sunday to 1, Friday to 6.
+    """
+    return d - _dt.timedelta(days=(d.weekday() + 2) % 7)
+
+
+def _week_ordinal(friday: "_dt.date") -> int:
+    """Which trading week of ITS month this is, counted by the Friday the week
+    ends on: the week ending Fri 4 Sep is week 1 of September even though it
+    started on Sat 29 Aug. That is how traders say "first week of the month"."""
+    return (friday.day - 1) // 7 + 1
+
+
+def by_week(rows: list[dict]) -> list[dict]:
+    """Group evaluated rows into Saturday-to-Friday weeks, newest first, with the
+    same per-group summary ``by_month`` produces (decided-only win rate, R sum).
+
+    Each group carries ``week`` (ISO Saturday), ``label`` ("Week 2 of September
+    2026"), ``range`` ("Sat 6 Sep - Fri 12 Sep") and ``current`` (True for the
+    week containing today, so the page can mark where new calls will land).
+    """
+    buckets: dict[_dt.date, list[dict]] = {}
+    for r in rows:
+        try:
+            d = _dt.date.fromisoformat((r.get("curated_on") or "")[:10])
+        except ValueError:
+            d = _dt.date(1970, 1, 3)        # a Saturday; undated rows share one bucket
+        buckets.setdefault(week_start(d), []).append(r)
+
+    this_week = week_start(_dt.date.today())
+    out = []
+    for start in sorted(buckets, reverse=True):
+        rs = sorted(buckets[start], key=lambda r: (r.get("curated_on") or ""), reverse=True)
+        fri = start + _dt.timedelta(days=6)
+        decided = [r for r in rs if r["eval"]["status"] in (TARGET, STOP)]
+        wins = [r for r in decided if r["eval"]["status"] == TARGET]
+        rmults = [r["eval"]["r_multiple"] for r in rs
+                  if r["eval"].get("r_multiple") is not None]
+        undated = start.year == 1970
+        out.append({
+            "week": start.isoformat(),
+            "label": ("Undated" if undated else
+                      f"Week {_week_ordinal(fri)} of {_MONTHS[fri.month - 1]} {fri.year}"),
+            "range": ("" if undated else
+                      f"Sat {start.day} {MONTH_ABBR[start.month - 1]} - "
+                      f"Fri {fri.day} {MONTH_ABBR[fri.month - 1]}"),
+            "current": start == this_week,
+            "rows": rs,
+            "n": len(rs),
+            "n_waiting": sum(1 for r in rs if r["eval"]["status"] == WAITING),
+            "n_open": sum(1 for r in rs if r["eval"]["status"] == OPEN),
+            "n_decided": len(decided),
+            "win_rate": round(len(wins) / len(decided) * 100.0) if decided else None,
+            "total_r": round(sum(rmults), 2) if rmults else None,
+            "avg_r": round(sum(rmults) / len(rmults), 2) if rmults else None,
+        })
+    return out
+
+
 _MONTHS = ["January", "February", "March", "April", "May", "June", "July",
            "August", "September", "October", "November", "December"]
 

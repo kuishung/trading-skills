@@ -74,7 +74,11 @@ def _list_context(db: Session, user: User, *, year: str = "", month: str = "",
     if m:
         sel = [i for i in sel if (i.get("curated_on") or "")[5:7] == "%02d" % m]
 
-    months = cur.by_month(cur.rows_for(sel))
+    # Grouped by TRADING WEEK, Saturday to Friday (user, 2026-09-13: "group by
+    # week of the month ... Saturday to Friday is one week, so during the weekend
+    # ticker can get to be curated for the coming week market"). The month tabs
+    # above still slice by the date the call was made.
+    months = cur.by_week(cur.rows_for(sel))
 
     # Position size is attached here rather than stored on the row: it depends on
     # the member's CURRENT account value and risk budget, so raising the account

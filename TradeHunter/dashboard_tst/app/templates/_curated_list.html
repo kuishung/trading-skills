@@ -1,5 +1,5 @@
 {# The curated list: add form, year + Jan-Dec tabs, totals, then one block per
-   MONTH, newest first. Context: months (services.curated.by_month), totals, msg,
+   TRADING WEEK (Sat-Fri), newest first. Context: months (services.curated.by_week), totals, msg,
    err, today, years, sel_year, sel_month, counts (12 ints), month_abbr, any_rows,
    prefs (services.trade_prefs.read -> nlv / risk_pct / offset_pct; each row also
    carries row.size from trade_prefs.size and row.revisions, each of those with its
@@ -164,11 +164,15 @@
 </div>
 {% endif %}
 
-{# ── one block per month ────────────────────────────────────────────────── #}
+{# ── one block per trading week (Saturday to Friday) ───────────────────── #}
+{# A call curated on Saturday or Sunday belongs to the week that opens on Monday,
+   so weekend homework lands under the coming week, not the one that just closed. #}
 {% for m in months %}
-<section class="rounded-lg border border-slate-800 bg-slate-900/40 mb-3 overflow-hidden">
+<section class="rounded-lg border {% if m.current %}border-emerald-700/60{% else %}border-slate-800{% endif %} bg-slate-900/40 mb-3 overflow-hidden">
   <div class="flex flex-wrap items-baseline gap-x-4 gap-y-1 px-3 py-2 border-b border-slate-800">
     <h2 class="text-sm font-semibold text-slate-200">{{ m.label }}</h2>
+    {% if m.range %}<span class="text-[11px] text-slate-500">{{ m.range }}</span>{% endif %}
+    {% if m.current %}<span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300" title="Today falls in this week; new calls land here">this week</span>{% endif %}
     <span class="text-[11px] text-slate-500 tabular-nums">{{ m.n }} curated</span>
     {% if m.n_waiting %}<span class="text-[11px] text-slate-500 tabular-nums">{{ m.n_waiting }} waiting</span>{% endif %}
     {% if m.n_open %}<span class="text-[11px] text-sky-300 tabular-nums">{{ m.n_open }} open</span>{% endif %}
