@@ -69,6 +69,10 @@ _CACHE_DIR = resources_bridge.TRADEHUNTER_ROOT / "state" / "cache"
 SORTS = [
     ("1d", "chg_1d", "1D"), ("1w", "perf_1w", "1W"), ("1m", "perf_1m", "1M"),
     ("3m", "perf_3m", "3M"), ("ytd", "perf_ytd", "YTD"), ("weight", "weight", "Wt"),
+    # Setup (user, 2026-09-13): EMA20>EMA50>EMA200 uptrend, a fresh rebound off
+    # EMA20/EMA50 (0.1-0.5% above it), and a round-number bonus - see
+    # services/ema_setup.py. Scored from live daily bars, best first.
+    ("setup", "setup_score", "Setup"),
 ]
 _SORT_FIELD = {k: f for k, f, _ in SORTS}
 _SORT_LABEL = {k: lbl for k, _, lbl in SORTS}
@@ -378,13 +382,29 @@ def components(etf: str, sort: str = DEFAULT_SORT) -> dict:
             "perf_1m": p.get("perf_1m"), "perf_3m": p.get("perf_3m"),
             "perf_ytd": p.get("perf_ytd"),
         })
-    field = _SORT_FIELD[sort]
-    rows.sort(key=lambda r: (r[field] is None, -(r[field] or 0.0), r["symbol"]))
+    if sort == "setup":
+        # One daily-bar fetch per holding, concurrent, cached 15 min. Attached
+        # here rather than always: it is the one sort that costs a Yahoo call
+        # per row, and the other pills must stay instant.
+        from . import ema_setup
+
+        st = ema_setup.setups_for_many([r["symbol"] for r in rows])
+        for r in rows:
+            r["setup"] = st.get(r["symbol"]) or ema_setup._blank()
+            r["setup_score"] = r["setup"]["score"]
+        # Ties inside a score band break towards the tighter rebound (closest to
+        # its EMA), which is the freshest entry.
+        rows.sort(key=lambda r: (r["setup_score"] is None, -(r["setup_score"] or 0),
+                                 r["setup"]["rebound_pct"] if r["setup"]["rebound_pct"] is not None else 99.0,
+                                 r["symbol"]))
+    else:
+        field = _SORT_FIELD[sort]
+        rows.sort(key=lambda r: (r[field] is None, -(r[field] or 0.0), r["symbol"]))
 
     # The value column shows the sorted window; sorting by weight shows 1D beside
     # it, because a weight sort is how the fund is built, not how it is doing.
-    perf_field = field if sort != "weight" else "chg_1d"
-    perf_label = _SORT_LABEL[sort] if sort != "weight" else "1D"
+    perf_field = _SORT_FIELD[sort] if sort not in ("weight", "setup") else "chg_1d"
+    perf_label = _SORT_LABEL[sort] if sort not in ("weight", "setup") else "1D"
     return {
         "etf": sym, "etf_name": _etf_name(sym), "rows": rows,
         "sort": sort, "sorts": SORTS, "perf_field": perf_field, "perf_label": perf_label,

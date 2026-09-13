@@ -44,7 +44,7 @@
             hx-get="/sector/etf-holdings?symbol={{ etf }}&sort={{ key }}"
             hx-target="closest .etf-holdings-body" hx-swap="outerHTML"
             hx-sync="closest .etf-holdings-body:replace"
-            title="{{ 'Heaviest first — how the fund is built' if key == 'weight' else label ~ ' performance, best first' }}">{{ label }}</button>
+            title="{{ 'Heaviest first — how the fund is built' if key == 'weight' else ('Best setups first: EMA20>EMA50>EMA200 uptrend, a fresh rebound off EMA20/EMA50 (close 0.1–0.5% above it), round-number bonus. Live daily bars; the first click on a fund takes a few seconds.' if key == 'setup' else label ~ ' performance, best first') }}">{{ label }}</button>
     {% endfor %}
   </div>
 
@@ -54,21 +54,47 @@
   <p class="text-[10px] text-amber-400/80 px-1 mb-1 leading-snug">Performance is unavailable right now &mdash; showing weights only. It retries on its own.</p>
   {% endif %}
 
+  {% if sort == 'setup' %}
+  {% set COLS = "display:grid;grid-template-columns:3.4rem 1fr 3.4rem 12rem;column-gap:0.35rem;align-items:center" %}
+  {% else %}
   {% set COLS = "display:grid;grid-template-columns:3.4rem 1fr 2.6rem 3.9rem;column-gap:0.35rem;align-items:center" %}
+  {% endif %}
   <div style="{{ COLS }}" class="px-1 pb-0.5 text-[10px] uppercase tracking-wide text-slate-600 border-b border-slate-800/70">
     <span>Ticker</span><span>Name</span>
+    {% if sort == 'setup' %}
+    <span class="text-right" title="Last close">Last</span>
+    <span title="Uptrend = EMA20>EMA50>EMA200. Rebound = touched EMA20/EMA50 in the last 3 sessions and closed above it; fresh while the close is 0.1–0.5% above the EMA. Round = within 0.5% of a 5/10/50/100 level.">Setup</span>
+    {% else %}
     <span class="text-right" title="Weight in the fund, %">Wt</span>
     <span class="text-right">{{ perf_label }}</span>
+    {% endif %}
   </div>
   {% for r in rows %}
   <div class="etf-holding cursor-pointer px-1 py-0.5 rounded hover:bg-emerald-500/10 transition"
        style="{{ COLS }}" role="button" tabindex="0"
        data-chart-sym="{{ r.chart_symbol }}"
-       title="{{ r.symbol }} &mdash; {{ r.name }}&#10;{{ '%.2f'|format(r.weight) }}% of {{ etf }}{% if r.price is not none %} &middot; last {{ '%.2f'|format(r.price) }}{% endif %}&#10;1D {{ txt(r.chg_1d) }} &middot; 1W {{ txt(r.perf_1w) }} &middot; 1M {{ txt(r.perf_1m) }} &middot; 3M {{ txt(r.perf_3m) }} &middot; YTD {{ txt(r.perf_ytd) }}&#10;Click to open the chart in a new window">
+       title="{{ r.symbol }} &mdash; {{ r.name }}&#10;{{ '%.2f'|format(r.weight) }}% of {{ etf }}{% if r.price is not none %} &middot; last {{ '%.2f'|format(r.price) }}{% endif %}&#10;1D {{ txt(r.chg_1d) }} &middot; 1W {{ txt(r.perf_1w) }} &middot; 1M {{ txt(r.perf_1m) }} &middot; 3M {{ txt(r.perf_3m) }} &middot; YTD {{ txt(r.perf_ytd) }}{% if r.setup %}&#10;Setup: {{ r.setup.summary }}{% if r.setup.ema20 %} &middot; EMA20 {{ r.setup.ema20 }} / EMA50 {{ r.setup.ema50 }} / EMA200 {{ r.setup.ema200 }}{% endif %}{% endif %}&#10;Click to open the chart in a new window">
     <span class="text-[12px] font-medium text-slate-200">{{ r.symbol }}</span>
     <span class="text-[11px] text-slate-400 truncate">{{ r.name }}</span>
+    {% if sort == 'setup' %}
+    <span class="text-right text-[11px] text-slate-400 tabular-nums">{{ '%.2f'|format(r.setup.close) if r.setup.close is not none else '–' }}</span>
+    <span class="flex flex-wrap gap-0.5">
+      {% for ch in r.setup.chips %}
+      <span class="text-[9px] px-1 py-px rounded whitespace-nowrap
+                   {% if ch.k == 'hot' %}bg-emerald-500/25 text-emerald-200 font-semibold
+                   {% elif ch.k == 'good' %}bg-emerald-500/10 text-emerald-300
+                   {% elif ch.k == 'warm' %}bg-amber-500/15 text-amber-300
+                   {% elif ch.k == 'watch' %}bg-sky-500/15 text-sky-300
+                   {% elif ch.k == 'round' %}bg-violet-500/15 text-violet-300
+                   {% else %}bg-slate-700/50 text-slate-400{% endif %}" title="{{ ch.title }}">{{ ch.t }}</span>
+      {% else %}
+      <span class="text-[9px] text-slate-600">{{ r.setup.summary if r.setup.score is none else 'no setup' }}</span>
+      {% endfor %}
+    </span>
+    {% else %}
     <span class="text-right text-[11px] text-slate-500 tabular-nums">{{ '%.1f'|format(r.weight) }}</span>
     <span class="text-right text-[11px]">{{ pct(r[perf_field]) }}</span>
+    {% endif %}
   </div>
   {% endfor %}
   {% endif %}

@@ -143,6 +143,38 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-13 - v4.71: Sector ETFs holdings - a Setup sort (EMA stack, EMA rebound, round number)
+
+User: *"in the Sector ETF, the Tickers i need an option to sort by the follow filters: 1.
+Uptrend, EMA20>EMA50>EMA200. 2. Rebound on EMAs (either Rebound EMA20 or EMA50). 3. the
+Rebound is only new where the rebound is 0.1% to 0.5% of the EMA. 4. If the Price coincide
+with psychological round number like 5, 10 then it should be ranked higher."*
+
+**New `Setup` pill on the holdings panel** (`services/ema_setup.py`, new; `etf_holdings.SORTS`).
+The MATP "buy the dip in an uptrend" entry restated as a score so a fund's best-looking
+setups float to the top:
+
+| Rule | Definition | Weight |
+|---|---|---|
+| Uptrend | EMA20 > EMA50 > EMA200 on the last close (EMAs seeded like MATP `classify_trend`) | 100 |
+| Fresh rebound | a bar in the last 3 sessions had its low reach EMA20 (else EMA50) and closed above it, and the latest close sits **0.1-0.5%** above that EMA | 50 |
+| Held rebound | same touch, close 0.5-3% above the EMA (the bounce has run) | 25 |
+| Watching | no touch yet, close within 1.5% above an EMA | 10 |
+| Round number | close within 0.5% of a multiple of 5 / 10 / 50 / 100 (below $5 ignored) | 8 / 15 / 20 / 25 |
+
+Ties break towards the tighter rebound. In Setup mode the panel's last two columns become
+**Last** (close) and **Setup** (chips: emerald `EMA stack`, bold `EMA20 rebound +0.3%`, amber
+`held`, sky `near EMA50`, violet `round 150`); the row tooltip carries the EMA values. Live
+daily bars from Yahoo (`services.prices`, never parquet - operational view), one fetch per
+holding in parallel, cached 15 min alongside the chart cache; the other pills are untouched
+and stay instant.
+
+Verified: unit cases for fresh / held / watching / downtrend / short history and the round
+levels (149.6 -> 150 [50-step], 9.97 -> 10, 47.2 and 203.2 -> none); NVDA live = uptrend, no
+rebound (close below EMA20); through the app `/sector/etf-holdings?symbol=XLV&sort=setup`
+renders the chips for the fund's holdings, cold in a few seconds and warm instantly, and the
+1M pill still works.
+
 ### 2026-09-13 - v4.70: the Sector panel reads the RRG's own feed, so it matches the chart
 
 User: *"only industrials and Utilities in lagging but the left side penal show other sectors
