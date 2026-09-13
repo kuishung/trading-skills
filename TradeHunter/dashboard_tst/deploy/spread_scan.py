@@ -66,6 +66,15 @@ def main() -> int:
                      f": {err}" if err else "")
 
     try:
+        # Ride-along (v4.70): file the official RRG's latest coordinates so the
+        # Sector panel keeps the last good reading even if the feed is down when
+        # somebody opens the page. Soft-fail; the scan's exit code is its own.
+        if not args.symbols:
+            try:
+                from app.services import rrg_feed
+                log.info("rrg feed refreshed: %s", rrg_feed.refresh_into_db(db))
+            except Exception as exc:  # noqa: BLE001
+                log.warning("rrg feed refresh skipped: %s", exc)
         syms = [s.upper() for s in args.symbols] or None
         res = spread_scan.run_scan(db, symbols=syms, on=args.on, workers=args.workers,
                                    pause=args.pause, fresh=True, progress=progress)

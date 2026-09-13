@@ -143,6 +143,31 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-13 - v4.70: the Sector panel reads the RRG's own feed, so it matches the chart
+
+User: *"only industrials and Utilities in lagging but the left side penal show other sectors
+in lagging"* - the panel said "quadrants from the RRG chart itself, as of 2026-09-04" while
+the embed showed 11 September. The coordinates came from `rrg_seed.json` (hand-updated) or a
+hand POST to `/api/rrg`, so they froze the moment the chart moved on; a week later four
+sectors had crossed the 100 line.
+
+**Traced how the embed gets its data** (browser network, 2026-09-13): `rrg.optuma.com` loads
+a PUBLIC S3 listing (`.../list/statestreet.json`) mapping each universe and timeframe to a
+CloudFront-signed JSON of `[date, rs_ratio, rs_momentum, ...]` per sector. No key, no login.
+
+- **`services/rrg_feed.py`** (new): `fetch_points(timeframe)` reads that listing, follows the
+  "SPDR S&P US Sectors ETF" link for weekly or daily, and returns the LAST point per sector,
+  mapping the feed's `SXLC`-style codes to `XLC`. Cached 4 h, sanity-checked like `/api/rrg`,
+  soft-fails to `{}`. `refresh_into_db()` upserts the points into `rrg_points` (never over a
+  newer reading) so the panel keeps the last good values if the feed is down later.
+- **`etf.real_rrg_points`** merges the live feed as a third source, newest wins, ahead of the
+  seed and posted rows. Real Estate is not in Optuma's universe and keeps the estimate.
+- **`deploy/spread_scan.py`** files the feed nightly as a ride-along before the scan.
+
+Verified: feed returns 10 sectors as of 2026-09-11 (XLC 94.01 / 100.38); `/sector/returns`
+now says "as of 2026-09-11" and its Lagging group is Industrials and Utilities (plus the
+Real Estate estimate), matching the chart; `refresh_into_db` wrote 20 rows on a scratch DB.
+
 ### 2026-09-13 - v4.69: the pop-out chart's Analyst targets button works
 
 User: *"in the pop out window of the sector industry of the ticker. When i click the analyst

@@ -193,14 +193,25 @@ def panel_symbol_order(timeframe: str = "weekly") -> list[str]:
 def real_rrg_points(timeframe: str) -> dict:
     """{symbol: {rs_ratio, rs_momentum, as_of, source}} — the chart's real numbers.
 
-    Two sources, newest wins: the seed that ships in the repo, and rows posted to
-    /api/rrg. Posting a fresher reading therefore overrides the seed without a
-    deploy, and a deploy carrying a newer seed overrides a stale posted row.
+    Three sources, newest wins: the seed that ships in the repo, rows posted to
+    /api/rrg (or filed by the nightly refresh), and - since v4.70 - the embed's
+    OWN feed read live (``rrg_feed``, cached a few hours). The feed is what the
+    chart draws, so when it is reachable the panel and the chart agree by
+    construction; the other two are what keeps the panel sensible when it is not.
 
-    Soft-fails to {} so the panel keeps working on its own estimate when both are
+    Soft-fails to {} so the panel keeps working on its own estimate when all are
     unavailable -- this is an ENHANCEMENT to the panel, never a dependency of it.
     """
     out = _seed_rrg_points(timeframe)
+    try:
+        from . import rrg_feed
+
+        for sym, p in rrg_feed.fetch_points(timeframe).items():
+            cur = out.get(sym)
+            if cur is None or str(p["as_of"]) >= str(cur["as_of"] or ""):
+                out[sym] = p
+    except Exception:  # noqa: BLE001
+        pass
     try:
         from ..db import SessionLocal
         from ..models import RRGPoint
