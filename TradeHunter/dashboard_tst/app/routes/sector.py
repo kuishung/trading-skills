@@ -264,14 +264,29 @@ def sector_chart_window(request: Request, symbol: str = "",
 
 @router.get("/etf-holdings", response_class=HTMLResponse)
 def sector_etf_holdings(request: Request, symbol: str = "", sort: str = "",
-                        user: User = Depends(require_user)):
+                        user: User = Depends(require_user),
+                        db: Session = Depends(get_db)):
     """Fragment: what one ETF holds, joined to each holding's performance and sorted
     — the Sector ETFs tab's right-hand panel. Sources and caching are in
-    services/etf_holdings.py (issuer holdings file + Finviz performance)."""
+    services/etf_holdings.py (issuer holdings file + Finviz performance).
+
+    Also carries which holdings THIS member curated TODAY (user, 2026-09-13: "if I
+    have curated the ticker I need it to be shown that I have curated (for today
+    only)"), so a name already worked on this session is marked in the list."""
+    import datetime as _dt
+
+    from ..models import CuratedTicker
     from ..services import etf_holdings as eh
 
-    return templates.TemplateResponse(
-        request, "_sector_etf_holdings.html", eh.components(symbol, sort))
+    ctx = eh.components(symbol, sort)
+    today = _dt.date.today().isoformat()
+    ctx["curated_today"] = {
+        (s or "").upper() for (s,) in
+        db.query(CuratedTicker.symbol)
+          .filter(CuratedTicker.user_id == user.id, CuratedTicker.curated_on == today)
+          .all()
+    }
+    return templates.TemplateResponse(request, "_sector_etf_holdings.html", ctx)
 
 
 @router.get("/filter", response_class=HTMLResponse)

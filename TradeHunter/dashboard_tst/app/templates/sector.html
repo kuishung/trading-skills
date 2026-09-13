@@ -314,9 +314,27 @@
     // One window PER TICKER, named after it: re-clicking a ticker whose chart is
     // already open brings that window forward instead of stacking a duplicate,
     // while two different holdings still open side by side for comparison.
+    // The clicked holding stays marked (user, 2026-09-13: "when a ticker is
+    // selected I need to know where I have selected"). Remembered per browser
+    // so the mark survives the panel being re-rendered by a sort pill, the
+    // performance poll, or a page reload.
+    var HOLD_SEL_KEY = 'th_etf_selected';
+    function markSelected(sym) {
+      document.querySelectorAll('.etf-holding.etf-selected').forEach(function (r) { r.classList.remove('etf-selected'); });
+      if (!sym) return;
+      var row = document.querySelector('.etf-holding[data-chart-sym="' + sym.replace(/"/g, '') + '"]');
+      if (row) row.classList.add('etf-selected');
+    }
+    function restoreSelected() {
+      var sym = '';
+      try { sym = localStorage.getItem(HOLD_SEL_KEY) || ''; } catch (err) {}
+      markSelected(sym);
+    }
     function openHoldingChart(row) {
       var sym = row.getAttribute('data-chart-sym');
       if (!sym) return;
+      try { localStorage.setItem(HOLD_SEL_KEY, sym); } catch (err) {}
+      markSelected(sym);
       var w = window.open('/sector/chart-window?symbol=' + encodeURIComponent(sym),
                           'th_chart_' + sym.replace(/[^A-Za-z0-9]/g, '_'),
                           'width=1280,height=860,resizable=yes,scrollbars=yes');
@@ -348,7 +366,10 @@
     document.body.addEventListener('htmx:afterSwap', function (e) {
       var t = e.detail && e.detail.target;
       if (t && t.classList && t.classList.contains('si-returns')) syncEtfOrder();
+      // the holdings panel (or its body) was re-rendered: put the mark back
+      if (t && (t.id === 'etfHoldings' || (t.classList && t.classList.contains('etf-holdings-body')))) restoreSelected();
     });
+    restoreSelected();
     window._sectorSetTab = setTab;
     document.querySelectorAll('.ctab').forEach(function (b) {
       b.addEventListener('click', function () { setTab(b.getAttribute('data-tab')); });

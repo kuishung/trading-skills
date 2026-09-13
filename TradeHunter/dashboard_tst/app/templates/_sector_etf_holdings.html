@@ -70,11 +70,12 @@
     {% endif %}
   </div>
   {% for r in rows %}
-  <div class="etf-holding cursor-pointer px-1 py-0.5 rounded hover:bg-emerald-500/10 transition"
+  {% set cur = curated_today is defined and (r.symbol in curated_today or r.chart_symbol in curated_today) %}
+  <div class="etf-holding cursor-pointer px-1 py-0.5 rounded hover:bg-emerald-500/10 transition{% if cur %} etf-curated{% endif %}"
        style="{{ COLS }}" role="button" tabindex="0"
-       data-chart-sym="{{ r.chart_symbol }}"
+       data-sym="{{ r.symbol }}" data-chart-sym="{{ r.chart_symbol }}"
        title="{{ r.symbol }} &mdash; {{ r.name }}&#10;{{ '%.2f'|format(r.weight) }}% of {{ etf }}{% if r.price is not none %} &middot; last {{ '%.2f'|format(r.price) }}{% endif %}&#10;1D {{ txt(r.chg_1d) }} &middot; 1W {{ txt(r.perf_1w) }} &middot; 1M {{ txt(r.perf_1m) }} &middot; 3M {{ txt(r.perf_3m) }} &middot; YTD {{ txt(r.perf_ytd) }}{% if r.setup %}&#10;Setup: {{ r.setup.summary }}{% if r.setup.ema20 %} &middot; EMA20 {{ r.setup.ema20 }} / EMA50 {{ r.setup.ema50 }} / EMA200 {{ r.setup.ema200 }}{% endif %}{% endif %}&#10;Click to open the chart in a new window">
-    <span class="text-[12px] font-medium text-slate-200">{{ r.symbol }}</span>
+    <span class="text-[12px] font-medium text-slate-200 whitespace-nowrap">{{ r.symbol }}{% if cur %} <span class="text-[9px] px-1 py-px rounded bg-emerald-500/20 text-emerald-300 align-middle" title="You curated {{ r.symbol }} today &mdash; it is on your Curated page">curated</span>{% endif %}</span>
     <span class="text-[11px] text-slate-400 truncate">{{ r.name }}</span>
     {% if sort == 'setup' %}
     <span class="text-right text-[11px] text-slate-400 tabular-nums">{{ '%.2f'|format(r.setup.close) if r.setup.close is not none else '–' }}</span>

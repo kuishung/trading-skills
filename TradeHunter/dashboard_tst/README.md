@@ -143,6 +143,25 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-13 - v4.73: Sector ETFs holdings - the clicked row stays marked, and today's curated names say so
+
+User: *"in the ticker list of Sector ETF, when a ticker is selected I need to know where I
+have selected. Also if I have curated the ticker I need it to be shown that I have curated
+(for today only)."*
+
+- **Selected row.** Clicking a holding opens its chart in a new window, so the list itself
+  never changed and the eye lost its place. The clicked row now carries a left accent and a
+  tint (`.etf-selected`, `sector.html`), remembered per browser in `localStorage` and put
+  back after every re-render of the panel - a sort pill, the performance poll, a page reload.
+- **Curated today.** `/sector/etf-holdings` now queries this member's `CuratedTicker` rows
+  dated today and passes their symbols; a matching holding gets a small emerald **curated**
+  chip after its ticker (matched on the issuer's spelling or the chart spelling, so BRK.B /
+  BRK-B both count). Today only, as asked: yesterday's calls do not mark the list.
+
+Verified through the app on a scratch DB: JPM curated today shows the chip, BAC curated
+yesterday does not; the Sector page carries the selected-row CSS and the remember/restore
+script. Test rows removed afterwards.
+
 ### 2026-09-13 - v4.72: readable chips in the light theme
 
 User: *"I cannot read the green pill wordings"* - the fresh-rebound chip on the Setup sort,
