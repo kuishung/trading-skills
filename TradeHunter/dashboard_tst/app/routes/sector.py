@@ -193,6 +193,45 @@ def sector_industries_panel(
     )
 
 
+SYM_CONDS_PREF = "sym_conds"     # User.prefs key: {c1..c4: bool}
+
+
+def _symbols_context(request: Request, sector: str, industry: str, user: User,
+                     db: Session) -> dict:
+    """The Symbol panel's context, with the member's four setup conditions
+    applied (user, 2026-09-15): tickers are scored from live daily bars against
+    whichever conditions are switched on and sorted best-first; each row carries
+    chips for the conditions it meets. All four off = the plain list."""
+    from ..services import ema_setup as es
+    from ..services import user_watchlist as uwl
+    from ..services.industry import sector_industries
+
+    data = sector_industries(sector, _sector_extra_filters(user))
+    match = next((i for i in data["industries"] if i["name"] == industry), None)
+    tickers = list(match["tickers"]) if match else []
+    prefs = getattr(user, "prefs", None) or {}
+    enabled = es.clean_enabled(prefs.get(SYM_CONDS_PREF))
+
+    if tickers and any(enabled.values()):
+        setups = es.setups_for_many([t["symbol"] for t in tickers])
+        for t in tickers:
+            st = setups.get(t["symbol"]) or es._blank()
+            t["rank"] = es.rank(st, enabled)
+            t["setup"] = st
+        tickers.sort(key=lambda t: (
+            t["rank"]["score"] is None, -(t["rank"]["score"] or 0),
+            t["setup"].get("above_pct") if t["setup"].get("above_pct") is not None else 99.0,
+            t["symbol"]))
+    return {
+        "sector": data["sector"], "sector_name": data["name"],
+        "industry": industry, "tickers": tickers,
+        "filtered": data.get("filtered", False),
+        "my_syms": uwl.symbol_set(db, user),
+        "enabled": enabled, "cond_labels": es.COND_LABELS, "cond_keys": es.COND_KEYS,
+        "ranked": bool(tickers and any(enabled.values())),
+    }
+
+
 @router.get("/symbols", response_class=HTMLResponse)
 def sector_symbols_panel(
     request: Request, sector: str = "", industry: str = "",
@@ -201,18 +240,30 @@ def sector_symbols_panel(
     """Fragment: the tickers of one selected sector+industry (Symbol / Full Name /
     Last Price), rendered into the bottom Symbol panel. When the user has an active
     Finviz filter, only tickers matching the criteria (within the industry) show.
-    Each row carries a My-Watchlist star, pre-filled from this user's list."""
-    from ..services.industry import sector_industries
-    from ..services import user_watchlist as uwl
+    Each row carries a My-Watchlist star, pre-filled from this user's list, and the
+    list is sorted by the member's switched-on setup conditions (_symbols_context)."""
+    return templates.TemplateResponse(
+        request, "_sector_symbols.html", _symbols_context(request, sector, industry, user, db))
 
-    data = sector_industries(sector, _sector_extra_filters(user))
-    match = next((i for i in data["industries"] if i["name"] == industry), None)
-    return templates.TemplateResponse(request, "_sector_symbols.html", {
-        "sector": data["sector"], "sector_name": data["name"],
-        "industry": industry, "tickers": (match["tickers"] if match else []),
-        "filtered": data.get("filtered", False),
-        "my_syms": uwl.symbol_set(db, user),
-    })
+
+@router.post("/symbols/conds", response_class=HTMLResponse)
+async def sector_symbols_conds(
+    request: Request, user: User = Depends(require_user), db: Session = Depends(get_db),
+):
+    """Save which of the four setup conditions are on (checkboxes; an unticked box
+    is absent from the form) and re-render the panel, re-sorted."""
+    from ..services import ema_setup as es
+
+    form = await request.form()
+    enabled = {k: form.get(k) is not None for k in es.COND_KEYS}
+    prefs = dict(getattr(user, "prefs", None) or {})
+    prefs[SYM_CONDS_PREF] = enabled
+    user = db.merge(user)
+    user.prefs = prefs
+    db.commit()
+    return templates.TemplateResponse(
+        request, "_sector_symbols.html",
+        _symbols_context(request, form.get("sector") or "", form.get("industry") or "", user, db))
 
 
 @router.get("/chart", response_class=HTMLResponse)

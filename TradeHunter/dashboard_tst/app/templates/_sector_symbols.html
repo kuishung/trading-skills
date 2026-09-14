@@ -1,4 +1,24 @@
-{# Symbols of the selected sector+industry. Context: sector, sector_name, industry, tickers [{symbol,company,price}]. #}
+{# Symbols of the selected sector+industry. Context: sector, sector_name, industry,
+   tickers [{symbol,company,price, rank?, setup?}], enabled {c1..c4}, cond_labels,
+   cond_keys, ranked. #}
+{# ── the four setup conditions, each switchable (user, 2026-09-15) ────────
+   Ticking or unticking re-sorts the list: hx-trigger on the form, target the
+   panel. The current sector/industry ride along as hidden fields so the
+   re-render knows what to list. #}
+{% if industry %}
+<form class="flex flex-wrap items-center gap-1 mb-1.5 px-1" hx-post="/sector/symbols/conds"
+      hx-target="#symbolPanel" hx-swap="innerHTML" hx-trigger="change">
+  <input type="hidden" name="sector" value="{{ sector }}"><input type="hidden" name="industry" value="{{ industry }}">
+  <span class="text-[10px] text-slate-500 mr-0.5" title="Tickers are scored from live daily bars against the conditions that are on, best first. All off = plain list.">Sort by</span>
+  {% for k in cond_keys %}
+  <label class="cursor-pointer select-none text-[10px] px-1.5 py-0.5 rounded border transition
+                {% if enabled[k] %}border-emerald-500/60 bg-emerald-500/15 text-emerald-300{% else %}border-slate-700 text-slate-500 hover:border-slate-500 hover:text-slate-300{% endif %}"
+         title="{{ cond_labels[k][1] }}">
+    <input type="checkbox" name="{{ k }}" class="sr-only" {% if enabled[k] %}checked{% endif %}>{{ cond_labels[k][0] }}{% if k == 'c1' %}<span class="opacity-70"> &middot; must</span>{% endif %}
+  </label>
+  {% endfor %}
+</form>
+{% endif %}
 {% if not tickers %}
 <p class="text-xs text-slate-600 py-3">
   {% if industry %}No symbols{% if filtered %} match the filter{% endif %} for {{ industry }}.{% else %}Select an industry above to list its symbols.{% endif %}
@@ -10,19 +30,36 @@
    click from also swapping the chart. #}
 {% set COLS = "display:grid;grid-template-columns:1.2rem 3rem 1fr 3.6rem;column-gap:0.3rem;align-items:center" %}
 <div style="{{ COLS }}" class="px-1 pb-0.5 text-[10px] uppercase tracking-wide text-slate-600 border-b border-slate-800/70">
-  <span class="text-center" title="My Watchlist">&#9733;</span><span>Ticker</span><span>Full Name</span><span class="text-right">Last</span>
+  <span class="text-center" title="My Watchlist">&#9733;</span><span>Ticker</span><span>Full Name{% if ranked %} <span class="normal-case tracking-normal text-slate-700">&middot; setup</span>{% endif %}</span><span class="text-right">Last</span>
 </div>
 {% for t in tickers %}
 {% set _on = my_syms and t.symbol in my_syms %}
-<div data-sym="{{ t.symbol }}" title="Show {{ t.symbol }} chart"
+{% set rk = t.rank if ranked else none %}
+<div data-sym="{{ t.symbol }}" title="Show {{ t.symbol }} chart{% if rk and t.setup.close %}&#10;{{ t.setup.summary }} &middot; EMA20 {{ t.setup.ema20 }} / EMA50 {{ t.setup.ema50 }} / EMA200 {{ t.setup.ema200 }}{% if t.setup.dip_pct %} &middot; deepest dip {{ t.setup.dip_pct }}%{% endif %}{% endif %}"
      hx-get="/sector/chart?symbol={{ t.symbol }}" hx-target="#sectorChartBody" hx-swap="innerHTML"
-     style="{{ COLS }}" class="wl-ticker cursor-pointer px-1 py-0.5 rounded hover:bg-emerald-500/10 hover:text-emerald-300 transition">
+     style="{{ COLS }}" class="wl-ticker cursor-pointer px-1 py-0.5 rounded hover:bg-emerald-500/10 hover:text-emerald-300 transition{% if rk and rk.gated %} opacity-50{% endif %}">
   <span class="wl-star cursor-pointer text-center text-[12px] leading-none select-none transition {% if _on %}text-amber-300{% else %}text-slate-700 hover:text-amber-300{% endif %}"
         role="button" tabindex="0" aria-pressed="{{ 'true' if _on else 'false' }}"
         title="{{ 'Remove ' ~ t.symbol ~ ' from My Watchlist' if _on else 'Add ' ~ t.symbol ~ ' to My Watchlist' }}"
         data-sym="{{ t.symbol }}">{% if _on %}&#9733;{% else %}&#9734;{% endif %}</span>
   <span class="text-[12px] font-medium text-slate-200">{{ t.symbol }}</span>
-  <span class="text-[11px] text-slate-400 truncate" title="{{ t.company }}">{{ t.company or '&mdash;' }}</span>
+  <span class="min-w-0">
+    <span class="block text-[11px] text-slate-400 truncate" title="{{ t.company }}">{{ t.company or '&mdash;' }}</span>
+    {% if rk %}
+    <span class="flex flex-wrap gap-0.5 mt-px">
+      {% for ch in rk.chips %}
+      <span class="text-[9px] px-1 py-px rounded whitespace-nowrap
+                   {% if ch.k == 'hot' %}bg-emerald-500/25 text-emerald-200 font-semibold
+                   {% elif ch.k == 'good' %}bg-emerald-500/10 text-emerald-300
+                   {% elif ch.k == 'warm' %}bg-amber-500/15 text-amber-300
+                   {% elif ch.k == 'round' %}bg-violet-500/15 text-violet-300
+                   {% else %}bg-slate-700/50 text-slate-400{% endif %}" title="{{ ch.title }}">{{ ch.t }}</span>
+      {% else %}
+      <span class="text-[9px] text-slate-600">{% if rk.score is none %}{{ rk.summary }}{% elif rk.gated %}not in EMA uptrend{% else %}none met{% endif %}</span>
+      {% endfor %}
+    </span>
+    {% endif %}
+  </span>
   <span class="text-right text-[11px] text-slate-300 tabular-nums">{{ '%.2f'|format(t.price) if t.price is not none else '-' }}</span>
 </div>
 {% endfor %}

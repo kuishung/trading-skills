@@ -58,6 +58,27 @@ W_ROUND = {5: 8, 10: 15, 50: 20, 100: 25}
 _TTL = 900.0
 _cache: dict[str, tuple[float, dict]] = {}
 
+# The Sector & Industry ticker panel's four switchable conditions (user,
+# 2026-09-15). Each can be turned on or off per member; the list is re-sorted
+# by whichever are on. Condition 1 is "a must": when on, a ticker that fails
+# it sinks below every ticker that passes, whatever else it has.
+#   c1  EMA20 > EMA50 > EMA200
+#   c2  price went 1-2% BELOW EMA20 or EMA50 recently (the dip)
+#   c3  price now sits 0.3-2% ABOVE EMA20 or EMA50 (the rebound)
+#   c4  price within 0.5% of a 10 / 50 / 100 round number
+DIP_BARS = 5             # sessions the dip may sit back
+DIP_MIN, DIP_MAX = 1.0, 2.0          # percent below the EMA
+REB_MIN, REB_MAX = 0.3, 2.0          # percent above the EMA
+COND_KEYS = ("c1", "c2", "c3", "c4")
+COND_LABELS = {
+    "c1": ("EMA 20>50>200", "Uptrend: EMA20 above EMA50 above EMA200 on the last close. A must: when on, tickers that fail it sort below every ticker that passes."),
+    "c2": ("dip 1-2%", f"Within the last {DIP_BARS} sessions a low reached 1-2% BELOW EMA20 (or EMA50): the pullback that sets up the rebound."),
+    "c3": ("rebound 0.3-2%", "The last close sits 0.3-2% ABOVE EMA20 (or EMA50): price has come back off the average."),
+    "c4": ("round 10/50/100", "The last close is within 0.5% of a multiple of 10, 50 or 100."),
+}
+COND_DEFAULT = {"c1": True, "c2": True, "c3": True, "c4": True}
+COND_WEIGHT = {"c1": 100, "c2": 30, "c3": 30, "c4": 20}
+
 
 def ema(values: list[float], period: int) -> list[float]:
     """EMA seeded with the first value - identical to MATP classify_trend.ema."""
@@ -70,12 +91,12 @@ def ema(values: list[float], period: int) -> list[float]:
     return out
 
 
-def round_level(price: float) -> tuple[float, int] | None:
+def round_level(price: float, steps=(100, 50, 10, 5)) -> tuple[float, int] | None:
     """The strongest psychological level within ROUND_TOL of ``price``, as
-    (level, step) with step in {100, 50, 10, 5}. None if there is none."""
+    (level, step) with step in ``steps``. None if there is none."""
     if price is None or price < 5:
         return None
-    for step in (100, 50, 10, 5):
+    for step in steps:
         lvl = round(price / step) * step
         if lvl >= 5 and abs(price - lvl) / price <= ROUND_TOL:
             return float(lvl), step
@@ -83,7 +104,9 @@ def round_level(price: float) -> tuple[float, int] | None:
 
 
 def _blank(reason: str = "not enough price history") -> dict:
-    return {"score": None, "uptrend": None, "rebound": None, "rebound_pct": None,
+    return {"dip_ema": None, "dip_pct": None, "above_ema": None, "above_pct": None,
+            "round10": None, "round10_step": None,
+            "score": None, "uptrend": None, "rebound": None, "rebound_pct": None,
             "fresh": False, "held": False, "watch": False, "round": None,
             "round_step": None, "close": None, "ema20": None, "ema50": None,
             "ema200": None, "chips": [], "summary": reason}
@@ -129,6 +152,28 @@ def analyze(bars: list[dict]) -> dict:
 
     rl = round_level(c)
 
+    # --- the industry panel's conditions (see COND_LABELS) -------------------
+    # c2: the deepest low under EMA20 (else EMA50) in the last DIP_BARS sessions
+    dip_ema = dip_pct = None
+    for name, series in (("EMA20", e20), ("EMA50", e50)):
+        deepest = 0.0
+        for i in range(max(0, len(closes) - DIP_BARS), len(closes)):
+            if lows[i] < series[i]:
+                deepest = max(deepest, (series[i] - lows[i]) / series[i] * 100.0)
+        if DIP_MIN <= deepest <= DIP_MAX:
+            dip_ema, dip_pct = name, round(deepest, 2)
+            break
+        if dip_ema is None and deepest > 0 and dip_pct is None:
+            dip_pct = round(deepest, 2)     # report the depth even when out of band
+    # c3: how far the close sits above the nearest EMA it is above
+    above_ema = above_pct = None
+    for name, series in (("EMA20", e20), ("EMA50", e50)):
+        d = (c - series[-1]) / series[-1] * 100.0
+        if d > 0 and (above_pct is None or d < above_pct):
+            above_ema, above_pct = name, round(d, 2)
+    # c4: 10 / 50 / 100 only (the Setup sort's 5s are too dense here)
+    r10 = round_level(c, (100, 50, 10))
+
     score = 0
     chips: list[dict] = []
     if uptrend:
@@ -166,6 +211,9 @@ def analyze(bars: list[dict]) -> dict:
     if rl:
         parts.append(f"round {rl[0]:g}")
     return {
+        "dip_ema": dip_ema, "dip_pct": dip_pct,
+        "above_ema": above_ema, "above_pct": above_pct,
+        "round10": None if not r10 else r10[0], "round10_step": None if not r10 else r10[1],
         "score": score, "uptrend": uptrend, "rebound": rebound,
         "rebound_pct": None if dist is None else round(dist * 100, 3),
         "fresh": fresh, "held": held, "watch": watch,
@@ -173,6 +221,69 @@ def analyze(bars: list[dict]) -> dict:
         "close": c, "ema20": round(e20[-1], 2), "ema50": round(e50[-1], 2),
         "ema200": round(e200[-1], 2), "chips": chips, "summary": ", ".join(parts),
     }
+
+
+def conditions(setup: dict) -> dict:
+    """Which of the four industry-panel conditions this setup meets."""
+    if setup.get("score") is None:
+        return {k: None for k in COND_KEYS}
+    return {
+        "c1": bool(setup.get("uptrend")),
+        "c2": setup.get("dip_ema") is not None,
+        "c3": (setup.get("above_pct") is not None
+               and REB_MIN <= setup["above_pct"] <= REB_MAX),
+        "c4": setup.get("round10") is not None,
+    }
+
+
+def clean_enabled(raw) -> dict:
+    """A complete {c1..c4: bool} from prefs / a form; missing keys -> default."""
+    raw = raw if isinstance(raw, dict) else {}
+    out = {}
+    for k in COND_KEYS:
+        v = raw.get(k, COND_DEFAULT[k])
+        out[k] = v if isinstance(v, bool) else str(v).lower() in ("1", "true", "on", "yes")
+    return out
+
+
+def rank(setup: dict, enabled: dict) -> dict:
+    """Score a ticker against the ENABLED conditions.
+
+    ``{score, met: {c: bool}, chips: [...], gated: bool}``. A ticker with no
+    price history scores None and sorts last. Condition 1, when enabled, is a
+    gate: failing it costs more than every other condition can pay, so such a
+    ticker can never rank above one that passes. Ties break towards the
+    tighter rebound (smallest distance above its EMA) in the caller.
+    """
+    met = conditions(setup)
+    if setup.get("score") is None:
+        return {"score": None, "met": met, "chips": [], "gated": False,
+                "summary": setup.get("summary") or "no price history"}
+    score = 0
+    chips: list[dict] = []
+    gated = False
+    if enabled.get("c1"):
+        if met["c1"]:
+            score += COND_WEIGHT["c1"]
+            chips.append({"t": "EMA stack", "k": "good",
+                          "title": f"EMA20 {setup['ema20']} > EMA50 {setup['ema50']} > EMA200 {setup['ema200']}"})
+        else:
+            score -= 1000
+            gated = True
+    if enabled.get("c2") and met["c2"]:
+        score += COND_WEIGHT["c2"]
+        chips.append({"t": f"dip {setup['dip_pct']:.1f}% under {setup['dip_ema']}", "k": "warm",
+                      "title": f"A low in the last {DIP_BARS} sessions reached {setup['dip_pct']:.2f}% below {setup['dip_ema']}"})
+    if enabled.get("c3") and met["c3"]:
+        score += COND_WEIGHT["c3"]
+        chips.append({"t": f"rebound +{setup['above_pct']:.1f}% {setup['above_ema']}", "k": "hot",
+                      "title": f"Close is {setup['above_pct']:.2f}% above {setup['above_ema']}"})
+    if enabled.get("c4") and met["c4"]:
+        score += COND_WEIGHT["c4"]
+        chips.append({"t": f"round {setup['round10']:g}", "k": "round",
+                      "title": f"Close {setup['close']:.2f} is within 0.5% of {setup['round10']:g}"})
+    return {"score": score, "met": met, "chips": chips, "gated": gated,
+            "summary": setup.get("summary") or ""}
 
 
 def setup_for(symbol: str) -> dict:

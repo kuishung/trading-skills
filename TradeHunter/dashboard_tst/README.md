@@ -143,6 +143,35 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-15 - v4.75: Sector & Industry ticker panel - four switchable setup conditions
+
+User: *"in the sector and industry ticker panel. The conditions to be applied as follow: 1.
+EMA20>EMA50>EMA200, this is a must. 2. price go below EMA20 or EMA50 by 1% - 2%. 3. price
+rebound on EMA20 or EMA50 by 0.3% to 2%. 4. Price within the round number of 10, 50, 100. I
+need these conditions to be enable and disabled by user and the ticker list will be resorted."*
+
+**A "Sort by" row of four toggles above the industry's ticker list** (`_sector_symbols.html`),
+saved per member (`User.prefs["sym_conds"]`, all on by default) and re-sorting the list on
+every change (`POST /sector/symbols/conds`; the sector/industry ride along as hidden fields).
+Scoring lives in `services/ema_setup.py` (`conditions`, `rank`, `clean_enabled`), on the same
+live daily bars the Setup sort uses, cached 15 min:
+
+| Toggle | Definition | Points |
+|---|---|---|
+| EMA 20>50>200 (must) | EMA20 above EMA50 above EMA200 on the last close. **A gate when on:** a ticker that fails it scores -1000 and sits below every ticker that passes, greyed, labelled "not in EMA uptrend". | 100 |
+| dip 1-2% | within the last 5 sessions a low reached 1-2% below EMA20 (else EMA50) | 30 |
+| rebound 0.3-2% | the last close sits 0.3-2% above EMA20 (else EMA50) | 30 |
+| round 10/50/100 | the close is within 0.5% of a multiple of 10, 50 or 100 | 20 |
+
+Each row shows chips for the conditions it meets (bold emerald rebound, amber dip, emerald
+EMA stack, violet round); ties break towards the tighter rebound; the tooltip carries the EMA
+values and the deepest dip. All four off = the plain alphabetical list as before.
+
+Verified: unit cases (an uptrend that dipped 1.45% under EMA20 two sessions ago and closed
+0.74% above it at 199.38 meets all four, scores 180; c2 alone scores 30; a downtrend is gated
+at -1000); through the app on XLK / Communication Equipment: 8 tickers ranked in 0.8 s, 5
+gated with condition 1 on, none gated after switching it off, prefs persisted and restored.
+
 ### 2026-09-13 - v4.74: the selected holding really stays selected
 
 User: *"i need the ticker to be stayed selected when new window on the ticket is opened"* -
