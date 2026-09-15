@@ -143,6 +143,38 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-15 - v4.77: Curated - the chart frames the setup, and takes the left three quarters
+
+User: *"in the curated page, when the chart is shown, I need to focus on the present candle and
+the setup"* and *"i need the chart windows to be on the left occupying 3/4 and is fixed whilst
+the curated ticker window put it to the right side"*.
+
+- **Price axis frames the call, not the reference lines.** The x-framing was already right
+  (`zoomToSetup`: the last ~45 bars plus blank room on the right), but the price axis was being
+  stretched by things that are not the setup: the MATP line (IFF: 94.50 against a PT of 86.79
+  pushed the axis to 68–104) and the EMA200 running well under the candles. On the Curated
+  page (`SETUP_SEED`) the candle series' `autoscaleInfoProvider` now leaves MATP / MBP /
+  support / resistance out of the range, and the three EMA line series opt out of autoscale
+  (`autoscaleInfoProvider: () => null`). All of them are still drawn; where one sits outside the
+  framed range it is simply off-screen, and the legend still carries its number. The axis is
+  now the visible candles plus Entry / SL / PT — the "focus on the present candle and the setup"
+  view. Every other chart is unchanged.
+- **Split layout on large screens.** `_curated_list.html` puts `#curatedChartWrap` first, as the
+  LEFT three quarters (`lg:w-3/4`, fixed — it fills the viewport height and never scrolls away),
+  and wraps the sizing form, month tabs and weekly tables in a new `#curatedSide` that is the
+  RIGHT quarter and scrolls on its own (`lg:overflow-y-auto`). `curated.html` overrides
+  `main_class` to full width / viewport height (as the Sector page does) and drops the
+  `max-w-[1400px]` cap. On a phone it stacks and scrolls as before. The ⤢ expand still takes
+  the whole window (the `.cur-max` rule resets the wrapper's flex sizing) and Esc restores.
+- The weekly tables keep all their columns, so in the right quarter they scroll sideways inside
+  their own box (the Ticker column is first). If that is too cramped, the next step is a compact
+  column set for the side pane.
+
+Verified in the browser at 1440×900 through the app with the login dependency overridden on the
+dev DB (an IFF call seeded with the exact levels from the user's screenshot): chart column
+1062px left, list 342px right, `<main>` does not scroll, the chart pane is 653px tall, expand →
+full window → Esc restores; the price axis top no longer reaches the MATP line.
+
 ### 2026-09-15 - v4.76: Portfolio and Options leave the menu bar
 
 User: *"remove the portfolio menu and also the option menu"*

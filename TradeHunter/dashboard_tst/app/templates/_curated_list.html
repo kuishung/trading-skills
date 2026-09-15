@@ -9,7 +9,47 @@
    target `closest .curated-panel` — a class, not an id, so the fragment is safe to
    render more than once on a page. #}
 {% from "_time.html" import localtime %}
-<div class="curated-panel" data-year="{{ sel_year }}" data-month="{{ sel_month }}">
+{# Split layout on large screens (user, 2026-09-15): the chart is the LEFT three
+   quarters and does not move; the sizing form, month tabs and the weekly tables are
+   the RIGHT quarter and scroll on their own. The chart is placed FIRST in the DOM
+   (its wrapper opens right after this div) and the rest of the panel is wrapped in
+   #curatedSide below. Before this the chart sat above a full-width table, so reading
+   the list meant scrolling the chart off the screen. #}
+<div class="curated-panel lg:h-full lg:flex lg:gap-3 lg:items-stretch min-h-0" data-year="{{ sel_year }}" data-month="{{ sel_month }}">
+{# ── the chart ──────────────────────────────────────────────────────────── #}
+{# Always on screen (user, 2026-09-08: "in the curated page i want to have the TV
+   chart on screen. when i click of the curated item, it will show up in the
+   chart"). It used to appear only inside an expanded revision row, which meant
+   reading the table and seeing the trade were two different modes.
+
+   ONE chart may exist in the DOM at a time — _price_chart.html addresses
+   #priceChart and friends by fixed id, so a second one would silently steal the
+   scripts of the first. This pane is that one, and the revision chips swap into
+   it rather than mounting their own. It loads the newest call on screen so the
+   page never opens on an empty half-screen. #}
+{# Taller than it was (52vh/340px), because this pane carries the most furniture of
+   any chart on the platform and the candles were what got squeezed — see the
+   `chart_price_min` floor in _curated_chart.html. `overflow-y-auto` rather than
+   `overflow-hidden` so that on a short screen the furniture scrolls and the chart
+   keeps its height, instead of the chart being clipped away. The ⤢ button expands
+   the pane to the full viewport for a proper look; see curated.html. #}
+<div id="curatedChartWrap" class="relative mb-3 lg:mb-0 lg:w-3/4 lg:shrink-0 lg:min-h-0 lg:flex lg:flex-col">
+  <button type="button" id="curatedChartExpand"
+          class="absolute right-2 top-1 z-20 text-[11px] px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900/80 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 transition"
+          title="Expand the chart to fill the window (Esc to restore)">&#10530;</button>
+<div id="curatedChartBody"
+     class="h-[68vh] min-h-[460px] lg:h-auto lg:flex-1 lg:min-h-0 flex flex-col rounded-lg border border-slate-800 bg-slate-900/40 overflow-y-auto"
+     {% if first_id %}hx-get="/curated/chart?row={{ first_id }}" hx-trigger="load" hx-swap="innerHTML"{% endif %}>
+  <div class="flex-1 flex items-center justify-center text-xs text-slate-500 px-6 text-center">
+    {% if first_id %}Loading chart&hellip;{% else %}<span>Nothing to chart in this month &mdash; pick another
+      month below, or curate a setup from the <a href="/matp" class="text-sky-300 hover:underline">Watchlist</a>
+      or <a href="/sector" class="text-sky-300 hover:underline">Sector &amp; Industry</a> chart.</span>{% endif %}
+  </div>
+</div>
+</div>{# /#curatedChartWrap #}
+
+{# ── everything else: the right quarter, scrolling on its own ──────────── #}
+<div id="curatedSide" class="min-w-0 lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:pr-1">
 
 {% set BADGE = {
   "waiting": ["border-slate-600 text-slate-400", "waiting", "Entry not reached yet"],
@@ -74,37 +114,7 @@
   {% if msg %}<p class="w-full text-[11px] text-emerald-400">{{ msg }}</p>{% endif %}
 </form>
 
-{# ── the chart ──────────────────────────────────────────────────────────── #}
-{# Always on screen (user, 2026-09-08: "in the curated page i want to have the TV
-   chart on screen. when i click of the curated item, it will show up in the
-   chart"). It used to appear only inside an expanded revision row, which meant
-   reading the table and seeing the trade were two different modes.
 
-   ONE chart may exist in the DOM at a time — _price_chart.html addresses
-   #priceChart and friends by fixed id, so a second one would silently steal the
-   scripts of the first. This pane is that one, and the revision chips swap into
-   it rather than mounting their own. It loads the newest call on screen so the
-   page never opens on an empty half-screen. #}
-{# Taller than it was (52vh/340px), because this pane carries the most furniture of
-   any chart on the platform and the candles were what got squeezed — see the
-   `chart_price_min` floor in _curated_chart.html. `overflow-y-auto` rather than
-   `overflow-hidden` so that on a short screen the furniture scrolls and the chart
-   keeps its height, instead of the chart being clipped away. The ⤢ button expands
-   the pane to the full viewport for a proper look; see curated.html. #}
-<div id="curatedChartWrap" class="relative mb-3">
-  <button type="button" id="curatedChartExpand"
-          class="absolute right-2 top-1 z-20 text-[11px] px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900/80 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 transition"
-          title="Expand the chart to fill the window (Esc to restore)">&#10530;</button>
-<div id="curatedChartBody"
-     class="h-[68vh] min-h-[460px] flex flex-col rounded-lg border border-slate-800 bg-slate-900/40 overflow-y-auto"
-     {% if first_id %}hx-get="/curated/chart?row={{ first_id }}" hx-trigger="load" hx-swap="innerHTML"{% endif %}>
-  <div class="flex-1 flex items-center justify-center text-xs text-slate-500 px-6 text-center">
-    {% if first_id %}Loading chart&hellip;{% else %}<span>Nothing to chart in this month &mdash; pick another
-      month below, or curate a setup from the <a href="/matp" class="text-sky-300 hover:underline">Watchlist</a>
-      or <a href="/sector" class="text-sky-300 hover:underline">Sector &amp; Industry</a> chart.</span>{% endif %}
-  </div>
-</div>
-</div>{# /#curatedChartWrap #}
 
 {% if any_rows %}
 {# ── year + Jan-Dec tabs ────────────────────────────────────────────────── #}
@@ -386,4 +396,5 @@
 </div>
 {% endif %}
 
-</div>
+</div>{# /#curatedSide #}
+</div>{# /.curated-panel #}

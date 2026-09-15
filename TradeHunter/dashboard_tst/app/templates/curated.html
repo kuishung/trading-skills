@@ -1,5 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Curated &middot; TradeHunter{% endblock %}
+{# Full width and viewport-high on large screens, like the Sector page: the chart
+   takes the LEFT three quarters and stays put while the curated list scrolls in the
+   right quarter (user, 2026-09-15: "the chart windows to be on the left occupying
+   3/4 and is fixed whilst the curated ticker window put it to the right side").
+   On a phone it stacks and the page scrolls as before. #}
+{% block main_class %}flex-1 lg:min-h-0 w-full px-3 py-3 overflow-y-auto lg:overflow-hidden{% endblock %}
 
 {% block content %}
 {# The list is loaded lazily: rendering it fetches daily bars for every distinct
@@ -11,8 +17,8 @@
    just pushing the chart below the fold, which is the opposite of what this page is
    for. Where a call comes from is still explained in the empty state, which is the
    only place someone actually needs telling. #}
-<div class="max-w-[1400px]">
-  <div hx-get="/curated/list" hx-trigger="load" hx-swap="innerHTML">
+<div class="lg:h-full">
+  <div class="lg:h-full" hx-get="/curated/list" hx-trigger="load" hx-swap="innerHTML">
     <div class="text-xs text-slate-500 py-8 text-center">Loading your curated list&hellip;</div>
   </div>
 </div>
@@ -43,6 +49,9 @@
   #curatedChartWrap.cur-max > #curatedChartBody {
     height: 100% !important; min-height: 0 !important;
   }
+  /* the wrapper is a flex column in the split layout (lg); expanded, the pane
+     is its only child and must be the box, not a flex item of an unsized column */
+  #curatedChartWrap.cur-max { display: block; width: auto; height: auto; }
   /* the page behind must not scroll under an overlay that covers it */
   body.cur-max-open { overflow: hidden; }
 </style>

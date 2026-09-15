@@ -458,7 +458,14 @@
   function addEma(chart, bars, period, color) {
     var data = ema(bars, period);
     if (!data.length) return;
-    var ls = chart.addLineSeries({ color: color, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+    var opts = { color: color, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false };
+    // On the Curated page the EMAs are drawn but do NOT drive the price axis: the
+    // axis frames the candles and the call's levels (see the candle series'
+    // autoscaleInfoProvider). An EMA200 running well under a rising stock (IFF:
+    // ~74 against candles at 78–88) otherwise drags the floor down and flattens
+    // the setup. Where an EMA leaves the framed range it is simply off-screen.
+    if (SETUP_SEED) opts.autoscaleInfoProvider = function () { return null; };
+    var ls = chart.addLineSeries(opts);
     ls.setData(data);
   }
   // ---- drawing tools (canvas overlay on top of the chart) ---------------
@@ -1917,13 +1924,22 @@
       var s = chart.addCandlestickSeries({
         upColor: '#10b981', downColor: '#ef4444', borderVisible: false,
         wickUpColor: '#10b981', wickDownColor: '#ef4444',
-        // keep MATP + MBP (+ curator support/resistance) inside the price range
+        // keep MATP + MBP (+ curator support/resistance) inside the price range.
+        //
+        // NOT on the Curated page (SETUP_SEED): there the chart is opened to read ONE
+        // call, so the price axis frames the recent candles and that call's Entry /
+        // SL / PT — and nothing else (user, 2026-09-15: "focus on the present candle
+        // and the setup"). Before this, a MATP well above the target (IFF: MATP 94.50
+        // over a PT of 86.79) stretched the axis to 68–104 and squeezed the setup's
+        // three levels into a fifth of the pane. The MATP / MBP lines are still drawn;
+        // if they sit outside the framed range they are simply off-screen, and the
+        // legend still carries their numbers.
         autoscaleInfoProvider: function (orig) {
           var r = orig();
           if (r && r.priceRange) {
-            [matp, mbp, supp, resis,
-             curLevels && curLevels.entry, curLevels && curLevels.stop,
-             curLevels && curLevels.target]
+            (SETUP_SEED ? [] : [matp, mbp, supp, resis])
+              .concat([curLevels && curLevels.entry, curLevels && curLevels.stop,
+                       curLevels && curLevels.target])
               .concat(tradeLevels).concat(curatedLevels).concat(spreadLevels).forEach(function (v) {
               if (v != null) {
                 r.priceRange.minValue = Math.min(r.priceRange.minValue, v);
