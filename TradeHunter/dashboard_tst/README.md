@@ -143,6 +143,18 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-15 - v4.92: the ETF basket sits two funds per row
+
+User: *"in the ETF list, one line showing only 1 ETF"* - with the name on each button (v4.88)
+the wrapped row in the narrow Pick-by column held one button per line, thirteen lines tall.
+
+`sector.html`: the basket is a two-column grid with short names on the long ones (`Cons Disc`,
+`Cons Staples`, `Comm Svcs`, `Nasdaq 100`; full name in the tooltip), buttons left-aligned and
+truncating rather than wrapping, and the `sectors` / `index` captions spanning the row so the
+client-side rotation re-order (which moves buttons before the first caption) is unchanged.
+Seven rows instead of thirteen. Verified through the app: 13 buttons render in the grid with
+the short names.
+
 ### 2026-09-15 - v4.91: Curated - a compact list that fits its quarter
 
 User: *"in curated list the font size and the table has to be compact and display all"*

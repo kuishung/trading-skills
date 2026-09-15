@@ -82,20 +82,27 @@
            (syncEtfOrder moves them BEFORE the first <span>, the caption), so the
            caption doubles as the divider before the index group, which is never
            re-sorted (an index has no quadrant to sort by). #}
-        <div class="flex flex-wrap items-center gap-1 px-1 shrink-0">
-          {# Each button states its sector / index name beside the ticker (user,
-             2026-09-15: "I want state the sector or the ETF name") - the ticker
-             alone assumed the reader had the SPDR codes memorised. #}
+        {# Two buttons per row (user, 2026-09-15: "in the ETF list, one line showing
+           only 1 ETF"): with the sector name on the button (v4.88) a wrapped row
+           held one button each in this narrow column. A two-column grid with the
+           SHORT names below keeps the whole basket to seven rows. The caption spans
+           the row so syncEtfOrder's "move before the first <span>" still works. #}
+        {% set short = {'Consumer Discretionary': 'Cons Disc', 'Consumer Staples': 'Cons Staples',
+                        'Communication Services': 'Comm Svcs', 'Health Care': 'Health Care',
+                        'Real Estate': 'Real Estate', 'Nasdaq-100': 'Nasdaq 100'} %}
+        <div class="grid grid-cols-2 gap-1 px-1 shrink-0">
           {% for e in etfs %}
-          <button type="button" class="etfbtn text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 transition whitespace-nowrap"
-                  data-sym="{{ e.symbol }}" title="{{ e.name }}"><span class="font-semibold">{{ e.symbol }}</span> <span class="opacity-75">{{ e.name.split(' — ')[0] }}</span></button>
+          {% set nm = e.name.split(' — ')[0] %}
+          <button type="button" class="etfbtn text-left text-[11px] px-1.5 py-0.5 rounded border border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 transition whitespace-nowrap truncate"
+                  data-sym="{{ e.symbol }}" title="{{ e.name }}"><span class="font-semibold">{{ e.symbol }}</span> <span class="opacity-75">{{ short.get(nm, nm) }}</span></button>
           {% endfor %}
-          <span class="text-[10px] text-slate-600">sectors</span>
+          <span class="col-span-2 text-[10px] text-slate-600">sectors</span>
           {% for e in indexes %}
-          <button type="button" class="etfbtn text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 transition whitespace-nowrap"
-                  data-sym="{{ e.symbol }}" title="{{ e.name }}"><span class="font-semibold">{{ e.symbol }}</span> <span class="opacity-75">{{ e.name.split(' — ')[0] }}</span></button>
+          {% set nm = e.name.split(' — ')[0] %}
+          <button type="button" class="etfbtn text-left text-[11px] px-1.5 py-0.5 rounded border border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 transition whitespace-nowrap truncate"
+                  data-sym="{{ e.symbol }}" title="{{ e.name }}"><span class="font-semibold">{{ e.symbol }}</span> <span class="opacity-75">{{ short.get(nm, nm) }}</span></button>
           {% endfor %}
-          <span class="text-[10px] text-slate-600">index</span>
+          <span class="col-span-2 text-[10px] text-slate-600">index</span>
         </div>
         {# Swing-structure monitor for all of them at once (services/structure.py):
            lazy, then self-polling, so it keeps watching without a reload. A chip
