@@ -55,10 +55,20 @@
 {# ── the divider: drag to resize the two columns, double-click to reset ──── #}
 {# lg only (there are no columns to divide when stacked). Handled by the delegated
    pointer code in curated.html, which survives every swap of this panel. #}
-<div id="curatedSplit" class="hidden lg:block shrink-0 w-2 -mx-0.5 cursor-col-resize rounded group select-none"
+{# A 2px hairline was not findable (user, 2026-09-15, asked for the resize again
+   after v4.80 shipped it): the handle is now 10px wide with a visible grip and a
+   caption, and lights up on hover. The width presets in the list header are the
+   no-drag alternative. #}
+<div id="curatedSplit" class="hidden lg:flex shrink-0 w-2.5 -mx-1 cursor-col-resize rounded group select-none flex-col items-center justify-center gap-1 hover:bg-emerald-500/10 transition"
      role="separator" aria-orientation="vertical" tabindex="0"
-     title="Drag to resize the chart and the list. Double-click to reset.">
-  <div class="h-full w-px mx-auto bg-slate-800 group-hover:bg-emerald-500/70 transition"></div>
+     title="Drag left or right to resize the chart and the list. Double-click to reset to 3/4. Arrow keys nudge it.">
+  <div class="w-px flex-1 bg-slate-700 group-hover:bg-emerald-500/70 transition"></div>
+  <div class="flex flex-col gap-0.5 py-1 px-0.5 rounded bg-slate-800 group-hover:bg-emerald-500/30 transition">
+    <i class="block w-1 h-1 rounded-full bg-slate-500 group-hover:bg-emerald-300"></i>
+    <i class="block w-1 h-1 rounded-full bg-slate-500 group-hover:bg-emerald-300"></i>
+    <i class="block w-1 h-1 rounded-full bg-slate-500 group-hover:bg-emerald-300"></i>
+  </div>
+  <div class="w-px flex-1 bg-slate-700 group-hover:bg-emerald-500/70 transition"></div>
 </div>
 
 {# ── everything else: the right column, scrolling on its own ──────────── #}
@@ -183,7 +193,11 @@
   <span>total {{ signed(totals.total_r, 2, "R") }}</span>
   <span>avg {{ signed(totals.avg_r, 2, "R") }}</span>
   {% endif %}
-  <span class="ml-auto text-slate-600" title="An entry above the price when you curated it is treated as a breakout (triggers on the day's high); below it as a pullback (triggers on the low). A gap straight through the level still fills — at the open.">how triggers are judged &#9432;</span>
+  <span class="hidden lg:inline-flex items-center gap-0.5 ml-auto text-[10px] text-slate-600" title="How much of the width the chart takes; the list gets the rest. Or drag the handle between them.">
+    chart
+    {% for pct in [50, 66, 75] %}<button type="button" class="cur-split-preset px-1 py-px rounded border border-slate-800 hover:border-emerald-500 hover:text-emerald-300 transition tabular-nums" data-pct="{{ pct }}">{{ pct }}%</button>{% endfor %}
+  </span>
+  <span class="text-slate-600" title="An entry above the price when you curated it is treated as a breakout (triggers on the day's high); below it as a pullback (triggers on the low). A gap straight through the level still fills — at the open.">how triggers are judged &#9432;</span>
 </div>
 {% endif %}
 

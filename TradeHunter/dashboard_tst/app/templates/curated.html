@@ -76,7 +76,7 @@
   // divider is re-rendered with the panel. The chart follows the new width on its
   // own (lightweight-charts autoSize watches its container).
   (function () {
-    var KEY = 'curated_split_pct', DEFAULT = 75, MIN = 35, MAX = 85;
+    var KEY = 'curated_split_pct', DEFAULT = 75, MIN = 30, MAX = 85;
     function panel() { return document.querySelector('.curated-panel'); }
     function stored() {
       try { var v = parseFloat(localStorage.getItem(KEY)); return isFinite(v) ? v : DEFAULT; }
@@ -116,6 +116,13 @@
     document.addEventListener('pointercancel', end);
     document.addEventListener('dblclick', function (e) {
       if (e.target.closest && e.target.closest('#curatedSplit')) { apply(DEFAULT); remember(DEFAULT); }
+    });
+    // width presets in the list header (the no-drag way to resize)
+    document.addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('.cur-split-preset') : null;
+      if (!b) return;
+      var v = parseFloat(b.getAttribute('data-pct'));
+      if (isFinite(v)) { apply(v); remember(v); }
     });
     // keyboard: the divider is focusable; arrows nudge it by 2% (Home resets)
     document.addEventListener('keydown', function (e) {

@@ -143,6 +143,21 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-15 - v4.95: Curated - a divider you can see, and width presets
+
+User: *"in curated, i need the chart and the ticker panel can be adjusted in width"* - asked
+again after v4.80 shipped the drag divider, which was a 2px hairline nobody could find.
+
+- **The handle is visible now** (`_curated_list.html` `#curatedSplit`): 10px wide with a
+  three-dot grip in the middle, lighting up green on hover, with a tooltip that says drag,
+  double-click to reset, arrow keys to nudge. Drag range widened to 30-85% for the chart.
+- **Width presets** in the list header (`chart 50% | 66% | 75%`), for a click instead of a
+  drag; same remembered setting (`curated_split_pct`), so a preset and a drag are one control.
+
+Verified in the browser at 1400px: dragging the handle moved the chart from 75% to 57% and
+the value persisted; the 50% preset set it to 50% (chart 688px of 1376); the grip renders
+between the columns.
+
 ### 2026-09-15 - v4.94: Curated - the setup findings under every call
 
 User: *"in the Curated I need the setup findings to be shown"*
