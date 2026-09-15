@@ -156,7 +156,7 @@ carries this member's newest curated call on the ticker (`curated.latest_for_sym
 of THIS call), `chart_setup_locked` (numbers, not mouse-drag), `chart_band_start_closed`.
 A ticker with no call keeps the survey view. Verified through the app: with a V call
 (365.18 / 359.18 / 377.19) `/sector/chart?symbol=V` carries that seed, the row id, locked
-setup and a closed band; MSFT without a call carries none; the pop-out gets it too.
+setup and a closed band; CSCO, with no call, carries none; the pop-out gets it too.
 
 ### 2026-09-15 - v4.89: the basket's sector buttons use the short name
 
