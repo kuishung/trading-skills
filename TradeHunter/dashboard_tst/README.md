@@ -143,6 +143,21 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-15 - v4.79: Curated - the analyst band starts collapsed every time
+
+User: *"by default in the analyst range to be collapsed in the Curated Page chart"*
+
+- The band's open/closed memory (`chart_band_open` in localStorage) is ONE key shared by every
+  chart, so a band left open on the Watchlist arrived open on Curated. New per-page flag
+  `chart_band_start_closed`, set by `_curated_chart.html`: the band script in
+  `_price_chart.html` then forces the `<details>` closed on every render and does not write the
+  shared key when it is pulled up here — so opening it on Curated leaves the Watchlist's choice
+  alone, and the next Curated chart is collapsed again. Other pages behave exactly as before.
+
+Verified by rendering `/curated/chart` (dev DB, login dependency overridden): `#bandBox` has no
+`open` attribute and the script carries `START_CLOSED = true`; `/matp` still renders
+`START_CLOSED = false`.
+
 ### 2026-09-15 - v4.78: Curated - the analyst band is back, collapsed
 
 User: *"in the curated chart need the collapsed Analyst target price so I can pull them up"*

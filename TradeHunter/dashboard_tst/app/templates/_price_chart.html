@@ -297,15 +297,25 @@
 // a resize event, so without dispatching one the candles keep their old height
 // and leave a gap. Runs per chart render (the fragment is HTMX-swapped), and is
 // defensive about localStorage, which throws in some privacy modes.
+//
+// chart_band_start_closed (the Curated page): the band ALWAYS starts collapsed
+// there, and opening it is not remembered (user, 2026-09-15: "by default the
+// analyst range to be collapsed in the Curated page chart"). The remembered state
+// is one key shared by every chart, so a band left open on the Watchlist would
+// otherwise arrive open on Curated, where the call's own levels are the point and
+// the street's range is for pulling up on demand. Nor does a pull-up here write
+// that key — the Watchlist keeps whatever the member chose there.
 (function () {
   var box = document.getElementById('bandBox');
   if (!box) return;
   var KEY = 'chart_band_open';
+  var START_CLOSED = {{ (chart_band_start_closed if (chart_band_start_closed is defined and chart_band_start_closed) else false)|tojson }};
   var caret = document.getElementById('bandCaret');
-  try { box.open = localStorage.getItem(KEY) === '1'; } catch (e) { box.open = false; }
+  if (START_CLOSED) box.open = false;
+  else { try { box.open = localStorage.getItem(KEY) === '1'; } catch (e) { box.open = false; } }
   if (caret) caret.style.transform = box.open ? 'rotate(90deg)' : '';
   box.addEventListener('toggle', function () {
-    try { localStorage.setItem(KEY, box.open ? '1' : '0'); } catch (e) {}
+    if (!START_CLOSED) { try { localStorage.setItem(KEY, box.open ? '1' : '0'); } catch (e) {} }
     if (caret) caret.style.transform = box.open ? 'rotate(90deg)' : '';
     try { window.dispatchEvent(new Event('resize')); } catch (e) {}
   });
