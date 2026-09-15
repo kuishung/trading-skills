@@ -143,6 +143,24 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-15 - v4.87: Sector & Industry setup - a fifth switch, price just below the EMA
+
+User: *"in the setup, i need also to see those tickers that do below EMA20 or EMA50 by 0.3%
+to 1.5%. make it a setup to be able to enable and disable"*
+
+- **New toggle `below 0.3-1.5%` (c5)** in `services/ema_setup.py`: the last close sits 0.3-1.5%
+  BELOW EMA20 (else EMA50) - price testing the average from underneath, the mirror of the
+  `rebound 0.3-2%` switch. Weight 25, on by default like the others, saved per member with
+  the rest; a sky-blue chip `below -0.7% EMA20` on the row. `analyze` now records
+  `below_ema` / `below_pct`; `conditions` / `rank` / `clean_enabled` pick the key up from
+  `COND_KEYS`, and the toggle row and both chip renderers (`_sector_symbols.html`,
+  `_sector_basket.html`) loop over the keys, so no route or layout change was needed.
+
+Verified: unit cases (an uptrend closing 0.72% under EMA20 meets c5 and not c3, scores 125
+with all on; 2.5% under is out of band; 0.8% above meets c3 and not c5); through the app on
+XLF / Banks - Regional (21 tickers): the fifth toggle renders, 12 rows carry a below chip, and
+with only c5 on the list re-sorts with nothing gated; prefs persisted and cleared afterwards.
+
 ### 2026-09-15 - v4.86: the Finviz filter has an On/Off switch, and the basket names its fund
 
 User: *"in the ETF basket i need you to show the full name of the ETF"*

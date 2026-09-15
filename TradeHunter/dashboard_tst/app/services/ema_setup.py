@@ -69,15 +69,19 @@ _cache: dict[str, tuple[float, dict]] = {}
 DIP_BARS = 5             # sessions the dip may sit back
 DIP_MIN, DIP_MAX = 1.0, 2.0          # percent below the EMA
 REB_MIN, REB_MAX = 0.3, 2.0          # percent above the EMA
-COND_KEYS = ("c1", "c2", "c3", "c4")
+BELOW_MIN, BELOW_MAX = 0.3, 1.5      # percent BELOW the EMA (c5: testing it from underneath)
+COND_KEYS = ("c1", "c2", "c3", "c4", "c5")
 COND_LABELS = {
     "c1": ("EMA 20>50>200", "Uptrend: EMA20 above EMA50 above EMA200 on the last close. A must: when on, tickers that fail it sort below every ticker that passes."),
     "c2": ("dip 1-2%", f"Within the last {DIP_BARS} sessions a low reached 1-2% BELOW EMA20 (or EMA50): the pullback that sets up the rebound."),
     "c3": ("rebound 0.3-2%", "The last close sits 0.3-2% ABOVE EMA20 (or EMA50): price has come back off the average."),
     "c4": ("round 10/50/100", "The last close is within 0.5% of a multiple of 10, 50 or 100."),
+    # c5 (user, 2026-09-15): "those tickers that do below EMA20 or EMA50 by
+    # 0.3% to 1.5%" - price sitting just UNDER the average, the mirror of c3.
+    "c5": ("below 0.3-1.5%", "The last close sits 0.3-1.5% BELOW EMA20 (or EMA50): price is testing the average from underneath, not yet back above it."),
 }
-COND_DEFAULT = {"c1": True, "c2": True, "c3": True, "c4": True}
-COND_WEIGHT = {"c1": 100, "c2": 30, "c3": 30, "c4": 20}
+COND_DEFAULT = {"c1": True, "c2": True, "c3": True, "c4": True, "c5": True}
+COND_WEIGHT = {"c1": 100, "c2": 30, "c3": 30, "c4": 20, "c5": 25}
 
 
 def ema(values: list[float], period: int) -> list[float]:
@@ -105,6 +109,7 @@ def round_level(price: float, steps=(100, 50, 10, 5)) -> tuple[float, int] | Non
 
 def _blank(reason: str = "not enough price history") -> dict:
     return {"dip_ema": None, "dip_pct": None, "above_ema": None, "above_pct": None,
+            "below_ema": None, "below_pct": None,
             "round10": None, "round10_step": None,
             "score": None, "uptrend": None, "rebound": None, "rebound_pct": None,
             "fresh": False, "held": False, "watch": False, "round": None,
@@ -171,6 +176,12 @@ def analyze(bars: list[dict]) -> dict:
         d = (c - series[-1]) / series[-1] * 100.0
         if d > 0 and (above_pct is None or d < above_pct):
             above_ema, above_pct = name, round(d, 2)
+    # c5: how far the close sits BELOW the nearest EMA it is under
+    below_ema = below_pct = None
+    for name, series in (("EMA20", e20), ("EMA50", e50)):
+        d = (series[-1] - c) / series[-1] * 100.0
+        if d > 0 and (below_pct is None or d < below_pct):
+            below_ema, below_pct = name, round(d, 2)
     # c4: 10 / 50 / 100 only (the Setup sort's 5s are too dense here)
     r10 = round_level(c, (100, 50, 10))
 
@@ -213,6 +224,7 @@ def analyze(bars: list[dict]) -> dict:
     return {
         "dip_ema": dip_ema, "dip_pct": dip_pct,
         "above_ema": above_ema, "above_pct": above_pct,
+        "below_ema": below_ema, "below_pct": below_pct,
         "round10": None if not r10 else r10[0], "round10_step": None if not r10 else r10[1],
         "score": score, "uptrend": uptrend, "rebound": rebound,
         "rebound_pct": None if dist is None else round(dist * 100, 3),
@@ -233,6 +245,8 @@ def conditions(setup: dict) -> dict:
         "c3": (setup.get("above_pct") is not None
                and REB_MIN <= setup["above_pct"] <= REB_MAX),
         "c4": setup.get("round10") is not None,
+        "c5": (setup.get("below_pct") is not None
+               and BELOW_MIN <= setup["below_pct"] <= BELOW_MAX),
     }
 
 
@@ -282,6 +296,10 @@ def rank(setup: dict, enabled: dict) -> dict:
         score += COND_WEIGHT["c4"]
         chips.append({"t": f"round {setup['round10']:g}", "k": "round",
                       "title": f"Close {setup['close']:.2f} is within 0.5% of {setup['round10']:g}"})
+    if enabled.get("c5") and met["c5"]:
+        score += COND_WEIGHT["c5"]
+        chips.append({"t": f"below -{setup['below_pct']:.1f}% {setup['below_ema']}", "k": "watch",
+                      "title": f"Close is {setup['below_pct']:.2f}% below {setup['below_ema']} - testing it from underneath"})
     return {"score": score, "met": met, "chips": chips, "gated": gated,
             "summary": setup.get("summary") or ""}
 
