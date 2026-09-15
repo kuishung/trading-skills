@@ -143,6 +143,20 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-15 - v4.88: the ETF basket buttons say which sector they are
+
+User: *"in the ETF basket list now is by button. I want state the sector or the ETF name"*
+
+The basket's fund buttons showed only the SPDR ticker (`XLF`, `XLK` ...), which assumes the
+reader has the codes memorised. Each button now reads **ticker + name**: `XLF Financials`,
+`XLV Health Care`, and for the index group the short name (`SPY S&P 500`, `QQQ Nasdaq 100`).
+The full issuer name stays in the tooltip. Buttons keep `data-sym`, so the click handlers,
+the rotation-order re-sort and the selected highlight are untouched; `whitespace-nowrap` keeps
+a name from breaking mid-button in the wrapped row.
+
+Verified through the app: `/sector` renders 13 buttons labelled `XLF Financials` ...
+`SPY S&P 500`.
+
 ### 2026-09-15 - v4.87: Sector & Industry setup - a fifth switch, price just below the EMA
 
 User: *"in the setup, i need also to see those tickers that do below EMA20 or EMA50 by 0.3%
