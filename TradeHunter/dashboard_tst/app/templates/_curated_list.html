@@ -192,8 +192,8 @@
    so weekend homework lands under the coming week, not the one that just closed. #}
 {% for m in months %}
 <section class="rounded-lg border {% if m.current %}border-emerald-700/60{% else %}border-slate-800{% endif %} bg-slate-900/40 mb-3 overflow-hidden">
-  <div class="flex flex-wrap items-baseline gap-x-4 gap-y-1 px-3 py-2 border-b border-slate-800">
-    <h2 class="text-sm font-semibold text-slate-200">{{ m.label }}</h2>
+  <div class="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-2 py-1 border-b border-slate-800">
+    <h2 class="text-xs font-semibold text-slate-200">{{ m.label }}</h2>
     {% if m.range %}<span class="text-[11px] text-slate-500">{{ m.range }}</span>{% endif %}
     {% if m.current %}<span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300" title="Today falls in this week; new calls land here">this week</span>{% endif %}
     <span class="text-[11px] text-slate-500 tabular-nums">{{ m.n }} curated</span>
@@ -210,23 +210,23 @@
 
   {# wide table: scrolls inside its own box so the page never scrolls sideways #}
   <div class="overflow-x-auto">
-    <table class="w-full text-xs">
+    <table class="w-full text-[11px] leading-tight">
       <thead>
-        <tr class="text-[10px] uppercase tracking-wide text-slate-500 border-b border-slate-800">
-          <th class="text-left font-normal px-3 py-1.5">Ticker</th>
-          <th class="text-left font-normal px-2 py-1.5">Curated</th>
+        <tr class="text-[9px] uppercase text-slate-500 border-b border-slate-800">
+          <th class="text-left font-normal px-1 py-0.5">Ticker</th>
+          <th class="text-left font-normal px-1 py-0.5" title="Date curated">Date</th>
           <th class="text-right font-normal px-2 py-1.5">Entry</th>
           <th class="text-right font-normal px-2 py-1.5">Stop</th>
-          <th class="text-right font-normal px-2 py-1.5">Target</th>
+          <th class="text-right font-normal px-1 py-0.5" title="Target">Tgt</th>
           <th class="text-right font-normal px-2 py-1.5" title="Planned reward-to-risk from your own levels">R:R</th>
           <th class="text-right font-normal px-2 py-1.5" title="Shares to buy: your risk budget (account value x risk %) divided by the risk per share (entry - stop), floored to whole shares">Qty</th>
           <th class="text-left font-normal px-2 py-1.5">Status</th>
-          <th class="text-left font-normal px-2 py-1.5">Triggered</th>
+          <th class="text-left font-normal px-1 py-0.5" title="Triggered on, and days held">Trig</th>
           <th class="text-right font-normal px-2 py-1.5" title="Where it actually filled — the entry level, or the open if it gapped through">Fill</th>
-          <th class="text-right font-normal px-2 py-1.5" title="Exit price if closed, otherwise the last close">Exit / last</th>
+          <th class="text-right font-normal px-1 py-0.5" title="Exit price if closed, otherwise the last close">Last</th>
           <th class="text-right font-normal px-2 py-1.5">%</th>
           <th class="text-right font-normal px-2 py-1.5" title="Result in multiples of the risk you took (fill to stop)">R</th>
-          <th class="px-2 py-1.5"></th>
+          <th class="px-1 py-0.5"></th>
         </tr>
       </thead>
       <tbody>
@@ -240,7 +240,7 @@
             hx-trigger="click[!event.target.closest('.cur-actions')]"
             hx-target="#curatedChartBody" hx-swap="innerHTML"
             title="Show {{ r.symbol }} on the chart above">
-          <td class="px-3 py-1.5">
+          <td class="px-1 py-0.5 whitespace-nowrap">
             {# Expander for this call's revisions, which are child rows already in the
                table below. Carries .cur-actions so the row's own click filter lets it
                through to its own handler instead of charting the call. Only offered
@@ -254,37 +254,37 @@
             {% if e.direction == "short" %}<span class="ml-1 text-[10px] text-amber-400/80" title="Short — your stop is above the entry">S</span>{% endif %}
             {% if r.note %}<span class="ml-1 text-slate-600 cursor-help" title="{{ r.note }}">&#9432;</span>{% endif %}
           </td>
-          <td class="px-2 py-1.5 text-slate-400 tabular-nums whitespace-nowrap">{{ r.curated_on }}</td>
-          <td class="px-2 py-1.5 text-right text-slate-300">{{ num(r.entry) }}</td>
-          <td class="px-2 py-1.5 text-right text-slate-400">{{ num(r.stop) }}</td>
-          <td class="px-2 py-1.5 text-right text-slate-400">{{ num(r.target) }}</td>
-          <td class="px-2 py-1.5 text-right text-slate-500">{{ num(e.planned_rr, 1) }}</td>
+          <td class="px-1 py-0.5 text-slate-400 tabular-nums whitespace-nowrap" title="{{ r.curated_on }}">{{ r.curated_on[5:] }}</td>
+          <td class="px-1 py-0.5 text-right text-slate-300">{{ num(r.entry) }}</td>
+          <td class="px-1 py-0.5 text-right text-slate-400">{{ num(r.stop) }}</td>
+          <td class="px-1 py-0.5 text-right text-slate-400">{{ num(r.target) }}</td>
+          <td class="px-1 py-0.5 text-right text-slate-500">{{ num(e.planned_rr, 1) }}</td>
           {# Derived from the CURRENT account value, never stored: raising the account
              above re-sizes every row at once. A dash means "no account value yet",
              which is a different thing from a size of zero. #}
-          <td class="px-2 py-1.5 text-right whitespace-nowrap">
+          <td class="px-1 py-0.5 text-right whitespace-nowrap">
             {% if r.size.qty is not none %}
             <span class="text-slate-200 tabular-nums cursor-help"
                   title="{{ r.size.qty }} shares &times; {{ '%.2f'|format(r.entry) }} = {{ '{:,.0f}'.format(r.size.cost) }} ({{ '%.0f'|format(r.size.exposure_pct) }}% of the account), risking {{ '{:,.0f}'.format(r.size.risk_budget) }} at {{ '%.2f'|format(r.size.risk_per_unit) }} per share">{{ '{:,}'.format(r.size.qty) }}</span>
             {% else %}<span class="text-slate-600" title="Set an account value above to size this call">&ndash;</span>{% endif %}
           </td>
-          <td class="px-2 py-1.5 whitespace-nowrap">
-            <span class="inline-block px-1.5 py-0.5 rounded border text-[10px] {{ b[0] }} cursor-help"
+          <td class="px-1 py-0.5 whitespace-nowrap">
+            <span class="inline-block px-1 py-px rounded border text-[9px] {{ b[0] }} cursor-help"
                   title="{{ e.note or b[2] }}">{{ b[1] }}</span>
             {% if e.ambiguous %}<span class="ml-1 text-[10px] text-amber-400/80 cursor-help"
                   title="Stop and target were both inside one day's range. Daily bars can't say which came first, so this counts as stopped.">&#9670;</span>{% endif %}
           </td>
-          <td class="px-2 py-1.5 text-slate-400 tabular-nums whitespace-nowrap">
-            {% if e.triggered_on %}{{ e.triggered_on }}
+          <td class="px-1 py-0.5 text-slate-400 tabular-nums whitespace-nowrap">
+            {% if e.triggered_on %}<span title="{{ e.triggered_on }}">{{ e.triggered_on[5:] }}</span>
               {% if e.bars_held %}<span class="text-slate-600">&middot; {{ e.bars_held }}d</span>{% endif %}
             {% elif e.bars_waiting %}<span class="text-slate-600">{{ e.bars_waiting }}d waiting</span>
             {% else %}<span class="text-slate-600">&ndash;</span>{% endif %}
           </td>
-          <td class="px-2 py-1.5 text-right text-slate-400">{{ num(e.fill) }}</td>
-          <td class="px-2 py-1.5 text-right text-slate-300">{{ num(e.exit if e.exit is not none else e.last) }}</td>
-          <td class="px-2 py-1.5 text-right">{{ signed(e.pct, 1, "%") }}</td>
-          <td class="px-2 py-1.5 text-right">{{ signed(e.r_multiple, 2, "R") }}</td>
-          <td class="cur-actions px-2 py-1.5 text-right whitespace-nowrap">
+          <td class="px-1 py-0.5 text-right text-slate-400">{{ num(e.fill) }}</td>
+          <td class="px-1 py-0.5 text-right text-slate-300">{{ num(e.exit if e.exit is not none else e.last) }}</td>
+          <td class="px-1 py-0.5 text-right">{{ signed(e.pct, 1, "%") }}</td>
+          <td class="px-1 py-0.5 text-right">{{ signed(e.r_multiple, 2, "R") }}</td>
+          <td class="cur-actions px-1 py-0.5 text-right whitespace-nowrap">
             {# Push this call straight to the user's OWN TradingView — symbol plus the
                three levels as Entry / SL / PT lines. Shares the .tv-plot handler in
                base.html; no exchange is stored for a curated row, and the bridge lets

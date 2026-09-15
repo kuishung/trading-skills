@@ -143,6 +143,22 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-15 - v4.91: Curated - a compact list that fits its quarter
+
+User: *"in curated list the font size and the table has to be compact and display all"*
+(screenshot: 13px rows with 6px padding wrapping the ticker cell and cutting the Qty column
+off the right edge of the quarter-width column v4.77 gave the list).
+
+`_curated_list.html`: the table is 11px with tight leading, every cell `px-1 py-0.5` (was
+`px-2/3 py-1.5`), 9px headers without letter-spacing, shorter headers (**Date**, **Tgt**,
+**Trig**, **Last**; full words in the tooltips), dates as `MM-DD` with the full date on hover,
+a smaller status chip, the ticker cell no longer wraps, and the week header is a size down.
+Roughly half the row height and a third less width, so all fourteen columns sit inside the
+right-hand column at laptop widths; the horizontal scroll stays as the safety net.
+
+Verified through the app: the September list renders at the new sizes with the short dates
+and the renamed headers.
+
 ### 2026-09-15 - v4.90: the Sector chart shows a curated ticker as its call
 
 User: *"if there is a curated chart i need it to focus on the curation and it will look like
