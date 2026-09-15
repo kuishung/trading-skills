@@ -143,6 +143,24 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-15 - v4.83: Sector & Industry ticker panel - the setup chips get their own line
+
+User: *"in the setup panel list each ticker will have multiple rows where the criteria pill will
+be shown below the ticker name and last price"* (the message ended mid-sentence; this is the
+part that was there).
+
+- `_sector_symbols.html`: each ticker is now a two-line row. Line 1 is star · ticker · company
+  · last price, as before; line 2 is the setup chips, full width under the ticker (a grid item
+  spanning `2 / -1`, so it starts under the ticker rather than the star). They had been
+  squeezed inside the name column, where two or three chips wrapped and pushed the price out
+  of line with the name. Rows with chips get a touch more padding and a faint rule below, so
+  the pairs read as units; with all four conditions off the list is the single-line list it was.
+  The "· setup" hint in the Full Name header is gone — the chips have their own line now.
+
+Verified by rendering `/sector/symbols` for a ranked industry through the app with the login
+dependency overridden: each ticker `div` carries the name span, the price span and then the
+`grid-column: 2 / -1` chip span, in that order.
+
 ### 2026-09-15 - v4.82: curating a call queues a MATP run when the ticker has no recent one
 
 User: *"if i click curate and if the ticker do not have MBP and MATP recently calculated, it

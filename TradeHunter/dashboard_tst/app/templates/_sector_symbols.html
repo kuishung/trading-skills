@@ -30,23 +30,29 @@
    click from also swapping the chart. #}
 {% set COLS = "display:grid;grid-template-columns:1.2rem 3rem 1fr 3.6rem;column-gap:0.3rem;align-items:center" %}
 <div style="{{ COLS }}" class="px-1 pb-0.5 text-[10px] uppercase tracking-wide text-slate-600 border-b border-slate-800/70">
-  <span class="text-center" title="My Watchlist">&#9733;</span><span>Ticker</span><span>Full Name{% if ranked %} <span class="normal-case tracking-normal text-slate-700">&middot; setup</span>{% endif %}</span><span class="text-right">Last</span>
+  <span class="text-center" title="My Watchlist">&#9733;</span><span>Ticker</span><span>Full Name</span><span class="text-right">Last</span>
 </div>
 {% for t in tickers %}
 {% set _on = my_syms and t.symbol in my_syms %}
 {% set rk = t.rank if ranked else none %}
 <div data-sym="{{ t.symbol }}" title="Show {{ t.symbol }} chart{% if rk and t.setup.close %}&#10;{{ t.setup.summary }} &middot; EMA20 {{ t.setup.ema20 }} / EMA50 {{ t.setup.ema50 }} / EMA200 {{ t.setup.ema200 }}{% if t.setup.dip_pct %} &middot; deepest dip {{ t.setup.dip_pct }}%{% endif %}{% endif %}"
      hx-get="/sector/chart?symbol={{ t.symbol }}" hx-target="#sectorChartBody" hx-swap="innerHTML"
-     style="{{ COLS }}" class="wl-ticker cursor-pointer px-1 py-0.5 rounded hover:bg-emerald-500/10 hover:text-emerald-300 transition{% if rk and rk.gated %} opacity-50{% endif %}">
+     style="{{ COLS }}" class="wl-ticker cursor-pointer px-1 {% if rk %}py-1 border-b border-slate-800/50{% else %}py-0.5{% endif %} rounded hover:bg-emerald-500/10 hover:text-emerald-300 transition{% if rk and rk.gated %} opacity-50{% endif %}">
   <span class="wl-star cursor-pointer text-center text-[12px] leading-none select-none transition {% if _on %}text-amber-300{% else %}text-slate-700 hover:text-amber-300{% endif %}"
         role="button" tabindex="0" aria-pressed="{{ 'true' if _on else 'false' }}"
         title="{{ 'Remove ' ~ t.symbol ~ ' from My Watchlist' if _on else 'Add ' ~ t.symbol ~ ' to My Watchlist' }}"
         data-sym="{{ t.symbol }}">{% if _on %}&#9733;{% else %}&#9734;{% endif %}</span>
   <span class="text-[12px] font-medium text-slate-200">{{ t.symbol }}</span>
-  <span class="min-w-0">
-    <span class="block text-[11px] text-slate-400 truncate" title="{{ t.company }}">{{ t.company or '&mdash;' }}</span>
-    {% if rk %}
-    <span class="flex flex-wrap gap-0.5 mt-px">
+  <span class="block min-w-0 text-[11px] text-slate-400 truncate" title="{{ t.company }}">{{ t.company or '&mdash;' }}</span>
+  <span class="text-right text-[11px] text-slate-300 tabular-nums">{{ '%.2f'|format(t.price) if t.price is not none else '-' }}</span>
+  {# Second line of the same row: the setup chips, full width under the ticker /
+     name / price (user, 2026-09-15: "each ticker will have multiple rows where the
+     criteria pill will be shown below the ticker name and last price"). They used
+     to be squeezed inside the name column, where two or three chips already
+     wrapped and pushed the price out of line with the name. grid-column 2 / -1
+     spans everything but the star column, so the chips start under the ticker. #}
+  {% if rk %}
+    <span class="flex flex-wrap gap-0.5 mt-0.5" style="grid-column: 2 / -1">
       {% for ch in rk.chips %}
       <span class="text-[9px] px-1 py-px rounded whitespace-nowrap
                    {% if ch.k == 'hot' %}bg-emerald-500/25 text-emerald-200 font-semibold
@@ -58,9 +64,7 @@
       <span class="text-[9px] text-slate-600">{% if rk.score is none %}{{ rk.summary }}{% elif rk.gated %}not in EMA uptrend{% else %}none met{% endif %}</span>
       {% endfor %}
     </span>
-    {% endif %}
-  </span>
-  <span class="text-right text-[11px] text-slate-300 tabular-nums">{{ '%.2f'|format(t.price) if t.price is not none else '-' }}</span>
+  {% endif %}
 </div>
 {% endfor %}
 {% endif %}
