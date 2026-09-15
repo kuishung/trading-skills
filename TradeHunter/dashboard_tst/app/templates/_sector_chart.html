@@ -29,6 +29,20 @@
    Curated-style (user, 2026-09-15). The inline Sector & Industry chart keeps its 6M
    default — there you are surveying, not reading one call. #}
 {% set chart_focus_setup = focus_setup is defined and focus_setup %}
+{# A ticker the member has CURATED is shown as its call, Curated-page style (user,
+   2026-09-15: "if there is a curated chart i need it to focus on the curation and
+   it will look like this"): the newest call's Entry / SL / PT mounted as the
+   (locked) trade setup, the view framed on it, the analyst band starting closed.
+   Same variables _curated_chart.html sets, so the two charts cannot drift apart.
+   A ticker with no call keeps the survey view above. #}
+{% if curated is defined and curated %}
+{% set chart_levels = {'entry': curated.entry, 'stop': curated.stop, 'target': curated.target, 'label': ''} %}
+{% set chart_curated_row = curated.id %}
+{% set chart_curated_on = curated.curated_on %}
+{% set chart_setup_seed = {'entry': curated.entry, 'stop': curated.stop, 'target': curated.target} %}
+{% set chart_setup_locked = true %}
+{% set chart_band_start_closed = true %}
+{% endif %}
 {% include "_price_chart.html" %}
 {% if not sel %}
 <p class="text-[11px] text-slate-500 mt-1 shrink-0">No analyst / MATP data for {{ symbol }} — showing price only.</p>

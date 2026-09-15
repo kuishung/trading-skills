@@ -335,11 +335,18 @@ def _chart_ctx(db: Session, user: User, symbol: str) -> dict:
     from ..models import MATPLevel
     from .matp import _chart_context
 
+    from ..services import curated as cur
+
     sym = (symbol or "").strip().upper()
     sel = db.query(MATPLevel).filter(MATPLevel.symbol == sym).first()
     cc = _chart_context(db, sel)
     return {"user": user, "symbol": sym, "sel": sel,
-            "sel_band": cc["sel_band"], "sel_patterns": cc["sel_patterns"]}
+            "sel_band": cc["sel_band"], "sel_patterns": cc["sel_patterns"],
+            # This member's newest curated call on the ticker, if any: the chart
+            # then mounts and frames it exactly as the Curated page does (user,
+            # 2026-09-15: "if there is a curated chart i need it to focus on the
+            # curation and it will look like this").
+            "curated": cur.latest_for_symbol(db, user, sym)}
 
 
 @router.get("/chart-window", response_class=HTMLResponse)

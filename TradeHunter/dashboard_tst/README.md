@@ -143,6 +143,21 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-15 - v4.90: the Sector chart shows a curated ticker as its call
+
+User: *"if there is a curated chart i need it to focus on the curation and it will look like
+this"* (screenshot: V on the Curated page - Entry / SL / PT bands, the view framed on them).
+
+`_chart_ctx` (the context behind the inline Sector & Industry chart AND the pop-out) now
+carries this member's newest curated call on the ticker (`curated.latest_for_symbol`), and
+`_sector_chart.html` sets the same variables `_curated_chart.html` sets when one exists:
+`chart_setup_seed` (mounts the levels and frames the view on them, Curated-style),
+`chart_levels`, `chart_curated_row` / `chart_curated_on` (the setup editor saves a revision
+of THIS call), `chart_setup_locked` (numbers, not mouse-drag), `chart_band_start_closed`.
+A ticker with no call keeps the survey view. Verified through the app: with a V call
+(365.18 / 359.18 / 377.19) `/sector/chart?symbol=V` carries that seed, the row id, locked
+setup and a closed band; MSFT without a call carries none; the pop-out gets it too.
+
 ### 2026-09-15 - v4.89: the basket's sector buttons use the short name
 
 v4.88 rendered the sector buttons with the route's full label (`XLF Financials — Financial
