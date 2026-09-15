@@ -32,20 +32,62 @@ def _sector_filter_url(user: User) -> str:
     return prefs.get("sector_finviz_filter") or ""
 
 
-def _sector_extra_filters(user: User) -> str:
-    """The sanitized Finviz `f=` criteria codes from the user's saved filter URL."""
+FILTER_ON_PREF = "sector_finviz_filter_on"   # User.prefs: bool, default True
+
+
+def _sector_filter_on(user: User) -> bool:
+    """Whether the saved filter is switched ON (user, 2026-09-15: "the filter user
+    can turn it on or off"). Saved criteria stay saved when it is off; they just
+    stop narrowing the lists until it is switched back on. Default on, so a member
+    who has never touched the switch sees what they saw before it existed."""
+    prefs = getattr(user, "prefs", None) or {}
+    return bool(prefs.get(FILTER_ON_PREF, True))
+
+
+def _sector_saved_codes(user: User) -> str:
+    """The sanitized Finviz `f=` criteria codes from the user's saved filter URL —
+    whether or not the filter is switched on."""
     from ..services.industry import parse_finviz_filters
 
     return parse_finviz_filters(_sector_filter_url(user))
 
 
+def _sector_extra_filters(user: User) -> str:
+    """The criteria codes to APPLY: the saved ones when the filter is on, else
+    none. Every list on the page (industry symbols, industry counts, the ETF
+    basket) reads this, so the switch governs all of them at once."""
+    return _sector_saved_codes(user) if _sector_filter_on(user) else ""
+
+
 def _filter_fragment(request: Request, user: User) -> HTMLResponse:
     url = _sector_filter_url(user)
-    codes = _sector_extra_filters(user)
+    codes = _sector_saved_codes(user)
     return templates.TemplateResponse(
         request, "_sector_filter.html",
-        {"user": user, "filter_url": url, "codes": codes},
+        {"user": user, "filter_url": url, "codes": codes, "filter_on": _sector_filter_on(user)},
     )
+
+
+@router.post("/filter/toggle", response_class=HTMLResponse)
+def sector_filter_toggle(
+    request: Request,
+    on: str = Form("1"),
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Switch the saved filter on or off without touching the saved URL. Returns
+    the refreshed control and fires `sector-filter-changed`, so whichever list is
+    showing re-fetches with (or without) the criteria."""
+    u = db.get(User, user.id)
+    if u is None:
+        return _filter_fragment(request, user)
+    prefs = dict(u.prefs or {})
+    prefs[FILTER_ON_PREF] = on.strip() not in ("0", "", "false", "off")
+    u.prefs = prefs
+    db.commit()
+    resp = _filter_fragment(request, u)
+    resp.headers["HX-Trigger"] = "sector-filter-changed"
+    return resp
 
 
 @router.get("", response_class=HTMLResponse)
@@ -57,13 +99,16 @@ def sector_home(request: Request, user: User = Depends(require_user)):
     # when the panel's Daily/Weekly toggle re-groups it.
     from ..services.etf import ETF_UNIVERSE, INDEX_ETFS, panel_symbol_order
 
+    from ..services.etf import etf_full_name
+
     names = dict(ETF_UNIVERSE)
-    etfs = [{"symbol": s, "name": names.get(s, s)} for s in panel_symbol_order("weekly")]
+    etfs = [{"symbol": s, "name": f"{names.get(s, s)} — {etf_full_name(s)}"}
+            for s in panel_symbol_order("weekly")]
     # SPY / QQQ ride along as a SECOND group on the tab, kept out of the sector list
     # above so the rotation panel, the RRG and the industry drill-down still see
     # exactly the 11 sectors (see services/etf.py::INDEX_ETFS). They keep their
     # declared order — there is no rotation ranking to sort an index by.
-    indexes = [{"symbol": s, "name": n} for s, n in INDEX_ETFS]
+    indexes = [{"symbol": s, "name": f"{n} — {etf_full_name(s)}"} for s, n in INDEX_ETFS]
     return templates.TemplateResponse(
         request, "sector.html", {"user": user, "etfs": etfs, "indexes": indexes},
     )

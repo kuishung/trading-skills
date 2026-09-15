@@ -1,16 +1,30 @@
-{# Symbol-panel Finviz filter control. Context: filter_url, codes.
-   Toggle button reveals a form to paste a Finviz screener URL; its criteria are
-   ANDed into the sector/industry drill-down so only matching tickers show. #}
+{# The Finviz filter control. Context: filter_url, codes, filter_on.
+   The ☰ button reveals a form to paste a Finviz screener URL; its criteria are
+   ANDed into the industry drill-down AND the ETF basket so only matching tickers
+   show. With criteria saved, an On/Off switch beside it pauses them without
+   clearing them (user, 2026-09-15: "the filter user can turn it on or off"); the
+   switch posts to /sector/filter/toggle, which fires sector-filter-changed so the
+   list that is showing re-fetches at once. #}
 <div id="symFilter" class="min-w-0">
   <div class="flex items-center gap-1.5 justify-end">
-    {% if codes %}<span class="text-[10px] text-emerald-400/80 truncate max-w-[8rem]" title="{{ codes }}">{{ codes.split(',')|length }} criteria</span>{% endif %}
+    {% if codes %}
+    <span class="text-[10px] truncate max-w-[6rem] {{ 'text-emerald-400/80' if filter_on else 'text-slate-500' }}" title="{{ codes }}">{{ codes.split(',')|length }} criteria</span>
+    <button type="button" role="switch" aria-checked="{{ 'true' if filter_on else 'false' }}"
+            hx-post="/sector/filter/toggle" hx-vals='{"on": "{{ '0' if filter_on else '1' }}"}'
+            hx-target="#symFilter" hx-swap="outerHTML"
+            class="text-[11px] px-2 py-0.5 rounded border transition whitespace-nowrap font-medium
+                   {{ 'border-emerald-500/60 text-emerald-300 bg-emerald-500/15 hover:bg-emerald-500/25' if filter_on else 'border-slate-600 text-slate-400 hover:border-emerald-500 hover:text-emerald-300' }}"
+            title="{{ 'The filter is ON — both lists show only matching tickers. Click to switch it off (the criteria stay saved).' if filter_on else 'The filter is OFF — lists are unfiltered. Click to apply the saved criteria again.' }}">
+      {{ 'On' if filter_on else 'Off' }}
+    </button>
+    {% endif %}
     <button type="button"
             onclick="var f=this.closest('#symFilter').querySelector('#symFilterForm'); f.classList.toggle('hidden');"
             class="text-[11px] px-2 py-0.5 rounded border transition whitespace-nowrap
-                   {{ 'border-emerald-500/60 text-emerald-300 bg-emerald-500/10' if codes else 'border-slate-700 text-slate-400' }}
+                   {{ 'border-emerald-500/60 text-emerald-300 bg-emerald-500/10' if (codes and filter_on) else 'border-slate-700 text-slate-400' }}
                    hover:border-emerald-500 hover:text-emerald-300"
-            title="Filter this industry's symbols by a Finviz screener">
-      &#9776; Filter{% if codes %} &middot; on{% endif %}
+            title="{{ 'Edit or clear the saved Finviz screener criteria' if codes else 'Filter both lists by a Finviz screener' }}">
+      &#9776; {{ 'Edit' if codes else 'Filter' }}
     </button>
   </div>
 

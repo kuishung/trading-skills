@@ -143,6 +143,35 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-15 - v4.86: the Finviz filter has an On/Off switch, and the basket names its fund
+
+User: *"in the ETF basket i need you to show the full name of the ETF"*
+
+- The basket header now reads e.g. **XLF · Financial Select Sector SPDR Fund**, with the short
+  label and provenance ("Financials holdings · as of … · State Street") on the line under it.
+  The issuers' full names live in `services/etf.py::ETF_FULL_NAMES` (+ `etf_full_name()`),
+  beside the short labels the panels and buttons keep using; the fund buttons' tooltips carry
+  both. `components()` returns `etf_full_name`.
+
+
+User: *"the filter user can turn it on or off"*
+
+- With criteria saved, the Filter panel shows an **On / Off** switch beside the count. Off
+  pauses the criteria without clearing them — both lists (industry symbols and counts, the
+  ETF basket) go unfiltered — and On applies them again. New `POST /sector/filter/toggle`
+  saves `User.prefs["sector_finviz_filter_on"]` (default on, so nothing changes for anyone
+  who never touches it) and fires `sector-filter-changed`, so the list that is showing
+  re-fetches at once. `_sector_extra_filters()` — the one function every list reads — returns
+  no codes while the switch is off; `_sector_saved_codes()` still reports what is saved, for
+  the control itself.
+- The ☰ button now reads *Edit* once criteria are saved (it opens the URL form, where Clear
+  still removes them), *Filter* before that.
+
+Verified through the app with the login dependency overridden (dev DB): with a saved
+`cap_large` filter, toggle off → the control shows Off and the industry list for XLF / Banks -
+Regional grows from the filtered count to the full count; toggle on → back to the filtered
+count; the response carries the `HX-Trigger`. Test prefs restored afterwards.
+
 ### 2026-09-15 - v4.85: Sector & Industry - four panels in three columns
 
 User: *"make it 4 panel on screen: first left (Filter up and Pick by panel), second left

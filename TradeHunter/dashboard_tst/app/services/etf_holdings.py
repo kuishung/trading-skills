@@ -363,6 +363,12 @@ def _etf_name(sym: str) -> str:
     return dict(ETF_UNIVERSE + INDEX_ETFS).get(sym, sym)
 
 
+def _etf_full_name(sym: str) -> str:
+    from .etf import etf_full_name
+
+    return etf_full_name(sym)
+
+
 # Setup ranking costs one daily-bar fetch per holding (concurrent, cached 15 min,
 # shared with the charts). A sector SPDR holds 25-80 names — a few seconds cold.
 # SPY holds 500: rank its heaviest RANK_CAP only, and say so in the panel, rather
@@ -430,7 +436,7 @@ def components(etf: str, sort: str = DEFAULT_SORT, *, extra_filters: str = "",
         rows.sort(key=lambda r: (r["rank"]["score"] is None, -(r["rank"]["score"] or 0)))
 
     return {
-        "etf": sym, "etf_name": _etf_name(sym), "rows": rows,
+        "etf": sym, "etf_name": _etf_name(sym), "etf_full_name": _etf_full_name(sym), "rows": rows,
         "sort": sort, "sorts": SORTS, "perf_field": field, "perf_label": _SORT_LABEL[sort],
         "as_of": hold["as_of"], "source": hold["source"], "stale": hold["stale"],
         "error": hold["error"], "perf_state": perf_state, "filtered": bool(extra),

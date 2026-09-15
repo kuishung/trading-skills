@@ -47,6 +47,32 @@ INDEX_ETFS = [
     ("SPY", "S&P 500"),
     ("QQQ", "Nasdaq-100"),
 ]
+
+# The issuers' full fund names (user, 2026-09-15: "in the ETF basket i need you to
+# show the full name of the ETF"). The short labels above stay the working names
+# for panels and buttons; these are what the basket header and the fund buttons'
+# tooltips show, so a symbol is never the only way to tell one fund from another.
+ETF_FULL_NAMES = {
+    "XLK": "Technology Select Sector SPDR Fund",
+    "XLF": "Financial Select Sector SPDR Fund",
+    "XLE": "Energy Select Sector SPDR Fund",
+    "XLV": "Health Care Select Sector SPDR Fund",
+    "XLI": "Industrial Select Sector SPDR Fund",
+    "XLY": "Consumer Discretionary Select Sector SPDR Fund",
+    "XLP": "Consumer Staples Select Sector SPDR Fund",
+    "XLU": "Utilities Select Sector SPDR Fund",
+    "XLB": "Materials Select Sector SPDR Fund",
+    "XLRE": "Real Estate Select Sector SPDR Fund",
+    "XLC": "Communication Services Select Sector SPDR Fund",
+    "SPY": "SPDR S&P 500 ETF Trust",
+    "QQQ": "Invesco QQQ Trust",
+}
+
+
+def etf_full_name(sym: str) -> str:
+    """The issuer's full fund name, falling back to the short label."""
+    s = (sym or "").strip().upper()
+    return ETF_FULL_NAMES.get(s) or dict(ETF_UNIVERSE + INDEX_ETFS).get(s, s)
 _TTL = 900.0  # 15 min
 _cache: dict = {}
 
