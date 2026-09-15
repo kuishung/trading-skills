@@ -179,6 +179,11 @@
           btn.addEventListener('keydown', function (e) {
             if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); run(); }
           });
+          // Curating a call without a recent MATP queues a run server-side
+          // (/curated/from-chart); this is how that button tells us to watch it.
+          document.addEventListener('tst:matp-queued', function (e) {
+            if (btn.isConnected && e.detail && e.detail.symbol === sym) { lastStatus = null; poll(); }
+          });
           idle();
           poll();   // a run someone already queued shows up without a click
         })();
@@ -845,6 +850,18 @@
             j.curated_on + ' \u2014 open Curated to see its history'
           : 'Added to your Curated list on ' + j.curated_on +
             ' \u2014 open Curated to see it';
+        // A call without a recent MATP / MBP queues a run server-side (user,
+        // 2026-09-15). Say so on the button, and wake this chart's Run-MATP
+        // control so it watches that run and redraws the lines when it lands.
+        if (j.matp_run && j.matp_run.queued) {
+          btn.textContent += ' \u00b7 MATP queued';
+          btn.title += '. ' + (j.matp_run.reason || 'MATP run queued') + '.';
+          try {
+            document.dispatchEvent(new CustomEvent('tst:matp-queued', { detail: { symbol: j.symbol } }));
+          } catch (e2) {}
+        } else if (j.matp_run && j.matp_run.reason) {
+          btn.title += '. ' + j.matp_run.reason + '.';
+        }
         var k = drawings.indexOf(d);
         setTimeout(function () {
           if (CURATED_ROW) {

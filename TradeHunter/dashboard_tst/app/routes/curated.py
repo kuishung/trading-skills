@@ -223,6 +223,39 @@ def curated_for_symbol(symbol: str,
     return {"ok": True, "call": {**call, "revisions": len(revs)}}
 
 
+# A curated call needs current MATP / MBP beside it (user, 2026-09-15: "if i click
+# curate and if the ticker does not have MBP and MATP recently calculated, it will
+# run the MATP"). "Recent" = calculated within this many days; older, or none on
+# record, and curating queues the same ticker run the chart's Run-MATP button
+# queues. The Nous agent picks it up on its next poll (about every 10 minutes).
+MATP_FRESH_DAYS = 7
+
+
+def _ensure_recent_matp(db: Session, user: User, symbol: str) -> dict:
+    """Queue a MATP run for `symbol` unless one was calculated in the last
+    MATP_FRESH_DAYS. Returns what happened, for the chart button to report:
+    {"queued": bool, "reason": str}. Never raises — curating must succeed even if
+    the queue cannot be touched."""
+    from ..models import MATPLevel
+    from .matp import _enqueue
+
+    sym = (symbol or "").strip().upper()
+    try:
+        lvl = db.query(MATPLevel).filter(MATPLevel.symbol == sym).first()
+        if lvl is not None and lvl.matp is not None and lvl.as_of is not None:
+            age = (_dt.datetime.utcnow() - lvl.as_of).days
+            if age <= MATP_FRESH_DAYS:
+                return {"queued": False,
+                        "reason": f"MATP calculated {age} day{'s' if age != 1 else ''} ago"}
+            why = f"MATP is {age} days old"
+        else:
+            why = "no MATP on record"
+        queued = _enqueue(db, "ticker", symbol=sym, user=user)
+        return {"queued": True, "reason": why + (" - run queued" if queued else " - a run is already queued")}
+    except Exception as e:  # noqa: BLE001 - reported, never fatal
+        return {"queued": False, "reason": f"could not queue a MATP run ({e.__class__.__name__})"}
+
+
 @router.post("/from-chart")
 def curated_from_chart(
     symbol: str = Form(...),
@@ -261,7 +294,8 @@ def curated_from_chart(
         return {"ok": True, "revised": True, "row_id": rid_int,
                 "symbol": (symbol or "").strip().upper(),
                 "curated_on": call["curated_on"] if call else "",
-                "revisions": len(revs), "message": message}
+                "revisions": len(revs), "message": message,
+                "matp_run": _ensure_recent_matp(db, user, symbol)}
 
     today = _dt.date.today().isoformat()
     ok, message = cur.add(db, user, symbol=symbol, curated_on=today, entry=entry,
@@ -270,7 +304,8 @@ def curated_from_chart(
     if not ok:
         return {"ok": False, "error": message}
     return {"ok": True, "revised": False, "symbol": (symbol or "").strip().upper(),
-            "curated_on": today, "message": message}
+            "curated_on": today, "message": message,
+            "matp_run": _ensure_recent_matp(db, user, symbol)}
 
 
 @router.post("/prefs", response_class=HTMLResponse)

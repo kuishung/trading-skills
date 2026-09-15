@@ -143,6 +143,29 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-15 - v4.82: curating a call queues a MATP run when the ticker has no recent one
+
+User: *"if i click curate and if the ticker do not have MBP and MATP recently calculated, it
+will run the MATP"*
+
+- `POST /curated/from-chart` (both a new call and a revision) now ends with
+  `_ensure_recent_matp()`: if the ticker has no MATP on record, or its `as_of` is older than
+  `MATP_FRESH_DAYS` (7), it queues the same ticker-scope request the chart's Run-MATP button
+  queues, through `matp._enqueue`, so it never duplicates a run already open. The response
+  carries `matp_run: {queued, reason}`; a queue failure is reported there, never fatal to the
+  curate itself.
+- In the setup editor the Curate button then reads `✓ Curated · MATP queued` (the tooltip
+  gives the reason, e.g. "no MATP on record - run queued" or "MATP is 12 days old"), and it
+  fires `tst:matp-queued`, which the chart's Run-MATP control listens for — so that control
+  switches to `⌛ MATP queued` at once and redraws the MATP / MBP lines when the agent finishes,
+  without a reload. A ticker calculated within the last 7 days queues nothing and the tooltip
+  says how old the number is.
+
+Verified through the app with the login dependency overridden (dev DB): curating KO (no MATP
+on record) → `matp_run.queued = true`, one pending ticker request for KO; curating KO again →
+"a run is already queued", still one request; curating IFF (MATP calculated today) → not
+queued, reason "MATP calculated 0 days ago". Test rows removed afterwards.
+
 ### 2026-09-15 - v4.81: the holdings pop-out opens zoomed to the ticker's setup
 
 User: *"when the ticker is clicked and the new window opened with the chart, the chart needs to
