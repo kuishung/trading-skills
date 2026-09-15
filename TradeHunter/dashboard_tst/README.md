@@ -143,6 +143,23 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-15 - v4.76: Portfolio and Options leave the menu bar
+
+User: *"remove the portfolio menu and also the option menu"*
+
+- `app/menus.py`: the **Portfolio** item (`positions`, `/portfolio`) and the **Options**
+  dropdown (its only entry, `spreads`, `/spreads`) moved from `MENUS` to `HIDDEN_KEYS` — the
+  same treatment `company` / `studies` / `strategy` / `patterns` got. The pages, routes and
+  per-user grants are untouched; both still open by URL. Re-adding either tuple to `MENUS`
+  restores it. The nav's Portfolio exit-line badge (polling `/portfolio/badge` every 5 min from
+  every page) lived inside the Portfolio item, so it goes with it.
+- The admin console's menu-access checklist is built from `MENUS`, so the two no longer appear
+  there either (as for the other hidden keys).
+
+Verified through the app with the login dependency overridden (dev DB): the nav on `/sector`
+shows Macro · Calendar · Sector & Industry · Company · Watchlist · Curated and no Portfolio /
+Options; `/portfolio` and `/spreads` still return 200; `/portfolio/badge` is no longer requested.
+
 ### 2026-09-15 - v4.75: Sector & Industry ticker panel - four switchable setup conditions
 
 User: *"in the sector and industry ticker panel. The conditions to be applied as follow: 1.

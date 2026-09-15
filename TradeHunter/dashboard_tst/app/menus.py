@@ -32,19 +32,6 @@ MENUS = [
     # Curated — each member's own dated calls (entry/stop/target), judged from
     # price history. Replaced the Portfolio placeholder 2026-09-07 (user).
     ("curated",          "Curated",           None, "/curated"),
-    # Portfolio — the member's OWN open option spreads, monitored daily against
-    # their delta and max-loss exit lines. Added 2026-09-10 (user).
-    #
-    # The key is "positions", not "portfolio", and that is deliberate: LEGACY_KEYS
-    # below still translates a stored "portfolio" grant to "curated", because the
-    # OLD Portfolio placeholder is what became Curated on 2026-09-07. Reusing the
-    # key here would make one stored string mean two different pages, and the
-    # translation would silently hand this page's grants to Curated instead.
-    ("positions",        "Portfolio",         None, "/portfolio"),
-    # Options — a dropdown group (user, 2026-09-13: "Option sub menu Spread").
-    # First entry: the bull put spread screener, Barchart's screen rebuilt on
-    # the platform's own Cboe feed. Room for Flow / Chains later.
-    ("spreads",          "Spread",            "Options", "/spreads"),
 ]
 # Routes that stay ACCESSIBLE (granted + reachable by URL) but are no longer shown
 # in the top nav after the revamp. Kept in ALL_KEYS so their require_menu() guards
@@ -52,7 +39,19 @@ MENUS = [
 # (kind=company); studies/strategy/patterns are de-emphasized. Re-add to MENUS to
 # resurface any of them. ("today" was the post-login landing until 2026-09-07, when
 # the page was removed and the Calendar became the landing -- see LANDING below.)
-HIDDEN_KEYS = ["company", "studies", "strategy", "patterns"]
+#
+# "positions" (/portfolio, the member's own open option spreads, added 2026-09-10)
+# and "spreads" (/spreads, the bull put spread screener that was the Options
+# dropdown's only entry, added 2026-09-13) were taken off the nav 2026-09-15 (user:
+# "remove the portfolio menu and also the option menu"). The pages and their routes
+# are untouched — only the menu entries went. To bring either back, re-add its
+# tuple to MENUS: ("positions", "Portfolio", None, "/portfolio") /
+# ("spreads", "Spread", "Options", "/spreads"). NB the Portfolio key is "positions",
+# not "portfolio": LEGACY_KEYS translates a stored "portfolio" grant to "curated"
+# (the OLD Portfolio placeholder became Curated on 2026-09-07), so reusing that key
+# would hand this page's grants to Curated. Hiding it also stops the nav's exit-line
+# badge poll (base.html, /portfolio/badge), which lived inside the Portfolio item.
+HIDDEN_KEYS = ["company", "studies", "strategy", "patterns", "positions", "spreads"]
 # Where an approved user lands after sign-in (user, 2026-09-07: "on login go to
 # calendar by default"). Kept here rather than hard-coded at each redirect site so
 # the three of them (index, password login, OAuth callback) cannot drift apart.
