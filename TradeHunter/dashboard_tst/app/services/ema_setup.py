@@ -300,8 +300,14 @@ def rank(setup: dict, enabled: dict) -> dict:
         score += COND_WEIGHT["c5"]
         chips.append({"t": f"below -{setup['below_pct']:.1f}% {setup['below_ema']}", "k": "watch",
                       "title": f"Close is {setup['below_pct']:.2f}% below {setup['below_ema']} - testing it from underneath"})
+    # Qualifies = passes the gate (if on) AND meets at least one of the other
+    # switched-on conditions (or none of the others are on). The list FADES
+    # tickers that do not (user, 2026-09-15: "those not qualifying to the
+    # technical will be faded"), so a sector-wide list still reads at a glance.
+    others = [k for k in COND_KEYS if k != "c1" and enabled.get(k)]
+    qualifies = (not gated) and (not others or any(met[k] for k in others))
     return {"score": score, "met": met, "chips": chips, "gated": gated,
-            "summary": setup.get("summary") or ""}
+            "qualifies": qualifies, "summary": setup.get("summary") or ""}
 
 
 def setup_for(symbol: str) -> dict:

@@ -1,4 +1,10 @@
 {# Industry HEADERS for a sector (children under the sector row). Context: sector, name, industries [{name,tickers}], n. #}
+{# Clicking the sector fills the ticker panel with the WHOLE sector (user,
+   2026-09-15), ranked and faded by the setup conditions; clicking an industry
+   below narrows it. Loaded from this fragment rather than by the sector row
+   itself, so the tree paints at once and the (slower, one-bar-fetch-per-ticker)
+   ranking follows. #}
+<div hx-get="/sector/symbols?sector={{ sector }}" hx-trigger="load" hx-target="#symbolPanel" hx-swap="innerHTML"></div>
 {% if not industries %}
 <p class="text-[11px] text-slate-600 px-2 py-1">No industries found.</p>
 {% else %}

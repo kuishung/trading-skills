@@ -4,7 +4,7 @@
 {# The four setup conditions — the form is SHARED with the ETF basket
    (_sector_conds.html); a change re-sorts this list, the sector/industry ride
    along as hidden fields so the re-render knows what to list. #}
-{% if industry %}
+{% if sector %}
 {% set conds_post = '/sector/symbols/conds' %}
 {% set conds_target = '#symbolPanel' %}
 {% set conds_hidden = {'sector': sector, 'industry': industry} %}
@@ -12,10 +12,10 @@
 {% endif %}
 {% if not tickers %}
 <p class="text-xs text-slate-600 py-3">
-  {% if industry %}No symbols{% if filtered %} match the filter{% endif %} for {{ industry }}.{% else %}Select an industry above to list its symbols.{% endif %}
+  {% if industry %}No symbols{% if filtered %} match the filter{% endif %} for {{ industry }}.{% elif sector %}No symbols{% if filtered %} match the filter{% endif %} in {{ sector_name }}.{% else %}Select a sector or an industry above to list its symbols.{% endif %}
 </p>
 {% else %}
-<div class="text-[11px] text-slate-500 mb-2">{{ sector_name }} &middot; <span class="text-slate-300">{{ industry }}</span> &middot; {{ tickers|length }} symbols{% if filtered %} &middot; <span class="text-emerald-400/80">filtered</span>{% endif %}</div>
+<div class="text-[11px] text-slate-500 mb-2">{{ sector_name }} &middot; <span class="text-slate-300">{{ industry or 'all industries' }}</span> &middot; {{ tickers|length }} symbols{% if filtered %} &middot; <span class="text-emerald-400/80">filtered</span>{% endif %}{% if ranked %}{% set nq = tickers|selectattr('rank.qualifies')|list|length %} &middot; <span class="text-emerald-300">{{ nq }} qualify</span>{% endif %}</div>
 {# Leading star column = add/remove this ticker on MY watchlist (handler in
    base.html). It sits inside the row, so the capture-phase handler stops the
    click from also swapping the chart. #}
@@ -28,13 +28,13 @@
 {% set rk = t.rank if ranked else none %}
 <div data-sym="{{ t.symbol }}" title="Show {{ t.symbol }} chart{% if rk and t.setup.close %}&#10;{{ t.setup.summary }} &middot; EMA20 {{ t.setup.ema20 }} / EMA50 {{ t.setup.ema50 }} / EMA200 {{ t.setup.ema200 }}{% if t.setup.dip_pct %} &middot; deepest dip {{ t.setup.dip_pct }}%{% endif %}{% endif %}"
      hx-get="/sector/chart?symbol={{ t.symbol }}" hx-target="#sectorChartBody" hx-swap="innerHTML"
-     style="{{ COLS }}" class="wl-ticker cursor-pointer px-1 {% if rk %}py-1 border-b border-slate-800/50{% else %}py-0.5{% endif %} rounded hover:bg-emerald-500/10 hover:text-emerald-300 transition{% if rk and rk.gated %} opacity-50{% endif %}">
+     style="{{ COLS }}" class="wl-ticker cursor-pointer px-1 {% if rk %}py-1 border-b border-slate-800/50{% else %}py-0.5{% endif %} rounded hover:bg-emerald-500/10 hover:text-emerald-300 transition{% if rk and not rk.qualifies %} opacity-40{% endif %}">
   <span class="wl-star cursor-pointer text-center text-[12px] leading-none select-none transition {% if _on %}text-amber-300{% else %}text-slate-700 hover:text-amber-300{% endif %}"
         role="button" tabindex="0" aria-pressed="{{ 'true' if _on else 'false' }}"
         title="{{ 'Remove ' ~ t.symbol ~ ' from My Watchlist' if _on else 'Add ' ~ t.symbol ~ ' to My Watchlist' }}"
         data-sym="{{ t.symbol }}">{% if _on %}&#9733;{% else %}&#9734;{% endif %}</span>
   <span class="text-[12px] font-medium text-slate-200">{{ t.symbol }}</span>
-  <span class="block min-w-0 text-[11px] text-slate-400 truncate" title="{{ t.company }}">{{ t.company or '&mdash;' }}</span>
+  <span class="block min-w-0 text-[11px] text-slate-400 truncate" title="{{ t.company }}{% if t.industry %} &middot; {{ t.industry }}{% endif %}">{{ t.company or '&mdash;' }}{% if t.industry and not industry %} <span class="text-slate-600">&middot; {{ t.industry }}</span>{% endif %}</span>
   <span class="text-right text-[11px] text-slate-300 tabular-nums">{{ '%.2f'|format(t.price) if t.price is not none else '-' }}</span>
   {# Second line of the same row: the setup chips, full width under the ticker /
      name / price (user, 2026-09-15: "each ticker will have multiple rows where the

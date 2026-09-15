@@ -252,8 +252,21 @@ def _symbols_context(request: Request, sector: str, industry: str, user: User,
     from ..services.industry import sector_industries
 
     data = sector_industries(sector, _sector_extra_filters(user))
-    match = next((i for i in data["industries"] if i["name"] == industry), None)
-    tickers = list(match["tickers"]) if match else []
+    if industry:
+        match = next((i for i in data["industries"] if i["name"] == industry), None)
+        tickers = list(match["tickers"]) if match else []
+    else:
+        # No industry = the WHOLE sector (user, 2026-09-15: "when click on a
+        # sector, all the stock under the filter will be shown in the ticker
+        # panel"). Every industry's tickers, de-duplicated, still under the
+        # member's Finviz filter because sector_industries applied it.
+        seen: set[str] = set()
+        tickers = []
+        for ind in data["industries"]:
+            for t in ind["tickers"]:
+                if t["symbol"] not in seen:
+                    seen.add(t["symbol"])
+                    tickers.append(dict(t, industry=ind["name"]))
     prefs = getattr(user, "prefs", None) or {}
     enabled = es.clean_enabled(prefs.get(SYM_CONDS_PREF))
 

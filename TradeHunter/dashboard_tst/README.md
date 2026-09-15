@@ -143,6 +143,27 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-15 - v4.93: Sector & Industry - a sector click lists the whole sector, non-qualifiers faded
+
+User: *"in sector and industry when click on a sector, all the stock under the filter will be
+shown in the ticker panel, those not qualifying to the technical will be faded"*
+
+- **A sector click fills the ticker panel with the whole sector.** The industry-headers
+  fragment (`_sector_industry_headers.html`) now carries a lazy loader that fetches
+  `/sector/symbols?sector=X` into `#symbolPanel` as soon as the tree paints, so the tree is
+  instant and the ranking follows. `_symbols_context` with a blank industry unions every
+  industry's tickers (de-duplicated, still under the member's Finviz filter, each row noting
+  its industry). Clicking an industry narrows the list as before.
+- **Non-qualifiers are faded** (`opacity-40`). `ema_setup.rank` gained a `qualifies` verdict:
+  passes the EMA gate when it is on AND meets at least one of the other switched-on conditions
+  (or none of the others are on). The header counts them: *77 symbols · 5 qualify*. The
+  conditions row shows for a sector-wide list too, and re-sorts it.
+
+Verified through the app on XLU: the industries fragment carries the loader; the sector-wide
+list renders all 77 filtered tickers in 1.9 s, 5 qualifying and 72 faded, labelled "all
+industries" with each row's industry; an industry click still narrows (Regulated Electric,
+36 rows); toggling a condition with only the sector set keeps the 77-row list.
+
 ### 2026-09-15 - v4.92: the ETF basket sits two funds per row
 
 User: *"in the ETF list, one line showing only 1 ETF"* - with the name on each button (v4.88)
