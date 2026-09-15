@@ -33,7 +33,11 @@
    `overflow-hidden` so that on a short screen the furniture scrolls and the chart
    keeps its height, instead of the chart being clipped away. The ⤢ button expands
    the pane to the full viewport for a proper look; see curated.html. #}
-<div id="curatedChartWrap" class="relative mb-3 lg:mb-0 lg:w-3/4 lg:shrink-0 lg:min-h-0 lg:flex lg:flex-col">
+{# The chart column's width on lg is the --cur-split variable on .curated-panel
+   (default 75%, see curated.html), which the divider below drags and localStorage
+   remembers — not a fixed lg:w-3/4 (user, 2026-09-15: "i need the chart and the
+   ticker panel to be adjustable in width"). #}
+<div id="curatedChartWrap" class="relative mb-3 lg:mb-0 lg:shrink-0 lg:min-h-0 lg:flex lg:flex-col">
   <button type="button" id="curatedChartExpand"
           class="absolute right-2 top-1 z-20 text-[11px] px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900/80 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 transition"
           title="Expand the chart to fill the window (Esc to restore)">&#10530;</button>
@@ -48,7 +52,16 @@
 </div>
 </div>{# /#curatedChartWrap #}
 
-{# ── everything else: the right quarter, scrolling on its own ──────────── #}
+{# ── the divider: drag to resize the two columns, double-click to reset ──── #}
+{# lg only (there are no columns to divide when stacked). Handled by the delegated
+   pointer code in curated.html, which survives every swap of this panel. #}
+<div id="curatedSplit" class="hidden lg:block shrink-0 w-2 -mx-0.5 cursor-col-resize rounded group select-none"
+     role="separator" aria-orientation="vertical" tabindex="0"
+     title="Drag to resize the chart and the list. Double-click to reset.">
+  <div class="h-full w-px mx-auto bg-slate-800 group-hover:bg-emerald-500/70 transition"></div>
+</div>
+
+{# ── everything else: the right column, scrolling on its own ──────────── #}
 <div id="curatedSide" class="min-w-0 lg:flex-1 lg:min-h-0 lg:overflow-y-auto lg:pr-1">
 
 {% set BADGE = {

@@ -143,6 +143,27 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-15 - v4.80: Curated - drag the divider to resize the chart and the list
+
+User: *"i need the chart and the ticker penal to be adjustable in width"*
+
+- A divider (`#curatedSplit`) between the chart column and the list column on large screens.
+  **Drag** it to move the boundary (clamped 35–85% for the chart), **double-click** to reset to
+  3/4; it is focusable, and the arrow keys nudge it by 2% (Home resets). The chart column's
+  width is now the `--cur-split` CSS variable on `.curated-panel` (default 75%) instead of a
+  fixed `lg:w-3/4`; the list still takes the rest.
+- Remembered per browser (`curated_split_pct`) and re-applied after every HTMX swap of the
+  panel, so a month change or a saved revision never snaps the columns back. The pointer code is
+  delegated on `document` because the divider is re-rendered with the panel. While dragging,
+  the two columns stop taking pointer events (the chart's canvases would otherwise swallow the
+  move) and the body shows a column-resize cursor. The chart follows its new width by itself
+  (`autoSize`).
+- Stacked (small screens) the divider is hidden; nothing to divide.
+
+Verified in the browser at 1440×900 (dev DB, login dependency overridden): dragging the divider
+from 75% to about 55% widens the list and the chart re-lays out; a reload keeps the split;
+double-click restores 3/4.
+
 ### 2026-09-15 - v4.79: Curated - the analyst band starts collapsed every time
 
 User: *"by default in the analyst range to be collapsed in the Curated Page chart"*

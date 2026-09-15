@@ -54,7 +54,83 @@
   #curatedChartWrap.cur-max { display: block; width: auto; height: auto; }
   /* the page behind must not scroll under an overlay that covers it */
   body.cur-max-open { overflow: hidden; }
+
+  /* Adjustable split (lg only): the chart column is --cur-split wide, the list
+     takes the rest. The variable lives on .curated-panel, which is re-rendered
+     by HTMX, so the JS below re-applies the remembered value after every swap. */
+  @media (min-width: 1024px) {
+    #curatedChartWrap { width: var(--cur-split, 75%); }
+    body.cur-resizing { cursor: col-resize; user-select: none; }
+    /* the chart's canvases would otherwise swallow the pointer mid-drag */
+    body.cur-resizing #curatedChartWrap, body.cur-resizing #curatedSide { pointer-events: none; }
+  }
 </style>
+
+<script>
+  // ── Adjustable split between the chart and the list ─────────────────────────
+  // User, 2026-09-15: "i need the chart and the ticker panel to be adjustable in
+  // width." Drag the divider (#curatedSplit) to move the boundary; double-click it
+  // to go back to 3/4. The width is remembered per browser and re-applied after
+  // every HTMX swap of the panel (month change, saved revision, sizing change), so
+  // a re-render never snaps the columns back. Delegated on document because the
+  // divider is re-rendered with the panel. The chart follows the new width on its
+  // own (lightweight-charts autoSize watches its container).
+  (function () {
+    var KEY = 'curated_split_pct', DEFAULT = 75, MIN = 35, MAX = 85;
+    function panel() { return document.querySelector('.curated-panel'); }
+    function stored() {
+      try { var v = parseFloat(localStorage.getItem(KEY)); return isFinite(v) ? v : DEFAULT; }
+      catch (e) { return DEFAULT; }
+    }
+    function clamp(v) { return Math.min(MAX, Math.max(MIN, v)); }
+    function apply(pct) {
+      var p = panel();
+      if (p) p.style.setProperty('--cur-split', clamp(pct) + '%');
+    }
+    function remember(pct) { try { localStorage.setItem(KEY, String(clamp(pct))); } catch (e) {} }
+
+    var drag = null;   // { left, width, last } of the panel while a drag is in progress
+    document.addEventListener('pointerdown', function (e) {
+      var h = e.target.closest ? e.target.closest('#curatedSplit') : null;
+      if (!h || e.button !== 0) return;
+      var p = panel();
+      if (!p) return;
+      var r = p.getBoundingClientRect();
+      drag = { left: r.left, width: r.width, last: stored() };
+      document.body.classList.add('cur-resizing');
+      try { h.setPointerCapture(e.pointerId); } catch (err) {}
+      e.preventDefault();
+    });
+    document.addEventListener('pointermove', function (e) {
+      if (!drag || !drag.width) return;
+      drag.last = clamp((e.clientX - drag.left) / drag.width * 100);
+      apply(drag.last);
+    });
+    function end() {
+      if (!drag) return;
+      remember(drag.last);
+      drag = null;
+      document.body.classList.remove('cur-resizing');
+    }
+    document.addEventListener('pointerup', end);
+    document.addEventListener('pointercancel', end);
+    document.addEventListener('dblclick', function (e) {
+      if (e.target.closest && e.target.closest('#curatedSplit')) { apply(DEFAULT); remember(DEFAULT); }
+    });
+    // keyboard: the divider is focusable; arrows nudge it by 2% (Home resets)
+    document.addEventListener('keydown', function (e) {
+      if (!(e.target && e.target.id === 'curatedSplit')) return;
+      var v = stored();
+      if (e.key === 'ArrowLeft') v -= 2; else if (e.key === 'ArrowRight') v += 2;
+      else if (e.key === 'Home') v = DEFAULT; else return;
+      e.preventDefault();
+      apply(v); remember(v);
+    });
+
+    document.addEventListener('htmx:afterSwap', function () { apply(stored()); });
+    apply(stored());
+  })();
+</script>
 
 <script>
   // ── Expand the chart pane to fill the window ────────────────────────────────
