@@ -143,6 +143,21 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-15 - v4.96: Curated - each week split into Below MBP and Above MBP
+
+User: *"in the curated list, i need it to be separated by before MBP and above MBP"*
+
+Inside every week block the calls are now grouped by where the ticker's latest price sits
+against its **Max Buy Price** from the MATP board: **Below MBP** first (still inside the
+buy zone), then **Above MBP**, then **No MBP yet** for tickers not on the board. Each group
+has a one-line header with its count, and the setup line under a call shows the MBP figure,
+green below / red above. `routes/curated._list_context` reads the on-screen tickers' MBP in
+one query and grades the latest close (the entry when no bar has printed yet) against it;
+the split is done in the template, so the week summary and the totals strip are unchanged.
+
+Verified through the app on the All view: the group headers' counts add up to the number
+of calls, and every call with an MBP carries the figure.
+
 ### 2026-09-15 - v4.95: Curated - a divider you can see, and width presets
 
 User: *"in curated, i need the chart and the ticker panel can be adjusted in width"* - asked

@@ -244,7 +244,19 @@
         </tr>
       </thead>
       <tbody>
-        {% for r in m.rows %}{% set e = r.eval %}{% set b = BADGE.get(e.status) %}
+        {# ── split by the ticker's Max Buy Price (user, 2026-09-15): calls whose latest
+           price is still BELOW MBP first (still buyable), then those above it, then
+           tickers with no MBP yet. A one-line group header per non-empty group. #}
+        {% for gkey, glabel, gcls in [('below', 'Below MBP', 'text-emerald-300'), ('above', 'Above MBP', 'text-rose-300'), ('none', 'No MBP yet', 'text-slate-500')] %}
+        {% set grp = m.rows | selectattr('mbp_state', 'equalto', gkey) | list %}
+        {% if grp %}
+        <tr class="cur-group-row">
+          <td colspan="14" class="px-1 pt-1.5 pb-0.5 text-[9px] uppercase tracking-wide {{ gcls }} border-b border-slate-800/60"
+              title="{% if gkey == 'below' %}Latest price is under the Max Buy Price from the MATP board{% elif gkey == 'above' %}Latest price has moved above the Max Buy Price{% else %}No MATP / MBP on the board for these tickers yet{% endif %}">
+            {{ glabel }} <span class="normal-case tracking-normal text-slate-600">{{ grp|length }}</span>
+          </td>
+        </tr>
+        {% for r in grp %}{% set e = r.eval %}{% set b = BADGE.get(e.status) %}
         {# Click the row to put this call on the chart above. The trigger filter
            excludes the actions cell, so the TV / history / edit / delete controls
            in it still do their own thing instead of also reloading the chart —
@@ -360,6 +372,7 @@
               <span class="text-[9px] text-slate-600">{% if sr.score is none %}{{ sr.summary }}{% elif sr.gated %}not in EMA uptrend{% else %}no setup condition met{% endif %}</span>
               {% endfor %}
               {% if r.setup.close %}<span class="text-[9px] text-slate-600 ml-1 tabular-nums" title="Last close against the EMAs">{{ '%.2f'|format(r.setup.close) }} &middot; E20 {{ r.setup.ema20 }} &middot; E50 {{ r.setup.ema50 }}</span>{% endif %}
+              {% if r.mbp %}<span class="text-[9px] tabular-nums ml-1 {% if r.mbp_state == 'above' %}text-rose-300/80{% else %}text-emerald-300/80{% endif %}" title="Max Buy Price from the MATP board">MBP {{ '%.2f'|format(r.mbp) }}</span>{% endif %}
             </span>
           </td>
         </tr>
@@ -418,6 +431,8 @@
                   data-tag="{% if not rv.current %}#{{ rv.n }}{% endif %}">&#9639;</span>
           </td>
         </tr>
+        {% endfor %}
+        {% endif %}
         {% endfor %}
         {% endif %}
         {% endfor %}

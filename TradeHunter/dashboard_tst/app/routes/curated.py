@@ -103,11 +103,25 @@ def _list_context(db: Session, user: User, *, year: str = "", month: str = "",
     on_screen_syms = sorted({r["symbol"] for mo in months for r in mo["rows"]})
     setups = es.setups_for_many(on_screen_syms) if on_screen_syms else {}
     enabled = es.clean_enabled((getattr(user, "prefs", None) or {}).get("sym_conds"))
+    # Where each call sits against its ticker's Max Buy Price (user, 2026-09-15:
+    # "separated by before MBP and above MBP"): the latest close (the entry when
+    # no bar has printed yet) against the MATP board's MBP. Grouped in the
+    # template: below MBP first (still buyable), then above, then no MBP yet.
+    from ..models import MATPLevel
+
+    mbps = {sym: mbp for sym, mbp in
+            db.query(MATPLevel.symbol, MATPLevel.mbp)
+              .filter(MATPLevel.symbol.in_(on_screen_syms)).all()} if on_screen_syms else {}
     for mo in months:
         for r in mo["rows"]:
             st = setups.get(r["symbol"]) or es._blank()
             r["setup"] = st
             r["setup_rank"] = es.rank(st, enabled)
+            mbp = mbps.get(r["symbol"])
+            price = r["eval"].get("last") if r["eval"].get("last") is not None else r.get("entry")
+            r["mbp"] = mbp
+            r["mbp_state"] = ("none" if not mbp or price is None
+                              else ("above" if float(price) > float(mbp) else "below"))
     for mo in months:
         for r in mo["rows"]:
             r["size"] = tp.size(r.get("entry"), r.get("stop"), prefs)
