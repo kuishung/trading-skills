@@ -1,0 +1,109 @@
+{# The ETF basket: one fund's holdings, each joined to its performance, filtered by
+   the member's Finviz criteria and RANKED by the same four setup conditions the
+   industry list uses. Context: services.etf_holdings.components() + the route's
+   my_syms, curated_today, enabled, cond_labels, cond_keys, ranked, rank_cap.
+   Swapped into #basketPanel.
+
+   The root re-requests ITSELF every 2.5s while perf_state == 'loading' (the
+   index's performance walk is running in the background on a cold cache) and stops
+   the moment the numbers land. The value pills and the conditions form swap the
+   same panel; hx-sync keeps a click from being undone by a poll landing later.
+
+   Rows are .wl-ticker like the industry list, so the page's one delegated handler
+   charts them in the Chart tab; the ↗ at the row's end opens the pop-out window. #}
+{% macro pct(v) -%}
+{%- if v is none -%}<span class="text-slate-600">&ndash;</span>
+{%- else -%}<span class="tabular-nums {{ 'text-emerald-400' if v > 0 else ('text-rose-400' if v < 0 else 'text-slate-400') }}">{{ '%+.1f'|format(v) }}%</span>
+{%- endif -%}
+{%- endmacro %}
+{% macro txt(v) -%}{{ '–' if v is none else ('%+.2f'|format(v) ~ '%') }}{%- endmacro %}
+{% set _qs = 'symbol=' ~ etf ~ '&sort=' ~ sort %}
+<div class="basket-body"
+     {% if perf_state == 'loading' %}hx-get="/sector/basket?{{ _qs }}" hx-trigger="load delay:2500ms" hx-target="#basketPanel" hx-swap="innerHTML" hx-sync="this:drop"{% endif %}>
+  <div class="flex items-baseline justify-between gap-2 px-1">
+    <h3 class="text-sm font-semibold text-slate-200">{{ etf }} <span class="font-normal text-slate-500">holdings</span></h3>
+    {% if rows %}<span class="text-[11px] text-slate-500 tabular-nums">{{ rows | length }}{% if filtered %} <span class="text-emerald-400/80" title="Only holdings matching your Finviz filter">filtered</span>{% endif %}</span>{% endif %}
+  </div>
+  <p class="text-[10px] text-slate-600 px-1 mb-1.5 leading-snug">
+    {{ etf_name }}{% if as_of %} &middot; as of {{ as_of }}{% endif %}{% if source %} &middot; {{ source }}{% endif %}
+    {% if stale %} &middot; <span class="text-amber-400/80" title="The issuer could not be reached, so this is the last good copy">last good copy</span>{% endif %}
+  </p>
+
+  {% if error and not rows %}
+  <p class="text-xs text-slate-500 py-3 px-1">{{ error }}</p>
+  {% else %}
+  {% set conds_post = '/sector/basket/conds' %}
+  {% set conds_target = '#basketPanel' %}
+  {% set conds_hidden = {'symbol': etf, 'sort': sort} %}
+  {% include "_sector_conds.html" %}
+
+  <div class="flex flex-wrap items-center gap-1 mb-1.5 px-1">
+    <span class="text-[10px] text-slate-500 mr-0.5" title="The value shown on each row — and the order, once the setup conditions have had their say">Show</span>
+    {% for key, _field, label in sorts %}
+    <button type="button"
+            class="bk-sort text-[10px] px-1.5 py-0.5 rounded border transition {% if key == sort %}border-emerald-500/60 bg-emerald-500/15 text-emerald-300{% else %}border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200{% endif %}"
+            data-sort="{{ key }}"
+            hx-get="/sector/basket?symbol={{ etf }}&sort={{ key }}"
+            hx-target="#basketPanel" hx-swap="innerHTML"
+            hx-sync="closest .basket-body:replace"
+            title="{{ 'Weight in the fund — how it is built' if key == 'weight' else label ~ ' performance' }}">{{ label }}</button>
+    {% endfor %}
+  </div>
+
+  {% if perf_state == 'loading' %}
+  <p class="text-[10px] text-sky-300/80 px-1 mb-1 leading-snug">Loading performance for the index&hellip; the first view after a restart takes up to ~40s, then it is cached for 15 min.{% if filtered %} Your filter applies once it lands.{% endif %}</p>
+  {% elif perf_state == 'failed' %}
+  <p class="text-[10px] text-amber-400/80 px-1 mb-1 leading-snug">Performance is unavailable right now &mdash; showing weights only. It retries on its own.</p>
+  {% endif %}
+  {% if rank_cap %}
+  <p class="text-[10px] text-slate-600 px-1 mb-1 leading-snug">Setup ranking covers the {{ rank_cap }} heaviest holdings; the rest list below them.</p>
+  {% endif %}
+
+  {% if not rows %}
+  <p class="text-xs text-slate-500 py-3 px-1">{% if filtered and perf_state == 'loading' %}Applying your filter&hellip;{% elif filtered %}No holdings match your filter.{% else %}No holdings to show.{% endif %}</p>
+  {% else %}
+  {% set COLS = "display:grid;grid-template-columns:1.2rem 3rem 1fr 3.4rem 3.6rem 1rem;column-gap:0.3rem;align-items:center" %}
+  <div style="{{ COLS }}" class="px-1 pb-0.5 text-[10px] uppercase tracking-wide text-slate-600 border-b border-slate-800/70">
+    <span class="text-center" title="My Watchlist">&#9733;</span><span>Ticker</span><span>Name</span>
+    <span class="text-right">Last</span>
+    <span class="text-right">{{ perf_label }}</span>
+    <span></span>
+  </div>
+  {% for r in rows %}
+  {% set _on = my_syms and (r.symbol in my_syms or r.chart_symbol in my_syms) %}
+  {% set cur = curated_today and (r.symbol in curated_today or r.chart_symbol in curated_today) %}
+  {% set rk = r.rank if ranked else none %}
+  <div data-sym="{{ r.chart_symbol }}"
+       title="{{ r.symbol }} &mdash; {{ r.name }}&#10;{{ '%.2f'|format(r.weight) }}% of {{ etf }}{% if r.price is not none %} &middot; last {{ '%.2f'|format(r.price) }}{% endif %}&#10;1D {{ txt(r.chg_1d) }} &middot; 1W {{ txt(r.perf_1w) }} &middot; 1M {{ txt(r.perf_1m) }} &middot; 3M {{ txt(r.perf_3m) }} &middot; YTD {{ txt(r.perf_ytd) }}{% if rk and r.setup and r.setup.close %}&#10;{{ r.setup.summary }} &middot; EMA20 {{ r.setup.ema20 }} / EMA50 {{ r.setup.ema50 }} / EMA200 {{ r.setup.ema200 }}{% if r.setup.dip_pct %} &middot; deepest dip {{ r.setup.dip_pct }}%{% endif %}{% endif %}&#10;Click to chart"
+       hx-get="/sector/chart?symbol={{ r.chart_symbol }}" hx-target="#sectorChartBody" hx-swap="innerHTML"
+       style="{{ COLS }}" class="wl-ticker cursor-pointer px-1 {% if rk %}py-1 border-b border-slate-800/50{% else %}py-0.5{% endif %} rounded hover:bg-emerald-500/10 hover:text-emerald-300 transition{% if rk and rk.gated %} opacity-50{% endif %}">
+    <span class="wl-star cursor-pointer text-center text-[12px] leading-none select-none transition {% if _on %}text-amber-300{% else %}text-slate-700 hover:text-amber-300{% endif %}"
+          role="button" tabindex="0" aria-pressed="{{ 'true' if _on else 'false' }}"
+          title="{{ 'Remove ' ~ r.chart_symbol ~ ' from My Watchlist' if _on else 'Add ' ~ r.chart_symbol ~ ' to My Watchlist' }}"
+          data-sym="{{ r.chart_symbol }}">{% if _on %}&#9733;{% else %}&#9734;{% endif %}</span>
+    <span class="text-[12px] font-medium text-slate-200 whitespace-nowrap">{{ r.symbol }}{% if cur %} <span class="text-[9px] px-1 py-px rounded bg-emerald-500/20 text-emerald-300 align-middle" title="You curated {{ r.symbol }} today &mdash; it is on your Curated page">curated</span>{% endif %}</span>
+    <span class="block min-w-0 text-[11px] text-slate-400 truncate" title="{{ r.name }}">{{ r.name }}</span>
+    <span class="text-right text-[11px] text-slate-300 tabular-nums">{{ '%.2f'|format(r.price) if r.price is not none else '-' }}</span>
+    <span class="text-right text-[11px]">{% if perf_field == 'weight' %}<span class="text-slate-500 tabular-nums">{{ '%.1f'|format(r.weight) }}%</span>{% else %}{{ pct(r[perf_field]) }}{% endif %}</span>
+    <span class="bk-popout text-center text-[11px] text-slate-600 hover:text-emerald-300 cursor-pointer select-none" role="button" tabindex="0"
+          data-sym="{{ r.chart_symbol }}" title="Open {{ r.chart_symbol }} in its own window">&#8599;</span>
+    {# second line: the setup chips, full width under the ticker (as the industry list) #}
+    {% if rk %}
+    <span class="flex flex-wrap gap-0.5 mt-0.5" style="grid-column: 2 / -1">
+      {% for ch in rk.chips %}
+      <span class="text-[9px] px-1 py-px rounded whitespace-nowrap
+                   {% if ch.k == 'hot' %}bg-emerald-500/25 text-emerald-200 font-semibold
+                   {% elif ch.k == 'good' %}bg-emerald-500/10 text-emerald-300
+                   {% elif ch.k == 'warm' %}bg-amber-500/15 text-amber-300
+                   {% elif ch.k == 'round' %}bg-violet-500/15 text-violet-300
+                   {% else %}bg-slate-700/50 text-slate-400{% endif %}" title="{{ ch.title }}">{{ ch.t }}</span>
+      {% else %}
+      <span class="text-[9px] text-slate-600">{% if rk.score is none %}{{ rk.summary }}{% elif rk.gated %}not in EMA uptrend{% else %}none met{% endif %}</span>
+      {% endfor %}
+    </span>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% endif %}
+  {% endif %}
+</div>

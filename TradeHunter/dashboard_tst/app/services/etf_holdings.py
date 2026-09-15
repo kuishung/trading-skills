@@ -69,10 +69,9 @@ _CACHE_DIR = resources_bridge.TRADEHUNTER_ROOT / "state" / "cache"
 SORTS = [
     ("1d", "chg_1d", "1D"), ("1w", "perf_1w", "1W"), ("1m", "perf_1m", "1M"),
     ("3m", "perf_3m", "3M"), ("ytd", "perf_ytd", "YTD"), ("weight", "weight", "Wt"),
-    # Setup (user, 2026-09-13): EMA20>EMA50>EMA200 uptrend, a fresh rebound off
-    # EMA20/EMA50 (0.1-0.5% above it), and a round-number bonus - see
-    # services/ema_setup.py. Scored from live daily bars, best first.
-    ("setup", "setup_score", "Setup"),
+    # The "setup" pill (2026-09-13) is gone: the basket is ranked by the member's
+    # four switchable setup conditions instead (components(enabled=...)), and these
+    # windows are the value column + the tie-breaker under that ranking.
 ]
 _SORT_FIELD = {k: f for k, f, _ in SORTS}
 _SORT_LABEL = {k: lbl for k, _, lbl in SORTS}
@@ -309,7 +308,7 @@ _PERF_RUNNING: set[str] = set()
 _PERF_FAILED: dict[str, float] = {}
 
 
-def _walk(code: str, url: str) -> None:
+def _walk(key: str, url: str) -> None:
     from resources import finviz_screener as fv
 
     try:
@@ -317,34 +316,41 @@ def _walk(code: str, url: str) -> None:
                                          page_sleep_s=0.3, force_refresh=True)
         with _PERF_LOCK:
             if rows:
-                _PERF_FAILED.pop(code, None)
+                _PERF_FAILED.pop(key, None)
             else:
-                _PERF_FAILED[code] = time.time()
+                _PERF_FAILED[key] = time.time()
     except Exception:  # noqa: BLE001
         with _PERF_LOCK:
-            _PERF_FAILED[code] = time.time()
+            _PERF_FAILED[key] = time.time()
     finally:
         with _PERF_LOCK:
-            _PERF_RUNNING.discard(code)
+            _PERF_RUNNING.discard(key)
 
 
-def _perf_rows(etf: str) -> tuple[list[dict], str]:
+def _perf_rows(etf: str, extra_filters: str = "") -> tuple[list[dict], str]:
     """(rows, state) — state is 'ready', 'loading' or 'failed'. Never blocks: a
-    cold cache starts ONE background walk per index (concurrent clicks share it)."""
+    cold cache starts ONE background walk per index (concurrent clicks share it).
+
+    ``extra_filters`` = the member's Finviz criteria codes (see
+    industry.parse_finviz_filters), ANDed into the index screen — so the walk
+    returns only the index members matching them, and the caller keeps only
+    holdings the walk returned. A filtered walk is its own cache key."""
     from resources import finviz_screener as fv
 
     code = _PERF_INDEX.get(etf, "idx_sp500")
-    url = _PERF_URL.format(code=code)
+    extra = (extra_filters or "").strip()
+    key = f"{code},{extra}" if extra else code
+    url = _PERF_URL.format(code=key)
     rows = fv.fetch_performance_rows(url, cache_ttl_s=PERF_TTL_S, cache_only=True)
     if rows:
         return rows, "ready"
     with _PERF_LOCK:
-        failed_at = _PERF_FAILED.get(code)
+        failed_at = _PERF_FAILED.get(key)
         if failed_at and time.time() - failed_at < _FAIL_BACKOFF_S:
             return [], "failed"
-        if code not in _PERF_RUNNING:
-            _PERF_RUNNING.add(code)
-            threading.Thread(target=_walk, args=(code, url), daemon=True,
+        if key not in _PERF_RUNNING:
+            _PERF_RUNNING.add(key)
+            threading.Thread(target=_walk, args=(key, url), daemon=True,
                              name=f"etf-perf-{code}").start()
     return [], "loading"
 
@@ -357,22 +363,38 @@ def _etf_name(sym: str) -> str:
     return dict(ETF_UNIVERSE + INDEX_ETFS).get(sym, sym)
 
 
-def components(etf: str, sort: str = DEFAULT_SORT) -> dict:
-    """Everything _sector_etf_holdings.html renders: the fund's holdings, each
-    joined to its performance, sorted best-first by the chosen window.
+# Setup ranking costs one daily-bar fetch per holding (concurrent, cached 15 min,
+# shared with the charts). A sector SPDR holds 25-80 names — a few seconds cold.
+# SPY holds 500: rank its heaviest RANK_CAP only, and say so in the panel, rather
+# than make the first click wait a minute for the tail of the index.
+RANK_CAP = 150
 
-    A holding Finviz has no row for keeps its weight and sorts to the bottom of a
-    performance sort rather than being dropped — the fund still owns it.
+
+def components(etf: str, sort: str = DEFAULT_SORT, *, extra_filters: str = "",
+               enabled: dict | None = None, rank_cap: int = RANK_CAP) -> dict:
+    """Everything _sector_basket.html renders: the fund's holdings, each joined to
+    its performance, FILTERED by the member's Finviz criteria (``extra_filters``,
+    when set — only holdings the filtered index screen returns are kept) and
+    RANKED by the member's switched-on setup conditions (``enabled``, the same
+    {c1..c4} the industry list uses; all off = plain performance order).
+
+    Without a filter, a holding Finviz has no row for keeps its weight and sorts to
+    the bottom of a performance sort rather than being dropped — the fund still
+    owns it. While a FILTERED walk is still loading, no rows are returned (the panel
+    polls) — an unfiltered list would be the wrong answer to the filter.
     """
     sym = (etf or "").strip().upper()
     sort = sort if sort in _SORT_FIELD else DEFAULT_SORT
+    extra = (extra_filters or "").strip()
     hold = holdings(sym)
-    perf_rows, perf_state = _perf_rows(sym) if hold["rows"] else ([], "ready")
+    perf_rows, perf_state = _perf_rows(sym, extra) if hold["rows"] else ([], "ready")
     perf = {r["symbol"]: r for r in perf_rows}
 
     rows = []
     for h in hold["rows"]:
         p = perf.get(h["symbol"]) or {}
+        if extra and not p:
+            continue          # filtered: only what the filtered screen returned
         rows.append({
             "symbol": h["symbol"], "chart_symbol": chart_symbol(h["symbol"]),
             # Finviz's "NVIDIA Corp" reads better than the issuer's "NVIDIA CORP"
@@ -382,33 +404,36 @@ def components(etf: str, sort: str = DEFAULT_SORT) -> dict:
             "perf_1m": p.get("perf_1m"), "perf_3m": p.get("perf_3m"),
             "perf_ytd": p.get("perf_ytd"),
         })
-    if sort == "setup":
-        # One daily-bar fetch per holding, concurrent, cached 15 min. Attached
-        # here rather than always: it is the one sort that costs a Yahoo call
-        # per row, and the other pills must stay instant.
-        from . import ema_setup
+    field = _SORT_FIELD[sort]
+    # the chosen window first — it is the tie-breaker under the ranking below
+    rows.sort(key=lambda r: (r[field] is None, -(r[field] or 0.0), r["symbol"]))
 
-        st = ema_setup.setups_for_many([r["symbol"] for r in rows])
+    ranked = bool(rows and enabled and any(enabled.values()))
+    capped = None
+    if ranked:
+        from . import ema_setup as es
+
+        heaviest = sorted(rows, key=lambda r: -(r["weight"] or 0.0))[:rank_cap]
+        if len(rows) > len(heaviest):
+            capped = len(heaviest)
+        scope = {r["symbol"] for r in heaviest}
+        st = es.setups_for_many([r["symbol"] for r in heaviest])
         for r in rows:
-            r["setup"] = st.get(r["symbol"]) or ema_setup._blank()
-            r["setup_score"] = r["setup"]["score"]
-        # Ties inside a score band break towards the tighter rebound (closest to
-        # its EMA), which is the freshest entry.
-        rows.sort(key=lambda r: (r["setup_score"] is None, -(r["setup_score"] or 0),
-                                 r["setup"]["rebound_pct"] if r["setup"]["rebound_pct"] is not None else 99.0,
-                                 r["symbol"]))
-    else:
-        field = _SORT_FIELD[sort]
-        rows.sort(key=lambda r: (r[field] is None, -(r[field] or 0.0), r["symbol"]))
+            if r["symbol"] in scope:
+                r["setup"] = st.get(r["symbol"]) or es._blank()
+                r["rank"] = es.rank(r["setup"], enabled)
+            else:
+                r["setup"] = es._blank("outside the ranked heaviest holdings")
+                r["rank"] = {"score": None, "met": {}, "chips": [], "gated": False,
+                             "summary": "not ranked (outside the %d heaviest)" % rank_cap}
+        # stable: rows already carry the window order, so equal scores keep it
+        rows.sort(key=lambda r: (r["rank"]["score"] is None, -(r["rank"]["score"] or 0)))
 
-    # The value column shows the sorted window; sorting by weight shows 1D beside
-    # it, because a weight sort is how the fund is built, not how it is doing.
-    perf_field = _SORT_FIELD[sort] if sort not in ("weight", "setup") else "chg_1d"
-    perf_label = _SORT_LABEL[sort] if sort not in ("weight", "setup") else "1D"
     return {
         "etf": sym, "etf_name": _etf_name(sym), "rows": rows,
-        "sort": sort, "sorts": SORTS, "perf_field": perf_field, "perf_label": perf_label,
+        "sort": sort, "sorts": SORTS, "perf_field": field, "perf_label": _SORT_LABEL[sort],
         "as_of": hold["as_of"], "source": hold["source"], "stale": hold["stale"],
-        "error": hold["error"], "perf_state": perf_state,
+        "error": hold["error"], "perf_state": perf_state, "filtered": bool(extra),
+        "ranked": ranked, "rank_cap": capped,
         "n_priced": sum(1 for r in rows if r["chg_1d"] is not None),
     }

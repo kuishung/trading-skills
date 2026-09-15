@@ -1,23 +1,14 @@
 {# Symbols of the selected sector+industry. Context: sector, sector_name, industry,
    tickers [{symbol,company,price, rank?, setup?}], enabled {c1..c4}, cond_labels,
    cond_keys, ranked. #}
-{# ── the four setup conditions, each switchable (user, 2026-09-15) ────────
-   Ticking or unticking re-sorts the list: hx-trigger on the form, target the
-   panel. The current sector/industry ride along as hidden fields so the
-   re-render knows what to list. #}
+{# The four setup conditions — the form is SHARED with the ETF basket
+   (_sector_conds.html); a change re-sorts this list, the sector/industry ride
+   along as hidden fields so the re-render knows what to list. #}
 {% if industry %}
-<form class="flex flex-wrap items-center gap-1 mb-1.5 px-1" hx-post="/sector/symbols/conds"
-      hx-target="#symbolPanel" hx-swap="innerHTML" hx-trigger="change">
-  <input type="hidden" name="sector" value="{{ sector }}"><input type="hidden" name="industry" value="{{ industry }}">
-  <span class="text-[10px] text-slate-500 mr-0.5" title="Tickers are scored from live daily bars against the conditions that are on, best first. All off = plain list.">Sort by</span>
-  {% for k in cond_keys %}
-  <label class="cursor-pointer select-none text-[10px] px-1.5 py-0.5 rounded border transition
-                {% if enabled[k] %}border-emerald-500/60 bg-emerald-500/15 text-emerald-300{% else %}border-slate-700 text-slate-500 hover:border-slate-500 hover:text-slate-300{% endif %}"
-         title="{{ cond_labels[k][1] }}">
-    <input type="checkbox" name="{{ k }}" class="sr-only" {% if enabled[k] %}checked{% endif %}>{{ cond_labels[k][0] }}{% if k == 'c1' %}<span class="opacity-70"> &middot; must</span>{% endif %}
-  </label>
-  {% endfor %}
-</form>
+{% set conds_post = '/sector/symbols/conds' %}
+{% set conds_target = '#symbolPanel' %}
+{% set conds_hidden = {'sector': sector, 'industry': industry} %}
+{% include "_sector_conds.html" %}
 {% endif %}
 {% if not tickers %}
 <p class="text-xs text-slate-600 py-3">

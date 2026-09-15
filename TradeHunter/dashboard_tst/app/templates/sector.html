@@ -5,72 +5,135 @@
 {% block content %}
 {# Sector & Industry — the "where to focus" step of the top-down funnel. Everything
    fits within the viewport (no page scroll); each panel scrolls internally if needed.
-   LEFT column: Sector & Industry tree (top 1/3) + Symbol list (bottom 2/3).
-   CENTER: the interactive RRG (centerpiece) with a collapsed leaders table inside it. #}
-{% macro card(title, sub="", span="") %}
-<section class="rounded-xl border border-slate-800 bg-slate-900/40 p-4 flex flex-col min-w-0 {{ span }}">
-  <div class="flex items-baseline justify-between mb-3 shrink-0">
-    <h2 class="text-sm font-semibold text-slate-200">{{ title }}</h2>
-    {% if sub %}<span class="text-[11px] text-slate-500">{{ sub }}</span>{% endif %}
-  </div>
-  {{ caller() }}
-</section>
-{% endmacro %}
+
+   ONE screen, four pieces (user, 2026-09-15: "I have to merge this into using only
+   1 Chart. So the screen will only see: 1. RRG 2. Chart 3. Ticker panel where user
+   can either use the sector and industry method ... Or user can select by ETF
+   basket of tickers where it will be shortlisted based on the criteria given
+   4. a filter panel"):
+
+     LEFT column
+       4. Filter panel  — the member's Finviz screener criteria. Applies to BOTH
+                          ways of picking tickers below.
+       3. Ticker panel  — "Pick by" toggle:
+            Sector & Industry: the rotation tree (top) + the picked industry's
+                               symbols (bottom), ranked by the setup conditions.
+            ETF basket:        the 11 sector SPDRs + SPY/QQQ + the swing-structure
+                               strip (top) + the picked fund's holdings (bottom),
+                               ranked by the SAME setup conditions and filtered
+                               by the same Finviz criteria.
+     CENTER
+       1. RRG   (tab)
+       2. Chart (tab) — the ONE chart. Any ticker or ETF clicked on the left lands
+                        here. Before this there was a third "Sector ETFs" tab with
+                        a chart of its own and a holdings panel that opened tickers
+                        in new windows; that tab is gone, its pieces live on the
+                        left, and the pop-out survives only as a per-row ↗ button. #}
 {% macro loading() %}
 <div class="flex-1 flex items-center justify-center text-xs text-slate-500 py-6">Loading&hellip;</div>
 {% endmacro %}
 
 <div class="lg:flex lg:gap-4 lg:items-stretch lg:h-[calc(100vh-6rem)]">
 
-  {# ── LEFT column: ONE panel holding Sector & Industry (top) and Symbol (bottom),
-     split 50:50 by default with a DRAGGABLE divider between them (drag to resize).
-     Each pane scrolls internally; the split ratio persists in localStorage. #}
-  <aside class="lg:w-80 lg:shrink-0 flex flex-col mb-4 lg:mb-0 lg:h-full lg:min-h-0">
+  {# ── LEFT column ──────────────────────────────────────────────────────── #}
+  <aside class="lg:w-80 lg:shrink-0 flex flex-col gap-2 mb-4 lg:mb-0 lg:h-full lg:min-h-0">
+
+    {# 4. Filter — the saved Finviz screener criteria. The fragment (_sector_filter.html)
+       carries its own "Filter · on" toggle and the URL form; applying it fires
+       sector-filter-changed, which re-fetches whichever list is showing (below). #}
+    <section class="rounded-xl border border-slate-800 bg-slate-900/40 p-2 shrink-0">
+      <div class="flex items-baseline justify-between gap-2 px-1 mb-1">
+        <h2 class="text-sm font-semibold text-slate-200">Filter</h2>
+        <span class="text-[10px] text-slate-500 truncate" title="Paste a Finviz screener URL; its criteria narrow both the industry list and the ETF basket to matching tickers">Finviz criteria &middot; applies to both lists</span>
+      </div>
+      <div class="min-w-0" hx-get="/sector/filter" hx-trigger="load" hx-swap="innerHTML"></div>
+    </section>
+
+    {# 3. Ticker panel — two ways to pick, one at a time #}
     <section id="siPanel" class="rounded-xl border border-slate-800 bg-slate-900/40 p-2 flex flex-col min-h-0 flex-1 w-full">
-      {# top pane: Sector & Industry #}
-      <div id="siTop" class="flex flex-col min-h-[240px] lg:min-h-0" style="flex:1 1 0">
-        <div class="flex items-baseline justify-between mb-1 px-1 shrink-0">
-          <h2 class="text-sm font-semibold text-slate-200">Sector &amp; Industry</h2>
-          <span class="text-[11px] text-slate-500">grouped by rotation &middot; click to drill down</span>
-        </div>
-        {# sector rows; clicking one expands its industry headers below it. Scrolls
-           internally (scrollbar invisible-until-hover, base.html). #}
-        <div class="si-returns flex-1 min-h-0 overflow-y-auto pr-1" hx-get="/sector/returns" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
+      <div class="flex items-center gap-1 mb-1.5 px-1 shrink-0">
+        <span class="text-[10px] uppercase tracking-wide text-slate-500 mr-0.5">Pick by</span>
+        <button type="button" class="modebtn text-[11px] px-2 py-0.5 rounded border transition" data-mode="si"
+                title="Drill down: sector → industry → its tickers">Sector &amp; Industry</button>
+        <button type="button" class="modebtn text-[11px] px-2 py-0.5 rounded border transition" data-mode="etf"
+                title="Pick a fund: its holdings, shortlisted by the setup conditions">ETF basket</button>
       </div>
 
-      {# draggable divider between the two panes #}
-      <div id="siDivider" role="separator" aria-orientation="horizontal"
-           class="shrink-0 my-1 h-1.5 rounded cursor-row-resize bg-slate-700/60 hover:bg-emerald-500/60 transition"
-           title="Drag to resize"></div>
-
-      {# bottom pane: Symbol #}
-      <div id="siBottom" class="flex flex-col min-h-[240px] lg:min-h-0" style="flex:1 1 0">
-        <div class="flex items-start justify-between gap-2 mb-1 px-1 shrink-0">
-          <h2 class="text-sm font-semibold text-slate-200 pt-0.5">Symbol</h2>
-          {# Finviz filter control — loads the user's saved filter; applying it re-fetches
-             the selected industry's symbols (see the sector-filter-changed listener below). #}
-          <div class="min-w-0" hx-get="/sector/filter" hx-trigger="load" hx-swap="innerHTML"></div>
+      {# ── mode A: Sector & Industry — tree (top) + symbols (bottom), split by a
+         draggable divider whose ratio persists in localStorage. #}
+      <div id="modeSI" class="flex flex-col min-h-0 flex-1">
+        <div id="siTop" class="flex flex-col min-h-[240px] lg:min-h-0" style="flex:1 1 0">
+          <div class="flex items-baseline justify-between mb-1 px-1 shrink-0">
+            <h2 class="text-sm font-semibold text-slate-200">Sector &amp; Industry</h2>
+            <span class="text-[11px] text-slate-500">grouped by rotation &middot; click to drill down</span>
+          </div>
+          {# sector rows; clicking one expands its industry headers below it. Scrolls
+             internally (scrollbar invisible-until-hover, base.html). #}
+          <div class="si-returns flex-1 min-h-0 overflow-y-auto pr-1" hx-get="/sector/returns" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
         </div>
-        <div id="symbolPanel" class="flex-1 min-h-0 overflow-y-auto pr-1">
-          <p class="text-xs text-slate-600 py-3 px-1">Select a sector, then an industry, to list its symbols.</p>
+
+        <div id="siDivider" role="separator" aria-orientation="horizontal"
+             class="shrink-0 my-1 h-1.5 rounded cursor-row-resize bg-slate-700/60 hover:bg-emerald-500/60 transition"
+             title="Drag to resize"></div>
+
+        <div id="siBottom" class="flex flex-col min-h-[240px] lg:min-h-0" style="flex:1 1 0">
+          <div class="flex items-baseline justify-between gap-2 mb-1 px-1 shrink-0">
+            <h2 class="text-sm font-semibold text-slate-200">Symbol</h2>
+            <span class="text-[11px] text-slate-500">click a ticker to chart it</span>
+          </div>
+          <div id="symbolPanel" class="flex-1 min-h-0 overflow-y-auto pr-1">
+            <p class="text-xs text-slate-600 py-3 px-1">Select a sector, then an industry, to list its symbols.</p>
+          </div>
+        </div>
+      </div>
+
+      {# ── mode B: ETF basket — the funds (top) + the picked fund's holdings (bottom) #}
+      <div id="modeETF" class="flex flex-col min-h-0 flex-1" style="display:none">
+        <div class="shrink-0">
+          <div class="flex items-baseline justify-between mb-1 px-1">
+            <h2 class="text-sm font-semibold text-slate-200">ETF basket</h2>
+            <span class="text-[11px] text-slate-500">click a fund to chart it and list what it holds</span>
+          </div>
+          {# The sector buttons are re-sorted client-side into the rotation tree's order
+             (syncEtfOrder moves them BEFORE the first <span>, the caption), so the
+             caption doubles as the divider before the index group, which is never
+             re-sorted (an index has no quadrant to sort by). #}
+          <div class="flex flex-wrap items-center gap-1 px-1">
+            {% for e in etfs %}
+            <button type="button" class="etfbtn text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 transition"
+                    data-sym="{{ e.symbol }}" title="{{ e.name }}">{{ e.symbol }}</button>
+            {% endfor %}
+            <span class="text-[10px] text-slate-600">sectors</span>
+            {% for e in indexes %}
+            <button type="button" class="etfbtn text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 transition"
+                    data-sym="{{ e.symbol }}" title="{{ e.name }}">{{ e.symbol }}</button>
+            {% endfor %}
+            <span class="text-[10px] text-slate-600">index</span>
+          </div>
+          {# Swing-structure monitor for all of them at once (services/structure.py):
+             lazy, then self-polling, so it keeps watching without a reload. A chip
+             charts that fund, like its button. #}
+          <div id="etfStructure" class="mt-1.5 px-1 min-h-[1.25rem] text-[11px]"
+               hx-get="/sector/etf-structure" hx-trigger="load" hx-swap="innerHTML"></div>
+        </div>
+        <div class="border-t border-slate-800 my-1.5 shrink-0"></div>
+        <div id="basketPanel" class="flex-1 min-h-0 overflow-y-auto pr-1">
+          <p class="text-xs text-slate-600 py-3 px-1">Pick a fund above to list what it holds.</p>
         </div>
       </div>
     </section>
   </aside>
 
-  {# ── CENTER / main: two TABS — the RRG (default) and a Chart tab. Clicking a
-     ticker in the Symbol panel switches to Chart and loads that ticker's chart
-     INLINE (no new window). Both panes fill the column height. #}
+  {# ── CENTER: two tabs — the RRG (default) and THE chart. Every ticker and ETF
+     clicked on the left loads its chart INLINE here (no new window). #}
   <div class="flex-1 min-w-0 flex flex-col min-h-0 mt-4 lg:mt-0">
-    {# tab bar #}
     <div class="flex items-center gap-1 mb-2 shrink-0 border-b border-slate-800">
       <button type="button" class="ctab text-xs px-3 py-1.5 -mb-px border-b-2 transition" data-tab="rrg">Relative Rotation</button>
       <button type="button" class="ctab text-xs px-3 py-1.5 -mb-px border-b-2 transition" data-tab="chart">Chart</button>
-      <button type="button" class="ctab text-xs px-3 py-1.5 -mb-px border-b-2 transition" data-tab="etf">Sector ETFs</button>
       <span id="chartTabTicker" class="ml-auto text-[11px] text-slate-500 pr-1"></span>
     </div>
 
-    {# RRG pane #}
+    {# 1. RRG pane #}
     <section id="tabPane-rrg" class="rounded-xl border border-slate-800 bg-slate-900/40 p-4 flex flex-col min-w-0 flex-1 min-h-0">
       <div class="flex items-center justify-between gap-2 mb-3 shrink-0">
         <div>
@@ -96,66 +159,20 @@
               class="flex-1 min-h-0 w-full rounded-lg bg-white border-0"></iframe>
     </section>
 
-    {# Sector ETFs pane — the 11 SPDR sector ETFs on the SAME chart component as the
-       Chart tab, so every control (zoom, drawing tools, ATR, crosshair, Plot-on-TV)
-       behaves identically. It literally reuses /sector/chart rather than
-       reimplementing a chart, so the two tabs can never drift apart. #}
-    <section id="tabPane-etf" class="hidden rounded-xl border border-slate-800 bg-slate-900/40 p-4 flex flex-col min-w-0 flex-1 min-h-0">
-      <div class="flex flex-wrap items-center gap-1 mb-2 shrink-0">
-        {% for e in etfs %}
-        <button type="button" class="etfbtn text-[11px] px-2 py-1 rounded border border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 transition"
-                data-sym="{{ e.symbol }}" title="{{ e.name }}">{{ e.symbol }}</button>
-        {% endfor %}
-        <span class="text-[11px] text-slate-500 ml-1">SPDR S&amp;P US sectors</span>
-        {# Index ETFs as a SECOND group, after the caption. Two reasons they sit
-           here rather than among the sectors: syncEtfOrder() re-sorts the sector
-           buttons into the left panel's rotation order by moving them BEFORE the
-           first <span>, so anything after that caption is left alone (an index has
-           no quadrant to sort by); and the caption then reads as a divider, which
-           is what stops SPY/QQQ from looking like two more sectors. #}
-        {% for e in indexes %}
-        <button type="button" class="etfbtn text-[11px] px-2 py-1 rounded border border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 transition"
-                data-sym="{{ e.symbol }}" title="{{ e.name }}">{{ e.symbol }}</button>
-        {% endfor %}
-        <span class="text-[11px] text-slate-500 ml-1">index</span>
-      </div>
-      {# Swing-structure monitor for ALL of them at once (services/structure.py).
-         Lazy so the tab paints immediately, then self-polls — the ask was for the
-         monitoring to be continuous, not a one-shot render at page load. #}
-      <div id="etfStructure" class="shrink-0 mb-2 min-h-[1.25rem]"
-           hx-get="/sector/etf-structure" hx-trigger="load" hx-swap="innerHTML"></div>
-      {# Chart LEFT, the fund's holdings RIGHT (user, 2026-09-11: "a right panel to
-         show the list of component tickers in that ETF and sort by performance").
-         The structure strip above stays full-width — it watches every ETF, not
-         just the one charted. A holding opens its chart in a NEW WINDOW, so this
-         pane's ETF chart is never replaced by a holding's, and the one-chart-per-
-         DOM rule (#priceChart is a fixed id) holds with no extra bookkeeping. #}
-      <div class="flex-1 min-h-0 flex flex-col lg:flex-row gap-3">
-        <div id="sectorEtfChartBody" class="flex-1 min-w-0 min-h-0 overflow-y-auto flex flex-col">
-          <div class="flex-1 flex items-center justify-center text-xs text-slate-500 text-center px-4">Pick a sector ETF above to chart it.</div>
-        </div>
-        <aside class="lg:w-80 shrink-0 min-h-0 flex flex-col max-h-[45vh] lg:max-h-none lg:border-l lg:border-slate-800 lg:pl-3">
-          <div id="etfHoldings" class="flex-1 min-h-0 overflow-y-auto pr-1">
-            <p class="text-xs text-slate-600 py-3 px-1">Pick an ETF to list what it holds.</p>
-          </div>
-        </aside>
-      </div>
-    </section>
-
-    {# Chart pane — hidden until a ticker is clicked / the tab is selected #}
+    {# 2. Chart pane — the one chart. Cleared when hidden so #priceChart's fixed ids
+       are never duplicated; reloaded from chartSym when the tab is re-selected. #}
     <section id="tabPane-chart" class="hidden rounded-xl border border-slate-800 bg-slate-900/40 p-4 flex flex-col min-w-0 flex-1 min-h-0">
       <div id="sectorChartBody" class="flex-1 min-h-0 overflow-y-auto flex flex-col">
-        <div class="flex-1 flex items-center justify-center text-xs text-slate-500 text-center px-4">Click a ticker in the Symbol panel to load its chart here.</div>
+        <div class="flex-1 flex items-center justify-center text-xs text-slate-500 text-center px-4">Click a ticker or a fund on the left to load its chart here.</div>
       </div>
     </section>
   </div>
 </div>
 
-{# preload the chart library ONCE so the Chart tab renders instantly on first click
-   (avoids the per-open CDN fetch the old new-window path paid every time). #}
+{# preload the chart library ONCE so the Chart tab renders instantly on first click #}
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 
-{# analyst-targets pop-out, used by the Chart tab's "Analyst targets →" button #}
+{# analyst-targets pop-out, used by the chart's "Analyst targets →" button #}
 {% include "_at_modal.html" %}
 
 <script>
@@ -178,8 +195,32 @@
     });
   })();
 
-  // ── Center tabs (Relative Rotation | Chart) ──────────────────────────────
+  // ── Center tabs (Relative Rotation | Chart), the ticker-panel modes, the ETF
+  //    basket, and the one chart they all feed ──────────────────────────────
   (function () {
+    var chartSym = null;          // what the Chart tab shows (or should, when re-shown)
+    var etfSym = null, etfPinned = false;
+
+    function chartTabOn() {
+      var p = document.getElementById('tabPane-chart');
+      return !!p && p.style.display !== 'none';
+    }
+    function clearPane(id, msg) {
+      var el = document.getElementById(id);
+      if (el) {
+        el.innerHTML = '<div class="flex-1 flex items-center justify-center text-xs ' +
+          'text-slate-500 text-center px-4">' + msg + '</div>';
+      }
+    }
+    function loadChart(sym) {
+      chartSym = sym;
+      var lbl = document.getElementById('chartTabTicker');
+      if (lbl) lbl.textContent = sym || '';
+      if (!window.htmx || !sym) return;
+      htmx.ajax('GET', '/sector/chart?symbol=' + encodeURIComponent(sym),
+                { target: '#sectorChartBody', swap: 'innerHTML' });
+    }
+
     function setTab(name) {
       // control display inline (not via the `hidden` class) — `hidden` and `flex`
       // on the same element conflict, which left the RRG pane 0-sized on re-show.
@@ -194,42 +235,55 @@
         b.classList.toggle('text-slate-400', !on);
       });
       // the RRG measures its container on resize; nudge it when its pane reappears
-      if (name === 'rrg') window.dispatchEvent(new Event('resize'));
-
-      // Only ONE chart may exist in the DOM at a time. _price_chart.html addresses
-      // its elements by fixed id (#priceChart, #chartName, ...), so a second chart
-      // left mounted in the hidden pane would be the one a later script found --
-      // the visible chart would then silently stop updating. Clearing the inactive
-      // pane keeps ids unique; the tab reloads its own chart on activation.
-      if (name === 'etf') {
-        clearPane('sectorChartBody', 'Click a ticker in the Symbol panel to load its chart here.');
-        // Land on a chart, never on an empty "pick one" pane: the first button is
-        // the panel's top sector, which is the one worth looking at first. An
-        // explicit pick is remembered (etfPinned) so re-entering the tab doesn't
-        // throw away the sector the user chose.
-        var want = (etfPinned && etfSym) || firstEtf();
-        if (want) loadEtf(want, etfPinned);
-      } else if (name === 'chart') {
-        clearPane('sectorEtfChartBody', 'Pick a sector ETF above to chart it.');
-        if (chartSym) loadChart(chartSym);
+      if (name === 'rrg') {
+        window.dispatchEvent(new Event('resize'));
+        // Only ONE chart may exist in the DOM at a time (_price_chart.html addresses
+        // its elements by fixed id), and a chart mounted in a hidden pane would be
+        // the one a later script found. Clear it; the tab reloads it on return.
+        clearPane('sectorChartBody', 'Click a ticker or a fund on the left to load its chart here.');
+      } else if (name === 'chart' && chartSym) {
+        loadChart(chartSym);
       }
     }
+    window._sectorSetTab = setTab;
+    document.querySelectorAll('.ctab').forEach(function (b) {
+      b.addEventListener('click', function () { setTab(b.getAttribute('data-tab')); });
+    });
 
-    var etfSym = null, chartSym = null, etfPinned = false;
-
-    function etfButtons() {
-      return Array.prototype.slice.call(document.querySelectorAll('.etfbtn'));
+    // ── "Pick by" modes ────────────────────────────────────────────────────
+    var MODE_KEY = 'sectorTickerMode';
+    function setMode(m, remember) {
+      var si = document.getElementById('modeSI'), etf = document.getElementById('modeETF');
+      if (si) si.style.display = (m === 'etf') ? 'none' : 'flex';
+      if (etf) etf.style.display = (m === 'etf') ? 'flex' : 'none';
+      document.querySelectorAll('.modebtn').forEach(function (b) {
+        var on = b.getAttribute('data-mode') === m;
+        b.className = 'modebtn text-[11px] px-2 py-0.5 rounded border transition ' +
+          (on ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-300'
+              : 'border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200');
+      });
+      if (remember) { try { localStorage.setItem(MODE_KEY, m); } catch (e) {} }
+      // Land on a fund, never on an empty "pick one" pane: the first button is the
+      // rotation leader. An explicit pick is remembered (etfPinned) so re-entering
+      // the mode doesn't throw away the fund the user chose.
+      if (m === 'etf') {
+        var want = (etfPinned && etfSym) || etfSym || firstEtf();
+        if (want) loadEtf(want, etfPinned, false);
+      }
     }
-    function firstEtf() {
-      var b = document.querySelector('.etfbtn');
-      return b ? b.getAttribute('data-sym') : null;
-    }
+    document.querySelectorAll('.modebtn').forEach(function (b) {
+      b.addEventListener('click', function () { setMode(b.getAttribute('data-mode'), true); });
+    });
 
-    // Keep the tab's buttons in the LEFT PANEL's order. The panel re-groups when its
-    // Daily/Weekly toggle is used (a sector genuinely changes quadrant between the
-    // two), and the server can only set the order the page was built with -- so the
-    // list is re-sorted here whenever that fragment swaps. Buttons are MOVED, never
-    // rebuilt, so their listeners and the selected highlight survive.
+    // ── ETF basket ─────────────────────────────────────────────────────────
+    function etfButtons() { return Array.prototype.slice.call(document.querySelectorAll('.etfbtn')); }
+    function firstEtf() { var b = document.querySelector('.etfbtn'); return b ? b.getAttribute('data-sym') : null; }
+
+    // Keep the fund buttons in the rotation tree's order. The tree re-groups when
+    // its Daily/Weekly toggle is used, and the server can only set the order the
+    // page was built with -- so the buttons are re-sorted here whenever that
+    // fragment swaps. Buttons are MOVED, never rebuilt, so their listeners and the
+    // selected highlight survive.
     function syncEtfOrder() {
       var buttons = etfButtons();
       if (!buttons.length) return;
@@ -240,46 +294,36 @@
         .call(document.querySelectorAll('.si-returns .wl-sector[data-sym]'))
         .map(function (r) { return r.getAttribute('data-sym'); });
       if (!order.length) return;
-      var tail = host.querySelector('span');   // the "SPDR S&P US sectors" caption
+      var tail = host.querySelector('span');   // the "sectors" caption
       order.forEach(function (sym) {
         var b = bySym[sym];
         if (b) host.insertBefore(b, tail);     // reinserting an existing node moves it
       });
       // An auto-selection follows the new leader; a pinned one stays put.
-      if (!etfPinned && document.getElementById('tabPane-etf').style.display !== 'none') {
+      var etfMode = document.getElementById('modeETF').style.display !== 'none';
+      if (!etfPinned && etfMode) {
         var top = firstEtf();
-        if (top && top !== etfSym) loadEtf(top, false);
+        if (top && top !== etfSym) loadEtf(top, false, false);
       }
     }
 
-    function clearPane(id, msg) {
-      var el = document.getElementById(id);
-      if (el) {
-        el.innerHTML = '<div class="flex-1 flex items-center justify-center text-xs ' +
-          'text-slate-500 text-center px-4">' + msg + '</div>';
-      }
+    // The value column / secondary order of the basket, remembered per browser.
+    var BK_SORT_KEY = 'thEtfHoldingsSort';
+    function basketSort() { try { return localStorage.getItem(BK_SORT_KEY) || ''; } catch (e) { return ''; } }
+    function loadBasket(sym) {
+      var el = document.getElementById('basketPanel');
+      if (!window.htmx || !el || !sym) return;
+      el.innerHTML = '<p class="text-xs text-slate-500 py-3 px-1">Loading ' + sym + ' holdings&hellip;</p>';
+      var s = basketSort();
+      htmx.ajax('GET', '/sector/basket?symbol=' + encodeURIComponent(sym) +
+                (s ? '&sort=' + encodeURIComponent(s) : ''),
+                { target: '#basketPanel', swap: 'innerHTML' });
     }
 
-    function loadInto(target, sym) {
-      if (!window.htmx) return;
-      htmx.ajax('GET', '/sector/chart?symbol=' + encodeURIComponent(sym),
-                { target: '#' + target, swap: 'innerHTML' });
-    }
-
-    function loadChart(sym) { chartSym = sym; loadInto('sectorChartBody', sym); }
-
-    // A chip in the structure strip charts that ETF. Delegated on document because
-    // the strip is HTMX-swapped on every poll — a directly-bound listener would be
-    // thrown away with the old nodes. Treated as a PINNED selection: you clicked a
-    // specific name, so the rotation re-sort must not steal the pane back.
-    document.addEventListener('click', function (e) {
-      var chip = e.target.closest ? e.target.closest('.structchip') : null;
-      if (!chip) return;
-      var sym = chip.getAttribute('data-sym');
-      if (sym) loadEtf(sym, true);
-    });
-
-    function loadEtf(sym, pinned) {
+    // showChart: a click on a fund charts it (and switches to the Chart tab); an
+    // automatic selection (entering the mode, the rotation re-sort) only lists the
+    // holdings and remembers the fund for the Chart tab, so the RRG is not stolen.
+    function loadEtf(sym, pinned, showChart) {
       etfSym = sym;
       if (pinned) etfPinned = true;
       document.querySelectorAll('.etfbtn').forEach(function (b) {
@@ -290,117 +334,85 @@
         b.classList.toggle('border-slate-700', !on);
         b.classList.toggle('text-slate-400', !on);
       });
-      loadInto('sectorEtfChartBody', sym);
-      loadHoldings(sym);
+      loadBasket(sym);
+      if (showChart) { chartSym = sym; setTab('chart'); }
+      else if (chartTabOn() && !chartSym) loadChart(sym);
     }
-
-    // ── the fund's holdings, right of the chart ────────────────────────────
-    // Follows whichever ETF is charted. The sort last picked is kept per browser,
-    // so flipping between sector buttons reads every fund on the same clock
-    // instead of snapping back to the default each time.
-    var HOLD_SORT_KEY = 'thEtfHoldingsSort';
-    function holdSort() {
-      try { return localStorage.getItem(HOLD_SORT_KEY) || ''; } catch (e) { return ''; }
-    }
-    function loadHoldings(sym) {
-      var el = document.getElementById('etfHoldings');
-      if (!window.htmx || !el || !sym) return;
-      el.innerHTML = '<p class="text-xs text-slate-500 py-3 px-1">Loading ' + sym + ' holdings&hellip;</p>';
-      var s = holdSort();
-      htmx.ajax('GET', '/sector/etf-holdings?symbol=' + encodeURIComponent(sym) +
-                (s ? '&sort=' + encodeURIComponent(s) : ''),
-                { target: '#etfHoldings', swap: 'innerHTML' });
-    }
-    // One window PER TICKER, named after it: re-clicking a ticker whose chart is
-    // already open brings that window forward instead of stacking a duplicate,
-    // while two different holdings still open side by side for comparison.
-    // The clicked holding stays marked (user, 2026-09-13: "when a ticker is
-    // selected I need to know where I have selected"). Remembered per browser
-    // so the mark survives the panel being re-rendered by a sort pill, the
-    // performance poll, or a page reload.
-    var HOLD_SEL_KEY = 'th_etf_selected';
-    function markSelected(sym) {
-      document.querySelectorAll('.etf-holding.etf-selected').forEach(function (r) { r.classList.remove('etf-selected'); });
+    document.querySelectorAll('.etfbtn').forEach(function (b) {
+      b.addEventListener('click', function () { loadEtf(b.getAttribute('data-sym'), true, true); });
+    });
+    // A chip in the structure strip charts that fund. Delegated on document because
+    // the strip is HTMX-swapped on every poll.
+    document.addEventListener('click', function (e) {
+      var chip = e.target.closest ? e.target.closest('.structchip') : null;
+      if (!chip) return;
+      var sym = chip.getAttribute('data-sym');
+      if (sym) loadEtf(sym, true, true);
+    });
+    // Basket value pills: remember the choice (the pill's own hx-get re-renders).
+    document.addEventListener('click', function (e) {
+      var pill = e.target.closest ? e.target.closest('.bk-sort') : null;
+      if (pill) { try { localStorage.setItem(BK_SORT_KEY, pill.getAttribute('data-sort') || ''); } catch (err) {} }
+    });
+    // ↗ on a basket row: that ticker's chart in its own window (one window per
+    // ticker; re-clicking brings it forward). CAPTURE phase + stopPropagation so the
+    // row's own hx-get (the inline chart) does not also fire.
+    document.addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('.bk-popout') : null;
+      if (!b) return;
+      e.preventDefault(); e.stopPropagation();
+      var sym = b.getAttribute('data-sym');
       if (!sym) return;
-      var row = document.querySelector('.etf-holding[data-chart-sym="' + sym.replace(/"/g, '') + '"]');
-      if (row) row.classList.add('etf-selected');
-    }
-    function restoreSelected() {
-      var sym = '';
-      try { sym = localStorage.getItem(HOLD_SEL_KEY) || ''; } catch (err) {}
-      markSelected(sym);
-    }
-    function openHoldingChart(row) {
-      var sym = row.getAttribute('data-chart-sym');
-      if (!sym) return;
-      try { localStorage.setItem(HOLD_SEL_KEY, sym); } catch (err) {}
-      markSelected(sym);
       var w = window.open('/sector/chart-window?symbol=' + encodeURIComponent(sym),
                           'th_chart_' + sym.replace(/[^A-Za-z0-9]/g, '_'),
                           'width=1280,height=860,resizable=yes,scrollbars=yes');
       if (w) { try { w.focus(); } catch (err) { /* cross-window focus can be refused */ } }
-    }
-    // Delegated on document: the panel is HTMX-swapped on every ETF switch, sort
-    // and performance poll, so directly-bound listeners would be thrown away.
-    document.addEventListener('click', function (e) {
-      var pill = e.target.closest ? e.target.closest('.etf-hold-sort') : null;
-      if (pill) {
-        try { localStorage.setItem(HOLD_SORT_KEY, pill.getAttribute('data-sort') || ''); } catch (err) {}
-        return;                         // the pill's own hx-get does the re-sort
-      }
-      var row = e.target.closest ? e.target.closest('.etf-holding') : null;
-      if (row) openHoldingChart(row);
-    });
-    document.addEventListener('keydown', function (e) {
-      if ((e.key === 'Enter' || e.key === ' ') && e.target.classList &&
-          e.target.classList.contains('etf-holding')) {
-        e.preventDefault();
-        openHoldingChart(e.target);
-      }
-    });
+    }, true);
 
-    document.querySelectorAll('.etfbtn').forEach(function (b) {
-      b.addEventListener('click', function () { loadEtf(b.getAttribute('data-sym'), true); });
-    });
-    // the returns panel loads after this script and again on every timeframe switch
+    // the rotation tree loads after this script and again on every timeframe switch
     document.body.addEventListener('htmx:afterSwap', function (e) {
       var t = e.detail && e.detail.target;
       if (t && t.classList && t.classList.contains('si-returns')) syncEtfOrder();
     });
-    // The holdings body is swapped with outerHTML (sort pills, the performance
-    // poll), and htmx fires afterSwap on the OLD, detached node - it never
-    // bubbles to the page. htmx:load fires on the NEW content, which is in the
-    // DOM, so that is the event to restore the mark on. Cheap enough to run on
-    // every load: one querySelector.
+    // The charted ticker stays marked in whichever list is showing, through every
+    // re-render of that list — the basket polls itself while the index's
+    // performance loads, and a condition toggle or a value pill re-renders both
+    // lists (user, 2026-09-13: "when a ticker is selected I need to know where I
+    // have selected"). htmx:load fires on the NEW content, which is in the DOM.
+    function markCharted() {
+      document.querySelectorAll('.wl-ticker').forEach(function (r) {
+        var on = !!chartSym && r.getAttribute('data-sym') === chartSym;
+        r.classList.toggle('bg-emerald-500/15', on);
+        r.classList.toggle('text-emerald-300', on);
+      });
+    }
     document.body.addEventListener('htmx:load', function (e) {
       var el = e.detail && e.detail.elt;
-      if (!el || !el.querySelector) return;
-      if (el.classList.contains('etf-holdings-body') || el.classList.contains('etf-holding') ||
-          el.querySelector('.etf-holding')) restoreSelected();
+      if (el && el.querySelector && (el.classList.contains('wl-ticker') || el.querySelector('.wl-ticker'))) markCharted();
     });
-    restoreSelected();
-    window._sectorSetTab = setTab;
-    document.querySelectorAll('.ctab').forEach(function (b) {
-      b.addEventListener('click', function () { setTab(b.getAttribute('data-tab')); });
-    });
-    setTab('rrg');
 
-    // Clicking a ticker: switch to the Chart tab + highlight it. The row's own
-    // hx-get loads the chart fragment into #sectorChartBody.
+    // Clicking a ticker (industry list OR basket): switch to the Chart tab and
+    // highlight it. The row's own hx-get loads the chart fragment into
+    // #sectorChartBody.
     document.addEventListener('click', function (e) {
       var t = e.target.closest ? e.target.closest('.wl-ticker') : null;
       if (!t) return;
-      document.querySelectorAll('.wl-ticker').forEach(function (r) {
-        r.classList.toggle('bg-emerald-500/15', r === t);
-        r.classList.toggle('text-emerald-300', r === t);
-      });
-      var lbl = document.getElementById('chartTabTicker');
       var sym = t.getAttribute('data-sym') || '';
-      if (lbl) lbl.textContent = sym;
-      // Remember it: switching tabs clears the pane (unique-id rule above), so the
-      // Chart tab needs to know what to put back when it is re-selected.
       if (sym) chartSym = sym;
-      setTab('chart');
+      markCharted();
+      var lbl = document.getElementById('chartTabTicker');
+      if (lbl) lbl.textContent = sym;
+      // show the pane WITHOUT reloading: the row's hx-get is already in flight
+      document.querySelectorAll('[id^="tabPane-"]').forEach(function (p) {
+        p.style.display = (p.id === 'tabPane-chart') ? 'flex' : 'none';
+      });
+      document.querySelectorAll('.ctab').forEach(function (b) {
+        var on = b.getAttribute('data-tab') === 'chart';
+        b.classList.toggle('border-emerald-500', on);
+        b.classList.toggle('text-emerald-300', on);
+        b.classList.toggle('border-transparent', !on);
+        b.classList.toggle('text-slate-400', !on);
+      });
     });
 
     // Warm the price cache on ticker HOVER so the chart appears instantly on click
@@ -415,6 +427,23 @@
       fetch('/matp/' + encodeURIComponent(sym) + '/prices', { credentials: 'same-origin' })
         .catch(function () { delete warmedPx[sym]; });
     }, { passive: true });
+
+    // When the Finviz filter changes, re-fetch whichever list is showing: the
+    // selected industry's symbols, and the basket (the server reads the saved filter).
+    document.body.addEventListener('sector-filter-changed', function () {
+      if (window._sectorClearWarm) window._sectorClearWarm();  // filtered = different cache
+      var sel = document.querySelector('.wl-industry.text-emerald-300');
+      if (sel && window.htmx) {
+        var url = sel.getAttribute('hx-get');
+        if (url) htmx.ajax('GET', url, { target: '#symbolPanel', swap: 'innerHTML' });
+      }
+      if (etfSym) loadBasket(etfSym);
+    });
+
+    setTab('rrg');
+    var mode = 'si';
+    try { mode = localStorage.getItem(MODE_KEY) || 'si'; } catch (e) {}
+    setMode(mode === 'etf' ? 'etf' : 'si', false);
   })();
 
   // Prefetch a sector's industry list on HOVER so the click is instant. The server
@@ -450,21 +479,10 @@
     }
   });
 
-  // When the Symbol-panel Finviz filter changes, re-fetch the currently-selected
-  // industry's symbols so the list updates immediately (server reads the saved filter).
-  document.body.addEventListener('sector-filter-changed', function () {
-    if (window._sectorClearWarm) window._sectorClearWarm();  // filtered = different cache
-    var sel = document.querySelector('.wl-industry.text-emerald-300');
-    if (sel && window.htmx) {
-      var url = sel.getAttribute('hx-get');
-      if (url) htmx.ajax('GET', url, { target: '#symbolPanel', swap: 'innerHTML' });
-    }
-  });
-
   // Draggable divider between the Sector & Industry (top) and Symbol (bottom) panes.
   // Adjusts their flex-grow ratio; default 50:50; the ratio persists in localStorage.
   (function () {
-    var panel = document.getElementById('siPanel'),
+    var panel = document.getElementById('modeSI'),
         top = document.getElementById('siTop'),
         div = document.getElementById('siDivider'),
         bot = document.getElementById('siBottom');
@@ -491,7 +509,6 @@
       if (!dragging) return;
       dragging = false;
       document.body.style.userSelect = '';
-      // read back the applied top fraction and persist it
       var f = parseFloat(top.style.flex) || 0.5;
       localStorage.setItem(KEY, String(Math.max(0.15, Math.min(0.85, f))));
     }

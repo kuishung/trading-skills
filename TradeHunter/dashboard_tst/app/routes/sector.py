@@ -316,31 +316,61 @@ def sector_chart_window(request: Request, symbol: str = "",
          "focus_setup": True})
 
 
-@router.get("/etf-holdings", response_class=HTMLResponse)
-def sector_etf_holdings(request: Request, symbol: str = "", sort: str = "",
-                        user: User = Depends(require_user),
-                        db: Session = Depends(get_db)):
-    """Fragment: what one ETF holds, joined to each holding's performance and sorted
-    — the Sector ETFs tab's right-hand panel. Sources and caching are in
-    services/etf_holdings.py (issuer holdings file + Finviz performance).
+@router.get("/basket", response_class=HTMLResponse)
+def sector_basket(request: Request, symbol: str = "", sort: str = "",
+                  user: User = Depends(require_user), db: Session = Depends(get_db)):
+    """Fragment: the ETF basket — what one fund holds, filtered by the member's
+    Finviz criteria and ranked by their setup conditions (user, 2026-09-15: "select
+    by ETF basket of tickers where it will be shortlisted based on the criteria
+    given"). The bottom of the ticker panel in ETF-basket mode."""
+    return templates.TemplateResponse(
+        request, "_sector_basket.html", _basket_context(symbol, sort, user, db))
 
-    Also carries which holdings THIS member curated TODAY (user, 2026-09-13: "if I
-    have curated the ticker I need it to be shown that I have curated (for today
-    only)"), so a name already worked on this session is marked in the list."""
+
+@router.post("/basket/conds", response_class=HTMLResponse)
+async def sector_basket_conds(
+    request: Request, user: User = Depends(require_user), db: Session = Depends(get_db),
+):
+    """Save which setup conditions are on — the SAME preference the industry list
+    uses (one technical setup, two ways of picking tickers) — and re-render the
+    basket, re-ranked."""
+    from ..services import ema_setup as es
+
+    form = await request.form()
+    enabled = {k: form.get(k) is not None for k in es.COND_KEYS}
+    prefs = dict(getattr(user, "prefs", None) or {})
+    prefs[SYM_CONDS_PREF] = enabled
+    user = db.merge(user)
+    user.prefs = prefs
+    db.commit()
+    return templates.TemplateResponse(
+        request, "_sector_basket.html",
+        _basket_context(form.get("symbol") or "", form.get("sort") or "", user, db))
+
+
+def _basket_context(symbol: str, sort: str, user: User, db: Session) -> dict:
     import datetime as _dt
 
     from ..models import CuratedTicker
+    from ..services import ema_setup as es
     from ..services import etf_holdings as eh
+    from ..services import user_watchlist as uwl
 
-    ctx = eh.components(symbol, sort)
+    prefs = getattr(user, "prefs", None) or {}
+    enabled = es.clean_enabled(prefs.get(SYM_CONDS_PREF))
+    ctx = eh.components(symbol, sort, extra_filters=_sector_extra_filters(user),
+                        enabled=enabled)
+    # which holdings THIS member curated TODAY (user, 2026-09-13), so a name already
+    # worked on this session is marked in the list
     today = _dt.date.today().isoformat()
-    ctx["curated_today"] = {
-        (s or "").upper() for (s,) in
-        db.query(CuratedTicker.symbol)
-          .filter(CuratedTicker.user_id == user.id, CuratedTicker.curated_on == today)
-          .all()
-    }
-    return templates.TemplateResponse(request, "_sector_etf_holdings.html", ctx)
+    curated = db.query(CuratedTicker.symbol).filter(
+        CuratedTicker.user_id == user.id, CuratedTicker.curated_on == today).all()
+    ctx.update({
+        "my_syms": uwl.symbol_set(db, user),
+        "curated_today": {r[0] for r in curated},
+        "enabled": enabled, "cond_labels": es.COND_LABELS, "cond_keys": es.COND_KEYS,
+    })
+    return ctx
 
 
 @router.get("/filter", response_class=HTMLResponse)

@@ -1,0 +1,20 @@
+{# The four setup conditions, each switchable (user, 2026-09-15) — ONE form shared
+   by both ways of picking tickers (the industry list and the ETF basket), so the
+   member adjusts the technical setup in one place and both lists rank by it.
+   Context: cond_keys, cond_labels, enabled, plus from the including template:
+     conds_post   — where a change posts (/sector/symbols/conds or /sector/basket/conds)
+     conds_target — the panel the re-render lands in (#symbolPanel or #basketPanel)
+     conds_hidden — {name: value} carried along so the re-render knows what to list
+   Ticking or unticking re-sorts the list (hx-trigger change). #}
+<form class="flex flex-wrap items-center gap-1 mb-1.5 px-1" hx-post="{{ conds_post }}"
+      hx-target="{{ conds_target }}" hx-swap="innerHTML" hx-trigger="change">
+  {% for name, value in conds_hidden.items() %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}
+  <span class="text-[10px] text-slate-500 mr-0.5" title="Tickers are scored from live daily bars against the conditions that are on, best first. All off = plain list.">Setup</span>
+  {% for k in cond_keys %}
+  <label class="cursor-pointer select-none text-[10px] px-1.5 py-0.5 rounded border transition
+                {% if enabled[k] %}border-emerald-500/60 bg-emerald-500/15 text-emerald-300{% else %}border-slate-700 text-slate-500 hover:border-slate-500 hover:text-slate-300{% endif %}"
+         title="{{ cond_labels[k][1] }}">
+    <input type="checkbox" name="{{ k }}" class="sr-only" {% if enabled[k] %}checked{% endif %}>{{ cond_labels[k][0] }}{% if k == 'c1' %}<span class="opacity-70"> &middot; must</span>{% endif %}
+  </label>
+  {% endfor %}
+</form>

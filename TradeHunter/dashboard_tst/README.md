@@ -143,6 +143,53 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-15 - v4.84: Sector & Industry - one chart, two ways to pick, one filter
+
+User: *"I have to merge this into using only 1 Chart. So the screen will only see 1. RRG
+2. Chart 3. Ticker panel where user can either use the sector and industry method to select
+the ticker by click the industry wanted Or user can select by ETF basket of tickers where it
+will be shortlisted based on the criteria given (here the technical setup will be adjustable
+here) 4. We need a filter panel where can put in the filter to apply which ticker to be shown
+(this finviz ticker)"*
+
+**The "Sector ETFs" tab is gone; its pieces moved into the left column, and there is one
+chart.** `sector.html` is now:
+
+- **Filter panel** (top-left): the saved Finviz screener criteria (`_sector_filter.html`, as
+  before) — now labelled as applying to BOTH ways of picking tickers, and it does: the
+  industry list as before, and the ETF basket (below).
+- **Ticker panel** with a **Pick by** toggle, remembered per browser (`sectorTickerMode`):
+  - *Sector & Industry* — the rotation tree + the picked industry's symbols, unchanged.
+  - *ETF basket* — the 11 sector SPDRs + SPY/QQQ (buttons, still re-sorted into the tree's
+    rotation order) + the swing-structure strip, and below them the picked fund's holdings
+    (`_sector_basket.html`, new `GET /sector/basket`). Clicking a fund charts it AND lists it.
+- **Centre**: two tabs, RRG and Chart. Every ticker or fund clicked on the left loads into
+  the one `#sectorChartBody`. Basket rows are `.wl-ticker` like the industry rows, so the same
+  delegated handler charts them; each row keeps a small **↗** that opens the pop-out window
+  (`/sector/chart-window`), which is otherwise no longer the default.
+
+**The basket is shortlisted, not just listed.** `etf_holdings.components()` takes
+`extra_filters` and `enabled`: with a filter, the Finviz performance walk for the index is
+run WITH the member's criteria (its own 15-min cache key) and only holdings that walk returns
+are kept (while a filtered walk is loading the panel shows "Applying your filter…" and polls,
+rather than an unfiltered list); with any setup condition on, holdings are ranked by
+`ema_setup.rank()` with the same chips and gating as the industry list, ties keeping the
+chosen window's order. SPY's 500 names: only the 150 heaviest are ranked (`RANK_CAP`), and the
+panel says so. The old "setup" sort pill is gone — the four conditions replaced it. The
+conditions form is now one shared fragment, `_sector_conds.html`, posting to
+`/sector/symbols/conds` or the new `/sector/basket/conds`; both save the same `sym_conds`
+preference, so the technical setup is adjusted in one place for both lists.
+
+Removed: the `/sector/etf-holdings` route and `_sector_etf_holdings.html` (the "clicked row
+stays marked" localStorage mark went with them — the basket rows use the ticker highlight the
+industry rows have, and the curated-today badge carried over).
+
+Verified through the app with the login dependency overridden (dev DB): `/sector` renders the
+filter panel, the Pick-by toggle, both modes and the two tabs; `/sector/basket?symbol=XLK`
+renders ranked holdings with chips and the ↗ button; `/sector/symbols` still renders its
+list with the shared conditions form; and in the browser the mode toggle, a fund click (chart
++ basket), a holding click (chart in place) and the ↗ pop-out all behave.
+
 ### 2026-09-15 - v4.83: Sector & Industry ticker panel - the setup chips get their own line
 
 User: *"in the setup panel list each ticker will have multiple rows where the criteria pill will
