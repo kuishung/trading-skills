@@ -363,6 +363,17 @@
   var CURATED_ROW = {{ (chart_curated_row if (chart_curated_row is defined and chart_curated_row) else None)|tojson }};
   var CURATED_ON = {{ (chart_curated_on if (chart_curated_on is defined and chart_curated_on) else None)|tojson }};
   var SETUP_SEED = {{ (chart_setup_seed if (chart_setup_seed is defined and chart_setup_seed) else None)|tojson }};
+  // chart_focus_setup (the Sector holdings pop-out window): when this ticker's
+  // STORED drawings include a trade setup, frame it on load exactly as the Curated
+  // page frames its call — the last ~45 bars plus blank room, and a price axis of
+  // candles + Entry / SL / PT only (user, 2026-09-15: "when the ticker is clicked
+  // and the new window opened with the chart, the chart needs to focus on the
+  // current candle, zoomed to the setup"). Without a stored setup the window
+  // behaves as before (6M, MATP / MBP inside the axis).
+  var FOCUS_SETUP = {{ (chart_focus_setup if (chart_focus_setup is defined and chart_focus_setup) else false)|tojson }};
+  // The live switch the price axis reads: on from the start on the Curated page,
+  // flipped on by setupDrawing() when a stored setup is framed under FOCUS_SETUP.
+  var focusSetupOn = !!SETUP_SEED;
   // Mouse-drag of the trade setup disabled (Curated). The editor's number boxes
   // remain the way to move a level; see beginGrab().
   var SETUP_LOCKED = {{ (true if (chart_setup_locked is defined and chart_setup_locked) else false)|tojson }};
@@ -474,7 +485,8 @@
     // autoscaleInfoProvider). An EMA200 running well under a rising stock (IFF:
     // ~74 against candles at 78–88) otherwise drags the floor down and flattens
     // the setup. Where an EMA leaves the framed range it is simply off-screen.
-    if (SETUP_SEED) opts.autoscaleInfoProvider = function () { return null; };
+    // Read at every autoscale, so a setup framed after load (FOCUS_SETUP) counts too.
+    opts.autoscaleInfoProvider = function (orig) { return focusSetupOn ? null : orig(); };
     var ls = chart.addLineSeries(opts);
     ls.setData(data);
   }
@@ -1861,6 +1873,24 @@
       return;
     }
 
+    // FOCUS_SETUP pages: once the stored shapes are in, if one of them is a trade
+    // setup, frame it (the newest one when there are several) and switch the price
+    // axis to candles + setup. Selecting it also puts its handles and the R labels
+    // on screen, which is what "zoomed to the setup" looks like on Curated.
+    function focusStoredSetup() {
+      if (!FOCUS_SETUP) return;
+      var idx = -1;
+      for (var i = drawings.length - 1; i >= 0; i--) {
+        if (drawings[i] && drawings[i].type === 'trade') { idx = i; break; }
+      }
+      if (idx < 0) return;
+      focusSetupOn = true;
+      selected = idx;
+      redraw();
+      zoomToSetup();
+      try { chart.priceScale('right').applyOptions({ autoScale: true }); } catch (e) {}
+    }
+
     // Load this user's stored shapes. If the server has none but this browser
     // still holds a pre-server localStorage set, adopt and upload it once so
     // drawings made before this change aren't stranded here.
@@ -1868,9 +1898,9 @@
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (d) {
         var server = (d && Array.isArray(d.shapes)) ? d.shapes : [];
-        if (server.length) { drawings = server; cacheLocal(); redraw(); return; }
+        if (server.length) { drawings = server; cacheLocal(); redraw(); focusStoredSetup(); return; }
         var local = readLocal();
-        if (local && local.length) { drawings = local; redraw(); pushToServer(); }
+        if (local && local.length) { drawings = local; redraw(); pushToServer(); focusStoredSetup(); }
       })
       .catch(function () {
         // offline / 401: fall back to the local mirror and flag it as unsaved
@@ -1947,7 +1977,7 @@
         autoscaleInfoProvider: function (orig) {
           var r = orig();
           if (r && r.priceRange) {
-            (SETUP_SEED ? [] : [matp, mbp, supp, resis])
+            (focusSetupOn ? [] : [matp, mbp, supp, resis])
               .concat([curLevels && curLevels.entry, curLevels && curLevels.stop,
                        curLevels && curLevels.target])
               .concat(tradeLevels).concat(curatedLevels).concat(spreadLevels).forEach(function (v) {

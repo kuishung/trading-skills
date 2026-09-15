@@ -25,6 +25,10 @@
    the calculate MATP and MBP in the chart in the sector ETFs"). The button already
    reports that outcome honestly ("✓ No MATP"), so hiding it bought nothing. #}
 {% set chart_matp_run = true %}
+{# The holdings pop-out window frames this ticker's stored trade setup on load,
+   Curated-style (user, 2026-09-15). The inline Sector & Industry chart keeps its 6M
+   default — there you are surveying, not reading one call. #}
+{% set chart_focus_setup = focus_setup is defined and focus_setup %}
 {% include "_price_chart.html" %}
 {% if not sel %}
 <p class="text-[11px] text-slate-500 mt-1 shrink-0">No analyst / MATP data for {{ symbol }} — showing price only.</p>

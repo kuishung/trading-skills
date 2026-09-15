@@ -310,7 +310,10 @@ def sector_chart_window(request: Request, symbol: str = "",
     is a chart window, not a second copy of the site. base.html honours the flag."""
     return templates.TemplateResponse(
         request, "sector_chart_window.html",
-        {**_chart_ctx(db, user, symbol), "chromeless": True})
+        {**_chart_ctx(db, user, symbol), "chromeless": True,
+         # frame the stored trade setup on load (user, 2026-09-15: "the chart needs
+         # to focus on the current candle, zoomed to the setup")
+         "focus_setup": True})
 
 
 @router.get("/etf-holdings", response_class=HTMLResponse)

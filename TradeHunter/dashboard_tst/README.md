@@ -143,6 +143,29 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-15 - v4.81: the holdings pop-out opens zoomed to the ticker's setup
+
+User: *"when the ticker is clicked and the new window opened with the chart, the chart needs to
+focus on the current candle, zoomed to the setup like this"* (screenshot: V, a stored
+Entry / SL / PT, the window on the 6M view).
+
+- New per-page flag `chart_focus_setup`, passed as `focus_setup` by `/sector/chart-window` and
+  picked up by `_sector_chart.html` (the inline Sector & Industry chart keeps its 6M default).
+  Once the ticker's stored drawings arrive, if one is a trade setup the chart selects the newest
+  one, frames it with the existing `zoomToSetup` (last ~45 bars plus blank room on the right)
+  and switches the price axis to candles + Entry / SL / PT — the same treatment the Curated
+  chart got in v4.77. A ticker with no stored setup opens exactly as before.
+- Mechanically: the Curated-only `SETUP_SEED` tests in the candle series' autoscale provider
+  and the EMA line series became a live switch, `focusSetupOn` (on from the start on Curated,
+  flipped on by `focusStoredSetup()` here), so an axis decision made at series creation can
+  change once the drawings load. The EMA provider now defers to the library's own range
+  (`orig()`) when the switch is off, so every other chart is unchanged.
+
+Verified in the browser (dev DB, login dependency overridden) on `/sector/chart-window?symbol=V`
+with a trade setup stored for V: the window opens on the last ~45 bars with room on the right,
+the setup selected, and the price axis spanning the candles and the levels rather than
+reaching the MATP line; `/sector/chart-window?symbol=IFF` (no stored setup) still opens on 6M.
+
 ### 2026-09-15 - v4.80: Curated - drag the divider to resize the chart and the list
 
 User: *"i need the chart and the ticker penal to be adjustable in width"*
