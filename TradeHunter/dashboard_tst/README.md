@@ -143,6 +143,22 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-15 - v4.94: Curated - the setup findings under every call
+
+User: *"in the Curated I need the setup findings to be shown"*
+
+Every call in the Curated list now carries a chip line beneath it (`_curated_list.html`,
+`cur-setup-row`) with the same findings the Sector & Industry ticker panel shows - EMA stack,
+dip, rebound, below, round - graded against the member's same switched-on conditions
+(`sym_conds`) from the same live daily bars, plus the last close against EMA20 / EMA50. A
+call meeting nothing says so ("no setup condition met" / "not in EMA uptrend"). Clicking the
+line charts the call like the row above it. `routes/curated._list_context` fetches one
+concurrent batch for the symbols on screen (`ema_setup.setups_for_many`, cached 15 min), never
+one fetch per row.
+
+Verified through the app: the All view renders one setup line per call row with the chips
+and the EMA figures.
+
 ### 2026-09-15 - v4.93: Sector & Industry - a sector click lists the whole sector, non-qualifiers faded
 
 User: *"in sector and industry when click on a sector, all the stock under the filter will be

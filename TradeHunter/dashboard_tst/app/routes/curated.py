@@ -92,6 +92,22 @@ def _list_context(db: Session, user: User, *, year: str = "", month: str = "",
     # seeing what each version would have committed.
     hist = cur.revisions_for_many(
         db, user, [r["id"] for mo in months for r in mo["rows"]])
+
+    # The setup findings for every call on screen (user, 2026-09-15: "in the
+    # Curated I need the setup findings to be shown") - the same chips the
+    # Sector & Industry ticker panel shows, graded against the same switched-on
+    # conditions, from the same live daily bars (cached 15 min). One concurrent
+    # batch for the slice, never one fetch per row.
+    from ..services import ema_setup as es
+
+    on_screen_syms = sorted({r["symbol"] for mo in months for r in mo["rows"]})
+    setups = es.setups_for_many(on_screen_syms) if on_screen_syms else {}
+    enabled = es.clean_enabled((getattr(user, "prefs", None) or {}).get("sym_conds"))
+    for mo in months:
+        for r in mo["rows"]:
+            st = setups.get(r["symbol"]) or es._blank()
+            r["setup"] = st
+            r["setup_rank"] = es.rank(st, enabled)
     for mo in months:
         for r in mo["rows"]:
             r["size"] = tp.size(r.get("entry"), r.get("stop"), prefs)

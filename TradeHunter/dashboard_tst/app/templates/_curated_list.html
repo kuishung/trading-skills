@@ -324,6 +324,31 @@
                     hx-confirm="Remove {{ r.symbol }} curated on {{ r.curated_on }}?">&times;</button>
           </td>
         </tr>
+        {# ── the setup findings, a chip line under the call (user, 2026-09-15) ─
+           Same chips and the same switched-on conditions as the Sector & Industry
+           ticker panel, so a call reads the same way here as where it was found.
+           Clicking the line charts the call, like the row above it. #}
+        {% set sr = r.setup_rank %}
+        <tr class="cur-setup-row border-b border-slate-800/60 hover:bg-slate-800/30 cursor-pointer"
+            hx-get="/curated/chart?row={{ r.id }}" hx-target="#curatedChartBody" hx-swap="innerHTML"
+            title="Setup findings for {{ r.symbol }}{% if r.setup.close %}: {{ r.setup.summary }} &middot; EMA20 {{ r.setup.ema20 }} / EMA50 {{ r.setup.ema50 }} / EMA200 {{ r.setup.ema200 }}{% endif %}">
+          <td colspan="14" class="px-1 pt-0 pb-1">
+            <span class="flex flex-wrap items-center gap-0.5 pl-4">
+              {% for ch in sr.chips %}
+              <span class="text-[9px] px-1 py-px rounded whitespace-nowrap
+                           {% if ch.k == 'hot' %}bg-emerald-500/25 text-emerald-200 font-semibold
+                           {% elif ch.k == 'good' %}bg-emerald-500/10 text-emerald-300
+                           {% elif ch.k == 'warm' %}bg-amber-500/15 text-amber-300
+                           {% elif ch.k == 'round' %}bg-violet-500/15 text-violet-300
+                           {% elif ch.k == 'watch' %}bg-sky-500/15 text-sky-300
+                           {% else %}bg-slate-700/50 text-slate-400{% endif %}" title="{{ ch.title }}">{{ ch.t }}</span>
+              {% else %}
+              <span class="text-[9px] text-slate-600">{% if sr.score is none %}{{ sr.summary }}{% elif sr.gated %}not in EMA uptrend{% else %}no setup condition met{% endif %}</span>
+              {% endfor %}
+              {% if r.setup.close %}<span class="text-[9px] text-slate-600 ml-1 tabular-nums" title="Last close against the EMAs">{{ '%.2f'|format(r.setup.close) }} &middot; E20 {{ r.setup.ema20 }} &middot; E50 {{ r.setup.ema50 }}</span>{% endif %}
+            </span>
+          </td>
+        </tr>
         {# ── this call's versions, as child rows ─────────────────────────────
            Real <tr>s in the same table rather than a panel of chips, so every
            version lines up under the column it belongs to and you can read down
