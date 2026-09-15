@@ -143,6 +143,28 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-15 - v4.85: Sector & Industry - four panels in three columns
+
+User: *"make it 4 panel on screen: first left (Filter up and Pick by panel), second left
+(ticker list), thirdly the chart"*
+
+- `sector.html` re-laid out: **column 1** (18rem) holds the **Filter** panel and, under it, the
+  **Pick by** panel — the toggle plus either the rotation tree or the fund buttons with the
+  swing-structure strip; **column 2** (20rem) is the **Tickers** panel — the picked industry's
+  symbols or the picked fund's holdings; **column 3** is the RRG / Chart tabs, the one chart.
+  The "Pick by" toggle now switches both columns together (`modeSI`/`listSI` vs
+  `modeETF`/`listETF`).
+- The draggable divider between the tree and the symbol list (and its localStorage ratio) is
+  gone — those are separate columns now, each scrolling on its own, so the tree no longer
+  shares a column with the list it fills.
+- Everything else (the shared setup conditions, the Finviz filter applying to both lists, the
+  charted row staying marked, the ↗ pop-out) is unchanged.
+
+Verified through the app with the login dependency overridden (dev DB) and in the browser at
+1440×900: three columns at 288 / 320 / the rest, the picker and the list switching together
+with the toggle, an industry click filling column 2, a fund click filling column 2 and the
+chart, a ticker click charting in column 3.
+
 ### 2026-09-15 - v4.84: Sector & Industry - one chart, two ways to pick, one filter
 
 User: *"I have to merge this into using only 1 Chart. So the screen will only see 1. RRG

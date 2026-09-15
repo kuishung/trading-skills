@@ -12,44 +12,46 @@
    basket of tickers where it will be shortlisted based on the criteria given
    4. a filter panel"):
 
-     LEFT column
-       4. Filter panel  — the member's Finviz screener criteria. Applies to BOTH
-                          ways of picking tickers below.
-       3. Ticker panel  — "Pick by" toggle:
-            Sector & Industry: the rotation tree (top) + the picked industry's
-                               symbols (bottom), ranked by the setup conditions.
-            ETF basket:        the 11 sector SPDRs + SPY/QQQ + the swing-structure
-                               strip (top) + the picked fund's holdings (bottom),
-                               ranked by the SAME setup conditions and filtered
-                               by the same Finviz criteria.
-     CENTER
-       1. RRG   (tab)
-       2. Chart (tab) — the ONE chart. Any ticker or ETF clicked on the left lands
-                        here. Before this there was a third "Sector ETFs" tab with
-                        a chart of its own and a holdings panel that opened tickers
-                        in new windows; that tab is gone, its pieces live on the
-                        left, and the pop-out survives only as a per-row ↗ button. #}
+   Four panels in three columns (user, 2026-09-15: "make it 4 panel on screen:
+   first left (Filter up and Pick by panel), second left (ticker list), thirdly
+   the chart"):
+
+     COLUMN 1 (narrow)
+       Filter   — the member's Finviz screener criteria. Applies to BOTH ways of
+                  picking tickers.
+       Pick by  — a toggle:
+            Sector & Industry: the rotation tree; click an industry.
+            ETF basket:        the 11 sector SPDRs + SPY/QQQ and the swing-structure
+                               strip; click a fund.
+     COLUMN 2
+       Tickers  — what the pick produced: the industry's symbols, or the fund's
+                  holdings, ranked by the SAME setup conditions and narrowed by the
+                  same Finviz criteria.
+     COLUMN 3 (the rest)
+       RRG / Chart tabs — the ONE chart. Any ticker or ETF clicked lands here. The
+                  old "Sector ETFs" tab (own chart, holdings opening new windows) is
+                  gone; the pop-out survives only as a per-row ↗ button. #}
 {% macro loading() %}
 <div class="flex-1 flex items-center justify-center text-xs text-slate-500 py-6">Loading&hellip;</div>
 {% endmacro %}
 
 <div class="lg:flex lg:gap-4 lg:items-stretch lg:h-[calc(100vh-6rem)]">
 
-  {# ── LEFT column ──────────────────────────────────────────────────────── #}
-  <aside class="lg:w-80 lg:shrink-0 flex flex-col gap-2 mb-4 lg:mb-0 lg:h-full lg:min-h-0">
+  {# ── COLUMN 1: Filter (top) + Pick by (the rest) ───────────────────── #}
+  <aside class="lg:w-72 lg:shrink-0 flex flex-col gap-2 mb-4 lg:mb-0 lg:h-full lg:min-h-0">
 
-    {# 4. Filter — the saved Finviz screener criteria. The fragment (_sector_filter.html)
+    {# Filter — the saved Finviz screener criteria. The fragment (_sector_filter.html)
        carries its own "Filter · on" toggle and the URL form; applying it fires
-       sector-filter-changed, which re-fetches whichever list is showing (below). #}
+       sector-filter-changed, which re-fetches whichever list is showing (column 2). #}
     <section class="rounded-xl border border-slate-800 bg-slate-900/40 p-2 shrink-0">
       <div class="flex items-baseline justify-between gap-2 px-1 mb-1">
         <h2 class="text-sm font-semibold text-slate-200">Filter</h2>
-        <span class="text-[10px] text-slate-500 truncate" title="Paste a Finviz screener URL; its criteria narrow both the industry list and the ETF basket to matching tickers">Finviz criteria &middot; applies to both lists</span>
+        <span class="text-[10px] text-slate-500 truncate" title="Paste a Finviz screener URL; its criteria narrow both the industry list and the ETF basket to matching tickers">Finviz &middot; both lists</span>
       </div>
       <div class="min-w-0" hx-get="/sector/filter" hx-trigger="load" hx-swap="innerHTML"></div>
     </section>
 
-    {# 3. Ticker panel — two ways to pick, one at a time #}
+    {# Pick by — two ways to choose what column 2 lists, one at a time #}
     <section id="siPanel" class="rounded-xl border border-slate-800 bg-slate-900/40 p-2 flex flex-col min-h-0 flex-1 w-full">
       <div class="flex items-center gap-1 mb-1.5 px-1 shrink-0">
         <span class="text-[10px] uppercase tracking-wide text-slate-500 mr-0.5">Pick by</span>
@@ -59,66 +61,65 @@
                 title="Pick a fund: its holdings, shortlisted by the setup conditions">ETF basket</button>
       </div>
 
-      {# ── mode A: Sector & Industry — tree (top) + symbols (bottom), split by a
-         draggable divider whose ratio persists in localStorage. #}
+      {# mode A: the rotation tree; an industry click fills column 2 #}
       <div id="modeSI" class="flex flex-col min-h-0 flex-1">
-        <div id="siTop" class="flex flex-col min-h-[240px] lg:min-h-0" style="flex:1 1 0">
-          <div class="flex items-baseline justify-between mb-1 px-1 shrink-0">
-            <h2 class="text-sm font-semibold text-slate-200">Sector &amp; Industry</h2>
-            <span class="text-[11px] text-slate-500">grouped by rotation &middot; click to drill down</span>
-          </div>
-          {# sector rows; clicking one expands its industry headers below it. Scrolls
-             internally (scrollbar invisible-until-hover, base.html). #}
-          <div class="si-returns flex-1 min-h-0 overflow-y-auto pr-1" hx-get="/sector/returns" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
+        <div class="flex items-baseline justify-between mb-1 px-1 shrink-0">
+          <h2 class="text-sm font-semibold text-slate-200">Sector &amp; Industry</h2>
+          <span class="text-[11px] text-slate-500 truncate" title="Grouped by rotation; click a sector, then an industry">by rotation</span>
         </div>
-
-        <div id="siDivider" role="separator" aria-orientation="horizontal"
-             class="shrink-0 my-1 h-1.5 rounded cursor-row-resize bg-slate-700/60 hover:bg-emerald-500/60 transition"
-             title="Drag to resize"></div>
-
-        <div id="siBottom" class="flex flex-col min-h-[240px] lg:min-h-0" style="flex:1 1 0">
-          <div class="flex items-baseline justify-between gap-2 mb-1 px-1 shrink-0">
-            <h2 class="text-sm font-semibold text-slate-200">Symbol</h2>
-            <span class="text-[11px] text-slate-500">click a ticker to chart it</span>
-          </div>
-          <div id="symbolPanel" class="flex-1 min-h-0 overflow-y-auto pr-1">
-            <p class="text-xs text-slate-600 py-3 px-1">Select a sector, then an industry, to list its symbols.</p>
-          </div>
-        </div>
+        {# sector rows; clicking one expands its industry headers below it. Scrolls
+           internally (scrollbar invisible-until-hover, base.html). #}
+        <div class="si-returns flex-1 min-h-0 overflow-y-auto pr-1" hx-get="/sector/returns" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
       </div>
 
-      {# ── mode B: ETF basket — the funds (top) + the picked fund's holdings (bottom) #}
+      {# mode B: the funds + the swing-structure strip; a fund click fills column 2 #}
       <div id="modeETF" class="flex flex-col min-h-0 flex-1" style="display:none">
-        <div class="shrink-0">
-          <div class="flex items-baseline justify-between mb-1 px-1">
-            <h2 class="text-sm font-semibold text-slate-200">ETF basket</h2>
-            <span class="text-[11px] text-slate-500">click a fund to chart it and list what it holds</span>
-          </div>
-          {# The sector buttons are re-sorted client-side into the rotation tree's order
-             (syncEtfOrder moves them BEFORE the first <span>, the caption), so the
-             caption doubles as the divider before the index group, which is never
-             re-sorted (an index has no quadrant to sort by). #}
-          <div class="flex flex-wrap items-center gap-1 px-1">
-            {% for e in etfs %}
-            <button type="button" class="etfbtn text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 transition"
-                    data-sym="{{ e.symbol }}" title="{{ e.name }}">{{ e.symbol }}</button>
-            {% endfor %}
-            <span class="text-[10px] text-slate-600">sectors</span>
-            {% for e in indexes %}
-            <button type="button" class="etfbtn text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 transition"
-                    data-sym="{{ e.symbol }}" title="{{ e.name }}">{{ e.symbol }}</button>
-            {% endfor %}
-            <span class="text-[10px] text-slate-600">index</span>
-          </div>
-          {# Swing-structure monitor for all of them at once (services/structure.py):
-             lazy, then self-polling, so it keeps watching without a reload. A chip
-             charts that fund, like its button. #}
-          <div id="etfStructure" class="mt-1.5 px-1 min-h-[1.25rem] text-[11px]"
-               hx-get="/sector/etf-structure" hx-trigger="load" hx-swap="innerHTML"></div>
+        <div class="flex items-baseline justify-between mb-1 px-1 shrink-0">
+          <h2 class="text-sm font-semibold text-slate-200">ETF basket</h2>
+          <span class="text-[11px] text-slate-500 truncate" title="Click a fund to chart it and list its holdings">click a fund</span>
         </div>
-        <div class="border-t border-slate-800 my-1.5 shrink-0"></div>
+        {# The sector buttons are re-sorted client-side into the rotation tree's order
+           (syncEtfOrder moves them BEFORE the first <span>, the caption), so the
+           caption doubles as the divider before the index group, which is never
+           re-sorted (an index has no quadrant to sort by). #}
+        <div class="flex flex-wrap items-center gap-1 px-1 shrink-0">
+          {% for e in etfs %}
+          <button type="button" class="etfbtn text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 transition"
+                  data-sym="{{ e.symbol }}" title="{{ e.name }}">{{ e.symbol }}</button>
+          {% endfor %}
+          <span class="text-[10px] text-slate-600">sectors</span>
+          {% for e in indexes %}
+          <button type="button" class="etfbtn text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 transition"
+                  data-sym="{{ e.symbol }}" title="{{ e.name }}">{{ e.symbol }}</button>
+          {% endfor %}
+          <span class="text-[10px] text-slate-600">index</span>
+        </div>
+        {# Swing-structure monitor for all of them at once (services/structure.py):
+           lazy, then self-polling, so it keeps watching without a reload. A chip
+           charts that fund, like its button. #}
+        <div id="etfStructure" class="mt-2 px-1 min-h-[1.25rem] text-[11px] flex-1 min-h-0 overflow-y-auto"
+             hx-get="/sector/etf-structure" hx-trigger="load" hx-swap="innerHTML"></div>
+      </div>
+    </section>
+  </aside>
+
+  {# ── COLUMN 2: the ticker list — the picked industry's symbols, or the picked
+     fund's holdings, depending on the mode. Both are ranked by the same setup
+     conditions and narrowed by the same Finviz filter. #}
+  <aside class="lg:w-80 lg:shrink-0 flex flex-col mb-4 lg:mb-0 lg:h-full lg:min-h-0">
+    <section class="rounded-xl border border-slate-800 bg-slate-900/40 p-2 flex flex-col min-h-0 flex-1 w-full">
+      <div class="flex items-baseline justify-between gap-2 mb-1 px-1 shrink-0">
+        <h2 class="text-sm font-semibold text-slate-200">Tickers</h2>
+        <span class="text-[11px] text-slate-500">click one to chart it</span>
+      </div>
+      <div id="listSI" class="flex flex-col min-h-0 flex-1">
+        <div id="symbolPanel" class="flex-1 min-h-0 overflow-y-auto pr-1">
+          <p class="text-xs text-slate-600 py-3 px-1">Select a sector, then an industry, to list its symbols.</p>
+        </div>
+      </div>
+      <div id="listETF" class="flex flex-col min-h-0 flex-1" style="display:none">
         <div id="basketPanel" class="flex-1 min-h-0 overflow-y-auto pr-1">
-          <p class="text-xs text-slate-600 py-3 px-1">Pick a fund above to list what it holds.</p>
+          <p class="text-xs text-slate-600 py-3 px-1">Pick a fund to list what it holds.</p>
         </div>
       </div>
     </section>
@@ -253,9 +254,11 @@
     // ── "Pick by" modes ────────────────────────────────────────────────────
     var MODE_KEY = 'sectorTickerMode';
     function setMode(m, remember) {
-      var si = document.getElementById('modeSI'), etf = document.getElementById('modeETF');
-      if (si) si.style.display = (m === 'etf') ? 'none' : 'flex';
-      if (etf) etf.style.display = (m === 'etf') ? 'flex' : 'none';
+      // column 1 (the picker) and column 2 (the list it fills) switch together
+      [['modeSI', 'si'], ['listSI', 'si'], ['modeETF', 'etf'], ['listETF', 'etf']].forEach(function (pair) {
+        var el = document.getElementById(pair[0]);
+        if (el) el.style.display = (pair[1] === m) ? 'flex' : 'none';
+      });
       document.querySelectorAll('.modebtn').forEach(function (b) {
         var on = b.getAttribute('data-mode') === m;
         b.className = 'modebtn text-[11px] px-2 py-0.5 rounded border transition ' +
@@ -479,49 +482,5 @@
     }
   });
 
-  // Draggable divider between the Sector & Industry (top) and Symbol (bottom) panes.
-  // Adjusts their flex-grow ratio; default 50:50; the ratio persists in localStorage.
-  (function () {
-    var panel = document.getElementById('modeSI'),
-        top = document.getElementById('siTop'),
-        div = document.getElementById('siDivider'),
-        bot = document.getElementById('siBottom');
-    if (!panel || !top || !div || !bot) return;
-    var KEY = 'sectorSiSplit';
-    function apply(frac) {
-      frac = Math.max(0.15, Math.min(0.85, frac));
-      top.style.flex = frac + ' 1 0';
-      bot.style.flex = (1 - frac) + ' 1 0';
-    }
-    var saved = parseFloat(localStorage.getItem(KEY));
-    apply(isNaN(saved) ? 0.5 : saved);
-
-    var dragging = false;
-    function onMove(e) {
-      if (!dragging) return;
-      var r = panel.getBoundingClientRect();
-      var cy = (e.touches && e.touches[0]) ? e.touches[0].clientY : e.clientY;
-      var frac = (cy - r.top) / Math.max(1, r.height);
-      apply(frac);
-      e.preventDefault();
-    }
-    function onUp() {
-      if (!dragging) return;
-      dragging = false;
-      document.body.style.userSelect = '';
-      var f = parseFloat(top.style.flex) || 0.5;
-      localStorage.setItem(KEY, String(Math.max(0.15, Math.min(0.85, f))));
-    }
-    div.addEventListener('pointerdown', function (e) {
-      dragging = true;
-      document.body.style.userSelect = 'none';
-      try { div.setPointerCapture(e.pointerId); } catch (_) {}
-    });
-    div.addEventListener('pointermove', onMove);
-    div.addEventListener('pointerup', onUp);
-    div.addEventListener('pointercancel', onUp);
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-  })();
 </script>
 {% endblock %}
