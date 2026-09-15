@@ -143,6 +143,13 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-15 - v4.89: the basket's sector buttons use the short name
+
+v4.88 rendered the sector buttons with the route's full label (`XLF Financials — Financial
+Select Sector SPDR Fund`). Now the short name on both groups (`XLF Financials`,
+`SPY S&P 500`); the full name stays in the tooltip. Verified: all 13 buttons render without
+the long suffix.
+
 ### 2026-09-15 - v4.88: the ETF basket buttons say which sector they are
 
 User: *"in the ETF basket list now is by button. I want state the sector or the ETF name"*

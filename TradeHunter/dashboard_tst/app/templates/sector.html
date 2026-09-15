@@ -88,7 +88,7 @@
              alone assumed the reader had the SPDR codes memorised. #}
           {% for e in etfs %}
           <button type="button" class="etfbtn text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 transition whitespace-nowrap"
-                  data-sym="{{ e.symbol }}" title="{{ e.name }}"><span class="font-semibold">{{ e.symbol }}</span> <span class="opacity-75">{{ e.name }}</span></button>
+                  data-sym="{{ e.symbol }}" title="{{ e.name }}"><span class="font-semibold">{{ e.symbol }}</span> <span class="opacity-75">{{ e.name.split(' — ')[0] }}</span></button>
           {% endfor %}
           <span class="text-[10px] text-slate-600">sectors</span>
           {% for e in indexes %}
