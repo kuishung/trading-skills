@@ -143,6 +143,20 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-15 - v4.78: Curated - the analyst band is back, collapsed
+
+User: *"in the curated chart need the collapsed Analyst target price so I can pull them up"*
+
+- `_curated_chart.html` passes `chart_band = sel_band` again (it had been `none` since
+  2026-09-10, when the band was always open and fought the setup's shading). The band is the
+  v4.57 collapsible `<details>`: closed by default to one summary line (MBP / MATP / number of
+  targets), opened with a click, the choice remembered per browser (`chart_band_open`). The
+  Curated route already supplied `sel_band`; no server change.
+
+Verified by rendering `/curated/chart` for a ticker with targets on record through the app with
+the login dependency overridden (dev DB): the `#bandBox` details element renders below the
+chart with the target list inside, and without an `open` attribute.
+
 ### 2026-09-15 - v4.77: Curated - the chart frames the setup, and takes the left three quarters
 
 User: *"in the curated page, when the chart is shown, I need to focus on the present candle and

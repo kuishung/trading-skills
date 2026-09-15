@@ -19,13 +19,14 @@
 {% set chart_mbp = sel.mbp if sel else None %}
 {% set chart_as_of = sel.as_of if sel else None %}
 {% set chart_earnings = sel.last_earnings_date if sel else None %}
-{# No analyst band on this page (user, 2026-09-10: "remove MATP and MBP bar below
-   the chart in the Curated chart"). The band answers "where does the street think
-   this goes?", which is a question for the Watchlist and Company pages. Here the
-   levels on screen are the ones YOU committed to, and a second shaded range under
-   them competed with the setup's own shading for the same glance. The MATP/MBP
-   reference lines on the chart itself are unaffected. #}
-{% set chart_band = none %}
+{# The analyst band is here again, COLLAPSED (user, 2026-09-15: "in the curated
+   chart need the collapsed Analyst target price so I can pull them up"). It was
+   removed on 2026-09-10 ("remove MATP and MBP bar below the chart") when the band
+   was always open and its shaded range competed with the setup's own shading. Since
+   v4.57 the band is a <details> that opens on click and remembers the choice per
+   browser (chart_band_open), so closed it is one summary line — MBP / MATP / target
+   count — and the street's range is one click away without crowding the call. #}
+{% set chart_band = sel_band %}
 {% set chart_patterns = sel_patterns %}
 {% set chart_fill = true %}
 {# Floor under the candles. This pane has a FIXED height and carries more furniture
