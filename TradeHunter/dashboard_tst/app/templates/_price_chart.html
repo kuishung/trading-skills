@@ -619,7 +619,16 @@
         var xa = xOf(d.a);
         if (xa == null || !isFinite(xa)) xa = 0;
         xa = Math.max(0, Math.min(w - 2, xa));
+        // The box ENDS at the setup's second point (anchor + 20 bars), like TV's
+        // tool - it must not run into the price axis (user, 2026-09-16: "the
+        // setup line should not span to the price axis"). Off-screen -> the edge.
+        var xb = d.b ? xOf(d.b) : null;
+        if (xb == null || !isFinite(xb) || xb <= xa + 8) xb = Math.min(w, xa + 160);
+        xb = Math.min(w, xb);
+        var w0 = w;            // the pane's full width, for the level's own tag
+        w = xb;                // everything below draws to the box's right edge
         var bw = w - xa;
+        var lx = Math.max(BAR_RIGHT + 4, xa + 4);
         ctx.fillStyle = 'rgba(16,185,129,0.15)';
         ctx.fillRect(xa, Math.min(ye, yp), bw, Math.abs(yp - ye));
         ctx.fillStyle = 'rgba(239,68,68,0.17)';
@@ -634,6 +643,8 @@
         // the box's left edge: the anchor candle
         ctx.strokeStyle = sel ? ACCENT : 'rgba(56,189,248,0.55)'; ctx.lineWidth = sel ? 2 : 1;
         ctx.beginPath(); ctx.moveTo(xa, Math.min(yp, ys)); ctx.lineTo(xa, Math.max(yp, ys)); ctx.stroke();
+        // ...and its right edge, short of the price axis
+        ctx.beginPath(); ctx.moveTo(w, Math.min(yp, ys)); ctx.lineTo(w, Math.max(yp, ys)); ctx.stroke();
         var risk = Math.abs(d.a.p - d.sl);
         var rr = risk > 0 ? Math.abs(d.pt - d.a.p) / risk : 0;
         // Labels in the MIDDLE of the box (user, 2026-09-16: "put in the center of
@@ -652,9 +663,12 @@
           // the level the whole setup hangs off, drawn as a dashed marker
           var yl = yOf(d.lvl);
           if (yl != null) {
+            // The LEVEL is a price, not part of the box: it still runs the full
+            // width of the pane (w0), unlike the box, which stops at xb.
             ctx.save();
             ctx.setLineDash([5, 4]);
-            band(yl, light ? 'rgba(100,116,139,.9)' : 'rgba(148,163,184,.9)', 1.4);
+            ctx.strokeStyle = light ? 'rgba(100,116,139,.9)' : 'rgba(148,163,184,.9)'; ctx.lineWidth = 1.4;
+            ctx.beginPath(); ctx.moveTo(0, yl); ctx.lineTo(w0, yl); ctx.stroke();
             ctx.restore();
             // The level's tag goes on the RIGHT. The entry sits a fraction of a
             // percent from it by construction, so a left-aligned label would land
@@ -662,7 +676,7 @@
             var lt = (d.kind === 'resistance' ? 'Resistance ' : 'Support ') + fmt(d.lvl);
             ctx.font = '600 12px ui-sans-serif,system-ui,sans-serif';
             var ltw = ctx.measureText(lt).width + 12;
-            tag(ctx, Math.max(lx, w - ltw - 24), yl, lt,
+            tag(ctx, Math.max(lx, w0 - ltw - 24), yl, lt,
                 light ? '#cbd5e1' : '#94a3b8', h, true);
           }
         }
@@ -1893,10 +1907,19 @@
     if (SETUP_SEED) {
       try {
         var lastI = bars.length - 1;
+        // The box starts on the candle of the day the call was CURATED (user,
+        // 2026-09-16: "cover the candle of the date the setup was curated, not
+        // always the recent candle"). A call made today therefore sits on the
+        // last candle; an older one on its own day, and the box runs from there.
+        var anchorI = lastI;
+        if (CURATED_ON) {
+          var ci = idxOfTime(CURATED_ON);
+          if (ci >= 0 && ci <= lastI) anchorI = ci;
+        }
         var seed = deriveTrade({
           type: 'trade',
-          a: logicalToPoint(lastI, SETUP_SEED.entry),
-          b: logicalToPoint(lastI + 20, SETUP_SEED.entry),
+          a: logicalToPoint(anchorI, SETUP_SEED.entry),
+          b: logicalToPoint(anchorI + 20, SETUP_SEED.entry),
           // No level was stored with the call (a call is three prices), so let
           // ensureLevel recover one from the entry at this member's own offset.
           kind: SETUP_SEED.target >= SETUP_SEED.entry ? 'support' : 'resistance',

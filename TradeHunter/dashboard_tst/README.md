@@ -143,6 +143,27 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-16 - v4.99: the setup box sits on the curated day's candle and stops short of the price axis
+
+User: *"the setup drawing is to cover the candle of the date the setup was curated, not always
+the recent candle"* and *"the setup line should not span to the price axis"*.
+
+- **Anchor = the curated date.** A mounted call now starts its box on the candle of
+  `curated_on` (`idxOfTime(CURATED_ON)`), falling back to the last candle when that date is not
+  in the loaded bars. A call made today therefore still sits on the last candle; BAP, curated
+  8 Sep, now starts on 8 Sep. New setups keep anchoring on the last candle - today is their
+  curated date.
+- **The box has a right edge.** It runs from the anchor to the setup's second point (anchor +
+  20 bars, or 160px when that is off-screen), like TV's tool, instead of into the price axis;
+  both edges are drawn. The Entry / SL / PT tags are centred between the two edges. The
+  support / resistance LEVEL is a price, not part of the box, so it still runs the full pane
+  width with its tag at the right.
+- Also fixes a `lx is not defined` error introduced in v4.98's label change, which broke the
+  paint of any setup carrying a level.
+
+Verified in the browser on the Curated page: BAP's box starts on its 8 Sep candle, ends before
+the axis with centred labels, and no errors are raised on load or click.
+
 ### 2026-09-16 - v4.98: setup labels in the middle of the box; the TV tool on the last bar with five stats
 
 User: *"when plot in tv only show this"* (screenshot: Stats = TP price offset, TP percent offset,
