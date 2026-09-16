@@ -143,7 +143,18 @@
               if (s.matp != null) {
                 paint('ok', '✓ MATP ' + fmt(s.matp),
                   'MATP ' + fmt(s.matp) + ' · MBP ' + fmt(s.mbp) + ' — the lines on this ' +
-                  'chart are updated. Reload the page for the analyst band.');
+                  'chart are updated; the chart re-renders with the analyst band in a moment.');
+                // Re-render the whole chart so the footer, the analyst band and the
+                // header agree with the new board row, instead of lines painted onto
+                // a page that still says there is no MATP.
+                if (REFRESH) {
+                  setTimeout(function () {
+                    try {
+                      if (REFRESH.target && window.htmx) htmx.ajax('GET', REFRESH.url, { target: REFRESH.target, swap: 'innerHTML' });
+                      else window.location.reload();
+                    } catch (e) {}
+                  }, 1500);
+                }
               } else {
                 paint('ok', '✓ No MATP',
                   'The run finished without a MATP' + (s.note ? ': ' + s.note : '') +
@@ -330,6 +341,12 @@
 (function () {
   var el = document.getElementById('priceChart');
   var msg = document.getElementById('priceChartMsg');
+  // How to re-render THIS chart in place once a MATP run has landed (set by each
+  // page's chart partial): {url, target} for an HTMX pane, {url:'', target:null}
+  // for the pop-out (a full page: reload). Without it the run's numbers were
+  // painted onto a page whose footer still said "No analyst / MATP data" and
+  // whose analyst band was missing (user, 2026-09-16, CNR).
+  var REFRESH = {{ (chart_refresh if (chart_refresh is defined and chart_refresh) else None)|tojson }};
   var matp = {{ chart_matp|tojson }};
   var mbp = {{ (chart_mbp if chart_mbp is not none else None)|tojson }};
   var lastEarn = {{ (chart_earnings if chart_earnings else None)|tojson }};  // 'YYYY-MM-DD' or null
