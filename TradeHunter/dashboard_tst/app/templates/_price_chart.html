@@ -636,10 +636,18 @@
         ctx.beginPath(); ctx.moveTo(xa, Math.min(yp, ys)); ctx.lineTo(xa, Math.max(yp, ys)); ctx.stroke();
         var risk = Math.abs(d.a.p - d.sl);
         var rr = risk > 0 ? Math.abs(d.pt - d.a.p) / risk : 0;
-        var lx = Math.max(BAR_RIGHT + 4, xa + 4);   // at the box, clear of the toolbar
-        tag(ctx, lx, ye, 'Entry ' + fmt(d.a.p), ACCENT, h, true);
-        tag(ctx, lx, ys, 'SL ' + fmt(d.sl) + '  \u22121R', '#f87171', h, true);
-        tag(ctx, lx, yp, 'PT ' + fmt(d.pt) + '  ' + rr.toFixed(1) + 'R', '#34d399', h, true);
+        // Labels in the MIDDLE of the box (user, 2026-09-16: "put in the center of
+        // the drawing so that it will not cover the candle") - the box starts on the
+        // last candle, so a left-aligned tag would sit right on top of it.
+        function ctag(yy, text, bg) {
+          ctx.font = '600 12px ui-sans-serif,system-ui,sans-serif';
+          var tw = ctx.measureText(text).width + 12;
+          var cx = xa + (w - xa) / 2 - tw / 2;
+          tag(ctx, Math.max(BAR_RIGHT + 4, Math.min(cx, w - tw - 2)), yy, text, bg, h, true);
+        }
+        ctag(ye, 'Entry ' + fmt(d.a.p), ACCENT);
+        ctag(ys, 'SL ' + fmt(d.sl) + '  \u22121R', '#f87171');
+        ctag(yp, 'PT ' + fmt(d.pt) + '  ' + rr.toFixed(1) + 'R', '#34d399');
         if (d.lvl != null) {
           // the level the whole setup hangs off, drawn as a dashed marker
           var yl = yOf(d.lvl);

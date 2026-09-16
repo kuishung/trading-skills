@@ -34,7 +34,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const BRIDGE_VERSION = '1.3.0'; // features: auto-launch, autosave, PNA header, locked lines (frozen+disableSelection), label-based de-dupe, curated setup as TV's Long/Short Position tool on the last bar (entry/stop/target)
+const BRIDGE_VERSION = '1.3.1'; // features: auto-launch, autosave, PNA header, locked lines (frozen+disableSelection), label-based de-dupe, curated setup as TV's Long/Short Position tool on the last bar (entry/stop/target)
 const BRIDGE_PORT = Number(process.env.TH_TV_BRIDGE_PORT || 9223);
 const CDP_PORT = Number(process.env.TH_TV_CDP_PORT || 9222);
 const CDP_HOST = process.env.TH_TV_CDP_HOST || '127.0.0.1';
@@ -262,17 +262,28 @@ function buildPlotExpr({ symbol, lines, purge, position }) {
         catch (e) { t = Math.floor(Date.now() / 1000); }
         // 2b) the LAST bar's time and the symbol's tick size, for the position tool.
         //     TV keeps the series in its model; fall back to the visible range end.
-        var tLast = null, minTick = 0.01;
+        var tLast = null, minTick = 0.01, anchorSrc = 'none';
+        // The series lives on the widget's model: the exact path the vendored
+        // MCP's data_get_ohlcv reads (connection.js KNOWN_PATHS.mainSeriesBars),
+        // bars.valueAt(i) = [time, open, high, low, close, volume]. v1.3.0 looked
+        // for a _model() on the API object, which does not exist, so it fell back
+        // to the visible range's END and the tool landed in the blank space to
+        // the right of the last candle.
         try {
-          var ms = api._model && api._model().mainSeries && api._model().mainSeries();
+          var ms = api._chartWidget && api._chartWidget.model && api._chartWidget.model().mainSeries();
           var bs = ms && ms.bars && ms.bars();
-          var li = bs && bs.lastIndex && bs.lastIndex();
-          var lb = (li != null && bs.valueAt) ? bs.valueAt(li) : null;
-          if (lb && lb[0]) tLast = Math.floor(lb[0]);
+          if (bs && typeof bs.lastIndex === 'function') {
+            var lb = bs.valueAt(bs.lastIndex());
+            if (lb && lb[0]) { tLast = Math.floor(lb[0]); anchorSrc = 'series'; }
+          }
           var si = ms && ms.symbolInfo && ms.symbolInfo();
           if (si && si.minmov && si.pricescale) minTick = si.minmov / si.pricescale;
         } catch (e) {}
-        if (!tLast) { try { tLast = Math.floor(api.getVisibleRange().to); } catch (e) { tLast = t; } }
+        if (!tLast) {
+          try { var ex = api.exportData && api.exportData({ includeTime: true, includeSeries: true, includeStudies: false });
+                if (ex && ex.then) { /* async: skip */ } else if (ex && ex.data && ex.data.length) { tLast = Math.floor(ex.data[ex.data.length - 1][0]); anchorSrc = 'export'; } } catch (e) {}
+        }
+        if (!tLast) { try { tLast = Math.floor(api.getVisibleRange().to); anchorSrc = 'visible_range'; } catch (e) { tLast = t; anchorSrc = 'mid'; } }
         // 3) snapshot ids, draw, then diff after a settle to capture the new ids
         var before = api.getAllShapes().map(function (s) { return s.id; });
         function line(price, color, label, style) {
@@ -305,9 +316,46 @@ function buildPlotExpr({ symbol, lines, purge, position }) {
                            linecolor: '#38bdf8', textcolor: '#e2e8f0',
                            profitBackground: 'rgba(16,185,129,0.20)', profitBackgroundTransparency: 80,
                            stopBackground: 'rgba(239,68,68,0.20)', stopBackgroundTransparency: 80,
-                           compact: false, alwaysShowStats: true, showPriceLabels: true }
+                           compact: true, alwaysShowStats: true, showPriceLabels: true }
             });
           } catch (e) { posErr = e && e.message ? e.message : String(e); }
+        }
+        // The stats the tool shows (user, 2026-09-16, screenshot of TV's Style tab):
+        // ONLY TP price offset, TP percent offset, Open/closed PL, SL price offset,
+        // SL percent offset - plus Price labels, Compact stats mode, Always show
+        // stats. TV names these per-stat flags in the shape's properties; the
+        // exact keys differ between TV builds, so they are matched by name
+        // (case-insensitive, punctuation-free) and the keys found are reported.
+        var STATS = { tppriceoffset: true, tppercentoffset: true, tptickoffset: false, tpamount: false, tppl: false,
+                      openclosedpl: true, qty: false, riskrewardratio: false,
+                      slpriceoffset: true, slpercentoffset: true, sltickoffset: false, slamount: false, slpl: false,
+                      compact: true, alwaysshowstats: true, showpricelabels: true };
+        function applyStats(sh) {
+          var found = {}, set = {};
+          try {
+            var props = sh.getProperties ? sh.getProperties() : (sh.properties ? sh.properties() : null);
+            function walk(o, prefix) {
+              if (!o || typeof o !== 'object') return;
+              Object.keys(o).forEach(function (k) {
+                var v = o[k], full = prefix ? prefix + '.' + k : k;
+                var norm = k.toLowerCase().replace(/[^a-z]/g, '');
+                if (typeof v === 'boolean' && STATS.hasOwnProperty(norm)) { found[full] = v; set[full] = STATS[norm]; }
+                else if (v && typeof v === 'object' && !Array.isArray(v) && prefix.split('.').length < 3) walk(v, full);
+              });
+            }
+            walk(props, '');
+            if (Object.keys(set).length) {
+              // nested keys ("stats.tpPriceOffset") are set through their parent object
+              var flat = {}, nested = {};
+              Object.keys(set).forEach(function (full) {
+                if (full.indexOf('.') < 0) flat[full] = set[full];
+                else { var parts = full.split('.'); nested[parts[0]] = nested[parts[0]] || {}; nested[parts[0]][parts.slice(1).join('.')] = set[full]; }
+              });
+              Object.keys(nested).forEach(function (p) { flat[p] = Object.assign({}, (props && props[p]) || {}, nested[p]); });
+              if (sh.setProperties) sh.setProperties(flat);
+            }
+          } catch (e) { found.__error = e && e.message ? e.message : String(e); }
+          return found;
         }
         setTimeout(function () {
           var after = api.getAllShapes().map(function (s) { return s.id; });
@@ -320,6 +368,8 @@ function buildPlotExpr({ symbol, lines, purge, position }) {
             });
           } catch (e) {}
           window.__TH_POS[KEY] = (window.__TH_POS[KEY] || []).concat(posIds);
+          var statKeys = {};
+          posIds.forEach(function (id) { try { var sh = api.getShapeById(id); if (sh) statKeys = applyStats(sh); } catch (e) {} });
           added = added.filter(function (id) { return posIds.indexOf(id) < 0; });
           window.__TH_LINES[KEY] = (window.__TH_LINES[KEY] || []).concat(added);
           // Lock (freeze) the lines we just drew so they can't be moved/edited. frozen
@@ -339,7 +389,8 @@ function buildPlotExpr({ symbol, lines, purge, position }) {
             else if (A && typeof A.saveChart === 'function') { A.saveChart(); saved = true; }
           } catch (e) {}
           resolve({ ok: true, symbol: SYM, added: added.length + posIds.length, position: posIds.length,
-                    position_error: posErr, anchor: tLast, min_tick: minTick, total: after.length, saved: saved });
+                    position_error: posErr, anchor: tLast, anchor_source: anchorSrc, min_tick: minTick,
+                    stat_keys: statKeys, total: after.length, saved: saved });
         }, 350);
       }
 

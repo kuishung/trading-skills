@@ -143,6 +143,27 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-16 - v4.98: setup labels in the middle of the box; the TV tool on the last bar with five stats
+
+User: *"when plot in tv only show this"* (screenshot: Stats = TP price offset, TP percent offset,
+Open/closed PL, SL price offset, SL percent offset; Price labels, Compact stats mode, Always
+show stats ticked), *"the drawing is towards the right side end and not on the recent candle"*,
+and *"in the app, the PT Entry and SL wordings put in the center of the drawing so that i will
+not cover the candle"*.
+
+- **App chart**: the Entry / SL / PT tags sit in the horizontal middle of the box, not at its
+  left edge, so they never cover the anchor candle.
+- **TV bridge 1.3.1**: the anchor is read from the chart's own series
+  (`_chartWidget.model().mainSeries().bars()`, the path the vendored MCP's `data_get_ohlcv`
+  uses) - v1.3.0 looked for a `_model()` that does not exist on the API object and fell back to
+  the visible range's END, which is why the tool landed to the right of the last candle. The
+  result now says `anchor_source` (`series` when it worked). The tool's stats are set to the
+  five the user ticked, compact and always shown, by matching TV's per-stat boolean
+  properties by name after creation; the keys found are echoed as `stat_keys` so the names
+  can be corrected against a real TV build if they differ.
+
+Bridge passes `node --check`; live behaviour needs the user's TV tab.
+
 ### 2026-09-16 - v4.97: the setup is drawn as TradingView's Long Position tool, on the last candle
 
 User: *"in the chart when i curate a setup, the Entry PT and SL, do not use lines to represent,

@@ -92,6 +92,11 @@ behind. Just clear those two lines by hand, or re-plot after they're gone.)
 
 ## Changelog
 
+- **1.3.1** (2026-09-16) - the position tool anchors on the LAST BAR read from the chart's
+  series (`_chartWidget.model().mainSeries().bars()`), not the visible range's end; its stats
+  are trimmed to TP/SL price + percent offsets and Open/closed PL (compact, always shown) by
+  matching TV's per-stat properties by name; the result echoes `anchor_source` and `stat_keys`.
+
 - **1.3.0** (2026-09-16) - a curated setup (`entry=&stop=&target=`) is drawn as TradingView's
   own **Long / Short Position tool** on the last bar (`createShape` with `long_position` /
   `short_position`, `profitLevel` / `stopLevel` in ticks from `minmov / pricescale`) instead
