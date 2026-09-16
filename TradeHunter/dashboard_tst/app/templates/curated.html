@@ -61,6 +61,9 @@
   @media (min-width: 1024px) {
     #curatedChartWrap { width: var(--cur-split, 75%); }
     body.cur-resizing { cursor: col-resize; user-select: none; }
+    /* the charted call: one block, not a striped row */
+    .cur-item.cur-charted { background: rgba(16,185,129,0.10); box-shadow: inset 3px 0 0 #10b981; }
+    .cur-rev-row.cur-charted { color: #a7f3d0; }
     /* the chart's canvases would otherwise swallow the pointer mid-drag */
     body.cur-resizing #curatedChartWrap, body.cur-resizing #curatedSide { pointer-events: none; }
   }
@@ -225,7 +228,7 @@
     evt.preventDefault();
     evt.stopPropagation();
     var id = t.dataset.row;
-    var kids = document.querySelectorAll('tr[data-rev-of="' + id + '"]');
+    var kids = document.querySelectorAll('[data-rev-of="' + id + '"]');
     if (!kids.length) return;
     var open = kids[0].hidden;          // about to open
     kids.forEach(function (k) { k.hidden = !open; });
@@ -242,14 +245,18 @@
 
   // Mark which row the chart above is showing, so a table of near-identical
   // versions still says which one you are looking at.
+  // The WHOLE card lights up (user, 2026-09-16: "when selected it is a whole
+  // item"); a version line inside it marks the card too, plus itself.
   document.body.addEventListener('htmx:beforeRequest', function (evt) {
     var el = evt.detail && evt.detail.elt;
-    if (!el || el.tagName !== 'TR' || !(el.getAttribute('hx-get') || '').indexOf) return;
+    if (!el || !el.getAttribute) return;
     if ((el.getAttribute('hx-get') || '').indexOf('/curated/chart') !== 0) return;
-    document.querySelectorAll('tr.cur-charted').forEach(function (r) {
+    document.querySelectorAll('.cur-charted').forEach(function (r) {
       r.classList.remove('cur-charted');
     });
-    el.classList.add('cur-charted');
+    var item = el.closest ? el.closest('.cur-item') : null;
+    if (item) item.classList.add('cur-charted');
+    if (el !== item) el.classList.add('cur-charted');
   });
 </script>
 {% endblock %}

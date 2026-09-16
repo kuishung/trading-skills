@@ -143,6 +143,31 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-16 - v4.104: Curated - each call is one card: the call, its performance, its setup
+
+User: *"the font size in the ticker list in curated make it bigger. the status, trigger, fill,
+%, R put into a new row as it is performance. the rows of one ticker do not use line, make it
+as one item when display and when selected it is a whole item"*
+
+`_curated_list.html` drops the table. Each call is a rounded **card** (`.cur-item`) with three
+lines and no rules between them:
+
+1. **the call** - ticker (14px, bold), curated date, Tgt, R:R, Qty, then the TV-plot and delete
+   controls at the right;
+2. **performance** (12px) - status chip, triggered-on and days held (or days waiting), fill,
+   exit / last, %, R;
+3. **the setup findings** - the chips, last close vs EMA20 / EMA50, MBP.
+
+The version lines (chevron) sit inside the card as small lines and chart their version.
+Clicking anywhere on the card except the controls charts the call, and the **whole card**
+carries `.cur-charted` (green tint + left bar, `curated.html`); charting a version marks the
+card and the line. The MBP groups keep their headers. The list header row is gone - every
+figure is labelled where it sits. The list-wide behaviours (week blocks, MBP groups, chevron
+toggle, TV plot, delete) are unchanged; `data-rev-of` lookups no longer assume `<tr>`.
+
+Verified in the browser: six cards with a performance and a setup line each, clicking a card
+marks only that card, the chevron opens its three version lines, ticker at 14px.
+
 ### 2026-09-16 - v4.103: the latest session's candle no longer goes missing
 
 User: *"the candles market data in the app is not up to date can you check"* - VEEV's chart
