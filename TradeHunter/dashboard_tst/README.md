@@ -143,6 +143,19 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-16 - v4.105: Curated cards simplified, revision history gone
+
+User: *"This ticker list looks too many information. please simplify and do not show the
+revision history"*
+
+Each card now carries only: **ticker · date · Tgt · Qty** with the two controls; **status ·
+exit/last · % · R** (the trigger date, days held and fill moved into the status chip's
+tooltip); and the **setup chips** (the close / EMA figures and MBP moved into the line's
+tooltip). R:R is gone (always the planned 2.0). The revision lines and their chevron are
+removed from the list altogether - versions are still visible on the chart's revision header
+and via `?rev=` charts. Verified through the app: six cards, no revision lines, no R:R, no
+trig / fill words in the visible text.
+
 ### 2026-09-16 - v4.104: Curated - each call is one card: the call, its performance, its setup
 
 User: *"the font size in the ticker list in curated make it bigger. the status, trigger, fill,
