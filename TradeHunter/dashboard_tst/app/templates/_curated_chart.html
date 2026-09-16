@@ -53,6 +53,7 @@
    the number is the deliberate act, and it is still one click away — double-click
    the setup to open the editor. See SETUP_LOCKED in _price_chart.html. #}
 {% set chart_setup_locked = true %}
+{% set chart_refresh = {'url': '/curated/chart?row=' ~ row_id, 'target': '#curatedChartBody'} %}
 
 <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1 shrink-0">
   <span class="text-xs text-slate-300">

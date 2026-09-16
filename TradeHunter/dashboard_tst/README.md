@@ -143,6 +143,25 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-16 - v4.107: the chart re-renders itself when a MATP run lands
+
+User: *"there is no analyst data for CNR but the chart still show MATP and MBP"* (screenshot:
+MATP 105 / MBP 91.30 lines and legend, and the footer "No analyst / MATP data for CNR").
+
+Not a wrong number: the run for CNR had finished (the run-status payload reads the
+`MATPLevel` row the agent wrote), and the chart painted the new lines in place - but the
+page around them was rendered BEFORE the run, so its footer still said there was no data and
+the analyst band was absent. The button even said "Reload the page for the analyst band".
+
+Now each chart partial passes a `chart_refresh` recipe (`_sector_chart.html` ->
+`/sector/chart?symbol=` into `#sectorChartBody`; `_chart_pane.html` -> `/matp/chart?symbol=`
+into `#chartPane`; `_curated_chart.html` -> `/curated/chart?row=` into `#curatedChartBody`;
+the pop-out -> a page reload), and `_price_chart.html` re-renders the chart 1.5 s after a
+run finishes with numbers, so the footer, the collapsed analyst band and the header all come
+from the new row. Verified through the app: all four charts carry the right recipe. (Shipped
+as two commits: the release commit carried only `_price_chart.html`; the partials and this
+note followed.)
+
 ### 2026-09-16 - v4.106: Sector & Industry chart - the analyst range starts collapsed
 
 User: *"in the sector and industry i need the analyst MATP and MBP to be collapsed"*

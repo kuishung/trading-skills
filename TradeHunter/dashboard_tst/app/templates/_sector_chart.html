@@ -47,6 +47,12 @@
 {% set chart_setup_locked = true %}
 {% set chart_band_start_closed = true %}
 {% endif %}
+{# how to re-render this chart after a MATP run lands (see REFRESH in _price_chart) #}
+{% if chromeless is defined and chromeless %}
+{% set chart_refresh = {'url': '', 'target': none} %}
+{% else %}
+{% set chart_refresh = {'url': '/sector/chart?symbol=' ~ symbol, 'target': '#sectorChartBody'} %}
+{% endif %}
 {% include "_price_chart.html" %}
 {% if not sel %}
 <p class="text-[11px] text-slate-500 mt-1 shrink-0">No analyst / MATP data for {{ symbol }} — showing price only.</p>
