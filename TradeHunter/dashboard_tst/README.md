@@ -143,6 +143,19 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-16 - v4.100: Curated list - no Entry / Stop columns, no pencil
+
+User: *"in the ticker list in curated no need to show the entry stop. the edit button also no
+need to show because user will edit from the chart control"*
+
+`_curated_list.html`: the **Entry** and **Stop** columns are gone from the call rows and the
+revision child rows (Target, R:R, Qty and the outcome columns stay - twelve columns now, the
+group and setup lines span them), and the **pencil / inline level editor** is removed from the
+actions cell. Levels are edited on the chart, where the setup editor saves a revision of the
+call; the levels themselves are still one hover away on the row's TV-plot control. The `/curated/{id}/edit`
+route stays for the chart's own save. Verified through the app: twelve headers, no Entry /
+Stop, no edit form in the list.
+
 ### 2026-09-16 - v4.99: the setup box sits on the curated day's candle and stops short of the price axis
 
 User: *"the setup drawing is to cover the candle of the date the setup was curated, not always

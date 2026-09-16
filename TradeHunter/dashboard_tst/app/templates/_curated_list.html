@@ -229,8 +229,6 @@
         <tr class="text-[9px] uppercase text-slate-500 border-b border-slate-800">
           <th class="text-left font-normal px-1 py-0.5">Ticker</th>
           <th class="text-left font-normal px-1 py-0.5" title="Date curated">Date</th>
-          <th class="text-right font-normal px-1 py-0.5">Entry</th>
-          <th class="text-right font-normal px-1 py-0.5">Stop</th>
           <th class="text-right font-normal px-1 py-0.5" title="Target">Tgt</th>
           <th class="text-right font-normal px-1 py-0.5" title="Planned reward-to-risk from your own levels">R:R</th>
           <th class="text-right font-normal px-1 py-0.5" title="Shares to buy: your risk budget (account value x risk %) divided by the risk per share (entry - stop), floored to whole shares">Qty</th>
@@ -251,7 +249,7 @@
         {% set grp = m.rows | selectattr('mbp_state', 'equalto', gkey) | list %}
         {% if grp %}
         <tr class="cur-group-row">
-          <td colspan="14" class="px-1 pt-1.5 pb-0.5 text-[9px] uppercase tracking-wide {{ gcls }} border-b border-slate-800/60"
+          <td colspan="12" class="px-1 pt-1.5 pb-0.5 text-[9px] uppercase tracking-wide {{ gcls }} border-b border-slate-800/60"
               title="{% if gkey == 'below' %}Latest price is under the Max Buy Price from the MATP board{% elif gkey == 'above' %}Latest price has moved above the Max Buy Price{% else %}No MATP / MBP on the board for these tickers yet{% endif %}">
             {{ glabel }} <span class="normal-case tracking-normal text-slate-600">{{ grp|length }}</span>
           </td>
@@ -281,8 +279,6 @@
             {% if r.note %}<span class="ml-1 text-slate-600 cursor-help" title="{{ r.note }}">&#9432;</span>{% endif %}
           </td>
           <td class="px-1 py-0.5 text-slate-400 tabular-nums whitespace-nowrap" title="{{ r.curated_on }}">{{ r.curated_on[5:] }}</td>
-          <td class="px-1 py-0.5 text-right text-slate-300">{{ num(r.entry) }}</td>
-          <td class="px-1 py-0.5 text-right text-slate-400">{{ num(r.stop) }}</td>
           <td class="px-1 py-0.5 text-right text-slate-400">{{ num(r.target) }}</td>
           <td class="px-1 py-0.5 text-right text-slate-500">{{ num(e.planned_rr, 1) }}</td>
           {# Derived from the CURRENT account value, never stored: raising the account
@@ -322,27 +318,10 @@
                   data-entry="{{ '%.4f'|format(r.entry) }}"
                   data-stop="{{ '%.4f'|format(r.stop) }}"
                   data-target="{{ '%.4f'|format(r.target) }}">&#9639;</span>
-            <details class="inline-block text-left ml-1">
-              <summary class="list-none cursor-pointer text-slate-500 hover:text-slate-300 select-none" title="Edit levels">&#9998;</summary>
-              {# Inline edit. There is no date field: the curated date anchors every
-                 trigger test, so it is fixed for the life of the call. Every change
-                 here is kept as a revision. #}
-              <form class="absolute z-10 mt-1 -ml-44 flex flex-col gap-1 rounded-lg border border-slate-700 bg-slate-900 p-2 shadow-lg"
-                    hx-post="/curated/{{ r.id }}/edit" hx-target="closest .curated-panel" hx-swap="outerHTML">
-                <input type="hidden" name="year" value="{{ sel_year }}">
-                <input type="hidden" name="month" value="{{ sel_month }}">
-                <div class="flex items-center gap-1">
-                  <input name="symbol" value="{{ r.symbol }}" maxlength="6" class="w-20 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-xs uppercase outline-none focus:border-emerald-500">
-                  <span class="text-[10px] text-slate-500 whitespace-nowrap" title="The curated date anchors every trigger test and cannot be changed">{{ r.curated_on }} &#128274;</span>
-                </div>
-                <div class="flex gap-1">
-                  <input name="entry" type="number" step="any" value="{{ r.entry }}" title="Entry" class="w-20 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-xs tabular-nums outline-none focus:border-emerald-500">
-                  <input name="stop" type="number" step="any" value="{{ r.stop }}" title="Stop" class="w-20 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-xs tabular-nums outline-none focus:border-emerald-500">
-                  <input name="target" type="number" step="any" value="{{ r.target }}" title="Target" class="w-20 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-xs tabular-nums outline-none focus:border-emerald-500">
-                </div>
-                <button type="submit" class="rounded border border-slate-700 px-2 py-1 text-xs text-slate-200 hover:border-emerald-500 hover:text-emerald-300 transition">Save</button>
-              </form>
-            </details>
+            {# The pencil / inline level editor is gone (user, 2026-09-16: "the edit
+               button also no need to show because user will edit from the chart
+               control") - levels are changed on the chart, where the setup editor
+               saves a revision of this call. #}
             <button type="button" class="ml-1 text-slate-600 hover:text-rose-400 transition"
                     title="Remove {{ r.symbol }} ({{ r.curated_on }})"
                     hx-post="/curated/{{ r.id }}/delete" hx-vals='{"year": "{{ sel_year }}", "month": "{{ sel_month }}"}'
@@ -358,7 +337,7 @@
         <tr class="cur-setup-row border-b border-slate-800/60 hover:bg-slate-800/30 cursor-pointer"
             hx-get="/curated/chart?row={{ r.id }}" hx-target="#curatedChartBody" hx-swap="innerHTML"
             title="Setup findings for {{ r.symbol }}{% if r.setup.close %}: {{ r.setup.summary }} &middot; EMA20 {{ r.setup.ema20 }} / EMA50 {{ r.setup.ema50 }} / EMA200 {{ r.setup.ema200 }}{% endif %}">
-          <td colspan="14" class="px-1 pt-0 pb-1">
+          <td colspan="12" class="px-1 pt-0 pb-1">
             <span class="flex flex-wrap items-center gap-0.5 pl-4">
               {% for ch in sr.chips %}
               <span class="text-[9px] px-1 py-px rounded whitespace-nowrap
@@ -408,8 +387,6 @@
             {% elif rv.source == 'created' %}<span class="ml-1 text-slate-600" title="The version this call was created with">&#8226;</span>{% endif %}
           </td>
           <td class="px-2 py-1 text-slate-500 tabular-nums whitespace-nowrap">{{ localtime(rv.created_at) }}</td>
-          <td class="px-2 py-1 text-right text-slate-400">{{ num(rv.entry) }}</td>
-          <td class="px-2 py-1 text-right text-slate-500">{{ num(rv.stop) }}</td>
           <td class="px-2 py-1 text-right text-slate-500">{{ num(rv.target) }}</td>
           <td class="px-2 py-1 text-right text-slate-600">{{ num(rv.planned_rr, 1) }}</td>
           <td class="px-2 py-1 text-right whitespace-nowrap">
