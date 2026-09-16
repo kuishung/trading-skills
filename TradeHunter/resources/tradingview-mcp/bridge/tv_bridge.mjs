@@ -34,7 +34,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const BRIDGE_VERSION = '1.2.0'; // features: auto-launch, autosave, PNA header, locked lines (frozen+disableSelection), label-based de-dupe, curated setup lines (entry/stop/target)
+const BRIDGE_VERSION = '1.3.0'; // features: auto-launch, autosave, PNA header, locked lines (frozen+disableSelection), label-based de-dupe, curated setup as TV's Long/Short Position tool on the last bar (entry/stop/target)
 const BRIDGE_PORT = Number(process.env.TH_TV_BRIDGE_PORT || 9223);
 const CDP_PORT = Number(process.env.TH_TV_CDP_PORT || 9222);
 const CDP_HOST = process.env.TH_TV_CDP_HOST || '127.0.0.1';
@@ -208,9 +208,10 @@ async function cdpEval(expression, awaitPromise = true, timeoutMs = 12000) {
 // MATP lines already on the chart, and "Open on TV" from Sector does not wipe a
 // setup you are watching.
 
-function buildPlotExpr({ symbol, lines, purge }) {
+function buildPlotExpr({ symbol, lines, purge, position }) {
   const S = JSON.stringify(symbol);
   const LINES = JSON.stringify(lines || []);
+  const POS = JSON.stringify(position || null);
   // purge: array of label prefixes, e.g. ['MATP','MBP'] -> /^(MATP|MBP)\s+[0-9.]/
   const PURGE = JSON.stringify((purge && purge.length ? purge : ['MATP', 'MBP']).join('|'));
   return `
@@ -222,7 +223,9 @@ function buildPlotExpr({ symbol, lines, purge }) {
       var SYM = ${S};
       var LINES = ${LINES};          // [{price, color, label, style}]
       var PURGE = ${PURGE};          // 'MATP|MBP' or 'Entry|SL|PT' or both
+      var POS = ${POS};              // {entry, stop, target} or null -> TV Long/Short Position tool
       window.__TH_LINES = window.__TH_LINES || {};
+      window.__TH_POS = window.__TH_POS || {};
       // key cleanup on the bare symbol (ignore EXCHANGE: prefix)
       var KEY = SYM.indexOf(':') >= 0 ? SYM.split(':').pop().toUpperCase() : SYM.toUpperCase();
 
@@ -246,10 +249,30 @@ function buildPlotExpr({ symbol, lines, purge }) {
           } catch (e) { /* skip */ }
         });
         window.__TH_LINES[KEY] = [];
+        // 1b) when a setup is being (re)drawn, remove OUR previous position tool on
+        //     this symbol (ids remembered per page; a manual Long Position the user
+        //     drew is left alone).
+        if (POS) {
+          (window.__TH_POS[KEY] || []).forEach(function (id) { try { api.removeEntity(id); } catch (e) {} });
+          window.__TH_POS[KEY] = [];
+        }
         // 2) pick a visible bar time for the anchor point (line spans the chart anyway)
         var t;
         try { var vr = api.getVisibleRange(); t = Math.floor((vr.from + vr.to) / 2); }
         catch (e) { t = Math.floor(Date.now() / 1000); }
+        // 2b) the LAST bar's time and the symbol's tick size, for the position tool.
+        //     TV keeps the series in its model; fall back to the visible range end.
+        var tLast = null, minTick = 0.01;
+        try {
+          var ms = api._model && api._model().mainSeries && api._model().mainSeries();
+          var bs = ms && ms.bars && ms.bars();
+          var li = bs && bs.lastIndex && bs.lastIndex();
+          var lb = (li != null && bs.valueAt) ? bs.valueAt(li) : null;
+          if (lb && lb[0]) tLast = Math.floor(lb[0]);
+          var si = ms && ms.symbolInfo && ms.symbolInfo();
+          if (si && si.minmov && si.pricescale) minTick = si.minmov / si.pricescale;
+        } catch (e) {}
+        if (!tLast) { try { tLast = Math.floor(api.getVisibleRange().to); } catch (e) { tLast = t; } }
         // 3) snapshot ids, draw, then diff after a settle to capture the new ids
         var before = api.getAllShapes().map(function (s) { return s.id; });
         function line(price, color, label, style) {
@@ -265,9 +288,39 @@ function buildPlotExpr({ symbol, lines, purge }) {
           });
         }
         LINES.forEach(function (L) { line(L.price, L.color, L.label, L.style); });
+        // 3b) the setup as TV's own Long / Short Position tool, anchored on the last
+        //     bar (user, 2026-09-16: "when Plot on TV, also use the Long Position
+        //     tool ... drawn on the recent candle"). profitLevel / stopLevel are in
+        //     TICKS from the entry, per TV's shape overrides.
+        var posErr = null;
+        if (POS) {
+          try {
+            var isLong = POS.target >= POS.entry;
+            var profitTicks = Math.max(1, Math.round(Math.abs(POS.target - POS.entry) / minTick));
+            var stopTicks = Math.max(1, Math.round(Math.abs(POS.entry - POS.stop) / minTick));
+            api.createShape({ time: tLast, price: POS.entry }, {
+              shape: isLong ? 'long_position' : 'short_position',
+              overrides: { profitLevel: profitTicks, stopLevel: stopTicks,
+                           fillBackground: true, fillLabelBackground: true,
+                           linecolor: '#38bdf8', textcolor: '#e2e8f0',
+                           profitBackground: 'rgba(16,185,129,0.20)', profitBackgroundTransparency: 80,
+                           stopBackground: 'rgba(239,68,68,0.20)', stopBackgroundTransparency: 80,
+                           compact: false, alwaysShowStats: true, showPriceLabels: true }
+            });
+          } catch (e) { posErr = e && e.message ? e.message : String(e); }
+        }
         setTimeout(function () {
           var after = api.getAllShapes().map(function (s) { return s.id; });
           var added = after.filter(function (id) { return before.indexOf(id) < 0; });
+          // split what we added: the position tool is tracked separately from the lines
+          var posIds = [];
+          try {
+            api.getAllShapes().forEach(function (s) {
+              if (added.indexOf(s.id) >= 0 && (s.name === 'long_position' || s.name === 'short_position')) posIds.push(s.id);
+            });
+          } catch (e) {}
+          window.__TH_POS[KEY] = (window.__TH_POS[KEY] || []).concat(posIds);
+          added = added.filter(function (id) { return posIds.indexOf(id) < 0; });
           window.__TH_LINES[KEY] = (window.__TH_LINES[KEY] || []).concat(added);
           // Lock (freeze) the lines we just drew so they can't be moved/edited. frozen
           // must be set AFTER creation (the create-time option is a no-op). removeEntity
@@ -285,7 +338,8 @@ function buildPlotExpr({ symbol, lines, purge }) {
             if (A && typeof A.autosave === 'function') { A.autosave(); saved = true; }
             else if (A && typeof A.saveChart === 'function') { A.saveChart(); saved = true; }
           } catch (e) {}
-          resolve({ ok: true, symbol: SYM, added: added.length, total: after.length, saved: saved });
+          resolve({ ok: true, symbol: SYM, added: added.length + posIds.length, position: posIds.length,
+                    position_error: posErr, anchor: tLast, min_tick: minTick, total: after.length, saved: saved });
         }, 350);
       }
 
@@ -315,6 +369,7 @@ function buildPlotExpr({ symbol, lines, purge }) {
 function buildLines({ matp, mbp, entry, stop, target, tag }) {
   const lines = [];
   const purge = [];
+  let position = null;
   const px = (n) => (Math.round(n * 100) / 100).toFixed(2);
   const sfx = tag ? ' ' + tag : '';
   // MATP/MBP are purged even when null, so a symbol whose MATP was withdrawn stops
@@ -324,12 +379,13 @@ function buildLines({ matp, mbp, entry, stop, target, tag }) {
   if (matp != null) lines.push({ price: matp, color: '#f97316', label: 'MATP ' + matp, style: 0 });
   if (mbp != null) lines.push({ price: mbp, color: '#16a34a', label: 'MBP ' + mbp, style: 0 });
   if (entry != null && stop != null && target != null) {
+    // v1.3.0: the setup is TV's own Long / Short Position tool on the last bar,
+    // not three horizontal lines. The old line family is still purged so a chart
+    // drawn by an earlier bridge loses its Entry / SL / PT lines when re-plotted.
     purge.push('Entry', 'SL', 'PT');
-    lines.push({ price: entry, color: '#38bdf8', label: 'Entry ' + px(entry) + sfx, style: 0 });
-    lines.push({ price: stop, color: '#f87171', label: 'SL ' + px(stop) + sfx, style: 2 });
-    lines.push({ price: target, color: '#34d399', label: 'PT ' + px(target) + sfx, style: 2 });
+    position = { entry, stop, target, tag: sfx.trim() };
   }
-  return { lines, purge };
+  return { lines, purge, position };
 }
 
 // --- HTTP server -------------------------------------------------------------
@@ -403,9 +459,9 @@ const server = http.createServer(async (req, res) => {
     const tvSym = exchange ? `${exchange}:${symbol}` : symbol;
 
     try {
-      const { lines, purge } = buildLines({ matp, mbp, entry, stop, target, tag });
-      console.log(`[tv-bridge] plot ${tvSym} matp=${matp} mbp=${mbp} setup=${entry != null ? `${entry}/${stop}/${target}` : 'none'} …`);
-      const result = await cdpEval(buildPlotExpr({ symbol: tvSym, lines, purge }));
+      const { lines, purge, position } = buildLines({ matp, mbp, entry, stop, target, tag });
+      console.log(`[tv-bridge] plot ${tvSym} matp=${matp} mbp=${mbp} setup=${entry != null ? `${entry}/${stop}/${target} (position tool)` : 'none'} …`);
+      const result = await cdpEval(buildPlotExpr({ symbol: tvSym, lines, purge, position }));
       console.log(`[tv-bridge] plot ${tvSym} ->`, JSON.stringify(result));
       if (nav) return sendHtml(res, htmlResult(!!(result && result.ok), (result && result.error) || '', symbol));
       return send(res, 200, result || { ok: false, error: 'no result' }, origin);

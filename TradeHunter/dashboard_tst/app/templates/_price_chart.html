@@ -607,28 +607,36 @@
       ctx.strokeStyle = ACCENT;
       ctx.lineWidth = sel ? 3 : 1.5;
       if (d.type === 'trade') {
-        // FULL-WIDTH bands: a red risk zone entry->stop, a green reward zone
-        // entry->target, and the entry line between them. The box used to stop at
-        // a right edge, which drew two vertical lines that mean nothing -- a stop
-        // is a price, not a date, and the box's width was a decoration you could
-        // accidentally drag. Now the levels read straight across the chart, the
-        // way a price line does.
+        // TradingView's Long Position tool, not three price lines (user,
+        // 2026-09-16): the box STARTS at the anchor candle - the most recent bar
+        // when the setup was made - and runs to the right edge. Green reward zone
+        // entry->target above, red risk zone entry->stop below, the entry line
+        // between them, the labels at the box's left edge like TV's. Nothing is
+        // drawn to the left of the anchor, so the setup sits on the candle it was
+        // curated on instead of striping the whole history.
         var ye = yOf(d.a.p), ys = yOf(d.sl), yp = yOf(d.pt);
         if (ye == null || ys == null || yp == null) { ctx.restore(); return; }
+        var xa = xOf(d.a);
+        if (xa == null || !isFinite(xa)) xa = 0;
+        xa = Math.max(0, Math.min(w - 2, xa));
+        var bw = w - xa;
         ctx.fillStyle = 'rgba(16,185,129,0.15)';
-        ctx.fillRect(0, Math.min(ye, yp), w, Math.abs(yp - ye));
+        ctx.fillRect(xa, Math.min(ye, yp), bw, Math.abs(yp - ye));
         ctx.fillStyle = 'rgba(239,68,68,0.17)';
-        ctx.fillRect(0, Math.min(ye, ys), w, Math.abs(ys - ye));
+        ctx.fillRect(xa, Math.min(ye, ys), bw, Math.abs(ys - ye));
         function band(yy, color, lw) {
           ctx.strokeStyle = color; ctx.lineWidth = lw;
-          ctx.beginPath(); ctx.moveTo(0, yy); ctx.lineTo(w, yy); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(xa, yy); ctx.lineTo(w, yy); ctx.stroke();
         }
         band(yp, 'rgba(16,185,129,0.9)', sel ? 2.5 : 1.8);
         band(ys, 'rgba(239,68,68,0.9)', sel ? 2.5 : 1.8);
         band(ye, ACCENT, sel ? 3 : 2.2);
+        // the box's left edge: the anchor candle
+        ctx.strokeStyle = sel ? ACCENT : 'rgba(56,189,248,0.55)'; ctx.lineWidth = sel ? 2 : 1;
+        ctx.beginPath(); ctx.moveTo(xa, Math.min(yp, ys)); ctx.lineTo(xa, Math.max(yp, ys)); ctx.stroke();
         var risk = Math.abs(d.a.p - d.sl);
         var rr = risk > 0 ? Math.abs(d.pt - d.a.p) / risk : 0;
-        var lx = BAR_RIGHT + 4;                 // clear of the drawing toolbar
+        var lx = Math.max(BAR_RIGHT + 4, xa + 4);   // at the box, clear of the toolbar
         tag(ctx, lx, ye, 'Entry ' + fmt(d.a.p), ACCENT, h, true);
         tag(ctx, lx, ys, 'SL ' + fmt(d.sl) + '  \u22121R', '#f87171', h, true);
         tag(ctx, lx, yp, 'PT ' + fmt(d.pt) + '  ' + rr.toFixed(1) + 'R', '#34d399', h, true);
@@ -1800,11 +1808,15 @@
         // resistance (short) -- and the editor lets you flip it when the guess is
         // wrong. Entry, stop and target are then derived (see deriveTrade).
         var lastClose = bars[bars.length - 1].close;
-        var aPt = logicalToPoint(el0, ep);
+        // The click sets the PRICE; the box always anchors on the most recent
+        // candle (user, 2026-09-16: "drawn on the recent candle"), like TV's
+        // Long Position tool placed on the last bar.
+        var lastL = bars.length - 1;
+        var aPt = logicalToPoint(lastL, ep);
         var nd = deriveTrade({
           type: 'trade',
           a: aPt,
-          b: logicalToPoint(el0 + 20, ep),
+          b: logicalToPoint(lastL + 20, ep),
           lvl: ep,
           kind: ep <= lastClose ? 'support' : 'resistance',
           off: tradePrefs.off,
@@ -1875,8 +1887,8 @@
         var lastI = bars.length - 1;
         var seed = deriveTrade({
           type: 'trade',
-          a: logicalToPoint(Math.max(0, lastI - 30), SETUP_SEED.entry),
-          b: logicalToPoint(Math.max(0, lastI - 30) + 20, SETUP_SEED.entry),
+          a: logicalToPoint(lastI, SETUP_SEED.entry),
+          b: logicalToPoint(lastI + 20, SETUP_SEED.entry),
           // No level was stored with the call (a call is three prices), so let
           // ensureLevel recover one from the entry at this member's own offset.
           kind: SETUP_SEED.target >= SETUP_SEED.entry ? 'support' : 'resistance',

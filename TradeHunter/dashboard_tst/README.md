@@ -143,6 +143,32 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-16 - v4.97: the setup is drawn as TradingView's Long Position tool, on the last candle
+
+User: *"in the chart when i curate a setup, the Entry PT and SL, do not use lines to represent,
+use the Long Position like in TV. when Plot on TV, also use the Long Position tool. this is
+to be drawn on the recent candle in both chart"*
+
+- **App chart** (`_price_chart.html`): a trade setup is painted as a Long Position box - the
+  green reward zone entry->target and the red risk zone entry->stop START at the anchor candle
+  and run to the right edge, with the entry line between them, a left edge on the anchor, and
+  the Entry / SL / PT labels at the box's left like TV's. Nothing is drawn to the left of the
+  anchor any more. A new setup (click on the level) anchors on the **last candle** whatever bar
+  was clicked - the click sets the price; a curated call mounts on the last candle too (it used
+  to sit 30 bars back).
+- **Plot on TV** (`resources/tradingview-mcp/bridge/tv_bridge.mjs` v1.3.0): a curated setup is
+  sent as TradingView's own `long_position` / `short_position` shape on the last bar, with
+  `profitLevel` / `stopLevel` in ticks from the entry (tick size read from the symbol's
+  `minmov / pricescale`), instead of three horizontal lines. The old Entry / SL / PT lines are
+  still purged on re-plot, and the bridge remembers the position tool it drew per symbol so a
+  re-plot replaces rather than duplicates. MATP / MBP lines are unchanged. `/plot` reports
+  `position`, `anchor` and `min_tick` in its result for checking.
+
+Verified in the browser on the Curated page (IFF): the box now starts on the 11 Sep candle
+and runs right, PT 86.79 / Entry 83.04 / SL 81.17 labelled at its left edge; no console
+errors. The bridge passes `node --check`; its live behaviour needs a TV tab on this user's PC,
+so please re-run `launch_tv_bridge.bat` and plot a call to confirm the tool appears.
+
 ### 2026-09-15 - v4.96: Curated - each week split into Below MBP and Above MBP
 
 User: *"in the curated list, i need it to be separated by before MBP and above MBP"*

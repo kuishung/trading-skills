@@ -92,6 +92,13 @@ behind. Just clear those two lines by hand, or re-plot after they're gone.)
 
 ## Changelog
 
+- **1.3.0** (2026-09-16) - a curated setup (`entry=&stop=&target=`) is drawn as TradingView's
+  own **Long / Short Position tool** on the last bar (`createShape` with `long_position` /
+  `short_position`, `profitLevel` / `stopLevel` in ticks from `minmov / pricescale`) instead
+  of three horizontal lines. Old Entry / SL / PT lines are still purged on re-plot; the tool's
+  id is remembered per symbol (`window.__TH_POS`) so a re-plot replaces it. Result carries
+  `position`, `anchor`, `min_tick`. MATP / MBP lines unchanged.
+
 ### 2026-09-08 — v1.2.0: plot a curated trade setup (Entry / SL / PT)
 
 Driven by the Curated page's *"show the curated setup on TV"* request.
