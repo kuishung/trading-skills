@@ -143,6 +143,16 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-16 - v4.106: Sector & Industry chart - the analyst range starts collapsed
+
+User: *"in the sector and industry i need the analyst MATP and MBP to be collapsed"*
+
+`_sector_chart.html` sets `chart_band_start_closed`, the flag the Curated page has used since
+v4.79, so the MATP / MBP band below the chart opens as its one summary line (MBP · MATP ·
+target count) and expands on click. Applies to the inline Sector & Industry chart and the
+holdings pop-out, which render the same partial. Verified through the app: both carry
+`START_CLOSED = true`.
+
 ### 2026-09-16 - v4.105: Curated cards simplified, revision history gone
 
 User: *"This ticker list looks too many information. please simplify and do not show the

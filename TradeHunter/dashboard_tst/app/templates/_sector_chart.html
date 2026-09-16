@@ -10,6 +10,10 @@
 {% set chart_as_of = sel.as_of if sel else None %}
 {% set chart_earnings = sel.last_earnings_date if sel else None %}
 {% set chart_band = sel_band %}
+{# The analyst range (MATP / MBP band) starts COLLAPSED here too (user, 2026-09-16:
+   "in the sector and industry i need the analyst MATP and MBP to be collapsed"),
+   as on the Curated page - one summary line, the bar a click away. #}
+{% set chart_band_start_closed = true %}
 {% set chart_patterns = sel_patterns %}
 {% set chart_fill = true %}
 {# Curate setup -> the member's Curated list (user, 2026-09-08) #}
