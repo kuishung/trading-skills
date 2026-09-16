@@ -143,6 +143,18 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-16 - v4.102: a weekend curated date anchors on Friday's candle
+
+User: *"i have VEEV which i curated on 13/9, the drawing of the setup start on 14/9"* - 13
+September is a Sunday; there is no candle that day, and the lookup snapped FORWARD to
+Monday's.
+
+`_price_chart.html` `anchorIndexFor(date)`: the last candle ON OR BEFORE the curated date -
+a call made on a Saturday or Sunday was made looking at Friday's candle, so that is where its
+box starts. Used by both the Curated page's seed mount and `reanchorToCurated()`. Checked on
+its own: 13/9 and 12/9 -> 11/9, 11/9 -> 11/9, 14/9 -> 14/9, a date past the last bar -> the
+last bar.
+
 ### 2026-09-16 - v4.101: every chart anchors a curated ticker's setup on the curated day
 
 User: *"the setup drawing still not start from the candle of the date the setup curated"* -

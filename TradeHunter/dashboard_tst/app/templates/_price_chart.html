@@ -569,6 +569,17 @@
       }
       return Math.max(0, Math.min(bars.length - 1, lo));
     }
+    /** The bar a CURATED date sits on: the last candle ON OR BEFORE that day. A
+        call made on a Saturday or Sunday was made on Friday's candle, so it must
+        not snap forward to Monday's (user, 2026-09-16: VEEV curated 13/9 was
+        drawn from 14/9). -1 when there are no bars. */
+    function anchorIndexFor(dateStr) {
+      if (!bars.length || !dateStr) return -1;
+      var i = idxOfTime(dateStr);
+      if (i < 0) return -1;
+      while (i > 0 && bars[i].time > dateStr) i--;
+      return i;
+    }
     function toPoint(x, y) {
       var l = ts.coordinateToLogical(x), p = series.coordinateToPrice(y);
       if (l == null || p == null) return null;
@@ -830,7 +841,7 @@
         the member saves the drawing afterwards. Returns true when a box moved. */
     function reanchorToCurated() {
       if (!curatedCall || !curatedCall.curated_on || !bars.length) return false;
-      var ci = idxOfTime(curatedCall.curated_on);
+      var ci = anchorIndexFor(curatedCall.curated_on);
       if (ci < 0) return false;
       var changed = false;
       drawings.forEach(function (d) {
@@ -1936,7 +1947,7 @@
         // last candle; an older one on its own day, and the box runs from there.
         var anchorI = lastI;
         if (CURATED_ON) {
-          var ci = idxOfTime(CURATED_ON);
+          var ci = anchorIndexFor(CURATED_ON);
           if (ci >= 0 && ci <= lastI) anchorI = ci;
         }
         var seed = deriveTrade({
