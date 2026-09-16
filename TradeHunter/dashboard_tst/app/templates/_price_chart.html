@@ -513,6 +513,8 @@
     var light = document.documentElement.classList.contains('light');
     var ACCENT = '#38bdf8', HIT = 6;
     var drawings = [], pending = null, tool = 'cursor', selected = -1, hovered = false;
+    // read-only debug handle: what is drawn, and where the setup's anchor sits
+    window.__thSetup = function () { return { drawings: drawings, curatedOn: CURATED_ON, lastBar: bars.length ? bars[bars.length - 1].time : null, firstBar: bars.length ? bars[0].time : null }; };
     var dragging = false, downAt = null, raf = 0;
 
     var URL_ = '/drawings/' + encodeURIComponent(symbol);
@@ -820,6 +822,26 @@
         '\nClick to ' + (curatedShown ? 'hide' : 'show') + ' these levels on the chart';
       badge.style.background = curatedShown ? 'rgba(56,189,248,.18)' : '';
     };
+    /** Stored trade setups sit on the candle of the day the call was CURATED
+        (user, 2026-09-16: "cover the candle of the date the setup was curated"),
+        whatever bar they were first placed on - older drawings were anchored on
+        the bar that was clicked. Applied in memory whenever both the shapes and
+        the call are known (either may arrive first); it is written back only if
+        the member saves the drawing afterwards. Returns true when a box moved. */
+    function reanchorToCurated() {
+      if (!curatedCall || !curatedCall.curated_on || !bars.length) return false;
+      var ci = idxOfTime(curatedCall.curated_on);
+      if (ci < 0) return false;
+      var changed = false;
+      drawings.forEach(function (d) {
+        if (!d || d.type !== 'trade' || !d.a) return;
+        if (d.a.t === bars[ci].time && !d.a.o) return;
+        d.a = { t: bars[ci].time, o: 0, p: d.a.p };
+        d.b = logicalToPoint(ci + 20, d.b ? d.b.p : d.a.p);
+        changed = true;
+      });
+      return changed;
+    }
     /** Ask the server what (if anything) is curated on this ticker, then re-render
         the badge and any open editor so its button says the right thing. */
     function refreshCuratedCall() {
@@ -831,6 +853,7 @@
         .then(function (r) { return r.ok ? r.json() : null; })
         .then(function (j) {
           curatedCall = (j && j.call) || null;
+          if (reanchorToCurated()) redraw();
           if (curatedShown && paintCurated) paintCurated(curatedCall);
           if (syncCuratedBadge) syncCuratedBadge();
           refreshPanel();
@@ -1958,14 +1981,14 @@
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (d) {
         var server = (d && Array.isArray(d.shapes)) ? d.shapes : [];
-        if (server.length) { drawings = server; cacheLocal(); redraw(); focusStoredSetup(); return; }
+        if (server.length) { drawings = server; cacheLocal(); reanchorToCurated(); redraw(); focusStoredSetup(); return; }
         var local = readLocal();
-        if (local && local.length) { drawings = local; redraw(); pushToServer(); focusStoredSetup(); }
+        if (local && local.length) { drawings = local; reanchorToCurated(); redraw(); pushToServer(); focusStoredSetup(); }
       })
       .catch(function () {
         // offline / 401: fall back to the local mirror and flag it as unsaved
         var local = readLocal();
-        if (local && local.length) { drawings = local; redraw(); }
+        if (local && local.length) { drawings = local; reanchorToCurated(); redraw(); }
         setSaveState('error');
       });
   }

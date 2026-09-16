@@ -143,6 +143,28 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-16 - v4.101: every chart anchors a curated ticker's setup on the curated day
+
+User: *"the setup drawing still not start from the candle of the date the setup curated"* -
+with v4.99/v4.100 already live (`/status` on Hermes said 4.100).
+
+v4.99 fixed the CURATED page (the call mounted as a seed), and the Sector chart with a call
+takes the same path. What still showed the old anchor was a **stored drawing** - the shape
+saved when the setup was drawn on the Watchlist / Sector chart and then curated. Before
+v4.97 such a drawing was anchored on whatever bar was clicked, and every chart that loads
+stored shapes (Watchlist, the Sector chart for a ticker with no call, the holdings pop-out)
+still painted it there.
+
+`_price_chart.html` `reanchorToCurated()`: whenever a chart knows both its stored shapes and
+the member's curated call on the ticker (`/curated/for-symbol`, either may arrive first),
+every stored trade setup is moved, in memory, to the candle of `curated_on` with its right
+edge 20 bars on. It is written back only if the member saves the drawing afterwards. A small
+read-only `window.__thSetup()` debug handle exposes the drawings and the anchor.
+
+Verified in the browser: a BAP drawing stored on 2026-08-03 loaded on the Watchlist chart
+reads anchor `2026-09-08`, the call's curated date; the Curated page's seed already read the
+same. Test shape removed afterwards.
+
 ### 2026-09-16 - v4.100: Curated list - no Entry / Stop columns, no pencil
 
 User: *"in the ticker list in curated no need to show the entry stop. the edit button also no
