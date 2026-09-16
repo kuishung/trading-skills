@@ -253,17 +253,11 @@
 
       {# 1. the call #}
       <div class="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[13px] leading-tight">
-        {% if r.revisions | length > 1 %}
-        <span class="cur-actions cur-rev-toggle inline-block w-3 text-slate-500 hover:text-sky-300 cursor-pointer select-none transition"
-              role="button" tabindex="0" data-row="{{ r.id }}"
-              title="{{ r.revisions | length }} versions of this call — show them">&#9656;</span>
-        {% else %}<span class="inline-block w-3"></span>{% endif %}
         <span class="text-[14px] font-semibold text-slate-100">{{ r.symbol }}</span>
         {% if e.direction == "short" %}<span class="text-[10px] text-amber-400/80" title="Short — your stop is above the entry">S</span>{% endif %}
         {% if r.note %}<span class="text-slate-500 cursor-help" title="{{ r.note }}">&#9432;</span>{% endif %}
         <span class="text-slate-400 tabular-nums" title="Curated {{ r.curated_on }}">{{ r.curated_on[5:] }}</span>
         <span class="text-slate-500" title="Target">Tgt <span class="text-slate-200 tabular-nums">{{ num(r.target) }}</span></span>
-        <span class="text-slate-500" title="Planned reward-to-risk from your own levels">R:R <span class="text-slate-300 tabular-nums">{{ num(e.planned_rr, 1) }}</span></span>
         {# Derived from the CURRENT account value, never stored: raising the account
            above re-sizes every call at once. A dash means "no account value yet". #}
         <span class="text-slate-500" title="Shares to buy: your risk budget (account value x risk %) divided by the risk per share (entry - stop), floored to whole shares">Qty
@@ -294,15 +288,9 @@
 
       {# 2. performance - its own line (user, 2026-09-16: "the status, trigger, fill,
          %, R put into a new row as it is performance") #}
-      <div class="flex flex-wrap items-center gap-x-2 gap-y-0.5 pl-5 mt-0.5 text-[12px] leading-tight text-slate-400">
-        <span class="inline-block px-1.5 py-px rounded border text-[10px] {{ b[0] }} cursor-help" title="{{ e.note or b[2] }}">{{ b[1] }}</span>
+      <div class="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5 text-[12px] leading-tight text-slate-400">
+        <span class="inline-block px-1.5 py-px rounded border text-[10px] {{ b[0] }} cursor-help" title="{{ e.note or b[2] }}{% if e.triggered_on %} &middot; triggered {{ e.triggered_on }}{% if e.bars_held %}, held {{ e.bars_held }}d{% endif %}{% if e.fill is not none %}, filled {{ num(e.fill) }}{% endif %}{% elif e.bars_waiting %} &middot; {{ e.bars_waiting }}d waiting{% endif %}">{{ b[1] }}</span>
         {% if e.ambiguous %}<span class="text-[10px] text-amber-400/80 cursor-help" title="Stop and target were both inside one day's range. Daily bars can't say which came first, so this counts as stopped.">&#9670;</span>{% endif %}
-        <span class="tabular-nums" title="Triggered on, and days held">
-          {% if e.triggered_on %}<span class="text-slate-500">trig</span> <span title="{{ e.triggered_on }}">{{ e.triggered_on[5:] }}</span>{% if e.bars_held %} <span class="text-slate-600">&middot; {{ e.bars_held }}d</span>{% endif %}
-          {% elif e.bars_waiting %}<span class="text-slate-600">{{ e.bars_waiting }}d waiting</span>
-          {% else %}<span class="text-slate-600">not triggered</span>{% endif %}
-        </span>
-        {% if e.fill is not none %}<span title="Where it actually filled — the entry level, or the open if it gapped through"><span class="text-slate-500">fill</span> <span class="tabular-nums">{{ num(e.fill) }}</span></span>{% endif %}
         <span title="Exit price if closed, otherwise the last close"><span class="text-slate-500">{{ 'exit' if e.exit is not none else 'last' }}</span> <span class="text-slate-200 tabular-nums">{{ num(e.exit if e.exit is not none else e.last) }}</span></span>
         {% if e.pct is not none %}<span class="tabular-nums">{{ signed(e.pct, 1, "%") }}</span>{% endif %}
         {% if e.r_multiple is not none %}<span class="tabular-nums" title="Result in multiples of the risk you took (fill to stop)">{{ signed(e.r_multiple, 2, "R") }}</span>{% endif %}
@@ -310,8 +298,8 @@
 
       {# 3. the setup findings (user, 2026-09-15): the same chips and switched-on
          conditions as the Sector & Industry ticker panel, plus MBP. #}
-      <div class="flex flex-wrap items-center gap-1 pl-5 mt-1"
-           title="Setup findings for {{ r.symbol }}{% if r.setup.close %}: {{ r.setup.summary }} &middot; EMA20 {{ r.setup.ema20 }} / EMA50 {{ r.setup.ema50 }} / EMA200 {{ r.setup.ema200 }}{% endif %}">
+      <div class="flex flex-wrap items-center gap-1 mt-1"
+           title="Setup findings for {{ r.symbol }}{% if r.setup.close %}: {{ r.setup.summary }} &middot; close {{ '%.2f'|format(r.setup.close) }} &middot; EMA20 {{ r.setup.ema20 }} / EMA50 {{ r.setup.ema50 }} / EMA200 {{ r.setup.ema200 }}{% endif %}{% if r.mbp %} &middot; MBP {{ '%.2f'|format(r.mbp) }}{% endif %}">
         {% for ch in sr.chips %}
         <span class="text-[10px] px-1.5 py-px rounded whitespace-nowrap
                      {% if ch.k == 'hot' %}bg-emerald-500/25 text-emerald-200 font-semibold
@@ -323,47 +311,8 @@
         {% else %}
         <span class="text-[10px] text-slate-600">{% if sr.score is none %}{{ sr.summary }}{% elif sr.gated %}not in EMA uptrend{% else %}no setup condition met{% endif %}</span>
         {% endfor %}
-        {% if r.setup.close %}<span class="text-[10px] text-slate-600 tabular-nums" title="Last close against the EMAs">{{ '%.2f'|format(r.setup.close) }} &middot; E20 {{ r.setup.ema20 }} &middot; E50 {{ r.setup.ema50 }}</span>{% endif %}
-        {% if r.mbp %}<span class="text-[10px] tabular-nums {% if r.mbp_state == 'above' %}text-rose-300/80{% else %}text-emerald-300/80{% endif %}" title="Max Buy Price from the MATP board">MBP {{ '%.2f'|format(r.mbp) }}</span>{% endif %}
       </div>
 
-      {# ── this call's versions, hidden until the chevron opens them. Clicking one
-         charts THAT version (`?rev=`). Only shown when there is more than the
-         opening version. The performance figures are deliberately absent: a
-         superseded version was never traded. #}
-      {% if r.revisions | length > 1 %}
-      {% for rv in r.revisions %}
-      <div class="cur-rev-row flex flex-wrap items-center gap-x-2 gap-y-0.5 pl-5 mt-1 text-[12px] leading-tight text-slate-400 hover:text-slate-200 cursor-pointer"
-           data-rev-of="{{ r.id }}" hidden
-           hx-get="/curated/chart?rev={{ rv.id }}"
-           hx-trigger="click[!event.target.closest('.cur-actions')]"
-           hx-target="#curatedChartBody" hx-swap="innerHTML"
-           title="Show version {{ rv.n }} of {{ r.symbol }} on the chart">
-        <span class="text-slate-700">&#9492;</span>
-        <span class="tabular-nums {{ 'text-emerald-300' if rv.current else 'text-slate-400' }}">#{{ rv.n }}</span>
-        {% if rv.current %}<span class="text-[10px] text-emerald-400/80">current</span>{% endif %}
-        {% if rv.source == 'chart' %}<span class="text-sky-400/70" title="Saved from a chart's trade setup">&#9873;</span>
-        {% elif rv.source == 'created' %}<span class="text-slate-600" title="The version this call was created with">&#8226;</span>{% endif %}
-        <span class="text-slate-500 tabular-nums">{{ localtime(rv.created_at) }}</span>
-        <span class="text-slate-500">Entry <span class="text-slate-300 tabular-nums">{{ num(rv.entry) }}</span></span>
-        <span class="text-slate-500">SL <span class="text-slate-300 tabular-nums">{{ num(rv.stop) }}</span></span>
-        <span class="text-slate-500">Tgt <span class="text-slate-300 tabular-nums">{{ num(rv.target) }}</span></span>
-        <span class="text-slate-500">R:R <span class="tabular-nums">{{ num(rv.planned_rr, 1) }}</span></span>
-        {% if rv.size.qty is not none %}<span class="text-slate-500">Qty <span class="tabular-nums cursor-help" title="What this version would have bought: {{ rv.size.qty }} shares &times; {{ '%.2f'|format(rv.entry) }} = {{ '{:,.0f}'.format(rv.size.cost) }}, risking {{ '{:,.0f}'.format(rv.size.risk_budget) }} at {{ '%.2f'|format(rv.size.risk_per_unit) }} per share">{{ '{:,}'.format(rv.size.qty) }}</span></span>{% endif %}
-        {% if rv.note %}<span class="cursor-help text-slate-500" title="{{ rv.note }}">&#9432;</span>{% endif %}
-        <span class="cur-actions ml-auto">
-          <span class="tv-plot cursor-pointer text-slate-600 hover:text-orange-300 transition select-none"
-                role="button" tabindex="0"
-                title="Plot version {{ rv.n }} of {{ r.symbol }} (Entry {{ '%.2f'|format(rv.entry) }} / SL {{ '%.2f'|format(rv.stop) }} / PT {{ '%.2f'|format(rv.target) }}) on your TradingView"
-                data-sym="{{ r.symbol }}"
-                data-entry="{{ '%.4f'|format(rv.entry) }}"
-                data-stop="{{ '%.4f'|format(rv.stop) }}"
-                data-target="{{ '%.4f'|format(rv.target) }}"
-                data-tag="{% if not rv.current %}#{{ rv.n }}{% endif %}">&#9639;</span>
-        </span>
-      </div>
-      {% endfor %}
-      {% endif %}
     </div>
     {% endfor %}
     {% endif %}
