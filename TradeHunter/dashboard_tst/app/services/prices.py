@@ -237,15 +237,35 @@ def _fetch(sym: str, rng: str) -> list[dict]:
                 quote.get("low") or [],
                 quote.get("close") or [],
             )
+            # The most recent session is listed with a NULL close (sometimes more)
+            # for hours after the bell while Yahoo finalises it, although the same
+            # response's meta already carries the session's last price, day high
+            # and day low. Skipping that bar left every chart, the EMA setups and
+            # the curated marks one day behind (user, 2026-09-16: "the candles
+            # market data in the app is not up to date"). Fill the LAST bar from
+            # meta when its date matches regularMarketTime; older gaps stay gaps.
+            meta = res.get("meta") or {}
+            rm_day = None
+            try:
+                rm_day = _dt.datetime.utcfromtimestamp(
+                    int(meta.get("regularMarketTime") or 0)).strftime("%Y-%m-%d")
+            except Exception:  # noqa: BLE001
+                rm_day = None
             out: list[dict] = []
+            last_i = len(ts) - 1
             for i, t in enumerate(ts):
                 try:
                     bo, bh, bl, bc = o[i], h[i], l[i], c[i]
                 except IndexError:
                     continue
+                day = _dt.datetime.utcfromtimestamp(t).strftime("%Y-%m-%d")
+                if None in (bo, bh, bl, bc) and i == last_i and rm_day == day:
+                    bc = bc if bc is not None else meta.get("regularMarketPrice")
+                    bh = bh if bh is not None else meta.get("regularMarketDayHigh")
+                    bl = bl if bl is not None else meta.get("regularMarketDayLow")
+                    bo = bo if bo is not None else (meta.get("chartPreviousClose") or bc)
                 if None in (bo, bh, bl, bc):
                     continue  # Yahoo leaves gaps as null
-                day = _dt.datetime.utcfromtimestamp(t).strftime("%Y-%m-%d")
                 out.append(
                     {"time": day, "open": round(bo, 2), "high": round(bh, 2),
                      "low": round(bl, 2), "close": round(bc, 2)}

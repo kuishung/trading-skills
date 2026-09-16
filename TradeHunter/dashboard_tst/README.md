@@ -143,6 +143,25 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-16 - v4.103: the latest session's candle no longer goes missing
+
+User: *"the candles market data in the app is not up to date can you check"* - VEEV's chart
+ended on 14 Sep on the morning of the 16th (Malaysia), after the 15 Sep session had closed.
+
+Cause, measured against Yahoo's chart endpoint: for hours after the bell the most recent
+session is listed with a **null close** (open / high / low / volume present) while Yahoo
+finalises it, and the same response's `meta` already carries `regularMarketPrice`,
+`regularMarketDayHigh` / `DayLow` and `regularMarketTime` for that session.
+`prices._fetch` skipped any bar with a null, so the last candle vanished until the next
+morning - and with it the last close for the EMA setups, the curated marks ("last") and the
+structure monitor, all of which read these bars.
+
+Fix in `services/prices.py`: when the LAST bar has a null and its date matches
+`regularMarketTime`, fill the missing fields from meta (close from `regularMarketPrice`,
+high / low from the day figures, open from `chartPreviousClose` as a last resort). Older
+gaps stay gaps. Verified: VEEV now ends 2026-09-15 at 266.62 (o 260.80 h 272.39 l 258.01);
+NVDA, SPY and BRK-B carry the 15 Sep bar too.
+
 ### 2026-09-16 - v4.102: a weekend curated date anchors on Friday's candle
 
 User: *"i have VEEV which i curated on 13/9, the drawing of the setup start on 14/9"* - 13
