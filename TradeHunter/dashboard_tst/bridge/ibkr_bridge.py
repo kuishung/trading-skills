@@ -414,7 +414,7 @@ def cached(key, fn, ttl=_CACHE_TTL):
 
 # --------------------------------------------------------------- HTTP layer
 class Handler(BaseHTTPRequestHandler):
-    server_version = "TradeHunterIBKRBridge/1.1"   # 1.1: /scan (High IV Rank scanner)
+    server_version = "TradeHunterIBKRBridge/1.2"   # 1.1: /scan; 1.2: one bridge per port
 
     def _origin_ok(self):
         o = self.headers.get("Origin")
@@ -510,6 +510,75 @@ class Handler(BaseHTTPRequestHandler):
         sys.stderr.write("[%s] %s\n" % (time.strftime("%H:%M:%S"), fmt % args))
 
 
+class _ExclusiveServer(ThreadingHTTPServer):
+    """One bridge per port, enforced by the socket.
+
+    ``HTTPServer`` sets SO_REUSEADDR, and on WINDOWS that lets a second process bind
+    a port that is already being listened on - silently. Both "listen", the OLDEST
+    one receives every request, and a freshly started bridge never sees traffic.
+    That is how a 1.0 bridge from the morning kept answering after two restarts
+    onto 1.1 (2026-09-18). Without the flag the second bind fails loudly instead.
+    """
+    allow_reuse_address = sys.platform != "win32"
+
+
+def _retire_other_copies(port: int) -> None:
+    """Starting the bridge means "run THIS bridge": stop any copy already on the port.
+
+    Windows only (the launcher, the Startup shortcut and the web app's Start button
+    are all Windows). Only processes that are LISTENING on our port AND whose
+    command line names this script are touched; the whole launcher tree
+    (cmd.exe -> py.exe -> python.exe) goes, so no stale "press any key" window is
+    left behind. Best effort: any failure here falls through to the bind, which
+    reports a held port plainly.
+    """
+    if sys.platform != "win32":
+        return
+    import os
+    import subprocess
+
+    try:
+        out = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True,
+                             text=True, timeout=15).stdout
+        listeners = set()
+        for line in out.splitlines():
+            f = line.split()
+            if len(f) >= 5 and f[0] == "TCP" and f[3] == "LISTENING" \
+                    and f[1].endswith(":%d" % port) and f[4].isdigit():
+                listeners.add(int(f[4]))
+        listeners.discard(os.getpid())
+        if not listeners:
+            return
+        ps = ("Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "
+              "'*ibkr_bridge*' } | ForEach-Object { '{0},{1}' -f $_.ProcessId, $_.ParentProcessId }")
+        out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+                             capture_output=True, text=True, timeout=30).stdout
+        parent = {}
+        for line in out.splitlines():
+            a, _, b = line.strip().partition(",")
+            if a.isdigit() and b.isdigit():
+                parent[int(a)] = int(b)
+        mine = set()                     # this process and its own launcher chain
+        p = os.getpid()
+        while p in parent and p not in mine:
+            mine.add(p)
+            p = parent[p]
+        mine.add(os.getpid())
+        for pid in listeners:
+            if pid not in parent:        # something else owns the port - not ours to stop
+                continue
+            top = pid
+            while parent.get(top) in parent and parent[top] not in mine:
+                top = parent[top]
+            if top in mine:
+                continue
+            print(f"  an earlier bridge is still on port {port} (pid {pid}) - stopping it")
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(top)],
+                           capture_output=True, timeout=15)
+    except Exception as exc:  # noqa: BLE001
+        print(f"  (could not check for an earlier bridge: {exc})", file=sys.stderr)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--tws-host", default=CFG["host"])
@@ -533,8 +602,21 @@ def main():
               "  API that eventkit needs at import time)", file=sys.stderr)
         raise SystemExit(1)
 
-    srv = ThreadingHTTPServer(("127.0.0.1", a.bridge_port), Handler)
-    print(f"TradeHunter IBKR bridge on http://127.0.0.1:{a.bridge_port}")
+    _retire_other_copies(a.bridge_port)
+    srv = None
+    for attempt in range(10):           # the retired copy's socket can take a moment to go
+        try:
+            srv = _ExclusiveServer(("127.0.0.1", a.bridge_port), Handler)
+            break
+        except OSError as exc:
+            if attempt == 9:
+                print(f"Port {a.bridge_port} is held by another program and could not be "
+                      f"freed: {exc}\n  Close the other bridge window (or end its python.exe "
+                      "in Task Manager), then start this again.", file=sys.stderr)
+                raise SystemExit(1)
+            time.sleep(0.5)
+    print(f"TradeHunter IBKR bridge {Handler.server_version.split('/')[-1]} "
+          f"on http://127.0.0.1:{a.bridge_port}")
     print(f"  -> TWS {CFG['host']}:{CFG['port']} (clientId {CFG['client_id']}, read-only)")
     print(f"  allowed: https://*.{ALLOWED_DOMAIN} + {', '.join(CFG['allowed'])}")
     print("  Ctrl-C to stop.")

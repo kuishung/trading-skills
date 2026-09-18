@@ -88,6 +88,26 @@ reachable from the network.
 
 ## Changelog
 
+### 2026-09-18 — bridge 1.2: one bridge per port; a new start replaces the old one
+User restarted the bridge for 1.1 and the IV Rank page still said "older version without the
+scanner". Three bridges were running (05:47, 20:56, 21:01). `HTTPServer` sets SO_REUSEADDR,
+and on **Windows** that lets a second process bind a port that is already listened on, with
+no error. All three "listened"; the OLDEST (1.0, from the morning) received every request,
+so no restart could ever take effect. Every press of the web app's Start button or a second
+run of the launcher added another invisible copy.
+
+Two changes:
+- `_ExclusiveServer` turns the flag off on Windows, so a second bind fails loudly.
+- `_retire_other_copies()` runs first: any process LISTENING on the bridge port whose command
+  line names `ibkr_bridge` is stopped, with its whole launcher tree (`cmd.exe` -> `py.exe` ->
+  `python.exe`), so starting the bridge always means "run this one". Other programs on the
+  port are left alone and reported. The startup banner now prints the version.
+
+Verified on the affected PC: one launch through `start_ibkr_bridge.bat` stopped all three
+old trees, `/health` reports 1.2 with a single listener, `/scan` and `/iv` answer for
+`https://app.tradehunter.net`. A force-stopped copy may keep clientId 86 held in TWS; the
+existing clientId walk (86 -> 87...) covers that.
+
 ### 2026-09-18 — bridge 1.1: `/scan`, the TWS "High IV Rank" scanner
 New endpoint `/scan?iv_rank=30&price=100&volume=200000` for the platform's Options > IV Rank
 page. It runs `reqScannerData` with scan code `SCAN_ivRank52w_DESC` (the API name of TWS's

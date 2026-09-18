@@ -143,6 +143,14 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-18 - v4.109: IBKR bridge 1.2 - a restart now really replaces the running bridge
+
+User (screenshot of Options > IV Rank after restarting the bridge): the page still said the
+bridge was "an older version without the scanner". Cause and fix are in the bridge, see
+`bridge/README.md` (bridge 1.2): on Windows several bridge copies could listen on port 9224
+at once and the oldest answered everything. No app code changed; the version moves so the
+release is traceable.
+
 ### 2026-09-18 - v4.108: Options is back in the nav - IV Rank watchlist from the member's TWS scanner
 
 User (TWS "High IV Rank Scanner" screenshot: US Stocks, 52 Week IV Rank > 30, Price > 100,
