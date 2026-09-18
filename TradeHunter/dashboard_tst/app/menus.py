@@ -32,6 +32,11 @@ MENUS = [
     # Curated — each member's own dated calls (entry/stop/target), judged from
     # price history. Replaced the Portfolio placeholder 2026-09-07 (user).
     ("curated",          "Curated",           None, "/curated"),
+    # Options - back in the bar as a dropdown (user, 2026-09-18: "put back the
+    # option menu and then give me the watchlist"). IV Rank = the member's TWS
+    # High IV Rank scanner as a watchlist; Spread = the bull put spread screener.
+    ("ivscan",           "IV Rank",           "Options", "/ivscan"),
+    ("spreads",          "Spread",            "Options", "/spreads"),
 ]
 # Routes that stay ACCESSIBLE (granted + reachable by URL) but are no longer shown
 # in the top nav after the revamp. Kept in ALL_KEYS so their require_menu() guards
@@ -41,17 +46,16 @@ MENUS = [
 # the page was removed and the Calendar became the landing -- see LANDING below.)
 #
 # "positions" (/portfolio, the member's own open option spreads, added 2026-09-10)
-# and "spreads" (/spreads, the bull put spread screener that was the Options
-# dropdown's only entry, added 2026-09-13) were taken off the nav 2026-09-15 (user:
-# "remove the portfolio menu and also the option menu"). The pages and their routes
-# are untouched — only the menu entries went. To bring either back, re-add its
-# tuple to MENUS: ("positions", "Portfolio", None, "/portfolio") /
-# ("spreads", "Spread", "Options", "/spreads"). NB the Portfolio key is "positions",
+# was taken off the nav 2026-09-15 together with the Options dropdown (user:
+# "remove the portfolio menu and also the option menu"). The Options dropdown came
+# back 2026-09-18 (IV Rank + Spread, see MENUS); Portfolio is still hidden. The page
+# and its routes are untouched — only the menu entry went. To bring it back, re-add
+# its tuple to MENUS: ("positions", "Portfolio", None, "/portfolio"). NB the Portfolio key is "positions",
 # not "portfolio": LEGACY_KEYS translates a stored "portfolio" grant to "curated"
 # (the OLD Portfolio placeholder became Curated on 2026-09-07), so reusing that key
 # would hand this page's grants to Curated. Hiding it also stops the nav's exit-line
 # badge poll (base.html, /portfolio/badge), which lived inside the Portfolio item.
-HIDDEN_KEYS = ["company", "studies", "strategy", "patterns", "positions", "spreads"]
+HIDDEN_KEYS = ["company", "studies", "strategy", "patterns", "positions"]
 # Where an approved user lands after sign-in (user, 2026-09-07: "on login go to
 # calendar by default"). Kept here rather than hard-coded at each redirect site so
 # the three of them (index, password login, OAuth callback) cannot drift apart.

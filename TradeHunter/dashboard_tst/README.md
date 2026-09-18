@@ -143,6 +143,50 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-18 - v4.108: Options is back in the nav - IV Rank watchlist from the member's TWS scanner
+
+User (TWS "High IV Rank Scanner" screenshot: US Stocks, 52 Week IV Rank > 30, Price > 100,
+Volume > 200K): *"I want scan option with 52 week IV rank above 30. It will list quite a
+number of tickers. with this ticker need the app to be able to filter certain criteria for me
+and show me the technical chart. So you will put back the option menu and then give me the
+watchlist"*.
+
+**Options dropdown restored** (`app/menus.py`): `IV Rank` (`/ivscan`, new) and `Spread`
+(`/spreads`, the bull put screener, taken off the nav 2026-09-15). `spreads` left
+`HIDDEN_KEYS`; Portfolio stays hidden.
+
+**Options > IV Rank** (`app/routes/ivscan.py`, `ivscan.html`, `_ivscan_list.html`):
+- **Scan TWS** runs the member's own scanner through the local IBKR bridge (`/scan`, bridge
+  1.1 - see `bridge/README.md`). The server can never reach a member's TWS, so the browser
+  calls the bridge and posts the symbols to `POST /ivscan/ingest` (cleaned, de-duplicated,
+  capped at 100). The three criteria are editable and remembered per member
+  (`prefs.ivscan_criteria`, defaults 30 / 100 / 200000).
+- The list is stored per member (`iv_scan_items`, migration `e2f3a4b5c6d7`), so it is there
+  the next day without TWS. A re-scan replaces it but keeps the IV readings of tickers that
+  are still on it.
+- The scanner returns tickers in rank order but not the figure, so the page then reads each
+  ticker's **IV rank / IV percentile** from the bridge's existing `/iv` (one at a time - IBKR
+  paces historical requests) and files it with `POST /ivscan/iv` (bounded 0-100). A reading
+  younger than 20 h is not asked for again; "Read from TWS" fills any that are missing.
+- **The filter**: every ticker is graded by the SAME setup switches as Sector & Industry
+  (`services/ema_setup`, c1-c5, one stored setting `prefs.sym_conds`), best first,
+  non-qualifiers faded. Sort by Setup / IV rank / TWS order.
+- **The chart**: a click renders `/sector/chart` into the right pane (id `sectorChartBody`,
+  so the partial's own refresh recipe works here too). Stars add to My Watchlist.
+- A bridge older than 1.1 answers "unknown endpoint"; the page says to restart the bridge
+  rather than showing a bare failure.
+
+Bug caught in verification: `iv_at` comes back from SQLite as a naive datetime while
+`_utcnow()` is aware, so the freshness check raised and `/ivscan/list` returned 500 as soon
+as one reading existed. `_age_hours()` now normalises both sides to naive UTC.
+
+Verified: scratch DB migrated to `e2f3a4b5c6d7`; through the app - nav shows the Options
+group, ingest of the live scan (8 tickers) 200, IV post, `sort=iv` puts the read ticker
+first, conds toggle, re-ingest keeps the IV reading, criteria saved, `/spreads` still 200.
+Bridge `/scan` verified over HTTP against live TWS on a temporary second bridge (port 9225):
+8 symbols, 403 for a foreign origin. NOT verified in a browser: the page's scan button flow
+(inline script only syntax-checked with node).
+
 ### 2026-09-16 - v4.107: the chart re-renders itself when a MATP run lands
 
 User: *"there is no analyst data for CNR but the chart still show MATP and MBP"* (screenshot:

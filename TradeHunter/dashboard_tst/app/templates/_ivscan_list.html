@@ -1,0 +1,84 @@
+{# The IV Rank watchlist. Context: items [{row (IVScanItem), setup, rank, iv_fresh}],
+   sort, enabled, cond_labels, cond_keys, ranked, n_qualify, scanned_at, criteria,
+   my_syms. Swapped into #ivsList. #}
+{% from "_time.html" import localtime %}
+{% if not items %}
+<p class="text-xs text-slate-500 py-4 px-1 leading-relaxed">
+  No scan on file yet. With TWS running and the IBKR bridge started on this PC, press
+  <span class="text-emerald-300">Scan TWS</span> above &mdash; it runs your High IV Rank scanner
+  (52-week IV rank, price and volume floors) and lists the tickers here, graded by your setup
+  conditions.
+</p>
+{% else %}
+{# the setup switches - the SAME ones as Sector & Industry, one stored setting #}
+{% set conds_post = '/ivscan/conds' %}
+{% set conds_target = '#ivsList' %}
+{% set conds_hidden = {'sort': sort} %}
+{% include "_sector_conds.html" %}
+
+<div class="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 mb-1.5 text-[11px] text-slate-500">
+  <span><span class="text-slate-300 tabular-nums">{{ items|length }}</span> tickers</span>
+  {% if ranked %}<span>&middot; <span class="text-emerald-300 tabular-nums">{{ n_qualify }}</span> qualify</span>{% endif %}
+  {% if scanned_at %}<span class="text-slate-600" title="When this list was last pulled from TWS">&middot; scanned {{ localtime(scanned_at) }}</span>{% endif %}
+  <span class="ml-auto flex items-center gap-1">
+    {% for key, lbl, tip in [('setup', 'Setup', 'Best technical setup first'), ('iv', 'IV rank', 'Highest IV rank first'), ('scan', 'TWS order', 'The order TWS returned')] %}
+    <button type="button" hx-get="/ivscan/list?sort={{ key }}" hx-target="#ivsList" hx-swap="innerHTML" title="{{ tip }}"
+            class="text-[10px] px-1.5 py-0.5 rounded border transition {% if sort == key %}border-emerald-500/60 bg-emerald-500/15 text-emerald-300{% else %}border-slate-700 text-slate-400 hover:border-slate-500{% endif %}">{{ lbl }}</button>
+    {% endfor %}
+  </span>
+</div>
+
+{% set need = items | selectattr('iv_fresh', 'equalto', false) | list | length %}
+{% if need %}
+<p class="px-1 mb-1 text-[10px] text-amber-300/90">
+  IV rank not read yet for {{ need }} ticker{{ '' if need == 1 else 's' }}.
+  <button type="button" id="ivsFillIV" class="underline hover:text-amber-200">Read from TWS</button>
+</p>
+{% endif %}
+
+{% set COLS = "display:grid;grid-template-columns:1.2rem 3.4rem 1fr 3.6rem 3.4rem;column-gap:0.3rem;align-items:center" %}
+<div style="{{ COLS }}" class="px-1 pb-0.5 text-[10px] uppercase tracking-wide text-slate-600 border-b border-slate-800/70">
+  <span class="text-center" title="My Watchlist">&#9733;</span><span>Ticker</span><span>Setup</span>
+  <span class="text-right" title="52-week IV rank / IV percentile, from a year of daily implied volatility in your TWS">IV rk/pct</span>
+  <span class="text-right">Last</span>
+</div>
+{% for it in items %}
+{% set r = it.row %}{% set st = it.setup %}{% set rk = it.rank %}
+{% set _on = my_syms and r.symbol in my_syms %}
+<div class="ivs-row wl-ticker cursor-pointer px-1 py-1 border-b border-slate-800/50 rounded hover:bg-emerald-500/10 transition{% if ranked and not rk.qualifies %} opacity-40{% endif %}"
+     style="{{ COLS }}" data-sym="{{ r.symbol }}" data-need-iv="{{ '0' if it.iv_fresh else '1' }}"
+     hx-get="/sector/chart?symbol={{ r.symbol }}" hx-target="#sectorChartBody" hx-swap="innerHTML"
+     hx-trigger="click[!event.target.closest('.wl-star')]"
+     title="Chart {{ r.symbol }}{% if st.close %}&#10;{{ st.summary }} &middot; EMA20 {{ st.ema20 }} / EMA50 {{ st.ema50 }} / EMA200 {{ st.ema200 }}{% endif %}">
+  <span class="wl-star cursor-pointer text-center text-[12px] leading-none select-none transition {% if _on %}text-amber-300{% else %}text-slate-700 hover:text-amber-300{% endif %}"
+        role="button" tabindex="0" aria-pressed="{{ 'true' if _on else 'false' }}"
+        title="{{ 'Remove ' ~ r.symbol ~ ' from My Watchlist' if _on else 'Add ' ~ r.symbol ~ ' to My Watchlist' }}"
+        data-sym="{{ r.symbol }}">{% if _on %}&#9733;{% else %}&#9734;{% endif %}</span>
+  <span class="text-[13px] font-semibold text-slate-200">{{ r.symbol }}</span>
+  <span class="flex flex-wrap gap-0.5 min-w-0">
+    {% for ch in rk.chips %}
+    <span class="text-[9px] px-1 py-px rounded whitespace-nowrap
+                 {% if ch.k == 'hot' %}bg-emerald-500/25 text-emerald-200 font-semibold
+                 {% elif ch.k == 'good' %}bg-emerald-500/10 text-emerald-300
+                 {% elif ch.k == 'warm' %}bg-amber-500/15 text-amber-300
+                 {% elif ch.k == 'round' %}bg-violet-500/15 text-violet-300
+                 {% elif ch.k == 'watch' %}bg-sky-500/15 text-sky-300
+                 {% else %}bg-slate-700/50 text-slate-400{% endif %}" title="{{ ch.title }}">{{ ch.t }}</span>
+    {% else %}
+    <span class="text-[9px] text-slate-600">{% if rk.score is none %}{{ rk.summary }}{% elif rk.gated %}not in EMA uptrend{% else %}none met{% endif %}</span>
+    {% endfor %}
+  </span>
+  <span class="ivs-iv text-right text-[11px] tabular-nums"
+        title="{% if r.iv_rank is not none %}IV rank {{ r.iv_rank }} &middot; IV percentile {{ r.iv_pct }} &middot; IV now {{ r.iv_current }}%{% else %}Not read yet{% endif %}">
+    {% if r.iv_rank is not none %}<span class="text-slate-200">{{ '%.0f'|format(r.iv_rank) }}</span><span class="text-slate-600"> / {{ '%.0f'|format(r.iv_pct) if r.iv_pct is not none else '–' }}</span>{% else %}<span class="text-slate-600">&ndash;</span>{% endif %}
+  </span>
+  <span class="text-right text-[11px] text-slate-300 tabular-nums">{{ '%.2f'|format(st.close) if st.close else '–' }}</span>
+</div>
+{% endfor %}
+
+<div class="flex justify-end px-1 mt-2">
+  <button type="button" hx-post="/ivscan/clear" hx-target="#ivsList" hx-swap="innerHTML"
+          hx-confirm="Clear the IV Rank watchlist? The next Scan TWS refills it."
+          class="text-[10px] text-slate-600 hover:text-rose-300 transition">clear list</button>
+</div>
+{% endif %}

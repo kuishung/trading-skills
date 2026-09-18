@@ -26,7 +26,7 @@ trustworthy origin), which is what makes this work with nothing exposed.
 ## Contents
 
 - `ibkr_bridge.py` — the bridge. Read-only (`readonly=True`, no order path).
-  Endpoints: `/health`, `/chain`, `/iv`, `/account`.
+  Endpoints: `/health`, `/chain`, `/iv`, `/account`, `/scan` (1.1).
 - `start_ibkr_bridge.bat` — launcher (uses `py -3.12`).
 - `requirements.txt` — just `ib_insync`.
 
@@ -87,6 +87,22 @@ could read your balances off localhost. It binds `127.0.0.1` only — never
 reachable from the network.
 
 ## Changelog
+
+### 2026-09-18 — bridge 1.1: `/scan`, the TWS "High IV Rank" scanner
+New endpoint `/scan?iv_rank=30&price=100&volume=200000` for the platform's Options > IV Rank
+page. It runs `reqScannerData` with scan code `SCAN_ivRank52w_DESC` (the API name of TWS's
+"52 Week IV Rank" sort), location `STK.US.MAJOR`, and the scanner's own filter codes
+`ivRank52wAbove` (in percent, like the TWS field), `priceAbove`, `volumeAbove`. Returns up to
+50 symbols in rank order; cached 120 s per criteria. The scanner does not return the rank
+figure itself, so the page reads that per ticker from the existing `/iv`.
+
+Still read-only: a scanner subscription is market data, there is no order path. Same origin
+allow-list as every other endpoint (verified: a foreign origin gets 403).
+
+**A running bridge must be restarted to pick this up** (close its window, run
+`start_ibkr_bridge.bat`). A 1.0 bridge answers `/scan` with "unknown endpoint", and the page
+tells the member to restart it. Verified against live TWS: 8 symbols pre-market (the volume
+floor is today's volume, so the list is short before the open and grows through the session).
 
 ### 2026-08-23 — step past a held clientId instead of demanding a TWS restart
 TWS keeps a client slot registered when a process dies without disconnecting — a

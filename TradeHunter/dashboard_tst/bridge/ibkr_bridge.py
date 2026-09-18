@@ -349,6 +349,44 @@ async def _iv(symbol):
             "n": len(vals), "note": ""}
 
 
+async def _scan(iv_rank: float, price: float, volume: float, rows: int = 50):
+    """The member's TWS "High IV Rank" scanner through the API.
+
+    ``SCAN_ivRank52w_DESC`` is the API name of TWS's "52 Week IV Rank" sort, and
+    ``ivRank52wAbove`` / ``priceAbove`` / ``volumeAbove`` are the scanner's own
+    filter codes (read from reqScannerParameters, 2026-09-18). The rank filter is
+    in PERCENT (30 = "greater than 30"), like the TWS field. The scanner returns
+    contracts in rank order but not the rank figure itself - the page reads that
+    per ticker from /iv.
+    """
+    from ib_insync import ScannerSubscription, TagValue
+
+    w = worker()
+    await _connect(w.ib)
+    ib = w.ib
+    sub = ScannerSubscription(instrument="STK", locationCode="STK.US.MAJOR",
+                              scanCode="SCAN_ivRank52w_DESC",
+                              numberOfRows=max(1, min(int(rows), 50)))
+    tags = [TagValue("ivRank52wAbove", "%g" % iv_rank)]
+    if price > 0:
+        tags.append(TagValue("priceAbove", "%g" % price))
+    if volume > 0:
+        tags.append(TagValue("volumeAbove", "%d" % int(volume)))
+    data = await ib.reqScannerDataAsync(sub, [], tags)
+    seen, symbols = set(), []
+    for d in data or []:
+        try:
+            s = (d.contractDetails.contract.symbol or "").strip().upper().replace(" ", ".")
+        except Exception:  # noqa: BLE001
+            continue
+        if s and s not in seen:
+            seen.add(s)
+            symbols.append(s)
+    return {"ok": True, "symbols": symbols, "n": len(symbols),
+            "scan_code": "SCAN_ivRank52w_DESC",
+            "criteria": {"iv_rank": iv_rank, "price": price, "volume": volume}}
+
+
 async def _account():
     w = worker()
     await _connect(w.ib)
@@ -376,7 +414,7 @@ def cached(key, fn, ttl=_CACHE_TTL):
 
 # --------------------------------------------------------------- HTTP layer
 class Handler(BaseHTTPRequestHandler):
-    server_version = "TradeHunterIBKRBridge/1.0"
+    server_version = "TradeHunterIBKRBridge/1.1"   # 1.1: /scan (High IV Rank scanner)
 
     def _origin_ok(self):
         o = self.headers.get("Origin")
@@ -451,6 +489,15 @@ class Handler(BaseHTTPRequestHandler):
                     raise RuntimeError("symbol is required")
                 self._send(200, cached(("iv", sym), lambda: worker().submit(
                     _iv(sym), 60), ttl=600), origin)
+            elif u.path == "/scan":
+                def _f(name, dflt):
+                    try:
+                        return max(0.0, float(q.get(name, dflt)))
+                    except (TypeError, ValueError):
+                        return float(dflt)
+                ivr, px, vol = _f("iv_rank", 30), _f("price", 100), _f("volume", 200000)
+                self._send(200, cached(("scan", ivr, px, vol), lambda: worker().submit(
+                    _scan(ivr, px, vol), 60), ttl=120), origin)
             elif u.path == "/account":
                 self._send(200, cached(("acct",), lambda: worker().submit(
                     _account(), 30), ttl=60), origin)

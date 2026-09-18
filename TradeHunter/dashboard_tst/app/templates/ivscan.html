@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+{% block title %}IV Rank &middot; TradeHunter{% endblock %}
+{% block main_class %}flex-1 w-full px-4 py-4 overflow-hidden{% endblock %}
+
+{% block content %}
+{# Options > IV Rank: the member's TWS "High IV Rank" scanner as a watchlist.
+   Left: the scan controls and the ticker list (graded by the setup conditions).
+   Right: the platform's one chart. The chart pane carries id="sectorChartBody" on
+   purpose: it renders the SAME partial as Sector & Industry (/sector/chart), whose
+   own re-render recipe targets that id - so a finished MATP run refreshes here too.
+
+   The scan runs on the member's own TWS through the local IBKR bridge; the browser
+   calls it and posts the symbols to the server (routes/ivscan.py). #}
+<div class="lg:flex lg:gap-4 lg:items-stretch lg:h-[calc(100vh-6rem)]">
+
+  <aside class="lg:w-96 lg:shrink-0 flex flex-col gap-2 mb-4 lg:mb-0 lg:h-full lg:min-h-0">
+    <section class="rounded-xl border border-slate-800 bg-slate-900/40 p-2 shrink-0">
+      <div class="flex items-baseline justify-between gap-2 px-1 mb-1">
+        <h2 class="text-sm font-semibold text-slate-200">High IV Rank scan</h2>
+        <span class="text-[10px] text-slate-500" title="US stocks, sorted by 52-week IV rank, from your own TWS through the local IBKR bridge">TWS scanner &middot; US stocks</span>
+      </div>
+      <div class="flex flex-wrap items-end gap-2 px-1 text-[10px] text-slate-500">
+        <label title="52-week IV rank: where today's implied volatility sits between the year's low and high, 0-100">IV rank &gt;
+          <input id="ivsRank" type="number" step="1" min="0" max="100" value="{{ '%g'|format(criteria.iv_rank) }}"
+                 class="ml-1 w-14 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
+        </label>
+        <label>Price &gt;
+          <input id="ivsPrice" type="number" step="1" min="0" value="{{ '%g'|format(criteria.price) }}"
+                 class="ml-1 w-16 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
+        </label>
+        <label>Volume &gt;
+          <input id="ivsVol" type="number" step="10000" min="0" value="{{ criteria.volume }}"
+                 class="ml-1 w-20 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
+        </label>
+        <button type="button" id="ivsScan"
+                class="ml-auto px-3 py-1 rounded border border-emerald-600 text-[11px] text-emerald-300 hover:bg-emerald-500/10 transition"
+                title="Run the scan on your TWS now and replace the list below">Scan TWS</button>
+      </div>
+      <p id="ivsStatus" class="px-1 mt-1 text-[10px] text-slate-500 leading-snug min-h-[1rem]"></p>
+    </section>
+
+    <section class="rounded-xl border border-slate-800 bg-slate-900/40 p-2 flex flex-col min-h-0 flex-1">
+      <div id="ivsList" class="flex-1 min-h-0 overflow-y-auto pr-1"
+           hx-get="/ivscan/list" hx-trigger="load" hx-swap="innerHTML">
+        <div class="text-xs text-slate-500 py-6 text-center">Loading&hellip;</div>
+      </div>
+    </section>
+  </aside>
+
+  <section class="flex-1 min-w-0 rounded-xl border border-slate-800 bg-slate-900/40 p-3 flex flex-col lg:h-full lg:min-h-0">
+    <div id="sectorChartBody" class="flex-1 min-h-0 overflow-y-auto flex flex-col">
+      <div class="flex-1 flex items-center justify-center text-xs text-slate-500 px-6 text-center">
+        Run the scan, then click a ticker to chart it. The setup switches above the list
+        rank the tickers by your technical conditions.
+      </div>
+    </div>
+  </section>
+</div>
+
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+{% include "_at_modal.html" %}
+
+<script>
+(function () {
+  var BRIDGE = 'http://127.0.0.1:9224';
+  var statusEl = document.getElementById('ivsStatus');
+  var btn = document.getElementById('ivsScan');
+  function say(msg, kind) {
+    statusEl.textContent = msg || '';
+    statusEl.className = 'px-1 mt-1 text-[10px] leading-snug min-h-[1rem] ' +
+      (kind === 'err' ? 'text-rose-300' : kind === 'ok' ? 'text-emerald-300' : 'text-slate-500');
+  }
+  function num(id, dflt) { var v = parseFloat(document.getElementById(id).value); return isFinite(v) && v >= 0 ? v : dflt; }
+
+  function bridgeDown(e) {
+    say('Could not reach the IBKR bridge on this PC (127.0.0.1:9224). Start it with ' +
+        'bridge\\start_ibkr_bridge.bat while TWS is running, then press Scan TWS again.', 'err');
+  }
+
+  // Fill in IV rank / percentile one ticker at a time from the bridge's /iv (a year
+  // of daily IV per symbol). Sequential on purpose: IBKR paces historical requests.
+  var filling = false;
+  function fillIV() {
+    if (filling) return;
+    var rows = Array.prototype.slice.call(document.querySelectorAll('.ivs-row[data-need-iv="1"]'));
+    if (!rows.length) return;
+    filling = true;
+    var i = 0, done = 0;
+    function next() {
+      if (i >= rows.length) { filling = false; say('IV rank filled for ' + done + ' of ' + rows.length + ' tickers.', 'ok'); return; }
+      var row = rows[i++], sym = row.getAttribute('data-sym');
+      if (!row.isConnected) { return next(); }
+      say('Reading IV history from TWS: ' + sym + ' (' + i + '/' + rows.length + ')…');
+      fetch(BRIDGE + '/iv?symbol=' + encodeURIComponent(sym), { mode: 'cors', cache: 'no-store' })
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+          if (!j || !j.ok) return;
+          var cell = row.querySelector('.ivs-iv');
+          if (cell && j.iv_rank != null) {
+            cell.innerHTML = '<span class="text-slate-200">' + Math.round(j.iv_rank) + '</span>' +
+              '<span class="text-slate-600"> / ' + (j.iv_percentile != null ? Math.round(j.iv_percentile) : '–') + '</span>';
+            cell.title = 'IV rank ' + j.iv_rank + ' · IV percentile ' + j.iv_percentile + ' · IV now ' + j.iv_current + '%';
+          }
+          row.setAttribute('data-need-iv', '0');
+          done++;
+          return fetch('/ivscan/iv', { method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ symbol: sym, iv_rank: j.iv_rank, iv_percentile: j.iv_percentile, iv_current: j.iv_current }) });
+        })
+        .catch(function () {})
+        .then(function () { setTimeout(next, 350); });
+    }
+    next();
+  }
+
+  btn.addEventListener('click', function () {
+    var rank = num('ivsRank', 30), price = num('ivsPrice', 100), vol = num('ivsVol', 200000);
+    btn.disabled = true; btn.style.opacity = '0.6';
+    say('Asking TWS for stocks with 52-week IV rank above ' + rank + '…');
+    fetch(BRIDGE + '/scan?iv_rank=' + rank + '&price=' + price + '&volume=' + vol, { mode: 'cors', cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (j && !j.ok && /unknown endpoint/i.test(j.error || '')) {
+          // a bridge started before 1.1 has no /scan - it needs the new file, not a retry
+          say('The IBKR bridge running on this PC is an older version without the scanner. ' +
+              'Close its window and start bridge\\start_ibkr_bridge.bat again, then press Scan TWS.', 'err');
+          return null;
+        }
+        if (!j || !j.ok) { say('TWS scan failed: ' + ((j && j.error) || 'no answer'), 'err'); return null; }
+        say('TWS returned ' + j.symbols.length + ' tickers. Grading them…');
+        return fetch('/ivscan/ingest', { method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ symbols: j.symbols, iv_rank: rank, price: price, volume: vol }) })
+          .then(function (r) { return r.text(); })
+          .then(function (html) {
+            var host = document.getElementById('ivsList');
+            host.innerHTML = html;
+            if (window.htmx) htmx.process(host);
+            say(j.symbols.length + ' tickers from TWS.', 'ok');
+            fillIV();
+          });
+      })
+      .catch(bridgeDown)
+      .then(function () { btn.disabled = false; btn.style.opacity = ''; });
+  });
+
+  // mark the charted ticker; and offer to fill IV when a stored list still lacks it
+  document.addEventListener('click', function (e) {
+    var t = e.target.closest ? e.target.closest('.ivs-row') : null;
+    if (!t || (e.target.closest && e.target.closest('.wl-star'))) return;
+    document.querySelectorAll('.ivs-row.ivs-on').forEach(function (r) { r.classList.remove('ivs-on'); });
+    t.classList.add('ivs-on');
+  });
+  document.addEventListener('click', function (e) {
+    if (e.target.closest && e.target.closest('#ivsFillIV')) fillIV();
+  });
+})();
+</script>
+<style>
+  .ivs-row.ivs-on { background: rgba(16,185,129,0.10); box-shadow: inset 3px 0 0 #10b981; }
+</style>
+{% endblock %}

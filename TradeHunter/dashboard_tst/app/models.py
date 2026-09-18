@@ -901,6 +901,32 @@ class SpreadCheck(Base):
     spread = relationship("OptionSpread", back_populates="checks")
 
 
+class IVScanItem(Base):
+    """One ticker on a member's IV Rank watchlist (Options > IV Rank).
+
+    The list is the member's own TWS scanner output - US stocks sorted by 52-week
+    IV rank above a threshold, with price and volume floors - pulled through the
+    local IBKR bridge by the member's browser and posted here. Per member, because
+    the scan, the criteria and the broker are theirs. ``pos`` is the order TWS
+    returned (highest IV rank first). The IV figures are read afterwards, one
+    ticker at a time, from a year of daily implied volatility in the same TWS.
+    """
+
+    __tablename__ = "iv_scan_items"
+    __table_args__ = (UniqueConstraint("user_id", "symbol", name="uq_iv_scan_user_symbol"),)
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
+                     nullable=False, index=True)
+    symbol = Column(String(20), nullable=False, index=True)
+    pos = Column(Integer, nullable=False, default=0)
+    scanned_at = Column(DateTime, nullable=True)
+    iv_rank = Column(Float, nullable=True)        # 0..100
+    iv_pct = Column(Float, nullable=True)         # percentile, 0..100
+    iv_current = Column(Float, nullable=True)     # percent
+    iv_at = Column(DateTime, nullable=True)       # when the IV figures were read
+
+
 class IVHistory(Base):
     """One day's 30-day implied volatility for one underlying, in PERCENT.
 
