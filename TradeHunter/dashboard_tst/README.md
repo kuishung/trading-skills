@@ -143,6 +143,16 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-19 - v4.112: the pin-bar chip is readable in the light theme
+
+User (screenshot of the XLV basket): *"the wording in the pink tag cannot be read"*. v4.111's
+`pin` chip is `bg-fuchsia-500/20 text-fuchsia-200` - pale pink text on a pale pink pill once
+the page is white. Same trap as the green pills on 2026-09-13: the light theme in `base.html`
+remaps each pale `-200/-300` text utility to a dark ink, and fuchsia had no entry. Added
+`.text-fuchsia-200, .text-fuchsia-300 { color:#a21caf }` inside the `html.light` block (about
+4.9:1 on the pill). Dark theme unchanged. **Rule of thumb: a new chip colour needs its
+`html.light` text mapping in `base.html` in the same change.**
+
 ### 2026-09-19 - v4.111: two pin-bar setup conditions - daily and weekly hammer at EMA20 / EMA50
 
 User: *"in the sector ticker panel, i need another filter that will filter pin bar (bullish
