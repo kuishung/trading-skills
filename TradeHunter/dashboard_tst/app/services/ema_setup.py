@@ -66,11 +66,31 @@ _cache: dict[str, tuple[float, dict]] = {}
 #   c2  price went 1-2% BELOW EMA20 or EMA50 recently (the dip)
 #   c3  price now sits 0.3-2% ABOVE EMA20 or EMA50 (the rebound)
 #   c4  price within 0.5% of a 10 / 50 / 100 round number
+#   c5  price sits 0.3-1.5% BELOW EMA20 or EMA50
+#   c6  DAILY pin bar (bullish hammer) at EMA20 or EMA50
+#   c7  WEEKLY pin bar (bullish hammer) at the weekly EMA20 or EMA50
 DIP_BARS = 5             # sessions the dip may sit back
 DIP_MIN, DIP_MAX = 1.0, 2.0          # percent below the EMA
 REB_MIN, REB_MAX = 0.3, 2.0          # percent above the EMA
 BELOW_MIN, BELOW_MAX = 0.3, 1.5      # percent BELOW the EMA (c5: testing it from underneath)
-COND_KEYS = ("c1", "c2", "c3", "c4", "c5")
+# c6 / c7 (user, 2026-09-19): "filter pin bar (bullish hammer) forming in daily
+# EMA20 EMA50 ... another one is for weekly EMA20 EMA50". Every threshold is a
+# fraction of the bar's OWN range, so the same rule fits a $5 and a $500 ticker
+# (CLAUDE.md: no absolute thresholds).
+#   pin bar   lower wick >= 60% of the range, upper wick <= 20%, and the lower
+#             wick at least twice the body - a long tail rejecting lower prices
+#   at an EMA the tail reached the average (the low may stop up to a quarter of
+#             the bar's range short of it) and the close held at or above it
+# "Forming" = the latest bar, which is still in progress during the session
+# (daily) or the week (weekly); the bar before it counts too, since a hammer
+# that completed yesterday / last week is the one a member acts on next.
+PIN_BARS = 2             # latest bar + the one before
+PIN_WICK_MIN = 0.60      # lower wick, fraction of the bar's range
+PIN_UPPER_MAX = 0.20     # upper wick, fraction of the bar's range
+PIN_BODY_WICK = 2.0      # lower wick >= this many bodies
+PIN_NEAR = 0.25          # the low may stop this fraction of the range above the EMA
+WEEKLY_MIN = 60          # weekly bars needed before the weekly EMA50 means anything
+COND_KEYS = ("c1", "c2", "c3", "c4", "c5", "c6", "c7")
 COND_LABELS = {
     "c1": ("EMA 20>50>200", "Uptrend: EMA20 above EMA50 above EMA200 on the last close. A must: when on, tickers that fail it sort below every ticker that passes."),
     "c2": ("dip 1-2%", f"Within the last {DIP_BARS} sessions a low reached 1-2% BELOW EMA20 (or EMA50): the pullback that sets up the rebound."),
@@ -79,9 +99,12 @@ COND_LABELS = {
     # c5 (user, 2026-09-15): "those tickers that do below EMA20 or EMA50 by
     # 0.3% to 1.5%" - price sitting just UNDER the average, the mirror of c3.
     "c5": ("below 0.3-1.5%", "The last close sits 0.3-1.5% BELOW EMA20 (or EMA50): price is testing the average from underneath, not yet back above it."),
+    "c6": ("pin bar D", "DAILY pin bar (bullish hammer) at EMA20 or EMA50: the latest daily bar, or the one before, has a long lower tail (60%+ of its range, small upper wick, tail at least twice the body) that reached the average while the close held at or above it."),
+    "c7": ("pin bar W", "WEEKLY pin bar (bullish hammer) at the WEEKLY EMA20 or EMA50: this week's bar (still forming), or last week's, has a long lower tail that reached the weekly average while the close held at or above it."),
 }
-COND_DEFAULT = {"c1": True, "c2": True, "c3": True, "c4": True, "c5": True}
-COND_WEIGHT = {"c1": 100, "c2": 30, "c3": 30, "c4": 20, "c5": 25}
+COND_DEFAULT = {"c1": True, "c2": True, "c3": True, "c4": True, "c5": True,
+                "c6": True, "c7": True}
+COND_WEIGHT = {"c1": 100, "c2": 30, "c3": 30, "c4": 20, "c5": 25, "c6": 35, "c7": 40}
 
 
 def ema(values: list[float], period: int) -> list[float]:
@@ -107,9 +130,62 @@ def round_level(price: float, steps=(100, 50, 10, 5)) -> tuple[float, int] | Non
     return None
 
 
+def is_pin_bar(o: float, h: float, l: float, c: float) -> bool:
+    """A bullish hammer, judged only by the bar's own proportions (see PIN_*)."""
+    rng = h - l
+    if rng <= 0:
+        return False
+    body = abs(c - o)
+    lower = min(o, c) - l
+    upper = h - max(o, c)
+    return (lower >= PIN_WICK_MIN * rng and upper <= PIN_UPPER_MAX * rng
+            and lower >= PIN_BODY_WICK * body)
+
+
+def pin_at_ema(ohlc: list[tuple], emas) -> dict | None:
+    """The most recent pin bar, within the last PIN_BARS bars, whose tail tested
+    one of ``emas`` ((name, series) pairs, tried in order) and closed at or above
+    it. ``ohlc`` is [(time, o, h, l, c)]. ``{ema, ago, time, tail}`` or None;
+    ``ago`` 0 = the latest (forming) bar, ``tail`` = lower wick as % of the range."""
+    n = len(ohlc)
+    for ago in range(min(PIN_BARS, n)):
+        i = n - 1 - ago
+        t, o, h, l, c = ohlc[i]
+        if not is_pin_bar(o, h, l, c):
+            continue
+        rng = h - l
+        for name, series in emas:
+            e = series[i]
+            if l <= e + PIN_NEAR * rng and c >= e:
+                return {"ema": name, "ago": ago, "time": t,
+                        "tail": round((min(o, c) - l) / rng * 100.0)}
+    return None
+
+
+def to_weekly(ohlc: list[tuple]) -> list[tuple]:
+    """Daily [(time 'YYYY-MM-DD', o, h, l, c)] -> weekly bars by ISO week; the
+    last one is the week in progress. ``time`` = the week's first session."""
+    import datetime as _dt
+
+    out: list[list] = []
+    key = None
+    for t, o, h, l, c in ohlc:
+        try:
+            k = _dt.date.fromisoformat(str(t)[:10]).isocalendar()[:2]
+        except ValueError:
+            continue
+        if k != key:
+            key = k
+            out.append([t, o, h, l, c])
+        else:
+            w = out[-1]
+            w[2], w[3], w[4] = max(w[2], h), min(w[3], l), c
+    return [tuple(w) for w in out]
+
+
 def _blank(reason: str = "not enough price history") -> dict:
     return {"dip_ema": None, "dip_pct": None, "above_ema": None, "above_pct": None,
-            "below_ema": None, "below_pct": None,
+            "below_ema": None, "below_pct": None, "pin_d": None, "pin_w": None,
             "round10": None, "round10_step": None,
             "score": None, "uptrend": None, "rebound": None, "rebound_pct": None,
             "fresh": False, "held": False, "watch": False, "round": None,
@@ -184,6 +260,23 @@ def analyze(bars: list[dict]) -> dict:
             below_ema, below_pct = name, round(d, 2)
     # c4: 10 / 50 / 100 only (the Setup sort's 5s are too dense here)
     r10 = round_level(c, (100, 50, 10))
+    # c6 / c7: a pin bar (bullish hammer) at the daily / the weekly EMA20 or EMA50.
+    # Same index as ``closes`` (same filter), so the EMA series line up bar for bar.
+    ohlc = []
+    for b in bars:
+        if b.get("close") is None:
+            continue
+        bc = float(b["close"])
+        bo = float(b["open"]) if b.get("open") is not None else bc
+        bh = float(b["high"]) if b.get("high") is not None else max(bo, bc)
+        bl = float(b["low"]) if b.get("low") is not None else min(bo, bc)
+        ohlc.append((b.get("time"), bo, bh, bl, bc))
+    pin_d = pin_at_ema(ohlc, (("EMA20", e20), ("EMA50", e50)))
+    pin_w = None
+    weekly = to_weekly(ohlc)
+    if len(weekly) >= WEEKLY_MIN:
+        wcloses = [w[4] for w in weekly]
+        pin_w = pin_at_ema(weekly, (("EMA20", ema(wcloses, 20)), ("EMA50", ema(wcloses, 50))))
 
     score = 0
     chips: list[dict] = []
@@ -225,6 +318,7 @@ def analyze(bars: list[dict]) -> dict:
         "dip_ema": dip_ema, "dip_pct": dip_pct,
         "above_ema": above_ema, "above_pct": above_pct,
         "below_ema": below_ema, "below_pct": below_pct,
+        "pin_d": pin_d, "pin_w": pin_w,
         "round10": None if not r10 else r10[0], "round10_step": None if not r10 else r10[1],
         "score": score, "uptrend": uptrend, "rebound": rebound,
         "rebound_pct": None if dist is None else round(dist * 100, 3),
@@ -247,6 +341,8 @@ def conditions(setup: dict) -> dict:
         "c4": setup.get("round10") is not None,
         "c5": (setup.get("below_pct") is not None
                and BELOW_MIN <= setup["below_pct"] <= BELOW_MAX),
+        "c6": setup.get("pin_d") is not None,
+        "c7": setup.get("pin_w") is not None,
     }
 
 
@@ -300,6 +396,19 @@ def rank(setup: dict, enabled: dict) -> dict:
         score += COND_WEIGHT["c5"]
         chips.append({"t": f"below -{setup['below_pct']:.1f}% {setup['below_ema']}", "k": "watch",
                       "title": f"Close is {setup['below_pct']:.2f}% below {setup['below_ema']} - testing it from underneath"})
+    for key, field, unit, word in (("c6", "pin_d", "session", "daily"),
+                                   ("c7", "pin_w", "week", "weekly")):
+        if enabled.get(key) and met[key]:
+            p = setup[field]
+            when = (f"the latest {unit} (still forming)" if p["ago"] == 0
+                    else f"the previous {unit}")
+            score += COND_WEIGHT[key]
+            chips.append({"t": f"pin bar {'W' if key == 'c7' else 'D'} {p['ema']}"
+                               + ("" if p["ago"] == 0 else " -1"),
+                          "k": "pin",
+                          "title": f"Bullish hammer on {when}, bar of {p['time']}: the lower tail is "
+                                   f"{p['tail']}% of the bar's range, it reached the {word} "
+                                   f"{p['ema']} and the close held at or above it"})
     # Qualifies = passes the gate (if on) AND meets at least one of the other
     # switched-on conditions (or none of the others are on). The list FADES
     # tickers that do not (user, 2026-09-15: "those not qualifying to the

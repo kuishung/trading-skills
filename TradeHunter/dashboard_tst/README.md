@@ -143,6 +143,40 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-19 - v4.111: two pin-bar setup conditions - daily and weekly hammer at EMA20 / EMA50
+
+User: *"in the sector ticker panel, i need another filter that will filter pin bar (bullish
+hammer) forming in daily EMA20 EMA50. another one is for weekly EMA20 EMA50"*.
+
+Two new switchable conditions in the shared Setup row (`_sector_conds.html`), next to c1-c5:
+
+- **c6 `pin bar D`** - the latest DAILY bar, or the one before, is a bullish hammer whose tail
+  tested the daily EMA20 (else EMA50) and whose close held at or above it.
+- **c7 `pin bar W`** - the same on WEEKLY bars against the WEEKLY EMA20 / EMA50. Weekly bars
+  are resampled from the same live 2y daily fetch by ISO week (`to_weekly`), so it costs no
+  extra Yahoo call; the last weekly bar is the week in progress. Needs 60+ weeks of history.
+
+`services/ema_setup.py`:
+- `is_pin_bar()` - lower wick >= 60% of the bar's range, upper wick <= 20%, lower wick >= 2x the
+  body. `pin_at_ema()` - "at the EMA" = the low reached it (it may stop up to 25% of the bar's
+  range short) and the close is at or above it. Every threshold is a fraction of the bar's OWN
+  range - no dollar / percent constants - so it reads the same on a $5 and a $500 ticker
+  (CLAUDE.md normalisation rule). Checked on real bars: 1-8 daily hits per ticker-year across
+  ten large caps, i.e. selective, not noise.
+- "Forming" = the latest bar, still in progress during the session / the week. The previous bar
+  counts too (`PIN_BARS = 2`) because the hammer that COMPLETED yesterday / last week is the one
+  acted on next; the chip says which (`pin bar D EMA20` vs `pin bar D EMA20 -1`) and its tooltip
+  gives the bar's date and tail size.
+- Weights c6 35 / c7 40 (a rejection candle at the average outranks mere proximity; weekly is
+  rarer). Both default ON; members with saved `sym_conds` prefs pick them up as ON through
+  `clean_enabled`. To see ONLY pin bars, switch the other conditions off - everything that does
+  not qualify fades, as before.
+- `COND_KEYS` drives every consumer, so the two conditions also appear in the ETF basket, the
+  curated list and the IV Rank watchlist with no route change. New chip kind `pin` (fuchsia) in
+  `_sector_symbols.html`, `_sector_basket.html`, `_curated_list.html`, `_ivscan_list.html`.
+
+Source stays LIVE daily bars (Yahoo), never parquet - this is a "now" view.
+
 ### 2026-09-18 - v4.110: bull put spread - which legs to sell/buy, and Positions back in the menu
 
 User (two playbook slides, "Steps to Sell Put Spread (Bull)" and "Trade and Risk
