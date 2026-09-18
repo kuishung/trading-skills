@@ -56,15 +56,46 @@ def _earnings_date(symbol: str) -> str | None:
         return None
 
 
+def _trend(symbol: str) -> dict | None:
+    """Step 1 of the playbook - "identify a neutral/bullish trade" - read off the
+    same daily EMAs as the setup switches. Bullish = EMA20 > EMA50 > EMA200;
+    neutral = the close holds above EMA50 and EMA200. Public price data, so it is
+    fetched server-side; any failure just leaves the check out."""
+    try:
+        from ..services import ema_setup as es
+
+        st = (es.setups_for_many([symbol]) or {}).get(symbol) or {}
+        c, e20, e50, e200 = (st.get(k) for k in ("close", "ema20", "ema50", "ema200"))
+        if not (c and e50 and e200):
+            return None
+        levels = f"close {c:g} · EMA20 {e20:g} · EMA50 {e50:g} · EMA200 {e200:g}"
+        if st.get("uptrend"):
+            return {"ok": True, "detail": "bullish — EMA20 > EMA50 > EMA200 (" + levels + ")",
+                    "ema50": e50, "ema200": e200}
+        if c > e50 and c > e200:
+            return {"ok": True, "detail": "neutral — price holds above EMA50 and EMA200 ("
+                                          + levels + ")", "ema50": e50, "ema200": e200}
+        return {"ok": False, "detail": "price is under EMA50 or EMA200 (" + levels
+                                       + ") — a bull put spread wants a chart that is not falling.",
+                "ema50": e50, "ema200": e200}
+    except Exception:  # noqa: BLE001
+        return None
+
+
 @router.get("/{symbol}", response_class=HTMLResponse)
-def options_tab(symbol: str, request: Request,
+def options_tab(symbol: str, request: Request, side: str = "",
                 user: User = Depends(require_user)):
-    """Shell for the tab. The browser fills it from the member's local bridge."""
+    """Shell for the tab. The browser fills it from the member's local bridge.
+
+    ``side=put`` is the bull put spread view (Options > IV Rank): the bridge is
+    asked for puts only, reaching far enough under the price to hold the
+    delta 0.20-0.25 strike (bridge 1.3)."""
     sym = (symbol or "").strip().upper()
     return templates.TemplateResponse(
         request, "_options_tab.html",
         {"user": user, "sym": sym, "bridge_port": BRIDGE_PORT,
          "dte_min": bull_put.DTE_MIN, "dte_max": bull_put.DTE_MAX, "diag": None,
+         "put_side": side == "put",
          "bridge_setup_path": BRIDGE_SETUP_PATH},
     )
 
@@ -89,7 +120,7 @@ def analyze(symbol: str, request: Request,
         nlv = None
 
     ctx = {"user": user, "sym": sym, "chain": chain, "iv": iv, "nlv": nlv,
-           "spread": None, "earnings": None, "level": None,
+           "spread": None, "earnings": None, "level": None, "trend": None,
            "nlv_source": payload.get("nlv_source") or "account",
            # what the BROWSER reported when the loopback fetch failed — shown in
            # the panel, because "not running" and "browser blocked it" are
@@ -101,7 +132,9 @@ def analyze(symbol: str, request: Request,
         earnings = _earnings_date(sym)
         ctx["earnings"] = earnings
         ctx["level"] = db.query(MATPLevel).filter(MATPLevel.symbol == sym).first()
+        ctx["trend"] = _trend(sym)
         ctx["spread"] = bull_put.select(
+            trend=ctx["trend"],
             symbol=sym,
             spot=float(chain["spot"]),
             expiry=chain.get("expiry_label") or "",
@@ -129,13 +162,23 @@ def track_spread(request: Request,
                  credit: float = Form(0.0),
                  contracts: int = Form(1),
                  entry_delta: float = Form(0.0),
+                 short_price: float = Form(0.0),
+                 long_price: float = Form(0.0),
+                 long_entry_delta: float = Form(0.0),
+                 entry_iv: float = Form(0.0),
                  user: User = Depends(require_user),
                  db: Session = Depends(get_db)):
+    # The same row the Positions page (/portfolio) grades daily, so a spread
+    # tracked from a recommendation is monitored with nothing re-typed.
     db.add(OptionSpread(
         user_id=user.id, symbol=symbol.strip().upper(), strategy="bull_put",
         expiry=expiry, short_strike=short_strike, long_strike=long_strike,
         credit=credit or None, contracts=max(1, contracts),
         entry_delta=entry_delta or None, status="open",
+        short_price=short_price or None, long_price=long_price or None,
+        short_entry_delta=entry_delta or None,
+        long_entry_delta=long_entry_delta or None,
+        entry_iv=entry_iv or None,
     ))
     db.commit()
     return _positions(request, user, db, {})

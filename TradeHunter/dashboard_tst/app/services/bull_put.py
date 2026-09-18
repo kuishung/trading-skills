@@ -90,6 +90,10 @@ class Candidate:
     short_leg_spread: float
     long_leg_spread: float
     long_offset: int
+    short_mid: float | None = None   # per share, what each leg was quoted at
+    long_mid: float | None = None
+    long_iv: float | None = None
+    cushion_pct: float | None = None  # how far the short strike sits below spot
     profile: dict = field(default_factory=dict)
 
 
@@ -143,20 +147,132 @@ def pl_profile(short_k: float, long_k: float, credit: float, contracts: int,
             "at_15dte": at_15 if len(at_15) == len(prices) else []}
 
 
+ALT_MAX = 8            # pairs listed in the "which legs" table
+ALT_NEAR_SHORTS = 2    # shorts offered when nothing sits inside the delta band
+
+
+def _pair(short: dict, long_row: dict, off: int, *, spot: float,
+          max_leg_spread: float, budget: float | None) -> dict | None:
+    """One short/long pair priced at the mid. None when it pays no credit."""
+    sm, lm = _mid(short), _mid(long_row)
+    if sm is None or lm is None:
+        return None
+    credit = sm - lm
+    width = short["strike"] - long_row["strike"]
+    if credit <= 0 or width <= 0:
+        return None
+    max_loss = (width - credit) * 100
+    if max_loss <= 0:
+        return None
+    ss, ls = _leg_spread(short), _leg_spread(long_row)
+    liquid = ((ss is None or ss <= max_leg_spread) and
+              (ls is None or ls <= max_leg_spread))
+    sd = _abs_delta(short)
+    risk_20 = max_loss * RISK_FRACTION
+    return {
+        "short_strike": short["strike"], "long_strike": long_row["strike"],
+        "long_offset": off, "width": width,
+        "short_delta": round(sd, 3), "in_band": SHORT_DELTA_LO <= sd <= SHORT_DELTA_HI,
+        "long_delta": round(_abs_delta(long_row), 3) if _abs_delta(long_row) else None,
+        "short_mid": round(sm, 2), "long_mid": round(lm, 2),
+        "credit": round(credit, 2), "ratio": round(credit / width * 100, 1),
+        "max_profit": round(credit * 100, 2), "max_loss": round(max_loss, 2),
+        "breakeven": round(short["strike"] - credit, 2),
+        "pop_est": round((1 - sd) * 100, 1),
+        "cushion_pct": round((spot - short["strike"]) / spot * 100, 1) if spot else None,
+        "short_leg_spread": ss, "long_leg_spread": ls, "liquid": liquid,
+        "contracts": int(budget // risk_20) if (budget and risk_20 > 0) else 0,
+    }
+
+
+def rank_pairs(puts: list[dict], *, spot: float, max_leg_spread: float = MAX_LEG_SPREAD,
+               net_liquidation: float | None = None,
+               nlv_risk_pct: float = NLV_RISK_PCT) -> list[dict]:
+    """Every pair the playbook allows in one expiry, best first.
+
+    Shorts: every put with delta 0.20-0.25 (or, when the chain has none, the
+    ``ALT_NEAR_SHORTS`` nearest to the band). Longs: 1 and 2 strikes below each.
+
+    The order states the playbook's priorities and nothing else:
+      1. both legs inside the bid/ask limit - a pair you cannot fill at the mark
+         is not a better trade for paying more on paper;
+      2. short delta inside the band;
+      3. credit as a share of the width - premium collected per dollar risked.
+    Each row says in ``why`` what it is best at, so the table reads as a choice,
+    not a verdict: a wider pair pays more credit for more max loss, a lower short
+    strike gives more room for less credit.
+    """
+    usable = [p for p in puts if _abs_delta(p) is not None and _mid(p) is not None]
+    if not usable:
+        return []
+    target = (SHORT_DELTA_LO + SHORT_DELTA_HI) / 2.0
+    shorts = [p for p in usable if SHORT_DELTA_LO <= _abs_delta(p) <= SHORT_DELTA_HI]
+    if not shorts:
+        shorts = sorted(usable, key=lambda p: abs(_abs_delta(p) - target))[:ALT_NEAR_SHORTS]
+    strikes = sorted({p["strike"] for p in usable})
+    by_strike = {p["strike"]: p for p in usable}
+    budget = net_liquidation * (nlv_risk_pct / 100.0) if net_liquidation else None
+
+    rows = []
+    for short in shorts:
+        si = strikes.index(short["strike"])
+        for off in range(LONG_OFFSET_MIN, LONG_OFFSET_MAX + 1):
+            if si - off < 0:
+                continue
+            row = _pair(short, by_strike[strikes[si - off]], off, spot=spot,
+                        max_leg_spread=max_leg_spread, budget=budget)
+            if row:
+                rows.append(row)
+    rows.sort(key=lambda r: (not r["liquid"], not r["in_band"], -r["ratio"],
+                             abs(r["short_delta"] - target)))
+    rows = rows[:ALT_MAX]
+    if rows:
+        best_ratio = max(r["ratio"] for r in rows)
+        most_room = max(r["cushion_pct"] or 0 for r in rows)
+        least_loss = min(r["max_loss"] for r in rows)
+        for i, r in enumerate(rows):
+            why = []
+            if i == 0:
+                why.append("best fit to the rules")
+            if r["ratio"] == best_ratio:
+                why.append("most credit per $ of width")
+            if (r["cushion_pct"] or 0) == most_room:
+                why.append("most room below the price")
+            if r["max_loss"] == least_loss:
+                why.append("smallest max loss")
+            if not r["liquid"]:
+                why.append("bid/ask too wide")
+            if not r["in_band"]:
+                why.append("delta outside 0.20-0.25")
+            r["recommended"] = i == 0
+            r["why"] = why
+    return rows
+
+
 def select(*, symbol: str, spot: float, expiry: str, dte: int,
            puts: list[dict], iv_percentile: float | None,
            earnings_date: str | None, net_liquidation: float | None,
            dte_min: int = DTE_MIN, dte_max: int = DTE_MAX,
            iv_pct_min: float = IV_PCT_MIN,
            max_leg_spread: float = MAX_LEG_SPREAD,
-           nlv_risk_pct: float = NLV_RISK_PCT) -> dict:
+           nlv_risk_pct: float = NLV_RISK_PCT,
+           trend: dict | None = None) -> dict:
     """Pick the best bull put spread in ONE expiry and grade it against the rules.
+
+    ``trend`` is step 1 of the playbook ("identify a neutral/bullish trade"),
+    supplied by the caller as ``{"ok": bool|None, "detail": str}`` because reading
+    a chart is I/O and this module does none. It never blocks: the playbook leaves
+    the technical read to the trader, so a failed trend is a warning, not a veto.
 
     Returns ``{"checks": [...], "candidate": {...}|None, "ok": bool}``. Checks are
     reported even when they fail, so the UI can show WHY a ticker is not a
     candidate today rather than just going blank.
     """
     checks: list[Check] = []
+
+    if trend and trend.get("ok") is not None:
+        checks.append(Check("Neutral / bullish chart", bool(trend["ok"]),
+                            trend.get("detail") or "", blocking=False))
 
     # ---- gate 1: IV regime -------------------------------------------------
     if iv_percentile is None:
@@ -199,56 +315,41 @@ def select(*, symbol: str, spot: float, expiry: str, dte: int,
         checks.append(Check("Short put by delta", False,
                             "No puts with deltas — TWS returned no option model.",
                             blocking=True))
-        return {"ok": False, "checks": [c.__dict__ for c in checks], "candidate": None}
+        return {"ok": False, "checks": [c.__dict__ for c in checks], "candidate": None,
+                "alternatives": []}
 
-    target = (SHORT_DELTA_LO + SHORT_DELTA_HI) / 2.0
-    in_band = [p for p in usable if SHORT_DELTA_LO <= _abs_delta(p) <= SHORT_DELTA_HI]
-    pool = in_band or usable
-    short = min(pool, key=lambda p: abs(_abs_delta(p) - target))
-    sdelta = _abs_delta(short)
-    checks.append(Check("Short put delta", bool(in_band),
-                        f"{short['strike']:g}P delta {sdelta:.2f} "
-                        f"(want {SHORT_DELTA_LO:.2f}-{SHORT_DELTA_HI:.2f})"
-                        + ("" if in_band else " — nothing in band, closest shown."),
-                        blocking=True))
-
-    # ---- long leg: 1-2 strikes below, pick the better of the two ----------
-    strikes = sorted({p["strike"] for p in usable})
-    si = strikes.index(short["strike"])
-    by_strike = {p["strike"]: p for p in usable}
-
-    best = None
-    for off in range(LONG_OFFSET_MIN, LONG_OFFSET_MAX + 1):
-        li = si - off
-        if li < 0:
-            continue
-        long_row = by_strike.get(strikes[li])
-        if long_row is None:
-            continue
-        credit = (_mid(short) or 0) - (_mid(long_row) or 0)
-        width = short["strike"] - long_row["strike"]
-        if credit <= 0 or width <= 0:
-            continue
-        max_loss = (width - credit) * 100
-        if max_loss <= 0:
-            continue
-        # prefer the higher credit-to-width ratio: more premium per dollar risked
-        score = credit / width
-        ss, ls = _leg_spread(short), _leg_spread(long_row)
-        liquid = ((ss is None or ss <= max_leg_spread) and
-                  (ls is None or ls <= max_leg_spread))
-        # a liquid pair always beats an illiquid one, ratio only breaks ties
-        rank = (1 if liquid else 0, score)
-        if best is None or rank > best[0]:
-            best = (rank, off, long_row, credit, width, max_loss, ss, ls, liquid)
-
-    if best is None:
+    # ---- the pair: the top of the ranked table ------------------------------
+    # One ranking decides both the recommendation and the table under it, so the
+    # "sell this" line can never disagree with row 1.
+    pairs = rank_pairs(usable, spot=spot, max_leg_spread=max_leg_spread,
+                       net_liquidation=net_liquidation, nlv_risk_pct=nlv_risk_pct)
+    if not pairs:
+        target = (SHORT_DELTA_LO + SHORT_DELTA_HI) / 2.0
+        near = min(usable, key=lambda p: abs(_abs_delta(p) - target))
+        checks.append(Check("Short put delta",
+                            SHORT_DELTA_LO <= _abs_delta(near) <= SHORT_DELTA_HI,
+                            f"{near['strike']:g}P delta {_abs_delta(near):.2f} "
+                            f"(want {SHORT_DELTA_LO:.2f}-{SHORT_DELTA_HI:.2f})", blocking=True))
         checks.append(Check("Long put 1-2 strikes below", False,
                             "No usable long strike below the short (no credit or no quote).",
                             blocking=True))
-        return {"ok": False, "checks": [c.__dict__ for c in checks], "candidate": None}
+        return {"ok": False, "checks": [c.__dict__ for c in checks], "candidate": None,
+                "alternatives": []}
 
-    _, off, long_row, credit, width, max_loss, ss, ls, liquid = best
+    top = pairs[0]
+    by_strike = {p["strike"]: p for p in usable}
+    short, long_row = by_strike[top["short_strike"]], by_strike[top["long_strike"]]
+    sdelta, off = _abs_delta(short), top["long_offset"]
+    credit = (_mid(short) or 0) - (_mid(long_row) or 0)
+    width = top["width"]
+    max_loss = (width - credit) * 100
+    ss, ls, liquid = top["short_leg_spread"], top["long_leg_spread"], top["liquid"]
+
+    checks.append(Check("Short put delta", top["in_band"],
+                        f"{short['strike']:g}P delta {sdelta:.2f} "
+                        f"(want {SHORT_DELTA_LO:.2f}-{SHORT_DELTA_HI:.2f})"
+                        + ("" if top["in_band"] else " — nothing in band, closest shown."),
+                        blocking=True))
     checks.append(Check("Long put 1-2 strikes below", True,
                         f"{long_row['strike']:g}P ({off} strike{'s' if off > 1 else ''} below, "
                         f"${width:g} wide)"))
@@ -259,6 +360,15 @@ def select(*, symbol: str, spot: float, expiry: str, dte: int,
                         f"long {('%.2f' % ls) if ls is not None else 'n/a'}"
                         + ("" if liquid else " — too wide, you'll bleed on the fill."),
                         blocking=True))
+
+    # Outside market hours TWS returns no bid/ask, and the credit above is then
+    # built from each leg's LAST trade - two prints that may be hours apart. Worth
+    # a plain warning: the pair is still the right pair, the credit is not a quote.
+    if ss is None or ls is None:
+        checks.append(Check("Live bid/ask", False,
+                            "no bid/ask on these legs right now (market closed?) — the credit "
+                            "is from last-trade prices; re-check after the open before ordering.",
+                            blocking=False))
 
     # ---- sizing: 20% of max loss < 2% of NLV -------------------------------
     risk_20 = max_loss * RISK_FRACTION
@@ -298,6 +408,10 @@ def select(*, symbol: str, spot: float, expiry: str, dte: int,
         short_leg_spread=ss if ss is not None else -1,
         long_leg_spread=ls if ls is not None else -1,
         long_offset=off,
+        short_mid=round(_mid(short), 2) if _mid(short) is not None else None,
+        long_mid=round(_mid(long_row), 2) if _mid(long_row) is not None else None,
+        long_iv=long_row.get("iv"),
+        cushion_pct=round((spot - short["strike"]) / spot * 100, 1) if spot else None,
         profile=pl_profile(short["strike"], long_row["strike"], credit, qty,
                            spot=spot, dte=dte, short_iv=short.get("iv"),
                            long_iv=long_row.get("iv")),
@@ -306,7 +420,8 @@ def select(*, symbol: str, spot: float, expiry: str, dte: int,
     blocking_fail = any((not c.ok) and c.blocking for c in checks)
     return {"ok": not blocking_fail,
             "checks": [c.__dict__ for c in checks],
-            "candidate": cand.__dict__}
+            "candidate": cand.__dict__,
+            "alternatives": pairs}
 
 
 # ---- monitoring -------------------------------------------------------------

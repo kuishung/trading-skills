@@ -113,27 +113,100 @@
       <span class="text-slate-400">Width</span><span class="text-slate-200">${{ "%g"|format(cand.width) }}</span>
       <span class="text-slate-400">Max loss</span><span class="text-slate-200">${{ "%.0f"|format(cand.max_loss) }}/contract</span>
       <span class="text-slate-400">Breakeven</span><span class="text-slate-200">{{ cand.breakeven }}</span>
+      {% if cand.cushion_pct is not none %}
+      <span class="text-slate-400" title="How far the short strike sits below today's price, and where it sits against the daily EMAs">Room below price</span>
+      <span class="text-slate-200">{{ cand.cushion_pct }}%{% if trend and trend.ema200 %}
+        <span class="{% if cand.short_strike < trend.ema200 and cand.short_strike < trend.ema50 %}text-emerald-300{% else %}text-amber-300{% endif %}">
+          &middot; short strike {% if cand.short_strike < trend.ema50 %}under{% else %}above{% endif %} EMA50 {{ "%g"|format(trend.ema50) }},
+          {% if cand.short_strike < trend.ema200 %}under{% else %}above{% endif %} EMA200 {{ "%g"|format(trend.ema200) }}</span>{% endif %}</span>
+      {% endif %}
       <span class="text-slate-400">Win prob (1&minus;&Delta;)</span><span class="text-slate-200">~{{ cand.pop_est }}%</span>
       <span class="text-slate-400">Quantity</span><span class="text-slate-200">{{ cand.contracts }} contract{% if cand.contracts != 1 %}s{% endif %}{% if nlv_source == 'override' %} <span class="text-amber-300/90" title="Sized against TST_NLV_OVERRIDE, not the connected account. Keep it current.">(NLV set manually)</span>{% endif %}</span>
     </div>
     <p class="text-slate-500 mt-1.5">Place as a single vertical combo, limit order at the mark, while the market is open.</p>
     {# Records what you opened so the delta line can be watched. It does NOT send
        an order — place the fill in TWS yourself, then track it here. #}
-    <form hx-post="/options/track" hx-target="#optPositions" hx-swap="innerHTML" class="mt-2">
+    <form id="bpsTrackForm" hx-post="/options/track" hx-target="#optPositions" hx-swap="innerHTML" class="mt-2">
       <input type="hidden" name="symbol" value="{{ sym }}">
       <input type="hidden" name="expiry" value="{{ cand.expiry }}">
       <input type="hidden" name="short_strike" value="{{ cand.short_strike }}">
       <input type="hidden" name="long_strike" value="{{ cand.long_strike }}">
       <input type="hidden" name="credit" value="{{ cand.credit }}">
       <input type="hidden" name="entry_delta" value="{{ cand.short_delta }}">
+      <input type="hidden" name="long_entry_delta" value="{{ cand.long_delta or 0 }}">
+      <input type="hidden" name="short_price" value="{{ cand.short_mid or 0 }}">
+      <input type="hidden" name="long_price" value="{{ cand.long_mid or 0 }}">
+      <input type="hidden" name="entry_iv" value="{{ cand.short_iv or 0 }}">
+      <span id="bpsTrackPair" class="text-slate-300 tabular-nums mr-1">{{ "%g"|format(cand.short_strike) }}/{{ "%g"|format(cand.long_strike) }} @ {{ "%.2f"|format(cand.credit) }}</span>
       <label class="text-slate-400">contracts
         <input type="number" name="contracts" min="1" max="500" value="{{ cand.contracts if cand.contracts > 0 else 1 }}"
                class="w-16 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] tabular-nums focus:border-emerald-500 outline-none">
       </label>
       <button type="submit" class="ml-1 text-[11px] px-2 py-0.5 rounded border border-emerald-500/50 text-emerald-300 hover:bg-emerald-500/15 transition"
               title="Track this spread so TradeHunter watches the short-put delta. Does not place an order.">Track this trade</button>
+      <a href="/portfolio" class="ml-2 text-[10px] text-slate-500 hover:text-emerald-300 underline"
+         title="Your tracked spreads, graded every day against the delta, loss, profit and time lines">Positions &rarr;</a>
     </form>
   </div>
+
+  {# ---- which legs: every pair the rules allow in this expiry, best first ----
+     Row 1 IS the recommendation above (one ranking feeds both). The rest are the
+     real alternatives: a wider pair pays more credit for more max loss, a lower
+     short strike gives more room for less credit. "Use" fills the track form. #}
+  {% if spread.alternatives and spread.alternatives|length > 0 %}
+  <div class="mt-2">
+    <div class="text-[11px] text-slate-400 mb-1">Which legs &mdash; pairs in this expiry, best first
+      <span class="text-slate-600">(short &Delta; 0.20&ndash;0.25, long 1&ndash;2 strikes below, priced at the mid)</span></div>
+    <div class="overflow-x-auto rounded border border-slate-800">
+      <table class="w-full text-[11px] tabular-nums">
+        <thead class="text-[10px] text-slate-500 bg-slate-900">
+          <tr>
+            <th class="px-1.5 py-1 text-left font-normal">Sell / Buy</th>
+            <th class="px-1.5 py-1 text-right font-normal" title="Short put delta. 1 minus delta is roughly the chance it expires worthless.">&Delta; short</th>
+            <th class="px-1.5 py-1 text-right font-normal">Credit</th>
+            <th class="px-1.5 py-1 text-right font-normal" title="Credit as a share of the width: premium collected per dollar risked">Cr/width</th>
+            <th class="px-1.5 py-1 text-right font-normal">Max loss</th>
+            <th class="px-1.5 py-1 text-right font-normal">Breakeven</th>
+            <th class="px-1.5 py-1 text-right font-normal" title="How far the short strike sits below today's price">Room</th>
+            <th class="px-1.5 py-1 text-right font-normal" title="Bid/ask width of the short and the long leg">Bid/ask</th>
+            <th class="px-1.5 py-1 text-right font-normal" title="Contracts allowed by 20% of max loss < 2% of net liquidation">Qty</th>
+            <th class="px-1.5 py-1 text-left font-normal">Why</th>
+            <th class="px-1.5 py-1"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for a in spread.alternatives %}
+          <tr class="border-t border-slate-800/70 {% if a.recommended %}bg-emerald-500/10{% elif not a.liquid or not a.in_band %}opacity-50{% endif %}">
+            <td class="px-1.5 py-1 whitespace-nowrap">
+              {% if a.recommended %}<span class="text-emerald-300" title="Recommended">&#9733;</span>{% endif %}
+              <span class="text-rose-300">{{ "%g"|format(a.short_strike) }}</span><span class="text-slate-600"> / </span><span class="text-emerald-300">{{ "%g"|format(a.long_strike) }}</span>
+              <span class="text-slate-600">${{ "%g"|format(a.width) }}w</span>
+            </td>
+            <td class="px-1.5 py-1 text-right {% if a.in_band %}text-slate-200{% else %}text-amber-300{% endif %}">{{ "%.2f"|format(a.short_delta) }}</td>
+            <td class="px-1.5 py-1 text-right text-slate-200">{{ "%.2f"|format(a.credit) }}</td>
+            <td class="px-1.5 py-1 text-right text-slate-300">{{ a.ratio }}%</td>
+            <td class="px-1.5 py-1 text-right text-slate-300">${{ "%.0f"|format(a.max_loss) }}</td>
+            <td class="px-1.5 py-1 text-right text-slate-300">{{ a.breakeven }}</td>
+            <td class="px-1.5 py-1 text-right text-slate-300">{% if a.cushion_pct is not none %}{{ a.cushion_pct }}%{% endif %}</td>
+            <td class="px-1.5 py-1 text-right {% if a.liquid %}text-slate-400{% else %}text-rose-300{% endif %}">
+              {{ "%.2f"|format(a.short_leg_spread) if a.short_leg_spread is not none else "–" }}/{{ "%.2f"|format(a.long_leg_spread) if a.long_leg_spread is not none else "–" }}</td>
+            <td class="px-1.5 py-1 text-right text-slate-300">{{ a.contracts if a.contracts else "–" }}</td>
+            <td class="px-1.5 py-1 text-left text-slate-500 leading-tight">{{ a.why|join(", ") }}</td>
+            <td class="px-1.5 py-1 text-right">
+              <button type="button" class="bpsUse text-[10px] px-1.5 py-0.5 rounded border border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 transition"
+                      title="Put this pair into the Track form below"
+                      data-short="{{ a.short_strike }}" data-long="{{ a.long_strike }}" data-credit="{{ a.credit }}"
+                      data-delta="{{ a.short_delta }}" data-ldelta="{{ a.long_delta or 0 }}"
+                      data-smid="{{ a.short_mid }}" data-lmid="{{ a.long_mid }}" data-qty="{{ a.contracts if a.contracts else 1 }}">Use</button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
 
   {# The sizing rule caps risk at 2% of NLV *only if the delta stop is honoured* —
      the undefended max loss is several times that. Say so plainly. #}
@@ -214,10 +287,50 @@
     <span class="px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-300 text-[11px]"
           title="IBKR returned quotes but no option model — Greeks columns will be blank.">no greeks</span>
     {% endif %}
-    <span class="text-[11px] text-slate-500">&plusmn;{{ chain.strike_window }} strikes</span>
+    <span class="text-[11px] text-slate-500">{% if chain.calls %}&plusmn;{{ chain.strike_window }} strikes{% else %}puts, price down{% endif %}</span>
   </span>
 </div>
 
+{% if not chain.calls %}
+{# ---- put-side view (bull put spread): puts only, from the price down. The legs
+   the recommendation names are marked so they can be found in the chain. #}
+{% set _cs = spread.candidate.short_strike if spread and spread.candidate else none %}
+{% set _cl = spread.candidate.long_strike if spread and spread.candidate else none %}
+<div class="flex-1 min-h-[12rem] overflow-auto rounded-lg border border-slate-800">
+  <table class="w-full text-[11px] tabular-nums border-collapse">
+    <thead class="sticky top-0 z-10 bg-slate-900 text-slate-400 text-[10px]">
+      <tr>
+        {% for h in ['Strike','% below','Bid/Ask','Last','Delta','IV','Theta','Vega','Vol'] %}
+        <th class="px-2 py-1 text-right border-b border-slate-800 font-normal">{{ h }}</th>
+        {% endfor %}
+        <th class="px-2 py-1 text-left border-b border-slate-800 font-normal"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in chain.puts|reverse %}
+      {% set d = (p.delta|abs) if p.delta is not none else none %}
+      {% set band = d is not none and d >= 0.20 and d <= 0.25 %}
+      <tr class="hover:bg-slate-800/40 {% if p.strike == _cs %}bg-rose-500/10{% elif p.strike == _cl %}bg-emerald-500/10{% elif band %}bg-sky-500/5{% endif %}">
+        <td class="px-2 py-0.5 text-right font-semibold text-slate-100">{{ "%g"|format(p.strike) }}</td>
+        <td class="px-2 py-0.5 text-right text-slate-500">{{ "%.1f"|format((chain.spot - p.strike) / chain.spot * 100) }}%</td>
+        <td class="px-2 py-0.5 text-right text-slate-200">{% if p.bid is not none and p.ask is not none %}{{ "%.2f"|format(p.bid) }}/{{ "%.2f"|format(p.ask) }}{% else %}&mdash;{% endif %}</td>
+        <td class="px-2 py-0.5 text-right text-slate-400">{{ "%.2f"|format(p.last) if p.last is not none else '' }}</td>
+        <td class="px-2 py-0.5 text-right {% if band %}text-sky-300 font-semibold{% else %}text-sky-300/70{% endif %}">{{ p.delta if p.delta is not none else '' }}</td>
+        <td class="px-2 py-0.5 text-right text-yellow-300">{{ p.iv if p.iv is not none else '' }}</td>
+        <td class="px-2 py-0.5 text-right text-slate-500">{{ p.theta if p.theta is not none else '' }}</td>
+        <td class="px-2 py-0.5 text-right text-slate-500">{{ p.vega if p.vega is not none else '' }}</td>
+        <td class="px-2 py-0.5 text-right text-slate-500">{{ p.volume if p.volume is not none else '' }}</td>
+        <td class="px-2 py-0.5 text-left text-[10px]">{% if p.strike == _cs %}<span class="text-rose-300">sell</span>{% elif p.strike == _cl %}<span class="text-emerald-300">buy</span>{% elif band %}<span class="text-sky-300/80">&Delta; band</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="text-[11px] text-slate-500 mt-2 leading-relaxed">
+  Puts only, from just above the price down, so the delta 0.20&ndash;0.25 strike is inside the
+  list. Greeks are IBKR's own option model. Every quoted contract costs an IBKR market-data line.
+</p>
+{% else %}
 {# ---- chain table: calls | strike | puts, mirrored around the spot row ----
    Scroll area inherits the invisible-until-hover scrollbar from base.html. #}
 <div class="flex-1 min-h-0 overflow-auto rounded-lg border border-slate-800">
@@ -288,4 +401,5 @@
   market-data line, which is why only &plusmn;{{ chain.strike_window }} strikes around spot
   are subscribed.
 </p>
+{% endif %}
 {% endif %}

@@ -26,7 +26,7 @@ trustworthy origin), which is what makes this work with nothing exposed.
 ## Contents
 
 - `ibkr_bridge.py` — the bridge. Read-only (`readonly=True`, no order path).
-  Endpoints: `/health`, `/chain`, `/iv`, `/account`, `/scan` (1.1).
+  Endpoints: `/health`, `/chain` (`side=put` since 1.3), `/iv`, `/account`, `/scan` (1.1).
 - `start_ibkr_bridge.bat` — launcher (uses `py -3.12`).
 - `requirements.txt` — just `ib_insync`.
 
@@ -87,6 +87,17 @@ could read your balances off localhost. It binds `127.0.0.1` only — never
 reachable from the network.
 
 ## Changelog
+
+### 2026-09-18 — bridge 1.3: `/chain?side=put`, the bull put spread view
+The symmetric window (10 strikes each side of the price) is right for reading a chain and
+wrong for finding a short put at delta 0.20-0.25: on META ($689, $5 strikes) it stops at 640,
+and the 0.20-0.25 deltas sit at 610-620. `side=put` quotes PUTS only, 26 strikes below the
+price and 2 above (never further than 28% under it). Dropping the calls pays for the reach:
+29 contracts instead of 42, so fewer market-data lines than before. The response carries
+`put_side: true` and an empty `calls`; ATM IV is then read off the puts.
+
+Verified live: META 2026-10-30 returned 29 puts from 560 to 700 with deltas 0.09-0.53. Before
+the open TWS returns no bid/ask (only `last`); the server-side rules flag that.
 
 ### 2026-09-18 — bridge 1.2: one bridge per port; a new start replaces the old one
 User restarted the bridge for 1.1 and the IV Rank page still said "older version without the

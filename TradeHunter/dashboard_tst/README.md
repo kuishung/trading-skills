@@ -143,6 +143,58 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-18 - v4.110: bull put spread - which legs to sell/buy, and Positions back in the menu
+
+User (two playbook slides, "Steps to Sell Put Spread (Bull)" and "Trade and Risk
+Management"): *"i need the app to be able to recommend to me which strike leg is good"* and
+*"if I am in the position i need to know if my position need to be managed"*.
+
+Both slides were already mechanised (`services/bull_put.py`: `select` for entry, `monitor`
+for open positions, the daily sweep and the nav badge) but neither was reachable from the new
+IV Rank watchlist, and the Positions page had been off the menu since 2026-09-15.
+
+**Which legs** (`services/bull_put.py`):
+- `rank_pairs()` lists EVERY pair the rules allow in the expiry - each put with delta
+  0.20-0.25 as the short (or the 2 nearest when none is in band), long 1 and 2 strikes below -
+  priced at the mid, best first. Order = the playbook's own priorities: both legs inside the
+  $0.50 bid/ask limit, then delta in band, then credit as a share of the width. Each row
+  carries credit, credit/width, max loss, breakeven, room below the price, bid/ask, contracts
+  by "20% of max loss < 2% of NLV", and a `why` ("most credit per $ of width", "most room
+  below the price", "smallest max loss", or what disqualifies it).
+- `select()` now takes its recommended pair from row 1 of that table, so the "Sell ..." card
+  and the table can never disagree. New non-blocking checks: **Neutral / bullish chart** (slide
+  step 1; `routes/options.py::_trend` from the daily EMAs - bullish = EMA20>50>200, neutral =
+  close above EMA50 and EMA200) and **Live bid/ask** (outside market hours TWS has no quotes
+  and the credit comes from last-trade prices - say so). The card also shows how far the short
+  strike sits below the price and whether it is under EMA50 / EMA200.
+- `_options_analysis.html`: the "Which legs" table with a **Use** button per row that refills
+  the Track form (one delegated listener in `_options_tab.html`, because the panel arrives via
+  innerHTML and inline scripts would not run). A puts-only chain table for the put-side view
+  marks the sell / buy strikes and the delta band.
+- "Track this trade" (`POST /options/track`) now also files both leg prices, both entry
+  deltas and the entry IV - the same `OptionSpread` row the Positions page grades daily.
+
+**Options > IV Rank** (`ivscan.html`): the right pane is now **Chart | Bull put spread**. The
+spread tab loads `/options/<sym>?side=put` for the selected ticker, only when opened (a cold
+chain is ~40 s and costs market-data lines); while it is showing, the row's chart request is
+held back so no chart is drawn into a hidden box. Needs bridge 1.3 for the put-side chain
+(`bridge/README.md`); an older bridge still answers with the symmetric chain.
+
+**Positions is back** (`app/menus.py`, `base.html`): `/portfolio` is the third entry of the
+Options dropdown. It already grades every open spread against the management slide - short
+delta past the line, loss at 20% of max loss, ROLL with more than 30 days left else CLOSE,
+plus the 50% profit and 21-day lines - daily, with the alert. The delta line is the member's
+own setting (default 0.30, stricter than the slide's 0.35-0.40; change it on the page). The
+exit-line badge now rides on the Options dropdown itself, since a count behind a closed menu
+is a count nobody sees.
+
+Verified: synthetic chain (illiquid strike skipped, candidate == row 1); then through the app
+with a REAL put-side META chain captured from TWS - analyze 200, 6 ranked pairs, earnings
+gate correctly failed (earnings 10-28 inside the 10-30 expiry), Track filed the row with leg
+prices and deltas, it appears on `/portfolio`, nav shows Positions with exactly one badge
+element. NOT verified in a browser: the tab switching and the Use button (scripts
+syntax-checked only).
+
 ### 2026-09-18 - v4.109: IBKR bridge 1.2 - a restart now really replaces the running bridge
 
 User (screenshot of Options > IV Rank after restarting the bridge): the page still said the

@@ -249,7 +249,21 @@ async def _chain_def(ib, symbol):
     return stock, float(spot), chains[0]
 
 
-async def _chain(symbol, expiry=None, dte_min=None, dte_max=None):
+PUT_SIDE_BELOW = 26     # puts-only mode: strikes quoted below spot ...
+PUT_SIDE_ABOVE = 2      # ... and above it
+PUT_SIDE_FLOOR = 0.72   # never probe further than 28% under the price
+
+
+async def _chain(symbol, expiry=None, dte_min=None, dte_max=None, put_side=False):
+    """One expiry of the chain.
+
+    ``put_side`` is the bull put spread view (1.3): PUTS only, from just above
+    the price down. The symmetric window (10 strikes each way) is right for
+    reading a chain but wrong for finding a short put at delta 0.20-0.25 - on a
+    $700 stock with $5 strikes it stops 7% under the price, well short of where
+    that delta sits at 45-60 days. Dropping the calls pays for the longer reach:
+    28 puts cost fewer market-data lines than 21 calls + 21 puts.
+    """
     global _mkt_type
     from ib_insync import Option
 
@@ -278,15 +292,24 @@ async def _chain(symbol, expiry=None, dte_min=None, dte_max=None):
     strikes = sorted(chain.strikes)
     near = min(range(len(strikes)), key=lambda i: abs(strikes[i] - spot))
     win = CFG["strike_window"]
-    probe = strikes[max(0, near - win * 3): near + win * 3 + 1]
+    if put_side:
+        lo = spot * PUT_SIDE_FLOOR
+        probe = [k for k in strikes[:near + PUT_SIDE_ABOVE * 3 + 1] if k >= lo][-90:]
+        rights = ("P",)
+    else:
+        probe = strikes[max(0, near - win * 3): near + win * 3 + 1]
+        rights = ("C", "P")
     cand = [Option(symbol, chosen, k, r, "SMART", tradingClass=chain.tradingClass)
-            for k in probe for r in ("C", "P")]
+            for k in probe for r in rights]
     qualified = await ib.qualifyContractsAsync(*cand)
     real = sorted({c.strike for c in qualified if getattr(c, "conId", None)})
     if not real:
         raise RuntimeError(f"No {symbol} {_fmt(chosen)} contracts qualified near spot.")
     j = min(range(len(real)), key=lambda i: abs(real[i] - spot))
-    keep = set(real[max(0, j - win): j + win + 1])
+    if put_side:
+        keep = set(real[max(0, j - PUT_SIDE_BELOW): j + PUT_SIDE_ABOVE + 1])
+    else:
+        keep = set(real[max(0, j - win): j + win + 1])
     contracts = [c for c in qualified if getattr(c, "conId", None) and c.strike in keep]
 
     # Sticky entitlement probe: one modelGreeks in forty is noise, not a live feed.
@@ -310,7 +333,8 @@ async def _chain(symbol, expiry=None, dte_min=None, dte_max=None):
         (calls if r.startswith("C") else puts).append(_row(t, r))
     calls.sort(key=lambda r: r["strike"])
     puts.sort(key=lambda r: r["strike"])
-    atm_iv = min(calls, key=lambda r: abs(r["strike"] - spot)).get("iv") if calls else None
+    atm_src = calls or puts
+    atm_iv = min(atm_src, key=lambda r: abs(r["strike"] - spot)).get("iv") if atm_src else None
 
     return {
         "ok": True, "symbol": symbol, "spot": round(spot, 2),
@@ -319,7 +343,7 @@ async def _chain(symbol, expiry=None, dte_min=None, dte_max=None):
         "calls": calls, "puts": puts, "atm_iv": atm_iv,
         "data_mode": "live" if _mkt_type == 1 else "delayed",
         "greeks_ok": any(c.get("delta") is not None for c in calls + puts),
-        "strike_window": win,
+        "strike_window": win, "put_side": bool(put_side),
         "source": f"TWS {CFG['host']}:{CFG['port']}",
     }
 
@@ -414,7 +438,7 @@ def cached(key, fn, ttl=_CACHE_TTL):
 
 # --------------------------------------------------------------- HTTP layer
 class Handler(BaseHTTPRequestHandler):
-    server_version = "TradeHunterIBKRBridge/1.2"   # 1.1: /scan; 1.2: one bridge per port
+    server_version = "TradeHunterIBKRBridge/1.3"   # 1.1 /scan; 1.2 one bridge per port; 1.3 put-side chain
 
     def _origin_ok(self):
         o = self.headers.get("Origin")
@@ -481,9 +505,10 @@ class Handler(BaseHTTPRequestHandler):
                 exp = q.get("exp") or None
                 dmin = int(q["dte_min"]) if q.get("dte_min") else None
                 dmax = int(q["dte_max"]) if q.get("dte_max") else None
-                key = ("chain", sym, exp or "", dmin, dmax)
+                side = q.get("side") == "put"      # 1.3: the bull put spread view
+                key = ("chain", sym, exp or "", dmin, dmax, side)
                 self._send(200, cached(key, lambda: worker().submit(
-                    _chain(sym, exp, dmin, dmax), 90)), origin)
+                    _chain(sym, exp, dmin, dmax, put_side=side), 120)), origin)
             elif u.path == "/iv":
                 if not sym:
                     raise RuntimeError("symbol is required")

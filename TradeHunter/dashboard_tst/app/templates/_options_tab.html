@@ -69,6 +69,27 @@
     };
   }
 
+  // "Use" on a row of the legs table: refill the Track form with that pair.
+  if (!window.__thBpsUse) {
+    window.__thBpsUse = true;
+    document.addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('.bpsUse') : null;
+      if (!b) return;
+      var form = document.getElementById('bpsTrackForm');
+      if (!form) return;
+      var d = b.dataset;
+      function set(n, v) { var el = form.querySelector('[name="' + n + '"]'); if (el) el.value = v; }
+      set('short_strike', d.short); set('long_strike', d.long); set('credit', d.credit);
+      set('entry_delta', d.delta); set('long_entry_delta', d.ldelta);
+      set('short_price', d.smid); set('long_price', d.lmid); set('contracts', d.qty);
+      var lbl = document.getElementById('bpsTrackPair');
+      if (lbl) lbl.textContent = (+d.short) + '/' + (+d.long) + ' @ ' + (+d.credit).toFixed(2);
+      document.querySelectorAll('.bpsUse').forEach(function (x) { x.textContent = 'Use'; });
+      b.textContent = 'In form';
+      form.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+  }
+
   window.thOptionsLoad = function (expiry) {
     box.innerHTML = '<div class="rounded-lg border border-slate-800 bg-slate-900/40 p-4 ' +
       'text-sm text-slate-400"><span class="inline-block w-2 h-2 rounded-full bg-sky-400 ' +
@@ -76,7 +97,9 @@
 
     var q = '/chain?symbol=' + encodeURIComponent(SYM) +
             (expiry ? '&exp=' + encodeURIComponent(expiry)
-                    : '&dte_min=' + DTE_MIN + '&dte_max=' + DTE_MAX);
+                    : '&dte_min=' + DTE_MIN + '&dte_max=' + DTE_MAX) +
+            // bull put spread view: puts only, reaching down to the 0.20 delta strike
+            ({{ 'true' if put_side else 'false' }} ? '&side=put' : '');
 
     // IV history and the balance are independent of the chain, so all three go at
     // once; a failure in either of those only blanks its own gate.

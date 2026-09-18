@@ -357,7 +357,13 @@
         <details class="relative shrink-0">
           <summary class="cursor-pointer list-none rounded-lg px-3 py-1.5 whitespace-nowrap transition flex items-center gap-1
                           {% if ns.active %}bg-orange-500/15 text-orange-300{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-orange-300{% endif %}">
-            {{ entry.label }}
+            {{ entry.label }}{#
+              The exit-line badge rides on the DROPDOWN when Positions lives inside
+              one (2026-09-18): a count hidden behind a closed menu is a count nobody
+              sees. Same element id, same poll, same painter as the single-item case
+              below - only one of the two can render, since /portfolio is one entry.
+            #}{% for href, label in items %}{% if href == '/portfolio' %}<span id="pfNavBadge" hx-get="/portfolio/badge" hx-trigger="load, every 300s"
+                  hx-swap="none" class="contents"></span>{% endif %}{% endfor %}
             <svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor" class="text-slate-500"><path d="M5.5 7.5 10 12l4.5-4.5z"/></svg>
           </summary>
           <div class="absolute left-0 mt-2 w-44 rounded-lg border border-slate-800 bg-slate-900 shadow-xl py-1 z-30">

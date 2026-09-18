@@ -37,6 +37,10 @@ MENUS = [
     # High IV Rank scanner as a watchlist; Spread = the bull put spread screener.
     ("ivscan",           "IV Rank",           "Options", "/ivscan"),
     ("spreads",          "Spread",            "Options", "/spreads"),
+    # Positions = /portfolio, the member's open spreads graded daily against the
+    # management lines (user, 2026-09-18: "if I am in the position i need to know
+    # if my position need to be managed"). Key stays "positions" - see HIDDEN_KEYS.
+    ("positions",        "Positions",         "Options", "/portfolio"),
 ]
 # Routes that stay ACCESSIBLE (granted + reachable by URL) but are no longer shown
 # in the top nav after the revamp. Kept in ALL_KEYS so their require_menu() guards
@@ -47,15 +51,13 @@ MENUS = [
 #
 # "positions" (/portfolio, the member's own open option spreads, added 2026-09-10)
 # was taken off the nav 2026-09-15 together with the Options dropdown (user:
-# "remove the portfolio menu and also the option menu"). The Options dropdown came
-# back 2026-09-18 (IV Rank + Spread, see MENUS); Portfolio is still hidden. The page
-# and its routes are untouched — only the menu entry went. To bring it back, re-add
-# its tuple to MENUS: ("positions", "Portfolio", None, "/portfolio"). NB the Portfolio key is "positions",
+# "remove the portfolio menu and also the option menu"). Both came back 2026-09-18:
+# the Options dropdown now holds IV Rank, Spread and Positions. NB the Portfolio key is "positions",
 # not "portfolio": LEGACY_KEYS translates a stored "portfolio" grant to "curated"
 # (the OLD Portfolio placeholder became Curated on 2026-09-07), so reusing that key
-# would hand this page's grants to Curated. Hiding it also stops the nav's exit-line
-# badge poll (base.html, /portfolio/badge), which lived inside the Portfolio item.
-HIDDEN_KEYS = ["company", "studies", "strategy", "patterns", "positions"]
+# would hand this page's grants to Curated. The nav's exit-line badge poll
+# (base.html, /portfolio/badge) renders only while this entry is in MENUS.
+HIDDEN_KEYS = ["company", "studies", "strategy", "patterns"]
 # Where an approved user lands after sign-in (user, 2026-09-07: "on login go to
 # calendar by default"). Kept here rather than hard-coded at each redirect site so
 # the three of them (index, password login, OAuth callback) cannot drift apart.

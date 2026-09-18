@@ -48,6 +48,22 @@
   </aside>
 
   <section class="flex-1 min-w-0 rounded-xl border border-slate-800 bg-slate-900/40 p-3 flex flex-col lg:h-full lg:min-h-0">
+    {# Chart | Bull put spread. The spread tab asks the member's TWS for the put
+       side of the chain (a cold chain takes ~40 s and costs market-data lines), so
+       it loads only when opened, for the ticker selected on the left. #}
+    <div class="flex items-center gap-1 mb-2 shrink-0">
+      <button type="button" class="ivsTab text-[11px] px-2.5 py-1 rounded border transition" data-tab="chart">Chart</button>
+      <button type="button" class="ivsTab text-[11px] px-2.5 py-1 rounded border transition" data-tab="bps"
+              title="Which strikes to sell and buy, by the bull put spread rules">Bull put spread</button>
+      <span id="ivsCurSym" class="ml-2 text-[11px] text-slate-500"></span>
+      <a href="/portfolio" class="ml-auto text-[11px] text-slate-500 hover:text-emerald-300"
+         title="Your tracked spreads, graded daily: does a position need managing?">My positions &rarr;</a>
+    </div>
+    <div id="ivsBps" class="flex-1 min-h-0 overflow-y-auto flex-col" style="display:none">
+      <div class="flex-1 flex items-center justify-center text-xs text-slate-500 px-6 text-center">
+        Click a ticker on the left to get the recommended strikes.
+      </div>
+    </div>
     <div id="sectorChartBody" class="flex-1 min-h-0 overflow-y-auto flex flex-col">
       <div class="flex-1 flex items-center justify-center text-xs text-slate-500 px-6 text-center">
         Run the scan, then click a ticker to chart it. The setup switches above the list
@@ -144,12 +160,59 @@
       .then(function () { btn.disabled = false; btn.style.opacity = ''; });
   });
 
-  // mark the charted ticker; and offer to fill IV when a stored list still lacks it
+  // ---- Chart | Bull put spread -------------------------------------------
+  var TABKEY = 'ivsPaneTab';
+  var chartEl = document.getElementById('sectorChartBody'), bpsEl = document.getElementById('ivsBps');
+  var tab = 'chart', cur = null, chartSym = null, bpsSym = null;
+  try { tab = localStorage.getItem(TABKEY) === 'bps' ? 'bps' : 'chart'; } catch (e) {}
+
+  function loadChart() {
+    if (!cur || chartSym === cur) return;
+    chartSym = cur;
+    htmx.ajax('GET', '/sector/chart?symbol=' + encodeURIComponent(cur), { target: '#sectorChartBody', swap: 'innerHTML' });
+  }
+  function loadBps() {
+    if (!cur || bpsSym === cur) return;
+    bpsSym = cur;
+    htmx.ajax('GET', '/options/' + encodeURIComponent(cur) + '?side=put', { target: '#ivsBps', swap: 'innerHTML' });
+  }
+  function paint() {
+    document.querySelectorAll('.ivsTab').forEach(function (b) {
+      var on = b.dataset.tab === tab;
+      b.className = 'ivsTab text-[11px] px-2.5 py-1 rounded border transition ' +
+        (on ? 'border-emerald-500/60 text-emerald-300 bg-emerald-500/10'
+            : 'border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300');
+    });
+    chartEl.style.display = tab === 'chart' ? 'flex' : 'none';
+    bpsEl.style.display = tab === 'bps' ? 'flex' : 'none';
+    // only the visible pane loads: a chart drawn inside a hidden box measures 0 wide,
+    // and a chain nobody is looking at still costs market-data lines
+    if (tab === 'chart') loadChart(); else loadBps();
+  }
+  document.querySelectorAll('.ivsTab').forEach(function (b) {
+    b.addEventListener('click', function () {
+      tab = b.dataset.tab;
+      try { localStorage.setItem(TABKEY, tab); } catch (e) {}
+      paint();
+    });
+  });
+  paint();
+
+  // A ticker click selects it for BOTH tabs. The row's own hx-get draws the chart;
+  // while the spread tab is showing, that request is held back (see paint()).
+  document.body.addEventListener('htmx:beforeRequest', function (e) {
+    var el = e.detail && e.detail.elt;
+    if (el && el.classList && el.classList.contains('ivs-row') && tab !== 'chart') e.preventDefault();
+  });
   document.addEventListener('click', function (e) {
     var t = e.target.closest ? e.target.closest('.ivs-row') : null;
     if (!t || (e.target.closest && e.target.closest('.wl-star'))) return;
     document.querySelectorAll('.ivs-row.ivs-on').forEach(function (r) { r.classList.remove('ivs-on'); });
     t.classList.add('ivs-on');
+    cur = t.getAttribute('data-sym');
+    document.getElementById('ivsCurSym').textContent = cur;
+    if (tab === 'chart') chartSym = cur;      // the row's hx-get is drawing it now
+    else loadBps();
   });
   document.addEventListener('click', function (e) {
     if (e.target.closest && e.target.closest('#ivsFillIV')) fillIV();
