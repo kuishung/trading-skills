@@ -143,6 +143,36 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-19 - v4.117: bull put spread - the bid/ask rule is the playbook's BAND, $0.40-0.50
+
+User: *"bid ask spread should not be more than 0.40 to 0.50"* - the playbook's own wording
+("bid/ask on each leg <= $0.40-0.50"). Only the top of that band existed (`MAX_LEG_SPREAD = 0.50`),
+so a leg quoted $0.49 wide was graded exactly like one quoted $0.05 wide, and could be row 1.
+
+`services/bull_put.py` - `IDEAL_LEG_SPREAD = 0.40` beside `MAX_LEG_SPREAD = 0.50`; each pair gets a
+`ba_tier` from its WIDER leg (and `ba_widest`):
+
+| Wider leg | Tier | Effect |
+|---|---|---|
+| <= $0.40 | `clean` | nothing to say |
+| $0.40-0.50 | `limit` | **allowed** (it is inside the band) but flagged "bid/ask at the limit", and ranked below clean pairs |
+| > $0.50 | `wide` | blocks, as before |
+
+- Sort order is now: liquid -> short delta in band -> **clean before limit** -> credit/width. The
+  delta band still outranks the bid/ask tier (it is a playbook rule; the tier only orders pairs
+  that are both allowed).
+- The check reads `Bid/ask <= $0.40-0.50 per leg`; at the limit it still PASSES and adds "work the
+  order at the mid and do not chase it". No bid/ask at all (market closed) = no tier; the existing
+  "Live bid/ask" warning covers it.
+- `_options_analysis.html`: the pair table's Bid/ask cell is slate / **amber** (limit) / **rose**
+  (wide) with a tooltip, and every strike's Bid/Ask in the put-side chain is coloured the same way
+  with its width in the tooltip - so a wide strike is visible before it is ever part of a pair.
+
+Tested on synthetic chains: boundaries 0.40 clean / 0.41 limit / 0.50 limit / 0.51 wide; a 0.45
+long leg keeps its pair allowed but hands row 1 to a clean pair; an all-0.46 chain passes with the
+advice; all-0.56 blocks; the v4.116 open-interest tests still pass. Rendered through
+`/options/<sym>/analyze`.
+
 ### 2026-09-19 - v4.116: bull put spread - open interest and volume decide "liquid", not just the bid/ask
 
 User: *"when select option trade, we need the open interest and volume so that it is liquid

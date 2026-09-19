@@ -41,7 +41,15 @@ DTE_MIN, DTE_MAX = 45, 60
 SHORT_DELTA_LO, SHORT_DELTA_HI = 0.20, 0.25
 LONG_OFFSET_MIN, LONG_OFFSET_MAX = 1, 2        # strikes below the short
 IV_PCT_MIN = 40.0
-MAX_LEG_SPREAD = 0.50                          # $ bid/ask width per leg
+# Bid/ask width per leg. The playbook gives a BAND, "<= $0.40-0.50", and the user
+# restated it (2026-09-19: "bid ask spread should not be more than 0.40 to 0.50").
+# Until v4.117 only the top of the band existed, so a leg quoted $0.49 wide was
+# graded the same as one quoted $0.05 wide. Now both ends mean something:
+#   <= IDEAL          clean - fills at or near the mid
+#   IDEAL .. MAX      AT THE LIMIT - allowed, flagged, and ranked below clean pairs
+#   >  MAX            blocks - you bleed the edge away on the fill
+IDEAL_LEG_SPREAD = 0.40
+MAX_LEG_SPREAD = 0.50
 # Liquidity beyond the bid/ask (user, 2026-09-19: "we need the open interest and
 # volume so that it is liquid enough"). NOT from the playbook - it states only the
 # bid/ask rule - so these are this platform's defaults, every one overridable per
@@ -191,6 +199,7 @@ ALT_NEAR_SHORTS = 2    # shorts offered when nothing sits inside the delta band
 
 def _pair(short: dict, long_row: dict, off: int, *, spot: float,
           max_leg_spread: float, budget: float | None,
+          ideal_leg_spread: float = IDEAL_LEG_SPREAD,
           min_open_interest: int = MIN_OPEN_INTEREST,
           oi_per_contract: int = OI_PER_CONTRACT,
           min_leg_volume: int = MIN_LEG_VOLUME) -> dict | None:
@@ -208,6 +217,12 @@ def _pair(short: dict, long_row: dict, off: int, *, spot: float,
     ss, ls = _leg_spread(short), _leg_spread(long_row)
     ba_ok = ((ss is None or ss <= max_leg_spread) and
              (ls is None or ls <= max_leg_spread))
+    # where the WIDER leg falls in the playbook's band (see IDEAL_LEG_SPREAD)
+    known = [w for w in (ss, ls) if w is not None]
+    widest = max(known) if known else None
+    ba_tier = (None if widest is None else
+               "clean" if widest <= ideal_leg_spread else
+               "limit" if widest <= max_leg_spread else "wide")
     sd = _abs_delta(short)
     risk_20 = max_loss * RISK_FRACTION
     contracts = int(budget // risk_20) if (budget and risk_20 > 0) else 0
@@ -224,6 +239,7 @@ def _pair(short: dict, long_row: dict, off: int, *, spot: float,
     return {
         "short_oi": s_oi, "long_oi": l_oi, "oi_needed": need, "oi_ok": oi_ok,
         "short_volume": s_vol, "long_volume": l_vol, "vol_ok": vol_ok, "ba_ok": ba_ok,
+        "ba_tier": ba_tier, "ba_widest": widest,
         "short_strike": short["strike"], "long_strike": long_row["strike"],
         "long_offset": off, "width": width,
         "short_delta": round(sd, 3), "in_band": SHORT_DELTA_LO <= sd <= SHORT_DELTA_HI,
@@ -244,7 +260,8 @@ def rank_pairs(puts: list[dict], *, spot: float, max_leg_spread: float = MAX_LEG
                nlv_risk_pct: float = NLV_RISK_PCT,
                min_open_interest: int = MIN_OPEN_INTEREST,
                oi_per_contract: int = OI_PER_CONTRACT,
-               min_leg_volume: int = MIN_LEG_VOLUME) -> list[dict]:
+               min_leg_volume: int = MIN_LEG_VOLUME,
+               ideal_leg_spread: float = IDEAL_LEG_SPREAD) -> list[dict]:
     """Every pair the playbook allows in one expiry, best first.
 
     Shorts: every put with delta 0.20-0.25 (or, when the chain has none, the
@@ -256,7 +273,10 @@ def rank_pairs(puts: list[dict], *, spot: float, max_leg_spread: float = MAX_LEG
          the mark, or cannot get out of, is not a better trade for paying more on
          paper;
       2. short delta inside the band;
-      3. credit as a share of the width - premium collected per dollar risked.
+      3. a CLEAN bid/ask (both legs <= $0.40) before one at the limit ($0.40-0.50):
+         both are allowed, but a few cents more credit on paper does not survive a
+         fill that gives up a dime on each leg;
+      4. credit as a share of the width - premium collected per dollar risked.
     Each row says in ``why`` what it is best at, so the table reads as a choice,
     not a verdict: a wider pair pays more credit for more max loss, a lower short
     strike gives more room for less credit.
@@ -280,12 +300,13 @@ def rank_pairs(puts: list[dict], *, spot: float, max_leg_spread: float = MAX_LEG
                 continue
             row = _pair(short, by_strike[strikes[si - off]], off, spot=spot,
                         max_leg_spread=max_leg_spread, budget=budget,
+                        ideal_leg_spread=ideal_leg_spread,
                         min_open_interest=min_open_interest,
                         oi_per_contract=oi_per_contract, min_leg_volume=min_leg_volume)
             if row:
                 rows.append(row)
-    rows.sort(key=lambda r: (not r["liquid"], not r["in_band"], -r["ratio"],
-                             abs(r["short_delta"] - target)))
+    rows.sort(key=lambda r: (not r["liquid"], not r["in_band"], r["ba_tier"] == "limit",
+                             -r["ratio"], abs(r["short_delta"] - target)))
     rows = rows[:ALT_MAX]
     if rows:
         best_ratio = max(r["ratio"] for r in rows)
@@ -303,6 +324,8 @@ def rank_pairs(puts: list[dict], *, spot: float, max_leg_spread: float = MAX_LEG
                 why.append("smallest max loss")
             if not r["ba_ok"]:
                 why.append("bid/ask too wide")
+            elif r["ba_tier"] == "limit":
+                why.append("bid/ask at the limit")
             if r["oi_ok"] is False:
                 why.append("open interest too thin")
             if r["vol_ok"] is False:
@@ -324,7 +347,8 @@ def select(*, symbol: str, spot: float, expiry: str, dte: int,
            trend: dict | None = None,
            min_open_interest: int = MIN_OPEN_INTEREST,
            oi_per_contract: int = OI_PER_CONTRACT,
-           min_leg_volume: int = MIN_LEG_VOLUME) -> dict:
+           min_leg_volume: int = MIN_LEG_VOLUME,
+           ideal_leg_spread: float = IDEAL_LEG_SPREAD) -> dict:
     """Pick the best bull put spread in ONE expiry and grade it against the rules.
 
     ``trend`` is step 1 of the playbook ("identify a neutral/bullish trade"),
@@ -392,7 +416,8 @@ def select(*, symbol: str, spot: float, expiry: str, dte: int,
     pairs = rank_pairs(usable, spot=spot, max_leg_spread=max_leg_spread,
                        net_liquidation=net_liquidation, nlv_risk_pct=nlv_risk_pct,
                        min_open_interest=min_open_interest,
-                       oi_per_contract=oi_per_contract, min_leg_volume=min_leg_volume)
+                       oi_per_contract=oi_per_contract, min_leg_volume=min_leg_volume,
+                       ideal_leg_spread=ideal_leg_spread)
     if not pairs:
         target = (SHORT_DELTA_LO + SHORT_DELTA_HI) / 2.0
         near = min(usable, key=lambda p: abs(_abs_delta(p) - target))
@@ -425,10 +450,14 @@ def select(*, symbol: str, spot: float, expiry: str, dte: int,
                         f"${width:g} wide)"))
 
     # ---- liquidity ---------------------------------------------------------
-    checks.append(Check("Bid/ask <= $%.2f per leg" % max_leg_spread, liquid,
+    # The playbook's band: <= $0.40 clean, $0.40-0.50 the limit, above it blocks.
+    tier_note = {"limit": f" — at the limit (over ${ideal_leg_spread:.2f}): allowed, but work "
+                          "the order at the mid and do not chase it.",
+                 "wide": " — too wide, you'll bleed on the fill."}.get(top["ba_tier"], "")
+    checks.append(Check("Bid/ask <= $%.2f-%.2f per leg" % (ideal_leg_spread, max_leg_spread),
+                        liquid,
                         f"short {('%.2f' % ss) if ss is not None else 'n/a'}, "
-                        f"long {('%.2f' % ls) if ls is not None else 'n/a'}"
-                        + ("" if liquid else " — too wide, you'll bleed on the fill."),
+                        f"long {('%.2f' % ls) if ls is not None else 'n/a'}" + tier_note,
                         blocking=True))
 
     # Open interest - the standing crowd at each strike, scaled to the order. A

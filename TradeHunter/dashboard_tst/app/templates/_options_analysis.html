@@ -168,7 +168,7 @@
             <th class="px-1.5 py-1 text-right font-normal">Max loss</th>
             <th class="px-1.5 py-1 text-right font-normal">Breakeven</th>
             <th class="px-1.5 py-1 text-right font-normal" title="How far the short strike sits below today's price">Room</th>
-            <th class="px-1.5 py-1 text-right font-normal" title="Bid/ask width of the short and the long leg">Bid/ask</th>
+            <th class="px-1.5 py-1 text-right font-normal" title="Bid/ask width of the short and the long leg. Up to $0.40 is clean; $0.40-0.50 is the limit (amber - allowed, ranked below clean pairs); over $0.50 is too wide (red).">Bid/ask</th>
             <th class="px-1.5 py-1 text-right font-normal" title="Open interest, short / long leg: contracts currently open at each strike. Both legs need at least 500, and at least 10x the contracts you would sell. Red = too thin to get in and out of cleanly.">OI</th>
             <th class="px-1.5 py-1 text-right font-normal" title="Contracts traded TODAY, short / long leg. Amber = under 20. A warning only: it is near zero for every strike early in the session.">Vol</th>
             <th class="px-1.5 py-1 text-right font-normal" title="Contracts allowed by 20% of max loss < 2% of net liquidation">Qty</th>
@@ -190,7 +190,8 @@
             <td class="px-1.5 py-1 text-right text-slate-300">${{ "%.0f"|format(a.max_loss) }}</td>
             <td class="px-1.5 py-1 text-right text-slate-300">{{ a.breakeven }}</td>
             <td class="px-1.5 py-1 text-right text-slate-300">{% if a.cushion_pct is not none %}{{ a.cushion_pct }}%{% endif %}</td>
-            <td class="px-1.5 py-1 text-right {% if a.liquid %}text-slate-400{% else %}text-rose-300{% endif %}">
+            <td class="px-1.5 py-1 text-right {% if a.ba_tier == 'wide' %}text-rose-300{% elif a.ba_tier == 'limit' %}text-amber-300{% else %}text-slate-400{% endif %}"
+                title="{% if a.ba_tier == 'wide' %}Over $0.50 on a leg: too wide{% elif a.ba_tier == 'limit' %}Between $0.40 and $0.50 on a leg: at the limit{% elif a.ba_tier == 'clean' %}Both legs $0.40 or tighter{% else %}No bid/ask right now{% endif %}">
               {{ "%.2f"|format(a.short_leg_spread) if a.short_leg_spread is not none else "–" }}/{{ "%.2f"|format(a.long_leg_spread) if a.long_leg_spread is not none else "–" }}</td>
             <td class="px-1.5 py-1 text-right whitespace-nowrap {% if a.oi_ok is false %}text-rose-300{% elif a.oi_ok %}text-slate-300{% else %}text-slate-600{% endif %}"
                 title="{% if a.oi_ok is none %}TWS did not report open interest for these legs{% else %}needs {{ '{:,}'.format(a.oi_needed) }} per leg{% endif %}">
@@ -320,7 +321,10 @@
       <tr class="hover:bg-slate-800/40 {% if p.strike == _cs %}bg-rose-500/10{% elif p.strike == _cl %}bg-emerald-500/10{% elif band %}bg-sky-500/5{% endif %}">
         <td class="px-2 py-0.5 text-right font-semibold text-slate-100">{{ "%g"|format(p.strike) }}</td>
         <td class="px-2 py-0.5 text-right text-slate-500">{{ "%.1f"|format((chain.spot - p.strike) / chain.spot * 100) }}%</td>
-        <td class="px-2 py-0.5 text-right text-slate-200">{% if p.bid is not none and p.ask is not none %}{{ "%.2f"|format(p.bid) }}/{{ "%.2f"|format(p.ask) }}{% else %}&mdash;{% endif %}</td>
+        {# width against the playbook's band: > 0.50 too wide, 0.40-0.50 the limit #}
+        {% set _w = (p.ask - p.bid) if (p.bid is number and p.ask is number) else none %}
+        <td class="px-2 py-0.5 text-right {% if _w is not none and _w > 0.505 %}text-rose-300{% elif _w is not none and _w > 0.405 %}text-amber-300{% else %}text-slate-200{% endif %}"
+            {% if _w is not none %}title="{{ '%.2f'|format(_w) }} wide{% if _w > 0.505 %} - too wide for a leg{% elif _w > 0.405 %} - at the limit{% endif %}"{% endif %}>{% if p.bid is not none and p.ask is not none %}{{ "%.2f"|format(p.bid) }}/{{ "%.2f"|format(p.ask) }}{% else %}&mdash;{% endif %}</td>
         <td class="px-2 py-0.5 text-right text-slate-400">{{ "%.2f"|format(p.last) if p.last is not none else '' }}</td>
         <td class="px-2 py-0.5 text-right {% if band %}text-sky-300 font-semibold{% else %}text-sky-300/70{% endif %}">{{ p.delta if p.delta is not none else '' }}</td>
         <td class="px-2 py-0.5 text-right text-yellow-300">{{ p.iv if p.iv is not none else '' }}</td>
