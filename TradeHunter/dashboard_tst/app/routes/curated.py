@@ -308,6 +308,16 @@ def curated_from_chart(
     idea into a fresh one. Without `row_id` it is a new call, dated TODAY (never
     back-dated to wherever on the chart the setup was drawn, which would let a setup
     placed over old bars be judged against a move that had already happened).
+
+    Who sends `row_id` (since v4.120): the chart, ONLY when the setup being curated
+    is the call's own - the one it mounted from that call (Curated page; a Sector
+    chart / pop-out of a ticker that has a call). A setup the member INSERTED is sent
+    without it and becomes a new call, even when the ticker already has one and even
+    from a chart that is showing that call (user, 2026-09-19: "if the existing
+    setting is deleted and user insert a new setup, the system should record it as
+    new setup not revision"). That does not reopen the laundering door above: the
+    earlier call is left exactly as it was, on its own date, still being judged; a
+    second idea is simply a second row.
     """
     rid = (row_id or "").strip()
     if rid:
@@ -333,7 +343,11 @@ def curated_from_chart(
                           note="from chart trade setup")
     if not ok:
         return {"ok": False, "error": message}
+    # the call just made is this ticker's newest (dated today, highest id) - its id
+    # lets the page that created it re-render pinned to it
+    made = cur.latest_for_symbol(db, user, symbol)
     return {"ok": True, "revised": False, "symbol": (symbol or "").strip().upper(),
+            "row_id": made["id"] if made else None,
             "curated_on": today, "message": message,
             "matp_run": _ensure_recent_matp(db, user, symbol)}
 

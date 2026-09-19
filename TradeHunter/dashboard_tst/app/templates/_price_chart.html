@@ -429,7 +429,7 @@
   // This member's newest curated call on THIS ticker, or null — fetched once from
   // /curated/for-symbol/<sym> on pages that allow curating. It drives two things:
   // the "⚑ Curated" badge (present at all, and what it reveals), and whether the
-  // setup editor's button reads "Curate setup" or "Save revision".
+  // setup editor's button reads "Curate setup" or "Curate as new call".
   // Set only on the Curated page, where the chart is ABOUT one particular call:
   // the row it is showing, the date that call was made, and its levels to mount as
   // an editable setup. Their presence puts the drawing layer in ephemeral mode
@@ -1037,7 +1037,20 @@
         whatever bar they were first placed on - older drawings were anchored on
         the bar that was clicked. Applied in memory whenever both the shapes and
         the call are known (either may arrive first); it is written back only if
-        the member saves the drawing afterwards. Returns true when a box moved. */
+        the member saves the drawing afterwards. Returns true when a box moved.
+
+        ONLY a setup that IS the call - same entry, stop and target (v4.120). It used
+        to move every stored setup on the ticker, which was harmless while a setup
+        here could only ever be "the" call. Now a setup drawn on a ticker that
+        already has a call is a NEW idea (see curateSetup), and dragging it back to
+        the old call's date on the next load would mis-date it before it was even
+        curated. */
+    function isCallsSetup(d) {
+      var c = curatedCall;
+      if (!c || !d || !d.a) return false;
+      function near(a, b) { return a != null && b != null && Math.abs(a - b) <= Math.abs(b) * 0.002 + 0.005; }
+      return near(d.a.p, c.entry) && near(d.sl, c.stop) && near(d.pt, c.target);
+    }
     function reanchorToCurated() {
       if (!curatedCall || !curatedCall.curated_on || !bars.length) return false;
       var ci = anchorIndexFor(curatedCall.curated_on);
@@ -1045,6 +1058,7 @@
       var changed = false;
       drawings.forEach(function (d) {
         if (!d || d.type !== 'trade' || !d.a) return;
+        if (!isCallsSetup(d)) return;
         if (d.a.t === bars[ci].time && !d.a.o) return;
         d.a = { t: bars[ci].time, o: 0, p: d.a.p };
         d.b = logicalToPoint(ci + 20, d.b ? d.b.p : d.a.p);
@@ -1081,13 +1095,28 @@
     }
     refreshCuratedCall();
 
-    /** Send one setup to Curated \u2014 a NEW call, or a revision of the one this ticker
-        already has \u2014 reporting the outcome on `btn` itself. */
+    /** Is this drawing the curated call itself? Only the setup the chart MOUNTED
+        from a call carries that call's id (`cid`) - on the Curated page, and on a
+        Sector chart / pop-out of a ticker that has a call. A setup the member
+        inserted with the trade tool never does. */
+    function isTheCall(d) { return !!(CURATED_ROW && d && d.cid === CURATED_ROW); }
+
+    /** Send one setup to Curated, reporting the outcome on `btn` itself.
+
+        A REVISION only when the setup being sent IS the call (isTheCall): the member
+        changed their mind about that idea, and it keeps its original date. ANY OTHER
+        setup is a NEW call, dated today - even when the ticker already has one, and
+        even on a chart that is showing that call (user, 2026-09-19: "if the existing
+        setting is deleted and user insert a new setup, the system should record it
+        as new setup not revision"). Until v4.120 the question asked was "does this
+        ticker have a call?", not "is this the call's setup?", so deleting the mounted
+        setup and drawing a fresh one was filed as a revision of the old call -
+        back-dating a new idea to the old call's date and its old week. The earlier
+        call is not touched by a new one: it stays on record and keeps being judged,
+        so nothing is laundered by starting again. */
     function curateSetup(d, btn) {
       if (!d) return;
-      // On the Curated page the target is fixed: the call this chart is showing.
-      // Elsewhere it is whatever call this ticker already has, if any.
-      var targetRow = CURATED_ROW || (curatedCall && curatedCall.id) || null;
+      var targetRow = isTheCall(d) ? CURATED_ROW : null;
       var revising = !!targetRow;
       var fields = { symbol: symbol, entry: d.a.p, stop: d.sl, target: d.pt };
       if (revising) fields.row_id = targetRow;
@@ -1130,11 +1159,22 @@
           if (CURATED_ROW) {
             // On the Curated page the setup IS the view of this call, so it stays.
             // The page reloads around it so the table, the header and the revision
-            // history all show what was just saved.
+            // history all show what was just saved - pinned to the row that was
+            // written: the revised call, or the NEW one just created from here.
             closePanel();
-            document.dispatchEvent(new CustomEvent('tst:curated-revised', {
-              detail: { row_id: CURATED_ROW }
-            }));
+            var wrote = j.row_id || CURATED_ROW;
+            if (document.querySelector('.curated-panel')) {
+              document.dispatchEvent(new CustomEvent('tst:curated-revised', {
+                detail: { row_id: wrote }
+              }));
+            } else if (!j.revised && REFRESH) {
+              // A Sector chart / pop-out showing the OLD call: re-render so it now
+              // opens on the newest one - the call that was just made.
+              try {
+                if (REFRESH.target && window.htmx) htmx.ajax('GET', REFRESH.url, { target: REFRESH.target, swap: 'innerHTML' });
+                else window.location.reload();
+              } catch (e3) {}
+            }
             return;
           }
           // Elsewhere the setup now lives in Curated, so take the drawing off the
@@ -1355,18 +1395,23 @@
     }
     /** Label the curate button for what pressing it will actually do. Called when
         the editor opens AND whenever the ticker's curated state changes, so a call
-        made in this session immediately turns "Curate setup" into "Save revision". */
+        made in this session immediately turns "Curate setup" into "Curate as new call". */
     function syncCurateBtn() {
       if (!curateBtn || curateBtn.disabled) return;   // mid-request: leave its status text
-      var on = CURATED_ROW ? CURATED_ON : (curatedCall && curatedCall.curated_on);
-      if (CURATED_ROW || curatedCall) {
+      if (isTheCall(drawings[panelIdx])) {
         curateBtn.textContent = '⚑ Save revision';
         curateBtn.title = 'Save these levels as a new revision of the ' + symbol +
-          ' call you made on ' + on +
+          ' call you made on ' + CURATED_ON +
           '. The curated date does not change, so it is still judged from that day.';
       } else {
-        curateBtn.textContent = '⚑ Curate setup';
-        curateBtn.title = 'Send these levels to your Curated list, dated today';
+        // A new call (see curateSetup). When the ticker already has one, say what
+        // happens to it - and how a revision is made instead.
+        var prior = CURATED_ROW ? CURATED_ON : (curatedCall && curatedCall.curated_on);
+        curateBtn.textContent = prior ? '⚑ Curate as new call' : '⚑ Curate setup';
+        curateBtn.title = 'Send these levels to your Curated list as a NEW call, dated today' +
+          (prior ? '. Your ' + symbol + ' call of ' + prior + ' stays as it is and keeps ' +
+            'being judged. To change THAT call instead, edit its own setup (the one the ' +
+            'chart opens with) and press Save revision.' : '');
       }
     }
     /** Push the shape's live values back into the open editor (used while dragging
@@ -1722,12 +1767,12 @@
       // as the affirmative one. Only on a trade setup, and only where the page
       // opted in (Watchlist / Sector & Industry).
       //
-      // It has TWO jobs, and says which one it is doing: a ticker with no call yet
-      // gets "Curate setup"; one that already has a call gets "Save revision",
-      // because a second call on the same ticker would compete with the first
-      // rather than replace it, and the levels you just redrew are a change of
-      // mind about the existing idea. A revision keeps the original curated_on, so
-      // the call is still judged from the day it was actually made.
+      // It has TWO jobs, and says which one it is doing. On the Curated page it is
+      // "Save revision": the setup there IS one call, and a revision keeps the
+      // original curated_on, so the call is still judged from the day it was made.
+      // Everywhere else it files a NEW call dated today - "Curate setup", or "Curate
+      // as new call" when the ticker already has one (v4.120; see curateSetup for
+      // why a setup drawn here is never a revision).
       if (d.type === 'trade' && CAN_CURATE) {
         var cur8 = document.createElement('button');
         cur8.type = 'button';
@@ -2158,6 +2203,9 @@
           kind: SETUP_SEED.target >= SETUP_SEED.entry ? 'support' : 'resistance',
           sl: SETUP_SEED.stop, pt: SETUP_SEED.target
         });
+        // THIS drawing is the call. Anything the member inserts afterwards is not,
+        // and is curated as a new call rather than a revision (see curateSetup).
+        seed.cid = CURATED_ROW;
         drawings = [seed];
         selected = 0;
         redraw();

@@ -143,6 +143,47 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-19 - v4.120: a newly inserted setup is a NEW curated call, not a revision of the old one
+
+User: *"if the existing setting is deleted and user insert a new setup, the system should record it
+as new setup not revision"* (and earlier the same day: *"if i curate a new setup on saturday and it
+has been curated before whether it will be a revision of the old curation?"* - it was).
+
+**What was wrong.** The chart decided revision-vs-new by asking "does this TICKER have a call?",
+never "is THIS SETUP the call?". Two paths produced a wrong revision:
+- Watchlist / un-curated Sector chart: a setup is taken off the chart the moment it is curated (the
+  ⚑ badge replaces it), so anything curated later was necessarily drawn afresh - and was still
+  filed as a revision of the ticker's newest call.
+- Sector chart / pop-out of a ticker that HAS a call (since 2026-09-15 it opens Curated-style with
+  the call mounted as the setup): deleting that setup and inserting a new one was sent as a
+  revision of the mounted call, because the page as a whole was "about" that row.
+Either way the new idea was back-dated to the old call's `curated_on`, grouped into the old week
+and judged from a day it was never made on.
+
+**The rule now** (`_price_chart.html`):
+- The setup the chart MOUNTS from a call carries that call's id (`seed.cid = CURATED_ROW`);
+  `isTheCall(d)` is true only for it. A setup the member inserts with the ⚑ tool never has one.
+- `curateSetup()` sends `row_id` (a revision) only when `isTheCall(d)`. Any other setup is sent
+  without it -> a NEW call dated today, from any page, even a chart that is showing the old call.
+- The editor's button is labelled per DRAWING: **⚑ Save revision** on the call's own setup;
+  **⚑ Curate setup**, or **⚑ Curate as new call** when the ticker already has one, on an inserted
+  setup - with a tooltip saying the earlier call "stays as it is and keeps being judged" and how to
+  revise it instead.
+- After a new call made from a chart that was showing the old one: the Curated page reloads pinned
+  to the new row; a Sector chart / pop-out re-renders (`chart_refresh`) and now opens on the new
+  call. `POST /curated/from-chart` returns the new call's `row_id` for that.
+- `reanchorToCurated()` now moves only a stored setup whose entry / stop / target ARE the call's
+  (`isCallsSetup`). It used to drag every stored setup to the call's date, which would mis-date a
+  new, not-yet-curated idea on the next load.
+
+This does not reopen the door the revision rule closed (re-dating a losing idea): the earlier call
+is left exactly as it was, on its own date, still being judged - a second idea is a second row.
+
+Verified in the browser on the dev DB (NVDA, call #1 of 2026-08-01, via the Sector pop-out): the
+mounted setup's editor read "Save revision"; after Delete + a new ⚑ setup the editor read "Curate as
+new call"; pressing it wrote call #4 dated 2026-09-19 with its own opening revision while #1 kept
+its levels and its single revision; the window re-opened on #4. Test rows removed afterwards.
+
 ### 2026-09-19 - v4.119: the drawing tools work on the WEEKLY chart too
 
 User: *"the sector and industry chart i do not see the tools already"*. v4.114 made W view-only (the
