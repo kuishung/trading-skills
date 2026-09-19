@@ -27,6 +27,9 @@
 {# Run MATP from the chart (user, 2026-09-11) #}
 {% set chart_matp_run = true %}
 {% set chart_spread = spread %}
+{# how to re-render this pane in place: the chart's D / W switch and a finished MATP
+   run both use it (see REFRESH in _price_chart) #}
+{% set chart_refresh = {'url': '/portfolio/chart?row=' ~ row.id, 'target': '#pfChartBody'} %}
 
 {% set v = snap.verdict or {} %}
 <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1 shrink-0">

@@ -223,6 +223,20 @@
         {% endif %}
       </div>
       <div class="flex items-center gap-1">
+        {# D / W timeframe switch (user, 2026-09-19: "in the chart i need to be able to
+           view the weekly chart"). The choice is remembered per browser
+           (localStorage th.chart.tf) and applies to EVERY chart, like a timeframe in
+           TradingView: pick W and the next ticker you click opens weekly too. The
+           script below reads it, asks /prices for tf=W and relabels the zoom buttons
+           (1Y / 2Y / 5Y / 10Y). Weekly is VIEW-ONLY: the drawing tools and the trade
+           setup are anchored to daily candles and sized with the daily ATR, so they
+           stay on the D chart - the note says so. Levels that are facts (MATP / MBP,
+           S / R, a curated call, a spread's strikes) are drawn on both. #}
+        <span class="tf-note hidden text-[10px] text-slate-500 mr-1 cursor-help"
+              title="Weekly candles, about 10 years. View only: your drawings and the trade-setup tool are anchored to daily candles and sized with the daily ATR, so they stay on the D chart. MATP / MBP, S / R, curated levels and spread strikes are shown here too.">weekly &middot; view only</span>
+        <button type="button" class="tfbtn text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 transition hover:border-emerald-500 hover:text-emerald-300" data-tf="D" title="Daily candles">D</button>
+        <button type="button" class="tfbtn text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 transition hover:border-emerald-500 hover:text-emerald-300" data-tf="W" title="Weekly candles (view only)">W</button>
+        <span class="inline-block w-px h-3 bg-slate-700 mx-0.5"></span>
         <button type="button" class="zoombtn text-[11px] px-2 py-0.5 rounded border border-emerald-500/60 text-emerald-300 bg-emerald-500/10 transition" data-months="6">6M</button>
         <button type="button" class="zoombtn text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 transition hover:border-emerald-500 hover:text-emerald-300" data-months="12">1Y</button>
         <button type="button" class="zoombtn text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 transition hover:border-emerald-500 hover:text-emerald-300" data-months="18">1.5Y</button>
@@ -347,6 +361,44 @@
   // painted onto a page whose footer still said "No analyst / MATP data" and
   // whose analyst band was missing (user, 2026-09-16, CNR).
   var REFRESH = {{ (chart_refresh if (chart_refresh is defined and chart_refresh) else None)|tojson }};
+  // ---- timeframe: D (default) or W ---------------------------------------
+  // Remembered per browser and shared by every chart. Switching re-renders the
+  // chart the same way a finished MATP run does (REFRESH; a full page reloads),
+  // so the weekly chart is built by the same code path as a fresh daily one -
+  // no half-torn-down chart, no listeners attached twice.
+  var TF_KEY = 'th.chart.tf';
+  var WEEKLY = false;
+  try { WEEKLY = localStorage.getItem(TF_KEY) === 'W'; } catch (e) {}
+  (function () {
+    var root = document.getElementById('chart');
+    if (!root) return;
+    var ON = 'tfbtn text-[11px] px-2 py-0.5 rounded border transition border-sky-500/60 text-sky-300 bg-sky-500/10';
+    var OFF = 'tfbtn text-[11px] px-2 py-0.5 rounded border transition border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300';
+    root.querySelectorAll('.tfbtn').forEach(function (b) {
+      var mine = (b.dataset.tf === 'W') === WEEKLY;
+      b.className = mine ? ON : OFF;
+      b.addEventListener('click', function () {
+        if (mine) return;
+        try { localStorage.setItem(TF_KEY, b.dataset.tf); } catch (e) { return; }
+        try {
+          if (REFRESH && REFRESH.target && window.htmx) htmx.ajax('GET', REFRESH.url, { target: REFRESH.target, swap: 'innerHTML' });
+          else window.location.reload();
+        } catch (e2) { window.location.reload(); }
+      });
+    });
+    if (WEEKLY) {
+      var note = root.querySelector('.tf-note');
+      if (note) note.classList.remove('hidden');
+      // weekly lookbacks; the script's showRange() reads data-months as before
+      var spans = [[12, '1Y'], [24, '2Y'], [60, '5Y'], [120, '10Y']];
+      root.querySelectorAll('.zoombtn').forEach(function (b, i) {
+        if (!spans[i]) return;
+        b.dataset.months = spans[i][0];
+        b.textContent = spans[i][1];
+      });
+    }
+  })();
+  var DEFAULT_MONTHS = WEEKLY ? 24 : 6;
   var matp = {{ chart_matp|tojson }};
   var mbp = {{ (chart_mbp if chart_mbp is not none else None)|tojson }};
   var lastEarn = {{ (chart_earnings if chart_earnings else None)|tojson }};  // 'YYYY-MM-DD' or null
@@ -2021,7 +2073,7 @@
       });
   }
   if (!window.LightweightCharts || !el) { empty(); return; }
-  fetch('/matp/{{ chart_symbol }}/prices')
+  fetch('/matp/{{ chart_symbol }}/prices' + (WEEKLY ? '?tf=W' : ''))
     .then(function (r) { return r.json(); })
     .then(function (d) {
       var bars = (d && d.bars) || [];
@@ -2031,7 +2083,8 @@
             prEl = document.getElementById('chartPrice'), cgEl = document.getElementById('chartChg');
         var price = q && q.price != null ? q.price : (bars.length ? bars[bars.length - 1].close : null);
         var chg = q && q.change != null ? q.change : null, pct = q && q.change_pct != null ? q.change_pct : null;
-        if (chg == null && bars.length > 1) {
+        // (not on W: bar-to-bar there is a WEEK's change and the header means today's)
+        if (chg == null && bars.length > 1 && !WEEKLY) {
           var prev = bars[bars.length - 2].close; chg = bars[bars.length - 1].close - prev;
           pct = prev ? (chg / prev * 100) : null;
         }
@@ -2141,7 +2194,8 @@
           'background:' + (_light ? 'rgba(255,255,255,.85)' : 'rgba(15,23,42,.72)') + ';';
         el.appendChild(atrTag);
         function showTag(v) {
-          atrTag.textContent = 'ATR (14) = ' + (v == null ? 'n/a' : v.toFixed(2));
+          // on W this is the ATR of WEEKLY candles - say so, it is ~2x the daily figure
+          atrTag.textContent = (WEEKLY ? 'Weekly ATR (14) = ' : 'ATR (14) = ') + (v == null ? 'n/a' : v.toFixed(2));
         }
 
         function show(v, c) {
@@ -2187,13 +2241,15 @@
             ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
             : 'bg-amber-500/15 text-amber-300 border-amber-500/40';
           chip.className = 'shrink-0 text-[11px] px-1.5 py-0.5 rounded border ' + skin;
-          chip.textContent = st.verdict;
+          // on W the verdict was read from the weekly candles on screen - label it,
+          // a weekly "lower high" next to a daily-looking chip would mislead
+          chip.textContent = (WEEKLY ? 'W · ' : '') + st.verdict;
           var hi = st.high, lo = st.low;
-          chip.title = st.reason
+          chip.title = (WEEKLY ? 'WEEKLY structure. ' : '') + st.reason
             + (hi ? '\nswing highs: ' + hi.prev + ' → ' + hi.last : '')
             + (lo ? '\nswing lows:  ' + lo.prev + ' → ' + lo.last : '')
             + '\nConfirmed swings only: the newest pivot needs 5 later bars, so it'
-            + ' lags a few days rather than repainting.';
+            + ' lags a few ' + (WEEKLY ? 'weeks' : 'days') + ' rather than repainting.';
         }
         try {
           var mk = (st.pivots || []).filter(function (p) { return p.time; }).map(function (p) {
@@ -2265,7 +2321,9 @@
       // two sets of Entry/SL/PT at the same prices, one of which moves as you drag
       // and one of which does not, reads as a bug. The stored values stay visible
       // in the header line above the chart.
-      if (curLevels && !SETUP_SEED) {
+      // (On W the editable setup is not mounted at all, so the static lines are the
+      // only way the call's levels can be on the weekly chart.)
+      if (curLevels && (!SETUP_SEED || WEEKLY)) {
         var _lbl = curLevels.label ? ' ' + curLevels.label : '';
         s.createPriceLine({ price: curLevels.entry, color: '#38bdf8', lineWidth: 2, lineStyle: 0, axisLabelVisible: true, title: 'Entry' + _lbl });
         s.createPriceLine({ price: curLevels.stop, color: '#f87171', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'SL' + _lbl });
@@ -2370,10 +2428,13 @@
         if (future.length) {
           var far = future.map(function (f) { return f.date; }).sort().pop();
           var ws = [], cur = new Date(lastT + 'T00:00:00Z'), end = new Date(far + 'T00:00:00Z');
+          // one slot per candle-to-be: a weekday on D, a week on W (daily slots on a
+          // weekly chart would stretch the future to five times its real width)
           while (cur < end) {
-            cur.setUTCDate(cur.getUTCDate() + 1);
+            cur.setUTCDate(cur.getUTCDate() + (WEEKLY ? 7 : 1));
             var dow = cur.getUTCDay();
-            if (dow === 0 || dow === 6) continue;
+            if (!WEEKLY && (dow === 0 || dow === 6)) continue;
+            if (cur >= end) break;
             ws.push({ time: cur.toISOString().slice(0, 10) });
           }
           if (!ws.length || ws[ws.length - 1].time !== far) ws.push({ time: far });
@@ -2447,12 +2508,19 @@
         b.addEventListener('click', function () { var m = +b.dataset.months; showRange(m); setActive(m); });
       });
 
-      // default: 6M
-      showRange(6);
-      setActive(6);
+      // default: 6M on D, 2Y on W (about the same number of candles on screen)
+      showRange(DEFAULT_MONTHS);
+      setActive(DEFAULT_MONTHS);
 
-      // drawing toolbar — non-essential, must never take the candles down
-      try { setupDrawing(chart, s, el, bars, {{ chart_symbol|tojson }}, atrLatest); } catch (e) {}
+      // drawing toolbar — non-essential, must never take the candles down.
+      // NOT on W. Every stored point is {daily date, offset in DAILY bars, price} and
+      // the trade tool sizes its stop from the daily ATR; mounted on weekly bars the
+      // shapes would land a bar out, a setup would be sized ~2x too wide, and the
+      // first drag would save those weekly coordinates over the member's daily
+      // drawings. View-only is the honest version until the layer is timeframe-aware.
+      if (!WEEKLY) {
+        try { setupDrawing(chart, s, el, bars, {{ chart_symbol|tojson }}, atrLatest); } catch (e) {}
+      }
     })
     .catch(empty);
 })();

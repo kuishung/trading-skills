@@ -823,10 +823,14 @@ def _build_band(low, high, mbp, matp, analysts=None, current=None):
 
 
 @router.get("/{symbol}/prices")
-def matp_prices(symbol: str, user: User = Depends(require_user)):
+def matp_prices(symbol: str, tf: str = "D", user: User = Depends(require_user)):
     """Daily OHLC for the price chart (lightweight-charts shape), fetched LIVE
     from Yahoo (cached ~10 min), plus the next earnings date and a header quote.
     Returns an empty list / null on any failure so the chart degrades gracefully.
+
+    ``tf=W`` (the chart's D / W switch) returns WEEKLY candles over ~10 years
+    instead, and the swing structure is then read from those weekly candles so the
+    chip and its markers still agree with what is on screen.
 
     The three fetches are INDEPENDENT, so they run concurrently. Serially they
     were ~1.1s + ~1.1s + ~0.8s of pure Yahoo round-trip — measured 3-5s for a
@@ -840,9 +844,11 @@ def matp_prices(symbol: str, user: User = Depends(require_user)):
     """
     from concurrent.futures import ThreadPoolExecutor
 
-    from ..services.prices import fetch_daily_ohlc, fetch_next_earnings, fetch_quote
+    from ..services.prices import (fetch_daily_ohlc, fetch_next_earnings, fetch_quote,
+                                   fetch_weekly_ohlc)
 
     sym = symbol.strip().upper()
+    weekly = (tf or "").strip().upper() == "W"
 
     def _safe(fn, default):
         try:
@@ -851,7 +857,7 @@ def matp_prices(symbol: str, user: User = Depends(require_user)):
             return default
 
     with ThreadPoolExecutor(max_workers=3) as ex:
-        bars = ex.submit(_safe, fetch_daily_ohlc, [])
+        bars = ex.submit(_safe, fetch_weekly_ohlc if weekly else fetch_daily_ohlc, [])
         earn = ex.submit(_safe, fetch_next_earnings, None)
         quote = ex.submit(_safe, fetch_quote, None)
         rows = bars.result()
@@ -867,6 +873,7 @@ def matp_prices(symbol: str, user: User = Depends(require_user)):
             struct = None
         return {
             "symbol": sym,
+            "tf": "W" if weekly else "D",
             "bars": rows,
             "next_earnings": earn.result(),
             "quote": quote.result(),   # {name, price, change, change_pct} for the header

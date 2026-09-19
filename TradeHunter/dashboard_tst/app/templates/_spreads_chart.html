@@ -15,6 +15,9 @@
 {% set chart_tv_plot = true %}
 {% set chart_matp_run = true %}
 {% set chart_spread = spread %}
+{# how to re-render this pane in place: the chart's D / W switch and a finished MATP
+   run both use it (see REFRESH in _price_chart) #}
+{% set chart_refresh = {'url': '/spreads/chart?row=' ~ c.id, 'target': '#spChartBody'} %}
 
 <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1 shrink-0 text-[11px] tabular-nums">
   <span class="text-xs text-slate-300">{{ c.symbol }}

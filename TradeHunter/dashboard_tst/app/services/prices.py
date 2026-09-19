@@ -65,6 +65,39 @@ def fetch_daily_ohlc(symbol: str, *, rng: str = "2y") -> list[dict]:
     return bars
 
 
+def to_weekly(bars: list[dict]) -> list[dict]:
+    """Daily ``{time, open, high, low, close}`` bars -> weekly bars by ISO week.
+
+    ``time`` is the week's FIRST session (a Monday, or Tuesday after a holiday) -
+    the stamp TradingView puts on a weekly candle. The last bar is the week in
+    progress. Same grouping as ``ema_setup.to_weekly``, so the weekly chart and
+    the "pin bar W" condition are looking at the same candles."""
+    out: list[dict] = []
+    key = None
+    for b in bars:
+        try:
+            k = _dt.date.fromisoformat(str(b["time"])[:10]).isocalendar()[:2]
+        except (KeyError, ValueError):
+            continue
+        if k != key:
+            key = k
+            out.append(dict(b))
+        else:
+            w = out[-1]
+            w["high"] = max(w["high"], b["high"])
+            w["low"] = min(w["low"], b["low"])
+            w["close"] = b["close"]
+    return out
+
+
+def fetch_weekly_ohlc(symbol: str, *, rng: str = "10y") -> list[dict]:
+    """Weekly candles for the chart's W view (user, 2026-09-19: "in the chart i need
+    to be able to view the weekly chart"). Resampled from a long DAILY fetch rather
+    than Yahoo's own 1wk interval: one code path for the null-close fix in
+    ``_fetch``, and 10y gives the weekly EMA200 (~4 years) room to mean something."""
+    return to_weekly(fetch_daily_ohlc(symbol, rng=rng))
+
+
 _QCACHE: dict = {}
 _QTTL = 60  # quote header is intraday-ish; refresh ~every minute
 

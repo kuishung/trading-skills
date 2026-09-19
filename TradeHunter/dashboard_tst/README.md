@@ -143,6 +143,44 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-19 - v4.114: the chart has a D / W switch - weekly candles on every chart
+
+User: *"in the chart i need to be able to view the weekly chart"* (the follow-on to the weekly
+pin-bar condition: a `pin bar W` chip is only useful if the weekly candle can be looked at).
+
+- **`_price_chart.html`** - a `D` / `W` pair left of the zoom buttons. The choice is remembered
+  per browser (`localStorage th.chart.tf`) and applies to EVERY chart, like a TradingView
+  timeframe: pick W and the next ticker you click opens weekly too. On W the script asks
+  `/matp/<sym>/prices?tf=W`, the zoom buttons become **1Y / 2Y / 5Y / 10Y** (default 2Y, about
+  as many candles as 6M of dailies), EMA20/50/200 and ATR(14) are computed from the weekly
+  candles (the on-chart tag reads "Weekly ATR"), the structure chip reads `W · ...` because the
+  verdict and its swing markers now come from weekly candles, and the future-date whitespace
+  tail (next earnings, spread expiry) steps by weeks instead of weekdays.
+- **Switching re-renders the chart through the page's `chart_refresh` recipe** (HTMX pane) or a
+  reload (full page / pop-out) - the mechanism a finished MATP run already uses - so a weekly
+  chart is built by the same code path as a fresh daily one: nothing half torn down, no
+  listener attached twice. `_portfolio_chart.html` and `_spreads_chart.html` gained a
+  `chart_refresh` so the switch re-renders their pane instead of reloading the page and losing
+  the selected row (their Run-MATP button now re-renders the pane on completion too).
+- **Weekly is VIEW-ONLY.** The drawing layer is not mounted on W: every stored point is
+  {daily date, offset in DAILY bars, price} and the trade tool sizes its stop from the daily
+  ATR, so on weekly bars shapes would land a bar out, a setup would be sized ~2x too wide, and
+  the first drag would save weekly coordinates over the member's daily drawings. A
+  "weekly · view only" note beside the switch says so. Levels that are FACTS still draw on W:
+  MATP / MBP, curator S / R, a spread's strikes + expiry, and a curated call's Entry / SL / PT
+  (as static lines on the Curated page, where D mounts them as the editable setup).
+- **`services/prices.py`** - `to_weekly()` (ISO-week resample; bar `time` = the week's first
+  session, the last bar is the week in progress) and `fetch_weekly_ohlc()` = 10y of LIVE daily
+  bars resampled, rather than Yahoo's 1wk interval, so the null-close fix in `_fetch` covers
+  weekly too and the weekly EMA200 has room. Same week grouping as `ema_setup.to_weekly`, so
+  the chart and the `pin bar W` condition look at the same candles.
+- **`routes/matp.py`** - `/matp/<sym>/prices` takes `tf=W`; the structure is classified from
+  the weekly rows and the response carries `tf`.
+
+Live source as always (Yahoo) - an operational view, never parquet. Verified in the browser
+against the real app: D -> W -> 10Y -> D on a full page (`/matp/AAPL`) and in an HTMX pane
+(Sector), the W choice carrying over to another ticker, no console errors.
+
 ### 2026-09-19 - v4.113: pin bar D / W look at the most recent candle only
 
 User: *"the pin bar d or w i want it to the last recent candle"*. v4.111 also accepted the bar
