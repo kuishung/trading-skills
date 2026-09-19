@@ -515,6 +515,47 @@
   // price axis open to include it instead of drawing it off-screen.
   var tradeLevels = [];
   function empty() { if (el) el.classList.add('hidden'); if (msg) msg.classList.remove('hidden'); }
+  /** Frame the chart on a logical range AND MAKE IT STICK.
+
+      A bare setVisibleLogicalRange() is silently lost when the chart has no width
+      yet: autoSize measures through a ResizeObserver, which fires a frame or more
+      AFTER createChart. Prices arrive fast (cached: ~10 ms), a background tab delays
+      frames for seconds, and a chart built inside a hidden tab (Sector's "Chart"
+      tab while Relative Rotation is showing) has no width at all until it is
+      revealed. In each case the library then falls back to its own default - the
+      last ~70 bars with the newest candle pressed against the right edge, none of
+      the room ahead of price this chart is designed around (found 2026-09-19 while
+      checking "is the latest candle shown": 434..500 on screen instead of
+      373..564, on three pages, right after a page load).
+
+      So the range is re-applied - on a few timers and whenever the container is
+      resized - until the chart REPORTS that range. It stops for good the moment it
+      sticks, or the moment the member pans / zooms (their view wins). A later call
+      (a zoom button, zoomToSetup) replaces the target. */
+  function frameTo(chart, host, from, to) {
+    var st = host.__frame;
+    if (!st) {
+      st = host.__frame = { touched: false, done: false, from: 0, to: 0 };
+      ['pointerdown', 'wheel', 'touchstart'].forEach(function (ev) {
+        host.addEventListener(ev, function () { st.touched = true; }, { passive: true });
+      });
+      if (window.ResizeObserver) {
+        try { new ResizeObserver(function () { st.apply && st.apply(); }).observe(host); } catch (e) {}
+      }
+    }
+    st.from = from; st.to = to; st.done = false; st.touched = false;
+    st.apply = function () {
+      if (st.done || st.touched || !host.isConnected || host.clientWidth < 2) return;
+      try {
+        var ts = chart.timeScale();
+        ts.setVisibleLogicalRange({ from: st.from, to: st.to });
+        var r = ts.getVisibleLogicalRange();
+        if (r && Math.abs(r.from - st.from) < 2 && Math.abs(r.to - st.to) < 2) st.done = true;
+      } catch (e) { /* framing is a nicety; never break the chart */ }
+    };
+    st.apply();
+    [60, 250, 800, 2000, 5000].forEach(function (ms) { setTimeout(st.apply, ms); });
+  }
   function ema(bars, period) {
     if (bars.length < period) return [];
     var k = 2 / (period + 1), sum = 0;
@@ -858,7 +899,7 @@
         // half the plot ends up being the room the bands run through, which is what
         // makes the three levels legible instead of squeezed against the last candle.
         var span = Math.min(bars.length - 1, 45);
-        ts.setVisibleLogicalRange({ from: last - span, to: last + 30 });
+        frameTo(chart, el, last - span, last + 30);   // re-applied until it sticks
       } catch (e) { /* framing is a nicety; never break the drawing */ }
     }
 
@@ -2494,7 +2535,7 @@
         while (firstIdx < last && bars[firstIdx].time < fromStr) firstIdx++;
         var dataBars = last - firstIdx + 1;
         var blank = Math.max(1, Math.round(dataBars / 2)); // blank = 1/3 of total
-        chart.timeScale().setVisibleLogicalRange({ from: firstIdx, to: last + blank });
+        frameTo(chart, el, firstIdx, last + blank);   // re-applied until it sticks
       }
       var zbtns = el.parentElement.querySelectorAll('.zoombtn');
       function setActive(months) {
@@ -2511,6 +2552,20 @@
       // default: 6M on D, 2Y on W (about the same number of candles on screen)
       showRange(DEFAULT_MONTHS);
       setActive(DEFAULT_MONTHS);
+
+      // Read-only inspection handle (like window.__thSetup): what is loaded and what
+      // is on screen. Exists so "is the latest candle shown?" can be CHECKED on any
+      // page rather than eyeballed - #priceChart.__chartInfo() in the console.
+      el.__chartInfo = function () {
+        var r = chart.timeScale().getVisibleLogicalRange(), last = bars.length - 1;
+        return {
+          symbol: {{ chart_symbol|tojson }}, tf: WEEKLY ? 'W' : 'D', bars: bars.length,
+          firstBar: bars[0].time, lastBar: bars[last].time, lastClose: bars[last].close,
+          visibleFrom: r ? r.from : null, visibleTo: r ? r.to : null,
+          // the newest candle's slot lies inside the visible logical range
+          lastVisible: !!r && r.from <= last && r.to >= last
+        };
+      };
 
       // drawing toolbar — non-essential, must never take the candles down.
       // NOT on W. Every stored point is {daily date, offset in DAILY bars, price} and

@@ -143,6 +143,45 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-19 - v4.118: the chart's framing now STICKS - the latest candle is never left jammed on the right edge
+
+User: *"can you check all the chart when loaded the latest candle is shown"*. Checked every page
+that hosts `_price_chart.html`, in D and W, against the source's own latest bar (Yahoo: daily
+2026-09-18, weekly = week of 2026-09-14, close = Friday's).
+
+**Data: correct everywhere.** The newest bar in the chart equalled the source's newest bar on every
+host and both timeframes - nothing is a day behind.
+
+**Framing: one real bug.** The chart frames itself with a single `setVisibleLogicalRange()` right
+after the prices arrive. That call is silently lost when the chart has NO WIDTH at that moment -
+and a chart built inside a hidden tab has none. On the **Company page the chart is always built
+inside the hidden "Chart" tab**; revealing it showed the whole 2 years squeezed together ("6M" lit
+but ignored) with the newest candles pressed against the right edge, partly under the price label.
+Same exposure for a Sector chart requested while "Relative Rotation" is the showing tab, and for
+any tab the browser is not painting when the prices land. Reproduced on the committed template,
+gone with this change.
+
+- `frameTo(chart, host, from, to)` - the ONE way the chart is framed now (`showRange` and
+  `zoomToSetup` both call it). It re-applies the range on a few timers and on every container
+  resize (a ResizeObserver fires exactly when a hidden tab is revealed) until the chart REPORTS
+  that range, then stops for good. It also stops the moment the member pans / zooms / touches the
+  chart - their view wins - and a zoom button or a newly placed setup sets a fresh target.
+- `#priceChart.__chartInfo()` - a read-only inspection handle (like `window.__thSetup`):
+  `{symbol, tf, bars, firstBar, lastBar, lastClose, visibleFrom, visibleTo, lastVisible}`, so "is
+  the latest candle shown?" can be checked from the console instead of eyeballed.
+
+Verified in the browser (local harness, painting forced before each reading): Sector pane (XLF, V;
+also built-while-hidden then revealed), Watchlist pane + its server-rendered first chart, MATP
+detail, Sector pop-out window (frames the stored setup: last 45 bars + room), Company (hidden tab
+-> reveal), Curated (setup framing), Portfolio, IV Rank - all D and W where applicable, every one
+`lastVisible = true` with the range equal to its target. Not exercised: Studies and Spreads (no
+rows in the dev DB) - same partial, visible container.
+
+*Testing note for next time:* lightweight-charts applies a range on the next ANIMATION FRAME. The
+desktop app's embedded browser pane runs at 0-2 fps while scripts execute, so
+`getVisibleLogicalRange()` reads stale until something forces a paint - take a screenshot first.
+That cost a false alarm here (three pages "stuck" at the library default that were simply unpainted).
+
 ### 2026-09-19 - v4.117: bull put spread - the bid/ask rule is the playbook's BAND, $0.40-0.50
 
 User: *"bid ask spread should not be more than 0.40 to 0.50"* - the playbook's own wording
