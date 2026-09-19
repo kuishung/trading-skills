@@ -143,6 +143,17 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-19 - v4.113: pin bar D / W look at the most recent candle only
+
+User: *"the pin bar d or w i want it to the last recent candle"*. v4.111 also accepted the bar
+BEFORE the latest one (`PIN_BARS = 2`, chip suffix `-1`), which listed hammers that were
+already a session / a week old - VRTX showed `pin bar D EMA50 -1` in the XLV basket.
+`services/ema_setup.py`: `PIN_BARS = 1`, so c6 reads only the latest daily candle and c7 only
+the latest weekly candle (this week's, in progress until Friday's close). The `-1` chip variant
+is gone; the tooltip now names the candle ("candle of 2026-09-18" / "week starting
+2026-09-14") instead of saying "still forming", which was wrong on a weekend. The v4.111 entry
+below describes the two-bar behaviour this replaces.
+
 ### 2026-09-19 - v4.112: the pin-bar chip is readable in the light theme
 
 User (screenshot of the XLV basket): *"the wording in the pink tag cannot be read"*. v4.111's

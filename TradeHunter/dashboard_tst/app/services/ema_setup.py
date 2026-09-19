@@ -81,10 +81,11 @@ BELOW_MIN, BELOW_MAX = 0.3, 1.5      # percent BELOW the EMA (c5: testing it fro
 #             wick at least twice the body - a long tail rejecting lower prices
 #   at an EMA the tail reached the average (the low may stop up to a quarter of
 #             the bar's range short of it) and the close held at or above it
-# "Forming" = the latest bar, which is still in progress during the session
-# (daily) or the week (weekly); the bar before it counts too, since a hammer
-# that completed yesterday / last week is the one a member acts on next.
-PIN_BARS = 2             # latest bar + the one before
+# ONLY the most recent candle counts (user, 2026-09-19: "the pin bar d or w i
+# want it to the last recent candle") - today's daily bar / this week's weekly
+# bar, still in progress while the market is open. v4.111 also accepted the bar
+# before it; that put stale hammers in the list, so it is gone.
+PIN_BARS = 1             # the latest candle only
 PIN_WICK_MIN = 0.60      # lower wick, fraction of the bar's range
 PIN_UPPER_MAX = 0.20     # upper wick, fraction of the bar's range
 PIN_BODY_WICK = 2.0      # lower wick >= this many bodies
@@ -99,8 +100,8 @@ COND_LABELS = {
     # c5 (user, 2026-09-15): "those tickers that do below EMA20 or EMA50 by
     # 0.3% to 1.5%" - price sitting just UNDER the average, the mirror of c3.
     "c5": ("below 0.3-1.5%", "The last close sits 0.3-1.5% BELOW EMA20 (or EMA50): price is testing the average from underneath, not yet back above it."),
-    "c6": ("pin bar D", "DAILY pin bar (bullish hammer) at EMA20 or EMA50: the latest daily bar, or the one before, has a long lower tail (60%+ of its range, small upper wick, tail at least twice the body) that reached the average while the close held at or above it."),
-    "c7": ("pin bar W", "WEEKLY pin bar (bullish hammer) at the WEEKLY EMA20 or EMA50: this week's bar (still forming), or last week's, has a long lower tail that reached the weekly average while the close held at or above it."),
+    "c6": ("pin bar D", "DAILY pin bar (bullish hammer) at EMA20 or EMA50: the most recent daily candle (today's, still forming while the market is open) has a long lower tail (60%+ of its range, small upper wick, tail at least twice the body) that reached the average while the close held at or above it."),
+    "c7": ("pin bar W", "WEEKLY pin bar (bullish hammer) at the WEEKLY EMA20 or EMA50: the most recent weekly candle (this week's, still forming until Friday's close) has a long lower tail that reached the weekly average while the close held at or above it."),
 }
 COND_DEFAULT = {"c1": True, "c2": True, "c3": True, "c4": True, "c5": True,
                 "c6": True, "c7": True}
@@ -396,19 +397,15 @@ def rank(setup: dict, enabled: dict) -> dict:
         score += COND_WEIGHT["c5"]
         chips.append({"t": f"below -{setup['below_pct']:.1f}% {setup['below_ema']}", "k": "watch",
                       "title": f"Close is {setup['below_pct']:.2f}% below {setup['below_ema']} - testing it from underneath"})
-    for key, field, unit, word in (("c6", "pin_d", "session", "daily"),
-                                   ("c7", "pin_w", "week", "weekly")):
+    for key, field, word, tf in (("c6", "pin_d", "daily", "D"), ("c7", "pin_w", "weekly", "W")):
         if enabled.get(key) and met[key]:
             p = setup[field]
-            when = (f"the latest {unit} (still forming)" if p["ago"] == 0
-                    else f"the previous {unit}")
+            start = "candle of" if key == "c6" else "week starting"
             score += COND_WEIGHT[key]
-            chips.append({"t": f"pin bar {'W' if key == 'c7' else 'D'} {p['ema']}"
-                               + ("" if p["ago"] == 0 else " -1"),
-                          "k": "pin",
-                          "title": f"Bullish hammer on {when}, bar of {p['time']}: the lower tail is "
-                                   f"{p['tail']}% of the bar's range, it reached the {word} "
-                                   f"{p['ema']} and the close held at or above it"})
+            chips.append({"t": f"pin bar {tf} {p['ema']}", "k": "pin",
+                          "title": f"Bullish hammer on the most recent {word} candle ({start} "
+                                   f"{p['time']}): the lower tail is {p['tail']}% of the bar's range, "
+                                   f"it reached the {word} {p['ema']} and the close held at or above it"})
     # Qualifies = passes the gate (if on) AND meets at least one of the other
     # switched-on conditions (or none of the others are on). The list FADES
     # tickers that do not (user, 2026-09-15: "those not qualifying to the
