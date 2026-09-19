@@ -143,6 +143,51 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-19 - v4.119: the drawing tools work on the WEEKLY chart too
+
+User: *"the sector and industry chart i do not see the tools already"*. v4.114 made W view-only (the
+drawing layer was not mounted), and because the timeframe is remembered for EVERY chart, one look
+at a weekly chart took the toolbar away on every page until D was pressed again. A trap, not a
+feature. The tools are back on W - without giving up what made view-only the safe choice then.
+
+**One language for a shape, on every timeframe.** A stored point is still `{daily date, offset in
+DAILY bars, price}`, whichever timeframe it was drawn on, so a line drawn on W sits on the same
+dates on D and nothing already saved changes meaning. On W the layer is handed the DAILY calendar
+and translated only where it touches the chart's time axis.
+
+- `routes/matp.py` - `/matp/<sym>/prices?tf=W` also returns `daily: {times, tail}`: the daily dates
+  the weekly candles were built from, and the last 260 daily bars (for the daily ATR and last
+  close). Same cached fetch as the weekly bars - no extra Yahoo call.
+- `_price_chart.html` `weeklyAxis(weekBars, dayTimes)` - daily bar position <-> weekly chart
+  position. A weekly candle's slot is split evenly among that week's sessions (Monday left, Friday
+  right; 4 in a holiday week); the week in progress counts as 5, and the future continues at 5
+  sessions per slot, the "weekdays" rule the editor's dates and the whitespace tail already use.
+  Property-tested in Node on 10 years of real bars (522 weeks, 96 of them 4-session, plus an
+  in-progress week with 2): exact round trips, strictly increasing, continuous at every boundary.
+- `setupDrawing(..., axis)` - `bars` are always DAILY there now. Its seven touch points with the
+  time axis go through two helpers, `c2l` / `l2c`; nothing else in the 1,500-line layer changed.
+  The trade tool therefore still anchors on the last DAILY bar, runs 20 daily bars wide, and sizes
+  its stop from the **daily** ATR - the on-chart tag on W reads "Weekly ATR (14) = 2.73 · daily
+  1.30 (sizes ⚑ stops)" so the two numbers cannot be confused. `zoomToSetup` frames ~45 weekly
+  candles on W.
+- **Two lightweight-charts quirks found on the way** (both now handled in the helpers):
+  `logicalToCoordinate()` returns **0 for a non-integer index** (measured 417 -> 0.06 px, 505.6 ->
+  0) - on W nearly every daily position is fractional, so `l2c` interpolates between the two whole
+  positions (exact: the scale is linear). This also fixes any D point with a fractional offset.
+  And `coordinateToLogical()` **snaps to a whole candle** - fine on D, but a week on W, so every
+  click became that week's Wednesday; `c2l` recovers the position inside the candle and snaps to
+  the nearest DAILY bar, i.e. the same rule as D.
+- The "weekly · view only" note survives only as a fallback, shown if `daily` did not arrive.
+  `window.__thSetup()` gained `weekly, axis, atr, xOf, toPoint, idxOfTime, nBars`;
+  `__chartInfo()` gained `barSpacing, xOfTime(t)`.
+
+Verified in the browser (KO, pop-out window, then cleaned up): a trend line stored as
+2026-06-01 -> 2026-09-17 renders on W with Monday at -0.40 of its weekly candle, Wednesday at 0,
+Friday at +0.40, and a point 10 bars ahead 2.40 slots right of the last candle; pixel -> date ->
+pixel is exact for every weekday, a holiday week and the future. The ⚑ tool clicked ON W produced a
+setup anchored 2026-09-18, stop distance 1.297 = the daily ATR (weekly was 2.73), saved to the
+server; switched to D, all three shapes sat exactly on their daily candles with identical levels.
+
 ### 2026-09-19 - v4.118: the chart's framing now STICKS - the latest candle is never left jammed on the right edge
 
 User: *"can you check all the chart when loaded the latest candle is shown"*. Checked every page

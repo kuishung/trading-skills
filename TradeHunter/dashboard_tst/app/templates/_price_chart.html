@@ -228,14 +228,15 @@
            (localStorage th.chart.tf) and applies to EVERY chart, like a timeframe in
            TradingView: pick W and the next ticker you click opens weekly too. The
            script below reads it, asks /prices for tf=W and relabels the zoom buttons
-           (1Y / 2Y / 5Y / 10Y). Weekly is VIEW-ONLY: the drawing tools and the trade
-           setup are anchored to daily candles and sized with the daily ATR, so they
-           stay on the D chart - the note says so. Levels that are facts (MATP / MBP,
-           S / R, a curated call, a spread's strikes) are drawn on both. #}
+           (1Y / 2Y / 5Y / 10Y). The drawing tools work on BOTH (v4.119): a shape is
+           stored as daily dates whichever timeframe it was drawn on, so it sits on the
+           same dates after a switch, and the trade tool sizes its stop from the DAILY
+           ATR on both. The "view only" note below is a fallback, shown only if the
+           daily calendar W needs for that did not arrive. #}
         <span class="tf-note hidden text-[10px] text-slate-500 mr-1 cursor-help"
-              title="Weekly candles, about 10 years. View only: your drawings and the trade-setup tool are anchored to daily candles and sized with the daily ATR, so they stay on the D chart. MATP / MBP, S / R, curated levels and spread strikes are shown here too.">weekly &middot; view only</span>
+              title="The drawing tools could not be loaded for the weekly chart (the daily calendar they need did not arrive). Switch to D to draw; reload to try again.">weekly &middot; view only</span>
         <button type="button" class="tfbtn text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 transition hover:border-emerald-500 hover:text-emerald-300" data-tf="D" title="Daily candles">D</button>
-        <button type="button" class="tfbtn text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 transition hover:border-emerald-500 hover:text-emerald-300" data-tf="W" title="Weekly candles (view only)">W</button>
+        <button type="button" class="tfbtn text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 transition hover:border-emerald-500 hover:text-emerald-300" data-tf="W" title="Weekly candles, about 10 years. Your drawings and the trade-setup tool work here too.">W</button>
         <span class="inline-block w-px h-3 bg-slate-700 mx-0.5"></span>
         <button type="button" class="zoombtn text-[11px] px-2 py-0.5 rounded border border-emerald-500/60 text-emerald-300 bg-emerald-500/10 transition" data-months="6">6M</button>
         <button type="button" class="zoombtn text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-400 transition hover:border-emerald-500 hover:text-emerald-300" data-months="12">1Y</button>
@@ -387,8 +388,8 @@
       });
     });
     if (WEEKLY) {
-      var note = root.querySelector('.tf-note');
-      if (note) note.classList.remove('hidden');
+      // (.tf-note "view only" is revealed later, and only if the drawing tools could
+      // not be mounted on W - see the setupDrawing call.)
       // weekly lookbacks; the script's showRange() reads data-months as before
       var spans = [[12, '1Y'], [24, '2Y'], [60, '5Y'], [120, '10Y']];
       root.querySelectorAll('.zoombtn').forEach(function (b, i) {
@@ -532,6 +533,53 @@
       resized - until the chart REPORTS that range. It stops for good the moment it
       sticks, or the moment the member pans / zooms (their view wins). A later call
       (a zoom button, zoomToSetup) replaces the target. */
+  /** DAILY bar positions <-> positions on a WEEKLY chart.
+
+      The drawing layer speaks one language on every timeframe: a point is {daily
+      date, offset in daily bars, price}. That is what is stored, and it must not
+      depend on which timeframe happened to be showing when the shape was drawn - a
+      line drawn on W has to sit on the same dates when the chart is switched to D.
+      So on W the layer is still handed the DAILY calendar, and only its seven touch
+      points with the chart's time axis are translated through this map.
+
+      A weekly candle's slot [w-0.5, w+0.5] is split evenly among that week's
+      sessions (4 in a holiday week), so Monday sits at the left of the candle and
+      Friday at the right. The week in progress is treated as 5 sessions long, and
+      past the last daily bar the axis continues at 5 sessions per slot - the same
+      "weekdays" rule the editor's dates and the whitespace tail already use - so the
+      map is continuous across every week boundary and out into the blank future.
+
+      weekBars / dayTimes are both ascending; a weekly bar's time is its first
+      session. Returns null when the two do not describe the same history. */
+  function weeklyAxis(weekBars, dayTimes) {
+    var n = dayTimes.length, lastW = weekBars.length - 1;
+    if (!n || lastW < 0) return null;
+    var wk = new Array(n), pos = new Array(n), first = [], cnt = [], w = 0, i;
+    for (i = 0; i < n; i++) {
+      while (w < lastW && weekBars[w + 1].time <= dayTimes[i]) w++;
+      wk[i] = w;
+      if (cnt[w] == null) { cnt[w] = 0; first[w] = i; }
+      pos[i] = cnt[w]++;
+    }
+    for (w = 0; w <= lastW; w++) if (cnt[w] == null) return null;   // a week with no sessions
+    function size(k) { return k === lastW ? Math.max(cnt[k], 5) : cnt[k]; }
+    function at(j) { return wk[j] + (pos[j] + 0.5) / size(wk[j]) - 0.5; }
+    var last = n - 1, cFirst = at(0), cLast = at(last);
+    return {
+      toChart: function (ld) {
+        if (ld > last) return cLast + (ld - last) / 5;
+        if (ld < 0) return cFirst + ld / 5;
+        var j = Math.floor(ld + 0.5);
+        return wk[j] + (pos[j] + 0.5 + (ld - j)) / size(wk[j]) - 0.5;
+      },
+      toDaily: function (lw) {
+        if (lw > cLast) return last + (lw - cLast) * 5;
+        if (lw < cFirst) return (lw - cFirst) * 5;
+        var k = Math.max(0, Math.min(lastW, Math.floor(lw + 0.5)));
+        return first[k] + (lw - k + 0.5) * size(k) - 0.5;
+      }
+    };
+  }
   function frameTo(chart, host, from, to) {
     var st = host.__frame;
     if (!st) {
@@ -618,13 +666,20 @@
   // instant local mirror: it absorbs the write before the debounced PUT lands,
   // so a network hiccup can't lose work, and it seeds the one-time migration
   // for drawings made back when the overlay was localStorage-only.
-  function setupDrawing(chart, series, el, bars, symbol, atrLatest) {
+  /** `bars` are ALWAYS daily bars here and `atrLatest` the DAILY ATR(14), whatever
+      the chart is showing. On W, `axis` (weeklyAxis) translates between daily bar
+      positions and the weekly chart's; on D it is null and the two are the same. */
+  function setupDrawing(chart, series, el, bars, symbol, atrLatest, axis) {
     var KEY = 'tstDraw:' + symbol;
     var light = document.documentElement.classList.contains('light');
     var ACCENT = '#38bdf8', HIT = 6;
     var drawings = [], pending = null, tool = 'cursor', selected = -1, hovered = false;
     // read-only debug handle: what is drawn, and where the setup's anchor sits
-    window.__thSetup = function () { return { drawings: drawings, curatedOn: CURATED_ON, lastBar: bars.length ? bars[bars.length - 1].time : null, firstBar: bars.length ? bars[0].time : null }; };
+    window.__thSetup = function () { return { drawings: drawings, curatedOn: CURATED_ON, lastBar: bars.length ? bars[bars.length - 1].time : null, firstBar: bars.length ? bars[0].time : null,
+      // where a stored point lands in pixels, and what a pixel becomes - the two
+      // conversions that must agree between D and W
+      weekly: !!axis, axis: axis, atr: atrLatest, xOf: xOf, toPoint: toPoint,
+      idxOfTime: idxOfTime, nBars: bars.length }; };
     var dragging = false, downAt = null, raf = 0;
 
     var URL_ = '/drawings/' + encodeURIComponent(symbol);
@@ -667,6 +722,33 @@
 
     // ---- date-anchored coordinates <-> pixels ---------------------------
     var ts = chart.timeScale();
+    // The ONLY two ways this layer touches the chart's time axis. Everything else in
+    // here counts in daily bars; never call ts.coordinateToLogical /
+    // ts.logicalToCoordinate directly, or a shape lands on the wrong week on W.
+    function c2l(x) {
+      // lightweight-charts snaps this to a WHOLE candle. On D that is the behaviour
+      // the layer has always had (a point lands on a daily candle). On W a whole
+      // candle is a week, so every click would become that week's Wednesday: recover
+      // where inside the candle the pixel is, convert to daily bars, and snap to the
+      // nearest DAILY bar - the same rule as D, at whatever precision the zoom allows.
+      var l = ts.coordinateToLogical(x);
+      if (l == null || !axis) return l;
+      var x0 = ts.logicalToCoordinate(l), x1 = ts.logicalToCoordinate(l + 1);
+      var lw = (x0 != null && x1 != null && x1 !== x0) ? l + (x - x0) / (x1 - x0) : l;
+      return Math.round(axis.toDaily(lw));
+    }
+    function l2c(l) {
+      // lightweight-charts answers 0 for a NON-INTEGER logical index (measured:
+      // 417 -> 0.06 px, 505.6 -> 0). On W nearly every daily position is fractional
+      // (Monday is 505.6, not 506), and on D so is any point placed between two
+      // candles - so ask for the two whole positions around it and interpolate. The
+      // scale is linear in the logical index, so this is exact, not an estimate.
+      var c = axis ? axis.toChart(l) : l;
+      var f = Math.floor(c), x0 = ts.logicalToCoordinate(f);
+      if (x0 == null || c === f) return x0;
+      var x1 = ts.logicalToCoordinate(f + 1);
+      return x1 == null ? x0 : x0 + (c - f) * (x1 - x0);
+    }
     function idxOfTime(t) {
       if (!bars.length) return -1;
       var lo = 0, hi = bars.length - 1;
@@ -691,7 +773,7 @@
       return i;
     }
     function toPoint(x, y) {
-      var l = ts.coordinateToLogical(x), p = series.coordinateToPrice(y);
+      var l = c2l(x), p = series.coordinateToPrice(y);
       if (l == null || p == null) return null;
       var last = bars.length - 1, i = Math.round(l);
       if (i < 0) i = 0;
@@ -700,7 +782,7 @@
     }
     function xOf(pt) {
       var i = idxOfTime(pt.t);
-      return i < 0 ? null : ts.logicalToCoordinate(i + (pt.o || 0));
+      return i < 0 ? null : l2c(i + (pt.o || 0));
     }
     function yOf(price) { return series.priceToCoordinate(price); }
 
@@ -899,7 +981,14 @@
         // half the plot ends up being the room the bands run through, which is what
         // makes the three levels legible instead of squeezed against the last candle.
         var span = Math.min(bars.length - 1, 45);
-        frameTo(chart, el, last - span, last + 30);   // re-applied until it sticks
+        if (axis) {
+          // W: the same idea in weekly candles - ~45 of them, and room for the
+          // setup's bands (20 daily bars = 4 weeks) plus a margin.
+          var cl = axis.toChart(last);
+          frameTo(chart, el, cl - 45, cl + 12);
+        } else {
+          frameTo(chart, el, last - span, last + 30);   // re-applied until it sticks
+        }
       } catch (e) { /* framing is a nicety; never break the drawing */ }
     }
 
@@ -1787,7 +1876,7 @@
         schedule();
         return false;
       }
-      var l = ts.coordinateToLogical(x), pr = series.coordinateToPrice(y);
+      var l = c2l(x), pr = series.coordinateToPrice(y);
       if (l == null || pr == null) return false;
       grab = {
         idx: g.idx, part: g.part, l0: l, p0: pr,
@@ -1810,7 +1899,7 @@
         var pr0 = series.coordinateToPrice(q.y);
         if (pr0 != null) d.p = pr0;
       } else if (d.type === 'trade') {
-        var tp = series.coordinateToPrice(q.y), tl = ts.coordinateToLogical(q.x);
+        var tp = series.coordinateToPrice(q.y), tl = c2l(q.x);
         if (grab.part === 'body' || grab.part === 'entry') {
           // Dragging the setup moves the LEVEL it hangs off, and the three prices
           // are re-derived from it. Moving the entry while leaving the level behind
@@ -1844,7 +1933,7 @@
           if (mult > 0) { d.rr = mult; deriveTrade(d); }
         }
       } else if (grab.part === 'body') {
-        var l = ts.coordinateToLogical(q.x), p = series.coordinateToPrice(q.y);
+        var l = c2l(q.x), p = series.coordinateToPrice(q.y);
         if (l == null || p == null) return;
         var dl = l - grab.l0, dp = p - grab.p0;
         d.a = logicalToPoint(logicalOf(grab.orig.a) + dl, grab.orig.a.p + dp);
@@ -1960,7 +2049,7 @@
         // Entry at the pointer's price; risk = 1 ATR(14); target = 2R. Sizing the
         // stop off ATR keeps the setup ticker-relative — the same click works on a
         // $4 name and a $700 one without retuning.
-        var ep = series.coordinateToPrice(q.y), el0 = ts.coordinateToLogical(q.x);
+        var ep = series.coordinateToPrice(q.y), el0 = c2l(q.x);
         var atr = atrLatest;      // the same number the ATR14 legend shows
         if (ep == null || el0 == null) { setTool('cursor'); return; }
         if (!atr) {
@@ -2235,9 +2324,17 @@
           'background:' + (_light ? 'rgba(255,255,255,.85)' : 'rgba(15,23,42,.72)') + ';';
         el.appendChild(atrTag);
         function showTag(v) {
-          // on W this is the ATR of WEEKLY candles - say so, it is ~2x the daily figure
-          atrTag.textContent = (WEEKLY ? 'Weekly ATR (14) = ' : 'ATR (14) = ') + (v == null ? 'n/a' : v.toFixed(2));
+          // on W this is the ATR of WEEKLY candles - say so, it is ~2x the daily figure.
+          // The ⚑ trade tool keeps sizing its stop from the DAILY ATR there, so that
+          // number is shown beside it (set once the daily bars have been read).
+          atrTag.textContent = (WEEKLY ? 'Weekly ATR (14) = ' : 'ATR (14) = ') +
+            (v == null ? 'n/a' : v.toFixed(2)) + dailyAtrTxt;
         }
+        var dailyAtrTxt = '';
+        el.__atrDailyNote = function (dv) {
+          dailyAtrTxt = (dv != null && isFinite(dv)) ? ' · daily ' + dv.toFixed(2) + ' (sizes ⚑ stops)' : '';
+          showTag(atrLatest);
+        };
 
         function show(v, c) {
           showTag(v);
@@ -2362,9 +2459,8 @@
       // two sets of Entry/SL/PT at the same prices, one of which moves as you drag
       // and one of which does not, reads as a bug. The stored values stay visible
       // in the header line above the chart.
-      // (On W the editable setup is not mounted at all, so the static lines are the
-      // only way the call's levels can be on the weekly chart.)
-      if (curLevels && (!SETUP_SEED || WEEKLY)) {
+      // (Same on W: the drawing layer is mounted there too, so the setup is editable.)
+      if (curLevels && !SETUP_SEED) {
         var _lbl = curLevels.label ? ' ' + curLevels.label : '';
         s.createPriceLine({ price: curLevels.entry, color: '#38bdf8', lineWidth: 2, lineStyle: 0, axisLabelVisible: true, title: 'Entry' + _lbl });
         s.createPriceLine({ price: curLevels.stop, color: '#f87171', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'SL' + _lbl });
@@ -2562,19 +2658,46 @@
           symbol: {{ chart_symbol|tojson }}, tf: WEEKLY ? 'W' : 'D', bars: bars.length,
           firstBar: bars[0].time, lastBar: bars[last].time, lastClose: bars[last].close,
           visibleFrom: r ? r.from : null, visibleTo: r ? r.to : null,
+          barSpacing: chart.timeScale().options().barSpacing,
+          xOfTime: function (t) { return chart.timeScale().timeToCoordinate(t); },
           // the newest candle's slot lies inside the visible logical range
           lastVisible: !!r && r.from <= last && r.to >= last
         };
       };
 
       // drawing toolbar — non-essential, must never take the candles down.
-      // NOT on W. Every stored point is {daily date, offset in DAILY bars, price} and
-      // the trade tool sizes its stop from the daily ATR; mounted on weekly bars the
-      // shapes would land a bar out, a setup would be sized ~2x too wide, and the
-      // first drag would save those weekly coordinates over the member's daily
-      // drawings. View-only is the honest version until the layer is timeframe-aware.
+      //
+      // On W too (user, 2026-09-19: "the sector and industry chart i do not see the
+      // tools already" - v4.114 made W view-only, and because the timeframe is
+      // remembered for EVERY chart, one look at a weekly chart took the tools away
+      // everywhere). The layer still works in DAILY units there: it is handed the
+      // daily calendar and the daily ATR the server sends with the weekly candles,
+      // and weeklyAxis() places those daily positions on the weekly chart. What is
+      // saved is therefore identical whichever timeframe it was drawn on.
       if (!WEEKLY) {
-        try { setupDrawing(chart, s, el, bars, {{ chart_symbol|tojson }}, atrLatest); } catch (e) {}
+        try { setupDrawing(chart, s, el, bars, {{ chart_symbol|tojson }}, atrLatest, null); } catch (e) {}
+      } else {
+        var dd = d && d.daily, wAxis = null, dayBars = null, atrDaily = null;
+        try {
+          if (dd && dd.times && dd.times.length) {
+            wAxis = weeklyAxis(bars, dd.times);
+            dayBars = dd.times.map(function (t) { return { time: t }; });
+            var tail = dd.tail || [];
+            if (tail.length <= dayBars.length) {
+              for (var k = 0; k < tail.length; k++) dayBars[dayBars.length - tail.length + k] = tail[k];
+            }
+            var da = atrSeries(tail, 14);
+            atrDaily = da.length ? da[da.length - 1].value : null;
+          }
+        } catch (e) { wAxis = null; }
+        if (wAxis && dayBars && dayBars[dayBars.length - 1].close != null) {
+          if (el.__atrDailyNote) el.__atrDailyNote(atrDaily);
+          try { setupDrawing(chart, s, el, dayBars, {{ chart_symbol|tojson }}, atrDaily, wAxis); } catch (e) {}
+        } else {
+          // an older server (no `daily` in the response): weekly stays view-only
+          var vo = el.parentElement ? el.parentElement.querySelector('.tf-note') : null;
+          if (vo) vo.classList.remove('hidden');
+        }
       }
     })
     .catch(empty);

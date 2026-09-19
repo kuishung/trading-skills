@@ -871,9 +871,22 @@ def matp_prices(symbol: str, tf: str = "D", user: User = Depends(require_user)):
             struct = classify(rows)
         except Exception:  # noqa: BLE001  — a monitor must not break the chart
             struct = None
+        # W: the drawing tools still work in DAILY units (every stored point is a daily
+        # date + an offset in daily bars, and the trade tool sizes its stop from the
+        # DAILY ATR), so the chart needs the daily calendar the weekly candles were
+        # built from, and enough recent daily bars to compute that ATR. Same cached
+        # fetch the weekly bars came from - no extra Yahoo call.
+        daily = None
+        if weekly:
+            try:
+                drows = fetch_daily_ohlc(sym, rng="10y")
+                daily = {"times": [r["time"] for r in drows], "tail": drows[-260:]}
+            except Exception:  # noqa: BLE001  — without it W falls back to view-only
+                daily = None
         return {
             "symbol": sym,
             "tf": "W" if weekly else "D",
+            "daily": daily,
             "bars": rows,
             "next_earnings": earn.result(),
             "quote": quote.result(),   # {name, price, change, change_pct} for the header
