@@ -1,13 +1,29 @@
-{# The IV Rank watchlist. Context: items [{row (IVScanItem), setup, rank, iv_fresh}],
-   sort, enabled, cond_labels, cond_keys, ranked, n_qualify, scanned_at, criteria,
-   my_syms. Swapped into #ivsList. #}
+{# The IV Rank watchlist. Context: items [{row (IVScanItem), setup, rank, iv_fresh,
+   iv_low}], sort, enabled, cond_labels, cond_keys, ranked, n_qualify, n_iv_ok,
+   scanned_at, criteria, my_syms, and the source: mode ('list' = the member's
+   pre-listed tickers | 'market' = the TWS scanner), iv_floor, n_universe.
+   iv_low is only ever true on My list (IV rank read and under the floor): those
+   rows are faded and already sorted below the rest. Swapped into #ivsList. #}
 {% from "_time.html" import localtime %}
 {% if not items %}
 <p class="text-xs text-slate-500 py-4 px-1 leading-relaxed">
+  {% if mode == 'list' %}
+  {% if n_universe %}
+  Your list has <span class="text-slate-300">{{ n_universe }}</span> pre-listed tickers. Press
+  <span class="text-emerald-300">Scan my list</span> above &mdash; only those tickers are graded
+  against your setup conditions, and their IV rank is read from your TWS (the IBKR bridge must be
+  running on this PC for the IV part).
+  {% else %}
+  No tickers pre-listed yet. Use <span class="text-sky-300">add tickers</span> above to paste the
+  names you trade options on. From then on only those tickers are scanned for IV rank and setup
+  &mdash; no market-wide scanner.
+  {% endif %}
+  {% else %}
   No scan on file yet. With TWS running and the IBKR bridge started on this PC, press
   <span class="text-emerald-300">Scan TWS</span> above &mdash; it runs your High IV Rank scanner
   (52-week IV rank, price and volume floors) and lists the tickers here, graded by your setup
   conditions.
+  {% endif %}
 </p>
 {% else %}
 {# the setup switches - the SAME ones as Sector & Industry, one stored setting #}
@@ -17,11 +33,13 @@
 {% include "_sector_conds.html" %}
 
 <div class="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 mb-1.5 text-[11px] text-slate-500">
-  <span><span class="text-slate-300 tabular-nums">{{ items|length }}</span> tickers</span>
-  {% if ranked %}<span>&middot; <span class="text-emerald-300 tabular-nums">{{ n_qualify }}</span> qualify</span>{% endif %}
-  {% if scanned_at %}<span class="text-slate-600" title="When this list was last pulled from TWS">&middot; scanned {{ localtime(scanned_at) }}</span>{% endif %}
+  <span><span class="text-slate-300 tabular-nums">{{ items|length }}</span> {{ 'pre-listed' if mode == 'list' else 'tickers' }}</span>
+  {# My list: TWS did not pre-filter these, so say how many clear the IV-rank floor #}
+  {% if mode == 'list' %}<span title="Tickers whose 52-week IV rank has been read and is at or above your floor. The rest are faded and sorted below.">&middot; <span class="text-sky-300 tabular-nums">{{ n_iv_ok }}</span> at IV rank &ge; {{ '%g'|format(iv_floor) }}</span>{% endif %}
+  {% if ranked %}<span title="{{ 'Meet your setup conditions AND clear the IV-rank floor' if mode == 'list' else 'Meet your setup conditions' }}">&middot; <span class="text-emerald-300 tabular-nums">{{ n_qualify }}</span> qualify</span>{% endif %}
+  {% if scanned_at %}<span class="text-slate-600" title="{{ 'When your list was last loaded' if mode == 'list' else 'When this list was last pulled from TWS' }}">&middot; scanned {{ localtime(scanned_at) }}</span>{% endif %}
   <span class="ml-auto flex items-center gap-1">
-    {% for key, lbl, tip in [('setup', 'Setup', 'Best technical setup first'), ('iv', 'IV rank', 'Highest IV rank first'), ('scan', 'TWS order', 'The order TWS returned')] %}
+    {% for key, lbl, tip in [('setup', 'Setup', 'Best technical setup first'), ('iv', 'IV rank', 'Highest IV rank first'), ('scan', 'My order' if mode == 'list' else 'TWS order', 'The order you listed them in' if mode == 'list' else 'The order TWS returned')] %}
     <button type="button" hx-get="/ivscan/list?sort={{ key }}" hx-target="#ivsList" hx-swap="innerHTML" title="{{ tip }}"
             class="text-[10px] px-1.5 py-0.5 rounded border transition {% if sort == key %}border-emerald-500/60 bg-emerald-500/15 text-emerald-300{% else %}border-slate-700 text-slate-400 hover:border-slate-500{% endif %}">{{ lbl }}</button>
     {% endfor %}
@@ -45,7 +63,7 @@
 {% for it in items %}
 {% set r = it.row %}{% set st = it.setup %}{% set rk = it.rank %}
 {% set _on = my_syms and r.symbol in my_syms %}
-<div class="ivs-row wl-ticker cursor-pointer px-1 py-1 border-b border-slate-800/50 rounded hover:bg-emerald-500/10 transition{% if ranked and not rk.qualifies %} opacity-40{% endif %}"
+<div class="ivs-row wl-ticker cursor-pointer px-1 py-1 border-b border-slate-800/50 rounded hover:bg-emerald-500/10 transition{% if it.iv_low or (ranked and not rk.qualifies) %} opacity-40{% endif %}"
      style="{{ COLS }}" data-sym="{{ r.symbol }}" data-need-iv="{{ '0' if it.iv_fresh else '1' }}"
      hx-get="/sector/chart?symbol={{ r.symbol }}" hx-target="#sectorChartBody" hx-swap="innerHTML"
      hx-trigger="click[!event.target.closest('.wl-star')]"
@@ -70,8 +88,8 @@
     {% endfor %}
   </span>
   <span class="ivs-iv text-right text-[11px] tabular-nums"
-        title="{% if r.iv_rank is not none %}IV rank {{ r.iv_rank }} &middot; IV percentile {{ r.iv_pct }} &middot; IV now {{ r.iv_current }}%{% else %}Not read yet{% endif %}">
-    {% if r.iv_rank is not none %}<span class="text-slate-200">{{ '%.0f'|format(r.iv_rank) }}</span><span class="text-slate-600"> / {{ '%.0f'|format(r.iv_pct) if r.iv_pct is not none else '–' }}</span>{% else %}<span class="text-slate-600">&ndash;</span>{% endif %}
+        title="{% if r.iv_rank is not none %}IV rank {{ r.iv_rank }} &middot; IV percentile {{ r.iv_pct }} &middot; IV now {{ r.iv_current }}%{% if it.iv_low %} &middot; under your floor of {{ '%g'|format(iv_floor) }}{% endif %}{% else %}Not read yet{% endif %}">
+    {% if r.iv_rank is not none %}<span class="{{ 'text-rose-300' if it.iv_low else 'text-slate-200' }}">{{ '%.0f'|format(r.iv_rank) }}</span><span class="text-slate-600"> / {{ '%.0f'|format(r.iv_pct) if r.iv_pct is not none else '–' }}</span>{% else %}<span class="text-slate-600">&ndash;</span>{% endif %}
   </span>
   <span class="text-right text-[11px] text-slate-300 tabular-nums">{{ '%.2f'|format(st.close) if st.close else '–' }}</span>
 </div>
@@ -79,7 +97,7 @@
 
 <div class="flex justify-end px-1 mt-2">
   <button type="button" hx-post="/ivscan/clear" hx-target="#ivsList" hx-swap="innerHTML"
-          hx-confirm="Clear the IV Rank watchlist? The next Scan TWS refills it."
+          hx-confirm="{{ 'Clear the rows shown here? Your pre-listed tickers are kept - Scan my list brings them back.' if mode == 'list' else 'Clear the IV Rank watchlist? The next Scan TWS refills it.' }}"
           class="text-[10px] text-slate-600 hover:text-rose-300 transition">clear list</button>
 </div>
 {% endif %}

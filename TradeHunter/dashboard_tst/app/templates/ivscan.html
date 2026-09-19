@@ -15,10 +15,54 @@
 
   <aside class="lg:w-96 lg:shrink-0 flex flex-col gap-2 mb-4 lg:mb-0 lg:h-full lg:min-h-0">
     <section class="rounded-xl border border-slate-800 bg-slate-900/40 p-2 shrink-0">
-      <div class="flex items-baseline justify-between gap-2 px-1 mb-1">
-        <h2 class="text-sm font-semibold text-slate-200">High IV Rank scan</h2>
-        <span class="text-[10px] text-slate-500" title="US stocks, sorted by 52-week IV rank, from your own TWS through the local IBKR bridge">TWS scanner &middot; US stocks</span>
+      {# Where the tickers come from (user, 2026-09-19): MY LIST = only the tickers the
+         member pre-listed get their IV rank read and their setup graded; WHOLE MARKET =
+         the TWS High-IV-Rank scanner. Remembered per member (prefs.ivscan_mode); the
+         switch saves it and reloads the page so every label below matches the mode. #}
+      <div class="flex items-center justify-between gap-2 px-1 mb-1.5">
+        <h2 class="text-sm font-semibold text-slate-200">IV Rank</h2>
+        <div class="flex items-center gap-1">
+          {% for key, lbl, tip in [('list', 'My list', 'Read IV rank and grade the setup ONLY for the tickers you pre-listed'),
+                                   ('market', 'Whole market', 'Run your TWS High IV Rank scanner across all US stocks')] %}
+          <button type="button" class="ivsMode text-[10px] px-2 py-0.5 rounded border transition
+                         {% if mode == key %}border-sky-500/60 bg-sky-500/10 text-sky-300{% else %}border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-300{% endif %}"
+                  data-mode="{{ key }}" title="{{ tip }}">{{ lbl }}</button>
+          {% endfor %}
+        </div>
       </div>
+
+      {% if mode == 'list' %}
+      {# ---- My list ------------------------------------------------------------ #}
+      <div class="flex flex-wrap items-end gap-2 px-1 text-[10px] text-slate-500">
+        <span class="text-[11px]"><span id="ivsUniCount" class="text-slate-200 tabular-nums">{{ universe|length }}</span> pre-listed
+          <button type="button" id="ivsUniEdit" class="ml-1 underline text-sky-300 hover:text-sky-200">{{ 'edit' if universe else 'add tickers' }}</button>
+        </span>
+        <label class="ml-auto" title="Tickers on your list whose 52-week IV rank is under this are kept, but faded and sorted below the rest">IV rank &ge;
+          <input id="ivsRank" type="number" step="1" min="0" max="100" value="{{ '%g'|format(criteria.iv_rank) }}"
+                 class="ml-1 w-14 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
+        </label>
+        <button type="button" id="ivsScanList"
+                class="px-3 py-1 rounded border border-emerald-600 text-[11px] text-emerald-300 hover:bg-emerald-500/10 transition"
+                title="Load your pre-listed tickers, grade each one's setup, and read its IV rank from your TWS. No market scanner runs.">Scan my list</button>
+      </div>
+      <div id="ivsUniBox" class="{% if universe %}hidden {% endif %}px-1 mt-2">
+        <textarea id="ivsUniText" rows="4" spellcheck="false" autocomplete="off"
+                  placeholder="AAPL, MSFT, NVDA … (commas, spaces or one per line)"
+                  class="w-full rounded bg-slate-950/60 border border-slate-700 px-2 py-1 text-[11px] text-slate-200 font-mono uppercase outline-none focus:border-emerald-500">{{ universe|join(', ') }}</textarea>
+        <div class="flex items-center gap-1.5 mt-1">
+          <button type="button" id="ivsUniSave"
+                  class="text-[11px] px-2.5 py-0.5 rounded bg-emerald-600 hover:bg-emerald-500 font-medium text-white">Save list</button>
+          {% if n_watchlist %}
+          <button type="button" id="ivsUniWl"
+                  class="text-[11px] px-2.5 py-0.5 rounded border border-slate-700 text-slate-400 hover:border-amber-400 hover:text-amber-300 transition"
+                  title="Add the {{ n_watchlist }} tickers on My Watchlist to what is typed above, and save">+ My Watchlist ({{ n_watchlist }})</button>
+          {% endif %}
+          <span class="text-[10px] text-slate-600 leading-tight">up to {{ max_symbols }} tickers &middot; IBKR paces the IV reads</span>
+        </div>
+      </div>
+      {% else %}
+      {# ---- Whole market: the TWS scanner ---------------------------------------- #}
+      <p class="px-1 mb-1 text-[10px] text-slate-500" title="US stocks, sorted by 52-week IV rank, from your own TWS through the local IBKR bridge">TWS scanner &middot; all US stocks</p>
       <div class="flex flex-wrap items-end gap-2 px-1 text-[10px] text-slate-500">
         <label title="52-week IV rank: where today's implied volatility sits between the year's low and high, 0-100">IV rank &gt;
           <input id="ivsRank" type="number" step="1" min="0" max="100" value="{{ '%g'|format(criteria.iv_rank) }}"
@@ -36,6 +80,7 @@
                 class="ml-auto px-3 py-1 rounded border border-emerald-600 text-[11px] text-emerald-300 hover:bg-emerald-500/10 transition"
                 title="Run the scan on your TWS now and replace the list below">Scan TWS</button>
       </div>
+      {% endif %}
       <p id="ivsStatus" class="px-1 mt-1 text-[10px] text-slate-500 leading-snug min-h-[1rem]"></p>
     </section>
 
@@ -90,7 +135,16 @@
 
   function bridgeDown(e) {
     say('Could not reach the IBKR bridge on this PC (127.0.0.1:9224). Start it with ' +
-        'bridge\\start_ibkr_bridge.bat while TWS is running, then press Scan TWS again.', 'err');
+        'bridge\\start_ibkr_bridge.bat while TWS is running, then scan again.', 'err');
+  }
+  function swapList(html) {
+    var host = document.getElementById('ivsList');
+    host.innerHTML = html;
+    if (window.htmx) htmx.process(host);
+  }
+  function postJSON(url, body) {
+    return fetch(url, { method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   }
 
   // Fill in IV rank / percentile one ticker at a time from the bridge's /iv (a year
@@ -101,14 +155,33 @@
     var rows = Array.prototype.slice.call(document.querySelectorAll('.ivs-row[data-need-iv="1"]'));
     if (!rows.length) return;
     filling = true;
-    var i = 0, done = 0;
+    var i = 0, done = 0, bridgeOff = false;
     function next() {
-      if (i >= rows.length) { filling = false; say('IV rank filled for ' + done + ' of ' + rows.length + ' tickers.', 'ok'); return; }
+      if (bridgeOff) {
+        say('The tickers are listed and graded, but their IV rank could not be read: the IBKR ' +
+            'bridge on this PC (127.0.0.1:9224) is not answering. Start bridge\\start_ibkr_bridge.bat ' +
+            'with TWS running, then press "Read from TWS".', 'err');
+        return;
+      }
+      if (i >= rows.length) {
+        filling = false;
+        say('IV rank filled for ' + done + ' of ' + rows.length + ' tickers.', 'ok');
+        // re-sort now the readings are in: on My list the IV-rank floor decides who
+        // sinks, and that could not be known until TWS answered
+        if (done && window.htmx) htmx.ajax('GET', '/ivscan/list', { target: '#ivsList', swap: 'innerHTML' });
+        return;
+      }
       var row = rows[i++], sym = row.getAttribute('data-sym');
       if (!row.isConnected) { return next(); }
       say('Reading IV history from TWS: ' + sym + ' (' + i + '/' + rows.length + ')…');
       fetch(BRIDGE + '/iv?symbol=' + encodeURIComponent(sym), { mode: 'cors', cache: 'no-store' })
-        .then(function (r) { return r.json(); })
+        .catch(function () {
+          // the bridge itself is unreachable: asking for the other 99 tickers would
+          // fail the same way, one slow timeout at a time
+          i = rows.length; filling = false; bridgeOff = true;
+          return null;
+        })
+        .then(function (r) { return r ? r.json() : null; })
         .then(function (j) {
           if (!j || !j.ok) return;
           var cell = row.querySelector('.ivs-iv');
@@ -129,7 +202,60 @@
     next();
   }
 
-  btn.addEventListener('click', function () {
+  // ---- source switch: My list | Whole market -------------------------------
+  document.querySelectorAll('.ivsMode').forEach(function (b) {
+    b.addEventListener('click', function () {
+      if (b.dataset.mode === {{ mode|tojson }}) return;
+      postJSON('/ivscan/mode', { mode: b.dataset.mode })
+        .then(function () { window.location.reload(); })
+        .catch(function () { say('Could not switch the source.', 'err'); });
+    });
+  });
+
+  // ---- My list: the pre-listed tickers --------------------------------------
+  var uniBox = document.getElementById('ivsUniBox'), uniText = document.getElementById('ivsUniText');
+  var scanListBtn = document.getElementById('ivsScanList');
+  function scanMyList() {
+    if (!scanListBtn) return;
+    scanListBtn.disabled = true; scanListBtn.style.opacity = '0.6';
+    say('Loading your pre-listed tickers and grading their setups…');
+    postJSON('/ivscan/scan-universe', { iv_rank: num('ivsRank', 30) })
+      .then(function (r) { return r.text(); })
+      .then(function (html) {
+        swapList(html);
+        var n = document.querySelectorAll('.ivs-row').length;
+        if (!n) { say('Your list is empty - add tickers first.', 'err'); if (uniBox) uniBox.classList.remove('hidden'); return; }
+        say(n + ' tickers from your list. Reading IV rank from TWS…', 'ok');
+        fillIV();
+      })
+      .catch(function () { say('Could not load your list.', 'err'); })
+      .then(function () { scanListBtn.disabled = false; scanListBtn.style.opacity = ''; });
+  }
+  function saveUniverse(addWatchlist) {
+    say('Saving your list…');
+    postJSON('/ivscan/universe', { text: uniText.value, add_watchlist: !!addWatchlist })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j || !j.ok) { say('Could not save the list.', 'err'); return; }
+        uniText.value = j.symbols.join(', ');
+        document.getElementById('ivsUniCount').textContent = j.count;
+        document.getElementById('ivsUniEdit').textContent = j.count ? 'edit' : 'add tickers';
+        if (j.count) uniBox.classList.add('hidden');
+        say(j.count + ' tickers saved' + (j.dropped ? ' (' + j.dropped + ' dropped: not a ticker, or past the ' + j.cap + ' cap)' : '') + '.', 'ok');
+        if (j.count) scanMyList();
+      })
+      .catch(function () { say('Could not save the list.', 'err'); });
+  }
+  if (scanListBtn) {
+    scanListBtn.addEventListener('click', scanMyList);
+    document.getElementById('ivsUniEdit').addEventListener('click', function () { uniBox.classList.toggle('hidden'); if (!uniBox.classList.contains('hidden')) uniText.focus(); });
+    document.getElementById('ivsUniSave').addEventListener('click', function () { saveUniverse(false); });
+    var wlBtn = document.getElementById('ivsUniWl');
+    if (wlBtn) wlBtn.addEventListener('click', function () { saveUniverse(true); });
+  }
+
+  // ---- Whole market: the TWS scanner ----------------------------------------
+  if (btn) btn.addEventListener('click', function () {
     var rank = num('ivsRank', 30), price = num('ivsPrice', 100), vol = num('ivsVol', 200000);
     btn.disabled = true; btn.style.opacity = '0.6';
     say('Asking TWS for stocks with 52-week IV rank above ' + rank + '…');

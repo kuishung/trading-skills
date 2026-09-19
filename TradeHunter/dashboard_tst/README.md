@@ -143,6 +143,42 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-19 - v4.115: Options > IV Rank scans a PRE-LISTED set of tickers ("My list")
+
+User: *"currently in the option we are scanning the whole market with IV Rank. I need the system
+to be able to present a list of tickers where I will only scan the IV and setup within these
+prelisted tickers."* Until now the only source was the member's TWS High-IV-Rank scanner over all
+US stocks, and every scan replaced the list - there was no list of the member's own.
+
+- **Source switch** on `/ivscan`: **My list | Whole market**, remembered per member
+  (`prefs.ivscan_mode`; never chosen = "list" once a universe exists, else "market", so nobody's
+  page changes until they add tickers). Whole market is the TWS scanner, unchanged.
+- **My list** - the member pre-lists tickers (`prefs.ivscan_universe`): an editor that takes
+  commas / spaces / new lines, cleans, de-duplicates and caps at 100 (IBKR paces the IV reads),
+  plus **+ My Watchlist** to fold the starred tickers in. Saving scans straight away.
+  **Scan my list** loads exactly those tickers (`POST /ivscan/scan-universe`), grades each against
+  the setup switches server-side (live daily bars - needs no TWS), then the page reads each one's
+  IV rank from the member's TWS through the bridge's `/iv`, as before. No market scanner runs and
+  the price / volume floors do not apply - the member chose the names.
+- **The IV-rank floor is applied by the app on My list** (TWS is not pre-filtering): a ticker whose
+  rank has been read and is under the floor stays on the list but is faded, its figure turns rose,
+  and it sorts below the rest in every sort order. Unread IV is "unknown", never "low". The stats
+  line reads `N pre-listed · N at IV rank >= 30 · N qualify` (qualify = setup AND floor). The list
+  re-sorts itself once the IV reads finish, since the floor cannot be judged before TWS answers.
+- **Bridge down is a first-class outcome here**, because grading does not need it: the IV fill now
+  stops at the first unreachable-bridge failure instead of timing out once per ticker, and says
+  the tickers are listed and graded but IV is unread, with how to start the bridge.
+- `routes/ivscan.py`: `_clean_symbols`, `_universe`, `_mode`, `_replace_items` (shared with the
+  market ingest, which now also records mode = market), `POST /ivscan/mode`, `/universe`,
+  `/scan-universe`. **No schema change**: the universe and the mode live in `User.prefs` (portable
+  JSON), and both sources fill the same `iv_scan_items` rows - so the chart and the bull-put-spread
+  tab do not care which produced the list, and a market scan can never wipe the universe.
+
+Verified in the browser against the real app (local harness, no TWS): default unchanged for a
+member with no list; switch -> paste `aapl, msft nvda\namzn; AAPL, $$bad, KO, JPM` -> 6 kept,
+graded, bridge-down message after ONE failed read; simulated IV readings -> KO (12) faded and sunk,
+"2 at IV rank >= 30 · 4 qualify"; market <-> list round trip keeps the universe; no console errors.
+
 ### 2026-09-19 - v4.114: the chart has a D / W switch - weekly candles on every chart
 
 User: *"in the chart i need to be able to view the weekly chart"* (the follow-on to the weekly
