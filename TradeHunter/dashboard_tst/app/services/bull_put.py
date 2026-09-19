@@ -22,6 +22,9 @@ Entry
   * long put 1-2 strikes below the short
   * bid/ask on each leg <= $0.40-0.50
   * 20% of max loss < 2% of net liquidation  -> position size
+Added by this platform (NOT in the playbook; user, 2026-09-19)
+  * open interest on each leg >= 500 and >= 10x the contracts sold   (blocks)
+  * each leg traded >= 20 contracts today                            (warns)
 Management
   * short-put delta above 0.35-0.40 is the action line
   * > 30 DTE  -> adjust (roll the spread down)
@@ -39,6 +42,20 @@ SHORT_DELTA_LO, SHORT_DELTA_HI = 0.20, 0.25
 LONG_OFFSET_MIN, LONG_OFFSET_MAX = 1, 2        # strikes below the short
 IV_PCT_MIN = 40.0
 MAX_LEG_SPREAD = 0.50                          # $ bid/ask width per leg
+# Liquidity beyond the bid/ask (user, 2026-09-19: "we need the open interest and
+# volume so that it is liquid enough"). NOT from the playbook - it states only the
+# bid/ask rule - so these are this platform's defaults, every one overridable per
+# call. A tight bid/ask on a strike nobody holds is a market maker's indicative
+# quote: it fills one contract and walks away from the rest, and there is nobody
+# to trade with when the spread has to be closed or rolled in a hurry.
+#   open interest  the standing crowd at the strike. Needed on BOTH legs, and
+#                  scaled to the order: never more than a tenth of what is open.
+#   day volume     proof it traded TODAY. Only a warning: it is ~0 for every strike
+#                  in the first minutes of a session and absent on a delayed feed,
+#                  so it cannot be allowed to veto a pair that open interest clears.
+MIN_OPEN_INTEREST = 500                        # contracts open, per leg
+OI_PER_CONTRACT = 10                           # and >= 10x the contracts being sold
+MIN_LEG_VOLUME = 20                            # contracts traded today, per leg
 RISK_FRACTION = 0.20                           # "20% of max loss"
 NLV_RISK_PCT = 2.0                             # "< 2% of net liquidation"
 DELTA_ADJUST = 0.35                            # action line
@@ -94,6 +111,10 @@ class Candidate:
     long_mid: float | None = None
     long_iv: float | None = None
     cushion_pct: float | None = None  # how far the short strike sits below spot
+    short_oi: int | None = None       # open interest / day volume per leg; None = TWS did not say
+    long_oi: int | None = None
+    short_volume: int | None = None
+    long_volume: int | None = None
     profile: dict = field(default_factory=dict)
 
 
@@ -114,6 +135,23 @@ def _leg_spread(row: dict) -> float | None:
 def _abs_delta(row: dict) -> float | None:
     d = row.get("delta")
     return None if d is None else abs(d)
+
+
+def _count(row: dict, key: str) -> int | None:
+    """Open interest / volume off a chain row. The row came from a browser, so
+    anything that is not a sane non-negative number is "unknown", not zero."""
+    v = row.get(key)
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return int(f) if (f == f and 0 <= f < 1e9) else None
+
+
+def oi_needed(contracts: int, *, min_open_interest: int = MIN_OPEN_INTEREST,
+              oi_per_contract: int = OI_PER_CONTRACT) -> int:
+    """Open interest a leg must show for an order of ``contracts``."""
+    return max(int(min_open_interest), int(oi_per_contract) * max(int(contracts or 0), 1))
 
 
 def pl_profile(short_k: float, long_k: float, credit: float, contracts: int,
@@ -152,7 +190,10 @@ ALT_NEAR_SHORTS = 2    # shorts offered when nothing sits inside the delta band
 
 
 def _pair(short: dict, long_row: dict, off: int, *, spot: float,
-          max_leg_spread: float, budget: float | None) -> dict | None:
+          max_leg_spread: float, budget: float | None,
+          min_open_interest: int = MIN_OPEN_INTEREST,
+          oi_per_contract: int = OI_PER_CONTRACT,
+          min_leg_volume: int = MIN_LEG_VOLUME) -> dict | None:
     """One short/long pair priced at the mid. None when it pays no credit."""
     sm, lm = _mid(short), _mid(long_row)
     if sm is None or lm is None:
@@ -165,11 +206,24 @@ def _pair(short: dict, long_row: dict, off: int, *, spot: float,
     if max_loss <= 0:
         return None
     ss, ls = _leg_spread(short), _leg_spread(long_row)
-    liquid = ((ss is None or ss <= max_leg_spread) and
-              (ls is None or ls <= max_leg_spread))
+    ba_ok = ((ss is None or ss <= max_leg_spread) and
+             (ls is None or ls <= max_leg_spread))
     sd = _abs_delta(short)
     risk_20 = max_loss * RISK_FRACTION
+    contracts = int(budget // risk_20) if (budget and risk_20 > 0) else 0
+    # Open interest: both legs, scaled to the order. None = TWS did not say (a feed
+    # without OI, an old bridge) - "unknown" must not sink a pair the way "thin" does.
+    s_oi, l_oi = _count(short, "oi"), _count(long_row, "oi")
+    need = oi_needed(contracts, min_open_interest=min_open_interest,
+                     oi_per_contract=oi_per_contract)
+    oi_ok = None if (s_oi is None or l_oi is None) else (s_oi >= need and l_oi >= need)
+    s_vol, l_vol = _count(short, "volume"), _count(long_row, "volume")
+    vol_ok = (None if (s_vol is None or l_vol is None)
+              else (s_vol >= min_leg_volume and l_vol >= min_leg_volume))
+    liquid = ba_ok and oi_ok is not False
     return {
+        "short_oi": s_oi, "long_oi": l_oi, "oi_needed": need, "oi_ok": oi_ok,
+        "short_volume": s_vol, "long_volume": l_vol, "vol_ok": vol_ok, "ba_ok": ba_ok,
         "short_strike": short["strike"], "long_strike": long_row["strike"],
         "long_offset": off, "width": width,
         "short_delta": round(sd, 3), "in_band": SHORT_DELTA_LO <= sd <= SHORT_DELTA_HI,
@@ -181,21 +235,26 @@ def _pair(short: dict, long_row: dict, off: int, *, spot: float,
         "pop_est": round((1 - sd) * 100, 1),
         "cushion_pct": round((spot - short["strike"]) / spot * 100, 1) if spot else None,
         "short_leg_spread": ss, "long_leg_spread": ls, "liquid": liquid,
-        "contracts": int(budget // risk_20) if (budget and risk_20 > 0) else 0,
+        "contracts": contracts,
     }
 
 
 def rank_pairs(puts: list[dict], *, spot: float, max_leg_spread: float = MAX_LEG_SPREAD,
                net_liquidation: float | None = None,
-               nlv_risk_pct: float = NLV_RISK_PCT) -> list[dict]:
+               nlv_risk_pct: float = NLV_RISK_PCT,
+               min_open_interest: int = MIN_OPEN_INTEREST,
+               oi_per_contract: int = OI_PER_CONTRACT,
+               min_leg_volume: int = MIN_LEG_VOLUME) -> list[dict]:
     """Every pair the playbook allows in one expiry, best first.
 
     Shorts: every put with delta 0.20-0.25 (or, when the chain has none, the
     ``ALT_NEAR_SHORTS`` nearest to the band). Longs: 1 and 2 strikes below each.
 
     The order states the playbook's priorities and nothing else:
-      1. both legs inside the bid/ask limit - a pair you cannot fill at the mark
-         is not a better trade for paying more on paper;
+      1. LIQUID: both legs inside the bid/ask limit AND (when TWS reports it) both
+         legs with enough open interest for the order - a pair you cannot fill at
+         the mark, or cannot get out of, is not a better trade for paying more on
+         paper;
       2. short delta inside the band;
       3. credit as a share of the width - premium collected per dollar risked.
     Each row says in ``why`` what it is best at, so the table reads as a choice,
@@ -220,7 +279,9 @@ def rank_pairs(puts: list[dict], *, spot: float, max_leg_spread: float = MAX_LEG
             if si - off < 0:
                 continue
             row = _pair(short, by_strike[strikes[si - off]], off, spot=spot,
-                        max_leg_spread=max_leg_spread, budget=budget)
+                        max_leg_spread=max_leg_spread, budget=budget,
+                        min_open_interest=min_open_interest,
+                        oi_per_contract=oi_per_contract, min_leg_volume=min_leg_volume)
             if row:
                 rows.append(row)
     rows.sort(key=lambda r: (not r["liquid"], not r["in_band"], -r["ratio"],
@@ -240,8 +301,12 @@ def rank_pairs(puts: list[dict], *, spot: float, max_leg_spread: float = MAX_LEG
                 why.append("most room below the price")
             if r["max_loss"] == least_loss:
                 why.append("smallest max loss")
-            if not r["liquid"]:
+            if not r["ba_ok"]:
                 why.append("bid/ask too wide")
+            if r["oi_ok"] is False:
+                why.append("open interest too thin")
+            if r["vol_ok"] is False:
+                why.append("barely traded today")
             if not r["in_band"]:
                 why.append("delta outside 0.20-0.25")
             r["recommended"] = i == 0
@@ -256,7 +321,10 @@ def select(*, symbol: str, spot: float, expiry: str, dte: int,
            iv_pct_min: float = IV_PCT_MIN,
            max_leg_spread: float = MAX_LEG_SPREAD,
            nlv_risk_pct: float = NLV_RISK_PCT,
-           trend: dict | None = None) -> dict:
+           trend: dict | None = None,
+           min_open_interest: int = MIN_OPEN_INTEREST,
+           oi_per_contract: int = OI_PER_CONTRACT,
+           min_leg_volume: int = MIN_LEG_VOLUME) -> dict:
     """Pick the best bull put spread in ONE expiry and grade it against the rules.
 
     ``trend`` is step 1 of the playbook ("identify a neutral/bullish trade"),
@@ -322,7 +390,9 @@ def select(*, symbol: str, spot: float, expiry: str, dte: int,
     # One ranking decides both the recommendation and the table under it, so the
     # "sell this" line can never disagree with row 1.
     pairs = rank_pairs(usable, spot=spot, max_leg_spread=max_leg_spread,
-                       net_liquidation=net_liquidation, nlv_risk_pct=nlv_risk_pct)
+                       net_liquidation=net_liquidation, nlv_risk_pct=nlv_risk_pct,
+                       min_open_interest=min_open_interest,
+                       oi_per_contract=oi_per_contract, min_leg_volume=min_leg_volume)
     if not pairs:
         target = (SHORT_DELTA_LO + SHORT_DELTA_HI) / 2.0
         near = min(usable, key=lambda p: abs(_abs_delta(p) - target))
@@ -343,7 +413,7 @@ def select(*, symbol: str, spot: float, expiry: str, dte: int,
     credit = (_mid(short) or 0) - (_mid(long_row) or 0)
     width = top["width"]
     max_loss = (width - credit) * 100
-    ss, ls, liquid = top["short_leg_spread"], top["long_leg_spread"], top["liquid"]
+    ss, ls, liquid = top["short_leg_spread"], top["long_leg_spread"], top["ba_ok"]
 
     checks.append(Check("Short put delta", top["in_band"],
                         f"{short['strike']:g}P delta {sdelta:.2f} "
@@ -360,6 +430,43 @@ def select(*, symbol: str, spot: float, expiry: str, dte: int,
                         f"long {('%.2f' % ls) if ls is not None else 'n/a'}"
                         + ("" if liquid else " — too wide, you'll bleed on the fill."),
                         blocking=True))
+
+    # Open interest - the standing crowd at each strike, scaled to the order. A
+    # known-thin leg BLOCKS (the bid/ask above can look fine on a strike nobody
+    # holds); an unreported one only warns, because "TWS did not say" is not
+    # evidence of anything.
+    s_oi, l_oi, need = top["short_oi"], top["long_oi"], top["oi_needed"]
+    qty_note = (f" = {oi_per_contract}x your {top['contracts']} contracts"
+                if top["contracts"] * oi_per_contract > min_open_interest else "")
+    if top["oi_ok"] is None:
+        checks.append(Check(f"Open interest >= {need:,} per leg", False,
+                            f"short {s_oi if s_oi is not None else 'n/a'}, "
+                            f"long {l_oi if l_oi is not None else 'n/a'} — TWS did not report open "
+                            "interest for these legs (a feed without it, or an IBKR bridge older "
+                            "than 1.4: restart bridge\\start_ibkr_bridge.bat). Check the OI column "
+                            "in TWS before ordering.", blocking=False))
+    else:
+        checks.append(Check(f"Open interest >= {need:,} per leg", top["oi_ok"],
+                            f"short {s_oi:,}, long {l_oi:,} (need {need:,}{qty_note})"
+                            + ("" if top["oi_ok"] else " — too few contracts open at this strike: "
+                               "hard to fill at the mid now, harder to close or roll later."),
+                            blocking=True))
+
+    # Day volume - did these strikes actually trade today. Warning only: see
+    # MIN_LEG_VOLUME for why it must not veto.
+    s_vol, l_vol = top["short_volume"], top["long_volume"]
+    if top["vol_ok"] is None:
+        checks.append(Check(f"Traded today >= {min_leg_volume} per leg", False,
+                            f"short {s_vol if s_vol is not None else 'n/a'}, "
+                            f"long {l_vol if l_vol is not None else 'n/a'} — no volume reported "
+                            "(market closed, or a delayed feed).", blocking=False))
+    else:
+        checks.append(Check(f"Traded today >= {min_leg_volume} per leg", top["vol_ok"],
+                            f"short {s_vol:,}, long {l_vol:,} contracts"
+                            + ("" if top["vol_ok"] else " — little or no trading in these strikes so "
+                               "far today. Normal early in the session; later in the day expect to "
+                               "work the order rather than fill at the mid."),
+                            blocking=False))
 
     # Outside market hours TWS returns no bid/ask, and the credit above is then
     # built from each leg's LAST trade - two prints that may be hours apart. Worth
@@ -412,6 +519,7 @@ def select(*, symbol: str, spot: float, expiry: str, dte: int,
         long_mid=round(_mid(long_row), 2) if _mid(long_row) is not None else None,
         long_iv=long_row.get("iv"),
         cushion_pct=round((spot - short["strike"]) / spot * 100, 1) if spot else None,
+        short_oi=s_oi, long_oi=l_oi, short_volume=s_vol, long_volume=l_vol,
         profile=pl_profile(short["strike"], long_row["strike"], credit, qty,
                            spot=spot, dte=dte, short_iv=short.get("iv"),
                            long_iv=long_row.get("iv")),

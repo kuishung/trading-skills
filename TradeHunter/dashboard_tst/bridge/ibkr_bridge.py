@@ -187,10 +187,16 @@ async def _quote(ib, contracts):
 
     reqTickersAsync waits for EVERY contract, so on a delayed feed it always
     burns its full timeout; this keeps whatever answered within one window.
+
+    Generic tick 101 = option OPEN INTEREST (1.4). It is not part of the default
+    tick set, so without asking for it every leg's OI came back empty and the
+    liquidity check could only look at the bid/ask. Streaming request (not a
+    snapshot) on purpose: IBKR refuses generic ticks on snapshots. Day VOLUME
+    needs nothing extra - it is in the default set.
     """
     for c in contracts:
         try:
-            ib.reqMktData(c, "", False, False)
+            ib.reqMktData(c, "101" if getattr(c, "secType", "") == "OPT" else "", False, False)
         except Exception:  # noqa: BLE001
             pass
     await asyncio.sleep(CFG["quote_wait"])
@@ -206,6 +212,23 @@ async def _quote(ib, contracts):
             except Exception:  # noqa: BLE001
                 pass
     return [t for t in out if t is not None]
+
+
+def _count(v):
+    """A tick count (open interest, volume) or None. ib_insync leaves a tick that
+    never arrived as NaN; 0 is a real answer ("nobody holds this strike")."""
+    try:
+        return int(v) if (v is not None and v == v and v >= 0) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _open_interest(t, right):
+    """IBKR reports a contract's OI on the tick for ITS side: 27 (call) / 28 (put)."""
+    first, second = ((t.putOpenInterest, t.callOpenInterest) if right.startswith("P")
+                     else (t.callOpenInterest, t.putOpenInterest))
+    oi = _count(first)
+    return oi if oi is not None else _count(second)
 
 
 def _row(t, right):
@@ -224,8 +247,8 @@ def _row(t, right):
         "gamma": round(g.gamma, 4) if (g and g.gamma is not None) else None,
         "theta": round(g.theta, 3) if (g and g.theta is not None) else None,
         "vega": round(g.vega, 3) if (g and g.vega is not None) else None,
-        "oi": None,
-        "volume": int(t.volume) if t.volume and t.volume > 0 else None,
+        "oi": _open_interest(t, right),
+        "volume": _count(t.volume),
     }
 
 
@@ -343,6 +366,10 @@ async def _chain(symbol, expiry=None, dte_min=None, dte_max=None, put_side=False
         "calls": calls, "puts": puts, "atm_iv": atm_iv,
         "data_mode": "live" if _mkt_type == 1 else "delayed",
         "greeks_ok": any(c.get("delta") is not None for c in calls + puts),
+        # did TWS send open interest at all? False = a feed that carries no OI, which
+        # the server reports as "unknown" rather than grading every leg as empty
+        "oi_ok": any(c.get("oi") is not None for c in calls + puts),
+        "bridge": Handler.server_version.split("/")[-1],
         "strike_window": win, "put_side": bool(put_side),
         "source": f"TWS {CFG['host']}:{CFG['port']}",
     }
@@ -438,7 +465,7 @@ def cached(key, fn, ttl=_CACHE_TTL):
 
 # --------------------------------------------------------------- HTTP layer
 class Handler(BaseHTTPRequestHandler):
-    server_version = "TradeHunterIBKRBridge/1.3"   # 1.1 /scan; 1.2 one bridge per port; 1.3 put-side chain
+    server_version = "TradeHunterIBKRBridge/1.4"   # 1.1 /scan; 1.2 one bridge per port; 1.3 put-side chain; 1.4 open interest per leg
 
     def _origin_ok(self):
         o = self.headers.get("Origin")

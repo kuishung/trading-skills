@@ -88,6 +88,25 @@ reachable from the network.
 
 ## Changelog
 
+### 2026-09-19 — bridge 1.4: open interest on every option leg
+User: *"when select option trade, we need the open interest and volume so that it is liquid
+enough"*. `/chain` rows have always had an `oi` field, but it was hard-coded `None`: open
+interest is not in IBKR's default tick set, and `_quote` subscribed with an empty generic-tick
+list. It now asks for **generic tick 101** on option contracts, and `_row` reads the answer off
+the tick for the contract's own side (27 = call, 28 = put - `ib_insync`'s
+`callOpenInterest` / `putOpenInterest`). Still a streaming subscription, never a snapshot:
+IBKR refuses generic ticks on snapshots. Day `volume` needed nothing (default tick 8) but is
+now reported as a real `0` when TWS says zero, and `None` only when no tick arrived - the
+server treats "unknown" and "zero" differently.
+
+The response also carries `oi_ok` (did ANY leg report open interest - false on a feed that
+carries none) and `bridge` (this version), so the server can tell "thin" from "not reported".
+
+**A running bridge must be restarted to pick this up** (close its window, run
+`start_ibkr_bridge.bat`). Until then the web app shows the open-interest check as "not
+reported" - a warning, not a block. Not yet verified against a live TWS (written with TWS
+off); the row building was checked against `ib_insync` 0.9.86's Ticker on Python 3.12.
+
 ### 2026-09-18 — bridge 1.3: `/chain?side=put`, the bull put spread view
 The symmetric window (10 strikes each side of the price) is right for reading a chain and
 wrong for finding a short put at delta 0.20-0.25: on META ($689, $5 strikes) it stops at 640,

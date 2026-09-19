@@ -143,6 +143,47 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-19 - v4.116: bull put spread - open interest and volume decide "liquid", not just the bid/ask
+
+User: *"when select option trade, we need the open interest and volume so that it is liquid
+enough, how do we ensure that?"* Until now "liquid" meant ONE thing: bid/ask <= $0.50 per leg
+(the only liquidity rule the playbook states). The chain rows had an `oi` field that was always
+empty (the bridge never asked TWS for it - see `bridge/README.md`, 1.4) and a `volume` the rules
+never read. A tight quote on a strike nobody holds is a market maker's indicative price: it fills
+one contract, and there is no one to trade with when the spread must be closed or rolled.
+
+`services/bull_put.py` - three measurements per leg now, and the playbook is NOT the source of the
+new two, so they are named defaults (`MIN_OPEN_INTEREST`, `OI_PER_CONTRACT`, `MIN_LEG_VOLUME`),
+each overridable per call to `select()` / `rank_pairs()`:
+
+| Measure | Rule | Fails -> |
+|---|---|---|
+| Bid/ask (playbook) | <= $0.50 on each leg | blocks |
+| **Open interest** | each leg >= 500 **and** >= 10x the contracts being sold (never more than a tenth of what is open - `oi_needed()`) | **blocks** |
+| **Day volume** | each leg traded >= 20 contracts today | warns only |
+
+- Volume only WARNS on purpose: it is ~0 on every strike in the first minutes of a session and
+  absent on a delayed feed, so it cannot be allowed to veto a pair that open interest clears.
+- **Unknown is not thin.** A leg whose OI was not reported (old bridge, a feed without it) makes
+  the check a non-blocking warning that says so and tells the member to read the OI column in
+  TWS; only a KNOWN-thin leg blocks. Junk from the browser counts as unknown (`_count`).
+- `rank_pairs()`: `liquid` = bid/ask OK **and** open interest not known-thin, and it is still the
+  first sort key - so a pair on a thin strike sinks under every liquid pair and can no longer be
+  row 1 / the recommendation. `why` says which: "bid/ask too wide", "open interest too thin",
+  "barely traded today". Rows carry `short_oi/long_oi/oi_needed/oi_ok`, `short_volume/
+  long_volume/vol_ok`, `ba_ok`; the candidate carries the four figures too.
+- `_options_analysis.html`: **OI** and **Vol** columns (short / long) in the "Which legs" table -
+  red OI = too thin, amber Vol = barely traded, grey dash = not reported - and an **OI** column in
+  the put-side chain table (under 500 in rose), so every strike's depth is visible, not only the
+  recommended pair's.
+
+Tested on synthetic chains (the module is pure): deep chain passes; a thin long leg drops the
+best-ratio pair out of row 1; an all-thin chain blocks with the numbers in the message; unknown
+OI warns only; a 5M account's 1,162 contracts raise the need to 11,620; low volume warns only;
+junk -> unknown. Rendered through the real `/options/<sym>/analyze` route. **Not yet seen with a
+live TWS** - the first run after restarting the bridge is the real check that tick 101 arrives
+on the member's data subscription.
+
 ### 2026-09-19 - v4.115: Options > IV Rank scans a PRE-LISTED set of tickers ("My list")
 
 User: *"currently in the option we are scanning the whole market with IV Rank. I need the system
