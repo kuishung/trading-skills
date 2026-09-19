@@ -88,6 +88,48 @@ reachable from the network.
 
 ## Changelog
 
+### 2026-09-19 — bridge 1.5: the chain no longer waits on fixed timers (20-21 s -> 8-10 s)
+User: *"when i get data from IBKR, it is quite slow, what is the problem?"* Measured against a live
+TWS (Saturday, market closed): `/account` 0.0 s, `/iv` 1.1-2.3 s, **`/chain` 20-22 s every time**.
+A stage-by-stage probe of the chain path showed IBKR was not the slow part - the bridge was:
+
+| Stage | Time | |
+|---|---|---|
+| connect / qualify stock / chain definition / qualify strikes | 0.2 + 0.2 + 0.6 + 0.8 s | fine |
+| **spot price via `reqTickersAsync`** | **11.1 s** | a SNAPSHOT: IBKR holds it open until it "ends", up to 11 s whenever no fresh trade arrives (evenings, weekends, thin names). The close was in the ticker after ~3 s. |
+| **option quotes: `asyncio.sleep(8.0)`** | **8.0 s** | fixed. Arrival curve: open interest ~1.0 s, greeks ~1.5-2.0 s, prices ~3.1-3.6 s, then NOTHING changes. |
+
+- **`_spot()`** replaces the snapshot with a streaming subscription read as soon as it has a number:
+  a live price the moment one exists, else the close after `SPOT_SETTLE` (0.8 s); ceiling
+  `SPOT_WAIT` 6 s (3 s was tried first and failed HD / XOM - out of hours the close lands at
+  3.1-3.6 s). Falls back once to delayed-frozen if the current type yields nothing. It now runs
+  CONCURRENTLY with `reqSecDefOptParams` - neither needs the other.
+- **`_quote()`** closes its window when the picture is complete and has stopped changing: every
+  contract priced AND greeks on at least half (deep OTM strikes never get a model) AND no newly
+  populated field for `QUOTE_QUIET` 1 s; or nothing new at all for `QUOTE_STALL` 3 s (a feed with no
+  entitlement used to cost the full 8 s). Both halves are required: greeks arrive before prices out
+  of hours and after them in hours. `quote_wait` (8 s) remains the ceiling.
+- **`_forget()`** - found while testing. ib_insync keeps one Ticker per contract for the life of the
+  connection and `cancelMktData` does not clear it, so "has the data arrived?" read off a reused
+  ticker said yes instantly; and a spot could be hours old on a bridge left running all day. Tickers
+  are blanked before each subscription - except the second half of the entitlement probe
+  (`fresh=False`), because TWS does not resend model greeks to a re-subscription seconds later and
+  wiping them returned chains with prices and no deltas.
+- **A "delayed" verdict now expires** (`MKT_RECHECK` 15 min). It was sticky for the life of the
+  process, so a bridge started at the weekend - when even a fully entitled account gets few model
+  greeks - kept serving 15-minute-old quotes through Monday's session.
+- **No deltas -> one retry with the other market data type** (prices kept, verdict unchanged). A
+  chain without deltas cannot be graded, and out of hours TWS sometimes sends no greeks under one
+  type and does under the other (COST, 29 puts: 0 then 11). Response field `greeks_from_delayed`.
+
+Verified by running 1.5 on port 9225 (clientId 98) BESIDE the running 1.3 and asking both for the
+same chains: ABBV 9.3 vs 20.6 s, PEP 9.8 vs 20.1, ORCL 9.8 vs 20.9, MRK 11.3 vs 21.1, LIN 12.0 vs
+21.0, V 10.1 s (23/23 deltas), COST 14.0 s with the retry. Deltas equal or better than 1.3 on every
+symbol, plus open interest and volume on every leg (1.4, now confirmed live: tick 101 arrives on
+this account). All numbers are OUT OF HOURS; in market hours a live price arrives in under a
+second, so the chain should be faster still - not yet measured. `/iv` and `/account` were never
+the problem and are unchanged.
+
 ### 2026-09-19 — bridge 1.4: open interest on every option leg
 User: *"when select option trade, we need the open interest and volume so that it is liquid
 enough"*. `/chain` rows have always had an `oi` field, but it was hard-coded `None`: open

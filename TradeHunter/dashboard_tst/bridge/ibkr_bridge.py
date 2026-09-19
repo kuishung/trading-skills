@@ -180,13 +180,75 @@ def _dte(ymd: str):
 
 
 _mkt_type: int | None = None
+_mkt_type_at = 0.0          # when that verdict was reached (time.monotonic)
+MKT_RECHECK = 900.0         # a "delayed" verdict is re-tested after this many seconds
 
 
-async def _quote(ib, contracts):
-    """Subscribe all, wait one window, read what arrived, release the lines.
+QUOTE_POLL = 0.25       # how often the quote window looks at what has arrived
+QUOTE_MIN = 1.5         # never return sooner than this
+QUOTE_QUIET = 1.0       # priced + greeks in, and nothing new for this long = done
+QUOTE_STALL = 3.0       # nothing new AT ALL for this long = done, complete or not
+_NAN = float("nan")
 
-    reqTickersAsync waits for EVERY contract, so on a delayed feed it always
-    burns its full timeout; this keeps whatever answered within one window.
+
+def _filled(t) -> tuple[int, bool, bool]:
+    """(populated fields, has a price, has greeks) for one ticker."""
+    def ok(v):
+        return v is not None and v == v and v > 0
+    priced = (ok(t.bid) and ok(t.ask)) or ok(t.last) or ok(t.close)
+    greeks = bool(t.modelGreeks and t.modelGreeks.delta is not None)
+    n = sum(1 for v in (t.bid, t.ask, t.last, t.close) if ok(v))
+    n += 1 if greeks else 0
+    n += sum(1 for v in (t.putOpenInterest, t.callOpenInterest, t.volume)
+             if v is not None and v == v)
+    return n, priced, greeks
+
+
+def _forget(ib, contract) -> None:
+    """Blank what an EARLIER subscription left on this contract's ticker.
+
+    ib_insync keeps one Ticker per contract for the life of the connection, and
+    cancelMktData does not clear it. Reading "has the data arrived yet?" off a
+    ticker that still holds last time's numbers answers yes before TWS has said
+    anything: a second quote window closed at once with the first one's partial
+    greeks, and a spot price could be hours old on a bridge left running all day.
+    """
+    t = ib.ticker(contract)
+    if t is None:
+        return
+    for name in ("bid", "ask", "last", "close", "volume", "putOpenInterest",
+                 "callOpenInterest", "bidSize", "askSize", "lastSize"):
+        try:
+            setattr(t, name, _NAN)
+        except Exception:  # noqa: BLE001
+            pass
+    t.modelGreeks = t.bidGreeks = t.askGreeks = t.lastGreeks = None
+    t.time = None
+
+
+async def _quote(ib, contracts, fresh=True):
+    """Subscribe all, wait until the data has ARRIVED, read it, release the lines.
+
+    ``fresh`` blanks whatever an earlier subscription left on these tickers first
+    (see ``_forget``). False only for the second half of the entitlement probe.
+
+    The wait used to be a fixed ``quote_wait`` (8 s) sleep. Measured against a live
+    TWS (2026-09-19, 22 JPM puts): every field that was ever going to arrive had
+    arrived by ~3.6 s (open interest ~1.0 s, greeks ~1.5-2.0 s, prices ~3.1-3.6 s
+    out of hours) and then nothing changed, so 4+ s of each chain was spent asleep.
+    Now the window closes once the picture is COMPLETE and has stopped changing:
+    every contract priced, greeks in on at least half of them (deep OTM strikes
+    never get a model, so "all" would never come true), and no new field for
+    QUOTE_QUIET. Both halves are required - greeks arrive before prices out of
+    hours and after them in hours, and either alone closes the window on a chain
+    that cannot be graded. A feed that sends nothing at all (no entitlement for
+    this market data type) ends after QUOTE_STALL instead of the full wait. "New"
+    means a FIELD becoming populated, not a tick: in market hours bid/ask ticks
+    never stop, but the set of filled fields saturates. ``quote_wait`` remains the
+    ceiling, so a slow feed still gets its full 8 s.
+
+    reqTickersAsync is not used: it waits for EVERY contract's snapshot to end, so
+    on a delayed feed it always burns its full timeout.
 
     Generic tick 101 = option OPEN INTEREST (1.4). It is not part of the default
     tick set, so without asking for it every leg's OI came back empty and the
@@ -196,10 +258,35 @@ async def _quote(ib, contracts):
     """
     for c in contracts:
         try:
+            if fresh:
+                _forget(ib, c)
             ib.reqMktData(c, "101" if getattr(c, "secType", "") == "OPT" else "", False, False)
         except Exception:  # noqa: BLE001
             pass
-    await asyncio.sleep(CFG["quote_wait"])
+    t0 = last_change = time.monotonic()
+    seen = 0
+    while True:
+        await asyncio.sleep(QUOTE_POLL)
+        now = time.monotonic()
+        total = n_priced = n_greeks = 0
+        for c in contracts:
+            try:
+                n, priced, greeks = _filled(ib.ticker(c))
+            except Exception:  # noqa: BLE001
+                n, priced, greeks = 0, False, False
+            total += n
+            n_priced += priced
+            n_greeks += greeks
+        if total != seen:
+            seen, last_change = total, now
+        quiet = now - last_change
+        if now - t0 >= CFG["quote_wait"]:
+            break
+        complete = (bool(contracts) and n_priced == len(contracts)
+                    and n_greeks * 2 >= len(contracts))
+        if now - t0 >= QUOTE_MIN and ((complete and quiet >= QUOTE_QUIET)
+                                      or quiet >= QUOTE_STALL):
+            break
     out = []
     for c in contracts:
         try:
@@ -252,6 +339,59 @@ def _row(t, right):
     }
 
 
+SPOT_WAIT = 6.0         # longest wait for any price. Out of hours the close lands at
+                        # 3.1-3.6 s (measured); 3.0 was tried first and failed HD / XOM
+SPOT_SETTLE = 0.8       # after this, yesterday's close is good enough to pick strikes
+
+
+async def _spot(ib, stock):
+    """The underlying's price, as fast as TWS can give it.
+
+    This was ``reqTickersAsync`` - a SNAPSHOT, which IBKR holds open until the
+    snapshot "ends": up to 11 seconds whenever no fresh trade arrives (every
+    weekend, every evening, and on thin names in hours). Measured 11.1 s on JPM
+    with the close sitting in the ticker after 0.3 s. The spot only anchors which
+    strikes to quote, so a streaming subscription read as soon as it has a number
+    is enough: a live price the moment one exists, otherwise the close once the
+    feed has had SPOT_SETTLE to show it has nothing better. If the current market
+    data type yields nothing at all (no live subscription for this stock), the free
+    delayed-frozen type is tried once before giving up.
+    """
+    def ok(v):
+        return v is not None and v == v and v > 0
+
+    async def attempt():
+        _forget(ib, stock)
+        ib.reqMktData(stock, "", False, False)
+        t0 = time.monotonic()
+        try:
+            while True:
+                await asyncio.sleep(0.15)
+                el = time.monotonic() - t0
+                t = ib.ticker(stock)
+                if t is not None:
+                    mp = t.marketPrice()
+                    if ok(mp):
+                        return float(mp)
+                    if el >= SPOT_SETTLE:
+                        for v in (t.last, t.close):
+                            if ok(v):
+                                return float(v)
+                if el >= SPOT_WAIT:
+                    return None
+        finally:
+            try:
+                ib.cancelMktData(stock)
+            except Exception:  # noqa: BLE001
+                pass
+
+    price = await attempt()
+    if price is None and _mkt_type != 4:
+        ib.reqMarketDataType(4)         # _chain sets the type it wants again before quoting
+        price = await attempt()
+    return price
+
+
 async def _chain_def(ib, symbol):
     from ib_insync import Stock
 
@@ -259,13 +399,12 @@ async def _chain_def(ib, symbol):
     if not q:
         raise RuntimeError(f"IBKR does not recognise the symbol {symbol}.")
     stock = q[0]
-    [stk] = await ib.reqTickersAsync(stock)
-    spot = stk.marketPrice()
-    if not spot or spot != spot:
-        spot = stk.close
+    # The price and the chain definition need nothing from each other - ask together.
+    spot, params = await asyncio.gather(
+        _spot(ib, stock),
+        ib.reqSecDefOptParamsAsync(stock.symbol, "", "STK", stock.conId))
     if not spot:
         raise RuntimeError(f"No price for {symbol} — market closed with no frozen data.")
-    params = await ib.reqSecDefOptParamsAsync(stock.symbol, "", "STK", stock.conId)
     chains = [p for p in params if p.exchange == "SMART"] or list(params)
     if not chains:
         raise RuntimeError(f"IBKR returned no option chain for {symbol}.")
@@ -336,6 +475,13 @@ async def _chain(symbol, expiry=None, dte_min=None, dte_max=None, put_side=False
     contracts = [c for c in qualified if getattr(c, "conId", None) and c.strike in keep]
 
     # Sticky entitlement probe: one modelGreeks in forty is noise, not a live feed.
+    # A "delayed" verdict EXPIRES (1.5): it used to last for the life of the process,
+    # so a bridge started on a Saturday - when even a fully entitled account gets few
+    # model greeks - kept serving 15-minute-old quotes through Monday's session.
+    global _mkt_type_at
+    greeks_from_delayed = False
+    if _mkt_type == 4 and time.monotonic() - _mkt_type_at > MKT_RECHECK:
+        _mkt_type = None
     if _mkt_type is None:
         ib.reqMarketDataType(1)
         tickers = await _quote(ib, contracts)
@@ -345,10 +491,25 @@ async def _chain(symbol, expiry=None, dte_min=None, dte_max=None, put_side=False
         else:
             _mkt_type = 4       # delayed-frozen; IBKR provides it free
             ib.reqMarketDataType(_mkt_type)
-            tickers = await _quote(ib, contracts)
+            # fresh=False: keep what the live attempt did deliver. TWS does not
+            # resend model greeks to a re-subscription seconds after the first, so
+            # wiping them here returned a chain with prices and NO deltas.
+            tickers = await _quote(ib, contracts, fresh=False)
+        _mkt_type_at = time.monotonic()
     else:
         ib.reqMarketDataType(_mkt_type)
         tickers = await _quote(ib, contracts)
+        # A chain with NO deltas cannot be graded at all (the short leg is chosen by
+        # delta). Out of hours TWS sometimes sends no model greeks for a large chain
+        # under one market data type and does under the other (COST, 29 puts,
+        # 2026-09-19: 0 under one, 11 under the other, and not always the same one).
+        # One extra window with the OTHER type, only in that case; prices already
+        # read are kept and the sticky verdict does not change.
+        if tickers and not any(x.modelGreeks for x in tickers):
+            ib.reqMarketDataType(4 if _mkt_type == 1 else 1)
+            tickers = await _quote(ib, contracts, fresh=False)
+            greeks_from_delayed = _mkt_type == 1 and any(x.modelGreeks for x in tickers)
+            ib.reqMarketDataType(_mkt_type)   # the next chain's spot reads the right feed
 
     calls, puts = [], []
     for t in tickers:
@@ -365,6 +526,8 @@ async def _chain(symbol, expiry=None, dte_min=None, dte_max=None, put_side=False
         "expirations": [{"value": e, "label": _fmt(e), "dte": _dte(e)} for e in exps[:24]],
         "calls": calls, "puts": puts, "atm_iv": atm_iv,
         "data_mode": "live" if _mkt_type == 1 else "delayed",
+        # true = the live feed sent no model greeks, so deltas came from the delayed one
+        "greeks_from_delayed": greeks_from_delayed,
         "greeks_ok": any(c.get("delta") is not None for c in calls + puts),
         # did TWS send open interest at all? False = a feed that carries no OI, which
         # the server reports as "unknown" rather than grading every leg as empty
@@ -465,7 +628,7 @@ def cached(key, fn, ttl=_CACHE_TTL):
 
 # --------------------------------------------------------------- HTTP layer
 class Handler(BaseHTTPRequestHandler):
-    server_version = "TradeHunterIBKRBridge/1.4"   # 1.1 /scan; 1.2 one bridge per port; 1.3 put-side chain; 1.4 open interest per leg
+    server_version = "TradeHunterIBKRBridge/1.5"   # 1.1 /scan; 1.2 one bridge per port; 1.3 put-side chain; 1.4 open interest per leg; 1.5 no fixed waits (spot + quote window)
 
     def _origin_ok(self):
         o = self.headers.get("Origin")
