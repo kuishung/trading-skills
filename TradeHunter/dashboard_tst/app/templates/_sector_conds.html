@@ -11,10 +11,17 @@
   {% for name, value in conds_hidden.items() %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}
   <span class="text-[10px] text-slate-500 mr-0.5" title="Tickers are scored from live daily bars against the conditions that are on, best first. All off = plain list.">Setup</span>
   {% for k in cond_keys %}
+  {# w1 is not another ingredient of the daily setup but a SETUP OF ITS OWN (weekly
+     trend stacked + weekly pin bar at wEMA20/50; user, 2026-09-20), so it sits apart
+     from c1-c7 behind a divider, in its own colour - the colour its chip uses. #}
+  {% if k == 'w1' %}
+  <span class="basis-full h-0"></span>
+  <span class="text-[10px] text-slate-500 mr-0.5" title="A separate setup judged on the WEEKLY chart only. It qualifies a ticker by itself; the daily 'must' above does not apply to it.">Weekly</span>
+  {% endif %}
   <label class="cursor-pointer select-none text-[10px] px-1.5 py-0.5 rounded border transition
-                {% if enabled[k] %}border-emerald-500/60 bg-emerald-500/15 text-emerald-300{% else %}border-slate-700 text-slate-500 hover:border-slate-500 hover:text-slate-300{% endif %}"
+                {% if enabled[k] and k == 'w1' %}border-indigo-400/60 bg-indigo-500/20 text-indigo-200 font-semibold{% elif enabled[k] %}border-emerald-500/60 bg-emerald-500/15 text-emerald-300{% else %}border-slate-700 text-slate-500 hover:border-slate-500 hover:text-slate-300{% endif %}"
          title="{{ cond_labels[k][1] }}">
-    <input type="checkbox" name="{{ k }}" class="sr-only" {% if enabled[k] %}checked{% endif %}>{{ cond_labels[k][0] }}{% if k == 'c1' %}<span class="opacity-70"> &middot; must</span>{% endif %}
+    <input type="checkbox" name="{{ k }}" class="sr-only" {% if enabled[k] %}checked{% endif %}>{{ cond_labels[k][0] }}{% if k == 'c1' %}<span class="opacity-70"> &middot; must</span>{% endif %}{% if k == 'w1' %}<span class="opacity-70 font-normal"> &middot; wEMA 20&gt;50&gt;200 + pin bar</span>{% endif %}
   </label>
   {% endfor %}
 </form>

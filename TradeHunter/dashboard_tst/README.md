@@ -143,6 +143,48 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-20 - v4.121: a separate WEEKLY SETUP - weekly pin bar at wEMA20/50 with the weekly trend stacked
+
+User: *"in the sector and industry i want a separate setup for pin bar forming in the Weekly EMA 20
+or EMA50 provided EMA20 > EMA50 > EMA200"*. The existing switches could not express it: `pin bar W`
+(c7) is one ingredient, and the only trend test, `EMA 20>50>200` (c1), is the DAILY stack.
+
+**`w1` "W setup"** (`services/ema_setup.py`) - not an eighth ingredient but a setup of its own, BOTH
+halves required: WEEKLY EMA20 > EMA50 > EMA200, and the most recent weekly candle is a pin bar at
+the weekly EMA20 or EMA50 (same hammer rule as c6/c7, latest candle only).
+- **Stands alone.** It is judged on the weekly chart only, so a ticker that meets it qualifies by
+  itself and is NOT subject to the daily "must" gate (a weekly hammer often prints while the daily
+  stack is broken - that is the pullback). Weight 120, so it leads the list; its chip
+  `W setup · pin bar wEMA20` (indigo, `wset`) leads the row and replaces the c7 chip for that
+  candle. In the switch row it sits on its own line under a "Weekly" label, in its chip's colour.
+- **History.** A weekly EMA200 is ~4 years of candles; the scan read 2. With w1 on (`needs_deep`)
+  `setup_for(sym, deep=True)` reads ~10 years instead - ONE fetch, not an extra one: the daily
+  conditions are computed on its last two years (`_last_two_years`, cut strictly after the two-year
+  mark to match Yahoo's own "2y"; verified identical field-for-field on AAPL / JPM / KO / XOM).
+  The weekly pin bar and the weekly setup read ONE weekly series, so they cannot disagree about the
+  same candle, and it is the series the W chart draws. Cache is per (symbol, deep); a deep result
+  also serves a shallow request. Cost measured: 61 tickers x 10y in 1.6 s cold; the 47-holding XLY
+  basket re-ranked in 2.7 s.
+- **Cannot be judged != passes.** Under `WEEKLY_200_MIN` (200) weekly candles `w_setup` is None,
+  the condition is false, and `w_note` says why ("only 152 weekly candles ...").
+- **Starts OFF** (`COND_DEFAULT["w1"] = False`): it changes what the scan downloads, so the member
+  who wants it switches it on; saved with the other switches in `prefs.sym_conds`, so it applies on
+  Sector & Industry (industry list AND ETF basket), Curated and IV Rank alike. Callers pass
+  `deep=es.needs_deep(enabled)`: `routes/sector.py`, `services/etf_holdings.py`, `routes/curated.py`,
+  `routes/ivscan.py`.
+- New setup fields: `w_uptrend, w_setup, w_weeks, w_note, w_ema20, w_ema50, w_ema200`.
+
+Also: **the ETF basket now fades every ticker that does not qualify**, like the industry list
+(`_sector_basket.html`). It only faded tickers failing the daily "must", so a setup switched on as a
+filter left all 47 holdings lit. Light-theme ink for the new indigo chip added to `base.html` in the
+same change (the v4.112 lesson).
+
+Tested: synthetic 10y series (stack + hammer -> hit; stack without hammer, hammer in a downtrend, 3y
+history, long history not loaded -> no hit; daily gate bypassed only when the weekly setup is met).
+Live, week of 2026-09-14: 39 of 61 large caps have the weekly stack; two print the setup - **AMZN**
+(hammer at wEMA20 252.60) and **BLK** (at wEMA50 1061.79). In the browser: XLY basket with only
+"must" + "W setup" on -> AMZN first with its chip, the other 46 holdings faded.
+
 ### 2026-09-19 - v4.120: a newly inserted setup is a NEW curated call, not a revision of the old one
 
 User: *"if the existing setting is deleted and user insert a new setup, the system should record it

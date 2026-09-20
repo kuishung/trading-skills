@@ -101,8 +101,9 @@ def _list_context(db: Session, user: User, *, year: str = "", month: str = "",
     from ..services import ema_setup as es
 
     on_screen_syms = sorted({r["symbol"] for mo in months for r in mo["rows"]})
-    setups = es.setups_for_many(on_screen_syms) if on_screen_syms else {}
     enabled = es.clean_enabled((getattr(user, "prefs", None) or {}).get("sym_conds"))
+    setups = (es.setups_for_many(on_screen_syms, deep=es.needs_deep(enabled))
+              if on_screen_syms else {})
     # Where each call sits against its ticker's Max Buy Price (user, 2026-09-15:
     # "separated by before MBP and above MBP"): the latest close (the entry when
     # no bar has printed yet) against the MATP board's MBP. Grouped in the

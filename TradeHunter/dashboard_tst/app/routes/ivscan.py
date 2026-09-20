@@ -173,7 +173,7 @@ def _list_context(db: Session, user: User, *, sort: str = "setup") -> dict:
     floor = criteria["iv_rank"]
     items = []
     if rows:
-        setups = es.setups_for_many([r.symbol for r in rows])
+        setups = es.setups_for_many([r.symbol for r in rows], deep=es.needs_deep(enabled))
         for r in rows:
             st = setups.get(r.symbol) or es._blank()
             fresh = _age_hours(r.iv_at) is not None and _age_hours(r.iv_at) < IV_FRESH_HOURS

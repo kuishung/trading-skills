@@ -91,7 +91,21 @@ PIN_UPPER_MAX = 0.20     # upper wick, fraction of the bar's range
 PIN_BODY_WICK = 2.0      # lower wick >= this many bodies
 PIN_NEAR = 0.25          # the low may stop this fraction of the range above the EMA
 WEEKLY_MIN = 60          # weekly bars needed before the weekly EMA50 means anything
-COND_KEYS = ("c1", "c2", "c3", "c4", "c5", "c6", "c7")
+# w1 - the WEEKLY SETUP (user, 2026-09-20: "i want a separate setup for pin bar
+# forming in the Weekly EMA 20 or EMA50 provided EMA20 > EMA50 > EMA200"). Unlike
+# c1-c7 it is not one ingredient but a whole setup, BOTH halves required:
+#   * the weekly trend is stacked - weekly EMA20 > EMA50 > EMA200 - and
+#   * the most recent weekly candle is a pin bar at the weekly EMA20 or EMA50.
+# It stands on its own: it is judged on the weekly chart only, so the DAILY gate
+# (c1) does not apply to a ticker that meets it, and it qualifies a ticker by
+# itself. A weekly EMA200 is ~4 years of candles, which the 2-year fetch c1-c7 run
+# on cannot give, so switching w1 on makes the scan read ~10 years per ticker
+# instead (ONE fetch, not an extra one - the daily conditions are computed on its
+# last 2 years and come out the same). A ticker listed for under WEEKLY_200_MIN
+# weeks cannot be judged and is reported as such, never passed by default.
+WEEKLY_200_MIN = 200     # weekly bars needed before the weekly EMA200 means anything
+DEEP_RANGE = "10y"
+COND_KEYS = ("c1", "c2", "c3", "c4", "c5", "c6", "c7", "w1")
 COND_LABELS = {
     "c1": ("EMA 20>50>200", "Uptrend: EMA20 above EMA50 above EMA200 on the last close. A must: when on, tickers that fail it sort below every ticker that passes."),
     "c2": ("dip 1-2%", f"Within the last {DIP_BARS} sessions a low reached 1-2% BELOW EMA20 (or EMA50): the pullback that sets up the rebound."),
@@ -102,10 +116,21 @@ COND_LABELS = {
     "c5": ("below 0.3-1.5%", "The last close sits 0.3-1.5% BELOW EMA20 (or EMA50): price is testing the average from underneath, not yet back above it."),
     "c6": ("pin bar D", "DAILY pin bar (bullish hammer) at EMA20 or EMA50: the most recent daily candle (today's, still forming while the market is open) has a long lower tail (60%+ of its range, small upper wick, tail at least twice the body) that reached the average while the close held at or above it."),
     "c7": ("pin bar W", "WEEKLY pin bar (bullish hammer) at the WEEKLY EMA20 or EMA50: the most recent weekly candle (this week's, still forming until Friday's close) has a long lower tail that reached the weekly average while the close held at or above it."),
+    "w1": ("W setup", "WEEKLY SETUP - a setup of its own, both parts required: the weekly trend is stacked (WEEKLY EMA20 > EMA50 > EMA200) AND the most recent weekly candle is a pin bar (bullish hammer) at the weekly EMA20 or EMA50. Judged on the weekly chart only: it qualifies a ticker by itself and the daily 'EMA 20>50>200' must does not apply to it. Reads about 10 years of history per ticker (a weekly EMA200 needs ~4), so the first scan with it on is slower; tickers listed under 4 years cannot be judged."),
 }
+# w1 starts OFF: it changes what the scan downloads, so it is switched on by the
+# member who wants it rather than landing on everyone's lists unasked.
 COND_DEFAULT = {"c1": True, "c2": True, "c3": True, "c4": True, "c5": True,
-                "c6": True, "c7": True}
-COND_WEIGHT = {"c1": 100, "c2": 30, "c3": 30, "c4": 20, "c5": 25, "c6": 35, "c7": 40}
+                "c6": True, "c7": True, "w1": False}
+COND_WEIGHT = {"c1": 100, "c2": 30, "c3": 30, "c4": 20, "c5": 25, "c6": 35, "c7": 40,
+               "w1": 120}
+# Which switches need the long history.
+DEEP_KEYS = ("w1",)
+
+
+def needs_deep(enabled: dict | None) -> bool:
+    """Does this member's switch set need the ~10-year fetch?"""
+    return any((enabled or {}).get(k) for k in DEEP_KEYS)
 
 
 def ema(values: list[float], period: int) -> list[float]:
@@ -187,6 +212,8 @@ def to_weekly(ohlc: list[tuple]) -> list[tuple]:
 def _blank(reason: str = "not enough price history") -> dict:
     return {"dip_ema": None, "dip_pct": None, "above_ema": None, "above_pct": None,
             "below_ema": None, "below_pct": None, "pin_d": None, "pin_w": None,
+            "w_uptrend": None, "w_setup": None, "w_weeks": 0, "w_note": "",
+            "w_ema20": None, "w_ema50": None, "w_ema200": None,
             "round10": None, "round10_step": None,
             "score": None, "uptrend": None, "rebound": None, "rebound_pct": None,
             "fresh": False, "held": False, "watch": False, "round": None,
@@ -194,8 +221,29 @@ def _blank(reason: str = "not enough price history") -> dict:
             "ema200": None, "chips": [], "summary": reason}
 
 
-def analyze(bars: list[dict]) -> dict:
-    """Score one ticker from ``/prices``-shaped daily bars (time/open/high/low/close)."""
+def _ohlc(bars: list[dict]) -> list[tuple]:
+    """``/prices`` dicts -> [(time, o, h, l, c)], skipping bars with no close."""
+    out = []
+    for b in bars:
+        if b.get("close") is None:
+            continue
+        bc = float(b["close"])
+        bo = float(b["open"]) if b.get("open") is not None else bc
+        bh = float(b["high"]) if b.get("high") is not None else max(bo, bc)
+        bl = float(b["low"]) if b.get("low") is not None else min(bo, bc)
+        out.append((b.get("time"), bo, bh, bl, bc))
+    return out
+
+
+def analyze(bars: list[dict], long_bars: list[dict] | None = None) -> dict:
+    """Score one ticker from ``/prices``-shaped daily bars (time/open/high/low/close).
+
+    ``bars`` is the ~2-year window every daily condition is read from.
+    ``long_bars`` is the same ticker over ~10 years, when the caller fetched it
+    (``deep``): the WEEKLY reads then come from it, because a weekly EMA200 cannot
+    be built from 104 candles. Without it the weekly pin bar still works off
+    ``bars`` and the weekly setup (w1) reports that it could not be judged.
+    """
     closes = [float(b["close"]) for b in bars if b.get("close") is not None]
     if len(closes) < 60:
         return _blank()
@@ -263,21 +311,31 @@ def analyze(bars: list[dict]) -> dict:
     r10 = round_level(c, (100, 50, 10))
     # c6 / c7: a pin bar (bullish hammer) at the daily / the weekly EMA20 or EMA50.
     # Same index as ``closes`` (same filter), so the EMA series line up bar for bar.
-    ohlc = []
-    for b in bars:
-        if b.get("close") is None:
-            continue
-        bc = float(b["close"])
-        bo = float(b["open"]) if b.get("open") is not None else bc
-        bh = float(b["high"]) if b.get("high") is not None else max(bo, bc)
-        bl = float(b["low"]) if b.get("low") is not None else min(bo, bc)
-        ohlc.append((b.get("time"), bo, bh, bl, bc))
+    ohlc = _ohlc(bars)
     pin_d = pin_at_ema(ohlc, (("EMA20", e20), ("EMA50", e50)))
+    # Weekly reads. ONE weekly series feeds both the weekly pin bar (c7) and the
+    # weekly setup (w1), so the two can never disagree about the same candle - and
+    # when the long history is present it is the series the W chart draws.
     pin_w = None
-    weekly = to_weekly(ohlc)
+    w_uptrend = w_setup = None
+    w20 = w50 = w200 = None
+    w_note = ""
+    weekly = to_weekly(_ohlc(long_bars) if long_bars else ohlc)
     if len(weekly) >= WEEKLY_MIN:
         wcloses = [w[4] for w in weekly]
-        pin_w = pin_at_ema(weekly, (("EMA20", ema(wcloses, 20)), ("EMA50", ema(wcloses, 50))))
+        we20, we50 = ema(wcloses, 20), ema(wcloses, 50)
+        pin_w = pin_at_ema(weekly, (("EMA20", we20), ("EMA50", we50)))
+        w20, w50 = round(we20[-1], 2), round(we50[-1], 2)
+        if len(weekly) >= WEEKLY_200_MIN:
+            w200v = ema(wcloses, 200)[-1]
+            w200 = round(w200v, 2)
+            w_uptrend = we20[-1] > we50[-1] > w200v
+            w_setup = bool(w_uptrend and pin_w is not None)
+        else:
+            w_note = (f"only {len(weekly)} weekly candles - a weekly EMA200 needs "
+                      f"{WEEKLY_200_MIN}" + ("" if long_bars else " (long history not loaded)"))
+    else:
+        w_note = f"only {len(weekly)} weekly candles"
 
     score = 0
     chips: list[dict] = []
@@ -320,6 +378,8 @@ def analyze(bars: list[dict]) -> dict:
         "above_ema": above_ema, "above_pct": above_pct,
         "below_ema": below_ema, "below_pct": below_pct,
         "pin_d": pin_d, "pin_w": pin_w,
+        "w_uptrend": w_uptrend, "w_setup": w_setup, "w_weeks": len(weekly), "w_note": w_note,
+        "w_ema20": w20, "w_ema50": w50, "w_ema200": w200,
         "round10": None if not r10 else r10[0], "round10_step": None if not r10 else r10[1],
         "score": score, "uptrend": uptrend, "rebound": rebound,
         "rebound_pct": None if dist is None else round(dist * 100, 3),
@@ -344,6 +404,7 @@ def conditions(setup: dict) -> dict:
                and BELOW_MIN <= setup["below_pct"] <= BELOW_MAX),
         "c6": setup.get("pin_d") is not None,
         "c7": setup.get("pin_w") is not None,
+        "w1": bool(setup.get("w_setup")),      # None (could not be judged) is not a pass
     }
 
 
@@ -373,12 +434,23 @@ def rank(setup: dict, enabled: dict) -> dict:
     score = 0
     chips: list[dict] = []
     gated = False
+    # The weekly setup is a setup of its own (see w1 above): a ticker that meets it
+    # is not subject to the DAILY gate, and the chip leads the row.
+    w_hit = bool(enabled.get("w1") and met["w1"])
+    if w_hit:
+        p = setup["pin_w"]
+        score += COND_WEIGHT["w1"]
+        chips.append({"t": f"W setup · pin bar w{p['ema']}", "k": "wset",
+                      "title": f"WEEKLY SETUP: weekly EMA20 {setup['w_ema20']} > EMA50 {setup['w_ema50']} "
+                               f"> EMA200 {setup['w_ema200']}, and the weekly candle starting {p['time']} "
+                               f"is a bullish hammer (tail {p['tail']}% of its range) that reached the "
+                               f"weekly {p['ema']} and closed at or above it"})
     if enabled.get("c1"):
         if met["c1"]:
             score += COND_WEIGHT["c1"]
             chips.append({"t": "EMA stack", "k": "good",
                           "title": f"EMA20 {setup['ema20']} > EMA50 {setup['ema50']} > EMA200 {setup['ema200']}"})
-        else:
+        elif not w_hit:
             score -= 1000
             gated = True
     if enabled.get("c2") and met["c2"]:
@@ -402,6 +474,8 @@ def rank(setup: dict, enabled: dict) -> dict:
             p = setup[field]
             start = "candle of" if key == "c6" else "week starting"
             score += COND_WEIGHT[key]
+            if key == "c7" and w_hit:
+                continue        # the W-setup chip already names this candle and its EMA
             chips.append({"t": f"pin bar {tf} {p['ema']}", "k": "pin",
                           "title": f"Bullish hammer on the most recent {word} candle ({start} "
                                    f"{p['time']}): the lower tail is {p['tail']}% of the bar's range, "
@@ -416,27 +490,58 @@ def rank(setup: dict, enabled: dict) -> dict:
             "qualifies": qualifies, "summary": setup.get("summary") or ""}
 
 
-def setup_for(symbol: str) -> dict:
+def _last_two_years(long_bars: list[dict]) -> list[dict]:
+    """The slice of a long daily history that a ``rng="2y"`` fetch would have
+    returned, so the daily conditions come out the same whichever was fetched."""
+    if not long_bars:
+        return long_bars
+    import datetime as _dt
+
+    try:
+        last = _dt.date.fromisoformat(str(long_bars[-1]["time"])[:10])
+    except (KeyError, TypeError, ValueError):
+        return long_bars
+    try:
+        cut = last.replace(year=last.year - 2)
+    except ValueError:                      # 29 Feb -> 28 Feb two years back
+        cut = last.replace(year=last.year - 2, day=28)
+    iso = cut.isoformat()
+    # strictly after: Yahoo's own "2y" starts the day AFTER the two-year mark
+    # (measured: 501 bars either way; ">=" gave 502 and moved EMA200 by a cent)
+    return [b for b in long_bars if str(b.get("time", "")) > iso]
+
+
+def setup_for(symbol: str, deep: bool = False) -> dict:
+    """One ticker's setup. ``deep`` reads ~10 years instead of 2 (needed by the
+    weekly setup, w1) - ONE fetch either way: the daily conditions are computed on
+    the last two years of it. Cached per (symbol, deep); a deep result also serves
+    a shallow request, since it contains everything the shallow one has."""
     sym = (symbol or "").strip().upper()
     if not sym:
         return _blank("no symbol")
     now = time.time()
-    hit = _cache.get(sym)
-    if hit and hit[0] > now:
-        return hit[1]
+    for key in ((sym, True),) if deep else ((sym, False), (sym, True)):
+        hit = _cache.get(key)
+        if hit and hit[0] > now:
+            return hit[1]
     try:
-        out = analyze(fetch_daily_ohlc(sym, rng="2y"))
+        if deep:
+            long_bars = fetch_daily_ohlc(sym, rng=DEEP_RANGE)
+            out = analyze(_last_two_years(long_bars), long_bars=long_bars)
+        else:
+            out = analyze(fetch_daily_ohlc(sym, rng="2y"))
     except Exception:  # noqa: BLE001
         out = _blank("price history unavailable")
-    _cache[sym] = (now + _TTL, out)
+    _cache[(sym, bool(deep))] = (now + _TTL, out)
     return out
 
 
-def setups_for_many(symbols) -> dict[str, dict]:
+def setups_for_many(symbols, deep: bool = False) -> dict[str, dict]:
     """Concurrent, like structure_for_many: a fund's 70 holdings cost a few
-    seconds cold and nothing warm (the price cache is shared with the charts)."""
+    seconds cold and nothing warm (the price cache is shared with the charts).
+    ``deep`` = ``needs_deep(enabled)``: see ``setup_for``."""
     syms = [s.strip().upper() for s in symbols if s and s.strip()]
     if not syms:
         return {}
     with ThreadPoolExecutor(max_workers=8) as ex:
-        return dict(zip(syms, ex.map(setup_for, syms)))
+        return dict(zip(syms, ex.map(lambda s: setup_for(s, deep), syms)))

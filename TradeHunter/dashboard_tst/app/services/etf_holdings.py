@@ -423,7 +423,7 @@ def components(etf: str, sort: str = DEFAULT_SORT, *, extra_filters: str = "",
         if len(rows) > len(heaviest):
             capped = len(heaviest)
         scope = {r["symbol"] for r in heaviest}
-        st = es.setups_for_many([r["symbol"] for r in heaviest])
+        st = es.setups_for_many([r["symbol"] for r in heaviest], deep=es.needs_deep(enabled))
         for r in rows:
             if r["symbol"] in scope:
                 r["setup"] = st.get(r["symbol"]) or es._blank()

@@ -271,7 +271,8 @@ def _symbols_context(request: Request, sector: str, industry: str, user: User,
     enabled = es.clean_enabled(prefs.get(SYM_CONDS_PREF))
 
     if tickers and any(enabled.values()):
-        setups = es.setups_for_many([t["symbol"] for t in tickers])
+        setups = es.setups_for_many([t["symbol"] for t in tickers],
+                                    deep=es.needs_deep(enabled))
         for t in tickers:
             st = setups.get(t["symbol"]) or es._blank()
             t["rank"] = es.rank(st, enabled)
