@@ -143,6 +143,28 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-20 - v4.123: the SL tag says how many ATRs away the stop is
+
+User: *"in the setup the SL i need it to be shown whether is 1 ATR or if adjusted 0.x ATR"*. The SL
+tag read `SL 170.25  -1R` - true of every stop by definition, so it said nothing. It now reads
+`SL 82.83 · 1 ATR` for the stop the trade tool seeds and `SL 83.47 · 0.51 ATR` / `... 1.97 ATR`
+once it has been dragged or typed (`atrMultiple()`: up to two decimals, trailing zeros dropped,
+exactly "1 ATR" within +/-0.005; falls back to `-1R` when the chart has no ATR).
+
+- The unit is THIS chart's latest DAILY ATR(14) - the number the tool sized the stop with and the
+  legend shows (on W it is still the daily figure, see v4.119). A call made weeks ago therefore
+  reads against today's volatility, not the day it was made; the editor's tooltip says so.
+- The editor's summary line says the same thing from the same helper, so the two cannot disagree:
+  `Long · risk 0.66/share = 0.51 ATR · 2.00R`.
+- **Handles moved just OUTSIDE the box's right edge** (`tradeBox().hx`, shared by `paint()` and
+  `corners()`). With a quantity on the Entry tag (v4.122) and an ATR multiple on the SL tag, the
+  labels outgrew the 20-bar box and the grab circles sat on the end of the text
+  (`SL 82.83 · 1 A●`). Outside, they cover nothing and are still where the hand goes.
+
+Verified in the browser (KO): a new setup read "1 ATR" (stop distance / ATR = 1.000); dragging the
+stop by its outside handle gave "0.51 ATR" on the tag and in the editor, PT following at 2.0R and
+the quantity going 1542 -> 3028. Test drawing removed afterwards.
+
 ### 2026-09-20 - v4.122: drag the Entry, SL and PT on the chart - and "Save revision" wakes up when you do
 
 User: *"in the chart i need to be able to move the Entry, SL and PT. move by entry will move the

@@ -861,7 +861,10 @@
         // not be open to show it. Blank until the member has given an account value.
         var qz = sizeTrade(d.a.p, d.sl);
         ctag(ye, 'Entry ' + fmt(d.a.p) + (qz.qty != null ? '  ·  ' + qz.qty + ' sh' : ''), ACCENT);
-        ctag(ys, 'SL ' + fmt(d.sl) + '  \u22121R', '#f87171');
+        // "-1R" said nothing (the stop is 1R by definition). How many ATRs away it
+        // sits does: "1 ATR" is the seeded stop, anything else is one the member moved.
+        var am = atrMultiple(d.a.p, d.sl);
+        ctag(ys, 'SL ' + fmt(d.sl) + '  \u00b7  ' + (am || '\u22121R'), '#f87171');
         ctag(yp, 'PT ' + fmt(d.pt) + '  ' + rr.toFixed(1) + 'R', '#34d399');
         if (d.lvl != null) {
           // the level the whole setup hangs off, drawn as a dashed marker
@@ -885,8 +888,8 @@
           }
         }
         if (sel) {
-          // handles hug the right edge now that there is no box corner to grab
-          var hx = Math.max(20, w - 16);
+          // just outside the box's right edge - see tradeBox()
+          var hx = bx.hx;
           ctx.lineWidth = 1.5;
           ctx.strokeStyle = ACCENT;
           [[hx, ye], [hx, ys], [hx, yp]].forEach(function (pp) {
@@ -1651,8 +1654,12 @@
             f.outEl.appendChild(k); f.outEl.appendChild(v);
           });
         }
-        f.rrEl.textContent = dir + ' \u00b7 risk ' + risk.toFixed(2) + '/share \u00b7 ' +
-          rr.toFixed(2) + 'R';
+        var amP = atrMultiple(cur.a.p, cur.sl);
+        f.rrEl.textContent = dir + ' \u00b7 risk ' + risk.toFixed(2) + '/share' +
+          (amP ? ' = ' + amP : '') + ' \u00b7 ' + rr.toFixed(2) + 'R';
+        f.rrEl.title = amP ? 'The stop sits ' + amP + ' from the entry, measured in this chart\'s ' +
+          'latest daily ATR(14) = ' + atrLatest.toFixed(2) + '. The trade tool seeds it at 1 ATR; ' +
+          'any other figure is a stop you adjusted.' : '';
         if (f.szEl) {
           f.szEl.textContent = sz.qty == null
             ? 'Set an account value to size this trade.'
@@ -1835,6 +1842,21 @@
     var GRIP = 7;                       // px radius that counts as "on the handle"
     var grab = null, hoverIdx = -1, hoverPart = null;
 
+    /** The stop's distance from the entry in ATRs, as text: "1 ATR" for the stop the
+        trade tool seeds, "0.8 ATR" / "1.97 ATR" once it has been adjusted (user,
+        2026-09-20: "in the setup the SL i need it to be shown whether is 1 ATR or if
+        adjusted 0.x ATR"). The unit is THIS chart's latest DAILY ATR(14) - the same
+        number the tool sized the stop with and the legend shows - so a call made
+        weeks ago reads against today's volatility, not the day it was made. Up to
+        two decimals, trailing zeros dropped; '' when there is no ATR to divide by. */
+    function atrMultiple(entry, stop) {
+      if (!(atrLatest > 0) || entry == null || stop == null) return '';
+      var m = Math.abs(entry - stop) / atrLatest;
+      if (!isFinite(m)) return '';
+      if (Math.abs(m - 1) < 0.005) return '1 ATR';
+      return String(parseFloat(m.toFixed(2))) + ' ATR';
+    }
+
     /** A trade setup's box in pixels: from its anchor candle to its second point
         (anchor + 20 bars), clamped to the pane. ONE definition, shared by paint()
         and the hit-tests - they drifted apart once already (see corners). */
@@ -1844,7 +1866,12 @@
       xa = Math.max(0, Math.min(w - 2, xa));
       var xb = d.b ? xOf(d.b) : null;
       if (xb == null || !isFinite(xb) || xb <= xa + 8) xb = Math.min(w, xa + 160);
-      return { xa: xa, xb: Math.min(w, xb) };
+      xb = Math.min(w, xb);
+      // The grab circles sit just OUTSIDE the box's right edge. Inside it they landed
+      // on the end of the labels once those grew a quantity and an ATR multiple
+      // ("SL 82.83 · 1 A●"); out here they cover nothing and are still where the eye
+      // goes to grab the line. Kept on-canvas when the box reaches the pane's edge.
+      return { xa: xa, xb: xb, hx: Math.max(20, Math.min(w - 8, xb + 10)) };
     }
 
     function corners(d) {
@@ -1855,7 +1882,7 @@
         // v4.122 this still used the pane's right edge, from when the bands ran the
         // full width (the box was shortened on 2026-09-16): the circles were drawn
         // in one place and tested for in another, so clicking one never grabbed it.
-        var hx = Math.max(20, tradeBox(d, el.clientWidth).xb - 16);
+        var hx = tradeBox(d, el.clientWidth).hx;
         return [{ x: hx, y: ey, part: 'entry' }, { x: hx, y: sy, part: 'sl' },
                 { x: hx, y: py, part: 'pt' }];
       }
