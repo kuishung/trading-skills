@@ -143,6 +143,50 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-20 - v4.122: drag the Entry, SL and PT on the chart - and "Save revision" wakes up when you do
+
+User: *"in the chart i need to be able to move the Entry, SL and PT. move by entry will move the
+whole setup. Move the SL will move the PT and the quantity. after moving the revise setup button
+will be available to click."*
+
+**Why it could not be done** (`_price_chart.html`) - two things, the first a bug:
+- The grab handles were DRAWN at the right edge of the setup box but TESTED FOR at the right edge
+  of the pane - left over from when the bands ran the full width (the box was shortened on
+  2026-09-16). Clicking a circle therefore never grabbed it; the click fell through to the "body",
+  which moved the level and re-seeded the stop. `tradeBox()` is now the ONE definition of the box,
+  used by `paint()`, `corners()`, `hit()` and `hitPart()`.
+- On the Curated page and on a Sector chart / pop-out of a curated ticker the setup was LOCKED
+  (`chart_setup_locked`) - the user's own rule of 2026-09-10 ("the shaded line should be fixed and
+  not movable by mouse"). Today's request reverses it, so the flag is gone. Its worry - a level
+  nudged by accident while panning - is answered differently: **a setup is grabbed only ON one of
+  its lines, never by its interior** (there is no 'body' part for a setup any more, so a pan across
+  it cannot move it), and on those charts nothing a drag does is kept until "Save revision".
+
+**What a drag does now**
+- **Any of the three LINES can be grabbed, anywhere along it** inside the box (`hitPart` picks the
+  nearest of SL / PT / Entry; the dashed level line counts as the entry). Cursor: `ns-resize`.
+- **Entry -> the WHOLE SETUP moves**: level, entry, stop and target shift by the same amount, so
+  risk per share, the R-multiple and the quantity are unchanged. (From 2026-09-08 a drag re-seeded
+  the stop at 1xATR under the new entry. TYPING a new level in the editor still does that - there
+  the level is being replaced and the risk starts over; a drag slides a finished setup.)
+- **SL -> the PT rides along at the same R, and the QUANTITY changes** with the new risk per share.
+  The quantity is now on the Entry tag (`Entry 180.50 · 195 sh`), because it is the number that
+  moves while a stop is dragged and the editor may not be open to show it.
+- **PT -> changes the R-multiple** (unchanged).
+- **When a drag ends the editor opens beside it** (or just refreshes if already open), so the
+  button is there to click: **⚑ Save revision** on a call's own setup, `⚑ Curate ...` on a new one.
+- **Save revision is DISABLED until the levels differ** from what the call has on record (dragged
+  or typed), with a tooltip saying so; a `data-busy` flag replaces `disabled` as the "request in
+  flight" marker so the two states cannot be confused.
+
+Verified with real mouse drags in the browser (NVDA call #1, Sector pop-out, the previously locked
+chart): SL 170.25 -> 165.45 moved PT 205 -> 216.47 at the same 2.39R and quantity 195 -> 132,
+editor opened, Save revision enabled; Entry drag moved entry / SL / PT by exactly +10.03 each with
+risk 15.05, R 2.39 and quantity 132 unchanged; a fresh load showed Save revision disabled; a drag
+through the box interior left the setup untouched and opened nothing; unsaved drags were discarded
+on reload; Save revision wrote a `chart` revision of call #1 (same date, still one NVDA call).
+Dev data restored afterwards.
+
 ### 2026-09-20 - v4.121: a separate WEEKLY SETUP - weekly pin bar at wEMA20/50 with the weekly trend stacked
 
 User: *"in the sector and industry i want a separate setup for pin bar forming in the Weekly EMA 20

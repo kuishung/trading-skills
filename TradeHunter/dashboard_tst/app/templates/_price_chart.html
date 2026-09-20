@@ -449,9 +449,8 @@
   // The live switch the price axis reads: on from the start on the Curated page,
   // flipped on by setupDrawing() when a stored setup is framed under FOCUS_SETUP.
   var focusSetupOn = !!SETUP_SEED;
-  // Mouse-drag of the trade setup disabled (Curated). The editor's number boxes
-  // remain the way to move a level; see beginGrab().
-  var SETUP_LOCKED = {{ (true if (chart_setup_locked is defined and chart_setup_locked) else false)|tojson }};
+  // (SETUP_LOCKED / chart_setup_locked lived here until v4.122: mouse-drag of the
+  // setup was disabled on the Curated charts. See beginGrab() for what replaced it.)
   var curatedCall = null;
   var curatedShown = false;            // are the curated lines currently painted?
   var curatedLevels = [];              // prices the autoscale must keep in view
@@ -821,15 +820,10 @@
         // curated on instead of striping the whole history.
         var ye = yOf(d.a.p), ys = yOf(d.sl), yp = yOf(d.pt);
         if (ye == null || ys == null || yp == null) { ctx.restore(); return; }
-        var xa = xOf(d.a);
-        if (xa == null || !isFinite(xa)) xa = 0;
-        xa = Math.max(0, Math.min(w - 2, xa));
         // The box ENDS at the setup's second point (anchor + 20 bars), like TV's
         // tool - it must not run into the price axis (user, 2026-09-16: "the
         // setup line should not span to the price axis"). Off-screen -> the edge.
-        var xb = d.b ? xOf(d.b) : null;
-        if (xb == null || !isFinite(xb) || xb <= xa + 8) xb = Math.min(w, xa + 160);
-        xb = Math.min(w, xb);
+        var bx = tradeBox(d, w), xa = bx.xa, xb = bx.xb;
         var w0 = w;            // the pane's full width, for the level's own tag
         w = xb;                // everything below draws to the box's right edge
         var bw = w - xa;
@@ -861,7 +855,12 @@
           var cx = xa + (w - xa) / 2 - tw / 2;
           tag(ctx, Math.max(BAR_RIGHT + 4, Math.min(cx, w - tw - 2)), yy, text, bg, h, true);
         }
-        ctag(ye, 'Entry ' + fmt(d.a.p), ACCENT);
+        // The quantity rides on the Entry tag (user, 2026-09-20: "move the SL will
+        // move the PT and the quantity"): it is risk-per-share that sets it, so it is
+        // the number that changes while a stop is being dragged - and the editor may
+        // not be open to show it. Blank until the member has given an account value.
+        var qz = sizeTrade(d.a.p, d.sl);
+        ctag(ye, 'Entry ' + fmt(d.a.p) + (qz.qty != null ? '  ·  ' + qz.qty + ' sh' : ''), ACCENT);
         ctag(ys, 'SL ' + fmt(d.sl) + '  \u22121R', '#f87171');
         ctag(yp, 'PT ' + fmt(d.pt) + '  ' + rr.toFixed(1) + 'R', '#34d399');
         if (d.lvl != null) {
@@ -1122,6 +1121,7 @@
       if (revising) fields.row_id = targetRow;
       var was = btn.textContent;
       btn.disabled = true;
+      btn.dataset.busy = '1';      // syncCurateBtn leaves the status text alone meanwhile
       btn.textContent = revising ? 'Saving\u2026' : 'Curating\u2026';
       fetch('/curated/from-chart', {
         method: 'POST', credentials: 'same-origin',
@@ -1133,7 +1133,7 @@
         if (!j || !j.ok) {
           btn.textContent = (j && j.error) || 'Failed';
           btn.title = (j && j.error) || 'Could not save';
-          setTimeout(function () { btn.textContent = was; btn.disabled = false; }, 2500);
+          setTimeout(function () { btn.textContent = was; btn.disabled = false; btn.dataset.busy = ''; syncCurateBtn(); }, 2500);
           return;
         }
         btn.textContent = j.revised ? '\u2713 Revision saved' : '\u2713 Curated';
@@ -1200,7 +1200,7 @@
         }, 1200);
       }).catch(function () {
         btn.textContent = 'Failed';
-        setTimeout(function () { btn.textContent = was; btn.disabled = false; }, 2500);
+        setTimeout(function () { btn.textContent = was; btn.disabled = false; btn.dataset.busy = ''; syncCurateBtn(); }, 2500);
       });
     }
     function schedule() {
@@ -1231,7 +1231,11 @@
           var ey = yOf(d.a.p), sy = yOf(d.sl), py = yOf(d.pt);
           if (ey == null || sy == null || py == null) continue;
           var ly = d.lvl != null ? yOf(d.lvl) : null;
-          var near = [ey, sy, py, ly].some(function (yy) {
+          // Entry / SL / PT are drawn only across the box; the dashed level runs the
+          // whole pane. A line is hit where it is DRAWN, not where it would be.
+          var tb = tradeBox(d, el.clientWidth);
+          var inBox = x >= tb.xa - HIT && x <= tb.xb + HIT;
+          var near = (inBox ? [ey, sy, py, ly] : [ly]).some(function (yy) {
             return yy != null && Math.abs(yy - y) <= HIT;
           });
           if (near) return i;
@@ -1397,13 +1401,29 @@
         the editor opens AND whenever the ticker's curated state changes, so a call
         made in this session immediately turns "Curate setup" into "Curate as new call". */
     function syncCurateBtn() {
-      if (!curateBtn || curateBtn.disabled) return;   // mid-request: leave its status text
-      if (isTheCall(drawings[panelIdx])) {
+      if (!curateBtn || curateBtn.dataset.busy === '1') return;   // mid-request: leave its status text
+      var dcur = drawings[panelIdx];
+      function enable(on) {
+        curateBtn.disabled = !on;
+        curateBtn.style.opacity = on ? '' : '.45';
+        curateBtn.style.cursor = on ? 'pointer' : 'not-allowed';
+      }
+      if (isTheCall(dcur)) {
+        // Available once there is something to revise: a level was dragged, or a
+        // number typed, away from what the call has on record (user, 2026-09-20:
+        // "after moving the revise setup button will be available to click").
+        function off(a, b) { return a == null || b == null || Math.abs(a - b) > Math.abs(b) * 1e-4 + 0.004; }
+        var changed = !SETUP_SEED || off(dcur.a.p, SETUP_SEED.entry) ||
+                      off(dcur.sl, SETUP_SEED.stop) || off(dcur.pt, SETUP_SEED.target);
         curateBtn.textContent = '⚑ Save revision';
-        curateBtn.title = 'Save these levels as a new revision of the ' + symbol +
-          ' call you made on ' + CURATED_ON +
-          '. The curated date does not change, so it is still judged from that day.';
+        enable(changed);
+        curateBtn.title = changed
+          ? 'Save these levels as a new revision of the ' + symbol + ' call you made on ' +
+            CURATED_ON + '. The curated date does not change, so it is still judged from that day.'
+          : 'These are the levels the call already has. Drag the Entry, SL or PT line on the ' +
+            'chart (or change a number above) and this becomes available.';
       } else {
+        enable(true);
         // A new call (see curateSetup). When the ticker already has one, say what
         // happens to it - and how a revision is made instead.
         var prior = CURATED_ROW ? CURATED_ON : (curatedCall && curatedCall.curated_on);
@@ -1815,13 +1835,27 @@
     var GRIP = 7;                       // px radius that counts as "on the handle"
     var grab = null, hoverIdx = -1, hoverPart = null;
 
+    /** A trade setup's box in pixels: from its anchor candle to its second point
+        (anchor + 20 bars), clamped to the pane. ONE definition, shared by paint()
+        and the hit-tests - they drifted apart once already (see corners). */
+    function tradeBox(d, w) {
+      var xa = xOf(d.a);
+      if (xa == null || !isFinite(xa)) xa = 0;
+      xa = Math.max(0, Math.min(w - 2, xa));
+      var xb = d.b ? xOf(d.b) : null;
+      if (xb == null || !isFinite(xb) || xb <= xa + 8) xb = Math.min(w, xa + 160);
+      return { xa: xa, xb: Math.min(w, xb) };
+    }
+
     function corners(d) {
       if (d.type === 'trade') {
         var ey = yOf(d.a.p), sy = yOf(d.sl), py = yOf(d.pt);
         if (ey == null || sy == null || py == null) return null;
-        // full-width bands: the grab points live at the right edge. 'x2' is gone
-        // with the box it used to resize.
-        var hx = Math.max(20, el.clientWidth - 16);
+        // The handles sit at the BOX's right edge - where paint() draws them. Until
+        // v4.122 this still used the pane's right edge, from when the bands ran the
+        // full width (the box was shortened on 2026-09-16): the circles were drawn
+        // in one place and tested for in another, so clicking one never grabbed it.
+        var hx = Math.max(20, tradeBox(d, el.clientWidth).xb - 16);
         return [{ x: hx, y: ey, part: 'entry' }, { x: hx, y: sy, part: 'sl' },
                 { x: hx, y: py, part: 'pt' }];
       }
@@ -1846,7 +1880,29 @@
         }
       }
       var b = hit(x, y);
-      return b >= 0 ? { idx: b, part: 'body' } : null;
+      if (b < 0) return null;
+      var t = drawings[b];
+      if (t && t.type === 'trade') {
+        // A setup is grabbed BY ITS LINES, anywhere along them (user, 2026-09-20: "i
+        // need to be able to move the Entry, SL and PT"). hit() only says "near one
+        // of the setup's lines"; which one decides what the drag does. The nearest
+        // wins; the dashed level sits a fraction of a percent from the entry and
+        // moves the whole setup just the same, so it counts as the entry. There is
+        // no 'body' any more: the interior is left to the chart, so panning across a
+        // setup cannot move it by accident.
+        var tbx = tradeBox(t, el.clientWidth);
+        var inside = x >= tbx.xa - HIT && x <= tbx.xb + HIT;
+        var cand = (inside ? [['sl', yOf(t.sl)], ['pt', yOf(t.pt)], ['entry', yOf(t.a.p)]] : [])
+          .concat([['entry', t.lvl != null ? yOf(t.lvl) : null]]);
+        var best = null, bestD = HIT + 0.01;
+        cand.forEach(function (c) {
+          if (c[1] == null) return;
+          var dy = Math.abs(c[1] - y);
+          if (dy < bestD) { bestD = dy; best = c[0]; }
+        });
+        return best ? { idx: b, part: best } : null;
+      }
+      return { idx: b, part: 'body' };
     }
 
     // ---- a setup is DERIVED from a level ---------------------------------
@@ -1911,16 +1967,13 @@
     function beginGrab(g, x, y) {
       var d = drawings[g.idx];
       if (!d) return false;
-      // A LOCKED trade setup (the Curated chart) is selectable but not draggable:
-      // the levels there are a recorded call, and nudging one with the mouse is
-      // both easy to do by accident and impossible to do precisely. Changing a
-      // number in the editor is the only way to move it — see chart_setup_locked.
-      // Returning false leaves the gesture to the chart, so the pane still pans.
-      if (SETUP_LOCKED && d.type === 'trade') {
-        selected = g.idx;
-        schedule();
-        return false;
-      }
+      // A setup is draggable on EVERY chart, the Curated ones included (user,
+      // 2026-09-20: "in the chart i need to be able to move the Entry, SL and PT").
+      // It used to be locked there (chart_setup_locked): a recorded call should not
+      // be nudged by accident. What made an accident likely is gone instead - a
+      // setup is now grabbed only ON one of its lines, never by its interior, so
+      // panning across it cannot move it - and nothing a drag does on those charts is
+      // kept until "Save revision" is pressed (the layer is ephemeral there).
       var l = c2l(x), pr = series.coordinateToPrice(y);
       if (l == null || pr == null) return false;
       grab = {
@@ -1944,24 +1997,26 @@
         var pr0 = series.coordinateToPrice(q.y);
         if (pr0 != null) d.p = pr0;
       } else if (d.type === 'trade') {
-        var tp = series.coordinateToPrice(q.y), tl = c2l(q.x);
-        if (grab.part === 'body' || grab.part === 'entry') {
-          // Dragging the setup moves the LEVEL it hangs off, and the three prices
-          // are re-derived from it. Moving the entry while leaving the level behind
-          // would make the editor lie about where the entry came from.
+        var tp = series.coordinateToPrice(q.y);
+        grab.moved = true;
+        grab.at = q;
+        if (grab.part === 'entry') {
+          // Dragging the ENTRY moves the WHOLE SETUP (user, 2026-09-20: "move by
+          // entry will move the whole setup"): level, entry, stop and target shift
+          // together, so the risk per share, the R-multiple and therefore the
+          // quantity stay exactly what they were - the same trade, somewhere else.
+          // The level moves with it, so the editor never lies about where the entry
+          // came from. (From 2026-09-08 until v4.122 a drag re-seeded the stop at
+          // 1xATR below the new entry instead. That is still what TYPING a new level
+          // in the editor does - there the level is being replaced, and the risk
+          // starts over; here a finished setup is being slid, and keeps its stop.)
           if (tp == null) return;
-          var tdp = tp - grab.p0;
-          d.lvl = (grab.orig.lvl != null ? grab.orig.lvl : grab.orig.a.p) + tdp;
-          if (tl != null && grab.part === 'body') {
-            var tdl = tl - grab.l0;
-            d.a = logicalToPoint(logicalOf(grab.orig.a) + tdl, d.a.p);
-            d.b = logicalToPoint(logicalOf(grab.orig.b) + tdl, d.a.p);
-          }
-          // Dragging the shape re-anchors the LEVEL, so the stop restarts at
-          // 1xATR(14) below the new entry — the same rule as typing a new level in
-          // the editor. (Until 2026-09-08 a body drag translated the stop along
-          // with it; one rule for "the level moved" is easier to predict than two.)
-          deriveTrade(d, { resetStop: true });
+          var o0 = grab.orig, risk0 = o0.a.p - o0.sl;          // signed: + for a long
+          d.lvl = (o0.lvl != null ? o0.lvl : o0.a.p) + (tp - grab.p0);
+          d.sl = o0.sl;                 // placeholder on the right side; fixed below
+          deriveTrade(d);               // entry from the moved level
+          d.sl = d.a.p - risk0;         // the stop keeps its distance from the entry
+          deriveTrade(d);               // target at the same R off the new entry
         } else if (grab.part === 'sl') {
           if (tp == null) return;
           // Moving the stop resizes R, so the target RIDES ALONG at the same
@@ -1999,9 +2054,20 @@
 
     function onGrabUp() {
       if (!grab) return;
+      var g = grab;
       endGrab();
       save();                                   // one write per drag, not per frame
       redraw();
+      // A setup that was just moved wants its button next: "Save revision" for a
+      // curated call, "Curate ..." for a new idea (user, 2026-09-20: "after moving
+      // the revise setup button will be available to click"). Open the editor beside
+      // where the drag ended unless it is already open on this setup - in which case
+      // it has been updating live and only the button state needs a refresh.
+      var moved = drawings[g.idx];
+      if (g.moved && moved && moved.type === 'trade') {
+        if (panel && panelIdx === g.idx) refreshPanel();
+        else openPanel(g.idx, g.at ? g.at.x : 0, g.at ? g.at.y : 0);
+      }
     }
 
     function endGrab() {
@@ -2020,10 +2086,9 @@
       var idx = h ? h.idx : -1, part = h ? h.part : null;
       if (idx !== hoverIdx || part !== hoverPart) {
         hoverIdx = idx; hoverPart = part;
-        // A locked setup must not advertise a grab/move cursor it will refuse to
-        // honour — that reads as a broken drag rather than a deliberate lock.
-        var locked = h && SETUP_LOCKED && drawings[h.idx] && drawings[h.idx].type === 'trade';
-        el.style.cursor = (!h || locked) ? '' : (part === 'body' ? 'move' : 'grab');
+        // A setup's lines only move up and down - say so with the cursor.
+        var onSetup = h && drawings[h.idx] && drawings[h.idx].type === 'trade';
+        el.style.cursor = !h ? '' : (onSetup ? 'ns-resize' : (part === 'body' ? 'move' : 'grab'));
         schedule();
       }
     }

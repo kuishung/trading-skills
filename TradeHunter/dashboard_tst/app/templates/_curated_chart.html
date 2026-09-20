@@ -46,13 +46,15 @@
 {% set chart_curated_row = row_id %}
 {% set chart_curated_on = row.curated_on %}
 {% set chart_setup_seed = {'entry': rev.entry, 'stop': rev.stop, 'target': rev.target} %}
-{# The setup is EDITABLE but not DRAGGABLE here (user, 2026-09-10: "the shaded line
-   should be fixed and not movable by mouse, only changing the value in the box will
-   move the shaded levels"). These levels are a recorded call: nudging one by a pixel
-   is easy to do by accident while panning, and impossible to do precisely. Typing
-   the number is the deliberate act, and it is still one click away — double-click
-   the setup to open the editor. See SETUP_LOCKED in _price_chart.html. #}
-{% set chart_setup_locked = true %}
+{# The setup is editable AND draggable here since v4.122 (user, 2026-09-20: "in the
+   chart i need to be able to move the Entry, SL and PT ... after moving the revise
+   setup button will be available to click"). That REVERSES the user's own rule of
+   2026-09-10 ("the shaded line should be fixed and not movable by mouse, only changing
+   the value in the box will move the shaded levels"), whose worry was a level nudged
+   by accident while panning. Two things answer it now: a setup is grabbed only ON one
+   of its three lines (its interior is left to the chart, so a pan cannot move it), and
+   on this page nothing a drag does is kept until "Save revision" is pressed. The old
+   `chart_setup_locked` flag is gone with it. #}
 {% set chart_refresh = {'url': '/curated/chart?row=' ~ row_id, 'target': '#curatedChartBody'} %}
 
 <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1 shrink-0">
