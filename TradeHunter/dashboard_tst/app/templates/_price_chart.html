@@ -405,6 +405,14 @@
   var lastEarn = {{ (chart_earnings if chart_earnings else None)|tojson }};  // 'YYYY-MM-DD' or null
   var supp = {{ (chart_support if (chart_support is defined and chart_support is not none) else None)|tojson }};   // curator support level or null
   var resis = {{ (chart_resistance if (chart_resistance is defined and chart_resistance is not none) else None)|tojson }}; // curator resistance level or null
+  // A SUPPORT BOUNCE the scanner found (services/ema_setup.py, the "support bounce"
+  // setup, v4.124): {level, zone: [lo, hi], touches: [{time, price, kind}], bounce:
+  // {time, kind}, d_ema, w_ema, vol_ratio, label}. Drawn as a read-only price line
+  // at the level plus a marker under every counted touch and under the bounce
+  // candle, so "bounced off support with 3 touches" can be checked against the
+  // candles it was read from. Price lines, not a drawing, for the same reason as
+  // curLevels: a scanner's line must never land in the member's saved drawings.
+  var BOUNCE = {{ (chart_bounce if (chart_bounce is defined and chart_bounce) else None)|tojson }};
   // A curated call's three levels, shown READ-ONLY. Deliberately price lines and
   // not a 'trade' drawing: a drawing would be editable, would be saved to this
   // symbol's drawings, and would then disagree with the revision it came from.
@@ -2413,7 +2421,7 @@
           if (r && r.priceRange) {
             (focusSetupOn ? [] : [matp, mbp, supp, resis])
               .concat([curLevels && curLevels.entry, curLevels && curLevels.stop,
-                       curLevels && curLevels.target])
+                       curLevels && curLevels.target, BOUNCE && BOUNCE.level])
               .concat(tradeLevels).concat(curatedLevels).concat(spreadLevels).forEach(function (v) {
               if (v != null) {
                 r.priceRange.minValue = Math.min(r.priceRange.minValue, v);
@@ -2510,6 +2518,10 @@
       // it: a chip in the header, and a marker on each of the four swings the
       // verdict was read from — a label saying "lower high" is an assertion
       // until you can see WHICH high it means.
+      // ONE setMarkers call for everything that marks a candle: lightweight-charts
+      // v4 replaces the whole set on every call, so the structure pivots and the
+      // support-bounce marks (below) are merged into this array first.
+      var candleMarks = [];
       (function () {
         var st = d && d.structure;
         var chip = document.getElementById('chartStruct');
@@ -2544,10 +2556,48 @@
               text: p.kind
             };
           });
-          mk.sort(function (a, b) { return a.time < b.time ? -1 : (a.time > b.time ? 1 : 0); });
-          if (mk.length) s.setMarkers(mk);
+          candleMarks = candleMarks.concat(mk);
         } catch (e) { /* markers are decoration; never break the chart */ }
       })();
+      // ---- support bounce (the scanner's setup) ---------------------------
+      // The level as a solid line; every counted touch and the bounce candle as a
+      // marker BELOW its candle. On W a daily date is snapped to the weekly candle
+      // that contains it (bars are stamped with the week's first session; a marker
+      // whose time is not a bar's time does not render).
+      (function () {
+        if (!BOUNCE || BOUNCE.level == null) return;
+        try {
+          s.createPriceLine({ price: BOUNCE.level, color: '#22d3ee', lineWidth: 2, lineStyle: 0,
+            axisLabelVisible: true, title: BOUNCE.label || 'Support' });
+          var times = bars.map(function (b) { return b.time; });
+          function snap(t) {
+            if (!t) return null;
+            if (!WEEKLY) return times.indexOf(t) >= 0 ? t : null;
+            var hit = null;
+            for (var i = 0; i < times.length; i++) { if (times[i] <= t) hit = times[i]; else break; }
+            return hit;
+          }
+          var n = (BOUNCE.touches || []).length;
+          (BOUNCE.touches || []).forEach(function (p, i) {
+            var t = snap(p.time);
+            if (!t) return;
+            candleMarks.push({ time: t, position: 'belowBar', shape: 'circle', color: '#22d3ee',
+              text: (p.kind === 'flip' ? 'R→S ' : 'touch ') + (i + 1) + '/' + n });
+          });
+          var bt = BOUNCE.bounce && snap(BOUNCE.bounce.time);
+          if (bt) {
+            candleMarks.push({ time: bt, position: 'belowBar', shape: 'arrowUp', color: '#a3e635',
+              text: (BOUNCE.bounce.kind === 'engulf' ? 'engulfing' : 'pin bar')
+                    + (BOUNCE.vol_ratio ? ' ×' + BOUNCE.vol_ratio + ' vol' : '') });
+          }
+        } catch (e) { /* decoration only */ }
+      })();
+      try {
+        if (candleMarks.length) {
+          candleMarks.sort(function (a, b) { return a.time < b.time ? -1 : (a.time > b.time ? 1 : 0); });
+          s.setMarkers(candleMarks);
+        }
+      } catch (e) { /* markers are decoration; never break the chart */ }
 
       // MATP / MBP reference lines. The handles are KEPT so the chart's Run-MATP button
       // can redraw them in place when a finished run lands (__paintMatp below), instead

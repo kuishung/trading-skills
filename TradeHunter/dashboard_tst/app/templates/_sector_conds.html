@@ -18,10 +18,16 @@
   <span class="basis-full h-0"></span>
   <span class="text-[10px] text-slate-500 mr-0.5" title="A separate setup judged on the WEEKLY chart only. It qualifies a ticker by itself; the daily 'must' above does not apply to it.">Weekly</span>
   {% endif %}
+  {# s1 (v4.124) is likewise a SETUP OF ITS OWN - the bull-put-spread entry: a
+     high-volume pin bar / engulfing candle at a horizontal support, in an uptrend. #}
+  {% if k == 's1' %}
+  <span class="basis-full h-0"></span>
+  <span class="text-[10px] text-slate-500 mr-0.5" title="A separate setup: EMA 20>50>200 AND the latest daily candle is a high-volume bullish pin bar or engulfing candle at a horizontal support with previous touches. Graded higher when the level sits on the daily or weekly EMA20 / EMA50.">Bounce</span>
+  {% endif %}
   <label class="cursor-pointer select-none text-[10px] px-1.5 py-0.5 rounded border transition
-                {% if enabled[k] and k == 'w1' %}border-indigo-400/60 bg-indigo-500/20 text-indigo-200 font-semibold{% elif enabled[k] %}border-emerald-500/60 bg-emerald-500/15 text-emerald-300{% else %}border-slate-700 text-slate-500 hover:border-slate-500 hover:text-slate-300{% endif %}"
+                {% if enabled[k] and k == 'w1' %}border-indigo-400/60 bg-indigo-500/20 text-indigo-200 font-semibold{% elif enabled[k] and k == 's1' %}border-cyan-400/60 bg-cyan-500/20 text-cyan-200 font-semibold{% elif enabled[k] %}border-emerald-500/60 bg-emerald-500/15 text-emerald-300{% else %}border-slate-700 text-slate-500 hover:border-slate-500 hover:text-slate-300{% endif %}"
          title="{{ cond_labels[k][1] }}">
-    <input type="checkbox" name="{{ k }}" class="sr-only" {% if enabled[k] %}checked{% endif %}>{{ cond_labels[k][0] }}{% if k == 'c1' %}<span class="opacity-70"> &middot; must</span>{% endif %}{% if k == 'w1' %}<span class="opacity-70 font-normal"> &middot; wEMA 20&gt;50&gt;200 + pin bar</span>{% endif %}
+    <input type="checkbox" name="{{ k }}" class="sr-only" {% if enabled[k] %}checked{% endif %}>{{ cond_labels[k][0] }}{% if k == 'c1' %}<span class="opacity-70"> &middot; must</span>{% endif %}{% if k == 'w1' %}<span class="opacity-70 font-normal"> &middot; wEMA 20&gt;50&gt;200 + pin bar</span>{% endif %}{% if k == 's1' %}<span class="opacity-70 font-normal"> &middot; pin bar / engulfing at support, high vol</span>{% endif %}
   </label>
   {% endfor %}
 </form>

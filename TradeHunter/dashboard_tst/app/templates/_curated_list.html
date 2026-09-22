@@ -309,6 +309,8 @@
                      {% elif ch.k == 'watch' %}bg-sky-500/15 text-sky-300
                      {% elif ch.k == 'pin' %}bg-fuchsia-500/20 text-fuchsia-200 font-semibold
                      {% elif ch.k == 'wset' %}bg-indigo-500/25 text-indigo-200 font-semibold ring-1 ring-indigo-400/50
+                     {% elif ch.k == 'sup' %}bg-cyan-500/25 text-cyan-200 font-semibold ring-1 ring-cyan-400/50
+                     {% elif ch.k == 'supx' %}bg-cyan-500/10 text-cyan-300
                      {% else %}bg-slate-700/50 text-slate-400{% endif %}" title="{{ ch.title }}">{{ ch.t }}</span>
         {% else %}
         <span class="text-[10px] text-slate-600">{% if sr.score is none %}{{ sr.summary }}{% elif sr.gated %}not in EMA uptrend{% else %}no setup condition met{% endif %}</span>

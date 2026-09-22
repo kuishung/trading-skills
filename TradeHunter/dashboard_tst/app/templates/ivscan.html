@@ -41,6 +41,16 @@
           <input id="ivsRank" type="number" step="1" min="0" max="100" value="{{ '%g'|format(criteria.iv_rank) }}"
                  class="ml-1 w-14 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
         </label>
+        {# the option-pair floors apply here too (v4.124): a pre-listed name under
+           them is kept but faded, like one under the IV-rank floor #}
+        <label title="Last price of the underlying must be above this (the option-pair floor). A pre-listed ticker under it is kept, but faded.">Price &gt;
+          <input id="ivsPrice" type="number" step="1" min="0" value="{{ '%g'|format(criteria.price) }}"
+                 class="ml-1 w-16 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
+        </label>
+        <label title="20-day average daily volume of the underlying must be above this. A pre-listed ticker under it is kept, but faded.">Volume &gt;
+          <input id="ivsVol" type="number" step="10000" min="0" value="{{ criteria.volume }}"
+                 class="ml-1 w-20 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
+        </label>
         <button type="button" id="ivsScanList"
                 class="px-3 py-1 rounded border border-emerald-600 text-[11px] text-emerald-300 hover:bg-emerald-500/10 transition"
                 title="Load your pre-listed tickers, grade each one's setup, and read its IV rank from your TWS. No market scanner runs.">Scan my list</button>
@@ -219,7 +229,7 @@
     if (!scanListBtn) return;
     scanListBtn.disabled = true; scanListBtn.style.opacity = '0.6';
     say('Loading your pre-listed tickers and grading their setups…');
-    postJSON('/ivscan/scan-universe', { iv_rank: num('ivsRank', 30) })
+    postJSON('/ivscan/scan-universe', { iv_rank: num('ivsRank', 30), price: num('ivsPrice', 50), volume: num('ivsVol', 200000) })
       .then(function (r) { return r.text(); })
       .then(function (html) {
         swapList(html);
@@ -256,7 +266,7 @@
 
   // ---- Whole market: the TWS scanner ----------------------------------------
   if (btn) btn.addEventListener('click', function () {
-    var rank = num('ivsRank', 30), price = num('ivsPrice', 100), vol = num('ivsVol', 200000);
+    var rank = num('ivsRank', 30), price = num('ivsPrice', 50), vol = num('ivsVol', 200000);
     btn.disabled = true; btn.style.opacity = '0.6';
     say('Asking TWS for stocks with 52-week IV rank above ' + rank + '…');
     fetch(BRIDGE + '/scan?iv_rank=' + rank + '&price=' + price + '&volume=' + vol, { mode: 'cors', cache: 'no-store' })
@@ -295,7 +305,8 @@
   function loadChart() {
     if (!cur || chartSym === cur) return;
     chartSym = cur;
-    htmx.ajax('GET', '/sector/chart?symbol=' + encodeURIComponent(cur), { target: '#sectorChartBody', swap: 'innerHTML' });
+    // bounce=1: draw the support bounce the scan found (level + touches), if any
+    htmx.ajax('GET', '/sector/chart?symbol=' + encodeURIComponent(cur) + '&bounce=1', { target: '#sectorChartBody', swap: 'innerHTML' });
   }
   function loadBps() {
     if (!cur || bpsSym === cur) return;

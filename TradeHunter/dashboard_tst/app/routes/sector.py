@@ -329,6 +329,7 @@ async def sector_symbols_conds(
 def sector_chart(
     request: Request,
     symbol: str,
+    bounce: int = 0,
     user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ):
@@ -336,9 +337,32 @@ def sector_chart(
     (EMA20/50/200 + MATP/MBP lines + analyst band when the ticker is on the MATP
     board; a plain price chart otherwise). Rendered into #sectorChartBody when a
     Symbol-panel ticker is clicked, so the chart shows in-page (no new window).
-    Reuses matp's _chart_context so it matches the Watchlist exactly."""
-    return templates.TemplateResponse(
-        request, "_sector_chart.html", _chart_ctx(db, user, symbol))
+    Reuses matp's _chart_context so it matches the Watchlist exactly.
+
+    ``bounce=1`` (the IV Rank list, v4.124) also draws the SUPPORT BOUNCE the setup
+    scan found on this ticker - the level, its counted touches and the bounce
+    candle - read from the same cached setup the list's chip came from, so the
+    line on the chart is the line the chip is talking about."""
+    ctx = _chart_ctx(db, user, symbol)
+    if bounce:
+        ctx["bounce"] = _bounce_overlay(user, ctx["symbol"])
+    return templates.TemplateResponse(request, "_sector_chart.html", ctx)
+
+
+def _bounce_overlay(user: User, sym: str) -> dict | None:
+    """The chart's ``chart_bounce`` for ``sym``, or None when the scan found no
+    support bounce there. Same switch set (and so the same fetch depth) as the
+    list, so this is a cache hit right after a scan."""
+    from ..services import ema_setup as es
+
+    enabled = es.clean_enabled((getattr(user, "prefs", None) or {}).get(SYM_CONDS_PREF))
+    sup = (es.setup_for(sym, deep=es.needs_deep(enabled)) or {}).get("sup")
+    if not sup:
+        return None
+    return {"level": sup["level"], "zone": sup.get("zone"), "touches": sup.get("touches") or [],
+            "bounce": sup.get("bounce"), "d_ema": sup.get("d_ema"), "w_ema": sup.get("w_ema"),
+            "vol_ratio": sup.get("vol_ratio"),
+            "label": "Support" + (f" ≈ {sup['d_ema']}" if sup.get("d_ema") else "")}
 
 
 def _chart_ctx(db: Session, user: User, symbol: str) -> dict:

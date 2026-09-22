@@ -6,8 +6,10 @@ Resilio-synced on the host. Uses ``httpx`` (already a dependency) — no API key
 A short in-process TTL cache avoids hammering Yahoo on repeated page loads.
 
 Returns lightweight-charts-ready dicts: {time:'YYYY-MM-DD', open, high, low,
-close}. Any failure (network, rate-limit, bad symbol) yields [] so the chart
-degrades to an empty state instead of erroring.
+close, volume} (the chart ignores ``volume``; the setup scans read it). The last
+bar also carries ``session_frac`` while its session is still open. Any failure
+(network, rate-limit, bad symbol) yields [] so the chart degrades to an empty
+state instead of erroring.
 """
 from __future__ import annotations
 
@@ -81,12 +83,16 @@ def to_weekly(bars: list[dict]) -> list[dict]:
             continue
         if k != key:
             key = k
-            out.append(dict(b))
+            w = dict(b)
+            w.pop("session_frac", None)     # a daily notion; a week is not "x% done"
+            out.append(w)
         else:
             w = out[-1]
             w["high"] = max(w["high"], b["high"])
             w["low"] = min(w["low"], b["low"])
             w["close"] = b["close"]
+            if b.get("volume") is not None:     # the week's volume is the SUM of its days
+                w["volume"] = (w.get("volume") or 0) + b["volume"]
     return out
 
 
@@ -252,6 +258,28 @@ def search_tickers(q: str, *, limit: int = 8) -> list[dict]:
         return []
 
 
+def _session_frac(meta: dict) -> float | None:
+    """How much of the regular session had elapsed at ``regularMarketTime``, 0..1.
+
+    Yahoo's daily bar for a session that is still open carries the volume traded
+    SO FAR, so anything that compares it with a full day's average has to know how
+    far through the day it is. 1.0 = the bell has rung (the bar is complete); None
+    = the meta did not say."""
+    try:
+        reg = (meta.get("currentTradingPeriod") or {}).get("regular") or {}
+        start, end = int(reg["start"]), int(reg["end"])
+        at = int(meta["regularMarketTime"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if end <= start:
+        return None
+    if at < start:
+        # pre-market: ``currentTradingPeriod`` is already TODAY's, while the last
+        # trade (and the last bar) belong to the previous, finished session
+        return 1.0
+    return round(min(1.0, max(0.0, (at - start) / (end - start))), 3)
+
+
 def _fetch(sym: str, rng: str) -> list[dict]:
     params = {"range": rng, "interval": "1d"}
     for host in _HOSTS:
@@ -270,6 +298,7 @@ def _fetch(sym: str, rng: str) -> list[dict]:
                 quote.get("low") or [],
                 quote.get("close") or [],
             )
+            vol = quote.get("volume") or []
             # The most recent session is listed with a NULL close (sometimes more)
             # for hours after the bell while Yahoo finalises it, although the same
             # response's meta already carries the session's last price, day high
@@ -299,10 +328,22 @@ def _fetch(sym: str, rng: str) -> list[dict]:
                     bo = bo if bo is not None else (meta.get("chartPreviousClose") or bc)
                 if None in (bo, bh, bl, bc):
                     continue  # Yahoo leaves gaps as null
-                out.append(
-                    {"time": day, "open": round(bo, 2), "high": round(bh, 2),
-                     "low": round(bl, 2), "close": round(bc, 2)}
-                )
+                # Volume rides along (v4.124: the support-bounce setup asks whether
+                # the bounce candle traded on high volume). Extra keys are ignored by
+                # the chart; None = Yahoo had no figure for that session.
+                bv = vol[i] if i < len(vol) else None
+                if bv is None and i == last_i and rm_day == day:
+                    bv = meta.get("regularMarketVolume")
+                bar = {"time": day, "open": round(bo, 2), "high": round(bh, 2),
+                       "low": round(bl, 2), "close": round(bc, 2),
+                       "volume": int(bv) if bv is not None else None}
+                if i == last_i and rm_day == day:
+                    frac = _session_frac(meta)
+                    if frac is not None and frac < 1.0:
+                        # the session is still open: this bar's volume is only
+                        # ``frac`` of a day's worth so far (see ``_session_frac``)
+                        bar["session_frac"] = frac
+                out.append(bar)
             if out:
                 return out
         except Exception:

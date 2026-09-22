@@ -1,7 +1,8 @@
 """Options > IV Rank — the member's TWS "High IV Rank" scanner as a watchlist.
 
 The member already runs this scan in TWS (user, 2026-09-18): US stocks, **52-week
-IV rank above 30**, price above 100, volume above 200K. It lists "quite a number
+IV rank above 30**, price above 50 (100 until v4.124; user, 2026-09-22: "last price
+of the underlying above 50"), volume above 200K. It lists "quite a number
 of tickers", and the work that follows is the same every time: which of these
 are technically set up, and what does the chart look like? This page does that
 part.
@@ -36,10 +37,12 @@ setup within these prelisted tickers."
 * **My list** - the member keeps a PRE-LISTED universe (``prefs.ivscan_universe``,
   pasted in, or topped up from My Watchlist). "Scan my list" loads exactly those
   tickers, reads each one's IV rank from TWS and grades the setup. No market
-  scanner runs, and the price / volume floors do not apply: the member chose the
-  names. The IV-rank floor still does - a ticker under it is kept on the list but
-  faded and sorted below the ones that clear it, so "which of MY names is rich
-  right now" reads at a glance.
+  scanner runs. The IV-rank floor applies - a ticker under it is kept on the list
+  but faded and sorted below the ones that clear it, so "which of MY names is rich
+  right now" reads at a glance - and since v4.124 so do the price and volume
+  floors (user, 2026-09-22: the option pair needs "volume more than 200k and last
+  price of the underlying above 50"), read from the live daily bars: last close
+  and 20-day average volume. Same treatment - kept, faded, sorted below.
 * **Whole market** - the TWS scanner described above, unchanged.
 
 The mode is remembered (``prefs.ivscan_mode``). Both fill the same
@@ -74,7 +77,11 @@ templates = Jinja2Templates(
 
 CRITERIA_PREF = "ivscan_criteria"
 CONDS_PREF = "sym_conds"            # the SAME switches as Sector & Industry
-DEFAULT_CRITERIA = {"iv_rank": 30.0, "price": 100.0, "volume": 200000}
+# The option-pair floors (user, 2026-09-22: "IV Rank above 30 trading with volume
+# more than 200k and last price of the underlying above 50"). The price floor was
+# 100 until v4.124; a saved 100 is read as the old default, not a choice (below).
+DEFAULT_CRITERIA = {"iv_rank": 30.0, "price": 50.0, "volume": 200000}
+_OLD_PRICE_DEFAULT = 100.0
 UNIVERSE_PREF = "ivscan_universe"   # the member's pre-listed tickers: [symbol, ...]
 MODE_PREF = "ivscan_mode"           # "list" (pre-listed tickers) | "market" (TWS scanner)
 MAX_SYMBOLS = 100
@@ -139,6 +146,11 @@ def _criteria(user: User) -> dict:
                 out[k] = v
         except (TypeError, ValueError):
             pass
+    if out["price"] == _OLD_PRICE_DEFAULT:
+        # every scan before v4.124 saved the then-default 100 back into prefs, so
+        # a stored 100 is the old default carried along, not a floor the member
+        # typed; the box shows 50 and the next scan saves whatever they leave in it
+        out["price"] = DEFAULT_CRITERIA["price"]
     out["volume"] = int(out["volume"])
     return out
 
@@ -180,8 +192,19 @@ def _list_context(db: Session, user: User, *, sort: str = "setup") -> dict:
             # My list: TWS has not pre-filtered these names, so the IV-rank floor is
             # applied HERE. An unread IV is "unknown", never "low".
             iv_low = mode == "list" and r.iv_rank is not None and r.iv_rank < floor
+            # ... and so are the option-pair floors (v4.124): last price and 20-day
+            # average volume from the same live bars the setup was read from. A
+            # ticker with no bars is "unknown", not under the floor.
+            under = []
+            if mode == "list" and st.get("close"):
+                if st["close"] < criteria["price"]:
+                    under.append(f"last {st['close']:.2f} under the {criteria['price']:g} price floor")
+                av = st.get("avg_vol20")
+                if av is not None and av < criteria["volume"]:
+                    under.append(f"20-day average volume {av / 1000:.0f}K under {criteria['volume'] / 1000:.0f}K")
             items.append({"row": r, "setup": st, "rank": es.rank(st, enabled),
-                          "iv_fresh": fresh, "iv_low": iv_low})
+                          "iv_fresh": fresh, "iv_low": iv_low or bool(under),
+                          "under": "; ".join(under)})
         # under-the-floor names sink in every sort order; False sorts before True
         if sort == "iv":
             items.sort(key=lambda it: (it["iv_low"], it["row"].iv_rank is None,
@@ -203,6 +226,7 @@ def _list_context(db: Session, user: User, *, sort: str = "setup") -> dict:
                          if it["rank"].get("qualifies") and not it["iv_low"]),
         "n_iv_ok": sum(1 for it in items
                        if it["row"].iv_rank is not None and not it["iv_low"]),
+        "n_under": sum(1 for it in items if it["under"]),
         "scanned_at": scanned, "criteria": criteria, "mode": mode, "iv_floor": floor,
         "n_universe": len(_universe(user)),
         "my_syms": uwl.symbol_set(db, user),
@@ -229,7 +253,7 @@ def ivscan_list(request: Request, sort: str = "setup",
 class ScanIngest(BaseModel):
     symbols: list[str] = Field(default_factory=list)
     iv_rank: float = 30.0
-    price: float = 100.0
+    price: float = 50.0
     volume: float = 200000
 
 
@@ -286,6 +310,8 @@ def ivscan_universe(payload: UniverseIn, user: User = Depends(require_user),
 
 class UniverseScan(BaseModel):
     iv_rank: float = 30.0
+    price: float = 50.0
+    volume: float = 200000
 
 
 @router.post("/scan-universe", response_class=HTMLResponse)
@@ -297,6 +323,8 @@ def ivscan_scan_universe(payload: UniverseScan, request: Request,
     _replace_items(db, user, _universe(user))
     crit = _criteria(user)
     crit["iv_rank"] = min(100.0, max(0.0, float(payload.iv_rank)))
+    crit["price"] = max(0.0, float(payload.price))
+    crit["volume"] = max(0, int(payload.volume))
     user = _save_pref(db, user, CRITERIA_PREF, crit)
     user = _save_pref(db, user, MODE_PREF, "list")
     return templates.TemplateResponse(request, "_ivscan_list.html", _list_context(db, user))

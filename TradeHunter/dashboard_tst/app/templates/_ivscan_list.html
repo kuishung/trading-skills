@@ -36,6 +36,7 @@
   <span><span class="text-slate-300 tabular-nums">{{ items|length }}</span> {{ 'pre-listed' if mode == 'list' else 'tickers' }}</span>
   {# My list: TWS did not pre-filter these, so say how many clear the IV-rank floor #}
   {% if mode == 'list' %}<span title="Tickers whose 52-week IV rank has been read and is at or above your floor. The rest are faded and sorted below.">&middot; <span class="text-sky-300 tabular-nums">{{ n_iv_ok }}</span> at IV rank &ge; {{ '%g'|format(iv_floor) }}</span>{% endif %}
+  {% if mode == 'list' and n_under %}<span title="Pre-listed tickers under the price or the 20-day average volume floor. Kept, faded and sorted below - hover a faded row for which floor.">&middot; <span class="text-rose-300 tabular-nums">{{ n_under }}</span> under price / volume floor</span>{% endif %}
   {% if ranked %}<span title="{{ 'Meet your setup conditions AND clear the IV-rank floor' if mode == 'list' else 'Meet your setup conditions' }}">&middot; <span class="text-emerald-300 tabular-nums">{{ n_qualify }}</span> qualify</span>{% endif %}
   {% if scanned_at %}<span class="text-slate-600" title="{{ 'When your list was last loaded' if mode == 'list' else 'When this list was last pulled from TWS' }}">&middot; scanned {{ localtime(scanned_at) }}</span>{% endif %}
   <span class="ml-auto flex items-center gap-1">
@@ -65,9 +66,9 @@
 {% set _on = my_syms and r.symbol in my_syms %}
 <div class="ivs-row wl-ticker cursor-pointer px-1 py-1 border-b border-slate-800/50 rounded hover:bg-emerald-500/10 transition{% if it.iv_low or (ranked and not rk.qualifies) %} opacity-40{% endif %}"
      style="{{ COLS }}" data-sym="{{ r.symbol }}" data-need-iv="{{ '0' if it.iv_fresh else '1' }}"
-     hx-get="/sector/chart?symbol={{ r.symbol }}" hx-target="#sectorChartBody" hx-swap="innerHTML"
+     hx-get="/sector/chart?symbol={{ r.symbol }}&bounce=1" hx-target="#sectorChartBody" hx-swap="innerHTML"
      hx-trigger="click[!event.target.closest('.wl-star')]"
-     title="Chart {{ r.symbol }}{% if st.close %}&#10;{{ st.summary }} &middot; EMA20 {{ st.ema20 }} / EMA50 {{ st.ema50 }} / EMA200 {{ st.ema200 }}{% endif %}">
+     title="Chart {{ r.symbol }}{% if st.close %}&#10;{{ st.summary }} &middot; EMA20 {{ st.ema20 }} / EMA50 {{ st.ema50 }} / EMA200 {{ st.ema200 }}{% endif %}{% if it.under %}&#10;Under the option-pair floor: {{ it.under }}{% endif %}">
   <span class="wl-star cursor-pointer text-center text-[12px] leading-none select-none transition {% if _on %}text-amber-300{% else %}text-slate-700 hover:text-amber-300{% endif %}"
         role="button" tabindex="0" aria-pressed="{{ 'true' if _on else 'false' }}"
         title="{{ 'Remove ' ~ r.symbol ~ ' from My Watchlist' if _on else 'Add ' ~ r.symbol ~ ' to My Watchlist' }}"
@@ -83,6 +84,8 @@
                  {% elif ch.k == 'watch' %}bg-sky-500/15 text-sky-300
                  {% elif ch.k == 'pin' %}bg-fuchsia-500/20 text-fuchsia-200 font-semibold
                  {% elif ch.k == 'wset' %}bg-indigo-500/25 text-indigo-200 font-semibold ring-1 ring-indigo-400/50
+                 {% elif ch.k == 'sup' %}bg-cyan-500/25 text-cyan-200 font-semibold ring-1 ring-cyan-400/50
+                 {% elif ch.k == 'supx' %}bg-cyan-500/10 text-cyan-300
                  {% else %}bg-slate-700/50 text-slate-400{% endif %}" title="{{ ch.title }}">{{ ch.t }}</span>
     {% else %}
     <span class="text-[9px] text-slate-600">{% if rk.score is none %}{{ rk.summary }}{% elif rk.gated %}not in EMA uptrend{% else %}none met{% endif %}</span>

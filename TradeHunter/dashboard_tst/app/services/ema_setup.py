@@ -38,6 +38,7 @@ from __future__ import annotations
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+from . import support_bounce as sb
 from .prices import fetch_daily_ohlc
 
 TOUCH_BARS = 3          # a touch this many sessions back still counts as "the rebound"
@@ -105,7 +106,21 @@ WEEKLY_MIN = 60          # weekly bars needed before the weekly EMA50 means anyt
 # weeks cannot be judged and is reported as such, never passed by default.
 WEEKLY_200_MIN = 200     # weekly bars needed before the weekly EMA200 means anything
 DEEP_RANGE = "10y"
-COND_KEYS = ("c1", "c2", "c3", "c4", "c5", "c6", "c7", "w1")
+# s1 - the SUPPORT BOUNCE setup (user, 2026-09-22, for the bull put spread): a
+# setup of its own like w1, all of these required -
+#   * EMA20 > EMA50 > EMA200 on the daily,
+#   * the most recent daily candle is a bullish pin bar or a bullish engulfing
+#     candle whose low tested a HORIZONTAL support level - a price where the stock
+#     turned up at least once before in the last year (see support_bounce),
+#   * that candle traded on HIGH volume (vs the ticker's own recent sessions).
+# and these grade it higher when present (the user's "bonus" / "preferable"):
+#   * two or more previous touches of the level,
+#   * the level coincides with the daily EMA20 or EMA50,
+#   * the level coincides with the weekly EMA20 or EMA50.
+# The candle pattern and the volume are judged on the LATEST candle only, like
+# c6 / c7. A bounce that has everything but the volume is shown as a near miss
+# (a lighter chip, no qualification) so the member can see it forming.
+COND_KEYS = ("c1", "c2", "c3", "c4", "c5", "c6", "c7", "s1", "w1")
 COND_LABELS = {
     "c1": ("EMA 20>50>200", "Uptrend: EMA20 above EMA50 above EMA200 on the last close. A must: when on, tickers that fail it sort below every ticker that passes."),
     "c2": ("dip 1-2%", f"Within the last {DIP_BARS} sessions a low reached 1-2% BELOW EMA20 (or EMA50): the pullback that sets up the rebound."),
@@ -117,13 +132,22 @@ COND_LABELS = {
     "c6": ("pin bar D", "DAILY pin bar (bullish hammer) at EMA20 or EMA50: the most recent daily candle (today's, still forming while the market is open) has a long lower tail (60%+ of its range, small upper wick, tail at least twice the body) that reached the average while the close held at or above it."),
     "c7": ("pin bar W", "WEEKLY pin bar (bullish hammer) at the WEEKLY EMA20 or EMA50: the most recent weekly candle (this week's, still forming until Friday's close) has a long lower tail that reached the weekly average while the close held at or above it."),
     "w1": ("W setup", "WEEKLY SETUP - a setup of its own, both parts required: the weekly trend is stacked (WEEKLY EMA20 > EMA50 > EMA200) AND the most recent weekly candle is a pin bar (bullish hammer) at the weekly EMA20 or EMA50. Judged on the weekly chart only: it qualifies a ticker by itself and the daily 'EMA 20>50>200' must does not apply to it. Reads about 10 years of history per ticker (a weekly EMA200 needs ~4), so the first scan with it on is slower; tickers listed under 4 years cannot be judged."),
+    "s1": ("Support bounce", "SUPPORT BOUNCE - the bull-put-spread setup, all three required: EMA20 > EMA50 > EMA200 on the daily; the most recent daily candle is a bullish pin bar or a bullish engulfing candle whose low tested a HORIZONTAL support (a price the stock turned up from at least once before in the last year); and that candle traded on high volume for this ticker. Graded higher when the level has 2+ previous touches, and when it coincides with the daily EMA20 / EMA50 or the weekly EMA20 / EMA50. Click the ticker: the chart draws the level, its touches and the bounce candle. A bounce with everything but the volume shows as a lighter chip and does not qualify."),
 }
 # w1 starts OFF: it changes what the scan downloads, so it is switched on by the
-# member who wants it rather than landing on everyone's lists unasked.
+# member who wants it rather than landing on everyone's lists unasked. s1 costs
+# nothing extra (same 2-year fetch), so it starts ON.
 COND_DEFAULT = {"c1": True, "c2": True, "c3": True, "c4": True, "c5": True,
-                "c6": True, "c7": True, "w1": False}
+                "c6": True, "c7": True, "s1": True, "w1": False}
 COND_WEIGHT = {"c1": 100, "c2": 30, "c3": 30, "c4": 20, "c5": 25, "c6": 35, "c7": 40,
-               "w1": 120}
+               "s1": 110, "w1": 120}
+# s1's bonuses, on top of COND_WEIGHT["s1"]: each previous touch past the first,
+# the daily-EMA confluence, the weekly-EMA confluence; and the near miss (bounce
+# at support, volume not high) on its own.
+S1_BONUS_TOUCH = 10
+S1_BONUS_DEMA = 15
+S1_BONUS_WEMA = 20
+S1_NEAR_MISS = 30
 # Which switches need the long history.
 DEEP_KEYS = ("w1",)
 
@@ -212,6 +236,7 @@ def to_weekly(ohlc: list[tuple]) -> list[tuple]:
 def _blank(reason: str = "not enough price history") -> dict:
     return {"dip_ema": None, "dip_pct": None, "above_ema": None, "above_pct": None,
             "below_ema": None, "below_pct": None, "pin_d": None, "pin_w": None,
+            "sup": None, "avg_vol20": None,
             "w_uptrend": None, "w_setup": None, "w_weeks": 0, "w_note": "",
             "w_ema20": None, "w_ema50": None, "w_ema200": None,
             "round10": None, "round10_step": None,
@@ -336,6 +361,20 @@ def analyze(bars: list[dict], long_bars: list[dict] | None = None) -> dict:
                       f"{WEEKLY_200_MIN}" + ("" if long_bars else " (long history not loaded)"))
     else:
         w_note = f"only {len(weekly)} weekly candles"
+    # s1: the support bounce (services/support_bounce.py) on the latest candle,
+    # with the daily / weekly EMA20-50 values for its "coincides with" read.
+    # Judged regardless of the trend; conditions() adds the uptrend requirement.
+    sup = None
+    try:
+        w_pairs = (("EMA20", we20[-1]), ("EMA50", we50[-1])) if len(weekly) >= WEEKLY_MIN else ()
+        sup = sb.find(bars, (("EMA20", e20[-1]), ("EMA50", e50[-1])), w_pairs)
+    except Exception:  # noqa: BLE001  - a detector must never take the whole setup down
+        sup = None
+    # 20-session average volume of COMPLETED sessions (the option-pair floor on
+    # the IV Rank page's My list). None when the feed carried no volume.
+    done = bars[:-1] if bars[-1].get("session_frac") is not None else bars
+    vols = [b["volume"] for b in done[-20:] if b.get("volume")]
+    avg_vol20 = int(sum(vols) / len(vols)) if len(vols) >= 10 else None
 
     score = 0
     chips: list[dict] = []
@@ -378,6 +417,7 @@ def analyze(bars: list[dict], long_bars: list[dict] | None = None) -> dict:
         "above_ema": above_ema, "above_pct": above_pct,
         "below_ema": below_ema, "below_pct": below_pct,
         "pin_d": pin_d, "pin_w": pin_w,
+        "sup": sup, "avg_vol20": avg_vol20,
         "w_uptrend": w_uptrend, "w_setup": w_setup, "w_weeks": len(weekly), "w_note": w_note,
         "w_ema20": w20, "w_ema50": w50, "w_ema200": w200,
         "round10": None if not r10 else r10[0], "round10_step": None if not r10 else r10[1],
@@ -404,6 +444,10 @@ def conditions(setup: dict) -> dict:
                and BELOW_MIN <= setup["below_pct"] <= BELOW_MAX),
         "c6": setup.get("pin_d") is not None,
         "c7": setup.get("pin_w") is not None,
+        # the full setup: uptrend + bounce candle at a tested level + high volume.
+        # A bounce whose volume is not high (or not yet readable) is a near miss,
+        # shown but not met - see rank().
+        "s1": bool(setup.get("uptrend") and setup.get("sup") and setup["sup"].get("vol_high")),
         "w1": bool(setup.get("w_setup")),      # None (could not be judged) is not a pass
     }
 
@@ -445,6 +489,48 @@ def rank(setup: dict, enabled: dict) -> dict:
                                f"> EMA200 {setup['w_ema200']}, and the weekly candle starting {p['time']} "
                                f"is a bullish hammer (tail {p['tail']}% of its range) that reached the "
                                f"weekly {p['ema']} and closed at or above it"})
+    # The support bounce (s1): the full setup leads the row in its own colour; a
+    # near miss (everything but the volume) gets a lighter chip and no score to
+    # speak of, so it is visible without outranking a setup that is complete.
+    sup = setup.get("sup")
+    if enabled.get("s1") and sup and setup.get("uptrend"):
+        n = sup.get("n_touches") or 0
+        b = sup.get("bounce") or {}
+        kind = "engulfing" if b.get("kind") == "engulf" else "pin bar"
+        vr = sup.get("vol_ratio")
+        vtxt = f"{vr:.1f}x vol" if vr is not None else "vol n/a"
+        conf = ""
+        if sup.get("d_ema"):
+            conf += f" ≈ {sup['d_ema']}"
+        if sup.get("w_ema"):
+            conf += f" ≈ w{sup['w_ema']}"
+        touches = ", ".join(t["time"] + (" (old resistance)" if t.get("kind") == "flip" else "")
+                            for t in (sup.get("touches") or []))
+        story = (f"Support {sup['level']:.2f}: {n} previous touch{'es' if n != 1 else ''} in the last year "
+                 f"({touches}). The latest candle ({b.get('time')}) is a bullish {kind} whose low "
+                 f"{b.get('low')} tested it and closed above it")
+        if sup.get("d_ema"):
+            conf_d = f"; the level sits on the daily {sup['d_ema']} {setup.get('ema20' if sup['d_ema'] == 'EMA20' else 'ema50')}"
+            story += conf_d
+        if sup.get("w_ema"):
+            story += f"; and on the weekly {sup['w_ema']}"
+        if met["s1"]:
+            score += (COND_WEIGHT["s1"] + S1_BONUS_TOUCH * max(0, n - 1)
+                      + (S1_BONUS_DEMA if sup.get("d_ema") else 0)
+                      + (S1_BONUS_WEMA if sup.get("w_ema") else 0))
+            chips.append({"t": f"support bounce {sup['level']:g} · x{n} · {kind} · {vtxt}{conf}",
+                          "k": "sup",
+                          "title": story + f". Volume {vtxt} the average of the 20 sessions before it"
+                                   + (" (projected from the part of today's session traded so far)"
+                                      if sup.get("vol_projected") else "") + " - a defended level."})
+        else:
+            score += S1_NEAR_MISS
+            why = ("volume not readable yet - too early in today's session"
+                   if sup.get("vol_high") is None and sup.get("vol_projected") is not None
+                   else ("no volume figure" if vr is None else f"only {vtxt}, not a high-volume bounce"))
+            chips.append({"t": f"support bounce {sup['level']:g} · x{n} · {kind} · light vol{conf}",
+                          "k": "supx",
+                          "title": story + f". NEAR MISS: {why}."})
     if enabled.get("c1"):
         if met["c1"]:
             score += COND_WEIGHT["c1"]

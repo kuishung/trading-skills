@@ -47,11 +47,16 @@
 {% set chart_setup_seed = {'entry': curated.entry, 'stop': curated.stop, 'target': curated.target} %}
 {% set chart_band_start_closed = true %}
 {% endif %}
+{# The support bounce the setup scan found (IV Rank list, v4.124): level line +
+   touch / bounce-candle markers. Only present when the list asked for it. #}
+{% if bounce is defined and bounce %}
+{% set chart_bounce = bounce %}
+{% endif %}
 {# how to re-render this chart after a MATP run lands (see REFRESH in _price_chart) #}
 {% if chromeless is defined and chromeless %}
 {% set chart_refresh = {'url': '', 'target': none} %}
 {% else %}
-{% set chart_refresh = {'url': '/sector/chart?symbol=' ~ symbol, 'target': '#sectorChartBody'} %}
+{% set chart_refresh = {'url': '/sector/chart?symbol=' ~ symbol ~ ('&bounce=1' if (bounce is defined and bounce) else ''), 'target': '#sectorChartBody'} %}
 {% endif %}
 {% include "_price_chart.html" %}
 {% if not sel %}

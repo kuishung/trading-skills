@@ -143,6 +143,112 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-22 - v4.124: the support-bounce setup - a high-volume pin bar / engulfing candle at a horizontal support, for the bull put spread
+
+User: *"in BPS I want to scan for setup which fulfill the following criteria: 1. EMA20 > EMA50 >
+EMA200; 2. Bouncing off horizontal support, if the support coincide with daily EMA20 or EMA50 will
+be added bonus; 3. if the daily support coincide with the weekly EMA20 or EMA50 is added advantage;
+4. Bouncing off means bullish pin bar or bullish Engulfing candle (mark up bar) form at the support
+level; 5. the horizontal support preferable with 2 and above previous touching point in the 1 year
+... time frame; 6. The bouncing off candle record high volume so that the bouncing off has solid
+participant the defend the support level. ... Next is the Option pair to trade BPS. I want IV Rank
+above 30 trading with volume more than 200k and last price of the underlying above 50."*
+
+**A new setup switch, "Support bounce" (`s1`)**, on the IV Rank page, Sector & Industry and the ETF
+basket (the one shared `sym_conds` setting), in its own "Bounce" row like the weekly setup. All
+three required: the daily EMA stack; the LATEST daily candle is a bullish pin bar (the app's rule)
+or a bullish engulfing candle whose low tested a horizontal support with at least one previous touch
+in the last year; and that candle traded on high volume for this ticker. A cyan chip leads the row -
+`support bounce 365.23 · x3 · pin bar · 1.6x vol ≈ EMA50` - and the tooltip names every touch date.
+A bounce that has everything but the volume is a NEAR MISS: a lighter cyan chip (`... light vol`),
+listed, not qualified, so a setup can be watched while it forms. The switch starts ON (it costs no
+extra fetch; the weekly setup stays OFF for its 10-year one).
+
+**How a horizontal support is found** (`app/services/support_bounce.py`, new; pure arithmetic over
+the live daily bars, every threshold a multiple of the ticker's own ATR(14) or of its own volume -
+no dollars, no share counts):
+- Touch candidates are the swing lows of the prior 252 sessions (tie-tolerant, so an equal-low double
+  bottom keeps both) and the swing HIGHS an old resistance was made of, each a real reaction (price
+  came at least 1 ATR into the point and left by 1 ATR within 10 bars); they end 5 bars before the
+  bounce candle. Candidates within 0.35 ATR of each other are one level (a hand-drawn line has
+  width); two candidates closer than 5 bars, or with no 1-ATR excursion away between them, are ONE
+  touch; the last touch must be followed by a rally away before the bounce revisits the level.
+- Invalidation: a level price then LIVED UNDER - three consecutive closes more than 0.5 ATR below
+  it - is broken; that touch and every older support touch are dropped (one close under is a
+  spring, still support). An old resistance counts only once price has closed back above it, and
+  only as good as its latest breakout: this is the "R→S" (resistance turned support) touch, and the
+  chart labels it so.
+- The test: the bounce low (for an engulfing, the lower of its two lows - the engulfed candle is the
+  one that tapped the level) got within 0.25 ATR of the level from above or speared at most 0.5 ATR
+  through it, and the close held at or above it. Among levels the candle tested: most touches wins,
+  then the nearest.
+- "High volume" = at least 1.5x the mean of the 20 sessions before (roughly +1.5 sigma for a large
+  cap's day-to-day scatter). "Coincides with" the daily EMA20/50 = within 0.4 ATR; the weekly
+  EMA20/50 within 0.5 ATR. Bonuses on top of the setup's weight: +10 per touch past the first, +15
+  for the daily EMA, +20 for the weekly EMA.
+- **The user's "1 year 1 minute time frame"** is read as the 1-year DAILY chart: a year of 1-minute
+  bars is not obtainable live (Yahoo caps 1-min at 7 days) and this is an operational view, which
+  never reads parquet. If a 1-minute reading was really meant, say so - it would be a different tool.
+- Bullish engulfing, which the app did not have (the user's "mark-up bar"): green candle, prior candle
+  red or doji, open at or below the prior body's bottom AND close at or above its top - equal allowed
+  (at two decimals an open exactly on the prior close is the norm) with a STRICTLY bigger body - and
+  decisive: body at least half its own range and at least half an ATR.
+
+**Design method.** Three independent prototypes were written to the same interface (pivot clusters;
+bounce-anchored reaction counting; quality-scored levels with invalidation), run through a
+walk-forward harness over 64 large caps x 250 sessions of live bars (~16,000 candle-days), and
+inspected against the raw candles; the shipped module is a synthesis (tie-tolerant pivots with a
+reaction requirement, ATR clustering, distinct-event and rally-away rules, lived-under invalidation
+for both touch kinds, polarity flips). Sanity numbers from the harness (NOT a backtest - it only
+asks "did the level then hold 10 / 30 sessions to within 0.5 ATR?"): with 2+ touches the level held
+10 sessions 49% of the time vs 36% with one touch; with 2+ touches AND high volume, 70% (n=10) -
+the direction the user's rules 5 and 6 expect. ~0.2 ms per ticker.
+
+**The chart draws it** (user click on the ticker: `/sector/chart?symbol=X&bounce=1`, carried through
+the D/W re-render): a solid cyan `Support` line at the level (`Support ≈ EMA50` when it coincides), a
+circle under every counted touch (`touch 2/3`, `R→S 1/3`) and an arrow under the bounce candle
+(`pin bar ×1.6 vol`). Read-only price line + markers, never a drawing, so the scanner's line cannot
+land in the member's saved drawings. lightweight-charts v4 replaces ALL markers on every
+`setMarkers`, so the structure pivots (HH/HL) and these are now merged into one sorted array
+(`candleMarks`) - before, a second call would have wiped the first. On W a daily date is snapped to
+the weekly candle that contains it.
+
+**Volume is now in the live feed** (`services/prices.py`): each bar carries `volume` (Yahoo returns
+it in the same response; the meta's `regularMarketVolume` fills the still-open session like the
+price does), and the last bar carries `session_frac` (0..1, how much of the regular session had run
+at `regularMarketTime`, from `currentTradingPeriod`) while its session is open - a bar holding
+only a morning's volume must not be read as a light day. The bounce's volume is projected to a full
+day from it once at least a quarter of the session has run; earlier the read is "not yet" (a near
+miss saying so), never a verdict. `to_weekly` SUMS the days' volume (it copied the first day's dict,
+which would have made a week's volume Monday's). The chart ignores the extra keys.
+
+**The option-pair floors**: the price floor is now **50** (was 100) - `DEFAULT_CRITERIA`, the
+`ScanIngest` default and the page's JS fallback. Every earlier scan saved the then-default 100 back
+into `prefs.ivscan_criteria`, so a stored 100 is read as the old default and shown as 50; a member
+who types something else keeps it. And the floors now apply on **My list** too - price and 20-day
+average volume from the same live bars the setup was read from (`avg_vol20` on the setup dict) -
+kept, faded and sorted below like a ticker under the IV-rank floor, with the reason in the row's
+tooltip and a count in the header (`2 under price / volume floor`). The My-list bar gained the Price
+and Volume inputs; `/ivscan/scan-universe` takes and saves them. (The v4.115 note that the floors
+"do not apply" to a pre-listed name is superseded by today's statement of the option pair.)
+
+Files: `app/services/support_bounce.py` (new), `app/services/ema_setup.py` (s1 key, labels, weight,
+`sup` + `avg_vol20` on the setup, scoring + chips), `app/services/prices.py` (volume,
+`session_frac`), `app/routes/ivscan.py` (price 50, list-mode floors), `app/routes/sector.py`
+(`bounce=1` -> `_bounce_overlay`), `_price_chart.html` (BOUNCE overlay, merged markers),
+`_sector_chart.html`, `_sector_conds.html` (Bounce row), `ivscan.html`, `_ivscan_list.html`,
+`_sector_symbols.html`, `_sector_basket.html`, `_curated_list.html` (the `sup` / `supx` chip
+colours), `base.html` (cyan-200 ink on the light theme).
+
+Tested: the walk-forward harness above; edge probes (30-bar history, None volume, a still-open
+session at 10% and 50%, a zero-range candle, a wick 3 ATR under the level, a close a cent under it,
+non-numeric prices, tie / 1-cent-off engulfing opens) all return None or the honest read, never
+raise. Verified in the browser (dev DB, 7 pre-listed tickers): the Bounce switch row, cyan chips on
+MA and V (3 touches each, pin bar on the EMA50, light volume -> near miss), the V chart with the
+`Support ≈ EMA50` line, `R→S 1/3`, `R→S 2/3`, `touch 3/3` and the `pin bar ×1.08 vol` marker, the
+same on W, the Price / Volume boxes on My list, `/sector/chart` without `bounce=1` unchanged; no
+console errors. `/curated`, `/sector/basket` and `/sector/symbols` render with the new key.
+
 ### 2026-09-20 - v4.123: the SL tag says how many ATRs away the stop is
 
 User: *"in the setup the SL i need it to be shown whether is 1 ATR or if adjusted 0.x ATR"*. The SL
