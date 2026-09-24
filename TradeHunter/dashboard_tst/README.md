@@ -143,6 +143,67 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-09-24 - v4.125: the support bounce counts the shelf, not just the spikes - and refuses fresh breakouts
+
+Follow-up to v4.124 from the adversarial review it was owed (the two judge agents of the design
+panel died on API overloads before shipping; re-run afterwards - a trader lens and an engineer lens,
+each checking the SHIPPED `support_bounce.py` against the raw bars and against the three prototypes).
+Both scored it 6.5-7.5 and agreed on the same defects, with evidence. What changed:
+
+- **Touches were dominated by old resistance highs.** 641 of the 833 touches the module reported
+  were "flip" (an old swing high), only 192 were support lows, and 234 of 345 bounces existed ONLY
+  because of flips - which hold worse (10-session hold 40% vs 51% with a real support touch). Two
+  causes: a 3-bar pivot test drops a SHELF (several sessions whose lows sit on the level while a spike
+  a day away is deeper - WFC sat on 86.5 for 26 sessions and none counted, TGT's five lows at 131-133
+  none), and the break rule was asymmetric (lows before a break were dropped, flips from before the
+  same break kept). Now every bar whose low is within the zone and whose close did not fall through
+  it is a touch candidate, not only the swings (the swings still SEED where levels are); each event
+  must have arrived at the level (a low from >= 1 ATR above, a flip from >= 1 ATR below within 10
+  bars) and left it; and invalidation / re-validation is the same for both kinds (a touch from before
+  a lived-under spell counts again once price has closed back above the level). Result on the same
+  16,000 candle-days: 623 lows / 295 flips, 29 all-flip bounces (was 224).
+- **The wick test was a razor line at the cluster mean**, refusing real bounces by cents (CVX
+  2025-10-01 by $0.02, WFC 2025-08-21 by $0.09; 33 bounces two or three prototypes agreed on). The
+  test is now against the ZONE the touches span: the low no more than 0.25 ATR above the highest
+  touch, no more than 0.5 ATR below the lowest, the close at or above the zone. Those now fire (CVX x9,
+  WFC x4, TGT x4).
+- **A flip counted as support after ONE close above it**, so the scan fired on 2-5-day-old breakouts
+  (KO 2026-06-12, MA 2026-08-06 - both fell 2 ATR within days; 45 such bounces held 33%). Three gates
+  on the 10 sessions before the pattern, all ATR-relative: at least 5 closes above the level
+  (established), a high at least 1 ATR above it (price came DOWN to the level - a month sitting on it
+  is not a bounce), and no close more than 0.5 ATR under it (a level broken and reclaimed last week is
+  a reclaim, not a bounce off a held support - AXP 2026-07-28 had gapped 0.9 ATR through it two days
+  before). Fresh-breakout bounces: 0 (was 45).
+- **The chip says how many touches are R->S**: `support bounce 324.76 · x3 (2 R→S) · engulfing ·
+  1.3x vol`. Levels are ranked by support touches first, then all touches, then distance. The setup
+  dict carries `n_low` / `n_flip`.
+- **"High volume" is now this ticker's own top 15%** of daily volume-to-20-day-mean ratios over the
+  last year, with a 1.2x floor (design A's calibration, both judges' pick) - a fixed 1.5x fired on 4% of
+  bounces and read the same for a name whose volume barely varies and a lumpy one. For an engulfing
+  the larger of its two candles is read (the engulfed one is the one that tapped the level).
+- Engineer's minors: tolerances are now multiples of the ATR as it stood BEFORE the bounce candle (a
+  very wide pin bar was widening its own reach / pierce - probed: a 15-point range admitted a low a
+  4-point range refused); a session under 25% run returns "not yet" (`None, None, projected`) instead
+  of the raw partial ratio labelled projected; a None / missing price on ANY older bar and a NaN
+  volume return None rather than raising or emitting `NaN` into JSON.
+
+Harness (same 64 large caps x 250 sessions): 220 bounces (was 345), 184 of them with 2+ touches (was
+201 of 345); the level held 10 sessions 48.6% (was 43.8%), 30 sessions 31.4% (was 28.1%). Still ~0.2
+ms per ticker. Cases the judges named as good and the rewrite now refuses, each checked on the bars:
+WFC 2026-08-03 (closed 1.2 ATR under the level five sessions earlier), LOW 2025-09-15 (had lived
+1-2 ATR UNDER the level until six sessions earlier - a breakout retest), AXP 2026-07-28 (the gap),
+NVDA 2026-06-09 (wick stopped 0.4 ATR short of the zone). Known and accepted: a pin bar followed by
+an engulfing whose test low is the pin's reports the same bounce on both days (25 of 220) - on the
+live page only today's candle is judged, so it reads as "still there", which it is.
+
+Verified: the judges' own probe scripts re-run on the rewrite (flip / low mix, fresh-breakout count,
+ATR self-inflation, reach / pierce / lookback / MIN_SEP boundaries to the cent and bar); my edge
+probes (None / NaN volume, None or missing price on an old bar, session at 10% and 50%, zero-range
+candle, non-numeric close) all None or the honest read; determinism; JSON-safe output. Live: the
+2026-09-21 V and MA bounces still fire (V x4 with 2 R->S, MA x9 with 8 support touches - the July
+shelf now counted), AAPL's flip-only near miss is gone; `/ivscan`, `/sector/chart?bounce=1`,
+`/sector/basket`, `/curated` render.
+
 ### 2026-09-22 - v4.124: the support-bounce setup - a high-volume pin bar / engulfing candle at a horizontal support, for the bull put spread
 
 User: *"in BPS I want to scan for setup which fulfill the following criteria: 1. EMA20 > EMA50 >

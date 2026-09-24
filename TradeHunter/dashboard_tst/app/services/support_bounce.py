@@ -16,52 +16,72 @@ The user's bull-put-spread entry (2026-09-22), in their words:
 (Rule 1, EMA20 > EMA50 > EMA200, is the caller's - ``ema_setup`` already reads it.)
 
 This module answers: does the LATEST daily candle bounce off a horizontal level
-that price has turned up from before? ``find()`` is pure arithmetic over the
+that price has turned at before? ``find()`` is pure arithmetic over the
 ``/prices``-shaped bars (time/open/high/low/close/volume) and returns the level,
 its previous touches, the bounce candle and the volume read - or None.
 
 How a level is found
 --------------------
-* **Touch candidates** are swing points of the prior 252 sessions (one year),
-  ending ``MIN_SEP`` bars before the bounce candle - anything closer is the same
-  visit, not history. A swing LOW has no lower low within ``PIVOT`` bars either
-  side (``<=``, so two EQUAL lows - the double bottom - both survive; a strict
-  test would lose exactly the case the rule is about). A swing HIGH is the
-  mirror: an old resistance that price later broke above and may now be
-  retesting from above - the "flip" touch. Either must be a real REACTION, not a
-  wobble: price came at least ``REACT_ATR`` into the point and left by at least
-  as much within ``REACT_BARS`` bars.
-* **Clustering**: every candidate the bounce could have reached seeds a level;
-  its members are the candidates within ``TOL_ATR`` (a hand-drawn line has
-  width). The level is the mean of the members' prices.
-* **Distinct events**: two members closer than ``MIN_SEP`` bars, or with no
-  excursion of ``SEP_ATR`` away from the level between them, are ONE touch
-  (a week sitting on a price is one test of it). The last touch must be followed
-  by a rally of ``SEP_ATR`` above the level before the bounce - otherwise the
-  bounce is the tail of that same visit.
-* **Invalidation**: a level price then LIVED UNDER - ``BREAK_BARS`` consecutive
-  closes more than ``BREAK_ATR`` below it - was broken; that touch and every
-  older "low" touch are dropped. A single close below is a spring, still
-  support. A "flip" touch counts only once price has closed back above the
-  level (the breakout that turned it) and is kept through a break: it is what
-  price did while under.
-* **The test**: the bounce candle's low (for an engulfing, the lower of its two
-  lows - the engulfed candle is the one that tapped the level) reached the zone
-  from above (no more than ``REACH_ATR`` short of it) and speared no deeper than
-  ``PIERCE_ATR`` through it; the close held at or above the level.
-* **Choice** among levels the candle tested: most touches, then the nearest.
+* **Where levels may be** is seeded by the swing points of the prior 252
+  sessions (one year), ending ``MIN_SEP`` bars before the bounce candle -
+  anything closer is the same visit, not history. A swing LOW has no lower low
+  within ``PIVOT`` bars either side (``<=``, so two EQUAL lows - the double
+  bottom - both survive); a swing HIGH is the mirror. Either must be a real
+  reaction: price came at least ``REACT_ATR`` into the point and left by as much
+  within ``REACT_BARS`` bars. Seeds within ``TOL_ATR`` of each other are one
+  level (a hand-drawn line has width).
+* **What touched it** is then read from EVERY bar, not only the swings (v4.125):
+  a SHELF - several sessions whose lows sit on the level while a spike a day or
+  two away is deeper - is what a trader counts as a touch, and a swing test
+  misses exactly that. A "low" touch is any bar whose low is within ``TOL_ATR``
+  of the level and whose close did not fall through the zone (a bar closing well
+  under it sliced the level; it did not touch it). A "flip" touch is a swing
+  HIGH at the level: an old resistance that price has since broken above and
+  may now be retesting from above.
+* **Distinct events**: members closer than ``MIN_SEP`` bars, or with no
+  excursion of ``SEP_ATR`` away from the level between them, are ONE touch (a
+  week sitting on a price is one test of it). Each event must have ARRIVED
+  (for a low, from at least ``REACT_ATR`` above within ``REACT_BARS`` bars; for
+  a flip, from as far below) and LEFT (the last low touch by a rally of
+  ``SEP_ATR`` above the level before the bounce; a flip by the breakout close
+  above it).
+* **Invalidation and re-validation**, the same for both kinds: a level price
+  then LIVED UNDER - ``BREAK_BARS`` consecutive closes more than ``BREAK_ATR``
+  below it - was broken, and a touch from before that break counts again only
+  once price has closed back above the level (the reclaim). A single close
+  below is a spring, still support.
+* **The test**, against the ZONE the touches actually span, not a razor line
+  at their mean: the bounce low (for an engulfing, the lower of its two lows -
+  the engulfed candle is the one that tapped the level) reached no more than
+  ``REACH_ATR`` above the highest touch and speared no more than ``PIERCE_ATR``
+  below the lowest; the close held at or above the zone.
+* **The level must be ESTABLISHED and APPROACHED** (v4.125): at least
+  ``ABOVE_MIN`` of the ``REACT_BARS`` closes before the pattern were above the
+  level (a resistance broken through three days ago is a breakout, not yet a
+  support), none of them was more than ``BREAK_ATR`` under it (a level broken
+  and reclaimed last week is a reclaim, not a bounce off a held level), and a
+  high at least ``REACT_ATR`` above the level printed in that window (price
+  came DOWN to the level; a month sitting on it and a hammer is not a bounce).
+* **Choice** among levels the candle tested: most "low" touches, then most
+  touches, then the nearest. The chip and the chart say which touches are
+  resistance-turned-support ("R->S"), because a level made only of old highs is a
+  first retest, not a defended support.
 
-Every threshold is a multiple of the ticker's own ATR(14) (Wilder), a fraction
-of the candle's own range, or a ratio to the ticker's own average volume - no
+Every threshold is a multiple of the ticker's own ATR(14) (Wilder) as it stood
+BEFORE the bounce candle (its own range must not move its own goalposts), a
+fraction of the candle's own range, or a ratio to the ticker's own volume - no
 dollars, no share counts (CLAUDE.md: ticker-relative thresholds only).
 
-Volume: ``vol_ratio`` = the bounce candle's volume over the mean of the 20
-sessions before it; ``vol_high`` = at least ``VOL_HIGH`` times that mean (roughly
-+1.5 sigma for a large cap's day-to-day scatter - the bar visibly stands above
-its neighbours). While today's session is open the bar holds only the volume
-traded SO FAR, so it is projected to a full day from ``session_frac`` (see
-``services.prices``) once at least ``VOL_MIN_FRAC`` of the session has run;
-earlier than that the read is "not yet" (None), never a verdict.
+Volume: ``vol_ratio`` = the pattern's volume (the bounce candle, or the larger
+of the two candles of an engulfing) over the mean of the ``VOL_LOOKBACK``
+sessions before the pattern. ``vol_high`` = at least ``VOL_FLOOR`` times that
+mean AND inside the top ``VOL_TOP_PCT`` of THIS ticker's own daily
+volume-to-20-day-mean ratios over the last year - "high" for a name whose
+volume barely varies is a smaller multiple than for a lumpy one (v4.125; a
+fixed 1.5x fired on 4% of bounces). While today's session is open the bar
+holds only the volume traded SO FAR, so it is projected to a full day from
+``session_frac`` (see ``services.prices``) once at least ``VOL_MIN_FRAC`` of
+the session has run; earlier the read is "not yet" (None), never a verdict.
 
 The candle patterns:
 * pin bar - the app's own rule, verbatim from ``ema_setup``: lower wick at least
@@ -78,22 +98,25 @@ The candle patterns:
 from __future__ import annotations
 
 import datetime as _dt
+import math
 
 LOOKBACK = 252          # sessions of history a touch may come from (one year)
 PIVOT = 3               # a swing point has no lower low / higher high this many bars either side
 MIN_SEP = 5             # bars between distinct touches, and before the bounce candle
 REACT_BARS = 10         # the approach / departure of a swing is measured over this many bars
-REACT_ATR = 1.0         # ... and must be at least this much (x ATR at the swing)
+REACT_ATR = 1.0         # ... and must be at least this much (x ATR)
 TOL_ATR = 0.35          # cluster half-width (x ATR): the line's thickness
 SEP_ATR = 1.0           # two touches need an excursion this far from the level between them
-REACH_ATR = 0.25        # the bounce low may stop this far ABOVE the level and still have tested it
+REACH_ATR = 0.25        # the bounce low may stop this far ABOVE the zone and still have tested it
 PIERCE_ATR = 0.5        # ... and may spear this far BELOW it (a spring); deeper is a break
 BREAK_ATR = 0.5         # closes more than this below the level ...
 BREAK_BARS = 3          # ... for this many consecutive sessions = lived under it = broken
+ABOVE_MIN = 5           # of the REACT_BARS closes before the pattern, at least this many above the level
 ENGULF_BODY_RNG = 0.5   # an engulfing body is at least half its own range
 ENGULF_BODY_ATR = 0.5   # ... and at least half a normal day's range
 VOL_LOOKBACK = 20       # sessions the average volume is taken over
-VOL_HIGH = 1.5          # x that average = high volume
+VOL_FLOOR = 1.2         # high volume is at least this many times the average ...
+VOL_TOP_PCT = 0.15      # ... and inside this top share of the ticker's own year of ratios
 VOL_MIN_FRAC = 0.25     # today's volume is projected only after this much of the session
 DEMA_TOL_ATR = 0.4      # the level "coincides" with a daily EMA within this
 WEMA_TOL_ATR = 0.5      # ... and with a weekly EMA within this (a coarser object)
@@ -179,34 +202,65 @@ def _swings(highs, lows, atr, lo_i, hi_i) -> list[tuple]:
     return out
 
 
+def _members(level, tol, flips, highs, lows, closes, lo_i, hi_i) -> list[tuple]:
+    """Every bar in [lo_i, hi_i] that touched ``level`` as support - low within
+    the zone, close not through it - plus the swing-high ``flips`` within the
+    zone. Sorted by index."""
+    out = [(i, lows[i], "low") for i in range(lo_i, hi_i + 1)
+           if abs(lows[i] - level) <= tol and closes[i] >= level - tol]
+    out += [(i, p, "flip") for i, p, _ in flips if abs(p - level) <= tol]
+    out.sort()
+    return out
+
+
 def _touches(members, highs, lows, closes, atr, level, tol, end) -> list[tuple]:
-    """Distinct, still-valid touches of ``level`` among cluster ``members`` (sorted
-    by index). ``end`` = the last bar that is "before the bounce"."""
+    """Distinct, still-valid touches of ``level`` among ``members`` (sorted by
+    index). ``end`` = the last bar that is "before the bounce pattern"."""
     # merge into distinct events: MIN_SEP bars apart AND an excursion away between
-    events: list[list] = []          # [idx, price, kind, last_member_idx]
+    events: list[list] = []          # [idx, price, kind, first_member_idx, last_member_idx]
     for i, p, kind in members:
         if events:
             e = events[-1]
-            j = e[3]
+            j = e[4]
             between_h = max(highs[j + 1:i]) if i > j + 1 else highs[i]
             between_l = min(lows[j + 1:i]) if i > j + 1 else lows[i]
             away = between_h >= level + SEP_ATR * atr[i] or between_l <= level - SEP_ATR * atr[i]
             if i - j < MIN_SEP or not away:
-                e[3] = i
+                e[4] = i
                 if kind == "low" and (e[2] != "low" or p < e[1]):
                     e[0], e[1], e[2] = i, p, kind
                 continue
-        events.append([i, p, kind, i])
-    # the last touch must be followed by a rally away before the bounce revisits
+        events.append([i, p, kind, i, i])
+    # each event ARRIVED at the level: a low from above, a flip from below
+    arrived = []
+    for e in events:
+        i0 = e[3]
+        a = atr[i0] or atr[end]
+        if not a:
+            continue
+        win_h = highs[max(0, i0 - REACT_BARS):i0]
+        win_l = lows[max(0, i0 - REACT_BARS):i0]
+        if e[2] == "low" and win_h and max(win_h) >= level + REACT_ATR * a:
+            arrived.append(e)
+        elif e[2] == "flip" and win_l and min(win_l) <= level - REACT_ATR * a:
+            arrived.append(e)
+    events = arrived
+    # the last touch must have LEFT before the bounce revisits: a low by a rally
+    # away, a flip by the breakout above it
     while events:
-        j = events[-1][3]
-        if j + 1 <= end and max(highs[j + 1:end + 1]) >= level + SEP_ATR * atr[end]:
-            break
+        e = events[-1]
+        j = e[4]
+        if j + 1 <= end:
+            if e[2] == "low" and max(highs[j + 1:end + 1]) >= level + SEP_ATR * atr[end]:
+                break
+            if e[2] == "flip" and any(closes[k] > level + tol for k in range(j + 1, end + 1)):
+                break
         events.pop()
     if not events:
         return []
-    # invalidation: where price LIVED UNDER the level (BREAK_BARS closes in a row
-    # more than BREAK_ATR below it) - the start of the last such run
+    # invalidation / re-validation: the start of the last spell price LIVED
+    # UNDER the level; a touch from before it counts again only once price has
+    # closed back above the level (a flip needs that breakout close in any case)
     last_break = -1
     run = 0
     for j in range(events[0][0] + 1, end + 1):
@@ -217,21 +271,12 @@ def _touches(members, highs, lows, closes, atr, level, tol, end) -> list[tuple]:
         else:
             run = 0
     kept = []
-    for i, p, kind, _ in events:
-        if kind == "low":
-            # a support touch price then lived under is a broken level, gone
-            if last_break > i:
-                continue
-        else:
-            # an old resistance is a support touch only once price has closed back
-            # above it - and only as good as the LATEST breakout: after the last
-            # spell under the level there must be a close above it (a swing high
-            # that price broke above, fell under for a month and broke above again
-            # is one flip, dated by the old high, valid again since that breakout)
-            since = max(i, last_break)
-            if not any(closes[j] > level + tol for j in range(since + 1, end + 1)):
-                continue
-        kept.append((i, p, kind))
+    for i, p, kind, _, last_i in events:
+        since = max(last_i, last_break)
+        if kind == "low" and last_break <= last_i:
+            kept.append((i, p, kind))          # never broken since: a held support
+        elif any(closes[k] > level + tol for k in range(since + 1, end + 1)):
+            kept.append((i, p, kind))          # reclaimed / broken out above since
     return kept
 
 
@@ -262,32 +307,68 @@ def _nearest(level, pairs, tol):
     return best[0] if best else None
 
 
-def volume_read(bars: list[dict]) -> tuple:
-    """(vol_ratio, vol_high, projected) for the LAST bar vs the mean of the
-    ``VOL_LOOKBACK`` sessions before it. ``projected`` is True when today's
-    partial volume was scaled up by the session fraction, None when no session
-    fraction was involved; ``vol_high`` is None when the read is not possible
-    yet (too early in the session) or there is no volume at all."""
-    if len(bars) < VOL_LOOKBACK + 1:
+def _vol(bars, i) -> float | None:
+    v = bars[i].get("volume")
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) and f > 0 else None
+
+
+def volume_read(bars: list[dict], pat_start: int | None = None) -> tuple:
+    """(vol_ratio, vol_high, projected) for the pattern that starts at
+    ``pat_start`` (default: the last bar) vs the mean of the ``VOL_LOOKBACK``
+    sessions before it. ``projected`` is True when today's partial volume was
+    scaled up by the session fraction, None otherwise; ``vol_high`` is None when
+    the read is not possible yet (too early in the session) or there is no
+    volume. "High" = at least VOL_FLOOR x the mean AND inside the top
+    VOL_TOP_PCT of this ticker's own daily ratios over the last year."""
+    n = len(bars)
+    if pat_start is None:
+        pat_start = n - 1
+    if pat_start < VOL_LOOKBACK + 1:
         return None, None, None
-    prev = [b.get("volume") for b in bars[-VOL_LOOKBACK - 1:-1]]
-    prev = [float(v) for v in prev if v]
-    v = bars[-1].get("volume")
-    if not v or len(prev) < VOL_LOOKBACK // 2:
+    prev = [_vol(bars, j) for j in range(pat_start - VOL_LOOKBACK, pat_start)]
+    prev = [v for v in prev if v]
+    if len(prev) < VOL_LOOKBACK // 2:
         return None, None, None
     mean = sum(prev) / len(prev)
-    if mean <= 0:
-        return None, None, None
-    v = float(v)
+    # the pattern's volume: the bounce candle (projected if its session is open),
+    # or for an engulfing the larger of its two candles
     frac = bars[-1].get("session_frac")
+    v_last = _vol(bars, n - 1)
+    if v_last is None:
+        return None, None, None
     projected = None
     if frac is not None and frac < 1.0:
         if frac < VOL_MIN_FRAC:
-            return round(v / mean, 2), None, True
-        v = v / frac
+            return None, None, True             # too early in the session to say
+        v_last = v_last / frac
         projected = True
+    v = v_last
+    for j in range(pat_start, n - 1):
+        vj = _vol(bars, j)
+        if vj and vj > v:
+            v = vj
     ratio = v / mean
-    return round(ratio, 2), ratio >= VOL_HIGH, projected
+    # this ticker's own distribution of daily volume / prior-20-day mean
+    ratios = []
+    for j in range(max(VOL_LOOKBACK, pat_start - LOOKBACK), pat_start):
+        vj = _vol(bars, j)
+        if not vj:
+            continue
+        win = [_vol(bars, k) for k in range(j - VOL_LOOKBACK, j)]
+        win = [w for w in win if w]
+        if len(win) >= VOL_LOOKBACK // 2:
+            ratios.append(vj / (sum(win) / len(win)))
+    if len(ratios) >= 40:
+        ratios.sort()
+        cut = ratios[int(len(ratios) * (1.0 - VOL_TOP_PCT))]
+        thresh = max(VOL_FLOOR, cut)
+    else:
+        thresh = VOL_FLOOR + 0.3                # too little history: a plain 1.5x
+    return round(ratio, 2), ratio >= thresh, projected
 
 
 def find(bars: list[dict], d_emas=(), w_emas=()) -> dict | None:
@@ -296,84 +377,105 @@ def find(bars: list[dict], d_emas=(), w_emas=()) -> dict | None:
     weekly EMA20 / EMA50 for the confluence read (weekly ones may be omitted).
 
     Returns {level, zone: [lo, hi], atr, touches: [{time, price, kind}] (oldest
-    first, previous touches only), n_touches, bounce: {time, kind, low},
-    vol_ratio, vol_high, vol_projected, d_ema, w_ema}."""
+    first, previous touches only), n_touches, n_low, n_flip, bounce: {time,
+    kind, low}, vol_ratio, vol_high, vol_projected, d_ema, w_ema}."""
     n = len(bars)
     if n < MIN_BARS:
         return None
     try:
         cur = tuple(float(bars[-1][k]) for k in ("open", "high", "low", "close"))
         prev = tuple(float(bars[-2][k]) for k in ("open", "high", "low", "close"))
+        o, h, l, c = cur
+        pin = is_pin_bar(o, h, l, c)
+        # cheap shape gate before any series work
+        if not pin and not (c > o and prev[3] <= prev[0] and o <= min(prev[0], prev[3])
+                            and c >= max(prev[0], prev[3])):
+            return None
+        highs = [float(b["high"]) for b in bars]
+        lows = [float(b["low"]) for b in bars]
+        closes = [float(b["close"]) for b in bars]
     except (KeyError, TypeError, ValueError):
         return None
-    o, h, l, c = cur
-    pin = is_pin_bar(o, h, l, c)
-    # cheap shape gate before any series work
-    if not pin and not (c > o and prev[3] <= prev[0] and o <= min(prev[0], prev[3]) and c >= max(prev[0], prev[3])):
+    if not all(math.isfinite(x) for x in (o, h, l, c)):
         return None
-    highs = [float(b["high"]) for b in bars]
-    lows = [float(b["low"]) for b in bars]
-    closes = [float(b["close"]) for b in bars]
     atr = atr_series(highs, lows, closes)
-    a = atr[-1]
-    if not a or a <= 0:
+    # the ATR as it stood before the pattern: a wide bounce candle must not
+    # widen its own tolerances
+    a_pin = atr[-2]
+    if not a_pin or a_pin <= 0:
         return None
     if pin:
-        kind, test_low = "pin", l
-    elif is_engulfing(prev, cur, a):
-        kind, test_low = "engulf", min(l, prev[2])
+        kind, test_low, pat_start = "pin", l, n - 1
+        a = a_pin
     else:
-        return None
+        a = atr[-3] if n >= 3 and atr[-3] else a_pin
+        if not is_engulfing(prev, cur, a):
+            return None
+        kind, test_low, pat_start = "engulf", min(l, prev[2]), n - 2
+    before = pat_start - 1                       # last bar of history before the pattern
 
     tol, reach, pierce = TOL_ATR * a, REACH_ATR * a, PIERCE_ATR * a
-    end = n - 1 - MIN_SEP                       # the last bar a touch may sit on
+    end = n - 1 - MIN_SEP                        # the last bar a touch may sit on
     lo_i = max(PIVOT + 14, n - 1 - LOOKBACK)
-    if end < lo_i:
+    if end < lo_i or before - REACT_BARS < 0:
         return None
     swings = _swings(highs, lows, atr, lo_i, end)
-    # only swings that could form a level the bounce candle reached
+    # only swings that could seed a level the bounce candle reached
     cand = [s for s in swings if test_low - reach - tol <= s[1] <= test_low + pierce + tol]
     if not cand:
         return None
+    flips = [s for s in swings if s[2] == "flip"]
+    # the bars before the pattern that decide "established" and "approached"
+    pre_c = closes[before - REACT_BARS + 1:before + 1]
+    pre_h = highs[before - REACT_BARS + 1:before + 1]
+    pre_a = atr[before - REACT_BARS + 1:before + 1]
     best = None
     seen = set()
     for _, seed, _ in cand:
         lvl = seed
-        mem = []
-        for _ in range(2):                      # seed -> mean -> re-gather
-            mem = [s for s in cand if abs(s[1] - lvl) <= tol]
-            lvl = sum(s[1] for s in mem) / len(mem)
-        mem.sort()
-        key = tuple(s[0] for s in mem)
-        if key in seen:
+        for _ in range(2):                      # seed -> mean of nearby swings -> re-gather
+            near = [s for s in cand if abs(s[1] - lvl) <= tol]
+            lvl = sum(s[1] for s in near) / len(near)
+        mem = _members(lvl, tol, flips, highs, lows, closes, lo_i, end)
+        key = tuple(m[0] for m in mem)
+        if not mem or key in seen:
             continue
         seen.add(key)
-        # history ends where the bounce pattern begins: the rally away from the
-        # last touch, and an old resistance's breakout, must have happened BEFORE
-        # the bounce candle(s) - a candle that is itself the breakout is not a
-        # retest from above
-        touches = _touches(mem, highs, lows, closes, atr, lvl, tol, n - 3 if kind == "engulf" else n - 2)
+        touches = _touches(mem, highs, lows, closes, atr, lvl, tol, before)
         if not touches:
             continue
-        lvl = sum(t[1] for t in touches) / len(touches)
-        if not (lvl - pierce <= test_low <= lvl + reach and c >= lvl):
+        prices = [t[1] for t in touches]
+        lvl = sum(prices) / len(prices)
+        z_lo, z_hi = min(prices), max(prices)
+        # the test, against the zone the touches span
+        if not (z_lo - pierce <= test_low <= z_hi + reach and c >= lvl - tol):
             continue
-        rank = (len(touches), -abs(test_low - lvl))
+        # established above it, approached from above, not broken last week
+        if sum(1 for x in pre_c if x >= lvl) < ABOVE_MIN:
+            continue
+        if max(pre_h) < lvl + REACT_ATR * a:
+            continue
+        if any(x < lvl - BREAK_ATR * (aa or a) for x, aa in zip(pre_c, pre_a)):
+            continue
+        n_low = sum(1 for t in touches if t[2] == "low")
+        rank = (n_low, len(touches), -abs(test_low - lvl))
         if best is None or rank > best[0]:
-            best = (rank, lvl, touches)
+            best = (rank, lvl, touches, z_lo, z_hi)
     if best is None:
         return None
-    _, lvl, touches = best
+    _, lvl, touches, z_lo, z_hi = best
 
-    vol_ratio, vol_high, projected = volume_read(bars)
+    vol_ratio, vol_high, projected = volume_read(bars, pat_start)
     d_ema = _nearest(lvl, d_emas, DEMA_TOL_ATR * a)
     w_ema = _nearest(lvl, w_emas, WEMA_TOL_ATR * a) if w_emas else None
     return {
         "level": round(lvl, 2),
-        "zone": [round(lvl - tol, 2), round(lvl + tol, 2)],
+        "zone": [round(z_lo, 2), round(z_hi, 2)],
         "atr": round(a, 4),
         "touches": [{"time": bars[i].get("time"), "price": round(p, 2), "kind": k} for i, p, k in touches],
         "n_touches": len(touches),
+        "n_low": sum(1 for t in touches if t[2] == "low"),
+        "n_flip": sum(1 for t in touches if t[2] == "flip"),
         "bounce": {"time": bars[-1].get("time"), "kind": kind, "low": round(test_low, 2)},
         "vol_ratio": vol_ratio, "vol_high": vol_high, "vol_projected": projected,
         "d_ema": d_ema, "w_ema": w_ema,

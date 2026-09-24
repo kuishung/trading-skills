@@ -495,6 +495,11 @@ def rank(setup: dict, enabled: dict) -> dict:
     sup = setup.get("sup")
     if enabled.get("s1") and sup and setup.get("uptrend"):
         n = sup.get("n_touches") or 0
+        n_flip = sup.get("n_flip") or 0
+        # "x3 (2 R>S)": how many of the touches are an old resistance retested
+        # from above - a level made only of old highs is a first retest, not a
+        # defended support, and the member should see that at a glance
+        xtxt = f"x{n}" + (f" ({n_flip} R→S)" if n_flip else "")
         b = sup.get("bounce") or {}
         kind = "engulfing" if b.get("kind") == "engulf" else "pin bar"
         vr = sup.get("vol_ratio")
@@ -518,9 +523,10 @@ def rank(setup: dict, enabled: dict) -> dict:
             score += (COND_WEIGHT["s1"] + S1_BONUS_TOUCH * max(0, n - 1)
                       + (S1_BONUS_DEMA if sup.get("d_ema") else 0)
                       + (S1_BONUS_WEMA if sup.get("w_ema") else 0))
-            chips.append({"t": f"support bounce {sup['level']:g} · x{n} · {kind} · {vtxt}{conf}",
+            chips.append({"t": f"support bounce {sup['level']:g} · {xtxt} · {kind} · {vtxt}{conf}",
                           "k": "sup",
-                          "title": story + f". Volume {vtxt} the average of the 20 sessions before it"
+                          "title": story + f". Volume {vtxt} the average of the 20 sessions before it - "
+                                   "high for this ticker (its top 15% of days, at least 1.2x)"
                                    + (" (projected from the part of today's session traded so far)"
                                       if sup.get("vol_projected") else "") + " - a defended level."})
         else:
@@ -528,7 +534,7 @@ def rank(setup: dict, enabled: dict) -> dict:
             why = ("volume not readable yet - too early in today's session"
                    if sup.get("vol_high") is None and sup.get("vol_projected") is not None
                    else ("no volume figure" if vr is None else f"only {vtxt}, not a high-volume bounce"))
-            chips.append({"t": f"support bounce {sup['level']:g} · x{n} · {kind} · light vol{conf}",
+            chips.append({"t": f"support bounce {sup['level']:g} · {xtxt} · {kind} · light vol{conf}",
                           "k": "supx",
                           "title": story + f". NEAR MISS: {why}."})
     if enabled.get("c1"):
