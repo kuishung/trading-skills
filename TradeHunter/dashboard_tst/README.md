@@ -143,6 +143,24 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-01 - v4.126: Macro, Company and the Options dropdown come off the nav
+
+User: *"in the tradehunter, i want to disable the Company, macro, options"*. Same treatment as the
+2026-09-15 removal of the Portfolio and Options menus (`app/menus.py`): the five keys - `macro`,
+`company_analysis` and the Options dropdown's `ivscan` / `spreads` / `positions` - move from `MENUS`
+to a new `OFF_NAV_KEYS` list that feeds `HIDDEN_KEYS`, so the bar now reads **Calendar · Sector &
+Industry · Watchlist · Curated**. The pages are NOT deleted: they still answer at their URLs and
+through in-page links (the chart's "Full company page", the Watchlist's Options tab, the calendar's
+ticker links, the IV Rank page's "My positions"), and existing per-member grants still pass the
+route guards (the keys stay in `ALL_KEYS`). The Positions exit-line badge in the nav goes with the
+dropdown (it renders only for a `/portfolio` nav entry). The tuples are kept in the comment verbatim,
+so restoring one is a cut-and-paste back into `MENUS`. `LABELS` still names the five keys so the
+admin console's access list reads properly.
+
+Verified: the rendered nav for an admin and for a member with no explicit grants shows the four
+items and no Options dropdown; `/macro`, `/company-analysis`, `/ivscan`, `/spreads`, `/portfolio`
+still return 200 by URL; `landing_for` still sends sign-ins to the Calendar.
+
 ### 2026-09-24 - v4.125: the support bounce counts the shelf, not just the spikes - and refuses fresh breakouts
 
 Follow-up to v4.124 from the adversarial review it was owed (the two judge agents of the design

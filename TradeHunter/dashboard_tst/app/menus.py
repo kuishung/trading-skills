@@ -15,11 +15,10 @@ from .security import require_user
 
 # (key, label, group, href). group None = a top-level single item. List = nav order.
 # Revamped 2026-07-18 to a top-down investing funnel (user): Macro -> Sector &
-# Industry -> Company -> Watchlist -> Portfolio. All 5 are flat top-level items.
+# Industry -> Company -> Watchlist -> Portfolio, all flat top-level items; trimmed
+# 2026-10-01 to Calendar -> Sector & Industry -> Watchlist -> Curated (see
+# OFF_NAV_KEYS below for the rest).
 MENUS = [
-    # /macro = the fixed six-topic board (2026-08-16). Free-form macro research
-    # still lives at /research?kind=macro, linked from the board.
-    ("macro",            "Macro",             None, "/macro"),
     # Calendar — ONE page: the combined month grid (releases + earnings on the
     # same wall calendar, with a day-detail panel). The standalone Economic and
     # Earnings pages were removed 2026-08-20 (user) — the month view already
@@ -27,21 +26,25 @@ MENUS = [
     # menu grants keep working.
     ("calendar_month",    "Calendar",          None, "/calendar/month"),
     ("sector",           "Sector & Industry", None, "/sector"),
-    ("company_analysis", "Company",           None, "/company-analysis"),
     ("matp",             "Watchlist",         None, "/matp"),
     # Curated — each member's own dated calls (entry/stop/target), judged from
     # price history. Replaced the Portfolio placeholder 2026-09-07 (user).
     ("curated",          "Curated",           None, "/curated"),
-    # Options - back in the bar as a dropdown (user, 2026-09-18: "put back the
-    # option menu and then give me the watchlist"). IV Rank = the member's TWS
-    # High IV Rank scanner as a watchlist; Spread = the bull put spread screener.
-    ("ivscan",           "IV Rank",           "Options", "/ivscan"),
-    ("spreads",          "Spread",            "Options", "/spreads"),
-    # Positions = /portfolio, the member's open spreads graded daily against the
-    # management lines (user, 2026-09-18: "if I am in the position i need to know
-    # if my position need to be managed"). Key stays "positions" - see HIDDEN_KEYS.
-    ("positions",        "Positions",         "Options", "/portfolio"),
 ]
+# Off the nav since 2026-10-01 (user: "i want to disable the Company, macro,
+# options") - the SAME treatment as the 2026-09-15 removal: the pages stay
+# reachable by URL and by in-page links (the chart's "Full company page", the
+# Watchlist's Options tab, the calendar's ticker links), they are just not in
+# the bar. To bring one back, move its tuple up into MENUS at its funnel
+# position. The tuples are kept here verbatim so that is a cut-and-paste:
+#   ("macro",            "Macro",             None,      "/macro")        - the fixed six-topic board (2026-08-16); free-form macro research at /research?kind=macro
+#   ("company_analysis", "Company",           None,      "/company-analysis")
+#   ("ivscan",           "IV Rank",           "Options", "/ivscan")       - the member's TWS High IV Rank scanner as a watchlist
+#   ("spreads",          "Spread",            "Options", "/spreads")      - the bull put spread screener
+#   ("positions",        "Positions",         "Options", "/portfolio")    - open spreads graded against the management lines; the nav's exit-line badge renders only while this is in MENUS
+# (The Options dropdown had been removed 2026-09-15 and put back 2026-09-18 -
+# "put back the option menu and then give me the watchlist" - before this.)
+OFF_NAV_KEYS = ["macro", "company_analysis", "ivscan", "spreads", "positions"]
 # Routes that stay ACCESSIBLE (granted + reachable by URL) but are no longer shown
 # in the top nav after the revamp. Kept in ALL_KEYS so their require_menu() guards
 # still pass; simply not rendered by nav_for. "company" is the research chat
@@ -57,7 +60,7 @@ MENUS = [
 # (the OLD Portfolio placeholder became Curated on 2026-09-07), so reusing that key
 # would hand this page's grants to Curated. The nav's exit-line badge poll
 # (base.html, /portfolio/badge) renders only while this entry is in MENUS.
-HIDDEN_KEYS = ["company", "studies", "strategy", "patterns"]
+HIDDEN_KEYS = OFF_NAV_KEYS + ["company", "studies", "strategy", "patterns"]
 # Where an approved user lands after sign-in (user, 2026-09-07: "on login go to
 # calendar by default"). Kept here rather than hard-coded at each redirect site so
 # the three of them (index, password login, OAuth callback) cannot drift apart.
@@ -70,6 +73,8 @@ ALL_KEYS = [m[0] for m in MENUS] + HIDDEN_KEYS
 # migration, and without pinning the code to a name the page no longer has.
 LEGACY_KEYS = {"portfolio": "curated"}
 LABELS = {m[0]: m[1] for m in MENUS}
+LABELS.update({"macro": "Macro", "company_analysis": "Company", "ivscan": "IV Rank",
+               "spreads": "Spread", "positions": "Positions"})
 
 
 def allowed_keys(user: User) -> set:
