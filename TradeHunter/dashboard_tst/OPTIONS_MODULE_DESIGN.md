@@ -415,6 +415,36 @@ From the mockup turn:
 
 ---
 
+---
+
+## Part II — full design: STATUS 2026-10-03 (drafts written, NOT yet reconciled)
+
+The buildable spec was drafted by a four-designer / two-critic panel and saved under
+`design/options/`:
+
+- `part_A_data.md` — ChainSource interface (Cboe / Alpaca / bridge payload), the six tables
+  with SQLAlchemy sketches, migration `f4a5b6c7d8e9` off head `e2f3a4b5c6d7`, the derived
+  metric formulas, the nightly job (`TST-Options-Nightly`, 07:15 MYT), the `option_signal`
+  contract, failure modes, test plan.
+- `part_B_engines.md` — premium gauge, chart-state contract, the ten-strategy rule table,
+  strike picker + prefs schema, sizing, order ticket, exits, worked LRCX / ISRG examples.
+- `part_C_chart_engines.md` — trend-line engine, range/resistance detector, payoff engine
+  and chart rendering, worked examples, tests.
+- `part_D_ui.md` — routes, templates, HTMX flows, My rules drawer, Telegram push,
+  migration of the three old pages, non-technical checklist, browser walkthrough.
+- `CRITIQUE.md` — both critics' findings. **Headline blocker:** contracts are sized two
+  different ways (B: by the loss at the chart stop; D: by max loss) — one rule needed:
+  `contracts = min(by_chart_stop, by_max_loss)` with a shared GAP_MULT pref (house 2.0),
+  and the card must show both figures ("$990 if the stop fires, up to $6,830 if it gaps").
+  Also: tracked positions proposed in three stores (pick one), two payoff implementations
+  (pick one), prefs field names differ between B and D, the push path differs.
+
+**Next session, in order:** (1) apply CRITIQUE.md blockers + majors to the parts;
+(2) unify the cross-part names listed under "Reconciliation"; (3) merge the four parts
+into this file as Part II; (4) then start build step 1 (credit spreads + payoff chart +
+page skeleton). The ten decisions in §10 were locked on 2026-10-03 with the user's
+go-ahead ("ok now we proceed with the full design") using the recommended picks.
+
 ## 11. Related docs
 
 `DESIGN.md` (platform blueprint, security posture: no execution), `app/services/bull_put.py`
