@@ -143,6 +143,19 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-03 - `OPTIONS_MODULE_DESIGN.md` (design only, no code)
+
+User: *"can you put into .md file what we have discussed so far so you can remember across
+machine"*. The whole Options-module discussion of 2026-10-03 written up so it resumes on any PC:
+the vision in the user's words, the mindmap (basket / data / engines / UI / responsiveness),
+what is automatic vs human (the system is the curator; the human approves and places the
+order), the data sources ranked (Cboe delayed - exists; IBKR bridge - exists; Alpaca as the
+contracted fallback), the storage tables and nightly cadence, the ten-strategy catalog the user
+specified with the per-strategy greek rules and IV gates, the automatic trend-line engine, the
+risk / reward payoff chart, the one-page UI layout that was mocked up, the exists-vs-new table,
+a build order, and ten open decisions. Pointer added to `CLAUDE.md` (IN-PROGRESS DESIGN) so
+every PC recalls it at session start. Status: DISCUSSION, not started.
+
 ### 2026-10-01 - v4.126: Macro, Company and the Options dropdown come off the nav
 
 User: *"in the tradehunter, i want to disable the Company, macro, options"*. Same treatment as the

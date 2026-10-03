@@ -641,6 +641,16 @@ it — memory files don't sync across PCs.
 platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
 `dashboard_tst/DEPLOY.md`. Key facts (so any session/PC recalls them):
 
+- **IN-PROGRESS DESIGN (resume across PCs):** `dashboard_tst/OPTIONS_MODULE_DESIGN.md`
+  — the Options module: a per-member basket of tickers, option data (chain + greeks,
+  HV, IV, IV rank) stored in the TradeHunter DB and refreshed nightly on Hermes, and three
+  engines that recommend (1) the strategy that fits the chart setup + IV regime, (2) the
+  strikes under each member's own greek rules, (3) whether it is a time to sell premium -
+  plus automatic trend lines and a risk/reward payoff chart, on ONE non-technical page that
+  replaces IV Rank / Spread / Positions. Status: DISCUSSION, not started (2026-10-03). The
+  user's ten strategies, the per-strategy rule tables, the mindmap, the mockup layout and
+  TEN open decisions are in that doc. Read it to continue; answer the open decisions first.
+
 - **IN-PROGRESS DESIGN (resume across PCs):** `dashboard_tst/COMPANY_INTELLIGENCE_DESIGN.md`
   — Obsidian-backed per-company analysis + per-quarter metric alerts (e.g. NVDA FCF
   depleting → in-app alert). Status: DISCUSSION, not started. Decisions locked so far:
