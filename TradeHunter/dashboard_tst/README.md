@@ -143,6 +143,29 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-04 - Options module: full design reconciled (`OPTIONS_MODULE_DESIGN.md` Part II + `design/options/`) (design only, no code)
+
+User: *"ok now we proceed with the full design?"* - and the ten open decisions were locked with the
+recommended picks. A four-designer / two-critic panel drafted the buildable spec on 2026-10-03
+(`design/options/part_A_data.md` data layer + nightly job, `part_B_engines.md` decision engines,
+`part_C_chart_engines.md` trend lines / range / payoff, `part_D_ui.md` the page); the critics found
+the parts contradicted each other where a member would be hurt (contracts sized two ways, three
+positions stores, two payoff charts, three prefs schemas, three migrations off the same head). On
+2026-10-04 one unified contract was written and four editors rewrote the parts against it; an
+integrator then wrote **Part II** into `OPTIONS_MODULE_DESIGN.md`: the canonical contract (ONE
+migration `f4a5b6c7d8e9` creating nine tables; `option_trades` + `option_trade_checks` as the one
+positions store from step 1; `option_prefs.py` with seven blocks and a pick-relevant `prefs_hash`;
+sizing = min(by chart stop, by max loss x GAP_MULT, by notional) with both figures always shown;
+the order ticket with NO entry condition by default and the chart-stop exit as the one conditional
+order; `option_signal` shapes; strategy keys; leg / pick / payoff / trend-line / range dicts; IV
+units by source; Live never persisted; Telegram with per-member opt-in and guards; routes under
+`verb/{symbol}`), the module map, the four-step build plan with tests and deploy notes, the
+resolved decisions and the remaining risks. Integrator calls on the two critic disagreements:
+generic positions store from step 1 (the alternative priced bear calls as puts); entry condition
+off by default (an absent member's order must not fire on a gap through support). A name-level
+consistency check (forbidden / required names across the five documents) passes; Part I's storage
+table was aligned (`term_ratio`). Status: DESIGNED, nothing built; next = build step 1.
+
 ### 2026-10-03 - `OPTIONS_MODULE_DESIGN.md` (design only, no code)
 
 User: *"can you put into .md file what we have discussed so far so you can remember across
