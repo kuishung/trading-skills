@@ -164,7 +164,10 @@ resolved decisions and the remaining risks. Integrator calls on the two critic d
 generic positions store from step 1 (the alternative priced bear calls as puts); entry condition
 off by default (an absent member's order must not fire on a gap through support). A name-level
 consistency check (forbidden / required names across the five documents) passes; Part I's storage
-table was aligned (`term_ratio`). Status: DESIGNED, nothing built; next = build step 1.
+table was aligned (`term_ratio`). A field-by-field verifier then found 55 contradictions between
+Part II and the parts; thirteen integrator rulings and a second editor pass applied them and the
+re-check verdict is "buildable as is". Golden fixtures are generated from real chain snapshots in
+step 1, never typed; `e2f3a4b5c6d7` was verified to be the current Alembic head. Status: DESIGNED, nothing built; next = build step 1.
 
 ### 2026-10-03 - `OPTIONS_MODULE_DESIGN.md` (design only, no code)
 

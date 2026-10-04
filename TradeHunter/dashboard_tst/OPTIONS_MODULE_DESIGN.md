@@ -1243,6 +1243,23 @@ five documents; where a part or this Part II said otherwise, it is corrected to 
 
 ### II.6 Risks and open items
 
+> **Golden fixtures are GENERATED, not typed (integrator, 2026-10-04).** The LRCX / ISRG
+> numbers quoted in Part II and the four parts are illustrative; several are not
+> Black-Scholes-consistent with each other (a 330P at IV 0.46, 48 DTE, from 349.20 cannot
+> trade at 5.70). Step 1 captures one real Cboe chain for LRCX and one for ISRG into
+> `tests/fixtures/options/{lrcx,isrg}.json` (chain + bars + as_of); the tests assert against
+> the values the engines produce from THOSE files, printed once by
+> `tests/fixtures/options/regen.py` into an expected-values JSON. Where a part quotes a
+> different figure for the same pick (worst fill 1.95 / 1.80 / 2.00, the 325/315 row, score
+> 0.199 / 0.328, per-leg mids), the generated value wins and the prose is corrected in the
+> build commit. `distinct_hashes(db)` returns a list (house hash first). `pop_model` is a
+> number (0..1), never a string.
+>
+> **Alembic head verified (2026-10-04).** Later-named migrations (`f3a4b5c6d7e8_chart_drawings`,
+> `f6a7b8c9d0e1_agent_cron_jobs`, `f8a9b0c1d2e3_company_analysis`) are ANCESTORS of
+> `e2f3a4b5c6d7`, which is the single current head - the parts' `down_revision` is right. The
+> builder still runs `alembic heads` before writing `f4a5b6c7d8e9_options_module.py`.
+
 Genuinely unresolved; none blocks step 1 from starting.
 
 | # | Item | Why it matters | Where it lands |
