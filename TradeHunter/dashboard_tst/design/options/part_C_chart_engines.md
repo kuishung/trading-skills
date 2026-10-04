@@ -24,8 +24,8 @@ route, including the two this part feeds); Part A owns `deploy/options_nightly.p
 | `app/services/ema_setup.py` | modify | `analyze()` gains `tl`, `tl_bounce`, `rng` fields and an `at=` keyword it hands to `trend_line.find`; `t1` / `r1` condition keys; chips (C1.7, C2.6) | 2, 3 |
 | `app/templates/_price_chart.html` | modify | `chart_trendline` / `chart_range` overlays; `SPREAD.legs` / `SPREAD.breakevens` for non-put strike labels (C4.4) | 1 (strikes), 2 (trend line), 3 (range) |
 | `app/templates/base.html` | modify | four `--po-*` colour tokens, dark + light (C4.2) | 1 |
-| `app/routes/options_page.py` (Part D's router) | modify | `GET /options/payoff/{symbol}?strategy=&pick=&units=$\|R` → the partial, HTMX-swapped into `#optPayoff`; `GET /options/chart/{symbol}` passes the overlays like `sector._bounce_overlay` (C4.5) | 1 |
-| `tests/test_trend_line.py`, `tests/test_range_box.py`, `tests/test_payoff.py`, `tests/fixtures/options/` | **create** | the C6 plan; the `dashboard_tst/tests/` tree and `requirements-dev.txt` (pytest) do not exist today and are created in step 1 before the first engine lands, shared with A8 / B9 / D8.2 | 1 |
+| `app/routes/options_page.py` (Part D's router) | modify | `GET /options/payoff/{symbol}?strategy=&pick=&units=$\|R` → the partial, HTMX-swapped into `#optPayoff`; `GET /options/chart/{symbol}` passes the overlays built from the STORED setup (`option_store.card_for(db, symbol, user)["setup"]`, never a detector run on a request — C4.5) | 1 |
+| `tests/test_payoff.py`, `tests/test_trend_line.py`, `tests/test_range_box.py`, `tests/fixtures/options/` | **create** | the C6 plan; the `dashboard_tst/tests/` tree and `requirements-dev.txt` (pytest) do not exist today and are created in step 1 before the first engine lands, shared with A8 / B9 / D8.2 (B's `tests/test_option_engines.py` is step 1 too) | 1 (`test_payoff.py`, the tree, `requirements-dev.txt`, the fixtures), 2 (`test_trend_line.py`), 3 (`test_range_box.py`) — each test file lands with its engine |
 | `README.md` | modify | Contents lines for the three modules + partial + the tests tree; changelog entry per release | each |
 
 Primitives reused verbatim (never copied): `support_bounce.atr_series` (l.150), `_swings` (l.169),
@@ -164,7 +164,7 @@ line that closes back above it is still a valid line — exactly `support_bounce
 |---|---|---|
 | < 60 bars, no ATR, < 2 qualifying pivots | `None` | no line, no chip; the headline sentence does not mention a trend line |
 | every pair rejected (no slope / rise / all closed through) | `None` | same — the EMA stack still carries the trend verdict |
-| best line closed through within the last 5 bars | dict with `broken=True`, `last_break` | dashed line, axis label `Trend ×3 · broken 2026-10-02`; recommender: warning ("the trend line gave way on Oct 2") — a credit idea under it is **rejected with that reason** (cross-part rule for Part B: the row's `reason_key` is `no_setup` from the fixed vocabulary, the long `reasons[]` text names the date) |
+| best line closed through within the last 5 bars | dict with `broken=True`, `last_break` | dashed line, axis label `Trend ×3 · broken 2026-10-02`; recommender: warning ("the trend line gave way on Oct 2") — a credit idea under it is **rejected with that reason** (cross-part rule for Part B: the strategies row is rejected — `score`, `why` and `must_happen` null — and the long `reasons[]` text names the date; `reason_key` is not a strategies-row field: it belongs to the picker's `degenerate` and has the fixed vocabulary `no_chain, no_expiry, no_band, constraint, credit_floor, thin, theta_cap, extrinsic_cap, no_term, safety` — a strike asked for under a broken line fails the chart constraint and reads `constraint`) |
 | latest close under the line by ≤ 0.5 ATR | `warning=True` | solid line; chip tooltip "today closed under the line — not yet broken" |
 | direction does not match the stack (caller asked "up" in a downtrend) | usually `None` or a short 2-touch line | the caller only asks for the direction the EMA20/50 order gives (C1.7) |
 | non-numeric / NaN prices | `None` (caught) | — |
@@ -221,14 +221,14 @@ l.370):
 
 | Change | Where | Detail |
 |---|---|---|
-| new fields | return dict l.419-431 and `_blank()` l.236-247 | `"tl": tl, "tl_bounce": tl_bounce` (and `"rng"`, C2.5) — stored verbatim by Part A under `option_signal.setup.tl` / `.tl_bounce` / `.rng` next to Part B's `kind, direction, level, zone, touches:int, quality, close, trend_days, atr, ema{e20,e50,e200}, plan{entry,stop,target,r}, levels{support,resistance}, evidence[]` |
-| one detector run | Part B's `chart_state.read()` | calls `ema_setup.analyze(bars, long_bars, at=expiries)` ONCE and reads `sup / tl / tl_bounce / rng` from the returned dict; it never calls `support_bounce.find`, `trend_line.find` or `range_box.find` itself (no second detector run, no renamed copies of these dicts) |
+| new fields | return dict l.419-431 and `_blank()` l.236-247 | `"tl": tl, "tl_bounce": tl_bounce` (and `"rng"`, C2.5) — stored verbatim by Part A under `option_signal.setup.tl` / `.tl_bounce` / `.rng` next to Part B's `kind, direction, level, zone, touches:int, quality:int (0-100), close, trend_days, atr, ema{e20,e50,e200}, plan{entry,stop,target,r}, stop (= plan.stop), target (= plan.target), levels{support,resistance}, evidence[]` |
+| one detector run | Part B's `chart_state.read(symbol, *, bars, long_bars, today, expiries) -> ChartState` | calls `ema_setup.analyze(bars, long_bars, at=expiries)` ONCE and reads `sup / tl / tl_bounce / rng` from the returned dict; it never calls `support_bounce.find`, `trend_line.find` or `range_box.find` itself (no second detector run, no renamed copies of these dicts) |
 | new condition key | `COND_KEYS` l.123 → add `"t1"` after `"s1"` (and `"r1"`, C2.5); `COND_LABELS` l.124; `COND_DEFAULT` l.140 (`True` — same 2y fetch, costs nothing extra, like s1); `COND_WEIGHT` l.142 (`"t1": 110`, equal to s1: a bounce off a 3-touch line is the same grade of setup as a bounce off a 3-touch shelf). **Release note:** every `sym_conds` reader (the Sector / IV Rank / Curated condition switches, `clean_enabled` l.455) sees two more switches, `t1` and `r1`, the moment the keys land | label: `("Trend-line bounce", "TREND-LINE BOUNCE — the debit-family setup, all required: EMA20 above EMA50 (daily); an automatic trend line under the lows with ≥ 3 touches in the last year that price has never closed more than half an ATR through; the most recent daily candle is a bullish pin bar or engulfing candle whose low tested that line; high volume for this ticker. Click the ticker: the chart draws the line, its touches and the bounce candle. A line closed through within the last week shows as broken.")` |
 | `conditions()` l.433-452 | add `"t1": bool(setup.get("uptrend") and (setup.get("tl") or {}).get("n_touches", 0) >= MIN_TOUCHES_SETUP and setup.get("tl_bounce") and setup["tl_bounce"].get("vol_high"))` with `MIN_TOUCHES_SETUP = 3` (the "3+ preferred" of §6d made a gate for the *setup*; a 2-touch line is still drawn, faded) | mirrors `s1` l.450 |
 | `rank()` l.465-583 | chip after the `sup` chip: `{"t": f"trend-line bounce {tl['value_today']:g} · ×{n} · {kind} · {vtxt}", "k": "tl"}`; near miss (volume not high) → `"k": "tlx"`, `S1_NEAR_MISS` score; a line with `broken=True` gets `{"t": f"trend line broken {tl['last_break']}", "k": "tlb"}` and no score | chip colours: amber (`bg-amber-500/15 text-amber-300`) for `tl`, `bg-amber-500/10` for `tlx`, rose for `tlb` — added where `supx` is handled: `_ivscan_list.html` l.88, `_curated_list.html`, `_sector_basket.html`, `_sector_symbols.html`, plus the light-theme ink in `base.html` (the v4.112 lesson) |
 | the bounce test | `trend_line.bounce()` | identical gates to `sb.find` l.386-414 (shape gate first, ATR *before* the pattern: `atr[-2]` for a pin, `atr[-3]` for an engulfing), then with `lv_i = value_on(line, times, bars[i].time)` per bar: `test_low` (pin: its low; engulf: the lower of the two lows, each measured against the line on ITS bar) within `[lv − PIERCE_ATR·a, lv + REACH_ATR·a]`; close ≥ lv − TOL_ATR·a; approached: a high ≥ `REACT_ATR·a` above the line in the `REACT_BARS` before the pattern (l.456's rule); no close in that window more than `BREAK_ATR` under the line (l.458's rule); `sb.volume_read(bars, pat_start)` for the volume |
-| the warning | `tl["warning"]` / `tl["broken"]` | the headline sentence (composed at write time by `option_words.headline`, stored in `option_signal.headline`) appends "— but today closed under the line" / "— the line broke on {date}"; the chart draws it dashed |
-| expiries | `find(..., at=expiries)` | the nightly job (`deploy/options_nightly.py`, Part A) is the one caller that passes `at=[every expiry in the chain snapshot]` — through `chart_state.read(..., at=...)` → `analyze(..., at=...)` — so `tl.value_at` is filled inside the single detector run and stored with the signal ("the line's value at expiry = where the short strike sits under"). `setup_for()`'s cached page read passes nothing (`value_at = {}`); the chart route then fills the ONE expiry it draws with `trend_line.value_on(setup["tl"], times, expiry)` — pure arithmetic over the stored dict (`times = [b["time"] for b in bars]`), not a detector run (C4.5) |
+| the warning | `tl["warning"]` / `tl["broken"]` | the headline sentence (composed at write time by `headline(setup, iv, strategies) -> str` in `option_words`, stored in `option_signal.headline`) appends "— but today closed under the line" / "— the line broke on {date}"; the chart draws it dashed |
+| expiries | `find(..., at=expiries)` | the nightly job (`deploy/options_nightly.py`, Part A) is the one caller that passes `at=[every expiry in the chain snapshot]` — through `chart_state.read(symbol, *, bars, long_bars, today, expiries)` → `analyze(..., at=expiries)` — so `tl.value_at` is filled inside the single detector run and stored with the signal ("the line's value at expiry = where the short strike sits under"). `setup_for()`'s cached list read (the Sector / IV Rank chips) passes nothing (`value_at = {}`); the Options chart route reads the STORED signal's `tl` (`option_store.card_for`, C4.5), whose `value_at` already holds every snapshot expiry, and fills a missing one with `trend_line.value_on(setup["tl"], times, expiry)` — pure arithmetic over the stored dict (`times = [b["time"] for b in bars]`, the chart's own daily bars), never a detector run on a request (C4.5) |
 
 `needs_deep()` is untouched: `t1` reads the same 2-year bars as `s1`.
 
@@ -352,8 +352,8 @@ and it is not under the trend line's 5 ms cap.
 
 | Consumer | Reads | Rule it applies |
 |---|---|---|
-| iron condor (Part B recommender / picker) | `sideways`, `zone_low`, `zone_high`, `width_atr`, `n_low`, `n_high` | fits only when `sideways` is True; the chart constraint is short put strike < `rng["zone_low"][0]`, short call strike > `rng["zone_high"][1]` (§5.3 — outside the zones, not just the mean levels); rejection otherwise with `reason_key` `trending_not_sideways` ("trending, not sideways") or `no_range` ("range only 1.4 ATR wide" — see C2.6) |
-| calendar | `sideways` or (`stack_flat` and `pos_pct` in [0.35, 0.65]) | "price expected to sit near a strike": the ATM strike nearest the close, which must sit mid-range; otherwise `reason_key` `no_range` |
+| iron condor (Part B recommender / picker) | `sideways`, `zone_low`, `zone_high`, `width_atr`, `n_low`, `n_high` | fits only when `sideways` is True; the chart constraint is short put strike < `rng["zone_low"][0]`, short call strike > `rng["zone_high"][1]` (§5.3 — outside the zones, not just the mean levels); rejection otherwise as a rejected strategies row (`score` / `why` / `must_happen` null, the sentence in `reasons[]`: "trending, not sideways" or "range only 1.4 ATR wide" — see C2.6); when the picker is run anyway and no strike clears the zone edges, `degenerate.reason_key` is `constraint` (the fixed vocabulary: `no_chain, no_expiry, no_band, constraint, credit_floor, thin, theta_cap, extrinsic_cap, no_term, safety`) |
+| calendar | `sideways` or (`stack_flat` and `pos_pct` in [0.35, 0.65]) | "price expected to sit near a strike": the ATM strike nearest the close, which must sit mid-range; otherwise a rejected row (`reasons[]`: "no range to sit in") |
 | bear call spread | `high`, `zone_high`, `touches_high` | "resistance holding — short strike ABOVE resistance" (the upper edge alone is a resistance even when the lower edge is missing: the module also exposes `resistance_only(bars)` returning the best upper level with ≥ 2 touches when no range pairs — same loop, no pairing). The bear-side *setup candle* (the rejection at that level) is Part B's `mirror_setups.find_resistance_reject`; this module supplies the level, not the candle |
 | bull call spread / diagonal | `high` | the target to cap at / the strike to sell the short call under |
 | Part B's `chart_state` | `sideways` | `trend == "sideways"` iff `rng["sideways"]` is True; every other trend value comes from the EMA stack |
@@ -367,7 +367,7 @@ and it is not under the trend line's 5 ms cap.
 | an edge with ≥ 2 touches but the other missing | `None` from `find()`; `resistance_only()` / the support detector still serve the directional spreads |
 | price has broken out (last close outside by > 0.5 ATR) | `None` — the range is over; the breakout-retest logic (Part B) takes it from here |
 | EMAs not supplied | range returned, `sideways=None`, reasons `["trend not judged"]`; the condor chip reads "range found, trend not judged" |
-| width < 2 ATR | `None` (rejected at pairing); reason surfaces only through the condor's rejection text (`reason_key` `no_range`) when a narrower pair existed: the module keeps `narrowest_rejected_atr` for that sentence |
+| width < 2 ATR | `None` (rejected at pairing); reason surfaces only through the condor's rejected row's `reasons[]` text when a narrower pair existed: the module keeps `narrowest_rejected_atr` for that sentence |
 
 ### C3. Payoff engine — `app/services/payoff.py`
 
@@ -400,9 +400,10 @@ MULT = 100
 RISK_FREE = 0.04      # = bull_put.bs_put's default r (l.79) so the two models agree to the cent
 ```
 
-Strategy keys (the ten of the catalog, used by the picker, the recommender and this module):
-`buy_call`, `buy_put`, `bull_call`, `bear_put`, `leaps_call`, `bull_put`, `bear_call`,
-`iron_condor`, `calendar`, `diagonal_call`. `build(..., strategy=...)` takes the strategy key and
+Strategy keys (`STRATEGY_KEYS` in `app/services/strategy_rules.py`, the ten of the catalog in the
+user's order, used by the picker, the recommender and this module): `buy_call`, `buy_put`,
+`bull_call`, `bear_put`, `leaps_call`, `diagonal_call`, `bull_put`, `bear_call`, `iron_condor`,
+`calendar`. `build(..., strategy=...)` takes the strategy key and
 derives the engine family through `option_prefs.family_of(strategy)` ∈ `credit_vertical |
 debit_vertical | long | leaps | condor | time`; `pop()` and `extremes()` take the family.
 `strategy=None` = arbitrary legs (generic labels, numeric max P/L, any number of breakevens) —
@@ -419,7 +420,7 @@ keeping it"; every other strategy → `pop_kind = "profit"`, label "chance of pr
 | `implied_vol` | `(price, S, K, T, kind) -> float\|None` | bisection on σ ∈ [0.01, 5.0], 60 iterations (precision 1e-18 — far past the cent); None when `price` ≤ intrinsic (stale quote) |
 | `calibrate` | `(legs, spot, as_of) -> list[Leg]` | per-leg σ in this order: solved from `price` → `leg.iv` (already a fraction) → the sibling leg's σ → the chain's `iv30 / 100` → HV20 / 100 (the caller passes `sigma_fallback`). Calibrating from the *dealt price* makes the T+0 curve pass through P&L = 0 at spot for a fresh idea, and through the current P&L for an open position (whose legs carry entry prices and whose σ is solved from *today's* mids — see C3.11) |
 | `horizon` | `(legs, as_of) -> (expiry, dte)` | the FRONT expiry = `min(leg.expiry)`; everything "at expiry" is at this date |
-| `leg_value` | `(leg, S, days_ahead, as_of, iv_bump: float = 0.0) -> float` | `T = max(dte(leg) − days_ahead, 0)/365`; `T == 0` → intrinsic; else `black_scholes(S, K, T, RISK_FREE, σ + iv_bump, kind).price`. `iv_bump` (an absolute shift of σ, e.g. `+0.05`) is what Part B's gap / IV-shock reads use (B5) — the only knob on the model |
+| `leg_value` | `(leg, S, days_ahead, as_of, iv_bump: float = 0.0) -> float` | `T = max(dte(leg) − days_ahead, 0)/365`; `T == 0` → intrinsic; else `black_scholes(S, K, T, RISK_FREE, σ × (1 + iv_bump), kind).price`. `iv_bump` is a RELATIVE lift of the leg's σ — `sigma_used = σ × (1 + iv_bump)`, so `0.10` means ten percent more volatility (a chain iv of 0.46 is read at 0.506, never 0.56) — and this line is the ONE definition of the lift in the module; `STOP_IV_BUMP = 0.10` (`opt_constants.py`) is the value Part B's gap / IV-shock reads pass (B5.1: `stop_iv 0.506 = 0.46 × 1.10`) — the only knob on the model |
 | `pnl` | `(legs, S, days_ahead, as_of, iv_bump: float = 0.0) -> float` | `Σ qty · (leg_value − price) · MULT` |
 | `grid` | `(legs, spot, atr, marker_xs) -> list[float]` | C3.5 |
 | `expiry_curve` | `(legs, xs, as_of) -> list[float]` | `pnl(..., days_ahead = horizon dte)`: single-expiry legs are intrinsic (piecewise linear, exact); back-month legs are BS-valued at the front expiry with their own σ (§6e: "the back leg valued by the model") |
@@ -428,7 +429,7 @@ keeping it"; every other strategy → `pop_kind = "profit"`, label "chance of pr
 | `extremes` | `(family, legs, xs, ys) -> dict` | C3.7 — `max_loss` and `max_profit` as POSITIVE $ magnitudes per contract |
 | `pop` | `(family, legs, spot, sigma_h, T_h, xs, ys) -> float\|None` | C3.8 — THE one probability-of-profit function of the module: Part B's picker calls it for every non-credit strategy (it covers calendars and diagonals too) and `build()` calls it for the model figure of every strategy |
 | `price_at_pnl` | `(legs, target, lo, hi, days_ahead, as_of) -> float\|None` | bisection on the T+n curve: the stock price at which the position shows `target` dollars (used for the rule stop's price) |
-| `build` | `(legs, *, strategy, spot, atr, as_of, chart_stop=None, target=None, levels=(), sigma_fallback=None, pl_now=None, premium_stop_pct=None, units="$") -> dict` | the dict of C3.10; always per ONE contract (position totals are the card's sizing line, C3.12) |
+| `build` | `(legs, *, strategy, spot, atr, as_of, chart_stop=None, target=None, levels=(), sigma_fallback=None, pl_now=None, premium_stop_pct=None, loss_fraction=0.20, units="$") -> dict` | the dict of C3.10; always per ONE contract (position totals are the card's sizing line, C3.12). `levels=` elements are `{x: price, label: str, kind ∈ {support, resistance, trend_line, target}}` (the route builds them from the stored setup). `loss_fraction` is the credit families' rule-stop fraction of max loss (the member's `trade_prefs` credit stop, house 0.20 = `LOSS_STOP_FRACTION`); `premium_stop_pct` is the debit families' (the `long` block's house 50; the `leaps` block's house 40 for `leaps_call` / `diagonal_call`, via `option_prefs.for_strategy`) — the route passes both so the chart's rule stop equals the pick's `rule_stop_pl` (B5.1) |
 
 #### C3.3 Expiry payoff as a piecewise-linear function
 
@@ -502,7 +503,7 @@ figures; the family picks which one is the big label, the other is the "model es
 
 | Figure | Formula | Where it goes |
 |---|---|---|
-| delta figure | credit vertical: `1 − |Δ_short|` (exists: `bull_put._pair` l.251 `pop_est`); iron condor: `1 − |Δ_short put| − |Δ_short call|`; debit vertical: `|Δ_long| − |Δ_short|` is NOT a probability — not computed (None) | `pop.value` with `pop.label = "chance of keeping it"` for bull_put, bear_call, iron_condor; `pop.basis = "1 − short delta 0.255"` |
+| delta figure | credit vertical: `1 − |Δ_short|` (exists: `bull_put._pair` l.251 `pop_est`); iron condor: `1 − |Δ_short put| − |Δ_short call|`; debit vertical: `|Δ_long| − |Δ_short|` is NOT a probability — not computed (None) | `pop.value` with `pop.label = "chance of keeping it"` for bull_put, bear_call, iron_condor; `pop.basis = "1 − short delta 0.25"` |
 | `pop()` (model) | risk-neutral `P(S_T ∈ profit region at the horizon)`: with `F(x) = N((ln(x/S) − (r − σ²/2)T) / (σ√T))` (`black_scholes.norm_cdf`), sum `F(x_i) − F(x_{i−1})` over every grid interval whose two endpoints are both > 0, plus the tails (`F(x_0)` if the left ray profits, `1 − F(x_last)` if the right one does); `σ` = the ATM IV of the horizon expiry (the chain leg nearest spot; fallback `iv30 / 100`, then HV20 / 100), `T` = horizon DTE / 365 | `pop.value` with `pop.label = "chance of profit"` for every other strategy (then `pop.model == pop.value`, `model_basis == basis`); for the credit strategies it is `pop.model` with `pop.model_basis = "lognormal, σ 28.4%, 48 d"` |
 
 Wording is NOT this module's: `services/option_words.pop_words(pop, pop_kind)` (Part D) turns the
@@ -524,13 +525,14 @@ The chart stop has ONE source — Part B's `plan` (`setup.plan.stop`, `setup.sto
 | Marker | x (stock price) | y read | Families |
 |---|---|---|---|
 | chart stop | `plan.stop`: credit strategies `zone_lo − LEVEL_PAD_ATR × ATR` (a quarter-ATR under the lower edge of the support zone — for a trend-line bounce the zone is built around `tl_bounce.line_value`); debit strategies `min(entry − STOP_ATR × ATR, zone_lo − LEVEL_PAD_ATR × ATR)` (the Curated convention, SL = 1 ATR under the entry, never above the zone's pad). The LRCX fixture gives **336.2** (the mockup's 338 was a 0.1-ATR pad and is gone everywhere) | `pnl_today = pnl(legs, stop, 0)` AND `pnl_expiry` (tooltip); the label quotes **today** (the stop is hit within days — the broker screen shows the T+0 value, not the expiry one). The pick stores the same read as `chart_stop_pl` | all |
-| rule stop | the price where the **today** curve reaches the family's $ rule (`price_at_pnl`); drawn wherever B7's exit table carries a $ line: credit strategies `−LOSS_STOP_FRACTION × max_loss` (l.616 = 0.20, B7's "20% of max loss"); `leaps_call` and `diagonal_call` `−premium_stop_pct/100 × debit × 100` (`premium_stop_pct`, house 40, the `leaps` block of `option_prefs`; the diagonal inherits it through its long leg). buy_call, buy_put, bull_call, bear_put and calendar are managed by the chart stop + target (+ theta, B7) and get no second line | a HORIZONTAL dashed line at that P&L, plus a vertical marker at the price. The pick stores it as `rule_stop_pl` | credit, leaps, diagonal |
+| rule stop | the price where the **today** curve reaches the family's $ rule (`price_at_pnl`); drawn and computed for EVERY family (II.2.9, R1): credit strategies `−loss_fraction × max_loss` (`build(loss_fraction=)`, house 0.20 = `LOSS_STOP_FRACTION` l.616, B7's "20% of max loss"); `leaps_call` and `diagonal_call` `−premium_stop_pct/100 × debit × 100` with the `leaps` block's `premium_stop_pct` (house 40; the diagonal inherits it through its long leg); buy_call, buy_put, bull_call, bear_put and calendar the same formula with the `long` block's `premium_stop_pct` (house 50) — the chart stop + target (+ theta, B7) still manage those trades; the rule stop is the second line that shows where the premium rule would fire | a HORIZONTAL dashed line at that P&L, plus a vertical marker at the price (two markers when the today curve crosses it twice — the calendar's dome). The pick stores it as `rule_stop_pl` for every family (B5.1) | all |
 | target | `plan.target` from the setup (resistance / entry + TARGET_R × R) | `pnl_today(target)`; expiry value in the tooltip | debit strategies; for credit strategies the target is the P&L line `+0.50 × credit` (B7's 50 % take-profit; `trade_prefs` l.87-88 holds the same house number for the legacy monitor) — drawn horizontal |
 | now | `spot` | 0 for an idea, `pl_now` for a position (`y_today` on this marker = the dot, C4.2) | all |
 | levels | support / resistance / trend line value at the horizon expiry (`tl.value_at[expiry]`, else `trend_line.value_on`) / range edges | — (vertical, labelled) | from the setup |
 
-Both stops are always drawn and labelled where both exist ("chart stop 336.2", "rule stop ≈
-332.7") — decision 7: the member sees that the chart stop fires first.
+Both stops are always drawn and labelled, for every family ("chart stop 336.2", "rule stop ≈
+332.7") — decision 7: the member sees which fires first (the chart stop, on the LRCX credit by 3.5
+points and on the ISRG call by 23 points — C5.1 / C5.2).
 
 R (one number per structure, `units.r_dollars`, per contract):
 
@@ -547,16 +549,16 @@ renders either (`units=$|R`), the client never recomputes.
 ```json
 {
   "strategy": "bull_put", "family": "credit_vertical", "label": "Nov 20 330/320 put", "symbol": "LRCX",
-  "spot": 349.20, "atr": 11.5, "as_of": "2026-10-03",
+  "spot": 349.20, "atr": 11.54, "as_of": "2026-10-03",
   "horizon": {"expiry": "2026-11-20", "dte": 48},
-  "legs": [{"expiry": "2026-11-20", "right": "P", "strike": 330, "side": "sell", "qty": 1, "price": 5.70, "iv": 0.2797, "delta": -0.255, "iv_source": "solved"},
+  "legs": [{"expiry": "2026-11-20", "right": "P", "strike": 330, "side": "sell", "qty": 1, "price": 5.70, "iv": 0.2797, "delta": -0.25, "iv_source": "solved"},   // iv = the solved σ (C3.2); the chain leg quotes iv 0.46, delta −0.25 (the fixture)
            {"expiry": "2026-11-20", "right": "P", "strike": 320, "side": "buy",  "qty": 1, "price": 3.60, "iv": 0.2886, "delta": -0.174, "iv_source": "solved"}],
-  "xs": [297.0, 297.375, "...", 372.0],
+  "xs": [296.92, 297.3, "...", 372.28],
   "at_expiry": [ -790.0, "..." ],
   "today":     [ -612.4, "..." ],              // T+0 at t = 0; null when no σ could be found (C3.12)
   "breakevens": [327.90],
   "max_profit": 210.0, "max_loss": 790.0, "unlimited_profit": false, "unlimited_loss": false,
-  "pop": {"label": "chance of keeping it", "value": 0.745, "basis": "1 − short delta 0.255",
+  "pop": {"label": "chance of keeping it", "value": 0.75, "basis": "1 − short delta 0.25",
           "model": 0.729, "model_basis": "lognormal, σ 28.4%, 48 d"},
   "markers": [
     {"x": 349.20, "label": "now 349.20", "kind": "now"},                       // Positions tab: + "y_today": pl_now (the dot)
@@ -574,7 +576,13 @@ renders either (`units=$|R`), the client never recomputes.
   ],
   "units": {"mode": "$", "r_dollars": 158.0, "r_basis": "20% of max loss"},
   "caption": "Dashed line: what the trade would be worth if the stock moved there today, at today's implied volatility - an estimate. Solid line: at expiry (48 days).",
-  "warnings": []
+  "warnings": [],
+  "error": null,                                // "expired" | "no edge: the spread pays nothing" | null — set, the partial prints it instead of the SVG (C3.12)
+  "uid": "7f3a9c1e",                            // per-build id: the pane's element ids and its JSON island (C4.3)
+  "svg": {"expiry_path": "M48,…", "today_path": "M48,…", "profit_zones": ["M…Z"], "loss_zones": ["M…Z"],
+          "hlines": [{"y_px": 0, "label": "…", "kind": "…"}], "markers": [{"x_px": 0, "row": 0, "label": "…", "kind": "…"}],
+          "x_ticks": [[0, "300"]], "y_ticks": [[0, "−$800"]]},   // payoff.svg_paths(result): the pixel work, server-side — the template has no arithmetic (C4.3)
+  "series": {"xs": [], "at_expiry": [], "today": [], "units": {}}   // the hover script's JSON island (C4.2): the same arrays, carried once
 }
 ```
 `xs`, `at_expiry`, `today` are parallel arrays. `kind` ∈ `now | breakeven | stop | rule_stop |
@@ -590,10 +598,10 @@ are the ONE payoff implementation of the module: there is no client-side canvas,
 
 | Caller | Legs come from | `pl_now` / σ |
 |---|---|---|
-| the Options card (Part D's router `app/routes/options_page.py`): `GET /options/payoff/{symbol}?strategy=bull_put&pick=0&units=$` — the partial is HTMX-swapped into `#optPayoff` | the pick `option_store.card_for(db, symbol, user)["picks"][strategy][pick]` (Part B's Candidate — the ONLY read path for a signal; the route never queries `OptionSignal` itself): its `legs` are in the API shape of C3.1 (`Leg.from_dict` each — the mid as `price`, chain `iv` as a fraction, signed `delta`), with `chart_stop` (= `plan.stop`), `breakevens`, `max_loss` / `max_profit` positive, `pop` + `pop_kind` | idea: `pl_now=None`, σ solved from the mids |
+| the Options card (Part D's router `app/routes/options_page.py`): `GET /options/payoff/{symbol}?strategy=bull_put&pick=0&units=$` — the partial is HTMX-swapped into `#optPayoff` | the pick `option_store.card_for(db, symbol, user)["picks"][strategy][pick]` (`card_for -> dict | None`; None = no signal row yet, the route answers the "not checked yet" line; Part B's Candidate — the ONLY read path for a signal; the route never queries `OptionSignal` itself): its `legs` are in the API shape of C3.1 (`Leg.from_dict` each — the mid as `price`, chain `iv` as a fraction, signed `delta`), with `chart_stop` (= `plan.stop`), `breakevens`, `max_loss` / `max_profit` positive, `pop` + `pop_kind` | idea: `pl_now=None`, σ solved from the mids |
 | the Positions tab (Part D): the same route with `?trade=<option_trades.id>` in place of `strategy` / `pick` — the one extra selector, inside the row's `OptionTradeCheck` drawer | the `OptionTrade` row's `legs` (the API shape plus `entry_price, entry_delta, entry_iv` → `Leg.from_dict(leg, price=leg["entry_price"])`) and its latest `OptionTradeCheck` row (`legs` per-day `{mid, delta, iv}` → σ solved from today's mids; the check's P&L → `pl_now`), both written by `services/option_exits.py` (`mark` / `grade` / `sweep`, Part B) for EVERY strategy from step 1. `spread_monitor` is not changed and `option_spreads` (read-only for the legacy `/portfolio` until removal) is not read here | the `now` marker carries `y_today = pl_now` (the dot); `chart_stop` from the trade's stored plan |
 | the full-chain expander (`GET /options/chain/{symbol}`, Part D) | rows only in step 1: by default the pick's expiry and ± 12 strikes around spot, an expiry picker and "show all strikes" per expiry — never more than ~60 rows without a click (a stored SPY snapshot is ~15k contracts). A "what if this strike" payoff for arbitrary legs is NOT in the step-1 route list; `build()` already accepts any legs (`strategy=None`, re-validated against the chain via `option_quotes.leg`), so when it lands it is a query parameter on this same GET route, not a new route | — |
-| the Telegram push (`services/telegram_push.py::run(db, as_of, dry_run)`, Part D, the nightly job's step 5) | does not call `build()`: it reads the pick's stored `pop` / `pop_kind` / `chart_stop_pl` / `max_loss` (the picker computed them through this module's functions at write time) and prints `about {p}% chance of keeping it (estimate)`; it never states a contract count; the SVG is not sent in v1 | — |
+| the Telegram push (`services/telegram_push.py::run(db, as_of=run_on, dry_run=...)`, Part D, the nightly job's step 6 — after `option_exits.sweep(db)` (4) and `option_store.prune(db, today)` (5), so it sees tonight's checks) | does not call `build()`: it reads the pick's stored `pop` / `pop_kind` / `chart_stop_pl` / `max_loss` (the picker computed them through this module's functions at write time) and prints `about {p}% chance of keeping it (estimate)`; it never states a contract count; the SVG is not sent in v1 | — |
 
 Routes are thin: load legs → `payoff.build(...)` → `templates.TemplateResponse("_payoff_chart.html", {"po": result, ...})`.
 
@@ -606,7 +614,7 @@ Routes are thin: load legs → `payoff.build(...)` → `templates.TemplateRespon
 | `credit ≤ 0` or `width ≤ 0` for a credit strategy | `error: "no edge: the spread pays nothing"` (the picker never emits one — `bull_put._pair` l.210-215 — this guards arbitrary legs) | message |
 | strike not on the chain (arbitrary legs) | 400 with the nearest listed strikes, the way `spread_monitor` names expiries (l.118-123) | inline error under the form |
 | unbounded max profit | `unlimited_profit: true`, `max_profit: null` | "unlimited" text, arrowhead |
-| sizing (not this module's) | the chart is always per contract; position totals are the card's sizing line from `option_sizing.size(pick, nlv, prefs)` (Part B, run at READ time): `contracts = min(floor(risk_budget / loss_at_chart_stop_usd), floor(risk_budget × GAP_MULT / max_loss_usd), floor(nlv × 10% / notional))`, where `loss_at_chart_stop_usd` is this module's `|pnl_today(chart_stop)|` and `max_loss_usd` its positive `max_loss`. NLV order: the Live figure for this request → stored `trade_prefs` nlv → None | legend "per contract"; the card's line always shows both figures: `{n} contracts: about ${loss_at_stop} if the stop fires, up to ${max_loss_total} ({pct}% of your account) if the stock gaps past it`; when NLV is None: "set your account size in My rules to see position totals"; when `contracts == 0`: "Not even one contract fits your 1% - lower the risk or choose a narrower spread" (0 is a valid answer; never `max(1, …)`). The pane never prints a contract count |
+| sizing (not this module's) | the chart is always per contract; position totals are the card's sizing line from `option_sizing.size(pick, nlv, prefs) -> {contracts, by_chart_stop, by_gap, by_notional, stop_t_days, stop_iv, max_loss_pct_nlv, nlv_source, line}` (Part B, run at READ time): `contracts = min(by_chart_stop = floor(risk_budget / loss_at_chart_stop_usd), by_gap = floor(risk_budget × GAP_MULT / max_loss_usd), by_notional = floor(nlv × MAX_POSITION_PCT / 100 / notional))`, where `loss_at_chart_stop_usd` is this module's `|pnl_today(chart_stop)|` (120.7 on the LRCX fixture) and `max_loss_usd` its positive `max_loss`; `GAP_MULT` is the shared block's `gap_mult` field (house 2.0) in prose, and `MAX_POSITION_PCT` (10.0) a constant in `opt_constants.py`, never a preference. NLV order (`nlv_source`): `live` (the Live figure for this request) → `prefs` (the stored account value) → `None`. LRCX fixture under house prefs (NLV 100,000, risk 1 %): by_chart_stop 8, by_gap 2, by_notional 10 → **2 contracts** | legend "per contract"; the card's line always shows both figures: `{n} contracts: about ${loss_at_stop} if the stop fires, up to ${max_loss_total} ({pct}% of your account) if the stock gaps past it` — on the fixture: "2 contracts: about $242 if the stop fires, up to $1,580 (1.6% of your account) if the stock gaps past it"; when NLV is None: "sized once you tell us the account value (My rules -> Shared)"; when `contracts == 0`: "Not even one contract fits your 1% - lower the risk or choose a narrower spread" (0 is a valid answer; never `max(1, …)`). The pane never prints a contract count |
 | ATR missing | `PAD` falls back to `0.05 · spot` with a warning | — |
 | `r_dollars == 0` (a stop above the entry on a debit) | R toggle disabled, warning "R undefined: the stop does not lose money" | toggle greyed |
 
@@ -658,7 +666,7 @@ the min/max over both curves and all hlines, padded 6 %. Zero always inside.
 | vertical markers | 1 px line full height; colour by kind: `now` `--tv-text`, `breakeven` `--tv-muted`, `stop`/`rule_stop` `--po-loss`, `target` `--po-exp`, `level` `#22d3ee` (support cyan, as the price chart) / `#f59e0b` (trend line amber), `strike` `--tv-muted` dotted; label 10 px at the top, alternating top (y 18) / second row (y 30) when two markers are within 56 px, so "trend line at expiry 336.1", "chart stop 336.2", "support 340" never overprint |
 | the dot | Positions tab: `<circle r=4>` at `(spot, pl_now)` — the `now` marker's `y_today` — in `--po-today` with a white ring |
 | axes | x ticks every `nice(atr)` dollars ($1/2/5/10/25) in `--tv-muted` 10 px; y ticks: 5 "nice" steps in $ or R |
-| legend (HTML under the SVG, not inside it) | swatch + "At expiry", dashed swatch + "Today", then: `breakeven 327.90 · max +$210 / −$790 · chance of keeping it 74% · model estimate 73%` (the two `pop` figures, C3.8; the member sentence from `option_words.pop_words` sits on the pick row, not here), the caption line of C3.4, and `per contract` (the sizing line with both $ figures is the card's, C3.12); on the right the `[$ \| R]` toggle |
+| legend (HTML under the SVG, not inside it) | swatch + "At expiry", dashed swatch + "Today", then: `breakeven 327.90 · max +$210 / −$790 · chance of keeping it 75% · model estimate 73%` (the two `pop` figures, C3.8; the member sentence from `option_words.pop_words` sits on the pick row, not here), the caption line of C3.4, and `per contract` (the sizing line with both $ figures is the card's, C3.12); on the right the `[$ \| R]` toggle |
 | hover | a transparent full-plot `<rect>`; `mousemove` → nearest `xs` index → a 1 px cursor line and a tooltip `<div>` (absolute, follows x, clamped inside the pane): `at 336.20 · today −$121 · at expiry +$210` (R mode: `−0.76 R · +1.33 R`); `mouseleave` hides it; touch: `touchmove` does the same |
 | the $/R toggle | two buttons; a click re-requests the partial with `units=R` (`hx-get` on the pane's own URL — `GET /options/payoff/{symbol}?strategy=&pick=&units=R` — `hx-target="closest .po-pane"`, `hx-swap="outerHTML"`, so the pane re-renders inside the card's `#optPayoff` slot); the choice is remembered in `localStorage['th.payoff.units']` (a per-viewer convenience, the `TF_KEY` pattern l.374) and sent as the default on the next render |
 | no chart cases | the partial renders the `error` / warning line in the same pane height so the card does not jump |
@@ -802,30 +810,36 @@ Colours follow the chart's existing grammar: cyan = support (BOUNCE l.2570), fuc
 
 #### C4.5 Passing the overlays (routes and partials)
 
-Mirror of `sector._bounce_overlay` (`routes/sector.py` l.352-365), living in Part D's
-`app/routes/options_page.py` and called by `GET /options/chart/{symbol}`: the setup is read from
-the same `ema_setup.setup_for(sym, deep=…)` cache the list used, so the line on the chart is the
-line the chip talks about.
+Shape-mirror of `sector._bounce_overlay` (`routes/sector.py` l.352-365), living in Part D's
+`app/routes/options_page.py` and called by `GET /options/chart/{symbol}`: the overlays come from
+the STORED setup — `option_store.card_for(db, symbol, user)["setup"]` (II.2.18) — so the line on
+the chart is the line the stored card's chip and headline talk about, and no detector runs on a
+request (`ema_setup.setup_for` is never called here; the one detector run is the nightly job's
+`chart_state.read`, C1.7).
 
 ```python
-def _chart_overlays(user: User, sym: str, expiry: str | None) -> dict:
-    """chart_bounce / chart_trendline / chart_range for the Options card's chart."""
-    from ..services import ema_setup as es, trend_line, range_box
-    enabled = es.clean_enabled((getattr(user, "prefs", None) or {}).get(SYM_CONDS_PREF))
-    st = es.setup_for(sym, deep=es.needs_deep(enabled)) or {}
+def _chart_overlays(db, user: User, sym: str, expiry: str | None, times: list[str]) -> dict:
+    """chart_bounce / chart_trendline / chart_range for the Options card's chart,
+    read from the stored option_signal.setup (card_for) - never from a detector."""
+    from ..services import option_store, trend_line, range_box
+    card = option_store.card_for(db, sym, user) or {}
+    st = card.get("setup") or {}
     tl = st.get("tl")
     if tl and expiry and expiry not in (tl.get("value_at") or {}):
-        tl = dict(tl, value_at={expiry: trend_line.value_on(tl, st.get("times") or [], expiry)})
-    return {"bounce": _bounce_overlay(user, sym),            # existing, reused as is
+        tl = dict(tl, value_at={expiry: trend_line.value_on(tl, times, expiry)})   # arithmetic, not a detector
+    return {"bounce": _bounce_from_setup(st.get("sup")),   # the BOUNCE dict (the shape sector._bounce_overlay emits) built from the stored setup.sup
             "trendline": trend_line.overlay(tl, st.get("tl_bounce")),
             "range": range_box.overlay(st.get("rng"))}
 ```
-(`analyze()` must keep `"times": [b["time"] for b in bars]` on the setup dict for this — a list of
-~500 strings, cached with the rest; or the route re-reads `fetch_daily_ohlc(sym)` from the same
-15-min cache, which costs one dict lookup. The nightly signal already carries `value_at` for every
-expiry, so the lookup is only needed on a cold page read.)
+(`times = [b["time"] for b in bars]` comes from the daily bars the chart route already fetched for
+the candles (`prices.fetch_daily_ohlc`, its 15-min cache) — a list of ~500 strings, one dict
+lookup; nothing is added to the setup dict for it. The nightly signal already carries `value_at`
+for every expiry in the snapshot, so the `value_on` fallback only fires for an expiry the
+snapshot did not list. `chart_bounce` is built from the stored `setup.sup`, not from
+`sector._bounce_overlay`'s own `setup_for` read; `?trade=` reads the trade's stored setup the same
+way.)
 
-The card's chart partial (Part D, e.g. `_options_card_chart.html`) sets, like `_sector_chart.html`
+The card's chart partial (Part D's `app/templates/_options_chart.html`) sets, like `_sector_chart.html`
 l.52-54 and `_spreads_chart.html` l.17 / `_portfolio_chart.html` l.29:
 ```jinja
 {% set chart_bounce = overlays.bounce %}
@@ -853,19 +867,25 @@ n_low, n_high, touches_low, touches_high, sideways, label}`.
 
 ### C5. Worked examples (numbers from the prototype `proto_payoff.py`, `RISK_FREE = 0.04`, today 2026-10-03)
 
-#### C5.1 LRCX bull put 330/320, Nov 20 2026 (48 DTE), credit 2.10 — spot 349.20, ATR 11.5
+#### C5.1 LRCX bull put 330/320, Nov 20 2026 (48 DTE), credit 2.10 — spot 349.20, ATR 11.54 (THE golden pick of `tests/fixtures/options/lrcx.json`)
 
-Quotes assumed: 330P mid 5.70, 320P mid 3.60 (credit 2.10). Calibration solves σ = 27.97 % / 28.86 %;
-model deltas −0.255 / −0.174 (the mockup's "74 %" is this 0.255).
+This is the ONE LRCX pick every part's sizing / ticket / payoff / tests use (R3); the 325/315
+spread (max loss 683, chart_stop_pl −99) may appear only as the picks table's second, "safer" row.
+
+Quotes assumed: 330P mid 5.70, 320P mid 3.60 (credit 2.10); the fixture's chain legs quote iv 0.46
+and a short delta of −0.25 (B8.1). `calibrate` solves σ from the dealt mids first (C3.2), so the
+T+0 curve runs at 27.97 % / 28.86 % (`iv_source: "solved"`; the solved-σ model deltas −0.255 /
+−0.174 agree with the chain's within rounding); the chain's 0.46 is the figure the sizing's
+`stop_iv` lifts (0.46 × 1.10 = 0.506, B5.1 / R2). The mockup's "74-75 %" is 1 − 0.25.
 
 | Quantity | Value | Formula / source |
 |---|---|---|
 | max profit | **+$210** | 2.10 × 100 |
 | max loss | **$790** (drawn at −$790) | (10 − 2.10) × 100 — equals `bull_put.spread_math`; reported positive everywhere (pick, sizing line, Telegram, this dict) |
 | breakeven | **327.90** | 330 − 2.10 — `breakevens: [327.90]` |
-| chance of keeping it | **74 %** (74.5) | 1 − 0.255 (the delta figure, `pop_kind = "keep"`); model estimate 72.9 % (`pop()`, lognormal σ 28.4 %, 48 d) — the two agree within 2 points; the legend prints both |
+| chance of keeping it | **75 %** (0.75) | 1 − 0.25 (the chain's short delta, `pop_kind = "keep"`); model estimate 72.9 % (`pop()`, lognormal σ 28.4 %, 48 d) — the two agree within 2 points; the legend prints both |
 | P&L at spot today | $0.00 | calibration check |
-| chart stop **336.2** | **≈ −$121 today** (−120.7; +$210 at expiry) | B's plan: `zone_lo − LEVEL_PAD_ATR × ATR` = `zone_lo − 2.875` on the LRCX fixture (B2.6 gives 336.2). The mockup's "stop 338 · ≈ $220" was a placeholder with a 0.1-ATR pad; at these IVs the real read at 336.2 is −$121 (it scales with IV: the today curve steepens as σ rises). The pick stores it as `chart_stop_pl` |
+| chart stop **336.2** | **≈ −$121 today** (−120.7; +$210 at expiry) | B's plan: `zone_lo − LEVEL_PAD_ATR × ATR` = `zone_lo − 2.885` (0.25 × 11.54) on the LRCX fixture (B2.6 gives 336.2; the sizing line's "about $242" is 2 × 120.7). The mockup's "stop 338 · ≈ $220" was a placeholder with a 0.1-ATR pad; at these IVs the real read at 336.2 is −$121 (it scales with IV: the today curve steepens as σ rises). The pick stores it as `chart_stop_pl` |
 | rule stop | −$158 = 20 % × 790, reached at **332.72** today | `price_at_pnl(legs, −158, …, days 0)` — 3.5 points under the chart stop: the chart stop fires first, as the design intends; `rule_stop_pl = −158` |
 | take profit | +$105 at 50 % of credit | B7's credit take-profit rule |
 | R | $158 | max profit = +1.33 R; loss at 336.2 = −0.76 R |
@@ -875,25 +895,34 @@ Order of markers on the x-axis, left to right: long 320 · breakeven 327.90 · s
 332.7 · trend line 336.1 · chart stop 336.2 · support 340 · now 349.20. The trend-line and
 chart-stop labels are 0.1 apart, so they take the two rows (C4.2).
 
-#### C5.2 ISRG Dec 18 2026 400 call at 34.30 (76 DTE) — entry 405.89, SL 394.27, PT 429.14
+#### C5.2 ISRG Dec 18 2026 400 call at 34.30 (76 DTE from the 2026-10-03 as_of) — a SUPPLEMENTARY buy_call worked example on the ISRG fixture's levels: entry 405.81, SL 394.27, PT 428.89
 
-(B's plan gives the levels with the constants: ATR 11.62 → SL = `entry − STOP_ATR × ATR` =
-405.89 − 11.62 = 394.27 (the zone's pad sits lower, so the entry term wins the `min`); PT =
-`entry + TARGET_R × R` = 405.89 + 2 × 11.62 ≈ 429.14.) Solved σ = 40.4 %, delta 0.586.
+The golden ISRG fixture (`tests/fixtures/options/isrg.json`, B8.2 / R4) is entry 405.81, ATR 11.54,
+stop 394.27, target 428.89 (`TARGET_R` 2.0; the user's sheet said 429.14 — noted, 428.89 is the
+number), earnings Oct 21 inside the Nov / Dec expiries, IV rank 41 (basis `rank`), and its
+recommended trade is the **bull_call Dec 395/430** (B8.2). This worked example is NOT that fixture
+trade: it is a single long call on the same entry / ATR / stop / target, kept because it is the
+simplest picture of a debit trade read on the today line. (B's plan gives the levels with the
+constants: SL = `entry − STOP_ATR × ATR` = 405.81 − 11.54 = 394.27 (the zone's pad sits lower, so
+the entry term wins the `min`); PT = `entry + TARGET_R × R` = 405.81 + 2 × 11.54 = 428.89.) Solved
+σ = 40.5 %, delta 0.585; 76 DTE = Oct 3 → Dec 18.
 
 | Quantity | Value | Note |
 |---|---|---|
 | breakeven at expiry | **434.30** | 400 + 34.30 |
 | max loss | **$3,430** (drawn at −$3,430) | the premium |
 | max profit | unlimited | arrowhead on the right ray |
-| loss at SL 394.27 | **≈ −$645 today** (−$3,430 at expiry) | T+0: the call keeps most of its time value when the stock is down 1 ATR tomorrow |
-| gain at PT 429.14 | **≈ +$1,496 today** (−$516 at expiry!) | the PT is a *today* number by construction: at expiry 429.14 is under the 434.30 breakeven. The caption on debit cards must say so: "stop and target are read on the today line — this trade is managed by the chart, not held to expiry" (the `pop_words` debit sentence carries the same point) |
+| loss at SL 394.27 | **≈ −$640 today** (−$3,430 at expiry) | T+0: the call keeps most of its time value when the stock is down 1 ATR tomorrow |
+| gain at PT 428.89 | **≈ +$1,483 today** (−$541 at expiry!) | the PT is a *today* number by construction: at expiry 428.89 is under the 434.30 breakeven. The caption on debit cards must say so: "stop and target are read on the today line — this trade is managed by the chart, not held to expiry" (the `pop_words` debit sentence carries the same point) |
+| rule stop | **−$1,715** = 50 % of the premium, reached at **370.82** today | the `long` block's `premium_stop_pct` (house 50) — R1 / II.2.9: drawn as the dashed hline + vertical marker like every family's; it sits 23 points under the chart stop, so the chart stop fires first; `rule_stop_pl = −1715` |
 | theta | −$0.21 / share / day = 0.63 % of premium per day | within the member's "theta/day ≤ 1 % of premium" rule (§5.2) |
-| chance of profit (held to expiry) | **34 %** | `pop()`: P(S_T > 434.30), σ 40.4 %, 76 d — `pop_kind = "profit"`; the only figure (model == value) |
-| R | $645 (loss at the chart stop today) | PT = **+2.32 R** — the 2R target in stock terms is 2.3R in option terms because delta rises on the way up |
+| chance of profit (held to expiry) | **34 %** | `pop()`: P(S_T > 434.30), σ 40.5 %, 76 d — `pop_kind = "profit"`; the only figure (model == value) |
+| R | $640 (loss at the chart stop today) | PT = **+2.32 R** — the 2R target in stock terms is 2.3R in option terms because delta rises on the way up |
 
-Markers: SL 394.27 · strike 400 · now 405.89 · PT 429.14 · breakeven 434.30. hlines: max loss only
-(no rule stop: a buy_call is managed by the chart stop + target, B7).
+Markers: rule stop 370.82 · SL 394.27 · strike 400 · now 405.81 · PT 428.89 · breakeven 434.30.
+hlines: rule stop −$1,715 (50 % of the premium) and max loss −$3,430 — R1: the rule stop is drawn
+for every family; a buy_call is still managed by the chart stop + target (B7), the line shows that
+the premium rule would fire far later.
 
 #### C5.3 A calendar — XYZ at 100, sell Oct 30 2026 100C (27 DTE, IV 34 %) / buy Dec 4 2026 100C (62 DTE, IV 30 %)
 
@@ -908,6 +937,7 @@ prices 3.83 / 5.26 → **debit 1.43**.
 | breakevens | **93.90 / 107.88** | numeric + bisection — `breakevens: [93.90, 107.88]` |
 | chance of profit | **54 %** | `pop()`: lognormal σ 34 %, 27 d, over [93.90, 107.88] — the same function the picker used for the pick's `pop` |
 | today at spot | $0.00 | calibration |
+| rule stop | **≈ −$72** = 50 % of the debit, reached at **88.8 / 118.7** on the today curve | the `long` block's `premium_stop_pct` (house 50) — R1: drawn for every family; the calendar's today curve is a dome, so the hline carries two vertical markers; `rule_stop_pl = −72` |
 | if pinned at 100 in 10 days | +$35 | a T+10 read the card can quote: "decay collected so far" |
 | expected move at the front expiry | 9.25 | 100 × 0.34 × √(27/365); the breakevens sit at −0.66 / +0.85 of it |
 
@@ -917,8 +947,11 @@ tells a member "this trade earns by time, not by direction".
 ### C6. Test plan
 
 The `dashboard_tst/tests/` tree does not exist today: step 1 creates it, with
-`requirements-dev.txt` (pytest) and `tests/fixtures/options/` (the LRCX / ISRG / calendar
-fixtures below, shared with A8 / B9 / D8.2), before the first engine lands.
+`requirements-dev.txt` (pytest) and `tests/fixtures/options/` (`lrcx.json` = C5.1's 330/320 pick,
+`isrg.json` = B8.2's bull_call 395/430 on C5.2's entry / ATR / stop / target, the calendar of C5.3
+— ONE set of numbers shared with A8 / B9 / D8.2), before the first engine lands.
+`tests/test_payoff.py` lands in step 1 with the engine, `tests/test_trend_line.py` in step 2 and
+`tests/test_range_box.py` in step 3 (B's `tests/test_option_engines.py` is step 1).
 
 #### C6.1 Trend-line engine — synthetic bar series (`tests/test_trend_line.py`, the `mk()` generator of the prototype: weekday dates, noise ±0.6, wicks 0.2-1.2)
 
@@ -957,7 +990,7 @@ candle bodies = a bug in the close test.
 
 | Identity | Assertion |
 |---|---|
-| put-call parity | `black_scholes(..., 'call').price − black_scholes(..., 'put').price == S − K·e^{−rT}` to 1e-9 (measured: 9.2077 = 9.2077 on the ISRG inputs) |
+| put-call parity | `black_scholes(..., 'call').price − black_scholes(..., 'put').price == S − K·e^{−rT}` to 1e-9 (measured: 9.1277 = 9.1277 on the ISRG inputs 405.81 / 400 / 76 d) |
 | leg shape | `Leg.from_dict({"side": "sell", "qty": 1, ...}).qty == -1` and `"buy"` → `+1`; `price=` override wins over the dict's mid; a dict carrying `open_interest` instead of `oi` is rejected (the key is `oi` once past `norm_leg`) |
 | IV unit | `normalise_iv(28.0, unit="percent") == 0.28`; `normalise_iv(3.1099, unit="fraction") == 3.1099` (a deep-ITM Cboe row is NOT rescaled); `normalise_iv(v)` without `unit` raises (no magnitude guess) |
 | vertical max loss | bull put 330/320 @ 2.10: `max_loss == (10 − 2.10)·100 == 790` (positive), `max_profit == 210`, `breakevens == [327.90]` — and equal to `bull_put.spread_math` to the cent |
@@ -967,13 +1000,13 @@ candle bodies = a bug in the close test.
 | long call | expiry curve `== max(S − K, 0)·100 − premium·100` at every grid point; `unlimited_profit` True |
 | condor | expiry curve == bull put curve + bear call curve point-wise; `max_loss` = the wider wing − credit (positive) |
 | calendar | `max_loss == debit·100` (analytic, positive) and `min(ys) ≥ −max_loss − 5` (numeric never below it); two breakevens around the strike |
-| POP | credit vertical: the delta figure and `pop()` within 5 points on the LRCX inputs (74.5 vs 72.9); long call: `pop() == 1 − N(d2)` at `K = breakeven` (equals `studies.black_scholes_grid`'s `prob_profit`, l.165-167); for every non-credit strategy the pick's `pop` (B's picker) `== build().pop.value` — one function, one number |
-| `iv_bump` | `pnl(legs, S, 0, as_of, iv_bump=0.05)` for the bull put is more negative than at `iv_bump=0` at every S below spot (a short vertical loses when IV rises); `iv_bump=0` reproduces the default to the cent |
+| POP | credit vertical: the delta figure and `pop()` within 5 points on the LRCX inputs (75 vs 72.9); long call: `pop() == 1 − N(d2)` at `K = breakeven` (equals `studies.black_scholes_grid`'s `prob_profit`, l.165-167); for every non-credit strategy the pick's `pop` (B's picker) `== build().pop.value` — one function, one number |
+| `iv_bump` | `pnl(legs, S, 0, as_of, iv_bump=0.10)` (`STOP_IV_BUMP`, a RELATIVE lift: σ × 1.10) for the bull put is more negative than at `iv_bump=0` at every S below spot (a short vertical loses when IV rises) — at 336.2 it reads −131.1 against −120.7; `iv_bump=0` reproduces the default to the cent; `leg_value` with `iv_bump=0.10` on a leg of σ 0.46 prices at σ 0.506 (not 0.56) |
 | breakevens | every returned x has `|pnl_expiry(x)| < $0.01`; the result is a list even when empty |
 | grid | every strike and every marker x is present in `xs`; `lo`/`hi` pad by exactly 2 ATR beyond the extreme |
 | chart stop | LRCX fixture: `chart_stop == 336.2` (from B's plan) and `pnl_today(336.2) == −120.7` within $0.5 — equals the pick's `chart_stop_pl` |
-| rule stop | `price_at_pnl(legs, −0.2·790, …)` returns 332.72 and `pnl_today(332.72) == −158` within $0.5; a `buy_call` build has NO `rule_stop` marker or hline; a `leaps_call` with `premium_stop_pct=40` has one at `−0.4 × debit × 100` |
-| R | LRCX: `r_dollars == 158`; ISRG: `r_dollars == |pnl_today(394.27)| == 645` |
+| rule stop | `price_at_pnl(legs, −0.2·790, …)` returns 332.72 and `pnl_today(332.72) == −158` within $0.5 (`loss_fraction=0.20`); EVERY family's build has a `rule_stop` marker and hline (R1): the ISRG `buy_call` with `premium_stop_pct=50` (the `long` block) at `−0.5 × 34.30 × 100 = −1715`, reached at 370.82 today; a `leaps_call` with `premium_stop_pct=40` at `−0.4 × debit × 100`; the calendar's hline at −$72 carries two markers (88.8 / 118.7) |
+| R | LRCX: `r_dollars == 158`; ISRG: `r_dollars == |pnl_today(394.27)| == 640` |
 | units | the `R` render's arrays equal the `$` arrays / `r_dollars` |
 | failure modes | price below intrinsic → `today` None + warning; expired → `error`; zero credit → `error`; chain strike missing (arbitrary legs) → 400 with the nearest strikes |
 
@@ -986,15 +1019,16 @@ candle bodies = a bug in the close test.
 3. Payoff pane: teal expiry line, purple dashed today line, teal/coral zones meeting exactly at
    327.90, the eight markers of C5.1 without overprinting labels (trend line 336.1 and chart stop
    336.2 on two rows), both stop lines labelled, zero line, legend sentence with `chance of
-   keeping it 74% · model estimate 73%`, the caption of C3.4; hover at 336.2 reads
+   keeping it 75% · model estimate 73%`, the caption of C3.4; hover at 336.2 reads
    `today −$121 · at expiry +$210`.
 4. Click the second strike candidate: the pane re-renders in place (HTMX, into `#optPayoff`), the
    price chart's strike lines move, the trend line stays.
 5. `$ | R` toggle: axis and tooltip in R; reload — still R (localStorage); a debit idea with an
    undefined R shows the toggle disabled with the reason.
 6. Theme toggle (sun/moon): the SVG recolours live; the price chart keeps its own behaviour.
-7. ISRG card: markers SL / strike / now / PT / BE; the "read on the today line" caption present;
-   "unlimited" + arrowhead; no rule-stop line.
+7. ISRG card (the C5.2 call): markers rule stop / SL / strike / now / PT / BE; the "read on the
+   today line" caption present; "unlimited" + arrowhead; the rule-stop line present at −$1,715
+   (50 % of the premium) under the max-loss line.
 8. Calendar card: dome-shaped expiry line, flat today line, two breakevens, max loss = debit.
 9. Positions tab: an open `option_trades` row's `OptionTradeCheck` drawer (opened with the
    `toggle from:closest details once` trigger) shows the pane with the dot at `(spot, P&L)`;
@@ -1007,7 +1041,7 @@ candle bodies = a bug in the close test.
 
 README changelog paragraph, to be written in the house style when each release lands, e.g.:
 *"Tested: the synthetic series above (3-touch, broken, tie lows, flat walk → None, downtrend
-mirror), timings median 0.9 ms / max 1.3 ms; payoff identities (parity 9.2077 = 9.2077, 790 =
+mirror), timings median 0.9 ms / max 1.3 ms; payoff identities (parity 9.1277 = 9.1277, 790 =
 width − credit, T+0 at spot = 0.00, condor = two verticals); in the browser (dev DB): LRCX card
 with Support 340 + Trend ×3 + strikes, the payoff pane's eight markers and the hover read at 336.2,
 W switch, $/R toggle persisted, theme toggle, ISRG + calendar cards, Positions dot; no console
@@ -1015,11 +1049,12 @@ errors."*
 
 ### C7. What this part assumes and needs from the others
 
-Assumptions: the setup dict keeps its single-source role — Part B's `chart_state.read()` calls
-`ema_setup.analyze(bars, long_bars, at=expiries)` ONCE and reads `sup / tl / tl_bounce / rng` from
-it, never re-running a detector; Part A's `option_store` stores those four dicts verbatim under
-`option_signal.setup.sup` / `.tl` / `.tl_bounce` / `.rng`, beside B's `kind, direction, level,
-zone, touches:int, quality, close, trend_days, atr, ema{e20,e50,e200}, plan{entry,stop,target,r},
+Assumptions: the setup dict keeps its single-source role — Part B's `chart_state.read(symbol, *,
+bars, long_bars, today, expiries)` calls `ema_setup.analyze(bars, long_bars, at=expiries)` ONCE and
+reads `sup / tl / tl_bounce / rng` from it, never re-running a detector; Part A's `option_store`
+stores those four dicts verbatim under `option_signal.setup.sup` / `.tl` / `.tl_bounce` / `.rng`,
+beside B's `kind, direction, level, zone, touches:int, quality:int (0-100), close, trend_days, atr,
+ema{e20,e50,e200}, plan{entry,stop,target,r}, stop (= plan.stop), target (= plan.target),
 levels{support,resistance}, evidence[]`, with `trend` a String in `{up, down, sideways, unclear}`
 (`sideways` iff `rng.sideways`); `ContractRow.iv` is a FRACTION at the source (Part A normalises;
 only `BridgePayloadSource` divides by 100) and `opt_legs.norm_leg(row, unit=)` /
@@ -1037,24 +1072,29 @@ strategy's `pop` computed by `payoff.pop()` and the credit strategies' by `1 −
 `max_loss` / `max_profit` positive $ per contract; `breakevens: []`; `chart_stop = plan.stop`,
 `chart_stop_pl` / `rule_stop_pl` read through `payoff.pnl` / `payoff.price_at_pnl`;
 `option_sizing.size(pick, nlv, prefs)` at read time using `|pnl_today(chart_stop)|` and the
-positive `max_loss`; `option_prefs.family_of(strategy)` and the `leaps` block's
-`premium_stop_pct` (house 40) for the leaps / diagonal rule stop; the t1 plan zone built around
+positive `max_loss`; `option_prefs.family_of(strategy)`, the `leaps` block's
+`premium_stop_pct` (house 40) for the leaps / diagonal rule stop, the `long` block's (house 50) for
+the buy / debit-vertical / calendar rule stop and `loss_fraction` (house 0.20) for the credit
+families — every family carries `rule_stop_pl` (R1); the t1 plan zone built around
 `tl_bounce.line_value`; the iron-condor constraint on `rng.zone_low[0]` / `rng.zone_high[1]`;
 `services/mirror_setups.py` (B's renamed `range_detector.py`) holding only `find_resistance_reject`
-and `find_breakdown` and reading the resistance level from this module; rejection rows carrying
-`reason_key` from the fixed vocabulary (`no_setup` for a broken line, `trending_not_sideways` /
-`no_range` from C2); `services/option_exits.py` (`mark` / `grade` / `sweep`) writing
+and `find_breakdown` and reading the resistance level from this module; rejected strategies rows
+(`score` / `why` / `must_happen` null) carrying the sentence in `reasons[]` (a broken line,
+"trending, not sideways", "no range" from C2), with `degenerate.reason_key` from the fixed
+vocabulary (`no_chain, no_expiry, no_band, constraint, credit_floor, thin, theta_cap,
+extrinsic_cap, no_term, safety`) when a pick is attempted and no strike passes; `services/option_exits.py` (`mark` / `grade` / `sweep`) writing
 `option_trades` / `option_trade_checks` for every strategy from step 1 (the Positions pane's
 input). Part D (page): owns `app/routes/options_page.py` with `GET /options/payoff/{symbol}?strategy=&pick=&units=$|R`
 (and `?trade=<option_trades.id>` for the Positions drawer) returning `_payoff_chart.html` into
 `#optPayoff`, and `GET /options/chart/{symbol}` passing `chart_trendline` / `chart_range` /
-`chart_spread.legs` + `chart_spread.breakevens` as in C4.5; the `details` lazy loads use
+`chart_spread.legs` + `chart_spread.breakevens` built from the STORED setup (`card_for`, never a
+detector run) as in C4.5, into `app/templates/_options_chart.html`; the `details` lazy loads use
 `hx-trigger="toggle from:closest details once"`; the chain expander's defaults (pick's expiry,
 ± 12 strikes, ≤ ~60 rows); `option_words.pop_words` / `option_words.headline` (stored at write
 time) for every member sentence; `services/telegram_push.py::run` reading the pick's stored
 numbers (never a contract count, `about {p}% chance of keeping it (estimate)`); the Live button
-hidden on touch / narrow viewports. Part A (data): `option_store.card_for(db, symbol, user)` and
-`basket_rows_for(db, user)` as the only signal reads; `deploy/options_nightly.py` passing
+hidden on touch / narrow viewports. Part A (data): `option_store.card_for(db, symbol, user) -> dict | None` and
+`basket_rows_for(db, user) -> dict[symbol, dict]` (one batched query) as the only signal reads; `deploy/options_nightly.py` passing
 `at=[every expiry in the snapshot]` so `tl.value_at` is filled in the one detector run;
 `option_signal.headline` stored at write time; the single migration `f4a5b6c7d8e9_options_module.py`
 (this part adds no table); the `tests/` tree and `requirements-dev.txt` created in step 1.

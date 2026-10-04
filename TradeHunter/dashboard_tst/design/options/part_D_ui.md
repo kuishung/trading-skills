@@ -20,7 +20,7 @@ Conventions used below, all taken from the existing code:
 | A fragment is wrapped in a class (`.pf-panel`, `.sp-panel`) and swapped by `outerHTML`, so its forms target `closest .<class>` | `templates/_portfolio_list.html:5-8`, `templates/_spreads_list.html:6-8` | `.opt-basket`, `.opt-card`, `.opt-picks`, `.opt-rules` |
 | Member preferences live in a sparse JSON and are read through a cleaner that fills defaults (`es.clean_enabled`) | `services/ema_setup.py:455-462`, `services/trade_prefs.py:71-91`, `routes/ivscan.py:139-155` | the rules merge (`option_prefs.read`, B4.1 with this part's presentation columns, D3) |
 | Browser talks to the member's own bridge on `127.0.0.1:9224` and POSTs the result to the server; the server only grades | `templates/_options_tab.html:24-128`, `templates/ivscan.html:163-213`, `routes/options.py:103-148` | `POST /options/live/{symbol}` (graded in-request through `BridgePayloadSource`, never stored), the scanner import |
-| A nightly job on Hermes writes the DB directly through `SessionLocal`, leaves a dated log, is registered by a `setup_*_task.ps1` | `deploy/portfolio_daily_check.py:1-80`, `deploy/spread_scan.py:1-60`, `deploy/setup_portfolio_check_task.ps1` | the Telegram push (step 5 of A's nightly job), the `option_jobs` record the status strip reads |
+| A nightly job on Hermes writes the DB directly through `SessionLocal`, leaves a dated log, is registered by a `setup_*_task.ps1` | `deploy/portfolio_daily_check.py:1-80`, `deploy/spread_scan.py:1-60`, `deploy/setup_portfolio_check_task.ps1` | the Telegram push (step 6 of A's nightly job), the `option_jobs` record the status strip reads |
 | ONE lightweight-charts instance in the DOM at a time; overlays arrive as `chart_*` context variables of `_price_chart.html` | `templates/_curated_list.html:25-28`, `templates/_sector_chart.html:52-54`, `templates/_portfolio_chart.html:29`, `templates/_price_chart.html:415-428` | the card chart (`chart_bounce`, `chart_trendline`, `chart_range`, `chart_spread`, `chart_levels`) and the Ideas/Positions tab switch |
 | The invisible-until-hover scrollbar is wildcard CSS in `base.html:15-22`; nothing may override it | `templates/base.html:15-22`, `templates/_options_analysis.html:350` | every scroll area on `/options` |
 | Scrolling `tabular-nums`, 11px secondary text, emerald = action/up, rose = down, amber = warning, sky = watch | `templates/base.html:69-260` (the TradingView token layer) | all new markup |
@@ -31,23 +31,23 @@ Conventions used below, all taken from the existing code:
 |---|---|---|
 | `OptionChainSnapshot` model (A2.1) | the full stored chain behind the expander (`GET /options/chain/{symbol}`) | columns `symbol, snap_on, kind, source, expiry, dte, right, strike, bid, ask, mid, last, bid_size, ask_size, iv (FRACTION), delta, gamma, theta, vega, rho, theo, oi, volume, prev_close`; rows are replaced per `(symbol, snap_on, kind)` |
 | `option_store.latest_chain(db, symbol)` / `latest_snap_on(db, symbol)` (A5.3) | the expander, the in-request grade on Track | the stored rows (~3k, < 50 ms) |
-| `option_store.card_for(db, symbol, user) -> dict` and `option_store.basket_rows_for(db, user) -> dict[symbol, dict]` (A5.3) | **the ONLY read path for `option_signal`**: the card, the picks, the ticket, the payoff, the basket | the latest row per symbol for the member's `prefs_hash`, else the house hash (`user_id IN (NULL, me)`); on a hash miss `card_for` computes lazily from the stored chain (no market call); each dict carries `id, symbol, snap_on, kind, as_of, status, trend, headline, setup, iv, strategies, picks, stale, age_h` where `stale` is computed there from `snap_on` vs the ET session date (`spread_monitor.et_today()`); `basket_rows_for` is ONE batched query, never a per-row lookup |
+| `option_store.card_for(db, symbol, user) -> dict | None` and `option_store.basket_rows_for(db, user) -> dict[symbol, dict]` (A5.3) | **the ONLY read path for `option_signal`**: the card, the picks, the ticket, the payoff, the basket | the latest row per symbol for the member's `prefs_hash`, else the house hash (`user_id IN (NULL, me)`); `card_for` returns `None` when no signal row exists yet and on a hash miss computes lazily from the stored chain (no market call); each dict carries `id, symbol, snap_on, kind, as_of, status, trend, headline, setup, iv, strategies, picks, stale, age_h` where `stale` is computed there from `snap_on` vs the ET session date (`spread_monitor.et_today()`); `basket_rows_for` is ONE batched query, never a per-row lookup, and it is what decides each row's `pick_state in {has_picks, no_strike_passes, not_checked}` (the route never recomputes it) |
 | `option_nightly.refresh_symbol(db, sym, user)` (A4.7) | `POST /options/refresh/{symbol}` | the per-symbol pipeline with `kind='intraday'`, computes the house signal AND the caller's hash, writes an `option_jobs(job='refresh')` row |
 | `option_data.BridgePayloadSource(payload)` (A1.5) | `POST /options/live/{symbol}` | built from the posted dict, no network; yields `Chain(kind="live", source="bridge")` of that one expiry with `iv` divided by 100 (the one place percent is converted); rows capped at 400, strikes within 50% of spot |
 | `option_store.bootstrap_iv(db, symbol, series, *, source="ibkr")` (A4.6) | inside `POST /options/live/{symbol}` | `series = [{"on": "YYYY-MM-DD", "iv": 31.2}, ...]` **PERCENT**, as bridge 1.6 sends it (`round(close*100, 1)`, `bridge/ibkr_bridge.py:559-563`), stored as-is bounded `0.1..1000`, <= 400 points; never overwrites a day the server read itself; marks the house signal `status='stale_iv'` so the next `card_for` recomputes the gauge |
-| `option_prefs` (B4.1 schema + D3's presentation columns, one module `app/services/option_prefs.py`) | the rules drawer, every pick, the hash | blocks `shared, credit_vertical, debit_vertical, long, leaps, condor, time`; `read(db, user)`, `write(db, user, tab, form)`, `reset(db, user, tab)`, `for_strategy(prefs, key)`, `prefs_hash(prefs)` (pick-relevant fields only, D3.1), `family_of(key)`, `STRATEGY_KEYS`, `TABS`, `FIELDS` |
-| `strike_picker.pick(strategy_key, chain_view, chart, gauge, prefs, *, nlv=None, today=None) -> PickResult` (B4.2, B4.8) | run **in-request only on Live** (the nightly job and `card_for` fill `option_signal.picks` for every distinct saved `prefs_hash`); otherwise picks are read from the signal | `PickResult = {strategy, family, prefs_hash, status: ok|degenerate, picks: [Pick x3], considered, degenerate: {reason_key, text, nearest, fix}|None, rules_line}`; a `Pick` = `{strategy, legs: [Leg], expiry, dte, back_expiry?, net (negative = credit), width, max_profit (+$), max_loss (+$), breakevens: [], pop (0..1), pop_kind: keep|profit, greeks, liquidity: {tier: clean|limit|wide|thin|unknown, widest, min_oi, vol_ok, notes}, constraint, score, why: [], words: {}, chart_stop, chart_stop_pl, rule_stop_pl, checks: [], sizing (filled at READ time, D1.4)}` |
+| `option_prefs` (B4.1 schema + D3's presentation columns, one module `app/services/option_prefs.py`) | the rules drawer, every pick, the hash | blocks `shared, credit_vertical, debit_vertical, long, leaps, condor, time`; `read(db, user)` (the merge over `HOUSE`; returns the merged blocks plus the top-level keys `telegram`, `account = {nlv, risk_pct, nlv_source}` and `_overridden`, D3.1), `clean(raw)` (the pure merge; `HOUSE_HASH = prefs_hash(clean({}))`), `write(db, user, tab, form)`, `reset(db, user, tab)`, `for_strategy(prefs, key)`, `family_of(key)`, `defined_risk(key)`, `prefs_hash(merged)` (pick-relevant fields only, D3.1; first 12 hex, `String(16)` column), `distinct_hashes(db)`, `STRATEGY_KEYS` (imported from `app/services/strategy_rules.py`), `TABS`, `FIELDS` |
+| `strike_picker.pick(strategy_key, chain_view, chart, gauge, prefs, *, today=None) -> PickResult` (B4.2, B4.8) - pure, no NLV; sizing is `option_sizing.size` afterwards | run **in-request only on Live** (the nightly job and `card_for` fill `option_signal.picks` for every distinct saved `prefs_hash`); otherwise picks are read from the signal | `PickResult = {strategy, family, prefs_hash, status: ok|degenerate, picks: [Pick x3], considered, degenerate: {reason_key, text, nearest, fix}|None, rules_line}` where `degenerate.reason_key` is one of `no_chain, no_expiry, no_band, constraint, credit_floor, thin, theta_cap, extrinsic_cap, no_term, safety`; a `Pick` = `{strategy, legs: [Leg], expiry, dte, back_expiry?, net (negative = credit), width, max_profit (+$), max_loss (+$), breakevens: [], pop (0..1), pop_kind: keep|profit, greeks, liquidity: {tier: clean|limit|wide|thin|unknown, widest, min_oi, vol_ok, notes}, constraint, score, why: [], words: {}, chart_stop, chart_stop_pl, rule_stop_pl, checks: [], sizing (filled at READ time, D1.4)}` |
 | `Leg` (A/B/C, one shape) | every leg this part renders | `{expiry, right: C|P, strike, side: sell|buy, qty: positive int, price (mid), bid, ask, iv (FRACTION), delta (signed), oi, volume}`; the key is `oi` (never the longer spelling) once past `opt_legs.norm_leg`; `payoff.Leg.from_dict(leg)` derives the signed quantity |
-| `option_sizing.size(pick, nlv, prefs) -> dict` (B5) | called by `_card_context` / `_picks_context` / the ticket / the push at READ time | `{nlv, nlv_source: bridge|prefs|None, risk_pct, risk_budget, loss_at_stop_usd, stop_price, rule_stop_usd, rule_stop_kind, fires_first, by_chart_stop, by_max_loss, by_notional, contracts, capital_at_risk_usd, max_loss_total_usd, note}`; `contracts = min(floor(risk_budget / loss_at_chart_stop_usd), floor(risk_budget x GAP_MULT / max_loss_usd), floor(nlv x 10% / notional))`, `0` is a valid answer, **never rounded up to one** |
-| `order_ticket.build(pick, setup, prefs) -> Ticket` + `order_ticket.render(ticket, broker: tws|moomoo) -> str` (B6) | `GET /options/ticket/{symbol}` | the Ticket dict of B6.1 with `condition=None` by default (D2.8); the member's contract count and the dip toggle travel on the pick (`pick["sizing"]["contracts"]`, `pick["enter_on_dip"]`) so the signature stays the shared one |
+| `option_sizing.size(pick, nlv, prefs) -> dict` (B5) | called by `_card_context` / `_picks_context` / the ticket / the push at READ time | `{contracts, by_chart_stop, by_gap, by_notional, stop_t_days, stop_iv, max_loss_pct_nlv, nlv_source: live|prefs|None, line}`; `contracts = min(by_chart_stop = floor(risk_budget / |chart_stop_pl|), by_gap = floor(risk_budget x GAP_MULT / max_loss), by_notional = floor(nlv x MAX_POSITION_PCT% / notional))` (GAP_MULT is the `shared.gap_mult` field, house 2.0; `MAX_POSITION_PCT = 10.0` is a constant in `opt_constants.py`, not a field); on the LRCX golden pick under house prefs (NLV 100,000, risk 1%) that is 8 / 2 / 10 → **2**; `0` is a valid answer, **never rounded up to one**; `line` is the member-facing sizing sentence (D2.7 `sizing_line`) |
+| `order_ticket.build(pick, setup, prefs, *, dip=False, rejection=None, now=None) -> Ticket` + `order_ticket.render(ticket, broker: tws|moomoo) -> str` (B6) | `GET /options/ticket/{symbol}` | the Ticket dict of B6.1 with `condition=None` unless `dip=True` (D2.8); `rejection=` is the rejected row's sentence and lands in `ticket['rejection']`, line 1 of BOTH renderings; the member's contract count travels on the pick (`pick["sizing"]["contracts"]`) so the signature stays the shared one |
 | `OptionTrade` / `OptionTradeCheck` models (B7.1) and `option_exits.mark / grade / sweep` (B7.2-B7.3) | the Positions tab, Track this, `/options/badge` | `option_trades` = THE positions store for EVERY strategy from step 1 (generic legs cover bear_call now); `OptionTrade.legs` = the Leg shape + `entry_price, entry_delta, entry_iv`; `OptionTradeCheck.legs` per-day `{mid, delta, iv}`; `grade()` returns `{state, action, reasons, urgent, ...}` incl. the "earnings now inside" WATCH-urgent row (D1.14) |
 | `OptionSpread` (legacy, `models.py:788-849`) | **read-only** for the legacy `/portfolio` until removal; nothing on this page writes it | `spread_monitor` is NOT changed |
-| `payoff.build(legs, *, family, spot, atr, today, contracts=1, chart_stop=None, target=None, rule_frac=None, levels=(), sigma_fallback=None, pl_now=None) -> dict` + `templates/_payoff_chart.html` (C3, C4) | `GET /options/payoff/{symbol}` returns C's partial — **the ONE payoff implementation** | dict `{family, label, symbol, spot, atr, contracts, horizon{expiry, dte}, legs, xs, at_expiry, today (T+0 at t=0), breakevens: [], max_profit, max_loss (POSITIVE), unlimited_*, pop{label, value, basis, model, model_basis}, markers: [{x, label, kind}], hlines: [{y, label, kind}], dot, units{mode: $|R, per, r_dollars, r_basis}, caption, warnings, error, uid, svg{...}, series}`; `pnl / leg_value / curve_at` take `iv_bump: float = 0.0` |
+| `payoff.build(legs, *, strategy, spot, atr, as_of, chart_stop=None, target=None, levels=(), sigma_fallback=None, pl_now=None, premium_stop_pct=None, loss_fraction=0.20, units='$') -> dict` + `templates/_payoff_chart.html` (C3, C4) | `GET /options/payoff/{symbol}` returns C's partial — **the ONE payoff implementation** | always per ONE contract (no `contracts=`); the family is derived inside via `option_prefs.family_of(strategy)`; `levels=` elements are `{x: price, label: str, kind in {support, resistance, trend_line, target}}`; `units` is passed in, never patched on the result; dict `{strategy, family, xs, at_expiry, today (T+0 at t=0), markers: [{x, label, kind, y_today}], hlines: [{y, label, kind}], breakevens: [], max_profit, max_loss (POSITIVE), pop{label, value, basis, model, model_basis}, units{mode: $|R, r_dollars, r_basis}, warnings, error, uid, svg{...}, series{...}}` (no `contracts`, no `dot` - the Positions tab's "dot" is the now marker's `y_today`); `pnl / leg_value / curve_at` take `iv_bump: float = 0.0`, a RELATIVE lift defined once in `payoff.leg_value`: `sigma_used = leg.iv × (1 + iv_bump)`, `STOP_IV_BUMP = 0.10` (so the stop valuation's `stop_iv` 0.506 = 0.46 × 1.10) |
 | `payoff.pop(family, legs, spot, sigma_h, T_h, xs, ys)` (C3.8) | not called here; the one function behind every non-credit `pop` on a pick | credit families (`CREDIT_FAMILIES = {bull_put, bear_call, iron_condor}`) use `1 - |delta_short|` (condor two-sided); the model figure is shown as "model estimate {m}%" (D2.7) |
-| `trend_line.overlay(tl, tl_bounce)` / `range_box.overlay(rng)` (C1.1, C2.1) | `chart_trendline` / `chart_range` of the card chart | `tl` = `{direction, p1{time,price}, p2, i1, slope_per_bar, slope_atr, touches[{time,price}], n_touches, span_bars, value_today, value_at{date: price}, broken, last_break, warning, residual_atr, atr, channel}`; `rng` = `{low, high, zone_low, zone_high, n_low, n_high, touches_low, touches_high, width_atr, pos_pct, stack_flat, sideways, reasons}`; drawn by C4.4 items 1-6 |
-| `option_signal` row (A2.1, A5.2 with the contract's shapes) | the card reads NOTHING else at page time | key `(symbol, snap_on, kind, prefs_hash)`; `trend` is a **String** in `up|down|sideways|unclear`; `headline` stored at WRITE time; `setup = {kind, direction, level, zone, touches:int, quality, close, trend_days, atr, ema{e20,e50,e200}, plan{entry,stop,target,r}, levels{support,resistance}, sup, tl, tl_bounce, rng, evidence[]}` (`sup/tl/tl_bounce/rng` are C's dicts verbatim; `ema_setup.analyze()` stores them and `chart_state.read()` calls `analyze` ONCE); `iv = {iv30, hv20, hv60, iv_hv_premium, iv_rank, iv_pct, iv_n, state: none|forming|pct_only|rank_ok|ok, basis: rank|percentile|provisional|unknown, provisional, iv_front, iv_back, term_ratio (= iv_front / iv_back; TERM_EVENT 1.05, TERM_CONTANGO 0.95), skew25, skew_norm, expected_move, earnings_date, earnings_days, verdict: SELL|NEUTRAL|BUY|UNKNOWN, verdict_why, gates}`; `strategies` = flat list of ALL TEN `{key, label, fit: recommended|also_fits|rejected, score, step, why, must_happen, reasons[], reason_key, shown}`; `picks = {strategy_key: [Pick]}` |
-| `OptionJob` / table `option_jobs` (A2.1, + `pushed` int) and `services/job_runs.py` (D6) | the status strip, the "job missed" notice, `/options/badge` | `job_runs.start(db, job, run_on) -> OptionJob`, `finish(db, run, *, ok, errors, rows, pushed, note, detail)`, `latest(db, job) -> OptionJob|None`, `missed(db, job) -> bool` |
-| Nightly job entry point `deploy/options_nightly.py` + `TST-Options-Nightly` 07:15 MYT, 30-minute limit (A4.1) | step 5 of A4.2 is this part's push | `telegram_push.run(db, *, as_of: str, dry_run: bool=False) -> dict` (D4); the job also computes picks for every DISTINCT saved `prefs_hash` so the basket is honest on first paint (D2.2), and runs `option_exits.sweep(db)` over `option_trades` before the push (D1.14) |
+| `trend_line.overlay(tl, tl_bounce)` / `range_box.overlay(rng)` (C1.1, C2.1) | `chart_trendline` / `chart_range` of the card chart | `tl` = `{direction, p1{time,price}, p2, i1, slope_per_bar, slope_atr, touches[{time,price}], n_touches, span_bars, value_today, value_at{date: price}, broken, last_break, warning (bool), residual_atr, atr, channel}`; `rng` = `{low, high, zone_low, zone_high, n_low, n_high, touches_low, touches_high, width_atr, pos_pct (0..1), stack_flat, sideways, reasons}`; drawn by C4.4 items 1-6 |
+| `option_signal` row (A2.1, A5.2 with the contract's shapes) | the card reads NOTHING else at page time | key `(symbol, snap_on, kind, prefs_hash)`; `trend` is a **String** in `up|down|sideways|unclear`; `headline` stored at WRITE time; `setup = {kind, direction, level, zone, touches:int, quality (int 0-100), close, trend_days, atr, ema{e20,e50,e200}, plan{entry,stop,target,r}, stop, target, levels{support,resistance}, sup, tl, tl_bounce, rng, evidence[]}` (`stop` / `target` are flat aliases of `plan.stop` / `plan.target` - 336.2 / 375.2 on the LRCX fixture; `sup/tl/tl_bounce/rng` are C's dicts verbatim; `ema_setup.analyze()` stores them and `chart_state.read(symbol, *, bars, long_bars, today, expiries) -> ChartState` calls `analyze` ONCE); `iv = {iv30, hv20, hv60, iv_hv_premium (the unitless RATIO iv30 / hv20 - 1.21 on the fixture; IV_HV_RICH 1.10, IV_HV_CHEAP 0.90), iv_rank, iv_pct, iv_n, state: none|forming|pct_only|rank_ok|ok, basis: rank|percentile|provisional|unknown, provisional, iv_front (ATM IV of the expiry nearest 30 DTE with dte >= 7), iv_back (nearest 75 DTE with dte >= 45), term_ratio (= iv_front / iv_back; TERM_EVENT 1.05, TERM_CONTANGO 0.95), skew25, skew_norm, expected_move, earnings_date, earnings_days, verdict: SELL|NEUTRAL|BUY|UNKNOWN, verdict_why, gates = {buy, sell_directional, sell_neutral, mid}}` (`term_event` is NOT a gate; the term reason lives in `verdict_why`); `strategies` = flat list of ALL TEN `{key, label, fit: recommended|also_fits|rejected, score, step, why, must_happen, reasons[], reason_key, shown}` (a rejected row has `score`, `why` and `must_happen` null; the leaps label is `Buy LEAPS`; `score = priority + iv_fit (0-20) + setup_quality/5 + term 10 + structure 5 − 10 if unbuilt`); `picks = {strategy_key: [Pick]}` |
+| `OptionJob` / table `option_jobs` (A2.1, + `pushed` int) and `services/job_runs.py` (D6) | the status strip, the "job missed" notice, `/options/badge` | `job_runs.start(db, job, run_on, source=None) -> OptionJob` (`job in {nightly, refresh, bootstrap, backfill, telegram_poll}`), `finish(db, run, *, ok, errors, rows, pushed, note, detail)`, `latest(db, job) -> OptionJob|None`, `missed(db, job) -> bool` |
+| Nightly job entry point `deploy/options_nightly.py` + `TST-Options-Nightly` 07:15 MYT, 30-minute limit (A4.1) | step 6 of A4.2 is this part's push | the nightly order: 1 snapshot, 2 metrics / `iv_daily`, 3 engines per hash, 4 `option_exits.sweep(db)`, 5 `option_store.prune(db, today)` (prunes `option_chain_snapshot` 90d, `option_trade_checks` 90d, `option_idea_push` 45d), 6 `telegram_push.run(db, as_of=run_on, dry_run=...)` (D4), 7 `job_runs.finish`; `telegram_push.run(db, *, as_of: str, dry_run: bool=False) -> dict`; the job also computes picks for every DISTINCT saved `prefs_hash` (`option_prefs.distinct_hashes(db)`) so the basket is honest on first paint (D2.2), and the sweep (step 4) runs over `option_trades` before the push so the push sees tonight's checks (D1.14) |
 | `option_words` (D2.7, `app/services/option_words.py`) | every member-facing sentence; `headline()` is called by the engine at WRITE time and stored in `option_signal.headline` | templates print, never compose |
 
 Ownership, stated once: this part owns `app/routes/options_page.py` (A's four data endpoints live in it under this part's `verb/{symbol}` paths); A owns `deploy/options_nightly.py` and `setup_options_nightly_task.ps1`; B owns the engines, `option_prefs.py` (this part contributes the presentation columns), `option_sizing.py`, `order_ticket.py`, `option_exits.py`; C owns `trend_line.py`, `range_box.py`, `payoff.py`, `_payoff_chart.html`.
@@ -129,6 +129,7 @@ from ..services import (option_prefs, option_words, option_store, option_nightly
                         trend_line, range_box, job_runs, telegram_push)
 from ..services import user_watchlist as uwl, trade_prefs as tp
 from ..services import spread_monitor                      # et_today() only
+from ..services import clock                               # _us_session_open() and the NYSE-holiday step (D1.9, D1.13)
 from . import options as legacy_options                    # BRIDGE_PORT / BRIDGE_SETUP_PATH, nothing else
 
 router = APIRouter(prefix="/options", tags=["options-page"])
@@ -162,11 +163,11 @@ bootstrap is a step inside `/options/live/{symbol}`).
 | `GET /options/basket` | `_options_basket.html` | the left column; `?sort=idea|iv|trend|added` | `option_basket`, `option_store.basket_rows_for` | - |
 | `POST /options/basket/add` | `_options_basket.html` | add one typed ticker (form `symbol`, `note`) | | `option_basket` |
 | `POST /options/basket/remove` | `_options_basket.html` | remove one (form `symbol`) | | `option_basket` |
-| `POST /options/basket/import` | `_options_basket.html` | bulk add from `source=paste|watchlist|ivscan_list|ivscan_scan|scanner|screener|positions` (D1.5) | `prefs.ivscan_universe`, `IVScanItem`, `user_watchlist`, `spread_candidates`, open `option_trades` | `option_basket` |
+| `POST /options/basket/import` | JSON `{added, skipped, over_cap, total}` + `HX-Trigger: options:basket-changed` (the basket re-renders itself) | bulk add from `source=paste|watchlist|ivscan_list|ivscan_scan|scanner|screener|positions` (D1.5); a JSON body, unlike `add` / `remove`, which are form-encoded (`hx-vals`) | `prefs.ivscan_universe`, `IVScanItem`, `user_watchlist`, `spread_candidates`, open `option_trades` | `option_basket` |
 | `GET /options/card/{symbol}` | `_options_card.html` | the centre card; `?strategy=&pick=` | `option_store.card_for`, `option_prefs.read`, `trade_prefs.read` | `option_signal` (lazy fill on a hash miss, inside `card_for`) |
 | `GET /options/picks/{symbol}` | `_options_picks.html` | strategy chip click and rule change re-render only the picks + payoff container; `?strategy=` | same as card, no chart | same lazy fill |
 | `GET /options/chart/{symbol}` | `_options_chart.html` → `_price_chart.html` | the one chart; `?strategy=&pick=` decides which overlay set | `card_for(...)["setup"]`, pick | - |
-| `GET /options/payoff/{symbol}` | `_payoff_chart.html` (C4.3, server-rendered SVG) | the risk & reward pane; `?strategy=&pick=&units=$|R`; `?trade=<option_trades.id>` on the Positions tab (the dot) | pick (or the trade's legs + latest `OptionTradeCheck`), `setup.plan`, `setup.levels`, rules | - |
+| `GET /options/payoff/{symbol}` | `_payoff_chart.html` (C4.3, server-rendered SVG) | the risk & reward pane; `?strategy=&pick=&units=$|R`; `?trade=<option_trades.id>` on the Positions tab (the now marker: the trade's entry prices with sigma solved from the latest `OptionTradeCheck` mids) | pick (or the trade's legs + latest `OptionTradeCheck`), `setup.plan`, `setup.levels`, rules | - |
 | `GET /options/chain/{symbol}` | `_options_chain.html` | the full stored chain behind the expander; `?expiry=&all=0|1` (D1.15) | `option_store.latest_chain` | - |
 | `GET /options/ticket/{symbol}` | `_options_ticket.html` | order ticket, both broker renderings; `?strategy=&pick=&contracts=&dip=0|1` | pick, rules, setup, `card_for(...)["as_of"]` | - |
 | `POST /options/refresh/{symbol}` | `_options_card.html` + `HX-Trigger: options:basket-changed` | on-demand Cboe read, re-signal (`option_nightly.refresh_symbol`) | | snapshot, `iv_daily`, signal, `option_jobs(job='refresh')` |
@@ -179,12 +180,13 @@ bootstrap is a step inside `/options/live/{symbol}`).
 | `POST /options/positions/{id}/close` | `_options_positions_tab.html` | mark a trade closed (`close_reason`, `closed_at`) - the shape of `/portfolio/{id}/close` (`routes/portfolio.py:350-363`) | | `option_trades` |
 | `GET /options/badge` | JSON | nav badge: `{run_on, finished_at, ok, errors, stale, running, job_missed, ideas_new, urgent, watch}` | `option_jobs` (via `job_runs`), `option_trade_checks`, `option_idea_push` | - |
 | `GET /options/status/strip` | `_options_status.html` | the honesty strip, polled every 300 s, rendered from the same dict `/options/badge` returns | same | - |
-| `POST /options/telegram` | `_options_rules.html` (shared tab) | opt-in, chat-id handshake (`/start` → 6-digit code), quiet switch, pause (D4.2) | `user_option_prefs.prefs["telegram"]` | same |
+| `POST /options/telegram` | `_options_rules.html` (shared tab) | opt-in, chat-id handshake (`/start` → 6-digit code), quiet switch, pause (D4.2); body `{action in {request_code, verify, quiet, pause, disable}, chat_id?, code?, pause_days?}` | `user_option_prefs.prefs["telegram"]` | same |
 
 Query parameters are validated the same way everywhere: `symbol` through `_clean_symbol()`
 (the single-ticker form of `ivscan._clean_symbols`, `routes/ivscan.py:91-102`); `strategy` must
-be in `option_prefs.STRATEGY_KEYS` (`buy_call, buy_put, bull_call, bear_put, leaps_call, bull_put,
-bear_call, iron_condor, calendar, diagonal_call`) else the recommended one; `pick` is an int index
+be in `option_prefs.STRATEGY_KEYS` (imported from `app/services/strategy_rules.py`, in the user's
+order: `buy_call, buy_put, bull_call, bear_put, leaps_call, diagonal_call, bull_put, bear_call,
+iron_condor, calendar` - ties in the recommender break in that order) else the recommended one; `pick` is an int index
 clamped to the pick list; `tab` must be in `option_prefs.TABS` (`shared, credit, debit, condor,
 time`); `units` in `("$", "R")`; `broker` in `("tws", "moomoo")`.
 
@@ -202,20 +204,20 @@ def _basket_context(db: Session, user: User, *, sort: str = "idea", selected: st
     recommendation and picks sorts above one with a recommendation and no strikes, above
     'not checked yet', above 'no setup', above 'no read'."""
     rows = _basket_rows(db, user)
-    sigs = option_store.basket_rows_for(db, user)        # A5.3: latest row per symbol for the member's hash, else the house hash; carries stale/age_h
+    sigs = option_store.basket_rows_for(db, user)        # A5.3: latest row per symbol for the member's hash, else the house hash; carries stale/age_h/pick_state
     items = []
     for r in rows:
         s = sigs.get(r.symbol)                            # None = no signal yet (added today)
         strategies = (s or {}).get("strategies") or []
         rec = next((x for x in strategies if x["fit"] == "recommended"), None)
-        picks = (s["picks"] or {}).get(rec["key"]) if (s and rec) else None
-        # THREE states, not two (CRITIQUE): None = not computed under this hash yet; [] = computed, no strike passes
-        pick_state = (None if not rec else "picks" if picks else "none" if picks == [] else "unchecked")
+        # THREE states, not two (CRITIQUE), decided by basket_rows_for - never recomputed here:
+        #   has_picks = picks under this hash; no_strike_passes = computed, [] ; not_checked = no entry under this hash yet
+        pick_state = s["pick_state"] if (s and rec) else None          # in {has_picks, no_strike_passes, not_checked}
         items.append({"row": r, "sig": s, "iv": (s or {}).get("iv"), "rec": rec, "pick_state": pick_state,
                       "age_h": s["age_h"] if s else None,
                       "stale": s is None or s["stale"],              # computed by card_for/basket_rows_for from snap_on vs et_today()
                       "idea_word": option_words.idea_short(rec) if rec else None})
-    rank = {"picks": 0, "unchecked": 1, "none": 2}
+    rank = {"has_picks": 0, "not_checked": 1, "no_strike_passes": 2}
     key = {"idea": lambda it: (it["rec"] is None, rank.get(it["pick_state"], 3), -((it["iv"] or {}).get("iv_rank") or 0)),
            "iv":   lambda it: (it["iv"] is None, -((it["iv"] or {}).get("iv_rank") or 0)),
            "trend": lambda it: (it["sig"] is None, {"up": 0, "down": 1, "sideways": 2, "unclear": 3}.get((it["sig"] or {}).get("trend"), 9)),
@@ -236,10 +238,11 @@ its freshness) so the two pages share one copy rather than cloning it; `card_for
 
 ```python
 def _nlv_for(user: User, live: dict | None) -> tuple[float | None, str | None]:
-    """B5.3 order: the Live figure for THIS request -> stored trade_prefs nlv (> 0) -> None.
+    """B5.3 order: the Live figure for THIS request -> stored trade_prefs nlv (> 0) -> None;
+    nlv_source in {live, prefs, None} (the same vocabulary option_sizing.size reports).
     Never written here; the '[remember this]' click is a POST /options/rules tab=shared nlv=..."""
     if live and live.get("nlv"):
-        return float(live["nlv"]), "bridge"
+        return float(live["nlv"]), "live"
     stored = tp.read(user)["nlv"]
     return (stored, "prefs") if stored and stored > 0 else (None, None)
 
@@ -263,8 +266,8 @@ def _card_context(db: Session, user: User, symbol: str, *, strategy: str = "",
     picks = (live["picks"] if live else ((card["picks"] or {}).get(strategy) if card else None))
     nlv, nlv_source = _nlv_for(user, live)
     for p in (picks or []):
-        p["sizing"] = option_sizing.size(p, nlv, prefs)   # READ time, microseconds; 0 contracts is an honest answer
-        p["sizing"]["nlv_source"] = nlv_source
+        p["sizing"] = option_sizing.size(p, nlv, prefs)   # READ time, microseconds; {contracts, by_chart_stop, by_gap, by_notional, stop_t_days, stop_iv,
+                                                           #   max_loss_pct_nlv, nlv_source in {live, prefs, None}, line}; 0 contracts is an honest answer
     pick_i = max(0, min(pick, len(picks) - 1)) if picks else 0
     chips = option_words.chip_row(strategies)            # D2.3: recommended, also_fits, <=2 near-miss rejects (shown=True), rest
     return {"user": user, "sym": sym, "card": card, "prefs": prefs, "in_basket": in_basket,
@@ -293,10 +296,14 @@ class BasketImport(BaseModel):
     symbols: list[str] = Field(default_factory=list)   # scanner / screener: what the browser chose
     note: str = ""
 
-@router.post("/basket/import", response_class=HTMLResponse)
+@router.post("/basket/import")
 def basket_import(payload: BasketImport, request: Request,
-                  user: User = Depends(require_user), db: Session = Depends(get_db)):
-    """Bulk add. Sources (the contract's list; 'ivscan' alone is ambiguous in this repo, so two names):
+                  user: User = Depends(require_user), db: Session = Depends(get_db)) -> JSONResponse:
+    """Bulk add (a JSON body; add / remove are form-encoded hx-vals posts). Returns
+    {added, skipped, over_cap, total} - skipped = duplicates and junk, over_cap = what the
+    MAX_BASKET cap dropped, total = the basket's size afterwards - with HX-Trigger
+    'options:basket-changed' (the basket fragment re-renders itself) and 'options:toast'.
+    Sources (the contract's list; 'ivscan' alone is ambiguous in this repo, so two names):
       paste        - typed text, cleaned exactly as /ivscan/universe cleans it (re, _clean_symbols)
       watchlist    - user_watchlist.symbols(db, user)                       (services/user_watchlist.py:28)
       ivscan_list  - prefs['ivscan_universe'] (the old IV Rank 'My list')    (routes/ivscan.py:85,105-107)
@@ -307,12 +314,12 @@ def basket_import(payload: BasketImport, request: Request,
       positions    - symbols of this member's OPEN option_trades rows (so a tracked trade's chain is always fresh)
     Existing rows are kept (their signal is not reset); new ones get pos = max+1,
     owner_key = f"u{user.id}", added_on = spread_monitor.et_today(), active = True and
-    source = payload.source. Returns the basket fragment; the response carries
-    HX-Trigger 'options:basket-changed' so the status strip updates its count."""
+    source = payload.source. The HX-Trigger 'options:basket-changed' also makes the status
+    strip update its count."""
 ```
 
-Rules: cap at `MAX_BASKET` (the response says how many were dropped, as `/ivscan/universe`
-reports `dropped`, `routes/ivscan.py:307`); duplicates ignored; `source` stored verbatim from
+Rules: cap at `MAX_BASKET` (the response's `over_cap` says how many the cap dropped - 10 on a
+70-symbol paste; `skipped` counts duplicates and junk); `source` stored verbatim from
 the allow-list `typed | paste | watchlist | ivscan_list | ivscan_scan | scanner | screener | sector |
 positions | system`. `add` is `import(source="typed")` with one symbol. `remove` sets nothing on the
 shared tables - it deletes the member's `option_basket` row and nothing else; the ticker's
@@ -387,29 +394,47 @@ pick's expiry (`tl.value_at[expiry]`) is already on the stored dict because the 
 def payoff_pane(symbol: str, request: Request, strategy: str = "", pick: int = 0, units: str = "$",
                 trade: int = 0, user: User = Depends(require_user), db: Session = Depends(get_db)):
     """Thin: load legs -> payoff.build(...) -> _payoff_chart.html (C3.11). The browser never
-    draws a payoff itself; the $|R toggle re-requests this URL with units=R."""
-    if trade:                                                   # Positions tab: the dot
+    draws a payoff itself; the $|R toggle re-requests this URL with units=R. build() is always
+    per ONE contract (no contracts= argument): the member's count is a sizing figure, never a
+    payoff input; units is passed IN (build falls back to '$' when there is no r_dollars)."""
+    units = units if units in ("$", "R") else "$"
+    prefs = option_prefs.read(db, user)
+    today = spread_monitor.et_today()
+    if trade:                                                   # Positions tab: the now marker (y_today = pl_now)
         t = db.get(OptionTrade, trade); _own(t, user)
-        legs = [payoff.Leg.from_dict(dict(l, price=l["entry_price"], iv=l["entry_iv"])) for l in t.legs]
-        chk = t.checks[-1] if t.checks else None
-        po = payoff.build(legs, family=t.family, spot=chk.spot if chk else None, atr=_atr_for(db, t.symbol), today=spread_monitor.et_today(),
-                          contracts=t.contracts, chart_stop=t.chart_stop, target=t.chart_target,
-                          rule_frac=_rule_frac(t.family, option_prefs.read(db, user), t), pl_now=chk.pl if chk else None)
+        chk = t.checks[-1] if t.checks else None                # the latest OptionTradeCheck: legs [{mid, delta, iv}], spot, pl
+        # the trade's legs at their ENTRY prices, each with the sigma SOLVED from the latest check's mid
+        # (_sigma_from_mark: the Black-Scholes implied vol that reprices the leg at chk_leg['mid'] today) - never entry_iv
+        legs = [payoff.Leg.from_dict(dict(l, price=l["entry_price"],
+                                          iv=_sigma_from_mark(l, chk_leg, chk.spot, today) if chk else l["entry_iv"]))
+                for l, chk_leg in zip(t.legs, (chk.legs if chk else t.legs))]
+        po = payoff.build(legs, strategy=t.strategy, spot=chk.spot if chk else None, atr=_atr_for(db, t.symbol), as_of=today,
+                          chart_stop=t.chart_stop, target=t.chart_target,
+                          premium_stop_pct=_premium_stop_pct(t.strategy, prefs, t),   # R1: leaps block (40) for leaps_call / diagonal_call; long block (50) for buy_call / buy_put / bull_call / bear_put / calendar; None for the credit families
+                          loss_fraction=_loss_fraction(prefs, t),                     # the credit families' rule stop: trade_prefs spread_loss_stop_pct / 100 (0.20 house), per-trade override first
+                          pl_now=chk.pl if chk else None, units=units)
     else:
         ctx = _picks_context(db, user, symbol, strategy=strategy, pick=pick)
         p, setup, iv = ctx["picks"][ctx["pick_i"]], ctx["card"]["setup"], ctx["card"]["iv"]
         legs = [payoff.Leg.from_dict(l) for l in p["legs"]]     # qty = +qty for buy, -qty for sell
-        po = payoff.build(legs, family=ctx["family"], spot=setup["close"], atr=setup["atr"], today=spread_monitor.et_today(),
-                          contracts=(p["sizing"] or {}).get("contracts") or 0,   # 0 = per-contract numbers (C3.12), never a forced 1
-                          chart_stop=p["chart_stop"],                           # = setup.plan.stop (B2.6): 336.2 on the LRCX fixture
-                          target=setup["plan"]["target"] if ctx["family"] in ("debit_vertical", "long", "leaps") else None,
-                          rule_frac=_rule_frac(ctx["family"], ctx["prefs"]),    # B5.2 table: credit 20% of max loss; long/debit/time premium_stop_pct; leaps None
-                          levels=_levels_at(setup, p["expiry"]),               # support / resistance / tl.value_at[expiry] / rng edges
-                          sigma_fallback=(iv.get("iv30") or 0) / 100 or None)   # iv_daily is PERCENT; payoff takes a fraction
-    po["units"]["mode"] = "R" if units == "R" and po["units"].get("r_dollars") else "$"
+        po = payoff.build(legs, strategy=ctx["strategy"], spot=setup["close"], atr=setup["atr"], as_of=today,   # family = option_prefs.family_of(strategy), derived inside build
+                          chart_stop=p["chart_stop"],                           # = setup.stop (the flat alias of setup.plan.stop, B2.6): 336.2 on the LRCX fixture
+                          target=setup["target"] if ctx["family"] in ("debit_vertical", "long", "leaps") else None,   # = setup.plan.target: 375.2 on the fixture
+                          premium_stop_pct=_premium_stop_pct(ctx["strategy"], ctx["prefs"]),   # R1: long block 50 / leaps block 40 / None for credit families - EVERY family gets its rule stop
+                          loss_fraction=ctx["trade_prefs"]["spread_loss_stop_pct"] / 100,       # 0.20 house: rule_stop_pl −158 on the fixture
+                          levels=_levels_at(setup, p["expiry"]),               # [{x, label, kind}], kind in {support, resistance, trend_line, target}: support / resistance / tl.value_at[expiry] / rng edges
+                          sigma_fallback=(iv.get("iv30") or 0) / 100 or None,   # iv_daily is PERCENT; payoff takes a fraction
+                          units=units)
     return templates.TemplateResponse(request, "_payoff_chart.html",
                                       {"po": po, "pane_url": request.url.remove_query_params("units")})
 ```
+
+`_premium_stop_pct(strategy, prefs, trade=None)` reads the per-trade override first, then
+`prefs.leaps.premium_stop_pct` for `leaps_call` / `diagonal_call` and `prefs.long.premium_stop_pct`
+for `buy_call`, `buy_put`, `bull_call`, `bear_put` and `calendar`; it returns `None` for the credit
+families, whose rule stop is `loss_fraction × max loss`. `_sigma_from_mark` is a route-local helper
+that solves Black-Scholes for the sigma that reprices one leg at the check's `mid` (C3.11); the
+stored `entry_iv` is only the fallback when a trade has no check yet.
 
 What the partial shows (C3.9-C3.10, C4.2 - restated here only where the card depends on it):
 
@@ -417,13 +442,18 @@ What the partial shows (C3.9-C3.10, C4.2 - restated here only where the card dep
 - **Both stops are drawn and labelled** (decision 7): the chart stop (`setup.plan.stop`: credit =
   `zone_lo − LEVEL_PAD_ATR × ATR`, debit = `min(entry − STOP_ATR × ATR, zone_lo − pad)`; **336.2**
   for the LRCX fixture - the mockup's 338 was a 0.1-ATR pad and is replaced everywhere) and the rule
-  stop for every family that has a $ rule in B5.2 (credit 20% of max loss, long / debit / time
-  `premium_stop_pct` of the debit; LEAPS has none, so no rule-stop marker).
+  stop for EVERY family (decision 7 as II.2.9 fixes it): the credit families at `loss_fraction`
+  (0.20) × max loss (−$158 on the fixture), `leaps_call` / `diagonal_call` at the leaps block's
+  `premium_stop_pct` (house 40), `buy_call` / `buy_put` / `bull_call` / `bear_put` / `calendar` at the
+  long block's `premium_stop_pct` (house 50) - a vertical marker plus an hline each; `rule_stop_pl`
+  is computed for every family. The chart-stop marker carries `y_today` −120.7 on the fixture's
+  330/320 pick (shown "about −$121").
 - `R` = 20% of max loss for the credit families, `|pnl_today(chart_stop)|` for the debit families
   (C3.9); the server renders `$` or `R`, the client never recomputes.
 - `today` is the T+0 curve at `t = 0`; `pnl / leg_value / curve_at` accept `iv_bump` (B5 uses it
-  for the stop valuation).
-- `pop = {label, value, basis, model, model_basis}`: the title reads `About a 74% chance of keeping
+  for the stop valuation) - a RELATIVE lift, `sigma_used = leg.iv × (1 + iv_bump)`, with
+  `STOP_IV_BUMP = 0.10` (stop_iv 0.506 = 0.46 × 1.10), defined once in `payoff.leg_value`.
+- `pop = {label, value, basis, model, model_basis}`: the title reads `About a 75% chance of keeping
   the credit` and the secondary figure `model estimate 73%` (D2.7).
 - Caption, verbatim: **"Dashed line: what the trade would be worth if the stock moved there today, at
   today's implied volatility - an estimate. Solid line: at expiry ({dte} days)."** For calendars /
@@ -468,8 +498,10 @@ def refresh(symbol: str, request: Request, strategy: str = "",
 
 `_cooldown_hit` is an in-process dict `{(user_id, sym): monotonic}`; good enough for one
 uvicorn worker (the app runs single-worker on Hermes, `deploy/run_app.ps1`).
-`_older_than_last_close(as_of)` = `as_of < 16:00 ET of the last ET trading day`
-(`spread_monitor.et_today()` minus the weekend/holiday step the sweep uses, `spread_monitor.py:204-242`).
+`_older_than_last_close(as_of)` = `as_of < 16:00 ET of the last ET trading day`, stepping back over
+weekends and NYSE holidays through `app/services/clock.py` - the module that also owns
+`_us_session_open()`: weekdays 09:30-16:00 ET excluding the NYSE holidays the calendar service
+already knows, falling back to a static list (D1.13 uses it for the "Refresh first" banner).
 
 #### D1.10 Live (the bridge) - graded in-request, never stored
 
@@ -488,8 +520,8 @@ def live(symbol: str, payload: LiveIn, request: Request, strategy: str = "",
     """Grade what the member's own TWS said, in this request, and show it - store nothing but the IV series.
     1. chain.ok and chain.spot: src = option_data.BridgePayloadSource(payload.chain)   (A1.5: iv/100, caps, no network)
        chain_view = opt_legs views over src.legs(); chart/gauge from card_for (stored); prefs = option_prefs.read
-       res = strike_picker.pick(strategy, chain_view, chart, gauge, prefs, nlv=payload.nlv, today=et_today())
-       for p in res.picks: p.sizing = option_sizing.size(p, payload.nlv or stored nlv, prefs)
+       res = strike_picker.pick(strategy, chain_view, chart, gauge, prefs, today=et_today())   # pure, no NLV
+       for p in res.picks: p.sizing = option_sizing.size(p, payload.nlv or stored nlv, prefs)   # sizing afterwards (nlv_source 'live' | 'prefs' | None)
        -> live = {"picks": res.picks, "expiry": the ONE live expiry, "at": 'HH:MM ET', "nlv": payload.nlv}
        The card renders with the badge 'live · TWS 21:42 ET' and the picks table RESTRICTED to the live
        expiry; the stored (delayed) expiries sit behind 'show delayed expiries' (D2.5) so no row ever
@@ -501,7 +533,7 @@ def live(symbol: str, payload: LiveIn, request: Request, strategy: str = "",
        writes option_jobs(job='bootstrap'); marks the house signal status='stale_iv' so the next
        card_for recomputes the gauge from the now-full window (A4.6). This is the decision-4
        bootstrap and the ONLY persisted artefact of a Live press.
-       iv.series absent: note += "Your bridge is older than 1.6, so the one-year IV history was not copied."
+       iv.series absent: the IV line reads the ONE sentence "Your bridge is older than 1.6 - restart bridge\\start_ibkr_bridge.bat"
     3. iv.iv_rank present: shown IN-REQUEST next to the server-side figure ('IV rank 62 (TWS, live) ·
        59 (delayed)'); not stored on the signal.
     4. payload.nlv: used for this request's sizing and labelled 'from TWS · [remember this]'. NEVER
@@ -550,6 +582,8 @@ def track_idea(request: Request, symbol: str = Form(...), strategy: str = Form(.
       front_expiry / back_expiry, net_entry = pick.net (negative = credit), contracts, max_loss = pick.max_loss,
       chart_stop = pick.chart_stop (= setup.plan.stop), chart_target = setup.plan.target (debit families) else None,
       roll_dte = prefs.leaps.roll_dte for leaps_call / diagonal_call, paper = False,
+      meta = the portable JSON the exit rules need at entry (a calendar's entry breakevens, a condor's
+        range edges; {} otherwise - B7.1's column, created by the migration),
       signal_id = card.id (so a review can say what the system saw: that row carries prefs_hash and as_of),
       note as above; the per-trade exit overrides stay NULL (= the family's rule).
     Then option_exits.mark(trade, option_store.latest_chain(db, sym), today) + grade(...) write the first
@@ -612,7 +646,11 @@ class OptionIdeaPush(Base):
 default=0)` (Telegram messages sent by that run); `services/job_runs.py` (D6) is the service over
 it. `UserOptionPrefs` is A's shape (`prefs` JSON sparse overrides, `prefs_hash`, `schema_version`,
 `updated_at`) - this part adds nothing to it; the Telegram settings live inside `prefs["telegram"]`
-(not a schema block, never hashed, D4.2). `OptionTrade` / `OptionTradeCheck` are B7.1's.
+(not a schema block, never hashed, D4.2); `User` carries the one-to-one `option_prefs` relationship
+(`UserOptionPrefs.user` backref, `uselist=False`), declared in `models.py`. `OptionTrade` /
+`OptionTradeCheck` are B7.1's, including `OptionTrade.meta` (a portable JSON column: a calendar's
+entry breakevens, a condor's range edges - anything the exit rules need at entry), which the
+migration creates.
 
 Alembic: **ONE migration for the whole module, `alembic/versions/f4a5b6c7d8e9_options_module.py`,
 `revision = "f4a5b6c7d8e9"`, `down_revision = "e2f3a4b5c6d7"`** (verified head: only
@@ -640,10 +678,12 @@ def ticket(symbol: str, request: Request, strategy: str = "", pick: int = 0, con
         -> the panel renders ONE line: 'No ticket: earnings {date} fall inside this trade and your rule
            says no.' - no legs, no prices (test: a rejected-for-earnings strategy produces no ticket)
       p.sizing.contracts = bounded form value or the sizing figure (0 -> the panel shows the sizing
-        note and no orders); p.enter_on_dip = bool(dip)             # the explicit toggle, default OFF
-      t = order_ticket.build(p, ctx.card.setup, ctx.prefs)            # B6.1; condition None unless enter_on_dip
-      if chosen.fit == 'rejected': t.first_line = chosen.reasons[0]  # the rejection sentence is the ticket's first line
-      refresh_first = _older_than_last_close(ctx.card.as_of) and _us_session_open()
+        note and no orders)
+      t = order_ticket.build(p, ctx.card.setup, ctx.prefs,
+                             dip=bool(dip),                                                  # the explicit toggle, default OFF; condition None unless dip
+                             rejection=(chosen.reasons[0] if chosen.fit == 'rejected' else None),   # -> ticket['rejection'], line 1 of BOTH renderings
+                             now=None)                                                       # B6.1
+      refresh_first = _older_than_last_close(ctx.card.as_of) and clock._us_session_open()   # app/services/clock.py (D1.9)
       render _options_ticket.html with tws = order_ticket.render(t, 'tws'), moomoo = order_ticket.render(t, 'moomoo'),
         as_of, refresh_first, dip, chosen, the footer lines (D2.8)."""
 ```
@@ -679,7 +719,8 @@ def close_trade(trade_id: int, request: Request, reason: str = Form(""), status:
 
 The nightly grading is `option_exits.sweep(db)` (B7.3: `spread_monitor.sweep`'s loop over
 `option_trades`, one chain fetch per underlying, per-member prefs, `record_check` upsert per ET
-day), run as a step of `deploy/options_nightly.py` between the per-symbol loop and the push (A4.2);
+day), run as step 4 of `deploy/options_nightly.py` - after the per-symbol loop (step 3), before the
+prune (step 5) and the push (step 6, A4.2), so the push sees tonight's checks;
 `spread_monitor.sweep` keeps grading the legacy `option_spreads` rows for `/portfolio` unchanged.
 `_verdict` adds, for every family, the **"earnings now inside"** row the exits table carries
 (B7): when `card_for(sym).iv.earnings_date <= trade.front_expiry` and the member's rule does not
@@ -796,7 +837,7 @@ Page script (one IIFE, ~120 lines), responsibilities:
 | Toasts | `options:toast` HX-Trigger → `window.thToast(msg, kind)` | `base.html:639-656` |
 | Chart expand | the `pfChartExpand` handler from `portfolio.html` (bottom of that file) ported as-is for the Positions tab's chart pane | `portfolio.html`, `spreads.html:44-67` |
 | Failure reporting | `htmx:responseError / sendError / timeout` on `#optPane` paint the "could not load … HTTP n … /admin/log" box | `portfolio.html:21-47` |
-| Telegram pause link | `?pause=7` on load → confirm "Pause Telegram ideas for 7 days?" → `htmx.ajax('POST','/options/telegram',{values:{pause_days:7}})` (D4.2) | |
+| Telegram pause link | `?pause=7` on load → confirm "Pause Telegram ideas for 7 days?" → `htmx.ajax('POST','/options/telegram',{values:{action:'pause', pause_days:7}})` (D4.2) | |
 
 Mobile (`< lg`): the layout is a single column - status strip, then the basket rendered as a
 **horizontal chip strip** (`_options_basket.html` switches on a `compact` flag the shell sets via
@@ -818,7 +859,7 @@ Column grid (`display:grid; grid-template-columns: 1fr 1.1rem 2rem 4.2rem`): tic
 | ticker | `text-[13px] font-semibold text-slate-200`; a 6px dot before it: emerald `< 20 h`, amber `20–72 h`, rose `> 72 h` or no signal; `title` = "data as of …" | the per-ticker data-age badge (D6), from `sig.age_h` / `sig.stale` |
 | trend | `↗` (`text-emerald-300`) `up`, `↘` (`text-rose-300`) `down`, `↔` (`text-slate-400`) `sideways`, `·` `unclear` or no read | `sig.trend` (a String) |
 | IV | `basis == 'rank'`: the rank as an integer, **amber** (`text-amber-300`) when `iv_rank >= 50` = sell premium, **grey** (`text-slate-400`) 30–50, **teal** (`text-teal-300`) `< 30` = buy. `basis in ('percentile', 'provisional')`: `~62` with a **dotted underline** (`decoration-dotted underline`), in grey only - **never amber on a provisional read**. `basis == 'unknown'`: `–`. `title` = `option_words.iv_rank_words(sig.iv)` with the day count | §7 "IV number colour" + CRITIQUE (the day count behind every rank) |
-| idea | `idea_word`: `sell put` / `sell call` / `buy call` / `buy put` / `call sprd` / `put sprd` / `condor` / `calendar` / `diagonal` / `LEAPS`. **Three states**: `pick_state == 'picks'` → normal; `'none'` → faded (`opacity-60`) with `title` "recommended, but no strike passes your rules today" (this is only said when the picker actually ran under your hash); `'unchecked'` → a grey dot `·` after the word with `title` "not checked under your rules yet - open the card to check" ; `none` in `text-slate-600` when no setup; `no read` when no signal | the nightly job computes picks for every DISTINCT saved `prefs_hash` (A5.1 + contract), so `'unchecked'` is rare: a member whose rules changed after last night's run |
+| idea | `idea_word`: `sell put` / `sell call` / `buy call` / `buy put` / `call sprd` / `put sprd` / `condor` / `calendar` / `diagonal` / `LEAPS`. **Three states** (`pick_state`, decided by `option_store.basket_rows_for`): `'has_picks'` → normal; `'no_strike_passes'` → faded (`opacity-60`) with `title` "recommended, but no strike passes your rules today" (this is only said when the picker actually ran under your hash); `'not_checked'` → a grey dot `·` after the word with `title` "not checked under your rules yet - open the card to check" ; `none` in `text-slate-600` when no setup; `no read` when no signal | the nightly job computes picks for every DISTINCT saved `prefs_hash` (A5.1 + contract), so `'not_checked'` is rare: a member whose rules changed after last night's run |
 
 Row attributes: `class="opt-row cursor-pointer …{% if row.symbol == selected %} opt-on{% endif %}" data-sym="{{ row.symbol }}" hx-get="/options/card/{{ row.symbol }}" hx-target="#optPane" hx-swap="innerHTML" hx-push-url="/options?symbol={{ row.symbol }}" title="{{ sig.headline }}"`. A `×` on hover: `hx-post="/options/basket/remove" hx-vals='{"symbol":"…"}' hx-target="closest .opt-basket" hx-swap="innerHTML" hx-confirm="Remove {{ sym }} from your basket? Its tracked positions are kept."`.
 
@@ -839,7 +880,7 @@ Context: everything `_card_context` returns (D1.4). Wrapped in `<div class="opt-
 │ #optHeadline  "Uptrend: EMA 20 above 50 above 200 for 34 days, and price is riding a trend line with 3 touches. It bounced   │
 │  off support at 340 on high volume (1.6× normal). Options are expensive (IV rank 62), so you're paid to sell a put spread     │
 │  below that support."                                                                                                        │
-│ #optGauge   SELL ● NEUTRAL ○ BUY ○   IV rank 62 over the last year · IV 41% vs realised 29%                                   │
+│ #optGauge   SELL ● NEUTRAL ○ BUY ○   IV rank 62 over the last year · IV 46% vs realised 38%                                   │
 │ #optChips   [✓ Bull put spread] [Bull call spread · also fits] [Buy call · expensive] [Iron condor · trending, not sideways]  │
 │             other strategies ▾                                                                                               │
 │ #optMust    What has to happen: LRCX stays above 330 until Nov 20. You keep the credit if it does nothing, drifts up, or     │
@@ -873,8 +914,9 @@ def chip_row(strategies: list[dict]) -> dict:
     reasons, reason_key, shown}. Order: the recommended one first (filled chip, check mark); every
     'also_fits' next (outlined) - including an unbuilt strategy, which the engine can never mark
     recommended and which carries reason_key 'not_available_yet'; then the rejected rows the
-    engine flagged shown=True (at most TWO near misses, ordered by score), greyed, each WITH its
-    reason; everything else behind 'other strategies'."""
+    engine flagged shown=True (at most TWO near misses, in the order the engine listed them - a
+    rejected row carries score null, why null, must_happen null), greyed, each WITH its
+    reason (reasons[0]); everything else behind 'other strategies'."""
 ```
 
 Chip markup: recommended `border-emerald-500/60 bg-emerald-500/15 text-emerald-300 font-semibold` with `✓`; also-fits `border-slate-600 text-slate-300` + `· also fits`, or `· not available yet` when `reason_key == 'not_available_yet'` (the build-step wording never reaches a member); rejected `border-slate-800 text-slate-500 opacity-70` + `· {{ chip_text }}` where `chip_text` is the fixed string for the row's `reason_key` in D2.7 (e.g. `expensive`, `cheap options`, `trending, not sideways`, `no range`, `no setup`, `earnings inside`, `near-term not dearer`). Every chip is `hx-get="/options/picks/{{ sym }}?strategy={{ key }}" hx-target="#optPicks" hx-swap="innerHTML"` and sets `data-strategy` so the page script updates `.opt-card[data-strategy]` and the hidden `strategy` inputs. The "other strategies" `<details>` lists the rest as plain text links with the same `hx-get`.
@@ -897,10 +939,10 @@ Debit families (`debit_vertical`, `long`, `leaps`): `chart_levels = {entry: plan
 
 #### D2.5 `_options_picks.html`
 
-Context: `sym, strategy, chosen, family, picks (list of Pick with sizing), degenerate {reason_key, text, nearest, fix}|None, rules_line, considered, pick_i, prefs, earnings {date, days, inside, rule, hide_strikes}, live, card, nlv, nlv_source`. Wrapped in `<div class="opt-picks" hx-get="/options/picks/{{ sym }}?strategy={{ strategy }}" hx-trigger="options:rules-changed from:body" hx-swap="outerHTML">` - so a rule save re-renders exactly this box.
+Context: `sym, strategy, chosen, family, picks (list of Pick with sizing), degenerate {reason_key in {no_chain, no_expiry, no_band, constraint, credit_floor, thin, theta_cap, extrinsic_cap, no_term, safety}, text, nearest, fix}|None, rules_line, considered, pick_i, prefs, earnings {date, days, inside, rule, hide_strikes}, live, card, nlv, nlv_source (live | prefs | None)`. Wrapped in `<div class="opt-picks" hx-get="/options/picks/{{ sym }}?strategy={{ strategy }}" hx-trigger="options:rules-changed from:body" hx-swap="outerHTML">` - so a rule save re-renders exactly this box.
 
 Heading (sentence case): `Strikes under your rules` followed by `rules_line` (B4.8, the picker's own line):
-"delta 0.20–0.30 · 30–60 days · width 0.5–1.5 ATR ($6–17) · credit ≥ 25% · under support 340.9 + trend line" - one line, no jargon beyond the words the rules drawer itself uses.
+"delta 0.20–0.30 · 30–60 days · width 0.5–1.5 ATR ($6–17) · credit ≥ 25% · under support 340 + trend line" - one line, no jargon beyond the words the rules drawer itself uses.
 
 Banner rules, before anything else renders:
 
@@ -918,9 +960,9 @@ Row (one per pick, max 3; the recommended one first with `★`):
 | Column | Wording | Source |
 |---|---|---|
 | legs | `Nov 20 · 330/320 put` (`expiry_label · short/long right`); condor `Nov 20 · 320/310 put + 380/390 call`; calendar `Nov 20 → Dec 18 · 350 call`; single `Dec 18 · 340 call` | `pick.legs` |
-| you collect / you pay | credit families **collect $300–$317** (worst likely fill to mid; the POP and max loss are quoted at the mid); debit **pay $640**; per contract, `× contracts` when > 1 | `-pick.net*100` / `pick.net*100`; the floor from the ticket's `net.floor` (B6.1) |
+| you collect / you pay | credit families **collect $200–$210** (worst likely fill to mid - the fixture's 330/320 at credit 2.10; the POP and max loss are quoted at the mid); debit **pay $640**; per contract, `× contracts` when > 1 | `-pick.net*100` / `pick.net*100`; the floor from the ticket's `net.floor` (B6.1) |
 | you risk | **risk $790** (credit: width − credit; debit: the debit; calendar: the net debit) | `pick.max_loss` (positive $ per contract) |
-| chance | credit **about 74% chance of keeping it**; debit **about 46% chance of profit**; the number is `round(pop*100)`, the word from `pop_kind`; `title` = the full `pop_words` sentence (D2.7) and, when present, `model estimate {m}%` | `pick.pop`, `pick.pop_kind` |
+| chance | credit **about 75% chance of keeping it**; debit **about 46% chance of profit**; the number is `round(pop*100)`, the word from `pop_kind`; `title` = the full `pop_words` sentence (D2.7) and, when present, `model estimate {m}%` | `pick.pop`, `pick.pop_kind` |
 | return | `27% on risk` (credit ÷ max loss) or `2.1× reward/cost` (debit verticals) | `pick.score` inputs via `pick.words` |
 | tag | `← best fit to your rules` on row 1, `highest chance` on the row with the highest pop, `most credit per $ risked` on the highest credit, by `pick.why[0]` | B4.7 |
 | liquidity | one word from `pick.liquidity.tier`: `clean`, `at the limit` (`limit`, amber), `wide` (amber), `thin` (rose, OI below rule), `unknown` (slate, "open interest unknown - check in TWS") with `title` = OI and width per leg | `bull_put.rank_pairs` tiers (`services/bull_put.py:51-52, 64-66`), generalised in B4.4 |
@@ -963,8 +1005,8 @@ Then the payoff container and `#optActions`:
 The contracts box is **pre-filled from `pick.sizing.contracts`** (B5.3, computed at read time by
 `option_sizing.size`) and the page never computes a quantity of its own: `0` stays `0` with the
 "Not even one contract fits your 1% - lower the risk or choose a narrower spread" note and a
-disabled Track button; `None` (no account value) shows "set your account value in My rules → Shared
-to size this" (NLV 0 = "not told yet", `trade_prefs.DEFAULT_NLV`). A member may type a lower number;
+disabled Track button; `None` (no account value) shows "sized once you tell us the account value
+(My rules → Shared)" (NLV 0 = "not told yet", `trade_prefs.DEFAULT_NLV`). A member may type a lower number;
 a higher one is accepted by the form but the sizing line beside it still states the gap figure for
 what they typed.
 
@@ -984,14 +1026,14 @@ What the member sees (C4.2), restated only where the card's checklist depends on
 |---|---|
 | profit / loss zones | two filled `<path>`s split exactly at the breakevens (they are grid points) |
 | expiry line | 2 px solid `--po-exp`; today line 1.5 px dashed `--po-today` (omitted when no σ) |
-| **chart stop** | vertical marker `kind=stop` in `--po-loss`, label `stop 336.2 · ≈ −$102 today` (the T+0 read; the stop is hit within days) |
-| **rule stop** | vertical marker `kind=rule_stop` + horizontal dashed hline `rule stop −$158 (20% of max loss)`; drawn for every family with a $ rule in B5.2 (credit 20% of max loss; long / debit / time `premium_stop_pct` of the debit); none for LEAPS |
+| **chart stop** | vertical marker `kind=stop` in `--po-loss`, label `chart stop 336.2 · about −$121 today` (`y_today` −120.7 on the fixture's 330/320 pick - the T+0 read; the stop is hit within days) |
+| **rule stop** | vertical marker `kind=rule_stop` + horizontal dashed hline `rule stop −$158 (20% of max loss)`; drawn for EVERY family: the credit families at `loss_fraction` (0.20) × max loss, `leaps_call` / `diagonal_call` at the leaps block's `premium_stop_pct` (house 40), `buy_call` / `buy_put` / `bull_call` / `bear_put` / `calendar` at the long block's `premium_stop_pct` (house 50) |
 | target | debit families: vertical `target 372 · +$640`; credit families: the horizontal `take profit +$105 (50% of credit)` line |
 | levels | `support 340`, `trend line at expiry 336.1`, range edges - vertical, labelled, cyan / amber |
 | strikes, breakevens | dotted verticals `short 330`, `long 320`; `breakeven 327.90` |
 | max profit / max loss | hlines `max profit` / `max loss` with the POSITIVE magnitudes in the legend: `max +$210 / −$790` |
-| chance | legend: `About a 74% chance of keeping the credit · model estimate 73%` |
-| the dot | Positions tab only (`?trade=`): `(spot, pl_now)` from the latest `OptionTradeCheck` |
+| chance | legend: `About a 75% chance of keeping the credit · model estimate 73%` |
+| the now marker | Positions tab only (`?trade=`): the marker at `spot` with `y_today = pl_now` from the latest `OptionTradeCheck` (there is no separate `dot` key) |
 
 Caption (decision 8), always visible under the chart, verbatim: **"Dashed line: what the trade would be worth if the stock moved there today, at today's implied volatility - an estimate. Solid line: at expiry ({{ dte }} days)."** For calendars/diagonals: **"Drawn at the near expiry ({{ front }}); the far option is valued by the model, so the solid line is an estimate too."**
 
@@ -1011,21 +1053,21 @@ Every number a member sees that is a greek, a rate or a rule is accompanied by o
 | `theta_words(t_per_day_usd, side)` | "Theta +$6/day - time is paying you about $6 a day while the stock sits still." | "Theta −$9/day - waiting costs about $9 a day; the stock has to move enough to pay for that." |
 | `vega_words(v_usd)` | "Vega $18 - if implied volatility rises one point this position loses about $18 (you are short volatility)." | "Vega $22 - if implied volatility rises one point this position gains about $22." |
 | `gamma_words(g)` | "Gamma 0.02 - the delta changes by about 0.02 for each $1 move; small means the trade's risk changes slowly." **Shown only inside the full-chain expander** (D1.15), never on the card. | same |
-| `iv_words(iv, spot, dte)` | "Implied volatility 41% - the market's guess at how much the stock will move in a year; about ±{{ spot·iv·sqrt(dte/365) }} ({{ pct }}%) over this trade." | same |
-| `iv_rank_words(iv)` | `basis == 'rank'`: "IV rank 62 over the last year ({{ iv_n }} days) - today's IV sits 62% of the way from the year's lowest to its highest. Above 50 options are expensive (sellers are paid); below 30 they are cheap by this stock's own standards." `basis == 'percentile'`: "IV percentile 71 over the last 118 days (not a full year yet) - IV was lower than today on 71% of those days." `basis == 'provisional'`: "IV 46% against 34 days of history - too short to rank; nothing here is firm yet." `basis == 'unknown'`: "No IV history yet ({{ iv_n }} of 60 days). It fills in by itself; if you run TWS on this PC, Live loads a year at once." | |
+| `iv_words(iv, spot, dte)` | "Implied volatility 46% - the market's guess at how much the stock will move in a year; about ±{{ spot·iv·sqrt(dte/365) }} ({{ pct }}%) over this trade." | same |
+| `iv_rank_words(iv)` | `basis == 'rank'`: "IV rank 62 over the last year ({{ iv_n }} days) - today's IV sits 62% of the way from the year's lowest to its highest. Above 50 options are expensive (sellers are paid); below 30 they are cheap by this stock's own standards." `basis == 'percentile'`: "IV percentile 71 over the last 118 days (not a full year yet) - IV was lower than today on 71% of those days." `basis == 'provisional'`: "IV 46% against 34 days of history - too short to rank; nothing here is firm yet." `basis == 'unknown'`: the ONE IV-unknown sentence, "We cannot yet say whether options are expensive - {{ iv_n }} of 60 days of history. If you have TWS on this PC, press Live to load a year." (the same string the gauge and D2.9 print; there is no second variant) | |
 | `iv_pct_words(iv)` | "IV percentile 71 - IV was lower than today on 71% of the past {{ iv_n }} trading days." | |
-| `hv_words(iv)` | "Realised volatility 29% - how much the stock actually moved over the last 20 days, annualised." | |
-| `iv_hv_words(iv)` | "IV 41% vs realised 29% - options are priced for 41% more movement than the stock has actually shown; sellers are paid for that gap." / "… less movement … buyers are getting it cheap." | |
-| `term_words(iv)` | `term_ratio >= 1.05`: "Near-term options are dearer than later ones (front IV 45% vs back 38%) - the market expects an event before the first expiry." `term_ratio <= 0.95`: "Later options are dearer than near ones - nothing special is priced in soon; calendars are not paid here." between: "Near and later options are priced alike." `term_ratio is None`: omitted. | |
+| `hv_words(iv)` | "Realised volatility 38% - how much the stock actually moved over the last 20 days, annualised." | |
+| `iv_hv_words(iv)` | "IV 46% vs realised 38% - options are priced for 21% more movement than the stock has actually shown; sellers are paid for that gap." (the figure is `iv_hv_premium`, the RATIO iv30 / hv20 = 1.21, minus one) / "… less movement … buyers are getting it cheap." | |
+| `term_words(iv)` | `term_ratio >= 1.05`: "Near-term options are dearer than later ones (front IV 50% vs back 45%) - the market expects an event before the first expiry." `term_ratio <= 0.95`: "Later options are dearer than near ones - nothing special is priced in soon; calendars are not paid here." between: "Near and later options are priced alike." `term_ratio is None`: omitted. | |
 | `oi_words(oi, rule)` | "Open interest 2,300 - contracts outstanding at this strike. You need enough to get out again; your rule is at least 500." | |
 | `width_words(w, rule)` | "Bid/ask $0.20 wide - the cost of getting in and out. Your rule allows up to $0.50; wider than that eats the edge." | |
-| `pop_words(pop, pop_kind)` | `keep`: **"About a 74% chance of keeping the credit - an estimate from today's option prices (the short strike's delta), not a promise. Earnings, news and gaps are not in that number."** | `profit`: **"About a 46% chance of profit if held to expiry, at today's volatility; this trade is managed by the chart stop and target, so the real odds depend on the move, not this number."** The model figure (C3.8 `pop.model`) is shown as "model estimate {m}%". |
+| `pop_words(pop, pop_kind)` | `keep`: **"About a 75% chance of keeping the credit - an estimate from today's option prices (the short strike's delta), not a promise. Earnings, news and gaps are not in that number."** | `profit`: **"About a 46% chance of profit if held to expiry, at today's volatility; this trade is managed by the chart stop and target, so the real odds depend on the move, not this number."** The model figure (C3.8 `pop.model`) is shown as "model estimate {m}%". |
 | `max_loss_words(x, family)` | "The most you can lose: $790 per contract (the width minus the credit), if the stock is below both strikes at expiry." | "The most you can lose: $640 per contract - what you paid." |
 | `breakeven_words(be, spot)` | "Breakeven 327.90 - the stock can fall 6.1% and this still makes money at expiry." | "Breakeven 356.40 - the stock must rise 2.1% by expiry just to get your money back." |
 | `dte_words(dte, family)` | "49 days to expiry - inside your 30–60 day window; long enough for time to work for you, short enough to manage." | "70 days - inside your 45–90 day window; enough time for the move, before decay bites." |
 | `expected_move_words(em, spot, dte)` | "Expected move ±$18 (5.2%) by expiry - one standard deviation at today's IV." | |
 | `earnings_words(e)` | "Earnings Oct 22 falls INSIDE this expiry - the one thing a stop cannot protect you from." / "Earnings Oct 22 is after this expiry." / "No earnings date on file - check before you trade." | |
-| `sizing_line(sizing)` | **"{n} contracts: about ${loss_at_stop} if the stop fires, up to ${max_loss_total} ({pct}% of your account) if the stock gaps past it"** (`capital_at_risk_usd`, `max_loss_total_usd`, `max_loss_total_usd / nlv`); `contracts == 0` → "Not even one contract fits your 1% - lower the risk or choose a narrower spread"; `nlv is None` → "sized once you tell us the account value (My rules → Shared)" | |
+| `sizing_line(sizing)` | **"{n} contracts: about ${loss_at_stop} if the stop fires, up to ${max_loss_total} ({pct}% of your account) if the stock gaps past it"** (`contracts × |chart_stop_pl|`, `contracts × max_loss`, `max_loss_pct_nlv`; `option_sizing.size` stores the result as `sizing.line` - on the LRCX golden pick under house prefs: "2 contracts: about $242 if the stop fires, up to $1,580 (1.6% of your account) if the stock gaps past it"); `contracts == 0` → "Not even one contract fits your 1% - lower the risk or choose a narrower spread"; `nlv is None` → "sized once you tell us the account value (My rules → Shared)" | |
 
 **Trend / setup / gauge (used by `headline`, which the ENGINE calls at write time and stores in `option_signal.headline`)**
 
@@ -1080,7 +1122,7 @@ Context: `sym, strategy, label, pick, contracts, tws (str), moomoo (str), ticket
 Lines this part puts around B's rendering, in order:
 
 1. ► **Refresh-first banner** (amber, when `refresh_first`: `as_of` older than the last session close AND the US session is open): "These prices are from {{ as_of }} and the market is open now. **Refresh first**, then re-open the ticket." with the Refresh button inline (`hx-post="/options/refresh/{{ sym }}"` - the 60 s cooldown never blocks this first refresh, D1.9).
-2. ► **Rejected first line** (when `chosen.fit == 'rejected'`): "Not recommended: {{ chosen.reasons[0] }}." as the first line inside the `<pre>` too.
+2. **Rejected first line** (when `chosen.fit == 'rejected'`) - NOT this part's: it is `ticket['rejection']` ("Not recommended: {{ chosen.reasons[0] }}."), passed to `order_ticket.build(..., rejection=chosen.reasons[0])` (D1.13) and printed by B's rendering as line 1 of BOTH the TWS and the moomoo text.
 3. ► **Header line**, verbatim: "Prices are from {{ as_of }}. Press Refresh after 21:30 Malaysia time (US open) and re-open the ticket before sending; the credit will have moved."
 4. B's rendering (B6.2 for TWS, B6.3 for moomoo).
 5. ► **Footer lines**: "You collect $…(worst likely fill)–$…(mid) · you risk $… · breakeven … · {{ earnings line }}" / "Tracking only: TradeHunter never sends an order."
@@ -1090,33 +1132,36 @@ What B's rendering must carry, and what this panel asserts in tests (D8.2):
 - **Entry: NO condition by default.** `ticket.condition` is `None` for every family unless the member switched on the **"Enter on the dip"** toggle (`?dip=1`, a checkbox in the panel). With it on, the condition is B6.1's `last <= level × (1 + offset_pct/100)` (341.92 on the LRCX fixture) and the panel prints, verbatim: *"This order will also fire if {{ sym }} crashes through {{ price }} on bad news. Only use it while you are watching."* The entry is a DAY limit order placed while the market is open.
 - **The ONE conditional order the ticket pushes hard is the chart-stop EXIT** (ORDER 2 in B6.2): `last <= 336.20` on the LRCX fixture (`setup.plan.stop`, the engine's value - never a hand-typed number), with the two sentences, verbatim: *"This order fires on the live price during regular hours, so it can fire on an intraday dip the close would have survived. If you prefer the close-based rule, leave this order off and act on the Positions tab's verdict instead."* and **"Trigger outside RTH: No"** printed in BOTH renderings.
 - **TWS combo stop:** Market recommended; Limit (the model's mark at the stop) as the secondary option with "may not fill in a fast market".
-- **moomoo stop, leg order:** (1) "Buy to close the SHORT leg first (325 Put) - market order, or limit = model × 1.15"; (2) "Then sell the LONG leg (315 Put)"; and the sentence *"Never sell the long leg before the short leg is closed - you would be short a naked put."* ("naked call" for a bear call). Same ordering rule for TWS when the combo cannot be conditional.
+- **moomoo stop, leg order:** (1) "Buy to close the SHORT leg first (330 Put) - market order, or limit = model × 1.15"; (2) "Then sell the LONG leg (320 Put)"; and the sentence *"Never sell the long leg before the short leg is closed - you would be short a naked put."* ("naked call" for a bear call). Same ordering rule for TWS when the combo cannot be conditional.
 - Jargon: "(you are paid; the most you can lose is fixed)" and "worst likely fill 2.00" are the only wordings; the trader-jargon forms an earlier draft used for the same two lines are gone.
 
-Example (the TWS tab for the LRCX fixture - B6.2's text, 10 contracts, with this part's lines marked ►):
+Example (the TWS tab for the LRCX golden fixture - the Nov 20 330/320 put spread at credit 2.10,
+sized to **2 contracts** under house prefs (NLV 100,000, risk 1%, GAP_MULT 2.0: by_chart_stop 8,
+by_gap 2, by_notional 10). The text between the ► lines is B6.2's rendering and B9's golden file is
+THE one text - this part prints it and never carries a second wording; a 10-contract example of an
+earlier draft was the very case the gap cap forbids. This part's lines are marked ►):
 
 ```
 ► Prices are from 02 Oct 16:00 ET. Press Refresh after 21:30 Malaysia time (US open) and re-open the ticket before sending; the credit will have moved.
-LRCX - Bull put spread (you are paid; the most you can lose is fixed) - 10 contracts - paste into TWS
-ORDER 1 · ENTRY (combo, DAY)
-  Strategy Builder → Vertical: SELL 10 LRCX 20 NOV 26 325 P / BUY 10 LRCX 20 NOV 26 315 P
-  Limit CREDIT 3.17 (mid; worst likely fill 2.95). Work it: if not filled in a few minutes, lower 0.05 at a time, never below 2.50.
-  No condition - place it during the session.
-  [Enter on the dip - only if you ticked it: Conditional tab → Add → Price → LRCX (STK, SMART) → Last ≤ 341.92.
-   This order will also fire if LRCX crashes through 341.92 on bad news. Only use it while you are watching.]
-ORDER 2 · CHART STOP (combo, GTC)
-  BUY 10 LRCX 20 NOV 26 325 P / SELL 10 LRCX 20 NOV 26 315 P (close the spread) - Market (recommended), OR Limit DEBIT 4.16 (the model's mark at the stop; may not fill in a fast market)
+LRCX - Bull put spread (you are paid; the most you can lose is fixed) - 2 contracts - paste into TWS
+ORDER 1 · ENTRY (combo, DAY, no condition - place it while the market is open)
+  Strategy Builder → Vertical: SELL 2 LRCX 20 NOV 26 330 P / BUY 2 LRCX 20 NOV 26 320 P
+  Limit CREDIT 2.10 (mid; worst likely fill 2.00). Work it: if not filled in a few minutes, lower 0.05 at a time, never below 2.00.
+  [Only if 'Enter on the dip' is switched on] Conditional tab → Add → Price → LRCX (STK, SMART) → Last ≤ 341.92 → submit.
+    This order will also fire if LRCX crashes through 341.92 on bad news. Only use it while you are watching.
+ORDER 2 · CHART STOP (combo, GTC, conditional) - the one order to set up before you walk away
+  BUY 2 LRCX 20 NOV 26 330 P / SELL 2 LRCX 20 NOV 26 320 P (close the spread)
+  Type: Market (recommended). Limit DEBIT 3.31 (the model's mark at the stop) is the second choice - it may not fill in a fast market.
   Conditional tab → Add → Price → LRCX (STK, SMART) → Last ≤ 336.20 → Trigger outside RTH: No → transmit when true
-  This order fires on the live price during regular hours, so it can fire on an intraday dip the close would have survived.
-  If you prefer the close-based rule, leave this order off and act on the Positions tab's verdict instead.
-  (this is the chart stop; you would lose ≈ $990 here, against the max loss of $6,830)
+  This order fires on the live price during regular hours, so it can fire on an intraday dip the close would have survived. If you prefer the close-based rule, leave this order off and act on the Positions tab's verdict instead.
+  (you would lose about $242 here; up to $1,580 if the stock gaps past it)
 ORDER 3 · TAKE PROFIT (combo, GTC)
-  BUY 10 LRCX 20 NOV 26 325 P / SELL 10 LRCX 20 NOV 26 315 P - Limit DEBIT 1.59 (half the credit kept). No condition.
-Rule stop (no order - the monitor watches it): if the spread is marked at 4.54 or more (20% of max loss), close it.
-Time stop: close or roll with 21 days left (Oct 30), whatever the P/L.
-What has to happen: LRCX stays above 325 until Nov 20.
-► 10 contracts: about $990 if the stop fires, up to $6,830 (6.8% of your account) if the stock gaps past it
-► You collect $2,950–$3,170 (worst likely fill to mid) · you risk $6,830 · breakeven 321.83 · earnings Oct 22 is inside this expiry (defined-risk trades only)
+  BUY 2 LRCX 20 NOV 26 330 P / SELL 2 LRCX 20 NOV 26 320 P - Limit DEBIT 1.05 (half the credit kept). No condition.
+Rule stop (no order - the Positions tab watches it): if the spread is marked at 3.68 or more (20% of max loss), close it.
+Time stop (no order - the Positions tab watches it): close or roll with 21 days left (Oct 30), whatever the P/L.
+What has to happen: LRCX stays above 330 until Nov 20.
+► 2 contracts: about $242 if the stop fires, up to $1,580 (1.6% of your account) if the stock gaps past it
+► You collect $400–$420 (worst likely fill to mid) · you risk $1,580 · breakeven 327.90 · earnings Oct 22 is inside this expiry (defined-risk trades only)
 ► Tracking only: TradeHunter never sends an order.
 ```
 
@@ -1138,7 +1183,7 @@ Broker mapping notes in a `<details>` under the text: TWS - "Strategy Builder �
 | not available yet | picks | "The long-term chart would suit a long-dated call; that strategy is not in TradeHunter yet." |
 | IV history unknown | gauge + basket `–` | "We cannot yet say whether options are expensive - {{ iv_n }} of 60 days of history. If you have TWS on this PC, press Live to load a year." |
 | IV history short | gauge + basket `~62` | "Options look expensive against the last {{ iv_n }} days (not a full year yet)" (never amber) |
-| sizing: no account value | picks | "set your account value in My rules → Shared to size this" |
+| sizing: no account value | picks | "sized once you tell us the account value (My rules → Shared)" |
 | sizing: zero | picks | "Not even one contract fits your 1% - lower the risk or choose a narrower spread" |
 | data stale (≥ 20 h, < 3 trading days) | age badge amber | "as of {{ when }} ET - the nightly job hasn't run since. Refresh reads today's delayed chain." |
 | data very stale (≥ 3 trading days) or job missed twice | banner over the card, rose | "This card is {{ n }} trading days old. The nightly job on Hermes has not run - an administrator can check `/admin/log`. Refresh still works for one ticker at a time." |
@@ -1147,11 +1192,11 @@ Broker mapping notes in a `<details>` under the text: TWS - "Strategy Builder �
 | Live on a phone / touch device | where the button would be | "Live quotes need TWS on your PC" |
 | bridge not running on Live | note strip + `<details>` diag | "Could not reach your IBKR bridge on this PC (127.0.0.1:9224). Start TWS and `bridge\start_ibkr_bridge.bat`, then press Live again. The card still shows the delayed data." + `[Start the bridge]` `[Retry]` (`_options_analysis.html:45-61` reused) |
 | bridge up, no greeks | note strip | "Your TWS sent quotes but no greeks (no option model yet). Delayed data kept for the picks; try Live again in a minute." |
-| bridge older than 1.6 (no IV series) | note strip, slate | "Live quotes shown. Your bridge is older than 1.6, so the one-year IV history was not copied - restart `start_ibkr_bridge.bat` to get the new file." |
+| bridge older than 1.6 (no IV series) | the IV line of the note strip, slate | the ONE sentence across parts: "Your bridge is older than 1.6 - restart `bridge\start_ibkr_bridge.bat`" (the live quotes are still shown) |
 | Live chain shown | age badge + picks | badge "live · TWS {{ time }} ET"; the picks table holds the live expiry only, each row "live {{ time }} ET"; "show delayed expiries ▾" below it. Nothing from Live is stored except the IV series. |
 | NLV from TWS | picks | "from TWS · [remember this]" - nothing stored until the click |
 | ticker unknown to Cboe | card | "{{ sym }}: no Cboe option chain - check the ticker. Removed from the nightly job until it is fixed." (`ChainError` 403/404 text, `option_quotes.py:143-150`) |
-| positions tab, none | `_options_positions_tab.html` | "Nothing tracked yet. Track an idea from its card, or enter a trade by hand below." |
+| positions tab, none | `_options_positions_tab.html` | "Nothing tracked yet. Track an idea from its card." (a by-hand entry form is step 2, D5.1) |
 | positions: earnings now inside | row, amber urgent | "Earnings {{ date }} now fall inside this trade (the date was unknown or later when you entered). Decide before the close that day." |
 | rules save out of range | drawer | the field's own "{{ label }} must be between {{ min }} and {{ max }}." (`trade_prefs.write` style, `services/trade_prefs.py:106-117`) |
 | safety switch unticked (before Save) | drawer, amber | "Without this, the short strike can sit inside the zone the chart says must hold." (D3.2) |
@@ -1208,19 +1253,23 @@ TAB_LABELS = {"shared": "Shared", "credit": "Credit spreads", "debit": "Buy call
 TAB_BLOCKS = {"shared": ("shared",), "credit": ("credit_vertical",),
               "debit": ("long", "debit_vertical", "leaps"),      # three sub-sections on one tab (D3.2)
               "condor": ("condor",), "time": ("time",)}
-STRATEGY_KEYS = ("bull_put", "bear_call", "buy_call", "buy_put", "bull_call", "bear_put",
-                 "leaps_call", "iron_condor", "calendar", "diagonal_call")
+from .strategy_rules import STRATEGY_KEYS   # the ONE home of the catalog order (B3.1), in the user's order:
+                                            # buy_call, buy_put, bull_call, bear_put, leaps_call, diagonal_call, bull_put, bear_call, iron_condor, calendar
+                                            # - ties in the recommender break in that order; option_prefs never redefines it
 FAMILY_OF = {"bull_put": "credit_vertical", "bear_call": "credit_vertical",
              "bull_call": "debit_vertical", "bear_put": "debit_vertical",
              "buy_call": "long", "buy_put": "long", "leaps_call": "leaps",
              "iron_condor": "condor", "calendar": "time", "diagonal_call": "time"}
 CREDIT_FAMILIES = {"bull_put", "bear_call", "iron_condor"}
-DEFINED_RISK = set(STRATEGY_KEYS) - set()          # every catalog strategy is defined-risk (a bought option's loss is the premium); used by the earnings gate
+DEFINED_RISK = {"bull_put", "bear_call", "bull_call", "bear_put", "iron_condor"}   # II.2.7 earnings policy: the verticals and the condor ONLY.
+# buy_call / buy_put / calendar / diagonal_call are none_inside REGARDLESS of the member's earnings_rule (defined_risk() is False for
+# them, so defined_risk_only never admits an earnings-inside buy_call through POST /options/track-idea); leaps_call is 'any'.
 
 # Constants, NOT fields (B0.3): the chart stop / target / pad are the engine's convention, not a preference.
 STOP_ATR = 1.0          # debit chart stop = entry - 1 ATR
 TARGET_R = 2.0          # debit chart target = entry + 2R
 LEVEL_PAD_ATR = 0.25    # credit chart stop = zone_lo - 0.25 ATR (336.2 on the LRCX fixture)
+# MAX_POSITION_PCT = 10.0 lives in opt_constants.py (CLAUDE.md: a global cap, never overridden) - it is NOT a field, not in SCHEMA, not in the drawer.
 
 # Absolute numbers are allowed ONLY for the member's own liquidity rules (OI, bid/ask width, volume);
 # everything else is a ratio, a delta, a count of days / months, a % or an ATR multiple.
@@ -1233,9 +1282,9 @@ SCHEMA = {
   "earnings_rule":     Field("none_inside", None, None, "choice", "Earnings inside the trade", "An earnings report before expiry is the one thing a stop cannot protect you from.", "not allowed / defined-risk trades only", None, ""),   # choices: none_inside | defined_risk_only - there is NO 'allowed'
   "monthly_only":      Field(False, None, None, "bool", "Monthly expiries only", "Third-Friday expiries have the deepest markets.", "", None, ""),
   "chart_constraint":  Field(True, None, None, "bool", "Strikes must respect the chart", "Short strikes under support / above resistance / outside the range, and under the trend line when there is one.", "the chart-derived rule (safety switch)", None, ""),
-  "max_position_pct":  Field(10.0, 1, 100, "num", "Max of account in one trade (%)", "Contracts × max loss never above this.", "the 10% cap", 1, "%"),
-  "GAP_MULT":          Field(2.0, 1.0, 5.0, "num", "Worst case allowed, as a multiple of your risk budget", "A gap through the stop may cost this many times what you planned to risk - never seven times.", "a gap may cost twice the budget, not seven times", 0.5, "×"),
+  "gap_mult":          Field(2.0, 1.0, 5.0, "num", "Worst case allowed, as a multiple of your risk budget", "A gap through the stop may cost this many times what you planned to risk - never seven times.", "a gap may cost twice the budget, not seven times", 0.5, "×"),   # GAP_MULT in prose and formulas; the field is gap_mult
   # nlv / risk_pct are READ from trade_prefs (nlv, risk_pct) and edited in the same drawer row; telegram lives in prefs['telegram'] (D4.2). Neither is in SCHEMA nor in the hash.
+  # The 10% notional cap (MAX_POSITION_PCT) is a constant in opt_constants.py, not a field here.
  },
  "credit_vertical": {   # bull_put, bear_call
   "short_delta_lo":    Field(0.20, 0.05, 0.50, "num", "Short strike delta, from", "≈ chance the stock is past the strike at expiry. 0.20 ≈ 1-in-5.", "≈ 70–80% chance it expires worthless", 0.01, ""),
@@ -1304,7 +1353,9 @@ FIELDS = SCHEMA     # the one table; the drawer iterates TAB_BLOCKS[tab] over it
 Every default is the §5 catalog row, verbatim. The four credit **exit** lines on the Credit tab
 (`take_pct`, `loss_stop_pct`, `dte_floor`, `roll_delta` as the drawer labels them) are the existing
 `trade_prefs` keys (`spread_profit_target_pct`, `spread_loss_stop_pct`, `spread_dte_floor`,
-`spread_roll_delta`, `services/trade_prefs.py:50-58, 121-125`), written through `tp.write()` so the
+`spread_roll_delta`, `services/trade_prefs.py:50-58, 121-125`; house: take profit 50%, stop 20% of
+max loss, 21 days, roll delta 0.35 adjust / 0.40 close - B7.3's 0.30 is a member override
+example), written through `tp.write()` so the
 legacy Positions monitor (`spread_monitor.snapshot_rows`, which reads `tp.read`,
 `routes/portfolio.py:96, 102`), `option_exits.grade` and this drawer can never disagree. Account
 value and risk per trade are `tp.read(user)["nlv"]` / `["risk_pct"]` for the same reason. The
@@ -1313,12 +1364,22 @@ every threshold ticker-relative) with the `$` translation rendered beside them f
 ticker's ATR (`rule_words`).
 
 ```python
+def clean(raw: dict) -> dict:
+    """The pure merge: house defaults with a sparse override dict on top, per field - the SAME
+    merge ema_setup.clean_enabled does for sym_conds (missing key -> default; a stored value
+    outside [lo, hi] -> default, never raise). HOUSE_HASH = prefs_hash(clean({}))."""
+
 def read(db, user) -> dict:
-    """House defaults with this member's overrides on top, per field - the SAME merge
-    ema_setup.clean_enabled does for sym_conds (missing key -> default; a stored value
-    outside [lo, hi] -> default, never raise). Returns the seven blocks plus
-    {"overridden": {block: [keys]}, "hash": prefs_hash(merged), "nlv": ..., "risk_pct": ...}
-    (nlv / risk_pct from trade_prefs.read, B4.1)."""
+    """clean(user.option_prefs.prefs or {}) - the merged seven blocks - plus the top-level keys
+    'telegram' = {enabled, chat_id, verified, quiet, paused_until, pending{chat_id, code, expires}}
+    (its OWN key in the JSON: never a SCHEMA field, never hashed, D4.2), 'account' =
+    {nlv, risk_pct, nlv_source} (from trade_prefs.read, B4.1; nlv_source 'prefs' or None) and
+    '_overridden' = the set of dotted field names the member changed ('credit_vertical.short_delta_hi').
+    The hash itself is prefs_hash(merged); user.option_prefs is the one-to-one relationship on User."""
+
+def distinct_hashes(db) -> set[str]:
+    """Every prefs_hash saved on user_option_prefs plus HOUSE_HASH - the set the nightly job
+    computes picks for (D0, A4.2 step 3)."""
 
 PICK_FIELDS = {   # the ONLY fields prefs_hash() hashes: what changes a pick. Sizing inputs, exit lines and telegram never do.
   "shared": ("min_oi", "oi_per_contract", "max_leg_spread", "min_leg_volume", "earnings_rule", "monthly_only", "chart_constraint"),
@@ -1334,14 +1395,17 @@ PICK_FIELDS = {   # the ONLY fields prefs_hash() hashes: what changes a pick. Si
 
 def prefs_hash(merged: dict) -> str:
     """First 12 hex of sha1 over canonical_json({block: {k: merged[block][k] for k in PICK_FIELDS[block]}})
-    (sorted keys, floats rounded to 4 dp). NEVER nlv, risk_pct, max_position_pct, GAP_MULT, premium_stop_pct,
-    roll_*, delta_floor, loss_stop_pct_credit, cal_take_pct, the trade_prefs exit lines or telegram - so a
-    changed account value never invalidates a cached pick, and members on house defaults share ONE signal row."""
+    (sorted keys, floats rounded to 4 dp), stored in the String(16) column user_option_prefs.prefs_hash.
+    NEVER nlv, risk_pct, gap_mult, premium_stop_pct, roll_*, delta_floor, loss_stop_pct_credit, cal_take_pct,
+    the trade_prefs exit lines, 'account' or 'telegram' - so a changed account value never invalidates a
+    cached pick, and members on house defaults share ONE signal row."""
 
 def for_strategy(prefs: dict, strategy: str) -> dict:
     """The flat dict strike_picker.pick reads: SCHEMA[FAMILY_OF[strategy]] merged values + 'shared'."""
 
-def defined_risk(strategy: str) -> bool: return strategy in DEFINED_RISK
+def family_of(strategy: str) -> str: return FAMILY_OF[strategy]
+
+def defined_risk(strategy: str) -> bool: return strategy in DEFINED_RISK   # False for buy_call / buy_put / calendar / diagonal_call / leaps_call
 
 def write(db, user, tab: str, form: dict) -> tuple[dict, str]:
     """Store ONLY fields that differ from the house default, for every block of TAB_BLOCKS[tab]
@@ -1409,13 +1473,13 @@ Context: `tab, tabs (list of (key, label, n_overridden)), sections [(block, bloc
 
 **Safety switches** (`is_safety`: `shared.chart_constraint`, `shared.earnings_rule`): unticking the box / choosing `defined_risk_only` shows the `data-safety` sentence inline in amber **before** Save (page script on `change`), and once saved the override dot is **rose** instead of amber. A non-technical member never turns a safety off with one click and no consequence shown.
 
-`rule_words` examples: `short_delta_lo/hi` → "≈ 70–80% chance the short strike expires worthless"; `width_atr_lo/hi` 0.5–1.5 → "≈ $6–17 wide on LRCX (ATR 11.5)"; `credit_pct_min` 25 → "you collect at least $0.25 per $1 risked"; `theta_pct_max` 1.0 → "a $500 option may lose up to about $5 a day"; `extrinsic_pct_max` 10 → "at most 10% of the share price pays for time"; `GAP_MULT` 2.0 → "a gap through the stop may cost up to twice what you planned to risk"; `premium_stop_pct` 40 → "out when the option is down 40% of what you paid"; `min_oi` 500 → "at least 500 contracts open at each strike". The chart stop and target are not fields: the help text on the debit tab says "The stop sits 1 ATR under the entry (and under the level that must hold); the target at 2R - the Curated convention, not a setting."
+`rule_words` examples: `short_delta_lo/hi` → "≈ 70–80% chance the short strike expires worthless"; `width_atr_lo/hi` 0.5–1.5 → "≈ $6–17 wide on LRCX (ATR 11.5)"; `credit_pct_min` 25 → "you collect at least $0.25 per $1 risked"; `theta_pct_max` 1.0 → "a $500 option may lose up to about $5 a day"; `extrinsic_pct_max` 10 → "at most 10% of the share price pays for time"; `gap_mult` 2.0 → "a gap through the stop may cost up to twice what you planned to risk"; `premium_stop_pct` 40 → "out when the option is down 40% of what you paid"; `min_oi` 500 → "at least 500 contracts open at each strike". The chart stop and target are not fields: the help text on the debit tab says "The stop sits 1 ATR under the entry (and under the level that must hold); the target at 2R - the Curated convention, not a setting."
 
 #### D3.3 Save flow and re-render
 
 1. `POST /options/rules` (one form, one tab) → `option_prefs.write(db, user, tab, form)` → re-render `_options_rules.html` for the same tab (target `#optRulesBody`, so the drawer stays open and shows the override dots and the new translation line).
 2. The response sets `HX-Trigger: {"options:rules-changed": {"tab": "credit", "hash": "…"}}`.
-3. `#optPicks` (`hx-trigger="options:rules-changed from:body"`) re-GETs `/options/picks/{sym}?strategy=…` → `card_for` misses on the new hash and computes the picks from `option_store.latest_chain` (DB) - **no chain fetch**; `option_sizing.size` runs again at read time; the picks table, nearest miss, the sizing line, the `#optPayoff` container and the hidden `pick` inputs re-render; the page script then calls `thChartSetStrikes` for pick 0. When only `nlv` / `risk_pct` / exit lines / `GAP_MULT` changed, the hash is unchanged (D3.1 `PICK_FIELDS`) and the re-render is a cache hit that only re-sizes.
+3. `#optPicks` (`hx-trigger="options:rules-changed from:body"`) re-GETs `/options/picks/{sym}?strategy=…` → `card_for` misses on the new hash and computes the picks from `option_store.latest_chain` (DB) - **no chain fetch**; `option_sizing.size` runs again at read time; the picks table, nearest miss, the sizing line, the `#optPayoff` container and the hidden `pick` inputs re-render; the page script then calls `thChartSetStrikes` for pick 0. When only `nlv` / `risk_pct` / exit lines / `gap_mult` changed, the hash is unchanged (D3.1 `PICK_FIELDS`) and the re-render is a cache hit that only re-sizes.
 4. `#optBasket` listens to the same event and re-renders (the idea column's three states can change).
 5. The headline, chips and the chart do **not** re-render: the recommender's verdict depends on the gates in `shared` and `iv_gate_min` - when the saved tab is `shared` (or `credit`'s `iv_gate_min` changed), the trigger payload carries `"recompute": true` and the card's `#optChips` also re-GETs `/options/card/{sym}` (whole card, chart remount accepted; it is the rare case). The headline is still the stored sentence.
 6. The summary in the `<summary>` (`#optRulesSummary`) updates via an OOB swap in the same response: "- 3 rules changed" / "- house defaults".
@@ -1433,7 +1497,8 @@ write and reset.
 ### D4. Telegram push - the ONE implementation
 
 `services/telegram.py` (sender) + `services/telegram_push.py::run(db, as_of, dry_run)` + table
-`option_idea_push`, called by step 5 of A's nightly job. A push timestamp on the signal row, a
+`option_idea_push`, called by step 6 of A's nightly job (after the sweep, step 4, and the prune,
+step 5; before `job_runs.finish`, step 7). A push timestamp on the signal row, a
 second push module on A's side and an exit-notify function on B's side do not exist; the exit-line
 push for open trades stays on the existing Discord path (`deploy/portfolio_daily_check.py:120-129`).
 
@@ -1476,18 +1541,19 @@ for the web app (it already imports `resources.*` through `resources_bridge`).
 
 #### D4.2 Opt-in, the chat-id handshake, quiet and pause
 
-`user_option_prefs.prefs["telegram"] = {"enabled": bool, "chat_id": str|None, "verified": bool, "quiet": bool, "paused_until": "YYYY-MM-DD"|None, "pending": {"chat_id", "code", "expires"}|None}` - its own key in the JSON, never hashed (D3.1). Rows on the Shared tab, all posting to `POST /options/telegram`:
+`user_option_prefs.prefs["telegram"] = {"enabled": bool, "chat_id": str|None, "verified": bool, "quiet": bool, "paused_until": "YYYY-MM-DD"|None, "pending": {"chat_id", "code", "expires"}|None}` - its own key in the JSON, never hashed (D3.1); `option_prefs.read()` returns it as the top-level `telegram` key. Rows on the Shared tab, all posting to `POST /options/telegram` with the body `{action in {request_code, verify, quiet, pause, disable}, chat_id?, code?, pause_days?}`:
 
-1. "Send me each new idea on Telegram (once, the morning it appears)" - checkbox `enabled`.
-2. "My Telegram chat id" - text box + **[Send code]**. Help: "Open a chat with the TradeHunter bot and send /start (Telegram only lets a bot message you after that); the bot replies with your chat id. Type it here and press Send code."
-3. "Code from the bot" - 6 digits + **[Verify]**. The drawer **accepts the chat id only with that code**: `send_code` stores `pending = {chat_id, code, expires: now + 10 min}`; `Verify` compares and sets `verified = True`; a mistyped id can never receive ideas because the code went to the typed id and the member cannot read it. Enabled + unverified → "enter the 6-digit code the bot sent you after /start" and not saved. An administrator with a blank chat id falls back to the vault's id (`verified` implied).
-4. "Quiet - keep the ideas on the page, do not message me" - the `quiet` switch (the opt-in stays, nothing is sent).
-5. "Pause for 7 days" - `paused_until`; the same action sits as a link in every message (`settings.public_url + "/options?pause=7"`, D2.1), so a member can stop the flow from the phone without finding the drawer.
+1. "Send me each new idea on Telegram (once, the morning it appears)" - checkbox `enabled`: ticking it is only honoured through the handshake below (`verify` sets `enabled` and `verified` together); unticking posts `action=disable`.
+2. "My Telegram chat id" - text box + **[Send code]** (`action=request_code, chat_id`). Help: "Open a chat with the TradeHunter bot and send /start (Telegram only lets a bot message you after that); the bot replies with your chat id. Type it here and press Send code."
+3. "Code from the bot" - 6 digits + **[Verify]** (`action=verify, code`). The drawer **accepts the chat id only with that code**: `request_code` stores `pending = {chat_id, code, expires: now + 10 min}`; `verify` compares and sets `verified = True` (and `enabled`); a mistyped id can never receive ideas because the code went to the typed id and the member cannot read it. Enabled + unverified → "enter the 6-digit code the bot sent you after /start" and not saved. An administrator with a blank chat id falls back to the vault's id (`verified` implied).
+4. "Quiet - keep the ideas on the page, do not message me" - the `quiet` switch (`action=quiet`; the opt-in stays, nothing is sent).
+5. "Pause for 7 days" - `action=pause, pause_days=7` → `paused_until`; the same action sits as a link in every message (`settings.public_url + "/options?pause=7"`, D2.1), so a member can stop the flow from the phone without finding the drawer.
 
 #### D4.3 When, once, and the guards
 
-Inside the nightly job (A4.2 step 5), after every basket ticker's signal is written, after
-`option_exits.sweep`, and before the `option_jobs` row is finished:
+Inside the nightly job (A4.2 step 6), after every basket ticker's signal is written (step 3), after
+`option_exits.sweep(db)` (step 4) and `option_store.prune(db, today)` (step 5), and before the
+`option_jobs` row is finished (`job_runs.finish`, step 7):
 `telegram_push.run(db, as_of=run_on, dry_run=args.telegram_dry_run)`.
 
 ```python
@@ -1509,8 +1575,8 @@ def run(db, *, as_of: str, dry_run: bool = False) -> dict:
         no 'recommended' strategy or no pick under this hash   -> (silent)
       DEDUPE: key = idea_key(...); the OptionIdeaPush row for (user, key), if any, holds short_strike + atr;
         push only if no row, or |pick.short_strike - row.short_strike| > 1 x atr (then UPDATE that row:
-        sent_at, short_strike, score). Keys older than 45 days are pruned so a repeated setup months
-        later is pushed again.
+        sent_at, short_strike, score). Keys older than 45 days are pruned (option_store.prune, step 5 -
+        the option_idea_push 45d retention) so a repeated setup months later is pushed again.
       CAP: at most 5 ideas per member per message, ordered by the recommended row's score; the rest
         become 'and N more on the page'.
     Send ONE message per member (chunked); record one OptionIdeaPush row per idea (ok / error;
@@ -1520,9 +1586,9 @@ def run(db, *, as_of: str, dry_run: bool = False) -> dict:
     Returns {"members": n, "ideas": n, "sent": n, "failed": n, "skipped": {reason: n}}."""
 ```
 
-The badge's `ideas_new` counts `OptionIdeaPush` rows since the last run that this member has not yet
-opened (`GET /options` writes a per-member `prefs["options_seen_at"]` marker). The push never states a
-contract count (sizing is a read-time, per-PC figure).
+The badge's `ideas_new` counts this member's `OptionIdeaPush` rows with `sent_at >= prefs['options_seen_at']`
+(`GET /options` writes that per-member marker when it renders, which clears the count). The push never
+states a contract count (sizing is a read-time, per-PC figure).
 
 #### D4.4 Text (HTML parse mode)
 
@@ -1532,12 +1598,12 @@ Options · 3 new ideas · Oct 3
 
 <b>LRCX</b> ↗ uptrend · IV rank 62 over the last year → <b>sell a put spread</b>
 Bounced off support 340 on high volume; riding a trend line with 3 touches.
-Nov 20 330/320 put · collect ≈ $210 · risk $790 · about 74% chance of keeping it (estimate)
+Nov 20 330/320 put · collect ≈ $210 · risk $790 · about 75% chance of keeping it (estimate)
 What has to happen: LRCX stays above 330 until Nov 20.
-Stop: LRCX under 336.2 (≈ −$102 today) · earnings Oct 22 inside — defined-risk trades only
+Stop: LRCX under 336.2 (about −$121 today) · earnings Oct 22 inside — defined-risk trades only
 <a href="https://app.tradehunter.net/options?symbol=LRCX">open the card</a>
 
-<b>ISRG</b> ↗ uptrend · IV rank 41 → <b>buy a call</b>
+<b>ISRG</b> ↗ uptrend · IV rank 41 → <b>buy a call spread</b>
 …
 and 2 more on the page · <a href="https://app.tradehunter.net/options?pause=7">pause for 7 days</a>
 ```
@@ -1560,8 +1626,8 @@ and the pause link. No greeks by name, no contract count - the same words as the
 | What | Moves / stays |
 |---|---|
 | the store | **`option_trades` + `option_trade_checks` for every strategy from step 1** (B7.1). The migration `f4a5b6c7d8e9` copies every OPEN `option_spreads` row into `option_trades` once (`strategy='bull_put'`, `family='credit_vertical'`, `note='migrated from option_spreads #<id>'`); `option_spreads` stays in place, read-only, for the legacy `/portfolio` until removal |
-| the board | the new `_options_positions_tab.html` rendered by `GET /options/positions` (D1.14): the `_portfolio_list.html` layout (board, chart pane `#pfChartBody`, per-row drawer, close form, `focus=` ring, `:54`) rebuilt over generic legs; forms post to `/options/positions/{id}/close`; a "Track a trade by hand" `<details>` writes an `option_trades` row with `signal_id=None` |
-| the per-row drawer | the latest `OptionTradeCheck` (mark, P/L, Δ, θ, vega, dte, state, action, reasons) + the check history; the payoff pane with the dot (`GET /options/payoff/{symbol}?trade=<id>`) |
+| the board | the new `_options_positions_tab.html` rendered by `GET /options/positions` (D1.14): the `_portfolio_list.html` layout (board, chart pane `#pfChartBody`, per-row drawer, close form, `focus=` ring, `:54`) rebuilt over generic legs; forms post to `/options/positions/{id}/close`. A "Track a trade by hand" form (an `option_trades` row with `signal_id=None`) is **OUT of v1 - step 2**; nothing in step 1 renders or routes it |
+| the per-row drawer | the latest `OptionTradeCheck` (mark, P/L, Δ, θ, vega, dte, state, action, reasons) + the check history; the payoff pane with the now marker (`GET /options/payoff/{symbol}?trade=<id>`: the entry prices with sigma solved from that check's mids, `y_today = pl_now`) |
 | the chart pane | stays inside the board; because the Positions tab swaps the whole `#optPane`, it is the only chart in the DOM while that tab is open; `chart_spread.legs` from `trade.legs` (any family) |
 | the expand button `#pfChartExpand` | its handler moves from `portfolio.html` into the page script (D2.1) |
 | the default exit-lines form (`_portfolio_list.html:480-501`) | its four fields are the same `trade_prefs` keys the Credit tab edits (D3.1), so the two are one setting; the new tab shows them on the Credit tab only. Removed with the old pages in the later release |
@@ -1594,13 +1660,13 @@ page shell (`GET /portfolio` only), the three page templates, the `HIDDEN_KEYS` 
 
 | Item | Surface | Source | States |
 |---|---|---|---|
-| **Nightly job health pill** | `#optStatus` strip (D2.1), left side: `job ✓ 07:17 MYT · 5/5 tickers` | `job_runs.latest(db, "nightly")` over `option_jobs` (A2.1 + `pushed`), `finished_at` localised via `localtime()` (`_time.html`) | emerald: `finished_at` set, `errors == 0`, `run_on == last ET trading day` (`spread_monitor.et_today()` minus weekend/holiday via the same helper the sweep uses, `services/spread_monitor.py:204-242`); amber: `errors > 0` ("5/7 tickers - KO: Cboe HTTP 403, …" from `detail`) or `run_on` one trading day behind; rose: no run for ≥ 2 trading days, or `started_at` set and `finished_at` null for > 2 h (crashed) |
+| **Nightly job health pill** | `#optStatus` strip (D2.1), left side: `job ✓ 07:17 MYT · 5/5 tickers` | `job_runs.latest(db, "nightly")` over `option_jobs` (A2.1 + `pushed`), `finished_at` localised via `localtime()` (`_time.html`) | emerald: `finished_at` set, `errors == 0`, `run_on == last ET trading day` (`spread_monitor.et_today()` stepped back over weekends and NYSE holidays through `app/services/clock.py`, the module `_us_session_open()` lives in, D1.9); amber: `errors > 0` ("5/7 tickers - KO: Cboe HTTP 403, …" from `detail`) or `run_on` one trading day behind; rose: no run for ≥ 2 trading days, or `started_at` set and `finished_at` null for > 2 h (crashed) |
 | **Data-age badge** | card header (per ticker) and the basket dot | `card_for(...)["stale"]`, `["age_h"]`, `as_of`, `source`; the in-request `live` dict | `as of Oct 2, 16:00 ET · delayed` (emerald, < 20 h) / amber (20 h–3 trading days) / rose (older); `live · TWS 21:42 ET` for the live expiry only, in-request (nothing persisted); the strip's own age is the **oldest** basket ticker's |
 | **"Hermes job missed" notice** | amber banner above the card, and the nav badge's `⚠` chip (`job_missed` in `/options/badge`) | `job_runs.missed(db, "nightly")`: no FINISHED run for the last ET trading day by 08:00 MYT (`latest.run_on < et_today() and now_myt.hour >= 8`) | "Last night's data job did not run (last run {{ when }}). The cards show {{ as_of }} data. Press Refresh on a ticker for today's delayed data; an administrator can read `/admin/log`." |
-| **New-ideas count** | nav badge (`ideas_new`) and the Ideas tab label `Ideas ●3` | `OptionIdeaPush` since last run, not yet seen | cleared when `GET /options` renders |
+| **New-ideas count** | nav badge (`ideas_new`) and the Ideas tab label `Ideas ●3` | this member's `OptionIdeaPush` rows with `sent_at >= prefs['options_seen_at']` | cleared when `GET /options` renders (it writes `options_seen_at`) |
 | **Positions at a line** | nav badge (`urgent` / `watch` / stale `!`) and the Positions tab label `Positions ●2` | newest `option_trade_checks` row per open `option_trades` row + the earnings-now-inside rows (D1.14) | same meaning the `/portfolio/badge` painter already has |
 | **IV history basis** | basket IV cell (`62` / `~62` dotted / `–`), the gauge line, the push guard | `signal.iv.basis`, `iv_n` | a provisional read is never amber and never pushed |
-| **Bridge state** | the `[Live (TWS)]` button turns emerald with `· up` after a successful `/health` probe (the page probes once on load, `_options_tab.html:190-194` pattern); on touch the slot reads "Live quotes need TWS on your PC" | | `[Live (TWS)]` grey = not probed / down; `[Live (TWS) · up]` emerald; bridge version from `/health` - `< 1.6` shows "· older than 1.6 (no IV history)" |
+| **Bridge state** | the `[Live (TWS)]` button turns emerald with `· up` after a successful `/health` probe (the page probes once on load, `_options_tab.html:190-194` pattern); on touch the slot reads "Live quotes need TWS on your PC" | | `[Live (TWS)]` grey = not probed / down; `[Live (TWS) · up]` emerald; bridge version from `/health` - `< 1.6` adds "· older than 1.6" to the button, and after a Live press the IV line carries the ONE sentence "Your bridge is older than 1.6 - restart `bridge\start_ibkr_bridge.bat`" (D2.9) |
 | **Refresh in flight** | `hx-indicator` spinner on the button; the card dims (`htmx-request` class) | | |
 | **Telegram** | Shared tab: verified ✓ / unverified / quiet / paused until …; the strip shows `· ideas paused` while paused | `prefs["telegram"]` | |
 
@@ -1613,7 +1679,7 @@ Data as of {{ as_of }} ET · {{ 'delayed' | 'live · TWS HH:MM ET' }} · <pill j
 with the cooldown respected (the server refuses bursts anyway).
 
 The job that writes `option_jobs` is A's `deploy/options_nightly.py`; this part supplies
-`services/job_runs.py` with `start(db, job, run_on) -> OptionJob`, `finish(db, run, *, ok, errors, rows, pushed, note, detail)`,
+`services/job_runs.py` with `start(db, job, run_on, source=None) -> OptionJob` (A4.2 passes `source=src.name`), `finish(db, run, *, ok, errors, rows, pushed, note, detail)`,
 `latest(db, job) -> OptionJob | None`, `missed(db, job) -> bool` so the status strip, the badge
 and the job all use one definition of "missed". There is no second job table.
 
@@ -1631,7 +1697,7 @@ A reviewer opens `/options` as a member with the house defaults and checks:
 6. **Rejections explain themselves.** Every greyed chip carries a reason in plain words; clicking it shows the amber "Not recommended today: …" banner, the strikes for every reason except earnings inside (then nothing to price), and "not available yet" for an unbuilt strategy. "Other strategies" hides the rest; nothing is silently missing.
 7. **Honesty strip always present.** Data age, delayed/live, and the job pill are visible on every state of the page, including the empty basket, and the age colour matches the badge rules in D6. Pull the network and press Refresh: the card says what failed and keeps the old data. After a Live press only the live expiry is shown and each row says so.
 8. **Both stop lines, labelled.** The payoff chart shows the chart stop (the engine's 336.2 on the fixture, not a hand number) and the rule stop, each with its price and dollar cost, and the caption under the chart says the dashed line is an estimate in one sentence.
-9. **Numbers are in money first, and the gap is never hidden.** Collect / risk / chance before delta or ratio; `$` units by default, `R` only on the toggle; the sizing line always shows both figures ("about $990 if the stop fires, up to $6,830 (6.8% of your account) if the stock gaps past it"), and `0 contracts` is said plainly, never rounded up to one.
+9. **Numbers are in money first, and the gap is never hidden.** Collect / risk / chance before delta or ratio; `$` units by default, `R` only on the toggle; the sizing line always shows both figures ("2 contracts: about $242 if the stop fires, up to $1,580 (1.6% of your account) if the stock gaps past it" on the LRCX fixture), and `0 contracts` is said plainly, never rounded up to one.
 10. **Layout rules.** No horizontal page scroll at 375 px; the basket becomes a chip strip; the Live button is absent on a phone with its one-line hint; one chart in the DOM at a time (switch Ideas/Positions and check `document.querySelectorAll('#priceChart').length === 1`); every scroll area's scrollbar is invisible until hovered (no `scrollbar-*` / `::-webkit-scrollbar` in the new templates); light theme: the teal IV number, the amber and rose override dots and the payoff legend are legible on white.
 11. **The ticket says when its prices are from.** The header line names the price time and tells a Malaysian member to Refresh after 21:30; while the US session is open on last night's prices the "Refresh first" banner shows; the entry order has no condition unless "Enter on the dip" was ticked (and then the crash sentence is printed); the chart-stop order carries the live-vs-close sentence and "Trigger outside RTH: No" in both renderings; the moomoo stop closes the short leg first.
 12. **Nothing provisional looks firm.** A ticker with 34 days of IV history shows `~62` in grey, the gauge says "against the last 34 days (not a full year yet)", and no Telegram idea goes out for it.
@@ -1649,14 +1715,14 @@ Uses `.claude/launch.json` → `tst-devcheck`: password auth, the admin from `TS
 | 1 | Start `tst-devcheck`; open `http://127.0.0.1:8011/`, sign in as the dev admin | lands on Calendar; the nav reads `Calendar · Sector & Industry · Watchlist · Curated · Options`; no Options dropdown; `/ivscan`, `/spreads`, `/portfolio` still open by URL; `alembic current` prints `f4a5b6c7d8e9` and the nine tables exist |
 | 2 | Click **Options** | shell renders in < 200 ms; status strip: `0 tickers · no data yet · job: never run` (slate); basket empty-state text (D2.9); pane empty-state text; My rules closed with "- house defaults"; opening My rules fires ONE request to `/options/rules?tab=shared` (the `toggle from:closest details once` trigger) |
 | 3 | `curl -s -o /dev/null -w "%{http_code}" -b <cookie> http://127.0.0.1:8011/options/basket` and `/options/rules?tab=credit` | both `200` with the fragment, **not** the legacy `_options_tab.html` shell (proves the router order, D1.1) |
-| 4 | Import → Paste `LRCX, MA, ISRG, NVDA, KO, lrcx, XX1234567890123` → Save | basket shows 5 rows (duplicate and junk dropped; toast "5 tickers added, 2 dropped"); each row has a rose dot, `·`, `–`, `no read`; strip says `5 tickers`; `option_basket` rows carry `owner_key='u1'`, `added_on` today's ET date, `active=1` |
+| 4 | Import → Paste `LRCX, MA, ISRG, NVDA, KO, lrcx, XX1234567890123` → Save | the import answers `{added: 5, skipped: 2, over_cap: 0, total: 5}` (duplicate and junk skipped; toast "5 added, 2 skipped") and the basket re-renders on `options:basket-changed` with 5 rows; each row has a rose dot, `·`, `–`, `no read`; strip says `5 tickers`; `option_basket` rows carry `owner_key='u1'`, `added_on` today's ET date, `active=1` |
 | 5 | Click LRCX | card: header `LRCX · no read yet` state text; chart mounts with EMA 20/50/200 and no overlays; no chips/picks/payoff; `[Refresh]` enabled |
 | 6 | Press **Refresh** | ≤ 3 s: note strip "Refreshed from Cboe HH:MM ET"; the stored headline sentence; gauge with its basis ("against the last N days" on a short history); chips in the decision-9 order; the What-has-to-happen line; chart gains the support line (if the detector found one), the strike lines, the trend line as a line series with `TL n/n` markers and the range lines when found; picks table (≤ 3 rows) with collect (range) / risk / chance; the sizing line with both figures; `#optPayoff` holds C's SVG with both stop markers labelled and the caption; basket row's dot turns emerald and its idea word fills in; pressing Refresh again inside 60 s → toast "Just refreshed - try again in a minute."; `option_jobs` has a `job='refresh'` row |
 | 7 | Click the second pick row | strike lines on the chart move without the chart remounting (the EMA legend does not flicker; `window.__thSetup` identity unchanged); `#optPayoff` re-requests `/options/payoff/...&pick=1`; the sizing line changes; `#optActions` hidden `pick` = 1; **no** request to `/options/chart` in the network tab |
 | 8 | Click a greyed chip (e.g. `Buy call · expensive`) | picks re-render with the amber "Not recommended today: options are expensive (IV rank …)" banner; strikes shown; the primary button reads `Order ticket (not recommended)` in the ghost style; chart lines switch to the Entry/SL/PT read-only set (long family); payoff shows target + both stops. Then set the dev DB's `earnings_date` inside the window and click a chip rejected for `earnings_inside`: banner, **no strike table, no buttons** |
 | 9 | Open My rules → Credit spreads; set `short_delta_hi` 0.30 → 0.22; Save | drawer re-renders with an amber dot on that field and "·1" on the tab; picks re-render (watch the server log: `card_for` computes under the new hash, **no** `fetch_chain` line); degenerate text names the rule when nothing passes; basket idea column may fade for tickers that lost their picks |
 | 10 | Reset this tab | override gone; picks back to the 0.30 set; `#optRulesSummary` "- house defaults" |
-| 11 | Shared tab → set account value 100 000, risk 1% → Save | the contracts box re-fills from `pick.sizing.contracts` (`min(by_chart_stop, by_max_loss, by_notional)`), the sizing line shows both figures; set account value 5 000 → `0` contracts and "Not even one contract fits your 1% - lower the risk or choose a narrower spread", Track disabled; the Curated page shows the same NLV (`/curated` prefs strip); the `prefs_hash` in `user_option_prefs` did NOT change |
+| 11 | Shared tab → set account value 100 000, risk 1% → Save | the contracts box re-fills from `pick.sizing.contracts` (`min(by_chart_stop, by_gap, by_notional)` = 8 / 2 / 10 → 2 on the LRCX fixture), the sizing line shows both figures; set account value 5 000 → `0` contracts and "Not even one contract fits your 1% - lower the risk or choose a narrower spread", Track disabled; the Curated page shows the same NLV (`/curated` prefs strip); the `prefs_hash` in `user_option_prefs` did NOT change |
 | 12 | Untick "Strikes must respect the chart" | the amber sentence appears before Save; after Save the dot is rose; re-tick and Save |
 | 13 | **Order ticket** | panel with the TWS and moomoo tabs, the header line "Prices are from … Press Refresh after 21:30 Malaysia time …", correct expiry label, limit = credit at the mid rounded to 0.05, **no entry condition**; tick "Enter on the dip" → the condition line and the crash sentence appear; ORDER 2 carries both sentences and "Trigger outside RTH: No" in BOTH tabs; the moomoo tab closes the short leg first with the naked-put sentence; the ticket's first line is the rejection sentence when opened from a rejected chip; `[Copy]` puts the visible text on the clipboard; opening the full-chain expander fires ONE request with the pick's expiry and ≤ 25 rows, "show all strikes" loads the rest |
 | 14 | **Track this** (the sized count) | pane switches to Positions with the new row ringed; `option_trades` has one row with `strategy='bull_put'`, `family='credit_vertical'`, `signal_id` set, legs carrying `entry_price/entry_delta/entry_iv` and `oi`; one `option_trade_checks` row written from the stored chain (Δ and P/L present, no network); nav badge unchanged (nothing at a line); `option_spreads` unchanged |
@@ -1677,19 +1743,19 @@ Uses `.claude/launch.json` → `tst-devcheck`: password auth, the admin from `TS
 
 | Case | Asserts |
 |---|---|
-| `option_prefs.read` with no row | every block equals the house defaults; `hash` stable across calls; `overridden == {}` |
+| `option_prefs.read` with no row | every block equals the house defaults (`clean({})`); `prefs_hash(merged) == HOUSE_HASH`, stable across calls; `_overridden == set()`; the top-level `telegram` and `account` keys are present; `distinct_hashes(db) == {HOUSE_HASH}` |
 | `write("credit", {"credit_vertical.short_delta_hi": "0.30"})` (equals default) | stores no override; `"0.22"` stores one; `"0.9"` returns the error "Short strike delta, … must be between 0.05 and 0.50." and stores nothing |
 | `write("shared", {"nlv": "50000"})` / `write("credit", {"take_pct": "40"})` | `tp.read(user)["nlv"] == 50000`, `["profit_target_pct"] == 40` (written through `trade_prefs`); `prefs_hash` unchanged by either |
-| `prefs_hash` | changes on `short_delta_hi`, `width_atr_lo`, `earnings_rule`, `chart_constraint`; unchanged on `GAP_MULT`, `premium_stop_pct`, `max_position_pct`, `telegram.*`, `nlv` |
+| `prefs_hash` | changes on `short_delta_hi`, `width_atr_lo`, `earnings_rule`, `chart_constraint`; unchanged on `gap_mult`, `premium_stop_pct`, `telegram.*`, `nlv`; the stored value fits `String(16)` (12 hex) |
 | `reset("all")` | prefs row holds only `telegram`; `trade_prefs` spread keys back to defaults; `nlv` untouched |
 | `chip_row` with 1 recommended, 2 also_fits, 7 rejected (2 with `shown=True`) | first = recommended; `also_fits` in order; exactly the 2 `shown` greys with their `reason_key`; 5 in `rest` |
 | `chip_row` with 0 recommended and an `also_fits` row with `reason_key='not_available_yet'` | `first is None`; that chip's text is "not available yet"; the rendered card HTML never contains "step " |
 | `headline` with every clause present / with no setup / with sideways / with `basis='percentile'` | the exact D2.7 sentences, punctuation included; "against the last 118 days (not a full year yet)" on the percentile case |
 | `delta_words(0.25, "sell", "P")` | contains "below this strike at expiry" and "75% chance of keeping"; never "in the money" |
-| `pop_words(0.74, "keep")` / `pop_words(0.46, "profit")` | start with "About a 74% chance of keeping the credit" / "About a 46% chance of profit if held to expiry"; both contain "estimate" or "not this number"; the profit one never says "keeping" |
-| `sizing_line({"contracts": 10, "capital_at_risk_usd": 990, "max_loss_total_usd": 6830, "nlv": 100000})` | "10 contracts: about $990 if the stop fires, up to $6,830 (6.8% of your account) if the stock gaps past it"; with `contracts == 0` the "Not even one contract fits your 1%" sentence; the page never rounds a count up to one |
-| `GET /options/payoff/LRCX?strategy=bull_put&pick=0` on the LRCX fixture | response is `_payoff_chart.html` (an `<svg viewBox="0 0 640 300">`), `po.max_loss == 790` (positive), `po.breakevens == [327.9]`, a marker `kind='stop'` at `x == 336.2`, a marker `kind='rule_stop'`, the caption with "an estimate"; `units=R` divides by `158.0` |
-| the payoff route for a calendar / for `buy_call` | horizon = the front expiry; rule-stop marker present for `buy_call` (premium_stop_pct) and absent for `leaps_call` |
+| `pop_words(0.75, "keep")` (the LRCX golden pick's pop) / `pop_words(0.46, "profit")` | start with "About a 75% chance of keeping the credit" / "About a 46% chance of profit if held to expiry"; both contain "estimate" or "not this number"; the profit one never says "keeping" |
+| `option_sizing.size(pick, 100000, HOUSE)` on the LRCX golden pick (330/320, chart_stop_pl −120.7, max_loss 790) | `by_chart_stop == 8`, `by_gap == 2`, `by_notional == 10`, `contracts == 2`, `nlv_source == 'prefs'`, `line == "2 contracts: about $242 if the stop fires, up to $1,580 (1.6% of your account) if the stock gaps past it"`; with nlv 5000 → `contracts == 0` and the "Not even one contract fits your 1%" sentence; with nlv None → `nlv_source is None` and "sized once you tell us the account value (My rules → Shared)"; the page never rounds a count up to one |
+| `GET /options/payoff/LRCX?strategy=bull_put&pick=0` on the LRCX fixture | response is `_payoff_chart.html` (an `<svg viewBox="0 0 640 300">`), `po.strategy == 'bull_put'`, `po.family == 'credit_vertical'`, `po.max_loss == 790` (positive), `po.max_profit == 210`, `po.breakevens == [327.9]`, a marker `kind='stop'` at `x == 336.2` with `y_today ≈ −120.7` (labelled "about −$121"), a marker `kind='rule_stop'` with its hline at −158, the caption with "an estimate"; `units=R` divides by `158.0`; the dict has no `contracts` and no `dot` |
+| the payoff route for a calendar / for `buy_call` / for `leaps_call` | horizon = the front expiry; the rule-stop marker + hline is PRESENT for every family: `buy_call` at the long block's `premium_stop_pct` 50 (hline at −0.5 × debit × 100), `leaps_call` and `diagonal_call` at the leaps block's `premium_stop_pct` 40 (hline at −0.4 × debit × 100), the calendar at the long block's 50 |
 | `idea_key` / `telegram_push` dedupe | `('LRCX','bull_put','2026-11-20')` → one key for 330/320 and 325/315; a second run with the short strike moved 0.5 ATR sends nothing; moved 1.2 ATR re-sends and UPDATES the row |
 | `telegram_push.run` guards | a ticker with `earnings_date None` is skipped and logged "skipped: earnings date unknown"; `provisional=True`, `status='no_setup'`, a stale `as_of`, a partial chain each skip; 7 ideas → 5 in the message and "and 2 more on the page"; the message's first line is the fixed sentence; it never contains "contracts" |
 | `telegram_push.run` with two members, one opted out, one verified, `dry_run=True` | one message built; `OptionIdeaPush` rows only for the opted-in member; second run sends nothing; a member with `quiet=True` or `paused_until` in the future gets nothing |
@@ -1700,8 +1766,8 @@ Uses `.claude/launch.json` → `tst-devcheck`: password auth, the admin from `TS
 | `GET /options/ticket/LRCX` default / `?dip=1` / rejected for earnings | no condition line in either rendering; with `dip=1` the `Last ≤ 341.92` line and "will also fire if LRCX crashes through 341.92"; "Trigger outside RTH: No" appears in BOTH renderings; the moomoo text has "SHORT leg first" before "LONG leg"; the earnings-rejected case returns the one-line "No ticket" panel with no leg |
 | `POST /options/live/LRCX` with a bridge payload | the response holds the live badge and only the live expiry's rows; `option_chain_snapshot` count unchanged; `iv_daily` gains rows with `iv30` in percent, each bounded 0.1..1000; a server-read day is not overwritten; `trade_prefs.nlv` unchanged |
 | the legacy `POST /options/track` | still handled by `routes/options.py` (the new router has no `/track`); row in `option_spreads` |
-| basket import of 70 symbols | 60 kept, `dropped == 10`, response says so; `source='positions'` imports the open `option_trades` symbols |
-| `_basket_context` three states | a recommended ticker with `picks == []` → `pick_state 'none'`; with no entry under the hash → `'unchecked'`; the template text differs ("no strike passes" vs "not checked under your rules yet") |
+| basket import of 70 symbols | the response is `{added: 60, skipped: 0, over_cap: 10, total: 60}` with the `options:basket-changed` trigger; `source='positions'` imports the open `option_trades` symbols |
+| `_basket_context` three states | `basket_rows_for` decides them: a recommended ticker with `picks == []` under the hash → `pick_state 'no_strike_passes'`; with no entry under the hash → `'not_checked'`; with picks → `'has_picks'`; the template text differs ("no strike passes" vs "not checked under your rules yet"); the route never recomputes the state |
 | `GET /options/basket` as user A after user B adds LRCX | A's basket empty (scoping by `owner_key`) |
 | router order | `app.routes` index of `GET /options/basket` < index of `GET /options/{symbol}`; the new router carries `require_menu("options")`, the legacy one does not |
 | `job_runs.missed` at 07:59 MYT with no run today | `False`; at 08:00 → `True` |
@@ -1735,10 +1801,10 @@ URL for a member granted only `options`.
 |---|---|
 | create | `app/routes/options_page.py` (every route in D1.3, incl. A's four data endpoints under this part's paths) |
 | create | `app/services/option_words.py`, `app/services/telegram.py`, `app/services/telegram_push.py`, `app/services/job_runs.py` |
-| create (with B) | `app/services/option_prefs.py` - B4.1's SCHEMA with this part's `label/help/plain/step/unit` columns, `TABS`, `PICK_FIELDS`, the `write/reset/for_strategy` wrappers (D3.1) |
+| create (with B) | `app/services/option_prefs.py` - B4.1's SCHEMA with this part's `label/help/plain/step/unit` columns, `TABS`, `PICK_FIELDS`, the `read/clean/write/reset/for_strategy/family_of/defined_risk/prefs_hash/distinct_hashes` functions (D3.1); `STRATEGY_KEYS` is imported from `app/services/strategy_rules.py`, never redefined |
 | create | `app/templates/options.html`, `_options_basket.html`, `_options_card.html`, `_options_picks.html`, `_options_chart.html`, `_options_rules.html`, `_options_ticket.html`, `_options_status.html`, `_options_chain.html`, `_options_positions_tab.html` |
 | create (C) | `app/services/payoff.py`, `app/templates/_payoff_chart.html` - this part only targets the partial into `#optPayoff` |
 | create (shared, A's skeleton) | `alembic/versions/f4a5b6c7d8e9_options_module.py` - the ONE migration, nine tables + the `option_spreads` copy step |
 | create | `dashboard_tst/requirements-dev.txt` (pytest), `dashboard_tst/tests/test_options_page.py`, `tests/fixtures/options/` (shared with A8 / B9 / C6) |
-| modify | `app/models.py` (`OptionBasket.pos`, `OptionIdeaPush`, `OptionJob.pushed`; the rest of the nine models are A's and B's), `app/main.py` (D1.1), `app/menus.py` (D1.1), `app/templates/base.html` (badge → `/options/badge`, href check, two chips, light-theme teal/violet inks; C4.2's `--po-*` tokens), `app/templates/_price_chart.html` (C4.4 items 1-6 + `window.thChartSetStrikes`), `app/services/glossary.py` (option group), `app/__init__.py` (`4.126` → `4.127`), `bridge/ibkr_bridge.py` (`/iv?series=1` in PERCENT, `server_version` 1.6), `README.md` (changelog entry per the folder convention + the Contents line for `tests/`), `OPTIONS_MODULE_DESIGN.md` (status line → "building, step 1") |
+| modify | `app/models.py` (`OptionBasket.pos`, `OptionIdeaPush`, `OptionJob.pushed`, the `User.option_prefs` one-to-one relationship (`UserOptionPrefs.user` backref, `uselist=False`); the rest of the nine models, incl. `OptionTrade.meta`, are A's and B's), `app/main.py` (D1.1), `app/menus.py` (D1.1), `app/templates/base.html` (badge → `/options/badge`, href check, two chips, light-theme teal/violet inks; C4.2's `--po-*` tokens), `app/templates/_price_chart.html` (C4.4 items 1-6 + `window.thChartSetStrikes`), `app/services/glossary.py` (option group), `app/__init__.py` (`4.126` → `4.127`), `bridge/ibkr_bridge.py` (`/iv?series=1` in PERCENT, `server_version` 1.6), `README.md` (changelog entry per the folder convention + the Contents line for `tests/`), `OPTIONS_MODULE_DESIGN.md` (status line → "building, step 1") |
 | untouched on purpose | `app/routes/options.py` (incl. its `POST /track`), `routes/ivscan.py`, `routes/spreads.py`, `routes/portfolio.py` (guards only change in `main.py`), their templates, `app/services/spread_monitor.py`, `app/services/bull_put.py` |
