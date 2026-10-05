@@ -22,14 +22,23 @@
     <div class="text-[11px] text-slate-500">Options &middot; {{ n_basket }} ticker{{ '' if n_basket == 1 else 's' }}</div>
   </div>
 
-  <div class="lg:flex lg:gap-3 lg:flex-1 lg:min-h-0">
-    <aside class="lg:w-[200px] lg:shrink-0 flex flex-col mb-3 lg:mb-0 lg:min-h-0">
+  {# The basket column is RESIZABLE (user, 2026-10-06: "the watchlist cannot be shown
+     fully, i need the divider to be adjustible and the system will auto apportion the
+     screen size"): a drag handle between the basket and the card sets the column's
+     width; the width is remembered per browser (localStorage th.options.basketW); with
+     no remembered width the page apportions it from the viewport (18%, 220-360 px) and
+     re-apportions on resize. Double-click the handle to go back to automatic. #}
+  <div class="lg:flex lg:gap-2 lg:flex-1 lg:min-h-0" id="optSplit">
+    <aside id="optAside" class="lg:shrink-0 flex flex-col mb-3 lg:mb-0 lg:min-h-0" style="--opt-basket-w: 240px">
       <div id="optBasket" class="opt-basket flex-1 min-h-0 overflow-y-auto rounded-xl border border-slate-800 bg-slate-900/40 p-1.5"
            hx-get="/options/basket" hx-trigger="load, options:basket-changed from:body, options:rules-changed from:body" hx-swap="innerHTML"
            hx-vals='js:{compact: window.innerWidth < 1024 ? 1 : 0, selected: window.thOptionsSym ? window.thOptionsSym() : ""}'>
         <div class="text-xs text-slate-500 py-6 text-center">Loading&hellip;</div>
       </div>
     </aside>
+    <div id="optDivider" class="hidden lg:block shrink-0 w-2 -mx-0.5 rounded cursor-col-resize select-none
+                bg-transparent hover:bg-slate-600/50 transition" title="Drag to resize the basket - double-click for automatic width"
+         role="separator" aria-orientation="vertical" aria-label="Resize the basket column"></div>
 
     <section class="flex-1 min-w-0 rounded-xl border border-slate-800 bg-slate-900/40 p-3 flex flex-col lg:min-h-0">
       <div class="flex items-center gap-1 mb-2 shrink-0">
@@ -477,5 +486,50 @@
   paintTabs();
   loadPane();
 })();
+  // ---- the resizable basket column ------------------------------------------
+  // Width lives on the <aside> as an inline style (lg and up only; below lg the
+  // basket stacks above the card and the handle is hidden). A remembered width
+  // wins; otherwise the viewport is apportioned: 18% for the basket, clamped to
+  // 220-360 px, re-done on every resize so a narrower window never hides tickers.
+  (function () {
+    var KEY = 'th.options.basketW', MIN = 210;
+    var aside = document.getElementById('optAside'), handle = document.getElementById('optDivider');
+    if (!aside || !handle) return;
+    function maxW() { return Math.max(MIN, Math.floor(window.innerWidth * 0.5)); }
+    function autoW() { return Math.round(Math.min(360, Math.max(220, window.innerWidth * 0.18))); }
+    function stored() { try { var v = parseInt(localStorage.getItem(KEY), 10); return isFinite(v) ? v : null; } catch (e) { return null; } }
+    function apply(w) {
+      var lg = window.innerWidth >= 1024;
+      aside.style.width = lg ? Math.min(maxW(), Math.max(MIN, w)) + 'px' : '';
+    }
+    function layout() { var s = stored(); apply(s != null ? s : autoW()); }
+    layout();
+    window.addEventListener('resize', layout);
+    var dragging = false, startX = 0, startW = 0;
+    handle.addEventListener('pointerdown', function (e) {
+      if (window.innerWidth < 1024) return;
+      dragging = true; startX = e.clientX; startW = aside.getBoundingClientRect().width;
+      handle.setPointerCapture(e.pointerId); handle.classList.add('bg-slate-500/60');
+      document.body.style.cursor = 'col-resize'; e.preventDefault();
+    });
+    handle.addEventListener('pointermove', function (e) {
+      if (!dragging) return;
+      apply(startW + (e.clientX - startX));
+    });
+    function stop(e) {
+      if (!dragging) return;
+      dragging = false; handle.classList.remove('bg-slate-500/60'); document.body.style.cursor = '';
+      try { localStorage.setItem(KEY, String(Math.round(aside.getBoundingClientRect().width))); } catch (err) {}
+      // the chart measures its box once; tell it the box changed
+      try { window.dispatchEvent(new Event('resize')); } catch (err) {}
+    }
+    handle.addEventListener('pointerup', stop);
+    handle.addEventListener('pointercancel', stop);
+    handle.addEventListener('dblclick', function () {
+      try { localStorage.removeItem(KEY); } catch (e) {}
+      layout();
+      try { window.dispatchEvent(new Event('resize')); } catch (e) {}
+    });
+  })();
 </script>
 {% endblock %}

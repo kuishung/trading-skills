@@ -143,6 +143,28 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-06 - v4.128: the Options basket column is resizable, and sizes itself to the screen
+
+User: *"the watchlist cannot be shown fully, i need the divider to be adjustible and the system
+will auto apportion the screen size"* - on the live site with 30 tickers the 200 px basket column
+squeezed every symbol to its first letter.
+
+- **A drag handle** (`#optDivider`, `options.html`) now sits between the basket and the card on
+  large screens: drag it to set the basket's width (210 px up to half the window); the width is
+  remembered per browser (`localStorage th.options.basketW`); **double-click** the handle to go back
+  to automatic. Hidden below the `lg` breakpoint, where the basket stacks above the card.
+- **Automatic apportioning**: with no remembered width the basket takes 18% of the viewport,
+  clamped to 220-360 px, and re-apportions on every window resize - so a narrower window never
+  hides tickers. After a drag the page fires a `resize` so the chart re-measures its box.
+- **The ticker column can no longer collapse** (`_options_basket.html`): the row grid's first
+  column is `minmax(4.5rem, 1fr)` instead of `1fr`, so a symbol always has room before the trend,
+  IV and idea columns take theirs.
+
+Tested: `tests/test_options_page.py` 18 passed. Verified in the browser at 1400 px: the basket
+opens at 252 px (18%) with no symbol clipped; a simulated drag to 372 px sticks and is stored;
+double-click returns to 252 px and clears the stored value; the handle is `display: block` only at
+`lg`; no console errors beyond the bridge refusing the dev origin.
+
 ### 2026-10-06 - v4.127: the Options page - step 1 of the Options module (credit spreads, the payoff chart, the nightly job)
 
 User: *"ok replace the old option menu to the new one"*. Build step 1 of `OPTIONS_MODULE_DESIGN.md`
