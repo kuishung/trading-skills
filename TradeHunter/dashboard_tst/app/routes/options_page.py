@@ -27,6 +27,7 @@ import importlib
 import json
 import logging
 import secrets
+import threading
 import time
 from pathlib import Path
 
@@ -788,6 +789,7 @@ def _status_dict(db: Session, user: User) -> dict:
             if isinstance(v, dict) and v.get("status") in ("error",) and v.get("err")][:3]
     d.update({"state": state, "as_of_oldest": _fmt_as_of(oldest) if oldest else "no data yet",
               "n_basket": len(rows), "n_stale": n_stale, "stale_symbols": stale_syms,
+              "basket_symbols": [r.symbol for r in rows],
               "bridge_port": BRIDGE_PORT, "delayed_or_live": "delayed", "paused": paused,
               "job_when": latest.finished_at if latest else None,
               "job_symbols": latest.symbols if latest else 0, "job_errors_text": "; ".join(errs),
@@ -1686,7 +1688,49 @@ def badge(user: User = Depends(require_user), db: Session = Depends(get_db)):
 @router.get("/status/strip", response_class=HTMLResponse)
 def status_strip(request: Request, user: User = Depends(require_user), db: Session = Depends(get_db)):
     """The honesty line: data age, delayed/live, job health. Polled every 300 s."""
-    return templates.TemplateResponse(request, "_options_status.html", _status_dict(db, user))
+    d = _status_dict(db, user)
+    d["is_admin"] = bool(getattr(user, "is_admin", False))
+    return templates.TemplateResponse(request, "_options_status.html", d)
+
+
+def _run_nightly_in_background(symbols=None) -> None:
+    """Start the full seven-step nightly (services/option_nightly.run_nightly) in a
+    daemon thread with a session of its own - the job writes its own option_jobs row
+    (job_runs.start), so the strip's 'running' state and the result come from the
+    same place the scheduled task's do. Module-level so a test can stub it."""
+    from ..db import SessionLocal
+    from ..services import option_nightly
+
+    def _work():
+        db = SessionLocal()
+        try:
+            option_nightly.run_nightly(db, symbols=symbols, push=True)
+        except Exception:  # noqa: BLE001 - the job logs its own per-ticker failures; this is the last resort
+            logging.getLogger(__name__).exception("options nightly (started from the page) failed")
+        finally:
+            db.close()
+
+    threading.Thread(target=_work, name="options-nightly-manual", daemon=True).start()
+
+
+@router.post("/admin/run-nightly", response_class=HTMLResponse)
+def admin_run_nightly(request: Request, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    """Run the data job NOW from the page (admin only; user, 2026-10-06: "can user run
+    it manually through the interface?"). Same seven steps as the scheduled task, in
+    the background; the strip re-polls every 10 s while it runs. A second press
+    while one is running is refused with a notice, not a second job."""
+    if not getattr(user, "is_admin", False):
+        return Response(status_code=403)
+    d = _status_dict(db, user)
+    d["is_admin"] = True
+    if job_runs.running(db, "nightly"):
+        d["notice"] = "The data job is already running."
+    else:
+        _run_nightly_in_background()
+        d["running"] = True
+        d["state"] = d.get("state") if d.get("state") != "none" else "warn"
+        d["notice"] = "Data job started - this line updates as it runs."
+    return templates.TemplateResponse(request, "_options_status.html", d)
 
 
 # ────────────────────────────────── member words (fallback) ──────────────────────────────────

@@ -143,6 +143,27 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-06 - v4.129: run the data job from the page, and refresh the whole basket
+
+User: *"can user run it manually throught the interface?"* and *"i need a button that will refresh
+the whole watchlist"*. Two buttons on the Options status strip (`_options_status.html`):
+
+- **Refresh all (N)** - every member; re-reads today's delayed Cboe chain for EVERY basket ticker,
+  one at a time (~2 s each) through the existing `POST /options/refresh/<sym>`, and rebuilds the
+  basket when done. **Refresh stale (n)** stays, shown only when the stale set is smaller than the
+  basket. (Before: only "Refresh all stale", and only while something was stale.)
+- **Run the data job now** - administrators only; `POST /options/admin/run-nightly`
+  (`options_page.py`) starts the FULL seven-step nightly (`option_nightly.run_nightly`: chains,
+  metrics, engines per rule set, the Positions sweep, prune, Telegram push) in a background thread
+  with its own session; the strip answers "Data job started" and re-polls itself every 10 s while
+  `job_runs.running` is true, then shows the result like a scheduled run. A second press while one
+  runs is refused with a notice. The scheduled task (`setup_options_nightly_task.ps1`) remains the
+  one thing that needs Hermes, because a page cannot create a Windows scheduled task.
+
+Tested: `tests/test_options_page.py` 20 passed - a member gets 403 on the admin route, an admin
+starts it (the thread starter stubbed), the response carries the 10 s re-poll, the strip offers
+"Refresh all (4)" with every ticker in its symbol list and no admin button for a member.
+
 ### 2026-10-06 - v4.128: the Options basket column is resizable, and sizes itself to the screen
 
 User: *"the watchlist cannot be shown fully, i need the divider to be adjustible and the system

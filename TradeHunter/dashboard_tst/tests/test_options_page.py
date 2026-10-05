@@ -738,3 +738,34 @@ def test_templates_carry_no_scrollbar_rules_and_the_toggle_trigger():
     assert "--po-exp" in base and "--po-today" in base and "--po-profit-fill" in base and "--po-loss-fill" in base
     assert 'hx-get="/options/badge"' in base and "d.job_missed" in base and "d.ideas_new" in base
     assert "scrollbar-width: thin" in base                                        # the house rule is untouched
+
+
+def test_admin_can_run_the_data_job_from_the_page(world, monkeypatch):
+    """The nightly can be started from the strip by an administrator (member -> 403);
+    the thread starter is stubbed, the strip answers 'started' and shows the button
+    again once nothing is running."""
+    op, c = world["op"], world["client"]
+    calls = []
+    monkeypatch.setattr(op, "_run_nightly_in_background", lambda symbols=None: calls.append(symbols))
+    r = c.post("/options/admin/run-nightly")
+    assert r.status_code == 403 and calls == []
+    with world["Session"]() as s:
+        u = s.get(models.User, world["uid"])
+        u.role = getattr(models, "ROLE_ADMIN", "admin")
+        s.commit()
+    r = c.post("/options/admin/run-nightly")
+    assert r.status_code == 200 and calls == [None]
+    assert "Data job started" in r.text and "job running" in r.text
+    assert 'hx-trigger="load delay:10s"' in r.text          # the 10 s re-poll while running
+    r = c.get("/options/status/strip")
+    assert r.status_code == 200 and "Run the data job now" in r.text
+
+
+def test_strip_offers_refresh_all_and_refresh_stale(world):
+    """Every member gets "Refresh all (N)" over the whole basket; "Refresh stale (n)"
+    appears only when the stale set is smaller than the basket."""
+    r = world["client"].get("/options/status/strip")
+    assert r.status_code == 200
+    assert "Refresh all (4)" in r.text
+    assert '"LRCX"' in r.text and '"KO"' in r.text          # the data-symbols list carries every ticker
+    assert "Run the data job now" not in r.text             # not an admin
