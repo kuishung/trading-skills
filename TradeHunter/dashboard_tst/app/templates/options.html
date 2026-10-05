@@ -1,0 +1,481 @@
+{% extends "base.html" %}
+{% block title %}Options &middot; TradeHunter{% endblock %}
+{% block main_class %}flex-1 w-full px-4 py-4 lg:overflow-hidden{% endblock %}
+
+{% block content %}
+{# The Options page shell (OPTIONS_MODULE_DESIGN.md II.2.18, part D D2.1): the status
+   strip, the basket (left), the Ideas / Positions pane (centre) and the My rules
+   drawer (bottom). Every slow panel is a lazy HTMX fragment: the shell renders at
+   once and nothing on it waits on a market call - the read path is the DB only.
+   Context: user, n_basket, symbol, tab, focus, max_basket, pause_days, bridge_port,
+   bridge_min_version, criteria.
+
+   Only ONE pane (Ideas or Positions) is in the DOM at a time, so there is one
+   lightweight-charts instance on the page; a chart drawn in a hidden box would
+   measure 0 wide. Scroll areas inherit base.html's invisible-until-hover scrollbar. #}
+<div class="lg:flex lg:flex-col lg:h-[calc(100vh-6rem)]"
+     id="optPage" data-symbol="{{ symbol }}" data-tab="{{ tab }}" data-focus="{{ focus or '' }}"
+     data-pause="{{ pause_days or 0 }}" data-bridge-port="{{ bridge_port }}" data-bridge-min="{{ bridge_min_version }}">
+
+  {# the honesty strip: data age, delayed / live, job health - polled every 300 s #}
+  <div id="optStatus" class="shrink-0 mb-2" hx-get="/options/status/strip" hx-trigger="load, every 300s, options:basket-changed from:body" hx-swap="innerHTML">
+    <div class="text-[11px] text-slate-500">Options &middot; {{ n_basket }} ticker{{ '' if n_basket == 1 else 's' }}</div>
+  </div>
+
+  <div class="lg:flex lg:gap-3 lg:flex-1 lg:min-h-0">
+    <aside class="lg:w-[200px] lg:shrink-0 flex flex-col mb-3 lg:mb-0 lg:min-h-0">
+      <div id="optBasket" class="opt-basket flex-1 min-h-0 overflow-y-auto rounded-xl border border-slate-800 bg-slate-900/40 p-1.5"
+           hx-get="/options/basket" hx-trigger="load, options:basket-changed from:body, options:rules-changed from:body" hx-swap="innerHTML"
+           hx-vals='js:{compact: window.innerWidth < 1024 ? 1 : 0, selected: window.thOptionsSym ? window.thOptionsSym() : ""}'>
+        <div class="text-xs text-slate-500 py-6 text-center">Loading&hellip;</div>
+      </div>
+    </aside>
+
+    <section class="flex-1 min-w-0 rounded-xl border border-slate-800 bg-slate-900/40 p-3 flex flex-col lg:min-h-0">
+      <div class="flex items-center gap-1 mb-2 shrink-0">
+        <button type="button" class="optTab text-[11px] px-2.5 py-1 rounded border transition" data-tab="ideas">Ideas <span id="optIdeasCount" class="hidden ml-0.5 rounded px-1 text-[10px] bg-emerald-500/20 text-emerald-300"></span></button>
+        <button type="button" class="optTab text-[11px] px-2.5 py-1 rounded border transition" data-tab="positions">Positions <span id="optPosCount" class="hidden ml-0.5 rounded px-1 text-[10px] bg-rose-500/25 text-rose-300"></span></button>
+        <span id="optCurSym" class="ml-2 text-[11px] text-slate-500">{{ symbol }}</span>
+      </div>
+      <div id="optPane" class="flex-1 min-h-0 overflow-y-auto flex flex-col">
+        {# filled by the tab script: /options/card/<sym> or /options/positions #}
+        <div id="optPaneEmpty" class="text-[12px] text-slate-500 leading-relaxed px-2 py-6 max-w-2xl">
+          {% if n_basket %}
+          Click a ticker on the left. Best ideas sort to the top: &#8599; &#8600; &#8596; is the trend,
+          the number is IV rank (amber = sell premium, teal = buy; ~62 with a dotted line = not a full
+          year of history yet), the last column is tonight's suggestion.
+          {% else %}
+          Your basket is empty. Add the tickers you trade options on - paste them, pull in My Watchlist,
+          or run your TWS scanner. Tonight's job reads each one's option chain; you'll see a card tomorrow
+          morning. In a hurry? Press <b class="text-slate-300">Refresh</b> on a ticker to read today's
+          delayed chain now (about 2 seconds).
+          {% endif %}
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <details id="optRules" class="shrink-0 mt-3 rounded-xl border border-slate-800 bg-slate-900/40">
+    <summary class="cursor-pointer select-none px-3 py-2 text-[11px] text-slate-300">My rules <span class="text-slate-500" id="optRulesSummary">- house defaults</span></summary>
+    {# the DOM toggle event does not bubble to children, so the lazy load listens on the
+       <details> itself - once; later tab clicks re-target this body directly #}
+    <div id="optRulesBody" class="opt-rules max-h-[40vh] overflow-y-auto px-3 pb-3"
+         hx-get="/options/rules?tab=shared" hx-trigger="toggle from:closest details once" hx-swap="innerHTML"
+         hx-vals='js:{sym: window.thOptionsSym ? window.thOptionsSym() : ""}'>
+      <div class="text-xs text-slate-500 py-3">Loading your rules&hellip;</div>
+    </div>
+  </details>
+</div>
+
+{# Preload the chart library ONCE, exactly as Curated, Sector and Portfolio do: the
+   chart partial ships its own <script src>, but when HTMX swaps the fragment in that
+   external script loads asynchronously while the fragment's inline script runs at once. #}
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+{% include "_at_modal.html" %}
+
+<style>
+  .opt-row.opt-on { background: rgba(16,185,129,0.10); box-shadow: inset 3px 0 0 #10b981; }
+  .opt-pick { cursor: pointer; }
+  .opt-pick.opt-pick-on { box-shadow: inset 3px 0 0 #10b981; }
+  .htmx-request.opt-card { opacity: 0.6; }
+  /* the expanded Positions chart leaves the page flow and takes the window (Portfolio's gesture) */
+  #pfChartWrap.pf-max { position: fixed; inset: 0.5rem; z-index: 60; margin: 0; }
+  #pfChartWrap.pf-max > #pfChartBody { height: 100% !important; min-height: 0 !important; }
+  body.pf-max-open { overflow: hidden; }
+  @media (max-width: 1023px) { #optPage .opt-live-btn { display: none; } #optPage .opt-live-hint { display: inline; } }
+  @media (min-width: 1024px) { #optPage .opt-live-hint { display: none; } }
+  .opt-touch .opt-live-btn { display: none !important; }
+  .opt-touch .opt-live-hint { display: inline !important; }
+</style>
+
+<script>
+(function () {
+  var page = document.getElementById('optPage');
+  if (!page) return;
+  var BRIDGE = 'http://127.0.0.1:' + (page.dataset.bridgePort || '9224');
+  var BRIDGE_MIN = page.dataset.bridgeMin || '1.6';
+  var TABKEY = 'optPaneTab', UNITKEY = 'th.payoff.units';
+  var pane = document.getElementById('optPane');
+  var sym = page.dataset.symbol || '';
+  var tab = page.dataset.tab === 'positions' ? 'positions' : 'ideas';
+  if (page.dataset.tab !== 'positions' && !sym) { try { tab = localStorage.getItem(TABKEY) === 'positions' ? 'positions' : 'ideas'; } catch (e) {} }
+  var touch = (navigator.maxTouchPoints || 0) > 0 && window.innerWidth < 1024;
+  if (touch) page.classList.add('opt-touch');
+
+  window.thOptionsSym = function () { return sym; };
+  function units() { try { var u = localStorage.getItem(UNITKEY); return u === 'R' ? 'R' : '$'; } catch (e) { return '$'; } }
+  window.thPayoffUnits = units;
+
+  // ---- toasts (options:toast HX-Trigger -> base.html's thToast) ----------------
+  document.body.addEventListener('options:toast', function (e) {
+    var d = e.detail || {};
+    if (window.thToast && d.msg) window.thToast(d.msg, d.kind === 'err' ? 'err' : (d.kind === 'ok' ? 'ok' : 'info'));
+  });
+
+  // ---- Ideas / Positions tabs: only the visible pane is in the DOM --------------
+  function paintTabs() {
+    document.querySelectorAll('.optTab').forEach(function (b) {
+      var on = b.dataset.tab === tab;
+      b.className = 'optTab text-[11px] px-2.5 py-1 rounded border transition ' +
+        (on ? 'border-emerald-500/60 text-emerald-300 bg-emerald-500/10'
+            : 'border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300');
+    });
+    var cur = document.getElementById('optCurSym');
+    if (cur) cur.textContent = tab === 'ideas' ? sym : '';
+  }
+  function loadPane(extra) {
+    if (!window.htmx) return;
+    if (tab === 'positions') {
+      var f = page.dataset.focus ? '&focus=' + encodeURIComponent(page.dataset.focus) : '';
+      htmx.ajax('GET', '/options/positions?status=open' + f + (extra || ''), { target: '#optPane', swap: 'innerHTML' });
+    } else if (sym) {
+      htmx.ajax('GET', '/options/card/' + encodeURIComponent(sym), { target: '#optPane', swap: 'innerHTML' });
+    }
+  }
+  function setTab(t, extra) {
+    tab = t === 'positions' ? 'positions' : 'ideas';
+    try { localStorage.setItem(TABKEY, tab); } catch (e) {}
+    paintTabs();
+    loadPane(extra);
+  }
+  document.querySelectorAll('.optTab').forEach(function (b) {
+    b.addEventListener('click', function () { setTab(b.dataset.tab); });
+  });
+  window.thOptionsTab = setTab;
+
+  // ---- a basket row click selects the ticker (its own hx-get draws the card) -----
+  document.addEventListener('click', function (e) {
+    var row = e.target.closest ? e.target.closest('.opt-row') : null;
+    if (!row || (e.target.closest && e.target.closest('.opt-row-x'))) return;
+    sym = row.getAttribute('data-sym') || sym;
+    document.querySelectorAll('.opt-row.opt-on').forEach(function (r) { r.classList.remove('opt-on'); });
+    row.classList.add('opt-on');
+    if (tab !== 'ideas') { tab = 'ideas'; try { localStorage.setItem(TABKEY, tab); } catch (err) {} }
+    paintTabs();
+    try { history.replaceState(null, '', '/options?symbol=' + encodeURIComponent(sym)); } catch (err) {}
+  });
+  // while the Positions tab is showing, a row click still switches to the card
+  document.body.addEventListener('htmx:afterSwap', function (e) {
+    var t = e.detail && e.detail.target;
+    if (!t || t.id !== 'optPane') return;
+    var card = t.querySelector('.opt-card');
+    if (card && card.dataset.sym) { sym = card.dataset.sym; tab = 'ideas'; paintTabs(); }
+    if (t.querySelector('.opt-positions')) { tab = 'positions'; paintTabs(); }
+    syncLive();
+  });
+
+  // ---- the card's hidden state the action buttons read ---------------------------
+  function card() { return document.querySelector('#optPane .opt-card'); }
+  window.thCardStrategy = function () { var c = card(); return c ? (c.dataset.strategy || '') : ''; };
+  window.thCardPick = function () { var p = document.querySelector('#optPicks'); return p ? (parseInt(p.dataset.pick || '0', 10) || 0) : 0; };
+  window.thCardQty = function () { var i = document.querySelector('#optActions input[name="contracts"]'); return i ? (parseInt(i.value, 10) || 0) : 0; };
+
+  // ---- a strategy chip: remember the choice on the card ---------------------------
+  document.addEventListener('click', function (e) {
+    var chip = e.target.closest ? e.target.closest('.opt-chip') : null;
+    if (!chip) return;
+    var c = card();
+    if (c && chip.dataset.strategy) c.dataset.strategy = chip.dataset.strategy;
+    document.querySelectorAll('.opt-chip').forEach(function (x) { x.classList.toggle('ring-1', x === chip); x.classList.toggle('ring-emerald-500/60', x === chip); });
+  });
+
+  // ---- a pick row: move the strike lines, repaint the payoff, no chart round trip -----
+  function payoff(strategy, pick) {
+    if (!window.htmx || !sym) return;
+    htmx.ajax('GET', '/options/payoff/' + encodeURIComponent(sym) + '?strategy=' + encodeURIComponent(strategy) +
+              '&pick=' + pick + '&units=' + encodeURIComponent(units()), { target: '#optPayoff', swap: 'innerHTML' });
+  }
+  window.thOptionsPayoff = payoff;
+  document.addEventListener('click', function (e) {
+    var row = e.target.closest ? e.target.closest('.opt-pick') : null;
+    if (!row || (e.target.closest && e.target.closest('a, button, input, select, details'))) return;
+    var host = document.getElementById('optPicks');
+    var i = parseInt(row.dataset.pick || '0', 10) || 0;
+    if (host) host.dataset.pick = String(i);
+    document.querySelectorAll('.opt-pick').forEach(function (r) {
+      r.classList.toggle('opt-pick-on', r === row);
+      r.classList.toggle('ring-1', r === row);
+      r.classList.toggle('ring-emerald-500/60', r === row);
+    });
+    var pickIn = document.querySelector('#optActions input[name="pick"]');
+    if (pickIn) pickIn.value = String(i);
+    var qty = document.querySelector('#optActions input[name="contracts"]');
+    var n = parseInt(row.dataset.contracts || '0', 10) || 0;
+    if (qty) { qty.value = String(n); }
+    var track = document.querySelector('#optActions button[name="track"]');
+    if (track) track.disabled = !n;
+    var line = document.getElementById('optSizingLine');
+    if (line && row.dataset.sizing) line.textContent = row.dataset.sizing;
+    var spec = null;
+    try { spec = JSON.parse(row.dataset.strikes || 'null'); } catch (err) {}
+    if (spec && window.thChartSetStrikes) {
+      try { window.thChartSetStrikes(spec); } catch (err) {}
+    } else if (spec && window.htmx) {
+      // the generalised strike painter is not on this build: redraw the chart instead
+      var strategy = window.thCardStrategy();
+      htmx.ajax('GET', '/options/chart/' + encodeURIComponent(sym) + '?strategy=' + encodeURIComponent(strategy) + '&pick=' + i,
+                { target: '#optChartBody', swap: 'innerHTML' });
+    }
+    payoff(window.thCardStrategy(), i);
+    var chainBox = document.querySelector('#optActions [data-chain-url]');
+    if (chainBox && row.dataset.expiry) chainBox.setAttribute('hx-get', chainBox.dataset.chainUrl + '?expiry=' + encodeURIComponent(row.dataset.expiry) + '&strategy=' + encodeURIComponent(window.thCardStrategy()) + '&pick=' + i);
+  });
+  // the $|R toggle inside the payoff pane (_payoff_chart.html's .po-units buttons)
+  // re-requests its own URL; the choice is remembered so the next pane opens in it
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('.po-units[data-units]') : null;
+    if (!b) return;
+    try { localStorage.setItem(UNITKEY, b.dataset.units === 'R' ? 'R' : '$'); } catch (err) {}
+  });
+
+  // ---- a rule save: the picks re-render themselves; recompute = the whole card -----
+  document.body.addEventListener('options:rules-changed', function (e) {
+    var d = e.detail || {};
+    if (d.recompute && tab === 'ideas' && sym && window.htmx) {
+      htmx.ajax('GET', '/options/card/' + encodeURIComponent(sym) + '?strategy=' + encodeURIComponent(window.thCardStrategy()), { target: '#optPane', swap: 'innerHTML' });
+    }
+  });
+  // the debit tab's three sub-sections: collapsed on < lg, open on a wide screen
+  document.body.addEventListener('htmx:afterSwap', function (e) {
+    var t = e.detail && e.detail.target;
+    if (!t || t.id !== 'optRulesBody') return;
+    if (window.innerWidth >= 1024) t.querySelectorAll('details.opt-rules-sec').forEach(function (d) { d.open = true; });
+  });
+  // safety switches: the consequence sentence shows BEFORE Save
+  document.addEventListener('change', function (e) {
+    var el = e.target;
+    if (!el || !el.dataset || !el.dataset.safety) return;
+    var off = (el.type === 'checkbox') ? !el.checked : (el.value === 'defined_risk_only');
+    var note = el.parentNode.querySelector('.opt-safety-note');
+    if (!note) { note = document.createElement('span'); note.className = 'opt-safety-note text-[10px] text-amber-300'; el.parentNode.appendChild(note); }
+    note.textContent = off ? el.dataset.safety : '';
+  });
+
+  // ---- Track this -> the Positions tab ------------------------------------------
+  document.body.addEventListener('options:tracked', function (e) {
+    tab = 'positions';
+    try { localStorage.setItem(TABKEY, tab); } catch (err) {}
+    paintTabs();
+  });
+
+  // ---- the nav badge also feeds the tab counts ----------------------------------
+  document.body.addEventListener('htmx:afterRequest', function (e) {
+    var el = e.detail && e.detail.elt;
+    if (!el || el.id !== 'pfNavBadge' || !e.detail.successful) return;
+    var d; try { d = JSON.parse(e.detail.xhr.responseText); } catch (err) { return; }
+    var pc = document.getElementById('optPosCount'), ic = document.getElementById('optIdeasCount');
+    var n = (d.urgent || 0) + (d.watch || 0);
+    if (pc) { pc.textContent = n ? ('●' + n) : ''; pc.classList.toggle('hidden', !n); }
+    if (ic) { ic.textContent = d.ideas_new ? ('●' + d.ideas_new) : ''; ic.classList.toggle('hidden', !d.ideas_new); }
+  });
+
+  // ---- failure reporting on the pane (Portfolio's box) ---------------------------
+  function fail(kind, xhr) {
+    var status = xhr ? xhr.status : 0;
+    if (status === 409 || status === 429) return;      // a toast already said it
+    var body = xhr && xhr.responseText ? xhr.responseText : '';
+    body = body.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 600);
+    pane.innerHTML =
+      '<div class="rounded border border-rose-600/60 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-300">' +
+      '<div class="font-semibold">The card could not load: ' + kind + (status ? ' (HTTP ' + status + ')' : '') + '</div>' +
+      (body ? '<pre class="mt-1 whitespace-pre-wrap text-[10px] text-rose-200/80">' + body.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</pre>' : '') +
+      '<div class="mt-1 text-slate-400">An administrator can read the server log at <a class="underline" href="/admin/log?lines=150">/admin/log</a>.</div></div>';
+  }
+  pane.addEventListener('htmx:responseError', function (e) { fail('server error', e.detail.xhr); });
+  pane.addEventListener('htmx:sendError', function (e) { fail('network error', e.detail.xhr); });
+  pane.addEventListener('htmx:timeout', function (e) { fail('timed out', e.detail.xhr); });
+
+  // ---- the member's own IBKR bridge (127.0.0.1) ----------------------------------
+  function get(path) {
+    return fetch(BRIDGE + path, { mode: 'cors', cache: 'no-store' }).then(function (r) { return r.json(); });
+  }
+  function describe(err) {
+    return { page_origin: location.origin, page_secure: location.protocol === 'https:', bridge: BRIDGE,
+             err_name: (err && err.name) || 'unknown', err_message: (err && err.message) || String(err) };
+  }
+  function bridgeDown(err) {
+    var d = describe(err);
+    return { ok: false, source: 'bridge ' + BRIDGE, diag: d, error: 'Could not reach the IBKR bridge on ' + BRIDGE + '.' };
+  }
+  var bridgeUp = null, bridgeVersion = '';
+  function syncLive() {
+    document.querySelectorAll('.opt-live-btn').forEach(function (b) {
+      var old = bridgeVersion && bridgeVersion < BRIDGE_MIN;
+      b.textContent = 'Live (TWS)' + (bridgeUp ? ' · up' : '') + (old ? ' · older than ' + BRIDGE_MIN : '');
+      b.classList.toggle('text-emerald-300', !!bridgeUp);
+      b.classList.toggle('border-emerald-500/60', !!bridgeUp);
+    });
+  }
+  function probe() {
+    if (touch) return;
+    get('/health').then(function (h) {
+      bridgeUp = !!(h && h.ok);
+      var v = String((h && (h.server_version || h.version)) || '');
+      var m = v.match(/(\d+\.\d+)/);
+      bridgeVersion = m ? m[1] : '';
+      syncLive();
+    }).catch(function () { bridgeUp = false; syncLive(); });
+  }
+  probe();
+
+  window.thOptionsLive = function (s, strategy) {
+    s = s || sym;
+    if (!s) return;
+    var btns = document.querySelectorAll('.opt-live-btn');
+    btns.forEach(function (b) { b.disabled = true; b.textContent = 'Reading your TWS…'; });
+    Promise.all([
+      get('/chain?symbol=' + encodeURIComponent(s) + '&dte_min=25&dte_max=70&side=put').catch(bridgeDown),
+      get('/iv?symbol=' + encodeURIComponent(s) + '&series=1').catch(function () { return {}; }),
+      get('/account').catch(function () { return {}; })
+    ]).then(function (r) {
+      var q = strategy || window.thCardStrategy();
+      return fetch('/options/live/' + encodeURIComponent(s) + (q ? '?strategy=' + encodeURIComponent(q) : ''), {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chain: r[0] || {}, iv: r[1] || {}, nlv: (r[2] || {}).net_liquidation, diag: (r[0] || {}).diag || null })
+      });
+    }).then(function (res) { return res.text(); })
+      .then(function (html) {
+        var c = card();
+        if (c) { c.outerHTML = html; } else { pane.innerHTML = html; }
+        if (window.htmx) htmx.process(pane);
+        syncLive();
+      })
+      .catch(function () {
+        if (window.thToast) window.thToast('Could not reach TradeHunter to grade the live chain.', 'err');
+        btns.forEach(function (b) { b.disabled = false; });
+        syncLive();
+      });
+  };
+
+  // Ask Windows to run start_ibkr_bridge.bat (tradehunter://start-bridge, registered
+  // once by bridge/install_bridge.ps1), then poll /health - the Watchlist tab's gesture.
+  window.thStartBridge = function (btn) {
+    if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
+    try { window.location.href = 'tradehunter://start-bridge'; } catch (e) {}
+    var tries = 0;
+    var timer = setInterval(function () {
+      tries++;
+      get('/health').then(function (h) {
+        if (!h || !h.ok) return;
+        clearInterval(timer);
+        if (btn) btn.textContent = 'Bridge up - reading…';
+        probe();
+        window.thOptionsLive(sym);
+      }).catch(function () {
+        if (tries >= 15) {
+          clearInterval(timer);
+          if (btn) { btn.disabled = false; btn.textContent = 'Start the bridge'; }
+          var note = document.getElementById('bridgeStartNote');
+          if (note) note.classList.remove('hidden');
+        }
+      });
+    }, 2000);
+  };
+
+  // Run my TWS scanner: the bridge /scan with the three pair floors, then the symbols
+  // land as basket rows with source 'scanner' (the IV Rank page's flow).
+  window.thScanImport = function (btn) {
+    function num(id, d) { var el = document.getElementById(id); var v = el ? parseFloat(el.value) : NaN; return isNaN(v) ? d : v; }
+    var rank = num('optScanRank', 30), price = num('optScanPrice', 50), vol = num('optScanVol', 200000);
+    if (btn) { btn.disabled = true; btn.textContent = 'Asking TWS…'; }
+    get('/scan?iv_rank=' + rank + '&price=' + price + '&volume=' + vol)
+      .then(function (j) {
+        if (!j || !j.ok) {
+          if (window.thToast) window.thToast('TWS scan failed: ' + ((j && j.error) || 'the bridge did not answer'), 'err');
+          return null;
+        }
+        return fetch('/options/basket/import', { method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ source: 'scanner', symbols: j.symbols || [], note: 'TWS scan' }) })
+          .then(function (r) { return r.json(); })
+          .then(function (res) {
+            if (window.thToast) window.thToast((res.added || 0) + ' added from your TWS scan' + (res.over_cap ? ', ' + res.over_cap + ' over the cap' : ''), 'ok');
+            document.body.dispatchEvent(new CustomEvent('options:basket-changed', { detail: { n: res.total } }));
+          });
+      })
+      .catch(function () { if (window.thToast) window.thToast('Could not reach your IBKR bridge on this PC (' + BRIDGE + '). Start TWS and bridge\\start_ibkr_bridge.bat, then try again.', 'err'); })
+      .then(function () { if (btn) { btn.disabled = false; btn.textContent = 'Run my TWS scanner'; } });
+  };
+
+  // Paste / import buttons post JSON and let the basket re-render itself
+  window.thBasketImport = function (source, text, symbols) {
+    return fetch('/options/basket/import', { method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source: source, text: text || '', symbols: symbols || [] }) })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (window.thToast) window.thToast((res.added || 0) + ' added, ' + (res.skipped || 0) + ' skipped' + (res.over_cap ? ', ' + res.over_cap + ' over the cap' : ''), res.added ? 'ok' : 'info');
+        document.body.dispatchEvent(new CustomEvent('options:basket-changed', { detail: { n: res.total } }));
+      })
+      .catch(function () { if (window.thToast) window.thToast('Could not import - try again.', 'err'); });
+  };
+
+  // ---- Refresh all stale (the strip's button): one at a time, the server paces it ----
+  window.thRefreshStale = function (btn) {
+    var list = [];
+    try { list = JSON.parse(btn.dataset.symbols || '[]'); } catch (e) {}
+    if (!list.length) return;
+    btn.disabled = true;
+    var i = 0;
+    function next() {
+      if (i >= list.length) { btn.disabled = false; document.body.dispatchEvent(new CustomEvent('options:basket-changed', { detail: {} })); return; }
+      var s = list[i++];
+      btn.textContent = 'Refreshing ' + s + ' (' + i + '/' + list.length + ')…';
+      fetch('/options/refresh/' + encodeURIComponent(s), { method: 'POST', credentials: 'same-origin' })
+        .catch(function () {}).then(function () { setTimeout(next, 1500); });
+    }
+    next();
+  };
+
+  // ---- the Positions chart expand (Portfolio's handler, delegated) -------------------
+  (function () {
+    var KEY = 'options_chart_max';
+    function wrap() { return document.getElementById('pfChartWrap'); }
+    function paint(on) {
+      var w = wrap(); if (!w) return;
+      w.classList.toggle('pf-max', on);
+      document.body.classList.toggle('pf-max-open', on);
+      var b = document.getElementById('pfChartExpand');
+      if (b) { b.innerHTML = on ? '&#10529;' : '&#10530;'; b.title = on ? 'Restore the chart (Esc)' : 'Expand the chart to fill the window (Esc to restore)'; }
+      try { window.dispatchEvent(new Event('resize')); } catch (e) {}
+    }
+    function set(on) { try { localStorage.setItem(KEY, on ? '1' : '0'); } catch (e) {} paint(on); }
+    function isOn() { try { return localStorage.getItem(KEY) === '1'; } catch (e) { return false; } }
+    document.addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('#pfChartExpand') : null;
+      if (!b) return;
+      e.preventDefault();
+      set(!wrap().classList.contains('pf-max'));
+    });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && wrap() && wrap().classList.contains('pf-max')) set(false); });
+    document.addEventListener('htmx:afterSwap', function () { if (isOn() && wrap()) paint(true); });
+  })();
+  // the per-trade drawer on the Positions tab
+  document.addEventListener('click', function (e) {
+    var t = e.target.closest ? e.target.closest('.pf-more') : null;
+    if (!t) return;
+    e.preventDefault(); e.stopPropagation();
+    var d = document.querySelector('.pf-drawer[data-row="' + t.dataset.row + '"]');
+    if (!d) return;
+    d.hidden = !d.hidden;
+    if (!d.hidden && window.htmx) htmx.process(d);
+    t.classList.toggle('border-emerald-600', !d.hidden);
+    t.classList.toggle('text-emerald-300', !d.hidden);
+  });
+
+  // ---- the Telegram pause link (?pause=7 from a message) ---------------------------
+  var pauseDays = parseInt(page.dataset.pause || '0', 10) || 0;
+  if (pauseDays && window.htmx) {
+    if (window.confirm('Pause Telegram ideas for ' + pauseDays + ' days?')) {
+      htmx.ajax('POST', '/options/telegram', { target: '#optRulesBody', swap: 'innerHTML', values: { action: 'pause', pause_days: pauseDays } });
+      var det = document.getElementById('optRules'); if (det) det.open = true;
+    }
+    try { history.replaceState(null, '', '/options' + (sym ? '?symbol=' + encodeURIComponent(sym) : '')); } catch (e) {}
+  }
+
+  paintTabs();
+  loadPane();
+})();
+</script>
+{% endblock %}

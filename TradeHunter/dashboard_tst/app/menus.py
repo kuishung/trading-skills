@@ -30,6 +30,11 @@ MENUS = [
     # Curated — each member's own dated calls (entry/stop/target), judged from
     # price history. Replaced the Portfolio placeholder 2026-09-07 (user).
     ("curated",          "Curated",           None, "/curated"),
+    # Options — ONE page (basket · ticker card · My rules) that replaces IV Rank,
+    # Spread and Positions (2026-10-04); those three stay reachable by URL (see
+    # HIDDEN_KEYS) with their guards widened to accept this key. A flat item, no
+    # dropdown (the dropdown is what 2026-10-01 removed).
+    ("options",          "Options",           None, "/options"),
 ]
 # Off the nav since 2026-10-01 (user: "i want to disable the Company, macro,
 # options") - the SAME treatment as the 2026-09-15 removal: the pages stay

@@ -1,0 +1,828 @@
+{
+ "generated_at": "2026-10-04T14:27:47+00:00",
+ "prefs": "house + shared.earnings_rule=defined_risk_only, NLV 100000 at 1%",
+ "lrcx": {
+  "symbol": "LRCX",
+  "today": "2026-10-02",
+  "as_of": "2026-10-02T15:59:59",
+  "chart": {
+   "trend": "up",
+   "trend_days": 1,
+   "atr": 13.9449,
+   "close": 347.49,
+   "setup": null,
+   "setups": [],
+   "plan": null,
+   "levels": {
+    "support": 300.82,
+    "resistance": null,
+    "target_up": null,
+    "target_dn": 300.82
+   },
+   "structure": "decelerated",
+   "w_uptrend": true,
+   "slow_drift": false,
+   "earnings": {
+    "date": "2026-10-21",
+    "days": 19
+   }
+  },
+  "iv": {
+   "iv30": 60.233,
+   "hv20": 57.6892,
+   "iv_hv_premium": 1.0441,
+   "iv_rank": 61.5,
+   "iv_pct": 61.1,
+   "iv_n": 252,
+   "state": "ok",
+   "basis": "rank",
+   "provisional": false,
+   "iv_front": 60.802,
+   "iv_back": 59.469,
+   "term_ratio": 1.0224,
+   "verdict": "SELL",
+   "verdict_why": "IV rank 62 (>= 50) and priced for 4% more movement than the stock has actually shown",
+   "gates": {
+    "buy": false,
+    "sell_directional": true,
+    "sell_neutral": true,
+    "mid": false
+   },
+   "earnings_date": "2026-10-21",
+   "earnings_days": 19
+  },
+  "recommended": null,
+  "strategies": [
+   {
+    "key": "buy_call",
+    "fit": "rejected",
+    "score": null,
+    "reason_key": "no_setup",
+    "shown": false,
+    "step": 2
+   },
+   {
+    "key": "buy_put",
+    "fit": "rejected",
+    "score": null,
+    "reason_key": "wrong_direction",
+    "shown": false,
+    "step": 2
+   },
+   {
+    "key": "bull_call",
+    "fit": "rejected",
+    "score": null,
+    "reason_key": "no_setup",
+    "shown": false,
+    "step": 2
+   },
+   {
+    "key": "bear_put",
+    "fit": "rejected",
+    "score": null,
+    "reason_key": "wrong_direction",
+    "shown": false,
+    "step": 2
+   },
+   {
+    "key": "leaps_call",
+    "fit": "rejected",
+    "score": null,
+    "reason_key": "expensive",
+    "shown": false,
+    "step": 4
+   },
+   {
+    "key": "diagonal_call",
+    "fit": "rejected",
+    "score": null,
+    "reason_key": "expensive",
+    "shown": false,
+    "step": 4
+   },
+   {
+    "key": "bull_put",
+    "fit": "rejected",
+    "score": null,
+    "reason_key": "no_setup",
+    "shown": true,
+    "step": 1
+   },
+   {
+    "key": "bear_call",
+    "fit": "rejected",
+    "score": null,
+    "reason_key": "wrong_direction",
+    "shown": false,
+    "step": 1
+   },
+   {
+    "key": "iron_condor",
+    "fit": "rejected",
+    "score": null,
+    "reason_key": "trending_not_sideways",
+    "shown": false,
+    "step": 3
+   },
+   {
+    "key": "calendar",
+    "fit": "rejected",
+    "score": null,
+    "reason_key": "no_setup",
+    "shown": false,
+    "step": 4
+   }
+  ],
+  "picks": {},
+  "sizing": null,
+  "ticket": null,
+  "engine": {
+   "status": "no_setup",
+   "headline": "Uptrend: EMA 20 above 50 above 200 for 1 day. No fresh setup today. Options are expensive (IV rank 62 over the last year), so there is nothing to do today - check again tomorrow.",
+   "engine_version": "1.0.0",
+   "picks_status": {},
+   "recommended": null
+  },
+  "forced": {
+   "prefs": "house + shared.earnings_rule=defined_risk_only + shared.max_leg_spread=1.5",
+   "setup": {
+    "kind": "support_bounce",
+    "direction": "up",
+    "level": 333.06,
+    "zone": [
+     331.94,
+     334.18
+    ],
+    "touches": 3,
+    "quality": 80,
+    "vol_high": true,
+    "vol_ratio": 1.7,
+    "candle": {
+     "time": "2026-10-02",
+     "kind": "pin",
+     "low": 331.94
+    },
+    "summary": "bounce off 333.06 (3 touches) on high volume (planted)"
+   },
+   "plan": {
+    "entry": 347.0,
+    "stop": 328.45,
+    "target": 384.09,
+    "r": 18.55
+   },
+   "recommended": "bull_put",
+   "strategies": [
+    {
+     "key": "bull_put",
+     "fit": "recommended",
+     "score": 90.0,
+     "reason_key": null
+    },
+    {
+     "key": "buy_call",
+     "fit": "rejected",
+     "score": null,
+     "reason_key": "expensive"
+    },
+    {
+     "key": "buy_put",
+     "fit": "rejected",
+     "score": null,
+     "reason_key": "wrong_direction"
+    },
+    {
+     "key": "bull_call",
+     "fit": "rejected",
+     "score": null,
+     "reason_key": "expensive"
+    },
+    {
+     "key": "bear_put",
+     "fit": "rejected",
+     "score": null,
+     "reason_key": "wrong_direction"
+    },
+    {
+     "key": "leaps_call",
+     "fit": "rejected",
+     "score": null,
+     "reason_key": "expensive"
+    },
+    {
+     "key": "diagonal_call",
+     "fit": "rejected",
+     "score": null,
+     "reason_key": "expensive"
+    },
+    {
+     "key": "bear_call",
+     "fit": "rejected",
+     "score": null,
+     "reason_key": "wrong_direction"
+    },
+    {
+     "key": "iron_condor",
+     "fit": "rejected",
+     "score": null,
+     "reason_key": "trending_not_sideways"
+    },
+    {
+     "key": "calendar",
+     "fit": "rejected",
+     "score": null,
+     "reason_key": "no_setup"
+    }
+   ],
+   "bull_put": {
+    "status": "ok",
+    "considered": 20,
+    "rules_line": "delta 0.20-0.30 \u00b7 30-60 days \u00b7 width 0.5-1.5 ATR ($7-21) \u00b7 credit >= 25% of the risk \u00b7 under support 333.1",
+    "degenerate": null,
+    "picks": [
+     {
+      "expiry": "2026-11-20",
+      "dte": 49,
+      "legs": [
+       [
+        310.0,
+        "sell",
+        "P",
+        13.475,
+        -0.2594,
+        0.6045
+       ],
+       [
+        300.0,
+        "buy",
+        "P",
+        10.325,
+        -0.2144,
+        0.6025
+       ]
+      ],
+      "net": -3.15,
+      "width": 10.0,
+      "max_profit": 315.0,
+      "max_loss": 685.0,
+      "breakevens": [
+       306.85
+      ],
+      "pop": 0.7406,
+      "pop_kind": "keep",
+      "pop_model": 0.683,
+      "chart_stop": 328.45,
+      "chart_stop_pl": -111.07,
+      "rule_stop_pl": -137.0,
+      "score": 0.307,
+      "constraint_ok": true,
+      "tier": "limit",
+      "worst_fill": -2.15,
+      "why": [
+       "best fit to your rules",
+       "most credit per $ risked",
+       "smallest max loss",
+       "bid/ask at the limit",
+       "barely traded today"
+      ],
+      "greeks": {
+       "delta": 0.045,
+       "theta": 0.0254,
+       "vega": -0.041,
+       "gamma": -0.0004
+      },
+      "checks": [
+       [
+        "open interest >= 500",
+        true,
+        true
+       ],
+       [
+        "bid/ask <= $1.50 per leg",
+        true,
+        true
+       ],
+       [
+        "days to expiry 30-60",
+        true,
+        false
+       ],
+       [
+        "credit >= 25% of the risk",
+        true,
+        true
+       ],
+       [
+        "under support 333.06 (pad 0.25 ATR = 328.5)",
+        true,
+        true
+       ],
+       [
+        "earnings inside expiry",
+        false,
+        false
+       ],
+       [
+        "traded today >= 20 per leg",
+        false,
+        false
+       ]
+      ]
+     },
+     {
+      "expiry": "2026-11-20",
+      "dte": 49,
+      "legs": [
+       [
+        310.0,
+        "sell",
+        "P",
+        13.475,
+        -0.2594,
+        0.6045
+       ],
+       [
+        290.0,
+        "buy",
+        "P",
+        7.925,
+        -0.1734,
+        0.6074
+       ]
+      ],
+      "net": -5.55,
+      "width": 20.0,
+      "max_profit": 555.0,
+      "max_loss": 1445.0,
+      "breakevens": [
+       304.45
+      ],
+      "pop": 0.7406,
+      "pop_kind": "keep",
+      "pop_model": 0.694,
+      "chart_stop": 328.45,
+      "chart_stop_pl": -214.04,
+      "rule_stop_pl": -289.0,
+      "score": 0.256,
+      "constraint_ok": true,
+      "tier": "limit",
+      "worst_fill": -4.45,
+      "why": [
+       "most credit per contract",
+       "bid/ask at the limit",
+       "barely traded today"
+      ],
+      "greeks": {
+       "delta": 0.086,
+       "theta": 0.0529,
+       "vega": -0.0858,
+       "gamma": -0.0009
+      },
+      "checks": [
+       [
+        "open interest >= 500",
+        true,
+        true
+       ],
+       [
+        "bid/ask <= $1.50 per leg",
+        true,
+        true
+       ],
+       [
+        "days to expiry 30-60",
+        true,
+        false
+       ],
+       [
+        "credit >= 25% of the risk",
+        true,
+        true
+       ],
+       [
+        "under support 333.06 (pad 0.25 ATR = 328.5)",
+        true,
+        true
+       ],
+       [
+        "earnings inside expiry",
+        false,
+        false
+       ],
+       [
+        "traded today >= 20 per leg",
+        false,
+        false
+       ]
+      ]
+     },
+     {
+      "expiry": "2026-11-20",
+      "dte": 49,
+      "legs": [
+       [
+        300.0,
+        "sell",
+        "P",
+        10.325,
+        -0.2144,
+        0.6025
+       ],
+       [
+        290.0,
+        "buy",
+        "P",
+        7.925,
+        -0.1734,
+        0.6074
+       ]
+      ],
+      "net": -2.4,
+      "width": 10.0,
+      "max_profit": 240.0,
+      "max_loss": 760.0,
+      "breakevens": [
+       297.6
+      ],
+      "pop": 0.7856,
+      "pop_kind": "keep",
+      "pop_model": 0.732,
+      "chart_stop": 328.45,
+      "chart_stop_pl": -102.98,
+      "rule_stop_pl": -152.0,
+      "score": 0.223,
+      "constraint_ok": true,
+      "tier": "limit",
+      "worst_fill": -1.65,
+      "why": [
+       "highest chance",
+       "safer",
+       "most room below the price",
+       "bid/ask at the limit"
+      ],
+      "greeks": {
+       "delta": 0.041,
+       "theta": 0.0275,
+       "vega": -0.0448,
+       "gamma": -0.0005
+      },
+      "checks": [
+       [
+        "open interest >= 500",
+        true,
+        true
+       ],
+       [
+        "bid/ask <= $1.50 per leg",
+        true,
+        true
+       ],
+       [
+        "days to expiry 30-60",
+        true,
+        false
+       ],
+       [
+        "credit >= 25% of the risk",
+        true,
+        true
+       ],
+       [
+        "under support 333.06 (pad 0.25 ATR = 328.5)",
+        true,
+        true
+       ],
+       [
+        "earnings inside expiry",
+        false,
+        false
+       ],
+       [
+        "traded today >= 20 per leg",
+        true,
+        false
+       ]
+      ]
+     }
+    ]
+   },
+   "sizing": {
+    "by_chart_stop": 9,
+    "by_gap": 2,
+    "by_notional": 10,
+    "contracts": 2,
+    "stop_t_days": 0,
+    "stop_iv": 0.665,
+    "max_loss_pct_nlv": 1.4,
+    "fires_first": "chart",
+    "rule_stop_usd": 137.0,
+    "loss_at_stop_usd": 111.07,
+    "nlv_source": "prefs",
+    "line": "2 contracts: about $223 if the stop fires, up to $1,370 (1.4% of your account) if the stock gaps past it",
+    "note": null
+   },
+   "ticket": {
+    "contracts": 2,
+    "header": "Prices are from 02 Oct 15:59 ET. Press Refresh after 21:30 Malaysia time (US open) and re-open the ticket before sending; the credit will have moved.",
+    "net": {
+     "kind": "credit",
+     "limit": 3.15,
+     "floor": 2.0,
+     "per_contract_usd": 315.0,
+     "total_usd": 630.0,
+     "work": "enter at the mid (3.15); if unfilled in a few minutes step down 0.05 at a time, never below 2.00 (never below $200 a contract)"
+    },
+    "condition_default": null,
+    "condition_dip": {
+     "on": "LRCX",
+     "field": "last",
+     "op": "<=",
+     "value": 334.06,
+     "why": "the close (347.49) has run 4.3% past the level: enter on the dip to 0.3% above support 333.06 rather than chase",
+     "warning": "This order will also fire if LRCX crashes through 334.06 on bad news. Only use it while you are watching."
+    },
+    "stop": {
+     "chart": {
+      "level": 328.45,
+      "loss_usd": 222.14,
+      "per_contract_usd": 111.07,
+      "gap_usd": 1370.0,
+      "trigger": "LRCX last <= 328.45",
+      "trigger_outside_rth": false,
+      "fill": "market",
+      "close_at": 4.26,
+      "rth_note": "This order fires on the live price during regular hours, so it can fire on an intraday dip the close would have survived. If you prefer the close-based rule, leave this order off and act on the Positions tab's verdict instead."
+     },
+     "rule": {
+      "kind": "20% of max loss",
+      "loss_usd": 274.0,
+      "per_contract_usd": 137.0,
+      "close_at": 4.52
+     }
+    },
+    "target": {
+     "chart": null,
+     "rule": {
+      "kind": "50% of the credit",
+      "close_at": 1.57,
+      "profit_usd": 316.0
+     }
+    },
+    "exits_text": "Close if LRCX closes under 328.45 (the 333.06 support failed) - or if the spread is marked at 4.52 (20% of max loss). Take profit by buying it back at 1.57 (half the credit). Close or roll with 21 days left (Oct 30) whatever the P/L.",
+    "warnings": [
+     "earnings Oct 21 are inside this trade - allowed by your rules; the stop is the only protection",
+     "bid/ask at the limit - work the order at the mid and do not chase it"
+    ],
+    "tws": "Prices are from 02 Oct 15:59 ET. Press Refresh after 21:30 Malaysia time (US open) and re-open the ticket before sending; the credit will have moved.\nLRCX - Bull put spread (you are paid; the most you can lose is fixed) - 2 contracts - paste into TWS\nORDER 1 - ENTRY (combo, DAY, no condition - place it while the market is open)\n  Strategy Builder -> Vertical: SELL 2 LRCX 20 NOV 26 310 P / BUY 2 LRCX 20 NOV 26 300 P\n  Limit CREDIT 3.15 (mid). Work it: if not filled in a few minutes, lower 0.05 at a time, never below 2.00.\nORDER 2 - CHART STOP (combo, GTC, conditional) - the one order to set up before you walk away\n  BUY 2 LRCX 20 NOV 26 310 P / SELL 2 LRCX 20 NOV 26 300 P (close the spread)\n  Type: Market (recommended). Limit DEBIT 4.26 (the model's mark at the stop) is the second choice - it may not fill in a fast market.\n  Conditional tab -> Add -> Price -> LRCX (STK, SMART) -> Last <= 328.45 -> Trigger outside RTH: No -> transmit when true\n  This order fires on the live price during regular hours, so it can fire on an intraday dip the close would have survived. If you prefer the close-based rule, leave this order off and act on the Positions tab's verdict instead.\n  (you would lose about $223 here; up to $1,370 if the stock gaps past it)\nORDER 3 - TAKE PROFIT (combo, GTC)\n  BUY 2 LRCX 20 NOV 26 310 P / SELL 2 LRCX 20 NOV 26 300 P - Limit DEBIT 1.57 (half the credit kept). No condition.\nRule stop (no order - the Positions tab watches it): if the spread is marked at 4.52 or more (20% of max loss), close it.\nTime stop (no order - the Positions tab watches it): close or roll with 21 days left (Oct 30), whatever the P/L.\nNote: earnings Oct 21 are inside this trade - allowed by your rules; the stop is the only protection\nNote: bid/ask at the limit - work the order at the mid and do not chase it",
+    "moomoo": "Prices are from 02 Oct 15:59 ET. Press Refresh after 21:30 Malaysia time (US open) and re-open the ticket before sending; the credit will have moved.\nLRCX - Bull put spread (you are paid; the most you can lose is fixed) - 2 contracts - paste into moomoo\nENTRY (today, no condition - place it while the market is open)\n  Options -> Strategy -> Bull Put Spread: sell LRCX 2026/11/20 310 Put, buy LRCX 2026/11/20 300 Put, qty 2, limit net credit 3.15 (never below 2.00). DAY.\nCHART STOP (GTC, conditional) - two orders, in this order\n  1. Conditional Order -> Price condition -> monitor symbol LRCX -> trigger when last <= 328.45 -> Trigger outside RTH: No\n     -> order: BUY TO CLOSE 310 Put, qty 2 - Market, or limit 25.12 (the model's 21.84 x 1.15)\n  2. Then SELL TO CLOSE 300 Put, qty 2 - on the same trigger, or by hand once order 1 has filled\n  Never sell the long leg before the short leg is closed - you would be short a naked put.\n  This order fires on the live price during regular hours, so it can fire on an intraday dip the close would have survived. If you prefer the close-based rule, leave this order off and act on the Positions tab's verdict instead.\n  (you would lose about $223 here; up to $1,370 if the stock gaps past it)\nTAKE PROFIT (GTC)\n  Strategy ticket: close the spread at net debit 1.57. No condition.\nRule stop (no order - the Positions tab watches it): close if the spread is marked at 4.52 or more (20% of max loss).\nTime stop (no order - the Positions tab watches it): close or roll with 21 days left (Oct 30), whatever the P/L.\nNote: earnings Oct 21 are inside this trade - allowed by your rules; the stop is the only protection\nNote: bid/ask at the limit - work the order at the mid and do not chase it"
+   }
+  }
+ },
+ "isrg": {
+  "symbol": "ISRG",
+  "today": "2026-10-02",
+  "as_of": "2026-10-02T15:59:59",
+  "chart": {
+   "trend": "unclear",
+   "trend_days": 6,
+   "atr": 10.9654,
+   "close": 391.95,
+   "setup": null,
+   "setups": [],
+   "plan": null,
+   "levels": {
+    "support": 375.27,
+    "resistance": 405.42,
+    "target_up": 405.42,
+    "target_dn": 375.27
+   },
+   "structure": "decelerated",
+   "w_uptrend": false,
+   "slow_drift": false,
+   "earnings": {
+    "date": "2026-10-20",
+    "days": 18
+   }
+  },
+  "iv": {
+   "iv30": 43.434,
+   "hv20": 29.8321,
+   "iv_hv_premium": 1.4559,
+   "iv_rank": 40.5,
+   "iv_pct": 40.5,
+   "iv_n": 252,
+   "state": "ok",
+   "basis": "rank",
+   "provisional": false,
+   "iv_front": 44.0379,
+   "iv_back": 37.5455,
+   "term_ratio": 1.1729,
+   "verdict": "SELL",
+   "verdict_why": "IV rank 40 (30-50) and priced for 46% more movement than the stock has actually shown - sellers are paid",
+   "gates": {
+    "buy": false,
+    "sell_directional": true,
+    "sell_neutral": false,
+    "mid": true
+   },
+   "earnings_date": "2026-10-20",
+   "earnings_days": 18
+  },
+  "recommended": null,
+  "strategies": [
+   {
+    "key": "buy_call",
+    "fit": "rejected",
+    "score": null,
+    "reason_key": "wrong_direction",
+    "shown": false,
+    "step": 2
+   },
+   {
+    "key": "buy_put",
+    "fit": "rejected",
+    "score": null,
+    "reason_key": "wrong_direction",
+    "shown": false,
+    "step": 2
+   },
+   {
+    "key": "bull_call",
+    "fit": "rejected",
+    "score": null,
+    "reason_key": "wrong_direction",
+    "shown": false,
+    "step": 2
+   },
+   {
+    "key": "bear_put",
+    "fit": "rejected",
+    "score": null,
+    "reason_key": "wrong_direction",
+    "shown": false,
+    "step": 2
+   },
+   {
+    "key": "leaps_call",
+    "fit": "rejected",
+    "score": null,
+    "reason_key": "wrong_direction",
+    "shown": false,
+    "step": 4
+   },
+   {
+    "key": "diagonal_call",
+    "fit": "rejected",
+    "score": null,
+    "reason_key": "wrong_direction",
+    "shown": false,
+    "step": 4
+   },
+   {
+    "key": "bull_put",
+    "fit": "rejected",
+    "score": null,
+    "reason_key": "wrong_direction",
+    "shown": false,
+    "step": 1
+   },
+   {
+    "key": "bear_call",
+    "fit": "rejected",
+    "score": null,
+    "reason_key": "wrong_direction",
+    "shown": false,
+    "step": 1
+   },
+   {
+    "key": "iron_condor",
+    "fit": "rejected",
+    "score": null,
+    "reason_key": "trending_not_sideways",
+    "shown": false,
+    "step": 3
+   },
+   {
+    "key": "calendar",
+    "fit": "rejected",
+    "score": null,
+    "reason_key": "trending_not_sideways",
+    "shown": false,
+    "step": 4
+   }
+  ],
+  "picks": {},
+  "sizing": null,
+  "ticket": null,
+  "engine": {
+   "status": "no_setup",
+   "headline": "No clear trend: the EMAs are tangled. No fresh setup today. Options are expensive (IV rank 40 over the last year), so there is nothing to do today - check again tomorrow.",
+   "engine_version": "1.0.0",
+   "picks_status": {},
+   "recommended": null
+  },
+  "forced": {
+   "prefs": "house + shared.earnings_rule=defined_risk_only + shared.max_leg_spread=1.5",
+   "setup": {
+    "kind": "support_bounce",
+    "direction": "up",
+    "level": 380.38,
+    "zone": [
+     379.5,
+     381.26
+    ],
+    "touches": 3,
+    "quality": 80,
+    "vol_high": true,
+    "vol_ratio": 1.7,
+    "candle": {
+     "time": "2026-10-02",
+     "kind": "pin",
+     "low": 379.5
+    },
+    "summary": "bounce off 380.38 (3 touches) on high volume (planted)"
+   },
+   "plan": {
+    "entry": 391.35,
+    "stop": 376.76,
+    "target": 420.53,
+    "r": 14.59
+   },
+   "recommended": "bull_put",
+   "strategies": [
+    {
+     "key": "bull_put",
+     "fit": "recommended",
+     "score": 84.0,
+     "reason_key": null
+    },
+    {
+     "key": "bull_call",
+     "fit": "also_fits",
+     "score": 85.5,
+     "reason_key": "not_available_yet"
+    },
+    {
+     "key": "buy_call",
+     "fit": "rejected",
+     "score": null,
+     "reason_key": "expensive"
+    },
+    {
+     "key": "buy_put",
+     "fit": "rejected",
+     "score": null,
+     "reason_key": "wrong_direction"
+    },
+    {
+     "key": "bear_put",
+     "fit": "rejected",
+     "score": null,
+     "reason_key": "wrong_direction"
+    },
+    {
+     "key": "leaps_call",
+     "fit": "rejected",
+     "score": null,
+     "reason_key": "no_weekly_trend"
+    },
+    {
+     "key": "diagonal_call",
+     "fit": "rejected",
+     "score": null,
+     "reason_key": "no_setup"
+    },
+    {
+     "key": "bear_call",
+     "fit": "rejected",
+     "score": null,
+     "reason_key": "wrong_direction"
+    },
+    {
+     "key": "iron_condor",
+     "fit": "rejected",
+     "score": null,
+     "reason_key": "trending_not_sideways"
+    },
+    {
+     "key": "calendar",
+     "fit": "rejected",
+     "score": null,
+     "reason_key": "no_setup"
+    }
+   ],
+   "bull_put": {
+    "status": "degenerate",
+    "considered": 22,
+    "rules_line": "delta 0.20-0.30 \u00b7 30-60 days \u00b7 width 0.5-1.5 ATR ($5-16) \u00b7 credit >= 25% of the risk \u00b7 under support 380.4",
+    "degenerate": {
+     "reason_key": "thin",
+     "text": "The strikes under your rules are too thin (open interest under 500)."
+    },
+    "picks": []
+   },
+   "sizing": null,
+   "ticket": null
+  }
+ }
+}

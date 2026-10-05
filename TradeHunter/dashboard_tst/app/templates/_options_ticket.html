@@ -1,0 +1,89 @@
+{# The order ticket panel (part D D2.8): both broker renderings of
+   order_ticket.render(ticket, broker) in <pre>, the Refresh-first banner, the
+   header line and the footer lines. This panel prints B's text and adds only the
+   lines around it; it holds no ticket text of its own. Rendered into #optTicket.
+   Context: sym, strategy, label, chosen, dip, prefs, pick, contracts, tws, moomoo,
+   ticket, refresh_first, as_of, source, refused, unavailable, footer {line1, line2},
+   sizing_line, earnings. #}
+<div class="opt-ticket rounded-lg border border-slate-800 bg-slate-900/40 p-3 text-[11px]" id="optTicketPanel">
+  <div class="flex flex-wrap items-center gap-2 mb-2">
+    <span class="text-slate-200 font-semibold">Order ticket</span>
+    <span class="text-slate-500">{{ sym }} &middot; {{ label }}{% if contracts %} &middot; {{ contracts }} contract{{ '' if contracts == 1 else 's' }}{% endif %}</span>
+    <span class="ml-auto flex items-center gap-1">
+      {% if tws %}
+      <button type="button" class="optTicketTab px-2 py-0.5 rounded border border-emerald-500/60 text-emerald-300 bg-emerald-500/10" data-broker="tws">TWS</button>
+      <button type="button" class="optTicketTab px-2 py-0.5 rounded border border-slate-700 text-slate-400" data-broker="moomoo">moomoo</button>
+      <button type="button" class="px-2 py-0.5 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition"
+              onclick="(function(b){var p=document.querySelector('#optTicketPanel pre:not([hidden])');if(!p)return;navigator.clipboard.writeText(p.textContent).then(function(){b.textContent='Copied';setTimeout(function(){b.textContent='Copy';},1500);});})(this)">Copy</button>
+      {% endif %}
+      <button type="button" class="px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:text-slate-200 transition"
+              onclick="var t=document.getElementById('optTicket');if(t)t.innerHTML='';">Close</button>
+    </span>
+  </div>
+
+  {% if refused %}
+  {# a strategy rejected for earnings inside: ONE line, no legs, no prices #}
+  <p class="text-amber-300 leading-relaxed">{{ refused }}</p>
+  {% elif unavailable %}
+  <p class="text-slate-400 leading-relaxed">{{ unavailable }}</p>
+  {% else %}
+
+  {% if refresh_first %}
+  <div class="mb-2 rounded border border-amber-700/60 bg-amber-500/5 px-2 py-1 text-amber-300 leading-relaxed flex flex-wrap items-center gap-2">
+    <span>These prices are from {{ as_of }} and the market is open now. <b>Refresh first</b>, then re-open the ticket.</span>
+    <button type="button" class="px-2 py-0.5 rounded border border-amber-500/60 text-amber-300 hover:bg-amber-500/15 transition"
+            hx-post="/options/refresh/{{ sym }}?strategy={{ strategy }}" hx-target="closest .opt-card" hx-swap="outerHTML">Refresh</button>
+  </div>
+  {% endif %}
+
+  {% if contracts is not none and contracts == 0 %}
+  <p class="mb-2 text-amber-300">{{ sizing_line }} No orders to type until a contract fits.</p>
+  {% endif %}
+
+  <p class="mb-2 text-slate-400 leading-relaxed">Prices are from {{ as_of }}. Press Refresh after 21:30 Malaysia time (US open) and re-open the ticket before sending; the credit will have moved.</p>
+
+  <label class="inline-flex items-center gap-1 mb-2 text-slate-400 cursor-pointer" title="Off by default: a conditional entry also fires on a crash through the level. Only use it while you are watching.">
+    <input type="checkbox" class="accent-emerald-500" {% if dip %}checked{% endif %}
+           hx-get="/options/ticket/{{ sym }}?strategy={{ strategy }}&pick={{ pick_i if pick_i is defined else 0 }}&contracts={{ contracts or 0 }}&dip={{ 0 if dip else 1 }}"
+           hx-target="#optTicket" hx-swap="innerHTML" hx-trigger="change">
+    Enter on the dip
+  </label>
+  {% if dip and ticket and ticket.condition %}
+  <p class="mb-2 text-amber-300 leading-relaxed">{{ ticket.condition.warning or ('This order will also fire if ' ~ sym ~ ' crashes through ' ~ ticket.condition.value ~ ' on bad news. Only use it while you are watching.') }}</p>
+  {% endif %}
+
+  {% if tws %}
+  <pre class="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-slate-300 rounded border border-slate-800 bg-slate-950/60 p-2" data-broker="tws">{{ tws }}</pre>
+  <pre class="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-slate-300 rounded border border-slate-800 bg-slate-950/60 p-2" data-broker="moomoo" hidden>{{ moomoo }}</pre>
+  {% endif %}
+
+  {% if footer %}
+  <div class="mt-2 space-y-0.5 text-slate-400 leading-relaxed">
+    {% if sizing_line %}<p class="text-slate-300">{{ sizing_line }}</p>{% endif %}
+    <p>{{ footer.line1 }}</p>
+    <p class="text-slate-500">{{ footer.line2 }}</p>
+  </div>
+  {% endif %}
+
+  <details class="mt-2 text-[10px] text-slate-500">
+    <summary class="cursor-pointer select-none">Where these go in the broker</summary>
+    <p class="mt-1 leading-relaxed"><b class="text-slate-400">TWS:</b> Strategy Builder &rarr; Vertical &rarr; enter both legs &rarr; Limit price = credit &rarr; (the stop) Conditional tab &rarr; Price of {{ sym }} &le; stop &rarr; Trigger outside RTH: No.</p>
+    <p class="mt-1 leading-relaxed"><b class="text-slate-400">moomoo:</b> Options &rarr; Strategy &rarr; the spread &rarr; both legs &rarr; (the stop) Conditional order &rarr; Price condition on {{ sym }} &rarr; then buy to close the short leg first, sell the long leg second.</p>
+  </details>
+  {% endif %}
+</div>
+<script>
+(function () {
+  var panel = document.getElementById('optTicketPanel');
+  if (!panel) return;
+  panel.querySelectorAll('.optTicketTab').forEach(function (b) {
+    b.addEventListener('click', function () {
+      panel.querySelectorAll('.optTicketTab').forEach(function (x) {
+        var on = x === b;
+        x.className = 'optTicketTab px-2 py-0.5 rounded border ' + (on ? 'border-emerald-500/60 text-emerald-300 bg-emerald-500/10' : 'border-slate-700 text-slate-400');
+      });
+      panel.querySelectorAll('pre[data-broker]').forEach(function (p) { p.hidden = p.dataset.broker !== b.dataset.broker; });
+    });
+  });
+})();
+</script>

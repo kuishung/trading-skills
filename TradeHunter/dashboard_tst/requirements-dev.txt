@@ -1,0 +1,7 @@
+# Development-only extras for dashboard_tst. The app itself needs only
+# app/requirements.txt; install this on top to run the test suite:
+#
+#     py -m pip install -r requirements-dev.txt
+#     py -m pytest tests -q
+#
+pytest>=8.0

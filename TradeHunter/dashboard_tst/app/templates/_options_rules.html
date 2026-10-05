@@ -1,0 +1,143 @@
+{# The My rules drawer (part D D3.2): five tabs (Shared · Credit spreads · Buy call/put
+   · Iron condor · Time spreads), the one-line translation FIRST, the fields under
+   "change these" with override dots (amber; rose on a safety switch), the Shared
+   tab's account value / risk per trade and Telegram rows, the Credit tab's four exit
+   lines (trade_prefs keys), the debit tab's three sub-sections collapsed on < lg.
+   Rendered into #optRulesBody by GET / POST /options/rules, /options/rules/reset
+   and /options/telegram. Context: options_page._rules_context. #}
+<div class="opt-rules" id="optRulesPanel" data-tab="{{ tab }}" data-hash="{{ hash }}">
+  {# the <summary>'s own line is updated by an out-of-band swap #}
+  <span id="optRulesSummary" hx-swap-oob="true" class="text-slate-500">{{ summary }}</span>
+
+  <div class="flex flex-wrap items-center gap-1 mb-2 text-[11px]">
+    {% for key, lbl, n in tabs %}
+    <button type="button" hx-get="/options/rules?tab={{ key }}&sym={{ sym }}" hx-target="#optRulesBody" hx-swap="innerHTML"
+            class="px-2.5 py-1 rounded border transition {% if key == tab %}border-emerald-500/60 text-emerald-300 bg-emerald-500/10{% else %}border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-300{% endif %}">
+      {{ lbl }}{% if n %} <span class="text-amber-300" title="{{ n }} rule(s) changed from the house default">&middot;{{ n }}</span>{% endif %}</button>
+    {% endfor %}
+    <span class="ml-auto flex items-center gap-2 text-[10px]">
+      <button type="button" hx-post="/options/rules/reset" hx-vals='{"tab": "{{ tab }}", "sym": "{{ sym }}"}' hx-target="#optRulesBody" hx-swap="innerHTML"
+              hx-confirm="Put the {{ label }} rules back to the house defaults?" class="text-slate-500 hover:text-rose-300">Reset this tab</button>
+      <button type="button" hx-post="/options/rules/reset" hx-vals='{"tab": "all", "sym": "{{ sym }}"}' hx-target="#optRulesBody" hx-swap="innerHTML"
+              hx-confirm="Put EVERY rule back to the house defaults?" class="text-slate-500 hover:text-rose-300">Reset all</button>
+    </span>
+  </div>
+
+  <p class="text-[11px] text-slate-400 mb-2 leading-relaxed">{{ translation }}</p>
+  {% for e in err %}<div class="mb-1 rounded border border-rose-700/60 bg-rose-500/10 px-2 py-1 text-[11px] text-rose-300">{{ e }}</div>{% endfor %}
+  {% if msg %}<div class="mb-1 rounded border border-emerald-700/60 bg-emerald-500/5 px-2 py-1 text-[11px] text-emerald-300">{{ msg }}</div>{% endif %}
+
+  <form hx-post="/options/rules" hx-target="#optRulesBody" hx-swap="innerHTML">
+    <input type="hidden" name="tab" value="{{ tab }}">
+    <input type="hidden" name="sym" value="{{ sym }}">
+
+    {% if tab == 'shared' %}
+    {# account value and risk per trade: trade_prefs keys, shared with Curated; never hashed #}
+    <div class="grid gap-x-4 gap-y-1.5 sm:grid-cols-2 lg:grid-cols-3 mb-2">
+      <label class="text-[10px] text-slate-500 flex flex-col" title="Sizes every idea: contracts = the smaller of your 1% at the stop, twice that at the gap, and 10% of the account. Never changes which strikes are picked.">
+        <span>Account value</span>
+        <span><input type="number" name="nlv" value="{{ '%.0f'|format(nlv) if nlv else '' }}" min="0" step="1000" placeholder="not told yet"
+               class="w-28 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 outline-none focus:border-emerald-500"> <span class="text-slate-600">$</span></span>
+        <span class="text-slate-600">{% if nlv %}sized on ${{ '{:,.0f}'.format(nlv) }}{% else %}until you tell us, nothing is sized{% endif %}</span>
+      </label>
+      <label class="text-[10px] text-slate-500 flex flex-col" title="How much of the account one idea may lose if its chart stop fires. 1% is the house rule and the hard cap.">
+        <span>Risk per trade</span>
+        <span><input type="number" name="risk_pct" value="{{ risk_pct if risk_pct is not none else 1.0 }}" min="0.1" max="1" step="0.1"
+               class="w-20 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 outline-none focus:border-emerald-500"> <span class="text-slate-600">% of the account</span></span>
+        <span class="text-slate-600">at most 1% - the house cap</span>
+      </label>
+    </div>
+    {% endif %}
+
+    {% for block, block_label, fields in sections %}
+    <details class="opt-rules-sec mb-1.5" {% if tab != 'debit' %}open{% endif %}>
+      <summary class="text-[11px] text-slate-300 cursor-pointer select-none">{{ block_label }} <span class="text-slate-500">&middot; change these</span></summary>
+      <div class="grid gap-x-4 gap-y-1.5 sm:grid-cols-2 lg:grid-cols-3 mt-1">
+        {% for f in fields %}
+        <label class="text-[10px] text-slate-500 flex flex-col" title="{{ f.help }}">
+          <span>{{ f.label }}{% if f.overridden %} <span class="{% if f.is_safety %}text-rose-300{% else %}text-amber-300{% endif %}" title="changed from the house default {{ f.default }}">&#9679;</span>{% endif %}</span>
+          {% if f.kind == 'bool' %}
+          <span><input type="checkbox" name="{{ block }}.{{ f.key }}" value="1" {% if f.value %}checked{% endif %} class="accent-emerald-500 mt-1"
+                 {% if f.is_safety %}data-safety="Without this, the short strike can sit inside the zone the chart says must hold."{% endif %}></span>
+          {% elif f.kind == 'choice' %}
+          <span><select name="{{ block }}.{{ f.key }}" class="rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 outline-none focus:border-emerald-500"
+                  {% if f.is_safety %}data-safety="Without this, a trade can run through an earnings report - the one thing a stop cannot protect."{% endif %}>
+            {% for v, lbl in f.choices %}<option value="{{ v }}" {% if v == f.value %}selected{% endif %}>{{ lbl }}</option>{% endfor %}
+          </select></span>
+          {% else %}
+          <span><input type="number" name="{{ block }}.{{ f.key }}" value="{{ f.value }}" min="{{ f.lo }}" max="{{ f.hi }}" step="{{ f.step or 'any' }}"
+                 class="w-24 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 outline-none focus:border-emerald-500"> <span class="text-slate-600">{{ f.unit }}</span></span>
+          {% endif %}
+          {% if f.words %}<span class="text-slate-600">{{ f.words }}</span>{% endif %}
+        </label>
+        {% endfor %}
+      </div>
+    </details>
+    {% endfor %}
+
+    {% if tab == 'credit' %}
+    {# the four exit lines: trade_prefs keys, so this drawer, the legacy Positions page and the grader never disagree #}
+    <details class="opt-rules-sec mb-1.5" open>
+      <summary class="text-[11px] text-slate-300 cursor-pointer select-none">Exits <span class="text-slate-500">&middot; the Positions tab watches these</span></summary>
+      <div class="grid gap-x-4 gap-y-1.5 sm:grid-cols-2 lg:grid-cols-4 mt-1">
+        <label class="text-[10px] text-slate-500 flex flex-col" title="Close once this share of the credit is captured."><span>Take profit at{% if exit_lines.profit_target_pct != defaults_tp.profit_target_pct %} <span class="text-amber-300">&#9679;</span>{% endif %}</span>
+          <span><input type="number" name="profit_target_pct" value="{{ '%g'|format(exit_lines.profit_target_pct) }}" min="0" max="100" step="5" class="w-20 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 outline-none focus:border-emerald-500"> <span class="text-slate-600">% of the credit</span></span></label>
+        <label class="text-[10px] text-slate-500 flex flex-col" title="Close when the spread's loss reaches this share of the most it can lose."><span>Stop at{% if exit_lines.loss_stop_pct != defaults_tp.loss_stop_pct %} <span class="text-amber-300">&#9679;</span>{% endif %}</span>
+          <span><input type="number" name="loss_stop_pct" value="{{ '%g'|format(exit_lines.loss_stop_pct) }}" min="0" max="100" step="5" class="w-20 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 outline-none focus:border-emerald-500"> <span class="text-slate-600">% of max loss</span></span></label>
+        <label class="text-[10px] text-slate-500 flex flex-col" title="Close or roll with this many days left, whatever the P/L."><span>Out by{% if exit_lines.dte_floor != defaults_tp.dte_floor %} <span class="text-amber-300">&#9679;</span>{% endif %}</span>
+          <span><input type="number" name="dte_floor" value="{{ exit_lines.dte_floor }}" min="0" max="365" step="1" class="w-20 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 outline-none focus:border-emerald-500"> <span class="text-slate-600">days left</span></span></label>
+        <label class="text-[10px] text-slate-500 flex flex-col" title="Roll (or close) when the short strike's delta reaches this - the trade has walked too close."><span>Act at delta{% if exit_lines.roll_delta != defaults_tp.roll_delta %} <span class="text-amber-300">&#9679;</span>{% endif %}</span>
+          <span><input type="number" name="roll_delta" value="{{ '%g'|format(exit_lines.roll_delta) }}" min="0" max="1" step="0.01" class="w-20 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 outline-none focus:border-emerald-500"></span></label>
+      </div>
+    </details>
+    {% endif %}
+
+    {% if tab == 'debit' %}
+    <p class="text-[10px] text-slate-600 mb-1.5">The stop sits 1 ATR under the entry (and under the level that must hold); the target at 2R - the Curated convention, not a setting.</p>
+    {% endif %}
+
+    <div class="flex items-center gap-2 mt-1">
+      <button type="submit" class="px-3 py-1 rounded bg-emerald-600 text-white text-[11px] hover:bg-emerald-500 transition">Save {{ label }} rules</button>
+      <span class="text-[10px] text-slate-600">Saving re-reads the strikes on the card from the stored chain - no market call.</span>
+    </div>
+  </form>
+
+  {% if tab == 'shared' %}
+  {# ---- Telegram: opt-in through the chat-id handshake ---- #}
+  <div class="mt-3 border-t border-slate-800 pt-2 text-[10px] text-slate-500 space-y-1.5" id="optTelegram">
+    <div class="text-[11px] text-slate-300">Telegram
+      {% if telegram.enabled and telegram.verified %}<span class="text-emerald-300">&#10003; on</span>{% if telegram.chat_id %}<span class="text-slate-500"> &middot; chat {{ telegram.chat_id }}</span>{% endif %}
+      {% elif telegram.pending %}<span class="text-amber-300">&middot; waiting for your code</span>
+      {% else %}<span class="text-slate-500">&middot; off</span>{% endif %}
+      {% if telegram.quiet %}<span class="text-slate-500"> &middot; quiet</span>{% endif %}
+      {% if telegram.paused_until %}<span class="text-slate-500"> &middot; paused until {{ telegram.paused_until }}</span>{% endif %}
+    </div>
+    <p class="leading-relaxed">Send me each new idea on Telegram (once, the morning it appears). Open a chat with the TradeHunter bot and send /start - the bot replies with your chat id. Type it here and press Send code.</p>
+    <form class="flex flex-wrap items-center gap-1" hx-post="/options/telegram" hx-target="#optRulesBody" hx-swap="innerHTML">
+      <input type="hidden" name="action" value="request_code">
+      <label>My Telegram chat id <input type="text" name="chat_id" value="{{ (telegram.pending or {}).get('chat_id') or telegram.chat_id or '' }}" inputmode="numeric" placeholder="123456789"
+             class="w-32 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 outline-none focus:border-emerald-500"></label>
+      <button type="submit" class="px-2 py-0.5 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Send code</button>
+    </form>
+    <form class="flex flex-wrap items-center gap-1" hx-post="/options/telegram" hx-target="#optRulesBody" hx-swap="innerHTML">
+      <input type="hidden" name="action" value="verify">
+      <label>Code from the bot <input type="text" name="code" inputmode="numeric" maxlength="6" placeholder="6 digits"
+             class="w-20 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 outline-none focus:border-emerald-500"></label>
+      <button type="submit" class="px-2 py-0.5 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Verify</button>
+      <span class="text-slate-600">the chat id is accepted only with the code the bot sent to it</span>
+    </form>
+    <div class="flex flex-wrap items-center gap-2">
+      <button type="button" hx-post="/options/telegram" hx-vals='{"action": "quiet", "quiet": "{{ 0 if telegram.quiet else 1 }}"}' hx-target="#optRulesBody" hx-swap="innerHTML"
+              class="px-2 py-0.5 rounded border border-slate-700 text-slate-300 hover:border-slate-500 transition" title="Keep the ideas on the page, do not message me">
+        {% if telegram.quiet %}Messages on again{% else %}Quiet - keep the ideas on the page{% endif %}</button>
+      <button type="button" hx-post="/options/telegram" hx-vals='{"action": "pause", "pause_days": 7}' hx-target="#optRulesBody" hx-swap="innerHTML"
+              class="px-2 py-0.5 rounded border border-slate-700 text-slate-300 hover:border-slate-500 transition">Pause for 7 days</button>
+      {% if telegram.enabled %}
+      <button type="button" hx-post="/options/telegram" hx-vals='{"action": "disable"}' hx-target="#optRulesBody" hx-swap="innerHTML"
+              class="px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:border-rose-500 hover:text-rose-300 transition">Turn off</button>
+      {% endif %}
+    </div>
+    <p class="text-slate-600 leading-relaxed">A trend-line bounce and a range join the setup switches on Sector &amp; Industry and Curated when they land; they read from the same chart as this page.</p>
+  </div>
+  {% endif %}
+</div>

@@ -1,0 +1,40 @@
+{# The card's one chart (part D D1.6 / D2.4): sector._chart_ctx's context plus the
+   option overlays, all from the STORED setup (option_store.card_for) - no detector
+   runs on a request. Sets the chart_* variables in the order _sector_chart.html and
+   _portfolio_chart.html do and includes _price_chart.html.
+   Context: symbol, sel, sel_band, sel_patterns, curated, user, bounce, trendline,
+   range, spread, levels, family, strategy, pick, trade.
+     chart_bounce    = the support bounce from setup.sup (level + touches)
+     chart_trendline = trend_line.overlay(setup.tl, setup.tl_bounce)   (None until it lands)
+     chart_range     = range_box.overlay(setup.rng)                    (None until it lands)
+     chart_spread    = {legs, breakevens, expiry, label} for the credit / condor / time families
+     chart_levels    = {entry, stop, target} for the debit / long / leaps families - read-only:
+                       chart_setup_seed is deliberately NOT set, so the lines are not draggable
+                       here (the setup detector owns them). #}
+{% set chart_symbol = symbol %}
+{% set chart_exchange = sel.exchange if sel else None %}
+{% set chart_matp = sel.matp if sel else None %}
+{% set chart_mbp = sel.mbp if sel else None %}
+{% set chart_as_of = sel.as_of if sel else None %}
+{% set chart_earnings = sel.last_earnings_date if sel else None %}
+{% set chart_fill = true %}
+{% set chart_price_min = 'lg:min-h-[300px]' %}
+{% set chart_band = sel_band %}
+{% set chart_band_start_closed = true %}
+{% set chart_patterns = sel_patterns %}
+{% set chart_tv_plot = true %}
+{% set chart_matp_run = true %}
+{# the card is where the system has already curated; "Track this" is the hand-over, not Curate #}
+{% set chart_curate_setup = false %}
+{% if bounce %}{% set chart_bounce = bounce %}{% endif %}
+{% if trendline %}{% set chart_trendline = trendline %}{% endif %}
+{% if range %}{% set chart_range = range %}{% endif %}
+{% if family in ('credit_vertical', 'condor', 'time') and spread %}{% set chart_spread = spread %}{% endif %}
+{% if family in ('debit_vertical', 'long', 'leaps') and levels %}{% set chart_levels = levels %}{% endif %}
+{# how to re-render this chart in place (the D / W switch, a finished MATP run) #}
+{% if trade %}
+{% set chart_refresh = {'url': '/options/chart/' ~ symbol ~ '?trade=' ~ trade, 'target': '#pfChartBody'} %}
+{% else %}
+{% set chart_refresh = {'url': '/options/chart/' ~ symbol ~ '?strategy=' ~ (strategy or '') ~ '&pick=' ~ (pick or 0), 'target': '#optChartBody'} %}
+{% endif %}
+{% include "_price_chart.html" %}

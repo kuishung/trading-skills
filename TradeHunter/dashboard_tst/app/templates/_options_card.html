@@ -1,0 +1,163 @@
+{# The centre card for one ticker (part D D2.3): header, the stored headline, the
+   gauge with its basis, the chip row (recommended first, then every also-fits, then
+   at most two near-miss rejects with their reason, the rest behind "other
+   strategies"), the "What has to happen" line, the chart and the picks.
+   Wrapped in .opt-card and swapped by outerHTML (Refresh / Live re-render it).
+   Context: everything options_page._card_context returns. The headline is the
+   sentence the engine composed at WRITE time; nothing here recomposes it. #}
+<div class="opt-card flex flex-col lg:min-h-0" data-sym="{{ sym }}" data-strategy="{{ strategy }}">
+
+  {# ---- header ---- #}
+  <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] shrink-0">
+    <span class="text-sm font-semibold text-slate-200">{{ sym }}</span>
+    {% if spot is not none %}<span class="text-slate-300 tabular-nums">{{ '%.2f'|format(spot) }}</span>{% endif %}
+    {% if atr is not none %}<span class="text-slate-500 tabular-nums" title="Average true range over 14 days - the stock's usual daily swing. Every width and stop on this card is measured in it.">ATR {{ '%.1f'|format(atr) }}</span>{% endif %}
+    {% if card %}
+    <span class="{% if earnings.inside %}text-amber-300{% else %}text-slate-500{% endif %}" title="{{ earnings.line }}">
+      {%- if earnings.date %}earnings {{ earnings.label }}{% if earnings.inside %} &middot; inside expiry{% endif %}{% else %}no earnings date on file{% endif -%}
+    </span>
+    {% endif %}
+    <span class="ml-auto flex flex-wrap items-center gap-1">
+      <span class="{{ age.cls }}" title="{{ age.title }}">{{ age.text }}</span>
+      <span id="optRefreshSpin" class="htmx-indicator text-slate-500">&#8635;</span>
+      <button type="button" class="px-2 py-0.5 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition"
+              hx-post="/options/refresh/{{ sym }}?strategy={{ strategy }}" hx-target="closest .opt-card" hx-swap="outerHTML" hx-indicator="#optRefreshSpin"
+              title="Read today's delayed chain from Cboe now (about 2 seconds) and re-check the idea">Refresh</button>
+      <button type="button" class="opt-live-btn px-2 py-0.5 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition"
+              onclick="window.thOptionsLive('{{ sym }}')"
+              title="Quotes from your own TWS through the bridge on this PC - graded now, never stored (except a year of IV history)">Live (TWS)</button>
+      <span class="opt-live-hint text-slate-500">Live quotes need TWS on your PC</span>
+      {% if not in_basket %}
+      <button type="button" class="px-2 py-0.5 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition"
+              hx-post="/options/basket/add" hx-vals='{"symbol": "{{ sym }}"}' hx-target="#optBasket" hx-swap="innerHTML"
+              title="Add {{ sym }} to your basket so tonight's job reads it">+ Add to basket</button>
+      {% endif %}
+    </span>
+  </div>
+
+  {# ---- a one-line note from the POST that re-rendered the card ---- #}
+  {% if note %}
+  <div class="mt-1.5 rounded border px-2 py-1 text-[11px] leading-relaxed
+              {% if note_kind == 'ok' %}border-emerald-700/60 bg-emerald-500/5 text-emerald-300
+              {% elif note_kind == 'bridge' %}border-slate-700 bg-slate-900/40 text-slate-300
+              {% else %}border-amber-700/60 bg-amber-500/5 text-amber-300{% endif %}">
+    {{ note }}
+    {% if live and live.iv_note %}<div class="text-slate-400 mt-0.5">{{ live.iv_note }}</div>{% endif %}
+    {% if note_kind == 'bridge' %}
+    <div class="mt-1.5 flex flex-wrap items-center gap-2">
+      <button type="button" class="text-[11px] px-2 py-0.5 rounded border border-emerald-500/60 text-emerald-300 hover:bg-emerald-500/15 transition"
+              onclick="window.thStartBridge && window.thStartBridge(this)" title="Asks Windows to run start_ibkr_bridge.bat, then waits for it to come up">Start the bridge</button>
+      <button type="button" class="text-[11px] px-2 py-0.5 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition"
+              onclick="window.thOptionsLive('{{ sym }}')">Retry</button>
+    </div>
+    <p id="bridgeStartNote" class="hidden mt-1.5 text-[10px] text-amber-300/90 leading-relaxed">
+      The bridge did not come up. The button needs a one-time setup on this PC - run this once in PowerShell, then the button (and auto-start on boot) will work:
+      <code class="block mt-1 text-slate-300">powershell -ExecutionPolicy Bypass -File "{{ bridge_setup_path }}"</code>
+      Until then, start it by double-clicking <code class="text-slate-300">start_ibkr_bridge.bat</code>.
+    </p>
+    {% endif %}
+    {% if diag %}
+    <details class="mt-1.5 text-[10px]">
+      <summary class="cursor-pointer text-slate-400 select-none">Diagnostics</summary>
+      <dl class="mt-1 grid grid-cols-[9rem_1fr] gap-x-3 gap-y-0.5 text-slate-400 font-mono">
+        <dt>page origin</dt><dd class="text-slate-300">{{ diag.page_origin }}</dd>
+        <dt>page is HTTPS</dt><dd class="text-slate-300">{{ 'yes' if diag.page_secure else 'no' }}</dd>
+        <dt>bridge URL</dt><dd class="text-slate-300">{{ diag.bridge }}</dd>
+        <dt>error</dt><dd class="text-rose-300">{{ diag.err_name }}: {{ diag.err_message }}</dd>
+      </dl>
+    </details>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if job_missed %}
+  <div class="mt-1.5 rounded border border-amber-700/60 bg-amber-500/5 px-2 py-1 text-[11px] text-amber-300 leading-relaxed">
+    Last night's data job did not run{% if last_run and last_run.finished_at %} (last run {{ last_run.run_on }}){% endif %}.
+    {% if not live %}The cards show {{ age.text }} data. {% endif %}Press Refresh on a ticker for today's delayed data; an administrator can read <a class="underline" href="/admin/log?lines=150">/admin/log</a>.
+  </div>
+  {% endif %}
+
+  {% if card is none %}
+  {# ---- no signal yet (added today) - chips, picks, payoff hidden; the chart still shows ---- #}
+  <p class="mt-2 text-[12px] text-slate-400 leading-relaxed">
+    No read yet for {{ sym }} - it was added after last night's job. Press <b class="text-slate-200">Refresh</b>
+    to read today's delayed chain now, or wait for tonight.
+  </p>
+  <div id="optChartBody" class="mt-2 flex flex-col min-h-[300px] lg:flex-1 lg:min-h-0"
+       hx-get="/options/chart/{{ sym }}" hx-trigger="load" hx-swap="innerHTML">
+    <div class="text-xs text-slate-500 py-6 text-center">Loading chart&hellip;</div>
+  </div>
+  {% else %}
+
+  {# ---- the headline: one paragraph, stored at write time ---- #}
+  <p id="optHeadline" class="mt-2 text-[12px] text-slate-200 leading-relaxed">{{ headline }}</p>
+
+  {# ---- the gauge with its basis and the day count ---- #}
+  {% set verdict = iv.verdict or 'UNKNOWN' %}
+  <div id="optGauge" class="mt-1 flex flex-wrap items-center gap-x-2 text-[11px]">
+    <span class="flex items-center gap-1 tabular-nums">
+      {% for v, cls in [('SELL', 'text-amber-300'), ('NEUTRAL', 'text-slate-400'), ('BUY', 'text-teal-300')] %}
+      <span class="{% if verdict == v and not iv.provisional %}{{ cls }} font-semibold{% else %}text-slate-600{% endif %}">{{ v }} {% if verdict == v and not iv.provisional %}&#9679;{% else %}&#9675;{% endif %}</span>
+      {% endfor %}
+    </span>
+    <span class="text-slate-400" title="{{ iv_words or '' }}">{{ gauge }}</span>
+    {% if live and live.iv_rank is not none %}
+    <span class="text-emerald-300" title="Your TWS's own 52-week IV rank, this moment; the delayed figure is the server's">IV rank {{ live.iv_rank|round|int }} (TWS, live){% if iv.iv_rank is not none %} &middot; {{ iv.iv_rank|round|int }} (delayed){% endif %}</span>
+    {% endif %}
+  </div>
+
+  {# ---- the chip row: decision 9 ---- #}
+  <div id="optChips" class="mt-1.5 flex flex-wrap items-center gap-1 text-[11px]">
+    {% if chips.first %}
+    <button type="button" class="opt-chip px-2 py-0.5 rounded border border-emerald-500/60 bg-emerald-500/15 text-emerald-300 font-semibold {% if strategy == chips.first.key %}ring-1 ring-emerald-500/60{% endif %}"
+            data-strategy="{{ chips.first.key }}" hx-get="/options/picks/{{ sym }}?strategy={{ chips.first.key }}" hx-target="#optPicks" hx-swap="outerHTML"
+            title="Recommended today">&#10003; {{ chips.first.label }}</button>
+    {% endif %}
+    {% for c in chips.also_fits %}
+    <button type="button" class="opt-chip px-2 py-0.5 rounded border border-slate-600 text-slate-300 {% if strategy == c.key %}ring-1 ring-emerald-500/60{% endif %}"
+            data-strategy="{{ c.key }}" hx-get="/options/picks/{{ sym }}?strategy={{ c.key }}" hx-target="#optPicks" hx-swap="outerHTML"
+            title="{% if c.reason_key == 'not_available_yet' %}That strategy is not in TradeHunter yet{% else %}Also fits today{% endif %}">{{ c.label }} &middot; {% if c.reason_key == 'not_available_yet' %}not available yet{% else %}also fits{% endif %}</button>
+    {% endfor %}
+    {% for c in chips.greys %}
+    <button type="button" class="opt-chip px-2 py-0.5 rounded border border-slate-800 text-slate-500 opacity-70 {% if strategy == c.key %}ring-1 ring-emerald-500/60{% endif %}"
+            data-strategy="{{ c.key }}" hx-get="/options/picks/{{ sym }}?strategy={{ c.key }}" hx-target="#optPicks" hx-swap="outerHTML"
+            title="{{ c.reason or c.chip_text }}">{{ c.label }}{% if c.chip_text %} &middot; {{ c.chip_text }}{% endif %}</button>
+    {% endfor %}
+    {% if chips.rest %}
+    <details class="relative">
+      <summary class="cursor-pointer select-none text-slate-500 hover:text-slate-300 px-1">other strategies &#9662;</summary>
+      <div class="absolute left-0 mt-1 z-20 rounded border border-slate-800 bg-slate-900 shadow-xl py-1 min-w-[16rem]">
+        {% for c in chips.rest %}
+        <a href="#" class="opt-chip block px-3 py-1 text-slate-400 hover:bg-slate-800 hover:text-slate-200" data-strategy="{{ c.key }}"
+           hx-get="/options/picks/{{ sym }}?strategy={{ c.key }}" hx-target="#optPicks" hx-swap="outerHTML" title="{{ c.reason or '' }}"
+           onclick="this.closest('details').open = false;">{{ c.label }}{% if c.chip_text %} <span class="text-slate-600">&middot; {{ c.chip_text }}</span>{% elif c.fit == 'also_fits' %} <span class="text-slate-600">&middot; also fits</span>{% endif %}</a>
+        {% endfor %}
+      </div>
+    </details>
+    {% endif %}
+  </div>
+
+  {# ---- what has to happen ---- #}
+  {% if must_happen %}
+  <p id="optMust" class="mt-1.5 text-[12px] text-slate-300 leading-relaxed"><span class="text-slate-500">What has to happen:</span> {{ must_happen }}</p>
+  {% elif no_setup %}
+  <p id="optMust" class="mt-1.5 text-[12px] text-slate-400 leading-relaxed">No strategy fits today. The chart is for checking that read - nothing to pick.</p>
+  {% endif %}
+
+  {# ---- the one chart ---- #}
+  <div id="optChartBody" class="mt-2 flex flex-col min-h-[300px] lg:min-h-[320px] shrink-0"
+       hx-get="/options/chart/{{ sym }}?strategy={{ strategy }}&pick={{ pick_i }}" hx-trigger="load" hx-swap="innerHTML">
+    <div class="text-xs text-slate-500 py-6 text-center">Loading chart&hellip;</div>
+  </div>
+
+  {# ---- the picks: strikes, sizing line, payoff, actions (its own fragment) ---- #}
+  {% if live %}
+  {% include "_options_picks.html" %}
+  {% else %}
+  <div id="optPicks" class="opt-picks mt-2 shrink-0" data-pick="{{ pick_i }}"
+       hx-get="/options/picks/{{ sym }}?strategy={{ strategy }}&pick={{ pick_i }}" hx-trigger="load" hx-swap="outerHTML">
+    <div class="text-xs text-slate-500 py-3">Checking the strikes under your rules&hellip;</div>
+  </div>
+  {% endif %}
+  {% endif %}
+</div>

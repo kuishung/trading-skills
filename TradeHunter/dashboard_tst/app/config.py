@@ -37,6 +37,15 @@ def _csv(value: str | None) -> tuple[str, ...]:
     return tuple(p.strip().lower() for p in value.split(",") if p.strip())
 
 
+def _int(value: str | None, default: int, lo: int = 1) -> int:
+    """A positive integer setting; anything unparsable or below ``lo`` is the default."""
+    try:
+        v = int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+    return v if v >= lo else default
+
+
 @dataclass
 class Settings:
     # Core
@@ -195,6 +204,30 @@ class Settings:
     )
     research_runner_timeout: float = field(
         default_factory=lambda: float(os.environ.get("TST_RESEARCH_RUNNER_TIMEOUT", "150"))
+    )
+
+    # --- Options module (OPTIONS_MODULE_DESIGN.md Part II; data layer A1.2) ---
+    # Source of record for option chains: "cboe" (free delayed CDN, has iv30) or
+    # "alpaca" (paper keys, no iv30 - our own ATM figure is used). An unknown
+    # name makes the nightly job fail loudly at startup, not per symbol.
+    options_source: str = field(
+        default_factory=lambda: (os.environ.get("TST_OPTIONS_SOURCE", "cboe") or "cboe").strip().lower()
+    )
+    # Tried ONCE per symbol when the primary raises: "alpaca" or "cboe". Unset = off.
+    options_fallback: str | None = field(
+        default_factory=lambda: (os.environ.get("TST_OPTIONS_FALLBACK", "") or "").strip().lower() or None
+    )
+    # Alpaca options feed: "indicative" (free) or "opra" (Algo Trader Plus only).
+    alpaca_feed: str = field(
+        default_factory=lambda: (os.environ.get("TST_ALPACA_FEED", "indicative") or "indicative").strip().lower()
+    )
+    # Retention of the EOD chain snapshots (days), and how many days a snapshot is
+    # kept at full width before the deep OTM / ITM rows are thinned (option_store.prune).
+    options_snapshot_days: int = field(
+        default_factory=lambda: _int(os.environ.get("TST_OPTIONS_SNAPSHOT_DAYS"), 90)
+    )
+    options_full_days: int = field(
+        default_factory=lambda: _int(os.environ.get("TST_OPTIONS_FULL_DAYS"), 7)
     )
 
     # Session cookie. Set TST_HTTPS_ONLY=1 only when served over TLS; over a

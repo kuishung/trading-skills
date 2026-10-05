@@ -2657,40 +2657,75 @@
         s.createPriceLine({ price: curLevels.target, color: '#34d399', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'PT' + _lbl });
       }
 
-      // ---- an open spread's strikes (Portfolio) ---------------------------
-      // Three lines that answer three different questions at a glance:
+      // ---- an open spread's strikes (Portfolio, Spreads, the Options card) ----
+      // Lines that answer different questions at a glance:
       //   short strike  the line price must NOT reach — drawn solid and loudest
       //   breakeven     where this trade starts losing money (short - credit)
       //   long strike   where the loss stops growing; the floor you paid for
       // Colour follows the same grammar as the trade setup (rose = the level that
       // hurts, slate = structure), so someone who reads one chart reads both.
-      if (SPREAD) {
-        if (SPREAD.short != null && isFinite(SPREAD.short)) {
-          s.createPriceLine({ price: SPREAD.short, color: '#fb7185', lineWidth: 2,
-            lineStyle: 0, axisLabelVisible: true,
-            title: 'Short ' + (+SPREAD.short) + 'P' });
+      // Two shapes are accepted (OPTIONS_MODULE_DESIGN.md II.5 #33, part C C4.4 item 5):
+      //   legacy  {short, long, breakeven}         two put strikes, one breakeven
+      //           (Spreads / Portfolio keep sending this)
+      //   generic {legs: [{strike, right: 'C'|'P', side: 'sell'|'buy', label}],
+      //            breakevens: [..]}               any structure - a bear call's
+      //           calls, a condor's four strikes, a calendar's shared strike - one
+      //           line per leg (its label, else 'Short 330P' / 'Long 400C') and one
+      //           dotted line per breakeven. `legs` wins when both are present.
+      // window.thChartSetStrikes(spec) repaints the same lines in place when the
+      // member clicks another candidate on the Options card, so only the payoff
+      // pane is re-requested - no /options/chart round trip (II.2.18).
+      var spreadHandles = [];
+      function paintSpread(sp) {
+        spreadHandles.forEach(function (h) { try { s.removePriceLine(h); } catch (e) { /* already gone */ } });
+        spreadHandles = [];
+        var lines = [];
+        if (sp) {
+          var legs = Array.isArray(sp.legs) ? sp.legs : null;
+          if (legs && legs.length) {
+            legs.forEach(function (l) {
+              if (!l || l.strike == null || !isFinite(l.strike)) return;
+              var sell = l.side === 'sell';
+              lines.push({ price: +l.strike, color: sell ? '#fb7185' : '#94a3b8',
+                           lineWidth: sell ? 2 : 1, lineStyle: sell ? 0 : 2,
+                           title: l.label || ((sell ? 'Short ' : 'Long ') + (+l.strike) + (l.right || '')) });
+            });
+          } else {
+            if (sp.short != null && isFinite(sp.short)) {
+              lines.push({ price: +sp.short, color: '#fb7185', lineWidth: 2, lineStyle: 0,
+                           title: 'Short ' + (+sp.short) + 'P' });
+            }
+            if (sp.long != null && isFinite(sp.long)) {
+              lines.push({ price: +sp.long, color: '#94a3b8', lineWidth: 1, lineStyle: 2,
+                           title: 'Long ' + (+sp.long) + 'P' });
+            }
+          }
+          var bes = Array.isArray(sp.breakevens) ? sp.breakevens
+                  : (sp.breakeven != null ? [sp.breakeven] : []);
+          bes.forEach(function (b) {
+            if (b == null || !isFinite(b)) return;
+            lines.push({ price: +b, color: '#fbbf24', lineWidth: 1, lineStyle: 3, title: 'BE' });
+          });
         }
-        if (SPREAD.breakeven != null && isFinite(SPREAD.breakeven)) {
-          s.createPriceLine({ price: SPREAD.breakeven, color: '#fbbf24', lineWidth: 1,
-            lineStyle: 3, axisLabelVisible: true, title: 'BE' });
-        }
-        if (SPREAD.long != null && isFinite(SPREAD.long)) {
-          s.createPriceLine({ price: SPREAD.long, color: '#94a3b8', lineWidth: 1,
-            lineStyle: 2, axisLabelVisible: true,
-            title: 'Long ' + (+SPREAD.long) + 'P' });
-        }
+        lines.forEach(function (o) {
+          try {
+            spreadHandles.push(s.createPriceLine({ price: o.price, color: o.color, lineWidth: o.lineWidth,
+              lineStyle: o.lineStyle, axisLabelVisible: true, title: o.title }));
+          } catch (e) { /* decoration only */ }
+        });
         // The strikes are usually well below the recent range, so without this the
         // autoscale keeps them off-screen and the chart silently answers a
         // different question than the one it was opened for.
         try {
-          var _sp = [SPREAD.short, SPREAD.long, SPREAD.breakeven]
-                      .filter(function (v) { return v != null && isFinite(v); });
-          if (_sp.length) {
-            spreadLevels = _sp;
-            chart.priceScale('right').applyOptions({ autoScale: true });
-          }
+          spreadLevels = lines.map(function (o) { return o.price; });
+          chart.priceScale('right').applyOptions({ autoScale: true });
         } catch (e) { /* scale hint only */ }
       }
+      if (SPREAD) paintSpread(SPREAD);
+      window.thChartSetStrikes = function (spec) {
+        SPREAD = spec || null;
+        paintSpread(SPREAD);
+      };
 
       // ---- the curated annotation, shown ON DEMAND ------------------------
       // Same three lines, same colours, but painted only when the ⚑ Curated badge

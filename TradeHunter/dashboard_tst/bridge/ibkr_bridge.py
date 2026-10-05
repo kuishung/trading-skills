@@ -538,7 +538,23 @@ async def _chain(symbol, expiry=None, dte_min=None, dte_max=None, put_side=False
     }
 
 
-async def _iv(symbol):
+IV_SERIES_MAX = 400     # 1.6: /iv?series=1 returns at most this many daily points
+
+
+def _bar_day(b):
+    """``YYYY-MM-DD`` of a daily bar. With ``formatDate=1`` ib_insync hands a
+    ``datetime.date`` for day bars, but a raw ``YYYYMMDD`` string has been seen on
+    older builds - accept both."""
+    d = getattr(b, "date", None)
+    if hasattr(d, "isoformat"):
+        return d.isoformat()[:10]
+    s = str(d or "").strip()
+    if len(s) >= 8 and s[:8].isdigit():
+        return f"{s[:4]}-{s[4:6]}-{s[6:8]}"
+    return s[:10]
+
+
+async def _iv(symbol, series=False):
     from ib_insync import Stock
 
     w = worker()
@@ -550,17 +566,28 @@ async def _iv(symbol):
     bars = await ib.reqHistoricalDataAsync(
         q[0], endDateTime="", durationStr="1 Y", barSizeSetting="1 day",
         whatToShow="OPTION_IMPLIED_VOLATILITY", useRTH=True, formatDate=1)
-    vals = [b.close for b in (bars or []) if b.close and b.close > 0]
+    good = [b for b in (bars or []) if b.close and b.close > 0]
+    vals = [b.close for b in good]
+    # 1.6: the dated daily series in PERCENT - round(close * 100, 1), the unit
+    # iv_current / iv_low / iv_high below already use - oldest first, at most
+    # IV_SERIES_MAX points. The server stores it AS-IS (option_store.bootstrap_iv)
+    # and never lets it overwrite a day it read itself. Only when asked for, so
+    # the IV Rank page and the Watchlist tab see an unchanged reply.
+    extra = {}
+    if series:
+        pts = [{"on": _bar_day(b), "iv": round(b.close * 100, 1)} for b in good]
+        pts = [p for p in pts if p["on"]]
+        extra["series"] = pts[-IV_SERIES_MAX:]
     if len(vals) < 30:
         return {"ok": True, "iv_percentile": None, "iv_rank": None,
                 "iv_current": None, "n": len(vals),
-                "note": "Not enough IV history from IBKR to compute a percentile."}
+                "note": "Not enough IV history from IBKR to compute a percentile.", **extra}
     cur, lo, hi = vals[-1], min(vals), max(vals)
     return {"ok": True, "iv_current": round(cur * 100, 1),
             "iv_percentile": round(sum(1 for v in vals if v < cur) / len(vals) * 100, 1),
             "iv_rank": round((cur - lo) / (hi - lo) * 100, 1) if hi > lo else None,
             "iv_low": round(lo * 100, 1), "iv_high": round(hi * 100, 1),
-            "n": len(vals), "note": ""}
+            "n": len(vals), "note": "", **extra}
 
 
 async def _scan(iv_rank: float, price: float, volume: float, rows: int = 50):
@@ -628,7 +655,7 @@ def cached(key, fn, ttl=_CACHE_TTL):
 
 # --------------------------------------------------------------- HTTP layer
 class Handler(BaseHTTPRequestHandler):
-    server_version = "TradeHunterIBKRBridge/1.5"   # 1.1 /scan; 1.2 one bridge per port; 1.3 put-side chain; 1.4 open interest per leg; 1.5 no fixed waits (spot + quote window)
+    server_version = "TradeHunterIBKRBridge/1.6"   # 1.1 /scan; 1.2 one bridge per port; 1.3 put-side chain; 1.4 open interest per leg; 1.5 no fixed waits (spot + quote window); 1.6 /iv?series=1 (dated daily IV, percent)
 
     def _origin_ok(self):
         o = self.headers.get("Origin")
@@ -702,8 +729,9 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == "/iv":
                 if not sym:
                     raise RuntimeError("symbol is required")
-                self._send(200, cached(("iv", sym), lambda: worker().submit(
-                    _iv(sym), 60), ttl=600), origin)
+                want_series = str(q.get("series", "")).strip().lower() in ("1", "true", "yes")   # 1.6
+                self._send(200, cached(("iv", sym, want_series), lambda: worker().submit(
+                    _iv(sym, series=want_series), 60), ttl=600), origin)
             elif u.path == "/scan":
                 def _f(name, dflt):
                     try:

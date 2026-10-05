@@ -1,6 +1,6 @@
 # Options module — basket, option data, strategy + strike recommendation
 
-**Status: DISCUSSION / not started.** No code written for this module yet. This file
+**Status: BUILDING - step 1 shipped in v4.127 (2026-10-06).** Steps 2-4 (debit family + trend lines, iron condor, calendar / diagonal / LEAPS) are not started. This file
 captures the whole design conversation so it can be resumed on any machine
 (cross-PC via git + Dropbox; a pointer lives in `CLAUDE.md`). Last updated 2026-10-04 (Part II
 reconciled; the integrator rulings R1-R13 applied, see II.5 and the Changelog).

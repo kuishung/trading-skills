@@ -442,3 +442,86 @@ def describe(label: str) -> str | None:
     if not label:
         return None
     return DEFS.get(_norm(label))
+
+# ── Options (the Options page, 2026-10-04: part D §D2.7) ──────────────────
+# The first sentence of each option_words row, without the numbers, so T.tip()
+# works on the strike table's and the full chain's column headers.
+_add({
+    "Delta":
+        "For a sold strike: about the chance the stock is past it at expiry (put another way, "
+        "roughly the chance of keeping the credit). For a bought option: how many cents it "
+        "moves for every $1 the stock moves; one contract behaves like about that many shares.",
+    "Theta":
+        "Time decay per day. Positive means time is paying you while the stock sits still; "
+        "negative means waiting costs you and the stock has to move enough to pay for that.",
+    "Vega":
+        "How much the position gains or loses if implied volatility rises one point. A seller "
+        "is short volatility and loses when it rises; a buyer gains.",
+    "Gamma":
+        "How fast the delta changes for each $1 move. Small means the trade's risk changes "
+        "slowly; it matters most close to expiry.",
+    "Implied Volatility":
+        "The market's guess at how much the stock will move in a year, read off today's option "
+        "prices. Higher means options cost more.",
+    "IV":
+        "Implied volatility: the market's guess at how much the stock will move in a year, read "
+        "off today's option prices. Higher means options cost more.",
+    "IV Rank":
+        "Where today's implied volatility sits between the year's lowest and highest, 0 to 100. "
+        "Above 50 options are expensive (sellers are paid); below 30 they are cheap by this "
+        "stock's own standards. A short history is said out loud and never coloured.",
+    "IV Percentile":
+        "The share of the past trading days on which implied volatility was lower than today. "
+        "Used instead of the rank while the history is shorter than a year.",
+    "Realised Volatility":
+        "How much the stock actually moved over the last 20 days, annualised. Options priced "
+        "for more movement than this pay sellers; for less, they are cheap for buyers.",
+    "Open Interest":
+        "Contracts outstanding at a strike. You need enough to get out again; the house rule is "
+        "at least 500 per leg.",
+    "OI":
+        "Open interest: contracts outstanding at a strike. You need enough to get out again; "
+        "the house rule is at least 500 per leg.",
+    "Bid/Ask":
+        "The two-sided quote. The gap between them is the cost of getting in and out; wider "
+        "than your rule allows eats the edge.",
+    "Breakeven":
+        "The stock price at expiry where the trade makes neither a profit nor a loss. For a "
+        "credit spread the stock can fall to it and you still keep money.",
+    "Max Loss":
+        "The most you can lose per contract: the width minus the credit for a credit spread, "
+        "what you paid for a bought option or debit spread.",
+    "Max Profit":
+        "The most you can make per contract: the credit for a credit spread, the width minus "
+        "the debit for a debit spread; unlimited for a plain bought call.",
+    "Chance of Keeping It":
+        "An estimate from today's option prices (the short strike's delta) of keeping the "
+        "credit at expiry - not a promise. Earnings, news and gaps are not in that number.",
+    "Chance of Profit":
+        "An estimate of profit if held to expiry at today's volatility. The trade is managed "
+        "by the chart stop and target, so the real odds depend on the move, not this number.",
+    "Expected Move":
+        "One standard deviation at today's implied volatility: the range the market thinks the "
+        "stock will stay inside about two times out of three.",
+    "Days to Expiry":
+        "Calendar days until the option expires. 30-60 is the credit-spread window: enough "
+        "decay to collect, short enough to manage.",
+    "DTE":
+        "Days to expiry: calendar days until the option expires.",
+    "Credit":
+        "Money you receive for opening the trade (you sold more than you bought). It is the "
+        "most you can make on a credit spread.",
+    "Debit":
+        "Money you pay to open the trade (you bought more than you sold). It is the most you "
+        "can lose on a bought option or debit spread.",
+    "Width":
+        "The distance between the two strikes of a spread. Width minus credit is a credit "
+        "spread's max loss; the house measures it in ATRs so it scales with the stock.",
+    "Chart Stop":
+        "The stock price at which the chart says the idea is wrong: just under the level that "
+        "must hold (a credit spread) or 1 ATR under the entry (a bought option). The same number "
+        "sizes the trade, prints on the ticket and is drawn on the payoff.",
+    "Rule Stop":
+        "The loss at which the family's rule closes the trade regardless of the chart: 20% of "
+        "max loss for a credit spread, 50% of the premium for a bought option, 40% for a LEAPS.",
+})

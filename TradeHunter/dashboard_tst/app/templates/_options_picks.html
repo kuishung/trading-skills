@@ -1,0 +1,162 @@
+{# The strikes under the member's rules for ONE strategy (part D D2.5): the rules
+   line, the banner, the strike table in collect / risk / chance words, the sizing
+   line with both figures, the payoff container, the action buttons and the
+   full-chain expander. Served apart from the card so a chip click or a rule save
+   re-renders exactly this box and never remounts the chart: wrapped in #optPicks
+   (.opt-picks), swapped by outerHTML, re-GETs itself on options:rules-changed.
+   Context: options_page._picks_context (sym, strategy, chosen, family, label, picks,
+   pick_i, degenerate, rules_line, considered, prefs, earnings, hide_strikes,
+   not_available, rejected, rejection, live, card, nlv, nlv_source, trade_prefs,
+   setup, units, tab_label, no_setup, sizing_error). #}
+{% set p0 = picks[pick_i] if picks else none %}
+<div id="optPicks" class="opt-picks mt-2 shrink-0" data-pick="{{ pick_i }}"
+     hx-get="/options/picks/{{ sym }}?strategy={{ strategy }}" hx-trigger="options:rules-changed from:body" hx-swap="outerHTML">
+
+  {% if not strategy %}
+  <p class="text-[12px] text-slate-400 leading-relaxed">No strategy fits today. The chart is for checking that read - nothing to pick.</p>
+  {% else %}
+
+  <div class="flex flex-wrap items-baseline gap-x-2 text-[11px]">
+    <span class="text-slate-200 font-semibold">Strikes under your rules</span>
+    <span class="text-slate-500">{{ label }}</span>
+    {% if rules_line %}<span class="text-slate-500" title="The rules the picker applied - change them in My rules">{{ rules_line }}</span>{% endif %}
+    {% if live and live.at %}<span class="text-emerald-300">live &middot; TWS {{ live.at }}</span>{% endif %}
+  </div>
+
+  {# ---- banner rules, before anything else renders ---- #}
+  {% if not_available %}
+  <p class="mt-1 rounded border border-slate-700 bg-slate-900/40 px-2 py-1 text-[11px] text-slate-300">The long-term chart would suit a long-dated call; that strategy is not in TradeHunter yet.</p>
+  {% elif hide_strikes %}
+  <p class="mt-1 rounded border border-amber-700/60 bg-amber-500/5 px-2 py-1 text-[11px] text-amber-300 leading-relaxed">
+    Not recommended today: earnings {{ earnings.label or earnings.date }} fall inside every expiry in your window and your rule says no.
+  </p>
+  <p class="mt-1 text-[11px] text-slate-400 leading-relaxed">
+    Earnings on {{ earnings.label or earnings.date }} fall inside every expiry in your window, and your rule says no earnings
+    inside the trade. Either wait, or allow defined-risk trades through earnings in My rules &rarr; Shared.
+  </p>
+  {% elif rejected and rejection %}
+  <p class="mt-1 rounded border border-amber-700/60 bg-amber-500/5 px-2 py-1 text-[11px] text-amber-300 leading-relaxed">
+    Not recommended today: {{ rejection }}. Showing the strikes anyway so you can see what it would cost.
+  </p>
+  {% endif %}
+
+  {% if not not_available and not hide_strikes %}
+  {% if picks %}
+  {# ---- the strike table: one row per pick, the recommended one first ---- #}
+  <div class="mt-1.5 overflow-x-auto">
+    <table class="w-full text-[11px] tabular-nums">
+      <thead class="text-[10px] text-slate-500">
+        <tr class="text-left">
+          <th class="pr-2 font-normal">strikes</th>
+          <th class="pr-2 font-normal">{% if p0.is_credit %}you collect{% else %}you pay{% endif %}</th>
+          <th class="pr-2 font-normal">you risk</th>
+          <th class="pr-2 font-normal">chance</th>
+          <th class="pr-2 font-normal">return</th>
+          <th class="pr-2 font-normal"></th>
+          <th class="font-normal" title="How easily you can get in and out: open interest and the bid/ask width per leg">market</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for pk in picks %}
+        {% set sz = pk.sizing or {} %}
+        <tr class="opt-pick border-t border-slate-800/60 hover:bg-slate-800/30 {% if loop.index0 == pick_i %}opt-pick-on ring-1 ring-emerald-500/60{% endif %}"
+            data-pick="{{ loop.index0 }}" data-strikes='{{ pk.chart_spec|tojson }}' data-expiry="{{ pk.expiry or '' }}"
+            data-contracts="{{ sz.contracts or 0 }}" data-sizing="{{ pk.sizing_line }}"
+            title="Click to put these strikes on the chart and the payoff">
+          <td class="pr-2 py-1 text-slate-200 whitespace-nowrap">
+            {% if loop.index0 == 0 %}<span class="text-emerald-300" title="best fit to your rules">&#9733;</span> {% endif %}{{ pk.label }}
+            {% if live and live.at %}<span class="block text-[10px] text-emerald-300">live {{ live.at }}</span>{% endif %}
+          </td>
+          <td class="pr-2 py-1 text-slate-300 whitespace-nowrap" title="{{ pk.collect_words or '' }}">
+            {%- if pk.is_credit %}collect {% if pk.collect_words %}{{ pk.collect_words|replace('you collect ', '')|replace(' (worst likely fill to mid)', '') }}{% else %}${{ pk.collect_usd }}{% endif %}
+            {%- else %}pay ${{ pk.pay_usd }}{% endif -%}
+            {% if sz.contracts and sz.contracts > 1 %}<span class="text-slate-500"> &times;{{ sz.contracts }}</span>{% endif %}
+          </td>
+          <td class="pr-2 py-1 text-rose-300 whitespace-nowrap" title="{{ pk.risk_words or '' }}">risk ${{ '%.0f'|format(pk.max_loss or 0) }}</td>
+          <td class="pr-2 py-1 text-slate-300 whitespace-nowrap" title="{{ pk.pop_words or '' }}{% if pk.pop_model_pct is not none %} Model estimate {{ pk.pop_model_pct }}%.{% endif %}">
+            {%- if pk.pop_pct is not none %}about {{ pk.pop_pct }}% chance of {% if pk.is_credit or pk.pop_kind == 'keep' %}keeping it{% else %}profit{% endif %}{% else %}&ndash;{% endif -%}
+          </td>
+          <td class="pr-2 py-1 text-slate-400 whitespace-nowrap">{{ pk.return_words or '' }}</td>
+          <td class="pr-2 py-1 text-slate-500 whitespace-nowrap">{% if loop.index0 == 0 %}&larr; best fit to your rules{% elif pk.why %}{{ pk.why[0] }}{% endif %}</td>
+          <td class="py-1 whitespace-nowrap {% if pk.liq_tier == 'clean' %}text-slate-400{% elif pk.liq_tier in ('limit', 'wide') %}text-amber-300{% elif pk.liq_tier == 'thin' %}text-rose-300{% else %}text-slate-500{% endif %}"
+              title="{% if pk.liq_tier == 'unknown' %}open interest unknown - check in TWS{% else %}{% for l in pk.legs %}{{ '%g'|format(l.strike) }}{{ l.right }}: open interest {{ l.oi if l.oi is not none else '?' }}, bid/ask {% if l.bid is not none and l.ask is not none %}${{ '%.2f'|format(l.ask - l.bid) }} wide{% else %}unknown{% endif %}{% if not loop.last %} &middot; {% endif %}{% endfor %}{% endif %}">{{ pk.liq_word }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {# ---- the sizing line: ALWAYS both figures; 0 is said plainly ---- #}
+  <p id="optSizingLine" class="mt-1 text-[11px] {% if (p0.sizing or {}).get('contracts') %}text-slate-300{% else %}text-amber-300{% endif %}">{{ p0.sizing_line }}</p>
+  {% if nlv_source == 'live' %}
+  <p class="text-[10px] text-slate-500">account value {{ '%.0f'|format(nlv) }} from TWS &middot;
+    <button type="button" class="underline hover:text-emerald-300" title="Store this account value in My rules -> Shared (nothing is stored until you click)"
+            hx-post="/options/rules" hx-vals='{"tab": "shared", "nlv": "{{ '%.0f'|format(nlv) }}"}' hx-target="#optRulesBody" hx-swap="innerHTML">remember this</button></p>
+  {% endif %}
+  {% if sizing_error %}<p class="text-[10px] text-amber-300">{{ sizing_error }}</p>{% endif %}
+
+  {% if earnings.inside and earnings.date %}
+  <p class="mt-1 text-[11px] text-amber-300">Earnings {{ earnings.label }} falls inside this expiry. Your rule: {% if earnings.allowed %}defined-risk trades only - this trade qualifies{% else %}not allowed{% endif %}.</p>
+  {% endif %}
+
+  {% else %}
+  {# ---- degenerate: nothing passes - a decision, not a blank ---- #}
+  <div class="mt-1.5 text-[11px] text-slate-400 leading-relaxed">
+    <p>No strike passes your rules for {{ label }} today{% if rules_line %} ({{ rules_line }}){% endif %}.
+      {% if degenerate and degenerate.text %}{{ degenerate.text }}{% endif %}</p>
+    {% if degenerate and degenerate.nearest %}
+    {% set nr = degenerate.nearest %}
+    <p class="text-slate-500">Closest that didn't pass: {% if nr is mapping %}{{ nr.label or nr.text or nr }}{% else %}{{ nr }}{% endif %}{% if degenerate.rule_label %} - fails <i>{{ degenerate.rule_label }}</i>{% endif %}.</p>
+    {% endif %}
+    {% if degenerate and degenerate.fix %}<p class="text-slate-500">Loosen that rule in My rules &rarr; {{ tab_label }}: {{ degenerate.fix }}.</p>{% endif %}
+    {% if considered %}<p class="text-slate-600">{{ considered }} combinations looked at.</p>{% endif %}
+  </div>
+  {% endif %}
+  {% endif %}
+
+  {% if live and live.at %}
+  <details class="mt-1 text-[11px]">
+    <summary class="cursor-pointer text-slate-500 select-none">show delayed expiries &#9662;</summary>
+    <div hx-get="/options/picks/{{ sym }}?strategy={{ strategy }}" hx-trigger="toggle from:closest details once" hx-swap="innerHTML" class="mt-1">
+      <div class="text-slate-500">Loading the stored picks&hellip;</div>
+    </div>
+  </details>
+  {% endif %}
+
+  {# ---- the payoff pane (C's server-rendered SVG lands here) ---- #}
+  {% if picks and not hide_strikes and not not_available %}
+  <div id="optPayoff" class="mt-2 min-h-[300px]"
+       hx-get="/options/payoff/{{ sym }}?strategy={{ strategy }}&pick={{ pick_i }}&units={{ units|urlencode }}" hx-trigger="load" hx-swap="innerHTML">
+    <div class="text-xs text-slate-500 py-6 text-center">Drawing the payoff&hellip;</div>
+  </div>
+  {% endif %}
+
+  {# ---- actions: ONE filled button per card ---- #}
+  <div id="optActions" class="flex flex-wrap items-center gap-2 mt-2 text-[11px]">
+    {% if picks and not hide_strikes and not not_available %}
+    <button type="button" class="px-3 py-1 rounded {% if rejected %}border border-slate-700 text-slate-400 hover:border-slate-500{% else %}bg-emerald-600 text-white hover:bg-emerald-500{% endif %} transition"
+            hx-get="/options/ticket/{{ sym }}" hx-vals='js:{strategy: window.thCardStrategy(), pick: window.thCardPick(), contracts: window.thCardQty()}'
+            hx-target="#optTicket" hx-swap="innerHTML"
+            title="What to type into TWS or moomoo for these strikes. TradeHunter never sends an order.">Order ticket{% if rejected %} (not recommended){% endif %}</button>
+    <form hx-post="/options/track-idea" hx-target="#optPane" hx-swap="innerHTML" class="flex items-center gap-1">
+      <input type="hidden" name="symbol" value="{{ sym }}"><input type="hidden" name="strategy" value="{{ strategy }}">
+      <input type="hidden" name="pick" value="{{ pick_i }}">
+      <label class="text-slate-500">contracts <input type="number" name="contracts" min="1" max="500" value="{{ (p0.sizing or {}).get('contracts') or 0 }}"
+             class="w-14 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 outline-none focus:border-emerald-500"></label>
+      <button type="submit" name="track" class="px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition"
+              {% if not (p0.sizing or {}).get('contracts') %}disabled{% endif %}
+              title="Track this idea in Positions so it is checked every day. Does not place an order.">Track this</button>
+    </form>
+    {% endif %}
+    <details class="ml-auto">
+      <summary class="cursor-pointer text-slate-500 hover:text-slate-300 select-none">Show full chain &#9662;</summary>
+      <div data-chain-url="/options/chain/{{ sym }}"
+           hx-get="/options/chain/{{ sym }}?expiry={{ p0.expiry if p0 else '' }}&strategy={{ strategy }}&pick={{ pick_i }}"
+           hx-trigger="toggle from:closest details once" hx-swap="innerHTML" class="overflow-auto max-h-[50vh] mt-1">
+        <div class="text-slate-500">Loading the stored chain&hellip;</div>
+      </div>
+    </details>
+  </div>
+  <div id="optTicket" class="mt-2"></div>
+  {% endif %}
+</div>

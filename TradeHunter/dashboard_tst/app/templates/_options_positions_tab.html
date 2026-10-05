@@ -1,0 +1,149 @@
+{# The Positions tab inside /options (part D D1.14 / D5.1): the board over
+   option_trades - every strategy, generic legs - rebuilt from _portfolio_list.html's
+   layout: a chart pane for the focused trade, one row per trade with the latest
+   OptionTradeCheck's verdict, a per-row drawer (the check, the history, the payoff
+   pane with the now marker) and "Mark closed". No market call: the sweep wrote the
+   checks; a trade tracked today carries the check written on Track. No "track by
+   hand" form (step 2). Wrapped in .opt-positions; forms target `closest .opt-positions`.
+   Context: rows [{trade, check, verdict, label, family_word, history, dte}], status,
+   focus, inside_options, n_urgent, urgent, watch, prefs, checked_on, user. #}
+{% from "_time.html" import localtime %}
+<div class="opt-positions flex flex-col" data-status="{{ status }}">
+
+  {% set first = (urgent[0].trade.id if urgent else (watch[0].trade.id if watch else (rows[0].trade.id if rows else 0))) %}
+  {% set open_id = focus or first %}
+  {% set open_row = (rows|selectattr('trade.id', 'equalto', open_id)|list|first) if rows else none %}
+  <div id="pfChartWrap" class="relative mb-3 shrink-0">
+    <button type="button" id="pfChartExpand"
+            class="absolute right-2 top-1 z-20 text-[11px] px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900/80 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 transition"
+            title="Expand the chart to fill the window (Esc to restore)">&#10530;</button>
+    <div id="pfChartBody" class="h-[48vh] min-h-[320px] flex flex-col rounded-lg border border-slate-800 bg-slate-900/40 overflow-y-auto"
+         {% if open_row %}hx-get="/options/chart/{{ open_row.trade.symbol }}?trade={{ open_row.trade.id }}" hx-trigger="load" hx-swap="innerHTML"{% endif %}>
+      <div class="flex-1 flex items-center justify-center text-xs text-slate-500 px-6 text-center">
+        {% if open_row %}Loading chart&hellip;{% else %}Nothing tracked yet. Track an idea from its card.{% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2 text-[11px]">
+    <div class="flex items-center gap-1">
+      <button type="button" class="px-2 py-0.5 rounded border {% if status == 'open' %}border-emerald-500 text-emerald-300{% else %}border-slate-700 text-slate-400 hover:border-slate-500{% endif %}"
+              hx-get="/options/positions?status=open" hx-target="#optPane" hx-swap="innerHTML">Open</button>
+      <button type="button" class="px-2 py-0.5 rounded border {% if status == 'closed' %}border-emerald-500 text-emerald-300{% else %}border-slate-700 text-slate-400 hover:border-slate-500{% endif %}"
+              hx-get="/options/positions?status=closed" hx-target="#optPane" hx-swap="innerHTML">Closed</button>
+    </div>
+    {% if rows %}
+    <span class="text-slate-500 tabular-nums">{{ rows|length }} position{{ '' if rows|length == 1 else 's' }}{% if n_urgent %} &middot; <span class="text-rose-300">{{ n_urgent }} need a decision</span>{% endif %}</span>
+    {% endif %}
+    <span class="ml-auto text-slate-600" title="Graded by the nightly job from the delayed feed; a trade tracked today was graded from the stored chain on the spot">checked {{ checked_on }}</span>
+  </div>
+
+  {% if rows %}
+  <div class="space-y-1.5">
+    {% for it in rows %}
+    {% set t = it.trade %}{% set chk = it.check %}{% set v = it.verdict %}
+    <div class="pf-row rounded border transition {% if t.id == open_id %}ring-1 ring-sky-500/50{% endif %}
+                {% if v.state == 'CLOSE' %}border-rose-600/60 bg-rose-500/5
+                {% elif v.state == 'ROLL' %}border-amber-600/60 bg-amber-500/5
+                {% elif v.state == 'TAKE' %}border-emerald-500/60 bg-emerald-500/10
+                {% elif v.state == 'WATCH' %}border-sky-700/50 bg-sky-500/5
+                {% elif v.state == 'EXPIRED' %}border-slate-700 bg-slate-800/30
+                {% else %}border-slate-800{% endif %}" data-row="{{ t.id }}">
+      <div class="flex flex-wrap items-center gap-x-2 gap-y-1 p-2 text-[11px] cursor-pointer"
+           hx-get="/options/chart/{{ t.symbol }}?trade={{ t.id }}" hx-target="#pfChartBody" hx-swap="innerHTML"
+           hx-trigger="click[!event.target.closest('.pf-actions')]" title="Show this position on the chart">
+        <span class="font-semibold text-slate-300">{{ t.symbol }}</span>
+        <span class="text-slate-300">{{ it.label }}</span>
+        <span class="text-slate-500">{{ t.strategy|replace('_', ' ') }}</span>
+        <span class="px-1.5 py-0.5 rounded border text-[10px]
+          {% if v.state == 'CLOSE' %}border-rose-500/60 text-rose-300{% elif v.state == 'ROLL' %}border-amber-500/60 text-amber-300
+          {% elif v.state == 'TAKE' %}border-emerald-500/60 text-emerald-300{% elif v.state == 'WATCH' %}border-sky-500/60 text-sky-300
+          {% elif v.state == 'OK' %}border-emerald-500/60 text-emerald-300{% else %}border-slate-600 text-slate-400{% endif %}">{{ v.state or 'UNKNOWN' }}</span>
+        <span class="text-slate-500 tabular-nums">
+          {{ t.contracts }}&times; &middot; {{ t.front_expiry }}{% if it.dte is not none %} &middot; {{ it.dte }}d{% endif %}
+          {% if chk and chk.pl is not none %} &middot; <span class="{% if chk.pl < 0 %}text-rose-300{% else %}text-emerald-300{% endif %}">{{ '%+.0f'|format(chk.pl) }}</span>{% endif %}
+          {% if chk and chk.net_delta is not none %} &middot; &Delta; {{ '%+.0f'|format(chk.net_delta) }}{% endif %}
+          {% if chk and chk.theta is not none %} &middot; &Theta; <span class="{% if chk.theta < 0 %}text-rose-300{% else %}text-emerald-300{% endif %}">{{ '%+.0f'|format(chk.theta) }}</span>/d{% endif %}
+        </span>
+        {% if t.paper %}<span class="text-[10px] text-slate-500">paper</span>{% endif %}
+        <span class="pf-actions ml-auto flex items-center gap-1">
+          <button type="button" class="pf-more text-[10px] px-1.5 py-0.5 rounded border border-slate-700 text-slate-500 hover:border-slate-500 hover:text-slate-300 transition"
+                  data-row="{{ t.id }}" title="The check, the history and the payoff for this trade">&hellip;</button>
+          {% if t.status == 'open' %}
+          <form hx-post="/options/positions/{{ t.id }}/close" hx-target="#optPane" hx-swap="innerHTML" class="inline">
+            <input type="hidden" name="status" value="{{ status }}"><input type="hidden" name="reason" value="{{ v.state|lower if v.state in ('CLOSE', 'ROLL', 'TAKE') else 'manual' }}">
+            <button type="submit" class="text-[10px] px-1.5 py-0.5 rounded border border-slate-700 text-slate-400 hover:border-rose-500 hover:text-rose-300 transition"
+                    title="Mark closed here after you have closed it in your broker. This changes nothing at the broker.">Mark closed</button>
+          </form>
+          {% else %}
+          <span class="text-[10px] text-slate-500">closed {{ localtime(t.closed_at, date_only=True) }}{% if t.close_reason %} &middot; {{ t.close_reason }}{% endif %}</span>
+          {% endif %}
+        </span>
+      </div>
+      {% if v.earnings_now_inside %}
+      <p class="px-2 pb-1.5 -mt-0.5 text-[11px] leading-relaxed text-amber-300">{{ v.earnings_now_inside }}</p>
+      {% endif %}
+      {% if v.action %}
+      <p class="px-2 pb-1.5 -mt-0.5 text-[11px] leading-relaxed {% if v.state == 'TAKE' %}text-emerald-300{% elif v.urgent %}text-rose-300{% elif v.state == 'WATCH' %}text-sky-300{% else %}text-slate-500{% endif %}">{{ v.action }}</p>
+      {% elif not chk %}
+      <p class="px-2 pb-1.5 -mt-0.5 text-[11px] text-slate-500">Not checked yet - the nightly job grades it from tonight's chain.</p>
+      {% endif %}
+      {% if chk and chk.error %}<p class="px-2 pb-1.5 text-[11px] text-amber-300">{{ chk.error }}</p>{% endif %}
+      {% if t.note %}<p class="px-2 pb-1.5 text-[10px] text-slate-500">{{ t.note }}</p>{% endif %}
+
+      {# ---- the per-trade drawer: the check, the history, the payoff with the now marker ---- #}
+      <div class="pf-drawer border-t border-slate-800 p-2 space-y-2" data-row="{{ t.id }}" hidden>
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-500 tabular-nums">
+          <span class="text-slate-600">at entry:</span>
+          {% for l in t.legs %}{% set ep = l.get('entry_price', l.get('price')) %}{% set ed = l.get('entry_delta', l.get('delta')) %}<span>{{ 'sold' if l.get('side') == 'sell' else 'bought' }} <span class="text-slate-300">{{ '%g'|format(l.get('strike') or 0) }}{{ l.get('right') or '' }} {{ l.get('expiry') or '' }} @ {{ '%.2f'|format(ep) if ep is not none else '?' }}</span>{% if ed is not none %} &Delta; {{ '%.2f'|format(ed) }}{% endif %}</span>{% endfor %}
+          <span>net <span class="text-slate-300">{{ '%.2f'|format(t.net_entry) }}</span>/sh ({{ 'credit' if t.net_entry < 0 else 'debit' }})</span>
+          {% if t.max_loss is not none %}<span>max loss <span class="text-rose-300">${{ '%.0f'|format(t.max_loss) }}</span>/contract</span>{% endif %}
+          {% if t.chart_stop is not none %}<span>chart stop <span class="text-slate-300">{{ '%g'|format(t.chart_stop) }}</span></span>{% endif %}
+          {% if t.chart_target is not none %}<span>target <span class="text-slate-300">{{ '%g'|format(t.chart_target) }}</span></span>{% endif %}
+          {% if t.earnings_date_at_entry %}<span>earnings then <span class="text-slate-300">{{ t.earnings_date_at_entry }}</span></span>{% endif %}
+          <span class="text-slate-600">{{ localtime(t.opened_at, date_only=True) }}</span>
+        </div>
+        {% if v.reasons %}
+        <ul class="text-[10px] text-slate-400 list-disc pl-4 space-y-0.5">{% for r in v.reasons %}<li>{{ r }}</li>{% endfor %}</ul>
+        {% endif %}
+        <div class="min-h-[200px]" hx-get="/options/payoff/{{ t.symbol }}?trade={{ t.id }}&units=$" hx-trigger="revealed" hx-swap="innerHTML">
+          <div class="text-[10px] text-slate-600">Loading the payoff&hellip;</div>
+        </div>
+        {% if it.history %}
+        <div class="overflow-x-auto">
+          <table class="w-full text-[10px] tabular-nums">
+            <thead><tr class="text-slate-600 text-left">
+              <th class="pr-3 font-normal">checked</th><th class="pr-3 font-normal">DTE</th><th class="pr-3 font-normal">spot</th>
+              <th class="pr-3 font-normal" title="Where the quote came from">src</th>
+              <th class="pr-3 font-normal" title="Position delta, share-equivalents">&Delta;</th>
+              <th class="pr-3 font-normal" title="Position theta, $/day">&Theta;</th>
+              <th class="pr-3 font-normal">mark</th><th class="pr-3 font-normal">% max loss</th><th class="pr-3 font-normal">P/L</th><th class="font-normal">state</th></tr></thead>
+            <tbody>
+            {% for h in it.history|reverse %}
+            <tr class="text-slate-400">
+              <td class="pr-3">{{ h.checked_on }}</td>
+              <td class="pr-3 text-slate-600">{{ h.dte if h.dte is not none else '' }}</td>
+              <td class="pr-3">{{ '%.2f'|format(h.spot) if h.spot is not none else '' }}</td>
+              <td class="pr-3 text-slate-600">{{ h.source }}</td>
+              <td class="pr-3">{{ '%+.0f'|format(h.net_delta) if h.net_delta is not none else '' }}</td>
+              <td class="pr-3 {% if h.theta and h.theta < 0 %}text-rose-300{% endif %}">{{ '%+.0f'|format(h.theta) if h.theta is not none else '' }}</td>
+              <td class="pr-3">{{ '%.2f'|format(h.mark) if h.mark is not none else '' }}</td>
+              <td class="pr-3">{{ '%.0f%%'|format(h.loss_pct * 100) if h.loss_pct is not none else '' }}</td>
+              <td class="pr-3 {% if h.pl and h.pl < 0 %}text-rose-300{% elif h.pl %}text-emerald-300{% endif %}">{{ '%+.0f'|format(h.pl) if h.pl is not none else '' }}</td>
+              <td class="text-slate-500">{{ h.state }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% elif status == 'closed' %}
+  <p class="text-[11px] text-slate-500 py-3">No closed trades yet.</p>
+  {% else %}
+  <p class="text-[11px] text-slate-500 py-3">Nothing tracked yet. Track an idea from its card.</p>
+  {% endif %}
+</div>

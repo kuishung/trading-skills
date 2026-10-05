@@ -143,6 +143,76 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-06 - v4.127: the Options page - step 1 of the Options module (credit spreads, the payoff chart, the nightly job)
+
+User: *"ok replace the old option menu to the new one"*. Build step 1 of `OPTIONS_MODULE_DESIGN.md`
+Part II: ONE page at **/options** (the "Options" item is back in the bar; IV Rank, Spread and
+Positions stay reachable by URL until a later removal release) with a per-member **basket**, a
+**ticker card** written overnight by the engines, the **payoff chart**, **My rules**, a **Positions**
+tab and a **Telegram** opt-in. Nothing here places an order.
+
+**What the member sees.** Left: the basket (typed / pasted / imported from My Watchlist, the IV Rank
+list or scan, the TWS scanner, the spread screener, open positions; 60 max) - one row per ticker with
+the trend arrow, the IV rank (amber = sell premium, teal = buy, `~62` dotted = not a full year of IV
+history yet) and tonight's idea in a few words. Centre: the card - last price, ATR, earnings date, the
+data's age (`as of Oct 5, 15:59 ET · delayed`), Refresh (Cboe, ~2 s) and Live (the member's TWS via
+bridge 1.6, hidden on phones); the **headline sentence** ("Uptrend: EMA 20 above 50 above 200 for 2
+days. No fresh setup today. IV 58% is close to the stock's own movement (56%) - provisional, 1 of 60
+days of IV history."); the SELL / NEUTRAL / BUY gauge with its basis spelled out; the strategy chips
+(recommended first, up to two near misses greyed with the reason, the rest behind "other
+strategies"; an unbuilt strategy reads "· not available yet", never "step N"); "What has to happen";
+the chart with EMA 20/50/200, the support and the strike lines; the strike table in *you collect /
+you risk / chance of keeping it* words with the sizing line that always shows both figures ("2
+contracts: about $242 if the stop fires, up to $1,580 (1.6% of your account) if the stock gaps past
+it"); the payoff chart (expiry line, today's dashed line, both stops drawn, `$ | R`); the order
+ticket for TWS and moomoo (no entry condition by default; the chart-stop exit is the one conditional
+order it pushes, with "Trigger outside RTH: No" and the RTH sentence; moomoo closes the short leg
+first); Track this. Bottom: My rules - five tabs (Shared · Credit spreads · Buy call/put · Iron
+condor · Time spreads), every field with a one-line translation, house defaults, Reset, and the
+Telegram handshake (chat id + the 6-digit code the bot sends).
+
+**What runs without anyone present.** `deploy/options_nightly.py` as the Hermes task
+`TST-Options-Nightly` (07:15 MYT, after the spread scan): for every basket ticker one Cboe chain
+(all expiries, with greeks) -> `option_chain_snapshot`; HV20/60, IV30, IV per expiry, term ratio,
+skew, IV rank / percentile from the accumulating `iv_daily`; the chart read ONCE (trend, setup via
+the support-bounce detector, structure, earnings, the plan) -> the engines per distinct rule set ->
+`option_signal`; the Positions sweep; prune; the Telegram push (guards: partial snapshot, provisional
+IV, unknown earnings date, stale data; dedupe per symbol + strategy + expiry; five per message); the
+job row behind the status strip ("job ✓ 07:22 AM · 5/5 tickers") and `/options/badge`.
+
+**The engines** (`app/services/`, all pure, all ticker-relative, no LLM): `premium_gauge`
+(verdict + four gates; a one-day IV history is "provisional" and the gates stay closed, so no
+premium-selling idea can come off a one-day read), `chart_state`, `strategy_rules` (all ten
+strategies as rows; only bull put and bear call are built in step 1), `strike_picker`
+(credit verticals: enumerate, chart constraint, liquidity tiers, credit/(width-credit) x POP,
+degenerate reasons), `option_sizing` (min of chart-stop, gap x2 and notional caps; 0 is an answer),
+`order_ticket`, `option_exits` (50% / 20% / 21 DTE / delta 0.35-0.40 + the "earnings now inside"
+row), `option_words` (every member sentence), `payoff` (expiry + T+0, breakevens, POP, both stops),
+`option_engine` (the composer). Data: `option_data` (`ChainSource` with Cboe / Alpaca / bridge-payload
+implementations behind `TST_OPTIONS_SOURCE`), `option_metrics`, `option_store`, `option_prefs`,
+`opt_legs`, `opt_constants`, `clock`, `job_runs`, `telegram`, `telegram_push`, `option_nightly`.
+Schema: migration `f4a5b6c7d8e9` (nine tables, chained off `e2f3a4b5c6d7`; open `option_spreads`
+rows are copied into `option_trades`). Bridge 1.6 adds `/iv?series=1` (see `bridge/README.md`).
+
+**Design method:** the module was designed by a four-designer / two-critic panel, reconciled under
+one contract and verified field by field (2026-10-03/04 entries); built by two foundation agents,
+four implementers on disjoint files and an integration pass; golden fixtures are captured from real
+LRCX / ISRG chains (`tests/fixtures/options/`), never typed.
+
+Tested: `py -m pytest tests -q` -> **246 passed** (`test_option_data`, `_prefs`, `_store`,
+`_engines`, `_payoff`, `_nightly`, `_telegram_push`, `_options_page`; pytest is a dev-only
+dependency, `requirements-dev.txt`); `alembic heads` = one head `f4a5b6c7d8e9`; upgrade / downgrade
+/ upgrade clean on a fresh DB; `deploy\options_nightly.py NVDA LRCX MSFT KO ISRG -v --no-push`
+against live Cboe: 5/5 ok, 13,014 chain rows, 5 signals, 17 s, and a same-day re-run leaves the
+counts unchanged (job #2). Verified in the browser on a dev server with the nightly's DB: the
+basket with five tickers and the job strip, the LRCX card (headline, gauge "provisional, 1 of 60
+days", the LEAPS chip "not available yet", the honest "No strategy fits today" line, the chart),
+the Positions tab's empty state, the rules drawer lazy-loading all five tabs with their translations
+and the Telegram section; no console errors except the bridge refusing the dev origin (expected).
+No ticker had a setup on the test night, so the strike table / payoff / ticket were exercised by the
+page and engine tests on the captured fixtures rather than on screen. Two store tests written before
+the engines existed were corrected (they now stub the lazy recompute).
+
 ### 2026-10-04 - Options module: full design reconciled (`OPTIONS_MODULE_DESIGN.md` Part II + `design/options/`) (design only, no code)
 
 User: *"ok now we proceed with the full design?"* - and the ten open decisions were locked with the

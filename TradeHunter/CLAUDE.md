@@ -647,9 +647,11 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
   engines that recommend (1) the strategy that fits the chart setup + IV regime, (2) the
   strikes under each member's own greek rules, (3) whether it is a time to sell premium -
   plus automatic trend lines and a risk/reward payoff chart, on ONE non-technical page that
-  replaces IV Rank / Spread / Positions. Status: DISCUSSION, not started (2026-10-03). The
-  user's ten strategies, the per-strategy rule tables, the mindmap, the mockup layout and
-  TEN open decisions are in that doc. Read it to continue; answer the open decisions first.
+  replaces IV Rank / Spread / Positions. Status: BUILDING - step 1 shipped in v4.127 on
+  2026-10-06 (the page at /options, credit spreads, the payoff chart, the nightly Hermes job
+  `TST-Options-Nightly`, Telegram push); steps 2-4 (debit family + trend lines, iron condor,
+  calendar / diagonal / LEAPS) not started. Part II of that doc is the contract and the build
+  plan; `design/options/` holds the four detailed parts. Read Part II §II.4 to continue.
 
 - **IN-PROGRESS DESIGN (resume across PCs):** `dashboard_tst/COMPANY_INTELLIGENCE_DESIGN.md`
   — Obsidian-backed per-company analysis + per-quarter metric alerts (e.g. NVDA FCF

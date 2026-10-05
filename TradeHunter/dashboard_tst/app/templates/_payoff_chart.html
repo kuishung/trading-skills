@@ -1,0 +1,212 @@
+{# The risk / reward pane: ONE server-rendered inline SVG per payoff.build() dict
+   (OPTIONS_MODULE_DESIGN.md II.2.9, design/options/part_C_chart_engines.md C4).
+   Context: po (payoff.build's dict), pane_url (this pane's own GET url WITHOUT
+   units=, so the $ | R toggle can re-request it). The card's slot is
+   <div id="optPayoff">: this partial is swapped INTO it on a candidate click and
+   replaces itself (outerHTML) on a units toggle.
+   Every pixel is po.svg (payoff.svg_paths, server-side): no arithmetic here, no
+   canvas, no client-side formula. The hover script only reads the JSON island
+   back by id, so several panes on one page (the Positions drawers) never
+   collide. Colours are the --po-* theme tokens of base.html with their dark
+   values as fallbacks, so the sun / moon toggle recolours the chart live.
+   The pane never scrolls; the scrollbar rule is inherited untouched. #}
+{% set _pu = pane_url if (pane_url is defined and pane_url) else ('/options/payoff/' ~ (po.symbol or '') ~ '?strategy=' ~ (po.strategy or '')) %}
+{% if '://' in _pu %}
+  {# an absolute url (request.url) would point at the uvicorn host behind the tunnel - keep path + query only #}
+  {% set _rest = _pu.split('://', 1)[1] %}
+  {% set _pu = '/' ~ (_rest.split('/', 1)[1] if '/' in _rest else '') %}
+{% endif %}
+{% set _sep = '&' if '?' in _pu else '?' %}
+{% set _mode = po.units.mode if po.units else '$' %}
+{% set _r_ok = po.units and po.units.r_dollars and po.units.r_dollars > 0 %}
+<div class="po-pane relative" id="po-{{ po.uid }}" data-units="{{ _mode }}"{% if po.symbol %} data-symbol="{{ po.symbol }}"{% endif %}>
+  <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[11px] mb-1 tabular-nums">
+    {% if po.label %}<span class="text-slate-300">{{ po.label }}</span>{% endif %}
+    {% if po.strategy_label %}<span class="text-slate-500">{{ po.strategy_label }}</span>{% endif %}
+    {% if po.horizon %}<span class="text-slate-500">expiry {{ po.horizon.expiry }} &middot; {{ po.horizon.dte }}d</span>{% endif %}
+    <span class="ml-auto inline-flex rounded border border-slate-700 overflow-hidden" role="group" aria-label="units">
+      <button type="button" data-units="$"
+              class="po-units px-2 py-0.5 {{ 'bg-slate-700/40 text-slate-200' if _mode == '$' else 'text-slate-500 hover:text-slate-300' }}"
+              hx-get="{{ _pu }}{{ _sep }}units=%24" hx-target="closest .po-pane" hx-swap="outerHTML"
+              {% if _mode == '$' %}aria-pressed="true"{% endif %}>$</button>
+      <button type="button" data-units="R"
+              class="po-units px-2 py-0.5 border-l border-slate-700 {{ 'bg-slate-700/40 text-slate-200' if _mode == 'R' else 'text-slate-500 hover:text-slate-300' }}{% if not _r_ok %} opacity-40 cursor-not-allowed{% endif %}"
+              {% if _r_ok %}hx-get="{{ _pu }}{{ _sep }}units=R" hx-target="closest .po-pane" hx-swap="outerHTML"{% else %}disabled title="R undefined: the stop does not lose money"{% endif %}
+              {% if _mode == 'R' %}aria-pressed="true"{% endif %}>R</button>
+    </span>
+  </div>
+
+  {% if po.error or not po.svg %}
+  {# the same pane height as a drawn chart, so the card never jumps #}
+  <div class="min-h-[300px] flex items-center justify-center text-xs text-amber-300 text-center px-4">
+    Nothing to draw{% if po.error %}: {{ po.error }}{% endif %}.
+  </div>
+  {% else %}
+  {% set S = po.svg %}
+  <div class="relative">
+    <svg viewBox="0 0 640 300" class="w-full h-auto select-none block" role="img"
+         aria-label="Risk and reward{% if po.label %} for {{ po.label }}{% endif %}">
+      <defs>
+        <marker id="po-arrow-{{ po.uid }}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M0,0 L10,5 L0,10 Z" fill="var(--po-exp, #1D9E75)"/>
+        </marker>
+      </defs>
+
+      {# faint grid at the y ticks, then the profit / loss zones split at the breakevens #}
+      {% for t in S.y_ticks %}<line x1="48" x2="628" y1="{{ t[0] }}" y2="{{ t[0] }}" stroke="var(--tv-border, #2a2e39)" stroke-opacity="0.5" stroke-width="1"/>{% endfor %}
+      {% for z in S.profit_zones %}<path d="{{ z }}" fill="var(--po-profit-fill, rgba(29,158,117,.18))" stroke="none"/>{% endfor %}
+      {% for z in S.loss_zones %}<path d="{{ z }}" fill="var(--po-loss-fill, rgba(224,99,67,.18))" stroke="none"/>{% endfor %}
+
+      {# zero line #}
+      <line x1="48" x2="628" y1="{{ S.zero_y }}" y2="{{ S.zero_y }}" stroke="var(--tv-border-2, #363a45)" stroke-width="1"/>
+
+      {# horizontal rule lines: rule stop / max loss in the loss ink, take profit / max profit in the expiry ink #}
+      {% for h in S.hlines %}
+      {% set _hc = 'var(--po-loss, #E0633D)' if h.kind in ('rule_stop', 'max_loss') else 'var(--po-exp, #1D9E75)' %}
+      <line x1="48" x2="628" y1="{{ h.y_px }}" y2="{{ h.y_px }}" stroke="{{ _hc }}" stroke-width="1" stroke-dasharray="4 3" stroke-opacity="0.9"/>
+      <text x="{{ h.label_x }}" y="{{ h.label_y }}" text-anchor="{{ h.anchor }}" font-size="10" fill="var(--tv-muted, #787b86)">{{ h.label }}</text>
+      {% endfor %}
+
+      {# vertical markers: now / breakeven / chart stop / rule stop / target / levels / strikes #}
+      {% for m in S.markers %}
+      {% if m.kind == 'now' %}{% set _mc = 'var(--tv-text, #d1d4dc)' %}
+      {% elif m.kind in ('stop', 'rule_stop') %}{% set _mc = 'var(--po-loss, #E0633D)' %}
+      {% elif m.kind == 'target' %}{% set _mc = 'var(--po-exp, #1D9E75)' %}
+      {% elif m.kind == 'level' and m.level == 'trend_line' %}{% set _mc = '#f59e0b' %}
+      {% elif m.kind == 'level' and m.level == 'resistance' %}{% set _mc = '#e879f9' %}
+      {% elif m.kind == 'level' %}{% set _mc = '#22d3ee' %}
+      {% else %}{% set _mc = 'var(--tv-muted, #787b86)' %}{% endif %}
+      <line x1="{{ m.x_px }}" x2="{{ m.x_px }}" y1="8" y2="264" stroke="{{ _mc }}" stroke-width="1"
+            {% if m.kind == 'strike' %}stroke-dasharray="2 3"{% elif m.kind == 'breakeven' %}stroke-dasharray="4 3"{% endif %}
+            stroke-opacity="{{ '0.9' if m.kind in ('now', 'stop', 'rule_stop', 'target') else '0.7' }}"/>
+      <text x="{{ m.label_x }}" y="{{ m.label_y }}" text-anchor="{{ m.anchor }}" font-size="10" fill="{{ _mc }}">{{ m.label }}</text>
+      {% endfor %}
+
+      {# the two curves #}
+      <path d="{{ S.expiry_path }}" fill="none" stroke="var(--po-exp, #1D9E75)" stroke-width="2"
+            stroke-linejoin="round" stroke-linecap="round"{% if S.arrow %} marker-end="url(#po-arrow-{{ po.uid }})"{% endif %}/>
+      {% if S.today_path %}
+      <path d="{{ S.today_path }}" fill="none" stroke="var(--po-today, #7F77DD)" stroke-width="1.5" stroke-dasharray="5 3" stroke-linejoin="round"/>
+      {% endif %}
+      {# the Positions tab's dot: the open trade's P&L today at the current price #}
+      {% if S.dot %}
+      <circle cx="{{ S.dot.x_px }}" cy="{{ S.dot.y_px }}" r="4" fill="var(--po-today, #7F77DD)" stroke="#fff" stroke-width="1.5"/>
+      {% endif %}
+
+      {# axes #}
+      <line x1="48" x2="628" y1="264" y2="264" stroke="var(--tv-border-2, #363a45)" stroke-width="1"/>
+      {% for t in S.x_ticks %}
+      <line x1="{{ t[0] }}" x2="{{ t[0] }}" y1="264" y2="268" stroke="var(--tv-border-2, #363a45)" stroke-width="1"/>
+      <text x="{{ t[0] }}" y="279" text-anchor="middle" font-size="10" fill="var(--tv-muted, #787b86)">{{ t[1] }}</text>
+      {% endfor %}
+      {% for t in S.y_ticks %}
+      <text x="44" y="{{ t[0] + 3 }}" text-anchor="end" font-size="10" fill="var(--tv-muted, #787b86)">{{ t[1] }}</text>
+      {% endfor %}
+      <text x="628" y="294" text-anchor="end" font-size="9" fill="var(--tv-muted, #787b86)">stock price</text>
+
+      {# hover: a cursor line, a dot on each curve, and the transparent hit area over the plot #}
+      <line class="po-cursor" x1="0" x2="0" y1="8" y2="264" stroke="var(--tv-text, #d1d4dc)" stroke-width="1" stroke-opacity="0.6" style="display:none" pointer-events="none"/>
+      <circle class="po-dot-e" r="3" fill="var(--po-exp, #1D9E75)" style="display:none" pointer-events="none"/>
+      <circle class="po-dot-t" r="3" fill="var(--po-today, #7F77DD)" style="display:none" pointer-events="none"/>
+      <rect class="po-hit" x="48" y="8" width="580" height="256" fill="transparent" style="cursor:crosshair"/>
+    </svg>
+    <div class="po-tip hidden absolute top-2 left-0 pointer-events-none z-10 rounded border border-slate-700 bg-slate-900/95 px-2 py-1 text-[11px] text-slate-200 tabular-nums whitespace-nowrap shadow"></div>
+  </div>
+
+  {# legend + caption (HTML under the SVG, never inside it) #}
+  <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-slate-400 tabular-nums">
+    <span class="inline-flex items-center gap-1"><span class="inline-block w-4 border-t-2" style="border-color:var(--po-exp, #1D9E75)"></span>At expiry</span>
+    {% if po.today %}<span class="inline-flex items-center gap-1"><span class="inline-block w-4 border-t-2 border-dashed" style="border-color:var(--po-today, #7F77DD)"></span>Today</span>{% endif %}
+    {% if po.legend %}<span class="text-slate-300">{{ po.legend }}</span>{% endif %}
+  </div>
+  {% if po.today and po.caption %}
+  <p class="text-[10px] text-slate-500 mt-0.5">{{ po.caption }}</p>
+  {% endif %}
+  {% if po.warnings %}
+  <p class="text-[10px] text-amber-300 mt-0.5">{{ po.warnings|join(' · ') }}</p>
+  {% endif %}
+
+  <script type="application/json" id="po-data-{{ po.uid }}">{{ po.series|tojson }}</script>
+  <script>
+  (function () {
+    // hover + tooltip for THIS pane only (read back by id), and the $ | R memory
+    var pane = document.getElementById('po-{{ po.uid }}');
+    var dataEl = document.getElementById('po-data-{{ po.uid }}');
+    if (!pane || !dataEl) return;
+    var D;
+    try { D = JSON.parse(dataEl.textContent); } catch (e) { return; }
+    var xs = D.xs || [], ye = D.at_expiry || [], yt = D.today || null;
+    var mode = (D.units && D.units.mode) || '$';
+    var svg = pane.querySelector('svg'), hit = pane.querySelector('.po-hit'), tip = pane.querySelector('.po-tip');
+    var cur = pane.querySelector('.po-cursor'), dE = pane.querySelector('.po-dot-e'), dT = pane.querySelector('.po-dot-t');
+    var X0 = 48, W = 580, Y0 = 8, H = 256;
+    var lo = {{ S.lo }}, hi = {{ S.hi }}, ymin = {{ S.ymin }}, ymax = {{ S.ymax }};
+    function money(v) {
+      var r = Math.round(v);
+      if (r === 0) return '$0';
+      return (r < 0 ? '-' : '+') + '$' + Math.abs(r).toLocaleString('en-US');
+    }
+    function fmt(v) {
+      if (v == null || !isFinite(v)) return '-';
+      return mode === 'R' ? ((v < 0 ? '-' : '+') + Math.abs(v).toFixed(2) + ' R') : money(v);
+    }
+    function sx(x) { return X0 + (x - lo) / ((hi - lo) || 1) * W; }
+    function sy(v) { return Y0 + (ymax - v) / ((ymax - ymin) || 1) * H; }
+    function nearest(price) {
+      var a = 0, b = xs.length - 1;
+      while (b - a > 1) { var m = (a + b) >> 1; if (xs[m] < price) a = m; else b = m; }
+      return (price - xs[a] <= xs[b] - price) ? a : b;
+    }
+    function hide() {
+      tip.classList.add('hidden');
+      cur.style.display = 'none'; dE.style.display = 'none'; dT.style.display = 'none';
+    }
+    function show(clientX) {
+      if (!xs.length || !svg) return;
+      var r = svg.getBoundingClientRect();
+      if (!r.width) return;
+      var fx = (clientX - r.left) / r.width * 640;
+      var price = lo + (fx - X0) / W * (hi - lo);
+      price = Math.max(lo, Math.min(hi, price));
+      var i = nearest(price), px = sx(xs[i]);
+      cur.setAttribute('x1', px); cur.setAttribute('x2', px); cur.style.display = '';
+      dE.setAttribute('cx', px); dE.setAttribute('cy', sy(ye[i])); dE.style.display = '';
+      if (yt && yt[i] != null) { dT.setAttribute('cx', px); dT.setAttribute('cy', sy(yt[i])); dT.style.display = ''; }
+      else dT.style.display = 'none';
+      tip.textContent = 'at ' + xs[i].toFixed(2) + (yt ? ' · today ' + fmt(yt[i]) : '') + ' · at expiry ' + fmt(ye[i]);
+      tip.classList.remove('hidden');
+      var pr = pane.getBoundingClientRect();
+      var left = (r.left - pr.left) + px / 640 * r.width + 8;
+      var tw = tip.offsetWidth || 160;
+      if (left + tw > pr.width - 4) left = left - tw - 16;
+      tip.style.left = Math.max(0, left) + 'px';
+      tip.style.top = ((r.top - pr.top) + 8) + 'px';
+    }
+    if (hit) {
+      hit.addEventListener('mousemove', function (e) { show(e.clientX); });
+      hit.addEventListener('mouseleave', hide);
+      hit.addEventListener('touchstart', function (e) { if (e.touches && e.touches[0]) show(e.touches[0].clientX); }, { passive: true });
+      hit.addEventListener('touchmove', function (e) { if (e.touches && e.touches[0]) show(e.touches[0].clientX); }, { passive: true });
+      hit.addEventListener('touchend', hide);
+    }
+    // the $ | R choice is a per-viewer convenience (localStorage, like the chart's
+    // TF_KEY): remembered on click, and a pane rendered in the other unit
+    // re-requests itself once - unless R is undefined here (button disabled)
+    var KEY = 'th.payoff.units';
+    var btns = pane.querySelectorAll('.po-units');
+    for (var k = 0; k < btns.length; k++) {
+      btns[k].addEventListener('click', function () {
+        try { localStorage.setItem(KEY, this.getAttribute('data-units')); } catch (e) { /* private window */ }
+      });
+    }
+    try {
+      var want = localStorage.getItem(KEY);
+      if (want && want !== pane.getAttribute('data-units') && window.htmx) {
+        var b = pane.querySelector('.po-units[data-units="' + want + '"]');
+        if (b && !b.disabled) b.click();
+      }
+    } catch (e) { /* storage blocked: the server's default stands */ }
+  })();
+  </script>
+  {% endif %}
+</div>

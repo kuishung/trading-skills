@@ -24,7 +24,7 @@ from sqlalchemy import (Index, JSON,
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import backref, relationship
 
 from .db import Base
 
@@ -1163,3 +1163,359 @@ class CuratedRevision(Base):
     note = Column(Text, nullable=True)
     source = Column(String(20), nullable=False, default="edit")  # created | edit | chart
     created_at = Column(DateTime, default=_utcnow)
+
+
+# ───────────────────────── Options module (OPTIONS_MODULE_DESIGN.md Part II) ─────────────────────────
+# Nine tables created by ONE migration (alembic/versions/f4a5b6c7d8e9_options_module.py).
+# Read and written only through services/option_store.py (signal / snapshot / iv_daily),
+# services/job_runs.py (option_jobs) and the Positions and Telegram services. Units, once:
+# per-contract ``iv`` is a FRACTION (0.3585); per-day vol statistics are PERCENT (35.85);
+# every day key is an ET trading date string (spread_monitor.et_today()).
+
+
+class OptionBasket(Base):
+    """A ticker one member (or the system) studies on the Options page.
+
+    Separate from ``user_watchlist``: a different cadence (a nightly chain snapshot,
+    1.5 s of Cboe pacing each) and a different cost, so adding a name here is a
+    deliberate act. ``owner_key`` is ``f"u{user_id}"`` or ``"system"`` so the unique
+    constraint works without a NULL ``user_id`` (NULLs are distinct in a UNIQUE on
+    both SQLite and Postgres). A member's basket caps at ``MAX_BASKET = 60``.
+    """
+
+    __tablename__ = "option_basket"
+    __table_args__ = (UniqueConstraint("owner_key", "symbol",
+                                       name="uq_option_basket_owner_symbol"),)
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
+                     nullable=True, index=True)
+    owner_key = Column(String(16), nullable=False, index=True)      # "u<id>" | "system"
+    symbol = Column(String(20), nullable=False, index=True)
+    source = Column(String(12), nullable=False, default="typed")
+    #   typed | paste | watchlist | ivscan_list | ivscan_scan | scanner | screener | sector | positions | system
+    note = Column(Text, nullable=True)
+    active = Column(Boolean, nullable=False, default=True)         # off = kept, not fetched
+    added_on = Column(String(10), nullable=False)                   # ET date (YYYY-MM-DD)
+    pos = Column(Integer, nullable=False, default=0)                # the member's display order
+    created_at = Column(DateTime, default=_utcnow)
+
+    user = relationship("User")
+
+
+class OptionChainSnapshot(Base):
+    """One contract's quote and greeks as seen at one snapshot.
+
+    The per-symbol-day header (spot, iv30, as_of, source, counts) lives in
+    ``iv_daily``, so this table is pure contract rows. Rows are replaced per
+    ``(symbol, snap_on, kind)``. ``kind`` is ``eod`` or ``intraday`` ONLY: a live
+    (bridge) chain is graded in-request and never written here. ``iv`` is a
+    FRACTION; ``oi`` / ``volume`` None means the feed did not say (never 0).
+    """
+
+    __tablename__ = "option_chain_snapshot"
+    __table_args__ = (
+        Index("ix_ocs_symbol_day_kind", "symbol", "snap_on", "kind"),
+        Index("ix_ocs_lookup", "symbol", "snap_on", "expiry", "right", "strike"),
+        Index("ix_ocs_snap_on", "snap_on"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), nullable=False)
+    snap_on = Column(String(10), nullable=False)        # ET date the chain describes
+    kind = Column(String(10), nullable=False, default="eod")    # eod | intraday
+    source = Column(String(12), nullable=False, default="cboe")
+    expiry = Column(String(10), nullable=False)
+    dte = Column(Integer, nullable=False)
+    right = Column(String(1), nullable=False)           # C | P
+    strike = Column(Float, nullable=False)
+    bid = Column(Float, nullable=True)
+    ask = Column(Float, nullable=True)
+    mid = Column(Float, nullable=True)
+    last = Column(Float, nullable=True)
+    bid_size = Column(Integer, nullable=True)
+    ask_size = Column(Integer, nullable=True)
+    iv = Column(Float, nullable=True)                   # FRACTION
+    delta = Column(Float, nullable=True)
+    gamma = Column(Float, nullable=True)
+    theta = Column(Float, nullable=True)
+    vega = Column(Float, nullable=True)
+    rho = Column(Float, nullable=True)
+    theo = Column(Float, nullable=True)
+    oi = Column(Integer, nullable=True)
+    volume = Column(Integer, nullable=True)
+    prev_close = Column(Float, nullable=True)
+
+
+class IVDaily(Base):
+    """One underlying, one ET day: the chain header plus every derived vol statistic.
+
+    Grows from ``iv_history`` (the backfill) and from every nightly snapshot; the
+    IBKR "Live" bootstrap fills a year of past days (``source='ibkr'``) without
+    overwriting a day the server read itself. Per-day statistics are PERCENT (the
+    ``iv_history`` unit). Column names match the keys of ``signal.iv`` so the engine
+    copies, not maps.
+    """
+
+    __tablename__ = "iv_daily"
+    __table_args__ = (UniqueConstraint("symbol", "on", name="uq_iv_daily_day"),
+                      Index("ix_iv_daily_symbol_on", "symbol", "on"))
+
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), nullable=False, index=True)
+    on = Column(String(10), nullable=False, index=True)
+    kind = Column(String(10), nullable=False, default="eod")     # eod | intraday | history
+    source = Column(String(12), nullable=False, default="cboe")  # cboe | alpaca | ibkr | iv_history
+    as_of = Column(DateTime, nullable=True)                      # feed timestamp, naive UTC
+    spot = Column(Float, nullable=True)
+    iv30 = Column(Float, nullable=True)          # the series the rank is computed on (pct)
+    iv30_src = Column(String(8), nullable=True)  # cboe | atm | ibkr - which figure iv30 holds
+    atm_iv30 = Column(Float, nullable=True)      # our own constant-maturity ATM IV (pct)
+    hv20 = Column(Float, nullable=True)          # pct
+    hv60 = Column(Float, nullable=True)          # pct
+    iv_hv_premium = Column(Float, nullable=True)   # iv30 / hv20, a unitless RATIO, never vol points
+    iv_rank = Column(Float, nullable=True)       # 0..100
+    iv_pct = Column(Float, nullable=True)        # 0..100
+    iv_n = Column(Integer, nullable=True)        # observations behind rank / pct
+    iv_state = Column(String(8), nullable=True)  # none | forming | pct_only | rank_ok | ok
+    iv_lo = Column(Float, nullable=True)         # window min (pct)
+    iv_hi = Column(Float, nullable=True)         # window max (pct)
+    iv_by_expiry = Column(JSON, nullable=True)   # {expiry: {dte, atm_iv, n_legs, em_1sd}}
+    iv_front = Column(Float, nullable=True)      # pct
+    iv_back = Column(Float, nullable=True)       # pct
+    term_ratio = Column(Float, nullable=True)    # iv_front / iv_back; the only term figure
+    skew25 = Column(Float, nullable=True)        # put25 - call25, vol points
+    skew_norm = Column(Float, nullable=True)     # skew25 / atm iv of that expiry
+    expected_move = Column(Float, nullable=True) # 1-sigma expected move, $, 30 calendar days
+    earnings_date = Column(String(10), nullable=True)
+    earnings_days = Column(Integer, nullable=True)
+    n_contracts = Column(Integer, nullable=True)
+    n_expiries = Column(Integer, nullable=True)
+    partial = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+class OptionSignal(Base):
+    """The cache the page reads: one ticker's full card for one snapshot under one
+    set of rules (``prefs_hash``).
+
+    The nightly job writes one row per DISTINCT prefs hash in use (the house hash
+    plus every saved override set); a member whose rules changed after the run gets
+    their row lazily on the first card open. Read ONLY through
+    ``option_store.card_for`` / ``option_store.basket_rows_for``. The JSON shapes are
+    the contract in OPTIONS_MODULE_DESIGN.md II.2.6. No payoff / ticket columns: both
+    are derived on request from the stored picks.
+    """
+
+    __tablename__ = "option_signal"
+    __table_args__ = (UniqueConstraint("symbol", "snap_on", "kind", "prefs_hash",
+                                       name="uq_option_signal_key"),
+                      Index("ix_option_signal_hash_day", "prefs_hash", "snap_on"),
+                      Index("ix_option_signal_symbol_day", "symbol", "snap_on"))
+
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), nullable=False)
+    snap_on = Column(String(10), nullable=False)
+    kind = Column(String(10), nullable=False, default="eod")
+    as_of = Column(DateTime, nullable=True)
+    prefs_hash = Column(String(16), nullable=False)      # first 12 hex of the merged prefs
+    engine_version = Column(String(12), nullable=False)
+    # Informational only (NULL = written by the job; else the member whose card open
+    # caused the lazy compute). The lookup key is prefs_hash, never user_id.
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
+                     nullable=True, index=True)
+    status = Column(String(12), nullable=False, default="ok")  # ok | no_setup | no_chain | no_iv | stale_iv | error
+    trend = Column(String(12), nullable=True)                  # up | down | sideways | unclear (a STRING)
+    headline = Column(Text, nullable=True)                     # composed at WRITE time
+    setup = Column(JSON, nullable=True)
+    iv = Column(JSON, nullable=True)
+    strategies = Column(JSON, nullable=True)
+    picks = Column(JSON, nullable=True)
+    error = Column(Text, nullable=True)
+    computed_ms = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
+
+
+class UserOptionPrefs(Base):
+    """A member's option rule overrides, SPARSE: only the fields they changed,
+    merged over ``option_prefs.HOUSE`` on read (like ``ema_setup.clean_enabled``
+    over ``COND_DEFAULT``).
+
+    ``prefs_hash`` is the hash of the MERGED result over the pick-relevant fields
+    only, stored so the signal lookup is one indexed read and so the nightly job can
+    enumerate the distinct hashes in use. The Telegram settings live inside
+    ``prefs["telegram"]`` - their own key, never a schema block, never hashed.
+    """
+
+    __tablename__ = "user_option_prefs"
+    __table_args__ = (UniqueConstraint("user_id", name="uq_user_option_prefs_user"),)
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    prefs = Column(JSON, nullable=False, default=dict)
+    prefs_hash = Column(String(16), nullable=False, index=True)
+    schema_version = Column(Integer, nullable=False, default=1)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+    # One-to-one: User.option_prefs <-> UserOptionPrefs.user. The ORM cascade mirrors
+    # the DB-level ON DELETE CASCADE so deleting a User through the session never
+    # tries to NULL a NOT NULL foreign key.
+    user = relationship("User",
+                        backref=backref("option_prefs", uselist=False,
+                                        cascade="all, delete-orphan",
+                                        passive_deletes=True))
+
+
+class OptionJob(Base):
+    """One run of the nightly job / a refresh / a bootstrap / a backfill / a
+    Telegram poll: the freshness pill and the operator's answer to "did it run?".
+
+    Same role as ``SpreadScan``. Written through ``services/job_runs.py``
+    (``start / finish / latest / missed``); this is the ONE job table of the module.
+    ``started_at`` set with ``finished_at`` NULL means "started, never finished".
+    """
+
+    __tablename__ = "option_jobs"
+
+    id = Column(Integer, primary_key=True)
+    job = Column(String(12), nullable=False, default="nightly")
+    #   nightly | refresh | bootstrap | backfill | telegram_poll
+    run_on = Column(String(10), nullable=False, index=True)      # ET date the run describes
+    source = Column(String(12), nullable=True)                   # cboe | alpaca | ibkr | ...
+    started_at = Column(DateTime, default=_utcnow)
+    finished_at = Column(DateTime, nullable=True)
+    symbols = Column(Integer, nullable=False, default=0)
+    ok = Column(Integer, nullable=False, default=0)
+    errors = Column(Integer, nullable=False, default=0)
+    rows = Column(Integer, nullable=False, default=0)
+    pushed = Column(Integer, nullable=False, default=0)          # Telegram ideas sent by step 6
+    detail = Column(JSON, nullable=True)   # {sym: {"status": "ok|error|partial", "ms": int, "n": int, "err": str|None}}
+    note = Column(Text, nullable=True)
+
+
+class OptionTrade(Base):
+    """THE positions store for EVERY option strategy from step 1: generic legs.
+
+    ``OptionSpread`` holds exactly two put legs and ``spread_monitor.snapshot`` is
+    hard-wired to puts, so even a bear call cannot live there. Every tracked
+    position of every family lives here and is graded by ``services/option_exits``;
+    ``option_spreads`` stays read-only for the legacy ``/portfolio`` page.
+
+    Scope is still **tracking, not execution**: nothing here places, modifies or
+    cancels an order. ``legs`` is the stored Leg shape plus ``entry_price``,
+    ``entry_delta``, ``entry_iv`` per leg; ``net_entry`` is per share, negative =
+    credit received. The per-trade override columns keep the ``OptionSpread``
+    convention: NULL = the member's default. ``meta`` is a portable JSON column for
+    whatever the exit rules need at entry and nothing else has a column for (a
+    calendar's entry breakevens, a condor's range edges); ``{}`` for a credit vertical.
+    """
+
+    __tablename__ = "option_trades"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
+                     nullable=False, index=True)
+    symbol = Column(String(20), nullable=False, index=True)
+    strategy = Column(String(24), nullable=False)        # the StrategyRule.key
+    family = Column(String(24), nullable=False)          # credit_vertical | debit_vertical | long | leaps | condor | time
+    legs = Column(JSON, nullable=False)
+    #   [{expiry, right, strike, side, qty, price, bid, ask, iv, delta, oi, volume,
+    #     entry_price, entry_delta, entry_iv}, ...]
+    front_expiry = Column(String(10), nullable=False, index=True)   # earliest leg expiry
+    back_expiry = Column(String(10), nullable=True)                 # latest leg expiry when they differ
+    net_entry = Column(Float, nullable=False)            # per share: negative = credit, positive = debit
+    contracts = Column(Integer, nullable=False, default=1)
+    max_loss = Column(Float, nullable=True)              # per contract $, positive; None = the premium (long-only)
+    chart_stop = Column(Float, nullable=True)            # stock level (plan.stop)
+    chart_target = Column(Float, nullable=True)          # stock level (debit trades)
+    roll_dte = Column(Integer, nullable=True)            # LEAPS / diagonal long-leg roll date
+    paper = Column(Boolean, nullable=False, default=False)   # the auto-tracked system idea (reserved)
+    signal_id = Column(Integer, nullable=True)           # the option_signal row it came from
+    earnings_date_at_entry = Column(String(10), nullable=True)   # what was known when it was opened
+    # Per-trade overrides of the member's exit lines (NULL = the member's default).
+    roll_delta = Column(Float, nullable=True)
+    loss_stop_pct = Column(Float, nullable=True)         # PERCENT of max loss
+    profit_target_pct = Column(Float, nullable=True)     # PERCENT of the credit
+    dte_floor = Column(Integer, nullable=True)
+    meta = Column(JSON, nullable=True)                   # written once at entry; read by option_exits.grade
+    opened_at = Column(DateTime, default=_utcnow)
+    status = Column(String(12), nullable=False, default="open")    # open | closed
+    closed_at = Column(DateTime, nullable=True)
+    close_reason = Column(String(24), nullable=True)
+    note = Column(Text, nullable=True)                   # carries the rejection sentence when tracked against the recommender
+
+    user = relationship("User")
+    checks = relationship("OptionTradeCheck", back_populates="trade",
+                          cascade="all, delete-orphan",
+                          order_by="OptionTradeCheck.checked_on")
+
+
+class OptionTradeCheck(Base):
+    """One day's grading of one tracked option trade - ``SpreadCheck`` generalised.
+
+    One row per (trade, ET day): a re-check on the same day UPDATES rather than
+    appends, so opening the page ten times does not manufacture ten data points.
+    Quotes are stored as taken and never recomputed on read. ``legs`` holds the
+    per-leg ``{mid, delta, iv}`` seen that day; ``state`` follows the
+    ``bull_put.monitor`` contract.
+    """
+
+    __tablename__ = "option_trade_checks"
+    __table_args__ = (UniqueConstraint("trade_id", "checked_on",
+                                       name="uq_option_trade_check_day"),)
+
+    id = Column(Integer, primary_key=True)
+    trade_id = Column(Integer, ForeignKey("option_trades.id", ondelete="CASCADE"),
+                      nullable=False, index=True)
+    checked_on = Column(String(10), nullable=False, index=True)   # YYYY-MM-DD (ET)
+
+    spot = Column(Float, nullable=True)
+    mark = Column(Float, nullable=True)             # per-share value / cost to close
+    pl = Column(Float, nullable=True)               # unrealised $, negative = losing
+    loss_pct = Column(Float, nullable=True)         # fraction of max loss used
+    profit_pct = Column(Float, nullable=True)       # fraction of the credit / target captured
+    dte = Column(Integer, nullable=True)            # front expiry
+    back_dte = Column(Integer, nullable=True)
+    net_delta = Column(Float, nullable=True)        # position delta in SHARES
+    theta = Column(Float, nullable=True)            # $ per day
+    vega = Column(Float, nullable=True)             # $ per vol point
+    legs = Column(JSON, nullable=True)              # [{mid, delta, iv}, ...] per leg, as seen that day
+
+    state = Column(String(10), nullable=False, default="UNKNOWN")  # OK|WATCH|ROLL|CLOSE|TAKE|UNKNOWN|EXPIRED
+    action = Column(Text, nullable=True)
+    reasons = Column(JSON, nullable=True)
+    urgent = Column(Boolean, nullable=False, default=False)
+    source = Column(String(12), nullable=False, default="cboe")    # cboe | alpaca | bridge
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
+
+    trade = relationship("OptionTrade", back_populates="checks")
+
+
+class OptionIdeaPush(Base):
+    """One Telegram push per (member, idea) - the dedupe / opt-in record.
+
+    ``idea_key`` is ``"SYM|strategy|front_expiry"``, which is what makes "once per
+    new idea" mean something; ``short_strike`` / ``atr`` let the push re-send ONLY
+    when the short strike moved by more than one ATR, by updating this row rather
+    than inserting a second one. ``error`` is ``'dry-run'`` on a dry run so the
+    second run still dedupes.
+    """
+
+    __tablename__ = "option_idea_push"
+    __table_args__ = (UniqueConstraint("user_id", "idea_key", name="uq_option_idea_push"),)
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
+                     nullable=False, index=True)
+    symbol = Column(String(20), nullable=False, index=True)
+    idea_key = Column(String(80), nullable=False)
+    short_strike = Column(Float, nullable=True)
+    atr = Column(Float, nullable=True)
+    score = Column(Float, nullable=True)
+    sent_at = Column(DateTime, default=_utcnow)
+    ok = Column(Boolean, nullable=False, default=True)
+    error = Column(Text, nullable=True)
+
+    user = relationship("User")

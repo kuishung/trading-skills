@@ -26,7 +26,7 @@ trustworthy origin), which is what makes this work with nothing exposed.
 ## Contents
 
 - `ibkr_bridge.py` — the bridge. Read-only (`readonly=True`, no order path).
-  Endpoints: `/health`, `/chain` (`side=put` since 1.3), `/iv`, `/account`, `/scan` (1.1).
+  Endpoints: `/health`, `/chain` (`side=put` since 1.3), `/iv` (`series=1` since 1.6), `/account`, `/scan` (1.1).
 - `start_ibkr_bridge.bat` — launcher (uses `py -3.12`).
 - `requirements.txt` — just `ib_insync`.
 
@@ -87,6 +87,36 @@ could read your balances off localhost. It binds `127.0.0.1` only — never
 reachable from the network.
 
 ## Changelog
+
+### 2026-10-04 — bridge 1.6: `/iv?symbol=X&series=1`, the dated daily IV series (percent)
+The Options page's **Live** button bootstraps a year of IV history into the server's
+`iv_daily` table from the member's own TWS (OPTIONS_MODULE_DESIGN.md II.2.13 / Part A
+§A4.6), so a basket name gets an IV rank with a real window the first evening instead of
+"forming" for sixty days. The bridge already fetched the dated daily
+`OPTION_IMPLIED_VOLATILITY` bars for `/iv`; it only summarised them. Additive:
+
+- `GET /iv?symbol=LRCX&series=1` adds `"series": [{"on": "YYYY-MM-DD", "iv": 31.2}, ...]`
+  to the reply - **PERCENT** (`round(close * 100, 1)`, the unit `iv_current` / `iv_low` /
+  `iv_high` in the same reply already use), **oldest first**, at most **400** points
+  (`IV_SERIES_MAX`). The series is also returned on the "not enough history" reply (fewer
+  than 30 points), since the server can store whatever exists.
+- Without `series=1` the reply is byte-for-byte what 1.5 sent, so the IV Rank page and the
+  Watchlist tab keep working on either bridge version. The `/iv` cache key now carries the
+  flag, so the two shapes never serve each other.
+- `server_version` -> `TradeHunterIBKRBridge/1.6`. The server's `BRIDGE_MIN_VERSION` is
+  `"1.6"`; when the Options card's Live press finds no `series` in the reply, its IV line
+  says "Your bridge is older than 1.6 - restart `bridge\start_ibkr_bridge.bat`" (the chain
+  still grades live). Nothing else changed: `/chain`, `/account`, `/scan`, `/health` and
+  the origin rules are 1.5's.
+- `_bar_day()` reads the bar date as a `datetime.date` (what `formatDate=1` gives for day
+  bars on current ib_insync) or a raw `YYYYMMDD` string, so an older build does not drop
+  the dates.
+
+Server side the series is stored AS-IS by `option_store.bootstrap_iv` (bounded `0.1 <= iv <=
+1000`, dates within the last 400 days, never overwriting a day the server read from Cboe /
+Alpaca itself). Tested: the handler on a stubbed `reqHistoricalDataAsync` (dated bars ->
+`series` oldest first, percent, capped at 400; `series` absent without the flag; the
+`< 30` reply still carries it); a live TWS check is the laptop's step-1 walkthrough item.
 
 ### 2026-09-19 — bridge 1.5: the chain no longer waits on fixed timers (20-21 s -> 8-10 s)
 User: *"when i get data from IBKR, it is quite slow, what is the problem?"* Measured against a live

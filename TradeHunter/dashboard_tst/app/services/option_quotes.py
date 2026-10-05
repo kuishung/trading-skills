@@ -109,7 +109,16 @@ def fetch_chain(symbol: str, *, ttl: float = _TTL, retries: int = 0,
         {"symbol", "spot", "iv30", "as_of", "fetched_at",
          "legs": {(expiry, right, strike): {bid, ask, mid, iv, delta, gamma,
                                             theta, vega, open_interest, volume,
-                                            theo}}}
+                                            theo, rho, last, bid_size, ask_size,
+                                            prev_close}},
+         "header": {every non-``options`` key of the feed's ``data``}}
+
+    The last five leg keys and ``header`` were added for the Options module
+    (2026-10-04, additive): ``rho``, ``last_trade_price`` -> ``last``, ``bid_size``,
+    ``ask_size``, ``prev_day_close`` -> ``prev_close``; the header carries the
+    underlying's own bid / ask / open / high / low / close / prev_day_close /
+    volume / iv30_change / last_trade_time for the full-chain expander and the
+    stale check. Existing consumers index by key and ignore the extras.
 
     Raises ``ChainError`` on any network or shape failure.
     """
@@ -148,8 +157,22 @@ def fetch_chain(symbol: str, *, ttl: float = _TTL, retries: int = 0,
     except Exception as exc:  # noqa: BLE001  - network, JSON, missing key
         raise ChainError(f"{symbol}: {type(exc).__name__}: {exc}") from exc
 
+    out = parse_chain(data, symbol)
+    with _lock:
+        _cache[sym] = (now, out)
+    return out
+
+
+def parse_chain(data: dict, symbol: str) -> dict:
+    """The feed's ``data`` object -> the dict ``fetch_chain`` returns (see there).
+
+    Split out of ``fetch_chain`` (2026-10-04) so a saved payload can be parsed
+    without HTTP - the Options module's tests run it on a trimmed MSFT capture
+    and ``option_data.CboeSource`` builds its normalized chain from the result.
+    Raises ``ChainError`` when no contract parses.
+    """
     legs: dict[tuple, dict] = {}
-    for o in data.get("options") or []:
+    for o in (data or {}).get("options") or []:
         p = parse_occ(o.get("option") or "")
         if p is None:
             continue
@@ -163,22 +186,28 @@ def fetch_chain(symbol: str, *, ttl: float = _TTL, retries: int = 0,
             "vega": _num(o.get("vega")), "theo": _num(o.get("theo")),
             "open_interest": _num(o.get("open_interest")),
             "volume": _num(o.get("volume")),
+            # kept since 2026-10-04 (Options module, additive): the feed carries them
+            "rho": _num(o.get("rho")),
+            "last": _num(o.get("last_trade_price")),
+            "bid_size": _num(o.get("bid_size")),
+            "ask_size": _num(o.get("ask_size")),
+            "prev_close": _num(o.get("prev_day_close")),
         }
 
     if not legs:
         raise ChainError(f"{symbol}: chain returned no parseable contracts")
 
-    out = {
+    return {
         "symbol": (symbol or "").strip().upper(),
         "spot": _num(data.get("current_price")),
         "iv30": _num(data.get("iv30")),
         "as_of": data.get("last_trade_time"),
         "fetched_at": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
         "legs": legs,
+        # the underlying's own fields (bid, ask, open, high, low, close,
+        # prev_day_close, volume, iv30_change, tick, seqno, last_trade_time ...)
+        "header": {k: v for k, v in data.items() if k != "options"},
     }
-    with _lock:
-        _cache[sym] = (now, out)
-    return out
 
 
 def leg(chain: dict, expiry: str, right: str, strike: float) -> dict | None:
