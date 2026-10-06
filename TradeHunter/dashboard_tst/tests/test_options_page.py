@@ -431,7 +431,16 @@ def test_card_headline_gauge_chips_and_must_happen(world):
     c = world["client"]
     html = c.get("/options/card/LRCX").text
     assert 'class="opt-card' in html and 'data-strategy="bull_put"' in html
-    assert "Uptrend: EMA 20 above 50 above 200 for 34 days" in html          # the stored headline, verbatim
+    assert "Uptrend: EMA 20 above 50 above 200 for 34 days" in html          # the stored headline (the read panel's tooltip)
+    assert "What the system read" in html                                     # v4.130: one row per fact, not a paragraph
+    for label, value in [("Trend", "Uptrend"), ("EMA 20 / 50 / 200", "346.10 / 335.80 / 301.20"),
+                         ("Setup today", "Support bounce"), ("Support", "340.90"), ("Resistance", "372.00"),
+                         ("Chart stop / target", "336.20 / 375.20"), ("Implied volatility", "46%"),
+                         ("IV vs movement", "+21%"), ("IV rank", ">62<"), ("Term structure", "50% front / 45% back"),
+                         ("Expected move", "±24.1"), ("Earnings", "2026-10-22"), ("Volume", "1.7x normal")]:
+        assert label in html and value in html, (label, value)
+    assert "EMA 20 &gt; 50 &gt; 200 for 34 days" in html                     # the trend row's note
+    assert "in 19 days" in html and "3 previous touches" in html
     assert "What has to happen:" in html and "LRCX stays above 330 until Nov 20" in html
     assert "&#10003; Bull put spread" in html                                 # the recommended chip first
     assert "Bull call spread &middot; not available yet" in html             # an unbuilt fit is never recommended

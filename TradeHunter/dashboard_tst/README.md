@@ -143,6 +143,29 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-06 - v4.130: "What the system read" - the card's facts as one row each, not a paragraph
+
+User: *"i need a separate panel for this and list down each of the data rather than in a long
+paragraph, it is hard to read"*. The card's headline paragraph is replaced by a panel
+(`_options_read.html`, included by `_options_card.html`) with one row per fact - the value, then a
+short plain note - in three groups. **Chart:** trend with the EMA stack and its age, the three EMA
+values, the weekly trend, swing structure, the setup found today with its level / touches / quality
+(or "None - no bounce, rebound or breakout candle on the latest bar"), the bounce volume vs normal,
+support, resistance, chart stop / target with the risk per share, price and ATR with "a normal day
+moves about x%". **Options:** implied volatility, the stock's own movement over 20 / 60 sessions,
+IV vs movement as a signed percent, IV rank with its basis and day count, IV percentile, term
+structure front / back with what it means, put / call skew, the expected move in dollars and percent,
+the premium verdict and why. **Dates:** earnings with days to go, when the data was read, and the
+evidence lines. Every value comes straight from the stored signal (no new engine work, no schema
+change); colours follow the house grammar (emerald good, amber caution, rose bad). The stored
+one-sentence headline is kept as the panel's tooltip and remains what the basket row's tooltip and
+the Telegram push say. Three columns on a laptop, stacked on a phone.
+
+Tested: `tests/test_options_page.py` (20 pass) - the card test now checks a dozen of the panel's
+rows by label and value and that the stored sentence still reaches the HTML as the tooltip.
+Verified in the browser on the dev server with the nightly's DB (NVDA: provisional IV, no setup;
+the rows read correctly and nothing else on the card moved).
+
 ### 2026-10-06 - v4.129: run the data job from the page, and refresh the whole basket
 
 User: *"can user run it manually throught the interface?"* and *"i need a button that will refresh

@@ -89,8 +89,9 @@
   </div>
   {% else %}
 
-  {# ---- the headline: one paragraph, stored at write time ---- #}
-  <p id="optHeadline" class="mt-2 text-[12px] text-slate-200 leading-relaxed">{{ headline }}</p>
+  {# ---- what the system read: one row per fact (v4.130). The stored one-sentence
+     headline is the panel's tooltip; it stays what the basket row and Telegram say. ---- #}
+  {% include "_options_read.html" %}
 
   {# ---- the gauge with its basis and the day count ---- #}
   {% set verdict = iv.verdict or 'UNKNOWN' %}

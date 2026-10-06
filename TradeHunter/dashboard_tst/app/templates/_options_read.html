@@ -1,0 +1,139 @@
+{# "What the system read" - every fact behind the card as ONE ROW EACH (user, 2026-10-06:
+   "i need a separate panel for this and list down each of the data rather than in a long
+   paragraph, it is hard to read"). Three groups: the chart, the options, the dates. Every
+   value comes straight from the stored signal (card.setup / card.iv); the stored
+   one-sentence headline is kept as the panel's tooltip and stays what the basket row and
+   the Telegram push say. Included by _options_card.html, after the age line.
+   Every field is read with .get() - a signal written by an older engine may lack a key,
+   and a missing key must leave a row out, never break the card. #}
+{% set st = (card.setup if card else none) or {} %}
+{% set iv = (card.iv if card else none) or {} %}
+{% set ema = st.get('ema') or {} %}
+{% set lv = st.get('levels') or {} %}
+{% set plan = st.get('plan') or {} %}
+{% set struct = st.get('structure') or {} %}
+{% set sup = st.get('sup') or {} %}
+{% set rng = st.get('rng') or {} %}
+{% set e20, e50, e200 = ema.get('e20'), ema.get('e50'), ema.get('e200') %}
+{% set vol_ratio = st.get('vol_ratio') if st.get('vol_ratio') is not none else sup.get('vol_ratio') %}
+{% set vol_high = st.get('vol_high') if st.get('vol_high') is not none else sup.get('vol_high') %}
+{% set stacked_up = e20 is not none and e50 is not none and e200 is not none and e20 > e50 and e50 > e200 %}
+{% set stacked_down = e20 is not none and e50 is not none and e200 is not none and e20 < e50 and e50 < e200 %}
+{% set tr = st.get('trend') or ('up' if stacked_up else ('down' if stacked_down else ('sideways' if rng.get('sideways') else 'flat'))) %}
+{% set trend_days = st.get('trend_days') %}
+{% set w_up = st.get('w_uptrend') %}
+{% set kind, level, touches, quality = st.get('kind'), st.get('level'), st.get('touches'), st.get('quality') %}
+{% set close, atr = st.get('close'), st.get('atr') %}
+{% set iv30, hv20, hv60, prem_ratio = iv.get('iv30'), iv.get('hv20'), iv.get('hv60'), iv.get('iv_hv_premium') %}
+{% set iv_rank, iv_pct, iv_n, basis = iv.get('iv_rank'), iv.get('iv_pct'), iv.get('iv_n') or 0, iv.get('basis') %}
+{% set iv_front, iv_back, term_ratio, skew25 = iv.get('iv_front'), iv.get('iv_back'), iv.get('term_ratio'), iv.get('skew25') %}
+{% set exp_move, verdict, provisional = iv.get('expected_move'), iv.get('verdict') or 'UNKNOWN', iv.get('provisional') %}
+{% set earn_date, earn_days = iv.get('earnings_date'), iv.get('earnings_days') %}
+{% set KIND = {'support_bounce': 'Support bounce', 'ema_rebound': 'EMA rebound', 'breakout_retest': 'Breakout retest',
+               'trendline_bounce': 'Trend-line bounce', 'resistance_reject': 'Resistance rejection',
+               'failed_support': 'Failed support', 'range': 'Range'} %}
+{% macro row(label, value, note='', k='') -%}
+<div class="grid items-baseline gap-x-2 py-[3px] border-b border-slate-800/60" style="grid-template-columns: 7.5rem minmax(0,1fr);">
+  <span class="text-[10px] uppercase tracking-wide text-slate-500">{{ label }}</span>
+  <span class="text-[12px] text-slate-200 min-w-0 tabular-nums"><span class="{% if k == 'good' %}text-emerald-300{% elif k == 'warn' %}text-amber-300{% elif k == 'bad' %}text-rose-300{% endif %}">{{ value }}</span>{% if note %} <span class="text-[11px] text-slate-500">&middot; {{ note }}</span>{% endif %}</span>
+</div>
+{%- endmacro %}
+<div id="optRead" class="mt-2 rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2" title="{{ headline or '' }}">
+  <div class="flex items-baseline gap-2 mb-1">
+    <span class="text-[11px] font-semibold text-slate-300">What the system read</span>
+    <span class="text-[10px] text-slate-500">every number behind this card, one per line</span>
+  </div>
+  <div class="grid gap-x-6 gap-y-2 lg:grid-cols-3">
+
+    {# ---- the chart ---- #}
+    <div>
+      <div class="text-[10px] uppercase tracking-wide text-slate-600 mb-0.5">Chart</div>
+      {{ row('Trend',
+             'Uptrend' if tr == 'up' else ('Downtrend' if tr == 'down' else ('Sideways' if tr == 'sideways' else 'No clear trend')),
+             (('EMA 20 > 50 > 200 for ' ~ trend_days ~ ' days') if (tr == 'up' and trend_days) else
+              (('EMA 20 < 50 < 200 for ' ~ trend_days ~ ' days') if (tr == 'down' and trend_days) else
+               ('the EMAs are tangled' if tr == 'flat' else ''))),
+             'good' if tr == 'up' else ('bad' if tr == 'down' else '')) }}
+      {% if e20 is not none and e50 is not none and e200 is not none %}
+      {{ row('EMA 20 / 50 / 200', '%.2f'|format(e20) ~ ' / ' ~ '%.2f'|format(e50) ~ ' / ' ~ '%.2f'|format(e200)) }}
+      {% endif %}
+      {% if w_up is not none %}
+      {{ row('Weekly trend', 'stacked up' if w_up else 'not stacked', 'weekly EMA 20 > 50 > 200' if w_up else 'the weekly EMAs do not agree', 'good' if w_up else '') }}
+      {% endif %}
+      {% if struct.get('reason') %}
+      {{ row('Swing structure', struct.get('reason')|capitalize, '', 'good' if struct.get('state') == 'bullish' else ('warn' if struct.get('state') == 'decelerated' else '')) }}
+      {% endif %}
+      {{ row('Setup today',
+             (KIND.get(kind, (kind|replace('_', ' ')|capitalize)) if kind else 'None'),
+             ((('at ' ~ '%.2f'|format(level)) if level else '')
+              ~ ((' · ' ~ touches ~ ' previous touch' ~ ('es' if touches != 1 else '')) if touches else '')
+              ~ ((' · quality ' ~ quality ~ '/100') if quality else '')) if kind else 'no bounce, rebound or breakout candle on the latest bar',
+             'good' if kind else '') }}
+      {% if vol_ratio is not none %}
+      {{ row('Volume', '%.1f'|format(vol_ratio) ~ 'x normal', 'high for this stock' if vol_high else 'nothing unusual', 'good' if vol_high else '') }}
+      {% endif %}
+      {{ row('Support', ('%.2f'|format(lv.get('support'))) if lv.get('support') else '–', 'nearest level under price' if lv.get('support') else 'none found in the last year') }}
+      {{ row('Resistance', ('%.2f'|format(lv.get('resistance'))) if lv.get('resistance') else '–', 'nearest level over price' if lv.get('resistance') else 'none found over price in the last year') }}
+      {{ row('Chart stop / target',
+             ('%.2f'|format(plan.get('stop')) ~ ' / ' ~ '%.2f'|format(plan.get('target'))) if (plan.get('stop') and plan.get('target')) else '–',
+             ('risk ' ~ ('%.2f'|format(plan.get('r'))) ~ ' per share') if plan.get('r') else 'no setup, so no trade plan today') }}
+      {% if close %}
+      {{ row('Price · ATR', '%.2f'|format(close) ~ ' · ' ~ (('%.2f'|format(atr)) if atr else '–'),
+             ('a normal day moves about ' ~ '%.1f'|format(atr / close * 100) ~ '%') if atr else '') }}
+      {% endif %}
+    </div>
+
+    {# ---- the options ---- #}
+    <div>
+      <div class="text-[10px] uppercase tracking-wide text-slate-600 mb-0.5">Options</div>
+      {{ row('Implied volatility', ('%.0f'|format(iv30) ~ '%') if iv30 is not none else '–', '30-day, at the money') }}
+      {{ row("Stock's own movement",
+             (('%.0f'|format(hv20) ~ '%') if hv20 is not none else '–') ~ ((' / ' ~ '%.0f'|format(hv60) ~ '%') if hv60 is not none else ''),
+             'realised, last 20 / 60 sessions') }}
+      {% if prem_ratio is not none %}
+      {% set prem = (prem_ratio - 1) * 100 %}
+      {{ row('IV vs movement', ('+' if prem >= 0 else '') ~ '%.0f'|format(prem) ~ '%',
+             'options priced for more movement than the stock has shown' if prem > 10 else ('priced for less movement than the stock has shown' if prem < -10 else 'about what the stock has actually moved'),
+             'warn' if prem > 10 else ('good' if prem < -10 else '')) }}
+      {% endif %}
+      {{ row('IV rank', ('%.0f'|format(iv_rank)) if iv_rank is not none else 'not yet',
+             ('where today sits between the year\'s low and high' if basis == 'rank' else
+              (('provisional - ' ~ iv_n ~ ' of 60 days of IV history') if basis in ('provisional', 'percentile') else
+               (iv_n ~ ' of 60 days of IV history; Live loads a year from TWS'))),
+             ('warn' if iv_rank >= 50 else ('good' if iv_rank < 30 else '')) if (iv_rank is not none and basis == 'rank') else '') }}
+      {% if iv_pct is not none %}
+      {{ row('IV percentile', '%.0f'|format(iv_pct), 'share of the last year with lower IV than today') }}
+      {% endif %}
+      {% if iv_front is not none and iv_back is not none %}
+      {{ row('Term structure', '%.0f'|format(iv_front) ~ '% front / ' ~ '%.0f'|format(iv_back) ~ '% back',
+             'front month dearer - an event is priced in' if (term_ratio or 0) >= 1.05 else ('front month cheaper - nothing special priced in' if (term_ratio or 1) <= 0.95 else 'about flat'),
+             'warn' if (term_ratio or 0) >= 1.05 else '') }}
+      {% endif %}
+      {% if skew25 is not none %}
+      {{ row('Put / call skew', '%.1f'|format(skew25|abs) ~ ' pts', ('puts dearer than calls' if skew25 > 0 else ('calls dearer than puts' if skew25 < 0 else 'even')) ~ ' at 25 delta') }}
+      {% endif %}
+      {% if exp_move is not none and close %}
+      {{ row('Expected move', '±' ~ '%.1f'|format(exp_move), 'about ±' ~ '%.1f'|format(exp_move / close * 100) ~ '% over 30 days, by the options market') }}
+      {% endif %}
+      {{ row('Premium verdict',
+             ('cannot say yet' if verdict == 'UNKNOWN' else verdict|capitalize) ~ (' (provisional)' if provisional else ''),
+             iv.get('verdict_why') or '',
+             'warn' if (verdict == 'SELL' and not provisional) else ('good' if (verdict == 'BUY' and not provisional) else '')) }}
+    </div>
+
+    {# ---- the dates ---- #}
+    <div>
+      <div class="text-[10px] uppercase tracking-wide text-slate-600 mb-0.5">Dates</div>
+      {{ row('Earnings', earn_date or '–',
+             ('in ' ~ earn_days ~ ' days') if earn_days is not none else ('date unknown - no idea is pushed until it is' if not earn_date else ''),
+             'warn' if (earn_days is not none and earn_days <= 45) else '') }}
+      {{ row('Data read', age.text if age else '–', '', 'warn' if (age and age.cls == 'text-amber-300') else ('bad' if (age and age.cls == 'text-rose-300') else '')) }}
+      {% if st.get('evidence') %}
+      <div class="pt-1">
+        <div class="text-[10px] uppercase tracking-wide text-slate-500 mb-0.5">Evidence</div>
+        {% for e in st.get('evidence') %}<div class="text-[11px] text-slate-400 leading-snug">&middot; {{ e }}</div>{% endfor %}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
