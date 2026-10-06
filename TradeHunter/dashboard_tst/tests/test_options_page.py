@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import math
+import json
 import types
 
 import pytest
@@ -151,7 +152,7 @@ def _chain(symbol, snap_on, as_of):
 
 
 @pytest.fixture
-def world(engine, db, user):
+def world(engine, db, user, monkeypatch):
     """The member (with ONE rule override, so their hash differs from the house hash),
     a second member, four basket tickers and the signal rows behind the three basket
     states plus an earnings-blocked card."""
@@ -188,7 +189,12 @@ def world(engine, db, user):
     db.commit()
 
     res = op._add_symbols(db, user, ["LRCX", "MA", "ISRG", "KO"], "paste")
-    assert res == {"added": 4, "skipped": 0, "over_cap": 0, "total": 4}
+    assert res == {"added": 4, "skipped": 0, "over_cap": 0, "total": 4, "new": ["LRCX", "MA", "ISRG", "KO"]}
+
+    # v4.131: an add starts the first-time read in a thread - recorded here, never run
+    first_reads: list = []
+    monkeypatch.setattr(op, "_first_read_in_background",
+                        lambda symbols, user_id=None: first_reads.append((list(symbols), user_id)))
 
     Session = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
     uid, oid = user.id, other.id
@@ -210,7 +216,8 @@ def world(engine, db, user):
     app.dependency_overrides[current_user] = _user
     try:
         yield {"client": TestClient(app, follow_redirects=False), "uid": uid, "oid": oid, "mine": mine,
-               "house": house, "day": day, "as_of": as_of, "Session": Session, "state": state, "op": op}
+               "house": house, "day": day, "as_of": as_of, "Session": Session, "state": state, "op": op,
+               "first_reads": first_reads}
     finally:
         app.dependency_overrides.clear()
 
@@ -768,6 +775,115 @@ def test_admin_can_run_the_data_job_from_the_page(world, monkeypatch):
     assert 'hx-trigger="load delay:10s"' in r.text          # the 10 s re-poll while running
     r = c.get("/options/status/strip")
     assert r.status_code == 200 and "Run the data job now" in r.text
+
+
+def test_adding_a_ticker_starts_its_first_time_read(world):
+    """v4.131: a basket add - typed or imported - starts the first-time read (IV history,
+    today's chain, the engines) for the NEW symbols only, in the background, and the
+    toast says so. A symbol already in the basket starts nothing; the import's JSON
+    shape is unchanged."""
+    c, reads = world["client"], world["first_reads"]
+    reads.clear()
+    r = c.post("/options/basket/add", data={"symbol": "nvda"})
+    assert r.status_code == 200 and "reading its chain and IV history now" in r.headers.get("HX-Trigger", "")
+    ev = json.loads(r.headers["HX-Trigger"])["options:basket-changed"]
+    assert ev["new"] == ["NVDA"] and ev["n"] == 5               # the page reloads the card it shows if it is one of these
+    assert reads == [(["NVDA"], world["uid"])]
+    r = c.post("/options/basket/add", data={"symbol": "nvda"})
+    assert "already in your basket" in r.headers.get("HX-Trigger", "") and len(reads) == 1
+    r = c.post("/options/basket/import", json={"source": "paste", "text": "LRCX, amd, nvda, amd"})
+    assert r.status_code == 200 and r.json() == {"added": 1, "skipped": 3, "over_cap": 0, "total": 6}
+    assert "reading them now" in r.headers.get("HX-Trigger", "")
+    assert reads[-1] == (["AMD"], world["uid"]) and len(reads) == 2
+    r = c.post("/options/basket/import", json={"source": "paste", "text": "amd"})
+    assert r.json()["added"] == 0 and len(reads) == 2 and "reading them now" not in r.headers.get("HX-Trigger", "")
+
+
+def test_card_basket_and_strip_show_a_first_read_in_flight(world):
+    """While a symbol's first-time read runs: its card says so and polls a lightweight
+    endpoint (204 - nothing swaps, the chart stays), Refresh is disabled and a Refresh
+    request is turned away, the basket row pulses and reads 'reading...', the strip
+    counts it and re-polls in 10 s. Once done, the poll answers with the finished card
+    retargeted into the pane, and this member's basket re-renders - not another
+    member's. A failed read says why. A marker whose thread vanished expires."""
+    op, c, uid, oid = world["op"], world["client"], world["uid"], world["oid"]
+    c.post("/options/basket/add", data={"symbol": "amd"})          # the stub records; AMD has no read
+    op._mark_reading(["AMD"], uid, op.time.monotonic())
+    try:
+        html = c.get("/options/card/AMD").text
+        assert "Reading AMD now" in html and 'hx-get="/options/card/AMD/reading' in html and 'hx-trigger="every 4s"' in html
+        assert 'hx-swap="none"' in html and "No read yet for AMD" not in html
+        assert "A first read of AMD is in progress" in html and "disabled" in html      # the Refresh button
+        assert c.get("/options/card/AMD/reading").status_code == 204
+        r = c.post("/options/refresh/AMD")
+        assert r.status_code == 200 and "already in progress" in r.text
+        html = c.get("/options/card/LRCX").text                      # another ticker: untouched
+        assert "Reading LRCX" not in html and "What the system read" in html and "disabled" not in html.split("Refresh</button>")[0][-400:]
+        r = c.get("/options/status/strip")
+        assert "reading 1 new ticker" in r.text and 'hx-trigger="load delay:10s"' in r.text
+        html = c.get("/options/basket").text
+        assert "reading&hellip;" in html and "animate-pulse" in html
+        world["state"]["uid"] = oid                                  # another member sees no "reading" of their own
+        assert "reading 1 new ticker" not in c.get("/options/status/strip").text
+    finally:
+        world["state"]["uid"] = uid
+        op._mark_done("AMD", uid)
+    # done: the poll answers once with the finished card, retargeted into the pane
+    r = c.get("/options/card/AMD/reading")
+    assert r.status_code == 200 and r.headers["HX-Retarget"] == "#optPane" and r.headers["HX-Reswap"] == "innerHTML"
+    assert "No read yet for AMD" in r.text and "Reading AMD now" not in r.text and "options:basket-changed" in r.headers.get("HX-Trigger", "")
+    r = c.get("/options/card/AMD")
+    assert "options:basket-changed" not in r.headers.get("HX-Trigger", "")           # the marker was consumed
+    # the done marker belongs to the member who added the ticker
+    op._mark_done("AMD", uid)
+    world["state"]["uid"] = oid
+    try:
+        assert "options:basket-changed" not in c.get("/options/status/strip").headers.get("HX-Trigger", "")
+    finally:
+        world["state"]["uid"] = uid
+    assert "options:basket-changed" in c.get("/options/status/strip").headers.get("HX-Trigger", "")
+    assert op._take_done(uid) == set()
+    # a failed first read: the card and the basket row say why; a later successful read clears it
+    op._mark_done("AMD", uid, err="AMD: Cboe HTTP 429 (no network in tests)")
+    html = c.get("/options/card/AMD").text
+    assert "The first read of AMD failed: AMD: Cboe HTTP 429" in html and "Press <b>Refresh</b>" in html
+    assert "read failed" in c.get("/options/basket").text
+    assert c.get("/options/card/LRCX").status_code == 200 and op._read_error("AMD")
+    op._clear_read_error("AMD")
+    assert "No read yet for AMD" in c.get("/options/card/AMD").text
+    # a stale marker (the thread vanished) expires; a newer read's marker is not cleared by an old thread
+    op._mark_reading(["AMD"], uid, op.time.monotonic() - op.FIRST_READ_MAX_S - 1)
+    assert op._reading("AMD") is False and "AMD" not in op._first_reads
+    t_new = op.time.monotonic()
+    op._mark_reading(["AMD"], uid, t_new)
+    op._mark_done("AMD", uid, started=t_new - 5)                     # an older thread's start time: ignored
+    assert op._reading("AMD") is True
+    op._mark_done("AMD", uid, started=t_new)
+    assert op._reading("AMD") is False and op._take_done(uid) == {"AMD"}
+
+
+def test_strip_shows_the_last_history_backfill(world):
+    """The last IV-history backfill (its own option_jobs row) is one line on the strip:
+    when, how many days landed, how many tickers are still short - the note as the tooltip."""
+    from app.services import job_runs
+
+    c = world["client"]
+    with world["Session"]() as s:
+        run = job_runs.start(s, "backfill", world["day"], source="iv_history")
+        job_runs.finish(s, run, ok=2, rows=312, symbols=3, detail={"_short": ["KO"]},
+                        note="3 tickers: 312 days of IV history added; 1 still under 60 days (KO) - press Live")
+    r = c.get("/options/status/strip")
+    assert r.status_code == 200
+    assert "history" in r.text and "+312 days" in r.text and "1 short" in r.text
+    assert "312 days of IV history added" in r.text                  # the tooltip
+    # a newer nightly carries its own step-1 summary: that one wins, with the probe's reason in the tooltip
+    with world["Session"]() as s:
+        run = job_runs.start(s, "nightly", clock.et_today(), source="cboe")
+        job_runs.finish(s, run, ok=5, rows=100, symbols=5, note="5/5 ok",
+                        detail={"_backfill": {"note": "5 tickers: 0 days of IV history added; IB Gateway / TWS not reachable on 127.0.0.1 (tried 4002, 4001, 7497, 7496); 5 still under 60 days (A, B, C, D, E) - press Live",
+                                              "gained": 0, "short": ["A", "B", "C", "D", "E"], "seed": {"status": "skipped"}}})
+    r = c.get("/options/status/strip")
+    assert "+0 days" in r.text and "5 short" in r.text and "not reachable on 127.0.0.1 (tried 4002" in r.text
 
 
 def test_strip_offers_refresh_all_and_refresh_stale(world):

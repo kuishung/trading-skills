@@ -27,6 +27,7 @@ os.environ["TST_DATABASE_URL"] = "sqlite:///" + (_TEST_TMP / "conftest_unused.db
 os.environ["TST_AUTH_MODE"] = "password"
 os.environ["TST_ADMIN_EMAIL"] = "dev@local.test"
 os.environ.setdefault("TST_ADMIN_PASSWORD", "dev-only-not-a-real-password")
+os.environ["TST_IV_SEED_IBKR"] = "0"      # never probe a port or spawn the IB seeder from a test
 
 from alembic import command                      # noqa: E402
 from alembic.config import Config                # noqa: E402

@@ -230,6 +230,31 @@ def test_seven_step_order_with_a_hash_per_rule_set(db, user, engines, no_network
     assert "2/2 ok" in job.note
 
 
+def test_backfill_is_on_by_default_and_scoped_to_the_run(db, user, engines, no_network, recorder):
+    """v4.131: step 1 copies the screener's iv_history for the run's symbols - and only
+    those - before any chain is read, so a ticker's first night already has a rank; the
+    backfill's own job row closes before the nightly's. --no-backfill skips the step."""
+    for i in range(70):
+        on = (_dt.date(2026, 6, 1) + _dt.timedelta(days=i)).isoformat()
+        db.add(models.IVHistory(symbol="AAA", on=on, iv30=30.0 + i % 5, spot=100.0, source="cboe"))
+        db.add(models.IVHistory(symbol="ZZZ", on=on, iv30=30.0, spot=100.0, source="cboe"))
+    db.commit()
+    res = _run(db, FakeSource(), symbols=["AAA"])
+    bf = res["backfilled"]
+    assert bf["copied"] == 70 and bf["gained"] == 70 and bf["short"] == [] and bf["seed"]["status"] == "none"
+    assert db.query(models.IVDaily).filter(models.IVDaily.symbol == "ZZZ").count() == 0     # not in this run
+    hdr = db.query(models.IVDaily).filter(models.IVDaily.symbol == "AAA", models.IVDaily.on == RUN_ON).one()
+    assert hdr.iv_n is not None and hdr.iv_n >= 60 and hdr.iv_rank is not None                # a rank on night one
+    names = [c for c in recorder if c[0] == "finish"]
+    assert names == [("finish", "backfill"), ("finish", "nightly")]
+    assert names and recorder.index(("finish", "backfill")) < recorder.index(("snapshot", "AAA"))
+    job = job_runs.latest(db, "nightly")
+    assert job.detail["_backfill"]["copied"] == 70 and "70 days of IV history added" in job.detail["_backfill"]["note"]
+
+    res = _run(db, FakeSource(), symbols=["AAA"], backfill=False)
+    assert res["backfilled"] is None
+
+
 def test_rerun_same_day_is_idempotent(db, user, engines, no_network, recorder):
     src = FakeSource()
     first = _run(db, src, symbols=["AAA"])

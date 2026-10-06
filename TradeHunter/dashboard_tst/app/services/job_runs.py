@@ -36,6 +36,8 @@ def start(db, job: str, run_on: str, source: str | None = None) -> OptionJob:
     describes (``spread_monitor.et_today()`` or the ``--on`` override)."""
     if job not in JOBS:
         raise ValueError("unknown job %r (one of %s)" % (job, ", ".join(JOBS)))
+    if source is not None:
+        source = str(source)[:12]        # OptionJob.source is String(12): Postgres enforces it, SQLite does not
     row = OptionJob(job=job, run_on=run_on, source=source, started_at=_utcnow(), detail={})
     db.add(row)
     db.commit()

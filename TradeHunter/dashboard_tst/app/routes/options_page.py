@@ -80,6 +80,83 @@ TAB_OF_FAMILY = {"credit_vertical": "credit", "debit_vertical": "debit", "long":
 _PKG = __name__.rsplit(".", 2)[0]       # "app"
 _cooldown: dict[tuple[int, str], float] = {}
 
+# First-time reads in flight (v4.131; user, 2026-10-06: a freshly added ticker gets ALL
+# its data at once - IV history, today's chain, the engines). Per process, like
+# _cooldown, under one lock (the reading thread and the request handlers both touch it):
+#   _first_reads        symbol -> (monotonic start, owner user id)   while the read runs
+#   _first_reads_done   owner user id -> symbols finished, not yet announced to THAT
+#                       member's basket (another member's tab must not drain them)
+#   _first_reads_failed symbol -> why the last first read failed (the card says so)
+_reg_lock = threading.Lock()
+_first_reads: dict[str, tuple[float, int | None]] = {}
+_first_reads_done: dict[int | None, set[str]] = {}
+_first_reads_failed: dict[str, str] = {}
+FIRST_READ_MAX_S = 20 * 60          # a thread that vanished must not spin a card forever
+
+
+def _reading(sym: str) -> bool:
+    with _reg_lock:
+        t = _first_reads.get(sym)
+        if t is None:
+            return False
+        if time.monotonic() - t[0] > FIRST_READ_MAX_S:
+            _first_reads.pop(sym, None)
+            return False
+        return True
+
+
+def _reading_symbols(user_id: int | None = None) -> list[str]:
+    """Symbols being read - all of them, or only those a given member added."""
+    now = time.monotonic()
+    with _reg_lock:
+        return sorted(s for s, (t, owner) in _first_reads.items()
+                      if now - t <= FIRST_READ_MAX_S and (user_id is None or owner == user_id))
+
+
+def _mark_reading(syms: list[str], user_id: int | None, started: float) -> None:
+    with _reg_lock:
+        for s in syms:
+            _first_reads[s] = (started, user_id)
+            _first_reads_failed.pop(s, None)
+
+
+def _mark_done(sym: str, user_id: int | None, err: str | None = None, started: float | None = None) -> None:
+    """The read of ``sym`` finished (``err`` when it failed). ``started`` guards a stale
+    thread from clearing a NEWER read's marker."""
+    with _reg_lock:
+        cur = _first_reads.get(sym)
+        if cur is not None and (started is None or cur[0] == started):
+            _first_reads.pop(sym, None)
+        _first_reads_done.setdefault(user_id, set()).add(sym)
+        if err:
+            _first_reads_failed[sym] = str(err)[:300]
+        else:
+            _first_reads_failed.pop(sym, None)
+
+
+def _take_done(user_id: int | None) -> set[str]:
+    with _reg_lock:
+        return _first_reads_done.pop(user_id, set())
+
+
+def _pop_done(sym: str, user_id: int | None) -> bool:
+    with _reg_lock:
+        s = _first_reads_done.get(user_id)
+        if s and sym in s:
+            s.discard(sym)
+            return True
+        return False
+
+
+def _read_error(sym: str) -> str | None:
+    with _reg_lock:
+        return _first_reads_failed.get(sym)
+
+
+def _clear_read_error(sym: str) -> None:
+    with _reg_lock:
+        _first_reads_failed.pop(sym, None)
+
 
 class LiveIn(BaseModel):
     chain: dict = Field(default_factory=dict)   # bridge /chain response, untrusted
@@ -326,6 +403,7 @@ def _add_symbols(db: Session, user: User, syms: list[str], source: str, note: st
     n_active = sum(1 for r in existing.values() if r.active)
     pos = max((r.pos for r in existing.values()), default=-1) + 1
     added = skipped = over_cap = 0
+    new: list[str] = []                      # the symbols actually added, in order (the first-time read)
     today = clock.et_today()
     seen: set[str] = set()
     for sym in syms:
@@ -352,8 +430,9 @@ def _add_symbols(db: Session, user: User, syms: list[str], source: str, note: st
         pos += 1
         n_active += 1
         added += 1
+        new.append(sym)
     db.commit()
-    return {"added": added, "skipped": skipped, "over_cap": over_cap, "total": n_active}
+    return {"added": added, "skipped": skipped, "over_cap": over_cap, "total": n_active, "new": new}
 
 
 def _screener_suggestions(db: Session, user: User, exclude: set[str], prefs: dict) -> list[dict]:
@@ -418,6 +497,8 @@ def _basket_context(db: Session, user: User, *, sort: str = "idea", selected: st
                       "trend": s.get("trend") if has_sig else None,
                       "headline": s.get("headline") if has_sig else None,
                       "no_setup": bool(has_sig and s.get("status") in ("no_setup",)),
+                      "reading": _reading(r.symbol),
+                      "read_err": None if has_sig else _read_error(r.symbol),
                       "as_of_text": None})
     rank = {"has_picks": 0, "not_checked": 1, "no_strike_passes": 2}
     keys = {
@@ -442,8 +523,12 @@ def _basket_response(request: Request, db: Session, user: User, *, sort="idea",
                      selected="", compact=False, events: dict | None = None) -> Response:
     ctx = _basket_context(db, user, sort=sort, selected=selected, compact=compact)
     resp = templates.TemplateResponse(request, "_options_basket.html", ctx)
-    ev = {"options:basket-changed": {"n": ctx["n"]}}
-    ev.update(events or {})
+    ev: dict = {"options:basket-changed": {"n": ctx["n"]}}
+    for k, v in (events or {}).items():
+        if k == "options:basket-changed" and isinstance(v, dict):
+            ev[k] = {**ev[k], **v}            # keep n, add e.g. the "new" symbols (v4.131)
+        else:
+            ev[k] = v
     return _trigger(resp, ev)
 
 
@@ -541,6 +626,12 @@ def _card_context(db: Session, user: User, symbol: str, *, strategy: str = "", p
         rules_line = _W.rules_line(prefs, strategy, setup)
     chosen_blocked = _earnings_blocked(chosen, strategy, prefs)
     gauge_text = _W.gauge((card or {}).get("iv")) if card else None
+    # v4.131: a first-time read in flight, or why the last one failed (cleared once a card exists)
+    reading = _reading(sym) if sym else False
+    read_err = None if (reading or not sym) else _read_error(sym)
+    if read_err and card:
+        _clear_read_error(sym)
+        read_err = None
     return {"user": user, "sym": sym, "card": card, "prefs": prefs, "in_basket": in_basket,
             "strategy": strategy, "chosen": chosen, "rec": rec, "family": family,
             "label": strategy_rules.LABELS.get(strategy, strategy) if strategy else None,
@@ -557,6 +648,7 @@ def _card_context(db: Session, user: User, symbol: str, *, strategy: str = "", p
             "rejected": bool(chosen and chosen.get("fit") == "rejected"),
             "rejection": (chosen.get("reasons") or [None])[0] if chosen else None,
             "age": _age_badge(card, live), "no_setup": bool(card and card.get("status") == "no_setup"),
+            "reading": reading, "read_err": read_err,
             "bridge_port": BRIDGE_PORT, "bridge_setup_path": BRIDGE_SETUP_PATH,
             "bridge_min_version": BRIDGE_MIN_VERSION, "note": note, "note_kind": note_kind,
             "diag": diag, "nlv": nlv, "nlv_source": nlv_source, "trade_prefs": tp.read(user),
@@ -787,6 +879,27 @@ def _status_dict(db: Session, user: User) -> dict:
     detail = latest.detail if (latest and isinstance(latest.detail, dict)) else {}
     errs = [f"{k}: {v.get('err')}" for k, v in detail.items()
             if isinstance(v, dict) and v.get("status") in ("error",) and v.get("err")][:3]
+    # v4.131: the last IV-history backfill - its own job row (a basket add) or the newest
+    # nightly's step-1 summary, whichever is newer - and THIS member's first-time reads in flight
+    bf = job_runs.latest(db, "backfill")
+    bf_detail = bf.detail if (bf and isinstance(bf.detail, dict)) else {}
+    nb = detail.get("_backfill") if isinstance(detail.get("_backfill"), dict) else None
+    if nb is not None and nb.get("error"):
+        nb = None
+    use_nightly = nb is not None and (bf is None or (latest.finished_at and bf.finished_at
+                                                      and latest.finished_at > bf.finished_at))
+    if use_nightly:
+        bf_note, bf_when, bf_rows, bf_short, bf_run_on = (nb.get("note"), latest.finished_at,
+                                                          int(nb.get("gained") or 0),
+                                                          len(nb.get("short") or []), latest.run_on)
+    else:
+        bf_note, bf_when, bf_rows, bf_short, bf_run_on = ((bf.note, bf.finished_at, int(bf.rows or 0),
+                                                           len(bf_detail.get("_short") or []), bf.run_on)
+                                                          if bf else (None, None, 0, 0, None))
+    reading = _reading_symbols(user.id)
+    d.update({"n_reading": len(reading), "reading_symbols": reading,
+              "backfill_note": bf_note, "backfill_when": bf_when, "backfill_rows": bf_rows,
+              "backfill_short": bf_short, "backfill_today": bool(bf_run_on and bf_run_on == today.isoformat())})
     d.update({"state": state, "as_of_oldest": _fmt_as_of(oldest) if oldest else "no data yet",
               "n_basket": len(rows), "n_stale": n_stale, "stale_symbols": stale_syms,
               "basket_symbols": [r.symbol for r in rows],
@@ -983,11 +1096,15 @@ def basket_add(request: Request, symbol: str = Form(""), note: str = Form(""), s
     """One typed ticker (form-encoded, hx-vals) = import with source='typed'."""
     sym = _clean_symbol(symbol)
     res = _add_symbols(db, user, [sym] if sym else [], "typed", note)
-    msg = (f"{sym} added" if res["added"] else
+    if res["added"]:
+        _first_read_in_background(res["new"], user.id)       # v4.131: its history, today's chain, the engines - now
+    msg = (f"{sym} added - reading its chain and IV history now" if res["added"] else
            ("Basket is full (%d tickers)" % MAX_BASKET if res["over_cap"] else
             (f"{sym} is already in your basket" if sym else "That is not a ticker")))
-    return _basket_response(request, db, user, sort=sort, selected=sym, compact=bool(compact),
-                            events=_toast(msg, "ok" if res["added"] else "err"))
+    events = _toast(msg, "ok" if res["added"] else "err")
+    if res["added"]:
+        events["options:basket-changed"] = {"new": res["new"]}   # the page reloads the card if it shows one of these
+    return _basket_response(request, db, user, sort=sort, selected=sym, compact=bool(compact), events=events)
 
 
 @router.post("/basket/remove", response_class=HTMLResponse)
@@ -1024,10 +1141,14 @@ def basket_import(payload: BasketImport, user: User = Depends(require_user), db:
     res = _add_symbols(db, user, syms, src, payload.note)
     if src == "paste":
         res["skipped"] += max(0, raw_n - len(syms))         # junk the cleaner dropped counts as skipped
+    new = res.pop("new", [])                                 # the JSON shape stays {added, skipped, over_cap, total}
+    if new:
+        _first_read_in_background(new, user.id)              # v4.131: the first-time read for the new ones only
     resp = JSONResponse(res)
-    return _trigger(resp, {"options:basket-changed": {"n": res["total"]},
+    return _trigger(resp, {"options:basket-changed": {"n": res["total"], "new": new},
                            **_toast(f"{res['added']} added, {res['skipped']} skipped"
-                                    + (f", {res['over_cap']} over the {MAX_BASKET} cap" if res["over_cap"] else ""),
+                                    + (f", {res['over_cap']} over the {MAX_BASKET} cap" if res["over_cap"] else "")
+                                    + (" - reading them now" if new else ""),
                                     "ok" if res["added"] else "info")})
 
 
@@ -1036,8 +1157,30 @@ def basket_import(payload: BasketImport, user: User = Depends(require_user), db:
 @router.get("/card/{symbol}", response_class=HTMLResponse)
 def card(symbol: str, request: Request, strategy: str = "", pick: int = 0,
          user: User = Depends(require_user), db: Session = Depends(get_db)):
-    return templates.TemplateResponse(request, "_options_card.html",
+    sym = _clean_symbol(symbol)
+    resp = templates.TemplateResponse(request, "_options_card.html",
                                       _card_context(db, user, symbol, strategy=strategy, pick=pick))
+    if _pop_done(sym, user.id):                   # its first-time read just finished: this member's basket row changes too
+        resp = _trigger(resp, {"options:basket-changed": {}})
+    return resp
+
+
+@router.get("/card/{symbol}/reading", response_class=HTMLResponse)
+def card_reading(symbol: str, request: Request, strategy: str = "",
+                 user: User = Depends(require_user), db: Session = Depends(get_db)):
+    """The poll behind "Reading X now" (v4.131): 204 while the first-time read runs -
+    nothing swaps, the chart and the member's chip stay put - then, once, the finished
+    card retargeted into #optPane (HX-Retarget / HX-Reswap), which also removes the
+    polling span. The basket re-renders through the trigger."""
+    sym = _clean_symbol(symbol)
+    if _reading(sym):
+        return Response(status_code=204)
+    _pop_done(sym, user.id)
+    resp = templates.TemplateResponse(request, "_options_card.html",
+                                      _card_context(db, user, sym, strategy=strategy))
+    resp.headers["HX-Retarget"] = "#optPane"
+    resp.headers["HX-Reswap"] = "innerHTML"
+    return _trigger(resp, {"options:basket-changed": {}})
 
 
 @router.get("/picks/{symbol}", response_class=HTMLResponse)
@@ -1327,6 +1470,11 @@ def refresh(symbol: str, request: Request, strategy: str = "",
     card. 60 s cooldown per (member, ticker) - consulted ONLY when the stored as_of is
     from the current session; the ticket's 'Refresh first' press always goes through."""
     sym = _clean_symbol(symbol)
+    if _reading(sym):                     # v4.131: never a second concurrent read of the same symbol
+        ctx = _card_context(db, user, sym, strategy=strategy,
+                            note=f"A first read of {sym} is already in progress - this card updates itself.",
+                            note_kind="info")
+        return templates.TemplateResponse(request, "_options_card.html", ctx)
     card = option_store.card_for(db, sym, user)
     if card and not clock.older_than_last_close(card.get("as_of")) and _cooldown_hit(user.id, sym):
         return _trigger(Response(status_code=429), _toast("Just refreshed - try again in a minute.", "info"))
@@ -1340,6 +1488,7 @@ def refresh(symbol: str, request: Request, strategy: str = "",
         try:
             nightly.refresh_symbol(db, sym, user)
             note = "Refreshed from Cboe · " + _W.et_clock()
+            _clear_read_error(sym)
         except Exception as exc:  # noqa: BLE001 - ChainError or anything else: keep the stored data
             err_cls = getattr(od, "ChainError", ()) if od is not None else ()
             db.rollback()
@@ -1687,10 +1836,14 @@ def badge(user: User = Depends(require_user), db: Session = Depends(get_db)):
 
 @router.get("/status/strip", response_class=HTMLResponse)
 def status_strip(request: Request, user: User = Depends(require_user), db: Session = Depends(get_db)):
-    """The honesty line: data age, delayed/live, job health. Polled every 300 s."""
+    """The honesty line: data age, delayed/live, job health. Polled every 300 s (every
+    10 s while the job runs or a first-time read is in flight)."""
     d = _status_dict(db, user)
     d["is_admin"] = bool(getattr(user, "is_admin", False))
-    return templates.TemplateResponse(request, "_options_status.html", d)
+    resp = templates.TemplateResponse(request, "_options_status.html", d)
+    if _take_done(user.id):                        # this member's first-time reads finished since the last poll
+        resp = _trigger(resp, {"options:basket-changed": {}})
+    return resp
 
 
 def _run_nightly_in_background(symbols=None) -> None:
@@ -1711,6 +1864,46 @@ def _run_nightly_in_background(symbols=None) -> None:
             db.close()
 
     threading.Thread(target=_work, name="options-nightly-manual", daemon=True).start()
+
+
+def _first_read_in_background(symbols, user_id: int | None = None) -> None:
+    """The first-time read for freshly added tickers (v4.131; user, 2026-10-06: "all the
+    data required to compute the result need to be backfilled the first time"): the IV
+    history (the screener's readings, then a year from IB Gateway when it answers),
+    today's delayed chain, the engines - services/option_backfill.first_read in a daemon
+    thread with its own session. The symbols read as 'reading' meanwhile (the card polls
+    itself, the basket row pulses, the strip counts them). Module-level so a test can
+    stub it."""
+    syms = [s for s in _clean_symbols(list(symbols or []), cap=MAX_BASKET) if s and not _reading(s)]
+    if not syms:
+        return
+    started = time.monotonic()
+    _mark_reading(syms, user_id, started)
+
+    def _done(sym: str, status: str | None = None, err: str | None = None) -> None:
+        _mark_done(sym, user_id, err=None if status == "ok" else (err or status or "the read did not finish"),
+                   started=started)
+
+    def _work():
+        from ..db import SessionLocal
+        from ..services import option_backfill
+
+        db = SessionLocal()
+        try:
+            u = db.get(User, user_id) if user_id else None
+            option_backfill.first_read(db, syms, u, on_done=_done)
+        except Exception as exc:  # noqa: BLE001 - per-symbol failures are recorded inside; this is the last resort
+            log.exception("options first read (%s) failed", ", ".join(syms))
+            for s in syms:
+                _done(s, "error", f"{type(exc).__name__}: {str(exc)[:160]}")
+        finally:
+            with _reg_lock:
+                left = [s for s in syms if _first_reads.get(s, (None, None))[0] == started]
+            for s in left:
+                _done(s, "error", "the read did not finish")
+            db.close()
+
+    threading.Thread(target=_work, name="options-first-read", daemon=True).start()
 
 
 @router.post("/admin/run-nightly", response_class=HTMLResponse)

@@ -7,7 +7,8 @@ IBC. This is an IBKR workload, so per the CLAUDE.md rule it needs Python 3.12
 with ib_insync - the TradeHunter root interpreter, NOT the dashboard venv:
 
     cd C:\trading-skills\TradeHunter\dashboard_tst
-    py -3.12 -m pip install ib_insync sqlalchemy python-dotenv alembic   # once, if missing
+    py -3.12 -m pip install ib_insync sqlalchemy httpx python-dotenv alembic   # once, if missing
+    # (or simply use the dashboard venv, which is built with py -3.12 and lists ib_insync)
     py -3.12 deploy\iv_seed_ibkr.py                 # whole universe, skips symbols already seeded
     py -3.12 deploy\iv_seed_ibkr.py NVDA AAPL MSFT  # just these
     py -3.12 deploy\iv_seed_ibkr.py --force         # re-pull even if history exists
@@ -44,6 +45,12 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=PORT)
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--pause", type=float, default=1.0, help="seconds between requests")
+    ap.add_argument("--client-id", type=int, default=CLIENT_ID,
+                    help="IB client id (default %d; the web app's first-time read passes 88 so it never "
+                         "collides with the nightly's 87)" % CLIENT_ID)
+    ap.add_argument("--no-init", action="store_true",
+                    help="skip init_db() (the Alembic upgrade) - what the web app passes, so a basket add "
+                         "never migrates the schema under the running server")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
@@ -59,7 +66,8 @@ def main() -> int:
     from app.models import IVHistory
     from app.services import spread_scan
 
-    init_db()
+    if not args.no_init:
+        init_db()
     log.disabled = False
     log.setLevel(logging.DEBUG if args.verbose else logging.INFO)
 
@@ -68,10 +76,11 @@ def main() -> int:
     log.info("%d symbol(s)", len(syms))
 
     ib = IB()
+    ib.RequestTimeout = 30               # a stalled HMDS farm must not pin the caller for the whole batch
     try:
-        ib.connect(HOST, args.port, clientId=CLIENT_ID, readonly=True, timeout=20)
+        ib.connect(HOST, args.port, clientId=args.client_id, readonly=True, timeout=20)
     except Exception as exc:  # noqa: BLE001
-        log.error("cannot connect to IB on %s:%s (clientId %s): %s", HOST, args.port, CLIENT_ID, exc)
+        log.error("cannot connect to IB on %s:%s (clientId %s): %s", HOST, args.port, args.client_id, exc)
         return 1
     log.info("connected: %s", ib.client.serverVersion())
 

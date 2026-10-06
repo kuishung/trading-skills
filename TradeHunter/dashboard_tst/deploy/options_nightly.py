@@ -14,7 +14,7 @@ Run by hand from the same box:
     cd C:\trading-skills\TradeHunter\dashboard_tst
     .\.venv\Scripts\python.exe deploy\options_nightly.py                 # every basket ticker
     .\.venv\Scripts\python.exe deploy\options_nightly.py NVDA LRCX       # just these
-    .\.venv\Scripts\python.exe deploy\options_nightly.py --backfill      # also copy iv_history -> iv_daily
+    .\.venv\Scripts\python.exe deploy\options_nightly.py --no-backfill   # skip the IV-history backfill (on by default)
     .\.venv\Scripts\python.exe deploy\options_nightly.py --no-push       # skip Telegram entirely
     .\.venv\Scripts\python.exe deploy\options_nightly.py --telegram-dry-run   # compose + log, send nothing
     .\.venv\Scripts\python.exe deploy\options_nightly.py --on 2026-10-02 --source alpaca -v
@@ -54,7 +54,10 @@ def main() -> int:
     ap.add_argument("--source", default=None,
                     help="chain source for this run: cboe | alpaca (default: TST_OPTIONS_SOURCE)")
     ap.add_argument("--backfill", action="store_true",
-                    help="first copy iv_history into iv_daily for the days not yet there (idempotent)")
+                    help="(the default since v4.131; kept for old scripts) copy the screener's iv_history "
+                         "into iv_daily and seed a year from IB Gateway for tickers still short")
+    ap.add_argument("--no-backfill", action="store_true",
+                    help="skip the IV-history backfill step entirely")
     ap.add_argument("--no-push", action="store_true", help="skip the Telegram push entirely")
     ap.add_argument("--telegram-dry-run", action="store_true",
                     help="compose and log the Telegram messages, send nothing (dedupe rows still written)")
@@ -109,7 +112,7 @@ def main() -> int:
         syms = [s.upper() for s in args.symbols] or None
         res = option_nightly.run_nightly(
             db, symbols=syms, on=args.on, source=src, push=not args.no_push,
-            telegram_dry_run=args.telegram_dry_run, backfill=args.backfill,
+            telegram_dry_run=args.telegram_dry_run, backfill=not args.no_backfill,
             engines=not args.no_engines, progress=progress, log=log)
         tg = res.get("telegram") or {}
         log.info("nightly %s (job #%s): %d symbols, %d ok, %d errors, %s rows, %d signal rows, "

@@ -40,6 +40,7 @@ import logging
 from dataclasses import dataclass, field
 
 from sqlalchemy import and_, func, or_, select
+from sqlalchemy.exc import IntegrityError
 
 from ..config import settings
 from ..models import (IVDaily, IVHistory, OptionBasket, OptionChainSnapshot,
@@ -463,20 +464,32 @@ def backfill_from_iv_history(db, *, symbols=None) -> int:
     if not hist:
         return 0
     inserted = 0
-    existing: set[str] = set()
-    current: str | None = None
+    by_symbol: dict[str, list] = {}
     for h in hist:
-        if h.symbol != current:
-            current = h.symbol
-            existing = {on for (on,) in db.query(IVDaily.on).filter(IVDaily.symbol == current)}
-        if h.on in existing or h.iv30 is None:
+        by_symbol.setdefault(h.symbol, []).append(h)
+    # One commit PER SYMBOL: the copy now also runs from a web thread and from the
+    # nightly (option_backfill), so two writers can race on the same days; a unique-
+    # day collision then costs that one symbol's batch, never every other symbol's.
+    for sym, rows in by_symbol.items():
+        existing = {on for (on,) in db.query(IVDaily.on).filter(IVDaily.symbol == sym)}
+        n = 0
+        for h in rows:
+            if h.on in existing or h.iv30 is None:
+                continue
+            existing.add(h.on)
+            db.add(IVDaily(symbol=h.symbol, on=h.on, kind="history", source="iv_history",
+                           iv30=float(h.iv30), iv30_src=("cboe" if h.source == "cboe" else "ibkr"),
+                           spot=h.spot))
+            n += 1
+        if not n:
             continue
-        existing.add(h.on)
-        db.add(IVDaily(symbol=h.symbol, on=h.on, kind="history", source="iv_history",
-                       iv30=float(h.iv30), iv30_src=("cboe" if h.source == "cboe" else "ibkr"),
-                       spot=h.spot))
-        inserted += 1
-    db.commit()
+        try:
+            db.commit()
+        except IntegrityError:            # another writer copied the same days meanwhile: theirs stand
+            db.rollback()
+            log.warning("backfill_from_iv_history %s: a concurrent copy won; %d row(s) skipped", sym, n)
+            continue
+        inserted += n
     return inserted
 
 
@@ -506,6 +519,30 @@ def _recompute_rank(db, symbol: str, today: str) -> dict | None:
         row.iv_hi = out.get("hi")
     row.updated_at = _utcnow()
     return out
+
+
+def rank_after_history(db, symbol: str, today=None) -> dict:
+    """After history rows landed for ``symbol`` from ANY source (the Live bootstrap, the
+    screener copy, the IB Gateway seed - services/option_backfill): today's rank from
+    the now-full window, and the symbol's signal rows on the latest snapshot marked
+    ``stale_iv`` so the next card read recomputes the gauge. Flushes, does not commit.
+    Returns ``{rank: dict|None, stale_marked: int}``."""
+    symbol = str(symbol or "").strip().upper()
+    today = _day(today)
+    rank = None
+    try:
+        rank = _recompute_rank(db, symbol, today)
+    except Exception as e:  # noqa: BLE001 - the rows are the point; the rank can wait
+        log.warning("rank_after_history %s: rank recompute failed: %s", symbol, e)
+    stale_marked = 0
+    latest = latest_snap_on(db, symbol)
+    if latest is not None:
+        stale_marked = (db.query(OptionSignal)
+                          .filter(OptionSignal.symbol == symbol,
+                                  OptionSignal.snap_on == latest[0])
+                          .update({OptionSignal.status: "stale_iv"},
+                                  synchronize_session=False))
+    return {"rank": rank, "stale_marked": int(stale_marked or 0)}
 
 
 def bootstrap_iv(db, symbol: str, series, *, source: str = "ibkr",
@@ -569,20 +606,8 @@ def bootstrap_iv(db, symbol: str, series, *, source: str = "ibkr",
         inserted += 1
     db.flush()
 
-    rank = None
-    try:
-        rank = _recompute_rank(db, symbol, today)
-    except Exception as e:  # noqa: BLE001 - the rows are the point; the rank can wait
-        log.warning("bootstrap_iv %s: rank recompute failed: %s", symbol, e)
-
-    stale_marked = 0
-    latest = latest_snap_on(db, symbol)
-    if latest is not None:
-        stale_marked = (db.query(OptionSignal)
-                          .filter(OptionSignal.symbol == symbol,
-                                  OptionSignal.snap_on == latest[0])
-                          .update({OptionSignal.status: "stale_iv"},
-                                  synchronize_session=False))
+    after = rank_after_history(db, symbol, today)
+    rank, stale_marked = after["rank"], after["stale_marked"]
 
     from . import job_runs      # noqa: PLC0415 - sibling import kept local (it imports models)
 

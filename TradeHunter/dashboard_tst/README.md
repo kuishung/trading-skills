@@ -143,6 +143,104 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-06 - v4.131: a new basket ticker gets ALL its data the first time (IV history backfill + an immediate read)
+
+User: *"when a new ticker is added in the option basket, all the data backfill required to compute the
+result need to be backfill in for the first time"* - after asking why a card's IV rank read "not yet ·
+provisional - 1 of 60 days". The only accumulating input a card needs is the IV history behind the
+rank (`iv_daily`: 20 readings for a percentile, 60 for a trusted rank, 252 for the full window);
+everything else (bars, earnings, today's chain) is fetched live on every read. Before this release a
+new ticker started at one reading and waited about three months; the Spread screener's own year of
+nightly readings (`iv_history`, since 2026-09-13, plus anything `deploy/iv_seed_ibkr.py` seeded) sat
+unused because the nightly only copied it with a `--backfill` flag the Hermes task never passed.
+
+**What happens now when a ticker is added** (typed, pasted or imported; the NEW symbols only): the add
+returns at once with the toast "NVDA added - reading its chain and IV history now", and a background
+thread runs the **first-time read** (`app/services/option_backfill.py`, new):
+1. **Copy** the screener's history for those symbols into `iv_daily` (`backfill_from_iv_history(symbols=...)`,
+   insert-only, idempotent).
+2. **Seed from IB Gateway** for whoever is still under 60 days: the existing seeder
+   `deploy/iv_seed_ibkr.py` runs as a `py -3.12` subprocess (ib_insync cannot import on 3.14 and the
+   web venv needs no IBKR package), only when a 1.5 s TCP probe finds something on the IB API port -
+   a box without a Gateway skips it in milliseconds with the reason recorded. Switches:
+   `TST_IV_SEED_IBKR=0` (off), `TST_IBKR_PORT` (default 7496 = TWS live; 7497 paper; 4001 / 4002
+   Gateway), `TST_IBKR_PYTHON` (default `py -3.12`). The seed also lands in `iv_history`, so the
+   Spread screen benefits too.
+3. **Read** each symbol the way the Refresh button does (`option_nightly.refresh_symbol`: today's
+   delayed Cboe chain -> metrics -> engines -> the house and the member's signal rows), Cboe-paced.
+A `backfill` job row (`option_jobs`) records what landed when anything changed; today's rank is
+recomputed from the full window and the symbol's signal rows go `stale_iv` so the next card read
+recomputes the gauge (`option_store.rank_after_history`, extracted from the Live bootstrap).
+
+**The nightly job does it too.** `run_nightly(backfill=True)` is now the default: step 1 runs the
+same copy + seed for the whole universe before any chain is read, so the tickers already in baskets
+get their history on the next night without re-registering `TST-Options-Nightly`. `--no-backfill`
+skips it; `--backfill` is kept as a no-op for old scripts. The rank is computed by step 3's metrics,
+so the nightly's backfill does not recompute separately.
+
+**Visible on the page** (the dashboard-visibility rule): while a first-time read runs the basket row
+pulses sky-blue and reads "reading...", the card says "Reading NVDA now: its IV history (...), today's
+delayed chain and the strategy engines" and polls itself every 4 s until the read lands (a re-added
+ticker with an old card shows a one-line note and polls every 6 s), and the status strip says
+"reading N new tickers..." and re-polls every 10 s. When a read finishes the next card or strip
+response carries `options:basket-changed`, so the basket row updates once. The strip also shows the
+last backfill: "history 09:26 AM · +300 days · 2 short" with the job's full note as the tooltip
+(including a seed error such as "cannot connect to IB", or "IB Gateway / TWS not reachable on
+127.0.0.1:7496").
+
+Routes: `_add_symbols` returns the `new` list (the import's JSON shape is unchanged - it pops the
+key); `_first_read_in_background`, the `_first_reads` / `_first_reads_done` registry (per process,
+20-minute expiry so a vanished thread never spins a card forever); `_card_context.reading`,
+`_basket_context` items' `reading`; `_status_dict` adds `n_reading`, `reading_symbols`,
+`backfill_note`, `backfill_when`, `backfill_rows`, `backfill_short`.
+
+Tested: `tests/test_option_backfill.py` (new, 11: the copy + rank + stale marking + job row and its
+note, idempotency, the seed off / skipped / run-for-the-short-only / failed paths, a missing
+interpreter, the env switches, first_read's order / pacing / isolation), `test_option_nightly.py`
+(+1: backfill on by default, scoped to the run, its job row closes before any chain is read;
+`--no-backfill`), `test_options_page.py` (+3: an add starts the read for the new symbols only, the
+in-flight states on card / basket / strip and the one-shot basket trigger, the strip's history line)
+- **270 pass**. Verified in the browser on the dev server: 300 screener-style readings planted for
+AMD, AMD added through the basket form -> "reading..." row, "Reading AMD now" card with the poll,
+"reading 1 new ticker..." on the strip; ~8 s later the card had IV rank 67 on a full-year basis
+(gauge SELL), the basket row "↗ 67", the strip "history 09:26 AM · +300 days", and the DB held the
+`backfill` (300 rows) and `refresh` (6,092 chain rows) job rows; no Gateway on the laptop, so the
+seed step was skipped with its reason recorded.
+
+**Reviewed before the commit** by a four-lens adversarial panel (correctness, concurrency,
+portability, UX; 16 findings, each re-checked by a skeptic). What it changed: the backfill job's
+`source` is `hist+ibkr` / `iv_history` (the column is `String(12)`; Postgres enforces it, and
+`job_runs.start` now truncates every caller); the IB port is **probed 4002, 4001, 7497, 7496 in turn**
+when `TST_IBKR_PORT` is unset (Hermes runs the Gateway on 4002 - the earlier 7496 default would have
+skipped the seed every night) and the skip reason names the ports tried; the interpreter is
+**preflighted** (`import ib_insync, sqlalchemy, httpx, alembic, dotenv`: this app's own venv first -
+`ib_insync` is now in `requirements.txt`, the venv is py -3.12 on Hermes - then `py -3.12`), so a box
+that cannot run the seeder reports "unavailable" with the pip line instead of an error row every run;
+one seed at a time per process (a lock) and **distinct IB client ids** (87 nightly, 88 web - recorded in
+CLAUDE.md's table; the seeder gained `--client-id` and `--no-init`, so a basket add never runs the
+Alembic upgrade under the live server, and `ib.RequestTimeout = 30` so a stalled farm cannot pin a
+run); the seed's result is judged by the rows that actually landed (a symbol IB has no bars for reads
+"no IB history for X", never "a year seeded", and is not retried for six hours); the seeder's output
+is logged (warning on failure) so `/admin/log` shows why; `backfill_from_iv_history` commits **per
+symbol** and survives a concurrent copy of the same days; `first_read` and the nightly recompute the
+rank after the copy, so a chain read that then fails still leaves the stored rank consistent. On the
+page: the "Reading now" card polls `GET /options/card/<sym>/reading` with `hx-swap="none"` - 204
+while the read runs (the chart, the chip and the scroll position stay put), then once the finished
+card retargeted into the pane; **a failed first read is said on the card** ("The first read of X
+failed: ... Press Refresh to try again") and on the basket row ("read failed"), never a silent "No read
+yet"; Refresh is disabled while a read is in flight and a Refresh request during one is turned away
+with a note (no second concurrent read of the same symbol); the done markers are **per member**, so
+another member's tab cannot drain them and leave the adder's basket row stuck on "reading..."; the
+card's own "+ Add to basket" button now reloads the card into its "Reading now" state (the
+basket-changed event carries the new symbols); the import toasts say "- reading them now"; the strip's
+history item shows the date when the backfill is not today's, and falls back to the newest nightly's
+step-1 summary (so a night where nothing could be copied still shows "+0 days · N short" with the probe
+reason in the tooltip). Settings documented in `app/.env.example` and `DEPLOY.md`.
+
+**On Hermes:** nothing to re-register. The deploy's `run_app.ps1` installs `ib_insync` into the venv
+(requirements changed), and the seed finds the Gateway on 4002 by itself; if the Gateway is not up at
+07:15 the step is skipped and the strip's history tooltip says which ports were tried.
+
 ### 2026-10-06 - v4.130: "What the system read" - the card's facts as one row each, not a paragraph
 
 User: *"i need a separate panel for this and list down each of the data rather than in a long

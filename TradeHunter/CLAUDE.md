@@ -516,6 +516,8 @@ Each component needs a unique clientId per concurrent IBKR session. The full all
 | **84** | **Ingest (production target)** | **Hermes** |
 | **85** | **Hermes health-check probes** | **Hermes** |
 | **86** | **Options chain feed (`dashboard_tst` Options tab)** | **wherever the web app runs** |
+| **87** | **IV-history seeder (`dashboard_tst/deploy/iv_seed_ibkr.py`) when run by the Options nightly job or by hand** | **Hermes** |
+| **88** | **The same seeder when the `dashboard_tst` web app starts it for a freshly added basket ticker (first-time read, v4.131)** | **Hermes** |
 | 98 | Probe / handshake test | Either |
 | 99 | Dashboard probe | Laptop |
 

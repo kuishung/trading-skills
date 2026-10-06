@@ -20,9 +20,9 @@
     <span class="ml-auto flex flex-wrap items-center gap-1">
       <span class="{{ age.cls }}" title="{{ age.title }}">{{ age.text }}</span>
       <span id="optRefreshSpin" class="htmx-indicator text-slate-500">&#8635;</span>
-      <button type="button" class="px-2 py-0.5 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition"
+      <button type="button" class="px-2 py-0.5 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition{% if reading %} opacity-50 cursor-not-allowed{% endif %}"
               hx-post="/options/refresh/{{ sym }}?strategy={{ strategy }}" hx-target="closest .opt-card" hx-swap="outerHTML" hx-indicator="#optRefreshSpin"
-              title="Read today's delayed chain from Cboe now (about 2 seconds) and re-check the idea">Refresh</button>
+              {% if reading %}disabled title="A first read of {{ sym }} is in progress - this card updates itself"{% else %}title="Read today's delayed chain from Cboe now (about 2 seconds) and re-check the idea"{% endif %}>Refresh</button>
       <button type="button" class="opt-live-btn px-2 py-0.5 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition"
               onclick="window.thOptionsLive('{{ sym }}')"
               title="Quotes from your own TWS through the bridge on this PC - graded now, never stored (except a year of IV history)">Live (TWS)</button>
@@ -78,16 +78,39 @@
   {% endif %}
 
   {% if card is none %}
-  {# ---- no signal yet (added today) - chips, picks, payoff hidden; the chart still shows ---- #}
+  {# ---- no signal yet - chips, picks, payoff hidden; the chart still shows. While the
+     first-time read runs (v4.131: history, today's chain, the engines) the card polls
+     itself every 4 s; otherwise the Refresh hint. ---- #}
+  {% if reading %}
+  <p id="optReading" class="mt-2 text-[12px] text-slate-300 leading-relaxed">
+    <span class="inline-block w-1.5 h-1.5 rounded-full bg-sky-400 animate-pulse mr-1 align-middle"></span>
+    Reading {{ sym }} now: its IV history (the screener's readings, then a year from IB Gateway when it is up),
+    today's delayed chain and the strategy engines. This card updates itself when the read lands - a few
+    seconds for one ticker, longer for a big import.
+  </p>
+  {# the poll: 204 while reading (nothing swaps), then the finished card retargeted into #optPane #}
+  <span id="optReadingPoll" hx-get="/options/card/{{ sym }}/reading?strategy={{ strategy }}" hx-trigger="every 4s" hx-swap="none"></span>
+  {% elif read_err %}
+  <p id="optReadFailed" class="mt-2 text-[12px] text-amber-300 leading-relaxed">
+    The first read of {{ sym }} failed: {{ read_err }}. Press <b>Refresh</b> to try again; tonight's job will also retry.
+  </p>
+  {% else %}
   <p class="mt-2 text-[12px] text-slate-400 leading-relaxed">
     No read yet for {{ sym }} - it was added after last night's job. Press <b class="text-slate-200">Refresh</b>
     to read today's delayed chain now, or wait for tonight.
   </p>
+  {% endif %}
   <div id="optChartBody" class="mt-2 flex flex-col min-h-[300px] lg:flex-1 lg:min-h-0"
        hx-get="/options/chart/{{ sym }}" hx-trigger="load" hx-swap="innerHTML">
     <div class="text-xs text-slate-500 py-6 text-center">Loading chart&hellip;</div>
   </div>
   {% else %}
+
+  {% if reading %}
+  {# a re-added ticker with an old read: say a fresh one is on its way, and poll #}
+  <p id="optReading" class="mt-1.5 text-[11px] text-sky-300"><span class="inline-block w-1.5 h-1.5 rounded-full bg-sky-400 animate-pulse mr-1 align-middle"></span>A fresh read of {{ sym }} is in progress (its IV history, today's chain, the engines) - this card updates itself.</p>
+  <span id="optReadingPoll" hx-get="/options/card/{{ sym }}/reading?strategy={{ strategy }}" hx-trigger="every 6s" hx-swap="none"></span>
+  {% endif %}
 
   {# ---- what the system read: one row per fact (v4.130). The stored one-sentence
      headline is the panel's tooltip; it stays what the basket row and Telegram say. ---- #}

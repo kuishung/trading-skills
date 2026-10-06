@@ -51,6 +51,12 @@ copy app\.env.example app\.env
 #     TST_AUTH_MODE=password
 #     TST_ADMIN_EMAIL / TST_ADMIN_PASSWORD   (seeds your admin on first run)
 #     TST_HTTPS_ONLY=1                        (served over Cloudflare HTTPS)
+#   Options page, IV-history seed from IB Gateway (v4.131, optional - skipped, and said so on the
+#   status strip, when nothing answers):
+#     TST_IBKR_PORT=4002        (unset = probe 4002, 4001, 7497, 7496 in turn; Hermes = Gateway paper 4002)
+#     TST_IV_SEED_IBKR=0        (only to switch the seed off; it is on by default)
+#     TST_IBKR_PYTHON=py -3.12  (unset = the venv's own python - built with py -3.12, ib_insync is in
+#                                 requirements.txt - then py -3.12; this IS an IBKR workload, never 3.14)
 
 # 3. First run (foreground sanity check) -> http://localhost:8000/health
 powershell -ExecutionPolicy Bypass -File deploy\run_app.ps1

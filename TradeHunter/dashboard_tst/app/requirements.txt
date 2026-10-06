@@ -10,9 +10,14 @@ authlib>=1.3              # Google OAuth / OIDC client
 httpx>=0.27               # async HTTP, used by authlib's token exchange
 alembic>=1.13             # database schema migrations (SQLite + Postgres)
 
-# NOTE: ib_insync is deliberately NOT here. TWS runs on each member's own PC and
-# the browser talks to dashboard_tst/bridge/ibkr_bridge.py on 127.0.0.1; the
-# server never connects to a broker. The bridge has its own requirements.
+# ib_insync is here ONLY for deploy/iv_seed_ibkr.py - a year of IV history from IB
+# Gateway, run as a SUBPROCESS by the Options page's first-time read and by the
+# nightly job (services/option_backfill). The web app itself never imports it. It
+# imports only on Python <= 3.13 (the venv is built with py -3.12 on Hermes); where
+# it cannot, the seed step reports "unavailable" and nothing else is affected.
+# Members' TWS is still reached from the browser via dashboard_tst/bridge/, which
+# has its own requirements.
+ib_insync>=0.9.86
 
 # Production extras (not needed for the SQLite dev scaffold):
 #   psycopg[binary]>=3.1   # when TST_DATABASE_URL points at Postgres

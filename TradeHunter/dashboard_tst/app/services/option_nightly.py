@@ -5,7 +5,7 @@
 
     0  job_runs.start(db, "nightly", run_on, source=)      a row at once: a crash leaves
                                                             "started, never finished"
-    1  option_store.backfill_from_iv_history (--backfill)  idempotent
+    1  option_backfill.backfill (default; --no-backfill)   idempotent
     2  universe = active basket symbols + open trades;      hashes = the house hash + every
        hashes = prefs_by_hash(db)                           DISTINCT saved prefs hash
     3  per symbol, sequential, the source's pacing between fetches (1.5 s Cboe / 0.4 s
@@ -324,7 +324,7 @@ def _skip_words(skipped: dict) -> str:
 
 
 def run_nightly(db, *, symbols=None, on=None, source=None, push: bool = True,
-                telegram_dry_run: bool = False, backfill: bool = False, engines: bool = True,
+                telegram_dry_run: bool = False, backfill: bool = True, engines: bool = True,
                 progress=None, log=None, sleep=time.sleep) -> dict:
     """The seven-step nightly run (module docstring). ``symbols`` limits the universe;
     ``on`` refiles everything under that ET date; ``source`` is a name
@@ -358,18 +358,25 @@ def run_nightly(db, *, symbols=None, on=None, source=None, push: bool = True,
     pushed = 0
     note = None
     try:
-        # 1
+        # 1 - the universe first, so the IV-history backfill is scoped to it: the
+        #     screener's iv_history copied in, then a year from IB Gateway for whoever
+        #     is still short (services/option_backfill). On by default since v4.131 -
+        #     a ticker's first night gets its rank, not a 60-day wait. The rank is
+        #     recomputed here too, so a symbol whose chain read then fails in step 3
+        #     still carries a rank consistent with the history that landed.
+        universe = _universe(db, symbols)
         if backfill:
             try:
-                detail["_backfill"] = option_store.backfill_from_iv_history(db)
-                lg.info("backfill: %d iv_history day(s) copied into iv_daily", detail["_backfill"])
+                from . import option_backfill        # noqa: PLC0415 - lazy: optional on an old checkout
+                detail["_backfill"] = option_backfill.backfill(db, universe, seed=True, recompute=True,
+                                                               today=run_on, log=lg,
+                                                               client_id=option_backfill.SEED_CLIENT_ID_NIGHTLY)
             except Exception as exc:  # noqa: BLE001
                 lg.warning("backfill failed: %s", exc, exc_info=True)
                 db.rollback()
                 detail["_backfill"] = {"error": f"{type(exc).__name__}: {exc}"}
 
         # 2
-        universe = _universe(db, symbols)
         hashes: list[tuple[str, dict]] = []
         engines_mode = "off"
         if engines:

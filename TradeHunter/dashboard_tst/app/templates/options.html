@@ -244,6 +244,14 @@
       htmx.ajax('GET', '/options/card/' + encodeURIComponent(sym) + '?strategy=' + encodeURIComponent(window.thCardStrategy()), { target: '#optPane', swap: 'innerHTML' });
     }
   });
+  // v4.131: a ticker just added from the card's own "+ Add to basket" button (or an import that
+  // includes the one on screen): reload the card so it shows "Reading now" and polls itself
+  document.body.addEventListener('options:basket-changed', function (e) {
+    var d = e.detail || {};
+    if (tab === 'ideas' && sym && (d['new'] || []).indexOf(sym) >= 0 && window.htmx) {
+      htmx.ajax('GET', '/options/card/' + encodeURIComponent(sym), { target: '#optPane', swap: 'innerHTML' });
+    }
+  });
   // the debit tab's three sub-sections: collapsed on < lg, open on a wide screen
   document.body.addEventListener('htmx:afterSwap', function (e) {
     var t = e.detail && e.detail.target;
@@ -399,7 +407,7 @@
           body: JSON.stringify({ source: 'scanner', symbols: j.symbols || [], note: 'TWS scan' }) })
           .then(function (r) { return r.json(); })
           .then(function (res) {
-            if (window.thToast) window.thToast((res.added || 0) + ' added from your TWS scan' + (res.over_cap ? ', ' + res.over_cap + ' over the cap' : ''), 'ok');
+            if (window.thToast) window.thToast((res.added || 0) + ' added from your TWS scan' + (res.over_cap ? ', ' + res.over_cap + ' over the cap' : '') + (res.added ? ' - reading them now' : ''), 'ok');
             document.body.dispatchEvent(new CustomEvent('options:basket-changed', { detail: { n: res.total } }));
           });
       })
@@ -414,7 +422,7 @@
       body: JSON.stringify({ source: source, text: text || '', symbols: symbols || [] }) })
       .then(function (r) { return r.json(); })
       .then(function (res) {
-        if (window.thToast) window.thToast((res.added || 0) + ' added, ' + (res.skipped || 0) + ' skipped' + (res.over_cap ? ', ' + res.over_cap + ' over the cap' : ''), res.added ? 'ok' : 'info');
+        if (window.thToast) window.thToast((res.added || 0) + ' added, ' + (res.skipped || 0) + ' skipped' + (res.over_cap ? ', ' + res.over_cap + ' over the cap' : '') + (res.added ? ' - reading them now' : ''), res.added ? 'ok' : 'info');
         document.body.dispatchEvent(new CustomEvent('options:basket-changed', { detail: { n: res.total } }));
       })
       .catch(function () { if (window.thToast) window.thToast('Could not import - try again.', 'err'); });
