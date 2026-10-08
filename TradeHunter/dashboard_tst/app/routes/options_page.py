@@ -586,6 +586,27 @@ def _age_badge(card: dict | None, live: dict | None) -> dict:
             "title": "Cboe's delayed feed, read by the nightly job (or your last Refresh)."}
 
 
+def _no_fit_lines(strategies: list, chips: dict) -> list[str]:
+    """Why nothing is recommended today (v4.132; user: "all of the ticker find no
+    strategy fits today"): one line per BUILT strategy with its first failure, plus
+    the unbuilt fits - so "No strategy fits today" always says why. Empty when
+    something is recommended."""
+    if (chips or {}).get("first"):
+        return []
+    out: list[str] = []
+    for s in strategies or []:
+        if not isinstance(s, dict):
+            continue
+        lab = strategy_rules.LABELS.get(s.get("key"), s.get("key") or "?")
+        if s.get("fit") == "also_fits" and s.get("reason_key") == "not_available_yet":
+            out.append(f"{lab} would fit today, but is not in TradeHunter yet")
+        elif s.get("fit") == "rejected" and int(s.get("step") or 1) <= strategy_rules.CURRENT_STEP:
+            why = (s.get("reasons") or [None])[0]
+            if why:
+                out.append(f"{lab}: {why}")
+    return out
+
+
 def _card_context(db: Session, user: User, symbol: str, *, strategy: str = "", pick: int = 0,
                   note: str = "", note_kind: str = "ok", live: dict | None = None,
                   diag: dict | None = None, units: str = "$") -> dict:
@@ -626,6 +647,7 @@ def _card_context(db: Session, user: User, symbol: str, *, strategy: str = "", p
         rules_line = _W.rules_line(prefs, strategy, setup)
     chosen_blocked = _earnings_blocked(chosen, strategy, prefs)
     gauge_text = _W.gauge((card or {}).get("iv")) if card else None
+    no_fit = _no_fit_lines(strategies, chips) if card else []
     # v4.131: a first-time read in flight, or why the last one failed (cleared once a card exists)
     reading = _reading(sym) if sym else False
     read_err = None if (reading or not sym) else _read_error(sym)
@@ -648,7 +670,7 @@ def _card_context(db: Session, user: User, symbol: str, *, strategy: str = "", p
             "rejected": bool(chosen and chosen.get("fit") == "rejected"),
             "rejection": (chosen.get("reasons") or [None])[0] if chosen else None,
             "age": _age_badge(card, live), "no_setup": bool(card and card.get("status") == "no_setup"),
-            "reading": reading, "read_err": read_err,
+            "no_fit": no_fit, "reading": reading, "read_err": read_err,
             "bridge_port": BRIDGE_PORT, "bridge_setup_path": BRIDGE_SETUP_PATH,
             "bridge_min_version": BRIDGE_MIN_VERSION, "note": note, "note_kind": note_kind,
             "diag": diag, "nlv": nlv, "nlv_source": nlv_source, "trade_prefs": tp.read(user),
@@ -1181,6 +1203,25 @@ def card_reading(symbol: str, request: Request, strategy: str = "",
     resp.headers["HX-Retarget"] = "#optPane"
     resp.headers["HX-Reswap"] = "innerHTML"
     return _trigger(resp, {"options:basket-changed": {}})
+
+
+@router.get("/vol/{symbol}", response_class=HTMLResponse)
+def vol(symbol: str, request: Request, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    """The volatility chart (v4.132): IV30, the stock's own HV20 / HV60 and the IV
+    rank over the last year - the IV from the stored daily readings, the HV from live
+    closes (services/option_vol). Loaded when the card's "Options & dates" tab opens."""
+    sym = _clean_symbol(symbol)
+    from ..services import option_vol    # noqa: PLC0415 - lazy: pulls the metrics + live prices
+
+    try:
+        data = option_vol.series(db, sym)
+    except Exception as exc:  # noqa: BLE001 - the tab must still render its rows
+        log.warning("vol %s: %s", sym, exc, exc_info=True)
+        data = {"symbol": sym, "iv": [], "rank": [], "hv20": [], "hv60": [],
+                "latest": {"on": None, "iv30": None, "iv_rank": None, "hv20": None, "hv60": None, "hv_on": None},
+                "n_iv": 0, "min_obs": 60, "window": 252, "sell_from": 30, "neutral_from": 50,
+                "error": f"{type(exc).__name__}: {str(exc)[:120]}"}
+    return templates.TemplateResponse(request, "_options_vol.html", {"sym": sym, "vol": data})
 
 
 @router.get("/picks/{symbol}", response_class=HTMLResponse)

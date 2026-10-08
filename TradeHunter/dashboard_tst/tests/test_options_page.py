@@ -83,7 +83,7 @@ SETUP = {
 }
 IV = {"iv30": 46.0, "hv20": 38.0, "hv60": 36.1, "iv_hv_premium": 1.21, "iv_rank": 62.0, "iv_pct": 71.0,
       "iv_n": 252, "state": "ok", "basis": "rank", "provisional": False, "iv_front": 50.0, "iv_back": 45.0,
-      "term_ratio": 1.11, "skew25": 4.1, "skew_norm": 0.08, "expected_move": 24.1,
+      "term_ratio": 1.11, "skew25": 4.1, "skew_norm": 0.08, "expected_move": 46.052,   # 349.2 x 0.46 x sqrt(30/365)
       "earnings_date": "2026-10-22", "earnings_days": 19, "verdict": "SELL",
       "verdict_why": "IV rank 62 (>= 50) and priced for 21% more movement than the stock has actually shown",
       "gates": {"buy": False, "sell_directional": True, "sell_neutral": True, "mid": False},
@@ -443,11 +443,23 @@ def test_card_headline_gauge_chips_and_must_happen(world):
     for label, value in [("Trend", "Uptrend"), ("EMA 20 / 50 / 200", "346.10 / 335.80 / 301.20"),
                          ("Setup today", "Support bounce"), ("Support", "340.90"), ("Resistance", "372.00"),
                          ("Chart stop / target", "336.20 / 375.20"), ("Implied volatility", "46%"),
-                         ("IV vs movement", "+21%"), ("IV rank", ">62<"), ("Term structure", "50% front / 45% back"),
-                         ("Expected move", "±24.1"), ("Earnings", "2026-10-22"), ("Volume", "1.7x normal")]:
+                         ("IV vs movement", "+21%"), ("IV rank", ">62<"), ("Term structure", "near 50% · later 45%"),
+                         ("Expected move", "±$46.1 (13.2%)"), ("Earnings", "2026-10-22"), ("Volume", "1.7x normal")]:
         assert label in html and value in html, (label, value)
     assert "EMA 20 &gt; 50 &gt; 200 for 34 days" in html                     # the trend row's note
     assert "in 19 days" in html and "3 previous touches" in html
+    # v4.132: the plain words for the three rows members did not understand, and a tooltip per label
+    assert "cost MORE than those 2-3 months out" in html                     # term ratio 1.11
+    assert "puts +4.1 pts" in html and "pay up for protection" in html       # skew 4.1
+    assert "349.20 × 46.0% × √(30/365) ≈ 46.1" in html and "two days in three" in html   # the factors multiply out
+    assert 'title="Where today' in html                                      # the IV-rank tooltip
+    # v4.132: the two tabs - the price chart + chart facts, the volatility chart + option facts + dates
+    assert 'data-ctab="chart"' in html and 'data-ctab="vol"' in html
+    assert 'id="optTabChart"' in html and 'id="optTabVol"' in html
+    assert 'hx-get="/options/vol/LRCX"' in html and 'hx-trigger="optvol once"' in html
+    assert "What the system read on the chart" in html and "What the options say" in html
+    assert html.index('id="optChartBody"') < html.index("What the system read on the chart") < html.index('id="optTabVol"')
+    assert html.index('id="optTabVol"') < html.index("What the options say")
     assert "What has to happen:" in html and "LRCX stays above 330 until Nov 20" in html
     assert "&#10003; Bull put spread" in html                                 # the recommended chip first
     assert "Bull call spread &middot; not available yet" in html             # an unbuilt fit is never recommended
@@ -775,6 +787,42 @@ def test_admin_can_run_the_data_job_from_the_page(world, monkeypatch):
     assert 'hx-trigger="load delay:10s"' in r.text          # the 10 s re-poll while running
     r = c.get("/options/status/strip")
     assert r.status_code == 200 and "Run the data job now" in r.text
+
+
+def test_no_fit_card_says_why_and_the_vol_chart_fragment_renders(world, monkeypatch):
+    """v4.132: a card with nothing recommended lists the reason per built strategy and
+    the unbuilt fits (user: "all of the ticker find no strategy fits today"); the
+    volatility fragment renders its chart data and the reading guide."""
+    from app.services import prices
+    from .fixtures.options import bars_synth
+
+    c = world["client"]
+    html = c.get("/options/card/KO").text                                   # earnings-blocked: no recommendation
+    assert "No strategy fits today." in html
+    assert "Bull put spread: earnings Oct 22 fall inside every expiry" in html
+    assert "Bull call spread would fit today, but is not in TradeHunter yet" in html
+    assert "Buy call:" not in html                                           # an unbuilt reject is not listed
+    assert "three things at once" in html
+    html = c.get("/options/card/LRCX").text                                  # recommended: no such list
+    assert "No strategy fits today." not in html
+    monkeypatch.setattr(prices, "fetch_daily_ohlc",
+                        lambda sym, *, rng="2y": bars_synth("uptrend_bounce", n=120, start=300.0, end=world["day"]))
+    r = c.get("/options/vol/LRCX")
+    assert r.status_code == 200
+    assert 'id="volChart"' in r.text and "data-vol=" in r.text and "Volatility, last year" in r.text
+    assert "How to read it:" in r.text and "sells spreads from 30 and iron condors from 50" in r.text
+    assert "1 of 60 readings so far" in r.text                               # one iv_daily row in the fixture
+    r = c.get("/options/vol/ZZZZ")
+    assert r.status_code == 200 and "No IV history stored for ZZZZ yet" in r.text
+    # the route's own soft-fail: the series builder raising still renders the tab (never a 500)
+    from app.services import option_vol
+    monkeypatch.setattr(option_vol, "series", lambda db_, s: (_ for _ in ()).throw(RuntimeError("database is locked")))
+    r = c.get("/options/vol/LRCX")
+    assert r.status_code == 200 and "The chart could not be built: RuntimeError: database is locked" in r.text
+    assert 'id="volChart"' not in r.text and "How to read it:" in r.text
+    # the card carries no inline script: the tab wiring is the page's (the Live path inserts raw HTML)
+    html = c.get("/options/card/LRCX").text
+    assert "<script" not in html.split('id="optCardTabs"')[1].split('id="optPicks"')[0]
 
 
 def test_adding_a_ticker_starts_its_first_time_read(world):

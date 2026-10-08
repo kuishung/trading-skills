@@ -173,6 +173,42 @@
     syncLive();
   });
 
+  // ---- the card's own two tabs (v4.132): Chart | Options & dates -------------------
+  // Delegated, not inline in the card: the Live path inserts the card with outerHTML,
+  // where an inline script would never run. The remembered tab is applied once per
+  // card (data-ready) after every htmx settle and after a Live render; opening
+  // "Options & dates" fires the 'optvol' event the volatility chart loads on.
+  var CTAB_KEY = 'th.options.cardTab';
+  function showCardTab(t, remember) {
+    var bar = document.getElementById('optCardTabs');
+    if (!bar) return;
+    t = t === 'vol' ? 'vol' : 'chart';
+    var panels = { chart: document.getElementById('optTabChart'), vol: document.getElementById('optTabVol') };
+    Object.keys(panels).forEach(function (k) { if (panels[k]) panels[k].classList.toggle('hidden', k !== t); });
+    bar.querySelectorAll('.opt-ctab').forEach(function (b) {
+      var on = b.dataset.ctab === t;
+      b.className = 'opt-ctab px-2.5 py-1 rounded border transition ' +
+        (on ? 'border-emerald-500/60 text-emerald-300 bg-emerald-500/10' : 'border-slate-700 text-slate-400 hover:text-slate-200');
+    });
+    if (t === 'vol') { var v = document.getElementById('optVolBody'); if (v && window.htmx) htmx.trigger(v, 'optvol'); }
+    try { window.dispatchEvent(new Event('resize')); } catch (e) {}
+    if (remember) { try { localStorage.setItem(CTAB_KEY, t); } catch (e) {} }
+  }
+  function applyCardTab() {
+    var bar = document.getElementById('optCardTabs');
+    if (!bar || bar.dataset.ready) return;
+    bar.dataset.ready = '1';
+    var t = 'chart';
+    try { t = localStorage.getItem(CTAB_KEY) || 'chart'; } catch (e) {}
+    if (t === 'vol') showCardTab('vol', false);
+  }
+  document.addEventListener('click', function (e) {
+    var b = e.target && e.target.closest ? e.target.closest('.opt-ctab') : null;
+    if (b) showCardTab(b.dataset.ctab, true);
+  });
+  document.body.addEventListener('htmx:afterSettle', function () { applyCardTab(); });
+  window.thApplyCardTab = applyCardTab;
+
   // ---- the card's hidden state the action buttons read ---------------------------
   function card() { return document.querySelector('#optPane .opt-card'); }
   window.thCardStrategy = function () { var c = card(); return c ? (c.dataset.strategy || '') : ''; };
@@ -356,6 +392,7 @@
         var c = card();
         if (c) { c.outerHTML = html; } else { pane.innerHTML = html; }
         if (window.htmx) htmx.process(pane);
+        applyCardTab();                       // the card's tabs (an inline script would be inert here)
         syncLive();
       })
       .catch(function () {

@@ -1,11 +1,16 @@
 {# "What the system read" - every fact behind the card as ONE ROW EACH (user, 2026-10-06:
    "i need a separate panel for this and list down each of the data rather than in a long
-   paragraph, it is hard to read"). Three groups: the chart, the options, the dates. Every
-   value comes straight from the stored signal (card.setup / card.iv); the stored
-   one-sentence headline is kept as the panel's tooltip and stays what the basket row and
-   the Telegram push say. Included by _options_card.html, after the age line.
+   paragraph, it is hard to read"), in two sections the card puts on two tabs (v4.132,
+   user 2026-10-08: "use tab to separate the contents"): `read_section` = 'chart' (the
+   price-chart facts, under the price chart) or 'options' (what the options say + the
+   dates, under the volatility chart); unset = both. Every value comes straight from the
+   stored signal (card.setup / card.iv); the stored one-sentence headline is the chart
+   section's tooltip. Every label carries a plain-words tooltip (hover) and the rows that
+   confused members - term structure, skew, expected move - say what they mean in the
+   note itself (user, 2026-10-08).
    Every field is read with .get() - a signal written by an older engine may lack a key,
    and a missing key must leave a row out, never break the card. #}
+{% set sec = read_section if read_section is defined else 'all' %}
 {% set st = (card.setup if card else none) or {} %}
 {% set iv = (card.iv if card else none) or {} %}
 {% set ema = st.get('ema') or {} %}
@@ -32,102 +37,147 @@
 {% set KIND = {'support_bounce': 'Support bounce', 'ema_rebound': 'EMA rebound', 'breakout_retest': 'Breakout retest',
                'trendline_bounce': 'Trend-line bounce', 'resistance_reject': 'Resistance rejection',
                'failed_support': 'Failed support', 'range': 'Range'} %}
-{% macro row(label, value, note='', k='') -%}
-<div class="grid items-baseline gap-x-2 py-[3px] border-b border-slate-800/60" style="grid-template-columns: 7.5rem minmax(0,1fr);">
-  <span class="text-[10px] uppercase tracking-wide text-slate-500">{{ label }}</span>
+{# ---- the plain-words tooltips, one per label ---- #}
+{% set TIP = {
+  'trend': 'The direction of the daily chart from the three moving averages: EMA 20 above 50 above 200 is an uptrend, the reverse a downtrend, tangled lines no clear trend.',
+  'ema': 'Exponential moving averages of the close over 20, 50 and 200 sessions - the three lines on the chart.',
+  'weekly': 'The same three averages on the weekly chart. A weekly uptrend behind a daily one is the stronger case.',
+  'structure': 'The swings: higher highs and higher lows mean buyers are in charge; lower highs and lower lows, sellers.',
+  'setup': 'A specific candle on the latest bar: a bounce off support, a rebound on an average, a breakout retest, a rejection at resistance. Most days there is none - that is normal.',
+  'volume': 'The latest bar\'s volume against this stock\'s own normal. A bounce on high volume is believed; on thin volume it is not.',
+  'support': 'The nearest price under today\'s where the stock has turned up before, within the last year.',
+  'resistance': 'The nearest price over today\'s where the stock has turned down before, within the last year.',
+  'plan': 'From the setup: the stop just past the level that would prove the setup wrong, the target at the next level. The strikes are chosen around these.',
+  'price': 'The last close, and the Average True Range over 14 sessions - how far the stock moves on a normal day.',
+  'iv': 'Implied volatility: the yearly move the option prices are built on, as a percent of price. 30% means the market is pricing a move of about 30% up or down over a year (one standard deviation).',
+  'hv': 'Realised (historical) volatility: how much the stock actually moved, from its daily closes over the last 20 and 60 sessions, annualised the same way as IV so the two can be compared.',
+  'ivhv': 'IV divided by the 20-day realised volatility, minus one. Positive: options are priced for more movement than the stock has delivered - the premium seller\'s edge. Negative: options are cheap by the stock\'s own behaviour.',
+  'rank': 'Where today\'s IV sits between the lowest and highest daily IV of the past year: 0 = at the yearly low, 100 = at the high. The rules sell spreads from 30 and iron condors from 50. Needs 60 readings; a full year for a true rank.',
+  'pct': 'The share of the past year\'s days that had lower IV than today.',
+  'term': 'The IV of the expiry nearest 30 days (near) against the one nearest 75 days (later). Near dearer than later means the market expects an event before the first expiry - earnings, a ruling, a launch.',
+  'skew': 'At the near expiry: the IV of the put 25 deltas below price minus the IV of the call 25 deltas above it, in volatility points. Puts dearer is the normal shape - investors pay up for downside insurance.',
+  'em': 'One standard deviation of price over the next 30 days, from the IV: price × IV × √(30/365). About two days in three the stock stays inside this band; the strikes are placed outside it.',
+  'verdict': 'SELL = options expensive by rank and against the stock\'s own movement, so selling premium is paid; BUY = cheap, so buying is paid; NEUTRAL in between. Provisional until 60 days of IV history.',
+  'earnings': 'The next earnings date and how far away it is. Options across it carry an event premium; your earnings rule decides whether a spread may span it.',
+  'data': 'When the chain behind these numbers was read. Delayed = Cboe\'s 15-minute delayed feed.'
+} %}
+{% macro row(label, value, note='', k='', tip='') -%}
+<div class="grid items-baseline gap-x-2 py-[3px] border-b border-slate-800/60" style="grid-template-columns: 8rem minmax(0,1fr);">
+  <span class="text-[10px] uppercase tracking-wide text-slate-500{% if tip %} cursor-help underline decoration-dotted decoration-slate-700 underline-offset-2{% endif %}"{% if tip %} title="{{ tip }}"{% endif %}>{{ label }}</span>
   <span class="text-[12px] text-slate-200 min-w-0 tabular-nums"><span class="{% if k == 'good' %}text-emerald-300{% elif k == 'warn' %}text-amber-300{% elif k == 'bad' %}text-rose-300{% endif %}">{{ value }}</span>{% if note %} <span class="text-[11px] text-slate-500">&middot; {{ note }}</span>{% endif %}</span>
 </div>
 {%- endmacro %}
-<div id="optRead" class="mt-2 rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2" title="{{ headline or '' }}">
-  <div class="flex items-baseline gap-2 mb-1">
-    <span class="text-[11px] font-semibold text-slate-300">What the system read</span>
-    <span class="text-[10px] text-slate-500">every number behind this card, one per line</span>
-  </div>
-  <div class="grid gap-x-6 gap-y-2 lg:grid-cols-3">
 
-    {# ---- the chart ---- #}
+{% if sec in ('chart', 'all') %}
+{# ═══════════════════════════ the chart section ═══════════════════════════ #}
+<div id="optReadChart" class="mt-2 rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2" title="{{ headline or '' }}">
+  <div class="flex items-baseline gap-2 mb-1">
+    <span class="text-[11px] font-semibold text-slate-300">What the system read on the chart</span>
+    <span class="text-[10px] text-slate-500">one fact per line &middot; hover a label for what it means</span>
+  </div>
+  <div class="grid gap-x-6 lg:grid-cols-2">
     <div>
-      <div class="text-[10px] uppercase tracking-wide text-slate-600 mb-0.5">Chart</div>
       {{ row('Trend',
              'Uptrend' if tr == 'up' else ('Downtrend' if tr == 'down' else ('Sideways' if tr == 'sideways' else 'No clear trend')),
              (('EMA 20 > 50 > 200 for ' ~ trend_days ~ ' days') if (tr == 'up' and trend_days) else
               (('EMA 20 < 50 < 200 for ' ~ trend_days ~ ' days') if (tr == 'down' and trend_days) else
                ('the EMAs are tangled' if tr == 'flat' else ''))),
-             'good' if tr == 'up' else ('bad' if tr == 'down' else '')) }}
+             'good' if tr == 'up' else ('bad' if tr == 'down' else ''), TIP['trend']) }}
       {% if e20 is not none and e50 is not none and e200 is not none %}
-      {{ row('EMA 20 / 50 / 200', '%.2f'|format(e20) ~ ' / ' ~ '%.2f'|format(e50) ~ ' / ' ~ '%.2f'|format(e200)) }}
+      {{ row('EMA 20 / 50 / 200', '%.2f'|format(e20) ~ ' / ' ~ '%.2f'|format(e50) ~ ' / ' ~ '%.2f'|format(e200), '', '', TIP['ema']) }}
       {% endif %}
       {% if w_up is not none %}
-      {{ row('Weekly trend', 'stacked up' if w_up else 'not stacked', 'weekly EMA 20 > 50 > 200' if w_up else 'the weekly EMAs do not agree', 'good' if w_up else '') }}
+      {{ row('Weekly trend', 'stacked up' if w_up else 'not stacked', 'weekly EMA 20 > 50 > 200' if w_up else 'the weekly EMAs do not agree', 'good' if w_up else '', TIP['weekly']) }}
       {% endif %}
       {% if struct.get('reason') %}
-      {{ row('Swing structure', struct.get('reason')|capitalize, '', 'good' if struct.get('state') == 'bullish' else ('warn' if struct.get('state') == 'decelerated' else '')) }}
+      {{ row('Swing structure', struct.get('reason')|capitalize, '', 'good' if struct.get('state') == 'bullish' else ('warn' if struct.get('state') == 'decelerated' else ''), TIP['structure']) }}
       {% endif %}
       {{ row('Setup today',
              (KIND.get(kind, (kind|replace('_', ' ')|capitalize)) if kind else 'None'),
              ((('at ' ~ '%.2f'|format(level)) if level else '')
               ~ ((' · ' ~ touches ~ ' previous touch' ~ ('es' if touches != 1 else '')) if touches else '')
               ~ ((' · quality ' ~ quality ~ '/100') if quality else '')) if kind else 'no bounce, rebound or breakout candle on the latest bar',
-             'good' if kind else '') }}
+             'good' if kind else '', TIP['setup']) }}
+    </div>
+    <div>
       {% if vol_ratio is not none %}
-      {{ row('Volume', '%.1f'|format(vol_ratio) ~ 'x normal', 'high for this stock' if vol_high else 'nothing unusual', 'good' if vol_high else '') }}
+      {{ row('Volume', '%.1f'|format(vol_ratio) ~ 'x normal', 'high for this stock' if vol_high else 'nothing unusual', 'good' if vol_high else '', TIP['volume']) }}
       {% endif %}
-      {{ row('Support', ('%.2f'|format(lv.get('support'))) if lv.get('support') else '–', 'nearest level under price' if lv.get('support') else 'none found in the last year') }}
-      {{ row('Resistance', ('%.2f'|format(lv.get('resistance'))) if lv.get('resistance') else '–', 'nearest level over price' if lv.get('resistance') else 'none found over price in the last year') }}
+      {{ row('Support', ('%.2f'|format(lv.get('support'))) if lv.get('support') else '–', 'nearest level under price' if lv.get('support') else 'none found in the last year', '', TIP['support']) }}
+      {{ row('Resistance', ('%.2f'|format(lv.get('resistance'))) if lv.get('resistance') else '–', 'nearest level over price' if lv.get('resistance') else 'none found over price in the last year', '', TIP['resistance']) }}
       {{ row('Chart stop / target',
              ('%.2f'|format(plan.get('stop')) ~ ' / ' ~ '%.2f'|format(plan.get('target'))) if (plan.get('stop') and plan.get('target')) else '–',
-             ('risk ' ~ ('%.2f'|format(plan.get('r'))) ~ ' per share') if plan.get('r') else 'no setup, so no trade plan today') }}
+             ('risk ' ~ ('%.2f'|format(plan.get('r'))) ~ ' per share') if plan.get('r') else 'no setup, so no trade plan today', '', TIP['plan']) }}
       {% if close %}
       {{ row('Price · ATR', '%.2f'|format(close) ~ ' · ' ~ (('%.2f'|format(atr)) if atr else '–'),
-             ('a normal day moves about ' ~ '%.1f'|format(atr / close * 100) ~ '%') if atr else '') }}
+             ('a normal day moves about ' ~ '%.1f'|format(atr / close * 100) ~ '%') if atr else '', '', TIP['price']) }}
       {% endif %}
     </div>
+  </div>
+</div>
+{% endif %}
 
-    {# ---- the options ---- #}
+{% if sec in ('options', 'all') %}
+{# ═══════════════════════════ the options section ═══════════════════════════ #}
+<div id="optReadOptions" class="mt-2 rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2">
+  <div class="flex items-baseline gap-2 mb-1">
+    <span class="text-[11px] font-semibold text-slate-300">What the options say</span>
+    <span class="text-[10px] text-slate-500">one fact per line &middot; hover a label for what it means</span>
+  </div>
+  <div class="grid gap-x-6 lg:grid-cols-2">
     <div>
-      <div class="text-[10px] uppercase tracking-wide text-slate-600 mb-0.5">Options</div>
-      {{ row('Implied volatility', ('%.0f'|format(iv30) ~ '%') if iv30 is not none else '–', '30-day, at the money') }}
+      {{ row('Implied volatility', ('%.0f'|format(iv30) ~ '%') if iv30 is not none else '–',
+             'the yearly move the option prices are built on (30-day, at the money)', '', TIP['iv']) }}
       {{ row("Stock's own movement",
              (('%.0f'|format(hv20) ~ '%') if hv20 is not none else '–') ~ ((' / ' ~ '%.0f'|format(hv60) ~ '%') if hv60 is not none else ''),
-             'realised, last 20 / 60 sessions') }}
+             'what it actually did over the last 20 / 60 sessions, annualised', '', TIP['hv']) }}
       {% if prem_ratio is not none %}
       {% set prem = (prem_ratio - 1) * 100 %}
       {{ row('IV vs movement', ('+' if prem >= 0 else '') ~ '%.0f'|format(prem) ~ '%',
-             'options priced for more movement than the stock has shown' if prem > 10 else ('priced for less movement than the stock has shown' if prem < -10 else 'about what the stock has actually moved'),
-             'warn' if prem > 10 else ('good' if prem < -10 else '')) }}
+             'options priced for more movement than the stock has shown - the seller is paid for the gap' if prem > 10 else ('priced for less movement than the stock has shown - cheap to buy' if prem < -10 else 'about what the stock has actually moved'),
+             'warn' if prem > 10 else ('good' if prem < -10 else ''), TIP['ivhv']) }}
       {% endif %}
       {{ row('IV rank', ('%.0f'|format(iv_rank)) if iv_rank is not none else 'not yet',
-             ('where today sits between the year\'s low and high' if basis == 'rank' else
+             ('where today sits between the year\'s low (0) and high (100)' if basis == 'rank' else
               (('provisional - ' ~ iv_n ~ ' of 60 days of IV history') if basis in ('provisional', 'percentile') else
                (iv_n ~ ' of 60 days of IV history; Live loads a year from TWS'))),
-             ('warn' if iv_rank >= 50 else ('good' if iv_rank < 30 else '')) if (iv_rank is not none and basis == 'rank') else '') }}
+             ('warn' if iv_rank >= 50 else ('good' if iv_rank < 30 else '')) if (iv_rank is not none and basis == 'rank') else '', TIP['rank']) }}
       {% if iv_pct is not none %}
-      {{ row('IV percentile', '%.0f'|format(iv_pct), 'share of the last year with lower IV than today') }}
-      {% endif %}
-      {% if iv_front is not none and iv_back is not none %}
-      {{ row('Term structure', '%.0f'|format(iv_front) ~ '% front / ' ~ '%.0f'|format(iv_back) ~ '% back',
-             'front month dearer - an event is priced in' if (term_ratio or 0) >= 1.05 else ('front month cheaper - nothing special priced in' if (term_ratio or 1) <= 0.95 else 'about flat'),
-             'warn' if (term_ratio or 0) >= 1.05 else '') }}
-      {% endif %}
-      {% if skew25 is not none %}
-      {{ row('Put / call skew', '%.1f'|format(skew25|abs) ~ ' pts', ('puts dearer than calls' if skew25 > 0 else ('calls dearer than puts' if skew25 < 0 else 'even')) ~ ' at 25 delta') }}
-      {% endif %}
-      {% if exp_move is not none and close %}
-      {{ row('Expected move', '±' ~ '%.1f'|format(exp_move), 'about ±' ~ '%.1f'|format(exp_move / close * 100) ~ '% over 30 days, by the options market') }}
+      {{ row('IV percentile', '%.0f'|format(iv_pct), 'share of the last year\'s days with lower IV than today', '', TIP['pct']) }}
       {% endif %}
       {{ row('Premium verdict',
              ('cannot say yet' if verdict == 'UNKNOWN' else verdict|capitalize) ~ (' (provisional)' if provisional else ''),
              iv.get('verdict_why') or '',
-             'warn' if (verdict == 'SELL' and not provisional) else ('good' if (verdict == 'BUY' and not provisional) else '')) }}
+             'warn' if (verdict == 'SELL' and not provisional) else ('good' if (verdict == 'BUY' and not provisional) else ''), TIP['verdict']) }}
     </div>
-
-    {# ---- the dates ---- #}
     <div>
-      <div class="text-[10px] uppercase tracking-wide text-slate-600 mb-0.5">Dates</div>
+      {% if iv_front is not none and iv_back is not none %}
+      {% set tr_ = term_ratio if term_ratio is not none else ((iv_front / iv_back) if iv_back else 1) %}
+      {{ row('Term structure', 'near ' ~ '%.0f'|format(iv_front) ~ '% · later ' ~ '%.0f'|format(iv_back) ~ '%',
+             ('options expiring in about a month cost MORE than those 2-3 months out - the market expects news before then (earnings?)' if tr_ >= 1.05 else
+              ('options expiring in about a month cost less than those 2-3 months out - nothing special is expected soon' if tr_ <= 0.95 else
+               'near and later options cost about the same - no event priced in')),
+             'warn' if tr_ >= 1.05 else '', TIP['term']) }}
+      {% endif %}
+      {% if skew25 is not none %}
+      {{ row('Put / call skew', ('puts +' if skew25 > 0 else ('calls +' if skew25 < 0 else 'even ')) ~ '%.1f'|format(skew25|abs) ~ ' pts',
+             (('puts (downside insurance) cost ' ~ '%.1f'|format(skew25) ~ ' volatility points more than calls the same distance from price - the usual shape; traders pay up for protection') if skew25 > 0 else
+              (('calls cost ' ~ '%.1f'|format(skew25|abs) ~ ' points more than puts - unusual; the crowd is chasing upside') if skew25 < 0 else
+               'puts and calls the same distance from price cost the same')),
+             'warn' if skew25 < 0 else '', TIP['skew']) }}
+      {% endif %}
+      {% if exp_move is not none and (iv30 or close) %}
+      {# the price the figure was computed on is solved back from it (spot × IV × √(30/365)), so the
+         printed factors multiply out to the printed result - the close can differ from that spot #}
+      {% set em_px = (exp_move / (iv30 / 100 * (30 / 365) ** 0.5)) if (iv30 and iv30 > 0) else close %}
+      {{ row('Expected move', '±$' ~ '%.1f'|format(exp_move) ~ ((' (' ~ '%.1f'|format(exp_move / em_px * 100) ~ '%)') if em_px else ''),
+             ('over the next 30 days, one standard deviation, from the IV: ' ~ ('%.2f'|format(em_px) if em_px else '?') ~ ' × ' ~ ('%.1f'|format(iv30) if iv30 is not none else '?') ~ '% × √(30/365) ≈ ' ~ '%.1f'|format(exp_move) ~ ' - about two days in three the stock stays inside this band'),
+             '', TIP['em']) }}
+      {% endif %}
       {{ row('Earnings', earn_date or '–',
              ('in ' ~ earn_days ~ ' days') if earn_days is not none else ('date unknown - no idea is pushed until it is' if not earn_date else ''),
-             'warn' if (earn_days is not none and earn_days <= 45) else '') }}
-      {{ row('Data read', age.text if age else '–', '', 'warn' if (age and age.cls == 'text-amber-300') else ('bad' if (age and age.cls == 'text-rose-300') else '')) }}
+             'warn' if (earn_days is not none and earn_days <= 45) else '', TIP['earnings']) }}
+      {{ row('Data read', age.text if age else '–', '', 'warn' if (age and age.cls == 'text-amber-300') else ('bad' if (age and age.cls == 'text-rose-300') else ''), TIP['data']) }}
       {% if st.get('evidence') %}
       <div class="pt-1">
         <div class="text-[10px] uppercase tracking-wide text-slate-500 mb-0.5">Evidence</div>
@@ -137,3 +187,4 @@
     </div>
   </div>
 </div>
+{% endif %}

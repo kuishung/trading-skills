@@ -1,0 +1,104 @@
+{# The volatility chart (v4.132): IV30 (amber), the stock's own movement HV20 (teal) and
+   HV60 (grey, dashed) on the left scale in percent; the IV rank (sky) on the right scale
+   0-100 with the two rule lines the strategies read (sell spreads from 30, iron condors
+   from 50). Data from services/option_vol.series; lightweight-charts is already on the
+   page from the price chart, and is loaded here if a member opens this tab first.
+   Every `latest` figure is read with .get(): the route's soft-fail path passes an empty
+   dict and the tab must still render. The chart and the theme observer are released
+   when the fragment is swapped out (htmx:beforeCleanupElement) or replaced by the next
+   render (window.__thVolDispose - the Live path replaces the card without htmx cleanup).
+   Context: sym, vol. #}
+{% set L = vol.latest or {} %}
+{% set iv30, hv20, hv60, rk = L.get('iv30'), L.get('hv20'), L.get('hv60'), L.get('iv_rank') %}
+<div class="rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2">
+  <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[11px]">
+    <span class="font-semibold text-slate-300">Volatility, last year</span>
+    <span title="Implied volatility: what the option prices say the stock will move, annualised{% if L.get('on') %} - the stored reading of {{ L.get('on') }}{% endif %}"><i class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#f59e0b"></i>IV <b class="tabular-nums text-amber-300">{{ ('%.0f'|format(iv30) ~ '%') if iv30 is not none else '–' }}</b> <span class="text-slate-500">what options are priced for{% if L.get('on') %} &middot; {{ L.get('on') }}{% endif %}</span></span>
+    <span title="Realised volatility over the last 20 sessions: what the stock actually did, annualised the same way{% if L.get('hv_on') %} - from the closes to {{ L.get('hv_on') }}{% endif %}"><i class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#2dd4bf"></i>HV20 <b class="tabular-nums text-teal-300">{{ ('%.0f'|format(hv20) ~ '%') if hv20 is not none else '–' }}</b> <span class="text-slate-500">what the stock actually did{% if L.get('hv_on') %} &middot; to {{ L.get('hv_on') }}{% endif %}</span></span>
+    <span title="Realised volatility over the last 60 sessions - the slower figure"><i class="inline-block w-3 h-[2px] align-middle mr-1 border-t border-dashed border-slate-400" style="height:0"></i>HV60 <b class="tabular-nums text-slate-300">{{ ('%.0f'|format(hv60) ~ '%') if hv60 is not none else '–' }}</b></span>
+    <span title="Where today's IV sits between the lowest and highest IV of the past year (0-100, right scale)"><i class="inline-block w-3 h-[2px] align-middle mr-1" style="background:#38bdf8"></i>IV rank <b class="tabular-nums text-sky-300">{{ ('%.0f'|format(rk)) if rk is not none else 'not yet' }}</b> <span class="text-slate-500">right scale, 0-100</span></span>
+  </div>
+
+  {% if vol.error and not vol.iv %}
+  <p class="mt-2 text-[12px] text-amber-300 leading-relaxed">The chart could not be built: {{ vol.error }}. The rows below still stand.</p>
+  {% elif vol.iv|length == 0 %}
+  <p class="mt-2 text-[12px] text-slate-400 leading-relaxed">No IV history stored for {{ sym }} yet - press <b class="text-slate-200">Refresh</b> to read today's chain, or <b class="text-slate-200">Live</b> for a year from your TWS.{% if vol.hv20|length %} The stock's own movement is drawn meanwhile.{% endif %}</p>
+  {% endif %}
+  {% if vol.iv|length or vol.hv20|length %}
+  <div id="volChart" class="mt-1 w-full" style="height:210px" data-vol='{{ vol|tojson }}'></div>
+  {% endif %}
+
+  <p class="mt-1 text-[11px] text-slate-500 leading-snug">
+    <span class="text-slate-400">How to read it:</span> when the amber line (IV) runs <b class="text-slate-300">above</b> the teal line (HV20),
+    options are priced for more movement than the stock has actually been making - that gap is what a premium
+    seller is paid for; below it, options are cheap by the stock's own behaviour. The blue line is the IV rank
+    (right scale): where today's IV sits in its own year - near 100 it is at the yearly high. The dotted lines at
+    {{ vol.sell_from }} and {{ vol.neutral_from }} are the rules: the system sells spreads from {{ vol.sell_from }} and iron condors from {{ vol.neutral_from }}.
+    {% if vol.n_iv < vol.min_obs %}<span class="text-amber-300">Only {{ vol.n_iv }} of {{ vol.min_obs }} readings so far, so the rank line is blank - press Live on the card for a year from your TWS, or wait.</span>{% endif %}
+    {% if vol.error and vol.iv %}<span class="text-amber-300">{{ vol.error }} - the IV lines are drawn without it.</span>{% endif %}
+  </p>
+
+  <script>
+  (function () {
+    var el = document.getElementById('volChart');
+    if (!el) return;
+    var data;
+    try { data = JSON.parse(el.getAttribute('data-vol')); } catch (e) { return; }
+    var chart = null, obs = null;
+    function pts(list) { return (list || []).map(function (p) { return { time: p.t, value: p.v }; }); }
+    function dispose() {
+      if (obs) { try { obs.disconnect(); } catch (e) {} obs = null; }
+      if (chart) { try { chart.remove(); } catch (e) {} chart = null; }
+    }
+    // the previous fragment's chart and observer (the Live path replaces the card with a
+    // raw outerHTML and never fires htmx's cleanup, so the next render releases the last)
+    if (window.__thVolDispose) { try { window.__thVolDispose(); } catch (e) {} }
+    window.__thVolDispose = dispose;
+    // htmx fires this on every element a swap removes: a ticker click, Refresh, the reading poll
+    el.addEventListener('htmx:beforeCleanupElement', dispose);
+    function draw() {
+      if (!window.LightweightCharts || !el.isConnected) return;
+      var light = document.documentElement.classList.contains('light');
+      var text = light ? '#475569' : '#94a3b8';
+      var grid = light ? 'rgba(100,116,139,0.16)' : 'rgba(148,163,184,0.08)';
+      if (chart) { try { chart.remove(); } catch (e) {} chart = null; }
+      el.innerHTML = '';
+      chart = LightweightCharts.createChart(el, {
+        autoSize: true,
+        layout: { background: { type: 'solid', color: 'transparent' }, textColor: text, fontSize: 10 },
+        grid: { vertLines: { color: grid }, horzLines: { color: grid } },
+        leftPriceScale: { visible: true, borderVisible: false, scaleMargins: { top: 0.08, bottom: 0.08 } },
+        rightPriceScale: { visible: true, borderVisible: false, scaleMargins: { top: 0.08, bottom: 0.08 } },
+        timeScale: { borderVisible: false, fixLeftEdge: true, fixRightEdge: true },
+        crosshair: { mode: 0 },
+        handleScroll: { mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+        handleScale: { mouseWheel: false, pinch: true, axisPressedMouseMove: false }
+      });
+      var pct = { type: 'custom', minMove: 0.1, formatter: function (v) { return Number(v).toFixed(0) + '%'; } };
+      var iv = chart.addLineSeries({ color: '#f59e0b', lineWidth: 2, priceScaleId: 'left', priceFormat: pct, priceLineVisible: false, lastValueVisible: true, title: 'IV' });
+      var hv20 = chart.addLineSeries({ color: '#2dd4bf', lineWidth: 1, priceScaleId: 'left', priceFormat: pct, priceLineVisible: false, lastValueVisible: false, title: 'HV20' });
+      var hv60 = chart.addLineSeries({ color: light ? '#64748b' : '#94a3b8', lineWidth: 1, lineStyle: 2, priceScaleId: 'left', priceFormat: pct, priceLineVisible: false, lastValueVisible: false, title: 'HV60' });
+      var rank = chart.addLineSeries({ color: '#38bdf8', lineWidth: 1, priceScaleId: 'right', priceLineVisible: false, lastValueVisible: true, title: 'rank',
+                                       priceFormat: { type: 'price', precision: 0, minMove: 1 },
+                                       autoscaleInfoProvider: function () { return { priceRange: { minValue: 0, maxValue: 100 } }; } });
+      iv.setData(pts(data.iv)); hv20.setData(pts(data.hv20)); hv60.setData(pts(data.hv60)); rank.setData(pts(data.rank));
+      [[data.sell_from, 'sell from ' + data.sell_from], [data.neutral_from, 'condor from ' + data.neutral_from]].forEach(function (x) {
+        rank.createPriceLine({ price: x[0], color: 'rgba(56,189,248,0.55)', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: x[1] });
+      });
+      chart.timeScale().fitContent();
+    }
+    if (window.LightweightCharts) { draw(); }
+    else {
+      var s = document.createElement('script');
+      s.src = 'https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js';
+      s.onload = draw;
+      document.head.appendChild(s);
+    }
+    // the theme toggle flips <html class="light">: redraw in the new colours (released by dispose)
+    if (window.MutationObserver) {
+      obs = new MutationObserver(function () { if (!el.isConnected) { dispose(); return; } draw(); });
+      obs.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    }
+  })();
+  </script>
+</div>

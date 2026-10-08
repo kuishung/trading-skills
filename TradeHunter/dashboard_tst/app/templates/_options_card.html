@@ -112,10 +112,6 @@
   <span id="optReadingPoll" hx-get="/options/card/{{ sym }}/reading?strategy={{ strategy }}" hx-trigger="every 6s" hx-swap="none"></span>
   {% endif %}
 
-  {# ---- what the system read: one row per fact (v4.130). The stored one-sentence
-     headline is the panel's tooltip; it stays what the basket row and Telegram say. ---- #}
-  {% include "_options_read.html" %}
-
   {# ---- the gauge with its basis and the day count ---- #}
   {% set verdict = iv.verdict or 'UNKNOWN' %}
   <div id="optGauge" class="mt-1 flex flex-wrap items-center gap-x-2 text-[11px]">
@@ -164,15 +160,46 @@
   {# ---- what has to happen ---- #}
   {% if must_happen %}
   <p id="optMust" class="mt-1.5 text-[12px] text-slate-300 leading-relaxed"><span class="text-slate-500">What has to happen:</span> {{ must_happen }}</p>
+  {% elif no_fit %}
+  {# v4.132 (user: "all of the ticker find no strategy fits today"): say WHY, one line per
+     built strategy, never a bare sentence #}
+  <div id="optMust" class="mt-1.5 text-[12px] text-slate-400 leading-relaxed">
+    <span class="text-slate-300">No strategy fits today.</span>
+    <ul class="mt-0.5 ml-4 list-disc text-[11px] text-slate-500 space-y-0.5">
+      {% for l in no_fit %}<li>{{ l }}</li>{% endfor %}
+    </ul>
+    <span class="text-[11px] text-slate-500">An idea needs three things at once - the trend, a fresh setup candle on the latest bar, and option prices that pay for it. Most days one is missing; that is normal. The chart is for checking the read.</span>
+  </div>
   {% elif no_setup %}
   <p id="optMust" class="mt-1.5 text-[12px] text-slate-400 leading-relaxed">No strategy fits today. The chart is for checking that read - nothing to pick.</p>
   {% endif %}
 
-  {# ---- the one chart ---- #}
-  <div id="optChartBody" class="mt-2 flex flex-col min-h-[300px] lg:min-h-[320px] shrink-0"
-       hx-get="/options/chart/{{ sym }}?strategy={{ strategy }}&pick={{ pick_i }}" hx-trigger="load" hx-swap="innerHTML">
-    <div class="text-xs text-slate-500 py-6 text-center">Loading chart&hellip;</div>
+  {# ---- the two tabs (v4.132; user, 2026-10-08: "use tab to separate the contents"):
+     Chart = the price chart + what the system read on it; Options & dates = the
+     volatility chart (IV / HV / IV rank) + what the options say + the dates. The chosen
+     tab is remembered per browser. The picks below stay outside the tabs. ---- #}
+  <div id="optCardTabs" class="mt-2 flex items-center gap-1 text-[11px] shrink-0" data-sym="{{ sym }}">
+    <button type="button" class="opt-ctab px-2.5 py-1 rounded border transition border-emerald-500/60 text-emerald-300 bg-emerald-500/10" data-ctab="chart">Chart</button>
+    <button type="button" class="opt-ctab px-2.5 py-1 rounded border transition border-slate-700 text-slate-400" data-ctab="vol">Options &amp; dates</button>
   </div>
+  <div id="optTabChart" class="opt-ctab-panel">
+    {# ---- the one chart ---- #}
+    <div id="optChartBody" class="mt-2 flex flex-col min-h-[300px] lg:min-h-[320px] shrink-0"
+         hx-get="/options/chart/{{ sym }}?strategy={{ strategy }}&pick={{ pick_i }}" hx-trigger="load" hx-swap="innerHTML">
+      <div class="text-xs text-slate-500 py-6 text-center">Loading chart&hellip;</div>
+    </div>
+    {% with read_section = 'chart' %}{% include "_options_read.html" %}{% endwith %}
+  </div>
+  <div id="optTabVol" class="opt-ctab-panel hidden">
+    {# the volatility chart loads the first time this tab is opened (the tab script fires 'optvol') #}
+    <div id="optVolBody" class="mt-2" hx-get="/options/vol/{{ sym }}" hx-trigger="optvol once" hx-swap="innerHTML">
+      <div class="text-xs text-slate-500 py-6 text-center">Loading the volatility chart&hellip;</div>
+    </div>
+    {% with read_section = 'options' %}{% include "_options_read.html" %}{% endwith %}
+  </div>
+  {# the tab wiring lives in options.html (delegated click + applied after every settle and
+     after a Live render) - an inline script here would be inert on the Live path, which
+     inserts the card with outerHTML #}
 
   {# ---- the picks: strikes, sizing line, payoff, actions (its own fragment) ---- #}
   {% if live %}

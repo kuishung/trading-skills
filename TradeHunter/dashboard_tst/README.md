@@ -143,6 +143,80 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-08 - v4.132: the Options card in two tabs, a volatility chart, plain words for term / skew / expected move, and WHY no strategy fits
+
+User, 2026-10-08: *"i need to use tab to separate the contents - the chart will be the first tab, the
+chart setup details put it in the same chart tab; another tab will be the option data and the dates.
+The volatility i need it to be represented by chart whether I need to see the HV, IV and IV Rank. The
+term structure i do not understand ... put / call skew, user do not know what does it means ... the
+expected move how do you get it? ... all of the ticker find no strategy fits today."*
+
+**Two tabs on the card** (`_options_card.html`; the picks - strikes, sizing, payoff, ticket - stay
+below both): **Chart** = the price chart + "What the system read on the chart" (trend, EMAs, weekly,
+structure, setup, volume, support, resistance, stop / target, price · ATR); **Options & dates** = the
+new volatility chart + "What the options say" (IV, the stock's own movement, IV vs movement, IV rank,
+IV percentile, the verdict, term structure, skew, expected move) + the dates (earnings, data read, the
+evidence). `_options_read.html` renders either section by `read_section`; the chosen tab is
+remembered per browser (`th.options.cardTab`), and the second tab's chart loads the first time it is
+opened (`hx-trigger="optvol once"`).
+
+**The volatility chart** (`GET /options/vol/<sym>` -> `_options_vol.html`; `services/option_vol.py`,
+new): IV30 (amber) and the stock's own HV20 (teal) / HV60 (grey, dashed) on the left scale in percent;
+the IV rank (blue) on the right scale 0-100 with the two rule lines the strategies read (sell spreads
+from 30, iron condors from 50). The IV is every stored daily reading (`iv_daily` - the nightly's, the
+screener copy, the IB seed, a TWS bootstrap); the rank is recomputed at every point with the ONE
+formula (`option_metrics.iv_rank_pct`, a trailing 252-reading window), so the line shows how the
+rank itself moved and why it is blank under 60 readings; HV is `option_metrics.hv` on a rolling
+window of live daily closes (`prices.fetch_daily_ohlc`, two years - a live view fetches live). The
+legend carries the latest of each with a plain tag ("what options are priced for" / "what the stock
+actually did"), and a "How to read it" line explains the IV-above-HV gap and the rank lines. Follows
+the page theme (redraws on the dark / light toggle). lightweight-charts is loaded on demand if this
+tab is opened before the price chart.
+
+**Plain words.** Every label in both sections now has a hover tooltip saying what the figure is, and
+the three rows members did not understand say it in the note itself: *Term structure* reads "near 29%
+· later 33% - options expiring in about a month cost less than those 2-3 months out - nothing
+special is expected soon" (or "cost MORE ... the market expects news before then (earnings?)");
+*Put / call skew* reads "puts +3.3 pts - puts (downside insurance) cost 3.3 volatility points more than
+calls the same distance from price - the usual shape; traders pay up for protection" (or "calls +x pts
+- unusual; the crowd is chasing upside"); *Expected move* reads "±$19.8 (8.3%) - over the next 30
+days, one standard deviation, from the IV: 238.90 × 29% × √(30/365) ≈ 19.8 - about two days in three
+the stock stays inside this band".
+
+**Why no strategy fits.** "No strategy fits today" is never bare any more: it lists one line per
+built strategy with its first failure ("Bull put spread: no support bounce on the chart today",
+"Bear call spread: the trend is up, not down") and the unbuilt fits ("Bull call spread would fit
+today, but is not in TradeHunter yet"), plus the sentence that an idea needs three things at once -
+the trend, a fresh setup candle on the latest bar, and option prices that pay for it - and that most
+days one is missing. (`options_page._no_fit_lines`; the chips' reasons already existed as hover
+titles, which nobody saw.) The answer to the user's observation is in that list: with only the two
+credit spreads built, each needs a setup candle on the latest bar AND a measured IV rank of 30 or
+more; before v4.131's backfill every ticker's rank was provisional, and a bounce candle is a specific
+day, so an empty board on most days is the design, not a fault.
+
+Tested: `tests/test_option_vol.py` (new, 3: the rank at every point equals the metrics formula and
+is blank under 60 readings, HV from the rolling closes and the open-session skip, the last-year
+window and the latest values, a failed price fetch leaves the IV lines), `test_options_page.py` (+1:
+the no-fit list on an earnings-blocked card and the volatility fragment; the card test now checks the
+tabs, the two sections in their tabs, the plain-words rows and a tooltip) - **274 pass**. Verified
+in the browser on the dev server with AMD (a year of IV history): the Chart tab with the price chart
+and the chart facts, the Options & dates tab loading the volatility chart with four lines and the
+rule lines, the tab remembered across cards, and the new wording on the three rows.
+
+**Reviewed before the commit** (two lenses, each finding re-checked by a skeptic; five confirmed,
+all fixed; 275 pass): the tab wiring moved out of the card into `options.html` as a delegated click
+handler plus an apply-once step after every htmx settle and after a Live render - an inline script in
+the card is inert on the Live path, which inserts the card with `outerHTML`, so the tabs would have
+died after pressing Live; the volatility fragment releases its chart and its theme observer when it is
+swapped out (`htmx:beforeCleanupElement`) or replaced by the next render (`window.__thVolDispose`),
+instead of leaking one per ticker click; the route's soft-fail path (the series builder raising)
+renders "The chart could not be built: ..." with the rows below, not a 500 (the legend reads every
+figure with `.get`); `option_metrics._window` now always trims to 252 readings including today, so
+the nightly's rank (which used to see 253 when today's row was not yet stored), the stored recompute
+and the chart's rank agree (`test_chart_rank_equals_the_nightly_and_stored_rank`); the expected-move
+note prints the price the figure was computed on (solved back from it) so its factors multiply out to
+the printed result; and the legend names the dates its IV and HV figures are from.
+
 ### 2026-10-06 - v4.131: a new basket ticker gets ALL its data the first time (IV history backfill + an immediate read)
 
 User: *"when a new ticker is added in the option basket, all the data backfill required to compute the

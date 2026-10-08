@@ -376,15 +376,18 @@ def _window(iv_series, iv30: float | None, snap_on: str | None) -> list[float]:
             on, v = None, _num(item)
         if v is not None:
             dated.append((str(on)[:10] if on else None, v))
+    # Always the documented window: IV_FULL_OBS readings INCLUDING today. A caller
+    # that hands in 252 PRIOR readings (the nightly, before today's row is stored)
+    # would otherwise rank on 253, one more than the stored rank and the chart use.
     if iv30 is None:
-        return [v for _, v in dated]
+        return [v for _, v in dated][-IV_FULL_OBS:]
     if any(on is not None for on, _ in dated):
         kept = [(on, v) for on, v in dated if on != str(snap_on or "")[:10]]
-        return [v for _, v in kept] + [iv30]
+        return ([v for _, v in kept] + [iv30])[-IV_FULL_OBS:]
     vals = [v for _, v in dated]
     if vals and vals[-1] == iv30:
-        return vals
-    return vals + [iv30]
+        return vals[-IV_FULL_OBS:]
+    return (vals + [iv30])[-IV_FULL_OBS:]
 
 
 def all_for(chain, bars, earnings, iv_series, *, today: str | None = None) -> dict:
