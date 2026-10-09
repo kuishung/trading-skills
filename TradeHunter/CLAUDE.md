@@ -643,7 +643,17 @@ it — memory files don't sync across PCs.
 platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
 `dashboard_tst/DEPLOY.md`. Key facts (so any session/PC recalls them):
 
-- **IN-PROGRESS DESIGN (resume across PCs):** `dashboard_tst/OPTIONS_MODULE_DESIGN.md`
+- **IN-PROGRESS BUILD (resume across PCs) — Options v2, set 2026-10-09:**
+  `dashboard_tst/OPTIONS_V2_DESIGN.md` is the contract. The user asked to REMOVE the auto-setup
+  Options page (ideas, positions, chart, options & dates) and rebuild it as: members BROWSE trades
+  that pass their own rules (one strategy at a time from a dropdown, rules always visible), with
+  EVERY option and stock figure from IBKR (earnings date the one exception) - collected by an
+  always-on Hermes collector (clientId 89) into the TradeHunter DB daily and through the session,
+  and topped up by each member's own downloadable IBKR connector (green / amber / red pill), every
+  figure stamped with its time and source so one member's live data helps everyone. Read §0 for
+  the user's words and decisions, §10 for the build parts.
+
+- **SUPERSEDED DESIGN (history only):** `dashboard_tst/OPTIONS_MODULE_DESIGN.md`
   — the Options module: a per-member basket of tickers, option data (chain + greeks,
   HV, IV, IV rank) stored in the TradeHunter DB and refreshed nightly on Hermes, and three
   engines that recommend (1) the strategy that fits the chart setup + IV regime, (2) the
