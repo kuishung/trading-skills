@@ -63,3 +63,9 @@ state/autoplan_*.log
 
 # Dev-only safety backups (e.g. anything ".polluted_by_smoke")
 *.polluted_by_*
+
+# dashboard_tst per-PC runtime files: the Options collector's heartbeat
+# (state/options_collector.json, read by the Hermes tray) and the scheduled
+# tasks' stdout logs (logs/*.log). Regenerated on every run; never committed.
+dashboard_tst/state/
+dashboard_tst/logs/

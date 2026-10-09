@@ -33,6 +33,27 @@ web, Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-10-09 — `tray_status.py`: the Options v2 collector line (tray-sync rule)
+- dashboard_tst v4.133 adds an always-on IBKR **options collector** on Hermes
+  (`dashboard_tst/deploy/options_collector.py`, task `TST-Options-Collector`, clientId 89)
+  that heartbeats every ~15 s into `dashboard_tst/state/options_collector.json`. Per the
+  tray-sync rule its state is now on the tray: new `get_options_collector_status()` reads
+  that file (file reads only) and returns one detail line + a tooltip fragment — state,
+  cycle, `done/total` while working, market-data type, `GW ok` / `GW down`, last EOD date,
+  "history waits (N)" while N symbols' IBKR history waits for the nightly top-up, and the
+  heartbeat age.
+- Colours: **green** running; **grey** `waiting` — the ingest supervisor keeps the Gateway
+  down BY DESIGN (the weekday 08:00-20:10 ET manual-trading blackout, its 20:10 start-up,
+  or closed after the nightly top-up): neutral, not a fault — or no state file (the
+  collector never ran on this PC, e.g. the laptop); **amber** state error / stopped, no
+  heartbeat for 5 min, or an unreadable file.
+- Where: a new line in the Show Status window under the Gateway line (window grown to
+  460×760, min 460×670), and an `Opt …` fragment (`Opt c12`, `Opt wait`, `Opt ERR`,
+  `Opt stale 9m`, `Opt -`) in the tooltip after the Gateway signal, before the
+  completed-through date (the 128-char cap trims the verbose tail first).
+- Tested in `dashboard_tst/tests/test_opt_collector.py` (the getter's colour / line per
+  state, stale heartbeat, missing and unreadable file).
+
 ### 2026-06-11 — `tray_status.py`: "Side-door ingest" button (ad-hoc, override)
 - New amber operator button on a second row: **⤵ Side-door ingest (ad-hoc, override)**.
   Runs `scripts/manual_ingest.ps1` in a new console — arms the supervisor's timed

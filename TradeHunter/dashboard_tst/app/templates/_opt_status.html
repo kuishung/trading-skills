@@ -1,0 +1,11 @@
+{# The Hermes collector line of the Options status strip (OPTIONS_V2_DESIGN.md §4.3),
+   polled every 60 s into #optStatus. States: running (emerald) / error, e.g. the
+   gateway is down (rose) / stale, no heartbeat for more than 5 minutes (amber) /
+   stopped or none, it has not reported yet (slate). The reason is in the tooltip.
+   The connector pill beside it is the page's own browser probe, not this fragment.
+   No <script> here. Context: col {state, tone, text, tip}. #}
+<span class="opt-collector inline-flex items-center gap-1.5" data-state="{{ col.state }}" tabindex="0" data-tip="{{ col.tip }}">
+  <span class="inline-block w-2 h-2 rounded-full
+               {% if col.tone == 'emerald' %}bg-emerald-400{% elif col.tone == 'amber' %}bg-amber-400{% elif col.tone == 'rose' %}bg-rose-400{% else %}bg-slate-500{% endif %}"></span>
+  <span class="{% if col.tone == 'emerald' %}text-slate-300{% elif col.tone == 'amber' %}text-amber-300{% elif col.tone == 'rose' %}text-rose-300{% else %}text-slate-400{% endif %}">{{ col.text }}</span>
+</span>

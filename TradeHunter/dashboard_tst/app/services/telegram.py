@@ -150,7 +150,7 @@ def answer_starts(db) -> int:
     ``option_jobs(job='telegram_poll')`` row's ``detail`` (re-used, not appended, so
     the ledger does not grow by one row per poll). Returns the number answered;
     soft-fail (0 and a log line) when the bot is not configured or unreachable.
-    Called by ``telegram_push.run`` and by ``POST /options/telegram``."""
+    Called by the Telegram link handshake (the Options ideas push was removed in v4.133)."""
     if not configured():
         return 0
     row = job_runs.latest_any(db, "telegram_poll")

@@ -86,6 +86,39 @@ from this dashboard.
   completeness, on **AI-Hermes** — folder-scans
   `C:\HermesSync\MarketResearch\QuarterlyReport` for missing quarters / stub MDs,
   POSTs `/api/ingest/edgar`; scheduled task).
+- **Options page (v4.133, Options v2 — contract `OPTIONS_V2_DESIGN.md`).** Browse trades
+  by your own rules, every option / stock figure from IBKR:
+  - `app/routes/options_page.py` (rewritten) + templates `options.html` (rewritten),
+    `_opt_basket.html`, `_opt_rules.html`, `_opt_results.html`, `_opt_trade.html`,
+    `_opt_status.html`, `_opt_connector.html` (the payoff keeps `_payoff_chart.html`).
+  - `app/services/opt_store.py` — the shared IBKR data pool (merge rule, member-data
+    validation + rate limit, freshness, work leases, the collector heartbeat, the EOD
+    record, retention); `opt_rules.py` — rules v2 (shared block + ten strategies, plain
+    labels / tooltips, sparse per-member storage); `opt_screen.py` — the ten screeners +
+    the "why so few?" funnel; `opt_collector.py` — the Hermes collector loop;
+    `opt_connector_pkg.py` — the connector zip. `option_store.py` is reduced to the
+    basket universe + the snapshot retention (`basket_universe`, `prune`);
+    `payoff.py` now takes its labels from `opt_rules`.
+  - `app/models.py` — `OptQuote`, `OptUnderlying`, `OptUnderlyingDaily`, `OptRefreshLog`,
+    `OptCollectorStatus`; migration `alembic/versions/3b26d60468a0_options_v2.py`.
+  - `bridge/` — the member IBKR connector 2.0 (`ibkr_bridge.py`) and `th_ibkr.py`, the
+    IBKR fetch library shared with the collector (see `bridge/README.md`).
+  - `deploy/options_collector.py` + `deploy/setup_options_collector_task.ps1` — the
+    always-on collector on Hermes (task `TST-Options-Collector`, clientId 89; DEPLOY.md G).
+    The task runs it with `--log-file logs\options_collector.log`: the collector rotates
+    its own log (5 MB x 5 files).
+  - Tests: `test_opt_store.py`, `test_th_ibkr.py`, `test_opt_collector.py`,
+    `test_connector.py`, `test_opt_rules.py`, `test_opt_screen.py`, `test_options_v2_page.py`
+    (+ the kept `test_payoff.py`, `test_option_store.py`).
+  - **Removed in v4.133:** `services/{option_engine, chart_state, strike_picker,
+    premium_gauge, order_ticket, option_exits, option_nightly, option_data,
+    option_backfill, option_vol, option_sizing}.py`, `deploy/options_nightly.py`,
+    `deploy/setup_options_nightly_task.ps1`, templates `_options_{card, read, vol, picks,
+    chain, chart, ticket, positions_tab, rules, status, basket}.html`, tests
+    `test_option_{engines, nightly, backfill, vol, data, prefs}.py`, `test_options_page.py`;
+    and before release the Telegram ideas-push island — `services/{telegram_push,
+    strategy_rules, option_words, option_prefs}.py`, `test_telegram_push.py` — with the v1
+    golden fixtures `tests/fixtures/options/{expected, isrg, lrcx}.json` + `regen.py`.
 - `DEPLOY.md` — **deployment runbook.** Active **Path B** (Hamachi VPN,
   `http://<server-hamachi-ip>:8000`, password auth, no domain/TLS — the VPN
   tunnel is encrypted) step-by-step: pull → `.env` → first run → firewall
@@ -142,6 +175,208 @@ surface takes shape.
 > `__version__` — that constant is the version shown on the login page / nav / `/status`
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
+
+### 2026-10-09 - v4.133: Options v2 - browse by rules, IBKR-only data, Hermes collector, member connector 2.0
+
+User, 2026-10-09 (`OPTIONS_V2_DESIGN.md` §0): *"Instead of the system auto check for setup, I want
+user to be able browse."* *"Remove all the idea, position, chart, and option & date functions. We
+will re-write the whole function."* *"For option data, I want every data to be from IBKR. Not sourced
+from elsewhere."* *"The data from IBKR will be run at the backend and stored in the TradeHunter DB
+every day, and updated during the live trading session."* *"When the user is using the system the
+user will use his own IBKR API to get live data."* *"When the option data gets updated from any user
+using IBKR live data, other users also benefit ... keep track when the option data is updated with a
+timestamp and from which source."* *"Different strategies ... the user can set rules ... the option
+filter ... the user rules is always visible and can be adjusted to shortlist."* And in the Q&A:
+*"I need a link for user to download the IBKR connector and it can set the setting there. When it
+runs it shows a green pill; if it is not running it shows red."*, *"it will show based on what the
+user rules set and will only show those fulfil criteria"*, *"use a dropdown list so that only one
+strategy is shown at once."* The contract is `OPTIONS_V2_DESIGN.md` (committed earlier the same day,
+now marked BUILT); its new §12 lists every place the build deliberately differs from it.
+
+**What was removed.** The auto-setup Options page of v4.127-v4.132: the Ideas tab, the card with its
+Chart / Options & dates tabs, the price and volatility charts, "What the system read", the strategy
+recommender and its chips, "What has to happen", the order ticket, Track this, the Positions tab
+and its nav badge (`/options/badge` and the `base.html` poller), the nightly Cboe job
+(`deploy/options_nightly.py` + `setup_options_nightly_task.ps1` - so the Telegram idea pushes it
+triggered stop too), the v4.131 first-time-read machinery (`option_backfill`, the `iv_seed_ibkr`
+subprocess and its thread) and the admin "Run the data job now". The files are listed under
+Contents. The old tables (`option_signal`, `option_trades`, `option_trade_checks`,
+`option_idea_push`, `iv_daily`) stay in the DB unused - no destructive migration; the legacy hidden
+pages (IV Rank / Spread / Positions) and their Cboe code are untouched; `option_metrics`,
+`opt_legs`, `payoff` (+ `_payoff_chart.html`), `opt_constants`, `job_runs`, `clock` and
+`option_quotes` are kept. The Telegram ideas-push island, which nothing called any more
+(`telegram_push`, `strategy_rules`, `option_words`, `option_prefs`, `test_telegram_push.py`, and the
+v1 golden fixtures with their `regen.py`), was removed too before release.
+
+**The data model and the merge rule.** One migration (`3b26d60468a0`, off `f4a5b6c7d8e9`), five ORM
+tables with portable types: `opt_quote` - the latest quote per contract, the **shared pool** (bid /
+ask / mid / last, sizes, volume, open interest, IV as a FRACTION, the greeks, the spot when
+quoted); `opt_underlying` - one row per stock (spot, Wilder ATR14, HV20 / HV60, 20-day average
+volume, IBKR's 30-day IV with its rank and percentile, the earnings date); `opt_underlying_daily` -
+IBKR daily bars + IBKR's daily `OPTION_IMPLIED_VOLATILITY` close (PERCENT), which the IV rank, HV and
+ATR are computed from, so the IV rank is IBKR's own series - the one TWS's IV Rank uses;
+`opt_refresh_log` - one row per fetch (the audit trail and the freshness badges, 30 days); and
+`opt_collector_status` - the Hermes heartbeat. Every figure carries **its time (UTC), its source
+(`hermes` or `member` + who) and its market-data type** (live / frozen / delayed / delayed frozen).
+The merge rule (`opt_store.upsert_quotes`): per contract, the newer time wins (an equal time: the
+better data type); contracts missing from a payload are left alone; a member's time is the
+SERVER's receive time, never the connector's clock. So one member's live read is what every member
+sees for that contract, and a trade can mix legs from different sources - it shows its oldest
+leg's age and every source involved. Member data is validated (`validate_contribution`: the stock
+is in some member's basket, at most 4000 contracts, the spot within 20% of a recent stored one,
+per-row sanity) and rate-limited (one per stock per 20 s, 30 a minute, per member). The earnings
+date is the one non-IBKR figure (free source, stored with `earnings_src = "yahoo"` so it is visibly
+the exception).
+
+**The collector, and the blackout reality.** `deploy/options_collector.py` + `app/services/
+opt_collector.py`, Hermes task **`TST-Options-Collector`**, IB Gateway on 127.0.0.1, **clientId
+89**, read-only; one step per 15 s tick, heartbeating into `opt_collector_status` and
+`state/options_collector.json` (which the Hermes tray reads). Its universe is every active basket
+ticker of every member. The design had it refreshing chains through the US session; on Hermes that
+cannot happen - the ingest supervisor keeps the Gateway **OFF Mon-Fri 08:00-20:10 ET** so it never
+competes with the user's manual trading (IBKR shares market data between the paper and the live
+login, but not at the same time), opens it at 20:10 ET for the nightly top-up, closes it the moment
+the top-up is done, and keeps it up over the weekend. So **Hermes collects the history and the
+daily EOD record outside the blackout** - on weekday evenings from 20:10 ET the EOD pass (a
+frozen-first chain read per ticker, the day's quotes copied into `option_chain_snapshot`, the
+earnings date, the retention prune), and the history (two years of bars + a year of IBKR's IV for a
+new ticker, and the daily increments) whenever no top-up can be running, which on Hermes means the
+weekend - and **during the US session the live updates come from members' connectors**. While the
+Gateway is down by design the collector's state is `waiting` (no error: the page strip says
+"Hermes: waiting · Gateway off by design" in grey, the tray shows a grey line); a real outage is
+`error` (a red strip, an amber tray). Historical requests share IBKR's per-login pacing with the
+top-up, so they wait until the supervisor's state file shows tonight's top-up done; chain quotes
+never wait - a new ticker gets its chain read at once in the evening window, and a member's
+connector can file its year of history meanwhile. Where a Gateway IS up during the session (the
+laptop, a supervisor override) the session cycle runs: never-read first, then most-held and
+stalest, skipping a ticker a member refreshed in the last 10 min, a new cycle at most every 10 min.
+
+**The member connector 2.0 and its download.** The connector (`bridge/`, its own entry in
+`bridge/README.md`) is a download on the page: `GET /options/connector/download` builds
+`TradeHunter-IBKR-Connector-2.0.zip` in memory (`app/services/opt_connector_pkg.py`: the connector,
+`th_ibkr.py`, the launcher, the installer, requirements and a plain README.txt). The installer
+checks for / offers Python 3.12, installs `ib_insync`, registers the Start handler and opens the
+connector's own settings page (`http://127.0.0.1:9224/`: TWS host, the port with its four presets,
+client ID, market-data lines). `GET /options/connector` is the three-step help. The page probes the
+connector's `/health` every 10 s: **green** connected (live / delayed data), **amber** running but
+TWS not reachable (the tooltip says why), **red** not running (Download / Start). While it is green
+and the tab is visible, the page loops `GET /options/data/next` (the member's stalest basket
+ticker, leased for 60 s) -> the connector's `/chain2` -> `POST /options/data/contribute` (stored as
+`source="member"` with the member's id), and once per ticker posts its year of history
+(`/underlying` -> `POST /options/data/contribute_history`) while Hermes has not pulled it. The
+collector and the connector read IBKR through ONE library, `bridge/th_ibkr.py`, so they cannot
+disagree on how a chain is read.
+
+**Rules v2 (`opt_rules.py`).** A shared block (stock price, 20-day stock volume, open interest,
+option volume, bid/ask in $ and in %, monthly expiries only, quote age, best N per ticker) above the
+chosen strategy's own block; every field has a plain label and a tooltip, bounds clamp with the
+error listed; stored sparse in the existing `user_option_prefs` row (`schema: 2`; a v1 row is
+migrated on read), so a later change to a default reaches everyone who never touched that field.
+Ten strategies in the dropdown: buy call, buy put, bull call spread, bear put spread, LEAPS call,
+diagonal call spread, bull put spread, bear call spread, iron condor, calendar spread. Decided at
+build: **the earnings rule is per strategy** - `none_inside` (no report on or before the last
+expiry) for every one-expiry trade, `allow` for the LEAPS (9-18 months always spans reports;
+bought instead of the stock, it holds through them as the shares would), and a new `short_leg` (no
+report before the SOLD leg's expiry) for the diagonal and the calendar, whose far leg is meant to
+hold through a report; and **the debit-spread width defaults to 1.0-6.0 ATR** (bull call / bear
+put) - the contract's 0.5-2.0 could never list a trade, because a bought delta of .60-.70 and a sold
+.25-.35 at 30-60 days sit about 3 to 5.5 ATR apart on any stock. The LEAPS time-value cap is 25%
+of the price for the same reason (10% could never pass).
+
+**The screeners (`opt_screen.py`).** One strategy over the member's whole basket, pure functions over
+the stored pool: stock filters -> expiry window (DTE, monthly only, the earnings rule) -> the
+family's structures (pruned by the delta and ATR-width bands before legs are paired) -> leg filters
+(a two-sided quote, open interest, option volume, bid/ask $ and %, quote age) -> family rules
+(credit, debit, daily decay, time value, cost against the stock) -> score, the best N per ticker.
+Each trade carries its legs (each with its own time, source and data type), the net at mids and at
+bid/ask, max profit / loss per contract, breakevens, POP (risk-neutral lognormal), return on risk,
+liquidity and its data age. Every removal counts against the FIRST rule that removed it - the "Why
+so few?" funnel.
+
+**The page.** `/options` (same menu key): a status strip (the connector pill, the Hermes line polled
+every 60 s, Download connector, help); the basket on the left (kept and resizable; each ticker's
+data-age dot and source; a new ticker reads "waiting for first read"); a **Strategy dropdown**
+(remembered per browser, default bull put spread) with the **rules always visible** (changes apply
+as you type); the **results - only the trades that pass every rule** - sortable by ticker, expiry,
+credit / debit, max profit, max loss, RoR, POP, delta, IV rank, liquidity and data age. A row opens
+the detail: the legs with each one's time and source, the payoff chart (at expiry + today, $ | R),
+the breakevens, and **"Refresh these legs live"** through the member's connector. The data column
+reads "12 min · Hermes live" / "2 min · Kui (live)"; a quote older than the member's limit never
+appears, and one older than 60 min is amber in market hours. Nothing on the page places an order.
+
+**Integration fixes in this release** (mismatches between the build parts): (1) the page test still
+expected `/options/badge`, which the v1 removal rightly deleted together with its `base.html` poller
+- the test now asserts both are gone; (2) the strip read the collector's new `waiting` state (which
+writes `gateway_ok = False`) as a red "gateway down" all through the US session -
+`options_page._collector_view` now shows it neutral grey, "Hermes: waiting · Gateway off by
+design", with the reason and until-when in the tooltip, and the strip test covers it.
+
+**Hermes (PowerShell):** `.\.venv\Scripts\python.exe -m pip install -r app\requirements.txt`
+(`ib_insync`), `schtasks /Change /TN TST-Options-Nightly /DISABLE`, then
+`powershell -ExecutionPolicy Bypass -File deploy\setup_options_collector_task.ps1 -StartNow` - and
+re-run that last line after any pull that changes `opt_collector.py`, `th_ibkr.py` or
+`options_collector.py` (DEPLOY.md section G). `app\.env`: `TST_IBKR_PORT` stays optional, the new
+`TST_OPTIONS_COLLECTOR_CLIENT_ID` (89) and `TST_OPTIONS_MAX_LINES` (60) are optional, and
+`TST_OPTIONS_SOURCE` / `_FALLBACK` / `TST_ALPACA_FEED` / `TST_IV_SEED_IBKR` / `TST_IBKR_PYTHON` are
+gone (`.env.example` updated).
+
+Tested at build (before the review below): **419 pass** (`py -m pytest tests -q`): `test_opt_screen.py` 107, `test_connector.py` 80,
+`test_opt_store.py` 47, `test_opt_collector.py` 44 (including the Hermes tray line),
+`test_th_ibkr.py` 39, `test_opt_rules.py` 21, `test_options_v2_page.py` 17, plus the kept
+`test_payoff.py` 25, `test_option_store.py` 11 and `test_telegram_push.py` 28. Nothing in the suite
+touches IBKR or the network: `th_ibkr` runs against a fake IB, the collector against a fake fetch
+module and a fake clock (the blackout / starting / closed windows and the top-up gate included),
+the connector against a stub `th_ibkr`, and the page through the real app on a fresh SQLite file
+brought to head by the real migrations. Also checked: `py -c "import app.main"` is clean, `alembic
+heads` is one head (`3b26d60468a0`), and no file in `app/` or `deploy/` imports a deleted module.
+The connector was also run for real under Python 3.12 against a closed TWS port (see its entry).
+**Not yet run against a live Gateway / TWS**: the first evening on Hermes after the deploy and the
+first session with a member's pill green are the real checks - the strip should go "waiting" ->
+"end-of-day pass" -> "EOD <day> done".
+
+**Review before release (2026-10-09/10).** A six-lens review of the build made 36 findings (a few seen by two lenses); four fix
+groups (data layer, screener + rules, IBKR side, page) fixed them and an integration pass made the
+four agree. Every fix, with its reason, is listed in `OPTIONS_V2_DESIGN.md` §12 "Review fixes"
+(R1-R30), and §2-§9 now match the code. In short: **shared data cannot be pushed around** - a
+member's stock price is checked against IBKR's own reference (Hermes's spot, its newest quote's
+price, or its last daily close) inside a ticker-relative band, max(15%, 4 x daily sigma x
+sqrt(trading days + 1)), so it can no longer be walked step by step nor lock everyone out after a
+real gap; a member's delayed data is filed 15 min back so it never replaces a newer live quote; a
+posted mid is recomputed and implausible prices / weekend or far expiries / off-grid strikes are
+dropped; quotes nobody refreshed for 7 days are pruned; member history goes through
+`validate_history` and Hermes's own pull replaces member rows; first-time history counts as done
+only when IBKR really returned it (20 bars and 20 IV points, or a young listing seen again on a
+later day). **Big chains are read in chunks that fit** - a member's connector gets at most 6
+expiries x 25 strikes a side per read (`next_for_member`), the connector stops at 150 s and returns
+what it read by 135 s (`partial`), answers `busy` instead of an empty read, and the page waits 160 s;
+a read that fails is reported (`POST /options/data/failed`) and the ticker backs off for 10 min,
+doubling to 2 h, so the loop moves on; leases last 240 s and belong to one member. **The list
+tells the truth** - quote age is market time (a Friday-close quote is still current on Saturday;
+the tooltip adds the clock age, `data.wall_age_min`), the no-trade reason names "the last rule in
+the way", the $0.50 bid/ask cap applies to the three premium-selling strategies only (it blocked
+every LEAPS above ~$110), the list re-screens after any contribution (5 s debounce) and a refresh
+swaps only the basket rows (inputs and sort survive). **The results are cheap** - only the
+strategy's expiry window and young-enough quotes are loaded (`chain_view` windowed and cached), a
+ticker that fails the stock filters is not loaded at all (about 4 s / 140 MB per request before).
+**The connector is safer and clearer** - no-Origin cross-site requests do no work, loopback origins
+are dev ports 8000-8099 only, market-data lines can no longer leak on a cancel, "contract does not
+exist" is remembered 3 days, an old 1.x connector gets an orange "out of date" pill and a
+browser-blocked one a "blocked by the browser" pill. **The collector's log stays small** - state
+lines are throttled, ib_insync's connect / unknown-contract noise is filtered, and the collector now
+writes and rotates its own log (`--log-file`, 5 MB x 5 files); the task runs python directly with it
+instead of appending stdout with `>>`. Integration fixes: the connector's busy answer now carries
+`"busy": true` (the contract between server, page and connector), and the log rotation above. Left
+open (§12): the installer's `Unblock-File` covers every file in its folder and the zip has no
+top-level folder; in a session the age clock is the wall clock, so Friday-evening quotes drop
+under the 24 h default on a Monday until members' reads arrive. **Hermes:** after this pull re-run
+`powershell -ExecutionPolicy Bypass -File deploy\setup_options_collector_task.ps1 -StartNow` - it
+re-registers the task with `--log-file` as well as restarting the collector.
+
+Tested (final, after the review): **482 pass** (`py -m pytest tests -q -p no:warnings`, ~2 min):
+`test_opt_screen.py` 136, `test_connector.py` 90, `test_opt_store.py` 70, `test_opt_collector.py` 52,
+`test_th_ibkr.py` 47, `test_options_v2_page.py` 31, `test_payoff.py` 25, `test_opt_rules.py` 23,
+`test_option_store.py` 8. `py -c "import app.main"` is clean and `alembic heads` is one head
+(`3b26d60468a0`).
 
 ### 2026-10-08 - v4.132: the Options card in two tabs, a volatility chart, plain words for term / skew / expected move, and WHY no strategy fits
 

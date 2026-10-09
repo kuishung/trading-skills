@@ -1,0 +1,130 @@
+{# The basket column (OPTIONS_V2_DESIGN.md §9): the universe the list screens and the
+   collectors read. Each row: the data-age dot and source from opt_store.freshness
+   (the newest read of that ticker by Hermes or any member's connector), the stored IV
+   rank, and the number of trades passing for the chosen strategy (the .opt-count cell,
+   painted by the page from the results' options:counts event). A ticker nobody has
+   read yet says "waiting for first read".
+   Two parts: the ROWS container (#optBasketRows: sort buttons, rows, the waiting note)
+   and the Add / Import FOOTER. part='all' renders both (the first load, as the
+   innerHTML of #optBasket); part='rows' renders only the rows container's inner HTML -
+   what every refresh swaps (a contribution, a sort click, add / remove), so the footer
+   keeps what the member typed, which panel is open, and the scan criteria. The chosen
+   sort rides on the rows (data-sort) and the page sends it with every refresh.
+   No <script> and no inline handlers: the import buttons are data-import /
+   data-scan-import, handled by the page.
+   Context: part ('all' | 'rows'), items [{row, sym, fresh, waiting, dot, age_text,
+   src_text, iv_rank, tip}], sort, n, max_basket, n_waiting, n_watchlist,
+   n_ivscan_list, n_ivscan_scan, n_positions, criteria. #}
+{% macro rows() -%}
+<div class="opt-basket-rows-inner" data-sort="{{ sort }}" data-n="{{ n }}">
+<div class="flex items-center gap-1 px-1 pb-1 text-[10px] text-slate-500">
+  <span class="tabular-nums">{{ n }}/{{ max_basket }} tickers</span>
+  <span class="ml-auto flex items-center gap-0.5">
+    {% for key, lbl, tip in [('added', 'Added', 'the order you added them'), ('symbol', 'A-Z', 'alphabetical'),
+                              ('fresh', 'Age', 'oldest data first'), ('iv', 'IV', 'highest IV rank first')] %}
+    <button type="button" data-basket-sort="{{ key }}" hx-get="/options/basket?sort={{ key }}&amp;part=rows"
+            hx-target="#optBasketRows" hx-swap="innerHTML"
+            class="px-1 rounded {% if sort == key %}text-emerald-300{% else %}hover:text-slate-300{% endif %}" title="Sort: {{ tip }}">{{ lbl }}</button>
+    {% endfor %}
+  </span>
+</div>
+
+{% if items %}
+<div class="grid items-center gap-x-1 px-1.5 pb-0.5 text-[9px] uppercase tracking-wide text-slate-600"
+     style="grid-template-columns: minmax(3.5rem, 1fr) minmax(0, 1.4fr) 1.8rem 1.6rem 0.9rem;">
+  <span>Ticker</span><span>Data</span><span class="text-right">IVR</span><span class="text-right" title="Trades passing for this strategy">Pass</span><span></span>
+</div>
+<div class="space-y-px">
+  {% for it in items %}
+  <div class="opt-brow cursor-pointer rounded px-1.5 py-1 text-[11px] hover:bg-slate-800/40 transition grid items-center gap-x-1"
+       style="grid-template-columns: minmax(3.5rem, 1fr) minmax(0, 1.4fr) 1.8rem 1.6rem 0.9rem;"
+       data-sym="{{ it.sym }}" data-tip="{{ it.tip }}">
+    <span class="flex items-center gap-1 min-w-0">
+      <span class="inline-block w-1.5 h-1.5 rounded-full shrink-0
+                   {% if it.dot == 'emerald' %}bg-emerald-400{% elif it.dot == 'amber' %}bg-amber-400{% elif it.dot == 'rose' %}bg-rose-400{% else %}bg-slate-600{% endif %}"></span>
+      <span class="text-[13px] font-semibold text-slate-200 truncate">{{ it.sym }}</span>
+    </span>
+    <span class="truncate text-[10px] {% if it.waiting %}text-sky-300/80 italic{% else %}text-slate-400{% endif %}">
+      {%- if it.waiting %}waiting for first read{% else %}{{ it.age_text }} &middot; {{ it.src_text }}{% endif -%}
+    </span>
+    <span class="text-right tabular-nums {% if it.iv_rank is none %}text-slate-600{% elif it.iv_rank >= 50 %}text-amber-300{% elif it.iv_rank < 30 %}text-teal-300{% else %}text-slate-400{% endif %}"
+          title="IV rank from IBKR's own 30-day IV over the last year">
+      {%- if it.iv_rank is none %}&ndash;{% else %}{{ it.iv_rank|round|int }}{% endif -%}
+    </span>
+    <span class="opt-count text-right tabular-nums text-slate-600" data-sym="{{ it.sym }}"></span>
+    <button type="button" class="opt-row-x text-slate-600 hover:text-rose-300 text-right" title="Remove {{ it.sym }} from your basket"
+            hx-post="/options/basket/remove" hx-vals='{"symbol": "{{ it.sym }}", "sort": "{{ sort }}", "part": "rows"}'
+            hx-target="#optBasketRows" hx-swap="innerHTML"
+            hx-confirm="Remove {{ it.sym }} from your basket? The shared data stays for the other members.">&times;</button>
+  </div>
+  {% endfor %}
+</div>
+{% if n_waiting %}
+<p class="px-1.5 pt-1 text-[10px] text-slate-500 leading-snug">{{ n_waiting }} waiting for a first read: your own IBKR connector reads them at once while its pill is green, and so does any other member's. During US market hours the Hermes gateway is off, so Hermes reads new tickers in the evening (after 20:10 ET) and at the weekend.</p>
+{% endif %}
+{% else %}
+<p class="text-[11px] text-slate-500 leading-relaxed px-1 py-3">
+  Your basket is empty. Add the tickers you trade options on - type one, paste a list, or pull in
+  My Watchlist. A new ticker shows <i>waiting for first read</i> until a member's IBKR connector
+  (or Hermes, in the evening or at the weekend) reads its option chain; then the list on the right screens it.
+</p>
+{% endif %}
+</div>
+{%- endmacro %}
+
+{% if part == 'rows' %}
+{{ rows() }}
+{% else %}
+<div id="optBasketRows">{{ rows() }}</div>
+
+{# ---- footer: add one, import many (never re-rendered by a refresh) ---- #}
+<div class="opt-basket-foot mt-2 px-1 space-y-1.5 text-[10px]">
+  <details>
+    <summary class="cursor-pointer text-slate-400 hover:text-slate-200 select-none">+ Add ticker</summary>
+    <form id="optAddForm" class="mt-1 flex items-center gap-1" hx-post="/options/basket/add" hx-target="#optBasketRows" hx-swap="innerHTML">
+      <input type="hidden" name="sort" value="{{ sort }}">
+      <input type="hidden" name="part" value="rows">
+      <input type="text" name="symbol" placeholder="NVDA" maxlength="12" required autocomplete="off"
+             class="w-20 uppercase rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-300 outline-none focus:border-emerald-500">
+      <button type="submit" class="px-2 py-0.5 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Add</button>
+    </form>
+  </details>
+  <details>
+    <summary class="cursor-pointer text-slate-400 hover:text-slate-200 select-none">Import &#9662;</summary>
+    <div class="mt-1 space-y-1.5">
+      <div>
+        <textarea id="optPasteBox" rows="2" placeholder="LRCX, MA, ISRG&#10;one per line or comma-separated"
+                  class="w-full rounded bg-slate-950/60 border border-slate-700 px-1.5 py-1 text-[11px] text-slate-300 outline-none focus:border-emerald-500"></textarea>
+        <button type="button" data-import="paste"
+                class="mt-0.5 px-2 py-0.5 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Paste tickers</button>
+      </div>
+      <div class="flex flex-wrap gap-1">
+        <button type="button" data-import="watchlist" title="Every ticker starred on My Watchlist"
+                class="px-2 py-0.5 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">My Watchlist ({{ n_watchlist }})</button>
+        {% if n_ivscan_list %}
+        <button type="button" data-import="ivscan_list" title="The tickers from the IV Rank page's list"
+                class="px-2 py-0.5 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">My IV Rank list ({{ n_ivscan_list }})</button>
+        {% endif %}
+        {% if n_ivscan_scan %}
+        <button type="button" data-import="ivscan_scan" title="The stored output of your last TWS High IV Rank scan"
+                class="px-2 py-0.5 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Last TWS scan ({{ n_ivscan_scan }})</button>
+        {% endif %}
+        {% if n_positions %}
+        <button type="button" data-import="positions" title="The tickers of the trades you tracked before this page was rewritten"
+                class="px-2 py-0.5 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">My tracked trades ({{ n_positions }})</button>
+        {% endif %}
+      </div>
+      <div>
+        <div class="flex flex-wrap items-center gap-1 text-slate-500">
+          <label>IV rank &gt; <input id="optScanRank" type="number" value="{{ criteria.iv_rank|int }}" class="w-12 rounded bg-slate-950/60 border border-slate-700 px-1 text-[10px] text-slate-300"></label>
+          <label>price &gt; <input id="optScanPrice" type="number" value="{{ criteria.price|int }}" class="w-12 rounded bg-slate-950/60 border border-slate-700 px-1 text-[10px] text-slate-300"></label>
+          <label>volume &gt; <input id="optScanVol" type="number" value="{{ criteria.volume|int }}" class="w-16 rounded bg-slate-950/60 border border-slate-700 px-1 text-[10px] text-slate-300"></label>
+        </div>
+        <button type="button" data-scan-import="1"
+                class="mt-0.5 px-2 py-0.5 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition"
+                title="Runs your TWS High IV Rank scanner through the IBKR connector on this PC and adds what it finds">Run my TWS scanner</button>
+      </div>
+    </div>
+  </details>
+</div>
+{% endif %}

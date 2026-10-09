@@ -1,5 +1,7 @@
-"""The persistence foundations of the Options module (step 1): the migration
-``f4a5b6c7d8e9`` and ``services/option_store.py``, ``job_runs.py``, ``clock.py``.
+"""The persistence foundations of the v1 Options module that survive Options v2: the
+migration ``f4a5b6c7d8e9`` (its nine tables stay in the DB, unused), what is left of
+``services/option_store.py`` (``prune``, ``basket_universe``, ``upsert_iv_daily`` and the
+``option_signal`` helpers the Telegram push still reads), ``job_runs.py``, ``clock.py``.
 
 Every DB test runs against a fresh SQLite file brought to head by the REAL migration
 chain (conftest), never ``create_all`` - so the migration is what is tested.
@@ -51,26 +53,6 @@ def _chain(symbol="LRCX", snap_on="2026-10-02", kind="eod", source="cboe", n=6,
     return {"symbol": symbol, "snap_on": snap_on, "kind": kind, "source": source,
             "as_of": as_of or _dt.datetime(2026, 10, 2, 19, 59, 59), "spot": spot,
             "iv30": iv30, "rows": rows, "partial": False}
-
-
-def _sig(picks_ok=True, recommended="bull_put"):
-    strategies = [{"key": recommended, "label": "Bull put spread", "fit": "recommended",
-                   "score": 90.1, "step": 1, "reasons": [], "reason_key": None, "shown": True},
-                  {"key": "buy_call", "label": "Buy call", "fit": "rejected", "score": None,
-                   "reasons": ["options too expensive to buy (IV rank 62)"],
-                   "reason_key": "expensive", "shown": True}]
-    if picks_ok:
-        picks = {recommended: [{"symbol": "LRCX", "strategy": recommended,
-                                "family": "credit_vertical", "status": "ok",
-                                "chart_stop_pl": -120.7, "max_loss": 790.0,
-                                "legs": [], "sizing": None}]}
-    else:
-        picks = {recommended: [{"status": "nearest", "degenerate": {"reason_key": "no_band"}}]}
-    return {"status": "ok", "headline": "Uptrend for 34 days.",
-            "setup": {"kind": "support_bounce", "direction": "long", "rng": {"sideways": False}},
-            "iv": {"iv30": 46.0, "iv_rank": 62.0, "basis": "rank", "iv_n": 252},
-            "strategies": strategies, "picks": picks, "computed_ms": 120,
-            "engine_version": "test"}
 
 
 # ───────────────────────────────── the migration ─────────────────────────────────
@@ -185,7 +167,9 @@ def test_migration_copies_open_spreads_once_and_downgrades_clean(db_url):
     assert len(_trade_rows(db_url)) == 3
     assert _spread_rows(db_url) == before
 
-    downgrade(db_url, "-1")
+    # explicitly to the revision before f4a5b6c7d8e9: "-1" from head would now only undo
+    # the Options v2 migration (3b26d60468a0) and leave the nine tables in place
+    downgrade(db_url, PREVIOUS_HEAD)
     have = table_names(db_url)
     assert not (set(NINE) & have)
     assert "option_spreads" in have and _spread_rows(db_url) == before
@@ -194,127 +178,28 @@ def test_migration_copies_open_spreads_once_and_downgrades_clean(db_url):
     assert len(_trade_rows(db_url)) == 3
 
 
-# ───────────────────────────────── snapshot + iv_daily ─────────────────────────────────
+# ───────────────────────────────── snapshot rows + iv_daily ─────────────────────────────────
 
-def test_replace_snapshot_round_trip_eod_over_intraday(db):
-    intraday = _chain(kind="intraday", as_of=_dt.datetime(2026, 10, 2, 15, 0, 0))
-    n1 = option_store.replace_snapshot(db, intraday)
-    option_store.upsert_iv_daily(db, intraday, {"hv20": 38.0})
-    db.commit()
-    assert n1 == 7
-    assert option_store.latest_snap_on(db, "LRCX")[:2] == ("2026-10-02", "intraday")
-
-    eod = _chain(kind="eod")
-    n2 = option_store.replace_snapshot(db, eod)
-    option_store.upsert_iv_daily(db, eod, {"hv20": 38.5, "iv_rank": 62.0, "n": 252, "state": "ok"})
-    db.commit()
-    assert n2 == 7
-    # both kinds coexist in the snapshot table; the day header says eod
-    kinds = {k for (k,) in db.query(models.OptionChainSnapshot.kind).distinct()}
-    assert kinds == {"eod", "intraday"}
-    day, kind, as_of = option_store.latest_snap_on(db, "LRCX")
-    assert (day, kind) == ("2026-10-02", "eod")
-    assert as_of == _dt.datetime(2026, 10, 2, 19, 59, 59)
-    hdr = db.query(models.IVDaily).filter_by(symbol="LRCX", on="2026-10-02").one()
-    assert hdr.kind == "eod" and hdr.iv30 == 46.0 and hdr.iv30_src == "cboe"
-    assert hdr.hv20 == 38.5 and hdr.iv_n == 252 and hdr.iv_state == "ok"
-    assert hdr.n_contracts == 7 and hdr.n_expiries == 2 and hdr.spot == 349.2
-
-    # idempotent: the same chain twice -> identical counts
-    option_store.replace_snapshot(db, eod)
-    db.commit()
-    assert db.query(models.OptionChainSnapshot).filter_by(kind="eod").count() == 7
-
-    chain = option_store.latest_chain(db, "LRCX")
-    assert chain.kind == "eod" and chain.spot == 349.2 and chain.iv30 == 46.0
-    assert len(chain.rows) == 7
-    r = [x for x in chain.rows if x.right == "P" and x.strike == 300.0][0]
-    assert r.mid == pytest.approx(1.05) and r.dte == 49 and r.oi == 1000 and r.volume is None
-    assert r.iv == pytest.approx(0.40)
-    legs = chain.legs()
-    assert legs[("2026-11-20", "P", 300.0)]["open_interest"] == 1000
-
-    with pytest.raises(ValueError):
-        option_store.replace_snapshot(db, _chain(kind="live"))      # live is never stored
-
-
-def test_intraday_refresh_replaces_older_intraday_rows(db):
-    option_store.replace_snapshot(db, _chain(snap_on="2026-10-01", kind="intraday"))
-    option_store.replace_snapshot(db, _chain(snap_on="2026-10-02", kind="intraday"))
-    db.commit()
-    days = {d for (d,) in db.query(models.OptionChainSnapshot.snap_on)
-                            .filter_by(kind="intraday").distinct()}
-    assert days == {"2026-10-02"}
-
-
-def test_bootstrap_iv_never_overwrites_a_cboe_day_and_rejects_out_of_bounds(db):
-    today = "2026-10-02"
-    eod = _chain(snap_on=today)
-    option_store.replace_snapshot(db, eod)
-    option_store.upsert_iv_daily(db, eod, {})
-    db.commit()
-    series = [{"on": "2026-09-30", "iv": 31.2}, {"on": "2026-10-01", "iv": 33.0},
-              {"on": today, "iv": 99.0},                    # the server read this day: kept at 46.0
-              {"on": "2026-10-03", "iv": 30.0},             # future -> rejected
-              {"on": "2026-09-29", "iv": 1200.0},           # above 1000 -> rejected
-              {"on": "2026-09-28", "iv": 0.05},             # below 0.1 -> rejected
-              {"on": "2024-01-01", "iv": 30.0},             # older than 400 days -> rejected
-              ("2026-09-25", 28.4)]                         # a pair works too
-    out = option_store.bootstrap_iv(db, "lrcx", series, source="ibkr", today=today)
-    assert (out["inserted"], out["skipped"], out["rejected"]) == (3, 1, 4)
-    assert out["n_total"] == 4
-    rows = {r.on: r for r in db.query(models.IVDaily).filter_by(symbol="LRCX").all()}
-    assert rows[today].iv30 == 46.0 and rows[today].source == "cboe" and rows[today].kind == "eod"
-    assert rows["2026-09-30"].iv30 == 31.2                  # percent, stored as-is
-    assert rows["2026-09-30"].kind == "history" and rows["2026-09-30"].source == "ibkr"
-    assert rows["2026-09-30"].iv30_src == "ibkr"
-    assert option_store.iv_series(db, "LRCX", 252) == [28.4, 31.2, 33.0, 46.0]
-    assert option_store.iv_series(db, "LRCX", 2, until="2026-10-01") == [31.2, 33.0]
-
-    job = job_runs.latest(db, "bootstrap")
-    assert job is not None and job.rows == 3 and job.symbols == 1 and job.run_on == today
-
-    # a second bootstrap of the same series inserts nothing
-    again = option_store.bootstrap_iv(db, "LRCX", series[:3], today=today)
-    assert again["inserted"] == 0 and again["skipped"] == 3
-
-    with pytest.raises(ValueError):
-        option_store.bootstrap_iv(db, "LRCX", [{"on": "2026-09-01", "iv": 30.0}] * 401, today=today)
-
-
-def test_bootstrap_iv_marks_latest_signal_rows_stale(db):
-    eod = _chain()
-    option_store.replace_snapshot(db, eod)
-    option_store.upsert_iv_daily(db, eod, {})
-    option_store.upsert_signal(db, _sig(), prefs_hash=HOUSE, symbol="LRCX",
-                               snap_on="2026-10-02", kind="eod")
-    option_store.upsert_signal(db, _sig(), prefs_hash=HOUSE, symbol="LRCX",
-                               snap_on="2026-10-01", kind="eod")
-    db.commit()
-    out = option_store.bootstrap_iv(db, "LRCX", [{"on": "2026-09-30", "iv": 31.2}],
-                                    today="2026-10-02")
-    assert out["stale_marked"] == 1
-    st = {r.snap_on: r.status for r in db.query(models.OptionSignal).all()}
-    assert st == {"2026-10-02": "stale_iv", "2026-10-01": "ok"}
-
-
-def test_backfill_from_iv_history(db):
-    for i in range(300):
-        on = (_dt.date(2025, 1, 1) + _dt.timedelta(days=i)).isoformat()
-        db.add(models.IVHistory(symbol="MSFT", on=on, iv30=20.0 + i % 10, spot=400.0,
-                                source="cboe" if i % 2 else "ibkr"))
-    for i in range(50):                                     # 50 already present
-        on = (_dt.date(2025, 1, 1) + _dt.timedelta(days=i)).isoformat()
-        db.add(models.IVDaily(symbol="MSFT", on=on, kind="eod", source="cboe", iv30=99.0))
-    db.commit()
-    assert option_store.backfill_from_iv_history(db) == 250
-    assert option_store.backfill_from_iv_history(db) == 0
-    rows = {r.on: r for r in db.query(models.IVDaily).filter_by(symbol="MSFT").all()}
-    assert len(rows) == 300
-    assert rows["2025-01-01"].iv30 == 99.0                  # the server-read day untouched
-    r = rows["2025-03-01"]
-    assert r.kind == "history" and r.source == "iv_history" and r.spot == 400.0
-    assert r.iv30_src in ("cboe", "ibkr")
+def _snap(db, chain) -> int:
+    """Write ``chain``'s rows to ``option_chain_snapshot`` the way the v1 writer did -
+    replaced per ``(symbol, snap_on, kind)``, and an intraday write drops the symbol's
+    older intraday rows - through the ORM, so ``prune`` has rows to prune. (The v2
+    collector's EOD copy is ``opt_store.snapshot_eod``, tested in test_opt_store.)"""
+    S = models.OptionChainSnapshot
+    q = db.query(S).filter(S.symbol == chain["symbol"], S.kind == chain["kind"])
+    if chain["kind"] != "intraday":
+        q = q.filter(S.snap_on == chain["snap_on"])
+    q.delete(synchronize_session=False)
+    on = _dt.date.fromisoformat(chain["snap_on"])
+    rows = [S(symbol=chain["symbol"], snap_on=chain["snap_on"], kind=chain["kind"],
+              source=chain["source"], expiry=r["expiry"], right=r["right"], strike=r["strike"],
+              dte=(_dt.date.fromisoformat(r["expiry"]) - on).days,
+              bid=r.get("bid"), ask=r.get("ask"), iv=r.get("iv"), delta=r.get("delta"),
+              oi=r.get("oi"), volume=r.get("volume"))
+            for r in chain["rows"]]
+    db.add_all(rows)
+    db.flush()
+    return len(rows)
 
 
 # ───────────────────────────────── prune ─────────────────────────────────
@@ -326,16 +211,15 @@ def test_prune(db, user, monkeypatch):
     today = _dt.date(2026, 10, 2)
     for i in range(100):                                    # 100 EOD days, 7 rows each
         day = (today - _dt.timedelta(days=i)).isoformat()
-        option_store.replace_snapshot(db, _chain(snap_on=day, kind="eod"))
-        option_store.upsert_signal(db, _sig(), prefs_hash=HOUSE, symbol="LRCX",
-                                   snap_on=day, kind="eod")
-    option_store.replace_snapshot(db, _chain(snap_on=(today - _dt.timedelta(days=1)).isoformat(),
-                                             kind="intraday"))
+        _snap(db, _chain(snap_on=day, kind="eod"))
+        db.add(models.OptionSignal(symbol="LRCX", snap_on=day, kind="eod", prefs_hash=HOUSE,
+                                   engine_version="t", status="ok"))
+    _snap(db, _chain(snap_on=(today - _dt.timedelta(days=1)).isoformat(), kind="intraday"))
     # an expired contract 8 days back, and one 6 days back (kept)
     expired = _chain(snap_on="2026-09-20")
     expired["rows"] = [dict(expired["rows"][3], expiry="2026-09-24"),
                        dict(expired["rows"][4], expiry="2026-09-26")]
-    option_store.replace_snapshot(db, expired)
+    _snap(db, expired)
     t = models.OptionTrade(user_id=user.id, symbol="LRCX", strategy="bull_put",
                            family="credit_vertical", legs=[], front_expiry="2026-11-20",
                            net_entry=-2.1, contracts=1)
@@ -373,101 +257,6 @@ def test_prune(db, user, monkeypatch):
     assert out["jobs"] == 20 and out["idea_push"] == 1 and out["trade_checks"] == 1
 
 
-# ───────────────────────────────── the read paths ─────────────────────────────────
-
-def test_card_for_none_when_no_row(db, user, monkeypatch):
-    # the read path only: a hash miss normally recomputes from the stored chain
-    # (the engines' own tests cover that); here the compute is stubbed to "could
-    # not" so the None path is what is exercised
-    monkeypatch.setattr(option_store, "_lazy_compute", lambda *a, **k: None)
-    assert option_store.card_for(db, "LRCX", user, prefs={}, prefs_hash=MINE, house_hash=HOUSE) is None
-    # a snapshot without any signal row (and no compute possible) is still None
-    option_store.replace_snapshot(db, _chain())
-    option_store.upsert_iv_daily(db, _chain(), {})
-    db.commit()
-    assert option_store.card_for(db, "LRCX", user, prefs={}, prefs_hash=MINE, house_hash=HOUSE) is None
-
-
-def test_card_for_serves_house_row_and_sizes_at_read_time(db, user, monkeypatch):
-    eod = _chain()
-    option_store.replace_snapshot(db, eod)
-    option_store.upsert_iv_daily(db, eod, {})
-    option_store.upsert_signal(db, _sig(), prefs_hash=HOUSE, symbol="LRCX",
-                               snap_on="2026-10-02", kind="eod", as_of=eod["as_of"])
-    db.commit()
-    monkeypatch.setattr(option_store, "_engine_version", lambda: "test")
-    monkeypatch.setattr(option_store.clock, "et_date", lambda now=None: _dt.date(2026, 10, 2))
-    # the member's hash has no row and the recompute is stubbed to "could not":
-    # the house row stands in (own_rules False)
-    monkeypatch.setattr(option_store, "_lazy_compute", lambda *a, **k: None)
-
-    card = option_store.card_for(db, "LRCX", user, prefs={}, prefs_hash=MINE, house_hash=HOUSE)
-    assert card is not None
-    assert card["prefs_hash"] == HOUSE and card["own_rules"] is False
-    assert card["kind"] == "eod" and card["snap_on"] == "2026-10-02" and card["source"] == "cboe"
-    assert card["stale"] is False and card["age_h"] is not None
-    assert card["recommended"] == "bull_put" and card["trend"] == "up"
-    assert "account" in card
-    pick = card["picks"]["bull_put"][0]
-    try:
-        import app.services.option_sizing  # noqa: F401
-    except ImportError:
-        assert pick["sizing"] is None and "sizing_error" in card      # tolerated, and said so
-    else:
-        assert pick["sizing"] is not None or "sizing_error" in card
-    # read-time only: the stored row still carries sizing = null
-    row = db.query(models.OptionSignal).one()
-    assert row.picks["bull_put"][0]["sizing"] is None
-
-    # an engine-version mismatch treats the row as missing
-    monkeypatch.setattr(option_store, "_engine_version", lambda: "newer")
-    assert option_store.card_for(db, "LRCX", user, prefs={}, prefs_hash=MINE, house_hash=HOUSE) is None
-
-
-def test_basket_rows_for_pick_state(db, user, monkeypatch):
-    monkeypatch.setattr(option_store, "_engine_version", lambda: "test")
-    monkeypatch.setattr(option_store.clock, "et_date", lambda now=None: _dt.date(2026, 10, 2))
-    for i, sym in enumerate(["LRCX", "MSFT", "KO", "ZZZZ", "NVDA"]):
-        db.add(models.OptionBasket(user_id=user.id, owner_key="u%d" % user.id, symbol=sym,
-                                   source="typed", added_on="2026-10-01", pos=i))
-    db.add(models.OptionBasket(user_id=user.id, owner_key="u%d" % user.id, symbol="AAPL",
-                               source="typed", added_on="2026-10-01", pos=9, active=False))
-    db.add(models.OptionBasket(user_id=None, owner_key="system", symbol="SPY",
-                               source="system", added_on="2026-10-01"))
-    day = "2026-10-02"
-    # LRCX: house row + member row with real picks
-    option_store.upsert_signal(db, _sig(), prefs_hash=HOUSE, symbol="LRCX", snap_on=day)
-    option_store.upsert_signal(db, _sig(), prefs_hash=MINE, symbol="LRCX", snap_on=day)
-    # MSFT: member row exists, picks hold only the "nearest" stub
-    option_store.upsert_signal(db, _sig(), prefs_hash=HOUSE, symbol="MSFT", snap_on=day)
-    option_store.upsert_signal(db, _sig(picks_ok=False), prefs_hash=MINE, symbol="MSFT", snap_on=day)
-    # KO: only the house row on the latest day; the member's row is a day old
-    option_store.upsert_signal(db, _sig(), prefs_hash=HOUSE, symbol="KO", snap_on=day)
-    option_store.upsert_signal(db, _sig(), prefs_hash=MINE, symbol="KO", snap_on="2026-10-01")
-    # NVDA: an old row only, two sessions back -> stale
-    option_store.upsert_signal(db, _sig(), prefs_hash=MINE, symbol="NVDA", snap_on="2026-09-29")
-    # a row of another engine version must be ignored
-    old = _sig()
-    old["engine_version"] = "older"
-    option_store.upsert_signal(db, old, prefs_hash=MINE, symbol="ZZZZ", snap_on=day)
-    db.commit()
-
-    rows = option_store.basket_rows_for(db, user, prefs={}, prefs_hash=MINE, house_hash=HOUSE)
-    assert list(rows) == ["LRCX", "MSFT", "KO", "ZZZZ", "NVDA"]        # basket order, inactive left out
-    assert rows["LRCX"]["pick_state"] == "has_picks" and rows["LRCX"]["idea"] == "bull_put"
-    assert rows["LRCX"]["trend"] == "up" and rows["LRCX"]["iv"] == {"iv_rank": 62.0, "basis": "rank", "iv_n": 252}
-    assert rows["LRCX"]["stale"] is False
-    assert rows["MSFT"]["pick_state"] == "no_strike_passes"
-    assert rows["KO"]["pick_state"] == "not_checked" and rows["KO"]["trend"] == "up"
-    assert rows["KO"]["snap_on"] == day
-    assert rows["ZZZZ"]["pick_state"] == "not_checked" and rows["ZZZZ"]["trend"] is None
-    assert rows["ZZZZ"]["stale"] is True
-    assert rows["NVDA"]["pick_state"] == "has_picks" and rows["NVDA"]["stale"] is True
-
-    assert option_store.basket_universe(db) == ["AAPL", "KO", "LRCX", "MSFT", "NVDA", "SPY", "ZZZZ"] or \
-        option_store.basket_universe(db) == ["KO", "LRCX", "MSFT", "NVDA", "SPY", "ZZZZ"]
-    assert "AAPL" not in option_store.basket_universe(db)             # inactive rows are not fetched
-
 
 def test_basket_universe_includes_open_trades(db, user):
     db.add(models.OptionBasket(user_id=user.id, owner_key="u%d" % user.id, symbol="KO",
@@ -480,17 +269,6 @@ def test_basket_universe_includes_open_trades(db, user):
                               net_entry=-2.1, status="closed"))
     db.commit()
     assert option_store.basket_universe(db) == ["KO", "LRCX"]
-
-
-def test_stale_is_session_based_not_wall_clock():
-    fri = _dt.datetime(2026, 10, 2, 23, 0, tzinfo=_dt.timezone.utc)     # Friday 19:00 ET
-    assert option_store._stale("2026-10-02", fri) is False
-    assert option_store._stale("2026-10-01", fri) is False              # the previous session
-    assert option_store._stale("2026-09-30", fri) is True               # one session older
-    sun = _dt.datetime(2026, 10, 4, 12, 0, tzinfo=_dt.timezone.utc)
-    assert option_store._stale("2026-10-01", sun) is False              # Thu is still "previous" on a Sunday
-    assert option_store._stale("2026-09-30", sun) is True
-    assert option_store._stale(None, sun) is True
 
 
 def test_user_option_prefs_one_to_one(db, user):

@@ -1,23 +1,24 @@
-# dashboard_tst/bridge/ — the per-member IBKR bridge
+# dashboard_tst/bridge/ — the member IBKR connector (2.0)
 
-A small program each member runs **on their own PC**, next to their own TWS.
+The small program each member runs **on their own PC**, next to their own TWS / IB
+Gateway, that feeds the Options page with option data from the member's own IBKR login
+(OPTIONS_V2_DESIGN.md §5). Members download it from the Options page as
+`TradeHunter-IBKR-Connector-<version>.zip` (built from this folder by
+`app/services/opt_connector_pkg.py`).
 
 ## Why it exists
 
-TradeHunter is a shared, server-hosted platform, but **TWS runs on each member's
-machine under their own login**. A server-side IBKR client cannot work:
-
-- it would use one account's data and one account's balance for everybody,
-- position sizing is `20% of max loss < 2% of NLV` — the wrong NLV silently
-  produces the wrong contract count,
-- and it would mean exposing somebody's TWS to the network.
-
-So the browser talks to a bridge on `127.0.0.1` and the server only grades rules.
-Same shape as the TradingView bridge already used by "Plot on TV".
+The Options page takes every option figure from IBKR and nothing else, and **TWS runs on
+each member's machine under their own login**. The web app never connects to IBKR itself:
+only the Hermes collector (clientId 89) and members' connectors do. So the browser asks
+the connector on `127.0.0.1` for a chain and relays it to the server, which validates it
+and stores it in the **shared pool** (`opt_quote`): every contract carries its time, its
+source (`member` + who) and its market data type, so one member's live read helps every
+other member looking at that ticker.
 
 ```
-browser (tradehunter.net) ──fetch──> 127.0.0.1:9224 ──ib_insync──> your TWS
-                          ──POST───> server: rule evaluation + rendering only
+browser (app.tradehunter.net) ──fetch──> 127.0.0.1:9224 ──ib_insync──> your TWS (read-only)
+                              ──POST───> server: validate + store in the shared pool
 ```
 
 Browsers permit an HTTPS page to fetch `http://127.0.0.1` (loopback counts as a
@@ -25,68 +26,192 @@ trustworthy origin), which is what makes this work with nothing exposed.
 
 ## Contents
 
-- `ibkr_bridge.py` — the bridge. Read-only (`readonly=True`, no order path).
-  Endpoints: `/health`, `/chain` (`side=put` since 1.3), `/iv` (`series=1` since 1.6), `/account`, `/scan` (1.1).
-- `start_ibkr_bridge.bat` — launcher (uses `py -3.12`).
+- `ibkr_bridge.py` — the connector (2.0). Read-only (`readonly=True`, no order path).
+  Settings page `GET /` + `POST /settings` (same-origin only), `/health` (cached state),
+  `/chain2` (a chain for a fetch-window spec), `/underlying` (spot + a year of daily bars
+  and IV), `/account`; the 1.x `/chain`, `/iv`, `/scan` unchanged for the legacy hidden pages.
+- `th_ibkr.py` — the IBKR fetch library shared with the Hermes collector (Part B, not
+  this folder's connector code; the connector imports it as a sibling module).
+- `install_bridge.ps1` — the one-time installer (PS 5.1, ASCII): Python 3.12 check
+  (offers `winget install -e --id Python.Python.3.12`), `pip install --user ib_insync`,
+  Startup shortcut, `tradehunter://start-bridge` handler, starts the connector and opens
+  its settings page. `-Uninstall` removes the shortcut and the handler.
+- `start_ibkr_bridge.bat` — launcher (uses `py -3.12`; extra arguments pass through).
 - `requirements.txt` — just `ib_insync`.
 
-## One-time setup (recommended)
+## Install (member, once per PC)
 
-Run on **your PC**, in PowerShell:
+1. Download the zip from the Options page and unzip it anywhere (keep the folder there).
+2. Right-click `install_bridge.ps1` > **Run with PowerShell**. Or:
+   `powershell -ExecutionPolicy Bypass -File install_bridge.ps1`
+3. In the settings page that opens, http://127.0.0.1:9224/, pick the TWS port
+   (TWS live 7496 / TWS paper 7497 / Gateway live 4001 / Gateway paper 4002) and press
+   **Save & reconnect**.
 
-```
-powershell -ExecutionPolicy Bypass -File install_bridge.ps1
-```
-
-It does two independent things, neither needing admin rights:
-
-1. **Auto-start** - a shortcut in your Startup folder, so the bridge runs whenever
-   Windows does. This is the real fix for "is the bridge up?", which caused every
-   false "bridge is down" report during development.
-2. **A working "Start the bridge" button** in the web app. A web page *cannot* launch a
-   local program - browsers forbid it, and no amount of code changes that. So this
-   registers a custom URL protocol, `tradehunter://start-bridge` (the mechanism Zoom and
-   Teams links use); the button opens that URL and Windows runs the launcher. Chrome asks
-   permission the first time, which is the point - your machine decides, not the page.
-
-**Security:** the registered command is fixed and the URL argument (`%1`) is deliberately
-**not** passed to the shell. If it were, any website could put arbitrary text after
-`tradehunter://` and land it on a command line. The handler can only ever start this one
-script, with no arguments.
-
-Undo with `.\install_bridge.ps1 -Uninstall`.
-
-## Install (once, per PC)
-
-```
-py -3.12 -m pip install -r requirements.txt
-```
+In TWS: **File > Global Configuration > API > Settings > Enable ActiveX and Socket
+Clients**, and leave **Read-Only API** ticked — a hard guarantee at the TWS end that no
+API client can place an order.
 
 **Python 3.12 is required.** `ib_insync` imports `eventkit`, which calls
 `asyncio.get_event_loop()` at import time — removed in 3.14.
 
-## Run (whenever you want the Options tab)
+The installer's **`tradehunter://start-bridge`** handler is what makes the page's
+"Start" button work: a web page cannot launch a local program, so a custom URL protocol
+(the mechanism Zoom and Teams links use) runs the launcher; Chrome asks permission the
+first time. **Security:** the registered command is fixed and the URL argument (`%1`) is
+deliberately **not** passed to the shell, so no website can land text on a command line.
 
+## Settings
+
+`%APPDATA%\TradeHunter\connector.json` (`~/.config/tradehunter/connector.json` off
+Windows), written by the settings page (and with the defaults on first start):
+
+```json
+{"tws_host": "127.0.0.1", "tws_port": 7496, "client_id": 86, "max_lines": 40, "allowed_origins": []}
 ```
-start_ibkr_bridge.bat
-```
 
-Defaults to TWS on `127.0.0.1:7496` with clientId 86. Flags: `--port` (7497 TWS
-paper, 4001/4002 IB Gateway live/paper), `--tws-host`, `--client-id`,
-`--strike-window`, `--origin` (extra allowed browser origin).
+Bounds: port 1-65535, client ID 0-999999, market-data lines 5-200, at most 20 extra
+origins (`scheme://host[:port]`). A bad field in a hand-edited file falls back to its
+default and is shown on the settings page. Command-line flags override the file for one
+run: `--port`, `--tws-host`, `--client-id`, `--max-lines`, `--origin` (repeatable),
+`--config`, `--bridge-port`, `--strike-window` (legacy `/chain`). A Save on the settings
+page replaces the command-line values for the rest of that run.
 
-In TWS: **API > Settings > Enable ActiveX and Socket Clients**, and leave
-**Read-Only API** ticked — that is a hard guarantee at the TWS end that no API
-client can place an order.
+## Endpoints
+
+| Endpoint | Returns |
+|---|---|
+| `GET /` | the settings page (inline CSS + JS, no CDN; live status line polled every 2 s) |
+| `POST /settings` | JSON or form; **same-origin only**: writes `connector.json`, reconnects; `{ok, config, path, reconnecting}` or 400 `{ok: false, error, errors}` |
+| `GET /health` | `{ok, version, tws_connected, connected, tws, client_id, mdt, account_type, error}` from cached state (no IB call) |
+| `GET /chain2?symbol=&spec=<json>` | `th_ibkr.fetch` (chain_defs + fresh spot -> `plan(spec)` -> `quote`) + `{ok: true, connector_version, partial}`; 20 s cache per (symbol, spec); 150 s timeout, the read's deadline 15 s before it (a long read returns what it read, `partial: true`) |
+| `GET /underlying?symbol=` | `{ok, symbol, spot, mdt, bars: [last 260], iv_series: [last 260]}`; the history is pulled once per symbol per day (an empty answer from IBKR is an error, not cached) |
+| `GET /account` | `{ok, net_liquidation, currency}` |
+| `GET /chain`, `/iv`, `/scan` | the 1.x replies, unchanged |
+
+Errors: bad input 400 `{ok: false, error}`; an IBKR failure 200 `{ok: false, error}` (the
+1.x convention the pages read); a `/chain2` read that waited for another one and has too
+little time left 200 `{ok: false, busy: true, error}` (the page reports it as a failed read).
 
 ## Security
 
-The bridge can read your account, so it answers only **allow-listed origins**
-(`tradehunter.net` plus localhost dev ports). Without that, any site you visited
-could read your balances off localhost. It binds `127.0.0.1` only — never
-reachable from the network.
+The connector can read your account, so it answers only **allow-listed origins**: any
+HTTPS host in `tradehunter.net`, `http://127.0.0.1` / `http://localhost` on the dev
+ports 8000-8099, plus extras from the settings page or `--origin`; with Private Network
+Access preflight headers for the real site. A browser request from another site with no
+`Origin` at all (`Sec-Fetch-Site: cross-site` - an `<img>`, a no-cors fetch) is refused
+on every endpoint but the settings page. It binds `127.0.0.1` only. Added in 2.0: requests whose
+`Host` header is not a loopback name are refused (DNS rebinding), and `POST /settings`
+accepts only the connector's own page (`Origin` / `Sec-Fetch-Site` / `Referer` checked, no
+CORS header, a cross-origin preflight is refused) so no website can repoint it.
 
 ## Changelog
+
+### 2026-10-09 — connector 2.0 review fixes: chunked reads that fit, no leaked lines, no cross-site reads
+From the six-lens review of the v4.133 build (Options v2), before it shipped:
+- **A big chain no longer times out with nothing** (review #16/#19). A large-cap's default
+  window (~2,000 listed contracts, ~45-50 waves) took longer than the 110 s cap, the read
+  was cancelled with every row thrown away, and the member's loop asked for the same
+  ticker forever. Now `/chain2` passes the spec's `max_expiries` / `max_side` (the server
+  hands members chunks of up to 6 expiries, 25 strikes a side) to `th_ibkr.plan`, and the
+  read gets a deadline 15 s under the connector's own limit (now 150 s; the page waits
+  160 s): `th_ibkr.quote` then starts no new wave, cuts the open one short and returns
+  the rows read so far with `"partial": true` (always in the answer). After waiting > 1 s
+  for another read with < 20 s left, it answers `{ok: false, busy: true, error}` instead
+  of an empty read (the `busy` flag added at integration, `ConnectorBusy`, so the answer
+  matches the server/page contract). The timeout text no longer tells the member to LOWER
+  the lines (that made reads slower).
+- **Market-data lines can no longer leak** (review #20, `th_ibkr.py`): the release of a
+  wave's lines (and the spot's) is a `finally` that never awaits - unpaced cancels,
+  counted afterwards against the message rate (`_Bucket.charge`). The old paced release
+  was a cancellation point: a timeout landing there left lines streaming until the
+  connector closed, eating the login's 100-line allowance the member's TWS shares.
+- **Cross-site requests without an Origin do no work** (review #0): `<img>` / no-cors
+  GETs from any page used to run `/chain2`, `/underlying`, `/scan`, `/account` in full
+  (only the answer was unreadable) - holding the quote slot and up to 40 lines per
+  request. Refused now when `Sec-Fetch-Site` says cross-site / same-site and no `Origin`
+  is sent; the settings page stays reachable (the Options page links to it).
+- **Loopback origins: dev ports 8000-8099 only** (review, low). 2.0 trusted every local
+  port - any program on the member's PC could read `/account`. Others need an explicit
+  extra origin (settings page / `--origin`).
+- **`/underlying`: an empty history is an error, not cached for the day** (review #18,
+  connector side): ib_insync answers a failed historical request with an empty list.
+- `th_ibkr.py`: "contract does not exist" remembered 3 days (was 6 h - every evening's
+  EOD pass re-asked IBKR about ~2,000 union strikes per large name); a cancelled wait for
+  a historical slot gives the slot back.
+
+Tested: `tests/test_connector.py`, `tests/test_th_ibkr.py`, `tests/test_opt_collector.py`
+(the cross-site refusal and what stays open, the chunk + deadline + partial passthrough,
+"busy", the dev-port allow-list, the empty-history error; plan's `max_expiries`, the
+deadline returning the waves read so far and cutting an open window, a cancellation at
+the release leaving no line open - which fails on the old release code).
+
+### 2026-10-09 — connector 2.0: settings page, `/chain2`, `/underlying`, downloadable zip
+User: *"for option data, I want every data to be from IBKR"* and *"the user will use his
+own IBKR API ... when the option data gets updated from any user using it IBKR live data
+other users will also benefit"*; Q&A: *"I need a link for user to download the IBKR
+connector and it can set the setting there. When it runs it shows a green pill; if it is
+not running it shows red."* OPTIONS_V2_DESIGN.md §5 (Part D). The bridge becomes the
+member connector that feeds the shared option pool:
+
+- **Settings in the connector.** `connector.json` (`%APPDATA%\TradeHunter\`) with
+  defaults and bounds; `GET /` is a self-contained settings page (TWS host, port with the
+  four presets TWS live 7496 / TWS paper 7497 / Gateway live 4001 / Gateway paper 4002,
+  client ID, market-data lines, extra origins, a live status line, **Save & reconnect**).
+  `POST /settings` is same-origin only. CLI flags still override for one run. The file
+  is created with the defaults on first start so a member can find it.
+- **Connects by itself.** A keeper on the IB loop connects at start-up and reconnects
+  after a drop (5 s backoff doubling to 30 s) and at once after a Save, so the Options
+  page's pill turns green without a request. After connecting it reads one SPY quote so
+  the status shows live / delayed before the first chain; the account type (paper = an
+  account id starting with D) comes from `managedAccounts()`.
+- **`/health` answers from cached state** (measured 2-25 ms against the real process):
+  `{ok, version: "2.0", tws_connected, tws, client_id, mdt, account_type, error}`; the
+  1.x `connected` key stays for the legacy pages. Not polled into the console log.
+- **`/chain2?symbol=&spec=`**: the spec (design §3.2) is validated, then `th_ibkr.fetch`
+  runs (a th_ibkr without `fetch` gets the same chain_defs + spot -> plan -> quote
+  steps), one chain at a time (the line limit is shared by every client of the login),
+  20 s cache per (symbol, spec), 110 s timeout so the page's 120 s fetch gets a JSON error.
+  NaN in any reply goes out as `null`.
+- **`/underlying?symbol=`**: fresh spot (20 s cache) + one year of daily bars and IBKR's
+  daily 30-day IV (last 260 each), pulled once per symbol per day — the member's
+  contribution to `opt_underlying_daily` when Hermes has not read the history yet.
+- **`/account`** returns `{ok, net_liquidation, currency}` (th_ibkr.account).
+- **`th_ibkr.py` (new here, shared with the Hermes collector) subscribes option contracts
+  with generic tick `"101"` only** (`OPT_TICKS`: open interest, ticks 27/28), not the
+  design's `"100,101,106"`: 100 and 106 are UNDERLYING ticks (the stock's option volume /
+  IV) and on an option contract they risk error 321, which empties the whole chain. Day
+  volume and the model greeks / IV come with the default tick set — the same choice 1.4
+  proved (below). Contracts IBKR sent nothing for (no bid, ask, last or delta) are left out
+  of a `/chain2` reply, so a dead feed never overwrites good shared data with blanks.
+- **Kept unchanged:** `/chain`, `/iv`, `/scan` (1.6 code, for the legacy hidden pages),
+  the origin allow-list (now also any `http://127.0.0.1:*` / `http://localhost:*` port, and
+  extras from the settings file), the PNA preflight, read-only connect, the clientId walk,
+  one connector per port + retiring an earlier copy. The legacy `/chain` now also waits its
+  turn behind a `/chain2` read instead of doubling the lines in use.
+- **New hardening:** a request whose `Host` is not loopback is refused (DNS rebinding);
+  the settings page sends `X-Frame-Options: DENY` and a CSP.
+- **Installer** (`install_bridge.ps1`, ASCII for PS 5.1): checks `py -3.12`, offers
+  `winget install -e --id Python.Python.3.12` (asks y/n), `pip install --user -r
+  requirements.txt`, unblocks the unzipped files, then the Startup shortcut (now
+  minimised) and the `tradehunter://` handler as before, starts the connector and opens
+  http://127.0.0.1:9224/. Keeps the window open at the end ("Run with PowerShell" closes
+  it otherwise). `-Uninstall` unchanged; new `-SkipPython`, `-NoStart`, `-NoPause`.
+- **Download:** `app/services/opt_connector_pkg.build_zip()` zips this folder in memory
+  (`ibkr_bridge.py`, `th_ibkr.py`, the .bat, the installer, requirements, a generated
+  README.txt) as `TradeHunter-IBKR-Connector-2.0.zip`, CRLF for the Windows text files.
+
+Tested: `tests/test_connector.py` (80 cases, no ib_insync, no network): config defaults /
+round trip / corrupt file / bounds, the origin and Host rules, `POST /settings`
+same-origin only (JSON, form, cross-origin Origin / Sec-Fetch-Site / Referer, foreign
+Host, invalid values), `/health` shape and < 200 ms on a live HTTP server, `/chain2`
+routing + cache + timeout + 400s on a stub th_ibkr, `/underlying`, `/account`, the keeper
+(read-only connect, paper account, reconnect on Save, unreachable TWS), the zip's contents
+and name, the installer's text. Also run for real under Python 3.12 with ib_insync on a
+spare port aimed at a closed TWS port (health, page, save, refusal, error path) and the
+settings page clicked through in a browser; the installer parsed by PowerShell 5.1 and
+dry-run with every side effect skipped. **Not yet run against a live TWS** — that is the
+laptop's first step after deploy.
 
 ### 2026-10-04 — bridge 1.6: `/iv?symbol=X&series=1`, the dated daily IV series (percent)
 The Options page's **Live** button bootstraps a year of IV history into the server's

@@ -4,7 +4,7 @@ SVG the card draws (OPTIONS_MODULE_DESIGN.md II.2.9, design/options/part_C_chart
 
 ONE code path for all ten strategies (and for arbitrary legs): the strategy key
 only selects the labels, the analytic max-P/L shortcut and the POP flavour,
-through its engine family (``option_prefs.family_of``). Pure stdlib + the
+through its engine family (``opt_rules.FAMILY``, see ``_family_of``). Pure stdlib + the
 platform's ``black_scholes`` - no DB, no network, no FastAPI import - so every
 number here can be checked against a synthetic chain with TWS off.
 
@@ -43,6 +43,7 @@ from dataclasses import dataclass
 
 from .black_scholes import black_scholes, norm_cdf
 from .opt_constants import LOSS_STOP_FRACTION, MULT, RISK_FREE, STOP_IV_BUMP  # noqa: F401  (STOP_IV_BUMP re-exported for callers)
+from .opt_rules import FAMILY as _RULES_FAMILY, LABELS as _RULES_LABELS
 
 __all__ = [
     "Leg", "NoSigma", "normalise_iv", "implied_vol", "calibrate", "horizon", "leg_value", "pnl",
@@ -62,10 +63,15 @@ LABEL_CHAR_PX = 5.3     # the width of one character of the 10 px label font, fo
 IV_UNITS = ("fraction", "percent")
 
 # Families whose P&L is a credit kept: POP label "chance of keeping it", rule stop a
-# fraction of max loss, take-profit hline at half the credit (strategy_rules.CREDIT_FAMILIES
-# holds the same three strategies by KEY; this is the same set by FAMILY).
+# fraction of max loss, take-profit hline at half the credit (bull_put, bear_call,
+# iron_condor by key).
 CREDIT_FAMILY_NAMES = frozenset({"credit_vertical", "condor"})
 FAMILIES = ("credit_vertical", "debit_vertical", "long", "leaps", "condor", "time")
+# opt_rules.FAMILY names -> the engine families above (the rest are the same word)
+_ENGINE_FAMILY = {"single": "long", "diagonal": "time", "calendar": "time"}
+# the debit families' house rule stop, % of the premium paid, when the route passes none
+_HOUSE_PREMIUM_STOP_PCT = {"leaps_call": 40.0, "diagonal_call": 40.0}
+HOUSE_PREMIUM_STOP_PCT_DEFAULT = 50.0
 
 CAPTION = ("Dashed line: what the trade would be worth if the stock moved there today, at today's "
            "implied volatility - an estimate. Solid line: at expiry ({dte} days).")
@@ -637,7 +643,7 @@ def _px(v: float, nd: int = 2) -> str:
 
 
 def _expiry_label(expiry: str) -> str:
-    """'2026-11-20' -> 'Nov 20' (strategy_rules.expiry_label's spelling)."""
+    """'2026-11-20' -> 'Nov 20' (month abbreviation and day)."""
     try:
         d = _date(expiry)
     except ValueError:
@@ -663,31 +669,25 @@ def _label(legs: list[Leg]) -> str:
 def _strategy_label(strategy: str | None) -> str | None:
     if not strategy:
         return None
-    try:
-        from .strategy_rules import LABELS
-        return LABELS.get(strategy)
-    except Exception:  # noqa: BLE001  - labels are decoration
-        return None
+    return _RULES_LABELS.get(strategy)
 
 
 def _family_of(strategy: str | None) -> str | None:
-    """The engine family through option_prefs.family_of (II.2.9); None for
-    arbitrary legs (``strategy=None``) - never a key stored or shown."""
+    """The engine family of a strategy key: ``opt_rules.FAMILY`` mapped through
+    ``_ENGINE_FAMILY`` (single -> long, diagonal / calendar -> time); None for
+    arbitrary legs (``strategy=None``). KeyError for a key outside the catalog
+    (``build`` turns it into an ``unknown strategy`` error)."""
     if not strategy:
         return None
-    from .option_prefs import family_of
-    return family_of(strategy)
+    fam = _RULES_FAMILY[strategy]
+    return _ENGINE_FAMILY.get(fam, fam)
 
 
 def _house_premium_stop_pct(strategy: str) -> float | None:
     """The house ``premium_stop_pct`` a debit family's rule stop falls back on when
-    the route passes none: the long block's 50, the leaps block's 40 (inherited
-    by the diagonal) - read from option_prefs so there is one home for it."""
-    try:
-        from .option_prefs import HOUSE, for_strategy
-        return _num(for_strategy(HOUSE, strategy).get("premium_stop_pct"))
-    except Exception:  # noqa: BLE001
-        return {"leaps": 40.0}.get(_family_of(strategy) or "", 50.0)
+    the route passes none: 40 for leaps_call / diagonal_call, 50 for every other
+    debit strategy (the v1 house values, unchanged)."""
+    return _HOUSE_PREMIUM_STOP_PCT.get(strategy, HOUSE_PREMIUM_STOP_PCT_DEFAULT)
 
 
 # ------------------------------------------------------------- SVG
@@ -894,7 +894,7 @@ def build(legs, *, strategy: str | None, spot: float, atr: float | None, as_of,
     """The payoff dict of II.2.6 / C3.10 for ONE contract of ``legs`` (Leg objects
     or API leg dicts).
 
-    * ``strategy`` - a catalog key (family via ``option_prefs.family_of``) or None
+    * ``strategy`` - a catalog key (family via ``opt_rules.FAMILY``) or None
       for arbitrary legs (generic labels, numeric extremes).
     * ``chart_stop`` / ``target`` - the setup's ``plan.stop`` / ``plan.target``;
       ``levels`` - ``({x, label, kind in {support, resistance, trend_line,

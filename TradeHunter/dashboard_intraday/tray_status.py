@@ -10,6 +10,13 @@ Color states:
   RED     stopped / stale       (last entry > 10 min ago, or no process)
   GRAY    unknown               (no log file, can't determine)
 
+The tooltip and the Show Status window also carry the Options v2 collector
+(dashboard_tst, task TST-Options-Collector) from its heartbeat file
+dashboard_tst/state/options_collector.json: state, cycle, last EOD date, gateway,
+heartbeat age - green running, amber error / no heartbeat for 5 min, grey no file or
+"waiting" (the Gateway is down by the supervisor's design, e.g. the weekday
+08:00-20:10 ET manual-trading blackout).
+
 Right-click menu:
   - Show Status        : popup notification with current symbol + progress
   - Open Log File      : opens ingest_log.jsonl in default editor
@@ -808,6 +815,113 @@ def get_supervisor_status() -> dict:
     return result
 
 
+# The Options v2 collector on Hermes (dashboard_tst/deploy/options_collector.py, task
+# TST-Options-Collector) heartbeats into this file every ~15 s (tray-sync rule).
+OPTIONS_COLLECTOR_STATE_PATH = SKILL_DIR / "dashboard_tst" / "state" / "options_collector.json"
+OPTIONS_COLLECTOR_STALE_SEC = 300   # no heartbeat for 5 min -> amber
+
+
+def get_options_collector_status(path=None, now=None) -> dict:
+    """The Hermes options collector from its heartbeat file
+    (dashboard_tst/state/options_collector.json): state, cycle, last EOD date,
+    gateway ok, heartbeat age - one detail line + a tooltip fragment.
+
+    Colour: green = running (fresh heartbeat, state not error/stopped/waiting); grey =
+    waiting (the ingest supervisor keeps the Gateway down by design - the weekday
+    08:00-20:10 ET manual-trading blackout, its start at 20:10 ET, or closed after the
+    nightly top-up: neutral, not a fault) or no file (the collector never ran on this
+    PC, e.g. the laptop); amber = state error or stopped, heartbeat older than 5 min, or
+    an unreadable file. A running line ends with "history waits (N)" while N symbols'
+    IBKR history waits for the nightly ingest top-up (shared historical pacing).
+    Returns {level: ok|waiting|warn|absent, color: green|grey|amber, state, line, tip,
+             age_sec, cycle_n, last_eod_on, gateway_ok}. File reads only."""
+    def _age_text(sec):
+        if sec is None:
+            return "?"
+        sec = max(0.0, sec)
+        if sec < 90:
+            return f"{sec:.0f}s"
+        if sec < 5400:
+            return f"{sec / 60:.0f}m"
+        return f"{sec / 3600:.1f}h"
+
+    p = Path(path) if path is not None else OPTIONS_COLLECTOR_STATE_PATH
+    out = {"level": "absent", "color": "grey", "state": None, "age_sec": None,
+           "cycle_n": None, "last_eod_on": None, "gateway_ok": None}
+    if not p.exists():
+        out.update(line="Options collector: not running on this PC (no state file)", tip="Opt -")
+        return out
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+        if not isinstance(d, dict):
+            raise ValueError("not a JSON object")
+    except Exception as exc:
+        out.update(level="warn", color="amber", tip="Opt ?",
+                   line=f"Options collector: state file unreadable ({exc})"[:160])
+        return out
+
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    hb = None
+    try:
+        hb = datetime.fromisoformat(str(d.get("heartbeat") or "").replace("Z", "+00:00"))
+        if hb.tzinfo is None:
+            hb = hb.replace(tzinfo=timezone.utc)
+    except Exception:
+        hb = None
+    age = (now - hb).total_seconds() if hb is not None else None
+    state = str(d.get("state") or "?")
+    cyc, eod, gw_ok = d.get("cycle_n"), d.get("last_eod_on"), d.get("gateway_ok")
+    done, total = d.get("symbols_done"), d.get("symbols_total")
+    out.update(state=state, age_sec=age, cycle_n=cyc, last_eod_on=eod, gateway_ok=gw_ok)
+
+    parts = [state.upper() if state in ("error", "stopped") else state]
+    if cyc:
+        parts.append(f"cycle {cyc}")
+    if total and state in ("history", "cycle", "eod"):
+        parts.append(f"{done or 0}/{total}")
+    if d.get("mdt"):
+        parts.append(str(d["mdt"]))
+    parts.append("GW ok" if gw_ok else "GW down")
+    parts.append(f"EOD {eod}" if eod else "EOD -")
+    try:
+        hist_wait = int(d.get("history_waiting") or 0)
+    except (TypeError, ValueError):
+        hist_wait = 0
+    if hist_wait > 0:
+        parts.append(f"history waits ({hist_wait})")
+    parts.append(f"hb {_age_text(age)} ago")
+    line = "Options collector: " + " · ".join(parts)
+
+    if age is None or age > OPTIONS_COLLECTOR_STALE_SEC:
+        out.update(level="warn", color="amber", tip=f"Opt stale {_age_text(age)}",
+                   line=f"Options collector: NO HEARTBEAT for {_age_text(age)} "
+                        f"(last: {state}) - is TST-Options-Collector running?")
+    elif state == "waiting":
+        # The ingest supervisor keeps the Gateway down by design - neutral, not amber.
+        reason, until = d.get("wait_reason"), d.get("wait_until")
+        what = {"blackout": "Gateway blackout",
+                "starting": "supervisor starting the Gateway",
+                "closed": "Gateway closed after the nightly top-up"}.get(reason)
+        if what:
+            wline = f"Options collector: waiting ({what}" + (f" until {until}" if until else "") + ")"
+        else:
+            why = d.get("phase_detail") or ""
+            wline = "Options collector: waiting" + (f" - {why}" if why else "")
+        out.update(level="waiting", color="grey", tip="Opt wait", line=wline[:200])
+    elif state in ("error", "stopped"):
+        why = d.get("phase_detail") or d.get("last_error") or ""
+        out.update(level="warn", color="amber",
+                   tip="Opt ERR" if state == "error" else "Opt stopped",
+                   line=(line + (f" - {why}" if why else ""))[:200])
+    else:
+        out.update(level="ok", color="green",
+                   tip=f"Opt c{cyc}" if (cyc and state == "cycle") else f"Opt {state}",
+                   line=line)
+    return out
+
+
 # ---- Icon generation (no .ico files needed — drawn at startup) ----
 
 def _make_circle_icon(color: tuple, size: int = 64,
@@ -985,8 +1099,8 @@ def _build_progress_window(root):
     # deep-check, live, detail, eta) PLUS the operator buttons + action line +
     # Close. Height grew when those were added; allow vertical resize so future
     # additions can never cover the Close button again.
-    win.geometry("460x730")
-    win.minsize(460, 640)
+    win.geometry("460x760")
+    win.minsize(460, 670)
     win.resizable(False, True)
     win.attributes('-topmost', True)
     win.configure(bg='#1a1a1a')
@@ -1122,6 +1236,15 @@ def _build_progress_window(root):
         font=('Segoe UI', 8), bg='#1a1a1a', fg='#6b7280',
         wraplength=430, justify='center',
     ).pack(pady=(0, 4))
+
+    # Options v2 collector (dashboard_tst, task TST-Options-Collector) - tray-sync
+    # rule. Green running / amber error or no heartbeat for 5 min / grey no file.
+    opt_var = tk.StringVar(value='Options collector: -')
+    opt_lbl = tk.Label(
+        win, textvariable=opt_var, font=('Segoe UI', 10),
+        bg='#1a1a1a', fg='#888888', wraplength=430, justify='center',
+    )
+    opt_lbl.pack(pady=(0, 4))
 
     # ── DEEP CHECK section ─────────────────────────────────────────────────
     tk.Label(win, text='DEEP CHECK', font=('Segoe UI', 8, 'bold'),
@@ -1503,6 +1626,16 @@ def _build_progress_window(root):
             except Exception:
                 gw_var.set("Gateway: ?")
 
+            # Options v2 collector heartbeat (green / amber / grey)
+            try:
+                oc = get_options_collector_status()
+                opt_var.set(oc.get('line') or "Options collector: ?")
+                opt_lbl.configure(fg={'green': '#5fd97a', 'amber': '#facc15'}.get(
+                    oc.get('color'), '#888888'))
+            except Exception:
+                opt_var.set("Options collector: ?")
+                opt_lbl.configure(fg='#888888')
+
             # "Completed through" date (ingest currency)
             try:
                 ct = get_completed_through()
@@ -1734,11 +1867,16 @@ def _update_loop(icon: "pystray.Icon"):
                     gw_str = "GW LIVE" if gw.get("up") else "GW down"
                 except Exception:
                     gw_str = "GW ?"
+                try:
+                    opt_str = get_options_collector_status().get("tip") or "Opt ?"
+                except Exception:
+                    opt_str = "Opt ?"
                 # Windows tray tooltips cap at 128 chars; put the critical
-                # signals (state, deep-check, gateway, through) FIRST so they
-                # survive, and let the verbose status tooltip trail + be trimmed.
+                # signals (state, deep-check, gateway, options collector,
+                # through) FIRST so they survive, and let the verbose status
+                # tooltip trail + be trimmed.
                 icon.title = _clamp_title(
-                    f"Ingest: {new_state} | {dc_str} | {gw_str} | {through_str} — {status['tooltip']}"
+                    f"Ingest: {new_state} | {dc_str} | {gw_str} | {opt_str} | {through_str} — {status['tooltip']}"
                 )
                 if new_state != current_state:
                     current_state = new_state

@@ -1339,7 +1339,7 @@ class OptionSignal(Base):
 
 class UserOptionPrefs(Base):
     """A member's option rule overrides, SPARSE: only the fields they changed,
-    merged over ``option_prefs.HOUSE`` on read (like ``ema_setup.clean_enabled``
+    merged over ``opt_rules`` defaults on read (like ``ema_setup.clean_enabled``
     over ``COND_DEFAULT``).
 
     ``prefs_hash`` is the hash of the MERGED result over the pick-relevant fields
@@ -1519,3 +1519,154 @@ class OptionIdeaPush(Base):
     error = Column(Text, nullable=True)
 
     user = relationship("User")
+
+
+# ═══════════════════════════════ Options v2 (OPTIONS_V2_DESIGN.md §2.2) ═══════════════════════════════
+# IBKR-only option data shared by every member. Read and written only through
+# services/opt_store.py. Every figure carries as_of (naive UTC), source (hermes |
+# member), source_user_id (member only) and mdt (live | frozen | delayed |
+# delayed_frozen). Per-contract iv is a FRACTION; per-day vol figures are PERCENT.
+
+
+def _utcnow_naive() -> _dt.datetime:
+    """UTC now without tzinfo - the value the Options v2 tables store, so a value
+    read back compares with one just written on SQLite and Postgres alike."""
+    return _dt.datetime.now(_dt.timezone.utc).replace(tzinfo=None)
+
+
+class OptQuote(Base):
+    """The latest known quote per option contract - the shared pool.
+
+    One row per (symbol, expiry, right, strike). A write replaces a row only when
+    its ``as_of`` is newer (equal time: live beats delayed), so the freshest read
+    from Hermes or any member's connector is what every member sees.
+    """
+
+    __tablename__ = "opt_quote"
+    __table_args__ = (
+        UniqueConstraint("symbol", "expiry", "right", "strike", name="uq_opt_quote_contract"),
+        Index("ix_opt_quote_symbol_expiry", "symbol", "expiry"),
+        Index("ix_opt_quote_as_of", "as_of"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), nullable=False)
+    expiry = Column(String(10), nullable=False)          # YYYY-MM-DD
+    right = Column(String(1), nullable=False)            # C | P
+    strike = Column(Float, nullable=False)
+    bid = Column(Float, nullable=True)
+    ask = Column(Float, nullable=True)
+    mid = Column(Float, nullable=True)
+    last = Column(Float, nullable=True)
+    bid_size = Column(Integer, nullable=True)
+    ask_size = Column(Integer, nullable=True)
+    volume = Column(Integer, nullable=True)
+    oi = Column(Integer, nullable=True)
+    iv = Column(Float, nullable=True)                    # FRACTION
+    delta = Column(Float, nullable=True)                 # signed (puts negative)
+    gamma = Column(Float, nullable=True)
+    theta = Column(Float, nullable=True)
+    vega = Column(Float, nullable=True)
+    und_price = Column(Float, nullable=True)             # spot when quoted
+    as_of = Column(DateTime, nullable=False)             # naive UTC; server receive time for member data
+    source = Column(String(8), nullable=False)           # hermes | member
+    source_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    mdt = Column(String(14), nullable=False)             # live | frozen | delayed | delayed_frozen
+    updated_at = Column(DateTime, default=_utcnow_naive)
+
+
+class OptUnderlying(Base):
+    """One row per symbol: the latest stock facts behind the screeners (spot, ATR,
+    HV, average volume, IBKR's 30-day IV and its rank, the earnings date)."""
+
+    __tablename__ = "opt_underlying"
+    __table_args__ = (UniqueConstraint("symbol", name="uq_opt_underlying_symbol"),)
+
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), nullable=False)
+    spot = Column(Float, nullable=True)
+    spot_as_of = Column(DateTime, nullable=True)
+    spot_source = Column(String(8), nullable=True)
+    spot_user_id = Column(Integer, nullable=True)
+    spot_mdt = Column(String(14), nullable=True)
+    atr14 = Column(Float, nullable=True)                 # Wilder, $
+    hv20 = Column(Float, nullable=True)                  # PERCENT
+    hv60 = Column(Float, nullable=True)                  # PERCENT
+    avg_vol20 = Column(Float, nullable=True)             # shares
+    bars_as_of = Column(DateTime, nullable=True)
+    iv30 = Column(Float, nullable=True)                  # PERCENT, IBKR's 30-day IV, last value
+    iv_rank = Column(Float, nullable=True)               # 0..100
+    iv_pct = Column(Float, nullable=True)                # 0..100
+    iv_n = Column(Integer, nullable=True)
+    iv_lo = Column(Float, nullable=True)                 # PERCENT
+    iv_hi = Column(Float, nullable=True)                 # PERCENT
+    iv_as_of = Column(DateTime, nullable=True)
+    earnings_date = Column(String(10), nullable=True)
+    earnings_src = Column(String(8), nullable=True)      # "yahoo" - the one non-IBKR figure
+    earnings_as_of = Column(DateTime, nullable=True)
+    first_seen = Column(DateTime, default=_utcnow_naive)
+    history_done = Column(Boolean, nullable=False, default=False)   # 1y IV + 2y bars pulled
+    updated_at = Column(DateTime, default=_utcnow_naive)
+
+
+class OptUnderlyingDaily(Base):
+    """The daily history behind IV rank, HV and ATR: IBKR TRADES bars and IBKR's
+    OPTION_IMPLIED_VOLATILITY daily close (x 100, PERCENT). A later value for the
+    same day replaces the earlier one, field by field."""
+
+    __tablename__ = "opt_underlying_daily"
+    __table_args__ = (UniqueConstraint("symbol", "on", name="uq_opt_und_daily"),)
+
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), nullable=False)
+    on = Column(String(10), nullable=False)              # YYYY-MM-DD
+    close = Column(Float, nullable=True)
+    high = Column(Float, nullable=True)
+    low = Column(Float, nullable=True)
+    volume = Column(Float, nullable=True)
+    iv30 = Column(Float, nullable=True)                  # PERCENT
+    source = Column(String(8), nullable=False)           # hermes | member
+    as_of = Column(DateTime, nullable=True)
+
+
+class OptRefreshLog(Base):
+    """One row per fetch that wrote quotes: the audit trail, and what the
+    freshness badges read. Pruned to 30 days."""
+
+    __tablename__ = "opt_refresh_log"
+    __table_args__ = (Index("ix_opt_refresh_log_symbol_as_of", "symbol", "as_of"),)
+
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), nullable=False)
+    as_of = Column(DateTime, nullable=False)
+    source = Column(String(8), nullable=False)
+    source_user_id = Column(Integer, nullable=True)
+    mdt = Column(String(14), nullable=True)
+    kind = Column(String(10), nullable=False, default="cycle")   # history | cycle | eod | member | trade
+    n_contracts = Column(Integer, nullable=False, default=0)
+    n_expiries = Column(Integer, nullable=False, default=0)
+    ms = Column(Integer, nullable=True)
+    error = Column(Text, nullable=True)
+
+
+class OptCollectorStatus(Base):
+    """The Hermes options collector's heartbeat: a single row, ``id = 1``."""
+
+    __tablename__ = "opt_collector_status"
+
+    id = Column(Integer, primary_key=True)
+    state = Column(String(12), nullable=True)            # starting | history | cycle | eod | idle | error | stopped
+    phase_detail = Column(Text, nullable=True)
+    gateway = Column(String(40), nullable=True)          # e.g. 127.0.0.1:4002
+    gateway_ok = Column(Boolean, nullable=True)
+    mdt = Column(String(14), nullable=True)
+    cycle_n = Column(Integer, nullable=True)
+    cycle_started = Column(DateTime, nullable=True)
+    cycle_finished = Column(DateTime, nullable=True)
+    symbols_total = Column(Integer, nullable=True)
+    symbols_done = Column(Integer, nullable=True)
+    last_eod_on = Column(String(10), nullable=True)
+    last_error = Column(Text, nullable=True)
+    heartbeat = Column(DateTime, nullable=True)
+    pid = Column(Integer, nullable=True)
+    version = Column(String(16), nullable=True)

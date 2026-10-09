@@ -381,13 +381,7 @@
         <details class="relative shrink-0">
           <summary class="cursor-pointer list-none rounded-lg px-3 py-1.5 whitespace-nowrap transition flex items-center gap-1
                           {% if ns.active %}bg-orange-500/15 text-orange-300{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-orange-300{% endif %}">
-            {{ entry.label }}{#
-              The exit-line badge rides on the DROPDOWN when Positions lives inside
-              one (2026-09-18): a count hidden behind a closed menu is a count nobody
-              sees. Same element id, same poll, same painter as the single-item case
-              below - only one of the two can render, since /portfolio is one entry.
-            #}{% for href, label in items %}{% if href == '/options' %}<span id="pfNavBadge" hx-get="/options/badge" hx-trigger="load, every 300s"
-                  hx-swap="none" class="contents"></span>{% endif %}{% endfor %}
+            {{ entry.label }}
             <svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor" class="text-slate-500"><path d="M5.5 7.5 10 12l4.5-4.5z"/></svg>
           </summary>
           <div class="absolute left-0 mt-2 w-44 rounded-lg border border-slate-800 bg-slate-900 shadow-xl py-1 z-30">
@@ -401,21 +395,7 @@
         {# a single top-level item (Macro, Sector & Industry, ...) #}
         <a href="{{ entry.href }}"
            class="relative rounded-lg px-3 py-1.5 whitespace-nowrap transition
-                  {% if nav_path.startswith(entry.href) %}bg-orange-500/15 text-orange-300{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-orange-300{% endif %}">{{ entry.label }}{#
-          #}{% if entry.href == '/options' %}{#
-            An open spread that has reached an exit line is the one thing on this
-            platform that is time-critical: the position is live, and the window to
-            roll rather than close is measured in days. So it gets a count in the
-            nav, visible from every page, rather than waiting to be discovered by
-            someone who happened to open Portfolio.
-
-            Reads STORED checks (/options/badge: option_trade_checks, the nightly
-            job row, this member's Telegram ideas), never live quotes -- this is
-            polled from every page, and putting a chain fetch behind it would put
-            the whole site behind Cboe. The Options page replaced /portfolio in the
-            nav on 2026-10-04; the painter below is unchanged apart from two chips.
-          #}<span id="pfNavBadge" hx-get="/options/badge" hx-trigger="load, every 300s"
-                  hx-swap="none" class="contents"></span>{% endif %}</a>
+                  {% if nav_path.startswith(entry.href) %}bg-orange-500/15 text-orange-300{% else %}text-slate-300 hover:bg-slate-800/70 hover:text-orange-300{% endif %}">{{ entry.label }}</a>
         {% endif %}
         {% endfor %}
         {% if user.is_admin %}
@@ -801,61 +781,6 @@
     // any scroll (page or an inner table) invalidates the anchor position
     window.addEventListener('scroll', hide, true);
     window.addEventListener('resize', hide);
-  })();
-</script>
-
-<script>
-  // ── Options / Portfolio nav badge ──────────────────────────────────────────
-  // /options/badge answers with JSON, so the request is made with hx-swap="none"
-  // and painted here. Three states, deliberately distinguishable at a glance:
-  //   rose count   positions AT an exit line -> act today
-  //   sky count    positions APPROACHING one -> nothing to do, but know about it
-  //   amber dot    the last check is older than today -> the number you are
-  //                looking at is stale, which is a different problem from "zero"
-  // A silent failure is the one outcome worth avoiding: an empty badge must mean
-  // "nothing to do", never "the check never ran".
-  (function () {
-    document.body.addEventListener('htmx:afterRequest', function (e) {
-      var el = e.detail && e.detail.elt;
-      if (!el || el.id !== 'pfNavBadge') return;
-      var host = el;
-      host.innerHTML = '';
-      if (!e.detail.successful) return;
-      var d;
-      try { d = JSON.parse(e.detail.xhr.responseText); } catch (err) { return; }
-
-      function chip(text, cls, title) {
-        var b = document.createElement('span');
-        b.textContent = text;
-        b.title = title;
-        b.className = 'ml-1 inline-flex items-center justify-center rounded px-1 ' +
-                      'text-[10px] font-semibold leading-4 align-middle ' + cls;
-        host.appendChild(b);
-      }
-
-      if (d.urgent) {
-        chip(d.urgent, 'bg-rose-500/25 text-rose-300',
-             d.urgent + ' position(s) have reached an exit line');
-      } else if (d.watch) {
-        chip(d.watch, 'bg-sky-500/20 text-sky-300',
-             d.watch + ' position(s) approaching an exit line');
-      }
-      if (d.stale) {
-        chip('!', 'bg-amber-500/25 text-amber-300',
-             'Last checked ' + (d.checked_on || d.run_on || 'never') +
-             ' - the sweep has not run today, so these numbers are stale.');
-      }
-      // the Options page's two extra signals (2026-10-04): last night's data job
-      // did not run, and ideas pushed to Telegram since the page was last opened
-      if (d.job_missed) {
-        chip('⚠', 'bg-amber-500/25 text-amber-300',
-             "Last night's options data job did not run");
-      }
-      if (d.ideas_new) {
-        chip(d.ideas_new, 'bg-emerald-500/20 text-emerald-300',
-             d.ideas_new + ' new idea(s) in your basket');
-      }
-    });
   })();
 </script>
 </body>

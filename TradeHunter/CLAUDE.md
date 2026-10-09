@@ -518,6 +518,7 @@ Each component needs a unique clientId per concurrent IBKR session. The full all
 | **86** | **Options chain feed (`dashboard_tst` Options tab)** | **wherever the web app runs** |
 | **87** | **IV-history seeder (`dashboard_tst/deploy/iv_seed_ibkr.py`) when run by the Options nightly job or by hand** | **Hermes** |
 | **88** | **The same seeder when the `dashboard_tst` web app starts it for a freshly added basket ticker (first-time read, v4.131)** | **Hermes** |
+| **89** | **Options collector (dashboard_tst/deploy/options_collector.py, TST-Options-Collector)** | **Hermes** |
 | 98 | Probe / handshake test | Either |
 | 99 | Dashboard probe | Laptop |
 
@@ -643,15 +644,20 @@ it — memory files don't sync across PCs.
 platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
 `dashboard_tst/DEPLOY.md`. Key facts (so any session/PC recalls them):
 
-- **IN-PROGRESS BUILD (resume across PCs) — Options v2, set 2026-10-09:**
-  `dashboard_tst/OPTIONS_V2_DESIGN.md` is the contract. The user asked to REMOVE the auto-setup
-  Options page (ideas, positions, chart, options & dates) and rebuild it as: members BROWSE trades
-  that pass their own rules (one strategy at a time from a dropdown, rules always visible), with
-  EVERY option and stock figure from IBKR (earnings date the one exception) - collected by an
-  always-on Hermes collector (clientId 89) into the TradeHunter DB daily and through the session,
-  and topped up by each member's own downloadable IBKR connector (green / amber / red pill), every
-  figure stamped with its time and source so one member's live data helps everyone. Read §0 for
-  the user's words and decisions, §10 for the build parts.
+- **Options v2 — BUILT in v4.133 (2026-10-09):**
+  `dashboard_tst/OPTIONS_V2_DESIGN.md` is the contract (§12 = what the build changed). The user asked
+  to REMOVE the auto-setup Options page (ideas, positions, chart, options & dates) and rebuild it as:
+  members BROWSE trades that pass their own rules (one strategy at a time from a dropdown, rules
+  always visible), with EVERY option and stock figure from IBKR (earnings date the one exception),
+  every figure stamped with its time and source so one member's live data helps everyone. The
+  always-on Hermes collector (clientId 89, task `TST-Options-Collector`) collects the history and
+  the daily EOD record OUTSIDE the ingest supervisor's weekday 08:00-20:10 ET Gateway blackout;
+  during the US session the live updates come from each member's own downloadable IBKR connector
+  (bridge 2.0, green / amber / red pill). **After a pull that touches the collector
+  (`opt_collector.py`, `th_ibkr.py`, `options_collector.py`), re-run on Hermes:
+  `powershell -ExecutionPolicy Bypass -File deploy\setup_options_collector_task.ps1 -StartNow`**
+  (from `C:\trading-skills\TradeHunter\dashboard_tst`) — the canonical web-app restart does not
+  restart the collector. Runbook: `dashboard_tst/DEPLOY.md` section G.
 
 - **SUPERSEDED DESIGN (history only):** `dashboard_tst/OPTIONS_MODULE_DESIGN.md`
   — the Options module: a per-member basket of tickers, option data (chain + greeks,

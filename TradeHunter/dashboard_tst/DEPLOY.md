@@ -36,8 +36,10 @@ collaborators.)
 
 ## A. App service on Hermes
 
-Requirements: **Python 3.12**, **git** (and later **cloudflared**). The
-`py -3.12` IBKR rule does NOT apply — this is a non-IBKR web app.
+Requirements: **Python 3.12**, **git** (and later **cloudflared**). The web app
+itself never touches IBKR, but the same venv runs the **options collector**
+(section G), an IBKR workload — so build the venv with `py -3.12` (`run_app.ps1`
+prefers it), never 3.14 (`ib_insync` cannot import there).
 
 ```powershell
 # 1. Clone (first time)
@@ -51,12 +53,12 @@ copy app\.env.example app\.env
 #     TST_AUTH_MODE=password
 #     TST_ADMIN_EMAIL / TST_ADMIN_PASSWORD   (seeds your admin on first run)
 #     TST_HTTPS_ONLY=1                        (served over Cloudflare HTTPS)
-#   Options page, IV-history seed from IB Gateway (v4.131, optional - skipped, and said so on the
-#   status strip, when nothing answers):
+#   Options page (v4.133): the web app never connects to IBKR - the options collector does
+#   (section G). Its settings, all optional:
 #     TST_IBKR_PORT=4002        (unset = probe 4002, 4001, 7497, 7496 in turn; Hermes = Gateway paper 4002)
-#     TST_IV_SEED_IBKR=0        (only to switch the seed off; it is on by default)
-#     TST_IBKR_PYTHON=py -3.12  (unset = the venv's own python - built with py -3.12, ib_insync is in
-#                                 requirements.txt - then py -3.12; this IS an IBKR workload, never 3.14)
+#     TST_OPTIONS_COLLECTOR_CLIENT_ID=89, TST_OPTIONS_MAX_LINES=60
+#   (TST_OPTIONS_SOURCE / _FALLBACK / TST_ALPACA_FEED / TST_IV_SEED_IBKR / TST_IBKR_PYTHON are gone
+#    since v4.133 - delete them from an older app\.env.)
 
 # 3. First run (foreground sanity check) -> http://localhost:8000/health
 powershell -ExecutionPolicy Bypass -File deploy\run_app.ps1
@@ -173,6 +175,71 @@ schtasks /Create /TN "TST-Edgar-Report" /TR ^
 
 The scan is local-only (no network, no DB, ~735 tickers in seconds) and soft-fail
 throughout — an unreadable ticker folder is skipped, never breaks the push.
+
+---
+
+## G. Options collector (on Hermes, v4.133 — Options v2)
+
+Since v4.133 every option and stock figure on the Options page comes from IBKR
+(`OPTIONS_V2_DESIGN.md`). The web app never connects to IBKR; two things do:
+
+- **`TST-Options-Collector`** on Hermes — `deploy/options_collector.py --forever`, IB
+  Gateway on 127.0.0.1 (port 4002 on Hermes; `TST_IBKR_PORT` to pin it), **clientId 89**,
+  read-only. It writes the shared pool (`opt_quote`, `opt_underlying`,
+  `opt_underlying_daily`), a heartbeat row (`opt_collector_status`) and
+  `state\options_collector.json` (the Hermes tray reads it).
+- **Each member's connector** (bridge 2.0, downloaded from the Options page) — the live
+  updates during the US session.
+
+**The blackout reality.** The ingest supervisor (`scripts\ingest_supervisor.py`) owns the
+Hermes Gateway and keeps it **OFF Mon-Fri 08:00-20:10 ET** for the user's manual trading.
+So on weekdays the collector reads history and the daily end-of-day record **in the
+evening, after 20:10 ET** (and over the weekend), and during the session its state is
+`waiting` ("members' IBKR connectors carry the session") — neutral, not an error, on the
+page strip and the tray. Historical requests also wait until the supervisor's state file
+shows tonight's top-up done (they share IBKR's per-login pacing with it); chain quotes
+never wait.
+
+### First install (Hermes, PowerShell, elevated)
+
+```powershell
+cd C:\trading-skills\TradeHunter\dashboard_tst
+.\.venv\Scripts\python.exe -m pip install -r app\requirements.txt    # ib_insync is in it; the venv is py 3.12
+schtasks /Change /TN TST-Options-Nightly /DISABLE                    # the v4.127 Cboe nightly is gone
+powershell -ExecutionPolicy Bypass -File deploy\setup_options_collector_task.ps1 -StartNow
+Get-Content state\options_collector.json                             # state, cycle, gateway, heartbeat
+```
+
+`TST-Options-Nightly` runs a script that no longer exists, so disable it (or
+`Unregister-ScheduledTask -TaskName TST-Options-Nightly -Confirm:$false`). The collector
+task starts at boot (1 min delay) and daily at 07:00 local (revives a dead copy only),
+restarts on failure, no time limit. The collector writes `logs\options_collector.log`
+itself (`--log-file`), rotated at 5 MB with 5 old files kept (`.1` ... `.5`), so it never
+grows past ~30 MB; an older registration that appended stdout with `>>` is replaced the
+next time the setup script runs.
+
+### After a pull
+
+The canonical web-app restart (section C / CLAUDE.md) does NOT restart the collector — it
+is a separate long-running task. **Re-run the setup script with `-StartNow` after any pull
+that changes `app\services\opt_collector.py`, `bridge\th_ibkr.py` or
+`deploy\options_collector.py`** (also `app\services\opt_store.py` / `app\models.py`, which
+it imports): it stops the running copy (and an orphaned python child) and starts the new
+code.
+
+```powershell
+cd C:\trading-skills\TradeHunter\dashboard_tst
+powershell -ExecutionPolicy Bypass -File deploy\setup_options_collector_task.ps1 -StartNow
+```
+
+### Watching it
+
+The Options page strip: "Hermes: running · cycle 3 · 12/30 tickers this pass · live data",
+"Hermes: waiting · Gateway off by design" (the weekday blackout), "Hermes: gateway down"
+(red, a real outage), "no heartbeat for 9 min" (amber, the task died). The Hermes tray
+carries the same line. By hand (stop the task first — two collectors collide on clientId
+89): `.\.venv\Scripts\python.exe deploy\options_collector.py --once -v`, `--history NVDA`,
+`--eod-now`; `--ignore-ingest` lifts the top-up wait for a one-off run.
 
 ---
 

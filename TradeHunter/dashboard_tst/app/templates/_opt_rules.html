@@ -1,0 +1,98 @@
+{# The rules panel (OPTIONS_V2_DESIGN.md §7, §9): ALWAYS visible above the results. The
+   shared block first, then the chosen strategy's own block; every field shows its
+   label with its help as the tooltip (data-tip), its unit, and a dot when it differs
+   from the house default.
+   Autosave per field: each input posts itself (hx-post, "change changed, keyup
+   changed delay:600ms" - the blur after a typed value that was already saved does not
+   post it twice) to /options/rules?strategy=; the answer is ONLY the message line
+   (#optRulesMsg) plus an out-of-band error slot and changed-dot for each POSTED field,
+   so the input being typed in is never re-rendered. A value outside its bounds is
+   stored clamped; the server names it in options:rules-clamped and the page writes
+   the value in force back into the box (its warning stays under it until that field
+   is saved again). A checkbox posts with a hidden "off" twin (hx-include) so
+   un-ticking it is saved too. The server fires options:rules-changed and the page
+   re-screens the list. Number inputs carry a step on the same grid as their min and
+   house default (so the arrows never turn 0.50 into 0.51). A failed save writes a
+   rose "Not saved (HTTP n)" into #optRulesMsg (the page script).
+   No <script> here: the page's own script handles everything.
+   Context: strategy, label, blocks [{block, title, fields[...]}], msg, msg_kind,
+   errors, band, n_changed, part ('panel' | 'msg'). #}
+{% macro message() -%}
+  {%- if msg -%}
+  <span class="{% if msg_kind == 'ok' %}text-emerald-300{% elif msg_kind == 'warn' %}text-amber-300{% else %}text-rose-300{% endif %}">{{ msg }}</span>
+  {%- elif band -%}
+  <span class="text-amber-300">{{ band|join(' ') }}</span>
+  {%- else -%}
+  <span class="text-slate-500">Changes apply as you type.</span>
+  {%- endif -%}
+{%- endmacro %}
+{% macro err_slot(f, oob=False) -%}
+<span id="rerr-{{ f.id }}"{% if oob %} hx-swap-oob="true"{% endif %} class="block min-h-0 text-[10px] leading-tight text-rose-300" role="status">{{ f.err or '' }}</span>
+{%- endmacro %}
+{% macro dot_slot(f, oob=False) -%}
+<span id="rdot-{{ f.id }}"{% if oob %} hx-swap-oob="true"{% endif %} class="inline-block w-1.5 text-emerald-400" aria-hidden="true"
+      {% if f.changed %}title="Changed from the house default ({{ f.default_text }})"{% endif %}>{% if f.changed %}&bull;{% endif %}</span>
+{%- endmacro %}
+
+{% if part == 'msg' %}
+{{ message() }}
+{# only the fields this save carried: another field's warning (a value that was
+   clamped) stays until THAT field is saved again #}
+{% for b in blocks %}{% for f in b.fields %}{% if f.posted %}
+{{ err_slot(f, True) }}
+{{ dot_slot(f, True) }}
+{% endif %}{% endfor %}{% endfor %}
+{% else %}
+<div id="optRules" class="opt-rules rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2 lg:max-h-[40vh] lg:overflow-y-auto"
+     data-strategy="{{ strategy }}">
+  <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mb-1.5">
+    <span class="text-[12px] font-semibold text-slate-200">Your rules &middot; {{ label }}</span>
+    <span class="text-[10px] text-slate-500">{% if n_changed %}{{ n_changed }} changed from the house defaults{% else %}house defaults{% endif %}</span>
+    <span id="optRulesMsg" class="text-[11px]" aria-live="polite">{{ message() }}</span>
+    <button type="button" class="ml-auto rounded border border-slate-700 px-2 py-0.5 text-[11px] text-slate-300 hover:border-amber-500 hover:text-amber-300 transition"
+            hx-post="/options/rules/reset?strategy={{ strategy }}" hx-target="#optRules" hx-swap="outerHTML"
+            hx-confirm="Put every rule shown here ({{ label }} and the shared ones) back to the house default?">Reset to defaults</button>
+  </div>
+
+  {% for b in blocks %}
+  <div class="{% if not loop.first %}mt-2 pt-2 border-t border-slate-800/70{% endif %}">
+    <div class="text-[10px] uppercase tracking-wide text-slate-500 mb-1">{{ b.title }}</div>
+    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-x-3 gap-y-1.5">
+      {% for f in b.fields %}
+      <div class="min-w-0" data-field="{{ f.key }}">
+        <label for="rf-{{ f.id }}" class="flex items-center gap-1 text-[10px] text-slate-400 leading-tight">
+          {{ dot_slot(f) }}
+          <span class="th-help truncate" tabindex="0" data-tip="{{ f.help }}{% if f.kind in ('int', 'num') and f.lo is not none %} Allowed {{ '%g'|format(f.lo) }} to {{ '%g'|format(f.hi) }}{% if f.unit %} {{ f.unit }}{% endif %}.{% endif %} House default: {{ f.default_text }}{% if f.unit and f.kind in ('int', 'num') %} {{ f.unit }}{% endif %}.">{{ f.label }}</span>
+        </label>
+        <div class="mt-0.5 flex items-center gap-1">
+          {% if f.kind == 'bool' %}
+          <input type="hidden" id="rf-{{ f.id }}-off" name="{{ f.key }}" value="off">
+          <input type="checkbox" id="rf-{{ f.id }}" name="{{ f.key }}" value="on" {% if f.value %}checked{% endif %}
+                 class="accent-emerald-500"
+                 hx-post="/options/rules?strategy={{ strategy }}" hx-trigger="change" hx-include="#rf-{{ f.id }}-off"
+                 hx-target="#optRulesMsg" hx-swap="innerHTML">
+          {% elif f.kind == 'choice' %}
+          <select id="rf-{{ f.id }}" name="{{ f.key }}"
+                  class="w-full rounded bg-slate-950/60 border border-slate-700 px-1 py-0.5 text-[11px] text-slate-200 outline-none focus:border-emerald-500"
+                  hx-post="/options/rules?strategy={{ strategy }}" hx-trigger="change changed, keyup changed delay:600ms"
+                  hx-target="#optRulesMsg" hx-swap="innerHTML">
+            {% for val, word in f.choices %}<option value="{{ val }}"{% if val == f.value %} selected{% endif %}>{{ word }}</option>{% endfor %}
+          </select>
+          {% else %}
+          <input type="number" id="rf-{{ f.id }}" name="{{ f.key }}" value="{{ f.text }}" inputmode="decimal"
+                 {% if f.lo is not none %}min="{{ '%g'|format(f.lo) }}"{% endif %} {% if f.hi is not none %}max="{{ '%g'|format(f.hi) }}"{% endif %}
+                 {% if f.step %}step="{{ '%g'|format(f.step) }}"{% endif %}
+                 class="w-full min-w-0 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-200 tabular-nums outline-none focus:border-emerald-500"
+                 hx-post="/options/rules?strategy={{ strategy }}" hx-trigger="change changed, keyup changed delay:600ms"
+                 hx-target="#optRulesMsg" hx-swap="innerHTML">
+          {% if f.unit %}<span class="shrink-0 text-[10px] text-slate-500">{{ f.unit }}</span>{% endif %}
+          {% endif %}
+        </div>
+        {{ err_slot(f) }}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}

@@ -3,7 +3,7 @@
 Every number an engine, the data layer or the page would otherwise bury in a
 function body lives here with a one-line reason (OPTIONS_MODULE_DESIGN.md
 II.2.3, design/options/part_B_engines.md B0.3). None of these is a member
-preference: a member's rules are the fields of ``option_prefs.SCHEMA``; what is
+preference: a member's rules are the fields of ``opt_rules.SCHEMA``; what is
 here is the platform's convention (the chart stop is 1 ATR, the notional cap is
 10 % of the account) or a data-quality bound (an IV of 8.3 is not a quote).
 
