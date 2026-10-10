@@ -1,10 +1,17 @@
 # dashboard_tst/bridge/ — the member IBKR connector (2.0)
 
 The small program each member runs **on their own PC**, next to their own TWS / IB
-Gateway, that feeds the Options page with option data from the member's own IBKR login
-(OPTIONS_V2_DESIGN.md §5). Members download it from the Options page as
-`TradeHunter-IBKR-Connector-<version>.zip` (built from this folder by
-`app/services/opt_connector_pkg.py`).
+Gateway, that reads the member's own IBKR login for the browser.
+
+> **Since dashboard_tst v4.134 (2026-10-10) the Options page takes its data from Massive
+> (formerly Polygon.io), not from this connector** (OPTIONS_V2_DESIGN.md §13). The page no
+> longer offers the download (`app/services/opt_connector_pkg.py` is deleted), shows no
+> connector pill and accepts no member data — `/chain2`, `/underlying` and `/account` have
+> no caller on the Options page any more. The bridge stays in the repo because the legacy
+> hidden pages (IV Rank / Spread / Positions) use its 1.x endpoints and the Options
+> basket's optional "Run my TWS scanner" import calls its `/scan`; a member who wants that
+> runs it from this folder. The text below describes the 2.0 connector as built for
+> v4.133 (§5).
 
 ## Why it exists
 
@@ -41,7 +48,7 @@ trustworthy origin), which is what makes this work with nothing exposed.
 
 ## Install (member, once per PC)
 
-1. Download the zip from the Options page and unzip it anywhere (keep the folder there).
+1. Copy this folder anywhere on your PC (until v4.134 it was a zip on the Options page).
 2. Right-click `install_bridge.ps1` > **Run with PowerShell**. Or:
    `powershell -ExecutionPolicy Bypass -File install_bridge.ps1`
 3. In the settings page that opens, http://127.0.0.1:9224/, pick the TWS port
@@ -106,6 +113,16 @@ accepts only the connector's own page (`Origin` / `Sec-Fetch-Site` / `Referer` c
 CORS header, a cross-origin preflight is refused) so no website can repoint it.
 
 ## Changelog
+
+### 2026-10-10 — dashboard_tst v4.134: the Options page no longer uses the connector (no file here changed)
+- The user switched the Options data to Massive (formerly Polygon.io — Options Starter +
+  Stocks Basic; *"ok i will build it with polygon API for the data"*), so the Options page
+  dropped the connector pill, its download (`app/services/opt_connector_pkg.py` deleted,
+  with its build_zip tests), the contribution loop and "Refresh these legs live". No file
+  in this folder changed. The bridge stays: the legacy hidden pages use its 1.x endpoints
+  and the Options basket's optional "Run my TWS scanner" import calls `/scan`. Its tests
+  (`tests/test_connector.py`, 87, and `tests/test_th_ibkr.py`) stay green. The intro above
+  and install step 1 now say so.
 
 ### 2026-10-09 — connector 2.0 review fixes: chunked reads that fit, no leaked lines, no cross-site reads
 From the six-lens review of the v4.133 build (Options v2), before it shipped:

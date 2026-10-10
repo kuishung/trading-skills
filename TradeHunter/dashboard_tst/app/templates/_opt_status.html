@@ -1,11 +1,21 @@
-{# The Hermes collector line of the Options status strip (OPTIONS_V2_DESIGN.md §4.3),
-   polled every 60 s into #optStatus. States: running (emerald) / error, e.g. the
-   gateway is down (rose) / stale, no heartbeat for more than 5 minutes (amber) /
-   stopped or none, it has not reported yet (slate). The reason is in the tooltip.
-   The connector pill beside it is the page's own browser probe, not this fragment.
-   No <script> here. Context: col {state, tone, text, tip}. #}
-<span class="opt-collector inline-flex items-center gap-1.5" data-state="{{ col.state }}" tabindex="0" data-tip="{{ col.tip }}">
+{# The Options status strip (OPTIONS_V2_DESIGN.md §13.6), polled every 60 s into
+   #optStatus. The Hermes collector line - it reads Massive: running (emerald) / idle
+   (slate) / reading history / end-of-day pass (emerald) / error, e.g. Massive rejected
+   the API key (rose) / stale, no heartbeat for more than 5 minutes (amber) / none, it
+   has not reported yet (slate); the details are in the tooltip. data-pass changes when
+   a pass finishes, and the page then re-screens the list. Then, while the data plan has
+   no bid/ask, the plain note that prices are estimated from IV; and for an
+   administrator only, a missing TST_MASSIVE_API_KEY.
+   No <script> here. Context: col {state, tone, text, tip, pass_key}, quotes,
+   no_quotes_note, key_missing, key_missing_text. #}
+<span class="opt-collector inline-flex items-center gap-1.5" data-state="{{ col.state }}" data-pass="{{ col.pass_key }}" tabindex="0" data-tip="{{ col.tip }}">
   <span class="inline-block w-2 h-2 rounded-full
                {% if col.tone == 'emerald' %}bg-emerald-400{% elif col.tone == 'amber' %}bg-amber-400{% elif col.tone == 'rose' %}bg-rose-400{% else %}bg-slate-500{% endif %}"></span>
   <span class="{% if col.tone == 'emerald' %}text-slate-300{% elif col.tone == 'amber' %}text-amber-300{% elif col.tone == 'rose' %}text-rose-300{% else %}text-slate-400{% endif %}">{{ col.text }}</span>
 </span>
+{% if not quotes %}
+<span class="opt-noquotes text-slate-500" data-tip="Massive Options Starter has no bid/ask quotes: each option's price is a model price from its own implied volatility. Real fills can differ - TradeHunter finds the trade, you check the live bid/ask and enter it in IBKR TWS.">&middot; {{ no_quotes_note }}</span>
+{% endif %}
+{% if key_missing %}
+<span class="opt-keymissing rounded border border-rose-600/60 bg-rose-500/10 px-1.5 text-rose-300" data-tip="Administrators only: put the Massive API key in app\.env on Hermes as TST_MASSIVE_API_KEY, then restart the web app and the TST-Options-Collector task.">{{ key_missing_text }}</span>
+{% endif %}

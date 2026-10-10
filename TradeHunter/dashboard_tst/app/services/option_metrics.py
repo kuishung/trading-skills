@@ -121,13 +121,16 @@ def hv(closes: list[float], n: int) -> float | None:
 
 
 # ---------------------------------------------- A3.2 ATM IV per expiry, IV30
-def atm_iv_by_expiry(rows, spot: float, snap_on: str | None = None) -> dict[str, dict]:
+def atm_iv_by_expiry(rows, spot: float, snap_on: str | None = None, *,
+                     require_quote: bool = True) -> dict[str, dict]:
     """``{expiry: {"dte", "atm_iv" (PERCENT), "n_legs", "em_1sd"}}``.
 
     Per expiry: K1 = the highest strike <= spot, K2 = the lowest strike > spot
     (both must exist and sit within ATM_MAX_DIST_PCT of spot). Legs = the call
     and put at K1 and K2 with a sane iv and bid > 0 (a quote, not a stale print);
-    at least two legs in all. iv(K) = the mean of the call and put iv present at
+    at least two legs in all. ``require_quote=False`` drops the bid condition (a
+    leg counts on a sane iv alone): Massive Options Starter has no bid/ask, its
+    IV comes from the feed's own model (OPTIONS_V2_DESIGN.md §13.3). iv(K) = the mean of the call and put iv present at
     K; atm_iv = iv(K1) + (iv(K2) - iv(K1)) * (spot - K1) / (K2 - K1), then * 100.
     When spot sits exactly on K1, iv(K1) alone decides. ``em_1sd`` = spot *
     atm_iv / 100 * sqrt(dte / 365), the one-sigma move to that expiry.
@@ -159,7 +162,9 @@ def atm_iv_by_expiry(rows, spot: float, snap_on: str | None = None) -> dict[str,
                 continue
             iv = _num(_g(r, "iv"))
             bid = _num(_g(r, "bid"))
-            if iv is None or not (IV_SANITY_LO < iv < IV_SANITY_HI) or bid is None or bid <= 0:
+            if iv is None or not (IV_SANITY_LO < iv < IV_SANITY_HI):
+                continue
+            if require_quote and (bid is None or bid <= 0):
                 continue
             ivs[k].append(iv)
         n_legs = len(ivs[k1]) + len(ivs[k2])

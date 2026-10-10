@@ -2,13 +2,15 @@
    the chosen strategy, over the member's whole basket. Sorted on the server: a header
    carries data-sort and the page re-requests with sort= / dir=. A row (tr.opt-cand,
    data-cand-id) opens the trade under itself (the page inserts tr.opt-detail and loads
-   /options/trade into it). The Data column is the OLDEST leg's age and every source
-   involved - amber when older than an hour during the session. "Why so few?" is the
+   /options/trade into it). The Data column is the OLDEST leg's market-time age and its
+   source, e.g. "16 min · Massive (delayed)" - amber when older than an hour during the
+   session. Credit/Debit is at the leg prices: the bid/ask mids when the data has
+   quotes, else model prices from each leg's IV (Massive Starter). "Why so few?" is the
    screener's funnel: how many tickers / expiries / trades each rule removed (the first
    rule each failed).
-   data-syms on the root: the tickers whose fresh data re-screens the list - the whole
-   basket (a read that makes an old chain current must re-screen it too); the page
-   debounces that re-screen and never runs it while a trade is open. No <script> here.
+   data-syms on the root: the basket's tickers (a refresh or a finished collector pass
+   re-screens the list; the page debounces it and never runs it while a trade is
+   open). No <script> here.
    Context: strategy, label, sort, dir, n_tickers, views [_row_view], funnel, tickers,
    n_passed, n_considered, error, syms_watch, no_trade [(sym, reason)], rules_note. #}
 {% macro th(key, text, tip, first_dir='desc', cls='') -%}
@@ -28,7 +30,7 @@
   {% if error %}
   <p class="rounded border border-rose-600/60 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-300">{{ error }}</p>
   {% elif not n_tickers %}
-  <p class="px-1 py-4 text-[12px] text-slate-400 leading-relaxed">Your basket is empty. Add tickers on the left; each one is screened against your rules as soon as its option chain has been read.</p>
+  <p class="px-1 py-4 text-[12px] text-slate-400 leading-relaxed">Your basket is empty. Add tickers on the left; each one is screened against your rules as soon as its option chain has been read from Massive.</p>
   {% elif not views %}
   <div class="px-1 py-3 text-[12px] text-slate-400 leading-relaxed">
     <p>No trade passes your {{ label|lower }} rules today.{% if rules_note %} <span class="text-amber-300">{{ rules_note }}</span>{% endif %}</p>
@@ -42,15 +44,15 @@
           {{ th('symbol', 'Ticker', 'The stock', 'asc') }}
           {{ th('expiry', 'Expiry (DTE)', 'Expiry and days to the nearest one', 'asc') }}
           <th class="px-1.5 py-1 font-normal whitespace-nowrap" title="+ = buy, &minus; = sell; strike and C (call) / P (put)">Legs</th>
-          {{ th('net', 'Credit/Debit', 'Per share at the mid prices (x100 per contract)') }}
+          {{ th('net', 'Credit/Debit', 'Per share at the leg prices - estimated from IV when there is no bid/ask (x100 per contract)') }}
           {{ th('max_profit', 'Max profit', 'Per contract') }}
           {{ th('max_loss', 'Max loss', 'Per contract', 'asc') }}
           {{ th('ror', 'RoR', 'Max profit / max loss') }}
           {{ th('pop', 'POP', 'Probability of profit at expiry (lognormal, the legs\' own IV)') }}
           {{ th('delta', '&Delta;'|safe, 'Delta of the leg that defines the trade') }}
-          {{ th('iv_rank', 'IV rank', 'IBKR 30-day IV against its own last year (0 = lowest, 100 = highest)') }}
-          {{ th('liquidity', 'Liquidity', 'Smallest open interest across the legs and the widest bid/ask') }}
-          {{ th('age', 'Data', 'Age of the oldest leg\'s quote and who read it', 'asc') }}
+          {{ th('iv_rank', 'IV rank', 'Today\'s 30-day IV against its own last year (0 = lowest, 100 = highest)') }}
+          {{ th('liquidity', 'Liquidity', 'Smallest open interest across the legs, then the widest bid/ask - or, without bid/ask, the least traded today') }}
+          {{ th('age', 'Data', 'Market-time age of the oldest leg\'s data and its source (Massive is 15 min delayed)', 'asc') }}
         </tr>
       </thead>
       <tbody>
@@ -84,10 +86,19 @@
         <thead class="text-[10px] text-slate-500 text-left"><tr><th class="pr-3 font-normal">Rule</th><th class="pr-1 font-normal text-right">Removed</th></tr></thead>
         <tbody>
           {% for f in funnel %}
+          {% set one = {'tickers': 'ticker', 'expiries': 'expiry', 'trades': 'trade'}.get(f.unit, f.unit) %}
+          {% if f.info %}
+          {# an information line (the bid/ask rules not applied: no quotes on the data plan) - it removes nothing #}
+          <tr class="opt-funnel-info border-t border-slate-800/60 text-slate-500 italic">
+            <td class="pr-3 py-0.5">{{ f.label }}</td>
+            <td class="pr-1 py-0.5 text-right whitespace-nowrap">{{ '{:,}'.format(f.removed) }} {{ f.unit if f.removed != 1 else one }} not checked</td>
+          </tr>
+          {% else %}
           <tr class="border-t border-slate-800/60 {% if f.removed %}text-slate-300{% else %}text-slate-600{% endif %}">
             <td class="pr-3 py-0.5">{{ f.label }}</td>
-            <td class="pr-1 py-0.5 text-right whitespace-nowrap">{{ '{:,}'.format(f.removed) }} {{ f.unit if f.removed != 1 else {'tickers': 'ticker', 'expiries': 'expiry', 'trades': 'trade'}.get(f.unit, f.unit) }}</td>
+            <td class="pr-1 py-0.5 text-right whitespace-nowrap">{{ '{:,}'.format(f.removed) }} {{ f.unit if f.removed != 1 else one }}</td>
           </tr>
+          {% endif %}
           {% endfor %}
         </tbody>
       </table>

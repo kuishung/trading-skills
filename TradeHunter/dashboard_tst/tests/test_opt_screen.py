@@ -76,8 +76,9 @@ def removed(res) -> dict:
 
 
 def check_invariant(res):
-    """Every enumerated trade is either removed by exactly one rule or listed."""
-    trades = sum(f["removed"] for f in res["funnel"] if f["unit"] == "trades")
+    """Every enumerated trade is either removed by exactly one rule or listed (the
+    no-quotes information line removes nothing, so it is left out of the sum)."""
+    trades = sum(f["removed"] for f in res["funnel"] if f["unit"] == "trades" and not f.get("info"))
     assert trades + res["n_passed"] == res["n_considered"], res["funnel"]
 
 
@@ -471,6 +472,9 @@ def test_is_monthly():
     ({"bid": 0.60, "ask": 0.90, "mid": 0.75}, {"max_leg_spread": 0.25}, {}, "spread", 1),   # an old shared one, lifted
     ({}, {"max_leg_spread_pct": 10}, {}, "spread_pct", 2),     # 0.10 / 0.75 = 13.3%; Nov 27 0.10 / 0.65 too
     ({"bid": None, "mid": None}, {}, {}, "quote", 1),
+    ({"bid": None, "ask": None, "mid": None}, {}, {}, "quote", 1),             # no quotes and no model price
+    ({"bid": 0.0, "ask": 0.0, "mid": 0.0}, {}, {}, "quote", 1),                # a zero price is no price
+    ({"bid": 0.90, "ask": 0.80, "mid": 0.85}, {}, {}, "quote", 1),             # a crossed quote is no price
     ({"oi": 50, "bid": 0.30, "ask": 1.20, "mid": 0.75}, {}, {}, "oi", 1),     # first failure wins: oi before spread
     ({"as_of": NOW - dt.timedelta(hours=30)}, {}, {}, "age", 1),
     ({"as_of": None}, {}, {}, "age", 1),
@@ -487,6 +491,7 @@ def test_leg_filters(long_92, shared, own, rule, n):
 def test_inactive_rules_are_not_in_the_funnel():
     keys = [f["rule"] for f in run("bull_put", bull_put_chain(), und())["funnel"]]
     assert "opt_vol" not in keys and "stock_vol_min" not in keys and "monthly" not in keys
+    assert opt_screen.NO_QUOTES not in keys                       # every leg quoted: no information line
     assert keys[0] == "data" and keys[-1] == "per_ticker"
     assert keys.index("iv_rank") < keys.index("dte") < keys.index("short_delta") < keys.index("quote") \
         < keys.index("credit")
@@ -996,3 +1001,116 @@ def test_thirty_tickers_screen_fast(synth):
         worst = max(worst, time.perf_counter() - t0)
         assert len(res["tickers"]) == 30
     assert worst < 4.0, f"slowest strategy took {worst:.2f} s over 30 tickers x 1,500 contracts"
+
+
+# ------------------------------------------------------------------ no bid/ask quotes (Massive Starter, §13.5)
+NO_QUOTES_LINE = "Bid/ask rules not applied - your data plan has no quotes"
+
+
+def unquote(view: dict, **kw) -> dict:
+    """A copy with no bid / ask on any row - Massive's Options Starter plan. ``mid``
+    stays: the model price (Black-Scholes from the contract's IV) the collector stores."""
+    out = copy.deepcopy(view)
+    for e in out["expiries"]:
+        for side in ("calls", "puts"):
+            for r in e[side]:
+                r.update(bid=None, ask=None, bid_size=None, ask_size=None, **kw)
+    return out
+
+
+def test_model_priced_legs_list_trades_and_the_funnel_says_bid_ask_was_skipped():
+    ch = unquote(bull_put_chain(), source="massive", mdt="delayed")
+    res = run("bull_put", ch, und())
+    assert res["n_passed"] == 1
+    c = res["rows"][0]
+    assert c["id"] == "SYN|bull_put|2026-11-20|P|94|2026-11-20|P|92"           # the same trade as with quotes
+    assert c["net"] == 0.5 and c["net_natural"] is None                         # no bid / ask: no natural price
+    assert c["max_profit"] == 50.0 and c["max_loss"] == 150.0 and c["breakevens"] == [93.5]
+    assert c["data"]["priced"] == "model" and [l["priced"] for l in c["legs"]] == ["model", "model"]
+    assert (c["legs"][0]["bid"], c["legs"][0]["ask"], c["legs"][0]["mid"]) == (None, None, 1.25)
+    assert c["liquidity"] == {"oi_min": 1000, "spread_max": None, "spread_pct_max": None, "volume_min": 100}
+    assert c["data"]["sources"] == ["massive·delayed"] and c["data"]["age_min"] == 10
+    rm = removed(res)
+    assert rm["spread"] == 0 and rm["spread_pct"] == 0 and rm["credit"] == 1
+    # ONE information line, right after the bid/ask rules: the 2 trades that reached them
+    keys = [f["rule"] for f in res["funnel"]]
+    assert keys.count(opt_screen.NO_QUOTES) == 1
+    assert keys.index(opt_screen.NO_QUOTES) == keys.index("spread_pct") + 1
+    line = res["funnel"][keys.index(opt_screen.NO_QUOTES)]
+    assert line == {"rule": "no_quotes", "label": NO_QUOTES_LINE, "unit": "trades", "removed": 2, "info": True}
+    assert opt_screen.NO_QUOTES_LABEL == NO_QUOTES_LINE
+    check_invariant(res)
+    # a wide market blocks the trade only where there IS a market to judge
+    wide = bull_put_chain(short_94={"bid": 0.95, "ask": 1.55, "mid": 1.25})
+    assert run("bull_put", wide, und())["n_passed"] == 0
+    assert removed(run("bull_put", wide, und()))["spread"] == 1
+    assert run("bull_put", unquote(wide), und())["n_passed"] == 1
+    # the detail re-derives the same model-priced trade
+    d = opt_screen.detail("bull_put", c["id"], ch, und(), rules("bull_put"), today=TODAY, now=NOW)
+    assert d["candidate"] == c and d["fails"] is None and d["payoff"]["max_loss"] == 150.0
+
+
+def test_with_quotes_the_bid_ask_rules_still_bite():
+    # every leg quoted: no information line, the $ and % rules remove as before
+    res = run("bull_put", bull_put_chain(short_94={"bid": 0.95, "ask": 1.55, "mid": 1.25}), und())
+    assert removed(res)["spread"] == 1 and opt_screen.NO_QUOTES not in removed(res)
+    pct = run("bull_put", bull_put_chain(), und(), rules("bull_put", {"max_leg_spread_pct": 10}))
+    assert removed(pct)["spread_pct"] == 2 and pct["n_passed"] == 0
+    c = run("bull_put", bull_put_chain(), und())["rows"][0]
+    assert c["data"]["priced"] == "quotes" and c["net_natural"] == 0.4
+    assert [l["priced"] for l in c["legs"]] == ["quotes", "quotes"]
+    # a quoted leg in a mixed trade is still checked: its wide market removes the trade, and a
+    # trade the bid/ask rules removed is not counted as "not applied"
+    mixed_wide = bull_put_chain(long_92={"bid": None, "ask": None},
+                                short_94={"bid": 0.95, "ask": 1.55, "mid": 1.25})
+    r2 = run("bull_put", mixed_wide, und())
+    assert removed(r2)["spread"] == 1 and opt_screen.NO_QUOTES not in removed(r2)
+    check_invariant(r2)
+
+
+def test_mixed_legs_are_model_priced_and_have_no_natural_price():
+    ch = bull_put_chain(long_92={"bid": None, "ask": None})            # mid 0.75 stays (the model price)
+    res = run("bull_put", ch, und())
+    c = res["rows"][0]
+    assert c["net"] == 0.5 and c["net_natural"] is None and c["data"]["priced"] == "model"
+    assert [l["priced"] for l in c["legs"]] == ["quotes", "model"]
+    assert c["liquidity"]["spread_max"] is None and c["liquidity"]["oi_min"] == 1000
+    assert removed(res)[opt_screen.NO_QUOTES] == 1                     # the Nov 27 pair is fully quoted
+    check_invariant(res)
+    # one side only (an ask, no bid) is not a two-sided quote: the stored price is used
+    one_side = bull_put_chain(long_92={"bid": None})
+    c1 = run("bull_put", one_side, und())["rows"][0]
+    assert c1["net_natural"] is None and c1["legs"][1]["priced"] == "model"
+
+
+def test_a_leg_with_no_price_at_all_is_named():
+    ch = unquote(chain({"2026-11-20": {"puts": [row(92, 0.70, 0.80, -0.17), row(94, 1.20, 1.30, -0.25)]}}))
+    ch["expiries"][0]["puts"][0]["mid"] = None                         # no IV, so no model price either
+    res = run("bull_put", ch, und())
+    assert res["n_passed"] == 0 and removed(res)["quote"] == 1
+    assert opt_screen.NO_QUOTES not in removed(res)                    # removed before the bid/ask rules
+    assert res["tickers"]["SYN"]["reason"] == ("no trade passes: the last rule in the way is no price on an "
+                                               "option (no bid/ask and no IV)")
+    check_invariant(res)
+
+
+@pytest.mark.parametrize("strategy", opt_rules.STRATEGIES)
+def test_every_strategy_lists_on_a_chain_without_quotes(synth_iv, strategy):
+    """The house defaults list every strategy on a model-priced chain (the Starter plan):
+    the bid/ask rules check nothing, the information line counts what they skipped."""
+    ch = unquote(synth_iv[0.35], source="massive", mdt="delayed")
+    u = default_und(strategy, 0.35)
+    r = house(strategy)
+    res = run(strategy, ch, u, r)
+    assert res["n_passed"] >= 1, (res["tickers"], [f for f in res["funnel"] if f["removed"]])
+    check_invariant(res)
+    rm = removed(res)
+    assert rm.get("spread", 0) == 0 and rm["spread_pct"] == 0
+    assert rm[opt_screen.NO_QUOTES] >= res["n_passed"]
+    assert [f for f in res["funnel"] if f.get("info")] == [
+        {"rule": "no_quotes", "label": NO_QUOTES_LINE, "unit": "trades", "removed": rm["no_quotes"], "info": True}]
+    for c in res["rows"]:
+        assert c["data"]["priced"] == "model" and c["net_natural"] is None
+        assert c["data"]["sources"] == ["massive·delayed"]
+        d = opt_screen.detail(strategy, c["id"], ch, u, r, today=TODAY, now=NOW)
+        assert d["candidate"] == c and d["fails"] is None and d["payoff"]["error"] is None

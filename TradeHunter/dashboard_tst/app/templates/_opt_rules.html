@@ -14,6 +14,9 @@
    re-screens the list. Number inputs carry a step on the same grid as their min and
    house default (so the arrows never turn 0.50 into 0.51). A failed save writes a
    rose "Not saved (HTTP n)" into #optRulesMsg (the page script).
+   A rule the data plan cannot apply (the two bid/ask rules while Massive returns no
+   quotes, opt_rules.UNUSED_WITHOUT_QUOTES) is greyed out with its note (f.unused); it
+   stays editable and stored, so it applies again on a plan with quotes (§13.5).
    No <script> here: the page's own script handles everything.
    Context: strategy, label, blocks [{block, title, fields[...]}], msg, msg_kind,
    errors, band, n_changed, part ('panel' | 'msg'). #}
@@ -59,10 +62,10 @@
     <div class="text-[10px] uppercase tracking-wide text-slate-500 mb-1">{{ b.title }}</div>
     <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-x-3 gap-y-1.5">
       {% for f in b.fields %}
-      <div class="min-w-0" data-field="{{ f.key }}">
+      <div class="min-w-0{% if f.unused %} opt-unused opacity-50{% endif %}" data-field="{{ f.key }}"{% if f.unused %} data-unused="1"{% endif %}>
         <label for="rf-{{ f.id }}" class="flex items-center gap-1 text-[10px] text-slate-400 leading-tight">
           {{ dot_slot(f) }}
-          <span class="th-help truncate" tabindex="0" data-tip="{{ f.help }}{% if f.kind in ('int', 'num') and f.lo is not none %} Allowed {{ '%g'|format(f.lo) }} to {{ '%g'|format(f.hi) }}{% if f.unit %} {{ f.unit }}{% endif %}.{% endif %} House default: {{ f.default_text }}{% if f.unit and f.kind in ('int', 'num') %} {{ f.unit }}{% endif %}.">{{ f.label }}</span>
+          <span class="th-help truncate" tabindex="0" data-tip="{% if f.unused %}{{ f.unused[:1]|upper }}{{ f.unused[1:] }}. {% endif %}{{ f.help }}{% if f.kind in ('int', 'num') and f.lo is not none %} Allowed {{ '%g'|format(f.lo) }} to {{ '%g'|format(f.hi) }}{% if f.unit %} {{ f.unit }}{% endif %}.{% endif %} House default: {{ f.default_text }}{% if f.unit and f.kind in ('int', 'num') %} {{ f.unit }}{% endif %}.">{{ f.label }}</span>
         </label>
         <div class="mt-0.5 flex items-center gap-1">
           {% if f.kind == 'bool' %}
@@ -88,6 +91,7 @@
           {% if f.unit %}<span class="shrink-0 text-[10px] text-slate-500">{{ f.unit }}</span>{% endif %}
           {% endif %}
         </div>
+        {% if f.unused %}<span class="opt-unused-note block text-[10px] leading-tight text-slate-500">{{ f.unused }}</span>{% endif %}
         {{ err_slot(f) }}
       </div>
       {% endfor %}

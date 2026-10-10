@@ -1,20 +1,53 @@
-{# The basket column (OPTIONS_V2_DESIGN.md §9): the universe the list screens and the
-   collectors read. Each row: the data-age dot and source from opt_store.freshness
-   (the newest read of that ticker by Hermes or any member's connector), the stored IV
-   rank, and the number of trades passing for the chosen strategy (the .opt-count cell,
-   painted by the page from the results' options:counts event). A ticker nobody has
-   read yet says "waiting for first read".
-   Two parts: the ROWS container (#optBasketRows: sort buttons, rows, the waiting note)
-   and the Add / Import FOOTER. part='all' renders both (the first load, as the
-   innerHTML of #optBasket); part='rows' renders only the rows container's inner HTML -
-   what every refresh swaps (a contribution, a sort click, add / remove), so the footer
-   keeps what the member typed, which panel is open, and the scan criteria. The chosen
-   sort rides on the rows (data-sort) and the page sends it with every refresh.
+{# The basket column (OPTIONS_V2_DESIGN.md §9, §13.6): the universe the list screens and
+   the Hermes collector reads from Massive. Each row: the data-age dot and source from
+   opt_store.freshness (the newest read of that ticker), the stored IV rank, the number
+   of trades passing for the chosen strategy (the .opt-count cell, painted by the page
+   from the results' options:counts event), and the refresh button ("Refresh now":
+   POST /options/refresh/<sym> reads that ticker from Massive on the server and answers
+   this row again, part='row'). A ticker nobody has read yet says "waiting for first
+   read".
+   Three parts: the ROWS container (#optBasketRows: sort buttons, rows, the waiting
+   note), the Add / Import FOOTER, and one ROW. part='all' renders the first two (the
+   first load, as the innerHTML of #optBasket); part='rows' renders only the rows
+   container's inner HTML - what every refresh swaps (a sort click, add / remove, the
+   page's refresh after a collector pass), so the footer keeps what the member typed,
+   which panel is open, and the scan criteria; part='row' renders one row (the answer
+   of "Refresh now", swapped over the old row). The chosen sort rides on the rows
+   (data-sort) and the page sends it with every refresh.
    No <script> and no inline handlers: the import buttons are data-import /
    data-scan-import, handled by the page.
-   Context: part ('all' | 'rows'), items [{row, sym, fresh, waiting, dot, age_text,
-   src_text, iv_rank, tip}], sort, n, max_basket, n_waiting, n_watchlist,
-   n_ivscan_list, n_ivscan_scan, n_positions, criteria. #}
+   Context: part ('all' | 'rows' | 'row'), it (part='row'), items [{row, sym, fresh,
+   waiting, dot, age_text, src_text, iv_rank, tip}], sort, n, max_basket, n_waiting,
+   n_watchlist, n_ivscan_list, n_ivscan_scan, n_positions, criteria, cycle_min. #}
+{% set COLS = "minmax(3.5rem, 1fr) minmax(0, 1.4fr) 1.8rem 1.6rem 1rem 0.9rem" %}
+{% macro row(it) -%}
+  <div class="opt-brow cursor-pointer rounded px-1.5 py-1 text-[11px] hover:bg-slate-800/40 transition grid items-center gap-x-1"
+       style="grid-template-columns: {{ COLS }};"
+       data-sym="{{ it.sym }}" data-tip="{{ it.tip }}">
+    <span class="flex items-center gap-1 min-w-0">
+      <span class="inline-block w-1.5 h-1.5 rounded-full shrink-0
+                   {% if it.dot == 'emerald' %}bg-emerald-400{% elif it.dot == 'amber' %}bg-amber-400{% elif it.dot == 'rose' %}bg-rose-400{% else %}bg-slate-600{% endif %}"></span>
+      <span class="text-[13px] font-semibold text-slate-200 truncate">{{ it.sym }}</span>
+    </span>
+    <span class="truncate text-[10px] {% if it.waiting %}text-sky-300/80 italic{% else %}text-slate-400{% endif %}">
+      {%- if it.waiting %}waiting for first read{% else %}{{ it.age_text }} &middot; {{ it.src_text }}{% endif -%}
+    </span>
+    <span class="text-right tabular-nums {% if it.iv_rank is none %}text-slate-600{% elif it.iv_rank >= 50 %}text-amber-300{% elif it.iv_rank < 30 %}text-teal-300{% else %}text-slate-400{% endif %}"
+          title="IV rank: today's 30-day implied volatility against its own last year (from Massive option prices)">
+      {%- if it.iv_rank is none %}&ndash;{% else %}{{ it.iv_rank|round|int }}{% endif -%}
+    </span>
+    <span class="opt-count text-right tabular-nums text-slate-600" data-sym="{{ it.sym }}"></span>
+    <button type="button" class="opt-refresh text-slate-500 hover:text-emerald-300 text-center leading-none disabled:opacity-40"
+            data-refresh-sym="{{ it.sym }}" hx-post="/options/refresh/{{ it.sym }}" hx-target="closest .opt-brow"
+            hx-swap="outerHTML" hx-indicator="find .opt-spin" hx-disabled-elt="this"
+            title="Refresh now: read {{ it.sym }} from Massive (15 min delayed) - at most once a minute"
+            aria-label="Refresh {{ it.sym }} now"><span class="opt-spin inline-block">&#8635;</span></button>
+    <button type="button" class="opt-row-x text-slate-600 hover:text-rose-300 text-right" title="Remove {{ it.sym }} from your basket"
+            hx-post="/options/basket/remove" hx-vals='{"symbol": "{{ it.sym }}", "sort": "{{ sort or 'added' }}", "part": "rows"}'
+            hx-target="#optBasketRows" hx-swap="innerHTML"
+            hx-confirm="Remove {{ it.sym }} from your basket? The shared data stays for the other members.">&times;</button>
+  </div>
+{%- endmacro %}
 {% macro rows() -%}
 <div class="opt-basket-rows-inner" data-sort="{{ sort }}" data-n="{{ n }}">
 <div class="flex items-center gap-1 px-1 pb-1 text-[10px] text-slate-500">
@@ -31,48 +64,30 @@
 
 {% if items %}
 <div class="grid items-center gap-x-1 px-1.5 pb-0.5 text-[9px] uppercase tracking-wide text-slate-600"
-     style="grid-template-columns: minmax(3.5rem, 1fr) minmax(0, 1.4fr) 1.8rem 1.6rem 0.9rem;">
-  <span>Ticker</span><span>Data</span><span class="text-right">IVR</span><span class="text-right" title="Trades passing for this strategy">Pass</span><span></span>
+     style="grid-template-columns: {{ COLS }};">
+  <span>Ticker</span><span>Data</span><span class="text-right">IVR</span><span class="text-right" title="Trades passing for this strategy">Pass</span><span></span><span></span>
 </div>
 <div class="space-y-px">
   {% for it in items %}
-  <div class="opt-brow cursor-pointer rounded px-1.5 py-1 text-[11px] hover:bg-slate-800/40 transition grid items-center gap-x-1"
-       style="grid-template-columns: minmax(3.5rem, 1fr) minmax(0, 1.4fr) 1.8rem 1.6rem 0.9rem;"
-       data-sym="{{ it.sym }}" data-tip="{{ it.tip }}">
-    <span class="flex items-center gap-1 min-w-0">
-      <span class="inline-block w-1.5 h-1.5 rounded-full shrink-0
-                   {% if it.dot == 'emerald' %}bg-emerald-400{% elif it.dot == 'amber' %}bg-amber-400{% elif it.dot == 'rose' %}bg-rose-400{% else %}bg-slate-600{% endif %}"></span>
-      <span class="text-[13px] font-semibold text-slate-200 truncate">{{ it.sym }}</span>
-    </span>
-    <span class="truncate text-[10px] {% if it.waiting %}text-sky-300/80 italic{% else %}text-slate-400{% endif %}">
-      {%- if it.waiting %}waiting for first read{% else %}{{ it.age_text }} &middot; {{ it.src_text }}{% endif -%}
-    </span>
-    <span class="text-right tabular-nums {% if it.iv_rank is none %}text-slate-600{% elif it.iv_rank >= 50 %}text-amber-300{% elif it.iv_rank < 30 %}text-teal-300{% else %}text-slate-400{% endif %}"
-          title="IV rank from IBKR's own 30-day IV over the last year">
-      {%- if it.iv_rank is none %}&ndash;{% else %}{{ it.iv_rank|round|int }}{% endif -%}
-    </span>
-    <span class="opt-count text-right tabular-nums text-slate-600" data-sym="{{ it.sym }}"></span>
-    <button type="button" class="opt-row-x text-slate-600 hover:text-rose-300 text-right" title="Remove {{ it.sym }} from your basket"
-            hx-post="/options/basket/remove" hx-vals='{"symbol": "{{ it.sym }}", "sort": "{{ sort }}", "part": "rows"}'
-            hx-target="#optBasketRows" hx-swap="innerHTML"
-            hx-confirm="Remove {{ it.sym }} from your basket? The shared data stays for the other members.">&times;</button>
-  </div>
+  {{ row(it) }}
   {% endfor %}
 </div>
 {% if n_waiting %}
-<p class="px-1.5 pt-1 text-[10px] text-slate-500 leading-snug">{{ n_waiting }} waiting for a first read: your own IBKR connector reads them at once while its pill is green, and so does any other member's. During US market hours the Hermes gateway is off, so Hermes reads new tickers in the evening (after 20:10 ET) and at the weekend.</p>
+<p class="px-1.5 pt-1 text-[10px] text-slate-500 leading-snug">{{ n_waiting }} waiting for a first read: the Hermes collector reads them from Massive on its next pass (every {{ cycle_min }} min while the US market is open, and once after the close). Press &#8635; on a row to read it now.</p>
 {% endif %}
 {% else %}
 <p class="text-[11px] text-slate-500 leading-relaxed px-1 py-3">
   Your basket is empty. Add the tickers you trade options on - type one, paste a list, or pull in
-  My Watchlist. A new ticker shows <i>waiting for first read</i> until a member's IBKR connector
-  (or Hermes, in the evening or at the weekend) reads its option chain; then the list on the right screens it.
+  My Watchlist. A new ticker shows <i>waiting for first read</i> until the Hermes collector reads its
+  option chain from Massive (or you press &#8635; on its row); then the list on the right screens it.
 </p>
 {% endif %}
 </div>
 {%- endmacro %}
 
-{% if part == 'rows' %}
+{% if part == 'row' %}
+{{ row(it) }}
+{% elif part == 'rows' %}
 {{ rows() }}
 {% else %}
 <div id="optBasketRows">{{ rows() }}</div>
@@ -122,7 +137,7 @@
         </div>
         <button type="button" data-scan-import="1"
                 class="mt-0.5 px-2 py-0.5 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition"
-                title="Runs your TWS High IV Rank scanner through the IBKR connector on this PC and adds what it finds">Run my TWS scanner</button>
+                title="Optional: runs your TWS High IV Rank scanner through the TradeHunter IBKR bridge on this PC (it must be running) and adds what it finds">Run my TWS scanner</button>
       </div>
     </div>
   </details>

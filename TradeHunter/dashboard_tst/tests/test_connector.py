@@ -1,28 +1,28 @@
-"""The member connector 2.0 (bridge/ibkr_bridge.py) and its download (opt_connector_pkg).
+"""The member connector 2.0 (bridge/ibkr_bridge.py).
 
 OPTIONS_V2_DESIGN.md §5. No ib_insync and no network: the bridge is loaded from its
 file as a fresh module per test, ``th_ibkr`` is replaced by a fake with the §3.1
 signatures, and the HTTP handler runs on an ephemeral loopback port in a thread.
+
+Since v4.134 (§13) the Options page no longer offers the connector as a download (its
+zip builder ``app/services/opt_connector_pkg.py`` and the build_zip tests are gone); the
+bridge itself stays for the legacy hidden pages and the basket's TWS-scanner import, so
+its own tests stay here.
 """
 from __future__ import annotations
 
 import asyncio
 import http.client
 import importlib.util
-import io
 import json
 import re
-import shutil
 import threading
 import time
 import types
-import zipfile
 from pathlib import Path
 from urllib.parse import quote, urlencode
 
 import pytest
-
-from app.services import opt_connector_pkg
 
 DASH = Path(__file__).resolve().parent.parent
 BRIDGE_DIR = DASH / "bridge"
@@ -796,50 +796,7 @@ def test_live_account_type(bridge):
     assert bridge._account_type(types.SimpleNamespace(managedAccounts=lambda: [])) is None
 
 
-# ───────────────────────────────────────────── the download
-
-def test_build_zip_contents_and_name():
-    data, name = opt_connector_pkg.build_zip()
-    version = opt_connector_pkg.connector_version()
-    assert name == f"TradeHunter-IBKR-Connector-{version}.zip"
-    assert re.fullmatch(r"TradeHunter-IBKR-Connector-[0-9A-Za-z.\-]+\.zip", name)
-    zf = zipfile.ZipFile(io.BytesIO(data))
-    names = set(zf.namelist())
-    top = opt_connector_pkg.TOP_FOLDER + "/"                                 # one folder, never loose files
-    assert all(n.startswith(top) for n in names)
-    expected = {"ibkr_bridge.py", "start_ibkr_bridge.bat", "install_bridge.ps1",
-                "requirements.txt", "README.txt"}
-    if (BRIDGE_DIR / "th_ibkr.py").is_file():
-        expected.add("th_ibkr.py")
-    assert {n[len(top):] for n in names} == expected
-    assert zf.testzip() is None
-    assert zf.read(top + "ibkr_bridge.py") == BRIDGE_PY.read_bytes()      # Python files unchanged
-    bat = zf.read(top + "start_ibkr_bridge.bat")
-    assert b"\r\n" in bat and b"\n" not in bat.replace(b"\r\n", b"")       # CRLF only
-    readme = zf.read(top + "README.txt").decode("ascii")
-    for needle in ("install_bridge.ps1", "Run with PowerShell", "127.0.0.1:9224",
-                   "Enable ActiveX and Socket Clients", "7496", "7497", "4001", "4002"):
-        assert needle in readme
-    assert readme.startswith(f"TradeHunter IBKR Connector {version}")
-
-
-def test_build_zip_version_prefers_th_ibkr(tmp_path):
-    for n in ("ibkr_bridge.py", "start_ibkr_bridge.bat", "install_bridge.ps1", "requirements.txt"):
-        shutil.copy(BRIDGE_DIR / n, tmp_path / n)
-    data, name = opt_connector_pkg.build_zip(tmp_path)
-    assert name == "TradeHunter-IBKR-Connector-2.0.zip"                     # from ibkr_bridge.VERSION
-    assert opt_connector_pkg.TOP_FOLDER + "/th_ibkr.py" not in zipfile.ZipFile(io.BytesIO(data)).namelist()
-    (tmp_path / "th_ibkr.py").write_text('"""fake"""\nVERSION = "2.0.1"\n', encoding="utf-8")
-    data, name = opt_connector_pkg.build_zip(tmp_path)
-    assert name == "TradeHunter-IBKR-Connector-2.0.1.zip"
-    assert opt_connector_pkg.TOP_FOLDER + "/th_ibkr.py" in zipfile.ZipFile(io.BytesIO(data)).namelist()
-
-
-def test_build_zip_missing_file(tmp_path):
-    shutil.copy(BRIDGE_DIR / "ibkr_bridge.py", tmp_path / "ibkr_bridge.py")
-    with pytest.raises(FileNotFoundError, match="install_bridge.ps1"):
-        opt_connector_pkg.build_zip(tmp_path)
-
+# ───────────────────────────────────────────── the installer
 
 def test_installer_and_requirements():
     ps = (BRIDGE_DIR / "install_bridge.ps1").read_bytes()

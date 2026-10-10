@@ -1522,10 +1522,14 @@ class OptionIdeaPush(Base):
 
 
 # ═══════════════════════════════ Options v2 (OPTIONS_V2_DESIGN.md §2.2) ═══════════════════════════════
-# IBKR-only option data shared by every member. Read and written only through
-# services/opt_store.py. Every figure carries as_of (naive UTC), source (hermes |
-# member), source_user_id (member only) and mdt (live | frozen | delayed |
-# delayed_frozen). Per-contract iv is a FRACTION; per-day vol figures are PERCENT.
+# Option and stock data shared by every member. Read and written only through
+# services/opt_store.py. Every figure carries as_of (naive UTC), source and mdt.
+# Since v4.134 (OPTIONS_V2_DESIGN.md §13) the only writer is Massive (formerly
+# Polygon.io): source "massive", mdt "delayed" (Options Starter, 15 min) | "live" (a
+# real-time plan) | "eod" (a closing value). Rows the v4.133 IBKR build wrote (source
+# hermes | member, source_user_id, mdt frozen | delayed_frozen) are still read until
+# opt_store.prune_v2's 7-day rule removes them. Per-contract iv is a FRACTION;
+# per-day vol figures are PERCENT.
 
 
 def _utcnow_naive() -> _dt.datetime:
@@ -1539,7 +1543,8 @@ class OptQuote(Base):
 
     One row per (symbol, expiry, right, strike). A write replaces a row only when
     its ``as_of`` is newer (equal time: live beats delayed), so the freshest read
-    from Hermes or any member's connector is what every member sees.
+    (the Hermes collector's, or a member's "Refresh now" - both from Massive since
+    v4.134) is what every member sees.
     """
 
     __tablename__ = "opt_quote"
@@ -1568,16 +1573,18 @@ class OptQuote(Base):
     theta = Column(Float, nullable=True)
     vega = Column(Float, nullable=True)
     und_price = Column(Float, nullable=True)             # spot when quoted
-    as_of = Column(DateTime, nullable=False)             # naive UTC; server receive time for member data
-    source = Column(String(8), nullable=False)           # hermes | member
-    source_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    mdt = Column(String(14), nullable=False)             # live | frozen | delayed | delayed_frozen
+    as_of = Column(DateTime, nullable=False)             # naive UTC; the read time - 15 min (a quote's own time on a quotes plan) (v4.134)
+    source = Column(String(8), nullable=False)           # massive (v4.134); legacy hermes | member
+    source_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)  # legacy member rows only
+    mdt = Column(String(14), nullable=False)             # delayed | live | eod; legacy frozen | delayed_frozen
     updated_at = Column(DateTime, default=_utcnow_naive)
 
 
 class OptUnderlying(Base):
     """One row per symbol: the latest stock facts behind the screeners (spot, ATR,
-    HV, average volume, IBKR's 30-day IV and its rank, the earnings date)."""
+    HV, average volume, the 30-day IV and its rank, the earnings date). Since v4.134
+    the IV30 is computed from Massive's chain (today) and rebuilt from option daily
+    bars (history) - see opt_massive."""
 
     __tablename__ = "opt_underlying"
     __table_args__ = (UniqueConstraint("symbol", name="uq_opt_underlying_symbol"),)
@@ -1594,7 +1601,7 @@ class OptUnderlying(Base):
     hv60 = Column(Float, nullable=True)                  # PERCENT
     avg_vol20 = Column(Float, nullable=True)             # shares
     bars_as_of = Column(DateTime, nullable=True)
-    iv30 = Column(Float, nullable=True)                  # PERCENT, IBKR's 30-day IV, last value
+    iv30 = Column(Float, nullable=True)                  # PERCENT, the 30-day IV, last value
     iv_rank = Column(Float, nullable=True)               # 0..100
     iv_pct = Column(Float, nullable=True)                # 0..100
     iv_n = Column(Integer, nullable=True)
@@ -1602,7 +1609,7 @@ class OptUnderlying(Base):
     iv_hi = Column(Float, nullable=True)                 # PERCENT
     iv_as_of = Column(DateTime, nullable=True)
     earnings_date = Column(String(10), nullable=True)
-    earnings_src = Column(String(8), nullable=True)      # "yahoo" - the one non-IBKR figure
+    earnings_src = Column(String(8), nullable=True)      # "yahoo" - the one figure not from the data vendor
     earnings_as_of = Column(DateTime, nullable=True)
     first_seen = Column(DateTime, default=_utcnow_naive)
     history_done = Column(Boolean, nullable=False, default=False)   # 1y IV + 2y bars pulled
@@ -1610,9 +1617,11 @@ class OptUnderlying(Base):
 
 
 class OptUnderlyingDaily(Base):
-    """The daily history behind IV rank, HV and ATR: IBKR TRADES bars and IBKR's
-    OPTION_IMPLIED_VOLATILITY daily close (x 100, PERCENT). A later value for the
-    same day replaces the earlier one, field by field."""
+    """The daily history behind IV rank, HV and ATR: daily stock bars and a daily
+    30-day IV (PERCENT). Since v4.134: Massive Stocks Basic bars and the IV30 rebuilt
+    from option daily bars / today's chain (opt_massive); v4.133 rows came from IBKR
+    (TRADES bars, OPTION_IMPLIED_VOLATILITY). A later value for the same day replaces
+    the earlier one, field by field."""
 
     __tablename__ = "opt_underlying_daily"
     __table_args__ = (UniqueConstraint("symbol", "on", name="uq_opt_und_daily"),)
@@ -1625,7 +1634,7 @@ class OptUnderlyingDaily(Base):
     low = Column(Float, nullable=True)
     volume = Column(Float, nullable=True)
     iv30 = Column(Float, nullable=True)                  # PERCENT
-    source = Column(String(8), nullable=False)           # hermes | member
+    source = Column(String(8), nullable=False)           # massive (v4.134); legacy hermes | member
     as_of = Column(DateTime, nullable=True)
 
 
@@ -1642,7 +1651,7 @@ class OptRefreshLog(Base):
     source = Column(String(8), nullable=False)
     source_user_id = Column(Integer, nullable=True)
     mdt = Column(String(14), nullable=True)
-    kind = Column(String(10), nullable=False, default="cycle")   # history | cycle | eod | member | trade
+    kind = Column(String(10), nullable=False, default="cycle")   # history | cycle | eod | manual; legacy member | trade
     n_contracts = Column(Integer, nullable=False, default=0)
     n_expiries = Column(Integer, nullable=False, default=0)
     ms = Column(Integer, nullable=True)
@@ -1657,8 +1666,8 @@ class OptCollectorStatus(Base):
     id = Column(Integer, primary_key=True)
     state = Column(String(12), nullable=True)            # starting | history | cycle | eod | idle | error | stopped
     phase_detail = Column(Text, nullable=True)
-    gateway = Column(String(40), nullable=True)          # e.g. 127.0.0.1:4002
-    gateway_ok = Column(Boolean, nullable=True)
+    gateway = Column(String(40), nullable=True)          # v4.134: the data host, e.g. api.massive.com (v4.133: 127.0.0.1:4002)
+    gateway_ok = Column(Boolean, nullable=True)          # v4.134: did the last Massive request work
     mdt = Column(String(14), nullable=True)
     cycle_n = Column(Integer, nullable=True)
     cycle_started = Column(DateTime, nullable=True)

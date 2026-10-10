@@ -430,3 +430,34 @@ def test_payoff_takes_labels_and_families_from_opt_rules():
     assert payoff._strategy_label("leaps_call") == "Buy LEAPS"
     assert payoff._house_premium_stop_pct("diagonal_call") == 40.0
     assert payoff._house_premium_stop_pct("bull_call") == 50.0
+
+
+# ------------------------------------------------------------------ the data plan (Massive, §13.5)
+@pytest.mark.parametrize("value, want", [
+    (None, False), ("0", False), ("", False), ("no", False), ("off", False), ("false", False), ("junk", False),
+    ("1", True), ("true", True), ("Yes", True), (" on ", True),
+])
+def test_quotes_available_reads_the_env(monkeypatch, value, want):
+    if value is None:
+        monkeypatch.delenv("TST_MASSIVE_QUOTES", raising=False)
+    else:
+        monkeypatch.setenv("TST_MASSIVE_QUOTES", value)
+    assert R.quotes_available() is want
+    assert R.QUOTES_ENV == "TST_MASSIVE_QUOTES"
+
+
+def test_bid_ask_fields_unused_without_quotes_keep_their_schema():
+    assert set(R.UNUSED_WITHOUT_QUOTES) == {"max_leg_spread", "max_leg_spread_pct"}
+    assert set(R.UNUSED_WITHOUT_QUOTES.values()) == {R.QUOTES_NOTE}
+    assert R.QUOTES_NOTE == "not used - the current data plan (Massive Starter) has no bid/ask"
+    # no schema change: the % rule stays shared, the $ cap per strategy, defaults as before
+    assert R.SCHEMA_VERSION == 2
+    assert R.SCHEMA["shared"]["max_leg_spread_pct"].default == 25
+    for s in R.STRATEGIES:
+        assert "max_leg_spread" in R.SCHEMA[s] and "max_leg_spread" not in R.SCHEMA["shared"]
+        names = {name for _b, name, _f in R.fields(s)}
+        assert set(R.UNUSED_WITHOUT_QUOTES) <= names            # the panel can grey each one out
+    # the help texts no longer name the old data sources
+    for block in R.SCHEMA.values():
+        for f in block.values():
+            assert "IBKR" not in f.help and "Hermes" not in f.help and "connector" not in f.help

@@ -1,17 +1,26 @@
-"""Options v2 - browse by rules (OPTIONS_V2_DESIGN.md §9, with §5.4 and §6).
+"""Options v2 - browse by rules (OPTIONS_V2_DESIGN.md §9, on the Massive data path of §13).
 
-One page: a status strip (the member's own IBKR connector pill, the Hermes collector
-line), the member's basket (left), a strategy dropdown with the rules panel ALWAYS
-visible, and the list of trades that pass every rule over the whole basket. A click on
-a trade opens its legs (each with its own as_of / source / market data type) and the
-payoff chart.
+One page: a status strip (the Hermes collector line - it reads Massive - and the plain
+data-plan note), the member's basket (left; every row has a "Refresh now" control), a
+strategy dropdown with the rules panel ALWAYS visible, and the list of trades that pass
+every rule over the whole basket. A click on a trade opens its legs (each with its data
+time, its source, and whether its price is the bid/ask mid or a model price from its IV)
+and the payoff chart.
 
-Data: every option and stock figure is read from the shared IBKR pool in
-``services/opt_store`` (the Hermes collector and members' connectors write it); the
-earnings date is the one free-source figure. The web app never connects to IBKR: the
-browser relays the member's own connector on 127.0.0.1 through ``/options/data/*``,
-which validates (§2.4), rate-limits and stores it as ``source="member"`` so every
-other member benefits.
+Data (§13): every option figure and the stock price come from Massive (formerly
+Polygon.io). Options Starter is the whole-chain snapshot with greeks, IV, open interest
+and the day bar, 15 minutes delayed and WITHOUT bid/ask quotes, so a leg's price is
+estimated from its own IV (``opt_massive.model_price``); Stocks Basic gives the daily
+bars. The Hermes collector (TST-Options-Collector) writes it into ``services/opt_store``
+every 15 min during the US session; "Refresh now" (``POST /options/refresh/<sym>``)
+reads one ticker on demand, server-side, through the same ``opt_massive.ingest_symbol``.
+The earnings date is the one free-source (Yahoo) figure. TradeHunter only FINDS the
+trade: the member checks the live price and enters it in IBKR TWS.
+
+No member writes any data any more: the v4.133 connector pill, its download, the help
+about it and the contribution endpoints are gone. The basket's optional "Run my TWS
+scanner" import still talks to the member's own IBKR bridge on 127.0.0.1 (from the
+page's script), unchanged.
 
 This router is included BEFORE ``routes/options.py`` in ``main.py`` so its fixed
 paths win over that module's ``/options/{symbol}`` catch-all, and it carries the
@@ -25,12 +34,14 @@ import datetime as _dt
 import json
 import logging
 import math
+import os
+import threading
+import time
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, Request, Response
-from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field as PField
@@ -41,7 +52,7 @@ from .. import models as _models
 from ..db import get_db
 from ..models import OptionBasket, OptQuote, User
 from ..security import require_user
-from ..services import clock, opt_connector_pkg, opt_rules, opt_screen, opt_store, payoff
+from ..services import clock, massive, opt_massive, opt_rules, opt_screen, opt_store, payoff
 from ..services import user_watchlist as uwl
 from ..services.opt_constants import MAX_BASKET
 from . import options as legacy_options            # BRIDGE_PORT only
@@ -52,7 +63,7 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/options", tags=["options-page"])
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent / "templates"))
 
-BRIDGE_PORT = legacy_options.BRIDGE_PORT            # 9224: the member's connector on 127.0.0.1
+BRIDGE_PORT = legacy_options.BRIDGE_PORT            # 9224: the member's own IBKR bridge (the TWS scanner import)
 
 SOURCES = ("typed", "paste", "watchlist", "ivscan_list", "ivscan_scan", "scanner",
            "screener", "sector", "positions", "system")
@@ -60,30 +71,36 @@ IMPORT_SOURCES = ("paste", "watchlist", "ivscan_list", "ivscan_scan", "scanner",
                   "screener", "positions")
 BASKET_SORTS = ("added", "symbol", "fresh", "iv")
 
-FRESH_MIN = 60              # a quote younger than this is fresh; older is amber during RTH (§9)
-STALE_HEARTBEAT_MIN = 5     # the collector line goes stale after this many minutes without a heartbeat (§4.3)
-NEXT_WAIT_S = 30            # /data/next with nothing to read: the page asks again after this
-HISTORY_MAX_POINTS = 800    # a member's history post: at most this many bars / IV points each
-MEMBER_HISTORY_KEEP_D = 7   # a member's history on file younger than this is not re-filed by another member
-MAX_BODY_BYTES = 5 * 1024 * 1024   # a contribution body over this is refused before it is parsed
-FAILED_ERROR_MAX = 300      # /data/failed keeps this many characters of the connector's error
+FRESH_MIN = 60              # data younger than this is fresh; older is amber during RTH (§9)
+STALE_HEARTBEAT_MIN = 5     # the collector line goes stale after this many minutes without a heartbeat
 REASON_MAX = 300            # a ticker's no-trade reason in options:counts (shown verbatim; a cap, not a cut)
 CHAIN_AGE_PAD_H = 96        # the results load quotes up to max_age_h + this (WALL clock: a weekend never
                             # empties the chain; the screener applies the exact market-time age)
-REFRESH_SIDE_MIN = 4        # "Refresh these legs live": at least this many strikes each side of spot
-REFRESH_SIDE_MAX = 40       # ... and at most this many (th_ibkr.plan's max_side)
-REFRESH_SIDE_PAD = 2        # ... beyond the farthest leg
-REFRESH_SIGMA_K_MIN = 0.05  # the refresh window's sigma_k bounds (the connector accepts 0 < k <= 10)
-REFRESH_SIGMA_K_MAX = 10.0
-REFRESH_DEFAULT_IV = 0.40   # th_ibkr.plan's own default when the stock's IV30 is unknown
+REFRESH_EVERY_S = 60        # "Refresh now": at most once per ticker per member per minute (in-process)
+REFRESH_MAX_WAIT_S = 5.0    # ... and the read never waits longer than this in one go inside the web request
+                            # (a 429 back-off of 15 s+ answers "Massive is busy" instead of holding it)
+CYCLE_MIN_DEFAULT = 15      # the collector's pass interval in the session (TST_OPTIONS_CYCLE_MIN, §13.4)
+ERROR_TEXT_MAX = 160        # a collector error in the strip line (the whole text is in the tooltip)
+
+NO_QUOTES_NOTE = ("prices are estimated from IV (no bid/ask on this plan) - check live in TWS "
+                  "before entering")
+NO_QUOTES_RULE_NOTE = "not used - the current data plan (Massive Starter) has no bid/ask"
+KEY_MISSING = "TST_MASSIVE_API_KEY is not set on the server"
+PRICE_MID = "bid/ask mid"
+PRICE_MODEL = "model (from IV)"
 
 MDT_WORDS = {"live": "live", "frozen": "frozen", "delayed": "delayed",
-             "delayed_frozen": "delayed frozen"}
+             "delayed_frozen": "delayed frozen", "eod": "end of day"}
+SOURCE_NAMES = {"massive": "Massive", "hermes": "Hermes"}
 _ON = {"on", "true", "1", "yes", "y", "t"}
 
 # the results table's server-side sort keys (default: the screener's own score order)
 RESULT_SORTS = ("score", "symbol", "expiry", "net", "max_profit", "max_loss", "ror", "pop",
                 "delta", "iv_rank", "liquidity", "age")
+
+# the collector's own state words (opt_collector writes the state column) -> the strip's words
+COLLECTOR_WORDS = {"starting": "starting", "cycle": "running", "running": "running",
+                   "history": "reading history", "eod": "end-of-day pass"}
 
 
 class BasketImport(BaseModel):
@@ -109,17 +126,13 @@ def _strategy(s: str | None) -> str:
     return s if s in opt_rules.STRATEGIES else opt_rules.DEFAULT_STRATEGY
 
 
-def _trigger(resp: Response, events: dict) -> Response:
-    resp.headers["HX-Trigger"] = json.dumps(events)        # ASCII-escaped: header-safe
+def _trigger(resp: Response, events: dict, header: str = "HX-Trigger") -> Response:
+    resp.headers[header] = json.dumps(events)        # ASCII-escaped: header-safe
     return resp
 
 
 def _toast(msg: str, kind: str = "info") -> dict:
     return {"options:toast": {"kind": kind, "msg": msg}}
-
-
-def _jerr(status: int, error: str, **extra) -> JSONResponse:
-    return JSONResponse({"ok": False, "error": error, **extra}, status_code=status)
 
 
 def _utcnow() -> _dt.datetime:
@@ -201,23 +214,22 @@ def _exp_label(expiry: str) -> str:
 
 
 def _who(source, name=None, uid=None) -> str:
-    """'Hermes' / the contributing member's display name."""
+    """'Massive' / 'Hermes' / a member's display name (the last two only on rows written
+    before v4.134, which age out within 7 days)."""
     if source == "member":
         return name or (f"member #{uid}" if uid else "a member")
-    if source == "hermes":
-        return "Hermes"
-    return str(source or "unknown")
+    return SOURCE_NAMES.get(source or "", str(source or "unknown"))
 
 
 def _source_words(source, name=None, uid=None, mdt=None) -> str:
-    """'Hermes live' / 'Kui (live)' - who quoted it and on what market data type."""
+    """'Massive (delayed)' / 'Hermes live' / 'Kui (live)' - who supplied it and how fresh."""
     m = MDT_WORDS.get(mdt or "", mdt or "unknown")
     who = _who(source, name, uid)
-    return f"{who} ({m})" if source == "member" else f"{who} {m}"
+    return f"{who} ({m})" if source in ("member", "massive") else f"{who} {m}"
 
 
 def _sources_words(sources) -> str:
-    """opt_screen's ``data.sources`` ('hermes·live', 'member:Kui·live') in words."""
+    """opt_screen's ``data.sources`` ('massive·delayed', 'member:Kui·live') in words."""
     out = []
     for s in sources or ():
         head, sep, mdt = str(s).rpartition("·")
@@ -230,6 +242,35 @@ def _sources_words(sources) -> str:
         if w not in out:
             out.append(w)
     return " + ".join(out) if out else "unknown source"
+
+
+def _has_quote(leg: dict) -> bool:
+    """True when the leg's price is a real bid/ask midpoint (the plan returned quotes):
+    opt_screen's own ``priced`` ("quotes" | "model") when the leg carries it, else
+    whether it has both a bid and an ask."""
+    priced = leg.get("priced")
+    if priced in ("quotes", "model"):
+        return priced == "quotes"
+    return _num(leg.get("bid")) is not None and _num(leg.get("ask")) is not None
+
+
+def _cycle_min() -> int:
+    """The collector's pass interval in the session (TST_OPTIONS_CYCLE_MIN, default 15)."""
+    try:
+        v = int(str(os.environ.get("TST_OPTIONS_CYCLE_MIN") or CYCLE_MIN_DEFAULT).strip())
+    except ValueError:
+        return CYCLE_MIN_DEFAULT
+    return v if 1 <= v <= 240 else CYCLE_MIN_DEFAULT
+
+
+def _scrub(text) -> str:
+    """A text shown on the page with the Massive key blanked out - the client never puts
+    the key into an error, this is only a second lock."""
+    s = " ".join(str(text or "").split())
+    key = massive.api_key()
+    if key and key in s:
+        s = s.replace(key, "***")
+    return s
 
 
 # ────────────────────────────────── basket ──────────────────────────────────
@@ -277,7 +318,7 @@ def _open_trade_symbols(db: Session, user: User) -> list[str]:
 def _add_symbols(db: Session, user: User, syms: list[str], source: str, note: str = "") -> dict:
     """The one basket writer: duplicates are skipped, the cap is enforced, the rest
     get pos = max + 1. Commits. Returns {added, skipped, over_cap, total, new}. A new
-    symbol simply has no data until Hermes or a member's connector reads it."""
+    symbol has no data until the Hermes collector's next pass or a "Refresh now"."""
     source = source if source in SOURCES else "typed"
     existing = {r.symbol: r for r in db.query(OptionBasket).filter(OptionBasket.owner_key == _owner(user)).all()}
     n_active = sum(1 for r in existing.values() if r.active)
@@ -315,6 +356,12 @@ def _add_symbols(db: Session, user: User, syms: list[str], source: str, note: st
     return {"added": added, "skipped": skipped, "over_cap": over_cap, "total": n_active, "new": new}
 
 
+def _in_own_basket(db: Session, user: User, sym: str) -> bool:
+    return (db.query(OptionBasket.id)
+              .filter(OptionBasket.owner_key == _owner(user), OptionBasket.symbol == sym,
+                      OptionBasket.active.is_(True)).first()) is not None
+
+
 def _dot(f: dict | None, rth: bool) -> str:
     """The basket's data-age dot: emerald = fresh, amber = getting old, rose = stale,
     slate = no data yet."""
@@ -330,28 +377,32 @@ def _dot(f: dict | None, rth: bool) -> str:
     return "rose"
 
 
+def _basket_item(r: OptionBasket, f: dict | None, u: dict | None, rth: bool) -> dict:
+    """One basket row's display values (``f``: opt_store.freshness, ``u``: the stored
+    underlying)."""
+    u = u or {}
+    src = _source_words(f.get("source"), f.get("source_name"), f.get("source_user_id"), f.get("mdt")) if f else None
+    if f is None:
+        tip = (f"{r.symbol}: waiting for its first read - the Hermes collector reads it from Massive on its "
+               f"next pass (every {_cycle_min()} min while the US market is open); the refresh button reads it now")
+    else:
+        tip = (f"{r.symbol}: data from {_age_text(f.get('age_min'))} ago · {src}, "
+               f"{f.get('n') or 0} contracts. The refresh button reads it again now.")
+    return {"row": r, "sym": r.symbol, "fresh": f, "waiting": f is None,
+            "dot": _dot(f, rth), "age_text": _age_text(f.get("age_min")) if f else None,
+            "src_text": src, "iv_rank": _num(u.get("iv_rank")),
+            "history_done": bool(u.get("history_done")), "tip": tip}
+
+
 def _basket_context(db: Session, user: User, *, sort: str = "added") -> dict:
-    """Every basket row with its freshness (opt_store.freshness: the newest refresh-log
-    row) and the stored IV rank - one query each, never a market call."""
+    """Every basket row with its freshness (opt_store.freshness: the newest read of that
+    ticker) and the stored IV rank - one query each, never a market call."""
     rows = _basket_rows(db, user)
     syms = [r.symbol for r in rows]
     fr = opt_store.freshness(db, syms) if syms else {}
     unds = opt_store.underlyings(db, syms) if syms else {}
     rth = clock.us_session_open()
-    items = []
-    for r in rows:
-        f = fr.get(r.symbol)
-        u = unds.get(r.symbol) or {}
-        src = _source_words(f.get("source"), f.get("source_name"), f.get("source_user_id"), f.get("mdt")) if f else None
-        items.append({"row": r, "sym": r.symbol, "fresh": f, "waiting": f is None,
-                      "dot": _dot(f, rth), "age_text": _age_text(f.get("age_min")) if f else None,
-                      "src_text": src, "iv_rank": _num(u.get("iv_rank")),
-                      "history_done": bool(u.get("history_done")),
-                      "tip": (f"{r.symbol}: waiting for first read - a member's IBKR connector reads it "
-                              f"while its pill is green; Hermes reads new tickers after 20:10 ET and at the "
-                              f"weekend" if f is None else
-                              f"{r.symbol}: last read {_age_text(f.get('age_min'))} ago by {src}, "
-                              f"{f.get('n') or 0} contracts")})
+    items = [_basket_item(r, fr.get(r.symbol), unds.get(r.symbol), rth) for r in rows]
     sort = sort if sort in BASKET_SORTS else "added"
     keys = {
         "added": lambda it: (it["row"].pos, it["sym"]),
@@ -367,7 +418,18 @@ def _basket_context(db: Session, user: User, *, sort: str = "added") -> dict:
             "n_ivscan_list": len(_ivscan_universe(user)),
             "n_ivscan_scan": len(_ivscan_scan_symbols(db, user)),
             "n_positions": len(_open_trade_symbols(db, user)),
-            "criteria": DEFAULT_CRITERIA}
+            "criteria": DEFAULT_CRITERIA, "cycle_min": _cycle_min()}
+
+
+def _one_item(db: Session, user: User, sym: str) -> dict | None:
+    """The basket row of one ticker (after a "Refresh now"), or None when it is gone."""
+    row = (db.query(OptionBasket)
+             .filter(OptionBasket.owner_key == _owner(user), OptionBasket.symbol == sym,
+                     OptionBasket.active.is_(True)).first())
+    if row is None:
+        return None
+    return _basket_item(row, opt_store.freshness(db, [sym]).get(sym), opt_store.underlying(db, sym),
+                        clock.us_session_open())
 
 
 def _part(part: str | None) -> str:
@@ -423,18 +485,32 @@ def _input_step(name: str, f: opt_rules.Field) -> float | None:
     return st
 
 
+def _unused_rules() -> dict[str, str]:
+    """{rule name: note} of the rules the data plan cannot apply: the bid/ask rules while
+    Massive returns no quotes (opt_rules.UNUSED_WITHOUT_QUOTES); empty with quotes. The
+    panel greys those fields out with the note (their values stay stored)."""
+    if opt_rules.quotes_available():
+        return {}
+    raw = opt_rules.UNUSED_WITHOUT_QUOTES
+    if isinstance(raw, dict):
+        return {str(k): str(v or NO_QUOTES_RULE_NOTE) for k, v in raw.items()}
+    return {str(k): NO_QUOTES_RULE_NOTE for k in (raw or ())}
+
+
 def _rules_context(db: Session, user: User, strategy: str, *, msg: str = "", msg_kind: str = "ok",
                    field_errs: dict | None = None, errors: list | None = None, part: str = "panel",
                    posted: set | None = None) -> dict:
     """The panel: the shared block, then the strategy's own block - every field with its
-    label, help (tooltip), unit, bounds, current value and whether it differs from the
-    house default. ``errors`` (all of them) feed the message line; ``field_errs`` the
-    slot under each field. ``posted`` (a save): the 'block.name' keys of the fields that
-    request carried - only their error slots and changed-dots are re-sent, so a warning
-    on another field (a clamped value) stays until THAT field is saved again."""
+    label, help (tooltip), unit, bounds, current value, whether it differs from the
+    house default, and the note when the data plan cannot apply it. ``errors`` (all of
+    them) feed the message line; ``field_errs`` the slot under each field. ``posted`` (a
+    save): the 'block.name' keys of the fields that request carried - only their error
+    slots and changed-dots are re-sent, so a warning on another field (a clamped value)
+    stays until THAT field is saved again."""
     prefs = opt_rules.read(db, user)
     view = opt_rules.for_strategy(prefs, strategy)
     field_errs = field_errs or {}
+    unused = _unused_rules()
     blocks = []
     n_changed = 0
     for block, title in (("shared", "Every strategy"), (strategy, opt_rules.LABELS[strategy])):
@@ -455,6 +531,7 @@ def _rules_context(db: Session, user: User, strategy: str, *, msg: str = "", msg
                 "choices": [(c, words.get(c, c)) for c in (f.choices or ())],
                 "changed": changed, "err": field_errs.get(f"{block}.{name}"),
                 "posted": posted is None or f"{block}.{name}" in posted,
+                "unused": unused.get(name),
             })
         blocks.append({"block": block, "title": title, "fields": fields})
     band = opt_rules.band_errors(prefs, strategy)
@@ -547,7 +624,13 @@ def _net_view(c: dict) -> tuple[str, str, bool]:
         return "-", "", False
     credit = net > 0
     word = "credit" if credit else "debit"
-    tip = f"{word.capitalize()} {_money(abs(net) * 100)} per contract at the mid prices"
+    legs = c.get("legs") or []
+    priced = (c.get("data") or {}).get("priced")
+    modelled = (priced == "model") if priced in ("quotes", "model") else \
+        (bool(legs) and not all(_has_quote(l) for l in legs))
+    tip = (f"{word.capitalize()} {_money(abs(net) * 100)} per contract at the leg prices"
+           + (" (estimated from IV - this data has no bid/ask; check the live price in TWS)" if modelled else
+              " (the bid/ask mids)"))
     if nat is not None:
         tip += f"; {_money(abs(nat) * 100)} {'credit' if nat > 0 else 'debit'} at the bid / ask"
     return f"${abs(net):.2f} {word}", tip + ".", credit
@@ -565,20 +648,25 @@ def _row_view(strategy: str, c: dict, rth: bool) -> dict:
     oi, sp = _num(liq.get("oi_min")), _num(liq.get("spread_max"))
     spp, vmin = _num(liq.get("spread_pct_max")), _num(liq.get("volume_min"))
     liq_tip = ("Smallest open interest across the legs: " + (f"{oi:,.0f}" if oi is not None else "not reported")
-               + "; widest bid/ask: " + (f"${sp:.2f}" if sp is not None else "unknown")
+               + "; widest bid/ask: " + (f"${sp:.2f}" if sp is not None else "not known (no bid/ask on this data)")
                + (f" ({spp:.0f}% of its mid)" if spp is not None else "")
                + "; least traded today: " + (f"{vmin:,.0f}" if vmin is not None else "not reported") + ".")
+    liq_text = f"OI {oi:,.0f}" if oi is not None else "OI ?"
+    if sp is not None:
+        liq_text += f" · ${sp:.2f}"
+    elif vmin is not None:
+        liq_text += f" · vol {vmin:,.0f}"
     srcs = _sources_words(data.get("sources"))
     oldest = data.get("as_of_oldest")
     oldest_dt = _naive(oldest)
     # age_min is the MARKET-time age (the column, and what max_age_h filters on: the
     # clock stops while the market is closed); wall_age_min is the plain clock age
     wall = _num(data.get("wall_age_min"))
-    data_tip = (f"Market-time age {_age_phrase(age)} (the age clock stops while the market is closed, so a "
-                f"quote from the last close stays current until the next open) · on the clock, read "
+    data_tip = (f"Market-time age {_age_phrase(age)} (the age clock stops while the market is closed, so data "
+                f"from the last close stays current until the next open) · on the clock, data from "
                 f"{_age_phrase(wall if wall is not None else age)} ago"
                 + (f" ({oldest_dt.strftime('%Y-%m-%d %H:%M')} UTC)" if oldest_dt else "")
-                + f" by {srcs}." + (" Legs come from more than one source." if data.get("mixed") else ""))
+                + f" · {srcs}." + (" Legs come from more than one source." if data.get("mixed") else ""))
     return {
         "c": c, "id": c.get("id"), "sym": c.get("symbol"),
         "legs_text": _legs_text(c), "expiry_text": _expiry_text(c),
@@ -590,8 +678,7 @@ def _row_view(strategy: str, c: dict, rth: bool) -> dict:
         "pop_text": "-" if _num(c.get("pop")) is None else f"{_num(c.get('pop')) * 100:.0f}%",
         "delta_text": d_text, "delta_tip": d_tip, "delta_sort": d_sort,
         "ivr_text": "-" if _num(und.get("iv_rank")) is None else f"{_num(und.get('iv_rank')):.0f}",
-        "liq_text": (f"OI {oi:,.0f}" if oi is not None else "OI ?") + (f" · ${sp:.2f}" if sp is not None else ""),
-        "liq_tip": liq_tip,
+        "liq_text": liq_text, "liq_tip": liq_tip,
         "data_text": f"{_age_text(age)} · {srcs}",
         "data_tip": data_tip,
         "data_amber": bool(rth and age is not None and age > FRESH_MIN),
@@ -768,7 +855,6 @@ def _results_context(db: Session, user: User, strategy: str, sort: str, directio
         "views": _sort_rows(views, sort, direction),
         "funnel": res.get("funnel") or [], "tickers": tickers,
         "n_passed": int(res.get("n_passed") or 0), "n_considered": int(res.get("n_considered") or 0),
-        # a contribution for any basket ticker re-screens the list (the page debounces it)
         "syms_watch": sorted(syms),
         "no_trade": sorted(((s, (t or {}).get("reason") or "no trade passes") for s, t in tickers.items()
                             if not (t or {}).get("passed")), key=lambda p: p[0]),
@@ -780,47 +866,23 @@ def _results_context(db: Session, user: User, strategy: str, sort: str, directio
 # ────────────────────────────────── trade detail ──────────────────────────────────
 
 def _leg_view(l: dict, now: _dt.datetime) -> dict:
+    """One leg of the opened trade: its price and where that price comes from - the
+    bid/ask midpoint when the data has quotes, else a model price from the leg's own IV
+    (Massive Starter has no bid/ask)."""
     iv = _num(l.get("iv"))
+    mid = _num(l.get("mid"))
+    quoted = _has_quote(l)
     return {**l, "side_word": "Sell" if l.get("side") == "sell" else "Buy",
             "right_word": "call" if l.get("right") == "C" else "put",
             "strike_text": _k(l.get("strike")), "expiry_text": _exp_label(l.get("expiry")),
             "iv_text": "-" if iv is None else f"{iv * 100:.1f}%",
+            "price_text": "-" if mid is None else f"{mid:.2f}",
+            "price_kind": PRICE_MID if quoted else (PRICE_MODEL if mid is not None else "no price"),
+            "quoted": quoted,
             "age_text": _age_text(_age_min(l.get("as_of"), now)),
             "as_of_dt": _naive(l.get("as_of")),
-            "src_text": _who(l.get("source"), l.get("source_name"), l.get("source_user_id")),
+            "src_text": _source_words(l.get("source"), l.get("source_name"), l.get("source_user_id"), l.get("mdt")),
             "mdt_text": MDT_WORDS.get(l.get("mdt") or "", l.get("mdt") or "unknown")}
-
-
-def _refresh_spec(c: dict, chain: dict, und: dict | None) -> dict:
-    """The narrow fetch window behind "Refresh these legs live" (th_ibkr.plan's spec):
-    only the trade's expiries; on each side of the spot at least as many strikes as
-    the stored chain lists out to the farthest leg (+2), and a sigma_k whose expected
-    move reaches that leg's distance (x1.15) at the nearest expiry - so a leg is
-    covered even when IBKR lists more strikes than were stored. Ticker-relative: the
-    distance is measured in the stock's own IV."""
-    legs = c.get("legs") or []
-    exps = sorted({l.get("expiry") for l in legs if l.get("expiry")})
-    spot = _num(chain.get("spot")) or _num((und or {}).get("spot")) or _num((c.get("underlying") or {}).get("spot"))
-    iv30 = _num((und or {}).get("iv30"))
-    iv_hint = round(iv30 / 100.0, 4) if iv30 else None
-    need, dist = REFRESH_SIDE_MIN, 0.0
-    by_exp = {e.get("expiry"): e for e in chain.get("expiries") or ()}
-    for l in legs:
-        e = by_exp.get(l.get("expiry")) or {}
-        ks = sorted({_num(r.get("strike")) for r in (e.get("calls") or []) + (e.get("puts") or [])} - {None})
-        k = _num(l.get("strike"))
-        if spot is None or k is None:
-            continue
-        n = (sum(1 for x in ks if k <= x < spot) if k < spot else sum(1 for x in ks if spot <= x <= k))
-        need = max(need, n + REFRESH_SIDE_PAD)
-        dist = max(dist, abs(k - spot))
-    dtes = [int(l["dte"]) for l in legs if isinstance(l.get("dte"), (int, float))]
-    sigma_k = REFRESH_SIGMA_K_MIN
-    if spot and dist > 0:
-        move_1k = spot * (iv_hint or REFRESH_DEFAULT_IV) * math.sqrt(max(1, min(dtes) if dtes else 30) / 365.0)
-        sigma_k = min(REFRESH_SIGMA_K_MAX, max(REFRESH_SIGMA_K_MIN, round(dist * 1.15 / move_1k, 3)))
-    return {"symbol": c.get("symbol"), "spot": spot, "iv_hint": iv_hint, "expiries": exps,
-            "sigma_k": sigma_k, "min_side": min(REFRESH_SIDE_MAX, need), "max_side": REFRESH_SIDE_MAX}
 
 
 def _detail(db: Session, user: User, strategy: str, cid: str) -> tuple[dict | None, dict, dict | None, str]:
@@ -832,7 +894,7 @@ def _detail(db: Session, user: User, strategy: str, cid: str) -> tuple[dict | No
     prefs = opt_rules.read(db, user)
     rules = opt_rules.for_strategy(prefs, strategy)
     # only the trade's own expiries are read (a day either side); no age cut - an
-    # opened trade shows its legs however old their quotes are
+    # opened trade shows its legs however old their data is
     day = clock.et_date()
     dtes = []
     for exp, _r, _k in parsed[2]:
@@ -866,51 +928,141 @@ def _payoff_url(strategy: str, cid: str) -> str:
 # ────────────────────────────────── collector line ──────────────────────────────────
 
 def _collector_view(db: Session, now: _dt.datetime | None = None) -> dict:
-    """The Hermes collector line of the strip (§4.3): state running / error / stale /
-    stopped / none, the words, the tooltip and a tone."""
+    """The Hermes collector line of the strip (§13.4, §13.6): state running / idle /
+    history / eod / error / stale / none (and stopped), the words, the tooltip, a tone,
+    and ``pass_key`` - it changes when a pass finishes, and the page then re-screens."""
     now = now or _utcnow()
     st = opt_store.collector_status(db)
     if st is None:
-        return {"state": "none", "tone": "slate", "text": "Hermes collector: no heartbeat yet",
-                "tip": "The Hermes options collector has not reported yet. Until it runs, only members' "
-                       "connectors fill the shared data."}
+        return {"state": "none", "tone": "slate", "pass_key": "",
+                "text": "Massive collector: no heartbeat yet",
+                "tip": "The Hermes options collector (TST-Options-Collector) has not reported yet. Until it "
+                       "runs, a ticker is read only when a member presses its refresh button."}
     age = _age_min(st.get("heartbeat"), now)
-    gw = st.get("gateway") or "IB Gateway"
-    detail = st.get("phase_detail") or ""
+    raw = str(st.get("state") or "").strip().lower()
+    detail = _scrub(st.get("phase_detail") or "")
+    eod = st.get("last_eod_on")
+    finished = _naive(st.get("cycle_finished"))
+    pass_key = "|".join(str(x or "") for x in (st.get("cycle_n"), finished and finished.isoformat(), eod))
+    tail = ((f" · last pass finished {finished.strftime('%Y-%m-%d %H:%M')} UTC" if finished else "")
+            + (f" · last end-of-day pass {eod}" if eod else ""))
     if age is None or age > STALE_HEARTBEAT_MIN:
-        return {"state": "stale", "tone": "amber",
-                "text": f"Hermes collector: no heartbeat for {_age_text(age) if age is not None else 'a while'}",
-                "tip": f"The collector on Hermes last reported {_age_text(age)} ago (state {st.get('state') or '?'}). "
-                       f"It may have stopped - check the TST-Options-Collector task on Hermes."}
-    if st.get("state") == "waiting":
-        # The ingest supervisor keeps the Hermes Gateway down BY DESIGN (the weekday
-        # 08:00-20:10 ET manual-trading blackout, its start-up, closed after the nightly
-        # top-up): neutral, not an error - members' connectors carry the session.
-        eod = st.get("last_eod_on")
-        return {"state": "waiting", "tone": "slate", "text": "Hermes: waiting · Gateway off by design",
-                "tip": (detail or "The Hermes Gateway is off by design.")
-                       + (f" · last end-of-day pass {eod}" if eod else "")}
-    if st.get("state") == "error" or st.get("gateway_ok") is False:
-        last_ok = _naive(st.get("cycle_finished"))
-        since = f" (last full pass {last_ok.strftime('%H:%M')} UTC)" if last_ok else ""
-        return {"state": "error", "tone": "rose",
-                "text": f"Hermes: gateway down{since}" if st.get("gateway_ok") is False else "Hermes: error",
-                "tip": f"{gw}: {st.get('last_error') or detail or 'not reachable'}. The collector retries every minute."}
-    if st.get("state") == "stopped":
-        return {"state": "stopped", "tone": "slate", "text": "Hermes collector: stopped",
-                "tip": detail or "The collector was stopped on Hermes."}
-    words = {"starting": "starting", "history": "reading history", "cycle": "running",
-             "eod": "end-of-day pass", "idle": "idle"}
-    parts = [f"Hermes: {words.get(st.get('state') or '', st.get('state') or 'running')}"]
-    if st.get("cycle_n"):
-        parts.append(f"cycle {st['cycle_n']}")
+        return {"state": "stale", "tone": "amber", "pass_key": pass_key,
+                "text": f"Massive collector: no heartbeat for {_age_text(age) if age is not None else 'a while'}",
+                "tip": f"The collector on Hermes last reported {_age_phrase(age)} ago (state {raw or '?'}). "
+                       f"It may have stopped - an administrator can check the TST-Options-Collector task on "
+                       f"Hermes. The refresh button on a ticker still reads it now." + tail}
+    if raw == "error":
+        # the reported detail is the pause's own reason + next try (the tray reads it first
+        # too); last_error is only the newest one-ticker failure
+        reason = _scrub(detail or st.get("last_error") or "unknown error")
+        short = reason if len(reason) <= ERROR_TEXT_MAX else reason[:ERROR_TEXT_MAX - 1].rstrip() + "…"
+        return {"state": "error", "tone": "rose", "pass_key": pass_key,
+                "text": f"Collector error: {short}",
+                "tip": f"The Hermes collector cannot read Massive: {reason}. It keeps trying on its own; the "
+                       f"data on the page stays as it was last read." + tail}
+    if raw == "stopped":
+        return {"state": "stopped", "tone": "slate", "pass_key": pass_key,
+                "text": "Massive collector: stopped",
+                "tip": (detail or "The collector was stopped on Hermes.") + tail}
+    mdt = st.get("mdt")
+    feed = f"{MDT_WORDS.get(mdt, mdt)} data" if mdt and mdt not in ("delayed", "eod") else "data 15 min delayed"
+    head = COLLECTOR_WORDS.get(raw)
+    if head is None:                                       # idle (between passes, out of hours) or unknown
+        parts = ["Massive: idle"]
+        if st.get("cycle_n"):
+            parts.append(f"pass {st['cycle_n']} done")
+        parts.append(feed)
+        return {"state": "idle", "tone": "slate", "pass_key": pass_key, "text": " · ".join(parts),
+                "tip": (f"Between passes: the collector reads every basket from Massive every {_cycle_min()} min "
+                        f"while the US market is open, and once more after the close"
+                        + (f" · {detail}" if detail else "") + f" · heartbeat {_age_phrase(age)} ago" + tail)}
+    parts = [f"Massive: {head}"]
+    if raw in ("cycle", "running") and st.get("cycle_n"):
+        parts.append(f"pass {st['cycle_n']}")
     if st.get("symbols_total"):
-        parts.append(f"{st.get('symbols_done') or 0}/{st['symbols_total']} tickers this pass")
-    if st.get("mdt"):
-        parts.append(f"{MDT_WORDS.get(st['mdt'], st['mdt'])} data")
-    tip = (f"{gw} · heartbeat {_age_text(age)} ago" + (f" · {detail}" if detail else "")
-           + (f" · last end-of-day pass {st['last_eod_on']}" if st.get("last_eod_on") else ""))
-    return {"state": "running", "tone": "emerald", "text": " · ".join(parts), "tip": tip}
+        parts.append(f"{st.get('symbols_done') or 0}/{st['symbols_total']} tickers")
+    if raw != "history":
+        parts.append(feed)
+    state = "running" if raw in ("cycle", "running", "starting") else raw
+    return {"state": state, "tone": "emerald", "pass_key": pass_key, "text": " · ".join(parts),
+            "tip": (f"The Hermes collector reads Massive (Options Starter, 15 min delayed) · heartbeat "
+                    f"{_age_phrase(age)} ago" + (f" · {detail}" if detail else "") + tail)}
+
+
+# ────────────────────────────────── "Refresh now" ──────────────────────────────────
+
+_refresh_lock = threading.Lock()
+_refresh_last: dict[tuple[int, str], float] = {}      # (user id, symbol) -> monotonic time of the last read
+_now_s = time.monotonic                                # the limiter's clock (a test replaces it)
+
+
+def reset_refresh_limits() -> None:
+    """Forget every member's last "Refresh now" (tests, a restart)."""
+    with _refresh_lock:
+        _refresh_last.clear()
+
+
+def _refresh_slot(user_id: int, sym: str) -> int:
+    """0 and the slot taken when this member may read ``sym`` now; else the whole
+    seconds left before the next read (one per ticker per member per minute)."""
+    now = _now_s()
+    with _refresh_lock:
+        last = _refresh_last.get((user_id, sym))
+        if last is not None and now - last < REFRESH_EVERY_S:
+            return max(1, int(math.ceil(REFRESH_EVERY_S - (now - last))))
+        if len(_refresh_last) > 5000:                  # never grows without bound
+            for k in [k for k, t in _refresh_last.items() if now - t >= REFRESH_EVERY_S]:
+                _refresh_last.pop(k, None)
+        _refresh_last[(user_id, sym)] = now
+        return 0
+
+
+def _refresh_free(user_id: int, sym: str) -> None:
+    """Give the slot back (nothing was asked of Massive)."""
+    with _refresh_lock:
+        _refresh_last.pop((user_id, sym), None)
+
+
+def _refresh_sleep(seconds: float) -> None:
+    """The refresh client's wait: the short pacing and network-retry pauses are kept;
+    a longer one (the 429 back-off: 15 s doubling to 2 min) ends the read as "rate"
+    rather than holding the member's request for minutes."""
+    if seconds > REFRESH_MAX_WAIT_S:
+        raise massive.MassiveError("rate", "Massive asked to wait %.0f s (too many requests)" % seconds, 429)
+    if seconds > 0:
+        time.sleep(seconds)
+
+
+def _massive_client():
+    """The Massive client of one "Refresh now" (the key from TST_MASSIVE_API_KEY)."""
+    return massive.Client(sleep=_refresh_sleep)
+
+
+def _massive_problem(exc: Exception) -> tuple[int, str]:
+    """(HTTP status, plain words) for a failed Massive read (MassiveError.kind)."""
+    kind = getattr(exc, "kind", None)
+    if kind == "config":
+        return 503, "Massive is not set up on the server"
+    if kind in ("auth", "plan"):
+        return 502, _scrub(str(exc)) or ("Massive rejected the API key" if kind == "auth"
+                                         else "the Massive plan does not include this data")
+    if kind == "rate":
+        return 503, "Massive is busy, try again in a minute"
+    if kind == "network":
+        return 503, "Massive could not be reached - try again in a minute"
+    status = getattr(exc, "status", None)
+    return 502, f"Massive answered with an error{f' (HTTP {status})' if status else ''} - try again in a minute"
+
+
+def _refresh_fail(status: int, msg: str, *, retry_after: int | None = None) -> Response:
+    """A refresh that did not happen: the plain reason as the body and as a toast; the
+    basket row stays as it is (no swap)."""
+    resp = Response(msg, status_code=status, media_type="text/plain")
+    resp.headers["HX-Reswap"] = "none"
+    if retry_after:
+        resp.headers["Retry-After"] = str(int(retry_after))
+    return _trigger(resp, _toast(msg, "err"))
 
 
 # ────────────────────────────────── routes: page + basket ──────────────────────────────────
@@ -928,8 +1080,8 @@ def options_home(request: Request, user: User = Depends(require_user), db: Sessi
 @router.get("/basket", response_class=HTMLResponse)
 def basket(request: Request, sort: str = "added", part: str = "", user: User = Depends(require_user),
            db: Session = Depends(get_db)):
-    """The basket fragment; ``part=rows`` = only the rows container (the page's
-    refreshes after a contribution, a sort click), so the Add / Import footer keeps
+    """The basket fragment; ``part=rows`` = only the rows container (a sort click, add /
+    remove, the page's refresh after a collector pass), so the Add / Import footer keeps
     what the member typed and which panel is open."""
     ctx = _basket_context(db, user, sort=sort)
     ctx["part"] = _part(part)
@@ -942,8 +1094,8 @@ def basket_add(request: Request, symbol: str = Form(""), note: str = Form(""), s
     """One typed ticker (form-encoded) = an import with source 'typed'."""
     sym = _clean_symbol(symbol)
     res = _add_symbols(db, user, [sym] if sym else [], "typed", note)
-    msg = (f"{sym} added - waiting for its first read (a member's IBKR connector, or Hermes after "
-           f"20:10 ET / at the weekend)" if res["added"] else
+    msg = (f"{sym} added - press its refresh button to read it from Massive now, or the collector reads it "
+           f"on its next pass" if res["added"] else
            ("Basket is full (%d tickers)" % MAX_BASKET if res["over_cap"] else
             (f"{sym} is already in your basket" if sym else "That is not a ticker")))
     return _basket_response(request, db, user, sort=sort, part=part,
@@ -990,6 +1142,64 @@ def basket_import(payload: BasketImport, user: User = Depends(require_user), db:
                            **_toast(f"{res['added']} added, {res['skipped']} skipped"
                                     + (f", {res['over_cap']} over the {MAX_BASKET} cap" if res["over_cap"] else ""),
                                     "ok" if res["added"] else "info")})
+
+
+@router.post("/refresh/{symbol}", response_class=HTMLResponse)
+def refresh_symbol(request: Request, symbol: str, src: str = Form(""), user: User = Depends(require_user),
+                   db: Session = Depends(get_db)):
+    """"Refresh now": read one ticker of the member's basket from Massive, server-side
+    (``opt_massive.ingest_symbol(kind="manual")``, the collector's own read - a few
+    seconds), at most once per ticker per member per minute. Answers the refreshed
+    basket row; ``HX-Trigger-After-Settle: options:refreshed`` makes the page re-screen
+    the list (and reload an open trade of that ticker). A read that fails answers the
+    plain reason (as the body and a toast) and swaps nothing. ``src=trade`` = pressed
+    in the trade detail (the page then reloads the basket rows itself)."""
+    sym = _clean_symbol(symbol)
+    if not sym or not _in_own_basket(db, user, sym):
+        return _refresh_fail(400, f"{sym or 'That ticker'} is not in your basket")
+    wait = _refresh_slot(user.id, sym)
+    if wait:
+        return _refresh_fail(429, f"{sym} was just refreshed - try again in {wait} s", retry_after=wait)
+    t0 = time.monotonic()
+    client = None
+    try:
+        client = _massive_client()
+        res = opt_massive.ingest_symbol(db, client, sym, kind="manual") or {}
+    except massive.MassiveError as exc:
+        db.rollback()
+        kind = getattr(exc, "kind", None)
+        if kind == "config":
+            _refresh_free(user.id, sym)                  # nothing was asked of Massive
+        status, why = _massive_problem(exc)
+        log.warning("options refresh %s by user %s: Massive %s (HTTP %s)", sym, user.id, kind,
+                    getattr(exc, "status", None))
+        return _refresh_fail(status, f"{sym}: {why}", retry_after=60 if kind == "rate" else None)
+    except Exception as exc:  # noqa: BLE001 - the member sees a plain reason, the log has the rest
+        db.rollback()
+        log.warning("options refresh %s by user %s: %s", sym, user.id, type(exc).__name__, exc_info=True)
+        return _refresh_fail(500, f"{sym}: the refresh failed ({type(exc).__name__}) - try again in a minute")
+    finally:
+        close = getattr(client, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:  # noqa: BLE001
+                pass
+    stored = int(_num(res.get("stored")) or 0)
+    secs = (time.monotonic() - t0)
+    log.info("options refresh %s by user %s: %s contracts in %.1f s", sym, user.id, stored, secs)
+    msg = (f"{sym} read from Massive: {stored:,} contracts ({secs:.1f} s) - the list is re-screened"
+           if stored else f"Massive returned no option contracts for {sym}")
+    it = _one_item(db, user, sym)
+    if it is None:                                       # removed meanwhile: nothing to swap in
+        resp = Response("", status_code=200, media_type="text/html")
+        resp.headers["HX-Reswap"] = "none"
+    else:
+        resp = templates.TemplateResponse(request, "_opt_basket.html", {"user": user, "part": "row", "it": it})
+    _trigger(resp, _toast(msg, "ok" if stored else "info"))
+    return _trigger(resp, {"options:refreshed": {"symbol": sym, "stored": stored,
+                                                 "src": "trade" if src == "trade" else "basket"}},
+                    header="HX-Trigger-After-Settle")
 
 
 # ────────────────────────────────── routes: rules ──────────────────────────────────
@@ -1078,28 +1288,31 @@ def results(request: Request, strategy: str = "", sort: str = "score", dir: str 
 @router.get("/trade", response_class=HTMLResponse)
 def trade(request: Request, strategy: str = "", id: str = "",  # noqa: A002
           user: User = Depends(require_user), db: Session = Depends(get_db)):
-    """One trade, re-derived from the current pool: the legs with each one's as_of /
-    source / market data type, the payoff chart, breakevens, max profit / loss, POP and
-    the "Refresh these legs live" window."""
+    """One trade, re-derived from the current data: the legs with each one's price and
+    where it comes from (bid/ask mid, or a model price from its IV), its data time and
+    source, the payoff chart, breakevens, max profit / loss, POP, the "Refresh now"
+    control and the reminder to check the live price in TWS."""
     strategy = _strategy(strategy)
     d, chain, und, sym = _detail(db, user, strategy, id)
     ctx: dict[str, Any] = {"user": user, "strategy": strategy, "label": opt_rules.LABELS[strategy],
                            "cid": id, "sym": sym, "d": d}
     if d is None:
-        ctx["gone"] = ("This trade is no longer in the data (a leg expired, or its quote is gone). "
-                       "The list refreshes as new quotes arrive.")
+        ctx["gone"] = ("This trade is no longer in the data (a leg expired, or its data is gone). "
+                       "The list refreshes as new data arrives.")
         return templates.TemplateResponse(request, "_opt_trade.html", ctx)
     c = d["candidate"]
     now = _utcnow()
     rth = clock.us_session_open()
+    legs = [_leg_view(l, now) for l in c.get("legs") or []]
     ctx.update({
         "c": c, "v": _row_view(strategy, c, rth), "po": d.get("payoff") or {}, "fails": d.get("fails"),
-        "legs": [_leg_view(l, now) for l in c.get("legs") or []],
+        "legs": legs, "any_quotes": any(l["quoted"] for l in legs),
+        "modelled": any(not l["quoted"] for l in legs),
         "pane_url": _payoff_url(strategy, id),
-        "spec_json": json.dumps(_refresh_spec(c, chain, und)),
         "metrics": c.get("metrics") or {}, "family": opt_rules.FAMILY.get(strategy),
         "breakevens_text": ", ".join(_k(b) for b in c.get("breakevens") or []) or "-",
         "earnings": (und or {}).get("earnings_date"), "spot": _num(chain.get("spot")),
+        "in_basket": _in_own_basket(db, user, sym),
     })
     return templates.TemplateResponse(request, "_opt_trade.html", ctx)
 
@@ -1126,232 +1339,25 @@ def payoff_pane(request: Request, strategy: str = "", id: str = "", units: str =
                                       {"po": po, "pane_url": _payoff_url(strategy, id), "user": user})
 
 
-# ────────────────────────────────── routes: strip, connector ──────────────────────────────────
+# ────────────────────────────────── routes: strip + help ──────────────────────────────────
 
 @router.get("/status", response_class=HTMLResponse)
 def status(request: Request, user: User = Depends(require_user), db: Session = Depends(get_db)):
-    """The Hermes collector line of the strip (polled every 60 s). The connector pill
-    is the browser's own probe of 127.0.0.1 and is not part of this fragment."""
-    return templates.TemplateResponse(request, "_opt_status.html",
-                                      {"user": user, "col": _collector_view(db)})
+    """The status strip (polled every 60 s): the Hermes collector line, the plain note
+    that prices are estimated from IV when the plan has no bid/ask, and - for an
+    administrator only - a missing Massive key."""
+    return templates.TemplateResponse(request, "_opt_status.html", {
+        "user": user, "col": _collector_view(db), "quotes": opt_rules.quotes_available(),
+        "no_quotes_note": NO_QUOTES_NOTE,
+        "key_missing": bool(getattr(user, "is_admin", False)) and massive.api_key() is None,
+        "key_missing_text": KEY_MISSING})
 
 
-@router.get("/connector", response_class=HTMLResponse)
-def connector_help(request: Request, user: User = Depends(require_user)):
-    """The connector help: download, install, set the port; what the pill colours mean."""
-    return templates.TemplateResponse(request, "_opt_connector.html",
-                                      {"user": user, "bridge_port": BRIDGE_PORT})
-
-
-@router.get("/connector/download")
-def connector_download(user: User = Depends(require_user)):
-    """The connector as a zip, built in memory from bridge/ (opt_connector_pkg)."""
-    try:
-        data, name = opt_connector_pkg.build_zip()
-    except FileNotFoundError as exc:
-        log.error("connector download: %s", exc)
-        return Response(f"The connector package is not available on this server: {exc}",
-                        status_code=500, media_type="text/plain")
-    return Response(content=data, media_type="application/zip",
-                    headers={"Content-Disposition": f'attachment; filename="{name}"',
-                             "Cache-Control": "no-store"})
-
-
-# ────────────────────────────────── routes: member contributions (§6) ──────────────────────────────────
-
-def _held(db: Session, sym: str) -> bool:
-    return (db.query(OptionBasket.id)
-              .filter(OptionBasket.symbol == sym, OptionBasket.active.is_(True)).first()) is not None
-
-
-def _in_own_basket(db: Session, user: User, sym: str) -> bool:
-    return (db.query(OptionBasket.id)
-              .filter(OptionBasket.owner_key == _owner(user), OptionBasket.symbol == sym,
-                      OptionBasket.active.is_(True)).first()) is not None
-
-
-class _Body(NamedTuple):
-    """A member's JSON body, read by ``_json_body``: ``data`` or (``status``, ``error``)."""
-    data: Any = None
-    status: int = 200
-    error: str | None = None
-
-
-async def _json_body(request: Request, user: User = Depends(require_user)) -> _Body:
-    """The JSON body of a contribution, read AFTER the sign-in check (this depends on
-    require_user; the router's menu gate runs before both) and refused unread when it
-    is over MAX_BODY_BYTES - by Content-Length, or while streaming a body without one.
-    Parsed off the event loop."""
-    cl = request.headers.get("content-length")
-    if cl is not None:
-        try:
-            n = int(cl)
-        except ValueError:
-            return _Body(None, 400, "bad Content-Length")
-        if n > MAX_BODY_BYTES:
-            return _Body(None, 413, f"the body is over {MAX_BODY_BYTES // (1024 * 1024)} MB")
-    chunks: list[bytes] = []
-    size = 0
-    async for chunk in request.stream():
-        size += len(chunk)
-        if size > MAX_BODY_BYTES:
-            return _Body(None, 413, f"the body is over {MAX_BODY_BYTES // (1024 * 1024)} MB")
-        chunks.append(chunk)
-    raw = b"".join(chunks)
-    if not raw.strip():
-        return _Body(None)
-    try:
-        return _Body(await run_in_threadpool(json.loads, raw))
-    except ValueError:
-        return _Body(None, 400, "the body is not JSON")
-
-
-@router.get("/data/next")
-def data_next(user: User = Depends(require_user), db: Session = Depends(get_db)):
-    """The next symbol this member's connector should read (stalest first, leased) with
-    its fetch window - a CHUNK of the chain (a few expiries, stalest first) so one read
-    fits the connector's time limit - or {wait: seconds}."""
-    nxt = opt_store.next_for_member(db, user)
-    if not nxt:
-        return {"wait": NEXT_WAIT_S}
-    hd = nxt.get("history_done")
-    if hd is None:
-        hd = (opt_store.underlying(db, nxt["symbol"]) or {}).get("history_done")
-    return {"symbol": nxt["symbol"], "spec": nxt["spec"], "history_done": bool(hd)}
-
-
-@router.post("/data/failed")
-def data_failed(body: _Body = Depends(_json_body), user: User = Depends(require_user),
-                db: Session = Depends(get_db)):
-    """The page's connector could not read a symbol (an error, a timeout, an empty
-    answer, or data the server refused): its lease is released and the symbol backs off
-    for members' reads (10 min, doubling, at most 2 h; the next good contribution clears
-    it), so one ticker that cannot be read never holds the loop. Only for a ticker in
-    the member's own basket - the loop reads nothing else."""
-    if body.error:
-        return _jerr(body.status, body.error)
-    payload = body.data
-    if not isinstance(payload, dict):
-        return _jerr(400, "the report must be a JSON object")
-    sym = _clean_symbol(str(payload.get("symbol") or ""))
-    if not sym:
-        return _jerr(400, "symbol missing or not valid")
-    if not _in_own_basket(db, user, sym):
-        return _jerr(400, f"{sym} is not in your basket")
-    why = opt_store.check_rate(user.id, sym, bucket="failed")
-    if why:
-        return _jerr(429, why)
-    error = " ".join(str(payload.get("error") or "the read failed").split())[:FAILED_ERROR_MAX]
-    try:
-        backoff = opt_store.report_failure(sym, user.id, error, db=db)
-    except Exception as exc:  # noqa: BLE001
-        db.rollback()
-        log.warning("options read failure %s by user %s: %s", sym, user.id, exc, exc_info=True)
-        return _jerr(500, "the failure could not be recorded")
-    log.info("options read failure %s by user %s (back-off %s s): %s", sym, user.id, backoff, error)
-    return {"ok": True, "symbol": sym, "backoff_s": backoff}
-
-
-@router.post("/data/contribute")
-def data_contribute(body: _Body = Depends(_json_body), user: User = Depends(require_user),
-                    db: Session = Depends(get_db)):
-    """A chain read by the member's own connector (§6): validated (§2.4), rate-limited,
-    stored as source 'member' with the member's id and the SERVER's receive time. The
-    background loop's post (not a trade refresh) always frees this member's own lease;
-    a refused one (400) of a ticker in the member's basket also counts as a failed read
-    (opt_store.report_failure: the ticker backs off; ``backoff_s`` in the answer)."""
-    if body.error:
-        return _jerr(body.status, body.error)
-    payload = body.data
-    if not isinstance(payload, dict):
-        return _jerr(400, "the contribution must be a JSON object")
-    kind = "trade" if payload.get("kind") == "trade" else "member"
-    clean, err, dropped = opt_store.validate_contribution(db, payload, user_id=user.id)
-    if clean is None:
-        err = err or "the contribution was rejected"
-        posted = _clean_symbol(str(payload.get("symbol") or ""))
-        extra: dict = {"dropped": dropped}
-        if kind != "trade" and posted and _in_own_basket(db, user, posted):
-            # the background loop's read was refused: exactly a failed read - this
-            # member's lease goes and the ticker backs off, so the loop moves on (the
-            # page sees backoff_s and does not report it a second time)
-            try:
-                extra["backoff_s"] = opt_store.report_failure(posted, user.id, f"refused: {err}", db=db)
-            except Exception as exc:  # noqa: BLE001 - the refusal itself still answers
-                db.rollback()
-                opt_store.release_lease(posted, user.id)
-                log.warning("options refused contribution %s by user %s: %s", posted, user.id, exc)
-        return _jerr(400, err, **extra)
-    sym = clean["symbol"]
-    why = opt_store.check_rate(user.id, sym, bucket="trade" if kind == "trade" else "chain")
-    if why:
-        if kind != "trade":
-            opt_store.release_lease(sym, user.id)       # not stored: free this member's own lease
-        return _jerr(429, why)
-    now = _utcnow()
-    try:
-        res = opt_store.upsert_quotes(db, sym, clean["rows"], source="member", mdt=clean["mdt"],
-                                      user_id=user.id, as_of=now, kind=kind, spot=clean["spot"])
-    except Exception as exc:  # noqa: BLE001
-        db.rollback()
-        log.warning("options contribution %s by user %s: %s", sym, user.id, exc, exc_info=True)
-        return _jerr(500, "the contribution could not be stored")
-    finally:
-        if kind != "trade":
-            opt_store.release_lease(sym, user.id)       # only this member's own lease
-    log.info("options contribution %s by user %s: %s stored, %s older, %s dropped, mdt %s, connector %s, "
-             "client clock %s", sym, user.id, res.get("stored"), res.get("skipped_older"), dropped,
-             clean["mdt"], str(payload.get("connector_version") or "?")[:16],
-             str(payload.get("client_as_of") or "?")[:40])
-    return {"ok": True, "symbol": sym, "stored": res.get("stored", 0), "skipped_older": res.get("skipped_older", 0),
-            "dropped": dropped, "as_of": now.isoformat(timespec="seconds") + "Z"}
-
-
-@router.post("/data/contribute_history")
-def data_contribute_history(body: _Body = Depends(_json_body), user: User = Depends(require_user),
-                            db: Session = Depends(get_db)):
-    """A year of daily bars + IBKR's daily 30-day IV from the member's connector, for a
-    symbol Hermes has not pulled history for yet: checked by opt_store.validate_history
-    (bars required, weekday dates only, every close inside the chain contributions' spot
-    band, IV 0.1-1000), filed into opt_underlying_daily (source 'member') and the stock
-    statistics recomputed. A no-op once history is on file - Hermes's, or a member's
-    from the last 7 days (so one member cannot overwrite another's; Hermes's own pull
-    replaces member rows)."""
-    if body.error:
-        return _jerr(body.status, body.error)
-    payload = body.data
-    if not isinstance(payload, dict):
-        return _jerr(400, "the history must be a JSON object")
-    sym = _clean_symbol(str(payload.get("symbol") or ""))
-    if not sym:
-        return _jerr(400, "symbol missing or not valid")
-    if not _held(db, sym):
-        return _jerr(400, f"{sym} is not in any member's basket")
-    bars, ivs = payload.get("bars"), payload.get("iv_series")
-    if not isinstance(bars, list) or not isinstance(ivs or [], list):
-        return _jerr(400, "bars and iv_series must be lists")
-    if len(bars) > HISTORY_MAX_POINTS or len(ivs or []) > HISTORY_MAX_POINTS:
-        return _jerr(400, f"at most {HISTORY_MAX_POINTS} points each")
-    und = opt_store.underlying(db, sym) or {}
-    if und.get("history_done"):
-        return {"ok": True, "symbol": sym, "stored": 0, "note": "history already on file"}
-    filed = _age_min(und.get("bars_as_of"))
-    if filed is not None and filed < MEMBER_HISTORY_KEEP_D * 1440:
-        return {"ok": True, "symbol": sym, "stored": 0,
-                "note": "a member's history is already on file; Hermes replaces it with its own pull"}
-    clean, err = opt_store.validate_history(db, payload, user_id=user.id)
-    if clean is None:
-        return _jerr(400, err or "the history was rejected")
-    why = opt_store.check_rate(user.id, sym, bucket="history")
-    if why:
-        return _jerr(429, why)
-    try:
-        n = opt_store.upsert_daily(db, sym, clean.get("bars") or [], clean.get("iv_series") or [],
-                                   source="member", user_id=user.id)
-        u = opt_store.recompute_underlying(db, sym) if n else (opt_store.underlying(db, sym) or {})
-    except Exception as exc:  # noqa: BLE001
-        db.rollback()
-        log.warning("options history %s by user %s: %s", sym, user.id, exc, exc_info=True)
-        return _jerr(500, "the history could not be stored")
-    return {"ok": True, "symbol": sym, "stored": n, "iv_rank": u.get("iv_rank"), "iv_n": u.get("iv_n"),
-            "atr14": u.get("atr14")}
+@router.get("/help", response_class=HTMLResponse)
+def data_help(request: Request, user: User = Depends(require_user)):
+    """The "?" panel: where the data comes from (Massive Options Starter, 15 min
+    delayed, refreshed by Hermes in the session), how prices are estimated, and that
+    the entry is made in TWS."""
+    return templates.TemplateResponse(request, "_opt_help.html", {
+        "user": user, "quotes": opt_rules.quotes_available(), "cycle_min": _cycle_min(),
+        "refresh_every_s": REFRESH_EVERY_S, "fresh_min": FRESH_MIN})

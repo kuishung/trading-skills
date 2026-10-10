@@ -33,6 +33,32 @@ web, Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-10-10 — `tray_status.py`: the Options collector line speaks Massive, not the Gateway (tray-sync rule)
+- dashboard_tst v4.134 switched the Options data from IBKR to **Massive** (formerly
+  Polygon.io — Options Starter + Stocks Basic, the user's decision of 2026-10-10). The
+  Hermes collector (`TST-Options-Collector`) now reads Massive over HTTPS: no IB Gateway,
+  no weekday blackout, no clientId (89 retired). Its heartbeat file
+  (`dashboard_tst/state/options_collector.json`) lost the IBKR keys (`gateway`,
+  `gateway_ok`, `wait_reason`, `wait_until`, `history_waiting`, …) and gained `api_ok`,
+  `error_kind`, `next_try`, `history_pending`, `cycle_min`, so the tray line had to follow
+  (tray-sync rule: the icon must show the runtime state the code now has).
+- `get_options_collector_status()` now maps the collector's state to **running**
+  (`cycle` / `starting`), **idle**, **history**, **eod**, **error**, **stopped**, plus
+  **stale** (no heartbeat for 5 min) and **absent** (no file — the laptop). The line reads
+  e.g. `Options collector: running · pass 12 · 40/98 · Massive delayed · EOD 2026-10-09 ·
+  hb 10s ago`; `Massive failing` replaces the data type when the last Massive request
+  failed; `history pending (N)` while N basket tickers still wait for their first-time
+  history. The `waiting` state and its grey "Gateway blackout" line are gone — nothing is
+  down by design any more.
+- Colours: **green** running / idle / history / eod; **amber** error (the reason follows
+  — e.g. "TST_MASSIVE_API_KEY is not set on this PC", "Massive rejected the API key", a
+  plan without an endpoint, Massive not reachable), stopped, stale, or an unreadable
+  file; **grey** absent. Tooltip fragments: `Opt p12` (running, pass 12), `Opt idle`,
+  `Opt history`, `Opt eod`, `Opt ERR`, `Opt stopped`, `Opt stale 9m`, `Opt -`, `Opt ?`.
+  The returned dict carries `api_ok` instead of `gateway_ok`.
+- Tested in `dashboard_tst/tests/test_opt_collector.py` (each state's colour, line and
+  tooltip; stale heartbeat; missing and unreadable file).
+
 ### 2026-10-09 — `tray_status.py`: the Options v2 collector line (tray-sync rule)
 - dashboard_tst v4.133 adds an always-on IBKR **options collector** on Hermes
   (`dashboard_tst/deploy/options_collector.py`, task `TST-Options-Collector`, clientId 89)

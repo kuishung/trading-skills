@@ -37,9 +37,10 @@ collaborators.)
 ## A. App service on Hermes
 
 Requirements: **Python 3.12**, **git** (and later **cloudflared**). The web app
-itself never touches IBKR, but the same venv runs the **options collector**
-(section G), an IBKR workload — so build the venv with `py -3.12` (`run_app.ps1`
-prefers it), never 3.14 (`ib_insync` cannot import there).
+never touches IBKR, and since v4.134 neither does the **options collector** (section G —
+it reads Massive over HTTPS from the same venv). Still build the venv with `py -3.12`
+(`run_app.ps1` prefers it), never 3.14: `requirements.txt` keeps `ib_insync` for the
+legacy by-hand seeder `deploy\iv_seed_ibkr.py`, and `ib_insync` cannot import on 3.14.
 
 ```powershell
 # 1. Clone (first time)
@@ -53,12 +54,13 @@ copy app\.env.example app\.env
 #     TST_AUTH_MODE=password
 #     TST_ADMIN_EMAIL / TST_ADMIN_PASSWORD   (seeds your admin on first run)
 #     TST_HTTPS_ONLY=1                        (served over Cloudflare HTTPS)
-#   Options page (v4.133): the web app never connects to IBKR - the options collector does
-#   (section G). Its settings, all optional:
-#     TST_IBKR_PORT=4002        (unset = probe 4002, 4001, 7497, 7496 in turn; Hermes = Gateway paper 4002)
-#     TST_OPTIONS_COLLECTOR_CLIENT_ID=89, TST_OPTIONS_MAX_LINES=60
-#   (TST_OPTIONS_SOURCE / _FALLBACK / TST_ALPACA_FEED / TST_IV_SEED_IBKR / TST_IBKR_PYTHON are gone
-#    since v4.133 - delete them from an older app\.env.)
+#   Options page (v4.134): the data comes from Massive (formerly Polygon.io) - section G.
+#     TST_MASSIVE_API_KEY=<your key>   (Hermes only; app\.env is gitignored - never commit it)
+#     TST_MASSIVE_QUOTES=0             (Options Starter has no bid/ask; 1 only on a plan with quotes)
+#     TST_OPTIONS_CYCLE_MIN=15         (optional: minutes between the collector's passes in the session)
+#   (TST_IBKR_PORT / TST_OPTIONS_COLLECTOR_CLIENT_ID / TST_OPTIONS_MAX_LINES are gone since v4.134,
+#    TST_OPTIONS_SOURCE / _FALLBACK / TST_ALPACA_FEED / TST_IV_SEED_IBKR / TST_IBKR_PYTHON since
+#    v4.133 - delete them from an older app\.env.)
 
 # 3. First run (foreground sanity check) -> http://localhost:8000/health
 powershell -ExecutionPolicy Bypass -File deploy\run_app.ps1
@@ -178,54 +180,82 @@ throughout — an unreadable ticker folder is skipped, never breaks the push.
 
 ---
 
-## G. Options collector (on Hermes, v4.133 — Options v2)
+## G. Options data from Massive (on Hermes, v4.134 — Options v2)
 
-Since v4.133 every option and stock figure on the Options page comes from IBKR
-(`OPTIONS_V2_DESIGN.md`). The web app never connects to IBKR; two things do:
+Since v4.134 every option and stock figure on the Options page comes from **Massive**
+(formerly Polygon.io) — the user's decision of 2026-10-10 (`OPTIONS_V2_DESIGN.md` §13).
+TradeHunter only FINDS the trade; the live price is checked and the order entered in IBKR
+TWS. The earnings date stays on the free source (Yahoo). Nothing in the Options data path
+touches IBKR any more: no IB Gateway, no weekday blackout, no clientId (89 is retired).
 
-- **`TST-Options-Collector`** on Hermes — `deploy/options_collector.py --forever`, IB
-  Gateway on 127.0.0.1 (port 4002 on Hermes; `TST_IBKR_PORT` to pin it), **clientId 89**,
-  read-only. It writes the shared pool (`opt_quote`, `opt_underlying`,
-  `opt_underlying_daily`), a heartbeat row (`opt_collector_status`) and
-  `state\options_collector.json` (the Hermes tray reads it).
-- **Each member's connector** (bridge 2.0, downloaded from the Options page) — the live
-  updates during the US session.
+| Massive plan | Cost | What it gives | Used for |
+|---|---|---|---|
+| **Options Starter** | $29 / month | the whole-chain snapshot with greeks, IV, open interest and the day bar; **15 min delayed; NO bid/ask**; unlimited requests; daily bars of option contracts (expired ones too), 2 years | every chain read (so prices are estimated from each contract's IV); the IV30 history behind IV rank, rebuilt from option daily bars |
+| **Stocks Basic** | free | end-of-day daily stock bars, 2 years, ~5 requests a minute | ATR, HV, 20-day volume, the stock price when the chain cannot give one |
 
-**The blackout reality.** The ingest supervisor (`scripts\ingest_supervisor.py`) owns the
-Hermes Gateway and keeps it **OFF Mon-Fri 08:00-20:10 ET** for the user's manual trading.
-So on weekdays the collector reads history and the daily end-of-day record **in the
-evening, after 20:10 ET** (and over the weekend), and during the session its state is
-`waiting` ("members' IBKR connectors carry the session") — neutral, not an error, on the
-page strip and the tray. Historical requests also wait until the supervisor's state file
-shows tonight's top-up done (they share IBKR's per-login pacing with it); chain quotes
-never wait.
+(The free Options Basic plan cannot run the screener: no chain snapshot, no greeks / IV,
+5 requests a minute.)
+
+Two things read Massive, both server-side with the one key:
+
+- **`TST-Options-Collector`** — `deploy\options_collector.py --forever`, the dashboard venv
+  python, HTTPS to `api.massive.com`. Each 15 s tick: the **first-time history** of a new
+  basket ticker first (2 years of Stocks Basic bars + about a year of IV30 rebuilt from
+  option daily bars — 150-300 requests per ticker); then **session passes** — 09:30-16:00 ET
+  on trading days, every `TST_OPTIONS_CYCLE_MIN` minutes (default 15), every basket ticker's
+  chain (most-held first); then **one end-of-day pass** after 16:20 ET (the chain, the day's
+  record into `option_chain_snapshot`, the Stocks Basic bars, the earnings date, the
+  retention prune — a missed evening is caught up before the next open). It writes
+  `opt_quote` / `opt_underlying` / `opt_underlying_daily` / `opt_refresh_log`, a heartbeat
+  row (`opt_collector_status`) and `state\options_collector.json` (the Hermes tray reads it).
+- **"Refresh now"** on a basket row (and in an opened trade) — the web app reads that one
+  ticker at once (a few seconds), at most once per ticker per member per minute.
 
 ### First install (Hermes, PowerShell, elevated)
 
+1. Subscribe at massive.com to **Options Starter** and **Stocks Basic**, and copy the API
+   key from the Massive dashboard.
+2. Put the key in `app\.env` on Hermes — the whole line, no quotes:
+   `TST_MASSIVE_API_KEY=<your key>`. `app\.env` is gitignored: the key lives only there —
+   never in the repo, a URL, a script you paste elsewhere, or a chat. While there, delete
+   the dead IBKR lines `TST_IBKR_PORT`, `TST_OPTIONS_COLLECTOR_CLIENT_ID`,
+   `TST_OPTIONS_MAX_LINES` if present. `TST_MASSIVE_QUOTES=0` (the default) is right for
+   Options Starter.
+3. Run:
+
 ```powershell
 cd C:\trading-skills\TradeHunter\dashboard_tst
-.\.venv\Scripts\python.exe -m pip install -r app\requirements.txt    # ib_insync is in it; the venv is py 3.12
-schtasks /Change /TN TST-Options-Nightly /DISABLE                    # the v4.127 Cboe nightly is gone
+notepad app\.env                                                     # add TST_MASSIVE_API_KEY=<your key>, save, close
+.\.venv\Scripts\python.exe -m pip install -r app\requirements.txt    # nothing new for Massive (httpx is already in); keeps the venv in step
 powershell -ExecutionPolicy Bypass -File deploy\setup_options_collector_task.ps1 -StartNow
-Get-Content state\options_collector.json                             # state, cycle, gateway, heartbeat
+Get-Content state\options_collector.json                             # state, pass, api_ok, history_pending, heartbeat
 ```
 
-`TST-Options-Nightly` runs a script that no longer exists, so disable it (or
-`Unregister-ScheduledTask -TaskName TST-Options-Nightly -Confirm:$false`). The collector
-task starts at boot (1 min delay) and daily at 07:00 local (revives a dead copy only),
-restarts on failure, no time limit. The collector writes `logs\options_collector.log`
-itself (`--log-file`), rotated at 5 MB with 5 old files kept (`.1` ... `.5`), so it never
-grows past ~30 MB; an older registration that appended stdout with `>>` is replaced the
-next time the setup script runs.
+4. Restart the web app with the canonical deploy script (CLAUDE.md / section C): the web
+   app reads `app\.env` only when it starts, so "Refresh now" and the admin's
+   "TST_MASSIVE_API_KEY is not set on the server" badge see the key only after a restart.
+
+The setup script warns (without printing it) when `TST_MASSIVE_API_KEY` is missing from
+`app\.env`; the collector then runs, reports "TST_MASSIVE_API_KEY is not set on this PC"
+on the strip and the tray, and looks again every 5 min. A key **replaced** in `app\.env`
+needs the collector restarted (re-run the setup script with `-StartNow`). The task starts
+at boot (1 min delay) and daily at 07:00 local (revives a dead copy only), restarts on
+failure, no time limit; the collector writes `logs\options_collector.log` itself, rotated
+at 5 MB with 5 old files kept. If the v4.127 Cboe nightly is still registered, disable it:
+`schtasks /Change /TN TST-Options-Nightly /DISABLE`.
+
+**The first run takes a while.** History comes first, so on the first deploy (~100 basket
+tickers x 150-300 option-bar requests, plus Stocks Basic at 5 requests a minute) the
+session passes wait roughly 30-50 min while the backfills run; the strip says "reading
+history" meanwhile.
 
 ### After a pull
 
-The canonical web-app restart (section C / CLAUDE.md) does NOT restart the collector — it
-is a separate long-running task. **Re-run the setup script with `-StartNow` after any pull
-that changes `app\services\opt_collector.py`, `bridge\th_ibkr.py` or
-`deploy\options_collector.py`** (also `app\services\opt_store.py` / `app\models.py`, which
-it imports): it stops the running copy (and an orphaned python child) and starts the new
-code.
+The canonical web-app restart (section C / CLAUDE.md) does NOT restart the collector — it is
+a separate long-running task. **Re-run the setup script with `-StartNow` after any pull that
+changes `app\services\opt_collector.py`, `opt_massive.py`, `massive.py`, `opt_store.py`,
+`app\models.py` or `deploy\options_collector.py`**: it stops the running copy (and an
+orphaned python child) and starts the new code.
 
 ```powershell
 cd C:\trading-skills\TradeHunter\dashboard_tst
@@ -234,19 +264,56 @@ powershell -ExecutionPolicy Bypass -File deploy\setup_options_collector_task.ps1
 
 ### Watching it
 
-The Options page strip: "Hermes: running · cycle 3 · 12/30 tickers this pass · live data",
-"Hermes: waiting · Gateway off by design" (the weekday blackout), "Hermes: gateway down"
-(red, a real outage), "no heartbeat for 9 min" (amber, the task died). The Hermes tray
-carries the same line. By hand (stop the task first — two collectors collide on clientId
-89): `.\.venv\Scripts\python.exe deploy\options_collector.py --once -v`, `--history NVDA`,
-`--eod-now`; `--ignore-ingest` lifts the top-up wait for a one-off run.
+**The Options page strip** (top of `/options`):
+
+| Strip | Meaning |
+|---|---|
+| "Massive: running · pass 12 · 40/98 tickers · data 15 min delayed" (green) | a session pass is reading the baskets |
+| "Massive: reading history · 3/98 tickers" (green) | first-time history of new tickers |
+| "Massive: end-of-day pass · 60/98 tickers · data 15 min delayed" (green) | after 16:20 ET |
+| "Massive: idle · pass 26 done · data 15 min delayed" (grey) | between passes, or the market is closed |
+| "Collector error: TST_MASSIVE_API_KEY is not set on this PC" / "Collector error: Massive rejected the API key (HTTP 401)" / "Collector error: your Massive plan does not include ... (HTTP 403)" (red) | the collector cannot read Massive; the tray line also says what is paused and when it tries again |
+| "Massive collector: no heartbeat for 9 min" (amber) | the task died or hangs |
+
+Below it, always on Options Starter: *"prices are estimated from IV (no bid/ask on this
+plan) - check live in TWS before entering"*; the two bid/ask rules are greyed out. An
+administrator also sees "TST_MASSIVE_API_KEY is not set on the server" when the web app has
+no key. The basket's Data column reads "16 min · Massive (delayed)".
+
+**The Hermes tray** carries the same collector: e.g. `Options collector: running · pass 12 ·
+40/98 · Massive delayed · EOD 2026-10-09 · hb 10s ago` — **green** running / idle /
+history / eod; **amber** ERROR with the reason, stopped, or NO HEARTBEAT; tooltip `Opt p12`,
+`Opt idle`, `Opt ERR`, `Opt stale 9m`.
+
+**What the collector does with an error.** No key or a rejected key: everything waits,
+looked at again every 5 min. A plan without an endpoint (HTTP 403): only that part pauses
+(chain reads, history reads, or the end-of-day stock bars), the rest carries on, retried
+every 5 min. Massive not reachable: everything waits, retried after 60 s doubling to 5 min.
+One ticker failing: logged in `opt_refresh_log`, the loop moves on. A history with too
+little data (a young listing, a ticker with no options) is retried after 30 min, doubling
+to 6 h.
+
+By hand (stop the task first, so two loops do not read the same chains) — the venv python,
+no `py -3.12` needed: `.\.venv\Scripts\python.exe deploy\options_collector.py --once -v`,
+`--history NVDA LRCX`, `--eod-now`. Exit code 2 = Massive not usable for a one-off run (no
+key, the key rejected, the plan lacks an endpoint, or Massive not reachable).
+
+**First checks once the key is in** (none of this could be run on the laptop — there is no
+key there):
+1. The strip goes "reading history" -> "running" (US session) or "idle"; the tray line is green.
+2. "Refresh now" on one ticker says "read from Massive: N contracts".
+3. In the session, the Data column reads about "15-30 min · Massive (delayed)": every row of
+   a snapshot is stamped with the read time minus the 15-min delay (not the contract's own
+   last-trade time), so thinly traded strikes do not look stale.
+4. After 16:20 ET the tray line shows `EOD <today>`.
 
 ---
 
 ## Notes / guardrails
 
 - **Isolation:** the app is genuinely public now (auth-gated). It holds no
-  broker credentials and opens no IBKR session, but running it on a **separate
+  broker credentials and opens no IBKR session (its one vendor secret is the Massive
+  data key in `app\.env`, v4.134), but running it on a **separate
   VM** from the trading "Hermes" VM is the cleaner choice (DESIGN.md).
 - **Google login (Path A):** now that there's a real HTTPS domain, you could
   switch `TST_AUTH_MODE=google`. Password mode is fine; your call.

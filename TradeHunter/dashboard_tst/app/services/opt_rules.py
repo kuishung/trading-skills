@@ -38,6 +38,14 @@ premium / stock price, days. The only absolute numbers are the member's own floo
 (stock price, volumes, open interest, the optional bid/ask $ cap), which are
 absolute by nature.
 
+Data plan (v4.134, design §13.5): the data comes from Massive. The Options Starter
+plan has NO bid/ask quotes, so the two bid/ask rules (``UNUSED_WITHOUT_QUOTES``)
+check nothing there - the screener applies them only to options that carry a bid
+and an ask, and the panel greys them out with ``QUOTES_NOTE`` while
+``quotes_available()`` (``TST_MASSIVE_QUOTES``, default 0) says the plan has none.
+The schema itself is unchanged: a member's saved values stay, ready for a plan with
+quotes.
+
 The ORM model is imported lazily so the pure functions work without a database.
 """
 from __future__ import annotations
@@ -45,6 +53,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 from typing import Any, NamedTuple
 
 SCHEMA_VERSION = 2
@@ -106,7 +115,7 @@ _DELTA_HELP = ("How much the option's price moves for a $1 move in the stock (0.
                "Read without its sign, so puts use the same numbers.")
 _SHORT_DELTA_HELP = ("Roughly the chance the stock finishes past the strike you sell at expiry "
                      "(0.25 = about 1 in 4). Read without its sign.")
-_IV_RANK_HELP = ("Where today's implied volatility sits in its own one-year range from IBKR: 0 = the "
+_IV_RANK_HELP = ("Where today's 30-day implied volatility sits in its own one-year range: 0 = the "
                  "lowest of the year, 100 = the highest. Buyers prefer it low, sellers high.")
 _DTE_HELP = "Calendar days from today to the expiry."
 
@@ -145,7 +154,7 @@ def _earnings(default: str, help_text: str) -> dict[str, Field]:
 # ---- the bid/ask dollar band, one per strategy (moved out of "shared" 2026-10-09).
 # A flat $ cap judges a $0.40 option and a $90 one alike: on the deep, long-dated,
 # high-priced legs the buying strategies use (LEAPS, the diagonal's far call, the
-# calendar's back month) a $0.50 cap is under 1% of the price - tighter than real IBKR
+# calendar's back month) a $0.50 cap is under 1% of the price - tighter than real
 # markets on any larger stock - so it is OFF (0) there and the shared %-of-price rule
 # does the work. Premium selling keeps the user's $0.50 band (v4.117 playbook).
 PREMIUM_SELLING_SPREAD = 0.50
@@ -188,7 +197,7 @@ _DEBIT_VERTICAL = {
     "short_delta_lo": Field(0.25, 0.01, 0.99, "num", "Sold option delta, from", _SHORT_DELTA_HELP),
     "short_delta_hi": Field(0.35, 0.01, 0.99, "num", "Sold option delta, up to", _SHORT_DELTA_HELP),
     "width_atr_lo": Field(1.0, 0.1, 10, "num", "Distance between strikes, from",
-                          "Measured in the stock's average daily range (ATR, 14 days, from IBKR) so it "
+                          "Measured in the stock's average daily range (ATR, 14 days) so it "
                           "scales with each stock: 1 ATR is about $11 on a stock that moves $11 a day. With "
                           "the delta bands above, 30-60 days out the two strikes usually sit 3 to 5 ATR apart.",
                           "x ATR"),
@@ -209,7 +218,7 @@ _CREDIT_VERTICAL = {
     "short_delta_lo": Field(0.20, 0.01, 0.99, "num", "Sold option delta, from", _SHORT_DELTA_HELP),
     "short_delta_hi": Field(0.30, 0.01, 0.99, "num", "Sold option delta, up to", _SHORT_DELTA_HELP),
     "width_atr_lo": Field(0.5, 0.1, 10, "num", "Distance between strikes, from",
-                          "Measured in the stock's average daily range (ATR, 14 days, from IBKR) so it "
+                          "Measured in the stock's average daily range (ATR, 14 days) so it "
                           "scales with each stock.", "x ATR"),
     "width_atr_hi": Field(1.5, 0.1, 10, "num", "Distance between strikes, up to",
                           "The widest spread you will sell, in the stock's average daily range (ATR).",
@@ -231,11 +240,11 @@ SCHEMA: dict[str, dict[str, Field]] = {
                            "Skip stocks priced under this. Cheap stocks tend to have few strikes and "
                            "wide option markets.", "$"),
         "stock_vol_min": Field(0, 0, 1_000_000_000, "int", "Stock volume at least (20-day average)",
-                               "Average shares traded per day over the last 20 sessions, from IBKR. "
+                               "Average shares traded per day over the last 20 sessions. "
                                "0 turns this check off.", "shares"),
         "oi_min": Field(100, 0, 1_000_000, "int", "Open interest per option at least",
                         "Contracts already open at that strike. With too few you may not get out at a "
-                        "fair price. An option whose open interest IBKR did not report fails this "
+                        "fair price. An option whose open interest the data feed did not report fails this "
                         "check unless it is 0.", "contracts"),
         "opt_vol_min": Field(0, 0, 1_000_000, "int", "Option volume today per option at least",
                              "Contracts traded today at that strike. 0 turns this check off (early in "
@@ -243,7 +252,9 @@ SCHEMA: dict[str, dict[str, Field]] = {
         "max_leg_spread_pct": Field(25, 1, 200, "num", "Widest bid/ask per option, % of its price",
                                     "The gap between the bid and the ask on each option, measured against "
                                     "the option's mid price, so cheap and dear options are judged fairly. "
-                                    "Each strategy can also set a $ cap of its own.", "%"),
+                                    "Each strategy can also set a $ cap of its own. Checked only on options "
+                                    "that carry a bid and an ask (a data plan without quotes has none).",
+                                    "%"),
         "monthly_only": Field(False, None, None, "bool", "Monthly expiries only",
                               "Only the third-Friday expiries, which usually have the most open interest "
                               "and the tightest markets."),
@@ -251,8 +262,8 @@ SCHEMA: dict[str, dict[str, Field]] = {
                            "A trade is listed only when every option's quote is at most this old. The clock "
                            "stops while the US market is closed (nights, weekends, holidays): a quote taken "
                            "after the last close counts as current until the next open, and an older one "
-                           "stays as old as it was at the close. Each quote keeps its own time and source "
-                           "(Hermes or a member's connector).",
+                           "stays as old as it was at the close. Each quote keeps its own time - the data "
+                           "feed's (Massive, 15 minutes delayed on the current plan).",
                            "hours"),
         "per_ticker": Field(3, 1, 50, "int", "Best trades per stock",
                             "List at most this many trades for each stock - the best by this strategy's "
@@ -316,7 +327,7 @@ SCHEMA: dict[str, dict[str, Field]] = {
         "short_delta_hi": Field(0.20, 0.01, 0.99, "num", "Sold options' delta, up to", _SHORT_DELTA_HELP),
         "wing_atr_lo": Field(0.5, 0.1, 10, "num", "Wing width, from",
                              "The distance from each sold strike to its bought strike, in the stock's "
-                             "average daily range (ATR, 14 days, from IBKR).", "x ATR"),
+                             "average daily range (ATR, 14 days).", "x ATR"),
         "wing_atr_hi": Field(1.5, 0.1, 10, "num", "Wing width, up to",
                              "The widest wing, in the stock's average daily range (ATR).", "x ATR"),
         "credit_pct_min": Field(30, 1, 300, "num", "Credit at least, % of the max loss",
@@ -369,6 +380,23 @@ _V1_DEFINED_RISK = frozenset({"bull_call", "bear_put", "bull_put", "bear_call", 
 # fields that used to live in the shared block - a stale "shared.<name>" form key
 # resolves to the strategy being edited
 _MOVED_FROM_SHARED = frozenset({"earnings_rule", "max_leg_spread"})
+
+# ---- the data plan (v4.134, design §13.5). Massive's Options Starter plan returns no
+# bid/ask quotes (``last_quote`` comes only with Advanced and up), so the two bid/ask
+# rules have nothing to check: the screener skips them on every option without a bid
+# and an ask (and says so in its funnel); the panel greys these fields out with the
+# note below while ``quotes_available()`` is False. Saved values are kept as they are.
+QUOTES_ENV = "TST_MASSIVE_QUOTES"
+QUOTES_NOTE = "not used - the current data plan (Massive Starter) has no bid/ask"
+UNUSED_WITHOUT_QUOTES = {"max_leg_spread": QUOTES_NOTE, "max_leg_spread_pct": QUOTES_NOTE}
+assert all(any(k in SCHEMA[b] for b in BLOCKS) for k in UNUSED_WITHOUT_QUOTES)
+
+
+def quotes_available() -> bool:
+    """Whether the data plan includes bid/ask quotes: ``TST_MASSIVE_QUOTES`` (``app/.env``)
+    is 1 / true / yes / on. Default 0 - the Options Starter plan has none. Read on every
+    call, so a changed setting needs no import-time reload."""
+    return str(os.environ.get(QUOTES_ENV, "0") or "0").strip().lower() in _TRUE
 
 # band pairs a "from" above its "to" would empty the list
 _PAIR_SUFFIXES = (("_lo", "_hi"), ("_min", "_max"))

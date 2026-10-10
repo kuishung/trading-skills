@@ -1,16 +1,19 @@
-{# One trade, opened under its row in the shortlist (OPTIONS_V2_DESIGN.md §9): re-derived
-   from the current pool (opt_screen.detail), so it can differ from the row it was
-   opened from when new quotes arrived. The legs table shows each leg's own quote time,
-   source (Hermes or the member whose connector read it) and market data type - a
-   trade can mix sources. Then the money (net at mid and at the bid / ask, max profit /
-   loss, breakevens, POP), the payoff chart (the existing _payoff_chart.html, its
-   $ | R toggle re-requests /options/payoff), and "Refresh these legs live": the page
-   reads ONLY these expiries and a narrow strike window (data-spec) from the member's
-   own connector, contributes them, and reloads this box.
+{# One trade, opened under its row in the shortlist (OPTIONS_V2_DESIGN.md §9, §13.5,
+   §13.6): re-derived from the current data (opt_screen.detail), so it can differ from
+   the row it was opened from when new data arrived. The legs table shows each leg's
+   price and where that price comes from - "bid/ask mid" when the data has quotes, else
+   "model (from IV)" (Massive Starter has no bid/ask; the Bid / Ask columns appear only
+   when a leg has them) - with its data time and source. Then the money (net at the leg
+   prices; "at the bid / ask" only when the data has quotes, i.e. net_natural is known),
+   max profit / loss, breakevens, POP, the payoff chart (the existing _payoff_chart.html,
+   its $ | R toggle re-requests /options/payoff), the "Refresh now" button (POST
+   /options/refresh/<sym> with src=trade; the page reloads this box when it answers) and
+   the reminder to check the live price in TWS before entering.
    Swapped in by htmx only (innerHTML of #optTradeBox), so the payoff pane's own hover
    script runs; this file itself has no <script>.
    Context: strategy, label, cid, sym, d, gone | c, v (_row_view), po, fails, legs,
-   pane_url, spec_json, metrics, family, breakevens_text, earnings, spot. #}
+   any_quotes, modelled, pane_url, metrics, family, breakevens_text, earnings, spot,
+   in_basket. #}
 {% from "_time.html" import localtime %}
 <div class="opt-trade" data-cand-id="{{ cid }}">
   {% if gone %}
@@ -27,7 +30,7 @@
   </div>
   {% if fails %}
   <p class="mt-1 rounded border border-amber-700/60 bg-amber-500/5 px-2 py-1 text-[11px] text-amber-300">
-    With the latest quotes this trade no longer passes: {{ fails.label|lower }}. It drops off the list on the next refresh.
+    With the latest data this trade no longer passes: {{ fails.label|lower }}. It drops off the list on the next refresh.
   </p>
   {% endif %}
 
@@ -36,27 +39,31 @@
       <thead class="text-[10px] text-slate-500 text-left">
         <tr>
           <th class="pr-2 font-normal">Leg</th><th class="pr-2 font-normal">Expiry</th>
-          <th class="pr-2 font-normal text-right">Bid</th><th class="pr-2 font-normal text-right">Ask</th><th class="pr-2 font-normal text-right">Mid</th>
+          {% if any_quotes %}<th class="pr-2 font-normal text-right">Bid</th><th class="pr-2 font-normal text-right">Ask</th>{% endif %}
+          <th class="pr-2 font-normal text-right">Price</th>
+          <th class="pr-2 font-normal" title="bid/ask mid = the middle of the quoted bid and ask; model (from IV) = Black-Scholes from the option's own implied volatility (the data plan has no bid/ask)">Price is</th>
           <th class="pr-2 font-normal text-right">IV</th><th class="pr-2 font-normal text-right">&Delta;</th>
           <th class="pr-2 font-normal text-right">OI</th><th class="pr-2 font-normal text-right">Vol</th>
-          <th class="pr-2 font-normal">Quoted</th><th class="pr-2 font-normal">Source</th><th class="font-normal">Data type</th>
+          <th class="pr-2 font-normal">Data from</th><th class="font-normal">Source</th>
         </tr>
       </thead>
       <tbody>
         {% for l in legs %}
-        <tr class="border-t border-slate-800/60">
+        <tr class="opt-leg border-t border-slate-800/60" data-price-kind="{{ 'mid' if l.quoted else 'model' }}">
           <td class="pr-2 py-1 whitespace-nowrap {% if l.side == 'sell' %}text-rose-200{% else %}text-emerald-200{% endif %}">{{ l.side_word }} {{ l.strike_text }} {{ l.right_word }}</td>
           <td class="pr-2 py-1 whitespace-nowrap text-slate-300">{{ l.expiry_text }} ({{ l.dte }}d)</td>
+          {% if any_quotes %}
           <td class="pr-2 py-1 text-right text-slate-300">{{ '%.2f'|format(l.bid) if l.bid is not none else '-' }}</td>
           <td class="pr-2 py-1 text-right text-slate-300">{{ '%.2f'|format(l.ask) if l.ask is not none else '-' }}</td>
-          <td class="pr-2 py-1 text-right text-slate-200">{{ '%.2f'|format(l.mid) if l.mid is not none else '-' }}</td>
+          {% endif %}
+          <td class="pr-2 py-1 text-right text-slate-200">{{ l.price_text }}</td>
+          <td class="pr-2 py-1 whitespace-nowrap {% if l.quoted %}text-slate-300{% else %}text-amber-300/90{% endif %}">{{ l.price_kind }}</td>
           <td class="pr-2 py-1 text-right text-slate-300">{{ l.iv_text }}</td>
           <td class="pr-2 py-1 text-right text-slate-300">{{ '%.2f'|format(l.delta) if l.delta is not none else '-' }}</td>
           <td class="pr-2 py-1 text-right text-slate-400">{{ '{:,.0f}'.format(l.oi) if l.oi is not none else '?' }}</td>
           <td class="pr-2 py-1 text-right text-slate-400">{{ '{:,.0f}'.format(l.volume) if l.volume is not none else '?' }}</td>
           <td class="pr-2 py-1 whitespace-nowrap text-slate-400">{{ 'just now' if l.age_text == 'now' else l.age_text ~ ' ago' }} <span class="text-slate-600">({{ localtime(l.as_of_dt) }})</span></td>
-          <td class="pr-2 py-1 whitespace-nowrap text-slate-300">{{ l.src_text }}</td>
-          <td class="py-1 whitespace-nowrap {% if l.mdt == 'live' %}text-emerald-300{% else %}text-amber-300{% endif %}">{{ l.mdt_text }}</td>
+          <td class="py-1 whitespace-nowrap text-slate-300">{{ l.src_text }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -64,11 +71,13 @@
   </div>
 
   <div class="mt-2 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-x-4 gap-y-1 text-[11px]">
-    <div><div class="text-[10px] text-slate-500">{% if v.is_credit %}You collect{% else %}You pay{% endif %}</div>
+    <div><div class="text-[10px] text-slate-500">{% if v.is_credit %}You collect{% else %}You pay{% endif %}{% if modelled %} <span class="text-amber-300/80">(estimated)</span>{% endif %}</div>
       <div class="{% if v.is_credit %}text-emerald-300{% else %}text-sky-300{% endif %} tabular-nums" data-tip="{{ v.net_tip }}">{{ v.net_text }}
         {% if c.net is not none %}<span class="text-slate-500">({{ '$%.0f'|format((c.net|abs) * 100) }}/contract)</span>{% endif %}</div></div>
-    <div><div class="text-[10px] text-slate-500">At the bid / ask</div>
-      <div class="text-slate-300 tabular-nums">{% if c.net_natural is not none %}${{ '%.2f'|format(c.net_natural|abs) }} {{ 'credit' if c.net_natural > 0 else 'debit' }}{% else %}-{% endif %}</div></div>
+    {% if c.net_natural is not none %}
+    <div class="opt-natural"><div class="text-[10px] text-slate-500">At the bid / ask</div>
+      <div class="text-slate-300 tabular-nums">${{ '%.2f'|format(c.net_natural|abs) }} {{ 'credit' if c.net_natural > 0 else 'debit' }}</div></div>
+    {% endif %}
     <div><div class="text-[10px] text-slate-500">Max profit</div><div class="text-slate-200 tabular-nums">{{ v.max_profit_text }}</div></div>
     <div><div class="text-[10px] text-slate-500">Max loss</div><div class="text-rose-300 tabular-nums">{{ v.max_loss_text }}</div></div>
     <div><div class="text-[10px] text-slate-500">Breakeven{% if (c.breakevens or [])|length != 1 %}s{% endif %}</div><div class="text-slate-200 tabular-nums">{{ breakevens_text }}</div></div>
@@ -78,7 +87,7 @@
   <div class="mt-1 flex flex-wrap gap-x-3 text-[10px] text-slate-500">
     <span>IV rank {{ v.ivr_text }}</span>
     <span>{{ v.liq_text }}</span>
-    {% if earnings %}<span>next earnings {{ earnings }} (free source - the one figure not from IBKR)</span>{% else %}<span>no earnings date on file</span>{% endif %}
+    {% if earnings %}<span>next earnings {{ earnings }} (Yahoo, free source)</span>{% else %}<span>no earnings date on file</span>{% endif %}
     {% if metrics.max_loss_basis %}<span class="text-amber-300/80">Max loss: {{ metrics.max_loss_basis }}</span>{% endif %}
     <span>Data: {{ v.data_text }}</span>
   </div>
@@ -88,11 +97,17 @@
   </div>
 
   <div class="mt-2 flex flex-wrap items-center gap-2">
-    <button type="button" data-refresh-legs="1" data-sym="{{ sym }}" data-spec="{{ spec_json }}"
-            class="rounded border border-slate-700 px-2.5 py-1 text-[11px] text-slate-200 hover:border-emerald-500 hover:text-emerald-300 transition disabled:opacity-50"
-            title="Read just these legs from YOUR TWS through the IBKR connector (the pill must be green); the fresher quotes are shared with every member">Refresh these legs live</button>
-    <span class="opt-refresh-note text-[11px] text-slate-500">Uses your own IBKR connector; the quotes are shared with everyone.</span>
-    <span class="ml-auto text-[10px] text-slate-600">Tracking only - TradeHunter never sends an order.</span>
+    {% if in_basket %}
+    <button type="button" class="opt-refresh rounded border border-slate-700 px-2.5 py-1 text-[11px] text-slate-200 hover:border-emerald-500 hover:text-emerald-300 transition disabled:opacity-50"
+            data-refresh-sym="{{ sym }}" hx-post="/options/refresh/{{ sym }}" hx-vals='{"src": "trade"}' hx-swap="none"
+            hx-indicator="find .opt-spin" hx-disabled-elt="this"
+            title="Read {{ sym }} again from Massive now (15 min delayed) - at most once a minute"><span class="opt-spin inline-block">&#8635;</span> Refresh now</button>
+    {% endif %}
+    <span class="opt-tws-note text-[11px] {% if modelled %}text-amber-300/90{% else %}text-slate-400{% endif %}">
+      {%- if modelled %}Prices are estimated from IV - check the live price in TWS before entering.
+      {%- else %}Prices are 15 min delayed - check the live bid/ask in TWS before entering.{% endif -%}
+    </span>
+    <span class="ml-auto text-[10px] text-slate-600">TradeHunter finds the trade; you enter it in IBKR TWS. It never sends an order.</span>
   </div>
   {% endif %}
 </div>

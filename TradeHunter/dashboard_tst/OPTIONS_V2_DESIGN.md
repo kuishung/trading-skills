@@ -1,6 +1,6 @@
-# Options v2 — browse by rules, IBKR-only data, shared freshness
+# Options v2 — browse by rules, shared freshness (data: Massive since v4.134; IBKR in v4.133)
 
-Status: **BUILT in v4.133 (2026-10-09)** (contract written the same day; what the build
+Status: **BUILT in v4.133 (2026-10-09); data source switched to Massive and BUILT in v4.134 (2026-10-10) - read §13 first, it supersedes the IBKR data path of §2.3-§6 (§13.8 = what the v4.134 build changed)** (contract written the same day; what the v4.133 build
 changed on purpose is in §12), then **reviewed before release (2026-10-09/10)** — every
 fix the six-lens review led to is listed in §12 "Review fixes", and §2–§9 below are kept
 in line with it. Supersedes the "auto setup" Options page of v4.127–v4.132
@@ -391,6 +391,8 @@ Interfaces between parts are exactly the signatures in §2–§8. A part that ne
 
 ## 11. Deploy (Hermes)
 
+*v4.133 history - since v4.134 the deploy is `DEPLOY.md` section G (the Massive key in `app\.env`, the collector re-registered with `-StartNow`, clientId 89 retired).*
+
 1. `git pull --ff-only`; `pip install -r app\requirements.txt` (venv — `ib_insync` is in it); restart the web app (the canonical script).
 2. `schtasks /Change /TN TST-Options-Nightly /DISABLE` (the Cboe job is gone).
 3. `powershell -ExecutionPolicy Bypass -File deploy\setup_options_collector_task.ps1 -StartNow`. **Re-run it after any pull that changes `opt_collector.py`, `th_ibkr.py` or `options_collector.py`** (or `opt_store.py` / `models.py`, which it imports) — the web-app restart does not touch the collector. Re-running it also re-registers the task's action (since the review: python started directly with `--log-file`, no `cmd.exe` / `>>`); the old `logs\options_collector.log` is kept and becomes the first file the rotation rolls over.
@@ -486,3 +488,438 @@ A six-lens review of the v4.133 build ran before release; four fix groups (data 
 - Rows a pre-review build marked `history_done` with no data are not repaired automatically: on Hermes run `deploy\options_collector.py --history SYM` for them. The young-listing memory lives in the collector process (a restart between the two days delays filing by a day).
 - The collector passes no deadline to `quote` (its 1,800 s ceiling still cancels a read whole, now without leaking lines; no measured chain gets near it). `parse_spec` still accepts `max_side` up to 400 and 80 expiries from allow-listed origins (the deadline caps the cost at ~135 s a request).
 - A member without the `options` menu grant gets a 303 from the router gate, which an htmx request would follow and swap into its target (an expired session is not affected).
+
+
+## 13. Data source switched to Massive (v4.134, 2026-10-10) — SUPERSEDES the IBKR data path
+
+### 13.0 What the user decided (2026-10-10)
+
+After v4.133 shipped on IBKR, the user asked whether a Massive (formerly Polygon.io) subscription
+would be easier, then decided: *"ok i will build it with polygon API for the data"*. Answers:
+- **Options data: Massive Options Starter ($29/mo).** Whole-chain snapshot with greeks, IV, open
+  interest and the day bar; **15-minute delayed; no bid/ask quotes** (`last_quote` is returned only
+  on plans that include quotes - Advanced and up); unlimited requests; daily bars of option
+  contracts (incl. expired) with 2 years of history. The free Options Basic plan cannot run the
+  screener (no chain snapshot, no greeks/IV, 5 requests a minute) - that was checked and said.
+- **Stock data: Massive Stocks Basic (free)** - end-of-day daily bars, 2 years, ~5 requests a minute.
+- **"We only use TradeHunter to get the opportunity; the entry is still done in IBKR TWS."** So
+  delayed, quote-less data is acceptable: the page finds candidates; prices are checked live in TWS.
+- **Remove the IBKR parts**: the Hermes IBKR collector, the downloadable member connector, the
+  green/amber/red pill, the member contribution / data-sharing protocol (§2.3-§2.5, §3, §4, §5, §6
+  are history from here on). The member bridge (`bridge/`) itself STAYS in the repo: it predates
+  v2 and still serves the legacy hidden pages (IV Rank / Spread / Positions) and the basket's
+  optional "Run my TWS scanner" import; the Options page no longer probes it.
+- Earnings dates stay on the free source (Yahoo), as before.
+
+### 13.1 The data path
+
+```
+Hermes: TST-Options-Collector (venv python, NO ib_insync, NO IB Gateway)
+   └─ app/services/massive.py  (REST client, https://api.massive.com, Bearer auth)
+   └─ app/services/opt_massive.py (snapshot -> rows, model price, spot, window, IV history)
+        └─ app/services/opt_store.py  (opt_quote / opt_underlying / opt_underlying_daily ...)
+web app: GET /options/results -> opt_screen over opt_store.chain_view  (unchanged shape)
+         POST /options/refresh/<sym> -> opt_massive.ingest_symbol(kind="manual")  ("Refresh now")
+```
+
+- Key: `TST_MASSIVE_API_KEY` in `app/.env` on Hermes (gitignored; the user puts it there; never in
+  code, logs, URLs or error text - the client sends it only as `Authorization: Bearer`).
+  `TST_MASSIVE_BASE_URL` (default `https://api.massive.com`) lets tests and the browser check point
+  at a local fake. `TST_MASSIVE_QUOTES=0|1` (default 0) says whether the plan includes quotes.
+- Every stored quote: `source="massive"`, `mdt="delayed"`, `as_of` = the contract's own
+  `last_updated` (the feed's timestamp, naive UTC) - so the market-time age logic of §12 R9 keeps
+  working. The old `hermes` / `member` sources are no longer written; old rows age out through
+  `prune_v2`'s 7-day rule.
+- No member writes any data any more: the contribution endpoints, leases, rate buckets, back-off
+  and member validation are removed from `opt_store` and the routes.
+
+### 13.2 `app/services/massive.py` - the client (Part M1)
+
+```python
+class MassiveError(RuntimeError):      # .kind: "auth" | "plan" | "rate" | "http" | "network" | "config"; .status
+def api_key() -> str | None             # TST_MASSIVE_API_KEY, stripped; None when unset
+def base_url() -> str                   # TST_MASSIVE_BASE_URL or https://api.massive.com
+def option_ticker(symbol, expiry, right, strike) -> str   # "O:" + SYM + YYMMDD + C|P + int(round(strike*1000)):08d
+def massive_symbol(symbol) -> str       # the URL-path spelling: BRK-B / BRK/B / "BRK B" -> BRK.B (review, §13.8)
+class Client:
+    def __init__(self, api_key=None, base_url=None, *, max_rps=20.0, concurrency=1,
+                 stocks_per_min=5, timeout=20.0, http=None, sleep=time.sleep, now=time.monotonic)
+    def chain_snapshot(self, symbol, *, exp_gte=None, exp_lte=None, strike_gte=None, strike_lte=None) -> dict
+        # GET /v3/snapshot/options/{symbol}?limit=250&expiration_date.gte=..&strike_price.gte=.. ; follows next_url
+        # -> {"symbol", "rows": [row...], "underlying_price": float|None, "underlying_as_of": datetime|None,
+        #     "pages": int, "as_of": datetime|None (newest row last_updated)}
+        # row = {"expiry","right" (C|P),"strike","iv" (FRACTION, None if absent),"delta","gamma","theta","vega",
+        #        "oi","volume" (day.volume),"day_close","day_vwap","prev_close","day_change_pct",
+        #        "bid","ask","bid_size","ask_size" (from last_quote when the plan returns it, else None),
+        #        "last_updated" (naive UTC datetime from day/quote last_updated ns, else None)}
+    def stock_daily(self, symbol, start, end, *, adjusted=True) -> list[dict]    # /v2/aggs/ticker/{T}/range/1/day/{start}/{end}?adjusted=true|false&limit=50000
+        # [{"on","open","high","low","close","volume"}] oldest first; paced by stocks_per_min (Stocks Basic)
+    def option_daily(self, option_ticker, start, end) -> list[dict]   # same path with the O: ticker; not paced per minute
+```
+Behaviour: requests go through one `httpx.Client` (sync - the collector is a sync loop), timeout
+20 s, a token bucket at `max_rps`, a separate per-minute bucket for `/v2/aggs/ticker/<stock>` calls.
+429 -> wait `Retry-After` (or 15 s, doubling to 2 min, 4 tries) then `MassiveError("rate")`; 401 ->
+`"auth"` ("Massive rejected the API key"); 403 -> `"plan"` ("your Massive plan does not include
+<endpoint>"); other 4xx/5xx -> `"http"` (5xx retried twice); connection errors -> `"network"`;
+missing key -> `"config"` ("TST_MASSIVE_API_KEY is not set on this PC"). `next_url` is fetched
+as given (it carries the cursor; the key goes in the header, never appended). The key never
+appears in an exception text or a log line.
+
+### 13.3 `app/services/opt_massive.py` - ingest, price, spot, window, IV history (Part M1)
+
+```python
+def model_price(spot, strike, dte_days, iv, right) -> float | None
+    # black_scholes(S, K, T=max(dte,0.5)/365, RISK_FREE, iv, "call"|"put").price, rounded to 0.01; None without iv/spot
+def estimate_spot(snapshot, *, stored_close=None, today=None) -> tuple[float|None, str]
+    # 1) snapshot underlying_price when present -> (price, "massive")
+    # 2) put-call parity on the nearest expiry >= 7 DTE: for the 2-4 strikes nearest the median
+    #    (strike where |delta| ~ 0.5), S ~ K + C - P*... using day_close of call and put traded today
+    #    (volume > 0) -> median -> (price, "parity")
+    # 3) stored_close (Stocks Basic last close) -> (price, "close"); else (None, "none")
+def window(rows, spot, *, today, iv_hint=None, max_weekly_dte=63, max_dte=1100, sigma_k=2.5, min_side=6, max_side=40)
+    # the th_ibkr.plan rule applied to rows already fetched (ticker-relative), pure
+def ingest_symbol(db, client, symbol, *, today=None, kind="cycle", now=None) -> dict
+    # snapshot with exp_gte=today, exp_lte=today+1100, strike range spot*[0.3, 3.0] when a spot is known
+    # -> spot -> window -> rows for opt_store.upsert_quotes: mid = bid/ask midpoint when both present,
+    #    else model_price(...) from the contract's IV; last = day_close; bid/ask as returned (None on Starter);
+    #    as_of per row = its last_updated (fallback: snapshot as_of, else now - 15 min)
+    # -> opt_store.upsert_quotes(db, symbol, rows, source="massive", mdt="delayed", kind=kind)  (und_price on
+    #    every row; NO spot= - §13.8 M1-1)
+    # -> opt_store.set_spot(... source="massive", its own as_of; mdt="delayed" | "eod" for a close)
+    # -> today's IV30 from the stored chain (option_metrics.atm_iv_by_expiry(..., require_quote=False)
+    #    + iv30_constant_maturity) -> opt_store.upsert_daily(iv_series=[{"on": today, "iv": iv30}]) and
+    #    recompute_underlying. Returns {"symbol","stored","expiries","spot","spot_kind","iv30","pages","ms"}.
+def backfill_history(db, client, symbol, *, today=None, years_bars=2, days_iv=260, now=None) -> dict
+    # stock_daily(2y) -> upsert_daily(bars); then the IV30 series for the last `days_iv` sessions:
+    # for each standard monthly expiry (3rd Friday) whose 15-45 DTE window overlaps the period, the
+    # strikes nearest the stock's closes during that window (at most 6 strikes, from the listed strike
+    # grid guessed from the close's magnitude: 0.5/1/2.5/5/10), call AND put option_daily(window);
+    # per day: IV of the call and put at the strike nearest that day's close via payoff.implied_vol
+    # (close prices, T = DTE/365), averaged -> the day's IV for that expiry; days covered by two
+    # expiries interpolate to 30 days in variance-time; -> upsert_daily(iv_series) ->
+    # recompute_underlying -> mark_history_done when >= 20 bars AND >= 20 IV points.
+    # Returns {"bars","iv_points","requests","ms"}. ~150-300 option_daily requests per ticker.
+def daily_update(db, client, symbol, *, today=None, now=None) -> dict
+    # stock_daily(last 10 calendar days) -> upsert_daily(bars) -> recompute_underlying
+```
+`option_metrics.atm_iv_by_expiry` gains `require_quote=True` (default unchanged); with False, a leg
+counts when it has a sane `iv` (no bid needed) - Starter has no bid.
+
+### 13.4 The collector (Part M2) - `app/services/opt_collector.py` (rewrite) + `deploy/options_collector.py`
+
+Same task name `TST-Options-Collector`, same heartbeat (`opt_collector_status`, `state/options_collector.json`),
+same tray line - but no IBKR, no Gateway, no blackout, no clientId (89 is retired). Loop, one step
+per 15 s tick:
+1. heartbeat; no key -> state `error` "TST_MASSIVE_API_KEY is not set on this PC" (retry every 5 min).
+2. **History first**: universe symbols with `history_done False` -> `backfill_history` (one per tick).
+3. **Session cycles** (09:30-16:00 ET on trading days): every `TST_OPTIONS_CYCLE_MIN` (default 15)
+   minutes a pass over the universe (`opt_store.universe()`, most-held first): `ingest_symbol(kind="cycle")`,
+   a few symbols per tick so heartbeats stay timely. A pass for 100 tickers is ~100 x 10-25 pages at
+   <= 20 req/s, i.e. ~2-4 min.
+4. **EOD pass** once per trading day after 16:20 ET: `ingest_symbol(kind="eod")` -> `opt_store.snapshot_eod`
+   -> `daily_update` (Stocks Basic, paced 5/min, so ~20 min for 100 tickers) -> earnings (Yahoo) ->
+   `prune_v2`. A missed pass runs before the next open.
+5. Otherwise `idle`. Errors per symbol are logged to `opt_refresh_log` (error text, no key) and the
+   loop continues; `auth`/`plan` errors set state `error` with the plain reason for the strip/tray
+   (as built: `config`/`auth`/`network` pause everything, `plan` only the operation that hit it - §13.8 M2-3).
+The CLI keeps `--forever` (default), `--once`, `--history SYM...`, `--eod-now`, `--log-file`, `-v`;
+`setup_options_collector_task.ps1` runs the venv python (no `py -3.12`, no ib_insync needed).
+
+### 13.5 Screener + rules (Part M3)
+
+- A leg needs a usable price: `mid > 0` (model price when no quotes). The two-sided-quote rule
+  becomes "no price (no bid/ask and no IV) on an option".
+- The bid/ask rules (`max_leg_spread`, `max_leg_spread_pct`) apply only to legs that have bid and ask;
+  when a candidate's legs have none they are skipped and the funnel shows one line "bid/ask rules not
+  applied - your data plan has no quotes" (count of trades it would have checked).
+- `net_natural` (at the bid/ask) is None without quotes; the trade detail shows "estimated from IV -
+  check the live price in TWS". `liquidity` shows OI and day volume.
+- Rules stay as v2 (no schema change). The rules panel greys out the two bid/ask fields with the note
+  "not used - the current data plan (Massive Starter) has no bid/ask" when `TST_MASSIVE_QUOTES` is 0.
+
+### 13.6 The page (Part M4)
+
+Removed: the connector pill, the Download connector link, the help panel about the connector, the
+contribution loop, `GET /options/data/next`, `POST /options/data/contribute`, `/contribute_history`,
+`/data/failed`, `GET /options/connector/download`, "Refresh these legs live".
+Added: **"Refresh now"** on a ticker (basket row menu or the trade detail) -> `POST /options/refresh/<sym>`
+-> `opt_massive.ingest_symbol(kind="manual")` server-side (one ticker, ~2-5 s), at most once per
+ticker per 60 s per member, then the list re-screens. The status strip shows the collector line
+("Massive: running · pass 12 · 98/100 tickers · data 15 min delayed" / "error: Massive rejected the
+API key" / "no heartbeat for 9 min") and one plain line "prices are estimated from IV (no bid/ask on
+this plan) - check live in TWS before entering". The Data column reads "16 min · Massive (delayed)".
+(As built the error line reads "Collector error: <reason>" and the help is `GET /options/help` - §13.8 M4.)
+Admins see "TST_MASSIVE_API_KEY is not set on the server" when it is missing.
+
+### 13.7 Ownership (v4.134 build)
+
+| Part | Owns |
+|---|---|
+| M1 client + ingest | `app/services/massive.py` (new), `app/services/opt_massive.py` (new), `app/services/option_metrics.py` (`require_quote` only), tests `test_massive.py`, `test_opt_massive.py` |
+| M2 collector | `app/services/opt_collector.py` (rewrite), `deploy/options_collector.py`, `deploy/setup_options_collector_task.ps1`, `dashboard_intraday/tray_status.py` (collector line wording), `tests/test_opt_collector.py` (rewrite) |
+| M3 store + screener + rules | `app/services/opt_store.py` (remove member machinery), `opt_screen.py`, `opt_rules.py`, tests `test_opt_store.py`, `test_opt_screen.py`, `test_opt_rules.py` |
+| M4 page | `app/routes/options_page.py`, `app/templates/options.html`, `_opt_*.html` (delete `_opt_connector.html` or repurpose as the data-source help), `tests/test_options_v2_page.py` |
+| M5 integrate + docs | removals (`opt_connector_pkg.py` and its tests in `test_connector.py` - the bridge's own tests stay), `.env.example`, `DEPLOY.md` §G, `README.md` v4.134, this file §13 deviations, `../CLAUDE.md` (Options bullet; clientId 89 retired), `../dashboard_intraday/README.md`, `app/__init__.py` 4.134, whole suite green |
+
+### 13.8 Deviations recorded at build (v4.134)
+
+Four parts built §13 (M1 client + ingest, M2 collector, M3 store + screener + rules, M4 page)
+and an integration part (M5) removed what was left, wrote the docs and released 4.134. Same
+convention as §12: **the code is the truth**; this list says where it differs from §13.0-§13.7
+and why. `M1-1` = Part M1, item 1.
+
+**M1 — `massive.py`, `opt_massive.py`, `option_metrics.atm_iv_by_expiry(require_quote=)`**
+- **M1-1 The spot is written on its own, not through `upsert_quotes(spot=)`.** `ingest_symbol`
+  puts `und_price` on every row and writes the spot with one `opt_store.set_spot` call that
+  keeps the spot's own time and type: `underlying_as_of` + `delayed` for a `massive` spot;
+  the snapshot time + `delayed` for a `parity` spot; 16:00 ET of the close's date (naive
+  UTC) + `eod` for a `close` spot. Reason: passing `spot=` would file a stale Stocks Basic
+  close as a fresh `delayed` spot at the log stamp.
+- **M1-2 Signatures.** `ingest_symbol`, `backfill_history` and `daily_update` take `now=None`
+  (naive UTC, for tests and the collector's clock). `ingest_symbol` also returns `rows`,
+  `skipped_bad` and `as_of`; `backfill_history` also `symbol` and `history_done`;
+  `daily_update` returns `{symbol, bars, ms}`.
+- **M1-3 `window()`** returns the kept rows (both rights of each kept strike, in their
+  original order). It uses each expiry's own listed strikes where `th_ibkr.plan` used the
+  strike union across expiries; the two agree on a `chain_bs` chain (tested). With
+  `spot=None` only the expiry rule applies.
+- **M1-4 Today's IV30 point is dated by the session it belongs to**: before 09:30 ET on a
+  trading day, or on a weekend / holiday, it is filed under the last session
+  (`clock.last_trading_day` / `prev_trading_day`), not under the calendar day.
+- **M1-5 Backfill economy** (beyond the contract): expiries are read newest first and three
+  empty expiries in a row end the reading (a young option listing keeps its recent
+  history; a ticker with no options costs ~16 requests); an expiry stops after two strikes
+  in a row with no bars on either leg; the finer strike grid is used when the closes in the
+  window need at most 6 strikes on it, else the coarser one - a strike only the finer grid
+  has is read first as a probe, and when it has no bars the rest of that expiry is read on
+  the coarser grid.
+- **M1-6 Client safety**: a `next_url` is followed only when it points at the configured
+  host (else `MassiveError("http")`), at most `MAX_PAGES` 400 pages; `has_key` (property),
+  `close()`, `quotes_enabled()` added; `option_ticker` strips punctuation from the root
+  (BRK.B -> `O:BRKB...`, the OCC root).
+
+**M2 — `opt_collector.py` 2.0, `deploy/options_collector.py`, `setup_options_collector_task.ps1`, the tray line**
+- **M2-1 Status row**: the v4.133 columns `gateway` / `gateway_ok` (no rename migration) hold
+  the data host (`api.massive.com`) and whether the last Massive request worked (None
+  before the first). `state` values written: `starting | history | cycle | eod | idle |
+  error | stopped` (the page maps `cycle` / `starting` to "running").
+- **M2-2 State file** `state/options_collector.json`: the IBKR keys (`gateway`, `gateway_ok`,
+  `wait_reason`, `wait_until`, `history_waiting`, `down_since`, `next_connect`) are gone; new
+  `source` (`massive`), `api` (host), `api_ok`, `error_kind` (`config | auth | plan |
+  network | None`), `next_try`, `history_pending`, `cycle_min`. The tray
+  (`dashboard_intraday/tray_status.py`) reads the new keys.
+- **M2-3 Error granularity** (§13.4 said only "auth/plan -> state error"): `config` / `auth`
+  pause EVERY request, retried every 5 min; `network` pauses everything, 60 s doubling to
+  5 min; `plan` (HTTP 403) pauses only the operation that hit it - chain reads, history
+  reads, or the end-of-day stock bars - retried every 5 min while the rest carries on
+  (otherwise a missing Stocks plan would block the chain cycles). The state is `error`
+  while any pause is active and clears on the next success of what failed; `http` /
+  `rate` / other errors are per symbol only (an `opt_refresh_log` row + `last_error`).
+- **M2-4 No key**: the text is the client's own "TST_MASSIVE_API_KEY is not set on this
+  PC". The default client factory re-reads `app/.env` (`override=False`) at each 5-minute
+  look, so a key ADDED while the collector runs is found without a restart - provided the
+  variable was not already set (even blank) when it started; a REPLACED key needs a restart.
+- **M2-5 History**: `backfill_history` returning `history_done` False (too few bars / IV
+  points) counts as a failure - an `opt_refresh_log` error row and a back-off of 30 min
+  doubling to 6 h, so the loop never re-runs it every tick. A never-quoted ticker whose
+  history waits still gets its chain read (one per tick, at most every 30 min); right after
+  its history, a never-quoted ticker's chain is read with kind `history`.
+- **M2-6 Logging / setup**: the HTTP libraries' per-request loggers (`httpx`, `httpcore`,
+  `urllib3`, `hpack`) are kept to warnings (their lines carry cursor URLs; a pass is
+  ~1,000-2,500 requests); the startup line says only "key set" / "key MISSING".
+  `setup_options_collector_task.ps1` runs the venv python and warns, without printing it,
+  when the key line is missing from `app\.env`. `--ignore-ingest` is gone (no supervisor
+  gate any more).
+
+**M3 — `opt_store.py`, `opt_screen.py`, `opt_rules.py`**
+- **M3-1 The no-quotes funnel line** (the contract gave no shape): `{"rule": "no_quotes",
+  "label": "Bid/ask rules not applied - your data plan has no quotes", "unit": "trades",
+  "removed": n, "info": True}`, directly after `spread_pct`, only when n > 0
+  (`opt_screen.NO_QUOTES` / `NO_QUOTES_LABEL`). Anything that sums `removed` must skip rows
+  with `info`. n = trades that got past the bid/ask stage with at least one leg lacking a
+  bid or an ask (including trades a later age / family rule removed; not a trade the $/%
+  rule removed on a quoted leg).
+- **M3-2 How a trade was priced** is stored twice: `candidate["data"]["priced"]` (`quotes` |
+  `model`) and `leg["priced"]` on every leg (the trade detail labels each leg).
+- **M3-3 `net_natural` is None whenever any leg lacks a bid or an ask** (before, a bought leg
+  with only an ask still got a natural price).
+- **M3-4 Leg rule `quote` = "needs a usable price"**: `mid > 0` (a crossed or negative quote
+  still counts as no price); label "No price on an option (no bid/ask and no IV)".
+- **M3-5 Per-row time**: `upsert_quotes` stamps each row with its own `as_of` (also read from
+  a `last_updated` key), else the call's `as_of`, else server now; the `opt_refresh_log`
+  row (and a spot passed in) takes the call's `as_of`, else the newest row stamp, else now -
+  so `freshness()` reports the time the data shows, the 15-minute delay included.
+- **M3-6 One writer**: `SOURCES = ("massive",)` - any other source raises. Rows of the IBKR
+  build (`LEGACY_SOURCES` `hermes` / `member`, `LEGACY_MDT` `frozen` / `delayed_frozen`) are
+  READ like any other until `prune_v2`'s 7-day rule removes them, and a Massive write
+  always replaces one, whatever its time. `MDT` written: `live | delayed | eod`; `KINDS`:
+  `history | cycle | eod | manual`. Row sanity on write: a row without expiry / right /
+  strike, a negative price, an iv outside (0.01, 5) or |delta| > 1 is dropped
+  (`skipped_bad`).
+- **M3-7 Removed** with the member machinery: `validate_contribution`, `validate_history`,
+  `drop_reasons`, `spot_reference` / `spot_band`, `check_rate`, the leases,
+  `next_for_member`, `report_failure` / the back-off, and their constants.
+- **M3-8 Rules**: `opt_rules.quotes_available()` (`TST_MASSIVE_QUOTES`, default 0),
+  `UNUSED_WITHOUT_QUOTES` (the two bid/ask fields) and `QUOTES_NOTE` ("not used - the
+  current data plan (Massive Starter) has no bid/ask") - the page greys those fields out.
+
+**M4 — `options_page.py`, `options.html`, `_opt_*.html`**
+- **M4-1 The refresh client** is built by `_massive_client()` with `sleep=_refresh_sleep`: the
+  short pacing and 1-2 s network-retry waits happen, but any wait over 5 s
+  (`REFRESH_MAX_WAIT_S`) raises `MassiveError("rate")` - otherwise a 429 back-off (15 s
+  doubling, 4 tries) could hold the member's web request for ~4 min. The member sees
+  "Massive is busy, try again in a minute" at once.
+- **M4-2 Answers of `POST /options/refresh/<sym>`**: 200 with the single basket row
+  (`_opt_basket.html` `part="row"`); a failure swaps nothing (`HX-Reswap: none`), with a
+  plain-text body and a toast - 400 a ticker not in the caller's basket; 429 + `Retry-After`
+  for the once-a-minute limit; 503 Massive `config` / `rate` / `network`; 502 `auth` /
+  `plan` / `http`; 500 anything else. A `config` error gives the minute back (nothing was
+  asked of Massive). An optional form field `src=trade` (the trade-detail button) is echoed.
+- **M4-3 Re-screen event**: the toast travels in `HX-Trigger`, the re-screen event
+  `options:refreshed {symbol, stored, src}` in `HX-Trigger-After-Settle`, so it fires after
+  the refreshed row is swapped in.
+- **M4-4 Help**: `_opt_connector.html` is deleted; the data help is a new fragment
+  `_opt_help.html` at `GET /options/help` (the old `/options/connector` path is not reused).
+  It reads `TST_OPTIONS_CYCLE_MIN` so the stated pass interval matches the collector.
+- **M4-5 The strip's words**: "Massive: running · pass 12 · 40/98 tickers · data 15 min
+  delayed" (also "reading history", "end-of-day pass"); "Massive: idle · pass 26 done ·
+  data 15 min delayed"; **"Collector error: <reason>"** (§13.6 wrote "error: ..."); "Massive
+  collector: stopped"; "Massive collector: no heartbeat for 9 min"; "Massive collector: no
+  heartbeat yet". The refresh control is its own basket column (not a row menu).
+- **M4-6** Browser check (local dev server, port 8011): the strip, the no-quotes note, the
+  admin key-missing badge, the greyed bid/ask rules, the no-quote trade detail, the refresh
+  error toast and the 375 px phone layout render. It found an htmx 1.9 bug - with
+  `hx-disabled-elt="this"` on the request indicator itself the spinner never stopped - fixed
+  with an inner `.opt-spin` indicator (tested).
+
+**M5 — integration, removal, docs**
+- The four parts agreed: the whole suite was green (505) before M5 changed anything, so no
+  cross-part fix was needed.
+- Removed `app/services/opt_connector_pkg.py` (the connector zip) and its three build_zip
+  tests in `tests/test_connector.py` (the bridge's own tests stay: 90 -> 87). Nothing outside
+  `bridge/` and the tests imports `th_ibkr` (only `tests/test_opt_massive.py` loads
+  `bridge/th_ibkr.py` by path for the `window` == `plan` parity check).
+- Docs: `app/.env.example` (`TST_MASSIVE_API_KEY` commented - it lives only in `app\.env` on
+  Hermes; `TST_MASSIVE_BASE_URL`, `TST_MASSIVE_QUOTES=0`, `TST_OPTIONS_CYCLE_MIN=15`; the IBKR
+  lines removed), `app/requirements.txt` (the `ib_insync` comment: only the legacy
+  `deploy/iv_seed_ibkr.py` needs it), `DEPLOY.md` §G (rewritten), `README.md` (v4.134),
+  `../CLAUDE.md` (the Options bullet; clientId 89 retired), `../dashboard_intraday/README.md`
+  (the tray wording), `bridge/README.md` (the download is gone; the bridge stays), and the
+  `app/models.py` comments of the Options v2 tables (comments only - no schema change, no
+  migration; `alembic heads` is still `3b26d60468a0`). `app/__init__.py` 4.134.
+
+**Open points after the build** (none of it could be run against Massive - there is no key on
+the laptop; every test fakes the HTTP layer)
+1. **What `day.last_updated` means** is not checked against a real response. Rows are stamped
+   with it (§13.1). If it is the last-trade time (or midnight of the session), every contract
+   that did not trade today gets an old `as_of` although its IV, greeks and model price are
+   fresh; the screener's age rule ("Quote older than 24 h on an option") and `chain_view`'s
+   `max_age_h` pre-filter would then drop thinly traded contracts late in the day, or show a
+   misleading age. Check on Hermes once the key is in (DEPLOY.md §G "First checks"): compare
+   `day.last_updated` with the snapshot time for a thinly traded strike; if it lags, stamp the
+   rows with the snapshot time instead (a small change in `opt_massive.ingest_symbol`).
+2. `mdt` is always `delayed` (Starter). A real-time plan would need `last_quote.timeframe` read
+   so rows can be filed `live`.
+3. The parity spot uses the day closes of the call and the put (last trades at different
+   times) and ignores dividends and early exercise. With fewer than 2 traded pairs on the 3
+   nearest expiries >= 7 DTE it falls back to the stored Stocks Basic close, so in-session
+   model mids then use yesterday's close. A stocks plan with snapshots would give
+   `underlying_asset.price` directly.
+4. History IV per expiry comes from the strike nearest the close, no interpolation between
+   strikes - skew can bias it slightly where only coarse strikes exist.
+5. Stocks Basic's bar for the current day may not be published at 16:20 ET; `daily_update`
+   re-reads the last 10 days every evening, so a missing bar fills the next evening (ATR / HV
+   can lag a day).
+6. First deploy: history comes first, so ~100 new tickers (150-300 option-bar requests each,
+   Stocks Basic at 5 a minute) hold the session passes for roughly 30-50 min.
+7. A replaced key needs a collector restart; the web app reads `app\.env` only at start.
+8. An end-of-day catch-up not finished by 09:30 ET is dropped for that day (as in v4.133).
+9. The once-a-minute refresh limit lives in the uvicorn process's memory - right for Hermes's
+   single worker; several workers would each keep their own.
+10. With the connector download gone, the basket's optional "Run my TWS scanner" import works
+    only for a member who already runs the bridge from the repo's `bridge/` folder; no page
+    offers it any more.
+11. The basket's Data text ("16 min · Massive (delayed)") is cut at the default basket width;
+    the row tooltip has it all and the column can be resized.
+12. Still from §12 item 20: `app/config.py` defines `options_source` / `options_fallback` /
+    `alpaca_feed`, which nothing reads; `tests/conftest.py` still sets `TST_IV_SEED_IBKR=0`,
+    which nothing reads (harmless).
+
+#### Review fixes (2026-10-10)
+
+A focused review of the v4.134 build ran before release. Three fix groups (client, ingest,
+collector + page) fixed the confirmed findings, each fix with a test. Then a verify pass checked that the parts agree: the whole suite was green (524) and needed no
+cross-part fix. The code is the truth. These items change M1-2, M1-5 and §13.4 step 2, and open
+points 1, 3 and 5 above. Only §13.2's two signature lines were edited to match.
+
+- **V1 Share classes reach Massive** (`massive.py`). `massive_symbol()` builds the URL path for
+  `chain_snapshot` and `stock_daily`: BRK-B, BRK/B and "BRK B" all become `BRK.B`. Before, the path
+  was `/BRK-B`, which returns no chain and no bars. The caller's spelling stays the storage key and
+  the snapshot's `symbol`. `option_ticker` still strips punctuation (`O:BRKB...`).
+- **V2 `stock_daily(..., *, adjusted=True)`** (`massive.py`). `adjusted=False` sends `adjusted=false`
+  and gets the bars as they traded. The default is unchanged. The docstring now says
+  "split-adjusted", because Polygon's flag covers splits but not dividends.
+- **V3 Quote-less rows are stamped with the read time** (`ingest_symbol`). A Starter row is stamped
+  with the read time minus 15 min (`DELAY_S`), not with its `day.last_updated`, which can be the
+  contract's last trade. With the old stamp, a thinly traded strike looked hours old while its IV,
+  greeks and model price were current. Only a row with a bid and an ask keeps its own quote time. A
+  parity spot is stamped the same way. This settles open point 1, so the check DEPLOY.md §G "First
+  checks" 3 asks for is no longer needed.
+- **V4 Parity uses one session** (`_parity_spot`). A call and a put are paired only when both day
+  bars are from the snapshot's newest ET session (`_bar_session`, read from `last_updated`). Rows
+  with no stamp are not used. Massive's `day` is the contract's most recent bar, so today's call
+  with Friday's put gave 102.96 for a stock trading at 104. Open point 3 is narrowed by this.
+- **V5 Standard contracts only** (`standard_rows`). A row whose `multiplier` is known and is not 100
+  is dropped. When two rows share (expiry, right, strike), the one whose ticker is the standard OCC
+  ticker is kept, else the first one seen. This runs before the spot, the IV hint, the window and
+  the store, so an adjusted root after a corporate action no longer skews the parity spot or the
+  stored IV. `rows` in the result still counts the raw snapshot.
+- **V6 Three strike grids plus a bracketing read** (`strike_grid`, `_fetch_expiry`; replaces the
+  two-grid rule of M1-5). `strike_grid` returns (finer, coarser, standard). The standard grid is
+  $2.50 under $25, $5 up to $200 and $10 above. While nothing has been found and an off-grid probe
+  has no call bars, the read moves to the next coarser grid, down to the standard one. If the
+  strikes found do not bracket the window's median close, the standard-grid strikes just below and
+  above it are read. Only after that does an expiry count as empty. Before, a name listed only on
+  the standard grid got 0 IV points.
+- **V7 IV history from unadjusted closes** (`backfill_history`). The split-adjusted bars are still
+  what is filed (HV, ATR). One more read, `stock_daily(adjusted=False)` over the last `days_iv`
+  sessions, feeds `iv30_history`, because an expired contract kept its pre-split strike. If that
+  read is empty, the adjusted bars are used. `requests` counts both stock reads. Before, a 4:1
+  split left 14 IV points and `history_done` False.
+- **V8 Bars end at the last published session** (`published_session`; changes M1-2). For a trading
+  day, the day itself counts as published once the ET time is 20:00 or later. Otherwise the last
+  published session is `clock.prev_trading_day`, and a day already in the past counts as
+  published. `daily_update` reads [end - 10 days, end], and `backfill_history` ends both stock
+  reads at `end`, so a part-day bar is never filed as a close. `daily_update` now returns
+  `{symbol, bars, ms, complete}`, where `complete` means the bars include `end`.
+- **V9 A session pass goes before histories** (`opt_collector`; changes §13.4 step 2). A session
+  pass that is running or due always gets the tick. Histories run one per tick in the gaps, so a
+  member importing a watchlist no longer holds back every basket's 15-minute reads.
+- **V10 A pass keeps its counts** (`opt_collector`). A history or a first read that runs while a
+  session pass or an end-of-day pass is in progress leaves the pass's ticker counts alone, in the
+  heartbeat, the strip, the tray and the end-of-pass line.
+- **V11 End-of-day stock bars are owed until complete** (`opt_collector`). A symbol's bars count as
+  done only when `daily_update` worked and returned `complete`. If not (bars not out yet, a failure,
+  a plan refusal or a pause), they are owed. The collector retries them outside the session: on the
+  next tick, then after 5 min, doubling up to 2 h (`BARS_RETRY_S`, `BARS_RETRY_MAX_S`). Meanwhile
+  the day's chain snapshot stays done and the day counts as done. The detail line says "stock bars
+  of N tickers still to come". The next day's pass drops whatever is still owed, because its
+  10-day lookback covers it.
+- **V12 The error line shows what paused the collector** (`options_page._collector_view`). In
+  state `error`, the strip shows the pause's own reason and next try (`phase_detail`, which the
+  tray also reads first), not `last_error`, which the next one-ticker failure overwrites.
+  `last_error` is shown only when there is no detail.
+
+**Open after the review**
+- Because of V8, the 16:20 ET pass files bars only up to the previous session. A session's own bar
+  arrives with the next trading day's pass (Friday's on Monday), so ATR, HV and the 20-day volume
+  always lag one session (open point 5, now certain rather than possible). V11's retry only covers
+  a session Massive is late with. Fix: a bars-only top-up read after 20:00 ET.
+- V4 reads a row's session from `last_updated`, which `massive.py` sets to the newer of the quote
+  time and the day-bar time. That is right on Starter (no quotes). On a plan with quotes, a stale
+  day bar would carry today's quote time; the fix is to keep the day bar's own stamp on the row.
+- Massive's `.` share-class spelling (V1) comes from Polygon's documentation and has not been tried
+  against the live API.
+- Some texts outside this round's files still describe the old stamp: the `opt_massive.py` module
+  docstring and the `opt_store.py` / `app/models.py` comments say rows carry the feed's own
+  `last_updated` (V3). DEPLOY.md §G check 3 is moot.

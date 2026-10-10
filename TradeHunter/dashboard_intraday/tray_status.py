@@ -10,12 +10,12 @@ Color states:
   RED     stopped / stale       (last entry > 10 min ago, or no process)
   GRAY    unknown               (no log file, can't determine)
 
-The tooltip and the Show Status window also carry the Options v2 collector
-(dashboard_tst, task TST-Options-Collector) from its heartbeat file
-dashboard_tst/state/options_collector.json: state, cycle, last EOD date, gateway,
-heartbeat age - green running, amber error / no heartbeat for 5 min, grey no file or
-"waiting" (the Gateway is down by the supervisor's design, e.g. the weekday
-08:00-20:10 ET manual-trading blackout).
+The tooltip and the Show Status window also carry the Options collector
+(dashboard_tst, task TST-Options-Collector - it reads Massive, formerly Polygon.io)
+from its heartbeat file dashboard_tst/state/options_collector.json: state, pass,
+last end-of-day date, heartbeat age - green running / idle / history / eod, amber
+error (e.g. the Massive key missing or rejected) / stopped / no heartbeat for 5 min,
+grey no file (the collector does not run on this PC).
 
 Right-click menu:
   - Show Status        : popup notification with current symbol + progress
@@ -815,26 +815,35 @@ def get_supervisor_status() -> dict:
     return result
 
 
-# The Options v2 collector on Hermes (dashboard_tst/deploy/options_collector.py, task
-# TST-Options-Collector) heartbeats into this file every ~15 s (tray-sync rule).
+# The Options collector on Hermes (dashboard_tst/deploy/options_collector.py, task
+# TST-Options-Collector; data from Massive, formerly Polygon.io) heartbeats into this
+# file every ~15 s (tray-sync rule).
 OPTIONS_COLLECTOR_STATE_PATH = SKILL_DIR / "dashboard_tst" / "state" / "options_collector.json"
 OPTIONS_COLLECTOR_STALE_SEC = 300   # no heartbeat for 5 min -> amber
 
 
 def get_options_collector_status(path=None, now=None) -> dict:
     """The Hermes options collector from its heartbeat file
-    (dashboard_tst/state/options_collector.json): state, cycle, last EOD date,
-    gateway ok, heartbeat age - one detail line + a tooltip fragment.
+    (dashboard_tst/state/options_collector.json): state, pass, tickers done, last
+    end-of-day date, heartbeat age - one detail line + a tooltip fragment.
 
-    Colour: green = running (fresh heartbeat, state not error/stopped/waiting); grey =
-    waiting (the ingest supervisor keeps the Gateway down by design - the weekday
-    08:00-20:10 ET manual-trading blackout, its start at 20:10 ET, or closed after the
-    nightly top-up: neutral, not a fault) or no file (the collector never ran on this
-    PC, e.g. the laptop); amber = state error or stopped, heartbeat older than 5 min, or
-    an unreadable file. A running line ends with "history waits (N)" while N symbols'
-    IBKR history waits for the nightly ingest top-up (shared historical pacing).
-    Returns {level: ok|waiting|warn|absent, color: green|grey|amber, state, line, tip,
-             age_sec, cycle_n, last_eod_on, gateway_ok}. File reads only."""
+    ``state`` (what the line says) is one of:
+      running  - a session pass is reading Massive (the collector writes "cycle");
+      idle     - between passes, out of hours, or the end-of-day pass done;
+      history  - reading a new ticker's 2 years of bars + IV history;
+      eod      - the end-of-day pass;
+      error    - the collector reports an error (the reason follows: e.g.
+                 "TST_MASSIVE_API_KEY is not set on this PC", "Massive rejected the
+                 API key", a plan without an endpoint, Massive not reachable), or the
+                 state file is unreadable;
+      stopped  - the collector was stopped (Ctrl+C, or a one-off run finished);
+      stale    - no heartbeat for 5 min (the task died or hangs);
+      absent   - no state file (the collector does not run on this PC, e.g. the laptop).
+    Colour: green = running / idle / history / eod; amber = error / stopped / stale;
+    grey = absent. A line ends with "history pending (N)" while N basket tickers still
+    wait for their history.
+    Returns {level: ok|warn|absent, color: green|amber|grey, state, line, tip, age_sec,
+             cycle_n, last_eod_on, api_ok}. File reads only."""
     def _age_text(sec):
         if sec is None:
             return "?"
@@ -846,8 +855,8 @@ def get_options_collector_status(path=None, now=None) -> dict:
         return f"{sec / 3600:.1f}h"
 
     p = Path(path) if path is not None else OPTIONS_COLLECTOR_STATE_PATH
-    out = {"level": "absent", "color": "grey", "state": None, "age_sec": None,
-           "cycle_n": None, "last_eod_on": None, "gateway_ok": None}
+    out = {"level": "absent", "color": "grey", "state": "absent", "age_sec": None,
+           "cycle_n": None, "last_eod_on": None, "api_ok": None}
     if not p.exists():
         out.update(line="Options collector: not running on this PC (no state file)", tip="Opt -")
         return out
@@ -856,7 +865,7 @@ def get_options_collector_status(path=None, now=None) -> dict:
         if not isinstance(d, dict):
             raise ValueError("not a JSON object")
     except Exception as exc:
-        out.update(level="warn", color="amber", tip="Opt ?",
+        out.update(level="warn", color="amber", state="error", tip="Opt ?",
                    line=f"Options collector: state file unreadable ({exc})"[:160])
         return out
 
@@ -871,45 +880,37 @@ def get_options_collector_status(path=None, now=None) -> dict:
     except Exception:
         hb = None
     age = (now - hb).total_seconds() if hb is not None else None
-    state = str(d.get("state") or "?")
-    cyc, eod, gw_ok = d.get("cycle_n"), d.get("last_eod_on"), d.get("gateway_ok")
+    raw = str(d.get("state") or "?").strip().lower()
+    state = {"cycle": "running", "running": "running", "starting": "running",
+             "history": "history", "eod": "eod", "error": "error",
+             "stopped": "stopped"}.get(raw, "idle")
+    cyc, eod, api_ok = d.get("cycle_n"), d.get("last_eod_on"), d.get("api_ok")
     done, total = d.get("symbols_done"), d.get("symbols_total")
-    out.update(state=state, age_sec=age, cycle_n=cyc, last_eod_on=eod, gateway_ok=gw_ok)
+    out.update(state=state, age_sec=age, cycle_n=cyc, last_eod_on=eod, api_ok=api_ok)
 
     parts = [state.upper() if state in ("error", "stopped") else state]
     if cyc:
-        parts.append(f"cycle {cyc}")
-    if total and state in ("history", "cycle", "eod"):
+        parts.append(f"pass {cyc}")
+    if total and state in ("running", "history", "eod"):
         parts.append(f"{done or 0}/{total}")
-    if d.get("mdt"):
-        parts.append(str(d["mdt"]))
-    parts.append("GW ok" if gw_ok else "GW down")
+    if api_ok is False:
+        parts.append("Massive failing")
+    else:
+        parts.append("Massive " + str(d.get("mdt") or "delayed"))
     parts.append(f"EOD {eod}" if eod else "EOD -")
     try:
-        hist_wait = int(d.get("history_waiting") or 0)
+        hist_pending = int(d.get("history_pending") or 0)
     except (TypeError, ValueError):
-        hist_wait = 0
-    if hist_wait > 0:
-        parts.append(f"history waits ({hist_wait})")
+        hist_pending = 0
+    if hist_pending > 0 and state != "history":
+        parts.append(f"history pending ({hist_pending})")
     parts.append(f"hb {_age_text(age)} ago")
     line = "Options collector: " + " · ".join(parts)
 
     if age is None or age > OPTIONS_COLLECTOR_STALE_SEC:
-        out.update(level="warn", color="amber", tip=f"Opt stale {_age_text(age)}",
+        out.update(level="warn", color="amber", state="stale", tip=f"Opt stale {_age_text(age)}",
                    line=f"Options collector: NO HEARTBEAT for {_age_text(age)} "
-                        f"(last: {state}) - is TST-Options-Collector running?")
-    elif state == "waiting":
-        # The ingest supervisor keeps the Gateway down by design - neutral, not amber.
-        reason, until = d.get("wait_reason"), d.get("wait_until")
-        what = {"blackout": "Gateway blackout",
-                "starting": "supervisor starting the Gateway",
-                "closed": "Gateway closed after the nightly top-up"}.get(reason)
-        if what:
-            wline = f"Options collector: waiting ({what}" + (f" until {until}" if until else "") + ")"
-        else:
-            why = d.get("phase_detail") or ""
-            wline = "Options collector: waiting" + (f" - {why}" if why else "")
-        out.update(level="waiting", color="grey", tip="Opt wait", line=wline[:200])
+                        f"(last: {raw}) - is TST-Options-Collector running?")
     elif state in ("error", "stopped"):
         why = d.get("phase_detail") or d.get("last_error") or ""
         out.update(level="warn", color="amber",
@@ -917,7 +918,7 @@ def get_options_collector_status(path=None, now=None) -> dict:
                    line=(line + (f" - {why}" if why else ""))[:200])
     else:
         out.update(level="ok", color="green",
-                   tip=f"Opt c{cyc}" if (cyc and state == "cycle") else f"Opt {state}",
+                   tip=f"Opt p{cyc}" if (cyc and state == "running") else f"Opt {state}",
                    line=line)
     return out
 

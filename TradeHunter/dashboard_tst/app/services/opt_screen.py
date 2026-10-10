@@ -1,12 +1,23 @@
 """Options v2 screeners - one strategy over a member's basket, by the member's rules
-(OPTIONS_V2_DESIGN.md section 8).
+(OPTIONS_V2_DESIGN.md sections 8 and 13.5).
 
 Input is what ``opt_store`` hands the page: ``chains = {sym: chain_view(...)}``
 (expiries ascending, each with ``calls`` / ``puts`` rows by strike, every row
 carrying its own ``as_of`` / ``source`` / ``mdt``), ``unds = {sym: underlying(...)}``
-(spot, IBKR ATR / HV / IV rank, earnings date) and ``rules =
+(spot, ATR / HV / IV rank from the stored daily history, earnings date) and ``rules =
 opt_rules.for_strategy(...)``. No I/O here - pure functions over dicts, so a
 screen is cheap enough to run on every rules change.
+
+Prices without quotes (v4.134, §13.5). The data comes from Massive; its Options
+Starter plan has NO bid/ask, so a row's ``mid`` is then the model price ``opt_massive``
+stored (Black-Scholes from the contract's own IV). A leg needs a usable price (``mid``
+> 0); the two bid/ask rules apply only to legs that carry a bid AND an ask - skipped
+otherwise, and the funnel then gains ONE information line (``NO_QUOTES``, ``"info":
+True``) whose count is the trades that reached those rules with at least one unquoted
+leg (it removes nothing). ``net_natural`` (at the bid / ask) is None unless every leg
+has both; ``data.priced`` (and each leg's ``priced``) is ``"quotes"`` when every price
+is a bid/ask midpoint, else ``"model"``. The entry is still made in TWS at its live
+price - the list finds the candidates.
 
 Pipeline per ticker, in this order:
 
@@ -20,9 +31,10 @@ Pipeline per ticker, in this order:
 3. enumerate - the family's structures, pruned by the delta bands and the ATR
    width bands BEFORE legs are paired (so a basket screens in milliseconds);
    what the bands prune is still counted, arithmetically, in TRADES.
-4. leg filters - two-sided quote, open interest, option volume, bid/ask $ (the
-   strategy's own cap; 0 = off) and % of mid, quote age (``max_age_h``). A trade is
-   removed by the first rule in this order that any of its legs fails.
+4. leg filters - a usable price, open interest, option volume, bid/ask $ (the
+   strategy's own cap; 0 = off) and % of mid (both only on a leg with a bid and an
+   ask), quote age (``max_age_h``). A trade is removed by the first rule in this order
+   that any of its legs fails.
 5. family rules - credit / debit / decay / time value / cost against the stock.
 6. score - each ticker keeps its ``per_ticker`` best (the rest are counted too).
 
@@ -36,9 +48,10 @@ Quote age is MARKET time (``market_now``): during the US regular session it is t
 wall-clock age; while the market is closed (nights, weekends, NYSE holidays -
 ``clock``) the clock stands still at the last close, so a quote taken at or after
 that close is current (age 0) until the next open, and an older one stays as old
-as it was at the close. Hermes reads the chain in the evening and members only
-while they trade, so a wall clock would age Friday evening's closing quotes past
-24 h every weekend. ``data.age_min`` is that market age (the page's Data column);
+as it was at the close. A row's ``as_of`` is the feed's own time for that contract
+(15 min delayed on the Starter plan), and the collector's last read of a day comes
+after the close, so a wall clock would age Friday's closing data past 24 h every
+weekend. ``data.age_min`` is that market age (the page's Data column);
 ``data.wall_age_min`` the plain wall-clock age (its tooltip).
 
 POP is the risk-neutral lognormal probability (drift ``RISK_FREE``, the same
@@ -71,6 +84,13 @@ SOLD_ROLES = frozenset({"short", "front"})      # the nearer, sold expiry of a d
 
 LEG_RULES = ("quote", "oi", "opt_vol", "spread", "spread_pct", "age")
 _LEG_INDEX = {k: i for i, k in enumerate(LEG_RULES)}
+_PAST_BID_ASK = _LEG_INDEX["spread_pct"]     # a first failure after this got past the bid/ask rules
+
+# The funnel's information line (§13.5): the bid/ask rules were skipped on trades with a
+# leg that has no bid and ask. It removes nothing ("info": True); its "removed" field
+# holds the trades it applies to, so the page's funnel table shows that count.
+NO_QUOTES = "no_quotes"
+NO_QUOTES_LABEL = "Bid/ask rules not applied - your data plan has no quotes"
 
 # enumeration (band) rules and family rules per family, in pipeline order
 _BAND_RULES = {
@@ -196,15 +216,18 @@ def market_age_min(as_of, now=None) -> int | None:
 
 # ------------------------------------------------------------------ the contract
 class _Opt:
-    """One contract of a chain_view row with its expiry, DTE and right attached."""
-    __slots__ = ("exp", "dte", "right", "row", "strike", "mid", "ad", "iv")
+    """One contract of a chain_view row with its expiry, DTE and right attached.
+    ``quoted``: the row carries a bid AND an ask, so its ``mid`` is their midpoint;
+    otherwise ``mid`` is the stored model price (no quotes on the data plan)."""
+    __slots__ = ("exp", "dte", "right", "row", "strike", "mid", "ad", "iv", "quoted")
 
     def __init__(self, exp: str, dte: int, right: str, row: dict):
         self.exp, self.dte, self.right, self.row = exp, dte, right, row
         self.strike = float(row["strike"])
         mid = _num(row.get("mid"))
         bid, ask = _num(row.get("bid")), _num(row.get("ask"))
-        if mid is None and bid is not None and ask is not None:
+        self.quoted = bid is not None and ask is not None
+        if mid is None and self.quoted:
             mid = (bid + ask) / 2.0
         self.mid = mid
         d = _num(row.get("delta"))
@@ -267,6 +290,7 @@ class _T:
         self.max_age = _dt.timedelta(hours=float(sh["max_age_h"]))
         self.leg_cache: dict[int, str] = {}
         self.counts: dict[str, int] = {}
+        self.no_quotes = 0        # trades that reached the bid/ask rules with an unquoted leg
         self.total = 0
         self.reason: str | None = None
 
@@ -358,7 +382,7 @@ def _band_label(key: str, fam: str, r: dict) -> str:
 
 def _leg_label(key: str, sh: dict, r: dict) -> str:
     return {
-        "quote": "No two-sided quote on an option",
+        "quote": "No price on an option (no bid/ask and no IV)",
         "oi": f"Open interest under {sh['oi_min']:,} on an option (or not reported)",
         "opt_vol": f"Volume today under {sh['opt_vol_min']:,} on an option (or not reported)",
         "spread": f"Bid/ask wider than ${r['max_leg_spread']:.2f} on an option",
@@ -501,10 +525,13 @@ def _expiries(t: _T) -> list[_Exp]:
 
 # ------------------------------------------------------------------ stage 4: the legs
 def _leg_check(t: _T, o: _Opt) -> str:
-    """The first leg rule ``o`` fails, "" when it passes them all."""
+    """The first leg rule ``o`` fails, "" when it passes them all. A usable price is a
+    ``mid`` > 0 (a bid/ask midpoint, or the model price on a plan without quotes; a
+    crossed or negative quote is no price). The bid/ask $ and % rules check only a leg
+    that has both a bid and an ask."""
     sh, row = t.sh, o.row
     bid, ask = _num(row.get("bid")), _num(row.get("ask"))
-    if bid is None or ask is None or bid < 0 or ask <= 0 or ask < bid or o.mid is None or o.mid <= 0:
+    if o.mid is None or o.mid <= 0 or (o.quoted and (bid < 0 or ask <= 0 or ask < bid)):
         return "quote"
     if sh["oi_min"] > 0:
         oi = _num(row.get("oi"))
@@ -514,12 +541,13 @@ def _leg_check(t: _T, o: _Opt) -> str:
         v = _num(row.get("volume"))
         if v is None or v < sh["opt_vol_min"]:
             return "opt_vol"
-    width = ask - bid
-    cap = t.r["max_leg_spread"]                  # the strategy's own $ band; 0 = off
-    if cap > 0 and width > cap + EPS:
-        return "spread"
-    if width / o.mid * 100.0 > sh["max_leg_spread_pct"] + EPS:
-        return "spread_pct"
+    if o.quoted:
+        width = ask - bid
+        cap = t.r["max_leg_spread"]                  # the strategy's own $ band; 0 = off
+        if cap > 0 and width > cap + EPS:
+            return "spread"
+        if width / o.mid * 100.0 > sh["max_leg_spread_pct"] + EPS:
+            return "spread_pct"
     as_of = _utc_naive(row.get("as_of"))
     if as_of is None or t.mnow - as_of > t.max_age:          # market time (market_now)
         return "age"
@@ -527,7 +555,12 @@ def _leg_check(t: _T, o: _Opt) -> str:
 
 
 def _leg_fail(t: _T, legs) -> str | None:
+    """The first leg rule (in ``LEG_RULES`` order) any of ``legs`` fails, or None. A
+    trade that got past the bid/ask rules (no failure, or only a later one) while one
+    of its legs had no bid and ask is counted in ``t.no_quotes`` - those rules were not
+    applied to it."""
     best = None
+    unquoted = False
     for o in legs:
         key = id(o.row)
         f = t.leg_cache.get(key)
@@ -535,6 +568,9 @@ def _leg_fail(t: _T, legs) -> str | None:
             f = t.leg_cache[key] = _leg_check(t, o)
         if f and (best is None or _LEG_INDEX[f] < _LEG_INDEX[best]):
             best = f
+        unquoted = unquoted or not o.quoted
+    if unquoted and (best is None or _LEG_INDEX[best] > _PAST_BID_ASK):
+        t.no_quotes += 1
     return best
 
 
@@ -551,6 +587,7 @@ def _leg(o: _Opt, side: str) -> dict:
     row = o.row
     return {"expiry": o.exp, "right": o.right, "strike": o.strike, "side": side, "qty": 1,
             "bid": _num(row.get("bid")), "ask": _num(row.get("ask")), "mid": o.mid, "price": o.mid,
+            "priced": "quotes" if o.quoted else "model",
             "iv": o.iv, "delta": _num(row.get("delta")), "theta": _num(row.get("theta")),
             "oi": _num(row.get("oi")), "volume": _num(row.get("volume")), "dte": o.dte,
             "as_of": row.get("as_of"), "source": row.get("source"), "source_user_id": row.get("source_user_id"),
@@ -565,6 +602,9 @@ def _cand(t: _T, legs: list[tuple[_Opt, str]], *, net, net_natural, max_profit, 
           pop, ror, score, metrics) -> dict:
     lg = [_leg(o, side) for o, side in legs]
     opts = [o for o, _ in legs]
+    quoted = all(o.quoted for o in opts)
+    if not quoted:
+        net_natural = None              # at the bid / ask only when every leg has both
     cid = "|".join([t.sym, t.strategy] + [f"{o.exp}|{o.right}|{_k(o.strike)}" for o in opts])
     ois = [l["oi"] for l in lg]
     spreads = [(l["ask"] - l["bid"]) if (l["ask"] is not None and l["bid"] is not None) else None for l in lg]
@@ -593,7 +633,7 @@ def _cand(t: _T, legs: list[tuple[_Opt, str]], *, net, net_natural, max_profit, 
                       "spread_pct_max": None if any(v is None for v in pcts) else round(max(pcts), 2),
                       "volume_min": None if any(v is None for v in vols) else min(vols)},
         "data": {"as_of_oldest": oldest, "age_min": age, "wall_age_min": wall_age, "sources": sources,
-                 "mixed": len(sources) > 1},
+                 "mixed": len(sources) > 1, "priced": "quotes" if quoted else "model"},
         "underlying": {"spot": t.spot, "iv_rank": _num(t.und.get("iv_rank")), "iv30": t.iv30, "hv20": t.hv20,
                        "atr14": t.atr, "earnings_date": t.und.get("earnings_date")},
     }
@@ -1077,8 +1117,11 @@ def screen(strategy: str, chains: dict, unds: dict, rules: dict | None, *, today
     """One strategy over every ticker in ``chains`` / ``unds``: the trades that pass
     every rule (each ticker's ``per_ticker`` best, best score first), the funnel
     (every active rule with how many tickers / expiries / trades it removed - the
-    first rule each failed), per-ticker ``{"passed", "reason"}``, ``n_considered``
-    (trades enumerated before any band) and ``n_passed`` (trades listed)."""
+    first rule each failed - plus, when any trade had a leg without a bid and ask, the
+    ``NO_QUOTES`` line after the bid/ask rules: ``"info": True``, ``"removed"`` = the
+    trades those rules were not applied to; it removes nothing, so leave it out of any
+    sum), per-ticker ``{"passed", "reason"}``, ``n_considered`` (trades enumerated
+    before any band) and ``n_passed`` (trades listed)."""
     if strategy not in opt_rules.STRATEGIES:
         raise KeyError(strategy)
     sh, r = _rules(strategy, rules)
@@ -1092,6 +1135,7 @@ def screen(strategy: str, chains: dict, unds: dict, rules: dict | None, *, today
     rows: list[dict] = []
     tickers: dict[str, dict] = {}
     n_considered = 0
+    n_no_quotes = 0
     for sym in sorted(set(chains) | set(unds)):
         t = _T(strategy, sym, chains.get(sym), unds.get(sym), sh, r, today, now, mnow)
         fail = _stock_fail(t)
@@ -1112,8 +1156,14 @@ def screen(strategy: str, chains: dict, unds: dict, rules: dict | None, *, today
             tickers[sym] = {"passed": len(keep), "reason": reason}
         for k, v in t.counts.items():
             counts[k] = counts.get(k, 0) + v
+        n_no_quotes += t.no_quotes
     rows.sort(key=_order)
     funnel = [{"rule": k, "label": lbl, "unit": unit, "removed": counts.get(k, 0)} for k, unit, lbl in cat]
+    if n_no_quotes:
+        # right after the bid/ask rules it speaks for; it removed nothing ("info")
+        at = next((i + 1 for i, f in enumerate(funnel) if f["rule"] == "spread_pct"), len(funnel))
+        funnel.insert(at, {"rule": NO_QUOTES, "label": NO_QUOTES_LABEL, "unit": "trades",
+                           "removed": n_no_quotes, "info": True})
     return {"rows": rows, "funnel": funnel, "tickers": tickers,
             "n_considered": n_considered, "n_passed": len(rows), "strategy": strategy}
 

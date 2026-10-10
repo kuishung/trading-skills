@@ -3,25 +3,27 @@
 {% block main_class %}flex-1 w-full px-4 py-4 lg:overflow-hidden{% endblock %}
 
 {% block content %}
-{# Options v2 (OPTIONS_V2_DESIGN.md §9): browse by rules. The status strip (the member's
-   own IBKR connector pill, probed by this page; the Hermes collector line, a polled
-   fragment), the resizable basket (left), the strategy dropdown with the rules panel
-   ALWAYS visible, and the trades that pass every rule (a click opens a trade's legs and
-   payoff under its row).
+{# Options v2 (OPTIONS_V2_DESIGN.md §9, on the Massive data path of §13): browse by rules.
+   The status strip (a polled fragment: the Hermes collector line - it reads Massive
+   Options Starter, 15 min delayed - the "prices are estimated from IV" note, and for an
+   administrator a missing key), the resizable basket (left; each row has a refresh
+   button), the strategy dropdown with the rules panel ALWAYS visible, and the trades
+   that pass every rule (a click opens a trade's legs and payoff under its row).
    Every script of the page lives at the bottom of THIS file with delegated handlers:
    the fragments (_opt_*.html) carry none, because a script inside a swapped fragment
    goes inert when it is inserted by outerHTML. The one exception is the payoff pane
    (_payoff_chart.html), which is only ever swapped in by htmx (innerHTML), where htmx
    runs its hover script.
-   The pill: green (connector 2.x + TWS connected - the contribution loop runs), amber
-   (connector 2.x, TWS not connected), orange "out of date" (a 1.x connector answered:
-   no tws_connected key, or a version that is not 2.x - no loop, a Download 2.0 link),
-   red (no answer - not running, or the browser's Local Network Access permission is
-   pending / blocked; "blocked by the browser" when navigator.permissions says denied).
+   The data is written by the server only (the Hermes collector, and "Refresh now":
+   POST /options/refresh/<sym>, which answers the refreshed basket row and fires
+   options:refreshed after the swap). The list re-screens after a refresh and when the
+   strip shows that a collector pass finished (data-pass changed) - debounced 5 s, and
+   never while a trade is open (the re-screen runs when it closes).
    The results are requested by ONE loader: at most one request in flight, a newer
-   trigger queues one follow-up. A contribution re-screens them (debounced 5 s), never
-   while a trade is open (the re-screen runs when it closes). Basket refreshes swap only
-   the rows (#optBasketRows) and keep the chosen sort.
+   trigger queues one follow-up. Basket refreshes swap only the rows (#optBasketRows)
+   and keep the chosen sort.
+   The only call to the member's PC is the optional "Run my TWS scanner" import (the
+   TradeHunter IBKR bridge on 127.0.0.1, data-bridge-port).
    Context: user, n_basket, max_basket, bridge_port, strategies [(key, label)],
    default_strategy, criteria, fresh_min. Scroll areas inherit base.html's
    invisible-until-hover scrollbar. #}
@@ -29,28 +31,15 @@
      data-bridge-port="{{ bridge_port }}" data-default-strategy="{{ default_strategy }}"
      data-strategies='{{ strategies|map(attribute=0)|list|tojson }}'>
 
-  {# ── status strip: connector pill (browser probe) · Hermes line (polled) · download · help ── #}
+  {# ── status strip: the collector line + data notes (polled) · help ── #}
   <div class="shrink-0 mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
-    <span id="optConnPill" data-state="red" tabindex="0"
-          class="inline-flex items-center gap-1.5 rounded-full border border-rose-500/50 bg-rose-500/10 px-2 py-0.5 text-rose-300"
-          data-tip="Looking for the IBKR connector on this PC (http://127.0.0.1:{{ bridge_port }})...">
-      <span class="opt-pill-dot inline-block w-2 h-2 rounded-full bg-rose-400"></span>
-      <span class="opt-pill-txt">IBKR connector: checking&hellip;</span>
+    <span id="optStatus" class="flex flex-wrap items-center gap-x-2 gap-y-1 text-slate-400"
+          hx-get="/options/status" hx-trigger="load, every 60s" hx-swap="innerHTML">
+      <span class="text-slate-500">Massive: &hellip;</span>
     </span>
-    <a id="optConnStart" href="tradehunter://start-bridge" class="hidden text-slate-400 underline hover:text-emerald-300"
-       data-tip="Starts the connector if it is installed on this PC (the installer registers this link).">Start it</a>
-    <a id="optConnUpdate" href="/options/connector/download"
-       class="hidden rounded border border-orange-500/60 px-2 py-0.5 text-orange-300 hover:bg-orange-500/10 transition"
-       data-tip="Download the 2.0 connector; its installer replaces the old one. Then reload this page.">Download 2.0</a>
-    <span id="optStatus" class="text-slate-400" hx-get="/options/status" hx-trigger="load, every 60s" hx-swap="innerHTML">
-      <span class="text-slate-500">Hermes: &hellip;</span>
-    </span>
-    <span id="optContrib" class="text-slate-500"></span>
     <span class="ml-auto flex items-center gap-2">
-      <a href="/options/connector/download" class="rounded border border-slate-700 px-2 py-0.5 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition"
-         data-tip="Download the TradeHunter IBKR connector for this PC (Windows). It reads YOUR TWS / IB Gateway; read-only, it never places an order.">Download connector</a>
       <button type="button" id="optHelpBtn" class="w-5 h-5 rounded-full border border-slate-700 text-slate-400 hover:text-emerald-300 hover:border-emerald-500"
-              aria-expanded="false" aria-controls="optHelp" data-tip="How the connector works, the browser permission it needs, and what the colours mean">?</button>
+              aria-expanded="false" aria-controls="optHelp" data-tip="Where the data comes from (Massive, 15 min delayed), how prices are estimated, and where you enter the trade">?</button>
     </span>
   </div>
   <div id="optHelp" class="hidden shrink-0 mb-2 rounded-xl border border-slate-800 bg-slate-900/60 p-3 text-[12px]"></div>
@@ -77,7 +66,7 @@
           </select>
         </label>
         <span id="optSummary" class="text-[12px] text-slate-300 tabular-nums">{{ n_basket }} ticker{{ '' if n_basket == 1 else 's' }}</span>
-        <span class="ml-auto text-[10px] text-slate-500">Only trades that pass every rule are listed &middot; tracking only, TradeHunter never sends an order</span>
+        <span class="ml-auto text-[10px] text-slate-500">Only trades that pass every rule are listed &middot; find it here, enter it in IBKR TWS &middot; TradeHunter never sends an order</span>
       </div>
 
       {# the rules panel: always visible (never a drawer), above the results #}
@@ -98,27 +87,31 @@
   #optPage .opt-brow.opt-on { background: rgba(16,185,129,0.10); box-shadow: inset 3px 0 0 #10b981; }
   #optPage .opt-cand.opt-flash { background: rgba(56,189,248,0.10); }
   #optResultsHost.htmx-request, #optRulesHost.htmx-request { opacity: 0.7; transition: opacity .15s; }
+  @keyframes opt-spin { to { transform: rotate(360deg); } }
+  /* "Refresh now": the inner .opt-spin is the request indicator (hx-indicator="find .opt-spin") -
+     never the button itself, which hx-disabled-elt disables: on ONE element htmx 1.9 counts both
+     in one counter and the indicator class would never come off */
+  #optPage .opt-refresh .opt-spin.htmx-request { animation: opt-spin 0.9s linear infinite; color: #6ee7b7; }
+  #optPage .opt-refresh[disabled] { cursor: progress; }
 </style>
 
 <script>
 (function () {
   var page = document.getElementById('optPage');
   if (!page) return;
-  var BRIDGE = 'http://127.0.0.1:' + (page.dataset.bridgePort || '9224');
+  var BRIDGE = 'http://127.0.0.1:' + (page.dataset.bridgePort || '9224');   // the member's own IBKR bridge (TWS scanner import)
   var STRATS = [];
   try { STRATS = JSON.parse(page.dataset.strategies || '[]'); } catch (e) {}
   var SKEY = 'th.options.strategy';        // the dropdown is remembered per browser
   var BSKEY = 'th.options.basketSort';     // ... and the basket's sort
-  var HKEY = 'th.options.histSent';        // symbols whose history this browser sent today
-  var PROBE_MS = 10000, PROBE_TIMEOUT_MS = 2000, PROBE_FIRST_TIMEOUT_MS = 4000;
-  // /chain2: the connector's own limit is 150 s (it returns what it read by 135 s, "partial")
-  var CHAIN_TIMEOUT_MS = 160000, BETWEEN_MS = 10000, ERROR_WAIT_MS = 30000, RESCREEN_MS = 5000;
+  var RESCREEN_MS = 5000;                  // a finished collector pass re-screens after this debounce
   var RESULTS_STUCK_MS = 90000;            // an in-flight results request older than this no longer blocks a new one
+  var SCAN_TIMEOUT_MS = 70000;
   var BASKET_SORTS = ['added', 'symbol', 'fresh', 'iv'];
   var sel = document.getElementById('optStrategy');
   var state = { strategy: page.dataset.defaultStrategy || 'bull_put', sort: 'score', dir: 'desc',
-                openId: null, counts: {}, reasons: {}, pill: 'red', health: null, focus: null,
-                bsort: 'added', funnelOpen: false };
+                openId: null, counts: {}, reasons: {}, focus: null, bsort: 'added', funnelOpen: false,
+                pass: null };
 
   function enc(s) { return encodeURIComponent(s == null ? '' : String(s)); }
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
@@ -158,8 +151,8 @@
   }
 
   // ── the results: one loader (at most one in flight + one queued follow-up) ──
-  // bg = a background re-screen (a contribution arrived): never while a trade is open,
-  // and never swapped in over a trade the member opened while it was in flight.
+  // bg = a background re-screen (new data arrived): never while a trade is open, and
+  // never swapped in over a trade the member opened while it was in flight.
   var res = { inflight: false, since: 0, bg: false, queued: false, queuedBg: null, timer: null, afterClose: false };
   function resultsUrl() {
     return '/options/results?strategy=' + enc(state.strategy) + '&sort=' + enc(state.sort) + '&dir=' + enc(state.dir);
@@ -167,7 +160,7 @@
   function requestResults(bg) {
     bg = !!bg;
     if (!bg) {
-      // this request re-screens anyway; a pending contribution re-screen keeps only its
+      // this request re-screens anyway; a pending background re-screen keeps only its
       // basket-rows refresh (the data-age dots)
       if (res.timer) { clearTimeout(res.timer); res.timer = null; refreshBasketRows(); }
       res.afterClose = false;
@@ -198,7 +191,7 @@
     if (p && typeof p.then === 'function') p.then(done, done); else setTimeout(done, 3000);
   }
   function scheduleRescreen() {
-    // a contribution: refresh the basket rows and re-screen the list, at most every 5 s
+    // new data from the collector: refresh the basket rows and re-screen the list, at most every 5 s
     clearTimeout(res.timer);
     res.timer = setTimeout(function () {
       res.timer = null;
@@ -242,6 +235,25 @@
     });
   });
 
+  // ── "Refresh now" answered (HX-Trigger-After-Settle, so the new basket row is in place) ──
+  // From a basket row the row itself was swapped; from the trade detail (src 'trade') the
+  // rows are reloaded here. An open trade of that ticker is reloaded at once; the list
+  // re-screens now, or when the open trade is closed.
+  document.body.addEventListener('options:refreshed', function (e) {
+    var d = e.detail || {};
+    if (d.src === 'trade') refreshBasketRows();
+    else {
+      paintCounts();
+      if (state.focus) { var r = document.querySelector('#optBasket .opt-brow[data-sym="' + state.focus + '"]'); if (r) r.classList.add('opt-on'); }
+    }
+    if (state.openId) {
+      if (String(state.openId).split('|')[0] === d.symbol) loadTrade();
+      res.afterClose = true;                          // the list re-screens when the trade is closed
+      return;
+    }
+    requestResults(true);
+  });
+
   // the per-ticker passing counts (the results' HX-Trigger) painted into the basket
   function paintCounts() {
     document.querySelectorAll('#optBasket .opt-count').forEach(function (el) {
@@ -275,6 +287,12 @@
       if (state.funnelOpen) { var f = t.querySelector('details.opt-funnel'); if (f) f.open = true; }
     } else if (t.id === 'optTradeBox') {
       fitTradeBox();
+    } else if (t.id === 'optStatus') {
+      // a collector pass finished (or the end-of-day pass): the stored data changed - re-screen
+      var col = t.querySelector('.opt-collector');
+      var pass = col ? (col.getAttribute('data-pass') || '') : '';
+      if (state.pass !== null && pass && pass !== state.pass) scheduleRescreen();
+      state.pass = pass;
     }
   });
   // basket edits carry the CURRENT sort and ask for the rows only (the footer's hidden
@@ -299,6 +317,15 @@
     var d = e.detail || {}, t = d.target, elt = d.elt;
     var xhr = d.xhr || {};
     var what = sendErr ? 'the server could not be reached' : ('HTTP ' + (xhr.status || '?'));
+    var refresh = elt && elt.closest ? elt.closest('[data-refresh-sym]') : null;
+    if (refresh) {
+      // "Refresh now": the server's own toast already says why (not in the basket, once a
+      // minute, Massive not set up / busy / refused); only an answer without one is worded here
+      var said = false;
+      try { said = !!(xhr.getResponseHeader && xhr.getResponseHeader('HX-Trigger')); } catch (err) {}
+      if (!said) toast('Refresh of ' + (refresh.getAttribute('data-refresh-sym') || 'the ticker') + ' failed (' + what + ') - try again in a minute.', 'err');
+      return;
+    }
     var inRules = (elt && elt.closest && elt.closest('#optRules')) || (t && (t.id === 'optRulesMsg' || t.id === 'optRules'));
     if (inRules) {
       var m = document.getElementById('optRulesMsg');
@@ -423,7 +450,8 @@
       })
       .then(function (res) {
         toast((res.added || 0) + ' added, ' + (res.skipped || 0) + ' skipped' + (res.over_cap ? ', ' + res.over_cap + ' over the cap' : '') +
-              (res.added ? ' - each one shows "waiting for first read" until it is read' : ''), res.added ? 'ok' : 'info');
+              (res.added ? ' - each one shows "waiting for first read" until it is read from Massive (or press its refresh button)' : ''),
+              res.added ? 'ok' : 'info');
         if (source === 'paste') { var box = document.getElementById('optPasteBox'); if (box) box.value = ''; }
         document.body.dispatchEvent(new CustomEvent('options:basket-changed', { detail: { n: res.total } }));
       })
@@ -437,7 +465,15 @@
     var box = document.getElementById('optPasteBox');
     importSyms(src, src === 'paste' && box ? box.value : '');
   });
-  // the member's TWS High IV Rank scanner through the connector, imported as 'scanner'
+  // optional: the member's TWS High IV Rank scanner through the TradeHunter IBKR bridge on
+  // this PC (the IV Rank page's bridge), imported as 'scanner' - the page's only call to the PC
+  function fetchT(url, ms) {
+    var ctl = ('AbortController' in window) ? new AbortController() : null;
+    var timer = setTimeout(function () { if (ctl) ctl.abort(); }, ms);
+    return fetch(url, { mode: 'cors', cache: 'no-store', signal: ctl ? ctl.signal : undefined })
+      .then(function (r) { clearTimeout(timer); return r.json(); },
+            function (err) { clearTimeout(timer); throw err; });
+  }
   document.addEventListener('click', function (e) {
     var b = e.target && e.target.closest ? e.target.closest('#optBasket [data-scan-import]') : null;
     if (!b) return;
@@ -445,16 +481,16 @@
     function num(id, d) { var el = document.getElementById(id); var v = el ? parseFloat(el.value) : NaN; return isNaN(v) ? d : v; }
     var label = b.textContent;
     b.disabled = true; b.textContent = 'Asking TWS…';
-    fetchT(BRIDGE + '/scan?iv_rank=' + num('optScanRank', 30) + '&price=' + num('optScanPrice', 50) + '&volume=' + num('optScanVol', 200000), 70000)
+    fetchT(BRIDGE + '/scan?iv_rank=' + num('optScanRank', 30) + '&price=' + num('optScanPrice', 50) + '&volume=' + num('optScanVol', 200000), SCAN_TIMEOUT_MS)
       .then(function (j) {
-        if (!j || !j.ok) { toast('TWS scan failed: ' + ((j && j.error) || 'the connector did not answer'), 'err'); return null; }
+        if (!j || !j.ok) { toast('TWS scan failed: ' + ((j && j.error) || 'the IBKR bridge did not answer'), 'err'); return null; }
         return importSyms('scanner', '', j.symbols || [], 'TWS scan');
       })
-      .catch(function () { toast('Could not reach your IBKR connector on this PC (' + BRIDGE + '). Start it, then try again.', 'err'); })
+      .catch(function () { toast('Could not reach the TradeHunter IBKR bridge on this PC (' + BRIDGE + '). Start it, then try again - or add the tickers another way.', 'err'); })
       .then(function () { b.disabled = false; b.textContent = label; });
   });
 
-  // ── the help panel (the ? button) ────────────────────────────────────────────
+  // ── the help panel (the ? button): where the data comes from ───────────────
   var helpBtn = document.getElementById('optHelpBtn'), help = document.getElementById('optHelp');
   if (helpBtn && help) helpBtn.addEventListener('click', function () {
     var open = help.classList.contains('hidden');
@@ -462,7 +498,7 @@
     helpBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
     if (open && !help.dataset.loaded) {
       help.dataset.loaded = '1';
-      load('/options/connector', '#optHelp');
+      load('/options/help', '#optHelp');
     }
   });
   document.addEventListener('click', function (e) {
@@ -472,278 +508,9 @@
     }
   });
 
-  // ── the member's IBKR connector: fetch helpers ──────────────────────────────
-  function fetchT(url, ms) {
-    var ctl = ('AbortController' in window) ? new AbortController() : null;
-    var timer = setTimeout(function () { if (ctl) ctl.abort(); }, ms);
-    return fetch(url, { mode: 'cors', cache: 'no-store', signal: ctl ? ctl.signal : undefined })
-      .then(function (r) { clearTimeout(timer); return r.json(); },
-            function (err) { clearTimeout(timer); throw err; });
-  }
-  function getJSON(url) {
-    return fetch(url, { credentials: 'same-origin', cache: 'no-store' })
-      .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'HTTP ' + r.status }; }); });
-  }
-  function postJSON(url, body) {
-    return fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(body) })
-      .then(function (r) {
-        return r.json().catch(function () { return {}; }).then(function (j) {
-          if (!r.ok && j && j.ok !== false) j = { ok: false, error: 'HTTP ' + r.status };
-          if (!r.ok && !j.error) j.error = 'HTTP ' + r.status;
-          j.status = r.status;
-          return j;
-        });
-      });
-  }
-
-  // ── the browser's Local Network Access permission (Chrome / Edge 142+) ─────
-  // A public https page reaching 127.0.0.1 needs it; until it is granted the probe
-  // fails exactly like a stopped connector, so the pill says so when it is denied.
-  // A page served from this PC itself (a dev copy on localhost) is never behind that
-  // gate, so a 'denied' there says nothing about the probe.
-  var lna = { state: null };
-  var LOCAL_PAGE = /^(localhost|127\.0\.0\.1|\[::1\])$/i.test(location.hostname || '');
-  (function watchLna() {
-    if (LOCAL_PAGE || !navigator.permissions || !navigator.permissions.query) return;
-    var names = ['local-network-access', 'loopback-network', 'local-network'];
-    (function next(i) {
-      if (i >= names.length) return;
-      var q;
-      try { q = navigator.permissions.query({ name: names[i] }); } catch (err) { next(i + 1); return; }
-      if (!q || typeof q.then !== 'function') { next(i + 1); return; }
-      q.then(function (st) {
-        lna.state = st.state;
-        st.onchange = function () { lna.state = st.state; probe(); };
-        if (st.state === 'denied') probe();
-      }, function () { next(i + 1); });
-    })(0);
-  })();
-
-  // ── the connector pill: probe /health every 10 s (2 s timeout; 4 s the first time) ──
-  var pill = document.getElementById('optConnPill'), startLink = document.getElementById('optConnStart');
-  var updLink = document.getElementById('optConnUpdate');
-  var TONES = { green: ['border-emerald-500/50', 'bg-emerald-500/10', 'text-emerald-300', 'bg-emerald-400'],
-                amber: ['border-amber-500/50', 'bg-amber-500/10', 'text-amber-300', 'bg-amber-400'],
-                old:   ['border-orange-500/50', 'bg-orange-500/10', 'text-orange-300', 'bg-orange-400'],
-                red:   ['border-rose-500/50', 'bg-rose-500/10', 'text-rose-300', 'bg-rose-400'] };
-  TONES.blocked = TONES.red;
-  var ALL = [].concat(TONES.green, TONES.amber, TONES.old, TONES.red);
-  function setPill(st, text, tip) {
-    var was = state.pill;
-    state.pill = st;
-    if (pill) {
-      var dot = pill.querySelector('.opt-pill-dot'), txt = pill.querySelector('.opt-pill-txt');
-      ALL.forEach(function (c) { pill.classList.remove(c); if (dot) dot.classList.remove(c); });
-      pill.classList.add(TONES[st][0], TONES[st][1], TONES[st][2]);
-      if (dot) dot.classList.add(TONES[st][3]);
-      if (txt) txt.textContent = text;
-      pill.setAttribute('data-state', st);
-      pill.setAttribute('data-tip', tip);
-      pill.setAttribute('title', tip);
-    }
-    if (startLink) startLink.classList.toggle('hidden', st !== 'red');
-    if (updLink) updLink.classList.toggle('hidden', st !== 'old');
-    if (st === 'green' && was !== 'green') kick(1000);
-    if (st !== 'green') setContrib('');
-  }
-  function mdtWord(m) { return m === 'live' ? 'live' : (m ? String(m).replace('_', ' ') : 'delayed'); }
-  function verOf(v) {
-    // "2.0" (2.x) or "TradeHunterIBKRBridge/1.6" (1.x) -> {major, text}
-    var m = /(\d+)(\.\d+)*/.exec(String(v == null ? '' : v).split('/').pop());
-    return m ? { major: parseInt(m[1], 10), text: m[0] } : { major: null, text: '' };
-  }
-  var probes = 0;
-  function probe() {
-    var ms = (probes++ === 0) ? PROBE_FIRST_TIMEOUT_MS : PROBE_TIMEOUT_MS;
-    fetchT(BRIDGE + '/health', ms).then(function (h) {
-      state.health = h || null;
-      var v = verOf(h && h.version);
-      var current = !!h && Object.prototype.hasOwnProperty.call(h, 'tws_connected') && v.major !== null && v.major >= 2;
-      if (!current) {
-        var tws = !!(h && (h.tws_connected || h.connected));
-        setPill('old', 'IBKR connector ' + (v.text || '1.x') + ' is out of date - download 2.0',
-          'An older connector (' + ((h && h.version) || 'version unknown') + ') answered on ' + BRIDGE +
-          (tws ? ', connected to TWS' : ', TWS not connected') + '. This page needs the 2.0 connector: press "Download 2.0", ' +
-          'run its installer (it replaces the old one), then reload this page. Until then your connector does not read ' +
-          'for this page; the shared data still shows.');
-        return;
-      }
-      if (h.tws_connected) {
-        setPill('green', 'IBKR connector: connected (' + mdtWord(h.mdt) + ' data)',
-          'Connector ' + (h.version || '?') + ' on this PC, TWS ' + (h.tws || '?') + ', client ID ' + (h.client_id != null ? h.client_id : '?') +
-          (h.account_type ? ', ' + h.account_type + ' account' : '') +
-          '. While this is green and the page is open, your connector reads the tickers in your basket (stalest first, a few expiries at a time) and every member sees the fresher quotes.');
-      } else {
-        setPill('amber', 'IBKR connector: running, TWS not connected',
-          (h && h.error ? h.error + ' - ' : '') + 'check TWS is running and the API port in the connector\'s settings (' + BRIDGE + '/). ' +
-          'In TWS: Configure > API > Settings > "Enable ActiveX and Socket Clients" (read-only is fine).');
-      }
-    }).catch(function () {
-      state.health = null;
-      if (lna.state === 'denied') {
-        setPill('blocked', 'IBKR connector: blocked by the browser',
-          'This browser does not let the site reach programs on your PC (Local Network Access is blocked), so the connector on ' + BRIDGE +
-          ' cannot answer even when it runs. Click the site icon left of the address bar > Site settings > Local network access ' +
-          '(Chrome / Edge: "Apps on this device") > Allow, then reload this page. Do not install the connector again.');
-        return;
-      }
-      setPill('red', 'IBKR connector not running',
-        'No answer from ' + BRIDGE + '. If Chrome / Edge asked whether this site may access apps and devices on your local network ' +
-        '(Local Network Access), choose Allow - or allow it under the site icon > Site settings > Local network access; a pending or ' +
-        'blocked permission looks exactly like a stopped connector. Otherwise download the connector (button on the right) and run its ' +
-        'installer, or Start it if it is installed. The page still works on the shared data.');
-    });
-  }
-  probe();
-  setInterval(probe, PROBE_MS);
-  if (startLink) startLink.addEventListener('click', function () {
-    var n = 0;
-    var t = setInterval(function () { probe(); if (++n >= 15 || state.pill !== 'red') clearInterval(t); }, 2000);
-  });
-
-  // ── the contribution loop (§6): only while the pill is green and the tab is visible ──
-  // /options/data/next hands out a CHUNK of one ticker's chain (the spec, passed to the
-  // connector as given). A failed or empty read is reported (/options/data/failed): the
-  // server releases the lease and backs the ticker off, so one ticker that cannot be read
-  // never holds the loop. "Refresh these legs live" pauses it while it runs.
-  var contrib = document.getElementById('optContrib');
-  var loop = { busy: false, timer: null, shared: 0, paused: 0 };
-  function setContrib(text) { if (contrib) contrib.textContent = text || ''; }
-  function kick(ms) { clearTimeout(loop.timer); loop.timer = setTimeout(tick, ms); }
-  function today() { var d = new Date(); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); }
-  function histSent(sym) {
-    try { var h = JSON.parse(lsGet(HKEY) || '{}'); return h.day === today() && (h.syms || []).indexOf(sym) >= 0; } catch (e) { return false; }
-  }
-  function markHist(sym) {
-    var h = { day: today(), syms: [] };
-    try { var o = JSON.parse(lsGet(HKEY) || '{}'); if (o.day === h.day) h.syms = o.syms || []; } catch (e) {}
-    if (h.syms.indexOf(sym) < 0) h.syms.push(sym);
-    lsSet(HKEY, JSON.stringify(h));
-  }
-  function sendHistory(sym) {
-    // once per symbol per day, while Hermes has not pulled its history yet
-    return fetchT(BRIDGE + '/underlying?symbol=' + enc(sym), CHAIN_TIMEOUT_MS).then(function (u) {
-      if (!u || u.ok === false) throw new Error((u && u.error) || 'no history from the connector');
-      return postJSON('/options/data/contribute_history', { symbol: sym, bars: u.bars || [], iv_series: u.iv_series || [] });
-    }).then(function (r) {
-      // filed, or refused by the server's checks (400): either way not re-sent today
-      if (r && (r.ok || r.status === 400)) markHist(sym);
-    }).catch(function () { /* best effort: Hermes pulls it too */ });
-  }
-  function readErr(msg, report) { var e = new Error(msg); e.report = !!report; return e; }
-  function shouldReport(err) {
-    // a read failure of THIS ticker (an error answer, a timeout, nothing read, data the
-    // server refused) - not the connector or TWS going away (the pill handles that)
-    if (!err || state.pill !== 'green') return false;
-    if (err.report === true || err.report === false) return err.report;
-    return err.name !== 'TypeError';                 // AbortError = the 160 s limit; TypeError = no connector
-  }
-  function afterContribution(sym, q) {
-    loop.shared++;
-    setContrib('Your connector shared ' + loop.shared + ' read' + (loop.shared === 1 ? '' : 's') + ' this session (last: ' + sym +
-               (q && q.partial ? ', part of a chunk - the rest next time' : '') + ')');
-    scheduleRescreen();
-  }
-  function tick() {
-    if (loop.busy) return;
-    if (state.pill !== 'green' || document.hidden || loop.paused > 0) { kick(BETWEEN_MS); return; }
-    loop.busy = true;
-    var wait = BETWEEN_MS, sym = null;
-    getJSON('/options/data/next').then(function (n) {
-      if (!n || !n.symbol) { wait = ((n && n.wait) || 30) * 1000; return null; }
-      sym = n.symbol;
-      setContrib('Your connector is reading ' + sym + '…');
-      return fetchT(BRIDGE + '/chain2?symbol=' + enc(sym) + '&spec=' + enc(JSON.stringify(n.spec || {})), CHAIN_TIMEOUT_MS)
-        .then(function (q) {
-          // "busy" is local (another tab, or a trade refresh on this connector): not the
-          // ticker's fault, so no back-off for anyone - just try again shortly
-          if (q && q.busy) { var b = readErr('your connector is busy with another read', false); b.busy = true; throw b; }
-          if (!q || q.ok === false) throw readErr((q && q.error) || 'the connector returned no chain', true);
-          if (!q.rows || !q.rows.length) throw readErr('no contracts read' + (q.partial ? ' before the time limit' : ''), true);
-          return postJSON('/options/data/contribute', {
-            symbol: sym, spot: q.spot, mdt: q.mdt, rows: q.rows,
-            connector_version: q.connector_version || ((state.health || {}).version) || '',
-            client_as_of: new Date().toISOString() }).then(function (r) {
-              if (!r || !r.ok) {
-                var st = r && r.status, refused = !!(r && r.backoff_s);
-                // a refusal of this ticker's data (400) is already a failed read on the
-                // server (backoff_s): reported once, not again from here
-                var e = readErr('not stored: ' + ((r && r.error) || 'HTTP ' + st),
-                                !refused && st !== 429 && st !== 401 && st !== 403);
-                if (refused) e.backoff = r.backoff_s;
-                throw e;
-              }
-              return (!n.history_done && !histSent(sym)) ? sendHistory(sym).then(function () { return q; }) : q;
-            });
-        })
-        .then(function (q) { afterContribution(sym, q); });
-    }).catch(function (err) {
-      wait = ERROR_WAIT_MS;
-      var msg = (err && err.message) || String(err);
-      if (err && err.busy) {                          // local, not the ticker: retry in 30 s, report nothing
-        wait = 30000;
-        setContrib('Your connector is busy with another read - trying again in 30 s');
-        return null;
-      }
-      setContrib('Your connector could not read ' + (sym || 'the next ticker') + ': ' + msg);
-      if (sym && err && err.backoff) {                // the server refused it and backed it off
-        wait = BETWEEN_MS;
-        setContrib('Your connector\'s read of ' + sym + ' was ' + msg + ' - it is skipped for ' +
-                   Math.max(1, Math.round(err.backoff / 60)) + ' min');
-        return null;
-      }
-      if (!sym || !shouldReport(err)) return null;
-      return postJSON('/options/data/failed', { symbol: sym, error: msg }).then(function (r) {
-        if (r && r.ok) {
-          wait = BETWEEN_MS;                          // the next ticker; this one waits out its back-off
-          var m = Math.max(1, Math.round((r.backoff_s || 600) / 60));
-          setContrib('Your connector could not read ' + sym + ' (' + msg + ') - it is skipped for ' + m + ' min');
-        }
-      }, function () {});
-    }).then(function () { loop.busy = false; kick(wait); });
-  }
-  document.addEventListener('visibilitychange', function () {
-    if (!document.hidden) { probe(); kick(1500); }
-  });
-
-  // ── "Refresh these legs live" (trade detail): a narrow window, then contribute ──
-  document.addEventListener('click', function (e) {
-    var b = e.target && e.target.closest ? e.target.closest('[data-refresh-legs]') : null;
-    if (!b) return;
-    e.preventDefault();
-    var box = b.closest('.opt-trade');
-    var note = box ? box.querySelector('.opt-refresh-note') : null;
-    function say(t, cls) { if (note) { note.textContent = t; note.className = 'opt-refresh-note text-[11px] ' + (cls || 'text-slate-400'); } }
-    if (state.pill !== 'green') {
-      say('Start the IBKR connector first - the pill at the top must be green.', 'text-amber-300');
-      return;
-    }
-    var sym = b.getAttribute('data-sym'), spec = b.getAttribute('data-spec') || '{}';
-    b.disabled = true;
-    loop.paused++;                                    // no new background read starts meanwhile
-    say(loop.busy ? 'Waiting for your connector to finish its current read, then reading these legs…'
-                  : 'Reading these legs from your TWS…');
-    fetchT(BRIDGE + '/chain2?symbol=' + enc(sym) + '&spec=' + enc(spec), CHAIN_TIMEOUT_MS)
-      .then(function (q) {
-        if (!q || q.ok === false || !q.rows) throw new Error((q && q.error) || 'the connector returned no quotes');
-        return postJSON('/options/data/contribute', { symbol: sym, spot: q.spot, mdt: q.mdt, rows: q.rows, kind: 'trade',
-          connector_version: q.connector_version || '', client_as_of: new Date().toISOString() });
-      })
-      .then(function (r) {
-        if (!r || !r.ok) throw new Error((r && r.error) || 'not stored');
-        loadTrade();
-        refreshBasketRows();
-        res.afterClose = true;                        // the list re-screens when this trade is closed
-      })
-      .catch(function (err) { say('Could not refresh: ' + ((err && err.message) || err), 'text-rose-300'); b.disabled = false; })
-      .then(function () { loop.paused = Math.max(0, loop.paused - 1); });
-  });
-
   loadBasket();
   loadRules();
   requestResults();
-  kick(3000);
 })();
 
 // ── the resizable basket column (v4.128) ──────────────────────────────────────

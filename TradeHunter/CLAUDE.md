@@ -518,7 +518,7 @@ Each component needs a unique clientId per concurrent IBKR session. The full all
 | **86** | **Options chain feed (`dashboard_tst` Options tab)** | **wherever the web app runs** |
 | **87** | **IV-history seeder (`dashboard_tst/deploy/iv_seed_ibkr.py`) when run by the Options nightly job or by hand** | **Hermes** |
 | **88** | **The same seeder when the `dashboard_tst` web app starts it for a freshly added basket ticker (first-time read, v4.131)** | **Hermes** |
-| **89** | **Options collector (dashboard_tst/deploy/options_collector.py, TST-Options-Collector)** | **Hermes** |
+| 89 | Options collector (dashboard_tst/deploy/options_collector.py, TST-Options-Collector) **(retired v4.134 — the collector reads Massive now, no IBKR session; keep the number unused)** | Hermes |
 | 98 | Probe / handshake test | Either |
 | 99 | Dashboard probe | Laptop |
 
@@ -644,17 +644,24 @@ it — memory files don't sync across PCs.
 platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
 `dashboard_tst/DEPLOY.md`. Key facts (so any session/PC recalls them):
 
-- **Options v2 — BUILT in v4.133 (2026-10-09):**
-  `dashboard_tst/OPTIONS_V2_DESIGN.md` is the contract (§12 = what the build changed). The user asked
-  to REMOVE the auto-setup Options page (ideas, positions, chart, options & dates) and rebuild it as:
-  members BROWSE trades that pass their own rules (one strategy at a time from a dropdown, rules
-  always visible), with EVERY option and stock figure from IBKR (earnings date the one exception),
-  every figure stamped with its time and source so one member's live data helps everyone. The
-  always-on Hermes collector (clientId 89, task `TST-Options-Collector`) collects the history and
-  the daily EOD record OUTSIDE the ingest supervisor's weekday 08:00-20:10 ET Gateway blackout;
-  during the US session the live updates come from each member's own downloadable IBKR connector
-  (bridge 2.0, green / amber / red pill). **After a pull that touches the collector
-  (`opt_collector.py`, `th_ibkr.py`, `options_collector.py`), re-run on Hermes:
+- **Options v2 — BUILT in v4.133 (2026-10-09); data from MASSIVE (formerly Polygon.io) since
+  v4.134 (2026-10-10):**
+  `dashboard_tst/OPTIONS_V2_DESIGN.md` is the contract — **§13 first** (the Massive data path; it
+  supersedes the IBKR data path of §2.3-§6; §13.8 = what the v4.134 build changed), §12 = what the
+  v4.133 build changed. The user asked to REMOVE the auto-setup Options page (ideas, positions,
+  chart, options & dates) and rebuild it as: members BROWSE trades that pass their own rules (one
+  strategy at a time from a dropdown, rules always visible), every figure stamped with its time and
+  source. v4.133 took every figure from IBKR; on 2026-10-10 the user decided *"ok i will build it
+  with polygon API for the data"*: **Massive Options Starter ($29/mo — whole-chain snapshot with
+  greeks / IV / OI, 15 min delayed, NO bid/ask, so prices are estimated from IV) + Stocks Basic
+  (free, end-of-day bars, ~5 requests/min)**; earnings dates stay on Yahoo. TradeHunter only FINDS
+  the trade — the user checks the live price and enters in IBKR TWS. The always-on Hermes collector
+  (task `TST-Options-Collector`, venv python) now reads Massive over HTTPS and **no longer touches
+  IBKR** (no Gateway, no blackout, clientId 89 retired); members' connector download, the pill and
+  the data-sharing protocol are gone (each basket row has a server-side "Refresh now"). The key is
+  `TST_MASSIVE_API_KEY` — it lives ONLY in `app\.env` on Hermes (gitignored), never in the repo, a
+  URL, a log or a chat. **After a pull that touches the collector (`opt_collector.py`,
+  `opt_massive.py`, `massive.py`, `opt_store.py`, `deploy\options_collector.py`), re-run on Hermes:
   `powershell -ExecutionPolicy Bypass -File deploy\setup_options_collector_task.ps1 -StartNow`**
   (from `C:\trading-skills\TradeHunter\dashboard_tst`) — the canonical web-app restart does not
   restart the collector. Runbook: `dashboard_tst/DEPLOY.md` section G.

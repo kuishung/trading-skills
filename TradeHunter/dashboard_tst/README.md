@@ -86,30 +86,35 @@ from this dashboard.
   completeness, on **AI-Hermes** — folder-scans
   `C:\HermesSync\MarketResearch\QuarterlyReport` for missing quarters / stub MDs,
   POSTs `/api/ingest/edgar`; scheduled task).
-- **Options page (v4.133, Options v2 — contract `OPTIONS_V2_DESIGN.md`).** Browse trades
-  by your own rules, every option / stock figure from IBKR:
-  - `app/routes/options_page.py` (rewritten) + templates `options.html` (rewritten),
-    `_opt_basket.html`, `_opt_rules.html`, `_opt_results.html`, `_opt_trade.html`,
-    `_opt_status.html`, `_opt_connector.html` (the payoff keeps `_payoff_chart.html`).
-  - `app/services/opt_store.py` — the shared IBKR data pool (merge rule, member-data
-    validation + rate limit, freshness, work leases, the collector heartbeat, the EOD
-    record, retention); `opt_rules.py` — rules v2 (shared block + ten strategies, plain
-    labels / tooltips, sparse per-member storage); `opt_screen.py` — the ten screeners +
-    the "why so few?" funnel; `opt_collector.py` — the Hermes collector loop;
-    `opt_connector_pkg.py` — the connector zip. `option_store.py` is reduced to the
-    basket universe + the snapshot retention (`basket_universe`, `prune`);
-    `payoff.py` now takes its labels from `opt_rules`.
+- **Options page (Options v2 — contract `OPTIONS_V2_DESIGN.md`, §13 first).** Browse trades
+  by your own rules; since v4.134 every option / stock figure comes from **Massive** (formerly
+  Polygon.io — Options Starter + Stocks Basic; the earnings date from Yahoo):
+  - `app/routes/options_page.py` + templates `options.html`, `_opt_basket.html`,
+    `_opt_rules.html`, `_opt_results.html`, `_opt_trade.html`, `_opt_status.html`,
+    `_opt_help.html` (the payoff keeps `_payoff_chart.html`). "Refresh now" =
+    `POST /options/refresh/<sym>`.
+  - `app/services/massive.py` — the Massive REST client (Bearer key from
+    `TST_MASSIVE_API_KEY`, pacing, typed errors); `opt_massive.py` — the chain snapshot ->
+    `opt_quote` rows (model prices from IV), the spot, the fetch window, the IV30 history
+    rebuilt from option daily bars, the daily bar top-up; `opt_store.py` — the data layer
+    (newer-wins quotes, freshness, the stock facts, the collector heartbeat, the EOD record,
+    retention); `opt_rules.py` — rules v2 (shared block + ten strategies); `opt_screen.py`
+    — the ten screeners + the "why so few?" funnel; `opt_collector.py` — the Hermes collector
+    loop. `option_store.py` is reduced to the basket universe + the snapshot retention;
+    `payoff.py` takes its labels from `opt_rules`.
   - `app/models.py` — `OptQuote`, `OptUnderlying`, `OptUnderlyingDaily`, `OptRefreshLog`,
     `OptCollectorStatus`; migration `alembic/versions/3b26d60468a0_options_v2.py`.
-  - `bridge/` — the member IBKR connector 2.0 (`ibkr_bridge.py`) and `th_ibkr.py`, the
-    IBKR fetch library shared with the collector (see `bridge/README.md`).
   - `deploy/options_collector.py` + `deploy/setup_options_collector_task.ps1` — the
-    always-on collector on Hermes (task `TST-Options-Collector`, clientId 89; DEPLOY.md G).
-    The task runs it with `--log-file logs\options_collector.log`: the collector rotates
-    its own log (5 MB x 5 files).
-  - Tests: `test_opt_store.py`, `test_th_ibkr.py`, `test_opt_collector.py`,
-    `test_connector.py`, `test_opt_rules.py`, `test_opt_screen.py`, `test_options_v2_page.py`
-    (+ the kept `test_payoff.py`, `test_option_store.py`).
+    always-on collector on Hermes (task `TST-Options-Collector`, venv python, HTTPS to
+    Massive; DEPLOY.md G). It rotates its own log (`--log-file`, 5 MB x 5 files).
+  - `bridge/` — the member IBKR bridge 2.0 (`ibkr_bridge.py`, `th_ibkr.py`). Since v4.134
+    the Options page no longer uses it for data; it stays for the legacy hidden pages and
+    the basket's optional "Run my TWS scanner" import (see `bridge/README.md`).
+  - Tests: `test_massive.py`, `test_opt_massive.py`, `test_opt_collector.py`,
+    `test_opt_store.py`, `test_opt_screen.py`, `test_opt_rules.py`, `test_options_v2_page.py`,
+    `test_connector.py` + `test_th_ibkr.py` (the bridge), `test_payoff.py`, `test_option_store.py`.
+  - **Removed in v4.134:** `services/opt_connector_pkg.py` (the connector zip) and
+    `_opt_connector.html`; the IBKR read path of the collector.
   - **Removed in v4.133:** `services/{option_engine, chart_state, strike_picker,
     premium_gauge, order_ticket, option_exits, option_nightly, option_data,
     option_backfill, option_vol, option_sizing}.py`, `deploy/options_nightly.py`,
@@ -175,6 +180,160 @@ surface takes shape.
 > `__version__` — that constant is the version shown on the login page / nav / `/status`
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
+
+### 2026-10-10 - v4.134: Options data from Massive (Polygon) - Options Starter + Stocks Basic, IBKR data path removed
+
+**Why.** v4.133 (the day before) took every Options figure from IBKR: a Hermes collector on IB
+Gateway that could only read outside the ingest supervisor's weekday 08:00-20:10 ET blackout, so
+during the US session the live data depended on each member downloading and running an IBKR
+connector. After it shipped the user asked whether a Massive (formerly Polygon.io) subscription
+would be easier, then decided: *"ok i will build it with polygon API for the data"*. The Q&A
+(`OPTIONS_V2_DESIGN.md` §13.0): **Options Starter ($29/month)** - the whole-chain snapshot with
+greeks, IV, open interest and the day bar, 15 minutes delayed, **no bid/ask quotes**, unlimited
+requests, and daily bars of option contracts (expired ones too) for 2 years; **Stocks Basic
+(free)** - end-of-day daily bars, about 5 requests a minute. (The free Options Basic plan was
+checked and cannot run the screener: no chain snapshot, no greeks / IV.) *"We only use
+TradeHunter to get the opportunity; the entry is still done in IBKR TWS"* - so delayed,
+quote-less data is acceptable: the page finds candidates, the price is checked live in TWS.
+Remove the IBKR parts; the earnings date stays on Yahoo. The contract is `OPTIONS_V2_DESIGN.md`
+§13 (it supersedes the IBKR data path of §2.3-§6); §13.8 lists every place the build differs
+from it, and the open points.
+
+**What was removed.** The Hermes collector's IBKR read path (IB Gateway, the blackout gate and
+the `waiting` state, the ingest-supervisor top-up wait, clientId 89 - retired in CLAUDE.md), the
+member connector download (`app/services/opt_connector_pkg.py` and its three build_zip tests in
+`tests/test_connector.py`), the green / amber / red connector pill, the connector help
+(`_opt_connector.html`), the page's contribution loop and its endpoints (`GET /options/data/next`,
+`POST /options/data/contribute`, `/contribute_history`, `/data/failed`,
+`GET /options/connector[/download]`), "Refresh these legs live", and in `opt_store` the whole
+member-data machinery (contribution and history validation, the IBKR-anchored spot band, rate
+buckets, leases, `next_for_member`, the failure back-off). The `bridge/` folder stays - the legacy
+hidden pages (IV Rank / Spread / Positions) and the basket's optional "Run my TWS scanner" import
+use it - but the Options page no longer probes it. No table changed and there is no migration:
+the v4.133 rows (source `hermes` / `member`) are read like any other until `prune_v2`'s 7-day
+rule removes them, and any Massive write replaces one.
+
+**The client (`app/services/massive.py`).** A sync `httpx` client for `https://api.massive.com`:
+the chain snapshot (`/v3/snapshot/options/{T}`, 250 a page, following `next_url` - only to the
+same host), stock daily bars and option daily bars (`/v2/aggs/ticker/.../range/1/day/...`). The
+key, `TST_MASSIVE_API_KEY`, lives only in `app\.env` on Hermes; it is sent ONLY as
+`Authorization: Bearer` - never as the `apiKey` query parameter, never in a URL, a log line or an
+error text. A token bucket (20 requests/s), a separate 5-a-minute window for Stocks Basic, and
+typed errors: `auth` (401 "Massive rejected the API key"), `plan` (403 "your Massive plan does not
+include ..."), `rate` (429 after `Retry-After` / 15 s doubling, 4 tries), `http`, `network`,
+`config` (no key: "TST_MASSIVE_API_KEY is not set on this PC").
+
+**The ingest (`app/services/opt_massive.py`).** `ingest_symbol` reads one ticker's chain
+(expiries up to 1,100 days, strikes 0.3-3 x a known spot), keeps the same ticker-relative window
+the IBKR build used (weeklies to 63 days, monthlies to 1,100; strikes within spot +/- 2.5 x spot x
+IV x sqrt(DTE/365), 6-40 a side), and files every
+contract with `source="massive"`, `mdt="delayed"` and **its own feed time** (`last_updated`), so
+the market-time age logic keeps working. **Model prices:** Options Starter has no bid/ask, so a
+leg's `mid` is the Black-Scholes price from the contract's own IV (same risk-free rate and no
+dividend as `payoff`, so a model mid, a payoff curve and a solved IV agree); on a plan with quotes
+(`TST_MASSIVE_QUOTES=1`) it is the bid/ask midpoint. The stock price comes from the snapshot when
+the plan gives it, else from put-call parity on the nearest expiry at least a week out, else the
+last Stocks Basic close - each filed with its own time and type. Today's IV30 is computed from the
+stored chain (`option_metrics.atm_iv_by_expiry(require_quote=False)` - no bid needed) and filed
+under the session it belongs to. **IV-rank backfill from option bars:** IBKR's daily implied-vol
+series is gone, so `backfill_history` rebuilds about a year of IV30 from Massive's daily bars of
+the monthly contracts the stock traded near (per expiry, the few strikes it closed near during its
+15-45 DTE window, call and put; IV solved from the closes, interpolated to 30 days in variance
+time) on top of 2 years of Stocks Basic bars - about 150-300 requests per new ticker, with early
+stops for young listings and tickers without options; `history_done` needs 20 bars and 20 IV points.
+`daily_update` re-reads the last ten days of bars each evening.
+
+**The collector (`opt_collector.py` 2.0, `deploy/options_collector.py`).** Same task
+`TST-Options-Collector`, same heartbeat row and `state\options_collector.json`, now the venv
+python over HTTPS (no `py -3.12`, no `ib_insync`). One 15 s tick: history first (one new ticker per
+tick, retried after 30 min doubling to 6 h when it has too little data); session passes every
+`TST_OPTIONS_CYCLE_MIN` minutes (default 15) over every basket ticker, 09:30-16:00 ET on trading
+days, a few tickers per tick; one end-of-day pass after 16:20 ET (the chain, the day's record into
+`option_chain_snapshot`, the Stocks Basic bars, the Yahoo earnings date, the prune), caught up
+before the next open when missed. A missing or rejected key pauses everything (looked at again every
+5 min); a plan without an endpoint pauses only that part; Massive unreachable backs off 60 s to 5
+min; one ticker's failure is logged and the loop moves on. The Hermes tray line follows
+(`dashboard_intraday/README.md`): running / idle / history / eod green, error / stopped / stale
+amber, "Massive failing" when the last request failed.
+
+**The page.** The strip now shows the collector line - "Massive: running · pass 12 · 40/98 tickers
+· data 15 min delayed", "Massive: idle · ...", "Collector error: Massive rejected the API key (HTTP
+401)", "Massive collector: no heartbeat for 9 min" - and one plain line *"prices are estimated from
+IV (no bid/ask on this plan) - check live in TWS before entering"*; an administrator also sees
+"TST_MASSIVE_API_KEY is not set on the server" when the web app has no key. Every basket row (and
+an opened trade) has **"Refresh now"**: `POST /options/refresh/<sym>` reads that ticker from
+Massive server-side through the collector's own `ingest_symbol` (a few seconds), at most once per
+ticker per member per minute, swaps the refreshed row in and re-screens the list; a failure says
+plainly why (busy, not reachable, key rejected) and swaps nothing. The rules panel greys out the two
+bid/ask rules ("not used - the current data plan (Massive Starter) has no bid/ask"); the funnel adds
+one line "Bid/ask rules not applied - your data plan has no quotes"; a leg needs a usable price
+(bid/ask, or a model price from its IV); the trade detail marks estimated prices, shows OI and day
+volume, and says "Prices are estimated from IV - check the live price in TWS before entering". The
+Data column reads "16 min · Massive (delayed)". The connector help became a data help
+(`GET /options/help`). Nothing on the page places an order.
+
+**Integration (this release's M5 part).** The four build parts (client + ingest, collector, store
++ screener + rules, page) agreed - the whole suite was green (505) before integration touched
+anything - so no cross-part fix was needed. Integration removed `opt_connector_pkg.py` and its
+tests, rewrote `.env.example` (`TST_MASSIVE_API_KEY` commented - it lives only in `app\.env` on
+Hermes; `TST_MASSIVE_BASE_URL`, `TST_MASSIVE_QUOTES=0`, `TST_OPTIONS_CYCLE_MIN=15`; the dead
+`TST_IBKR_PORT` / `TST_OPTIONS_COLLECTOR_CLIENT_ID` / `TST_OPTIONS_MAX_LINES` gone), the
+`requirements.txt` comments (`httpx` is the Massive client; `ib_insync` is now only for the legacy
+`deploy/iv_seed_ibkr.py`), DEPLOY.md section G, `OPTIONS_V2_DESIGN.md` §13.8, the Options v2
+model comments in `app/models.py` (comments only - no schema change), `bridge/README.md`, CLAUDE.md
+and the version.
+
+**Tested: 502 pass** (`py -m pytest tests -q -p no:warnings`, ~2 min): `test_opt_screen.py` 153,
+`test_connector.py` 87, `test_th_ibkr.py` 47, `test_options_v2_page.py` 40, `test_opt_rules.py` 35,
+`test_opt_collector.py` 33 (including the Hermes tray line), `test_massive.py` 26,
+`test_opt_store.py` 26, `test_payoff.py` 25, `test_opt_massive.py` 22, `test_option_store.py` 8.
+**Nothing touches the network**: the client runs on an `httpx.MockTransport` fake server built from
+Black-Scholes fixtures, the collector against a fake Massive client and a fake clock, the page
+through the real app on a fresh SQLite file brought to head by the real migrations (its "Refresh
+now" through the real ingest on a fake transport); tests check the key never reaches a URL, a log
+or an error text. Also: `py -c "import app.main"` is clean and `alembic heads` is one head
+(`3b26d60468a0`). The page was also checked in a browser on a local dev server (the strip, the
+no-quotes note, the admin badge, the greyed rules, the no-quote trade detail, the refresh error
+toast, a 375 px phone).
+
+**Not verified (no Massive key on the laptop).** Nothing has run against the real API yet. The
+first checks on Hermes are in DEPLOY.md section G; the main open point (§13.8 #1) is what Massive's
+per-contract `day.last_updated` means - if it is the last-trade time, thinly traded contracts would
+look old and the 24 h age rule would drop them late in the day (the fix would be to stamp rows with
+the snapshot time). Also open (§13.8): the parity spot falls back to yesterday's close when too few
+pairs traded; Stocks Basic's current-day bar may not be out at 16:20 ET (ATR / HV can lag a day);
+the first deploy's history backfill holds the session passes for ~30-50 min; with the download gone
+the TWS-scanner import works only for members who already run the bridge.
+
+**Review before release.** A focused review of this build ran before release, and three fix
+groups (client, ingest, collector + page) fixed its confirmed findings, twelve changes in all, each
+with a test (`OPTIONS_V2_DESIGN.md` §13.8 "Review fixes", V1-V12). A ticker written BRK-B is now requested from Massive as `BRK.B`
+(`massive.massive_symbol`) and still stored under the member's spelling. `stock_daily` takes
+`adjusted=`, and the IV history is rebuilt from unadjusted closes, so a split no longer empties it
+(the filed bars stay split-adjusted). Only standard 100-share contracts reach the spot, the window
+and the store. The parity spot pairs a call and a put only from the same session. The history read
+steps down to the exchanges' standard strike grid ($2.50 / $5 / $10) and reads the strikes that
+bracket the close before calling an expiry empty. A quote-less row is stamped with the read time
+minus 15 min, not its contract's last-trade time; this supersedes "its own feed time" above and
+settles the main "Not verified" point. Stock-bar reads end at the last published session (the day
+itself only after 20:00 ET), and `daily_update` reports `complete`. In the collector, a due session
+pass goes before pending histories, and a history read leaves a running pass's counts alone.
+End-of-day stock bars stay owed, retried on the next tick and then after 5 min doubling to 2 h,
+until they include the session asked for. The page's error line now shows what paused the
+collector (the same text as the tray), not the latest one-ticker failure. A verify pass found the
+parts in agreement and changed no code. **Tested: 524 pass** (`test_opt_massive.py` 33,
+`test_massive.py` 32, `test_opt_collector.py` 37, `test_options_v2_page.py` 41, the rest
+unchanged); `import app.main` is clean, and `alembic heads` is still `3b26d60468a0`. Still open:
+the 16:20 ET pass now files bars only up to the previous session, so a session's own bar arrives
+with the next trading day's pass and ATR / HV lag one session (a top-up read after 20:00 ET would
+close it), and the `.` share-class spelling has not been tried against the live API.
+
+**Hermes (PowerShell):** put `TST_MASSIVE_API_KEY=<key>` in `app\.env` (never in the repo), pull and
+restart the web app (the canonical script), then re-run
+`powershell -ExecutionPolicy Bypass -File deploy\setup_options_collector_task.ps1 -StartNow` - and
+again after any pull that changes `opt_collector.py`, `opt_massive.py`, `massive.py`, `opt_store.py`,
+`models.py` or `deploy\options_collector.py` (DEPLOY.md section G). Delete the dead IBKR lines from
+`app\.env`.
 
 ### 2026-10-09 - v4.133: Options v2 - browse by rules, IBKR-only data, Hermes collector, member connector 2.0
 
