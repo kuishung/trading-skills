@@ -151,6 +151,21 @@ def _attach_file_log() -> None:
 async def lifespan(app: FastAPI):
     _attach_file_log()
     init_db()
+    # The Options Screener's own database (OPTIONS_SCREENER_DESIGN.md §2): migrated here
+    # and by the Hermes screener collector. Soft-fail: a screener DB problem shows on the
+    # Options page, it never stops the platform from booting.
+    try:
+        from .screener_db import init_screener_db
+        init_screener_db()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("screener database not ready: %s", exc)
+    try:
+        # load the market arrays in the background (~8 s for 1M contracts), so the first
+        # screen does not wait for them; needs numpy (app/requirements.txt)
+        from .services.screener import frame as _screener_frame
+        _screener_frame.warm()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("options screener engine not available: %s", exc)
     if settings.is_google_auth:
         # google mode: admin is auto-promoted on first sign-in (routes/auth.py).
         if not settings.google_configured:

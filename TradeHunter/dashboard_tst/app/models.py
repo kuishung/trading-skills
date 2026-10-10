@@ -1680,3 +1680,30 @@ class OptCollectorStatus(Base):
     heartbeat = Column(DateTime, nullable=True)
     pid = Column(Integer, nullable=True)
     version = Column(String(16), nullable=True)
+
+
+class OptionScreen(Base):
+    """A member's saved Options Screener (OPTIONS_SCREENER_DESIGN.md §7): the filter
+    cards, sort, view and earnings flag of one screen (``screen_key``, e.g.
+    ``bull-put-spread``) under a name the member chose. ``payload`` is the §5 payload,
+    validated by ``routes/options_page.py`` before it is stored. At most one row per
+    (member, screen) carries ``is_default`` - it loads when the member opens that screen.
+
+    Scoping is by user_id on every read and write - a member never sees or changes
+    another member's screeners. Cascade-deletes with the user (DB-level FK).
+    """
+
+    __tablename__ = "option_screens"
+    __table_args__ = (
+        UniqueConstraint("user_id", "screen_key", "name", name="uq_option_screens_user_screen_name"),
+        Index("ix_option_screens_user_screen", "user_id", "screen_key"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    screen_key = Column(String(40), nullable=False)
+    name = Column(String(80), nullable=False)
+    payload = Column(JSON, nullable=False, default=dict)
+    is_default = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=_utcnow_naive)
+    updated_at = Column(DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)

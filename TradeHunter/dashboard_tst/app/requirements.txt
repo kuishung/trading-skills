@@ -10,6 +10,8 @@ authlib>=1.3              # Google OAuth / OIDC client
 httpx>=0.27               # HTTP: authlib's token exchange, and the Massive (Polygon) REST client
                           # (app/services/massive.py - the Options collector + "Refresh now", v4.134)
 alembic>=1.13             # database schema migrations (SQLite + Postgres)
+numpy>=1.26               # the Options Screener engine (app/services/screener/): vectorised
+                          # screening of ~1M option contracts per request (v4.136)
 
 # ib_insync is here ONLY for the legacy deploy/iv_seed_ibkr.py (a one-off, by-hand
 # IV-history seeder for the hidden legacy Spread screen). Since v4.134 the Options collector

@@ -86,29 +86,40 @@ from this dashboard.
   completeness, on **AI-Hermes** — folder-scans
   `C:\HermesSync\MarketResearch\QuarterlyReport` for missing quarters / stub MDs,
   POSTs `/api/ingest/edgar`; scheduled task).
-- **Options — the Massive data pipeline (the page is BLANK since v4.135, to be rebuilt).**
+- **Options — the Options Screener (v4.136; contract `OPTIONS_SCREENER_DESIGN.md`).** A
+  Barchart-style screener over the whole US options market Massive covers: the Options
+  Screener plus 32 strategy screeners, Set Filters / Results tabs, saved screeners per member.
   Every option / stock figure comes from **Massive** (formerly Polygon.io — Options Starter +
-  Stocks Basic; the earnings date from Yahoo), collected on Hermes into the database:
-  - `app/routes/options_page.py` + `options.html` — only `GET /options`, a blank page (the
-    menu entry and its `require_menu("options")` gate stay).
-  - `app/services/massive.py` — the Massive REST client (Bearer key from
-    `TST_MASSIVE_API_KEY`, pacing, typed errors); `opt_massive.py` — the chain snapshot ->
-    `opt_quote` rows (model prices from IV), the spot, the fetch window, the IV30 history
-    rebuilt from option daily bars, the daily bar top-up; `opt_store.py` — the data layer
-    (newer-wins quotes, freshness, the stock facts, the collector heartbeat, the EOD record,
-    retention); `opt_collector.py` — the Hermes collector loop; `black_scholes.py` — the
-    model price and (since v4.135) `implied_vol`. `option_store.py` is reduced to the basket
-    universe + the snapshot retention. The collector's universe is still `option_basket`.
-  - `app/models.py` — `OptQuote`, `OptUnderlying`, `OptUnderlyingDaily`, `OptRefreshLog`,
-    `OptCollectorStatus`; migrations `alembic/versions/3b26d60468a0_options_v2.py` (tables)
-    and `7c1e5a9d2b40_options_massive_only_purge.py` (v4.135: non-Massive rows purged).
-  - `deploy/options_collector.py` + `deploy/setup_options_collector_task.ps1` — the
-    always-on collector on Hermes (task `TST-Options-Collector`, venv python, HTTPS to
-    Massive; DEPLOY.md G). It rotates its own log (`--log-file`, 5 MB x 5 files).
+  Stocks Basic; earnings dates from Nasdaq via `calendars.py`); no bid/ask (prices are
+  estimated from each contract's IV).
+  - `app/routes/options_page.py` + `options.html` — the page (`/options?screen=`) and its JSON
+    API under `/options/api/` (screens, spec, run, csv, status, saved). The engine is imported
+    lazily, so the app boots without numpy (the page then says so).
+  - `app/services/screener/` — the engine (numpy): `frame.py` (the market loaded into arrays,
+    reloaded in the background after each finished pass), `fields.py` (every filter / column),
+    `screens.py` (the 33 screens: legs, defaults, columns), `single.py`, `strategies.py`
+    (vectorised pairing), `engine.py` (`screens`, `spec`, `run`, `csv`).
+  - `app/screener_models.py` + `app/screener_db.py` — the screener's OWN database
+    (`TST_SCREENER_DATABASE_URL`, default `screener.db` beside `tst.db`): `scr_contract` (~1M
+    rows, replaced per underlying each pass), `scr_underlying`, `scr_underlying_daily`,
+    `scr_universe`, `scr_pass`, `scr_status`; migrations in `alembic_screener/` +
+    `alembic_screener.ini` (version table `alembic_version_screener`).
+  - `app/services/scr_collector.py` + `scr_store.py` — the Hermes market collector (universe
+    from Massive's contract list daily, a market pass every 30 min in the session + one after
+    the close, grouped daily stock bars, technicals, identity, earnings, IV history) and its
+    store; `deploy/screener_collector.py` + `deploy/setup_screener_task.ps1` — task
+    `TST-Options-Screener` (DEPLOY.md H).
+  - `app/models.py` — `OptionScreen` (`option_screens`: saved screeners; migration
+    `alembic/versions/3069a57385d1_option_screens.py`).
+  - The basket data pipeline stays beside it, unchanged: `massive.py` (the REST client — v4.136
+    added `option_underlyings`, `grouped_daily`, `reference_tickers`), `opt_massive.py`,
+    `opt_store.py`, `opt_collector.py`, `black_scholes.py` (incl. `implied_vol`),
+    `option_store.py`; `deploy/options_collector.py` (task `TST-Options-Collector`, DEPLOY.md G).
   - `bridge/` — the member IBKR bridge 2.0 (`ibkr_bridge.py`, `th_ibkr.py`). Not used for
     Options data; it stays for the legacy hidden pages (see `bridge/README.md`).
-  - Tests: `test_massive.py`, `test_opt_massive.py`, `test_opt_collector.py`,
-    `test_opt_store.py`, `test_options_page.py`, `test_option_store.py`, `test_connector.py` +
+  - Tests: `test_screener_engine.py`, `test_screener_strategies.py`, `test_scr_store.py`,
+    `test_scr_collector.py`, `test_options_page.py`, `test_massive.py`, `test_opt_massive.py`,
+    `test_opt_collector.py`, `test_opt_store.py`, `test_option_store.py`, `test_connector.py` +
     `test_th_ibkr.py` (the bridge).
   - **Removed in v4.135:** the whole v2 page and its screener — `services/{opt_rules,
     opt_screen, payoff, opt_legs}.py`, templates `_opt_{basket, rules, results, trade, status,
@@ -181,6 +192,64 @@ surface takes shape.
 > `__version__` — that constant is the version shown on the login page / nav / `/status`
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
+
+### 2026-10-10 - v4.136: the Options Screener - Barchart's screener on Massive data, the whole market, 33 screeners
+
+The user: *"this is the screener i see from barchart.com ... I want to build exactly this screener
+in which user can set his own preference and setting"* · *"i need the result too"*. Their
+answers: search **"what massive API available"** (the whole US options market), **"ignore the
+bid ask in the filter"**, **"Include strategy screeners now"**. Contract:
+`OPTIONS_SCREENER_DESIGN.md` (§11 = what the build decided where the contract was silent).
+
+- **The page (`/options`).** Barchart's layout in our theme: the screen's title and a GO TO
+  dropdown of all **33 screeners** (Options Screener, Long Call / Put, Covered Call, Naked Put,
+  the four verticals, Married Put, Protective Collar, long / short straddle and strangle, call /
+  put calendars, the four diagonals, the six butterflies, the six condors); a one-line plain
+  description; the **data line** (Massive · 15-min delayed · prices estimated from IV · last
+  market pass HH:MM ET · underlyings · contracts · IV history done / total, with the collector's
+  coloured dot, polled every 60 s - the dashboard-visibility rule). **SET FILTERS**: filter
+  cards (checkboxes, range boxes with Barchart's preset chips, a comparator for single values),
+  remove / move up / down, **Add a filter** (group -> field), clear, reset to defaults; saved
+  screeners: load, save, save as, delete, make default (a member's default loads when they open
+  that screen). **RESULTS**: the count, views (Main / Filter / Greeks / Volatility), Flag
+  earnings, refresh, Download CSV (<= 1000 rows), a sortable sticky-header table, 100 rows a
+  page; a click on a row opens its legs and an at-expiry **profit / loss chart**; the Symbol
+  links to the chart page. Works at phone width (only the table scrolls sideways).
+- **No bid / ask** (Options Starter has none; the user's decision): every leg price is the
+  Black-Scholes price from the contract's own IV, marked *est.*; the last trade is shown as
+  Last. Barchart's Bid / Ask columns are our "Sell price (est.)" / "Buy price (est.)".
+- **The engine (`services/screener/`, numpy).** The market is loaded into arrays (~8 s for 1M
+  contracts from SQLite, in the background after each finished pass; `frame.warm()` at
+  startup); a single-option screen takes ~0.02 s, a strategy screen with its defaults
+  0.1-2.5 s at full size (measured on a synthetic 1M-contract market). Strategy legs are
+  filtered BEFORE pairing; strikes at most 10 listed strikes apart; a run over 4M candidate
+  combinations stops with a warning; at most 5,000 sorted rows are kept per run.
+  Probabilities: lognormal with the IV of the leg nearest each break-even.
+- **The data (`TST-Options-Screener`, a new Hermes task).** `scr_collector.py`: the universe
+  daily from Massive's contract list (every underlying with options listed in the next 60
+  days); a **market pass** every 30 min from 09:45 to 16:00 ET plus one after 16:20 ET -
+  every underlying's whole chain, 8 threads at <= 40 requests/s, standard contracts with open
+  interest or volume kept (~1M rows); Stocks Basic **grouped daily** bars (2 years, adjusted
+  and as traded) -> SMA 20/50/200, RSI, ATR, HV 20/60, 52-week range, trend (the MATP
+  `classify_trend` rule); name / type / exchange from Massive's ticker reference; earnings
+  dates from Nasdaq; **IV history** per underlying from option daily bars
+  (`opt_massive.iv30_history`) -> IV rank / percentile. Its own database (`screener.db`,
+  `alembic_screener/`) so `tst.db` never carries the churn. First start: the stock history
+  takes ~3.5 h (5 requests/min), the market's IV history ~12-20 h; IV rank reads "-" for an
+  underlying until its history is in.
+- **Saved screeners:** `option_screens` (main DB, migration `3069a57385d1`): per member, per
+  screen, by name; one default per screen; <= 50 per screen; members see only their own.
+- `app/main.py` migrates the screener DB and warms the engine at startup, both soft-fail (a
+  screener problem never stops the platform). `app/requirements.txt` adds **numpy**.
+- **Tested: 463 pass** (`py -m pytest tests -q -p no:warnings`): `test_screener_engine.py` +
+  `test_screener_strategies.py` 113 (every screen with its defaults, hand-checked formulas per
+  family, filters / sort / paging / views / CSV, the DB loader, a tunable-size performance
+  test), `test_scr_store.py` 19, `test_scr_collector.py` 28, `test_massive.py` +7,
+  `test_options_page.py` 25 (every endpoint, saved screeners and their ownership / limits, the
+  numpy-missing path, the migration). Checked in the browser on a made-up 40-underlying market
+  seeded through the real store: all 33 screens with their defaults, the legs + P/L chart
+  (bull put: best $46 / worst -$454 / BE 504.54; iron condor: $74 / -$676 / 71.76-95.74), light
+  and dark, 375 px.
 
 ### 2026-10-10 - v4.135: the Options page is blank; only the Massive data stays (non-Massive rows purged)
 

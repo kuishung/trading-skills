@@ -5,6 +5,8 @@
 
 # Local databases (dashboard_tst platform dev SQLite, etc.)
 *.db
+*.db-wal
+*.db-shm
 *.sqlite3
 
 # Per-PC preview launch config (machine-absolute paths)

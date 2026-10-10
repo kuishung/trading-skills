@@ -1,11 +1,960 @@
 {% extends "base.html" %}
-{% block title %}Options &middot; TradeHunter{% endblock %}
+{% block title %}Options Screener &middot; TradeHunter{% endblock %}
+{% block main_class %}flex-1 min-h-0 overflow-y-auto overflow-x-hidden w-full px-3 sm:px-4 py-4 max-w-screen-2xl mx-auto{% endblock %}
 
 {% block content %}
-{# The Options page is BLANK since v4.135 (2026-10-10): the v2 page and its screener
-   were removed and the page will be rebuilt. Only the Massive data pipeline stays
-   (the Hermes collector writing the opt_* tables). Context: user. #}
-<div id="optPage" class="py-16 text-center">
-  <h1 class="text-lg font-semibold text-slate-200">Options</h1>
+{# The Options Screener (v4.136, OPTIONS_SCREENER_DESIGN.md §8): Barchart's options
+   screener on Massive data. Header (title, GO TO, the screen's one-liner, the data line
+   with the collector's status dot), then two tabs: SET FILTERS | RESULTS. Everything the
+   page does goes through /options/api/* (routes/options_page.py); the screen's spec, the
+   member's saved screeners and the first payload arrive in #scrBoot.
+   Context: user, screens, families, screen, status, engine_error, boot. #}
+<style>
+  /* page-scoped, built on base.html's --tv-* tokens so day and night both work */
+  .scr-btn { border: 1px solid var(--tv-border-2); color: var(--tv-text); background: transparent;
+             padding: .25rem .6rem; font-size: 12px; line-height: 1.2; white-space: nowrap; }
+  .scr-btn:hover:not(:disabled) { background: var(--tv-hover); color: var(--tv-text-hi); }
+  .scr-btn:disabled { opacity: .45; cursor: default; }
+  .scr-btn.scr-danger:hover:not(:disabled) { color: var(--tv-down); border-color: var(--tv-down); }
+  .scr-primary { background: var(--tv-accent); color: #fff; border: 1px solid var(--tv-accent);
+                 padding: .35rem 1rem; font-size: 13px; }
+  .scr-primary:hover:not(:disabled) { background: var(--tv-accent-hi); }
+  .scr-primary:disabled { opacity: .5; cursor: default; }
+  .scr-tab { padding: .5rem .25rem; margin-bottom: -1px; border-bottom: 2px solid transparent;
+             color: var(--tv-muted); font-size: 13px; letter-spacing: .04em; text-transform: uppercase; }
+  .scr-tab:hover { color: var(--tv-text-hi); }
+  .scr-tab[aria-selected="true"] { color: var(--tv-text-hi); border-bottom-color: var(--tv-accent); }
+  .scr-badge { display: inline-block; min-width: 1.25rem; padding: 0 .35rem; margin-left: .3rem;
+               border-radius: 9999px; background: var(--tv-hover); color: var(--tv-text);
+               font-size: 11px; text-align: center; letter-spacing: 0; }
+  .scr-card { border: 1px solid var(--tv-border); background: var(--tv-panel); border-radius: var(--tv-r-panel);
+              padding: .5rem .6rem; min-width: 0; }
+  .scr-ico { color: var(--tv-icon); padding: 0 .3rem; font-size: 13px; line-height: 1.4; }
+  .scr-ico:hover:not(:disabled) { color: var(--tv-text-hi); background: var(--tv-hover); }
+  .scr-ico:disabled { opacity: .3; cursor: default; }
+  .scr-ico.scr-x:hover { color: var(--tv-down); }
+  .scr-chip { border: 1px solid var(--tv-border-2); color: var(--tv-text); padding: .1rem .45rem;
+              font-size: 11px; border-radius: var(--tv-r-ctl); white-space: nowrap; }
+  .scr-chip:hover { background: var(--tv-hover); }
+  .scr-chip[aria-pressed="true"] { border-color: var(--tv-accent); color: var(--tv-accent-tx);
+                                   background: rgba(41,98,255,.12); }
+  .scr-check { display: inline-flex; align-items: center; gap: .3rem; font-size: 12px;
+               color: var(--tv-text); white-space: nowrap; cursor: pointer; }
+  .scr-num { width: 6.5rem; padding: .2rem .4rem; }
+  .scr-num[type="date"] { width: 9.5rem; }
+  .scr-wrap { max-height: calc(100vh - 15rem); min-height: 12rem; }
+  @media (max-width: 640px) { .scr-wrap { max-height: 75vh; } }
+  .scr-table { border-collapse: separate; border-spacing: 0; }
+  .scr-table thead th { position: sticky; top: 0; z-index: 2; background: var(--tv-panel);
+                        border-bottom: 1px solid var(--tv-border-2); white-space: nowrap;
+                        padding: .45rem .5rem; font-size: 11px; text-align: right; cursor: pointer;
+                        user-select: none; }
+  .scr-table thead th.scr-l { text-align: left; }
+  .scr-table thead th:hover { color: var(--tv-text-hi); }
+  .scr-table thead th[aria-sort="ascending"], .scr-table thead th[aria-sort="descending"] { color: var(--tv-accent-tx); }
+  .scr-table td { padding: .35rem .5rem; border-bottom: 1px solid var(--tv-border); white-space: nowrap;
+                  background: var(--tv-page); }
+  .scr-table tbody tr.scr-row:hover td { background: var(--tv-hover); }
+  .scr-table tbody tr.scr-legs td.scr-sym-td { cursor: pointer; }
+  .scr-table tbody tr.scr-legs { cursor: pointer; }
+  .scr-table tbody tr.scr-open td { background: var(--tv-hover); }
+  .scr-table .scr-sticky { position: sticky; left: 0; z-index: 1; }
+  .scr-table thead th.scr-sticky { z-index: 3; }
+  .scr-sym { color: var(--tv-accent-tx); font-weight: 600; }
+  .scr-sym:hover { text-decoration: underline; }
+  .scr-up { color: var(--tv-up); } .scr-down { color: var(--tv-down); }
+  .scr-earn { display: inline-block; margin-left: .3rem; padding: 0 .25rem; font-size: 10px; font-weight: 600;
+              border-radius: 3px; background: rgba(245,158,11,.18); color: #b45309; vertical-align: 1px; }
+  html:not(.light) .scr-earn { color: #fbbf24; }
+  .scr-caret { display: inline-block; width: .8rem; color: var(--tv-muted); transition: transform .12s; }
+  .scr-open .scr-caret { transform: rotate(90deg); }
+  .scr-detail > td { background: var(--tv-panel-2) !important; padding: 0 !important; white-space: normal !important; }
+  .scr-detail-box { position: sticky; left: 0; padding: .75rem; }
+  .scr-table .scr-legs-t td, .scr-table .scr-legs-t th { padding: .25rem .5rem; border-bottom: 1px solid var(--tv-border);
+                                    background: transparent !important; text-align: right; white-space: nowrap; }
+  .scr-table .scr-legs-t th { position: static; font-size: 11px; color: var(--tv-muted); font-weight: 500; cursor: default; }
+  .scr-table .scr-legs-t .scr-l { text-align: left; }
+  .scr-dot { display: inline-block; width: .55rem; height: .55rem; border-radius: 9999px; flex-shrink: 0; }
+  .scr-dot-green { background: var(--tv-up); }
+  .scr-dot-amber { background: #f59e0b; }
+  .scr-dot-rose { background: var(--tv-down); }
+  .scr-dot-slate { background: var(--tv-muted); }
+  .scr-pl svg text { fill: var(--tv-muted); font-size: 10px; }
+  .scr-busy { opacity: .55; pointer-events: none; }
+</style>
+
+<div id="optPage" class="space-y-3" data-screen="{{ screen.key }}">
+
+  {# ── header ── #}
+  <div class="flex flex-wrap items-start gap-x-4 gap-y-2">
+    <div class="min-w-0 w-full sm:w-auto sm:flex-1">
+      <h1 id="scrTitle" class="text-lg font-semibold text-slate-100 leading-tight">{{ screen.label }}</h1>
+      <p id="scrDesc" class="text-xs text-slate-400 mt-1 max-w-3xl">{{ screen.desc }}</p>
+    </div>
+    <label class="flex items-center gap-2 text-[11px] uppercase tracking-wide text-slate-500 shrink-0 max-w-full">Go to
+      <select id="scrGoto" class="px-2 py-1 text-sm normal-case tracking-normal max-w-[15rem]" {% if not screens %}disabled{% endif %}>
+        {% if not screens %}<option value="{{ screen.key }}">{{ screen.label }}</option>{% endif %}
+        {% for fam in families %}
+        <optgroup label="{{ fam.label }}">
+          {% for s in fam.screens %}<option value="{{ s.key }}"{% if s.key == screen.key %} selected{% endif %}>{{ s.label }}</option>{% endfor %}
+        </optgroup>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
+
+  {# the data line + the collector's status dot (dashboard-visibility rule); repainted every 60 s #}
+  <div id="scrData" class="text-[11px] text-slate-500 leading-snug">
+    <div class="flex items-start gap-2">
+      <span id="scrDot" class="scr-dot scr-dot-{{ status.dot }} mt-[3px]" title="{{ status.label }}"></span>
+      <span id="scrDataLine" class="min-w-0 break-words">{{ status.line }}</span>
+    </div>
+    <div id="scrDataState" class="pl-[1.1rem] text-slate-500">{{ status.label }}</div>
+  </div>
+
+  {% if engine_error %}
+  <div id="scrEngineErr" class="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">{{ engine_error }}</div>
+  {% endif %}
+
+  {# ── tabs ── #}
+  <div class="flex items-center gap-5 border-b border-slate-800" role="tablist">
+    <button type="button" class="scr-tab" data-tab="filters" role="tab" aria-selected="false" aria-controls="scrPanelFilters">Set filters<span id="scrNf" class="scr-badge">0</span></button>
+    <button type="button" class="scr-tab" data-tab="results" role="tab" aria-selected="true" aria-controls="scrPanelResults">Results<span id="scrNr" class="scr-badge">&ndash;</span></button>
+  </div>
+
+  {# ── SET FILTERS ── #}
+  <section id="scrPanelFilters" class="hidden space-y-3" role="tabpanel">
+    <div class="flex flex-wrap items-center gap-2 text-xs">
+      <label class="flex items-center gap-1.5 text-slate-500 max-w-full">Load a screener
+        <select id="scrSaved" class="px-2 py-1 text-xs max-w-[13rem]"><option value="">Built-in defaults</option></select>
+      </label>
+      <button type="button" id="scrSave" class="scr-btn" title="Save the filters below into the screener that is loaded (or name a new one)">Save</button>
+      <button type="button" id="scrSaveAs" class="scr-btn" title="Save the filters below under a new name">Save as&hellip;</button>
+      <button type="button" id="scrMakeDefault" class="scr-btn" title="Load this screener every time you open this screen">Make default</button>
+      <button type="button" id="scrDelete" class="scr-btn scr-danger">Delete</button>
+    </div>
+    <div id="scrSaveAsBox" class="hidden flex flex-wrap items-center gap-2 text-xs">
+      <input id="scrSaveName" type="text" maxlength="{{ boot.max_name }}" placeholder="Name this screener" class="px-2 py-1 w-56 max-w-full">
+      <label class="scr-check"><input type="checkbox" id="scrSaveDefault"> load it by default</label>
+      <button type="button" id="scrSaveAsGo" class="scr-primary">Save</button>
+      <button type="button" id="scrSaveAsCancel" class="scr-btn">Cancel</button>
+    </div>
+
+    <div id="scrCards" class="grid gap-2 sm:grid-cols-2 xl:grid-cols-3"></div>
+    <p id="scrNoCards" class="hidden text-xs text-slate-500 py-3">No filters - every contract on this screen would be listed. Add a filter below, or reset to the defaults.</p>
+
+    <div class="scr-card flex flex-wrap items-center gap-2 text-xs">
+      <span class="text-slate-300 font-medium">Add a filter</span>
+      <select id="scrAddGroup" class="px-2 py-1 text-xs max-w-full" aria-label="Filter group"></select>
+      <select id="scrAddField" class="px-2 py-1 text-xs max-w-[16rem]" aria-label="Filter"></select>
+      <button type="button" id="scrAddBtn" class="scr-btn">Add</button>
+    </div>
+
+    <div class="flex flex-wrap items-center gap-2">
+      <button type="button" id="scrClear" class="scr-btn">Clear all</button>
+      <button type="button" id="scrReset" class="scr-btn" title="Back to this screen's built-in filters">Reset to defaults</button>
+      <button type="button" id="scrSee" class="scr-primary ml-auto">See results</button>
+    </div>
+  </section>
+
+  {# ── RESULTS ── #}
+  <section id="scrPanelResults" class="space-y-2" role="tabpanel">
+    <div class="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
+      <span class="text-sm text-slate-200 font-medium">Results: <span id="scrTotal" class="tabular-nums">&ndash;</span></span>
+      <span id="scrMs" class="text-slate-500"></span>
+      <div class="flex flex-wrap items-center gap-2 sm:ml-auto">
+        <select id="scrView" class="px-2 py-1 text-xs" aria-label="View"></select>
+        <label class="scr-check" title="Mark the underlyings that report earnings before the option expires"><input type="checkbox" id="scrFlagEarn"> Flag earnings</label>
+        <button type="button" id="scrRefresh" class="scr-btn" title="Run again on the latest data">&#8635; Refresh</button>
+        <button type="button" id="scrCsv" class="scr-btn" title="Download up to {{ '{:,}'.format(boot.csv_limit) }} rows in the current sort order">Download CSV</button>
+        <button type="button" id="scrSaveR" class="scr-btn">Save screener</button>
+      </div>
+    </div>
+    <div id="scrWarn" class="hidden rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300"></div>
+    <div id="scrTrunc" class="hidden text-xs text-amber-300"></div>
+    <div id="scrTableWrap" class="scr-wrap rounded-lg border border-slate-800 overflow-auto">
+      <table id="scrTable" class="scr-table min-w-full text-xs"><thead></thead><tbody></tbody></table>
+      <div id="scrEmpty" class="hidden px-4 py-10 text-center text-sm text-slate-500"></div>
+    </div>
+    <div id="scrPager" class="flex flex-wrap items-center justify-center gap-2 text-xs"></div>
+    <p class="text-[11px] text-slate-500 leading-snug">
+      Prices marked est. are estimated from each contract's own implied volatility (Massive Options
+      Starter has no bid / ask); probabilities come from a model. TradeHunter finds the trade &mdash;
+      check the live price in TWS before you enter.<span id="scrLegHint" class="hidden"> Click a row to see its legs and the profit / loss chart.</span>
+    </p>
+  </section>
 </div>
+
+<script type="application/json" id="scrBoot">{{ boot|tojson }}</script>
+<script>
+(function () {
+  'use strict';
+  var BOOT = JSON.parse(document.getElementById('scrBoot').textContent || '{}');
+  var SPEC = BOOT.spec || {screen: {}, defaults: {filters: []}, fields: [], groups: [], views: []};
+  var RF = typeof BOOT.risk_free === 'number' ? BOOT.risk_free : 0.04;
+  var $ = function (id) { return document.getElementById(id); };
+  var S = {
+    screen: BOOT.screen, fields: {}, saved: BOOT.saved || [], savedId: null,
+    filters: [], sort: null, view: 'main', flag: false,
+    page: 1, perPage: BOOT.per_page || 100, last: null, seq: 0
+  };
+  (SPEC.fields || []).forEach(function (f) { S.fields[f.key] = f; });
+
+  // ── small helpers ─────────────────────────────────────────────────────────────
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
+    });
+  }
+  function clone(x) { return JSON.parse(JSON.stringify(x == null ? null : x)); }
+  function isSet(v) { return v !== null && v !== undefined && v !== '' && !(typeof v === 'number' && !isFinite(v)); }
+  function toast(msg, kind) { if (window.thToast) window.thToast(msg, kind); }
+  function num(v) { var n = typeof v === 'number' ? v : parseFloat(v); return isFinite(n) ? n : null; }
+  function fmtInt(n) { return isSet(n) ? Math.round(n).toLocaleString('en-US') : '–'; }
+  function money(v, d) {
+    if (!isSet(v)) return '–';
+    var s = Math.abs(v).toLocaleString('en-US', {minimumFractionDigits: d == null ? 2 : d, maximumFractionDigits: d == null ? 2 : d});
+    return (v < 0 ? '-$' : '$') + s;
+  }
+  function api(url, body) {
+    var opt = body === undefined ? {} : {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)};
+    return fetch(url, opt).then(function (r) {
+      return r.json().catch(function () { return {ok: false, error: 'The server answered HTTP ' + r.status + '.'}; })
+        .then(function (j) { if (!r.ok && j.ok !== false) j.ok = false; if (!r.ok && !j.error) j.error = 'HTTP ' + r.status; return j; });
+    });
+  }
+
+  // ── value formatting from a column's unit / fmt ───────────────────────────────
+  // fmt (engine fields.py): text | int | num2 | num4 | pct (already percent) | money | ratio |
+  // date | datetime | bool; unit: $ | % | x | days | contracts | shares | ''
+  function decimals(fmt, unit, v) {
+    var m;
+    if ((m = /^num(\d)$/.exec(fmt))) return parseInt(m[1], 10);
+    if (fmt === 'money' || fmt === 'pct' || fmt === 'ratio') return 2;
+    if ((m = /^0\.(0+)$/.exec(fmt))) return m[1].length;
+    if ((m = /\.(\d+)f\}?$/.exec(fmt))) return parseInt(m[1], 10);
+    if (/^\d$/.test(fmt)) return parseInt(fmt, 10);
+    if (fmt === '0' || fmt === 'int') return 0;
+    if (unit === '%' || unit === '$' || unit === 'x') return 2;
+    if (Number.isInteger(v)) return 0;
+    return Math.abs(v) >= 1000 ? 0 : 2;
+  }
+  function compact(v) {
+    var a = Math.abs(v);
+    if (a >= 1e9) return (v / 1e9).toFixed(2) + 'B';
+    if (a >= 1e6) return (v / 1e6).toFixed(2) + 'M';
+    if (a >= 1e4) return (v / 1e3).toFixed(1) + 'K';
+    return Math.round(v).toLocaleString('en-US');
+  }
+  function fmtDate(s) { return String(s).slice(0, 10); }
+  function fmtDateTime(s) {
+    var d = new Date(/Z$|[+-]\d\d:?\d\d$/.test(s) ? s : s + 'Z');
+    if (isNaN(d.getTime())) return String(s);
+    // market time, like Barchart: the US Eastern clock, whatever the viewer's zone
+    try {
+      return d.toLocaleString('en-US', {timeZone: 'America/New_York', month: 'short', day: 'numeric',
+                                        hour: '2-digit', minute: '2-digit', hour12: false}) + ' ET';
+    } catch (e) {
+      return d.toLocaleString(undefined, {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'});
+    }
+  }
+  function fmtVal(v, col) {
+    col = col || {};
+    var u = col.unit || '', f = col.fmt || '';
+    if (!isSet(v)) return '–';
+    if (typeof v === 'boolean' || f === 'bool') return v ? 'Yes' : 'No';
+    if (typeof v === 'object') return '–';
+    if (typeof v !== 'number') {
+      if (f === 'datetime' || u === 'datetime') return fmtDateTime(v);
+      if (f === 'date' || u === 'date') return fmtDate(v);
+      return String(v);
+    }
+    if (f === 'text') return String(v);
+    if (f === 'datetime' || u === 'datetime') return fmtDateTime(new Date(v * (v < 1e11 ? 1000 : 1)).toISOString());
+    var a = Math.abs(v), s;
+    if (f === 'int' || f === 'count' || f === 'd') s = Math.round(a).toLocaleString('en-US');
+    else if (f === 'big' || f === 'compact') s = compact(a);
+    else { var d = decimals(f, u, v); s = a.toLocaleString('en-US', {minimumFractionDigits: d, maximumFractionDigits: d}); }
+    var neg = v < 0 && /[1-9]/.test(s) ? '-' : '';
+    if (u === '$' || f === 'money') return neg + '$' + s;
+    if (u === '%' || f === 'pct') return neg + s + '%';
+    if (u === 'x') return neg + s + '×';
+    return neg + s;
+  }
+
+  // ── filters: state, defaults, cleaning ───────────────────────────────────────
+  // ops by kind (engine): range gte|lte|between|eq · choice in|eq · bool is|eq ·
+  // date in|eq|between|within|gte|lte. A field's own `ops` list wins when the spec has one.
+  var OP_ORDER = ['between', 'gte', 'lte', 'eq', 'in', 'within', 'is'];
+  var KIND_OPS = {range: ['between', 'gte', 'lte', 'eq'], choice: ['in'], bool: ['is'],
+                  date: ['in', 'between', 'gte', 'lte', 'eq', 'within']};
+  function opsFor(fd) {
+    var ops = (fd && fd.ops && fd.ops.length) ? fd.ops.slice() : (KIND_OPS[(fd && fd.kind) || 'range'] || KIND_OPS.range).slice();
+    if (fd && fd.kind === 'date' && !(fd.choices || []).length) ops = ops.filter(function (o) { return o !== 'in'; });
+    return OP_ORDER.filter(function (o) { return ops.indexOf(o) >= 0; });
+  }
+  function defaultOp(fd) {
+    if (!fd) return 'between';
+    if (fd.kind === 'choice') return 'in';
+    if (fd.kind === 'bool') return 'is';
+    var ops = opsFor(fd);
+    if (fd.kind === 'date') return ops.indexOf('in') >= 0 ? 'in' : (ops.indexOf('within') >= 0 ? 'within' : 'between');
+    var want = (fd.presets && fd.presets.length) ? 'between' : 'gte';
+    return ops.indexOf(want) >= 0 ? want : (ops[0] || want);
+  }
+  function normFilter(f) {
+    var o = {f: f.f, op: f.op || defaultOp(S.fields[f.f])};
+    ['lo', 'hi', 'v'].forEach(function (k) { if (k in f) o[k] = clone(f[k]); });
+    if (o.op === 'in' && !Array.isArray(o.v)) o.v = isSet(o.v) ? [o.v] : [];
+    if (o.op === 'eq' && !isSet(o.lo) && isSet(o.v)) o.lo = Array.isArray(o.v) ? o.v[0] : o.v;
+    return o;
+  }
+  function cleanFilter(f) {      // what a run sends: only the cards that hold a value
+    var fd = S.fields[f.f], op = f.op || defaultOp(fd), o = {f: f.f, op: op};
+    if (op === 'in') { var v = Array.isArray(f.v) ? f.v : []; if (!v.length) return null; o.v = v; return o; }
+    if (op === 'is') { if (!isSet(f.v)) return null; o.v = f.v; return o; }
+    if (op === 'within') { var w = isSet(f.v) ? f.v : f.hi; if (!isSet(w)) return null; o.v = w; return o; }
+    if (op === 'eq') { var x = isSet(f.lo) ? f.lo : f.v; if (!isSet(x) || Array.isArray(x)) return null; o.v = x; o.lo = x; return o; }
+    var lo = op === 'lte' ? null : f.lo, hi = op === 'gte' ? null : f.hi;
+    if (!isSet(lo) && !isSet(hi)) return null;
+    if (op === 'between' && !isSet(lo)) o.op = 'lte';
+    if (op === 'between' && !isSet(hi)) o.op = 'gte';
+    if (isSet(lo)) o.lo = lo;
+    if (isSet(hi)) o.hi = hi;
+    return o;
+  }
+  function rawFilters() {     // what a saved screener keeps (every card, set or not)
+    return S.filters.map(function (f) {
+      var o = {f: f.f, op: f.op};
+      ['lo', 'hi', 'v'].forEach(function (k) { if (isSet(f[k]) && !(Array.isArray(f[k]) && !f[k].length)) o[k] = f[k]; });
+      return o;
+    });
+  }
+  function payload(forSave) {
+    var p = {filters: forSave ? rawFilters() : S.filters.map(cleanFilter).filter(Boolean),
+             view: S.view, flag_earnings: S.flag};
+    if (S.sort && S.sort.col) p.sort = S.sort;
+    return p;
+  }
+  function loadPayload(p) {
+    p = p || {};
+    S.filters = (p.filters || []).map(normFilter);
+    S.sort = p.sort || (SPEC.defaults && SPEC.defaults.sort) || null;
+    S.view = p.view || 'main';
+    S.flag = !!p.flag_earnings;
+    $('scrView').value = S.view;
+    if ($('scrView').value !== S.view && $('scrView').options.length) { S.view = $('scrView').options[0].value; $('scrView').value = S.view; }
+    $('scrFlagEarn').checked = S.flag;
+    renderCards();
+  }
+  function loadDefaults() { S.savedId = null; loadPayload(clone(SPEC.defaults || {})); renderSaved(); }
+
+  // ── filter cards ─────────────────────────────────────────────────────────────
+  function opLabel(op, fd) {
+    var date = fd && fd.kind === 'date';
+    return {between: 'between', gte: date ? 'on or after' : 'greater than', lte: date ? 'on or before' : 'less than',
+            eq: date ? 'on' : 'equal to', 'in': date ? 'any of these dates' : 'any of',
+            within: 'within the next (' + ((fd && fd.within) || 'days') + ')', is: 'is'}[op] || op;
+  }
+  function presetOn(f, p) {
+    if ((p.op || '') !== (f.op || '')) return false;
+    if ('v' in p) return JSON.stringify(p.v) === JSON.stringify(f.v);
+    return String(isSet(p.lo) ? p.lo : '') === String(isSet(f.lo) ? f.lo : '') &&
+           String(isSet(p.hi) ? p.hi : '') === String(isSet(f.hi) ? f.hi : '');
+  }
+  function numBox(i, k, val, ph, type) {
+    return '<input type="' + (type || 'number') + '" step="any" data-i="' + i + '" data-k="' + k + '" value="' +
+      esc(isSet(val) ? val : '') + '" placeholder="' + esc(ph) + '" class="scr-num text-xs">';
+  }
+  function choiceBoxes(f, i, fd, scroll) {
+    var vals = (Array.isArray(f.v) ? f.v : (isSet(f.v) ? [f.v] : [])).map(String);
+    var h = '<div class="flex flex-wrap gap-x-3 gap-y-1' + (scroll ? ' max-h-32 overflow-y-auto pr-1' : '') + '">';
+    (fd.choices || []).forEach(function (c, ci) {
+      h += '<label class="scr-check"><input type="checkbox" data-i="' + i + '" data-ci="' + ci + '"' +
+           (vals.indexOf(String(c.v)) >= 0 ? ' checked' : '') + '> ' + esc(c.label) + '</label>';
+    });
+    if (!(fd.choices || []).length) h += '<span class="text-[11px] text-slate-500">No choices yet (no market data).</span>';
+    return h + '</div>';
+  }
+  function cardBody(f, i, fd) {
+    if (!fd) return '<p class="text-[11px] text-slate-500">This filter is not available on this screen; it is ignored.</p>';
+    var h = '', showUnit = fd.unit && fd.unit !== 'date' && fd.kind !== 'date';
+    var unit = showUnit ? '<span class="text-[11px] text-slate-500">' + esc(fd.unit) + '</span>' : '';
+    var op = f.op || defaultOp(fd);
+    if (fd.kind === 'choice') {
+      h += choiceBoxes(f, i, fd, (fd.choices || []).length > 12);
+    } else if (fd.kind === 'bool') {
+      var bv = f.v === true ? 'true' : (f.v === false ? 'false' : '');
+      h += '<select data-i="' + i + '" data-k="bool" class="px-2 py-1 text-xs">' +
+           '<option value=""' + (bv === '' ? ' selected' : '') + '>Any</option>' +
+           '<option value="true"' + (bv === 'true' ? ' selected' : '') + '>Yes</option>' +
+           '<option value="false"' + (bv === 'false' ? ' selected' : '') + '>No</option></select>';
+    } else {
+      var isDate = fd.kind === 'date', ops = opsFor(fd);
+      if (ops.indexOf(op) < 0) ops.push(op);
+      h += '<div class="flex flex-wrap items-center gap-1.5">';
+      h += '<select data-i="' + i + '" data-k="op" class="px-1.5 py-1 text-xs">' + ops.map(function (o) {
+        return '<option value="' + o + '"' + (o === op ? ' selected' : '') + '>' + esc(opLabel(o, fd)) + '</option>'; }).join('') + '</select>';
+      var t = isDate ? 'date' : 'number';
+      if (op === 'in') h += '</div><div class="mt-1.5">' + choiceBoxes(f, i, fd, true);
+      else if (op === 'between') h += numBox(i, 'lo', f.lo, 'min', t) + '<span class="text-[11px] text-slate-500">to</span>' + numBox(i, 'hi', f.hi, 'max', t) + unit;
+      else if (op === 'lte') h += numBox(i, 'hi', f.hi, 'value', t) + unit;
+      else if (op === 'within') h += numBox(i, 'v', f.v, fd.within || 'days', 'number');
+      else h += numBox(i, 'lo', f.lo, 'value', t) + unit;
+      h += '</div>';
+    }
+    if (fd.presets && fd.presets.length) {
+      h += '<div class="flex flex-wrap gap-1 mt-1.5">';
+      fd.presets.forEach(function (p, pi) {
+        h += '<button type="button" class="scr-chip" data-i="' + i + '" data-preset="' + pi + '" aria-pressed="' +
+             (presetOn(f, p) ? 'true' : 'false') + '">' + esc(p.label) + '</button>';
+      });
+      h += '</div>';
+    }
+    return h;
+  }
+  function renderCards() {
+    var box = $('scrCards'), n = S.filters.length;
+    box.innerHTML = S.filters.map(function (f, i) {
+      var fd = S.fields[f.f];
+      var label = fd ? fd.label : f.f;
+      var tip = fd && fd.help ? ' data-tip="' + esc(fd.help) + '" tabindex="0"' : '';
+      return '<div class="scr-card" data-card="' + i + '">' +
+        '<div class="flex items-start gap-1 mb-1.5">' +
+          '<span class="flex-1 min-w-0 text-xs font-medium text-slate-200' + (tip ? ' th-help' : '') + '"' + tip + '>' + esc(label) +
+            (fd && fd.group ? ' <span class="text-[10px] font-normal text-slate-500">' + esc(fd.group) + '</span>' : '') + '</span>' +
+          '<button type="button" class="scr-ico" data-act="up" data-i="' + i + '" title="Move up"' + (i === 0 ? ' disabled' : '') + '>&uarr;</button>' +
+          '<button type="button" class="scr-ico" data-act="down" data-i="' + i + '" title="Move down"' + (i === n - 1 ? ' disabled' : '') + '>&darr;</button>' +
+          '<button type="button" class="scr-ico scr-x" data-act="del" data-i="' + i + '" title="Remove this filter">&#10005;</button>' +
+        '</div>' + cardBody(f, i, fd) + '</div>';
+    }).join('');
+    $('scrNoCards').classList.toggle('hidden', n > 0);
+    countFilters();
+    renderAddField();
+  }
+  function countFilters() {
+    $('scrNf').textContent = S.filters.map(cleanFilter).filter(Boolean).length;
+  }
+  function renderAddGroups() {
+    var g = $('scrAddGroup');
+    g.innerHTML = (SPEC.groups || []).map(function (x) { return '<option>' + esc(x) + '</option>'; }).join('');
+    renderAddField();
+  }
+  function renderAddField() {
+    var grp = $('scrAddGroup').value, used = {};
+    S.filters.forEach(function (f) { used[f.f] = 1; });
+    var opts = (SPEC.fields || []).filter(function (f) { return f.group === grp; }).map(function (f) {
+      return '<option value="' + esc(f.key) + '"' + (used[f.key] ? ' disabled' : '') + '>' + esc(f.label) + (used[f.key] ? ' (added)' : '') + '</option>';
+    });
+    var sel = $('scrAddField'), keep = sel.value;
+    sel.innerHTML = opts.join('') || '<option value="">-</option>';
+    if (keep) sel.value = keep;
+    if (!sel.value || (sel.selectedOptions[0] && sel.selectedOptions[0].disabled)) {
+      var first = Array.prototype.find.call(sel.options, function (o) { return !o.disabled; });
+      if (first) sel.value = first.value;
+    }
+  }
+
+  document.getElementById('scrCards').addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-i]');
+    if (!b) return;
+    var i = parseInt(b.dataset.i, 10), f = S.filters[i];
+    if (!f) return;
+    if (b.dataset.act === 'del') { S.filters.splice(i, 1); renderCards(); return; }
+    if (b.dataset.act === 'up' && i > 0) { S.filters.splice(i - 1, 0, S.filters.splice(i, 1)[0]); renderCards(); return; }
+    if (b.dataset.act === 'down' && i < S.filters.length - 1) { S.filters.splice(i + 1, 0, S.filters.splice(i, 1)[0]); renderCards(); return; }
+    if (b.dataset.preset !== undefined) {
+      var fd = S.fields[f.f], p = fd && fd.presets[parseInt(b.dataset.preset, 10)];
+      if (!p) return;
+      var on = presetOn(f, p);
+      delete f.lo; delete f.hi; delete f.v;
+      if (on) { f.op = defaultOp(fd); if (f.op === 'in') f.v = []; }
+      else { f.op = p.op || defaultOp(fd); ['lo', 'hi', 'v'].forEach(function (k) { if (k in p) f[k] = clone(p[k]); }); }
+      renderCards();
+    }
+  });
+  function onCardInput(e) {
+    var el = e.target, i = parseInt(el.dataset.i, 10), f = S.filters[i];
+    if (!f || isNaN(i)) return;
+    var fd = S.fields[f.f];
+    if (el.dataset.ci !== undefined) {
+      var c = fd.choices[parseInt(el.dataset.ci, 10)], vals = Array.isArray(f.v) ? f.v.slice() : [];
+      var at = vals.map(String).indexOf(String(c.v));
+      if (el.checked && at < 0) vals.push(c.v);
+      if (!el.checked && at >= 0) vals.splice(at, 1);
+      f.op = 'in'; f.v = vals;
+    } else if (el.dataset.k === 'op') {
+      f.op = el.value;
+      if (f.op === 'in') { delete f.lo; delete f.hi; if (!Array.isArray(f.v)) f.v = []; }
+      else if (f.op === 'within') { delete f.lo; delete f.hi; if (Array.isArray(f.v)) delete f.v; }
+      else {
+        delete f.v;
+        if (f.op === 'gte' || f.op === 'eq') delete f.hi;
+        if (f.op === 'lte') delete f.lo;
+      }
+      if (e.type === 'change') { renderCards(); return; }
+    } else if (el.dataset.k === 'bool') {
+      f.op = 'is'; f.v = el.value === '' ? null : el.value === 'true';
+    } else {
+      var k = el.dataset.k, raw = el.value.trim();
+      f[k] = raw === '' ? null : (el.type === 'date' ? raw : num(raw));
+    }
+    if (e.type === 'change') {
+      // repaint only the chips' pressed state, never the inputs mid-typing
+      var card = el.closest('[data-card]');
+      if (card && fd) card.querySelectorAll('.scr-chip').forEach(function (ch) {
+        ch.setAttribute('aria-pressed', presetOn(f, fd.presets[parseInt(ch.dataset.preset, 10)]) ? 'true' : 'false');
+      });
+    }
+    countFilters();
+  }
+  document.getElementById('scrCards').addEventListener('input', onCardInput);
+  document.getElementById('scrCards').addEventListener('change', onCardInput);
+  document.getElementById('scrCards').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && e.target.tagName === 'INPUT') { e.preventDefault(); seeResults(); }
+  });
+
+  $('scrAddGroup').addEventListener('change', renderAddField);
+  $('scrAddBtn').addEventListener('click', function () {
+    var key = $('scrAddField').value, fd = S.fields[key];
+    if (!fd) return;
+    if (S.filters.some(function (f) { return f.f === key; })) { toast(fd.label + ' is already a filter', 'info'); return; }
+    if (S.filters.length >= (BOOT.max_filters || 60)) { toast('At most ' + (BOOT.max_filters || 60) + ' filters', 'err'); return; }
+    S.filters.push(normFilter({f: key}));
+    renderCards();
+    var cards = $('scrCards').querySelectorAll('[data-card]');
+    if (cards.length) cards[cards.length - 1].scrollIntoView({block: 'nearest', behavior: 'smooth'});
+  });
+  $('scrClear').addEventListener('click', function () { S.filters = []; renderCards(); });
+  $('scrReset').addEventListener('click', function () { loadDefaults(); toast('Filters reset to the screen\'s defaults', 'info'); });
+  function seeResults() { showTab('results'); run(1); }
+  $('scrSee').addEventListener('click', seeResults);
+
+  // ── tabs ──────────────────────────────────────────────────────────────────────
+  function showTab(t) {
+    document.querySelectorAll('.scr-tab').forEach(function (b) { b.setAttribute('aria-selected', b.dataset.tab === t ? 'true' : 'false'); });
+    $('scrPanelFilters').classList.toggle('hidden', t !== 'filters');
+    $('scrPanelResults').classList.toggle('hidden', t !== 'results');
+  }
+  document.querySelectorAll('.scr-tab').forEach(function (b) {
+    b.addEventListener('click', function () { showTab(b.dataset.tab); });
+  });
+  $('scrGoto').addEventListener('change', function () {
+    location.href = '/options?screen=' + encodeURIComponent(this.value);
+  });
+
+  // ── saved screeners ──────────────────────────────────────────────────────────
+  function curSaved() { return S.saved.filter(function (x) { return x.id === S.savedId; })[0] || null; }
+  function renderSaved() {
+    var sel = $('scrSaved');
+    sel.innerHTML = '<option value="">Built-in defaults</option>' + S.saved.map(function (it) {
+      return '<option value="' + it.id + '">' + esc(it.name) + (it.is_default ? ' (default)' : '') + '</option>';
+    }).join('');
+    sel.value = S.savedId ? String(S.savedId) : '';
+    var cur = curSaved();
+    $('scrDelete').disabled = !cur;
+    $('scrMakeDefault').disabled = !cur;
+    $('scrMakeDefault').textContent = cur && cur.is_default ? 'Stop loading by default' : 'Make default';
+  }
+  $('scrSaved').addEventListener('change', function () {
+    var id = parseInt(this.value, 10);
+    if (!id) { loadDefaults(); return; }
+    var it = S.saved.filter(function (x) { return x.id === id; })[0];
+    if (!it) return;
+    S.savedId = id;
+    loadPayload(clone(it.payload));
+    renderSaved();
+    toast('Loaded "' + it.name + '"', 'info');
+  });
+  function save(name, asDefault) {
+    var body = {screen: S.screen, name: name, payload: payload(true)};
+    if (asDefault !== undefined) body.is_default = asDefault;
+    return api('/options/api/saved', body).then(function (j) {
+      if (!j.ok) { toast(j.error || 'Could not save', 'err'); return; }
+      S.saved = j.items || S.saved;
+      S.savedId = j.item.id;
+      renderSaved();
+      toast((j.created ? 'Saved "' : 'Updated "') + j.item.name + '"', 'ok');
+      $('scrSaveAsBox').classList.add('hidden');
+    }).catch(function () { toast('Could not reach the server', 'err'); });
+  }
+  function openSaveAs() {
+    showTab('filters');
+    $('scrSaveAsBox').classList.remove('hidden');
+    var cur = curSaved();
+    $('scrSaveName').value = cur ? cur.name + ' (copy)' : '';
+    $('scrSaveDefault').checked = false;
+    $('scrSaveName').focus();
+  }
+  function saveCurrent() { var cur = curSaved(); if (cur) save(cur.name); else openSaveAs(); }
+  $('scrSave').addEventListener('click', saveCurrent);
+  $('scrSaveR').addEventListener('click', saveCurrent);
+  $('scrSaveAs').addEventListener('click', openSaveAs);
+  $('scrSaveAsCancel').addEventListener('click', function () { $('scrSaveAsBox').classList.add('hidden'); });
+  $('scrSaveAsGo').addEventListener('click', function () {
+    var name = $('scrSaveName').value.trim();
+    if (!name) { toast('Give the screener a name', 'err'); $('scrSaveName').focus(); return; }
+    save(name, $('scrSaveDefault').checked);
+  });
+  $('scrSaveName').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); $('scrSaveAsGo').click(); } });
+  $('scrDelete').addEventListener('click', function () {
+    var cur = curSaved();
+    if (!cur || !window.confirm('Delete the saved screener "' + cur.name + '"?')) return;
+    api('/options/api/saved/' + cur.id + '/delete', {}).then(function (j) {
+      if (!j.ok) { toast(j.error || 'Could not delete', 'err'); return; }
+      S.saved = j.items || []; S.savedId = null; renderSaved();
+      toast('Deleted "' + cur.name + '"', 'ok');
+    }).catch(function () { toast('Could not reach the server', 'err'); });
+  });
+  $('scrMakeDefault').addEventListener('click', function () {
+    var cur = curSaved();
+    if (!cur) return;
+    var on = !cur.is_default;
+    api('/options/api/saved/' + cur.id + '/default', {on: on}).then(function (j) {
+      if (!j.ok) { toast(j.error || 'Could not change the default', 'err'); return; }
+      S.saved = j.items || S.saved; renderSaved();
+      toast(on ? '"' + cur.name + '" now loads when you open this screen' : 'The built-in defaults load again', 'ok');
+    }).catch(function () { toast('Could not reach the server', 'err'); });
+  });
+
+  // ── results ──────────────────────────────────────────────────────────────────
+  (SPEC.views || []).forEach(function (v) {
+    var o = document.createElement('option'); o.value = v.key; o.textContent = v.label; $('scrView').appendChild(o);
+  });
+  $('scrView').addEventListener('change', function () { S.view = this.value; run(1); });
+  $('scrFlagEarn').addEventListener('change', function () { S.flag = this.checked; run(S.page); });
+  $('scrRefresh').addEventListener('click', function () { run(S.page); });
+
+  function setEmpty(msg) {
+    $('scrEmpty').textContent = msg || '';
+    $('scrEmpty').classList.toggle('hidden', !msg);
+  }
+  function run(page) {
+    if (!BOOT.engine_ok) return;
+    S.page = page || 1;
+    var my = ++S.seq;
+    $('scrTableWrap').classList.add('scr-busy');
+    $('scrMs').textContent = 'Screening…';
+    api('/options/api/run', {screen: S.screen, payload: payload(false), page: S.page, per_page: S.perPage})
+      .then(function (j) {
+        if (my !== S.seq) return;
+        if (!j.ok) { failed(j.error || 'The screener failed.'); return; }
+        S.last = j;
+        renderResults();
+      })
+      .catch(function () { if (my === S.seq) failed('Could not reach the server - check your connection and refresh.'); })
+      .then(function () { if (my === S.seq) $('scrTableWrap').classList.remove('scr-busy'); });
+  }
+  function failed(msg) {
+    S.last = null;
+    $('scrTable').querySelector('thead').innerHTML = '';
+    $('scrTable').querySelector('tbody').innerHTML = '';
+    $('scrTotal').textContent = '–'; $('scrNr').textContent = '–'; $('scrMs').textContent = '';
+    $('scrPager').innerHTML = '';
+    $('scrWarn').classList.add('hidden'); $('scrTrunc').classList.add('hidden');
+    setEmpty(msg);
+  }
+  function isTextCol(c) {     // text / date columns sit left and sort A-Z first
+    return /^(text|date|datetime)$/.test(c.fmt || '') || (!c.fmt && /^(expiry|exp|exp_date|name|trend|option_type|right|side)$/.test(c.key));
+  }
+  function hasLegs(row) { return Array.isArray(row.legs) && row.legs.length > 0; }
+  function earnFlag(row) {
+    return !!(row.earnings_flag || row.earnings_before_exp || row.flag_earnings || row.earn_flag);
+  }
+  function earnDate(row) { return row.earnings_date || row.earnings || ''; }
+  function symCell(row, col, sticky) {
+    var sym = String(row[col.key] == null ? '' : row[col.key]);
+    var link = BOOT.chart_url ? BOOT.chart_url.replace('{sym}', encodeURIComponent(sym)) : '';
+    var earn = S.flag && earnFlag(row)
+      ? '<span class="scr-earn" title="Earnings' + (earnDate(row) ? ' ' + esc(earnDate(row)) : '') + ' before this option expires">E</span>' : '';
+    return '<td class="scr-l' + (sticky ? ' scr-sticky' : '') + '">' +
+      (link ? '<a href="' + esc(link) + '" target="_blank" rel="noopener" class="scr-sym" title="Open the ' + esc(sym) + ' chart">' + esc(sym) + '</a>'
+            : '<span class="scr-sym">' + esc(sym) + '</span>') + earn + '</td>';
+  }
+  function cell(row, col) {
+    var v = row[col.key];
+    var cls = typeof v === 'number' ? 'text-right tabular-nums' : 'scr-l';
+    if (typeof v === 'number' && /(^|_)(chg|change|perf\d*)($|_)|chg_pct|_chg/.test(col.key)) cls += v > 0 ? ' scr-up' : (v < 0 ? ' scr-down' : '');
+    return '<td class="' + cls + '">' + esc(fmtVal(v, col)) + '</td>';
+  }
+  function renderResults() {
+    var R = S.last, cols = R.columns || [], rows = R.rows || [];
+    var legs = rows.some(hasLegs);
+    $('scrTotal').textContent = fmtInt(R.total);
+    $('scrNr').textContent = isSet(R.total) ? compact(R.total) : '–';
+    $('scrMs').textContent = isSet(R.ms) ? 'in ' + fmtInt(R.ms) + ' ms' : '';
+    var warns = (R.warnings || []).filter(Boolean);
+    $('scrWarn').innerHTML = warns.map(function (w) { return '<div>' + esc(typeof w === 'string' ? w : (w.text || w.message || JSON.stringify(w))) + '</div>'; }).join('');
+    $('scrWarn').classList.toggle('hidden', !warns.length);
+    $('scrTrunc').textContent = R.truncated
+      ? 'Only the first ' + fmtInt((R.limits && R.limits.max_rows) || R.max_rows || R.kept || 5000) + ' matches (in the current sort order) are kept - narrow the filters to see the rest.' : '';
+    $('scrTrunc').classList.toggle('hidden', !R.truncated);
+    $('scrLegHint').classList.toggle('hidden', !legs);
+
+    var sort = S.sort || {};
+    var symIdx = -1;
+    cols.forEach(function (c, ci) { if (symIdx < 0 && (c.key === 'symbol' || c.key === 'sym' || c.key === 'underlying')) symIdx = ci; });
+    var head = '<tr>' + (legs ? '<th class="scr-l" aria-label="Legs" style="cursor:default"></th>' : '') + cols.map(function (c, ci) {
+      var on = sort.col === c.key, arrow = on ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : '';
+      var left = (ci === symIdx || isTextCol(c)) ? ' scr-l' : '';
+      return '<th class="' + left + (ci === symIdx && !legs ? ' scr-sticky' : '') + '" data-col="' + esc(c.key) + '"' +
+        (on ? ' aria-sort="' + (sort.dir === 'asc' ? 'ascending' : 'descending') + '"' : '') +
+        (c.help ? ' title="' + esc(c.help) + '"' : ' title="Sort by ' + esc(c.label) + '"') + '>' + esc(c.label) + arrow + '</th>';
+    }).join('') + '</tr>';
+    $('scrTable').querySelector('thead').innerHTML = cols.length ? head : '';
+    $('scrTable').querySelector('tbody').innerHTML = rows.map(function (row, i) {
+      return '<tr class="scr-row' + (hasLegs(row) ? ' scr-legs' : '') + '" data-i="' + i + '">' +
+        (legs ? '<td class="scr-l">' + (hasLegs(row) ? '<span class="scr-caret">&#9656;</span>' : '') + '</td>' : '') +
+        cols.map(function (c, ci) { return ci === symIdx ? symCell(row, c, !legs) : cell(row, c); }).join('') + '</tr>';
+    }).join('');
+
+    if (!rows.length) {
+      var empty = R.data && (R.data.empty || R.data.n_contracts === 0);
+      setEmpty(empty ? 'No data yet - the market collector has not finished its first pass. Check back after the next pass (the line at the top shows its progress).'
+                     : (R.total ? 'No rows on this page.' : 'No contracts match these filters. Widen a filter or remove one on SET FILTERS.'));
+    } else setEmpty('');
+    renderPager();
+  }
+  function renderPager() {
+    var R = S.last, pages = R.pages || 1, p = R.page || S.page;
+    if (pages <= 1) { $('scrPager').innerHTML = ''; return; }
+    $('scrPager').innerHTML =
+      '<button type="button" class="scr-btn" data-page="1"' + (p <= 1 ? ' disabled' : '') + '>&laquo; First</button>' +
+      '<button type="button" class="scr-btn" data-page="' + (p - 1) + '"' + (p <= 1 ? ' disabled' : '') + '>&lsaquo; Prev</button>' +
+      '<span class="text-slate-400 px-1">Page ' + fmtInt(p) + ' of ' + fmtInt(pages) + '</span>' +
+      '<button type="button" class="scr-btn" data-page="' + (p + 1) + '"' + (p >= pages ? ' disabled' : '') + '>Next &rsaquo;</button>' +
+      '<button type="button" class="scr-btn" data-page="' + pages + '"' + (p >= pages ? ' disabled' : '') + '>Last &raquo;</button>';
+  }
+  $('scrPager').addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-page]');
+    if (!b || b.disabled) return;
+    run(parseInt(b.dataset.page, 10));
+    $('scrTableWrap').scrollTop = 0;
+  });
+  $('scrTable').querySelector('thead').addEventListener('click', function (e) {
+    var th = e.target.closest('th[data-col]');
+    if (!th) return;
+    var col = th.dataset.col;
+    if (S.sort && S.sort.col === col) S.sort = {col: col, dir: S.sort.dir === 'asc' ? 'desc' : 'asc'};
+    else {
+      var cdef = ((S.last && S.last.columns) || []).filter(function (c) { return c.key === col; })[0] || {key: col};
+      S.sort = {col: col, dir: (/^(symbol|sym|underlying)$/.test(col) || isTextCol(cdef)) ? 'asc' : 'desc'};
+    }
+    run(1);
+  });
+  $('scrTable').querySelector('tbody').addEventListener('click', function (e) {
+    if (e.target.closest('a')) return;
+    var tr = e.target.closest('tr.scr-legs');
+    if (!tr) return;
+    toggleRow(tr);
+  });
+
+  // ── CSV ───────────────────────────────────────────────────────────────────────
+  $('scrCsv').addEventListener('click', function () {
+    if (!BOOT.engine_ok) return;
+    var btn = this; btn.disabled = true;
+    fetch('/options/api/csv', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                               body: JSON.stringify({screen: S.screen, payload: payload(false)})})
+      .then(function (r) {
+        if (!r.ok) return r.json().catch(function () { return {}; }).then(function (j) { throw new Error(j.error || ('HTTP ' + r.status)); });
+        var cd = r.headers.get('Content-Disposition') || '', m = /filename="?([^";]+)"?/.exec(cd);
+        return r.blob().then(function (b) { return {blob: b, name: m ? m[1] : 'tradehunter-' + S.screen + '.csv'}; });
+      })
+      .then(function (x) {
+        var a = document.createElement('a'), url = URL.createObjectURL(x.blob);
+        a.href = url; a.download = x.name; document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+        toast('Downloaded ' + x.name, 'ok');
+      })
+      .catch(function (err) { toast(err.message || 'The download failed', 'err'); })
+      .then(function () { btn.disabled = false; });
+  });
+
+  // ── a strategy's legs + its at-expiry profit / loss chart ─────────────────────
+  function ivFrac(v) { v = num(v); return v == null ? null : (v > 3 ? v / 100 : v); }
+  function daysTo(exp) {
+    if (!exp || !BOOT.today) return null;
+    var a = Date.parse(String(exp).slice(0, 10) + 'T00:00:00Z'), b = Date.parse(BOOT.today + 'T00:00:00Z');
+    return isNaN(a) || isNaN(b) ? null : Math.round((a - b) / 86400000);
+  }
+  function spotOf(row) {
+    var keys = ['spot', 'stock_price', 'underlying_price', 'und_price'];
+    for (var i = 0; i < keys.length; i++) { var v = num(row[keys[i]]); if (v != null && v > 0) return v; }
+    var st = (row.legs || []).filter(function (l) { return /^(S|STOCK|U)$/i.test(String(l.right || l.type || '')); })[0];
+    return st ? num(st.price) : null;
+  }
+  function normLegs(row, spot) {
+    return (row.legs || []).map(function (l) {
+      var side = String(l.side || l.action || l.dir || '');
+      var q = num(l.qty != null ? l.qty : (l.ratio != null ? l.ratio : (l.n != null ? l.n : 1))) || 1;
+      var sign = /^(s|sell|short|-)/i.test(side) ? -1 : (/^(b|buy|long|\+)/i.test(side) ? 1 : (q < 0 ? -1 : 1));
+      var t = String(l.right || l.type || l.kind || (l.stock ? 'stock' : '')).toUpperCase();
+      var type = /^C/.test(t) ? 'C' : (/^P/.test(t) ? 'P' : (/^(S|STOCK|U|UND)/.test(t) ? 'S' : ''));
+      var price = num(l.price != null ? l.price : (l.est != null ? l.est : (l.p != null ? l.p : (l.mid != null ? l.mid : (l.premium != null ? l.premium : l.last)))));
+      var exp = l.expiry || l.exp || l.expiration || null;
+      var dte = num(l.dte); if (dte == null) dte = daysTo(exp);
+      if (type === 'S' && price == null) price = spot;
+      return {sign: sign, qty: Math.abs(q), type: type, strike: num(l.strike != null ? l.strike : l.k), price: price,
+              expiry: exp, dte: dte, iv: ivFrac(l.iv), delta: num(l.delta), volume: num(l.volume != null ? l.volume : l.vol),
+              oi: num(l.oi != null ? l.oi : l.open_interest), raw: l};
+    });
+  }
+  function ncdf(x) {
+    var z = Math.abs(x) / Math.SQRT2, t = 1 / (1 + 0.3275911 * z);
+    var y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-z * z);
+    return x >= 0 ? (1 + y) / 2 : (1 - y) / 2;
+  }
+  function bs(S0, K, T, sig, type) {
+    if (!(S0 > 0) || !(K > 0) || !(T > 0) || !(sig > 0)) return type === 'C' ? Math.max(0, S0 - K) : Math.max(0, K - S0);
+    var sq = sig * Math.sqrt(T), d1 = (Math.log(S0 / K) + (RF + sig * sig / 2) * T) / sq, d2 = d1 - sq, df = Math.exp(-RF * T);
+    return type === 'C' ? S0 * ncdf(d1) - K * df * ncdf(d2) : K * df * ncdf(-d2) - S0 * ncdf(-d1);
+  }
+  function plAt(legs, ST, tNear) {
+    var tot = 0;
+    legs.forEach(function (L) {
+      if (L.price == null) return;
+      var val, mult = 100;
+      if (L.type === 'S') { val = ST; mult = L.qty >= 100 ? 1 : 100; }
+      else if (L.type === 'C' || L.type === 'P') {
+        var rem = (L.dte != null && tNear != null) ? Math.max(0, L.dte - tNear) / 365 : 0;
+        val = rem > 0 && L.iv ? bs(ST, L.strike, rem, L.iv, L.type)
+                              : (L.type === 'C' ? Math.max(0, ST - L.strike) : Math.max(0, L.strike - ST));
+      } else return;
+      tot += L.sign * L.qty * (val - L.price) * mult;
+    });
+    return tot;
+  }
+  function legsTable(legs) {
+    var has = function (k) { return legs.some(function (L) { return L[k] != null; }); };
+    var cols = [['Side', 'l'], ['Qty', ''], ['Type', 'l']];
+    if (has('expiry')) cols.push(['Expiry', 'l']);
+    cols.push(['Strike', ''], ['Price est.', '']);
+    if (has('iv')) cols.push(['IV', '']);
+    if (has('delta')) cols.push(['Delta', '']);
+    if (has('volume')) cols.push(['Volume', '']);
+    if (has('oi')) cols.push(['Open int.', '']);
+    var h = '<table class="scr-legs-t text-xs"><thead><tr>' + cols.map(function (c) {
+      return '<th class="' + (c[1] ? 'scr-l' : '') + '">' + c[0] + '</th>'; }).join('') + '</tr></thead><tbody>';
+    legs.forEach(function (L) {
+      var cells = ['<td class="scr-l ' + (L.sign > 0 ? 'scr-up' : 'scr-down') + '">' + (L.sign > 0 ? 'Buy' : 'Sell') + '</td>',
+                   '<td>' + fmtInt(L.qty) + '</td>',
+                   '<td class="scr-l">' + ({C: 'Call', P: 'Put', S: 'Stock'}[L.type] || '?') + '</td>'];
+      if (has('expiry')) cells.push('<td class="scr-l">' + esc(L.expiry ? fmtDate(L.expiry) : '–') + (L.dte != null ? ' <span class="text-slate-500">(' + L.dte + 'd)</span>' : '') + '</td>');
+      cells.push('<td>' + (L.type === 'S' ? '–' : money(L.strike)) + '</td>', '<td>' + money(L.price) + '</td>');
+      if (has('iv')) cells.push('<td>' + (L.iv != null ? (L.iv * 100).toFixed(1) + '%' : '–') + '</td>');
+      if (has('delta')) cells.push('<td>' + (L.delta != null ? L.delta.toFixed(2) : '–') + '</td>');
+      if (has('volume')) cells.push('<td>' + fmtInt(L.volume) + '</td>');
+      if (has('oi')) cells.push('<td>' + fmtInt(L.oi) + '</td>');
+      h += '<tr>' + cells.join('') + '</tr>';
+    });
+    return h + '</tbody></table>';
+  }
+  var clipN = 0;
+  function plChart(legs, spot, width) {
+    var opts = legs.filter(function (L) { return (L.type === 'C' || L.type === 'P') && L.strike != null; });
+    if (!opts.length || legs.some(function (L) { return L.price == null && L.type !== ''; })) {
+      return '<p class="text-[11px] text-slate-500 mt-2">No profit / loss chart: a leg has no price.</p>';
+    }
+    var ks = opts.map(function (L) { return L.strike; });
+    var near = opts.reduce(function (m, L) { return L.dte != null && (m == null || L.dte < m) ? L.dte : m; }, null);
+    var lo = Math.min.apply(null, ks.concat(spot ? [spot] : [])), hi = Math.max.apply(null, ks.concat(spot ? [spot] : []));
+    var pad = Math.max((hi - lo) * 0.6, (spot || hi) * 0.08);
+    var x0 = Math.max(0, lo - pad), x1 = hi + pad, N = 180, pts = [];
+    for (var i = 0; i <= N; i++) { var x = x0 + (x1 - x0) * i / N; pts.push([x, plAt(legs, x, near)]); }
+    ks.forEach(function (k) { pts.push([k, plAt(legs, k, near)]); });
+    pts.sort(function (a, b) { return a[0] - b[0]; });
+    var ys = pts.map(function (p) { return p[1]; });
+    var y0 = Math.min(0, Math.min.apply(null, ys)), y1 = Math.max(0, Math.max.apply(null, ys));
+    if (y1 - y0 < 1) { y1 += 1; y0 -= 1; }
+    var yp = (y1 - y0) * 0.08; y0 -= yp; y1 += yp;
+    var W = Math.round(Math.max(300, Math.min(640, width || 640))), H = W < 480 ? 210 : 240, L = 56, R = 12, T = 14, B = 30;
+    var X = function (v) { return L + (v - x0) / (x1 - x0) * (W - L - R); };
+    var Y = function (v) { return T + (y1 - v) / (y1 - y0) * (H - T - B); };
+    var line = pts.map(function (p, j) { return (j ? 'L' : 'M') + X(p[0]).toFixed(1) + ' ' + Y(p[1]).toFixed(1); }).join(' ');
+    var area = line + ' L' + X(pts[pts.length - 1][0]).toFixed(1) + ' ' + Y(0).toFixed(1) + ' L' + X(pts[0][0]).toFixed(1) + ' ' + Y(0).toFixed(1) + ' Z';
+    var id = 'scrClip' + (++clipN), zy = Y(0);
+    var bes = [];
+    for (var j = 1; j < pts.length; j++) {
+      var a = pts[j - 1], b = pts[j];
+      if ((a[1] < 0 && b[1] >= 0) || (a[1] >= 0 && b[1] < 0)) {
+        if (a[1] === b[1]) continue;
+        var be = a[0] + (0 - a[1]) * (b[0] - a[0]) / (b[1] - a[1]);
+        if (!bes.length || Math.abs(be - bes[bes.length - 1]) > (x1 - x0) / 200) bes.push(be);
+      }
+    }
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" style="max-width:' + W + 'px;display:block" role="img" aria-label="Profit and loss at expiration">' +
+      '<defs><clipPath id="' + id + 'u"><rect x="0" y="0" width="' + W + '" height="' + zy.toFixed(1) + '"/></clipPath>' +
+      '<clipPath id="' + id + 'd"><rect x="0" y="' + zy.toFixed(1) + '" width="' + W + '" height="' + (H - zy).toFixed(1) + '"/></clipPath></defs>' +
+      '<path d="' + area + '" clip-path="url(#' + id + 'u)" style="fill:var(--tv-up);fill-opacity:.16"/>' +
+      '<path d="' + area + '" clip-path="url(#' + id + 'd)" style="fill:var(--tv-down);fill-opacity:.16"/>' +
+      '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + zy.toFixed(1) + '" y2="' + zy.toFixed(1) + '" style="stroke:var(--tv-muted);stroke-dasharray:3 3"/>' +
+      '<path d="' + line + '" style="fill:none;stroke:var(--tv-text);stroke-width:1.6"/>';
+    [y1 - yp, 0, y0 + yp].forEach(function (v) {
+      s += '<text x="' + (L - 6) + '" y="' + (Y(v) + 3).toFixed(1) + '" text-anchor="end">' + esc(money(v, 0)) + '</text>';
+    });
+    for (var t = 0; t <= 4; t++) {
+      var xv = x0 + (x1 - x0) * t / 4;
+      s += '<text x="' + X(xv).toFixed(1) + '" y="' + (H - 10) + '" text-anchor="middle">' + esc(xv.toFixed(xv < 20 ? 2 : 0)) + '</text>';
+    }
+    bes.forEach(function (be) {
+      s += '<line x1="' + X(be).toFixed(1) + '" x2="' + X(be).toFixed(1) + '" y1="' + T + '" y2="' + (H - B) + '" style="stroke:var(--tv-muted);stroke-dasharray:2 3"/>' +
+           '<text x="' + (X(be) + 3).toFixed(1) + '" y="' + (T + 10) + '">BE ' + esc(be.toFixed(2)) + '</text>';
+    });
+    if (spot) {
+      s += '<line x1="' + X(spot).toFixed(1) + '" x2="' + X(spot).toFixed(1) + '" y1="' + T + '" y2="' + (H - B) + '" style="stroke:var(--tv-accent);stroke-width:1.2"/>' +
+           '<text x="' + (X(spot) + 3).toFixed(1) + '" y="' + (H - B - 4) + '" style="fill:var(--tv-accent-tx)">Now ' + esc(spot.toFixed(2)) + '</text>';
+    }
+    s += '</svg>';
+    var maxP = Math.max.apply(null, ys), maxL = Math.min.apply(null, ys);
+    var multiExp = opts.some(function (Lg) { return Lg.dte != null && near != null && Lg.dte > near; });
+    return '<div class="scr-pl mt-3">' +
+      '<div class="text-[11px] text-slate-400 mb-1">Profit / loss at ' + (multiExp ? 'the near expiration (the far leg valued from its own IV)' : 'expiration') +
+      ', per contract &middot; best ' + esc(money(maxP, 0)) + ' &middot; worst ' + esc(money(maxL, 0)) + ' (within the prices shown)' +
+      (bes.length ? ' &middot; break-even ' + bes.map(function (b) { return esc(b.toFixed(2)); }).join(' / ') : '') + '</div>' + s + '</div>';
+  }
+  function toggleRow(tr) {
+    var next = tr.nextElementSibling;
+    if (next && next.classList.contains('scr-detail')) { next.remove(); tr.classList.remove('scr-open'); return; }
+    var row = (S.last && S.last.rows || [])[parseInt(tr.dataset.i, 10)];
+    if (!row || !hasLegs(row)) return;
+    var spot = spotOf(row), legs = normLegs(row, spot);
+    var d = document.createElement('tr'), td = document.createElement('td');
+    d.className = 'scr-detail';
+    td.colSpan = tr.children.length;
+    var w = Math.max(260, $('scrTableWrap').clientWidth - 2);
+    td.innerHTML = '<div class="scr-detail-box" style="width:' + w + 'px;max-width:100%">' +
+      '<div class="overflow-x-auto">' + legsTable(legs) + '</div>' + plChart(legs, spot, w - 26) + '</div>';
+    d.appendChild(td);
+    tr.parentNode.insertBefore(d, tr.nextSibling);
+    tr.classList.add('scr-open');
+  }
+
+  // ── the data line, every 60 s ────────────────────────────────────────────────
+  function paintStatus(st) {
+    if (!st || !st.line) return;
+    var dot = $('scrDot');
+    dot.className = 'scr-dot scr-dot-' + (st.dot || 'slate') + ' mt-[3px]';
+    dot.title = st.label || '';
+    $('scrDataLine').textContent = st.line;
+    $('scrDataState').textContent = st.label || '';
+  }
+  function pollStatus() {
+    fetch('/options/api/status').then(function (r) { return r.ok ? r.json() : null; }).then(paintStatus).catch(function () {});
+  }
+  pollStatus();
+  setInterval(pollStatus, 60000);
+
+  // ── start ─────────────────────────────────────────────────────────────────────
+  renderAddGroups();
+  var dflt = S.saved.filter(function (x) { return x.id === BOOT.default_id; })[0];
+  if (dflt) { S.savedId = dflt.id; loadPayload(clone(dflt.payload)); renderSaved(); }
+  else loadDefaults();
+  if (BOOT.engine_ok) { showTab('results'); run(1); }
+  else {
+    showTab('results');
+    setEmpty(BOOT.engine_error || 'The screener is not available on this server yet.');
+    ['scrSee', 'scrRefresh', 'scrCsv', 'scrAddBtn'].forEach(function (id) { $(id).disabled = true; });
+  }
+})();
+</script>
 {% endblock %}

@@ -24,6 +24,9 @@ import pytest
 _TEST_TMP = Path(tempfile.gettempdir()) / "dashboard_tst_pytest"
 _TEST_TMP.mkdir(parents=True, exist_ok=True)
 os.environ["TST_DATABASE_URL"] = "sqlite:///" + (_TEST_TMP / "conftest_unused.db").as_posix()
+# the Options Screener DB: never the default screener.db beside the code (a test that
+# needs one aims app.screener_db at its own temp file with screener_db.configure)
+os.environ["TST_SCREENER_DATABASE_URL"] = "sqlite:///" + (_TEST_TMP / "screener_unused.db").as_posix()
 os.environ["TST_AUTH_MODE"] = "password"
 os.environ["TST_ADMIN_EMAIL"] = "dev@local.test"
 os.environ.setdefault("TST_ADMIN_PASSWORD", "dev-only-not-a-real-password")
@@ -38,7 +41,7 @@ from app.config import settings                  # noqa: E402
 from app import models                           # noqa: E402,F401  (register models on Base)
 
 DASH_ROOT = Path(__file__).resolve().parent.parent      # dashboard_tst/
-HEAD = "7c1e5a9d2b40"
+HEAD = "3069a57385d1"
 PREVIOUS_HEAD = "e2f3a4b5c6d7"
 
 

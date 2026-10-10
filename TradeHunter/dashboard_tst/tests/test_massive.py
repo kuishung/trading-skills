@@ -473,3 +473,138 @@ def test_client_from_env(monkeypatch):
     assert server.requests[0].url.host == "api.massive.test"
     assert server.requests[0].headers["Authorization"] == "Bearer " + KEY
     assert client.requests == 1
+
+
+# ───────────────────────────────────────────── Options Screener endpoints (v4.136)
+
+def _contract(underlying, exp="2026-11-20", ct="call", strike=100.0):
+    return {"underlying_ticker": underlying, "expiration_date": exp, "contract_type": ct,
+            "strike_price": strike, "shares_per_contract": 100,
+            "ticker": "O:%s261120C00100000" % underlying.replace(".", "")}
+
+
+def test_option_underlyings_counts_every_page_in_our_spelling():
+    nxt = BASE + "/v3/reference/options/contracts?cursor=PAGE2"
+    pages = {
+        None: {"results": [_contract("SPY"), _contract("SPY", ct="put"), _contract("BRK.B"),
+                           {"no": "ticker"}], "next_url": nxt},
+        "PAGE2": {"results": [_contract("SPY", strike=105.0), _contract("I:SPX")]},
+    }
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, json=pages[request.url.params.get("cursor")])
+
+    client, clock = make_client(Server(handler=handler), stocks_per_min=1)
+    got = client.option_underlyings(exp_lte=_dt.date(2026, 12, 9))
+    assert got == {"SPY": 3, "BRK-B": 1, "I:SPX": 1}
+    first = seen[0]
+    assert first.url.path == "/v3/reference/options/contracts"
+    params = dict(first.url.params)
+    assert params["expired"] == "false" and params["limit"] == "1000"
+    assert params["expiration_date.lte"] == "2026-12-09"
+    assert "apiKey" not in str(first.url) and first.headers["Authorization"] == "Bearer " + KEY
+    assert str(seen[1].url) == nxt                       # the cursor followed as given
+    assert clock.sleeps == []                            # options reference: not paced per minute
+
+
+def test_option_underlyings_without_a_date_and_errors_raise():
+    client, _ = make_client(Server([(200, {"results": [_contract("QQQ")]})]))
+    assert client.option_underlyings() == {"QQQ": 1}
+    client, _ = make_client(Server([(403, {"status": "NOT_AUTHORIZED"})]))
+    with pytest.raises(massive.MassiveError) as ei:
+        client.option_underlyings()
+    assert ei.value.kind == "plan" and "the options contracts list" in str(ei.value)
+
+
+def test_grouped_daily_path_params_parse_and_pacing():
+    seen = []
+    t = int(_dt.datetime(2026, 10, 8, 4, 0, tzinfo=_dt.timezone.utc).timestamp() * 1000)
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, json={"status": "OK", "resultsCount": 4, "results": [
+            {"T": "AAPL", "o": 200.0, "h": 205.0, "l": 199.0, "c": 204.5, "v": 5.5e7, "t": t},
+            {"T": "BRK.B", "o": 480.0, "h": 485.0, "l": 478.0, "c": 482.0, "v": 3.1e6, "t": t},
+            {"T": "NOCLOSE", "o": 1.0, "t": t},
+            "junk",
+        ]})
+
+    client, clock = make_client(Server(handler=handler), stocks_per_min=1)
+    bars = client.grouped_daily("2026-10-08")
+    assert [b["symbol"] for b in bars] == ["AAPL", "BRK-B"]
+    assert bars[0] == {"symbol": "AAPL", "on": "2026-10-08", "open": 200.0, "high": 205.0,
+                       "low": 199.0, "close": 204.5, "volume": 5.5e7}
+    assert seen[0].url.path == "/v2/aggs/grouped/locale/us/market/stocks/2026-10-08"
+    assert dict(seen[0].url.params)["adjusted"] == "true"
+    assert clock.sleeps == []
+    client.grouped_daily(_dt.date(2026, 10, 7), adjusted=False)     # a stock request: the minute window
+    assert dict(seen[1].url.params)["adjusted"] == "false"
+    assert seen[1].url.path.endswith("/2026-10-07")
+    assert clock.sleeps and clock.sleeps[-1] >= 60.0
+
+
+def test_grouped_daily_empty_day_and_plan_label():
+    client, _ = make_client(Server([(200, {"status": "OK", "resultsCount": 0})]))
+    assert client.grouped_daily("2026-10-10") == []
+    client, _ = make_client(Server([(403, {"status": "NOT_AUTHORIZED"})]))
+    with pytest.raises(massive.MassiveError) as ei:
+        client.grouped_daily("2026-10-08")
+    assert ei.value.kind == "plan" and "grouped daily stock bars" in str(ei.value)
+
+
+def test_reference_tickers_pages_and_is_stock_paced():
+    nxt = BASE + "/v3/reference/tickers?cursor=T2"
+    pages = {
+        None: {"results": [
+            {"ticker": "AAPL", "name": "Apple Inc.", "type": "CS", "primary_exchange": "XNAS"},
+            {"ticker": "BRK.B", "name": "Berkshire Hathaway Inc. Class B", "type": "CS",
+             "primary_exchange": "XNYS"},
+            {"name": "no ticker"}], "next_url": nxt},
+        "T2": {"results": [{"ticker": "SPY", "name": "SPDR S&P 500 ETF", "type": "ETF",
+                            "primary_exchange": "ARCX"},
+                           {"ticker": "I:SPX", "name": "S&P 500", "type": None}]},
+    }
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, json=pages[request.url.params.get("cursor")])
+
+    client, clock = make_client(Server(handler=handler), stocks_per_min=1)
+    got = client.reference_tickers("stocks")
+    assert [t["symbol"] for t in got] == ["AAPL", "BRK-B", "I:SPX", "SPY"]
+    assert got[1] == {"symbol": "BRK-B", "name": "Berkshire Hathaway Inc. Class B", "type": "CS",
+                      "primary_exchange": "XNYS"}
+    assert got[2] == {"symbol": "I:SPX", "name": "S&P 500", "type": None, "primary_exchange": None}
+    params = dict(seen[0].url.params)
+    assert seen[0].url.path == "/v3/reference/tickers"
+    assert (params["market"], params["active"], params["limit"]) == ("stocks", "true", "1000")
+    assert clock.sleeps and clock.sleeps[-1] >= 60.0       # page 2 waited out the minute window
+    n = len(seen)
+    client.reference_tickers("indices")
+    assert dict(seen[n].url.params)["market"] == "indices"
+
+
+def test_our_symbol_is_the_inverse_of_massive_symbol():
+    for ours in ("BRK-B", "AAPL", "BF-A"):
+        assert massive.our_symbol(massive.massive_symbol(ours)) == ours
+    assert massive.our_symbol(" brk.b ") == "BRK-B"
+    assert massive.our_symbol("I:SPX") == "I:SPX"
+    assert massive.our_symbol(None) == ""
+
+
+def test_paging_cap_is_per_call():
+    loop = {"results": [_contract("SPY")], "next_url": BASE + "/v3/reference/options/contracts?cursor=X"}
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        body = dict(loop, next_url=BASE + "/v3/reference/options/contracts?cursor=%d" % calls["n"])
+        return httpx.Response(200, json=body)
+
+    client, _ = make_client(Server(handler=handler))
+    with pytest.raises(massive.MassiveError) as ei:
+        list(client._pages("/v3/reference/options/contracts", {}, max_pages=3))
+    assert ei.value.kind == "http" and "past 3 pages" in str(ei.value) and calls["n"] == 3

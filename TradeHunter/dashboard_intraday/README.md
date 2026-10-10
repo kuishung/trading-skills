@@ -33,6 +33,19 @@ web, Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-10-10 — `tray_status.py`: the Options screener line (tray-sync rule)
+- dashboard_tst v4.136 added a second Massive collector on Hermes, **TST-Options-Screener**
+  (the whole-market Options Screener), so the tray carries its state too (tray-sync rule).
+  `get_screener_collector_status(path=None, now=None)` reads
+  `dashboard_tst/state/screener_collector.json` (`OPTIONS_SCREENER_STATE_PATH`) and builds an
+  **Options screener** line in the Show Status window, e.g. `Options screener: pass · cycle
+  pass 12 1,234/4,512 · last pass 09:45 ET · universe 4,512 · IV history 1,204/4,512 · hb 20s
+  ago`, plus a `Scr …` fragment in the tooltip.
+- Colours: **green** while it works (universe / pass / stocks / history / idle); **amber** on
+  error (the reason follows), stopped, or no heartbeat for 5 min
+  (`OPTIONS_SCREENER_STALE_SEC=300`); **grey** with no state file (the laptop).
+- The Options collector line is unchanged. Tested in `dashboard_tst/tests/test_scr_collector.py`.
+
 ### 2026-10-10 — `tray_status.py`: the Options collector line speaks Massive, not the Gateway (tray-sync rule)
 - dashboard_tst v4.134 switched the Options data from IBKR to **Massive** (formerly
   Polygon.io — Options Starter + Stocks Basic, the user's decision of 2026-10-10). The

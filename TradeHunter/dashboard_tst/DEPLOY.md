@@ -318,6 +318,74 @@ key there):
    last-trade time), so thinly traded strikes do not look stale.
 4. After 16:20 ET the tray line shows `EOD <today>`.
 
+## H. The Options Screener collector (on Hermes, v4.136)
+
+The Options page (`/options`) is a Barchart-style screener over the **whole US options market**
+Massive covers (`OPTIONS_SCREENER_DESIGN.md`). Its data comes from a second always-on Massive
+collector, **`TST-Options-Screener`** (`deploy\screener_collector.py --forever`, the venv
+python, the same `TST_MASSIVE_API_KEY` in `app\.env`, no IBKR, no clientId). It writes its own
+database, `screener.db` beside `tst.db` (gitignored; `TST_SCREENER_DATABASE_URL` overrides it),
+`state\screener_collector.json` (the tray's **Options screener** line) and
+`logs\screener_collector.log` (5 MB x 5). The basket collector of section G keeps running beside
+it, unchanged.
+
+What it does: the universe each morning from 07:30 ET (Massive's option contracts within 60
+days -> every optionable underlying); a **market pass** every `TST_SCREENER_CYCLE_MIN` (30) min
+from 09:45 to 16:00 ET and one after 16:20 ET (every underlying's whole chain,
+`TST_SCREENER_WORKERS` 8 threads, <= `TST_SCREENER_MAX_RPS` 40 requests/s); after 20:00 ET the
+day's stock bars (Stocks Basic grouped daily) and the technicals; weekly the names / types /
+exchanges; daily the earnings dates (Nasdaq); between passes the IV history of underlyings that
+do not have it yet.
+
+### First install (Hermes, PowerShell)
+
+```powershell
+cd C:\trading-skills\TradeHunter\dashboard_tst
+.\.venv\Scripts\python.exe -m pip install -r app\requirements.txt     # numpy (new in v4.136)
+powershell -ExecutionPolicy Bypass -File deploy\setup_screener_task.ps1 -StartNow
+Start-Sleep 30
+Get-Content state\screener_collector.json                               # state, pass, universe, history
+```
+
+Then restart the web app (the canonical script, section C) - it migrates `screener.db` and
+loads the market in the background (~8 s per 1M contracts; a single uvicorn worker, ~400 MB
+per 1M contracts, about double during a reload).
+
+**The first day.** The universe comes first (a few minutes: ~600 pages of the contract list);
+then a market pass (~4,000-5,000 underlyings, a few minutes); the stock history (2 years of
+grouped daily bars at 5 requests/min) takes ~3.5 h in the background, newest sessions first, so
+the technicals fill in over that time; the IV history of the whole market (~150-300 option-bar
+requests per underlying) takes ~12-20 h - IV rank reads "-" for an underlying until its history
+is in. The Options page's data line shows all of it (passes, underlyings, contracts, IV history
+done / total).
+
+### After a pull
+
+Re-run the setup script with `-StartNow` after any pull that changes
+`app\services\scr_collector.py`, `scr_store.py`, `massive.py`, `opt_massive.py`,
+`app\screener_models.py`, `app\screener_db.py`, `alembic_screener\` or
+`deploy\screener_collector.py` (the web-app restart does not restart this collector):
+
+```powershell
+cd C:\trading-skills\TradeHunter\dashboard_tst
+powershell -ExecutionPolicy Bypass -File deploy\setup_screener_task.ps1 -StartNow
+```
+
+By hand (stop the task first): `.\.venv\Scripts\python.exe deploy\screener_collector.py --once
+-v`, `--universe-now`, `--eod-now`, `--history NVDA LRCX`. Exit code 2 = Massive not usable for
+a one-off run.
+
+### Watching it
+
+- **The Options page data line**: green dot = running / idle; amber = no heartbeat (10 min in
+  its working hours, 3 h outside them) or stopped; rose = error (the reason is in the line).
+- **The Hermes tray**: `Options screener: pass · cycle pass 12 1,234/4,512 · last pass 09:45 ET
+  · universe 4,512 · IV history 1,204/4,512 · hb 20s ago` - green working; amber error /
+  stopped / no heartbeat for 5 min.
+- Errors: no key or a rejected key or a plan without an endpoint -> state `error`, retried every
+  5 min; one underlying failing is counted and skipped; a pass cut short by a Massive pause is
+  not counted as finished and resumes.
+
 ---
 
 ## Notes / guardrails

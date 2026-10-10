@@ -9,6 +9,10 @@ What it reads (the user's plans, 2026-10-10)
   requests; this client still keeps itself to ``max_rps`` a second.
 * **Stocks Basic** (free) - end-of-day daily bars, ~5 requests a minute: every
   ``/v2/aggs/ticker/<stock>`` call goes through a separate per-minute window.
+* For the Options Screener (OPTIONS_SCREENER_DESIGN.md §4, v4.136): the options
+  contracts reference list (``option_underlyings`` - the universe, not paced), the
+  grouped daily bars of every stock (``grouped_daily``) and the ticker reference list
+  (``reference_tickers``) - both paced like a stock request.
 
 The key
 -------
@@ -72,7 +76,13 @@ RETRY_BASE_S = 1.0            # 1 s, 2 s between those retries
 KINDS = ("auth", "plan", "rate", "http", "network", "config")
 _LABELS = (("/v3/snapshot/options/", "the options chain snapshot"),
            ("/v2/aggs/ticker/O:", "option daily bars"),
-           ("/v2/aggs/ticker/", "stock daily bars"))
+           ("/v2/aggs/ticker/", "stock daily bars"),
+           ("/v2/aggs/grouped/", "grouped daily stock bars"),
+           ("/v3/reference/options/contracts", "the options contracts list"),
+           ("/v3/reference/tickers", "the ticker reference list"))
+
+REFERENCE_LIMIT = 1000        # the reference endpoints' largest page
+UNIVERSE_MAX_PAGES = 5000     # the whole US options list within 60 days is ~500-800 pages
 
 
 class MassiveError(RuntimeError):
@@ -132,6 +142,15 @@ def massive_symbol(symbol) -> str:
     keep their own spelling as the storage key; only the request uses this one."""
     sym = str(symbol or "").strip().upper()
     return re.sub(r"[-/\s]+", ".", sym)
+
+
+def our_symbol(ticker) -> str:
+    """Massive's spelling of an underlying back to ours (the inverse of
+    ``massive_symbol``): upper-case, a share-class dot becomes a dash - ``BRK.B`` ->
+    ``BRK-B``. An index prefix (``I:SPX``) is kept as it is: it is how Massive names the
+    index for every later request."""
+    sym = str(ticker or "").strip().upper()
+    return re.sub(r"[./\s]+", "-", sym)
 
 
 # ────────────────────────────────── small helpers ──────────────────────────────────
@@ -389,6 +408,75 @@ class Client:
             raise ValueError("option_daily: an O: ticker is needed")
         return self._daily(t, start, end, stock=False)
 
+    def option_underlyings(self, *, exp_lte=None) -> dict[str, int]:
+        """Every underlying with listed options (the Options Screener's universe,
+        OPTIONS_SCREENER_DESIGN.md §4.1): ``/v3/reference/options/contracts`` with
+        ``expired=false`` (and ``expiration_date.lte`` when given), every page ->
+        ``{symbol: number of contracts}`` in OUR spelling (``our_symbol``: BRK.B ->
+        BRK-B). Not paced per minute (Options Starter has no request cap); a failure on
+        any page raises - no partial list comes back."""
+        params = {"expired": "false", "limit": REFERENCE_LIMIT}
+        if exp_lte is not None:
+            params["expiration_date.lte"] = _day_str(exp_lte)
+        counts: dict[str, int] = {}
+        for payload in self._pages("/v3/reference/options/contracts", params,
+                                   max_pages=UNIVERSE_MAX_PAGES):
+            for res in payload.get("results") or ():
+                if not isinstance(res, dict):
+                    continue
+                sym = our_symbol(res.get("underlying_ticker"))
+                if sym:
+                    counts[sym] = counts.get(sym, 0) + 1
+        return counts
+
+    def grouped_daily(self, day, *, adjusted=True) -> list[dict]:
+        """One session's daily bar of EVERY US stock (Stocks Basic grouped daily,
+        ``/v2/aggs/grouped/locale/us/market/stocks/<day>``): ``[{"symbol", "on", "open",
+        "high", "low", "close", "volume"}]`` with ``symbol`` in our spelling and ``on`` =
+        ``day``. Split-adjusted by default; ``adjusted=False`` = the prices that traded
+        that day. Paced by the per-minute window (a stock request). A day with no bars
+        (a holiday, not published yet) is ``[]``."""
+        on = _day_str(day)
+        path = "/v2/aggs/grouped/locale/us/market/stocks/%s" % on
+        params = {"adjusted": "true" if adjusted else "false"}
+        out: dict[str, dict] = {}
+        for payload in self._pages(path, params, stock=True):
+            for b in payload.get("results") or ():
+                if not isinstance(b, dict):
+                    continue
+                sym = our_symbol(b.get("T"))
+                close = _pos(b.get("c"))
+                if not sym or close is None:
+                    continue
+                vol = _num(b.get("v"))
+                out[sym] = {"symbol": sym, "on": on, "open": _pos(b.get("o")),
+                            "high": _pos(b.get("h")), "low": _pos(b.get("l")), "close": close,
+                            "volume": vol if (vol is not None and vol >= 0) else None}
+        return [out[s] for s in sorted(out)]
+
+    def reference_tickers(self, market="stocks") -> list[dict]:
+        """The active tickers of one market (``/v3/reference/tickers?market=<market>
+        &active=true``, every page; paced as a stock request): ``[{"symbol", "name",
+        "type", "primary_exchange"}]`` - ``symbol`` in our spelling (an index keeps
+        Massive's ``I:`` prefix), ``type`` Massive's code (CS, ETF, ADRC, INDEX ...),
+        ``primary_exchange`` its MIC (XNYS, XNAS ...) or None."""
+        m = str(market or "").strip().lower() or "stocks"
+        params = {"market": m, "active": "true", "limit": REFERENCE_LIMIT}
+        out: dict[str, dict] = {}
+        for payload in self._pages("/v3/reference/tickers", params, stock=True,
+                                   max_pages=UNIVERSE_MAX_PAGES):
+            for res in payload.get("results") or ():
+                if not isinstance(res, dict):
+                    continue
+                sym = our_symbol(res.get("ticker"))
+                if not sym:
+                    continue
+                name = str(res.get("name") or "").strip() or None
+                typ = str(res.get("type") or "").strip().upper() or None
+                exch = str(res.get("primary_exchange") or "").strip().upper() or None
+                out[sym] = {"symbol": sym, "name": name, "type": typ, "primary_exchange": exch}
+        return [out[s] for s in sorted(out)]
+
     # -- internals --
     def _daily(self, ticker: str, start, end, *, stock: bool, adjusted: bool = True) -> list[dict]:
         path = "/v2/aggs/ticker/%s/range/1/day/%s/%s" % (
@@ -402,12 +490,13 @@ class Client:
                     by_day[bar["on"]] = bar
         return [by_day[d] for d in sorted(by_day)]
 
-    def _pages(self, path: str, params: dict, *, stock: bool = False):
-        """Yield each JSON page, following ``next_url`` (as given, same host only)."""
+    def _pages(self, path: str, params: dict, *, stock: bool = False, max_pages: int = MAX_PAGES):
+        """Yield each JSON page, following ``next_url`` (as given, same host only), at
+        most ``max_pages`` of them."""
         url = self.base_url + path
         label = _label(path)
         seen = set()
-        for _ in range(MAX_PAGES):
+        for _ in range(max(1, int(max_pages))):
             payload = self._get(url, params, label=label, stock=stock)
             yield payload
             nxt = payload.get("next_url") if isinstance(payload, dict) else None
@@ -421,7 +510,7 @@ class Client:
                 return
             seen.add(nxt)
             url, params = nxt, None
-        raise MassiveError("http", "Massive kept paging past %d pages for %s" % (MAX_PAGES, label))
+        raise MassiveError("http", "Massive kept paging past %d pages for %s" % (max(1, int(max_pages)), label))
 
     def _get(self, url: str, params, *, label: str, stock: bool) -> dict:
         if not self._key:

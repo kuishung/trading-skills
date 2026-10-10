@@ -644,9 +644,27 @@ it — memory files don't sync across PCs.
 platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
 `dashboard_tst/DEPLOY.md`. Key facts (so any session/PC recalls them):
 
-- **Options — PAGE BLANK since v4.135 (2026-10-10), only the Massive data pipeline stays.** The
-  user: *"delete everything except the massive data"*: `/options` renders an empty page (to be
-  rebuilt); the screener (`opt_rules`, `opt_screen`, `payoff`, `opt_legs`) and every `_opt_*`
+- **Options SCREENER — BUILT in v4.136 (2026-10-10): `dashboard_tst/OPTIONS_SCREENER_DESIGN.md`
+  is the contract.** The user asked for *"exactly"* Barchart's options screener
+  (barchart.com/options/options-screener) with each member's own settings: `/options` is now a
+  Barchart-style screener over the **whole US options market Massive covers** (the user:
+  "based on what massive API available"), the Options Screener + **all 32 strategy screeners**
+  (verticals, straddles/strangles, calendars/diagonals, butterflies, condors, covered call,
+  naked put, married put, collar), Set Filters / Results tabs, saved screeners per member
+  (`option_screens`), CSV, P/L chart. **No bid/ask anywhere** (the user: "ignore the bid ask in
+  the filter") - prices are estimated from IV. Data: a SECOND Hermes collector, task
+  **`TST-Options-Screener`** (`deploy\screener_collector.py`, Massive only, no clientId) writes
+  its OWN DB **`screener.db`** (`TST_SCREENER_DATABASE_URL`, migrations in
+  `dashboard_tst/alembic_screener/`, version table `alembic_version_screener`); the engine
+  (`app/services/screener/`) needs **numpy** (`pip install -r app\requirements.txt` on Hermes).
+  **After a pull touching `scr_collector.py`, `scr_store.py`, `massive.py`, `opt_massive.py`,
+  `screener_models.py`, `screener_db.py`, `alembic_screener\` or `deploy\screener_collector.py`,
+  re-run on Hermes `powershell -ExecutionPolicy Bypass -File deploy\setup_screener_task.ps1
+  -StartNow`** (from `C:\trading-skills\TradeHunter\dashboard_tst`). Tray: an "Options
+  screener" line. Runbook: `dashboard_tst/DEPLOY.md` section H.
+- **Options — the v4.135 reset (history):** the v2 page was deleted and its IBKR-era rows purged. The
+  user: *"delete everything except the massive data"*: `/options` rendered an empty page (rebuilt
+  as the screener in v4.136); the v2 screener (`opt_rules`, `opt_screen`, `payoff`, `opt_legs`) and every `_opt_*`
   fragment are deleted; IBKR-era option rows were purged (migration `7c1e5a9d2b40`) and the
   history is rebuilt from Massive by the collector. The collector (below) is now the ONE reader
   of Massive; its universe is the tickers already in `option_basket`. History of the page:

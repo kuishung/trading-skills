@@ -16,6 +16,10 @@ from its heartbeat file dashboard_tst/state/options_collector.json: state, pass,
 last end-of-day date, heartbeat age - green running / idle / history / eod, amber
 error (e.g. the Massive key missing or rejected) / stopped / no heartbeat for 5 min,
 grey no file (the collector does not run on this PC).
+They also carry the Options Screener collector (dashboard_tst, task
+TST-Options-Screener - the whole US options market from Massive) from
+dashboard_tst/state/screener_collector.json: state, the pass in progress, the last
+pass time, universe size, IV history done/total, heartbeat age - same colours.
 
 Right-click menu:
   - Show Status        : popup notification with current symbol + progress
@@ -923,6 +927,118 @@ def get_options_collector_status(path=None, now=None) -> dict:
     return out
 
 
+# The Options Screener collector on Hermes (dashboard_tst/deploy/screener_collector.py,
+# task TST-Options-Screener; the whole US options market from Massive) heartbeats into
+# this file every ~15 s (tray-sync rule).
+OPTIONS_SCREENER_STATE_PATH = SKILL_DIR / "dashboard_tst" / "state" / "screener_collector.json"
+OPTIONS_SCREENER_STALE_SEC = 300    # no heartbeat for 5 min -> amber
+
+
+def get_screener_collector_status(path=None, now=None) -> dict:
+    """The Hermes Options Screener collector from its heartbeat file
+    (dashboard_tst/state/screener_collector.json): state, the pass in progress, the last
+    finished pass, universe size, IV history done / total, heartbeat age - one detail line
+    + a tooltip fragment.
+
+    ``state`` (what the line says) is one of:
+      starting / pass / universe / stocks / history / idle - the collector is working
+                 (a market pass, the universe refresh, stock bars / names / earnings /
+                 technicals, the IV history, or waiting for the next pass);
+      error    - the collector reports an error (the reason follows: the Massive key
+                 missing or rejected, a plan without an endpoint, Massive not reachable),
+                 or the state file is unreadable;
+      stopped  - the collector was stopped (Ctrl+C, or a one-off run finished);
+      stale    - no heartbeat for 5 min (the task died or hangs);
+      absent   - no state file (the collector does not run on this PC, e.g. the laptop).
+    Colour: green = working; amber = error / stopped / stale; grey = absent.
+    Returns {level: ok|warn|absent, color: green|amber|grey, state, line, tip, age_sec,
+             pass_id, last_pass_et, universe_n, history_done_n, history_total, api_ok}.
+    File reads only."""
+    def _age_text(sec):
+        if sec is None:
+            return "?"
+        sec = max(0.0, sec)
+        if sec < 90:
+            return f"{sec:.0f}s"
+        if sec < 5400:
+            return f"{sec / 60:.0f}m"
+        return f"{sec / 3600:.1f}h"
+
+    def _n(v):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+
+    p = Path(path) if path is not None else OPTIONS_SCREENER_STATE_PATH
+    out = {"level": "absent", "color": "grey", "state": "absent", "age_sec": None, "pass_id": None,
+           "last_pass_et": None, "universe_n": None, "history_done_n": None, "history_total": None,
+           "api_ok": None}
+    if not p.exists():
+        out.update(line="Options screener: not running on this PC (no state file)", tip="Scr -")
+        return out
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+        if not isinstance(d, dict):
+            raise ValueError("not a JSON object")
+    except Exception as exc:
+        out.update(level="warn", color="amber", state="error", tip="Scr ?",
+                   line=f"Options screener: state file unreadable ({exc})"[:160])
+        return out
+
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    try:
+        hb = datetime.fromisoformat(str(d.get("heartbeat") or "").replace("Z", "+00:00"))
+        if hb.tzinfo is None:
+            hb = hb.replace(tzinfo=timezone.utc)
+    except Exception:
+        hb = None
+    age = (now - hb).total_seconds() if hb is not None else None
+    raw = str(d.get("state") or "?").strip().lower()
+    state = raw if raw in ("starting", "pass", "universe", "stocks", "history", "idle", "error",
+                           "stopped") else "idle"
+    pid, kind = _n(d.get("pass_id")), d.get("pass_kind")
+    done, total = _n(d.get("symbols_done")), _n(d.get("symbols_total"))
+    uni = _n(d.get("universe_n"))
+    h_done, h_total = _n(d.get("history_done_n")), _n(d.get("history_total"))
+    last_et, api_ok = d.get("last_pass_et"), d.get("api_ok")
+    out.update(state=state, age_sec=age, pass_id=pid, last_pass_et=last_et, universe_n=uni,
+               history_done_n=h_done, history_total=h_total, api_ok=api_ok)
+
+    parts = [state.upper() if state in ("error", "stopped") else state]
+    if state == "pass" and total:
+        parts.append(f"{kind or 'market'} pass {pid or '?'} {done or 0:,}/{total:,}")
+    parts.append(f"last pass {last_et}" if last_et else "no pass yet")
+    if uni:
+        parts.append(f"universe {uni:,}")
+    if h_total:
+        parts.append(f"IV history {h_done or 0:,}/{h_total:,}")
+    pend = _n(d.get("stock_days_pending"))
+    if pend:
+        parts.append(f"stock days to go {pend:,}")
+    if api_ok is False:
+        parts.append("Massive failing")
+    parts.append(f"hb {_age_text(age)} ago")
+    line = "Options screener: " + " · ".join(parts)
+
+    if age is None or age > OPTIONS_SCREENER_STALE_SEC:
+        out.update(level="warn", color="amber", state="stale", tip=f"Scr stale {_age_text(age)}",
+                   line=f"Options screener: NO HEARTBEAT for {_age_text(age)} "
+                        f"(last: {raw}) - is TST-Options-Screener running?")
+    elif state in ("error", "stopped"):
+        why = d.get("detail") or d.get("last_error") or ""
+        out.update(level="warn", color="amber",
+                   tip="Scr ERR" if state == "error" else "Scr stopped",
+                   line=(line + (f" - {why}" if why else ""))[:220])
+    else:
+        out.update(level="ok", color="green",
+                   tip=f"Scr p{pid}" if (pid and state == "pass") else f"Scr {state}",
+                   line=line)
+    return out
+
+
 # ---- Icon generation (no .ico files needed — drawn at startup) ----
 
 def _make_circle_icon(color: tuple, size: int = 64,
@@ -1246,6 +1362,15 @@ def _build_progress_window(root):
         bg='#1a1a1a', fg='#888888', wraplength=430, justify='center',
     )
     opt_lbl.pack(pady=(0, 4))
+
+    # Options Screener collector (dashboard_tst, task TST-Options-Screener) - tray-sync
+    # rule. Green working / amber error or no heartbeat for 5 min / grey no file.
+    scr_var = tk.StringVar(value='Options screener: -')
+    scr_lbl = tk.Label(
+        win, textvariable=scr_var, font=('Segoe UI', 10),
+        bg='#1a1a1a', fg='#888888', wraplength=430, justify='center',
+    )
+    scr_lbl.pack(pady=(0, 4))
 
     # ── DEEP CHECK section ─────────────────────────────────────────────────
     tk.Label(win, text='DEEP CHECK', font=('Segoe UI', 8, 'bold'),
@@ -1637,6 +1762,16 @@ def _build_progress_window(root):
                 opt_var.set("Options collector: ?")
                 opt_lbl.configure(fg='#888888')
 
+            # Options Screener collector heartbeat (green / amber / grey)
+            try:
+                sc = get_screener_collector_status()
+                scr_var.set(sc.get('line') or "Options screener: ?")
+                scr_lbl.configure(fg={'green': '#5fd97a', 'amber': '#facc15'}.get(
+                    sc.get('color'), '#888888'))
+            except Exception:
+                scr_var.set("Options screener: ?")
+                scr_lbl.configure(fg='#888888')
+
             # "Completed through" date (ingest currency)
             try:
                 ct = get_completed_through()
@@ -1872,12 +2007,16 @@ def _update_loop(icon: "pystray.Icon"):
                     opt_str = get_options_collector_status().get("tip") or "Opt ?"
                 except Exception:
                     opt_str = "Opt ?"
+                try:
+                    scr_str = get_screener_collector_status().get("tip") or "Scr ?"
+                except Exception:
+                    scr_str = "Scr ?"
                 # Windows tray tooltips cap at 128 chars; put the critical
                 # signals (state, deep-check, gateway, options collector,
-                # through) FIRST so they survive, and let the verbose status
-                # tooltip trail + be trimmed.
+                # options screener, through) FIRST so they survive, and let the
+                # verbose status tooltip trail + be trimmed.
                 icon.title = _clamp_title(
-                    f"Ingest: {new_state} | {dc_str} | {gw_str} | {opt_str} | {through_str} — {status['tooltip']}"
+                    f"Ingest: {new_state} | {dc_str} | {gw_str} | {opt_str} | {scr_str} | {through_str} — {status['tooltip']}"
                 )
                 if new_state != current_state:
                     current_state = new_state
