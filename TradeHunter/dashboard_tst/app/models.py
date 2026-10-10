@@ -1339,8 +1339,9 @@ class OptionSignal(Base):
 
 class UserOptionPrefs(Base):
     """A member's option rule overrides, SPARSE: only the fields they changed,
-    merged over ``opt_rules`` defaults on read (like ``ema_setup.clean_enabled``
-    over ``COND_DEFAULT``).
+    merged over the ``opt_rules`` defaults on read (like ``ema_setup.clean_enabled``
+    over ``COND_DEFAULT``). UNUSED since v4.135, which removed the Options page and
+    ``opt_rules``; the table is kept.
 
     ``prefs_hash`` is the hash of the MERGED result over the pick-relevant fields
     only, stored so the signal lookup is one indexed read and so the nightly job can

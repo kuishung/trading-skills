@@ -31,7 +31,7 @@ action) at the same expiry / right / strike as the standard one, is dropped.
 
 Units: a contract's ``iv`` is a FRACTION; a day's IV30 (``iv_series``, ``iv30``) is
 PERCENT. Model prices use ``opt_constants.RISK_FREE`` and no dividend, the same as
-``payoff`` - so a model mid, a payoff curve and a solved IV agree with each other.
+``black_scholes`` - so a model mid and a solved IV agree with each other.
 
 Everything is ticker-relative (CLAUDE.md): the window is spot +/- k x spot x IV x
 sqrt(DTE); the strike grids follow the price's magnitude. Nothing here prints or logs
@@ -47,10 +47,9 @@ import time
 
 from ..models import OptUnderlyingDaily
 from . import clock, opt_store, option_metrics
-from .black_scholes import black_scholes
+from .black_scholes import black_scholes, implied_vol
 from .massive import MassiveError, option_ticker
 from .opt_constants import ATM_MAX_DIST_PCT, RISK_FREE
-from .payoff import implied_vol
 
 log = logging.getLogger(__name__)
 

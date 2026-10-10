@@ -3,8 +3,8 @@
 Every number an engine, the data layer or the page would otherwise bury in a
 function body lives here with a one-line reason (OPTIONS_MODULE_DESIGN.md
 II.2.3, design/options/part_B_engines.md B0.3). None of these is a member
-preference: a member's rules are the fields of ``opt_rules.SCHEMA``; what is
-here is the platform's convention (the chart stop is 1 ATR, the notional cap is
+preference (the member rules lived in ``opt_rules``, removed with the v2 page in
+v4.135); what is here is the platform's convention (the chart stop is 1 ATR, the notional cap is
 10 % of the account) or a data-quality bound (an IV of 8.3 is not a quote).
 
 Everything a strike or a stop is measured against is ticker-relative - ATR
@@ -38,7 +38,7 @@ from .bull_put import (  # noqa: F401  - re-exports, one home for the playbook n
 
 # ---- pricing ----------------------------------------------------------------
 MULT = 100                  # shares per US equity option contract: every $ figure on the page is per contract
-RISK_FREE = 0.04            # the one rate behind every model number (bull_put.bs_put prices its 15-DTE curve with it, payoff.RISK_FREE is the same)
+RISK_FREE = 0.04            # the one rate behind every model number (bull_put.bs_put prices its 15-DTE curve with it, black_scholes.implied_vol solves with it)
 
 # ---- the chart stop / target / pad (conventions, never fields) --------------
 STOP_ATR = 1.0              # debit chart stop = entry - 1 ATR (the Curated / trade-tool convention "stop 1xATR(14) away")

@@ -18,7 +18,7 @@ import sqlalchemy as sa
 from alembic.script import ScriptDirectory
 
 from app import models
-from app.services import opt_rules, opt_screen, opt_store, option_metrics, support_bounce
+from app.services import opt_store, option_metrics, support_bounce
 
 from .conftest import DASH_ROOT, downgrade, make_engine, table_names, upgrade
 from .fixtures.options import bars_synth, bs_greeks
@@ -151,6 +151,66 @@ def test_migration_guard_when_create_all_made_a_table_first(db_url):
     finally:
         eng.dispose()
     upgrade(db_url, REV)                                   # must not raise
+    assert set(FIVE) <= table_names(db_url)
+
+
+def test_purge_migration_keeps_only_massive_data(db_url):
+    """v4.135 (7c1e5a9d2b40): non-Massive option rows go, the daily history is emptied for
+    a Massive rebuild, the derived stock figures are cleared, the basket stays."""
+    upgrade(db_url, REV)
+    T = models.Base.metadata.tables
+    eng = make_engine(db_url)
+    q = {"symbol": "SPY", "expiry": E2, "right": "P", "as_of": T0, "mdt": "delayed"}
+    snap = {"symbol": "SPY", "snap_on": TODAY, "kind": "eod", "expiry": E2, "dte": 43, "right": "P"}
+    try:
+        with eng.begin() as c:
+            c.execute(T["opt_quote"].insert(), [dict(q, strike=95.0, source="massive"),
+                                                dict(q, strike=96.0, source="hermes"),
+                                                dict(q, strike=97.0, source="member")])
+            c.execute(T["opt_refresh_log"].insert(), [{"symbol": "SPY", "as_of": T0, "source": s}
+                                                      for s in ("massive", "hermes", "member")])
+            c.execute(T["option_chain_snapshot"].insert(), [dict(snap, strike=95.0, source="massive"),
+                                                            dict(snap, strike=96.0, source="ibkr"),
+                                                            dict(snap, strike=97.0, source="cboe")])
+            c.execute(T["opt_underlying_daily"].insert(), [
+                {"symbol": "SPY", "on": "2026-10-06", "close": 100.0, "iv30": 20.0, "source": "massive"},
+                {"symbol": "SPY", "on": "2026-10-07", "close": 101.0, "iv30": 21.0, "source": "hermes"}])
+            c.execute(T["opt_underlying"].insert(),
+                      {"symbol": "SPY", "spot": 101.0, "spot_source": "massive", "spot_mdt": "delayed",
+                       "atr14": 2.0, "hv20": 15.0, "iv30": 21.0, "iv_rank": 40.0, "iv_n": 200,
+                       "earnings_date": "2027-01-20", "earnings_src": "yahoo", "history_done": True})
+            c.execute(T["opt_underlying"].insert(),
+                      {"symbol": "QQQ", "spot": 400.0, "spot_source": "hermes", "spot_user_id": 3,
+                       "spot_mdt": "live", "iv30": 25.0, "history_done": True})
+            c.execute(T["iv_daily"].insert(), [{"symbol": "SPY", "on": TODAY, "source": "ibkr"}])
+            c.execute(T["option_signal"].insert(), [{"symbol": "SPY", "snap_on": TODAY, "kind": "eod",
+                                                     "prefs_hash": "abc", "engine_version": "1",
+                                                     "status": "ok"}])
+            c.execute(T["option_basket"].insert(), [{"owner_key": "system", "symbol": "SPY", "added_on": TODAY}])
+    finally:
+        eng.dispose()
+
+    upgrade(db_url, "head")
+    eng = make_engine(db_url)
+    try:
+        with eng.connect() as c:
+            def rows(name, *cols):
+                return [tuple(r) for r in c.execute(sa.select(*(T[name].c[k] for k in cols))
+                                                    .order_by(T[name].c.id))]
+            assert rows("opt_quote", "strike", "source") == [(95.0, "massive")]
+            assert rows("opt_refresh_log", "source") == [("massive",)]
+            assert rows("option_chain_snapshot", "strike", "source") == [(95.0, "massive")]
+            assert rows("opt_underlying_daily", "on") == []          # rebuilt from Massive by the collector
+            assert rows("iv_daily", "symbol") == [] and rows("option_signal", "symbol") == []
+            assert rows("option_basket", "symbol") == [("SPY",)]
+            und = rows("opt_underlying", "symbol", "spot", "spot_source", "spot_user_id", "atr14", "hv20",
+                       "iv30", "iv_rank", "iv_n", "earnings_date", "history_done")
+            assert und == [("SPY", 101.0, "massive", None, None, None, None, None, None, "2027-01-20", False),
+                           ("QQQ", None, None, None, None, None, None, None, None, None, False)]
+    finally:
+        eng.dispose()
+
+    downgrade(db_url, REV)                                 # the no-op downgrade does not raise
     assert set(FIVE) <= table_names(db_url)
 
 
@@ -438,9 +498,9 @@ def test_chain_view_shape_order_and_expired_hidden(db, user):
     assert empty["expiries"] == [] and empty["spot"] is None
 
 
-def test_massive_rows_through_chain_view_and_the_screener(db):
+def test_massive_rows_through_chain_view(db):
     """Starter-shaped rows (no bid / ask, the model price as mid, the feed's 15-min-old
-    stamp) come out of chain_view as the screener reads them - and list trades."""
+    stamp) come out of chain_view with their source, feed and stamp intact."""
     stamp = T0 - 16 * MIN
     T = (_dt.date.fromisoformat(E2) - _dt.date.fromisoformat(TODAY)).days / 365.0
     rows = []
@@ -461,16 +521,6 @@ def test_massive_rows_through_chain_view_and_the_screener(db):
         {("massive", "delayed", None, None, stamp)}
     assert (view["spot"], view["spot_source"], view["spot_mdt"], view["spot_as_of"]) == \
         (100.0, "massive", "delayed", stamp)
-    opt_store.set_earnings(db, "SPY", "2027-01-20", now=T0)
-    und = dict(opt_store.underlying(db, "SPY"), atr14=2.0, iv_rank=55.0, avg_vol20=5e7)
-    rules = opt_rules.for_strategy(opt_rules.house(), "bull_put")
-    out = opt_screen.screen("bull_put", {"SPY": view}, {"SPY": und}, rules, today=TODAY, now=T0)
-    assert out["n_passed"] >= 1, (out["tickers"], [f for f in out["funnel"] if f["removed"]])
-    for c in out["rows"]:
-        assert c["data"]["priced"] == "model" and c["net_natural"] is None and c["net"] > 0
-        assert c["data"]["sources"] == ["massive·delayed"] and c["data"]["age_min"] == 16
-    line = [f for f in out["funnel"] if f.get("info")]
-    assert len(line) == 1 and line[0]["rule"] == "no_quotes" and line[0]["removed"] >= out["n_passed"]
 
 
 def test_chain_view_filters_cache_and_copies(db, engine):

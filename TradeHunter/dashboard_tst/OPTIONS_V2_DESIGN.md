@@ -1,6 +1,6 @@
 # Options v2 — browse by rules, shared freshness (data: Massive since v4.134; IBKR in v4.133)
 
-Status: **BUILT in v4.133 (2026-10-09); data source switched to Massive and BUILT in v4.134 (2026-10-10) - read §13 first, it supersedes the IBKR data path of §2.3-§6 (§13.8 = what the v4.134 build changed)** (contract written the same day; what the v4.133 build
+Status: **PAGE REMOVED in v4.135 (2026-10-10)** - the user asked to delete everything except the Massive data; `/options` is blank, to be rebuilt, and only the §13 data pipeline (collector, `massive`, `opt_massive`, `opt_store`) remains (§14). Before that: **BUILT in v4.133 (2026-10-09); data source switched to Massive and BUILT in v4.134 (2026-10-10) - read §13 first, it supersedes the IBKR data path of §2.3-§6 (§13.8 = what the v4.134 build changed)** (contract written the same day; what the v4.133 build
 changed on purpose is in §12), then **reviewed before release (2026-10-09/10)** — every
 fix the six-lens review led to is listed in §12 "Review fixes", and §2–§9 below are kept
 in line with it. Supersedes the "auto setup" Options page of v4.127–v4.132
@@ -923,3 +923,21 @@ points 1, 3 and 5 above. Only §13.2's two signature lines were edited to match.
 - Some texts outside this round's files still describe the old stamp: the `opt_massive.py` module
   docstring and the `opt_store.py` / `app/models.py` comments say rows carry the feed's own
   `last_updated` (V3). DEPLOY.md §G check 3 is moot.
+
+## 14. The page removed (v4.135, 2026-10-10)
+
+The user: *"I want to revamp the full page of this. delete everything except the massive
+data"* - new page **blank for now**, keep **nothing else**, old data **purged now**.
+
+- Gone: the whole browse-by-rules page of §9 (strip, basket editor, strategy dropdown, rules
+  panel, trade list, legs, payoff) and its code - `opt_rules.py` (§7), `opt_screen.py` (§8),
+  `payoff.py`, `opt_legs.py`, the `_opt_*.html` fragments, `_payoff_chart.html`. `GET /options`
+  renders a blank page; `implied_vol` moved to `black_scholes.py`.
+- Kept: the §13 data path unchanged - the Hermes collector reading Massive into `opt_quote`,
+  `opt_underlying`, `opt_underlying_daily`, `opt_refresh_log`, `opt_collector_status` and the
+  EOD record, over the tickers already in `option_basket`.
+- Purged (migration `7c1e5a9d2b40`): every non-Massive row of `opt_quote`, `opt_refresh_log`,
+  `option_chain_snapshot`; all of `opt_underlying_daily` (rebuilt from Massive - a row relabelled
+  `massive` could still hold an IBKR IV30), `iv_daily`, `option_signal`; the derived figures and
+  any non-Massive spot in `opt_underlying`, with `history_done` reset.
+- The next page will be designed fresh; §7-§9 are history, not a contract.

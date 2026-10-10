@@ -29,8 +29,8 @@ doubling to 2 min, 4 retries), ``http`` (any other status; 5xx retried twice; a 
 that is not JSON; a ``next_url`` to another host), ``network`` (connection / timeout,
 retried twice). ``.status`` is the HTTP status when there was one.
 
-Sync on purpose: the collector is a sync loop and the web app's "Refresh now" runs in a
-worker thread. ``http`` (an ``httpx.Client``-like object), ``sleep`` and ``now`` are
+Sync on purpose: the collector is a sync loop (the web app's "Refresh now", removed with
+the Options page in v4.135, ran it in a worker thread). ``http`` (an ``httpx.Client``-like object), ``sleep`` and ``now`` are
 injectable so the tests run with no network and a fake clock.
 """
 from __future__ import annotations

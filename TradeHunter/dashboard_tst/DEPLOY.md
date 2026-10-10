@@ -182,6 +182,15 @@ throughout — an unreadable ticker folder is skipped, never breaks the push.
 
 ## G. Options data from Massive (on Hermes, v4.134 — Options v2)
 
+> **v4.135 (2026-10-10): the Options page is BLANK** (to be rebuilt) and only this data
+> pipeline stays. There is no "Refresh now", no status strip and no basket editor any more:
+> the collector is the ONE reader of Massive, its universe is the tickers already in
+> `option_basket`, and it is watched on the **Hermes tray** and in `state\options_collector.json`
+> / `logs\options_collector.log`. The first start after the v4.135 deploy **rebuilds every
+> basket ticker's history from Massive** (migration `7c1e5a9d2b40` purged the IBKR-era rows and
+> reset `history_done`) — expect "reading history" for 30-50 min. The page-strip text below
+> is history.
+
 Since v4.134 every option and stock figure on the Options page comes from **Massive**
 (formerly Polygon.io) — the user's decision of 2026-10-10 (`OPTIONS_V2_DESIGN.md` §13).
 TradeHunter only FINDS the trade; the live price is checked and the order entered in IBKR
@@ -210,6 +219,7 @@ Two things read Massive, both server-side with the one key:
   row (`opt_collector_status`) and `state\options_collector.json` (the Hermes tray reads it).
 - **"Refresh now"** on a basket row (and in an opened trade) — the web app reads that one
   ticker at once (a few seconds), at most once per ticker per member per minute.
+  *(Removed in v4.135 with the page.)*
 
 ### First install (Hermes, PowerShell, elevated)
 
@@ -264,7 +274,8 @@ powershell -ExecutionPolicy Bypass -File deploy\setup_options_collector_task.ps1
 
 ### Watching it
 
-**The Options page strip** (top of `/options`):
+**The Options page strip** (top of `/options`; v4.134 only — removed with the page in
+v4.135, watch the tray below):
 
 | Strip | Meaning |
 |---|---|

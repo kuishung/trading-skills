@@ -86,33 +86,34 @@ from this dashboard.
   completeness, on **AI-Hermes** — folder-scans
   `C:\HermesSync\MarketResearch\QuarterlyReport` for missing quarters / stub MDs,
   POSTs `/api/ingest/edgar`; scheduled task).
-- **Options page (Options v2 — contract `OPTIONS_V2_DESIGN.md`, §13 first).** Browse trades
-  by your own rules; since v4.134 every option / stock figure comes from **Massive** (formerly
-  Polygon.io — Options Starter + Stocks Basic; the earnings date from Yahoo):
-  - `app/routes/options_page.py` + templates `options.html`, `_opt_basket.html`,
-    `_opt_rules.html`, `_opt_results.html`, `_opt_trade.html`, `_opt_status.html`,
-    `_opt_help.html` (the payoff keeps `_payoff_chart.html`). "Refresh now" =
-    `POST /options/refresh/<sym>`.
+- **Options — the Massive data pipeline (the page is BLANK since v4.135, to be rebuilt).**
+  Every option / stock figure comes from **Massive** (formerly Polygon.io — Options Starter +
+  Stocks Basic; the earnings date from Yahoo), collected on Hermes into the database:
+  - `app/routes/options_page.py` + `options.html` — only `GET /options`, a blank page (the
+    menu entry and its `require_menu("options")` gate stay).
   - `app/services/massive.py` — the Massive REST client (Bearer key from
     `TST_MASSIVE_API_KEY`, pacing, typed errors); `opt_massive.py` — the chain snapshot ->
     `opt_quote` rows (model prices from IV), the spot, the fetch window, the IV30 history
     rebuilt from option daily bars, the daily bar top-up; `opt_store.py` — the data layer
     (newer-wins quotes, freshness, the stock facts, the collector heartbeat, the EOD record,
-    retention); `opt_rules.py` — rules v2 (shared block + ten strategies); `opt_screen.py`
-    — the ten screeners + the "why so few?" funnel; `opt_collector.py` — the Hermes collector
-    loop. `option_store.py` is reduced to the basket universe + the snapshot retention;
-    `payoff.py` takes its labels from `opt_rules`.
+    retention); `opt_collector.py` — the Hermes collector loop; `black_scholes.py` — the
+    model price and (since v4.135) `implied_vol`. `option_store.py` is reduced to the basket
+    universe + the snapshot retention. The collector's universe is still `option_basket`.
   - `app/models.py` — `OptQuote`, `OptUnderlying`, `OptUnderlyingDaily`, `OptRefreshLog`,
-    `OptCollectorStatus`; migration `alembic/versions/3b26d60468a0_options_v2.py`.
+    `OptCollectorStatus`; migrations `alembic/versions/3b26d60468a0_options_v2.py` (tables)
+    and `7c1e5a9d2b40_options_massive_only_purge.py` (v4.135: non-Massive rows purged).
   - `deploy/options_collector.py` + `deploy/setup_options_collector_task.ps1` — the
     always-on collector on Hermes (task `TST-Options-Collector`, venv python, HTTPS to
     Massive; DEPLOY.md G). It rotates its own log (`--log-file`, 5 MB x 5 files).
-  - `bridge/` — the member IBKR bridge 2.0 (`ibkr_bridge.py`, `th_ibkr.py`). Since v4.134
-    the Options page no longer uses it for data; it stays for the legacy hidden pages and
-    the basket's optional "Run my TWS scanner" import (see `bridge/README.md`).
+  - `bridge/` — the member IBKR bridge 2.0 (`ibkr_bridge.py`, `th_ibkr.py`). Not used for
+    Options data; it stays for the legacy hidden pages (see `bridge/README.md`).
   - Tests: `test_massive.py`, `test_opt_massive.py`, `test_opt_collector.py`,
-    `test_opt_store.py`, `test_opt_screen.py`, `test_opt_rules.py`, `test_options_v2_page.py`,
-    `test_connector.py` + `test_th_ibkr.py` (the bridge), `test_payoff.py`, `test_option_store.py`.
+    `test_opt_store.py`, `test_options_page.py`, `test_option_store.py`, `test_connector.py` +
+    `test_th_ibkr.py` (the bridge).
+  - **Removed in v4.135:** the whole v2 page and its screener — `services/{opt_rules,
+    opt_screen, payoff, opt_legs}.py`, templates `_opt_{basket, rules, results, trade, status,
+    help}.html` and `_payoff_chart.html`, the `--po-*` colours in `base.html`, tests
+    `test_opt_rules.py`, `test_opt_screen.py`, `test_options_v2_page.py`, `test_payoff.py`.
   - **Removed in v4.134:** `services/opt_connector_pkg.py` (the connector zip) and
     `_opt_connector.html`; the IBKR read path of the collector.
   - **Removed in v4.133:** `services/{option_engine, chart_state, strike_picker,
@@ -180,6 +181,42 @@ surface takes shape.
 > `__version__` — that constant is the version shown on the login page / nav / `/status`
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
+
+### 2026-10-10 - v4.135: the Options page is blank; only the Massive data stays (non-Massive rows purged)
+
+The user: *"I want to revamp the full page of this. delete everything except the massive
+data"* - the new page: **blank for now**; keep: **nothing else**; old IBKR-era data: **purge
+now**.
+
+- **The page.** `routes/options_page.py` serves only `GET /options` (a blank `options.html`
+  with the page title); the menu entry and its `require_menu("options")` gate stay. Removed:
+  the status strip, the basket (add / remove / import / sort / refresh now), the strategy
+  dropdown, the rules panel, the trade list, the legs and the payoff chart, with every
+  endpoint under `/options/{basket, refresh, rules, results, trade, payoff, status, help}`.
+- **The screener.** Deleted `services/opt_rules.py`, `opt_screen.py`, `payoff.py` and
+  `opt_legs.py` (its only user was `payoff`), the `_opt_*.html` fragments and
+  `_payoff_chart.html`, and the payoff colour variables (`--po-*`) in `base.html`.
+  `implied_vol` (the Massive IV-history backfill uses it) moved to `black_scholes.py`, the
+  same bisection on [0.01, 5] at `opt_constants.RISK_FREE`; `opt_massive` imports it there.
+- **Kept, unchanged in behaviour:** the Massive pipeline - `massive.py`, `opt_massive.py`,
+  `opt_store.py`, `opt_collector.py`, `option_metrics.py`, `option_store.py` (retention),
+  the Hermes collector task and its tray line. The collector's universe is still
+  `option_basket`, so the tickers already in members' baskets keep being collected while
+  there is no page to edit the basket.
+- **Purge (migration `7c1e5a9d2b40`, data only, runs at app start).** Deletes the non-Massive
+  rows of `opt_quote`, `opt_refresh_log` and `option_chain_snapshot`; empties
+  `opt_underlying_daily` (a day row is updated field by field and relabelled `massive` by the
+  last writer, so a Massive-touched row could still hold an IBKR IV30 - rebuilding is the only
+  way to be sure), `iv_daily` and `option_signal`; clears `opt_underlying`'s derived figures
+  (ATR, HV, average volume, IV30 and rank) and any spot not read from Massive, and resets
+  `history_done` - so the collector rebuilds every basket ticker's 2 years of bars and 1 year
+  of IV30 from Massive on its next start. Earnings dates, the basket, member trade records and
+  the legacy IV screener's `iv_history` are untouched. Downgrade is a no-op.
+- **Tested: 276 pass** (`py -m pytest tests -q -p no:warnings`): the 524 of v4.134 minus the
+  254 in the four deleted test files, plus `test_options_page.py` (5: the blank page, the
+  one route, the deleted files, the kept pipeline incl. an `implied_vol` round trip, the menu
+  entry) and `test_opt_store.py` +1 (the purge keeps only Massive rows, empties the history,
+  clears the derived figures, leaves the basket).
 
 ### 2026-10-10 - v4.134: Options data from Massive (Polygon) - Options Starter + Stocks Basic, IBKR data path removed
 

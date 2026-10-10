@@ -68,3 +68,42 @@ def black_scholes(
     else:
         raise ValueError("kind must be 'call' or 'put'")
     return BSResult(price=price, delta=delta, prob_itm=prob_itm)
+
+
+# ---------------------------------------------------------------- implied vol
+# Moved here from services/payoff.py in v4.135, when the Options page and its payoff
+# chart were removed: the Massive IV-history backfill (opt_massive) is the one user.
+IV_LO, IV_HI = 0.01, 5.0    # the sigma bracket implied_vol bisects
+IV_ITERS = 60               # 60 halvings of [0.01, 5] -> 4e-18: far past the cent
+
+
+def implied_vol(price: float, S: float, K: float, T: float, kind: str, r: float | None = None) -> float | None:
+    """The sigma that prices ``price``: bisection on [0.01, 5.0], 60 iterations, at the
+    platform's one rate (``opt_constants.RISK_FREE``) unless ``r`` is given, q = 0.
+    None when the price sits at or under the model's floor (a stale print at or below
+    intrinsic) or above its ceiling, or when there is no time left."""
+    from .opt_constants import RISK_FREE  # noqa: PLC0415 - lazy: opt_constants is a heavier import
+
+    rate = RISK_FREE if r is None else r
+    try:
+        p = float(price)
+    except (TypeError, ValueError):
+        return None
+    if not (p > 0) or not (S and S > 0 and K and K > 0) or T is None or T <= 0:
+        return None
+    kind = "call" if str(kind).lower().startswith("c") else "put"
+    try:
+        lo_p = black_scholes(S, K, T, rate, IV_LO, kind).price
+        hi_p = black_scholes(S, K, T, rate, IV_HI, kind).price
+    except ValueError:
+        return None
+    if p <= lo_p or p >= hi_p:
+        return None
+    lo, hi = IV_LO, IV_HI
+    for _ in range(IV_ITERS):
+        mid = 0.5 * (lo + hi)
+        if black_scholes(S, K, T, rate, mid, kind).price > p:
+            hi = mid
+        else:
+            lo = mid
+    return 0.5 * (lo + hi)

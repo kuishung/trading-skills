@@ -644,6 +644,12 @@ it — memory files don't sync across PCs.
 platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
 `dashboard_tst/DEPLOY.md`. Key facts (so any session/PC recalls them):
 
+- **Options — PAGE BLANK since v4.135 (2026-10-10), only the Massive data pipeline stays.** The
+  user: *"delete everything except the massive data"*: `/options` renders an empty page (to be
+  rebuilt); the screener (`opt_rules`, `opt_screen`, `payoff`, `opt_legs`) and every `_opt_*`
+  fragment are deleted; IBKR-era option rows were purged (migration `7c1e5a9d2b40`) and the
+  history is rebuilt from Massive by the collector. The collector (below) is now the ONE reader
+  of Massive; its universe is the tickers already in `option_basket`. History of the page:
 - **Options v2 — BUILT in v4.133 (2026-10-09); data from MASSIVE (formerly Polygon.io) since
   v4.134 (2026-10-10):**
   `dashboard_tst/OPTIONS_V2_DESIGN.md` is the contract — **§13 first** (the Massive data path; it
