@@ -217,6 +217,83 @@ def test_empty_frame_run_and_spec():
     assert engine.csv("options-screener", {}).splitlines()[0].startswith("Symbol")
 
 
+def _untyped_market() -> Frame:
+    """The test market before the identity job ran: no underlying has a security type."""
+    return make_market(unds=tuple(dict(u, sec_type=None) for u in UNDERLYINGS))
+
+
+@pytest.mark.parametrize("key", ["options-screener", "bull-put-spread"])
+def test_untyped_market_skips_the_default_security_type_filter(key):
+    """v4.137 (design §11.17): while NO type is in, the screens' default stock + ETF card is
+    skipped with a warning - day one is not an empty table."""
+    typed_total = engine.run(key, None)["total"]                 # the pinned, typed market
+    fr = _untyped_market()
+    assert fr.meta["n_sec_type_unknown"] == fr.meta["n_underlyings"] == 5
+    frame_mod.set_current(fr)
+    out = engine.run(key, None)
+    assert out["total"] > 0 and out["rows"]
+    assert engine.SEC_TYPES_LOADING in out["warnings"]
+    assert engine.SEC_TYPES_LOADING == ("Security types are still loading - the Security Type filter is "
+                                        "skipped until they are in, so index underlyings may appear.")
+    assert not any("left out by the Security Type filter" in w for w in out["warnings"])
+    assert out["data"]["n_sec_type_unknown"] == 5 and out["data"]["reloading"] is False
+    if key == "options-screener":                               # index underlyings may appear
+        assert out["total"] > typed_total
+        idx = engine.run(key, {"filters": [*screens_mod.SCREENS[key].defaults,
+                                           {"f": "symbol", "op": "in", "v": ["IDX"]}]})
+        assert idx["total"] > 0 and {r["symbol"] for r in idx["rows"]} == {"IDX"}
+
+
+def test_untyped_market_never_widens_a_members_own_type_choice():
+    frame_mod.set_current(_untyped_market())
+    out = engine.run("options-screener", {"filters": [{"f": "sec_type", "op": "in", "v": ["etf"]}]})
+    assert out["total"] == 0
+    assert engine.SEC_TYPES_LOADING not in out["warnings"]
+    assert any("left out by the Security Type filter" in w for w in out["warnings"])
+
+
+def test_partly_typed_market_keeps_the_default_filter():
+    unds = tuple(dict(u, sec_type=None) if u["symbol"] == "DDD" else u for u in UNDERLYINGS)
+    frame_mod.set_current(make_market(unds=unds))
+    out = engine.run("options-screener", None, per_page=1000)
+    assert engine.SEC_TYPES_LOADING not in out["warnings"]
+    assert {r["symbol"] for r in out["rows"]} <= {"AAA", "BBB", "CCC"}
+    assert any("1 underlyings have no security type yet" in w for w in out["warnings"])
+    assert out["data"]["sec_type_active"] is True                # applied: the page may blame it
+
+
+def test_sec_type_active_says_whether_the_filter_was_applied():
+    """The page's "the Security Type filter leaves them out" (T-26) needs the filter to have
+    been APPLIED - never when the engine skipped it (T-23) or dropped it as invalid."""
+    frame_mod.set_current(_untyped_market())
+    defaults = [*screens_mod.SCREENS["options-screener"].defaults]
+    nothing = {"f": "symbol", "op": "in", "v": ["NOPE"]}
+    out = engine.run("options-screener", {"filters": defaults + [nothing]})
+    assert out["total"] == 0 and out["data"]["n_sec_type_unknown"] == 5
+    assert engine.SEC_TYPES_LOADING in out["warnings"] and out["data"]["sec_type_active"] is False
+    out = engine.run("options-screener", {"filters": [{"f": "sec_type", "op": "in", "v": ["etf"]}]})
+    assert out["total"] == 0 and out["data"]["sec_type_active"] is True      # a member's own choice
+    out = engine.run("options-screener", {"filters": [{"f": "sec_type", "op": "in", "v": ["nonsense"]}, nothing]})
+    assert out["data"]["sec_type_active"] is False                           # dropped as invalid
+    assert "sec_type_active" not in frame_mod.current().meta                 # a copy, never the shared meta
+    assert engine.run("no-such-screen", {})["data"]["sec_type_active"] is False
+
+
+def test_the_page_blames_the_security_type_filter_only_when_it_was_applied():
+    from pathlib import Path  # noqa: PLC0415
+
+    html = (Path(engine.__file__).resolve().parents[2] / "templates" / "options.html").read_text(encoding="utf-8")
+    body = html.split("function secTypeBlocked(R)", 1)[1].split("\n  }", 1)[0]
+    assert "R.data.sec_type_active" in body and "S.filters" not in body
+
+
+def test_data_carries_reloading_as_a_copy(market):
+    out = engine.run("long-call", {"filters": []})
+    sp = engine.spec("long-call")
+    assert out["data"]["reloading"] is False and sp["data"]["reloading"] is False
+    assert "reloading" not in market.meta
+
+
 # ─────────────────────────────────── screens / spec ───────────────────────────────────
 
 ALL_KEYS = list(screens_mod.ORDER)
@@ -576,7 +653,7 @@ def test_loader_missing_or_unmigrated_db(tmp_path):
         screener_db.configure("sqlite:///" + (tmp_path / "nope" / "missing.db").as_posix())
         frame_mod.reset()
         fr = frame_mod.current()
-        assert fr.empty and fr.meta["empty"] and "No screener data yet" in fr.meta["warnings"][0]
+        assert fr.empty and fr.meta["empty"] and fr.meta["warnings"][0].startswith(frame_mod.NO_DATA)
         assert not (tmp_path / "nope" / "missing.db").exists()
         out = engine.run("options-screener", {})
         assert out["total"] == 0 and out["warnings"]

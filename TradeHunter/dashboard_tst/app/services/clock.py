@@ -22,7 +22,9 @@ Conventions (the ones ``spread_monitor.et_today`` set)
   02:00 local), the same fallback ``spread_monitor._et_now`` carries, so the clock
   is right even without the package.
 * Holidays: the calendar service is asked first (``calendars.nyse_holidays(year)``
-  when a later version grows it); until then the static NYSE rules below apply.
+  when a later version grows it); until then the static NYSE rules below apply, plus
+  the one-off closures no rule produces (``_SPECIAL_CLOSURES`` - national days of
+  mourning, Hurricane Sandy), which are added to either list.
   Early closes (the day after Thanksgiving, Christmas Eve) are treated as full
   sessions - the one place that would notice is the ticket's "Refresh first"
   banner, and showing it for an extra afternoon is harmless.
@@ -149,8 +151,25 @@ def _observed(d: _dt.date) -> _dt.date | None:
     return d
 
 
+# Full-day NYSE closures no yearly rule produces: national days of mourning for a former
+# president (Ford 2007-01-02, G. H. W. Bush 2018-12-05, Carter 2025-01-09) and Hurricane
+# Sandy (2012-10-29 / 30). A future one-off closure goes here too - without it the
+# screener's stock-day list waits forever for a grouped day Massive never publishes.
+_SPECIAL_CLOSURES: frozenset[_dt.date] = frozenset({
+    _dt.date(2007, 1, 2),
+    _dt.date(2012, 10, 29),
+    _dt.date(2012, 10, 30),
+    _dt.date(2018, 12, 5),
+    _dt.date(2025, 1, 9),
+})
+
+
+def _special_closures(year: int) -> set[_dt.date]:
+    return {d for d in _SPECIAL_CLOSURES if d.year == year}
+
+
 def _static_nyse_holidays(year: int) -> set[_dt.date]:
-    out: set[_dt.date] = set()
+    out: set[_dt.date] = set(_special_closures(year))
     ny = _dt.date(year, 1, 1)
     if ny.weekday() == 6:                      # Sunday -> Monday; Saturday -> no closure
         out.add(ny + _dt.timedelta(days=1))
@@ -181,7 +200,8 @@ _HOLIDAY_CACHE: dict[int, frozenset[_dt.date]] = {}
 def nyse_holidays(year: int) -> frozenset[_dt.date]:
     """Full-day NYSE closures in ``year``. The calendar service is asked first
     (``calendars.nyse_holidays(year)``) so a feed-backed list wins the day it
-    exists; the static rules above are the fallback."""
+    exists; the static rules above are the fallback. The one-off closures
+    (``_SPECIAL_CLOSURES``) are in the answer either way."""
     hit = _HOLIDAY_CACHE.get(year)
     if hit is not None:
         return hit
@@ -198,7 +218,7 @@ def nyse_holidays(year: int) -> frozenset[_dt.date]:
         days = None
     if not days:
         days = _static_nyse_holidays(year)
-    out = frozenset(days)
+    out = frozenset(set(days) | _special_closures(year))
     _HOLIDAY_CACHE[year] = out
     return out
 

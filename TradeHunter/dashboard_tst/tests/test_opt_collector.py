@@ -400,6 +400,56 @@ def test_default_client_reads_the_key_from_app_env(monkeypatch, tmp_path):
         os.environ.pop("TST_MASSIVE_API_KEY", None)
 
 
+def test_a_rejected_key_corrected_in_app_env_is_used_without_a_restart(db, user, build, monkeypatch, tmp_path):
+    """v4.137: while the key is rejected, ``app/.env`` is re-read at each 5-minute look and
+    ITS key replaces the process's (``load_dotenv(override=False)`` alone never did): a
+    corrected key gets a fresh client at once; an unchanged one is tried again only every
+    30 min; a blank placeholder removes the key (state config) until it is filled in."""
+    _basket(db, user, "AAA")
+    _history_done(db, "AAA")
+    env_file = tmp_path / "app.env"
+    monkeypatch.setattr(opt_collector, "APP_ENV_PATH", env_file)
+    monkeypatch.setenv("TST_MASSIVE_API_KEY", "stale-process-key-9999")    # the file wins over it
+    bad = "rejected-key-0000000000"
+    env_file.write_text("TST_MASSIVE_API_KEY=%s\n" % bad, encoding="utf-8")
+    clk = Clock(RTH)
+    made: list[FakeMassive] = []
+
+    def factory():                          # what default_client does, on a fake
+        opt_collector._load_env()
+        key = os.environ.get("TST_MASSIVE_API_KEY")
+        c = FakeMassive(clk, key=bool(key))
+        c._key = key
+        if key and key != KEY:
+            c.fail[("chain_snapshot", None)] = MassiveError("auth", "Massive rejected the API key (HTTP 401)", 401)
+        made.append(c)
+        return c
+
+    col, _ = build(clk, client_factory=factory)
+    assert col.tick() == "error" and _doc(tmp_path)["error_kind"] == "auth"
+    assert len(made) == 1 and made[0]._key == bad and len(made[0].read()) == 1
+    clk.advance(minutes=5)
+    col.tick()                                               # the same key: tried once more
+    assert len(made) == 1 and len(made[0].read()) == 2 and col.error_kind() == "auth"
+    clk.advance(minutes=5)
+    col.tick()                                               # still the same, within 30 min: held
+    assert len(made[0].read()) == 2 and col.error_kind() == "auth"
+    env_file.write_text("TST_MASSIVE_API_KEY=%s\n" % KEY, encoding="utf-8")
+    clk.advance(minutes=5)
+    assert col.tick() == "idle"                              # corrected: a fresh client, no restart
+    assert len(made) == 2 and made[1]._key == KEY and made[1].read() == ["AAA"]
+    assert col.error_kind() is None and _doc(tmp_path)["api_ok"] is True
+
+    env_file.write_text("TST_MASSIVE_API_KEY=\n", encoding="utf-8")   # a blank placeholder
+    col2, _ = build(clk, client_factory=factory)
+    assert col2.tick() == "error" and col2.error_kind() == "config"
+    assert "TST_MASSIVE_API_KEY" not in os.environ and made[-1].calls == []
+    env_file.write_text("TST_MASSIVE_API_KEY=%s\n" % KEY, encoding="utf-8")
+    clk.advance(minutes=5)
+    col2.tick()
+    assert col2.error_kind() is None and made[-1]._key == KEY
+
+
 # ───────────────────────────────────────── history ─────────────────────────────────────────
 
 def test_history_one_symbol_per_tick_in_the_gap_after_the_pass(db, user, build):
@@ -1287,8 +1337,9 @@ class _FakeCollector:
         self.stopped = reason
 
 
-def test_cli_arguments_modes_and_exit_codes(monkeypatch, logger_levels):
+def test_cli_arguments_modes_and_exit_codes(monkeypatch, logger_levels, tmp_path):
     cli = _load_cli()
+    monkeypatch.setattr(cli, "LOCK_FILE", tmp_path / "state" / "options_collector.lock")   # never this PC's
     a = cli.parse_args([])
     assert not (a.once or a.history or a.eod_now or a.forever) and a.log_file is None
     assert cli.parse_args(["--history", "NVDA", "LRCX"]).history == ["NVDA", "LRCX"]
@@ -1315,6 +1366,49 @@ def test_cli_arguments_modes_and_exit_codes(monkeypatch, logger_levels):
         stops = [c.stopped for c in _FakeCollector.made]
         assert stops[0] is None and stops[1] == "one-off --once run finished"
     finally:
+        root.setLevel(level)
+        for h in list(root.handlers):
+            for x in [x for x in h.filters if isinstance(x, cli.KeyScrub)]:
+                h.removeFilter(x)
+            if h not in before:
+                root.removeHandler(h)
+
+
+def test_cli_one_collector_at_a_time(monkeypatch, logger_levels, tmp_path):
+    """The 15-min revive trigger starts the task whenever it is not running: a second
+    collector (a hand run, or the revived task during one) never runs beside the first."""
+    cli = _load_cli()
+    lock = tmp_path / "state" / "options_collector.lock"
+    monkeypatch.setattr(cli, "LOCK_FILE", lock)
+    slept = []
+    monkeypatch.setattr(cli, "_sleep", slept.append)
+    monkeypatch.setattr(opt_collector, "Collector", _FakeCollector)
+    root = logging.getLogger()
+    level, before = root.level, list(root.handlers)
+    first = cli.InstanceLock(lock)
+    try:
+        _FakeCollector.made.clear()
+        _FakeCollector.result = {"ok": True}
+        assert first.acquire() and first.holder() == os.getpid()
+        assert (lock.parent / ".gitignore").read_text(encoding="utf-8").endswith("*\n")
+        assert cli.main(["--no-init", "--once"]) == cli.EXIT_SETUP          # a one-off gives up at once
+        assert cli.main(["--no-init"], max_lock_waits=2) == cli.EXIT_SETUP    # --forever waits ...
+        assert slept == [cli.LOCK_WAIT_S] * 2 and _FakeCollector.made == []   # ... starting nothing
+        assert first.holder() == os.getpid()                                  # the pid is the holder's
+        slept.clear()
+
+        def free_on_second(s):
+            slept.append(s)
+            if len(slept) == 2:
+                first.release()                                               # the other one ends
+
+        monkeypatch.setattr(cli, "_sleep", free_on_second)
+        assert cli.main(["--no-init"]) == cli.EXIT_OK                         # ... and takes over
+        assert [c.ran for c in _FakeCollector.made] == [["forever"]] and len(slept) == 2
+        assert cli.main(["--no-init", "--once"]) == cli.EXIT_OK               # released at the end
+        assert "Disable-ScheduledTask -TaskName TST-Options-Collector" in cli.__doc__
+    finally:
+        first.release()
         root.setLevel(level)
         for h in list(root.handlers):
             for x in [x for x in h.filters if isinstance(x, cli.KeyScrub)]:
@@ -1414,9 +1508,14 @@ def test_task_script_is_ascii_and_registers_the_always_on_task():
                    "-RestartCount 3", "-RestartInterval (New-TimeSpan -Minutes 5)",
                    "-MultipleInstances IgnoreNew", "-ExecutionTimeLimit ([TimeSpan]::Zero)",
                    "[switch] $StartNow", "Start-ScheduledTask", ".venv\\Scripts\\python.exe",
-                   "--log-file", "TST_MASSIVE_API_KEY", "-Quiet"):
+                   "--log-file", "TST_MASSIVE_API_KEY", "-Quiet",
+                   # the 15-min revive (v4.137): a dead collector is back within 15 min, not at 07:00
+                   "$revive = New-ScheduledTaskTrigger -Once -At (Get-Date)",
+                   "-RepetitionInterval (New-TimeSpan -Minutes 15)",
+                   "-RepetitionDuration (New-TimeSpan -Days 9999)",
+                   "-Trigger @($atStartup, $daily, $revive)"):
         assert needle in src, needle
-    assert "&&" not in src
+    assert "&&" not in src and "[TimeSpan]::MaxValue" not in src.split("$revive =")[1]
     code = "\n".join(ln for ln in src.splitlines() if not ln.lstrip().startswith("#"))
     assert ">>" not in code and "cmd.exe" not in code     # the collector rotates its own log
     low = src.lower()

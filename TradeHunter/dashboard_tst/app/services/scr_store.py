@@ -6,7 +6,7 @@ and writer of the ``scr_*`` tables for the Hermes screener collector
 What lives here
 ---------------
 * contracts: ``replace_contracts`` (one symbol per transaction - delete, then an ORM bulk
-  insert, carrying ``vol_prev`` / ``oi_prev`` across a new session);
+  insert, carrying ``vol_prev`` / ``oi_prev`` across a new session), ``newest_session``;
 * the underlying: ``update_underlying_pass`` (spot, IV30, the option-wide figures of a
   pass, the IV figures), ``recompute_technicals`` (from the daily bars),
   ``recompute_iv`` (IV30 / IV rank / IV percentile over the last 252 daily IV30s),
@@ -14,27 +14,40 @@ What lives here
 * daily history: ``upsert_daily`` (one symbol, field by field), ``file_grouped_day`` (one
   session of grouped daily bars for every universe symbol), ``stock_day_status``,
   ``daily_counts``, ``raw_bars``, ``last_close``;
-* the universe: ``upsert_universe``, ``pass_symbols``, ``universe_info``;
-* passes: ``start_pass`` / ``finish_pass`` / ``last_pass``;
-* the heartbeat row: ``status`` / ``set_status``;
+* the universe: ``upsert_universe`` (a streamed, partial save with ``deactivate=False``
+  never deactivates), ``pass_symbols`` / ``pass_symbols_weighted`` (the same order, with
+  each symbol's contract count - the pass percent weights), ``universe_info``;
+* passes: ``start_pass`` / ``finish_pass`` / ``last_pass`` (``min_contracts`` skips a pass
+  that stored nothing; ``partial`` tells a pass read on a partial list of optionable stocks
+  from one read on a complete list);
+* the heartbeat row: ``status`` / ``set_status`` (the JSON ``progress`` block is made
+  JSON-safe on the way in);
 * IV-history bookkeeping: ``history_queue``, ``mark_history`` (30 min back-off doubling to
-  24 h), ``history_counts``;
+  24 h), ``history_counts`` - an index underlying (``sec_type`` index, or an ``I:``
+  prefix) has no IV history to build (no index closes on Stocks Basic) and is left out
+  of both;
 * retention: ``prune`` (universe symbols inactive more than 10 days and every row of
   theirs, expired contracts, daily rows past ~3 years, pass rows past 30 days).
 
 Rules (CLAUDE.md data-handling rule): SQLAlchemy ORM only - no raw SQL, no SQLite-only
 syntax; upserts are query-then-update/insert; bulk inserts are ORM ``insert(Model)`` in
 chunks; every public write commits (one unit of work) and retries once on a unique-key
-race with another writer. All datetimes naive UTC; a contract's ``iv`` is a FRACTION,
-every per-underlying IV / HV figure PERCENT.
+race with another writer. Inside ONE process the three writers that can insert the same
+``scr_underlying_daily`` (symbol, day) row - ``file_grouped_day``, ``upsert_daily`` and the
+EOD branch of ``update_underlying_pass`` - also serialize on ``_DAILY_LOCK`` (taken before
+the transaction, never inside it), so the collector's pass workers and its stocks lane
+never race each other into an IntegrityError; the retry stays as the backstop for another
+process. All datetimes naive UTC; a contract's ``iv`` is a FRACTION, every per-underlying
+IV / HV figure PERCENT.
 """
 from __future__ import annotations
 
 import datetime as _dt
 import logging
 import math
+import threading
 
-from sqlalchemy import DateTime, String, func, insert
+from sqlalchemy import JSON, DateTime, String, func, insert, or_
 from sqlalchemy.exc import IntegrityError
 
 from ..screener_models import (ScrContract, ScrPass, ScrStatus, ScrUnderlying,
@@ -61,6 +74,10 @@ SEC_TYPES = ("stock", "etf", "index", "other")
 EXCHANGES = ("NYSE", "NASDAQ", "AMEX", "INDEX", "OTHER")
 
 C, U, D, UNI, P = ScrContract, ScrUnderlying, ScrUnderlyingDaily, ScrUniverse, ScrPass
+
+# One process's writers of scr_underlying_daily (see the module docstring). Re-entrant so
+# a writer that calls another one never deadlocks itself.
+_DAILY_LOCK = threading.RLock()
 
 
 # ────────────────────────────────── small helpers ──────────────────────────────────
@@ -367,6 +384,13 @@ def replace_contracts(db, symbol, rows, *, session_day, as_of) -> int:
     return _txn(db, apply)
 
 
+def newest_session(db, symbol) -> str | None:
+    """The newest ET session (``YYYY-MM-DD``) any stored contract row of ``symbol``
+    describes, or None when it has none - how recent the stored chain is."""
+    v = db.query(func.max(C.session)).filter(C.symbol == _sym(symbol)).scalar()
+    return str(v)[:10] if v else None
+
+
 def delete_contracts(db, symbol) -> int:
     """Remove every contract row of ``symbol``. Commits; returns the rows deleted."""
     sym = _sym(symbol)
@@ -484,7 +508,8 @@ def upsert_daily(db, symbol, bars=None, *, raw_bars=None, iv_series=None, overwr
         db.flush()
         return len(days)
 
-    return _txn(db, apply)
+    with _DAILY_LOCK:
+        return _txn(db, apply)
 
 
 def file_grouped_day(db, day, bars, *, adjusted: bool = True, symbols=None) -> int:
@@ -537,7 +562,8 @@ def file_grouped_day(db, day, bars, *, adjusted: bool = True, symbols=None) -> i
         db.flush()
         return len(syms)
 
-    return _txn(db, apply)
+    with _DAILY_LOCK:
+        return _txn(db, apply)
 
 
 def stock_day_status(db, start, end) -> dict[str, tuple[int, int]]:
@@ -621,8 +647,9 @@ def update_underlying_pass(db, symbol, *, session_day, pass_id=None, spot=None, 
     against the close of the session before ``session_day``, IV30 (PERCENT; kept when
     this pass could not read one) and the one-sigma 30-day move, call / put volume and open
     interest, the contracts kept, the pass id. ``file_iv`` (the EOD pass) also files this
-    pass's IV30 as ``session_day``'s daily reading. Then the IV figures (``_apply_iv``).
-    Creates the row when missing. Commits; returns the row as a dict."""
+    pass's IV30 as ``session_day``'s daily reading (under ``_DAILY_LOCK``). Then the IV
+    figures (``_apply_iv``). Creates the row when missing. Commits; returns the row as a
+    dict."""
     sym = _sym(symbol)
     if not sym:
         raise ValueError("update_underlying_pass: no symbol")
@@ -660,6 +687,9 @@ def update_underlying_pass(db, symbol, *, session_day, pass_id=None, spot=None, 
         db.flush()
         return _row_dict(u, U)
 
+    if file_iv:                       # it may insert a scr_underlying_daily row
+        with _DAILY_LOCK:
+            return _txn(db, apply)
     return _txn(db, apply)
 
 
@@ -834,13 +864,22 @@ def set_earnings(db, dates: dict, *, today, src: str = "nasdaq", now=None) -> in
 
 # ────────────────────────────────── the universe ──────────────────────────────────
 
-def upsert_universe(db, counts: dict, *, now=None, min_keep_ratio: float = 0.5) -> dict:
+def upsert_universe(db, counts: dict, *, now=None, min_keep_ratio: float = 0.5,
+                    deactivate: bool = True) -> dict:
     """Massive's list of optionable underlyings (``{symbol: contracts}``) into
     ``scr_universe``: listed symbols are active (``n_contracts``, ``last_seen`` = now; new
     ones ``first_seen`` too, plus an empty ``scr_underlying`` row), every other symbol
     inactive. A list that is empty, or shorter than ``min_keep_ratio`` of the active one
     (a partial answer), adds and updates but deactivates nothing - yesterday's list holds.
-    Commits; returns ``{"n", "new", "inactive", "partial"}``."""
+
+    ``deactivate=False`` is a streamed save of a walk still in progress (the first pages of
+    the contracts list): it adds and updates, never deactivates, whatever its length. The
+    final save of a COMPLETE walk passes ``deactivate=True`` and ``now`` = the walk's
+    completion time (``last_seen`` then says when the full list was known, not when the
+    walk started).
+
+    Commits; returns ``{"n", "new", "inactive", "partial"}`` - ``partial`` is True when
+    nothing could be deactivated (a short / empty list, or ``deactivate=False``)."""
     stamp = _now(now)
     got = {}
     for k, v in (counts or {}).items():
@@ -851,7 +890,7 @@ def upsert_universe(db, counts: dict, *, now=None, min_keep_ratio: float = 0.5) 
     def apply() -> dict:
         rows = {u.symbol: u for u in db.query(UNI)}
         n_active = sum(1 for u in rows.values() if u.active)
-        partial = (not got) or len(got) < min_keep_ratio * n_active
+        partial = (not deactivate) or (not got) or len(got) < min_keep_ratio * n_active
         new = []
         for sym, n in got.items():
             u = rows.get(sym)
@@ -881,14 +920,22 @@ def upsert_universe(db, counts: dict, *, now=None, min_keep_ratio: float = 0.5) 
     return _txn(db, apply)
 
 
-def pass_symbols(db, *, now=None, keep_days: int = INACTIVE_KEEP_DAYS) -> list[str]:
-    """The symbols a market pass reads, most contracts first: every active universe symbol
-    plus those gone from Massive's list less than ``keep_days`` ago."""
+def pass_symbols_weighted(db, *, now=None, keep_days: int = INACTIVE_KEEP_DAYS) -> list[tuple[str, int]]:
+    """``[(symbol, n_contracts)]`` in pass order, most contracts first: every active
+    universe symbol plus those gone from Massive's list less than ``keep_days`` ago. The
+    counts weight a pass's percent and ETA (v4.137) - they come from the stored universe,
+    so they survive a restart."""
     cutoff = _now(now) - _dt.timedelta(days=keep_days)
     rows = (db.query(UNI.symbol, UNI.n_contracts, UNI.active, UNI.last_seen).all())
-    keep = [(s, n or 0) for s, n, a, seen in rows if a or (seen is not None and seen >= cutoff)]
+    keep = [(s, int(n or 0)) for s, n, a, seen in rows if a or (seen is not None and seen >= cutoff)]
     keep.sort(key=lambda x: (-x[1], x[0]))
-    return [s for s, _ in keep]
+    return keep
+
+
+def pass_symbols(db, *, now=None, keep_days: int = INACTIVE_KEEP_DAYS) -> list[str]:
+    """The symbols a market pass reads, most contracts first (``pass_symbols_weighted``
+    without the counts - the two never drift apart)."""
+    return [s for s, _ in pass_symbols_weighted(db, now=now, keep_days=keep_days)]
 
 
 def universe_info(db) -> dict:
@@ -916,10 +963,14 @@ def start_pass(db, *, kind: str, session, n_symbols: int, now=None) -> int:
 
 
 def finish_pass(db, pass_id, *, n_ok=None, n_failed=None, n_contracts=None, requests=None, ms=None,
-                finished: bool = True, now=None) -> dict | None:
+                finished: bool = True, now=None, n_symbols=None, partial: bool | None = None) -> dict | None:
     """Record a pass's counts; ``finished=True`` stamps ``finished`` (the web app reloads on
     a newer finished pass), ``False`` leaves it NULL (a pass cut short by a paused Massive
-    is not a finished one). Commits; returns the row as a dict (None when unknown)."""
+    is not a finished one). ``n_symbols`` updates the symbol count of a pass that grew with a
+    streamed universe (v4.137; ``finished=False`` with only it set records the growth of a
+    running pass). ``partial`` (when not None) records whether the pass was read on a
+    partial list of optionable stocks. Commits; returns the row as a dict (None when
+    unknown)."""
     stamp = _now(now)
 
     def apply():
@@ -927,9 +978,11 @@ def finish_pass(db, pass_id, *, n_ok=None, n_failed=None, n_contracts=None, requ
         if p is None:
             return None
         for k, v in (("n_ok", n_ok), ("n_failed", n_failed), ("n_contracts", n_contracts),
-                     ("requests", requests), ("ms", ms)):
+                     ("requests", requests), ("ms", ms), ("n_symbols", n_symbols)):
             if v is not None:
                 setattr(p, k, int(v))
+        if partial is not None:
+            p.partial = bool(partial)
         if finished:
             p.finished = stamp
         db.flush()
@@ -938,12 +991,22 @@ def finish_pass(db, pass_id, *, n_ok=None, n_failed=None, n_contracts=None, requ
     return _txn(db, apply)
 
 
-def last_pass(db, *, kind=None, finished: bool | None = True) -> dict | None:
+def last_pass(db, *, kind=None, finished: bool | None = True, min_contracts: int | None = None,
+              partial: bool | None = None) -> dict | None:
     """The newest pass (of ``kind`` when given; only finished ones by default, any with
-    ``finished=None``) as a dict, or None."""
+    ``finished=None``; with ``min_contracts``, only one that stored at least that many
+    contracts - a finished pass that read nothing is not "done"; ``partial=False`` only one
+    read on a complete list of optionable stocks - NULL counts as complete - and
+    ``partial=True`` only one read on a partial list) as a dict, or None."""
     q = db.query(P)
     if kind:
         q = q.filter(P.kind == kind)
+    if min_contracts is not None:
+        q = q.filter(P.n_contracts >= int(min_contracts))
+    if partial is False:
+        q = q.filter(or_(P.partial.is_(None), P.partial.is_(False)))
+    elif partial is True:
+        q = q.filter(P.partial.is_(True))
     if finished is True:
         q = q.filter(P.finished.isnot(None))
     elif finished is False:
@@ -960,11 +1023,42 @@ def status(db) -> dict | None:
     return _row_dict(row, ScrStatus) if row is not None else None
 
 
+def _json_safe(v, depth: int = 0):
+    """A value a JSON column stores on any backend: dicts (string keys) and lists of
+    numbers / strings / booleans / None; a datetime becomes ISO text (naive = UTC, with
+    its ``+00:00``), a date ``YYYY-MM-DD``, a tuple / set a list, NaN / inf None, anything
+    else its text. Nested at most 6 deep."""
+    if v is None or isinstance(v, (bool, str)):
+        return v
+    if isinstance(v, int):
+        return v
+    if isinstance(v, float):
+        return v if math.isfinite(v) else None
+    if isinstance(v, _dt.datetime):
+        if v.tzinfo is None:
+            v = v.replace(tzinfo=_dt.timezone.utc)
+        return v.isoformat()
+    if isinstance(v, _dt.date):
+        return v.isoformat()
+    if depth >= 6:
+        return str(v)
+    if isinstance(v, dict):
+        return {str(k): _json_safe(x, depth + 1) for k, x in v.items()}
+    if isinstance(v, (list, tuple, set, frozenset)):
+        items = sorted(v, key=str) if isinstance(v, (set, frozenset)) else v
+        return [_json_safe(x, depth + 1) for x in items]
+    f = _f(v)                       # numpy scalars and friends
+    if f is not None:
+        return f
+    return str(v)
+
+
 def set_status(db, **fields) -> None:
     """Update the heartbeat row (created on first use) with any of its columns; unknown
-    keys are ignored with a warning. Datetimes are stored naive UTC, strings cut to the
-    column width. ``heartbeat`` is set to now (or the ``now`` keyword) unless given.
-    Commits."""
+    keys are ignored with a warning. Datetimes are stored naive UTC (an aware one or ISO
+    text is converted), strings cut to the column width, a JSON column (``progress``) made
+    JSON-safe (``_json_safe``). ``heartbeat`` is set to now (or the ``now`` keyword) unless
+    given. A key left out keeps its stored value; ``None`` clears it. Commits."""
     cols = {c.name: c for c in ScrStatus.__table__.columns if c.name != "id"}
     stamp = _now(fields.pop("now", None))
 
@@ -980,6 +1074,8 @@ def set_status(db, **fields) -> None:
                 continue
             if v is not None and isinstance(col.type, DateTime):
                 v = _naive_utc(v)
+            elif v is not None and isinstance(col.type, JSON):
+                v = _json_safe(v)
             elif v is not None and isinstance(col.type, String) and col.type.length:
                 v = str(v)[:col.type.length]
             setattr(row, k, v)
@@ -992,16 +1088,27 @@ def set_status(db, **fields) -> None:
 
 # ────────────────────────────────── IV history bookkeeping ──────────────────────────────────
 
+def history_applies(symbol, sec_type=None) -> bool:
+    """Can ``symbol`` get an IV history? Not an index (``sec_type`` index, or Massive's
+    ``I:`` prefix): Stocks Basic has no index closes to price its options against."""
+    if str(sec_type or "").strip().lower() == "index":
+        return False
+    return not str(symbol or "").strip().upper().startswith("I:")
+
+
 def history_queue(db, *, now=None, symbols=None, limit: int = 50) -> list[str]:
     """Underlyings still without their IV history whose retry time has come, most option
-    volume (call + put) first; ``symbols`` (the pass symbols) limits the list."""
+    volume (call + put) first; ``symbols`` (the pass symbols) limits the list. Index
+    underlyings are left out (``history_applies``)."""
     stamp = _now(now)
     keep = set(symbols) if symbols is not None else None
-    rows = (db.query(U.symbol, U.call_vol, U.put_vol, U.history_next)
+    rows = (db.query(U.symbol, U.call_vol, U.put_vol, U.history_next, U.sec_type)
               .filter(U.history_done.is_(False)).all())
     out = []
-    for sym, cv, pv, nxt in rows:
+    for sym, cv, pv, nxt, st in rows:
         if keep is not None and sym not in keep:
+            continue
+        if not history_applies(sym, st):
             continue
         if nxt is not None and nxt > stamp:
             continue
@@ -1039,10 +1146,13 @@ def mark_history(db, symbol, *, done: bool, now=None) -> dict:
 
 
 def history_counts(db, symbols=None) -> tuple[int, int]:
-    """``(underlyings with their IV history, underlyings)`` - over ``symbols`` when given."""
-    rows = db.query(U.symbol, U.history_done).all()
+    """``(underlyings with their IV history, underlyings that can have one)`` - over
+    ``symbols`` when given. Index underlyings are not counted at all (``history_applies``):
+    they never get one, so they must not hold the denominator open."""
+    rows = db.query(U.symbol, U.history_done, U.sec_type).all()
     keep = set(symbols) if symbols is not None else None
-    sel = [bool(h) for s, h in rows if keep is None or s in keep]
+    sel = [bool(h) for s, h, st in rows
+           if (keep is None or s in keep) and history_applies(s, st)]
     return sum(sel), len(sel)
 
 
@@ -1084,6 +1194,7 @@ __all__ = [
     "set_identity", "identity_missing", "set_earnings", "upsert_daily", "file_grouped_day", "stock_day_status",
     "daily_counts", "big_moves", "raw_bars", "last_close", "underlying", "upsert_universe",
     "pass_symbols", "universe_info", "start_pass", "finish_pass", "last_pass", "status",
-    "set_status", "history_queue", "history_backoff_s", "mark_history", "history_counts",
+    "set_status", "history_queue", "history_applies", "history_backoff_s", "mark_history",
+    "history_counts",
     "prune", "close_time_utc",
 ]

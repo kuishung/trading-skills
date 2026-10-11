@@ -485,10 +485,11 @@ def _contract(underlying, exp="2026-11-20", ct="call", strike=100.0):
 
 def test_option_underlyings_counts_every_page_in_our_spelling():
     nxt = BASE + "/v3/reference/options/contracts?cursor=PAGE2"
+    # the contracts list names an index option's underlying BARE (SPX), not I:SPX
     pages = {
         None: {"results": [_contract("SPY"), _contract("SPY", ct="put"), _contract("BRK.B"),
                            {"no": "ticker"}], "next_url": nxt},
-        "PAGE2": {"results": [_contract("SPY", strike=105.0), _contract("I:SPX")]},
+        "PAGE2": {"results": [_contract("SPY", strike=105.0), _contract("SPX")]},
     }
     seen = []
 
@@ -498,12 +499,13 @@ def test_option_underlyings_counts_every_page_in_our_spelling():
 
     client, clock = make_client(Server(handler=handler), stocks_per_min=1)
     got = client.option_underlyings(exp_lte=_dt.date(2026, 12, 9))
-    assert got == {"SPY": 3, "BRK-B": 1, "I:SPX": 1}
+    assert got == {"SPY": 3, "BRK-B": 1, "SPX": 1}
     first = seen[0]
     assert first.url.path == "/v3/reference/options/contracts"
     params = dict(first.url.params)
     assert params["expired"] == "false" and params["limit"] == "1000"
     assert params["expiration_date.lte"] == "2026-12-09"
+    assert params["contract_type"] == "call"
     assert "apiKey" not in str(first.url) and first.headers["Authorization"] == "Bearer " + KEY
     assert str(seen[1].url) == nxt                       # the cursor followed as given
     assert clock.sleeps == []                            # options reference: not paced per minute
@@ -516,6 +518,8 @@ def test_option_underlyings_without_a_date_and_errors_raise():
     with pytest.raises(massive.MassiveError) as ei:
         client.option_underlyings()
     assert ei.value.kind == "plan" and "the options contracts list" in str(ei.value)
+    assert ei.value.counts == {} and ei.value.pages == 0
+    assert ei.value.resume_url.startswith(BASE + "/v3/reference/options/contracts?")   # page 1, resumable
 
 
 def test_grouped_daily_path_params_parse_and_pacing():
@@ -608,3 +612,198 @@ def test_paging_cap_is_per_call():
     with pytest.raises(massive.MassiveError) as ei:
         list(client._pages("/v3/reference/options/contracts", {}, max_pages=3))
     assert ei.value.kind == "http" and "past 3 pages" in str(ei.value) and calls["n"] == 3
+
+
+# ───────────────────────────────────────────── the universe walk: resumable, visible (v4.137)
+
+N_PAGES = 8
+
+
+def _walk_server(fail_page=None, fail=None):
+    """An 8-page contracts list: page k (1-based, cursor ``P<k>`` from page 2) lists ``k``
+    calls of ``S<k>`` and one SPY call, and links the next page (none after page 8).
+    ``fail_page`` answers ``fail`` (an exception to raise, or a (status, body) reply)
+    every time it is asked for."""
+    seen: list[httpx.Request] = []
+
+    def page_of(request) -> int:
+        cur = request.url.params.get("cursor")
+        return int(cur[1:]) if cur else 1
+
+    def handler(request):
+        seen.append(request)
+        k = page_of(request)
+        if fail_page is not None and k == fail_page:
+            if isinstance(fail, Exception):
+                raise fail
+            return httpx.Response(fail[0], json=fail[1])
+        body = {"status": "OK",
+                "results": [_contract("S%d" % k, strike=100.0 + i) for i in range(k)] + [_contract("SPY")]}
+        if k < N_PAGES:
+            body["next_url"] = BASE + "/v3/reference/options/contracts?cursor=P%d" % (k + 1)
+        return httpx.Response(200, json=body)
+
+    return handler, seen, page_of
+
+
+def _counts_through(last_page: int) -> dict:
+    out = {"S%d" % k: k for k in range(1, last_page + 1)}
+    if last_page:
+        out["SPY"] = last_page
+    return out
+
+
+def test_universe_failure_carries_counts_and_resume_url():
+    handler, seen, page_of = _walk_server(fail_page=6, fail=httpx.ReadTimeout("slow deep page"))
+    client, clock = make_client(Server(handler=handler))
+    with pytest.raises(massive.MassiveError) as ei:
+        client.option_underlyings(exp_lte="2026-12-09")
+    exc = ei.value
+    assert exc.kind == "network"
+    assert exc.counts == _counts_through(5) and exc.pages == 5          # pages 1-5 kept
+    assert exc.resume_url == BASE + "/v3/reference/options/contracts?cursor=P6"
+    # page 6 asked 1 + 4 times, backing off 2, 4, 8, 16 s (the universe's own retries)
+    assert [page_of(r) for r in seen] == [1, 2, 3, 4, 5, 6, 6, 6, 6, 6]
+    assert [s for s in clock.sleeps if s >= 1] == [2.0, 4.0, 8.0, 16.0]
+    # each contracts-list request waits up to 60 s; a chain read keeps the client's 20 s
+    assert seen[0].extensions["timeout"]["read"] == 60.0
+    assert KEY not in str(exc) and KEY not in exc.resume_url
+    srv = Server([(200, {"results": []})])
+    c2, _ = make_client(srv)
+    c2.chain_snapshot("SPY")
+    assert srv.requests[0].extensions["timeout"]["read"] == 20.0
+
+
+def test_universe_failure_on_page_1_resumes_with_the_filters():
+    handler, seen, _ = _walk_server(fail_page=1, fail=(502, {"error": "bad gateway"}))
+    client, _ = make_client(Server(handler=handler))
+    with pytest.raises(massive.MassiveError) as ei:
+        client.option_underlyings(exp_lte="2026-12-09")
+    exc = ei.value
+    assert exc.kind == "http" and exc.status == 502 and exc.counts == {} and exc.pages == 0
+    assert len(seen) == 1 + massive.UNIVERSE_RETRIES                     # 5xx: the universe's 4 retries
+    # the resume URL is page 1 itself, with its filters - a resume asks the same page
+    handler2, seen2, _ = _walk_server()
+    client2, _ = make_client(Server(handler=handler2))
+    got = client2.option_underlyings(start_url=exc.resume_url)
+    assert got == _counts_through(N_PAGES)
+    assert dict(seen2[0].url.params) == {"expired": "false", "limit": "1000",
+                                         "expiration_date.lte": "2026-12-09", "contract_type": "call"}
+
+
+def test_universe_resumes_from_start_url():
+    handler, seen, page_of = _walk_server(fail_page=6, fail=httpx.ConnectError("down"))
+    client, _ = make_client(Server(handler=handler))
+    with pytest.raises(massive.MassiveError) as ei:
+        client.option_underlyings(exp_lte="2026-12-09")
+    exc = ei.value
+
+    handler, seen, page_of = _walk_server()                                # Massive is back
+    client, _ = make_client(Server(handler=handler))
+    pages = []
+    got = client.option_underlyings(start_url=exc.resume_url, counts=exc.counts,
+                                    on_page=lambda n, c, nxt: pages.append(n))
+    assert [page_of(r) for r in seen] == [6, 7, 8]                          # only pages 6-8 asked
+    assert str(seen[0].url) == exc.resume_url                               # exactly as kept
+    assert got == _counts_through(N_PAGES)                                  # = an uninterrupted walk
+    assert pages == [1, 2, 3]                                               # numbered per call
+    assert seen[0].headers["Authorization"] == "Bearer " + KEY
+
+
+def test_universe_resume_url_on_another_host_is_refused():
+    handler, seen, _ = _walk_server()
+    client, _ = make_client(Server(handler=handler))
+    with pytest.raises(massive.MassiveError) as ei:
+        client.option_underlyings(start_url="https://evil.example/v3/reference/options/contracts?cursor=P6",
+                                  counts={"SPY": 5})
+    assert ei.value.kind == "http" and ei.value.resume_url is None          # not resumable: start over
+    assert ei.value.counts == {"SPY": 5}
+    assert seen == []                                                       # the key went nowhere
+
+
+def test_universe_on_page_called_and_errors_ignored():
+    handler, seen, _ = _walk_server()
+    client, _ = make_client(Server(handler=handler))
+    calls = []
+
+    def on_page(n, counts, nxt):
+        calls.append((n, dict(counts), nxt))
+        counts["SPY"] = 10_000                    # a copy: the walk's own counts are not touched
+        raise RuntimeError("a broken progress hook")
+
+    got = client.option_underlyings(on_page=on_page)
+    assert got == _counts_through(N_PAGES)
+    assert [c[0] for c in calls] == list(range(1, N_PAGES + 1))
+    assert calls[2][1] == _counts_through(3)
+    assert calls[0][2] == BASE + "/v3/reference/options/contracts?cursor=P2"
+    assert calls[-1][2] is None                                             # after the last page
+    assert len(seen) == N_PAGES
+
+
+def test_universe_sends_contract_type_call():
+    handler, seen, _ = _walk_server()
+    client, _ = make_client(Server(handler=handler))
+    client.option_underlyings(exp_lte=_dt.date(2026, 12, 9))
+    assert dict(seen[0].url.params)["contract_type"] == "call"
+    assert "contract_type" not in dict(seen[1].url.params)                  # the cursor carries it
+    n = len(seen)
+    client.option_underlyings(contract_type=None)                           # both rights, if ever needed
+    assert "contract_type" not in dict(seen[n].url.params)
+    n = len(seen)
+    client.option_underlyings(contract_type="PUT")
+    assert dict(seen[n].url.params)["contract_type"] == "put"
+    with pytest.raises(ValueError):
+        client.option_underlyings(contract_type="straddle")
+
+
+def test_403_keeps_server_message_and_timeframe_flag():
+    body = {"status": "NOT_AUTHORIZED", "request_id": "abc",
+            "message": "Your plan doesn't include this data timeframe. Please upgrade your plan."}
+    client, _ = make_client(Server([(403, body)]))
+    with pytest.raises(massive.MassiveError) as ei:
+        client.grouped_daily("2024-09-30")
+    exc = ei.value
+    assert exc.kind == "plan" and exc.status == 403 and exc.window is True
+    assert "grouped daily stock bars" in str(exc) and "data timeframe" in str(exc)
+    # an endpoint the plan lacks: still plan, not a window
+    client, _ = make_client(Server([(403, {"status": "NOT_AUTHORIZED",
+                                           "message": "You are not entitled to this data."})]))
+    with pytest.raises(massive.MassiveError) as ei:
+        client.chain_snapshot("SPY")
+    assert ei.value.kind == "plan" and ei.value.window is False
+    assert "not entitled" in str(ei.value)
+    # the key never rides along in the kept message
+    client, _ = make_client(Server([(403, {"message": "bad key %s for this timeframe" % KEY})]))
+    with pytest.raises(massive.MassiveError) as ei:
+        client.stock_daily("AAPL", "2024-01-01", "2024-02-01")
+    assert ei.value.window is True and KEY not in str(ei.value)
+    assert massive.MassiveError("http", "x").window is False                # the default
+
+
+def test_2xx_body_with_an_error_status_raises():
+    client, _ = make_client(Server([(200, {"status": "ERROR", "error": "internal problem"})]))
+    with pytest.raises(massive.MassiveError) as ei:
+        client.chain_snapshot("SPY")
+    assert ei.value.kind == "http" and ei.value.status == 200 and "internal problem" in str(ei.value)
+    client, _ = make_client(Server([(200, {"status": "NOT_AUTHORIZED",
+                                           "message": "Your plan doesn't include this data timeframe."})]))
+    with pytest.raises(massive.MassiveError) as ei:
+        client.grouped_daily("2024-01-02")
+    assert ei.value.kind == "plan" and ei.value.window is True
+    for ok in ("OK", "DELAYED"):                                             # the normal answers
+        client, _ = make_client(Server([(200, {"status": ok, "results": []})]))
+        assert client.chain_snapshot("SPY")["rows"] == []
+
+
+def test_index_symbol_keeps_its_colon_in_the_snapshot_path():
+    srv = Server([(200, {"results": []})])
+    client, _ = make_client(srv)
+    client.chain_snapshot("I:SPX")
+    assert srv.requests[0].url.raw_path.split(b"?")[0] == b"/v3/snapshot/options/I:SPX"
+
+
+def test_stocks_plan_start_is_725_days_back():
+    assert massive.STOCKS_PLAN_DAYS == 725
+    assert massive.stocks_plan_start("2026-10-10") == _dt.date(2024, 10, 15)
+    with pytest.raises(ValueError):
+        massive.stocks_plan_start("soon")

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import datetime as _dt
 
-from sqlalchemy import (Boolean, Column, DateTime, Float, Index, Integer, String, Text,
+from sqlalchemy import (JSON, Boolean, Column, DateTime, Float, Index, Integer, String, Text,
                         UniqueConstraint)
 from sqlalchemy.orm import declarative_base
 
@@ -151,7 +151,10 @@ class ScrUniverse(ScrBase):
 
 class ScrPass(ScrBase):
     """One market pass over the universe. ``finished`` is NULL while it runs; the web app
-    reloads its arrays when a newer pass finishes."""
+    reloads its arrays when a newer pass finishes. ``partial`` (migration ``b4e1f7c9d2a6``,
+    v4.137) is True for a pass read on a PARTIAL list of optionable stocks (a first start's
+    streamed universe): a restart must not take such an end-of-day pass as the session's
+    full one. NULL (every older row) reads as a complete list."""
 
     __tablename__ = "scr_pass"
 
@@ -166,10 +169,16 @@ class ScrPass(ScrBase):
     n_contracts = Column(Integer, nullable=True)
     requests = Column(Integer, nullable=True)
     ms = Column(Integer, nullable=True)
+    partial = Column(Boolean, nullable=True)             # read on a partial universe (NULL = complete)
 
 
 class ScrStatus(ScrBase):
-    """The screener collector's heartbeat: a single row, ``id = 1``."""
+    """The screener collector's heartbeat: a single row, ``id = 1``.
+
+    The structured fields from ``error_kind`` down (migration ``8d2f4b6a1c37``, v4.137) are
+    all nullable: the web app migrates the DB before the collector restarts, so an older
+    collector keeps writing rows without them for a while and every reader must accept
+    None there."""
 
     __tablename__ = "scr_status"
 
@@ -188,3 +197,9 @@ class ScrStatus(ScrBase):
     history_total = Column(Integer, nullable=True)
     last_error = Column(Text, nullable=True)
     api_ok = Column(Boolean, nullable=True)
+    error_kind = Column(String(10), nullable=True)       # the active alert's kind (massive.KINDS, empty, startup, error)
+    next_try = Column(DateTime, nullable=True)           # when the paused / failed work is retried
+    warn = Column(Text, nullable=True)                   # a non-pausing warning (e.g. a failed day-2 universe refresh)
+    universe_done = Column(DateTime, nullable=True)      # set only when a universe walk COMPLETED
+    earnings_on = Column(String(10), nullable=True)      # ET day of the last earnings read
+    progress = Column(JSON(none_as_null=True), nullable=True)   # {universe_pages, pass_pct, stock_eta_s, ...}

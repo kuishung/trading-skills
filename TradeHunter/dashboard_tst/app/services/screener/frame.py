@@ -5,10 +5,21 @@ A ``Frame`` is immutable once built (its arrays are read-only) so any number of 
 screen it at once. ``current()`` hands out the latest one:
 
 * the first call loads it synchronously from the screener DB;
-* afterwards, at most every ``RELOAD_CHECK_S`` seconds, a request starts a background check:
-  when ``scr_pass`` has a newer finished pass (or the ET date has rolled, so every DTE moved)
-  a new Frame is built in that thread and swapped in. Requests keep using the previous Frame
-  meanwhile; a lock guarantees there are never two loads at once.
+* afterwards, at most every ``RELOAD_CHECK_S`` seconds, a request starts a background check
+  (``_needs_reload``). A new Frame is built in that thread and swapped in when:
+  (a) the cached frame is empty and the DB holds contracts it has not seen;
+  (b) no pass that STORED contracts has finished yet (the first real pass is running - a
+      legacy finished pass that read nothing does not count) and, at most every
+      ``GROW_RELOAD_S`` (and never more often than 4x the last load time), the DB has more
+      contracts or more security types than the frame - so the first pass's results grow;
+  (c) any frame with underlyings of unknown security type, when more types are filed (the
+      identity job landed after the pass finished);
+  (d) ``scr_pass`` has a newer finished pass (or the ET date has rolled, so every DTE moved).
+  Requests keep using the previous Frame meanwhile; a lock guarantees there are never two
+  loads at once. ``reloading()`` is True only while such a load really runs.
+* v4.137: while the cached frame is EMPTY, a request checks at most every ``EMPTY_CHECK_S``
+  and, when there is something to load, waits up to ``EMPTY_WAIT_S`` for it - so the first
+  request after the first rows land already gets them instead of "no data".
 
 The DB is read through the ORM (``screener_db.session()``, column selects, ``yield_per``
 chunks of ``LOAD_CHUNK`` rows) so ~1M contracts never sit in memory as ORM objects.
@@ -47,6 +58,10 @@ from ..opt_constants import RISK_FREE
 log = logging.getLogger("tst.screener.frame")
 
 RELOAD_CHECK_S = 30.0          # a request checks for a newer pass at most this often
+EMPTY_CHECK_S = 5.0            # an EMPTY cached frame is checked for new rows at most this often
+EMPTY_WAIT_S = 3.0             # ...and the request waits at most this long for that load
+GROW_RELOAD_S = 120.0          # a growing first-pass frame / late security types: at most this often
+GROW_LOAD_FACTOR = 4.0         # ...and never more often than this many times the last load time
 LOAD_CHUNK = 50_000            # ORM yield_per / partition size while loading contracts
 KEY_SPAN = 1_000_000_000       # a strike in thousandths of a dollar stays under this ($1M)
 EXP_SPAN = 1_000_000           # day offsets inside the (symbol, expiry) key
@@ -73,8 +88,16 @@ _U_NUM = ("spot", "prev_close", "chg_pct", "stock_volume", "avg_vol20", "avg_vol
           "perf20", "iv30", "iv30_prev", "iv_rank", "iv_pct", "iv_hi", "iv_lo", "iv_n",
           "exp_move30", "call_vol", "put_vol", "call_oi", "put_oi", "n_contracts")
 
-NO_DATA = ("No screener data yet - the Hermes screener collector has not finished a market "
-           "pass.")
+# the results area's texts (fix plan 2.T: T-20, T-21, T-22). Why there is no data is the
+# collector's to say - the page's empty panel (routes/options_page.py) shows it.
+NO_DATA = "No option data loaded yet."
+FIRST_PASS_WARN = ("The first market pass is still running: results cover {n:,} of {total:,} underlyings "
+                   "read by {hm} ET (refreshed every 2 minutes).")
+FIRST_PASS_WARN_NO_TOTAL = ("The first market pass is still running: results cover the {n:,} underlyings "
+                            "read by {hm} ET (refreshed every 2 minutes).")
+ZERO_PASS_WARN = ("The last market pass ({what}, finished {hm} ET) stored no contracts - see the "
+                  "collector status above.")
+_KIND_WORDS = {"eod": "end-of-day", "cycle": "intraday", "manual": "manual"}
 
 
 # ─────────────────────────────────── math ───────────────────────────────────
@@ -207,6 +230,7 @@ class Frame:
         self.today_d = (today - EPOCH).days
         self.n = int(len(c["strike"]))
         self.nu = int(len(symbols))
+        self.loaded_mono: float | None = None    # load_from_db: when it was read (monotonic s)
         self._cache: dict = {}
         self._cache_lock = threading.Lock()
 
@@ -560,12 +584,50 @@ def _transpose(rows, keys) -> dict:
     return {k: list(cols[i]) for i, k in enumerate(keys)}
 
 
+def _mono() -> float:
+    """The clock the reload throttles use (a function so tests can move it)."""
+    return time.monotonic()
+
+
+def _et_hm(t) -> str:
+    """A naive-UTC datetime as ``HH:MM`` on the US Eastern clock."""
+    if not isinstance(t, _dt.datetime):
+        t = _dt.datetime.now(_dt.timezone.utc)
+    return clock.et_now(t).strftime("%H:%M")
+
+
+def _session_words(kind, session) -> str:
+    """``eod`` + ``2026-10-09`` -> ``end-of-day Fri Oct 9`` (plain words for the warnings)."""
+    d = _as_date(session)
+    when = f"{d.strftime('%a %b')} {d.day}" if d else ""
+    words = _KIND_WORDS.get(str(kind or ""), str(kind or "")).strip()
+    return " ".join(x for x in (words, when) if x) or "market pass"
+
+
 def load_from_db(today=None) -> Frame:
     """Build a Frame from the screener DB. Never raises: a DB that does not exist, is not
-    migrated, or cannot be read yields an empty Frame whose ``meta.warnings`` says why."""
+    migrated, or cannot be read yields an empty Frame whose ``meta.warnings`` says why.
+
+    Besides the data, ``meta`` records what the reload checks compare against: ``max_cid``
+    (the highest ``scr_contract.id`` read), ``n_typed`` (underlyings with a security type),
+    ``run_id`` / ``run_total`` (the newest unfinished pass and its symbol count) and
+    ``pass_contracts`` (the last finished pass's contract count). ``real_pass_id`` /
+    ``real_pass_kind`` / ``real_session`` / ``real_finished`` name the newest finished pass
+    that STORED contracts (``n_contracts`` > 0, or unknown) - None while only a pass that
+    read nothing has finished (the first real pass is then still running: the frame grows
+    and says so). ``frame.loaded_mono`` (and the module's ``_loaded_mono``) stamp when it was
+    read."""
+    global _loaded_mono
+    fr = _load_from_db(today)
+    fr.loaded_mono = _mono()
+    _loaded_mono = fr.loaded_mono
+    return fr
+
+
+def _load_from_db(today=None) -> Frame:
     t0 = time.perf_counter()
     try:
-        from sqlalchemy import func, select
+        from sqlalchemy import func, or_, select
 
         from ... import screener_db
         from ...screener_models import ScrContract, ScrPass, ScrUnderlying
@@ -581,8 +643,24 @@ def load_from_db(today=None) -> Frame:
     try:
         with screener_db.session() as s:
             last = s.execute(
-                select(ScrPass.id, ScrPass.kind, ScrPass.session, ScrPass.started, ScrPass.finished)
+                select(ScrPass.id, ScrPass.kind, ScrPass.session, ScrPass.started, ScrPass.finished,
+                       ScrPass.n_contracts)
                 .where(ScrPass.finished.is_not(None)).order_by(ScrPass.id.desc()).limit(1)).first()
+            # the newest finished pass that stored contracts (NULL = unknown counts as stored);
+            # pass_id stays the newest of ANY count - rule (d) and the T-22 warning read it
+            real = s.execute(
+                select(ScrPass.id, ScrPass.kind, ScrPass.session, ScrPass.finished)
+                .where(ScrPass.finished.is_not(None),
+                       or_(ScrPass.n_contracts.is_(None), ScrPass.n_contracts > 0))
+                .order_by(ScrPass.id.desc()).limit(1)).first()
+            run = s.execute(
+                select(ScrPass.id, ScrPass.n_symbols)
+                .where(ScrPass.finished.is_(None)).order_by(ScrPass.id.desc()).limit(1)).first()
+            # read BEFORE the rows: a row filed during the load only makes the next check
+            # reload once more, it is never missed
+            meta["max_cid"] = s.execute(select(func.max(ScrContract.id))).scalar()
+            meta["n_typed"] = int(s.execute(select(func.count(ScrUnderlying.id))
+                                            .where(ScrUnderlying.sec_type.is_not(None))).scalar() or 0)
             urows = s.execute(select(*[getattr(ScrUnderlying, k) for k in U_COLS])).all()
             b.add_underlyings(_transpose(urows, U_COLS))
             # the read time: one aggregate instead of a datetime parsed per contract
@@ -601,11 +679,24 @@ def load_from_db(today=None) -> Frame:
                                  f"{type(exc).__name__})", today, meta={"source": "db"})
     if last is not None:
         meta.update(pass_id=last.id, pass_kind=last.kind, session=last.session,
-                    started=_iso_utc(last.started), finished=_iso_utc(last.finished))
+                    started=_iso_utc(last.started), finished=_iso_utc(last.finished),
+                    pass_contracts=last.n_contracts)
+    meta["run_id"] = run.id if run is not None else None
+    meta["run_total"] = run.n_symbols if run is not None else None
+    meta.update(real_pass_id=real.id if real is not None else None,
+                real_pass_kind=real.kind if real is not None else None,
+                real_session=real.session if real is not None else None,
+                real_finished=_iso_utc(real.finished) if real is not None else None)
     frame = b.build(meta, today, source="db")
-    if last is None and not frame.empty:
-        frame.meta["warnings"].append("The first market pass is still running - results cover "
-                                      "only the underlyings read so far.")
+    if real is None and not frame.empty:          # T-21: no pass that stored contracts has finished
+        n, total = frame.meta["n_underlyings"], frame.meta.get("run_total")
+        hm = _et_hm(b.as_of)
+        frame.meta["warnings"].append(FIRST_PASS_WARN.format(n=n, total=total, hm=hm)
+                                      if total and total >= n else
+                                      FIRST_PASS_WARN_NO_TOTAL.format(n=n, hm=hm))
+    if frame.empty and last is not None and not (last.n_contracts or 0):
+        frame.meta["warnings"].append(ZERO_PASS_WARN.format(what=_session_words(last.kind, last.session),
+                                                            hm=_et_hm(last.finished)))
     if frame.empty and not frame.meta["warnings"]:
         frame.meta["warnings"].append(NO_DATA)
     frame.meta["load_ms"] = int((time.perf_counter() - t0) * 1000)
@@ -614,42 +705,64 @@ def load_from_db(today=None) -> Frame:
     return frame
 
 
-def _latest_pass_id():
-    from sqlalchemy import select
-
-    from ... import screener_db
-    from ...screener_models import ScrPass
-
-    if _sqlite_missing(screener_db.database_url()):
-        return None, False
-    with screener_db.session() as s:
-        row = s.execute(select(ScrPass.id).where(ScrPass.finished.is_not(None))
-                        .order_by(ScrPass.id.desc()).limit(1)).first()
-        return (row[0] if row else None), True
-
-
-def _has_contracts() -> bool:
-    from sqlalchemy import select
-
-    from ... import screener_db
-    from ...screener_models import ScrContract
-
-    with screener_db.session() as s:
-        return s.execute(select(ScrContract.id).limit(1)).first() is not None
-
-
 def _needs_reload(cur: Frame | None) -> bool:
+    """Is there something worth loading for ``cur``? Cheap ORM reads only (an id, a max,
+    a count); see the module docstring for rules (a)-(d). Never raises."""
     if cur is None:
         return True
     try:
         if cur.today != clock.et_date():
             return True
-        latest, exists = _latest_pass_id()
-        if not exists:
+        from sqlalchemy import func, select
+
+        from ... import screener_db
+        from ...screener_models import ScrContract, ScrPass, ScrUnderlying
+
+        if _sqlite_missing(screener_db.database_url()):
             return False
-        if latest is None:
-            return cur.empty and _has_contracts()
-        return latest != cur.meta.get("pass_id")
+        m = cur.meta
+        with screener_db.session() as s:
+            row = s.execute(select(ScrPass.id).where(ScrPass.finished.is_not(None))
+                            .order_by(ScrPass.id.desc()).limit(1)).first()
+            latest = row[0] if row else None
+
+            def max_cid():
+                return s.execute(select(func.max(ScrContract.id))).scalar()
+
+            def n_typed() -> int:
+                return int(s.execute(select(func.count(ScrUnderlying.id))
+                                     .where(ScrUnderlying.sec_type.is_not(None))).scalar() or 0)
+
+            # (a) an empty frame and contracts it has not seen (an unchanged max id means
+            #     rows the loader drops anyway - expired - so no reload every few seconds)
+            if cur.empty:
+                cid = max_cid()
+                if cid is not None and cid != m.get("max_cid"):
+                    return True
+            # (d) a newer finished pass
+            if latest is not None and latest != m.get("pass_id"):
+                return True
+            if cur.empty:
+                return False
+            loaded = cur.loaded_mono
+            elapsed = float("inf") if loaded is None else _mono() - loaded
+            if elapsed < GROW_RELOAD_S:
+                return False
+            # (b) the first REAL pass is still running (no finished pass, or only ones that
+            #     read nothing): the frame grows (never on later passes)
+            real = m["real_pass_id"] if "real_pass_id" in m else m.get("pass_id")
+            first = latest is None or real is None
+            if first and elapsed >= max(GROW_RELOAD_S,
+                                        GROW_LOAD_FACTOR * (m.get("load_ms") or 0) / 1000.0):
+                cid = max_cid()
+                if cid is not None and (m.get("max_cid") is None or cid > m["max_cid"]):
+                    return True
+                if n_typed() != (m.get("n_typed") or 0):
+                    return True
+            # (c) security types landed after the frame was read
+            if (m.get("n_sec_type_unknown") or 0) > 0 and n_typed() > (m.get("n_typed") or 0):
+                return True
+            return False
     except Exception as exc:  # noqa: BLE001
         log.debug("screener reload check failed: %s", exc)
         return False
@@ -661,30 +774,76 @@ _state_lock = threading.Lock()      # guards the fields below
 _load_lock = threading.Lock()       # held for the whole of a load: never two at once
 _frame: Frame | None = None
 _pinned = False                     # set_current(): tests pin a frame, no background checks
-_last_check = 0.0
+_last_check = float("-inf")
+_last_empty_check = float("-inf")
+_loading = False                    # a load that _needs_reload asked for is running
+_loaded_mono: float | None = None   # when the last load_from_db() read the DB
 _bg: threading.Thread | None = None
+
+
+def reloading() -> bool:
+    """True only while a load is really running (never for a check that found nothing).
+    Callers add it to a COPY of ``meta`` - a frame's own meta never carries it."""
+    return _loading
+
+
+def _set_loading(on: bool) -> None:
+    global _loading
+    with _state_lock:
+        _loading = bool(on)
 
 
 def current() -> Frame:
     """The latest Frame. The first call loads synchronously; later calls may start a
-    background reload (see the module docstring) and return the previous Frame meanwhile."""
+    background reload (see the module docstring) and return the previous Frame meanwhile -
+    except while that frame is EMPTY, when the request waits up to ``EMPTY_WAIT_S`` for it."""
     global _frame, _last_check
     f = _frame
     if f is None:
         with _load_lock:
             if _frame is None:
-                _frame = load_from_db()
+                _set_loading(True)
+                try:
+                    _frame = load_from_db()
+                finally:
+                    _set_loading(False)
                 with _state_lock:
-                    _last_check = time.monotonic()
+                    _last_check = _mono()
             return _frame
-    if not _pinned:
-        _maybe_schedule()
+    if _pinned:
+        return f
+    if f.empty:
+        return _empty_fast_path(f)
+    _maybe_schedule()
     return f
+
+
+def _empty_fast_path(f: Frame) -> Frame:
+    """An empty cached frame: at most every ``EMPTY_CHECK_S`` start the background check
+    (or join the one running) and wait up to ``EMPTY_WAIT_S`` for it. Returns the new frame
+    when it finished in time, else ``f`` (``reloading()`` then tells the page why)."""
+    global _last_check, _last_empty_check, _bg
+    now = _mono()
+    with _state_lock:
+        if _pinned or _frame is not f:              # swapped meanwhile: hand out the new one
+            return _frame if _frame is not None else f
+        t = _bg if (_bg is not None and _bg.is_alive()) else None
+        if t is None:
+            if now - _last_empty_check < EMPTY_CHECK_S:
+                return f
+            _last_empty_check = now
+            _last_check = now
+            t = threading.Thread(target=_bg_reload, name="screener-frame-reload", daemon=True)
+            _bg = t
+            t.start()
+    t.join(EMPTY_WAIT_S)
+    cur = _frame
+    return cur if cur is not None else f
 
 
 def _maybe_schedule() -> None:
     global _last_check, _bg
-    now = time.monotonic()
+    now = _mono()
     with _state_lock:
         if _pinned or now - _last_check < RELOAD_CHECK_S:
             return
@@ -700,9 +859,10 @@ def _bg_reload() -> None:
     if not _load_lock.acquire(blocking=False):
         return
     try:
-        cur = _frame
+        cur = _frame                                # re-read under the lock: one load only
         if _pinned or not _needs_reload(cur):
             return
+        _set_loading(True)
         new = load_from_db()
         if new.empty and cur is not None and not cur.empty and new.meta.get("pass_id") is None:
             log.warning("screener reload produced no data; keeping the previous frame")
@@ -712,6 +872,7 @@ def _bg_reload() -> None:
     except Exception as exc:  # noqa: BLE001 - a failed reload keeps the old frame
         log.warning("screener background reload failed: %s", exc)
     finally:
+        _set_loading(False)                         # after the swap: never "done" with the old frame
         _load_lock.release()
 
 
@@ -743,9 +904,12 @@ def set_current(frame: Frame | None) -> None:
 
 def reset() -> None:
     """Test hook: forget the current frame; the next ``current()`` loads from the DB."""
-    global _frame, _pinned, _last_check
+    global _frame, _pinned, _last_check, _last_empty_check, _loading, _loaded_mono
     wait_reload(5.0)
     with _state_lock:
         _frame = None
         _pinned = False
-        _last_check = 0.0
+        _last_check = float("-inf")
+        _last_empty_check = float("-inf")
+        _loading = False
+        _loaded_mono = None

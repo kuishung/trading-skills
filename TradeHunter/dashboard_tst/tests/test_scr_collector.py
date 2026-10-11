@@ -19,6 +19,7 @@ import logging
 import math
 import re
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -100,6 +101,16 @@ class FakeMassive:
         self.bars_end = "2026-10-07"
         self.no_options: set[str] = set()
         self.split_on: str | None = None             # AAA splits 2:1 on this day
+        # the contracts list (option_underlyings): ``uni_page`` symbols a page (None: one page);
+        # ``uni_fail[page]`` raises on that page (once), carrying the counts / cursor as the real
+        # client does; ``uni_gate = (page, release, arrived)`` holds the walk after that page;
+        # ``uni_hook(page)`` runs before each page; ``uni_urls`` = the pages asked for.
+        self.uni_page: int | None = None
+        self.uni_fail: dict = {}
+        self.uni_gate = None
+        self.uni_hook = None
+        self.uni_urls: list[str] = []
+        self.chain_rows: dict = {}                   # symbol -> rows to return instead of the grid
 
     def _rec(self, name, key, **kw):
         self.calls.append((name, key, kw))
@@ -126,6 +137,9 @@ class FakeMassive:
                   strike_gte=strike_gte, strike_lte=strike_lte)
         now = self.clk()
         stamp = now - _dt.timedelta(minutes=15)
+        if symbol in self.chain_rows:
+            return {"symbol": symbol, "rows": list(self.chain_rows[symbol]), "underlying_price": None,
+                    "underlying_as_of": None, "pages": 1, "as_of": stamp}
         S = SPOTS[symbol]
         rows = [self._row(symbol, e, round(S * m, 2), r, now, stamp)
                 for e in EXPIRIES for m in MULTS for r in ("C", "P")]
@@ -136,9 +150,40 @@ class FakeMassive:
         return {"symbol": symbol, "rows": rows, "underlying_price": None, "underlying_as_of": None,
                 "pages": 2, "as_of": stamp}
 
-    def option_underlyings(self, *, exp_lte=None):
-        self._rec("option_underlyings", None, exp_lte=str(exp_lte))
-        return dict(self.universe)
+    def _uni_url(self, page: int) -> str:
+        return "%s/v3/reference/options/contracts?cursor=%d" % (self.base_url, page)
+
+    def option_underlyings(self, exp_lte=None, *, contract_type="call", start_url=None, counts=None,
+                           on_page=None, **kw):
+        self._rec("option_underlyings", None, exp_lte=str(exp_lte), contract_type=contract_type,
+                  start_url=start_url, counts=dict(counts or {}))
+        items = list(self.universe.items())
+        size = self.uni_page or max(1, len(items))
+        pages = [dict(items[i:i + size]) for i in range(0, len(items), size)] or [{}]
+        first = int(start_url.rsplit("=", 1)[1]) if start_url else 1
+        got = dict(counts or {})
+        n = 0
+        for page in range(first, len(pages) + 1):
+            url = self._uni_url(page)
+            self.uni_urls.append(url)
+            if self.uni_hook is not None:
+                self.uni_hook(page)
+            exc = self.uni_fail.pop(page, None)
+            if exc is not None:
+                exc.counts, exc.pages, exc.resume_url = dict(got), n, url
+                raise exc
+            for sym, c in pages[page - 1].items():
+                got[sym] = got.get(sym, 0) + c
+            n += 1
+            if on_page is not None:
+                try:
+                    on_page(n, dict(got), self._uni_url(page + 1) if page < len(pages) else None)
+                except Exception:  # noqa: BLE001 - as the real client: a hook never stops the walk
+                    pass
+            if self.uni_gate is not None and self.uni_gate[0] == page:
+                self.uni_gate[2].set()
+                assert self.uni_gate[1].wait(30), "the test never released the walk"
+        return got
 
     def _bar_close(self, sym, d: _dt.date, adjusted: bool) -> float:
         c = _close(sym, d)
@@ -434,7 +479,12 @@ def test_universe_then_a_pass_over_three_underlyings(db, build, tmp_path):
     assert (st["universe_n"], st["universe_on"], st["history_total"], st["history_done_n"]) == (3, DAY, 3, 0)
     assert st["api_ok"] is True
     doc = _doc(tmp_path)
-    assert doc["state"] == "idle" and "next pass 10:30 ET" in doc["detail"]
+    assert doc["state"] == "idle"
+    assert doc["detail"] == "Up to date with the Thu Oct 8 10:00 ET read; next market pass Thu Oct 8 10:30 ET."
+    assert cl.of("option_underlyings")[0][2]["contract_type"] == "call"
+    assert doc["universe_done"] == _utc(RTH).isoformat() and st["universe_done"] == RTH
+    assert doc["error_kind"] is None and doc["next_try"] is None and doc["warn"] is None
+    assert set(doc["progress"]) == set(scr_collector.PROGRESS_KEYS)
     assert (doc["last_pass_id"], doc["last_pass_kind"], doc["last_pass_et"]) == (p.id, "cycle", "10:00 ET")
     assert doc["last_pass_contracts"] == 3 * KEPT and doc["universe_n"] == 3
     assert doc["written_by"] == "dashboard_tst/app/services/scr_collector.py"
@@ -802,25 +852,922 @@ def test_nothing_outside_scr_store_touches_the_tables():
         assert word not in src.lower(), word
 
 
+# ───────────────────────────────────────── v4.137: the first-run fix ─────────────────────────────────────────
+
+FRI_0725 = _dt.datetime(2026, 10, 9, 11, 25)      # Friday 07:25 ET
+MON_RTH = _dt.datetime(2026, 10, 12, 13, 50)      # Monday 09:50 ET
+
+
+def _e403(what="the options chain snapshot", *, window=False):
+    exc = MassiveError("plan", "your Massive plan does not include %s (HTTP 403)" % what, 403)
+    exc.window = window
+    return exc
+
+
+def _http(what="the options contracts list", status=502):
+    return MassiveError("http", "Massive answered HTTP %d for %s" % (status, what), status)
+
+
+def _gated(clk, build, page=1, **kw):
+    """A collector whose universe walk runs on its own REAL thread and is held after
+    ``page`` (one symbol a page: AAA, BBB, CCC) until the test releases it; every other
+    job runs inline."""
+    cl = FakeMassive(clk)
+    cl.uni_page = 1
+    release, arrived = threading.Event(), threading.Event()
+    cl.uni_gate = (page, release, arrived)
+    col, _ = build(clk, client=cl, universe_executor_factory=scr_collector._thread_pool, **kw)
+    return col, cl, release, arrived
+
+
+# -- the universe and the first pass --
+
+def test_streamed_universe_starts_the_pass_before_the_walk_ends(db, build, tmp_path):
+    clk = Clock(RTH)
+    col, cl, release, arrived = _gated(clk, build)
+    try:
+        col.tick()                                           # the walk starts on its own thread
+        assert arrived.wait(30)
+        assert scr_store.pass_symbols(db, now=RTH) == ["AAA"]          # page 1 is filed at once
+        assert col.tick() == "pass"                          # the first pass starts on it
+        assert cl.read() == ["AAA"] and len(_contracts(db, "AAA")) == KEPT
+        doc = _doc(tmp_path)
+        assert doc["state"] == "pass" and doc["universe_done"] is None and doc["error_kind"] is None
+        assert doc["detail"] == (
+            "Reading the option market (live, 15-min delayed): all 1 underlyings listed so far are read - "
+            "waiting for the rest of the list." + scr_collector.DETAIL_JOIN +
+            "Step 1 of 2: reading Massive's list of optionable stocks - page 1 (1 stocks so far, 0 min). "
+            "Results start appearing as soon as the first stocks are read.")
+        pr = doc["progress"]
+        assert (pr["universe_pages"], pr["universe_symbols"], pr["universe_started"]) == (1, 1, _utc(RTH).isoformat())
+        assert (pr["pass_kind"], pr["pass_pct"]) == ("cycle", 100.0)
+        assert _passes(db)[-1].finished is None              # it waits for the rest of the list
+        assert _passes(db)[-1].n_symbols == 1
+        assert _und(db, "AAA")["sec_type"] == "stock"        # identities run on the partial list
+    finally:
+        release.set()
+    col._uni_future.result(timeout=30)
+    col.tick()                                               # the list is complete: the pass grows and ends
+    assert cl.read() == ["AAA", "BBB", "CCC"]
+    p = _passes(db)[-1]
+    assert p.finished is not None and (p.n_ok, p.n_failed, p.n_contracts) == (3, 0, 3 * KEPT)
+    assert p.n_symbols == 3                                  # the pass row follows the growth (frame T-21)
+    assert _und(db, "BBB")["sec_type"] == "etf"              # named from the cached identity records
+    assert len(cl.of("reference_tickers", "stocks")) == 1
+    doc = _doc(tmp_path)
+    assert doc["universe_done"] == _utc(RTH).isoformat() and doc["state"] == "idle"
+    assert doc["last_pass_contracts"] == 3 * KEPT
+
+
+def test_growing_pass_reads_symbols_filed_later_before_last_eod_is_set(db, build, tmp_path):
+    clk = Clock(EOD)
+    col, cl, release, arrived = _gated(clk, build, page=2)
+    try:
+        col.tick()
+        assert arrived.wait(30)
+        assert scr_store.pass_symbols(db, now=EOD) == ["AAA"]   # page 2 waits for the 25-page / 30 s save
+        col.tick()
+        assert cl.read() == ["AAA"] and _passes(db)[-1].kind == "eod"
+        clk.advance(minutes=1)
+        col.tick()
+        assert col._pass is not None and col._last_eod is None
+        assert _doc(tmp_path)["last_eod_session"] is None
+    finally:
+        release.set()
+    col._uni_future.result(timeout=30)
+    col.tick()
+    assert cl.read() == ["AAA", "BBB", "CCC"] and col._last_eod == DAY
+    p = _passes(db)[-1]
+    assert (p.kind, p.n_ok) == ("eod", 3) and p.finished is not None
+    db.expire_all()
+    assert db.query(ScrUnderlyingDaily).filter(ScrUnderlyingDaily.on == DAY,
+                                               ScrUnderlyingDaily.iv30.isnot(None)).count() == 3
+
+
+def test_universe_walk_resumes_at_failed_page_not_page_1(db, build, tmp_path):
+    clk = Clock(RTH)
+    col, cl = build(clk)
+    cl.uni_page = 1
+    cl.uni_fail[2] = _http()
+    assert col.tick() == "error"
+    doc = _doc(tmp_path)
+    assert doc["error_kind"] == "http" and doc["universe_done"] is None
+    assert doc["detail"] == ("universe: Massive answered HTTP 502 for the options contracts list"
+                             + scr_collector.NO_UNIVERSE_SUFFIX + "; next try 10:01 ET")
+    assert _dt.datetime.fromisoformat(doc["next_try"]) == _utc(RTH + _dt.timedelta(seconds=60))
+    assert (doc["progress"]["universe_pages"], doc["progress"]["universe_symbols"]) == (1, 1)
+    assert scr_store.pass_symbols(db, now=RTH) == ["AAA"]            # page 1 is kept
+    clk.advance(seconds=15)
+    col.tick()
+    assert len(cl.of("option_underlyings")) == 1                       # not before 60 s
+    clk.advance(seconds=50)
+    col.tick()
+    calls = cl.of("option_underlyings")
+    assert len(calls) == 2 and calls[1][2]["start_url"] == cl._uni_url(2)
+    assert calls[1][2]["counts"] == {"AAA": 3000}
+    assert cl.uni_urls == [cl._uni_url(1), cl._uni_url(2), cl._uni_url(2), cl._uni_url(3)]   # page 1 read once
+    assert scr_store.pass_symbols(db, now=clk.t) == ["AAA", "BBB", "CCC"]
+    doc = _doc(tmp_path)
+    assert doc["error_kind"] is None and doc["universe_done"] is not None and doc["last_error"] is None
+
+
+def test_universe_cursor_refused_starts_again_from_page_1(db, build):
+    clk = Clock(RTH)
+    col, cl = build(clk)
+    cl.uni_page = 1
+    cl.uni_fail[2] = MassiveError("network", "could not reach Massive for the options contracts list (ReadTimeout: )")
+    col.tick()
+    assert col._retry_at["all"] - clk.t == _dt.timedelta(seconds=60) and "universe" not in col._alerts
+    cl.uni_fail[2] = _http(status=400)                       # the saved cursor is refused
+    clk.advance(seconds=61)
+    col.tick()
+    assert [c[2]["start_url"] for c in cl.of("option_underlyings")] == [None, cl._uni_url(2), None]
+    assert scr_store.pass_symbols(db, now=clk.t) == ["AAA", "BBB", "CCC"]
+    assert col._universe_done is not None and col._uni_resume is None
+
+
+def test_partial_universe_never_deactivates_and_does_not_count_as_refreshed(db, build, tmp_path):
+    clk = Clock(RTH)
+    scr_store.upsert_universe(db, {"DDD": 10, "AAA": 5}, now=RTH - _dt.timedelta(days=1))   # an older list, no stamp
+    col, cl = build(clk)
+    cl.chain_rows["DDD"] = []
+    cl.uni_page = 1
+    cl.uni_fail[2] = _http()
+    col.tick()
+    db.expire_all()
+    assert scr_store.universe_info(db)["n"] == 2              # AAA updated, DDD still active
+    assert col._universe_done is None and _status(db)["universe_done"] is None
+    assert _status(db)["universe_on"] is None
+    clk.advance(seconds=61)
+    col.tick()                                               # resumed and complete: only now is DDD gone
+    db.expire_all()
+    info = scr_store.universe_info(db)
+    assert (info["n"], info["total"]) == (3, 4) and col._universe_done == clk.t
+    assert _status(db)["universe_done"] == clk.t
+
+
+def test_day2_refresh_failure_keeps_yesterdays_list_warn_not_error(db, build, tmp_path):
+    clk = Clock(RTH)
+    col, cl = build(clk)
+    col.tick()                                               # Thursday: a complete list
+    col._last_eod = DAY
+    clk.t = _dt.datetime(2026, 10, 9, 11, 35)                # Friday 07:35 ET: the daily refresh fails
+    cl.fail[("option_underlyings", None)] = _http()
+    assert col.tick() != "error"
+    doc = _doc(tmp_path)
+    assert doc["error_kind"] is None and doc["state"] != "error"
+    assert doc["warn"] == ("Universe refresh failed 07:35 ET (Massive answered HTTP 502 for the options "
+                           "contracts list); next try 07:50 ET - yesterday's list in use.")
+    assert _dt.datetime.fromisoformat(doc["next_try"]) == _utc(clk.t + _dt.timedelta(minutes=15))
+    assert doc["last_error"].startswith("universe: Massive answered HTTP 502")
+    assert scr_store.pass_symbols(db, now=clk.t) == ["AAA", "BBB", "CCC"] and doc["universe_n"] == 3
+    assert _status(db)["warn"] == doc["warn"]
+    cl.fail.clear()
+    clk.advance(minutes=15)
+    col.tick()
+    doc = _doc(tmp_path)
+    assert doc["warn"] is None and doc["last_error"] is None and len(cl.of("option_underlyings")) == 3
+    assert doc["universe_done"] == _utc(clk.t).isoformat()
+
+
+@pytest.mark.parametrize("exc", [
+    _http(),
+    MassiveError("rate", "Massive kept answering 'too many requests' for the options contracts list (HTTP 429)", 429),
+], ids=["http", "rate"])
+def test_universe_http_rate_error_on_empty_db_is_error_with_next_try(db, build, tmp_path, exc):
+    clk = Clock(SAT)
+    col, cl = build(clk)
+    cl.fail[("option_underlyings", None)] = exc
+    assert col.tick() == "error"
+    doc = _doc(tmp_path)
+    assert (doc["state"], doc["error_kind"], doc["universe_n"]) == ("error", exc.kind, 0)
+    assert doc["detail"] == "universe: %s%s; next try 12:15 ET" % (exc, scr_collector.NO_UNIVERSE_SUFFIX)
+    assert _dt.datetime.fromisoformat(doc["next_try"]) == _utc(SAT + _dt.timedelta(minutes=15))
+    st = _status(db)
+    assert (st["state"], st["error_kind"], st["next_try"]) == ("error", exc.kind, SAT + _dt.timedelta(minutes=15))
+    clk.advance(minutes=5)
+    col.tick()
+    assert len(cl.of("option_underlyings")) == 1
+    cl.fail.clear()
+    clk.advance(minutes=10)
+    assert col.tick() != "error"                             # the recovery clears it
+    doc = _doc(tmp_path)
+    assert doc["error_kind"] is None and doc["last_error"] is None and doc["next_try"] is None
+    assert scr_store.pass_symbols(db, now=clk.t) == ["AAA", "BBB", "CCC"]
+
+
+def test_network_blip_still_retries_after_60s(db, build):
+    clk = Clock(SAT)
+    col, cl = build(clk)
+    cl.fail[("option_underlyings", None)] = MassiveError("network", "could not reach Massive for the options "
+                                                                    "contracts list (ConnectError: )")
+    assert col.tick() == "error"
+    assert col._retry_at["all"] - clk.t == _dt.timedelta(seconds=60)
+    assert "universe" not in col._alerts and col._universe_retry_at is None    # no 15-min universe alert on top
+    cl.fail.clear()
+    clk.advance(seconds=61)
+    col.tick()
+    assert len(cl.of("option_underlyings")) == 2 and col.error_kind() is None
+    assert scr_store.pass_symbols(db, now=clk.t) == ["AAA", "BBB", "CCC"]
+
+
+def test_empty_universe_is_error_and_not_retried_each_tick(db, build, tmp_path):
+    clk = Clock(SAT)
+    col, cl = build(clk)
+    cl.universe = {}
+    assert col.tick() == "error"
+    doc = _doc(tmp_path)
+    assert doc["error_kind"] == "empty" and doc["universe_on"] is None and doc["universe_done"] is None
+    assert doc["detail"].startswith(scr_collector.UNIVERSE_EMPTY_TEXT + scr_collector.NO_UNIVERSE_SUFFIX)
+    assert doc["last_error"] == scr_collector.UNIVERSE_EMPTY_TEXT
+    for _ in range(4):
+        clk.advance(seconds=15)
+        col.tick()
+    assert len(cl.of("option_underlyings")) == 1                       # not asked again every tick
+    cl.universe = dict(UNIVERSE)
+    clk.t = SAT + _dt.timedelta(minutes=15, seconds=1)
+    col.tick()
+    assert len(cl.of("option_underlyings")) == 2 and col.error_kind() is None
+
+
+def test_universe_straddling_0730_runs_once(db, build):
+    clk = Clock(RTH)
+    col, cl = build(clk)
+    col.tick()                                               # Thursday 10:00 ET: the list
+    clk2 = Clock(FRI_0725)                                   # a restart at 07:25 ET Friday: the list is 21 h old
+    col2, _ = build(clk2, client=cl)
+    cl.uni_hook = lambda page: clk2.advance(minutes=10)      # the walk takes 10 min: it ends at 07:35
+    col2.tick()
+    assert len(cl.of("option_underlyings")) == 2
+    assert col2._universe_done == _dt.datetime(2026, 10, 9, 11, 35)     # its completion, not its start
+    cl.uni_hook = None
+    for minutes in (1, 10, 30):
+        clk2.t = _dt.datetime(2026, 10, 9, 11, 35) + _dt.timedelta(minutes=minutes)
+        col2.tick()
+    assert len(cl.of("option_underlyings")) == 2             # not read again for 07:30
+
+
+def _partial_first_eod(build):
+    """First start at 16:25 ET: page 1 (AAA) is filed, page 2 fails, and the EOD pass reads
+    AAA and ends 'finished' on that PARTIAL list (the walk waits 60 s for its resume)."""
+    clk = Clock(EOD)
+    col, cl = build(clk)
+    cl.uni_page = 1
+    cl.uni_fail[2] = _http()
+    col.tick()                                               # the walk (inline): AAA filed, page 2 fails
+    clk.advance(seconds=15)
+    col.tick()                                               # the EOD pass on [AAA]
+    assert col._partial_eod == DAY and col._last_eod is None
+    return clk, col, cl
+
+
+def test_restart_after_a_partial_eod_reads_the_rest_once_the_list_is_complete(db, build):
+    clk, col, cl = _partial_first_eod(build)
+    p = _passes(db)[-1]
+    assert (p.kind, p.session, p.n_symbols, p.partial) == ("eod", DAY, 1, True) and p.finished is not None
+    col.stop("restart")                                      # before the walk completes
+    clk2 = Clock(EOD + _dt.timedelta(minutes=2))
+    col2, _ = build(clk2, client=cl)
+    col2.tick()                                              # restored as partial: no EOD on [AAA] again ...
+    assert col2._partial_eod == DAY and col2._last_eod is None
+    for _ in range(4):
+        clk2.advance(seconds=15)
+        col2.tick()                                          # ... the walk completes, then the full EOD pass
+    assert col2._universe_done is not None and col2._last_eod == DAY
+    eods = [x for x in _passes(db) if x.kind == "eod" and x.finished is not None]
+    assert [(x.n_symbols, x.partial) for x in eods] == [(1, True), (3, False)]
+    assert _contracts(db, "BBB") and _contracts(db, "CCC")
+    assert sorted(cl.read()) == ["AAA", "AAA", "BBB", "CCC"]
+
+
+def test_restart_during_the_full_eod_after_a_partial_one_reads_the_rest(db, build):
+    clk, col, cl = _partial_first_eod(build)
+    for sym in UNIVERSE:                                     # the full pass will pause at once
+        cl.fail[("chain_snapshot", sym)] = MassiveError("network", "could not reach Massive (ConnectError: )")
+    for _ in range(4):
+        clk.advance(seconds=61)
+        col.tick()                                           # the walk resumes and completes; the full pass starts
+    assert col._universe_done is not None
+    assert any(x.kind == "eod" and x.finished is None and x.n_symbols == 3 for x in _passes(db))
+    col.stop("restart")
+    cl.fail.clear()
+    n = len(cl.read())
+    clk2 = Clock(clk.t + _dt.timedelta(minutes=2))
+    col2, _ = build(clk2, client=cl)
+    for _ in range(3):
+        col2.tick()
+        clk2.advance(seconds=15)
+    assert sorted(cl.read()[n:]) == ["AAA", "BBB", "CCC"] and col2._last_eod == DAY
+    assert _contracts(db, "BBB") and _contracts(db, "CCC")
+
+
+@pytest.mark.parametrize("partial", [False, None], ids=["complete", "legacy-null"])
+def test_restart_after_a_complete_eod_reads_nothing_again(db, build, partial):
+    clk = Clock(SAT)
+    col, cl = build(clk)
+    assert col.run_universe()["ok"]
+    pid = scr_store.start_pass(db, kind="eod", session="2026-10-09", n_symbols=3, now=SAT)
+    scr_store.finish_pass(db, pid, n_ok=3, n_failed=0, n_contracts=90, finished=True, now=SAT, partial=partial)
+    col2, _ = build(clk, client=cl)
+    col2.tick()
+    assert col2._last_eod == "2026-10-09" and col2._partial_eod is None
+    assert cl.read() == [] and len(_passes(db)) == 1
+
+
+def test_resumed_walk_shows_its_progress_not_the_error(db, build, tmp_path):
+    clk = Clock(RTH)
+    cl = FakeMassive(clk)
+    cl.uni_page = 1
+    cl.universe["DDD"] = 100                                 # a 4th page
+    cl.chain_rows["DDD"] = []
+    release, arrived = threading.Event(), threading.Event()
+    cl.uni_gate = (3, release, arrived)
+    col, _ = build(clk, client=cl, universe_executor_factory=scr_collector._thread_pool)
+    cl.uni_fail[2] = _http()
+    try:
+        col.tick()                                           # the walk on its thread: AAA filed, page 2 fails
+        col._uni_future.result(timeout=30)
+        assert col.tick() == "error" and col.error_kind() == "http"
+        doc = _doc(tmp_path)
+        # AAA is filed and read: "nothing can be screened" (T-09) would not be true now
+        assert scr_collector.NO_UNIVERSE_SUFFIX not in doc["detail"]
+        assert doc["detail"].startswith("universe: Massive answered HTTP 502 for the options contracts list - "
+                                        "the universe refresh paused, the rest carries on; next try 10:01 ET")
+        clk.advance(seconds=61)
+        col.tick()                                           # the resumed walk starts at page 2
+        assert arrived.wait(30)                              # pages 2 and 3 are back; held after 3
+        clk.advance(seconds=15)
+        assert col.tick() in ("universe", "pass")            # the walk works again: its progress, not an error
+        doc = _doc(tmp_path)
+        assert doc["error_kind"] is None and doc["state"] in ("universe", "pass")
+        assert "Step 1 of 2: reading Massive's list of optionable stocks - page 3 (" in doc["detail"]
+        assert doc["last_error"].startswith("universe: Massive answered HTTP 502")    # kept until it completes
+        cl.uni_fail[4] = _http()                             # ... and the resumed walk fails again
+    finally:
+        release.set()
+    col._uni_future.result(timeout=30)
+    assert col.tick() == "error" and col.error_kind() == "http"     # the alert is back
+    clk.advance(seconds=61)
+    col.tick()                                               # resumed at page 4 and complete
+    col._uni_future.result(timeout=30)
+    col.tick()
+    assert col.error_kind() is None and col.last_error is None and col._universe_done is not None
+    assert cl.uni_urls.count(cl._uni_url(1)) == 1             # page 1 was never read again
+
+
+def test_pass_weights_come_from_the_stored_universe_after_a_restart(db, build, tmp_path):
+    clk = Clock(EOD)
+    col, cl = build(clk)
+    assert col.run_universe()["ok"]
+    col.stop("restart")
+    col2, _ = build(clk, client=cl)                          # no walk is due: nothing in _uni_counts
+    cl.fail[("chain_snapshot", "BBB")] = MassiveError("network", "could not reach Massive (ConnectError: )")
+    col2.tick()                                              # AAA read; BBB pauses the pass; CCC not read
+    p = col2._pass
+    assert col2._uni_counts == {} and p is not None and p.w == UNIVERSE
+    assert col2._pass_pct(p) == pytest.approx(3000 / 4700)   # by contracts, not 1 of 3 symbols
+    assert _doc(tmp_path)["progress"]["pass_pct"] == 63.8
+
+
+# -- no single symbol or failed read stalls a pass --
+
+def test_single_symbol_403_counts_failed_and_pass_finishes(db, build, caplog):
+    caplog.set_level(logging.WARNING, logger="test_scr_collector")
+    for sym, t0 in (("AAA", RTH), ("CCC", RTH + _dt.timedelta(days=1))):    # sorted first, then last
+        clk = Clock(t0)
+        col, cl = build(clk)
+        cl.fail[("chain_snapshot", sym)] = _e403()
+        col.tick()
+        col.tick()
+        p = _passes(db)[-1]
+        assert (p.n_ok, p.n_failed, p.finished is not None) == (2, 1, True), sym
+        assert col.shown_state != "error" and col.error_kind() is None
+        assert sym in col._refused
+        assert "Massive refused %s's chain (HTTP 403) - skipped this pass" % sym in caplog.text
+        n = len(cl.of("chain_snapshot", sym))
+        clk.advance(minutes=30)
+        col.tick()
+        assert len(cl.of("chain_snapshot", sym)) == n        # left out of passes for 24 h
+        assert _passes(db)[-1].n_symbols == 2 and _passes(db)[-1].finished is not None
+
+
+def test_all_symbols_403_pauses_passes(db, build, tmp_path):
+    clk = Clock(RTH)
+    col, cl = build(clk)
+    col.tick()
+    cl.fail[("chain_snapshot", None)] = _e403()
+    col.tick()
+    doc = _doc(tmp_path)
+    assert doc["state"] == "error" and doc["error_kind"] == "plan"
+    assert "market passes paused, the rest carries on" in doc["detail"]
+    p = _passes(db)[-1]
+    assert p.finished is None and sorted(col._pass.queue) == ["AAA", "BBB", "CCC"] and col._pass.failed == 0
+    assert col._refused == {}
+    for _ in range(2):                                       # refused at each 5-min look (the pause halts the rest)
+        clk.advance(minutes=5, seconds=1)
+        col.tick()
+    p = col._pass                                            # AAA was requeued twice: the third refusal counts
+    assert p is not None and (p.failed, p.ok, p.requeues["AAA"]) == (1, 0, 2)
+    assert sorted(p.queue) == ["BBB", "CCC"] and col.error_kind() == "plan" and col.shown_state == "error"
+    assert _passes(db)[-1].finished is None and col._refused == {}
+
+
+def test_eod_pass_open_at_monday_rth_closes_unfinished(db, build):
+    clk = Clock(SAT)
+    col, cl = build(clk)
+    col.tick()                                               # the universe
+    cl.fail[("chain_snapshot", None)] = MassiveError("network", "could not reach Massive for the options chain "
+                                                                "snapshot (ConnectError: )")
+    col.tick()                                               # Friday's EOD pass: paused at once
+    p = col._pass
+    assert p is not None and (p.kind, p.session) == ("eod", "2026-10-09") and p.queue
+    cl.fail.clear()
+    clk.t = MON_RTH                                          # nothing ticked since: Monday 09:50 ET
+    col.tick()
+    ps = _passes(db)
+    assert (ps[-2].kind, ps[-2].session, ps[-2].finished) == ("eod", "2026-10-09", None)
+    assert (ps[-1].kind, ps[-1].session, ps[-1].n_ok) == ("cycle", "2026-10-12", 3)
+    assert ps[-1].finished is not None and col._last_eod is None
+    res = col.run_eod()                                      # a by-hand EOD pass in the session is not closed
+    assert res["ok"] and res["read"] == 3 and _passes(db)[-1].finished is not None
+
+
+def test_a_pass_over_12_h_old_closes_unfinished(db, build):
+    clk = Clock(SAT)
+    col, cl = build(clk)
+    col.tick()
+    cl.fail[("chain_snapshot", None)] = MassiveError("network", "could not reach Massive for the options chain "
+                                                                "snapshot (ConnectError: )")
+    col.tick()
+    first = col._pass.id
+    cl.fail.clear()
+    clk.advance(hours=12, minutes=1)                         # Sunday 00:01 ET: the same EOD day, but 12 h on
+    col.tick()
+    ps = _passes(db)
+    assert ps[-2].id == first and ps[-2].finished is None
+    assert (ps[-1].kind, ps[-1].session, ps[-1].n_ok) == ("eod", "2026-10-09", 3) and ps[-1].finished is not None
+
+
+def test_all_chains_fail_pass_not_finished_backoff_then_retry(db, build, tmp_path):
+    clk = Clock(EOD)
+    col, cl = build(clk)
+    col.tick()                                               # the universe
+    cl.fail[("chain_snapshot", None)] = _http("the options chain snapshot", 500)
+    assert col.tick() == "error"
+    p = _passes(db)[-1]
+    assert (p.kind, p.finished, p.n_ok, p.n_failed) == ("eod", None, 0, 3)
+    doc = _doc(tmp_path)
+    assert doc["error_kind"] == "empty" and doc["last_eod_session"] is None
+    assert doc["last_error"] == ("eod pass %d read no option data: Massive answered HTTP 500 for the options chain "
+                                 "snapshot (3 of 3 underlyings)" % p.id)
+    assert col._retry_at["chain"] - clk.t == _dt.timedelta(minutes=10)
+    clk.advance(minutes=5)
+    col.tick()
+    assert len(_passes(db)) == 1                             # the passes wait
+    clk.advance(minutes=5, seconds=1)
+    col.tick()                                               # read again: fails again -> 20 min
+    assert len(_passes(db)) == 2 and col._retry_at["chain"] - clk.t == _dt.timedelta(minutes=20)
+    cl.fail.clear()
+    clk.advance(minutes=20, seconds=1)
+    col.tick()
+    p = _passes(db)[-1]
+    assert p.finished is not None and p.n_ok == 3 and col._last_eod == DAY
+    assert col.error_kind() is None and col._empty_fails == 0
+
+
+def test_mostly_failed_eod_pass_is_finished_but_read_again(db, build):
+    clk = Clock(EOD)
+    col, cl = build(clk)
+    col.tick()
+    cl.fail[("chain_snapshot", "BBB")] = _http("the options chain snapshot", 500)
+    cl.fail[("chain_snapshot", "CCC")] = _http("the options chain snapshot", 500)
+    col.tick()                                               # 1 of 3 read: the failed two get one more round
+    assert col._pass is not None and sorted(col._pass.queue) == ["BBB", "CCC"]
+    assert col._pass.retry_at == clk.t + _dt.timedelta(minutes=5)
+    clk.advance(minutes=5, seconds=1)
+    col.tick()                                               # still failing: finished, but not "done"
+    p = _passes(db)[-1]
+    assert p.finished is not None and (p.n_ok, p.n_failed) == (1, 2) and col._last_eod is None
+    assert col.error_kind() == "http" and col._retry_at["chain"] - clk.t == _dt.timedelta(minutes=10)
+    cl.fail.clear()
+    clk.advance(minutes=10, seconds=1)
+    col.tick()
+    assert col._last_eod == DAY and _passes(db)[-1].n_ok == 3 and col.error_kind() is None
+
+
+def test_zero_contract_pass_not_finished(db, build, caplog):
+    caplog.set_level(logging.WARNING, logger="test_scr_collector")
+    clk = Clock(EOD)
+    col, cl = build(clk)
+    col.tick()
+    stamp = clk.t - _dt.timedelta(minutes=15)
+    for sym in UNIVERSE:
+        cl.chain_rows[sym] = [cl._row(sym, EXPIRIES[0], SPOTS[sym], "C", clk.t, stamp, oi=0, volume=0)]
+    col.tick()
+    p = _passes(db)[-1]
+    assert (p.finished, p.n_ok, p.n_contracts) == (None, 3, 0)
+    assert col._last_eod is None and col.error_kind() == "empty"
+    assert col.last_error == ("eod pass %d read no option data: Massive returned no contracts (3 of 3 underlyings)"
+                              % p.id)
+    assert "3 underlyings listed by Massive returned no contracts (first: AAA, BBB, CCC)" in caplog.text
+    assert _status(db)["last_error"] == col.last_error
+
+
+def test_restore_ignores_finished_zero_contract_eod(db, build):
+    clk = Clock(SAT)
+    col, cl = build(clk)
+    assert col.run_universe()["ok"]
+    for n_ok, n_failed, n_contracts in ((3, 0, 0), (1, 2, 500)):    # read nothing; mostly failed
+        pid = scr_store.start_pass(db, kind="eod", session="2026-10-09", n_symbols=3, now=SAT)
+        scr_store.finish_pass(db, pid, n_ok=n_ok, n_failed=n_failed, n_contracts=n_contracts, finished=True,
+                              now=SAT)
+        n = len(cl.read())
+        col2, _ = build(clk, client=cl)
+        col2.tick()                                          # a restart: that EOD pass does not count as done
+        assert len(cl.read()) == n + 3, (n_ok, n_contracts)
+        p = _passes(db)[-1]
+        assert (p.kind, p.session, p.n_ok) == ("eod", "2026-10-09", 3) and p.finished is not None
+        assert col2._last_eod == "2026-10-09"
+
+
+def test_empty_read_does_not_wipe_stored_rows(db, build):
+    clk = Clock(RTH)
+    col, cl = build(clk)
+    col.tick()
+    col.tick()
+    assert len(_contracts(db, "AAA")) == KEPT
+    stamp = clk.t - _dt.timedelta(minutes=15)
+    for rows in ([], [cl._row("AAA", EXPIRIES[0], 100.0, "C", clk.t, stamp, oi=0, volume=0)]):
+        cl.chain_rows["AAA"] = rows                          # an empty answer; one that keeps nothing
+        clk.advance(minutes=30)
+        col.tick()
+        p = _passes(db)[-1]
+        assert p.finished is not None and p.n_ok == 3
+        assert len(_contracts(db, "AAA")) == KEPT and _und(db, "AAA")["n_contracts"] == KEPT
+
+
+def test_all_adjusted_chain_clears_stored_rows(db, build):
+    """A cash merger / delisting: the chain lists only ADJUSTED series (root AAA1). That
+    answer is final - the old standard rows go, the underlying counts 0 contracts."""
+    clk = Clock(RTH)
+    col, cl = build(clk)
+    col.tick()
+    col.tick()
+    assert len(_contracts(db, "AAA")) == KEPT
+    grid = cl.chain_snapshot("AAA")["rows"]
+    cl.chain_rows["AAA"] = [dict(r, ticker=r["ticker"].replace("O:AAA", "O:AAA1", 1)) for r in grid]
+    clk.advance(minutes=30)
+    col.tick()
+    p = _passes(db)[-1]
+    assert p.finished is not None and (p.n_ok, p.n_failed) == (3, 0)
+    assert _contracts(db, "AAA") == [] and _und(db, "AAA")["n_contracts"] == 0
+    assert len(_contracts(db, "BBB")) == KEPT
+
+
+def test_an_empty_answer_keeps_only_recent_rows(db, build):
+    clk = Clock(RTH)                                         # Thursday: AAA's rows describe 2026-10-08
+    col, cl = build(clk)
+    col.tick()
+    col.tick()
+    cl.chain_rows["AAA"] = []
+    clk.t = _dt.datetime(2026, 10, 12, 14, 0)                # Monday: 2 sessions on - still kept
+    col.tick()
+    assert len(_contracts(db, "AAA")) == KEPT
+    clk.t = _dt.datetime(2026, 10, 13, 14, 0)                # Tuesday: older than the last 2 sessions
+    col.tick()
+    assert _contracts(db, "AAA") == [] and _und(db, "AAA")["n_contracts"] == 0
+    assert len(_contracts(db, "BBB")) == KEPT
+
+
+def test_index_chain_read_as_I_prefix_when_the_bare_symbol_is_empty(db, build):
+    SPOTS["SPX"] = 5000.0
+    try:
+        clk = Clock(RTH)
+        col, cl = build(clk)
+        cl.universe["SPX"] = 9000                            # the contracts list names it bare
+        cl.chain_rows["SPX"] = []
+        col.tick()
+        col.tick()                                           # SPX not typed yet: empty, nothing stored
+        assert _contracts(db, "SPX") == [] and _und(db, "SPX")["sec_type"] == "index"
+        stamp = clk.t - _dt.timedelta(minutes=15)
+        cl.chain_rows["I:SPX"] = [cl._row("SPX", e, round(5000.0 * m, 2), r, clk.t, stamp)
+                                  for e in EXPIRIES for m in MULTS for r in ("C", "P")]
+        clk.advance(minutes=30)
+        col.tick()
+        assert len(_contracts(db, "SPX")) == len(EXPIRIES) * len(MULTS) * 2
+        assert col._spelling == {"SPX": "I:SPX"}
+        clk.advance(minutes=30)
+        col.tick()
+        assert len(cl.of("chain_snapshot", "SPX")) == 2 and len(cl.of("chain_snapshot", "I:SPX")) == 2
+    finally:
+        SPOTS.pop("SPX", None)
+
+
+# -- the lanes and the one-off runs --
+
+def test_history_403_one_symbol_marks_and_does_not_pause(db, build):
+    clk = Clock(SAT)
+    col, cl = build(clk, stock_years=0.3)
+    cl.bars_end = "2026-10-09"
+    cl.fail[("option_daily", "CCC")] = _e403("the option daily bars")
+    _settle(col, clk, until=lambda c: (_und(db, "CCC").get("history_tries") or 0) >= 1 and not c._hist)
+    assert _und(db, "AAA")["history_done"] is True
+    c = _und(db, "CCC")
+    assert c["history_done"] is False and c["history_tries"] == 1
+    assert abs((c["history_next"] - clk.t).total_seconds() - 1800) < 1
+    assert "history" not in col._alerts and col.shown_state != "error"
+
+
+def test_history_403_before_any_read_worked_pauses_history(db, build):
+    clk = Clock(SAT)
+    col, cl = build(clk, stock_years=0.3)
+    cl.bars_end = "2026-10-09"
+    cl.fail[("option_daily", None)] = _e403("the option daily bars")
+    _settle(col, clk, until=lambda c: "history" in c._alerts)
+    assert col.error_kind() == "plan" and "IV-history reads paused" in col._shown()[1]
+    assert _und(db, "AAA")["history_tries"] == 0              # nothing marked: the plan, not the symbol
+
+
+def test_stock_window_never_requests_outside_plan_and_pending_reaches_zero(db, build, monkeypatch):
+    assert scr_collector.stock_days(RTH)[0] >= massive.stocks_plan_start(clock.et_date(RTH)).isoformat()
+    monkeypatch.setattr(massive, "STOCKS_PLAN_DAYS", 40)      # a narrow plan window, so 0.3 years crosses it
+    clk = Clock(RTH)
+    col, cl = build(clk, stock_years=0.3)
+    start = scr_collector.plan_start(RTH)
+    assert start == clock.et_date(RTH) - _dt.timedelta(days=40)
+    days = scr_collector.stock_days(RTH, 0.3)
+    assert days[0] >= start.isoformat()
+    _settle(col, clk)
+    asked = {c[1] for c in cl.of("grouped_daily")}
+    assert asked == set(days) and min(asked) >= start.isoformat()
+    assert col._pending_days() == 0 and set(col._days) == set(days)
+    col.job_fill("AAA")
+    assert cl.of("stock_daily") and all(c[2]["start"] >= start.isoformat() for c in cl.of("stock_daily"))
+
+
+def test_dated_403_retires_the_day(db, build, monkeypatch):
+    monkeypatch.setattr(massive, "STOCKS_PLAN_DAYS", 40)
+    clk = Clock(RTH)
+    col, cl = build(clk, stock_years=0.3)
+    days = scr_collector.stock_days(RTH, 0.3)
+    old, recent = days[0], days[-3]
+    edge = (scr_collector.plan_start(RTH) + _dt.timedelta(days=7)).isoformat()
+    assert old < edge <= recent
+    for d in (old, recent):
+        cl.fail[("grouped_daily", d)] = _e403("the grouped daily bars - Your plan doesn't include this data "
+                                              "timeframe", window=True)
+    _settle(col, clk, until=lambda c: bool(c._days) and c._bg is None and c._next_day(clk.t) is None)
+    assert old in col._refused_days and old not in col._days
+    assert len(cl.of("grouped_daily", old)) == 1                       # asked once, then retired
+    assert col._day_retry[recent] - clk.t == _dt.timedelta(hours=1)
+    assert "stocks" not in col._alerts and col.shown_state != "error" and col._pending_days() == 1
+    cl.fail.clear()
+    clk.advance(hours=1, seconds=1)
+    _settle(col, clk)
+    assert col._pending_days() == 0 and len(cl.of("grouped_daily", old)) == 1
+
+
+def test_stock_403_not_about_the_date_before_any_day_pauses_the_lane(db, build):
+    clk = Clock(RTH)
+    col, cl = build(clk, stock_years=0.05)
+    cl.fail[("grouped_daily", None)] = _e403("the grouped daily bars")
+    _settle(col, clk, until=lambda c: "stocks" in c._alerts)
+    assert col.error_kind() == "plan" and "stock bars and reference reads paused" in col._shown()[1]
+    assert not col._refused_days and not col._day_retry
+
+
+def test_technicals_hourly_once_260_sessions_filed(db, build, monkeypatch):
+    monkeypatch.setattr(scr_collector, "HISTORY_SESSIONS", 10)    # "the newest 260 sessions", scaled down
+    clk = Clock(RTH)
+    col, cl = build(clk, stock_years=0.12)
+    seen = []
+    real = col.job_technicals
+
+    def spy():
+        seen.append(col._pending_days())
+        return real()
+
+    col.job_technicals = spy
+    _settle(col, clk, until=lambda c: len(seen) == 1)
+    assert seen[0] > 0 and col._recent_days_done()                 # while older days still file
+    col.tick()
+    assert len(seen) == 1 and col._tech_dirty                      # not again within the hour
+    clk.advance(minutes=61)
+    _settle(col, clk, until=lambda c: len(seen) == 2)
+    assert seen[1] > 0                                             # an hour on, days still filing
+    _settle(col, clk)
+    assert seen[-1] == 0 and col._pending_days() == 0              # and once every day is on file
+
+
+def test_technicals_failure_backs_off(db, build, monkeypatch, caplog):
+    caplog.set_level(logging.WARNING, logger="test_scr_collector")
+    clk = Clock(RTH)
+    col, cl = build(clk, stock_years=0.05)
+    calls = []
+
+    def boom(*a, **kw):
+        calls.append(1)
+        raise RuntimeError("disk I/O error")
+
+    monkeypatch.setattr(scr_store, "recompute_technicals_many", boom)
+    _settle(col, clk, until=lambda c: c._tech_retry_at is not None)
+    assert len(calls) == 1 and col._tech_retry_at - clk.t == _dt.timedelta(minutes=10)
+    for _ in range(5):
+        col.tick()
+    assert len(calls) == 1                                   # not every tick
+    clk.advance(minutes=10, seconds=1)
+    col.tick()
+    assert len(calls) == 2
+    tracebacks = [r for r in caplog.records if r.getMessage() == "lane job technicals failed"]
+    assert len(tracebacks) == 1 and tracebacks[0].exc_info   # the traceback once
+    assert "lane job technicals failed again (2 in a row): disk I/O error" in caplog.text
+
+
+def test_restart_same_day_skips_earnings(db, build):
+    clk = Clock(RTH)
+    asked1, asked2 = [], []
+    col, cl = build(clk, earnings_fetch=lambda d: asked1.append(d) or fake_earnings(d))
+    _settle(col, clk)
+    assert asked1 and col._earnings_on == DAY and _status(db)["earnings_on"] == DAY
+    col2, _ = build(clk, client=cl, earnings_fetch=lambda d: asked2.append(d) or fake_earnings(d))
+    for _ in range(5):
+        col2.tick()
+    assert asked2 == [] and col2._earnings_on == DAY
+
+
+def test_rejected_key_fixed_in_env_file_is_used_after_5_min(db, build, monkeypatch, tmp_path):
+    env_file = tmp_path / "app.env"
+    monkeypatch.setattr(scr_collector, "APP_ENV_PATH", env_file)
+    monkeypatch.setenv("TST_MASSIVE_API_KEY", "stale-process-key-9999")    # the file's key wins over it
+    bad = "rejected-key-0000000000"
+    env_file.write_text("TST_MASSIVE_API_KEY=%s\n" % bad, encoding="utf-8")
+    clk = Clock(RTH)
+    made: list[FakeMassive] = []
+
+    def factory():                          # what default_client does, on a fake
+        scr_collector._load_env()
+        key = massive.api_key()
+        c = FakeMassive(clk, key=bool(key))
+        c._key = key
+        if key and key != KEY:
+            for name in ("option_underlyings", "chain_snapshot", "reference_tickers", "grouped_daily"):
+                c.fail[(name, None)] = MassiveError("auth", "Massive rejected the API key (HTTP 401)", 401)
+        made.append(c)
+        return c
+
+    col, _ = build(clk, client_factory=factory)
+    assert col.tick() == "error" and col.error_kind() == "auth"
+    assert len(made) == 1 and made[0]._key == bad
+    clk.advance(minutes=5)
+    col.tick()                                               # the same key: tried once more
+    assert len(made) == 1 and len(made[0].of("option_underlyings")) == 2 and col.error_kind() == "auth"
+    clk.advance(minutes=5)
+    col.tick()                                               # still the same, within 30 min: held
+    assert len(made[0].of("option_underlyings")) == 2 and col.error_kind() == "auth"
+    env_file.write_text("TST_MASSIVE_API_KEY=%s\n" % KEY, encoding="utf-8")
+    clk.advance(minutes=5)
+    assert col.tick() != "error"                             # corrected: a fresh client, no restart
+    assert len(made) == 2 and made[1]._key == KEY and made[1].of("option_underlyings")
+    assert col.error_kind() is None and col._retired == []
+
+    env_file.write_text("TST_MASSIVE_API_KEY=\n", encoding="utf-8")   # a blank placeholder ...
+    col2, _ = build(clk, client_factory=factory)
+    assert col2.tick() == "error" and col2.error_kind() == "config"
+    assert col2.last_error == scr_collector.NO_KEY_TEXT and massive.api_key() is None
+    env_file.write_text("TST_MASSIVE_API_KEY=%s\n" % KEY, encoding="utf-8")   # ... filled in later
+    clk.advance(minutes=5)
+    col2.tick()
+    assert col2.error_kind() is None and made[-1]._key == KEY
+
+
+def test_last_error_points_at_active_alert_after_clear(db, build, tmp_path):
+    clk = Clock(RTH)
+    col, cl = build(clk)
+    col.tick()
+    cl.fail[("chain_snapshot", None)] = _e403()
+    col.tick()                                               # every chain refused: passes paused (plan)
+    plan = col._alerts["chain"][1]
+    assert col.last_error == plan
+    col._alert("stocks", "plan", "stocks refused", 300, clk.t)
+    assert col.last_error == "stocks refused"
+    col._clear("stocks")
+    assert col.last_error == plan                            # the alert still active
+    col._bg_result("earnings", {"ok": False, "kind": "error", "error": "Nasdaq's earnings calendar returned nothing"})
+    assert col.last_error == plan and col.last_failure == "earnings: Nasdaq's earnings calendar returned nothing"
+    col.tick()
+    assert _doc(tmp_path)["last_error"] == plan
+    col._clear("chain")
+    assert col.last_error is None                            # it was this alert's reason
+    col._alert("history", "plan", "history refused", 300, clk.t)
+    col.last_error = "a later failure"
+    col._clear("history")
+    assert col.last_error == "a later failure"               # not this alert's reason: kept
+
+
+def test_progress_fields_in_state_file(db, build, tmp_path):
+    clk = Clock(RTH)
+    col, cl = build(clk, stock_years=0.05)
+    cl.uni_page = 1
+    cl.uni_fail[3] = _http()
+    col.tick()                                               # the walk stops at page 3: 2 pages kept
+    pr = _doc(tmp_path)["progress"]
+    assert set(pr) == set(scr_collector.PROGRESS_KEYS)
+    assert (pr["universe_pages"], pr["universe_symbols"], pr["universe_started"]) == (2, 2, _utc(RTH).isoformat())
+    assert pr["pass_kind"] is None and pr["stock_days_pending"] is None
+    clk.advance(seconds=61)
+    col.tick()                                               # resumed and complete
+    cl.fail[("chain_snapshot", "BBB")] = MassiveError("network", "could not reach Massive for the options chain "
+                                                                 "snapshot (ConnectError: )")
+    clk.advance(minutes=30)
+    col.tick()                                               # AAA read, BBB failed (paused), CCC not read
+    doc = _doc(tmp_path)
+    pr = doc["progress"]
+    assert (pr["pass_kind"], pr["pass_session"]) == ("cycle", DAY)
+    assert pr["pass_pct"] == round(3000 / 4700 * 100, 1)      # weighted by the contracts of each underlying
+    assert pr["pass_paused_at"] == _utc(clk.t).isoformat() and pr["pass_eta_s"] == 0
+    assert col.detail.startswith("Reading the option market (live, 15-min delayed): 1 of 3 underlyings, 63% of "
+                                 "contracts")
+    assert (pr["universe_pages"], pr["universe_symbols"], pr["universe_started"]) == (None, None, None)
+    pend = col._pending_days()
+    assert pr["stock_days_pending"] == pend > 0 and pr["stock_eta_s"] == int(2 * pend * 60.5 / 5)
+    assert (pr["history_left"], pr["history_waiting"], pr["history_eta_s"]) == (3, 0, None)
+    st = _status(db)
+    assert st["progress"] == pr and st["error_kind"] == doc["error_kind"] == "network"
+    assert st["next_try"] == clk.t + _dt.timedelta(seconds=60)
+    assert doc["universe_done"] is not None and st["universe_done"] is not None
+
+
+def test_run_universe_failure_exit_2(db, build):
+    clk = Clock(SAT)
+    col, cl = build(clk)
+    cl.fail[("option_underlyings", None)] = _http()
+    res = col.run_universe()
+    assert res["ok"] is False and res["error_kind"] == "http" and "HTTP 502" in res["error"]
+    cl.fail.clear()
+    assert col.run_universe()["ok"] is True
+    cl.fail[("option_underlyings", None)] = _http()
+    res = col.run_universe()                                 # a list on file: only a warning - still exit 2
+    assert res["ok"] is False and "HTTP 502" in res["error"] and col.error_kind() is None
+    cl.fail.clear()
+    cl.universe = {}
+    res = col.run_universe()
+    assert res["ok"] is False and res["error_kind"] == "empty"
+    cl.universe = dict(UNIVERSE)
+    for sym in UNIVERSE:
+        cl.chain_rows[sym] = []
+    res = col.run_once()                                     # a pass that read no option data
+    assert res["ok"] is False and res["contracts"] == 0 and res["read"] == 3
+
+
+def test_run_history_skips_no_bars_exit_3(db, build, caplog):
+    caplog.set_level(logging.WARNING, logger="test_scr_collector")
+    clk = Clock(SAT)
+    col, cl = build(clk, stock_years=0.3)
+    assert col.run_universe()["ok"]
+    res = col.run_history(["AAA", "BBB"])
+    assert (res["ok"], res["nothing"], res["skipped"], res["done"], res["failed"]) == (True, True, 2, 0, 0)
+    assert cl.of("option_daily") == [] and _und(db, "AAA")["history_tries"] == 0     # nothing read, nothing marked
+    assert "IV history AAA skipped: 0 stored closes, need 20 - the stock bars are not loaded yet (" in caplog.text
+
+
 # ───────────────────────────────────────── the tray ─────────────────────────────────────────
 
-def _tray_function(state_path):
-    """``get_screener_collector_status`` lifted out of tray_status.py with its stale
-    threshold - the module itself imports pystray / PIL and cannot load here."""
+_TRAY_FUNCS = ("get_screener_collector_status", "_screener_log_error", "screener_toast")
+_TRAY_CONSTS = ("OPTIONS_SCREENER_STALE_SEC", "OPTIONS_SCREENER_DETAIL_MAX", "OPTIONS_SCREENER_LOG_TAIL")
+
+
+def _tray_ns(state_path, log_path=None) -> dict:
+    """The screener part of tray_status.py - its functions and thresholds - lifted out (the
+    module itself imports pystray / PIL and cannot load here). The log defaults to a path
+    that does not exist."""
     tree = ast.parse(TRAY.read_text(encoding="utf-8"))
     keep = [n for n in tree.body
-            if (isinstance(n, ast.FunctionDef) and n.name == "get_screener_collector_status")
-            or (isinstance(n, ast.Assign)
-                and any(getattr(t, "id", None) == "OPTIONS_SCREENER_STALE_SEC" for t in n.targets))]
-    assert len(keep) == 2
-    ns = {"json": json, "datetime": _dt.datetime, "timezone": _dt.timezone, "Path": Path,
-          "OPTIONS_SCREENER_STATE_PATH": state_path}
+            if (isinstance(n, ast.FunctionDef) and n.name in _TRAY_FUNCS)
+            or (isinstance(n, ast.Assign) and any(getattr(t, "id", None) in _TRAY_CONSTS for t in n.targets))]
+    assert len(keep) == len(_TRAY_FUNCS) + len(_TRAY_CONSTS)
+    state_path = Path(state_path)
+    ns = {"json": json, "re": re, "datetime": _dt.datetime, "timezone": _dt.timezone, "Path": Path,
+          "OPTIONS_SCREENER_STATE_PATH": state_path,
+          "OPTIONS_SCREENER_LOG_PATH": Path(log_path) if log_path else state_path.parent / "no-logs" / "x.log"}
     exec(compile(ast.Module(body=keep, type_ignores=[]), str(TRAY), "exec"), ns)   # noqa: S102
-    return ns["get_screener_collector_status"]
+    return ns
+
+
+def _tray_function(state_path, log_path=None):
+    """``get_screener_collector_status`` lifted out of tray_status.py."""
+    return _tray_ns(state_path, log_path)["get_screener_collector_status"]
 
 
 TRAY_STATES = {"starting", "pass", "universe", "stocks", "history", "idle", "error", "stopped", "stale",
                "absent"}
+TRAY_NOW = _dt.datetime(2026, 10, 8, 14, 0, tzinfo=_dt.timezone.utc)
+T01 = ("Step 1 of 2: reading Massive's list of optionable stocks - page 312 (1,840 stocks so far, 4 min). "
+       "Results start appearing as soon as the first stocks are read.")
+T08 = ("Universe refresh failed 07:31 ET (Massive HTTP 502); next try 07:46 ET - yesterday's list in use.")
+
+
+def _write(p: Path, doc: dict) -> None:
+    p.write_text(json.dumps(doc), encoding="utf-8")
 
 
 def test_state_file_and_the_tray_read_together(db, build, tmp_path):
@@ -837,6 +1784,10 @@ def test_state_file_and_the_tray_read_together(db, build, tmp_path):
     for needle in ("last pass 10:00 ET", "universe 3", "IV history 0/3", "hb 20s ago"):
         assert needle in line, (needle, line)
     assert (got["universe_n"], got["history_total"], got["last_pass_et"]) == (3, 3, "10:00 ET")
+    assert got["last_pass_id"] == 1 and got["last_pass_contracts"] > 0 and got["last_pass_n"] == 3
+    assert got["detail"].startswith("Up to date with the Thu Oct 8 10:00 ET read; next market pass ")   # T-17
+    assert got["detail"] == _doc(tmp_path)["detail"]
+    assert got["warn"] is None and got["error_kind"] is None
 
     got = status(now=_utc(RTH) + _dt.timedelta(minutes=6))      # no heartbeat for 5 min
     assert (got["state"], got["color"]) == ("stale", "amber") and "NO HEARTBEAT" in got["line"]
@@ -845,9 +1796,17 @@ def test_state_file_and_the_tray_read_together(db, build, tmp_path):
     cl.fail[("chain_snapshot", None)] = MassiveError("auth", "Massive rejected the API key (HTTP 401)", 401)
     clk.advance(minutes=30)
     col.tick()
-    got = status(now=_utc(clk.t))
-    assert (got["state"], got["color"], got["tip"]) == ("error", "amber", "Scr ERR")
-    assert "Massive rejected the API key" in got["line"] and "Massive failing" in got["line"]
+    err = status(now=_utc(clk.t))
+    assert (err["state"], err["color"], err["tip"]) == ("error", "amber", "Scr ERR")
+    assert "Massive rejected the API key" in err["line"] and "Massive failing" in err["line"]
+    assert err["error_kind"] == "auth" and "Massive rejected the API key" in err["reason"]
+    toast = _tray_ns(tmp_path / "state" / "screener_collector.json")["screener_toast"]
+    assert toast(got, err) is None                                 # stale -> error: already a bad state
+    assert toast(dict(got, state="idle"), err).startswith("Options screener: ERROR - Massive rejected the API key")
+
+    stale = status(now=_utc(clk.t) + _dt.timedelta(minutes=10))  # it stopped reporting while in error
+    assert stale["state"] == "stale" and stale["line"].startswith("Options screener: NOT RUNNING - ")
+    assert "Massive rejected the API key" in stale["line"]
 
     col.stop("test stop")
     got = status(now=_utc(clk.t))
@@ -857,14 +1816,16 @@ def test_state_file_and_the_tray_read_together(db, build, tmp_path):
 def test_tray_status_function_cases(tmp_path):
     p = tmp_path / "screener_collector.json"
     status = _tray_function(p)
-    now = _dt.datetime(2026, 10, 8, 14, 0, tzinfo=_dt.timezone.utc)
+    now = TRAY_NOW
     got = status(now=now)
     assert (got["state"], got["level"], got["color"], got["tip"]) == ("absent", "absent", "grey", "Scr -")
     assert "not running on this PC" in got["line"]
 
     base = {"state": "pass", "pass_id": 12, "pass_kind": "cycle", "symbols_done": 1234, "symbols_total": 4512,
-            "last_pass_et": "09:45 ET", "universe_n": 4512, "history_done_n": 1204, "history_total": 4512,
-            "api_ok": True, "heartbeat": "2026-10-08T13:59:40+00:00", "detail": "cycle pass 12: 1,234/4,512",
+            "last_pass_et": "09:45 ET", "last_pass_id": 11, "last_pass_contracts": 1043221,
+            "universe_n": 4512, "universe_done": "2026-10-08T11:40:00+00:00", "history_done_n": 1204,
+            "history_total": 4512, "api_ok": True, "heartbeat": "2026-10-08T13:59:40+00:00",
+            "detail": "Reading the option market (live, 15-min delayed): 1,234 of 4,512 underlyings",
             "last_error": None, "stock_days_pending": 0}
     cases = [
         ({}, "pass", "green", "Scr p12",
@@ -873,7 +1834,7 @@ def test_tray_status_function_cases(tmp_path):
         ({"state": "idle"}, "idle", "green", "Scr idle", ("idle", "last pass 09:45 ET")),
         ({"state": "history"}, "history", "green", "Scr history", ("history",)),
         ({"state": "stocks", "stock_days_pending": 412}, "stocks", "green", "Scr stocks", ("stock days to go 412",)),
-        ({"state": "universe", "last_pass_et": None}, "universe", "green", "Scr universe", ("no pass yet",)),
+        ({"state": "universe", "last_pass_et": None}, "universe", "green", "Scr universe", ("universe",)),
         ({"state": "starting"}, "starting", "green", "Scr starting", ("starting",)),
         ({"state": "error", "detail": "TST_MASSIVE_API_KEY is not set on this PC; next try 10:05 ET"},
          "error", "amber", "Scr ERR", ("ERROR", "TST_MASSIVE_API_KEY is not set on this PC")),
@@ -884,36 +1845,229 @@ def test_tray_status_function_cases(tmp_path):
         ({"state": "something-new"}, "idle", "green", "Scr idle", ()),
     ]
     for change, state, color, tip, needles in cases:
-        p.write_text(json.dumps(dict(base, **change)), encoding="utf-8")
+        _write(p, dict(base, **change))
         got = status(now=now)
         assert got["state"] in TRAY_STATES
         assert (got["state"], got["color"], got["tip"]) == (state, color, tip), change
         for n in needles:
             assert n in got["line"], (change, n, got["line"])
-    p.write_text(json.dumps(dict(base, heartbeat="2026-10-08T13:50:00Z")), encoding="utf-8")
+    _write(p, dict(base, heartbeat="2026-10-08T13:50:00Z"))
     got = status(now=now)
     assert (got["state"], got["color"]) == ("stale", "amber") and "10m" in got["line"]
+    assert got["line"].startswith("Options screener: NO HEARTBEAT for 10m (last: pass)")
     p.write_text("{not json", encoding="utf-8")
     got = status(now=now)
     assert (got["state"], got["color"], got["tip"]) == ("error", "amber", "Scr ?")
+
+
+def test_tray_universe_walk_line_detail_and_progress(tmp_path):
+    p = tmp_path / "screener_collector.json"
+    status = _tray_function(p)
+    walk = {"state": "universe", "heartbeat": "2026-10-08T13:59:50+00:00", "pass_id": None, "universe_n": 1840,
+            "universe_done": None, "last_pass_et": None, "last_pass_id": None, "history_total": 0,
+            "stock_days_pending": None, "detail": T01, "last_error": None, "api_ok": True,
+            "progress": {"universe_pages": 312, "universe_symbols": 1840,
+                         "universe_started": "2026-10-08T13:55:00+00:00"}}
+    _write(p, walk)
+    got = status(now=TRAY_NOW)
+    assert got["line"] == "Options screener: universe · page 312 (1,840 so far) · hb 10s ago"     # T-70
+    assert (got["state"], got["color"], got["tip"], got["detail"]) == ("universe", "green", "Scr universe", T01)
+    long = T01 + " · " + T01                                   # jobs at once: joined, then cut at 220
+    _write(p, dict(walk, detail=long))
+    assert status(now=TRAY_NOW)["detail"] == long[:220]
+    # the first walk legitimately has no list yet: never amber during the walk or at start
+    for change in ({"warn": T08}, {"universe_n": 0, "last_error": "universe: Massive HTTP 502"},
+                   {"state": "starting", "universe_n": 0, "last_error": "universe: Massive HTTP 502"},
+                   {"last_pass_contracts": 0, "last_pass_id": 1, "last_pass_et": "16:40 ET"}):
+        _write(p, dict(walk, **change))
+        got = status(now=TRAY_NOW)
+        assert (got["color"], got["level"]) == ("green", "ok"), change
+    # a day-2 refresh: the list on file is shown, the walk's page too
+    _write(p, dict(walk, universe_done="2026-10-07T11:40:00+00:00", universe_n=4512, last_pass_et="16:40 ET",
+                   last_pass_id=7))
+    assert status(now=TRAY_NOW)["line"] == ("Options screener: universe · page 312 (1,840 so far) · "
+                                           "last pass 16:40 ET · universe 4,512 · hb 10s ago")
+
+    first = {"state": "pass", "pass_id": 1, "pass_kind": "eod", "symbols_done": 1240, "symbols_total": 4512,
+             "heartbeat": "2026-10-08T13:59:40+00:00", "last_pass_et": None, "last_pass_id": None,
+             "universe_n": 4512, "universe_done": "2026-10-08T13:58:00+00:00", "detail": "Reading ...",
+             "progress": {"pass_kind": "eod", "pass_session": "2026-10-07", "pass_pct": 27.34, "pass_eta_s": 840,
+                          "pass_paused_at": None, "stock_days_pending": 412, "stock_eta_s": 9888}}
+    _write(p, first)
+    got = status(now=TRAY_NOW)
+    assert got["line"] == ("Options screener: pass · eod pass 1 1,240/4,512 27.3% · about 14 min left · "
+                           "first pass running · universe 4,512 · stock days to go 412 (at least 2.7 h) · "
+                           "hb 20s ago")
+    assert (got["tip"], got["color"], got["last_pass_n"]) == ("Scr p1 27%", "green", None)
+    _write(p, dict(first, progress=dict(first["progress"], pass_paused_at="2026-10-08T13:58:00+00:00")))
+    line = status(now=TRAY_NOW)["line"]
+    assert "1,240/4,512 27.3% · paused · first pass running" in line and "about 14 min left" not in line
+
+    hist = {"state": "history", "heartbeat": "2026-10-08T13:59:40+00:00", "last_pass_et": "16:40 ET",
+            "last_pass_id": 3, "universe_n": 4512, "universe_done": "2026-10-08T11:40:00+00:00",
+            "history_done_n": 1204, "history_total": 4512, "detail": "Building IV history ...",
+            "progress": {"history_left": 3300, "history_waiting": 8, "history_eta_s": 7200,
+                         "stock_days_pending": 0, "stock_eta_s": 0}}
+    _write(p, hist)
+    got = status(now=TRAY_NOW)
+    assert "IV history 1,204/4,512 (3,300 left, about 2.0 h)" in got["line"]
+    assert "stock days" not in got["line"]
+    _write(p, dict(hist, progress={"history_left": 3300, "history_eta_s": None}))
+    assert "IV history 1,204/4,512 (3,300 left) · hb" in status(now=TRAY_NOW)["line"]
+
+
+def test_tray_warnings_are_amber(tmp_path):
+    p = tmp_path / "screener_collector.json"
+    status = _tray_function(p)
+    idle = {"state": "idle", "heartbeat": "2026-10-08T13:59:40+00:00", "last_pass_et": "16:40 ET",
+            "last_pass_id": 4, "last_pass_kind": "eod", "last_pass_session": "2026-10-07",
+            "last_pass_contracts": 980000, "universe_n": 4512, "universe_done": "2026-10-07T11:40:00+00:00",
+            "detail": "Up to date with the Wed Oct 7 close; next market pass Thu Oct 8 09:45 ET.",
+            "last_error": None, "warn": None}
+    _write(p, idle)
+    assert status(now=TRAY_NOW)["color"] == "green"
+
+    cases = [
+        ({"warn": T08}, T08),                                                   # a failed day-2 refresh
+        ({"state": "pass", "pass_id": 5, "symbols_total": 10, "symbols_done": 2, "warn": T08}, T08),
+        ({"last_pass_contracts": 0}, "the last market pass (eod 2026-10-07) stored no contracts"),
+        ({"last_pass_contracts": 0, "last_error": "eod pass 4 read no option data: x"},
+         "eod pass 4 read no option data: x"),
+        ({"universe_n": 0, "last_error": "universe: Massive HTTP 502"}, "universe: Massive HTTP 502"),
+    ]
+    for change, why in cases:
+        _write(p, dict(idle, **change))
+        got = status(now=TRAY_NOW)
+        assert got["state"] in TRAY_STATES and got["state"] == change.get("state", "idle")
+        assert (got["color"], got["level"], got["tip"]) == ("amber", "warn", "Scr WARN"), change
+        assert got["line"] == "Options screener: WARN - " + why                 # T-71
+        assert got["reason"] == why and got["detail"] == idle["detail"]
+    _write(p, dict(idle, warn="x" * 400))
+    assert status(now=TRAY_NOW)["line"] == "Options screener: WARN - " + "x" * 220
+    # no list and no error is not a warning (e.g. a fresh install before the first walk)
+    _write(p, dict(idle, universe_n=0, last_pass_et=None, last_pass_id=None, last_pass_contracts=None))
+    got = status(now=TRAY_NOW)
+    assert got["color"] == "green" and "no pass yet" in got["line"]
+
+
+def test_tray_not_running_and_never_checked_in(tmp_path):
+    p = tmp_path / "state" / "screener_collector.json"
+    log_file = tmp_path / "logs" / "screener_collector.log"
+    status = _tray_function(p, log_file)
+    crash = ("The collector could not start on the server: the app modules could not be loaded "
+             "(ModuleNotFoundError: No module named 'numpy'). - see logs\\screener_collector.log")
+    p.parent.mkdir(parents=True)
+    _write(p, {"state": "error", "error_kind": "startup", "detail": crash, "last_error": "x",
+               "heartbeat": "2026-10-08T12:00:00+00:00", "written_by": "dashboard_tst/deploy/screener_collector.py"})
+    got = status(now=TRAY_NOW)
+    assert (got["state"], got["color"], got["level"]) == ("stale", "amber", "warn")
+    assert got["line"] == ("Options screener: NOT RUNNING - " + crash[:160] + " (2.0h ago) - "
+                           "is TST-Options-Screener running?")                     # T-72
+    _write(p, {"state": "error", "detail": crash, "heartbeat": "2026-10-08T13:59:00+00:00"})
+    got = status(now=TRAY_NOW)                                     # a fresh crash state: an error
+    assert (got["state"], got["tip"]) == ("error", "Scr ERR") and "could not start on the server" in got["line"]
+    assert got["detail"] == crash and got["reason"] == crash      # the whole reason on the second line
+    p.unlink()
+
+    assert status(now=TRAY_NOW)["state"] == "absent"               # no file, no log: not on this PC
+    log_file.parent.mkdir()
+    log_file.write_text(
+        "2026-10-08 09:00:00 INFO    screener collector starting\n"
+        "2026-10-08 09:00:01 ERROR   could not load the app modules\n"
+        "Traceback (most recent call last):\n"
+        '  File "deploy/screener_collector.py", line 180, in _load_app\n'
+        "    importlib.import_module('app.services.scr_collector')\n"
+        "ValueError: an older problem\n"
+        "\n"
+        "During handling of the above exception, another exception occurred:\n"
+        "\n"
+        "Traceback (most recent call last):\n"
+        '  File "app/services/screener/engine.py", line 3, in <module>\n'
+        "    import numpy as np\n"
+        "ModuleNotFoundError: No module named 'numpy'\n"
+        "2026-10-08 09:00:01 WARNING --forever: could not start; trying again in 5 min\n", encoding="utf-8")
+    got = status(now=TRAY_NOW)
+    assert (got["state"], got["color"], got["level"], got["tip"]) == ("stale", "amber", "warn", "Scr NEVER")
+    assert got["line"] == ("Options screener: NEVER CHECKED IN - last log error: "
+                           "ModuleNotFoundError: No module named 'numpy'")             # T-73
+    # only the tail is read: an error further back than 64 KB is not found
+    log_file.write_text("2026-10-08 09:00:01 ERROR   an old error line\n" + "x" * 70000 + "\n"
+                        "2026-10-08 10:00:01 ERROR   init_screener_db (the Alembic upgrade) failed\n",
+                        encoding="utf-8")
+    assert status(now=TRAY_NOW)["line"].endswith("last log error: init_screener_db (the Alembic upgrade) failed")
+    log_file.write_text("2026-10-08 09:00:01 ERROR   " + "y" * 300 + "\n" + "z" * 70000 + "\n", encoding="utf-8")
+    assert status(now=TRAY_NOW)["line"].endswith("last log error: none found")
+    # the log path defaults to logs\screener_collector.log beside the state folder
+    assert _tray_ns(p)["get_screener_collector_status"](p, now=TRAY_NOW)["tip"] == "Scr NEVER"
+
+
+def test_tray_toasts_on_the_edges(tmp_path):
+    p = tmp_path / "screener_collector.json"
+    ns = _tray_ns(p)
+    status, toast = ns["get_screener_collector_status"], ns["screener_toast"]
+
+    def read(doc):
+        if doc is None:
+            if p.exists():
+                p.unlink()
+        else:
+            _write(p, doc)
+        return status(now=TRAY_NOW)
+
+    hb = "2026-10-08T13:59:40+00:00"
+    first = read({"state": "pass", "pass_id": 1, "pass_kind": "eod", "symbols_done": 9, "symbols_total": 4512,
+                  "universe_n": 4512, "last_pass_et": None, "last_pass_id": None, "heartbeat": hb})
+    done = read({"state": "idle", "pass_id": 1, "symbols_done": 4512, "symbols_total": 4512, "universe_n": 4512,
+                 "last_pass_et": "16:58 ET", "last_pass_id": 1, "last_pass_contracts": 1043221, "heartbeat": hb})
+    err = read({"state": "error", "detail": "Massive rejected the API key (HTTP 401); next try 17:05 ET",
+                "last_pass_et": "16:58 ET", "last_pass_id": 1, "heartbeat": hb})
+    stale = read({"state": "idle", "last_pass_et": "16:58 ET", "last_pass_id": 1,
+                  "heartbeat": "2026-10-08T13:40:00+00:00"})
+    absent = read(None)
+
+    assert toast(first, done) == "Options screener: first market pass done - 4,512 underlyings, 1,043,221 contracts"
+    assert toast(done, done) is None and toast(first, first) is None           # edge-triggered: once
+    assert toast(done, err) == "Options screener: ERROR - Massive rejected the API key (HTTP 401); next try 17:05 ET"
+    assert toast(err, err) is None
+    assert toast(done, stale) == "Options screener: no heartbeat for 5 min"
+    assert toast(err, stale) is None and toast(stale, err) is None             # still not working: no repeat
+    assert toast(stale, done) is None and toast(err, done) is None             # recovering is quiet
+    assert toast(None, err) is None and toast(None, done) is None              # the tray's first poll
+    assert toast(absent, done) is None                                         # the file just appeared
+    p.write_text("{not json", encoding="utf-8")
+    broken = status(now=TRAY_NOW)
+    assert toast(done, broken) == "Options screener: ERROR - see the tray status"
+    assert toast(broken, done) is None                                         # no heartbeat read before
+    p.unlink()
+    log_file = tmp_path / "x.log"
+    log_file.write_text("2026-10-08 09:00:01 ERROR   init_screener_db failed\n", encoding="utf-8")
+    never = status(now=TRAY_NOW, log_path=log_file)
+    assert never["tip"] == "Scr NEVER"
+    assert toast(absent, never) == "Options screener: ERROR - init_screener_db failed"
 
 
 def test_tray_wires_the_line_into_tooltip_and_window():
     src = TRAY.read_text(encoding="utf-8")
     compile(src, str(TRAY), "exec")
     tree = ast.parse(src)
-    callers = set()
+    callers: dict[str, set] = {}
     for fn in tree.body:
         if isinstance(fn, ast.FunctionDef):
             for node in ast.walk(fn):
-                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-                        and node.func.id == "get_screener_collector_status"):
-                    callers.add(fn.name)
-    assert {"_update_loop", "_build_progress_window"} <= callers
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                    callers.setdefault(node.func.id, set()).add(fn.name)
+    assert {"_update_loop", "_build_progress_window"} <= callers["get_screener_collector_status"]
+    assert callers["screener_toast"] == {"_update_loop"}            # the toasts
+    loop = ast.get_source_segment(src, next(f for f in tree.body
+                                             if isinstance(f, ast.FunctionDef) and f.name == "_update_loop"))
+    assert "icon.notify(" in loop and 'title="Options screener"' in loop
+    assert "current_alert = (dc.get(\"status\") == \"issues\")" in loop   # the red ring stays the deep check's
     assert '"dashboard_tst" / "state" / "screener_collector.json"' in src
+    assert '"dashboard_tst" / "logs" / "screener_collector.log"' in src
     assert scr_collector.STATE_PATH.relative_to(DASH_ROOT.parent).as_posix() == \
         "dashboard_tst/state/screener_collector.json"
     assert "{scr_str}" in src                                   # the tooltip fragment
+    assert "scr_detail_var.set(sc_detail)" in src               # the collector's sentence in the window
 
 
 # ───────────────────────────────────────── the CLI + the task script ─────────────────────────────────────────
@@ -969,8 +2123,9 @@ def logger_levels():
         logging.getLogger(n).disabled = dis
 
 
-def test_cli_arguments_modes_and_exit_codes(monkeypatch, logger_levels):
+def test_cli_arguments_modes_and_exit_codes(monkeypatch, logger_levels, tmp_path):
     cli = _load_cli()
+    monkeypatch.setattr(cli, "STATE_FILE", tmp_path / "state" / "screener_collector.json")   # its lock too
     a = cli.parse_args([])
     assert not (a.once or a.history or a.eod_now or a.forever or a.universe_now) and a.log_file is None
     assert cli.parse_args(["--history", "NVDA", "SPY"]).history == ["NVDA", "SPY"]
@@ -1006,6 +2161,7 @@ def test_cli_arguments_modes_and_exit_codes(monkeypatch, logger_levels):
 
 def test_cli_runs_the_screener_migrations_first(monkeypatch, tmp_path, logger_levels):
     cli = _load_cli()
+    monkeypatch.setattr(cli, "STATE_FILE", tmp_path / "state" / "screener_collector.json")   # its lock too
     url = "sqlite:///" + (tmp_path / "cli.db").as_posix()
     monkeypatch.setenv("TST_SCREENER_DATABASE_URL", url)
     screener_db.configure(None)

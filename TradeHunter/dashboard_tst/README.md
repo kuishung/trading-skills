@@ -117,8 +117,8 @@ from this dashboard.
     `option_store.py`; `deploy/options_collector.py` (task `TST-Options-Collector`, DEPLOY.md G).
   - `bridge/` — the member IBKR bridge 2.0 (`ibkr_bridge.py`, `th_ibkr.py`). Not used for
     Options data; it stays for the legacy hidden pages (see `bridge/README.md`).
-  - Tests: `test_screener_engine.py`, `test_screener_strategies.py`, `test_scr_store.py`,
-    `test_scr_collector.py`, `test_options_page.py`, `test_massive.py`, `test_opt_massive.py`,
+  - Tests: `test_screener_engine.py`, `test_screener_strategies.py`, `test_screener_frame.py`,
+    `test_scr_store.py`, `test_scr_collector.py`, `test_screener_cli.py`, `test_clock_closures.py`, `test_options_page.py`, `test_massive.py`, `test_opt_massive.py`,
     `test_opt_collector.py`, `test_opt_store.py`, `test_option_store.py`, `test_connector.py` +
     `test_th_ibkr.py` (the bridge).
   - **Removed in v4.135:** the whole v2 page and its screener — `services/{opt_rules,
@@ -192,6 +192,70 @@ surface takes shape.
 > `__version__` — that constant is the version shown on the login page / nav / `/status`
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
+
+### 2026-10-11 - v4.137: the screener's first run - data within minutes, and the page and tray always say what the collector is doing
+
+After the v4.136 deploy (Sat 2026-10-10 20:18 MYT) the Options page showed only *"No screener data
+yet - the Hermes screener collector has not finished a market pass"* for as long as the first start
+took. The user: *"what does it means?"* An audit (four lenses - a code trace, an end-to-end
+simulation against a fake Massive, Massive's own docs, what the page and tray show; every finding
+re-checked by skeptics: 38 of 40 confirmed) found the cause: the first start read Massive's whole
+option-contract list (~500-800 pages, one after another) before reading any chain, all-or-nothing
+and in silence, and the page never told the member which step it was on. It also found defects that
+could have kept the page empty afterwards. All fixed here; the full plan and the findings are
+recorded in `OPTIONS_SCREENER_DESIGN.md` §12.
+
+- **Data within minutes on a fresh start** (`scr_collector`, `massive`): the universe walk runs on
+  its own thread, sends `contract_type=call` (half the pages), reports every page, files the stocks
+  it has found as it goes (first page at once, then every 25 pages / 30 s) and resumes from the page
+  that failed instead of page 1. The first market pass starts with the first stocks found and grows
+  as the list grows; a pass read on a partial list is marked (`scr_pass.partial`) so the full
+  end-of-day pass still runs once the list is complete. A later day's refresh stays all-or-nothing
+  (yesterday's list keeps feeding the passes) but shows its progress too.
+- **No single stock or failed read can stall the passes**: a 403 on one stock is a per-stock
+  failure (skipped, retried next day) - only 25 refusals with no success at all pause the passes as
+  a plan problem; a pass that stores nothing is not finished (alert + back-off 10 min -> 2 h) and
+  never marks the session done; an end-of-day pass still open when the session opens closes
+  unfinished; an empty or adjusted-only answer never wipes good rows (an all-adjusted chain clears
+  them); a restart ignores a 0-contract end-of-day pass. Index options are listed under the bare
+  symbol (SPX) - resolved against Massive's docs; adjusted roots (GME1, BRKB1) are dropped.
+- **What the page shows** (`options_page`, `options.html`, `frame`, `engine`): the collector's live
+  step in plain words - "Step 1 of 2: reading Massive's list of optionable stocks - page 312 (1,840
+  stocks so far, 6 min)", "Reading the option market (Fri Oct 9 close): 1,240 of 4,512 underlyings,
+  38% of contracts, about 6 min left", stock-price and IV-history progress with time left - in the
+  data line and in an empty-results panel; errors in a coloured box in member words with the next
+  retry time (admins also get the technical detail and what to do on Hermes); amber when no
+  heartbeat for 5 min at any hour (was 10 min / 3 h). The page polls every 15 s while loading and
+  re-runs the screen by itself when data arrives; an empty frame is re-checked every 5 s (a request
+  waits at most 3 s for a load); the first pass's partial results grow every ~2 min. Until security
+  types are loaded, the default Security Type filter is skipped with a note instead of hiding every
+  row.
+- **The Hermes tray** (`dashboard_intraday/tray_status.py`): the screener line carries the
+  collector's detail and progress, "first pass running", amber WARN for a warning / a pass that
+  stored nothing / no universe after an error, NOT RUNNING / NEVER CHECKED IN from the crash file,
+  and a pop-up notice when the collector errors or stops, and when the first pass finishes.
+- **The collector keeps itself alive** (`deploy/screener_collector.py`, `setup_screener_task.ps1`,
+  `setup_options_collector_task.ps1`): a start that fails (an import, the DB migration) writes a
+  crash state the page and tray show, and `--forever` keeps retrying every 5 min instead of exiting;
+  both tasks gain a 15-minute revive trigger; both collectors take a single-instance lock
+  (`state\screener_collector.lock`, `state\options_collector.lock`), so a by-hand run never races
+  the task (it exits 1 while the task holds the lock - see DEPLOY.md for the hand-run sequence). A
+  key corrected in `app\.env` is picked up within 5 min without a restart (both collectors).
+- **Lanes**: the stock-bar window is clamped to Stocks Basic's 2 years (dated 403s retire that day
+  instead of pausing the lane); technicals run hourly once the newest 260 sessions are filed instead
+  of after the whole 2-year backfill; earnings dates are not re-read on a same-day restart; the IV
+  history skips index underlyings; the trading calendar knows NYSE's one-off closures (2025-01-09
+  and four older ones).
+- Schema (screener DB, `alembic_screener/`): `8d2f4b6a1c37` adds `scr_status.error_kind / next_try /
+  warn / universe_done / earnings_on / progress`; `b4e1f7c9d2a6` adds `scr_pass.partial`. Both run
+  at web-app start and collector start.
+- **Tested: 594 pass** (`py -m pytest tests -q -p no:warnings`): new `test_screener_frame.py`,
+  `test_screener_cli.py`, `test_clock_closures.py`, and additions across `test_scr_collector.py`,
+  `test_scr_store.py`, `test_massive.py`, `test_opt_massive.py`, `test_options_page.py`,
+  `test_screener_engine.py`. An end-to-end run on a fake Massive (Saturday clock): rows landed while
+  the universe walk was still on page 2 and the page showed them within 5 s. Four reviewers then
+  read the change; their 14 findings were all confirmed and fixed (each with a test). Checked in the
+  browser: the populated page, the "Step 1 of 2" first-start panel, and the network-error box.
 
 ### 2026-10-10 - v4.136: the Options Screener - Barchart's screener on Massive data, the whole market, 33 screeners
 

@@ -47,6 +47,9 @@ the collector in state ``error`` with the plain reason (the Options page strip a
 Hermes tray show it):
 
 * ``config`` / ``auth`` (no key, a rejected key) - everything, retried every 5 min;
+  ``app/.env`` is re-read then and its ``TST_MASSIVE_API_KEY`` replaces the process's
+  (v4.137), so a key added or corrected there is used without a restart (a rejected key
+  still unchanged there is tried again at most every 30 min);
 * ``network`` (Massive not reachable) - everything, retried after 60 s doubling to 5 min;
 * ``plan`` (HTTP 403 - the plan lacks an endpoint) - only the part that needs it
   (chain reads, history reads, or the end-of-day stock bars), retried every 5 min; the
@@ -80,6 +83,7 @@ BATCH = 5                        # ... nor more than this many (session / EOD pa
 CYCLE_MIN_DEFAULT = 15           # TST_OPTIONS_CYCLE_MIN: a session pass every N minutes
 CYCLE_MIN_LO, CYCLE_MIN_HI = 1, 240
 KEY_RETRY_S = 300.0              # no key / a rejected key: looked at again every 5 min
+KEY_SAME_RETRY_S = 1800.0        # a rejected key still unchanged in app/.env: tried again every 30 min
 PLAN_RETRY_S = 300.0             # an endpoint the plan lacks: tried again every 5 min
 NETWORK_RETRY_S = 60.0           # Massive unreachable: 60 s ...
 NETWORK_RETRY_MAX_S = 300.0      # ... doubling to 5 min
@@ -114,16 +118,33 @@ def env_cycle_min() -> int:
     return v if CYCLE_MIN_LO <= v <= CYCLE_MIN_HI else CYCLE_MIN_DEFAULT
 
 
-def default_client():
-    """A ``massive.Client`` with the key from the environment. ``app/.env`` is re-read
-    first (variables already set are kept), so a key added there while the collector
-    runs is found at the next 5-minute look."""
+def _load_env() -> None:
+    """Re-read ``app/.env``: every variable not already set is loaded, and the Massive key
+    is taken FROM THE FILE whatever the process holds - a key added or corrected there is
+    picked up without a restart; a blank ``TST_MASSIVE_API_KEY=`` removes it. A missing
+    file (or python-dotenv) leaves the environment as it is."""
     try:
-        from dotenv import load_dotenv  # noqa: PLC0415
+        from dotenv import dotenv_values, load_dotenv  # noqa: PLC0415
 
         load_dotenv(APP_ENV_PATH, override=False)
-    except Exception:  # noqa: BLE001 - python-dotenv or the file missing: the environment as is
+        if not Path(APP_ENV_PATH).is_file():
+            return
+        vals = dotenv_values(APP_ENV_PATH)
+        if massive.ENV_KEY in vals:
+            v = str(vals.get(massive.ENV_KEY) or "").strip()
+            if v:
+                os.environ[massive.ENV_KEY] = v
+            else:
+                os.environ.pop(massive.ENV_KEY, None)
+    except Exception:  # noqa: BLE001 - python-dotenv or the file unreadable: the environment as is
         pass
+
+
+def default_client():
+    """A ``massive.Client`` with the key from the environment. ``app/.env`` is re-read
+    first (``_load_env``: the key in the file wins), so a key added or corrected there
+    while the collector runs is found at the next 5-minute look."""
+    _load_env()
     return massive.Client()
 
 
@@ -203,6 +224,7 @@ class Collector:
         self._alerts: dict[str, tuple[str, str]] = {}
         self._retry_at: dict[str, _dt.datetime] = {}
         self._net_fails = 0
+        self._auth_tried_at: _dt.datetime | None = None   # a rejected key's last try (same key)
         # work
         self._cycle: list[str] | None = None              # symbols left in the running pass
         self._pass_failed = 0
@@ -413,10 +435,32 @@ class Collector:
 
     def _ready(self, now: _dt.datetime, *, force: bool = False) -> bool:
         """A client with a key, and every request not paused (``force``: look now). No
-        key -> state error with ``NO_KEY_TEXT``, looked at again in 5 min."""
+        key -> state error with ``NO_KEY_TEXT``, looked at again in 5 min. A rejected key:
+        ``app/.env`` is re-read at each look - a different key there gets a fresh client at
+        once; the same key is tried again at most every 30 min."""
         if not force and self._paused_all(now):
             return False
         c = self.client
+        if self._alerts.get(ALL, ("",))[0] == "auth" and self._client_factory is not None and _has_key(c):
+            _load_env()
+            if massive.api_key() != getattr(c, "_key", None):
+                try:
+                    fresh = self._client_factory()
+                except Exception as exc:  # noqa: BLE001
+                    self._alert(ALL, "config", "could not set up the Massive client: %s"
+                                % self._err_text(exc), KEY_RETRY_S, now)
+                    return False
+                if fresh is not c:
+                    self._close_client(c)            # one thread: nothing is in flight on it
+                self.client = c = fresh
+                self._auth_tried_at = None
+                self.log.info("the Massive key in app/.env changed - a new client uses it")
+            elif not force and self._auth_tried_at is not None and \
+                    (now - self._auth_tried_at).total_seconds() < KEY_SAME_RETRY_S:
+                self._retry_at[ALL] = now + _dt.timedelta(seconds=KEY_RETRY_S)
+                return False
+            else:
+                self._auth_tried_at = now
         if not _has_key(c) and self._client_factory is not None:
             try:
                 fresh = self._client_factory()

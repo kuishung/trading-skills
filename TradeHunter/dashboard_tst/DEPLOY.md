@@ -304,10 +304,14 @@ One ticker failing: logged in `opt_refresh_log`, the loop moves on. A history wi
 little data (a young listing, a ticker with no options) is retried after 30 min, doubling
 to 6 h.
 
-By hand (stop the task first, so two loops do not read the same chains) — the venv python,
-no `py -3.12` needed: `.\.venv\Scripts\python.exe deploy\options_collector.py --once -v`,
-`--history NVDA LRCX`, `--eod-now`. Exit code 2 = Massive not usable for a one-off run (no
-key, the key rejected, the plan lacks an endpoint, or Massive not reachable).
+By hand - the venv python, no `py -3.12` needed: `.\.venv\Scripts\python.exe
+deploy\options_collector.py --once -v`, `--history NVDA LRCX`, `--eod-now`. Since v4.137 the
+collector holds a single-instance lock (`state\options_collector.lock`): a by-hand run exits 1 while
+the task's copy holds it, so stop the task the same way as for the screener collector (section H,
+"By hand") with `TST-Options-Collector` / `options_collector.py` in place of `TST-Options-Screener` /
+`screener_collector.py`. Exit code 2 = Massive not usable for a one-off run (no key, the key
+rejected, the plan lacks an endpoint, or Massive not reachable). A key corrected in `app\.env` is
+picked up within 5 min without a restart (v4.137).
 
 **First checks once the key is in** (none of this could be run on the laptop — there is no
 key there):
@@ -351,13 +355,15 @@ Then restart the web app (the canonical script, section C) - it migrates `screen
 loads the market in the background (~8 s per 1M contracts; a single uvicorn worker, ~400 MB
 per 1M contracts, about double during a reload).
 
-**The first day.** The universe comes first (a few minutes: ~600 pages of the contract list);
-then a market pass (~4,000-5,000 underlyings, a few minutes); the stock history (2 years of
-grouped daily bars at 5 requests/min) takes ~3.5 h in the background, newest sessions first, so
-the technicals fill in over that time; the IV history of the whole market (~150-300 option-bar
-requests per underlying) takes ~12-20 h - IV rank reads "-" for an underlying until its history
-is in. The Options page's data line shows all of it (passes, underlyings, contracts, IV history
-done / total).
+**The first day (v4.137).** Step 1 reads Massive's list of optionable stocks (~300-400 pages of
+call contracts; the page shows "Step 1 of 2 ... page N (M stocks so far)"), and the stocks it finds
+are filed as it goes; step 2 - the first market pass - starts with the first stocks found and grows
+as the list grows, so **results appear within a few minutes** of a fresh start and fill in as the
+pass goes. A failed page resumes where it stopped. The stock history (2 years of grouped daily bars
+at 5 requests/min) takes ~3.5 h in the background, newest sessions first; the technicals fill in
+hourly once the newest 260 sessions are in; the IV history of the whole market (~150-300
+option-bar requests per underlying) takes ~12-20 h - IV rank reads "-" for an underlying until its
+history is in. The Options page's data line and the tray show all of it, with time left.
 
 ### After a pull
 
@@ -371,20 +377,59 @@ cd C:\trading-skills\TradeHunter\dashboard_tst
 powershell -ExecutionPolicy Bypass -File deploy\setup_screener_task.ps1 -StartNow
 ```
 
-By hand (stop the task first): `.\.venv\Scripts\python.exe deploy\screener_collector.py --once
--v`, `--universe-now`, `--eod-now`, `--history NVDA LRCX`. Exit code 2 = Massive not usable for
-a one-off run.
+The setup script registers three triggers: at boot (+1 min), daily 07:00 (revive) and, since v4.137,
+every 15 min (revive a dead copy; a no-op while it runs). A start that fails (an import error, the
+screener DB migration) writes a crash state that the page and the tray show, and `--forever` keeps
+retrying every 5 min instead of exiting.
+
+**After a pull that changes `dashboard_intraday\tray_status.py`**, restart the tray too (Hermes,
+PowerShell in the RDP session, as Administrator):
+
+```powershell
+(Get-ScheduledTask -TaskName IntradayBot-Tray).Actions | Select-Object Execute, Arguments   # must show C:\trading-skills\TradeHunter\dashboard_intraday\tray_status.py
+Get-CimInstance Win32_Process | Where-Object { ($_.Name -eq 'pythonw.exe' -or $_.Name -eq 'python.exe') -and $_.CommandLine -like '*tray_status.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA SilentlyContinue }
+schtasks /End /TN IntradayBot-Tray
+Start-Sleep 2
+Start-ScheduledTask -TaskName IntradayBot-Tray
+```
+
+**By hand.** The collector holds a single-instance lock (`state\screener_collector.lock`, v4.137): a
+by-hand run exits 1 while the task's copy holds it. Disable and stop the task, run, then re-enable
+(Hermes, elevated PowerShell):
+
+```powershell
+cd C:\trading-skills\TradeHunter\dashboard_tst
+Disable-ScheduledTask -TaskName TST-Options-Screener
+schtasks /End /TN TST-Options-Screener
+Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'screener_collector\.py' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+.\.venv\Scripts\python.exe deploy\screener_collector.py --eod-now -v
+Enable-ScheduledTask -TaskName TST-Options-Screener
+Start-ScheduledTask -TaskName TST-Options-Screener
+```
+
+Other one-off modes: `--once -v`, `--universe-now`, `--history NVDA LRCX`. Exit codes: 2 = Massive
+not usable for a one-off run; 3 = `--history` had nothing it could read (the stock bars are not in
+yet).
 
 ### Watching it
 
-- **The Options page data line**: green dot = running / idle; amber = no heartbeat (10 min in
-  its working hours, 3 h outside them) or stopped; rose = error (the reason is in the line).
+- **The Options page data line** (v4.137): the collector's live step in plain words with its
+  progress and time left; green dot = working / idle; **amber** = no heartbeat for 5 min (any hour),
+  stopped, a warning (e.g. a universe refresh failed - yesterday's list in use), or one part paused;
+  **rose** = error, shown in a box in member words with the next retry time (admins also see the
+  detail and what to do on Hermes). While there is nothing to screen, the results area explains which
+  step is running.
 - **The Hermes tray**: `Options screener: pass · cycle pass 12 1,234/4,512 · last pass 09:45 ET
-  · universe 4,512 · IV history 1,204/4,512 · hb 20s ago` - green working; amber error /
-  stopped / no heartbeat for 5 min.
-- Errors: no key or a rejected key or a plan without an endpoint -> state `error`, retried every
-  5 min; one underlying failing is counted and skipped; a pass cut short by a Massive pause is
-  not counted as finished and resumes.
+  · universe 4,512 · IV history 1,204/4,512 · hb 20s ago` plus the collector's detail and time
+  left - green working; amber error / stopped / no heartbeat for 5 min / `Scr WARN` (a warning, a
+  pass that stored nothing); NOT RUNNING when it could not start; a pop-up notice on error and when
+  the first pass finishes.
+- Errors: no key or a rejected key -> state `error`, the key re-read from `app\.env` every 5 min;
+  Massive not reachable -> paused, retried after 60 s doubling to 5 min; one underlying refused or
+  failing is counted and skipped (a refused one is retried the next day) - only 25 refusals with no
+  success pause the passes as a plan problem; a pass that stores nothing is not finished and is
+  retried after 10 min doubling to 2 h; a pass cut short by a pause is not counted as finished and
+  resumes.
 
 ---
 

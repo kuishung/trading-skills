@@ -379,7 +379,31 @@ def test_standard_rows_drops_non_standard_contracts():
     plain = dict(adj, strike=110.0, multiplier=None, ticker=None)    # nothing said: kept
     assert opt_massive.standard_rows("BRK-B", [adj, std, mini, plain]) == [std, plain]
     assert opt_massive.standard_rows("BRK-B", [std, adj]) == [std]
-    assert opt_massive.standard_rows("BRK-B", [adj, dict(adj, iv=0.5)]) == [adj]    # neither: the first
+    # an adjusted root is dropped on its own now - two of them leave nothing
+    assert opt_massive.standard_rows("BRK-B", [adj, dict(adj, iv=0.5)]) == []
+    # the "first seen" rule: two rows at one key and neither the standard ticker
+    t1, t2 = dict(adj, ticker=None), dict(adj, ticker=None, iv=0.5)
+    assert opt_massive.standard_rows("BRK-B", [t1, t2]) == [t1]
+
+
+def test_standard_rows_drops_adjusted_roots_at_any_strike():
+    def row(ticker, strike, **kw):
+        return dict({"expiry": "2026-10-16", "right": "C", "strike": strike, "iv": 0.5,
+                     "multiplier": 100, "ticker": ticker}, **kw)
+
+    std = row(massive.option_ticker("GME", "2026-10-16", "C", 25.0), 25.0)
+    gme1 = row("O:GME1261016C00003000", 3.0)          # adjusted, 100 shares, a strike only it has
+    two = row("O:XYZ12261016C00007500", 7.5)          # a two-digit adjusted root
+    bare = row(None, 30.0)                            # no ticker: not judged, kept
+    odd = row("not-an-option-ticker", 35.0)           # does not parse: kept
+    weekly_index = row("O:SPXW261016C05800000", 5800.0)
+    assert opt_massive.standard_rows("GME", [std, gme1, two, bare, odd]) == [std, bare, odd]
+    # no root-equals-symbol rule: an index's root (SPXW) is not our spelling (I:SPX)
+    assert opt_massive.standard_rows("I:SPX", [weekly_index]) == [weekly_index]
+    assert opt_massive.adjusted_root("O:BRKB1261120C00100000") is True
+    assert opt_massive.adjusted_root("o:gme1261016c00003000") is True
+    assert opt_massive.adjusted_root("O:BRKB261120C00100000") is False
+    assert opt_massive.adjusted_root(None) is False and opt_massive.adjusted_root("SPY") is False
 
 
 def test_ingest_keeps_only_standard_contracts(db):
@@ -735,3 +759,84 @@ def test_daily_update_not_complete_until_the_session_is_on_the_feed(db):
                                    now=_dt.datetime(2026, 10, 6, 0, 30))     # Monday 20:30 ET
     assert seen[-1].url.path.endswith("/2026-09-25/2026-10-05")
     assert out["bars"] == 6 and out["complete"] is False
+
+
+# ───────────────────────────────────────────── v4.137: the plan window + the screener's chain read
+
+def test_backfill_never_asks_before_the_plan_window(db):
+    """Stocks Basic keeps ~2 years: the bar read starts no earlier than 725 days before
+    the ET day (``massive.stocks_plan_start``), whatever ``years_bars`` says."""
+    bars = bars_synth("range", n=30, start=150.0, seed=3, end=HIST_DAY)
+    seen: list = []
+    handler, _ = history_server(bars, lambda k: False, seen)
+    client = make_client(handler)
+    plan_start = (_dt.date.fromisoformat(HIST_DAY) - _dt.timedelta(days=725)).isoformat()   # 2024-10-07
+    for years in (2, 5):
+        n = len(seen)
+        opt_massive.backfill_history(db, client, "SYN", today=HIST_DAY, now=NOW, years_bars=years)
+        frm = seen[n].url.path.split("/")[8]
+        assert frm == plan_start == massive.stocks_plan_start(HIST_DAY).isoformat(), years
+    n = len(seen)
+    opt_massive.backfill_history(db, client, "SYN", today=HIST_DAY, now=NOW, years_bars=1)
+    assert seen[n].url.path.split("/")[8] == "2025-09-28"           # inside the window: as asked
+
+
+@pytest.fixture
+def sdb(tmp_path):
+    """A session on a fresh SCREENER DB at its own Alembic head."""
+    from app import screener_db
+
+    screener_db.configure("sqlite:///" + (tmp_path / "screener.db").as_posix())
+    screener_db.init_screener_db()
+    s = screener_db.SessionLocal()
+    try:
+        yield s
+    finally:
+        s.rollback()
+        s.close()
+        screener_db.configure(None)
+
+
+def test_screener_chain_read_never_stores_an_adjusted_contract(sdb, tmp_path):
+    """``scr_collector.Collector.read_chain`` -> ``scr_contract``: an adjusted series (GME1,
+    100 shares) is dropped at a strike only it has AND at a key the standard chain has."""
+    import logging
+
+    from app.screener_models import ScrContract
+    from app.services import scr_collector
+
+    now = NOW                                                           # Monday 14:00 ET
+    stamp = now - _dt.timedelta(minutes=15)
+
+    def row(exp, right, k, *, ticker=None, iv=0.5, multiplier=100):
+        return {"expiry": exp, "right": right, "strike": k, "iv": iv, "delta": 0.5 if right == "C" else -0.5,
+                "gamma": 0.05, "theta": -0.02, "vega": 0.03, "oi": 500, "volume": 20, "day_close": 1.5,
+                "day_vwap": 1.5, "prev_close": 1.4, "day_change_pct": 7.1, "bid": None, "ask": None,
+                "bid_size": None, "ask_size": None, "last_updated": stamp,
+                "ticker": ticker or massive.option_ticker("GME", exp, right, k), "multiplier": multiplier,
+                "und_price": None, "und_as_of": None}
+
+    std = [row(e, r, k) for e in ("2026-10-16", "2026-11-20") for k in (20.0, 25.0, 30.0) for r in ("C", "P")]
+    adjusted = [row("2026-10-16", "C", 3.0, ticker="O:GME1261016C00003000"),            # only it has 3.0
+                row("2026-10-16", "C", 25.0, ticker="O:GME1261016C00025000", iv=0.95)]  # a standard key
+
+    class Fake:
+        has_key = True
+        base_url = "https://api.massive.test"
+
+        def chain_snapshot(self, symbol, **kw):
+            rows = list(adjusted[:1]) + std + list(adjusted[1:])
+            return {"symbol": symbol, "rows": rows, "underlying_price": 25.0, "underlying_as_of": stamp,
+                    "pages": 1, "as_of": stamp}
+
+    col = scr_collector.Collector(lambda: sdb, client=Fake(), clock=lambda: now, sleep=lambda s: None,
+                                  state_path=tmp_path / "state" / "screener_collector.json",
+                                  log=logging.getLogger("test_opt_massive"),
+                                  executor_factory=lambda n: scr_collector.InlineExecutor(),
+                                  earnings_fetch=lambda d: [], workers=1)
+    res = col.read_chain(sdb, "GME", kind="cycle", session=TODAY, day=_dt.date.fromisoformat(TODAY))
+    sdb.expire_all()
+    got = {(c.expiry, c.right, c.strike): c for c in sdb.query(ScrContract).filter(ScrContract.symbol == "GME")}
+    assert res["contracts"] == len(std) == len(got)
+    assert ("2026-10-16", "C", 3.0) not in got                         # the adjusted-only strike
+    assert got[("2026-10-16", "C", 25.0)].iv == pytest.approx(0.5)      # the standard row, not GME1's

@@ -10,9 +10,11 @@
 # the key again every 5 min. This script only checks that the line is there - it never
 # prints the key.
 #
-# Triggers: at startup (1 min delay) and daily 07:00 local (Malaysia) - the daily one
-# only revives a collector that died (MultipleInstances IgnoreNew). Restart on
-# failure 3 times, 5 min apart. No execution time limit.
+# Triggers: at startup (1 min delay), daily 07:00 local (Malaysia) and every 15 min from
+# the moment this script runs - the daily and the 15-min ones only revive a collector
+# that died (MultipleInstances IgnoreNew makes them a no-op while it runs), so a dead
+# collector is back within 15 min instead of at the next 07:00. Restart on failure 3
+# times, 5 min apart. No execution time limit.
 #
 # Run ONCE on Hermes, from an elevated PowerShell:
 #   cd C:\trading-skills\TradeHunter\dashboard_tst
@@ -70,6 +72,10 @@ $action = New-ScheduledTaskAction -Execute $Python -Argument $CollectorArgs -Wor
 $atStartup = New-ScheduledTaskTrigger -AtStartup
 $atStartup.Delay = "PT1M"          # let the network come up first
 $daily = New-ScheduledTaskTrigger -Daily -At $At
+# Every 15 min, for good (9999 days: [TimeSpan]::MaxValue is refused on Server 2016+).
+# A run BY HAND must Disable the task first - this trigger restarts it otherwise (the
+# collector's lock, state\options_collector.lock, then makes the second copy wait or exit).
+$revive = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 15) -RepetitionDuration (New-TimeSpan -Days 9999)
 
 $principal = New-ScheduledTaskPrincipal -UserId $User -LogonType S4U -RunLevel Highest
 # ExecutionTimeLimit zero = no limit: the collector runs until the box stops.
@@ -79,12 +85,12 @@ $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable `
     -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 5) `
     -MultipleInstances IgnoreNew
 
-$null = Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger @($atStartup, $daily) `
+$null = Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger @($atStartup, $daily, $revive) `
     -Principal $principal -Settings $settings -Force
 
 $verify = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if ($null -eq $verify) { Write-Error "Task '$TaskName' did not register."; exit 1 }
-Write-Host "Task registered: $TaskName at startup + daily at $At  (State: $($verify.State))" -ForegroundColor Green
+Write-Host "Task registered: $TaskName at startup + daily at $At + every 15 min if it died  (State: $($verify.State))" -ForegroundColor Green
 
 if ($StartNow) {
     # Stop a running copy first: IgnoreNew would otherwise keep the old code running.
@@ -113,4 +119,5 @@ Write-Host "Log:     $LogFile  (rotated at 5 MB: .1 ... .5 are the older ones)"
 Write-Host "Status:  Get-Content `"$DashRoot\state\options_collector.json`""
 Write-Host "Tail:    Get-Content `"$LogFile`" -Tail 40 -Wait"
 Write-Host "Run now: Start-ScheduledTask -TaskName $TaskName"
+Write-Host "By hand: Disable-ScheduledTask -TaskName $TaskName; schtasks /End /TN $TaskName first (the 15-min trigger restarts it otherwise), then Enable-ScheduledTask -TaskName $TaskName; Start-ScheduledTask -TaskName $TaskName after"
 Write-Host "Remove:  Unregister-ScheduledTask -TaskName '$TaskName' -Confirm:`$false"

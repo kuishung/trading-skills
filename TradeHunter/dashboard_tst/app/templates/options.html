@@ -81,6 +81,14 @@
   .scr-dot-slate { background: var(--tv-muted); }
   .scr-pl svg text { fill: var(--tv-muted); font-size: 10px; }
   .scr-busy { opacity: .55; pointer-events: none; }
+  /* v4.137: the collector alert (rose = error; amber / slate use #scrEngineErr's classes) and
+     the empty-results panel that says why there is nothing to screen yet */
+  .scr-alert-rose { border-color: var(--tv-down); color: var(--tv-down); background: rgba(239,83,80,.08); }
+  .scr-empty-panel { max-width: 44rem; margin: 0 auto; }
+  .scr-admin { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+  .scr-notice { border: 1px solid var(--tv-accent); color: var(--tv-accent-tx); background: rgba(41,98,255,.08);
+                padding: .2rem .6rem; font-size: 12px; border-radius: var(--tv-r-ctl); }
+  .scr-notice:hover { background: rgba(41,98,255,.16); }
 </style>
 
 <div id="optPage" class="space-y-3" data-screen="{{ screen.key }}">
@@ -103,14 +111,20 @@
     </label>
   </div>
 
-  {# the data line + the collector's status dot (dashboard-visibility rule); repainted every 60 s #}
+  {# the data line + the collector's status dot (dashboard-visibility rule); repainted every
+     15 s while there is no data / a pass or list read runs, else every 60 s #}
   <div id="scrData" class="text-[11px] text-slate-500 leading-snug">
     <div class="flex items-start gap-2">
       <span id="scrDot" class="scr-dot scr-dot-{{ status.dot }} mt-[3px]" title="{{ status.label }}"></span>
       <span id="scrDataLine" class="min-w-0 break-words">{{ status.line }}</span>
     </div>
-    <div id="scrDataState" class="pl-[1.1rem] text-slate-500">{{ status.label }}</div>
+    <div id="scrDataState" class="pl-[1.1rem] text-slate-500 break-words{% if status.dot != 'green' %} hidden{% endif %}">{{ status.label }}</div>
   </div>
+  {# a collector problem (rose error · amber stale / paused / warning · slate never reported) in a
+     box members cannot miss - the same text the dot's tooltip carries #}
+  {% set alert_cls = {'rose': 'scr-alert-rose', 'amber': 'border-amber-500/40 bg-amber-500/10 text-amber-300',
+                      'slate': 'border-amber-500/40 bg-amber-500/10 text-amber-300'} %}
+  <div id="scrCollectorAlert" role="status" class="{% if status.dot not in alert_cls %}hidden {% endif %}rounded-lg border px-3 py-2 text-xs break-words {{ alert_cls.get(status.dot, '') }}">{{ status.alert if status.dot in alert_cls else '' }}</div>
 
   {% if engine_error %}
   <div id="scrEngineErr" class="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">{{ engine_error }}</div>
@@ -170,11 +184,24 @@
         <button type="button" id="scrSaveR" class="scr-btn">Save screener</button>
       </div>
     </div>
+    {# a newer market pass while rows are on screen: offered, never forced (an open legs row stays) #}
+    <div id="scrNotice" class="hidden"><button type="button" id="scrNoticeBtn" class="scr-notice"></button></div>
     <div id="scrWarn" class="hidden rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300"></div>
     <div id="scrTrunc" class="hidden text-xs text-amber-300"></div>
     <div id="scrTableWrap" class="scr-wrap rounded-lg border border-slate-800 overflow-auto">
       <table id="scrTable" class="scr-table min-w-full text-xs"><thead></thead><tbody></tbody></table>
       <div id="scrEmpty" class="hidden px-4 py-10 text-center text-sm text-slate-500"></div>
+      {# why there is nothing to screen yet - the collector's own state (status.empty), shown
+         while the loaded market has no contracts; painted on the server for the first paint #}
+      {% set ep = status.empty or {} %}
+      {% set ep_on = boot.engine_ok and status.empty and (not status.frame or status.frame.empty or not status.frame.n_contracts) %}
+      <div id="scrEmptyPanel" class="{% if not ep_on %}hidden {% endif %}px-4 py-10 text-center" role="status">
+        <div class="scr-empty-panel">
+          <div id="scrEmptyTitle" class="text-sm font-medium text-slate-200 break-words">{{ ep.title or '' }}</div>
+          <div id="scrEmptyBody" class="mt-2 text-xs text-slate-400 leading-relaxed break-words">{{ ep.body or '' }}</div>
+          <div id="scrEmptyAdmin" class="{% if not ep.admin %}hidden {% endif %}mt-3 text-[11px] text-slate-500 scr-admin">{{ ep.admin or '' }}</div>
+        </div>
+      </div>
     </div>
     <div id="scrPager" class="flex flex-wrap items-center justify-center gap-2 text-xs"></div>
     <p class="text-[11px] text-slate-500 leading-snug">
@@ -193,10 +220,12 @@
   var SPEC = BOOT.spec || {screen: {}, defaults: {filters: []}, fields: [], groups: [], views: []};
   var RF = typeof BOOT.risk_free === 'number' ? BOOT.risk_free : 0.04;
   var $ = function (id) { return document.getElementById(id); };
+  var NO_DATA = BOOT.no_data || 'No option data loaded yet.';
   var S = {
     screen: BOOT.screen, fields: {}, saved: BOOT.saved || [], savedId: null,
     filters: [], sort: null, view: 'main', flag: false,
-    page: 1, perPage: BOOT.per_page || 100, last: null, seq: 0
+    page: 1, perPage: BOOT.per_page || 100, last: null, seq: 0,
+    status: BOOT.status || null, busy: false, failedRun: false
   };
   (SPEC.fields || []).forEach(function (f) { S.fields[f.key] = f; });
 
@@ -633,6 +662,7 @@
     if (!BOOT.engine_ok) return;
     S.page = page || 1;
     var my = ++S.seq;
+    S.busy = true;
     $('scrTableWrap').classList.add('scr-busy');
     $('scrMs').textContent = 'Screening…';
     api('/options/api/run', {screen: S.screen, payload: payload(false), page: S.page, per_page: S.perPage})
@@ -640,19 +670,51 @@
         if (my !== S.seq) return;
         if (!j.ok) { failed(j.error || 'The screener failed.'); return; }
         S.last = j;
+        S.failedRun = false;
         renderResults();
       })
       .catch(function () { if (my === S.seq) failed('Could not reach the server - check your connection and refresh.'); })
-      .then(function () { if (my === S.seq) $('scrTableWrap').classList.remove('scr-busy'); });
+      .then(function () { if (my === S.seq) { S.busy = false; $('scrTableWrap').classList.remove('scr-busy'); } });
   }
   function failed(msg) {
     S.last = null;
+    S.failedRun = true;
     $('scrTable').querySelector('thead').innerHTML = '';
     $('scrTable').querySelector('tbody').innerHTML = '';
     $('scrTotal').textContent = '–'; $('scrNr').textContent = '–'; $('scrMs').textContent = '';
     $('scrPager').innerHTML = '';
     $('scrWarn').classList.add('hidden'); $('scrTrunc').classList.add('hidden');
+    showPanel(false);
     setEmpty(msg);
+  }
+
+  // ── the empty panel (status.empty: why there is nothing to screen yet) ─────────────
+  function frameEmpty(st) {
+    var fr = st && st.frame;
+    return !fr || !!fr.empty || !fr.n_contracts;
+  }
+  function paintPanel(st) {
+    var e = (st && st.empty) || {};
+    $('scrEmptyTitle').textContent = e.title || '';
+    $('scrEmptyBody').textContent = e.body || '';
+    $('scrEmptyAdmin').textContent = e.admin || '';
+    $('scrEmptyAdmin').classList.toggle('hidden', !e.admin);
+  }
+  function showPanel(on) {
+    if (on) { paintPanel(S.status); setEmpty(''); }
+    $('scrEmptyPanel').classList.toggle('hidden', !on);
+  }
+  function panelWanted(R) {      // the table is empty because the loaded market is
+    return !!(BOOT.engine_ok && S.status && S.status.empty && R && !(R.rows || []).length &&
+              R.data && R.data.empty && !R.data.reloading);
+  }
+  function loadingText(st) {     // T-25
+    var s = (st && st.reload_eta_s) || 10;
+    return 'New market data is loading into the screener (about ' + s + ' seconds) - the results refresh by themselves.';
+  }
+  function secTypeBlocked(R) {   // 0 rows and a Security Type filter the ENGINE applied leaves out the untyped ones
+    var n = R.data && R.data.n_sec_type_unknown;   // (a skipped one - T-23 - never blames it: sec_type_active)
+    return !R.total && n > 0 && !!(R.data && R.data.sec_type_active);
   }
   function isTextCol(c) {     // text / date columns sit left and sort A-Z first
     return /^(text|date|datetime)$/.test(c.fmt || '') || (!c.fmt && /^(expiry|exp|exp_date|name|trend|option_type|right|side)$/.test(c.key));
@@ -683,7 +745,13 @@
     $('scrTotal').textContent = fmtInt(R.total);
     $('scrNr').textContent = isSet(R.total) ? compact(R.total) : '–';
     $('scrMs').textContent = isSet(R.ms) ? 'in ' + fmtInt(R.ms) + ' ms' : '';
-    var warns = (R.warnings || []).filter(Boolean);
+    var panel = panelWanted(R);
+    var noData = (R.warnings || []).filter(function (w) { return typeof w === 'string' && w.indexOf(NO_DATA) === 0; })[0];
+    var emptyMarket = !!(R.data && R.data.empty && !rows.length);
+    var warns = (R.warnings || []).filter(Boolean).filter(function (w) {
+      // an empty market: the panel (or the table's own line) says it - never twice
+      return !(emptyMarket && w === noData);
+    });
     $('scrWarn').innerHTML = warns.map(function (w) { return '<div>' + esc(typeof w === 'string' ? w : (w.text || w.message || JSON.stringify(w))) + '</div>'; }).join('');
     $('scrWarn').classList.toggle('hidden', !warns.length);
     $('scrTrunc').textContent = R.truncated
@@ -710,9 +778,20 @@
 
     if (!rows.length) {
       var empty = R.data && (R.data.empty || R.data.n_contracts === 0);
-      setEmpty(empty ? 'No data yet - the market collector has not finished its first pass. Check back after the next pass (the line at the top shows its progress).'
-                     : (R.total ? 'No rows on this page.' : 'No contracts match these filters. Widen a filter or remove one on SET FILTERS.'));
-    } else setEmpty('');
+      if (panel) showPanel(true);
+      else {
+        showPanel(false);
+        if (empty) setEmpty(R.data.reloading ? loadingText(S.status) : (noData || NO_DATA));
+        else if (R.total) setEmpty('No rows on this page.');
+        else if (secTypeBlocked(R)) {
+          setEmpty('No matches - ' + fmtInt(R.data.n_sec_type_unknown) + ' of the underlyings read so far have no ' +
+                   'security type yet (still loading), and the Security Type filter leaves them out. Remove that ' +
+                   'filter on SET FILTERS to see them now.');
+        } else setEmpty('No contracts match these filters. Widen a filter or remove one on SET FILTERS.');
+      }
+    } else { showPanel(false); setEmpty(''); }
+    var nf = S.status && S.status.frame;
+    if (!nf || nf.pass_id == null || nf.pass_id === (R.data || {}).pass_id) hideNotice();
     renderPager();
   }
   function renderPager() {
@@ -929,32 +1008,119 @@
     tr.classList.add('scr-open');
   }
 
-  // ── the data line, every 60 s ────────────────────────────────────────────────
+  // ── the data line, the collector alert, and re-running when the data arrives ──────
+  // polled every 15 s while there is no data, a pass or the list of optionable stocks is
+  // being read, or new data is loading into the screener; otherwise every 60 s
+  var ALERT_CLS = {rose: 'scr-alert-rose', amber: 'border-amber-500/40 bg-amber-500/10 text-amber-300',
+                   slate: 'border-amber-500/40 bg-amber-500/10 text-amber-300'};
+  var pollTimer = null, specReloaded = false;
+  function etHM(s) {
+    if (!s) return '';
+    var d = new Date(/Z$|[+-]\d\d:?\d\d$/.test(s) ? s : s + 'Z');
+    if (isNaN(d.getTime())) return '';
+    try {
+      return d.toLocaleTimeString('en-US', {timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'});
+    } catch (e) { return ''; }
+  }
+  function detailOpen() { return !!document.querySelector('#scrTable tr.scr-detail'); }
+  function hideNotice() { $('scrNotice').classList.add('hidden'); }
+  function showNotice(fr) {      // T-24
+    var hm = etHM(fr.finished);
+    $('scrNoticeBtn').textContent = 'New data from the ' + (hm ? hm + ' ET ' : 'latest ') + 'pass - Refresh';
+    $('scrNotice').classList.remove('hidden');
+  }
+  $('scrNoticeBtn').addEventListener('click', function () { hideNotice(); run(S.page); });
+  function reloadSpecOnce() {    // BOOT.spec was built from an empty market: no expiry choices yet
+    if (specReloaded || !(SPEC.data && SPEC.data.empty)) return;
+    specReloaded = true;
+    api('/options/api/spec?screen=' + encodeURIComponent(S.screen)).then(function (j) {
+      if (!j || !j.ok) { specReloaded = false; return; }
+      SPEC = j;
+      S.fields = {};
+      (SPEC.fields || []).forEach(function (f) { S.fields[f.key] = f; });
+      var g = $('scrAddGroup').value;
+      renderAddGroups();
+      if (g && (SPEC.groups || []).indexOf(g) >= 0) { $('scrAddGroup').value = g; renderAddField(); }
+      renderCards();
+    }).catch(function () { specReloaded = false; });
+  }
+  function firstPassRunning(m) {   // no pass that STORED contracts has finished (an older empty one does not count)
+    return ('real_pass_id' in m) ? m.real_pass_id == null : m.pass_id == null;
+  }
+  function autoRun(st) {
+    if (!BOOT.engine_ok || S.busy || !st.frame) return;
+    var fr = st.frame, last = S.last, ld = (last && last.data) || {};
+    var has = fr.n_contracts > 0;
+    if (!has) return;
+    // the table came from an empty market (or the last run failed) and data is in now
+    if ((last && ld.empty) || (!last && S.failedRun)) { reloadSpecOnce(); run(S.page); return; }
+    if (!last) return;
+    // a first pass still running: the market grew since the table was drawn
+    if (firstPassRunning(fr) && firstPassRunning(ld)) {
+      if (fr.n_contracts !== ld.n_contracts && !detailOpen()) run(S.page);
+      return;
+    }
+    // a newer finished pass: offered while rows are on screen, run when the table is empty
+    if (fr.pass_id != null && fr.pass_id !== ld.pass_id) {
+      if (!(last.rows || []).length && !detailOpen()) { run(S.page); return; }
+      showNotice(fr);
+    }
+  }
+  function paintAlert(st) {
+    var el = $('scrCollectorAlert'), cls = ALERT_CLS[st.dot];
+    el.className = 'rounded-lg border px-3 py-2 text-xs break-words ' + (cls || 'hidden');
+    el.textContent = cls ? (st.alert || st.label || '') : '';
+    $('scrDataState').classList.toggle('hidden', !!cls);
+  }
   function paintStatus(st) {
     if (!st || !st.line) return;
+    S.status = st;
     var dot = $('scrDot');
     dot.className = 'scr-dot scr-dot-' + (st.dot || 'slate') + ' mt-[3px]';
     dot.title = st.label || '';
     $('scrDataLine').textContent = st.line;
     $('scrDataState').textContent = st.label || '';
+    paintAlert(st);
+    if (!$('scrEmptyPanel').classList.contains('hidden')) {
+      if (st.empty) paintPanel(st); else showPanel(false);
+    }
+    autoRun(st);
+  }
+  function pollDelay(st) {
+    if (!BOOT.engine_ok) return 60000;
+    var fr = (st && st.frame) || {};
+    var behind = !!(st && st.last_pass && st.last_pass.id != null && st.last_pass.id !== fr.pass_id);  // a reload is due
+    var fast = !st || frameEmpty(st) || !!fr.reloading || behind || st.state === 'pass' || st.state === 'universe' ||
+               !!(S.last && S.last.data && S.last.data.reloading);
+    return fast ? 15000 : 60000;
+  }
+  function schedulePoll(ms) {
+    if (pollTimer) clearTimeout(pollTimer);
+    pollTimer = setTimeout(pollStatus, ms);
   }
   function pollStatus() {
-    fetch('/options/api/status').then(function (r) { return r.ok ? r.json() : null; }).then(paintStatus).catch(function () {});
+    fetch('/options/api/status').then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (st) { if (st) paintStatus(st); schedulePoll(pollDelay(st || S.status)); })
+      .catch(function () { schedulePoll(60000); });
   }
-  pollStatus();
-  setInterval(pollStatus, 60000);
 
   // ── start ─────────────────────────────────────────────────────────────────────
   renderAddGroups();
   var dflt = S.saved.filter(function (x) { return x.id === BOOT.default_id; })[0];
   if (dflt) { S.savedId = dflt.id; loadPayload(clone(dflt.payload)); renderSaved(); }
   else loadDefaults();
-  if (BOOT.engine_ok) { showTab('results'); run(1); }
-  else {
+  if (BOOT.engine_ok) {
     showTab('results');
+    if (S.status && S.status.empty && frameEmpty(S.status)) showPanel(true);   // first paint
+    run(1);
+  } else {
+    showTab('results');
+    showPanel(false);
     setEmpty(BOOT.engine_error || 'The screener is not available on this server yet.');
     ['scrSee', 'scrRefresh', 'scrCsv', 'scrAddBtn'].forEach(function (id) { $(id).disabled = true; });
   }
+  if (S.status) schedulePoll(pollDelay(S.status));     // BOOT.status is the first poll
+  else pollStatus();
 })();
 </script>
 {% endblock %}

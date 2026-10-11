@@ -10,6 +10,14 @@
                      "warnings", "sort", "view", "flag_earnings", "limits"}``.
 * ``csv(key, payload, *, limit=1000)`` -> CSV text of the same rows (header = column labels).
 
+``data`` (in ``spec`` and ``run``) is a copy of ``frame.meta`` plus ``reloading`` (a load of
+newer data is running right now - v4.137); it carries ``n_sec_type_unknown`` too. While NO
+underlying has a security type yet, the screens' default Security Type card (stock + ETF) is
+skipped with a warning instead of hiding every row (design §11.17, v4.137). ``run``'s
+``data.sec_type_active`` says whether a Security Type filter was really APPLIED to that run
+(not skipped, not dropped as invalid) - the page only blames that filter for "no matches"
+when it was.
+
 Payload (what the page sends and a saved screener stores)::
 
     {"filters": [{"f": "<field>", "op": "gte|lte|eq|between|in|is|within",
@@ -216,12 +224,32 @@ class _Exec:
     flag: bool
     sort: dict
     warnings: list
+    sec_type_active: bool = False       # a Security Type filter was applied (not skipped / dropped)
+
+
+# the screen default the identity job's late arrival must not turn into "no matches" (T-23)
+DEFAULT_SEC_TYPES = frozenset({"stock", "etf"})
+SEC_TYPES_LOADING = ("Security types are still loading - the Security Type filter is skipped until "
+                     "they are in, so index underlyings may appear.")
 
 
 def _meta(fr) -> dict:
+    """A COPY of the frame's meta plus ``reloading`` (never written into the shared one)."""
     m = dict(fr.meta)
     m["warnings"] = list(m.get("warnings") or [])
+    m["reloading"] = bool(_frame.reloading())
     return m
+
+
+def _is_default_sec_filter(flt: Filt) -> bool:
+    """The Security Type card exactly as the screens default it: any of stock / ETF."""
+    if flt.field.key != "sec_type" or flt.op != "in" or flt.noop:
+        return False
+    try:
+        chosen = {str(flt.field.choices[int(c)]["v"]).lower() for c in flt.vals}
+    except (IndexError, KeyError, TypeError, ValueError):
+        return False
+    return chosen == DEFAULT_SEC_TYPES
 
 
 def _execute(key: str, payload) -> _Exec | None:
@@ -260,7 +288,17 @@ def _execute(key: str, payload) -> _Exec | None:
         view = "main"
     flag = bool(payload.get("flag_earnings"))
 
-    if any(f.field.key == "sec_type" and not f.noop for f in filts) and fr.meta.get("n_sec_type_unknown"):
+    # no underlying has a security type yet (the identity job is still loading them): the
+    # screen's own default (stock + ETF) would hide every row, so it is skipped with a note.
+    # A member's own choice (e.g. ETF only) is never widened.
+    n_unknown = int(fr.meta.get("n_sec_type_unknown") or 0)
+    if n_unknown and n_unknown == int(fr.meta.get("n_underlyings") or 0):
+        for flt in filts:
+            if _is_default_sec_filter(flt):
+                flt.noop = True
+                warnings.append(SEC_TYPES_LOADING)
+    sec_active = any(f.field.key == "sec_type" and not f.noop for f in filts)
+    if sec_active and fr.meta.get("n_sec_type_unknown"):
         warnings.append(f"{fr.meta['n_sec_type_unknown']:,} underlyings have no security type yet and are "
                         "left out by the Security Type filter.")
 
@@ -280,7 +318,8 @@ def _execute(key: str, payload) -> _Exec | None:
     else:
         table, total, w, stopped = single.run(fr, screen, plan)
         warnings += w
-    return _Exec(screen, fr, table, total, stopped, cols, view, flag, {"col": col, "dir": dirn}, warnings)
+    return _Exec(screen, fr, table, total, stopped, cols, view, flag, {"col": col, "dir": dirn}, warnings,
+                 sec_active)
 
 
 def _iso_days(arr) -> list:
@@ -349,7 +388,8 @@ def _dedupe(ws: list) -> list:
 def _empty_result(key, warnings, t0, page=1, per_page=100) -> dict:
     return {"screen": key, "label": None, "total": 0, "kept": 0, "page": 1, "pages": 0,
             "per_page": per_page, "rows": [], "columns": [], "truncated": False,
-            "ms": int((time.perf_counter() - t0) * 1000), "data": {}, "warnings": warnings,
+            "ms": int((time.perf_counter() - t0) * 1000), "data": {"sec_type_active": False},
+            "warnings": warnings,
             "sort": None, "view": "main", "flag_earnings": False, "limits": limits()}
 
 
@@ -376,6 +416,7 @@ def run(key: str, payload: dict | None = None, *, page: int = 1, per_page: int =
         sel = np.arange(lo, min(lo + per_page, kept))
         rows = _rows(ex, sel)
         meta = _meta(ex.frame)
+        meta["sec_type_active"] = bool(ex.sec_type_active)      # a copy: never the shared meta
         return {
             "screen": key, "label": ex.screen.label, "total": int(ex.total), "kept": int(kept),
             "page": page, "pages": pages, "per_page": per_page, "rows": rows,

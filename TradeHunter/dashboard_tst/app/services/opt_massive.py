@@ -26,8 +26,11 @@ itself once it is past 20:00 ET on a trading day, else the trading day before - 
 read in session never files a part-day bar as a close.
 
 The chain is cut to the standard contracts first (``standard_rows``): a contract that
-does not deliver 100 shares, or an adjusted one (another root after a corporate
-action) at the same expiry / right / strike as the standard one, is dropped.
+does not deliver 100 shares, or an adjusted one (a root with digits after a corporate
+action - GME1, BRKB1 - at any strike), is dropped.
+
+Stocks Basic keeps about two years: the bar reads never start before
+``massive.stocks_plan_start`` (725 days back from the ET day).
 
 Units: a contract's ``iv`` is a FRACTION; a day's IV30 (``iv_series``, ``iv30``) is
 PERCENT. Model prices use ``opt_constants.RISK_FREE`` and no dividend, the same as
@@ -42,13 +45,14 @@ from __future__ import annotations
 import datetime as _dt
 import logging
 import math
+import re
 import statistics
 import time
 
 from ..models import OptUnderlyingDaily
 from . import clock, opt_store, option_metrics
 from .black_scholes import black_scholes, implied_vol
-from .massive import MassiveError, option_ticker
+from .massive import MassiveError, option_ticker, stocks_plan_start
 from .opt_constants import ATM_MAX_DIST_PCT, RISK_FREE
 
 log = logging.getLogger(__name__)
@@ -84,6 +88,8 @@ HISTORY_MIN_POINTS = 20         # history_done needs this many bars AND IV point
 DAILY_UPDATE_DAYS = 10
 BARS_PUBLISHED = _dt.time(20, 0)   # ET: a session's Stocks Basic daily bar is out by then
 STD_MULTIPLIER = 100            # shares per standard contract
+# An option ticker: O: + root letters + (digits of an ADJUSTED root) + YYMMDD + C|P + strike x 1000
+_ROOT_RE = re.compile(r"^O:([A-Z]+)(\d*)(\d{6})[CP](\d{8})$")
 
 
 # ────────────────────────────────── helpers ──────────────────────────────────
@@ -358,13 +364,27 @@ def _last_close(db, sym: str) -> tuple[float | None, str | None]:
     return _pos(row[1]), row[0]
 
 
+def adjusted_root(ticker) -> bool:
+    """Is ``ticker`` an ADJUSTED option series - a root with digits after the letters
+    (``O:GME1261016C00003000``, ``O:BRKB1...``, ``O:XYZ12...``)? The OCC gives an adjusted
+    series (after a split, spin-off or special dividend) such a root; its shares per
+    contract is often still 100, so the multiplier test cannot see it, yet its IV and
+    greeks belong to another deliverable. A missing or unparseable ticker is not judged
+    (False). An index root (SPXW, NDXP, ``I:``-less) has no digits and passes."""
+    m = _ROOT_RE.match(str(ticker or "").strip().upper())
+    return bool(m and m.group(2))
+
+
 def standard_rows(symbol, rows) -> list[dict]:
     """The chain's standard contracts, in their own order. A row whose ``multiplier``
     (shares per contract) is known and not 100 is dropped - a mini, or an adjusted
     contract after a spin-off / special dividend / odd split, whose IV and greeks belong
-    to another deliverable. When two rows share (expiry, right, strike) - an adjusted
-    root listed beside the new standard one - the row whose ``ticker`` is the standard
-    OCC ticker of ``symbol`` (``massive.option_ticker``) is kept, else the first seen."""
+    to another deliverable - and so is a row whose ``ticker`` has an adjusted root
+    (``adjusted_root``: digits after the root's letters, GME1 / BRKB1), at any strike.
+    A row with no ticker, or one that does not parse, is kept. When two rows share
+    (expiry, right, strike), the row whose ``ticker`` is the standard OCC ticker of
+    ``symbol`` (``massive.option_ticker``) is kept, else the first seen. (No root-equals-
+    symbol rule: an index's root differs from our spelling - ``I:SPX`` vs SPX / SPXW.)"""
     def is_std(r) -> bool:
         t = str(r.get("ticker") or "").strip().upper()
         if not t:
@@ -379,6 +399,8 @@ def standard_rows(symbol, rows) -> list[dict]:
     for r in rows or ():
         m = r.get("multiplier")
         if m is not None and m != STD_MULTIPLIER:
+            continue
+        if adjusted_root(r.get("ticker")):
             continue
         key = (_to_date(r.get("expiry")), _right(r.get("right")), _pos(r.get("strike")))
         i = at.get(key)
@@ -712,7 +734,8 @@ def published_session(day, now=None) -> _dt.date:
 
 def backfill_history(db, client, symbol, *, today=None, years_bars=2, days_iv=260, now=None) -> dict:
     """The one-time history of ``symbol`` (§13.3): ``years_bars`` years of Stocks Basic
-    daily bars (split-adjusted) up to the last published session (``published_session``)
+    daily bars (split-adjusted; never from before ``massive.stocks_plan_start(today)`` -
+    the plan keeps about two years) up to the last published session (``published_session``)
     -> ``opt_underlying_daily`` (HV, ATR read them), the IV30 series for the last
     ``days_iv`` sessions (``iv30_history``, from one more read of those sessions'
     UNADJUSTED bars - an expired contract was listed at the pre-split strike and priced
@@ -731,7 +754,8 @@ def backfill_history(db, client, symbol, *, today=None, years_bars=2, days_iv=26
     day = _day(today, t_now)
     day_s = day.isoformat()
     end = published_session(day, t_now)
-    start = end - _dt.timedelta(days=int(years_bars * 366) + 3)
+    # never older than the plan keeps (a 403 "timeframe" there would fail the whole read)
+    start = max(end - _dt.timedelta(days=int(years_bars * 366) + 3), stocks_plan_start(day))
     bars = client.stock_daily(sym, start, end)
     requests = 1
     good = sorted((b for b in bars if _pos(b.get("close")) and b.get("on")), key=lambda b: str(b["on"])[:10])

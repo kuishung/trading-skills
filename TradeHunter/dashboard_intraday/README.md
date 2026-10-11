@@ -33,6 +33,21 @@ web, Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-10-11 — `tray_status.py`: the Options screener line shows progress, warnings and a dead collector (tray-sync rule)
+- dashboard_tst v4.137 made the screener collector publish its live step and progress (state json
+  `detail`, `warn`, `error_kind`, `next_try`, `progress`), so the tray line follows it:
+  - working states append the collector's own detail (cut to 220 characters) and the progress -
+    universe page / stocks found, pass % and time left, stock days left, IV history left;
+  - "first pass running" replaces "no pass yet" while the first pass reads;
+  - **amber `Scr WARN`** when the collector sets a warning, when the last pass stored no contracts,
+    or when it is idle with no universe after an error (never during the first universe walk);
+  - **NOT RUNNING / NEVER CHECKED IN** when there is no fresh state file but the collector wrote a
+    crash state or its log shows a start-up error (the last exception line);
+  - a pop-up notice (`icon.notify`) on the move into error or stale, and once when the first pass
+    finishes. The red alert ring stays reserved for the deep-check.
+- The Options collector line is unchanged. Tested in `dashboard_tst/tests/test_scr_collector.py`.
+- After pulling this, restart the tray task on Hermes (the commands are in DEPLOY.md section H).
+
 ### 2026-10-10 — `tray_status.py`: the Options screener line (tray-sync rule)
 - dashboard_tst v4.136 added a second Massive collector on Hermes, **TST-Options-Screener**
   (the whole-market Options Screener), so the tray carries its state too (tray-sync rule).

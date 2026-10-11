@@ -10,6 +10,12 @@ engine API this module calls), §7 (saved screeners), §8 (this page and its end
 * ``/options/api/*`` - the JSON the page talks to (screens, spec, run, csv, status,
   saved screeners). The member's saved screeners live in the main DB
   (``models.OptionScreen``); members see and change only their own.
+* v4.137 - the collector's status (``_status_view``): a heartbeat older than 5 min is amber
+  at any hour; the label is the collector's own plain-words detail; errors are told by kind
+  in plain words (admins also get the fix); the status file
+  ``state/screener_collector.json`` is read when the DB has nothing newer (a collector that
+  could not start writes only that); ``empty`` = the results area's panel saying why there
+  is nothing to screen yet. The first paint carries the same status (``boot.status``).
 
 The screening engine (``services/screener``) needs numpy, so it is imported LAZILY inside
 the handlers: a server that has not run ``pip install -r app/requirements.txt`` yet still
@@ -58,15 +64,18 @@ MAX_NAME = 80                  # a saved screener's name
 MAX_SAVED_PER_SCREEN = 50      # saved screeners per member per screen
 MAX_PAYLOAD_BYTES = 32_000     # the cleaned payload, as JSON
 MAX_LIST_VALUES = 200          # values in one choice filter
-STALE_ACTIVE_S = 10 * 60       # heartbeat older than this in the collector's working hours -> amber
-STALE_IDLE_S = 3 * 60 * 60     # ...and outside them (nights, weekends, holidays)
-ACTIVE_FROM = _dt.time(7, 30)  # the collector's working day, ET (universe at 07:30 ...
-ACTIVE_TO = _dt.time(21, 0)    # ... stock days after 20:00)
+STALE_S = 5 * 60               # no heartbeat for 5 min -> amber, at ANY hour: the collector beats
+                               # every 15 s around the clock (the Hermes tray uses the same 5 min)
+LABEL_MAX = 240                # the collector's detail in the page label
+# the collector's own status file - read when the screener DB has no status row, cannot be
+# read, or holds an older heartbeat (a collector that crashed at start writes only this)
+STATE_PATH = Path(__file__).resolve().parents[2] / "state" / "screener_collector.json"
+CRASH_WRITER = "deploy/screener_collector.py"
 
 VIEW_LABELS = {"main": "Main view", "filter": "Filter view", "greeks": "Greeks view",
                "vol": "Volatility view"}
 _SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
-_STATES = {
+_STATES = {                    # the label when the collector sent no detail
     "starting": "starting up",
     "universe": "refreshing the list of optionable stocks",
     "pass": "reading the option market",
@@ -74,6 +83,16 @@ _STATES = {
     "history": "building IV history",
     "idle": "idle, waiting for the next market pass",
     "error": "error",
+    "stopped": "stopped",
+}
+_DOING = {                     # "(it was ...)" in the stale texts
+    "starting": "starting up",
+    "universe": "reading the list of optionable stocks",
+    "pass": "reading the option market",
+    "stocks": "loading daily stock prices",
+    "history": "building IV history",
+    "idle": "idle",
+    "error": "reporting an error",
     "stopped": "stopped",
 }
 
@@ -485,6 +504,17 @@ def _norm_spec(raw, key: str, screens: list[dict]) -> dict:
 # ─────────────────────────────────────── status ───────────────────────────────────────
 
 def _naive_utc(ts) -> _dt.datetime | None:
+    """A datetime (aware, or naive = UTC) or ISO text (``...Z`` / ``+00:00``) -> naive UTC."""
+    if isinstance(ts, str):
+        s = ts.strip()
+        if not s:
+            return None
+        if s[-1] in "Zz":
+            s = s[:-1] + "+00:00"
+        try:
+            ts = _dt.datetime.fromisoformat(s)
+        except ValueError:
+            return None
     if not isinstance(ts, _dt.datetime):
         return None
     if ts.tzinfo is not None:
@@ -497,10 +527,21 @@ def _iso(ts) -> str | None:
     return ts.isoformat(timespec="seconds") + "Z" if ts else None
 
 
-def _read_collector() -> dict:
-    """The screener collector's heartbeat (``scr_status`` row 1) and its newest passes,
-    read from the screener DB. Never raises; never creates a missing SQLite file."""
+# scr_status columns the page reads. The v4.137 ones (migration 8d2f4b6a1c37, error_kind on)
+# are None while an older collector still writes the row - every reader accepts that.
+_STATUS_COLS = ("state", "detail", "heartbeat", "pid", "version", "pass_id", "symbols_total",
+                "symbols_done", "universe_n", "universe_on", "history_done_n", "history_total",
+                "last_error", "api_ok",
+                "error_kind", "next_try", "warn", "universe_done", "earnings_on", "progress")
+_STATUS_TIMES = ("heartbeat", "next_try", "universe_done")
+
+
+def _read_collector_db() -> dict:
+    """``scr_status`` row 1 and the newest finished / unfinished passes from the screener DB.
+    Never raises; never creates a missing SQLite file."""
     try:
+        from sqlalchemy import or_
+
         from .. import screener_db
         from ..screener_models import ScrPass, ScrStatus
     except Exception as exc:  # noqa: BLE001 - the data part is not deployed yet
@@ -517,17 +558,23 @@ def _read_collector() -> dict:
                     .order_by(ScrPass.id.desc()).first())
             running = (s.query(ScrPass).filter(ScrPass.finished.is_(None))
                        .order_by(ScrPass.id.desc()).first())
+            # the data line's source: the newest finished pass that STORED contracts (a pass
+            # that read nothing - e.g. v4.136's empty one - is not where the data comes from)
+            real = (s.query(ScrPass).filter(ScrPass.finished.isnot(None),
+                                            or_(ScrPass.n_contracts.is_(None), ScrPass.n_contracts > 0))
+                    .order_by(ScrPass.id.desc()).first())
 
             def row(o, cols):
                 return {c: getattr(o, c, None) for c in cols} if o is not None else None
 
+            pass_cols = ("id", "kind", "session", "started", "finished", "n_symbols", "n_ok", "n_failed",
+                         "n_contracts", "ms")
             return {
                 "available": True,
-                "status": row(st, ("state", "detail", "heartbeat", "pid", "version", "pass_id",
-                                   "symbols_total", "symbols_done", "universe_n", "universe_on",
-                                   "history_done_n", "history_total", "last_error", "api_ok")),
-                "last_pass": row(last, ("id", "kind", "session", "started", "finished", "n_symbols",
-                                        "n_ok", "n_failed", "n_contracts", "ms")),
+                "source": "db",
+                "status": row(st, _STATUS_COLS),
+                "last_pass": row(last, pass_cols),
+                "real_pass": row(real, pass_cols),
                 "running_pass": row(running, ("id", "kind", "session", "started", "n_symbols")),
             }
     except Exception as exc:  # noqa: BLE001 - missing tables, locked file, bad URL
@@ -535,8 +582,64 @@ def _read_collector() -> dict:
         return {"available": False, "why": "the screener database is not ready yet"}
 
 
+def _read_state_file() -> dict | None:
+    """The collector's ``state/screener_collector.json`` (None when absent or unreadable)."""
+    try:
+        doc = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError):
+        return None
+    return doc if isinstance(doc, dict) else None
+
+
+def _file_view(doc: dict) -> tuple[dict, dict | None, dict | None]:
+    """The state file in the DB's shapes: (status, last_pass, running_pass)."""
+    st = {c: doc.get(c) for c in _STATUS_COLS}
+    for c in _STATUS_TIMES:
+        st[c] = _naive_utc(st.get(c))
+    if not isinstance(st.get("progress"), dict):
+        st["progress"] = None
+    st["written_by"] = str(doc.get("written_by") or "") or None
+    last = None
+    if doc.get("last_pass_id") is not None or doc.get("last_pass_finished"):
+        last = {"id": doc.get("last_pass_id"), "kind": doc.get("last_pass_kind"),
+                "session": doc.get("last_pass_session"),
+                "finished": _naive_utc(doc.get("last_pass_finished")),
+                "n_contracts": doc.get("last_pass_contracts")}
+    running = None
+    if doc.get("pass_kind") and st.get("pass_id") is not None:
+        running = {"id": st.get("pass_id"), "kind": doc.get("pass_kind"),
+                   "session": doc.get("pass_session"), "started": None,
+                   "n_symbols": st.get("symbols_total")}
+    return st, last, running
+
+
+def _read_collector() -> dict:
+    """The screener collector's heartbeat (``scr_status`` row 1) and its newest passes.
+
+    Falls back to ``state/screener_collector.json`` when the screener DB has no status row,
+    cannot be read, or holds an older heartbeat than the file (a collector that crashed at
+    start - ``deploy/screener_collector.py`` - writes only the file). ``source`` says which
+    was used. Never raises; never creates a missing SQLite file."""
+    col = _read_collector_db()
+    doc = _read_state_file()
+    if doc is None:
+        return col
+    fst, flast, frun = _file_view(doc)
+    dst = col.get("status") if col.get("available") else None
+    fhb, dhb = fst.get("heartbeat"), _naive_utc((dst or {}).get("heartbeat"))
+    newer = fhb is not None and (dhb is None or (fhb - dhb).total_seconds() > 1.0)
+    if dst is not None and not newer:
+        return col
+    return {"available": True, "source": "file", "status": fst,
+            "last_pass": col.get("last_pass") or flast,
+            # the file's last pass is the collector's own: the newest that stored contracts
+            "real_pass": col.get("real_pass") or flast,
+            "running_pass": col.get("running_pass") if col.get("available") else frun}
+
+
 def _frame_meta(eng) -> dict | None:
-    """The engine's loaded-data summary (§5 ``frame.meta``), or None."""
+    """The engine's loaded-data summary (§5 ``frame.meta``) plus ``reloading``, or None. The
+    flag goes into this COPY, never into the shared frame's meta."""
     if eng is None:
         return None
     try:
@@ -547,10 +650,25 @@ def _frame_meta(eng) -> dict | None:
         fr = getattr(eng, "frame", None)
         if not callable(getattr(fr, "current", None)):
             from ..services.screener import frame as fr     # the engine package's loader
-        return _jsonable(_as_dict(getattr(fr.current(), "meta", None))) or None
+        m = dict(_as_dict(getattr(fr.current(), "meta", None)))
+        if not m:
+            return None
+        rl = getattr(fr, "reloading", None)
+        m["reloading"] = bool(rl()) if callable(rl) else False
+        return _jsonable(m)
     except Exception as exc:  # noqa: BLE001
         log.debug("options screener: frame meta failed: %s", exc)
     return None
+
+
+def _no_data_text() -> str:
+    """The engine's "no data" warning (frame.NO_DATA) - the page hides it while the empty
+    panel explains why. A plain fallback when the engine does not import."""
+    try:
+        from ..services.screener.frame import NO_DATA
+        return str(NO_DATA)
+    except Exception:  # noqa: BLE001 - numpy missing: the page shows the engine error instead
+        return "No option data loaded yet."
 
 
 def _compact(n) -> str:
@@ -568,72 +686,384 @@ def _count(n) -> str:
     return "-" if n is None else f"{int(n):,}"
 
 
-def _idle_hours(now_utc: _dt.datetime) -> bool:
-    et = clock.et_now(now_utc)
-    if not clock.is_trading_day(et.date()):
+def _num(v) -> int | None:
+    try:
+        return None if v is None or isinstance(v, bool) else int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+# ───────────────────────── status: words (fix plan 2.T, T-40 to T-68) ─────────────────────────
+
+def _dur(seconds, *, up: bool = False) -> str:
+    """A duration in plain words: ``4 min`` · ``2 h`` · ``2 h 05 min`` · ``3 d 4 h``
+    (``up``: round up, for a countdown; an age rounds down)."""
+    s = max(0.0, float(seconds or 0))
+    mins = int(math.ceil(s / 60.0)) if up else int(s // 60)
+    if mins < 60:
+        return f"{mins} min"
+    h, m = divmod(mins, 60)
+    if h < 48:
+        return f"{h} h" if not m else f"{h} h {m:02d} min"
+    d, h = divmod(h, 24)
+    return f"{d} d" if not h else f"{d} d {h} h"
+
+
+def _et(ts) -> _dt.datetime | None:
+    ts = _naive_utc(ts)
+    return clock.et_now(ts) if ts else None
+
+
+def _hm(ts) -> str:
+    et = _et(ts)
+    return et.strftime("%H:%M") if et else "-"
+
+
+def _day_words(d) -> str:
+    """A date (or ``YYYY-MM-DD``) as ``Fri Oct 9``."""
+    if isinstance(d, _dt.datetime):
+        d = d.date()
+    if not isinstance(d, _dt.date):
+        try:
+            d = _dt.date.fromisoformat(str(d)[:10])
+        except ValueError:
+            return str(d or "")
+    return f"{d.strftime('%a %b')} {d.day}"
+
+
+def _pass_words(kind, session) -> str:
+    """Which market a pass reads (T-03): ``Fri Oct 9 close`` for an end-of-day pass,
+    ``live, 15-min delayed`` for a cycle (or manual) pass."""
+    if str(kind or "") == "eod":
+        return f"{_day_words(session)} close" if session else "end-of-day"
+    return "live, 15-min delayed"
+
+
+def _data_when(src: dict) -> str:
+    """The data line's pass part: T-51 (eod) / T-52 (cycle)."""
+    kind = src.get("kind") or src.get("pass_kind")
+    fin = _et(src.get("finished"))
+    if kind == "eod" and src.get("session"):
+        read = f" (read {fin.strftime('%a %H:%M')} ET)" if fin else ""
+        return f"data: {_day_words(src['session'])} close{read}"
+    if fin:
+        return f"data: {_day_words(fin.date())} {fin.strftime('%H:%M')} ET"
+    return f"data: {_day_words(src['session'])}" if src.get("session") else "no market pass yet"
+
+
+_KIND_TEXT = (                 # an older collector's row carries no error_kind: read its text
+    ("startup", ("could not start",)),
+    ("config", ("is not set on this pc", "could not set up the massive client")),
+    ("auth", ("rejected the api key", "http 401")),
+    ("network", ("could not reach massive",)),
+    ("plan", ("plan does not include", "http 403", "not_authorized")),
+    ("rate", ("too many requests", "http 429")),
+    ("empty", ("read no option data", "empty options list")),
+)
+_MEMBER_TEXT = {               # T-42 .. T-47
+    "config": "The server is not connected to the market data feed yet.",
+    "auth": "The market data feed rejected the server's access key.",
+    "network": "The server cannot reach the market data feed right now.",
+    "plan": "The server's data subscription does not cover part of the feed.",
+    "empty": "The last market pass read no option data.",
+}
+_MEMBER_OTHER = "The market collector hit an unexpected problem."
+# an EMPTY list of optionable stocks (the universe walk), not an empty market pass (T-47)
+_UNIVERSE_EMPTY = "The market data feed returned an empty list of optionable stocks."
+_ALL_KINDS = ("config", "auth", "network")     # the collector pauses EVERYTHING for these (its _FATAL)
+_UNI_WORDS = ("universe", "massive returned an empty options list")   # how a universe alert starts
+_PLAN_ONE = "Part of the data ({what}) is paused; the rest keeps updating."        # T-46
+_ADMIN_HINT = {                # T-49
+    "config": "Admin: add TST_MASSIVE_API_KEY to app\\.env on Hermes (re-read within 5 min).",
+    "auth": "Admin: fix the key in app\\.env on Hermes (re-read within 5 min).",
+    "plan": "Admin: check the Massive subscription.",
+    "network": "Admin: check Hermes' internet / DNS.",
+}
+_ADMIN_OTHER = "Admin: see logs\\screener_collector.log on Hermes."
+_NEXT_RE = re.compile(r";?\s*next try (\d{1,2}:\d{2})(?:\s*ET)?", re.I)
+# keyed on scr_collector._OP_WORDS' values (a test pins the two together)
+_SCOPE_WORDS = {"the universe refresh": "the list of optionable stocks",
+                "market passes": "the option market reads",
+                "IV-history reads": "IV history",
+                "stock bars and reference reads": "stock prices and names"}
+# only the collector's own op words: a " - " inside Massive's reason must not be read as the scope
+_SCOPE_RE = re.compile(r"\s+-\s+(" + "|".join(map(re.escape, _SCOPE_WORDS)) + r") paused, the rest carries on")
+_CRASH_PREFIX = "The collector could not start on the server: "
+_START_TASK = "Hermes: Start-ScheduledTask -TaskName TST-Options-Screener."
+_SETUP_TASK = ("Hermes: powershell -ExecutionPolicy Bypass -File deploy\\setup_screener_task.ps1 -StartNow, "
+               "then read logs\\screener_collector.log.")
+
+
+def _error_kind(st: dict) -> str:
+    """The active alert's kind: ``error_kind`` when the collector sent it, else read from
+    the detail first, then ``last_error`` (an older collector)."""
+    k = str(st.get("error_kind") or "").strip().lower()
+    if k:
+        return k
+    for text in (st.get("detail"), st.get("last_error")):
+        t = str(text or "").lower()
+        for kind, hints in _KIND_TEXT:
+            if any(h in t for h in hints):
+                return kind
+    return "other"
+
+
+def _scope(detail) -> str | None:
+    """The one paused part of a single-scope alert (the collector's "<op> paused, the rest
+    carries on"), else None = everything is paused."""
+    m = _SCOPE_RE.search(str(detail or ""))
+    return m.group(1).strip() if m else None
+
+
+def _uni_alert(detail, last_error, scope) -> bool:
+    """Is the active alert about the list of optionable stocks (the universe walk) - read
+    from the alert's own words, never from how many stocks are filed?"""
+    if scope == "the universe refresh":
         return True
-    return not (ACTIVE_FROM <= et.time() < ACTIVE_TO)
+    return any(str(t or "").strip().lower().startswith(_UNI_WORDS) for t in (detail, last_error))
+
+
+def _pass_paused(in_pass: bool, total, prog: dict, kind, scope) -> bool:
+    """Is the running pass really paused? The collector says so (``progress.pass_paused_at``
+    - a TIME, set once the pass stopped submitting), or the alert pauses the passes: the
+    market-pass scope, or one of the kinds that pause everything. A universe alert during a
+    first start's pass is NOT a pause - the pass keeps reading."""
+    if not (in_pass and total):
+        return False
+    return (bool((prog or {}).get("pass_paused_at")) or scope == "market passes"
+            or (scope is None and kind in _ALL_KINDS))
+
+
+def _raw_reason(text, cap: int = 200) -> str:
+    """The collector's reason without its scope / next-try tails."""
+    t = _NEXT_RE.sub("", _SCOPE_RE.sub("", str(text or ""))).strip().rstrip(";").strip()
+    return t[:cap]
+
+
+def _next_try(st: dict, now: _dt.datetime) -> tuple[str, str] | None:
+    """(``HH:MM``, ``in N min`` words) of the collector's next try - ``now`` for a time
+    already passed, ``""`` when only the HH:MM is known (an older collector's detail)."""
+    nt = _naive_utc(st.get("next_try"))
+    if nt is not None:
+        left = (nt - now).total_seconds()
+        return _hm(nt), ("now" if left <= 30 else _dur(left, up=True))
+    m = _NEXT_RE.search(str(st.get("detail") or ""))
+    return (m.group(1), "") if m else None
+
+
+def _retry_text(nt) -> str:
+    """T-48."""
+    if not nt:
+        return ""
+    hm, left = nt
+    if left == "now":
+        return " Retrying now."
+    return f" Retrying at {hm} ET" + (f" (in {left})." if left else ".")
+
+
+def _tries_again(nt, lead: str = "The collector tries again") -> str:
+    """The panels' "... at HH:MM ET (in N min)" sentence tail (no full stop)."""
+    if not nt:
+        return f"{lead} by itself"
+    hm, left = nt
+    if left == "now":
+        return f"{lead} now"
+    return f"{lead} at {hm} ET" + (f" (in {left})" if left else "")
+
+
+def _sentence(text: str) -> str:
+    """text ending in a full stop (before more words are appended)."""
+    text = text.rstrip()
+    return text if (not text or text[-1] in ".!?") else text + "."
+
+
+def _cap(text: str, n: int = LABEL_MAX) -> str:
+    """``text`` cut to at most ``n`` characters, at a word when one ends near the cut, with
+    "…" - the collector joins the jobs running at once (" · "), so a detail often runs past
+    the cap and must not stop mid-word."""
+    if len(text) <= n:
+        return text
+    cut = text[:n - 1]
+    sp = cut.rfind(" ")
+    if sp >= n - 40:
+        cut = cut[:sp]
+    return cut.rstrip(" ·;,-") + "…"
+
+
+def _crash_reason(st: dict) -> str:
+    text = str(st.get("last_error") or st.get("detail") or "").strip()
+    if text.startswith(_CRASH_PREFIX):
+        text = text[len(_CRASH_PREFIX):]
+    text = re.sub(r"\.?\s*-\s*see logs\\+screener_collector\.log\s*$", "", text).strip().rstrip(".")
+    return text[:160] or "unknown reason"
+
+
+def _is_crash(st: dict) -> bool:
+    if (st.get("state") or "") != "error":
+        return False
+    return CRASH_WRITER in str(st.get("written_by") or "") or str(st.get("error_kind") or "") == "startup"
+
+
+def _reload_eta_s(meta: dict, last: dict | None) -> int:
+    """About how long loading the latest data into the screener takes (~10 s per 1M rows)."""
+    n = (last or {}).get("n_contracts") or meta.get("pass_contracts") or 0
+    try:
+        s = float(n) / 1_000_000 * 10.0
+    except (TypeError, ValueError):
+        s = 10.0
+    return int(max(5, round(s / 5.0) * 5)) if n else 10
 
 
 def _status_view(col: dict, meta: dict | None = None, now: _dt.datetime | None = None,
-                 engine_error: str | None = None) -> dict:
-    """The data line and the status dot (§8; dashboard-visibility rule).
+                 engine_error: str | None = None, is_admin: bool = False) -> dict:
+    """The data line, the status dot, the alert and the empty-results panel (§8;
+    dashboard-visibility rule; fix plan v4.137 step 9).
 
-    dot: ``green`` running / idle · ``amber`` heartbeat stale (> 10 min in the collector's
-    working hours, > 3 h outside them) or stopped · ``rose`` error · ``slate`` not started."""
+    dot: ``green`` working / idle · ``amber`` no heartbeat for ``STALE_S`` (any hour), stopped,
+    a warning, a plan pause on one part, an idle collector with no universe and an error, or a
+    last pass that stored nothing · ``rose`` error / could not start · ``slate`` never reported.
+    ``label`` = ``alert`` (+ the engine's problem); members get plain words, admins also the
+    fix (``is_admin``). ``empty`` = ``{title, body, admin}`` while the frame has no contracts
+    or no pass has finished (None otherwise)."""
     now = _naive_utc(now) or _dt.datetime.now(_dt.timezone.utc).replace(tzinfo=None)
     meta = meta or {}
-    st = (col or {}).get("status") or None
-    last = (col or {}).get("last_pass") or None
-    running = (col or {}).get("running_pass") or None
+    col = col or {}
+    st = col.get("status") or None
+    last = col.get("last_pass") or None
+    running = col.get("running_pass") or None
+    s = st or {}
+    prog = s.get("progress") if isinstance(s.get("progress"), dict) else {}
+    state = s.get("state") or ""
+    detail = " ".join(str(s.get("detail") or "").split())
+    last_error = " ".join(str(s.get("last_error") or "").split())
+    warn = " ".join(str(s.get("warn") or "").split())
+    universe_n = _num(s.get("universe_n")) or 0
+    hb = _naive_utc(s.get("heartbeat"))
+    age = (now - hb).total_seconds() if hb else None
 
+    # ---- what the screener holds ----
+    finished = last if (last and last.get("finished")) else None
+    # the newest finished pass that STORED contracts - where the data comes from (a newer
+    # pass that read nothing keeps the amber dot and T-22, never the data line)
+    if "real_pass" in col:
+        real = col.get("real_pass") or None
+        real = real if (real and real.get("finished")) else None
+    else:
+        real = finished if (finished and finished.get("n_contracts") != 0) else None
+    n_und, n_con = meta.get("n_underlyings"), meta.get("n_contracts")
+    if not n_con and real and real.get("n_contracts"):
+        # the frame is empty but a pass stored rows (its reload is due): the pass's counts
+        n_und = real.get("n_ok") if real.get("n_ok") is not None else real.get("n_symbols")
+        n_con = real.get("n_contracts")
+    if meta:
+        frame_empty = bool(meta.get("empty")) or not meta.get("n_contracts")
+    else:
+        frame_empty = not (real and real.get("n_contracts"))
+    has_rows = not frame_empty
+    # a pass in flight (running, or paused by an alert): the collector's pass is the newest
+    # unfinished one (an idle collector reports its LAST pass's id and counts instead)
+    in_pass = state == "pass" or bool(running and s.get("pass_id") is not None
+                                      and s.get("pass_id") == running.get("id"))
+    done, total = _num(s.get("symbols_done")), _num(s.get("symbols_total"))
+    if not in_pass:
+        done = total = None
+    elif total is None and running:
+        total = _num(running.get("n_symbols"))
+
+    # ---- the data line (T-51 .. T-55) ----
     parts = ["Massive", "15-min delayed", "prices estimated from IV"]
-    fin = _naive_utc((last or {}).get("finished"))
-    if fin:
-        et = clock.et_now(fin)
-        today = clock.et_now(now).date()
-        when = et.strftime("%H:%M") if et.date() == today else f"{et.strftime('%b')} {et.day} {et.strftime('%H:%M')}"
-        parts.append(f"last market pass {when} ET")
+    if "real_pass_id" in meta:
+        # the pass the loaded data comes from (what the table shows): the frame's newest real
+        # pass - none while only a pass that read nothing has finished (the first pass runs)
+        src = ({"kind": meta.get("real_pass_kind"), "session": meta.get("real_session"),
+                "finished": meta.get("real_finished")} if meta.get("real_pass_id") is not None else None)
+    elif (meta.get("pass_id") is not None and (meta.get("finished") or meta.get("session"))
+          and meta.get("pass_contracts") != 0):
+        src = {"kind": meta.get("pass_kind"), "session": meta.get("session"), "finished": meta.get("finished")}
+    else:
+        src = real                        # ... else the collector's last pass that stored contracts
+    if src:
+        parts.append(_data_when(src))
+    elif in_pass and total:
+        parts.append(f"first pass: {_count(done or 0)} / {_count(total)} read")
+    elif in_pass:
+        parts.append("first pass running")
+    elif universe_n and frame_empty:
+        parts.append(f"list of optionable stocks {_count(universe_n)} · none read yet")
     else:
         parts.append("no market pass yet")
-    n_und = meta.get("n_underlyings")
-    if n_und is None and last:
-        n_und = last.get("n_ok") if last.get("n_ok") is not None else last.get("n_symbols")
-    if n_und is None and st:
-        n_und = st.get("universe_n")
-    n_con = meta.get("n_contracts", (last or {}).get("n_contracts"))
-    if n_und is not None:
-        parts.append(f"{_count(n_und)} underlying" + ("" if n_und == 1 else "s"))
-    if n_con is not None:
+    if n_con:
+        parts.append(f"{_count(n_und or 0)} underlying" + ("" if n_und == 1 else "s"))
         parts.append(f"{_compact(n_con)} contracts")
-    if st and st.get("history_total"):
-        parts.append(f"IV history {_count(st.get('history_done_n') or 0)} / {_count(st.get('history_total'))}")
-    elif meta.get("iv_history_total"):
-        parts.append(f"IV history {_count(meta.get('iv_history_done') or 0)} / {_count(meta['iv_history_total'])}")
+    h_total, h_done = _num(s.get("history_total")), _num(s.get("history_done_n"))
+    if not h_total and meta.get("iv_history_total"):
+        h_total, h_done = _num(meta.get("iv_history_total")), _num(meta.get("iv_history_done"))
+    if h_total:
+        h_done = h_done or 0
+        if h_done >= h_total:
+            parts.append(f"IV history {_count(h_done)} / {_count(h_total)}")
+        elif not h_done and (_num(prog.get("stock_days_pending")) or state == "stocks"):
+            parts.append("IV history starts after the stock prices")
+        else:
+            parts.append(f"IV rank: building ({_count(h_done)} / {_count(h_total)})")
 
-    hb = _naive_utc((st or {}).get("heartbeat"))
-    age = (now - hb).total_seconds() if hb else None
-    state = (st or {}).get("state") or ""
-    if not col or not col.get("available") or not st:
+    # ---- the dot and the label ----
+    kind = _error_kind(s) if state == "error" else None
+    nt = _next_try(s, now) if st else None
+    admin_hint = ""
+    if not col.get("available") or not st:
         dot, label = "slate", "The market collector has not started yet - no option data to screen."
-    elif state == "error":
-        why = (st.get("last_error") or st.get("detail") or "").strip()
-        dot, label = "rose", "Collector error" + (f": {why[:160]}" if why else ".")
+    elif _is_crash(s):
+        dot, label = "rose", f"{_CRASH_PREFIX}{_crash_reason(s)}."                     # T-41
+        admin_hint = _ADMIN_OTHER
     elif state == "stopped":
         dot, label = "amber", "The market collector is stopped - the data is not being refreshed."
-    elif age is None or age > (STALE_IDLE_S if _idle_hours(now) else STALE_ACTIVE_S):
-        mins = int(age // 60) if age is not None else None
+        admin_hint = "Admin: " + _START_TASK[len("Hermes: "):]
+    elif age is None or age > STALE_S:
         dot = "amber"
-        label = ("The collector has not checked in"
-                 + (f" for {mins} min" if mins is not None else "") + " - it may have stopped.")
+        label = ((f"The collector has not reported for {_dur(age)}" if age is not None
+                  else "The collector has never reported a heartbeat")
+                 + f" (it was {_DOING.get(state, state or 'running')}) - it has probably stopped, "
+                   "so the data is not being refreshed.")                               # T-40
+        admin_hint = "Admin: " + _START_TASK[len("Hermes: "):]
+    elif state == "error":
+        scope = _scope(detail)
+        if kind == "plan" and scope:
+            dot, label = "amber", _PLAN_ONE.format(what=_SCOPE_WORDS.get(scope, scope))  # T-46
+        elif kind == "empty" and _uni_alert(detail, last_error, scope):
+            dot, label = "rose", _UNIVERSE_EMPTY        # the list of optionable stocks, not a pass
+        else:
+            dot, label = "rose", _MEMBER_TEXT.get(kind, _MEMBER_OTHER)                  # T-42..T-47
+        label += _retry_text(nt)                                                        # T-48
+        if kind != "empty" and _pass_paused(in_pass, total, prog, kind, scope):
+            label += (f" Pass paused at {_count(done or 0)} / {_count(total)} underlyings"   # T-50
+                      + ("; results already loaded stay on screen." if has_rows else "."))
+        admin_hint = _ADMIN_HINT.get(kind, _ADMIN_OTHER)
     else:
         dot = "green"
-        label = "Collector " + _STATES.get(state, state or "running")
-        if state == "pass" and st.get("symbols_total"):
-            label += f" ({_count(st.get('symbols_done') or 0)} / {_count(st.get('symbols_total'))})"
-        elif st.get("detail") and state not in ("idle",):
-            label += f" - {str(st['detail'])[:120]}"
-        label += "."
+        label = _cap(f"Collector: {detail}") if detail else \
+            "Collector " + _STATES.get(state, state or "running") + "."
+        if warn:
+            dot = "amber"
+            label = _sentence(label) + " " + warn[:LABEL_MAX]
+        elif state == "idle" and not universe_n and last_error:
+            dot = "amber"
+            label = _sentence(label) + f" The last attempt failed: {_raw_reason(last_error, 160)}."
+        elif state == "idle" and finished and finished.get("n_contracts") == 0 and frame_empty:
+            dot = "amber"
+            label = _sentence(label) + (f" The last market pass ({_pass_words(finished.get('kind'), finished.get('session'))})"
+                      " read no option data.")
+    if is_admin and admin_hint and dot != "green":
+        raw = detail or last_error
+        label += f" {admin_hint}" + (f" Details: {raw[:300]}" if raw else "")
+    alert = label
+
+    empty = None
+    if frame_empty or not finished:
+        empty = _empty_view(col, st, meta, now, kind=kind, nt=nt, age=age, frame_empty=frame_empty,
+                            finished=finished, running=running, in_pass=in_pass, done=done,
+                            total=total, universe_n=universe_n, detail=detail, is_admin=is_admin)
+
     if engine_error:
         label += " " + engine_error
 
@@ -641,21 +1071,121 @@ def _status_view(col: dict, meta: dict | None = None, now: _dt.datetime | None =
         "ok": True,
         "dot": dot,
         "label": label,
+        "alert": alert,
         "line": " · ".join(parts),
         "parts": parts,
         "heartbeat": _iso(hb),
         "heartbeat_age_s": int(age) if age is not None else None,
         "state": state or None,
+        "error_kind": kind,
+        "next_try": _iso(s.get("next_try")),
+        "warn": warn or None,
+        "source": col.get("source"),
         "collector": _jsonable({k: (_iso(v) if isinstance(v, _dt.datetime) else v)
-                                for k, v in (st or {}).items()}) if st else None,
+                                for k, v in s.items()}) if st else None,
         "last_pass": _jsonable({k: (_iso(v) if isinstance(v, _dt.datetime) else v)
                                 for k, v in (last or {}).items()}) if last else None,
         "running_pass": _jsonable({k: (_iso(v) if isinstance(v, _dt.datetime) else v)
                                    for k, v in (running or {}).items()}) if running else None,
         "frame": meta or None,
+        "empty": empty,
+        "reload_eta_s": _reload_eta_s(meta, finished),
         "engine_ok": engine_error is None,
         "engine_error": engine_error,
     }
+
+
+def _empty_view(col, st, meta, now, *, kind, nt, age, frame_empty, finished, running, in_pass, done,
+                total, universe_n, detail, is_admin) -> dict:
+    """The results area's panel while there is nothing to screen (T-60 .. T-68):
+    ``{title, body, admin}`` - ``admin`` is the fix for an administrator, "" for members."""
+    s = st or {}
+    prog = s.get("progress") if isinstance(s.get("progress"), dict) else {}
+    state = s.get("state") or ""
+
+    def out(title, body="", admin=""):
+        return {"title": title, "body": body, "admin": admin if is_admin else ""}
+
+    def plain(k):
+        return (_MEMBER_TEXT.get(k, _MEMBER_OTHER)).rstrip(".")
+
+    if not col.get("available") or not st:                                            # T-60
+        return out("No option data yet - the market data collector is not running.",
+                   "TradeHunter reads the whole US option market from Massive with a collector on the "
+                   "server. It has never reported in, so there is nothing to screen yet.", _SETUP_TASK)
+    if _is_crash(s):                                                                   # T-61
+        return out("No option data yet - the market data collector could not start.",
+                   f"{_CRASH_PREFIX}{_crash_reason(s)}.",
+                   "Hermes: read logs\\screener_collector.log, then run powershell -ExecutionPolicy "
+                   "Bypass -File deploy\\setup_screener_task.ps1 -StartNow.")
+    if frame_empty and meta.get("reloading"):                                         # T-68 = T-25
+        return out(f"New market data is loading into the screener (about {_reload_eta_s(meta, finished)} "
+                   "seconds) - the results refresh by themselves.")
+    if state == "stopped":
+        return out("No option data yet - the market data collector is stopped.",
+                   "Nothing new is read until it runs again.", _START_TASK)
+    if age is None or age > STALE_S:                                                  # T-62
+        when = f"{_dur(age)} ago" if age is not None else "a while ago"
+        return out(f"No option data yet - the collector stopped reporting {when} "
+                   f"(it was {_DOING.get(state, state or 'running')}).",
+                   "Nothing new is read until it runs again.", _START_TASK)
+    hint = _ADMIN_HINT.get(kind or "", _ADMIN_OTHER)
+    raw = detail or str(s.get("last_error") or "")
+    admin = f"{hint} Details: {raw[:300]}" if raw else hint
+
+    def pass_panel():                                                                  # T-65
+        src = running or {}
+        what = _pass_words(src.get("kind") or prog.get("pass_kind"), src.get("session") or prog.get("pass_session"))
+        counts = f"{_count(done or 0)} of {_count(total)} underlyings read. " if total else ""
+        return out(f"Step 2 of 2: reading the option market ({what}).",
+                   counts + "Results appear within a minute and grow every couple of minutes as more "
+                   "are read; this page refreshes by itself.")
+
+    if state == "error":
+        scope = _scope(detail)
+        uni_alert = _uni_alert(detail, s.get("last_error"), scope)
+        if (not universe_n or uni_alert) and not in_pass:                              # T-64
+            reason = "Massive returned an empty options list" if kind == "empty" else plain(kind)
+            pages = _num(prog.get("universe_pages"))
+            cont = f", continuing from page {pages + 1:,}" if pages else ""
+            return out("No option data yet - the list of optionable stocks could not be read.",
+                       f"{reason}. {_tries_again(nt)}{cont}.", admin)
+        if ((kind == "empty" and not uni_alert)                                        # T-67: a pass's empty
+                or (finished and finished.get("n_contracts") == 0 and not in_pass)):
+            src = finished or running or {}
+            reason = _raw_reason(detail or s.get("last_error")) or plain("empty")
+            return out(f"The last market pass ({_pass_words(src.get('kind'), src.get('session'))}) "
+                       "read no option data.", f"{reason.rstrip('.')}. {_tries_again(nt)}.", admin)
+        if _pass_paused(in_pass, total, prog, kind, scope):                            # T-66
+            return out(f"Reading the option market is paused at {_count(done or 0)} of {_count(total)} "
+                       "underlyings.", f"{plain(kind)}. {_tries_again(nt, 'It resumes where it stopped')}.", admin)
+        if in_pass:
+            return pass_panel()           # the pass keeps reading under another part's alert
+        reason = (_PLAN_ONE.format(what=_SCOPE_WORDS.get(scope, scope)).rstrip(".")
+                  if (kind == "plan" and scope) else plain(kind))
+        return out("No option data yet.", f"{reason}. {_tries_again(nt)}.", admin)
+    if state == "universe":                                                            # T-63
+        pages, syms = _num(prog.get("universe_pages")), _num(prog.get("universe_symbols"))
+        started = _naive_utc(prog.get("universe_started"))
+        if pages:
+            mins = int(max(0.0, (now - started).total_seconds()) // 60) if started else None
+            body = (f"Page {pages:,} of Massive's option contract list ({syms or 0:,} stocks so far"
+                    + (f", started {mins} min ago" if mins is not None else "") + "). ")
+        else:
+            body = "Reading Massive's option contract list (this can take several minutes). "
+        return out("Step 1 of 2: reading the list of optionable stocks.",
+                   body + "Results appear here as soon as the first stocks' option chains are read; "
+                   "this page refreshes by itself.")
+    if in_pass or state == "pass":                                                     # T-65
+        return pass_panel()
+    if finished and finished.get("n_contracts") == 0:                                  # T-67 (idle)
+        reason = _raw_reason(s.get("last_error")) or plain("empty")
+        return out(f"The last market pass ({_pass_words(finished.get('kind'), finished.get('session'))}) "
+                   "read no option data.", f"{reason.rstrip('.')}. {_tries_again(nt)}.", admin)
+    body = _sentence(f"Collector: {detail}") if detail else "Collector " + _STATES.get(state, state or "running") + "."
+    if state == "idle" and not universe_n and s.get("last_error"):
+        body += f" The last attempt failed: {_raw_reason(s.get('last_error'), 160)}."
+    return out("No option data yet.", _cap(body, LABEL_MAX + 60))
 
 
 # ─────────────────────────────────────── saved screeners ───────────────────────────────────────
@@ -733,7 +1263,18 @@ def options_home(request: Request, screen: str = "", user: User = Depends(requir
         cur = {**cur, **{k: spec["screen"][k] for k in ("label", "desc") if spec["screen"].get(k)}}
     saved = _saved_list(db, user, key)
     default = next((i for i in saved if i["is_default"]), None)
-    status = _status_view(_read_collector(), None, engine_error=None)
+    # the same inputs /api/status uses, so the first paint and the first poll say the same.
+    # The frame summary comes from the spec the engine just built (``data`` = frame.meta +
+    # reloading): a second frame read would wait on an empty frame's reload once more.
+    d = spec.get("data") if spec else None
+    if isinstance(d, dict):
+        meta = d
+    elif engine_error is None:
+        meta = _frame_meta(eng)                   # an engine whose spec carries no data
+    else:
+        meta = None                               # the engine failed: its error is shown instead
+    status = _status_view(_read_collector(), meta, engine_error=None,
+                          is_admin=bool(getattr(user, "is_admin", False)))
     boot = {
         "screen": key,
         "engine_ok": spec is not None and engine_error is None,
@@ -748,6 +1289,9 @@ def options_home(request: Request, screen: str = "", user: User = Depends(requir
         "max_filters": MAX_FILTERS,
         "max_name": MAX_NAME,
         "today": clock.et_today(),
+        "status": status,                     # the empty panel + alert on first paint
+        "no_data": _no_data_text(),           # hidden from the warnings while the panel shows
+        "is_admin": bool(getattr(user, "is_admin", False)),
     }
     return templates.TemplateResponse(request, "options.html", {
         "user": user, "screens": screens, "families": _families(screens), "screen": cur,
@@ -876,7 +1420,8 @@ def api_status(user: User = Depends(require_user)):
     """The collector's status (screener DB) + the engine's loaded-data summary. Never
     fails: a missing screener DB or engine is reported in the body."""
     eng, missing = _load_engine()
-    return _status_view(_read_collector(), _frame_meta(eng), engine_error=missing)
+    return _status_view(_read_collector(), _frame_meta(eng), engine_error=missing,
+                        is_admin=bool(getattr(user, "is_admin", False)))
 
 
 @router.get("/api/saved")

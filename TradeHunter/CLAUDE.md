@@ -661,7 +661,13 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
   `screener_models.py`, `screener_db.py`, `alembic_screener\` or `deploy\screener_collector.py`,
   re-run on Hermes `powershell -ExecutionPolicy Bypass -File deploy\setup_screener_task.ps1
   -StartNow`** (from `C:\trading-skills\TradeHunter\dashboard_tst`). Tray: an "Options
-  screener" line. Runbook: `dashboard_tst/DEPLOY.md` section H.
+  screener" line. Runbook: `dashboard_tst/DEPLOY.md` section H. **v4.137 (2026-10-11) first-run
+  fixes** (design §12): the first start streams the stock list and shows data within minutes; the
+  page and tray always say which step runs, with progress and errors in plain words. Since v4.137
+  both collectors hold a single-instance lock (`state\*_collector.lock`) - a by-hand run must
+  Disable + End the task first (DEPLOY.md H "By hand"); **after a pull that changes
+  `dashboard_intraday\tray_status.py`, restart the `IntradayBot-Tray` task too** (commands in
+  DEPLOY.md H).
 - **Options — the v4.135 reset (history):** the v2 page was deleted and its IBKR-era rows purged. The
   user: *"delete everything except the massive data"*: `/options` rendered an empty page (rebuilt
   as the screener in v4.136); the v2 screener (`opt_rules`, `opt_screen`, `payoff`, `opt_legs`) and every `_opt_*`

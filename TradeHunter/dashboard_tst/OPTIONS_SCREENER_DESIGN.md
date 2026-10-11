@@ -1,6 +1,7 @@
 # Options Screener — a Barchart-style screener on Massive data (v4.136)
 
-Status: **BUILT in v4.136 (2026-10-10)** — this file is the contract (§11 = what the build
+Status: **BUILT in v4.136 (2026-10-10); first-run fixes in v4.137 (2026-10-11) - §12 supersedes the
+parts of §4, §5 and §8 it names** — this file is the contract (§11 = what the build
 decided where it was silent). Read it before touching any
 file named `scr_*`, `screener/*`, `options_page.py` or `options.html`.
 
@@ -398,3 +399,51 @@ Data (`scr_collector`, `scr_store`, `massive`):
 
 Open, to confirm on Hermes against live Massive: whether index options list under `SPX` or
 `I:SPX`; the exact grouped-daily and ticker-reference fields (assumed from Polygon's docs).
+
+## 12. First-run fixes (v4.137, 2026-10-11)
+
+Why: after the v4.136 deploy the page said only "No screener data yet ... has not finished a market
+pass" for the whole first start. An audit (code trace, end-to-end simulation on a fake Massive,
+Massive's docs, what the page / tray show; 38 of 40 findings confirmed by skeptics) found the first
+start read the whole contract list before any chain, all-or-nothing and silently, plus defects that
+could keep the page empty afterwards. What changed (supersedes §4.1-4.2, §5 frame, §8 texts):
+
+- **§4.1 universe**: its own thread; `contract_type=call` (half the pages); per-page progress;
+  streamed - the stocks found are filed as it goes (first page at once, then every 25 pages / 30 s)
+  while no complete list exists (`scr_status.universe_done` is the completion stamp); resumable from
+  the failed page (a 4xx on a resumed cursor restarts at page 1; resume state kept 2 h); an empty
+  list is an error, never a success; a later day's refresh stays all-or-nothing (yesterday's list
+  feeds the passes) and a failure there is a warning, not an error. Identity may run once any stock
+  is filed; earnings, stock days, fills and technicals wait for a complete list.
+- **§4.2 passes**: the first pass starts with the first stocks and grows with the list; a pass read
+  on a partial list is `scr_pass.partial` and never marks the session's end-of-day as done; a 403
+  for one stock is a per-stock failure (skipped, retried after 24 h) - a plan-wide pause needs 25
+  distinct refusals with no success; a pass that stores 0 contracts is not finished (alert `empty`,
+  back-off 10 min doubling to 2 h, the reason = the most common failure); more than half failed on an
+  end-of-day pass -> finished but the session not marked done; an end-of-day pass still open at the
+  next session's open (or older than 12 h) closes unfinished; at most 2 requeues per stock; an
+  empty answer keeps stored rows for 2 sessions, an all-adjusted chain clears them; pass percent and
+  ETA are weighted by the stored universe's contract counts; restore ignores 0-contract and partial
+  end-of-day passes.
+- **Lanes**: the Stocks Basic window (725 days) bounds every stock-bar request; a dated 403 retires
+  that day; technicals hourly once the newest 260 sessions are filed; earnings not re-read on a
+  same-day restart; IV history skips index underlyings; NYSE one-off closures in the calendar.
+- **Key**: `app\.env` re-read every 5 min while the key is missing / rejected (both collectors).
+- **Start-up**: a failed import / migration writes a crash state (page + tray), `--forever` retries
+  every 5 min; a single-instance lock per collector (`state\*_collector.lock`); a 15-minute revive
+  trigger on both tasks.
+- **§5 frame**: an empty frame is re-checked every 5 s and a request waits at most 3 s for the load;
+  the first pass's partial frame grows every ~2 min (rows or identities added); `real_pass_*` = the
+  newest finished pass that stored contracts (the data line and the first-pass note key on it).
+- **§5 engine**: until security types are in, the default Security Type filter (`stock`+`etf`) is
+  skipped with a note (a member's own choice is never widened); `data.sec_type_active` tells the page.
+- **§8 page**: the data line and an empty-results panel show the collector's live step with progress
+  and time left; errors in a box in member words with the next retry (admins: the detail + what to do
+  on Hermes); stale = no heartbeat for 5 min at any hour; polls every 15 s while loading and re-runs
+  the screen when data arrives.
+- **§11.17 resolved**: index options are listed under the bare symbol (SPX). Adjusted roots (GME1,
+  BRKB1, two-digit roots) are dropped by `opt_massive.standard_rows`.
+- Schema: screener migrations `8d2f4b6a1c37` (`scr_status` error_kind / next_try / warn /
+  universe_done / earnings_on / progress) and `b4e1f7c9d2a6` (`scr_pass.partial`).
+- Not built: ticker-range shards of the universe walk (needs a live check that
+  `underlying_ticker.gte/.lt` is honoured).

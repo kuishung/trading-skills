@@ -18,8 +18,13 @@ error (e.g. the Massive key missing or rejected) / stopped / no heartbeat for 5 
 grey no file (the collector does not run on this PC).
 They also carry the Options Screener collector (dashboard_tst, task
 TST-Options-Screener - the whole US options market from Massive) from
-dashboard_tst/state/screener_collector.json: state, the pass in progress, the last
-pass time, universe size, IV history done/total, heartbeat age - same colours.
+dashboard_tst/state/screener_collector.json: state, the walk's page, the pass in
+progress (percent + time left), the last pass time, universe size, stock days and IV
+history to go, heartbeat age, plus the collector's own sentence on a second line -
+green working; amber error / stopped / a warning / NOT RUNNING (no heartbeat for
+5 min) / NEVER CHECKED IN (no state file, an error in its log); grey no file. A toast
+fires when it goes into error or stops reporting, and once when the first market
+pass finishes.
 
 Right-click menu:
   - Show Status        : popup notification with current symbol + progress
@@ -929,31 +934,79 @@ def get_options_collector_status(path=None, now=None) -> dict:
 
 # The Options Screener collector on Hermes (dashboard_tst/deploy/screener_collector.py,
 # task TST-Options-Screener; the whole US options market from Massive) heartbeats into
-# this file every ~15 s (tray-sync rule).
+# this file every ~15 s (tray-sync rule). When it could not start, the CLI writes the
+# same file with state "error" (and keeps its heartbeat fresh in --forever); when even
+# that never happened, the tray reads the last error from the collector's own log.
 OPTIONS_SCREENER_STATE_PATH = SKILL_DIR / "dashboard_tst" / "state" / "screener_collector.json"
+OPTIONS_SCREENER_LOG_PATH = SKILL_DIR / "dashboard_tst" / "logs" / "screener_collector.log"
 OPTIONS_SCREENER_STALE_SEC = 300    # no heartbeat for 5 min -> amber
+OPTIONS_SCREENER_DETAIL_MAX = 220   # the collector's sentence (and a warning) cut to this
+OPTIONS_SCREENER_LOG_TAIL = 65536   # NEVER CHECKED IN reads only the log's last 64 KB
 
 
-def get_screener_collector_status(path=None, now=None) -> dict:
+def _screener_log_error(path, tail: int = OPTIONS_SCREENER_LOG_TAIL):
+    """The last error in the screener collector's log (only its last ``tail`` bytes are
+    read): the exception line of the last traceback, else the message of the last ERROR /
+    CRITICAL line, else "none found". None when there is no log file."""
+    p = Path(path)
+    try:
+        size = p.stat().st_size
+    except OSError:
+        return None
+    try:
+        with open(p, "rb") as fh:
+            if size > tail:
+                fh.seek(size - tail)
+            text = fh.read().decode("utf-8", "replace")
+    except OSError as exc:
+        return f"the log could not be read ({exc})"
+    lines = text.splitlines()
+    if size > tail and lines:
+        lines = lines[1:]                  # the first line was cut by the seek
+    start = None
+    for i in range(len(lines) - 1, -1, -1):
+        if lines[i].startswith("Traceback (most recent call last)"):
+            start = i
+            break
+    if start is not None:
+        for ln in lines[start + 1:]:
+            if ln.strip() and not ln[:1].isspace():
+                return ln.strip()
+    for ln in reversed(lines):
+        m = re.search(r"\s(?:ERROR|CRITICAL)\s+(.+)$", ln)
+        if m:
+            return m.group(1).strip()
+    return "none found"
+
+
+def get_screener_collector_status(path=None, now=None, log_path=None) -> dict:
     """The Hermes Options Screener collector from its heartbeat file
-    (dashboard_tst/state/screener_collector.json): state, the pass in progress, the last
-    finished pass, universe size, IV history done / total, heartbeat age - one detail line
-    + a tooltip fragment.
+    (dashboard_tst/state/screener_collector.json): state, the walk's page, the pass in
+    progress (percent + time left), the last finished pass, universe size, stock days and
+    IV history to go, heartbeat age - one line + a tooltip fragment, and the collector's
+    own sentence (``detail``: what it is doing, or the whole error / stop reason, cut to
+    220 characters) for the second line of the Show Status window.
 
     ``state`` (what the line says) is one of:
       starting / pass / universe / stocks / history / idle - the collector is working
-                 (a market pass, the universe refresh, stock bars / names / earnings /
-                 technicals, the IV history, or waiting for the next pass);
+                 (a market pass, the list of optionable stocks, stock bars / names /
+                 earnings / technicals, the IV history, or waiting for the next pass);
       error    - the collector reports an error (the reason follows: the Massive key
-                 missing or rejected, a plan without an endpoint, Massive not reachable),
-                 or the state file is unreadable;
+                 missing or rejected, a plan without an endpoint, Massive not reachable,
+                 or "could not start" from the CLI), or the state file is unreadable;
       stopped  - the collector was stopped (Ctrl+C, or a one-off run finished);
-      stale    - no heartbeat for 5 min (the task died or hangs);
-      absent   - no state file (the collector does not run on this PC, e.g. the laptop).
-    Colour: green = working; amber = error / stopped / stale; grey = absent.
-    Returns {level: ok|warn|absent, color: green|amber|grey, state, line, tip, age_sec,
-             pass_id, last_pass_et, universe_n, history_done_n, history_total, api_ok}.
-    File reads only."""
+      stale    - no heartbeat for 5 min (NOT RUNNING when its last state was error), or
+                 no state file but a log (NEVER CHECKED IN: the last error in the log);
+      absent   - no state file and no log (the collector does not run on this PC).
+    Colour: green = working; amber = error / stopped / stale, or a working collector with
+    a warning (a failed list refresh, a last pass that stored no contracts, no list of
+    optionable stocks after a failure - never during the walk or at start: the first walk
+    legitimately has no list yet; tip "Scr WARN"); grey = absent.
+    Returns {level: ok|warn|absent, color: green|amber|grey, state, line, tip, detail,
+             reason, age_sec, pass_id, last_pass_et, last_pass_id, last_pass_contracts,
+             last_pass_n, universe_n, history_done_n, history_total, api_ok, error_kind,
+             warn}. File reads only; ``log_path`` defaults to logs/screener_collector.log
+    beside the state folder."""
     def _age_text(sec):
         if sec is None:
             return "?"
@@ -964,17 +1017,51 @@ def get_screener_collector_status(path=None, now=None) -> dict:
             return f"{sec / 60:.0f}m"
         return f"{sec / 3600:.1f}h"
 
+    def _dur(sec):                      # a time left: 45s / 14 min / 2.5 h
+        try:
+            sec = float(sec)
+        except (TypeError, ValueError):
+            return None
+        if sec != sec or sec < 0:
+            return None
+        if sec < 90:
+            return f"{sec:.0f}s"
+        if sec < 5400:
+            return f"{sec / 60:.0f} min"
+        return f"{sec / 3600:.1f} h"
+
     def _n(v):
         try:
             return int(v)
         except (TypeError, ValueError):
             return None
 
+    def _f(v):
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            return None
+        return v if v == v else None
+
+    def _text(v):
+        v = " ".join(str(v or "").split())
+        return v or None
+
     p = Path(path) if path is not None else OPTIONS_SCREENER_STATE_PATH
+    if log_path is None:
+        log_path = (OPTIONS_SCREENER_LOG_PATH if path is None
+                    else p.parent.parent / "logs" / "screener_collector.log")
+    cap = OPTIONS_SCREENER_DETAIL_MAX
     out = {"level": "absent", "color": "grey", "state": "absent", "age_sec": None, "pass_id": None,
-           "last_pass_et": None, "universe_n": None, "history_done_n": None, "history_total": None,
-           "api_ok": None}
+           "last_pass_et": None, "last_pass_id": None, "last_pass_contracts": None, "last_pass_n": None,
+           "universe_n": None, "history_done_n": None, "history_total": None, "api_ok": None,
+           "detail": None, "reason": None, "error_kind": None, "warn": None}
     if not p.exists():
+        err = _screener_log_error(log_path)
+        if err is not None:                 # it has a log, so it was meant to run here
+            out.update(level="warn", color="amber", state="stale", tip="Scr NEVER", reason=err[:160],
+                       line=f"Options screener: NEVER CHECKED IN - last log error: {err[:160]}")
+            return out
         out.update(line="Options screener: not running on this PC (no state file)", tip="Scr -")
         return out
     try:
@@ -999,44 +1086,121 @@ def get_screener_collector_status(path=None, now=None) -> dict:
     raw = str(d.get("state") or "?").strip().lower()
     state = raw if raw in ("starting", "pass", "universe", "stocks", "history", "idle", "error",
                            "stopped") else "idle"
-    pid, kind = _n(d.get("pass_id")), d.get("pass_kind")
+    prog = d.get("progress") if isinstance(d.get("progress"), dict) else {}
+    pid = _n(d.get("pass_id"))
+    kind = d.get("pass_kind") or prog.get("pass_kind")
     done, total = _n(d.get("symbols_done")), _n(d.get("symbols_total"))
     uni = _n(d.get("universe_n"))
     h_done, h_total = _n(d.get("history_done_n")), _n(d.get("history_total"))
     last_et, api_ok = d.get("last_pass_et"), d.get("api_ok")
-    out.update(state=state, age_sec=age, pass_id=pid, last_pass_et=last_et, universe_n=uni,
-               history_done_n=h_done, history_total=h_total, api_ok=api_ok)
+    lp_id, lp_n = _n(d.get("last_pass_id")), _n(d.get("last_pass_contracts"))
+    detail, last_error, warn = _text(d.get("detail")), _text(d.get("last_error")), _text(d.get("warn"))
+    out.update(state=state, age_sec=age, pass_id=pid, last_pass_et=last_et, last_pass_id=lp_id,
+               last_pass_contracts=lp_n, last_pass_n=(total if state != "pass" else None),
+               universe_n=uni, history_done_n=h_done, history_total=h_total, api_ok=api_ok,
+               error_kind=d.get("error_kind"), warn=warn)
 
     parts = [state.upper() if state in ("error", "stopped") else state]
+    pct = _f(prog.get("pass_pct")) if state == "pass" else None
+    if state == "universe":
+        pages, seen = _n(prog.get("universe_pages")), _n(prog.get("universe_symbols"))
+        if pages:
+            parts.append(f"page {pages:,} ({seen or 0:,} so far)")
     if state == "pass" and total:
-        parts.append(f"{kind or 'market'} pass {pid or '?'} {done or 0:,}/{total:,}")
-    parts.append(f"last pass {last_et}" if last_et else "no pass yet")
-    if uni:
-        parts.append(f"universe {uni:,}")
-    if h_total:
-        parts.append(f"IV history {h_done or 0:,}/{h_total:,}")
-    pend = _n(d.get("stock_days_pending"))
+        seg = f"{kind or 'market'} pass {pid or '?'} {done or 0:,}/{total:,}"
+        if pct is not None:
+            seg += f" {pct:.1f}%"
+        parts.append(seg)
+        if prog.get("pass_paused_at"):
+            parts.append("paused")
+        elif _dur(prog.get("pass_eta_s")):
+            parts.append(f"about {_dur(prog.get('pass_eta_s'))} left")
+    if last_et:
+        parts.append(f"last pass {last_et}")
+    elif state == "pass":
+        parts.append("first pass running")
+    elif state not in ("universe", "starting"):
+        parts.append("no pass yet")
+    if uni and not (state == "universe" and not d.get("universe_done")):
+        parts.append(f"universe {uni:,}")      # (the first walk's count is its page's "so far")
+    pend = _n(prog.get("stock_days_pending"))
+    if pend is None:
+        pend = _n(d.get("stock_days_pending"))
     if pend:
-        parts.append(f"stock days to go {pend:,}")
+        seg = f"stock days to go {pend:,}"
+        if _dur(prog.get("stock_eta_s")):
+            seg += f" (at least {_dur(prog.get('stock_eta_s'))})"
+        parts.append(seg)
+    if h_total:
+        seg = f"IV history {h_done or 0:,}/{h_total:,}"
+        left, eta = _n(prog.get("history_left")), _dur(prog.get("history_eta_s"))
+        if left:
+            seg += f" ({left:,} left" + (f", about {eta}" if eta else "") + ")"
+        parts.append(seg)
     if api_ok is False:
         parts.append("Massive failing")
     parts.append(f"hb {_age_text(age)} ago")
     line = "Options screener: " + " · ".join(parts)
 
+    warn_why = None
+    if state not in ("universe", "starting", "error", "stopped"):
+        if warn:
+            warn_why = warn
+        elif lp_n == 0:
+            warn_why = last_error or (f"the last market pass ({d.get('last_pass_kind') or 'pass'} "
+                                      f"{d.get('last_pass_session') or '?'}) stored no contracts")
+        elif state == "idle" and not uni and last_error:
+            warn_why = last_error
+
     if age is None or age > OPTIONS_SCREENER_STALE_SEC:
-        out.update(level="warn", color="amber", state="stale", tip=f"Scr stale {_age_text(age)}",
-                   line=f"Options screener: NO HEARTBEAT for {_age_text(age)} "
-                        f"(last: {raw}) - is TST-Options-Screener running?")
+        if raw == "error":
+            why = (detail or last_error or "error")[:160]
+            out.update(reason=why,
+                       line=f"Options screener: NOT RUNNING - {why} ({_age_text(age)} ago) - "
+                            f"is TST-Options-Screener running?")
+        else:
+            out.update(line=f"Options screener: NO HEARTBEAT for {_age_text(age)} "
+                            f"(last: {raw}) - is TST-Options-Screener running?")
+        out.update(level="warn", color="amber", state="stale", tip=f"Scr stale {_age_text(age)}")
     elif state in ("error", "stopped"):
-        why = d.get("detail") or d.get("last_error") or ""
-        out.update(level="warn", color="amber",
+        why = detail or last_error or ""
+        out.update(level="warn", color="amber", reason=why or None, detail=why[:cap] or None,
                    tip="Scr ERR" if state == "error" else "Scr stopped",
-                   line=(line + (f" - {why}" if why else ""))[:220])
+                   line=(line + (f" - {why}" if why else ""))[:cap])
+    elif warn_why:
+        out.update(level="warn", color="amber", tip="Scr WARN", reason=warn_why[:cap],
+                   detail=detail[:cap] if detail else None,
+                   line=f"Options screener: WARN - {warn_why[:cap]}")
     else:
-        out.update(level="ok", color="green",
-                   tip=f"Scr p{pid}" if (pid and state == "pass") else f"Scr {state}",
-                   line=line)
+        tip = f"Scr {state}"
+        if pid and state == "pass":
+            tip = f"Scr p{pid}" + (f" {pct:.0f}%" if pct is not None else "")
+        out.update(level="ok", color="green", tip=tip, line=line, detail=detail[:cap] if detail else None)
     return out
+
+
+def screener_toast(prev, cur):
+    """The toast for a change in the Options Screener collector between two tray polls
+    (``get_screener_collector_status`` results), or None. Edge-triggered, so a state that
+    lasts fires once: going into error or stale from any other state (T-74: the reason
+    for an error or a NEVER CHECKED IN, "no heartbeat for 5 min" for a collector that
+    stopped reporting), and the first market pass finishing - no finished pass in the
+    previous heartbeat, one now (T-75). Nothing on the first poll after the tray starts
+    (``prev`` None), and no "first pass" when the previous poll read no heartbeat (no
+    file, an unreadable one)."""
+    if not prev or not cur:
+        return None
+    bad = ("error", "stale")
+    if cur.get("state") in bad and prev.get("state") not in bad:
+        if cur.get("state") == "error" or cur.get("tip") == "Scr NEVER":
+            return f"Options screener: ERROR - {cur.get('reason') or 'see the tray status'}"
+        return "Options screener: no heartbeat for 5 min"
+    if (prev.get("age_sec") is not None and prev.get("last_pass_id") is None and not prev.get("last_pass_et")
+            and (cur.get("last_pass_id") is not None or cur.get("last_pass_et"))):
+        n = cur.get("last_pass_n") or cur.get("universe_n") or 0
+        m = cur.get("last_pass_contracts") or 0
+        return f"Options screener: first market pass done - {n:,} underlyings, {m:,} contracts"
+    return None
 
 
 # ---- Icon generation (no .ico files needed — drawn at startup) ----
@@ -1216,8 +1380,8 @@ def _build_progress_window(root):
     # deep-check, live, detail, eta) PLUS the operator buttons + action line +
     # Close. Height grew when those were added; allow vertical resize so future
     # additions can never cover the Close button again.
-    win.geometry("460x760")
-    win.minsize(460, 670)
+    win.geometry("460x840")
+    win.minsize(460, 750)
     win.resizable(False, True)
     win.attributes('-topmost', True)
     win.configure(bg='#1a1a1a')
@@ -1364,13 +1528,20 @@ def _build_progress_window(root):
     opt_lbl.pack(pady=(0, 4))
 
     # Options Screener collector (dashboard_tst, task TST-Options-Screener) - tray-sync
-    # rule. Green working / amber error or no heartbeat for 5 min / grey no file.
+    # rule. Green working / amber error, a warning or no heartbeat for 5 min / grey no
+    # file. The second line is the collector's own sentence (what it is doing now); it is
+    # packed only while there is one.
     scr_var = tk.StringVar(value='Options screener: -')
     scr_lbl = tk.Label(
         win, textvariable=scr_var, font=('Segoe UI', 10),
         bg='#1a1a1a', fg='#888888', wraplength=430, justify='center',
     )
     scr_lbl.pack(pady=(0, 4))
+    scr_detail_var = tk.StringVar(value='')
+    scr_detail_lbl = tk.Label(
+        win, textvariable=scr_detail_var, font=('Segoe UI', 9),
+        bg='#1a1a1a', fg='#9ca3af', wraplength=430, justify='center',
+    )
 
     # ── DEEP CHECK section ─────────────────────────────────────────────────
     tk.Label(win, text='DEEP CHECK', font=('Segoe UI', 8, 'bold'),
@@ -1762,15 +1933,25 @@ def _build_progress_window(root):
                 opt_var.set("Options collector: ?")
                 opt_lbl.configure(fg='#888888')
 
-            # Options Screener collector heartbeat (green / amber / grey)
+            # Options Screener collector heartbeat (green / amber / grey) + its sentence
+            sc_detail = ''
             try:
                 sc = get_screener_collector_status()
                 scr_var.set(sc.get('line') or "Options screener: ?")
                 scr_lbl.configure(fg={'green': '#5fd97a', 'amber': '#facc15'}.get(
                     sc.get('color'), '#888888'))
+                sc_detail = sc.get('detail') or ''
             except Exception:
                 scr_var.set("Options screener: ?")
                 scr_lbl.configure(fg='#888888')
+            try:
+                scr_detail_var.set(sc_detail)
+                if sc_detail and not scr_detail_lbl.winfo_manager():
+                    scr_detail_lbl.pack(after=scr_lbl, pady=(0, 4))
+                elif not sc_detail and scr_detail_lbl.winfo_manager():
+                    scr_detail_lbl.pack_forget()
+            except Exception:
+                pass
 
             # "Completed through" date (ingest currency)
             try:
@@ -1975,6 +2156,7 @@ def _update_loop(icon: "pystray.Icon"):
     current_alert = False
     frame_index = 0
     last_poll = 0.0
+    prev_scr = None        # the screener collector at the last poll (its toasts are edge-triggered)
 
     while True:
         try:
@@ -2008,7 +2190,17 @@ def _update_loop(icon: "pystray.Icon"):
                 except Exception:
                     opt_str = "Opt ?"
                 try:
-                    scr_str = get_screener_collector_status().get("tip") or "Scr ?"
+                    scr = get_screener_collector_status()
+                    scr_str = scr.get("tip") or "Scr ?"
+                    # A toast on going into error / no heartbeat, and once when the first
+                    # market pass finishes. The red alert ring stays the deep check's.
+                    try:
+                        toast = screener_toast(prev_scr, scr)
+                        if toast:
+                            icon.notify(_clamp_title(toast, 255), title="Options screener")
+                    except Exception:
+                        pass   # a toast must never stop the tray
+                    prev_scr = scr
                 except Exception:
                     scr_str = "Scr ?"
                 # Windows tray tooltips cap at 128 chars; put the critical

@@ -11,6 +11,8 @@ import ast
 import datetime as _dt
 import math
 import random
+import threading
+import time
 
 import pytest
 from alembic import command
@@ -23,7 +25,9 @@ from app.services import scr_store
 
 from .conftest import DASH_ROOT
 
-HEAD = "5c7a1d3e9b20"
+HEAD = "b4e1f7c9d2a6"                 # scr_pass.partial (v4.137) on top of 8d2f4b6a1c37
+STATUS_REV = "8d2f4b6a1c37"           # scr_status progress columns (v4.137) on top of 5c7a1d3e9b20
+BASE_REV = "5c7a1d3e9b20"
 TABLES = {"scr_contract", "scr_underlying", "scr_underlying_daily", "scr_universe", "scr_pass",
           "scr_status"}
 NOW = _dt.datetime(2026, 10, 8, 14, 0)          # Thursday 10:00 ET (naive UTC)
@@ -96,6 +100,88 @@ def test_migration_creates_the_tables_and_its_own_version_table(sdb, tmp_path):
         assert compare_metadata(mc, ScrBase.metadata) == []
     command.downgrade(screener_db.alembic_config(), "base")
     assert set(inspect(screener_db.engine()).get_table_names()) == {"alembic_version_screener"}
+
+
+STATUS_NEW = {"error_kind", "next_try", "warn", "universe_done", "earnings_on", "progress"}
+
+
+def test_status_progress_migration_upgrade_and_downgrade(sdb):
+    eng = screener_db.engine()
+    cols = {c["name"] for c in inspect(eng).get_columns("scr_status")}
+    assert STATUS_NEW <= cols
+    # an older collector's row (none of the new fields) survives both ways
+    scr_store.set_status(sdb, state="universe", detail="reading", universe_n=0, now=NOW)
+    sdb.close()
+    command.downgrade(screener_db.alembic_config(), BASE_REV)
+    eng = screener_db.engine()
+    cols = {c["name"] for c in inspect(eng).get_columns("scr_status")}
+    assert not (STATUS_NEW & cols) and {"state", "detail", "heartbeat", "last_error"} <= cols
+    from sqlalchemy import text  # noqa: PLC0415 - reading the downgraded table in a test only
+    with eng.connect() as c:
+        assert c.execute(text("select state, detail from scr_status where id = 1")).one() == ("universe", "reading")
+        assert c.execute(text("select version_num from alembic_version_screener")).scalar() == BASE_REV
+    screener_db.init_screener_db()                         # back to head: the columns again, empty
+    s = screener_db.SessionLocal()
+    try:
+        st = scr_store.status(s)
+        assert (st["state"], st["detail"]) == ("universe", "reading")
+        assert all(st[k] is None for k in STATUS_NEW)
+    finally:
+        s.close()
+
+
+def test_pass_partial_migration_upgrade_and_downgrade(sdb):
+    eng = screener_db.engine()
+    assert "partial" in {c["name"] for c in inspect(eng).get_columns("scr_pass")}
+    pid = scr_store.start_pass(sdb, kind="eod", session="2026-10-07", n_symbols=3, now=NOW)
+    scr_store.finish_pass(sdb, pid, n_ok=3, n_contracts=90, now=NOW)        # an older collector: NULL
+    sdb.close()
+    command.downgrade(screener_db.alembic_config(), STATUS_REV)
+    eng = screener_db.engine()
+    assert "partial" not in {c["name"] for c in inspect(eng).get_columns("scr_pass")}
+    assert "progress" in {c["name"] for c in inspect(eng).get_columns("scr_status")}   # only its own column
+    screener_db.init_screener_db()
+    s = screener_db.SessionLocal()
+    try:
+        row = scr_store.last_pass(s, kind="eod")
+        assert row["id"] == pid and row["partial"] is None
+    finally:
+        s.close()
+
+
+def test_finish_pass_records_partial_and_last_pass_tells_them_apart(sdb):
+    def eod(session, *, partial, n_contracts=50):
+        pid = scr_store.start_pass(sdb, kind="eod", session=session, n_symbols=3, now=NOW)
+        scr_store.finish_pass(sdb, pid, n_ok=3, n_contracts=n_contracts, now=NOW, partial=partial)
+        return pid
+
+    legacy = eod("2026-10-05", partial=None)                 # a v4.136 row: NULL = a complete list
+    full = eod("2026-10-06", partial=False)
+    part = eod("2026-10-07", partial=True)
+    assert scr_store.last_pass(sdb, kind="eod")["partial"] is True
+    assert scr_store.last_pass(sdb, kind="eod", partial=False)["id"] == full
+    assert scr_store.last_pass(sdb, kind="eod", partial=True)["id"] == part
+    eod("2026-10-08", partial=False, n_contracts=0)          # read nothing
+    assert scr_store.last_pass(sdb, kind="eod", min_contracts=1, partial=False)["id"] == full
+    sdb.query(ScrPass).filter(ScrPass.id == full).delete()
+    sdb.commit()
+    assert scr_store.last_pass(sdb, kind="eod", min_contracts=1, partial=False)["id"] == legacy
+    # a later call without partial leaves the mark alone
+    scr_store.finish_pass(sdb, part, n_symbols=4, finished=False)
+    assert scr_store.last_pass(sdb, kind="eod", partial=True)["id"] == part
+
+
+def test_pass_symbols_weighted_follows_pass_symbols(sdb):
+    scr_store.upsert_universe(sdb, {"AAA": 3000, "BBB": 1200, "CCC": 500, "DDD": None}, now=NOW)
+    pairs = scr_store.pass_symbols_weighted(sdb, now=NOW)
+    assert pairs == [("AAA", 3000), ("BBB", 1200), ("CCC", 500), ("DDD", 0)]
+    assert scr_store.pass_symbols(sdb, now=NOW) == [s for s, _ in pairs]
+
+
+def test_newest_session_of_the_stored_chain(sdb):
+    assert scr_store.newest_session(sdb, "AAA") is None
+    scr_store.replace_contracts(sdb, "AAA", [_contract()], session_day="2026-10-07", as_of=NOW)
+    assert scr_store.newest_session(sdb, "aaa") == "2026-10-07"
 
 
 def test_screener_env_targets_only_the_scr_tables():
@@ -197,6 +283,80 @@ def test_file_grouped_day_files_only_the_universe_and_both_reads_fill_one_row(sd
     st = scr_store.stock_day_status(sdb, "2026-10-01", "2026-10-08")
     assert st == {"2026-10-07": (2, 1)}
     assert scr_store.daily_counts(sdb) == {"AAA": 1, "BBB": 1}
+
+
+def test_daily_writers_share_one_lock(sdb):
+    """file_grouped_day waits while another thread of this process holds _DAILY_LOCK."""
+    assert isinstance(scr_store._DAILY_LOCK, type(threading.RLock()))
+    out: list = []
+
+    def other():
+        s = screener_db.SessionLocal()
+        try:
+            out.append(scr_store.file_grouped_day(s, "2026-10-07", [{"symbol": "AAA", "close": 10.0}],
+                                                  symbols={"AAA"}))
+        finally:
+            s.close()
+
+    with scr_store._DAILY_LOCK:
+        t = threading.Thread(target=other)
+        t.start()
+        t.join(0.3)
+        assert t.is_alive() and out == []                       # blocked on the lock
+    t.join(10)
+    assert out == [1]
+
+
+def test_grouped_day_and_eod_iv_race_no_integrity_error(sdb):
+    """The EOD pass's workers (``update_underlying_pass(file_iv=True)``) and the stocks
+    lane (``file_grouped_day``) insert the same (symbol, day) rows at once: 8 worker
+    threads against the grouped filing, on the WAL file DB, several sessions in a row."""
+    syms = ["S%02d" % i for i in range(48)]
+    days = ["2026-10-0%d" % d for d in (5, 6, 7, 8)]
+    errors: list = []
+
+    def run(fn):
+        s = screener_db.SessionLocal()
+        try:
+            fn(s)
+        except Exception as exc:  # noqa: BLE001 - collected and asserted below
+            errors.append(repr(exc))
+        finally:
+            s.close()
+
+    for day in days:
+        gate = threading.Barrier(9)
+
+        def worker(part, day=day, gate=gate):
+            def fn(s):
+                gate.wait(10)
+                for sym in part:
+                    scr_store.update_underlying_pass(s, sym, session_day=day, spot=100.0, iv30=30.0,
+                                                     file_iv=True, now=NOW)
+            run(fn)
+
+        def grouped(day=day, gate=gate):
+            bars = [{"symbol": s_, "close": 100.0, "open": 99.0, "high": 101.0, "low": 98.0, "volume": 1e6}
+                    for s_ in syms]
+
+            def fn(s):
+                gate.wait(10)
+                time.sleep(0.001)
+                scr_store.file_grouped_day(s, day, bars, adjusted=True, symbols=set(syms))
+            run(fn)
+
+        threads = [threading.Thread(target=worker, args=(syms[i::8],)) for i in range(8)]
+        threads.append(threading.Thread(target=grouped))
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(60)
+        assert not any(t.is_alive() for t in threads)
+    assert errors == []
+    sdb.expire_all()
+    rows = sdb.query(ScrUnderlyingDaily).filter(ScrUnderlyingDaily.on.in_(days)).all()
+    assert len(rows) == len(syms) * len(days)                   # one row per (symbol, day) ...
+    assert all(r.close == 100.0 and r.iv30 == 30.0 for r in rows)   # ... carrying both writes
 
 
 def test_raw_bars_prefers_unadjusted_closes(sdb):
@@ -373,6 +533,36 @@ def test_upsert_universe_new_gone_partial_and_retention(sdb):
     assert set(_rows(sdb, "AAA")) == {("2026-11-20", "C", 100.0)}
 
 
+def test_upsert_universe_partial_never_deactivates(sdb):
+    t0 = NOW
+    scr_store.upsert_universe(sdb, {"AAA": 300, "BBB": 50, "CCC": 900, "DDD": 10}, now=t0)
+    # a streamed save of a walk in progress: its first pages hold only two symbols - long
+    # enough to pass the ratio rule would not matter, deactivate=False never deactivates
+    t1 = t0 + _dt.timedelta(minutes=5)
+    res = scr_store.upsert_universe(sdb, {"AAA": 120, "EEE": 7}, now=t1, deactivate=False)
+    assert res == {"n": 2, "new": 1, "inactive": 0, "partial": True}
+    sdb.expire_all()
+    act = {u.symbol: u.active for u in sdb.query(ScrUniverse)}
+    assert act == {"AAA": True, "BBB": True, "CCC": True, "DDD": True, "EEE": True}
+    assert scr_store.underlying(sdb, "EEE") is not None                 # filed at once for the pass
+    aaa = sdb.query(ScrUniverse).filter_by(symbol="AAA").one()
+    assert (aaa.n_contracts, aaa.last_seen) == (120, t1)
+    # even a list as long as the active one stays a partial save with deactivate=False
+    res = scr_store.upsert_universe(sdb, {"AAA": 1, "BBB": 1, "CCC": 1, "EEE": 1}, now=t1, deactivate=False)
+    assert res["partial"] and res["inactive"] == 0
+    # the walk completes: the final save deactivates what is gone, stamped with the
+    # COMPLETION time (not the start)
+    done = t1 + _dt.timedelta(minutes=20)
+    res = scr_store.upsert_universe(sdb, {"AAA": 310, "CCC": 900, "EEE": 7}, now=done)
+    assert res == {"n": 3, "new": 0, "inactive": 2, "partial": False}
+    sdb.expire_all()
+    act = {u.symbol: u.active for u in sdb.query(ScrUniverse)}
+    assert act == {"AAA": True, "BBB": False, "CCC": True, "DDD": False, "EEE": True}
+    assert scr_store.universe_info(sdb)["refreshed"] == done
+    # the gone ones are still read for 10 days (most contracts first)
+    assert scr_store.pass_symbols(sdb, now=done) == ["CCC", "AAA", "DDD", "EEE", "BBB"]
+
+
 # ───────────────────────────────────────── passes, status, history ─────────────────────────────────────────
 
 def test_passes_and_the_status_row(sdb):
@@ -393,6 +583,57 @@ def test_passes_and_the_status_row(sdb):
     assert (st["state"], st["pid"], st["heartbeat"], st["api_ok"]) == ("pass", 42, NOW, True)
     assert len(st["version"]) == 16 and len(st["detail"]) == 5000
     assert sdb.query(ScrStatus).count() == 1
+    # the v4.137 fields are None until a collector writes them (an older one never does)
+    assert all(st[k] is None for k in STATUS_NEW)
+
+
+def test_set_status_round_trips_progress_and_next_try(sdb):
+    myt = _dt.timezone(_dt.timedelta(hours=8))
+    started = _dt.datetime(2026, 10, 10, 13, 5)                      # naive UTC
+    progress = {"universe_pages": 312, "universe_symbols": 1840, "universe_started": started,
+                "pass_kind": "eod", "pass_session": _dt.date(2026, 10, 9), "pass_pct": 41.5,
+                "pass_eta_s": float("nan"), "stock_days_pending": (3, 4), "history_left": None,
+                "nested": {"ok": True, "days": {"2026-10-08"}}}
+    scr_store.set_status(sdb, state="universe", error_kind="network-and-more",
+                         next_try=_dt.datetime(2026, 10, 10, 21, 30, tzinfo=myt),   # 13:30 UTC
+                         universe_done="2026-10-09T20:31:00+00:00", earnings_on="2026-10-09",
+                         warn="Universe refresh failed", progress=progress, now=NOW)
+    sdb.expire_all()
+    st = scr_store.status(sdb)
+    assert st["error_kind"] == "network-an"                          # cut to the column's 10
+    assert st["next_try"] == _dt.datetime(2026, 10, 10, 13, 30) and st["next_try"].tzinfo is None
+    assert st["universe_done"] == _dt.datetime(2026, 10, 9, 20, 31)
+    assert (st["earnings_on"], st["warn"]) == ("2026-10-09", "Universe refresh failed")
+    assert st["progress"] == {"universe_pages": 312, "universe_symbols": 1840,
+                              "universe_started": "2026-10-10T13:05:00+00:00", "pass_kind": "eod",
+                              "pass_session": "2026-10-09", "pass_pct": 41.5, "pass_eta_s": None,
+                              "stock_days_pending": [3, 4], "history_left": None,
+                              "nested": {"ok": True, "days": ["2026-10-08"]}}
+    # a heartbeat that leaves a field out keeps it; None clears it (SQL NULL)
+    scr_store.set_status(sdb, state="pass", now=NOW + _dt.timedelta(seconds=15))
+    sdb.expire_all()
+    st = scr_store.status(sdb)
+    assert st["progress"]["universe_pages"] == 312 and st["warn"] == "Universe refresh failed"
+    scr_store.set_status(sdb, progress=None, warn=None, next_try=None, error_kind=None, now=NOW)
+    sdb.expire_all()
+    st = scr_store.status(sdb)
+    assert (st["progress"], st["warn"], st["next_try"], st["error_kind"]) == (None, None, None, None)
+    from sqlalchemy import text  # noqa: PLC0415 - checking the stored NULL in a test only
+    assert sdb.execute(text("select progress is null from scr_status where id = 1")).scalar() == 1
+
+
+def test_last_pass_min_contracts(sdb):
+    good = scr_store.start_pass(sdb, kind="eod", session="2026-10-08", n_symbols=3, now=NOW)
+    scr_store.finish_pass(sdb, good, n_ok=3, n_failed=0, n_contracts=40, now=NOW)
+    empty = scr_store.start_pass(sdb, kind="eod", session="2026-10-09", n_symbols=3, now=NOW)
+    scr_store.finish_pass(sdb, empty, n_ok=0, n_failed=3, n_contracts=0, now=NOW)
+    assert scr_store.last_pass(sdb, kind="eod")["id"] == empty          # finished, but read nothing
+    assert scr_store.last_pass(sdb, kind="eod", min_contracts=1)["id"] == good
+    assert scr_store.last_pass(sdb, min_contracts=41) is None
+    running = scr_store.start_pass(sdb, kind="cycle", session="2026-10-09", n_symbols=3, now=NOW)
+    assert scr_store.last_pass(sdb, finished=None, min_contracts=1)["id"] == good   # 0 so far
+    scr_store.finish_pass(sdb, running, n_contracts=7, finished=False, now=NOW)
+    assert scr_store.last_pass(sdb, finished=False, min_contracts=1)["id"] == running
 
 
 def test_history_queue_order_and_backoff(sdb):
@@ -413,6 +654,24 @@ def test_history_queue_order_and_backoff(sdb):
     assert got == {"done": True, "tries": 0, "next": None}
     assert scr_store.history_counts(sdb) == (1, 3)
     assert scr_store.history_counts(sdb, {"AAA", "BBB"}) == (1, 2)
+
+
+def test_history_queue_skips_index(sdb):
+    # the contracts list names index options bare (SPX); the ticker list gives I:NDX
+    scr_store.upsert_universe(sdb, {"AAA": 10, "SPX": 9000, "I:NDX": 4000, "BBB": 5}, now=NOW)
+    scr_store.set_identity(sdb, [{"symbol": "AAA", "sec_type": "stock", "exchange": "NYSE"},
+                                 {"symbol": "SPX", "sec_type": "index", "exchange": "INDEX"}],
+                           only={"AAA", "SPX", "I:NDX", "BBB"}, now=NOW)
+    for sym, cv in (("AAA", 10), ("SPX", 90_000), ("I:NDX", 50_000), ("BBB", 5)):
+        scr_store.update_underlying_pass(sdb, sym, session_day="2026-10-08", call_vol=cv, put_vol=0, now=NOW)
+    assert scr_store.history_queue(sdb, now=NOW) == ["AAA", "BBB"]     # no index, however busy
+    assert scr_store.history_counts(sdb) == (0, 2)                     # nor in the denominator
+    assert scr_store.history_counts(sdb, {"AAA", "SPX", "I:NDX"}) == (0, 1)
+    scr_store.mark_history(sdb, "AAA", done=True, now=NOW)
+    scr_store.mark_history(sdb, "BBB", done=True, now=NOW)
+    assert scr_store.history_counts(sdb) == (2, 2)                     # complete: nothing waits on SPX
+    assert scr_store.history_applies("SPY") and scr_store.history_applies("SPX", "stock")
+    assert not scr_store.history_applies("SPX", "index") and not scr_store.history_applies("i:ndx")
 
 
 def test_identity_and_earnings(sdb):
