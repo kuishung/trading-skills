@@ -823,6 +823,19 @@ but always hand over the full ordered script above unless the user says
 otherwise. (The autopull task also pulls + restarts every ~5 min once
 installed.)
 
+## Subagents run on Sonnet (user rule, set 2026-10-12)
+
+The user: *"ok set those sub agent works to Sonnet ... remember it and put into your memory"*.
+**Every subagent / helper agent / workflow agent runs on Sonnet by default** (cheaper than the
+main conversation's model): pass `model: "sonnet"` on Agent-tool calls and `{model: 'sonnet'}` on
+workflow `agent()` calls (or set the phase's `model`), unless the user asks for another model for
+that task. Use a stronger model (Opus / Fable) only when the user explicitly asks for it (e.g. for
+hard build or review work); Haiku is fine for plain search / doc lookup if the user agrees.
+- Per-PC default: `C:\Users\kswong\.claude\settings.json` -> `"env": { "CLAUDE_CODE_SUBAGENT_MODEL":
+  "sonnet" }` (set on the laptop 2026-10-12; this file does NOT sync - add the same block on each
+  other PC). Not forced (`CLAUDE_CODE_SUBAGENT_MODEL_FORCE` unset), so an explicit model still wins.
+- This CLAUDE.md note is the cross-PC copy: on a PC without the env var, still pass Sonnet explicitly.
+
 ## What NOT to do
 
 - Don't add sibling-folder dependencies.
