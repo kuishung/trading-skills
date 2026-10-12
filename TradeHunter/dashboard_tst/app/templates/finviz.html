@@ -2,7 +2,7 @@
 {% block title %}Data Ingest &middot; TradeHunter{% endblock %}
 {% block content %}
 <h1 class="text-2xl font-semibold mb-1">Data Ingest</h1>
-<p class="text-slate-400 text-sm mb-4">Finviz screener filters that feed MATP, the price-data-history &amp; ticker-profile health, and the EDGAR filings corpus.</p>
+<p class="text-slate-400 text-sm mb-4">Finviz screener filters that feed MATP, the price-data-history &amp; ticker-profile health, the EDGAR filings corpus, and Massive's options history.</p>
 
 {# ---------------- tabs ---------------- #}
 <div class="flex gap-1 border-b border-slate-800 mb-5" role="tablist">
@@ -10,6 +10,7 @@
   <button type="button" data-tab="queue" class="di-tab px-3 py-2 text-sm border-b-2 border-transparent text-slate-400">MATP Tickers</button>
   <button type="button" data-tab="market" class="di-tab px-3 py-2 text-sm border-b-2 border-transparent text-slate-400">Market Data</button>
   <button type="button" data-tab="edgar" class="di-tab px-3 py-2 text-sm border-b-2 border-transparent text-slate-400">EDGAR Filings</button>
+  <button type="button" data-tab="opthist" class="di-tab px-3 py-2 text-sm border-b-2 border-transparent text-slate-400">Option History</button>
 </div>
 
 {# ======================== MATP Tickers (the deduplicated MATP queue) ========================
@@ -378,6 +379,17 @@
 {% endif %}
 </div>
 
+{# ======================== Option History (v4.139) ========================
+   Massive's options day files on Hermes: the download, the IV readings filed from them and the
+   conversion to Parquet (the contract history). Fetched when the tab opens, then every 30 s while
+   it stays open (GET /finviz/option-history). #}
+<div data-panel="opthist" class="hidden">
+<h2 class="text-lg font-medium mb-1">Option History
+  <span class="text-xs font-normal text-slate-500">&mdash; Massive's daily options files &rarr; Parquet</span></h2>
+<p class="text-slate-400 text-sm mb-3">Every US option contract that traded, one file per trading day for the last two years: downloaded from Massive by the screener collector on Hermes, used for the screener's IV Rank, and converted to Parquet for the Options page's contract history and volatility surface.</p>
+<div id="ohBox"><p class="text-xs text-slate-500 py-4"><span class="inline-block animate-pulse">Reading the option history&hellip;</span></p></div>
+</div>
+
 <script>
   (function () {
     var tabs = Array.prototype.slice.call(document.querySelectorAll('.di-tab'));
@@ -401,6 +413,9 @@
         activate._queueLoaded = true;
         loadQueue();
       }
+      // Option History: fetched on open, then every 30 s while this tab is the one shown
+      activate._current = name;
+      if (name === 'opthist') loadOptHist();
       try { history.replaceState(null, '', '#' + name); } catch (e) {}
     }
     // Fetch the MATP-queue panel with an explicit failure path. Plain fetch (not
@@ -428,6 +443,32 @@
             'text-rose-200 hover:bg-rose-500/10 transition">Retry</button></div>';
         });
     };
+    var ohTimer = null;
+    window.loadOptHist = function loadOptHist() {
+      var box = document.getElementById('ohBox');
+      if (!box) return;
+      if (ohTimer) { clearTimeout(ohTimer); ohTimer = null; }
+      fetch('/finviz/option-history', { headers: { 'HX-Request': 'true' } })
+        .then(function (r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + r.statusText);
+          return r.text();
+        })
+        .then(function (html) { box.innerHTML = html; })
+        .catch(function (err) {
+          box.innerHTML = '<div class="rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-xs text-rose-200">' +
+            '<b>Could not read the option history.</b> ' + String(err.message || err) + '</div>';
+        })
+        .finally(function () {
+          ohTimer = setTimeout(function () {
+            if (activate._current === 'opthist' && !document.hidden) loadOptHist();
+            else ohTimer = null;
+          }, 30000);
+        });
+    };
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden && activate._current === 'opthist' && !ohTimer) loadOptHist();
+    });
+
     // "Recalculate all" — reports back what it actually queued (a redirect would
     // lose that, and "N filters marked due + M individually" is the useful part).
     document.addEventListener('click', function (e) {

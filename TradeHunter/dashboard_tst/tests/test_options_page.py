@@ -1165,6 +1165,10 @@ def test_the_router_serves_the_screener_paths():
         ("/options/api/saved", ("POST",)),
         ("/options/api/saved/{sid}/default", ("POST",)),
         ("/options/api/saved/{sid}/delete", ("POST",)),
+        ("/options/api/surface", ("GET",)),                 # v4.139: the volatility surface
+        ("/options/api/history/days", ("GET",)),            # v4.139: the contract history
+        ("/options/api/history/chain", ("GET",)),
+        ("/options/api/history/contract", ("GET",)),
     }
 
 
@@ -1209,3 +1213,82 @@ def test_a_payload_without_filters_means_the_screen_defaults():
     assert err is None and clean["filters"] == []
     clean, err = op._clean_payload(None)
     assert err is None and "filters" not in clean
+
+
+# ─────────────────── v4.139: the VOLATILITY SURFACE + CONTRACT HISTORY tabs, Option History ───────────────────
+
+def test_the_page_has_the_surface_and_history_tabs(client, fake):
+    html = client.get("/options").text
+    for needle in ('data-tab="surface"', 'data-tab="history"', 'id="volPanelSurface"', 'id="volPanelHistory"',
+                   'id="volForm"', 'id="chForm"', "window.optShowTab = showTab", "/options/api/surface",
+                   "/options/api/history/contract"):
+        assert needle in html, needle
+
+
+def test_the_surface_api_answers_with_the_grid_or_a_plain_reason(client, fake, screener_url):
+    from app import screener_db
+    from app.screener_models import ScrContract, ScrUnderlying
+
+    asof = _dt.datetime(2026, 10, 7, 19, 30)
+    with screener_db.session() as s:
+        s.add(ScrUnderlying(symbol="AAPL", name="Apple", sec_type="stock", spot=100.0, history_done=False,
+                            history_tries=0))
+        for k in (90.0, 100.0, 110.0):
+            for rt in "CP":
+                s.add(ScrContract(symbol="AAPL", expiry="2026-11-20", right=rt, strike=k, weekly=False, iv=0.3,
+                                  session="2026-10-07", as_of=asof))
+        s.commit()
+    j = client.get("/options/api/surface", params={"symbol": "aapl"}).json()
+    assert j["ok"] is True and j["symbol"] == "AAPL" and j["strikes"] == [90.0, 100.0, 110.0]
+    assert j["cells"] == [[30.0], [30.0], [30.0]] and j["expiries"][0]["date"] == "2026-11-20"
+    assert j["source"] == "latest" and j["as_of"] == "2026-10-07T19:30:00Z"
+    j = client.get("/options/api/surface", params={"symbol": "NOPE"}).json()
+    assert j["ok"] is False and "NOPE" in j["error"]
+    j = client.get("/options/api/surface", params={"symbol": "AAPL", "day": "2026-10-02"}).json()
+    assert j["ok"] is False and "contract history" in j["error"]
+
+
+def test_the_history_days_api_lists_the_converted_sessions(client, fake, monkeypatch, tmp_path):
+    pytest.importorskip("pyarrow")
+    from app.services import opt_history
+
+    root = tmp_path / "pq"
+    monkeypatch.setenv("TST_OPTION_HISTORY_DIR", str(root))
+    days = ("2026-10-05", "2026-10-06")
+    for d in days:
+        p = opt_history.day_path(d, root)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b"x")
+    (root / "manifest.json").write_text(json.dumps({d: {"fmt": opt_history.FORMAT} for d in days}), encoding="utf-8")
+    j = client.get("/options/api/history/days").json()
+    assert j["ok"] is True and j["available"] is True and j["days"] == ["2026-10-06", "2026-10-05"]
+
+
+def test_the_contract_apis_say_why_when_they_cannot(client, fake, screener_url):
+    j = client.get("/options/api/history/chain", params={"symbol": "", "day": "2026-10-06"}).json()
+    assert j["ok"] is False and "symbol" in j["error"]
+    j = client.get("/options/api/history/contract",
+                   params={"symbol": "AAPL", "expiry": "x", "right": "C", "strike": "1"}).json()
+    assert j["ok"] is False and j["error"]
+
+
+def test_the_data_ingest_page_has_the_option_history_tab(engine, db, no_screener_db, monkeypatch, tmp_path):
+    """Settings -> Data Ingest is admin-only (main.py); the new tab and its fragment come with it."""
+    from app.services import flat_files
+
+    monkeypatch.setattr(flat_files, "DEFAULT_ROOT", tmp_path / "flat")
+    admin = models.User(email="admin@local.test", display_name="Admin", role=models.ROLE_ADMIN,
+                        status=models.APPROVED, created_at=_dt.datetime(2026, 1, 5, tzinfo=_dt.timezone.utc))
+    db.add(admin)
+    db.commit()
+    try:
+        client = _client(engine, admin.id)
+        html = client.get("/finviz").text
+        assert 'data-tab="opthist"' in html and 'id="ohBox"' in html and "/finviz/option-history" in html
+        frag = client.get("/finviz/option-history")
+        assert frag.status_code == 200
+        for needle in ("1 &middot; Download from Massive", "2 &middot; IV Rank history",
+                       "3 &middot; Convert to Parquet", "By month", "How it updates", "has not reported on this server"):
+            assert needle in frag.text, needle
+    finally:
+        app.dependency_overrides.clear()

@@ -306,6 +306,8 @@ def build(Session, tmp_path):
         kw.setdefault("stock_years", 0.05)
         if "flat_store" not in kw:
             kw.setdefault("flat_factory", lambda: None)     # no Flat Files keys (the day-file lane off)
+        if "history_store" not in kw:
+            kw.setdefault("history_factory", lambda: None)  # the parquet lane off (v4.139)
         col = scr_collector.Collector(Session, clock=clk, **kw)
         made.append(col)
         return col, client
@@ -2975,3 +2977,141 @@ def test_task_script_is_ascii_and_registers_the_always_on_task():
         assert word not in low, word
     assert CLI.read_bytes().decode("ascii")                   # the CLI is ASCII too
     assert sys.version_info >= (3, 10)
+
+
+# ───────────────────────────── the contract history: day files -> Parquet (v4.139) ─────────────────────────────
+
+def _pq_flat(root: Path, days) -> Path:
+    """A flat-file store with one tiny options day file per day in ``days`` + its manifest."""
+    from app.services import opt_history  # noqa: F401 - the lane's module
+
+    man = {}
+    for d in days:
+        key = flat_files.key_for(d)
+        path = root.joinpath(*key.split("/"))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with gzip.open(path, "wt", encoding="utf-8", newline="") as f:
+            f.write("ticker,volume,open,close,high,low,window_start,transactions\n"
+                    "O:AAA261120C00100000,5,1.0,1.1,1.2,0.9,1,2\nO:AAA261120P00100000,4,2.0,2.1,2.2,1.9,1,2\n")
+        man[key] = {"day": d, "size": path.stat().st_size, "etag": "e-" + d, "downloaded_at": "2026-10-08T15:20:00Z"}
+    (root / "manifest.json").write_text(json.dumps(man), encoding="utf-8")
+    return root
+
+
+def test_the_parquet_lane_converts_the_day_files_and_reports_it(db, build, tmp_path):
+    pytest.importorskip("pyarrow")
+    from app.services import opt_history
+
+    flat = _pq_flat(tmp_path / "flat", ["2026-10-05", "2026-10-06"])
+    clk = Clock(RTH)
+    store = opt_history.Store(root=tmp_path / "pq", flat_root=flat, now=lambda: clk.t)
+    col, cl = build(clk, history_store=store)
+    col.tick()                                         # inline: the job runs and is collected in the tick
+    assert col.pq_status() == {"state": "ready", "error": None, "days_done": 2, "days_total": 2, "running": False}
+    assert store.days() == ["2026-10-05", "2026-10-06"]
+    doc = json.loads((tmp_path / "state" / "screener_collector.json").read_text(encoding="utf-8"))
+    pr = doc["progress"]
+    assert (pr["pq_state"], pr["pq_days_done"], pr["pq_days_total"], pr["pq_error"]) == ("ready", 2, 2, None)
+    assert set(scr_collector.PROGRESS_KEYS) <= set(pr)
+    # right after a job the lane looks again at once (more may have landed meanwhile) ...
+    _pq_flat(flat, ["2026-10-05", "2026-10-06", "2026-10-07"])
+    clk.t += _dt.timedelta(seconds=20)
+    col.tick()
+    assert col.pq_status()["days_done"] == 3 and store.days()[-1] == "2026-10-07"
+    clk.t += _dt.timedelta(seconds=20)
+    col.tick()                                         # ... finds nothing: from now on at most every minute
+    _pq_flat(flat, ["2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08"])
+    clk.t += _dt.timedelta(seconds=20)
+    col.tick()
+    assert col.pq_status()["days_done"] == 3 and col.pq_status()["days_total"] == 3
+    clk.t += _dt.timedelta(seconds=scr_collector.PQ_LOOK_S)
+    col.tick()
+    assert col.pq_status()["days_done"] == 4 and store.days()[-1] == "2026-10-08"
+    assert cl.calls == [] or all("flatfiles" not in str(c) for c in cl.calls)     # no Massive request for it
+
+
+def test_the_parquet_lane_reports_a_broken_folder_and_a_missing_pyarrow(db, build, tmp_path, monkeypatch):
+    pytest.importorskip("pyarrow")
+    from app.services import opt_history
+
+    flat = _pq_flat(tmp_path / "flat", ["2026-10-06"])
+    clk = Clock(RTH)
+
+    class Broken(opt_history.Store):
+        def run(self, days=None, *, stop=None, on_day=None):
+            raise opt_history.HistoryError("config", "could not write 2026-10-06.parquet (disk full)")
+
+    store = Broken(root=tmp_path / "pq", flat_root=flat)
+    col, cl = build(clk, history_store=store)
+    col.tick()
+    st = col.pq_status()
+    assert st["state"] == "error" and "disk full" in st["error"]
+    pr = json.loads((tmp_path / "state" / "screener_collector.json").read_text(encoding="utf-8"))["progress"]
+    assert pr["pq_state"] == "error" and "disk full" in pr["pq_error"]
+    # pyarrow missing on this PC: the lane is off with the fix in its reason
+    monkeypatch.setattr(opt_history, "available", lambda: "pyarrow is not installed on this PC (ImportError) - "
+                                                           "run: pip install -r app\\requirements.txt")
+    col2, _ = build(clk, history_factory=lambda: opt_history.Store(root=tmp_path / "pq2", flat_root=flat))
+    col2.tick()
+    st2 = col2.pq_status()
+    assert st2["state"] == "off" and "pip install" in st2["error"]
+
+
+def test_day_files_that_keep_failing_are_an_error_not_ready(db, build, tmp_path):
+    """The review's finding: failed days wait an hour before the next try, so nothing is pending -
+    the lane must still say error (with the newest failure's reason), never ready."""
+    pytest.importorskip("pyarrow")
+    from app.services import opt_history
+
+    flat = _pq_flat(tmp_path / "flat", ["2026-10-05", "2026-10-06"])
+    for d in ("2026-10-05", "2026-10-06"):                      # damaged copies, sizes as the manifest says
+        p = flat.joinpath(*flat_files.key_for(d).split("/"))
+        p.write_bytes(b"\x1f\x8b" + b"\x00" * (p.stat().st_size - 2))
+    clk = Clock(RTH)
+    store = opt_history.Store(root=tmp_path / "pq", flat_root=flat, now=lambda: clk.t)
+    col, cl = build(clk, history_store=store)
+    col.tick()
+    clk.t += _dt.timedelta(seconds=20)
+    col.tick()                                                  # the look after the job: nothing pending
+    st = col.pq_status()
+    assert st["state"] == "error" and st["days_done"] == 0 and st["days_total"] == 2
+    assert st["error"].startswith("2 day files could not be converted (tried again later) - the newest, 2026-10-06:")
+    pr = json.loads((tmp_path / "state" / "screener_collector.json").read_text(encoding="utf-8"))["progress"]
+    assert pr["pq_state"] == "error" and pr["pq_failed"] == ["2026-10-06", "2026-10-05"]
+    _pq_flat(flat, ["2026-10-05", "2026-10-06"])               # good copies downloaded again
+    clk.t += _dt.timedelta(seconds=scr_collector.PQ_LOOK_S)
+    col.tick()
+    assert col.pq_status() == {"state": "ready", "error": None, "days_done": 2, "days_total": 2, "running": False}
+
+
+def test_tray_shows_the_parquet_conversion_and_its_warning(tmp_path):
+    """v4.139 (tray-sync rule): the contract history's conversion on the screener line - its
+    days and time left, done - and a failing conversion as an amber WARN."""
+    p = tmp_path / "screener_collector.json"
+    status = _tray_function(p)
+    prog = {"flat_state": "ready", "flat_days_done": 497, "flat_days_total": 497,
+            "pq_state": "building", "pq_days_done": 120, "pq_days_total": 497, "pq_eta_s": 360, "pq_error": None}
+    base = {"state": "history", "heartbeat": "2026-10-08T13:59:40+00:00", "last_pass_et": "16:40 ET",
+            "last_pass_id": 3, "last_pass_contracts": 980000, "universe_n": 4512,
+            "universe_done": "2026-10-08T11:40:00+00:00", "history_done_n": 4512, "history_total": 4512,
+            "detail": "Contract history: converting the daily option files to Parquet, 120 of 497 days.",
+            "warn": None, "last_error": None, "progress": prog}
+    _write(p, base)
+    got = status(now=TRAY_NOW)
+    assert (got["color"], got["level"]) == ("green", "ok")
+    assert "· IV files 497/497 days · Parquet 120/497 days, about 6 min · hb 20s ago" in got["line"], got["line"]
+    _write(p, dict(base, progress=dict(prog, pq_state="ready", pq_days_done=497, pq_eta_s=None)))
+    assert "· Parquet 497/497 days · hb" in status(now=TRAY_NOW)["line"]
+    for quiet in ({"pq_state": "off", "pq_error": None, "pq_days_total": None}, {"pq_state": None}):
+        _write(p, dict(base, progress=dict(prog, **quiet)))
+        got = status(now=TRAY_NOW)
+        assert got["color"] == "green" and "Parquet" not in got["line"], quiet
+    err = "could not write 2026-10-06.parquet (disk full) - check the free disk space and the folder C:\\x"
+    _write(p, dict(base, progress=dict(prog, pq_state="error", pq_error=err)))
+    got = status(now=TRAY_NOW)
+    assert (got["color"], got["level"], got["tip"]) == ("amber", "warn", "Scr WARN")
+    assert got["line"] == "Options screener: WARN - Contract history (Parquet) is not being updated: " + err
+    off = "pyarrow is not installed on this PC (ImportError) - run: pip install -r app\\requirements.txt"
+    _write(p, dict(base, progress=dict(prog, pq_state="off", pq_error=off, pq_days_total=None)))
+    got = status(now=TRAY_NOW)
+    assert got["tip"] == "Scr WARN" and got["line"].endswith("Contract history (Parquet) is not running: " + off)

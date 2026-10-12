@@ -33,6 +33,15 @@ web, Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-10-13 — `tray_status.py`: the Options screener line shows the contract history's Parquet conversion (tray-sync rule)
+- dashboard_tst v4.139 converts Massive's options day files into Parquet (the contract history) in a
+  new collector lane; its state is published as `progress.pq_*`, so the screener line shows it:
+  "Parquet 120/497 days, about 6 min" while converting, "Parquet 497/497 days" once done, and an
+  amber "WARN - Contract history (Parquet) is not being updated: <reason>" when the conversion fails
+  (the folder, the disk) or "... is not running: <reason>" when pyarrow is missing.
+- Tested in `dashboard_tst/tests/test_scr_collector.py`. Restart the tray task on Hermes after
+  pulling this (DEPLOY.md section H).
+
 ### 2026-10-12 — `tray_status.py`: the Options screener line shows the IV history from Massive's daily files (tray-sync rule)
 - dashboard_tst v4.138 builds the IV history (IV Rank / IV Percentile) from Massive's Flat Files
   in a new collector lane; its state is published as `progress.flat_*`, so the screener line

@@ -160,6 +160,22 @@ def finviz_home(
     )
 
 
+@router.get("/option-history", response_class=HTMLResponse)
+def option_history_panel(request: Request, user: User = Depends(require_user)):
+    """The Option History tab (v4.139): how Massive's options day files are downloaded,
+    filed and converted to Parquet on Hermes (``services/option_history_view``). An HTML
+    fragment; the page fetches it when the tab opens and every 30 s while it is open."""
+    from ..services import option_history_view
+
+    try:
+        oh = option_history_view.view()
+    except Exception as exc:  # noqa: BLE001 - shown in the tab, never a 500 page
+        return HTMLResponse('<div class="rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-xs '
+                            'text-rose-200">The option history status could not be read (%s).</div>'
+                            % type(exc).__name__)
+    return templates.TemplateResponse(request, "_option_history.html", {"user": user, "oh": oh})
+
+
 @router.get("/queue", response_class=HTMLResponse)
 def matp_queue_panel(
     request: Request,

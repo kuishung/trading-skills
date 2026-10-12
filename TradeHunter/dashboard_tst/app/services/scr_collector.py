@@ -110,6 +110,15 @@ only starts jobs and files their results.
    REST lane takes everything until a job works again. One day file that cannot be read
    fails only that day: a damaged copy is set aside (``FlatFiles.discard``) and the day
    asked for again in 1 h.
+4c. **Contract history as Parquet** (v4.139; ``opt_history``) - the "parquet" thread, whenever
+   day files are on this PC (it needs no Massive key): at most every minute it looks for day
+   files without a current Parquet file (new, re-published by Massive, or an older
+   ``opt_history.FORMAT``) and converts them, NEWEST first, one day at a time
+   (``opt_history.Store.run``, about a second a day) into ``TST_OPTION_HISTORY_DIR`` (else
+   ``option_history`` beside ``TST_PRICE_HISTORY_DIR``). A day file that cannot be read fails
+   only that day (tried again in 1 h, or as soon as it changes); pyarrow missing or a folder
+   that cannot be written stops the lane (``error``, looked at again every 5 min). The
+   Options page's Contract history and past-day Volatility surface read these files.
 5. **Status** - ``scr_status`` (row 1) and ``state/screener_collector.json`` (the Hermes
    tray reads it) at the start and the end of every tick: the state, a plain-English
    ``detail`` (jobs running at once are joined with " · "), the active error's kind and
@@ -117,7 +126,9 @@ only starts jobs and files their results.
    (``PROGRESS_KEYS``: the walk's pages, the pass's weighted percent and ETA, stock days
    to go and their ETA, the IV history left / waiting / ETA, and the day-file lane's
    ``flat_days_done`` / ``flat_days_total`` / ``flat_eta_s`` / ``flat_state`` (``FLAT_STATES``)
-   / ``flat_error`` / ``flat_kind``).
+   / ``flat_error`` / ``flat_kind``), and the parquet lane's ``pq_state`` (``PQ_STATES``) /
+   ``pq_days_done`` / ``pq_days_total`` / ``pq_eta_s`` / ``pq_error`` / ``pq_failed`` - the day files
+   that could not be converted, newest first).
 
 Errors: ``config`` / ``auth`` -> everything paused, looked at again every 5 min - ``app/.env``
 is re-read then (``TST_MASSIVE_API_KEY`` from the file replaces the one in the process: a
@@ -142,7 +153,7 @@ import time
 import zlib
 from pathlib import Path
 
-from . import calendars, clock, flat_files, massive, opt_massive, option_metrics, scr_store
+from . import calendars, clock, flat_files, massive, opt_history, opt_massive, option_metrics, scr_store
 from .flat_files import FlatFilesError                  # (scr_flativ needs numpy: imported by the lane)
 from .massive import MassiveError
 
@@ -227,6 +238,12 @@ FLAT_FAIL_GIVEUP = 5             # ... and after 5 failed jobs in a row of any k
 FLAT_ETA_MIN_DAYS = 3            # the build's time left once 3 days are filed
 FLAT_LOG_EVERY = 10              # a progress line every 10 days filed
 FLAT_STATES = ("off", "waiting", "building", "ready", "error", "retry")
+PQ_LOOK_S = 60.0                 # the parquet lane looks for day files to convert at most every minute
+PQ_CONFIG_RETRY_S = 300.0        # pyarrow missing / the folder cannot be written: looked at again every 5 min
+PQ_ERROR_RETRY_S = 600.0         # a job that failed for another reason: again in 10 min
+PQ_ETA_MIN_DAYS = 3              # the conversion's time left once 3 days are converted
+PQ_LOG_EVERY = 50                # a progress line every 50 days converted
+PQ_STATES = ("off", "waiting", "building", "ready", "error")   # error: the job failed, or day files keep failing
 
 NO_KEY_TEXT = "%s is not set on this PC" % massive.ENV_KEY
 UNIVERSE_EMPTY_TEXT = "Massive returned an empty options list (/v3/reference/options/contracts)"
@@ -243,7 +260,8 @@ _BG_OP = {"universe": "universe", "identity": "stocks", "stocks": "stocks", "fil
 PROGRESS_KEYS = ("universe_pages", "universe_symbols", "universe_started", "pass_kind", "pass_session",
                  "pass_pct", "pass_eta_s", "pass_paused_at", "stock_days_pending", "stock_eta_s",
                  "history_left", "history_waiting", "history_eta_s",
-                 "flat_days_done", "flat_days_total", "flat_eta_s", "flat_state", "flat_error", "flat_kind")
+                 "flat_days_done", "flat_days_total", "flat_eta_s", "flat_state", "flat_error", "flat_kind",
+                 "pq_state", "pq_days_done", "pq_days_total", "pq_eta_s", "pq_error", "pq_failed")
 
 STATE_PATH = Path(__file__).resolve().parents[2] / "state" / "screener_collector.json"
 APP_ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
@@ -332,6 +350,15 @@ def default_flat_files(log=None):
     if not flat_files.configured():
         return None
     return flat_files.FlatFiles(log=log)
+
+
+def default_history_store(log=None):
+    """The contract-history store (``opt_history.Store``: the Parquet files under
+    ``opt_history.history_root()``, the day files under ``state/flatfiles``) - ``app/.env``
+    is re-read first (``_load_env``) so ``TST_OPTION_HISTORY_DIR`` / ``TST_PRICE_HISTORY_DIR``
+    set there are used. Writes nothing yet."""
+    _load_env()
+    return opt_history.Store(log_=log)
 
 
 def flat_newest_day(now: _dt.datetime) -> _dt.date:
@@ -679,13 +706,16 @@ class Collector:
     ``earnings_fetch(day)`` -> Nasdaq-shaped rows (default ``calendars.earnings_for``);
     ``flat_store`` (a ``flat_files.FlatFiles``, e.g. on a fake S3 client) or
     ``flat_factory()`` -> one, or None when the Flat Files keys are not set (default
-    ``default_flat_files``); ``flat_sessions`` (the day-file window in sessions; default None = ~2 years)."""
+    ``default_flat_files``); ``flat_sessions`` (the day-file window in sessions; default None = ~2 years);
+    ``history_store`` (an ``opt_history.Store``) or ``history_factory()`` -> one, or None for no
+    parquet lane (default ``default_history_store``)."""
 
     def __init__(self, session_factory=None, *, client=None, client_factory=None, clock=None,
                  sleep=None, log=None, state_path=None, executor_factory=None, earnings_fetch=None,
                  tick_s: float = TICK_S, cycle_min=None, workers=None, max_rps=None, max_dte=None,
                  stock_years: float | None = None, universe_executor_factory=None,
-                 flat_store=None, flat_factory=None, flat_sessions: int | None = None):
+                 flat_store=None, flat_factory=None, flat_sessions: int | None = None,
+                 history_store=None, history_factory=None):
         if session_factory is None:
             from .. import screener_db  # noqa: PLC0415
 
@@ -814,6 +844,22 @@ class Collector:
         self._flat_touched: set[str] = set()             # (flat thread) readings filed, IV figures not redone yet
         self._flat_settled_at: float | None = None       # (flat thread) the last recompute, monotonic
         self._flat_logged: dict = {}                     # the lane's log throttle: slot -> (key, when)
+        # the contract-history lane (4c): the day files -> Parquet
+        self._pq = history_store                         # the opt_history.Store (None: not set up / off)
+        if history_factory is None and history_store is None:
+            history_factory = lambda: default_history_store(self.log)  # noqa: E731
+        self._pq_factory = history_factory
+        self._pqpool = None
+        self._pq_future: cf.Future | None = None
+        self._pq_state = "waiting" if history_store is not None else "off"
+        self._pq_error: str | None = None                # plain words: why the lane is off / failing
+        self._pq_retry_at: _dt.datetime | None = None
+        self._pq_look_at: _dt.datetime | None = None     # the last look for work
+        self._pq_prog: dict | None = None                # the running job's progress (the parquet thread sets it)
+        self._pq_counts: tuple[int, int] | None = None   # (days converted, day files here) at the last look
+        self._pq_job_err: str | None = None              # the last job's failure (the folder, pyarrow, a bug)
+        self._pq_failed: list[tuple[str, dict]] = []     # day files that keep failing (Store.failed_days)
+        self._pq_logged: str | None = None               # the last warning logged (once per text)
         self._restored = False
         self._last_beat: _dt.datetime | None = None
         self._db_warned = False
@@ -1159,6 +1205,7 @@ class Collector:
             eta = self._history_eta_s(now)
             out["history_eta_s"] = int(eta) if eta is not None else None
         out.update(self._flat_progress(now))
+        out.update(self._pq_progress(now))
         return out
 
     def _fields(self) -> dict:
@@ -2308,6 +2355,202 @@ class Collector:
                 "days_done": done, "days_total": total, "mapped": len(self._flat_mapped or ()),
                 "tried": len(self._flat_tried), "fails": self._flat_fails, "working": self._flat_working()}
 
+    # ── the contract history: day files -> Parquet (the "parquet" thread, 4c) ──
+
+    def _pq_lane(self):
+        if self._pqpool is None:
+            self._pqpool = self._executor_factory(1)
+        return self._pqpool
+
+    def _pq_warn(self, text: str) -> None:
+        if text and text != self._pq_logged:
+            self._pq_logged = text
+            self.log.warning("Contract history (Parquet): %s", text)
+
+    def _pq_off(self, now: _dt.datetime, text: str | None) -> None:
+        """The lane cannot run on this PC (pyarrow missing, no store): looked at again in 5 min."""
+        self._pq_state = "off"
+        self._pq_error = text[:500] if text else None
+        self._pq_retry_at = now + _dt.timedelta(seconds=PQ_CONFIG_RETRY_S)
+        if text:
+            self._pq_warn(text)
+
+    def _pq_get(self, now: _dt.datetime):
+        """The store (built by the factory at the first look), or None (the lane off)."""
+        if self._pq is not None:
+            return self._pq
+        if self._pq_factory is None:
+            return None
+        why = opt_history.available()
+        if why:
+            self._pq_off(now, why)
+            return None
+        try:
+            store = self._pq_factory()
+        except Exception as exc:  # noqa: BLE001
+            self._pq_off(now, "could not set up the contract history (%s)" % self._err_text(exc))
+            return None
+        if store is None:
+            self._pq_off(now, None)
+            return None
+        self._pq = store
+        if self._pq_state == "off":
+            self._pq_state, self._pq_error = "waiting", None
+        return store
+
+    def _pq_tick(self, now: _dt.datetime) -> None:
+        """Start a conversion job when day files wait for theirs (at most every minute)."""
+        if self._pq_future is not None or self._stopping.is_set():
+            return
+        if self._pq_retry_at is not None and now < self._pq_retry_at:
+            return
+        if self._pq_look_at is not None and (now - self._pq_look_at).total_seconds() < PQ_LOOK_S:
+            return
+        self._pq_look_at = now
+        try:
+            store = self._pq_get(now)
+            if store is None:
+                return
+            sources = store.sources()
+            todo = store.pending(sources)
+            self._pq_counts = store.counts(sources)
+            self._pq_failed = store.failed_days(sources)
+            if not todo:
+                return
+            self._pq_prog = {"t0": time.monotonic(), "n": 0, "ok": 0, "todo": len(todo), "day": None}
+            self._pq_future = self._pq_lane().submit(self._pq_wrap, list(todo))
+        except Exception as exc:  # noqa: BLE001 - never stops the tick
+            self._pq_warn("could not look for day files to convert (%s)" % self._err_text(exc))
+
+    def _pq_wrap(self, todo: list[str]) -> dict:
+        """Run ``job_pq``; never raises."""
+        try:
+            return self.job_pq(todo)
+        except opt_history.HistoryError as exc:
+            return {"ok": False, "kind": exc.kind, "error": self._err_text(exc)}
+        except Exception as exc:  # noqa: BLE001 - a bug: the lane retries later
+            self.log.exception("Contract history (Parquet): the job failed")
+            return {"ok": False, "kind": "error", "error": self._err_text(exc)}
+
+    def job_pq(self, todo: list[str]) -> dict:
+        """(the parquet thread) Convert ``todo`` (newest first) - ``opt_history.Store.run``
+        with the progress in ``_pq_prog`` and a log line every ``PQ_LOG_EVERY`` days."""
+        store = self._pq
+        prog = dict(self._pq_prog or {"t0": time.monotonic(), "n": 0, "ok": 0, "todo": len(todo)})
+
+        def on_day(n, total, day, ent, err):  # noqa: ARG001
+            prog["n"], prog["day"] = n, day
+            if ent is not None:
+                prog["ok"] = int(prog.get("ok") or 0) + 1
+            self._pq_prog = dict(prog)
+            if n % PQ_LOG_EVERY == 0 and n < total:
+                self.log.info("Contract history: %s of %s day files converted to Parquet (newest first, now %s)",
+                              format(n, ","), format(total, ","), day)
+
+        res = store.run(todo, stop=self._stopping.is_set, on_day=on_day)
+        res["ok"] = True
+        return res
+
+    def _collect_pq(self) -> dict | None:
+        f = self._pq_future
+        if f is None or not f.done():
+            return None
+        self._pq_future = None
+        try:
+            res = f.result()
+        except Exception as exc:  # noqa: BLE001
+            res = {"ok": False, "kind": "error", "error": self._err_text(exc)}
+        now = self._now()
+        self._pq_prog = None
+        if res.get("ok"):
+            self._pq_job_err, self._pq_logged, self._pq_retry_at = None, None, None
+            self._pq_look_at = None                    # look again at once: more may have landed meanwhile
+            failed = res.get("failed") or []
+            if res.get("converted") or failed:
+                self.log.info("Contract history: %s converted to Parquet (%s rows, %.0f MB) in %s%s",
+                              _plural(int(res.get("converted") or 0), "day"), format(int(res.get("rows") or 0), ","),
+                              (res.get("bytes") or 0) / 1e6, _dur((res.get("ms") or 0) / 1000.0),
+                              ("; %s could not be read (tried again in 1 h): %s" % (
+                                  _plural(len(failed), "day file"), ", ".join(d for d, _e in failed[:5])))
+                              if failed else "")
+            try:
+                if self._pq is not None:
+                    sources = self._pq.sources()
+                    self._pq_counts = self._pq.counts(sources)
+                    self._pq_failed = self._pq.failed_days(sources)
+            except Exception:  # noqa: BLE001
+                pass
+        else:
+            kind = res.get("kind") or "error"
+            err = str(res.get("error") or "the conversion job failed")
+            self._pq_job_err = err[:500]
+            self._pq_retry_at = now + _dt.timedelta(seconds=PQ_CONFIG_RETRY_S if kind == "config" else PQ_ERROR_RETRY_S)
+            self._pq_warn("%s - tried again %s" % (err, _et_hm(self._pq_retry_at)))
+        return res
+
+    def _pq_now(self) -> tuple[str, str | None]:
+        """The lane's state and its reason, from the facts: off (no store: pyarrow missing, or
+        not set up), error (the last job failed, or day files keep failing - with the newest
+        one's reason), building (a job runs or days wait), ready (every day file converted),
+        waiting (no day file on this PC yet)."""
+        if self._pq is None:
+            return "off", self._pq_error
+        if self._pq_job_err:
+            return "error", self._pq_job_err
+        if self._pq_future is not None:
+            return "building", None
+        if self._pq_failed:
+            day, f = self._pq_failed[0]
+            return "error", ("%s could not be converted (tried again later) - the newest, %s: %s"
+                             % (_plural(len(self._pq_failed), "day file"), day, f.get("error") or "?"))[:500]
+        done, total = self._pq_counts or (0, 0)
+        if not total:
+            return "waiting", None
+        return ("ready" if done >= total else "building"), None
+
+    def _pq_eta_s(self) -> float | None:
+        pr = self._pq_prog if self._pq_future is not None else None
+        if not pr:
+            return None
+        n, todo = int(pr.get("n") or 0), int(pr.get("todo") or 0)
+        if n < PQ_ETA_MIN_DAYS or todo <= n:
+            return None
+        rate = (time.monotonic() - float(pr.get("t0") or time.monotonic())) / n
+        return rate * (todo - n)
+
+    def _pq_progress(self, now: _dt.datetime) -> dict:  # noqa: ARG002
+        state, err = self._pq_now()
+        out = {"pq_state": state, "pq_error": err, "pq_days_done": None,
+               "pq_days_total": None, "pq_eta_s": None, "pq_failed": None}
+        if self._pq_failed:
+            out["pq_failed"] = [d for d, _f in self._pq_failed[:10]]
+        if self._pq_counts is None:
+            return out
+        done, total = self._pq_counts
+        pr = self._pq_prog if self._pq_future is not None else None
+        if pr:
+            done = min(total, done + int(pr.get("ok") or 0))
+        eta = self._pq_eta_s()
+        out.update(pq_days_done=done, pq_days_total=total, pq_eta_s=int(eta) if eta is not None else None)
+        return out
+
+    def _pq_text(self, now: _dt.datetime) -> str:
+        p = self._pq_progress(now)
+        done, total = p.get("pq_days_done"), p.get("pq_days_total")
+        text = "Contract history: converting the daily option files to Parquet"
+        if total:
+            text += ", %s of %s days" % (format(done or 0, ","), format(total, ","))
+        if p.get("pq_eta_s") is not None:
+            text += " (about %s left)" % _dur(p["pq_eta_s"])
+        return text + "."
+
+    def pq_status(self) -> dict:
+        """The parquet lane in one dict (the CLI and the tests)."""
+        done, total = self._pq_counts or (0, 0)
+        state, err = self._pq_now()
+        return {"state": state, "error": err, "days_done": done, "days_total": total,
+                "running": self._pq_future is not None}
+
     # ── the stocks lane (one thread) ──
 
     def _load_days(self, db, now: _dt.datetime) -> None:
@@ -3029,6 +3272,7 @@ class Collector:
         self._collect_bg()
         self._collect_earn()
         self._collect_flat()
+        self._collect_pq()
         self._collect_history()
         self._collect_pass(db)
 
@@ -3053,6 +3297,9 @@ class Collector:
         if self._flat_future is not None:
             state = state or "history"
             parts.append(self._flat_text(now))
+        if self._pq_future is not None:
+            state = state or "history"
+            parts.append(self._pq_text(now))
         if state is None:
             self.state, self.detail = "idle", self._idle_text(now)
         else:
@@ -3061,6 +3308,7 @@ class Collector:
     def _step(self, db, now: _dt.datetime) -> None:
         syms = self._refresh_counts(db, now)
         self._flat_tick(db, now)            # Massive Flat Files: its own keys, never the REST key
+        self._pq_tick(now)                  # the day files on this PC -> Parquet: no Massive request at all
         if not self._ready(now):
             return
         self._uni_resumed()
@@ -3355,7 +3603,7 @@ class Collector:
         if self._pass is not None:
             futs += list(self._pass.futures)
         for f in ((self._bg[1] if self._bg is not None else None), self._uni_future, self._earn_future,
-                  self._flat_future):
+                  self._flat_future, self._pq_future):
             if f is not None:
                 futs.append(f)
         if futs:
@@ -3367,7 +3615,7 @@ class Collector:
         self._stopping.set()
         if self._pass is not None:
             self._pass.halt.set()
-        for pool in (self._pool, self._bgpool, self._unipool, self._earnpool, self._flatpool):
+        for pool in (self._pool, self._bgpool, self._unipool, self._earnpool, self._flatpool, self._pqpool):
             if pool is not None:
                 try:
                     pool.shutdown(wait=False, cancel_futures=True)
@@ -3375,7 +3623,7 @@ class Collector:
                     pool.shutdown(wait=False)
                 except Exception:  # noqa: BLE001
                     pass
-        self._pool = self._bgpool = self._unipool = self._earnpool = self._flatpool = None
+        self._pool = self._bgpool = self._unipool = self._earnpool = self._flatpool = self._pqpool = None
         self.state = "stopped"
         self.detail = reason
         try:
@@ -3399,4 +3647,4 @@ __all__ = ["Collector", "InlineExecutor", "default_client", "contract_rows", "sn
            "env_cycle_min", "env_workers", "env_max_rps", "env_max_dte", "STATE_PATH",
            "COLLECTOR_VERSION", "NO_KEY_TEXT", "UNIVERSE_EMPTY_TEXT", "PROGRESS_KEYS", "TICK_S",
            "RTH_START", "RTH_END", "EOD_AFTER", "default_flat_files", "flat_newest_day", "flat_days",
-           "FLAT_SESSIONS", "FLAT_STATES"]
+           "FLAT_SESSIONS", "FLAT_STATES", "default_history_store", "PQ_STATES"]

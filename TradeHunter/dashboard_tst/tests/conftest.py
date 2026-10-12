@@ -27,6 +27,8 @@ os.environ["TST_DATABASE_URL"] = "sqlite:///" + (_TEST_TMP / "conftest_unused.db
 # the Options Screener DB: never the default screener.db beside the code (a test that
 # needs one aims app.screener_db at its own temp file with screener_db.configure)
 os.environ["TST_SCREENER_DATABASE_URL"] = "sqlite:///" + (_TEST_TMP / "screener_unused.db").as_posix()
+# the contract history (v4.139): never the real Parquet folder (a test that needs one passes its own root)
+os.environ["TST_OPTION_HISTORY_DIR"] = str(_TEST_TMP / "option_history_unused")
 os.environ["TST_AUTH_MODE"] = "password"
 os.environ["TST_ADMIN_EMAIL"] = "dev@local.test"
 os.environ.setdefault("TST_ADMIN_PASSWORD", "dev-only-not-a-real-password")

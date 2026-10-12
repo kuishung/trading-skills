@@ -1594,3 +1594,71 @@ def api_saved_delete(sid: int, user: User = Depends(require_user), db: Session =
     db.delete(row)
     db.commit()
     return {"ok": True, "items": _saved_list(db, user, key)}
+
+
+# ─────────────────────── the volatility surface + contract history (v4.139) ───────────────────────
+# OPTIONS_SCREENER_DESIGN.md §14. Two more tabs on this page: VOLATILITY SURFACE (one underlying,
+# implied vol by strike x expiry, from the last market pass or a past day of the contract history)
+# and CONTRACT HISTORY (one contract's daily bars + IV across its life). The reads run in a thread
+# (pyarrow + numpy work); a reason the page can show comes back as {"ok": false, "error"} (200).
+
+def _hist_call(fn, *args, **kw):
+    """Run ``fn(screener_session, ...)``: ``{"ok": True, ...result}`` or ``{"ok": False, "error"}``."""
+    from .. import screener_db
+    from ..services.vol_surface import SurfaceError
+
+    try:
+        with screener_db.session() as s:
+            res = fn(s, *args, **kw)
+    except SurfaceError as exc:
+        return {"ok": False, "error": str(exc)}
+    except Exception as exc:  # noqa: BLE001
+        log.exception("options history: %s failed", getattr(fn, "__name__", fn))
+        return {"ok": False, "error": f"That could not be read just now ({type(exc).__name__}). Try again in a minute."}
+    out = _jsonable(res)
+    out["ok"] = True
+    return out
+
+
+def _hist_days_payload() -> dict:
+    from ..services import contract_view, opt_history
+
+    why = opt_history.available()
+    days = [] if why else contract_view.history_days()
+    return {"ok": True, "days": days, "available": why is None, "why": why,
+            "today": clock.et_today()}
+
+
+@router.get("/api/history/days")
+async def api_history_days(user: User = Depends(require_user)):
+    """The sessions in the contract history, newest first (the two tabs' day pickers)."""
+    return JSONResponse(_jsonable(await run_in_threadpool(_hist_days_payload)))
+
+
+@router.get("/api/surface")
+async def api_surface(symbol: str = "", day: str = "latest", side: str = "", band: str = "", dte: str = "",
+                      exp: str = "", user: User = Depends(require_user)):
+    """The volatility surface of ``symbol`` on ``day`` (``latest`` or ``YYYY-MM-DD``)."""
+    from ..services import vol_surface
+
+    return JSONResponse(await run_in_threadpool(_hist_call, vol_surface.surface, symbol, day or "latest",
+                                                side=side or None, band=band or None, max_dte=dte or None,
+                                                expiries=exp or None))
+
+
+@router.get("/api/history/chain")
+async def api_history_chain(symbol: str = "", day: str = "", user: User = Depends(require_user)):
+    """The contracts of ``symbol`` that traded on ``day`` (the contract pickers)."""
+    from ..services import contract_view
+
+    return JSONResponse(await run_in_threadpool(_hist_call, contract_view.day_contracts, symbol, day))
+
+
+@router.get("/api/history/contract")
+async def api_history_contract(symbol: str = "", expiry: str = "", right: str = "", strike: str = "",
+                               user: User = Depends(require_user)):
+    """One contract's daily bars and IV from the contract history."""
+    from ..services import contract_view
+
+    return JSONResponse(await run_in_threadpool(_hist_call, contract_view.contract_series, symbol, expiry,
+                                                right, strike))

@@ -474,3 +474,54 @@ Supersedes §4.4 (IV history) when the Flat Files key pair is set.
   from the stored files. The REST lane takes only what the files cannot fill; with no keys it runs
   as in v4.137. 5 failures in a row -> lane error, REST takes over, retry after 30 min.
 - **Visible:** page data line + empty panel, tray line, `--flat-iv` one-off.
+
+## 14. The contract history, the volatility surface and the Option History tab (v4.139, 2026-10-13)
+
+- **Why:** v4.138 read each options day file only for every stock's IV30; the contracts' own daily
+  bars (~330k a day, ~160M rows for 2 years) were not queryable. The user: *"i need that contract
+  history queryable"*, a Settings tab *"to see how update the option flatfile data, the download and
+  the also the conversion to parquet file"*, and a volatility surface - *"when a underlying asset is
+  selected, it will show the volatility table where y-axis will show the strikes and the x-axis will
+  show the maturities"* (financetrainingcourse.com, "Creating the volatility surface data set using
+  implied volatilities").
+- **Store (`opt_history`):** Parquet, one file per session (`day/YYYY/YYYY-MM-DD.parquet`), columns
+  on, root, expiry, right, strike, open, high, low, close, volume, transactions; sorted by root,
+  expiry, right, strike; 16,384-row groups with statistics (a read of one underlying touches only
+  its groups); zstd; the ticker text is not stored (`occ_ticker` rebuilds it). A manifest records
+  each day's source size / etag and `FORMAT`; a day is rewritten only when Massive re-published it
+  or the format changed. Folder: `TST_OPTION_HISTORY_DIR`, else `option_history` beside
+  `TST_PRICE_HISTORY_DIR` (the HermesSync data folder, Resilio-synced), else `state/option_history`.
+  Chosen over one file per underlying: a day is written once and never touched again (Resilio
+  syncs only new files), the conversion maps one to one onto the downloads (what the Settings tab
+  shows), and a whole-market read of one day is one file; one contract across ~500 files reads
+  in well under a second thanks to the row-group statistics. Parquet is the project's format for
+  stored history; the live screener never reads it (CLAUDE.md carve-out: analysis views may).
+- **Writer:** the screener collector's "parquet" lane (4c): looks at most every minute (at once
+  after a job), converts what is pending newest first, ~1 s a day. No Massive request, no key.
+  `pq_state` (off / waiting / building / ready / error), `pq_days_done` / `pq_days_total`,
+  `pq_eta_s`, `pq_error`, `pq_failed` in `progress`. The state is derived from the facts: `error`
+  = the last job failed (pyarrow, the disk, the folder - retried in 5 min) OR day files keep failing
+  (a file that cannot be read: retried in 1 h, or at once when a new copy arrives - size, etag or
+  modification time; a Parquet file in use: 10 min); `ready` only when every day file on Hermes is
+  converted. A disk / folder problem is never recorded against a day.
+- **Reads:** one day = one file (ms, row-group pruning); one contract = every day file up to its
+  expiry (~1 s for 500), the last 64 answers cached until the manifest changes.
+- **Volatility surface (`vol_surface`, `/options/api/surface`):** one underlying on one day,
+  strikes (rows) x expiries (columns), each cell an implied vol in percent. Latest = the last
+  market pass's chain (`scr_contract.iv`, Massive's own); a past session = every contract that
+  traded that day, IV solved from its close against the stock's unadjusted close
+  (`scr_flativ.implied_vols`, r = `RISK_FREE`, no dividend, T = days / 365). A cell shows the
+  out-of-the-money option by default (put below the price, call at or above it), or calls / puts /
+  their average. Strike band 10 / 20 / 30 / 50 % / all, expiries up to 30 d .. 2 y / all, monthly
+  only. DTE < 1 is left out; IVs outside 0.5-500 % are left out; nothing is interpolated; an ATM
+  row (the strike nearest the price, call and put averaged) and the price line. Caps: 400 strikes
+  (nearest the price) x 80 expiries. Indices: latest only (the day files carry no index close).
+- **Contract history (`contract_view`, `/options/api/history/days|chain|contract`):** pick a
+  contract from the chain that traded on a chosen day; every day it traded with OHLC, volume,
+  trades, the stock's unadjusted close and the IV; CSV in the browser.
+- **Settings -> Data Ingest -> Option History (`option_history_view`, `/finviz/option-history`):**
+  the three steps (download / IV filing / conversion) with counts, sizes, times (ET and MYT), the
+  next file due, missing days, failures, a month table and the latest 15 days; every 30 s while
+  open. Admin-only (the Data Ingest page is).
+- **Tray:** "Parquet n/N days, about t" while converting / once done; amber WARN when the
+  conversion fails or pyarrow is missing.

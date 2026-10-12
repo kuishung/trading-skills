@@ -388,12 +388,33 @@ tray ("IV files 187/500 days, about 6 min"). It starts once the stock prices of 
 file (the stock lane, section H "The first day"). A by-hand one-off: the "By hand" sequence below
 with `--flat-iv` in place of `--eod-now`.
 
+### Contract history as Parquet (v4.139)
+
+The collector also converts every day file into **Parquet** - one file per trading day, every
+contract's daily open / high / low / close / volume / trades - for the Options page's **Contract
+history** and the past dates of its **Volatility surface**. It needs no key and no Massive request:
+only `pyarrow` (in `app\requirements.txt`; the web-app restart installs it into the venv) and the
+day files already on Hermes. The ~500 files take about 10 minutes the first time, newest first; a
+new day file is converted within a minute of its download. The folder: `TST_OPTION_HISTORY_DIR`,
+else `option_history` beside `TST_PRICE_HISTORY_DIR` (`C:\HermesSync\MarketData\option_history`,
+~1.5-3 GB for 2 years; Resilio carries it to the laptop for backtests), else
+`dashboard_tst\state\option_history`. Watch it in **Settings -> Data Ingest -> Option History**
+(download, IV filing and conversion, by month and by day) and on the tray ("Parquet 120/497 days,
+about 6 min"). A read-only check on Hermes:
+
+```powershell
+cd C:\trading-skills\TradeHunter\dashboard_tst
+.\.venv\Scripts\python.exe -m app.services.opt_history status
+```
+
 ### After a pull
 
 Re-run the setup script with `-StartNow` after any pull that changes
-`app\services\scr_collector.py`, `scr_store.py`, `massive.py`, `opt_massive.py`,
-`app\screener_models.py`, `app\screener_db.py`, `alembic_screener\` or
-`deploy\screener_collector.py` (the web-app restart does not restart this collector):
+`app\services\scr_collector.py`, `scr_store.py`, `massive.py`, `opt_massive.py`, `flat_files.py`,
+`scr_flativ.py`, `opt_history.py`, `app\screener_models.py`, `app\screener_db.py`,
+`alembic_screener\` or `deploy\screener_collector.py` (the web-app restart does not restart this
+collector; restart the web app FIRST when `app\requirements.txt` changed, so the venv has the new
+packages):
 
 ```powershell
 cd C:\trading-skills\TradeHunter\dashboard_tst

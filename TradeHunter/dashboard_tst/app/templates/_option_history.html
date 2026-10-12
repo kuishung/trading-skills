@@ -1,0 +1,167 @@
+{# Settings -> Data Ingest -> Option History (v4.139, OPTIONS_SCREENER_DESIGN.md §14): how Massive's
+   options day files are kept up to date on Hermes - 1 the download, 2 the IV readings filed from them,
+   3 the conversion to Parquet (the contract history). Fetched by finviz.html when the tab opens and
+   every 30 s while it stays open (GET /finviz/option-history). Context: oh (services/option_history_view). #}
+{% set dl = oh.download %}{% set iv = oh.iv %}{% set pq = oh.parquet %}{% set col = oh.collector %}
+{% set word = {'building': 'working', 'ready': 'up to date', 'waiting': 'waiting', 'retry': 'retrying',
+               'error': 'problem', 'off': 'off', 'unknown': 'unknown'} %}
+{% set tone = {'building': 'text-sky-300', 'ready': 'text-emerald-300', 'waiting': 'text-slate-400',
+               'retry': 'text-amber-300', 'error': 'text-rose-300', 'off': 'text-slate-500', 'unknown': 'text-slate-500'} %}
+
+<div class="flex flex-wrap items-center gap-2 mb-3 text-xs">
+  <span class="inline-block h-2.5 w-2.5 rounded-full
+               {% if not col.known or col.stale %}bg-amber-400{% elif pq.state == 'error' or dl.state == 'error' %}bg-rose-500{% else %}bg-emerald-400{% endif %}"></span>
+  {% if not col.known %}
+    <span class="text-amber-300">The screener collector has not reported on this server - is the TST-Options-Screener task running?</span>
+  {% elif col.stale %}
+    <span class="text-amber-300">The screener collector last reported {{ col.age or 'long ago' }} - is the TST-Options-Screener task running?</span>
+  {% else %}
+    <span class="text-slate-300">Screener collector: {{ col.detail or col.state }}</span>
+    <span class="text-slate-500">&middot; reported {{ col.age }}</span>
+  {% endif %}
+  <span class="text-slate-600 ml-auto">{{ oh.now_myt }} &middot; refreshes every 30 s</span>
+</div>
+
+{% if oh.available %}
+<div class="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+  The Parquet conversion cannot run on this server: {{ oh.available }}
+</div>
+{% endif %}
+
+<div class="grid gap-3 md:grid-cols-3 mb-6">
+  {# ── 1 download ── #}
+  <div class="rounded-lg border border-slate-800 bg-slate-900/40 p-3 text-xs space-y-1.5">
+    <div class="flex items-center justify-between">
+      <span class="text-sm font-medium text-slate-200">1 &middot; Download from Massive</span>
+      {% if dl.state %}<span class="{{ tone.get(dl.state, 'text-slate-400') }}">{{ word.get(dl.state, dl.state) }}</span>{% endif %}
+    </div>
+    <div class="text-slate-300"><b class="tabular-nums">{{ '{:,}'.format(dl.done) }}</b> of <span class="tabular-nums">{{ '{:,}'.format(dl.total) }}</span> trading days on Hermes</div>
+    <div class="h-1.5 rounded bg-slate-800 overflow-hidden"><div class="h-full bg-emerald-500" style="width: {{ dl.pct }}%"></div></div>
+    <div class="text-slate-400">{{ dl.size }}{% if dl.oldest %} &middot; {{ dl.oldest }} to {{ dl.newest }}{% endif %}</div>
+    {% if dl.last %}<div class="text-slate-500">Last file downloaded {{ dl.last }}</div>{% endif %}
+    {% if dl.next.session %}
+    <div class="text-slate-400">Next file: the <b>{{ dl.next.session }}</b> session,
+      {% if dl.next.late %}due since {{ dl.next.due_et }} - asked for every hour until Massive publishes it{% else %}due {{ dl.next.due_et }} ({{ dl.next.due_myt }}){% endif %}</div>
+    {% endif %}
+    {% if dl.n_missing %}<div class="text-amber-300">{{ dl.n_missing }} trading day{{ '' if dl.n_missing == 1 else 's' }} of the window not downloaded (listed below)</div>{% endif %}
+    {% if dl.error %}<div class="text-rose-300 break-words">{{ dl.error }}</div>{% endif %}
+  </div>
+
+  {# ── 2 IV readings ── #}
+  <div class="rounded-lg border border-slate-800 bg-slate-900/40 p-3 text-xs space-y-1.5">
+    <div class="text-sm font-medium text-slate-200">2 &middot; IV Rank history</div>
+    {% if iv.total %}
+    <div class="text-slate-300"><b class="tabular-nums">{{ '{:,}'.format(iv.done or 0) }}</b> of <span class="tabular-nums">{{ '{:,}'.format(iv.total) }}</span> days filed into the screener's IV history</div>
+    <div class="h-1.5 rounded bg-slate-800 overflow-hidden"><div class="h-full bg-sky-500" style="width: {{ iv.pct }}%"></div></div>
+    {% if iv.eta %}<div class="text-slate-400">About {{ iv.eta }} left</div>{% endif %}
+    {% else %}
+    <div class="text-slate-500">Not reported yet.</div>
+    {% endif %}
+    <div class="text-slate-500">Each day file gives every stock's 30-day implied volatility for that day - the screener's IV Rank and IV Percentile.</div>
+  </div>
+
+  {# ── 3 Parquet ── #}
+  <div class="rounded-lg border border-slate-800 bg-slate-900/40 p-3 text-xs space-y-1.5">
+    <div class="flex items-center justify-between">
+      <span class="text-sm font-medium text-slate-200">3 &middot; Convert to Parquet</span>
+      {% if pq.state %}<span class="{{ tone.get(pq.state, 'text-slate-400') }}">{{ word.get(pq.state, pq.state) }}</span>{% endif %}
+    </div>
+    <div class="text-slate-300"><b class="tabular-nums">{{ '{:,}'.format(pq.done) }}</b> of <span class="tabular-nums">{{ '{:,}'.format(pq.total) }}</span> downloaded days converted</div>
+    <div class="h-1.5 rounded bg-slate-800 overflow-hidden"><div class="h-full bg-orange-500" style="width: {{ pq.pct }}%"></div></div>
+    <div class="text-slate-400"><span class="tabular-nums">{{ '{:,}'.format(pq.rows) }}</span> contract-days &middot; {{ pq.size }}{% if pq.oldest %} &middot; {{ pq.oldest }} to {{ pq.newest }}{% endif %}</div>
+    {% if pq.state == 'building' and pq.eta %}<div class="text-sky-300">Converting now, about {{ pq.eta }} left</div>
+    {% elif pq.behind %}<div class="text-slate-400">{{ pq.behind }} day{{ '' if pq.behind == 1 else 's' }} still to convert</div>{% endif %}
+    {% if pq.last %}<div class="text-slate-500">Last converted {{ pq.last }}</div>{% endif %}
+    {% if pq.failed %}<div class="text-amber-300 break-words">Could not convert (tried again every hour): {{ pq.failed|map(attribute='day')|join(', ') }}</div>{% endif %}
+    {% if pq.error %}<div class="text-rose-300 break-words">{{ pq.error }}</div>{% endif %}
+    <div class="text-slate-500 break-all">{{ oh.root }}</div>
+  </div>
+</div>
+
+<p class="text-xs text-slate-400 mb-4 max-w-4xl leading-relaxed">
+  <b class="text-slate-300">How it updates - nothing to do by hand.</b> Massive publishes each trading day's
+  options file about 11:00 New York time the next day. The screener collector on Hermes asks for it from 11:15 ET
+  (every hour until it is out), files every stock's implied volatility from it, then converts it to Parquet within a
+  minute. Massive re-publishes old days now and then: the collector checks weekly and converts those again. The
+  Parquet files are the Options page's <i>Contract history</i> and the past dates of its <i>Volatility surface</i>.
+</p>
+
+{# ── by month ── #}
+<h3 class="text-sm font-medium text-slate-200 mb-1">By month</h3>
+<div class="max-h-80 overflow-y-auto pr-1 mb-6 rounded border border-slate-800">
+<table class="w-full text-xs">
+  <thead class="text-[10px] uppercase tracking-wide text-slate-500 sticky top-0 bg-slate-900">
+    <tr>
+      <th class="text-left px-2 py-1">Month</th>
+      <th class="text-right px-2 py-1">Trading days</th>
+      <th class="text-right px-2 py-1">Downloaded</th>
+      <th class="text-right px-2 py-1">Converted</th>
+      <th class="text-right px-2 py-1">Contract-days</th>
+      <th class="text-right px-2 py-1">Download size</th>
+      <th class="text-right px-2 py-1">Parquet size</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for m in oh.months %}
+    {% set full = m.sessions and m.downloaded >= m.sessions and m.converted >= m.downloaded %}
+    <tr class="border-t border-slate-800">
+      <td class="px-2 py-1 font-medium text-slate-200">{{ m.month }}</td>
+      <td class="px-2 py-1 text-right tabular-nums text-slate-400">{{ m.sessions }}</td>
+      <td class="px-2 py-1 text-right tabular-nums {% if m.downloaded < m.sessions %}text-amber-300{% else %}text-slate-300{% endif %}">{{ m.downloaded }}</td>
+      <td class="px-2 py-1 text-right tabular-nums {% if m.converted < m.downloaded %}text-sky-300{% elif full %}text-emerald-300{% else %}text-slate-300{% endif %}">{{ m.converted }}</td>
+      <td class="px-2 py-1 text-right tabular-nums text-slate-400">{{ '{:,}'.format(m.rows) }}</td>
+      <td class="px-2 py-1 text-right tabular-nums text-slate-500">{{ m.gz }}</td>
+      <td class="px-2 py-1 text-right tabular-nums text-slate-500">{{ m.pqs }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7" class="px-2 py-3 text-slate-500">No day files on this server yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+
+{# ── the latest days ── #}
+<h3 class="text-sm font-medium text-slate-200 mb-1">Latest trading days</h3>
+<div class="overflow-x-auto mb-6 rounded border border-slate-800">
+<table class="w-full text-xs">
+  <thead class="text-[10px] uppercase tracking-wide text-slate-500 bg-slate-900">
+    <tr>
+      <th class="text-left px-2 py-1">Session</th>
+      <th class="text-left px-2 py-1">Status</th>
+      <th class="text-right px-2 py-1">Download</th>
+      <th class="text-left px-2 py-1">Downloaded</th>
+      <th class="text-right px-2 py-1">Contract-days</th>
+      <th class="text-right px-2 py-1">Parquet</th>
+      <th class="text-left px-2 py-1">Converted</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% set badge = {'converted': 'bg-emerald-900/50 text-emerald-300', 'pending': 'bg-sky-900/40 text-sky-300',
+                    'failed': 'bg-rose-900/50 text-rose-300', 'missing': 'bg-amber-900/40 text-amber-200'} %}
+    {% set label = {'converted': 'in Parquet', 'pending': 'to convert', 'failed': 'cannot convert', 'missing': 'not downloaded'} %}
+    {% for r in oh.recent %}
+    <tr class="border-t border-slate-800">
+      <td class="px-2 py-1 font-medium text-slate-200 tabular-nums">{{ r.day }}</td>
+      <td class="px-2 py-1"><span class="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium {{ badge[r.state] }}">{{ label[r.state] }}</span></td>
+      <td class="px-2 py-1 text-right tabular-nums text-slate-400">{{ r.gz or '-' }}</td>
+      <td class="px-2 py-1 text-slate-500">{{ r.dl or '-' }}</td>
+      <td class="px-2 py-1 text-right tabular-nums text-slate-400">{{ '{:,}'.format(r.rows) if r.rows is not none else '-' }}</td>
+      <td class="px-2 py-1 text-right tabular-nums text-slate-400">{{ r.pqs or '-' }}</td>
+      <td class="px-2 py-1 text-slate-500">{{ r.cv or '-' }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7" class="px-2 py-3 text-slate-500">No trading days yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+
+{% if dl.missing %}
+<h3 class="text-sm font-medium text-slate-200 mb-1">Not downloaded <span class="text-xs font-normal text-slate-500">({{ dl.n_missing }}{% if dl.n_missing > dl.missing|length %}, newest {{ dl.missing|length }} shown{% endif %})</span></h3>
+<p class="text-xs text-slate-400 mb-1">Trading days Massive should have a file for that are not on Hermes yet. The newest one is usually just not published yet; older ones are downloaded on the collector's next pass (or Massive has no file for them).</p>
+<div class="flex flex-wrap gap-1.5 mb-6">
+  {% for d in dl.missing %}<span class="rounded bg-slate-800 text-amber-200 px-2 py-0.5 text-[11px] tabular-nums">{{ d }}</span>{% endfor %}
+</div>
+{% endif %}
+
+<p class="text-[11px] text-slate-600">Day files: {{ oh.flat_root }} &middot; Parquet: {{ oh.root }} (one file per trading day, Parquet format {{ oh.s.format }}).</p>

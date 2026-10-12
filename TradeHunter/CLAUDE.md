@@ -672,7 +672,16 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
   `TST_MASSIVE_S3_KEY_ID` / `TST_MASSIVE_S3_SECRET` in `app\.env` on Hermes (never in the repo or
   a chat), boto3 in requirements, files kept in `dashboard_tst\state\flatfiles\` (design §13,
   DEPLOY.md H "IV history from Massive's daily files"). Massive itself has no IV Rank / IV
-  Percentile / HV - TradeHunter computes them.
+  Percentile / HV - TradeHunter computes them. **v4.139 (2026-10-13): the CONTRACT HISTORY** - the
+  collector's "parquet" lane converts every day file into Parquet (`app/services/opt_history.py`,
+  one file per session in `TST_OPTION_HISTORY_DIR`, default `MarketData\option_history` beside
+  `TST_PRICE_HISTORY_DIR`; pyarrow in requirements) = queryable history of every contract (stored
+  history -> Parquet per the carve-out; the live screener never reads it). `/options` gained two
+  tabs: **Volatility surface** (one underlying, strikes down x expiries across, IV per cell; latest
+  pass = Massive's IV, a past day = IV solved from closes; user ask: financetrainingcourse.com's
+  vol-surface data set) and **Contract history** (one contract's daily bars + IV). **Settings ->
+  Data Ingest -> Option History** shows the download, the IV filing and the conversion (design
+  §14, DEPLOY.md H "Contract history as Parquet").
 - **Options — the v4.135 reset (history):** the v2 page was deleted and its IBKR-era rows purged. The
   user: *"delete everything except the massive data"*: `/options` rendered an empty page (rebuilt
   as the screener in v4.136); the v2 screener (`opt_rules`, `opt_screen`, `payoff`, `opt_legs`) and every `_opt_*`

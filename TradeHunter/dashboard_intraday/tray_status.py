@@ -985,7 +985,9 @@ def get_screener_collector_status(path=None, now=None, log_path=None) -> dict:
     progress (percent + time left), the last finished pass, universe size, stock days and
     IV history to go, the IV history built from Massive's daily option files (v4.138:
     "IV files 187/252 days, about 6 min" - waiting for stock prices / retrying / off with
-    its reason), heartbeat age - one line + a tooltip fragment, and the collector's
+    its reason), the contract history those files are converted into (v4.139: "Parquet
+    120/497 days, about 6 min" while it converts, "Parquet 497/497 days" once done),
+    heartbeat age - one line + a tooltip fragment, and the collector's
     own sentence (``detail``: what it is doing, or the whole error / stop reason, cut to
     220 characters) for the second line of the Show Status window.
 
@@ -1008,7 +1010,10 @@ def get_screener_collector_status(path=None, now=None, log_path=None) -> dict:
     (``flat_kind`` auth / plan, "is paused"), or failing again and again for another reason
     (network / http / missing / a bug, "keeps failing" - the REST reads took over); or
     ``flat_state`` off WITH a ``flat_error``: the keys are set but the lane cannot run on
-    this PC (boto3, the clock, the bucket, the disk - "is not running"); tip "Scr WARN");
+    this PC (boto3, the clock, the bucket, the disk - "is not running"); the Parquet
+    conversion failing (``progress.pq_state`` error - the folder, the disk, pyarrow:
+    "Contract history (Parquet) is not being updated") or off WITH a ``pq_error`` (pyarrow
+    missing - "is not running"); tip "Scr WARN");
     grey = absent. The day-file lane off WITHOUT a reason (no keys) stays green and silent.
     Returns {level: ok|warn|absent, color: green|amber|grey, state, line, tip, detail,
              reason, age_sec, pass_id, last_pass_et, last_pass_id, last_pass_contracts,
@@ -1165,6 +1170,19 @@ def get_screener_collector_status(path=None, now=None, log_path=None) -> dict:
         parts.append("IV files off")              # (the WARN line carries the whole reason)
     elif f_state == "error":
         parts.append("IV files paused")
+    # the contract history: the day files converted to Parquet (v4.139, the collector's parquet lane)
+    q_state = str(prog.get("pq_state") or "").strip().lower()
+    q_done, q_total = _n(prog.get("pq_days_done")), _n(prog.get("pq_days_total"))
+    q_err = _text(prog.get("pq_error"))
+    if q_state in ("building", "ready") and q_total:
+        seg = f"Parquet {q_done or 0:,}/{q_total:,} days"
+        if q_state == "building" and _dur(prog.get("pq_eta_s")):
+            seg += f", about {_dur(prog.get('pq_eta_s'))}"
+        parts.append(seg)
+    elif q_state == "error":
+        parts.append("Parquet paused")
+    elif q_state == "off" and q_err:
+        parts.append("Parquet off")
     if api_ok is False:
         parts.append("Massive failing")
     parts.append(f"hb {_age_text(age)} ago")
@@ -1188,6 +1206,11 @@ def get_screener_collector_status(path=None, now=None, log_path=None) -> dict:
                         + (f_err or f"the daily-file job failed ({f_kind})"))
         elif f_state == "off" and f_err:
             warn_why = "IV history from Massive's daily files is not running: " + f_err
+        elif q_state == "error":
+            warn_why = ("Contract history (Parquet) is not being updated: "
+                        + (q_err or "converting the daily option files failed"))
+        elif q_state == "off" and q_err:
+            warn_why = "Contract history (Parquet) is not running: " + q_err
 
     if age is None or age > OPTIONS_SCREENER_STALE_SEC:
         if raw == "error":

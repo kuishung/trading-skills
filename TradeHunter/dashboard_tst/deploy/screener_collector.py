@@ -53,6 +53,10 @@ Environment (app\.env; only the key is required):
                                 without them the per-stock REST reads build it, as before
     TST_MASSIVE_S3_ENDPOINT     default https://files.massive.com
     TST_MASSIVE_S3_BUCKET       default flatfiles
+    TST_OPTION_HISTORY_DIR      where the day files are converted to Parquet - the contract
+                                history (v4.139, the "parquet" lane, needs pyarrow); default
+                                option_history beside TST_PRICE_HISTORY_DIR, else
+                                state\option_history
 
 --flat-iv (v4.138) builds / refreshes the IV history from Massive's daily option files now:
 the days Massive re-published, every session of the last 252 whose stock closes are on file

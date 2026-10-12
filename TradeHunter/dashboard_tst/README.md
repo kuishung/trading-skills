@@ -107,6 +107,13 @@ from this dashboard.
   - `app/services/flat_files.py` + `scr_flativ.py` (v4.138) — Massive Flat Files: the options
     day files (S3, kept under `state\flatfiles\`) and the per-day IV30 of every underlying
     worked out from them; the collector's "flat IV" lane files them as the IV history.
+  - `app/services/opt_history.py` (v4.139) — the contract history: every day file as a Parquet
+    file (one per session, in `TST_OPTION_HISTORY_DIR` / `MarketData\option_history`), written by
+    the collector's "parquet" lane; reads one chain on a day or one contract's life.
+    `vol_surface.py` + `contract_view.py` — the Options page's Volatility surface and Contract
+    history tabs (`/options/api/surface`, `/options/api/history/*`). `option_history_view.py` +
+    `templates/_option_history.html` — Settings -> Data Ingest -> Option History
+    (`/finviz/option-history`): the download, the IV filing and the conversion.
   - `app/services/scr_collector.py` + `scr_store.py` — the Hermes market collector (universe
     from Massive's contract list daily, a market pass every 30 min in the session + one after
     the close, grouped daily stock bars, technicals, identity, earnings, IV history) and its
@@ -122,7 +129,8 @@ from this dashboard.
     Options data; it stays for the legacy hidden pages (see `bridge/README.md`).
   - Tests: `test_screener_engine.py`, `test_screener_strategies.py`, `test_screener_frame.py`,
     `test_scr_store.py`, `test_scr_collector.py`, `test_screener_cli.py`, `test_clock_closures.py`,
-    `test_flat_files.py`, `test_scr_flativ.py`, `test_options_page.py`, `test_massive.py`, `test_opt_massive.py`,
+    `test_flat_files.py`, `test_scr_flativ.py`, `test_opt_history.py`, `test_vol_surface.py`,
+    `test_options_page.py`, `test_massive.py`, `test_opt_massive.py`,
     `test_opt_collector.py`, `test_opt_store.py`, `test_option_store.py`, `test_connector.py` +
     `test_th_ibkr.py` (the bridge).
   - **Removed in v4.135:** the whole v2 page and its screener — `services/{opt_rules,
@@ -196,6 +204,63 @@ surface takes shape.
 > `__version__` — that constant is the version shown on the login page / nav / `/status`
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
+
+### 2026-10-13 - v4.139: the contract history in Parquet, the Option History settings tab, and the volatility surface
+
+The user: *"the flat file now is downloaded but not ingested as a data for live queries?"* - right:
+v4.138 boiled each of Massive's ~500 options day files down to one IV30 per stock, and every
+contract's own daily bar stayed inside the gzip files. Then: *"ok i need that contract history
+queryable and in the Settings, I need to add and new tab to see how update the option flatfile data,
+the download and the also the conversion to parquet file"*, and *"I want to build a volatility
+surface ... when a underlying asset is selected, it will show the volatility table where y-axis will
+show the strikes and the x-axis will show the maturities"* (financetrainingcourse.com, "Creating the
+volatility surface data set using implied volatilities": one date, one underlying, every strike x
+maturity, each cell that option's implied vol).
+
+- **`app/services/opt_history.py`** - the contract history: each day file -> one Parquet file
+  (`<root>/day/YYYY/YYYY-MM-DD.parquet`: on, root, expiry, right, strike, open / high / low / close,
+  volume, trades; sorted by underlying, 16k-row groups with statistics, zstd; ~1 s a day), a
+  manifest, what is pending (new, re-published by Massive, an older format), and the reads: one
+  underlying's chain on a day, one contract's whole life. The folder: `TST_OPTION_HISTORY_DIR`,
+  else `option_history` beside `TST_PRICE_HISTORY_DIR` (`C:\HermesSync\MarketData\option_history`
+  on Hermes - Resilio carries it to the laptop for backtests), else `state\option_history`.
+- **`scr_collector`** - a "parquet" lane on its own thread (no Massive request, no key): every day
+  file without a current Parquet file is converted, newest first; a new file within a minute of its
+  download; a damaged file fails alone (tried again hourly, or as soon as it changes); pyarrow
+  missing or a folder that cannot be written is reported (`progress.pq_*`, the page, the tray).
+- **Settings -> Data Ingest -> Option History** (`option_history_view.py`, `_option_history.html`,
+  `GET /finviz/option-history`; admin-only like the page): 1 the download (days on Hermes of the
+  window, size, the last file, the next file and when it is due in ET and MYT, missing days, the
+  lane's error), 2 the IV Rank history filed from the files, 3 the conversion (days, contract-days,
+  size, time left, failures, the folder), a month table and the latest days. Refreshes every 30 s
+  while it is open.
+- **Options page -> Volatility surface** (`vol_surface.py`, `GET /options/api/surface`): pick an
+  underlying and a date - the latest market pass (Massive's own IV per contract) or any day of the
+  contract history (the IV solved from each contract's close against the stock's unadjusted close,
+  the IV history's own solver) - and see the strikes down the side, the expiries across (days left,
+  M = monthly), an ATM row, the price line and a colour scale. Options: out of the money (default:
+  puts below the price, calls above) / calls / puts / their average; strikes within 10-50 % or all;
+  expiries up to 30 days - 2 years or all; monthly only. An empty cell stays empty (nothing
+  interpolated). A click on a cell opens that contract's history.
+- **Options page -> Contract history** (`contract_view.py`, `GET /options/api/history/*`): pick a
+  contract from the chain that traded on a day; its open / high / low / close, volume, trades, the
+  stock's close and the IV for every day it traded, and a CSV download.
+- **Tray** - the screener line shows "Parquet 120/497 days, about 6 min" while converting and an
+  amber WARN when the conversion fails or pyarrow is missing (`dashboard_intraday/README.md`).
+- `app/requirements.txt` adds **pyarrow**; `.env.example` documents `TST_OPTION_HISTORY_DIR`.
+- **Review (an independent Sonnet pass), all fixed:** day files that kept failing left the lane
+  "ready" (green, "0 of 497 converted") - the state now comes from the facts, and failing days make
+  it `error` with the newest one's reason (the tab marks them "cannot convert"); a disk / folder
+  problem no longer marks the newest day as failed for an hour; an unexpected pyarrow error fails
+  only its day; a fresh copy of a failed day (same size and etag) is tried at once; a Parquet file in
+  use on Windows fails only that day (10 min); one contract's read (~1 s over 500 files) is cached
+  until the next day is converted.
+- **Tested: 714 pass** (`py -m pytest tests -q -p no:warnings`): new `test_opt_history.py` (15) and
+  `test_vol_surface.py` (6 - the grid's rules, and a round trip: closes priced at 30 % come back as
+  30 %), plus the parquet lane (incl. failing days), the tray line in `test_scr_collector.py` and
+  the page, the API and the settings tab in `test_options_page.py`. Checked in the browser on a
+  seeded dev server (light, dark, phone width); that check found and fixed a cell click that left
+  the contract pickers empty.
 
 ### 2026-10-12 - v4.138: IV Rank / IV Percentile for the whole market from Massive's daily files - 2 years in under an hour
 
