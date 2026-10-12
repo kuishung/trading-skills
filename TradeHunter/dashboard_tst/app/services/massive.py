@@ -77,6 +77,7 @@ DEFAULT_BASE_URL = "https://api.massive.com"
 ENV_KEY = "TST_MASSIVE_API_KEY"
 ENV_BASE = "TST_MASSIVE_BASE_URL"
 ENV_QUOTES = "TST_MASSIVE_QUOTES"
+_S3_SECRET_ENVS = ("TST_MASSIVE_S3_SECRET", "TST_MASSIVE_S3_KEY_ID")   # masked by _scrub as well
 
 SNAPSHOT_LIMIT = 250          # the chain snapshot's largest page
 AGGS_LIMIT = 50000            # daily bars: two years fit one page many times over
@@ -263,11 +264,17 @@ def ts_to_utc(v) -> _dt.datetime | None:
 
 
 def _scrub(text, key: str | None = None) -> str:
-    """Text safe to show or log: the key (when known) and anything that looks like an
-    ``apiKey=`` parameter or a Bearer token are masked; capped at 300 characters."""
+    """Text safe to show or log: the key (when known), the Flat Files secret and key id
+    (``TST_MASSIVE_S3_SECRET`` / ``TST_MASSIVE_S3_KEY_ID`` from the environment, v4.138)
+    and anything that looks like an ``apiKey=`` parameter or a Bearer token are masked;
+    capped at 300 characters."""
     s = str(text or "")
     if key:
         s = s.replace(key, "***")
+    for env in _S3_SECRET_ENVS:   # the Flat Files pair (flat_files.py, v4.138) - masked everywhere too
+        v = (os.environ.get(env) or "").strip()
+        if len(v) >= 4:
+            s = s.replace(v, "***")
     s = re.sub(r"(?i)(api_?key=)[^&\s\"']+", r"\1***", s)
     s = re.sub(r"(?i)(bearer\s+)[A-Za-z0-9._\-]+", r"\1***", s)
     return s[:300]

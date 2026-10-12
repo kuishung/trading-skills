@@ -667,7 +667,12 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
   both collectors hold a single-instance lock (`state\*_collector.lock`) - a by-hand run must
   Disable + End the task first (DEPLOY.md H "By hand"); **after a pull that changes
   `dashboard_intraday\tray_status.py`, restart the `IntradayBot-Tray` task too** (commands in
-  DEPLOY.md H).
+  DEPLOY.md H). **v4.138 (2026-10-12): IV Rank / IV Percentile are built from Massive FLAT FILES**
+  (S3 options day files, in Options Starter; ~2 years in under an hour) - a SEPARATE key pair
+  `TST_MASSIVE_S3_KEY_ID` / `TST_MASSIVE_S3_SECRET` in `app\.env` on Hermes (never in the repo or
+  a chat), boto3 in requirements, files kept in `dashboard_tst\state\flatfiles\` (design §13,
+  DEPLOY.md H "IV history from Massive's daily files"). Massive itself has no IV Rank / IV
+  Percentile / HV - TradeHunter computes them.
 - **Options — the v4.135 reset (history):** the v2 page was deleted and its IBKR-era rows purged. The
   user: *"delete everything except the massive data"*: `/options` rendered an empty page (rebuilt
   as the screener in v4.136); the v2 screener (`opt_rules`, `opt_screen`, `payoff`, `opt_legs`) and every `_opt_*`

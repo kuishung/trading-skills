@@ -365,6 +365,29 @@ hourly once the newest 260 sessions are in; the IV history of the whole market (
 option-bar requests per underlying) takes ~12-20 h - IV rank reads "-" for an underlying until its
 history is in. The Options page's data line and the tray show all of it, with time left.
 
+### IV history from Massive's daily files (v4.138)
+
+IV Rank and IV Percentile need each underlying's daily 30-day IV for the past year; Massive does
+not store it. With the **Flat Files** key pair set, the collector builds it from Massive's options
+day files (one file per trading day, the whole market, ~4 MB) - **about 2 years (~500 files,
+~2 GB) in roughly 30-60 minutes**, newest first, then one file a day (out ~11:00 ET the next day;
+taken from 11:15 ET). The files stay in `state\flatfiles\` (not in git): Starter serves a rolling
+2 years, so a day once downloaded is kept for good. Without the keys the collector falls back to
+the slow per-stock method (12-20 h for the market).
+
+1. Massive website: Dashboard -> **Keys** -> the **Flat Files / S3** section -> Access Key ID and
+   Secret Access Key (a separate pair from the API key).
+2. On Hermes, `notepad app\.env` and add (no quotes, never anywhere else):
+   `TST_MASSIVE_S3_KEY_ID=...` and `TST_MASSIVE_S3_SECRET=...`
+3. `.\.venv\Scripts\python.exe -m pip install -r app\requirements.txt` (boto3), then restart the
+   screener collector (`setup_screener_task.ps1 -StartNow`). A key added or changed later is
+   re-read within 5 min.
+
+Watch it on the Options page ("IV rank: building from daily files (187 / 500 days)") and on the
+tray ("IV files 187/500 days, about 6 min"). It starts once the stock prices of those days are on
+file (the stock lane, section H "The first day"). A by-hand one-off: the "By hand" sequence below
+with `--flat-iv` in place of `--eod-now`.
+
 ### After a pull
 
 Re-run the setup script with `-StartNow` after any pull that changes

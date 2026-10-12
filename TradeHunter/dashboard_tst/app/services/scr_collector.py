@@ -83,13 +83,41 @@ only starts jobs and files their results.
    file: underlyings without it (not the indices - there are no index closes to price
    against), most option volume first, up to ``WORKERS`` at a time ->
    ``opt_massive.iv30_history`` -> daily IV30 -> ``recompute_iv``; done at >= 20 points,
-   else retried after 30 min doubling to 24 h (``scr_store.mark_history``).
+   else retried after 30 min doubling to 24 h (``scr_store.mark_history``). While the
+   flat-file lane (4b) works, this REST lane takes only what the files could not fill:
+   symbols with no option root in them, and symbols the files were read for that are
+   still under 20 points once no day of the window is left to file.
+4b. **IV history from Massive's day files** (v4.138; ``flat_files`` + ``scr_flativ``) -
+   the "flat" thread, when ``TST_MASSIVE_S3_KEY_ID`` / ``TST_MASSIVE_S3_SECRET`` are set:
+   every session Massive still serves (~2 years, ``FLAT_SESSIONS`` None) whose unadjusted closes are on file
+   and that has no flat filing yet, newest first: ``FlatFiles.ensure(day)`` ->
+   ``scr_flativ.day_iv30`` (every stock of the universe at once) -> ``scr_store.file_iv_day``
+   (fills only days without an IV30 or with a history one - a ``live`` EOD reading wins);
+   underlyings not done yet whose files were never read in this process (new members,
+   or after a restart) get the stored files read again for them; then ``recompute_iv_many``
+   and ``mark_history_many`` (done at >= 20 points) - every 50 days during a long build
+   and at its end. A day's file is out about 11:00 ET the next day: from 11:15 ET the
+   previous session is added (a file not there yet is asked for again hourly). Weekly
+   (and once after a start) ``FlatFiles.changed`` finds the days Massive re-published and
+   they are filed again. Errors: ``config`` -> the lane is off, looked at again every 5
+   min (no keys: silently; keys set but something else missing - boto3, numpy, the PC
+   clock, the endpoint / bucket, the disk: a warning with the reason, kept until a job
+   works); ``auth`` / ``plan`` -> a warning (the page and the tray turn amber), tried
+   again every 30 min with ``app/.env`` re-read, and the REST lane takes everything
+   meanwhile; ``network`` -> 60 s doubling to 30 min, anything else (``http``,
+   ``missing``, a bug) -> every 5 min; after ``FLAT_FAIL_GIVEUP`` (5) failed jobs in a row
+   of any of these the lane is in ``error`` (a warning, ``flat_kind`` says which) and the
+   REST lane takes everything until a job works again. One day file that cannot be read
+   fails only that day: a damaged copy is set aside (``FlatFiles.discard``) and the day
+   asked for again in 1 h.
 5. **Status** - ``scr_status`` (row 1) and ``state/screener_collector.json`` (the Hermes
    tray reads it) at the start and the end of every tick: the state, a plain-English
    ``detail`` (jobs running at once are joined with " · "), the active error's kind and
    next try, a non-pausing ``warn``, ``universe_done``, ``earnings_on`` and ``progress``
    (``PROGRESS_KEYS``: the walk's pages, the pass's weighted percent and ETA, stock days
-   to go and their ETA, the IV history left / waiting / ETA).
+   to go and their ETA, the IV history left / waiting / ETA, and the day-file lane's
+   ``flat_days_done`` / ``flat_days_total`` / ``flat_eta_s`` / ``flat_state`` (``FLAT_STATES``)
+   / ``flat_error`` / ``flat_kind``).
 
 Errors: ``config`` / ``auth`` -> everything paused, looked at again every 5 min - ``app/.env``
 is re-read then (``TST_MASSIVE_API_KEY`` from the file replaces the one in the process: a
@@ -103,6 +131,7 @@ from __future__ import annotations
 import collections
 import concurrent.futures as cf
 import datetime as _dt
+import gzip
 import json
 import logging
 import math
@@ -110,9 +139,11 @@ import os
 import re
 import threading
 import time
+import zlib
 from pathlib import Path
 
-from . import calendars, clock, massive, opt_massive, option_metrics, scr_store
+from . import calendars, clock, flat_files, massive, opt_massive, option_metrics, scr_store
+from .flat_files import FlatFilesError                  # (scr_flativ needs numpy: imported by the lane)
 from .massive import MassiveError
 
 COLLECTOR_VERSION = "1.1"
@@ -177,6 +208,25 @@ NETWORK_RETRY_MAX_S = 300.0      # ... doubling to 5 min
 STATE_LOG_EVERY_S = 1800.0       # a persisting error is logged when it begins, then every 30 min
 FAIL_LOG_PER_PASS = 20           # per-symbol failures logged at WARNING per pass (then a summary)
 DETAIL_JOIN = " · "              # jobs running at once in the detail
+FLAT_SESSIONS = None             # the day-file IV history: None = every session Massive still serves (~2 years,
+                                 # ``plan_start``; the user, 2026-10-12: "i need all the 2 years data backfill");
+                                 # an int = the last N sessions. IV rank / percentile still read the last 252.
+FLAT_READY_AT = _dt.time(11, 15)  # a day's options file is out ~11:00 ET the next day: asked for from 11:15 ET
+FLAT_NOT_YET_S = 3600.0          # a day file not published yet: asked for again in 1 h
+FLAT_CHECK_S = 7 * 86400.0       # Massive re-publishes old days now and then: a size / etag check weekly
+FLAT_RESCAN_S = 3600.0           # the lane looks for new work (new underlyings, a late file) at least hourly
+FLAT_CHECKPOINT_DAYS = 50        # a long build files the IV figures every 50 days (and at its end) ...
+FLAT_SETTLE_EVERY_S = 900.0      # ... and while the stock lane still delivers days, at most every 15 min
+FLAT_CONFIG_RETRY_S = 300.0      # the lane off (no keys, boto3 / numpy missing): looked at again every 5 min
+FLAT_REFUSED_RETRY_S = 1800.0    # the keys / the plan refused: tried again every 30 min (app/.env re-read)
+FLAT_NET_RETRY_S = 60.0          # Massive Flat Files unreachable: 60 s ...
+FLAT_NET_RETRY_MAX_S = 1800.0    # ... doubling to 30 min
+FLAT_NET_GIVEUP = 5              # after 5 network failures in a row the REST lane takes every symbol
+FLAT_FAIL_GIVEUP = 5             # ... and after 5 failed jobs in a row of any kind but config / auth / plan
+#                                  (network, http, missing, a bug): the lane is in "error" (a warning)
+FLAT_ETA_MIN_DAYS = 3            # the build's time left once 3 days are filed
+FLAT_LOG_EVERY = 10              # a progress line every 10 days filed
+FLAT_STATES = ("off", "waiting", "building", "ready", "error", "retry")
 
 NO_KEY_TEXT = "%s is not set on this PC" % massive.ENV_KEY
 UNIVERSE_EMPTY_TEXT = "Massive returned an empty options list (/v3/reference/options/contracts)"
@@ -192,7 +242,8 @@ _RETRYABLE = ("http", "rate", "error")    # a pass gone bad tries these once mor
 _BG_OP = {"universe": "universe", "identity": "stocks", "stocks": "stocks", "fill": "stocks"}
 PROGRESS_KEYS = ("universe_pages", "universe_symbols", "universe_started", "pass_kind", "pass_session",
                  "pass_pct", "pass_eta_s", "pass_paused_at", "stock_days_pending", "stock_eta_s",
-                 "history_left", "history_waiting", "history_eta_s")
+                 "history_left", "history_waiting", "history_eta_s",
+                 "flat_days_done", "flat_days_total", "flat_eta_s", "flat_state", "flat_error", "flat_kind")
 
 STATE_PATH = Path(__file__).resolve().parents[2] / "state" / "screener_collector.json"
 APP_ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
@@ -233,11 +284,16 @@ def env_max_dte() -> int:
     return _env_num("TST_SCREENER_MAX_DTE", MAX_DTE_DEFAULT, MAX_DTE_LO, MAX_DTE_HI)
 
 
+_FILE_WINS = (massive.ENV_KEY, flat_files.ENV_KEY_ID, flat_files.ENV_SECRET, flat_files.ENV_ENDPOINT,
+              flat_files.ENV_BUCKET)
+
+
 def _load_env() -> None:
     """Re-read ``app/.env``: every variable not already set is loaded, and the Massive key
-    is taken FROM THE FILE whatever the process holds - a key added or corrected there is
-    picked up without a restart; a blank ``TST_MASSIVE_API_KEY=`` removes it. A missing
-    file (or python-dotenv) leaves the environment as it is."""
+    - and the Flat Files pair, endpoint and bucket (v4.138) - are taken FROM THE FILE
+    whatever the process holds: a key (or a Flat Files endpoint / bucket) added or
+    corrected there is picked up without a restart; a blank ``TST_MASSIVE_API_KEY=``
+    removes it. A missing file (or python-dotenv) leaves the environment as it is."""
     try:
         from dotenv import dotenv_values, load_dotenv  # noqa: PLC0415
 
@@ -245,12 +301,13 @@ def _load_env() -> None:
         if not Path(APP_ENV_PATH).is_file():
             return
         vals = dotenv_values(APP_ENV_PATH)
-        if massive.ENV_KEY in vals:
-            v = str(vals.get(massive.ENV_KEY) or "").strip()
-            if v:
-                os.environ[massive.ENV_KEY] = v
-            else:
-                os.environ.pop(massive.ENV_KEY, None)
+        for name in _FILE_WINS:
+            if name in vals:
+                v = str(vals.get(name) or "").strip()
+                if v:
+                    os.environ[name] = v
+                else:
+                    os.environ.pop(name, None)
     except Exception:  # noqa: BLE001 - python-dotenv or the file unreadable: the environment as is
         pass
 
@@ -263,6 +320,52 @@ def default_client(workers: int | None = None, max_rps: float | None = None):
     _load_env()
     w = int(workers or env_workers())
     return massive.Client(max_rps=float(max_rps or env_max_rps()), concurrency=w)
+
+
+def default_flat_files(log=None):
+    """The Massive Flat Files store (``flat_files.FlatFiles``, files under
+    ``state/flatfiles``) when ``TST_MASSIVE_S3_KEY_ID`` and ``TST_MASSIVE_S3_SECRET`` are
+    set - ``app/.env`` is re-read first (``_load_env``), so keys added there are used at
+    the lane's next 5-minute look - else None (the lane is off). Builds no S3 client yet:
+    that happens at the first request."""
+    _load_env()
+    if not flat_files.configured():
+        return None
+    return flat_files.FlatFiles(log=log)
+
+
+def flat_newest_day(now: _dt.datetime) -> _dt.date:
+    """The newest session whose options day file should be out at ``now``: Massive
+    publishes a day's file about 11:00 ET the next (calendar) day, so from 11:15 ET it is
+    the last trading day before today, before 11:15 ET the last one before yesterday."""
+    et = clock.et_now(now)
+    d = et.date()
+    if et.time() < FLAT_READY_AT:
+        d -= _dt.timedelta(days=1)
+    return clock.prev_trading_day(d)
+
+
+def flat_days(now: _dt.datetime, n: int | None = None) -> list[str]:
+    """The sessions up to ``flat_newest_day(now)``, oldest first - the window the day-file
+    lane fills: the last ``n`` sessions, or with ``n`` None (``FLAT_SESSIONS``) every
+    session from ``plan_start(now)`` - the ~2 years Massive serves (a day older than the
+    options plan is not listed and is skipped by the lane)."""
+    if n is None:
+        n = FLAT_SESSIONS
+    d = flat_newest_day(now)
+    out = [d]
+    if n is None:
+        start = plan_start(now)
+        while True:
+            d = clock.prev_trading_day(d)
+            if d < start:
+                break
+            out.append(d)
+    else:
+        for _ in range(max(1, int(n)) - 1):
+            d = clock.prev_trading_day(d)
+            out.append(d)
+    return [x.isoformat() for x in reversed(out)]
 
 
 # ────────────────────────────────── pure helpers ──────────────────────────────────
@@ -573,12 +676,16 @@ class Collector:
     ``clock()`` -> now (naive = UTC); ``sleep(s)``; ``executor_factory(n)`` -> an executor
     (default a thread pool; ``InlineExecutor`` runs jobs at once) and
     ``universe_executor_factory(n)`` for the universe thread (default the same);
-    ``earnings_fetch(day)`` -> Nasdaq-shaped rows (default ``calendars.earnings_for``)."""
+    ``earnings_fetch(day)`` -> Nasdaq-shaped rows (default ``calendars.earnings_for``);
+    ``flat_store`` (a ``flat_files.FlatFiles``, e.g. on a fake S3 client) or
+    ``flat_factory()`` -> one, or None when the Flat Files keys are not set (default
+    ``default_flat_files``); ``flat_sessions`` (the day-file window in sessions; default None = ~2 years)."""
 
     def __init__(self, session_factory=None, *, client=None, client_factory=None, clock=None,
                  sleep=None, log=None, state_path=None, executor_factory=None, earnings_fetch=None,
                  tick_s: float = TICK_S, cycle_min=None, workers=None, max_rps=None, max_dte=None,
-                 stock_years: float | None = None, universe_executor_factory=None):
+                 stock_years: float | None = None, universe_executor_factory=None,
+                 flat_store=None, flat_factory=None, flat_sessions: int | None = None):
         if session_factory is None:
             from .. import screener_db  # noqa: PLC0415
 
@@ -676,6 +783,37 @@ class Collector:
         self._tech_retry_at: _dt.datetime | None = None
         self._fill: dict[str, str] = {}                 # symbol -> "new" | "split"
         self._fill_tried: dict[str, _dt.datetime] = {}
+        # the day-file IV lane (4b)
+        self._flat = flat_store                          # the FlatFiles store (None: not set up / off)
+        self._flat_own = False                           # built by the factory (dropped on a key error)
+        if flat_factory is None and flat_store is None:
+            flat_factory = lambda: default_flat_files(self.log)  # noqa: E731
+        self._flat_factory = flat_factory
+        self.flat_sessions = int(flat_sessions) if flat_sessions else FLAT_SESSIONS
+        self._flatpool = None
+        self._flat_future: cf.Future | None = None
+        self._flat_state = "waiting" if flat_store is not None else "off"
+        self._flat_error: str | None = None              # plain words: why the lane is off / refused / retrying
+        self._flat_kind: str | None = None               # the FlatFilesError kind behind it
+        self._flat_retry_at: _dt.datetime | None = None  # the lane's own back-off
+        self._flat_net_fails = 0                         # network failures in a row (the back-off)
+        self._flat_fails = 0                             # failed jobs in a row (not config / auth / plan)
+        self._flat_lock = threading.Lock()               # _flat_days: the flat thread adds, the tick reads
+        self._flat_days: set[str] = set()                # sessions with a flat filing
+        self._flat_loaded = False                        # _flat_days read from the DB (once a process)
+        self._flat_skip: set[str] = set()                # sessions with no file on Massive (none listed / refused)
+        self._flat_wait: dict[str, _dt.datetime] = {}    # session -> asked for again then (not published yet)
+        self._flat_seen: set[str] = set()                # not-done symbols every filed day was read for
+        self._flat_tried: set[str] = set()               # ... once nothing is left to file: the REST lane's
+        self._flat_mapped: set[str] | None = None        # symbols with an option root in the files
+        self._flat_unmapped: set[str] = set()            # universe symbols the files cannot have
+        self._flat_window: list[str] = []
+        self._flat_check_at: _dt.datetime | None = None  # the last changed() check
+        self._flat_job_at: _dt.datetime | None = None    # the last job's end
+        self._flat_prog: dict | None = None              # the running job's progress (the flat thread sets it)
+        self._flat_touched: set[str] = set()             # (flat thread) readings filed, IV figures not redone yet
+        self._flat_settled_at: float | None = None       # (flat thread) the last recompute, monotonic
+        self._flat_logged: dict = {}                     # the lane's log throttle: slot -> (key, when)
         self._restored = False
         self._last_beat: _dt.datetime | None = None
         self._db_warned = False
@@ -730,6 +868,11 @@ class Collector:
         if self._earnpool is None:
             self._earnpool = self._executor_factory(1)
         return self._earnpool
+
+    def _flat_lane(self):
+        if self._flatpool is None:
+            self._flatpool = self._executor_factory(1)
+        return self._flatpool
 
     # ── errors that pause work ──
 
@@ -894,6 +1037,7 @@ class Collector:
     def _busy(self) -> bool:
         return bool((self._pass is not None and self._pass.futures) or self._bg is not None
                     or self._uni_future is not None or self._earn_future is not None or self._hist)
+        # (the day-file thread never holds a Massive REST client)
 
     def _close_retired(self, *, force: bool = False) -> None:
         if not self._retired or (self._busy() and not force):
@@ -1014,6 +1158,7 @@ class Collector:
             out["history_waiting"] = self._hist_waiting
             eta = self._history_eta_s(now)
             out["history_eta_s"] = int(eta) if eta is not None else None
+        out.update(self._flat_progress(now))
         return out
 
     def _fields(self) -> dict:
@@ -1642,11 +1787,526 @@ class Collector:
         if room <= 0 or not self._allowed("history", now) or not self._recent_days_done():
             return
         busy = set(self._hist.values())
-        queue = [s for s in scr_store.history_queue(db, now=now, symbols=syms, limit=room + len(busy))
-                 if s not in busy][:room]
+        flat = self._flat_working()            # the day files fill what they can: the rest is ours
+        limit = (len(syms) + 1) if flat else room + len(busy)
+        queue = [s for s in scr_store.history_queue(db, now=now, symbols=syms, limit=limit)
+                 if s not in busy and (not flat or self._rest_may(s))][:room]
         pool = self._workers_pool()
         for sym in queue:
             self._hist[pool.submit(self._history_job, sym)] = sym
+
+    # ── IV history from Massive's day files (the "flat" thread, 4b) ──
+
+    def _flat_working(self) -> bool:
+        """Is the day-file lane set up and not refused, so the REST history lane leaves it
+        the symbols it can fill? No when it is off, refused, failed to reach Massive
+        ``FLAT_NET_GIVEUP`` times in a row, or its jobs failed ``FLAT_FAIL_GIVEUP`` times in
+        a row for any other reason (an HTTP error, a bug)."""
+        if self._flat is None or self._flat_state in ("off", "error"):
+            return False
+        return self._flat_net_fails < FLAT_NET_GIVEUP and self._flat_fails < FLAT_FAIL_GIVEUP
+
+    def _rest_may(self, sym: str) -> bool:
+        """May the REST history lane read ``sym`` while the day-file lane works? Only when
+        the files cannot have it (no option root in them, as of the lane's last symbol
+        map) or every filed day was read for it and no day of the window is left to file
+        (``_flat_tried``). A symbol newer than the map waits for the lane's next look."""
+        if self._flat_mapped is None:
+            return False                       # the lane has not read the symbol map yet
+        return sym in self._flat_tried or sym in self._flat_unmapped
+
+    def _flat_log(self, key: tuple, level: int, msg: str, *args, exc_info: bool = False) -> None:
+        """A lane message logged when it changes, then at most every 30 min. Each kind of
+        message (``key[0]``: the job's exception, the job's result, the tick ...) has its
+        own slot, so two lines about one failure do not undo each other's throttle."""
+        now = self._now()
+        slot = key[0] if key else None
+        last = self._flat_logged.get(slot)
+        if last is not None and last[0] == key and (now - last[1]).total_seconds() < STATE_LOG_EVERY_S:
+            return
+        self._flat_logged[slot] = (key, now)
+        self.log.log(level, msg, *args, exc_info=exc_info)
+
+    def _flat_drop(self) -> None:
+        """Forget a store the factory built (the next look builds a new one from a re-read
+        ``app/.env``); an injected store is kept."""
+        if self._flat_own and self._flat is not None:
+            try:
+                self._flat.reset_client()
+            except Exception:  # noqa: BLE001
+                pass
+            self._flat = None
+            self._flat_own = False
+
+    def _flat_off(self, now: _dt.datetime, kind: str | None, text: str | None) -> None:
+        """The lane is off (``config``): no keys (``text`` None - silent), or keys set but
+        something else missing (boto3, numpy, the bucket). Looked at again in 5 min; the
+        REST history lane takes every symbol meanwhile."""
+        self._flat_state, self._flat_kind = "off", kind
+        self._flat_error = text[:500] if text else None
+        self._flat_retry_at = now + _dt.timedelta(seconds=FLAT_CONFIG_RETRY_S)
+        self._flat_drop()
+        if text:
+            self._flat_log(("off", text), logging.WARNING,
+                           "IV history: Massive's daily option files are not used: %s (looked at again in %d min)",
+                           text, FLAT_CONFIG_RETRY_S // 60)
+
+    def _flat_get(self, now: _dt.datetime):
+        """The day-file store, set up from the factory when there is none (``app/.env``
+        re-read); None while the Flat Files keys are not set (the lane off, silently). A
+        lane that is off WITH a reason (keys set, but boto3 / numpy / the clock / the
+        bucket / the disk failed) stays off with that reason until a job works - only the
+        job can tell whether it is fixed, and the page and the tray must not flicker green
+        at every 5-minute look."""
+        if self._flat is not None:
+            return self._flat
+        if self._flat_factory is None:
+            return None
+        try:
+            store = self._flat_factory()
+        except Exception as exc:  # noqa: BLE001
+            self._flat_off(now, "config", "could not set up Massive Flat Files (%s)" % self._err_text(exc))
+            return None
+        if store is None:
+            self._flat_off(now, None, None)
+            return None
+        self._flat, self._flat_own = store, True
+        again = self._flat_state == "off" and bool(self._flat_error)
+        if self._flat_state == "off" and not again:
+            self._flat_state, self._flat_error, self._flat_kind = "waiting", None, None
+        # (looked at again after a setup failure: every 5 min, so only with --verbose)
+        self.log.log(logging.DEBUG if again else logging.INFO,
+                     "IV history: Massive's daily option files are set up (%s) - the IV history is built "
+                     "from them, the per-stock REST reads take only what they cannot fill",
+                     self._scrub(repr(store)))
+        return store
+
+    def _flat_window_for(self, now: _dt.datetime) -> list[str]:
+        newest = flat_newest_day(now).isoformat()
+        if not self._flat_window or self._flat_window[-1] != newest:
+            self._flat_window = flat_days(now, self.flat_sessions)
+        return self._flat_window
+
+    def _flat_restore(self, db, window: list[str]) -> None:
+        """The window's sessions that already have a flat filing (an earlier run)."""
+        st = scr_store.iv_day_status(db, window[0], window[-1])
+        days = {d for d, c in st.items() if c.get(scr_store.IV_SRC_FLAT)}
+        with self._flat_lock:
+            self._flat_days |= days
+        self._flat_loaded = True
+
+    def _flat_plan(self, now: _dt.datetime, window: list[str]) -> tuple[list[str], list[str]]:
+        """``(todo, waiting)``: the window's sessions to file now (unadjusted closes on
+        file, no flat filing, not asked for in the last hour), and those still waiting for
+        their closes (the stocks lane files them). A session outside the stocks lane's
+        days (refused, past its window) or with no file on Massive is neither."""
+        with self._flat_lock:
+            filed = set(self._flat_days)
+        todo, waiting = [], []
+        for d in window:
+            if d in filed or d in self._flat_skip:
+                continue
+            got = self._days.get(d)
+            if got is None:
+                continue
+            if not got[1]:
+                waiting.append(d)
+                continue
+            at = self._flat_wait.get(d)
+            if at is not None and now < at:
+                continue
+            todo.append(d)
+        return todo, waiting
+
+    def _flat_counts(self, window: list[str]) -> tuple[int, int]:
+        """``(days filed, days that can be)`` of the window: a session counts once its
+        closes are expected (the stocks lane's days) and Massive has a file for it."""
+        with self._flat_lock:
+            filed = set(self._flat_days)
+        total = done = 0
+        for d in window:
+            if d in self._flat_skip or (d not in self._days and d not in filed):
+                continue
+            total += 1
+            done += d in filed
+        return done, total
+
+    def _flat_eta_s(self) -> float | None:
+        pr = self._flat_prog if self._flat_future is not None else None
+        if not pr or pr.get("phase") != "build":
+            return None
+        n, left = int(pr.get("n") or 0), int(pr.get("left") or 0)
+        if left <= 0:
+            return 0.0
+        if n < FLAT_ETA_MIN_DAYS:
+            return None
+        return max(0.0, time.monotonic() - pr["t0"]) / n * left
+
+    def _flat_live(self) -> bool:
+        """Has the running job got past its file list while the lane is still marked off /
+        refused / retrying? Then the files answer again: the page and the tray show it as
+        building (the job's result settles the state)."""
+        return (self._flat_future is not None and self._flat_state in ("off", "error", "retry")
+                and (self._flat_prog or {}).get("phase") == "build")
+
+    def _flat_progress(self, now: _dt.datetime) -> dict:  # noqa: ARG002
+        state, err, kind = self._flat_state, self._flat_error, self._flat_kind
+        if self._flat_live():
+            state, err, kind = "building", None, None
+        out = {"flat_state": state, "flat_error": err, "flat_kind": kind, "flat_days_done": None,
+               "flat_days_total": None, "flat_eta_s": None}
+        if self._flat is None or not self._flat_window or not (self._days or self._flat_days):
+            return out
+        done, total = self._flat_counts(self._flat_window)
+        eta = self._flat_eta_s()
+        out.update(flat_days_done=done, flat_days_total=total, flat_eta_s=int(eta) if eta is not None else None)
+        return out
+
+    def _flat_tick(self, db, now: _dt.datetime) -> None:
+        """Start a day-file job when there is work: sessions to file, the weekly check of
+        re-published days (and the first one after a start), or the hourly look for new
+        underlyings / a late file. Never raises."""
+        if self._flat_future is not None or self._stopping.is_set():
+            return
+        if self._flat_retry_at is not None and now < self._flat_retry_at:
+            return
+        try:
+            if self._flat_get(now) is None:
+                return
+            if self._universe_done is None or not self.universe_n:
+                return                                # the symbol map needs the complete list
+            self._load_days(db, now)                  # (cached) which sessions' closes are on file
+            if not self._days:
+                return
+            window = self._flat_window_for(now)
+            if not self._flat_loaded:
+                self._flat_restore(db, window)
+            todo, waiting = self._flat_plan(now, window)
+            if not todo and not waiting:
+                self._flat_tried |= self._flat_seen   # nothing left to file: the REST lane may take the rest
+            if self._flat_state in ("waiting", "building", "ready"):     # (error / retry stay until a job works)
+                self._flat_state = "building" if todo else ("waiting" if waiting else "ready")
+            check = self._flat_check_at is None or (now - self._flat_check_at).total_seconds() >= FLAT_CHECK_S
+            hourly = self._flat_job_at is None or (now - self._flat_job_at).total_seconds() >= FLAT_RESCAN_S
+            if not (todo or check or hourly):
+                return
+            self._flat_prog = {"phase": "check" if check else "start", "t0": time.monotonic(), "n": 0,
+                               "left": len(todo), "todo": len(todo), "rescan": 0}
+            self._flat_future = self._flat_lane().submit(self._flat_wrap, list(todo), list(window), check,
+                                                         bool(waiting))
+        except Exception as exc:  # noqa: BLE001 - a DB hiccup must not stop the tick
+            self._rollback(db)
+            self._flat_log(("tick", type(exc).__name__), logging.WARNING,
+                           "IV history (day files): could not plan the next job: %s", self._err_text(exc))
+
+    def _flat_wrap(self, todo: list[str], window: list[str], check: bool, more: bool = False) -> dict:
+        """Run ``job_flat``; never raises."""
+        try:
+            return self.job_flat(todo, window, check=check, more=more)
+        except ImportError as exc:
+            return {"ok": False, "kind": "config", "checked": False,
+                    "error": "numpy is not installed on this PC - run: pip install -r app\\requirements.txt (%s)"
+                             % self._err_text(exc)}
+        except Exception as exc:  # noqa: BLE001
+            err = self._err_text(exc)
+            # (its own throttle slot: the result's line about the same failure follows)
+            self._flat_log(("job", type(exc).__name__, err), logging.ERROR, "IV history (day files): the job failed: %s",
+                           err, exc_info=True)
+            return {"ok": False, "kind": "error", "checked": False, "error": err}
+
+    def _unreadable(self, store, day: str, exc: BaseException) -> str:
+        """(the flat thread) Why one day file could not be read. A damaged copy (bad gzip
+        data, a wrong CRC, cut short) is set aside (``FlatFiles.discard`` - kept as
+        ``.bad``, never deleted) so the next try downloads a fresh one instead of reading
+        the same broken file every hour; a file this PC could not open (locked, no
+        permission) or a bug is left as it is."""
+        why = "the day file could not be read (%s)" % self._err_text(exc)
+        if not isinstance(exc, (gzip.BadGzipFile, zlib.error, EOFError)):
+            return why
+        discard = getattr(store, "discard", None)
+        if not callable(discard):
+            return why
+        try:
+            discard(day)
+        except Exception as e2:  # noqa: BLE001 - it is read again (and fails again) in 1 h
+            return why + " - could not set it aside (%s)" % self._err_text(e2)
+        return why + " - set aside, downloaded again at the next try"
+
+    def _flat_settle(self, db, touched: set, open_syms: set, start: str) -> int:
+        """The IV figures of the symbols that got readings (``touched`` is emptied), then
+        the histories now done (>= 20 points) marked. Returns how many were marked."""
+        if touched:
+            scr_store.recompute_iv_many(db, touched, now=self._now(), stop=self._stopping.is_set)
+            touched.clear()
+        self._flat_settled_at = time.monotonic()
+        if not open_syms:
+            return 0
+        counts = scr_store.iv_counts(db, open_syms, start=start)
+        done = sorted(s for s in open_syms if counts.get(s, 0) >= HISTORY_MIN_POINTS)
+        if done:
+            scr_store.mark_history_many(db, done, done=True, now=self._now())
+            open_syms.difference_update(done)
+        return len(done)
+
+    def job_flat(self, todo: list[str], window: list[str], *, check: bool = False, more: bool = False) -> dict:
+        """One day-file job (the flat thread; its own DB session): ``check`` - the days
+        Massive re-published (``FlatFiles.changed``) are filed again; then every session of
+        ``todo`` (newest first) is filed for every stock of the universe, and the window's
+        filed sessions are read again for the not-done underlyings whose files were never
+        read in this process (with >= 20 unadjusted closes in the window); every 50 days
+        and at the end the IV figures are recomputed and the histories with >= 20 points
+        marked done - except that while ``more`` days wait for their stock closes (a first
+        build follows the stocks lane a day or two at a time) the end's recompute runs at
+        most every 15 min. A Flat Files error that is not about one day (keys, plan,
+        network) stops it: what was filed stays, ``ok`` False with ``kind`` / ``error``.
+
+        Returns ``{"ok", "filed", "readings", "changed", "not_yet", "skip", "failed",
+        "mapped", "seen", "marked", "checked", "stopped"}`` (+ ``kind`` / ``error``)."""
+        from . import scr_flativ  # noqa: PLC0415 - numpy: an ImportError turns the lane off
+
+        store = self._flat
+        win = set(window)
+        todo = sorted(d for d in set(todo) if d in win)
+        out = {"ok": True, "filed": [], "readings": 0, "changed": [], "not_yet": [], "skip": [], "failed": [],
+               "mapped": None, "seen": [], "marked": 0, "checked": False, "stopped": False}
+        t0 = time.monotonic()
+        touched = self._flat_touched                 # (kept across jobs until a recompute)
+        open_syms: set[str] = set()
+        db = self._sf()
+        try:
+            try:
+                if check:
+                    with self._flat_lock:
+                        filed = sorted(d for d in self._flat_days if d in win)
+                    ch = sorted(x.isoformat() for x in store.changed(filed)) if filed else []
+                    if ch:
+                        with self._flat_lock:
+                            self._flat_days.difference_update(ch)
+                        todo = sorted(set(todo) | set(ch))
+                        self.log.info("IV history: Massive re-published the daily files of %s - filed again",
+                                      ", ".join(ch[:8]) + (" ..." if len(ch) > 8 else ""))
+                    out["changed"], out["checked"] = ch, True
+                now = self._now()
+                syms = scr_store.pass_symbols(db, now=now)
+                types = scr_store.sec_types(db, syms)
+                roots = scr_flativ.symbol_map({s: types.get(s) for s in syms})
+                mapped = set(roots.values())
+                out["mapped"], out["unmapped"] = sorted(mapped), sorted(set(syms) - mapped)
+                # not done yet - or no underlying row yet (no market pass read it so far)
+                open_syms = set(scr_store.history_not_done(db, mapped)) | (mapped - set(types))
+                cand = open_syms - self._flat_seen
+                rescan: set[str] = set()
+                if cand:
+                    raw_n = scr_store.raw_close_counts(db, cand, start=window[0], end=window[-1])
+                    rescan = {s for s in cand if raw_n.get(s, 0) >= HISTORY_MIN_POINTS}
+                with self._flat_lock:
+                    filed_now = {d for d in self._flat_days if d in win}
+                listed, refused = None, set()
+                if todo:
+                    listed = {i["day"].isoformat() for i in store.list_days(todo[0], todo[-1])}
+                    refused = set(getattr(store, "refused_months", None) or ())
+                work = [d for d in reversed(window) if d in todo or (rescan and d in filed_now)]
+                n_todo = sum(1 for d in work if d in todo)
+                recent = set(window[-2:])               # a file this new may simply not be out yet
+                prog = {"phase": "build", "t0": t0, "n": 0, "left": n_todo, "todo": n_todo, "rescan": len(rescan),
+                        "days": len(work), "i": 0}
+                self._flat_prog = dict(prog)
+                since = 0
+                for i, d in enumerate(work, 1):
+                    if self._stopping.is_set():
+                        out["stopped"] = True
+                        break
+                    full = d in todo
+                    prog["i"] = i
+                    if full and listed is not None and d not in listed:
+                        if d[:7] not in refused and d in recent:
+                            out["not_yet"].append(d)
+                        else:
+                            out["skip"].append(d)      # refused by the plan, or Massive has none
+                        prog["left"] -= 1
+                        self._flat_prog = dict(prog)
+                        continue
+                    try:
+                        path = store.ensure(d)
+                    except FlatFilesError as exc:
+                        if exc.kind == "plan":
+                            out["skip"].append(d)
+                        elif exc.kind == "http":
+                            out["failed"].append([d, self._err_text(exc)])
+                        else:
+                            raise
+                        prog["left"] -= int(full)
+                        self._flat_prog = dict(prog)
+                        continue
+                    if path is None:
+                        if full:
+                            out["not_yet"].append(d)
+                            prog["left"] -= 1
+                            self._flat_prog = dict(prog)
+                        continue
+                    scope = mapped if full else rescan
+                    closes = scr_store.day_closes_raw(db, d, scope)
+                    st: dict = {}
+                    try:
+                        vals = scr_flativ.day_iv30(path, d, closes, {r: s for r, s in roots.items() if s in scope},
+                                                   stats=st) if closes else {}
+                    except (ValueError, OSError, EOFError, zlib.error) as exc:   # that day only: again in 1 h
+                        out["failed"].append([d, self._unreadable(store, d, exc)])
+                        prog["left"] -= int(full)
+                        self._flat_prog = dict(prog)
+                        continue
+                    n = scr_store.file_iv_day(db, d, vals) if vals else 0
+                    touched.update(vals)
+                    out["readings"] += n
+                    if full:
+                        out["filed"].append(d)
+                        with self._flat_lock:
+                            self._flat_days.add(d)
+                        since += 1
+                        prog["n"] += 1
+                        prog["left"] -= 1
+                        k = len(out["filed"])
+                        lvl = logging.INFO if (k == 1 or k % FLAT_LOG_EVERY == 0 or prog["left"] == 0) else logging.DEBUG
+                        self.log.log(lvl, "IV history: %s filed from Massive's daily file - %s, %s written (%s of %s "
+                                     "days this run, %d ms)", d, _plural(len(vals), "stock"), format(n, ","), k,
+                                     n_todo, int(st.get("ms") or 0))
+                    self._flat_prog = dict(prog)
+                    if since >= FLAT_CHECKPOINT_DAYS:
+                        out["marked"] += self._flat_settle(db, touched, open_syms, window[0])
+                        since = 0
+                if not out["stopped"]:
+                    out["seen"] = sorted(rescan)
+            except FlatFilesError as exc:
+                out.update(ok=False, kind=exc.kind, error=self._err_text(exc))
+        finally:
+            last = self._flat_settled_at
+            due = (not more or not out["ok"] or out["stopped"] or last is None
+                   or time.monotonic() - last >= FLAT_SETTLE_EVERY_S)
+            try:
+                if due and (touched or open_syms):
+                    out["marked"] += self._flat_settle(db, touched, open_syms, window[0])
+            except Exception as exc:  # noqa: BLE001 - the readings are filed; the next job settles them
+                self._rollback(db)
+                self.log.warning("IV history (day files): could not recompute the IV figures: %s", self._err_text(exc))
+            db.close()
+        out["ms"] = int((time.monotonic() - t0) * 1000)
+        return out
+
+    def _collect_flat(self) -> dict | None:
+        f = self._flat_future
+        if f is None or not f.done():
+            return None
+        self._flat_future = None
+        try:
+            res = f.result()
+        except Exception as exc:  # noqa: BLE001
+            res = {"ok": False, "kind": "error", "error": self._err_text(exc)}
+        self._flat_result(res, self._now())
+        return res
+
+    def _flat_result(self, res: dict, now: _dt.datetime) -> None:
+        self._flat_prog = None
+        self._flat_job_at = now
+        for d in res.get("not_yet") or ():
+            self._flat_wait[d] = now + _dt.timedelta(seconds=FLAT_NOT_YET_S)
+        for d, err in res.get("failed") or ():
+            self._flat_wait[d] = now + _dt.timedelta(seconds=FLAT_NOT_YET_S)
+            self.log.warning("IV history: the daily file of %s failed (%s) - tried again in 1 h", d, err)
+        self._flat_skip.update(res.get("skip") or ())
+        if res.get("mapped") is not None:
+            self._flat_mapped = set(res["mapped"])
+            self._flat_unmapped = set(res.get("unmapped") or ())
+        self._flat_seen.update(res.get("seen") or ())
+        if res.get("checked"):
+            self._flat_check_at = now
+        if res.get("not_yet"):
+            self.log.info("IV history: the daily file of %s is not on Massive yet - asked for again in 1 h",
+                          ", ".join(res["not_yet"]))
+        if res.get("filed") or res.get("marked"):
+            self.log.info("IV history: %s filed from Massive's daily files (%s IV readings, %s histories done, "
+                          "%.0f s)", _plural(len(res.get("filed") or ()), "day"), format(res.get("readings") or 0, ","),
+                          format(res.get("marked") or 0, ","), (res.get("ms") or 0) / 1000.0)
+        if res.get("ok"):
+            if self._flat_state in ("error", "retry") or (self._flat_state == "off" and self._flat_error):
+                self.log.info("IV history: Massive's daily files work again")
+            self._flat_net_fails = self._flat_fails = 0
+            self._flat_error = self._flat_kind = None
+            self._flat_retry_at = None
+            self._flat_logged = {}
+            self._flat_state = "ready"
+            if self._flat_window and self._days:
+                todo, waiting = self._flat_plan(now, self._flat_window)
+                self._flat_state = "building" if todo else ("waiting" if waiting else "ready")
+                if not todo and not waiting:
+                    self._flat_tried |= self._flat_seen
+            return
+        kind, err = str(res.get("kind") or "error"), res.get("error") or ""
+        if kind == "config":
+            self._flat_off(now, "config", err)
+        elif kind in ("auth", "plan"):
+            self._flat_state, self._flat_kind, self._flat_error = "error", kind, err[:500]
+            self._flat_retry_at = now + _dt.timedelta(seconds=FLAT_REFUSED_RETRY_S)
+            self._flat_drop()                    # the next try re-reads app/.env
+            self._flat_log(("refused", kind, err), logging.WARNING,
+                           "IV history: Massive refused the daily option files (%s): %s - the per-stock REST reads "
+                           "build the IV history meanwhile; tried again %s", kind, err, _et_hm(self._flat_retry_at))
+        else:
+            # network / http / missing / a bug: retried (network 60 s doubling to 30 min, the
+            # rest every 5 min); after FLAT_FAIL_GIVEUP failed jobs in a row - or at once when
+            # the lane was already off / refused - the lane is in "error" (the page and the tray
+            # turn amber) and the REST lane takes every symbol until a job works again
+            handed = self._flat_state in ("off", "error") or not self._flat_working()   # already handed over
+            self._flat_fails += 1
+            if kind == "network":
+                self._flat_net_fails += 1
+                wait = min(FLAT_NET_RETRY_S * 2 ** (self._flat_net_fails - 1), FLAT_NET_RETRY_MAX_S)
+            else:
+                wait = FLAT_CONFIG_RETRY_S
+            self._flat_kind, self._flat_error = kind, err[:500]
+            if handed or not self._flat_working():
+                if kind != "network":
+                    wait = FLAT_REFUSED_RETRY_S
+                self._flat_state = "error"
+                self._flat_retry_at = now + _dt.timedelta(seconds=wait)
+                self._flat_drop()                # the next try re-reads app/.env (the endpoint, the bucket)
+                self._flat_log(("failing", kind, err), logging.WARNING,
+                               "IV history: Massive's daily option files keep failing (%s, %d jobs in a row): %s - "
+                               "the per-stock REST reads build the IV history meanwhile; tried again %s",
+                               kind, self._flat_fails, err, _et_hm(self._flat_retry_at))
+            elif kind == "network":
+                self._flat_state = "retry"
+                self._flat_retry_at = now + _dt.timedelta(seconds=wait)
+                self._flat_log(("network",), logging.WARNING, "IV history: Massive Flat Files not reachable (%s) - "
+                               "tried again %s", err, _et_hm(self._flat_retry_at))
+            else:
+                self._flat_state = "retry"
+                self._flat_retry_at = now + _dt.timedelta(seconds=wait)
+                self._flat_log(("other", kind, err), logging.WARNING, "IV history: the daily-file job failed (%s) - "
+                               "tried again %s", err, _et_hm(self._flat_retry_at))
+
+    def _flat_text(self, now: _dt.datetime) -> str:  # noqa: ARG002
+        """The detail while a day-file job runs."""
+        pr = self._flat_prog or {}
+        if pr.get("phase") == "check":
+            return "Checking Massive's daily option files for re-published days."
+        if pr.get("phase") != "build":
+            return "Looking for new daily option files on Massive."
+        if pr.get("todo"):
+            done, total = self._flat_counts(self._flat_window)
+            eta = self._flat_eta_s()
+            text = "Building IV history from Massive's daily files: %s of %s days" % (format(done, ","),
+                                                                                     format(total, ","))
+            return text + ((", about %s left." % _dur(eta)) if eta is not None else ".")
+        return ("Reading Massive's stored daily files for %s still without an IV history: day %s of %s."
+                % (_plural(int(pr.get("rescan") or 0), "underlying"), format(int(pr.get("i") or 0), ","),
+                   format(int(pr.get("days") or 0), ",")))
+
+    def flat_status(self) -> dict:
+        """The day-file lane in one dict (tests, the CLI): state, error, days filed / to file."""
+        done, total = self._flat_counts(self._flat_window) if self._flat_window else (0, 0)
+        return {"state": self._flat_state, "error": self._flat_error, "kind": self._flat_kind,
+                "days_done": done, "days_total": total, "mapped": len(self._flat_mapped or ()),
+                "tried": len(self._flat_tried), "fails": self._flat_fails, "working": self._flat_working()}
 
     # ── the stocks lane (one thread) ──
 
@@ -2368,6 +3028,7 @@ class Collector:
         self._collect_uni()
         self._collect_bg()
         self._collect_earn()
+        self._collect_flat()
         self._collect_history()
         self._collect_pass(db)
 
@@ -2389,6 +3050,9 @@ class Collector:
         if self._hist:
             state = state or "history"
             parts.append(self._hist_text(now))
+        if self._flat_future is not None:
+            state = state or "history"
+            parts.append(self._flat_text(now))
         if state is None:
             self.state, self.detail = "idle", self._idle_text(now)
         else:
@@ -2396,6 +3060,7 @@ class Collector:
 
     def _step(self, db, now: _dt.datetime) -> None:
         syms = self._refresh_counts(db, now)
+        self._flat_tick(db, now)            # Massive Flat Files: its own keys, never the REST key
         if not self._ready(now):
             return
         self._uni_resumed()
@@ -2617,12 +3282,80 @@ class Collector:
             self._beat(db)
             db.close()
 
+    def run_flat_iv(self) -> dict:
+        """Build / refresh the IV history from Massive's day files now (the CLI's
+        ``--flat-iv``): the re-published days found again, every session of the window
+        whose unadjusted closes are on file and that has no flat filing yet, the stored
+        files read again for the underlyings still without a history - with a progress
+        line every 10 days. Needs the Flat Files keys, not the REST key. Returns ``{"ok",
+        "days_done", "days_total", "filed", "readings", "marked", "waiting", "not_yet"}``
+        (+ ``error`` / ``error_kind``); ``nothing`` is True when no day of the window is
+        filed at all (e.g. the stock prices are not loaded yet - the CLI's exit 3)."""
+        out = {"days_done": 0, "days_total": 0, "filed": 0, "readings": 0, "marked": 0, "waiting": 0,
+               "not_yet": 0}
+        db = self._sf()
+        try:
+            now = self._now()
+            self._restore(db)
+            self._refresh_counts(db, now)
+            self._flat_retry_at = None
+            store = self._flat_get(now)
+            if store is None:
+                why = self._flat_error or ("the Flat Files keys are not set on this PC: add %s and %s to app\\.env "
+                                           "(Massive Dashboard -> Keys -> Flat Files)"
+                                           % (flat_files.ENV_KEY_ID, flat_files.ENV_SECRET))
+                return dict(out, ok=False, error=why, error_kind="config", nothing=True)
+            if not self.universe_n:
+                return dict(out, ok=False, error_kind="empty", nothing=True,
+                            error="no list of optionable stocks on file yet - the collector reads it first")
+            try:
+                self._days_loaded_at = None           # a fresh read of which sessions' closes are on file
+                self._load_days(db, now)
+            except Exception:  # noqa: BLE001 - then only the stored flat days are known
+                self._rollback(db)
+            window = self._flat_window_for(now)
+            if not self._flat_loaded:
+                self._flat_restore(db, window)
+            todo, waiting = self._flat_plan(now, window)
+            self.log.info("IV history from Massive's daily files (one-off): %s to file, %s waiting for their stock "
+                          "prices, window %s .. %s", _plural(len(todo), "day"), _plural(len(waiting), "day"),
+                          window[0], window[-1])
+            if self._flat_state in ("waiting", "building", "ready"):    # as _flat_tick: the tray says "building"
+                self._flat_state = "building" if todo else ("waiting" if waiting else "ready")
+            self._flat_prog = {"phase": "check", "t0": time.monotonic(), "n": 0, "left": len(todo),
+                               "todo": len(todo), "rescan": 0}
+            fut = self._flat_lane().submit(self._flat_wrap, list(todo), list(window), True)
+            self._flat_future = fut
+            self._wait(db, [fut], collect=lambda: None)
+            res = self._collect_flat() or {}
+            _, waiting2 = self._flat_plan(self._now(), window)
+            done, total = self._flat_counts(window)
+            out.update(days_done=done, days_total=total, filed=len(res.get("filed") or ()),
+                       readings=int(res.get("readings") or 0), marked=int(res.get("marked") or 0),
+                       waiting=len(waiting2), not_yet=len(res.get("not_yet") or ()))
+            self.state, self.detail = "idle", "IV history from Massive's daily files (one-off): %s of %s days filed" % (
+                format(done, ","), format(total, ","))
+            out["ok"] = bool(res.get("ok"))
+            if not out["ok"]:
+                out["error"] = res.get("error") or "the day-file job failed"
+                out["error_kind"] = res.get("kind") or "error"
+            out["nothing"] = done == 0
+            self.log.info("IV history from Massive's daily files (one-off): %s of %s days filed (%s this run, %s IV "
+                          "readings, %s histories done), %s waiting for their stock prices", format(done, ","),
+                          format(total, ","), out["filed"], format(out["readings"], ","), format(out["marked"], ","),
+                          _plural(out["waiting"], "day"))
+            return out
+        finally:
+            self._beat(db)
+            db.close()
+
     def wait_idle(self, timeout: float = 60.0) -> None:
         """Wait for every job in flight (tests and one-offs)."""
         futs = list(self._hist)
         if self._pass is not None:
             futs += list(self._pass.futures)
-        for f in ((self._bg[1] if self._bg is not None else None), self._uni_future, self._earn_future):
+        for f in ((self._bg[1] if self._bg is not None else None), self._uni_future, self._earn_future,
+                  self._flat_future):
             if f is not None:
                 futs.append(f)
         if futs:
@@ -2634,7 +3367,7 @@ class Collector:
         self._stopping.set()
         if self._pass is not None:
             self._pass.halt.set()
-        for pool in (self._pool, self._bgpool, self._unipool, self._earnpool):
+        for pool in (self._pool, self._bgpool, self._unipool, self._earnpool, self._flatpool):
             if pool is not None:
                 try:
                     pool.shutdown(wait=False, cancel_futures=True)
@@ -2642,7 +3375,7 @@ class Collector:
                     pool.shutdown(wait=False)
                 except Exception:  # noqa: BLE001
                     pass
-        self._pool = self._bgpool = self._unipool = self._earnpool = None
+        self._pool = self._bgpool = self._unipool = self._earnpool = self._flatpool = None
         self.state = "stopped"
         self.detail = reason
         try:
@@ -2658,10 +3391,12 @@ class Collector:
         if self._client_factory is not None and self.client is not None:
             self._close_client(self.client)
             self.client = None
+        self._flat_drop()                    # the S3 client the Flat Files store built
 
 
 __all__ = ["Collector", "InlineExecutor", "default_client", "contract_rows", "snapshot_session",
            "eod_day_for", "stock_days", "plan_start", "sec_type_of", "exchange_of", "classify_trend",
            "env_cycle_min", "env_workers", "env_max_rps", "env_max_dte", "STATE_PATH",
            "COLLECTOR_VERSION", "NO_KEY_TEXT", "UNIVERSE_EMPTY_TEXT", "PROGRESS_KEYS", "TICK_S",
-           "RTH_START", "RTH_END", "EOD_AFTER"]
+           "RTH_START", "RTH_END", "EOD_AFTER", "default_flat_files", "flat_newest_day", "flat_days",
+           "FLAT_SESSIONS", "FLAT_STATES"]

@@ -1,7 +1,7 @@
 # Options Screener — a Barchart-style screener on Massive data (v4.136)
 
 Status: **BUILT in v4.136 (2026-10-10); first-run fixes in v4.137 (2026-10-11) - §12 supersedes the
-parts of §4, §5 and §8 it names** — this file is the contract (§11 = what the build
+parts of §4, §5 and §8 it names; IV history from Massive Flat Files in v4.138 (2026-10-12) - §13** — this file is the contract (§11 = what the build
 decided where it was silent). Read it before touching any
 file named `scr_*`, `screener/*`, `options_page.py` or `options.html`.
 
@@ -447,3 +447,30 @@ could keep the page empty afterwards. What changed (supersedes §4.1-4.2, §5 fr
   universe_done / earnings_on / progress) and `b4e1f7c9d2a6` (`scr_pass.partial`).
 - Not built: ticker-range shards of the universe walk (needs a live check that
   `underlying_ticker.gte/.lt` is honoured).
+
+## 13. IV history from Massive Flat Files (v4.138, 2026-10-12)
+
+Supersedes §4.4 (IV history) when the Flat Files key pair is set.
+
+- **Why:** Massive has no IV Rank, IV Percentile or stored IV - only each contract's IV today and
+  past option prices. The per-stock rebuild (~150 option-bar requests per underlying) takes 12-20 h
+  for the market. Massive's Flat Files (included in Options Starter, rolling 2 years) hold one file
+  per trading day with every option contract's daily bar: ~500 files cover 2 years.
+- **Confirmed on Hermes (2026-10-12):** endpoint `https://files.massive.com`, bucket `flatfiles`,
+  key `us_options_opra/day_aggs_v1/YYYY/MM/YYYY-MM-DD.csv.gz`, columns
+  `ticker,volume,open,close,high,low,window_start,transactions`; 2026-10-09 = 3.9 MB, 331,809
+  contracts, 4,424 roots (724 adjusted-series rows); 12 months back readable. Separate S3 keys
+  (`TST_MASSIVE_S3_KEY_ID` / `TST_MASSIVE_S3_SECRET`), boto3 with s3v4 signatures.
+- **Method (unchanged):** `scr_flativ.day_iv30` = the per-stock `_day_iv` + `iv30_constant_maturity`
+  for every underlying of one file at once (vectorised, bit-identical IV solve). IV30 filed in
+  `scr_underlying_daily.iv30` with `iv30_src` = `flat`; a `live` EOD reading always wins; `rest` =
+  the per-stock method.
+- **Window:** every session Massive still serves (~2 years, `plan_start`) - the user: "i need all
+  the 2 years data backfill". IV Rank / IV Percentile keep the 52-week window (`IV_WINDOW` 252);
+  the older year is stored. Files are kept under `state\flatfiles\` (+ `manifest.json`), so the
+  history outlives Massive's rolling limit.
+- **Schedule:** newest first once the stock closes of a day are on file; the previous session from
+  11:15 ET; a weekly size / etag check re-files re-published days; a stock added later is filled
+  from the stored files. The REST lane takes only what the files cannot fill; with no keys it runs
+  as in v4.137. 5 failures in a row -> lane error, REST takes over, retry after 30 min.
+- **Visible:** page data line + empty panel, tray line, `--flat-iv` one-off.

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ast
 import datetime as _dt
+import gzip
 import importlib.util
 import json
 import logging
@@ -26,13 +27,14 @@ import pytest
 
 from app import screener_db
 from app.screener_models import ScrContract, ScrPass, ScrUnderlyingDaily
-from app.services import clock, massive, scr_collector, scr_store
+from app.services import clock, flat_files, massive, scr_collector, scr_flativ, scr_store
 from app.services.black_scholes import black_scholes
 from app.services.massive import MassiveError
 from app.services.opt_constants import RISK_FREE
 
 from .conftest import DASH_ROOT
 from .fixtures.options import bs_greeks
+from .test_flat_files import ClientError, EndpointConnectionError, FakeS3
 
 # 2026-10-08 is a Thursday (a trading day); New York is UTC-4 (EDT) - naive UTC below.
 DAY = "2026-10-08"
@@ -260,7 +262,8 @@ def fake_earnings(day):
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch):
     for var in ("TST_MASSIVE_API_KEY", "TST_MASSIVE_BASE_URL", "TST_SCREENER_CYCLE_MIN",
-                "TST_SCREENER_WORKERS", "TST_SCREENER_MAX_RPS", "TST_SCREENER_MAX_DTE"):
+                "TST_SCREENER_WORKERS", "TST_SCREENER_MAX_RPS", "TST_SCREENER_MAX_DTE",
+                "TST_MASSIVE_S3_KEY_ID", "TST_MASSIVE_S3_SECRET", "TST_MASSIVE_S3_ENDPOINT", "TST_MASSIVE_S3_BUCKET"):
         monkeypatch.delenv(var, raising=False)
     yield
 
@@ -301,6 +304,8 @@ def build(Session, tmp_path):
         kw.setdefault("earnings_fetch", fake_earnings)
         kw.setdefault("workers", 2)
         kw.setdefault("stock_years", 0.05)
+        if "flat_store" not in kw:
+            kw.setdefault("flat_factory", lambda: None)     # no Flat Files keys (the day-file lane off)
         col = scr_collector.Collector(Session, clock=clk, **kw)
         made.append(col)
         return col, client
@@ -1730,6 +1735,666 @@ def test_run_history_skips_no_bars_exit_3(db, build, caplog):
     assert "IV history AAA skipped: 0 stored closes, need 20 - the stock bars are not loaded yet (" in caplog.text
 
 
+# ───────────────────────────────────────── v4.138: IV history from Massive's day files ─────────────────────────────────────────
+
+FLAT_IV = 0.35                                   # the fake day files price every option at 35 % (REST: 30, live: 40)
+FLAT_N = 25                                      # the day-file window in these tests (252 on Hermes)
+FRI = "2026-10-09"
+MON = "2026-10-12"
+S3_KEY_ID = "UNITTESTFLATKEYID0123"              # made-up Flat Files keys (not real)
+S3_SECRET = "unit-test-flat-secret-Zq9vX2/abc+0123"
+
+
+def _day_file(day: str, iv: float = FLAT_IV, syms=("AAA", "BBB", "CCC", "ZZZ")) -> bytes:
+    """One options day file (Massive's ``day_aggs_v1`` CSV, gzip) priced by Black-Scholes
+    at ``iv`` on the fake stocks' closes of that day: the 15-45 DTE monthlies, 5 strikes,
+    calls and puts - plus noise the builder must ignore (a weekly expiry priced at 50 and
+    an adjusted ``AAA1`` series)."""
+    d = _dt.date.fromisoformat(day)
+    lines = ["ticker,volume,open,close,high,low,window_start,transactions"]
+    for e, dte in scr_flativ.monthly_window(d).values():
+        for sym in syms:
+            S = _close(sym, d)
+            for m in MULTS:
+                k = float(round(S * m))
+                for right in ("C", "P"):
+                    kind = "call" if right == "C" else "put"
+                    p = round(black_scholes(S, k, dte / 365.0, RISK_FREE, iv, kind).price, 2)
+                    if p < 0.01:
+                        continue
+                    t = massive.option_ticker(sym, e, right, k)
+                    lines.append("%s,12,%s,%s,%s,%s,1760000000000000000,3" % (t, p, p, p, p))
+                    if sym == "AAA" and m == 1.0:
+                        lines.append("O:AAA1%s,5,9.99,9.99,9.99,9.99,1760000000000000000,1" % t[5:])
+                        wk = massive.option_ticker(sym, e - _dt.timedelta(days=7), right, k)
+                        lines.append("%s,40,50,50,50,50,1760000000000000000,9" % wk)
+    return gzip.compress(("\n".join(lines) + "\n").encode("ascii"), mtime=0)
+
+
+def _flat(tmp_path, clk, days, *, page=50, **kw):
+    """A ``FlatFiles`` store on a fake S3 holding the day files of ``days`` (files kept
+    under tmp_path/flatfiles; back-off sleeps skipped)."""
+    s3 = FakeS3(page=page)
+    for d in days:
+        s3.put(flat_files.key_for(d), _day_file(d, **kw))
+    return flat_files.FlatFiles(client=s3, root=tmp_path / "flatfiles", now=clk, sleep=lambda s: None), s3
+
+
+def _ivs(db, sym, src=None) -> dict:
+    db.expire_all()
+    return {r.on: r.iv30 for r in db.query(ScrUnderlyingDaily).filter_by(symbol=sym)
+            if r.iv30 is not None and (src is None or r.iv30_src == src)}
+
+
+def _iv_days(window) -> list[str]:
+    """The sessions an IV30 can come out of: a standard monthly expiry 15-45 days out
+    (on 2026-10-02 and 10-05 Oct 16 is too near and Nov 20 too far - no IV, the REST way too)."""
+    return [d for d in window if scr_flativ.monthly_window(d)]
+
+
+def _quiet(c) -> bool:
+    """Every stock day filed and no job left in any lane (the day-file one included)."""
+    return (bool(c._days) and c._pending_days() == 0 and c._bg is None and not c._hist
+            and c._flat_future is None and c._earnings_on is not None)
+
+
+def _flat_built(c) -> bool:
+    return _quiet(c) and c._flat_state == "ready"
+
+
+def test_flat_window_and_when_a_day_file_is_due():
+    # a day's file is out ~11:00 ET the next (calendar) day: asked for from 11:15 ET
+    sat_10 = _dt.datetime(2026, 10, 10, 14, 0)                   # Saturday 10:00 ET
+    assert scr_collector.flat_newest_day(sat_10).isoformat() == "2026-10-08"
+    assert scr_collector.flat_newest_day(SAT).isoformat() == FRI     # Saturday 12:00 ET
+    assert scr_collector.flat_newest_day(_dt.datetime(2026, 10, 12, 14, 0)).isoformat() == FRI   # Mon 10:00
+    assert scr_collector.flat_newest_day(_dt.datetime(2026, 10, 13, 15, 14)).isoformat() == FRI  # Tue 11:14
+    assert scr_collector.flat_newest_day(_dt.datetime(2026, 10, 13, 15, 15)).isoformat() == MON  # Tue 11:15
+    w = scr_collector.flat_days(SAT, FLAT_N)
+    assert len(w) == FLAT_N and w[-1] == FRI and w == sorted(w)
+    assert all(clock.is_trading_day(d) for d in w)
+    # the default window is every session Massive still serves: ~2 years back to plan_start (v4.138)
+    full = scr_collector.flat_days(SAT)
+    assert scr_collector.FLAT_SESSIONS is None and "flat_state" in scr_collector.PROGRESS_KEYS
+    assert full[-1] == FRI and full == sorted(full) and all(clock.is_trading_day(d) for d in full)
+    assert full[0] >= scr_collector.plan_start(SAT).isoformat()
+    assert clock.prev_trading_day(_dt.date.fromisoformat(full[0])) < scr_collector.plan_start(SAT)
+    assert 480 <= len(full) <= 510
+    for k in ("flat_days_done", "flat_days_total", "flat_eta_s", "flat_state", "flat_error", "flat_kind"):
+        assert k in scr_collector.PROGRESS_KEYS
+
+
+def test_flat_lane_builds_the_iv_history_from_the_day_files(db, build, tmp_path, monkeypatch):
+    clk = Clock(SAT)
+    window = scr_collector.flat_days(SAT, FLAT_N)
+    store, s3 = _flat(tmp_path, clk, window)
+    recomputes = []
+    real_many = scr_store.recompute_iv_many
+    monkeypatch.setattr(scr_store, "recompute_iv_many",
+                        lambda db_, syms, **kw: recomputes.append(len(syms)) or real_many(db_, syms, **kw))
+    col, cl = build(clk, stock_years=0.3, flat_store=store, flat_sessions=FLAT_N)
+    cl.bars_end = FRI
+    _settle(col, clk, until=_flat_built)
+    # the stocks lane hands the days over one at a time: the IV figures are not redone after each
+    assert len(recomputes) <= 3 and recomputes[-1] == 3, recomputes
+    ivd = _iv_days(window)
+    assert len(ivd) == FLAT_N - 2 and FRI in ivd
+    for sym in ("AAA", "BBB", "CCC"):
+        flat = _ivs(db, sym, "flat")
+        assert sorted(flat) == [d for d in ivd if d != FRI], sym     # every session but Friday ...
+        assert all(abs(v - 35.0) < 0.5 for v in flat.values()), (sym, flat)
+        live = _ivs(db, sym, "live")
+        assert list(live) == [FRI] and live[FRI] == pytest.approx(40.0, abs=0.05)   # ... the EOD reading wins
+        u = _und(db, sym)
+        assert u["history_done"] is True and u["iv_n"] == len(ivd) and u["iv_pct"] is not None   # (rank: 60+)
+    assert _ivs(db, "ZZZ") == {}                                 # not in the universe: never filed
+    assert cl.of("option_daily") == []                           # the REST history lane read nothing
+    gets = s3.ops("get")
+    assert len(gets) == FLAT_N and gets[0][1] == flat_files.key_for(FRI)    # each file once, newest first
+    assert all((tmp_path / "flatfiles").joinpath(*flat_files.key_for(d).split("/")).is_file() for d in window)
+    doc = _doc(tmp_path)
+    pr = doc["progress"]
+    assert (pr["flat_state"], pr["flat_days_done"], pr["flat_days_total"]) == ("ready", FLAT_N, FLAT_N)
+    assert pr["flat_error"] is None and pr["flat_eta_s"] is None and doc["warn"] is None
+    assert col.flat_status()["mapped"] == 3 and col._flat_check_at is not None
+    # nothing to do: an hour on, the lane only looks (no download, no new filing)
+    n = len(s3.calls)
+    clk.advance(minutes=61)
+    col.tick()
+    assert len(s3.ops("get")) == FLAT_N and len(s3.calls) == n
+
+
+def test_flat_detail_and_progress_while_a_job_runs(db, build, tmp_path):
+    clk = Clock(SAT)
+    window = scr_collector.flat_days(SAT, FLAT_N)
+    store, _ = _flat(tmp_path, clk, window)
+    col, cl = build(clk, stock_years=0.3, flat_store=store, flat_sessions=FLAT_N)
+    cl.bars_end = FRI
+    _settle(col, clk, until=lambda c: len(c._flat_days) >= 5)
+    col._flat_future = scr_collector.cf.Future()                   # a job in flight, 5 of 6 days filed
+    col._flat_prog = {"phase": "build", "t0": scr_collector.time.monotonic() - 50.0, "n": 5, "left": 1, "todo": 6,
+                      "rescan": 0, "days": 6, "i": 5}
+    try:
+        col._set_state(clk.t)
+        done, total = col._flat_counts(col._flat_window)
+        assert col.detail.endswith("Building IV history from Massive's daily files: %d of %d days, about 1 min left."
+                                   % (done, total))
+        pr = col._progress(clk.t)
+        assert pr["flat_days_done"] == done and 5 <= pr["flat_eta_s"] <= 15
+        col._flat_prog = dict(col._flat_prog, todo=0, rescan=12, days=24, i=7)
+        assert col._flat_text(clk.t) == ("Reading Massive's stored daily files for 12 underlyings still without "
+                                         "an IV history: day 7 of 24.")
+        col._flat_prog = {"phase": "check"}
+        assert col._flat_text(clk.t) == "Checking Massive's daily option files for re-published days."
+    finally:
+        col._flat_future.set_result({"ok": True})
+        col._flat_future = None
+
+
+def test_flat_lane_on_real_threads(db, build, tmp_path):
+    clk = Clock(SAT)
+    window = scr_collector.flat_days(SAT, FLAT_N)
+    store, s3 = _flat(tmp_path, clk, window)
+    col, cl = build(clk, executor_factory=None, workers=3, stock_years=0.12, flat_store=store, flat_sessions=FLAT_N)
+    cl.bars_end = FRI
+    for _ in range(300):
+        col.wait_idle(30)
+        col.tick()
+        if _flat_built(col) and all(_und(db, s).get("history_done") for s in ("AAA", "BBB", "CCC")):
+            break
+    else:
+        raise AssertionError("the day-file lane did not finish on real threads: %s" % col.flat_status())
+    assert col._flatpool is not None and col._flat_future is None
+    assert sorted(_ivs(db, "BBB", "flat")) == [d for d in _iv_days(window) if d != FRI]
+    assert cl.of("option_daily") == [] and len(s3.ops("get")) == FLAT_N
+
+
+def test_rest_lane_takes_only_what_the_day_files_could_not_fill(db, build, tmp_path):
+    clk = Clock(SAT)
+    window = scr_collector.flat_days(SAT, FLAT_N)
+    store, _ = _flat(tmp_path, clk, window, syms=("AAA", "BBB", "ZZZ"))      # CCC has no options in the files
+    col, cl = build(clk, stock_years=0.3, flat_store=store, flat_sessions=FLAT_N)
+    cl.bars_end = FRI
+    _settle(col, clk, until=lambda c: _flat_built(c) and bool(_und(db, "CCC").get("history_done")))
+    assert {c[1] for c in cl.of("option_daily")} == {"CCC"}        # the REST lane read CCC only
+    assert _und(db, "AAA")["history_done"] and _und(db, "BBB")["history_done"]
+    rest = _ivs(db, "CCC", "rest")
+    assert len(rest) >= 20 and all(abs(v - 30.0) < 1.0 for v in rest.values())
+    assert _ivs(db, "CCC", "flat") == {} and "CCC" in col._flat_tried
+
+
+def test_rest_lane_waits_while_the_day_files_are_being_filed(db, build, tmp_path):
+    clk = Clock(SAT)
+    window = scr_collector.flat_days(SAT, FLAT_N)
+    store, _ = _flat(tmp_path, clk, window, syms=("AAA", "BBB"))
+    col, cl = build(clk, stock_years=0.3, flat_store=store, flat_sessions=FLAT_N)
+    cl.bars_end = FRI
+    _settle(col, clk, until=lambda c: c._flat_mapped is not None)
+    assert col._flat_working() and not col._rest_may("CCC")       # mapped, files not read for it yet
+    col._flat_unmapped.add("XYZ1")
+    assert col._rest_may("XYZ1") and not col._rest_may("NEWSYM")  # no option root / newer than the map
+    col._flat_state = "error"
+    assert not col._flat_working()                                 # refused: the REST lane takes everything
+
+
+def test_flat_daily_top_up_after_1115_et_and_a_missing_file_is_not_yet(db, build, tmp_path):
+    clk = Clock(SAT)
+    window = scr_collector.flat_days(SAT, FLAT_N)
+    store, s3 = _flat(tmp_path, clk, window)
+    col, cl = build(clk, stock_years=0.3, flat_store=store, flat_sessions=FLAT_N)
+    cl.bars_end = FRI
+    _settle(col, clk, until=_flat_built)
+    # Tuesday 10:00 ET: Monday's closes are filed, but its option file is not due before 11:15 ET
+    cl.bars_end = MON
+    clk.t = _dt.datetime(2026, 10, 13, 14, 0)
+    _settle(col, clk, until=lambda c: c._days.get(MON, [False, False])[1] and c._bg is None
+            and c._flat_future is None)
+    col.tick()
+    assert col._flat_window[-1] == FRI and MON not in col._flat_days
+    assert not [c for c in s3.calls if MON in str(c[1:])]
+    # 11:30 ET: Monday is asked for - Massive has not published it yet: "not yet", again in 1 h
+    clk.t = _dt.datetime(2026, 10, 13, 15, 30)
+    col.tick()
+    assert col._flat_window[-1] == MON and col._flat_window[0] == window[1]      # the window moved on a day
+    assert MON not in col._flat_days and col._flat_wait[MON] == clk.t + _dt.timedelta(hours=1)
+    assert col.flat_status()["state"] == "ready" and _doc(tmp_path)["progress"]["flat_error"] is None
+    s3.put(flat_files.key_for(MON), _day_file(MON))
+    clk.advance(minutes=30)
+    col.tick()
+    assert MON not in col._flat_days                                # not asked for again before the hour
+    clk.advance(minutes=31)
+    col.tick()
+    assert MON in col._flat_days
+    assert _ivs(db, "AAA", "flat")[MON] == pytest.approx(35.0, abs=0.5)
+    pr = _doc(tmp_path)["progress"]
+    assert pr["flat_days_done"] == pr["flat_days_total"] == FLAT_N
+
+
+def test_a_republished_day_file_is_filed_again(db, build, tmp_path):
+    clk = Clock(SAT)
+    window = scr_collector.flat_days(SAT, FLAT_N)
+    store, s3 = _flat(tmp_path, clk, window)
+    col, cl = build(clk, stock_years=0.3, flat_store=store, flat_sessions=FLAT_N)
+    cl.bars_end = FRI
+    _settle(col, clk, until=_flat_built)
+    day, other = _iv_days(window)[-4], _iv_days(window)[-5]
+    s3.put(flat_files.key_for(day), _day_file(day, iv=0.45))       # Massive re-published that day
+    clk.advance(days=3)
+    col.tick()
+    assert _ivs(db, "AAA", "flat")[day] == pytest.approx(35.0, abs=0.5)      # not checked before a week
+    clk.advance(days=4, minutes=1)
+    col.tick()
+    assert _ivs(db, "AAA", "flat")[day] == pytest.approx(45.0, abs=0.5)      # the weekly check re-filed it
+    assert _ivs(db, "AAA", "flat")[other] == pytest.approx(35.0, abs=0.5)
+    assert len([c for c in s3.ops("get") if c[1] == flat_files.key_for(day)]) == 2
+    assert col._flat_check_at == clk.t and day in col._flat_days
+
+
+@pytest.mark.parametrize("code,kind", [("InvalidAccessKeyId", "auth"), ("AccessDenied", "plan")])
+def test_refused_day_files_warn_and_the_rest_lane_builds_the_history(db, build, tmp_path, monkeypatch, caplog,
+                                                                     code, kind):
+    monkeypatch.setenv("TST_MASSIVE_S3_KEY_ID", S3_KEY_ID)
+    monkeypatch.setenv("TST_MASSIVE_S3_SECRET", S3_SECRET)
+    caplog.set_level(logging.DEBUG)
+    clk = Clock(SAT)
+    window = scr_collector.flat_days(SAT, FLAT_N)
+    store, s3 = _flat(tmp_path, clk, window)
+    s3.fail["list_objects_v2"] = [ClientError(code, 403, "key %s / %s refused" % (S3_KEY_ID, S3_SECRET))
+                                  for _ in range(200)]
+    col, cl = build(clk, stock_years=0.3, flat_store=store, flat_sessions=FLAT_N)
+    cl.bars_end = FRI
+    _settle(col, clk, until=lambda c: _quiet(c) and bool(_und(db, "BBB").get("history_done"))
+            and bool(_und(db, "AAA").get("history_done")))
+    assert (col._flat_state, col._flat_kind) == ("error", kind) and not col._flat_working()
+    assert col._flat_retry_at == col._flat_job_at + _dt.timedelta(minutes=30)
+    assert {"AAA", "BBB"} <= {c[1] for c in cl.of("option_daily")}           # the REST lane took over
+    assert _ivs(db, "AAA", "flat") == {} and len(_ivs(db, "AAA", "rest")) >= 20
+    doc = _doc(tmp_path)
+    pr = doc["progress"]
+    assert pr["flat_state"] == "error" and "Flat Files" in pr["flat_error"]
+    assert doc["state"] != "error"                                  # a warning, never the collector's error
+    text = (tmp_path / "state" / "screener_collector.json").read_text(encoding="utf-8") + caplog.text
+    assert S3_SECRET not in text and S3_KEY_ID not in text and S3_SECRET not in json.dumps(_status(db), default=str)
+    got = _tray_function(tmp_path / "state" / "screener_collector.json")(now=_utc(clk.t))
+    assert (got["color"], got["level"], got["tip"]) == ("amber", "warn", "Scr WARN")
+    assert got["line"].startswith("Options screener: WARN - IV history from Massive's daily files is paused: ")
+    # 30 min later it is tried again; once the files answer, the lane builds and the warning goes
+    s3.fail.clear()
+    clk.t = col._flat_retry_at
+    _settle(col, clk, until=_flat_built)
+    assert col._flat_error is None and len(_ivs(db, "AAA", "flat")) >= 1
+    assert _doc(tmp_path)["progress"]["flat_state"] == "ready"
+
+
+def _flat_page(tmp_path, clk, admin: bool = False) -> dict:
+    """The /options status (``options_page._status_view``) for the state file as written."""
+    from app.routes import options_page  # noqa: PLC0415
+
+    doc = _doc(tmp_path)
+    doc["heartbeat"] = _utc(clk.t).isoformat()
+    return options_page._status_view({"available": True, "status": doc, "source": "file"}, None,
+                                     now=_utc(clk.t), is_admin=admin)
+
+
+@pytest.mark.parametrize("err,needle", [
+    (ClientError("NoSuchBucket", 404, "The specified bucket does not exist"),
+     "Massive Flat Files has no bucket 'flatfiles' - check TST_MASSIVE_S3_BUCKET in app\\.env, default flatfiles"),
+    (ClientError("404", 404, "Not Found"),                       # e.g. the endpoint set to the API host
+     "Massive Flat Files has no file list at https://files.massive.com, bucket 'flatfiles' - check "
+     "TST_MASSIVE_S3_ENDPOINT and TST_MASSIVE_S3_BUCKET in app\\.env"),
+], ids=["no-bucket", "list-404"])
+def test_flat_setup_error_turns_the_lane_off_with_a_warning(db, build, tmp_path, monkeypatch, caplog, err, needle):
+    """Keys set but the lane cannot run on this PC (config kind - here the bucket / the
+    endpoint): the lane is off WITH the reason, the REST lane builds the history, the page
+    and the tray turn amber with the reason (the fix first), and the reason is KEPT across
+    the 5-minute looks until a job works - no green flicker in between."""
+    for var in ("TST_MASSIVE_S3_ENDPOINT", "TST_MASSIVE_S3_BUCKET"):
+        monkeypatch.delenv(var, raising=False)
+    caplog.set_level(logging.INFO, logger="test_scr_collector")
+    from app.routes import options_page  # noqa: PLC0415
+
+    clk = Clock(SAT)
+    window = scr_collector.flat_days(SAT, FLAT_N)
+    _, s3 = _flat(tmp_path, clk, window)
+    s3.fail["list_objects_v2"] = [err for _ in range(10000)]
+    looks = []
+
+    def factory():                                   # a store the collector owns (dropped when it fails)
+        looks.append(1)
+        return flat_files.FlatFiles(client=s3, root=tmp_path / "flatfiles", now=clk, sleep=lambda s: None)
+
+    col, cl = build(clk, stock_years=0.3, flat_factory=factory, flat_sessions=FLAT_N)
+    cl.bars_end = FRI
+    _settle(col, clk, until=lambda c: _quiet(c) and bool(_und(db, "AAA").get("history_done")))
+    assert (col._flat_state, col._flat_kind) == ("off", "config") and needle in col._flat_error
+    assert not col._flat_working() and col._flat is None
+    assert cl.of("option_daily")                                     # the REST lane as before
+    doc = _doc(tmp_path)
+    pr = doc["progress"]
+    assert (pr["flat_state"], pr["flat_kind"]) == ("off", "config") and needle in pr["flat_error"]
+    assert doc["warn"] is None                                       # (the lane's warning, not the collector's)
+    got = _tray_function(tmp_path / "state" / "screener_collector.json")(now=_utc(clk.t))
+    assert (got["color"], got["level"], got["tip"]) == ("amber", "warn", "Scr WARN")
+    assert got["line"].startswith("Options screener: WARN - IV history from Massive's daily files is not running: "
+                                  + needle)
+    m, a = _flat_page(tmp_path, clk), _flat_page(tmp_path, clk, admin=True)
+    assert m["dot"] == a["dot"] == "amber" and options_page._FLAT_SETUP in m["label"]
+    assert "Admin" not in m["label"] and "TST_MASSIVE_S3" not in m["label"]
+    assert options_page._FLAT_SETUP_ADMIN + " Details: " + needle in a["label"]
+    # the next look builds the store again: the lane stays off with its reason until a job works
+    assert col._flat_get(clk.t) is not None and len(looks) == 2
+    assert (col._flat_state, col._flat_kind) == ("off", "config") and needle in col._flat_error
+    pr = col._progress(clk.t)
+    assert pr["flat_state"] == "off" and needle in pr["flat_error"]
+    assert caplog.text.count("Massive's daily option files are set up") == 1     # (again: only with --verbose)
+    # fixed on Hermes: the next try works, the warning goes
+    s3.fail.clear()
+    clk.advance(minutes=5, seconds=1)
+    _settle(col, clk, until=_flat_built)
+    assert col._flat_error is None and col._flat_kind is None and col._flat_working()
+    assert "Massive's daily files work again" in caplog.text
+    got = _tray_function(tmp_path / "state" / "screener_collector.json")(now=_utc(clk.t))
+    assert got["color"] == "green" and _flat_page(tmp_path, clk, admin=True)["dot"] == "green"
+
+
+@pytest.mark.parametrize("exc,kind", [(ClientError("Conflict", 409, "odd"), "http"),
+                                      (RuntimeError("boom in the day-file lane"), "error"),
+                                      (EndpointConnectionError("Could not connect to the endpoint URL"), "network")],
+                         ids=["http", "bug", "network"])
+def test_a_lasting_flat_failure_hands_over_to_the_rest_lane_and_warns(db, build, tmp_path, exc, kind):
+    """A failure that is not about the keys, the plan or the setup (an HTTP error, a bug,
+    Massive unreachable) is retried - the REST lane waits and the page / tray stay green -
+    but after FLAT_FAIL_GIVEUP failed jobs in a row the lane is in "error": the REST lane
+    takes every symbol, the page and the tray turn amber with words that fit the cause;
+    once a job works the counters reset and the lane takes over again."""
+    from app.routes import options_page  # noqa: PLC0415
+
+    clk = Clock(SAT)
+    window = scr_collector.flat_days(SAT, FLAT_N)
+    store, s3 = _flat(tmp_path, clk, window)
+    s3.fail["list_objects_v2"] = [exc for _ in range(100000)]
+    col, cl = build(clk, stock_years=0.3, flat_store=store, flat_sessions=FLAT_N)
+    cl.bars_end = FRI
+    _settle(col, clk, until=lambda c: c._flat_state == "retry")
+    assert (col._flat_kind, col._flat_fails) == (kind, 1) and col._flat_working()
+    assert not {"AAA", "BBB"} & {c[1] for c in cl.of("option_daily")}           # a short retry: the REST lane waits
+    assert _flat_page(tmp_path, clk, admin=True)["dot"] == "green"
+    assert "(retrying)" in _tray_function(tmp_path / "state" / "screener_collector.json")(now=_utc(clk.t))["line"]
+    for n in range(2, scr_collector.FLAT_FAIL_GIVEUP + 1):
+        clk.t = col._flat_retry_at
+        _settle(col, clk, until=lambda c, n=n: c._flat_fails == n)
+        assert col._flat_working() is (n < scr_collector.FLAT_FAIL_GIVEUP)
+        assert col._flat_state == ("error" if n == scr_collector.FLAT_FAIL_GIVEUP else "retry")
+    wait = col._flat_retry_at - clk.t
+    assert wait == (_dt.timedelta(seconds=960) if kind == "network" else _dt.timedelta(minutes=30))
+    _settle(col, clk, until=lambda c: _quiet(c) and all(_und(db, s).get("history_done") for s in ("AAA", "BBB")))
+    assert {"AAA", "BBB"} <= {c[1] for c in cl.of("option_daily")}            # the REST lane took over
+    pr = _doc(tmp_path)["progress"]
+    assert (pr["flat_state"], pr["flat_kind"]) == ("error", kind) and pr["flat_error"]
+    m, a = _flat_page(tmp_path, clk), _flat_page(tmp_path, clk, admin=True)
+    assert m["dot"] == a["dot"] == "amber" and options_page._FLAT_FAILING in m["label"]
+    assert options_page._FLAT_PAUSED not in m["label"] and "Admin" not in m["label"]
+    hint = options_page._FLAT_BUG_ADMIN if kind == "error" else options_page._FLAT_FAIL_ADMIN
+    assert hint + " Details: " in a["label"]
+    assert "building from daily files" not in m["line"]                        # the REST progress shows instead
+    got = _tray_function(tmp_path / "state" / "screener_collector.json")(now=_utc(clk.t))
+    assert (got["color"], got["tip"]) == ("amber", "Scr WARN")
+    assert got["line"].startswith("Options screener: WARN - IV history from Massive's daily files keeps failing ")
+    # the files answer again: the lane builds, the counters reset, green again
+    s3.fail.clear()
+    clk.t = col._flat_retry_at
+    _settle(col, clk, until=_flat_built)
+    assert (col._flat_fails, col._flat_net_fails, col._flat_error) == (0, 0, None) and col._flat_working()
+    assert _flat_page(tmp_path, clk)["dot"] == "green"
+
+
+def test_a_lasting_flat_failure_is_logged_at_most_every_30_min(db, build, tmp_path, caplog):
+    """The job's exception (ERROR, with its traceback) and the job's result (WARNING) each
+    keep their own throttle: one failure lasting an hour writes a handful of lines, not a
+    pair every 5 minutes."""
+    caplog.set_level(logging.INFO, logger="test_scr_collector")
+    clk = Clock(SAT)
+    window = scr_collector.flat_days(SAT, FLAT_N)
+    store, s3 = _flat(tmp_path, clk, window)
+    s3.fail["list_objects_v2"] = [RuntimeError("boom in the day-file lane") for _ in range(100000)]
+    col, cl = build(clk, stock_years=0.3, flat_store=store, flat_sessions=FLAT_N)
+    cl.bars_end = FRI
+    _settle(col, clk, until=lambda c: c._flat_state == "retry")
+    t_end = clk.t + _dt.timedelta(minutes=65)
+    while clk.t < t_end:
+        clk.advance(minutes=1)
+        col.tick()
+    recs = [r for r in caplog.records if r.name == "test_scr_collector"]
+    job = [r for r in recs if "IV history (day files): the job failed" in r.getMessage()]
+    res = [r for r in recs if "the daily-file job failed" in r.getMessage() or "keep failing" in r.getMessage()]
+    assert 1 <= len(job) <= 2 and all(r.levelno == logging.ERROR and r.exc_info for r in job)
+    assert 2 <= len(res) <= 3, [r.getMessage() for r in res]        # (a retry, then the hand-over)
+    assert col._flat_state == "error" and col._flat_fails >= scr_collector.FLAT_FAIL_GIVEUP
+
+
+@pytest.mark.parametrize("where", ["bad-data", "bad-crc", "massive"])
+def test_a_damaged_day_file_fails_only_that_day_and_is_downloaded_again(db, build, tmp_path, caplog, where):
+    """A day file that cannot be read (damaged on this PC with its size unchanged - bad
+    gzip data or a wrong CRC - or sent damaged by Massive) fails that day only: the days
+    after it are still filed, a damaged local copy is set aside as .bad (never deleted),
+    and an hour later the day is downloaded again and filed. The lane never stalls."""
+    caplog.set_level(logging.INFO, logger="test_scr_collector")
+    clk = Clock(SAT)
+    window = scr_collector.flat_days(SAT, FLAT_N)
+    store, s3 = _flat(tmp_path, clk, window)
+    bad_day = _iv_days(window)[-4]
+    good = s3.objects[flat_files.key_for(bad_day)]["data"]
+    if where == "massive":
+        broken = bytearray(good)
+        broken[20] ^= 0xFF
+        s3.put(flat_files.key_for(bad_day), bytes(broken))
+    else:
+        p = store.ensure(bad_day)
+        broken = bytearray(p.read_bytes())
+        broken[20 if where == "bad-data" else -6] ^= 0xFF
+        p.write_bytes(bytes(broken))
+        with pytest.raises(__import__("zlib").error if where == "bad-data" else gzip.BadGzipFile):
+            list(scr_flativ.read_day(p))
+    col, cl = build(clk, stock_years=0.3, flat_store=store, flat_sessions=FLAT_N)
+    cl.bars_end = FRI
+    _settle(col, clk, until=lambda c: _quiet(c) and len(c._flat_days) == FLAT_N - 1 and bad_day in c._flat_wait)
+    assert bad_day not in col._flat_days and col._flat_fails == 0 and col._flat_state not in ("error", "retry")
+    assert all(d in col._flat_days for d in window if d != bad_day)          # the older days too
+    assert "the daily file of %s failed" % bad_day in caplog.text
+    path = store.local_path(bad_day)
+    if where != "massive":
+        assert path.with_name(path.name + ".bad").read_bytes() == bytes(broken)
+        assert not path.exists() and flat_files.key_for(bad_day) not in store.manifest()
+    else:
+        assert not path.exists() and "damaged" in caplog.text
+        s3.put(flat_files.key_for(bad_day), good)                            # Massive fixed its copy
+    clk.advance(hours=1, minutes=1)
+    _settle(col, clk, until=lambda c: _quiet(c) and bad_day in c._flat_days)
+    assert path.read_bytes() == good and _ivs(db, "AAA", "flat")[bad_day] == pytest.approx(35.0, abs=0.5)
+    pr = _doc(tmp_path)["progress"]
+    assert pr["flat_days_done"] == pr["flat_days_total"] == FLAT_N and pr["flat_state"] == "ready"
+
+
+def test_a_running_job_past_its_file_list_shows_as_building(db, build, tmp_path):
+    """A lane marked off / refused / retrying whose running job got past its file list:
+    the files answer again, so the page and the tray see "building" (no stale warning for
+    the length of a long build); before the list answers the warning stays. The state
+    itself is settled by the job's result."""
+    clk = Clock(SAT)
+    window = scr_collector.flat_days(SAT, FLAT_N)
+    store, _ = _flat(tmp_path, clk, window)
+    col, cl = build(clk, stock_years=0.3, flat_store=store, flat_sessions=FLAT_N)
+    cl.bars_end = FRI
+    _settle(col, clk, until=lambda c: len(c._flat_days) >= 5)
+    col._flat_future = scr_collector.cf.Future()
+    try:
+        for state, kind in (("off", "config"), ("error", "auth"), ("retry", "network")):
+            col._flat_state, col._flat_kind, col._flat_error = state, kind, "why it failed"
+            col._flat_prog = {"phase": "start", "t0": scr_collector.time.monotonic(), "n": 0, "left": 4, "todo": 4,
+                              "rescan": 0}
+            pr = col._progress(clk.t)
+            assert (pr["flat_state"], pr["flat_kind"], pr["flat_error"]) == (state, kind, "why it failed")
+            col._flat_prog = dict(col._flat_prog, phase="build", days=4, i=1, n=1, left=3)
+            pr = col._progress(clk.t)
+            assert (pr["flat_state"], pr["flat_kind"], pr["flat_error"]) == ("building", None, None)
+            assert col._flat_state == state
+    finally:
+        col._flat_future.set_result({"ok": True})
+        col._flat_future = None
+        col._flat_prog = None
+
+
+def test_run_flat_iv_reports_building_while_it_files(db, build, tmp_path, monkeypatch):
+    """The --flat-iv one-off sets the lane's state like the loop does: a heartbeat in the
+    middle of the run says "building" - never "waiting for stock prices"."""
+    clk = Clock(SAT)
+    window = scr_collector.flat_days(SAT, FLAT_N)
+    store, _ = _flat(tmp_path, clk, window)
+    col, cl = build(clk, stock_years=0.3, flat_store=store, flat_sessions=FLAT_N)
+    assert col.run_universe()["ok"]
+    cl.bars_end = FRI
+    for d in window:
+        col.job_stock_day(d)
+    seen = []
+    real = scr_store.file_iv_day
+
+    def hook(db_, d, vals, **kw):
+        n = real(db_, d, vals, **kw)
+        if len(seen) < 6:
+            col._beat(None)                                          # what a heartbeat writes now
+            tray = _tray_function(tmp_path / "state" / "screener_collector.json")(now=_utc(clk.t))
+            seen.append((_doc(tmp_path)["progress"]["flat_state"], tray["line"]))
+        return n
+
+    monkeypatch.setattr(scr_store, "file_iv_day", hook)
+    res = col.run_flat_iv()
+    assert res["ok"] and res["filed"] == FLAT_N and seen
+    for state, line in seen:
+        assert state == "building" and "IV files " in line and "(waiting for stock prices)" not in line, line
+
+
+def test_no_keys_the_lane_is_off_silently_and_looked_at_every_5_min(db, build, tmp_path, monkeypatch):
+    env_file = tmp_path / "app.env"
+    env_file.write_text("TST_MASSIVE_API_KEY=%s\n" % KEY, encoding="utf-8")
+    monkeypatch.setattr(scr_collector, "APP_ENV_PATH", env_file)
+    for var in ("TST_MASSIVE_S3_KEY_ID", "TST_MASSIVE_S3_SECRET"):
+        monkeypatch.setenv(var, "")                                  # (restored after: _load_env writes os.environ)
+    monkeypatch.setenv("TST_MASSIVE_API_KEY", KEY)
+    looks = []
+
+    def factory():
+        looks.append(1)
+        return scr_collector.default_flat_files()
+
+    clk = Clock(SAT)
+    col, cl = build(clk, stock_years=0.3, flat_factory=factory, flat_sessions=FLAT_N)
+    cl.bars_end = FRI
+    _settle(col, clk, until=lambda c: _quiet(c) and bool(_und(db, "AAA").get("history_done")))
+    assert (col._flat_state, col._flat_error, col._flat) == ("off", None, None)
+    assert cl.of("option_daily") and len(looks) == 1                 # the REST lane as before; one look
+    doc = _doc(tmp_path)
+    assert doc["progress"]["flat_state"] == "off" and doc["progress"]["flat_days_total"] is None
+    got = _tray_function(tmp_path / "state" / "screener_collector.json")(now=_utc(clk.t))
+    assert got["color"] == "green" and "IV files" not in got["line"]
+    # the keys are added to app/.env: picked up at the next 5-minute look, no restart
+    env_file.write_text("TST_MASSIVE_API_KEY=%s\nTST_MASSIVE_S3_KEY_ID=%s\nTST_MASSIVE_S3_SECRET=%s\n"
+                        % (KEY, S3_KEY_ID, S3_SECRET), encoding="utf-8")
+    clk.advance(minutes=4)
+    col.tick()
+    assert len(looks) == 1
+    real = flat_files.FlatFiles
+    s3 = FakeS3()
+    monkeypatch.setattr(flat_files, "FlatFiles", lambda log=None: real(client=s3, root=tmp_path / "ff", now=clk,
+                                                                       sleep=lambda s: None))
+    clk.advance(minutes=1, seconds=1)
+    col.tick()
+    assert len(looks) == 2 and col._flat is not None and col._flat_own
+    assert flat_files.configured() and col._flat_state in ("waiting", "building", "ready")
+    assert S3_SECRET not in repr(real(client=s3, root=tmp_path / "ff"))
+
+
+def test_flat_network_errors_back_off_and_hand_over_after_5(db, build, tmp_path):
+    clk = Clock(SAT)
+    window = scr_collector.flat_days(SAT, 5)
+    store, s3 = _flat(tmp_path, clk, window)
+    s3.fail["list_objects_v2"] = [EndpointConnectionError("Could not connect to the endpoint URL")
+                                  for _ in range(1000)]
+    col, cl = build(clk, stock_years=0.05, flat_store=store, flat_sessions=5)
+    cl.bars_end = FRI
+    _settle(col, clk, until=lambda c: c._flat_state == "retry")
+    assert col._flat_retry_at - clk.t == _dt.timedelta(seconds=60) and col._flat_working()
+    assert "could not reach Massive Flat Files" in _doc(tmp_path)["progress"]["flat_error"]
+    for n, wait in ((2, 120), (3, 240), (4, 480), (5, 960)):
+        clk.t = col._flat_retry_at
+        _settle(col, clk, until=lambda c, n=n: c._flat_net_fails == n)
+        assert col._flat_retry_at - clk.t == _dt.timedelta(seconds=wait)
+        assert col._flat_working() is (n < scr_collector.FLAT_NET_GIVEUP)
+    s3.fail.clear()
+    clk.t = col._flat_retry_at
+    _settle(col, clk, until=lambda c: c._flat_state == "ready" and c._flat_future is None)
+    assert col._flat_net_fails == 0 and col._flat_working() and col._flat_error is None
+
+
+def test_a_new_underlying_gets_its_history_from_the_stored_files(db, build, tmp_path):
+    SPOTS["DDD"] = 30.0
+    try:
+        clk = Clock(SAT)
+        window = scr_collector.flat_days(SAT, FLAT_N)
+        store, s3 = _flat(tmp_path, clk, window, syms=("AAA", "BBB", "CCC", "DDD"))   # DDD trades, not listed yet
+        col, cl = build(clk, stock_years=0.3, flat_store=store, flat_sessions=FLAT_N)
+        cl.bars_end = FRI
+        _settle(col, clk, until=_flat_built)
+        assert _ivs(db, "DDD") == {} and len(s3.ops("get")) == FLAT_N
+        cl.universe["DDD"] = 50                                    # Sunday 07:35 ET: the daily refresh lists it
+        clk.t = _dt.datetime(2026, 10, 11, 11, 35)
+        _settle(col, clk, until=lambda c: len(cl.of("stock_daily", "DDD")) == 2 and c._bg is None
+                and bool(_und(db, "DDD").get("history_done")), step_s=60)
+        flat = _ivs(db, "DDD", "flat")
+        assert sorted(flat) == _iv_days(window) and all(abs(v - 35.0) < 0.5 for v in flat.values())
+        assert cl.of("option_daily", "DDD") == []                 # no REST reads: the stored files had it
+        assert len(s3.ops("get")) == FLAT_N                        # and nothing was downloaded again
+    finally:
+        SPOTS.pop("DDD", None)
+
+
+def test_run_flat_iv_one_off(db, build, tmp_path, caplog):
+    caplog.set_level(logging.INFO, logger="test_scr_collector")
+    clk = Clock(SAT)
+    window = scr_collector.flat_days(SAT, FLAT_N)
+    store, s3 = _flat(tmp_path, clk, window)
+    col, cl = build(clk, stock_years=0.3, flat_store=store, flat_sessions=FLAT_N)
+    assert col.run_universe()["ok"]
+    res = col.run_flat_iv()                                      # no stock prices yet: nothing to file
+    assert res["ok"] and res["nothing"] and res["days_done"] == 0 and res["waiting"] == FLAT_N
+    cl.bars_end = FRI
+    for d in window:
+        col.job_stock_day(d)
+    res = col.run_flat_iv()
+    assert res["ok"] and not res["nothing"] and (res["days_done"], res["days_total"], res["filed"]) == \
+        (FLAT_N, FLAT_N, FLAT_N)
+    assert res["marked"] == 3 and res["readings"] == 3 * len(_iv_days(window)) and res["waiting"] == 0
+    assert _und(db, "AAA")["history_done"] and cl.of("option_daily") == []
+    assert "IV history: %s filed from Massive's daily file" % FRI in caplog.text           # progress lines
+    assert "IV history: %s filed from Massive's daily file" % window[-10] in caplog.text
+    assert "of %d days filed" % FLAT_N in caplog.text
+    again = col.run_flat_iv()
+    assert again["ok"] and again["filed"] == 0 and again["days_done"] == FLAT_N and not again["nothing"]
+    assert len(s3.ops("get")) == FLAT_N
+    # refused: exit 2 (ok False with the kind)
+    s3.fail["list_objects_v2"] = [ClientError("SignatureDoesNotMatch", 403, "bad") for _ in range(50)]
+    res = col.run_flat_iv()                                      # (the weekly check lists the months first)
+    assert res["ok"] is False and res["error_kind"] == "auth" and "Flat Files keys" in res["error"]
+
+
+def test_run_flat_iv_without_keys(db, build):
+    clk = Clock(SAT)
+    col, cl = build(clk)
+    res = col.run_flat_iv()
+    assert res["ok"] is False and res["error_kind"] == "config" and res["nothing"]
+    assert "TST_MASSIVE_S3_KEY_ID" in res["error"] and "TST_MASSIVE_S3_SECRET" in res["error"]
+    assert cl.calls == []                                       # no Massive REST request either
+
+
 # ───────────────────────────────────────── the tray ─────────────────────────────────────────
 
 _TRAY_FUNCS = ("get_screener_collector_status", "_screener_log_error", "screener_toast")
@@ -1948,6 +2613,76 @@ def test_tray_warnings_are_amber(tmp_path):
     _write(p, dict(idle, universe_n=0, last_pass_et=None, last_pass_id=None, last_pass_contracts=None))
     got = status(now=TRAY_NOW)
     assert got["color"] == "green" and "no pass yet" in got["line"]
+
+
+def test_tray_shows_the_iv_files_progress_and_its_warning(tmp_path):
+    """v4.138 (tray-sync rule): the IV history from Massive's daily option files on the
+    screener line - its days, time left, waiting / retrying / off - and Massive refusing the
+    files as an amber WARN; an older collector without the keys changes nothing."""
+    p = tmp_path / "screener_collector.json"
+    status = _tray_function(p)
+    det = "Building IV history from Massive's daily files: 187 of 252 days, about 6 min left."
+    prog = {"flat_state": "building", "flat_days_done": 187, "flat_days_total": 252, "flat_eta_s": 360,
+            "flat_error": None}
+    base = {"state": "history", "heartbeat": "2026-10-08T13:59:40+00:00", "last_pass_et": "16:40 ET",
+            "last_pass_id": 3, "last_pass_contracts": 980000, "universe_n": 4512,
+            "universe_done": "2026-10-08T11:40:00+00:00", "history_done_n": 1204, "history_total": 4512,
+            "detail": det, "warn": None, "last_error": None, "progress": prog}
+    _write(p, base)
+    got = status(now=TRAY_NOW)
+    assert (got["color"], got["level"], got["tip"], got["detail"]) == ("green", "ok", "Scr history", det)
+    assert got["line"] == ("Options screener: history · last pass 16:40 ET · universe 4,512 · IV history 1,204/4,512 · "
+                           "IV files 187/252 days, about 6 min · hb 20s ago")
+    boto = "boto3 is not installed on this PC - run: pip install -r app\\requirements.txt"
+    for change, needle in (({"flat_state": "waiting", "flat_eta_s": None}, "IV files 187/252 days (waiting for stock prices) ·"),
+                           ({"flat_state": "ready", "flat_days_done": 252}, "IV files 252/252 days · hb"),
+                           ({"flat_state": "retry", "flat_error": "could not reach Massive Flat Files"},
+                            "IV files 187/252 days (retrying) ·"),
+                           ({"flat_state": "retry", "flat_days_total": None}, "· IV files retrying ·")):
+        _write(p, dict(base, progress=dict(prog, **change)))
+        got = status(now=TRAY_NOW)
+        assert (got["color"], got["level"]) == ("green", "ok") and needle in got["line"], (change, got["line"])
+    for quiet in ({"flat_state": "off", "flat_error": None, "flat_days_total": None}, {}, None):   # no keys / older
+        _write(p, dict(base, progress=quiet))
+        got = status(now=TRAY_NOW)
+        assert got["color"] == "green" and "IV files" not in got["line"], quiet
+    # the keys are set but the lane cannot run on this PC: amber WARN with the whole reason (the fix included)
+    off = dict(base, progress=dict(prog, flat_state="off", flat_days_total=None, flat_error=boto, flat_kind="config"))
+    _write(p, off)
+    got = status(now=TRAY_NOW)
+    assert (got["color"], got["level"], got["tip"]) == ("amber", "warn", "Scr WARN")
+    assert got["line"] == "Options screener: WARN - IV history from Massive's daily files is not running: " + boto
+    assert got["reason"].endswith("pip install -r app\\requirements.txt")
+    _write(p, dict(off, state="error", detail="Massive rejected the API key (HTTP 401)"))     # an error wins
+    got = status(now=TRAY_NOW)
+    assert got["tip"] == "Scr ERR" and "· IV files off ·" in got["line"]
+    # the files keep failing for another reason (network / http / a bug): the REST reads took over
+    fail = ("could not reach Massive Flat Files for the file list for 2026-10 after 5 tries "
+            "(EndpointConnectionError: Could not connect)")
+    for k in ("network", "http", "error"):
+        _write(p, dict(base, progress=dict(prog, flat_state="error", flat_kind=k, flat_error=fail)))
+        got = status(now=TRAY_NOW)
+        assert (got["color"], got["level"], got["tip"]) == ("amber", "warn", "Scr WARN"), k
+        assert got["line"] == ("Options screener: WARN - IV history from Massive's daily files keeps failing (the REST "
+                               "reads build it meanwhile): " + fail)
+    # Massive refused the files (the keys or the plan): amber WARN with the reason, the detail kept
+    err = ("Massive did not accept the Flat Files keys for the file list for 2026-10 (HTTP 403, InvalidAccessKeyId) - "
+           "copy the Access Key ID and the Secret Access Key again from massive.com/dashboard/keys into app\\.env")
+    bad = dict(base, state="idle", detail="Up to date with the Wed Oct 7 close.",
+               progress={"flat_state": "error", "flat_error": err, "flat_days_done": 40, "flat_days_total": 252})
+    _write(p, bad)
+    got = status(now=TRAY_NOW)
+    why = "IV history from Massive's daily files is paused: " + err
+    assert (got["color"], got["level"], got["tip"]) == ("amber", "warn", "Scr WARN")
+    assert got["line"] == "Options screener: WARN - " + why[:220] and got["reason"] == why[:220]
+    assert got["detail"] == "Up to date with the Wed Oct 7 close."
+    _write(p, dict(bad, state="universe"))                       # still a warning during a day-2 list refresh
+    assert status(now=TRAY_NOW)["tip"] == "Scr WARN"
+    _write(p, dict(bad, warn=T08))                               # the list refresh's own warning first
+    assert status(now=TRAY_NOW)["line"] == "Options screener: WARN - " + T08
+    _write(p, dict(bad, state="error", detail="Massive rejected the API key (HTTP 401)"))     # an error wins
+    got = status(now=TRAY_NOW)
+    assert got["tip"] == "Scr ERR" and "IV history from Massive's daily files" not in got["line"]
 
 
 def test_tray_not_running_and_never_checked_in(tmp_path):

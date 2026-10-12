@@ -12,18 +12,27 @@ What lives here
   ``recompute_iv`` (IV30 / IV rank / IV percentile over the last 252 daily IV30s),
   ``set_identity`` (name / security type / exchange), ``set_earnings``;
 * daily history: ``upsert_daily`` (one symbol, field by field), ``file_grouped_day`` (one
-  session of grouped daily bars for every universe symbol), ``stock_day_status``,
-  ``daily_counts``, ``raw_bars``, ``last_close``;
+  session of grouped daily bars for every universe symbol), ``file_iv_day`` (one session's
+  IV30 for every stock, from Massive's options day file - v4.138), ``stock_day_status``,
+  ``iv_day_status``, ``daily_counts``, ``raw_bars``, ``last_close``; for the flat-file
+  lane (v4.138): ``day_closes_raw`` (one day's unadjusted closes), ``iv_counts`` /
+  ``raw_close_counts`` (points per symbol), ``sec_types``;
+* where a day's IV30 came from (``iv30_src``, v4.138): ``live`` (the EOD pass,
+  ``update_underlying_pass(file_iv=True)``), ``rest`` (the per-stock REST history through
+  ``upsert_daily``), ``flat`` (``file_iv_day``). A live reading always wins: neither
+  history writer replaces one. NULL = filed before v4.138 (unknown, kept);
 * the universe: ``upsert_universe`` (a streamed, partial save with ``deactivate=False``
   never deactivates), ``pass_symbols`` / ``pass_symbols_weighted`` (the same order, with
   each symbol's contract count - the pass percent weights), ``universe_info``;
+* the IV figures of many symbols at once: ``recompute_iv_many`` (one commit per chunk);
 * passes: ``start_pass`` / ``finish_pass`` / ``last_pass`` (``min_contracts`` skips a pass
   that stored nothing; ``partial`` tells a pass read on a partial list of optionable stocks
   from one read on a complete list);
 * the heartbeat row: ``status`` / ``set_status`` (the JSON ``progress`` block is made
   JSON-safe on the way in);
 * IV-history bookkeeping: ``history_queue``, ``mark_history`` (30 min back-off doubling to
-  24 h), ``history_counts`` - an index underlying (``sec_type`` index, or an ``I:``
+  24 h), ``mark_history_many`` (many at once, v4.138), ``history_not_done``,
+  ``history_counts`` - an index underlying (``sec_type`` index, or an ``I:``
   prefix) has no IV history to build (no index closes on Stocks Basic) and is left out
   of both;
 * retention: ``prune`` (universe symbols inactive more than 10 days and every row of
@@ -32,9 +41,10 @@ What lives here
 Rules (CLAUDE.md data-handling rule): SQLAlchemy ORM only - no raw SQL, no SQLite-only
 syntax; upserts are query-then-update/insert; bulk inserts are ORM ``insert(Model)`` in
 chunks; every public write commits (one unit of work) and retries once on a unique-key
-race with another writer. Inside ONE process the three writers that can insert the same
-``scr_underlying_daily`` (symbol, day) row - ``file_grouped_day``, ``upsert_daily`` and the
-EOD branch of ``update_underlying_pass`` - also serialize on ``_DAILY_LOCK`` (taken before
+race with another writer. Inside ONE process the four writers that can insert the same
+``scr_underlying_daily`` (symbol, day) row - ``file_grouped_day``, ``upsert_daily``,
+``file_iv_day`` and the EOD branch of ``update_underlying_pass`` - also serialize on
+``_DAILY_LOCK`` (taken before
 the transaction, never inside it), so the collector's pass workers and its stocks lane
 never race each other into an IntegrityError; the retry stays as the backstop for another
 process. All datetimes naive UTC; a contract's ``iv`` is a FRACTION, every per-underlying
@@ -71,6 +81,8 @@ ATR_N, RSI_N = 14, 14
 TREND_MIN_BARS = 210             # MATP classify_trend: EMA200 needs this many closes
 TREND_SLOPE_WINDOW = 20          # MATP classify_trend: EMA50 slope over 20 bars
 SEC_TYPES = ("stock", "etf", "index", "other")
+IV_SRC_LIVE, IV_SRC_REST, IV_SRC_FLAT = "live", "rest", "flat"   # scr_underlying_daily.iv30_src
+IV_SRC_REPLACEABLE = (IV_SRC_FLAT, IV_SRC_REST)   # history readings a history writer may redo
 EXCHANGES = ("NYSE", "NASDAQ", "AMEX", "INDEX", "OTHER")
 
 C, U, D, UNI, P = ScrContract, ScrUnderlying, ScrUnderlyingDaily, ScrUniverse, ScrPass
@@ -139,6 +151,11 @@ def _day_str(v) -> str | None:
         return _dt.date.fromisoformat(s[:10]).isoformat()
     except ValueError:
         return None
+
+
+def _src(v, default: str) -> str:
+    """An ``iv30_src`` tag: lower-case, at most 8 characters; empty -> ``default``."""
+    return (str(v or "").strip().lower() or default)[:8]
 
 
 def _chunks(items, n: int = CHUNK):
@@ -433,17 +450,21 @@ def raw_bars(db, symbol, n: int = 260) -> list[dict]:
 
 
 def upsert_daily(db, symbol, bars=None, *, raw_bars=None, iv_series=None, overwrite_iv=True,
-                 today=None) -> int:
+                 today=None, source: str = IV_SRC_REST) -> int:
     """File daily history for ONE symbol into ``scr_underlying_daily``, field by field: a
     day already on file is updated, a new one inserted, and no input erases another's
     columns. ``bars`` = adjusted ``[{"on", "open", "high", "low", "close", "volume"}]``;
     ``raw_bars`` = unadjusted bars (their ``close`` becomes ``close_raw``); ``iv_series`` =
     ``[{"on", "iv"}]`` (PERCENT; ``overwrite_iv=False`` fills only days without one).
-    Points after ``today`` (when given), with no positive close, with high < low, or an IV
-    outside 0.1-1000 are skipped. Commits; returns the day rows touched."""
+    Each IV filed is tagged ``iv30_src = source`` (default ``rest``: the per-stock REST
+    history is the series' one caller). A ``live`` reading (the EOD pass) is never
+    replaced by another source, not even with ``overwrite_iv``. Points after ``today``
+    (when given), with no positive close, with high < low, or an IV outside 0.1-1000 are
+    skipped. Commits; returns the day rows touched."""
     sym = _sym(symbol)
     if not sym:
         raise ValueError("upsert_daily: no symbol")
+    src = _src(source, IV_SRC_REST)
     last_day = _day_str(today) if today is not None else None
 
     def ok_day(v) -> str | None:
@@ -495,11 +516,14 @@ def upsert_daily(db, symbol, bars=None, *, raw_bars=None, iv_series=None, overwr
                     vals[k] = v
             if on in raw:
                 vals["close_raw"] = raw[on]
-            if on in ivs and (overwrite_iv or r is None or r.iv30 is None):
+            if on in ivs and (r is None or r.iv30 is None or (
+                    overwrite_iv and (r.iv30_src != IV_SRC_LIVE or src == IV_SRC_LIVE))):
                 vals["iv30"] = ivs[on]
+                vals["iv30_src"] = src
             if r is None:
                 new.append(dict({"open": None, "high": None, "low": None, "close": None,
-                                 "close_raw": None, "volume": None, "iv30": None}, symbol=sym, on=on, **vals))
+                                 "close_raw": None, "volume": None, "iv30": None, "iv30_src": None},
+                                symbol=sym, on=on, **vals))
             else:
                 for k, v in vals.items():
                     setattr(r, k, v)
@@ -553,7 +577,8 @@ def file_grouped_day(db, day, bars, *, adjusted: bool = True, symbols=None) -> i
             r = existing.get(sym)
             if r is None:
                 new.append(dict({"open": None, "high": None, "low": None, "close": None,
-                                 "close_raw": None, "volume": None, "iv30": None}, symbol=sym, on=on, **vals))
+                                 "close_raw": None, "volume": None, "iv30": None, "iv30_src": None},
+                                symbol=sym, on=on, **vals))
             else:
                 for k, v in vals.items():
                     setattr(r, k, v)
@@ -575,9 +600,146 @@ def stock_day_status(db, start, end) -> dict[str, tuple[int, int]]:
     return {on: (int(n1 or 0), int(n2 or 0)) for on, n1, n2 in rows}
 
 
+def file_iv_day(db, day, values: dict, *, source: str = IV_SRC_FLAT) -> int:
+    """File ONE session's IV30 for many stocks (``values`` = ``{symbol: IV30 PERCENT}``,
+    from Massive's options day file - ``scr_flativ.day_iv30``), tagged ``iv30_src =
+    source``. A day is filled only when it has no IV30 yet or its IV30 is itself a history
+    reading (``flat`` / ``rest`` - a re-published day file redoes it); a ``live`` reading
+    (the EOD pass) always wins, and so does an untagged one (filed before v4.138 - it may
+    be live). ``source="live"`` replaces anything. A symbol without a daily row for the
+    day gets one. Values that are not numbers, or outside 0.1-1000, are skipped. Under
+    ``_DAILY_LOCK``; commits; returns the readings written."""
+    on = _day_str(day)
+    if on is None:
+        raise ValueError("file_iv_day: a date is needed")
+    src = _src(source, IV_SRC_FLAT)
+    clean: dict[str, float] = {}
+    for k, v in (values or {}).items():
+        sym, f = _sym(k), _f(v)
+        if sym and f is not None and DAILY_IV_LO <= f <= DAILY_IV_HI:
+            clean[sym] = f
+    if not clean:
+        return 0
+    syms = sorted(clean)
+
+    def apply() -> int:
+        existing: dict[str, ScrUnderlyingDaily] = {}
+        for part in _chunks(syms, 500):
+            for r in db.query(D).filter(D.on == on, D.symbol.in_(part)):
+                existing[r.symbol] = r
+        new, n = [], 0
+        for sym in syms:
+            r = existing.get(sym)
+            if r is None:
+                new.append({"symbol": sym, "on": on, "open": None, "high": None, "low": None,
+                            "close": None, "close_raw": None, "volume": None, "iv30": clean[sym],
+                            "iv30_src": src})
+                n += 1
+            elif r.iv30 is None or r.iv30_src in IV_SRC_REPLACEABLE or src == IV_SRC_LIVE:
+                r.iv30, r.iv30_src = clean[sym], src
+                n += 1
+        for part in _chunks(new):
+            db.execute(insert(D), part)
+        db.flush()
+        return n
+
+    with _DAILY_LOCK:
+        return _txn(db, apply)
+
+
+def iv_day_status(db, start, end, *, symbols=None) -> dict[str, dict[str, int]]:
+    """``{on: {source: IV30 readings}}`` for the sessions between ``start`` and ``end``
+    (inclusive) - which days have IV30s and from where (``live`` / ``flat`` / ``rest``;
+    ``none`` = untagged, filed before v4.138). ``symbols`` limits the count."""
+    a, b = _day_str(start), _day_str(end)
+    q = (db.query(D.on, D.iv30_src, func.count(D.id))
+           .filter(D.on >= a, D.on <= b, D.iv30.isnot(None)))
+    if symbols is not None:
+        keep = sorted({_sym(s) for s in symbols if _sym(s)})
+        if not keep:
+            return {}
+        out: dict[str, dict[str, int]] = {}
+        for part in _chunks(keep, 500):
+            for on, src, n in q.filter(D.symbol.in_(part)).group_by(D.on, D.iv30_src).all():
+                cell = out.setdefault(on, {})
+                key = src or "none"
+                cell[key] = cell.get(key, 0) + int(n or 0)
+        return out
+    out = {}
+    for on, src, n in q.group_by(D.on, D.iv30_src).all():
+        out.setdefault(on, {})[src or "none"] = int(n or 0)
+    return out
+
+
 def daily_counts(db) -> dict[str, int]:
     """``{symbol: adjusted closes on file}`` for every symbol with daily rows."""
     return {s: int(n or 0) for s, n in db.query(D.symbol, func.count(D.close)).group_by(D.symbol)}
+
+
+def day_closes_raw(db, day, symbols=None) -> dict[str, float]:
+    """``{symbol: that day's UNADJUSTED close}`` (``close_raw``) for ``day`` - what an
+    options day file is priced against (``scr_flativ.day_iv30``; v4.138). ``symbols``
+    limits it. A symbol without a positive raw close that day is left out (never the
+    adjusted close: a split would pick the wrong strike)."""
+    on = _day_str(day)
+    if on is None:
+        raise ValueError("day_closes_raw: a date is needed")
+    q = db.query(D.symbol, D.close_raw).filter(D.on == on, D.close_raw.isnot(None))
+    out: dict[str, float] = {}
+    if symbols is None:
+        rows = q.all()
+    else:
+        keep = sorted({_sym(s) for s in symbols if _sym(s)})
+        rows = [r for part in _chunks(keep, 500) for r in q.filter(D.symbol.in_(part)).all()]
+    for sym, c in rows:
+        f = _pos(c)
+        if f is not None:
+            out[sym] = f
+    return out
+
+
+def _counts_by_symbol(db, col, symbols, start, end) -> dict[str, int]:
+    q = db.query(D.symbol, func.count(col)).filter(col.isnot(None))
+    a, b = _day_str(start), _day_str(end)
+    if a:
+        q = q.filter(D.on >= a)
+    if b:
+        q = q.filter(D.on <= b)
+    if symbols is None:
+        return {s: int(n or 0) for s, n in q.group_by(D.symbol).all()}
+    keep = sorted({_sym(s) for s in symbols if _sym(s)})
+    out: dict[str, int] = {}
+    for part in _chunks(keep, 500):
+        for s, n in q.filter(D.symbol.in_(part)).group_by(D.symbol).all():
+            out[s] = int(n or 0)
+    return out
+
+
+def iv_counts(db, symbols=None, *, start=None, end=None) -> dict[str, int]:
+    """``{symbol: daily IV30 readings}`` (any source) between ``start`` and ``end``
+    (inclusive, either open) - how many points an IV history has (v4.138: the flat-file
+    lane marks a history done at ``HISTORY_MIN_POINTS``). ``symbols`` limits it."""
+    return _counts_by_symbol(db, D.iv30, symbols, start, end)
+
+
+def raw_close_counts(db, symbols=None, *, start=None, end=None) -> dict[str, int]:
+    """``{symbol: unadjusted closes on file}`` between ``start`` and ``end`` - whether an
+    IV history can be built yet (v4.138). ``symbols`` limits it."""
+    return _counts_by_symbol(db, D.close_raw, symbols, start, end)
+
+
+def sec_types(db, symbols=None) -> dict[str, str | None]:
+    """``{symbol: security type}`` of the stored underlyings (None = not named yet) - one
+    query for the flat-file lane's symbol map (v4.138). ``symbols`` limits it."""
+    q = db.query(U.symbol, U.sec_type)
+    if symbols is None:
+        return {s: t for s, t in q.all()}
+    keep = sorted({_sym(s) for s in symbols if _sym(s)})
+    out: dict[str, str | None] = {}
+    for part in _chunks(keep, 500):
+        for s, t in q.filter(U.symbol.in_(part)).all():
+            out[s] = t
+    return out
 
 
 def big_moves(db, day, *, lo: float, hi: float, symbols=None) -> list[str]:
@@ -647,9 +809,9 @@ def update_underlying_pass(db, symbol, *, session_day, pass_id=None, spot=None, 
     against the close of the session before ``session_day``, IV30 (PERCENT; kept when
     this pass could not read one) and the one-sigma 30-day move, call / put volume and open
     interest, the contracts kept, the pass id. ``file_iv`` (the EOD pass) also files this
-    pass's IV30 as ``session_day``'s daily reading (under ``_DAILY_LOCK``). Then the IV
-    figures (``_apply_iv``). Creates the row when missing. Commits; returns the row as a
-    dict."""
+    pass's IV30 as ``session_day``'s daily reading, tagged ``iv30_src = live`` (under
+    ``_DAILY_LOCK``; it replaces any history reading of that day). Then the IV figures
+    (``_apply_iv``). Creates the row when missing. Commits; returns the row as a dict."""
     sym = _sym(symbol)
     if not sym:
         raise ValueError("update_underlying_pass: no symbol")
@@ -676,9 +838,9 @@ def update_underlying_pass(db, symbol, *, session_day, pass_id=None, spot=None, 
         if file_iv and v30 is not None and session is not None and DAILY_IV_LO <= v30 <= DAILY_IV_HI:
             r = db.query(D).filter(D.symbol == sym, D.on == session).one_or_none()
             if r is None:
-                db.add(D(symbol=sym, on=session, iv30=v30))
+                db.add(D(symbol=sym, on=session, iv30=v30, iv30_src=IV_SRC_LIVE))
             else:
-                r.iv30 = v30
+                r.iv30, r.iv30_src = v30, IV_SRC_LIVE
             db.flush()
         if pass_id is not None:
             u.pass_id = int(pass_id)
@@ -708,6 +870,35 @@ def recompute_iv(db, symbol, *, session_day=None, now=None) -> dict:
         return _row_dict(u, U)
 
     return _txn(db, apply)
+
+
+def recompute_iv_many(db, symbols, *, now=None, chunk: int = 200, stop=None) -> int:
+    """``recompute_iv`` for many symbols (after a day file filed IV30s for all of them),
+    one commit per ``chunk`` instead of one per symbol; each symbol against the session of
+    its latest pass, as ``recompute_iv`` does by default. ``stop()`` returning True ends it
+    early. Creates missing rows. Returns the symbols done."""
+    stamp = _now(now)
+    syms = sorted({s for s in (_sym(x) for x in symbols or ()) if s})
+    done = 0
+    for part in _chunks(syms, max(1, int(chunk))):
+        if stop is not None and stop():
+            break
+
+        def apply(part=part) -> int:
+            have = {u.symbol: u for u in db.query(U).filter(U.symbol.in_(part))}
+            for sym in part:
+                u = have.get(sym)
+                if u is None:
+                    u = U(symbol=sym, history_done=False, history_tries=0, updated_at=stamp)
+                    db.add(u)
+                    db.flush()
+                _apply_iv(db, u, _pass_session(db, u))
+                u.updated_at = stamp
+            db.flush()
+            return len(part)
+
+        done += _txn(db, apply) or 0
+    return done
 
 
 def _recompute_tech_row(db, u, stamp) -> None:
@@ -1145,6 +1336,44 @@ def mark_history(db, symbol, *, done: bool, now=None) -> dict:
     return _txn(db, apply)
 
 
+def history_not_done(db, symbols=None) -> list[str]:
+    """Underlyings that can have an IV history (``history_applies``) and do not have it
+    yet, whatever their retry time - sorted. ``symbols`` limits the list."""
+    keep = set(symbols) if symbols is not None else None
+    rows = db.query(U.symbol, U.sec_type).filter(U.history_done.is_(False)).all()
+    return sorted(s for s, st in rows if (keep is None or s in keep) and history_applies(s, st))
+
+
+def mark_history_many(db, symbols, *, done: bool = True, now=None, chunk: int = 500) -> int:
+    """``mark_history`` for many symbols at once (v4.138: a day-file build completes
+    thousands of histories together), one commit per ``chunk``; creates missing rows.
+    Returns the symbols marked."""
+    stamp = _now(now)
+    syms = sorted({s for s in (_sym(x) for x in symbols or ()) if s})
+    n = 0
+    for part in _chunks(syms, max(1, int(chunk))):
+
+        def apply(part=part) -> int:
+            have = {u.symbol: u for u in db.query(U).filter(U.symbol.in_(part))}
+            for sym in part:
+                u = have.get(sym)
+                if u is None:
+                    u = U(symbol=sym, history_done=False, history_tries=0, updated_at=stamp)
+                    db.add(u)
+                if done:
+                    u.history_done, u.history_tries, u.history_next = True, 0, None
+                else:
+                    u.history_done = False
+                    u.history_tries = int(u.history_tries or 0) + 1
+                    u.history_next = stamp + _dt.timedelta(seconds=history_backoff_s(u.history_tries))
+                u.updated_at = stamp
+            db.flush()
+            return len(part)
+
+        n += _txn(db, apply) or 0
+    return n
+
+
 def history_counts(db, symbols=None) -> tuple[int, int]:
     """``(underlyings with their IV history, underlyings that can have one)`` - over
     ``symbols`` when given. Index underlyings are not counted at all (``history_applies``):
@@ -1190,11 +1419,13 @@ def prune(db, *, now=None, today=None, keep_days: int = INACTIVE_KEEP_DAYS) -> d
 
 __all__ = [
     "replace_contracts", "delete_contracts", "update_underlying_pass", "recompute_iv",
-    "recompute_technicals", "recompute_technicals_many", "technicals", "classify_trend",
+    "recompute_iv_many", "recompute_technicals", "recompute_technicals_many", "technicals",
+    "classify_trend", "file_iv_day", "iv_day_status", "IV_SRC_LIVE", "IV_SRC_REST", "IV_SRC_FLAT",
     "set_identity", "identity_missing", "set_earnings", "upsert_daily", "file_grouped_day", "stock_day_status",
     "daily_counts", "big_moves", "raw_bars", "last_close", "underlying", "upsert_universe",
     "pass_symbols", "universe_info", "start_pass", "finish_pass", "last_pass", "status",
     "set_status", "history_queue", "history_applies", "history_backoff_s", "mark_history",
-    "history_counts",
+    "history_counts", "mark_history_many", "history_not_done", "day_closes_raw", "iv_counts",
+    "raw_close_counts", "sec_types",
     "prune", "close_time_utc",
 ]

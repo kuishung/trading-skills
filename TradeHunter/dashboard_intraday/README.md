@@ -33,6 +33,16 @@ web, Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-10-12 — `tray_status.py`: the Options screener line shows the IV history from Massive's daily files (tray-sync rule)
+- dashboard_tst v4.138 builds the IV history (IV Rank / IV Percentile) from Massive's Flat Files
+  in a new collector lane; its state is published as `progress.flat_*`, so the screener line
+  shows it: "IV files 187/500 days, about 6 min", "(waiting for stock prices)", "(retrying)", or
+  "IV files off (<reason>)" when the keys are set but something is missing (boto3, the clock, the
+  bucket, the disk); a refused lane turns the line amber: "WARN - IV history from Massive's daily
+  files is paused: ...". During a `--flat-iv` one-off the line says building with the time left.
+- Tested in `dashboard_tst/tests/test_scr_collector.py`. Restart the tray task on Hermes after
+  pulling this (DEPLOY.md section H).
+
 ### 2026-10-11 — `tray_status.py`: the Options screener line shows progress, warnings and a dead collector (tray-sync rule)
 - dashboard_tst v4.137 made the screener collector publish its live step and progress (state json
   `detail`, `warn`, `error_kind`, `next_try`, `progress`), so the tray line follows it:

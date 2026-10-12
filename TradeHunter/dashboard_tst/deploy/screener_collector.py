@@ -31,6 +31,7 @@ PowerShell as Administrator:
     .\.venv\Scripts\python.exe deploy\screener_collector.py --once          # one full market pass, exit
     .\.venv\Scripts\python.exe deploy\screener_collector.py --eod-now -v    # the end-of-day pass now
     .\.venv\Scripts\python.exe deploy\screener_collector.py --history NVDA SPY   # re-read their IV history
+    .\.venv\Scripts\python.exe deploy\screener_collector.py --flat-iv       # IV history from the daily files now
     .\.venv\Scripts\python.exe deploy\screener_collector.py --once -v --log-file logs\screener_collector.log
     Enable-ScheduledTask -TaskName TST-Options-Screener
     Start-ScheduledTask -TaskName TST-Options-Screener
@@ -47,6 +48,18 @@ Environment (app\.env; only the key is required):
     TST_SCREENER_WORKERS        reader threads sharing one client, default 8
     TST_SCREENER_MAX_RPS        Massive requests a second at most, default 40
     TST_SCREENER_MAX_DTE        farthest expiry read, in days, default 1100
+    TST_MASSIVE_S3_KEY_ID       the Massive Flat Files pair (Dashboard -> Keys -> Flat Files):
+    TST_MASSIVE_S3_SECRET       the IV history is built from the daily option files (v4.138);
+                                without them the per-stock REST reads build it, as before
+    TST_MASSIVE_S3_ENDPOINT     default https://files.massive.com
+    TST_MASSIVE_S3_BUCKET       default flatfiles
+
+--flat-iv (v4.138) builds / refreshes the IV history from Massive's daily option files now:
+the days Massive re-published, every session of the last 252 whose stock closes are on file
+and that has no filing yet (newest first; a progress line every 10 days), and the stored
+files read again for the underlyings still without a history. It needs the Flat Files pair
+and boto3 (pip install -r app\requirements.txt), not the REST key; the files are kept in
+state\flatfiles. The secret and the key id are masked in every log line, like the key.
 
 When it cannot start (the app modules do not load, the screener DB cannot be migrated, the
 collector crashes) it says so where the page and the tray look: ``state\screener_collector.json``
@@ -64,11 +77,13 @@ Exit codes: 0 = ran (single underlyings that failed are logged, not fatal; --for
 stopped by Ctrl+C); 1 = a one-off could not start (another collector is running - the
 lock; the app or the DB not loadable; a crash - the crash state survives the one-off's
 final "stopped" heartbeat); 2 = a one-off
-run failed (--once, --universe-now, --eod-now, --history): no key on this PC, the key
-rejected, the plan lacks an endpoint, Massive not reachable, the list of optionable stocks
-could not be read, or the pass read no option data; 3 = --history ran but no IV history
-came out done (e.g. the stock bars are not loaded yet). --forever never exits on any of
-these - it reports them (state error on the page and the tray) and retries.
+run failed (--once, --universe-now, --eod-now, --history, --flat-iv): no key on this PC, the
+key rejected, the plan lacks an endpoint, Massive not reachable, the list of optionable
+stocks could not be read, or the pass read no option data (--flat-iv: no Flat Files pair or
+boto3 on this PC, the pair or the plan refused, the files not reachable);
+3 = --history ran but no IV history came out done (e.g. the stock bars are not loaded yet) -
+for --flat-iv: no day of the window is filed yet. --forever never exits on any of these - it
+reports them (state error on the page and the tray) and retries.
 """
 from __future__ import annotations
 
@@ -110,12 +125,15 @@ _FMT = "%(asctime)s %(levelname)-7s %(message)s"
 LOG_MAX_BYTES = 5 * 1024 * 1024     # --log-file rotates at 5 MB ...
 LOG_BACKUPS = 5                     # ... and keeps 5 old files (at most ~30 MB in all)
 KEY_ENV = "TST_MASSIVE_API_KEY"
+S3_ENVS = ("TST_MASSIVE_S3_SECRET", "TST_MASSIVE_S3_KEY_ID")   # the Flat Files pair: masked like the key
 ENV_FILE = DASH / "app" / ".env"
 # Libraries that log one line per HTTP request (the URL, cursor included): a market pass
-# is tens of thousands of requests. Kept to warnings and errors.
-QUIET_LOGGERS = ("httpx", "httpcore", "urllib3", "hpack")
+# is tens of thousands of requests. Kept to warnings and errors - botocore's debug lines
+# would also carry the signed S3 requests (v4.138).
+QUIET_LOGGERS = ("httpx", "httpcore", "urllib3", "hpack", "botocore", "boto3", "s3transfer")
 APP_LOGGERS = ("screener_collector", "app.services.scr_collector", "app.services.scr_store",
-               "app.services.opt_massive", "app.services.massive", "app.services.calendars")
+               "app.services.opt_massive", "app.services.massive", "app.services.calendars",
+               "app.services.flat_files", "app.services.scr_flativ")
 
 # The crash state: the same file the collector heartbeats into (scr_collector.STATE_PATH).
 STATE_FILE = DASH / "state" / "screener_collector.json"
@@ -148,6 +166,9 @@ def parse_args(argv=None) -> argparse.Namespace:
                       help="run the end-of-day pass now (every chain + the day's IV30), then exit")
     mode.add_argument("--history", nargs="+", metavar="SYM",
                       help="re-read the IV history of these underlyings now, then exit")
+    mode.add_argument("--flat-iv", action="store_true",
+                      help="build / refresh the IV history from Massive's daily option files now (needs "
+                           "TST_MASSIVE_S3_KEY_ID / TST_MASSIVE_S3_SECRET), with progress lines, then exit")
     ap.add_argument("--no-init", action="store_true",
                     help="skip init_screener_db() (the Alembic upgrade of the screener DB at start)")
     ap.add_argument("--log-file", default=None, metavar="PATH",
@@ -158,26 +179,30 @@ def parse_args(argv=None) -> argparse.Namespace:
 
 
 class KeyScrub(logging.Filter):
-    """Masks the Massive key in every log line and traceback - a second guard: the client
-    never puts it in a message (it travels only in the Authorization header)."""
+    """Masks the Massive key - and the Flat Files secret and key id (v4.138) - in every log
+    line and traceback: a second guard, the clients never put them in a message (the key
+    travels only in the Authorization header, the pair only into the S3 signature)."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        key = (os.environ.get(KEY_ENV) or "").strip()
-        if len(key) < 4:
+        keys = [k for k in ((os.environ.get(n) or "").strip() for n in (KEY_ENV,) + S3_ENVS) if len(k) >= 4]
+        if not keys:
             return True
         try:
             msg = record.getMessage()
         except Exception:  # noqa: BLE001
             return True
-        if key in msg:
-            record.msg, record.args = msg.replace(key, "***"), None
+        if any(k in msg for k in keys):
+            for k in keys:
+                msg = msg.replace(k, "***")
+            record.msg, record.args = msg, None
         if record.exc_info and not record.exc_text:
             try:
                 record.exc_text = logging.Formatter().formatException(record.exc_info)
             except Exception:  # noqa: BLE001
                 pass
-        if record.exc_text and key in record.exc_text:
-            record.exc_text = record.exc_text.replace(key, "***")
+        if record.exc_text:
+            for k in keys:
+                record.exc_text = record.exc_text.replace(k, "***")
         return True
 
 
@@ -241,19 +266,22 @@ def _logging(level: int, log_file: str | None = None) -> None:
 # ---------------------------------------------------------------- the crash state
 
 def _secrets() -> list[str]:
-    """The Massive key as the process holds it and as ``app\\.env`` has it (the app may
-    not have loaded the file yet) - the values a crash text must never carry."""
+    """The Massive key - and the Flat Files secret and key id (v4.138) - as the process
+    holds them and as ``app\\.env`` has them (the app may not have loaded the file yet):
+    the values a crash text must never carry."""
     out = []
-    v = (os.environ.get(KEY_ENV) or "").strip()
-    if len(v) >= 4:
-        out.append(v)
+    for name in (KEY_ENV,) + S3_ENVS:
+        v = (os.environ.get(name) or "").strip()
+        if len(v) >= 4 and v not in out:
+            out.append(v)
     try:
         text = ENV_FILE.read_text(encoding="utf-8", errors="replace")
     except OSError:
         text = ""
-    for m in re.finditer(r"(?m)^\s*(?:export\s+)?" + KEY_ENV + r"\s*=\s*['\"]?([^'\"\s#]+)", text):
-        if len(m.group(1)) >= 4 and m.group(1) not in out:
-            out.append(m.group(1))
+    for name in (KEY_ENV,) + S3_ENVS:
+        for m in re.finditer(r"(?m)^\s*(?:export\s+)?" + name + r"\s*=\s*['\"]?([^'\"\s#]+)", text):
+            if len(m.group(1)) >= 4 and m.group(1) not in out:
+                out.append(m.group(1))
     return out
 
 
@@ -482,7 +510,8 @@ def _load_app():
 
 def _mode(args) -> str:
     return ("once" if args.once else "universe-now" if args.universe_now else
-            "eod-now" if args.eod_now else "history" if args.history else "forever")
+            "eod-now" if args.eod_now else "history" if args.history else
+            "flat-iv" if args.flat_iv else "forever")
 
 
 def _setup(args, level):
@@ -510,11 +539,12 @@ def _setup(args, level):
 def _start(mods, mode: str):
     screener_db, massive, scr_collector = mods
     col = scr_collector.Collector(screener_db.SessionLocal, log=log)
-    log.info("screener collector %s pid %d: mode %s, Massive %s (key %s), %d workers, %.0f req/s, "
-             "a pass every %d min in the US session, DB %s, state file %s",
+    flat = all((os.environ.get(n) or "").strip() for n in S3_ENVS)
+    log.info("screener collector %s pid %d: mode %s, Massive %s (key %s, Flat Files pair %s), %d workers, "
+             "%.0f req/s, a pass every %d min in the US session, DB %s, state file %s",
              scr_collector.COLLECTOR_VERSION, os.getpid(), mode, massive.base_url(),
-             "set" if massive.api_key() else "MISSING", col.workers, col.max_rps, col.cycle_min,
-             _db_label(screener_db.database_url()), col.state_path)
+             "set" if massive.api_key() else "MISSING", "set" if flat else "not set", col.workers, col.max_rps,
+             col.cycle_min, _db_label(screener_db.database_url()), col.state_path)
     return col
 
 
@@ -590,6 +620,8 @@ def _one_off(args, mode: str, level: int) -> int:
             res = col.run_universe()
         elif mode == "eod-now":
             res = col.run_eod()
+        elif mode == "flat-iv":
+            res = col.run_flat_iv()
         else:
             res = col.run_history(args.history)
         log.info("%s: %s", mode, res)

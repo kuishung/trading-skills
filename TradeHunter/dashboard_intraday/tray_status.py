@@ -983,7 +983,9 @@ def get_screener_collector_status(path=None, now=None, log_path=None) -> dict:
     """The Hermes Options Screener collector from its heartbeat file
     (dashboard_tst/state/screener_collector.json): state, the walk's page, the pass in
     progress (percent + time left), the last finished pass, universe size, stock days and
-    IV history to go, heartbeat age - one line + a tooltip fragment, and the collector's
+    IV history to go, the IV history built from Massive's daily option files (v4.138:
+    "IV files 187/252 days, about 6 min" - waiting for stock prices / retrying / off with
+    its reason), heartbeat age - one line + a tooltip fragment, and the collector's
     own sentence (``detail``: what it is doing, or the whole error / stop reason, cut to
     220 characters) for the second line of the Show Status window.
 
@@ -1001,7 +1003,13 @@ def get_screener_collector_status(path=None, now=None, log_path=None) -> dict:
     Colour: green = working; amber = error / stopped / stale, or a working collector with
     a warning (a failed list refresh, a last pass that stored no contracts, no list of
     optionable stocks after a failure - never during the walk or at start: the first walk
-    legitimately has no list yet; tip "Scr WARN"); grey = absent.
+    legitimately has no list yet; the IV history from Massive's daily option files not
+    working - ``progress.flat_state`` error: refused, the Flat Files keys or the plan
+    (``flat_kind`` auth / plan, "is paused"), or failing again and again for another reason
+    (network / http / missing / a bug, "keeps failing" - the REST reads took over); or
+    ``flat_state`` off WITH a ``flat_error``: the keys are set but the lane cannot run on
+    this PC (boto3, the clock, the bucket, the disk - "is not running"); tip "Scr WARN");
+    grey = absent. The day-file lane off WITHOUT a reason (no keys) stays green and silent.
     Returns {level: ok|warn|absent, color: green|amber|grey, state, line, tip, detail,
              reason, age_sec, pass_id, last_pass_et, last_pass_id, last_pass_contracts,
              last_pass_n, universe_n, history_done_n, history_total, api_ok, error_kind,
@@ -1137,6 +1145,26 @@ def get_screener_collector_status(path=None, now=None, log_path=None) -> dict:
         if left:
             seg += f" ({left:,} left" + (f", about {eta}" if eta else "") + ")"
         parts.append(seg)
+    # the IV history from Massive's daily option files (v4.138, the collector's flat lane)
+    f_state = str(prog.get("flat_state") or "").strip().lower()
+    f_done, f_total = _n(prog.get("flat_days_done")), _n(prog.get("flat_days_total"))
+    f_err = _text(prog.get("flat_error"))
+    f_kind = str(prog.get("flat_kind") or "").strip().lower()
+    if f_state in ("building", "waiting", "ready", "retry") and f_total:
+        seg = f"IV files {f_done or 0:,}/{f_total:,} days"
+        if f_state == "building" and _dur(prog.get("flat_eta_s")):
+            seg += f", about {_dur(prog.get('flat_eta_s'))}"
+        elif f_state == "waiting":
+            seg += " (waiting for stock prices)"
+        elif f_state == "retry":
+            seg += " (retrying)"
+        parts.append(seg)
+    elif f_state == "retry":
+        parts.append("IV files retrying")
+    elif f_state == "off" and f_err:
+        parts.append("IV files off")              # (the WARN line carries the whole reason)
+    elif f_state == "error":
+        parts.append("IV files paused")
     if api_ok is False:
         parts.append("Massive failing")
     parts.append(f"hb {_age_text(age)} ago")
@@ -1151,6 +1179,15 @@ def get_screener_collector_status(path=None, now=None, log_path=None) -> dict:
                                       f"{d.get('last_pass_session') or '?'}) stored no contracts")
         elif state == "idle" and not uni and last_error:
             warn_why = last_error
+    if warn_why is None and state not in ("error", "stopped"):
+        if f_state == "error" and f_kind in ("", "auth", "plan"):
+            warn_why = ("IV history from Massive's daily files is paused: "
+                        + (f_err or "Massive refused the daily option files (the Flat Files keys or the plan)"))
+        elif f_state == "error":
+            warn_why = ("IV history from Massive's daily files keeps failing (the REST reads build it meanwhile): "
+                        + (f_err or f"the daily-file job failed ({f_kind})"))
+        elif f_state == "off" and f_err:
+            warn_why = "IV history from Massive's daily files is not running: " + f_err
 
     if age is None or age > OPTIONS_SCREENER_STALE_SEC:
         if raw == "error":

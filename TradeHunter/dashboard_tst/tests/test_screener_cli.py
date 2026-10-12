@@ -28,6 +28,9 @@ CLI = DASH_ROOT / "deploy" / "screener_collector.py"
 PS1 = DASH_ROOT / "deploy" / "setup_screener_task.ps1"
 KEY = "unit-test-key-0123456789abcdef"          # not a real key
 FILE_KEY = "file-only-key-9876543210fedcba"     # the key as only app\.env has it
+S3_KEY_ID = "UNITTESTFLATKEYID0123"             # a made-up Flat Files pair (v4.138)
+S3_SECRET = "unit-test-flat-secret-Zq9vX2/abc+0123"
+FILE_S3_SECRET = "file-only-flat-secret-9876/zyx+abc"
 
 
 def _load_cli():
@@ -80,6 +83,10 @@ class FakeCollector:
 
     def run_history(self, symbols):
         self.ran.append("history:" + ",".join(symbols))
+        return dict(self.result)
+
+    def run_flat_iv(self):
+        self.ran.append("flat-iv")
         return dict(self.result)
 
     def stop(self, reason="stopped"):
@@ -369,6 +376,53 @@ def test_one_collector_at_a_time(cli, sdb, monkeypatch):
     assert cli.main(["--no-init", "--once"]) == cli.EXIT_OK          # the lock went with that run
     doc = cli.__doc__
     assert "Disable-ScheduledTask -TaskName TST-Options-Screener" in doc and "stop the task first" not in doc
+
+
+def test_flat_iv_one_off_exit_codes_and_the_lock(cli, sdb):
+    """--flat-iv (v4.138): the IV history from Massive's daily files now - 0 done, 3 nothing
+    filed yet (no stock prices), 2 refused / no keys; one collector at a time, as every run."""
+    FakeCollector.result = {"ok": True, "days_done": 252, "days_total": 252, "nothing": False}
+    assert cli.main(["--no-init", "--flat-iv"]) == cli.EXIT_OK
+    FakeCollector.result = {"ok": True, "days_done": 0, "days_total": 252, "nothing": True}
+    assert cli.main(["--no-init", "--flat-iv"]) == cli.EXIT_NOTHING
+    FakeCollector.result = {"ok": False, "nothing": True, "error_kind": "config",
+                            "error": "the Flat Files keys are not set on this PC"}
+    assert cli.main(["--no-init", "--flat-iv"]) == cli.EXIT_SOURCE          # not usable beats "nothing"
+    assert [c.ran for c in FakeCollector.made] == [["flat-iv"]] * 3
+    assert [c.stopped for c in FakeCollector.made] == [["one-off --flat-iv run finished"]] * 3
+    for bad in (["--flat-iv", "--once"], ["--flat-iv", "--history", "NVDA"], ["--flat-iv", "SPY"]):
+        with pytest.raises(SystemExit):
+            cli.main(bad)
+    assert cli.parse_args(["--flat-iv"]).flat_iv is True and cli._mode(cli.parse_args(["--flat-iv"])) == "flat-iv"
+    first = cli.InstanceLock(cli._lock_path())
+    assert first.acquire()
+    try:
+        assert cli.main(["--no-init", "--flat-iv"]) == cli.EXIT_SETUP      # another collector runs: nothing done
+        assert len(FakeCollector.made) == 3
+    finally:
+        first.release()
+    doc = cli.__doc__
+    assert "deploy\\screener_collector.py --flat-iv" in doc and "TST_MASSIVE_S3_SECRET" in doc
+    assert "for --flat-iv: no day of the window is filed yet" in doc
+
+
+def test_the_flat_files_pair_is_masked_like_the_key(cli, monkeypatch):
+    monkeypatch.setenv("TST_MASSIVE_S3_SECRET", S3_SECRET)
+    monkeypatch.setenv("TST_MASSIVE_S3_KEY_ID", S3_KEY_ID)
+    rec = logging.LogRecord("x", logging.ERROR, __file__, 1, "signed with %s for %s", (S3_SECRET, S3_KEY_ID), None)
+    assert cli.KeyScrub().filter(rec) and rec.getMessage() == "signed with *** for ***"
+    try:
+        raise RuntimeError("boto said %s" % S3_SECRET)
+    except RuntimeError:
+        rec = logging.LogRecord("x", logging.ERROR, __file__, 1, "failed", (), sys.exc_info())
+    assert cli.KeyScrub().filter(rec) and S3_SECRET not in rec.exc_text and "boto said ***" in rec.exc_text
+    cli.ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+    cli.ENV_FILE.write_text("TST_MASSIVE_S3_SECRET='%s'\n" % FILE_S3_SECRET, encoding="utf-8")
+    assert cli._mask("a %s b %s c %s" % (S3_SECRET, S3_KEY_ID, FILE_S3_SECRET)) == "a *** b *** c ***"
+    doc = cli._crash_state("could not start with %s" % FILE_S3_SECRET)
+    assert FILE_S3_SECRET not in json.dumps(doc) and FILE_S3_SECRET not in cli.STATE_FILE.read_text(encoding="utf-8")
+    assert {"botocore", "boto3", "s3transfer"} <= set(cli.QUIET_LOGGERS)    # signed requests never logged
+    assert {"app.services.flat_files", "app.services.scr_flativ"} <= set(cli.APP_LOGGERS)
 
 
 def test_cli_state_file_is_the_collectors():

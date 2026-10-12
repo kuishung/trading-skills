@@ -118,7 +118,11 @@ class ScrUnderlying(ScrBase):
 
 class ScrUnderlyingDaily(ScrBase):
     """Daily history per underlying: Stocks Basic grouped daily bars (adjusted OHLCV and the
-    unadjusted close) and the day's IV30 (PERCENT)."""
+    unadjusted close) and the day's IV30 (PERCENT). ``iv30_src`` (migration ``c3d9e5f1a7b2``,
+    v4.138) says where that IV30 came from: ``live`` (the end-of-day pass, from the whole
+    chain - it always wins), ``flat`` (Massive's options day files, ``scr_flativ``) or
+    ``rest`` (the per-stock REST history, ``opt_massive.iv30_history``). NULL = filed
+    before v4.138 (unknown; kept like a live reading)."""
 
     __tablename__ = "scr_underlying_daily"
     __table_args__ = (UniqueConstraint("symbol", "on", name="uq_scr_und_daily"),)
@@ -133,6 +137,7 @@ class ScrUnderlyingDaily(ScrBase):
     close_raw = Column(Float, nullable=True)             # as traded that day
     volume = Column(Float, nullable=True)
     iv30 = Column(Float, nullable=True)                  # PERCENT
+    iv30_src = Column(String(8), nullable=True)          # live | flat | rest (NULL = before v4.138)
 
 
 class ScrUniverse(ScrBase):

@@ -16,6 +16,17 @@ engine API this module calls), §7 (saved screeners), §8 (this page and its end
   ``state/screener_collector.json`` is read when the DB has nothing newer (a collector that
   could not start writes only that); ``empty`` = the results area's panel saying why there
   is nothing to screen yet. The first paint carries the same status (``boot.status``).
+* v4.138 - the IV history from Massive's daily option files (the collector's flat lane,
+  ``progress.flat_*``): the data line says "IV rank: building from daily files (187 / 252
+  days)" while days are still to file, the empty panel says the same. Three warnings turn
+  the dot amber, with plain words for members and the fix (plus the collector's reason)
+  for admins: Massive refusing the files (``flat_state`` error, ``flat_kind`` auth / plan
+  or none: the Flat Files keys / the plan), the files failing for another reason
+  (``flat_state`` error, kind network / http / missing / error: the REST reads took over;
+  the endpoint / bucket / Hermes's connection, or the log), and the lane off WITH a reason
+  (``flat_state`` off + ``flat_error``: the keys are set but something on Hermes is not -
+  boto3, the clock, the bucket, the disk). Off without a reason (no keys) and a collector
+  that sends no ``flat_*`` keys change nothing.
 
 The screening engine (``services/screener``) needs numpy, so it is imported LAZILY inside
 the handlers: a server that has not run ``pip install -r app/requirements.txt`` yet still
@@ -789,6 +800,27 @@ _SCOPE_WORDS = {"the universe refresh": "the list of optionable stocks",
 # only the collector's own op words: a " - " inside Massive's reason must not be read as the scope
 _SCOPE_RE = re.compile(r"\s+-\s+(" + "|".join(map(re.escape, _SCOPE_WORDS)) + r") paused, the rest carries on")
 _CRASH_PREFIX = "The collector could not start on the server: "
+# v4.138 - the IV history from Massive's daily option files (the collector's flat lane):
+# progress.flat_state is off | waiting | building | ready | error | retry (an older collector sends none);
+# progress.flat_kind says why an error / off happened (auth | plan | network | http | missing | error | config)
+_FLAT_PAUSED = ("IV history from Massive's daily option files is paused (Massive refused access); "
+                "IV Rank keeps building the slower way meanwhile.")
+_FLAT_ADMIN = ("Admin: check TST_MASSIVE_S3_KEY_ID and TST_MASSIVE_S3_SECRET in app\\.env on Hermes (the Flat "
+               "Files pair from massive.com/dashboard/keys - re-read within 30 min) and that the Massive plan "
+               "includes Flat Files.")
+# the files keep failing for another reason (network / HTTP / a bug): the REST reads took over
+_FLAT_FAILING = ("IV history from Massive's daily option files can't be read right now; "
+                 "IV Rank keeps building the slower way meanwhile.")
+_FLAT_FAIL_ADMIN = ("Admin: check that Hermes reaches Massive, and TST_MASSIVE_S3_ENDPOINT (default "
+                    "https://files.massive.com) and TST_MASSIVE_S3_BUCKET (default flatfiles) in app\\.env on Hermes "
+                    "(re-read at the next try, within 30 min).")
+_FLAT_BUG_ADMIN = ("Admin: the daily-file job keeps failing on Hermes - read logs\\screener_collector.log "
+                   "(tried again by itself every 30 min).")
+# the keys are set but the lane cannot run on Hermes (boto3 / numpy, the PC clock, the endpoint / bucket, the disk)
+_FLAT_SETUP = ("IV history from Massive's daily option files is not running on the server (a setup problem on "
+               "Hermes); IV Rank keeps building the slower way meanwhile.")
+_FLAT_SETUP_ADMIN = ("Admin: fix the step named below on Hermes - the collector looks again every 5 min, "
+                     "no restart needed.")
 _START_TASK = "Hermes: Start-ScheduledTask -TaskName TST-Options-Screener."
 _SETUP_TASK = ("Hermes: powershell -ExecutionPolicy Bypass -File deploy\\setup_screener_task.ps1 -StartNow, "
                "then read logs\\screener_collector.log.")
@@ -904,6 +936,56 @@ def _is_crash(st: dict) -> bool:
     return CRASH_WRITER in str(st.get("written_by") or "") or str(st.get("error_kind") or "") == "startup"
 
 
+def _flat_view(prog: dict | None) -> dict:
+    """The day-file IV lane from the collector's ``progress`` (v4.138): ``{state, done,
+    total, error, kind, building, blocked}`` - ``building`` while days are still to file
+    (filing, waiting for the stock prices, or a short retry); ``blocked`` when the lane is
+    off WITH a reason (the keys are set but it cannot run on Hermes - off without one is
+    "no keys": silent). Missing keys (an older collector) -> all None / False."""
+    p = prog if isinstance(prog, dict) else {}
+    state = str(p.get("flat_state") or "").strip().lower() or None
+    done, total = _num(p.get("flat_days_done")), _num(p.get("flat_days_total"))
+    err = " ".join(str(p.get("flat_error") or "").split()) or None
+    kind = str(p.get("flat_kind") or "").strip().lower() or None
+    building = bool(state in ("building", "waiting", "retry") and total and (done or 0) < total)
+    return {"state": state, "done": done, "total": total, "error": err, "kind": kind, "building": building,
+            "blocked": bool(state == "off" and err)}
+
+
+def _flat_words(fl: dict) -> str:
+    """``IV rank: building from daily files (187 / 252 days)`` - the data line's IV part
+    while the day files are being filed."""
+    return f"IV rank: building from daily files ({_count(fl['done'] or 0)} / {_count(fl['total'])} days)"
+
+
+def _flat_warning(fl: dict) -> tuple[str, str] | None:
+    """``(member sentence, admin hint)`` when the day-file lane is a warning, else None:
+    Massive refused the files (``error``, auth / plan - an older collector sends no kind),
+    they keep failing for another reason (``error``, network / http / missing / a bug - the
+    REST reads took over), or the lane is off with a reason (``blocked``: a setup problem
+    on Hermes)."""
+    if fl.get("blocked"):
+        return _FLAT_SETUP, _FLAT_SETUP_ADMIN
+    if fl.get("state") != "error":
+        return None
+    kind = fl.get("kind")
+    if kind in (None, "auth", "plan"):
+        return _FLAT_PAUSED, _FLAT_ADMIN
+    if kind == "error":
+        return _FLAT_FAILING, _FLAT_BUG_ADMIN
+    return _FLAT_FAILING, _FLAT_FAIL_ADMIN
+
+
+def _flat_note(fl: dict) -> str:
+    """The empty panel's sentence about the day-file IV lane ("" when there is nothing to say)."""
+    fw = _flat_warning(fl)
+    if fw:
+        return " " + fw[0]
+    if fl.get("building"):
+        return " " + _flat_words(fl) + "."
+    return ""
+
+
 def _reload_eta_s(meta: dict, last: dict | None) -> int:
     """About how long loading the latest data into the screener takes (~10 s per 1M rows)."""
     n = (last or {}).get("n_contracts") or meta.get("pass_contracts") or 0
@@ -998,7 +1080,10 @@ def _status_view(col: dict, meta: dict | None = None, now: _dt.datetime | None =
     h_total, h_done = _num(s.get("history_total")), _num(s.get("history_done_n"))
     if not h_total and meta.get("iv_history_total"):
         h_total, h_done = _num(meta.get("iv_history_total")), _num(meta.get("iv_history_done"))
-    if h_total:
+    fl = _flat_view(prog)
+    if fl["building"]:                     # v4.138: the IV history comes from Massive's daily files
+        parts.append(_flat_words(fl))
+    elif h_total:
         h_done = h_done or 0
         if h_done >= h_total:
             parts.append(f"IV history {_count(h_done)} / {_count(h_total)}")
@@ -1011,6 +1096,7 @@ def _status_view(col: dict, meta: dict | None = None, now: _dt.datetime | None =
     kind = _error_kind(s) if state == "error" else None
     nt = _next_try(s, now) if st else None
     admin_hint = ""
+    admin_raw = None                       # the admin's "Details:" (default: the collector's own words)
     if not col.get("available") or not st:
         dot, label = "slate", "The market collector has not started yet - no option data to screen."
     elif _is_crash(s):
@@ -1053,8 +1139,13 @@ def _status_view(col: dict, meta: dict | None = None, now: _dt.datetime | None =
             dot = "amber"
             label = _sentence(label) + (f" The last market pass ({_pass_words(finished.get('kind'), finished.get('session'))})"
                       " read no option data.")
+        fw = _flat_warning(fl)             # v4.138: the daily files refused / failing / not set up - a warning
+        if fw:
+            dot = "amber"
+            label = _sentence(label) + " " + fw[0]
+            admin_hint, admin_raw = fw[1], fl["error"] or ""
     if is_admin and admin_hint and dot != "green":
-        raw = detail or last_error
+        raw = admin_raw if admin_raw is not None else (detail or last_error)
         label += f" {admin_hint}" + (f" Details: {raw[:300]}" if raw else "")
     alert = label
 
@@ -1080,6 +1171,7 @@ def _status_view(col: dict, meta: dict | None = None, now: _dt.datetime | None =
         "error_kind": kind,
         "next_try": _iso(s.get("next_try")),
         "warn": warn or None,
+        "flat": fl,
         "source": col.get("source"),
         "collector": _jsonable({k: (_iso(v) if isinstance(v, _dt.datetime) else v)
                                 for k, v in s.items()}) if st else None,
@@ -1132,6 +1224,10 @@ def _empty_view(col, st, meta, now, *, kind, nt, age, frame_empty, finished, run
     hint = _ADMIN_HINT.get(kind or "", _ADMIN_OTHER)
     raw = detail or str(s.get("last_error") or "")
     admin = f"{hint} Details: {raw[:300]}" if raw else hint
+    fl = _flat_view(prog)                  # v4.138: the IV history from the daily files
+    note = _flat_note(fl)
+    fw = _flat_warning(fl)
+    flat_admin = (f"{fw[1]} Details: {fl['error'][:300]}" if fl["error"] else fw[1]) if fw else ""
 
     def pass_panel():                                                                  # T-65
         src = running or {}
@@ -1139,7 +1235,7 @@ def _empty_view(col, st, meta, now, *, kind, nt, age, frame_empty, finished, run
         counts = f"{_count(done or 0)} of {_count(total)} underlyings read. " if total else ""
         return out(f"Step 2 of 2: reading the option market ({what}).",
                    counts + "Results appear within a minute and grow every couple of minutes as more "
-                   "are read; this page refreshes by itself.")
+                   "are read; this page refreshes by itself." + note, flat_admin)
 
     if state == "error":
         scope = _scope(detail)
@@ -1185,7 +1281,7 @@ def _empty_view(col, st, meta, now, *, kind, nt, age, frame_empty, finished, run
     body = _sentence(f"Collector: {detail}") if detail else "Collector " + _STATES.get(state, state or "running") + "."
     if state == "idle" and not universe_n and s.get("last_error"):
         body += f" The last attempt failed: {_raw_reason(s.get('last_error'), 160)}."
-    return out("No option data yet.", _cap(body, LABEL_MAX + 60))
+    return out("No option data yet.", _cap(body, LABEL_MAX + 60) + note, flat_admin)
 
 
 # ─────────────────────────────────────── saved screeners ───────────────────────────────────────

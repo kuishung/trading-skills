@@ -25,7 +25,8 @@ from app.services import scr_store
 
 from .conftest import DASH_ROOT
 
-HEAD = "b4e1f7c9d2a6"                 # scr_pass.partial (v4.137) on top of 8d2f4b6a1c37
+HEAD = "c3d9e5f1a7b2"                 # scr_underlying_daily.iv30_src (v4.138) on top of b4e1f7c9d2a6
+PARTIAL_REV = "b4e1f7c9d2a6"          # scr_pass.partial (v4.137) on top of 8d2f4b6a1c37
 STATUS_REV = "8d2f4b6a1c37"           # scr_status progress columns (v4.137) on top of 5c7a1d3e9b20
 BASE_REV = "5c7a1d3e9b20"
 TABLES = {"scr_contract", "scr_underlying", "scr_underlying_daily", "scr_universe", "scr_pass",
@@ -707,3 +708,192 @@ def test_only_orm_no_raw_sql_in_scr_store():
     for word in ("text(", "insert or replace", "\"pragma", "on conflict", "exec_driver_sql", "executescript"):
         assert word not in low, word
     assert ScrPass.__tablename__ == "scr_pass"
+
+
+# ──────────────────────────── where a day's IV30 came from (v4.138) ────────────────────────────
+
+DAY = "2026-10-07"
+
+
+def _daily(db, sym, on=DAY):
+    db.expire_all()
+    return db.query(ScrUnderlyingDaily).filter_by(symbol=sym, on=on).one_or_none()
+
+
+def test_iv30_src_migration_upgrade_and_downgrade(sdb):
+    eng = screener_db.engine()
+    assert "iv30_src" in {c["name"] for c in inspect(eng).get_columns("scr_underlying_daily")}
+    scr_store.upsert_daily(sdb, "AAA", bars=_bars([DAY], [10.0]), iv_series=[{"on": DAY, "iv": 33.0}])
+    sdb.close()
+    command.downgrade(screener_db.alembic_config(), PARTIAL_REV)
+    eng = screener_db.engine()
+    cols = {c["name"] for c in inspect(eng).get_columns("scr_underlying_daily")}
+    assert "iv30_src" not in cols and {"iv30", "close_raw"} <= cols
+    assert "partial" in {c["name"] for c in inspect(eng).get_columns("scr_pass")}     # only its own column
+    from sqlalchemy import text  # noqa: PLC0415 - reading the downgraded table in a test only
+    with eng.connect() as c:
+        assert c.execute(text("select iv30 from scr_underlying_daily where symbol = 'AAA'")).scalar() == 33.0
+    screener_db.init_screener_db()                          # back to head: the column again, empty
+    s = screener_db.SessionLocal()
+    try:
+        r = s.query(ScrUnderlyingDaily).filter_by(symbol="AAA").one()
+        assert (r.iv30, r.iv30_src) == (33.0, None)         # a reading from before v4.138: untagged
+    finally:
+        s.close()
+
+
+def test_each_writer_tags_its_iv30(sdb):
+    scr_store.upsert_daily(sdb, "RST", iv_series=[{"on": DAY, "iv": 30.0}])            # the REST history
+    scr_store.update_underlying_pass(sdb, "LIV", session_day=DAY, spot=100.0, iv30=31.0, file_iv=True,
+                                     now=NOW)                                         # the EOD pass
+    scr_store.file_iv_day(sdb, DAY, {"FLT": 32.0})                                    # a day file
+    scr_store.update_underlying_pass(sdb, "CYC", session_day=DAY, spot=100.0, iv30=33.0, now=NOW)   # a cycle
+    assert (_daily(sdb, "RST").iv30, _daily(sdb, "RST").iv30_src) == (30.0, "rest")
+    assert (_daily(sdb, "LIV").iv30, _daily(sdb, "LIV").iv30_src) == (31.0, "live")
+    assert (_daily(sdb, "FLT").iv30, _daily(sdb, "FLT").iv30_src) == (32.0, "flat")
+    assert _daily(sdb, "CYC") is None                       # a cycle pass files no daily reading
+    # bars alone never tag a row
+    scr_store.file_grouped_day(sdb, DAY, [{"symbol": "BAR", "close": 10.0}], symbols={"BAR"})
+    scr_store.upsert_daily(sdb, "BAR2", bars=_bars([DAY], [10.0]))
+    assert _daily(sdb, "BAR").iv30_src is None and _daily(sdb, "BAR2").iv30_src is None
+    # the EOD pass replaces a history reading of its day
+    scr_store.update_underlying_pass(sdb, "FLT", session_day=DAY, spot=100.0, iv30=35.0, file_iv=True, now=NOW)
+    assert (_daily(sdb, "FLT").iv30, _daily(sdb, "FLT").iv30_src) == (35.0, "live")
+
+
+def test_file_iv_day_fills_empty_and_history_days_and_never_a_live_one(sdb):
+    scr_store.file_grouped_day(sdb, DAY, [{"symbol": s, "close": 10.0} for s in ("AAA", "BBB", "CCC", "DDD", "EEE")],
+                               symbols=None)
+    scr_store.upsert_daily(sdb, "BBB", iv_series=[{"on": DAY, "iv": 30.0}])                     # rest
+    scr_store.file_iv_day(sdb, DAY, {"CCC": 31.0})                                             # flat
+    scr_store.update_underlying_pass(sdb, "DDD", session_day=DAY, iv30=32.0, file_iv=True, now=NOW)   # live
+    sdb.query(ScrUnderlyingDaily).filter_by(symbol="EEE", on=DAY).one().iv30 = 33.0             # pre-v4.138
+    sdb.commit()
+    n = scr_store.file_iv_day(sdb, _dt.date(2026, 10, 7), {
+        "aaa": 40.0, "BBB": 41.0, "CCC": 42.0, "DDD": 43.0, "EEE": 44.0, "FFF": 45.0,
+        "GGG": "x", "HHH": 5000.0, "III": float("nan"), "": 46.0})
+    assert n == 4                                            # AAA, BBB, CCC and the new FFF row
+    got = {s: (_daily(sdb, s).iv30, _daily(sdb, s).iv30_src) for s in ("AAA", "BBB", "CCC", "DDD", "EEE", "FFF")}
+    assert got == {"AAA": (40.0, "flat"), "BBB": (41.0, "flat"), "CCC": (42.0, "flat"),
+                   "DDD": (32.0, "live"), "EEE": (33.0, None), "FFF": (45.0, "flat")}
+    f = _daily(sdb, "FFF")
+    assert f.close is None and f.close_raw is None          # a new row carries only the reading
+    for s_ in ("GGG", "HHH", "III"):
+        assert _daily(sdb, s_) is None
+    # a re-published day file redoes its own readings
+    assert scr_store.file_iv_day(sdb, DAY, {"AAA": 40.5, "DDD": 43.0}) == 1
+    assert _daily(sdb, "AAA").iv30 == 40.5 and _daily(sdb, "DDD").iv30 == 32.0
+    # an explicit live source replaces anything
+    assert scr_store.file_iv_day(sdb, DAY, {"DDD": 50.0, "EEE": 51.0}, source="LIVE") == 2
+    assert (_daily(sdb, "DDD").iv30_src, _daily(sdb, "EEE").iv30_src) == ("live", "live")
+    assert scr_store.file_iv_day(sdb, DAY, {}) == 0
+    with pytest.raises(ValueError):
+        scr_store.file_iv_day(sdb, "not a day", {"AAA": 1.0})
+
+
+def test_file_iv_day_takes_the_daily_lock(sdb):
+    out: list = []
+
+    def other():
+        s = screener_db.SessionLocal()
+        try:
+            out.append(scr_store.file_iv_day(s, DAY, {"AAA": 30.0}))
+        finally:
+            s.close()
+
+    with scr_store._DAILY_LOCK:
+        t = threading.Thread(target=other)
+        t.start()
+        t.join(0.3)
+        assert t.is_alive() and out == []                   # blocked on the lock
+    t.join(10)
+    assert out == [1]
+
+
+def test_upsert_daily_history_never_replaces_a_live_reading(sdb):
+    days = _weekdays(_dt.date(2026, 10, 7), 3)
+    scr_store.update_underlying_pass(sdb, "AAA", session_day=days[-1], iv30=65.0, file_iv=True, now=NOW)
+    scr_store.file_iv_day(sdb, days[0], {"AAA": 20.0})
+    # the by-hand REST rebuild (overwrite_iv=True): the flat day is redone, the live one kept
+    scr_store.upsert_daily(sdb, "AAA", iv_series=[{"on": d, "iv": 50.0 + i} for i, d in enumerate(days)])
+    got = [(_daily(sdb, "AAA", d).iv30, _daily(sdb, "AAA", d).iv30_src) for d in days]
+    assert got == [(50.0, "rest"), (51.0, "rest"), (65.0, "live")]
+    # the history queue (overwrite_iv=False) fills only empty days
+    scr_store.upsert_daily(sdb, "AAA", iv_series=[{"on": days[0], "iv": 70.0}], overwrite_iv=False)
+    assert _daily(sdb, "AAA", days[0]).iv30 == 50.0
+    # a caller filing a live series may replace it; the tag follows the source
+    scr_store.upsert_daily(sdb, "AAA", iv_series=[{"on": days[-1], "iv": 66.0}], source="live")
+    assert (_daily(sdb, "AAA", days[-1]).iv30, _daily(sdb, "AAA", days[-1]).iv30_src) == (66.0, "live")
+    scr_store.upsert_daily(sdb, "AAA", iv_series=[{"on": days[1], "iv": 52.0}], source="flat")
+    assert _daily(sdb, "AAA", days[1]).iv30_src == "flat"
+
+
+def test_iv_day_status_by_source(sdb):
+    scr_store.upsert_daily(sdb, "AAA", iv_series=[{"on": "2026-10-05", "iv": 30.0}])
+    scr_store.file_iv_day(sdb, "2026-10-05", {"BBB": 31.0, "CCC": 32.0})
+    scr_store.file_iv_day(sdb, "2026-10-06", {"AAA": 33.0})
+    scr_store.update_underlying_pass(sdb, "BBB", session_day="2026-10-06", iv30=34.0, file_iv=True, now=NOW)
+    scr_store.file_grouped_day(sdb, "2026-10-06", [{"symbol": "CCC", "close": 10.0}], symbols=None)   # no IV
+    sdb.add(ScrUnderlyingDaily(symbol="DDD", on="2026-10-06", iv30=35.0))           # pre-v4.138
+    sdb.add(ScrUnderlyingDaily(symbol="EEE", on="2026-10-09", iv30=36.0, iv30_src="flat"))   # out of range
+    sdb.commit()
+    assert scr_store.iv_day_status(sdb, "2026-10-01", "2026-10-08") == {
+        "2026-10-05": {"rest": 1, "flat": 2},
+        "2026-10-06": {"flat": 1, "live": 1, "none": 1}}
+    assert scr_store.iv_day_status(sdb, "2026-10-01", "2026-10-08", symbols=["aaa", "BBB"]) == {
+        "2026-10-05": {"rest": 1, "flat": 1}, "2026-10-06": {"flat": 1, "live": 1}}
+    assert scr_store.iv_day_status(sdb, "2026-10-01", "2026-10-08", symbols=[]) == {}
+
+
+def test_recompute_iv_many_matches_recompute_iv(sdb):
+    days = _weekdays(_dt.date(2026, 10, 7), 70)
+    for j, sym in enumerate(("AAA", "BBB", "CCC")):
+        scr_store.upsert_daily(sdb, sym, iv_series=[{"on": d, "iv": 20.0 + j + (i % 9)} for i, d in enumerate(days)])
+    pid = scr_store.start_pass(sdb, kind="cycle", session="2026-10-08", n_symbols=1, now=NOW)
+    scr_store.update_underlying_pass(sdb, "BBB", session_day="2026-10-08", pass_id=pid, iv30=40.0, now=NOW)
+    keys = ("iv30", "iv30_prev", "iv_rank", "iv_pct", "iv_n", "iv_lo", "iv_hi")
+    assert scr_store.recompute_iv_many(sdb, ["aaa", "BBB", "CCC", "AAA", "NEW"], now=NOW, chunk=2) == 4
+    many = {s: {k: scr_store.underlying(sdb, s)[k] for k in keys} for s in ("AAA", "BBB", "CCC", "NEW")}
+    one = {s: {k: scr_store.recompute_iv(sdb, s, now=NOW)[k] for k in keys} for s in ("AAA", "BBB", "CCC", "NEW")}
+    assert many == one
+    assert many["AAA"]["iv_n"] == 70 and many["BBB"]["iv30"] == 40.0 and many["NEW"]["iv_n"] == 0
+    assert scr_store.recompute_iv_many(sdb, ["AAA", "BBB"], now=NOW, stop=lambda: True) == 0
+
+
+def test_the_flat_lane_read_helpers_and_mark_history_many(sdb):
+    """v4.138: what the collector's day-file lane reads (one day's unadjusted closes, points
+    per symbol, security types, the histories not done) and its bulk mark."""
+    days = _weekdays(_dt.date(2026, 10, 7), 5)
+    scr_store.upsert_daily(sdb, "AAA", bars=_bars(days, [10.0] * 5), raw_bars=_bars(days[1:], [20.0] * 4),
+                           iv_series=[{"on": d, "iv": 30.0} for d in days[:3]])
+    scr_store.upsert_daily(sdb, "BRK-B", raw_bars=_bars(days[-1:], [480.0]))
+    scr_store.upsert_daily(sdb, "ZZZ", bars=_bars(days[-1:], [5.0]))               # adjusted only
+    on = days[-1]
+    assert scr_store.day_closes_raw(sdb, on) == {"AAA": 20.0, "BRK-B": 480.0}       # never the adjusted close
+    assert scr_store.day_closes_raw(sdb, on, ["aaa", "ZZZ"]) == {"AAA": 20.0}
+    assert scr_store.day_closes_raw(sdb, days[0], None) == {}
+    with pytest.raises(ValueError):
+        scr_store.day_closes_raw(sdb, "not a day")
+    assert scr_store.iv_counts(sdb) == {"AAA": 3}
+    assert scr_store.iv_counts(sdb, ["AAA", "BRK-B"], start=days[1]) == {"AAA": 2}
+    assert scr_store.iv_counts(sdb, ["AAA"], start=days[0], end=days[0]) == {"AAA": 1}
+    assert scr_store.raw_close_counts(sdb, start=days[1]) == {"AAA": 4, "BRK-B": 1}
+    assert scr_store.raw_close_counts(sdb, ["ZZZ"]) == {}
+    scr_store.set_identity(sdb, [{"symbol": "AAA", "name": "A", "sec_type": "stock", "exchange": "NYSE"},
+                                 {"symbol": "SPX", "name": "S&P", "sec_type": "index", "exchange": "INDEX"}],
+                           only={"AAA", "SPX"})                                  # (creates their rows)
+    scr_store.mark_history(sdb, "BRK-B", done=False, now=NOW)
+    assert scr_store.sec_types(sdb, ["AAA", "SPX", "BRK-B", "NOPE"]) == {"AAA": "stock", "SPX": "index", "BRK-B": None}
+    assert set(scr_store.sec_types(sdb)) == {"AAA", "SPX", "BRK-B"}
+    assert scr_store.history_not_done(sdb) == ["AAA", "BRK-B"]                       # (an index never)
+    assert scr_store.history_not_done(sdb, ["BRK-B"]) == ["BRK-B"]
+    assert scr_store.mark_history_many(sdb, ["aaa", "BRK-B", "NEW", "AAA"], done=True, now=NOW, chunk=2) == 3
+    rows = {s: scr_store.underlying(sdb, s) for s in ("AAA", "BRK-B", "NEW")}
+    assert all(r["history_done"] is True and r["history_tries"] == 0 and r["history_next"] is None
+               for r in rows.values())
+    assert scr_store.history_not_done(sdb) == [] and scr_store.history_counts(sdb) == (3, 3)
+    assert scr_store.mark_history_many(sdb, ["NEW"], done=False, now=NOW) == 1      # the same as mark_history
+    u = scr_store.underlying(sdb, "NEW")
+    assert (u["history_done"], u["history_tries"]) == (False, 1)
+    assert u["history_next"] == NOW + _dt.timedelta(seconds=scr_store.history_backoff_s(1))
+    assert scr_store.mark_history_many(sdb, [], now=NOW) == 0

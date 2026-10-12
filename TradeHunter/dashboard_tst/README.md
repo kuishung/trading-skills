@@ -104,6 +104,9 @@ from this dashboard.
     rows, replaced per underlying each pass), `scr_underlying`, `scr_underlying_daily`,
     `scr_universe`, `scr_pass`, `scr_status`; migrations in `alembic_screener/` +
     `alembic_screener.ini` (version table `alembic_version_screener`).
+  - `app/services/flat_files.py` + `scr_flativ.py` (v4.138) — Massive Flat Files: the options
+    day files (S3, kept under `state\flatfiles\`) and the per-day IV30 of every underlying
+    worked out from them; the collector's "flat IV" lane files them as the IV history.
   - `app/services/scr_collector.py` + `scr_store.py` — the Hermes market collector (universe
     from Massive's contract list daily, a market pass every 30 min in the session + one after
     the close, grouped daily stock bars, technicals, identity, earnings, IV history) and its
@@ -118,7 +121,8 @@ from this dashboard.
   - `bridge/` — the member IBKR bridge 2.0 (`ibkr_bridge.py`, `th_ibkr.py`). Not used for
     Options data; it stays for the legacy hidden pages (see `bridge/README.md`).
   - Tests: `test_screener_engine.py`, `test_screener_strategies.py`, `test_screener_frame.py`,
-    `test_scr_store.py`, `test_scr_collector.py`, `test_screener_cli.py`, `test_clock_closures.py`, `test_options_page.py`, `test_massive.py`, `test_opt_massive.py`,
+    `test_scr_store.py`, `test_scr_collector.py`, `test_screener_cli.py`, `test_clock_closures.py`,
+    `test_flat_files.py`, `test_scr_flativ.py`, `test_options_page.py`, `test_massive.py`, `test_opt_massive.py`,
     `test_opt_collector.py`, `test_opt_store.py`, `test_option_store.py`, `test_connector.py` +
     `test_th_ibkr.py` (the bridge).
   - **Removed in v4.135:** the whole v2 page and its screener — `services/{opt_rules,
@@ -192,6 +196,54 @@ surface takes shape.
 > `__version__` — that constant is the version shown on the login page / nav / `/status`
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
+
+### 2026-10-12 - v4.138: IV Rank / IV Percentile for the whole market from Massive's daily files - 2 years in under an hour
+
+The user asked how IV Rank is calculated (Massive has no IV Rank, IV Percentile, HV or stored IV
+history - only each contract's IV today and past option prices), then whether it could be built
+faster: *"this is doable and how to do it?"* - and *"i need all the 2 years data backfill"*.
+Massive's **Flat Files** (S3, included in Options Starter) hold one file per trading day with
+every option contract's daily bar for the whole market; the user created the Flat Files key pair
+and a one-time Hermes test confirmed it (2026-10-09 file: 3.9 MB, 331,809 contracts, 4,424
+roots, columns `ticker,volume,open,close,high,low,window_start,transactions`, 12 months back
+readable).
+
+- **`app/services/flat_files.py`** - the downloader: lists Massive's month folders (never guesses
+  names), downloads a day only when missing or changed (size / etag), checks the gzip before an
+  atomic rename, keeps every file under `state\flatfiles\` with a manifest (Starter serves a
+  rolling 2 years, so a day once downloaded is never lost), maps S3 errors to plain kinds
+  (auth / plan / config / network / missing), retries with back-off, and masks the Flat Files
+  secret and key id everywhere (`massive._scrub` now covers them, so both collectors' logs,
+  status and tray text do too). A damaged copy is moved aside as `.bad` and fetched again.
+- **`app/services/scr_flativ.py`** - one day file -> every underlying's 30-day IV, by **the same
+  method** as the per-stock history: standard monthly expiries 15-45 days out, the strike nearest
+  that day's unadjusted close (within 15 %), call + put IV from the option close (a vectorised copy
+  of `black_scholes.implied_vol` that returns its numbers to the last bit), averaged, blended to
+  30 days. Option roots map to our symbols (BRKB -> BRK-B); adjusted roots (GME1) and index roots
+  (SPX, SPXW, NDX ...) are skipped. ~1 s for a 400k-row day.
+- **`scr_store`** - `file_iv_day` (fills a day only when it has no IV30 or a history one - a live
+  end-of-day reading always wins) and helpers; a new column `scr_underlying_daily.iv30_src`
+  (`live` / `flat` / `rest`; screener migration `c3d9e5f1a7b2`).
+- **`scr_collector`** - a "flat IV" lane on its own thread: **every session Massive still serves
+  (~2 years, newest first)** whose stock closes are on file -> file -> IV rank / percentile
+  recomputed and histories marked done; the previous session's file from 11:15 ET (23:15 MYT now,
+  00:15 MYT after 1 Nov), a weekly check for days Massive re-published, the stored files re-read
+  for a stock added later (no download). The per-stock REST history now only takes what the files
+  cannot fill, and runs exactly as before when the keys are not set. A lasting failure (5 in a
+  row) turns the lane to error and hands everything back to REST. IV Rank / IV Percentile still use
+  the latest 52 weeks; the second year is stored for later use.
+- **Visible** - the Options page data line ("IV rank: building from daily files (187 / 500 days)")
+  and the empty panel; amber with plain words when the lane is paused (admins also see what to
+  check); the Hermes tray line ("IV files 187/500 days, about 6 min", or the reason it is off).
+- **`deploy/screener_collector.py --flat-iv`** - a one-off build / refresh (stop the task first).
+- `app/requirements.txt` adds **boto3**; `app/.env.example` documents `TST_MASSIVE_S3_KEY_ID` /
+  `TST_MASSIVE_S3_SECRET` (+ optional endpoint / bucket).
+- **Tested: 684 pass** (`py -m pytest tests -q -p no:warnings`): new `test_flat_files.py` (32, a
+  fake S3 - no boto3 or network needed) and `test_scr_flativ.py` (equivalence with the per-stock
+  method within 1e-9, speed), plus additions across `test_scr_collector.py`, `test_scr_store.py`,
+  `test_options_page.py`, `test_screener_cli.py`. End to end on 260 synthetic day files with known
+  IV paths: every day filed once, IV rank correct, no REST option-bar request, a second run
+  downloads nothing. Three reviewers' 8 findings were all confirmed and fixed.
 
 ### 2026-10-11 - v4.137: the screener's first run - data within minutes, and the page and tray always say what the collector is doing
 

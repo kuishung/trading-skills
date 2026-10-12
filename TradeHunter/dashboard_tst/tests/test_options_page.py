@@ -793,6 +793,141 @@ def test_the_data_line_wording():
     assert v(_col(running=running, **hist), None, now=TUE_NOON)["line"].endswith("· IV history 4,512 / 4,512")
 
 
+def test_the_day_file_iv_history_on_the_line_the_label_and_the_panel():
+    """v4.138: the collector's flat lane (progress.flat_*) on the page - its progress on the
+    data line and in the empty panel, Massive refusing the files as an amber warning (plain
+    words for members, the Flat Files keys for admins); an older collector changes nothing."""
+    v = options_page._status_view
+    eod = {"id": 3, "kind": "eod", "session": "2026-10-09", "finished": _dt.datetime(2026, 10, 10, 16, 9),
+           "n_symbols": 4512, "n_ok": 4500, "n_contracts": 1_020_000}
+    meta = {"pass_id": 3, "pass_kind": "eod", "session": "2026-10-09", "finished": "2026-10-10T16:09:00Z",
+            "n_underlyings": 4500, "n_contracts": 1_020_000, "empty": False}
+    prog = {"flat_state": "building", "flat_days_done": 187, "flat_days_total": 252, "flat_eta_s": 360,
+            "flat_error": None}
+    st = dict(state="history", heartbeat=TUE_NOON, universe_n=4512, history_total=4512, history_done_n=1204,
+              detail="Building IV history from Massive's daily files: 187 of 252 days, about 6 min left.",
+              progress=prog)
+    j = v(_col(last=eod, **st), meta, now=TUE_NOON)
+    assert j["line"].endswith(" · 1.02M contracts · IV rank: building from daily files (187 / 252 days)")
+    assert j["dot"] == "green" and j["label"] == "Collector: " + st["detail"]
+    assert j["flat"] == {"state": "building", "done": 187, "total": 252, "error": None, "kind": None,
+                         "building": True, "blocked": False}
+    for state in ("waiting", "retry"):                       # waiting for stock prices / retrying: still building
+        got = v(_col(last=eod, **dict(st, progress=dict(prog, flat_state=state))), meta, now=TUE_NOON)
+        assert got["line"].endswith("IV rank: building from daily files (187 / 252 days)") and got["dot"] == "green"
+    done = dict(prog, flat_state="ready", flat_days_done=252)                    # every day filed
+    assert v(_col(last=eod, **dict(st, progress=done)), meta, now=TUE_NOON)["line"].endswith(
+        "· IV rank: building (1,204 / 4,512)")
+    for old in (None, {}, {"history_left": 3}, {"flat_state": "off"}):          # an older collector / the lane off
+        got = v(_col(last=eod, **dict(st, progress=old)), meta, now=TUE_NOON)
+        assert got["line"].endswith("· IV rank: building (1,204 / 4,512)") and got["dot"] == "green", old
+    # Massive refused the files: amber, plain words for members, the keys + the reason for admins
+    err = ("Massive did not accept the Flat Files keys for the file list for 2026-10 (HTTP 403, InvalidAccessKeyId) "
+           "- copy the Access Key ID and the Secret Access Key again from massive.com/dashboard/keys into app\.env")
+    bad = dict(st, state="idle", detail="Up to date with the Fri Oct 9 close; next market pass Mon Oct 12 09:45 ET.",
+               progress={"flat_state": "error", "flat_error": err, "flat_days_done": 40, "flat_days_total": 252})
+    m = v(_col(last=eod, **bad), meta, now=TUE_NOON)
+    a = v(_col(last=eod, **bad), meta, now=TUE_NOON, is_admin=True)
+    assert m["dot"] == a["dot"] == "amber" and m["alert"] == m["label"]
+    assert m["label"] == "Collector: " + bad["detail"] + " " + options_page._FLAT_PAUSED
+    assert "TST_MASSIVE_S3" not in m["label"] and "Admin" not in m["label"] and "403" not in m["label"]
+    assert a["label"].startswith(m["label"] + " Admin: check TST_MASSIVE_S3_KEY_ID and TST_MASSIVE_S3_SECRET in "
+                                              "app\.env on Hermes")
+    assert a["label"].endswith(" Details: " + err[:300])
+    assert m["line"].endswith("· IV rank: building (1,204 / 4,512)")       # (no "building from daily files")
+    # the collector's own error wins over the files' warning
+    e = v(_col(**dict(bad, state="error", error_kind="network", detail="could not reach Massive")), now=TUE_NOON)
+    assert e["dot"] == "rose" and options_page._FLAT_PAUSED not in e["label"]
+    # the empty panel says the same
+    E = {"n_contracts": 0, "empty": True}
+    e = v(_col(**dict(st, state="idle", detail="Waiting for the next market pass.")), E, now=TUE_NOON)["empty"]
+    assert e == {"title": "No option data yet.", "admin": "",
+                 "body": "Collector: Waiting for the next market pass. IV rank: building from daily files (187 / "
+                         "252 days)."}
+    running = {"id": 1, "kind": "eod", "session": "2026-10-09", "n_symbols": 4512}
+    e = v(_col(running=running, state="pass", pass_id=1, symbols_done=1240, symbols_total=4512, universe_n=4512,
+               heartbeat=TUE_NOON, progress=prog), E, now=TUE_NOON)["empty"]
+    assert e["body"].endswith("this page refreshes by itself. IV rank: building from daily files (187 / 252 days).")
+    member = v(_col(**dict(bad, detail="Waiting for the next market pass.")), E, now=TUE_NOON)["empty"]
+    admin = v(_col(**dict(bad, detail="Waiting for the next market pass.")), E, now=TUE_NOON, is_admin=True)["empty"]
+    assert member["body"] == "Collector: Waiting for the next market pass. " + options_page._FLAT_PAUSED
+    assert member["admin"] == "" and admin["admin"] == options_page._FLAT_ADMIN + " Details: " + err
+
+
+def test_the_day_file_warnings_say_what_is_wrong():
+    """v4.138: three day-file warnings, each in its own words - Massive refused the files
+    (auth / plan, or no kind from an older collector), the files keep failing for another
+    reason (network / http / missing / a bug: the REST reads took over), the lane off WITH a
+    reason (keys set but a setup problem on Hermes) - amber, plain words for members and the
+    fix plus the collector's full reason for admins, on the label and on the empty panel. Off
+    without a reason (no keys) and a short retry stay green."""
+    v = options_page._status_view
+    eod = {"id": 3, "kind": "eod", "session": "2026-10-09", "finished": _dt.datetime(2026, 10, 10, 16, 9),
+           "n_symbols": 4512, "n_ok": 4500, "n_contracts": 1_020_000}
+    meta = {"pass_id": 3, "pass_kind": "eod", "session": "2026-10-09", "finished": "2026-10-10T16:09:00Z",
+            "n_underlyings": 4500, "n_contracts": 1_020_000, "empty": False}
+    idle = dict(state="idle", heartbeat=TUE_NOON, universe_n=4512, history_total=4512, history_done_n=1204,
+                detail="Up to date with the Fri Oct 9 close; next market pass Mon Oct 12 09:45 ET.")
+    boto = "boto3 is not installed on this PC - run: pip install -r app\\requirements.txt"
+    net = ("could not reach Massive Flat Files for the file list for 2026-10 after 5 tries "
+           "(EndpointConnectionError: Could not connect)")
+    cases = [
+        ({"flat_state": "error", "flat_kind": "plan", "flat_error": "Massive refused ..."},
+         options_page._FLAT_PAUSED, options_page._FLAT_ADMIN),
+        ({"flat_state": "error", "flat_kind": "network", "flat_error": net},
+         options_page._FLAT_FAILING, options_page._FLAT_FAIL_ADMIN),
+        ({"flat_state": "error", "flat_kind": "http", "flat_error": "Massive Flat Files answered HTTP 409"},
+         options_page._FLAT_FAILING, options_page._FLAT_FAIL_ADMIN),
+        ({"flat_state": "error", "flat_kind": "error", "flat_error": "boom"},
+         options_page._FLAT_FAILING, options_page._FLAT_BUG_ADMIN),
+        ({"flat_state": "off", "flat_kind": "config", "flat_error": boto},
+         options_page._FLAT_SETUP, options_page._FLAT_SETUP_ADMIN),
+    ]
+    E = {"n_contracts": 0, "empty": True}
+    for prog, member_words, admin_words in cases:
+        prog = dict(prog, flat_days_done=40, flat_days_total=252)
+        st = dict(idle, progress=prog)
+        m = v(_col(last=eod, **st), meta, now=TUE_NOON)
+        a = v(_col(last=eod, **st), meta, now=TUE_NOON, is_admin=True)
+        assert m["dot"] == a["dot"] == "amber", prog
+        assert m["label"] == "Collector: " + idle["detail"] + " " + member_words, prog
+        assert "Admin" not in m["label"] and "TST_MASSIVE_S3" not in m["label"] and "pip" not in m["label"]
+        assert a["label"] == m["label"] + " " + admin_words + " Details: " + prog["flat_error"], prog
+        assert m["line"].endswith("· IV rank: building (1,204 / 4,512)")        # the REST progress, not the files'
+        assert m["flat"]["kind"] == prog["flat_kind"] and m["flat"]["blocked"] is (prog["flat_state"] == "off")
+        em = v(_col(**dict(st, detail="Waiting for the next market pass.")), E, now=TUE_NOON)["empty"]
+        ea = v(_col(**dict(st, detail="Waiting for the next market pass.")), E, now=TUE_NOON, is_admin=True)["empty"]
+        assert em["body"] == "Collector: Waiting for the next market pass. " + member_words and em["admin"] == ""
+        assert ea["admin"] == admin_words + " Details: " + prog["flat_error"]
+    # the setup reason reaches the admin whole (the fix included)
+    a = v(_col(last=eod, **dict(idle, progress={"flat_state": "off", "flat_kind": "config", "flat_error": boto})),
+          meta, now=TUE_NOON, is_admin=True)
+    assert a["label"].endswith("Details: " + boto)
+    # off WITHOUT a reason (no keys) and a short retry (not handed over yet) stay green
+    for quiet in ({"flat_state": "off", "flat_error": None},
+                  {"flat_state": "retry", "flat_kind": "network", "flat_error": net, "flat_days_done": 40,
+                   "flat_days_total": 252}):
+        got = v(_col(last=eod, **dict(idle, progress=quiet)), meta, now=TUE_NOON, is_admin=True)
+        assert got["dot"] == "green" and "Admin" not in got["label"], quiet
+    got = v(_col(last=eod, **dict(idle, progress={"flat_state": "retry", "flat_kind": "network", "flat_error": net,
+                                                   "flat_days_done": 40, "flat_days_total": 252})), meta, now=TUE_NOON)
+    assert got["line"].endswith("· IV rank: building from daily files (40 / 252 days)")
+
+
+def test_the_status_api_and_the_first_paint_carry_the_day_file_progress(client, fake, state_file):
+    state_file.parent.mkdir(parents=True)
+    state_file.write_text(json.dumps({
+        "state": "history", "detail": "Building IV history from Massive's daily files: 12 of 252 days.",
+        "heartbeat": _dt.datetime.now(_dt.timezone.utc).isoformat(), "universe_n": 4512,
+        "progress": {"flat_state": "building", "flat_days_done": 12, "flat_days_total": 252, "flat_eta_s": None,
+                     "flat_error": None},
+        "written_by": "dashboard_tst/app/services/scr_collector.py"}), encoding="utf-8")
+    j = client.get("/options/api/status").json()
+    assert j["source"] == "file" and j["line"].endswith("IV rank: building from daily files (12 / 252 days)")
+    assert j["flat"]["building"] is True and j["dot"] == "green"
+    assert "IV rank: building from daily files (12 / 252 days)" in client.get("/options").text
+
+
 def test_the_first_paint_and_the_first_poll_say_the_same(client, fake, screener_url):
     from app import screener_db
     from app.screener_models import ScrPass, ScrStatus
