@@ -197,3 +197,37 @@ def test_the_contract_pickers_and_one_contracts_life(sdb, hist):
         contract_view.day_contracts(sdb, "SPX", ON.isoformat(), root=hist)
     assert contract_view.history_days(hist) == ["2026-10-07", "2026-10-06", "2026-10-05"]
     assert not math.isnan(life["rows"][0]["iv"])
+
+
+def test_the_hermes_check_script_solves_independently_and_reports(sdb, hist, tmp_path, monkeypatch, capsys):
+    """deploy/check_vol_surface.py: its own Black-Scholes (statistics.NormalDist) agrees with the
+    app's solver, and a run over the fixtures reports every check (display and past day PASS)."""
+    import importlib.util
+    from pathlib import Path
+
+    from app import screener_db
+    from app.services.black_scholes import implied_vol
+
+    path = Path(__file__).resolve().parent.parent / "deploy" / "check_vol_surface.py"
+    spec = importlib.util.spec_from_file_location("check_vol_surface", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    T = (NOV - ON).days / 365.0
+    for k, rt in ((90.0, "P"), (100.0, "C"), (110.0, "C"), (100.0, "P")):
+        p = bs(SPOT, k, NOV, rt, 0.30)
+        mine = mod.solve_iv(p, SPOT, k, T, RISK_FREE, rt == "C")
+        assert mine == pytest.approx(implied_vol(p, SPOT, k, T, "call" if rt == "C" else "put"), abs=1e-9)
+        assert mine == pytest.approx(0.30, abs=1e-6)
+    assert mod.solve_iv(0, SPOT, 100.0, T, RISK_FREE, True) is None
+    screener_db.configure("sqlite:///" + (tmp_path / "screener.db").as_posix())
+    monkeypatch.setenv("TST_OPTION_HISTORY_DIR", str(hist))
+    try:
+        rc = mod.main(["AAPL"])
+    finally:
+        screener_db.configure(None)
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    for needle in ("1. DISPLAY", "otm  PASS", "ATM  PASS", "2. MASSIVE/PRICE", "3. CALL/PUT", "4. SAME SESSION",
+                   "5. PAST DAY", "nothing was written"):
+        assert needle in out, needle
+    assert "differ by more than 0.01" in out and "FAIL" not in out

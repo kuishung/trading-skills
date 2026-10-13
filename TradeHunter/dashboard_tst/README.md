@@ -255,7 +255,15 @@ maturity, each cell that option's implied vol).
   only its day; a fresh copy of a failed day (same size and etag) is tried at once; a Parquet file in
   use on Windows fails only that day (10 min); one contract's read (~1 s over 500 files) is cached
   until the next day is converted.
-- **Tested: 714 pass** (`py -m pytest tests -q -p no:warnings`): new `test_opt_history.py` (15) and
+- **`deploy/check_vol_surface.py`** (added the same day, after the user asked *"can you check and verify
+  the data shown on the Volatility surface is correct?"*) - a read-only Hermes check per symbol: 1 the
+  grid shows exactly the stored Massive IVs (all four cell choices + the ATM row), 2 Massive's IV
+  against the IV solved from each contract's own last trade (liquid near-the-money contracts must
+  agree within 2 points for 90 %), 3 call vs put IV at the same strike, 4 Massive's end-of-day IV
+  against the IV solved from Massive's daily file for the same session, 5 a past day's grid against
+  an independent solve; plus contracts to compare with TWS. Its Black-Scholes is its own
+  (`statistics.NormalDist`), not the app's (DEPLOY.md H "Checking the volatility surface").
+- **Tested: 715 pass** (`py -m pytest tests -q -p no:warnings`): new `test_opt_history.py` (15) and
   `test_vol_surface.py` (6 - the grid's rules, and a round trip: closes priced at 30 % come back as
   30 %), plus the parquet lane (incl. failing days), the tray line in `test_scr_collector.py` and
   the page, the API and the settings tab in `test_options_page.py`. Checked in the browser on a

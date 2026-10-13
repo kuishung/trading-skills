@@ -407,6 +407,24 @@ cd C:\trading-skills\TradeHunter\dashboard_tst
 .\.venv\Scripts\python.exe -m app.services.opt_history status
 ```
 
+### Checking the volatility surface (v4.139)
+
+A read-only check of the Options page's Volatility surface against its sources - run it any time
+(Hermes, PowerShell; it writes nothing and needs no task stopped):
+
+```powershell
+cd C:\trading-skills\TradeHunter\dashboard_tst
+.\.venv\Scripts\python.exe deploy\check_vol_surface.py AAPL MSFT SPY
+```
+
+Per symbol: 1 DISPLAY (the grid = the stored Massive IVs, PASS / FAIL), 2 MASSIVE/PRICE (Massive's IV
+vs the IV solved from each contract's last trade - AGREES when 90 % of liquid near-the-money
+contracts are within 2 points), 3 CALL/PUT (the call-minus-put gap by expiry bucket), 4 SAME
+SESSION (Massive's end-of-day IV vs the IV solved from that session's daily file - PENDING until
+the file is converted the next day ~11:15 ET), 5 PAST DAY (a past day's grid vs an independent
+solve, PASS / FAIL), and a few contracts to compare with TWS's Implied Vol column. Exit 1 only when
+1 or 5 fails.
+
 ### After a pull
 
 Re-run the setup script with `-StartNow` after any pull that changes
