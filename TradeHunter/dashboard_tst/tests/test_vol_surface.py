@@ -231,3 +231,45 @@ def test_the_hermes_check_script_solves_independently_and_reports(sdb, hist, tmp
                    "5. PAST DAY", "nothing was written"):
         assert needle in out, needle
     assert "differ by more than 0.01" in out and "FAIL" not in out
+
+
+def test_the_check_compares_massive_with_an_ibkr_snapshot(sdb, tmp_path, monkeypatch, capsys):
+    """check 6 (--ibkr): Massive's stored IV against IBKR's model IV, matched by expiry / right /
+    strike; tight IBKR quotes near the money are the 'liquid' set."""
+    import importlib.util
+    import json as _json
+    from pathlib import Path
+
+    from app import screener_db
+
+    path = Path(__file__).resolve().parent.parent / "deploy" / "check_vol_surface.py"
+    spec = importlib.util.spec_from_file_location("check_vol_surface", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    rows = []
+    for exp in (NOV, DEC):
+        for k in (90.0, 100.0, 110.0):
+            for rt in "CP":
+                iv = 0.25 + (0.05 if rt == "P" else 0.0) + (0.004 if k == 100.0 else 0.0)   # Massive +- 0.4 pt
+                p = bs(101.0, k, exp, rt, iv)
+                rows.append({"expiry": exp.isoformat(), "right": rt, "strike": k, "bid": round(p * 0.99, 2),
+                             "ask": round(p * 1.01, 2), "last": None, "close": None, "volume": 10,
+                             "iv_model": iv, "und_price": 101.0, "iv_bid": None, "iv_ask": None})
+    snap = {"taken_utc": "2026-10-07T19:40:00+00:00", "taken_et": "2026-10-07 15:40", "source": "test",
+            "symbols": {"AAPL": {"spot": 101.0, "spot_src": "last", "contracts": rows}}}
+    f = tmp_path / "iv_check" / "ibkr_2026-10-07_1540ET.json"
+    f.parent.mkdir()
+    f.write_text(_json.dumps(snap), encoding="utf-8")
+    screener_db.configure("sqlite:///" + (tmp_path / "screener.db").as_posix())
+    monkeypatch.setenv("TST_OPTION_HISTORY_DIR", str(tmp_path / "option_history"))
+    try:
+        rc = mod.main(["AAPL", "--ibkr"])
+    finally:
+        screener_db.configure(None)
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    assert "IBKR snapshot: " in out and "6. IBKR" in out and "time gap" in out
+    six = out[out.index("6. IBKR"):]
+    assert "AGREES - 100% of the liquid contracts within 2 pts of IBKR" in six, six
+    assert "price: Massive 101.00" in six and "IBKR 101.00" in six
+    assert mod.find_snapshot(str(f), None) == f

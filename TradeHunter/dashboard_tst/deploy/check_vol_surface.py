@@ -18,6 +18,9 @@ Five checks per symbol, each ending in PASS / AGREES / CHECK / FAIL with its num
                    same session (two independent routes to one number; once that day is converted).
 5. PAST DAY      - every cell of a past day's surface (TradeHunter's own calculation) against the
                    solve here from the Parquet closes.
+6. IBKR          - with --ibkr: Massive's IV against IBKR's own option model for the same contracts,
+                   from a read-only snapshot taken on the laptop (deploy/ibkr_iv_snapshot.py, synced
+                   here by Resilio into <MarketData>\iv_check). A source outside Massive entirely.
 
 Plus a short list of liquid contracts to compare by eye with the Implied Vol column in TWS.
 
@@ -32,7 +35,9 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import json
 import math
+import os
 import statistics
 import sys
 from pathlib import Path
@@ -366,10 +371,89 @@ def check_past_day(s, sym, day, r, vs, oh) -> bool:
     return not bad
 
 
+def find_snapshot(arg, oh) -> Path | None:
+    """The IBKR snapshot: the path given, or the newest ibkr_*.json in <MarketData>/iv_check."""
+    if arg and arg != "newest":
+        return Path(arg)
+    roots = []
+    hr = oh.history_root()
+    if hr.name == "option_history":
+        roots.append(hr.parent / "iv_check")
+    ph = (os.environ.get("TST_PRICE_HISTORY_DIR") or "").strip()
+    if ph:
+        roots.append(Path(ph).parent / "iv_check")
+    roots += [Path("C:/HermesSync/MarketData/iv_check"), Path("D:/HermesSync/MarketData/iv_check")]
+    for r in roots:
+        files = sorted(r.glob("ibkr_*.json")) if r.is_dir() else []
+        if files:
+            return files[-1]
+    return None
+
+
+def check_ibkr(sym, u, rows, snap, r, clock) -> None:
+    """6. Massive's IV against IBKR's own model IV for the same contracts."""
+    print("\n6. IBKR - Massive's IV vs IBKR's own option model (snapshot %s ET, %s)"
+          % (snap.get("taken_et"), snap.get("source", "")))
+    s = (snap.get("symbols") or {}).get(sym)
+    if not s:
+        print("   SKIP - %s is not in the IBKR snapshot" % sym)
+        return
+    if not rows or u is None or not u.spot:
+        print("   SKIP - no stored Massive chain")
+        return
+    taken = _dt.datetime.fromisoformat(snap["taken_utc"]).astimezone(_dt.timezone.utc).replace(tzinfo=None)
+    mass = {(_d(x.expiry), x.right, _f(x.strike)): x for x in rows}
+    spot_m, spot_i = float(u.spot), float(s["spot"])
+    print("   price: Massive %.2f (%s, as of %s ET) vs IBKR %.2f (%s) - %+.2f%%" % (
+        spot_m, u.spot_src or "?", clock.et_now(u.spot_as_of.replace(tzinfo=_dt.timezone.utc)).strftime("%H:%M")
+        if u.spot_as_of else "?", spot_i, s.get("spot_src"), 100 * (spot_m / spot_i - 1)))
+    liquid, other, gaps, worst, model = [], [], [], [], []
+    for c in s.get("contracts") or ():
+        e, k, ib_iv = _d(c.get("expiry")), _f(c.get("strike")), _f(c.get("iv_model"))
+        x = mass.get((e, c.get("right"), k))
+        if x is None or ib_iv is None or ib_iv <= 0 or _f(x.iv) is None:
+            continue
+        diff = (x.iv - ib_iv) * 100
+        if x.as_of is not None:
+            gaps.append(abs((x.as_of - taken).total_seconds()) / 60.0)
+        bid, ask = _f(c.get("bid")), _f(c.get("ask"))
+        mid = (bid + ask) / 2 if (bid and ask and ask >= bid) else None
+        tight = mid is not None and (ask - bid) <= 0.10 * mid
+        dte = (e - taken.date()).days
+        und = _f(c.get("und_price")) or spot_i
+        if mid is not None and dte >= 1:              # IBKR's model vs the plain one here, on IBKR's own mid
+            mine = solve_iv(mid, und, k, dte / 365.0, r, c.get("right") == "C")
+            if mine is not None:
+                model.append((ib_iv - mine) * 100)
+        if abs(k / spot_i - 1) <= NEAR and dte >= MIN_DTE and tight:
+            liquid.append(diff)
+            worst.append((abs(diff), c, x, ib_iv))
+        else:
+            other.append(diff)
+    if gaps:
+        print("   time gap between Massive's read (15 min delayed) and the IBKR snapshot: median %.0f min" %
+              statistics.median(gaps))
+    print("   liquid near the money (strike within 10%%, 7+ days, IBKR bid/ask spread under 10%%): %s"
+          % stats_line(liquid))
+    print("   everything else matched: %s" % stats_line(other))
+    if model:
+        print("   (for scale: IBKR's model vs the plain Black-Scholes here on the same IBKR mid price: median gap %.2f pts,"
+              " average %+.2f - dividends, rates and early exercise)"
+              % (statistics.median(abs(x) for x in model), statistics.fmean(model)))
+    print("   %s - %.0f%% of the liquid contracts within %.0f pts of IBKR (needs %.0f%%)" % (
+        verdict(share_ok(liquid) >= OK_SHARE), 100 * share_ok(liquid), OK_PTS, 100 * OK_SHARE))
+    for _g, c, x, ib_iv in sorted(worst, key=lambda t: -t[0])[:6]:
+        print("     %-22s Massive %6.1f%%  IBKR %6.1f%%  gap %+5.1f   IBKR bid/ask %s / %s" % (
+            tag(c["expiry"], c["right"], c["strike"]), x.iv * 100, ib_iv * 100, (x.iv - ib_iv) * 100,
+            c.get("bid"), c.get("ask")))
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Check the Volatility surface against its sources (read-only).")
     ap.add_argument("symbols", nargs="+", help="underlyings, e.g. AAPL MSFT SPY")
     ap.add_argument("--day", default=None, help="the past day for check 5 (default: the newest converted)")
+    ap.add_argument("--ibkr", nargs="?", const="newest", default=None,
+                    help="check 6: compare with an IBKR snapshot (a path, or the newest in <MarketData>\\iv_check)")
     a = ap.parse_args(argv)
     from app import screener_db
     from app.services import clock, opt_history as oh, vol_surface as vs
@@ -378,6 +462,14 @@ def main(argv=None) -> int:
     print("Volatility surface check - %s ET - rate %.1f%%, no dividend, T = days / 365"
           % (clock.et_now().strftime("%Y-%m-%d %H:%M"), RISK_FREE * 100))
     print("Contract history: %s (%d days converted)" % (oh.history_root(), len(oh.converted_days())))
+    snap = None
+    if a.ibkr:
+        path = find_snapshot(a.ibkr, oh)
+        if path is None or not path.is_file():
+            print("IBKR snapshot: none found (run deploy\\ibkr_iv_snapshot.py on the laptop; Resilio brings it here)")
+        else:
+            snap = json.loads(path.read_text(encoding="utf-8"))
+            print("IBKR snapshot: %s (taken %s ET)" % (path, snap.get("taken_et")))
     failed = False
     with screener_db.session() as s:
         for sym in [x.strip().upper() for x in a.symbols if x.strip()]:
@@ -395,6 +487,8 @@ def main(argv=None) -> int:
                 check_call_put(u, rows)
                 check_same_session(s, sym, u, rows, RISK_FREE, vs, oh)
                 failed |= not check_past_day(s, sym, a.day, RISK_FREE, vs, oh)
+                if snap is not None:
+                    check_ibkr(sym, u, rows, snap, RISK_FREE, clock)
             except Exception as exc:  # noqa: BLE001 - report and go on with the next symbol
                 print("   ERROR - %s: %s" % (type(exc).__name__, exc))
                 failed = True

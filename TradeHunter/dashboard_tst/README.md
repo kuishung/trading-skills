@@ -263,7 +263,19 @@ maturity, each cell that option's implied vol).
   against the IV solved from Massive's daily file for the same session, 5 a past day's grid against
   an independent solve; plus contracts to compare with TWS. Its Black-Scholes is its own
   (`statistics.NormalDist`), not the app's (DEPLOY.md H "Checking the volatility surface").
-- **Tested: 715 pass** (`py -m pytest tests -q -p no:warnings`): new `test_opt_history.py` (15) and
+- **`deploy/ibkr_iv_snapshot.py` + check 6 `--ibkr`** (same day; the user: *"i am connect to IBKR for
+  trading can you connect to the API"*) - a source outside Massive: on the LAPTOP, a READ-ONLY
+  snapshot of IBKR's own option-model IV from the user's TWS (clientId 90, market data only: the
+  low-level client connect, no position / order / account sync, the order methods replaced by a
+  guard) for a few underlyings' near expiries + monthlies and the 12 strikes nearest the price,
+  written to `<MarketData>\iv_check\ibkr_<date>_<HHMM>ET.json` (Resilio carries it to Hermes);
+  on Hermes `check_vol_surface.py --ibkr` matches every contract with Massive's last pass and
+  reports the gap (liquid near-the-money contracts with a tight IBKR quote: 90 % within 2 points),
+  the price difference, the time gap, and - for scale - IBKR's model against the plain
+  Black-Scholes on IBKR's own mid. Found while running it: ib_insync hands back a weekly's
+  `lastTradeDateOrContractMonth` one day late after qualifying (SPY 2026-10-16 -> "20261017", a
+  Saturday), so the snapshot keys every contract by the expiry it ASKED for (the chain's date).
+- **Tested: 716 pass** (`py -m pytest tests -q -p no:warnings`): new `test_opt_history.py` (15) and
   `test_vol_surface.py` (6 - the grid's rules, and a round trip: closes priced at 30 % come back as
   30 %), plus the parquet lane (incl. failing days), the tray line in `test_scr_collector.py` and
   the page, the API and the settings tab in `test_options_page.py`. Checked in the browser on a

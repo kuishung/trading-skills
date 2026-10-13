@@ -425,6 +425,18 @@ the file is converted the next day ~11:15 ET), 5 PAST DAY (a past day's grid vs 
 solve, PASS / FAIL), and a few contracts to compare with TWS's Implied Vol column. Exit 1 only when
 1 or 5 fails.
 
+**Against IBKR (check 6).** On the laptop, with TWS logged in (API enabled, port 7496), take a
+read-only snapshot of IBKR's own implied volatility - market data only, clientId 90, no orders:
+
+```powershell
+cd D:\Dropbox\Claude\claude-skills\trading-skills\TradeHunter
+py -3.12 dashboard_tst\deploy\ibkr_iv_snapshot.py AAPL MSFT SPY
+```
+
+It lands in `D:\HermesSync\MarketData\iv_check\` and Resilio carries it to Hermes; then on Hermes
+add `--ibkr` (the newest snapshot) to the check above. Best within ~30 min of a Massive market pass
+(the check prints the time gap: Massive reads are 15 min delayed, a pass every 30 min).
+
 ### After a pull
 
 Re-run the setup script with `-StartNow` after any pull that changes

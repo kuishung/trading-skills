@@ -519,6 +519,7 @@ Each component needs a unique clientId per concurrent IBKR session. The full all
 | **87** | **IV-history seeder (`dashboard_tst/deploy/iv_seed_ibkr.py`) when run by the Options nightly job or by hand** | **Hermes** |
 | **88** | **The same seeder when the `dashboard_tst` web app starts it for a freshly added basket ticker (first-time read, v4.131)** | **Hermes** |
 | 89 | Options collector (dashboard_tst/deploy/options_collector.py, TST-Options-Collector) **(retired v4.134 — the collector reads Massive now, no IBKR session; keep the number unused)** | Hermes |
+| **90** | **IV cross-check snapshot (`dashboard_tst/deploy/ibkr_iv_snapshot.py`, v4.139): READ-ONLY market data (no orders, no account sync) from the user's TWS, compared with Massive on Hermes by `check_vol_surface.py --ibkr`** | **Laptop (TWS 7496)** |
 | 98 | Probe / handshake test | Either |
 | 99 | Dashboard probe | Laptop |
 
