@@ -74,8 +74,10 @@ def test_the_options_choose_the_cells():
     assert dict(zip(mid["strikes"], mid["cells"]))[110.0][1] == pytest.approx(46.0)
     narrow = vol_surface.build(rows, SPOT, ON, band=10)
     assert narrow["strikes"] == [90.0, 95.0, 100.0, 105.0, 110.0]
-    every = vol_surface.build(rows, SPOT, ON, band=0)
+    every = vol_surface.build(rows, SPOT, ON, band=0, common=False)
     assert every["strikes"][0] == 70.0 and every["strikes"][-1] == 200.0
+    common = vol_surface.build(rows, SPOT, ON, band=0)              # 200 is in 1 expiry of 4: hidden
+    assert common["strikes"][-1] == 130.0 and common["hidden_strikes"] == 1 and common["common"] is True
     short = vol_surface.build(rows, SPOT, ON, max_dte=60)
     assert [e["date"] for e in short["expiries"]] == [NOV_WK.isoformat(), NOV.isoformat()]
     monthly = vol_surface.build(rows, SPOT, ON, expiries="monthly")
@@ -83,6 +85,30 @@ def test_the_options_choose_the_cells():
     junk = vol_surface.build(rows, SPOT, ON, side="nope", band="x", max_dte=17, expiries="?")
     assert (junk["side"], junk["band"], junk["max_dte"], junk["exp_mode"]) == ("otm", 20, 365, "all")
     assert monthly["exp_mode"] == "monthly"
+
+
+def test_common_strikes_only_hides_the_rarely_listed_strikes_and_unticked_shows_all():
+    """v4.140: the $2.50 strikes only the near weeklies list are rows that are empty for every other
+    expiry - hidden by default (fewer than half of the expiries have a cell there)."""
+    rows = grid_rows()
+    for k in (97.5, 102.5):                                   # listed for the near weekly only
+        rows.append(row(NOV_WK, "P", k, 0.41))
+        rows.append(row(NOV_WK, "C", k, 0.31))
+    g = vol_surface.build(rows, SPOT, ON)
+    assert 97.5 not in g["strikes"] and 102.5 not in g["strikes"] and g["hidden_strikes"] == 2
+    assert g["strikes"] == [float(k) for k in range(80, 125, 5)]
+    assert g["spot_row"] == 4 and len(g["cells"]) == len(g["strikes"])
+    every = vol_surface.build(rows, SPOT, ON, common=False)
+    assert 97.5 in every["strikes"] and 102.5 in every["strikes"] and every["hidden_strikes"] == 0
+    assert every["spot_row"] == 5 and every["common"] is False
+    row_975 = dict(zip(every["strikes"], every["cells"]))[97.5]
+    assert row_975[0] == pytest.approx(41.0) and row_975[1:] == [None, None, None]
+    # a strike in exactly half of the expiries stays (2 of 4)
+    half = grid_rows() + [row(NOV_WK, "C", 101.0, 0.3), row(NOV, "C", 101.0, 0.3)]
+    assert 101.0 in vol_surface.build(half, SPOT, ON)["strikes"]
+    # a grid where no strike is common keeps every strike rather than going empty
+    lone = [row(NOV, "C", 100.0, 0.3), row(DEC, "C", 105.0, 0.3), row(FAR, "C", 110.0, 0.3)]
+    assert vol_surface.build(lone, SPOT, ON)["strikes"] == [100.0, 105.0, 110.0]
 
 
 def test_an_empty_cell_stays_empty_and_no_price_is_an_error():

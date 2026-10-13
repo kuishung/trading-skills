@@ -205,6 +205,25 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-14 - v4.140: Volatility surface - "Common strikes only", ticked by default
+
+The user, looking at AAPL's live surface: *"why there are so many gap without data"* - most empty
+cells are strikes the exchange does not list for that expiry (the $2.50 strikes only the near
+weeklies carry, the $10 steps of the far 2027 expiries, the narrow range of a newly listed weekly),
+a few are contracts with no open interest and no volume (the collector keeps neither) or no IV
+from Massive. Every strike any expiry lists became a row, mostly empty. Then: *"Common strikes only
+do a default for this with a box ticked. If untick it will show all data"*.
+
+- **`vol_surface.build(common=True)`** - a strike is kept only when at least half
+  (`COMMON_SHARE`) of the expiries shown have a cell at it; `common=False` shows every strike. The
+  result says `common` and `hidden_strikes`; a grid where no strike is common keeps them all.
+- **`/options/api/surface?common=0|1`** (default 1) and the page: a **Common strikes only** box,
+  ticked by default, next to the other surface options; changing it redraws at once; the info line
+  says how many rarely listed strikes are hidden ("untick Common strikes only to see them").
+- **Tested: 717 pass** - the hidden / shown strikes, the exactly-half case, the never-empty
+  fallback, the API flag; checked in the browser on dev data with real listing quirks (half-step
+  strikes on the near weeklies, double steps far out): ticked 10 strikes, unticked 17.
+
 ### 2026-10-13 - v4.139: the contract history in Parquet, the Option History settings tab, and the volatility surface
 
 The user: *"the flat file now is downloaded but not ingested as a data for live queries?"* - right:

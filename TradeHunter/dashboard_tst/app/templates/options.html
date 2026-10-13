@@ -277,6 +277,9 @@
           <option value="monthly">Monthly only</option>
         </select>
       </label>
+      <label class="scr-check self-end pb-1" title="Hide the strikes that fewer than half of the expiries list (the $2.50 strikes of the near weeklies, the in-between strikes of the far expiries). Untick to see every strike.">
+        <input type="checkbox" id="volCommon" checked> Common strikes only
+      </label>
       <button type="submit" id="volGo" class="scr-primary">Show surface</button>
     </form>
     <div id="volInfo" class="hidden text-[11px] text-slate-400 leading-snug break-words"></div>
@@ -294,7 +297,8 @@
       Each cell is one option's implied volatility, in percent: the strike down the side, the expiry
       across the top (M = the standard monthly). The ATM row is each expiry's at-the-money
       volatility. An empty cell means no contract there had a volatility - nothing is filled in or
-      smoothed. <b>Latest</b> uses Massive's own volatility per contract from the last market pass
+      smoothed. <b>Common strikes only</b> (ticked by default) hides the strikes fewer than half of the
+      expiries list; untick it to see every strike. <b>Latest</b> uses Massive's own volatility per contract from the last market pass
       (15 min delayed). <b>A past date</b> solves it from each contract's closing price and the stock's
       close that day (Black-Scholes, no dividend), so only contracts that traded that day appear.
     </p>
@@ -1351,6 +1355,8 @@
     $('volInfo').innerHTML = '<b class="text-slate-200">' + esc(j.symbol) + '</b>' + (j.name ? ' - ' + esc(j.name) : '') +
       ' &middot; ' + src + ' &middot; price ' + esc(num(j.spot, 2)) +
       ' &middot; ' + intText(j.strikes.length) + ' strikes x ' + intText(ex.length) + ' expiries, ' + intText(j.n_cells) + ' cells' +
+      (j.hidden_strikes ? ' &middot; ' + intText(j.hidden_strikes) + ' rarely listed strike' + (j.hidden_strikes === 1 ? '' : 's') +
+       ' hidden (untick Common strikes only to see ' + (j.hidden_strikes === 1 ? 'it' : 'them') + ')' : '') +
       '<div class="text-slate-500">' + esc(j.method) + '</div>';
     $('volLo').textContent = j.scale ? num(j.scale[0], 1) + '%' : '';
     $('volHi').textContent = j.scale ? num(j.scale[1], 1) + '%' : '';
@@ -1361,7 +1367,8 @@
     $('volSym').value = sym;
     if (!sym) { msg($('volMsg'), 'Type an underlying symbol, for example AAPL.'); return; }
     var q = new URLSearchParams({symbol: sym, day: $('volDay').value || 'latest', side: $('volSide').value,
-                                 band: $('volBand').value, dte: $('volDte').value, exp: $('volExp').value});
+                                 band: $('volBand').value, dte: $('volDte').value, exp: $('volExp').value,
+                                 common: $('volCommon').checked ? '1' : '0'});
     var my = ++V.seq;
     $('volGo').disabled = true;
     msg($('volMsg'), 'Building the ' + sym + ' surface...');
@@ -1381,7 +1388,7 @@
     }).then(function () { if (my === V.seq) $('volGo').disabled = false; });
   }
   $('volForm').addEventListener('submit', function (e) { e.preventDefault(); runSurface(); });
-  ['volDay', 'volSide', 'volBand', 'volDte', 'volExp'].forEach(function (id) {
+  ['volDay', 'volSide', 'volBand', 'volDte', 'volExp', 'volCommon'].forEach(function (id) {
     $(id).addEventListener('change', function () { if ($('volSym').value.trim()) runSurface(); });
   });
   $('volTable').addEventListener('mouseover', function (e) {

@@ -25,6 +25,13 @@ calls); ``mid`` - the average of the call and the put when both have one. A cell
 contract (or no IV) stays EMPTY - nothing is interpolated or smoothed. The ``ATM`` row is
 each expiry's at-the-money IV (the strike nearest the spot; call and put averaged).
 
+Common strikes only (``common``, the default; v4.140, the user: *"Common strikes only do a
+default for this with a box ticked. If untick it will show all data"*): exchanges list some
+strikes for a few expiries only - the $2.50 strikes of the near weeklies, the wider steps of
+the far expiries - and every one of them is a row, mostly empty. With ``common`` a strike is
+kept only when at least half (``COMMON_SHARE``) of the expiries shown have a cell at it;
+``common=False`` shows every strike.
+
 Pure grid building (``build``) is separate from the DB / Parquet reads (``latest_rows``,
 ``history_rows``) so it is tested without either. IVs in the result are PERCENT.
 """
@@ -45,6 +52,7 @@ IV_LO, IV_HI = 0.005, 5.0            # a contract IV (FRACTION) outside this is 
 MAX_STRIKES = 400                    # rows: the strikes nearest the spot are kept
 MAX_EXPIRIES = 80                    # columns: the nearest expiries are kept
 SCALE_LO_PCT, SCALE_HI_PCT = 5, 95   # the colour scale's ends (percentiles of the cells)
+COMMON_SHARE = 0.5                   # common strikes only: a strike with a cell in at least half the expiries
 
 
 class SurfaceError(ValueError):
@@ -126,13 +134,14 @@ def _pctile(vals: list[float], p: float) -> float:
 # ────────────────────────────────── the grid ──────────────────────────────────
 
 def build(rows, spot, on, *, side=DEFAULT_SIDE, band=DEFAULT_BAND, max_dte=DEFAULT_DTE,
-          expiries="all") -> dict:
+          expiries="all", common: bool = True) -> dict:
     """The surface grid from ``rows`` (dicts ``expiry`` (date / ISO), ``right`` C|P,
     ``strike``, ``iv`` FRACTION or None) for ``spot`` on day ``on``: the options used
     (``side``, ``band``, ``max_dte``, ``exp_mode`` all | monthly) and
     ``{expiries: [{date, dte, years, monthly}], strikes: [...] ascending, cells:
     [[iv PERCENT | None per expiry] per strike], atm: [ATM iv per expiry], atm_strikes,
-    spot_row (strikes below the spot), scale: [lo, hi] | None, n_cells, n_contracts}``."""
+    spot_row (strikes below the spot), scale: [lo, hi] | None, n_cells, n_contracts, common,
+    hidden_strikes (the strikes ``common`` left out)}``."""
     o = norm_options(side, band, max_dte, expiries)
     d = _to_date(on)
     s = _f(spot)
@@ -184,6 +193,14 @@ def build(rows, spot, on, *, side=DEFAULT_SIDE, band=DEFAULT_BAND, max_dte=DEFAU
     if len(strikes) > MAX_STRIKES:
         near = sorted(strikes, key=lambda k: (abs(k - s), k))[:MAX_STRIKES]
         strikes = sorted(near)
+    hidden = 0
+    if common and strikes and exps:
+        need = max(1, math.ceil(COMMON_SHARE * len(exps)))
+        fill = {k: sum(1 for e in exps if (k, e) in values) for k in strikes}
+        keep_k = [k for k in strikes if fill[k] >= need]
+        if keep_k:                                   # (never an empty grid: then every strike stays)
+            hidden = len(strikes) - len(keep_k)
+            strikes = keep_k
     kept = set(strikes)
     used = {e for (k, e) in values if k in kept}
     exps = [e for e in exps if e in used]
@@ -211,7 +228,7 @@ def build(rows, spot, on, *, side=DEFAULT_SIDE, band=DEFAULT_BAND, max_dte=DEFAU
                       "monthly": is_monthly(e)} for e in exps],
         "strikes": strikes, "cells": cells, "atm": atm, "atm_strikes": atm_k,
         "spot_row": sum(1 for k in strikes if k < s), "scale": scale,
-        "n_cells": len(flat), "n_contracts": n_contracts,
+        "n_cells": len(flat), "n_contracts": n_contracts, "common": bool(common), "hidden_strikes": hidden,
     }
 
 
@@ -341,7 +358,8 @@ def history_rows(sdb, symbol, day, *, band=DEFAULT_BAND, max_dte=DEFAULT_DTE, ro
                   "as_of": None, "name": (u or {}).get("name"), "traded": tbl.num_rows, "root": oroot}
 
 
-def surface(sdb, symbol, day="latest", *, side=None, band=None, max_dte=None, expiries=None, root=None) -> dict:
+def surface(sdb, symbol, day="latest", *, side=None, band=None, max_dte=None, expiries=None, common=True,
+            root=None) -> dict:
     """The surface for ``symbol`` on ``day`` (``latest`` or ``YYYY-MM-DD``): ``build``'s
     grid plus ``symbol``, ``name``, ``source``, ``as_of``, ``method``. Raises
     ``SurfaceError`` with the reason when it cannot be drawn."""
@@ -356,7 +374,7 @@ def surface(sdb, symbol, day="latest", *, side=None, band=None, max_dte=None, ex
         rows, meta = history_rows(sdb, sym, day, band=o["band"], max_dte=o["max_dte"], root=root)
         method = ("Black-Scholes implied volatility from each contract's closing price and the stock's close "
                   "(r = %.1f %%, no dividend, T = days / 365)" % (RISK_FREE * 100.0))
-    grid = build(rows, meta.get("spot"), meta.get("on"), **o)
+    grid = build(rows, meta.get("spot"), meta.get("on"), common=common, **o)
     if not grid["n_cells"]:
         raise SurfaceError("no %s option inside this window has an implied volatility - widen the strike "
                            "range or the expiries" % sym)

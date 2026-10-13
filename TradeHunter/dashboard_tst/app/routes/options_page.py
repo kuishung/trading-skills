@@ -1637,13 +1637,15 @@ async def api_history_days(user: User = Depends(require_user)):
 
 @router.get("/api/surface")
 async def api_surface(symbol: str = "", day: str = "latest", side: str = "", band: str = "", dte: str = "",
-                      exp: str = "", user: User = Depends(require_user)):
-    """The volatility surface of ``symbol`` on ``day`` (``latest`` or ``YYYY-MM-DD``)."""
+                      exp: str = "", common: str = "1", user: User = Depends(require_user)):
+    """The volatility surface of ``symbol`` on ``day`` (``latest`` or ``YYYY-MM-DD``); ``common=0``
+    shows every strike (default: common strikes only, v4.140)."""
     from ..services import vol_surface
 
     return JSONResponse(await run_in_threadpool(_hist_call, vol_surface.surface, symbol, day or "latest",
                                                 side=side or None, band=band or None, max_dte=dte or None,
-                                                expiries=exp or None))
+                                                expiries=exp or None,
+                                                common=str(common).strip().lower() not in ("0", "false", "off", "no")))
 
 
 @router.get("/api/history/chain")

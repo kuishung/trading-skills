@@ -516,6 +516,10 @@ Supersedes §4.4 (IV history) when the Flat Files key pair is set.
   only. DTE < 1 is left out; IVs outside 0.5-500 % are left out; nothing is interpolated; an ATM
   row (the strike nearest the price, call and put averaged) and the price line. Caps: 400 strikes
   (nearest the price) x 80 expiries. Indices: latest only (the day files carry no index close).
+  **Common strikes only (v4.140, ticked by default):** a strike is a row only when at least half of
+  the expiries shown have a cell at it - the strikes the exchange lists for a few expiries only
+  (near-weekly $2.50 strikes, the far expiries' in-between steps) are hidden; unticked = every
+  strike.
 - **Contract history (`contract_view`, `/options/api/history/days|chain|contract`):** pick a
   contract from the chain that traded on a chosen day; every day it traded with OHLC, volume,
   trades, the stock's unadjusted close and the IV; CSV in the browser.

@@ -1242,6 +1242,8 @@ def test_the_surface_api_answers_with_the_grid_or_a_plain_reason(client, fake, s
     assert j["ok"] is True and j["symbol"] == "AAPL" and j["strikes"] == [90.0, 100.0, 110.0]
     assert j["cells"] == [[30.0], [30.0], [30.0]] and j["expiries"][0]["date"] == "2026-11-20"
     assert j["source"] == "latest" and j["as_of"] == "2026-10-07T19:30:00Z"
+    assert j["common"] is True and j["hidden_strikes"] == 0
+    assert client.get("/options/api/surface", params={"symbol": "AAPL", "common": "0"}).json()["common"] is False
     j = client.get("/options/api/surface", params={"symbol": "NOPE"}).json()
     assert j["ok"] is False and "NOPE" in j["error"]
     j = client.get("/options/api/surface", params={"symbol": "AAPL", "day": "2026-10-02"}).json()
