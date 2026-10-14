@@ -57,6 +57,7 @@ from ..opt_constants import RISK_FREE
 
 log = logging.getLogger("tst.screener.frame")
 
+LOADING_WARNING = "The option market is loading on this server - results appear in a few seconds."
 RELOAD_CHECK_S = 30.0          # a request checks for a newer pass at most this often
 EMPTY_CHECK_S = 5.0            # an EMPTY cached frame is checked for new rows at most this often
 EMPTY_WAIT_S = 3.0             # ...and the request waits at most this long for that load
@@ -800,7 +801,12 @@ def current() -> Frame:
     global _frame, _last_check
     f = _frame
     if f is None:
-        with _load_lock:
+        if not _load_lock.acquire(blocking=False):
+            # the start-up load (``warm``) is running: never make a request wait the ~10 s a
+            # million contracts take - hand out an empty placeholder (not cached); ``reloading()``
+            # is True, so the page says the market is loading and polls until it is in (v4.144)
+            return Frame.empty_frame(warning=LOADING_WARNING)
+        try:
             if _frame is None:
                 _set_loading(True)
                 try:
@@ -810,6 +816,8 @@ def current() -> Frame:
                 with _state_lock:
                     _last_check = _mono()
             return _frame
+        finally:
+            _load_lock.release()
     if _pinned:
         return f
     if f.empty:

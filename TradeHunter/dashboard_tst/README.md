@@ -207,6 +207,23 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-14 - v4.144: the Options page no longer waits for the market to load after a restart; its build is timed
+
+The user: *"it takes quite a while to load the option page. why is this?"* Nothing in the page's
+own request is heavy (one screen's spec, the collector's status, the saved screeners); the two
+real costs are the first request after a restart - it waited for the whole market to load from
+the screener DB (~10 s for 1.1M contracts) because the start-up load held the frame lock - and
+the screening run the page fires on opening (its time already shows on the Results line).
+
+- **No waiting at start:** a request that arrives while the start-up load runs gets an empty
+  placeholder frame (not cached) with the warning "The option market is loading on this server -
+  results appear in a few seconds"; the page shows its loading panel and polls every 15 s until
+  the market is in, then screens. (`frame.current`: a non-blocking try of the load lock.)
+- **The page's build is timed:** the log says `options page options-screener for <email>: spec 40
+  ms (market loaded), status 12 ms, total 60 ms`; admins see "(page built in 60 ms, it waited for
+  the market to load)" next to the Results line. With that, the next slow load names its cause.
+- **Tested: 730 pass.**
+
 ### 2026-10-14 - v4.143: Volatility surface - earnings marked on the hover chart, the card in plain words; the collector keeps every earnings date it sees
 
 The user, on the hover card: *"here in this chart we want the earnings and the clearer description

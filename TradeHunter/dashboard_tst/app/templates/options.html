@@ -904,7 +904,10 @@
     var legs = rows.some(hasLegs);
     $('scrTotal').textContent = fmtInt(R.total);
     $('scrNr').textContent = isSet(R.total) ? compact(R.total) : '–';
-    $('scrMs').textContent = isSet(R.ms) ? 'in ' + fmtInt(R.ms) + ' ms' : '';
+    $('scrMs').textContent = (isSet(R.ms) ? 'in ' + fmtInt(R.ms) + ' ms' : '') +
+      (BOOT.is_admin && BOOT.page_ms && isSet(BOOT.page_ms.total)
+        ? ' (page built in ' + fmtInt(BOOT.page_ms.total) + ' ms' + (BOOT.page_ms.waited_for_load ? ', it waited for the market to load' : '') + ')'
+        : '');
     var panel = panelWanted(R);
     var noData = (R.warnings || []).filter(function (w) { return typeof w === 'string' && w.indexOf(NO_DATA) === 0; })[0];
     var emptyMarket = !!(R.data && R.data.empty && !rows.length);

@@ -1334,7 +1334,17 @@ def _chart_url(user: User) -> str:
 def options_home(request: Request, screen: str = "", user: User = Depends(require_user),
                  db: Session = Depends(get_db)):
     """The screener page. ``?screen=<key>`` (unknown -> the Options Screener)."""
+    import time as _time
+
+    t0 = _time.monotonic()
     eng, engine_error = _load_engine()
+    loading_at_start = False                     # the market still loading (a fresh start): the page waits for it
+    try:
+        from ..services.screener import frame as _fr
+
+        loading_at_start = bool(_fr.reloading()) or _fr.current.__globals__.get("_frame") is None
+    except Exception:  # noqa: BLE001
+        pass
     screens: list[dict] = []
     spec: dict | None = None
     if eng is not None:
@@ -1357,6 +1367,7 @@ def options_home(request: Request, screen: str = "", user: User = Depends(requir
                {"key": key, "label": "Options Screener", "family": "", "desc": "", "strategy": False})
     if spec:
         cur = {**cur, **{k: spec["screen"][k] for k in ("label", "desc") if spec["screen"].get(k)}}
+    t_spec = _time.monotonic()
     saved = _saved_list(db, user, key)
     default = next((i for i in saved if i["is_default"]), None)
     # the same inputs /api/status uses, so the first paint and the first poll say the same.
@@ -1371,7 +1382,15 @@ def options_home(request: Request, screen: str = "", user: User = Depends(requir
         meta = None                               # the engine failed: its error is shown instead
     status = _status_view(_read_collector(), meta, engine_error=None,
                           is_admin=bool(getattr(user, "is_admin", False)))
+    t_status = _time.monotonic()
+    # v4.144: where the page's own time goes (the log, and the Results line for admins)
+    page_ms = {"spec": int((t_spec - t0) * 1000), "status": int((t_status - t_spec) * 1000),
+               "total": int((t_status - t0) * 1000), "waited_for_load": loading_at_start}
+    log.info("options page %s for %s: spec %d ms (market %s), status %d ms, total %d ms", key,
+             getattr(user, "email", "?"), page_ms["spec"], "still loading" if loading_at_start else "loaded",
+             page_ms["status"], page_ms["total"])
     boot = {
+        "page_ms": page_ms,
         "screen": key,
         "engine_ok": spec is not None and engine_error is None,
         "engine_error": engine_error,

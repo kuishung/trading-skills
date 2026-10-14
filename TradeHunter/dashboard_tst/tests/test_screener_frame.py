@@ -317,3 +317,21 @@ def test_load_records_what_the_checks_compare(sdb):
     assert m["max_cid"] and m["n_typed"] == 2 and m["pass_contracts"] == 123
     assert m["run_id"] == 2 and m["run_total"] == 7
     assert fr.loaded_mono is not None and frame_mod._loaded_mono == fr.loaded_mono
+
+
+def test_a_request_during_the_start_up_load_gets_a_placeholder_not_a_wait(sdb):
+    """v4.144: while the warm-up load holds the lock, current() answers at once with an empty
+    placeholder (not cached, the loading warning on it) instead of waiting ~10 s on Hermes."""
+    frame_mod.reset()
+    assert frame_mod._load_lock.acquire(timeout=1)          # as the warm-up thread would
+    try:
+        t0 = time.perf_counter()
+        f = frame_mod.current()
+        assert time.perf_counter() - t0 < 1.0
+        assert f.empty and frame_mod.LOADING_WARNING in (f.meta.get("warnings") or [])
+        assert frame_mod._frame is None                      # nothing cached: the real load still comes
+    finally:
+        frame_mod._load_lock.release()
+    g = frame_mod.current()                                  # the lock free again: the real load runs
+    assert frame_mod._frame is g and frame_mod.LOADING_WARNING not in (g.meta.get("warnings") or [])
+    frame_mod.reset()
