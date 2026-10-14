@@ -524,7 +524,10 @@ Supersedes §4.4 (IV history) when the Flat Files key pair is set.
   high, grey under 10 days; the ATM row / the mid option: the two legs' per-day average), from
   `vol_history` (the contract history solved in bulk with a numpy-only Black-Scholes, cached per
   root and per contract; fetched after the grid, `/options/api/surface/history`); hover = a card
-  with now, the year's low - high, the rank, the share of days below, and a sparkline.
+  with now, the year's low - high, the rank, the share of days below, and a sparkline. **v4.142:**
+  five colour bands (fifths of the contract's own range, deep green -> light green -> yellow ->
+  orange -> red), monthly expiries by default, the read limited to contracts alive at the window's
+  end, every request timed (`timing_ms`, logged and shown in the legend).
 - **Contract history (`contract_view`, `/options/api/history/days|chain|contract`):** pick a
   contract from the chain that traded on a chosen day; every day it traded with OHLC, volume,
   trades, the stock's unadjusted close and the IV; CSV in the browser.

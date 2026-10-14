@@ -207,6 +207,32 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-14 - v4.142: Volatility surface - five contrasting colour bands, monthly expiries by default, the history timed
+
+The user, on the deployed v4.141: *"it is taking too long to load, can you test how long it takes
+to compute"*, *"the colour does not show clearly to differentiate the different contract, i need
+colour to be more contrast"*, *"in default monthly contract only"*.
+
+- **Timed on the real data** (the laptop's Resilio copy of the 498-day Parquet history, the stock
+  closes from `price_history`, a realistic grid from the newest day's chain): AAPL at a 20 % band
+  (386 cells) = 0.6 s cold (Parquet read 0.23 s, solve 0.19 s), 0.08 s warm; TSLA / NVDA ~0.5 s;
+  MSFT at a 50 % band (736 cells) 0.6 s. The computation is not the slow part; a cold VM disk (and
+  Defender scanning 252 files on first touch) is the likely one on Hermes. So:
+- **The read now skips expired contracts** (a filter on the expiry: only contracts alive at the
+  window's end, whole row groups skipped - AAPL's rows 360k -> 152k) and **the solve precomputes
+  the per-contract terms once** and bisects 40 times instead of 50 (5 / 2^40, nothing lost):
+  AAPL cold 0.38 s, MSFT 50 % 0.53 s on the laptop.
+- **Every history request is timed** (`timing_ms`: window / closes / read / solve / stats / grid /
+  request) - logged by the web app (`surface history AAPL 2026-10-13: ... read 230 ms, solve 190 ms,
+  total 600 ms`) and shown in the legend ("... in 0.6 s (read 0.2, solve 0.2)"), so a slow Hermes
+  says which phase.
+- **Five colour bands** instead of a pale continuous tint: deep green = today's IV in the lowest
+  fifth of the contract's own range, light green = low, yellow = middle, orange = high, red = the
+  highest fifth; stronger (alpha .62-.75), with a swatch legend and the band's name on the hover
+  card ("48 % (middle)").
+- **"Which expiries" defaults to Monthly only.**
+- **Tested: 725 pass**; checked in the browser.
+
 ### 2026-10-14 - v4.141: Volatility surface - the ATM row at the price, colours from each contract's own history, a history card on hover
 
 The user: *"the ATM row data should be in the strike that is middle where current strike level is.

@@ -1654,11 +1654,19 @@ def _flag(v) -> bool:
 
 
 def _surface_history(s, symbol, day, **o):
+    import time as _time
+
     from ..services import vol_history, vol_surface
 
+    t0 = _time.monotonic()
     grid = vol_surface.surface(s, symbol, day, **o)
+    grid_ms = int((_time.monotonic() - t0) * 1000)
     out = vol_history.grid_history(s, symbol, grid)
     out["on"] = grid["on"]
+    out.setdefault("timing_ms", {})["grid"] = grid_ms
+    out["timing_ms"]["request"] = int((_time.monotonic() - t0) * 1000)
+    log.info("surface history request %s %s: grid %d ms, whole request %d ms", symbol, grid["on"], grid_ms,
+             out["timing_ms"]["request"])
     return out
 
 

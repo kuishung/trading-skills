@@ -38,8 +38,10 @@ from __future__ import annotations
 
 import collections
 import datetime as _dt
+import logging
 import math
 import threading
+import time
 
 import numpy as np
 
@@ -47,11 +49,13 @@ from . import opt_history
 from .opt_constants import RISK_FREE
 from .vol_surface import SurfaceError, _f, _sym, _to_date, option_root_of, raw_closes
 
+log = logging.getLogger(__name__)
+
 HISTORY_DAYS = 252              # the past year of sessions (the screener's IV-rank window)
 MIN_HISTORY = 10                # a rank needs at least this many days of history
 SPARK_POINTS = 60               # points in a sparkline (about weekly over a year)
 MAX_CONTRACTS = 6000            # legs solved for one grid (the nearest the price first; the rest reported as skipped)
-IV_LO, IV_HI, IV_ITERS = 0.01, 5.0, 50     # the bisection bracket (fraction) and halvings (~1e-15)
+IV_LO, IV_HI, IV_ITERS = 0.01, 5.0, 40     # the bisection bracket (fraction) and halvings (5 / 2^40 ~ 5e-12)
 TABLE_CACHE_N = 4               # roots whose window rows are kept in memory
 _EPOCH = _dt.date(1970, 1, 1)
 
@@ -72,11 +76,12 @@ def ncdf_fast(x: np.ndarray) -> np.ndarray:
     return 0.5 * (1.0 + np.where(x >= 0, y, -y))
 
 
-def _bs(sig, S, K, T, call, r):
-    st = sig * np.sqrt(T)
-    d1 = (np.log(S / K) + (r + 0.5 * sig * sig) * T) / st
+def _bs(sig, S, call, log_sk, sqrt_t, rT, disc):
+    """Black-Scholes prices for the vols ``sig`` with the per-contract terms precomputed once
+    (``log_sk`` = ln(S/K), ``sqrt_t`` = sqrt(T), ``rT`` = r T, ``disc`` = K e^(-rT))."""
+    st = sig * sqrt_t
+    d1 = (log_sk + rT + 0.5 * sig * sig * sqrt_t * sqrt_t) / st
     d2 = d1 - st
-    disc = K * np.exp(-r * T)
     return np.where(call, S * ncdf_fast(d1) - disc * ncdf_fast(d2), disc * ncdf_fast(-d2) - S * ncdf_fast(-d1))
 
 
@@ -96,12 +101,13 @@ def implied_vols_fast(prices, S, K, T, is_call, r: float = RISK_FREE) -> np.ndar
         return out
     idx = np.nonzero(good)[0]
     p, S, K, T, call = p[idx], S[idx], K[idx], T[idx], call[idx]
+    terms = (S, call, np.log(S / K), np.sqrt(T), r * T, K * np.exp(-r * T))   # once, not per iteration
     lo = np.full(p.shape, IV_LO)
     hi = np.full(p.shape, IV_HI)
-    ok = (p > _bs(lo, S, K, T, call, r)) & (p < _bs(hi, S, K, T, call, r))
+    ok = (p > _bs(lo, *terms)) & (p < _bs(hi, *terms))
     for _ in range(IV_ITERS):
         mid = 0.5 * (lo + hi)
-        above = _bs(mid, S, K, T, call, r) > p
+        above = _bs(mid, *terms) > p
         hi = np.where(above, mid, hi)
         lo = np.where(above, lo, mid)
     iv = 0.5 * (lo + hi)
@@ -158,7 +164,10 @@ def _read_root(opt_root: str, days: list[str], root=None) -> dict:
         return empty
     try:
         ds = pds.dataset(paths, format="parquet")
-        tbl = ds.to_table(filter=(pc.field("root") == str(opt_root).upper()),
+        # only contracts still alive at the window's end: a grid for a later day shows no other, and
+        # the rows are sorted by root then expiry, so whole row groups of expired contracts are skipped
+        alive = pa.scalar(_dt.date.fromisoformat(days[-1]), pa.date32())
+        tbl = ds.to_table(filter=(pc.field("root") == str(opt_root).upper()) & (pc.field("expiry") > alive),
                           columns=["on", "expiry", "right", "strike", "close"])
     except Exception as exc:  # noqa: BLE001
         raise opt_history.HistoryError("source", "the contract history could not be read (%s: %s)"
@@ -315,11 +324,20 @@ def grid_history(sdb, symbol, grid: dict, *, root=None) -> dict:
     side = grid.get("side") or "otm"
     strikes = grid["strikes"]
     exps = [_to_date(e["date"]) for e in grid["expiries"]]
+    t0 = time.monotonic()
+    timing: dict[str, int] = {}
+
+    def lap(what: str, since: float) -> float:          # the phases, in ms (the log and the page show them)
+        timing[what] = int((time.monotonic() - since) * 1000)
+        return time.monotonic()
+
     days = history_window(on, root)
+    t = lap("window", t0)
     if not days:
         return {"cells": {}, "atm": {}, "days": 0, "window": None, "epoch": _EPOCH.isoformat(),
-                "note": "no day of the contract history before %s is converted yet" % on}
+                "note": "no day of the contract history before %s is converted yet" % on, "timing_ms": timing}
     spots = raw_closes(sdb, sym, days)
+    t = lap("closes", t)
 
     def legs_for(k: float, which: str) -> list[str]:
         if which == "call":
@@ -350,7 +368,10 @@ def grid_history(sdb, symbol, grid: dict, *, root=None) -> dict:
             atm_keys[j] = [contract_key(e, "C", k), contract_key(e, "P", k)]
             keys += atm_keys[j]
     try:
+        _arrays, _days, _ck = root_rows(oroot, on, root)
+        t = lap("read", t)
         series = contract_series(oroot, set(keys), spots, on, root)
+        t = lap("solve", t)
     except opt_history.HistoryError as exc:            # the real cause reaches the page
         raise SurfaceError("the contract history could not be read: %s" % exc) from None
     cells: dict[str, dict] = {}
@@ -365,8 +386,13 @@ def grid_history(sdb, symbol, grid: dict, *, root=None) -> dict:
             atm[str(j)] = st
     skipped = ["%d,%d" % (i, j) for i in range(len(strikes)) for j in range(len(exps))
                if grid["cells"][i][j] is not None and (i, j) not in wanted]
+    lap("stats", t)
+    lap("total", t0)
+    log.info("surface history %s %s: %d cells, %d legs, %d days - window %d ms, closes %d ms, read %d ms, "
+             "solve %d ms, stats %d ms, total %d ms", sym, on, len(cells), len(set(keys)), len(days),
+             timing["window"], timing["closes"], timing["read"], timing["solve"], timing["stats"], timing["total"])
     return {"cells": cells, "atm": atm, "days": len(days), "window": [days[0], days[-1]],
-            "epoch": _EPOCH.isoformat(), "note": None,
+            "epoch": _EPOCH.isoformat(), "note": None, "timing_ms": timing,
             # the grid these figures belong to - the page checks it is still the one on screen
             "strikes": list(strikes), "expiries": [e.isoformat() for e in exps], "spot": spot, "side": side,
             "skipped": skipped,
