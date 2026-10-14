@@ -207,6 +207,20 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-14 - v4.145: Volatility surface - the continuous green-to-red tint is back, with a slim rank bar under each figure
+
+The user: *"on the colour scheme of the Volatility surface i still prefer the old one. perhaps we
+put a bar progress bar below the figure to show which one is lowest and which one is highest. Do
+it in a sleek design"*.
+
+- The five bands of v4.142 are gone; a cell's tint is v4.141's continuous hue again (green at the
+  contract's lowest IV of its past year, through yellow, to red at its highest).
+- **A slim bar under each figure** (3 px, rounded, a faint track with a fill in the cell's hue and a
+  small marker at the end) shows how far up its own range today's IV sits - the same thing as
+  the colour, readable at a glance cell by cell. No bar without history; grey tint under 10 days.
+- The legend is one gradient bar again ("at its lowest IV ... at its highest"); the hover card's
+  "Where today sits in that range" keeps the percentage in the same hue.
+
 ### 2026-10-14 - v4.144: the Options page no longer waits for the market to load after a restart; its build is timed
 
 The user: *"it takes quite a while to load the option page. why is this?"* Nothing in the page's
