@@ -207,6 +207,25 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-15 - v4.146: Volatility surface - the hover card shows again
+
+The user: *"the mouse over detail not showing"*.
+
+- v4.145's patch replaced the colour helpers of the page script in one span, and that span also
+  held `sideOf()` (which option a cell shows: call, put, or by the side of the price). The hover
+  card and click-to-open both call it, so from v4.145 hovering a cell threw a `ReferenceError`
+  and no card appeared (only the "call + put average" side, which does not call it, still
+  worked). The helper is back.
+- Guard: `tests/test_options_page.py` now checks that every helper the surface and history
+  scripts call is defined exactly once in the page, so a patch that drops one fails the suite
+  instead of the browser.
+- Three small looks of the v4.145 bar, found by the review of that patch: the marker dot is no
+  longer clipped by its own 3 px track (it stands over the track as designed, whole at 0 % and
+  100 %); the strike labels line up with the figures again (the cells align to the top now that a
+  figure cell is taller than its label); and the hover card's "where today sits" percentage takes
+  a darker shade of the cell's hue on the light theme and a lighter one on the dark theme, so it
+  reads on both.
+
 ### 2026-10-14 - v4.145: Volatility surface - the continuous green-to-red tint is back, with a slim rank bar under each figure
 
 The user: *"on the colour scheme of the Volatility surface i still prefer the old one. perhaps we

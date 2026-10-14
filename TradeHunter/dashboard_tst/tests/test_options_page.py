@@ -1300,3 +1300,16 @@ def test_the_data_ingest_page_has_the_option_history_tab(engine, db, no_screener
             assert needle in frag.text, needle
     finally:
         app.dependency_overrides.clear()
+
+
+def test_every_surface_helper_the_page_calls_is_defined():
+    """v4.146: the v4.145 patch dropped ``sideOf()`` along with the band helpers it replaced, and
+    the hover card threw a ReferenceError in the browser. Every helper the surface and history
+    scripts call must be defined exactly once in the page."""
+    html = (APP_DIR / "templates" / "options.html").read_text(encoding="utf-8")
+    script = html[html.index("VOLATILITY SURFACE"):]
+    for name in ("sideOf", "rankHue", "rankColor", "rankText", "rankBar", "cellStyle", "sameGrid",
+                 "paintHistory", "loadHistory", "spotRow", "renderSurface", "popoverHtml", "sparkline",
+                 "showPop", "hidePop", "runSurface", "openContract", "strikeText", "dayNum"):
+        assert re.search("(?<![A-Za-z0-9_])" + name + "[(]", script), f"{name} is never called - update this list"
+        assert html.count(f"function {name}(") == 1, f"{name} must be defined exactly once"

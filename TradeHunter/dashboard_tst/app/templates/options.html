@@ -116,8 +116,9 @@
              background: linear-gradient(90deg, hsla(120,70%,45%,.75), hsla(60,70%,45%,.75), hsla(0,70%,45%,.75)); }
   /* v4.145: a slim bar under each figure - how far up its own year's range today's IV sits */
   .vol-grid td.vol-cell { position: relative; padding-bottom: .6rem; }
+  .vol-grid tbody tr:not(.vol-spot) > th, .vol-grid tbody tr:not(.vol-spot) > td { vertical-align: top; }
   .vol-rk { position: absolute; left: .45rem; right: .45rem; bottom: .22rem; height: 3px; border-radius: 9999px;
-            background: rgba(128,128,128,.22); overflow: hidden; }
+            background: rgba(128,128,128,.22); }
   .vol-rk > i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 9999px; }
   .vol-rk > b { position: absolute; top: -1px; width: 5px; height: 5px; margin-left: -2.5px; border-radius: 9999px;
                 background: var(--tv-text-hi); box-shadow: 0 0 0 1px var(--tv-panel); }
@@ -136,6 +137,8 @@
   .vol-pop .vol-dot { fill: var(--tv-text-hi); }
   .vol-pop .vol-band { fill: var(--tv-hover); }
   .vol-pop .vol-lbl { fill: var(--tv-muted); font-size: 9px; }
+  .vol-pop .vol-rk-tx { color: hsl(var(--rk-h), 70%, 34%); }
+  html:not(.light) .vol-pop .vol-rk-tx { color: hsl(var(--rk-h), 75%, 64%); }
 </style>
 
 <div id="optPage" class="space-y-3" data-screen="{{ screen.key }}">
@@ -1345,13 +1348,18 @@
   function rankColor(rank) {          // the cell's tint: 0 = at its lowest (green) ... 1 = at its highest (red)
     return rank == null ? '' : 'background:hsla(' + rankHue(rank) + ',70%,45%,.35)';
   }
-  function rankText(rank) {           // the same hue as a text colour (the hover card)
-    return rank == null ? '' : 'color:hsl(' + rankHue(rank) + ',70%,36%)';
+  function rankText(rank) {           // the same hue for the hover card's text (.vol-rk-tx picks a lightness per theme)
+    return rank == null ? '' : '--rk-h:' + rankHue(rank);
   }
   function rankBar(rank) {            // the slim bar under the figure
     var pct = Math.round(Math.max(0, Math.min(1, rank)) * 100);
     return '<span class="vol-rk"><i style="width:' + pct + '%;background:hsla(' + rankHue(rank) + ',70%,45%,.95)"></i>' +
            '<b style="left:' + pct + '%"></b></span>';
+  }
+  function sideOf(j, k) {                // the option a cell shows
+    if (j.side === 'call') return 'C';
+    if (j.side === 'put') return 'P';
+    return k < j.spot ? 'P' : 'C';
   }
   function spotRow(j, n) {             // the line at the price, in the strike column as "ATM": ITM one side, OTM the other
     return '<tr class="vol-spot"><th class="vol-sticky" title="The underlying\'s price - the at-the-money level">ATM ' + esc(num(j.spot, 2)) + '</th>' +
@@ -1492,7 +1500,7 @@
     h += '<div class="vol-pop-row"><span>Past year, ' + intText(s.n) + ' trading days' + (s.first ? ' since ' + esc(s.first) : '') + '</span>' +
          '<span class="whitespace-nowrap">' + num(s.lo, 1) + '% - ' + num(s.hi, 1) + '%</span></div>';
     if (s.rank != null) {
-      h += '<div class="vol-pop-row"><span>Where ' + nowWord + ' sits in that range</span><b class="whitespace-nowrap" style="' + rankText(s.rank) + '">' +
+      h += '<div class="vol-pop-row"><span>Where ' + nowWord + ' sits in that range</span><b class="whitespace-nowrap vol-rk-tx" style="' + rankText(s.rank) + '">' +
            Math.round(s.rank * 100) + '%</b></div>' +
            '<div class="vol-cap">0% = at its lowest IV of the year, 100% = at its highest</div>' +
            '<div class="vol-pop-row"><span>Days with a lower IV than ' + nowWord + '</span><span class="whitespace-nowrap">' +
