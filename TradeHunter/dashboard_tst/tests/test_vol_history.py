@@ -183,10 +183,7 @@ def test_the_grid_payload_ranks_each_cell_in_its_own_history(sdb, hist):
     p90 = h["cells"]["%d,%d" % (rows[90.0], cols[DEC.isoformat()])]          # the put a third of the way up
     assert p90["rank"] == pytest.approx((29.67 - 20) / 29.0, abs=0.01)
     assert p90["pct"] == pytest.approx(10 / 30, abs=0.04)
-    # the ATM row: the 100 strike's call + put averaged, day by day (both at iv_on(i)) -> the same
-    # history; its current value is (49 + 20) / 2 = 34.5 -> half way up
-    a = h["atm"][str(cols[NOV.isoformat()])]
-    assert a["n"] == N_DAYS and a["rank"] == pytest.approx(0.5, abs=0.01)
+    assert "atm" not in h                                                 # no ATM row (v4.143: not a contract)
     # every shown cell has an entry, the series dates are days since the epoch
     assert len(h["cells"]) == grid["n_cells"] and h["epoch"] == "1970-01-01"
     d0 = _dt.date(1970, 1, 1) + _dt.timedelta(days=c100["series"][0][0])
@@ -261,3 +258,37 @@ def test_an_index_and_a_missing_history_say_so(sdb, hist, monkeypatch):
     h2 = vol_history.grid_history(sdb, "AAPL", g2)
     assert h2["days"] == 0 and h2["cells"] == {} and "converted" in h2["note"]
     assert g is None
+
+
+def test_the_payload_carries_the_earnings_dates_of_the_window_and_the_next(sdb, hist):
+    """v4.143: the earnings dates the collector kept (scr_earnings) inside the history window,
+    and the next one after the surface day (scr_earnings first, else the underlying's next date)."""
+    from app.services import scr_store
+
+    days = sessions_before(ON, N_DAYS)
+    scr_store.file_earnings_day(sdb, days[5], [{"symbol": "AAPL", "when": "amc"}, {"symbol": "MSFT", "when": "bmo"}])
+    scr_store.file_earnings_day(sdb, days[20], [{"symbol": "AAPL", "when": "amc"}])
+    scr_store.file_earnings_day(sdb, "2025-01-30", [{"symbol": "AAPL", "when": "amc"}])      # before the window
+    grid = vol_surface.surface(sdb, "AAPL", "latest", side="otm", band=20)
+    h = vol_history.grid_history(sdb, "AAPL", grid)
+    assert [e["on"] for e in h["earnings"]] == [days[5].isoformat(), days[20].isoformat()]
+    assert h["earnings"][0]["when"] == "amc" and h["next_earnings"] is None
+    weekdays = sum(1 for i in range((ON - days[0]).days) if (days[0] + _dt.timedelta(days=i)).weekday() < 5)
+    assert h["earnings_coverage"] == {"fetched": 2, "weekdays": weekdays}   # only the two filed days were read
+    # the next one: the underlying's next date (re-read daily) unless a kept date comes first
+    u = sdb.query(ScrUnderlying).filter(ScrUnderlying.symbol == "AAPL").one()
+    u.earnings_date = "2026-10-29"
+    sdb.commit()
+    assert vol_history.grid_history(sdb, "AAPL", grid)["next_earnings"] == {"on": "2026-10-29", "when": None}
+    scr_store.file_earnings_day(sdb, "2026-10-22", [{"symbol": "AAPL", "when": "amc"}])
+    assert vol_history.grid_history(sdb, "AAPL", grid)["next_earnings"] == {"on": "2026-10-22", "when": "amc"}
+    # earnings ON the surface day: not in the past, and "next" says so (the review's finding)
+    scr_store.file_earnings_day(sdb, ON, [{"symbol": "AAPL", "when": "bmo"}])
+    h3 = vol_history.grid_history(sdb, "AAPL", grid)
+    assert h3["next_earnings"] == {"on": ON.isoformat(), "when": "bmo"}
+    assert ON.isoformat() not in [e["on"] for e in h3["earnings"]]
+    # a past day's surface: dates before that day, the next one on or after it
+    g2 = vol_surface.surface(sdb, "AAPL", days[10].isoformat(), side="call", band=20)
+    h2 = vol_history.grid_history(sdb, "AAPL", g2)
+    assert [e["on"] for e in h2["earnings"]] == [days[5].isoformat()]
+    assert h2["next_earnings"] == {"on": days[20].isoformat(), "when": "amc"}

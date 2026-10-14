@@ -47,7 +47,7 @@ import numpy as np
 
 from . import opt_history
 from .opt_constants import RISK_FREE
-from .vol_surface import SurfaceError, _f, _sym, _to_date, option_root_of, raw_closes
+from .vol_surface import SurfaceError, _f, _sym, _to_date, option_root_of, raw_closes, underlying
 
 log = logging.getLogger(__name__)
 
@@ -303,20 +303,52 @@ def cell_stats(current, on_days: np.ndarray, iv: np.ndarray) -> dict | None:
     return out
 
 
+def earnings_in(sdb, symbol, start, on) -> dict:
+    """The earnings dates the collector has seen for ``symbol`` (``scr_earnings``, v4.143):
+    ``past`` = those from ``start`` up to but not including ``on`` (the history window),
+    ``next`` = ``{on, when}`` of the first one ON or after ``on`` - the collector's own next date
+    (``scr_underlying.earnings_date``, re-read daily from Nasdaq's projections) when it is on or
+    after ``on`` and not later than the first kept date, else that kept date - or None; and
+    ``coverage`` = how many of the window's weekdays had their calendar read (``fetched`` of
+    ``weekdays``), so the page can say when the history is still loading."""
+    from . import scr_store  # noqa: PLC0415
+
+    sym = _sym(symbol)
+    d = _to_date(on)
+    on_s = d.isoformat() if d else None
+    past = [e for e in scr_store.earnings_dates(sdb, sym, start, on_s) if on_s is None or e["on"] < on_s]
+    kept = scr_store.earnings_dates(sdb, sym, on_s, None)
+    nxt = dict(kept[0]) if kept else None
+    u = underlying(sdb, sym) or {}
+    ed = u.get("earnings_date")
+    if ed and (on_s is None or ed >= on_s) and (nxt is None or ed <= nxt["on"]):
+        nxt = {"on": ed, "when": nxt["when"] if nxt and nxt["on"] == ed else None}
+    weekdays = []
+    a = _to_date(start)
+    if a and d:
+        x = a
+        while x < d:
+            if x.weekday() < 5:
+                weekdays.append(x.isoformat())
+            x += _dt.timedelta(days=1)
+    fetched = len(scr_store.earnings_days_fetched(sdb, weekdays)) if weekdays else 0
+    return {"past": past, "next": nxt, "coverage": {"fetched": fetched, "weekdays": len(weekdays)}}
+
+
 # ────────────────────────────── the payload for one grid ──────────────────────────────
 
 def grid_history(sdb, symbol, grid: dict, *, root=None) -> dict:
     """For the surface ``grid`` (``vol_surface.surface``'s result): ``{cells: {"r,c": stats},
-    atm: {"c": stats}, days: n, window: [first, last], epoch: "1970-01-01", note}``. The leg
-    behind a cell follows the grid's ``side`` (put below the price, call at / above, one side
-    only, or both averaged); the ATM row averages both legs at its strike."""
+    days: n, window: [first, last], epoch: "1970-01-01", note, ...}``. The leg behind a cell
+    follows the grid's ``side`` (put below the price, call at / above, one side only, or both
+    averaged)."""
     sym = _sym(symbol)
     why = opt_history.available()
     if why:
         raise SurfaceError("the contract history is not set up on this server (%s)" % why)
     oroot = option_root_of(sdb, sym)
     if oroot is None:
-        return {"cells": {}, "atm": {}, "days": 0, "window": None, "epoch": _EPOCH.isoformat(),
+        return {"cells": {}, "days": 0, "window": None, "epoch": _EPOCH.isoformat(),
                 "note": "%s is an index: the daily files carry no index close, so its contracts have no IV history"
                         % sym}
     on = grid["on"]
@@ -334,9 +366,10 @@ def grid_history(sdb, symbol, grid: dict, *, root=None) -> dict:
     days = history_window(on, root)
     t = lap("window", t0)
     if not days:
-        return {"cells": {}, "atm": {}, "days": 0, "window": None, "epoch": _EPOCH.isoformat(),
+        return {"cells": {}, "days": 0, "window": None, "epoch": _EPOCH.isoformat(),
                 "note": "no day of the contract history before %s is converted yet" % on, "timing_ms": timing}
     spots = raw_closes(sdb, sym, days)
+    earnings = earnings_in(sdb, sym, days[0], on)
     t = lap("closes", t)
 
     def legs_for(k: float, which: str) -> list[str]:
@@ -361,12 +394,6 @@ def grid_history(sdb, symbol, grid: dict, *, root=None) -> dict:
             keys += ks
         if len(keys) >= MAX_CONTRACTS:
             break
-    atm_keys: dict[int, list[int]] = {}
-    for j, e in enumerate(exps):
-        k = (grid.get("atm_strikes") or [None] * len(exps))[j]
-        if k is not None and (grid.get("atm") or [None] * len(exps))[j] is not None:
-            atm_keys[j] = [contract_key(e, "C", k), contract_key(e, "P", k)]
-            keys += atm_keys[j]
     try:
         _arrays, _days, _ck = root_rows(oroot, on, root)
         t = lap("read", t)
@@ -379,11 +406,6 @@ def grid_history(sdb, symbol, grid: dict, *, root=None) -> dict:
         st = cell_stats(grid["cells"][i][j], *_merge_mean([series.get(k) for k in ks]))
         if st is not None:
             cells["%d,%d" % (i, j)] = st
-    atm: dict[str, dict] = {}
-    for j, ks in atm_keys.items():
-        st = cell_stats(grid["atm"][j], *_merge_mean([series.get(k) for k in ks]))
-        if st is not None:
-            atm[str(j)] = st
     skipped = ["%d,%d" % (i, j) for i in range(len(strikes)) for j in range(len(exps))
                if grid["cells"][i][j] is not None and (i, j) not in wanted]
     lap("stats", t)
@@ -391,8 +413,9 @@ def grid_history(sdb, symbol, grid: dict, *, root=None) -> dict:
     log.info("surface history %s %s: %d cells, %d legs, %d days - window %d ms, closes %d ms, read %d ms, "
              "solve %d ms, stats %d ms, total %d ms", sym, on, len(cells), len(set(keys)), len(days),
              timing["window"], timing["closes"], timing["read"], timing["solve"], timing["stats"], timing["total"])
-    return {"cells": cells, "atm": atm, "days": len(days), "window": [days[0], days[-1]],
+    return {"cells": cells, "days": len(days), "window": [days[0], days[-1]],
             "epoch": _EPOCH.isoformat(), "note": None, "timing_ms": timing,
+            "earnings": earnings["past"], "next_earnings": earnings["next"], "earnings_coverage": earnings["coverage"],
             # the grid these figures belong to - the page checks it is still the one on screen
             "strikes": list(strikes), "expiries": [e.isoformat() for e in exps], "spot": spot, "side": side,
             "skipped": skipped,

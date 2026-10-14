@@ -140,6 +140,36 @@ class ScrUnderlyingDaily(ScrBase):
     iv30_src = Column(String(8), nullable=True)          # live | flat | rest (NULL = before v4.138)
 
 
+class ScrEarnings(ScrBase):
+    """Every earnings date the collector has seen on Nasdaq's calendar, per symbol (migration
+    ``d4e6f8a0b2c4``, v4.143) - the past year backfilled once, then every day's read of the
+    next 70 days adds to it. ``when_``: bmo / amc / tbd. The Volatility surface's hover card
+    marks these on a contract's IV history."""
+
+    __tablename__ = "scr_earnings"
+    __table_args__ = (UniqueConstraint("symbol", "on", name="uq_scr_earnings"),
+                      Index("ix_scr_earnings_symbol", "symbol"))
+
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), nullable=False)
+    on = Column(String(10), nullable=False)              # YYYY-MM-DD
+    when_ = Column(String(4), nullable=True)             # bmo | amc | tbd
+    src = Column(String(8), nullable=True)               # nasdaq
+    first_seen = Column(DateTime, nullable=True)
+
+
+class ScrEarningsDay(ScrBase):
+    """A calendar day whose earnings list was fetched (v4.143) - the backfill's bookkeeping."""
+
+    __tablename__ = "scr_earnings_day"
+    __table_args__ = (UniqueConstraint("on", name="uq_scr_earnings_day"),)
+
+    id = Column(Integer, primary_key=True)
+    on = Column(String(10), nullable=False)
+    fetched_at = Column(DateTime, nullable=True)
+    n_rows = Column(Integer, nullable=True)
+
+
 class ScrUniverse(ScrBase):
     """The optionable underlyings Massive lists (reference contracts, daily)."""
 

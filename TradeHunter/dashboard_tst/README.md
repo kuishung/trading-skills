@@ -207,6 +207,55 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-14 - v4.143: Volatility surface - earnings marked on the hover chart, the card in plain words; the collector keeps every earnings date it sees
+
+The user, on the hover card: *"here in this chart we want the earnings and the clearer description
+on the chart"*, and *"what in its range means / what days below now means"*.
+
+- **The ATM row is gone** - the user: *"the ATM column data is not based on the massive data?
+  there is no such contract. Should just put a line to separate the ITM and OTM contracts"*. A
+  thin line at the price now separates them (below it calls are in the money and puts out; above
+  it the reverse), as in v4.139; every cell on the grid is one real contract.
+- **The card, in plain words.** "Today 29.3 %"; "Past year, 91 trading days since 2025-10-10:
+  27.1 % - 47.7 %"; "Where today sits in that range: 11 % (lowest fifth)" with the note "0 % = at
+  its lowest IV of the year, 100 % = at its highest"; "Days with a lower IV than today: 18 % (16 of
+  91)"; "Earnings: 4 in this window (E), next 2026-10-29 - before this expiry" (or "after this
+  expiry" / "next date not known").
+- **The chart** is taller and labelled: the window's first and last dates along the bottom, "high
+  47.7" / "low 27.1" at the range band, "today 29.3" at the end of the dashed line, and an amber
+  dashed **E** mark on every earnings day inside the window; a caption says what the line, the
+  dashed line and the band are.
+- **Where the earnings dates come from** - a new screener table **`scr_earnings`** (+
+  `scr_earnings_day`, migration `d4e6f8a0b2c4`, applied by the web app at start): the collector's
+  daily read of Nasdaq's calendar (the next 70 days, as before) now KEEPS every (symbol, date) it
+  sees (`scr_store.file_earnings_day`), and a one-off backfill on the same lane reads the past
+  260 weekdays' calendars, 10 a job and one job a tick (~7 minutes), until the past year is on file
+  (`job_earnings_history`; progress `earnings_history_left`, the detail "Loading past earnings
+  dates: N days to go", the tray "earnings history N days to go"). `vol_history.earnings_in`
+  gives the surface the dates inside its window and the next one (`scr_earnings`, else the
+  underlying's next date).
+- **Review (an Opus panel, 15 confirmed findings, all fixed):** the backfill could not tell a
+  failed Nasdaq request from a day with nobody reporting (the cached reader answers `[]` for
+  both) - the collector now uses a strict reader (`calendars.earnings_for_strict`: no cache, a
+  failure RAISES) so a bad day waits for the next try, and a trading day once filed as empty is
+  read once more; the daily read filed Nasdaq's projections for the next 70 days, which move,
+  leaving phantom dates - it keeps only the day that has arrived, and the next date is the
+  underlying's own (re-read daily) unless a kept date comes first; an earnings date on the
+  surface's own day showed nowhere - it is now "reports today, before the open"; the backfill
+  reaches a year before the contract history's first day (a past-day surface's window), at most
+  800 weekdays; Nasdaq's pre / post / tbd are stored as bmo / amc / unknown; the card says "On
+  2026-10-09" instead of "today" for a past day, "on expiry day, after the close (after this
+  expiry)" when the date equals the expiry, "history still loading (120 of 252 days on file)"
+  while the backfill runs (the payload carries the window's coverage), and its caption names
+  the amber E marks and appears only with a chart.
+- **Deploy:** re-run `setup_screener_task.ps1 -StartNow` (the collector changed) and restart the
+  tray (DEPLOY.md H); the backfill takes about 20 minutes on its first evening (three years of
+  weekdays, ten a tick).
+- **Tested** - the store (first sighting wins, empty days count as fetched, per-symbol reads), the
+  collector (the daily read keeps its dates, the backfill runs after it and files the past
+  weekdays batch by batch, the progress key, the tray line), the payload (the window's dates, the
+  next one from either source, a past day's surface); checked in the browser.
+
 ### 2026-10-14 - v4.142: Volatility surface - five contrasting colour bands, monthly expiries by default, the history timed
 
 The user, on the deployed v4.141: *"it is taking too long to load, can you test how long it takes

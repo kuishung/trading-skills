@@ -1183,6 +1183,9 @@ def get_screener_collector_status(path=None, now=None, log_path=None) -> dict:
         parts.append("Parquet paused")
     elif q_state == "off" and q_err:
         parts.append("Parquet off")
+    eh_left = _n(prog.get("earnings_history_left"))        # v4.143: the past year's earnings dates being read
+    if eh_left:
+        parts.append(f"earnings history {eh_left:,} days to go")
     if api_ok is False:
         parts.append("Massive failing")
     parts.append(f"hb {_age_text(age)} ago")

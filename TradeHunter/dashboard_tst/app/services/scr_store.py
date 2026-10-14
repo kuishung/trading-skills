@@ -60,7 +60,7 @@ import threading
 from sqlalchemy import JSON, DateTime, String, func, insert, or_
 from sqlalchemy.exc import IntegrityError
 
-from ..screener_models import (ScrContract, ScrPass, ScrStatus, ScrUnderlying,
+from ..screener_models import (ScrContract, ScrEarnings, ScrEarningsDay, ScrPass, ScrStatus, ScrUnderlying,
                                ScrUnderlyingDaily, ScrUniverse)
 from . import clock, option_metrics
 
@@ -81,6 +81,7 @@ ATR_N, RSI_N = 14, 14
 TREND_MIN_BARS = 210             # MATP classify_trend: EMA200 needs this many closes
 TREND_SLOPE_WINDOW = 20          # MATP classify_trend: EMA50 slope over 20 bars
 SEC_TYPES = ("stock", "etf", "index", "other")
+WHEN_WORDS = {"pre": "bmo", "bmo": "bmo", "before": "bmo", "post": "amc", "amc": "amc", "after": "amc"}
 IV_SRC_LIVE, IV_SRC_REST, IV_SRC_FLAT = "live", "rest", "flat"   # scr_underlying_daily.iv30_src
 IV_SRC_REPLACEABLE = (IV_SRC_FLAT, IV_SRC_REST)   # history readings a history writer may redo
 EXCHANGES = ("NYSE", "NASDAQ", "AMEX", "INDEX", "OTHER")
@@ -1051,6 +1052,79 @@ def set_earnings(db, dates: dict, *, today, src: str = "nasdaq", now=None) -> in
         return n
 
     return _txn(db, apply)
+
+
+def file_earnings_day(db, day, rows, *, src: str = "nasdaq", now=None) -> int:
+    """Keep the earnings dates seen on one calendar day (v4.143): ``rows`` = Nasdaq-shaped
+    ``{symbol, when}`` dicts (``when`` as ``calendars`` spells it: pre / post / tbd, or bmo /
+    amc; stored as ``bmo`` / ``amc`` / NULL) -> ``scr_earnings`` (a date already there keeps
+    its first sighting; ``when_`` filled in when it was unknown), and the day is marked
+    fetched in ``scr_earnings_day`` (even with no rows: a holiday, or nobody reports).
+    Commits; returns the dates added."""
+    on = _day_str(day)
+    if on is None:
+        raise ValueError("file_earnings_day: a date is needed")
+    stamp = _now(now)
+    seen: dict[str, str | None] = {}
+    for r in rows or ():
+        sym = _sym((r or {}).get("symbol"))
+        if sym:
+            w = WHEN_WORDS.get(str((r or {}).get("when") or "").strip().lower())
+            if sym not in seen or (seen[sym] is None and w):
+                seen[sym] = w
+
+    def apply() -> int:
+        have = {e.symbol: e for e in db.query(ScrEarnings).filter(ScrEarnings.on == on)}
+        n = 0
+        for sym, w in seen.items():
+            e = have.get(sym)
+            if e is None:
+                db.add(ScrEarnings(symbol=sym, on=on, when_=w, src=str(src)[:8], first_seen=stamp))
+                n += 1
+            elif not e.when_ and w:
+                e.when_ = w
+        d = db.query(ScrEarningsDay).filter(ScrEarningsDay.on == on).first()
+        if d is None:
+            db.add(ScrEarningsDay(on=on, fetched_at=stamp, n_rows=len(seen)))
+        else:
+            d.fetched_at, d.n_rows = stamp, len(seen)
+        db.flush()
+        return n
+
+    return _txn(db, apply)
+
+
+def earnings_days_empty(db, days) -> set[str]:
+    """Which of ``days`` were fetched and had NO rows - a holiday, nobody reporting, or (before
+    v4.143's strict fetch) a failed request filed as empty; the backfill reads a trading day
+    among them once more."""
+    want = sorted({_day_str(d) for d in days or () if _day_str(d)})
+    out: set[str] = set()
+    for part in _chunks(want, 500):
+        out.update(on for (on,) in db.query(ScrEarningsDay.on)
+                   .filter(ScrEarningsDay.on.in_(part), ScrEarningsDay.n_rows == 0))
+    return out
+
+
+def earnings_days_fetched(db, days) -> set[str]:
+    """Which of ``days`` (YYYY-MM-DD) already had their earnings list fetched."""
+    want = sorted({_day_str(d) for d in days or () if _day_str(d)})
+    out: set[str] = set()
+    for part in _chunks(want, 500):
+        out.update(on for (on,) in db.query(ScrEarningsDay.on).filter(ScrEarningsDay.on.in_(part)))
+    return out
+
+
+def earnings_dates(db, symbol, start=None, end=None) -> list[dict]:
+    """``[{on, when}]`` of ``symbol``'s earnings dates between ``start`` and ``end``
+    (inclusive, either open), oldest first."""
+    q = db.query(ScrEarnings.on, ScrEarnings.when_).filter(ScrEarnings.symbol == _sym(symbol))
+    a, b = _day_str(start), _day_str(end)
+    if a:
+        q = q.filter(ScrEarnings.on >= a)
+    if b:
+        q = q.filter(ScrEarnings.on <= b)
+    return [{"on": on, "when": w} for on, w in q.order_by(ScrEarnings.on).all()]
 
 
 # ────────────────────────────────── the universe ──────────────────────────────────

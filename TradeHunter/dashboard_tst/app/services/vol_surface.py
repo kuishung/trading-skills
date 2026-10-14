@@ -247,7 +247,7 @@ def underlying(sdb, symbol) -> dict | None:
     if u is None:
         return None
     return {"symbol": u.symbol, "name": u.name, "sec_type": u.sec_type, "spot": u.spot,
-            "spot_src": u.spot_src, "spot_as_of": u.spot_as_of}
+            "spot_src": u.spot_src, "spot_as_of": u.spot_as_of, "earnings_date": u.earnings_date}
 
 
 def option_root_of(sdb, symbol) -> str | None:

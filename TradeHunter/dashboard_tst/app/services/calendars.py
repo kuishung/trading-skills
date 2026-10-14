@@ -321,7 +321,18 @@ def earnings_for(day: _dt.date) -> list[dict]:
     return rows
 
 
-def _fetch_earnings(day: _dt.date) -> list[dict]:
+class CalendarError(RuntimeError):
+    """Nasdaq's calendar could not be read (``earnings_for_strict``)."""
+
+
+def earnings_for_strict(day: _dt.date) -> list[dict]:
+    """``earnings_for`` for a collector that must tell a failed request from a day with
+    nobody reporting (v4.143): no cache, and a non-200 answer or an exception RAISES
+    ``CalendarError`` instead of answering ``[]``."""
+    return _fetch_earnings(day, strict=True)
+
+
+def _fetch_earnings(day: _dt.date, strict: bool = False) -> list[dict]:
     try:
         r = _client().get(
             _EARN_URL,
@@ -331,9 +342,16 @@ def _fetch_earnings(day: _dt.date) -> list[dict]:
                      "Referer": "https://www.nasdaq.com/"},
         )
         if r.status_code != 200:
+            if strict:
+                raise CalendarError("Nasdaq's earnings calendar answered HTTP %s for %s" % (r.status_code, day))
             return []
         raw = ((r.json() or {}).get("data") or {}).get("rows") or []
-    except Exception:  # noqa: BLE001
+    except CalendarError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        if strict:
+            raise CalendarError("Nasdaq's earnings calendar for %s: %s: %s" % (day, type(exc).__name__,
+                                                                              str(exc)[:160])) from None
         return []
 
     out: list[dict] = []

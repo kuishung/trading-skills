@@ -190,6 +190,10 @@ IDENTITY_EVERY_S = 7 * 86400.0   # names / types / exchanges weekly
 IDENTITY_REQUESTS = 15           # ~ the reference-list pages an identity read takes (for its ETA)
 EARNINGS_DAYS = 70               # earnings dates for the next 70 days ...
 EARNINGS_RETRY_S = 3600.0        # ... re-read daily; a failed read again in 1 h
+EARNINGS_HISTORY_DAYS = 260      # v4.143: the past calendar days read ONCE (the surface's earnings marks): a year ...
+EARNINGS_HISTORY_MAX = 800       # ... or back to a year before the contract history's first day, at most this many ...
+EARNINGS_HISTORY_BATCH = 10      # ... ten days per job, one job a tick (~0.7 requests a second to Nasdaq) ...
+EARNINGS_HISTORY_RETRY_S = 1800.0  # ... a failed batch again in 30 min
 FILL_MIN_BARS = 20               # a universe symbol under this many bars gets its own read ...
 FILL_RETRY_S = 24 * 3600.0       # ... at most once a day
 FILL_EMPTY_RETRY_S = 7 * 86400.0  # a symbol Massive has no stock bars for: once a week
@@ -259,7 +263,7 @@ _RETRYABLE = ("http", "rate", "error")    # a pass gone bad tries these once mor
 _BG_OP = {"universe": "universe", "identity": "stocks", "stocks": "stocks", "fill": "stocks"}
 PROGRESS_KEYS = ("universe_pages", "universe_symbols", "universe_started", "pass_kind", "pass_session",
                  "pass_pct", "pass_eta_s", "pass_paused_at", "stock_days_pending", "stock_eta_s",
-                 "history_left", "history_waiting", "history_eta_s",
+                 "history_left", "history_waiting", "history_eta_s", "earnings_history_left",
                  "flat_days_done", "flat_days_total", "flat_eta_s", "flat_state", "flat_error", "flat_kind",
                  "pq_state", "pq_days_done", "pq_days_total", "pq_eta_s", "pq_error", "pq_failed")
 
@@ -737,6 +741,9 @@ class Collector:
         self._executor_factory = executor_factory or _thread_pool
         self._uni_executor_factory = universe_executor_factory or self._executor_factory
         self._earnings_fetch = earnings_fetch or calendars.earnings_for
+        # the reads that must tell a failed request from a day with nobody reporting (v4.143): the
+        # strict fetch raises; a test's fake (``earnings_fetch``) serves both
+        self._earnings_fetch_strict = earnings_fetch or calendars.earnings_for_strict
         self.tick_s = float(tick_s)
         self.version = COLLECTOR_VERSION
         self.pid = os.getpid()
@@ -801,8 +808,11 @@ class Collector:
         self._identity_at: _dt.datetime | None = None
         self._identity_retry_at: _dt.datetime | None = None
         self._earn_future: cf.Future | None = None
+        self._earn_mode: str | None = None               # what the earnings lane is doing: next | history
         self._earnings_on: str | None = None
         self._earnings_retry_at: _dt.datetime | None = None
+        self._earn_hist_days: list[str] | None = None    # the past calendar days still to read (newest first)
+        self._earn_hist_retry_at: _dt.datetime | None = None
         self._days: dict[str, list[bool]] = {}
         self._days_loaded_at: _dt.datetime | None = None
         self._day_retry: dict[str, _dt.datetime] = {}
@@ -1206,6 +1216,7 @@ class Collector:
             out["history_eta_s"] = int(eta) if eta is not None else None
         out.update(self._flat_progress(now))
         out.update(self._pq_progress(now))
+        out["earnings_history_left"] = len(self._earn_hist_days) if self._earn_hist_days is not None else None
         return out
 
     def _fields(self) -> dict:
@@ -2752,20 +2763,80 @@ class Collector:
         return clock.et_now(now).time() >= UNIVERSE_AT or self._earnings_on is None
 
     def _earn_tick(self, now: _dt.datetime) -> None:
-        if self._earn_future is not None or self._stopping.is_set() or not self._earnings_due(now):
+        if self._earn_future is not None or self._stopping.is_set():
             return
-        self._earn_future = self._earn_lane().submit(self._bg_wrap, "earnings", self.job_earnings)
+        if self._earnings_due(now):
+            self._earn_mode = "next"
+            self._earn_future = self._earn_lane().submit(self._bg_wrap, "earnings", self.job_earnings)
+            return
+        if self._earnings_on != clock.et_today(now) or not self.universe_n:
+            return
+        if self._earn_hist_retry_at is not None and now < self._earn_hist_retry_at:
+            return
+        if self._earn_hist_days is None:
+            db = self._sf()
+            try:
+                self._earn_hist_days = self._earnings_history_todo(db, now)
+            except Exception as exc:  # noqa: BLE001
+                self._rollback(db)
+                self._earn_hist_retry_at = now + _dt.timedelta(seconds=EARNINGS_HISTORY_RETRY_S)
+                self.log.warning("earnings history: could not list the days to read (%s)", self._err_text(exc))
+                return
+            finally:
+                db.close()
+        if not self._earn_hist_days:
+            return
+        batch = self._earn_hist_days[:EARNINGS_HISTORY_BATCH]
+        self._earn_mode = "history"
+        self._earn_future = self._earn_lane().submit(self._bg_wrap, "earnings_history",
+                                                     lambda: self.job_earnings_history(batch))
+
+    def _earnings_history_start(self, today: _dt.date) -> _dt.date:
+        """How far back the earnings history reaches: a year (252 sessions) before the contract
+        history's first converted day - a past-day surface can be any of those days and shows the
+        year before it - else ``EARNINGS_HISTORY_DAYS`` weekdays before today."""
+        try:
+            first = opt_history.converted_days()
+        except Exception:  # noqa: BLE001
+            first = []
+        if first:
+            return clock.prev_trading_day(_dt.date.fromisoformat(first[0]), 252)
+        d, n = today, 0
+        while n < EARNINGS_HISTORY_DAYS:
+            d -= _dt.timedelta(days=1)
+            if d.weekday() < 5:
+                n += 1
+        return d
+
+    def _earnings_history_todo(self, db, now: _dt.datetime) -> list[str]:
+        """The past calendar weekdays (back to ``_earnings_history_start``, at most
+        ``EARNINGS_HISTORY_MAX``) whose earnings list was never fetched - plus the trading days
+        fetched with NO rows, read once more (an older failed request was filed as empty) -
+        newest first."""
+        today = clock.et_date(now)
+        start = self._earnings_history_start(today)
+        days, d = [], today
+        while len(days) < EARNINGS_HISTORY_MAX:
+            d -= _dt.timedelta(days=1)
+            if d < start:
+                break
+            if d.weekday() < 5:
+                days.append(d.isoformat())
+        done = scr_store.earnings_days_fetched(db, days)
+        empty = scr_store.earnings_days_empty(db, days)
+        return [x for x in days if x not in done or (x in empty and clock.is_trading_day(x))]
 
     def _collect_earn(self) -> None:
         f = self._earn_future
         if f is None or not f.done():
             return
         self._earn_future = None
+        name = "earnings_history" if self._earn_mode == "history" else "earnings"
         try:
             res = f.result()
         except Exception as exc:  # noqa: BLE001
-            res = {"job": "earnings", "ok": False, "kind": "error", "error": self._err_text(exc)}
-        self._bg_result("earnings", res)
+            res = {"job": name, "ok": False, "kind": "error", "error": self._err_text(exc)}
+        self._bg_result(res.get("job") or name, res)
 
     def _bg_result(self, name: str, res: dict) -> None:
         now = self._now()
@@ -2776,6 +2847,11 @@ class Collector:
                 self._universe_failed(res, now)
             return
         if not res.get("ok"):
+            if name == "earnings_history":            # its own back-off: never an alert
+                self._earn_hist_retry_at = now + _dt.timedelta(seconds=EARNINGS_HISTORY_RETRY_S)
+                self.log.warning("earnings history: %s - tried again %s", res.get("error"),
+                                 _et_hm(self._earn_hist_retry_at))
+                return
             self._bg_failed(name, res, now)
             return
         if name in _BG_OP:
@@ -2786,8 +2862,18 @@ class Collector:
                           res.get("named", 0), res.get("stocks", 0), res.get("indices", 0))
         elif name == "earnings":
             self._earnings_on, self._earnings_retry_at = clock.et_today(now), None
-            self.log.info("earnings: %d dates from %d calendar rows, %d rows changed",
-                          res.get("dates", 0), res.get("rows", 0), res.get("changed", 0))
+            self.log.info("earnings: %d dates from %d calendar rows, %d rows changed, %d kept in the history",
+                          res.get("dates", 0), res.get("rows", 0), res.get("changed", 0), res.get("kept", 0))
+        elif name == "earnings_history":
+            done = set(res.get("days") or ())
+            if self._earn_hist_days is not None:
+                self._earn_hist_days = [d for d in self._earn_hist_days if d not in done]
+            self._earn_hist_retry_at = None
+            left = len(self._earn_hist_days or ())
+            self.log.info("earnings history: %d days read (%d dates kept), %d days to go", len(done),
+                          res.get("kept", 0), left)
+            if not left:
+                self.log.info("earnings history: the past %d weekdays are on file", EARNINGS_HISTORY_DAYS)
         elif name == "stocks":
             d = res.get("day")
             if res.get("adj_bars") or res.get("raw_bars"):
@@ -3086,14 +3172,18 @@ class Collector:
         today = clock.et_date(now)
         dates: dict[str, str] = {}
         n_rows = 0
+        seen: list[tuple[_dt.date, list[dict]]] = []
         for i in range(EARNINGS_DAYS + 1):
             d = today + _dt.timedelta(days=i)
             if d.weekday() >= 5:
                 continue
             if self._stopping.is_set():
                 return {"ok": False, "kind": "error", "error": "stopping"}
-            rows = self._earnings_fetch(d) or []
+            rows = self._earnings_fetch_strict(d) or []
             n_rows += len(rows)
+            if d == today:                 # only the day that has arrived is history; the rest are projections
+                seen.append((d, [{"symbol": massive.our_symbol((r or {}).get("symbol")), "when": (r or {}).get("when")}
+                                 for r in rows]))
             for r in rows:
                 sym = massive.our_symbol((r or {}).get("symbol"))
                 if sym and sym not in dates:
@@ -3103,9 +3193,37 @@ class Collector:
         db = self._sf()
         try:
             changed = scr_store.set_earnings(db, dates, today=today.isoformat(), now=now)
+            kept = sum(scr_store.file_earnings_day(db, d, rows, now=now) for d, rows in seen)   # v4.143
         finally:
             db.close()
-        return {"dates": len(dates), "rows": n_rows, "changed": changed}
+        return {"dates": len(dates), "rows": n_rows, "changed": changed, "kept": kept}
+
+    def job_earnings_history(self, days: list[str]) -> dict:
+        """Past calendar days' earnings lists (v4.143): one Nasdaq request a day, ten days a job
+        and one job a tick, each day's dates kept in ``scr_earnings`` and the day marked fetched -
+        so the Volatility surface can mark earnings on a contract's past year. An empty answer
+        counts as a day with nobody reporting (Nasdaq answers empty for holidays); a request that
+        raises leaves the rest of the batch for the next try."""
+        out = {"days": [], "kept": 0}
+        db = self._sf()
+        try:
+            for day in days:
+                if self._stopping.is_set():
+                    return {"ok": False, "kind": "error", "error": "stopping", **out}
+                try:
+                    rows = self._earnings_fetch_strict(_dt.date.fromisoformat(day))
+                except Exception as exc:  # noqa: BLE001 - a failed request: this day and the rest wait for the next try
+                    return {"ok": False, "kind": "error", "error": "Nasdaq's calendar for %s: %s" % (day, self._err_text(exc)),
+                            **out}
+                if rows is None:
+                    return {"ok": False, "kind": "error", "error": "Nasdaq's calendar for %s did not answer" % day, **out}
+                out["kept"] += scr_store.file_earnings_day(
+                    db, day, [{"symbol": massive.our_symbol((r or {}).get("symbol")), "when": (r or {}).get("when")}
+                              for r in rows], now=self._now())
+                out["days"].append(day)
+        finally:
+            db.close()
+        return out
 
     def job_stock_day(self, day: str, *, adjusted: bool = True, raw: bool = True) -> dict:
         """One session of grouped daily bars (adjusted and / or unadjusted) for the
@@ -3222,7 +3340,10 @@ class Collector:
             parts.append("Computing trend, moving averages, RSI and HV for %s underlyings."
                          % format(self.universe_n, ","))
         if self._earn_future is not None:
-            parts.append("Loading earnings dates for the next %d days." % EARNINGS_DAYS)
+            if self._earn_mode == "history":
+                parts.append("Loading past earnings dates: %s days to go." % format(len(self._earn_hist_days or ()), ","))
+            else:
+                parts.append("Loading earnings dates for the next %d days." % EARNINGS_DAYS)
         return DETAIL_JOIN.join(parts)
 
     def _hist_text(self, now: _dt.datetime) -> str:

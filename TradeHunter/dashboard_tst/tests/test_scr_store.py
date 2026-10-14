@@ -25,12 +25,12 @@ from app.services import scr_store
 
 from .conftest import DASH_ROOT
 
-HEAD = "c3d9e5f1a7b2"                 # scr_underlying_daily.iv30_src (v4.138) on top of b4e1f7c9d2a6
+HEAD = "d4e6f8a0b2c4"                 # scr_earnings + scr_earnings_day (v4.143) on top of c3d9e5f1a7b2
 PARTIAL_REV = "b4e1f7c9d2a6"          # scr_pass.partial (v4.137) on top of 8d2f4b6a1c37
 STATUS_REV = "8d2f4b6a1c37"           # scr_status progress columns (v4.137) on top of 5c7a1d3e9b20
 BASE_REV = "5c7a1d3e9b20"
 TABLES = {"scr_contract", "scr_underlying", "scr_underlying_daily", "scr_universe", "scr_pass",
-          "scr_status"}
+          "scr_status", "scr_earnings", "scr_earnings_day"}
 NOW = _dt.datetime(2026, 10, 8, 14, 0)          # Thursday 10:00 ET (naive UTC)
 MATP_SRC = DASH_ROOT.parent / "resources" / "MATP" / "scripts" / "daily_bounce_alert.py"
 
@@ -897,3 +897,35 @@ def test_the_flat_lane_read_helpers_and_mark_history_many(sdb):
     assert (u["history_done"], u["history_tries"]) == (False, 1)
     assert u["history_next"] == NOW + _dt.timedelta(seconds=scr_store.history_backoff_s(1))
     assert scr_store.mark_history_many(sdb, [], now=NOW) == 0
+
+
+def test_earnings_history_is_kept_per_day_and_read_per_symbol(sdb):
+    """v4.143: file_earnings_day keeps the dates seen on one calendar day (first sighting wins,
+    an unknown time of day filled in later) and marks the day fetched - even an empty day."""
+    from app.services.scr_store import earnings_dates, earnings_days_fetched, file_earnings_day
+
+    db = sdb
+
+    n = file_earnings_day(db, "2026-10-01", [{"symbol": "aapl", "when": "amc"}, {"symbol": "MSFT", "when": None},
+                                            {"symbol": "", "when": "bmo"}, {"symbol": "AAPL", "when": "bmo"}])
+    assert n == 2                                                   # AAPL once (its first sighting, amc), MSFT
+    assert file_earnings_day(db, "2026-10-01", [{"symbol": "MSFT", "when": "bmo"}, {"symbol": "NVDA"}]) == 1
+    assert file_earnings_day(db, "2026-10-02", []) == 0             # a day with nobody reporting is still fetched
+    assert earnings_days_fetched(db, ["2026-10-01", "2026-10-02", "2026-10-05"]) == {"2026-10-01", "2026-10-02"}
+    assert earnings_dates(db, "AAPL") == [{"on": "2026-10-01", "when": "amc"}]
+    assert earnings_dates(db, "msft") == [{"on": "2026-10-01", "when": "bmo"}]     # the time of day filled in
+    file_earnings_day(db, "2027-01-28", [{"symbol": "AAPL", "when": "amc"}])
+    assert [e["on"] for e in earnings_dates(db, "AAPL")] == ["2026-10-01", "2027-01-28"]
+    assert [e["on"] for e in earnings_dates(db, "AAPL", "2026-10-02", None)] == ["2027-01-28"]
+    assert earnings_dates(db, "AAPL", None, "2026-12-31") == [{"on": "2026-10-01", "when": "amc"}]
+    assert earnings_dates(db, "ZZZZ") == []
+    # Nasdaq's own words (calendars: pre / post / tbd) are stored as bmo / amc / unknown, filled in later
+    from app.services.scr_store import earnings_days_empty
+
+    file_earnings_day(db, "2026-10-06", [{"symbol": "NVDA", "when": "tbd"}, {"symbol": "AMD", "when": "post"},
+                                         {"symbol": "TSLA", "when": "pre"}])
+    assert earnings_dates(db, "NVDA", "2026-10-06", None) == [{"on": "2026-10-06", "when": None}]
+    assert earnings_dates(db, "AMD")[0]["when"] == "amc" and earnings_dates(db, "TSLA")[0]["when"] == "bmo"
+    file_earnings_day(db, "2026-10-06", [{"symbol": "NVDA", "when": "post"}])
+    assert earnings_dates(db, "NVDA", "2026-10-06", None) == [{"on": "2026-10-06", "when": "amc"}]
+    assert earnings_days_empty(db, ["2026-10-01", "2026-10-02", "2026-10-06", "2026-10-09"]) == {"2026-10-02"}

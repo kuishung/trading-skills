@@ -1599,7 +1599,8 @@ def test_restart_same_day_skips_earnings(db, build):
     col2, _ = build(clk, client=cl, earnings_fetch=lambda d: asked2.append(d) or fake_earnings(d))
     for _ in range(5):
         col2.tick()
-    assert asked2 == [] and col2._earnings_on == DAY
+    # the day's read of the next 70 days is not repeated; only the past year's backfill (v4.143) may go on
+    assert all(d.isoformat() < DAY for d in asked2) and col2._earnings_on == DAY
 
 
 def test_rejected_key_fixed_in_env_file_is_used_after_5_min(db, build, monkeypatch, tmp_path):
@@ -3115,3 +3116,71 @@ def test_tray_shows_the_parquet_conversion_and_its_warning(tmp_path):
     _write(p, dict(base, progress=dict(prog, pq_state="off", pq_error=off, pq_days_total=None)))
     got = status(now=TRAY_NOW)
     assert got["tip"] == "Scr WARN" and got["line"].endswith("Contract history (Parquet) is not running: " + off)
+
+
+# ───────────────────────── the earnings history (v4.143): kept daily, the past year backfilled ─────────────────────────
+
+def test_the_daily_earnings_read_keeps_its_dates_and_the_backfill_reads_the_past_year(db, build, tmp_path):
+    past = clock.prev_trading_day(clock.prev_trading_day(clock.et_date(_utc(RTH)), 5)).isoformat()
+    asked: list[str] = []
+
+    def fetch(day):
+        asked.append(day.isoformat())
+        if day.isoformat() == past:
+            return [{"symbol": "AAA", "when": "amc"}, {"symbol": "ZZZ", "when": "bmo"}]
+        if day < clock.et_date(_utc(RTH)):
+            return [{"symbol": "ZZZ", "when": "pre"}]       # a real calendar day has names on it
+        return fake_earnings(day)
+
+    clk = Clock(RTH)
+    col, cl = build(clk, earnings_fetch=fetch)
+    _settle(col, clk, n=30, until=lambda c: c._earnings_on is not None)
+    # the daily read of the next 70 days keeps only TODAY's list as history (the rest are Nasdaq's
+    # projections, which move) - the next date per stock stays the underlying's, re-read daily
+    assert scr_store.earnings_dates(db, "AAA") == [] and scr_store.earnings_dates(db, "BBB") == []
+    assert scr_store.underlying(db, "AAA")["earnings_date"] == "2026-10-20"
+    assert scr_store.earnings_days_fetched(db, ["2026-10-08", "2026-10-20"]) == {"2026-10-08"}
+    # the backfill: the past 260 weekdays, 10 a job, one job a tick, newest first
+    _settle(col, clk, n=40, until=lambda c: c._earn_hist_days == [])
+    assert col._earn_hist_days == []
+    weekdays, d = [], clock.et_date(_utc(RTH))
+    while len(weekdays) < scr_collector.EARNINGS_HISTORY_DAYS:
+        d -= _dt.timedelta(days=1)
+        if d.weekday() < 5:
+            weekdays.append(d.isoformat())
+    assert scr_store.earnings_days_fetched(db, weekdays) == set(weekdays)
+    assert asked[-1] == weekdays[-1] and past in asked
+    assert [e["on"] for e in scr_store.earnings_dates(db, "AAA")] == [past]
+    assert scr_store.earnings_dates(db, "AAA", None, past)[0]["when"] == "amc"
+    # a failed request (the strict fetch raises) leaves the batch for the next try; nothing is filed as empty
+    boom_day = weekdays[3]
+    col3, _ = build(clk, earnings_fetch=lambda d: (_ for _ in ()).throw(RuntimeError("Nasdaq down"))
+                    if d.isoformat() == boom_day else fetch(d))
+    col3._earn_hist_days = [boom_day, weekdays[4]]
+    col3._earnings_on = clock.et_today(_utc(RTH))
+    col3.universe_n = 3
+    col3.tick()
+    col3.tick()
+    assert col3._earn_hist_days == [boom_day, weekdays[4]] and col3._earn_hist_retry_at is not None
+    assert "earnings_history_left" in scr_collector.PROGRESS_KEYS
+    assert col._progress(clk.t)["earnings_history_left"] == 0
+    # a restart finds nothing left to read
+    col2, _ = build(clk, earnings_fetch=fetch)
+    n_before = len(asked)
+    _settle(col2, clk, n=5, until=lambda c: c._earn_hist_days is not None)
+    assert col2._earn_hist_days == [] and len(asked) - n_before <= scr_collector.EARNINGS_DAYS + 1
+
+
+def test_tray_shows_the_earnings_history_backfill(tmp_path):
+    p = tmp_path / "screener_collector.json"
+    status = _tray_function(p)
+    base = {"state": "idle", "heartbeat": "2026-10-08T13:59:40+00:00", "last_pass_et": "16:40 ET",
+            "last_pass_id": 3, "last_pass_contracts": 980000, "universe_n": 4512,
+            "universe_done": "2026-10-08T11:40:00+00:00", "history_done_n": 4512, "history_total": 4512,
+            "detail": "Loading past earnings dates: 120 days to go.", "warn": None, "last_error": None,
+            "progress": {"earnings_history_left": 120}}
+    _write(p, base)
+    got = status(now=TRAY_NOW)
+    assert got["color"] == "green" and "· earnings history 120 days to go ·" in got["line"]
+    _write(p, dict(base, progress={"earnings_history_left": 0}))
+    assert "earnings history" not in status(now=TRAY_NOW)["line"]

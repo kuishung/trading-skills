@@ -105,22 +105,25 @@
   .vol-grid .vol-m { display: inline-block; margin-left: .25rem; padding: 0 .2rem; font-size: 9px; border-radius: 3px;
                      background: var(--tv-hover); color: var(--tv-text-hi); vertical-align: 1px; }
   .vol-grid .vol-k { font-weight: 600; color: var(--tv-text-hi); }
-  /* v4.141: the ATM row sits where the price falls between the strikes */
-  .vol-grid tr.vol-atm td, .vol-grid tr.vol-atm th { font-weight: 700; border-top: 2px solid var(--tv-accent);
-                                                     border-bottom: 2px solid var(--tv-accent); }
-  .vol-grid tr.vol-atm th { color: var(--tv-accent-tx); white-space: nowrap; }
-  .vol-grid tr.vol-atm th .vol-sub { font-weight: 400; }
-  .vol-grid td.vol-cell, .vol-grid td.vol-atm-cell { cursor: pointer; }
-  .vol-grid td.vol-cell:hover, .vol-grid td.vol-atm-cell:hover { outline: 1px solid var(--tv-accent); outline-offset: -1px; }
+  /* v4.143: a line at the price separates in-the-money from out-of-the-money (no row of its own:
+     the user - an ATM average is not a Massive contract) */
+  .vol-grid tr.vol-spot th, .vol-grid tr.vol-spot td { padding: .1rem .45rem; font-size: 10px; color: var(--tv-accent-tx);
+                                                       border-bottom: 2px solid var(--tv-accent); white-space: nowrap; }
+  .vol-grid tr.vol-spot td { text-align: left; }
+  .vol-grid td.vol-cell { cursor: pointer; }
+  .vol-grid td.vol-cell:hover { outline: 1px solid var(--tv-accent); outline-offset: -1px; }
   .vol-sw { display: inline-block; padding: .05rem .4rem; border-radius: 3px; color: var(--tv-text-hi);
             font-size: 10px; white-space: nowrap; }
   /* the hover card: this contract's IV against its own past year */
-  .vol-pop { position: fixed; z-index: 40; width: 17rem; padding: .5rem .6rem; border: 1px solid var(--tv-border-2);
+  .vol-pop { position: fixed; z-index: 40; width: 20rem; padding: .5rem .6rem; border: 1px solid var(--tv-border-2);
              border-radius: var(--tv-r-panel); background: var(--tv-panel); color: var(--tv-text); font-size: 11px;
              box-shadow: 0 6px 24px rgba(0,0,0,.25); pointer-events: none; }
   .vol-pop b { color: var(--tv-text-hi); }
   .vol-pop .vol-pop-row { display: flex; justify-content: space-between; gap: .5rem; margin-top: .15rem; }
-  .vol-pop svg { display: block; width: 100%; height: 3.4rem; margin-top: .35rem; }
+  .vol-pop svg { display: block; width: 100%; height: 5rem; margin-top: .35rem; }
+  .vol-pop .vol-earn { stroke: #d97706; stroke-width: 1; stroke-dasharray: 2 2; }
+  .vol-pop .vol-earn-lbl { fill: #d97706; font-size: 9px; font-weight: 700; }
+  .vol-pop .vol-cap { color: var(--tv-muted); font-size: 10px; margin-top: .15rem; }
   .vol-pop .vol-line { fill: none; stroke: var(--tv-accent); stroke-width: 1.2; }
   .vol-pop .vol-cur { stroke: var(--tv-text-hi); stroke-width: 1; stroke-dasharray: 3 2; }
   .vol-pop .vol-dot { fill: var(--tv-text-hi); }
@@ -315,8 +318,8 @@
     <div id="volPop" class="vol-pop hidden" role="tooltip"></div>
     <p class="text-[11px] text-slate-500 leading-snug">
       Each cell is one option's implied volatility, in percent: the strike down the side, the expiry
-      across the top (M = the standard monthly). The ATM row sits where the price falls and shows each
-      expiry's at-the-money volatility. The colour is each contract against <b>its own</b> past year, in
+      across the top (M = the standard monthly). A line marks the price: below it calls are in the money
+      and puts out, above it the reverse. The colour is each contract against <b>its own</b> past year, in
       five bands: deep green = today's implied volatility is in the lowest fifth of that contract's range,
       light green = low, yellow = the middle, orange = high, red = the highest fifth (grey = under 10 days
       of history); hover a cell to see that history. An empty cell means no contract there had a volatility - nothing is
@@ -1360,12 +1363,9 @@
     if (j.side === 'put') return 'P';
     return k < j.spot ? 'P' : 'C';
   }
-  function atmRow(j) {                 // the ATM row, where the price falls between the strikes
-    var h = '<tr class="vol-atm"><th class="vol-sticky">ATM<div class="vol-sub">price ' + esc(num(j.spot, 2)) + '</div></th>';
-    (j.atm || []).forEach(function (v, c) {
-      h += v == null ? '<td></td>' : '<td class="vol-atm-cell" data-c="' + c + '">' + num(v, 1) + '</td>';
-    });
-    return h + '</tr>';
+  function spotRow(j, n) {             // the line at the price, in the strike column as "ATM": ITM one side, OTM the other
+    return '<tr class="vol-spot"><th class="vol-sticky" title="The underlying\'s price - the at-the-money level">ATM ' + esc(num(j.spot, 2)) + '</th>' +
+           '<td colspan="' + n + '">price ' + esc(num(j.spot, 2)) + ' &middot; above: calls out of the money, puts in &middot; below: calls in the money, puts out</td></tr>';
   }
   function renderSurface(j) {
     var ex = j.expiries || [], lo = j.scale ? j.scale[0] : 0, hi = j.scale ? j.scale[1] : 0;
@@ -1377,7 +1377,7 @@
     });
     h += '</tr></thead><tbody>';
     (j.strikes || []).forEach(function (k, r) {
-      if (r === j.spot_row) h += atmRow(j);
+      if (r === j.spot_row) h += spotRow(j, ex.length);
       h += '<tr><th class="vol-sticky vol-k">' + esc(strikeText(k)) + '</th>';
       (j.cells[r] || []).forEach(function (v, c) {
         h += v == null ? '<td></td>'
@@ -1385,7 +1385,7 @@
       });
       h += '</tr>';
     });
-    if (j.spot_row >= (j.strikes || []).length) h += atmRow(j);
+    if (j.spot_row >= (j.strikes || []).length) h += spotRow(j, ex.length);
     $('volTable').innerHTML = h + '</tbody>';
     var src = j.source === 'latest'
       ? 'Latest market pass, session ' + esc(j.on) + (j.as_of ? ' (read ' + esc(new Date(j.as_of).toLocaleString()) + ')' : '')
@@ -1412,9 +1412,6 @@
       var s = hst.cells[td.dataset.r + ',' + td.dataset.c];
       td.style.cssText = cellStyle(s);
       if (s && s.rank != null) n++;
-    });
-    document.querySelectorAll('#volTable td.vol-atm-cell').forEach(function (td) {
-      td.style.cssText = cellStyle(hst.atm[td.dataset.c]);
     });
     var skipped = (hst.skipped || []).length, tm = hst.timing_ms || {};
     var took = tm.request != null ? ' in ' + (tm.request / 1000).toFixed(1) + ' s' +
@@ -1447,34 +1444,48 @@
       $('volHistMsg').textContent = '(history colouring did not load)';
     });
   }
-  function sparkline(s, cur) {
-    var w = 252, hgt = 54, pad = 4, pts = s.series || [];   // 252 = the card's inner width, so nothing stretches
+  function dayNum(iso) {            // YYYY-MM-DD -> days since 1970 (the series' x unit)
+    var p = String(iso || '').split('-');
+    return p.length === 3 ? Math.round(Date.UTC(+p[0], +p[1] - 1, +p[2]) / 86400000) : null;
+  }
+  function sparkline(s, cur, earn, nowWord) {
+    var w = 300, hgt = 84, padL = 4, padR = 50, padT = 10, padB = 16, pts = s.series || [];   // 300 = the card's inner width
     if (pts.length < 2) return '';
     var lo = Math.min(s.lo, cur == null ? s.lo : cur), hi = Math.max(s.hi, cur == null ? s.hi : cur);
     if (hi - lo < 0.05) { lo -= 0.5; hi += 0.5; }
     var x0 = pts[0][0], x1 = pts[pts.length - 1][0] + 1;
-    function X(d) { return pad + (w - 2 * pad) * (d - x0) / Math.max(1, x1 - x0); }
-    function Y(v) { return hgt - pad - (hgt - 2 * pad) * (v - lo) / (hi - lo); }
+    function X(d) { return padL + (w - padL - padR) * (d - x0) / Math.max(1, x1 - x0); }
+    function Y(v) { return hgt - padB - (hgt - padT - padB) * (v - lo) / (hi - lo); }
     var line = pts.map(function (p) { return X(p[0]).toFixed(1) + ',' + Y(p[1]).toFixed(1); }).join(' ');
-    var last = pts[pts.length - 1];
-    var yHiLbl = Math.max(9, Math.min(hgt - 11, Y(s.hi) + 9));            // the labels stay inside the box ...
-    var yLoLbl = Math.max(yHiLbl + 10, Math.min(hgt - 1, Y(s.lo) - 2));   // ... and the high above the low
     var out = '<svg viewBox="0 0 ' + w + ' ' + hgt + '">' +
-      '<rect class="vol-band" x="0" y="' + Y(s.hi).toFixed(1) + '" width="' + w + '" height="' + Math.max(1, Y(s.lo) - Y(s.hi)).toFixed(1) + '"/>' +
-      '<polyline class="vol-line" points="' + line + '"/>';
+      '<rect class="vol-band" x="' + padL + '" y="' + Y(s.hi).toFixed(1) + '" width="' + (w - padL - padR) + '" height="' +
+      Math.max(1, Y(s.lo) - Y(s.hi)).toFixed(1) + '"/>';
+    (earn || []).forEach(function (e) {                     // earnings days inside the window
+      var d = dayNum(e.on);
+      if (d == null || d < x0 || d >= x1) return;
+      var x = X(d).toFixed(1);
+      out += '<line class="vol-earn" x1="' + x + '" x2="' + x + '" y1="' + padT + '" y2="' + (hgt - padB) + '"/>' +
+             '<text class="vol-earn-lbl" x="' + x + '" y="' + (padT - 2) + '" text-anchor="middle">E</text>';
+    });
+    out += '<polyline class="vol-line" points="' + line + '"/>';
     if (cur != null) {
-      out += '<line class="vol-cur" x1="0" x2="' + w + '" y1="' + Y(cur).toFixed(1) + '" y2="' + Y(cur).toFixed(1) + '"/>' +
-             '<circle class="vol-dot" cx="' + (w - pad) + '" cy="' + Y(cur).toFixed(1) + '" r="2.5"/>';
-    } else {
-      out += '<circle class="vol-dot" cx="' + X(last[0]).toFixed(1) + '" cy="' + Y(last[1]).toFixed(1) + '" r="2"/>';
+      out += '<line class="vol-cur" x1="' + padL + '" x2="' + (w - padR) + '" y1="' + Y(cur).toFixed(1) + '" y2="' + Y(cur).toFixed(1) + '"/>' +
+             '<circle class="vol-dot" cx="' + (w - padR) + '" cy="' + Y(cur).toFixed(1) + '" r="2.5"/>' +
+             '<text class="vol-lbl" x="' + (w - padR + 4) + '" y="' + (Y(cur) + 3).toFixed(1) + '">' + esc(nowWord || 'today') + ' ' + num(cur, 1) + '</text>';
     }
-    out += '<text class="vol-lbl" x="2" y="' + yHiLbl.toFixed(1) + '">' + num(s.hi, 1) + '</text>' +
-           '<text class="vol-lbl" x="2" y="' + yLoLbl.toFixed(1) + '">' + num(s.lo, 1) + '</text></svg>';
+    var yHiLbl = Math.max(padT + 8, Math.min(hgt - padB - 12, Y(s.hi) + 9));   // the range labels stay inside ...
+    var yLoLbl = Math.max(yHiLbl + 10, Math.min(hgt - padB - 3, Y(s.lo) - 2)); // ... above the dates, the high above the low
+    out += '<text class="vol-lbl" x="' + (padL + 2) + '" y="' + yHiLbl.toFixed(1) + '">high ' + num(s.hi, 1) + '</text>' +
+           '<text class="vol-lbl" x="' + (padL + 2) + '" y="' + yLoLbl.toFixed(1) + '">low ' + num(s.lo, 1) + '</text>' +
+           '<text class="vol-lbl" x="' + padL + '" y="' + (hgt - 2) + '">' + esc(s.first || '') + '</text>' +
+           '<text class="vol-lbl" x="' + (w - padR) + '" y="' + (hgt - 2) + '" text-anchor="end">' + esc(s.last || '') + '</text></svg>';
     return out;
   }
-  function popoverHtml(label, cur, s, key) {
+  function popoverHtml(label, cur, s, key, expiry) {
+    var latest = !V.last || V.last.source === 'latest', day = V.last ? V.last.on : '';
+    var nowCap = latest ? 'Today' : 'On ' + day, nowWord = latest ? 'today' : 'that day';
     var h = '<div><b>' + esc(label) + '</b></div>';
-    h += '<div class="vol-pop-row"><span>Now</span><b>' + (cur == null ? '-' : num(cur, 1) + '%') + '</b></div>';
+    h += '<div class="vol-pop-row"><span>' + esc(nowCap) + '</span><b>' + (cur == null ? '-' : num(cur, 1) + '%') + '</b></div>';
     if (V.histState !== 'ok') {
       h += '<div class="text-slate-500 mt-1">' + (V.histState === 'failed' ? 'History unavailable: ' + esc(V.histWhy) + '.' : 'History loading...') + '</div>';
       return h;
@@ -1486,40 +1497,53 @@
         : 'No history for this contract in the last ' + intText(V.hist.days) + ' sessions.') + '</div>';
       return h;
     }
-    h += '<div class="vol-pop-row"><span>Past year, ' + intText(s.n) + ' days</span>' +
-         '<span class="whitespace-nowrap">' + num(s.lo, 1) + '% - ' + num(s.hi, 1) + '%</span></div>' +
-         (s.first ? '<div class="text-slate-500">since ' + esc(s.first) + '</div>' : '');
+    h += '<div class="vol-pop-row"><span>Past year, ' + intText(s.n) + ' trading days' + (s.first ? ' since ' + esc(s.first) : '') + '</span>' +
+         '<span class="whitespace-nowrap">' + num(s.lo, 1) + '% - ' + num(s.hi, 1) + '%</span></div>';
     if (s.rank != null) {
-      h += '<div class="vol-pop-row"><span>In its range</span><b style="' + rankText(s.rank) + '">' +
+      h += '<div class="vol-pop-row"><span>Where ' + nowWord + ' sits in that range</span><b class="whitespace-nowrap" style="' + rankText(s.rank) + '">' +
            Math.round(s.rank * 100) + '% (' + rankBand(s.rank).label + ')</b></div>' +
-           '<div class="vol-pop-row"><span>Days below now</span><span>' + Math.round(s.pct * 100) + '%</span></div>';
+           '<div class="vol-cap">0% = at its lowest IV of the year, 100% = at its highest</div>' +
+           '<div class="vol-pop-row"><span>Days with a lower IV than ' + nowWord + '</span><span class="whitespace-nowrap">' +
+           Math.round(s.pct * 100) + '% (' + intText(Math.round(s.pct * s.n)) + ' of ' + intText(s.n) + ')</span></div>';
     } else {
       h += '<div class="text-slate-500 mt-1">Under 10 days of history - no colour.</div>';
     }
-    h += sparkline(s, cur);
+    var hs = V.hist || {}, win = (hs.earnings || []).filter(function (e) {
+      var d = dayNum(e.on), a = dayNum(s.first), b = dayNum(s.last);
+      return d != null && a != null && b != null && d >= a && d <= b;
+    });
+    var ne = hs.next_earnings, cov = hs.earnings_coverage || null;    // {on, when} | null; {fetched, weekdays}
+    function whenWord(w) { return w === 'bmo' ? ' before the open' : (w === 'amc' ? ' after the close' : ''); }
+    var nxt;
+    if (!ne) nxt = 'next date not known';
+    else if (ne.on === day) nxt = 'reports ' + nowWord + whenWord(ne.when);
+    else if (expiry && ne.on === expiry) nxt = 'next ' + esc(ne.on) + ' - on expiry day' +
+      (ne.when === 'amc' ? ', after the close (after this expiry)' : (ne.when === 'bmo' ? ', before the open (before this expiry)' : ''));
+    else nxt = 'next ' + esc(ne.on) + whenWord(ne.when) + (expiry ? (ne.on < expiry ? ' - before this expiry' : ' - after this expiry') : '');
+    var partial = cov && cov.weekdays && cov.fetched < cov.weekdays;
+    var inWin = win.length ? intText(win.length) + ' in this window (marked E)' + (partial ? ', history still loading' : '')
+                           : (partial ? 'history still loading (' + intText(cov.fetched) + ' of ' + intText(cov.weekdays) + ' days on file)' : 'none in this window');
+    h += '<div class="mt-1"><span class="text-slate-500">Earnings:</span> ' + inWin + ' &middot; ' + nxt + '</div>';
+    var chart = sparkline(s, cur, win, nowWord);
+    h += chart;
+    if (chart) {
+      h += '<div class="vol-cap">Implied volatility by trading day' + (cur != null ? '; the dashed line is ' + nowWord : '') +
+           '; the shaded band is the year\'s range' + (win.length ? '; amber E = an earnings day' : '') + '.</div>';
+    }
     return h;
   }
   function showPop(td, ev) {
     var j = V.last, pop = $('volPop');
     if (!j) return;
-    var label, cur, s, key = null;
-    if (td.classList.contains('vol-atm-cell')) {
-      var cx = +td.dataset.c, exa = j.expiries[cx];
-      var ka = (j.atm_strikes || [])[cx];
-      label = j.symbol + ' ATM ' + (ka != null ? strikeText(ka) + ' ' : '') + '(call + put average), ' + exa.date + ' (' + exa.dte + ' days)';
-      cur = j.atm[cx];
-      s = V.hist && V.hist.atm[String(cx)];
-    } else {
-      var k = j.strikes[+td.dataset.r], ex = j.expiries[+td.dataset.c];
-      var side = j.side === 'mid' ? 'call + put average' : (sideOf(j, k) === 'C' ? 'call' : 'put');
-      label = j.symbol + ' ' + strikeText(k) + ' ' + side + ', ' + ex.date + ' (' + ex.dte + ' days)';
-      cur = j.cells[+td.dataset.r][+td.dataset.c];
-      key = td.dataset.r + ',' + td.dataset.c;
-      s = V.hist && V.hist.cells[key];
-    }
-    pop.innerHTML = popoverHtml(label, cur, s, key);
+    var k = j.strikes[+td.dataset.r], ex = j.expiries[+td.dataset.c];
+    var side = j.side === 'mid' ? 'call + put average' : (sideOf(j, k) === 'C' ? 'call' : 'put');
+    var label = j.symbol + ' ' + strikeText(k) + ' ' + side + ', ' + ex.date + ' (' + ex.dte + ' days)';
+    var cur = j.cells[+td.dataset.r][+td.dataset.c];
+    var key = td.dataset.r + ',' + td.dataset.c;
+    var s = V.hist && V.hist.cells[key];
+    pop.innerHTML = popoverHtml(label, cur, s, key, ex.date);
     pop.classList.remove('hidden');
-    var pw = pop.offsetWidth || 272, ph = pop.offsetHeight || 120;
+    var pw = pop.offsetWidth || 320, ph = pop.offsetHeight || 200;
     var x = ev.clientX + 14, y = ev.clientY + 14;
     if (x + pw > window.innerWidth - 8) x = ev.clientX - pw - 14;
     if (y + ph > window.innerHeight - 8) y = ev.clientY - ph - 14;
@@ -1558,28 +1582,22 @@
     $(id).addEventListener('change', function () { if ($('volSym').value.trim()) runSurface(); });
   });
   $('volTable').addEventListener('mouseover', function (e) {
-    var td = e.target.closest ? e.target.closest('td.vol-cell, td.vol-atm-cell') : null;
+    var td = e.target.closest ? e.target.closest('td.vol-cell') : null;
     if (!td) { hidePop(); return; }
     showPop(td, e);
   });
   $('volTable').addEventListener('mousemove', function (e) {
-    var td = e.target.closest ? e.target.closest('td.vol-cell, td.vol-atm-cell') : null;
+    var td = e.target.closest ? e.target.closest('td.vol-cell') : null;
     if (td && !$('volPop').classList.contains('hidden')) showPop(td, e);
   });
   $('volTable').addEventListener('mouseleave', hidePop);
   $('volWrap').addEventListener('scroll', hidePop);
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape') hidePop(); });
   $('volTable').addEventListener('click', function (e) {
-    var td = e.target.closest ? e.target.closest('td.vol-cell, td.vol-atm-cell') : null;
+    var td = e.target.closest ? e.target.closest('td.vol-cell') : null;
     var j = V.last;
     if (!td || !j) return;
     hidePop();
-    if (td.classList.contains('vol-atm-cell')) {
-      var ca = +td.dataset.c, ka = (j.atm_strikes || [])[ca];
-      if (ka == null) return;
-      openContract(j.symbol, j.expiries[ca].date, ka < j.spot ? 'P' : 'C', ka, j.source === 'latest' ? null : j.on);
-      return;
-    }
     var k = j.strikes[+td.dataset.r], ex = j.expiries[+td.dataset.c];
     openContract(j.symbol, ex.date, sideOf(j, k), k, j.source === 'latest' ? null : j.on);
   });

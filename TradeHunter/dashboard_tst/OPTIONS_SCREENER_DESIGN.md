@@ -527,7 +527,11 @@ Supersedes §4.4 (IV history) when the Flat Files key pair is set.
   with now, the year's low - high, the rank, the share of days below, and a sparkline. **v4.142:**
   five colour bands (fifths of the contract's own range, deep green -> light green -> yellow ->
   orange -> red), monthly expiries by default, the read limited to contracts alive at the window's
-  end, every request timed (`timing_ms`, logged and shown in the legend).
+  end, every request timed (`timing_ms`, logged and shown in the legend). **v4.143:** the card in
+  plain words, the chart labelled (dates, high / low, today) with an **E** mark per earnings day;
+  the dates from `scr_earnings` (+ `scr_earnings_day`, migration `d4e6f8a0b2c4`): the collector
+  keeps every date its daily Nasdaq read sees and backfills the past 260 weekdays once (10 days a
+  job, one job a tick, on the earnings lane; `earnings_history_left` in `progress`).
 - **Contract history (`contract_view`, `/options/api/history/days|chain|contract`):** pick a
   contract from the chain that traded on a chosen day; every day it traded with OHLC, volume,
   trades, the stock's unadjusted close and the IV; CSV in the browser.

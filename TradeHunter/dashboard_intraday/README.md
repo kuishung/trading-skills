@@ -33,6 +33,11 @@ web, Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-10-14 — `tray_status.py`: the Options screener line shows the earnings-history backfill (tray-sync rule)
+- dashboard_tst v4.143's collector reads the past year's earnings calendars once (`progress.earnings_history_left`);
+  the screener line shows "earnings history 120 days to go" while it runs, nothing once done.
+  Restart the tray task on Hermes after pulling this (DEPLOY.md section H).
+
 ### 2026-10-13 — `tray_status.py`: the Options screener line shows the contract history's Parquet conversion (tray-sync rule)
 - dashboard_tst v4.139 converts Massive's options day files into Parquet (the contract history) in a
   new collector lane; its state is published as `progress.pq_*`, so the screener line shows it:
