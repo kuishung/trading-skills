@@ -1645,7 +1645,31 @@ async def api_surface(symbol: str = "", day: str = "latest", side: str = "", ban
     return JSONResponse(await run_in_threadpool(_hist_call, vol_surface.surface, symbol, day or "latest",
                                                 side=side or None, band=band or None, max_dte=dte or None,
                                                 expiries=exp or None,
-                                                common=str(common).strip().lower() not in ("0", "false", "off", "no")))
+                                                common=_flag(common)))
+
+
+def _flag(v) -> bool:
+    """A query flag: on unless 0 / false / off / no."""
+    return str(v).strip().lower() not in ("0", "false", "off", "no")
+
+
+def _surface_history(s, symbol, day, **o):
+    from ..services import vol_history, vol_surface
+
+    grid = vol_surface.surface(s, symbol, day, **o)
+    out = vol_history.grid_history(s, symbol, grid)
+    out["on"] = grid["on"]
+    return out
+
+
+@router.get("/api/surface/history")
+async def api_surface_history(symbol: str = "", day: str = "latest", side: str = "", band: str = "", dte: str = "",
+                              exp: str = "", common: str = "1", user: User = Depends(require_user)):
+    """Each cell's own IV history for the same surface (v4.141): rank in its past-year range,
+    lowest / highest, the sparkline points - fetched by the page after the grid is painted."""
+    return JSONResponse(await run_in_threadpool(_hist_call, _surface_history, symbol, day or "latest",
+                                                side=side or None, band=band or None, max_dte=dte or None,
+                                                expiries=exp or None, common=_flag(common)))
 
 
 @router.get("/api/history/chain")

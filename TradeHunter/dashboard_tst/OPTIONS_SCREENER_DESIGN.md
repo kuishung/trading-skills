@@ -519,7 +519,12 @@ Supersedes §4.4 (IV history) when the Flat Files key pair is set.
   **Common strikes only (v4.140, ticked by default):** a strike is a row only when at least half of
   the expiries shown have a cell at it - the strikes the exchange lists for a few expiries only
   (near-weekly $2.50 strikes, the far expiries' in-between steps) are hidden; unticked = every
-  strike.
+  strike. **v4.141:** the ATM row sits at the price (between the strikes below and at / above it);
+  the colour is each contract's IV rank in ITS OWN past 252 sessions (green at its low, red at its
+  high, grey under 10 days; the ATM row / the mid option: the two legs' per-day average), from
+  `vol_history` (the contract history solved in bulk with a numpy-only Black-Scholes, cached per
+  root and per contract; fetched after the grid, `/options/api/surface/history`); hover = a card
+  with now, the year's low - high, the rank, the share of days below, and a sparkline.
 - **Contract history (`contract_view`, `/options/api/history/days|chain|contract`):** pick a
   contract from the chain that traded on a chosen day; every day it traded with OHLC, volume,
   trades, the stock's unadjusted close and the IV; CSV in the browser.

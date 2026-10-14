@@ -111,7 +111,9 @@ from this dashboard.
     file (one per session, in `TST_OPTION_HISTORY_DIR` / `MarketData\option_history`), written by
     the collector's "parquet" lane; reads one chain on a day or one contract's life.
     `vol_surface.py` + `contract_view.py` — the Options page's Volatility surface and Contract
-    history tabs (`/options/api/surface`, `/options/api/history/*`). `option_history_view.py` +
+    history tabs (`/options/api/surface`, `/options/api/history/*`); `vol_history.py` (v4.141) —
+    each cell's own IV history behind the surface's colours and hover card
+    (`/options/api/surface/history`). `option_history_view.py` +
     `templates/_option_history.html` — Settings -> Data Ingest -> Option History
     (`/finviz/option-history`): the download, the IV filing and the conversion.
   - `app/services/scr_collector.py` + `scr_store.py` — the Hermes market collector (universe
@@ -204,6 +206,57 @@ surface takes shape.
 > `__version__` — that constant is the version shown on the login page / nav / `/status`
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
+
+### 2026-10-14 - v4.141: Volatility surface - the ATM row at the price, colours from each contract's own history, a history card on hover
+
+The user: *"the ATM row data should be in the strike that is middle where current strike level is.
+currently the colour scheme is based on the page comparison between the different contracts of the
+same day, I want it to be based on the IV of the same contract compared to its own historical IV.
+with the lowest IV be coloured green and the highest IV to the red. when mouse over, it will shown
+the historical IV versus the current IV with a small graphical representation."*
+
+- **The ATM row** now sits where the price falls between the strikes (it replaces the price line;
+  its header says "ATM / price 341.40"), bold, with the price-coloured rules above and below.
+- **The colour** is each contract against ITS OWN past year, not the other contracts of the day:
+  green = at its lowest implied volatility of the last 252 sessions, red = at its highest, in
+  between by IV rank ((now - low) / (high - low), the screener's own convention); grey = under 10
+  days of history. The ATM row and the "average of call and put" option use the per-day average
+  of the two legs' histories.
+- **Hover** a cell (or an ATM cell) for its card: the contract, now, the past year's low - high and
+  how many days, its place in the range and the share of days below now, and a sparkline of the
+  history with the current level as a dashed line (the shaded band = the past year's range).
+  Click still opens the contract's history.
+- **`app/services/vol_history.py`** - the history behind it, from the contract history (Parquet):
+  for every contract in the grid, its close on each day it traded in the 252 sessions before the
+  surface's day -> Black-Scholes IV against the stock's unadjusted close that day. A numpy-only
+  solver (`implied_vols_fast`: the normal CDF by Abramowitz-Stegun 7.1.26) does 200,000 contracts a
+  second - within 0.005 points of the exact solver on anything with vega (tested), which a rank or a
+  sparkline never notices. The root's rows for the window are read once (AAPL: 670k rows in 2.4 s
+  on the laptop's Resilio copy) and kept, solved series are kept per contract, so the first surface
+  of a symbol takes a few seconds and the next ones milliseconds. The page fetches it AFTER the grid
+  is painted (`GET /options/api/surface/history`, the same parameters as the surface) and says
+  "colouring each cell by its own history..." meanwhile, so the grid never waits for it.
+- **Review (an Opus panel, three lenses, every finding verified by a skeptic; all 11 confirmed
+  points fixed):** the ATM row and the "average of call and put" cells ranked against a history
+  that mixed single-leg days (a put sits above its call in the no-dividend model, so those days
+  stretched the range - GILD's ATM rank 0.70 instead of 1.00 on the real data): now only days both
+  legs traded count, and a leg without history means no colour; the 3,000-leg cap on a huge view
+  silently left cells uncoloured: the cap is 6,000 and the skipped cells are named (the legend and
+  the card say "not computed - narrow the strikes or the expiries"); the hover card said "no
+  history" while the history was still loading, or forever after it failed: it now says loading /
+  the failure's reason; "grey under 10 days" was promised but not drawn: it is; the history was
+  keyed to a grid the server rebuilt - it now names its strikes, expiries and side and the page
+  checks they match the grid on screen (else "press Show surface again"); a series solved while the
+  stock's closes were still arriving stayed cached short: a window with closes missing is answered
+  but not kept, and the cache key carries the contract history's manifest time; two requests for
+  the same root no longer both read the Parquet; the sparkline keeps the lowest and highest days
+  and its labels stay inside the box; a Parquet read error reaches the page with its cause.
+- **Tested: 725 pass** - the solver against the scalar one and by repricing, the per-cell figures
+  (rank, share below, the downsampled sparkline with its extremes, under-10-days), the grid payload
+  on a synthetic 30-day history with rising IVs (ranks 1.0 / 0.0 / a third, the ATM average, the
+  both-legs rule, caching and the not-cached-while-incomplete rule, the grid named in the payload,
+  a past day's history stopping the session before it, an index's note), the endpoint; checked in
+  the browser.
 
 ### 2026-10-14 - v4.140: Volatility surface - "Common strikes only", ticked by default
 

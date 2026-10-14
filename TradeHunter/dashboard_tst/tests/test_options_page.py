@@ -1166,6 +1166,7 @@ def test_the_router_serves_the_screener_paths():
         ("/options/api/saved/{sid}/default", ("POST",)),
         ("/options/api/saved/{sid}/delete", ("POST",)),
         ("/options/api/surface", ("GET",)),                 # v4.139: the volatility surface
+        ("/options/api/surface/history", ("GET",)),         # v4.141: each cell's own history behind it
         ("/options/api/history/days", ("GET",)),            # v4.139: the contract history
         ("/options/api/history/chain", ("GET",)),
         ("/options/api/history/contract", ("GET",)),
@@ -1244,6 +1245,11 @@ def test_the_surface_api_answers_with_the_grid_or_a_plain_reason(client, fake, s
     assert j["source"] == "latest" and j["as_of"] == "2026-10-07T19:30:00Z"
     assert j["common"] is True and j["hidden_strikes"] == 0
     assert client.get("/options/api/surface", params={"symbol": "AAPL", "common": "0"}).json()["common"] is False
+    # v4.141: the per-cell history for the same surface (no day converted here: an honest empty answer)
+    h = client.get("/options/api/surface/history", params={"symbol": "AAPL"}).json()
+    assert h["ok"] is True and h["cells"] == {} and h["days"] == 0 and "converted" in h["note"] and h["on"] == "2026-10-07"
+    h = client.get("/options/api/surface/history", params={"symbol": "NOPE"}).json()
+    assert h["ok"] is False and "NOPE" in h["error"]
     j = client.get("/options/api/surface", params={"symbol": "NOPE"}).json()
     assert j["ok"] is False and "NOPE" in j["error"]
     j = client.get("/options/api/surface", params={"symbol": "AAPL", "day": "2026-10-02"}).json()
