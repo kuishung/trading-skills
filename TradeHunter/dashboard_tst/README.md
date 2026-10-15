@@ -207,6 +207,27 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-15 - v4.148: Options page - fixed screen, the table scrolls, and no title
+
+User: *"make the header scrollable and remove the word option screener"*, then *"make it fixed
+screen and on scroll on the table"*.
+
+- **Fixed screen.** On a large screen the page never scrolls: `main` is a flex column with
+  `overflow-hidden`, `#optPage` and the active tab panel are flex columns that fill it, and the
+  table box (`.scr-wrap`) takes the remaining height (`flex: 1 1 0`) and scrolls on its own, both
+  ways, with its column headers held at the top of the box. The header, tabs and controls stay
+  put. The old `max-height: calc(100vh - 15rem)` guess is gone - the box now takes exactly what
+  is left, which is more than before now that the header is one line. Set filters, which can be
+  long, scrolls inside its panel. Stacked small screens keep a scrolling page with the box
+  capped at 75vh.
+- The `<h1>` ("Options Screener" / the strategy name) is gone; the Go to selector already
+  names the screen and now carries the screen's one-liner as its tooltip. The header row is
+  the status dot / data toggle on the left and Go to on the right.
+
+Verified by rendering `/options` through the app (dev DB): no `<h1>`, the selector carries the
+tooltip, the flex-column classes are on `main`, `#optPage` and every tab panel, and `.scr-wrap`
+is `flex: 1 1 0`.
+
 ### 2026-10-15 - v4.147: Options page decluttered
 
 User: *"these are taking too much space of the screen, I do not need the explanations and i do

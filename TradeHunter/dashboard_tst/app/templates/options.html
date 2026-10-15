@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Options Screener &middot; TradeHunter{% endblock %}
-{% block main_class %}flex-1 min-h-0 overflow-y-auto overflow-x-hidden w-full px-3 sm:px-4 py-4 max-w-screen-2xl mx-auto{% endblock %}
+{# Fixed screen (user, 2026-10-15: "make it fixed screen and on scroll on the table"): on a
+   large screen the page itself never scrolls - the header, tabs and controls stay put and
+   the active tab's table takes the remaining height and scrolls on its own, column headers
+   held at the top of that box. Stacked small screens keep a scrolling page. #}
+{% block main_class %}flex-1 min-h-0 overflow-y-auto lg:overflow-hidden overflow-x-hidden flex flex-col w-full px-3 sm:px-4 py-3 max-w-screen-2xl mx-auto{% endblock %}
 
 {% block content %}
 {# The Options Screener (v4.136, OPTIONS_SCREENER_DESIGN.md §8): Barchart's options
@@ -43,8 +47,11 @@
                color: var(--tv-text); white-space: nowrap; cursor: pointer; }
   .scr-num { width: 6.5rem; padding: .2rem .4rem; }
   .scr-num[type="date"] { width: 9.5rem; }
-  .scr-wrap { max-height: calc(100vh - 15rem); min-height: 12rem; }
-  @media (max-width: 640px) { .scr-wrap { max-height: 75vh; } }
+  /* The table box takes whatever height the tab has left (the tab is a flex column that
+     fills the fixed-height page) and scrolls inside, both ways, its thead sticky at the
+     top of the box. On a stacked small screen the page scrolls and the box is capped. */
+  .scr-wrap { flex: 1 1 0; min-height: 10rem; }
+  @media (max-width: 1023px) { .scr-wrap { flex: none; max-height: 75vh; } }
   .scr-table { border-collapse: separate; border-spacing: 0; }
   .scr-table thead th { position: sticky; top: 0; z-index: 2; background: var(--tv-panel);
                         border-bottom: 1px solid var(--tv-border-2); white-space: nowrap;
@@ -141,7 +148,7 @@
   html:not(.light) .vol-pop .vol-rk-tx { color: hsl(var(--rk-h), 75%, 64%); }
 </style>
 
-<div id="optPage" class="space-y-3" data-screen="{{ screen.key }}">
+<div id="optPage" class="flex flex-col min-h-0 flex-1 space-y-3" data-screen="{{ screen.key }}">
 
   {# ── header ── #}
   {# Decluttered (user, 2026-10-15: "these are taking too much space of the screen, I do
@@ -150,15 +157,16 @@
      the dot is always visible (dashboard-visibility rule), a click shows the detail,
      and a collector problem still gets its own alert box below. #}
   <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+    {# no <h1> (user, 2026-10-15: "remove the word option screener") - the Go-to
+       selector names the screen; the screen's one-liner is its tooltip #}
     <div class="min-w-0 w-full sm:w-auto sm:flex-1 flex items-center gap-2">
-      <h1 id="scrTitle" class="text-lg font-semibold text-slate-100 leading-tight" title="{{ screen.desc }}">{{ screen.label }}</h1>
       <button type="button" id="scrDataToggle" class="flex items-center gap-1.5 text-[11px] text-slate-500 hover:text-slate-300 transition"
               title="Data status - click for details" aria-expanded="false" aria-controls="scrData">
         <span id="scrDot" class="scr-dot scr-dot-{{ status.dot }}" title="{{ status.label }}"></span>data
       </button>
     </div>
     <label class="flex items-center gap-2 text-[11px] uppercase tracking-wide text-slate-500 shrink-0 max-w-full">Go to
-      <select id="scrGoto" class="px-2 py-1 text-sm normal-case tracking-normal max-w-[15rem]" {% if not screens %}disabled{% endif %}>
+      <select id="scrGoto" class="px-2 py-1 text-sm normal-case tracking-normal max-w-[15rem]" title="{{ screen.desc }}" {% if not screens %}disabled{% endif %}>
         {% if not screens %}<option value="{{ screen.key }}">{{ screen.label }}</option>{% endif %}
         {% for fam in families %}
         <optgroup label="{{ fam.label }}">
@@ -194,7 +202,7 @@
   </div>
 
   {# ── SET FILTERS ── #}
-  <section id="scrPanelFilters" class="hidden space-y-3" role="tabpanel">
+  <section id="scrPanelFilters" class="hidden space-y-3 min-h-0 flex-1 lg:overflow-y-auto" role="tabpanel">
     <div class="flex flex-wrap items-center gap-2 text-xs">
       <label class="flex items-center gap-1.5 text-slate-500 max-w-full">Load a screener
         <select id="scrSaved" class="px-2 py-1 text-xs max-w-[13rem]"><option value="">Built-in defaults</option></select>
@@ -229,7 +237,7 @@
   </section>
 
   {# ── RESULTS ── #}
-  <section id="scrPanelResults" class="space-y-2" role="tabpanel">
+  <section id="scrPanelResults" class="flex flex-col min-h-0 flex-1 space-y-2" role="tabpanel">
     <div class="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
       <span class="text-sm text-slate-200 font-medium">Results: <span id="scrTotal" class="tabular-nums">&ndash;</span></span>
       <span id="scrMs" class="text-slate-500"></span>
@@ -269,7 +277,7 @@
   {# ── VOLATILITY SURFACE (v4.139, OPTIONS_SCREENER_DESIGN.md §14) ── one underlying on one day:
      implied volatility by strike (rows) x expiry (columns), from the last market pass or a past
      day of the contract history. Painted by the script at the end of this page. #}
-  <section id="volPanelSurface" class="hidden space-y-2" role="tabpanel">
+  <section id="volPanelSurface" class="hidden flex flex-col min-h-0 flex-1 space-y-2" role="tabpanel">
     <form id="volForm" class="flex flex-wrap items-end gap-x-3 gap-y-2 text-xs" autocomplete="off">
       <label class="vol-f">Ticker
         <input id="volSym" type="text" maxlength="12" placeholder="AAPL" class="px-2 py-1 w-24 uppercase">
@@ -327,7 +335,7 @@
 
   {# ── CONTRACT HISTORY (v4.139) ── one contract's daily bars and IV from the contract history
      (Massive's daily option files as Parquet on Hermes). #}
-  <section id="volPanelHistory" class="hidden space-y-2" role="tabpanel">
+  <section id="volPanelHistory" class="hidden flex flex-col min-h-0 flex-1 space-y-2" role="tabpanel">
     <form id="chForm" class="flex flex-wrap items-end gap-x-3 gap-y-2 text-xs" autocomplete="off">
       <label class="vol-f">Ticker
         <input id="chSym" type="text" maxlength="12" placeholder="AAPL" class="px-2 py-1 w-24 uppercase">
