@@ -144,10 +144,18 @@
 <div id="optPage" class="space-y-3" data-screen="{{ screen.key }}">
 
   {# ── header ── #}
-  <div class="flex flex-wrap items-start gap-x-4 gap-y-2">
-    <div class="min-w-0 w-full sm:w-auto sm:flex-1">
-      <h1 id="scrTitle" class="text-lg font-semibold text-slate-100 leading-tight">{{ screen.label }}</h1>
-      <p id="scrDesc" class="text-xs text-slate-400 mt-1 max-w-3xl">{{ screen.desc }}</p>
+  {# Decluttered (user, 2026-10-15: "these are taking too much space of the screen, I do
+     not need the explanations and i do not want the screen glutted"): the screen's
+     one-liner is the title's tooltip, and the data line sits behind the status dot -
+     the dot is always visible (dashboard-visibility rule), a click shows the detail,
+     and a collector problem still gets its own alert box below. #}
+  <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+    <div class="min-w-0 w-full sm:w-auto sm:flex-1 flex items-center gap-2">
+      <h1 id="scrTitle" class="text-lg font-semibold text-slate-100 leading-tight" title="{{ screen.desc }}">{{ screen.label }}</h1>
+      <button type="button" id="scrDataToggle" class="flex items-center gap-1.5 text-[11px] text-slate-500 hover:text-slate-300 transition"
+              title="Data status - click for details" aria-expanded="false" aria-controls="scrData">
+        <span id="scrDot" class="scr-dot scr-dot-{{ status.dot }}" title="{{ status.label }}"></span>data
+      </button>
     </div>
     <label class="flex items-center gap-2 text-[11px] uppercase tracking-wide text-slate-500 shrink-0 max-w-full">Go to
       <select id="scrGoto" class="px-2 py-1 text-sm normal-case tracking-normal max-w-[15rem]" {% if not screens %}disabled{% endif %}>
@@ -163,12 +171,9 @@
 
   {# the data line + the collector's status dot (dashboard-visibility rule); repainted every
      15 s while there is no data / a pass or list read runs, else every 60 s #}
-  <div id="scrData" class="text-[11px] text-slate-500 leading-snug">
-    <div class="flex items-start gap-2">
-      <span id="scrDot" class="scr-dot scr-dot-{{ status.dot }} mt-[3px]" title="{{ status.label }}"></span>
-      <span id="scrDataLine" class="min-w-0 break-words">{{ status.line }}</span>
-    </div>
-    <div id="scrDataState" class="pl-[1.1rem] text-slate-500 break-words{% if status.dot != 'green' %} hidden{% endif %}">{{ status.label }}</div>
+  <div id="scrData" class="hidden text-[11px] text-slate-500 leading-snug rounded border border-slate-800 px-3 py-2">
+    <div id="scrDataLine" class="min-w-0 break-words">{{ status.line }}</div>
+    <div id="scrDataState" class="text-slate-500 break-words{% if status.dot != 'green' %} hidden{% endif %}">{{ status.label }}</div>
   </div>
   {# a collector problem (rose error · amber stale / paused / warning · slate never reported) in a
      box members cannot miss - the same text the dot's tooltip carries #}
@@ -256,10 +261,8 @@
       </div>
     </div>
     <div id="scrPager" class="flex flex-wrap items-center justify-center gap-2 text-xs"></div>
-    <p class="text-[11px] text-slate-500 leading-snug">
-      Prices marked est. are estimated from each contract's own implied volatility (Massive Options
-      Starter has no bid / ask); probabilities come from a model. TradeHunter finds the trade &mdash;
-      check the live price in TWS before you enter.<span id="scrLegHint" class="hidden"> Click a row to see its legs and the profit / loss chart.</span>
+    <p class="text-[11px] text-slate-500 leading-snug" title="Massive Options Starter has no bid / ask, so prices marked est. are estimated from each contract's own implied volatility; probabilities come from a model.">
+      est. = price estimated from IV &middot; check the live price in TWS before you enter.<span id="scrLegHint" class="hidden"> Click a row for its legs and the profit / loss chart.</span>
     </p>
   </section>
 
@@ -268,81 +271,68 @@
      day of the contract history. Painted by the script at the end of this page. #}
   <section id="volPanelSurface" class="hidden space-y-2" role="tabpanel">
     <form id="volForm" class="flex flex-wrap items-end gap-x-3 gap-y-2 text-xs" autocomplete="off">
-      <label class="vol-f">Underlying
-        <input id="volSym" type="text" maxlength="12" placeholder="e.g. AAPL" class="px-2 py-1 w-28 uppercase">
+      <label class="vol-f">Ticker
+        <input id="volSym" type="text" maxlength="12" placeholder="AAPL" class="px-2 py-1 w-24 uppercase">
       </label>
       <label class="vol-f">Date
-        <select id="volDay" class="px-2 py-1 text-xs max-w-[14rem]"><option value="latest">Latest market pass</option></select>
+        <select id="volDay" class="px-2 py-1 text-xs max-w-[12rem]"><option value="latest">Latest</option></select>
       </label>
-      <label class="vol-f">Option in each cell
+      <label class="vol-f" title="Which option's implied volatility fills each cell. Out of the money = puts below the price, calls above.">Show
         <select id="volSide" class="px-2 py-1 text-xs">
-          <option value="otm" selected>Out of the money (puts below the price, calls above)</option>
-          <option value="call">Calls only</option>
-          <option value="put">Puts only</option>
-          <option value="mid">Average of call and put</option>
+          <option value="otm" selected>Out of the money</option>
+          <option value="call">Calls</option>
+          <option value="put">Puts</option>
+          <option value="mid">Call / put average</option>
         </select>
       </label>
-      <label class="vol-f">Strikes
+      <label class="vol-f" title="Strikes within this distance of the stock price">Strikes
         <select id="volBand" class="px-2 py-1 text-xs">
-          <option value="10">within 10 % of the price</option>
-          <option value="20" selected>within 20 % of the price</option>
-          <option value="30">within 30 % of the price</option>
-          <option value="50">within 50 % of the price</option>
-          <option value="0">every strike</option>
+          <option value="10">&plusmn;10%</option>
+          <option value="20" selected>&plusmn;20%</option>
+          <option value="30">&plusmn;30%</option>
+          <option value="50">&plusmn;50%</option>
+          <option value="0">all</option>
         </select>
       </label>
-      <label class="vol-f">Expiries up to
+      <label class="vol-f" title="Expiries up to this far out">Expiries
         <select id="volDte" class="px-2 py-1 text-xs">
           <option value="30">30 days</option><option value="60">60 days</option><option value="90">90 days</option>
           <option value="180">6 months</option><option value="365" selected>1 year</option>
           <option value="730">2 years</option><option value="0">all</option>
         </select>
-      </label>
-      <label class="vol-f">Which expiries
-        <select id="volExp" class="px-2 py-1 text-xs">
-          <option value="monthly" selected>Monthly only</option>
-          <option value="all">Every expiry</option>
+        <select id="volExp" class="px-2 py-1 text-xs" title="Monthly = the standard third-Friday expiries only">
+          <option value="monthly" selected>monthly</option>
+          <option value="all">every expiry</option>
         </select>
       </label>
-      <label class="scr-check self-end pb-1" title="Hide the strikes that fewer than half of the expiries list (the $2.50 strikes of the near weeklies, the in-between strikes of the far expiries). Untick to see every strike.">
-        <input type="checkbox" id="volCommon" checked> Common strikes only
+      <label class="scr-check self-end pb-1" title="Hide the strikes that fewer than half of the expiries list. Untick to see every strike.">
+        <input type="checkbox" id="volCommon" checked> Common strikes
       </label>
-      <button type="submit" id="volGo" class="scr-primary">Show surface</button>
+      <button type="submit" id="volGo" class="scr-primary">Show</button>
     </form>
     <div id="volInfo" class="hidden text-[11px] text-slate-400 leading-snug break-words"></div>
     <div id="volMsg" class="hidden rounded border border-slate-700 px-3 py-2 text-xs text-slate-300"></div>
     <div id="volWrap" class="hidden scr-wrap rounded-lg border border-slate-800 overflow-auto">
       <table id="volTable" class="vol-grid text-xs"></table>
     </div>
-    <div id="volLegend" class="hidden flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
-      <span>Each contract against its own past year:</span>
-      <span>at its lowest IV</span><span class="vol-bar"></span><span>at its highest</span>
-      <span class="text-slate-500">(the bar under a figure shows the same; grey = under 10 days of history)</span>
-      <span id="volHistMsg" class="text-slate-400"></span>
-      <span class="ml-3">Hover a cell for its history; click to open the contract.</span>
+    {# one short legend line; everything it used to explain lives in its tooltip #}
+    <div id="volLegend" class="hidden flex flex-wrap items-center gap-2 text-[11px] text-slate-500"
+         title="Each cell is one option's implied volatility, in percent - strikes down the side, expiries across the top (M = monthly); the line marks the stock price. The colour is each contract against its own past year: green at its lowest IV, red at its highest; the slim bar under a figure shows the same (grey = under 10 days of history). Hover a cell for its history; click to open the contract. An empty cell means no contract there had a volatility.">
+      <span>IV vs own past year:</span>
+      <span>low</span><span class="vol-bar"></span><span>high</span>
+      <span id="volHistMsg" class="text-slate-600"></span>
     </div>
     <div id="volPop" class="vol-pop hidden" role="tooltip"></div>
-    <p class="text-[11px] text-slate-500 leading-snug">
-      Each cell is one option's implied volatility, in percent: the strike down the side, the expiry
-      across the top (M = the standard monthly). A line marks the price: below it calls are in the money
-      and puts out, above it the reverse. The colour is each contract against <b>its own</b> past year:
-      green at its lowest implied volatility, red at its highest, and the slim bar under each figure shows
-      how far up that range today sits (grey = under 10 days of history); hover a cell to see that history. An empty cell means no contract there had a volatility - nothing is
-      filled in or smoothed. <b>Common strikes only</b> (ticked by default) hides the strikes fewer than half of the
-      expiries list; untick it to see every strike. <b>Latest</b> uses Massive's own volatility per contract from the last market pass
-      (15 min delayed). <b>A past date</b> solves it from each contract's closing price and the stock's
-      close that day (Black-Scholes, no dividend), so only contracts that traded that day appear.
-    </p>
   </section>
 
   {# ── CONTRACT HISTORY (v4.139) ── one contract's daily bars and IV from the contract history
      (Massive's daily option files as Parquet on Hermes). #}
   <section id="volPanelHistory" class="hidden space-y-2" role="tabpanel">
     <form id="chForm" class="flex flex-wrap items-end gap-x-3 gap-y-2 text-xs" autocomplete="off">
-      <label class="vol-f">Underlying
-        <input id="chSym" type="text" maxlength="12" placeholder="e.g. AAPL" class="px-2 py-1 w-28 uppercase">
+      <label class="vol-f">Ticker
+        <input id="chSym" type="text" maxlength="12" placeholder="AAPL" class="px-2 py-1 w-24 uppercase">
       </label>
-      <label class="vol-f">Contracts that traded on
+      <label class="vol-f" title="Lists the contracts that traded on this day">Traded on
         <select id="chDay" class="px-2 py-1 text-xs max-w-[12rem]"></select>
       </label>
       <button type="submit" id="chLoad" class="scr-btn">Load contracts</button>
@@ -365,11 +355,6 @@
     <div id="chWrap" class="hidden scr-wrap rounded-lg border border-slate-800 overflow-auto">
       <table id="chTable" class="scr-table min-w-full text-xs"><thead></thead><tbody></tbody></table>
     </div>
-    <p class="text-[11px] text-slate-500 leading-snug">
-      From Massive's daily option files, kept on Hermes as the contract history (about two years).
-      A day appears only if the contract traded that day. IV is solved from the contract's close and
-      the stock's close that day (Black-Scholes, no dividend).
-    </p>
   </section>
 </div>
 
@@ -1240,11 +1225,20 @@
     el.textContent = cls ? (st.alert || st.label || '') : '';
     $('scrDataState').classList.toggle('hidden', !!cls);
   }
+  // the data line sits behind the status dot (v4.147): click to show / hide it
+  (function () {
+    var b = $('scrDataToggle'), box = $('scrData');
+    if (!b || !box) return;
+    b.addEventListener('click', function () {
+      var open = box.classList.toggle('hidden') === false;
+      b.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+  })();
   function paintStatus(st) {
     if (!st || !st.line) return;
     S.status = st;
     var dot = $('scrDot');
-    dot.className = 'scr-dot scr-dot-' + (st.dot || 'slate') + ' mt-[3px]';
+    dot.className = 'scr-dot scr-dot-' + (st.dot || 'slate');
     dot.title = st.label || '';
     $('scrDataLine').textContent = st.line;
     $('scrDataState').textContent = st.label || '';
@@ -1388,12 +1382,12 @@
     var src = j.source === 'latest'
       ? 'Latest market pass, session ' + esc(j.on) + (j.as_of ? ' (read ' + esc(new Date(j.as_of).toLocaleString()) + ')' : '')
       : 'Close of ' + esc(j.on) + (j.traded != null ? ' (' + intText(j.traded) + ' contracts traded)' : '');
+    // one line; the method (which volatility, how solved) is its tooltip
+    $('volInfo').title = j.method || '';
     $('volInfo').innerHTML = '<b class="text-slate-200">' + esc(j.symbol) + '</b>' + (j.name ? ' - ' + esc(j.name) : '') +
       ' &middot; ' + src + ' &middot; price ' + esc(num(j.spot, 2)) +
-      ' &middot; ' + intText(j.strikes.length) + ' strikes x ' + intText(ex.length) + ' expiries, ' + intText(j.n_cells) + ' cells' +
-      (j.hidden_strikes ? ' &middot; ' + intText(j.hidden_strikes) + ' rarely listed strike' + (j.hidden_strikes === 1 ? '' : 's') +
-       ' hidden (untick Common strikes only to see ' + (j.hidden_strikes === 1 ? 'it' : 'them') + ')' : '') +
-      '<div class="text-slate-500">' + esc(j.method) + '</div>';
+      ' &middot; ' + intText(j.strikes.length) + ' strikes x ' + intText(ex.length) + ' expiries' +
+      (j.hidden_strikes ? ' &middot; ' + intText(j.hidden_strikes) + ' hidden' : '');
     show($('volInfo'), true); show($('volWrap'), true); show($('volLegend'), true);
   }
   // ── each cell against its own past year: the colour and the hover card (v4.141) ──

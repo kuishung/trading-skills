@@ -207,7 +207,28 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
-### 2026-10-15 - v4.146: Volatility surface - the hover card shows again
+### 2026-10-15 - v4.147: Options page decluttered
+
+User: *"these are taking too much space of the screen, I do not need the explanations and i do
+not want the screen to glutted. I need it to be with easier to understand and simple interface"*
+
+- **Header:** the screen's one-liner is now the title's tooltip; the two-line data line (source,
+  session, counts, collector state) sits behind the status dot - the dot stays beside the title
+  (dashboard-visibility rule), a click on "data" shows the detail, and a collector problem still
+  gets its own alert box.
+- **Volatility surface:** the explanatory paragraph and the long legend are gone; what they said
+  is the legend line's tooltip ("IV vs own past year: low ▬ high"). The controls read Ticker /
+  Date (Latest) / Show (Out of the money, Calls, Puts, Call / put average) / Strikes (±10%…all) /
+  Expiries (1 year · monthly) / Common strikes / Show. The info line is one line (the method is
+  its tooltip; "N hidden" instead of the untick sentence).
+- **Results:** the footer paragraph is one short line (est. = price estimated from IV · check
+  the live price in TWS), the rest in its tooltip.
+- **Contract history:** Ticker / Traded on labels, the footer paragraph removed.
+
+Verified by rendering `/options` through the app with the login dependency overridden (dev DB):
+the removed paragraphs are absent, the status dot and alert box remain, and the toggle, legend
+and info elements the script addresses are all present.
+
 
 The user: *"the mouse over detail not showing"*.
 
