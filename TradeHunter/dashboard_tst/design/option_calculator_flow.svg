@@ -1,0 +1,175 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="1250" viewBox="0 0 760 1250" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="13">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <style>
+      .box{fill:#ffffff;stroke:#94a3b8;stroke-width:1.2;rx:8}
+      .data{fill:#f1f5f9;stroke:#64748b;stroke-width:1.2;rx:8}
+      .eng{fill:#fff7ed;stroke:#ea580c;stroke-width:1.6;rx:8}
+      .ui{fill:#eff6ff;stroke:#2563eb;stroke-width:1.2;rx:8}
+      .ext{fill:#f0fdf4;stroke:#16a34a;stroke-width:1.2;rx:8}
+      .band{fill:none;stroke:#cbd5e1;stroke-dasharray:4 4;rx:12}
+      .h{font-size:15px;font-weight:700;fill:#0f172a}
+      .t{fill:#0f172a}
+      .s{fill:#475569;font-size:12px}
+      .arr{stroke:#475569;stroke-width:1.4;fill:none;marker-end:url(#a)}
+      .lbl{fill:#475569;font-size:11px;font-style:italic}
+    </style>
+  </defs>
+  <rect width="760" height="1250" fill="#ffffff"/>
+  <text x="380" y="34" text-anchor="middle" font-size="19" font-weight="700" fill="#0f172a">Option calculator → setup pairing: process flow</text>
+  <text x="380" y="54" text-anchor="middle" class="s">One engine, three steps. Orange = the engine. Blue = what a member sees. Grey = stored data. Green = outside data.</text>
+
+  <!-- ───────────── STEP 1 ───────────── -->
+  <rect x="20" y="72" width="720" height="250" class="band"/>
+  <text x="34" y="96" class="h">STEP 1 — THE ENGINE</text>
+  <text x="34" y="113" class="s">Built today. 14 automated tests reproduce the Excel sheet's sample to 9 decimals.</text>
+
+  <rect x="40" y="130" width="200" height="110" class="box"/>
+  <text x="140" y="150" text-anchor="middle" class="t" font-weight="700">Inputs</text>
+  <text x="52" y="170" class="t">Legs (1–4): call/put, strike,</text>
+  <text x="52" y="186" class="t">days to expiry, IV, +/− qty</text>
+  <text x="52" y="208" class="t">Scenario: spot, target price,</text>
+  <text x="52" y="224" class="t">worst price, days to target</text>
+
+  <path d="M240,185 L280,185" class="arr"/>
+
+  <rect x="280" y="130" width="200" height="110" class="eng"/>
+  <text x="380" y="150" text-anchor="middle" class="t" font-weight="700">ENGINE  evaluate()</text>
+  <text x="292" y="170" class="t">Black-Scholes-Merton, days/365</text>
+  <text x="292" y="186" class="t">Reprice every leg on the</text>
+  <text x="292" y="202" class="t">target date, own IV per leg</text>
+  <text x="292" y="224" class="t">Curves on a dense price grid</text>
+
+  <path d="M480,185 L520,185" class="arr"/>
+
+  <rect x="520" y="130" width="200" height="110" class="box"/>
+  <text x="620" y="150" text-anchor="middle" class="t" font-weight="700">Outputs (the sheet's)</text>
+  <text x="532" y="170" class="t">Entry cost · value at target,</text>
+  <text x="532" y="186" class="t">at worst, at spot decayed</text>
+  <text x="532" y="202" class="t">Breakevens · reward/risk · ROI</text>
+  <text x="532" y="218" class="t">Deltas · total decay · $ totals</text>
+  <text x="532" y="234" class="t">Payoff curves per leg + net</text>
+
+  <rect x="280" y="258" width="200" height="50" class="data"/>
+  <text x="380" y="278" text-anchor="middle" class="t" font-weight="700">Proof</text>
+  <text x="380" y="296" text-anchor="middle" class="s">tests/test_option_calc.py = the sheet</text>
+
+  <!-- ───────────── STEP 2 ───────────── -->
+  <rect x="20" y="340" width="720" height="410" class="band"/>
+  <text x="34" y="364" class="h">STEP 2 — MANUAL CALCULATOR, RUN ON HERMES</text>
+  <text x="34" y="381" class="s">The sheet, fed by Massive instead of typing. Next to build.</text>
+
+  <rect x="520" y="400" width="200" height="64" class="ext"/>
+  <text x="620" y="420" text-anchor="middle" class="t" font-weight="700">Massive pass (every 30 min)</text>
+  <text x="532" y="440" class="t">Chain: strike, expiry, IV, greeks,</text>
+  <text x="532" y="456" class="t">open interest · spot · earnings</text>
+
+  <rect x="40" y="400" width="200" height="130" class="ui"/>
+  <text x="140" y="420" text-anchor="middle" class="t" font-weight="700">Member: calculator page</text>
+  <text x="52" y="440" class="t">1. pick ticker</text>
+  <text x="52" y="456" class="t">2. pick legs from the live chain</text>
+  <text x="52" y="472" class="s">   (strike, DTE, IV filled for you)</text>
+  <text x="52" y="490" class="t">3. type target, worst, days</text>
+  <text x="52" y="506" class="t">4. set +/− qty · Save request</text>
+
+  <path d="M520,432 L480,432 L480,456 L240,456" class="arr"/>
+  <text x="300" y="450" class="lbl">chain fills the leg fields</text>
+
+  <path d="M240,500 L280,500" class="arr"/>
+  <rect x="280" y="476" width="200" height="50" class="data"/>
+  <text x="380" y="496" text-anchor="middle" class="t" font-weight="700">DB: saved requests</text>
+  <text x="380" y="514" text-anchor="middle" class="s">per member · ticker, legs, scenario</text>
+
+  <path d="M380,526 L380,560" class="arr"/>
+  <rect x="280" y="560" width="200" height="86" class="eng"/>
+  <text x="380" y="580" text-anchor="middle" class="t" font-weight="700">Hermes lane (background)</text>
+  <text x="292" y="600" class="t">After each Massive pass:</text>
+  <text x="292" y="616" class="t">for every saved request →</text>
+  <text x="292" y="632" class="t">refresh spot + IV → ENGINE</text>
+
+  <path d="M620,464 L620,560 L480,603" class="arr"/>
+  <text x="630" y="520" class="lbl">latest chain</text>
+
+  <path d="M480,620 L520,620" class="arr"/>
+  <rect x="520" y="594" width="200" height="52" class="data"/>
+  <text x="620" y="614" text-anchor="middle" class="t" font-weight="700">DB: results</text>
+  <text x="620" y="632" text-anchor="middle" class="s">one row per request per pass</text>
+
+  <path d="M620,646 L620,676" class="arr"/>
+  <rect x="520" y="676" width="200" height="60" class="ui"/>
+  <text x="620" y="696" text-anchor="middle" class="t" font-weight="700">Member: review</text>
+  <text x="620" y="714" text-anchor="middle" class="t">sheet layout: legs, indicators, chart</text>
+  <text x="620" y="728" text-anchor="middle" class="s">history of passes, replay</text>
+
+  <rect x="280" y="676" width="200" height="60" class="box"/>
+  <text x="380" y="696" text-anchor="middle" class="t" font-weight="700">Health</text>
+  <text x="380" y="714" text-anchor="middle" class="t">tray line · Settings → Data Ingest</text>
+  <text x="380" y="728" text-anchor="middle" class="s">last run, errors, next pass</text>
+  <path d="M380,646 L380,676" class="arr"/>
+
+  <!-- ───────────── STEP 3 ───────────── -->
+  <rect x="20" y="768" width="720" height="440" class="band"/>
+  <text x="34" y="792" class="h">STEP 3 — SETUP PAIRING, RUN ON HERMES</text>
+  <text x="34" y="809" class="s">No legs typed. The member gives the move; the lane finds the legs. After step 2.</text>
+
+  <rect x="40" y="826" width="200" height="124" class="ui"/>
+  <text x="140" y="846" text-anchor="middle" class="t" font-weight="700">Member: setup</text>
+  <text x="52" y="866" class="t">ticker · target price · worst</text>
+  <text x="52" y="882" class="t">price · days (from a chart's</text>
+  <text x="52" y="898" class="t">support / resistance)</text>
+  <text x="52" y="918" class="t">Criteria: defined risk, max loss,</text>
+  <text x="52" y="934" class="t">min R/R, min OI, no earnings</text>
+
+  <path d="M240,870 L280,870" class="arr"/>
+  <rect x="280" y="826" width="200" height="88" class="box"/>
+  <text x="380" y="846" text-anchor="middle" class="t" font-weight="700">Direction → families</text>
+  <text x="292" y="866" class="t">target &gt; spot: bullish families</text>
+  <text x="292" y="882" class="t">target &lt; spot: bearish families</text>
+  <text x="292" y="898" class="t">near spot, 2 worsts: range</text>
+
+  <path d="M480,870 L520,870" class="arr"/>
+  <rect x="520" y="826" width="200" height="88" class="box"/>
+  <text x="620" y="846" text-anchor="middle" class="t" font-weight="700">Window</text>
+  <text x="532" y="866" class="t">expiries ≥ target date (+1–2)</text>
+  <text x="532" y="882" class="t">strikes worst … target ± buffer</text>
+  <text x="532" y="898" class="s">this is what keeps it to seconds</text>
+
+  <path d="M620,914 L620,960" class="arr"/>
+  <rect x="520" y="960" width="200" height="72" class="box"/>
+  <text x="620" y="980" text-anchor="middle" class="t" font-weight="700">Enumerate leg sets</text>
+  <text x="620" y="998" text-anchor="middle" class="t">per family, inside the window</text>
+  <text x="620" y="1014" text-anchor="middle" class="s">~50k candidates typical</text>
+
+  <path d="M520,996 L480,996" class="arr"/>
+  <rect x="280" y="960" width="200" height="72" class="eng"/>
+  <text x="380" y="980" text-anchor="middle" class="t" font-weight="700">ENGINE scores each</text>
+  <text x="380" y="998" text-anchor="middle" class="t">same evaluate() as step 1</text>
+  <text x="380" y="1014" text-anchor="middle" class="s">vectorised · under a second</text>
+
+  <path d="M280,996 L240,996" class="arr"/>
+  <rect x="40" y="960" width="200" height="72" class="box"/>
+  <text x="140" y="980" text-anchor="middle" class="t" font-weight="700">Filter → rank</text>
+  <text x="140" y="998" text-anchor="middle" class="t">drop what fails the criteria</text>
+  <text x="140" y="1014" text-anchor="middle" class="s">rank: R/R blended with probability</text>
+
+  <path d="M140,1032 L140,1068" class="arr"/>
+  <rect x="40" y="1068" width="200" height="50" class="data"/>
+  <text x="140" y="1088" text-anchor="middle" class="t" font-weight="700">DB: pairing results</text>
+  <text x="140" y="1106" text-anchor="middle" class="s">per setup, per pass</text>
+
+  <path d="M240,1093 L280,1093" class="arr"/>
+  <rect x="280" y="1060" width="440" height="66" class="ui"/>
+  <text x="500" y="1080" text-anchor="middle" class="t" font-weight="700">Member: review pairing</text>
+  <text x="500" y="1098" text-anchor="middle" class="t">one row per family: its best leg set + indicators; alternatives under it</text>
+  <text x="500" y="1116" text-anchor="middle" class="s">click a row → opens that leg set in the step-2 calculator page</text>
+
+  <path d="M500,1060 L500,1046 L735,1046 L735,706 L720,706" class="arr"/>
+  <text x="560" y="1042" class="lbl">back to the manual calculator</text>
+
+  <text x="34" y="1152" class="s">Hermes does steps 2 and 3 in the background after every Massive pass. Members only save a setup and review the result.</text>
+  <text x="34" y="1170" class="s">Where step 2 answers "what is THIS trade worth if the move happens", step 3 answers "WHICH trade is best for this move".</text>
+  <text x="34" y="1196" class="s">Design: dashboard_tst/OPTION_CALCULATOR_DESIGN.md · sheet notes: strategies-reference/OPTION_PRICING_CALCULATOR.md</text>
+  <text x="34" y="1214" class="s">Drawn 2026-10-17.</text>
+</svg>

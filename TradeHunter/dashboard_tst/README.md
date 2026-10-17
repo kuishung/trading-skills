@@ -207,6 +207,31 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-17 - v4.150: Option calculator engine - the user's Excel strategy calculator as one function, proven against the sheet
+
+The user shared *Option Pricing - Clean Sample 20261017.xlsm* (a four-leg Black-Scholes strategy
+calculator with VBA; study notes and parked flaws in `strategies-reference/OPTION_PRICING_CALCULATOR.md`)
+and asked for it to become the basis of an automatic strategy pairer fed by Massive: *"with the massive
+data we have now, i do not want to manually pairing the legs"*. Design and the agreed three steps:
+**`OPTION_CALCULATOR_DESIGN.md`** (+ the flow diagram `design/option_calculator_flow.svg/.png`).
+
+- **Step 1 built: `app/services/option_calc.py`.** `evaluate(legs, scenario)` - up to four legs
+  (call/put, strike, days to expiry, IV, +/- qty) and a scenario (spot, target price, worst price,
+  days to the target date) in; the sheet's decision indicators out: entry cost, value at spot /
+  target / worst on the TARGET DATE (the position is repriced, not expired), gain, loss, reward over
+  risk, ROI, total decay, net deltas, every breakeven, max profit / loss on the grid, the dollar
+  totals for N sets, and the payoff curves per leg and net. Black-Scholes-Merton with dividend yield,
+  days/365, each leg its own IV (`iv_override` reproduces the sheet's one flat IV; `iv_shift` is
+  reserved). Vectorised over an array of prices (`bs_price`, `bs_delta`, `leg_curve`, `net_value`),
+  exact normal CDF (`math.erf`, not the screener's 1e-7 fit). Deliberate differences from the sheet:
+  the dividend exponent is right, breakevens are every crossing found by bisection, the price grid is
+  dense and spot-relative, an expired leg is intrinsic.
+- **Tested: `tests/test_option_calc.py` (14)** - the sheet's cached cell values (long 100 C / short
+  150 C, 120 DTE, 20 % IV, 4.8 %, decay 85 d, target 175, worst 50, 13 sets) reproduce to 1e-9:
+  per-leg prices and deltas (rows 15-19), C10/C11/C12/C14, D11/D12, C25, E11, Q25, W82, C29-C31;
+  the breakeven agrees with the sheet's interpolated 104.016 within 2 cents and is an exact root.
+- Nothing user-facing yet; steps 2 (manual calculator on Hermes) and 3 (setup pairing) follow.
+
 ### 2026-10-17 - v4.149: Volatility surface - every expiry by default, the ATM line reads the right way, a live countdown to the next market pass; "Options Screener" gone from the page
 
 The user: *"a default to show every expiry"*; *"this line ATM 214.10 price 214.10 · above: calls out of
