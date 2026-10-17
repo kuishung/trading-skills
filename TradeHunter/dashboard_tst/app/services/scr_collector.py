@@ -265,7 +265,8 @@ PROGRESS_KEYS = ("universe_pages", "universe_symbols", "universe_started", "pass
                  "pass_pct", "pass_eta_s", "pass_paused_at", "stock_days_pending", "stock_eta_s",
                  "history_left", "history_waiting", "history_eta_s", "earnings_history_left",
                  "flat_days_done", "flat_days_total", "flat_eta_s", "flat_state", "flat_error", "flat_kind",
-                 "pq_state", "pq_days_done", "pq_days_total", "pq_eta_s", "pq_error", "pq_failed")
+                 "pq_state", "pq_days_done", "pq_days_total", "pq_eta_s", "pq_error", "pq_failed",
+                 "next_pass", "next_pass_in_s", "cycle_min")
 
 STATE_PATH = Path(__file__).resolve().parents[2] / "state" / "screener_collector.json"
 APP_ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
@@ -1217,6 +1218,23 @@ class Collector:
         out.update(self._flat_progress(now))
         out.update(self._pq_progress(now))
         out["earnings_history_left"] = len(self._earn_hist_days) if self._earn_hist_days is not None else None
+        # v4.149: when the next market pass is due - the surface tab's countdown (the tray's detail line
+        # already carries the same time in words)
+        out["cycle_min"] = self.cycle_min
+        out["next_pass"] = out["next_pass_in_s"] = None
+        try:
+            et = clock.et_now(now)
+            nxt = self._next_pass_et(now)
+            # A pass that is "due now" but cannot start - no list of optionable stocks yet, the
+            # end-of-day read done on the partial list, the chain scope paused - has no time to
+            # count down to: publish nothing rather than a countdown stuck at zero.
+            due_now = nxt.timestamp() <= et.timestamp()
+            held = due_now and self._pass is None and self._pass_due(now, ["_"] if self.universe_n else []) is None
+            if not held:
+                out["next_pass"] = _iso(nxt)
+                out["next_pass_in_s"] = max(0, int(nxt.timestamp() - et.timestamp()))   # instants, not wall clocks
+        except Exception:  # noqa: BLE001 - a clock question must never stop the heartbeat
+            pass
         return out
 
     def _fields(self) -> dict:

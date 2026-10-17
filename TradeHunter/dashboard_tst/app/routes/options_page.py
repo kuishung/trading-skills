@@ -1364,7 +1364,7 @@ def options_home(request: Request, screen: str = "", user: User = Depends(requir
             log.exception("options screener: spec(%s) failed", key)
             engine_error = f"This screener could not be loaded ({type(exc).__name__})."
     cur = next((s for s in screens if s["key"] == key),
-               {"key": key, "label": "Options Screener", "family": "", "desc": "", "strategy": False})
+               {"key": key, "label": "All contracts", "family": "", "desc": "", "strategy": False})
     if spec:
         cur = {**cur, **{k: spec["screen"][k] for k in ("label", "desc") if spec["screen"].get(k)}}
     t_spec = _time.monotonic()

@@ -200,7 +200,7 @@ def test_the_page_renders_with_go_to_and_boot(client, fake):
     r = client.get("/options")
     assert r.status_code == 200
     html = r.text
-    assert 'id="optPage"' in html and 'id="scrTitle"' in html
+    assert 'id="optPage"' in html and 'id="scrGoto"' in html   # v4.148: no <h1>, the Go to picker names the screen
     assert ">Options Screener<" in html
     assert len(_goto_options(html)) == 33
     assert html.count("<optgroup") == len(FAMILIES)
@@ -1313,3 +1313,29 @@ def test_every_surface_helper_the_page_calls_is_defined():
                  "showPop", "hidePop", "runSurface", "openContract", "strikeText", "dayNum"):
         assert re.search("(?<![A-Za-z0-9_])" + name + "[(]", script), f"{name} is never called - update this list"
         assert html.count(f"function {name}(") == 1, f"{name} must be defined exactly once"
+
+
+def test_the_surface_opens_on_every_expiry_and_reads_the_atm_line_the_right_way(client, fake):
+    """v4.149: every expiry by default (monthly one click away); the ATM line says what is above it
+    (the strikes below the price: calls in the money, puts out); the countdown to the next market
+    pass is wired to the status polls."""
+    html = client.get("/options").text
+    assert '<option value="all" selected>every expiry</option>' in html
+    assert '<option value="monthly">monthly</option>' in html
+    assert "above: calls in the money, puts out &middot; below: calls out of the money, puts in" in html
+    for needle in ('id="volTick"', 'id="volInfoRow"', "window.optOnStatus", "window.optGetStatus",
+                   "window.optPollNow", "next_pass_in_s", "stored day &middot; fixed",
+                   "next pass: waiting for the collector", "market pass paused"):
+        assert needle in html, needle
+
+
+def test_the_page_no_longer_says_options_screener():
+    """v4.149: the user - "remove the word option scanner". The generic screen is "All contracts";
+    the template's rendered text never says "Options Screener" (Jinja comments aside)."""
+    src = (APP_DIR / "templates" / "options.html").read_text(encoding="utf-8")
+    assert "Options Screener" not in re.sub(r"\{#.*?#\}", "", src, flags=re.S)
+    pytest.importorskip("numpy")
+    from app.services.screener import screens
+
+    assert screens.SCREENS["options-screener"].label == "All contracts"
+    assert "Options Screener" not in Path(options_page.__file__).read_text(encoding="utf-8").split('"label": ')[1][:40]

@@ -234,7 +234,7 @@ B, S = "buy", "sell"
 
 # ---- Options ----
 _s(Screen(
-    "options-screener", "Options Screener", "Options",
+    "options-screener", "All contracts", "Options",
     "Every listed call and put across the US options market that passes your filters.",
     "any", "options", (Leg(B, "", "Option", "opt"),),
     (EXCH, _f("option_type", "in", v=[]), _f("expiry", "in", v=[]), _f("dte", "lte", hi=60),

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Options Screener &middot; TradeHunter{% endblock %}
+{% block title %}Options &middot; TradeHunter{% endblock %}
 {# Fixed screen (user, 2026-10-15: "make it fixed screen and on scroll on the table"): on a
    large screen the page itself never scrolls - the header, tabs and controls stay put and
    the active tab's table takes the remaining height and scrolls on its own, column headers
@@ -99,6 +99,20 @@
   .scr-notice:hover { background: rgba(41,98,255,.16); }
   /* v4.139: the volatility surface grid (strikes down, expiries across) and its form */
   .vol-f { display: flex; flex-direction: column; gap: .2rem; font-size: 11px; color: var(--tv-muted); }
+  /* v4.149: the countdown to the next market pass (Latest) / the fixed-day tag (a past date) */
+  .vol-tick { display: inline-flex; flex-direction: column; gap: .25rem; min-width: 12rem; padding: .25rem .6rem;
+              border: 1px solid var(--tv-border-2); border-radius: var(--tv-r-ctl); font-size: 11px;
+              color: var(--tv-text); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .vol-tick-row { display: inline-flex; align-items: center; gap: .4rem; }
+  .vol-tick-dot { width: 6px; height: 6px; border-radius: 9999px; background: var(--tv-muted); flex: none; }
+  .vol-tick.is-live .vol-tick-dot { background: var(--tv-up); animation: volPulse 2s ease-in-out infinite; }
+  .vol-tick.is-pass .vol-tick-dot { background: var(--tv-accent); animation: volPulse .9s ease-in-out infinite; }
+  .vol-tick.is-off .vol-tick-dot { background: var(--tv-down); }
+  .vol-tick b { color: var(--tv-text-hi); font-weight: 600; }
+  .vol-tick-bar { display: block; height: 2px; border-radius: 9999px; background: rgba(128,128,128,.22); overflow: hidden; }
+  .vol-tick-bar > i { display: block; height: 100%; width: 0; background: var(--tv-accent); transition: width 1s linear; }
+  .vol-tick.is-pass .vol-tick-bar > i { background: var(--tv-up); }
+  @keyframes volPulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.7); } }
   .vol-grid { border-collapse: separate; border-spacing: 0; }
   .vol-grid th, .vol-grid td { padding: .25rem .45rem; border-bottom: 1px solid var(--tv-border);
                                text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
@@ -309,8 +323,8 @@
           <option value="730">2 years</option><option value="0">all</option>
         </select>
         <select id="volExp" class="px-2 py-1 text-xs" title="Monthly = the standard third-Friday expiries only">
-          <option value="monthly" selected>monthly</option>
-          <option value="all">every expiry</option>
+          <option value="all" selected>every expiry</option>
+          <option value="monthly">monthly</option>
         </select>
       </label>
       <label class="scr-check self-end pb-1" title="Hide the strikes that fewer than half of the expiries list. Untick to see every strike.">
@@ -318,7 +332,10 @@
       </label>
       <button type="submit" id="volGo" class="scr-primary">Show</button>
     </form>
-    <div id="volInfo" class="hidden text-[11px] text-slate-400 leading-snug break-words"></div>
+    <div id="volInfoRow" class="hidden flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400 leading-snug">
+      <div id="volInfo" class="min-w-0 break-words"></div>
+      <span id="volTick" class="vol-tick hidden ml-auto"></span>
+    </div>
     <div id="volMsg" class="hidden rounded border border-slate-700 px-3 py-2 text-xs text-slate-300"></div>
     <div id="volWrap" class="hidden scr-wrap rounded-lg border border-slate-800 overflow-auto">
       <table id="volTable" class="vol-grid text-xs"></table>
@@ -1245,6 +1262,7 @@
   function paintStatus(st) {
     if (!st || !st.line) return;
     S.status = st;
+    if (window.optOnStatus) { try { window.optOnStatus(st); } catch (e) { /* the surface tab is not up yet */ } }
     var dot = $('scrDot');
     dot.className = 'scr-dot scr-dot-' + (st.dot || 'slate');
     dot.title = st.label || '';
@@ -1275,6 +1293,9 @@
   }
 
   // ── start ─────────────────────────────────────────────────────────────────────
+  // v4.149: the surface tab's countdown reads the same status polls (and can ask for one now)
+  window.optGetStatus = function () { return S.status; };
+  window.optPollNow = function () { schedulePoll(0); };
   renderAddGroups();
   var dflt = S.saved.filter(function (x) { return x.id === BOOT.default_id; })[0];
   if (dflt) { S.savedId = dflt.id; loadPayload(clone(dflt.payload)); renderSaved(); }
@@ -1345,7 +1366,95 @@
   }
 
   // ── VOLATILITY SURFACE ───────────────────────────────────────────────────────────
-  var V = {seq: 0, last: null, hist: null, histState: 'loading', histWhy: ''};
+  var V = {seq: 0, last: null, hist: null, histState: 'loading', histWhy: '', passId: null, quiet: false, refreshFailed: null};
+  // ── v4.149: the countdown to the next market pass (Latest = the collector's last pass of Massive) ──
+  var T = {st: null, at: 0, left: null, timer: null, due: false};
+  function etTime(iso) {               // "09:45 ET" for an ISO instant
+    try {
+      return new Date(iso).toLocaleTimeString('en-US', {timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'}) + ' ET';
+    } catch (e) { return ''; }
+  }
+  function mmss(s) {                   // 754 -> "12:34", 5000 -> "1:23:20"
+    s = Math.max(0, Math.round(s));
+    var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
+    var two = function (n) { return (n < 10 ? '0' : '') + n; };
+    return (h ? h + ':' + two(m) : m) + ':' + two(x);
+  }
+  function tickHtml(text, pct) {
+    return '<span class="vol-tick-row"><i class="vol-tick-dot"></i><span>' + text + '</span></span>' +
+           (pct == null ? '' : '<span class="vol-tick-bar"><i style="width:' + Math.round(Math.max(0, Math.min(1, pct)) * 100) + '%"></i></span>');
+  }
+  function paintTick() {
+    var el = $('volTick'), j = V.last;
+    if (!j) { show(el, false); return; }
+    if (j.source !== 'latest') {        // a past day: the stored option files, which never change
+      el.className = 'vol-tick ml-auto';
+      el.title = 'A past day is read from the stored option files on this server - it does not change.';
+      el.innerHTML = tickHtml('stored day &middot; fixed', null);
+      show(el, true); return;
+    }
+    var st = T.st, pr = (st && st.collector && st.collector.progress) || {};
+    var cls = 'vol-tick ml-auto', text, pct = null, title = '';
+    // the status view's dot: slate = never started, rose = a problem, amber = stopped / stale / a warning
+    var stale = st && st.heartbeat_age_s != null && st.heartbeat_age_s > 180;
+    var off = !st ? 'collector status unknown' : st.dot === 'slate' ? 'collector not started' : st.dot === 'rose' ? 'collector problem'
+            : st.state === 'stopped' ? 'collector stopped' : stale ? 'collector not reporting' : null;
+    if (off) {
+      cls += ' is-off';
+      text = off + (j.as_of ? ' &middot; data of ' + esc(etTime(j.as_of)) : '');
+      title = (st && st.label) || 'No fresh market pass until the screener collector runs again on Hermes.';
+    } else if (st.state === 'pass' || pr.pass_kind) {   // a pass runs (state can read "error" under an alert)
+      cls += ' is-pass';
+      var p = pr.pass_pct;
+      if (pr.pass_paused_at) {
+        text = 'market pass paused' + (p != null ? ' &middot; ' + Math.round(p) + '%' : '');
+        title = (st.label) || 'The pass is paused by a collector alert; it resumes by itself.';
+      } else {
+        text = 'reading the market now' + (p != null ? ' &middot; ' + Math.round(p) + '%' : '') +
+               (pr.pass_eta_s != null ? ' &middot; ' + mmss(pr.pass_eta_s) + ' left' : '');
+        title = 'Massive is being read; the surface refreshes itself when the pass is stored.';
+      }
+      pct = p != null ? p / 100 : null;
+    } else if (T.left != null) {
+      cls += ' is-live';
+      var left = T.left - (Date.now() - T.at) / 1000, cyc = (pr.cycle_min || 0) * 60;
+      if (left <= 0) {
+        text = 'market pass due&hellip;'; pct = 1;
+        if (!T.due) { T.due = true; if (window.optPollNow) window.optPollNow(); }
+      } else {
+        text = 'next market pass in <b>' + mmss(left) + '</b>' +
+               (pr.next_pass ? ' <span class="text-slate-500">' + esc(etTime(pr.next_pass)) + '</span>' : '');
+        pct = cyc && left <= cyc ? 1 - left / cyc : null;
+      }
+      title = 'The collector reads Massive every ' + (pr.cycle_min || '?') + ' min during the US session (15 min delayed) ' +
+              'and once after the close; the surface refreshes itself when a pass is stored.';
+    } else {                            // no time to count down to: the list still loading, a held pass, an older collector
+      text = 'live' + (j.as_of ? ' &middot; data of ' + esc(etTime(j.as_of)) : '') + ' &middot; next pass: waiting for the collector';
+      title = (st.label) || 'The collector has not said when its next pass is due.';
+    }
+    if (V.refreshFailed) title = 'The last automatic refresh failed (' + V.refreshFailed + ') - it is tried again at the next status poll. ' + title;
+    el.className = cls; el.title = title; el.innerHTML = tickHtml(text, pct); show(el, true);
+  }
+  function tickStart() {
+    if (!T.st && window.optGetStatus && window.optOnStatus) window.optOnStatus(window.optGetStatus());
+    if (!T.timer) T.timer = setInterval(paintTick, 1000);
+    paintTick();
+  }
+  function tickStop() { if (T.timer) { clearInterval(T.timer); T.timer = null; } }
+  window.optOnStatus = function (st) {   // called by the screener script on every status poll
+    T.st = st || null; T.at = Date.now();
+    var pr = (st && st.collector && st.collector.progress) || {};
+    var age = st && st.heartbeat_age_s != null ? st.heartbeat_age_s : 0;
+    T.left = pr.next_pass_in_s != null ? Math.max(0, pr.next_pass_in_s - age) : null;
+    if (T.left > 0) T.due = false;
+    var id = st && st.last_pass && st.last_pass.id != null ? st.last_pass.id : null;
+    var j = V.last;
+    // a pass is stored that this grid did not come from (a grid built before any pass had finished
+    // has no id yet - the first id that arrives counts as new, one harmless rebuild)
+    if (j && j.source === 'latest' && id != null && id !== V.passId && !V.quiet &&
+        $('volSym').value.trim().toUpperCase() === j.symbol) runSurface(true);
+    if (V.last) paintTick();
+  };
   function rankHue(rank) { return Math.round(120 - 120 * Math.max(0, Math.min(1, rank))); }   // green -> red
   function rankColor(rank) {          // the cell's tint: 0 = at its lowest (green) ... 1 = at its highest (red)
     return rank == null ? '' : 'background:hsla(' + rankHue(rank) + ',70%,45%,.35)';
@@ -1363,9 +1472,10 @@
     if (j.side === 'put') return 'P';
     return k < j.spot ? 'P' : 'C';
   }
-  function spotRow(j, n) {             // the line at the price, in the strike column as "ATM": ITM one side, OTM the other
-    return '<tr class="vol-spot"><th class="vol-sticky" title="The underlying\'s price - the at-the-money level">ATM ' + esc(num(j.spot, 2)) + '</th>' +
-           '<td colspan="' + n + '">price ' + esc(num(j.spot, 2)) + ' &middot; above: calls out of the money, puts in &middot; below: calls in the money, puts out</td></tr>';
+  function spotRow(j, n) {             // the line at the price, in the strike column as "ATM": strikes below the
+    // price are listed ABOVE the line (calls in the money, puts out), strikes above it below (v4.149: it read the other way)
+    return '<tr class="vol-spot"><th class="vol-sticky" title="The stock price - the at-the-money level. The rows above this line are the strikes below the price, the rows below it the strikes above.">ATM ' + esc(num(j.spot, 2)) + '</th>' +
+           '<td colspan="' + n + '">price ' + esc(num(j.spot, 2)) + ' &middot; above: calls in the money, puts out &middot; below: calls out of the money, puts in</td></tr>';
   }
   function renderSurface(j) {
     var ex = j.expiries || [], lo = j.scale ? j.scale[0] : 0, hi = j.scale ? j.scale[1] : 0;
@@ -1396,7 +1506,7 @@
       ' &middot; ' + src + ' &middot; price ' + esc(num(j.spot, 2)) +
       ' &middot; ' + intText(j.strikes.length) + ' strikes x ' + intText(ex.length) + ' expiries' +
       (j.hidden_strikes ? ' &middot; ' + intText(j.hidden_strikes) + ' hidden' : '');
-    show($('volInfo'), true); show($('volWrap'), true); show($('volLegend'), true);
+    show($('volInfoRow'), true); show($('volWrap'), true); show($('volLegend'), true);
   }
   // ── each cell against its own past year: the colour and the hover card (v4.141) ──
   var GREY = 'background:hsla(0,0%,50%,.18)';   // history, but under 10 days of it
@@ -1553,31 +1663,41 @@
     pop.style.top = Math.max(4, y) + 'px';
   }
   function hidePop() { $('volPop').classList.add('hidden'); }
-  function runSurface() {
+  function runSurface(quiet) {           // quiet (v4.149): a refresh behind the shown grid - no message, scroll kept
     var sym = $('volSym').value.trim().toUpperCase();
     $('volSym').value = sym;
     if (!sym) { msg($('volMsg'), 'Type an underlying symbol, for example AAPL.'); return; }
     var q = new URLSearchParams({symbol: sym, day: $('volDay').value || 'latest', side: $('volSide').value,
                                  band: $('volBand').value, dte: $('volDte').value, exp: $('volExp').value,
                                  common: $('volCommon').checked ? '1' : '0'});
-    var my = ++V.seq;
+    var my = ++V.seq, sc = quiet && V.last ? {t: $('volWrap').scrollTop, l: $('volWrap').scrollLeft} : null;
+    V.quiet = !!sc;
     $('volGo').disabled = true;
-    msg($('volMsg'), 'Building the ' + sym + ' surface...');
+    if (!V.quiet) msg($('volMsg'), 'Building the ' + sym + ' surface...');
     getJSON('/options/api/surface?' + q.toString()).then(function (j) {
       if (my !== V.seq) return;
       if (!j || !j.ok) {
-        V.last = null;
-        show($('volWrap'), false); show($('volLegend'), false); show($('volInfo'), false);
+        if (V.quiet) {                 // a background refresh that failed: keep the grid, the next poll retries
+          V.refreshFailed = (j && j.error) || 'no answer'; paintTick(); return;
+        }
+        V.last = null; tickStop();
+        show($('volWrap'), false); show($('volLegend'), false); show($('volInfoRow'), false);
         msg($('volMsg'), (j && j.error) ? ('No surface: ' + j.error + '.') : 'The surface could not be built.');
         return;
       }
-      V.last = j;
+      V.last = j; V.refreshFailed = null;
+      var st = T.st || (window.optGetStatus ? window.optGetStatus() : null);   // the pass this grid came from
+      V.passId = st && st.last_pass && st.last_pass.id != null ? st.last_pass.id : V.passId;
       msg($('volMsg'), '');
       renderSurface(j);
+      if (sc) { $('volWrap').scrollTop = sc.t; $('volWrap').scrollLeft = sc.l; }
+      if (j.source === 'latest') tickStart(); else { tickStop(); paintTick(); }
       loadHistory(j, q, my);
     }).catch(function () {
-      if (my === V.seq) msg($('volMsg'), 'The server did not answer. Try again in a minute.');
-    }).then(function () { if (my === V.seq) $('volGo').disabled = false; });
+      if (my !== V.seq) return;
+      if (V.quiet) { V.refreshFailed = 'no answer'; paintTick(); }
+      else msg($('volMsg'), 'The server did not answer. Try again in a minute.');
+    }).then(function () { if (my === V.seq) { $('volGo').disabled = false; V.quiet = false; } });
   }
   $('volForm').addEventListener('submit', function (e) { e.preventDefault(); runSurface(); });
   ['volDay', 'volSide', 'volBand', 'volDte', 'volExp', 'volCommon'].forEach(function (id) {

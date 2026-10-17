@@ -492,6 +492,9 @@ def test_universe_then_a_pass_over_three_underlyings(db, build, tmp_path):
     assert doc["universe_done"] == _utc(RTH).isoformat() and st["universe_done"] == RTH
     assert doc["error_kind"] is None and doc["next_try"] is None and doc["warn"] is None
     assert set(doc["progress"]) == set(scr_collector.PROGRESS_KEYS)
+    # v4.149: the surface tab's countdown - the 10:00 read, a 30-min cycle -> the next pass at 10:30
+    assert doc["progress"]["cycle_min"] == 30 and 1700 <= doc["progress"]["next_pass_in_s"] <= 1800
+    assert doc["progress"]["next_pass"].endswith("10:30:00-04:00")
     assert (doc["last_pass_id"], doc["last_pass_kind"], doc["last_pass_et"]) == (p.id, "cycle", "10:00 ET")
     assert doc["last_pass_contracts"] == 3 * KEPT and doc["universe_n"] == 3
     assert doc["written_by"] == "dashboard_tst/app/services/scr_collector.py"
@@ -3184,3 +3187,27 @@ def test_tray_shows_the_earnings_history_backfill(tmp_path):
     assert got["color"] == "green" and "· earnings history 120 days to go ·" in got["line"]
     _write(p, dict(base, progress={"earnings_history_left": 0}))
     assert "earnings history" not in status(now=TRAY_NOW)["line"]
+
+
+def test_the_next_pass_countdown_is_counted_in_utc_across_a_dst_change(build):
+    """v4.149: Fri Oct 30 2026 17:00 EDT, the day's EOD pass done -> the next pass is Mon Nov 2
+    09:45 EST. Two wall clocks differ by 64h45m; the real wait is an hour longer."""
+    clk = Clock(_dt.datetime(2026, 10, 30, 21, 0))        # 17:00 EDT
+    col, _cl = build(clk)
+    col._last_eod, col._last_cycle, col.universe_n = "2026-10-30", None, 3
+    pr = col._progress(clk())
+    assert pr["next_pass"] == "2026-11-02T09:45:00-05:00"
+    assert pr["next_pass_in_s"] == 236700                 # 65 h 45 min, not 64 h 45 min
+
+
+def test_a_pass_that_is_due_but_held_publishes_no_next_pass_time(build):
+    """v4.149: after the close on a first start, the EOD read was done on the partial list and the
+    full pass waits for the complete list - "due now" with nothing to count down to."""
+    clk = Clock(_dt.datetime(2026, 10, 8, 21, 0))         # Thu 17:00 EDT
+    col, _cl = build(clk)
+    col._last_eod, col._partial_eod, col._universe_done, col.universe_n = "2026-10-07", "2026-10-08", None, 3
+    pr = col._progress(clk())
+    assert pr["next_pass"] is None and pr["next_pass_in_s"] is None and pr["cycle_min"] == col.cycle_min
+    col._universe_done = clk()                             # the list is complete: the EOD pass is due now
+    pr = col._progress(clk())
+    assert pr["next_pass_in_s"] == 0 and pr["next_pass"] is not None

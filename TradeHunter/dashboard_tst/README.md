@@ -207,6 +207,49 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-17 - v4.149: Volatility surface - every expiry by default, the ATM line reads the right way, a live countdown to the next market pass; "Options Screener" gone from the page
+
+The user: *"a default to show every expiry"*; *"this line ATM 214.10 price 214.10 · above: calls out of
+the money, puts in · below: calls in the money, puts out, is this inversed"*; *"if latest market pass,
+the data keep changing and data is being pull from massive, then i need the timer that will animate
+like a ticker that show when the new data will be fetched"*; *"remove the word option scanner"*.
+
+- **Every expiry by default.** The Expiries picker opens on "every expiry"; "monthly" is one click
+  away (v4.142 had made monthly the default).
+- **The ATM line was inverted.** Strikes run upward down the grid, so the rows ABOVE the line are
+  the strikes BELOW the price: calls in the money, puts out. The line and its tooltip now say so
+  (v4.143 wrote it the other way round; the cells themselves were always right).
+- **Latest vs a past day, in plain words.** "Latest" is the screener collector's last market pass:
+  Massive's chain snapshot (15 min delayed), stored on Hermes once per pass - every
+  `TST_SCREENER_CYCLE_MIN` minutes during the US session (default 30) and once after the close. It
+  changes with every pass. A past date is read from the stored day files (Parquet) and never changes.
+- **A live countdown.** On "Latest" a small ticker beside the info line counts down to the next
+  market pass second by second, with the ET time and a thin bar that fills over the cycle; while a
+  pass runs it reads "reading the market now · 43% · 2:10 left"; when the collector is down,
+  "collector not running · data of 10:00 ET". **When a new pass is stored the surface refreshes
+  itself** (same grid, scroll kept, the history recoloured). On a past date the tag reads
+  "stored day · fixed". The collector publishes `next_pass`, `next_pass_in_s` and `cycle_min` in its
+  `progress` (status row + state file, `PROGRESS_KEYS`); the page's status poll already carries
+  `progress`, `last_pass` and `heartbeat_age_s`, which the ticker reads. The Hermes tray shows the
+  same next-pass time in the collector's detail line, so it needs no change.
+- **"Options Screener" is gone**: the generic screen in the Go to list is "All contracts" (the
+  browser tab stays "TradeHunter" - `base.html` fixes it; the page's inert title block just says
+  "Options" now).
+- The ticker's "down" cases follow the status view's own dot: slate = not started, rose = a problem,
+  state stopped, or a heartbeat older than 3 min ("collector not reporting"); amber warnings keep
+  the countdown running. A pass that runs while the status reads "error" (an alert on another lane)
+  still shows as "reading the market now", a paused one as "market pass paused". A pass that is
+  due but cannot start yet (the list of optionable stocks still loading, the end-of-day read done
+  on the partial list) publishes no time and the ticker says "next pass: waiting for the
+  collector". The seconds are counted between instants (UTC), so a weekend with a daylight-saving
+  change counts right. A background refresh that fails keeps the grid on screen (the tooltip says
+  so) and is tried again at the next status poll; a grid built before any pass had finished takes
+  the first stored pass as new.
+- Guard from the v4.146 outage check: `tests/test_options_page_loading.py` renders the page and its
+  status API with the real engine while the start-up load holds the frame lock (no 500).
+- Deploy: `scr_collector.py` changed - after the pull on Hermes re-run
+  `deploy\setup_screener_task.ps1 -StartNow` (DEPLOY.md H), then the web app restart.
+
 ### 2026-10-15 - v4.148: Options page - fixed screen, the table scrolls, and no title
 
 User: *"make the header scrollable and remove the word option screener"*, then *"make it fixed
