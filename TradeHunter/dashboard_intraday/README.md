@@ -33,6 +33,22 @@ web, Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-10-17 — `tray_status.py`: a new "Option calculator" line for the `TST-Option-Calc` lane (tray-sync rule)
+- dashboard_tst v4.151 adds a second always-on Hermes lane, the option calculator
+  (`dashboard_tst/deploy/option_calc_worker.py`, task `TST-Option-Calc`), which recomputes members'
+  saved option setups after every Massive pass and writes `dashboard_tst/state/option_calc_worker.json`.
+  The tray reads that file: `get_option_calc_status()` builds a line like
+  "Option calculator: idle · 7 setups · last computed 14:32 ET on pass 812 · hb 20s ago"
+  ("computing 3 setups (of 7)" while it runs; "· 1 setup could not be computed" after a run with
+  failures), amber on ERROR / STOPPED / no heartbeat for over 5 min ("is TST-Option-Calc running?"),
+  grey "not running on this PC (no state file)". A tooltip segment ("Calc idle" / "Calc 3 due" /
+  "Calc ERR" / "Calc stale 7m"), a line + detail line in the Show Status window, and an
+  edge-triggered toast (`option_calc_toast`) on error / stale, like the Options screener line.
+- `_option_calc_et()` is the file's first ET helper (zone database, US daylight-saving fallback).
+- Tested in `dashboard_tst/tests/test_scr_collector.py` (6 tray tests; the state keys are checked
+  against `calc_worker.STATE_KEYS`). Restart the tray task on Hermes after pulling this
+  (DEPLOY.md section I).
+
 ### 2026-10-14 — `tray_status.py`: the Options screener line shows the earnings-history backfill (tray-sync rule)
 - dashboard_tst v4.143's collector reads the past year's earnings calendars once (`progress.earnings_history_left`);
   the screener line shows "earnings history 120 days to go" while it runs, nothing once done.

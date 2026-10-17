@@ -86,6 +86,22 @@ from this dashboard.
   completeness, on **AI-Hermes** — folder-scans
   `C:\HermesSync\MarketResearch\QuarterlyReport` for missing quarters / stub MDs,
   POSTs `/api/ingest/edgar`; scheduled task).
+- **Calculator — the option calculator + setup pairing (v4.150-4.151; contract
+  `OPTION_CALCULATOR_DESIGN.md`, flow `design/option_calculator_flow.svg`).** The user's Excel
+  strategy calculator as an engine, a page where a member types two prices (expected and
+  worst-case) and gets the sheet's indicators for legs they picked or for the leg sets the
+  pairing found per strategy family, and a Hermes lane that recomputes every saved setup
+  after each Massive pass.
+  - `app/services/option_calc.py` — the engine (`evaluate(legs, scenario)`, vectorised BSM);
+    `calc_chain.py` (one symbol's last-pass chain -> engine legs); `calc_store.py` (member
+    defaults in `User.prefs`, `option_calc_requests` / `option_calc_results`, migration
+    `a7c3e91d5b24`, retention); `calc_pair.py` (direction -> families -> horizons -> window ->
+    numpy scoring -> criteria -> ranked rows); `calc_worker.py` + `deploy/option_calc_worker.py`
+    + `deploy/setup_option_calc_task.ps1` — the lane, task `TST-Option-Calc` (DEPLOY.md I);
+    `calc_health.py` — the Settings -> Data Ingest card.
+  - `app/routes/calc.py` + `calc.html` — the page (`/calc`, nav key `calc`) and `/calc/api/*`.
+  - Tests: `test_option_calc.py`, `test_calc_store.py`, `test_calc_pair.py`, `test_calc_cli.py`,
+    `test_calc_page.py`, `test_calc_health.py`.
 - **Options — the Options Screener (v4.136; contract `OPTIONS_SCREENER_DESIGN.md`).** A
   Barchart-style screener over the whole US options market Massive covers: the Options
   Screener plus 32 strategy screeners, Set Filters / Results tabs, saved screeners per member.
@@ -206,6 +222,53 @@ surface takes shape.
 > `__version__` — that constant is the version shown on the login page / nav / `/status`
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
+
+### 2026-10-17 - v4.151: Option calculator - the Calculator page, the Hermes lane that recomputes saved setups after every Massive pass, and setup pairing from two prices
+
+The user (from the phone, after checking the flow diagram): *"I want the user to pick the expected price and
+the worst case price only"*, then *"ok build it"*. Steps 2 and 3 of `OPTION_CALCULATOR_DESIGN.md` (§10 = what
+was built and where; §5 decisions 6-12 = the two-price input, horizons searched, directional first).
+
+- **Calculator page `/calc`** (nav "Calculator", key `calc`; `app/routes/calc.py`, `app/templates/calc.html`):
+  a member saves a setup with **two numbers, the expected price and the worst-case price** (days optional -
+  their default otherwise), either *find the legs for me* (pair) or *I pick the legs* (manual, legs chosen
+  from the live chain: expiry and strike lists, call/put, +/- qty). Saving computes at once ("compute now",
+  the same code the lane runs) so nothing waits for a pass. A manual setup shows the sheet's layout: the legs,
+  the indicator cards (entry cost, value at spot / expected / worst on the target date, gain, loss, reward over
+  risk, ROI, breakevens, model probability of profit, deltas, decay, dollar totals) and the payoff chart; a
+  pair setup shows what was searched (direction, horizons, window, counts, what was dropped and why) and one
+  card per strategy family, best first, with its alternatives and "Open in calculator". A Defaults drawer
+  holds the member's horizon, horizons to search and criteria (defined risk only, max loss per set, min
+  reward over risk, min open interest, avoid earnings, debit / credit, alternatives). JSON under
+  `/calc/api/*` (chain, requests, compute, prefs, status). Every figure says which pass and spot it came
+  from.
+- **Setup pairing `app/services/calc_pair.py`**: direction from the expected price against spot picks the
+  families (bull: long call, bull call / bull put spread, call calendar / diagonal, short put when undefined
+  risk is allowed; bear: the mirror). Horizons: the first N monthly expiries at least three weeks out, each
+  evaluated five days before expiry, or the member's days. Window per horizon: expiries on / after the target
+  date (two), strikes between the two prices widened by one expected-move unit, open interest floor, at most
+  24 strikes per expiry and right. Every leg set of every family inside the window is scored at once with
+  numpy (each contract's target-date value curve once; a leg set is a weighted sum), filtered by the
+  criteria, ranked by reward over risk; the best few per family go through the engine for the full figures,
+  the curves and a lognormal probability of profit; `score = min(R/R, 10) x P(profit)`. Three horizons on a
+  synthetic chain run in well under a second.
+- **The Hermes lane `TST-Option-Calc`** (`app/services/calc_worker.py`, `deploy/option_calc_worker.py`,
+  `deploy/setup_option_calc_task.ps1`): a separate always-on process (both databases; the screener collector
+  is untouched). One look a minute at the collector's newest finished pass; every active setup not yet
+  computed on it (or changed since) is computed and its rows written with the pass stamp; a setup the chain
+  cannot serve keeps the reason on the page. Retention: every pass for the two newest sessions, the last pass
+  of each older session. State file `state\option_calc_worker.json`; one lane at a time (lock file); a
+  failed start writes an error state. Tray line "Option calculator: …" and **Settings -> Data Ingest ->
+  Option Calculator** show it. Runbook: `DEPLOY.md` section I.
+- **Store + tables** (`app/services/calc_store.py`, `calc_chain.py`): `option_calc_requests` and
+  `option_calc_results` (migration `a7c3e91d5b24`, portable types, cascade with the member); the member's
+  defaults in `User.prefs` (`calc_*`) like the trade prefs; the chain view over screener.db's last pass.
+- **Tested** (`py -m pytest tests -q -p no:warnings`): new `test_calc_store.py` (9), `test_calc_pair.py`
+  (11, pairing + the lane), `test_calc_cli.py` (5), `test_calc_page.py`, `test_calc_health.py`, tray tests
+  in `test_scr_collector.py`; `conftest.HEAD` is the new migration.
+- **Hermes:** pull, restart the web app (it migrates tst.db), then
+  `powershell -ExecutionPolicy Bypass -File deploy\setup_option_calc_task.ps1 -StartNow` once to install the
+  lane, and restart `IntradayBot-Tray` for the new tray line.
 
 ### 2026-10-17 - v4.150: Option calculator engine - the user's Excel strategy calculator as one function, proven against the sheet
 

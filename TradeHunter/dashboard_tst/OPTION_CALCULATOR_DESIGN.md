@@ -1,7 +1,7 @@
 # Option Calculator + Setup Pairing — design (agreed 2026-10-17)
 
-**Status: BUILDING — step 1 (the engine) in progress.** Steps 2–3 not started.
-Read this file first when continuing on any PC.
+**Status: BUILT (v4.151, 2026-10-17) — all three steps.** Read this file first when
+continuing on any PC. §10 lists where everything lives and what is still open.
 
 ## 1. Where it comes from
 
@@ -175,6 +175,25 @@ root search agrees to about a cent.)
 `design/option_calculator_flow.svg` (+ `.png`): the three steps as one diagram - the
 engine (orange) in the middle of each; member pages (blue); stored data (grey); Massive
 (green). Checked by the user on 2026-10-17.
+
+## 10. What was built (v4.151) and where
+
+| Piece | File | Notes |
+|---|---|---|
+| Engine | `app/services/option_calc.py` | `evaluate(legs, scenario)`; vectorised BSM; exact CDF. Tests `tests/test_option_calc.py` (14) = the sheet. |
+| Chain view | `app/services/calc_chain.py` | `load_chain(sdb, symbol)` from screener.db (last pass: strike, expiry, IV, OI, spot, earnings, IV rank); `resolve_legs` typed legs -> engine legs; `Chain.in_window`. |
+| Store | `app/services/calc_store.py` | member defaults in `User.prefs` (`calc_*`), requests, results, retention (`thin_results`), `figures_from` / `curves_from`. Tables `option_calc_requests` / `option_calc_results` (migration `a7c3e91d5b24`). Tests `tests/test_calc_store.py`. |
+| Pairing | `app/services/calc_pair.py` | `search(chain, target, worst, criteria, today)`: direction -> families, horizons (first N monthlies, target date = expiry - 5 d, or the member's days), window (worst..target +/- one expected move, 2 expiries, <= 24 strikes per expiry/right, OI floor), numpy scoring of every leg set, criteria filters, top `1 + alternatives` per family through the engine, model probability of profit, `score = min(R/R, 10) x P(profit)`. 12 families (6 bull, 6 bear; `short_put` / `short_call` only when defined risk is off). Tests `tests/test_calc_pair.py`. |
+| Lane | `app/services/calc_worker.py` + `deploy/option_calc_worker.py` | a SEPARATE process (task `TST-Option-Calc`, `deploy/setup_option_calc_task.ps1`), one look a minute at `scr_store.last_pass`; `compute_request` / `compute_and_store` (the page's "compute now" shares it); state file `state/option_calc_worker.json` (`STATE_KEYS`). Tests `tests/test_calc_pair.py` (lane), `tests/test_calc_cli.py`. |
+| Page | `app/routes/calc.py`, `app/templates/calc.html`, nav key `calc` ("Calculator") | setups list + new-setup form (two prices, days optional, mode: find the legs / I pick the legs), result view (manual: the sheet's cards + payoff chart; pair: summary + one card per family with alternatives, "Open in calculator"), defaults drawer. JSON under `/calc/api/*`. Tests `tests/test_calc_page.py`. |
+| Status | tray line "Option calculator: …" (`dashboard_intraday/tray_status.py`), Settings -> Data Ingest -> Option Calculator (`app/services/calc_health.py`, `/finviz/option-calc`) | DEPLOY.md section I. |
+
+**Still open / next:**
+- Range trades (a second worst price; condors, butterflies, strangles) - decision 8.
+- An IV-change scenario on the target date (`Scenario.iv_shift` exists, no UI).
+- Chart-drawn levels: drag support / resistance on the MATP chart to fill the two prices.
+- Ratio spreads and American-style pricing (the sheet's European model is kept).
+- The parked workbook flaws (`strategies-reference/OPTION_PRICING_CALCULATOR.md`).
 
 ## 9. Changelog
 

@@ -2,7 +2,7 @@
 {% block title %}Data Ingest &middot; TradeHunter{% endblock %}
 {% block content %}
 <h1 class="text-2xl font-semibold mb-1">Data Ingest</h1>
-<p class="text-slate-400 text-sm mb-4">Finviz screener filters that feed MATP, the price-data-history &amp; ticker-profile health, the EDGAR filings corpus, and Massive's options history.</p>
+<p class="text-slate-400 text-sm mb-4">Finviz screener filters that feed MATP, the price-data-history &amp; ticker-profile health, the EDGAR filings corpus, Massive's options history, and the option calculator lane.</p>
 
 {# ---------------- tabs ---------------- #}
 <div class="flex gap-1 border-b border-slate-800 mb-5" role="tablist">
@@ -11,6 +11,7 @@
   <button type="button" data-tab="market" class="di-tab px-3 py-2 text-sm border-b-2 border-transparent text-slate-400">Market Data</button>
   <button type="button" data-tab="edgar" class="di-tab px-3 py-2 text-sm border-b-2 border-transparent text-slate-400">EDGAR Filings</button>
   <button type="button" data-tab="opthist" class="di-tab px-3 py-2 text-sm border-b-2 border-transparent text-slate-400">Option History</button>
+  <button type="button" data-tab="optcalc" class="di-tab px-3 py-2 text-sm border-b-2 border-transparent text-slate-400">Option Calculator</button>
 </div>
 
 {# ======================== MATP Tickers (the deduplicated MATP queue) ========================
@@ -390,6 +391,17 @@
 <div id="ohBox"><p class="text-xs text-slate-500 py-4"><span class="inline-block animate-pulse">Reading the option history&hellip;</span></p></div>
 </div>
 
+{# ======================== Option Calculator (v4.151) ========================
+   The Hermes lane (task TST-Option-Calc) that recomputes every member's saved option-calculator
+   setups after each Massive market pass. Fetched when the tab opens, then every 30 s while it
+   stays open (GET /finviz/option-calc). #}
+<div data-panel="optcalc" class="hidden">
+<h2 class="text-lg font-medium mb-1">Option Calculator
+  <span class="text-xs font-normal text-slate-500">&mdash; members' saved setups, recomputed after each market pass</span></h2>
+<p class="text-slate-400 text-sm mb-3">The always-on lane on Hermes that keeps every saved setup on the Option Calculator page up to date with the newest Massive market pass.</p>
+<div id="ocBox"><p class="text-xs text-slate-500 py-4"><span class="inline-block animate-pulse">Reading the option calculator&hellip;</span></p></div>
+</div>
+
 <script>
   (function () {
     var tabs = Array.prototype.slice.call(document.querySelectorAll('.di-tab'));
@@ -416,6 +428,7 @@
       // Option History: fetched on open, then every 30 s while this tab is the one shown
       activate._current = name;
       if (name === 'opthist') loadOptHist();
+      if (name === 'optcalc') loadOptCalc();
       try { history.replaceState(null, '', '#' + name); } catch (e) {}
     }
     // Fetch the MATP-queue panel with an explicit failure path. Plain fetch (not
@@ -467,6 +480,32 @@
     };
     document.addEventListener('visibilitychange', function () {
       if (!document.hidden && activate._current === 'opthist' && !ohTimer) loadOptHist();
+    });
+    // Option Calculator: the same shape - fetched on open, then every 30 s while it is shown
+    var ocTimer = null;
+    window.loadOptCalc = function loadOptCalc() {
+      var box = document.getElementById('ocBox');
+      if (!box) return;
+      if (ocTimer) { clearTimeout(ocTimer); ocTimer = null; }
+      fetch('/finviz/option-calc', { headers: { 'HX-Request': 'true' } })
+        .then(function (r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + r.statusText);
+          return r.text();
+        })
+        .then(function (html) { box.innerHTML = html; })
+        .catch(function (err) {
+          box.innerHTML = '<div class="rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-xs text-rose-200">' +
+            '<b>Could not read the option calculator status.</b> ' + String(err.message || err) + '</div>';
+        })
+        .finally(function () {
+          ocTimer = setTimeout(function () {
+            if (activate._current === 'optcalc' && !document.hidden) loadOptCalc();
+            else ocTimer = null;
+          }, 30000);
+        });
+    };
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden && activate._current === 'optcalc' && !ocTimer) loadOptCalc();
     });
 
     // "Recalculate all" — reports back what it actually queued (a redirect would

@@ -25,6 +25,13 @@ green working; amber error / stopped / a warning / NOT RUNNING (no heartbeat for
 5 min) / NEVER CHECKED IN (no state file, an error in its log); grey no file. A toast
 fires when it goes into error or stops reporting, and once when the first market
 pass finishes.
+And the Option Calculator lane (dashboard_tst, task TST-Option-Calc - recomputes the
+members' saved option setups after each Massive pass) from
+dashboard_tst/state/option_calc_worker.json: idle / computing N setups, active setups,
+last computed time (ET) and pass, setups that could not be computed, heartbeat age,
+plus the lane's own sentence - green working; amber error / stopped / NOT RUNNING (no
+heartbeat for 5 min); grey no file. A toast fires when it goes into error or stops
+reporting.
 
 Right-click menu:
   - Show Status        : popup notification with current symbol + progress
@@ -1266,6 +1273,197 @@ def screener_toast(prev, cur):
     return None
 
 
+# The Option Calculator lane on Hermes (dashboard_tst/deploy/option_calc_worker.py, task
+# TST-Option-Calc; dashboard_tst/app/services/calc_worker.py) writes this file on every look
+# (about once a minute): after each Massive market pass it recomputes every member's saved
+# option-calculator setups (tray-sync rule).
+OPTION_CALC_STATE_PATH = SKILL_DIR / "dashboard_tst" / "state" / "option_calc_worker.json"
+OPTION_CALC_STALE_SEC = 300         # no heartbeat for 5 min -> amber
+OPTION_CALC_DETAIL_MAX = 220        # the lane's sentence (and an error) cut to this
+
+
+def _option_calc_et(value, now=None):
+    """An ISO stamp (offset / ``Z`` / naive = UTC) as ``14:32 ET`` - with the weekday
+    (``Thu 14:32 ET``) when it is not today in New York. None when it cannot be read.
+    US Eastern from the zone database, else by rule (DST from the second Sunday of March
+    to the first Sunday of November, as dashboard_tst's clock does)."""
+    from datetime import date, time as _time, timedelta
+
+    def _to_et(t):
+        try:
+            from zoneinfo import ZoneInfo
+            return t.astimezone(ZoneInfo("America/New_York"))
+        except Exception:
+            def _sunday(year, month, n):
+                d = date(year, month, 1)
+                d += timedelta(days=(6 - d.weekday()) % 7)
+                return d + timedelta(weeks=n - 1)
+            y = t.year
+            start = datetime.combine(_sunday(y, 3, 2), _time(7), timezone.utc)
+            end = datetime.combine(_sunday(y, 11, 1), _time(6), timezone.utc)
+            return t.astimezone(timezone(timedelta(hours=-4 if start <= t < end else -5)))
+
+    try:
+        t = datetime.fromisoformat(str(value or "").strip().replace("Z", "+00:00"))
+    except Exception:
+        return None
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    et = _to_et(t.astimezone(timezone.utc))
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    same_day = _to_et(now.astimezone(timezone.utc)).date() == et.date()
+    return et.strftime("%H:%M ET" if same_day else "%a %H:%M ET")
+
+
+def get_option_calc_status(path=None, now=None) -> dict:
+    """The Hermes Option Calculator lane from its state file
+    (dashboard_tst/state/option_calc_worker.json, written on every look - about once a
+    minute): what it is doing, how many saved setups it keeps up to date, when it last
+    computed and on which market pass, setups that could not be computed, heartbeat age -
+    one line + a tooltip fragment, and the lane's own sentence (``detail``) for the second
+    line of the Show Status window.
+
+    The line reads ``Option calculator: idle · 7 setups · last computed 14:32 ET on pass 812
+    · hb 20s ago``; while it works: ``computing 3 setups (of 7)``; when setups on the last
+    run could not be computed: ``· 1 setup could not be computed`` (the members see why on
+    their setups). ``state`` is one of:
+      starting / idle / computing - the lane is working (green);
+      error    - the last look failed (the reason follows), or the file is unreadable;
+      stopped  - the lane was stopped (Ctrl+C, or a one-off --once run finished);
+      stale    - no heartbeat for 5 min (NOT RUNNING when its last state was error);
+      absent   - no state file (the lane does not run on this PC, e.g. the laptop).
+    Colour: green = working; amber = error / stopped / stale; grey = absent.
+    Returns {level: ok|warn|absent, color: green|amber|grey, state, line, tip, detail,
+             reason, age_sec, last_pass_id, requests_active, done, failed, computed_at}.
+    File reads only."""
+    def _age_text(sec):
+        if sec is None:
+            return "?"
+        sec = max(0.0, sec)
+        if sec < 90:
+            return f"{sec:.0f}s"
+        if sec < 5400:
+            return f"{sec / 60:.0f}m"
+        return f"{sec / 3600:.1f}h"
+
+    def _n(v):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+
+    def _text(v):
+        v = " ".join(str(v or "").split())
+        return v or None
+
+    def _setups(n):
+        return f"{n} setup" + ("" if n == 1 else "s")
+
+    p = Path(path) if path is not None else OPTION_CALC_STATE_PATH
+    cap = OPTION_CALC_DETAIL_MAX
+    out = {"level": "absent", "color": "grey", "state": "absent", "age_sec": None, "detail": None,
+           "reason": None, "last_pass_id": None, "requests_active": None, "done": None, "failed": None,
+           "computed_at": None}
+    if not p.exists():
+        out.update(line="Option calculator: not running on this PC (no state file)", tip="Calc -")
+        return out
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+        if not isinstance(d, dict):
+            raise ValueError("not a JSON object")
+    except Exception as exc:
+        out.update(level="warn", color="amber", state="error", tip="Calc ?",
+                   line=f"Option calculator: state file unreadable ({exc})"[:160])
+        return out
+
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    try:
+        hb = datetime.fromisoformat(str(d.get("heartbeat") or "").replace("Z", "+00:00"))
+        if hb.tzinfo is None:
+            hb = hb.replace(tzinfo=timezone.utc)
+    except Exception:
+        hb = None
+    age = (now - hb).total_seconds() if hb is not None else None
+    raw = str(d.get("state") or "?").strip().lower()
+    state = raw if raw in ("starting", "idle", "computing", "error", "stopped") else "idle"
+    pass_id, active = _n(d.get("last_pass_id")), _n(d.get("requests_active"))
+    due, done, failed = _n(d.get("requests_due")), _n(d.get("done")), _n(d.get("failed"))
+    detail, last_error = _text(d.get("detail")), _text(d.get("last_error"))
+    out.update(state=state, age_sec=age, last_pass_id=pass_id, requests_active=active, done=done,
+               failed=failed, computed_at=d.get("computed_at"))
+
+    # setups the LAST run could not compute: the lane's sentence says "pass N: 5 computed, 1 not";
+    # the cumulative ``failed`` is used only when that sentence is not there. ``last_error`` is
+    # set only when the last run had failures.
+    failed_last = 0
+    if last_error and state not in ("error", "stopped"):
+        m = re.search(r"\d+ computed, (\d+) not", detail or "")
+        failed_last = int(m.group(1)) if m else (failed or 0)
+
+    if state == "computing" and due:
+        parts = [f"computing {_setups(due)}" + (f" (of {active})" if active else "")]
+    else:
+        parts = [state.upper() if state in ("error", "stopped") else state]
+        if active is not None:
+            parts.append(_setups(active) if active else "no setups")
+    when = _option_calc_et(d.get("computed_at"), now) if d.get("computed_at") else None
+    if when:
+        parts.append(f"last computed {when}" + (f" on pass {pass_id}" if pass_id else ""))
+    elif pass_id:
+        parts.append(f"nothing computed yet · pass {pass_id}")
+    elif state not in ("error", "stopped"):
+        parts.append("waiting for the first market pass")
+    if failed_last:
+        parts.append(f"{_setups(failed_last)} could not be computed")
+    parts.append(f"hb {_age_text(age)} ago")
+    line = "Option calculator: " + " · ".join(parts)
+
+    if age is None or age > OPTION_CALC_STALE_SEC:
+        if raw == "error":
+            why = (last_error or detail or "error")[:160]
+            out.update(reason=why,
+                       line=f"Option calculator: NOT RUNNING - {why} ({_age_text(age)} ago) - "
+                            f"is TST-Option-Calc running?")
+        else:
+            out.update(line=f"Option calculator: NO HEARTBEAT for {_age_text(age)} "
+                            f"(last: {raw}) - is TST-Option-Calc running?")
+        out.update(level="warn", color="amber", state="stale", tip=f"Calc stale {_age_text(age)}")
+    elif state in ("error", "stopped"):
+        why = (last_error or detail or "") if state == "error" else (detail or "")
+        if why.strip().lower() == state:          # the lane's own "stopped" adds nothing
+            why = ""
+        out.update(level="warn", color="amber", reason=why or None,
+                   detail=(detail[:cap] if detail and detail != why and detail.lower() != state else None),
+                   tip="Calc ERR" if state == "error" else "Calc stopped",
+                   line=(line + (f" - {why}" if why else ""))[:cap])
+    else:
+        tip = f"Calc {due} due" if (state == "computing" and due) else f"Calc {state}"
+        out.update(level="ok", color="green", tip=tip, line=line,
+                   reason=last_error[:cap] if failed_last and last_error else None,
+                   detail=detail[:cap] if detail else None)
+    return out
+
+
+def option_calc_toast(prev, cur):
+    """The toast for a change in the Option Calculator lane between two tray polls
+    (``get_option_calc_status`` results), or None. Edge-triggered, so a state that lasts
+    fires once: going into error (the reason) or stale ("no heartbeat for 5 min") from any
+    other state. Nothing on the first poll after the tray starts (``prev`` None), and
+    recovering is quiet."""
+    if not prev or not cur:
+        return None
+    bad = ("error", "stale")
+    if cur.get("state") in bad and prev.get("state") not in bad:
+        if cur.get("state") == "error" or cur.get("reason"):
+            return f"Option calculator: ERROR - {cur.get('reason') or 'see the tray status'}"
+        return "Option calculator: no heartbeat for 5 min"
+    return None
+
+
 # ---- Icon generation (no .ico files needed — drawn at startup) ----
 
 def _make_circle_icon(color: tuple, size: int = 64,
@@ -1603,6 +1801,21 @@ def _build_progress_window(root):
     scr_detail_var = tk.StringVar(value='')
     scr_detail_lbl = tk.Label(
         win, textvariable=scr_detail_var, font=('Segoe UI', 9),
+        bg='#1a1a1a', fg='#9ca3af', wraplength=430, justify='center',
+    )
+
+    # Option Calculator lane (dashboard_tst, task TST-Option-Calc) - tray-sync rule.
+    # Green working / amber error, stopped or no heartbeat for 5 min / grey no file. The
+    # second line is the lane's own sentence; it is packed only while there is one.
+    calc_var = tk.StringVar(value='Option calculator: -')
+    calc_lbl = tk.Label(
+        win, textvariable=calc_var, font=('Segoe UI', 10),
+        bg='#1a1a1a', fg='#888888', wraplength=430, justify='center',
+    )
+    calc_lbl.pack(pady=(0, 4))
+    calc_detail_var = tk.StringVar(value='')
+    calc_detail_lbl = tk.Label(
+        win, textvariable=calc_detail_var, font=('Segoe UI', 9),
         bg='#1a1a1a', fg='#9ca3af', wraplength=430, justify='center',
     )
 
@@ -2016,6 +2229,26 @@ def _build_progress_window(root):
             except Exception:
                 pass
 
+            # Option Calculator lane heartbeat (green / amber / grey) + its sentence
+            oc_detail = ''
+            try:
+                ocs = get_option_calc_status()
+                calc_var.set(ocs.get('line') or "Option calculator: ?")
+                calc_lbl.configure(fg={'green': '#5fd97a', 'amber': '#facc15'}.get(
+                    ocs.get('color'), '#888888'))
+                oc_detail = ocs.get('detail') or ''
+            except Exception:
+                calc_var.set("Option calculator: ?")
+                calc_lbl.configure(fg='#888888')
+            try:
+                calc_detail_var.set(oc_detail)
+                if oc_detail and not calc_detail_lbl.winfo_manager():
+                    calc_detail_lbl.pack(after=calc_lbl, pady=(0, 4))
+                elif not oc_detail and calc_detail_lbl.winfo_manager():
+                    calc_detail_lbl.pack_forget()
+            except Exception:
+                pass
+
             # "Completed through" date (ingest currency)
             try:
                 ct = get_completed_through()
@@ -2220,6 +2453,7 @@ def _update_loop(icon: "pystray.Icon"):
     frame_index = 0
     last_poll = 0.0
     prev_scr = None        # the screener collector at the last poll (its toasts are edge-triggered)
+    prev_calc = None       # the option calculator lane at the last poll (same)
 
     while True:
         try:
@@ -2266,12 +2500,25 @@ def _update_loop(icon: "pystray.Icon"):
                     prev_scr = scr
                 except Exception:
                     scr_str = "Scr ?"
+                try:
+                    ocalc = get_option_calc_status()
+                    calc_str = ocalc.get("tip") or "Calc ?"
+                    # A toast on going into error / no heartbeat (edge-triggered).
+                    try:
+                        toast = option_calc_toast(prev_calc, ocalc)
+                        if toast:
+                            icon.notify(_clamp_title(toast, 255), title="Option calculator")
+                    except Exception:
+                        pass   # a toast must never stop the tray
+                    prev_calc = ocalc
+                except Exception:
+                    calc_str = "Calc ?"
                 # Windows tray tooltips cap at 128 chars; put the critical
                 # signals (state, deep-check, gateway, options collector,
-                # options screener, through) FIRST so they survive, and let the
-                # verbose status tooltip trail + be trimmed.
+                # options screener, option calculator, through) FIRST so they
+                # survive, and let the verbose status tooltip trail + be trimmed.
                 icon.title = _clamp_title(
-                    f"Ingest: {new_state} | {dc_str} | {gw_str} | {opt_str} | {scr_str} | {through_str} — {status['tooltip']}"
+                    f"Ingest: {new_state} | {dc_str} | {gw_str} | {opt_str} | {scr_str} | {calc_str} | {through_str} — {status['tooltip']}"
                 )
                 if new_state != current_state:
                     current_state = new_state

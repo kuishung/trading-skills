@@ -2403,12 +2403,15 @@ def test_run_flat_iv_without_keys(db, build):
 
 # ───────────────────────────────────────── the tray ─────────────────────────────────────────
 
-_TRAY_FUNCS = ("get_screener_collector_status", "_screener_log_error", "screener_toast")
-_TRAY_CONSTS = ("OPTIONS_SCREENER_STALE_SEC", "OPTIONS_SCREENER_DETAIL_MAX", "OPTIONS_SCREENER_LOG_TAIL")
+_TRAY_FUNCS = ("get_screener_collector_status", "_screener_log_error", "screener_toast",
+               "get_option_calc_status", "option_calc_toast", "_option_calc_et")
+_TRAY_CONSTS = ("OPTIONS_SCREENER_STALE_SEC", "OPTIONS_SCREENER_DETAIL_MAX", "OPTIONS_SCREENER_LOG_TAIL",
+                "OPTION_CALC_STALE_SEC", "OPTION_CALC_DETAIL_MAX")
 
 
 def _tray_ns(state_path, log_path=None) -> dict:
-    """The screener part of tray_status.py - its functions and thresholds - lifted out (the
+    """The screener and option-calculator parts of tray_status.py - their functions and
+    thresholds - lifted out (the
     module itself imports pystray / PIL and cannot load here). The log defaults to a path
     that does not exist."""
     tree = ast.parse(TRAY.read_text(encoding="utf-8"))
@@ -2419,6 +2422,7 @@ def _tray_ns(state_path, log_path=None) -> dict:
     state_path = Path(state_path)
     ns = {"json": json, "re": re, "datetime": _dt.datetime, "timezone": _dt.timezone, "Path": Path,
           "OPTIONS_SCREENER_STATE_PATH": state_path,
+          "OPTION_CALC_STATE_PATH": state_path.parent / "option_calc_worker.json",
           "OPTIONS_SCREENER_LOG_PATH": Path(log_path) if log_path else state_path.parent / "no-logs" / "x.log"}
     exec(compile(ast.Module(body=keep, type_ignores=[]), str(TRAY), "exec"), ns)   # noqa: S102
     return ns
@@ -2809,6 +2813,138 @@ def test_tray_wires_the_line_into_tooltip_and_window():
         "dashboard_tst/state/screener_collector.json"
     assert "{scr_str}" in src                                   # the tooltip fragment
     assert "scr_detail_var.set(sc_detail)" in src               # the collector's sentence in the window
+
+
+# ─────────────────────────────── the tray: the option calculator lane ───────────────────────────────
+
+CALC_NOW = _dt.datetime(2026, 10, 8, 18, 33, tzinfo=_dt.timezone.utc)      # 14:33 ET (EDT)
+CALC_BASE = {"version": "1.0", "pid": 4242, "heartbeat": "2026-10-08T18:32:40+00:00", "state": "idle",
+             "detail": "up to date with pass 812 · 7 active setups", "last_look": "2026-10-08T18:32:40+00:00",
+             "next_look": "2026-10-08T18:33:40+00:00", "last_pass_id": 812, "last_pass_session": "2026-10-08",
+             "last_pass_finished": "2026-10-08T18:31:00+00:00", "requests_active": 7, "requests_due": 0,
+             "done": 20, "failed": 0, "last_run_ms": 120, "last_error": None,
+             "computed_at": "2026-10-08T18:32:05+00:00", "written_by": "option_calc_worker"}
+
+
+def _calc_status(tmp_path, change=None, *, now=CALC_NOW):
+    p = tmp_path / "option_calc_worker.json"
+    if change is not None:
+        _write(p, dict(CALC_BASE, **change))
+    return _tray_ns(tmp_path / "screener_collector.json")["get_option_calc_status"](p, now=now)
+
+
+def test_tray_option_calc_reads_every_key_the_lane_writes():
+    from app.services import calc_worker
+
+    assert set(CALC_BASE) == set(calc_worker.STATE_KEYS)
+    assert calc_worker.STATE_PATH.relative_to(DASH_ROOT.parent).as_posix() == \
+        "dashboard_tst/state/option_calc_worker.json"
+
+
+def test_tray_option_calc_idle_and_computing(tmp_path):
+    got = _calc_status(tmp_path, {})
+    assert (got["state"], got["level"], got["color"], got["tip"]) == ("idle", "ok", "green", "Calc idle")
+    assert got["line"] == "Option calculator: idle · 7 setups · last computed 14:32 ET on pass 812 · hb 20s ago"
+    assert got["detail"] == "up to date with pass 812 · 7 active setups" and got["reason"] is None
+    assert (got["last_pass_id"], got["requests_active"], got["done"], got["failed"]) == (812, 7, 20, 0)
+    assert got["computed_at"] == "2026-10-08T18:32:05+00:00"
+
+    got = _calc_status(tmp_path, {"state": "computing", "requests_due": 3,
+                                  "detail": "3 setups to compute on pass 812"})
+    assert (got["state"], got["color"], got["tip"]) == ("computing", "green", "Calc 3 due")
+    assert got["line"] == ("Option calculator: computing 3 setups (of 7) · last computed 14:32 ET on pass 812 "
+                           "· hb 20s ago")
+    assert got["detail"] == "3 setups to compute on pass 812"
+
+    got = _calc_status(tmp_path, {"computed_at": "2026-10-07T18:32:05+00:00", "requests_active": 1})
+    assert got["line"] == "Option calculator: idle · 1 setup · last computed Wed 14:32 ET on pass 812 · hb 20s ago"
+    got = _calc_status(tmp_path, {"computed_at": None, "last_pass_id": None, "requests_active": 0,
+                                  "detail": "waiting for the screener collector's first market pass"})
+    assert got["line"] == "Option calculator: idle · no setups · waiting for the first market pass · hb 20s ago"
+    got = _calc_status(tmp_path, {"state": "starting", "computed_at": None})
+    assert (got["color"], got["tip"]) == ("green", "Calc starting")
+    assert got["line"] == "Option calculator: starting · 7 setups · nothing computed yet · pass 812 · hb 20s ago"
+
+
+def test_tray_option_calc_setups_that_could_not_be_computed(tmp_path):
+    got = _calc_status(tmp_path, {"done": 26, "failed": 3, "last_error": "AAPL #4: the 2026-11-20 185 call is no longer listed",
+                                  "detail": "pass 812: 6 computed, 1 not (see the setups) · 7 active setups · 120 ms"})
+    assert (got["state"], got["color"], got["tip"]) == ("idle", "green", "Calc idle")
+    assert got["line"] == ("Option calculator: idle · 7 setups · last computed 14:32 ET on pass 812 "
+                           "· 1 setup could not be computed · hb 20s ago")
+    assert got["reason"] == "AAPL #4: the 2026-11-20 185 call is no longer listed"
+    got = _calc_status(tmp_path, {"failed": 3, "last_error": None})            # an earlier run's: not shown
+    assert "could not be computed" not in got["line"]
+    got = _calc_status(tmp_path, {"failed": 2, "last_error": "MSFT #9: no IV", "detail": "something else"})
+    assert "· 2 setups could not be computed ·" in got["line"]
+
+
+def test_tray_option_calc_stale_error_stopped_absent(tmp_path):
+    p = tmp_path / "option_calc_worker.json"
+    got = _calc_status(tmp_path)                                               # no file
+    assert (got["state"], got["level"], got["color"], got["tip"]) == ("absent", "absent", "grey", "Calc -")
+    assert got["line"] == "Option calculator: not running on this PC (no state file)"
+
+    got = _calc_status(tmp_path, {"heartbeat": "2026-10-08T18:26:00+00:00"})
+    assert (got["state"], got["level"], got["color"], got["tip"]) == ("stale", "warn", "amber", "Calc stale 7m")
+    assert got["line"] == "Option calculator: NO HEARTBEAT for 7m (last: idle) - is TST-Option-Calc running?"
+
+    err = {"state": "error", "last_error": "OperationalError: database is locked",
+           "detail": "the look failed; again in 60 s"}
+    got = _calc_status(tmp_path, err)
+    assert (got["state"], got["level"], got["color"], got["tip"]) == ("error", "warn", "amber", "Calc ERR")
+    assert got["line"] == ("Option calculator: ERROR · 7 setups · last computed 14:32 ET on pass 812 · hb 20s ago"
+                           " - OperationalError: database is locked")
+    assert got["reason"] == "OperationalError: database is locked"
+    assert got["detail"] == "the look failed; again in 60 s"
+
+    got = _calc_status(tmp_path, dict(err, heartbeat="2026-10-08T18:20:00+00:00"))
+    assert (got["state"], got["color"], got["tip"]) == ("stale", "amber", "Calc stale 13m")
+    assert got["line"] == ("Option calculator: NOT RUNNING - OperationalError: database is locked (13m ago) "
+                           "- is TST-Option-Calc running?")
+
+    got = _calc_status(tmp_path, {"state": "stopped", "detail": "stopped"})
+    assert (got["state"], got["color"], got["tip"]) == ("stopped", "amber", "Calc stopped")
+    assert got["line"] == "Option calculator: STOPPED · 7 setups · last computed 14:32 ET on pass 812 · hb 20s ago"
+    assert got["detail"] is None
+
+    p.write_text("{not json", encoding="utf-8")
+    got = _calc_status(tmp_path)
+    assert (got["state"], got["color"], got["tip"]) == ("error", "amber", "Calc ?")
+    assert got["line"].startswith("Option calculator: state file unreadable (")
+
+
+def test_tray_option_calc_toasts_on_the_edges(tmp_path):
+    toast = _tray_ns(tmp_path / "screener_collector.json")["option_calc_toast"]
+    idle = _calc_status(tmp_path, {})
+    err = _calc_status(tmp_path, {"state": "error", "last_error": "OperationalError: database is locked"})
+    stale = _calc_status(tmp_path, {"heartbeat": "2026-10-08T18:20:00+00:00"})
+    gone = _calc_status(tmp_path, {"state": "error", "last_error": "OperationalError: database is locked",
+                                   "heartbeat": "2026-10-08T18:20:00+00:00"})
+    assert toast(idle, err) == "Option calculator: ERROR - OperationalError: database is locked"
+    assert toast(idle, stale) == "Option calculator: no heartbeat for 5 min"
+    assert toast(idle, gone) == "Option calculator: ERROR - OperationalError: database is locked"
+    assert toast(err, err) is None and toast(err, stale) is None and toast(stale, err) is None
+    assert toast(err, idle) is None and toast(stale, idle) is None             # recovering is quiet
+    assert toast(None, err) is None                                            # the tray's first poll
+
+
+def test_tray_wires_the_option_calc_line_into_tooltip_and_window():
+    src = TRAY.read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    callers: dict[str, set] = {}
+    for fn in tree.body:
+        if isinstance(fn, ast.FunctionDef):
+            for node in ast.walk(fn):
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                    callers.setdefault(node.func.id, set()).add(fn.name)
+    assert {"_update_loop", "_build_progress_window"} <= callers["get_option_calc_status"]
+    assert callers["option_calc_toast"] == {"_update_loop"}
+    loop = ast.get_source_segment(src, next(f for f in tree.body
+                                             if isinstance(f, ast.FunctionDef) and f.name == "_update_loop"))
+    assert 'title="Option calculator"' in loop and "{calc_str}" in loop
+    assert '"dashboard_tst" / "state" / "option_calc_worker.json"' in src
+    assert "calc_detail_var.set(oc_detail)" in src
 
 
 # ───────────────────────────────────────── the CLI + the task script ─────────────────────────────────────────

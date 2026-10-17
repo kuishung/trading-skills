@@ -176,6 +176,22 @@ def option_history_panel(request: Request, user: User = Depends(require_user)):
     return templates.TemplateResponse(request, "_option_history.html", {"user": user, "oh": oh})
 
 
+@router.get("/option-calc", response_class=HTMLResponse)
+def option_calc_panel(request: Request, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    """The Option Calculator tab (v4.151): the Hermes lane that recomputes every member's saved
+    option-calculator setups after each Massive pass (``services/calc_health``). An HTML
+    fragment; the page fetches it when the tab opens and every 30 s while it is open."""
+    from ..services import calc_health
+
+    try:
+        oc = calc_health.view(db=db)
+    except Exception as exc:  # noqa: BLE001 - shown in the tab, never a 500 page
+        return HTMLResponse('<div class="rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-xs '
+                            'text-rose-200">The option calculator status could not be read (%s).</div>'
+                            % type(exc).__name__)
+    return templates.TemplateResponse(request, "_option_calc_health.html", {"user": user, "oc": oc})
+
+
 @router.get("/queue", response_class=HTMLResponse)
 def matp_queue_panel(
     request: Request,

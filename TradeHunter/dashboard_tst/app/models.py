@@ -1707,3 +1707,79 @@ class OptionScreen(Base):
     is_default = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=_utcnow_naive)
     updated_at = Column(DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
+
+
+class OptionCalcRequest(Base):
+    """A member's saved option-calculator setup (OPTION_CALCULATOR_DESIGN.md step 2 / 3).
+
+    ``kind`` = ``manual`` (the member picked the legs: ``legs`` is a list of
+    ``{right, strike, expiry, qty}``) or ``pair`` (no legs - the Hermes lane finds them
+    inside the window the two prices and the horizon define). The scenario is the two
+    numbers the user types, ``target`` and ``worst``; ``horizon_days`` NULL means the
+    member's default (``calc_store.read_prefs``); ``criteria`` NULL means their defaults.
+    The lane recomputes every ``active`` request after each Massive pass and stamps
+    ``last_pass_id`` / ``last_computed_at`` (or ``last_error``) here; the figures go to
+    ``option_calc_results``. Scoped by user_id on every read and write.
+    """
+
+    __tablename__ = "option_calc_requests"
+    __table_args__ = (Index("ix_option_calc_requests_user_active", "user_id", "active"),)
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    symbol = Column(String(20), nullable=False, index=True)
+    kind = Column(String(8), nullable=False, default="manual")      # manual | pair
+    name = Column(String(80), nullable=True)
+    target = Column(Float, nullable=False)                          # the expected price
+    worst = Column(Float, nullable=False)                           # the worst-case price
+    horizon_days = Column(Integer, nullable=True)                   # NULL = the member's default
+    sets = Column(Integer, nullable=False, default=1)
+    legs = Column(JSON, nullable=True)                              # manual: [{right, strike, expiry, qty}]
+    criteria = Column(JSON, nullable=True)                          # pair: overrides of the member's criteria
+    active = Column(Boolean, nullable=False, default=True)
+    last_pass_id = Column(Integer, nullable=True)
+    last_computed_at = Column(DateTime, nullable=True)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=_utcnow_naive)
+    updated_at = Column(DateTime, default=_utcnow_naive, onupdate=_utcnow_naive)
+
+    user = relationship("User")
+
+
+class OptionCalcResult(Base):
+    """What the lane computed for one request on one Massive pass.
+
+    A ``manual`` request writes ONE row per pass (``family`` = ``manual``, ``rank`` 1). A
+    ``pair`` request writes one row per strategy family it kept, ``rank`` 1 being that
+    family's best leg set, 2.. its alternatives. ``legs`` are the RESOLVED legs (with
+    dte, iv, oi as read on that pass), ``figures`` the engine's indicators
+    (``option_calc.Result`` without the curves), ``curves`` the payoff curves (kept for
+    rank 1 only - the alternatives are recomputed on demand). Every figure carries its
+    pass (``pass_id``, ``session``, ``as_of``, ``spot``) so the page can say when and from
+    what it was computed.
+    """
+
+    __tablename__ = "option_calc_results"
+    __table_args__ = (Index("ix_option_calc_results_req_pass", "request_id", "pass_id"),
+                      Index("ix_option_calc_results_req_created", "request_id", "created_at"))
+
+    id = Column(Integer, primary_key=True)
+    request_id = Column(Integer, ForeignKey("option_calc_requests.id", ondelete="CASCADE"),
+                        nullable=False)
+    pass_id = Column(Integer, nullable=True)                        # scr_pass.id (NULL: computed by hand)
+    session = Column(String(10), nullable=True)                     # ET session of the chain
+    as_of = Column(DateTime, nullable=True)                         # the chain's read time
+    spot = Column(Float, nullable=True)
+    family = Column(String(24), nullable=False, default="manual")
+    rank = Column(Integer, nullable=False, default=1)
+    horizon_days = Column(Integer, nullable=True)
+    target_date = Column(String(10), nullable=True)
+    legs = Column(JSON, nullable=False, default=list)
+    figures = Column(JSON, nullable=False, default=dict)
+    curves = Column(JSON, nullable=True)
+    score = Column(Float, nullable=True)
+    created_at = Column(DateTime, default=_utcnow_naive)
+
+    request = relationship("OptionCalcRequest",
+                           backref=backref("results", cascade="all, delete-orphan",
+                                           passive_deletes=True))

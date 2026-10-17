@@ -43,8 +43,8 @@ from app.config import settings                  # noqa: E402
 from app import models                           # noqa: E402,F401  (register models on Base)
 
 DASH_ROOT = Path(__file__).resolve().parent.parent      # dashboard_tst/
-HEAD = "3069a57385d1"
-PREVIOUS_HEAD = "e2f3a4b5c6d7"
+HEAD = "a7c3e91d5b24"
+PREVIOUS_HEAD = "e2f3a4b5c6d7"     # test_option_store: the revision BEFORE the options-module tables
 
 
 def alembic_config(url: str) -> Config:

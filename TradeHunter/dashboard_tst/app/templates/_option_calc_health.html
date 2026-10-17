@@ -1,0 +1,60 @@
+{# Settings -> Data Ingest -> Option Calculator (v4.151, OPTION_CALCULATOR_DESIGN.md): the Hermes lane
+   that recomputes every member's saved option-calculator setups after each Massive market pass (task
+   TST-Option-Calc). Fetched by finviz.html when the tab opens and every 30 s while it stays open
+   (GET /finviz/option-calc). Context: oc (services/calc_health.view). #}
+{% set dot = {'emerald': 'bg-emerald-400', 'sky': 'bg-sky-400', 'amber': 'bg-amber-400', 'rose': 'bg-rose-500',
+              'slate': 'bg-slate-500'} %}
+{% set text = {'emerald': 'text-emerald-300', 'sky': 'text-sky-300', 'amber': 'text-amber-300', 'rose': 'text-rose-300',
+               'slate': 'text-slate-400'} %}
+
+<div class="flex flex-wrap items-center gap-2 mb-3 text-xs">
+  <span class="inline-block h-2.5 w-2.5 rounded-full {{ dot.get(oc.tone, 'bg-slate-500') }}"></span>
+  <span class="font-medium {{ text.get(oc.tone, 'text-slate-400') }}">{{ oc.word }}</span>
+  <span class="text-slate-300">{{ oc.detail }}</span>
+  {% if oc.known and not oc.stale and oc.age %}<span class="text-slate-500">&middot; reported {{ oc.age }}</span>{% endif %}
+  <span class="text-slate-600 ml-auto">{{ oc.now_et }} &middot; refreshes every 30 s</span>
+</div>
+
+<div class="rounded-lg border border-slate-800 bg-slate-900/40 p-3 text-xs space-y-1.5 mb-4 max-w-3xl">
+  <div class="flex items-center justify-between">
+    <span class="text-sm font-medium text-slate-200">Option Calculator lane</span>
+    <span class="{{ text.get(oc.tone, 'text-slate-400') }}">{{ oc.word }}</span>
+  </div>
+
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 py-1">
+    <div><div class="text-slate-500">Saved setups kept up to date</div>
+      <div class="text-base text-slate-200 tabular-nums">{{ oc.requests_active if oc.requests_active is not none else '-' }}</div></div>
+    <div><div class="text-slate-500">Setups with a problem</div>
+      <div class="text-base tabular-nums {% if oc.requests_errors %}text-amber-300{% else %}text-slate-200{% endif %}">{{ oc.requests_errors if oc.requests_errors is not none else '-' }}</div></div>
+    <div><div class="text-slate-500">Results in the last 24 h</div>
+      <div class="text-base text-slate-200 tabular-nums">{{ '{:,}'.format(oc.results_24h) if oc.results_24h is not none else '-' }}</div></div>
+    <div><div class="text-slate-500">Market pass</div>
+      <div class="text-base text-slate-200 tabular-nums">{{ oc.last_pass_id if oc.last_pass_id is not none else '-' }}</div></div>
+  </div>
+
+  {% if oc.computed_at %}<div class="text-slate-300">Last computed {{ oc.computed_at }}</div>
+  {% elif oc.known %}<div class="text-slate-500">Nothing computed yet since the lane started.</div>{% endif %}
+  {% if oc.newest_result %}<div class="text-slate-400">Newest stored result {{ oc.newest_result }}</div>{% endif %}
+  {% if oc.last_pass_finished %}<div class="text-slate-400">Market pass {{ oc.last_pass_id }}{% if oc.last_pass_session %} (the {{ oc.last_pass_session }} session){% endif %} finished {{ oc.last_pass_finished }}</div>{% endif %}
+  {% if oc.known %}<div class="text-slate-400">Since the lane started: <span class="tabular-nums">{{ oc.done or 0 }}</span> computed, <span class="tabular-nums">{{ oc.failed or 0 }}</span> could not be computed{% if oc.last_run_ms is not none %} &middot; last run took {{ oc.last_run_ms }} ms{% endif %}</div>{% endif %}
+  {% if oc.next_look %}<div class="text-slate-500">Next look {{ oc.next_look }}</div>{% endif %}
+  {% if oc.last_error %}<div class="text-rose-300 break-words">Last error: {{ oc.last_error }}</div>{% endif %}
+  {% if oc.db_error %}<div class="text-amber-300 break-words">{{ oc.db_error }}</div>{% endif %}
+</div>
+
+{% if not oc.known or oc.stale or oc.state in ('error', 'stopped') %}
+<div class="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200 mb-4 max-w-3xl leading-relaxed">
+  <b>How to start it.</b> On Hermes, in PowerShell from <code>C:\trading-skills\TradeHunter\dashboard_tst</code>:
+  <code class="block mt-1 text-amber-100">powershell -ExecutionPolicy Bypass -File deploy\setup_option_calc_task.ps1 -StartNow</code>
+  <span class="block mt-1">That installs (or re-installs) the <b>{{ oc.task }}</b> scheduled task and starts it. Its log is
+  <code>logs\option_calc_worker.log</code>.</span>
+</div>
+{% endif %}
+
+<p class="text-xs text-slate-400 max-w-3xl leading-relaxed">
+  <b class="text-slate-300">How it updates - nothing to do by hand.</b> The screener collector reads the whole option
+  market from Massive about every 30 minutes. Once a minute this lane looks for a newer finished pass and recomputes
+  every member's saved setups on the Option Calculator page against it, so the figures there always say which pass
+  they come from. A setup it cannot compute (a leg no longer listed, no implied volatility) keeps the reason on the
+  member's page and is tried again on the next pass.
+</p>

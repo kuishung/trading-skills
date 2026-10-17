@@ -1,0 +1,917 @@
+{% extends "base.html" %}
+{% block title %}Calculator &middot; TradeHunter{% endblock %}
+{% block main_class %}flex-1 min-h-0 overflow-y-auto overflow-x-hidden w-full px-3 sm:px-4 py-3 max-w-screen-2xl mx-auto{% endblock %}
+
+{% block content %}
+{# The option calculator (OPTION_CALCULATOR_DESIGN.md steps 2-3). Left / top: the member's
+   saved setups, the "New setup" form (two prices: expected and worst case), their defaults.
+   Right / below: the selected setup's result - the sheet's layout for "I pick the legs",
+   one card per strategy family for "Find the legs for me". Everything goes through
+   /calc/api/* (routes/calc.py); the first paint's data arrives in #calcBoot.
+   Scroll areas keep base.html's invisible-until-hover scrollbar (never override it). #}
+<style>
+  /* page-scoped, on base.html's --tv-* tokens so day and night both work */
+  .calc-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; align-items: start; }
+  @media (min-width: 768px) { .calc-grid { grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); } }
+  .calc-card { border: 1px solid var(--tv-border); background: var(--tv-panel); border-radius: var(--tv-r-panel);
+               padding: .75rem; min-width: 0; }
+  .calc-card h2 { font-size: 13px; font-weight: 600; color: var(--tv-text-hi); margin-bottom: .5rem; }
+  .calc-muted { color: var(--tv-muted); }
+  .calc-small { font-size: 11px; }
+  .calc-btn { border: 1px solid var(--tv-border-2); color: var(--tv-text); background: transparent;
+              padding: .25rem .6rem; font-size: 12px; line-height: 1.25; white-space: nowrap; border-radius: var(--tv-r-ctl); }
+  .calc-btn:hover:not(:disabled) { background: var(--tv-hover); color: var(--tv-text-hi); }
+  .calc-btn:disabled { opacity: .45; cursor: default; }
+  .calc-btn.calc-danger:hover:not(:disabled) { color: var(--tv-down); border-color: var(--tv-down); }
+  .calc-primary { background: var(--tv-accent); color: #fff; border: 1px solid var(--tv-accent);
+                  padding: .4rem 1rem; font-size: 13px; border-radius: var(--tv-r-ctl); }
+  .calc-primary:hover:not(:disabled) { background: var(--tv-accent-hi); }
+  .calc-primary:disabled { opacity: .5; cursor: default; }
+  .calc-in { width: 100%; padding: .3rem .45rem; font-size: 13px; }
+  .calc-lbl { display: flex; flex-direction: column; gap: .2rem; font-size: 11px; color: var(--tv-muted); min-width: 0; }
+  .calc-mode { display: flex; border: 1px solid var(--tv-border-2); border-radius: var(--tv-r-ctl); overflow: hidden; }
+  .calc-mode button { flex: 1; padding: .35rem .4rem; font-size: 12px; color: var(--tv-text); }
+  .calc-mode button[aria-pressed="true"] { background: var(--tv-accent); color: #fff; }
+  .calc-list { max-height: 22rem; overflow-y: auto; }
+  @media (max-width: 767px) { .calc-list { max-height: 16rem; } }
+  .calc-row { border-bottom: 1px solid var(--tv-border); padding: .5rem .25rem; cursor: pointer; }
+  .calc-row:last-child { border-bottom: 0; }
+  .calc-row:hover { background: var(--tv-hover); }
+  .calc-row.is-sel { background: var(--tv-hover); box-shadow: inset 3px 0 0 var(--tv-accent); }
+  .calc-row.is-off { opacity: .6; }
+  .calc-sym { color: var(--tv-text-hi); font-weight: 600; }
+  .calc-tag { display: inline-block; padding: 0 .35rem; border-radius: 3px; font-size: 10px; font-weight: 600;
+              background: var(--tv-hover); color: var(--tv-text); vertical-align: 1px; }
+  .calc-tag.is-bull { background: rgba(38,166,154,.16); color: var(--tv-up); }
+  .calc-tag.is-bear { background: rgba(239,83,80,.14); color: var(--tv-down); }
+  .calc-err { color: var(--tv-down); }
+  .calc-up { color: var(--tv-up); } .calc-down { color: var(--tv-down); }
+  .calc-dot { display: inline-block; width: 8px; height: 8px; border-radius: 9999px; margin-right: .35rem; vertical-align: 0; flex: none; }
+  .calc-dot.is-green { background: var(--tv-up); } .calc-dot.is-amber { background: #f59e0b; }
+  .calc-dot.is-red { background: var(--tv-down); } .calc-dot.is-grey { background: var(--tv-muted); }
+  .calc-figs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; }
+  @media (min-width: 1100px) { .calc-figs { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+  .calc-fig { border: 1px solid var(--tv-border); border-radius: var(--tv-r-ctl); padding: .45rem .55rem; background: var(--tv-page); min-width: 0; }
+  .calc-fig .k { font-size: 11px; color: var(--tv-muted); }
+  .calc-fig .v { font-size: 16px; font-weight: 600; color: var(--tv-text-hi); font-variant-numeric: tabular-nums; }
+  .calc-fig .s { font-size: 11px; color: var(--tv-muted); }
+  .calc-table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .calc-table th { text-align: right; font-weight: 500; font-size: 11px; color: var(--tv-muted); padding: .3rem .45rem;
+                   border-bottom: 1px solid var(--tv-border-2); white-space: nowrap; }
+  .calc-table td { text-align: right; padding: .3rem .45rem; border-bottom: 1px solid var(--tv-border); white-space: nowrap; }
+  .calc-table th.l, .calc-table td.l { text-align: left; }
+  .calc-scroll { overflow-x: auto; }
+  .calc-fam { border: 1px solid var(--tv-border); border-radius: var(--tv-r-panel); background: var(--tv-page); padding: .6rem .7rem; }
+  .calc-fam + .calc-fam { margin-top: .6rem; }
+  .calc-kv { display: flex; flex-wrap: wrap; gap: .25rem 1rem; font-size: 12px; }
+  .calc-kv b { font-weight: 600; color: var(--tv-text-hi); font-variant-numeric: tabular-nums; }
+  .calc-chart svg text { fill: var(--tv-muted); font-size: 10px; }
+  .calc-chart { position: relative; }
+  .calc-tip { position: absolute; pointer-events: none; font-size: 11px; padding: .25rem .45rem; border-radius: var(--tv-r-ctl);
+              background: var(--tv-panel); border: 1px solid var(--tv-border-2); color: var(--tv-text); white-space: nowrap; }
+  .calc-notice { border: 1px solid var(--tv-down); color: var(--tv-down); background: rgba(239,83,80,.08);
+                 padding: .4rem .6rem; font-size: 12px; border-radius: var(--tv-r-ctl); }
+  .calc-pref { display: grid; grid-template-columns: minmax(0, 1fr) 7rem; gap: .2rem .6rem; align-items: center;
+               padding: .4rem 0; border-bottom: 1px solid var(--tv-border); }
+  .calc-pref:last-of-type { border-bottom: 0; }
+  .calc-pref .t { font-size: 12px; color: var(--tv-text-hi); }
+  .calc-pref .h { grid-column: 1 / -1; font-size: 11px; color: var(--tv-muted); }
+  .calc-leg { display: grid; grid-template-columns: 4.6rem minmax(0, 1fr) minmax(0, 1fr) 3.6rem 1.6rem; gap: .3rem; align-items: center; }
+  .calc-leg + .calc-leg { margin-top: .35rem; }
+  .calc-leg select, .calc-leg input { padding: .25rem .3rem; font-size: 12px; min-width: 0; width: 100%; }
+  #fSym::placeholder { text-transform: none; }
+  details.calc-card > summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--tv-text-hi); list-style: revert; }
+</style>
+
+<div id="calcPage" class="calc-grid">
+  <aside class="flex flex-col gap-3 min-w-0">
+    <div>
+      <h1 class="text-base font-semibold" style="color:var(--tv-text-hi)">Option calculator</h1>
+      <p class="calc-small calc-muted mt-1">Type where you expect the stock to go and the price at which you would be wrong.
+        The calculator prices the legs you pick, or finds the best legs for you, from the latest option data
+        (Massive, 15-minute delayed, prices estimated from implied volatility). Saved setups are recalculated on
+        Hermes after every market pass.</p>
+    </div>
+    {% if engine_error %}<div class="calc-notice">{{ engine_error }}</div>{% endif %}
+    <div id="calcLane" class="calc-small calc-muted"></div>
+
+    <section class="calc-card">
+      <h2>Your setups</h2>
+      <div id="calcList" class="calc-list"></div>
+    </section>
+
+    <section class="calc-card" id="calcFormCard">
+      <h2 id="fTitle">New setup</h2>
+      <div class="grid grid-cols-2 gap-2">
+        <label class="calc-lbl col-span-2">Ticker
+          <input id="fSym" class="calc-in uppercase" type="text" maxlength="20" autocomplete="off" spellcheck="false" placeholder="e.g. NVDA">
+        </label>
+        <div id="fChain" class="col-span-2 calc-small calc-muted"></div>
+        <label class="calc-lbl">Expected price
+          <input id="fTarget" class="calc-in" type="number" step="any" min="0" inputmode="decimal" placeholder="where it goes">
+        </label>
+        <label class="calc-lbl">Worst-case price
+          <input id="fWorst" class="calc-in" type="number" step="any" min="0" inputmode="decimal" placeholder="where you're wrong">
+        </label>
+        <label class="calc-lbl">Days
+          <input id="fDays" class="calc-in" type="number" step="1" min="1" inputmode="numeric">
+        </label>
+        <label class="calc-lbl">Sets
+          <input id="fSets" class="calc-in" type="number" step="1" min="1" value="1" inputmode="numeric">
+        </label>
+        <div id="fHint" class="col-span-2 calc-small calc-muted"></div>
+        <div class="col-span-2">
+          <div class="calc-mode" role="group" aria-label="How to build the trade">
+            <button type="button" data-mode="pair" aria-pressed="true">Find the legs for me</button>
+            <button type="button" data-mode="manual" aria-pressed="false">I pick the legs</button>
+          </div>
+          <p id="fModeHelp" class="calc-small calc-muted mt-1"></p>
+        </div>
+        <div id="fLegsBox" class="col-span-2 hidden">
+          <div class="calc-leg calc-small calc-muted mb-1"><span>Call / put</span><span>Expiry</span><span>Strike</span><span title="+ buy, - sell">Qty &plusmn;</span><span></span></div>
+          <div id="fLegs"></div>
+          <button type="button" id="fAddLeg" class="calc-btn mt-2">+ Add a leg</button>
+          <p class="calc-small calc-muted mt-1">Quantity: a positive number buys the contract, a negative number sells it.</p>
+        </div>
+        <label class="calc-lbl col-span-2">Name (optional)
+          <input id="fName" class="calc-in" type="text" maxlength="80" placeholder="e.g. breakout to the old high">
+        </label>
+        <div id="fErr" class="col-span-2 calc-small calc-err hidden"></div>
+        <div class="col-span-2 flex items-center gap-2 flex-wrap">
+          <button type="button" id="fSave" class="calc-primary">Save and calculate</button>
+          <button type="button" id="fCancel" class="calc-btn hidden">Cancel edit</button>
+        </div>
+      </div>
+    </section>
+
+    <details class="calc-card" id="calcPrefs">
+      <summary>Your defaults</summary>
+      <p class="calc-small calc-muted mt-2">Used by every setup that does not say otherwise. "Find the legs for me" uses all of them;
+        "I pick the legs" uses only the number of days.</p>
+      <div id="pForm" class="mt-2"></div>
+      <div id="pErr" class="calc-small calc-err hidden mt-1"></div>
+      <div class="mt-2 flex gap-2"><button type="button" id="pSave" class="calc-primary">Save defaults</button>
+        <button type="button" id="pReset" class="calc-btn">Back to the standard values</button></div>
+    </details>
+  </aside>
+
+  <section id="calcView" class="calc-card min-w-0"></section>
+</div>
+
+<script type="application/json" id="calcBoot">{{ boot|tojson }}</script>
+<script>
+(function () {
+  'use strict';
+  var BOOT = JSON.parse(document.getElementById('calcBoot').textContent || '{}');
+  var $ = function (id) { return document.getElementById(id); };
+  var MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  var FAM = BOOT.families || {};
+  var S = {
+    items: BOOT.requests || [], sel: BOOT.selected, view: null, prefs: BOOT.prefs || {}, status: BOOT.status || null,
+    mode: 'pair', editing: null, chain: null, chainSym: null, chainSeq: 0, busy: false, open: {}
+  };
+
+  // ── small helpers ─────────────────────────────────────────────────────────────
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
+    });
+  }
+  function toast(msg, kind) { if (window.thToast) window.thToast(msg, kind); }
+  function isNum(v) { return typeof v === 'number' && isFinite(v); }
+  function num(v, d) { return isNum(v) ? v.toLocaleString('en-US', {minimumFractionDigits: d, maximumFractionDigits: d}) : '–'; }
+  function money(v, d) {
+    if (!isNum(v)) return '–';
+    d = d == null ? 2 : d;
+    return (v < 0 ? '-$' : '$') + Math.abs(v).toLocaleString('en-US', {minimumFractionDigits: d, maximumFractionDigits: d});
+  }
+  function signed(v, d) { return !isNum(v) ? '–' : (v > 0 ? '+' : '') + money(v, d); }
+  function pct(v, d) { return isNum(v) ? (v * 100).toFixed(d == null ? 1 : d) + '%' : '–'; }
+  function strikeText(k) { return isNum(k) ? String(Math.round(k * 1000) / 1000) : '–'; }
+  function shortDate(iso) {
+    var p = String(iso || '').split('-');
+    if (p.length !== 3) return esc(iso);
+    return MON[parseInt(p[1], 10) - 1] + ' ' + parseInt(p[2], 10) + " '" + p[0].slice(2);
+  }
+  function ago(iso) {
+    if (!iso) return '';
+    var t = Date.parse(iso);
+    if (!isFinite(t)) return '';
+    var s = Math.max(0, Math.round((Date.now() - t) / 1000));
+    if (s < 60) return s + ' s ago';
+    if (s < 3600) return Math.round(s / 60) + ' min ago';
+    if (s < 86400 * 2) return Math.round(s / 3600) + ' h ago';
+    return Math.round(s / 86400) + ' days ago';
+  }
+  function api(url, method, body) {
+    var opt = {method: method || 'GET', headers: {'Accept': 'application/json'}};
+    if (body !== undefined) { opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body); }
+    return fetch(url, opt).then(function (r) {
+      return r.json().catch(function () { return {ok: false, error: 'The server answered HTTP ' + r.status + '.'}; })
+        .then(function (j) { if (!r.ok && j.ok !== false) j.ok = false; if (!r.ok && !j.error) j.error = 'HTTP ' + r.status; return j; });
+    }).catch(function () { return {ok: false, error: 'No answer from the server - check your connection.'}; });
+  }
+  function show(el, on) { el.classList.toggle('hidden', !on); }
+  function famLabel(f, figs) { return (figs && figs.family_label) || (FAM[f] && FAM[f].label) || (f === 'manual' ? 'Your legs' : f); }
+  function legsLine(legs) {
+    return (legs || []).map(function (l) {
+      return (l.qty > 0 ? 'Buy ' : 'Sell ') + Math.abs(l.qty) + ' ' + shortDate(l.expiry) + ' ' + strikeText(l.strike) +
+        (l.right === 'C' ? ' call' : ' put');
+    }).join(' / ');
+  }
+  function cost(v) {
+    if (!isNum(v)) return '–';
+    return (v >= 0 ? 'Debit ' : 'Credit ') + money(Math.abs(v));
+  }
+  function dirOf(item, spot) {
+    if (!isNum(spot)) return '';
+    return item.target > spot ? 'bull' : item.target < spot ? 'bear' : '';
+  }
+
+  // ── the lane's status line ────────────────────────────────────────────────────
+  function paintStatus() {
+    var st = S.status, box = $('calcLane');
+    if (!st) { box.innerHTML = ''; return; }
+    var L = st.lane || {}, lp = st.last_pass, dot = 'is-grey', words;
+    if (L.state === 'absent') { dot = 'is-amber'; words = L.detail; }
+    else if (L.state === 'error') { dot = 'is-red'; words = 'Background calculator on Hermes: error - ' + (L.last_error || L.detail || ''); }
+    else if (L.stale) { dot = 'is-amber'; words = 'Background calculator on Hermes: ' + (L.heartbeat ? 'no sign of life for ' + ago(L.heartbeat).replace(' ago', '') : 'no sign of life') + ' (it was: ' + (L.detail || L.state) + '). "Compute now" still works.'; }
+    else { dot = 'is-green'; words = 'Background calculator on Hermes: ' + (L.state === 'computing' ? 'calculating - ' : '') + (L.detail || L.state) + ' · checked ' + ago(L.heartbeat); }
+    var p;
+    if (lp) p = 'Latest market pass: #' + lp.id + ' (' + esc(lp.session || '') + '), finished ' + esc(lp.finished_et || '') + ' · ' + ago(lp.finished);
+    else if (st.last_pass_error) p = esc(st.last_pass_error);
+    else p = 'No market pass yet: the screener collector has not finished one, so there are no option prices to calculate with.';
+    box.innerHTML = '<div class="flex items-start"><span class="calc-dot ' + dot + '" style="margin-top:4px"></span><span>' + esc(words) + '</span></div>' +
+      '<div class="mt-1" style="padding-left:14px">' + p + '</div>';
+  }
+  function pollStatus() {
+    api('/calc/api/status').then(function (j) {
+      if (j && j.ok) { S.status = j; paintStatus(); }
+    });
+    api('/calc/api/requests').then(function (j) {
+      if (!j || !j.ok) return;
+      var before = selItem();
+      S.items = j.items || [];
+      paintList();
+      var after = selItem();
+      if (before && after && after.last_computed_at !== before.last_computed_at && !S.busy) loadView(after.id, true);
+    });
+  }
+
+  // ── the setups list ───────────────────────────────────────────────────────────
+  function selItem() { for (var i = 0; i < S.items.length; i++) if (S.items[i].id === S.sel) return S.items[i]; return null; }
+  function horizonText(it) {
+    if (it.horizon_days) return it.horizon_days + ' days';
+    if (it.kind === 'pair') return (S.prefs.horizons_n || 3) + ' horizons';
+    return (S.prefs.horizon_days || 45) + ' days (default)';
+  }
+  function paintList() {
+    var box = $('calcList');
+    if (!S.items.length) {
+      box.innerHTML = '<p class="calc-small calc-muted">No setups yet. Fill in "New setup" below: a ticker, the price you expect and the price at which you would be wrong.</p>';
+      return;
+    }
+    box.innerHTML = S.items.map(function (it) {
+      var when = it.last_computed_at ? 'calculated ' + esc(it.last_computed_et) + ' · ' + ago(it.last_computed_at) +
+        (it.last_pass_id ? ' · pass #' + it.last_pass_id : '') : 'not calculated yet';
+      return '<div class="calc-row' + (it.id === S.sel ? ' is-sel' : '') + (it.active ? '' : ' is-off') + '" data-id="' + it.id + '">' +
+        '<div class="flex items-center gap-2 flex-wrap">' +
+          '<span class="calc-sym">' + esc(it.symbol) + '</span>' +
+          '<span class="calc-tag">' + (it.kind === 'pair' ? 'find the legs' : 'your legs') + '</span>' +
+          (it.active ? '' : '<span class="calc-tag">paused</span>') +
+          (it.name ? '<span class="calc-small calc-muted truncate" style="max-width:12rem">' + esc(it.name) + '</span>' : '') +
+        '</div>' +
+        '<div class="calc-small mt-1">Expected ' + money(it.target) + ' · worst ' + money(it.worst) + ' · ' + esc(horizonText(it)) +
+          (it.sets > 1 ? ' · ' + it.sets + ' sets' : '') + '</div>' +
+        '<div class="calc-small calc-muted">' + when + '</div>' +
+        (it.last_error ? '<div class="calc-small calc-err">Not calculated: ' + esc(it.last_error) + '</div>' : '') +
+        '<div class="flex gap-1 mt-1 flex-wrap">' +
+          '<button type="button" class="calc-btn" data-act="open">Open</button>' +
+          '<button type="button" class="calc-btn" data-act="active">' + (it.active ? 'Pause' : 'Resume') + '</button>' +
+          '<button type="button" class="calc-btn calc-danger" data-act="delete">Delete</button>' +
+        '</div></div>';
+    }).join('');
+  }
+  $('calcList').addEventListener('click', function (ev) {
+    var row = ev.target.closest('.calc-row');
+    if (!row) return;
+    var id = parseInt(row.dataset.id, 10), btn = ev.target.closest('button'), act = btn ? btn.dataset.act : 'open';
+    if (act === 'open') select(id);
+    else if (act === 'active') toggleActive(id);
+    else if (act === 'delete') removeItem(id);
+  });
+  function select(id) {
+    S.sel = id;
+    paintList();
+    try { history.replaceState(null, '', '/calc?id=' + id); } catch (e) { /* ignore */ }
+    loadView(id);
+    if (window.innerWidth < 768) $('calcView').scrollIntoView({behavior: 'smooth', block: 'start'});
+  }
+  function upsertItem(it) {
+    var i = S.items.findIndex(function (x) { return x.id === it.id; });
+    if (i >= 0) S.items[i] = it; else S.items.unshift(it);
+  }
+  function toggleActive(id) {
+    var it = S.items.find(function (x) { return x.id === id; });
+    if (!it) return;
+    api('/calc/api/requests/' + id + '/active', 'POST', {active: !it.active}).then(function (j) {
+      if (!j.ok) { toast(j.error || 'Could not change it', 'err'); return; }
+      upsertItem(j.item); paintList();
+      toast(j.item.active ? 'Resumed - Hermes recalculates it after the next market pass' : 'Paused - Hermes stops recalculating it', 'ok');
+      if (S.view && S.view.item.id === id) { S.view.item = j.item; paintView(); }
+    });
+  }
+  function removeItem(id) {
+    var it = S.items.find(function (x) { return x.id === id; });
+    if (!it || !window.confirm('Delete the ' + it.symbol + ' setup and all its saved results?')) return;
+    api('/calc/api/requests/' + id, 'DELETE').then(function (j) {
+      if (!j.ok) { toast(j.error || 'Could not delete it', 'err'); return; }
+      S.items = S.items.filter(function (x) { return x.id !== id; });
+      if (S.sel === id) { S.sel = null; S.view = null; try { history.replaceState(null, '', '/calc'); } catch (e) { /* ignore */ } }
+      if (S.editing === id) resetForm();
+      paintList(); paintView();
+      toast('Deleted', 'ok');
+    });
+  }
+
+  // ── the result view ───────────────────────────────────────────────────────────
+  function loadView(id, quiet) {
+    if (!quiet) { S.view = null; $('calcView').innerHTML = '<p class="calc-small calc-muted">Loading…</p>'; }
+    return api('/calc/api/requests/' + id).then(function (j) {
+      if (S.sel !== id) return;
+      if (!j.ok) { $('calcView').innerHTML = '<p class="calc-small calc-err">' + esc(j.error) + '</p>'; return; }
+      S.view = j; upsertItem(j.item); paintList(); paintView();
+    });
+  }
+  function computeNow(id) {
+    S.busy = true;
+    var btn = $('vCompute');
+    if (btn) { btn.disabled = true; btn.textContent = 'Calculating…'; }
+    return api('/calc/api/requests/' + id + '/compute', 'POST').then(function (j) {
+      S.busy = false;
+      if (j.item) { upsertItem(j.item); paintList(); }
+      if (j.item && S.sel === id) { S.view = j; paintView(); }
+      if (!j.ok) toast(j.error || 'Could not calculate it', 'err');
+      return j;
+    });
+  }
+  function paintView() {
+    var box = $('calcView'), v = S.view;
+    if (!v) {
+      box.innerHTML = S.items.length
+        ? '<p class="calc-small calc-muted">Pick a setup on the left to see its figures and chart.</p>'
+        : '<div class="calc-small calc-muted"><p class="mb-2" style="color:var(--tv-text-hi);font-size:13px">How it works</p>' +
+          '<p>1. Type a ticker, the price you expect it to reach, and the price at which you would be wrong.</p>' +
+          '<p>2. Let the calculator find the legs (it tries every spread, calendar and single option that fits the move and ranks them), or pick the legs yourself.</p>' +
+          '<p>3. You see what the trade is worth on the day you expect the move, at both prices, with a chart. Hermes recalculates it after every market pass.</p></div>';
+      return;
+    }
+    var it = v.item, c = v.computed, spot = c ? c.spot : null, dir = dirOf(it, spot);
+    var h = '<div class="flex items-start justify-between gap-2 flex-wrap">' +
+      '<div><div class="flex items-center gap-2 flex-wrap"><span class="calc-sym" style="font-size:16px">' + esc(it.symbol) + '</span>' +
+        '<span class="calc-tag">' + (it.kind === 'pair' ? 'find the legs for me' : 'your legs') + '</span>' +
+        (dir ? '<span class="calc-tag is-' + dir + '">' + (dir === 'bull' ? 'bullish' : 'bearish') + '</span>' : '') +
+        (it.active ? '' : '<span class="calc-tag">paused</span>') + '</div>' +
+        (it.name ? '<div class="calc-small calc-muted">' + esc(it.name) + '</div>' : '') +
+        '<div class="calc-small mt-1">Expected <b>' + money(it.target) + '</b> · worst case <b>' + money(it.worst) + '</b> · ' +
+          esc(horizonText(it)) + ' · ' + it.sets + (it.sets === 1 ? ' set' : ' sets') + '</div></div>' +
+      '<div class="flex gap-1 flex-wrap">' +
+        '<button type="button" id="vCompute" class="calc-primary">Compute now</button>' +
+        '<button type="button" id="vEdit" class="calc-btn">Edit</button>' +
+        '<button type="button" id="vActive" class="calc-btn">' + (it.active ? 'Pause' : 'Resume') + '</button>' +
+        '<button type="button" id="vDelete" class="calc-btn calc-danger">Delete</button></div></div>';
+    if (c) {
+      h += '<p class="calc-small calc-muted mt-2">Calculated ' + esc(c.created_et) + ' (' + ago(c.created_at) + ')' +
+        (c.pass_id ? ' on market pass #' + c.pass_id : ' by hand') + ' from ' + esc(it.symbol) + ' at ' + money(spot) +
+        (c.as_of_et ? ' · option data as of ' + esc(c.as_of_et) : '') + '.</p>';
+    }
+    if (it.last_error) h += '<p class="calc-small calc-err mt-1">The last try did not work: ' + esc(it.last_error) + '</p>';
+    if (!v.results.length && !v.summary) {
+      h += '<p class="calc-small calc-muted mt-3">' + (it.last_error ? 'There is no earlier result to show.' :
+        'Not calculated yet. Press "Compute now", or wait for Hermes to do it after the next market pass.') + '</p>';
+    } else if (it.kind === 'manual') {
+      h += manualView(it, v.results[0], spot);
+    } else {
+      h += pairView(it, v, spot);
+    }
+    if (v.history && v.history.length > 1) h += historyView(it, v.history);
+    box.innerHTML = h;
+    $('vCompute').onclick = function () { computeNow(it.id); };
+    $('vEdit').onclick = function () { editItem(it); };
+    $('vActive').onclick = function () { toggleActive(it.id); };
+    $('vDelete').onclick = function () { removeItem(it.id); };
+    wireCharts(box);
+  }
+
+  function fig(k, v, s, cls) {
+    return '<div class="calc-fig"><div class="k">' + k + '</div><div class="v ' + (cls || '') + '">' + v + '</div>' +
+      (s ? '<div class="s">' + s + '</div>' : '') + '</div>';
+  }
+  function rrText(f) {
+    if (isNum(f.reward_over_risk)) return num(f.reward_over_risk, 2) + ' : 1';
+    return f.loss_at_worst != null && f.loss_at_worst >= 0 ? 'no loss at worst' : '–';
+  }
+  function manualView(it, r, spot) {
+    if (!r) return '';
+    var f = r.figures || {}, el = f.legs || [], sets = it.sets || 1;
+    var h = '<h2 class="mt-4">The legs</h2><div class="calc-scroll"><table class="calc-table"><thead><tr>' +
+      '<th class="l">Buy / sell</th><th>Qty</th><th class="l">Call / put</th><th>Strike</th><th class="l">Expiry</th><th>Days left</th>' +
+      '<th>IV</th><th title="Model price per share from the contract\'s IV; one contract = 100 shares">Price today</th>' +
+      '<th title="The model price on the target date, at today\'s stock price">Price on target date</th><th>Delta today</th><th>Open interest</th></tr></thead><tbody>';
+    (r.legs || []).forEach(function (l, i) {
+      var e = el[i] || {};
+      h += '<tr><td class="l ' + (l.qty > 0 ? 'calc-up' : 'calc-down') + '">' + (l.qty > 0 ? 'Buy' : 'Sell') + '</td><td>' + Math.abs(l.qty) + '</td>' +
+        '<td class="l">' + (l.right === 'C' ? 'Call' : 'Put') + '</td><td>' + strikeText(l.strike) + '</td><td class="l">' + shortDate(l.expiry) + '</td>' +
+        '<td>' + (isNum(l.dte) ? l.dte : '–') + '</td><td>' + pct(l.iv) + '</td><td>' + money(e.price_entry) + '</td><td>' + money(e.price_target) + '</td>' +
+        '<td>' + num(e.delta_entry, 3) + '</td><td>' + (isNum(l.oi) ? l.oi.toLocaleString('en-US') : '–') + '</td></tr>';
+    });
+    h += '</tbody></table></div>';
+    var td = r.target_date ? 'on ' + shortDate(r.target_date) + ' (' + r.horizon_days + ' days from the calculation)' : '';
+    h += '<h2 class="mt-4">What the trade does ' + esc(td) + '</h2><div class="calc-figs">' +
+      fig('Cost to open', cost(f.entry_value), money(Math.abs(f.entry_value) * 100 * sets, 0) + ' for ' + sets + (sets === 1 ? ' set' : ' sets')) +
+      fig('Worth at today\'s price', money(f.decayed_value), 'on the target date, if the stock does not move') +
+      fig('Worth at the expected price', money(f.target_value), 'at ' + money(it.target)) +
+      fig('Worth at the worst price', money(f.worst_value), 'at ' + money(it.worst)) +
+      fig('Profit or loss at the expected price', signed(f.gain_at_target), 'per share', f.gain_at_target >= 0 ? 'calc-up' : 'calc-down') +
+      fig('Profit or loss at the worst price', signed(f.loss_at_worst), 'per share', f.loss_at_worst >= 0 ? 'calc-up' : 'calc-down') +
+      fig('Reward over risk', rrText(f), 'gain at expected ÷ loss at worst') +
+      fig('Return on cost', pct(f.roi, 0), 'gain at expected ÷ cost to open') +
+      fig('Breakeven', (f.breakevens || []).length ? f.breakevens.map(function (b) { return money(b); }).join(' / ') : 'none in range', 'stock price on the target date where the trade is flat') +
+      fig('Chance of profit', pct(f.prob_profit, 0), 'model probability, not a forecast') +
+      fig('Delta today / on target date', num(f.net_delta_entry, 3) + ' / ' + num(f.net_delta_target, 3), 'how much the trade moves per $1 in the stock') +
+      fig('Time decay over the window', signed(f.total_decay), 'value lost (or gained) to time if the stock does not move') +
+      fig('Best / worst in the chart', signed(f.max_profit) + ' / ' + signed(f.max_loss), 'profit or loss per share on the target date') +
+      fig('Total at the expected price', signed(f.total_gains, 0), sets + (sets === 1 ? ' set' : ' sets') + ' × 100 shares', f.total_gains >= 0 ? 'calc-up' : 'calc-down') +
+      fig('Total at the worst price', signed(f.total_risk, 0), sets + (sets === 1 ? ' set' : ' sets') + ' × 100 shares', f.total_risk >= 0 ? 'calc-up' : 'calc-down') +
+      fig('Money put up', money(f.total_outlay, 0), 'the cost to open, all sets') +
+      '</div>';
+    h += chartBlock(r, it, spot, f);
+    return h;
+  }
+  function chartBlock(r, it, spot, f) {
+    if (!r.curves || !r.curves.grid || !r.curves.grid.length) return '';
+    var id = 'ch' + r.id;
+    S.charts = S.charts || {};
+    S.charts[id] = {curves: r.curves, spot: spot, target: it.target, worst: it.worst, entry: f.entry_value, be: f.breakevens || []};
+    return '<h2 class="mt-4">Profit and loss on the target date</h2>' +
+      '<div class="calc-chart" data-chart="' + id + '"></div>' +
+      '<p class="calc-small calc-muted mt-1">Solid line: what the position is worth on ' + esc(shortDate(r.target_date)) +
+      ' at each stock price. Dashed line: what it is worth today. Faint lines: each leg. Green above the cost to open is profit, red below is loss. ' +
+      'Values per share (one contract = 100 shares). Computed' + (r.pass_id ? ' on market pass #' + r.pass_id : ' by hand') +
+      (r.created_et ? ' at ' + esc(r.created_et) : '') + ' from ' + esc(it.symbol) + ' at ' + money(spot) + '.</p>';
+  }
+  function wireCharts(root) {
+    root.querySelectorAll('[data-chart]').forEach(function (el) {
+      var o = (S.charts || {})[el.dataset.chart];
+      if (!o) return;
+      var w = Math.max(280, el.clientWidth || 600);
+      el.innerHTML = payoffChart(o, w);
+      hover(el, o);
+    });
+  }
+
+  // The payoff chart from the stored curves (x = grid, y = position value per share).
+  var clipN = 0;
+  function payoffChart(o, width) {
+    var c = o.curves, g = c.grid, net = c.net_target || [], ent = c.net_entry || [], legs = c.legs || [];
+    var x0 = g[0], x1 = g[g.length - 1];
+    var ys = net.concat(ent).concat(isNum(o.entry) ? [o.entry] : []).filter(isNum);
+    var y0 = Math.min.apply(null, ys), y1 = Math.max.apply(null, ys);
+    if (y1 - y0 < 0.5) { y1 += 0.5; y0 -= 0.5; }
+    var yp = (y1 - y0) * 0.07; y0 -= yp; y1 += yp;
+    var W = Math.round(Math.max(280, Math.min(900, width))), H = W < 480 ? 230 : 290, L = 52, R = 10, T = 16, B = 28;
+    var X = function (v) { return L + (v - x0) / (x1 - x0) * (W - L - R); };
+    var Y = function (v) { return T + (y1 - v) / (y1 - y0) * (H - T - B); };
+    function path(arr) {
+      var d = '', on = false;
+      for (var i = 0; i < g.length; i++) {
+        if (!isNum(arr[i])) { on = false; continue; }
+        d += (on ? 'L' : 'M') + X(g[i]).toFixed(1) + ' ' + Y(arr[i]).toFixed(1) + ' ';
+        on = true;
+      }
+      return d;
+    }
+    var id = 'calcClip' + (++clipN), ey = isNum(o.entry) ? Y(o.entry) : Y(0);
+    var line = path(net);
+    var area = line + 'L' + X(x1).toFixed(1) + ' ' + ey.toFixed(1) + ' L' + X(x0).toFixed(1) + ' ' + ey.toFixed(1) + ' Z';
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" style="max-width:' + W + 'px;display:block" role="img" aria-label="Position value on the target date">' +
+      '<defs><clipPath id="' + id + 'u"><rect x="0" y="0" width="' + W + '" height="' + ey.toFixed(1) + '"/></clipPath>' +
+      '<clipPath id="' + id + 'd"><rect x="0" y="' + ey.toFixed(1) + '" width="' + W + '" height="' + (H - ey).toFixed(1) + '"/></clipPath>' +
+      '<clipPath id="' + id + 'p"><rect x="' + L + '" y="' + T + '" width="' + (W - L - R) + '" height="' + (H - T - B) + '"/></clipPath></defs>' +
+      '<path d="' + area + '" clip-path="url(#' + id + 'u)" style="fill:var(--tv-up);fill-opacity:.16"/>' +
+      '<path d="' + area + '" clip-path="url(#' + id + 'd)" style="fill:var(--tv-down);fill-opacity:.16"/>';
+    for (var t = 0; t <= 4; t++) {
+      var yv = y0 + yp + (y1 - y0 - 2 * yp) * t / 4;
+      s += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + Y(yv).toFixed(1) + '" y2="' + Y(yv).toFixed(1) + '" style="stroke:var(--tv-border);stroke-width:.6"/>' +
+        '<text x="' + (L - 5) + '" y="' + (Y(yv) + 3).toFixed(1) + '" text-anchor="end">' + esc(money(yv, Math.abs(y1 - y0) < 10 ? 2 : 0)) + '</text>';
+      var xv = x0 + (x1 - x0) * t / 4;
+      s += '<text x="' + X(xv).toFixed(1) + '" y="' + (H - 9) + '" text-anchor="middle">' + esc(xv.toFixed(xv < 20 ? 2 : 0)) + '</text>';
+    }
+    legs.forEach(function (l) { s += '<path d="' + path(l) + '" clip-path="url(#' + id + 'p)" style="fill:none;stroke:var(--tv-muted);stroke-width:1;stroke-opacity:.45"/>'; });
+    if (isNum(o.entry)) {
+      s += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + ey.toFixed(1) + '" y2="' + ey.toFixed(1) + '" style="stroke:var(--tv-muted);stroke-dasharray:4 3"/>' +
+        '<text x="' + (L + 4) + '" y="' + (ey + 11).toFixed(1) + '" text-anchor="start">cost to open: ' + esc(cost(o.entry).toLowerCase()) + '</text>';
+    }
+    s += '<path d="' + path(ent) + '" style="fill:none;stroke:var(--tv-text);stroke-width:1;stroke-dasharray:5 4;stroke-opacity:.7"/>';
+    s += '<path d="' + line + '" style="fill:none;stroke:var(--tv-text-hi);stroke-width:1.8"/>';
+    function vline(x, color, label, dy) {
+      if (!isNum(x) || x < x0 || x > x1) return '';
+      return '<line x1="' + X(x).toFixed(1) + '" x2="' + X(x).toFixed(1) + '" y1="' + T + '" y2="' + (H - B) + '" style="stroke:' + color + ';stroke-dasharray:3 3;stroke-width:1.2"/>' +
+        '<text x="' + (X(x) > W * 0.7 ? X(x) - 3 : X(x) + 3).toFixed(1) + '" y="' + (T + 9 + dy) + '" text-anchor="' + (X(x) > W * 0.7 ? 'end' : 'start') + '" style="fill:' + color + '">' + esc(label) + '</text>';
+    }
+    s += vline(o.spot, 'var(--tv-accent-tx)', 'now ' + money(o.spot), 0);
+    s += vline(o.target, 'var(--tv-up)', 'expected ' + money(o.target), 12);
+    s += vline(o.worst, 'var(--tv-down)', 'worst ' + money(o.worst), 24);
+    (o.be || []).forEach(function (b) {
+      if (isNum(b) && b >= x0 && b <= x1 && isNum(o.entry)) {
+        s += '<circle cx="' + X(b).toFixed(1) + '" cy="' + ey.toFixed(1) + '" r="3" style="fill:var(--tv-text-hi)"/>';
+      }
+    });
+    s += '<line class="calc-cross" x1="0" x2="0" y1="' + T + '" y2="' + (H - B) + '" style="stroke:var(--tv-text);stroke-width:.8;display:none"/>';
+    s += '</svg><div class="calc-tip hidden"></div>';
+    o._X = {L: L, R: R, W: W, x0: x0, x1: x1};
+    return s;
+  }
+  function hover(el, o) {
+    var svg = el.querySelector('svg'), tip = el.querySelector('.calc-tip'), cross = el.querySelector('.calc-cross');
+    if (!svg || !o._X) return;
+    function at(ev) {
+      var rect = svg.getBoundingClientRect(), k = o._X.W / rect.width;
+      var px = (ev.clientX - rect.left) * k;
+      if (px < o._X.L || px > o._X.W - o._X.R) { tip.classList.add('hidden'); cross.style.display = 'none'; return; }
+      var xv = o._X.x0 + (px - o._X.L) / (o._X.W - o._X.L - o._X.R) * (o._X.x1 - o._X.x0);
+      var g = o.curves.grid, i = 0, best = Infinity;
+      for (var j = 0; j < g.length; j++) { var d = Math.abs(g[j] - xv); if (d < best) { best = d; i = j; } }
+      var v = o.curves.net_target[i], pl = isNum(v) && isNum(o.entry) ? v - o.entry : null;
+      cross.setAttribute('x1', px.toFixed(1)); cross.setAttribute('x2', px.toFixed(1)); cross.style.display = '';
+      tip.innerHTML = 'Stock at <b>' + money(g[i]) + '</b>: worth ' + money(v) + ' · ' +
+        '<span class="' + (pl >= 0 ? 'calc-up' : 'calc-down') + '">' + (pl >= 0 ? 'profit ' : 'loss ') + money(Math.abs(pl)) + '</span> per share';
+      tip.classList.remove('hidden');
+      var left = (ev.clientX - el.getBoundingClientRect().left) + 12;
+      if (left + tip.offsetWidth > el.clientWidth) left = Math.max(0, left - tip.offsetWidth - 24);
+      tip.style.left = left + 'px'; tip.style.top = '4px';
+    }
+    svg.addEventListener('mousemove', at);
+    svg.addEventListener('touchmove', function (ev) { if (ev.touches[0]) at(ev.touches[0]); }, {passive: true});
+    svg.addEventListener('mouseleave', function () { tip.classList.add('hidden'); cross.style.display = 'none'; });
+  }
+
+  // ── "find the legs for me": the summary + one card per family ─────────────────
+  function critWords(c) {
+    if (!c) return '';
+    var w = [];
+    w.push(c.defined_risk ? 'only trades with a capped loss' : 'trades with an open-ended loss allowed');
+    if (c.max_loss > 0) w.push('lose at most ' + money(c.max_loss, 0) + ' per set');
+    w.push('reward over risk at least ' + c.min_rr);
+    w.push('open interest at least ' + c.min_oi + ' on every leg');
+    w.push(c.avoid_earnings ? 'no earnings inside the window' : 'earnings inside the window allowed');
+    if (c.credit_pref && c.credit_pref !== 'any') w.push('only ' + c.credit_pref + ' trades');
+    return w.join('; ');
+  }
+  function pairView(it, v, spot) {
+    var sm = v.summary, h = '';
+    if (sm) {
+      var dir = sm.direction === 'bull' ? 'Bullish' : 'Bearish';
+      h += '<div class="calc-small mt-3"><p><b>' + dir + '</b>: from ' + money(sm.spot) + ' now to ' + money(sm.target) +
+        ' (' + (sm.target >= sm.spot ? '+' : '') + pct((sm.target - sm.spot) / sm.spot, 1) + '), wrong at ' + money(sm.worst) + '.</p>';
+      h += '<p class="mt-1">Searched ' + (sm.horizons || []).length + ' horizon' + ((sm.horizons || []).length === 1 ? '' : 's') + ':</p><ul class="mt-1" style="padding-left:1rem;list-style:disc">';
+      (sm.horizons || []).forEach(function (hz) {
+        h += '<li>' + hz.days + ' days, target date ' + shortDate(hz.target_date) +
+          ((hz.expiries || []).length ? ' · expiries ' + hz.expiries.map(shortDate).join(', ') : '') +
+          (isNum(hz.lo) ? ' · strikes from ' + money(hz.lo, 0) + ' to ' + money(hz.hi, 0) : '') +
+          (isNum(hz.n_contracts) ? ' · ' + hz.n_contracts + ' contracts' : '') +
+          (hz.reason ? ' · <span class="calc-err">skipped: ' + esc(hz.reason) + '</span>' : '') + '</li>';
+      });
+      h += '</ul><p class="mt-1">Tried ' + (sm.n_candidates || 0).toLocaleString('en-US') + ' leg sets, kept ' + (sm.n_kept || 0) + '.';
+      var dr = Object.keys(sm.dropped || {}).filter(function (k) { return sm.dropped[k] > 0; });
+      if (dr.length) h += ' Left out: ' + dr.map(function (k) { return sm.dropped[k].toLocaleString('en-US') + ' with ' + esc(k); }).join(', ') + '.';
+      h += '</p><p class="mt-1 calc-muted">Your rules: ' + esc(critWords(sm.criteria)) + '.</p></div>';
+    }
+    var groups = {};
+    v.results.forEach(function (r) { (groups[r.family] = groups[r.family] || []).push(r); });
+    var fams = Object.keys(groups).map(function (f) {
+      var rows = groups[f].sort(function (a, b) { return a.rank - b.rank; });
+      return {family: f, rows: rows, best: rows[0]};
+    }).sort(function (a, b) { return (b.best.score || 0) - (a.best.score || 0); });
+    if (!fams.length) {
+      return h + '<p class="calc-small mt-3">No leg set passed your rules this time. Loosen a rule under "Your defaults" (for example a lower reward over risk or open interest), or change the prices.</p>';
+    }
+    h += '<h2 class="mt-4">Best trade for each strategy, best first</h2>';
+    fams.forEach(function (F, n) {
+      var r = F.best, f = r.figures || {}, open = !!S.open[r.id];
+      h += '<div class="calc-fam">' +
+        '<div class="flex items-center justify-between gap-2 flex-wrap"><div class="flex items-center gap-2 flex-wrap">' +
+          '<span style="color:var(--tv-text-hi);font-weight:600">' + (n + 1) + '. ' + esc(famLabel(F.family, f)) + '</span>' +
+          '<span class="calc-tag">' + (f.debit_credit || (f.entry_value >= 0 ? 'debit' : 'credit')) + '</span>' +
+          (f.defined_risk === false ? '<span class="calc-tag is-bear">loss not capped</span>' : '') +
+          '<span class="calc-small calc-muted">best at ' + r.horizon_days + ' days (target date ' + shortDate(r.target_date) + ')</span></div>' +
+          '<span class="calc-small calc-muted">score ' + num(r.score, 2) + '</span></div>' +
+        '<div class="calc-small mt-1">' + esc(legsLine(r.legs)) + '</div>' +
+        '<div class="calc-kv mt-1"><span>Cost to open <b>' + cost(f.entry_value) + '</b></span>' +
+          '<span>Worth at expected <b>' + money(f.target_value) + '</b></span>' +
+          '<span>Gain at expected <b class="' + (f.gain_at_target >= 0 ? 'calc-up' : 'calc-down') + '">' + signed(isNum(f.gain_at_target) ? f.gain_at_target * 100 * (it.sets || 1) : null, 0) + '</b>' + ((it.sets || 1) > 1 ? ' (' + it.sets + ' sets)' : ' per set') + '</span>' +
+          '<span>Reward over risk <b>' + rrText(f) + '</b></span>' +
+          '<span>Most it can lose <b>' + money(Math.abs(Math.min(f.max_loss || 0, 0)) * 100 * (it.sets || 1), 0) + '</b>' + ((it.sets || 1) > 1 ? ' (' + it.sets + ' sets)' : ' per set') + '</span>' +
+          '<span>Chance of profit <b>' + pct(f.prob_profit, 0) + '</b> <span class="calc-muted">(model probability, not a forecast)</span></span></div>' +
+        '<div class="flex gap-1 mt-2 flex-wrap"><button type="button" class="calc-btn" data-more="' + r.id + '">' + (open ? 'Hide the chart and alternatives' : 'Show the chart and alternatives') + '</button>' +
+          '<button type="button" class="calc-btn" data-copy="' + r.id + '">Open in calculator</button></div>';
+      if (open) {
+        h += chartBlock(r, it, spot, f);
+        var alts = F.rows.slice(1);
+        if (alts.length) {
+          h += '<h2 class="mt-3">Alternatives</h2><div class="calc-scroll"><table class="calc-table"><thead><tr><th class="l">Legs</th><th>Days</th><th>Cost to open</th>' +
+            '<th>Worth at expected</th><th>Reward over risk</th><th>Most it can lose</th><th>Chance of profit</th><th>Score</th><th></th></tr></thead><tbody>';
+          alts.forEach(function (a) {
+            var g = a.figures || {};
+            h += '<tr><td class="l">' + esc(legsLine(a.legs)) + '</td><td>' + a.horizon_days + '</td><td>' + cost(g.entry_value) + '</td>' +
+              '<td>' + money(g.target_value) + '</td><td>' + rrText(g) + '</td><td>' + money(Math.abs(Math.min(g.max_loss || 0, 0)) * 100, 0) + '</td>' +
+              '<td>' + pct(g.prob_profit, 0) + '</td><td>' + num(a.score, 2) + '</td>' +
+              '<td><button type="button" class="calc-btn" data-copy="' + a.id + '">Open</button></td></tr>';
+          });
+          h += '</tbody></table></div>';
+        } else {
+          h += '<p class="calc-small calc-muted mt-2">No alternatives passed your rules for this strategy.</p>';
+        }
+      }
+      h += '</div>';
+    });
+    return h;
+  }
+  $('calcView').addEventListener('click', function (ev) {
+    var more = ev.target.closest('[data-more]'), copy = ev.target.closest('[data-copy]');
+    if (more) { var id = parseInt(more.dataset.more, 10); S.open[id] = !S.open[id]; paintView(); }
+    else if (copy) openInCalculator(parseInt(copy.dataset.copy, 10));
+  });
+  function openInCalculator(rid) {
+    var v = S.view, r = v && v.results.find(function (x) { return x.id === rid; });
+    if (!r) return;
+    var it = v.item;
+    var body = {symbol: it.symbol, kind: 'manual', target: it.target, worst: it.worst, horizon_days: r.horizon_days,
+                sets: it.sets, name: famLabel(r.family, r.figures) + ' (from the ' + it.symbol + ' search)',
+                legs: r.legs.map(function (l) { return {right: l.right, strike: l.strike, expiry: l.expiry, qty: l.qty}; })};
+    api('/calc/api/requests', 'POST', body).then(function (j) {
+      if (!j.ok) { toast(j.error || 'Could not open it', 'err'); return; }
+      upsertItem(j.item); S.sel = j.item.id; paintList();
+      try { history.replaceState(null, '', '/calc?id=' + j.item.id); } catch (e) { /* ignore */ }
+      $('calcView').innerHTML = '<p class="calc-small calc-muted">Calculating…</p>';
+      computeNow(j.item.id).then(function (k) { if (!k.item) loadView(j.item.id); });
+    });
+  }
+  function historyView(it, rows) {
+    var h = '<h2 class="mt-4">Earlier calculations</h2><p class="calc-small calc-muted mb-1">' +
+      (it.kind === 'pair' ? 'The best trade found each time, newest first.' : 'How the figures moved pass by pass, newest first.') + '</p>' +
+      '<div class="calc-scroll"><table class="calc-table"><thead><tr><th class="l">Calculated</th><th>Pass</th><th>Stock price</th>' +
+      (it.kind === 'pair' ? '<th class="l">Strategy</th>' : '') + '<th>Cost to open</th><th>Worth at expected</th><th>Reward over risk</th></tr></thead><tbody>';
+    rows.forEach(function (r) {
+      h += '<tr><td class="l">' + esc(r.created_et) + '</td><td>' + (r.pass_id ? '#' + r.pass_id : 'by hand') + '</td><td>' + money(r.spot) + '</td>' +
+        (it.kind === 'pair' ? '<td class="l">' + esc(famLabel(r.family, r)) + '</td>' : '') +
+        '<td>' + cost(r.entry_value) + '</td><td>' + money(r.target_value) + '</td><td>' + (isNum(r.reward_over_risk) ? num(r.reward_over_risk, 2) : '–') + '</td></tr>';
+    });
+    return h + '</tbody></table></div>';
+  }
+
+  // ── the "New setup" form ──────────────────────────────────────────────────────
+  function setMode(m) {
+    S.mode = m;
+    document.querySelectorAll('.calc-mode button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.mode === m)); });
+    show($('fLegsBox'), m === 'manual');
+    $('fModeHelp').textContent = m === 'pair'
+      ? 'The calculator tries every single option, spread, calendar and diagonal that fits your move, keeps those that pass your defaults, and ranks them. Leave Days empty to search the next ' + (S.prefs.horizons_n || 3) + ' monthly expiries.'
+      : 'Pick up to 4 contracts from the latest market pass. The figures are for the target date (Days from today).';
+    $('fDays').placeholder = m === 'pair' ? 'auto: ' + (S.prefs.horizons_n || 3) + ' expiries' : 'default ' + (S.prefs.horizon_days || 45);
+    if (m === 'manual') { if (!$('fLegs').children.length) addLeg(); ensureChain(); }
+  }
+  document.querySelectorAll('.calc-mode button').forEach(function (b) { b.onclick = function () { setMode(b.dataset.mode); }; });
+
+  function ensureChain() {
+    var sym = $('fSym').value.trim().toUpperCase();
+    if (!sym) { S.chain = null; S.chainSym = null; paintChain(); fillLegSelects(); return; }
+    if (sym === S.chainSym) return;
+    loadChain(sym);
+  }
+  function loadChain(sym) {
+    var seq = ++S.chainSeq;
+    S.chainSym = sym; S.chain = null;
+    $('fChain').innerHTML = 'Reading ' + esc(sym) + '\'s options…';
+    api('/calc/api/chain?symbol=' + encodeURIComponent(sym)).then(function (j) {
+      if (seq !== S.chainSeq) return;
+      S.chain = j;
+      paintChain(); fillLegSelects(); hint();
+    });
+  }
+  function paintChain() {
+    var c = S.chain, box = $('fChain');
+    if (!c) { box.innerHTML = ''; return; }
+    if (!c.ok) { box.innerHTML = '<span class="calc-err">' + esc(c.error) + '</span>'; return; }
+    box.innerHTML = esc(c.symbol) + (c.name ? ' · ' + esc(c.name) : '') + ' · <b>' + money(c.spot) + '</b> ' +
+      '(from the market pass of ' + esc(c.as_of_et || c.session || '?') + ')' +
+      (c.earnings_date ? ' · earnings ' + esc(shortDate(c.earnings_date)) : '') +
+      (isNum(c.iv_rank) ? ' · IV rank ' + Math.round(c.iv_rank) : '') + ' · ' + c.expiries.length + ' expiries';
+  }
+  $('fSym').addEventListener('change', function () { $('fSym').value = $('fSym').value.trim().toUpperCase(); ensureChain(); });
+  $('fSym').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); $('fSym').blur(); ensureChain(); } });
+  ['fTarget', 'fWorst'].forEach(function (id) { $(id).addEventListener('input', hint); });
+
+  function hint() {
+    var c = S.chain, t = parseFloat($('fTarget').value), w = parseFloat($('fWorst').value), box = $('fHint');
+    if (!c || !c.ok || !isNum(c.spot) || !isFinite(t)) { box.textContent = ''; return; }
+    var spot = c.spot, txt;
+    if (t > spot) txt = 'Bullish: you expect a rise of ' + pct((t - spot) / spot, 1) + ' from ' + money(spot) + '.';
+    else if (t < spot) txt = 'Bearish: you expect a fall of ' + pct((spot - t) / spot, 1) + ' from ' + money(spot) + '.';
+    else txt = 'The expected price equals today\'s price - pick one above or below it.';
+    if (isFinite(w)) {
+      if ((t > spot && w >= spot) || (t < spot && w <= spot)) txt += ' Usually the worst-case price sits on the other side of today\'s price.';
+      else if (t !== spot) txt += ' You are wrong at ' + money(w) + ' (' + pct((w - spot) / spot, 1) + ').';
+    }
+    box.textContent = txt;
+  }
+
+  function legRow(l) {
+    var d = document.createElement('div');
+    d.className = 'calc-leg';
+    d.innerHTML = '<select class="calc-in lg-right" aria-label="Call or put"><option value="C">Call</option><option value="P">Put</option></select>' +
+      '<select class="calc-in lg-exp" aria-label="Expiry"></select><select class="calc-in lg-strike" aria-label="Strike"></select>' +
+      '<input class="calc-in lg-qty" type="number" step="1" value="1" aria-label="Quantity, + buy or - sell">' +
+      '<button type="button" class="calc-btn calc-danger lg-x" title="Remove this leg" aria-label="Remove this leg">&times;</button>';
+    if (l) { d.querySelector('.lg-right').value = l.right; d.querySelector('.lg-qty').value = l.qty; d.dataset.exp = l.expiry; d.dataset.strike = l.strike; }
+    d.querySelector('.lg-right').onchange = function () { fillOne(d); };
+    d.querySelector('.lg-exp').onchange = function () { d.dataset.exp = d.querySelector('.lg-exp').value; fillOne(d); };
+    d.querySelector('.lg-strike').onchange = function () { d.dataset.strike = d.querySelector('.lg-strike').value; };
+    d.querySelector('.lg-x').onclick = function () { d.remove(); $('fAddLeg').disabled = false; };
+    return d;
+  }
+  function addLeg(l) {
+    var box = $('fLegs');
+    if (box.children.length >= (BOOT.max_legs || 4)) return;
+    var d = legRow(l);
+    box.appendChild(d);
+    fillOne(d);
+    $('fAddLeg').disabled = box.children.length >= (BOOT.max_legs || 4);
+  }
+  $('fAddLeg').onclick = function () { addLeg(); };
+  function fillLegSelects() { Array.prototype.forEach.call($('fLegs').children, fillOne); }
+  function fillOne(d) {
+    var c = S.chain, es = d.querySelector('.lg-exp'), ks = d.querySelector('.lg-strike');
+    if (!c || !c.ok || !c.expiries.length) {
+      es.innerHTML = '<option value="">' + (c && !c.ok ? 'no data' : 'type a ticker') + '</option>';
+      ks.innerHTML = '<option value="">–</option>';
+      es.disabled = ks.disabled = true;
+      return;
+    }
+    es.disabled = ks.disabled = false;
+    var want = d.dataset.exp && c.expiries.indexOf(d.dataset.exp) >= 0 ? d.dataset.exp : null;
+    if (!want) {             // default: the first expiry at least the default horizon away
+      var hd = parseInt($('fDays').value, 10) || S.prefs.horizon_days || 45;
+      want = c.expiries.find(function (e) { return (c.dte[e] || 0) >= hd; }) || c.expiries[c.expiries.length - 1];
+    }
+    es.innerHTML = c.expiries.map(function (e) {
+      return '<option value="' + esc(e) + '">' + shortDate(e) + ' (' + c.dte[e] + 'd)</option>';
+    }).join('');
+    es.value = want; d.dataset.exp = want;
+    var right = d.querySelector('.lg-right').value, list = (c.strikes[want] || {})[right] || [];
+    if (!list.length) { ks.innerHTML = '<option value="">none listed</option>'; return; }
+    var k = parseFloat(d.dataset.strike), pick = null;
+    if (isFinite(k) && list.indexOf(k) >= 0) pick = k;
+    if (pick == null) {       // default: the strike nearest today's price
+      pick = list.reduce(function (m, x) { return m == null || Math.abs(x - c.spot) < Math.abs(m - c.spot) ? x : m; }, null);
+    }
+    ks.innerHTML = list.map(function (x) {
+      return '<option value="' + x + '">' + strikeText(x) + (Math.abs(x - c.spot) < 1e-9 ? ' (at the money)' : '') + '</option>';
+    }).join('');
+    ks.value = String(pick); d.dataset.strike = pick;
+  }
+  function readLegs() {
+    return Array.prototype.map.call($('fLegs').children, function (d) {
+      return {right: d.querySelector('.lg-right').value, expiry: d.querySelector('.lg-exp').value,
+              strike: parseFloat(d.querySelector('.lg-strike').value), qty: parseInt(d.querySelector('.lg-qty').value, 10)};
+    });
+  }
+  function formErr(msg) { $('fErr').textContent = msg || ''; show($('fErr'), !!msg); }
+  function readForm() {
+    var sym = $('fSym').value.trim().toUpperCase(), t = parseFloat($('fTarget').value), w = parseFloat($('fWorst').value);
+    var days = $('fDays').value.trim(), sets = parseInt($('fSets').value, 10) || 1;
+    if (!sym) return [null, 'Type a ticker.'];
+    if (!(t > 0)) return [null, 'Type the price you expect the stock to reach.'];
+    if (!(w > 0)) return [null, 'Type the price at which you would be wrong.'];
+    if (t === w) return [null, 'The expected and the worst-case prices must differ.'];
+    if (days && !(parseInt(days, 10) >= 1)) return [null, 'Days must be a whole number, 1 or more.'];
+    var body = {symbol: sym, target: t, worst: w, kind: S.mode, sets: sets, horizon_days: days ? parseInt(days, 10) : null,
+                name: $('fName').value.trim() || null};
+    if (S.mode === 'manual') {
+      var legs = readLegs();
+      if (!legs.length) return [null, 'Add at least one leg.'];
+      for (var i = 0; i < legs.length; i++) {
+        if (!legs[i].expiry || !isFinite(legs[i].strike)) return [null, 'Leg ' + (i + 1) + ': pick an expiry and a strike.'];
+        if (!legs[i].qty) return [null, 'Leg ' + (i + 1) + ': the quantity cannot be 0 (+ buys, - sells).'];
+      }
+      body.legs = legs;
+    } else {
+      body.legs = null;
+      if (S.chain && S.chain.ok && isNum(S.chain.spot) && t === S.chain.spot) return [null, 'The expected price equals today\'s price - pick one above or below it.'];
+    }
+    return [body, null];
+  }
+  $('fSave').onclick = function () {
+    var r = readForm();
+    if (r[1]) { formErr(r[1]); return; }
+    formErr('');
+    var btn = $('fSave');
+    btn.disabled = true; btn.textContent = 'Saving…';
+    var url = S.editing ? '/calc/api/requests/' + S.editing : '/calc/api/requests';
+    api(url, 'POST', r[0]).then(function (j) {
+      if (!j.ok) { btn.disabled = false; btn.textContent = S.editing ? 'Save changes and calculate' : 'Save and calculate'; formErr(j.error); return; }
+      upsertItem(j.item); S.sel = j.item.id; paintList();
+      try { history.replaceState(null, '', '/calc?id=' + j.item.id); } catch (e) { /* ignore */ }
+      $('calcView').innerHTML = '<p class="calc-small calc-muted">Calculating…</p>';
+      btn.textContent = 'Calculating…';
+      computeNow(j.item.id).then(function (k) {
+        if (!k.item) loadView(j.item.id);
+        resetForm();
+        toast(k.ok ? 'Saved and calculated' : 'Saved - but it could not be calculated yet', k.ok ? 'ok' : 'err');
+        if (window.innerWidth < 768) $('calcView').scrollIntoView({behavior: 'smooth', block: 'start'});
+      });
+    });
+  };
+  function resetForm() {
+    S.editing = null;
+    $('fTitle').textContent = 'New setup';
+    $('fSave').disabled = false; $('fSave').textContent = 'Save and calculate';
+    show($('fCancel'), false);
+    ['fTarget', 'fWorst', 'fDays', 'fName'].forEach(function (id) { $(id).value = ''; });
+    $('fSets').value = '1'; $('fHint').textContent = '';
+    $('fLegs').innerHTML = ''; $('fAddLeg').disabled = false;
+    formErr('');
+    setMode(S.mode);
+  }
+  $('fCancel').onclick = resetForm;
+  function editItem(it) {
+    S.editing = it.id;
+    $('fTitle').textContent = 'Change the ' + it.symbol + ' setup';
+    $('fSave').textContent = 'Save changes and calculate';
+    show($('fCancel'), true);
+    $('fSym').value = it.symbol; $('fTarget').value = it.target; $('fWorst').value = it.worst;
+    $('fDays').value = it.horizon_days || ''; $('fSets').value = it.sets || 1; $('fName').value = it.name || '';
+    $('fLegs').innerHTML = '';
+    (it.legs || []).forEach(function (l) { addLeg(l); });
+    setMode(it.kind);
+    ensureChain();
+    $('calcFormCard').scrollIntoView({behavior: 'smooth', block: 'start'});
+  }
+
+  // ── the member's defaults ─────────────────────────────────────────────────────
+  var PREFS = [
+    ['horizon_days', 'Days to the target date', 'num', 'For "I pick the legs": how many days from today you expect the move to take, when a setup does not say.'],
+    ['horizons_n', 'Expiries to search', 'num', 'For "Find the legs for me": how many monthly expiries (three weeks out or more) to try when a setup gives no days.'],
+    ['defined_risk', 'Capped loss only', 'bool', 'Only trades whose loss has a limit (no selling a bare call or put).'],
+    ['max_loss', 'Most I will lose per set ($)', 'num', 'Leave out any trade that can lose more than this per set. 0 means no limit.'],
+    ['min_rr', 'Lowest reward over risk', 'num', 'Gain at the expected price divided by the loss at the worst price must be at least this.'],
+    ['min_oi', 'Lowest open interest per leg', 'num', 'Skip contracts few people hold - they are hard to trade at a fair price.'],
+    ['avoid_earnings', 'Avoid earnings', 'bool', 'Skip a search window that has the company\'s earnings date inside it.'],
+    ['credit_pref', 'Pay or collect', 'sel', 'Debit = you pay to open the trade; credit = you are paid to open it. "Either" keeps both.'],
+    ['alternatives', 'Alternatives per strategy', 'num', 'How many runner-up trades to keep under each strategy\'s best.']
+  ];
+  function paintPrefs(p) {
+    p = p || S.prefs;
+    var lim = BOOT.limits || {};
+    $('pForm').innerHTML = PREFS.map(function (d) {
+      var k = d[0], input;
+      if (d[2] === 'bool') input = '<input type="checkbox" id="p_' + k + '"' + (p[k] ? ' checked' : '') + '>';
+      else if (d[2] === 'sel') input = '<select class="calc-in" id="p_' + k + '">' + [['any', 'Either'], ['debit', 'Pay (debit)'], ['credit', 'Collect (credit)']].map(function (o) {
+        return '<option value="' + o[0] + '"' + (p[k] === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>';
+      else input = '<input class="calc-in" type="number" step="any" id="p_' + k + '" value="' + esc(p[k]) + '"' +
+        (lim[k] ? ' min="' + lim[k][0] + '" max="' + lim[k][1] + '"' : '') + '>';
+      return '<div class="calc-pref"><label class="t" for="p_' + k + '">' + d[1] + '</label><div>' + input + '</div><div class="h">' + d[3] + '</div></div>';
+    }).join('');
+  }
+  function readPrefs() {
+    var out = {};
+    PREFS.forEach(function (d) {
+      var el = $('p_' + d[0]);
+      out[d[0]] = d[2] === 'bool' ? el.checked : d[2] === 'sel' ? el.value : el.value;
+    });
+    return out;
+  }
+  $('pSave').onclick = function () {
+    api('/calc/api/prefs', 'POST', readPrefs()).then(function (j) {
+      $('pErr').textContent = j.ok ? '' : (j.error || 'Not saved');
+      show($('pErr'), !j.ok);
+      if (j.prefs) { S.prefs = j.prefs; paintPrefs(); setMode(S.mode); paintList(); }
+      if (j.ok) toast('Defaults saved - setups use them from their next calculation', 'ok');
+    });
+  };
+  $('pReset').onclick = function () { paintPrefs(BOOT.defaults || {}); };
+
+  // ── start ─────────────────────────────────────────────────────────────────────
+  paintStatus(); paintList(); paintPrefs(); setMode('pair');
+  if (BOOT.symbol) { $('fSym').value = BOOT.symbol; ensureChain(); }
+  if (S.sel) loadView(S.sel); else paintView();
+  var lastW = window.innerWidth;
+  window.addEventListener('resize', function () {
+    if (Math.abs(window.innerWidth - lastW) < 40) return;
+    lastW = window.innerWidth;
+    if (S.view) paintView();
+  });
+  setInterval(pollStatus, 60000);
+})();
+</script>
+{% endblock %}

@@ -507,6 +507,100 @@ yet).
 
 ---
 
+## I. The Option Calculator lane (on Hermes, v4.151)
+
+The Option Calculator page (`/calc`, `OPTION_CALCULATOR_DESIGN.md`) lets members save option
+setups - their own legs, or just a target price and a worst-case price for TradeHunter to find the
+legs. A third always-on process on Hermes, **`TST-Option-Calc`** (`deploy\option_calc_worker.py
+--forever`, the venv python), keeps them current: once a minute it looks for the screener
+collector's newest finished Massive market pass (section H) and recomputes every member's active
+setups on it, writing the results to `tst.db` - so after each pass (every 30 min in market hours)
+every saved setup shows fresh figures, stamped with the pass they came from. It needs no API key
+and makes no Massive request (it reads only what the screener collector stored in `screener.db`),
+no IBKR, no clientId. A setup it cannot compute (a leg no longer listed, no IV, an unknown ticker)
+keeps the reason on the member's page and is tried again on the next pass. It writes
+`state\option_calc_worker.json` (the tray's **Option calculator** line and Settings -> Data
+Ingest -> Option Calculator read it) and `logs\option_calc_worker.log` (5 MB x 5). The two
+collectors of sections G and H keep running beside it, unchanged.
+
+### First install (Hermes, PowerShell, elevated)
+
+Restart the web app first (the canonical script, section C) - its start runs the `alembic\`
+migrations that create the option-calculator tables in `tst.db`. Then:
+
+```powershell
+cd C:\trading-skills\TradeHunter\dashboard_tst
+powershell -ExecutionPolicy Bypass -File deploy\setup_option_calc_task.ps1 -StartNow
+Start-Sleep 30
+Get-Content state\option_calc_worker.json                               # state, last pass, setups
+```
+
+The setup script registers three triggers like section H's: at boot (+1 min), daily 07:00 (revive)
+and every 15 min (revive a dead copy; a no-op while it runs). Restart on failure 3 times, 5 min
+apart; no time limit.
+
+### After a pull
+
+The web-app restart does **not** restart this lane. Re-run the setup script with `-StartNow` after
+any pull that changes `app\services\calc_*.py` (`calc_worker.py`, `calc_store.py`, `calc_chain.py`,
+`calc_pair.py`), `app\services\option_calc.py` or `deploy\option_calc_worker.py`. When the same pull
+brings `alembic\` migrations (new or changed option-calculator tables), restart the web app FIRST -
+its start migrates `tst.db` - then the lane:
+
+```powershell
+cd C:\trading-skills\TradeHunter\dashboard_tst
+powershell -ExecutionPolicy Bypass -File deploy\setup_option_calc_task.ps1 -StartNow
+```
+
+`-StartNow` ends the task, stops any leftover `option_calc_worker.py` python process and starts the
+new code.
+
+**After a pull that changes `dashboard_intraday\tray_status.py`**, restart the tray too (Hermes,
+PowerShell in the RDP session, as Administrator) - the same commands as section H:
+
+```powershell
+(Get-ScheduledTask -TaskName IntradayBot-Tray).Actions | Select-Object Execute, Arguments   # must show C:\trading-skills\TradeHunter\dashboard_intraday\tray_status.py
+Get-CimInstance Win32_Process | Where-Object { ($_.Name -eq 'pythonw.exe' -or $_.Name -eq 'python.exe') -and $_.CommandLine -like '*tray_status.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA SilentlyContinue }
+schtasks /End /TN IntradayBot-Tray
+Start-Sleep 2
+Start-ScheduledTask -TaskName IntradayBot-Tray
+```
+
+**By hand.** The lane holds a single-instance lock (`state\option_calc_worker.lock`): a by-hand run
+exits 1 while the task's copy holds it, and the 15-min trigger would restart the task. Disable and
+stop the task, run one look, then re-enable (Hermes, elevated PowerShell):
+
+```powershell
+cd C:\trading-skills\TradeHunter\dashboard_tst
+Disable-ScheduledTask -TaskName TST-Option-Calc
+schtasks /End /TN TST-Option-Calc
+Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'option_calc_worker\.py' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+.\.venv\Scripts\python.exe deploy\option_calc_worker.py --once -v     # one look, then exit
+Enable-ScheduledTask -TaskName TST-Option-Calc
+Start-ScheduledTask -TaskName TST-Option-Calc
+```
+
+### Watching it
+
+- **The Hermes tray**: `Option calculator: idle · 7 setups · last computed 14:32 ET on pass 812
+  · hb 20s ago` (while it works: `computing 3 setups (of 7)`; when some setups on the last run
+  could not be computed: `· 1 setup could not be computed`), plus the lane's own sentence on a second
+  line - green working; amber `ERROR` (the reason follows), `STOPPED`, or `NO HEARTBEAT for 7m ... is
+  TST-Option-Calc running?` (no word from it for 5 min; `NOT RUNNING - <reason>` when its last word
+  was an error); grey when it does not run on this PC (the laptop). Tooltip: `Calc idle`,
+  `Calc 3 due`, `Calc ERR`, `Calc stale 7m`. A pop-up notice when it goes into error or stops
+  reporting.
+- **Settings -> Data Ingest -> Option Calculator** (admins): state and the lane's sentence, setups
+  kept up to date, setups with a problem, results in the last 24 h, the market pass and when it was
+  last computed, the last error in red, and how to start it when it is not running. Refreshes every
+  30 s while the tab is open.
+- The state file: `Get-Content state\option_calc_worker.json`.
+- The log: `Get-Content logs\option_calc_worker.log -Tail 40 -Wait`.
+- "Waiting for the screener collector's first market pass" means section H has not finished a pass
+  yet - look there first.
+
+---
+
 ## Notes / guardrails
 
 - **Isolation:** the app is genuinely public now (auth-gated). It holds no

@@ -39,6 +39,7 @@ from .routes import company_analysis as company_analysis_routes
 from .routes import drawings as drawings_routes
 from .routes import options as options_routes
 from .routes import options_page as options_page_routes
+from .routes import calc as calc_routes
 from .routes import macro as macro_routes
 from .routes import feedback as feedback_routes
 from .routes import finviz as finviz_routes
@@ -66,7 +67,7 @@ for _routes_mod in (
     auth_routes, matp_routes, studies_routes,
     finviz_routes, feedback_routes, admin_routes, agent_routes, pipeline_routes,
     research_routes, patterns_routes, strategy_routes, curated_routes,
-    portfolio_routes, spreads_routes, ivscan_routes, options_page_routes,
+    portfolio_routes, spreads_routes, ivscan_routes, options_page_routes, calc_routes,
     company_analysis_routes, sector_routes, macro_routes, calendar_routes,
 ):
     _routes_mod.templates.env.globals["version"] = APP_VERSION
@@ -247,6 +248,10 @@ def create_app() -> FastAPI:
     # router is included FIRST; it carries the per-menu gate the legacy one does not.
     app.include_router(options_page_routes.router,
                        dependencies=[Depends(menus.require_menu("options"))])
+    # The option calculator (OPTION_CALCULATOR_DESIGN.md steps 2-3): the member's setups,
+    # the lane's results, "compute now", their defaults.
+    app.include_router(calc_routes.router,
+                       dependencies=[Depends(menus.require_menu("calc"))])
     # Options chain (TWS-sourced) — used from the Watchlist pane; require_user
     # only, no per-menu gate, same as the drawings API.
     app.include_router(options_routes.router)
