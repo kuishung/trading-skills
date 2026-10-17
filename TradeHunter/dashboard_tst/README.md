@@ -223,6 +223,13 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-17 - v4.152: nav - Options and Calculator under one "Options" dropdown
+
+The user: *"Move Calculator under an Options dropdown with Options and Calculator as its two entries."*
+`app/menus.py`: both entries now carry the group `"Options"`, so `nav_for` renders one dropdown at the
+Options position with Options and Calculator inside it (the same mechanism the Calendar group used).
+Keys and URLs unchanged (`options` -> `/options`, `calc` -> `/calc`); member menu grants are untouched.
+
 ### 2026-10-17 - v4.151: Option calculator - the Calculator page, the Hermes lane that recomputes saved setups after every Massive pass, and setup pairing from two prices
 
 The user (from the phone, after checking the flow diagram): *"I want the user to pick the expected price and

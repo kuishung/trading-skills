@@ -1201,7 +1201,7 @@ def test_the_menu_entry_stays():
     """The nav keeps its Options item (the page keeps its require_menu("options") gate in main.py)."""
     from app import menus
 
-    assert ("options", "Options", None, "/options") in menus.MENUS
+    assert ("options", "Options", "Options", "/options") in menus.MENUS
 
 
 def test_a_payload_without_filters_means_the_screen_defaults():

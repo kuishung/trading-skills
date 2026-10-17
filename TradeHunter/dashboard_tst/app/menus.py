@@ -32,13 +32,14 @@ MENUS = [
     ("curated",          "Curated",           None, "/curated"),
     # Options — ONE page that replaces IV Rank, Spread and Positions (2026-10-04);
     # those three stay reachable by URL (see HIDDEN_KEYS) with their guards widened
-    # to accept this key. A flat item, no dropdown (the dropdown is what 2026-10-01
-    # removed). The page is BLANK since v4.135 (2026-10-10), waiting for its rebuild.
-    ("options",          "Options",           None, "/options"),
+    # to accept this key. Rebuilt as the Options Screener in v4.136. Since v4.152
+    # (2026-10-17, user: "Move Calculator under an Options dropdown") it is the first
+    # entry of an "Options" DROPDOWN whose second entry is the Calculator below.
+    ("options",          "Options",           "Options", "/options"),
     # Calculator - the option calculator (OPTION_CALCULATOR_DESIGN.md steps 2-3, 2026-10-17):
     # the member types an expected and a worst-case price; the Hermes lane finds the legs
     # (or prices the member's own) after every Massive pass. routes/calc.py.
-    ("calc",             "Calculator",        None, "/calc"),
+    ("calc",             "Calculator",        "Options", "/calc"),
 ]
 # Off the nav since 2026-10-01 (user: "i want to disable the Company, macro,
 # options") - the SAME treatment as the 2026-09-15 removal: the pages stay
