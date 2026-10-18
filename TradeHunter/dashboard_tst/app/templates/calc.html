@@ -31,7 +31,13 @@
   .calc-lbl { display: flex; flex-direction: column; gap: .2rem; font-size: 11px; color: var(--tv-muted); min-width: 0; }
   .calc-mode { display: flex; border: 1px solid var(--tv-border-2); border-radius: var(--tv-r-ctl); overflow: hidden; }
   .calc-mode button { flex: 1; padding: .35rem .4rem; font-size: 12px; color: var(--tv-text); }
-  .calc-mode button[aria-pressed="true"] { background: var(--tv-accent); color: #fff; }
+  /* the selected MODE looks like a chosen tab, not a button to press: only "Save and calculate"
+     is solid blue (v4.153 - a member pressed the blue mode switch and waited for a result) */
+  .calc-mode button { color: var(--tv-muted); }
+  .calc-mode button[aria-pressed="true"] { background: var(--tv-panel-2, transparent); color: var(--tv-text);
+    font-weight: 600; box-shadow: inset 0 -2px 0 var(--tv-accent); }
+  .calc-mode button[aria-pressed="true"]::before { content: "\2713\00a0"; color: var(--tv-accent); }
+  #fSave { padding: .5rem 1rem; font-size: 14px; }
   .calc-list { max-height: 22rem; overflow-y: auto; }
   @media (max-width: 767px) { .calc-list { max-height: 16rem; } }
   .calc-row { border-bottom: 1px solid var(--tv-border); padding: .5rem .25rem; cursor: pointer; }

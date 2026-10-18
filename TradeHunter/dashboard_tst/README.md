@@ -223,6 +223,14 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-19 - v4.153: Calculator - the mode switch no longer looks like the run button
+
+The user keyed in a setup, pressed the blue "Find the legs for me" and waited: that button only
+chooses the mode (it was already chosen) and was styled in the same solid blue as "Save and
+calculate", the button that actually runs. `calc.html`: the selected mode now reads as a chosen tab
+(a tick, bold text, an accent underline, no fill); "Save and calculate" is the only solid-blue
+button in the form and is a size larger. No behaviour change.
+
 ### 2026-10-17 - v4.152: nav - Options and Calculator under one "Options" dropdown
 
 The user: *"Move Calculator under an Options dropdown with Options and Calculator as its two entries."*
