@@ -1339,3 +1339,23 @@ def test_the_page_no_longer_says_options_screener():
 
     assert screens.SCREENS["options-screener"].label == "All contracts"
     assert "Options Screener" not in Path(options_page.__file__).read_text(encoding="utf-8").split('"label": ')[1][:40]
+
+
+def test_symbol_in_the_url_opens_the_surface_for_it(client, fake):
+    """v4.154: /options?symbol=NVDA#surface (the Watchlist's "Vol surface" button) fills the
+    symbol in and draws the surface without typing - the hand-off script is on the page."""
+    r = client.get("/options", params={"symbol": "NVDA"})
+    assert r.status_code == 200
+    html = r.text
+    assert "URLSearchParams(location.search).get('symbol')" in html
+    assert "optShowTab('surface')" in html and "loadDays().then(function () { runSurface(); })" in html
+
+
+def test_watchlist_chart_pane_links_to_the_surface_for_its_ticker(client, fake):
+    """v4.154: the selected ticker's pane carries a "Vol surface" link to the options page
+    in a new window, with the ticker on screen - nothing to type."""
+    r = client.get("/matp/chart", params={"symbol": "nvda"})
+    assert r.status_code == 200
+    html = r.text
+    assert 'href="/options?symbol=NVDA#surface"' in html
+    assert 'target="_blank"' in html and "Vol surface" in html

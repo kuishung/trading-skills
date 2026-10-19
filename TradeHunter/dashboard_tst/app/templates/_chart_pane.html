@@ -28,6 +28,10 @@
             data-tab="chart">Chart</button>
     <button type="button" class="paneTab text-[11px] px-2.5 py-1 rounded border transition border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300"
             data-tab="options">Options</button>
+    {# v4.154 (user): the volatility surface for THIS ticker in a new window, nothing to type #}
+    <a href="/options?symbol={{ sel.symbol | urlencode }}#surface" target="_blank" rel="noopener"
+       class="text-[11px] px-2.5 py-1 rounded border transition border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 ml-1"
+       title="Open the option volatility surface for {{ sel.symbol }} in a new window">Vol surface &#8599;</a>
   </div>
 
   <div id="tabChart" class="flex flex-col lg:flex-1 lg:min-h-0">

@@ -223,6 +223,21 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-19 - v4.154: Watchlist - a "Vol surface" button opens the volatility surface for the selected ticker in a new window
+
+The user: *"In the watchlist page, i need a button where i will open the option volatility surface in new
+window where user will not have to type a ticker"*.
+
+- **`/options?symbol=NVDA#surface`** (`options.html`): when the URL carries a `symbol`, the page opens the
+  Volatility surface tab, fills the symbol in and draws the surface at once (after the day list loads) -
+  nothing to type. Any other open of `/options` is unchanged.
+- **Watchlist** (`_chart_pane.html`): a "Vol surface &#8599;" link beside the Chart | Options tabs of the
+  selected ticker's pane opens that URL in a new window (`target=_blank`, `rel=noopener`). Because the pane
+  is the part HTMX swaps when a row is clicked, the link always carries the ticker on screen. The
+  per-ticker detail page (`matp_detail.html`) has the same link in its header.
+- Tested in `test_options_page.py`: the symbol hand-off script is on the page, and the chart pane carries
+  the link for its ticker.
+
 ### 2026-10-19 - v4.153: Calculator - the mode switch no longer looks like the run button
 
 The user keyed in a setup, pressed the blue "Find the legs for me" and waited: that button only

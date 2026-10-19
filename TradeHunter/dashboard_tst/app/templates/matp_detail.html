@@ -7,6 +7,10 @@
     {% if level and level.exchange %}<span class="text-slate-600 text-base">{{ level.exchange }}</span>{% endif %}
   </h1>
   <div class="flex items-center gap-3">
+    {# v4.154 (user): the volatility surface for this ticker in a new window, nothing to type #}
+    <a href="/options?symbol={{ symbol | urlencode }}#surface" target="_blank" rel="noopener"
+       class="text-xs px-2.5 py-1 rounded-full border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition"
+       title="Open the option volatility surface for {{ symbol }} in a new window">Vol surface &#8599;</a>
     {% if user.can_moderate %}
       {% if discord_configured %}
       <span id="shareDiscordResult" class="text-xs"></span>

@@ -1862,6 +1862,16 @@
   if ((location.hash === '#surface' || location.hash === '#history') && window.optShowTab) {
     window.optShowTab(location.hash.slice(1));
   }
+  // v4.154: /options?symbol=NVDA#surface - opened from the Watchlist's "Vol surface" button in a
+  // new window: the symbol is filled in and the surface drawn without typing anything.
+  (function () {
+    var want = '';
+    try { want = (new URLSearchParams(location.search).get('symbol') || '').trim().toUpperCase(); } catch (err) { want = ''; }
+    if (!want || !/^[A-Z0-9.\-]{1,12}$/.test(want)) return;
+    $('volSym').value = want;
+    if (window.optShowTab) window.optShowTab('surface');
+    loadDays().then(function () { runSurface(); });
+  })();
 })();
 </script>
 {% endblock %}
