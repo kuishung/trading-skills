@@ -1359,3 +1359,4 @@ def test_watchlist_chart_pane_links_to_the_surface_for_its_ticker(client, fake):
     html = r.text
     assert 'href="/options?symbol=NVDA#surface"' in html
     assert 'target="_blank"' in html and "Vol surface" in html
+    assert 'href="/calc?view=sheet&amp;symbol=NVDA"' in html and "Calculator" in html   # v4.157

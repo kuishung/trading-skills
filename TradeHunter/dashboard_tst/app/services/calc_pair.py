@@ -69,6 +69,7 @@ class Horizon:
     target_date: str
     expiries: list[str] = field(default_factory=list)
     reason: str | None = None          # why it was dropped
+    earnings: bool = False             # the earnings date falls inside this horizon (kept, flagged)
 
 
 @dataclass
@@ -125,8 +126,18 @@ def horizons_for(chain: Chain, today: _dt.date, *, horizon_days: int | None, hor
         h.expiries = [e for e in exps if e >= h.target_date][:WINDOW_EXPIRIES]
         if not h.expiries:
             h.reason = "no expiry on or after %s" % h.target_date
-        elif avoid_earnings and earn and today.isoformat() < earn <= h.target_date:
-            h.reason = "earnings on %s fall inside this horizon" % earn
+        h.earnings = bool(earn and today.isoformat() < earn <= h.target_date)
+    # v4.157: "avoid earnings" PREFERS horizons that end before the earnings date. It drops
+    # the ones that cross earnings only while a clean horizon remains; when every horizon
+    # crosses (earnings in the next few weeks - most of the time for most names, which is
+    # why the search came back empty "most of the time"), they are all kept and FLAGGED.
+    # A horizon the member asked for by its days is never dropped, only flagged.
+    if avoid_earnings and not horizon_days:
+        clean = [h for h in out if not h.earnings and not h.reason]
+        if clean:
+            for h in out:
+                if h.earnings and not h.reason:
+                    h.reason = "earnings on %s fall inside this horizon" % earn
     return out
 
 
@@ -303,8 +314,13 @@ def search(chain: Chain, target: float, worst: float, criteria: dict, today: _dt
                "families": fams, "horizons": [], "n_candidates": 0, "n_kept": 0, "dropped": {},
                "criteria": dict(criteria), "today": today.isoformat()}
     best: dict[str, list[tuple]] = {f: [] for f in fams}        # family -> (rr, roi, h, legs idx, qty, figs)
+    summary["earnings_date"] = chain.earnings_date
+    if hs and all(h.earnings for h in hs):
+        summary["earnings_note"] = ("earnings on %s fall inside every horizon; the trades are shown anyway and "
+                                    "flagged" % chain.earnings_date)
     for h in hs:
-        hrec = {"days": h.days, "target_date": h.target_date, "expiries": h.expiries, "reason": h.reason}
+        hrec = {"days": h.days, "target_date": h.target_date, "expiries": h.expiries, "reason": h.reason,
+                "earnings_in_window": h.earnings}
         summary["horizons"].append(hrec)
         if h.reason:
             continue
@@ -369,7 +385,8 @@ def search(chain: Chain, target: float, worst: float, criteria: dict, today: _dt
             figs.update({"prob_profit": None if p != p else round(p, 4), "score": round(score, 4),
                          "family_label": FAMILIES[fam][3], "direction": direction,
                          "defined_risk": FAMILIES[fam][2], "debit_credit": FAMILIES[fam][4],
-                         "atm_iv": round(sigma, 4)})
+                         "atm_iv": round(sigma, 4), "earnings_in_window": h.earnings,
+                         "earnings_date": chain.earnings_date if h.earnings else None})
             rows.append({"family": fam, "rank": rank, "horizon_days": h.days, "target_date": h.target_date,
                          "legs": resolved, "figures": figs, "score": score,
                          "curves": curves_from(res) if rank == 1 else None})

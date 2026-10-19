@@ -79,13 +79,30 @@ def test_direction_and_horizons(sdb):
     assert len(one) == 1 and one[0].days == 40 and one[0].expiries[0] == MONTHLIES[1].isoformat()
 
 
-def test_earnings_drop_horizons(sdb):
+def test_earnings_flag_horizons_and_drop_only_while_a_clean_one_remains(sdb):
+    # v4.157: earnings 10 days before the first monthly -> EVERY horizon crosses it. They are
+    # all kept and flagged (dropping them all was why the search came back empty most of the time).
     earn = (MONTHLIES[0] - _dt.timedelta(days=10)).isoformat()
     ch = _fill(sdb, earnings=earn)
     hs = calc_pair.horizons_for(ch, TODAY, horizon_days=None, horizons_n=2, avoid_earnings=True)
-    assert all("earnings" in (h.reason or "") for h in hs)
-    hs2 = calc_pair.horizons_for(ch, TODAY, horizon_days=None, horizons_n=2, avoid_earnings=False)
-    assert all(h.reason is None for h in hs2)
+    assert all(h.earnings and h.reason is None for h in hs)
+    rows, summary = calc_pair.search(ch, 120.0, 92.0, _crit(min_rr=0.0, horizons_n=2), TODAY)
+    assert rows and "every horizon" in summary["earnings_note"]
+    assert all(r["figures"]["earnings_in_window"] is True and r["figures"]["earnings_date"] == earn for r in rows)
+    # earnings between the first and the second monthly -> the first horizon is clean, the
+    # later ones are dropped (a clean one remains)
+    sdb.query(ScrUnderlying).filter_by(symbol="ACME").update({"earnings_date": (MONTHLIES[1] - _dt.timedelta(days=10)).isoformat()})
+    sdb.commit()
+    ch2 = calc_chain.load_chain(sdb, "ACME")
+    hs2 = calc_pair.horizons_for(ch2, TODAY, horizon_days=None, horizons_n=3, avoid_earnings=True)
+    assert hs2[0].reason is None and not hs2[0].earnings
+    assert all("earnings" in (h.reason or "") for h in hs2[1:])
+    # the member's own days are never dropped, only flagged
+    one = calc_pair.horizons_for(ch2, TODAY, horizon_days=60, horizons_n=3, avoid_earnings=True)
+    assert one[0].reason is None and one[0].earnings is True
+    # avoid earnings off: nothing dropped, still flagged
+    hs3 = calc_pair.horizons_for(ch2, TODAY, horizon_days=None, horizons_n=3, avoid_earnings=False)
+    assert all(h.reason is None for h in hs3) and hs3[1].earnings
 
 
 def test_window_is_the_move_plus_a_buffer(sdb):

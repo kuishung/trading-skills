@@ -188,6 +188,22 @@ engine (orange) in the middle of each; member pages (blue); stored data (grey); 
 | Page | `app/routes/calc.py`, `app/templates/calc.html`, nav key `calc` ("Calculator") | setups list + new-setup form (two prices, days optional, mode: find the legs / I pick the legs), result view (manual: the sheet's cards + payoff chart; pair: summary + one card per family with alternatives, "Open in calculator"), defaults drawer. JSON under `/calc/api/*`. Tests `tests/test_calc_page.py`. |
 | Status | tray line "Option calculator: …" (`dashboard_intraday/tray_status.py`), Settings -> Data Ingest -> Option Calculator (`app/services/calc_health.py`, `/finviz/option-calc`) | DEPLOY.md section I. |
 
+**v4.157 (2026-10-19) — the Sheet view + two fixes from use.** The user: *"with the calculator
+presently provided, i come out no result most of the time. I would want a interface to follow
+the excel sheet and then on the leg user can select the leg from the volatility surface."*
+- **Empty results**: "avoid earnings" dropped every horizon whose target date lay past the
+  next earnings date; with horizons three weeks out that emptied the search for any name
+  with earnings in the next month or two (most names, most of the time). It now PREFERS
+  horizons that end before earnings and drops the crossing ones only while a clean one
+  remains; when every horizon crosses, all are kept and flagged (`earnings_in_window` on
+  each row, `earnings_note` in the summary). A horizon the member typed is never dropped.
+- **The Sheet view** (`/calc?view=sheet`, the default): the Excel layout - inputs, four leg
+  columns, Option Values with $ / % change, Decision Indicators, the chart - where **each
+  leg is picked by clicking a cell of the volatility surface** (strikes x expiries, call /
+  put toggle, click = +1, again = -1, again = remove). Every change recomputes at once through
+  `POST /calc/api/preview` (the engine, nothing saved); "Save this setup" hands it to the
+  Hermes lane. `GET /calc/api/surface?symbol=` serves the picker grid from the last pass.
+
 **Still open / next:**
 - Range trades (a second worst price; condors, butterflies, strangles) - decision 8.
 - An IV-change scenario on the target date (`Scenario.iv_shift` exists, no UI).

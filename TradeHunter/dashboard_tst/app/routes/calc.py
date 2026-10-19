@@ -3,7 +3,9 @@
 * ``GET /calc`` - the page: the member's saved setups (left / top), the selected setup's
   result (right / below), a "New setup" form (two prices: expected and worst case;
   "find the legs for me" = a pair request, "I pick the legs" = a manual one) and the
-  member's defaults. ``?id=`` selects a setup, ``?symbol=`` fills the ticker.
+  member's defaults. ``?id=`` selects a setup, ``?symbol=`` fills the ticker,
+  ``?view=sheet|setups`` picks the view (v4.157: the Excel-style "Sheet" with the
+  volatility surface as the leg picker, or the saved "Setups").
 * ``/calc/api/*`` - the JSON the page talks to:
 
   - ``GET  /api/chain?symbol=``          the last market pass's chain for the leg picker
@@ -234,8 +236,8 @@ def _status_payload(now: _dt.datetime | None = None) -> dict:
 # ─────────────────────────────────────── the page ───────────────────────────────────────
 
 @router.get("", response_class=HTMLResponse)
-def calc_home(request: Request, id: str = "", symbol: str = "", user: User = Depends(require_user),
-              db: Session = Depends(get_db)):
+def calc_home(request: Request, id: str = "", symbol: str = "", view: str = "",
+              user: User = Depends(require_user), db: Session = Depends(get_db)):
     engine_error, requests, prefs, defaults, limits, families = None, [], {}, {}, {}, {}
     try:
         store, _chain, pair, _worker = _services()
@@ -253,10 +255,15 @@ def calc_home(request: Request, id: str = "", symbol: str = "", user: User = Dep
     if selected is not None and not any(r["id"] == selected for r in requests):
         selected = None
     sym = str(symbol or "").strip().upper()[:20]
+    # v4.157: "sheet" (the Excel-style sheet with the volatility-surface leg picker) or
+    # "setups" (the saved setups). Empty = the page decides: ?id= -> setups, else the
+    # member's last choice (browser storage), else the sheet.
+    view = str(view or "").strip().lower()
+    view = view if view in ("sheet", "setups") else ""
     boot = {
         "engine_error": engine_error, "requests": requests, "prefs": prefs, "defaults": defaults,
         "limits": limits, "families": families, "selected": selected, "symbol": sym,
-        "status": _status_payload(), "today": clock.et_today(), "max_legs": MAX_LEGS,
+        "status": _status_payload(), "today": clock.et_today(), "max_legs": MAX_LEGS, "view": view,
     }
     return templates.TemplateResponse(request, "calc.html", {"user": user, "boot": boot,
                                                              "engine_error": engine_error})
@@ -459,3 +466,168 @@ async def api_prefs_save(request: Request, user: User = Depends(require_user), d
 @router.get("/api/status")
 async def api_status(user: User = Depends(require_user)):
     return JSONResponse(await run_in_threadpool(_status_payload))
+
+
+# ─────────────────────────────────── the sheet view (v4.157) ───────────────────────────────────
+# The user: "I would want a interface to follow the excel sheet and then on the leg user can
+# select the leg from the volatility surface. So every leg selected will be calculated with
+# the result as per the excel sheet format." Two endpoints: the surface as a leg PICKER (call
+# and put IV per strike x expiry, from the last market pass) and an instant PREVIEW (the
+# engine's figures for the legs on screen, nothing saved).
+
+SURFACE_BAND = 0.35           # strikes within +/- 35 % of spot
+SURFACE_MAX_STRIKES = 40      # nearest the spot
+SURFACE_MAX_EXPIRIES = 14
+
+
+def _surface_payload(symbol: str) -> dict:
+    """``{ok, symbol, name, spot, as_of_et, session, earnings_date, iv_rank, expiries:[{date,
+    dte}], strikes:[...], calls:[[iv %|null]], puts:[[iv %|null]], oi_c, oi_p, atm:[iv %|null],
+    scale:[lo, hi]}`` - rows = strikes ascending, columns = expiries ascending."""
+    from .. import screener_db  # noqa: PLC0415
+
+    _store, chain_mod, _pair, _worker = _services()
+    with screener_db.session() as s:
+        ch = chain_mod.load_chain(s, symbol)
+    if not ch.spot or ch.spot <= 0:
+        raise chain_mod.ChainError("the last market pass has no spot price for %s" % ch.symbol)
+    today = clock.et_date()
+    lo, hi = ch.spot * (1 - SURFACE_BAND), ch.spot * (1 + SURFACE_BAND)
+    by: dict = {}
+    for c in ch.contracts:
+        if c.iv is None or c.iv <= 0 or not (lo <= c.strike <= hi):
+            continue
+        d = chain_mod.dte(c.expiry, today)
+        if d <= 0:
+            continue
+        by.setdefault(c.expiry, {}).setdefault(c.strike, {})[c.right] = c
+    exps = sorted(by)[:SURFACE_MAX_EXPIRIES]
+    strikes = sorted({k for e in exps for k in by[e]})
+    if len(strikes) > SURFACE_MAX_STRIKES:
+        strikes = sorted(sorted(strikes, key=lambda k: (abs(k - ch.spot), k))[:SURFACE_MAX_STRIKES])
+
+    def grid(right, attr):
+        out = []
+        for k in strikes:
+            row = []
+            for e in exps:
+                c = by.get(e, {}).get(k, {}).get(right)
+                v = getattr(c, attr) if c is not None else None
+                row.append(round(v * 100.0, 2) if (attr == "iv" and v is not None) else v)
+            out.append(row)
+        return out
+
+    calls, puts = grid("C", "iv"), grid("P", "iv")
+    atm = []
+    for e in exps:
+        ks = sorted(by[e], key=lambda k: (abs(k - ch.spot), k))
+        legs = by[e][ks[0]] if ks else {}
+        vals = [c.iv for c in legs.values() if c.iv]
+        atm.append(round(sum(vals) / len(vals) * 100.0, 2) if vals else None)
+    flat = sorted(v for g in (calls, puts) for row in g for v in row if v is not None)
+    scale = [flat[int(0.05 * (len(flat) - 1))], flat[int(0.95 * (len(flat) - 1))]] if flat else None
+    return _clean({
+        "ok": True, "symbol": ch.symbol, "name": ch.name, "spot": ch.spot, "spot_src": ch.spot_src,
+        "as_of": _iso(ch.as_of), "as_of_et": _et(ch.as_of), "session": ch.session,
+        "earnings_date": ch.earnings_date, "iv_rank": ch.iv_rank, "today": today.isoformat(),
+        "expiries": [{"date": e, "dte": chain_mod.dte(e, today)} for e in exps],
+        "strikes": strikes, "calls": calls, "puts": puts, "oi_c": grid("C", "oi"), "oi_p": grid("P", "oi"),
+        "atm": atm, "scale": scale,
+        "spot_row": sum(1 for k in strikes if k < ch.spot),
+    })
+
+
+@router.get("/api/surface")
+async def api_surface(symbol: str = "", user: User = Depends(require_user)):
+    sym = (symbol or "").strip().upper()
+    if not sym:
+        return _err("A ticker is needed.")
+    try:
+        _store, chain_mod, _pair, _worker = _services()
+    except _Missing as exc:
+        return _err(str(exc), 503)
+    try:
+        return JSONResponse(await run_in_threadpool(_surface_payload, sym))
+    except chain_mod.ChainError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)})
+    except Exception as exc:  # noqa: BLE001 - no screener DB on this PC
+        log.info("calc surface %s: %s", sym, exc)
+        return JSONResponse({"ok": False, "error": "The option data could not be read just now (%s)." % type(exc).__name__})
+
+
+def _preview_payload(user, body: dict) -> dict:
+    """The sheet's figures for the legs on screen: ``{ok, spot, as_of_et, session, horizon_days,
+    target_date, legs (resolved), figures, curves}``. Nothing is saved."""
+    from .. import screener_db  # noqa: PLC0415
+    from ..services.option_calc import Scenario, evaluate  # noqa: PLC0415
+
+    store, chain_mod, pair, _worker = _services()
+    prefs = store.read_prefs(user)
+    sym = str(body.get("symbol") or "").strip().upper()
+    if not sym:
+        raise chain_mod.ChainError("A ticker is needed.")
+    try:
+        target, worst = float(body.get("target")), float(body.get("worst"))
+    except (TypeError, ValueError):
+        raise chain_mod.ChainError("The expected and worst-case prices must be numbers.") from None
+    if target <= 0 or worst <= 0:
+        raise chain_mod.ChainError("The expected and worst-case prices must be positive.")
+    days = body.get("days") or body.get("horizon_days")
+    try:
+        days = int(days) if days not in (None, "") else int(prefs["horizon_days"])
+    except (TypeError, ValueError):
+        raise chain_mod.ChainError("Days must be a whole number.") from None
+    if not 1 <= days <= 730:
+        raise chain_mod.ChainError("Days must be between 1 and 730.")
+    try:
+        sets = int(body.get("sets") or 1)
+    except (TypeError, ValueError):
+        sets = 1
+    sets = max(1, min(sets, 10_000))
+    today = clock.et_date()
+    with screener_db.session() as s:
+        ch = chain_mod.load_chain(s, sym)
+    if not ch.spot or ch.spot <= 0:
+        raise chain_mod.ChainError("the last market pass has no spot price for %s" % ch.symbol)
+    legs, resolved = chain_mod.resolve_legs(ch, body.get("legs") or [], today)
+    res = evaluate(legs, Scenario(ch.spot, target, worst, days, sets=sets))
+    figs = store.figures_from(res)
+    atm = pair._atm_iv(ch, resolved[0]["expiry"], ch.spot)
+    p = pair._prob_profit(res, ch.spot, atm, days / 365.0, res_r(res))
+    figs.update({"prob_profit": None if p != p else round(p, 4), "atm_iv": round(atm, 4),
+                 "direction": "bull" if target > ch.spot else "bear" if target < ch.spot else "flat",
+                 "earnings_in_window": bool(ch.earnings_date and today.isoformat() < ch.earnings_date
+                                            <= (today + _dt.timedelta(days=days)).isoformat()),
+                 "earnings_date": ch.earnings_date})
+    return _clean({"ok": True, "symbol": ch.symbol, "spot": ch.spot, "spot_src": ch.spot_src,
+                   "as_of": _iso(ch.as_of), "as_of_et": _et(ch.as_of), "session": ch.session,
+                   "horizon_days": days, "target_date": (today + _dt.timedelta(days=days)).isoformat(),
+                   "today": today.isoformat(), "sets": sets, "legs": resolved, "figures": figs,
+                   "curves": store.curves_from(res)})
+
+
+def res_r(res) -> float:
+    """The rate the engine priced with (the platform's one rate)."""
+    from ..services.opt_constants import RISK_FREE  # noqa: PLC0415
+
+    return RISK_FREE
+
+
+@router.post("/api/preview")
+async def api_preview(request: Request, user: User = Depends(require_user)):
+    body = await _json_body(request)
+    if body is None:
+        return _err("The request was not in the expected form.")
+    try:
+        _store, chain_mod, _pair, _worker = _services()
+    except _Missing as exc:
+        return _err(str(exc), 503)
+    try:
+        return JSONResponse(await run_in_threadpool(_preview_payload, user, body))
+    except chain_mod.ChainError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)})
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)})
+    except Exception as exc:  # noqa: BLE001
+        log.exception("calc preview failed")
+        return JSONResponse({"ok": False, "error": "The option data could not be read just now (%s)." % type(exc).__name__})

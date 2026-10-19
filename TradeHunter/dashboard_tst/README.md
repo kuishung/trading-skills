@@ -223,6 +223,31 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-19 - v4.157: Calculator - the Sheet view (legs picked from the volatility surface, the Excel layout, instant recompute); pairing no longer comes back empty because of earnings
+
+The user: *"with the calculator presently provided, i come out no result most of the time. I would want a
+interface to follow the excel sheet and then on the leg user can select the leg from the volatility surface.
+So every leg selected will be calculate with the result as per the excel sheet format."*
+
+- **Why "no result most of the time"** (`calc_pair.horizons_for`): the avoid-earnings rule dropped every
+  horizon whose target date lay past the next earnings date; the horizons start three weeks out, so any
+  name with earnings inside the next month or two (AAPL's 2 Nov, for one) lost all its horizons and the
+  search returned nothing. It now prefers horizons that end before earnings and drops the crossing ones only
+  while a clean horizon remains; when every horizon crosses, all are kept and FLAGGED (`earnings_in_window`
+  and `earnings_date` on each row, `earnings_note` in the summary). Days the member typed are never dropped.
+- **The Sheet view** on `/calc` (`?view=sheet`, the default for a fresh open; "Setups" keeps the existing
+  view): the Excel sheet's layout - Inputs (current price from the pass, expected, worst, days, sets), four
+  leg columns, Option Values (current / target / worst / post-decayed with $ and % change), Decision
+  Indicators (breakevens, reward over risk, ROI, sets, total gains / risk / outlay, probability of profit,
+  deltas, decay) and the payoff chart. **Each leg is picked by clicking a cell of the volatility surface**
+  (strikes down, expiries across, IV % tinted, a Call / Put toggle; click = buy 1, again = sell 1, again =
+  remove; up to four legs). Every change recomputes at once; "Save this setup" hands it to the Hermes lane.
+  `?symbol=NVDA` preloads a ticker.
+- New endpoints in `routes/calc.py`: `GET /calc/api/surface?symbol=` (call and put IV, OI, ATM per expiry,
+  strikes within +/- 35 % of spot, from the last pass) and `POST /calc/api/preview` (the engine's figures and
+  curves for the legs on screen; nothing saved). Tests: `tests/test_calc_sheet_api.py` (4),
+  `tests/test_calc_sheet.py`, `test_calc_pair.py` (earnings cases).
+
 ### 2026-10-19 - v4.156: filter runs - TradeHunter hands the agent the screener's tickers; the agent no longer browses Finviz
 
 The user, after v4.155: *"i have deleted the previous filter and reinserted but it still show no tickers"*.

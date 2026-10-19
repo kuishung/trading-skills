@@ -87,8 +87,130 @@
   .calc-leg select, .calc-leg input { padding: .25rem .3rem; font-size: 12px; min-width: 0; width: 100%; }
   #fSym::placeholder { text-transform: none; }
   details.calc-card > summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--tv-text-hi); list-style: revert; }
+  /* v4.157: the view switch (Sheet / Setups) and the Excel-style sheet */
+  .calc-views { display: inline-flex; border: 1px solid var(--tv-border-2); border-radius: var(--tv-r-ctl); overflow: hidden; }
+  .calc-views button { padding: .4rem 1rem; font-size: 13px; color: var(--tv-muted); }
+  .calc-views button[aria-selected="true"] { color: var(--tv-text-hi); font-weight: 600; background: var(--tv-hover);
+    box-shadow: inset 0 -2px 0 var(--tv-accent); }
+  .sh-top { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; align-items: start; }
+  @media (min-width: 1024px) { .sh-top { grid-template-columns: minmax(280px, 330px) minmax(0, 1fr); } }
+  .sh-two { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; align-items: start; }
+  @media (min-width: 1000px) { .sh-two { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+  .sh-in { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; }
+  .sh-ro { background: var(--tv-page); color: var(--tv-text-hi); font-weight: 600; cursor: default; }
+  .sh-side { display: inline-flex; border: 1px solid var(--tv-border-2); border-radius: var(--tv-r-ctl); overflow: hidden; }
+  .sh-side button { padding: .3rem .8rem; font-size: 12px; color: var(--tv-muted); }
+  .sh-side button[aria-pressed="true"] { color: var(--tv-text-hi); font-weight: 600; background: var(--tv-hover);
+    box-shadow: inset 0 -2px 0 var(--tv-accent); }
+  .sh-wrap { max-height: 27rem; overflow: auto; position: relative; border: 1px solid var(--tv-border); border-radius: var(--tv-r-ctl); }
+  @media (max-width: 767px) { .sh-wrap { max-height: 22rem; } }
+  .sh-grid { border-collapse: separate; border-spacing: 0; font-size: 12px; }
+  .sh-grid th, .sh-grid td { padding: .22rem .4rem; border-bottom: 1px solid var(--tv-border); text-align: right;
+                             white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .sh-grid thead th { position: sticky; top: 0; z-index: 2; background: var(--tv-panel); font-size: 11px; font-weight: 500;
+                      color: var(--tv-text); border-bottom: 1px solid var(--tv-border-2); }
+  .sh-grid .sh-sticky { position: sticky; left: 0; z-index: 1; background: var(--tv-panel); }
+  .sh-grid thead th.sh-sticky { z-index: 3; }
+  .sh-grid .sh-corner { color: var(--tv-muted); font-weight: 400; }
+  .sh-grid .sh-sub { color: var(--tv-muted); font-size: 10px; font-weight: 400; }
+  .sh-grid .sh-k { font-weight: 600; color: var(--tv-text-hi); }
+  .sh-grid td { min-width: 3.3rem; background-clip: padding-box; vertical-align: top; }
+  .sh-grid td.sh-cell { cursor: pointer; }
+  .sh-grid td.sh-cell:hover { outline: 1px solid var(--tv-accent); outline-offset: -1px; }
+  .sh-grid td.is-pick { outline: 2px solid var(--tv-accent); outline-offset: -2px; color: var(--tv-text-hi); font-weight: 600; }
+  .sh-grid tr.sh-spot th, .sh-grid tr.sh-spot td { padding: .1rem .4rem; font-size: 10px; color: var(--tv-accent-tx);
+                                                   border-bottom: 2px solid var(--tv-accent); text-align: left; }
+  .sh-b { display: block; font-size: 9px; font-weight: 700; line-height: 1.15; text-align: right; }
+  .sh-b.buy { color: var(--tv-up); } .sh-b.sell { color: var(--tv-down); } .sh-b.other { opacity: .6; font-weight: 500; }
+  .sh-legs td.l { color: var(--tv-muted); }
+  .sh-legs th { text-align: right; }
+  .sh-legs td, .sh-legs th { min-width: 4.6rem; }
+  .sh-legs tr.sh-sec td { text-align: left; font-size: 11px; color: var(--tv-muted); padding-top: .6rem; border-bottom: 1px solid var(--tv-border-2); }
+  .sh-w { width: 4.4rem; text-align: right; padding: .15rem .3rem; font-size: 12px; }
+  .sh-x { margin-left: .25rem; padding: 0 .35rem; border: 1px solid var(--tv-border-2); border-radius: var(--tv-r-ctl); color: var(--tv-muted); line-height: 1.3; }
+  .sh-x:hover { color: var(--tv-down); border-color: var(--tv-down); }
+  .sh-dim { opacity: .55; transition: opacity .15s; }
+  .sh-kv td.l { white-space: normal; }
+  .sh-kv td .n { display: block; font-size: 10px; color: var(--tv-muted); white-space: normal; }
 </style>
 
+<div class="flex items-center gap-3 flex-wrap mb-3">
+  <div class="calc-views" role="tablist" aria-label="Calculator view">
+    <button type="button" role="tab" data-view="sheet" aria-selected="true">Sheet</button>
+    <button type="button" role="tab" data-view="setups" aria-selected="false">Setups</button>
+  </div>
+  <span id="viewHelp" class="calc-small calc-muted min-w-0"></span>
+</div>
+
+{# v4.157 the Sheet: the user's Excel option calculator, with the volatility surface as the leg
+   picker. Inputs (sheet B3:C7) · the surface (click a cell = a leg) · the leg columns (H:K) ·
+   Option Values (B9:E14) · Decision Indicators (B23:C33) · the payoff chart. Every change is
+   priced by /calc/api/preview (nothing saved); "Save this setup" makes a manual setup. #}
+<div id="sheetPage" class="hidden">
+  <div class="sh-top">
+    <section class="calc-card" id="shInputs">
+      <h2>Inputs</h2>
+      <div class="sh-in">
+        <label class="calc-lbl col-span-2">Ticker
+          <input id="shSym" class="calc-in uppercase" type="text" maxlength="20" autocomplete="off" spellcheck="false" placeholder="e.g. NVDA">
+        </label>
+        <label class="calc-lbl col-span-2">Current price
+          <input id="shSpot" class="calc-in sh-ro" type="text" readonly tabindex="-1" placeholder="from the market data">
+        </label>
+        <div id="shSpotSrc" class="col-span-2 calc-small calc-muted" style="margin-top:-.25rem"></div>
+        <label class="calc-lbl">Expected price
+          <input id="shTarget" class="calc-in" type="number" step="any" min="0" inputmode="decimal" placeholder="where it goes">
+        </label>
+        <label class="calc-lbl">Worst-case price
+          <input id="shWorst" class="calc-in" type="number" step="any" min="0" inputmode="decimal" placeholder="where you're wrong">
+        </label>
+        <label class="calc-lbl">Days to target date
+          <input id="shDays" class="calc-in" type="number" step="1" min="1" inputmode="numeric">
+        </label>
+        <label class="calc-lbl">Sets
+          <input id="shSets" class="calc-in" type="number" step="1" min="1" value="1" inputmode="numeric">
+        </label>
+        <div id="shHint" class="col-span-2 calc-small calc-muted"></div>
+        <label class="calc-lbl col-span-2">Name (optional, for saving)
+          <input id="shName" class="calc-in" type="text" maxlength="80" placeholder="e.g. breakout to the old high">
+        </label>
+        <div id="shErr" class="col-span-2 calc-small calc-err hidden"></div>
+        <div class="col-span-2 flex items-center gap-2 flex-wrap">
+          <button type="button" id="shSave" class="calc-primary">Save this setup</button>
+          <button type="button" id="shClear" class="calc-btn">Clear the legs</button>
+        </div>
+        <p class="col-span-2 calc-small calc-muted">Nothing is saved until you press Save. A saved setup goes under "Setups",
+          where Hermes recalculates it after every market pass.</p>
+      </div>
+    </section>
+
+    <section class="calc-card min-w-0">
+      <div class="flex items-center justify-between gap-2 flex-wrap mb-1">
+        <h2 style="margin:0">Pick the legs on the volatility surface</h2>
+        <div class="sh-side" role="group" aria-label="Show calls or puts">
+          <button type="button" data-side="C" aria-pressed="true">Calls</button>
+          <button type="button" data-side="P" aria-pressed="false">Puts</button>
+        </div>
+      </div>
+      <p id="shSurfInfo" class="calc-small calc-muted mb-1">Type a ticker to see its options.</p>
+      <p id="shMsg" class="calc-small calc-err hidden mb-1"></p>
+      <div id="shWrap" class="sh-wrap hidden"><table id="shGrid" class="sh-grid"></table></div>
+      <p class="calc-small calc-muted mt-1">Each cell is a contract's implied volatility (%): strikes down, expiry dates across.
+        <b>Click a cell to buy it (+1), click again to sell it (-1), a third time to remove it.</b> Calls / Puts above
+        decides which contract a click adds. Up to 4 legs. Green = lower volatility than the rest of this table, red = higher.</p>
+    </section>
+  </div>
+
+  <section class="calc-card mt-3 min-w-0">
+    <h2>The legs</h2>
+    <div class="calc-scroll"><table id="shLegs" class="calc-table sh-legs"></table></div>
+    <p id="shLegNote" class="calc-small calc-muted mt-1"></p>
+  </section>
+
+  <div id="shResult" class="mt-3"></div>
+</div>
+
+<div id="setupsPage">
 <div id="calcPage" class="calc-grid">
   <aside class="flex flex-col gap-3 min-w-0">
     <div>
@@ -162,6 +284,7 @@
   </aside>
 
   <section id="calcView" class="calc-card min-w-0"></section>
+</div>
 </div>
 
 <script type="application/json" id="calcBoot">{{ boot|tojson }}</script>
@@ -293,6 +416,7 @@
         (it.last_error ? '<div class="calc-small calc-err">Not calculated: ' + esc(it.last_error) + '</div>' : '') +
         '<div class="flex gap-1 mt-1 flex-wrap">' +
           '<button type="button" class="calc-btn" data-act="open">Open</button>' +
+          (it.kind === 'manual' ? '<button type="button" class="calc-btn" data-act="sheet" title="Load its legs and prices into the Sheet">Open in sheet</button>' : '') +
           '<button type="button" class="calc-btn" data-act="active">' + (it.active ? 'Pause' : 'Resume') + '</button>' +
           '<button type="button" class="calc-btn calc-danger" data-act="delete">Delete</button>' +
         '</div></div>';
@@ -303,6 +427,7 @@
     if (!row) return;
     var id = parseInt(row.dataset.id, 10), btn = ev.target.closest('button'), act = btn ? btn.dataset.act : 'open';
     if (act === 'open') select(id);
+    else if (act === 'sheet') { var si = S.items.find(function (x) { return x.id === id; }); if (si) openInSheet(si); }
     else if (act === 'active') toggleActive(id);
     else if (act === 'delete') removeItem(id);
   });
@@ -383,6 +508,7 @@
           esc(horizonText(it)) + ' · ' + it.sets + (it.sets === 1 ? ' set' : ' sets') + '</div></div>' +
       '<div class="flex gap-1 flex-wrap">' +
         '<button type="button" id="vCompute" class="calc-primary">Compute now</button>' +
+        (it.kind === 'manual' ? '<button type="button" id="vSheet" class="calc-btn">Open in sheet</button>' : '') +
         '<button type="button" id="vEdit" class="calc-btn">Edit</button>' +
         '<button type="button" id="vActive" class="calc-btn">' + (it.active ? 'Pause' : 'Resume') + '</button>' +
         '<button type="button" id="vDelete" class="calc-btn calc-danger">Delete</button></div></div>';
@@ -404,6 +530,7 @@
     box.innerHTML = h;
     $('vCompute').onclick = function () { computeNow(it.id); };
     $('vEdit').onclick = function () { editItem(it); };
+    if ($('vSheet')) $('vSheet').onclick = function () { openInSheet(it); };
     $('vActive').onclick = function () { toggleActive(it.id); };
     $('vDelete').onclick = function () { removeItem(it.id); };
     wireCharts(box);
@@ -721,7 +848,10 @@
   function hint() {
     var c = S.chain, t = parseFloat($('fTarget').value), w = parseFloat($('fWorst').value), box = $('fHint');
     if (!c || !c.ok || !isNum(c.spot) || !isFinite(t)) { box.textContent = ''; return; }
-    var spot = c.spot, txt;
+    box.textContent = moveText(c.spot, t, w);
+  }
+  function moveText(spot, t, w) {       // the one-line direction hint (the form and the sheet)
+    var txt;
     if (t > spot) txt = 'Bullish: you expect a rise of ' + pct((t - spot) / spot, 1) + ' from ' + money(spot) + '.';
     else if (t < spot) txt = 'Bearish: you expect a fall of ' + pct((spot - t) / spot, 1) + ' from ' + money(spot) + '.';
     else txt = 'The expected price equals today\'s price - pick one above or below it.';
@@ -729,7 +859,7 @@
       if ((t > spot && w >= spot) || (t < spot && w <= spot)) txt += ' Usually the worst-case price sits on the other side of today\'s price.';
       else if (t !== spot) txt += ' You are wrong at ' + money(w) + ' (' + pct((w - spot) / spot, 1) + ').';
     }
-    box.textContent = txt;
+    return txt;
   }
 
   function legRow(l) {
@@ -907,15 +1037,452 @@
   };
   $('pReset').onclick = function () { paintPrefs(BOOT.defaults || {}); };
 
+  // ── the view switch: Sheet / Setups (v4.157) ──────────────────────────────────
+  var VIEW_KEY = 'th.calc.view';
+  function lsGet(k) { try { return window.localStorage.getItem(k); } catch (e) { return null; } }
+  function lsSet(k, v) { try { window.localStorage.setItem(k, v); } catch (e) { /* private window */ } }
+  function syncUrl() {
+    var u = S.page === 'sheet'
+      ? '/calc?view=sheet' + (SH.sym ? '&symbol=' + encodeURIComponent(SH.sym) : '')
+      : (S.sel ? '/calc?id=' + S.sel : '/calc?view=setups');
+    try { history.replaceState(null, '', u); } catch (e) { /* ignore */ }
+  }
+  function setView(v, quiet) {
+    if (v !== 'sheet' && v !== 'setups') v = 'sheet';
+    S.page = v;
+    show($('sheetPage'), v === 'sheet');
+    show($('setupsPage'), v === 'setups');
+    document.querySelectorAll('.calc-views button').forEach(function (b) { b.setAttribute('aria-selected', String(b.dataset.view === v)); });
+    $('viewHelp').textContent = v === 'sheet'
+      ? 'Laid out like your Excel calculator: pick up to 4 legs on the volatility surface and the figures update as you go.'
+      : 'Your saved setups - Hermes recalculates them after every market pass.';
+    lsSet(VIEW_KEY, v);
+    if (!quiet) syncUrl();
+    if (v === 'sheet') { if (SH.prev) paintSheetResult(); }
+    else if (S.view) paintView();
+  }
+  document.querySelectorAll('.calc-views button').forEach(function (b) { b.onclick = function () { setView(b.dataset.view); }; });
+
+  // ── the Sheet: the volatility surface as the leg picker (v4.157) ──────────────
+  var MAXL = BOOT.max_legs || 4;
+  var SH = {sym: null, surf: null, seq: 0, side: 'C', legs: [], prev: null, prevKey: null, prevBody: null,
+            pseq: 0, timer: null, busy: false, why: null};
+  function sameK(a, b) { return Math.abs(Number(a) - Number(b)) < 1e-6; }
+  function legIndex(right, k, e) {
+    for (var i = 0; i < SH.legs.length; i++) {
+      var l = SH.legs[i];
+      if (l.right === right && l.expiry === e && sameK(l.strike, k)) return i;
+    }
+    return -1;
+  }
+  function legsKey(legs) { return JSON.stringify(legs.map(function (l) { return [l.right, Number(l.strike), l.expiry, l.qty]; })); }
+  function shMsg(m) { $('shMsg').textContent = m || ''; show($('shMsg'), !!m); }
+  function shErr(m) { $('shErr').textContent = m || ''; show($('shErr'), !!m); }
+  function surfCell(l) {               // the surface's own figures for a leg: {iv %, oi, dte} or {}
+    var j = SH.surf;
+    if (!j || !j.ok) return {};
+    var r = -1, c = -1;
+    for (var i = 0; i < j.strikes.length; i++) if (sameK(j.strikes[i], l.strike)) { r = i; break; }
+    for (var x = 0; x < j.expiries.length; x++) if (j.expiries[x].date === l.expiry) { c = x; break; }
+    var out = {};
+    if (c >= 0) out.dte = j.expiries[c].dte;
+    if (r >= 0 && c >= 0) {
+      out.iv = ((l.right === 'C' ? j.calls : j.puts)[r] || [])[c];
+      out.oi = ((l.right === 'C' ? j.oi_c : j.oi_p)[r] || [])[c];
+    }
+    return out;
+  }
+  function tint(v, lo, hi) {
+    if (!isNum(v) || !isNum(lo) || !isNum(hi) || hi <= lo) return '';
+    var r = Math.max(0, Math.min(1, (v - lo) / (hi - lo)));
+    return 'background:hsla(' + Math.round(120 - 120 * r) + ',70%,45%,.30)';
+  }
+
+  function loadSurface(sym) {
+    var seq = ++SH.seq;
+    SH.sym = sym; SH.surf = null;
+    $('shSpot').value = ''; $('shSpotSrc').textContent = '';
+    $('shSurfInfo').innerHTML = 'Reading ' + esc(sym) + '\'s options…';
+    show($('shWrap'), false);
+    if (S.page === 'sheet') syncUrl();
+    return api('/calc/api/surface?symbol=' + encodeURIComponent(sym)).then(function (j) {
+      if (seq !== SH.seq) return;
+      SH.surf = j;
+      if (!j.ok) {
+        $('shSurfInfo').innerHTML = '<span class="calc-err">' + esc(j.error || 'No option data for ' + sym + '.') + '</span>';
+      } else {
+        $('shSpot').value = money(j.spot);
+        $('shSpotSrc').textContent = 'from the market pass of ' + (j.as_of_et || j.session || '?') + ' (15-minute delayed)';
+        paintSurface(true);
+      }
+      paintLegs(); shHint(); schedule();
+    });
+  }
+  function surfInfo() {
+    var j = SH.surf;
+    $('shSurfInfo').innerHTML = '<b style="color:var(--tv-text-hi)">' + esc(j.symbol) + '</b>' + (j.name ? ' · ' + esc(j.name) : '') +
+      ' · price ' + money(j.spot) + ' · ' + j.strikes.length + ' strikes × ' + j.expiries.length + ' expiries' +
+      (j.earnings_date ? ' · earnings ' + shortDate(j.earnings_date) : '') +
+      (isNum(j.iv_rank) ? ' · IV rank ' + Math.round(j.iv_rank) : '') +
+      ' · showing <b>' + (SH.side === 'C' ? 'calls' : 'puts') + '</b>';
+  }
+  function spotLine(j, n) {
+    return '<tr class="sh-spot"><th class="sh-sticky">now ' + esc(num(j.spot, 2)) + '</th><td colspan="' + n + '">stock price ' +
+      money(j.spot) + ' - strikes above this line are below the price, strikes under it are above</td></tr>';
+  }
+  function paintSurface(center) {
+    var j = SH.surf;
+    if (!j || !j.ok) return;
+    surfInfo();
+    var ex = j.expiries || [], side = SH.side, ivs = side === 'C' ? j.calls : j.puts, ois = side === 'C' ? j.oi_c : j.oi_p;
+    var lo = j.scale ? j.scale[0] : null, hi = j.scale ? j.scale[1] : null;
+    if (!j.strikes.length || !ex.length) {
+      $('shSurfInfo').innerHTML += '<br><span class="calc-err">No contracts with an implied volatility near the price on the last market pass.</span>';
+      show($('shWrap'), false);
+      return;
+    }
+    var h = '<thead><tr><th class="sh-sticky sh-corner">Strike ↓ · expiry →</th>';
+    ex.forEach(function (e) {
+      h += '<th title="' + esc(e.date) + ' - ' + e.dte + ' days to expiry">' + shortDate(e.date) + '<div class="sh-sub">' + e.dte + 'd</div></th>';
+    });
+    h += '</tr></thead><tbody>';
+    j.strikes.forEach(function (k, r) {
+      if (r === j.spot_row) h += spotLine(j, ex.length);
+      h += '<tr><th class="sh-sticky sh-k">' + esc(strikeText(k)) + '</th>';
+      ex.forEach(function (e, c) {
+        var v = (ivs[r] || [])[c], here = SH.legs.filter(function (l) { return l.expiry === e.date && sameK(l.strike, k); });
+        var badges = here.map(function (l) {
+          return '<span class="sh-b ' + (l.qty > 0 ? 'buy' : 'sell') + (l.right !== side ? ' other' : '') + '">' +
+            (l.qty > 0 ? '+' : '') + l.qty + ' ' + l.right + '</span>';
+        }).join('');
+        if (!isNum(v)) { h += '<td>' + badges + '</td>'; return; }
+        var mine = null;
+        here.forEach(function (l) { if (l.right === side) mine = l; });
+        var oi = (ois[r] || [])[c];
+        var next = !mine ? 'click to buy it (+1)' : mine.qty > 0 ? 'click to sell it instead (-1)' : 'click to remove it';
+        var t = j.symbol + ' ' + shortDate(e.date) + ' ' + strikeText(k) + (side === 'C' ? ' call' : ' put') +
+          ' - implied volatility ' + num(v, 1) + '% - open interest ' + (isNum(oi) ? oi.toLocaleString('en-US') : 'not known') +
+          ' - ' + e.dte + ' days to expiry - ' + next;
+        h += '<td class="sh-cell' + (mine ? ' is-pick' : '') + '" data-r="' + r + '" data-c="' + c + '" style="' + tint(v, lo, hi) +
+          '" title="' + esc(t) + '">' + num(v, 1) + badges + '</td>';
+      });
+      h += '</tr>';
+    });
+    if (j.spot_row >= j.strikes.length) h += spotLine(j, ex.length);
+    $('shGrid').innerHTML = h + '</tbody>';
+    show($('shWrap'), true);
+    if (center) {
+      var sp = $('shGrid').querySelector('tr.sh-spot'), w = $('shWrap');
+      if (sp) w.scrollTop = Math.max(0, sp.offsetTop - w.clientHeight / 2);
+    }
+  }
+  $('shGrid').addEventListener('click', function (ev) {
+    var td = ev.target.closest('td.sh-cell'), j = SH.surf;
+    if (!td || !j || !j.ok) return;
+    var r = parseInt(td.dataset.r, 10), c = parseInt(td.dataset.c, 10), k = j.strikes[r], e = j.expiries[c].date;
+    var i = legIndex(SH.side, k, e);
+    if (i < 0) {
+      if (SH.legs.length >= MAXL) {
+        shMsg('The sheet takes at most ' + MAXL + ' legs. Remove one (× in the leg table) before adding another.');
+        return;
+      }
+      SH.legs.push({right: SH.side, strike: k, expiry: e, qty: 1});
+    } else if (SH.legs[i].qty > 0) {
+      SH.legs[i].qty = -SH.legs[i].qty;
+    } else {
+      SH.legs.splice(i, 1);
+    }
+    shMsg('');
+    legsChanged();
+  });
+  document.querySelectorAll('.sh-side button').forEach(function (b) {
+    b.onclick = function () {
+      SH.side = b.dataset.side;
+      document.querySelectorAll('.sh-side button').forEach(function (x) { x.setAttribute('aria-pressed', String(x === b)); });
+      paintSurface(false);
+    };
+  });
+  function legsChanged() { paintSurface(false); paintLegs(); schedule(); }
+
+  // the leg columns (sheet H:K): the contract, then what the engine priced
+  function paintLegs() {
+    var L = SH.legs, ok = SH.prev && SH.prev.ok && SH.prevKey === legsKey(L), p = ok ? SH.prev : null;
+    var fl = p ? (p.figures.legs || []) : [], rl = p ? (p.legs || []) : [], wait = SH.busy ? '…' : '–';
+    var ae = document.activeElement, focus = ae && ae.classList.contains('sh-w') ? ae.dataset.w : null, typed = focus != null ? ae.value : null;
+    var cols = [];
+    for (var i = 0; i < MAXL; i++) cols.push(i);
+    var h = '<thead><tr><th class="l"></th>' + cols.map(function (i) {
+      return '<th>Leg ' + (i + 1) + (L[i] ? '<button type="button" class="sh-x" data-x="' + i + '" title="Remove leg ' + (i + 1) + '" aria-label="Remove leg ' + (i + 1) + '">×</button>' : '') + '</th>';
+    }).join('') + '</tr></thead><tbody>';
+    function row(label, f, tip) {
+      h += '<tr><td class="l"' + (tip ? ' title="' + esc(tip) + '"' : '') + '>' + label + '</td>' + cols.map(function (i) {
+        if (!L[i]) return '<td>' + (i === L.length && label === 'Call or put' ? '<span class="calc-muted">pick a cell</span>' : '') + '</td>';
+        return '<td>' + f(L[i], fl[i] || {}, rl[i] || {}, surfCell(L[i]), i) + '</td>';
+      }).join('') + '</tr>';
+    }
+    function sec(t) { h += '<tr class="sh-sec"><td colspan="' + (MAXL + 1) + '">' + t + '</td></tr>'; }
+    row('Call or put', function (l) { return '<span class="' + (l.qty > 0 ? 'calc-up' : 'calc-down') + '">' + (l.qty > 0 ? 'Buy ' : 'Sell ') + (l.right === 'C' ? 'call' : 'put') + '</span>'; });
+    row('Strike', function (l) { return esc(strikeText(Number(l.strike))); });
+    row('Expiry', function (l) { return shortDate(l.expiry); });
+    row('Days to expiry', function (l, e, r, s) { return isNum(r.dte) ? r.dte : isNum(s.dte) ? s.dte : '–'; });
+    row('Implied volatility', function (l, e, r, s) { return isNum(r.iv) ? pct(r.iv, 1) : isNum(s.iv) ? num(s.iv, 1) + '%' : '–'; },
+        'The contract\'s own implied volatility on the last market pass; it is held constant to the target date.');
+    row('Open interest', function (l, e, r, s) { var oi = isNum(r.oi) ? r.oi : s.oi; return isNum(oi) ? oi.toLocaleString('en-US') : '–'; });
+    row('Weight (+ buy, - sell)', function (l, e, r, s, i) {
+      return '<input class="calc-in sh-w" type="number" step="1" data-w="' + i + '" value="' + esc(l.qty) + '" aria-label="Leg ' + (i + 1) + ' weight, + buy, - sell">';
+    }, 'How many contracts: a positive number buys, a negative number sells.');
+    sec(p ? 'Priced from the market pass of ' + esc(p.as_of_et || p.session || '?') + ' - per share, one contract = 100 shares'
+          : (SH.busy ? 'Pricing…' : 'Priced after you fill in the prices above'));
+    row('Option price', function (l, e) { return p ? money(e.price_entry) : wait; }, 'Model price per share today, from the contract\'s implied volatility.');
+    row('Delta', function (l, e) { return p ? num(e.delta_entry, 3) : wait; });
+    row('Days left on target date', function (l, e) { return p ? num(e.dte_target, 0) : wait; });
+    row('Price on target date', function (l, e) { return p ? money(e.price_target) : wait; }, 'Model price on the target date at today\'s stock price.');
+    row('Delta on target date', function (l, e) { return p ? num(e.delta_target, 3) : wait; });
+    row('Value (price × weight)', function (l, e) { return p ? signed(e.value_entry) : wait; });
+    row('Value on target date', function (l, e) { return p ? signed(e.value_target) : wait; });
+    row('Decay', function (l, e) { return p ? signed(e.decay) : wait; }, 'Value lost (or gained) to time by the target date if the stock does not move.');
+    $('shLegs').innerHTML = h + '</tbody>';
+    if (focus != null) {
+      var el = $('shLegs').querySelector('.sh-w[data-w="' + focus + '"]');
+      if (el) { el.value = typed; el.focus(); }      // keep what is being typed (e.g. a lone "-")
+    }
+    legNote();
+  }
+  function legNote() {
+    var days = parseInt($('shDays').value, 10), notes = [];
+    SH.legs.forEach(function (l, i) {
+      var d = surfCell(l).dte;
+      if (isNum(d) && days >= d) notes.push('Leg ' + (i + 1) + ' expires before the target date (in ' + d + ' days), so it is valued at what it is worth at expiry.');
+    });
+    if (!SH.legs.length) notes.push('No legs yet: click a cell on the volatility surface above.');
+    $('shLegNote').textContent = notes.join(' ');
+  }
+  $('shLegs').addEventListener('click', function (ev) {
+    var x = ev.target.closest('[data-x]');
+    if (!x) return;
+    SH.legs.splice(parseInt(x.dataset.x, 10), 1);
+    shMsg('');
+    legsChanged();
+  });
+  $('shLegs').addEventListener('input', function (ev) {
+    var el = ev.target.closest('.sh-w');
+    if (!el) return;
+    var i = parseInt(el.dataset.w, 10), q = el.value.trim() === '' ? NaN : Number(el.value), l = SH.legs[i];
+    if (!l) return;
+    if (Number.isInteger(q) && q !== 0 && Math.abs(q) <= 1000) { l.qty = q; delete l.badQty; }
+    else l.badQty = true;
+    paintSurface(false);
+    schedule();
+  });
+
+  // the inputs (sheet B3:C7)
+  function shHint() {
+    var j = SH.surf, t = parseFloat($('shTarget').value), w = parseFloat($('shWorst').value);
+    $('shHint').textContent = j && j.ok && isNum(j.spot) && isFinite(t) ? moveText(j.spot, t, w) : '';
+  }
+  function symChanged() {
+    var sym = $('shSym').value.trim().toUpperCase();
+    $('shSym').value = sym;
+    if (!sym || sym === SH.sym) return;
+    shMsg(SH.legs.length && SH.sym ? 'The legs of ' + SH.sym + ' were cleared - they do not exist on ' + sym + '.' : '');
+    SH.legs = []; SH.prev = null; SH.prevKey = null;
+    loadSurface(sym);
+    paintLegs(); paintSheetResult();
+  }
+  $('shSym').addEventListener('change', symChanged);
+  $('shSym').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); symChanged(); } });
+  ['shTarget', 'shWorst', 'shDays', 'shSets'].forEach(function (id) {
+    $(id).addEventListener('input', function () { shHint(); legNote(); schedule(); });
+  });
+  $('shClear').onclick = function () { SH.legs = []; shMsg(''); legsChanged(); };
+
+  // the preview: every change, debounced; nothing is saved
+  function readSheet() {
+    var sym = SH.sym, t = parseFloat($('shTarget').value), w = parseFloat($('shWorst').value);
+    var dtxt = $('shDays').value.trim(), sets = parseInt($('shSets').value, 10) || 1;
+    if (!sym) return {why: 'Type a ticker to start.'};
+    if (!SH.surf) return {why: 'Reading ' + sym + '\'s options…'};
+    if (!SH.surf.ok) return {why: 'There is no option data to price ' + sym + ' with: ' + (SH.surf.error || '') };
+    if (!SH.legs.length) return {why: 'Click a cell on the volatility surface to add your first leg.'};
+    for (var i = 0; i < SH.legs.length; i++) {
+      if (SH.legs[i].badQty) return {why: 'Leg ' + (i + 1) + ': the weight must be a whole number other than 0 (+ buys, - sells).'};
+    }
+    if (!(t > 0) || !(w > 0)) return {why: 'Type the expected price and the worst-case price to see the figures.'};
+    if (dtxt && !(parseInt(dtxt, 10) >= 1)) return {why: 'Days to target date must be a whole number, 1 or more.'};
+    return {body: {symbol: sym, target: t, worst: w, days: dtxt ? parseInt(dtxt, 10) : null, sets: Math.max(1, sets),
+                   legs: SH.legs.map(function (l) { return {right: l.right, strike: Number(l.strike), expiry: l.expiry, qty: l.qty}; })}};
+  }
+  function schedule() { clearTimeout(SH.timer); SH.timer = setTimeout(runPreview, 300); }
+  function runPreview() {
+    var r = readSheet();
+    if (r.why) {
+      SH.pseq++; SH.busy = false; SH.why = r.why; SH.prev = null; SH.prevKey = null;
+      paintLegs(); paintSheetResult();
+      return;
+    }
+    var seq = ++SH.pseq, key = legsKey(SH.legs);
+    SH.busy = true; SH.why = null;
+    paintBusy();
+    api('/calc/api/preview', 'POST', r.body).then(function (j) {
+      if (seq !== SH.pseq) return;
+      SH.busy = false; SH.prev = j; SH.prevKey = key; SH.prevBody = r.body;
+      paintLegs(); paintSheetResult();
+    });
+  }
+  function paintBusy() {
+    var st = $('shState');
+    if (st) st.textContent = 'computing…';
+    var body = $('shResBody');
+    if (body) body.classList.add('sh-dim');
+    if (!st) paintSheetResult();
+  }
+  function chg(v, base) {       // the sheet's D and E columns: $ and % change against "Current"
+    if (!isNum(v) || !isNum(base)) return ['–', '–'];
+    var d = v - base, cls = d > 1e-9 ? 'calc-up' : d < -1e-9 ? 'calc-down' : '';
+    var pc = Math.abs(base) > 1e-9 ? (d >= 0 ? '+' : '') + pct(d / Math.abs(base), 1) : '–';
+    return ['<span class="' + cls + '">' + signed(d) + '</span>', '<span class="' + cls + '">' + pc + '</span>'];
+  }
+  function kv(label, value, note, cls) {
+    return '<tr><td class="l">' + label + '</td><td class="' + (cls || '') + '"><b>' + value + '</b>' + (note ? '<span class="n">' + note + '</span>' : '') + '</td></tr>';
+  }
+  function paintSheetResult() {
+    var box = $('shResult'), p = SH.prev;
+    if (SH.why && !SH.busy) {
+      box.innerHTML = '<section class="calc-card"><p class="calc-small calc-muted">' + esc(SH.why) + '</p></section>';
+      return;
+    }
+    if (!p) {
+      box.innerHTML = SH.busy ? '<section class="calc-card"><p class="calc-small calc-muted" id="shState">computing…</p></section>' : '';
+      return;
+    }
+    var state = '<span id="shState" class="calc-small calc-muted">' + (SH.busy ? 'computing…' : '') + '</span>';
+    if (!p.ok) {
+      box.innerHTML = '<section class="calc-card"><div class="flex justify-between gap-2"><h2>The result</h2>' + state + '</div>' +
+        '<p class="calc-small calc-err">These legs could not be priced: ' + esc(p.error || 'no answer') + '</p></section>';
+      return;
+    }
+    var f = p.figures || {}, b = SH.prevBody || {}, spot = p.spot, sets = p.sets || 1, e0 = f.entry_value;
+    var when = 'on ' + shortDate(p.target_date) + ' (' + p.horizon_days + ' days from today)';
+    var h = '<div class="flex items-baseline justify-between gap-2 flex-wrap mb-2"><p class="calc-small calc-muted">' +
+      esc(p.symbol) + ' at ' + money(spot) + ' · computed from the market pass of ' + esc(p.as_of_et || p.session || '?') +
+      ' · target date ' + esc(when) + '</p>' + state + '</div>';
+    h += '<div id="shResBody"' + (SH.busy ? ' class="sh-dim"' : '') + '><div class="sh-two">';
+    // Option Values (B9:E14)
+    var rows = [['Current', e0, 'what the legs are worth today' + (isNum(e0) && e0 < 0 ? ' (a credit: you collect it)' : '')],
+                ['Target', f.target_value, 'at the expected price ' + money(b.target) + ', ' + when],
+                ['Worst', f.worst_value, 'at the worst-case price ' + money(b.worst) + ', ' + when],
+                ['Post-decayed', f.decayed_value, 'at today\'s price ' + money(spot) + ', ' + when]];
+    h += '<section class="calc-card min-w-0"><h2>Option values</h2><div class="calc-scroll"><table class="calc-table sh-kv"><thead><tr>' +
+      '<th class="l"></th><th>Value</th><th>$ change</th><th>% change</th></tr></thead><tbody>';
+    rows.forEach(function (rw, i) {
+      var c = i === 0 ? ['', ''] : chg(rw[1], e0);
+      h += '<tr><td class="l" title="' + esc(rw[2]) + '"><b style="color:var(--tv-text-hi)">' + rw[0] + '</b><span class="n">' + esc(rw[2]) + '</span></td>' +
+        '<td>' + money(rw[1]) + '</td><td>' + c[0] + '</td><td>' + c[1] + '</td></tr>';
+    });
+    h += '</tbody></table></div><p class="calc-small calc-muted mt-1">Per share, net of all legs (one contract = 100 shares). ' +
+      'Changes are against "Current", the value today.</p></section>';
+    // Decision Indicators (B23:C33)
+    var be = (f.breakevens || []).filter(isNum);
+    var beTxt = be.length ? be.map(function (x) {
+      return money(x) + ' <span class="calc-muted" style="font-weight:400">(' + signed(x - spot) + ', ' + (x >= spot ? '+' : '') + pct((x - spot) / spot, 1) + ')</span>';
+    }).join('<br>') : 'none in the price range';
+    var rr = isNum(f.reward_over_risk) ? num(f.reward_over_risk, 2) + ' : 1'
+      : (isNum(f.loss_at_worst) && f.loss_at_worst >= 0 ? 'no loss at the worst case' : '–');
+    h += '<section class="calc-card min-w-0"><h2>Decision indicators</h2><div class="calc-scroll"><table class="calc-table sh-kv"><tbody>' +
+      kv('Breakeven stock price', beTxt, 'where the trade is flat ' + esc(when) + '; vs today\'s ' + money(spot)) +
+      kv('Reward over risk', rr, 'gain at the expected price ÷ loss at the worst-case price') +
+      kv('Return on investment', pct(f.roi, 1), 'gain at the expected price ÷ what the legs cost today', isNum(f.roi) ? (f.roi >= 0 ? 'calc-up' : 'calc-down') : '') +
+      (isNum(f.roi_on_max_loss) && isNum(e0) && e0 < 0 ? kv('Return on the most it can lose', pct(f.roi_on_max_loss, 1), 'for a credit trade: gain ÷ the largest loss in the chart') : '') +
+      kv('#Sets', String(sets), 'each set = the legs above × 100 shares') +
+      kv('Total gains', signed(f.total_gains, 0), 'at the expected price, all sets', isNum(f.total_gains) ? (f.total_gains >= 0 ? 'calc-up' : 'calc-down') : '') +
+      kv('Total risk', signed(f.total_risk, 0), 'at the worst-case price, all sets', isNum(f.total_risk) ? (f.total_risk >= 0 ? 'calc-up' : 'calc-down') : '') +
+      kv('Total outlay', money(f.total_outlay, 0), isNum(f.total_outlay) && f.total_outlay < 0 ? 'a credit: money you collect to open, all sets' : 'what you pay to open, all sets') +
+      kv('Probability of profit', pct(f.prob_profit, 0), 'model probability, not a forecast') +
+      kv('Net delta now / on target date', num(f.net_delta_entry, 3) + ' / ' + num(f.net_delta_target, 3), 'how much the position moves per $1 in the stock, per share') +
+      kv('Total decay', signed(f.total_decay), 'per share: value lost (or gained) to time if the stock does not move') +
+      kv('Best / worst in the chart', signed(f.max_profit) + ' / ' + signed(f.max_loss), 'profit or loss per share ' + esc(when)) +
+      '</tbody></table></div></section></div>';
+    // the payoff chart
+    if (p.curves && p.curves.grid && p.curves.grid.length) {
+      S.charts = S.charts || {};
+      S.charts.sheet = {curves: p.curves, spot: spot, target: b.target, worst: b.worst, entry: e0, be: be};
+      h += '<section class="calc-card mt-3 min-w-0"><h2>Profit and loss ' + esc(when) + '</h2>' +
+        '<div class="calc-chart" data-chart="sheet"></div>' +
+        '<p class="calc-small calc-muted mt-1">Computed from the market pass of ' + esc(p.as_of_et || p.session || '?') + ', spot ' + money(spot) + '. ' +
+        'Solid line: what the position is worth on ' + esc(shortDate(p.target_date)) + ' at each stock price; dashed line: what it is worth today; ' +
+        'faint lines: each leg. Green above the cost to open is profit, red below is loss. Per share.</p>' +
+        (f.earnings_in_window ? '<p class="calc-notice mt-2">Earnings on ' + esc(shortDate(f.earnings_date)) + ' fall inside this window. ' +
+          'Implied volatility usually drops after the report; these figures keep it unchanged.</p>' : '') +
+        '</section>';
+    }
+    h += '</div>';
+    box.innerHTML = h;
+    wireCharts(box);
+  }
+
+  // "Save this setup": a manual setup the Hermes lane keeps recalculating
+  $('shSave').onclick = function () {
+    var r = readSheet();
+    if (r.why) { shErr(r.why); return; }
+    var bd = r.body;
+    if (bd.target === bd.worst) { shErr('The expected and the worst-case prices must differ.'); return; }
+    shErr('');
+    var btn = $('shSave');
+    btn.disabled = true; btn.textContent = 'Saving…';
+    api('/calc/api/requests', 'POST', {symbol: bd.symbol, kind: 'manual', target: bd.target, worst: bd.worst,
+      horizon_days: bd.days, sets: bd.sets, name: $('shName').value.trim() || null, legs: bd.legs}).then(function (j) {
+      btn.disabled = false; btn.textContent = 'Save this setup';
+      if (!j.ok) { shErr(j.error || 'Not saved.'); return; }
+      upsertItem(j.item); S.sel = j.item.id; paintList();
+      setView('setups');
+      $('calcView').innerHTML = '<p class="calc-small calc-muted">Calculating…</p>';
+      computeNow(j.item.id).then(function (k) {
+        if (!k.item) loadView(j.item.id);
+        toast(k.ok ? 'Saved - it is under Setups and Hermes recalculates it after every market pass' : 'Saved - but it could not be calculated yet', k.ok ? 'ok' : 'err');
+      });
+    });
+  };
+  // "Open in sheet": a saved setup's legs and prices into the sheet
+  function openInSheet(it) {
+    $('shSym').value = it.symbol;
+    $('shTarget').value = isNum(it.target) ? it.target : '';
+    $('shWorst').value = isNum(it.worst) ? it.worst : '';
+    $('shDays').value = it.horizon_days || S.prefs.horizon_days || 45;
+    $('shSets').value = it.sets || 1;
+    $('shName').value = it.name || '';
+    SH.legs = (it.legs || []).slice(0, MAXL).map(function (l) {
+      return {right: l.right, strike: Number(l.strike), expiry: l.expiry, qty: parseInt(l.qty, 10)};
+    });
+    if (SH.legs.length) {
+      SH.side = SH.legs[0].right;
+      document.querySelectorAll('.sh-side button').forEach(function (x) { x.setAttribute('aria-pressed', String(x.dataset.side === SH.side)); });
+    }
+    SH.prev = null; SH.prevKey = null; shMsg(''); shErr('');
+    setView('sheet');
+    if (it.symbol !== SH.sym || !SH.surf || !SH.surf.ok) loadSurface(it.symbol);
+    else { paintSurface(true); paintLegs(); shHint(); schedule(); }
+    window.scrollTo({top: 0, behavior: 'smooth'});
+  }
+
   // ── start ─────────────────────────────────────────────────────────────────────
   paintStatus(); paintList(); paintPrefs(); setMode('pair');
   if (BOOT.symbol) { $('fSym').value = BOOT.symbol; ensureChain(); }
   if (S.sel) loadView(S.sel); else paintView();
+  $('shDays').value = S.prefs.horizon_days || 45;
+  (function () {
+    var v = BOOT.view || (S.sel ? 'setups' : BOOT.symbol ? 'sheet' : (lsGet(VIEW_KEY) || 'sheet'));
+    setView(v, true);
+    var it = S.sel ? selItem() : null;
+    if (S.page === 'sheet' && it) openInSheet(it);
+    else if (BOOT.symbol) { $('shSym').value = BOOT.symbol; loadSurface(BOOT.symbol); }
+    else runPreview();          // paints the empty leg columns and "type a ticker"
+  })();
   var lastW = window.innerWidth;
   window.addEventListener('resize', function () {
     if (Math.abs(window.innerWidth - lastW) < 40) return;
     lastW = window.innerWidth;
-    if (S.view) paintView();
+    if (S.page === 'sheet') { if (SH.prev) paintSheetResult(); }
+    else if (S.view) paintView();
   });
   setInterval(pollStatus, 60000);
 })();
