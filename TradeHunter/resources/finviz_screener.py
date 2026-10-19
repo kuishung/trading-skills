@@ -153,11 +153,91 @@ _TICKER_RE = re.compile(r'data-boxover-ticker="([A-Z][A-Z0-9.]{0,9})"')
 _TS_BLOCK_RE = re.compile(r'<!--\s*TS\s*\n(.*?)-->', re.DOTALL)
 
 
+# ── Finviz's 2026 page (found 2026-10-19) ───────────────────────────────────
+# The screener is now a server-side-rendered React "island": the table rows no
+# longer carry data-boxover-* attributes and the TS comment block is gone, so every
+# regex above matches nothing and every walker returned []. The page instead embeds
+# its data as JSON in <script type="application/json" data-ssr-props="ssr-island-1">:
+#   {"data": {"rows": [{"text": {"ticker", "company", "sector", "industry", ...},
+#                        "numbers": {"marketCap" (millions), "price", "change",
+#                                    "volume", "perf1w", "perf4w", "perf13w",
+#                                    "perf26w", "perf52w", "perfYtd", ...}}],
+#             "totalCount": N, "pageSize": 20, "firstRow": 1}, ...}
+# Which "numbers" are present depends on the view (v=111 overview, v=121 valuation,
+# v=141 performance); the "text" block is the same on every view, so one parser
+# serves every walker. `&r=<offset>` paging still works. Every extractor below
+# reads this JSON first and keeps the old markup as the fallback.
+_SSR_PROPS_RE = re.compile(
+    r'<script[^>]+type="application/json"[^>]+data-ssr-props="[^"]*"[^>]*>(.*?)</script>', re.S
+)
+
+
+def _num(v) -> float | None:
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if f == f else None
+
+
+def _ssr_rows(html: str) -> tuple[list[dict], int | None]:
+    """Rows from the embedded JSON: [{symbol, company, sector, industry, price,
+    volume, mcap, chg_1d, perf_1w, perf_1m, perf_3m, perf_6m, perf_ytd, perf_1y}]
+    (dotted share classes, document order, deduped) and the screen's total count.
+    ([], None) when the page has no such block (the old markup, or an error page)."""
+    m = _SSR_PROPS_RE.search(html)
+    if not m:
+        return [], None
+    raw = m.group(1)
+    try:
+        doc = json.loads(raw)
+    except ValueError:
+        try:
+            import html as _html
+            doc = json.loads(_html.unescape(raw))
+        except ValueError:
+            return [], None
+    data = doc.get("data") if isinstance(doc, dict) else None
+    if not isinstance(data, dict):
+        return [], None
+    out: list[dict] = []
+    seen: set[str] = set()
+    for r in data.get("rows") or []:
+        if not isinstance(r, dict):
+            continue
+        t, n = r.get("text") or {}, r.get("numbers") or {}
+        sym = str(t.get("ticker") or "").strip().upper().replace("-", ".")
+        if not sym or sym in seen:
+            continue
+        seen.add(sym)
+        mcap = _num(n.get("marketCap"))
+        vol = _num(n.get("volume"))
+        out.append({
+            "symbol": sym,
+            "company": str(t.get("company") or "").strip(),
+            "sector": str(t.get("sector") or "").strip(),
+            "industry": str(t.get("industry") or "").strip(),
+            "price": _num(n.get("price")),
+            "volume": int(vol) if vol is not None else None,
+            "mcap": mcap * 1e6 if mcap is not None else None,     # Finviz counts in millions
+            "chg_1d": _num(n.get("change")),
+            "perf_1w": _num(n.get("perf1w")), "perf_1m": _num(n.get("perf4w")),
+            "perf_3m": _num(n.get("perf13w")), "perf_6m": _num(n.get("perf26w")),
+            "perf_ytd": _num(n.get("perfYtd")), "perf_1y": _num(n.get("perf52w")),
+        })
+    total = data.get("totalCount")
+    return out, (int(total) if isinstance(total, (int, float)) else None)
+
+
 def _extract_symbols(html: str) -> list[str]:
     """Return deduplicated symbols (in document order) from one page's
-    HTML. `data-boxover-ticker` appears twice per row (left + right
-    cells), so the dedup keeps the first-seen order.
+    HTML: the embedded JSON when the page has it (2026 markup), else the
+    `data-boxover-ticker` attributes (it appears twice per row, left +
+    right cells, so the dedup keeps the first-seen order).
     """
+    ssr, _total = _ssr_rows(html)
+    if ssr:
+        return [r["symbol"] for r in ssr]
     seen: set[str] = set()
     out: list[str] = []
     for sym in _TICKER_RE.findall(html):
@@ -234,18 +314,23 @@ def fetch_ticker_industries(
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as exc:
             sys.stderr.write(f"[finviz_screener] industry page {offset} failed: {exc}\n")
             break
-        price_map = {r["symbol"]: r.get("price") for r in _extract_rows(html)}
+        ssr, total = _ssr_rows(html)
+        if ssr:                                   # the 2026 page: everything is in the JSON
+            found = [(r["symbol"], r["company"], r["industry"], r["price"]) for r in ssr]
+        else:
+            price_map = {r["symbol"]: r.get("price") for r in _extract_rows(html)}
+            found = [(sym.upper(), company, ind, price_map.get(sym.upper()))
+                     for sym, company, ind in _TICKER_INDUSTRY_RE.findall(html)]
         new_on_page = 0
-        for sym, company, ind in _TICKER_INDUSTRY_RE.findall(html):
-            sym = sym.upper()
+        for sym, company, ind, price in found:
             if sym in seen:
                 continue
             seen.add(sym)
             out.append({"symbol": sym, "company": (company or "").strip(),
                         "industry": (ind or "").strip() or "Other",
-                        "price": price_map.get(sym)})
+                        "price": price})
             new_on_page += 1
-        if new_on_page == 0:
+        if new_on_page == 0 or (ssr and total is not None and len(out) >= total):
             break
         time.sleep(page_sleep_s if page_sleep_s is not None else _PAGE_SLEEP_S)
     if out:
@@ -322,7 +407,14 @@ def _mcap(text: str) -> float | None:
 
 
 def _extract_perf_rows(html: str) -> list[dict]:
-    """Per-row performance dicts from one v=141 page (see the block comment above)."""
+    """Per-row performance dicts from one v=141 page: the embedded JSON when the page
+    has it (2026 markup, the figures come as numbers), else the header-keyed cells
+    (see the block comment above)."""
+    ssr, _total = _ssr_rows(html)
+    if ssr:
+        keep = ("symbol", "company", "mcap", "price", "chg_1d", "perf_1w", "perf_1m", "perf_3m",
+                "perf_6m", "perf_ytd", "perf_1y")
+        return [{k: r[k] for k in keep} for r in ssr]
     head = _THEAD_RE.search(html)
     if not head:
         return []
@@ -400,7 +492,7 @@ def fetch_performance_rows(
             break
         if total is None:
             m = _TOTAL_RE.search(html)
-            total = int(m.group(1)) if m else None
+            total = int(m.group(1)) if m else _ssr_rows(html)[1]
         new_on_page = 0
         for rec in _extract_perf_rows(html):
             if rec["symbol"] in seen:
@@ -419,10 +511,14 @@ def fetch_performance_rows(
 
 
 def _extract_rows(html: str) -> list[dict]:
-    """Return per-row dicts {symbol, price, volume} from the TS comment
-    block at the bottom of the page. Float-parses price + volume;
-    rejects rows that don't parse.
+    """Return per-row dicts {symbol, price, volume}: from the embedded JSON
+    when the page has it (2026 markup), else from the TS comment block at
+    the bottom of the page (float-parses price + volume; rejects rows that
+    don't parse).
     """
+    ssr, _total = _ssr_rows(html)
+    if ssr:
+        return [{"symbol": r["symbol"], "price": r["price"], "volume": r["volume"]} for r in ssr]
     m = _TS_BLOCK_RE.search(html)
     if not m:
         return []
@@ -510,6 +606,7 @@ def fetch_screener_symbols(
             sys.stderr.write(f"[finviz_screener] page {offset} fetch failed: {exc}\n")
             break
         page_syms = _extract_symbols(html)
+        total = _ssr_rows(html)[1]
         new_on_page = 0
         for s in page_syms:
             if s in seen:
@@ -517,10 +614,12 @@ def fetch_screener_symbols(
             seen.add(s)
             all_symbols.append(s)
             new_on_page += 1
-        if new_on_page == 0:
+        if new_on_page == 0 or (total is not None and len(all_symbols) >= total):
             # End of results (sentinel for both "no more pages" and
             # "Finviz looped back to page 1"). Without this we'd loop
-            # forever on a stale/empty result set.
+            # forever on a stale/empty result set. The 2026 page also
+            # says how many rows the screen has, which saves the last,
+            # looped-back fetch.
             break
         if page_idx + 1 < max_pages:
             time.sleep(_PAGE_SLEEP_S)
@@ -572,6 +671,7 @@ def fetch_screener_rows(
             sys.stderr.write(f"[finviz_screener] page {offset} fetch failed: {exc}\n")
             break
         page_rows = _extract_rows(html)
+        total = _ssr_rows(html)[1]
         new_on_page = 0
         for r in page_rows:
             s = r["symbol"]
@@ -580,7 +680,7 @@ def fetch_screener_rows(
             seen.add(s)
             all_rows.append(r)
             new_on_page += 1
-        if new_on_page == 0:
+        if new_on_page == 0 or (total is not None and len(all_rows) >= total):
             break
         if page_idx + 1 < max_pages:
             time.sleep(_PAGE_SLEEP_S)

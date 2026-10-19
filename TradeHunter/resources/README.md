@@ -56,6 +56,23 @@ treating any "missing" feature as a bug.
 
 ## Changelog
 
+### 2026-10-19 — `finviz_screener.py`: reads Finviz's new page (rows in an embedded JSON block)
+- Finviz redesigned the screener into a server-rendered React island: the rows no longer carry
+  `data-boxover-*` attributes and the `<!-- TS` comment block is gone, so every walker returned
+  `[]` (found when a saved screener on the TradeHunter Watchlist loaded no tickers; the Sector
+  page's industry grouping and the ETF performance walk were silently empty too). The page now
+  embeds its data as `<script type="application/json" data-ssr-props="…">` with
+  `data.rows[].text` (ticker, company, sector, industry) and `data.rows[].numbers` (marketCap in
+  millions, price, change, volume, perf1w/4w/13w/26w/52w/Ytd on the v=141 view) plus
+  `data.totalCount`; `&r=` paging still works.
+- New `_ssr_rows(html) -> (rows, total)` parses that block (dotted share classes, deduped).
+  `_extract_symbols`, `_extract_rows`, `fetch_ticker_industries` and `_extract_perf_rows` read it
+  FIRST and keep the old markup as the fallback, so callers and return shapes are unchanged.
+  The walkers also stop once they hold `totalCount` rows, which saves the looped-back last page.
+- Tested in `dashboard_tst/tests/test_finviz_screener.py` (synthetic pages in both shapes; no
+  network). Verified live 2026-10-19: a 17-ticker `t=` list, a 25-name `f=` screen over two
+  pages, the industry walk and the performance walk.
+
 ### 2026-09-11 — `finviz_screener.py`: added `fetch_performance_rows()` (v=141 performance view)
 - New public function (pure addition; the existing walkers are untouched): walks a Finviz
   `v=141` URL and returns `[{symbol, company, mcap, price, chg_1d, perf_1w, perf_1m,

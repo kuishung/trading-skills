@@ -223,6 +223,19 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-19 - v4.155: Watchlist - saved Finviz screeners load their tickers again (Finviz changed its page)
+
+The user: *"i add finviz filter in the setting page … but when i try to load the filter it does not show up
+the tickers in the watchlist"*. Not the filter: Finviz redesigned its screener page and the shared scraper
+(`resources/finviz_screener.py`, see that folder's changelog) found no tickers on ANY screener URL. It now
+reads the JSON block the new page embeds, with the old markup as the fallback. Nothing in `dashboard_tst`
+changed except this entry, the version and a new test file - the Watchlist's run-filter path
+(`matp_queue.filter_symbols` -> `resources_bridge.screen_universe`), the Sector page's industry grouping
+(`industry.sector_industries`) and the ETF performance walk (`etf_holdings`) all go through that module.
+Verified live with the user's URL (17 tickers). Tests: `tests/test_finviz_screener.py` (5, no network).
+Note: a filter run while the scraper was broken may have cached an empty answer for up to an hour; the
+next run after the pull reads afresh.
+
 ### 2026-10-19 - v4.154: Watchlist - a "Vol surface" button opens the volatility surface for the selected ticker in a new window
 
 The user: *"In the watchlist page, i need a button where i will open the option volatility surface in new
