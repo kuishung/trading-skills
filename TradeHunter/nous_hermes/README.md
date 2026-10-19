@@ -224,6 +224,17 @@ recreate the cron job unless the schedule or delivery target changes.
 
 ## Changelog
 
+### 2026-10-19 — `markets/matp` skill → **v1.10.0**: a filter request's tickers come from TradeHunter; never browse Finviz
+Finviz redesigned its screener page in October 2026; a browse of it reads no tickers, so
+every "Run" of a saved screener from the Watchlist finished with nothing to compute and the
+watchlist stayed "No tickers here yet". TradeHunter v4.156's `GET /api/refresh-queue` now
+returns each filter request with **`symbols`** (resolved server-side by the fixed shared
+Finviz reader), `n_symbols` and `symbols_error`. The skill uses that list as Stage 1 and
+runs Stages 2-5 over it; it falls back to the legacy expansion only when `symbols` is
+absent (an older server), and marks the request `failed` with the reason when the list is
+empty. **Redeploy with `bash nous_hermes/install.sh` on the agent** (and pull the web app
+on Hermes first, or the field will not be there yet).
+
 ### 2026-09-05 — guidance skill added
 New `skills/markets/guidance/SKILL.md` (v1.0.0). TradeHunter's EDGAR corpus is 10-Q/10-K
 only and contains no forward guidance, so guidance needed a new source: the 8-K item-2.02

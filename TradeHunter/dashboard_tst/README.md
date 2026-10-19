@@ -223,6 +223,19 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-19 - v4.156: filter runs - TradeHunter hands the agent the screener's tickers; the agent no longer browses Finviz
+
+The user, after v4.155: *"i have deleted the previous filter and reinserted but it still show no tickers"*.
+The watchlist shows `MATPLevel` rows the Nous agent pushes back after a run. For a filter request the
+agent's skill expanded the Finviz URL ITSELF (a browse of the page) - and since Finviz's redesign that
+browse reads no tickers, so every filter run finished with nothing to compute and the watchlist stayed
+"No tickers here yet". `GET /api/refresh-queue` (`routes/api.py`) now resolves each filter request's
+tickers server-side with the fixed shared reader (`matp_queue.filter_symbols`; a cached empty answer is
+read again) and returns them as `symbols` / `n_symbols` / `symbols_error`; the `markets/matp` skill
+(`nous_hermes/`, v1.10.0) uses that list as Stage 1 and never opens Finviz. Both sides must be deployed:
+the web app on Hermes AND `install.sh` on the Nous agent (see `nous_hermes/README.md`). Test:
+`tests/test_refresh_queue.py`.
+
 ### 2026-10-19 - v4.155: Watchlist - saved Finviz screeners load their tickers again (Finviz changed its page)
 
 The user: *"i add finviz filter in the setting page … but when i try to load the filter it does not show up

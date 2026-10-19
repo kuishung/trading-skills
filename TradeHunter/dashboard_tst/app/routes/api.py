@@ -387,12 +387,25 @@ def refresh_queue(_: bool = Depends(require_api_key), db: Session = Depends(get_
         .order_by(MATPRefreshRequest.created_at.asc())
         .all()
     )
+    from ..services.matp_queue import filter_symbols
+
     out = []
     for r in rows:
         item = {"id": r.id, "scope": r.scope, "symbol": r.symbol, "filter_id": r.filter_id}
         if r.scope == "filter" and r.filter is not None:
             item["filter_url"] = r.filter.url
             item["filter_description"] = r.filter.description
+            # v4.156: TradeHunter resolves the screener's tickers itself (the shared
+            # Finviz reader, fixed for Finviz's 2026 page) and hands them over, so the
+            # agent no longer browses Finviz - it had been reading nothing since the
+            # redesign and every filter run came back empty. A cached empty answer
+            # (from the broken window) is read again before it is handed over.
+            syms, err = filter_symbols(r.filter)
+            if not syms:
+                syms, err = filter_symbols(r.filter, force_refresh=True)
+            item["symbols"] = syms
+            item["n_symbols"] = len(syms)
+            item["symbols_error"] = err
         out.append(item)
     return {"requests": out}
 

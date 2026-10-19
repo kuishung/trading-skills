@@ -1,6 +1,6 @@
 ---
 name: matp
-version: 1.9.0
+version: 1.10.0
 description: Compute the faithful Median Analyst Target Price (MATP) + Max Buy Price (MBP) for TradeHunter and push the results to the platform. Use when asked to "refresh MATP", "run MATP", "update target prices", or on the scheduled cron. Reads the active Finviz screener filters from TradeHunter's API, expands them to a ticker universe, and for each ticker looks up the latest earnings date + analyst price targets on MarketBeat, keeps only targets issued AFTER the latest earnings, computes the median (MATP) and MBP = MATP/1.15, then POSTs the rows to TradeHunter's /api/matp endpoint. Does NOT write CSV / Google Sheets / Telegram -- output is the API push only.
 ---
 
@@ -100,9 +100,18 @@ agent — so the agent **polls** and drains the queue.
 GET {TRADEHUNTER_URL}/api/refresh-queue     header: X-API-Key: {TST_INGEST_API_KEY}
 -> {"requests":[
      {"id":7,"scope":"ticker","symbol":"NVDA","filter_id":null},
-     {"id":8,"scope":"filter","filter_id":1,"filter_url":"https://finviz.com/...","filter_description":"growth screen"}
+     {"id":8,"scope":"filter","filter_id":1,"filter_url":"https://finviz.com/...","filter_description":"growth screen",
+      "symbols":["NVDA","TSM","AVGO"],"n_symbols":3,"symbols_error":null}
    ]}
 ```
+**A filter request now carries its tickers (`symbols`, since TradeHunter v4.156).**
+TradeHunter expands the screener URL itself and hands you the list - that IS Stage 1,
+done. **Never open the Finviz URL yourself**: Finviz redesigned its screener in October
+2026 and a browse of it reads no tickers (that is why filter runs came back empty).
+Only if `symbols` is absent (an older server) fall back to the legacy expansion in
+Stage 1. When `symbols` is an empty list, do not browse Finviz either: mark the request
+`failed` with the note `symbols_error` gives (or "TradeHunter resolved no tickers for
+this screener") so the problem is visible on the /agent page.
 **Report status with the `matp_status.sh` helper — NOT a hand-built curl.**
 Progress drives the moving progress bar on TradeHunter's **/agent** page. Build
 the status POST by hand and you WILL mangle the shell quoting (it happened
@@ -132,8 +141,9 @@ For each request:
    - `scope:"ticker"` → run Stages 2-5 for that one `symbol`. Push via
      `/api/matp` as a single item, **no `filter_id`, no `prune`** (a single
      ticker is not a universe — pruning would wrongly drop everything else).
-   - `scope:"filter"` → run Stages 1-5 for that filter's `filter_url` (the full
-     universe). **Push incrementally so the table fills live:** as each ticker
+   - `scope:"filter"` → the universe is the request's **`symbols`** list (Stage 1 is
+     done for you; see above - do not browse the `filter_url`). Run Stages 2-5
+     over those tickers. **Push incrementally so the table fills live:** as each ticker
      (or small batch) is computed, `POST /api/matp` with that batch +
      `filter_id` and **`final:false`** (NO `prune`) — these upsert the processed
      tickers immediately (they appear on the board mid-run) and are NOT archived.
