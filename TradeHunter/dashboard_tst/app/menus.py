@@ -35,7 +35,7 @@ MENUS = [
     # to accept this key. Rebuilt as the Options Screener in v4.136. Since v4.152
     # (2026-10-17, user: "Move Calculator under an Options dropdown") it is the first
     # entry of an "Options" DROPDOWN whose second entry is the Calculator below.
-    ("options",          "Options",           "Options", "/options"),
+    ("options",          "Volatility Surface", "Options", "/options"),   # v4.159: the page is the surface only
     # Calculator - the option calculator (OPTION_CALCULATOR_DESIGN.md steps 2-3, 2026-10-17):
     # the member types an expected and a worst-case price; the Hermes lane finds the legs
     # (or prices the member's own) after every Massive pass. routes/calc.py.

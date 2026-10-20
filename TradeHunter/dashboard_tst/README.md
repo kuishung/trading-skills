@@ -223,6 +223,26 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-20 - v4.159: Options page - the Volatility surface only; a cell click opens that contract's history in a new window
+
+The user: *"in the option page remove the Set filter, result and Contract History. We only have the Volatility
+Surface. the Option menu, sub menu will be the Volatility Surface. We click into any cell in the Volatility
+Surface then open new window for Contract History of the selected"*.
+
+- **Nav** (`menus.py`): the Options dropdown now reads **Volatility Surface** (`/options`) and **Calculator**
+  (`/calc`).
+- **`/options`** (`options.html`, `options_page.py`): the page shows the Volatility surface alone - no Set
+  filters / Results tabs, no Go-to picker, no Contract history tab, and the screener no longer runs a query
+  on open. `?symbol=X` still pre-fills and draws (the Watchlist's "Vol surface" button).
+- **A cell click opens `/options/history?symbol=&expiry=&right=&strike=&day=`** in a new window: the same
+  template in history mode, which loads that contract's daily bars and IV at once (the existing Contract
+  history table, CSV included), with a "← Volatility surface" link back. The right comes from the surface's
+  side setting (call / put; for mid / otm: put below the spot, call above).
+- Nothing behind the page changed: the screener engine and its `/options/api/*` endpoints, saved screeners,
+  the Hermes screener collector and the contract-history Parquet lane all stay (the surface reads from them).
+  `OPTIONS_SCREENER_DESIGN.md` describes the engine; its page sections are history as of this version.
+- Tests: `tests/test_options_page.py` page assertions updated to the surface-only page + the history route.
+
 ### 2026-10-20 - v4.158: Watchlist - the price-to-MATP gap in $ and %, Trend and Sig columns removed
 
 The user: *"in the watchlist, I want to show Stock Price - MATP in $ and % difference. remove the Trend & Sig"*.

@@ -188,75 +188,65 @@ def _boot(html: str) -> dict:
     return json.loads(m.group(1))
 
 
-def _goto_options(html: str) -> list[str]:
-    m = re.search(r'<select id="scrGoto".*?</select>', html, re.S)
-    assert m
-    return re.findall(r'<option value="([^"]+)"', m.group(0))
+def _no_spec(*_a, **_k):
+    raise AssertionError("the page built a screener spec")
 
 
 # ───────────────────────────────────────── the page ─────────────────────────────────────────
 
-def test_the_page_renders_with_go_to_and_boot(client, fake):
+def test_the_page_is_the_volatility_surface_only(client, fake, monkeypatch):
+    """v4.159 (user: "remove the Set filter, result and Contract History. We only have the
+    Volatility Surface"): /options shows the surface and nothing of the screener - no Go-to
+    picker, no tabs, no filter / results panels, no contract history on the page."""
+    monkeypatch.setattr(fake, "spec", _no_spec)
     r = client.get("/options")
     assert r.status_code == 200
     html = r.text
-    assert 'id="optPage"' in html and 'id="scrGoto"' in html   # v4.148: no <h1>, the Go to picker names the screen
-    assert ">Options Screener<" in html
-    assert len(_goto_options(html)) == 33
-    assert html.count("<optgroup") == len(FAMILIES)
-    assert "Set filters" in html and "Results" in html and "Add a filter" in html
-    assert "Massive · 15-min delayed · prices estimated from IV" in html
-    boot = _boot(html)
-    assert boot["screen"] == "options-screener" and boot["engine_ok"] is True
-    spec = boot["spec"]
-    assert [f["key"] for f in spec["fields"]] == ["dte", "right", "volume", "weekly", "expiry"]
-    assert spec["groups"] == ["Option Info", "Price & Volume"]
-    dte = spec["fields"][0]
-    assert dte["presets"] == [{"label": "< 60", "hi": 60, "op": "lte"},
-                              {"label": "60-100", "lo": 60, "hi": 100, "op": "between"}]
-    assert spec["fields"][1]["choices"] == [{"v": "C", "label": "Call"}, {"v": "P", "label": "Put"}]
-    exp = spec["fields"][4]
-    assert exp["ops"] == ["in", "eq", "between", "within", "gte", "lte"] and exp["within"] == "days"
-    assert exp["presets"] == [{"label": "7 days", "v": 7, "op": "within"}]
-    assert spec["fields"][3]["ops"] == [] and "within" not in spec["fields"][3]
-    assert spec["defaults"]["filters"][2] == {"f": "volume"}
-    assert spec["defaults"]["sort"] == {"col": "volume", "dir": "desc"}
-    assert [v["key"] for v in spec["views"]] == ["main", "greeks"]
-    assert spec["views"][1]["columns"] == [{"key": "delta", "label": "delta", "unit": "", "fmt": ""}]
-    assert boot["chart_url"] == "/sector/chart-window?symbol={sym}"
-    assert boot["per_page"] == 100 and boot["saved"] == [] and boot["default_id"] is None
-    # the old blank page and the v2 page are gone
-    for gone in ("optBasket", "optStatus", "/options/rules", "/options/basket", "/options/payoff"):
+    assert 'id="optPage"' in html and 'data-mode="surface"' in html
+    for needle in ('id="volPanelSurface"', 'id="volForm"', 'id="volSym"', 'id="volDay"', 'id="volTable"',
+                   'id="volPop"', ">Volatility surface</h1>"):
+        assert needle in html, needle
+    for gone in ('id="scrGoto"', 'class="scr-tab"', "data-tab=", 'role="tablist"', 'id="scrPanelFilters"',
+                 'id="scrPanelResults"', 'id="scrNf"', 'id="scrNr"', "Set filters", "Add a filter", "See results",
+                 'id="volPanelHistory"', 'id="chForm"', "<optgroup", "optShowTab", 'id="scrEngineErr"',
+                 # the old blank page and the v2 page are gone too
+                 "optBasket", "optStatus", "/options/rules", "/options/basket", "/options/payoff"):
         assert gone not in html, gone
+    assert "Massive · 15-min delayed · prices estimated from IV" in html      # the status line, behind the dot
+    boot = _boot(html)
+    assert boot["mode"] == "surface" and boot["engine_ok"] is True
+    for gone in ("spec", "screen", "saved", "default_id", "chart_url", "per_page"):
+        assert gone not in boot, gone
 
 
-def test_the_screen_param_picks_the_screen_and_unknown_falls_back(client, fake):
-    html = client.get("/options?screen=bull-put-spread").text
-    assert ">Bull Put Spread<" in html and _boot(html)["screen"] == "bull-put-spread"
-    assert 'value="bull-put-spread" selected' in html
-    for bad in ("nope", "../../etc", "OPTIONS-SCREENER<script>"):
-        assert _boot(client.get("/options", params={"screen": bad}).text)["screen"] == "options-screener"
+def test_the_page_never_runs_a_screen_on_open(client, fake, monkeypatch):
+    """v4.159: opening the page no longer screens the market - no /options/api/run call is in
+    the page, and the engine is never asked to run or to build a spec."""
+    monkeypatch.setattr(fake, "spec", _no_spec)
+    html = client.get("/options").text
+    assert "/options/api/run" not in html and "/options/api/csv" not in html and "run(1)" not in html
+    assert not [c for c in fake.calls if c[0] in ("run", "csv")]
 
 
-def test_the_members_default_saved_screener_loads(client, fake, db, user):
+def test_an_old_screen_link_still_opens_the_surface(client, fake, monkeypatch):
+    """A bookmarked /options?screen=... still answers - with the surface; the screen is ignored."""
+    monkeypatch.setattr(fake, "spec", _no_spec)
+    for q in ("bull-put-spread", "nope", "OPTIONS-SCREENER<script>"):
+        r = client.get("/options", params={"screen": q})
+        assert r.status_code == 200 and _boot(r.text)["mode"] == "surface"
+        assert "OPTIONS-SCREENER<script>" not in r.text
+
+
+def test_saved_screeners_stay_in_the_api(client, fake, db, user):
+    """The page no longer loads saved screeners, but the saved-screener API keeps them."""
     row = models.OptionScreen(user_id=user.id, screen_key="long-call", name="Mine",
                               payload={"filters": [{"f": "dte", "op": "lte", "hi": 30}]}, is_default=True)
     db.add(row)
     db.commit()
-    boot = _boot(client.get("/options?screen=long-call").text)
-    assert boot["default_id"] == row.id
-    assert boot["saved"][0]["payload"]["filters"] == [{"f": "dte", "op": "lte", "hi": 30}]
-    assert _boot(client.get("/options?screen=long-put").text)["default_id"] is None
-
-
-def test_the_symbol_link_follows_the_members_menus(client, fake, db, user):
-    u = db.get(models.User, user.id)
-    u.menu_access = ["options", "matp"]
-    db.commit()
-    assert _boot(client.get("/options").text)["chart_url"] == "/matp?symbol={sym}"
-    u.menu_access = ["options"]
-    db.commit()
-    assert _boot(client.get("/options").text)["chart_url"] == ""
+    items = client.get("/options/api/saved?screen=long-call").json()["items"]
+    assert items[0]["id"] == row.id and items[0]["is_default"] is True
+    assert items[0]["payload"]["filters"] == [{"f": "dte", "op": "lte", "hi": 30}]
+    assert "saved" not in _boot(client.get("/options").text)
 
 
 # ───────────────────────────────────────── the engine API ─────────────────────────────────────────
@@ -599,21 +589,20 @@ def test_the_data_line_skips_a_pass_that_read_nothing():
     assert "· data: Thu Oct 8 close (read Mon 16:30 ET)" in v(col2, None, now=TUE_NOON)["line"]
 
 
-def test_the_page_reads_the_frame_once_when_the_spec_carries_it(client, fake, monkeypatch):
-    """An empty frame makes each frame read wait up to 3 s for a reload: the page takes the
-    frame summary from the spec it just built instead of reading the frame a second time."""
-    real_spec = fake.spec
+def test_the_page_reads_the_frame_once_and_builds_no_spec(client, fake, monkeypatch):
+    """An empty frame makes each frame read wait up to 3 s for a reload: the page (v4.159: the
+    surface only) builds no screener spec and reads the frame summary exactly once."""
+    reads = []
 
-    def spec_with_data(key):
-        return dict(real_spec(key), data={"n_contracts": 0, "empty": True, "reloading": True})
+    def one_read():
+        reads.append(1)
+        return {"n_contracts": 0, "empty": True, "reloading": True}
 
-    def no_second_read():
-        raise AssertionError("the frame was read a second time")
-
-    monkeypatch.setattr(fake, "spec", spec_with_data)
-    monkeypatch.setattr(fake, "frame_meta", no_second_read)
+    monkeypatch.setattr(fake, "spec", _no_spec)
+    monkeypatch.setattr(fake, "frame_meta", one_read)
     boot = _boot(client.get("/options").text)
-    assert boot["status"]["frame"] == {"n_contracts": 0, "empty": True, "reloading": True}    # the spec's
+    assert len(reads) == 1
+    assert boot["status"]["frame"] == {"n_contracts": 0, "empty": True, "reloading": True}
     assert boot["status"]["empty"]["title"]                  # the panel is there on the first paint
 
 
@@ -950,14 +939,13 @@ def test_the_first_paint_and_the_first_poll_say_the_same(client, fake, screener_
 def test_the_template_carries_the_alert_the_panel_and_the_boot_status(client, fake):
     html = client.get("/options").text
     for i in ("scrCollectorAlert", "scrEmptyPanel", "scrEmptyTitle", "scrEmptyBody", "scrEmptyAdmin",
-              "scrNotice", "scrNoticeBtn", "scrDataState"):
+              "scrDataState", "scrDot", "scrDataLine"):
         assert f'id="{i}"' in html, i
     boot = _boot(html)
     assert boot["status"]["dot"] == "slate" and boot["status"]["empty"]["title"]
     assert boot["no_data"] == options_page._no_data_text()
     assert "setInterval(pollStatus" not in html and "schedulePoll(pollDelay" in html
-    # a first pass grows on screen even under an older finished pass that read nothing (frame real_pass_id)
-    assert "function firstPassRunning(m)" in html and "m.real_pass_id == null" in html
+    assert "fetch('/options/api/status')" in html          # the polls the surface's countdown reads
     m = re.search(r'<div id="scrCollectorAlert"([^>]*)>(.*?)</div>', html, re.S)
     assert m and "hidden" not in m.group(1) and "The market collector has not started yet" in m.group(2)
     # the fake frame holds data: the panel stays hidden on the first paint
@@ -993,9 +981,11 @@ def test_numpy_missing_gives_a_clear_notice_and_the_page_still_renders(client, m
     monkeypatch.setattr(options_page, "_load_engine", lambda: (None, why))
     r = client.get("/options")
     assert r.status_code == 200
-    assert 'id="scrEngineErr"' in r.text and "numpy" in r.text
+    # v4.159: the page is the volatility surface (no screener on it), so the screener's notice is
+    # not shown there; the screener API still says why
+    assert 'id="volPanelSurface"' in r.text and 'id="scrEngineErr"' not in r.text
     boot = _boot(r.text)
-    assert boot["engine_ok"] is False and "numpy" in boot["engine_error"]
+    assert boot["engine_ok"] is False
     for method, url, kw in (("post", "/options/api/run", {"json": {"screen": "long-call", "payload": {}}}),
                             ("post", "/options/api/csv", {"json": {"screen": "long-call", "payload": {}}}),
                             ("get", "/options/api/screens", {}),
@@ -1130,11 +1120,10 @@ def _real_engine_checks(client):
     keys = [s["key"] for s in j["screens"]]
     assert "options-screener" in keys and "bull-put-spread" in keys
     html = client.get("/options").text
-    assert len(_goto_options(html)) == 33 and _boot(html)["engine_ok"] is True
     boot = _boot(html)
-    # v4.137: the spec says it came from an empty market (the page reloads it once data lands),
-    # the status carries the frame's reloading flag, and the empty panel is painted on the server
-    assert boot["spec"]["data"]["empty"] is True and boot["status"]["frame"]["reloading"] is False
+    assert boot["engine_ok"] is True and boot["mode"] == "surface"
+    # v4.137: the status carries the frame's reloading flag, and the empty panel is painted on the server
+    assert boot["status"]["frame"]["empty"] is True and boot["status"]["frame"]["reloading"] is False
     assert boot["no_data"] == "No option data loaded yet."
     m = re.search(r'<div id="scrEmptyPanel" class="([^"]*)"', html)
     assert m and "hidden" not in m.group(1)
@@ -1156,6 +1145,7 @@ def test_the_router_serves_the_screener_paths():
     paths = {(r.path, tuple(sorted(r.methods))) for r in options_page.router.routes}
     assert paths == {
         ("/options", ("GET",)),
+        ("/options/history", ("GET",)),                     # v4.159: one contract's history, its own window
         ("/options/api/screens", ("GET",)),
         ("/options/api/spec", ("GET",)),
         ("/options/api/run", ("POST",)),
@@ -1201,7 +1191,7 @@ def test_the_menu_entry_stays():
     """The nav keeps its Options item (the page keeps its require_menu("options") gate in main.py)."""
     from app import menus
 
-    assert ("options", "Options", "Options", "/options") in menus.MENUS
+    assert ("options", "Volatility Surface", "Options", "/options") in menus.MENUS
 
 
 def test_a_payload_without_filters_means_the_screen_defaults():
@@ -1218,12 +1208,67 @@ def test_a_payload_without_filters_means_the_screen_defaults():
 
 # ─────────────────── v4.139: the VOLATILITY SURFACE + CONTRACT HISTORY tabs, Option History ───────────────────
 
-def test_the_page_has_the_surface_and_history_tabs(client, fake):
+def test_the_surface_cells_open_the_contract_history_in_a_new_window(client, fake):
+    """v4.159: a click on a surface cell opens /options/history?symbol=&expiry=&right=&strike=&day=
+    in a new window - the right is the cell's own (out of the money: put below the price, call
+    above), the day the surface's own date or, on the latest pass, the newest history day."""
     html = client.get("/options").text
-    for needle in ('data-tab="surface"', 'data-tab="history"', 'id="volPanelSurface"', 'id="volPanelHistory"',
-                   'id="volForm"', 'id="chForm"', "window.optShowTab = showTab", "/options/api/surface",
-                   "/options/api/history/contract"):
+    for needle in ('id="volPanelSurface"', 'id="volForm"', "/options/api/surface",
+                   "'/options/history?' + q.toString()", "window.open(historyUrl(sym, expiry, right, strike, day), '_blank', 'noopener')",
+                   "openContract(j.symbol, ex.date, sideOf(j, k), k, day)",
+                   "j.source === 'latest' ? ((H.days && H.days.length) ? H.days[0] : null) : j.on",
+                   "return k < j.spot ? 'P' : 'C';", "click: contract history in a new window",
+                   'class="vol-iv"', 'class="vol-l2"', 'class="vol-l3"'):
         assert needle in html, needle
+    assert ".vol-grid td.vol-cell { cursor: pointer; }" in html
+    # squarish cells, the IV figure centred both ways; an empty reserved line takes no room
+    assert "vertical-align: middle; text-align: center; position: relative;" in html
+    assert ".vol-grid .vol-l2:empty, .vol-grid .vol-l3:empty { display: none; }" in html
+    # the old #history link is sent to the history window
+    assert "location.replace('/options/history'" in html
+
+
+def test_the_history_window_renders_the_contract_from_the_url(client, fake):
+    """v4.159: /options/history renders the same template in history mode - only the contract
+    history (pickers, table, CSV), the contract in the boot so the page draws it on load, a
+    header naming it and a link back to the surface."""
+    r = client.get("/options/history", params={"symbol": "acme", "expiry": "2026-12-18", "right": "c",
+                                               "strike": "100", "day": "2026-10-16"})
+    assert r.status_code == 200
+    html = r.text
+    boot = _boot(html)
+    assert boot["mode"] == "history"
+    assert boot["contract"] == {"symbol": "ACME", "expiry": "2026-12-18", "right": "C", "strike": 100.0,
+                                "day": "2026-10-16", "label": "ACME 2026-12-18 100 C"}
+    assert "Contract history &middot; ACME 2026-12-18 100 C</h1>" in html
+    assert 'href="/options?symbol=ACME#surface"' in html and "&larr; Volatility surface" in html
+    for needle in ('id="volPanelHistory"', 'id="chForm"', 'id="chSym"', 'id="chDay"', 'id="chExp"',
+                   'id="chRight"', 'id="chStrike"', 'id="chCsv"', 'id="chMsg"', "/options/api/history/contract",
+                   "/options/api/history/chain", "openFromBoot(BOOT.contract || {})",
+                   "C.want = full ? {expiry: c.expiry, right: c.right, strike: Number(c.strike)} : null",
+                   "is not in the list of contracts that traded on"):
+        assert needle in html, needle
+    for gone in ('id="volPanelSurface"', 'id="volForm"', 'id="volTable"', 'id="scrDot"', 'id="scrGoto"',
+                 "Set filters"):
+        assert gone not in html, gone
+    assert "/options/api/run" not in html
+
+
+def test_the_history_window_drops_bad_values(client, fake):
+    r = client.get("/options/history", params={"symbol": "<script>", "expiry": "2026-13-40", "right": "X",
+                                               "strike": "abc", "day": "nope"})
+    assert r.status_code == 200
+    c = _boot(r.text)["contract"]
+    assert c == {"symbol": "", "expiry": "", "right": "", "strike": None, "day": "", "label": ""}
+    assert 'href="/options#surface"' in r.text and "<script>alert" not in r.text
+    assert ">Contract history</h1>" in r.text
+    # a strike like 182.5 keeps its decimals; inf / negative are dropped
+    assert options_page._clean_contract("nvda", "2026-11-20", "P", "182.5")["label"] == "NVDA 2026-11-20 182.5 P"
+    for bad in ("inf", "-5", "0"):
+        assert options_page._clean_contract("NVDA", strike=bad)["strike"] is None, bad
+    # only the symbol: the pickers start on it (no contract drawn)
+    c = _boot(client.get("/options/history", params={"symbol": "NVDA"}).text)["contract"]
+    assert c["symbol"] == "NVDA" and c["expiry"] == "" and c["label"] == "NVDA"
 
 
 def test_the_surface_api_answers_with_the_grid_or_a_plain_reason(client, fake, screener_url):
@@ -1320,8 +1365,15 @@ def test_the_surface_opens_on_every_expiry_and_reads_the_atm_line_the_right_way(
     (the strikes below the price: calls in the money, puts out); the countdown to the next market
     pass is wired to the status polls."""
     html = client.get("/options").text
-    assert '<option value="all" selected>every expiry</option>' in html
-    assert '<option value="monthly">monthly</option>' in html
+    # v4.159: the member picks only the ticker and the day - the rest is fixed in hidden inputs:
+    # out of the money, every strike, every expiry, common strikes
+    for fixed in ('<input type="hidden" id="volSide" value="otm">', '<input type="hidden" id="volBand" value="0">',
+                  '<input type="hidden" id="volDte" value="0">', '<input type="hidden" id="volExp" value="all">',
+                  '<input type="hidden" id="volCommon" value="1">'):
+        assert fixed in html, fixed
+    for gone in ('<select id="volSide"', '<select id="volBand"', '<select id="volExp"', '<select id="volDte"',
+                 'type="checkbox" id="volCommon"', 'id="volGo"'):
+        assert gone not in html, gone
     assert "above: calls in the money, puts out &middot; below: calls out of the money, puts in" in html
     for needle in ('id="volTick"', 'id="volInfoRow"', "window.optOnStatus", "window.optGetStatus",
                    "window.optPollNow", "next_pass_in_s", "stored day &middot; fixed",
@@ -1348,7 +1400,8 @@ def test_symbol_in_the_url_opens_the_surface_for_it(client, fake):
     assert r.status_code == 200
     html = r.text
     assert "URLSearchParams(location.search).get('symbol')" in html
-    assert "optShowTab('surface')" in html and "loadDays().then(function () { runSurface(); })" in html
+    assert "loadDays().then(function () { runSurface(); })" in html
+    assert "optShowTab" not in html                     # v4.159: no tabs - the surface is the page
 
 
 def test_watchlist_chart_pane_links_to_the_surface_for_its_ticker(client, fake):

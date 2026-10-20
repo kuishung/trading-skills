@@ -279,12 +279,15 @@ def test_sec_type_active_says_whether_the_filter_was_applied():
     assert engine.run("no-such-screen", {})["data"]["sec_type_active"] is False
 
 
-def test_the_page_blames_the_security_type_filter_only_when_it_was_applied():
+def test_the_page_no_longer_carries_the_screener_script():
+    """v4.159: the Options page is the Volatility surface only - the screener's page script
+    (and its ``secTypeBlocked`` notice) is gone from the template; the engine still reports
+    ``sec_type_active`` for the API (checked above)."""
     from pathlib import Path  # noqa: PLC0415
 
     html = (Path(engine.__file__).resolve().parents[2] / "templates" / "options.html").read_text(encoding="utf-8")
-    body = html.split("function secTypeBlocked(R)", 1)[1].split("\n  }", 1)[0]
-    assert "R.data.sec_type_active" in body and "S.filters" not in body
+    assert "function secTypeBlocked(" not in html and "/options/api/run" not in html
+    assert "volPanelSurface" in html
 
 
 def test_data_carries_reloading_as_a_copy(market):

@@ -1329,88 +1329,86 @@ def _chart_url(user: User) -> str:
 
 
 # ─────────────────────────────────────── the page ───────────────────────────────────────
+# v4.159 (user, 2026-10-20: "in the option page remove the Set filter, result and Contract
+# History. We only have the Volatility Surface ... We click into any cell in the Volatility
+# Surface then open new window for Contract History of the selected"): /options renders ONLY
+# the volatility surface, and /options/history renders the contract history of one contract
+# (the same template, ``mode`` "history"). The page builds no screener spec and runs no screen;
+# the screener API below is unchanged.
 
-@router.get("", response_class=HTMLResponse)
-def options_home(request: Request, screen: str = "", user: User = Depends(require_user),
-                 db: Session = Depends(get_db)):
-    """The screener page. ``?screen=<key>`` (unknown -> the Options Screener)."""
-    import time as _time
+_SYM_RE = re.compile(r"^[A-Z0-9.\-]{1,12}$")
+_DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
-    t0 = _time.monotonic()
+
+def _page_status(user: User) -> tuple[dict, bool]:
+    """The collector's status for the first paint (the same inputs /api/status uses, so the first
+    paint and the first poll say the same) and whether the screener engine loaded."""
     eng, engine_error = _load_engine()
-    loading_at_start = False                     # the market still loading (a fresh start): the page waits for it
-    try:
-        from ..services.screener import frame as _fr
-
-        loading_at_start = bool(_fr.reloading()) or _fr.current.__globals__.get("_frame") is None
-    except Exception:  # noqa: BLE001
-        pass
-    screens: list[dict] = []
-    spec: dict | None = None
-    if eng is not None:
-        try:
-            screens = _norm_screens(eng.screens())
-        except Exception as exc:  # noqa: BLE001
-            log.exception("options screener: screens() failed")
-            engine_error = f"The screener list could not be loaded ({type(exc).__name__})."
-    keys = {s["key"] for s in screens}
-    key = _screen_key(screen)
-    if key not in keys:
-        key = DEFAULT_SCREEN if (DEFAULT_SCREEN in keys or not screens) else screens[0]["key"]
-    if eng is not None and screens:
-        try:
-            spec = _norm_spec(eng.spec(key), key, screens)
-        except Exception as exc:  # noqa: BLE001
-            log.exception("options screener: spec(%s) failed", key)
-            engine_error = f"This screener could not be loaded ({type(exc).__name__})."
-    cur = next((s for s in screens if s["key"] == key),
-               {"key": key, "label": "All contracts", "family": "", "desc": "", "strategy": False})
-    if spec:
-        cur = {**cur, **{k: spec["screen"][k] for k in ("label", "desc") if spec["screen"].get(k)}}
-    t_spec = _time.monotonic()
-    saved = _saved_list(db, user, key)
-    default = next((i for i in saved if i["is_default"]), None)
-    # the same inputs /api/status uses, so the first paint and the first poll say the same.
-    # The frame summary comes from the spec the engine just built (``data`` = frame.meta +
-    # reloading): a second frame read would wait on an empty frame's reload once more.
-    d = spec.get("data") if spec else None
-    if isinstance(d, dict):
-        meta = d
-    elif engine_error is None:
-        meta = _frame_meta(eng)                   # an engine whose spec carries no data
-    else:
-        meta = None                               # the engine failed: its error is shown instead
+    meta = _frame_meta(eng) if engine_error is None else None
     status = _status_view(_read_collector(), meta, engine_error=None,
                           is_admin=bool(getattr(user, "is_admin", False)))
-    t_status = _time.monotonic()
-    # v4.144: where the page's own time goes (the log, and the Results line for admins)
-    page_ms = {"spec": int((t_spec - t0) * 1000), "status": int((t_status - t_spec) * 1000),
-               "total": int((t_status - t0) * 1000), "waited_for_load": loading_at_start}
-    log.info("options page %s for %s: spec %d ms (market %s), status %d ms, total %d ms", key,
-             getattr(user, "email", "?"), page_ms["spec"], "still loading" if loading_at_start else "loaded",
-             page_ms["status"], page_ms["total"])
+    return status, eng is not None and engine_error is None
+
+
+def _clean_contract(symbol="", expiry="", right="", strike="", day="") -> dict:
+    """The contract a surface cell hands over, cleaned: a bad value is dropped (never echoed)."""
+    sym = str(symbol or "").strip().upper()
+    sym = sym if _SYM_RE.match(sym) else ""
+
+    def _day(v) -> str:
+        v = str(v or "").strip()
+        if not _DAY_RE.match(v):
+            return ""
+        try:
+            _dt.date.fromisoformat(v)
+        except ValueError:
+            return ""
+        return v
+
+    r = str(right or "").strip().upper()[:1]
+    r = r if r in ("C", "P") else ""
+    try:
+        k = float(strike)
+        k = k if math.isfinite(k) and 0 < k < 1_000_000 else None
+    except (TypeError, ValueError):
+        k = None
+    k_text = "" if k is None else f"{k:g}"
+    out = {"symbol": sym, "expiry": _day(expiry), "right": r, "strike": k, "day": _day(day)}
+    out["label"] = " ".join(x for x in (sym, out["expiry"], k_text, r) if x) if sym else ""
+    return out
+
+
+@router.get("", response_class=HTMLResponse)
+def options_home(request: Request, user: User = Depends(require_user)):
+    """The volatility surface. ``?symbol=X`` (the Watchlist hand-off, v4.154) is read by the page
+    script, which fills the ticker in and draws the surface."""
+    status, engine_ok = _page_status(user)
     boot = {
-        "page_ms": page_ms,
-        "screen": key,
-        "engine_ok": spec is not None and engine_error is None,
-        "engine_error": engine_error,
-        "spec": spec,
-        "saved": saved,
-        "default_id": default["id"] if default else None,
-        "chart_url": _chart_url(user),
-        "risk_free": RISK_FREE,
-        "per_page": PER_PAGE,
-        "csv_limit": CSV_LIMIT,
-        "max_filters": MAX_FILTERS,
-        "max_name": MAX_NAME,
+        "mode": "surface",
+        "engine_ok": engine_ok,
         "today": clock.et_today(),
-        "status": status,                     # the empty panel + alert on first paint
-        "no_data": _no_data_text(),           # hidden from the warnings while the panel shows
+        "status": status,                     # the alert + the no-data panel on first paint
+        "no_data": _no_data_text(),
         "is_admin": bool(getattr(user, "is_admin", False)),
     }
     return templates.TemplateResponse(request, "options.html", {
-        "user": user, "screens": screens, "families": _families(screens), "screen": cur,
-        "status": status, "engine_error": engine_error, "boot": boot,
+        "user": user, "mode": "surface", "status": status, "contract": {}, "back_url": "/options",
+        "boot": boot,
+    })
+
+
+@router.get("/history", response_class=HTMLResponse)
+def options_history(request: Request, symbol: str = "", expiry: str = "", right: str = "", strike: str = "",
+                    day: str = "", user: User = Depends(require_user)):
+    """One contract's history in its own window (opened by a click on a surface cell):
+    ``?symbol=&expiry=YYYY-MM-DD&right=C|P&strike=&day=YYYY-MM-DD``. The page fills the pickers
+    and draws the table on load; a missing or bad value leaves that picker for the member."""
+    c = _clean_contract(symbol, expiry, right, strike, day)
+    back = "/options?symbol=" + c["symbol"] + "#surface" if c["symbol"] else "/options#surface"
+    boot = {"mode": "history", "contract": c, "today": clock.et_today(),
+            "is_admin": bool(getattr(user, "is_admin", False))}
+    return templates.TemplateResponse(request, "options.html", {
+        "user": user, "mode": "history", "status": {}, "contract": c, "back_url": back, "boot": boot,
     })
 
 
