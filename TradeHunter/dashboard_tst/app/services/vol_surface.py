@@ -32,6 +32,13 @@ the far expiries - and every one of them is a row, mostly empty. With ``common``
 kept only when at least half (``COMMON_SHARE``) of the expiries shown have a cell at it;
 ``common=False`` shows every strike.
 
+The tile figures (``extra``, v4.166; the user: *"configurable tiles in the vol surface ... the
+top to show the greeks. the bottom will show the last price"*): beside ``cells`` a parallel grid
+of the SAME contract's delta / gamma / theta / vega, last trade, model price, day change, open
+interest and volume - from the latest pass only (``has_greeks``); a past day's rows carry only
+the IV solved from the close, so its ``extra`` cells are all null. On ``mid`` the figures are the
+call's (the put's when there is no call) and ``mixed`` says the IV is the average of both.
+
 Pure grid building (``build``) is separate from the DB / Parquet reads (``latest_rows``,
 ``history_rows``) so it is tested without either. IVs in the result are PERCENT.
 """
@@ -53,6 +60,9 @@ MAX_STRIKES = 400                    # rows: the strikes nearest the spot are ke
 MAX_EXPIRIES = 80                    # columns: the nearest expiries are kept
 SCALE_LO_PCT, SCALE_HI_PCT = 5, 95   # the colour scale's ends (percentiles of the cells)
 COMMON_SHARE = 0.5                   # common strikes only: a strike with a cell in at least half the expiries
+# the tile figures (v4.166): the row key -> the short key in an ``extra`` cell
+FIGURES = (("delta", "d"), ("gamma", "g"), ("theta", "t"), ("vega", "v"), ("last", "last"), ("price", "price"),
+           ("chg_pct", "chg"), ("oi", "oi"), ("volume", "vol"))
 
 
 class SurfaceError(ValueError):
@@ -81,6 +91,14 @@ def _f(v) -> float | None:
     except (TypeError, ValueError):
         return None
     return f if math.isfinite(f) else None
+
+
+def _fig(v, src: str):
+    """A tile figure, cleaned: a number (open interest / volume as whole numbers) or None."""
+    f = _f(v)
+    if f is None:
+        return None
+    return int(round(f)) if src in ("oi", "volume") else f
 
 
 def _sym(s) -> str:
@@ -141,7 +159,10 @@ def build(rows, spot, on, *, side=DEFAULT_SIDE, band=DEFAULT_BAND, max_dte=DEFAU
     ``{expiries: [{date, dte, years, monthly}], strikes: [...] ascending, cells:
     [[iv PERCENT | None per expiry] per strike], atm: [ATM iv per expiry], atm_strikes,
     spot_row (strikes below the spot), scale: [lo, hi] | None, n_cells, n_contracts, common,
-    hidden_strikes (the strikes ``common`` left out)}``."""
+    hidden_strikes (the strikes ``common`` left out), extra: [[{d, g, t, v, last, price, chg, oi,
+    vol[, mixed]} | None per expiry] per strike]}``. ``extra`` is the tile figures of the contract
+    each cell's IV came from (None where the cell is empty or the rows carry no figures - a past
+    day's rows have only the IV)."""
     o = norm_options(side, band, max_dte, expiries)
     d = _to_date(on)
     s = _f(spot)
@@ -150,6 +171,7 @@ def build(rows, spot, on, *, side=DEFAULT_SIDE, band=DEFAULT_BAND, max_dte=DEFAU
     if s is None or s <= 0:
         raise SurfaceError("no price for the underlying on that day, so the strikes cannot be placed")
     by: dict[tuple[float, _dt.date], dict[str, float]] = {}
+    figs: dict[tuple[float, _dt.date], dict[str, dict]] = {}   # the same legs' tile figures (latest rows only)
     n_contracts = 0
     for r in rows or ():
         e = _to_date(r.get("expiry"))
@@ -166,6 +188,8 @@ def build(rows, spot, on, *, side=DEFAULT_SIDE, band=DEFAULT_BAND, max_dte=DEFAU
         if o["expiries"] == "monthly" and not is_monthly(e):
             continue
         by.setdefault((k, e), {})[right] = iv
+        if any(src in r for src, _key in FIGURES):
+            figs.setdefault((k, e), {})[right] = {key: _fig(r.get(src), src) for src, key in FIGURES}
         n_contracts += 1
 
     def cell(legs: dict, k: float) -> float | None:
@@ -177,6 +201,28 @@ def build(rows, spot, on, *, side=DEFAULT_SIDE, band=DEFAULT_BAND, max_dte=DEFAU
             vals = [v for v in (legs.get("C"), legs.get("P")) if v is not None]
             return statistics.fmean(vals) if vals else None
         return legs.get("P") if k < s else legs.get("C")
+
+    def leg_of(legs: dict, k: float) -> str | None:
+        """The right whose figures a cell carries (``mid``: the call's, else the put's)."""
+        if o["side"] == "call":
+            return "C"
+        if o["side"] == "put":
+            return "P"
+        if o["side"] == "mid":
+            return "C" if legs.get("C") is not None else ("P" if legs.get("P") is not None else None)
+        return "P" if k < s else "C"
+
+    def extra_of(k: float, e: _dt.date) -> dict | None:
+        if (k, e) not in values:
+            return None
+        legs = by[(k, e)]
+        f = (figs.get((k, e)) or {}).get(leg_of(legs, k) or "")
+        if f is None:
+            return None
+        out = dict(f)
+        if o["side"] == "mid":
+            out["mixed"] = legs.get("C") is not None and legs.get("P") is not None
+        return out
 
     exps = sorted({e for (_k, e) in by})
     if len(exps) > MAX_EXPIRIES:
@@ -205,6 +251,7 @@ def build(rows, spot, on, *, side=DEFAULT_SIDE, band=DEFAULT_BAND, max_dte=DEFAU
     used = {e for (k, e) in values if k in kept}
     exps = [e for e in exps if e in used]
     cells = [[(round(values[(k, e)] * 100.0, 2) if (k, e) in values else None) for e in exps] for k in strikes]
+    extra = [[extra_of(k, e) for e in exps] for k in strikes]
 
     # the ATM row: per expiry, the strike nearest the spot that has a call or a put IV
     atm, atm_k = [], []
@@ -229,6 +276,7 @@ def build(rows, spot, on, *, side=DEFAULT_SIDE, band=DEFAULT_BAND, max_dte=DEFAU
         "strikes": strikes, "cells": cells, "atm": atm, "atm_strikes": atm_k,
         "spot_row": sum(1 for k in strikes if k < s), "scale": scale,
         "n_cells": len(flat), "n_contracts": n_contracts, "common": bool(common), "hidden_strikes": hidden,
+        "extra": extra,
     }
 
 
@@ -288,15 +336,19 @@ def solve_ivs(prices, spots, strikes, years, calls) -> list[float | None]:
 
 
 def latest_rows(sdb, symbol) -> tuple[list[dict], dict]:
-    """The last market pass's chain for ``symbol`` (Massive's IV per contract) and its meta
-    ``{source, on, spot, spot_src, as_of, name}``."""
+    """The last market pass's chain for ``symbol`` (Massive's IV per contract, plus the tile
+    figures ``delta, gamma, theta, vega, last, price, chg_pct, oi, volume`` - None when missing)
+    and its meta ``{source, on, spot, spot_src, as_of, name}``."""
     C, _U, _D = _models()
     sym = _sym(symbol)
     u = underlying(sdb, sym)
-    q = sdb.query(C.expiry, C.right, C.strike, C.iv, C.session, C.as_of).filter(C.symbol == sym)
+    q = (sdb.query(C.expiry, C.right, C.strike, C.iv, C.session, C.as_of, C.delta, C.gamma, C.theta, C.vega,
+                   C.last, C.price, C.chg_pct, C.oi, C.volume)
+            .filter(C.symbol == sym))
     rows, session, as_of = [], None, None
-    for e, right, k, iv, sess, ao in q.all():
-        rows.append({"expiry": e, "right": right, "strike": k, "iv": iv})
+    for e, right, k, iv, sess, ao, de, ga, th, ve, la, pr, ch, oi, vo in q.all():
+        rows.append({"expiry": e, "right": right, "strike": k, "iv": iv, "delta": de, "gamma": ga, "theta": th,
+                     "vega": ve, "last": la, "price": pr, "chg_pct": ch, "oi": oi, "volume": vo})
         if sess and (session is None or sess > session):
             session = sess
         if ao and (as_of is None or ao > as_of):
@@ -361,7 +413,8 @@ def history_rows(sdb, symbol, day, *, band=DEFAULT_BAND, max_dte=DEFAULT_DTE, ro
 def surface(sdb, symbol, day="latest", *, side=None, band=None, max_dte=None, expiries=None, common=True,
             root=None) -> dict:
     """The surface for ``symbol`` on ``day`` (``latest`` or ``YYYY-MM-DD``): ``build``'s
-    grid plus ``symbol``, ``name``, ``source``, ``as_of``, ``method``. Raises
+    grid plus ``symbol``, ``name``, ``source``, ``as_of``, ``method``, ``has_greeks`` (the
+    tile figures are there: the latest pass yes, a past day no). Raises
     ``SurfaceError`` with the reason when it cannot be drawn."""
     sym = _sym(symbol)
     if not sym:
@@ -382,8 +435,8 @@ def surface(sdb, symbol, day="latest", *, side=None, band=None, max_dte=None, ex
     return {**grid, "symbol": sym, "name": meta.get("name"), "source": meta["source"],
             "spot_src": meta.get("spot_src"),
             "as_of": as_of.replace(microsecond=0).isoformat() + "Z" if isinstance(as_of, _dt.datetime) else None,
-            "traded": meta.get("traded"), "method": method}
+            "traded": meta.get("traded"), "method": method, "has_greeks": meta["source"] == "latest"}
 
 
-__all__ = ["SIDES", "BANDS", "DTES", "SurfaceError", "build", "norm_options", "keep", "is_monthly",
+__all__ = ["SIDES", "FIGURES", "BANDS", "DTES", "SurfaceError", "build", "norm_options", "keep", "is_monthly",
            "latest_rows", "history_rows", "surface", "raw_closes", "solve_ivs", "option_root_of", "underlying"]

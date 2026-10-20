@@ -115,6 +115,23 @@
   /* centred (user, 2026-10-20): the IV figure sits in the middle of the box; an empty extra line takes no
      room, so the figure is centred now and the figure + its lines stay centred as a stack once they are filled */
   .vol-grid .vol-l2:empty, .vol-grid .vol-l3:empty { display: none; }
+  /* v4.166 - the configurable tile (user: "the tile, i need to utilise the top to show the greeks. the bottom
+     will show the last price"): the chosen greeks on the line ABOVE the IV (.vol-l2, up to two short rows when
+     three or four are picked), the chosen figure on the line BELOW it (.vol-l3); both 9px so the cell keeps
+     its 68 x 60 shape and the IV stays in the middle. Set in the Tile block of the left panel (#volTile). */
+  .vol-grid .vol-l2 { font-size: 9px; line-height: 1.05; white-space: normal; max-height: 2.1em; }
+  .vol-grid .vol-l3 { font-size: 9px; line-height: 1.1; color: var(--tv-text); }
+  .vol-grid .vol-gt { display: inline-block; white-space: nowrap; margin: 0 .1rem; }
+  .vol-tile summary { cursor: pointer; padding: .3rem .5rem; color: var(--tv-muted); font-size: 11px; list-style: none;
+                      display: flex; align-items: center; justify-content: space-between; gap: .4rem; }
+  .vol-tile summary::-webkit-details-marker { display: none; }
+  .vol-tile summary::after { content: '\25B8'; font-size: 9px; }
+  .vol-tile[open] summary::after { content: '\25BE'; }
+  .vol-tile fieldset { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .2rem; }
+  .vol-tile legend { padding: 0; margin-bottom: .15rem; font-size: 11px; color: var(--tv-text); }
+  .vol-pop .vol-pop-figs { display: grid; grid-template-columns: 1fr 1fr; column-gap: .75rem; row-gap: .1rem; margin-top: .3rem;
+                           padding-top: .3rem; border-top: 1px solid var(--tv-border); }
+  .vol-pop .vol-pop-figs > div { display: flex; justify-content: space-between; gap: .4rem; }
   /* v4.145: a slim bar at the bottom of each cell - how far up its own year's range today's IV sits */
   .vol-rk { position: absolute; left: .4rem; right: .4rem; bottom: .25rem; height: 3px; border-radius: 9999px;
             background: rgba(128,128,128,.22); }
@@ -263,6 +280,33 @@
       </label>
       <button type="submit" id="volGo" class="scr-primary w-full">Show</button>
     </form>
+    {# v4.166 (user: "configurable tiles in the vol surface ... the top to show the greeks. the bottom will
+       show the last price"): what each cell shows above and below its IV. Remembered per browser in
+       localStorage th.vol.tile; a change repaints the grid on screen (no new request). #}
+    <details id="volTile" class="vol-tile rounded border border-slate-800">
+      <summary title="Choose what each cell shows above and below its implied volatility">
+        <span>Tile&hellip;</span><span id="volTileSum" class="text-slate-500 truncate"></span>
+      </summary>
+      <div class="flex flex-col gap-2 px-2 pb-2 text-xs">
+        <fieldset id="volTileTop">
+          <legend>Top line - Greeks</legend>
+          <label class="scr-check"><input type="checkbox" id="volTileD" data-g="d" checked> Delta (&Delta;)</label>
+          <label class="scr-check"><input type="checkbox" id="volTileG" data-g="g"> Gamma (&Gamma;)</label>
+          <label class="scr-check"><input type="checkbox" id="volTileT" data-g="t" checked> Theta (&Theta;)</label>
+          <label class="scr-check"><input type="checkbox" id="volTileV" data-g="v"> Vega (&nu;)</label>
+        </fieldset>
+        <div class="text-[11px] text-slate-500">Middle: the implied volatility, in percent</div>
+        <fieldset id="volTileBottom">
+          <legend>Bottom line</legend>
+          <label class="scr-check"><input type="radio" name="volTileB" value="last" checked> Last price</label>
+          <label class="scr-check" title="The price worked out from the option's own implied volatility"><input type="radio" name="volTileB" value="price"> Model price</label>
+          <label class="scr-check"><input type="radio" name="volTileB" value="oi"> Open interest</label>
+          <label class="scr-check"><input type="radio" name="volTileB" value="vol"> Volume</label>
+          <label class="scr-check"><input type="radio" name="volTileB" value="none"> Nothing</label>
+        </fieldset>
+        <div id="volTileNote" class="hidden text-[10px] text-slate-500 leading-snug">Greeks and prices are on the latest pass only</div>
+      </div>
+    </details>
     <div class="flex flex-wrap items-center gap-3 min-w-0">
       <span id="volTick" class="vol-tick hidden"></span>
       <button type="button" id="scrDataToggle" class="flex items-center gap-1.5 text-[11px] text-slate-500 hover:text-slate-300 transition"
@@ -581,11 +625,14 @@
       h += '<tr><th class="vol-sticky vol-k">' + esc(strikeText(k)) + '</th>';
       var kind = sideOf(j, k) === 'C' ? 'call' : 'put';
       (j.cells[r] || []).forEach(function (v, c) {
-        // v4.159: a small stack - the IV on top, two lines reserved for more figures, the rank bar at the bottom
+        // v4.166: the tile - the chosen greeks on top (.vol-l2), the IV in the middle, the chosen figure
+        // below (.vol-l3), the rank bar at the bottom. The figures come from j.extra (same shape as j.cells).
+        var x = extraAt(j, r, c);
         h += v == null ? '<td></td>'
           : '<td class="vol-cell" data-r="' + r + '" data-c="' + c + '" title="' +
             esc(j.symbol + ' ' + strikeText(k) + ' ' + kind + ' ' + ex[c].date + ' - click: contract history in a new window') + '">' +
-            '<div class="vol-iv">' + num(v, 1) + '</div><div class="vol-l2"></div><div class="vol-l3"></div></td>';
+            '<div class="vol-l2">' + tileTop(x) + '</div><div class="vol-iv">' + num(v, 1) + '</div>' +
+            '<div class="vol-l3">' + tileBottom(x) + '</div></td>';
       });
       h += '</tr>';
     });
@@ -601,6 +648,107 @@
       ' &middot; ' + intText(j.strikes.length) + ' strikes x ' + intText(ex.length) + ' expiries' +
       (j.hidden_strikes ? ' &middot; ' + intText(j.hidden_strikes) + ' hidden' : '');
     show($('volInfoRow'), true); show($('volWrap'), true); show($('volLegend'), true);
+    tileNote(j);
+  }
+  // ── the configurable tile (v4.166) ── which greeks sit above the IV, which figure below it; the
+  // choice lives in localStorage th.vol.tile ({g: ['d', 't'], b: 'last'}) and a change repaints the
+  // grid on screen from the payload (j.extra) - no new request. A past day has no greeks or prices
+  // (has_greeks false: its IVs are solved from the closes), so its tiles show the IV alone.
+  var TILE_KEY = 'th.vol.tile';
+  var TILE_DEFAULT = {g: ['d', 't'], b: 'last'};
+  var GREEKS = [['d', '\u0394', 'Delta', 3], ['g', '\u0393', 'Gamma', 4], ['t', '\u0398', 'Theta', 3], ['v', '\u03BD', 'Vega', 3]];
+  var BOTTOMS = {last: 'last', price: 'model', oi: 'OI', vol: 'volume', none: ''};
+  var TILE = {g: TILE_DEFAULT.g.slice(), b: TILE_DEFAULT.b};
+  function extraAt(j, r, c) { return (j && j.extra && j.extra[r] && j.extra[r][c]) || null; }
+  function greekText(v) {             // 2 decimals, no leading zero: .42  -.05  1.23
+    if (v == null || !isFinite(v)) return '';
+    var s = Math.abs(v).toFixed(2);
+    if (s === '0.00') return '.00';
+    if (s.charAt(0) === '0') s = s.slice(1);
+    return (v < 0 ? '-' : '') + s;
+  }
+  function kText(n) {                 // 950 -> 950, 12400 -> 12.4k, 2300000 -> 2.3M
+    if (n == null || !isFinite(n)) return '';
+    n = Number(n);
+    if (Math.abs(n) >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
+    if (Math.abs(n) >= 1e5) return Math.round(n / 1e3) + 'k';
+    if (Math.abs(n) >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'k';
+    return String(Math.round(n));
+  }
+  function money(v) { return (v == null || !isFinite(v)) ? '' : '$' + Number(v).toFixed(2); }
+  function tileTop(x) {
+    if (!x) return '';
+    return GREEKS.filter(function (g) { return TILE.g.indexOf(g[0]) >= 0 && x[g[0]] != null; }).map(function (g) {
+      return '<span class="vol-gt">' + g[1] + greekText(x[g[0]]) + '</span>';
+    }).join(' ');
+  }
+  function tileBottom(x) {
+    if (!x) return '';
+    if (TILE.b === 'last') return esc(money(x.last));
+    if (TILE.b === 'price') return esc(money(x.price));
+    if (TILE.b === 'oi') return esc(kText(x.oi));
+    if (TILE.b === 'vol') return esc(kText(x.vol));
+    return '';
+  }
+  function tileLoad() {
+    var raw = lsGet(TILE_KEY), t = null;
+    try { t = raw ? JSON.parse(raw) : null; } catch (err) { t = null; }
+    var known = GREEKS.map(function (g) { return g[0]; });
+    TILE.g = t && Array.isArray(t.g) ? t.g.filter(function (k) { return known.indexOf(k) >= 0; }) : TILE_DEFAULT.g.slice();
+    TILE.b = t && Object.prototype.hasOwnProperty.call(BOTTOMS, t.b) ? t.b : TILE_DEFAULT.b;
+  }
+  function tileFormSet() {             // the Tile block shows the choice in force
+    GREEKS.forEach(function (g) {
+      var box = document.querySelector('#volTileTop input[data-g="' + g[0] + '"]');
+      if (box) box.checked = TILE.g.indexOf(g[0]) >= 0;
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('input[name="volTileB"]'), function (rd) {
+      rd.checked = rd.value === TILE.b;
+    });
+    tileSummary();
+  }
+  function tileSummary() {
+    var g = GREEKS.filter(function (x) { return TILE.g.indexOf(x[0]) >= 0; }).map(function (x) { return x[1]; }).join(' ');
+    var b = BOTTOMS[TILE.b];
+    $('volTileSum').textContent = [g, b].filter(function (s) { return s; }).join(' \u00B7 ') || 'IV only';
+  }
+  function tileRead() {                 // the Tile block -> TILE, remembered
+    TILE.g = GREEKS.map(function (g) { return g[0]; }).filter(function (k) {
+      var box = document.querySelector('#volTileTop input[data-g="' + k + '"]');
+      return box && box.checked;
+    });
+    var rd = document.querySelector('input[name="volTileB"]:checked');
+    TILE.b = rd && Object.prototype.hasOwnProperty.call(BOTTOMS, rd.value) ? rd.value : TILE_DEFAULT.b;
+    lsSet(TILE_KEY, JSON.stringify({g: TILE.g, b: TILE.b}));
+    tileSummary();
+  }
+  function tileNote(j) { show($('volTileNote'), !!(j && j.has_greeks === false)); }
+  function paintTiles() {               // repaint the tiles of the grid on screen from j.extra
+    var j = V.last;
+    tileNote(j);
+    if (!j) return;
+    Array.prototype.forEach.call(document.querySelectorAll('#volTable td.vol-cell'), function (td) {
+      var x = extraAt(j, +td.dataset.r, +td.dataset.c);
+      var top = td.querySelector('.vol-l2'), bot = td.querySelector('.vol-l3');
+      if (top) top.innerHTML = tileTop(x);
+      if (bot) bot.innerHTML = tileBottom(x);
+    });
+  }
+  function figsHtml(j, x) {             // the hover card's figures, in words
+    if (!x) return j && j.has_greeks === false
+      ? '<div class="vol-cap">Greeks and prices are on the latest pass only.</div>' : '';
+    var rows = [];
+    GREEKS.forEach(function (g) { if (x[g[0]] != null) rows.push([g[2], num(x[g[0]], g[3])]); });
+    if (x.last != null) rows.push(['Last', money(x.last)]);
+    if (x.price != null) rows.push(['Model price', money(x.price)]);
+    if (x.oi != null) rows.push(['OI', intText(x.oi)]);
+    if (x.vol != null) rows.push(['Volume', intText(x.vol)]);
+    if (!rows.length) return '';
+    var h = '<div class="vol-pop-figs">' + rows.map(function (r) {
+      return '<div><span>' + esc(r[0]) + '</span><b>' + esc(r[1]) + '</b></div>';
+    }).join('') + '</div>';
+    if (x.mixed) h += '<div class="vol-cap">The figures are the call\'s; the IV is the call + put average.</div>';
+    return h;
   }
   // ── each cell against its own past year: the colour and the hover card (v4.141) ──
   var GREY = 'background:hsla(0,0%,50%,.18)';   // history, but under 10 days of it
@@ -692,11 +840,12 @@
            '<text class="vol-lbl" x="' + (w - padR) + '" y="' + (hgt - 2) + '" text-anchor="end">' + esc(s.last || '') + '</text></svg>';
     return out;
   }
-  function popoverHtml(label, cur, s, key, expiry) {
+  function popoverHtml(label, cur, s, key, expiry, figs) {
     var latest = !V.last || V.last.source === 'latest', day = V.last ? V.last.on : '';
     var nowCap = latest ? 'Today' : 'On ' + day, nowWord = latest ? 'today' : 'that day';
     var h = '<div><b>' + esc(label) + '</b></div>';
     h += '<div class="vol-pop-row"><span>' + esc(nowCap) + '</span><b>' + (cur == null ? '-' : num(cur, 1) + '%') + '</b></div>';
+    h += figs || '';                    // v4.166: delta / gamma / theta / vega, last, model price, OI, volume
     if (V.histState !== 'ok') {
       h += '<div class="text-slate-500 mt-1">' + (V.histState === 'failed' ? 'History unavailable: ' + esc(V.histWhy) + '.' : 'History loading...') + '</div>';
       return h;
@@ -752,7 +901,7 @@
     var cur = j.cells[+td.dataset.r][+td.dataset.c];
     var key = td.dataset.r + ',' + td.dataset.c;
     var s = V.hist && V.hist.cells[key];
-    pop.innerHTML = popoverHtml(label, cur, s, key, ex.date);
+    pop.innerHTML = popoverHtml(label, cur, s, key, ex.date, figsHtml(j, extraAt(j, +td.dataset.r, +td.dataset.c)));
     pop.classList.remove('hidden');
     var pw = pop.offsetWidth || 320, ph = pop.offsetHeight || 200;
     var x = ev.clientX + 14, y = ev.clientY + 14;
@@ -826,6 +975,9 @@
     ['volSide', 'volBand', 'volDte', 'volExp', 'volCommon'].forEach(function (id) {
       $(id).addEventListener('change', function () { if ($('volSym').value.trim()) runSurface(); });
     });
+    // v4.166: the Tile block - load the remembered choice, repaint the grid on screen on a change
+    tileLoad(); tileFormSet();
+    $('volTile').addEventListener('change', function () { tileRead(); paintTiles(); });
     $('volTable').addEventListener('mouseover', function (e) {
       var td = e.target.closest ? e.target.closest('td.vol-cell') : null;
       if (!td) { hidePop(); return; }

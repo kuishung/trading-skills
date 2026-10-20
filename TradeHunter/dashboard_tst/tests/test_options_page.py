@@ -1229,6 +1229,39 @@ def test_the_surface_cells_open_the_contract_history_in_a_new_window(client, fak
     assert "location.replace('/options/history'" in html
 
 
+def test_the_surface_tiles_are_configurable(client, fake):
+    """v4.166 (user: "configurable tiles in the vol surface ... the top to show the greeks. the
+    bottom will show the last price"): a Tile block in the controls pane - Delta / Gamma / Theta /
+    Vega for the top line (Delta + Theta on), the IV in the middle, Last / Model price / OI /
+    Volume / Nothing for the bottom (Last on) - remembered in th.vol.tile; the cell renderer and
+    the hover card read j.extra; a change repaints without a new request."""
+    html = client.get("/options").text
+    for needle in ('<details id="volTile"', 'id="volTileSum"', 'id="volTileTop"', 'id="volTileBottom"',
+                   'id="volTileNote"', "Greeks and prices are on the latest pass only",
+                   "'th.vol.tile'", "var TILE_DEFAULT = {g: ['d', 't'], b: 'last'};",
+                   "var x = extraAt(j, r, c);", "'<div class=\"vol-l2\">' + tileTop(x) + '</div><div class=\"vol-iv\">'",
+                   "'<div class=\"vol-l3\">' + tileBottom(x) + '</div></td>'",
+                   "figsHtml(j, extraAt(j, +td.dataset.r, +td.dataset.c))", "j.has_greeks === false",
+                   "$('volTile').addEventListener('change', function () { tileRead(); paintTiles(); });",
+                   "Model price", "Open interest", r"'\u0394'", r"'\u0398'", r"'\u0393'", r"'\u03BD'"):
+        assert needle in html, needle
+    # the defaults in the markup: Delta + Theta ticked, Gamma + Vega not, Last price picked
+    assert 'id="volTileD" data-g="d" checked' in html and 'id="volTileT" data-g="t" checked' in html
+    assert 'id="volTileG" data-g="g">' in html and 'id="volTileV" data-g="v">' in html
+    assert 'name="volTileB" value="last" checked' in html
+    for v in ("price", "oi", "vol", "none"):
+        assert f'name="volTileB" value="{v}">' in html, v
+    # the Tile block sits in the controls pane, after the form
+    ctl = html[html.index('id="volCtlPane"'):html.index('id="volLegend"')]
+    assert ctl.index('id="volForm"') < ctl.index('id="volTile"')
+    # a repaint does not ask the server again
+    paint = html[html.index("function paintTiles("):html.index("function figsHtml(")]
+    assert "getJSON" not in paint and "fetch(" not in paint and "runSurface" not in paint
+    # the greeks: 2 decimals, no leading zero; OI / volume in thousands with k
+    assert "if (s.charAt(0) === '0') s = s.slice(1);" in html and "+ 'k';" in html
+    assert ".vol-grid .vol-l2 { font-size: 9px;" in html and ".vol-grid .vol-l3 { font-size: 9px;" in html
+
+
 def test_the_history_window_renders_the_contract_from_the_url(client, fake):
     """v4.159: /options/history renders the same template in history mode - only the contract
     history (pickers, table, CSV), the contract in the boot so the page draws it on load, a
@@ -1283,11 +1316,17 @@ def test_the_surface_api_answers_with_the_grid_or_a_plain_reason(client, fake, s
         for k in (90.0, 100.0, 110.0):
             for rt in "CP":
                 s.add(ScrContract(symbol="AAPL", expiry="2026-11-20", right=rt, strike=k, weekly=False, iv=0.3,
-                                  session="2026-10-07", as_of=asof))
+                                  session="2026-10-07", as_of=asof, delta=(0.45 if rt == "C" else -0.55),
+                                  theta=-0.03, last=2.5, oi=12400, volume=None))
         s.commit()
     j = client.get("/options/api/surface", params={"symbol": "aapl"}).json()
     assert j["ok"] is True and j["symbol"] == "AAPL" and j["strikes"] == [90.0, 100.0, 110.0]
     assert j["cells"] == [[30.0], [30.0], [30.0]] and j["expiries"][0]["date"] == "2026-11-20"
+    # v4.166: the tile figures beside the cells (the same contract: put below 100, call at / above)
+    assert j["has_greeks"] is True
+    assert [[x["d"] for x in row] for row in j["extra"]] == [[-0.55], [0.45], [0.45]]
+    assert j["extra"][0][0] == {"d": -0.55, "g": None, "t": -0.03, "v": None, "last": 2.5, "price": None,
+                                "chg": None, "oi": 12400, "vol": None}
     assert j["source"] == "latest" and j["as_of"] == "2026-10-07T19:30:00Z"
     assert j["common"] is True and j["hidden_strikes"] == 0
     assert client.get("/options/api/surface", params={"symbol": "AAPL", "common": "0"}).json()["common"] is False

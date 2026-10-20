@@ -120,6 +120,56 @@ def test_an_empty_cell_stays_empty_and_no_price_is_an_error():
     assert vol_surface.build([], SPOT, ON)["n_cells"] == 0
 
 
+def fig_rows():
+    """grid_rows() with the tile figures: delta = +k/1000 on calls, -k/1000 on puts (so the
+    figures say which contract a cell's IV came from), the rest derived from the strike."""
+    out = []
+    for r in grid_rows():
+        k, sign = r["strike"], (1.0 if r["right"] == "C" else -1.0)
+        out.append({**r, "delta": sign * k / 1000.0, "gamma": 0.01, "theta": -0.05, "vega": 0.15,
+                    "last": k / 100.0, "price": k / 100.0 + 0.01, "chg_pct": 1.5, "oi": int(k) * 10, "volume": int(k)})
+    return out
+
+
+def test_extra_carries_the_tile_figures_of_the_cells_own_contract():
+    """v4.166: ``extra`` has the shape of ``cells``, null where the cell is null, and the figures
+    of the contract the cell's IV came from (out of the money: the put below the price, the call
+    at / above it)."""
+    rows = [r for r in fig_rows() if not (r["expiry"] == DEC and r["strike"] == 110.0)]
+    g = vol_surface.build(rows, SPOT, ON)
+    assert len(g["extra"]) == len(g["cells"])
+    for crow, xrow in zip(g["cells"], g["extra"]):
+        assert len(xrow) == len(crow)
+        for v, x in zip(crow, xrow):
+            assert (v is None) == (x is None)
+    by = dict(zip(g["strikes"], g["extra"]))
+    assert by[95.0][1]["d"] == pytest.approx(-0.095)                  # below the price: the put's figures
+    assert by[105.0][1]["d"] == pytest.approx(0.105)                  # above: the call's
+    assert by[110.0][2] is None                                       # the empty cell
+    x = by[105.0][1]
+    assert x == {"d": pytest.approx(0.105), "g": 0.01, "t": -0.05, "v": 0.15, "last": 1.05, "price": pytest.approx(1.06),
+                 "chg": 1.5, "oi": 1050, "vol": 105}
+    assert "mixed" not in x
+    calls = vol_surface.build(rows, SPOT, ON, side="call")
+    assert dict(zip(calls["strikes"], calls["extra"]))[90.0][1]["d"] == pytest.approx(0.09)
+    puts = vol_surface.build(rows, SPOT, ON, side="put")
+    assert dict(zip(puts["strikes"], puts["extra"]))[110.0][1]["d"] == pytest.approx(-0.11)
+    mid = vol_surface.build(rows, SPOT, ON, side="mid")               # the call's figures, marked mixed
+    xm = dict(zip(mid["strikes"], mid["extra"]))[90.0][1]
+    assert xm["d"] == pytest.approx(0.09) and xm["mixed"] is True
+    # a missing figure is None, never dropped; open interest / volume are whole numbers
+    one = [{**rows[0], "delta": None, "oi": 12.0, "volume": "7"}]
+    x1 = vol_surface.build(one, SPOT, ON, side="call", band=0, common=False)["extra"][0][0]
+    assert x1["d"] is None and x1["oi"] == 12 and isinstance(x1["oi"], int) and x1["vol"] == 7
+
+
+def test_rows_without_figures_give_null_extra_cells():
+    """A past day's rows carry only the IV: every ``extra`` cell is null, the grid unchanged."""
+    g = vol_surface.build(grid_rows(), SPOT, ON)
+    assert g["n_cells"] == 36 and all(x is None for row_ in g["extra"] for x in row_)
+    assert len(g["extra"]) == len(g["cells"]) and len(g["extra"][0]) == len(g["cells"][0])
+
+
 # ───────────────────────────────── the reads: a screener DB + the Parquet files ─────────────────────────────────
 
 def bs(S, k, exp, right, sig, day=ON):
@@ -139,8 +189,14 @@ def sdb(tmp_path):
     for exp in (NOV, DEC):
         for k in (90.0, 100.0, 110.0):
             for rt in "CP":
+                full = k != 110.0                     # the 110 contracts carry no greeks / prices (all None)
                 s.add(ScrContract(symbol="AAPL", expiry=exp.isoformat(), right=rt, strike=k, weekly=False,
-                                  iv=0.25 + (0.05 if rt == "P" else 0.0), session="2026-10-07", as_of=asof))
+                                  iv=0.25 + (0.05 if rt == "P" else 0.0), session="2026-10-07", as_of=asof,
+                                  delta=((0.4 if rt == "C" else -0.6) if full else None),
+                                  gamma=(0.02 if full else None), theta=(-0.04 if full else None),
+                                  vega=(0.11 if full else None), last=(k / 50.0 if full else None),
+                                  price=(k / 50.0 + 0.05 if full else None), chg_pct=(-2.0 if full else None),
+                                  oi=(1200 if full else None), volume=(34 if full else None)))
     for day, c in ((_dt.date(2026, 10, 5), 98.0), (_dt.date(2026, 10, 6), 99.0), (ON, SPOT)):
         s.add(ScrUnderlyingDaily(symbol="AAPL", on=day.isoformat(), close=c, close_raw=c))
     s.commit()
@@ -176,6 +232,21 @@ def hist(tmp_path):
     return tmp_path / "pq"
 
 
+def test_latest_rows_carry_the_tile_figures(sdb):
+    """v4.166: each row of the last pass carries delta / gamma / theta / vega, last, model price,
+    day change, open interest and volume (None when the pass stored none)."""
+    rows, meta = vol_surface.latest_rows(sdb, "AAPL")
+    assert meta["source"] == "latest" and len(rows) == 12
+    keys = {"expiry", "right", "strike", "iv", "delta", "gamma", "theta", "vega", "last", "price", "chg_pct", "oi", "volume"}
+    assert all(set(r) == keys for r in rows)
+    put90 = next(r for r in rows if r["strike"] == 90.0 and r["right"] == "P" and r["expiry"] == NOV.isoformat())
+    assert put90["delta"] == -0.6 and put90["gamma"] == 0.02 and put90["theta"] == -0.04 and put90["vega"] == 0.11
+    assert put90["last"] == 1.8 and put90["price"] == pytest.approx(1.85) and put90["chg_pct"] == -2.0
+    assert put90["oi"] == 1200 and put90["volume"] == 34
+    bare = next(r for r in rows if r["strike"] == 110.0)
+    assert all(bare[k] is None for k in ("delta", "gamma", "theta", "vega", "last", "price", "chg_pct", "oi", "volume"))
+
+
 def test_the_latest_surface_is_massives_iv_from_the_last_pass(sdb):
     g = vol_surface.surface(sdb, "aapl")
     assert g["source"] == "latest" and g["symbol"] == "AAPL" and g["name"] == "Apple Inc."
@@ -183,6 +254,13 @@ def test_the_latest_surface_is_massives_iv_from_the_last_pass(sdb):
     by = dict(zip(g["strikes"], g["cells"]))
     assert by[90.0] == [30.0, 30.0] and by[110.0] == [25.0, 25.0]      # puts below 101, calls above
     assert "Massive" in g["method"]
+    # v4.166: the tile figures of each cell's own contract; the latest pass has greeks
+    assert g["has_greeks"] is True
+    xb = dict(zip(g["strikes"], g["extra"]))
+    assert xb[90.0][0]["d"] == -0.6 and xb[90.0][0]["oi"] == 1200 and xb[90.0][0]["last"] == 1.8   # the put
+    assert xb[100.0][0]["d"] == -0.6                                       # 100 < the 101 spot: the put too
+    assert xb[110.0][0] == {"d": None, "g": None, "t": None, "v": None, "last": None, "price": None,
+                            "chg": None, "oi": None, "vol": None}
     with pytest.raises(SurfaceError, match="ZZZZ"):
         vol_surface.surface(sdb, "ZZZZ")
     with pytest.raises(SurfaceError, match="symbol"):
@@ -196,6 +274,9 @@ def test_a_past_days_surface_solves_the_closes_back_to_their_volatility(sdb, his
         for v in row_:
             assert v == pytest.approx(30.0, abs=0.05)
     assert "Black-Scholes" in g["method"]
+    # v4.166: a past day has no greeks or prices - every tile figure cell is null
+    assert g["has_greeks"] is False
+    assert len(g["extra"]) == len(g["cells"]) and all(x is None for row_ in g["extra"] for x in row_)
     with pytest.raises(SurfaceError, match="index"):
         vol_surface.surface(sdb, "SPX", ON.isoformat(), root=hist)
     with pytest.raises(SurfaceError, match="not in the contract history"):

@@ -1656,7 +1656,9 @@ async def api_history_days(user: User = Depends(require_user)):
 async def api_surface(symbol: str = "", day: str = "latest", side: str = "", band: str = "", dte: str = "",
                       exp: str = "", common: str = "1", user: User = Depends(require_user)):
     """The volatility surface of ``symbol`` on ``day`` (``latest`` or ``YYYY-MM-DD``); ``common=0``
-    shows every strike (default: common strikes only, v4.140)."""
+    shows every strike (default: common strikes only, v4.140). v4.166: the answer also carries
+    ``extra`` (each cell's delta / gamma / theta / vega, last, model price, day change, OI, volume -
+    the tile figures, same shape as ``cells``) and ``has_greeks`` (false on a past day)."""
     from ..services import vol_surface
 
     return JSONResponse(await run_in_threadpool(_hist_call, vol_surface.surface, symbol, day or "latest",

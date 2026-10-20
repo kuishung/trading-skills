@@ -223,6 +223,22 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-20 - v4.166: Volatility surface - configurable tiles: Greeks on top, the IV in the middle, the last price below
+
+The user: *"i want to have a configurable tiles in the vol surface. where the tile, i need to utilise the top to
+show the greeks. the bottom will show the last price"*.
+- **Data** (`vol_surface.py`): `latest_rows` now carries each contract's delta, gamma, theta, vega, last
+  trade, model price, day change, open interest and volume from the last pass; `build()` returns a parallel
+  `extra` grid (the same contract the cell's IV came from; `mixed` on the call / put average) and `surface()`
+  says `has_greeks` (true on the latest pass, false on a past day - the Parquet history holds only IV).
+- **The tile** (`options.html`): three bands - the chosen Greeks on top (Delta, Gamma, Theta, Vega as
+  checkboxes; Delta + Theta by default), the IV % centred as before, and below it the Last price (default),
+  the Model price, Open interest, Volume, or nothing. A "Tile" block in the controls pane holds the
+  choice, remembered in the browser; a change repaints at once. On a past day the top line is blank and
+  the block says Greeks and prices are on the latest pass only. The hover card lists the same figures.
+- Tests: `tests/test_vol_surface.py` (fields, `extra`, `has_greeks`), `tests/test_options_page.py` (payload
+  and the Tile block).
+
 ### 2026-10-20 - v4.165: Volatility surface - a watchlist pane above the controls in the left panel, with an adjustable split
 
 The user: *"the left side panel i need to add a watchlist and the drop down boxes at the left bottom panel. up
