@@ -223,6 +223,37 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-20 - v4.175: Interpolated Volatility Surface - columns out to two years, rows at fixed moneyness
+
+The user: *"include a 30-day column and extend more columns after 1-year by quarterly intervals to up to 2-years
+... the strike price of 340 today is not comparable to the same strike price of 340 last week in terms of
+moneyness. For the columns, we interpolated for a fixed time to maturity. For the rows, we need to interpolate
+for a fixed level of moneyness."*
+- **Columns**: 30, 60, 90, 180, 270, 365, 456, 547, 638 and 730 days (15, 18, 21 and 24 months), all on by
+  default in the Horizons row; a far horizon a name has no LEAPS for stays blank.
+- **Rows at fixed moneyness** (`vol_cm.py`, `MONEYNESS` = 80 % to 120 % of the price in steps, with 97.5 and
+  102.5 near the money): after the time step, each horizon's IV is interpolated **linearly in strike** between
+  the two listed strikes around `price x moneyness`; nothing is extrapolated beyond the listed strikes. Rows
+  read `97.5% · 327.11` (the moneyness and today's implied strike); the 100 % row is the at-the-money line.
+  Greeks follow the same two steps; the model price is at the derived IV and strike. A "Rows: moneyness /
+  strikes" toggle in the Horizons row brings the by-strike grid back (`rows=` on the endpoint). The hover card
+  shows both steps of the working; a click opens the nearer listed expiry and strike.
+- **Every listed expiry is a leg** on the interpolated tab, whatever the Expiries dropdown says (user: *"why
+  there is no 30d?"* - with "monthly" the first leg was 32 days out, so 30d could not be bracketed and the
+  hide tick removed the empty column). The Expiries and days-cap settings apply to the other tab only.
+- **Rank window on the Volatility Surface tab** (user: contracts of different ages were ranked over different
+  histories, *"not comparing apples to apples ... if the user gets to define how long the historical window
+  is"*; calendar days agreed): a radio row above the grid - 30 / 60 / 90 / 180 / 270 / 365 days, default 365,
+  remembered in the browser. Every cell is ranked within the sessions dated inside that window ending on the
+  selected day (`vol_history.grid_history(window_days=)`, `GET /options/api/surface/history?window=`). A
+  contract that covers less than 80 % of the window is left grey and its hover card says "listed N days
+  ago, shorter than the W-day window". The hover card and legend name the window and the session count.
+  **At the default 365 the coverage rule is NOT applied** (it would grey every contract younger than about
+  ten months, most of a typical surface), so the default behaves exactly as before; the rule bites on the
+  shorter windows. Greeks of a leg of the other right (out-of-the-money mixes puts below the price and
+  calls above) are restated by put-call parity before the strike step, so an ATM delta reads about 0.5.
+- Tests: `tests/test_vol_cm.py`, `tests/test_vol_history.py`, `tests/test_options_page.py`.
+
 ### 2026-10-20 - v4.174: Interpolated Volatility Surface - the Horizons row sits above its grid, not in the left panel
 
 The user: *"This should be in the interpolating vol surface not in the panel"*. `options.html`: the six horizon

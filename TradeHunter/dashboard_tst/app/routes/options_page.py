@@ -1674,7 +1674,7 @@ def _flag(v) -> bool:
     return str(v).strip().lower() not in ("0", "false", "off", "no")
 
 
-def _surface_history(s, symbol, day, **o):
+def _surface_history(s, symbol, day, window_days=None, **o):
     import time as _time
 
     from ..services import vol_history, vol_surface
@@ -1682,7 +1682,8 @@ def _surface_history(s, symbol, day, **o):
     t0 = _time.monotonic()
     grid = vol_surface.surface(s, symbol, day, **o)
     grid_ms = int((_time.monotonic() - t0) * 1000)
-    out = vol_history.grid_history(s, symbol, grid)
+    out = vol_history.grid_history(s, symbol, grid,
+                                   window_days=vol_history.DEFAULT_WINDOW if window_days is None else window_days)
     out["on"] = grid["on"]
     out.setdefault("timing_ms", {})["grid"] = grid_ms
     out["timing_ms"]["request"] = int((_time.monotonic() - t0) * 1000)
@@ -1693,32 +1694,45 @@ def _surface_history(s, symbol, day, **o):
 
 @router.get("/api/surface/history")
 async def api_surface_history(symbol: str = "", day: str = "latest", side: str = "", band: str = "", dte: str = "",
-                              exp: str = "", common: str = "1", user: User = Depends(require_user)):
-    """Each cell's own IV history for the same surface (v4.141): rank in its past-year range,
-    lowest / highest, the sparkline points - fetched by the page after the grid is painted."""
+                              exp: str = "", common: str = "1", window: str = "", user: User = Depends(require_user)):
+    """Each cell's own IV history for the same surface (v4.141): rank in its range over the rank
+    window, lowest / highest, the sparkline points - fetched by the page after the grid is painted.
+    v4.175: ``window`` = the rank window in CALENDAR days (30 / 60 / 90 / 180 / 270 / 365, default
+    365), one window for every cell, ending on the surface's day; the answer carries
+    ``window_days``. A bad ``window`` is a 400 ``{ok: false, error}``."""
+    from ..services import vol_history
+
+    try:
+        wd = vol_history.norm_window(window or None)
+    except ValueError as exc:
+        return _err(str(exc))
     return JSONResponse(await run_in_threadpool(_hist_call, _surface_history, symbol, day or "latest",
-                                                side=side or None, band=band or None, max_dte=dte or None,
-                                                expiries=exp or None, common=_flag(common)))
+                                                window_days=wd, side=side or None, band=band or None,
+                                                max_dte=dte or None, expiries=exp or None, common=_flag(common)))
 
 
 @router.get("/api/surface/cm")
 async def api_surface_cm(symbol: str = "", day: str = "latest", side: str = "", band: str = "", exp: str = "",
-                         common: str = "1", horizons: str = "", user: User = Depends(require_user)):
+                         common: str = "1", horizons: str = "", rows: str = "", user: User = Depends(require_user)):
     """The INTERPOLATED volatility surface (v4.171): the same rows re-cut on fixed horizons
-    (``horizons=30,60,90``; default 30 / 60 / 90 / 180 / 270 / 365 days) - each cell the IV
-    interpolated linearly in total variance between the two listed expiries around the horizon (legs
-    at least 7 days out, no extrapolation), with ``exact`` / ``brackets`` / ``nearest`` / ``extra``
-    beside ``cells`` (``vol_cm.interpolate``). Every listed expiry is read (no ``dte`` cap). A bad
-    ``horizons`` value is a 400 ``{ok: false, error}``."""
+    (``horizons=30,60,90``; default 30 days to two years) - each cell the IV interpolated linearly
+    in total variance between the two listed expiries around the horizon (legs at least 7 days out,
+    no extrapolation), with ``exact`` / ``brackets`` / ``nearest`` / ``extra`` beside ``cells``
+    (``vol_cm.interpolate``). v4.175: the rows are FIXED MONEYNESS levels (strike / price, linear in
+    strike between the two listed strikes around each) unless ``rows=strike``; the by-strike grid is
+    always in ``by_strike``. Every listed expiry is read and used as a leg: ``exp`` (all / monthly) is
+    accepted but ignored here, and there is no ``dte`` cap. A bad ``horizons`` or ``rows`` value is a
+    400 ``{ok: false, error}``."""
     from ..services import vol_cm
 
     try:
         hs = vol_cm.norm_horizons(horizons or None)
+        rm = vol_cm.norm_rows(rows or None)
     except ValueError as exc:
         return _err(str(exc))
     return JSONResponse(await run_in_threadpool(_hist_call, vol_cm.surface_cm, symbol, day or "latest",
-                                                side=side or None, band=band or None, expiries=exp or None,
-                                                common=_flag(common), horizons=hs))
+                                                side=side or None, band=band or None, expiries="all",
+                                                common=_flag(common), horizons=hs, rows=rm))
 
 
 @router.get("/api/history/chain")

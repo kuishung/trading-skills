@@ -97,6 +97,10 @@
   .vol-grid tr.vol-spot th, .vol-grid tr.vol-spot td { padding: .1rem .45rem; font-size: 10px; color: var(--tv-accent-tx);
                                                        border-bottom: 2px solid var(--tv-accent); white-space: nowrap; }
   .vol-grid tr.vol-spot td { text-align: left; }
+  /* v4.175: on the interpolated tab's moneyness rows the 100 % row IS the at-the-money line */
+  .vol-grid tr.vol-atm > th { color: var(--tv-accent-tx); }
+  .vol-grid tr.vol-atm > th, .vol-grid tr.vol-atm > td { border-top: 2px solid var(--tv-accent); border-bottom: 2px solid var(--tv-accent); }
+  .vol-grid th.vol-m-k { white-space: nowrap; }
   .vol-grid td.vol-cell { cursor: pointer; }
   .vol-grid td.vol-cell:hover { outline: 1px solid var(--tv-accent); outline-offset: -1px; }
   .vol-bar { display: inline-block; width: 9rem; height: .5rem; border-radius: 9999px; vertical-align: middle;
@@ -347,17 +351,17 @@
     </div>
     {# one short legend line; everything it used to explain lives in its tooltip #}
     <div id="volLegend" class="hidden flex flex-wrap items-center gap-2 text-[11px] text-slate-500"
-         title="Each cell is one option's implied volatility, in percent - strikes down the side, expiries across the top (M = monthly); the line marks the stock price. Below the price each cell is the put, above it the call (out of the money). The colour is each contract against its own past year: green at its lowest IV, red at its highest; the slim bar at the bottom of a cell shows the same (grey = under 10 days of history). Hover a cell for its history; click: contract history in a new window. An empty cell means no contract there had a volatility.">
-      <span>IV vs own past year:</span>
+         title="Each cell is one option's implied volatility, in percent - strikes down the side, expiries across the top (M = monthly); the line marks the stock price. Below the price each cell is the put, above it the call (out of the money). The colour is each contract against its own IV over the rank window picked above the grid (365 days unless you pick a shorter one): green at its lowest IV, red at its highest; the slim bar at the bottom of a cell shows the same (grey = too little history in the window - listed too recently, or under 10 days with a price). Hover a cell for its history; click: contract history in a new window. An empty cell means no contract there had a volatility.">
+      <span id="volLegWin">IV vs own past 365 days:</span>
       <span>low</span><span class="vol-bar"></span><span>high</span>
       <span>&middot; click a cell: contract history in a new window</span>
       <span id="volHistMsg" class="text-slate-600"></span>
     </div>
     {# v4.171: the Interpolated tab's legend line (no colour there) #}
     <div id="cmLegend" class="hidden text-[11px] text-slate-500 leading-snug"
-         title="Each cell is the implied volatility, in percent, of a fixed time horizon at that strike - worked out from the two listed expiries around the horizon (each at least 7 days out), linear in total variance. Nothing is extrapolated: a horizon before the first expiry or after the last one is empty, and so is a strike missing on either expiry. Hover a cell for the working.">
+         title="Each cell is the implied volatility, in percent, of a fixed time horizon at a fixed moneyness (strike / price) - first worked out per listed strike from the two listed expiries around the horizon (every listed expiry at least 7 days out, linear in total variance), then between the two listed strikes around strike = price x moneyness (linear in strike). Nothing is extrapolated: a horizon before the first expiry or after the last one is empty, and so is a level outside the listed strikes. Hover a cell for the working.">
       <div class="flex flex-wrap items-center gap-2"><span>IV vs this surface:</span><span>low</span><span class="vol-bar"></span><span>high</span></div>
-      <span class="vol-sub" style="font-size:10px">=</span> a listed expiry falls on that horizon &middot; hover a cell for the working &middot; click: contract history of the nearer listed expiry
+      <span class="vol-sub" style="font-size:10px">=</span> a listed expiry and a listed strike fall on that cell &middot; hover a cell for the working &middot; click: contract history of the nearer listed expiry and strike
     </div>
     </div>{# /controls pane #}
   </aside>
@@ -393,6 +397,16 @@
      day of the contract history. Full screen (v4.159): the grid takes the rest of the page and
      scrolls inside, the strike column and the expiry header held. Painted by the script below. #}
   <section id="volPanelSurface" class="flex flex-col min-h-0 flex-1 space-y-2" role="tabpanel" aria-labelledby="volTabSurface">
+    {# v4.175: ONE rank window for the whole surface (calendar days, ending on the day shown), remembered in
+       th.vol.window - every cell's colour, rank bar and hover card are over the same span, so a contract
+       listed three weeks ago is no longer ranked over three weeks and an old one over a year #}
+    <fieldset id="volWin" class="border-0 m-0 p-0 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400"
+              title="How far back each contract's own IV range reaches for its colour, in calendar days, ending on the day shown. On a window shorter than 365 days a contract listed too recently to cover most of it stays grey.">
+      <legend class="float-left mr-1 text-slate-500">Rank window (days):</legend>
+      <div class="vol-hz">
+        {% for w in (30, 60, 90, 180, 270, 365) %}<label class="scr-check"><input type="radio" name="volWin" id="volWin{{ w }}" value="{{ w }}"{% if w == 365 %} checked{% endif %}> {{ w }}</label>{% endfor %}
+      </div>
+    </fieldset>
     <div id="volInfoRow" class="hidden flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400 leading-snug">
       <div id="volInfo" class="min-w-0 break-words"></div>
     </div>
@@ -410,13 +424,26 @@
     {# v4.171: the fixed horizons shown as columns, all six on by default, remembered in localStorage
        th.vol.horizons. v4.174 (user: "This should be in the interpolating vol surface not in the panel"):
        the row lives HERE, above the interpolated grid, not in the left panel. #}
+    {# v4.175: out to two years (after a year by quarters: 15, 18, 21, 24 months), and the rows toggle -
+       fixed moneyness (the default) or the listed strikes, remembered in th.vol.cmrows #}
+    {% set hz_months = {456: '15 months', 547: '18 months', 638: '21 months', 730: '24 months (2 years)'} %}
+    <div class="flex flex-wrap items-center gap-x-5 gap-y-1">
     <fieldset id="volHz" class="hidden border-0 m-0 p-0 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400"
               title="The fixed horizons, in calendar days, this surface shows as columns">
       <legend class="float-left mr-1 text-slate-500">Horizons (days):</legend>
       <div class="vol-hz">
-        {% for h in (30, 60, 90, 180, 270, 365) %}<label class="scr-check"><input type="checkbox" id="volHz{{ h }}" data-h="{{ h }}" checked> {{ h }}</label>{% endfor %}
+        {% for h in (30, 60, 90, 180, 270, 365, 456, 547, 638, 730) %}<label class="scr-check"{% if h in hz_months %} title="{{ hz_months[h] }}"{% endif %}><input type="checkbox" id="volHz{{ h }}" data-h="{{ h }}" checked> {{ h }}</label>{% endfor %}
       </div>
     </fieldset>
+    <fieldset id="cmRows" class="border-0 m-0 p-0 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400"
+              title="Rows at a fixed moneyness (strike / price) stay comparable from day to day as the price moves; the listed strikes do not.">
+      <legend class="float-left mr-1 text-slate-500">Rows:</legend>
+      <div class="vol-hz">
+        <label class="scr-check"><input type="radio" name="cmRows" id="cmRowsM" value="moneyness" checked> moneyness</label>
+        <label class="scr-check"><input type="radio" name="cmRows" id="cmRowsK" value="strike"> strikes</label>
+      </div>
+    </fieldset>
+    </div>
     <div id="cmInfoRow" class="hidden flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400 leading-snug">
       <div id="cmInfo" class="min-w-0 break-words"></div>
     </div>
@@ -699,8 +726,8 @@
     return {cols: cols, rows: rows, hidCols: nCols - cols.length, hidRows: cells.length - rows.length};
   }
   function fullView(nRows, nCols) { return {cols: allIdx(nCols), rows: allIdx(nRows), hidCols: 0, hidRows: 0}; }
-  function youngKey(j) { return j.symbol + '|' + j.on + '|' + j.side + '|' + j.source; }
-  function youngCols(j) {               // rule (1): per expiry, true = most of its cells have under 10 days of history
+  function youngKey(j) { return j.symbol + '|' + j.on + '|' + j.side + '|' + j.source + '|' + winChosen(); }
+  function youngCols(j) {               // rule (1): per expiry, true = most of its cells are not ranked in the window
     var ex = j.expiries || [], hs = V.hist, out = ex.map(function () { return false; });
     if (V.histState === 'ok' && hs && sameGrid(j, hs)) {
       var skip = {};
@@ -712,7 +739,7 @@
           if (j.cells[r][c] == null || skip[key]) return;
           n++;
           var s = hs.cells[key];
-          if (s && s.n >= MIN_HIST) old++;
+          if (s && s.rank != null) old++;   // v4.175: ranked = enough history inside the chosen rank window
         });
         out[c] = n > 0 && old * 2 < n;
       });
@@ -726,10 +753,10 @@
     var n = (j.expiries || []).length;
     return cleanOn() ? tidy(j.cells || [], n, youngCols(j)) : fullView((j.strikes || []).length, n);
   }
-  function tidyNote(vw, one, many) {    // " · 2 expiries and 5 strikes hidden by the tick"
+  function tidyNote(vw, one, many, rowOne, rowMany) {    // " · 2 expiries and 5 strikes hidden by the tick"
     var parts = [];
     if (vw.hidCols) parts.push(intText(vw.hidCols) + ' ' + (vw.hidCols === 1 ? one : many));
-    if (vw.hidRows) parts.push(intText(vw.hidRows) + ' ' + (vw.hidRows === 1 ? 'strike' : 'strikes'));
+    if (vw.hidRows) parts.push(intText(vw.hidRows) + ' ' + (vw.hidRows === 1 ? (rowOne || 'strike') : (rowMany || 'strikes')));
     return parts.length ? ' &middot; ' + parts.join(' and ') + ' hidden by the tick' : '';
   }
   function renderSurface(j) {
@@ -853,7 +880,7 @@
   function tileNote(j) { show($('volTileNote'), !!(j && j.has_greeks === false)); }
   function paintTiles() {               // repaint the tiles of both grids from their own payloads (j.extra)
     tileNote(activeLast());
-    [['#volTable', V.last, tileBottom], ['#cmTable', CM.last, cmBottom]].forEach(function (g) {
+    [['#volTable', V.last, tileBottom], ['#cmTable', cmGrid(CM.last), cmBottom]].forEach(function (g) {
       var j = g[1];
       if (!j) return;
       Array.prototype.forEach.call(document.querySelectorAll(g[0] + ' td.vol-cell'), function (td) {
@@ -888,6 +915,25 @@
     var same = function (a, b) { return a.length === b.length && a.every(function (v, i) { return v === b[i]; }); };
     return same(j.strikes || [], hst.strikes || []) && same(ex, hst.expiries || []) && j.side === hst.side;
   }
+  // v4.175: the rank window (calendar days, the radios at the top of the tab, th.vol.window)
+  var WIN_KEY = 'th.vol.window', WINS = [30, 60, 90, 180, 270, 365];
+  function winChosen() {
+    var b = document.querySelector('input[name="volWin"]:checked');
+    var w = b ? parseInt(b.value, 10) : 365;
+    return WINS.indexOf(w) >= 0 ? w : 365;
+  }
+  function winLoad() {
+    var w = parseInt(lsGet(WIN_KEY), 10);
+    if (WINS.indexOf(w) < 0) return;
+    var b = $('volWin' + w);
+    if (b) b.checked = true;
+  }
+  function winLegend() { $('volLegWin').textContent = 'IV vs own past ' + winChosen() + ' days:'; }
+  function histParams(q) {              // the surface's own request + the rank window
+    var h = new URLSearchParams(q.toString());
+    h.set('window', String(winChosen()));
+    return h;
+  }
   function paintHistory(j, hst) {
     var n = 0;
     document.querySelectorAll('#volTable td.vol-cell').forEach(function (td) {
@@ -901,15 +947,18 @@
     var took = tm.request != null ? ' in ' + (tm.request / 1000).toFixed(1) + ' s' +
                (tm.read != null && tm.solve != null ? ' (read ' + (tm.read / 1000).toFixed(1) + ', solve ' + (tm.solve / 1000).toFixed(1) + ')' : '') : '';
     $('volHistMsg').textContent = hst.note ? '(' + hst.note + ')'
-      : '(' + intText(n) + ' cells coloured by their own history, ' + intText(hst.days) + ' sessions' +
+      : '(' + intText(n) + ' cells coloured by their own history over the past ' + (hst.window_days || winChosen()) +
+        ' days, ' + intText(hst.days) + ' sessions' +
         (hst.window ? ' to ' + hst.window[1] : '') + took +
         (skipped ? '; ' + intText(skipped) + ' cells not computed - the view is too large, narrow the strikes or the expiries' : '') + ')';
   }
   function loadHistory(j, q, my) {
+    var hseq = V.histSeq = (V.histSeq || 0) + 1;   // a window change while one loads: the last one wins
+    V.histQ = q;
     V.hist = null; V.histState = 'loading'; V.histWhy = '';
     $('volHistMsg').textContent = '(colouring each cell by its own history...)';
-    getJSON('/options/api/surface/history?' + q.toString()).then(function (h) {
-      if (my !== V.seq || V.last !== j) return;
+    getJSON('/options/api/surface/history?' + histParams(q).toString()).then(function (h) {
+      if (my !== V.seq || V.last !== j || hseq !== V.histSeq) return;
       if (!h || !h.ok) {
         V.histState = 'failed'; V.histWhy = (h && h.error) || 'not available';
         $('volHistMsg').textContent = '(no history colouring: ' + V.histWhy + ')';
@@ -930,7 +979,7 @@
       // redraw paints the colours too); otherwise only the colours
       if (cleanOn()) renderSurface(j); else paintHistory(j, h);
     }).catch(function () {
-      if (my !== V.seq) return;
+      if (my !== V.seq || hseq !== V.histSeq) return;
       V.histState = 'failed'; V.histWhy = 'the server did not answer';
       $('volHistMsg').textContent = '(history colouring did not load)';
     });
@@ -986,19 +1035,21 @@
       var skipped = key && (V.hist.skipped || []).indexOf(key) >= 0;
       h += '<div class="text-slate-500 mt-1">' + (skipped
         ? 'Not computed: the view is too large (over ' + intText(6000) + ' contracts) - narrow the strikes or the expiries.'
-        : 'No history for this contract in the last ' + intText(V.hist.days) + ' sessions.') + '</div>';
+        : 'No history for this contract in the past ' + (V.hist.window_days || winChosen()) + ' days (' +
+          intText(V.hist.days) + ' sessions).') + '</div>';
       return h;
     }
-    h += '<div class="vol-pop-row"><span>Past year, ' + intText(s.n) + ' trading days' + (s.first ? ' since ' + esc(s.first) : '') + '</span>' +
+    var wd = s.window_days || V.hist.window_days || winChosen();
+    h += '<div class="vol-pop-row"><span>Past ' + wd + ' days, ' + intText(s.n) + ' sessions' + (s.first ? ' since ' + esc(s.first) : '') + '</span>' +
          '<span class="whitespace-nowrap">' + num(s.lo, 1) + '% - ' + num(s.hi, 1) + '%</span></div>';
     if (s.rank != null) {
-      h += '<div class="vol-pop-row"><span>Where ' + nowWord + ' sits in that range</span><b class="whitespace-nowrap vol-rk-tx" style="' + rankText(s.rank) + '">' +
+      h += '<div class="vol-pop-row"><span>Where ' + nowWord + ' sits in that ' + wd + '-day range</span><b class="whitespace-nowrap vol-rk-tx" style="' + rankText(s.rank) + '">' +
            Math.round(s.rank * 100) + '%</b></div>' +
-           '<div class="vol-cap">0% = at its lowest IV of the year, 100% = at its highest</div>' +
+           '<div class="vol-cap">0% = at its lowest IV of the past ' + wd + ' days, 100% = at its highest</div>' +
            '<div class="vol-pop-row"><span>Days with a lower IV than ' + nowWord + '</span><span class="whitespace-nowrap">' +
            Math.round(s.pct * 100) + '% (' + intText(Math.round(s.pct * s.n)) + ' of ' + intText(s.n) + ')</span></div>';
     } else {
-      h += '<div class="text-slate-500 mt-1">Under 10 days of history - no colour.</div>';
+      h += '<div class="text-slate-500 mt-1">No colour: ' + esc(s.why || 'under 10 days of history') + '.</div>';
     }
     var hs = V.hist || {}, win = (hs.earnings || []).filter(function (e) {
       var d = dayNum(e.on), a = dayNum(s.first), b = dayNum(s.last);
@@ -1020,7 +1071,7 @@
     h += chart;
     if (chart) {
       h += '<div class="vol-cap">Implied volatility by trading day' + (cur != null ? '; the dashed line is ' + nowWord : '') +
-           '; the shaded band is the year\'s range' + (win.length ? '; amber E = an earnings day' : '') + '.</div>';
+           '; the shaded band is the range over the past ' + wd + ' days' + (win.length ? '; amber E = an earnings day' : '') + '.</div>';
     }
     return h;
   }
@@ -1105,24 +1156,44 @@
   // the horizon (legs at least 7 days out, nothing extrapolated); the same tiles, no colour; a click opens
   // the contract history of the NEARER of the two expiries.
   var TAB_KEY = 'th.vol.tab', HZ_KEY = 'th.vol.horizons', CLEAN_KEY = 'th.vol.clean';
-  var HZ_ALL = [30, 60, 90, 180, 270, 365];
+  var HZ_ALL = [30, 60, 90, 180, 270, 365, 456, 547, 638, 730];
+  var HZ_OLD = [30, 60, 90, 180, 270, 365];   // the set before v4.175: a member's old choice ticks the new ones
+  var HZ_MONTHS = {456: '15 months', 547: '18 months', 638: '21 months', 730: '24 months (2 years)'};
   function hzChosen() {
     return HZ_ALL.filter(function (h) { var b = $('volHz' + h); return !!(b && b.checked); });
   }
-  function hzLoad() {                   // the remembered horizons (all six until the member unticks one)
+  function hzLoad() {                   // the remembered horizons (all ten until the member unticks one)
     var raw = lsGet(HZ_KEY);
     if (raw == null) return;
-    var want = String(raw).split(',').map(function (x) { return parseInt(x, 10); });
-    HZ_ALL.forEach(function (h) { var b = $('volHz' + h); if (b) b.checked = want.indexOf(h) >= 0; });
+    // "chosen|offered": a horizon added since the member chose (not in "offered") starts ticked
+    var parts = String(raw).split('|');
+    var ints = function (t) { return t.split(',').map(function (x) { return parseInt(x, 10); }); };
+    var want = ints(parts[0]), seen = parts.length > 1 ? ints(parts[1]) : HZ_OLD;
+    HZ_ALL.forEach(function (h) {
+      var b = $('volHz' + h);
+      if (b) b.checked = seen.indexOf(h) < 0 || want.indexOf(h) >= 0;
+    });
   }
+  function hzSave() { lsSet(HZ_KEY, hzChosen().join(',') + '|' + HZ_ALL.join(',')); }
+  // v4.175: the rows - fixed moneyness (the payload's primary grid) or the listed strikes (its by_strike grid)
+  var ROWS_KEY = 'th.vol.cmrows';
+  function cmRowsMode() { return $('cmRowsK') && $('cmRowsK').checked ? 'strike' : 'moneyness'; }
+  function cmGrid(j) {                  // the grid on screen, from the one answer (the toggle needs no request)
+    if (!j) return null;
+    if (cmRowsMode() === 'strike' && j.by_strike) return Object.assign({}, j, j.by_strike, {rows: null, rows_mode: 'strike'});
+    return j;
+  }
+  function pctText(p) { return (Math.round(p * 10) / 10).toString(); }
+  function mText(row) { return pctText(row.pct) + '% \u00B7 ' + num(row.strike, 2); }   // "97.5% · 327.11"
   function surfaceParams(sym) {
     return new URLSearchParams({symbol: sym, day: $('volDay').value || 'latest', side: $('volSide').value,
                                 band: $('volBand').value, dte: $('volDte').value, exp: $('volExp').value,
                                 common: $('volCommon').checked ? '1' : '0'});
   }
-  function cmParams(sym) {              // no "dte": every listed expiry is read (a 365-day horizon needs the far ones)
+  function cmParams(sym) {              // no "dte" and no "exp": every listed expiry is a leg (v4.175: a monthly-only
+    // list left the 30-day horizon without a near leg; the Expiries setting applies to the other tab)
     return new URLSearchParams({symbol: sym, day: $('volDay').value || 'latest', side: $('volSide').value,
-                                band: $('volBand').value, exp: $('volExp').value,
+                                band: $('volBand').value,
                                 common: $('volCommon').checked ? '1' : '0', horizons: hzChosen().join(',')});
   }
   function syncTick() {                 // the countdown follows the tab on screen
@@ -1145,12 +1216,14 @@
     return x && (TILE.b === 'last' || TILE.b === 'price') ? esc(money(x.price)) : '';
   }
   function cmView(j) {
-    var n = (j.horizons || []).length, nr = (j.strikes || []).length;
+    var n = (j.horizons || []).length, nr = (j.cells || []).length;
     if (!cleanOn()) return fullView(nr, n);
-    // a horizon fewer than half of the strikes reach goes first (else rule (2) would empty the grid)
+    // a horizon fewer than half of the rows WITH ANY VALUE reach goes first (else rule (2) would empty the grid);
+    // a horizon is never dropped merely because the far expiries are missing for some rows
+    var live = allIdx(nr).filter(function (r) { return j.cells[r].some(function (v) { return v != null; }); }).length;
     var thin = allIdx(n).map(function (c) {
       var got = allIdx(nr).filter(function (r) { return j.cells[r][c] != null; }).length;
-      return got * 2 < nr;
+      return got * 2 < live;
     });
     return tidy(j.cells || [], n, thin);
   }
@@ -1163,29 +1236,53 @@
     return Math.max(0, Math.min(1, (v - s[0]) / (s[1] - s[0])));
   }
   function cmTint(j, v) { var l = cmLevel(j, v); return l == null ? '' : rankColor(l); }
-  function renderCm(j) {
-    var hz = j.horizons || [], vw = cmView(j);
-    var h = '<thead><tr><th class="vol-sticky vol-corner">Strike \\ Horizon</th>';
+  function renderCm(j0) {
+    var j = cmGrid(j0), hz = j.horizons || [], mon = !!j.rows;
+    if (mon && !j.n_cells) {            // no moneyness level falls between two listed strikes with a value
+      show($('cmWrap'), false); show($('cmInfoRow'), false); legends();
+      msg($('cmMsg'), 'No fixed moneyness level (80% to 120% of the price) falls between two listed strikes with a value here - pick Rows: strikes, or widen the strikes.');
+      return;
+    }
+    msg($('cmMsg'), '');
+    var vw = cmView(j);
+    var h = '<thead><tr><th class="vol-sticky vol-corner">' + (mon ? 'Strike/price \\ Horizon' : 'Strike \\ Horizon') + '</th>';
     vw.cols.forEach(function (c) {
-      h += '<th title="' + esc('A fixed ' + hz[c].days + ' days out (' + hz[c].years + ' years), worked out from the listed expiries around it') +
-           '">' + hz[c].days + 'd</th>';
+      var d = hz[c].days;
+      h += '<th title="' + esc((HZ_MONTHS[d] ? HZ_MONTHS[d] + ' - ' : '') + 'A fixed ' + d + ' days out (' + hz[c].years + ' years), worked out from the listed expiries around it') +
+           '">' + d + 'd</th>';
     });
     h += '</tr></thead><tbody>';
-    var spotDone = false;
+    // the at-the-money line: on moneyness rows the 100% row itself (when shown), else the line at the price
+    var atmShown = mon && vw.rows.some(function (r) { return j.rows[r].m === 1; });
+    var spotDone = atmShown;
+    var spot = num(j.spot, 2);
     vw.rows.forEach(function (r) {
-      var k = j.strikes[r];
+      var k = j.strikes[r], row = mon ? j.rows[r] : null, atm = !!(row && row.m === 1);
       if (!spotDone && r >= j.spot_row) { h += cmSpotRow(j, vw.cols.length); spotDone = true; }
-      h += '<tr><th class="vol-sticky vol-k">' + esc(strikeText(k)) + '</th>';
+      if (mon) {
+        var rt = atm ? 'at the money - price ' + spot
+                     : 'strike / price = ' + pctText(row.pct) + ' % - strike ' + num(row.strike, 2) + ' at price ' + spot;
+        h += '<tr' + (atm ? ' class="vol-atm"' : '') + '><th class="vol-sticky vol-k vol-m-k" title="' + esc(rt) + '">' + esc(mText(row)) + '</th>';
+      } else {
+        h += '<tr><th class="vol-sticky vol-k">' + esc(strikeText(k)) + '</th>';
+      }
       var kind = sideOf(j, k) === 'C' ? 'call' : 'put';
       vw.cols.forEach(function (c) {
         var v = j.cells[r][c];
         if (v == null) { h += '<td></td>'; return; }
-        var x = extraAt(j, r, c), n = cmNear(j, r, c), ex = cmExact(j, r, c);
-        var tip = j.symbol + ' ' + strikeText(k) + ' ' + kind + ', ' + hz[c].days + ' days - click: ' +
-                  (ex ? 'contract history of the listed expiry on this horizon' : 'contract history of the nearer listed expiry') +
-                  (n ? ' (' + n.date + ')' : '') + ' in a new window';
+        var x = extraAt(j, r, c), n = cmNear(j, r, c), ex = cmExact(j, r, c), tip;
+        if (mon) {
+          tip = j.symbol + ' ' + pctText(row.pct) + '% (strike ' + num(row.strike, 2) + ') ' + kind + ', ' + hz[c].days +
+                ' days - click: contract history of ' + (ex ? 'this contract' : 'the nearer listed expiry and strike') +
+                (n ? ' (' + n.date + ' ' + strikeText(n.strike) + ' ' + kind + ')' : '') + ' in a new window';
+        } else {
+          tip = j.symbol + ' ' + strikeText(k) + ' ' + kind + ', ' + hz[c].days + ' days - click: ' +
+                (ex ? 'contract history of the listed expiry on this horizon' : 'contract history of the nearer listed expiry') +
+                (n ? ' (' + n.date + ')' : '') + ' in a new window';
+        }
         h += '<td class="vol-cell" data-r="' + r + '" data-c="' + c + '" title="' + esc(tip) + '" style="' + cmTint(j, v) + '">' +
-             (ex ? '<span class="vol-x" title="a listed expiry falls on this horizon - this is that contract\'s own IV">=</span>' : '') +
+             (ex ? '<span class="vol-x" title="' + (mon ? 'a listed expiry falls on this horizon and a listed strike on this level - this is that contract\'s own IV'
+                                                        : 'a listed expiry falls on this horizon - this is that contract\'s own IV') + '">=</span>' : '') +
              '<div class="vol-l2">' + tileTop(x) + '</div><div class="vol-iv">' + num(v, 1) + '</div>' +
              '<div class="vol-l3">' + cmBottom(x) + '</div></td>';
       });
@@ -1198,18 +1295,64 @@
     $('cmInfo').title = j.method || '';
     $('cmInfo').innerHTML = '<b class="text-slate-200">' + esc(j.symbol) + '</b>' + (j.name ? ' - ' + esc(j.name) : '') +
       ' &middot; derived from ' + intText(nx) + ' listed ' + (nx === 1 ? 'expiry' : 'expiries') + ' on ' + src +
-      ' &middot; linear in total variance &middot; legs at least 7 days out &middot; price ' + esc(num(j.spot, 2)) +
+      ' &middot; linear in total variance &middot; legs: every listed expiry at least 7 days out (the Expiries setting applies to the other tab)' +
+      (mon ? ' &middot; rows at fixed moneyness (strike / price), interpolated by strike' : '') +
+      ' &middot; price ' + esc(spot) +
       (j.has_greeks === false ? ' &middot; no greeks or prices on a past day (the latest pass only)' : '') +
-      tidyNote(vw, 'horizon', 'horizons');
+      (mon ? tidyNote(vw, 'horizon', 'horizons', 'row', 'rows') : tidyNote(vw, 'horizon', 'horizons'));
     show($('cmInfoRow'), true); show($('cmWrap'), true); legends();
     tileNote(activeLast());
   }
-  function cmPopHtml(j, r, c) {
+  function cmMoneyWork(j, r, c, b, v, hz) {   // v4.175: the working of a moneyness cell - time, then strike
+    var row = j.rows[r], h = '';
+    var weightCap = function () {
+      return '<div class="vol-cap">' + Math.round(b.w * 100) + '% of the weight on ' + shortDate(b.lo.date) + ', ' +
+             Math.round((1 - b.w) * 100) + '% on ' + shortDate(b.hi.date) + ': the closer expiry counts more.</div>';
+    };
+    if (!b) {
+      var n0 = cmNear(j, r, c);
+      return '<div class="vol-pop-work">A listed expiry' + (n0 ? ' (' + shortDate(n0.date) + ')' : '') + ' falls on ' + hz.days +
+             'd and a listed strike' + (n0 ? ' (' + esc(strikeText(n0.strike)) + ')' : '') + ' on ' + pctText(row.pct) +
+             '% - its own IV: <b>' + num(v, 1) + '</b></div>';
+    }
+    if (!b.k_lo) {                      // the level is a listed strike: the time step only
+      if (b.lo) {
+        h += '<div class="vol-pop-work">' + hz.days + 'd at strike ' + esc(num(row.strike, 2)) + ': between ' + shortDate(b.lo.date) +
+             ' (' + b.lo.dte + 'd) ' + num(b.lo.iv, 1) + ' and ' + shortDate(b.hi.date) + ' (' + b.hi.dte + 'd) ' + num(b.hi.iv, 1) +
+             ', weighted by time (linear in total variance) = <b>' + num(v, 1) + '</b></div>' + weightCap();
+      }
+      return h + '<div class="vol-cap">' + pctText(row.pct) + ' % = strike ' + esc(num(row.strike, 2)) + ', a listed strike - no strike step.</div>';
+    }
+    var kStep = function (kp) {
+      return kp.lo_iv != null
+        ? 'strike ' + esc(strikeText(kp.strike)) + ': ' + num(kp.lo_iv, 1) + ' and ' + num(kp.hi_iv, 1) + ' = <b>' + num(kp.iv, 1) + '</b>'
+        : 'strike ' + esc(strikeText(kp.strike)) + ': a listed expiry on ' + hz.days + 'd = <b>' + num(kp.iv, 1) + '</b>';
+    };
+    if (b.lo) {
+      h += '<div class="vol-pop-work">' + hz.days + 'd: between ' + shortDate(b.lo.date) + ' (' + b.lo.dte + 'd) and ' +
+           shortDate(b.hi.date) + ' (' + b.hi.dte + 'd), weighted by time (linear in total variance) - ' +
+           kStep(b.k_lo) + '; ' + kStep(b.k_hi) + '</div>' + weightCap();
+    } else {
+      h += '<div class="vol-pop-work">A listed expiry falls on ' + hz.days + 'd: strike ' + esc(strikeText(b.k_lo.strike)) + ' = ' +
+           num(b.k_lo.iv, 1) + ', strike ' + esc(strikeText(b.k_hi.strike)) + ' = ' + num(b.k_hi.iv, 1) + '</div>';
+    }
+    h += '<div class="vol-pop-work">' + pctText(row.pct) + ' % = strike ' + esc(num(row.strike, 2)) + ': between ' +
+         esc(strikeText(b.k_lo.strike)) + ' (' + num(b.k_lo.iv, 1) + ') and ' + esc(strikeText(b.k_hi.strike)) + ' (' +
+         num(b.k_hi.iv, 1) + '), by strike = <b>' + num(v, 1) + '</b></div>' +
+         '<div class="vol-cap">' + Math.round(b.wk * 100) + '% of the weight on ' + esc(strikeText(b.k_lo.strike)) + ', ' +
+         Math.round((1 - b.wk) * 100) + '% on ' + esc(strikeText(b.k_hi.strike)) + ': the closer strike counts more.</div>';
+    return h;
+  }
+  function cmPopHtml(j0, r, c) {
+    var j = cmGrid(j0), mon = !!j.rows;
     var k = j.strikes[r], hz = j.horizons[c], v = j.cells[r][c], b = j.brackets && j.brackets[r] ? j.brackets[r][c] : null;
     var n = cmNear(j, r, c), right = sideOf(j, k) === 'C' ? 'call' : 'put';
     var side = j.side === 'mid' ? 'call + put average' : right;
-    var h = '<div><b>' + esc(j.symbol + ' ' + strikeText(k) + ' ' + side + ', fixed ' + hz.days + ' days') + '</b></div>';
-    if (cmExact(j, r, c) && n) {
+    var h = '<div><b>' + esc(j.symbol + ' ' + (mon ? pctText(j.rows[r].pct) + '% (strike ' + num(k, 2) + ')' : strikeText(k)) + ' ' +
+            side + ', fixed ' + hz.days + ' days') + '</b></div>';
+    if (mon) {
+      h += cmMoneyWork(j, r, c, b, v, hz);
+    } else if (cmExact(j, r, c) && n) {
       h += '<div class="vol-pop-work">A listed expiry (' + shortDate(n.date) + ') falls on ' + hz.days + 'd - its own IV: <b>' +
            num(v, 1) + '</b></div>';
     } else if (b) {
@@ -1232,18 +1375,23 @@
         h += '<div class="vol-pop-figs">' + rows.map(function (q) {
           return '<div><span>' + esc(q[0]) + '</span><b>' + esc(q[1]) + '</b></div>';
         }).join('') + '</div>';
-        if (b) h += '<div class="vol-cap">The greeks are the two expiries\' greeks, weighted by time.</div>';
+        if (b) h += '<div class="vol-cap">The greeks are ' + (mon && b.k_lo
+          ? (b.lo ? 'the two expiries\' greeks, weighted by time, then the two strikes\', weighted by strike.'
+                  : 'the two strikes\' greeks, weighted by strike.')
+          : 'the two expiries\' greeks, weighted by time.') + '</div>';
       }
       if (x.price != null) {
         h += '<div class="vol-pop-row"><span>model price</span><b>' + esc(money(x.price)) + '</b></div>' +
-             '<div class="vol-cap">Black-Scholes at this IV, ' + hz.days + ' days, no dividend - a fixed horizon has no last trade.</div>';
+             '<div class="vol-cap">Black-Scholes at this IV, ' + (mon ? 'strike ' + esc(num(k, 2)) + ', ' : '') + hz.days +
+             ' days, no dividend - a fixed horizon has no last trade.</div>';
       }
     } else if (j.has_greeks === false) {
       h += '<div class="vol-cap">Greeks and prices are on the latest pass only.</div>';
     }
     if (n) {
-      h += '<div class="vol-cap">Click: contract history of ' + (cmExact(j, r, c) ? 'this contract' : 'the nearer listed expiry') +
-           ', ' + shortDate(n.date) + ' ' + esc(strikeText(k)) + ' ' + right + ', in a new window.</div>';
+      h += '<div class="vol-cap">Click: contract history of ' + (cmExact(j, r, c) ? 'this contract'
+             : (mon ? 'the nearer listed expiry and strike' : 'the nearer listed expiry')) +
+           ', ' + shortDate(n.date) + ' ' + esc(strikeText(n.strike != null ? n.strike : k)) + ' ' + right + ', in a new window.</div>';
     }
     return h;
   }
@@ -1274,7 +1422,7 @@
     if (!hzChosen().length) {
       CM.seq++; CM.last = null; syncTick();
       show($('cmWrap'), false); show($('cmInfoRow'), false); legends();
-      msg($('cmMsg'), 'Tick at least one horizon in the left panel (30 to 365 days).');
+      msg($('cmMsg'), 'Tick at least one horizon above the grid (30 days to 2 years).');
       return;
     }
     var my = ++CM.seq, sc = quiet && CM.last ? {t: $('cmWrap').scrollTop, l: $('cmWrap').scrollLeft} : null;
@@ -1292,7 +1440,6 @@
       CM.last = j; V.refreshFailed = null;
       var st = T.st || (window.optGetStatus ? window.optGetStatus() : null);   // the pass this grid came from
       CM.passId = st && st.last_pass && st.last_pass.id != null ? st.last_pass.id : CM.passId;
-      msg($('cmMsg'), '');
       renderCm(j);
       if (sc) { $('cmWrap').scrollTop = sc.t; $('cmWrap').scrollLeft = sc.l; }
       syncTick();
@@ -1358,8 +1505,23 @@
     });
     hzLoad();
     $('volHz').addEventListener('change', function () {
-      lsSet(HZ_KEY, hzChosen().join(','));
+      hzSave();
       if (TAB === 'cm' && $('volSym').value.trim()) runSurface();
+    });
+    // v4.175: the rows toggle repaints the interpolated grid from the answer on hand (it carries both grids)
+    if (lsGet(ROWS_KEY) === 'strike') $('cmRowsK').checked = true;
+    $('cmRows').addEventListener('change', function () {
+      lsSet(ROWS_KEY, cmRowsMode());
+      hideCmPop();
+      if (CM.last) renderCm(CM.last);
+    });
+    // v4.175: the rank window re-fetches the history only (no new surface) and repaints the tint, the bars,
+    // the hover cards (and, with the tick on, the columns the window leaves unranked)
+    winLoad(); winLegend();
+    $('volWin').addEventListener('change', function () {
+      lsSet(WIN_KEY, String(winChosen()));
+      winLegend(); hidePop();
+      if (V.last && V.histQ) loadHistory(V.last, V.histQ, V.seq);
     });
     if (lsGet(CLEAN_KEY) === '0') $('volClean').checked = false;
     $('volClean').addEventListener('change', function () {
@@ -1386,10 +1548,13 @@
       var j = CM.last;
       if (!td || !j) return;
       hideCmPop();
-      var r = +td.dataset.r, c = +td.dataset.c, k = j.strikes[r], nearest = cmNear(j, r, c);
+      var g = cmGrid(j), r = +td.dataset.r, c = +td.dataset.c, k = g.strikes[r], nearest = cmNear(g, r, c);
       if (!nearest) return;
+      // the nearer listed expiry at the nearer listed strike (on strike rows: that strike); the cell's own right
+      if (nearest.strike == null) nearest = Object.assign({}, nearest, {strike: k});
+      var right = sideOf(g, k);
       var day = j.source === 'latest' ? ((H.days && H.days.length) ? H.days[0] : null) : j.on;
-      openContract(j.symbol, nearest.date, sideOf(j, k), k, day);
+      openContract(j.symbol, nearest.date, right, nearest.strike, day);
     });
     // v4.166: the Tile block - load the remembered choice, repaint the grid on screen on a change
     tileLoad(); tileFormSet();

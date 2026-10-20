@@ -292,3 +292,72 @@ def test_the_payload_carries_the_earnings_dates_of_the_window_and_the_next(sdb, 
     h2 = vol_history.grid_history(sdb, "AAPL", g2)
     assert [e["on"] for e in h2["earnings"]] == [days[5].isoformat()]
     assert h2["next_earnings"] == {"on": days[20].isoformat(), "when": "amc"}
+
+
+# ─────────────────────────── v4.175: one rank window for the whole surface ───────────────────────────
+
+def test_the_rank_window_is_checked():
+    assert vol_history.norm_window(None) == vol_history.norm_window("") == vol_history.DEFAULT_WINDOW == 365
+    assert vol_history.WINDOWS == (30, 60, 90, 180, 270, 365)
+    assert vol_history.norm_window("90") == 90 and vol_history.norm_window(30) == 30
+    for bad in ("45", "abc", "0", "-30", "90.5", "400", True):
+        with pytest.raises(ValueError, match="window"):
+            vol_history.norm_window(bad)
+
+
+def test_a_cell_must_cover_most_of_a_shorter_window():
+    """On a window shorter than 365 days a cell is ranked only when its first session is at least 80 % of
+    the window back (and it has 10+ sessions); otherwise rank None and the reason in plain words."""
+    end = _dt.date(2026, 10, 7)
+    first_n = (end - _dt.date(1970, 1, 1)).days
+    young_on = np.arange(first_n - 21, first_n)                     # listed 21 days ago, a price every day
+    young_iv = np.linspace(20.0, 40.0, 21)
+    s = vol_history.cell_stats(30.0, young_on, young_iv, window_days=90, end=end)
+    assert s["rank"] is None and s["pct"] is None and s["n"] == 21
+    assert s["window_days"] == 90 and s["covered"] == 21 and s["first"] == "2026-09-16"
+    assert s["why"] == "listed 21 days ago, shorter than the 90-day window"
+    # the same contract on a 30-day window covers 21 of 30 days (70 %, under 80 %): still not ranked
+    assert vol_history.cell_stats(30.0, young_on, young_iv, window_days=30, end=end)["rank"] is None
+    old_on = np.arange(first_n - 80, first_n)                       # 80 of 90 days: ranked
+    ok = vol_history.cell_stats(30.0, old_on, np.linspace(20.0, 40.0, 80), window_days=90, end=end)
+    assert ok["rank"] == pytest.approx(0.5, abs=1e-3) and ok["why"] is None and ok["covered"] == 80
+    # the converted history itself starts 40 days back: the window counts from there (32 of 40 days needed)
+    capped = vol_history.cell_stats(30.0, young_on[-21:], young_iv, window_days=90, end=end,
+                                     data_from=end - _dt.timedelta(days=25))
+    assert capped["rank"] is not None and capped["why"] is None
+    # too few sessions: the other reason
+    few = vol_history.cell_stats(30.0, old_on[::20], np.linspace(20.0, 40.0, 4), window_days=90, end=end)
+    assert few["rank"] is None and few["why"] == "only 4 sessions with a price in the past 90 days (a rank needs 10)"
+    # the default 365 days keeps the rule before v4.175: ranked from 10 sessions on, however young
+    legacy = vol_history.cell_stats(30.0, young_on, young_iv, window_days=365, end=end)
+    plain = vol_history.cell_stats(30.0, young_on, young_iv)
+    assert legacy["rank"] == plain["rank"] is not None and legacy["why"] is None and legacy["window_days"] == 365
+    assert "window_days" not in plain                               # no window given: the old figures only
+
+
+def test_the_window_cuts_the_history_by_calendar_days(sdb, hist):
+    grid = vol_surface.surface(sdb, "AAPL", "latest", side="otm", band=20)
+    full = vol_history.grid_history(sdb, "AAPL", grid)
+    same = vol_history.grid_history(sdb, "AAPL", grid, window_days=365)
+    assert full["window_days"] == same["window_days"] == 365 and full["cells"] == same["cells"]
+    assert full["days"] == N_DAYS                                   # 30 sessions all inside 365 days
+    h = vol_history.grid_history(sdb, "AAPL", grid, window_days=30)
+    inside = [d for d in sessions_before(ON, N_DAYS) if d >= ON - _dt.timedelta(days=30)]
+    assert h["window_days"] == 30 and h["days"] == len(inside) < N_DAYS
+    assert h["window"] == [inside[0].isoformat(), inside[-1].isoformat()]
+    assert "30 calendar days" in h["method"]
+    rows = {k: i for i, k in enumerate(grid["strikes"])}
+    cols = {e["date"]: j for j, e in enumerate(grid["expiries"])}
+    c = h["cells"]["%d,%d" % (rows[100.0], cols[NOV.isoformat()])]
+    assert c["n"] == len(inside) and c["first"] == inside[0].isoformat()
+    assert c["window_days"] == 30 and c["covered"] == (ON - inside[0]).days and c["why"] is None
+    assert c["rank"] == 1.0                                         # still the top of the shorter range ...
+    assert c["lo"] == pytest.approx(iv_on(N_DAYS - len(inside)) * 100, abs=0.05)   # ... whose low is higher
+    # a past day: the window ends on that day
+    last = sessions_before(ON, N_DAYS)[-1]
+    g2 = vol_surface.surface(sdb, "AAPL", last.isoformat(), side="call", band=20)
+    h2 = vol_history.grid_history(sdb, "AAPL", g2, window_days=30)
+    want = [d for d in sessions_before(ON, N_DAYS)[:-1] if d >= last - _dt.timedelta(days=30)]
+    assert h2["days"] == len(want) and h2["window"][1] == want[-1].isoformat()
+    with pytest.raises(ValueError):
+        vol_history.grid_history(sdb, "AAPL", grid, window_days=45)

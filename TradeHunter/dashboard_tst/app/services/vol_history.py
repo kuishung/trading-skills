@@ -29,6 +29,23 @@ days below the current IV; ``series`` = up to ``SPARK_POINTS`` evenly spaced poi
 the call and the put (the ATM row, the ``mid`` option) gets the per-day average of the two legs'
 histories where both exist, else the one that does.
 
+The rank window (v4.175)
+------------------------
+One lookback window for the WHOLE surface, chosen by the member: ``window_days`` calendar days
+(``WINDOWS``: 30 / 60 / 90 / 180 / 270 / 365, default 365) ending at the surface's day (the
+latest pass's session, or the past day picked). Every cell is ranked over the sessions dated
+inside that window - so a contract listed three weeks ago and one listed two years ago are no
+longer ranked over different spans. A cell carries ``window_days``, ``n`` (its sessions in the
+window), ``first`` (its first one) and ``covered`` (calendar days from ``first`` to the end day).
+On a window SHORTER than the default a cell is ranked only when it covers at least ``MIN_COVER``
+(80 %) of the window (of the part of it the converted history reaches) and has ``MIN_HISTORY``
+sessions; otherwise ``rank`` is None with ``why`` ("listed 21 days ago, shorter than the 90-day
+window" - the first session in the data stands in for the listing day). At the default 365 days
+the rule is the one before v4.175 (ranked from ``MIN_HISTORY`` sessions on), so nothing changes
+until the member picks a shorter window; 365 calendar days is about the 252-session year.
+The root is read and solved once over the default window and every window is cut from that
+(switching the window is a cache hit).
+
 Speed: the root's rows for the window are read once per (root, newest converted day) and kept
 (``_TABLES``, a few roots), solved series are kept per contract (``_SERIES``), so the first surface
 of a symbol takes a few seconds (AAPL: ~2.5 s read + ~1 s solve for a 20 % band) and the next ones
@@ -51,7 +68,10 @@ from .vol_surface import SurfaceError, _f, _sym, _to_date, option_root_of, raw_c
 
 log = logging.getLogger(__name__)
 
-HISTORY_DAYS = 252              # the past year of sessions (the screener's IV-rank window)
+HISTORY_DAYS = 252              # the past year of sessions (the screener's IV-rank window): a cap on the read
+WINDOWS = (30, 60, 90, 180, 270, 365)   # v4.175: the rank windows a member can pick, in CALENDAR days
+DEFAULT_WINDOW = 365
+MIN_COVER = 0.8                 # a cell covers at least this share of a (shorter) window to be ranked
 MIN_HISTORY = 10                # a rank needs at least this many days of history
 SPARK_POINTS = 60               # points in a sparkline (about weekly over a year)
 MAX_CONTRACTS = 6000            # legs solved for one grid (the nearest the price first; the rest reported as skipped)
@@ -128,21 +148,46 @@ def contract_key(expiry, right: str, strike: float) -> int:
     return _days(e) * 20_000_000 + (10_000_000 if str(right).upper().startswith("C") else 0) + int(round(float(strike) * 1000))
 
 
-def _window(end_day, root=None) -> tuple[list[str], float | None]:
-    """The converted sessions strictly before ``end_day`` (the last ``HISTORY_DAYS`` of them) and
-    the contract-history manifest's modification time - a day converted again (re-published by
-    Massive, or late) changes it, so the caches below see a new window."""
+def norm_window(window=None) -> int:
+    """The rank window in calendar days: one of ``WINDOWS``; ``DEFAULT_WINDOW`` when none.
+    Raises ``ValueError`` on anything else."""
+    if window is None or str(window).strip() == "":
+        return DEFAULT_WINDOW
+    if isinstance(window, bool):
+        raise ValueError("the rank window must be one of %s days" % ", ".join(str(w) for w in WINDOWS))
+    try:
+        f = float(str(window).strip())
+    except (TypeError, ValueError):
+        f = float("nan")
+    if not math.isfinite(f) or f != int(f) or int(f) not in WINDOWS:
+        raise ValueError("the rank window must be one of %s days" % ", ".join(str(w) for w in WINDOWS))
+    return int(f)
+
+
+def _cut(days: list[str], end, window_days: int) -> list[str]:
+    """The sessions of ``days`` dated within ``window_days`` calendar days before ``end``."""
+    if end is None:
+        return days
+    start = (end - _dt.timedelta(days=int(window_days))).isoformat()
+    return [d for d in days if d >= start]
+
+
+def _window(end_day, root=None, window_days: int = DEFAULT_WINDOW) -> tuple[list[str], float | None]:
+    """The converted sessions strictly before ``end_day`` and dated within ``window_days`` calendar
+    days of it (at most the last ``HISTORY_DAYS``), and the contract-history manifest's modification
+    time - a day converted again (re-published by Massive, or late) changes it, so the caches below
+    see a new window."""
     from . import flat_files  # noqa: PLC0415
 
     end = _to_date(end_day)
     store = opt_history.Store(root=opt_history._root(root), flat_root=flat_files.DEFAULT_ROOT)  # noqa: SLF001
     days = [d for d in store.days() if end is None or d < end.isoformat()]
-    return days[-HISTORY_DAYS:], store._mtime  # noqa: SLF001 - the manifest's mtime, as opt_history's own cache uses
+    return _cut(days, end, window_days)[-HISTORY_DAYS:], store._mtime  # noqa: SLF001 - the manifest's mtime
 
 
-def history_window(end_day, root=None) -> list[str]:
-    """The converted sessions strictly before ``end_day``, the last ``HISTORY_DAYS`` of them."""
-    return _window(end_day, root)[0]
+def history_window(end_day, root=None, window_days: int = DEFAULT_WINDOW) -> list[str]:
+    """The converted sessions strictly before ``end_day`` within ``window_days`` calendar days of it."""
+    return _window(end_day, root, window_days)[0]
 
 
 def _window_key(opt_root: str, days: list[str], mtime, root) -> tuple:
@@ -281,17 +326,40 @@ def _merge_mean(series: list) -> tuple:
     return common.astype(np.int64), 0.5 * (iv_a[ia] + iv_b[ib])
 
 
-def cell_stats(current, on_days: np.ndarray, iv: np.ndarray) -> dict | None:
-    """The figures of one cell (see the module docstring); None with no history at all."""
+def cell_stats(current, on_days: np.ndarray, iv: np.ndarray, *, window_days: int | None = None, end=None,
+               data_from=None) -> dict | None:
+    """The figures of one cell (see the module docstring); None with no history at all.
+    ``window_days`` / ``end`` (v4.175): the rank window and the day it ends on - the cell then
+    carries ``window_days``, ``covered`` (calendar days from its first session to ``end``) and
+    ``why`` (None when ranked). On a window shorter than ``DEFAULT_WINDOW`` the cell must cover
+    ``MIN_COVER`` of the window - of the part from ``data_from`` (the first session the converted
+    history holds inside the window) when the history itself starts later."""
     n = int(len(iv))
     if n == 0:
         return None
     cur = _f(current)
     lo, hi = float(iv.min()), float(iv.max())
-    out = {"n": n, "lo": round(lo, 2), "hi": round(hi, 2), "first": _EPOCH + _dt.timedelta(days=int(on_days[0])),
+    first = _EPOCH + _dt.timedelta(days=int(on_days[0]))
+    out = {"n": n, "lo": round(lo, 2), "hi": round(hi, 2), "first": first,
            "last": _EPOCH + _dt.timedelta(days=int(on_days[-1])), "rank": None, "pct": None}
     out["first"], out["last"] = out["first"].isoformat(), out["last"].isoformat()
-    if cur is not None and n >= MIN_HISTORY:
+    ranked = n >= MIN_HISTORY
+    end_d = _to_date(end) if end is not None else None
+    if window_days is not None and end_d is not None:
+        covered = (end_d - first).days
+        out["window_days"], out["covered"], out["why"] = int(window_days), covered, None
+        if int(window_days) < DEFAULT_WINDOW:
+            span = int(window_days)
+            dfrom = _to_date(data_from) if data_from is not None else None
+            if dfrom is not None:
+                span = min(span, max(0, (end_d - dfrom).days))
+            if covered < MIN_COVER * span:
+                ranked = False
+                out["why"] = "listed %d days ago, shorter than the %d-day window" % (covered, int(window_days))
+        if out["why"] is None and n < MIN_HISTORY:
+            out["why"] = "only %d %s with a price in the past %d days (a rank needs %d)" % (
+                n, "session" if n == 1 else "sessions", int(window_days), MIN_HISTORY)
+    if cur is not None and ranked:
         out["rank"] = round(max(0.0, min(1.0, (cur - lo) / (hi - lo))) if hi > lo else 0.5, 4)
         out["pct"] = round(float(np.mean(iv < cur)), 4)
     if n > SPARK_POINTS:                          # evenly spaced, plus the lowest and the highest day
@@ -337,18 +405,19 @@ def earnings_in(sdb, symbol, start, on) -> dict:
 
 # ────────────────────────────── the payload for one grid ──────────────────────────────
 
-def grid_history(sdb, symbol, grid: dict, *, root=None) -> dict:
+def grid_history(sdb, symbol, grid: dict, *, root=None, window_days: int = DEFAULT_WINDOW) -> dict:
     """For the surface ``grid`` (``vol_surface.surface``'s result): ``{cells: {"r,c": stats},
-    days: n, window: [first, last], epoch: "1970-01-01", note, ...}``. The leg behind a cell
-    follows the grid's ``side`` (put below the price, call at / above, one side only, or both
-    averaged)."""
+    days: n, window: [first, last], window_days, epoch: "1970-01-01", note, ...}``. The leg behind
+    a cell follows the grid's ``side`` (put below the price, call at / above, one side only, or both
+    averaged). ``window_days`` (v4.175): the rank window, calendar days ending at the grid's day."""
+    wd = norm_window(window_days)
     sym = _sym(symbol)
     why = opt_history.available()
     if why:
         raise SurfaceError("the contract history is not set up on this server (%s)" % why)
     oroot = option_root_of(sdb, sym)
     if oroot is None:
-        return {"cells": {}, "days": 0, "window": None, "epoch": _EPOCH.isoformat(),
+        return {"cells": {}, "days": 0, "window": None, "window_days": wd, "epoch": _EPOCH.isoformat(),
                 "note": "%s is an index: the daily files carry no index close, so its contracts have no IV history"
                         % sym}
     on = grid["on"]
@@ -363,13 +432,18 @@ def grid_history(sdb, symbol, grid: dict, *, root=None) -> dict:
         timing[what] = int((time.monotonic() - since) * 1000)
         return time.monotonic()
 
-    days = history_window(on, root)
+    end = _to_date(on)
+    days_all = history_window(on, root)              # the default window: read and solved once, cut below
+    days = _cut(days_all, end, wd)
     t = lap("window", t0)
     if not days:
-        return {"cells": {}, "days": 0, "window": None, "epoch": _EPOCH.isoformat(),
-                "note": "no day of the contract history before %s is converted yet" % on, "timing_ms": timing}
-    spots = raw_closes(sdb, sym, days)
+        return {"cells": {}, "days": 0, "window": None, "window_days": wd, "epoch": _EPOCH.isoformat(),
+                "note": ("no day of the contract history before %s is converted yet" % on if not days_all else
+                         "no day of the contract history in the %d days before %s" % (wd, on)),
+                "timing_ms": timing}
+    spots = raw_closes(sdb, sym, days_all)
     earnings = earnings_in(sdb, sym, days[0], on)
+    start_n = _days(_dt.date.fromisoformat(days[0]))
     t = lap("closes", t)
 
     def legs_for(k: float, which: str) -> list[str]:
@@ -395,7 +469,7 @@ def grid_history(sdb, symbol, grid: dict, *, root=None) -> dict:
         if len(keys) >= MAX_CONTRACTS:
             break
     try:
-        _arrays, _days, _ck = root_rows(oroot, on, root)
+        root_rows(oroot, on, root)                     # the read, timed on its own
         t = lap("read", t)
         series = contract_series(oroot, set(keys), spots, on, root)
         t = lap("solve", t)
@@ -403,7 +477,11 @@ def grid_history(sdb, symbol, grid: dict, *, root=None) -> dict:
         raise SurfaceError("the contract history could not be read: %s" % exc) from None
     cells: dict[str, dict] = {}
     for (i, j), ks in wanted.items():
-        st = cell_stats(grid["cells"][i][j], *_merge_mean([series.get(k) for k in ks]))
+        on_d, ivs = _merge_mean([series.get(k) for k in ks])
+        if len(on_d):                                   # the chosen window, cut from the default one
+            keep = on_d >= start_n
+            on_d, ivs = on_d[keep], ivs[keep]
+        st = cell_stats(grid["cells"][i][j], on_d, ivs, window_days=wd, end=end, data_from=days[0])
         if st is not None:
             cells["%d,%d" % (i, j)] = st
     skipped = ["%d,%d" % (i, j) for i in range(len(strikes)) for j in range(len(exps))
@@ -413,15 +491,16 @@ def grid_history(sdb, symbol, grid: dict, *, root=None) -> dict:
     log.info("surface history %s %s: %d cells, %d legs, %d days - window %d ms, closes %d ms, read %d ms, "
              "solve %d ms, stats %d ms, total %d ms", sym, on, len(cells), len(set(keys)), len(days),
              timing["window"], timing["closes"], timing["read"], timing["solve"], timing["stats"], timing["total"])
-    return {"cells": cells, "days": len(days), "window": [days[0], days[-1]],
+    return {"cells": cells, "days": len(days), "window": [days[0], days[-1]], "window_days": wd,
             "epoch": _EPOCH.isoformat(), "note": None, "timing_ms": timing,
             "earnings": earnings["past"], "next_earnings": earnings["next"], "earnings_coverage": earnings["coverage"],
             # the grid these figures belong to - the page checks it is still the one on screen
             "strikes": list(strikes), "expiries": [e.isoformat() for e in exps], "spot": spot, "side": side,
             "skipped": skipped,
             "method": "each contract's implied volatility solved from its daily close and the stock's close "
-                      "(Black-Scholes, no dividend) over the %d sessions before %s" % (len(days), on)}
+                      "(Black-Scholes, no dividend) over the %d sessions in the %d calendar days before %s"
+                      % (len(days), wd, on)}
 
 
-__all__ = ["HISTORY_DAYS", "MIN_HISTORY", "SPARK_POINTS", "ncdf_fast", "implied_vols_fast", "contract_key",
+__all__ = ["HISTORY_DAYS", "WINDOWS", "DEFAULT_WINDOW", "MIN_COVER", "norm_window", "MIN_HISTORY", "SPARK_POINTS", "ncdf_fast", "implied_vols_fast", "contract_key",
            "history_window", "root_rows", "contract_series", "cell_stats", "grid_history"]

@@ -1586,22 +1586,43 @@ def test_the_interpolated_surface_api(client, fake, screener_url):
     _seed_cm(screener_db)
     j = client.get("/options/api/surface/cm", params={"symbol": "aapl"}).json()
     assert j["ok"] is True and j["symbol"] == "AAPL" and j["source"] == "latest" and j["has_greeks"] is True
-    assert [h["days"] for h in j["horizons"]] == [30, 60, 90, 180, 270, 365]
-    assert j["horizons_requested"] == [30, 60, 90, 180, 270, 365]
-    assert j["strikes"] == [90.0, 100.0, 110.0] and j["spot_row"] == 1 and j["n_expiries_used"] == 2
+    hz = [30, 60, 90, 180, 270, 365, 456, 547, 638, 730]               # v4.175: out to two years
+    assert [h["days"] for h in j["horizons"]] == hz and j["horizons_requested"] == hz
     T1, T2, T = 44 / 365, 72 / 365, 60 / 365
     w = (T2 - T) / (T2 - T1)
     want = math.sqrt((0.34 ** 2 * T1 * w + 0.32 ** 2 * T2 * (1 - w)) / T) * 100
+    # v4.175: the primary rows are fixed moneyness levels - 100 x m inside the listed 90 ... 110
+    assert j["rows_mode"] == "moneyness" and j["n_expiries_used"] == 2
+    assert [r["pct"] for r in j["rows"]] == [90.0, 95.0, 97.5, 100.0, 102.5, 105.0, 110.0]
+    assert j["rows"][2] == {"m": 0.975, "pct": 97.5, "strike": 97.5} and j["spot_row"] == 3
     for row in j["cells"]:
-        assert row[0] is None and row[2] is None and row[5] is None        # nothing extrapolated
-        assert row[1] == pytest.approx(want, abs=1e-9)
-    b = j["brackets"][0][1]
+        assert row[0] is None and row[2] is None and row[5] is None and row[9] is None   # nothing extrapolated
+        assert row[1] == pytest.approx(want, abs=1e-9)               # a flat smile stays flat by strike
+    b = j["brackets"][2][1]                                            # 97.5: between 90 and 100, 44d and 72d
     assert b["lo"]["date"] == "2026-11-20" and b["hi"]["date"] == "2026-12-18" and b["w"] == pytest.approx(w)
-    assert j["nearest"][0][1] == {"date": "2026-12-18", "dte": 72}       # 12 days from 72, 16 from 44
-    assert j["exact"][0] == [False] * 6
-    x = j["extra"][0][1]
+    assert b["k_lo"]["strike"] == 90.0 and b["k_hi"]["strike"] == 100.0 and b["wk"] == pytest.approx(0.25)
+    assert j["nearest"][2][1] == {"date": "2026-12-18", "dte": 72, "strike": 100.0}
+    assert j["exact"][3] == [False] * 10 and j["exact_k"][3][1] is True   # 100 %: a listed strike, not a listed expiry
+    x = j["extra"][0][1]                                               # 90 %: the listed 90 put
     assert set(x) == {"d", "g", "t", "v", "price"} and x["d"] == pytest.approx(-0.55) and x["price"] > 0
-    assert "linear in total variance" in j["method"]
+    # 97.5 % is a put: the 100 call's delta (0.45) is restated as the 100 put's by parity (0.45 - 1)
+    assert j["extra"][2][1]["d"] == pytest.approx(-0.55 * 0.25 + (0.45 - 1.0) * 0.75)
+    assert "linear in total variance" in j["method"] and "linear in strike" in j["method"]
+    # the by-strike grid rides along (the page's "Rows: strikes" needs no second request)
+    bs_ = j["by_strike"]
+    assert bs_["strikes"] == [90.0, 100.0, 110.0] and bs_["spot_row"] == 1
+    assert bs_["nearest"][0][1] == {"date": "2026-12-18", "dte": 72}   # 12 days from 72, 16 from 44
+    assert bs_["cells"][0][1] == pytest.approx(want, abs=1e-9)
+    k = client.get("/options/api/surface/cm", params={"symbol": "AAPL", "rows": "strike"}).json()
+    assert k["ok"] is True and k["rows_mode"] == "strike" and k["rows"] is None and k["strikes"] == [90.0, 100.0, 110.0]
+    assert k["cells"] == bs_["cells"]
+    m = client.get("/options/api/surface/cm", params={"symbol": "AAPL", "rows": "moneyness"}).json()
+    assert m["ok"] is True and m["rows_mode"] == "moneyness"
+    r = client.get("/options/api/surface/cm", params={"symbol": "AAPL", "rows": "bad"})
+    assert r.status_code == 400 and r.json()["ok"] is False and "rows" in r.json()["error"]
+    # v4.175: the Expiries setting (all / monthly) does not reach this surface - every listed expiry is a leg
+    mo = client.get("/options/api/surface/cm", params={"symbol": "AAPL", "exp": "monthly"}).json()
+    assert mo["ok"] is True and mo["exp_mode"] == "all" and mo["cells"] == j["cells"]
     one = client.get("/options/api/surface/cm", params={"symbol": "AAPL", "horizons": "60, 60"}).json()
     assert one["ok"] is True and [h["days"] for h in one["horizons"]] == [60]
     for bad in ("abc", "0", "-30", "12.5", "60,x"):
@@ -1621,6 +1642,7 @@ def test_the_page_has_the_two_tabs_and_the_horizons(client, fake):
     panel (all six ticked, th.vol.horizons, shown on the interpolated tab only), the interpolated grid's own
     ids, the exact mark, and a click on a cell opening the NEARER bracketing contract."""
     html = client.get("/options", params={"tab": "cm"}).text
+    js = html[html.index("function cmMoneyWork("):]
     for needle in ('id="volTabSurface" role="tab" data-vtab="surface" aria-selected="true"',
                    'id="volTabCm" role="tab" data-vtab="cm" aria-selected="false"',
                    ">Volatility Surface</button>", ">Interpolated Volatility Surface</button>",
@@ -1630,26 +1652,64 @@ def test_the_page_has_the_two_tabs_and_the_horizons(client, fake):
                    "if (TAB === 'cm') { runCm(quiet); return; }",
                    "show($('volHz'), TAB === 'cm');",
                    "a listed expiry falls on this horizon - this is that contract\\'s own IV",
-                   "openContract(j.symbol, nearest.date, sideOf(j, k), k, day)",
+                   "openContract(j.symbol, nearest.date, right, nearest.strike, day)",
                    "weighted by time (linear in total variance) = <b>", "') falls on ' + hz.days + 'd - its own IV",
                    "model price",
-                   "'d</th>'", "linear in total variance &middot; legs at least 7 days out",
-                   "Tick at least one horizon"):
+                   "'d</th>'", "linear in total variance &middot; legs: every listed expiry at least 7 days out "
+                               "(the Expiries setting applies to the other tab)",
+                   "rows at fixed moneyness (strike / price), interpolated by strike",
+                   "Tick at least one horizon above the grid (30 days to 2 years)."):
         assert needle in html, needle
-    for h in (30, 60, 90, 180, 270, 365):
+    # v4.175: out to two years, every horizon ticked by default; the new ones say their months
+    for h in (30, 60, 90, 180, 270, 365, 456, 547, 638, 730):
         assert 'id="volHz%d" data-h="%d" checked' % (h, h) in html, h
-    # the horizons sit in the controls form; the tabs sit over the right panel, before both panels
+    assert '<label class="scr-check" title="15 months"><input type="checkbox" id="volHz456"' in html
+    assert '<label class="scr-check" title="24 months (2 years)"><input type="checkbox" id="volHz730"' in html
+    assert "var HZ_ALL = [30, 60, 90, 180, 270, 365, 456, 547, 638, 730];" in html
+    assert "456: '15 months'" in html and "(HZ_MONTHS[d] ? HZ_MONTHS[d] + ' - ' : '')" in html
+    # a member's remembered choice from before keeps the new horizons ticked ("chosen|offered")
+    hzl = html[html.index("function hzLoad("):html.index("function hzSave(")]
+    assert "seen.indexOf(h) < 0 || want.indexOf(h) >= 0" in hzl and "HZ_OLD" in hzl
+    assert "lsSet(HZ_KEY, hzChosen().join(',') + '|' + HZ_ALL.join(','))" in html
+    # v4.174: the horizons sit above the interpolated grid, inside its tab (not in the left panel's form)
     form = html[html.index('id="volForm"'):html.index('id="volGo"')]
-    assert 'id="volHz"' in form
+    assert 'id="volHz"' not in form
+    cm = html[html.index('<section id="volPanelCm"'):html.index('id="cmTable"')]
+    assert cm.index('id="volHz"') < cm.index('id="cmRows"') < cm.index('id="cmInfoRow"')
     order = [html.index(x) for x in ('id="volTabs"', 'id="volPanelSurface"', 'id="volPanelCm"')]
     assert order == sorted(order)
+    # v4.175: the rows toggle - moneyness (default) or strikes, remembered, repainting without a request
+    assert '<input type="radio" name="cmRows" id="cmRowsM" value="moneyness" checked> moneyness' in cm
+    assert '<input type="radio" name="cmRows" id="cmRowsK" value="strike"> strikes' in cm
+    assert "var ROWS_KEY = 'th.vol.cmrows';" in html
+    rows = html[html.index("$('cmRows').addEventListener('change'"):]
+    rows = rows[:rows.index("});") + 3]
+    assert "lsSet(ROWS_KEY, cmRowsMode())" in rows and "renderCm(CM.last)" in rows and "getJSON" not in rows
+    assert "Object.assign({}, j, j.by_strike, {rows: null, rows_mode: 'strike'})" in html
+    # the row label "97.5% · 327.11", its title, and the 100% row as the at-the-money line
+    assert "function mText(row) { return pctText(row.pct) + '% \\u00B7 ' + num(row.strike, 2); }" in html
+    rcm0 = html[html.index("function renderCm("):html.index("function cmMoneyWork(")]
+    assert "'strike / price = ' + pctText(row.pct) + ' % - strike ' + num(row.strike, 2) + ' at price ' + spot" in rcm0
+    assert "'at the money - price ' + spot" in rcm0 and "' class=\"vol-atm\"'" in rcm0
+    assert "var spotDone = atmShown;" in rcm0 and ".vol-grid tr.vol-atm > th" in html
+    # the hover card: the strike step after the time step
+    assert "' % = strike ' + esc(num(row.strike, 2)) + ': between '" in js and "'), by strike = <b>'" in js
+    # the click: the nearer listed expiry AND the nearer listed strike, the cell's own right
+    click = html[html.index("$('cmTable').addEventListener('click'"):]
+    click = click[:click.index("openContract(") + 80]
+    assert "nearest = cmNear(g, r, c)" in click and "var right = sideOf(g, k);" in click
+    assert "nearest = Object.assign({}, nearest, {strike: k})" in click
+    # the cm request never carries the Expiries setting (all legs, always)
+    cmp = html[html.index("function cmParams("):html.index("function syncTick(")]
+    assert "exp:" not in cmp and "dte" not in cmp.split("return")[1]
     assert '<section id="volPanelCm" class="hidden' in html
     # the interpolated tiles: the bottom line is the MODEL price (last / OI / volume do not exist at a horizon)
     cmb = html[html.index("function cmBottom("):html.index("function cmView(")]
     assert "TILE.b === 'last' || TILE.b === 'price'" in cmb and "x.price" in cmb
-    # no colour and no rank bar on the interpolated grid
-    rcm = html[html.index("function renderCm("):html.index("function cmPopHtml(")]
+    # no rank colour and no rank bar on the interpolated grid (v4.172: tinted by level within the surface)
+    rcm = html[html.index("function renderCm("):html.index("function cmMoneyWork(")]
     assert "rankColor" not in rcm and "rankBar" not in rcm and "cellStyle" not in rcm and "cmSpotRow(j" in rcm
+    assert "cmTint(j, v)" in rcm
     assert 'class="vol-x"' in rcm and ".vol-grid .vol-x { position: absolute;" in html
     assert "'<div class=\"vol-l2\">' + tileTop(x) + '</div><div class=\"vol-iv\">'" in rcm
     # a tab switch draws the newly shown tab only when its last answer is for other settings / an older pass
@@ -1657,7 +1717,7 @@ def test_the_page_has_the_two_tabs_and_the_horizons(client, fake):
     assert "S.want !== want || older" in stale
     # the tiles repaint both grids
     paint = html[html.index("function paintTiles("):html.index("function figsHtml(")]
-    assert "'#cmTable'" in paint and "getJSON" not in paint
+    assert "['#cmTable', cmGrid(CM.last), cmBottom]" in paint and "getJSON" not in paint
 
 
 def test_the_hide_new_and_thinly_listed_tick(client, fake):
@@ -1670,16 +1730,72 @@ def test_the_hide_new_and_thinly_listed_tick(client, fake):
     assert ("Leaves out expiries listed less than 10 days ago, which have no history to colour yet, and strikes "
             "that only some expiries carry. The grid then shows no grey cells and no gaps. Untick to see everything.") in html
     form = html[html.index('id="volForm"'):html.index('id="volGo"')]
-    assert form.index('id="volCommon"') < form.index('id="volClean"') < form.index('id="volHz"')
+    assert form.index('id="volCommon"') < form.index('id="volClean"')
     assert "'th.vol.clean'" in html and "var MIN_HIST = 10;" in html
     young = html[html.index("function youngCols("):html.index("function surfaceView(")]
-    assert "s.n >= MIN_HIST" in young and "old * 2 < n" in young and "sameGrid(j, hs)" in young
+    # v4.175: a column goes when fewer than half of its cells are RANKED in the chosen rank window
+    assert "s.rank != null" in young and "old * 2 < n" in young and "sameGrid(j, hs)" in young
+    assert "'|' + winChosen()" in html[html.index("function youngKey("):html.index("function youngCols(")]
+    # the interpolated tab: a horizon goes only when fewer than half of the rows WITH ANY VALUE reach it
+    cv = html[html.index("function cmView("):html.index("function cmLevel(")]
+    assert "got * 2 < live" in cv and "j.cells[r].some(function (v) { return v != null; })" in cv
     td = html[html.index("function tidy("):html.index("function fullView(")]
     assert "cols.every(function (c) { return cells[r][c] != null; })" in td
     assert "' hidden by the tick'" in html and "tidyNote(vw, 'expiry', 'expiries')" in html
-    assert "tidyNote(vw, 'horizon', 'horizons')" in html
+    assert "tidyNote(vw, 'horizon', 'horizons')" in html and "tidyNote(vw, 'horizon', 'horizons', 'row', 'rows')" in html
     # the history's arrival redraws the tidy grid; the tick repaints without a request
     assert "if (cleanOn()) renderSurface(j); else paintHistory(j, h);" in html
     tick = html[html.index("$('volClean').addEventListener('change'"):]
     tick = tick[:tick.index("});") + 3]
     assert "renderSurface(V.last)" in tick and "renderCm(CM.last)" in tick and "getJSON" not in tick
+
+
+def test_the_rank_window_api(client, fake, screener_url, monkeypatch):
+    """v4.175: GET /options/api/surface/history?window=N - one rank window for the whole surface, in
+    calendar days (30 / 60 / 90 / 180 / 270 / 365, default 365); a bad value is a 400."""
+    from app.routes import options_page
+
+    seen = []
+
+    def fake_history(s, symbol, day, window_days=None, **o):
+        seen.append(window_days)
+        return {"cells": {}, "days": 0, "window": None, "window_days": window_days}
+
+    monkeypatch.setattr(options_page, "_surface_history", fake_history)
+    j = client.get("/options/api/surface/history", params={"symbol": "AAPL"}).json()
+    assert j["ok"] is True and j["window_days"] == 365 and seen[-1] == 365
+    j = client.get("/options/api/surface/history", params={"symbol": "AAPL", "window": "90"}).json()
+    assert j["ok"] is True and j["window_days"] == 90 and seen[-1] == 90
+    for bad in ("45", "abc", "0", "400", "90.5"):
+        r = client.get("/options/api/surface/history", params={"symbol": "AAPL", "window": bad})
+        assert r.status_code == 400 and r.json()["ok"] is False and "window" in r.json()["error"], bad
+    assert len(seen) == 2
+
+
+def test_the_page_has_the_rank_window(client, fake):
+    """v4.175 (user: a contract's colour must be over the same span for every cell): a radio row at the top
+    of the Volatility Surface tab - 30 ... 365 days, 365 by default, remembered in th.vol.window; a change
+    re-fetches the history only (no new surface) and repaints; the legend and the hover card name the window."""
+    html = client.get("/options").text
+    panel = html[html.index('<section id="volPanelSurface"'):html.index('id="volTable"')]
+    assert panel.index('id="volWin"') < panel.index('id="volInfoRow"')
+    assert "Rank window (days):" in panel
+    for w in (30, 60, 90, 180, 270):
+        assert '<input type="radio" name="volWin" id="volWin%d" value="%d">' % (w, w) in panel, w
+    assert '<input type="radio" name="volWin" id="volWin365" value="365" checked>' in panel
+    assert "var WIN_KEY = 'th.vol.window', WINS = [30, 60, 90, 180, 270, 365];" in html
+    assert '<span id="volLegWin">IV vs own past 365 days:</span>' in html
+    assert "'IV vs own past ' + winChosen() + ' days:'" in html
+    # the history request carries the window; a change re-fetches the history only
+    assert "getJSON('/options/api/surface/history?' + histParams(q).toString())" in html
+    assert "h.set('window', String(winChosen()));" in html
+    ch = html[html.index("$('volWin').addEventListener('change'"):]
+    ch = ch[:ch.index("});") + 3]
+    assert "lsSet(WIN_KEY, String(winChosen()))" in ch and "loadHistory(V.last, V.histQ, V.seq)" in ch
+    assert "/options/api/surface?" not in ch and "runSurface" not in ch
+    assert "hseq !== V.histSeq" in html                                   # the last window picked wins
+    # the hover card: the window in words, the percentile over it, the reason a cell stays grey
+    pop = html[html.index("function popoverHtml("):html.index("function showPop(")]
+    assert "'<div class=\"vol-pop-row\"><span>Past ' + wd + ' days, ' + intText(s.n) + ' sessions'" in pop
+    assert "' sits in that ' + wd + '-day range</span>" in pop
+    assert "No colour: ' + esc(s.why || 'under 10 days of history')" in pop
