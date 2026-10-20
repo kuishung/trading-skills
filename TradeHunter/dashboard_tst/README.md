@@ -223,6 +223,12 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-20 - v4.168: Volatility surface - the tile's Greeks labelled D, G, T, V
+
+The user: *"show only D,G,T,V as the greek"*. `options.html`: the tile's top rows read `D .42`, `G .01`,
+`T -.05`, `V .12` - the English initials - and the Tile block's summary line uses the same letters. The
+checkboxes and the hover card keep the full words.
+
 ### 2026-10-20 - v4.167: Volatility surface - the Greeks on the tiles are written in English
 
 The user: *"the greeks i need to use the english rather the sign, i dont understand them"*. `options.html`: the

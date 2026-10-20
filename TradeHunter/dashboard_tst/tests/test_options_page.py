@@ -1244,7 +1244,7 @@ def test_the_surface_tiles_are_configurable(client, fake):
                    "figsHtml(j, extraAt(j, +td.dataset.r, +td.dataset.c))", "j.has_greeks === false",
                    "$('volTile').addEventListener('change', function () { tileRead(); paintTiles(); });",
                    "Model price", "Open interest", "'Delta'", "'Gamma'", "'Theta'", "'Vega'",
-                   "g[2] + ' ' + greekText("):      # v4.167: the words, not the signs
+                   "g[2].charAt(0) + ' ' + greekText("):      # v4.168: the initials D G T V, not the signs
         assert needle in html, needle
     # the defaults in the markup: Delta + Theta ticked, Gamma + Vega not, Last price picked
     for k in ("D", "G", "T", "V"):          # v4.167: all four greeks on by default

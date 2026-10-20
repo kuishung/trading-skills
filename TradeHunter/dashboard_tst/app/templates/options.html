@@ -680,9 +680,9 @@
   function money(v) { return (v == null || !isFinite(v)) ? '' : '$' + Number(v).toFixed(2); }
   function tileTop(x) {
     if (!x) return '';
-    // v4.167 (user: "the greeks i need to use the english rather the sign"): the word, one per row
+    // v4.168 (user: "show only D,G,T,V as the greek"): the English initial, one per row
     return GREEKS.filter(function (g) { return TILE.g.indexOf(g[0]) >= 0 && x[g[0]] != null; }).map(function (g) {
-      return '<span class="vol-gt">' + g[2] + ' ' + greekText(x[g[0]]) + '</span>';
+      return '<span class="vol-gt">' + g[2].charAt(0) + ' ' + greekText(x[g[0]]) + '</span>';
     }).join('');
   }
   function tileBottom(x) {
@@ -711,7 +711,7 @@
     tileSummary();
   }
   function tileSummary() {
-    var g = GREEKS.filter(function (x) { return TILE.g.indexOf(x[0]) >= 0; }).map(function (x) { return x[2]; }).join(', ');
+    var g = GREEKS.filter(function (x) { return TILE.g.indexOf(x[0]) >= 0; }).map(function (x) { return x[2].charAt(0); }).join(' ');
     var b = BOTTOMS[TILE.b];
     $('volTileSum').textContent = [g, b].filter(function (s) { return s; }).join(' \u00B7 ') || 'IV only';
   }
