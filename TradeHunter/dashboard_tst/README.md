@@ -223,6 +223,14 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-20 - v4.172: Interpolated Volatility Surface - coloured by IV level within the surface
+
+The user: *"the interpolated surface also need a coloring scheme"*. `options.html`: until the constant-maturity
+history exists (phase 2), each cell of the interpolated tab is tinted by where its IV sits within the surface on
+screen - the 5th to 95th percentile of the shown values (`scale`) runs green (low) to red (high), the same hues
+as the other tab. The legend says "IV vs this surface"; the hover card gives the cell's position in percent
+and says the against-its-own-past colour comes with the constant-maturity history. No rank bar on this tab.
+
 ### 2026-10-20 - v4.171: Interpolated Volatility Surface - a second tab with fixed horizons (30/60/90/180/270/365 days)
 
 The user: *"put the current Vol Surface into a tab called Volatility Surface. Copy it into a new tab called

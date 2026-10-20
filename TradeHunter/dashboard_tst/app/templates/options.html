@@ -364,6 +364,7 @@
     {# v4.171: the Interpolated tab's legend line (no colour there) #}
     <div id="cmLegend" class="hidden text-[11px] text-slate-500 leading-snug"
          title="Each cell is the implied volatility, in percent, of a fixed time horizon at that strike - worked out from the two listed expiries around the horizon (each at least 7 days out), linear in total variance. Nothing is extrapolated: a horizon before the first expiry or after the last one is empty, and so is a strike missing on either expiry. Hover a cell for the working.">
+      <div class="flex flex-wrap items-center gap-2"><span>IV vs this surface:</span><span>low</span><span class="vol-bar"></span><span>high</span></div>
       <span class="vol-sub" style="font-size:10px">=</span> a listed expiry falls on that horizon &middot; hover a cell for the working &middot; click: contract history of the nearer listed expiry
     </div>
     </div>{# /controls pane #}
@@ -1151,6 +1152,15 @@
     });
     return tidy(j.cells || [], n, thin);
   }
+  // v4.172 (user: "the interpolated surface also need a coloring scheme"): until the constant-maturity
+  // history exists (phase 2), a cell is tinted by where its IV sits WITHIN THIS SURFACE - the 5th to 95th
+  // percentile of the shown values (j.scale) runs green (low) to red (high), the same hues as the other tab
+  function cmLevel(j, v) {
+    var s = j.scale;
+    if (!s || v == null || !(s[1] > s[0])) return null;
+    return Math.max(0, Math.min(1, (v - s[0]) / (s[1] - s[0])));
+  }
+  function cmTint(j, v) { var l = cmLevel(j, v); return l == null ? '' : rankColor(l); }
   function renderCm(j) {
     var hz = j.horizons || [], vw = cmView(j);
     var h = '<thead><tr><th class="vol-sticky vol-corner">Strike \\ Horizon</th>';
@@ -1172,7 +1182,7 @@
         var tip = j.symbol + ' ' + strikeText(k) + ' ' + kind + ', ' + hz[c].days + ' days - click: ' +
                   (ex ? 'contract history of the listed expiry on this horizon' : 'contract history of the nearer listed expiry') +
                   (n ? ' (' + n.date + ')' : '') + ' in a new window';
-        h += '<td class="vol-cell" data-r="' + r + '" data-c="' + c + '" title="' + esc(tip) + '">' +
+        h += '<td class="vol-cell" data-r="' + r + '" data-c="' + c + '" title="' + esc(tip) + '" style="' + cmTint(j, v) + '">' +
              (ex ? '<span class="vol-x" title="a listed expiry falls on this horizon - this is that contract\'s own IV">=</span>' : '') +
              '<div class="vol-l2">' + tileTop(x) + '</div><div class="vol-iv">' + num(v, 1) + '</div>' +
              '<div class="vol-l3">' + cmBottom(x) + '</div></td>';
@@ -1206,6 +1216,11 @@
            ', weighted by time (linear in total variance) = <b>' + num(v, 1) + '</b></div>' +
            '<div class="vol-cap">' + Math.round(b.w * 100) + '% of the weight on ' + shortDate(b.lo.date) + ', ' +
            Math.round((1 - b.w) * 100) + '% on ' + shortDate(b.hi.date) + ': the closer expiry counts more.</div>';
+    }
+    var lv = cmLevel(j, v);
+    if (lv != null) {
+      h += '<div class="vol-cap">Colour: this IV sits at ' + Math.round(lv * 100) + '% of the way from the lowest to the highest ' +
+           'on this surface (green low, red high). Against its own past comes with the constant-maturity history.</div>';
     }
     var x = extraAt(j, r, c);
     if (x) {
