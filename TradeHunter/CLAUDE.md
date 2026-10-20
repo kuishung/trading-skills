@@ -814,7 +814,11 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
 
 **Post-push rule (user, set 2026-05-30; reinforced 2026-06-01, 2026-08-15 and 2026-10-20 — *"always
 give me the script to update"*; a bare "give me the code" / "give me the powershell script" after a
-push means this script, in full):**
+push means this script, in full). PLACEMENT (2026-10-20, *"where is the script you have forgotten
+always"*): the script MUST be in the LAST message of the turn — the closing text written AFTER the
+final tool call (wrap_up) — never only in text that precedes a tool call: on the phone (Remote
+Control) the user sees only that final message, so a script placed earlier in the turn is invisible
+to them. When in doubt, repeat the script in the closing message.**
 EVERY time a push happens, ALSO give the user the **complete, in-order, copy-paste
 deploy script(s)** — the whole thing, every time, so they never have to reassemble
 it or trial-and-error it. **This includes bare "push" confirmations where the
