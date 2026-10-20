@@ -258,15 +258,6 @@
          class="hidden lg:block shrink-0 h-1.5 my-0.5 cursor-row-resize rounded bg-slate-800 hover:bg-emerald-600/60 transition-colors"></div>
     <div id="volCtlPane" class="flex flex-col gap-3 min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1">
     <form id="volForm" class="flex flex-col gap-2 text-xs" autocomplete="off">
-      {# v4.171: the fixed horizons of the Interpolated tab (shown only while that tab is open), all six on by
-         default, remembered in localStorage th.vol.horizons. v4.173 (user: "i did not see the horizon"): at
-         the TOP of the controls, above Ticker, so it is in view without scrolling the panel. #}
-      <fieldset id="volHz" class="hidden vol-f border-0 m-0 p-0" title="The fixed horizons, in calendar days, the Interpolated Volatility Surface shows as columns">
-        <legend class="mb-0.5">Horizons (days)</legend>
-        <div class="vol-hz">
-          {% for h in (30, 60, 90, 180, 270, 365) %}<label class="scr-check"><input type="checkbox" id="volHz{{ h }}" data-h="{{ h }}" checked> {{ h }}</label>{% endfor %}
-        </div>
-      </fieldset>
       <label class="vol-f">Ticker
         <input id="volSym" type="text" maxlength="12" placeholder="AAPL" class="px-2 py-1 w-full uppercase"
                title="Type a symbol and press Enter">
@@ -416,6 +407,16 @@
      180 / 270 / 365 days) instead of the listed expiry dates: each cell interpolated linearly in total
      variance between the two listed expiries around the horizon (vol_cm.py). Same tiles, no colour. #}
   <section id="volPanelCm" class="hidden flex flex-col min-h-0 flex-1 space-y-2" role="tabpanel" aria-labelledby="volTabCm">
+    {# v4.171: the fixed horizons shown as columns, all six on by default, remembered in localStorage
+       th.vol.horizons. v4.174 (user: "This should be in the interpolating vol surface not in the panel"):
+       the row lives HERE, above the interpolated grid, not in the left panel. #}
+    <fieldset id="volHz" class="hidden border-0 m-0 p-0 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400"
+              title="The fixed horizons, in calendar days, this surface shows as columns">
+      <legend class="float-left mr-1 text-slate-500">Horizons (days):</legend>
+      <div class="vol-hz">
+        {% for h in (30, 60, 90, 180, 270, 365) %}<label class="scr-check"><input type="checkbox" id="volHz{{ h }}" data-h="{{ h }}" checked> {{ h }}</label>{% endfor %}
+      </div>
+    </fieldset>
     <div id="cmInfoRow" class="hidden flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400 leading-snug">
       <div id="cmInfo" class="min-w-0 break-words"></div>
     </div>

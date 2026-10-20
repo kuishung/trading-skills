@@ -223,6 +223,12 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-20 - v4.174: Interpolated Volatility Surface - the Horizons row sits above its grid, not in the left panel
+
+The user: *"This should be in the interpolating vol surface not in the panel"*. `options.html`: the six horizon
+checkboxes now sit inside the Interpolated tab, in a row above its grid, and leave the left panel. Same ids,
+same memory in the browser, same redraw on change.
+
 ### 2026-10-20 - v4.173: Interpolated Volatility Surface - the Horizons row moved to the top of the controls
 
 The user: *"i did not see the horizon in the interpolated vol surface"*. The six horizon checkboxes sat at the
