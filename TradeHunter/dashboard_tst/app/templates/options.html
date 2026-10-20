@@ -211,10 +211,10 @@
       <label class="vol-f" title="Strikes within this distance of the stock price">Strikes
         <select id="volBand" class="px-2 py-1 text-xs">
           <option value="10">&plusmn;10%</option>
-          <option value="20">&plusmn;20%</option>
+          <option value="20" selected>&plusmn;20%</option>
           <option value="30">&plusmn;30%</option>
           <option value="50">&plusmn;50%</option>
-          <option value="0" selected>all</option>
+          <option value="0">all</option>
         </select>
       </label>
       <label class="vol-f" title="Expiries up to this far out">Expiries
@@ -224,8 +224,8 @@
           <option value="730">2 years</option><option value="0" selected>all</option>
         </select>
         <select id="volExp" class="px-2 py-1 text-xs" title="Monthly = the standard third-Friday expiries only">
-          <option value="all" selected>every expiry</option>
-          <option value="monthly">monthly</option>
+          <option value="all">every expiry</option>
+          <option value="monthly" selected>monthly</option>
         </select>
       </label>
       <label class="scr-check" title="Hide the strikes that fewer than half of the expiries list. Untick to see every strike.">

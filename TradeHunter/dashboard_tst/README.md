@@ -223,6 +223,13 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-20 - v4.164: Volatility surface - opens on strikes within 20 % and the monthly expiries
+
+The user: *"by default the Volatility surface load Strike +%, on monthly"*. `options.html`: the Strikes
+control defaults to &plusmn;20 % and the Expiries control to monthly (the third-Friday expiries); every strike
+and every expiry are one click away as before. Show (out of the money), the days cap (all) and Common
+strikes (on) are unchanged.
+
 ### 2026-10-20 - v4.163: Volatility surface - the panel and the table sit together in the middle of the screen
 
 The user: *"the panel and the table make it shown center screen"*. `options.html`: the two-panel row is

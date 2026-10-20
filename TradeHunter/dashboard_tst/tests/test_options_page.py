@@ -1368,9 +1368,11 @@ def test_the_surface_opens_on_every_expiry_and_reads_the_atm_line_the_right_way(
     # v4.160 (user: "i still want them"): the Show / Strikes / Expiries / Common-strikes controls
     # are back, defaulting to what v4.159 had fixed: out of the money, every strike, every
     # expiry, common strikes on; a change redraws
+    # v4.164 (user: "by default the Volatility surface load Strike +%, on monthly"): strikes
+    # within 20 % of the price and the monthly expiries open first
     for back in ('<select id="volSide"', '<option value="otm" selected>', '<select id="volBand"',
-                 '<option value="0" selected>all</option>', '<select id="volDte"', '<select id="volExp"',
-                 '<option value="all" selected>every expiry</option>', 'type="checkbox" id="volCommon" checked',
+                 '<option value="20" selected>&plusmn;20%</option>', '<select id="volDte"', '<select id="volExp"',
+                 '<option value="monthly" selected>monthly</option>', 'type="checkbox" id="volCommon" checked',
                  'id="volGo"', "['volSide', 'volBand', 'volDte', 'volExp', 'volCommon'].forEach"):
         assert back in html, back
     assert 'type="hidden" id="volSide"' not in html
