@@ -68,7 +68,9 @@
   .vol-tick-bar > i { display: block; height: 100%; width: 0; background: var(--tv-accent); transition: width 1s linear; }
   .vol-tick.is-pass .vol-tick-bar > i { background: var(--tv-up); }
   @keyframes volPulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.7); } }
-  .vol-grid { border-collapse: separate; border-spacing: 0; }
+  /* v4.161 (user): the table sits in the middle of the screen when it is narrower than the
+     page; a wider table still scrolls inside its box from the left */
+  .vol-grid { border-collapse: separate; border-spacing: 0; margin-left: auto; margin-right: auto; }
   .vol-grid th, .vol-grid td { padding: .25rem .45rem; border-bottom: 1px solid var(--tv-border);
                                text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
   .vol-grid td { background-clip: padding-box; }

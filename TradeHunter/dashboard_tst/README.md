@@ -223,6 +223,12 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-20 - v4.161: Volatility surface - the table is centred on the screen
+
+The user: *"the vol surface make the whole table center to the screen"*. `options.html`: `.vol-grid` gets
+auto side margins, so a table narrower than the page sits in the middle; a wider one still scrolls inside
+its box from the left, with the sticky strike column and header unchanged.
+
 ### 2026-10-20 - v4.160: Volatility surface - the Show / Strikes / Expiries / Common-strikes controls are back
 
 The user, after v4.159 removed them: *"i still want them"*. `options.html`: the four controls and the Show
