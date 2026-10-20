@@ -1238,16 +1238,17 @@ def test_the_surface_tiles_are_configurable(client, fake):
     html = client.get("/options").text
     for needle in ('<details id="volTile"', 'id="volTileSum"', 'id="volTileTop"', 'id="volTileBottom"',
                    'id="volTileNote"', "Greeks and prices are on the latest pass only",
-                   "'th.vol.tile'", "var TILE_DEFAULT = {g: ['d', 't'], b: 'last'};",
+                   "'th.vol.tile'", "var TILE_DEFAULT = {g: ['d', 'g', 't', 'v'], b: 'last'};",
                    "var x = extraAt(j, r, c);", "'<div class=\"vol-l2\">' + tileTop(x) + '</div><div class=\"vol-iv\">'",
                    "'<div class=\"vol-l3\">' + tileBottom(x) + '</div></td>'",
                    "figsHtml(j, extraAt(j, +td.dataset.r, +td.dataset.c))", "j.has_greeks === false",
                    "$('volTile').addEventListener('change', function () { tileRead(); paintTiles(); });",
-                   "Model price", "Open interest", r"'\u0394'", r"'\u0398'", r"'\u0393'", r"'\u03BD'"):
+                   "Model price", "Open interest", "'Delta'", "'Gamma'", "'Theta'", "'Vega'",
+                   "g[2] + ' ' + greekText("):      # v4.167: the words, not the signs
         assert needle in html, needle
     # the defaults in the markup: Delta + Theta ticked, Gamma + Vega not, Last price picked
-    assert 'id="volTileD" data-g="d" checked' in html and 'id="volTileT" data-g="t" checked' in html
-    assert 'id="volTileG" data-g="g">' in html and 'id="volTileV" data-g="v">' in html
+    for k in ("D", "G", "T", "V"):          # v4.167: all four greeks on by default
+        assert 'id="volTile%s" data-g="%s" checked' % (k, k.lower()) in html
     assert 'name="volTileB" value="last" checked' in html
     for v in ("price", "oi", "vol", "none"):
         assert f'name="volTileB" value="{v}">' in html, v

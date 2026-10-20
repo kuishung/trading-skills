@@ -119,9 +119,10 @@
      will show the last price"): the chosen greeks on the line ABOVE the IV (.vol-l2, up to two short rows when
      three or four are picked), the chosen figure on the line BELOW it (.vol-l3); both 9px so the cell keeps
      its 68 x 60 shape and the IV stays in the middle. Set in the Tile block of the left panel (#volTile). */
-  .vol-grid .vol-l2 { font-size: 9px; line-height: 1.05; white-space: normal; max-height: 2.1em; }
+  /* v4.167: the greeks are written in English ("Delta .42"), one per row; the cell grows with them */
+  .vol-grid .vol-l2 { font-size: 9px; line-height: 1.15; white-space: normal; }
   .vol-grid .vol-l3 { font-size: 9px; line-height: 1.1; color: var(--tv-text); }
-  .vol-grid .vol-gt { display: inline-block; white-space: nowrap; margin: 0 .1rem; }
+  .vol-grid .vol-gt { display: block; white-space: nowrap; }
   .vol-tile summary { cursor: pointer; padding: .3rem .5rem; color: var(--tv-muted); font-size: 11px; list-style: none;
                       display: flex; align-items: center; justify-content: space-between; gap: .4rem; }
   .vol-tile summary::-webkit-details-marker { display: none; }
@@ -290,10 +291,11 @@
       <div class="flex flex-col gap-2 px-2 pb-2 text-xs">
         <fieldset id="volTileTop">
           <legend>Top line - Greeks</legend>
-          <label class="scr-check"><input type="checkbox" id="volTileD" data-g="d" checked> Delta (&Delta;)</label>
-          <label class="scr-check"><input type="checkbox" id="volTileG" data-g="g"> Gamma (&Gamma;)</label>
-          <label class="scr-check"><input type="checkbox" id="volTileT" data-g="t" checked> Theta (&Theta;)</label>
-          <label class="scr-check"><input type="checkbox" id="volTileV" data-g="v"> Vega (&nu;)</label>
+          {# v4.167 (user): all four on by default, named in English #}
+          <label class="scr-check"><input type="checkbox" id="volTileD" data-g="d" checked> Delta</label>
+          <label class="scr-check"><input type="checkbox" id="volTileG" data-g="g" checked> Gamma</label>
+          <label class="scr-check"><input type="checkbox" id="volTileT" data-g="t" checked> Theta</label>
+          <label class="scr-check"><input type="checkbox" id="volTileV" data-g="v" checked> Vega</label>
         </fieldset>
         <div class="text-[11px] text-slate-500">Middle: the implied volatility, in percent</div>
         <fieldset id="volTileBottom">
@@ -655,7 +657,7 @@
   // grid on screen from the payload (j.extra) - no new request. A past day has no greeks or prices
   // (has_greeks false: its IVs are solved from the closes), so its tiles show the IV alone.
   var TILE_KEY = 'th.vol.tile';
-  var TILE_DEFAULT = {g: ['d', 't'], b: 'last'};
+  var TILE_DEFAULT = {g: ['d', 'g', 't', 'v'], b: 'last'};     // v4.167: all four greeks by default
   var GREEKS = [['d', '\u0394', 'Delta', 3], ['g', '\u0393', 'Gamma', 4], ['t', '\u0398', 'Theta', 3], ['v', '\u03BD', 'Vega', 3]];
   var BOTTOMS = {last: 'last', price: 'model', oi: 'OI', vol: 'volume', none: ''};
   var TILE = {g: TILE_DEFAULT.g.slice(), b: TILE_DEFAULT.b};
@@ -678,9 +680,10 @@
   function money(v) { return (v == null || !isFinite(v)) ? '' : '$' + Number(v).toFixed(2); }
   function tileTop(x) {
     if (!x) return '';
+    // v4.167 (user: "the greeks i need to use the english rather the sign"): the word, one per row
     return GREEKS.filter(function (g) { return TILE.g.indexOf(g[0]) >= 0 && x[g[0]] != null; }).map(function (g) {
-      return '<span class="vol-gt">' + g[1] + greekText(x[g[0]]) + '</span>';
-    }).join(' ');
+      return '<span class="vol-gt">' + g[2] + ' ' + greekText(x[g[0]]) + '</span>';
+    }).join('');
   }
   function tileBottom(x) {
     if (!x) return '';
@@ -708,7 +711,7 @@
     tileSummary();
   }
   function tileSummary() {
-    var g = GREEKS.filter(function (x) { return TILE.g.indexOf(x[0]) >= 0; }).map(function (x) { return x[1]; }).join(' ');
+    var g = GREEKS.filter(function (x) { return TILE.g.indexOf(x[0]) >= 0; }).map(function (x) { return x[2]; }).join(', ');
     var b = BOTTOMS[TILE.b];
     $('volTileSum').textContent = [g, b].filter(function (s) { return s; }).join(' \u00B7 ') || 'IV only';
   }

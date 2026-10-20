@@ -223,6 +223,13 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-20 - v4.167: Volatility surface - the Greeks on the tiles are written in English
+
+The user: *"the greeks i need to use the english rather the sign, i dont understand them"*. `options.html`: the
+tile's top band says `Delta .42`, `Gamma .01`, `Theta -.05`, `Vega .12`, one per row, instead of the Greek
+letters; **all four are on by default** (*"i need all 4 greeks to show"*), each can be unticked; the Tile
+block's summary line uses the same words. The cell grows with the rows.
+
 ### 2026-10-20 - v4.166: Volatility surface - configurable tiles: Greeks on top, the IV in the middle, the last price below
 
 The user: *"i want to have a configurable tiles in the vol surface. where the tile, i need to utilise the top to
