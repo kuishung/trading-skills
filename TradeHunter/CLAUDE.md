@@ -668,6 +668,17 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
   IV) in a new window. The Set filters / Results tabs and the Go-to picker are gone from the page; the
   screener ENGINE, `/options/api/*`, saved screeners, the collectors and the Parquet lane stay (the
   surface reads from them). The bullet below describes the engine; its page parts are history.
+  v4.160-4.170 (same day): the Show / Strikes / Expiries / Common controls are back (defaults ±20 %,
+  monthly), a LEFT panel (watchlist pane over the controls, adjustable split) + the table on the right,
+  centred; **configurable tiles** (D G T V greeks two per row on top, IV in the middle, last price below,
+  Tile block in the controls); the screener's "loading" banner removed.
+  **v4.171: a second tab, "Interpolated Volatility Surface"** (`app/services/vol_cm.py`,
+  `GET /options/api/surface/cm`): fixed horizons 30/60/90/180/270/365 d as columns, each strike's IV
+  derived by linear interpolation in TOTAL VARIANCE between the two listed expiries around the horizon
+  (legs ≥ 7 DTE, no extrapolation, exact matches marked; hover shows the working; click opens the nearer
+  leg's history). **Phase 2 NOT built**: a constant-maturity history per ticker/day at ATM and 25-delta
+  (from the Parquet history, a Hermes job) to give that tab a rank tint, percentile and z-score - the
+  user's pasted note (VIX-style, fix moneyness before tenor) is the spec for it.
 - **Options SCREENER — BUILT in v4.136 (2026-10-10): `dashboard_tst/OPTIONS_SCREENER_DESIGN.md`
   is the contract.** The user asked for *"exactly"* Barchart's options screener
   (barchart.com/options/options-screener) with each member's own settings: `/options` is now a

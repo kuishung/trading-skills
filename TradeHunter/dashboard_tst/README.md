@@ -223,6 +223,34 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-20 - v4.171: Interpolated Volatility Surface - a second tab with fixed horizons (30/60/90/180/270/365 days)
+
+The user: *"put the current Vol Surface into a tab called Volatility Surface. Copy it into a new tab called
+Interpolated Volatility Surface. Both reuse the left hand panel. The original shows contracts with a fixed
+expiry date; what we need is a fixed time horizon ... derive the fixed horizons and generate a new vol surface
+with the fixed-maturity data."* Discussed 2026-10-20 and built as **phase 1**; phase 2 (a constant-maturity
+history per ticker and day at the money / 25-delta, for a rank tint and z-scores) is not built yet.
+
+- **Two tabs in the right panel**: Volatility Surface (unchanged) and Interpolated Volatility Surface. The
+  left panel (watchlist, controls, Tile) drives both; a "Horizons" row of checkboxes (30 60 90 180 270 365,
+  all on) shows while the interpolated tab is active. The choice of tab and horizons is remembered.
+- **The derivation** (`app/services/vol_cm.py`, `interpolate` / `surface_cm`): per strike and horizon, the
+  two listed expiries that bracket the horizon (legs at least 7 days out) are interpolated **linearly in
+  total variance** (σ²T), calendar days / 365; a horizon that lands on a listed expiry is that contract's own
+  IV and is marked exact; nothing is extrapolated - a horizon outside the listed expiries, or a strike
+  missing on a leg, is blank. Greeks are interpolated in time between the same legs; the bottom figure is
+  the model price at the derived IV. No tint on this tab until phase 2.
+- **Endpoint** `GET /options/api/surface/cm?symbol=&day=&side=&band=&exp=&common=&horizons=`. Columns read
+  `30d`, `60d`...; the hover card shows the working (both legs, their IVs, the weight); a click opens the
+  contract history of the nearer leg. The Date picker drives both tabs (latest pass or a past day).
+- **"Hide new and thinly listed contracts"** (user, seeing grey columns and gaps on SNDK: *"i need tick in the
+  left hand side panel to hide the gaps or new contract ... by default it is clicked"*): a tick under Common
+  strikes, on by default, remembered in the browser. It drops an expiry column when fewer than half of its
+  contracts have 10 days of history (the ones the colouring leaves grey - newly listed expiries), then drops a
+  strike row that any remaining expiry does not list (the gaps of 20-dollar-step expiries). The info line says
+  how many were hidden; untick to see everything. On the interpolated tab it drops rows with a blank horizon.
+- Tests: `tests/test_vol_cm.py`, `tests/test_options_page.py`.
+
 ### 2026-10-20 - v4.170: Volatility surface - the "new market data is loading into the screener" panel is gone
 
 The user, seeing the banner: *"what is this for?"*. It was the screener's notice while the web app reloads

@@ -159,6 +159,20 @@
   .vol-pop .vol-lbl { fill: var(--tv-muted); font-size: 9px; }
   .vol-pop .vol-rk-tx { color: hsl(var(--rk-h), 70%, 34%); }
   html:not(.light) .vol-pop .vol-rk-tx { color: hsl(var(--rk-h), 75%, 64%); }
+  /* v4.171 (user: "put the current Vol Surface into a tab called Volatility Surface ... duplicate it into a new
+     tab called Interpolated Volatility Surface. Both surfaces will reuse the left hand panel"): two tabs at the
+     top of the right panel; the left panel is shared */
+  .vol-tabs { display: flex; gap: .25rem; border-bottom: 1px solid var(--tv-border-2); overflow-x: auto; }
+  .vol-tabs button { padding: .35rem .75rem; font-size: 12px; color: var(--tv-muted); background: transparent;
+                     border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+  .vol-tabs button:hover { color: var(--tv-text-hi); }
+  .vol-tabs button[aria-selected="true"] { color: var(--tv-text-hi); border-bottom-color: var(--tv-accent); }
+  /* the interpolated tab: a horizon that falls on a listed expiry carries a small "=" mark in the cell's bottom-right
+     corner (that contract's own IV) - the corner the rank bar uses on the listed tab, free here */
+  .vol-grid .vol-x { position: absolute; bottom: .15rem; right: .2rem; font-size: 9px; line-height: 1; padding: 0 .15rem;
+                     border-radius: 3px; background: var(--tv-hover); color: var(--tv-accent-tx); cursor: help; }
+  .vol-hz { display: flex; flex-wrap: wrap; gap: .15rem .6rem; }
+  .vol-pop .vol-pop-work { margin-top: .3rem; line-height: 1.35; }
 </style>
 
 <div id="optPage" class="flex flex-col min-h-0 flex-1 space-y-2" data-mode="{{ mode }}">
@@ -282,6 +296,20 @@
       <label class="scr-check" title="Hide the strikes that fewer than half of the expiries list. Untick to see every strike.">
         <input type="checkbox" id="volCommon" checked> Common strikes
       </label>
+      {# v4.171 (user, on SNDK: newly listed expiries are grey and 20-dollar-step expiries leave gaps on the
+         10-dollar strikes - "a clean grid by default and the full one on untick"): a tidy-up done on the page
+         from the answers already loaded (no new request), remembered in localStorage th.vol.clean #}
+      <label class="scr-check" title="Leaves out expiries listed less than 10 days ago, which have no history to colour yet, and strikes that only some expiries carry. The grid then shows no grey cells and no gaps. Untick to see everything.">
+        <input type="checkbox" id="volClean" checked> Hide new and thinly listed contracts
+      </label>
+      {# v4.171: the fixed horizons of the Interpolated tab (shown only while that tab is open), all six on by
+         default, remembered in localStorage th.vol.horizons #}
+      <fieldset id="volHz" class="hidden vol-f border-0 m-0 p-0" title="The fixed horizons, in calendar days, the Interpolated Volatility Surface shows as columns">
+        <legend class="mb-0.5">Horizons</legend>
+        <div class="vol-hz">
+          {% for h in (30, 60, 90, 180, 270, 365) %}<label class="scr-check"><input type="checkbox" id="volHz{{ h }}" data-h="{{ h }}" checked> {{ h }}</label>{% endfor %}
+        </div>
+      </fieldset>
       <button type="submit" id="volGo" class="scr-primary w-full">Show</button>
     </form>
     {# v4.166 (user: "configurable tiles in the vol surface ... the top to show the greeks. the bottom will
@@ -333,10 +361,23 @@
       <span>&middot; click a cell: contract history in a new window</span>
       <span id="volHistMsg" class="text-slate-600"></span>
     </div>
+    {# v4.171: the Interpolated tab's legend line (no colour there) #}
+    <div id="cmLegend" class="hidden text-[11px] text-slate-500 leading-snug"
+         title="Each cell is the implied volatility, in percent, of a fixed time horizon at that strike - worked out from the two listed expiries around the horizon (each at least 7 days out), linear in total variance. Nothing is extrapolated: a horizon before the first expiry or after the last one is empty, and so is a strike missing on either expiry. Hover a cell for the working.">
+      <span class="vol-sub" style="font-size:10px">=</span> a listed expiry falls on that horizon &middot; hover a cell for the working &middot; click: contract history of the nearer listed expiry
+    </div>
     </div>{# /controls pane #}
   </aside>
 
   <div class="min-w-0 flex-1 lg:flex-initial flex flex-col gap-2 min-h-0">
+  {# v4.171: the two tabs - the listed surface (fixed expiry dates) and the interpolated one (fixed time
+     horizons). Remembered in localStorage th.vol.tab; /options?tab=cm opens the interpolated one. #}
+  <div id="volTabs" class="vol-tabs shrink-0" role="tablist" aria-label="Surface">
+    <button type="button" id="volTabSurface" role="tab" data-vtab="surface" aria-selected="true" aria-controls="volPanelSurface"
+            title="One column per listed expiry date">Volatility Surface</button>
+    <button type="button" id="volTabCm" role="tab" data-vtab="cm" aria-selected="false" aria-controls="volPanelCm"
+            title="One column per fixed time horizon (30 to 365 days), worked out from the listed expiries around it">Interpolated Volatility Surface</button>
+  </div>
   {# a collector problem (rose error · amber stale / paused / warning · slate never reported) in a
      box members cannot miss - the same text the dot's tooltip carries #}
   {% set alert_cls = {'rose': 'scr-alert-rose', 'amber': 'border-amber-500/40 bg-amber-500/10 text-amber-300',
@@ -358,7 +399,7 @@
      implied volatility by strike (rows) x expiry (columns), from the last market pass or a past
      day of the contract history. Full screen (v4.159): the grid takes the rest of the page and
      scrolls inside, the strike column and the expiry header held. Painted by the script below. #}
-  <section id="volPanelSurface" class="flex flex-col min-h-0 flex-1 space-y-2">
+  <section id="volPanelSurface" class="flex flex-col min-h-0 flex-1 space-y-2" role="tabpanel" aria-labelledby="volTabSurface">
     <div id="volInfoRow" class="hidden flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400 leading-snug">
       <div id="volInfo" class="min-w-0 break-words"></div>
     </div>
@@ -367,6 +408,20 @@
       <table id="volTable" class="vol-grid text-xs"></table>
     </div>
     <div id="volPop" class="vol-pop hidden" role="tooltip"></div>
+  </section>
+
+  {# ── INTERPOLATED VOLATILITY SURFACE (v4.171) ── the same strikes on FIXED time horizons (30 / 60 / 90 /
+     180 / 270 / 365 days) instead of the listed expiry dates: each cell interpolated linearly in total
+     variance between the two listed expiries around the horizon (vol_cm.py). Same tiles, no colour. #}
+  <section id="volPanelCm" class="hidden flex flex-col min-h-0 flex-1 space-y-2" role="tabpanel" aria-labelledby="volTabCm">
+    <div id="cmInfoRow" class="hidden flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400 leading-snug">
+      <div id="cmInfo" class="min-w-0 break-words"></div>
+    </div>
+    <div id="cmMsg" class="hidden rounded border border-slate-700 px-3 py-2 text-xs text-slate-300"></div>
+    <div id="cmWrap" class="hidden scr-wrap vol-wrap rounded-lg border border-slate-800 overflow-auto">
+      <table id="cmTable" class="vol-grid text-xs"></table>
+    </div>
+    <div id="cmPop" class="vol-pop hidden" role="tooltip"></div>
   </section>
   </div>{# /right panel #}
   </div>{# /two panels #}
@@ -505,7 +560,13 @@
   }
 
   // ── VOLATILITY SURFACE ───────────────────────────────────────────────────────────
-  var V = {seq: 0, last: null, hist: null, histState: 'loading', histWhy: '', passId: null, quiet: false, refreshFailed: null};
+  var V = {seq: 0, last: null, hist: null, histState: 'loading', histWhy: '', passId: null, quiet: false, refreshFailed: null,
+           want: null, young: null};
+  // v4.171: the Interpolated Volatility Surface's own state (its last answer, the request it came from) and the
+  // tab on screen; the left panel, the countdown and the status polls are shared and follow the active tab
+  var CM = {seq: 0, last: null, passId: null, quiet: false, want: null};
+  var TAB = 'surface';
+  function activeLast() { return TAB === 'cm' ? CM.last : V.last; }
   // ── v4.149: the countdown to the next market pass (Latest = the collector's last pass of Massive) ──
   var T = {st: null, at: 0, left: null, timer: null, due: false};
   function etTime(iso) {               // "09:45 ET" for an ISO instant
@@ -524,7 +585,7 @@
            (pct == null ? '' : '<span class="vol-tick-bar"><i style="width:' + Math.round(Math.max(0, Math.min(1, pct)) * 100) + '%"></i></span>');
   }
   function paintTick() {
-    var el = $('volTick'), j = V.last;
+    var el = $('volTick'), j = activeLast();
     if (!j) { show(el, false); return; }
     if (j.source !== 'latest') {        // a past day: the stored option files, which never change
       el.className = 'vol-tick ml-auto';
@@ -587,12 +648,13 @@
     T.left = pr.next_pass_in_s != null ? Math.max(0, pr.next_pass_in_s - age) : null;
     if (T.left > 0) T.due = false;
     var id = st && st.last_pass && st.last_pass.id != null ? st.last_pass.id : null;
-    var j = V.last;
+    var j = activeLast(), pid = TAB === 'cm' ? CM.passId : V.passId, busy = TAB === 'cm' ? CM.quiet : V.quiet;
     // a pass is stored that this grid did not come from (a grid built before any pass had finished
-    // has no id yet - the first id that arrives counts as new, one harmless rebuild)
-    if (j && j.source === 'latest' && id != null && id !== V.passId && !V.quiet &&
+    // has no id yet - the first id that arrives counts as new, one harmless rebuild). v4.171: the grid of
+    // the tab on screen; the other tab is redrawn when it is opened (drawIfStale)
+    if (j && j.source === 'latest' && id != null && id !== pid && !busy &&
         $('volSym').value.trim().toUpperCase() === j.symbol) runSurface(true);
-    if (V.last) paintTick();
+    if (j) paintTick();
   };
   function rankHue(rank) { return Math.round(120 - 120 * Math.max(0, Math.min(1, rank))); }   // green -> red
   function rankColor(rank) {          // the cell's tint: 0 = at its lowest (green) ... 1 = at its highest (red)
@@ -616,20 +678,75 @@
     return '<tr class="vol-spot"><th class="vol-sticky" title="The stock price - the at-the-money level. The rows above this line are the strikes below the price, the rows below it the strikes above.">ATM ' + esc(num(j.spot, 2)) + '</th>' +
            '<td colspan="' + n + '">price ' + esc(num(j.spot, 2)) + ' &middot; above: calls in the money, puts out &middot; below: calls out of the money, puts in</td></tr>';
   }
+  // ── v4.171: "Hide new and thinly listed contracts" (#volClean, on by default, th.vol.clean) ── a tidy-up on
+  // the page from the answers already loaded: (1) an expiry column is left out when fewer than half of its
+  // cells with an IV have 10+ days of history (the cells the colouring leaves grey - newly listed expiries;
+  // applied once the history has arrived), then (2) a strike row is left out when any column still shown
+  // has no IV there - no grey columns, no gaps. On the Interpolated tab only (2) applies (the 7-day leg rule
+  // already keeps the newest expiries out), after the horizons fewer than half of the strikes reach.
+  var MIN_HIST = 10;                    // vol_history.MIN_HISTORY: a cell needs this many days of history for a colour
+  function cleanOn() { return !!($('volClean') && $('volClean').checked); }
+  function allIdx(n) { var a = []; for (var i = 0; i < n; i++) a.push(i); return a; }
+  function tidy(cells, nCols, dropCol) {
+    var cols = allIdx(nCols).filter(function (c) { return !dropCol[c]; }), every = allIdx(cells.length);
+    var rows = every.filter(function (r) {
+      return cols.length && cols.every(function (c) { return cells[r][c] != null; });
+    });
+    if (!rows.length) rows = every.filter(function (r) { return cols.some(function (c) { return cells[r][c] != null; }); });
+    return {cols: cols, rows: rows, hidCols: nCols - cols.length, hidRows: cells.length - rows.length};
+  }
+  function fullView(nRows, nCols) { return {cols: allIdx(nCols), rows: allIdx(nRows), hidCols: 0, hidRows: 0}; }
+  function youngKey(j) { return j.symbol + '|' + j.on + '|' + j.side + '|' + j.source; }
+  function youngCols(j) {               // rule (1): per expiry, true = most of its cells have under 10 days of history
+    var ex = j.expiries || [], hs = V.hist, out = ex.map(function () { return false; });
+    if (V.histState === 'ok' && hs && sameGrid(j, hs)) {
+      var skip = {};
+      (hs.skipped || []).forEach(function (key) { skip[key] = 1; });
+      ex.forEach(function (e, c) {
+        var n = 0, old = 0;
+        (j.strikes || []).forEach(function (k, r) {
+          var key = r + ',' + c;
+          if (j.cells[r][c] == null || skip[key]) return;
+          n++;
+          var s = hs.cells[key];
+          if (s && s.n >= MIN_HIST) old++;
+        });
+        out[c] = n > 0 && old * 2 < n;
+      });
+      V.young = {key: youngKey(j), dates: ex.filter(function (e, c) { return out[c]; }).map(function (e) { return e.date; })};
+    } else if (V.young && V.young.key === youngKey(j)) {     // a refresh: the last answer's call until the new history is in
+      out = ex.map(function (e) { return V.young.dates.indexOf(e.date) >= 0; });
+    }
+    return out;
+  }
+  function surfaceView(j) {
+    var n = (j.expiries || []).length;
+    return cleanOn() ? tidy(j.cells || [], n, youngCols(j)) : fullView((j.strikes || []).length, n);
+  }
+  function tidyNote(vw, one, many) {    // " · 2 expiries and 5 strikes hidden by the tick"
+    var parts = [];
+    if (vw.hidCols) parts.push(intText(vw.hidCols) + ' ' + (vw.hidCols === 1 ? one : many));
+    if (vw.hidRows) parts.push(intText(vw.hidRows) + ' ' + (vw.hidRows === 1 ? 'strike' : 'strikes'));
+    return parts.length ? ' &middot; ' + parts.join(' and ') + ' hidden by the tick' : '';
+  }
   function renderSurface(j) {
-    var ex = j.expiries || [], lo = j.scale ? j.scale[0] : 0, hi = j.scale ? j.scale[1] : 0;
+    var ex = j.expiries || [], vw = surfaceView(j);
     var h = '<thead><tr><th class="vol-sticky vol-corner">Strike \\ Expiry</th>';
-    ex.forEach(function (e) {
+    vw.cols.forEach(function (c) {
+      var e = ex[c];
       h += '<th title="' + esc(e.date + ' - ' + e.dte + ' days (' + e.years + ' years)' + (e.monthly ? ' - standard monthly' : '')) + '">' +
            shortDate(e.date) + (e.monthly ? '<span class="vol-m">M</span>' : '') +
            '<div class="vol-sub">' + e.dte + 'd</div></th>';
     });
     h += '</tr></thead><tbody>';
-    (j.strikes || []).forEach(function (k, r) {
-      if (r === j.spot_row) h += spotRow(j, ex.length);
+    var spotDone = false;
+    vw.rows.forEach(function (r) {
+      var k = j.strikes[r];
+      if (!spotDone && r >= j.spot_row) { h += spotRow(j, vw.cols.length); spotDone = true; }
       h += '<tr><th class="vol-sticky vol-k">' + esc(strikeText(k)) + '</th>';
       var kind = sideOf(j, k) === 'C' ? 'call' : 'put';
-      (j.cells[r] || []).forEach(function (v, c) {
+      vw.cols.forEach(function (c) {
+        var v = j.cells[r][c];
         // v4.166: the tile - the chosen greeks on top (.vol-l2), the IV in the middle, the chosen figure
         // below (.vol-l3), the rank bar at the bottom. The figures come from j.extra (same shape as j.cells).
         var x = extraAt(j, r, c);
@@ -641,7 +758,7 @@
       });
       h += '</tr>';
     });
-    if (j.spot_row >= (j.strikes || []).length) h += spotRow(j, ex.length);
+    if (!spotDone) h += spotRow(j, vw.cols.length);
     $('volTable').innerHTML = h + '</tbody>';
     var src = j.source === 'latest'
       ? 'Latest market pass, session ' + esc(j.on) + (j.as_of ? ' (read ' + esc(new Date(j.as_of).toLocaleString()) + ')' : '')
@@ -650,10 +767,12 @@
     $('volInfo').title = j.method || '';
     $('volInfo').innerHTML = '<b class="text-slate-200">' + esc(j.symbol) + '</b>' + (j.name ? ' - ' + esc(j.name) : '') +
       ' &middot; ' + src + ' &middot; price ' + esc(num(j.spot, 2)) +
-      ' &middot; ' + intText(j.strikes.length) + ' strikes x ' + intText(ex.length) + ' expiries' +
-      (j.hidden_strikes ? ' &middot; ' + intText(j.hidden_strikes) + ' hidden' : '');
-    show($('volInfoRow'), true); show($('volWrap'), true); show($('volLegend'), true);
-    tileNote(j);
+      ' &middot; ' + intText(vw.rows.length) + ' strikes x ' + intText(vw.cols.length) + ' expiries' +
+      (j.hidden_strikes ? ' &middot; ' + intText(j.hidden_strikes) + ' hidden' : '') + tidyNote(vw, 'expiry', 'expiries');
+    show($('volInfoRow'), true); show($('volWrap'), true); legends();
+    tileNote(activeLast());
+    // a redraw (the tick, a refresh) keeps the colours when the history on hand is this grid's
+    if (V.histState === 'ok' && V.hist && sameGrid(j, V.hist)) paintHistory(j, V.hist);
   }
   // ── the configurable tile (v4.166) ── which greeks sit above the IV, which figure below it; the
   // choice lives in localStorage th.vol.tile ({g: ['d', 't'], b: 'last'}) and a change repaints the
@@ -729,15 +848,17 @@
     tileSummary();
   }
   function tileNote(j) { show($('volTileNote'), !!(j && j.has_greeks === false)); }
-  function paintTiles() {               // repaint the tiles of the grid on screen from j.extra
-    var j = V.last;
-    tileNote(j);
-    if (!j) return;
-    Array.prototype.forEach.call(document.querySelectorAll('#volTable td.vol-cell'), function (td) {
-      var x = extraAt(j, +td.dataset.r, +td.dataset.c);
-      var top = td.querySelector('.vol-l2'), bot = td.querySelector('.vol-l3');
-      if (top) top.innerHTML = tileTop(x);
-      if (bot) bot.innerHTML = tileBottom(x);
+  function paintTiles() {               // repaint the tiles of both grids from their own payloads (j.extra)
+    tileNote(activeLast());
+    [['#volTable', V.last, tileBottom], ['#cmTable', CM.last, cmBottom]].forEach(function (g) {
+      var j = g[1];
+      if (!j) return;
+      Array.prototype.forEach.call(document.querySelectorAll(g[0] + ' td.vol-cell'), function (td) {
+        var x = extraAt(j, +td.dataset.r, +td.dataset.c);
+        var top = td.querySelector('.vol-l2'), bot = td.querySelector('.vol-l3');
+        if (top) top.innerHTML = tileTop(x);
+        if (bot) bot.innerHTML = g[2](x);
+      });
     });
   }
   function figsHtml(j, x) {             // the hover card's figures, in words
@@ -802,7 +923,9 @@
         return;
       }
       V.hist = h; V.histState = 'ok';
-      paintHistory(j, h);
+      // v4.171: with "Hide new and thinly listed" on, the history decides which expiries are new - redraw (the
+      // redraw paints the colours too); otherwise only the colours
+      if (cleanOn()) renderSurface(j); else paintHistory(j, h);
     }).catch(function () {
       if (my !== V.seq) return;
       V.histState = 'failed'; V.histWhy = 'the server did not answer';
@@ -918,15 +1041,15 @@
   }
   function hidePop() { $('volPop').classList.add('hidden'); }
   function runSurface(quiet) {           // quiet (v4.149): a refresh behind the shown grid - no message, scroll kept
+    if (TAB === 'cm') { runCm(quiet); return; }    // v4.171: the left panel draws the tab on screen
     var sym = $('volSym').value.trim().toUpperCase();
     $('volSym').value = sym;
     if (!sym) { msg($('volMsg'), 'Type an underlying symbol, for example AAPL.'); return; }
     // v4.159: side / band / expiries / common strikes are fixed (hidden inputs) - the member picks
     // only the ticker and the day; out of the money (puts below the price, calls above) also decides
     // the right a click hands to the contract history
-    var q = new URLSearchParams({symbol: sym, day: $('volDay').value || 'latest', side: $('volSide').value,
-                                 band: $('volBand').value, dte: $('volDte').value, exp: $('volExp').value,
-                                 common: $('volCommon').checked ? '1' : '0'});
+    var q = surfaceParams(sym);
+    V.want = q.toString();
     var my = ++V.seq, sc = quiet && V.last ? {t: $('volWrap').scrollTop, l: $('volWrap').scrollLeft} : null;
     V.quiet = !!sc;
     V.reqSym = sym;
@@ -938,7 +1061,7 @@
         if (V.quiet) {                 // a background refresh that failed: keep the grid, the next poll retries
           V.refreshFailed = (j && j.error) || 'no answer'; paintTick(); return;
         }
-        V.last = null; tickStop();
+        V.last = null; syncTick();
         show($('volWrap'), false); show($('volLegend'), false); show($('volInfoRow'), false);
         msg($('volMsg'), (j && j.error) ? ('No surface: ' + j.error + '.') : 'The surface could not be built.');
         return;
@@ -949,7 +1072,7 @@
       msg($('volMsg'), '');
       renderSurface(j);
       if (sc) { $('volWrap').scrollTop = sc.t; $('volWrap').scrollLeft = sc.l; }
-      if (j.source === 'latest') tickStart(); else { tickStop(); paintTick(); }
+      syncTick();
       loadHistory(j, q, my);
     }).catch(function () {
       if (my !== V.seq) return;
@@ -968,6 +1091,230 @@
   function openContract(sym, expiry, right, strike, day) {
     window.open(historyUrl(sym, expiry, right, strike, day), '_blank', 'noopener');
   }
+
+  // ── v4.171: the TABS and the INTERPOLATED VOLATILITY SURFACE ───────────────────────────────
+  // (user: "the original vol surface displays contracts with a fixed expiry date; what we need is a fixed
+  // time horizon (30/60/90/180/270/365 days)"). Two tabs over the right panel share the left panel: every
+  // change there redraws the tab on screen (runSurface dispatches), and opening a tab draws it when its last
+  // answer was made with other settings or an older market pass (drawIfStale) - one request per settings
+  // change per tab. The interpolated grid comes from /options/api/surface/cm (vol_cm.py): one column per
+  // horizon, each cell the IV interpolated linearly in total variance between the two listed expiries around
+  // the horizon (legs at least 7 days out, nothing extrapolated); the same tiles, no colour; a click opens
+  // the contract history of the NEARER of the two expiries.
+  var TAB_KEY = 'th.vol.tab', HZ_KEY = 'th.vol.horizons', CLEAN_KEY = 'th.vol.clean';
+  var HZ_ALL = [30, 60, 90, 180, 270, 365];
+  function hzChosen() {
+    return HZ_ALL.filter(function (h) { var b = $('volHz' + h); return !!(b && b.checked); });
+  }
+  function hzLoad() {                   // the remembered horizons (all six until the member unticks one)
+    var raw = lsGet(HZ_KEY);
+    if (raw == null) return;
+    var want = String(raw).split(',').map(function (x) { return parseInt(x, 10); });
+    HZ_ALL.forEach(function (h) { var b = $('volHz' + h); if (b) b.checked = want.indexOf(h) >= 0; });
+  }
+  function surfaceParams(sym) {
+    return new URLSearchParams({symbol: sym, day: $('volDay').value || 'latest', side: $('volSide').value,
+                                band: $('volBand').value, dte: $('volDte').value, exp: $('volExp').value,
+                                common: $('volCommon').checked ? '1' : '0'});
+  }
+  function cmParams(sym) {              // no "dte": every listed expiry is read (a 365-day horizon needs the far ones)
+    return new URLSearchParams({symbol: sym, day: $('volDay').value || 'latest', side: $('volSide').value,
+                                band: $('volBand').value, exp: $('volExp').value,
+                                common: $('volCommon').checked ? '1' : '0', horizons: hzChosen().join(',')});
+  }
+  function syncTick() {                 // the countdown follows the tab on screen
+    var j = activeLast();
+    if (j && j.source === 'latest') tickStart(); else { tickStop(); paintTick(); }
+  }
+  function legends() {
+    show($('volLegend'), TAB === 'surface' && !!V.last);
+    show($('cmLegend'), TAB === 'cm' && !!CM.last);
+  }
+  function cmSpotRow(j, n) {            // the line at the price, as on the listed tab; its words never widen the
+    // (few) horizon columns - they are cut to the grid's width, the whole sentence in the tooltip
+    var words = 'price ' + num(j.spot, 2) + ' · above: calls in the money, puts out · below: calls out of the money, puts in';
+    return '<tr class="vol-spot"><th class="vol-sticky" title="The stock price - the at-the-money level. The rows above this line are the strikes below the price, the rows below it the strikes above.">ATM ' + esc(num(j.spot, 2)) + '</th>' +
+           '<td colspan="' + n + '" title="' + esc(words) + '"><div style="width:0;min-width:100%;overflow:hidden;text-overflow:ellipsis">' + esc(words) + '</div></td></tr>';
+  }
+  function cmExact(j, r, c) { return !!(j.exact && j.exact[r] && j.exact[r][c]); }
+  function cmNear(j, r, c) { return (j.nearest && j.nearest[r] && j.nearest[r][c]) || null; }
+  function cmBottom(x) {                // the bottom line here: the MODEL price (no last trade, OI or volume at a fixed horizon)
+    return x && (TILE.b === 'last' || TILE.b === 'price') ? esc(money(x.price)) : '';
+  }
+  function cmView(j) {
+    var n = (j.horizons || []).length, nr = (j.strikes || []).length;
+    if (!cleanOn()) return fullView(nr, n);
+    // a horizon fewer than half of the strikes reach goes first (else rule (2) would empty the grid)
+    var thin = allIdx(n).map(function (c) {
+      var got = allIdx(nr).filter(function (r) { return j.cells[r][c] != null; }).length;
+      return got * 2 < nr;
+    });
+    return tidy(j.cells || [], n, thin);
+  }
+  function renderCm(j) {
+    var hz = j.horizons || [], vw = cmView(j);
+    var h = '<thead><tr><th class="vol-sticky vol-corner">Strike \\ Horizon</th>';
+    vw.cols.forEach(function (c) {
+      h += '<th title="' + esc('A fixed ' + hz[c].days + ' days out (' + hz[c].years + ' years), worked out from the listed expiries around it') +
+           '">' + hz[c].days + 'd</th>';
+    });
+    h += '</tr></thead><tbody>';
+    var spotDone = false;
+    vw.rows.forEach(function (r) {
+      var k = j.strikes[r];
+      if (!spotDone && r >= j.spot_row) { h += cmSpotRow(j, vw.cols.length); spotDone = true; }
+      h += '<tr><th class="vol-sticky vol-k">' + esc(strikeText(k)) + '</th>';
+      var kind = sideOf(j, k) === 'C' ? 'call' : 'put';
+      vw.cols.forEach(function (c) {
+        var v = j.cells[r][c];
+        if (v == null) { h += '<td></td>'; return; }
+        var x = extraAt(j, r, c), n = cmNear(j, r, c), ex = cmExact(j, r, c);
+        var tip = j.symbol + ' ' + strikeText(k) + ' ' + kind + ', ' + hz[c].days + ' days - click: ' +
+                  (ex ? 'contract history of the listed expiry on this horizon' : 'contract history of the nearer listed expiry') +
+                  (n ? ' (' + n.date + ')' : '') + ' in a new window';
+        h += '<td class="vol-cell" data-r="' + r + '" data-c="' + c + '" title="' + esc(tip) + '">' +
+             (ex ? '<span class="vol-x" title="a listed expiry falls on this horizon - this is that contract\'s own IV">=</span>' : '') +
+             '<div class="vol-l2">' + tileTop(x) + '</div><div class="vol-iv">' + num(v, 1) + '</div>' +
+             '<div class="vol-l3">' + cmBottom(x) + '</div></td>';
+      });
+      h += '</tr>';
+    });
+    if (!spotDone) h += cmSpotRow(j, vw.cols.length);
+    $('cmTable').innerHTML = h + '</tbody>';
+    var src = j.source === 'latest' ? 'the latest market pass (session ' + esc(j.on) + ')' : 'the close of ' + esc(j.on);
+    var nx = j.n_expiries_used || 0;
+    $('cmInfo').title = j.method || '';
+    $('cmInfo').innerHTML = '<b class="text-slate-200">' + esc(j.symbol) + '</b>' + (j.name ? ' - ' + esc(j.name) : '') +
+      ' &middot; derived from ' + intText(nx) + ' listed ' + (nx === 1 ? 'expiry' : 'expiries') + ' on ' + src +
+      ' &middot; linear in total variance &middot; legs at least 7 days out &middot; price ' + esc(num(j.spot, 2)) +
+      (j.has_greeks === false ? ' &middot; no greeks or prices on a past day (the latest pass only)' : '') +
+      tidyNote(vw, 'horizon', 'horizons');
+    show($('cmInfoRow'), true); show($('cmWrap'), true); legends();
+    tileNote(activeLast());
+  }
+  function cmPopHtml(j, r, c) {
+    var k = j.strikes[r], hz = j.horizons[c], v = j.cells[r][c], b = j.brackets && j.brackets[r] ? j.brackets[r][c] : null;
+    var n = cmNear(j, r, c), right = sideOf(j, k) === 'C' ? 'call' : 'put';
+    var side = j.side === 'mid' ? 'call + put average' : right;
+    var h = '<div><b>' + esc(j.symbol + ' ' + strikeText(k) + ' ' + side + ', fixed ' + hz.days + ' days') + '</b></div>';
+    if (cmExact(j, r, c) && n) {
+      h += '<div class="vol-pop-work">A listed expiry (' + shortDate(n.date) + ') falls on ' + hz.days + 'd - its own IV: <b>' +
+           num(v, 1) + '</b></div>';
+    } else if (b) {
+      h += '<div class="vol-pop-work">' + hz.days + 'd at strike ' + esc(strikeText(k)) + ': between ' + shortDate(b.lo.date) +
+           ' (' + b.lo.dte + 'd) ' + num(b.lo.iv, 1) + ' and ' + shortDate(b.hi.date) + ' (' + b.hi.dte + 'd) ' + num(b.hi.iv, 1) +
+           ', weighted by time (linear in total variance) = <b>' + num(v, 1) + '</b></div>' +
+           '<div class="vol-cap">' + Math.round(b.w * 100) + '% of the weight on ' + shortDate(b.lo.date) + ', ' +
+           Math.round((1 - b.w) * 100) + '% on ' + shortDate(b.hi.date) + ': the closer expiry counts more.</div>';
+    }
+    var x = extraAt(j, r, c);
+    if (x) {
+      var rows = [];
+      GREEKS.forEach(function (g) { if (x[g[0]] != null) rows.push([g[2], num(x[g[0]], g[3])]); });
+      if (rows.length) {
+        h += '<div class="vol-pop-figs">' + rows.map(function (q) {
+          return '<div><span>' + esc(q[0]) + '</span><b>' + esc(q[1]) + '</b></div>';
+        }).join('') + '</div>';
+        if (b) h += '<div class="vol-cap">The greeks are the two expiries\' greeks, weighted by time.</div>';
+      }
+      if (x.price != null) {
+        h += '<div class="vol-pop-row"><span>model price</span><b>' + esc(money(x.price)) + '</b></div>' +
+             '<div class="vol-cap">Black-Scholes at this IV, ' + hz.days + ' days, no dividend - a fixed horizon has no last trade.</div>';
+      }
+    } else if (j.has_greeks === false) {
+      h += '<div class="vol-cap">Greeks and prices are on the latest pass only.</div>';
+    }
+    if (n) {
+      h += '<div class="vol-cap">Click: contract history of ' + (cmExact(j, r, c) ? 'this contract' : 'the nearer listed expiry') +
+           ', ' + shortDate(n.date) + ' ' + esc(strikeText(k)) + ' ' + right + ', in a new window.</div>';
+    }
+    return h;
+  }
+  function placePop(pop, ev) {
+    var pw = pop.offsetWidth || 320, ph = pop.offsetHeight || 200;
+    var x = ev.clientX + 14, y = ev.clientY + 14;
+    if (x + pw > window.innerWidth - 8) x = ev.clientX - pw - 14;
+    if (y + ph > window.innerHeight - 8) y = ev.clientY - ph - 14;
+    pop.style.left = Math.max(4, x) + 'px';
+    pop.style.top = Math.max(4, y) + 'px';
+  }
+  function showCmPop(td, ev) {
+    var j = CM.last, pop = $('cmPop');
+    if (!j) return;
+    pop.innerHTML = cmPopHtml(j, +td.dataset.r, +td.dataset.c);
+    pop.classList.remove('hidden');
+    placePop(pop, ev);
+  }
+  function hideCmPop() { $('cmPop').classList.add('hidden'); }
+  function runCm(quiet) {
+    var sym = $('volSym').value.trim().toUpperCase();
+    $('volSym').value = sym;
+    if (!sym) { msg($('cmMsg'), 'Type an underlying symbol, for example AAPL.'); return; }
+    var q = cmParams(sym);
+    CM.want = q.toString();
+    V.reqSym = sym;
+    wlMark(sym);
+    if (!hzChosen().length) {
+      CM.seq++; CM.last = null; syncTick();
+      show($('cmWrap'), false); show($('cmInfoRow'), false); legends();
+      msg($('cmMsg'), 'Tick at least one horizon in the left panel (30 to 365 days).');
+      return;
+    }
+    var my = ++CM.seq, sc = quiet && CM.last ? {t: $('cmWrap').scrollTop, l: $('cmWrap').scrollLeft} : null;
+    CM.quiet = !!sc;
+    if (!CM.quiet) msg($('cmMsg'), 'Working out the ' + sym + ' surface at fixed horizons...');
+    getJSON('/options/api/surface/cm?' + q.toString()).then(function (j) {
+      if (my !== CM.seq) return;
+      if (!j || !j.ok) {
+        if (CM.quiet) { V.refreshFailed = (j && j.error) || 'no answer'; paintTick(); return; }
+        CM.last = null; syncTick();
+        show($('cmWrap'), false); show($('cmInfoRow'), false); legends();
+        msg($('cmMsg'), (j && j.error) ? ('No interpolated surface: ' + j.error + '.') : 'The interpolated surface could not be built.');
+        return;
+      }
+      CM.last = j; V.refreshFailed = null;
+      var st = T.st || (window.optGetStatus ? window.optGetStatus() : null);   // the pass this grid came from
+      CM.passId = st && st.last_pass && st.last_pass.id != null ? st.last_pass.id : CM.passId;
+      msg($('cmMsg'), '');
+      renderCm(j);
+      if (sc) { $('cmWrap').scrollTop = sc.t; $('cmWrap').scrollLeft = sc.l; }
+      syncTick();
+    }).catch(function () {
+      if (my !== CM.seq) return;
+      if (CM.quiet) { V.refreshFailed = 'no answer'; paintTick(); }
+      else msg($('cmMsg'), 'The server did not answer. Try again in a minute.');
+    }).then(function () { if (my === CM.seq) CM.quiet = false; });
+  }
+  function passNow() {
+    var st = T.st || (window.optGetStatus ? window.optGetStatus() : null);
+    return st && st.last_pass && st.last_pass.id != null ? st.last_pass.id : null;
+  }
+  function drawIfStale() {              // the tab just opened: draw it when its last answer is for other settings
+    var sym = $('volSym').value.trim().toUpperCase(), pid = passNow();
+    if (!sym) {
+      msg(TAB === 'cm' ? $('cmMsg') : $('volMsg'), 'Type an underlying symbol and press Enter, for example AAPL.');
+      return;
+    }
+    var S = TAB === 'cm' ? CM : V, want = (TAB === 'cm' ? cmParams(sym) : surfaceParams(sym)).toString();
+    var older = !!(S.last && S.last.source === 'latest' && pid != null && pid !== S.passId);
+    if (S.want !== want || older) runSurface();
+  }
+  function tabSet(t, draw) {
+    TAB = t === 'cm' ? 'cm' : 'surface';
+    lsSet(TAB_KEY, TAB);
+    [['surface', 'volTabSurface', 'volPanelSurface'], ['cm', 'volTabCm', 'volPanelCm']].forEach(function (p) {
+      var on = p[0] === TAB;
+      $(p[1]).setAttribute('aria-selected', on ? 'true' : 'false');
+      $(p[1]).tabIndex = on ? 0 : -1;
+      show($(p[2]), on);
+    });
+    show($('volHz'), TAB === 'cm');
+    hidePop(); hideCmPop();
+    legends();
+    tileNote(activeLast());
+    if (draw) drawIfStale();
+    syncTick();
+  }
   if (MODE === 'surface') {
     $('volForm').addEventListener('submit', function (e) { e.preventDefault(); runSurface(); });
     $('volSym').addEventListener('keydown', function (e) {      // Enter: (re)draw - also for the same ticker
@@ -980,6 +1327,52 @@
     // v4.160: the Show / Strikes / Expiries / Common-strikes controls are back - a change redraws
     ['volSide', 'volBand', 'volDte', 'volExp', 'volCommon'].forEach(function (id) {
       $(id).addEventListener('change', function () { if ($('volSym').value.trim()) runSurface(); });
+    });
+    // v4.171: the tabs (click, or the arrow keys on a tab), the horizons (redraw the interpolated tab), and
+    // "Hide new and thinly listed" (a repaint of both tabs from the answers on hand - no new request)
+    Array.prototype.forEach.call(document.querySelectorAll('#volTabs [data-vtab]'), function (b) {
+      b.addEventListener('click', function () { if (b.dataset.vtab !== TAB) tabSet(b.dataset.vtab, true); });
+      b.addEventListener('keydown', function (e) {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        e.preventDefault();
+        tabSet(TAB === 'cm' ? 'surface' : 'cm', true);
+        $(TAB === 'cm' ? 'volTabCm' : 'volTabSurface').focus();
+      });
+    });
+    hzLoad();
+    $('volHz').addEventListener('change', function () {
+      lsSet(HZ_KEY, hzChosen().join(','));
+      if (TAB === 'cm' && $('volSym').value.trim()) runSurface();
+    });
+    if (lsGet(CLEAN_KEY) === '0') $('volClean').checked = false;
+    $('volClean').addEventListener('change', function () {
+      lsSet(CLEAN_KEY, cleanOn() ? '1' : '0');
+      hidePop(); hideCmPop();
+      if (V.last) renderSurface(V.last);
+      if (CM.last) renderCm(CM.last);
+    });
+    $('cmTable').addEventListener('mouseover', function (e) {
+      var td = e.target.closest ? e.target.closest('td.vol-cell') : null;
+      if (!td) { hideCmPop(); return; }
+      showCmPop(td, e);
+    });
+    $('cmTable').addEventListener('mousemove', function (e) {
+      var td = e.target.closest ? e.target.closest('td.vol-cell') : null;
+      if (td && !$('cmPop').classList.contains('hidden')) showCmPop(td, e);
+    });
+    $('cmTable').addEventListener('mouseleave', hideCmPop);
+    $('cmWrap').addEventListener('scroll', hideCmPop);
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') hideCmPop(); });
+    // a cell -> the contract history of the NEARER bracketing expiry (an exact cell: its own contract), same strike
+    $('cmTable').addEventListener('click', function (e) {
+      var td = e.target.closest ? e.target.closest('td.vol-cell') : null;
+      var j = CM.last;
+      if (!td || !j) return;
+      hideCmPop();
+      var r = +td.dataset.r, c = +td.dataset.c, k = j.strikes[r], nearest = cmNear(j, r, c);
+      if (!nearest) return;
+      var day = j.source === 'latest' ? ((H.days && H.days.length) ? H.days[0] : null) : j.on;
+      openContract(j.symbol, nearest.date, sideOf(j, k), k, day);
     });
     // v4.166: the Tile block - load the remembered choice, repaint the grid on screen on a change
     tileLoad(); tileFormSet();
@@ -1286,6 +1679,10 @@
     // v4.154: /options?symbol=NVDA#surface - opened from the Watchlist's "Vol surface" button in a
     // new window: the symbol is filled in and the surface drawn without typing anything. v4.159:
     // the surface is the whole page, so it loads on open (no tab to pick).
+    // v4.171: ?tab=cm opens the Interpolated Volatility Surface; else the tab last used in this browser
+    var tabWant = '';
+    try { tabWant = (new URLSearchParams(location.search).get('tab') || '').trim().toLowerCase(); } catch (err) { tabWant = ''; }
+    tabSet(tabWant === 'cm' || tabWant === 'surface' ? tabWant : (lsGet(TAB_KEY) === 'cm' ? 'cm' : 'surface'), false);
     var want = '';
     try { want = (new URLSearchParams(location.search).get('symbol') || '').trim().toUpperCase(); } catch (err) { want = ''; }
     if (want && /^[A-Z0-9.\-]{1,12}$/.test(want)) {
@@ -1294,6 +1691,7 @@
     } else {
       loadDays();
       msg($('volMsg'), 'Type an underlying symbol and press Enter, for example AAPL.');
+      msg($('cmMsg'), 'Type an underlying symbol and press Enter, for example AAPL.');
       $('volSym').focus();
     }
   }

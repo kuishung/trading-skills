@@ -1701,6 +1701,26 @@ async def api_surface_history(symbol: str = "", day: str = "latest", side: str =
                                                 expiries=exp or None, common=_flag(common)))
 
 
+@router.get("/api/surface/cm")
+async def api_surface_cm(symbol: str = "", day: str = "latest", side: str = "", band: str = "", exp: str = "",
+                         common: str = "1", horizons: str = "", user: User = Depends(require_user)):
+    """The INTERPOLATED volatility surface (v4.171): the same rows re-cut on fixed horizons
+    (``horizons=30,60,90``; default 30 / 60 / 90 / 180 / 270 / 365 days) - each cell the IV
+    interpolated linearly in total variance between the two listed expiries around the horizon (legs
+    at least 7 days out, no extrapolation), with ``exact`` / ``brackets`` / ``nearest`` / ``extra``
+    beside ``cells`` (``vol_cm.interpolate``). Every listed expiry is read (no ``dte`` cap). A bad
+    ``horizons`` value is a 400 ``{ok: false, error}``."""
+    from ..services import vol_cm
+
+    try:
+        hs = vol_cm.norm_horizons(horizons or None)
+    except ValueError as exc:
+        return _err(str(exc))
+    return JSONResponse(await run_in_threadpool(_hist_call, vol_cm.surface_cm, symbol, day or "latest",
+                                                side=side or None, band=band or None, expiries=exp or None,
+                                                common=_flag(common), horizons=hs))
+
+
 @router.get("/api/history/chain")
 async def api_history_chain(symbol: str = "", day: str = "", user: User = Depends(require_user)):
     """The contracts of ``symbol`` that traded on ``day`` (the contract pickers)."""

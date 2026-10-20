@@ -12,6 +12,7 @@ import datetime as _dt
 import importlib
 import importlib.util
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -206,7 +207,9 @@ def test_the_page_is_the_volatility_surface_only(client, fake, monkeypatch):
     for needle in ('id="volPanelSurface"', 'id="volForm"', 'id="volSym"', 'id="volDay"', 'id="volTable"',
                    'id="volPop"', ">Volatility surface</h1>"):
         assert needle in html, needle
-    for gone in ('id="scrGoto"', 'class="scr-tab"', "data-tab=", 'role="tablist"', 'id="scrPanelFilters"',
+    # v4.171: the one tab list is the surface's own (Volatility Surface / Interpolated) - no screener tabs
+    assert html.count('role="tablist"') == 1 and 'id="volTabs" class="vol-tabs shrink-0" role="tablist"' in html
+    for gone in ('id="scrGoto"', 'class="scr-tab"', "data-tab=", 'id="scrPanelFilters"',
                  'id="scrPanelResults"', 'id="scrNf"', 'id="scrNr"', "Set filters", "Add a filter", "See results",
                  'id="volPanelHistory"', 'id="chForm"', "<optgroup", "optShowTab", 'id="scrEngineErr"',
                  # the old blank page and the v2 page are gone too
@@ -1157,6 +1160,7 @@ def test_the_router_serves_the_screener_paths():
         ("/options/api/saved/{sid}/delete", ("POST",)),
         ("/options/api/surface", ("GET",)),                 # v4.139: the volatility surface
         ("/options/api/surface/history", ("GET",)),         # v4.141: each cell's own history behind it
+        ("/options/api/surface/cm", ("GET",)),              # v4.171: the interpolated (fixed-horizon) surface
         ("/options/api/history/days", ("GET",)),            # v4.139: the contract history
         ("/options/api/history/chain", ("GET",)),
         ("/options/api/history/contract", ("GET",)),
@@ -1395,7 +1399,12 @@ def test_every_surface_helper_the_page_calls_is_defined():
     script = html[html.index("VOLATILITY SURFACE"):]
     for name in ("sideOf", "rankHue", "rankColor", "rankText", "rankBar", "cellStyle", "sameGrid",
                  "paintHistory", "loadHistory", "spotRow", "renderSurface", "popoverHtml", "sparkline",
-                 "showPop", "hidePop", "runSurface", "openContract", "strikeText", "dayNum"):
+                 "showPop", "hidePop", "runSurface", "openContract", "strikeText", "dayNum",
+                 # v4.171: the tabs, the interpolated surface, the tidy-up
+                 "activeLast", "tabSet", "drawIfStale", "syncTick", "legends", "runCm", "renderCm", "cmView",
+                 "cmPopHtml", "showCmPop", "hideCmPop", "cmBottom", "cmNear", "cmExact", "placePop", "hzChosen",
+                 "hzLoad", "surfaceParams", "cmParams", "passNow", "cleanOn", "tidy", "fullView", "allIdx",
+                 "youngCols", "youngKey", "surfaceView", "tidyNote", "cmSpotRow"):
         assert re.search("(?<![A-Za-z0-9_])" + name + "[(]", script), f"{name} is never called - update this list"
         assert html.count(f"function {name}(") == 1, f"{name} must be defined exactly once"
 
@@ -1549,3 +1558,128 @@ def test_the_left_panel_has_the_watchlist_on_top_and_an_adjustable_split(client,
     # the split keeps the controls in reach: top pane at least 6rem, at most the panel less 14rem
     assert "6 * r" in html and "h - 14 * r" in html
     assert "height: var(--vol-wl-h, 45%)" in html and ".vol-wlpane { flex: none; height: 12rem; }" in html
+
+
+# ─────────────────── v4.171: the INTERPOLATED VOLATILITY SURFACE tab + "Hide new and thinly listed" ───────────────────
+
+def _seed_cm(screener_db):
+    from app.screener_models import ScrContract, ScrUnderlying
+
+    asof = _dt.datetime(2026, 10, 7, 19, 30)
+    with screener_db.session() as s:
+        s.add(ScrUnderlying(symbol="AAPL", name="Apple", sec_type="stock", spot=100.0, history_done=False,
+                            history_tries=0))
+        for exp, iv in (("2026-11-20", 0.34), ("2026-12-18", 0.32)):          # 44 and 72 days out
+            for k in (90.0, 100.0, 110.0):
+                for rt in "CP":
+                    s.add(ScrContract(symbol="AAPL", expiry=exp, right=rt, strike=k, weekly=False, iv=iv,
+                                      session="2026-10-07", as_of=asof, delta=(0.45 if rt == "C" else -0.55),
+                                      gamma=0.02, theta=-0.03, vega=0.1, last=2.5, oi=100, volume=5))
+        s.commit()
+
+
+def test_the_interpolated_surface_api(client, fake, screener_url):
+    """GET /options/api/surface/cm: the same rows on fixed horizons (default 30 ... 365 days; ``horizons=``
+    picks), each cell interpolated in total variance between the two listed expiries around it."""
+    from app import screener_db
+
+    _seed_cm(screener_db)
+    j = client.get("/options/api/surface/cm", params={"symbol": "aapl"}).json()
+    assert j["ok"] is True and j["symbol"] == "AAPL" and j["source"] == "latest" and j["has_greeks"] is True
+    assert [h["days"] for h in j["horizons"]] == [30, 60, 90, 180, 270, 365]
+    assert j["horizons_requested"] == [30, 60, 90, 180, 270, 365]
+    assert j["strikes"] == [90.0, 100.0, 110.0] and j["spot_row"] == 1 and j["n_expiries_used"] == 2
+    T1, T2, T = 44 / 365, 72 / 365, 60 / 365
+    w = (T2 - T) / (T2 - T1)
+    want = math.sqrt((0.34 ** 2 * T1 * w + 0.32 ** 2 * T2 * (1 - w)) / T) * 100
+    for row in j["cells"]:
+        assert row[0] is None and row[2] is None and row[5] is None        # nothing extrapolated
+        assert row[1] == pytest.approx(want, abs=1e-9)
+    b = j["brackets"][0][1]
+    assert b["lo"]["date"] == "2026-11-20" and b["hi"]["date"] == "2026-12-18" and b["w"] == pytest.approx(w)
+    assert j["nearest"][0][1] == {"date": "2026-12-18", "dte": 72}       # 12 days from 72, 16 from 44
+    assert j["exact"][0] == [False] * 6
+    x = j["extra"][0][1]
+    assert set(x) == {"d", "g", "t", "v", "price"} and x["d"] == pytest.approx(-0.55) and x["price"] > 0
+    assert "linear in total variance" in j["method"]
+    one = client.get("/options/api/surface/cm", params={"symbol": "AAPL", "horizons": "60, 60"}).json()
+    assert one["ok"] is True and [h["days"] for h in one["horizons"]] == [60]
+    for bad in ("abc", "0", "-30", "12.5", "60,x"):
+        r = client.get("/options/api/surface/cm", params={"symbol": "AAPL", "horizons": bad})
+        assert r.status_code == 400 and r.json()["ok"] is False and "horizon" in r.json()["error"], bad
+    none = client.get("/options/api/surface/cm", params={"symbol": "AAPL", "horizons": "30,365"}).json()
+    assert none["ok"] is False and "bracket" in none["error"]
+    assert client.get("/options/api/surface/cm", params={"symbol": "NOPE"}).json()["ok"] is False
+    j = client.get("/options/api/surface/cm", params={"symbol": "AAPL", "day": "2026-10-02"}).json()
+    assert j["ok"] is False and "contract history" in j["error"]
+
+
+def test_the_page_has_the_two_tabs_and_the_horizons(client, fake):
+    """v4.171 (user: "put the current Vol Surface into a tab called Volatility Surface ... duplicate it into a
+    new tab called Interpolated Volatility Surface. Both surfaces will reuse the left hand panel"): two tabs
+    over the right panel (remembered in th.vol.tab, ?tab=cm), the Horizons checkboxes in the shared left
+    panel (all six ticked, th.vol.horizons, shown on the interpolated tab only), the interpolated grid's own
+    ids, the exact mark, and a click on a cell opening the NEARER bracketing contract."""
+    html = client.get("/options", params={"tab": "cm"}).text
+    for needle in ('id="volTabSurface" role="tab" data-vtab="surface" aria-selected="true"',
+                   'id="volTabCm" role="tab" data-vtab="cm" aria-selected="false"',
+                   ">Volatility Surface</button>", ">Interpolated Volatility Surface</button>",
+                   'id="volPanelCm"', 'id="cmInfoRow"', 'id="cmInfo"', 'id="cmMsg"', 'id="cmWrap"', 'id="cmTable"',
+                   'id="cmPop"', 'id="cmLegend"', 'id="volHz"', "'th.vol.tab'", "'th.vol.horizons'",
+                   "get('tab')", "'/options/api/surface/cm?' + q.toString()",
+                   "if (TAB === 'cm') { runCm(quiet); return; }",
+                   "show($('volHz'), TAB === 'cm');",
+                   "a listed expiry falls on this horizon - this is that contract\\'s own IV",
+                   "openContract(j.symbol, nearest.date, sideOf(j, k), k, day)",
+                   "weighted by time (linear in total variance) = <b>", "') falls on ' + hz.days + 'd - its own IV",
+                   "model price",
+                   "'d</th>'", "linear in total variance &middot; legs at least 7 days out",
+                   "Tick at least one horizon"):
+        assert needle in html, needle
+    for h in (30, 60, 90, 180, 270, 365):
+        assert 'id="volHz%d" data-h="%d" checked' % (h, h) in html, h
+    # the horizons sit in the controls form; the tabs sit over the right panel, before both panels
+    form = html[html.index('id="volForm"'):html.index('id="volGo"')]
+    assert 'id="volHz"' in form
+    order = [html.index(x) for x in ('id="volTabs"', 'id="volPanelSurface"', 'id="volPanelCm"')]
+    assert order == sorted(order)
+    assert '<section id="volPanelCm" class="hidden' in html
+    # the interpolated tiles: the bottom line is the MODEL price (last / OI / volume do not exist at a horizon)
+    cmb = html[html.index("function cmBottom("):html.index("function cmView(")]
+    assert "TILE.b === 'last' || TILE.b === 'price'" in cmb and "x.price" in cmb
+    # no colour and no rank bar on the interpolated grid
+    rcm = html[html.index("function renderCm("):html.index("function cmPopHtml(")]
+    assert "rankColor" not in rcm and "rankBar" not in rcm and "cellStyle" not in rcm and "cmSpotRow(j" in rcm
+    assert 'class="vol-x"' in rcm and ".vol-grid .vol-x { position: absolute;" in html
+    assert "'<div class=\"vol-l2\">' + tileTop(x) + '</div><div class=\"vol-iv\">'" in rcm
+    # a tab switch draws the newly shown tab only when its last answer is for other settings / an older pass
+    stale = html[html.index("function drawIfStale("):html.index("function tabSet(")]
+    assert "S.want !== want || older" in stale
+    # the tiles repaint both grids
+    paint = html[html.index("function paintTiles("):html.index("function figsHtml(")]
+    assert "'#cmTable'" in paint and "getJSON" not in paint
+
+
+def test_the_hide_new_and_thinly_listed_tick(client, fake):
+    """v4.171 (user, on SNDK): "Hide new and thinly listed contracts" under Common strikes, on by default,
+    remembered in th.vol.clean: an expiry whose cells mostly have under 10 days of history is left out (once
+    the history is in), then every strike with a gap; the info row says how many; the tick repaints both
+    tabs from the answers on hand."""
+    html = client.get("/options").text
+    assert '<input type="checkbox" id="volClean" checked> Hide new and thinly listed contracts' in html
+    assert ("Leaves out expiries listed less than 10 days ago, which have no history to colour yet, and strikes "
+            "that only some expiries carry. The grid then shows no grey cells and no gaps. Untick to see everything.") in html
+    form = html[html.index('id="volForm"'):html.index('id="volGo"')]
+    assert form.index('id="volCommon"') < form.index('id="volClean"') < form.index('id="volHz"')
+    assert "'th.vol.clean'" in html and "var MIN_HIST = 10;" in html
+    young = html[html.index("function youngCols("):html.index("function surfaceView(")]
+    assert "s.n >= MIN_HIST" in young and "old * 2 < n" in young and "sameGrid(j, hs)" in young
+    td = html[html.index("function tidy("):html.index("function fullView(")]
+    assert "cols.every(function (c) { return cells[r][c] != null; })" in td
+    assert "' hidden by the tick'" in html and "tidyNote(vw, 'expiry', 'expiries')" in html
+    assert "tidyNote(vw, 'horizon', 'horizons')" in html
+    # the history's arrival redraws the tidy grid; the tick repaints without a request
+    assert "if (cleanOn()) renderSurface(j); else paintHistory(j, h);" in html
+    tick = html[html.index("$('volClean').addEventListener('change'"):]
+    tick = tick[:tick.index("});") + 3]
+    assert "renderSurface(V.last)" in tick and "renderCm(CM.last)" in tick and "getJSON" not in tick
