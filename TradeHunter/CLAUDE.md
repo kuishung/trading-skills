@@ -645,6 +645,29 @@ it — memory files don't sync across PCs.
 platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
 `dashboard_tst/DEPLOY.md`. Key facts (so any session/PC recalls them):
 
+- **Option CALCULATOR + setup pairing — BUILT v4.150-4.157 (2026-10-17/19):
+  `dashboard_tst/OPTION_CALCULATOR_DESIGN.md` is the contract** (§10 = where everything lives;
+  `design/option_calculator_flow.svg` = the flow the user checked). Born from the user's Excel strategy
+  calculator (`strategies-reference/OPTION_PRICING_CALCULATOR.md`, its flaws PARKED at the user's
+  request). Three steps, one engine: (1) `app/services/option_calc.py` = the sheet's math as
+  `evaluate(legs, scenario)`, proven against the workbook; (2) the **Calculator page `/calc`**
+  (nav: Options ▾ → Calculator) - the **Sheet view** is the default: the Excel layout where **each leg
+  is picked by clicking a cell of the volatility surface** (click = buy, again = sell, again = remove),
+  recomputed at once via `POST /calc/api/preview`; "Setups" keeps saved setups that the **Hermes lane
+  `TST-Option-Calc`** (`deploy/option_calc_worker.py`, `deploy/setup_option_calc_task.ps1`, DEPLOY.md
+  section I, a tray line + Settings → Data Ingest card) recomputes after every Massive pass; (3)
+  **setup pairing** (`calc_pair.py`): the member types ONLY an expected price and a worst-case price
+  (decision 6), the direction picks the strategy families, horizons = the first monthlies (or the
+  member's days), the window = the two prices ± one expected move, every leg set scored with numpy,
+  filtered by the member's criteria (defaults in `User.prefs`), ranked. Earnings inside a horizon FLAG
+  a result, never empty it (v4.157). Range trades (two worst prices), IV shift and chart-drawn levels
+  are the open next steps. **Subagents for this work ran on Opus at the user's request (2026-10-17).**
+- **Options page = the Volatility surface ONLY since v4.159 (2026-10-20, user: "We only have the
+  Volatility Surface")**: nav Options ▾ → **Volatility Surface** (`/options`) + Calculator. A surface
+  cell click opens `/options/history?symbol=&expiry=&right=&strike=&day=` (the contract's daily bars +
+  IV) in a new window. The Set filters / Results tabs and the Go-to picker are gone from the page; the
+  screener ENGINE, `/options/api/*`, saved screeners, the collectors and the Parquet lane stay (the
+  surface reads from them). The bullet below describes the engine; its page parts are history.
 - **Options SCREENER — BUILT in v4.136 (2026-10-10): `dashboard_tst/OPTIONS_SCREENER_DESIGN.md`
   is the contract.** The user asked for *"exactly"* Barchart's options screener
   (barchart.com/options/options-screener) with each member's own settings: `/options` is now a
@@ -833,18 +856,18 @@ but always hand over the full ordered script above unless the user says
 otherwise. (The autopull task also pulls + restarts every ~5 min once
 installed.)
 
-## Subagents run on Sonnet (user rule, set 2026-10-12)
+## Subagents run on Opus (user rule, set 2026-10-20; supersedes the Sonnet rule of 2026-10-12)
 
-The user: *"ok set those sub agent works to Sonnet ... remember it and put into your memory"*.
-**Every subagent / helper agent / workflow agent runs on Sonnet by default** (cheaper than the
-main conversation's model): pass `model: "sonnet"` on Agent-tool calls and `{model: 'sonnet'}` on
-workflow `agent()` calls (or set the phase's `model`), unless the user asks for another model for
-that task. Use a stronger model (Opus / Fable) only when the user explicitly asks for it (e.g. for
-hard build or review work); Haiku is fine for plain search / doc lookup if the user agrees.
+The user, 2026-10-17: *"subagent use opus"*; 2026-10-20: *"for all subagent work you will use opus"*.
+**Every subagent / helper agent / workflow agent runs on Opus**: pass `model: "opus"` on Agent-tool
+calls and `{model: 'opus'}` on workflow `agent()` calls (or set the phase's `model`). The earlier
+Sonnet default (2026-10-12, set to cut the cost of the big workflows) is withdrawn. Use a different
+model only when the user asks for it on a task (Fable for the hardest review work; Haiku only for
+plain lookups with their agreement).
 - Per-PC default: `C:\Users\kswong\.claude\settings.json` -> `"env": { "CLAUDE_CODE_SUBAGENT_MODEL":
-  "sonnet" }` (set on the laptop 2026-10-12; this file does NOT sync - add the same block on each
-  other PC). Not forced (`CLAUDE_CODE_SUBAGENT_MODEL_FORCE` unset), so an explicit model still wins.
-- This CLAUDE.md note is the cross-PC copy: on a PC without the env var, still pass Sonnet explicitly.
+  "opus" }` (set on the laptop 2026-10-20; this file does NOT sync - set the same on each other PC).
+  Not forced (`CLAUDE_CODE_SUBAGENT_MODEL_FORCE` unset), so an explicit model still wins.
+- This CLAUDE.md note is the cross-PC copy: on a PC without the env var, still pass Opus explicitly.
 
 ## What NOT to do
 
