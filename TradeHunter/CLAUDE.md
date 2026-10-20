@@ -812,7 +812,9 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
   invisible-until-hover scrollbar styling. Do not remove these `base.html`
   rules.
 
-**Post-push rule (user, set 2026-05-30; reinforced 2026-06-01 and 2026-08-15):**
+**Post-push rule (user, set 2026-05-30; reinforced 2026-06-01, 2026-08-15 and 2026-10-20 — *"always
+give me the script to update"*; a bare "give me the code" / "give me the powershell script" after a
+push means this script, in full):**
 EVERY time a push happens, ALSO give the user the **complete, in-order, copy-paste
 deploy script(s)** — the whole thing, every time, so they never have to reassemble
 it or trial-and-error it. **This includes bare "push" confirmations where the
