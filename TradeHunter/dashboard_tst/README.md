@@ -223,6 +223,12 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-20 - v4.163: Volatility surface - the panel and the table sit together in the middle of the screen
+
+The user: *"the panel and the table make it shown center screen"*. `options.html`: the two-panel row is
+centred on wide screens and the right panel takes only the table's width (it still scrolls inside when the
+table is wider than the space), so the control panel and the table appear as one centred block.
+
 ### 2026-10-20 - v4.162: Volatility surface - the controls in a left panel, the table in the right panel
 
 The user: *"the top dropdown boxes make it in the left panel and the table on the right panel"*. `options.html`:

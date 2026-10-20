@@ -186,7 +186,10 @@
   {# v4.162 (user: "the top dropdown boxes make it in the left panel and the table on the right
      panel"): a two-panel layout - the controls stacked in a LEFT panel (with the data dot and
      the legend), the surface filling the RIGHT panel. On a phone the panels stack. #}
-  <div class="flex flex-col lg:flex-row lg:items-stretch gap-3 min-h-0 flex-1">
+  {# v4.163 (user: "the panel and the table make it shown center screen"): the pair is centred
+     on wide screens - the right panel takes only the table's width (it still scrolls inside
+     when the table is wider than the space), so panel + table sit together in the middle #}
+  <div class="flex flex-col lg:flex-row lg:items-stretch lg:justify-center gap-3 min-h-0 flex-1">
   <aside class="vol-aside shrink-0 lg:w-56 flex flex-col gap-3 lg:overflow-y-auto lg:pr-1">
     <h1 class="text-sm font-medium text-slate-200 whitespace-nowrap">Volatility surface</h1>
     <form id="volForm" class="flex flex-col gap-2 text-xs" autocomplete="off">
@@ -253,7 +256,7 @@
     </div>
   </aside>
 
-  <div class="flex-1 min-w-0 flex flex-col gap-2 min-h-0">
+  <div class="min-w-0 flex-1 lg:flex-initial flex flex-col gap-2 min-h-0">
   {# a collector problem (rose error · amber stale / paused / warning · slate never reported) in a
      box members cannot miss - the same text the dot's tooltip carries #}
   {% set alert_cls = {'rose': 'scr-alert-rose', 'amber': 'border-amber-500/40 bg-amber-500/10 text-amber-300',
