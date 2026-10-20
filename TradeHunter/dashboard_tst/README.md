@@ -223,6 +223,15 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-21 - v4.177: Volatility surface - the grid's box is trimmed to the grid
+
+The user (on the Interpolated tab, the table centred inside a box as wide as the panel): *"if the edge of the
+table is showing blank, trim it"*. The bordered box around either surface grid (`.vol-wrap` in `options.html`)
+now shrinks to its table - `width: fit-content` capped at the panel, centred, and on a large screen its height
+is the table's rather than the rest of the page - so no blank margin shows inside the border. A grid wider or
+taller than the panel still scrolls inside the box with sticky headers, as before. Test in
+`tests/test_options_page.py`.
+
 ### 2026-10-21 - v4.176: Interpolated surface level bar; the countdown on the tab row; "did you mean" for a mistyped ticker
 
 - **The slim level bar** (user: *"in the interpolated Vol Surface i need the bottom progress bar indicator

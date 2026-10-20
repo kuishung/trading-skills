@@ -34,6 +34,10 @@
   @media (max-width: 1023px) { .scr-wrap { flex: none; max-height: 75vh; } }
   /* v4.159: the surface grid fills the screen - on a phone too (both ways scroll inside) */
   @media (max-width: 1023px) { .vol-wrap { height: calc(100dvh - 9rem); max-height: none; min-height: 18rem; } }
+  /* v4.177 (user: "if the edge of the table is showing blank, trim it"): the box is no wider or taller than
+     its table - it shrinks to the grid and sits in the middle; a grid bigger than the panel still scrolls inside */
+  .vol-wrap { width: fit-content; max-width: 100%; align-self: center; }
+  @media (min-width: 1024px) { .vol-wrap { flex: 0 1 auto; min-height: 0; } }
   .scr-table { border-collapse: separate; border-spacing: 0; }
   .scr-table thead th { position: sticky; top: 0; z-index: 2; background: var(--tv-panel);
                         border-bottom: 1px solid var(--tv-border-2); white-space: nowrap;

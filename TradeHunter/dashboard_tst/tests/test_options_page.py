@@ -1430,6 +1430,9 @@ def test_the_surface_opens_on_every_expiry_and_reads_the_atm_line_the_right_way(
                    "window.optPollNow", "next_pass_in_s", "stored day &middot; fixed",
                    "next pass: waiting for the collector", "market pass paused"):
         assert needle in html, needle
+    # v4.177 (user: "if the edge of the table is showing blank, trim it"): the box shrinks to its grid
+    assert ".vol-wrap { width: fit-content; max-width: 100%; align-self: center; }" in html
+    assert "@media (min-width: 1024px) { .vol-wrap { flex: 0 1 auto; min-height: 0; } }" in html
     # v4.176 (user: "this should be show on the tab header"): the countdown sits in the tab row, not the left panel
     tabs = html[html.index('<div id="volTabs"'):html.index('id="scrCollectorAlert"')]
     assert '<span id="volTick" class="vol-tick ml-auto hidden"></span>' in tabs
