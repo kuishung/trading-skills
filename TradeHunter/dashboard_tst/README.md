@@ -223,6 +223,13 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-20 - v4.162: Volatility surface - the controls in a left panel, the table in the right panel
+
+The user: *"the top dropdown boxes make it in the left panel and the table on the right panel"*. `options.html`:
+a two-panel layout - the heading, Ticker, Date, Show, Strikes, Expiries, Common strikes, the Show button, the
+data dot and the legend stacked in a narrow left panel; the surface (info line, messages, the grid) filling
+the right panel. On a phone the panels stack, controls first. Nothing else changes (cells, click, history).
+
 ### 2026-10-20 - v4.161: Volatility surface - the table is centred on the screen
 
 The user: *"the vol surface make the whole table center to the screen"*. `options.html`: `.vol-grid` gets

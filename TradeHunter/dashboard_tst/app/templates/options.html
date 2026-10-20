@@ -54,6 +54,9 @@
   .scr-admin { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
   /* v4.139: the volatility surface grid (strikes down, expiries across) and its form */
   .vol-f { display: flex; flex-direction: column; gap: .2rem; font-size: 11px; color: var(--tv-muted); }
+  /* v4.162: the controls stack in the left panel, each the panel's full width */
+  .vol-aside .vol-f select, .vol-aside .vol-f input { width: 100%; }
+  .vol-aside .scr-check { font-size: 11px; color: var(--tv-muted); display: flex; align-items: center; gap: .35rem; }
   /* v4.149: the countdown to the next market pass (Latest) / the fixed-day tag (a past date) */
   .vol-tick { display: inline-flex; flex-direction: column; gap: .25rem; min-width: 12rem; padding: .25rem .6rem;
               border: 1px solid var(--tv-border-2); border-radius: var(--tv-r-ctl); font-size: 11px;
@@ -180,15 +183,19 @@
      the money (puts below the price, calls above - also the right a click hands over), every
      strike (the API keeps the 400 nearest the price), every expiry, common strikes only. A change
      redraws at once; Show is for the keyboard-less case. #}
-  <div class="flex flex-wrap items-end gap-x-4 gap-y-2">
-    <h1 class="text-sm font-medium text-slate-200 self-center whitespace-nowrap">Volatility surface</h1>
-    <form id="volForm" class="flex flex-wrap items-end gap-x-3 gap-y-2 text-xs" autocomplete="off">
+  {# v4.162 (user: "the top dropdown boxes make it in the left panel and the table on the right
+     panel"): a two-panel layout - the controls stacked in a LEFT panel (with the data dot and
+     the legend), the surface filling the RIGHT panel. On a phone the panels stack. #}
+  <div class="flex flex-col lg:flex-row lg:items-stretch gap-3 min-h-0 flex-1">
+  <aside class="vol-aside shrink-0 lg:w-56 flex flex-col gap-3 lg:overflow-y-auto lg:pr-1">
+    <h1 class="text-sm font-medium text-slate-200 whitespace-nowrap">Volatility surface</h1>
+    <form id="volForm" class="flex flex-col gap-2 text-xs" autocomplete="off">
       <label class="vol-f">Ticker
-        <input id="volSym" type="text" maxlength="12" placeholder="AAPL" class="px-2 py-1 w-24 uppercase"
+        <input id="volSym" type="text" maxlength="12" placeholder="AAPL" class="px-2 py-1 w-full uppercase"
                title="Type a symbol and press Enter">
       </label>
       <label class="vol-f">Date
-        <select id="volDay" class="px-2 py-1 text-xs max-w-[12rem]"><option value="latest">Latest</option></select>
+        <select id="volDay" class="px-2 py-1 text-xs w-full"><option value="latest">Latest</option></select>
       </label>
       <label class="vol-f" title="Which option's implied volatility fills each cell - and which contract a click opens. Out of the money = puts below the price, calls above.">Show
         <select id="volSide" class="px-2 py-1 text-xs">
@@ -218,26 +225,35 @@
           <option value="monthly">monthly</option>
         </select>
       </label>
-      <label class="scr-check self-end pb-1" title="Hide the strikes that fewer than half of the expiries list. Untick to see every strike.">
+      <label class="scr-check" title="Hide the strikes that fewer than half of the expiries list. Untick to see every strike.">
         <input type="checkbox" id="volCommon" checked> Common strikes
       </label>
-      <button type="submit" id="volGo" class="scr-primary">Show</button>
+      <button type="submit" id="volGo" class="scr-primary w-full">Show</button>
     </form>
-    <div class="self-center sm:ml-auto flex items-center gap-3 min-w-0">
+    <div class="flex flex-wrap items-center gap-3 min-w-0">
       <span id="volTick" class="vol-tick hidden"></span>
       <button type="button" id="scrDataToggle" class="flex items-center gap-1.5 text-[11px] text-slate-500 hover:text-slate-300 transition"
               title="Data status - click for details" aria-expanded="false" aria-controls="scrData">
         <span id="scrDot" class="scr-dot scr-dot-{{ status.dot }}" title="{{ status.label }}"></span>data
       </button>
     </div>
-  </div>
+    {# the data line + the collector's status dot (dashboard-visibility rule); repainted every
+       15 s while there is no data / a pass or list read runs, else every 60 s #}
+    <div id="scrData" class="hidden text-[11px] text-slate-500 leading-snug rounded border border-slate-800 px-3 py-2">
+      <div id="scrDataLine" class="min-w-0 break-words">{{ status.line }}</div>
+      <div id="scrDataState" class="text-slate-500 break-words{% if status.dot != 'green' %} hidden{% endif %}">{{ status.label }}</div>
+    </div>
+    {# one short legend line; everything it used to explain lives in its tooltip #}
+    <div id="volLegend" class="hidden flex flex-wrap items-center gap-2 text-[11px] text-slate-500"
+         title="Each cell is one option's implied volatility, in percent - strikes down the side, expiries across the top (M = monthly); the line marks the stock price. Below the price each cell is the put, above it the call (out of the money). The colour is each contract against its own past year: green at its lowest IV, red at its highest; the slim bar at the bottom of a cell shows the same (grey = under 10 days of history). Hover a cell for its history; click: contract history in a new window. An empty cell means no contract there had a volatility.">
+      <span>IV vs own past year:</span>
+      <span>low</span><span class="vol-bar"></span><span>high</span>
+      <span>&middot; click a cell: contract history in a new window</span>
+      <span id="volHistMsg" class="text-slate-600"></span>
+    </div>
+  </aside>
 
-  {# the data line + the collector's status dot (dashboard-visibility rule); repainted every
-     15 s while there is no data / a pass or list read runs, else every 60 s #}
-  <div id="scrData" class="hidden text-[11px] text-slate-500 leading-snug rounded border border-slate-800 px-3 py-2">
-    <div id="scrDataLine" class="min-w-0 break-words">{{ status.line }}</div>
-    <div id="scrDataState" class="text-slate-500 break-words{% if status.dot != 'green' %} hidden{% endif %}">{{ status.label }}</div>
-  </div>
+  <div class="flex-1 min-w-0 flex flex-col gap-2 min-h-0">
   {# a collector problem (rose error · amber stale / paused / warning · slate never reported) in a
      box members cannot miss - the same text the dot's tooltip carries #}
   {% set alert_cls = {'rose': 'scr-alert-rose', 'amber': 'border-amber-500/40 bg-amber-500/10 text-amber-300',
@@ -267,16 +283,10 @@
     <div id="volWrap" class="hidden scr-wrap vol-wrap rounded-lg border border-slate-800 overflow-auto">
       <table id="volTable" class="vol-grid text-xs"></table>
     </div>
-    {# one short legend line; everything it used to explain lives in its tooltip #}
-    <div id="volLegend" class="hidden flex flex-wrap items-center gap-2 text-[11px] text-slate-500"
-         title="Each cell is one option's implied volatility, in percent - strikes down the side, expiries across the top (M = monthly); the line marks the stock price. Below the price each cell is the put, above it the call (out of the money). The colour is each contract against its own past year: green at its lowest IV, red at its highest; the slim bar at the bottom of a cell shows the same (grey = under 10 days of history). Hover a cell for its history; click: contract history in a new window. An empty cell means no contract there had a volatility.">
-      <span>IV vs own past year:</span>
-      <span>low</span><span class="vol-bar"></span><span>high</span>
-      <span>&middot; click a cell: contract history in a new window</span>
-      <span id="volHistMsg" class="text-slate-600"></span>
-    </div>
     <div id="volPop" class="vol-pop hidden" role="tooltip"></div>
   </section>
+  </div>{# /right panel #}
+  </div>{# /two panels #}
 
 {% endif %}
 </div>
