@@ -223,6 +223,15 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-20 - v4.160: Volatility surface - the Show / Strikes / Expiries / Common-strikes controls are back
+
+The user, after v4.159 removed them: *"i still want them"*. `options.html`: the four controls and the Show
+button return beside Ticker and Date, with v4.159's fixed values as their defaults (out of the money, every
+strike, every expiry, common strikes on); any change redraws at once. The Show choice also decides which
+contract a cell click opens (calls / puts; out of the money and the average follow the put-below /
+call-above rule). Everything else from v4.159 stands: the page is the surface alone, full screen, squarish
+centred cells, a cell click opens the contract history in a new window.
+
 ### 2026-10-20 - v4.159: Options page - the Volatility surface only; a cell click opens that contract's history in a new window
 
 The user: *"in the option page remove the Set filter, result and Contract History. We only have the Volatility

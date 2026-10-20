@@ -1365,15 +1365,15 @@ def test_the_surface_opens_on_every_expiry_and_reads_the_atm_line_the_right_way(
     (the strikes below the price: calls in the money, puts out); the countdown to the next market
     pass is wired to the status polls."""
     html = client.get("/options").text
-    # v4.159: the member picks only the ticker and the day - the rest is fixed in hidden inputs:
-    # out of the money, every strike, every expiry, common strikes
-    for fixed in ('<input type="hidden" id="volSide" value="otm">', '<input type="hidden" id="volBand" value="0">',
-                  '<input type="hidden" id="volDte" value="0">', '<input type="hidden" id="volExp" value="all">',
-                  '<input type="hidden" id="volCommon" value="1">'):
-        assert fixed in html, fixed
-    for gone in ('<select id="volSide"', '<select id="volBand"', '<select id="volExp"', '<select id="volDte"',
-                 'type="checkbox" id="volCommon"', 'id="volGo"'):
-        assert gone not in html, gone
+    # v4.160 (user: "i still want them"): the Show / Strikes / Expiries / Common-strikes controls
+    # are back, defaulting to what v4.159 had fixed: out of the money, every strike, every
+    # expiry, common strikes on; a change redraws
+    for back in ('<select id="volSide"', '<option value="otm" selected>', '<select id="volBand"',
+                 '<option value="0" selected>all</option>', '<select id="volDte"', '<select id="volExp"',
+                 '<option value="all" selected>every expiry</option>', 'type="checkbox" id="volCommon" checked',
+                 'id="volGo"', "['volSide', 'volBand', 'volDte', 'volExp', 'volCommon'].forEach"):
+        assert back in html, back
+    assert 'type="hidden" id="volSide"' not in html
     assert "above: calls in the money, puts out &middot; below: calls out of the money, puts in" in html
     for needle in ('id="volTick"', 'id="volInfoRow"', "window.optOnStatus", "window.optGetStatus",
                    "window.optPollNow", "next_pass_in_s", "stored day &middot; fixed",
