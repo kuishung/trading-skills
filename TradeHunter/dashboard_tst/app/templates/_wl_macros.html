@@ -20,17 +20,20 @@
 {% macro ticker_grid(tickers, open_symbols, sel_sym, live, wl="", can_delete=false, my_syms=None) %}
 {# Shared column template — used VERBATIM by the header and every row so the
    columns line up pixel-for-pixel (separate grids with `auto` cols would drift).
-   Sym flexes (truncates); Trend/Sig/Price/MATP/MBP are fixed widths. A leading
+   Sym flexes (truncates); the gap columns/Price/MATP/MBP are fixed widths. A leading
    1.2rem STAR column (My Watchlist toggle, every user) and a trailing 1.3rem
    delete column (moderators only) bracket the row. Defined INSIDE the macro so
    it's in scope even when imported into another template. #}
 {% set _my = my_syms or [] %}
-{% set GRIDCSS = "display:grid;grid-template-columns:1.2rem minmax(3.4rem,1fr) 2.4rem 2.9rem 3.2rem 3.2rem 3.2rem 1.3rem" ~ (" 1.3rem" if can_delete else "") ~ ";column-gap:0.25rem;align-items:center" %}
+{# v4.158 (user): the Trend and Sig columns are gone; in their place the GAP between the
+   stock price and the MATP - in dollars and in percent of the MATP. Below the MATP (room
+   up to the target) reads green, above it (past the target) reads red. #}
+{% set GRIDCSS = "display:grid;grid-template-columns:1.2rem minmax(3.4rem,1fr) 3.3rem 3.3rem 3.2rem 3.2rem 3.2rem 1.3rem" ~ (" 1.3rem" if can_delete else "") ~ ";column-gap:0.25rem;align-items:center" %}
 <div style="{{ GRIDCSS }}" class="px-2 pt-1 text-[10px] uppercase tracking-wide text-slate-600">
   <span class="text-center" title="My Watchlist">&#9733;</span>
   <span>Sym</span>
-  <span class="text-center">Trend</span>
-  <span class="text-center">Sig</span>
+  <span class="text-right" title="Stock price minus MATP, in dollars">&Delta;$</span>
+  <span class="text-right" title="Stock price minus MATP, as a percent of the MATP">&Delta;%</span>
   <span class="text-right">Price</span>
   <span class="text-right">MATP</span>
   <span class="text-right">MBP</span>
@@ -56,8 +59,11 @@
         title="{{ 'Remove ' ~ lv.symbol ~ ' from My Watchlist' if _on else 'Add ' ~ lv.symbol ~ ' to My Watchlist' }}"
         data-sym="{{ lv.symbol }}">{% if _on %}&#9733;{% else %}&#9734;{% endif %}</span>
   <span class="wl-sym text-[13px] font-medium whitespace-nowrap {% if sel_sym == lv.symbol %}text-emerald-300{% else %}text-white{% endif %}">{{ lv.symbol }}{% if lv.symbol in open_symbols %} <span class="text-amber-400">&#8635;</span>{% endif %}</span>
-  <span class="text-center text-[12px]">{{ trend_badge(lr.get("trend") or lv.trend) }}</span>
-  <span class="text-center">{{ signal_badge(lr.get("signal") or lv.signal) }}</span>
+  {% set gap = (cur - lv.matp) if (cur is not none and lv.matp is not none) else none %}
+  {% set gap_pct = (gap / lv.matp * 100.0) if (gap is not none and lv.matp) else none %}
+  {% set gap_cls = "text-slate-600" if gap is none else ("text-emerald-300" if gap < 0 else "text-rose-300") %}
+  <span class="text-right text-[12px] tabular-nums {{ gap_cls }}" title="{{ 'price minus MATP' if gap is not none else 'no price or no MATP yet' }}">{{ ("%+.2f"|format(gap)) if gap is not none else "-" }}</span>
+  <span class="text-right text-[12px] tabular-nums {{ gap_cls }}">{{ ("%+.1f%%"|format(gap_pct)) if gap_pct is not none else "-" }}</span>
   <span class="text-right text-[13px] tabular-nums {% if cur is not none and lv.mbp is not none and cur > lv.mbp %}text-rose-300{% else %}text-white{% endif %}">{{ "%.2f"|format(cur) if cur is not none else "-" }}</span>
   <span class="text-right text-[13px] text-orange-300 tabular-nums">{{ "%.2f"|format(lv.matp) if lv.matp is not none else "-" }}</span>
   <span class="text-right text-[13px] text-green-500 tabular-nums">{{ "%.2f"|format(lv.mbp) if lv.mbp is not none else "-" }}</span>

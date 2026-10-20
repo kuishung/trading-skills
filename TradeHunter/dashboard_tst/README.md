@@ -223,6 +223,16 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-20 - v4.158: Watchlist - the price-to-MATP gap in $ and %, Trend and Sig columns removed
+
+The user: *"in the watchlist, I want to show Stock Price - MATP in $ and % difference. remove the Trend & Sig"*.
+`_wl_macros.html` `ticker_grid`: the Trend and Sig columns are gone; in their place two columns, **&Delta;$**
+(stock price minus MATP) and **&Delta;%** (the same as a percent of the MATP), signed, green when the price
+sits below the MATP (room up to the target) and red when above it; "-" when either figure is missing. Price,
+MATP and MBP stay. The trend still drives the qualified / disqualified split behind the scenes (a downtrend
+still moves a row to the lower group); it is just no longer a column. The `trend_badge` / `signal_badge`
+macros remain in the file for the rail.
+
 ### 2026-10-19 - v4.157: Calculator - the Sheet view (legs picked from the volatility surface, the Excel layout, instant recompute); pairing no longer comes back empty because of earnings
 
 The user: *"with the calculator presently provided, i come out no result most of the time. I would want a
