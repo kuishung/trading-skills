@@ -258,6 +258,15 @@
          class="hidden lg:block shrink-0 h-1.5 my-0.5 cursor-row-resize rounded bg-slate-800 hover:bg-emerald-600/60 transition-colors"></div>
     <div id="volCtlPane" class="flex flex-col gap-3 min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1">
     <form id="volForm" class="flex flex-col gap-2 text-xs" autocomplete="off">
+      {# v4.171: the fixed horizons of the Interpolated tab (shown only while that tab is open), all six on by
+         default, remembered in localStorage th.vol.horizons. v4.173 (user: "i did not see the horizon"): at
+         the TOP of the controls, above Ticker, so it is in view without scrolling the panel. #}
+      <fieldset id="volHz" class="hidden vol-f border-0 m-0 p-0" title="The fixed horizons, in calendar days, the Interpolated Volatility Surface shows as columns">
+        <legend class="mb-0.5">Horizons (days)</legend>
+        <div class="vol-hz">
+          {% for h in (30, 60, 90, 180, 270, 365) %}<label class="scr-check"><input type="checkbox" id="volHz{{ h }}" data-h="{{ h }}" checked> {{ h }}</label>{% endfor %}
+        </div>
+      </fieldset>
       <label class="vol-f">Ticker
         <input id="volSym" type="text" maxlength="12" placeholder="AAPL" class="px-2 py-1 w-full uppercase"
                title="Type a symbol and press Enter">
@@ -302,14 +311,6 @@
       <label class="scr-check" title="Leaves out expiries listed less than 10 days ago, which have no history to colour yet, and strikes that only some expiries carry. The grid then shows no grey cells and no gaps. Untick to see everything.">
         <input type="checkbox" id="volClean" checked> Hide new and thinly listed contracts
       </label>
-      {# v4.171: the fixed horizons of the Interpolated tab (shown only while that tab is open), all six on by
-         default, remembered in localStorage th.vol.horizons #}
-      <fieldset id="volHz" class="hidden vol-f border-0 m-0 p-0" title="The fixed horizons, in calendar days, the Interpolated Volatility Surface shows as columns">
-        <legend class="mb-0.5">Horizons</legend>
-        <div class="vol-hz">
-          {% for h in (30, 60, 90, 180, 270, 365) %}<label class="scr-check"><input type="checkbox" id="volHz{{ h }}" data-h="{{ h }}" checked> {{ h }}</label>{% endfor %}
-        </div>
-      </fieldset>
       <button type="submit" id="volGo" class="scr-primary w-full">Show</button>
     </form>
     {# v4.166 (user: "configurable tiles in the vol surface ... the top to show the greeks. the bottom will

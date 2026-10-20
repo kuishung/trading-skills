@@ -223,6 +223,12 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-20 - v4.173: Interpolated Volatility Surface - the Horizons row moved to the top of the controls
+
+The user: *"i did not see the horizon in the interpolated vol surface"*. The six horizon checkboxes sat at the
+bottom of the controls pane, below the fold when the left panel scrolls. `options.html`: the row now sits at
+the top of the controls, above Ticker, whenever the Interpolated tab is open (still hidden on the other tab).
+
 ### 2026-10-20 - v4.172: Interpolated Volatility Surface - coloured by IV level within the surface
 
 The user: *"the interpolated surface also need a coloring scheme"*. `options.html`: until the constant-maturity
