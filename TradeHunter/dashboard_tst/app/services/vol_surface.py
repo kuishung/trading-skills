@@ -335,6 +335,28 @@ def solve_ivs(prices, spots, strikes, years, calls) -> list[float | None]:
     return [v if v == v else None for v in out]
 
 
+def unknown_symbol_text(sdb, symbol, n: int = 3) -> str:
+    """The message for a symbol the screener does not list - with the closest listed
+    tickers when there are any (v4.176, the user typed MFST for MSFT): ``MFST is not in the
+    screener's list of optionable stocks - did you mean MSFT?``."""
+    import difflib  # noqa: PLC0415
+
+    sym = _sym(symbol)
+    text = "%s is not in the screener's list of optionable stocks" % sym
+    try:
+        _C, U, _D = _models()
+        listed = [s for (s,) in sdb.query(U.symbol).all() if s]
+    except Exception:  # noqa: BLE001 - a hint only
+        listed = []
+    close = difflib.get_close_matches(sym, listed, n=n, cutoff=0.6) if sym and listed else []
+    # a transposition (MFST / MSFT) scores low in difflib: add tickers made of the same letters
+    same = sorted(s for s in listed if len(s) == len(sym) and sorted(s) == sorted(sym) and s != sym)
+    hints = list(dict.fromkeys(same + close))[:n]
+    if hints:
+        text += " - did you mean %s?" % " or ".join(hints)
+    return text
+
+
 def latest_rows(sdb, symbol) -> tuple[list[dict], dict]:
     """The last market pass's chain for ``symbol`` (Massive's IV per contract, plus the tile
     figures ``delta, gamma, theta, vega, last, price, chg_pct, oi, volume`` - None when missing)
@@ -354,7 +376,7 @@ def latest_rows(sdb, symbol) -> tuple[list[dict], dict]:
         if ao and (as_of is None or ao > as_of):
             as_of = ao
     if u is None and not rows:
-        raise SurfaceError("%s is not in the screener's list of optionable stocks" % sym)
+        raise SurfaceError(unknown_symbol_text(sdb, sym))
     if not rows:
         raise SurfaceError("the last market pass stored no option contracts for %s" % sym)
     from . import clock  # noqa: PLC0415
@@ -439,4 +461,5 @@ def surface(sdb, symbol, day="latest", *, side=None, band=None, max_dte=None, ex
 
 
 __all__ = ["SIDES", "FIGURES", "BANDS", "DTES", "SurfaceError", "build", "norm_options", "keep", "is_monthly",
-           "latest_rows", "history_rows", "surface", "raw_closes", "solve_ivs", "option_root_of", "underlying"]
+           "latest_rows", "history_rows", "surface", "raw_closes", "solve_ivs", "option_root_of", "underlying",
+           "unknown_symbol_text"]

@@ -265,6 +265,12 @@ def test_the_latest_surface_is_massives_iv_from_the_last_pass(sdb):
         vol_surface.surface(sdb, "ZZZZ")
     with pytest.raises(SurfaceError, match="symbol"):
         vol_surface.surface(sdb, "")
+    # v4.176 (the user typed MFST for MSFT): an unknown symbol names the closest listed tickers
+    assert vol_surface.unknown_symbol_text(sdb, "ZZZZ") == "ZZZZ is not in the screener's list of optionable stocks"
+    assert vol_surface.unknown_symbol_text(sdb, "apal") == \
+        "APAL is not in the screener's list of optionable stocks - did you mean AAPL?"
+    with pytest.raises(SurfaceError, match="did you mean AAPL"):
+        vol_surface.surface(sdb, "AAPLE")
 
 
 def test_a_past_days_surface_solves_the_closes_back_to_their_volatility(sdb, hist):

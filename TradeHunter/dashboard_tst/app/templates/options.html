@@ -171,6 +171,7 @@
                      border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
   .vol-tabs button:hover { color: var(--tv-text-hi); }
   .vol-tabs button[aria-selected="true"] { color: var(--tv-text-hi); border-bottom-color: var(--tv-accent); }
+  .vol-tabs .vol-tick { align-self: center; margin-left: auto; margin-bottom: .2rem; flex: none; }
   /* the interpolated tab: a horizon that falls on a listed expiry carries a small "=" mark in the cell's bottom-right
      corner (that contract's own IV) - the corner the rank bar uses on the listed tab, free here */
   .vol-grid .vol-x { position: absolute; bottom: .15rem; right: .2rem; font-size: 9px; line-height: 1; padding: 0 .15rem;
@@ -337,7 +338,7 @@
       </div>
     </details>
     <div class="flex flex-wrap items-center gap-3 min-w-0">
-      <span id="volTick" class="vol-tick hidden"></span>
+      {# v4.176: the next-pass countdown (#volTick) moved up to the tab header row #}
       <button type="button" id="scrDataToggle" class="flex items-center gap-1.5 text-[11px] text-slate-500 hover:text-slate-300 transition"
               title="Data status - click for details" aria-expanded="false" aria-controls="scrData">
         <span id="scrDot" class="scr-dot scr-dot-{{ status.dot }}" title="{{ status.label }}"></span>data
@@ -360,7 +361,7 @@
     {# v4.171: the Interpolated tab's legend line (no colour there) #}
     <div id="cmLegend" class="hidden text-[11px] text-slate-500 leading-snug"
          title="Each cell is the implied volatility, in percent, of a fixed time horizon at a fixed moneyness (strike / price) - first worked out per listed strike from the two listed expiries around the horizon (every listed expiry at least 7 days out, linear in total variance), then between the two listed strikes around strike = price x moneyness (linear in strike). Nothing is extrapolated: a horizon before the first expiry or after the last one is empty, and so is a level outside the listed strikes. Hover a cell for the working.">
-      <div class="flex flex-wrap items-center gap-2"><span>IV vs this surface:</span><span>low</span><span class="vol-bar"></span><span>high</span></div>
+      <div class="flex flex-wrap items-center gap-2"><span>IV vs this surface:</span><span>low</span><span class="vol-bar"></span><span>high</span><span>&middot; the bar under each figure shows the same level</span></div>
       <span class="vol-sub" style="font-size:10px">=</span> a listed expiry and a listed strike fall on that cell &middot; hover a cell for the working &middot; click: contract history of the nearer listed expiry and strike
     </div>
     </div>{# /controls pane #}
@@ -374,6 +375,9 @@
             title="One column per listed expiry date">Volatility Surface</button>
     <button type="button" id="volTabCm" role="tab" data-vtab="cm" aria-selected="false" aria-controls="volPanelCm"
             title="One column per fixed time horizon (30 to 365 days), worked out from the listed expiries around it">Interpolated Volatility Surface</button>
+    {# v4.176 (user: "this should be show on the tab header"): the countdown to the next market pass sits at
+       the right end of the tab row, above whichever surface is shown #}
+    <span id="volTick" class="vol-tick ml-auto hidden"></span>
   </div>
   {# a collector problem (rose error · amber stale / paused / warning · slate never reported) in a
      box members cannot miss - the same text the dot's tooltip carries #}
@@ -1236,6 +1240,9 @@
     return Math.max(0, Math.min(1, (v - s[0]) / (s[1] - s[0])));
   }
   function cmTint(j, v) { var l = cmLevel(j, v); return l == null ? '' : rankColor(l); }
+  // v4.176 (user: "i need the bottom progress bar indicator also"): the same slim bar as the other tab,
+  // filled to the cell's level within this surface (the tint's own number, so bar and colour always agree)
+  function cmBar(j, v) { var l = cmLevel(j, v); return l == null ? '' : rankBar(l); }
   function renderCm(j0) {
     var j = cmGrid(j0), hz = j.horizons || [], mon = !!j.rows;
     if (mon && !j.n_cells) {            // no moneyness level falls between two listed strikes with a value
@@ -1284,7 +1291,7 @@
              (ex ? '<span class="vol-x" title="' + (mon ? 'a listed expiry falls on this horizon and a listed strike on this level - this is that contract\'s own IV'
                                                         : 'a listed expiry falls on this horizon - this is that contract\'s own IV') + '">=</span>' : '') +
              '<div class="vol-l2">' + tileTop(x) + '</div><div class="vol-iv">' + num(v, 1) + '</div>' +
-             '<div class="vol-l3">' + cmBottom(x) + '</div></td>';
+             '<div class="vol-l3">' + cmBottom(x) + '</div>' + cmBar(j, v) + '</td>';
       });
       h += '</tr>';
     });

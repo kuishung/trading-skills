@@ -1430,6 +1430,10 @@ def test_the_surface_opens_on_every_expiry_and_reads_the_atm_line_the_right_way(
                    "window.optPollNow", "next_pass_in_s", "stored day &middot; fixed",
                    "next pass: waiting for the collector", "market pass paused"):
         assert needle in html, needle
+    # v4.176 (user: "this should be show on the tab header"): the countdown sits in the tab row, not the left panel
+    tabs = html[html.index('<div id="volTabs"'):html.index('id="scrCollectorAlert"')]
+    assert '<span id="volTick" class="vol-tick ml-auto hidden"></span>' in tabs
+    assert html.count('id="volTick"') == 1 and ".vol-tabs .vol-tick { align-self: center; margin-left: auto;" in html
 
 
 def test_the_page_no_longer_says_options_screener():
@@ -1706,10 +1710,14 @@ def test_the_page_has_the_two_tabs_and_the_horizons(client, fake):
     # the interpolated tiles: the bottom line is the MODEL price (last / OI / volume do not exist at a horizon)
     cmb = html[html.index("function cmBottom("):html.index("function cmView(")]
     assert "TILE.b === 'last' || TILE.b === 'price'" in cmb and "x.price" in cmb
-    # no rank colour and no rank bar on the interpolated grid (v4.172: tinted by level within the surface)
+    # no past-year rank on the interpolated grid: tint (v4.172) and the slim bottom bar (v4.176) both come
+    # from the cell's level within this surface, never from cellStyle / the other tab's rank
     rcm = html[html.index("function renderCm("):html.index("function cmMoneyWork(")]
     assert "rankColor" not in rcm and "rankBar" not in rcm and "cellStyle" not in rcm and "cmSpotRow(j" in rcm
-    assert "cmTint(j, v)" in rcm
+    assert "cmTint(j, v)" in rcm and "'</div>' + cmBar(j, v) + '</td>'" in rcm
+    bar = html[html.index("function cmBar("):html.index("function renderCm(")]
+    assert "var l = cmLevel(j, v); return l == null ? '' : rankBar(l);" in bar
+    assert "the bar under each figure shows the same level" in html
     assert 'class="vol-x"' in rcm and ".vol-grid .vol-x { position: absolute;" in html
     assert "'<div class=\"vol-l2\">' + tileTop(x) + '</div><div class=\"vol-iv\">'" in rcm
     # a tab switch draws the newly shown tab only when its last answer is for other settings / an older pass

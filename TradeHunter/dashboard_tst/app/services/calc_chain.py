@@ -109,7 +109,9 @@ def load_chain(sdb, symbol) -> Chain:
                       C.session, C.as_of)
                .filter(C.symbol == sym).all())
     if u is None and not rows:
-        raise ChainError("%s is not in the screener's list of optionable stocks" % sym)
+        from .vol_surface import unknown_symbol_text  # noqa: PLC0415
+
+        raise ChainError(unknown_symbol_text(sdb, sym))
     if not rows:
         raise ChainError("the last market pass stored no option contracts for %s" % sym)
     contracts, session, as_of = [], None, None

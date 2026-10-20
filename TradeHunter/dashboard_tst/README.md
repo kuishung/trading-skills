@@ -223,6 +223,25 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-21 - v4.176: Interpolated surface level bar; the countdown on the tab row; "did you mean" for a mistyped ticker
+
+- **The slim level bar** (user: *"in the interpolated Vol Surface i need the bottom progress bar indicator
+  also"*): each cell of the interpolated grid now carries the same slim bar as the Volatility Surface tab
+  (`cmBar` in `options.html`, reusing `rankBar`), filled to the cell's level within this surface - the very
+  number the tint uses (5th to 95th percentile of the shown values), so the bar and the colour always agree.
+  The legend says so. Once the constant-maturity history exists (phase 2) the bar will switch to the cell's
+  own past-window rank like the other tab.
+- **The next-pass countdown on the tab header** (user: *"this should be show on the tab header"*): the
+  "next market pass in …" tick (`#volTick`) moved from the left panel to the right end of the
+  Volatility Surface / Interpolated tab row, above whichever surface is shown. Same element, same script.
+- **A mistyped ticker names the closest listed ones** (the user typed MFST and read *"No surface: MFST is not
+  in the screener's list of optionable stocks"*): `vol_surface.unknown_symbol_text` adds *"- did you mean
+  MSFT?"* - tickers made of the same letters first (a transposition), then difflib's closest matches from the
+  screener's own list (the whole US optionable market Massive covers); the Calculator's chain loader
+  (`calc_chain.load_chain`) uses the same text. The surface still draws only what the screener collector has
+  stored; a real ticker it has not reached yet still says so.
+Tests in `tests/test_options_page.py` and `tests/test_vol_surface.py`.
+
 ### 2026-10-20 - v4.175: Interpolated Volatility Surface - columns out to two years, rows at fixed moneyness
 
 The user: *"include a 30-day column and extend more columns after 1-year by quarterly intervals to up to 2-years

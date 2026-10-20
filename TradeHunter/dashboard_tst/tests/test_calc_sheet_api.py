@@ -17,9 +17,10 @@ from app.main import app
 from app.models import OptionCalcRequest
 from app.screener_models import ScrContract, ScrPass, ScrUnderlying
 from app.security import current_user
+from app.services import clock
 from app.services.option_calc import bs_price
 
-TODAY = _dt.date.today()
+TODAY = _dt.date.fromisoformat(str(clock.et_today())[:10])   # the route's clock (New York) - the local date is a day ahead in Malaysia before noon
 
 
 def _third_friday(y, m):
