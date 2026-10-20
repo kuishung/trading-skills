@@ -850,28 +850,32 @@ or `;`). **A Hermes pull is ALWAYS paired with a restart** — a bare `git pull`
 only updates files; the running uvicorn keeps serving OLD code until restarted
 (no prod auto-reload). NEVER hand Hermes a plain `git pull` alone.
 
-**Canonical Hermes deploy script (give this in full after every push):**
+**Canonical Hermes deploy script (give this in full after every push) — SHORT FORM since
+2026-10-20:**
 
 ```powershell
-cd C:\trading-skills
-git pull --ff-only
-Get-NetTCPConnection -LocalPort 8000 -State Listen -EA SilentlyContinue |
-  Select-Object -ExpandProperty OwningProcess -Unique |
-  ForEach-Object { Stop-Process -Id $_ -Force -EA SilentlyContinue }
-schtasks /End /TN TST-Dashboard-Web
-Start-Sleep 2
-Start-ScheduledTask -TaskName TST-Dashboard-Web
+cd C:\trading-skills\TradeHunter\dashboard_tst
+powershell -ExecutionPolicy Bypass -File deploy\update.ps1
 Start-Sleep 15
-Invoke-RestMethod http://localhost:8000/status   # confirm version = latest
+Invoke-RestMethod http://localhost:8000/status
 ```
 
-This is the bulletproof sequence: pull → free port 8000 (kill orphaned
-uvicorn) → non-blocking task stop (`schtasks /End`, NOT `Stop-ScheduledTask`
-which can hang on the orphan) → start → verify `/status`. `deploy/update.ps1`
-wraps exactly this, so once it's deployed `update.ps1` alone is equivalent —
-but always hand over the full ordered script above unless the user says
-otherwise. (The autopull task also pulls + restarts every ~5 min once
-installed.)
+`deploy\update.ps1` does the whole sequence in one short command: pull → free port 8000
+(kill the orphaned uvicorn) → non-blocking task stop (`schtasks /End`, NOT
+`Stop-ScheduledTask`, which can hang on the orphan) → start. The last line must say the
+new version. **Why the short form (2026-10-20):** the long multi-line `Get-NetTCPConnection
+… | ForEach-Object { … }` block was being CUT when pasted over RDP - three deploys in a row
+lost their restart lines, and once the kill ran while the restart did not, which took the
+site down (502) until `run_app.ps1` was started by hand. Keep every line short; never hand
+the user a multi-line pipeline again. If `update.ps1` says "No new commits. Nothing to do."
+but a restart is still wanted, use: `schtasks /End /TN TST-Dashboard-Web`, `Start-Sleep 2`,
+`Start-ScheduledTask -TaskName TST-Dashboard-Web`. If the site is down and the task shows
+State = Ready (not Running), `Start-ScheduledTask -TaskName TST-Dashboard-Web` brings it
+back; to see a startup error run `powershell -ExecutionPolicy Bypass -File deploy\run_app.ps1`
+in the foreground. Git on Hermes has `gc.auto 0`, `maintenance.auto false` and
+`GIT_ASK_YESNO=false` (machine env) since 2026-10-20, so a pull never stops on the
+"Unlink of file … (y/n)" question again. (The autopull task also pulls + restarts every
+~5 min once installed.)
 
 ## Subagents run on Opus (user rule, set 2026-10-20; supersedes the Sonnet rule of 2026-10-12)
 
