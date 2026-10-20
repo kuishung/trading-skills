@@ -722,8 +722,7 @@ def test_the_empty_panel_for_each_branch():
     full = dict(last0, n_ok=4500, n_contracts=1_200_000)                                          # loading
     e = p(_col(last=full, universe_n=4512, heartbeat=TUE_NOON, detail="Up to date."),
           {"n_contracts": 0, "empty": True, "reloading": True})
-    assert e["title"] == ("New market data is loading into the screener (about 10 seconds) - the results refresh "
-                          "by themselves.")
+    assert e is None      # v4.170: the surface reads the pass from the DB - no "loading into the screener" panel
     e = p(_col(universe_n=4512, heartbeat=TUE_NOON, detail="Waiting for the next market pass."))  # idle, nothing
     assert e == {"title": "No option data yet.", "body": "Collector: Waiting for the next market pass.", "admin": ""}
     # data on screen and a finished pass: no panel

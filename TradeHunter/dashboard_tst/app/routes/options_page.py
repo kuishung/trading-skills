@@ -1211,8 +1211,10 @@ def _empty_view(col, st, meta, now, *, kind, nt, age, frame_empty, finished, run
                    "Hermes: read logs\\screener_collector.log, then run powershell -ExecutionPolicy "
                    "Bypass -File deploy\\setup_screener_task.ps1 -StartNow.")
     if frame_empty and meta.get("reloading"):                                         # T-68 = T-25
-        return out(f"New market data is loading into the screener (about {_reload_eta_s(meta, finished)} "
-                   "seconds) - the results refresh by themselves.")
+        # v4.170 (user: "what is this for?"): the in-memory market table reloading after a pass
+        # mattered to the screener's results; the Volatility surface reads the pass from the
+        # database and never waits for it, so the page shows no panel for this state.
+        return None
     if state == "stopped":
         return out("No option data yet - the market data collector is stopped.",
                    "Nothing new is read until it runs again.", _START_TASK)

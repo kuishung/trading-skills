@@ -223,6 +223,14 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-20 - v4.170: Volatility surface - the "new market data is loading into the screener" panel is gone
+
+The user, seeing the banner: *"what is this for?"*. It was the screener's notice while the web app reloads
+its in-memory market table after a Massive pass (about ten seconds). The Volatility surface reads the pass
+from the database and never waits for that table, so `options_page._empty_view` now returns no panel for the
+reloading state. The real collector states (never reported, stopped, stale, a pass that read nothing)
+still show.
+
 ### 2026-10-20 - v4.169: Volatility surface - two Greeks per row on the tile
 
 The user: *"make the greek to show 2 greeks side by side so you will only have 2 lines"*. `options.html`: the
