@@ -57,6 +57,12 @@
   /* v4.162: the controls stack in the left panel, each the panel's full width */
   .vol-aside .vol-f select, .vol-aside .vol-f input { width: 100%; }
   .vol-aside .scr-check { font-size: 11px; color: var(--tv-muted); display: flex; align-items: center; gap: .35rem; }
+  /* v4.165 (user: "add a watchlist ... up panel is watchlist and the up and down panel adjustable"):
+     the left panel is two panes - the watchlist on top, the controls below - split by a drag
+     handle. On a large screen the watchlist pane takes --vol-wl-h (set by the handle, remembered
+     per browser; 45 % of the panel until then); on a phone it is a fixed 12rem above the controls. */
+  .vol-wlpane { flex: none; height: 12rem; }
+  @media (min-width: 1024px) { .vol-wlpane { height: var(--vol-wl-h, 45%); } }
   /* v4.149: the countdown to the next market pass (Latest) / the fixed-day tag (a past date) */
   .vol-tick { display: inline-flex; flex-direction: column; gap: .25rem; min-width: 12rem; padding: .25rem .6rem;
               border: 1px solid var(--tv-border-2); border-radius: var(--tv-r-ctl); font-size: 11px;
@@ -190,8 +196,32 @@
      on wide screens - the right panel takes only the table's width (it still scrolls inside
      when the table is wider than the space), so panel + table sit together in the middle #}
   <div class="flex flex-col lg:flex-row lg:items-stretch lg:justify-center gap-3 min-h-0 flex-1">
-  <aside class="vol-aside shrink-0 lg:w-56 flex flex-col gap-3 lg:overflow-y-auto lg:pr-1">
-    <h1 class="text-sm font-medium text-slate-200 whitespace-nowrap">Volatility surface</h1>
+  {# v4.165 (user: "in the Vol surface the left side panel i need to add a watchlist and the drop
+     down boxes at the left bottom panel. up panel is watchlist and the up and down panel
+     adjustable"): the left panel holds two panes - the member's watchlists on top (a click on a
+     ticker draws its surface), the controls below - and a drag handle between them (#volSplit)
+     sets the split, remembered in localStorage th.vol.split. Phone: a fixed-height list, no handle. #}
+  <aside id="volAside" class="vol-aside shrink-0 lg:w-56 flex flex-col gap-2 min-h-0 lg:h-full lg:overflow-hidden">
+    <h1 class="shrink-0 text-sm font-medium text-slate-200 whitespace-nowrap">Volatility surface</h1>
+    <section id="volWlPane" class="vol-wlpane flex flex-col min-h-0 rounded border border-slate-800" aria-label="Watchlist">
+      <div class="shrink-0 flex items-center justify-between gap-2 px-2 pt-1.5 text-[11px] text-slate-400">
+        <span class="font-medium text-slate-300">Watchlist</span>
+        <span id="volWlCount" class="text-slate-500 tabular-nums"></span>
+      </div>
+      <div class="shrink-0 px-2 pt-1 pb-1.5">
+        <select id="volWl" class="px-2 py-1 text-xs w-full" title="Which watchlist to show" disabled>
+          <option value="">Loading&hellip;</option>
+        </select>
+      </div>
+      <div id="volWlList" class="flex-1 min-h-0 overflow-y-auto px-1 pb-1 text-xs" role="listbox" aria-label="Tickers">
+        <div class="px-2 py-2 text-[11px] text-slate-500">Loading the watchlist&hellip;</div>
+      </div>
+    </section>
+    {# the handle between the two panes (large screens only) - same look as the Watchlist page's #wlResizer #}
+    <div id="volSplit" role="separator" aria-orientation="horizontal" tabindex="0"
+         title="Drag to give the watchlist more or less room (double-click: back to the default)"
+         class="hidden lg:block shrink-0 h-1.5 my-0.5 cursor-row-resize rounded bg-slate-800 hover:bg-emerald-600/60 transition-colors"></div>
+    <div id="volCtlPane" class="flex flex-col gap-3 min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1">
     <form id="volForm" class="flex flex-col gap-2 text-xs" autocomplete="off">
       <label class="vol-f">Ticker
         <input id="volSym" type="text" maxlength="12" placeholder="AAPL" class="px-2 py-1 w-full uppercase"
@@ -254,6 +284,7 @@
       <span>&middot; click a cell: contract history in a new window</span>
       <span id="volHistMsg" class="text-slate-600"></span>
     </div>
+    </div>{# /controls pane #}
   </aside>
 
   <div class="min-w-0 flex-1 lg:flex-initial flex flex-col gap-2 min-h-0">
@@ -744,6 +775,7 @@
     var my = ++V.seq, sc = quiet && V.last ? {t: $('volWrap').scrollTop, l: $('volWrap').scrollLeft} : null;
     V.quiet = !!sc;
     V.reqSym = sym;
+    wlMark(sym);                       // v4.165: highlight this ticker in the watchlist, if it is listed
     if (!V.quiet) msg($('volMsg'), 'Building the ' + sym + ' surface...');
     getJSON('/options/api/surface?' + q.toString()).then(function (j) {
       if (my !== V.seq) return;
@@ -815,6 +847,130 @@
       var day = j.source === 'latest' ? ((H.days && H.days.length) ? H.days[0] : null) : j.on;
       openContract(j.symbol, ex.date, sideOf(j, k), k, day);
     });
+  }
+
+  // -- THE SURFACE'S WATCHLIST (v4.165) -- the member's lists in the left panel's top pane: one
+  // fetch carries every list (/options/api/watchlists); the picker switches between them; a click
+  // on a ticker puts it in the Ticker box and draws its surface. The chosen list is remembered
+  // per browser (th.vol.wl); the member's default list (the Watchlist page's) opens first.
+  var WL = {lists: [], key: null};
+  function lsGet(k) { try { return window.localStorage.getItem(k); } catch (err) { return null; } }
+  function lsSet(k, v) {
+    try { if (v == null) window.localStorage.removeItem(k); else window.localStorage.setItem(k, v); } catch (err) { /* storage blocked */ }
+  }
+  function wlList(key) {
+    for (var i = 0; i < WL.lists.length; i++) if (WL.lists[i].key === key) return WL.lists[i];
+    return null;
+  }
+  function wlMark(sym) {               // highlight the row of the ticker on screen (the Watchlist page's classes)
+    sym = (sym || '').toUpperCase();
+    Array.prototype.forEach.call($('volWlList').querySelectorAll('.vol-wl-row'), function (r) {
+      var on = r.dataset.sym === sym, s = r.querySelector('.vol-wl-sym');
+      r.classList.toggle('bg-emerald-500/15', on);
+      r.classList.toggle('hover:bg-slate-800/70', !on);
+      r.setAttribute('aria-selected', on ? 'true' : 'false');
+      if (s) { s.classList.toggle('text-emerald-300', on); s.classList.toggle('text-white', !on); }
+    });
+  }
+  function wlPaint() {
+    var l = wlList(WL.key), box = $('volWlList');
+    var n = l ? l.symbols.length : 0;
+    $('volWlCount').textContent = l ? intText(n) + (n === 1 ? ' ticker' : ' tickers') : '';
+    if (!l || !n) { box.innerHTML = '<div class="px-2 py-2 text-[11px] text-slate-500">No tickers in this list yet.</div>'; return; }
+    box.innerHTML = l.symbols.map(function (r) {
+      return '<button type="button" class="vol-wl-row w-full flex items-baseline justify-between gap-2 px-2 py-1 rounded text-left hover:bg-slate-800/70"' +
+             ' role="option" aria-selected="false" data-sym="' + esc(r.symbol) + '" title="Show the ' + esc(r.symbol) + ' volatility surface">' +
+             '<span class="vol-wl-sym text-[13px] font-semibold whitespace-nowrap text-white">' + esc(r.symbol) + '</span>' +
+             (r.matp == null ? '' : '<span class="text-[10px] text-slate-500 whitespace-nowrap tabular-nums">MATP ' + esc(num(r.matp, 2)) + '</span>') +
+             '</button>';
+    }).join('');
+    wlMark(V.reqSym || $('volSym').value.trim());
+  }
+  function wlLoad() {
+    getJSON('/options/api/watchlists').then(function (j) {
+      var sel = $('volWl');
+      if (!j || !j.ok || !j.lists || !j.lists.length) {
+        sel.innerHTML = '<option value="">No list</option>'; sel.disabled = true; $('volWlCount').textContent = '';
+        $('volWlList').innerHTML = '<div class="px-2 py-2 text-[11px] text-slate-500">' +
+          esc((j && j.error) ? 'The watchlist could not be loaded: ' + j.error + '.' : 'The watchlist could not be loaded.') + '</div>';
+        return;
+      }
+      WL.lists = j.lists;
+      sel.innerHTML = j.lists.map(function (l) {
+        return '<option value="' + esc(l.key) + '">' + esc(l.label) + ' (' + intText(l.n) + ')</option>';
+      }).join('');
+      var saved = lsGet('th.vol.wl');
+      WL.key = wlList(saved) ? saved : (wlList(j.default) ? j.default : j.lists[0].key);
+      sel.value = WL.key;
+      sel.disabled = false;
+      wlPaint();
+    }).catch(function () {
+      $('volWlList').innerHTML = '<div class="px-2 py-2 text-[11px] text-slate-500">The server did not answer - reload the page to try again.</div>';
+    });
+  }
+  // the split between the watchlist (top) and the controls (bottom): drag #volSplit (mouse or
+  // touch) - the top pane at least 6rem, at most the panel less 14rem so the controls stay in
+  // reach; remembered in th.vol.split; a double-click goes back to the default 45 %
+  function remPx() { return parseFloat(getComputedStyle(document.documentElement).fontSize) || 16; }
+  function splitClamp(px) {
+    var h = $('volAside').getBoundingClientRect().height, r = remPx();
+    var lo = 6 * r, hi = Math.max(lo, h - 14 * r);
+    return Math.round(Math.max(lo, Math.min(px, hi)));
+  }
+  function splitSet(px) { $('volAside').style.setProperty('--vol-wl-h', splitClamp(px) + 'px'); }
+  function splitSave() { lsSet('th.vol.split', String(Math.round($('volWlPane').getBoundingClientRect().height))); }
+  function splitInit() {
+    var aside = $('volAside'), bar = $('volSplit'), pane = $('volWlPane'), drag = null;
+    var saved = parseInt(lsGet('th.vol.split'), 10);
+    var wide = window.matchMedia ? window.matchMedia('(min-width: 1024px)') : {matches: true};
+    if (saved > 0 && wide.matches) splitSet(saved);
+    function move(y) { if (drag) splitSet(drag.h + (y - drag.y)); }
+    function start(y, e) {
+      drag = {y: y, h: pane.getBoundingClientRect().height};
+      document.body.style.cursor = 'row-resize';
+      document.body.style.userSelect = 'none';
+      if (e && e.cancelable) e.preventDefault();
+    }
+    function end() {
+      if (!drag) return;
+      drag = null;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      splitSave();
+    }
+    bar.addEventListener('mousedown', function (e) { start(e.clientY, e); });
+    window.addEventListener('mousemove', function (e) { move(e.clientY); });
+    window.addEventListener('mouseup', end);
+    bar.addEventListener('touchstart', function (e) { if (e.touches[0]) start(e.touches[0].clientY, e); }, {passive: false});
+    window.addEventListener('touchmove', function (e) { if (drag && e.touches[0]) move(e.touches[0].clientY); }, {passive: true});
+    window.addEventListener('touchend', end);
+    window.addEventListener('touchcancel', end);
+    bar.addEventListener('keydown', function (e) {    // the keyboard: arrow up / down move the handle
+      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+      e.preventDefault();
+      splitSet(pane.getBoundingClientRect().height + (e.key === 'ArrowUp' ? -16 : 16));
+      splitSave();
+    });
+    bar.addEventListener('dblclick', function () { aside.style.removeProperty('--vol-wl-h'); lsSet('th.vol.split', null); });
+    window.addEventListener('resize', function () {   // a smaller window: keep the controls in reach
+      if (wide.matches && aside.style.getPropertyValue('--vol-wl-h')) splitSet(pane.getBoundingClientRect().height);
+    });
+  }
+  if (MODE === 'surface') {
+    $('volWl').addEventListener('change', function () {
+      WL.key = $('volWl').value;
+      lsSet('th.vol.wl', WL.key);
+      wlPaint();
+    });
+    $('volWlList').addEventListener('click', function (e) {
+      var row = e.target.closest ? e.target.closest('.vol-wl-row') : null;
+      if (!row) return;
+      $('volSym').value = row.dataset.sym;
+      wlMark(row.dataset.sym);
+      runSurface();
+    });
+    splitInit();
+    wlLoad();
   }
 
   // ── CONTRACT HISTORY ─────────────────────────────────────────────────────────────

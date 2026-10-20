@@ -1713,3 +1713,70 @@ async def api_history_contract(symbol: str = "", expiry: str = "", right: str = 
 
     return JSONResponse(await run_in_threadpool(_hist_call, contract_view.contract_series, symbol, expiry,
                                                 right, strike))
+
+
+# ─────────────────────────────── the surface's watchlist (v4.165) ───────────────────────────────
+# The user (2026-10-20): "in the Vol surface the left side panel i need to add a watchlist ...
+# up panel is watchlist". The surface's left panel lists the member's watchlists - the same
+# lists the Watchlist page offers (My Watchlist, one per active Finviz screener, Selective, All)
+# - so a click on a ticker draws its surface. One fetch carries every list; the page switches
+# between them without asking again.
+
+def _wl_matp(v) -> float | None:
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return round(f, 2) if math.isfinite(f) else None
+
+
+def _watchlists_payload(db: Session, user: User) -> dict:
+    from ..models import FinvizFilter, MATPLevel
+    from ..services import user_watchlist as uwl
+    from .matp import _default_wl
+
+    all_levels = db.query(MATPLevel).all()
+    active = [lv for lv in all_levels if (lv.status or "active") == "active"]
+    matp_of: dict[str, float | None] = {}
+    for lv in all_levels:                     # an active row's MATP wins over a dropped one's
+        if lv.symbol and (lv.symbol not in matp_of or (lv.status or "active") == "active"):
+            matp_of[lv.symbol] = _wl_matp(lv.matp)
+
+    def rows(levels) -> list[dict]:
+        seen, out = set(), []
+        for lv in sorted(levels, key=lambda x: x.symbol or ""):
+            if lv.symbol and lv.symbol not in seen:
+                seen.add(lv.symbol)
+                out.append({"symbol": lv.symbol, "matp": _wl_matp(lv.matp)})
+        return out
+
+    def entry(key: str, label: str, symbols: list[dict]) -> dict:
+        return {"key": key, "label": label, "n": len(symbols), "symbols": symbols}
+
+    mine = [{"symbol": s, "matp": matp_of.get(s)} for s in uwl.symbols(db, user)]
+    lists = [entry("mine", "My Watchlist", mine)]
+    filters = sorted((f for f in db.query(FinvizFilter).all() if f.is_active), key=lambda f: f.id)
+    for f in filters:
+        syms = rows(lv for lv in active if lv.filter_id == f.id)
+        if syms:
+            lists.append(entry(str(f.id), f.description or f"Screener {f.id}", syms))
+    selective = rows(lv for lv in active if lv.filter_id is None)
+    if selective:
+        lists.append(entry("individual", "Selective", selective))
+    lists.append(entry("all", "All", rows(active)))
+    default = _default_wl(db, user)
+    if default not in {x["key"] for x in lists}:
+        default = "all"
+    return {"ok": True, "default": default, "lists": lists}
+
+
+@router.get("/api/watchlists")
+def api_watchlists(user: User = Depends(require_user), db: Session = Depends(get_db)):
+    """The member's watchlists for the surface's left panel: ``{ok, default, lists: [{key, label,
+    n, symbols: [{symbol, matp}]}]}`` - My Watchlist, one per active Finviz screener, Selective,
+    All (an empty screener / Selective list is left out)."""
+    try:
+        return JSONResponse(_watchlists_payload(db, user))
+    except Exception as exc:  # noqa: BLE001 - the panel says so instead of a 500
+        log.exception("surface watchlists failed")
+        return JSONResponse({"ok": False, "error": "the watchlists could not be read (" + type(exc).__name__ + ")"})

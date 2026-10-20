@@ -1146,6 +1146,7 @@ def test_the_router_serves_the_screener_paths():
     assert paths == {
         ("/options", ("GET",)),
         ("/options/history", ("GET",)),                     # v4.159: one contract's history, its own window
+        ("/options/api/watchlists", ("GET",)),              # v4.165: the surface's watchlist pane
         ("/options/api/screens", ("GET",)),
         ("/options/api/spec", ("GET",)),
         ("/options/api/run", ("POST",)),
@@ -1415,3 +1416,97 @@ def test_watchlist_chart_pane_links_to_the_surface_for_its_ticker(client, fake):
     assert 'href="/options?symbol=NVDA#surface"' in html
     assert 'target="_blank"' in html and "Vol surface" in html
     assert 'href="/calc?view=sheet&amp;symbol=NVDA"' in html and "Calculator" in html   # v4.157
+
+
+# ─────────────────────────────── the surface's watchlist (v4.165) ───────────────────────────────
+
+def _seed_watchlists(db, user):
+    f1 = models.FinvizFilter(description="Big caps", url="https://finviz.com/screener.ashx?v=1", is_active=True)
+    f2 = models.FinvizFilter(description="Switched off", url="https://finviz.com/screener.ashx?v=2", is_active=False)
+    f3 = models.FinvizFilter(description="Empty screen", url="https://finviz.com/screener.ashx?v=3", is_active=True)
+    db.add_all([f1, f2, f3])
+    db.flush()
+    db.add_all([
+        models.MATPLevel(symbol="NVDA", matp=210.5, filter_id=f1.id, status="active"),
+        models.MATPLevel(symbol="AAPL", matp=None, filter_id=f1.id, status="active"),
+        models.MATPLevel(symbol="OFF1", matp=50.0, filter_id=f2.id, status="active"),
+        models.MATPLevel(symbol="SOLO", matp=12.25, filter_id=None, status="active"),
+        models.MATPLevel(symbol="GONE", matp=9.0, filter_id=f1.id, status="dropped"),
+    ])
+    db.add_all([models.UserWatchlist(user_id=user.id, symbol="NVDA"),
+                models.UserWatchlist(user_id=user.id, symbol="ZZZZ")])      # starred, no MATP row
+    db.commit()
+    return f1, f2, f3
+
+
+def test_the_watchlists_api_lists_the_members_lists(client, db, user):
+    """v4.165 (user: "in the Vol surface the left side panel i need to add a watchlist"): one call
+    carries every list the Watchlist page offers - My Watchlist first, then one per ACTIVE Finviz
+    screener (an empty one left out), Selective (no screener), All - each ticker with its MATP."""
+    f1, _f2, f3 = _seed_watchlists(db, user)
+    r = client.get("/options/api/watchlists")
+    assert r.status_code == 200
+    j = r.json()
+    assert j["ok"] is True and j["default"] == "mine"            # the member has starred tickers
+    keys = [x["key"] for x in j["lists"]]
+    assert keys == ["mine", str(f1.id), "individual", "all"], keys
+    assert str(f3.id) not in keys                                 # an empty screener is left out
+    by = {x["key"]: x for x in j["lists"]}
+    assert by["mine"]["label"] == "My Watchlist"
+    assert {s["symbol"]: s["matp"] for s in by["mine"]["symbols"]} == {"NVDA": 210.5, "ZZZZ": None}
+    assert by[str(f1.id)]["label"] == "Big caps"
+    assert by[str(f1.id)]["symbols"] == [{"symbol": "AAPL", "matp": None}, {"symbol": "NVDA", "matp": 210.5}]
+    assert by["individual"] == {"key": "individual", "label": "Selective", "n": 1,
+                                "symbols": [{"symbol": "SOLO", "matp": 12.25}]}
+    assert by["all"]["label"] == "All"
+    assert [s["symbol"] for s in by["all"]["symbols"]] == ["AAPL", "NVDA", "OFF1", "SOLO"]   # active rows, sorted
+    for x in j["lists"]:
+        assert x["n"] == len(x["symbols"])
+
+
+def test_the_watchlists_api_without_any_list_keeps_mine_and_all(client, db, user):
+    """A member with no stars and an empty universe still gets My Watchlist and All (empty), and
+    the default falls back to All - the Watchlist page's own rule."""
+    j = client.get("/options/api/watchlists").json()
+    assert j["ok"] is True and j["default"] == "all"
+    assert [(x["key"], x["n"]) for x in j["lists"]] == [("mine", 0), ("all", 0)]
+
+
+def test_the_watchlists_api_answers_an_error_in_plain_json(client, monkeypatch):
+    def boom(*_a, **_k):
+        raise RuntimeError("db gone")
+
+    monkeypatch.setattr(options_page, "_watchlists_payload", boom)
+    r = client.get("/options/api/watchlists")
+    assert r.status_code == 200
+    j = r.json()
+    assert j["ok"] is False and "could not be read" in j["error"]
+
+
+def test_the_left_panel_has_the_watchlist_on_top_and_an_adjustable_split(client, fake):
+    """v4.165 (user: "up panel is watchlist and the up and down panel adjustable"): the left panel
+    is the watchlist pane (list picker + tickers), a horizontal drag handle, then the controls; a
+    click on a ticker fills the Ticker box and draws the surface; the list and the split are
+    remembered per browser."""
+    html = client.get("/options").text
+    for needle in ('id="volAside"', 'id="volWlPane"', '<select id="volWl"', 'id="volWlList"', 'id="volWlCount"',
+                   'id="volSplit" role="separator" aria-orientation="horizontal"', "cursor-row-resize",
+                   'id="volCtlPane"', "'/options/api/watchlists'", "'th.vol.wl'", "'th.vol.split'",
+                   "No tickers in this list yet.", "bg-emerald-500/15", "text-emerald-300",
+                   "$('volSym').value = row.dataset.sym;", "touchstart", "mousedown", "--vol-wl-h"):
+        assert needle in html, needle
+    # the order in the panel: watchlist pane, handle, controls (form), then the right panel
+    order = [html.index(x) for x in ('id="volWlPane"', 'id="volSplit"', 'id="volCtlPane"', 'id="volForm"',
+                                     'id="volLegend"', 'id="volPanelSurface"')]
+    assert order == sorted(order), order
+    # a click on a ticker row calls runSurface; runSurface marks the drawn ticker in the list
+    script = html[html.index("THE SURFACE'S WATCHLIST"):]
+    click = script[script.index("$('volWlList').addEventListener('click'"):]
+    assert "runSurface();" in click[:400]
+    run = html[html.index("function runSurface("):html.index("function historyUrl(")]
+    assert "wlMark(sym);" in run
+    for name in ("wlMark", "wlPaint", "wlLoad", "splitInit", "splitSet", "splitClamp"):
+        assert html.count(f"function {name}(") == 1, name
+    # the split keeps the controls in reach: top pane at least 6rem, at most the panel less 14rem
+    assert "6 * r" in html and "h - 14 * r" in html
+    assert "height: var(--vol-wl-h, 45%)" in html and ".vol-wlpane { flex: none; height: 12rem; }" in html

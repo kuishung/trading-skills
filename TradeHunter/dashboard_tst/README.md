@@ -223,6 +223,22 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-20 - v4.165: Volatility surface - a watchlist pane above the controls in the left panel, with an adjustable split
+
+The user: *"the left side panel i need to add a watchlist and the drop down boxes at the left bottom panel. up
+panel is watchlist and the up and down panel adjustable"*. `options.html` + `options_page.py`:
+- **Top pane: the member's watchlists** - a list picker (My Watchlist, each active Finviz screener by its
+  name, Selective, All; the member's default list first, the choice remembered in the browser) over a
+  scrollable ticker list (symbol + MATP). Clicking a ticker draws its surface; the drawn ticker is
+  highlighted. New `GET /options/api/watchlists` serves the lists (`{default, lists:[{key, label, n,
+  symbols:[{symbol, matp}]}]}`) from the same tables the Watchlist page reads.
+- **Bottom pane: the controls** (Ticker, Date, Show, Strikes, Expiries, Common strikes, Show), the data dot
+  and the legend, as before.
+- **An adjustable split**: a horizontal drag handle between the panes (mouse and touch); the top pane's
+  height is remembered in the browser. On a phone the watchlist pane sits above the controls at a fixed
+  height, no handle.
+- Tests in `tests/test_options_page.py` (the endpoint and the pane markup).
+
 ### 2026-10-20 - v4.164: Volatility surface - opens on strikes within 20 % and the monthly expiries
 
 The user: *"by default the Volatility surface load Strike +%, on monthly"*. `options.html`: the Strikes
