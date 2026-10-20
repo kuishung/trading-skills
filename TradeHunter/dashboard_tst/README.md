@@ -223,6 +223,12 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-20 - v4.169: Volatility surface - two Greeks per row on the tile
+
+The user: *"make the greek to show 2 greeks side by side so you will only have 2 lines"*. `options.html`: the
+tile's top band is a two-column grid - `D .42  G .01` over `T -.05  V .12` - so the four Greeks take two
+rows and the cell stays compact. With fewer Greeks ticked the rows shrink accordingly.
+
 ### 2026-10-20 - v4.168: Volatility surface - the tile's Greeks labelled D, G, T, V
 
 The user: *"show only D,G,T,V as the greek"*. `options.html`: the tile's top rows read `D .42`, `G .01`,

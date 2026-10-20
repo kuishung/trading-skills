@@ -119,8 +119,11 @@
      will show the last price"): the chosen greeks on the line ABOVE the IV (.vol-l2, up to two short rows when
      three or four are picked), the chosen figure on the line BELOW it (.vol-l3); both 9px so the cell keeps
      its 68 x 60 shape and the IV stays in the middle. Set in the Tile block of the left panel (#volTile). */
-  /* v4.167: the greeks are written in English ("Delta .42"), one per row; the cell grows with them */
-  .vol-grid .vol-l2 { font-size: 9px; line-height: 1.15; white-space: normal; }
+  /* v4.169 (user: "show 2 greeks side by side so you will only have 2 lines"): the greeks sit in a
+     two-column grid - "D .42  G .01" over "T -.05  V .12" - so four of them take two rows */
+  .vol-grid .vol-l2 { font-size: 9px; line-height: 1.15; white-space: normal; display: grid;
+    grid-template-columns: 1fr 1fr; column-gap: .25rem; justify-items: center; }
+  .vol-grid .vol-l2:empty { display: none; }
   .vol-grid .vol-l3 { font-size: 9px; line-height: 1.1; color: var(--tv-text); }
   .vol-grid .vol-gt { display: block; white-space: nowrap; }
   .vol-tile summary { cursor: pointer; padding: .3rem .5rem; color: var(--tv-muted); font-size: 11px; list-style: none;
