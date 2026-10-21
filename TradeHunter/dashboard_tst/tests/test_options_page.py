@@ -1797,6 +1797,7 @@ def test_the_hide_new_and_thinly_listed_tick(client, fake):
     assert "wlLiq(l.symbols.map(function (r) { return r.symbol; }));" in wp
     assert "getJSON('/options/api/liquidity?symbols=' + encodeURIComponent(syms.join(',')))" in wp
     assert "var LQ_CLS = {liquid: 'text-emerald-300', fair: 'text-amber-300', thin: 'text-slate-500'};" in wp
+    assert "el.textContent = (v.num && v.num !== '-' ? v.num + ' ' : '') + v.label;" in wp   # v4.187: the near OI, then the verdict
     # v4.185: the hover card's liquidity bar in the edge gauge's blue
     assert ".vol-pop .vol-pos > i.vol-pos-lq { background: rgba(30,64,175,.72); }" in html
     assert ".vol-pop .vol-pos.vol-pos-grey { background: rgba(30,58,138,.16); }" in html

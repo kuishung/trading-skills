@@ -47,8 +47,14 @@ def test_grid_shows_the_gap_to_matp_and_no_trend_or_sig(client, db, monkeypatch)
     monkeypatch.setattr(matp_routes, "_watchlist_signals_fast", lambda levels: live)
     # v4.186: the option-liquidity verdict per ticker (Opt liq column) - Liquid / Fair / Thin against the
     # member's own lines, the figures in the hover; a ticker the screener does not list reads "-"
-    liq = {"NVDA": {"level": "liquid", "label": "Liquid", "text": "NVDA option liquidity: Liquid. Near the money ..."},
-           "ABOVE": {"level": "fair", "label": "Fair", "text": "ABOVE option liquidity: Fair. Held back from Liquid by the near-the-money volume."}}
+    def figs(oi, vol, chain, lv):
+        return [{"key": "oi", "name": "Near OI (median)", "value_text": oi, "fair_text": "250", "liquid_text": "1k", "level": lv[0]},
+                {"key": "vol", "name": "Near volume today", "value_text": vol, "fair_text": "1k", "liquid_text": "5k", "level": lv[1]},
+                {"key": "chain", "name": "Chain OI", "value_text": chain, "fair_text": "20k", "liquid_text": "100k", "level": lv[2]}]
+    liq = {"NVDA": {"level": "liquid", "label": "Liquid", "num": "12.4k", "near_words": "within 10% of 182.00 in 2026-11-20 and 2026-12-18, 20 contracts",
+                    "figs": figs("12.4k", "31k", "2.1M", ("liquid", "liquid", "liquid")), "text": "NVDA option liquidity: Liquid."},
+           "ABOVE": {"level": "fair", "label": "Fair", "num": "410", "near_words": "within 10% of 104.00 in 2026-11-20 and 2026-12-18, 8 contracts",
+                     "figs": figs("410", "2.3k", "48k", ("fair", "fair", "fair")), "text": "ABOVE option liquidity: Fair."}}
     monkeypatch.setattr(matp_routes, "_watchlist_liquidity", lambda levels, user: liq)
     r = client.get("/matp/watchlist", params={"wl": "all"})
     assert r.status_code == 200
@@ -57,10 +63,19 @@ def test_grid_shows_the_gap_to_matp_and_no_trend_or_sig(client, db, monkeypatch)
     assert "&Delta;$" in html or "Δ$" in html
     assert ">Trend<" not in html and ">Sig<" not in html
     assert ">Opt liq</span>" in html
-    assert 'class="wl-liq text-right text-[11px] whitespace-nowrap text-emerald-300" data-level="liquid"' in html
-    assert 'title="NVDA option liquidity: Liquid. Near the money ..."' in html and ">Liquid</span>" in html
-    assert 'data-level="fair"' in html and "text-amber-300" in html and ">Fair</span>" in html
+    # v4.187 (user: "show the liquidity in numbers and then the fair, thin, liquid next to it ... a table"):
+    # the near OI, the verdict beside it, and a hidden table the delegated handler shows as a popover
+    i = html.index('data-level="liquid"')
+    cell = html[i:i + 2500]
+    assert '<b class="text-slate-200 tabular-nums font-medium">12.4k</b> <span class="text-emerald-300">Liquid</span>' in cell
+    assert '<div class="wl-liq-tip hidden">' in cell and "NVDA option liquidity</b>" in cell
+    assert "<th>Fair &ge;</th><th>Liquid &ge;</th>" in cell and "Near OI (median)" in cell and ">2.1M</td>" in cell
+    assert "Near the money = within 10% of 182.00 in 2026-11-20 and 2026-12-18, 20 contracts." in cell
+    j = html.index('data-level="fair"')
+    assert '<b class="text-slate-200 tabular-nums font-medium">410</b> <span class="text-amber-300">Fair</span>' in html[j:j + 400]
+    assert 'class="text-amber-300">410</td>' in html[j:j + 2500]          # the value coloured by the line it clears
     assert 'data-level=""' in html and "No option data for NOMATP in the screener" in html
+    assert "window.__wlLiqPop" in html and "document.addEventListener('mouseover'" in html
     # the member's lines under the list, with the defaults
     assert "Option liquidity lines" in html and 'hx-post="/matp/liq-thresholds"' in html
     assert 'name="liquid_oi" type="number" min="0" step="1" value="1000"' in html

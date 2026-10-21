@@ -223,6 +223,22 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-21 - v4.187: Watchlist - the Opt liq column shows the number and the verdict; the hover is a table
+
+The user: *"i want to show the liquidity in watchlist in numbers and then the fair, thin, liquid next to it; in the
+tooltip I do not want a full string of words, i need a table and classification can show the criteria"*.
+- **The column** reads "12.4k Liquid" / "410 Fair" / "57 Thin": the near-the-money median open interest (the
+  figure that decides a fill) then the verdict, coloured as before. The surface's watchlist pane shows the
+  same "number + verdict".
+- **The hover** is a table (`.wl-liq-tip` in `_wl_macros.html`, shown as one fixed popover `#wlLiqPop` by a
+  delegated handler in `_watchlist.html` - the `title` attribute cannot hold a table): one row per figure -
+  Near OI (median), Near volume today (or "prev. session" before the open), Chain OI - with the ticker's
+  value, the Fair line and the Liquid line; the value is green at the Liquid line, amber between the lines,
+  red below Fair, so the figure that held the verdict back is the odd colour out. Two short caption lines:
+  what "near the money" was for this ticker (price, the two monthlies, contract count) and the data caveats.
+- `opt_liquidity.verdict` adds `num`, `figs` (the table rows) and `near_words`; the sentence `text` stays for
+  the pane's title.
+
 ### 2026-10-21 - v4.186: Watchlist - an option-liquidity verdict per ticker ("is it liquid enough?")
 
 The user: *"if i want liquidity in the watchlist ... I do not want to compare against each other on the

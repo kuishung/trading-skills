@@ -75,6 +75,11 @@ def test_the_verdict_is_judged_near_the_money_in_the_first_two_monthlies(sdb):
     assert v["near_oi"] == 2000 and v["near_vol"] == 12_000 and v["vol_src"] == "today"
     assert v["chain_oi"] == 170_000 and v["short"] == "2k OI"
     assert "DEEP option liquidity: Liquid." in v["text"] and "median open interest 2k, volume 12k today" in v["text"]
+    # v4.187: the column's number and the hover table's rows
+    assert v["num"] == "2k" and v["near_words"] == "within 10% of 100.00 in 2026-11-20 and 2026-12-18, 20 contracts"
+    assert [(f["key"], f["value_text"], f["fair_text"], f["liquid_text"], f["level"]) for f in v["figs"]] == [
+        ("oi", "2k", "250", "1k", "liquid"), ("vol", "12k", "1k", "5k", "liquid"), ("chain", "170k", "20k", "100k", "liquid")]
+    assert v["figs"][1]["name"] == "Near volume today"
     assert "Lines: Liquid >= 1k / 5k / 100k, Fair >= 250 / 1k / 20k" in v["text"]
 
 
@@ -82,6 +87,7 @@ def test_fair_names_the_figure_that_held_it_back_and_the_member_lines_move_it(sd
     v = liq.verdict(sdb, "MID", today=TODAY)
     assert v["level"] == "fair" and v["near_oi"] == 400 and v["near_vol"] == 1500 and v["chain_oi"] == 30_000
     assert v["held"] == "near-the-money open interest" and "Held back from Liquid by the near-the-money open interest." in v["text"]
+    assert [f["level"] for f in v["figs"]] == ["fair", "fair", "fair"] and v["num"] == "400"
     own = {"liquid_oi": 300, "liquid_vol": 1000, "liquid_chain": 20_000}
     assert liq.verdict(sdb, "MID", own, today=TODAY)["level"] == "liquid"
 
@@ -90,11 +96,13 @@ def test_before_the_open_the_previous_sessions_volume_stands_in(sdb):
     v = liq.verdict(sdb, "PREOPEN", today=TODAY)
     assert v["vol_src"] == "prev" and v["near_vol"] == 12_000 and v["level"] == "liquid"
     assert "the previous session (nothing traded yet today)" in v["text"]
+    assert v["figs"][1]["name"] == "Near volume (prev. session)"
 
 
 def test_no_price_unknown_ticker_and_the_batch(sdb):
     v = liq.verdict(sdb, "NOPRICE", today=TODAY)
     assert v["level"] == "thin" and v["n_near"] == 0 and "No price for the name in the last pass." in v["text"]
+    assert v["num"] == "-" and v["near_words"] == "no price in the last pass" and v["figs"][0]["value_text"] == "-"
     assert liq.verdict(sdb, "ZZZZ", today=TODAY) is None
     out = liq.verdicts(sdb, ["deep", "ZZZZ", "MID", "DEEP"], today=TODAY)
     assert set(out) == {"DEEP", "MID"} and out["DEEP"]["level"] == "liquid"

@@ -32,7 +32,7 @@
    Liquid / Fair / Thin against the member's own fixed lines, judged near the money in the first two
    monthlies (services/opt_liquidity.py); the hover carries the figures. `liq` = {symbol: verdict}. #}
 {% set _liq = liq or {} %}
-{% set GRIDCSS = "display:grid;grid-template-columns:1.2rem minmax(3.4rem,1fr) 3.3rem 3.3rem 3.2rem 3.2rem 3.2rem 3.4rem 1.3rem" ~ (" 1.3rem" if can_delete else "") ~ ";column-gap:0.25rem;align-items:center" %}
+{% set GRIDCSS = "display:grid;grid-template-columns:1.2rem minmax(3.4rem,1fr) 3.3rem 3.3rem 3.2rem 3.2rem 3.2rem 5rem 1.3rem" ~ (" 1.3rem" if can_delete else "") ~ ";column-gap:0.25rem;align-items:center" %}
 <div style="{{ GRIDCSS }}" class="px-2 pt-1 text-[10px] uppercase tracking-wide text-slate-600">
   <span class="text-center" title="My Watchlist">&#9733;</span>
   <span>Sym</span>
@@ -41,7 +41,7 @@
   <span class="text-right">Price</span>
   <span class="text-right">MATP</span>
   <span class="text-right">MBP</span>
-  <span class="text-right" title="Option liquidity: Liquid / Fair / Thin against your own lines - the median open interest and today's volume of the contracts within 10% of the price in the first two monthlies, plus the chain's open interest (the screener's last pass). Hover a verdict for the figures; change the lines under the list.">Opt liq</span>
+  <span class="text-right" title="Option liquidity: the near-the-money median open interest (the figure that decides a fill), then the verdict - Liquid / Fair / Thin against your own lines (near OI, near volume, chain OI; the screener's last pass). Hover for the table; change the lines under the list.">Opt liq</span>
   <span class="text-center" title="Plot MATP &amp; MBP on your TradingView">&#9639;</span>
   {% if can_delete %}<span class="text-center" title="Remove from watchlist">&times;</span>{% endif %}
 </div>
@@ -74,8 +74,26 @@
   <span class="text-right text-[13px] text-green-500 tabular-nums">{{ "%.2f"|format(lv.mbp) if lv.mbp is not none else "-" }}</span>
   {% set lq = _liq.get(lv.symbol) %}
   {% set lq_cls = "text-slate-700" if not lq else ("text-emerald-300" if lq.level == "liquid" else ("text-amber-300" if lq.level == "fair" else "text-slate-500")) %}
-  <span class="wl-liq text-right text-[11px] whitespace-nowrap {{ lq_cls }}" data-level="{{ lq.level if lq else '' }}"
-        title="{{ lq.text if lq else 'No option data for ' ~ lv.symbol ~ ' in the screener\'s last pass.' }}">{{ lq.label if lq else "-" }}</span>
+  {# v4.187 (user: "show the liquidity in numbers and then the fair, thin, liquid next to it ... in the tooltip
+     i need a table"): the near-the-money median OI, the verdict beside it; the hover is a TABLE (one row per
+     figure: the value, the Fair line, the Liquid line, the value coloured by the line it clears) in a hidden
+     .wl-liq-tip that the delegated handler in _watchlist.html shows as a fixed popover. #}
+  <span class="wl-liq text-right text-[11px] whitespace-nowrap" data-level="{{ lq.level if lq else '' }}"
+        {% if not lq %}title="No option data for {{ lv.symbol }} in the screener's last pass."{% endif %}>
+    {% if lq %}<b class="text-slate-200 tabular-nums font-medium">{{ lq.num }}</b> <span class="{{ lq_cls }}">{{ lq.label }}</span>
+    <div class="wl-liq-tip hidden">
+      <div class="flex items-baseline justify-between gap-2 mb-1"><b class="text-slate-100">{{ lv.symbol }} option liquidity</b><span class="wl-liq-chip {{ lq_cls }}">{{ lq.label }}</span></div>
+      <table class="wl-liq-tbl">
+        <tr><th class="text-left">Figure</th><th>{{ lv.symbol }}</th><th>Fair &ge;</th><th>Liquid &ge;</th></tr>
+        {% for f in lq.figs %}
+        <tr><td class="text-left text-slate-400">{{ f.name }}</td>
+            <td class="{{ 'text-emerald-300' if f.level == 'liquid' else ('text-amber-300' if f.level == 'fair' else 'text-rose-300') }}">{{ f.value_text }}</td>
+            <td class="text-slate-300">{{ f.fair_text }}</td><td class="text-slate-300">{{ f.liquid_text }}</td></tr>
+        {% endfor %}
+      </table>
+      <div class="wl-liq-cap">Near the money = {{ lq.near_words }}. A level needs all three figures: green at the Liquid line, amber between the lines, red below Fair.</div>
+      <div class="wl-liq-cap">Open interest is yesterday's &middot; volume 15 min delayed &middot; no bid/ask in this data &middot; lines: edit under the list.</div>
+    </div>{% else %}-{% endif %}</span>
   {# Plot MATP/MBP on the user's OWN TradingView via the local TV bridge (127.0.0.1:9223).
      A <span> (not <button>) so it's valid inside the row <a>; the capture-phase handler
      in matp.html intercepts it (stopPropagation) so it never triggers the row's chart load. #}

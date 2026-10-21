@@ -164,6 +164,16 @@ def verdict(sdb, symbol: str, thresholds: dict | None = None, today: _dt.date | 
                 near_vol, vol_src = v_prev, "prev"
     level, held = grade(near_oi, near_vol, chain_oi, t)
     label = LABELS[level]
+    # v4.187 (the user: "in the tooltip ... i need a table"): one row per figure - the value, the Fair line,
+    # the Liquid line and which line the value clears (the hover table and the column's number)
+    figs = []
+    for key, name, val in (("oi", "Near OI (median)", near_oi), ("vol", "Near volume " + ("today" if vol_src == "today" else "(prev. session)"), near_vol),
+                           ("chain", "Chain OI", chain_oi)):
+        v = val or 0
+        figs.append({"key": key, "name": name, "value": val, "value_text": _fmt(val) if val is not None else "-",
+                     "fair": t["fair_" + key], "fair_text": _fmt(t["fair_" + key]),
+                     "liquid": t["liquid_" + key], "liquid_text": _fmt(t["liquid_" + key]),
+                     "level": "liquid" if v >= t["liquid_" + key] else ("fair" if v >= t["fair_" + key] else "thin")})
     when = "today" if vol_src == "today" else "the previous session (nothing traded yet today)"
     parts = ["%s option liquidity: %s." % (sym, label)]
     if n_near:
@@ -185,7 +195,11 @@ def verdict(sdb, symbol: str, thresholds: dict | None = None, today: _dt.date | 
     parts.append("Open interest is yesterday's; volume is 15 min delayed; the spread is not in this data.")
     return {"symbol": sym, "level": level, "label": label, "near_oi": near_oi, "near_vol": near_vol,
             "vol_src": vol_src, "chain_oi": chain_oi, "n_near": n_near, "expiries": exps, "held": held,
-            "text": " ".join(parts), "short": (_fmt(near_oi) + " OI") if near_oi is not None else ""}
+            "text": " ".join(parts), "short": (_fmt(near_oi) + " OI") if near_oi is not None else "",
+            "num": _fmt(near_oi) if near_oi is not None else "-", "spot": spot, "figs": figs,
+            "near_words": ("within 10%% of %.2f in %s, %d contracts" % (spot, " and ".join(exps), n_near)) if n_near
+                          else ("no contract within 10%% of %.2f in %s" % (spot, " and ".join(exps)) if (spot and exps)
+                                else ("no price in the last pass" if not spot else "no standard monthly ahead"))}
 
 
 def verdicts(sdb, symbols, thresholds: dict | None = None, today: _dt.date | None = None) -> dict[str, dict]:

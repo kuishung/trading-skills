@@ -1785,7 +1785,7 @@
       Array.prototype.forEach.call($('volWlList').querySelectorAll('.vol-wl-lq'), function (el) {
         var v = j.verdicts && j.verdicts[el.dataset.sym];
         if (!v) { el.textContent = ''; el.title = 'No option data for ' + el.dataset.sym + ' in the screener\'s last pass.'; return; }
-        el.textContent = v.label;
+        el.textContent = (v.num && v.num !== '-' ? v.num + ' ' : '') + v.label;   // v4.187: the near OI, then the verdict
         el.title = v.text;
         el.className = 'vol-wl-lq text-[10px] whitespace-nowrap ml-auto ' + (LQ_CLS[v.level] || 'text-slate-600');
       });
