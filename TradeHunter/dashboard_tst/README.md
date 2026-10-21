@@ -223,6 +223,15 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-21 - v4.178: Volatility surface - the ticker as the heading of both grids
+
+The user (on the long "AMD - Advanced Micro Devices · derived from 12 listed expiries … · price 537.30" line):
+*"this line is too long. we do not need this, just put the ticker name in bigger font size, apply to both
+surface"*. Both grids now head with the ticker in a larger font, the company name and the stock price small
+beside it (`infoHead` in `options.html`, CSS `.vol-head`). Everything the line used to say - the source and
+session, the counts, the interpolation method, the "hidden by the tick" note - plus the volatility method is
+the heading's tooltip (hover the ticker). Test in `tests/test_options_page.py`.
+
 ### 2026-10-21 - v4.177: Volatility surface - the grid's box is trimmed to the grid
 
 The user (on the Interpolated tab, the table centred inside a box as wide as the panel): *"if the edge of the

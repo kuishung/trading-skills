@@ -1430,6 +1430,14 @@ def test_the_surface_opens_on_every_expiry_and_reads_the_atm_line_the_right_way(
                    "window.optPollNow", "next_pass_in_s", "stored day &middot; fixed",
                    "next pass: waiting for the collector", "market pass paused"):
         assert needle in html, needle
+    # v4.178 (user: "this line is too long ... just put the ticker name in bigger font size, apply to both
+    # surface"): both grids head with the ticker large; the old line and the method are the tooltip
+    head = html[html.index("function infoHead("):html.index("function renderSurface(")]
+    assert "el.title = (detail ? detail + '\\n' : '') + (j.method || '');" in head
+    assert "'<span class=\"vol-head\"><b>' + esc(j.symbol) + '</b>'" in head and "vol-head-name" in head
+    assert html.count("infoHead($('volInfo'), j, detail);") == 1 and html.count("infoHead($('cmInfo'), j, detail);") == 1
+    assert "$('volInfo').innerHTML" not in html and "$('cmInfo').innerHTML" not in html
+    assert ".vol-head > b { font-size: 1.25rem;" in html
     # v4.177 (user: "if the edge of the table is showing blank, trim it"): the box shrinks to its grid
     assert ".vol-wrap { width: fit-content; max-width: 100%; align-self: center; }" in html
     assert "@media (min-width: 1024px) { .vol-wrap { flex: 0 1 auto; min-height: 0; } }" in html
@@ -1662,7 +1670,7 @@ def test_the_page_has_the_two_tabs_and_the_horizons(client, fake):
                    "openContract(j.symbol, nearest.date, right, nearest.strike, day)",
                    "weighted by time (linear in total variance) = <b>", "') falls on ' + hz.days + 'd - its own IV",
                    "model price",
-                   "'d</th>'", "linear in total variance &middot; legs: every listed expiry at least 7 days out "
+                   "'d</th>'", "linear in total variance · legs: every listed expiry at least 7 days out "
                                "(the Expiries setting applies to the other tab)",
                    "rows at fixed moneyness (strike / price), interpolated by strike",
                    "Tick at least one horizon above the grid (30 days to 2 years)."):

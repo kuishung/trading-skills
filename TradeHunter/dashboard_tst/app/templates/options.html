@@ -176,6 +176,11 @@
   .vol-tabs button:hover { color: var(--tv-text-hi); }
   .vol-tabs button[aria-selected="true"] { color: var(--tv-text-hi); border-bottom-color: var(--tv-accent); }
   .vol-tabs .vol-tick { align-self: center; margin-left: auto; margin-bottom: .2rem; flex: none; }
+  /* v4.178: the grid's heading - the ticker large, the name and price small beside it */
+  .vol-head { display: inline-flex; align-items: baseline; flex-wrap: wrap; gap: .5rem; }
+  .vol-head > b { font-size: 1.25rem; line-height: 1.2; font-weight: 600; color: var(--tv-text-hi); }
+  .vol-head-name { font-size: 12px; color: var(--tv-muted); }
+  .vol-head-px { font-size: 12px; color: var(--tv-text); font-variant-numeric: tabular-nums; }
   /* the interpolated tab: a horizon that falls on a listed expiry carries a small "=" mark in the cell's bottom-right
      corner (that contract's own IV) - the corner the rank bar uses on the listed tab, free here */
   .vol-grid .vol-x { position: absolute; bottom: .15rem; right: .2rem; font-size: 9px; line-height: 1; padding: 0 .15rem;
@@ -767,6 +772,16 @@
     if (vw.hidRows) parts.push(intText(vw.hidRows) + ' ' + (vw.hidRows === 1 ? (rowOne || 'strike') : (rowMany || 'strikes')));
     return parts.length ? ' &middot; ' + parts.join(' and ') + ' hidden by the tick' : '';
   }
+  function plain(s) { return String(s || '').replace(/&middot;/g, '·').replace(/&hellip;/g, '…'); }
+  // v4.178 (user: "this line is too long. we do not need this, just put the ticker name in bigger font size,
+  // apply to both surface"): the heading of either grid = the ticker large, the name and the price small
+  // beside it; everything the long line used to say, and the method, is the heading's tooltip
+  function infoHead(el, j, detail) {
+    el.title = (detail ? detail + '\n' : '') + (j.method || '');
+    el.innerHTML = '<span class="vol-head"><b>' + esc(j.symbol) + '</b>' +
+      (j.name ? '<span class="vol-head-name">' + esc(j.name) + '</span>' : '') +
+      (j.spot != null ? '<span class="vol-head-px" title="the stock price">' + esc(num(j.spot, 2)) + '</span>' : '') + '</span>';
+  }
   function renderSurface(j) {
     var ex = j.expiries || [], vw = surfaceView(j);
     var h = '<thead><tr><th class="vol-sticky vol-corner">Strike \\ Expiry</th>';
@@ -801,12 +816,12 @@
     var src = j.source === 'latest'
       ? 'Latest market pass, session ' + esc(j.on) + (j.as_of ? ' (read ' + esc(new Date(j.as_of).toLocaleString()) + ')' : '')
       : 'Close of ' + esc(j.on) + (j.traded != null ? ' (' + intText(j.traded) + ' contracts traded)' : '');
-    // one line; the method (which volatility, how solved) is its tooltip
-    $('volInfo').title = j.method || '';
-    $('volInfo').innerHTML = '<b class="text-slate-200">' + esc(j.symbol) + '</b>' + (j.name ? ' - ' + esc(j.name) : '') +
-      ' &middot; ' + src + ' &middot; price ' + esc(num(j.spot, 2)) +
-      ' &middot; ' + intText(vw.rows.length) + ' strikes x ' + intText(vw.cols.length) + ' expiries' +
-      (j.hidden_strikes ? ' &middot; ' + intText(j.hidden_strikes) + ' hidden' : '') + tidyNote(vw, 'expiry', 'expiries');
+    // v4.178 (user: "this line is too long ... just put the ticker name in bigger font size"): the ticker
+    // large, the name and price small beside it; the rest of the line (source, counts, method) is the tooltip
+    var detail = src + ' · price ' + num(j.spot, 2) +
+      ' · ' + intText(vw.rows.length) + ' strikes x ' + intText(vw.cols.length) + ' expiries' +
+      (j.hidden_strikes ? ' · ' + intText(j.hidden_strikes) + ' hidden' : '') + plain(tidyNote(vw, 'expiry', 'expiries'));
+    infoHead($('volInfo'), j, detail);
     show($('volInfoRow'), true); show($('volWrap'), true); legends();
     tileNote(activeLast());
     // a redraw (the tick, a refresh) keeps the colours when the history on hand is this grid's
@@ -1303,14 +1318,14 @@
     $('cmTable').innerHTML = h + '</tbody>';
     var src = j.source === 'latest' ? 'the latest market pass (session ' + esc(j.on) + ')' : 'the close of ' + esc(j.on);
     var nx = j.n_expiries_used || 0;
-    $('cmInfo').title = j.method || '';
-    $('cmInfo').innerHTML = '<b class="text-slate-200">' + esc(j.symbol) + '</b>' + (j.name ? ' - ' + esc(j.name) : '') +
-      ' &middot; derived from ' + intText(nx) + ' listed ' + (nx === 1 ? 'expiry' : 'expiries') + ' on ' + src +
-      ' &middot; linear in total variance &middot; legs: every listed expiry at least 7 days out (the Expiries setting applies to the other tab)' +
-      (mon ? ' &middot; rows at fixed moneyness (strike / price), interpolated by strike' : '') +
-      ' &middot; price ' + esc(spot) +
-      (j.has_greeks === false ? ' &middot; no greeks or prices on a past day (the latest pass only)' : '') +
-      (mon ? tidyNote(vw, 'horizon', 'horizons', 'row', 'rows') : tidyNote(vw, 'horizon', 'horizons'));
+    // v4.178: the ticker large; the working of the surface is the tooltip (the user: the line was too long)
+    var detail = 'derived from ' + intText(nx) + ' listed ' + (nx === 1 ? 'expiry' : 'expiries') + ' on ' + src +
+      ' · linear in total variance · legs: every listed expiry at least 7 days out (the Expiries setting applies to the other tab)' +
+      (mon ? ' · rows at fixed moneyness (strike / price), interpolated by strike' : '') +
+      ' · price ' + spot +
+      (j.has_greeks === false ? ' · no greeks or prices on a past day (the latest pass only)' : '') +
+      plain(mon ? tidyNote(vw, 'horizon', 'horizons', 'row', 'rows') : tidyNote(vw, 'horizon', 'horizons'));
+    infoHead($('cmInfo'), j, detail);
     show($('cmInfoRow'), true); show($('cmWrap'), true); legends();
     tileNote(activeLast());
   }
