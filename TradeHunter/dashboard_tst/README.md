@@ -223,6 +223,15 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-21 - v4.182: Volatility surface - the liquidity gauge (3 px, dark blue, a pointer)
+
+The user, on the live v4.181 tiles: *"it looks like nothing. i need like a fuel gauge"*, then after three rounds of
+mock-ups: *"a side edge with a pointer ... the pointer should be pointing the edge not inside ... use 3px with dark
+blue colour edge bar"*. The 1.5 px slate line is now a gauge: a 3 px dark-blue track on the tile's right edge
+(`.vol-lq`), filled from the bottom up to the contract's depth, and a small arrow INSIDE the tile pointing out at
+the level reached (`.vol-lq > b`, top = 100 - depth %). Lighter blues in dark mode. The tick's tooltip and the
+legend say "gauge" and "arrow = the level". Score, fade, tick and hover block unchanged from v4.181.
+
 ### 2026-10-21 - v4.181: Volatility surface - a liquidity indicator on the tiles
 
 The user: *"i want a liquidity indicator on the tiles"*, settled after a discussion with mock-ups: *"on/off

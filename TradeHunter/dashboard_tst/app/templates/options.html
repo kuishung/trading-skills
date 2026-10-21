@@ -153,9 +153,16 @@
   /* v4.181: liquidity on the listed surface - a 1.5 px bar on the tile's right edge, top to bottom, filled from the
      bottom with the contract's depth in a soft slate (no solid colour: "the whole screen looks very contrast"); the
      thinnest quarter of the chain faded. #volTable.vol-nolq (the tick off) hides both. */
-  .vol-lq { position: absolute; right: 0; top: 0; bottom: 0; width: 1.5px; background: rgba(128,128,128,.12); }
-  .vol-lq > i { position: absolute; left: 0; right: 0; bottom: 0; background: rgba(100,116,139,.45); }
-  html:not(.light) .vol-lq > i { background: rgba(148,163,184,.5); }
+  /* v4.182 (user: "i need like a fuel gauge ... a side edge with a pointer ... pointing the edge not inside ... 3px
+     with dark blue"): the gauge is a 3 px dark-blue track on the right edge, filled from the bottom to the depth, and
+     a small arrow INSIDE the tile pointing out at the level reached */
+  .vol-lq { position: absolute; right: 0; top: 0; bottom: 0; width: 3px; background: rgba(30,58,138,.16); }
+  .vol-lq > i { position: absolute; left: 0; right: 0; bottom: 0; background: rgba(30,64,175,.72); }
+  .vol-lq > b { position: absolute; right: 3px; width: 0; height: 0; margin-top: -4px; border-top: 4px solid transparent;
+                border-bottom: 4px solid transparent; border-left: 5px solid rgba(30,64,175,.9); }
+  html:not(.light) .vol-lq { background: rgba(96,165,250,.16); }
+  html:not(.light) .vol-lq > i { background: rgba(96,165,250,.6); }
+  html:not(.light) .vol-lq > b { border-left-color: rgba(147,197,253,.9); }
   .vol-grid td.vol-cell.vol-thin { opacity: .38; }
   .vol-grid td.vol-cell.vol-thin:hover { opacity: 1; }
   .vol-grid.vol-nolq .vol-lq { display: none; }
@@ -341,7 +348,7 @@
       </label>
       {# v4.181 (user: "i want a liquidity indicator on the tiles ... on/off button ... right edge bar ... and fading
          (for low liquidity)"): the Volatility Surface tab only - remembered in localStorage th.vol.liq #}
-      <label class="scr-check" title="On the Volatility Surface tab: a slim bar on the right edge of each tile fills with the contract's depth - open interest and today's volume, ranked against every contract of this stock - and the thinnest quarter of the chain is drawn faded. Hover a tile for the figures. Latest pass only: the day files behind a past day carry no open interest. The Interpolated tab has no liquidity (its cells are derived, not traded).">
+      <label class="scr-check" title="On the Volatility Surface tab: a gauge on the right edge of each tile fills with the contract's depth, an arrow pointing at the level - open interest and today's volume, ranked against every contract of this stock - and the thinnest quarter of the chain is drawn faded. Hover a tile for the figures. Latest pass only: the day files behind a past day carry no open interest. The Interpolated tab has no liquidity (its cells are derived, not traded).">
         <input type="checkbox" id="volLiq" checked> Show liquidity
       </label>
       <button type="submit" id="volGo" class="scr-primary w-full">Show</button>
@@ -392,7 +399,7 @@
          title="Each cell is one option's implied volatility, in percent - strikes down the side, expiries across the top (M = monthly); the line marks the stock price. Below the price each cell is the put, above it the call (out of the money). The colour is each contract against its own IV over the rank window picked above the grid (365 days unless you pick a shorter one): green at its lowest IV, red at its highest; the slim bar at the bottom of a cell shows the same (grey = too little history in the window - listed too recently, or under 10 days with a price). Hover a cell for its history; click: contract history in a new window. An empty cell means no contract there had a volatility.">
       <span id="volLegWin">IV vs own past 365 days:</span>
       <span>low</span><span class="vol-bar"></span><span>high</span>
-      <span id="volLegLiq" class="hidden">&middot; right edge: depth among this stock's contracts &middot; faded: the thinnest quarter</span>
+      <span id="volLegLiq" class="hidden">&middot; right-edge gauge: depth among this stock's contracts (arrow = the level) &middot; faded: the thinnest quarter</span>
       <span>&middot; click a cell: contract history in a new window</span>
       <span id="volHistMsg" class="text-slate-600"></span>
     </div>
@@ -968,9 +975,10 @@
   var LIQ_KEY = 'th.vol.liq', LIQ_THIN = 0.25;        // faded: the thinnest quarter of the chain
   function liqOn() { return !!($('volLiq') && $('volLiq').checked); }
   function liqThin(x) { return !!(x && x.liq != null && x.liq < LIQ_THIN); }
-  function liqBar(x) {
+  function liqBar(x) {                  // v4.182: the gauge - the fill from the bottom, the pointer at its top
     if (!x || x.liq == null) return '';
-    return '<span class="vol-lq"><i style="height:' + Math.round(Math.max(0, Math.min(1, x.liq)) * 100) + '%"></i></span>';
+    var pct = Math.round(Math.max(0, Math.min(1, x.liq)) * 100);
+    return '<span class="vol-lq"><i style="height:' + pct + '%"></i><b style="top:' + (100 - pct) + '%"></b></span>';
   }
   function liqWord(l) { return l >= 0.75 ? 'deep' : (l >= LIQ_THIN ? 'fair' : 'thin'); }
   function liqHtml(j, x) {              // the hover card's liquidity block
