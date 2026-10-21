@@ -223,6 +223,28 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-21 - v4.181: Volatility surface - a liquidity indicator on the tiles
+
+The user: *"i want a liquidity indicator on the tiles"*, settled after a discussion with mock-ups: *"on/off
+button ... right edge bar that cover the top and bottom of the tile and fading (for low liquidity)"*, a soft
+tone (*"the whole screen looks very contrast with the solid black"*), 1.5 px, and *"only ... in the vol surface
+not the interpolated"*.
+- **The score** (`vol_surface.liquidity_ranks`, run by `latest_rows`): depth = log(1 + open interest) +
+  0.5 x log(1 + today's volume), ranked 0..1 among EVERY contract of the stock's last-pass chain (ties share
+  the mid rank) - ticker-relative, no dollar cut-off, so the scale means the same on NVDA and a thin name. It
+  travels in each cell's `extra` as `liq`. Latest pass only: the day files behind a past day carry no open
+  interest. No bid/ask is in the data, so the spread itself stays unknown.
+- **The tiles** (`options.html`): a 1.5 px bar on the right edge of each tile, top to bottom, filled from the
+  bottom with the depth in a soft slate (`.vol-lq`); the thinnest quarter of the chain drawn at 38 % opacity
+  (`.vol-thin`, full on hover). A **"Show liquidity" tick** under the other ticks (on by default, remembered
+  in `th.vol.liq`) hides both without a new request. The legend names them.
+- **The hover card**: a Liquidity block - the rank in words ("deep · top 6 % of AMD's contracts", deep ≥ 75 %,
+  fair, thin < 25 %) over a grey position bar, open interest (yesterday's close), today's volume (15 min
+  delayed), turnover (volume / open interest), the last trade against the model price (the only hint at the
+  spread), and how the score is built.
+- Nothing on the Interpolated tab: its cells are derived, not traded (discussed; the user chose to leave it).
+Tests in `tests/test_vol_surface.py` and `tests/test_options_page.py`.
+
 ### 2026-10-21 - v4.180: Volatility surface - a coloured position bar in the hover card
 
 The user: *"in the tooltip of the vol surface where it sit today, i need a colour progress bar to show where

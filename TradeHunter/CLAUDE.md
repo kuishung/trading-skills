@@ -679,6 +679,13 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
   leg's history). **Phase 2 NOT built**: a constant-maturity history per ticker/day at ATM and 25-delta
   (from the Parquet history, a Hermes job) to give that tab a rank tint, percentile and z-score - the
   user's pasted note (VIX-style, fix moneyness before tenor) is the spec for it.
+  **v4.175-4.181 (2026-10-20/21):** the Interpolated tab runs out to 2 years at fixed moneyness with a level
+  bar per cell; the listed tab has a rank-window radio (30-365 calendar days), the ticker as the grid's
+  heading (details in its tooltip), the next-pass countdown on the tab row, a coloured position bar in the
+  hover card and - **v4.181 - a LIQUIDITY indicator** (`vol_surface.liquidity_ranks`: open interest +
+  today's volume on a log scale, ranked within the stock's whole chain; a 1.5 px soft-slate bar on each
+  tile's right edge, the thinnest quarter faded, a "Show liquidity" tick, the figures in the hover card;
+  latest pass only, listed tab only - the user chose none on the Interpolated tab).
 - **Options SCREENER — BUILT in v4.136 (2026-10-10): `dashboard_tst/OPTIONS_SCREENER_DESIGN.md`
   is the contract.** The user asked for *"exactly"* Barchart's options screener
   (barchart.com/options/options-screener) with each member's own settings: `/options` is now a

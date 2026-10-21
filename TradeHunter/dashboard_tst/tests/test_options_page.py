@@ -1243,8 +1243,8 @@ def test_the_surface_tiles_are_configurable(client, fake):
                    'id="volTileNote"', "Greeks and prices are on the latest pass only",
                    "'th.vol.tile'", "var TILE_DEFAULT = {g: ['d', 'g', 't', 'v'], b: 'last'};",
                    "var x = extraAt(j, r, c);", "'<div class=\"vol-l2\">' + tileTop(x) + '</div><div class=\"vol-iv\">'",
-                   "'<div class=\"vol-l3\">' + tileBottom(x) + '</div></td>'",
-                   "figsHtml(j, extraAt(j, +td.dataset.r, +td.dataset.c))", "j.has_greeks === false",
+                   "'<div class=\"vol-l3\">' + tileBottom(x) + '</div>' + liqBar(x) + '</td>'",
+                   "figsHtml(j, xf)) + liqHtml(j, xf);", "j.has_greeks === false",
                    "$('volTile').addEventListener('change', function () { tileRead(); paintTiles(); });",
                    "Model price", "Open interest", "'Delta'", "'Gamma'", "'Theta'", "'Vega'",
                    "g[2].charAt(0) + ' ' + greekText("):      # v4.168: the initials D G T V, not the signs
@@ -1330,7 +1330,7 @@ def test_the_surface_api_answers_with_the_grid_or_a_plain_reason(client, fake, s
     assert j["has_greeks"] is True
     assert [[x["d"] for x in row] for row in j["extra"]] == [[-0.55], [0.45], [0.45]]
     assert j["extra"][0][0] == {"d": -0.55, "g": None, "t": -0.03, "v": None, "last": 2.5, "price": None,
-                                "chg": None, "oi": 12400, "vol": None}
+                                "chg": None, "oi": 12400, "vol": None, "liq": 0.5}   # v4.181: ranked among the chain
     assert j["source"] == "latest" and j["as_of"] == "2026-10-07T19:30:00Z"
     assert j["common"] is True and j["hidden_strikes"] == 0
     assert client.get("/options/api/surface", params={"symbol": "AAPL", "common": "0"}).json()["common"] is False
@@ -1762,6 +1762,24 @@ def test_the_hide_new_and_thinly_listed_tick(client, fake):
     assert "got * 2 < live" in cv and "j.cells[r].some(function (v) { return v != null; })" in cv
     td = html[html.index("function tidy("):html.index("function fullView(")]
     assert "cols.every(function (c) { return cells[r][c] != null; })" in td
+    # v4.181 (user: "a liquidity indicator on the tiles ... on/off button ... right edge bar ... and fading"): the
+    # Volatility Surface tab only - a 1.5 px soft-slate bar on the right edge, the thinnest quarter faded, a
+    # "Show liquidity" tick (th.vol.liq), the figures in the hover card; nothing on the Interpolated tab
+    assert '<input type="checkbox" id="volLiq" checked> Show liquidity' in html
+    assert ".vol-lq { position: absolute; right: 0; top: 0; bottom: 0; width: 1.5px;" in html
+    assert ".vol-lq > i { position: absolute; left: 0; right: 0; bottom: 0; background: rgba(100,116,139,.45); }" in html
+    assert ".vol-grid td.vol-cell.vol-thin { opacity: .38; }" in html and ".vol-grid.vol-nolq .vol-lq { display: none; }" in html
+    assert "var LIQ_KEY = 'th.vol.liq', LIQ_THIN = 0.25;" in html
+    rs = html[html.index("function renderSurface("):html.index("function tileLoad(")]
+    assert "'<td class=\"vol-cell' + (liqThin(x) ? ' vol-thin' : '') + '\"" in rs and "+ liqBar(x) + '</td>'" in rs
+    assert "$('volTable').classList.toggle('vol-nolq', !liqOn());" in rs
+    lq = html[html.index("function liqHtml("):html.index("function figsHtml(")]
+    assert "Liquidity is on the latest pass only" in lq and "'s contracts</span></div>'" in lq
+    assert "Turnover (volume / open interest)" in lq and "Last trade vs model price" in lq
+    assert "+ liqHtml(j, xf);" in html and 'id="volLegLiq"' in html
+    assert "show($('volLegLiq'), liqOn() && !!V.last && V.last.source === 'latest');" in html
+    rcm_ = html[html.index("function renderCm("):html.index("function cmMoneyWork(")]
+    assert "liqBar" not in rcm_ and "vol-thin" not in rcm_
     # v4.179 (user, AMD on 2026-10-13: "only 2 strike listed"): a past day's grid holds only the contracts that
     # traded, so a gap is no trade - a row stays while half of the shown expiries have a value; the latest pass
     # keeps the every-column rule

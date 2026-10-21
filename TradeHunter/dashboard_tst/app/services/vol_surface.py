@@ -62,7 +62,8 @@ SCALE_LO_PCT, SCALE_HI_PCT = 5, 95   # the colour scale's ends (percentiles of t
 COMMON_SHARE = 0.5                   # common strikes only: a strike with a cell in at least half the expiries
 # the tile figures (v4.166): the row key -> the short key in an ``extra`` cell
 FIGURES = (("delta", "d"), ("gamma", "g"), ("theta", "t"), ("vega", "v"), ("last", "last"), ("price", "price"),
-           ("chg_pct", "chg"), ("oi", "oi"), ("volume", "vol"))
+           ("chg_pct", "chg"), ("oi", "oi"), ("volume", "vol"), ("liq", "liq"))
+LIQ_VOLUME_WEIGHT = 0.5              # liquidity depth = log(1 + open interest) + this x log(1 + today's volume)
 
 
 class SurfaceError(ValueError):
@@ -138,6 +139,40 @@ def keep(strike: float, dte: int, spot: float, *, band: int, max_dte: int) -> bo
     if band and spot > 0 and abs(strike - spot) / spot > band / 100.0:
         return False
     return True
+
+
+def liquidity_ranks(rows) -> None:
+    """v4.181 (the user: a liquidity indicator on the tiles): give every row of one underlying's
+    chain a ``liq`` in 0..1 - where its depth sits among ALL the contracts of that chain (0 =
+    the thinnest, 1 = the deepest; ties share their mid rank). Depth = log(1 + open interest)
+    + ``LIQ_VOLUME_WEIGHT`` x log(1 + today's volume): open interest is yesterday's standing
+    size, today's volume (15 min delayed) a lighter, fresher vote. Ranked within the chain, not
+    on a dollar cut-off, so the scale means the same on a mega-cap and a thin name. A row with
+    neither figure gets None. No bid/ask is in the data, so the spread itself is unknown."""
+    scored = []
+    for r in rows or ():
+        oi, vol = _f(r.get("oi")), _f(r.get("volume"))
+        if oi is None and vol is None:
+            r["liq"] = None
+            continue
+        d = math.log1p(max(0.0, oi or 0.0)) + LIQ_VOLUME_WEIGHT * math.log1p(max(0.0, vol or 0.0))
+        scored.append((d, r))
+    n = len(scored)
+    if not n:
+        return
+    if n == 1:
+        scored[0][1]["liq"] = 1.0
+        return
+    scored.sort(key=lambda t: t[0])
+    i = 0
+    while i < n:
+        j = i
+        while j + 1 < n and scored[j + 1][0] == scored[i][0]:
+            j += 1
+        mid = (i + j) / 2.0                        # the shared rank of a tie
+        for k in range(i, j + 1):
+            scored[k][1]["liq"] = round(mid / (n - 1), 4)
+        i = j + 1
 
 
 def _pctile(vals: list[float], p: float) -> float:
@@ -379,6 +414,7 @@ def latest_rows(sdb, symbol) -> tuple[list[dict], dict]:
         raise SurfaceError(unknown_symbol_text(sdb, sym))
     if not rows:
         raise SurfaceError("the last market pass stored no option contracts for %s" % sym)
+    liquidity_ranks(rows)                # v4.181: each contract's depth among the whole chain
     from . import clock  # noqa: PLC0415
 
     on = session or clock.et_today()
@@ -462,4 +498,4 @@ def surface(sdb, symbol, day="latest", *, side=None, band=None, max_dte=None, ex
 
 __all__ = ["SIDES", "FIGURES", "BANDS", "DTES", "SurfaceError", "build", "norm_options", "keep", "is_monthly",
            "latest_rows", "history_rows", "surface", "raw_closes", "solve_ivs", "option_root_of", "underlying",
-           "unknown_symbol_text"]
+           "unknown_symbol_text", "liquidity_ranks"]
