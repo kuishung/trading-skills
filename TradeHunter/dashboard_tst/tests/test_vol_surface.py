@@ -148,7 +148,7 @@ def test_extra_carries_the_tile_figures_of_the_cells_own_contract():
     assert by[110.0][2] is None                                       # the empty cell
     x = by[105.0][1]
     assert x == {"d": pytest.approx(0.105), "g": 0.01, "t": -0.05, "v": 0.15, "last": 1.05, "price": pytest.approx(1.06),
-                 "chg": 1.5, "oi": 1050, "vol": 105, "liq": None}     # liq: build() alone does not rank (latest_rows does)
+                 "chg": 1.5, "oi": 1050, "vol": 105, "liq": None, "rk": None}   # liq / rk: build() alone does not rank (latest_rows does)
     assert "mixed" not in x
     calls = vol_surface.build(rows, SPOT, ON, side="call")
     assert dict(zip(calls["strikes"], calls["extra"]))[90.0][1]["d"] == pytest.approx(0.09)
@@ -238,7 +238,7 @@ def test_latest_rows_carry_the_tile_figures(sdb):
     rows, meta = vol_surface.latest_rows(sdb, "AAPL")
     assert meta["source"] == "latest" and len(rows) == 12
     keys = {"expiry", "right", "strike", "iv", "delta", "gamma", "theta", "vega", "last", "price", "chg_pct", "oi", "volume",
-            "liq"}
+            "liq", "liq_rank"}
     assert all(set(r) == keys for r in rows)
     put90 = next(r for r in rows if r["strike"] == 90.0 and r["right"] == "P" and r["expiry"] == NOV.isoformat())
     assert put90["delta"] == -0.6 and put90["gamma"] == 0.02 and put90["theta"] == -0.04 and put90["vega"] == 0.11
@@ -256,10 +256,13 @@ def test_liquidity_ranks_place_each_contract_among_its_chain():
             {"oi": None, "volume": None}, {"oi": 300, "volume": 20}]
     vol_surface.liquidity_ranks(rows)
     assert rows[0]["liq"] == 1.0 and rows[1]["liq"] == 0.0 and rows[3]["liq"] is None
+    # v4.184: rank 1 = the deepest; a tie shares the better rank; no figures = no rank
+    assert rows[0]["liq_rank"] == 1 and rows[1]["liq_rank"] == 4 and rows[3]["liq_rank"] is None
+    assert rows[2]["liq_rank"] == rows[4]["liq_rank"] == 2
     assert rows[2]["liq"] == rows[4]["liq"] == 0.5                        # a tie of the two middle ranks (1 and 2 of 0..3)
     one = [{"oi": 5, "volume": None}]
     vol_surface.liquidity_ranks(one)
-    assert one[0]["liq"] == 1.0
+    assert one[0]["liq"] == 1.0 and one[0]["liq_rank"] == 1
     vol_surface.liquidity_ranks([])                                       # nothing to rank, no error
 
 
@@ -276,7 +279,9 @@ def test_the_latest_surface_is_massives_iv_from_the_last_pass(sdb):
     assert xb[90.0][0]["d"] == -0.6 and xb[90.0][0]["oi"] == 1200 and xb[90.0][0]["last"] == 1.8   # the put
     assert xb[100.0][0]["d"] == -0.6                                       # 100 < the 101 spot: the put too
     assert xb[110.0][0] == {"d": None, "g": None, "t": None, "v": None, "last": None, "price": None,
-                            "chg": None, "oi": None, "vol": None, "liq": None}
+                            "chg": None, "oi": None, "vol": None, "liq": None, "rk": None}
+    # v4.184: the eight tied contracts all rank 1 of the 8 ranked in the chain
+    assert xb[90.0][0]["rk"] == 1 and g["liq_n"] == 8
     # v4.181: liquidity rank among the chain - the eight full contracts tie (same OI and volume) at the mid rank
     assert xb[90.0][0]["liq"] == 0.5 and xb[100.0][0]["liq"] == 0.5
     with pytest.raises(SurfaceError, match="ZZZZ"):

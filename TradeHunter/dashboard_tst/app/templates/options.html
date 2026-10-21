@@ -1001,8 +1001,12 @@
       return '<div class="vol-pop-sec vol-cap">Liquidity: the last pass stored no open interest or volume for this contract.</div>';
     }
     var l = Math.max(0, Math.min(1, x.liq)), top = Math.max(1, Math.round((1 - l) * 100));
+    // v4.184 (user: "in the tooltip i need xx/xx of the liquidity ranking"): rank 1 = the deepest contract of the chain
+    var rk = x.rk != null && j.liq_n ? intText(x.rk) + ' / ' + intText(j.liq_n) : null;
     var h = '<div class="vol-pop-sec"><div class="vol-pop-row"><span><b>Liquidity</b></span>' +
-            '<span class="vol-chip">' + liqWord(l) + ' · top ' + top + '% of ' + esc(j.symbol) + '\'s contracts</span></div>' +
+            '<span class="vol-chip">' + liqWord(l) + (rk ? ' · rank ' + rk : '') + ' · top ' + top + '%</span></div>' +
+            (rk ? '<div class="vol-cap">Rank ' + rk + ': ' + intText(x.rk - 1) + ' of ' + esc(j.symbol) + '\'s ' + intText(j.liq_n) +
+                  ' contracts in the last pass ' + (x.rk - 1 === 1 ? 'is' : 'are') + ' deeper than this one (1 = the deepest).</div>' : '') +
             '<div class="vol-pos vol-pos-grey"><i class="vol-pos-lq" style="width:' + Math.round(l * 100) + '%"></i><b style="left:' + Math.round(l * 100) + '%"></b></div>' +
             '<div class="vol-pos-ends"><span>thinnest</span><span>deepest</span></div>';
     if (x.oi != null) h += '<div class="vol-pop-row"><span>Open interest</span><span>' + intText(x.oi) + ' <span class="text-slate-500">(yesterday\'s close)</span></span></div>';

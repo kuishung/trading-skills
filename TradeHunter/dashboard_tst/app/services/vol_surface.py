@@ -62,7 +62,7 @@ SCALE_LO_PCT, SCALE_HI_PCT = 5, 95   # the colour scale's ends (percentiles of t
 COMMON_SHARE = 0.5                   # common strikes only: a strike with a cell in at least half the expiries
 # the tile figures (v4.166): the row key -> the short key in an ``extra`` cell
 FIGURES = (("delta", "d"), ("gamma", "g"), ("theta", "t"), ("vega", "v"), ("last", "last"), ("price", "price"),
-           ("chg_pct", "chg"), ("oi", "oi"), ("volume", "vol"), ("liq", "liq"))
+           ("chg_pct", "chg"), ("oi", "oi"), ("volume", "vol"), ("liq", "liq"), ("liq_rank", "rk"))
 LIQ_VOLUME_WEIGHT = 0.5              # liquidity depth = log(1 + open interest) + this x log(1 + today's volume)
 
 
@@ -154,6 +154,7 @@ def liquidity_ranks(rows) -> None:
         oi, vol = _f(r.get("oi")), _f(r.get("volume"))
         if oi is None and vol is None:
             r["liq"] = None
+            r["liq_rank"] = None
             continue
         d = math.log1p(max(0.0, oi or 0.0)) + LIQ_VOLUME_WEIGHT * math.log1p(max(0.0, vol or 0.0))
         scored.append((d, r))
@@ -162,6 +163,7 @@ def liquidity_ranks(rows) -> None:
         return
     if n == 1:
         scored[0][1]["liq"] = 1.0
+        scored[0][1]["liq_rank"] = 1
         return
     scored.sort(key=lambda t: t[0])
     i = 0
@@ -169,9 +171,12 @@ def liquidity_ranks(rows) -> None:
         j = i
         while j + 1 < n and scored[j + 1][0] == scored[i][0]:
             j += 1
-        mid = (i + j) / 2.0                        # the shared rank of a tie
+        mid = (i + j) / 2.0                        # the shared percentile of a tie
         for k in range(i, j + 1):
             scored[k][1]["liq"] = round(mid / (n - 1), 4)
+            # v4.184 (the user: "xx/xx of the liquidity ranking"): 1 = the deepest contract of the chain;
+            # a tie shares the better rank (1 + the number of contracts strictly deeper)
+            scored[k][1]["liq_rank"] = n - j
         i = j + 1
 
 
@@ -419,7 +424,8 @@ def latest_rows(sdb, symbol) -> tuple[list[dict], dict]:
 
     on = session or clock.et_today()
     return rows, {"source": "latest", "on": str(on)[:10], "spot": (u or {}).get("spot"),
-                  "spot_src": (u or {}).get("spot_src"), "as_of": as_of, "name": (u or {}).get("name")}
+                  "spot_src": (u or {}).get("spot_src"), "as_of": as_of, "name": (u or {}).get("name"),
+                  "liq_n": sum(1 for r in rows if r.get("liq") is not None)}   # v4.184: the chain's ranked contracts
 
 
 def history_rows(sdb, symbol, day, *, band=DEFAULT_BAND, max_dte=DEFAULT_DTE, root=None) -> tuple[list[dict], dict]:
@@ -493,7 +499,8 @@ def surface(sdb, symbol, day="latest", *, side=None, band=None, max_dte=None, ex
     return {**grid, "symbol": sym, "name": meta.get("name"), "source": meta["source"],
             "spot_src": meta.get("spot_src"),
             "as_of": as_of.replace(microsecond=0).isoformat() + "Z" if isinstance(as_of, _dt.datetime) else None,
-            "traded": meta.get("traded"), "method": method, "has_greeks": meta["source"] == "latest"}
+            "traded": meta.get("traded"), "method": method, "has_greeks": meta["source"] == "latest",
+            "liq_n": meta.get("liq_n")}
 
 
 __all__ = ["SIDES", "FIGURES", "BANDS", "DTES", "SurfaceError", "build", "norm_options", "keep", "is_monthly",

@@ -223,6 +223,14 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-21 - v4.184: Volatility surface - the liquidity rank as "rank / total" in the hover card
+
+The user: *"in the tooltip i need xx/xx of the liquidity ranking - this rank/total rank"*. `liquidity_ranks`
+now also sets `liq_rank` per contract (1 = the deepest of the chain; a tie shares the better rank = 1 + the
+contracts strictly deeper) and `latest_rows` / `surface()` carry `liq_n` (the chain's ranked contracts); the
+rank travels in each cell's `extra` as `rk`. The hover card's chip reads "deep · rank 312 / 4,860 · top 6 %"
+with a line under it saying how many contracts are deeper. The percentile and the gauge are unchanged.
+
 ### 2026-10-21 - v4.183: Volatility surface - the liquidity gauge is the same width in every column
 
 The user, on a live screenshot: *"why some edge bar looks bolder and some thinner?"* - with nearly every cell full,

@@ -1330,7 +1330,7 @@ def test_the_surface_api_answers_with_the_grid_or_a_plain_reason(client, fake, s
     assert j["has_greeks"] is True
     assert [[x["d"] for x in row] for row in j["extra"]] == [[-0.55], [0.45], [0.45]]
     assert j["extra"][0][0] == {"d": -0.55, "g": None, "t": -0.03, "v": None, "last": 2.5, "price": None,
-                                "chg": None, "oi": 12400, "vol": None, "liq": 0.5}   # v4.181: ranked among the chain
+                                "chg": None, "oi": 12400, "vol": None, "liq": 0.5, "rk": 1}   # v4.181 / v4.184: ranked among the chain
     assert j["source"] == "latest" and j["as_of"] == "2026-10-07T19:30:00Z"
     assert j["common"] is True and j["hidden_strikes"] == 0
     assert client.get("/options/api/surface", params={"symbol": "AAPL", "common": "0"}).json()["common"] is False
@@ -1786,7 +1786,10 @@ def test_the_hide_new_and_thinly_listed_tick(client, fake):
     assert "'<td class=\"vol-cell' + (liqThin(x) ? ' vol-thin' : '') + '\"" in rs and "+ liqBar(x) + '</td>'" in rs
     assert "$('volTable').classList.toggle('vol-nolq', !liqOn());" in rs
     lq = html[html.index("function liqHtml("):html.index("function figsHtml(")]
-    assert "Liquidity is on the latest pass only" in lq and "'s contracts</span></div>'" in lq
+    assert "Liquidity is on the latest pass only" in lq
+    # v4.184 (user: "in the tooltip i need xx/xx of the liquidity ranking"): rank / chain size in the chip, 1 = deepest
+    assert "intText(x.rk) + ' / ' + intText(j.liq_n)" in lq and "(rk ? ' · rank ' + rk : '')" in lq
+    assert "(1 = the deepest)" in lq
     assert "Turnover (volume / open interest)" in lq and "Last trade vs model price" in lq
     assert "+ liqHtml(j, xf);" in html and 'id="volLegLiq"' in html
     assert "show($('volLegLiq'), liqOn() && !!V.last && V.last.source === 'latest');" in html
