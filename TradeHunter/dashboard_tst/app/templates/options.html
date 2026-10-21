@@ -113,9 +113,26 @@
      cell (empty ones too, so the rows line up) is about 68 x 60 px: the IV figure centred in the box, two
      small lines reserved below it, centred with it (.vol-l2 / .vol-l3, empty for now), the rank bar at the bottom.
      The size is fixed, so on a phone the grid scrolls both ways and the cells keep their shape. */
-  .vol-grid tbody tr:not(.vol-spot) > td { width: 4.25rem; min-width: 4.25rem; max-width: 4.25rem; height: 3.75rem;
+  .vol-grid tbody tr:not(.vol-spot):not(.vol-lvl) > td { width: 4.25rem; min-width: 4.25rem; max-width: 4.25rem; height: 3.75rem;
                                            padding: .45rem .4rem; vertical-align: middle; text-align: center; position: relative; }
-  .vol-grid tbody tr:not(.vol-spot) > th { vertical-align: middle; height: 3.75rem; }
+  .vol-grid tbody tr:not(.vol-spot):not(.vol-lvl) > th { vertical-align: middle; height: 3.75rem; }
+  /* v4.192 (user: "add an MATP and MBP in the tile so that user will know the strike of the MBP and MATP"): a line
+     at the MATP (orange) and at the MBP (green) between the strike rows, like the price line, and a small tag on
+     the listed strike nearest each - the Watchlist's colours for the two levels */
+  .vol-grid tr.vol-lvl th, .vol-grid tr.vol-lvl td { padding: .1rem .45rem; font-size: 10px; white-space: nowrap; border-bottom: 2px solid; }
+  .vol-grid tr.vol-lvl td { text-align: left; }
+  .vol-grid tr.vol-lvl.vol-lvl-matp th, .vol-grid tr.vol-lvl.vol-lvl-matp td { color: #fb923c; border-bottom-color: #f97316; }
+  .vol-grid tr.vol-lvl.vol-lvl-mbp th, .vol-grid tr.vol-lvl.vol-lvl-mbp td { color: #22c55e; border-bottom-color: #16a34a; }
+  html.light .vol-grid tr.vol-lvl.vol-lvl-matp th, html.light .vol-grid tr.vol-lvl.vol-lvl-matp td { color: #c2410c; }
+  html.light .vol-grid tr.vol-lvl.vol-lvl-mbp th, html.light .vol-grid tr.vol-lvl.vol-lvl-mbp td { color: #15803d; }
+  .vol-ktag { display: inline-block; margin-left: .3rem; padding: 0 .3rem; border-radius: 9999px; font-size: 9px; font-weight: 600;
+              vertical-align: middle; line-height: 1.4; }
+  .vol-ktag.vol-lvl-matp { background: rgba(249,115,22,.18); color: #fb923c; }
+  .vol-ktag.vol-lvl-mbp { background: rgba(22,163,74,.18); color: #22c55e; }
+  html.light .vol-ktag.vol-lvl-matp { color: #c2410c; }
+  html.light .vol-ktag.vol-lvl-mbp { color: #15803d; }
+  .vol-leg-matp { color: #fb923c; } .vol-leg-mbp { color: #22c55e; }
+  html.light .vol-leg-matp { color: #c2410c; } html.light .vol-leg-mbp { color: #15803d; }
   .vol-grid thead th:not(.vol-sticky) { min-width: 4.25rem; }
   .vol-grid .vol-iv { font-size: 13px; font-weight: 600; line-height: 1.15; color: var(--tv-text-hi); }
   .vol-grid .vol-l2, .vol-grid .vol-l3 { font-size: 10px; line-height: 1.2; color: var(--tv-muted);
@@ -417,6 +434,7 @@
       <span id="volLegWin">IV vs own past 365 days:</span>
       <span>low</span><span class="vol-bar"></span><span>high</span>
       <span id="volLegLiq" class="hidden">&middot; right-edge gauge: depth among this stock's contracts (arrow = the level) &middot; faded: the thinnest quarter</span>
+      <span title="The two levels of the Watchlist's MATP run, drawn as lines between the strike rows; the listed strike nearest each carries a tag">&middot; <span class="vol-leg-matp">MATP</span> / <span class="vol-leg-mbp">MBP</span> lines from the Watchlist</span>
       <span>&middot; click a cell: contract history in a new window</span>
       <span id="volHistMsg" class="text-slate-600"></span>
     </div>
@@ -425,6 +443,7 @@
          title="Each cell is the implied volatility, in percent, of a fixed time horizon at a fixed moneyness (strike / price) - first worked out per listed strike from the two listed expiries around the horizon (every listed expiry at least 7 days out, linear in total variance), then between the two listed strikes around strike = price x moneyness (linear in strike). Nothing is extrapolated: a horizon before the first expiry or after the last one is empty, and so is a level outside the listed strikes. Hover a cell for the working.">
       <div class="flex flex-wrap items-center gap-2"><span>IV vs this surface:</span><span>low</span><span class="vol-bar"></span><span>high</span><span>&middot; the bar under each figure shows the same level</span></div>
       <span class="vol-sub" style="font-size:10px">=</span> a listed expiry and a listed strike fall on that cell &middot; hover a cell for the working &middot; click: contract history of the nearer listed expiry and strike
+      &middot; <span class="vol-leg-matp">MATP</span> / <span class="vol-leg-mbp">MBP</span> lines from the Watchlist
     </div>
     </div>{# /controls pane #}
   </aside>
@@ -780,6 +799,44 @@
     if (j.side === 'put') return 'P';
     return k < j.spot ? 'P' : 'C';
   }
+  // ── v4.192: the MATP and MBP lines (user: "add an MATP and MBP in the tile so that user will know the strike of
+  // the MBP and MATP") - j.levels = {matp, mbp} from the Watchlist's MATP run. A line between the strike rows at
+  // each level (like the price line) and a tag on the listed strike nearest it, on both grids. ──
+  var LVL = {matp: {word: 'MATP', cls: 'vol-lvl-matp', why: 'the maximum acceptable target price from the Watchlist\'s MATP run'},
+             mbp: {word: 'MBP', cls: 'vol-lvl-mbp', why: 'the maximum buy price from the Watchlist\'s MATP run'}};
+  function levelList(j) {              // the levels on hand, lowest first
+    var L = (j && j.levels) || {}, out = [];
+    ['mbp', 'matp'].forEach(function (k) { if (L[k] != null && isFinite(L[k])) out.push({kind: k, v: +L[k]}); });
+    out.sort(function (a, b) { return a.v - b.v; });
+    return out;
+  }
+  function levelState(j) { return {list: levelList(j), i: 0}; }
+  function levelRow(l, n) {
+    var d = LVL[l.kind], v = num(l.v, 2);
+    return '<tr class="vol-lvl ' + d.cls + '"><th class="vol-sticky" title="' + esc(d.word + ' ' + v + ' - ' + d.why +
+           '. The strikes above this line are below the ' + d.word + ', the strikes below it above.') + '">' + d.word + ' ' + esc(v) + '</th>' +
+           '<td colspan="' + n + '">' + d.word + ' ' + esc(v) + ' &middot; ' + esc(d.why) + '</td></tr>';
+  }
+  function levelsBefore(st, k, n) {    // the lines that fall at or below strike k, not drawn yet
+    var h = '';
+    while (st.i < st.list.length && st.list[st.i].v <= k) { h += levelRow(st.list[st.i], n); st.i++; }
+    return h;
+  }
+  function levelsRest(st, n) { var h = ''; while (st.i < st.list.length) { h += levelRow(st.list[st.i], n); st.i++; } return h; }
+  function levelTags(j, rows) {        // {row index: [kinds]} - the shown strike nearest each level
+    var out = {};
+    levelList(j).forEach(function (l) {
+      var best = -1, bd = Infinity;
+      rows.forEach(function (r) { var d = Math.abs(j.strikes[r] - l.v); if (d < bd) { bd = d; best = r; } });
+      if (best >= 0) (out[best] = out[best] || []).push(l.kind);
+    });
+    return out;
+  }
+  function tagHtml(kinds) {
+    return (kinds || []).map(function (k) {
+      return '<span class="vol-ktag ' + LVL[k].cls + '" title="the listed strike nearest the ' + LVL[k].word + '">' + LVL[k].word + '</span>';
+    }).join('');
+  }
   function spotRow(j, n) {             // the line at the price, in the strike column as "ATM": strikes below the
     // price are listed ABOVE the line (calls in the money, puts out), strikes above it below (v4.149: it read the other way)
     return '<tr class="vol-spot"><th class="vol-sticky" title="The stock price - the at-the-money level. The rows above this line are the strikes below the price, the rows below it the strikes above.">ATM ' + esc(num(j.spot, 2)) + '</th>' +
@@ -866,10 +923,12 @@
     });
     h += '</tr></thead><tbody>';
     var spotDone = false;
+    var lst = levelState(j), ltags = levelTags(j, vw.rows);   // v4.192: the MATP / MBP lines and strike tags
     vw.rows.forEach(function (r) {
       var k = j.strikes[r];
-      if (!spotDone && r >= j.spot_row) { h += spotRow(j, vw.cols.length); spotDone = true; }
-      h += '<tr><th class="vol-sticky vol-k">' + esc(strikeText(k)) + '</th>';
+      if (!spotDone && r >= j.spot_row) { h += levelsBefore(lst, j.spot, vw.cols.length) + spotRow(j, vw.cols.length); spotDone = true; }
+      h += levelsBefore(lst, k, vw.cols.length);     // v4.192: the MATP / MBP lines in value order
+      h += '<tr><th class="vol-sticky vol-k">' + esc(strikeText(k)) + tagHtml(ltags[r]) + '</th>';
       var kind = sideOf(j, k) === 'C' ? 'call' : 'put';
       vw.cols.forEach(function (c) {
         var v = j.cells[r][c];
@@ -884,7 +943,8 @@
       });
       h += '</tr>';
     });
-    if (!spotDone) h += spotRow(j, vw.cols.length);
+    if (!spotDone) h += levelsBefore(lst, j.spot, vw.cols.length) + spotRow(j, vw.cols.length);
+    h += levelsRest(lst, vw.cols.length);
     $('volTable').innerHTML = h + '</tbody>';
     $('volTable').classList.toggle('vol-nolq', !liqOn());
     var src = j.source === 'latest'
@@ -1407,16 +1467,18 @@
     // the at-the-money line: on moneyness rows the 100% row itself (when shown), else the line at the price
     var atmShown = mon && vw.rows.some(function (r) { return j.rows[r].m === 1; });
     var spotDone = atmShown;
+    var lst = levelState(j), ltags = levelTags(j, vw.rows);   // v4.192: the MATP / MBP lines and strike tags
     var spot = num(j.spot, 2);
     vw.rows.forEach(function (r) {
       var k = j.strikes[r], row = mon ? j.rows[r] : null, atm = !!(row && row.m === 1);
-      if (!spotDone && r >= j.spot_row) { h += cmSpotRow(j, vw.cols.length); spotDone = true; }
+      if (!spotDone && r >= j.spot_row) { h += levelsBefore(lst, j.spot, vw.cols.length) + cmSpotRow(j, vw.cols.length); spotDone = true; }
+      h += levelsBefore(lst, k, vw.cols.length);     // v4.192: the MATP / MBP lines in value order
       if (mon) {
         var rt = atm ? 'at the money - price ' + spot
                      : 'strike / price = ' + pctText(row.pct) + ' % - strike ' + num(row.strike, 2) + ' at price ' + spot;
-        h += '<tr' + (atm ? ' class="vol-atm"' : '') + '><th class="vol-sticky vol-k vol-m-k" title="' + esc(rt) + '">' + esc(mText(row)) + '</th>';
+        h += '<tr' + (atm ? ' class="vol-atm"' : '') + '><th class="vol-sticky vol-k vol-m-k" title="' + esc(rt) + '">' + esc(mText(row)) + tagHtml(ltags[r]) + '</th>';
       } else {
-        h += '<tr><th class="vol-sticky vol-k">' + esc(strikeText(k)) + '</th>';
+        h += '<tr><th class="vol-sticky vol-k">' + esc(strikeText(k)) + tagHtml(ltags[r]) + '</th>';
       }
       var kind = sideOf(j, k) === 'C' ? 'call' : 'put';
       vw.cols.forEach(function (c) {
@@ -1440,7 +1502,8 @@
       });
       h += '</tr>';
     });
-    if (!spotDone) h += cmSpotRow(j, vw.cols.length);
+    if (!spotDone) h += levelsBefore(lst, j.spot, vw.cols.length) + cmSpotRow(j, vw.cols.length);
+    h += levelsRest(lst, vw.cols.length);
     $('cmTable').innerHTML = h + '</tbody>';
     var src = j.source === 'latest' ? 'the latest market pass (session ' + esc(j.on) + ')' : 'the close of ' + esc(j.on);
     var nx = j.n_expiries_used || 0;

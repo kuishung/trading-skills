@@ -223,6 +223,16 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-21 - v4.192: both surfaces - the ticker's MATP and MBP as lines between the strike rows
+
+The user: *"in the vol surface and the interpolated vol surface i want you to add an MATP and MBP in the tile so
+that user will know the strike of the MBP and MATP"*. `GET /options/api/surface` and `/options/api/surface/cm`
+now carry `levels = {matp, mbp}` from the Watchlist's MATP board (`_levels_for`: an active row wins over a
+dropped one; `{}` off the board). On both grids a line is drawn between the strike rows at each level, like the
+price line - orange for the MATP, green for the MBP (the Watchlist's colours), the value and what it is in the
+line - in value order with the price line; the listed strike nearest each level carries a small MATP / MBP tag
+in its strike cell. Both legends say so. Tests in `tests/test_options_page.py`.
+
 ### 2026-10-21 - v4.191: Volatility surface - the pane's liquidity table actually shows
 
 The user: *"the watchlist in the vol surface does not show liquidity tooltip table"*. v4.190 put the popover

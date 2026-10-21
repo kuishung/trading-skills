@@ -1656,17 +1656,47 @@ async def api_history_days(user: User = Depends(require_user)):
 
 @router.get("/api/surface")
 async def api_surface(symbol: str = "", day: str = "latest", side: str = "", band: str = "", dte: str = "",
-                      exp: str = "", common: str = "1", user: User = Depends(require_user)):
+                      exp: str = "", common: str = "1", user: User = Depends(require_user),
+                      db: Session = Depends(get_db)):
     """The volatility surface of ``symbol`` on ``day`` (``latest`` or ``YYYY-MM-DD``); ``common=0``
     shows every strike (default: common strikes only, v4.140). v4.166: the answer also carries
     ``extra`` (each cell's delta / gamma / theta / vega, last, model price, day change, OI, volume -
-    the tile figures, same shape as ``cells``) and ``has_greeks`` (false on a past day)."""
+    the tile figures, same shape as ``cells``) and ``has_greeks`` (false on a past day). v4.192:
+    ``levels`` = the ticker's MATP and MBP from the Watchlist's MATP run (``{}`` when it has none)."""
     from ..services import vol_surface
 
-    return JSONResponse(await run_in_threadpool(_hist_call, vol_surface.surface, symbol, day or "latest",
-                                                side=side or None, band=band or None, max_dte=dte or None,
-                                                expiries=exp or None,
-                                                common=_flag(common)))
+    out = await run_in_threadpool(_hist_call, vol_surface.surface, symbol, day or "latest",
+                                  side=side or None, band=band or None, max_dte=dte or None,
+                                  expiries=exp or None, common=_flag(common))
+    if out.get("ok"):
+        out["levels"] = _levels_for(db, symbol)
+    return JSONResponse(out)
+
+
+def _levels_for(db, symbol) -> dict:
+    """v4.192 (the user: "add an MATP and MBP in the tile so that user will know the strike of the
+    MBP and MATP"): ``{matp, mbp}`` for ``symbol`` from the MATP board (an active row wins over a
+    dropped one), ``{}`` when the board has none or the read fails."""
+    from ..models import MATPLevel
+
+    sym = str(symbol or "").strip().upper()
+    if not sym:
+        return {}
+    try:
+        rows = db.query(MATPLevel).filter(MATPLevel.symbol == sym).all()
+    except Exception:  # noqa: BLE001 - the lines are a convenience, never the reason a surface fails
+        log.exception("surface levels failed for %s", sym)
+        return {}
+    if not rows:
+        return {}
+    rows.sort(key=lambda lv: 0 if (lv.status or "active") == "active" else 1)
+    lv = rows[0]
+    out = {}
+    if _wl_matp(lv.matp) is not None:
+        out["matp"] = _wl_matp(lv.matp)
+    if _wl_matp(lv.mbp) is not None:
+        out["mbp"] = _wl_matp(lv.mbp)
+    return out
 
 
 def _flag(v) -> bool:
@@ -1713,7 +1743,8 @@ async def api_surface_history(symbol: str = "", day: str = "latest", side: str =
 
 @router.get("/api/surface/cm")
 async def api_surface_cm(symbol: str = "", day: str = "latest", side: str = "", band: str = "", exp: str = "",
-                         common: str = "1", horizons: str = "", rows: str = "", user: User = Depends(require_user)):
+                         common: str = "1", horizons: str = "", rows: str = "", user: User = Depends(require_user),
+                         db: Session = Depends(get_db)):
     """The INTERPOLATED volatility surface (v4.171): the same rows re-cut on fixed horizons
     (``horizons=30,60,90``; default 30 days to two years) - each cell the IV interpolated linearly
     in total variance between the two listed expiries around the horizon (legs at least 7 days out,
@@ -1730,9 +1761,12 @@ async def api_surface_cm(symbol: str = "", day: str = "latest", side: str = "", 
         rm = vol_cm.norm_rows(rows or None)
     except ValueError as exc:
         return _err(str(exc))
-    return JSONResponse(await run_in_threadpool(_hist_call, vol_cm.surface_cm, symbol, day or "latest",
-                                                side=side or None, band=band or None, expiries="all",
-                                                common=_flag(common), horizons=hs, rows=rm))
+    out = await run_in_threadpool(_hist_call, vol_cm.surface_cm, symbol, day or "latest",
+                                  side=side or None, band=band or None, expiries="all",
+                                  common=_flag(common), horizons=hs, rows=rm)
+    if out.get("ok"):
+        out["levels"] = _levels_for(db, symbol)      # v4.192: the MATP and MBP lines on this grid too
+    return JSONResponse(out)
 
 
 @router.get("/api/history/chain")

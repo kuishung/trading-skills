@@ -1333,6 +1333,7 @@ def test_the_surface_api_answers_with_the_grid_or_a_plain_reason(client, fake, s
     assert j["extra"][0][0] == {"d": -0.55, "g": None, "t": -0.03, "v": None, "last": 2.5, "price": None,
                                 "chg": None, "oi": 12400, "vol": None, "liq": 0.5, "rk": 1}   # v4.181 / v4.184: ranked among the chain
     assert j["source"] == "latest" and j["as_of"] == "2026-10-07T19:30:00Z"
+    assert j["levels"] == {}                                           # v4.192: no MATP row for AAPL on the board
     assert j["common"] is True and j["hidden_strikes"] == 0
     assert client.get("/options/api/surface", params={"symbol": "AAPL", "common": "0"}).json()["common"] is False
     # v4.141: the per-cell history for the same surface (no day converted here: an honest empty answer)
@@ -1344,6 +1345,43 @@ def test_the_surface_api_answers_with_the_grid_or_a_plain_reason(client, fake, s
     assert j["ok"] is False and "NOPE" in j["error"]
     j = client.get("/options/api/surface", params={"symbol": "AAPL", "day": "2026-10-02"}).json()
     assert j["ok"] is False and "contract history" in j["error"]
+
+
+def test_the_surface_apis_carry_the_tickers_matp_and_mbp(client, fake, screener_url, db):
+    """v4.192 (user: "add an MATP and MBP in the tile so that user will know the strike of the MBP and
+    MATP"): both surface answers carry ``levels`` from the Watchlist's MATP board - an active row wins
+    over a dropped one; a missing figure is left out; a ticker off the board gets ``{}``."""
+    from app import screener_db
+    from app.screener_models import ScrContract, ScrUnderlying
+
+    asof = _dt.datetime(2026, 10, 7, 19, 30)
+    with screener_db.session() as s:
+        s.add(ScrUnderlying(symbol="AMD", name="AMD", sec_type="stock", spot=100.0, history_done=False, history_tries=0))
+        for exp in ("2026-11-20", "2026-12-18"):
+            for k in (90.0, 100.0, 110.0):
+                for rt in "CP":
+                    s.add(ScrContract(symbol="AMD", expiry=exp, right=rt, strike=k, weekly=False, iv=0.3,
+                                      session="2026-10-07", as_of=asof, oi=100, volume=5))
+        s.commit()
+    db.add(models.MATPLevel(symbol="AMD", exchange="NASDAQ", matp=107.5, mbp=93.25, status="dropped"))
+    db.add(models.MATPLevel(symbol="AMD", exchange="NASDAQ", matp=108.0, mbp=None, status="active"))
+    db.commit()
+    j = client.get("/options/api/surface", params={"symbol": "amd"}).json()
+    assert j["ok"] is True and j["levels"] == {"matp": 108.0}
+    j = client.get("/options/api/surface/cm", params={"symbol": "AMD", "horizons": "30,60"}).json()
+    assert j["ok"] is True and j["levels"] == {"matp": 108.0}
+    # the page: a line per level between the strike rows (orange MATP, green MBP) and a tag on the nearest strike
+    html = client.get("/options").text
+    for needle in ("var LVL = {matp: {word: 'MATP', cls: 'vol-lvl-matp'", "function levelsBefore(st, k, n)",
+                   "function levelTags(j, rows)", "h += levelsRest(lst, vw.cols.length);",
+                   "h += levelsBefore(lst, j.spot, vw.cols.length) + spotRow(j, vw.cols.length); spotDone = true; }",
+                   "h += levelsBefore(lst, j.spot, vw.cols.length) + cmSpotRow(j, vw.cols.length); spotDone = true; }",
+                   "esc(strikeText(k)) + tagHtml(ltags[r]) + '</th>'", "esc(mText(row)) + tagHtml(ltags[r]) + '</th>'",
+                   ".vol-grid tr.vol-lvl.vol-lvl-matp th, .vol-grid tr.vol-lvl.vol-lvl-matp td { color: #fb923c; border-bottom-color: #f97316; }",
+                   ".vol-grid tbody tr:not(.vol-spot):not(.vol-lvl) > td {",
+                   '<span class="vol-leg-matp">MATP</span> / <span class="vol-leg-mbp">MBP</span> lines from the Watchlist'):
+        assert needle in html, needle
+    assert html.count("lines from the Watchlist") == 2                  # both tabs' legends
 
 
 def test_the_history_days_api_lists_the_converted_sessions(client, fake, monkeypatch, tmp_path):
