@@ -76,6 +76,11 @@ def test_grid_shows_the_gap_to_matp_and_no_trend_or_sig(client, db, monkeypatch)
     assert 'class="text-amber-300">410</td>' in html[j:j + 2500]          # the value coloured by the line it clears
     assert 'data-level=""' in html and "No option data for NOMATP in the screener" in html
     assert "window.__wlLiqPop" in html and "document.addEventListener('mouseover'" in html
+    # v4.188 (user: "the black wording cannot see ... follow the setting of the toggle dark/light"): theme variables
+    assert "#wlLiqPop{position:fixed;z-index:60;width:19rem;padding:.5rem .6rem;border:1px solid var(--tv-border-2);border-radius:.5rem;background:var(--tv-panel);color:var(--tv-text);" in html
+    assert "#wlLiqPop .wl-liq-cap{margin-top:.3rem;color:var(--tv-muted);font-size:10px}" in html
+    assert 'class="text-left wl-liq-name">Near OI (median)</td>' in cell and 'class="wl-liq-line">1k</td>' in cell
+    assert "text-slate-400" not in cell[cell.index('<div class="wl-liq-tip hidden">'):] .split("</div>\n    </div>")[0] if "wl-liq-tip" in cell else True
     # the member's lines under the list, with the defaults
     assert "Option liquidity lines" in html and 'hx-post="/matp/liq-thresholds"' in html
     assert 'name="liquid_oi" type="number" min="0" step="1" value="1000"' in html

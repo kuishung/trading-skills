@@ -85,13 +85,19 @@
 .wl-liq-in{width:100%;min-width:0;border-radius:.25rem;background:rgba(2,6,23,.6);border:1px solid rgb(51,65,85);padding:.1rem .3rem;font-size:11px;color:rgb(226,232,240)}
 .wl-liq-in:focus{outline:none;border-color:rgb(16,185,129)}
 /* v4.187: the Opt liq hover table - one fixed popover (#wlLiqPop) filled from the row's hidden .wl-liq-tip */
-#wlLiqPop{position:fixed;z-index:60;width:19rem;padding:.5rem .6rem;border:1px solid rgb(51,65,85);border-radius:.5rem;background:rgb(15,23,42);color:rgb(203,213,225);font-size:11px;line-height:1.35;box-shadow:0 8px 24px rgba(0,0,0,.45);pointer-events:none}
+/* v4.188 (user: "the black wording cannot see ... follow the setting of the toggle dark/light"): the popover
+   is painted with the theme variables (--tv-panel / --tv-text / --tv-muted ...), the same as the surface's
+   hover card, so it follows the light / dark toggle - no hard-coded dark surface, no Tailwind slate text */
+#wlLiqPop{position:fixed;z-index:60;width:19rem;padding:.5rem .6rem;border:1px solid var(--tv-border-2);border-radius:.5rem;background:var(--tv-panel);color:var(--tv-text);font-size:11px;line-height:1.35;box-shadow:0 8px 24px rgba(0,0,0,.25);pointer-events:none}
+#wlLiqPop b{color:var(--tv-text-hi)}
+#wlLiqPop .wl-liq-name{color:var(--tv-text)}
+#wlLiqPop .wl-liq-line{color:var(--tv-text)}
 #wlLiqPop .wl-liq-tbl{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
-#wlLiqPop .wl-liq-tbl th{font-weight:400;color:rgb(148,163,184);text-align:right;padding:0 0 .2rem;border-bottom:1px solid rgb(51,65,85);font-size:10px}
+#wlLiqPop .wl-liq-tbl th{font-weight:400;color:var(--tv-muted);text-align:right;padding:0 0 .2rem;border-bottom:1px solid var(--tv-border-2);font-size:10px}
 #wlLiqPop .wl-liq-tbl td{text-align:right;padding:.15rem 0 0}
 #wlLiqPop .wl-liq-tbl th:first-child,#wlLiqPop .wl-liq-tbl td:first-child{text-align:left}
-#wlLiqPop .wl-liq-chip{display:inline-block;padding:0 .4rem;border-radius:9999px;background:rgba(100,116,139,.18);font-size:10px}
-#wlLiqPop .wl-liq-cap{margin-top:.3rem;color:rgb(100,116,139);font-size:10px}
+#wlLiqPop .wl-liq-chip{display:inline-block;padding:0 .4rem;border-radius:9999px;background:rgba(120,123,134,.18);font-size:10px}
+#wlLiqPop .wl-liq-cap{margin-top:.3rem;color:var(--tv-muted);font-size:10px}
 </style>
 <script>
 (function () {

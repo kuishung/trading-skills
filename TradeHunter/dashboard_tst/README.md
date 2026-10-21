@@ -223,6 +223,15 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-21 - v4.188: Watchlist - the Opt liq hover table follows the light / dark toggle
+
+The user (light theme): *"the black wording cannot see. I need it to be with background and follow the setting
+of the toggle dark/light"*. The popover (`#wlLiqPop` in `_watchlist.html`) had a hard-coded dark surface while
+the site's light theme turned its Tailwind slate text dark. It is now painted with the theme variables the
+surface's hover card uses (`--tv-panel`, `--tv-border-2`, `--tv-text`, `--tv-text-hi`, `--tv-muted`), and the
+table's figure names and lines carry theme classes (`.wl-liq-name`, `.wl-liq-line`) instead of slate colours,
+so it reads in both themes. The green / amber / red values are unchanged.
+
 ### 2026-10-21 - v4.187: Watchlist - the Opt liq column shows the number and the verdict; the hover is a table
 
 The user: *"i want to show the liquidity in watchlist in numbers and then the fair, thin, liquid next to it; in the

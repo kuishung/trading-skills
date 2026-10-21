@@ -82,13 +82,13 @@
         {% if not lq %}title="No option data for {{ lv.symbol }} in the screener's last pass."{% endif %}>
     {% if lq %}<b class="text-slate-200 tabular-nums font-medium">{{ lq.num }}</b> <span class="{{ lq_cls }}">{{ lq.label }}</span>
     <div class="wl-liq-tip hidden">
-      <div class="flex items-baseline justify-between gap-2 mb-1"><b class="text-slate-100">{{ lv.symbol }} option liquidity</b><span class="wl-liq-chip {{ lq_cls }}">{{ lq.label }}</span></div>
+      <div class="flex items-baseline justify-between gap-2 mb-1"><b>{{ lv.symbol }} option liquidity</b><span class="wl-liq-chip {{ lq_cls }}">{{ lq.label }}</span></div>
       <table class="wl-liq-tbl">
         <tr><th class="text-left">Figure</th><th>{{ lv.symbol }}</th><th>Fair &ge;</th><th>Liquid &ge;</th></tr>
         {% for f in lq.figs %}
-        <tr><td class="text-left text-slate-400">{{ f.name }}</td>
+        <tr><td class="text-left wl-liq-name">{{ f.name }}</td>
             <td class="{{ 'text-emerald-300' if f.level == 'liquid' else ('text-amber-300' if f.level == 'fair' else 'text-rose-300') }}">{{ f.value_text }}</td>
-            <td class="text-slate-300">{{ f.fair_text }}</td><td class="text-slate-300">{{ f.liquid_text }}</td></tr>
+            <td class="wl-liq-line">{{ f.fair_text }}</td><td class="wl-liq-line">{{ f.liquid_text }}</td></tr>
         {% endfor %}
       </table>
       <div class="wl-liq-cap">Near the money = {{ lq.near_words }}. A level needs all three figures: green at the Liquid line, amber between the lines, red below Fair.</div>
