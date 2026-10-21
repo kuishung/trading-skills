@@ -223,6 +223,12 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-21 - v4.185: Volatility surface - the hover card's liquidity bar in the gauge's blue
+
+The user: *"the liquidity progress bar in the tooltip i need the colour in blue like the one of the edge bar"*.
+The hover card's liquidity position bar (`.vol-pos-lq` / `.vol-pos-grey` in `options.html`) now uses the edge
+gauge's dark blue for the fill and its pale blue for the track, with the same lighter blues in dark mode.
+
 ### 2026-10-21 - v4.184: Volatility surface - the liquidity rank as "rank / total" in the hover card
 
 The user: *"in the tooltip i need xx/xx of the liquidity ranking - this rank/total rank"*. `liquidity_ranks`

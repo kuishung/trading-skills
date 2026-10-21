@@ -176,8 +176,11 @@
   .vol-pop .vol-pop-sec { border-top: 1px solid var(--tv-border); margin-top: .4rem; padding-top: .35rem; }
   .vol-pop .vol-chip { display: inline-block; padding: 0 .4rem; border-radius: 9999px; font-size: 10px;
                        background: rgba(100,116,139,.18); color: var(--tv-text); white-space: nowrap; }
-  .vol-pop .vol-pos > i.vol-pos-lq { background: rgba(100,116,139,.55); }
-  .vol-pop .vol-pos.vol-pos-grey { background: rgba(128,128,128,.18); }
+  /* v4.185 (user: "the liquidity progress bar in the tooltip i need the colour in blue like the one of the edge bar") */
+  .vol-pop .vol-pos > i.vol-pos-lq { background: rgba(30,64,175,.72); }
+  .vol-pop .vol-pos.vol-pos-grey { background: rgba(30,58,138,.16); }
+  html:not(.light) .vol-pop .vol-pos > i.vol-pos-lq { background: rgba(96,165,250,.6); }
+  html:not(.light) .vol-pop .vol-pos.vol-pos-grey { background: rgba(96,165,250,.16); }
   /* the hover card: this contract's IV against its own past year */
   .vol-pop { position: fixed; z-index: 40; width: 20rem; padding: .5rem .6rem; border: 1px solid var(--tv-border-2);
              border-radius: var(--tv-r-panel); background: var(--tv-panel); color: var(--tv-text); font-size: 11px;

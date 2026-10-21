@@ -1790,6 +1790,9 @@ def test_the_hide_new_and_thinly_listed_tick(client, fake):
     # v4.184 (user: "in the tooltip i need xx/xx of the liquidity ranking"): rank / chain size in the chip, 1 = deepest
     assert "intText(x.rk) + ' / ' + intText(j.liq_n)" in lq and "(rk ? ' · rank ' + rk : '')" in lq
     assert "(1 = the deepest)" in lq
+    # v4.185: the hover card's liquidity bar in the edge gauge's blue
+    assert ".vol-pop .vol-pos > i.vol-pos-lq { background: rgba(30,64,175,.72); }" in html
+    assert ".vol-pop .vol-pos.vol-pos-grey { background: rgba(30,58,138,.16); }" in html
     assert "Turnover (volume / open interest)" in lq and "Last trade vs model price" in lq
     assert "+ liqHtml(j, xf);" in html and 'id="volLegLiq"' in html
     assert "show($('volLegLiq'), liqOn() && !!V.last && V.last.source === 'latest');" in html
