@@ -223,6 +223,15 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-21 - v4.190: Volatility surface - the watchlist pane's liquidity hover is the same table
+
+The user: *"the liquidity hover tooltip also need to be the same with the vol surface page"*. The pane's
+"number + verdict" label had the old sentence as its title; it now opens the same table as the Watchlist page's
+Opt liq hover (`lqTipHtml` in `options.html`, in a `.vol-pop` so it follows the theme): one row per figure,
+the ticker's value against the Fair and Liquid lines, the value coloured by the line it clears, the two caption
+lines. `GET /options/api/liquidity` carries the rows (`figs`, `near_words`). Hovering a row of the pane shows
+it; leaving the pane or scrolling it hides it. Test in `tests/test_options_page.py`.
+
 ### 2026-10-21 - v4.189: the price chart follows the light / dark toggle in place
 
 The user: *"when the interface is toggled to dark, the chart background is still white, i need it to change to

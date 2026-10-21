@@ -1830,7 +1830,8 @@ def api_liquidity(symbols: str = "", user: User = Depends(require_user)):
     except Exception as exc:  # noqa: BLE001 - the pane shows no label rather than a 500
         log.exception("surface liquidity failed")
         return JSONResponse({"ok": False, "error": "the option liquidity could not be read (" + type(exc).__name__ + ")"})
-    out = {k: {"level": x["level"], "label": x["label"], "text": x["text"], "short": x["short"], "num": x["num"]}
+    out = {k: {"level": x["level"], "label": x["label"], "text": x["text"], "short": x["short"], "num": x["num"],
+               "near_words": x["near_words"], "figs": x["figs"]}          # v4.190: the hover table's rows
            for k, x in v.items()}
     return JSONResponse({"ok": True, "verdicts": out})
 

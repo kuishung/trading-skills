@@ -177,6 +177,14 @@
   .vol-pop .vol-chip { display: inline-block; padding: 0 .4rem; border-radius: 9999px; font-size: 10px;
                        background: rgba(100,116,139,.18); color: var(--tv-text); white-space: nowrap; }
   /* v4.185 (user: "the liquidity progress bar in the tooltip i need the colour in blue like the one of the edge bar") */
+  /* v4.190: the watchlist pane's option-liquidity table (the Watchlist page's Opt liq hover, same look) */
+  .vol-pop .lq-tbl { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  .vol-pop .lq-tbl th { font-weight: 400; color: var(--tv-muted); text-align: right; padding: 0 0 .2rem;
+                        border-bottom: 1px solid var(--tv-border-2); font-size: 10px; }
+  .vol-pop .lq-tbl td { text-align: right; padding: .15rem 0 0; }
+  .vol-pop .lq-tbl th:first-child, .vol-pop .lq-tbl td:first-child { text-align: left; }
+  .vol-pop .lq-name, .vol-pop .lq-line { color: var(--tv-text); }
+  .vol-pop .lq-chip { display: inline-block; padding: 0 .4rem; border-radius: 9999px; background: rgba(120,123,134,.18); font-size: 10px; }
   .vol-pop .vol-pos > i.vol-pos-lq { background: rgba(30,64,175,.72); }
   .vol-pop .vol-pos.vol-pos-grey { background: rgba(30,58,138,.16); }
   html:not(.light) .vol-pop .vol-pos > i.vol-pos-lq { background: rgba(96,165,250,.6); }
@@ -510,6 +518,8 @@
       <table id="cmTable" class="vol-grid text-xs"></table>
     </div>
     <div id="cmPop" class="vol-pop hidden" role="tooltip"></div>
+    {# v4.190: the watchlist pane's option-liquidity hover table (same as the Watchlist page's Opt liq) #}
+    <div id="volLqPop" class="vol-pop hidden" role="tooltip" style="width:19rem"></div>
   </section>
   </div>{# /right panel #}
   </div>{# /two panels #}
@@ -1681,6 +1691,18 @@
       if (V.last) renderSurface(V.last);
       if (CM.last) renderCm(CM.last);
     });
+    // v4.190: the watchlist pane's option-liquidity hover table
+    $('volWlList').addEventListener('mouseover', function (e) {
+      var row = e.target.closest ? e.target.closest('.vol-wl-row') : null, v = row && LQV[row.dataset.sym];
+      if (!v) { lqPopHide(); return; }
+      var pop = $('volLqPop');
+      pop.innerHTML = lqTipHtml(row.dataset.sym, v);
+      pop.classList.remove('hidden');
+      lqPopPlace(e);
+    });
+    $('volWlList').addEventListener('mousemove', function (e) { if (!$('volLqPop').classList.contains('hidden')) lqPopPlace(e); });
+    $('volWlList').addEventListener('mouseleave', lqPopHide);
+    $('volWlList').addEventListener('scroll', lqPopHide);
     $('cmTable').addEventListener('mouseover', function (e) {
       var td = e.target.closest ? e.target.closest('td.vol-cell') : null;
       if (!td) { hideCmPop(); return; }
@@ -1776,21 +1798,46 @@
   // ticker - Liquid / Fair / Thin against the member's own lines (set under the Watchlist page's list),
   // judged near the money in the first two monthlies; the hover carries the figures
   var LQ_CLS = {liquid: 'text-emerald-300', fair: 'text-amber-300', thin: 'text-slate-500'};
-  var lqSeq = 0;
+  var LQ_VAL = {liquid: 'text-emerald-300', fair: 'text-amber-300', thin: 'text-rose-300'};
+  var lqSeq = 0, LQV = {};               // the verdicts on hand, by symbol (for the hover table)
   function wlLiq(syms) {
     if (!syms || !syms.length) return;
     var seq = ++lqSeq;
     getJSON('/options/api/liquidity?symbols=' + encodeURIComponent(syms.join(','))).then(function (j) {
       if (seq !== lqSeq || !j || !j.ok) return;
+      LQV = j.verdicts || {};
       Array.prototype.forEach.call($('volWlList').querySelectorAll('.vol-wl-lq'), function (el) {
-        var v = j.verdicts && j.verdicts[el.dataset.sym];
+        var v = LQV[el.dataset.sym];
         if (!v) { el.textContent = ''; el.title = 'No option data for ' + el.dataset.sym + ' in the screener\'s last pass.'; return; }
         el.textContent = (v.num && v.num !== '-' ? v.num + ' ' : '') + v.label;   // v4.187: the near OI, then the verdict
-        el.title = v.text;
+        el.title = '';                     // v4.190: the hover is the table below, the same as the Watchlist page
         el.className = 'vol-wl-lq text-[10px] whitespace-nowrap ml-auto ' + (LQ_CLS[v.level] || 'text-slate-600');
       });
     }).catch(function () {});
   }
+  // v4.190 (user: "the liquidity hover tooltip also need to be the same with the vol surface page"): the same
+  // table as the Watchlist page's Opt liq hover - one row per figure, the ticker's value against the Fair and
+  // Liquid lines, the value coloured by the line it clears - in a .vol-pop (theme variables, both themes)
+  function lqTipHtml(sym, v) {
+    var h = '<div class="flex items-baseline justify-between gap-2 mb-1"><b>' + esc(sym) + ' option liquidity</b>' +
+            '<span class="lq-chip ' + (LQ_CLS[v.level] || '') + '">' + esc(v.label) + '</span></div>' +
+            '<table class="lq-tbl"><tr><th class="text-left">Figure</th><th>' + esc(sym) + '</th><th>Fair &ge;</th><th>Liquid &ge;</th></tr>';
+    (v.figs || []).forEach(function (f) {
+      h += '<tr><td class="text-left lq-name">' + esc(f.name) + '</td><td class="' + (LQ_VAL[f.level] || '') + '">' + esc(f.value_text) +
+           '</td><td class="lq-line">' + esc(f.fair_text) + '</td><td class="lq-line">' + esc(f.liquid_text) + '</td></tr>';
+    });
+    h += '</table><div class="vol-cap">Near the money = ' + esc(v.near_words || '') + '. A level needs all three figures: green at the Liquid line, amber between the lines, red below Fair.</div>' +
+         '<div class="vol-cap">Open interest is yesterday\'s &middot; volume 15 min delayed &middot; no bid/ask in this data &middot; lines: edit under the Watchlist page\'s list.</div>';
+    return h;
+  }
+  function lqPopPlace(ev) {
+    var pop = $('volLqPop'), pw = pop.offsetWidth || 304, ph = pop.offsetHeight || 160;
+    var x = ev.clientX + 14, y = ev.clientY + 14;
+    if (x + pw > window.innerWidth - 8) x = ev.clientX - pw - 14;
+    if (y + ph > window.innerHeight - 8) y = ev.clientY - ph - 14;
+    pop.style.left = Math.max(4, x) + 'px'; pop.style.top = Math.max(4, y) + 'px';
+  }
+  function lqPopHide() { var p = $('volLqPop'); if (p) p.classList.add('hidden'); }
   function wlLoad() {
     getJSON('/options/api/watchlists').then(function (j) {
       var sel = $('volWl');
