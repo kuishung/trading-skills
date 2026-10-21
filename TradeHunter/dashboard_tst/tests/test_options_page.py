@@ -1791,6 +1791,19 @@ def test_the_hide_new_and_thinly_listed_tick(client, fake):
     # v4.184 (user: "in the tooltip i need xx/xx of the liquidity ranking"): rank / chain size in the chip, 1 = deepest
     assert "intText(x.rk) + ' / ' + intText(j.liq_n)" in lq and "(rk ? ' · rank ' + rk : '')" in lq
     assert "(1 = the deepest)" in lq
+    # v4.189 (user: "when the interface is toggled to dark, the chart background is still white"): the toggle in
+    # base.html tells the page, and the charts repaint in place
+    assert "document.dispatchEvent(new CustomEvent('th:theme', {detail: {light: light}}));" in html
+    from pathlib import Path
+    tpl = Path(__file__).resolve().parents[1] / "app" / "templates"
+    pc = (tpl / "_price_chart.html").read_text(encoding="utf-8")
+    assert "document.addEventListener('th:theme', onTheme);" in pc and "document.addEventListener('th:theme', onThemeDraw);" in pc
+    assert "chart.applyOptions({ layout: { background: { color: l ? '#ffffff' : '#0b1220' }, textColor: l ? '#334155' : '#94a3b8' } });" in pc
+    assert "if (!el.isConnected) { document.removeEventListener('th:theme', onTheme); return; }" in pc
+    assert "IDLE_FG = light ? '#334155' : '#cbd5e1';\n      try { updateBtns(); } catch (e) {}\n      try { redraw(); } catch (e) {}" in pc
+    pd = (tpl / "pattern_detail.html").read_text(encoding="utf-8")
+    assert "layout: { background: { color: _lightPD ? '#ffffff' : '#0b1220' }, textColor: _lightPD ? '#334155' : '#94a3b8' }," in pd
+    assert "document.addEventListener('th:theme', function (ev) {" in pd
     # v4.186: the watchlist pane's per-ticker verdict (Liquid / Fair / Thin) from /options/api/liquidity
     wp = html[html.index("function wlPaint("):html.index("function wlLoad(")]
     assert "'<span class=\"vol-wl-lq text-[10px] whitespace-nowrap text-slate-600 ml-auto\" data-sym=\"' + esc(r.symbol) + '\"></span>'" in wp

@@ -179,12 +179,19 @@
   var THR0 = {{ detector.thresholds | tojson }};
 
   // ---------- chart ----------
+  // v4.189: the pattern chart follows the light / dark toggle (it was always white)
+  var _lightPD = document.documentElement.classList.contains('light');
   var chart = LightweightCharts.createChart(el, {
     width: el.clientWidth || el.offsetWidth || 800, height: 600,
-    layout: { background: { color: '#ffffff' }, textColor: '#334155' },
+    layout: { background: { color: _lightPD ? '#ffffff' : '#0b1220' }, textColor: _lightPD ? '#334155' : '#94a3b8' },
     grid: { vertLines: { color: 'rgba(148,163,184,0.08)' }, horzLines: { color: 'rgba(148,163,184,0.08)' } },
     rightPriceScale: { borderColor: 'rgba(148,163,184,0.2)' },
     timeScale: { borderColor: 'rgba(148,163,184,0.2)', timeVisible: true, secondsVisible: false }
+  });
+  document.addEventListener('th:theme', function (ev) {
+    if (!el.isConnected) return;
+    var l = ev && ev.detail ? !!ev.detail.light : document.documentElement.classList.contains('light');
+    try { chart.applyOptions({ layout: { background: { color: l ? '#ffffff' : '#0b1220' }, textColor: l ? '#334155' : '#94a3b8' } }); } catch (e) {}
   });
   var series = chart.addCandlestickSeries({
     upColor: '#10b981', downColor: '#ef4444', borderVisible: false,

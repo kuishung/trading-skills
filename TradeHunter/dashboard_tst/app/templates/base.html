@@ -520,6 +520,9 @@
       var light = document.documentElement.classList.toggle('light');
       try { localStorage.setItem('theme', light ? 'light' : 'dark'); } catch (e) {}
       syncIcon();
+      // v4.189 (user: "when the interface is toggled to dark, the chart background is still white"): the
+      // charts read the theme once when they are built - tell them it changed so they repaint in place
+      try { document.dispatchEvent(new CustomEvent('th:theme', {detail: {light: light}})); } catch (e) {}
     });
   })();
 

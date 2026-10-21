@@ -223,6 +223,16 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-21 - v4.189: the price chart follows the light / dark toggle in place
+
+The user: *"when the interface is toggled to dark, the chart background is still white, i need it to change to
+dark also and the words"*. The lightweight-charts price chart (`_price_chart.html`) read the theme once when it
+was built, so a toggle left it on the old colours until the pane was swapped. The toggle in `base.html` now
+fires a `th:theme` event; the chart re-applies its layout (background and text colours) in place, the ATR tag
+and the drawing overlay (toolbar buttons, labels, boxes) repaint with it, and each listener lets go once its
+chart's element has left the page (HTMX swaps). The Pattern Trainer's chart (`pattern_detail.html`), which was
+always white, now starts in the current theme and follows the toggle too. Test in `tests/test_options_page.py`.
+
 ### 2026-10-21 - v4.188: Watchlist - the Opt liq hover table follows the light / dark toggle
 
 The user (light theme): *"the black wording cannot see. I need it to be with background and follow the setting
