@@ -156,6 +156,14 @@
              box-shadow: 0 6px 24px rgba(0,0,0,.25); pointer-events: none; }
   .vol-pop b { color: var(--tv-text-hi); }
   .vol-pop .vol-pop-row { display: flex; justify-content: space-between; gap: .5rem; margin-top: .15rem; }
+  /* v4.180 (user: "in the tooltip ... i need a colour progress bar to show where it sit today"): a track from
+     the window's low (green) to its high (red), filled to today's position in that position's hue, a dot at the end */
+  .vol-pop .vol-pos { position: relative; height: 6px; margin: .35rem 0 .1rem; border-radius: 9999px;
+                      background: linear-gradient(90deg, hsla(120,70%,45%,.22), hsla(60,70%,45%,.22), hsla(0,70%,45%,.22)); }
+  .vol-pop .vol-pos > i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 9999px; }
+  .vol-pop .vol-pos > b { position: absolute; top: -2px; width: 10px; height: 10px; margin-left: -5px; border-radius: 9999px;
+                          background: var(--tv-text-hi); box-shadow: 0 0 0 1px var(--tv-panel); }
+  .vol-pop .vol-pos-ends { display: flex; justify-content: space-between; font-size: 10px; color: var(--tv-muted); }
   .vol-pop svg { display: block; width: 100%; height: 5rem; margin-top: .35rem; }
   .vol-pop .vol-earn { stroke: #d97706; stroke-width: 1; stroke-dasharray: 2 2; }
   .vol-pop .vol-earn-lbl { fill: #d97706; font-size: 9px; font-weight: 700; }
@@ -711,6 +719,13 @@
     return '<span class="vol-rk"><i style="width:' + pct + '%;background:hsla(' + rankHue(rank) + ',70%,45%,.95)"></i>' +
            '<b style="left:' + pct + '%"></b></span>';
   }
+  function posBar(rank, lo, hi, loWord, hiWord) {   // v4.180: the hover card's coloured bar - where today sits between low and high
+    var pct = Math.round(Math.max(0, Math.min(1, rank)) * 100);
+    return '<div class="vol-pos"><i style="width:' + pct + '%;background:hsla(' + rankHue(rank) + ',70%,45%,.9)"></i>' +
+           '<b style="left:' + pct + '%"></b></div>' +
+           '<div class="vol-pos-ends"><span>' + (loWord || 'low') + (lo == null ? '' : ' ' + num(lo, 1) + '%') + '</span>' +
+           '<span>' + (hiWord || 'high') + (hi == null ? '' : ' ' + num(hi, 1) + '%') + '</span></div>';
+  }
   function sideOf(j, k) {                // the option a cell shows
     if (j.side === 'call') return 'C';
     if (j.side === 'put') return 'P';
@@ -1078,6 +1093,7 @@
     if (s.rank != null) {
       h += '<div class="vol-pop-row"><span>Where ' + nowWord + ' sits in that ' + wd + '-day range</span><b class="whitespace-nowrap vol-rk-tx" style="' + rankText(s.rank) + '">' +
            Math.round(s.rank * 100) + '%</b></div>' +
+           posBar(s.rank, s.lo, s.hi) +
            '<div class="vol-cap">0% = at its lowest IV of the past ' + wd + ' days, 100% = at its highest</div>' +
            '<div class="vol-pop-row"><span>Days with a lower IV than ' + nowWord + '</span><span class="whitespace-nowrap">' +
            Math.round(s.pct * 100) + '% (' + intText(Math.round(s.pct * s.n)) + ' of ' + intText(s.n) + ')</span></div>';
@@ -1400,8 +1416,11 @@
     }
     var lv = cmLevel(j, v);
     if (lv != null) {
-      h += '<div class="vol-cap">Colour: this IV sits at ' + Math.round(lv * 100) + '% of the way from the lowest to the highest ' +
-           'on this surface (green low, red high). Against its own past comes with the constant-maturity history.</div>';
+      h += '<div class="vol-pop-row"><span>Where this IV sits on this surface</span><b class="whitespace-nowrap vol-rk-tx" style="' + rankText(lv) + '">' +
+           Math.round(lv * 100) + '%</b></div>' +
+           posBar(lv, j.scale ? j.scale[0] : null, j.scale ? j.scale[1] : null, 'lowest', 'highest') +
+           '<div class="vol-cap">0% = the lowest IV on this surface (green), 100% = the highest (red). ' +
+           'Against its own past comes with the constant-maturity history.</div>';
     }
     var x = extraAt(j, r, c);
     if (x) {

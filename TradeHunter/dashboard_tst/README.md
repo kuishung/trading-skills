@@ -223,6 +223,15 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-21 - v4.180: Volatility surface - a coloured position bar in the hover card
+
+The user: *"in the tooltip of the vol surface where it sit today, i need a colour progress bar to show where
+it sit today"*. The hover card's "Where today sits in that N-day range" row now carries a bar under it
+(`posBar` in `options.html`, CSS `.vol-pos`): a track from the window's low (green) to its high (red), filled
+to today's position in that position's own hue - the same hue as the cell's tint and bottom bar - with a dot
+at the end and the low / high IV figures at the two ends. The Interpolated tab's hover card gets the same bar
+for its "within this surface" level. Test in `tests/test_options_page.py`.
+
 ### 2026-10-21 - v4.179: Volatility surface - a past day keeps its strikes under the "Hide new and thinly listed" tick
 
 The user (AMD on 2026-10-13, 14 monthlies): *"when i change the date, the strike become lesser ... only 2

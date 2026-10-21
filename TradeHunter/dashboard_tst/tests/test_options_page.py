@@ -1828,3 +1828,12 @@ def test_the_page_has_the_rank_window(client, fake):
     assert "'<div class=\"vol-pop-row\"><span>Past ' + wd + ' days, ' + intText(s.n) + ' sessions'" in pop
     assert "' sits in that ' + wd + '-day range</span>" in pop
     assert "No colour: ' + esc(s.why || 'under 10 days of history')" in pop
+    # v4.180 (user: "i need a colour progress bar to show where it sit today"): the bar under that row, low to
+    # high of the window, filled to today's position in its hue
+    assert "posBar(s.rank, s.lo, s.hi) +" in pop
+    pb = html[html.index("function posBar("):html.index("function sideOf(")]
+    assert "'<div class=\"vol-pos\"><i style=\"width:' + pct + '%;background:hsla(' + rankHue(rank) + ',70%,45%,.9)\"></i>'" in pb
+    assert "'<b style=\"left:' + pct + '%\"></b></div>'" in pb and "vol-pos-ends" in pb
+    assert ".vol-pop .vol-pos { position: relative; height: 6px;" in html
+    cmp_ = html[html.index("function cmPopHtml("):html.index("function placePop(")]
+    assert "posBar(lv, j.scale ? j.scale[0] : null, j.scale ? j.scale[1] : null, 'lowest', 'highest')" in cmp_
