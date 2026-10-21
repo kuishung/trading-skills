@@ -223,6 +223,13 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-21 - v4.191: Volatility surface - the pane's liquidity table actually shows
+
+The user: *"the watchlist in the vol surface does not show liquidity tooltip table"*. v4.190 put the popover
+element inside the Interpolated tab's panel, which is `hidden` while the Volatility Surface tab is shown - so
+on that tab the table could never appear. The element now sits outside both tab panels (`#volLqPop` in
+`options.html`). Test in `tests/test_options_page.py` pins its position.
+
 ### 2026-10-21 - v4.190: Volatility surface - the watchlist pane's liquidity hover is the same table
 
 The user: *"the liquidity hover tooltip also need to be the same with the vol surface page"*. The pane's

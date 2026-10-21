@@ -1813,6 +1813,10 @@ def test_the_hide_new_and_thinly_listed_tick(client, fake):
     assert "el.textContent = (v.num && v.num !== '-' ? v.num + ' ' : '') + v.label;" in wp   # v4.187: the near OI, then the verdict
     # v4.190 (user: "the liquidity hover tooltip also need to be the same with the vol surface page"): the table popover
     assert '<div id="volLqPop" class="vol-pop hidden" role="tooltip" style="width:19rem"></div>' in html
+    # v4.191 (user: the pane "does not show liquidity tooltip table"): the popover sits OUTSIDE both tab panels -
+    # inside the hidden Interpolated panel it could never show on the Surface tab
+    cm_end = html.index("</section>", html.index('<section id="volPanelCm"'))
+    assert html.index('id="volLqPop"') > cm_end
     lt = html[html.index("function lqTipHtml("):html.index("function lqPopPlace(")]
     assert "<th>Fair &ge;</th><th>Liquid &ge;</th>" in lt and "lq-name" in lt and "(LQ_VAL[f.level] || '')" in lt
     assert "Near the money = ' + esc(v.near_words || '')" in lt
