@@ -156,16 +156,22 @@
   /* v4.182 (user: "i need like a fuel gauge ... a side edge with a pointer ... pointing the edge not inside ... 3px
      with dark blue"): the gauge is a 3 px dark-blue track on the right edge, filled from the bottom to the depth, and
      a small arrow INSIDE the tile pointing out at the level reached */
-  .vol-lq { position: absolute; right: 0; top: 0; bottom: 0; width: 3px; background: rgba(30,58,138,.16); }
-  .vol-lq > i { position: absolute; left: 0; right: 0; bottom: 0; background: rgba(30,64,175,.72); }
-  .vol-lq > b { position: absolute; right: 3px; width: 0; height: 0; margin-top: -4px; border-top: 4px solid transparent;
-                border-bottom: 4px solid transparent; border-left: 5px solid rgba(30,64,175,.9); }
-  html:not(.light) .vol-lq { background: rgba(96,165,250,.16); }
-  html:not(.light) .vol-lq > i { background: rgba(96,165,250,.6); }
-  html:not(.light) .vol-lq > b { border-left-color: rgba(147,197,253,.9); }
+  /* v4.183 (user: "why some edge bar looks bolder and some thinner?"): the gauge was its own absolutely positioned box,
+     and columns sit at fractional pixel positions, so each column's box snapped to 2, 3 or 4 device pixels. Now the
+     gauge is the CELL'S OWN BACKGROUND-IMAGE (two flat gradients: the fill from the bottom to --lq, the track behind
+     it), which snaps with the cell's edge - the same 3 px in every column. The tint is background-COLOR beneath it. */
+  .vol-grid td.vol-cell[data-lq] {
+    background-image: linear-gradient(rgba(30,64,175,.72), rgba(30,64,175,.72)), linear-gradient(rgba(30,58,138,.16), rgba(30,58,138,.16));
+    background-size: 3px var(--lq, 0%), 3px 100%; background-position: right bottom, right top; background-repeat: no-repeat; }
+  html:not(.light) .vol-grid td.vol-cell[data-lq] {
+    background-image: linear-gradient(rgba(96,165,250,.6), rgba(96,165,250,.6)), linear-gradient(rgba(96,165,250,.16), rgba(96,165,250,.16)); }
+  .vol-lq-pt { position: absolute; right: 3px; width: 0; height: 0; margin-top: -4px; border-top: 4px solid transparent;
+               border-bottom: 4px solid transparent; border-left: 5px solid rgba(30,64,175,.9); }
+  html:not(.light) .vol-lq-pt { border-left-color: rgba(147,197,253,.9); }
+  .vol-grid.vol-nolq td.vol-cell[data-lq] { background-image: none; }
+  .vol-grid.vol-nolq .vol-lq-pt { display: none; }
   .vol-grid td.vol-cell.vol-thin { opacity: .38; }
   .vol-grid td.vol-cell.vol-thin:hover { opacity: 1; }
-  .vol-grid.vol-nolq .vol-lq { display: none; }
   .vol-grid.vol-nolq td.vol-cell.vol-thin { opacity: 1; }
   .vol-pop .vol-pop-sec { border-top: 1px solid var(--tv-border); margin-top: .4rem; padding-top: .35rem; }
   .vol-pop .vol-chip { display: inline-block; padding: 0 .4rem; border-radius: 9999px; font-size: 10px;
@@ -737,7 +743,8 @@
   };
   function rankHue(rank) { return Math.round(120 - 120 * Math.max(0, Math.min(1, rank))); }   // green -> red
   function rankColor(rank) {          // the cell's tint: 0 = at its lowest (green) ... 1 = at its highest (red)
-    return rank == null ? '' : 'background:hsla(' + rankHue(rank) + ',70%,45%,.35)';
+    // background-COLOR, not the shorthand: the shorthand would wipe the liquidity gauge, which is the cell's background-image (v4.183)
+    return rank == null ? '' : 'background-color:hsla(' + rankHue(rank) + ',70%,45%,.35)';
   }
   function rankText(rank) {           // the same hue for the hover card's text (.vol-rk-tx picks a lightness per theme)
     return rank == null ? '' : '--rk-h:' + rankHue(rank);
@@ -856,7 +863,7 @@
         // below (.vol-l3), the rank bar at the bottom. The figures come from j.extra (same shape as j.cells).
         var x = extraAt(j, r, c);
         h += v == null ? '<td></td>'
-          : '<td class="vol-cell' + (liqThin(x) ? ' vol-thin' : '') + '" data-r="' + r + '" data-c="' + c + '" title="' +
+          : '<td class="vol-cell' + (liqThin(x) ? ' vol-thin' : '') + '"' + liqAttr(x) + ' data-r="' + r + '" data-c="' + c + '" title="' +
             esc(j.symbol + ' ' + strikeText(k) + ' ' + kind + ' ' + ex[c].date + ' - click: contract history in a new window') + '">' +
             '<div class="vol-l2">' + tileTop(x) + '</div><div class="vol-iv">' + num(v, 1) + '</div>' +
             '<div class="vol-l3">' + tileBottom(x) + '</div>' + liqBar(x) + '</td>';
@@ -975,10 +982,15 @@
   var LIQ_KEY = 'th.vol.liq', LIQ_THIN = 0.25;        // faded: the thinnest quarter of the chain
   function liqOn() { return !!($('volLiq') && $('volLiq').checked); }
   function liqThin(x) { return !!(x && x.liq != null && x.liq < LIQ_THIN); }
-  function liqBar(x) {                  // v4.182: the gauge - the fill from the bottom, the pointer at its top
-    if (!x || x.liq == null) return '';
-    var pct = Math.round(Math.max(0, Math.min(1, x.liq)) * 100);
-    return '<span class="vol-lq"><i style="height:' + pct + '%"></i><b style="top:' + (100 - pct) + '%"></b></span>';
+  function liqPct(x) { return (!x || x.liq == null) ? null : Math.round(Math.max(0, Math.min(1, x.liq)) * 100); }
+  function liqAttr(x) {                 // v4.183: the gauge lives in the cell's background - data-lq + --lq (the fill height)
+    var p = liqPct(x);
+    return p == null ? '' : ' data-lq="' + p + '" style="--lq:' + p + '%"';
+  }
+  function liqVar(td) { return td.dataset.lq != null ? ';--lq:' + td.dataset.lq + '%' : ''; }
+  function liqBar(x) {                  // v4.182: the pointer - an arrow inside the tile pointing out at the level reached
+    var p = liqPct(x);
+    return p == null ? '' : '<b class="vol-lq-pt" style="top:' + (100 - p) + '%"></b>';
   }
   function liqWord(l) { return l >= 0.75 ? 'deep' : (l >= LIQ_THIN ? 'fair' : 'thin'); }
   function liqHtml(j, x) {              // the hover card's liquidity block
@@ -1024,7 +1036,7 @@
     return h;
   }
   // ── each cell against its own past year: the colour and the hover card (v4.141) ──
-  var GREY = 'background:hsla(0,0%,50%,.18)';   // history, but under 10 days of it
+  var GREY = 'background-color:hsla(0,0%,50%,.18)';   // history, but under 10 days of it
   function cellStyle(s) { return !s ? '' : (s.rank != null ? rankColor(s.rank) : GREY); }
   function sameGrid(j, hst) {           // the history was built for the grid on screen?
     var ex = (j.expiries || []).map(function (e) { return e.date; });
@@ -1054,7 +1066,7 @@
     var n = 0;
     document.querySelectorAll('#volTable td.vol-cell').forEach(function (td) {
       var s = hst.cells[td.dataset.r + ',' + td.dataset.c];
-      td.style.cssText = cellStyle(s);
+      td.style.cssText = cellStyle(s) + liqVar(td);   // v4.183: keep the gauge's --lq when the colour lands
       var old = td.querySelector('.vol-rk');
       if (old) old.remove();
       if (s && s.rank != null) { n++; td.insertAdjacentHTML('beforeend', rankBar(s.rank)); }

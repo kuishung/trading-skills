@@ -223,6 +223,17 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-21 - v4.183: Volatility surface - the liquidity gauge is the same width in every column
+
+The user, on a live screenshot: *"why some edge bar looks bolder and some thinner?"* - with nearly every cell full,
+some columns drew a 4 px gauge and others 2 px. Cause: the gauge was its own absolutely positioned box, and the
+columns sit at fractional pixel positions, so each column's box pixel-snapped differently. Now the gauge is the
+CELL'S OWN BACKGROUND-IMAGE (`td.vol-cell[data-lq]`: two flat gradients, the fill from the bottom to `--lq` and the
+track behind it, both anchored at the cell's right edge), which snaps with the cell - the same 3 px everywhere.
+The IV tint became a `background-color` beneath it (`rankColor` / `GREY`, the shorthand would have wiped the
+image), and the history repaint keeps `--lq`. The pointer stays an arrow inside the tile. Test in
+`tests/test_options_page.py`.
+
 ### 2026-10-21 - v4.182: Volatility surface - the liquidity gauge (3 px, dark blue, a pointer)
 
 The user, on the live v4.181 tiles: *"it looks like nothing. i need like a fuel gauge"*, then after three rounds of

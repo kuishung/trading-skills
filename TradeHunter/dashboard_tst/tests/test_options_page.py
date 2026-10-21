@@ -1768,12 +1768,19 @@ def test_the_hide_new_and_thinly_listed_tick(client, fake):
     assert '<input type="checkbox" id="volLiq" checked> Show liquidity' in html
     # v4.182 (user: "a fuel gauge ... a side edge with a pointer ... pointing the edge not inside ... 3px with dark
     # blue"): a 3 px dark-blue track, the fill from the bottom, an arrow inside the tile pointing out at the level
-    assert ".vol-lq { position: absolute; right: 0; top: 0; bottom: 0; width: 3px; background: rgba(30,58,138,.16); }" in html
-    assert ".vol-lq > i { position: absolute; left: 0; right: 0; bottom: 0; background: rgba(30,64,175,.72); }" in html
-    assert "border-left: 5px solid rgba(30,64,175,.9); }" in html
+    # v4.183 (user: "why some edge bar looks bolder and some thinner?"): the gauge is the cell's own background-image
+    # (snaps with the cell edge - the same 3 px in every column), the tint a background-COLOR beneath it, the
+    # pointer an arrow inside the tile; the colour's repaint keeps --lq
+    assert ".vol-grid td.vol-cell[data-lq] {" in html and "background-size: 3px var(--lq, 0%), 3px 100%;" in html
+    assert "background-position: right bottom, right top; background-repeat: no-repeat; }" in html
+    assert "border-left: 5px solid rgba(30,64,175,.9); }" in html and ".vol-grid.vol-nolq td.vol-cell[data-lq] { background-image: none; }" in html
+    assert "'background-color:hsla(' + rankHue(rank) + ',70%,45%,.35)'" in html and "var GREY = 'background-color:hsla(0,0%,50%,.18)';" in html
+    assert "' data-lq=\"' + p + '\" style=\"--lq:' + p + '%\"'" in html
+    assert "td.style.cssText = cellStyle(s) + liqVar(td);" in html
     lb = html[html.index("function liqBar("):html.index("function liqWord(")]
-    assert "'<span class=\"vol-lq\"><i style=\"height:' + pct + '%\"></i><b style=\"top:' + (100 - pct) + '%\"></b></span>'" in lb
-    assert ".vol-grid td.vol-cell.vol-thin { opacity: .38; }" in html and ".vol-grid.vol-nolq .vol-lq { display: none; }" in html
+    assert "'<b class=\"vol-lq-pt\" style=\"top:' + (100 - p) + '%\"></b>'" in lb
+    assert "'\"' + liqAttr(x) + ' data-r=\"' + r + '\"" in html[html.index("function renderSurface("):html.index("function tileLoad(")]
+    assert ".vol-grid td.vol-cell.vol-thin { opacity: .38; }" in html and ".vol-grid.vol-nolq .vol-lq-pt { display: none; }" in html
     assert "var LIQ_KEY = 'th.vol.liq', LIQ_THIN = 0.25;" in html
     rs = html[html.index("function renderSurface("):html.index("function tileLoad(")]
     assert "'<td class=\"vol-cell' + (liqThin(x) ? ' vol-thin' : '') + '\"" in rs and "+ liqBar(x) + '</td>'" in rs
