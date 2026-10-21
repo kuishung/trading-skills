@@ -313,7 +313,7 @@
       {# v4.171 (user, on SNDK: newly listed expiries are grey and 20-dollar-step expiries leave gaps on the
          10-dollar strikes - "a clean grid by default and the full one on untick"): a tidy-up done on the page
          from the answers already loaded (no new request), remembered in localStorage th.vol.clean #}
-      <label class="scr-check" title="Leaves out expiries listed less than 10 days ago, which have no history to colour yet, and strikes that only some expiries carry. The grid then shows no grey cells and no gaps. Untick to see everything.">
+      <label class="scr-check" title="Leaves out expiries listed less than 10 days ago, which have no history to colour yet, and strikes that only some expiries carry. The grid then shows no grey cells and no gaps. On a past day only the contracts that traded are on file, so an empty cell means no trade - there a strike stays while at least half of the expiries have a value. Untick to see everything.">
         <input type="checkbox" id="volClean" checked> Hide new and thinly listed contracts
       </label>
       <button type="submit" id="volGo" class="scr-primary w-full">Show</button>
@@ -730,10 +730,18 @@
   var MIN_HIST = 10;                    // vol_history.MIN_HISTORY: a cell needs this many days of history for a colour
   function cleanOn() { return !!($('volClean') && $('volClean').checked); }
   function allIdx(n) { var a = []; for (var i = 0; i < n; i++) a.push(i); return a; }
-  function tidy(cells, nCols, dropCol) {
+  // v4.179 (user, on a past day: "when i change the date, the strike become lesser ... only 2 strike listed"):
+  // minShare = null keeps a row only when EVERY shown column has a value (the latest pass: every listed
+  // contract has an IV, so a gap is a strike that expiry does not list); a past day's grid holds only the
+  // contracts that TRADED that day, so a gap is an honest "no trade" - there a row stays while at least
+  // minShare (half) of the shown columns have a value, the same bar as Common strikes.
+  function tidy(cells, nCols, dropCol, minShare) {
     var cols = allIdx(nCols).filter(function (c) { return !dropCol[c]; }), every = allIdx(cells.length);
     var rows = every.filter(function (r) {
-      return cols.length && cols.every(function (c) { return cells[r][c] != null; });
+      if (!cols.length) return false;
+      if (minShare == null) return cols.every(function (c) { return cells[r][c] != null; });
+      var got = cols.filter(function (c) { return cells[r][c] != null; }).length;
+      return got >= Math.ceil(cols.length * minShare);
     });
     if (!rows.length) rows = every.filter(function (r) { return cols.some(function (c) { return cells[r][c] != null; }); });
     return {cols: cols, rows: rows, hidCols: nCols - cols.length, hidRows: cells.length - rows.length};
@@ -764,7 +772,8 @@
   }
   function surfaceView(j) {
     var n = (j.expiries || []).length;
-    return cleanOn() ? tidy(j.cells || [], n, youngCols(j)) : fullView((j.strikes || []).length, n);
+    return cleanOn() ? tidy(j.cells || [], n, youngCols(j), j.source === 'latest' ? null : 0.5)
+                     : fullView((j.strikes || []).length, n);
   }
   function tidyNote(vw, one, many, rowOne, rowMany) {    // " · 2 expiries and 5 strikes hidden by the tick"
     var parts = [];
@@ -820,7 +829,8 @@
     // large, the name and price small beside it; the rest of the line (source, counts, method) is the tooltip
     var detail = src + ' · price ' + num(j.spot, 2) +
       ' · ' + intText(vw.rows.length) + ' strikes x ' + intText(vw.cols.length) + ' expiries' +
-      (j.hidden_strikes ? ' · ' + intText(j.hidden_strikes) + ' hidden' : '') + plain(tidyNote(vw, 'expiry', 'expiries'));
+      (j.hidden_strikes ? ' · ' + intText(j.hidden_strikes) + ' hidden' : '') + plain(tidyNote(vw, 'expiry', 'expiries')) +
+      (j.source === 'latest' ? '' : ' · an empty cell: that contract did not trade that day');
     infoHead($('volInfo'), j, detail);
     show($('volInfoRow'), true); show($('volWrap'), true); legends();
     tileNote(activeLast());

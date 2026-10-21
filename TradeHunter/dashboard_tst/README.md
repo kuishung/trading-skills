@@ -223,6 +223,19 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-21 - v4.179: Volatility surface - a past day keeps its strikes under the "Hide new and thinly listed" tick
+
+The user (AMD on 2026-10-13, 14 monthlies): *"when i change the date, the strike become lesser ... only 2
+strike listed"* - "22 strikes hidden by the tick". Cause: the tick's second rule kept a strike row only when
+EVERY shown expiry had a value there. That is right on the latest pass (every listed contract has an IV, so a
+gap is a strike that expiry does not list) but wrong on a past day, whose grid holds only the contracts that
+TRADED that day (the Massive day files) - there a gap is an honest "no trade", and the far monthlies always
+have some, so nearly every row went. Checked against the local Parquet copy: the server's Common-strikes rule
+left 24 strikes x 9 monthlies that day; the page then cut them to 2. Now `tidy` (`options.html`) takes a
+`minShare`: the latest pass keeps "every column"; a past day keeps a row while at least HALF of the shown
+expiries have a value, the same bar as Common strikes - so the 24 strikes stay. The tick's tooltip and the
+heading's tooltip say that on a past day an empty cell means no trade. Test in `tests/test_options_page.py`.
+
 ### 2026-10-21 - v4.178: Volatility surface - the ticker as the heading of both grids
 
 The user (on the long "AMD - Advanced Micro Devices · derived from 12 listed expiries … · price 537.30" line):

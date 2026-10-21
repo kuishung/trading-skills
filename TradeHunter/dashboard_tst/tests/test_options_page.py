@@ -1747,7 +1747,9 @@ def test_the_hide_new_and_thinly_listed_tick(client, fake):
     html = client.get("/options").text
     assert '<input type="checkbox" id="volClean" checked> Hide new and thinly listed contracts' in html
     assert ("Leaves out expiries listed less than 10 days ago, which have no history to colour yet, and strikes "
-            "that only some expiries carry. The grid then shows no grey cells and no gaps. Untick to see everything.") in html
+            "that only some expiries carry. The grid then shows no grey cells and no gaps. On a past day only the "
+            "contracts that traded are on file, so an empty cell means no trade - there a strike stays while at "
+            "least half of the expiries have a value. Untick to see everything.") in html
     form = html[html.index('id="volForm"'):html.index('id="volGo"')]
     assert form.index('id="volCommon"') < form.index('id="volClean"')
     assert "'th.vol.clean'" in html and "var MIN_HIST = 10;" in html
@@ -1760,6 +1762,14 @@ def test_the_hide_new_and_thinly_listed_tick(client, fake):
     assert "got * 2 < live" in cv and "j.cells[r].some(function (v) { return v != null; })" in cv
     td = html[html.index("function tidy("):html.index("function fullView(")]
     assert "cols.every(function (c) { return cells[r][c] != null; })" in td
+    # v4.179 (user, AMD on 2026-10-13: "only 2 strike listed"): a past day's grid holds only the contracts that
+    # traded, so a gap is no trade - a row stays while half of the shown expiries have a value; the latest pass
+    # keeps the every-column rule
+    assert "function tidy(cells, nCols, dropCol, minShare)" in td
+    assert "if (minShare == null) return cols.every(" in td and "return got >= Math.ceil(cols.length * minShare);" in td
+    sv = html[html.index("function surfaceView("):html.index("function tidyNote(")]
+    assert "tidy(j.cells || [], n, youngCols(j), j.source === 'latest' ? null : 0.5)" in sv
+    assert "an empty cell: that contract did not trade that day" in html
     assert "' hidden by the tick'" in html and "tidyNote(vw, 'expiry', 'expiries')" in html
     assert "tidyNote(vw, 'horizon', 'horizons')" in html and "tidyNote(vw, 'horizon', 'horizons', 'row', 'rows')" in html
     # the history's arrival redraws the tidy grid; the tick repaints without a request
