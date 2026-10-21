@@ -114,14 +114,98 @@ def portfolio_diag(admin: User = Depends(require_admin)):
     return f"exit {r.returncode}\n\n{r.stdout}\n{r.stderr}"
 
 
+@router.get("/integrations", response_class=HTMLResponse)
+def integrations_page(
+    request: Request,
+    saved: str = "",
+    error: str = "",
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """v4.193 (the user: "Integration where discord and telegram will be set here"): the Settings
+    gear -> Integration page - the Discord webhook / bot and the Telegram bot details, saved in
+    the app (``app_settings``) over the environment, each with a test send."""
+    from ..services import app_settings, telegram
+
+    rows = app_settings.describe(db)
+    by = {r["key"]: r for r in rows}
+    return templates.TemplateResponse(
+        request,
+        "admin_integrations.html",
+        {
+            "user": admin,
+            "rows": rows,
+            "discord": [by[k] for k in ("discord_webhook_url", "discord_bot_token", "discord_channel_id", "discord_guild_id")],
+            "telegram": [by[k] for k in ("telegram_bot_token", "telegram_chat_id")],
+            "discord_configured": discord.configured(),
+            "discord_bot_configured": discord.bot_configured(),
+            "telegram_configured": telegram.configured(),
+            "saved": saved,
+            "error": error,
+        },
+    )
+
+
+@router.post("/integrations")
+def integrations_save(
+    request: Request,
+    discord_webhook_url: str = Form(""),
+    discord_bot_token: str = Form(""),
+    discord_channel_id: str = Form(""),
+    discord_guild_id: str = Form(""),
+    telegram_bot_token: str = Form(""),
+    telegram_chat_id: str = Form(""),
+    clear: list[str] = Form([]),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Save the Integration page. A secret left blank keeps what is saved; ticking its
+    "clear" box removes it (the environment stands in again); a non-secret field is saved
+    as shown (blank clears it)."""
+    from ..services import app_settings
+
+    values: dict = {}
+    form = {"discord_webhook_url": discord_webhook_url, "discord_bot_token": discord_bot_token,
+            "discord_channel_id": discord_channel_id, "discord_guild_id": discord_guild_id,
+            "telegram_bot_token": telegram_bot_token, "telegram_chat_id": telegram_chat_id}
+    for key, (_label, _env, secret) in app_settings.KEYS.items():
+        v = (form.get(key) or "").strip()
+        if key in (clear or []):
+            values[key] = ""
+        elif v or not secret:
+            values[key] = v
+    changed = app_settings.set_many(db, admin, values)
+    return RedirectResponse(url="/admin/integrations?saved=" + str(len(changed)), status_code=303)
+
+
+@router.post("/integrations/test/telegram", response_class=HTMLResponse)
+def telegram_test(admin: User = Depends(require_admin)):
+    """A test message to the default chat id with the bot in force (HTMX fragment)."""
+    from ..services import telegram
+
+    token, chat_id = telegram.creds()
+    if not token:
+        return HTMLResponse('<span class="text-rose-300">No Telegram bot token - save one above (or put it in the vault\'s telegram.env).</span>')
+    if not chat_id:
+        return HTMLResponse('<span class="text-rose-300">No default chat id - save one above.</span>')
+    try:
+        ok, why = telegram.send("TradeHunter test from %s. If you can read this, the Telegram integration works."
+                                % (admin.display_name or admin.email), chat_id=chat_id)
+    except Exception as exc:  # noqa: BLE001
+        ok, why = False, type(exc).__name__
+    if ok:
+        return HTMLResponse('<span class="text-emerald-300">Sent &#10003; - check the Telegram chat.</span>')
+    return HTMLResponse('<span class="text-rose-300">Telegram send failed: ' + str(why or "see the server log") + '</span>')
+
+
 @router.post("/discord-test", response_class=HTMLResponse)
 def discord_test(admin: User = Depends(require_admin)):
     """Fire a test post to the configured Discord webhook (HTMX fragment result).
     Lets an admin confirm the integration without waiting for a real refresh."""
     if not discord.configured():
         return HTMLResponse(
-            '<span class="text-rose-300">No webhook configured — set '
-            '<code>TST_DISCORD_WEBHOOK_URL</code> in app/.env and restart.</span>'
+            '<span class="text-rose-300">No webhook configured — save one on this page '
+            '(or set <code>TST_DISCORD_WEBHOOK_URL</code> in app/.env and restart).</span>'
         )
     ok = discord.post_embed(
         title="🔔 TradeHunter · test",

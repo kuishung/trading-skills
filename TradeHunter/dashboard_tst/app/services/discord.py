@@ -26,20 +26,28 @@ COLOR_ROSE = 0xEF4444
 _API = "https://discord.com/api/v10"
 
 
+def _cfg(key: str) -> str | None:
+    """v4.193: the value in force - saved on the Settings gear -> Integration page, else the
+    environment (``app\\.env``), the same as before that page existed."""
+    from . import app_settings  # noqa: PLC0415
+
+    return app_settings.get(key, getattr(settings, key, None))
+
+
 def configured() -> bool:
     """True when a webhook URL is set (so callers can skip building a payload)."""
-    return bool(settings.discord_webhook_url)
+    return bool(_cfg("discord_webhook_url"))
 
 
 def bot_configured() -> bool:
     """True when a bot token + parent channel are set, so we can create a thread
     per study and READ its messages back (webhooks can't read)."""
-    return bool(settings.discord_bot_token and settings.discord_channel_id)
+    return bool(_cfg("discord_bot_token") and _cfg("discord_channel_id"))
 
 
 def _bot_headers() -> dict:
     return {
-        "Authorization": f"Bot {settings.discord_bot_token}",
+        "Authorization": f"Bot {_cfg('discord_bot_token')}",
         "Content-Type": "application/json",
         "User-Agent": "TradeHunter (https://tradehunter.net, 1.0)",
     }
@@ -55,7 +63,7 @@ def create_study_thread(name: str, embed: dict | None = None) -> str | None:
     try:
         # type 11 = public thread; 10080 min = 7-day auto-archive
         r = httpx.post(
-            f"{_API}/channels/{settings.discord_channel_id}/threads",
+            f"{_API}/channels/{_cfg('discord_channel_id')}/threads",
             headers=_bot_headers(),
             json={"name": (name or "study")[:100], "type": 11, "auto_archive_duration": 10080},
             timeout=8.0,
@@ -144,8 +152,8 @@ def fetch_thread_messages(thread_id: str, limit: int = 50) -> list[dict] | None:
 
 def thread_link(thread_id: str | None) -> str | None:
     """Deep-link to a thread in the Discord client, if the guild id is set."""
-    if thread_id and settings.discord_guild_id:
-        return f"https://discord.com/channels/{settings.discord_guild_id}/{thread_id}"
+    if thread_id and _cfg("discord_guild_id"):
+        return f"https://discord.com/channels/{_cfg('discord_guild_id')}/{thread_id}"
     return None
 
 
@@ -211,7 +219,7 @@ def post_embed(
     False otherwise (logged). Never raises. ``fields`` = list of
     ``{"name", "value", "inline"}`` dicts (Discord caps: 25 fields, name 256,
     value 1024, title 256, description 4096)."""
-    hook = settings.discord_webhook_url
+    hook = _cfg("discord_webhook_url")
     if not hook:
         return False
     embed: dict = {"title": (title or "")[:256], "color": color}

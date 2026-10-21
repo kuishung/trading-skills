@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Integration &middot; TradeHunter{% endblock %}
+{% block content %}
+{# v4.193 (user: "Integration where discord and telegram will be set here"): the Settings gear's second
+   page. Values saved here win over app\.env on Hermes; a blank keeps what the environment has. #}
+<h1 class="text-2xl font-semibold mb-1">Integration</h1>
+<p class="text-sm text-slate-500 mb-6 max-w-2xl">Where TradeHunter posts. A value saved here is used at once and wins over
+  <code class="text-slate-400">app\.env</code> on the server; leave a field blank to keep what the server already has.
+  Secrets are shown masked and never echoed back in full.</p>
+
+{% if saved %}<div class="mb-4 rounded-lg border border-emerald-600/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-300">Saved{% if saved != '0' %} - {{ saved }} setting{{ 's' if saved != '1' else '' }} changed{% else %} - nothing changed{% endif %}.</div>{% endif %}
+{% if error %}<div class="mb-4 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-300">{{ error }}</div>{% endif %}
+
+<form method="post" action="/admin/integrations" class="space-y-8 max-w-2xl" autocomplete="off">
+  {% macro field(r) %}
+  <div class="grid gap-x-3 gap-y-1 items-center" style="grid-template-columns:12rem 1fr auto">
+    <label for="f_{{ r.key }}" class="text-sm text-slate-300">{{ r.label }}</label>
+    {% if r.secret %}
+    <input id="f_{{ r.key }}" name="{{ r.key }}" type="password" autocomplete="new-password"
+           class="rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm focus:border-emerald-500 outline-none"
+           placeholder="{% if r.source == 'none' %}not set{% else %}{{ r.shown }} - leave blank to keep{% endif %}">
+    <label class="text-[11px] text-slate-500 whitespace-nowrap flex items-center gap-1" title="Remove the saved value; the server's environment stands in again">
+      <input type="checkbox" name="clear" value="{{ r.key }}"> clear</label>
+    {% else %}
+    <input id="f_{{ r.key }}" name="{{ r.key }}" type="text" value="{{ r.plain }}"
+           class="rounded bg-slate-950/60 border border-slate-700 px-2 py-1.5 text-sm focus:border-emerald-500 outline-none tabular-nums"
+           placeholder="not set">
+    <span></span>
+    {% endif %}
+    <span></span>
+    <span class="text-[11px] {% if r.source == 'saved' %}text-emerald-400{% elif r.source == 'env' %}text-sky-400{% else %}text-slate-600{% endif %}">
+      {% if r.source == 'saved' %}saved in the app{% elif r.source == 'env' %}from the server's environment ({{ r.env_name }}){% else %}not set anywhere{% endif %}
+    </span>
+    <span></span>
+  </div>
+  {% endmacro %}
+
+  <section class="rounded-lg border border-slate-800 bg-slate-900/40 p-4">
+    <div class="flex items-center justify-between gap-3 flex-wrap mb-3">
+      <div>
+        <h2 class="text-lg font-medium">Discord</h2>
+        <p class="text-xs text-slate-500 mt-0.5">The webhook posts ticker embeds (share from a chart, MATP refreshes, new studies, the daily portfolio check).
+          The bot opens a thread per study and reads its messages back - it needs the token, the parent channel id and the server id.
+          {% if discord_configured %}<span class="text-emerald-300">Webhook in force.</span>{% else %}<span class="text-amber-300">No webhook yet.</span>{% endif %}
+          {% if discord_bot_configured %}<span class="text-emerald-300">Bot in force.</span>{% else %}<span class="text-slate-500">Bot not set.</span>{% endif %}</p>
+      </div>
+      <div class="flex items-center gap-3 shrink-0">
+        <span id="discordTestResult" class="text-xs"></span>
+        <button type="button" hx-post="/admin/discord-test" hx-target="#discordTestResult" hx-swap="innerHTML"
+                class="text-xs px-3 py-1.5 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Send test post</button>
+      </div>
+    </div>
+    <div class="space-y-3">{% for r in discord %}{{ field(r) }}{% endfor %}</div>
+  </section>
+
+  <section class="rounded-lg border border-slate-800 bg-slate-900/40 p-4">
+    <div class="flex items-center justify-between gap-3 flex-wrap mb-3">
+      <div>
+        <h2 class="text-lg font-medium">Telegram</h2>
+        <p class="text-xs text-slate-500 mt-0.5">One bot for the platform; the default chat id is where a test and the administrator's pushes go.
+          The intraday bot keeps reading the vault's <code class="text-slate-400">telegram.env</code>; a token saved here is used by the web app first.
+          {% if telegram_configured %}<span class="text-emerald-300">Bot in force.</span>{% else %}<span class="text-amber-300">No bot token yet.</span>{% endif %}</p>
+      </div>
+      <div class="flex items-center gap-3 shrink-0">
+        <span id="telegramTestResult" class="text-xs"></span>
+        <button type="button" hx-post="/admin/integrations/test/telegram" hx-target="#telegramTestResult" hx-swap="innerHTML"
+                class="text-xs px-3 py-1.5 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Send test message</button>
+      </div>
+    </div>
+    <div class="space-y-3">{% for r in telegram %}{{ field(r) }}{% endfor %}</div>
+  </section>
+
+  <div class="flex items-center gap-3">
+    <button type="submit" class="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-medium text-white transition">Save</button>
+    <span class="text-xs text-slate-500">Used at once - no restart. Hermes's <code class="text-slate-400">app\.env</code> is untouched.</span>
+  </div>
+</form>
+{% endblock %}

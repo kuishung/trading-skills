@@ -50,13 +50,17 @@ class TelegramError(RuntimeError):
 # ───────────────────────────────────── credentials ─────────────────────────────────────
 
 def creds() -> tuple[str | None, str | None]:
-    """``(token, default_chat_id)`` from the vault lookup; ``(None, None)`` when the
-    bot is not configured on this PC."""
+    """``(token, default_chat_id)``: v4.193 - what is saved on the Settings gear ->
+    Integration page first, then the vault lookup (``telegram.env``); ``(None, None)`` when
+    the bot is not configured anywhere. Each half falls back on its own."""
+    from . import app_settings  # noqa: PLC0415
+
+    v_token, v_chat = None, None
     try:
-        return thc.telegram_env(None)
+        v_token, v_chat = thc.telegram_env(None)
     except Exception as exc:  # noqa: BLE001 - a broken vault must not break the page
         log.warning("telegram credentials lookup failed: %s", exc)
-        return None, None
+    return app_settings.get("telegram_bot_token", v_token), app_settings.get("telegram_chat_id", v_chat)
 
 
 def configured() -> bool:

@@ -1783,3 +1783,17 @@ class OptionCalcResult(Base):
     request = relationship("OptionCalcRequest",
                            backref=backref("results", cascade="all, delete-orphan",
                                            passive_deletes=True))
+
+
+class AppSetting(Base):
+    """v4.193: a setting an administrator edits in the app (the Settings gear -> Integration
+    page): the Discord webhook / bot and the Telegram bot details, by key. A saved value wins
+    over the environment variable it stands in for; a blank row means "use the environment"
+    (``services/app_settings.py``). Secrets are stored as typed - shown masked on the page."""
+
+    __tablename__ = "app_settings"
+
+    key = Column(String(64), primary_key=True)
+    value = Column(Text, nullable=True)
+    updated_by = Column(String(255), nullable=True)
+    updated_at = Column(DateTime, nullable=True)

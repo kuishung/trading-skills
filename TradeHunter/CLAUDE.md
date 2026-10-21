@@ -809,7 +809,11 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
   member = collaborate). Managed in the `/admin` console.
 - **Pages:** `/matp` (approved-user landing, "under construction" board),
   `/studies`, `/finviz` (moderator-curated saved-filter list — no scan
-  here), `/feedback`, `/admin`.
+  here), `/feedback`, `/admin`. **Settings (v4.193, 2026-10-21): a GEAR icon beside the
+  dark / light toggle (admin-only) holds User Management (`/admin`), Integration
+  (`/admin/integrations`: Discord webhook / bot + Telegram bot, saved in the app over `app\.env`
+  via `services/app_settings.py`, table `app_settings`) and Data Ingest (`/finviz`)** - the old
+  "Settings" dropdown and "Admin" link are gone from the menu bar.
 - **Hosting:** **Hermes (Win Server 2019)**. The app is served at
   **`https://app.tradehunter.net`** (the `app.` subdomain, NOT the apex — recording it
   loosely as "tradehunter.net" cost a debugging round on 2026-08-23, when the IBKR

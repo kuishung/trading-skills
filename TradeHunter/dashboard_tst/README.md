@@ -223,6 +223,27 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-21 - v4.193: the Settings gear - User Management, Integration, Data Ingest
+
+The user: *"the setting menu i want to move it to the toggle dark light and i want to use the logo to represent
+setting. the sub menu will be User Management ... next will be Integration where discord and telegram will be
+set here. Next will be the data ingest. also all under the setting logo wheel"*.
+- **Nav** (`base.html`): the Settings dropdown and the Admin link are gone from the menu bar; a **gear icon**
+  beside the dark / light toggle (admin-only, `#settingsGear`) opens **User Management** (`/admin`, the console
+  renamed), **Integration** (`/admin/integrations`, new) and **Data Ingest** (`/finviz`).
+- **Integration page** (`routes/admin.py`, `admin_integrations.html`): the Discord webhook URL, bot token,
+  channel id and server id, and the Telegram bot token and default chat id, each with where it comes from
+  ("saved in the app" / "from the server's environment" / "not set anywhere"); secrets typed into password
+  fields, shown masked (last four characters), a blank keeps the saved value, a "clear" box removes it; a
+  "Send test post" (Discord) and "Send test message" (Telegram) beside each card. The Integrations card left
+  the User Management page.
+- **The store** (`services/app_settings.py`, table `app_settings`, migration `b9d2e4f6a8c1`): a saved value
+  WINS over the environment variable it stands in for and is used at once (10-second read cache, no restart);
+  a blank or missing row falls back to `app\.env` / the vault, so nothing already configured on Hermes changes
+  until someone types a value. `services/discord.py` and `services/telegram.py` read through it (`_cfg`,
+  `creds`); the intraday bot keeps reading the vault's `telegram.env` directly.
+Tests: `tests/test_admin_integrations.py`; `tests/conftest.py` HEAD -> `b9d2e4f6a8c1`.
+
 ### 2026-10-21 - v4.192: both surfaces - the ticker's MATP and MBP as lines between the strike rows
 
 The user: *"in the vol surface and the interpolated vol surface i want you to add an MATP and MBP in the tile so
