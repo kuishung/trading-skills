@@ -1765,10 +1765,31 @@
       return '<button type="button" class="vol-wl-row w-full flex items-baseline justify-between gap-2 px-2 py-1 rounded text-left hover:bg-slate-800/70"' +
              ' role="option" aria-selected="false" data-sym="' + esc(r.symbol) + '" title="Show the ' + esc(r.symbol) + ' volatility surface">' +
              '<span class="vol-wl-sym text-[13px] font-semibold whitespace-nowrap text-white">' + esc(r.symbol) + '</span>' +
+             '<span class="vol-wl-lq text-[10px] whitespace-nowrap text-slate-600 ml-auto" data-sym="' + esc(r.symbol) + '"></span>' +
              (r.matp == null ? '' : '<span class="text-[10px] text-slate-500 whitespace-nowrap tabular-nums">MATP ' + esc(num(r.matp, 2)) + '</span>') +
              '</button>';
     }).join('');
     wlMark(V.reqSym || $('volSym').value.trim());
+    wlLiq(l.symbols.map(function (r) { return r.symbol; }));
+  }
+  // v4.186 (user: "I want to know the ticker is liquid enough"): the option-liquidity verdict after each
+  // ticker - Liquid / Fair / Thin against the member's own lines (set under the Watchlist page's list),
+  // judged near the money in the first two monthlies; the hover carries the figures
+  var LQ_CLS = {liquid: 'text-emerald-300', fair: 'text-amber-300', thin: 'text-slate-500'};
+  var lqSeq = 0;
+  function wlLiq(syms) {
+    if (!syms || !syms.length) return;
+    var seq = ++lqSeq;
+    getJSON('/options/api/liquidity?symbols=' + encodeURIComponent(syms.join(','))).then(function (j) {
+      if (seq !== lqSeq || !j || !j.ok) return;
+      Array.prototype.forEach.call($('volWlList').querySelectorAll('.vol-wl-lq'), function (el) {
+        var v = j.verdicts && j.verdicts[el.dataset.sym];
+        if (!v) { el.textContent = ''; el.title = 'No option data for ' + el.dataset.sym + ' in the screener\'s last pass.'; return; }
+        el.textContent = v.label;
+        el.title = v.text;
+        el.className = 'vol-wl-lq text-[10px] whitespace-nowrap ml-auto ' + (LQ_CLS[v.level] || 'text-slate-600');
+      });
+    }).catch(function () {});
   }
   function wlLoad() {
     getJSON('/options/api/watchlists').then(function (j) {

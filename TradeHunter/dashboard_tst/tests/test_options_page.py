@@ -1149,6 +1149,7 @@ def test_the_router_serves_the_screener_paths():
         ("/options", ("GET",)),
         ("/options/history", ("GET",)),                     # v4.159: one contract's history, its own window
         ("/options/api/watchlists", ("GET",)),              # v4.165: the surface's watchlist pane
+        ("/options/api/liquidity", ("GET",)),               # v4.186: the pane's option-liquidity verdicts
         ("/options/api/screens", ("GET",)),
         ("/options/api/spec", ("GET",)),
         ("/options/api/run", ("POST",)),
@@ -1790,6 +1791,12 @@ def test_the_hide_new_and_thinly_listed_tick(client, fake):
     # v4.184 (user: "in the tooltip i need xx/xx of the liquidity ranking"): rank / chain size in the chip, 1 = deepest
     assert "intText(x.rk) + ' / ' + intText(j.liq_n)" in lq and "(rk ? ' · rank ' + rk : '')" in lq
     assert "(1 = the deepest)" in lq
+    # v4.186: the watchlist pane's per-ticker verdict (Liquid / Fair / Thin) from /options/api/liquidity
+    wp = html[html.index("function wlPaint("):html.index("function wlLoad(")]
+    assert "'<span class=\"vol-wl-lq text-[10px] whitespace-nowrap text-slate-600 ml-auto\" data-sym=\"' + esc(r.symbol) + '\"></span>'" in wp
+    assert "wlLiq(l.symbols.map(function (r) { return r.symbol; }));" in wp
+    assert "getJSON('/options/api/liquidity?symbols=' + encodeURIComponent(syms.join(',')))" in wp
+    assert "var LQ_CLS = {liquid: 'text-emerald-300', fair: 'text-amber-300', thin: 'text-slate-500'};" in wp
     # v4.185: the hover card's liquidity bar in the edge gauge's blue
     assert ".vol-pop .vol-pos > i.vol-pos-lq { background: rgba(30,64,175,.72); }" in html
     assert ".vol-pop .vol-pos.vol-pos-grey { background: rgba(30,58,138,.16); }" in html

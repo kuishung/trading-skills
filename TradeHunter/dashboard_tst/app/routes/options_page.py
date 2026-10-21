@@ -1808,6 +1808,32 @@ def _watchlists_payload(db: Session, user: User) -> dict:
     return {"ok": True, "default": default, "lists": lists}
 
 
+@router.get("/api/liquidity")
+def api_liquidity(symbols: str = "", user: User = Depends(require_user)):
+    """v4.186: the option-liquidity verdict per ticker (``services/opt_liquidity.py``) for the
+    surface's watchlist pane - ``?symbols=A,B,C`` (up to 200), ``{ok, verdicts: {symbol: {level,
+    label, text, short}}}``; a ticker the screener does not list is left out."""
+    from .. import screener_db
+    from ..services import opt_liquidity
+
+    syms = []
+    for s in (symbols or "").split(","):
+        s = s.strip().upper()
+        if s and s not in syms:
+            syms.append(s)
+    syms = syms[:200]
+    if not syms:
+        return JSONResponse({"ok": True, "verdicts": {}})
+    try:
+        with screener_db.session() as s:
+            v = opt_liquidity.verdicts(s, syms, opt_liquidity.read_thresholds(user))
+    except Exception as exc:  # noqa: BLE001 - the pane shows no label rather than a 500
+        log.exception("surface liquidity failed")
+        return JSONResponse({"ok": False, "error": "the option liquidity could not be read (" + type(exc).__name__ + ")"})
+    out = {k: {"level": x["level"], "label": x["label"], "text": x["text"], "short": x["short"]} for k, x in v.items()}
+    return JSONResponse({"ok": True, "verdicts": out})
+
+
 @router.get("/api/watchlists")
 def api_watchlists(user: User = Depends(require_user), db: Session = Depends(get_db)):
     """The member's watchlists for the surface's left panel: ``{ok, default, lists: [{key, label,

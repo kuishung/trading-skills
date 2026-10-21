@@ -33,7 +33,7 @@
 </div>
 {% endif %}
 {% set can_delete = user and user.can_moderate %}
-{% if qualified %}{{ ticker_grid(qualified, open_symbols, sel_sym, live, wl, can_delete, my_syms) }}
+{% if qualified %}{{ ticker_grid(qualified, open_symbols, sel_sym, live, wl, can_delete, my_syms, liq) }}
 {% elif not disqualified %}
   {% if wl == "mine" %}
   <p class="text-xs text-slate-500 px-2 py-3 leading-relaxed">
@@ -50,9 +50,38 @@
 {% if disqualified %}
 <details class="mt-2 rounded-lg border border-rose-500/30 bg-rose-500/5" open>
   <summary class="cursor-pointer px-3 py-2 text-xs text-rose-300 select-none">Disqualified &middot; Price &gt; MBP or downtrend ({{ disqualified|length }})</summary>
-  <div class="px-1 pb-2 opacity-90">{{ ticker_grid(disqualified, open_symbols, sel_sym, live, wl, can_delete, my_syms) }}</div>
+  <div class="px-1 pb-2 opacity-90">{{ ticker_grid(disqualified, open_symbols, sel_sym, live, wl, can_delete, my_syms, liq) }}</div>
 </details>
 {% endif %}
+
+{# v4.186: the member's own option-liquidity lines (Opt liq column). A name must clear all three
+   figures for a level; the hover on a verdict names the figure that held it back. #}
+{% set lt = liq_thresholds or {} %}
+<details class="mt-2 rounded-lg border border-slate-800 bg-slate-900/40"{% if liq_error %} open{% endif %}>
+  <summary class="cursor-pointer px-3 py-1.5 text-[11px] text-slate-400 select-none"
+           title="Opt liq: a ticker is Liquid when its near-the-money median open interest, near-the-money volume today and chain open interest all reach the Liquid lines; Fair when all three reach the Fair lines; Thin otherwise. Near the money = within 10% of the price in the first two monthlies.">Option liquidity lines</summary>
+  <form class="px-3 pb-2 text-[11px] text-slate-400" hx-post="/matp/liq-thresholds" hx-target="closest .wl-panel" hx-swap="outerHTML">
+    <input type="hidden" name="wl" value="{{ wl }}">
+    <input type="hidden" name="sym" value="{{ sel_sym }}">
+    <div class="grid gap-x-2 gap-y-1 items-center" style="grid-template-columns:auto 1fr 1fr">
+      <span></span><span class="text-emerald-300">Liquid &ge;</span><span class="text-amber-300">Fair &ge;</span>
+      <span title="The median open interest of the contracts within 10% of the price in the first two monthlies">Near OI</span>
+      <input name="liquid_oi" type="number" min="0" step="1" value="{{ lt.liquid_oi }}" class="wl-liq-in">
+      <input name="fair_oi" type="number" min="0" step="1" value="{{ lt.fair_oi }}" class="wl-liq-in">
+      <span title="The contracts traded today across those same near-the-money contracts (the previous session's before the open)">Near volume</span>
+      <input name="liquid_vol" type="number" min="0" step="1" value="{{ lt.liquid_vol }}" class="wl-liq-in">
+      <input name="fair_vol" type="number" min="0" step="1" value="{{ lt.fair_vol }}" class="wl-liq-in">
+      <span title="Calls plus puts over every contract of the name">Chain OI</span>
+      <input name="liquid_chain" type="number" min="0" step="1" value="{{ lt.liquid_chain }}" class="wl-liq-in">
+      <input name="fair_chain" type="number" min="0" step="1" value="{{ lt.fair_chain }}" class="wl-liq-in">
+    </div>
+    <div class="mt-1.5 flex items-center gap-2">
+      <button type="submit" class="rounded border border-slate-700 px-2 py-0.5 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Save lines</button>
+      {% if liq_error %}<span class="text-rose-300">{{ liq_error }}</span>{% else %}<span class="text-slate-600">Yours only. Open interest is yesterday's; no bid/ask in this data.</span>{% endif %}
+    </div>
+  </form>
+</details>
+<style>.wl-liq-in{width:100%;min-width:0;border-radius:.25rem;background:rgba(2,6,23,.6);border:1px solid rgb(51,65,85);padding:.1rem .3rem;font-size:11px;color:rgb(226,232,240)}.wl-liq-in:focus{outline:none;border-color:rgb(16,185,129)}</style>
 
 {# "Dropped from filter" list removed per request. #}
 </div>{# /.wl-panel #}

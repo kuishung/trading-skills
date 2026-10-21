@@ -685,7 +685,12 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
   hover card and - **v4.181 - a LIQUIDITY indicator** (`vol_surface.liquidity_ranks`: open interest +
   today's volume on a log scale, ranked within the stock's whole chain; a 1.5 px soft-slate bar on each
   tile's right edge, the thinnest quarter faded, a "Show liquidity" tick, the figures in the hover card;
-  latest pass only, listed tab only - the user chose none on the Interpolated tab).
+  latest pass only, listed tab only - the user chose none on the Interpolated tab). **v4.186: an
+  option-liquidity VERDICT per ticker on the Watchlist page ("Opt liq" column) and the surface's watchlist
+  pane** (`app/services/opt_liquidity.py`): Liquid / Fair / Thin against fixed, member-editable lines
+  (near-the-money median OI, near-the-money volume, chain OI; first two monthlies, ±10 % of the price) -
+  the user: *"I do not want to compare against each other on the watchlist. I want to know the ticker is
+  liquid enough."* - never a rank across names.
 - **Options SCREENER — BUILT in v4.136 (2026-10-10): `dashboard_tst/OPTIONS_SCREENER_DESIGN.md`
   is the contract.** The user asked for *"exactly"* Barchart's options screener
   (barchart.com/options/options-screener) with each member's own settings: `/options` is now a

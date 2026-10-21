@@ -223,6 +223,28 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-21 - v4.186: Watchlist - an option-liquidity verdict per ticker ("is it liquid enough?")
+
+The user: *"if i want liquidity in the watchlist ... I do not want to compare against each other on the
+watchlist. I want to know the ticker is liquid enough."* So an ABSOLUTE verdict, not a rank:
+- **`app/services/opt_liquidity.py`**: from the screener's last pass, judged where a trade would happen -
+  the median open interest and today's volume of the contracts within 10 % of the price in the first two
+  standard monthlies (weeklies never count), plus the chain's open interest (calls + puts). Three levels,
+  **Liquid / Fair / Thin**; a name must clear ALL THREE figures for a level, and the verdict names the figure
+  that held it back. Before the open (nothing traded yet) the previous session's volume stands in and the
+  text says so. Default lines: Liquid >= 1,000 / 5,000 / 100 k, Fair >= 250 / 1,000 / 20 k (near OI / near
+  volume / chain OI) - rules of thumb, so **each member can change them** (`User.prefs` `liq_*`,
+  `read_thresholds` / `write_thresholds`; a Fair line may not sit above its Liquid line). No bid/ask in this
+  data, so the spread stays unknown; open interest is yesterday's.
+- **Watchlist page** (`_wl_macros.html` ticker_grid, `routes/matp.py`): a new **"Opt liq"** column after MBP -
+  the label in green / amber / grey, the figures and the lines in its hover, "-" for a ticker the screener
+  does not list; **"Option liquidity lines"** under the list (`_watchlist.html`) edits the six numbers
+  (`POST /matp/liq-thresholds` re-renders the panel; a bad line is reported, nothing written). Soft-fail:
+  without the screener DB every verdict reads "-".
+- **Volatility Surface watchlist pane** (`options.html`, `GET /options/api/liquidity?symbols=`): the same
+  label after each ticker, hover for the figures.
+Tests: `tests/test_opt_liquidity.py`, `tests/test_watchlist_grid.py`, `tests/test_options_page.py`.
+
 ### 2026-10-21 - v4.185: Volatility surface - the hover card's liquidity bar in the gauge's blue
 
 The user: *"the liquidity progress bar in the tooltip i need the colour in blue like the one of the edge bar"*.

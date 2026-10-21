@@ -17,7 +17,7 @@
   {% else %}<span class="text-slate-700">&middot;</span>{% endif %}
 {% endmacro %}
 
-{% macro ticker_grid(tickers, open_symbols, sel_sym, live, wl="", can_delete=false, my_syms=None) %}
+{% macro ticker_grid(tickers, open_symbols, sel_sym, live, wl="", can_delete=false, my_syms=None, liq=None) %}
 {# Shared column template — used VERBATIM by the header and every row so the
    columns line up pixel-for-pixel (separate grids with `auto` cols would drift).
    Sym flexes (truncates); the gap columns/Price/MATP/MBP are fixed widths. A leading
@@ -28,7 +28,11 @@
 {# v4.158 (user): the Trend and Sig columns are gone; in their place the GAP between the
    stock price and the MATP - in dollars and in percent of the MATP. Below the MATP (room
    up to the target) reads green, above it (past the target) reads red. #}
-{% set GRIDCSS = "display:grid;grid-template-columns:1.2rem minmax(3.4rem,1fr) 3.3rem 3.3rem 3.2rem 3.2rem 3.2rem 1.3rem" ~ (" 1.3rem" if can_delete else "") ~ ";column-gap:0.25rem;align-items:center" %}
+{# v4.186 (user: "I want to know the ticker is liquid enough"): an OPTION LIQUIDITY verdict per ticker -
+   Liquid / Fair / Thin against the member's own fixed lines, judged near the money in the first two
+   monthlies (services/opt_liquidity.py); the hover carries the figures. `liq` = {symbol: verdict}. #}
+{% set _liq = liq or {} %}
+{% set GRIDCSS = "display:grid;grid-template-columns:1.2rem minmax(3.4rem,1fr) 3.3rem 3.3rem 3.2rem 3.2rem 3.2rem 3.4rem 1.3rem" ~ (" 1.3rem" if can_delete else "") ~ ";column-gap:0.25rem;align-items:center" %}
 <div style="{{ GRIDCSS }}" class="px-2 pt-1 text-[10px] uppercase tracking-wide text-slate-600">
   <span class="text-center" title="My Watchlist">&#9733;</span>
   <span>Sym</span>
@@ -37,6 +41,7 @@
   <span class="text-right">Price</span>
   <span class="text-right">MATP</span>
   <span class="text-right">MBP</span>
+  <span class="text-right" title="Option liquidity: Liquid / Fair / Thin against your own lines - the median open interest and today's volume of the contracts within 10% of the price in the first two monthlies, plus the chain's open interest (the screener's last pass). Hover a verdict for the figures; change the lines under the list.">Opt liq</span>
   <span class="text-center" title="Plot MATP &amp; MBP on your TradingView">&#9639;</span>
   {% if can_delete %}<span class="text-center" title="Remove from watchlist">&times;</span>{% endif %}
 </div>
@@ -67,6 +72,10 @@
   <span class="text-right text-[13px] tabular-nums {% if cur is not none and lv.mbp is not none and cur > lv.mbp %}text-rose-300{% else %}text-white{% endif %}">{{ "%.2f"|format(cur) if cur is not none else "-" }}</span>
   <span class="text-right text-[13px] text-orange-300 tabular-nums">{{ "%.2f"|format(lv.matp) if lv.matp is not none else "-" }}</span>
   <span class="text-right text-[13px] text-green-500 tabular-nums">{{ "%.2f"|format(lv.mbp) if lv.mbp is not none else "-" }}</span>
+  {% set lq = _liq.get(lv.symbol) %}
+  {% set lq_cls = "text-slate-700" if not lq else ("text-emerald-300" if lq.level == "liquid" else ("text-amber-300" if lq.level == "fair" else "text-slate-500")) %}
+  <span class="wl-liq text-right text-[11px] whitespace-nowrap {{ lq_cls }}" data-level="{{ lq.level if lq else '' }}"
+        title="{{ lq.text if lq else 'No option data for ' ~ lv.symbol ~ ' in the screener\'s last pass.' }}">{{ lq.label if lq else "-" }}</span>
   {# Plot MATP/MBP on the user's OWN TradingView via the local TV bridge (127.0.0.1:9223).
      A <span> (not <button>) so it's valid inside the row <a>; the capture-phase handler
      in matp.html intercepts it (stopPropagation) so it never triggers the row's chart load. #}

@@ -9,6 +9,7 @@ LLM and does no scraping). Approved members only.
 from __future__ import annotations
 
 import datetime as _dt
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -294,6 +295,7 @@ def _watchlist_context(
         shown = list(active)
 
     live = _watchlist_signals_fast(shown)
+    liq = _watchlist_liquidity(shown, user)       # v4.186: the option-liquidity verdict per ticker
 
     # "Refreshed" stamp for this watchlist: for a Finviz-filter watchlist it's
     # the filter's last completed run (advanced by the scheduled MATP run); for
@@ -328,9 +330,41 @@ def _watchlist_context(
         "sel_sym": (sym or "").strip().upper(),
         "sel_wl": sel_wl,
         "live": live,
+        "liq": liq,
+        "liq_thresholds": _liq_thresholds(user),
+        "liq_error": "",
         "wl_refreshed": wl_refreshed,
         "my_syms": uwl.symbol_set(db, user),
     }
+
+
+log = logging.getLogger(__name__)
+
+
+def _liq_thresholds(user) -> dict:
+    from ..services import opt_liquidity
+
+    return opt_liquidity.read_thresholds(user)
+
+
+def _watchlist_liquidity(levels, user) -> dict:
+    """v4.186: ``{symbol: verdict}`` from the screener's last pass for the tickers shown -
+    soft-fail (an empty dict: every verdict reads "-") when the screener DB is not there."""
+    from .. import screener_db
+    from ..services import opt_liquidity
+
+    syms = []
+    for lv in levels or ():
+        if lv.symbol and lv.symbol not in syms:
+            syms.append(lv.symbol)
+    if not syms:
+        return {}
+    try:
+        with screener_db.session() as s:
+            return opt_liquidity.verdicts(s, syms, opt_liquidity.read_thresholds(user))
+    except Exception:  # noqa: BLE001 - the column shows "-" rather than breaking the watchlist
+        log.exception("watchlist option liquidity failed")
+        return {}
 
 
 @router.get("/watchlist", response_class=HTMLResponse)
@@ -378,6 +412,32 @@ def my_watchlist_quick_add(
     )
     resp.headers["HX-Trigger"] = "refreshRuns"
     return resp
+
+
+@router.post("/liq-thresholds", response_class=HTMLResponse)
+def liq_thresholds_save(
+    request: Request,
+    wl: str = Form(""),
+    sym: str = Form(""),
+    liquid_oi: str = Form(""),
+    liquid_vol: str = Form(""),
+    liquid_chain: str = Form(""),
+    fair_oi: str = Form(""),
+    fair_vol: str = Form(""),
+    fair_chain: str = Form(""),
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """v4.186: the member's option-liquidity lines (the Opt liq column) - saved to User.prefs,
+    the panel re-rendered with the new verdicts; a bad value is reported, nothing written."""
+    from ..services import opt_liquidity
+
+    _t, err = opt_liquidity.write_thresholds(
+        db, user, liquid_oi=liquid_oi, liquid_vol=liquid_vol, liquid_chain=liquid_chain,
+        fair_oi=fair_oi, fair_vol=fair_vol, fair_chain=fair_chain)
+    ctx = _watchlist_context(db, user, wl or None, sym)
+    ctx["liq_error"] = err
+    return templates.TemplateResponse(request, "_watchlist.html", ctx)
 
 
 @router.get("/chart", response_class=HTMLResponse)
