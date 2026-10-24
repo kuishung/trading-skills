@@ -55,17 +55,27 @@
 {% endif %}
 
 {# v4.186: the member's own option-liquidity lines (Opt liq column). A name must clear all three
-   figures for a level; the hover on a verdict names the figure that held it back. #}
+   figures for a level; the hover on a verdict names the figure that held it back.
+   v4.214 (user: "based on sum of open interest rather than median ... within 10 % of the current stock price,
+   in the first two standard monthly expiries ... (this has to be user define in setting)"): the near OI is a
+   SUM, and the band and the number of monthlies are the member's own settings here. #}
 {% set lt = liq_thresholds or {} %}
 <details class="mt-2 rounded-lg border border-slate-800 bg-slate-900/40"{% if liq_error %} open{% endif %}>
   <summary class="cursor-pointer px-3 py-1.5 text-[11px] text-slate-400 select-none"
-           title="Opt liq: a ticker is Liquid when its near-the-money median open interest, near-the-money volume today and chain open interest all reach the Liquid lines; Fair when all three reach the Fair lines; Thin otherwise. Near the money = within 10% of the price in the first two monthlies.">Option liquidity lines</summary>
+           title="Opt liq: a ticker is Liquid when its near-the-money open interest (summed), near-the-money volume today and chain open interest all reach the Liquid lines; Fair when all three reach the Fair lines; Thin otherwise. Near the money = within {{ lt.band_pct }}% of the price in the first {{ lt.monthlies }} monthly expiries.">Option liquidity settings</summary>
   <form class="px-3 pb-2 text-[11px] text-slate-400" hx-post="/matp/liq-thresholds" hx-target="closest .wl-panel" hx-swap="outerHTML">
     <input type="hidden" name="wl" value="{{ wl }}">
     <input type="hidden" name="sym" value="{{ sel_sym }}">
+    <div class="mb-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1">
+      <span title="Which contracts count as near the money: strikes within this percent of the stock price">Near the money: within &plusmn;</span>
+      <input name="band_pct" type="number" min="1" max="50" step="1" value="{{ lt.band_pct }}" class="wl-liq-in" style="width:3.2rem">
+      <span>% of the price, in the first</span>
+      <input name="monthlies" type="number" min="1" max="6" step="1" value="{{ lt.monthlies }}" class="wl-liq-in" style="width:2.6rem">
+      <span title="Standard monthly expiries (the third Friday), counted from today; weeklies never count">monthly expiries</span>
+    </div>
     <div class="grid gap-x-2 gap-y-1 items-center" style="grid-template-columns:auto 1fr 1fr">
       <span></span><span class="text-emerald-300">Liquid &ge;</span><span class="text-amber-300">Fair &ge;</span>
-      <span title="The median open interest of the contracts within 10% of the price in the first two monthlies">Near OI</span>
+      <span title="The open interest of every contract within {{ lt.band_pct }}% of the price in the first {{ lt.monthlies }} monthly expiries, added up (calls and puts)">Near OI (sum)</span>
       <input name="liquid_oi" type="number" min="0" step="1" value="{{ lt.liquid_oi }}" class="wl-liq-in">
       <input name="fair_oi" type="number" min="0" step="1" value="{{ lt.fair_oi }}" class="wl-liq-in">
       <span title="The contracts traded today across those same near-the-money contracts (the previous session's before the open)">Near volume</span>
@@ -76,7 +86,7 @@
       <input name="fair_chain" type="number" min="0" step="1" value="{{ lt.fair_chain }}" class="wl-liq-in">
     </div>
     <div class="mt-1.5 flex items-center gap-2">
-      <button type="submit" class="rounded border border-slate-700 px-2 py-0.5 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Save lines</button>
+      <button type="submit" class="rounded border border-slate-700 px-2 py-0.5 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Save</button>
       {% if liq_error %}<span class="text-rose-300">{{ liq_error }}</span>{% else %}<span class="text-slate-600">Yours only. Open interest is yesterday's; no bid/ask in this data.</span>{% endif %}
     </div>
   </form>

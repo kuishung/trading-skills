@@ -1991,7 +1991,7 @@
   }
   // v4.186 (user: "I want to know the ticker is liquid enough"): the option-liquidity verdict after each
   // ticker - Liquid / Fair / Thin against the member's own lines (set under the Watchlist page's list),
-  // judged near the money in the first two monthlies; the hover carries the figures
+  // judged near the money (the member's band and monthlies, v4.214: the open interest summed); the hover carries the figures
   var LQ_CLS = {liquid: 'text-emerald-300', fair: 'text-amber-300', thin: 'text-slate-500'};
   var LQ_VAL = {liquid: 'text-emerald-300', fair: 'text-amber-300', thin: 'text-rose-300'};
   var lqSeq = 0, LQV = {};               // the verdicts on hand, by symbol (for the hover table)

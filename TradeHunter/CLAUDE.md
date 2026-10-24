@@ -688,7 +688,9 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
   latest pass only, listed tab only - the user chose none on the Interpolated tab). **v4.186: an
   option-liquidity VERDICT per ticker on the Watchlist page ("Opt liq" column) and the surface's watchlist
   pane** (`app/services/opt_liquidity.py`): Liquid / Fair / Thin against fixed, member-editable lines
-  (near-the-money median OI, near-the-money volume, chain OI; first two monthlies, ±10 % of the price) -
+  (near-the-money OI - **SUMMED since v4.214**, it was the median - near-the-money volume, chain OI; the band
+  (default ±10 % of the price) and the number of monthlies (default 2) are **the member's own settings since
+  v4.214**, in the "Option liquidity settings" box under the Watchlist) -
   the user: *"I do not want to compare against each other on the watchlist. I want to know the ticker is
   liquid enough."* - never a rank across names. **v4.209 (2026-10-24): the INTERPOLATION PAGE**
   (`/options/interpolation`, `options_interp.html`, services `vol_cm_point.py` + `vol_cm_series.py`): a click on

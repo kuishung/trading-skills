@@ -29,8 +29,9 @@
    stock price and the MATP - in dollars and in percent of the MATP. Below the MATP (room
    up to the target) reads green, above it (past the target) reads red. #}
 {# v4.186 (user: "I want to know the ticker is liquid enough"): an OPTION LIQUIDITY verdict per ticker -
-   Liquid / Fair / Thin against the member's own fixed lines, judged near the money in the first two
-   monthlies (services/opt_liquidity.py); the hover carries the figures. `liq` = {symbol: verdict}. #}
+   Liquid / Fair / Thin against the member's own fixed lines, judged near the money (the member's band, in
+   the member's first N monthlies - v4.214) (services/opt_liquidity.py); the hover carries the figures. `liq` =
+   {symbol: verdict}. #}
 {% set _liq = liq or {} %}
 {# v4.196 (user): the columns are Last, MATP, MBP, then the gap in $ and % AFTER the MBP, then Opt liq; the
    TradingView plot column is gone (the chart pane has its own "Plot on TV" button) #}
@@ -43,7 +44,7 @@
   <span class="text-right">MBP</span>
   <span class="text-right" title="Last price minus MATP, in dollars">&Delta;$</span>
   <span class="text-right" title="Last price minus MATP, as a percent of the MATP">&Delta;%</span>
-  <span class="text-right" title="Option liquidity: the near-the-money median open interest (the figure that decides a fill), then the verdict - Liquid / Fair / Thin against your own lines (near OI, near volume, chain OI; the screener's last pass). Hover for the table; change the lines under the list.">Opt liq</span>
+  <span class="text-right" title="Option liquidity: the near-the-money open interest summed over the contracts in your band (the figure that decides a fill), then the verdict - Liquid / Fair / Thin against your own lines (near OI, near volume, chain OI; the screener's last pass). Hover for the table; change the lines under the list.">Opt liq</span>
   {% if can_delete %}<span class="text-center" title="Remove from watchlist">&times;</span>{% endif %}
 </div>
 {% for lv in tickers %}
@@ -76,7 +77,7 @@
   {% set lq = _liq.get(lv.symbol) %}
   {% set lq_cls = "text-slate-700" if not lq else ("text-emerald-300" if lq.level == "liquid" else ("text-amber-300" if lq.level == "fair" else "text-slate-500")) %}
   {# v4.187 (user: "show the liquidity in numbers and then the fair, thin, liquid next to it ... in the tooltip
-     i need a table"): the near-the-money median OI, the verdict beside it; the hover is a TABLE (one row per
+     i need a table"): the near-the-money OI (a sum since v4.214), the verdict beside it; the hover is a TABLE (one row per
      figure: the value, the Fair line, the Liquid line, the value coloured by the line it clears) in a hidden
      .wl-liq-tip that the delegated handler in _watchlist.html shows as a fixed popover. #}
   <span class="wl-liq text-right text-[11px] whitespace-nowrap" data-level="{{ lq.level if lq else '' }}"

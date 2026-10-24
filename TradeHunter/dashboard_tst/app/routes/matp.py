@@ -445,16 +445,19 @@ def liq_thresholds_save(
     fair_oi: str = Form(""),
     fair_vol: str = Form(""),
     fair_chain: str = Form(""),
+    band_pct: str = Form(""),
+    monthlies: str = Form(""),
     user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ):
     """v4.186: the member's option-liquidity lines (the Opt liq column) - saved to User.prefs,
-    the panel re-rendered with the new verdicts; a bad value is reported, nothing written."""
+    the panel re-rendered with the new verdicts; a bad value is reported, nothing written.
+    v4.214: also the scope - the near-the-money band (% of the price) and the number of monthlies."""
     from ..services import opt_liquidity
 
     _t, err = opt_liquidity.write_thresholds(
         db, user, liquid_oi=liquid_oi, liquid_vol=liquid_vol, liquid_chain=liquid_chain,
-        fair_oi=fair_oi, fair_vol=fair_vol, fair_chain=fair_chain)
+        fair_oi=fair_oi, fair_vol=fair_vol, fair_chain=fair_chain, band_pct=band_pct, monthlies=monthlies)
     ctx = _watchlist_context(db, user, wl or None, sym)
     ctx["liq_error"] = err
     return templates.TemplateResponse(request, "_watchlist.html", ctx)

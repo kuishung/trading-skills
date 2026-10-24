@@ -6,9 +6,13 @@ thresholds - not a rank (the per-contract rank among a chain lives in ``vol_surf
 
 Judged where a trade would happen, not across the whole chain:
 
-- **near-the-money open interest**: the median open interest of the contracts within ``BAND``
-  (10 %) of the price in the first ``N_MONTHLIES`` (2) standard monthly expiries - the figure that
-  decides whether an order fills at size;
+- **near-the-money open interest**: the SUM of the open interest of the contracts within the member's
+  band (default 10 %) of the price in the member's first N (default 2) standard monthly expiries - the
+  figure that decides whether an order fills at size. v4.214 (user, 2026-10-24: *"Option liquidity should
+  be based on sum of open interest rather than median ... (this has to be user define in setting)"*): it
+  was the median per contract; the band and the number of monthlies are now the member's own settings
+  (``band_pct``, ``monthlies``, saved with the lines). Lines saved under the median rule are ignored for
+  open interest (``liq_rule`` != "sum" in ``User.prefs``): a median-sized line would pass every name;
 - **near-the-money volume today**: the day's contracts traded across those same contracts; before
   the open (nothing traded yet) the previous session's final volume stands in, and the verdict says so;
 - **chain open interest**: calls plus puts over every contract of the name, a sanity check.
@@ -22,36 +26,44 @@ yesterday's, volume 15 min delayed, no bid/ask so the spread stays unknown).
 from __future__ import annotations
 
 import datetime as _dt
-import statistics
 
-BAND = 0.10                  # near the money = strike within 10 % of the price
-N_MONTHLIES = 2              # the first two standard monthly expiries from today
+BAND = 0.10                  # the default band: near the money = strike within 10 % of the price
+N_MONTHLIES = 2              # the default: the first two standard monthly expiries from today
+RULE = "sum"                 # v4.214: the near-OI figure is a sum (prefs saved before carry no rule: median-era)
 
 DEFAULTS = {
-    "liquid_oi": 1000,       # near-the-money median open interest
+    "liquid_oi": 20_000,     # near-the-money open interest, SUMMED over the contracts in the band
     "liquid_vol": 5000,      # near-the-money volume today
     "liquid_chain": 100_000, # chain open interest, calls + puts
-    "fair_oi": 250,
+    "fair_oi": 5000,
     "fair_vol": 1000,
     "fair_chain": 20_000,
+    "band_pct": 10,          # v4.214: near the money = within this % of the price ...
+    "monthlies": 2,          # ... in the first this-many standard monthly expiries
 }
 LIMITS = (0, 1_000_000_000)
+SCOPE_LIMITS = {"band_pct": (1, 50), "monthlies": (1, 6)}
+SCOPE_WORDS = {"band_pct": "the near-the-money band (%% of the price)", "monthlies": "the number of monthly expiries"}
 LABELS = {"liquid": "Liquid", "fair": "Fair", "thin": "Thin"}
 FIGURES = (("oi", "near-the-money open interest"), ("vol", "near-the-money volume"), ("chain", "chain open interest"))
 
 
-def _int(v, default: int) -> int:
+def _int(v, default: int, lim=LIMITS) -> int:
     try:
         n = int(float(v))
     except (TypeError, ValueError):
         return default
-    return min(LIMITS[1], max(LIMITS[0], n))
+    return min(lim[1], max(lim[0], n))
 
 
 def read_thresholds(user) -> dict:
-    """This member's thresholds, always complete and in bounds (defaults where unset)."""
+    """This member's thresholds and scope, always complete and in bounds (defaults where unset). Open
+    interest lines saved under the median rule (no ``liq_rule``) fall back to the sum defaults."""
     p = getattr(user, "prefs", None) or {}
-    return {k: _int(p.get("liq_" + k), d) for k, d in DEFAULTS.items()}
+    out = {k: _int(p.get("liq_" + k), d, SCOPE_LIMITS.get(k, LIMITS)) for k, d in DEFAULTS.items()}
+    if p.get("liq_rule") != RULE:
+        out["liquid_oi"], out["fair_oi"] = DEFAULTS["liquid_oi"], DEFAULTS["fair_oi"]
+    return out
 
 
 def write_thresholds(db, user, **changes) -> tuple[dict, str]:
@@ -66,8 +78,11 @@ def write_thresholds(db, user, **changes) -> tuple[dict, str]:
             n = int(float(value))
         except (TypeError, ValueError):
             return cur, "%s must be a whole number" % key.replace("_", " ")
-        if n < LIMITS[0] or n > LIMITS[1]:
-            return cur, "%s must be between %d and %d" % (key.replace("_", " "), LIMITS[0], LIMITS[1])
+        lim = SCOPE_LIMITS.get(key, LIMITS)
+        if n < lim[0] or n > lim[1]:
+            if key in SCOPE_LIMITS:
+                return cur, "%s must be between %d and %d" % (SCOPE_WORDS[key].replace("%%", "%"), lim[0], lim[1])
+            return cur, "%s must be between %d and %d" % (key.replace("_", " "), lim[0], lim[1])
         new[key] = n
     for fig, _words in FIGURES:
         if new["fair_" + fig] > new["liquid_" + fig]:
@@ -75,6 +90,7 @@ def write_thresholds(db, user, **changes) -> tuple[dict, str]:
     p = dict(getattr(user, "prefs", None) or {})
     for k, v in new.items():
         p["liq_" + k] = v
+    p["liq_rule"] = RULE
     user.prefs = p
     db.add(user)
     db.commit()
@@ -144,18 +160,20 @@ def verdict(sdb, symbol: str, thresholds: dict | None = None, today: _dt.date | 
     if chain_oi is None:
         chain_oi = sdb.query(C.oi).filter(C.symbol == sym).all()
         chain_oi = sum(int(x or 0) for (x,) in chain_oi) or None
+    band = max(1, min(50, int(t.get("band_pct") or DEFAULTS["band_pct"]))) / 100.0
+    n_mon = max(1, min(6, int(t.get("monthlies") or DEFAULTS["monthlies"])))
     exps = [e for (e,) in sdb.query(C.expiry).filter(C.symbol == sym, C.weekly.is_(False))
-            .distinct().order_by(C.expiry).all() if e and _to_date(e) and _to_date(e) >= d][:N_MONTHLIES]
+            .distinct().order_by(C.expiry).all() if e and _to_date(e) and _to_date(e) >= d][:n_mon]
     near_oi = near_vol = None
     vol_src = "today"
     n_near = 0
     if spot and exps:
-        lo, hi = spot * (1 - BAND), spot * (1 + BAND)
+        lo, hi = spot * (1 - band), spot * (1 + band)
         rows = (sdb.query(C.oi, C.volume, C.vol_prev)
                    .filter(C.symbol == sym, C.expiry.in_(exps), C.strike >= lo, C.strike <= hi).all())
         n_near = len(rows)
         if rows:
-            near_oi = int(statistics.median([int(o or 0) for (o, _v, _p) in rows]))
+            near_oi = sum(int(o or 0) for (o, _v, _p) in rows)          # v4.214: the sum, not the median
             v_today = sum(int(v or 0) for (_o, v, _p) in rows)
             v_prev = sum(int(p or 0) for (_o, _v, p) in rows)
             if v_today > 0 or v_prev == 0:
@@ -167,7 +185,7 @@ def verdict(sdb, symbol: str, thresholds: dict | None = None, today: _dt.date | 
     # v4.187 (the user: "in the tooltip ... i need a table"): one row per figure - the value, the Fair line,
     # the Liquid line and which line the value clears (the hover table and the column's number)
     figs = []
-    for key, name, val in (("oi", "Near OI (median)", near_oi), ("vol", "Near volume " + ("today" if vol_src == "today" else "(prev. session)"), near_vol),
+    for key, name, val in (("oi", "Near OI (sum)", near_oi), ("vol", "Near volume " + ("today" if vol_src == "today" else "(prev. session)"), near_vol),
                            ("chain", "Chain OI", chain_oi)):
         v = val or 0
         figs.append({"key": key, "name": name, "value": val, "value_text": _fmt(val) if val is not None else "-",
@@ -175,12 +193,13 @@ def verdict(sdb, symbol: str, thresholds: dict | None = None, today: _dt.date | 
                      "liquid": t["liquid_" + key], "liquid_text": _fmt(t["liquid_" + key]),
                      "level": "liquid" if v >= t["liquid_" + key] else ("fair" if v >= t["fair_" + key] else "thin")})
     when = "today" if vol_src == "today" else "the previous session (nothing traded yet today)"
+    bp = int(round(band * 100))
     parts = ["%s option liquidity: %s." % (sym, label)]
     if n_near:
-        parts.append("Near the money (within 10%% of %.2f, %s): median open interest %s, volume %s %s."
-                     % (spot, " and ".join(exps), _fmt(near_oi), _fmt(near_vol), when))
+        parts.append("Near the money (within %d%% of %.2f, %s): open interest %s summed over %d contracts, volume %s %s."
+                     % (bp, spot, " and ".join(exps), _fmt(near_oi), n_near, _fmt(near_vol), when))
     elif spot and exps:
-        parts.append("No contract within 10%% of %.2f in %s." % (spot, " and ".join(exps)))
+        parts.append("No contract within %d%% of %.2f in %s." % (bp, spot, " and ".join(exps)))
     elif not spot:
         parts.append("No price for the name in the last pass.")
     else:
@@ -189,16 +208,18 @@ def verdict(sdb, symbol: str, thresholds: dict | None = None, today: _dt.date | 
     if held:
         nxt = "Liquid" if level == "fair" else "Fair"
         parts.append("Held back from %s by the %s." % (nxt, held))
-    parts.append("Lines: Liquid >= %s / %s / %s, Fair >= %s / %s / %s (near OI / near volume / chain OI); change them under the watchlist."
+    parts.append("Lines: Liquid >= %s / %s / %s, Fair >= %s / %s / %s (near OI / near volume / chain OI); near = within %d%% "
+                 "of the price in the first %d monthl%s; change them under the watchlist."
                  % (_fmt(t["liquid_oi"]), _fmt(t["liquid_vol"]), _fmt(t["liquid_chain"]),
-                    _fmt(t["fair_oi"]), _fmt(t["fair_vol"]), _fmt(t["fair_chain"])))
+                    _fmt(t["fair_oi"]), _fmt(t["fair_vol"]), _fmt(t["fair_chain"]), bp, n_mon, "y" if n_mon == 1 else "ies"))
     parts.append("Open interest is yesterday's; volume is 15 min delayed; the spread is not in this data.")
     return {"symbol": sym, "level": level, "label": label, "near_oi": near_oi, "near_vol": near_vol,
             "vol_src": vol_src, "chain_oi": chain_oi, "n_near": n_near, "expiries": exps, "held": held,
             "text": " ".join(parts), "short": (_fmt(near_oi) + " OI") if near_oi is not None else "",
             "num": _fmt(near_oi) if near_oi is not None else "-", "spot": spot, "figs": figs,
-            "near_words": ("within 10%% of %.2f in %s, %d contracts" % (spot, " and ".join(exps), n_near)) if n_near
-                          else ("no contract within 10%% of %.2f in %s" % (spot, " and ".join(exps)) if (spot and exps)
+            "band_pct": bp, "monthlies": n_mon,
+            "near_words": ("within %d%% of %.2f in %s, %d contracts (open interest summed)" % (bp, spot, " and ".join(exps), n_near)) if n_near
+                          else ("no contract within %d%% of %.2f in %s" % (bp, spot, " and ".join(exps)) if (spot and exps)
                                 else ("no price in the last pass" if not spot else "no standard monthly ahead"))}
 
 
@@ -215,5 +236,5 @@ def verdicts(sdb, symbols, thresholds: dict | None = None, today: _dt.date | Non
     return out
 
 
-__all__ = ["BAND", "N_MONTHLIES", "DEFAULTS", "LIMITS", "LABELS", "FIGURES", "read_thresholds",
+__all__ = ["BAND", "N_MONTHLIES", "RULE", "DEFAULTS", "LIMITS", "SCOPE_LIMITS", "LABELS", "FIGURES", "read_thresholds",
            "write_thresholds", "grade", "verdict", "verdicts"]

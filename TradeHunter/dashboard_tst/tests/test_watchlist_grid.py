@@ -48,7 +48,7 @@ def test_grid_shows_the_gap_to_matp_and_no_trend_or_sig(client, db, monkeypatch)
     # v4.186: the option-liquidity verdict per ticker (Opt liq column) - Liquid / Fair / Thin against the
     # member's own lines, the figures in the hover; a ticker the screener does not list reads "-"
     def figs(oi, vol, chain, lv):
-        return [{"key": "oi", "name": "Near OI (median)", "value_text": oi, "fair_text": "250", "liquid_text": "1k", "level": lv[0]},
+        return [{"key": "oi", "name": "Near OI (sum)", "value_text": oi, "fair_text": "5k", "liquid_text": "20k", "level": lv[0]},
                 {"key": "vol", "name": "Near volume today", "value_text": vol, "fair_text": "1k", "liquid_text": "5k", "level": lv[1]},
                 {"key": "chain", "name": "Chain OI", "value_text": chain, "fair_text": "20k", "liquid_text": "100k", "level": lv[2]}]
     liq = {"NVDA": {"level": "liquid", "label": "Liquid", "num": "12.4k", "near_words": "within 10% of 182.00 in 2026-11-20 and 2026-12-18, 20 contracts",
@@ -69,7 +69,7 @@ def test_grid_shows_the_gap_to_matp_and_no_trend_or_sig(client, db, monkeypatch)
     cell = html[i:i + 2500]
     assert '<b class="text-slate-200 tabular-nums font-medium">12.4k</b> <span class="text-emerald-300">Liquid</span>' in cell
     assert '<div class="wl-liq-tip hidden">' in cell and "NVDA option liquidity</b>" in cell
-    assert "<th>Fair &ge;</th><th>Liquid &ge;</th>" in cell and "Near OI (median)" in cell and ">2.1M</td>" in cell
+    assert "<th>Fair &ge;</th><th>Liquid &ge;</th>" in cell and "Near OI (sum)" in cell and ">2.1M</td>" in cell
     assert "Near the money = within 10% of 182.00 in 2026-11-20 and 2026-12-18, 20 contracts." in cell
     j = html.index('data-level="fair"')
     assert '<b class="text-slate-200 tabular-nums font-medium">410</b> <span class="text-amber-300">Fair</span>' in html[j:j + 400]
@@ -79,11 +79,15 @@ def test_grid_shows_the_gap_to_matp_and_no_trend_or_sig(client, db, monkeypatch)
     # v4.188 (user: "the black wording cannot see ... follow the setting of the toggle dark/light"): theme variables
     assert "#wlLiqPop{position:fixed;z-index:60;width:19rem;padding:.5rem .6rem;border:1px solid var(--tv-border-2);border-radius:.5rem;background:var(--tv-panel);color:var(--tv-text);" in html
     assert "#wlLiqPop .wl-liq-cap{margin-top:.3rem;color:var(--tv-muted);font-size:10px}" in html
-    assert 'class="text-left wl-liq-name">Near OI (median)</td>' in cell and 'class="wl-liq-line">1k</td>' in cell
+    assert 'class="text-left wl-liq-name">Near OI (sum)</td>' in cell and 'class="wl-liq-line">20k</td>' in cell
     assert "text-slate-400" not in cell[cell.index('<div class="wl-liq-tip hidden">'):] .split("</div>\n    </div>")[0] if "wl-liq-tip" in cell else True
     # the member's lines under the list, with the defaults
-    assert "Option liquidity lines" in html and 'hx-post="/matp/liq-thresholds"' in html
-    assert 'name="liquid_oi" type="number" min="0" step="1" value="1000"' in html
+    assert "Option liquidity settings" in html and 'hx-post="/matp/liq-thresholds"' in html
+    assert 'name="liquid_oi" type="number" min="0" step="1" value="20000"' in html and ">Near OI (sum)</span>" in html
+    # v4.214: the band and the number of monthlies, the member's own
+    assert 'name="band_pct" type="number" min="1" max="50" step="1" value="10"' in html
+    assert 'name="monthlies" type="number" min="1" max="6" step="1" value="2"' in html
+    assert "Near the money = within 10% of the price in the first 2 monthly expiries." in html
     assert 'name="fair_chain" type="number" min="0" step="1" value="20000"' in html
     # NVDA: 182 - 200 = -18.00, -9.0 % of the MATP, green (below the target)
     assert "-18.00" in html and "-9.0%" in html
@@ -111,9 +115,15 @@ def test_saving_the_liquidity_lines_rerenders_the_panel_and_reports_a_bad_line(c
     db.commit()
     monkeypatch.setattr(matp_routes, "_watchlist_signals_fast", lambda levels: {"NVDA": {"current": 182.0}})
     monkeypatch.setattr(matp_routes, "_watchlist_liquidity", lambda levels, user: {})
-    r = client.post("/matp/liq-thresholds", data={"wl": "all", "sym": "", "liquid_oi": "800", "fair_vol": "500"})
-    assert r.status_code == 200 and 'value="800"' in r.text and 'value="500"' in r.text
+    r = client.post("/matp/liq-thresholds", data={"wl": "all", "sym": "", "liquid_oi": "8000", "fair_vol": "500",
+                                                  "band_pct": "15", "monthlies": "3"})
+    assert r.status_code == 200 and 'value="8000"' in r.text and 'value="500"' in r.text
+    assert 'name="band_pct" type="number" min="1" max="50" step="1" value="15"' in r.text
+    assert 'name="monthlies" type="number" min="1" max="6" step="1" value="3"' in r.text
     db.expire_all()
-    assert db.get(models.User, user.id).prefs["liq_liquid_oi"] == 800
-    r = client.post("/matp/liq-thresholds", data={"wl": "all", "sym": "", "fair_oi": "900"})
-    assert r.status_code == 200 and "cannot be above the Liquid line" in r.text and 'value="800"' in r.text
+    p = db.get(models.User, user.id).prefs
+    assert p["liq_liquid_oi"] == 8000 and p["liq_band_pct"] == 15 and p["liq_monthlies"] == 3 and p["liq_rule"] == "sum"
+    r = client.post("/matp/liq-thresholds", data={"wl": "all", "sym": "", "fair_oi": "9000"})
+    assert r.status_code == 200 and "cannot be above the Liquid line" in r.text and 'value="8000"' in r.text
+    r = client.post("/matp/liq-thresholds", data={"wl": "all", "sym": "", "monthlies": "9"})
+    assert r.status_code == 200 and "the number of monthly expiries must be between 1 and 6" in r.text

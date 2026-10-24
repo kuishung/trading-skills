@@ -223,6 +223,28 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-24 - v4.214: option liquidity - near-the-money open interest SUMMED; the band and monthlies are the member's
+
+The user: *"in the watchlist, Option liquidity should be based on sum of open interest rather than median currently
+is under within 10 % of the current stock price, in the first two standard monthly expiries from today. (this has
+to be user define in setting)"*. `services/opt_liquidity.py`:
+- **Near OI is the sum** of the open interest of every contract (calls and puts) within the band of the price in
+  the first N standard monthly expiries - it was the median per contract. The column's number, the hover table
+  ("Near OI (sum)") and the sentence follow. A sum measures how much is resting where a trade happens; the median
+  only said what a typical contract held, so a name with a few deep strikes and many empty ones read the same as
+  a name deep everywhere.
+- **The band and the number of monthlies are the member's own** (`band_pct` 1-50, default 10; `monthlies` 1-6,
+  default 2), saved with the lines in `User.prefs` (`liq_band_pct`, `liq_monthlies`). The box under the Watchlist
+  is now **"Option liquidity settings"**: "Near the money: within ± [10] % of the price, in the first [2] monthly
+  expiries", then the three lines. The route `/matp/liq-thresholds` takes the two new fields; a value out of
+  bounds is reported and nothing is written. The surface page's watchlist pane reads the same settings.
+- **New default lines for the sum**: Liquid ≥ 20,000 / Fair ≥ 5,000 near-the-money open interest (volume and chain
+  lines unchanged). Lines a member saved under the median rule would pass every name once summed, so open-interest
+  lines saved before this release (no `liq_rule: "sum"` in the prefs) are read as the new defaults until the member
+  saves again; their volume and chain lines are kept.
+- Tests: `test_opt_liquidity.py` (the sums, the member's band and monthlies, the bounds, the median-era fallback),
+  `test_watchlist_grid.py` (the settings box, the save route with the two new fields).
+
 ### 2026-10-24 - v4.213: the smile chart zooms too
 
 The user, on the smile: *"this cannot zoom"*. The zoom machinery of v4.211 is now one zoomer per chart kind
