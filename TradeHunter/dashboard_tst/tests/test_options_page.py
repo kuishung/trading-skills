@@ -1225,6 +1225,14 @@ def test_the_surface_cells_open_the_contract_history_in_a_new_window(client, fak
                    "return k < j.spot ? 'P' : 'C';", "click: contract history in a new window",
                    'class="vol-iv"', 'class="vol-l2"', 'class="vol-l3"'):
         assert needle in html, needle
+    # v4.198 (user: "I do not want the small tooltip that cover the larger info box"): no title on a cell of either
+    # grid; the click hint lives in the hover cards
+    rs_ = html[html.index("function renderSurface("):html.index("function tileLoad(")]
+    assert "data-c=\"' + c + '\">' +" in rs_ and "title=\"' +" not in rs_.split("<td class=\"vol-cell")[1][:400]
+    rcm_ = html[html.index("function renderCm("):html.index("function cmMoneyWork(")]
+    assert "esc(tip)" not in rcm_ and "data-c=\"' + c + '\" style=\"' + cmTint(j, v) + '\">'" in rcm_
+    pop_ = html[html.index("function popoverHtml("):html.index("function showPop(")]
+    assert "'<div class=\"vol-cap\">Click: contract history in a new window.</div>'" in pop_
     assert ".vol-grid td.vol-cell { cursor: pointer; }" in html
     # squarish cells, the IV figure centred both ways; an empty reserved line takes no room
     assert "vertical-align: middle; text-align: center; position: relative;" in html

@@ -223,6 +223,14 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-24 - v4.198: Volatility surface - no browser tooltip over the hover card
+
+The user: *"when hover to the vol surface, I do not want the small tooltip that cover the larger info box"*.
+Each cell carried a `title` attribute ("AMD 430 put 2027-02-19 - click: contract history in a new window"), so
+the browser's own tooltip popped up over the hover card. Both grids' cells lost the attribute; the surface's
+hover card ends with "Click: contract history in a new window" (the interpolated card already named the
+contract a click opens). Test in `tests/test_options_page.py`.
+
 ### 2026-10-24 - v4.197: Volatility surface - a custom rank window
 
 The user: *"i need a radio button 'custom' for user to key in the rank window"*. The rank-window row above the

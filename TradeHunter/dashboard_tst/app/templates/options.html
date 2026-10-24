@@ -942,8 +942,9 @@
         // below (.vol-l3), the rank bar at the bottom. The figures come from j.extra (same shape as j.cells).
         var x = extraAt(j, r, c);
         h += v == null ? '<td></td>'
-          : '<td class="vol-cell' + (liqThin(x) ? ' vol-thin' : '') + '"' + liqAttr(x) + ' data-r="' + r + '" data-c="' + c + '" title="' +
-            esc(j.symbol + ' ' + strikeText(k) + ' ' + kind + ' ' + ex[c].date + ' - click: contract history in a new window') + '">' +
+          // v4.198 (user: "I do not want the small tooltip that cover the larger info box"): no title attribute
+          // on a cell - the browser's own tooltip sat over the hover card; the click hint is in the card
+          : '<td class="vol-cell' + (liqThin(x) ? ' vol-thin' : '') + '"' + liqAttr(x) + ' data-r="' + r + '" data-c="' + c + '">' +
             '<div class="vol-l2">' + tileTop(x) + '</div><div class="vol-iv">' + num(v, 1) + '</div>' +
             '<div class="vol-l3">' + tileBottom(x) + '</div>' + liqBar(x) + '</td>';
       });
@@ -1291,6 +1292,7 @@
       h += '<div class="vol-cap">Implied volatility by trading day' + (cur != null ? '; the dashed line is ' + nowWord : '') +
            '; the shaded band is the range over the past ' + wd + ' days' + (win.length ? '; amber E = an earnings day' : '') + '.</div>';
     }
+    h += '<div class="vol-cap">Click: contract history in a new window.</div>';   // v4.198: was the cell's own tooltip
     return h;
   }
   function showPop(td, ev) {
@@ -1495,17 +1497,10 @@
       vw.cols.forEach(function (c) {
         var v = j.cells[r][c];
         if (v == null) { h += '<td></td>'; return; }
-        var x = extraAt(j, r, c), n = cmNear(j, r, c), ex = cmExact(j, r, c), tip;
-        if (mon) {
-          tip = j.symbol + ' ' + pctText(row.pct) + '% (strike ' + num(row.strike, 2) + ') ' + kind + ', ' + hz[c].days +
-                ' days - click: contract history of ' + (ex ? 'this contract' : 'the nearer listed expiry and strike') +
-                (n ? ' (' + n.date + ' ' + strikeText(n.strike) + ' ' + kind + ')' : '') + ' in a new window';
-        } else {
-          tip = j.symbol + ' ' + strikeText(k) + ' ' + kind + ', ' + hz[c].days + ' days - click: ' +
-                (ex ? 'contract history of the listed expiry on this horizon' : 'contract history of the nearer listed expiry') +
-                (n ? ' (' + n.date + ')' : '') + ' in a new window';
-        }
-        h += '<td class="vol-cell" data-r="' + r + '" data-c="' + c + '" title="' + esc(tip) + '" style="' + cmTint(j, v) + '">' +
+        var x = extraAt(j, r, c), ex = cmExact(j, r, c);
+        // v4.198: no title attribute on a cell (the browser's tooltip covered the hover card); the hover card
+        // names the contract a click opens
+        h += '<td class="vol-cell" data-r="' + r + '" data-c="' + c + '" style="' + cmTint(j, v) + '">' +
              (ex ? '<span class="vol-x" title="' + (mon ? 'a listed expiry falls on this horizon and a listed strike on this level - this is that contract\'s own IV'
                                                         : 'a listed expiry falls on this horizon - this is that contract\'s own IV') + '">=</span>' : '') +
              '<div class="vol-l2">' + tileTop(x) + '</div><div class="vol-iv">' + num(v, 1) + '</div>' +
