@@ -10,7 +10,7 @@ import subprocess
 
 import pytest
 
-from tests.test_options_page import client, fake  # noqa: F401 - the page fixtures live there
+from tests.test_options_page import client, fake, no_screener_db  # noqa: F401 - the page fixtures live there
 
 _SCRIPT_RE = re.compile(r"<script(?P<attrs>[^>]*)>(?P<body>.*?)</script>", re.S)
 
