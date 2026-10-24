@@ -15,23 +15,19 @@
   .ip-tabs button[aria-selected="true"] { color: var(--tv-text-hi); border-bottom-color: var(--tv-accent); }
   .ip-card { background: var(--tv-panel); border: 1px solid var(--tv-border); border-radius: .6rem; padding: .6rem .8rem; margin-top: .75rem; }
   .ip-card h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--tv-muted); margin: 0 0 .4rem; font-weight: 600; }
-  .ip-grid { border-collapse: separate; border-spacing: 0; font-variant-numeric: tabular-nums; }
-  .ip-grid th { font-weight: 500; color: var(--tv-muted); font-size: 11px; padding: .25rem .4rem; text-align: center; white-space: nowrap; }
-  .ip-grid th.k { text-align: right; padding-right: .6rem; color: var(--tv-text); }
-  .ip-grid td { width: 4.6rem; height: 3rem; text-align: center; border: 1px solid var(--tv-border); font-size: 13px; font-weight: 600;
-                color: var(--tv-text-hi); background: rgba(96,165,250,.08); }
-  .ip-grid td small { display: block; font-weight: 400; font-size: 10px; color: var(--tv-muted); }
-  .ip-grid td.leg { background: rgba(245,158,11,.22); outline: 2px solid #f59e0b; outline-offset: -2px; }
-  .ip-grid td.dim { opacity: .45; }
-  .ip-grid td.live { cursor: pointer; } .ip-grid td.live:hover { outline: 1px solid var(--tv-accent); outline-offset: -1px; }
-  .ip-wrap { position: relative; display: inline-block; max-width: 100%; overflow: auto; }
-  .ip-ov { position: absolute; inset: 0; pointer-events: none; }
-  .ip-vline { position: absolute; border-left: 2px dashed #34d399; }
-  .ip-hline { position: absolute; border-top: 2px dashed #34d399; }
-  .ip-pt { position: absolute; width: 12px; height: 12px; border-radius: 50%; transform: translate(-50%,-50%); border: 2px solid var(--tv-panel); }
-  .ip-pt.mid { background: #a78bfa; } .ip-pt.res { background: #34d399; width: 16px; height: 16px; }
-  .ip-tag { position: absolute; font-size: 11px; font-weight: 700; white-space: nowrap; transform: translate(8px,-50%); }
-  .ip-tag.mid { color: #a78bfa; } .ip-tag.res { color: #34d399; } .ip-tag.hz { color: #34d399; transform: translate(-50%,0); }
+  /* v4.212 (user: "i want this to replace the working on the contract table"): the surface as a map - listed
+     expiries across (log scale), listed strikes up, each tile that contract's own IV; the horizon and the level
+     drawn across it, the legs ringed, the cell at the cross */
+  .ip-map svg { width: 100%; height: auto; display: block; }
+  .ip-map rect.tile { cursor: pointer; } .ip-map rect.tile:hover { stroke: var(--tv-text-hi); stroke-width: 1.5; }
+  .ip-map rect.none { fill: var(--tv-border); opacity: .5; }
+  .ip-map text.tv { font-size: 10px; fill: #2c2c2a; pointer-events: none; }
+  .ip-map text.ax { font-size: 10px; fill: var(--tv-muted); } .ip-map text.ax.leg { fill: #f59e0b; font-weight: 600; }
+  .ip-map text.ttl { font-size: 11px; fill: var(--tv-muted); }
+  .ip-map .hz { stroke: #34d399; stroke-width: 1.5; stroke-dasharray: 5 4; } .ip-map text.hzt { font-size: 11px; fill: #34d399; font-weight: 600; }
+  .ip-map .legring { fill: none; stroke: #f59e0b; stroke-width: 2.5; } .ip-map .legbox { fill: none; stroke: #f59e0b; stroke-width: 1.2; stroke-dasharray: 3 3; }
+  .ip-map .res { fill: #34d399; stroke: var(--tv-panel); stroke-width: 2; }
+  .ip-map .tag { fill: #d1fae5; stroke: #34d399; } .ip-map text.tagt { font-size: 12px; font-weight: 700; fill: #065f46; }
   .ip-w { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 12px; }
   .ip-w th { text-align: right; color: var(--tv-muted); font-weight: 500; border-bottom: 1px solid var(--tv-border); padding: .25rem .4rem; font-size: 11px; white-space: nowrap; }
   .ip-w td { text-align: right; padding: .25rem .4rem; border-bottom: 1px solid var(--tv-border); white-space: nowrap; }
@@ -42,10 +38,14 @@
   html.light .ip-f { background: rgba(15,23,42,.06); }
   .ip-legend { display: flex; flex-wrap: wrap; gap: .8rem; font-size: 11px; color: var(--tv-muted); margin-top: .4rem; }
   .ip-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: -1px; margin-right: 5px; }
-  .ip-steps { display: flex; gap: .3rem; margin-bottom: .5rem; }
-  .ip-steps button { font-size: 11px; padding: .1rem .55rem; border-radius: 9999px; border: 1px solid var(--tv-border-2); color: var(--tv-muted); background: transparent; cursor: pointer; }
-  .ip-steps button[aria-pressed="true"] { border-color: #34d399; color: #34d399; }
   svg.ip-svg { width: 100%; height: auto; display: block; }
+  /* v4.211 (user: "make it smaller and can be animated to zoom in and out so the data does not overlapped"): the
+     term and smile charts stay at their drawn width instead of stretching across the card; the term charts zoom */
+  .ip-term, .ip-smile { max-width: 40rem; }
+  .ip-term svg { cursor: grab; touch-action: none; } .ip-term.drag svg { cursor: grabbing; }
+  .ip-zoom { display: flex; align-items: center; gap: .35rem; flex-wrap: wrap; font-size: 11px; color: var(--tv-muted); margin: .2rem 0 .4rem; }
+  .ip-zoom button { border: 1px solid var(--tv-border-2); border-radius: .3rem; padding: .05rem .5rem; color: var(--tv-text); background: var(--tv-panel); font-size: 11px; line-height: 1.3; }
+  .ip-zoom button:hover { border-color: var(--tv-accent, #60a5fa); }
   .ip-svg .ax { stroke: var(--tv-border-2); } .ip-svg .lbl { fill: var(--tv-muted); font-size: 10px; }
   .ip-svg .dot { fill: #60a5fa; } .ip-svg .dot-leg { fill: #f59e0b; } .ip-svg .dot-res { fill: #34d399; stroke: var(--tv-panel); stroke-width: 1.5; }
   .ip-svg .path { stroke: #60a5fa; stroke-width: 1.2; fill: none; opacity: .75; } .ip-svg .ivp { stroke: #a78bfa; stroke-width: 1.2; fill: none; stroke-dasharray: 3 3; }
@@ -63,7 +63,7 @@
   <a href="{{ back_url }}" class="text-xs text-slate-400 hover:text-slate-200 sm:ml-auto whitespace-nowrap">&larr; Interpolated surface</a>
 </div>
 <div class="ip-tabs mt-2" role="tablist">
-  <button type="button" role="tab" data-tab="work" aria-selected="true">Working on the contract table</button>
+  <button type="button" role="tab" data-tab="work" aria-selected="true">Surface map &amp; working</button>
   <button type="button" role="tab" data-tab="charts" aria-selected="false">Term structure &amp; smile</button>
   <button type="button" role="tab" data-tab="hist" aria-selected="false">Interpolated history</button>
 </div>
@@ -88,47 +88,109 @@
     if (day && day !== 'latest') q.set('day', day);
     return '/options/history?' + q.toString();
   }
-  var P = null, S = null, STEP = 'both';
+  var P = null, S = null;
   // ── tabs ──
   var TAB_KEY = 'th.interp.tab';
   function tabSet(name) {
     document.querySelectorAll('.ip-tabs button').forEach(function (b) { b.setAttribute('aria-selected', b.dataset.tab === name ? 'true' : 'false'); });
     show($('tabWork'), name === 'work'); show($('tabCharts'), name === 'charts'); show($('tabHist'), name === 'hist');
     try { localStorage.setItem(TAB_KEY, name); } catch (e) {}
-    if (name === 'work' && P) drawOverlay();
     if (name === 'hist' && !S) loadSeries();
   }
   document.querySelectorAll('.ip-tabs button').forEach(function (b) { b.addEventListener('click', function () { tabSet(b.dataset.tab); }); });
   // ── the working tab ──
+  // v4.212 (user, shown the sample: "i want this to replace the working on the contract table"): the surface as a
+  // map - every listed expiry across on a log scale, the listed strikes near the price up, each tile coloured and
+  // written with that contract's own IV; the horizon (vertical) and the level (horizontal) drawn across it, the four
+  // legs ringed and boxed, the clicked cell at the cross with its interpolated IV. A click on a tile opens that
+  // contract's history.
+  function mapColor(v, lo, hi) {        // light peach to coral by IV
+    var t = hi > lo ? Math.max(0, Math.min(1, (v - lo) / (hi - lo))) : 0.5;
+    return 'rgb(' + Math.round(248 - 18 * t) + ',' + Math.round(241 - 121 * t) + ',' + Math.round(251 - 191 * t) + ')';
+  }
+  function mapSvg(p) {
+    var mp = p.map;
+    if (!mp || !mp.expiries || !mp.strikes.length) return '';
+    var exps = mp.expiries.map(function (e, c) { return {e: e, c: c}; }).filter(function (q) { return q.e.dte >= 1; });
+    if (exps.length < 1) return '';
+    var rows = mp.strikes, n = exps.length;
+    var W = 920, L = 96, R = 28, T = 24, rowH = 17, B = 48, H = T + rows.length * rowH + B;
+    var lx = exps.map(function (q) { return Math.log(q.e.dte); });
+    var edges = [];                      // column edges: the geometric midpoints between expiries
+    for (var i = 0; i <= n; i++) {
+      if (i === 0) edges.push(lx[0] - Math.min(0.25, n > 1 ? (lx[1] - lx[0]) / 2 : 0.25));          // the outer edges: at most a quarter log-unit
+      else if (i === n) edges.push(lx[n - 1] + Math.min(0.25, n > 1 ? (lx[n - 1] - lx[n - 2]) / 2 : 0.25));
+      else edges.push((lx[i - 1] + lx[i]) / 2);
+    }
+    var x0 = edges[0], x1 = edges[n];
+    function XL(l) { return L + (W - L - R) * (l - x0) / Math.max(1e-9, x1 - x0); }
+    function X(d) { return XL(Math.log(d)); }
+    function Yr(i) { return T + (rows.length - 1 - i) * rowH + rowH / 2; }
+    var vals = [];
+    mp.cells.forEach(function (r) { r.forEach(function (v) { if (v != null) vals.push(v); }); });
+    var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="The volatility surface as a map">';
+    rows.forEach(function (st, ri) {
+      var y = Yr(ri) - rowH / 2 + 0.5;
+      exps.forEach(function (q, i) {
+        var v = mp.cells[ri][q.c], xa = XL(edges[i]) + 0.5, xb = XL(edges[i + 1]) - 0.5, wdt = Math.max(1, xb - xa);
+        if (v == null) { s += '<rect class="none" x="' + xa.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + wdt.toFixed(1) + '" height="' + (rowH - 1) + '" rx="2"/>'; return; }
+        s += '<rect class="tile" data-r="' + ri + '" data-c="' + q.c + '" x="' + xa.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + wdt.toFixed(1) + '" height="' + (rowH - 1) + '" rx="2" fill="' + mapColor(v, lo, hi) + '">' +
+             '<title>' + esc(p.symbol + ' ' + num(st.strike, 2) + ' ' + shortDate(q.e.date) + ' (' + q.e.dte + 'd) - IV ' + num(v, 1) + '% - click: contract history') + '</title></rect>';
+        if (wdt >= 27) s += '<text class="tv" x="' + ((xa + xb) / 2).toFixed(1) + '" y="' + (y + rowH / 2 + 3).toFixed(1) + '" text-anchor="middle">' + num(v, 1) + '</text>';
+      });
+      s += '<text class="ax' + (st.leg ? ' leg' : '') + '" x="' + (L - 6) + '" y="' + (Yr(ri) + 3.5).toFixed(1) + '" text-anchor="end">' + num(st.strike, 2) + (st.pct != null ? ' &middot; ' + num(st.pct, 1) + '%' : '') + '</text>';
+    });
+    // the expiries along the bottom: the legs first, then whatever has room
+    var labels = exps.map(function (q) { return {x: X(q.e.dte), pri: q.e.leg ? 2 : 1, text: q.e.dte + 'd', leg: q.e.leg}; });
+    pickLabels(labels, 24).forEach(function (l) {
+      if (l.ok) s += '<text class="ax' + (l.leg ? ' leg' : '') + '" x="' + l.x.toFixed(1) + '" y="' + (H - B + 14) + '" text-anchor="middle">' + l.text + '</text>';
+    });
+    s += '<text class="ttl" x="' + ((L + W - R) / 2).toFixed(1) + '" y="' + (H - 8) + '" text-anchor="middle">days to expiry - every listed expiry, log scale</text>' +
+         '<text class="ttl" transform="translate(12 ' + ((T + H - B) / 2).toFixed(1) + ') rotate(-90)" text-anchor="middle">strike &middot; strike / price</text>';
+    // the horizon and the level
+    var rowOf = {}; rows.forEach(function (st, i) { rowOf[String(st.strike)] = i; });
+    var hx = X(p.h), hIn = Math.log(p.h) >= x0 && Math.log(p.h) <= x1;
+    if (hIn) s += '<line class="hz" x1="' + hx.toFixed(1) + '" y1="' + T + '" x2="' + hx.toFixed(1) + '" y2="' + (H - B) + '"/>' +
+                  '<text class="hzt" x="' + hx.toFixed(1) + '" y="' + (T - 7) + '" text-anchor="middle">horizon ' + p.h + 'd</text>';
+    var st_ = p.strike, yK = null;
+    if (st_) {
+      var rlo = rowOf[String(st_.k_lo.strike)], rhi = rowOf[String(st_.k_hi.strike)];
+      if (rlo != null && rhi != null) yK = st_.exact || st_.wk == null || rlo === rhi ? Yr(rlo) : Yr(rlo) + (Yr(rhi) - Yr(rlo)) * (1 - st_.wk);
+    } else if (p.k != null && rowOf[String(p.k)] != null) yK = Yr(rowOf[String(p.k)]);
+    if (yK != null) s += '<line class="hz" x1="' + L + '" y1="' + yK.toFixed(1) + '" x2="' + (W - R) + '" y2="' + yK.toFixed(1) + '"/>' +
+                         '<text class="hzt" x="' + (W - R) + '" y="' + (yK - 5).toFixed(1) + '" text-anchor="end">level ' + num(p.k, 2) + (p.fixed === 'moneyness' ? ' = ' + num(p.pct, 1) + '%' : '') + '</text>';
+    // the legs
+    var tm = p.time, legKs = st_ ? [st_.k_lo.strike, st_.k_hi.strike] : (p.k != null ? [p.k] : []);
+    if (tm && tm.lo && tm.hi) {
+      var xs = tm.lo.date === tm.hi.date ? [X(tm.lo.dte)] : [X(tm.lo.dte), X(tm.hi.dte)], ys = [];
+      legKs.forEach(function (kk) { var r = rowOf[String(kk)]; if (r != null && ys.indexOf(Yr(r)) < 0) ys.push(Yr(r)); });
+      if (xs.length > 1 && ys.length > 1) s += '<rect class="legbox" x="' + Math.min.apply(null, xs).toFixed(1) + '" y="' + Math.min.apply(null, ys).toFixed(1) + '" width="' + (Math.max.apply(null, xs) - Math.min.apply(null, xs)).toFixed(1) + '" height="' + (Math.max.apply(null, ys) - Math.min.apply(null, ys)).toFixed(1) + '"/>';
+      xs.forEach(function (x) { ys.forEach(function (y) { s += '<circle class="legring" cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="7"/>'; }); });
+    }
+    // the cell at the cross
+    if (hIn && yK != null && p.iv != null) {
+      var flip = hx > W - R - 170, tx = flip ? hx - 12 : hx + 12;
+      s += '<circle class="res" cx="' + hx.toFixed(1) + '" cy="' + yK.toFixed(1) + '" r="8"/>' +
+           '<rect class="tag" x="' + (flip ? tx - 150 : tx).toFixed(1) + '" y="' + (yK - 31).toFixed(1) + '" width="150" height="22" rx="4"/>' +
+           '<text class="tagt" x="' + (flip ? tx - 75 : tx + 75).toFixed(1) + '" y="' + (yK - 16).toFixed(1) + '" text-anchor="middle">IV ' + pct(p.iv) + ' at the cross</text>';
+    }
+    return s + '</svg>';
+  }
   function renderWork(p) {
-    var t = p.table, h = '';
+    var h = '';
     if (!p.iv) {
       $('tabWork').innerHTML = '<div class="ip-card"><div class="ip-msg">' + esc(p.why || 'nothing to interpolate here') + '</div></div>';
       return;
     }
-    if (t) {
-      h += '<div class="ip-card"><h2>The contract table around the cell &middot; listed expiries across, listed strikes down &middot; each figure is that contract\'s own IV</h2>' +
-           '<div class="ip-steps"><button type="button" data-step="both" aria-pressed="true">Both steps</button>' +
-           '<button type="button" data-step="time" aria-pressed="false">Step 1 &middot; time</button>' +
-           '<button type="button" data-step="strike" aria-pressed="false">Step 2 &middot; strike</button></div>' +
-           '<div class="ip-wrap" id="ipWrap"><table class="ip-grid" id="ipGrid"><tr><th></th>';
-      t.expiries.forEach(function (e) { h += '<th>' + esc(shortDate(e.date)) + '<br><small>' + e.dte + 'd</small></th>'; });
-      h += '</tr>';
-      t.strikes.forEach(function (s, r) {
-        h += '<tr><th class="k">' + esc(num(s.strike, 2)) + '</th>';
-        t.expiries.forEach(function (e, c) {
-          var v = t.cells[r][c], leg = s.leg && e.leg && v != null;
-          h += '<td class="' + (v == null ? 'dim' : (leg ? 'leg live' : 'dim live')) + '" data-r="' + r + '" data-c="' + c + '"' +
-               (v != null ? ' title="' + esc(p.symbol + ' ' + num(s.strike, 2) + ' ' + esc(shortDate(e.date)) + ' - click: contract history in a new window') + '"' : '') + '>' +
-               (v == null ? '&middot;' : num(v, 1) + (leg ? '<small>leg</small>' : '')) + '</td>';
-        });
-        h += '</tr>';
-      });
-      h += '</table><div class="ip-ov" id="ipOv"></div></div>' +
-           '<div class="ip-legend"><span><i style="background:#f59e0b"></i>the legs: listed contracts around the horizon and the level</span>' +
-           '<span><i style="background:#a78bfa"></i>step 1: each leg row cut at the horizon, linear in total variance</span>' +
-           '<span><i style="background:#34d399"></i>step 2: the two cuts joined and cut at the level, linear in strike</span>' +
-           '<span>dimmed: listed contracts this cell does not use &middot; click any contract: its history</span></div></div>';
+    var map = mapSvg(p);
+    if (map) {
+      h += '<div class="ip-card"><h2>The surface as a map &middot; listed expiries across (log scale), listed strikes up &middot; each tile is that contract\'s own IV</h2>' +
+           '<div class="ip-map" id="ipMap">' + map + '</div>' +
+           '<div class="ip-legend"><span><i style="background:#f0997b"></i>listed contract - lighter = lower IV, deeper = higher (hover: the contract; click: its history)</span>' +
+           '<span><i style="background:#f59e0b"></i>the legs: the listed contracts around the horizon and the level</span>' +
+           '<span><i style="background:#34d399"></i>the cell: where the horizon line and the level line cross - its IV is read from the legs</span>' +
+           (p.map.capped ? '<span>strikes: the ' + p.map.strikes.length + ' nearest the level within &plusmn;' + Math.round(p.map.band * 100) + '% of the price</span>' : '') + '</div></div>';
     }
     // the working tables
     var tm = p.time, st = p.strike;
@@ -166,86 +228,125 @@
     }
     h += '</div>';
     $('tabWork').innerHTML = h;
-    document.querySelectorAll('.ip-steps button').forEach(function (b) {
-      b.addEventListener('click', function () { STEP = b.dataset.step; document.querySelectorAll('.ip-steps button').forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); }); drawOverlay(); });
+    var mapEl = $('ipMap');
+    if (mapEl) mapEl.addEventListener('click', function (e) {
+      var tile = e.target.closest ? e.target.closest('rect.tile') : null;
+      if (!tile || !p.map) return;
+      var st = p.map.strikes[+tile.dataset.r], ex = p.map.expiries[+tile.dataset.c];
+      var right = p.side === 'call' ? 'C' : (p.side === 'put' ? 'P' : (st.strike < p.spot ? 'P' : 'C'));
+      window.open(contractUrl(p.symbol, ex.date, right, st.strike, p.source === 'latest' ? null : p.on), '_blank', 'noopener');
     });
-    var grid = $('ipGrid');
-    if (grid) grid.addEventListener('click', function (e) {
-      var td = e.target.closest ? e.target.closest('td.live') : null;
-      if (!td || !t) return;
-      var s = t.strikes[+td.dataset.r], ex = t.expiries[+td.dataset.c];
-      var right = p.side === 'call' ? 'C' : (p.side === 'put' ? 'P' : (s.strike < p.spot ? 'P' : 'C'));
-      window.open(contractUrl(p.symbol, ex.date, right, s.strike, p.source === 'latest' ? null : p.on), '_blank', 'noopener');
-    });
-    drawOverlay();
   }
-  function drawOverlay() {
-    var p = P, t = p && p.table, ov = $('ipOv'), grid = $('ipGrid'), wrap = $('ipWrap');
-    if (!t || !ov || !grid || t.lo_col == null || t.hi_col == null) return;
-    var rows = grid.rows, w0 = wrap.getBoundingClientRect();
-    function colX(c) { var cell = rows[0].cells[c + 1].getBoundingClientRect(); return cell.left + cell.width / 2 - w0.left + wrap.scrollLeft; }
-    function rowY(r) { var cell = rows[r + 1].cells[0].getBoundingClientRect(); return cell.top + cell.height / 2 - w0.top + wrap.scrollTop; }
-    var head = rows[0].getBoundingClientRect(), gtop = head.bottom - w0.top, gbot = grid.getBoundingClientRect().bottom - w0.top;
-    var x = t.lo_col === t.hi_col ? colX(t.lo_col) : colX(t.lo_col) + (colX(t.hi_col) - colX(t.lo_col)) * t.hpos;
-    var h = '';
-    var showT = STEP !== 'strike', showK = STEP !== 'time';
-    if (showT) h += '<div class="ip-vline" style="left:' + x + 'px;top:' + (gtop - 4) + 'px;height:' + (gbot - gtop + 4) + 'px"></div>' +
-                    '<div class="ip-tag hz" style="left:' + x + 'px;top:' + (gtop - 18) + 'px">' + p.h + 'd</div>';
-    var mids = p.time ? p.time.per_strike : [];
-    var rowOf = {}; t.strikes.forEach(function (s, i) { rowOf[String(s.strike)] = i; });
-    var ys = [];
-    mids.forEach(function (q) {
-      var r = rowOf[String(q.strike)]; if (r == null) return;
-      var y = rowY(r); ys.push(y);
-      if (showT) h += '<div class="ip-pt mid" style="left:' + x + 'px;top:' + y + 'px"></div><div class="ip-tag mid" style="left:' + (x + 6) + 'px;top:' + (y - 11) + 'px">' + num(q.iv, 1) + ' at ' + num(q.strike, 2) + '</div>';
-    });
-    if (showK && p.strike && t.lo_row != null && t.hi_row != null) {
-      var y = t.lo_row === t.hi_row ? rowY(t.lo_row) : rowY(t.lo_row) + (rowY(t.hi_row) - rowY(t.lo_row)) * (t.kpos == null ? 0 : t.kpos);
-      var left = rows[0].cells[1].getBoundingClientRect().left - w0.left - 2, right = grid.getBoundingClientRect().right - w0.left;
-      h += '<div class="ip-hline" style="left:' + left + 'px;top:' + y + 'px;width:' + (right - left) + 'px"></div>' +
-           '<div class="ip-pt res" style="left:' + x + 'px;top:' + y + 'px"></div>' +
-           '<div class="ip-tag res" style="left:' + (x + 8) + 'px;top:' + y + 'px">' + pct(p.iv) + (p.fixed === 'moneyness' ? ' at ' + num(p.k, 2) + ' = price &times; ' + num(p.pct, 1) + '%' : '') + '</div>';
-    }
-    ov.innerHTML = h;
-  }
-  window.addEventListener('resize', function () { if (P) drawOverlay(); });
   // ── the charts tab ──
+  // v4.211 (user: "the graph in term structure have to make it smaller and can be animated to zoom in and out so the
+  // data does not overlapped"): the term charts share ONE x-range (days to expiry) that zooms with a short eased
+  // animation - the + / - buttons (about the centre), Legs (the two legs around the horizon), All, the wheel over a
+  // chart (about the cursor) and a drag to pan. Both axes rescale to the points in view, and the day labels along the
+  // bottom skip any that would sit on another (the legs and the horizon are placed first).
+  var TERM = {x0: null, x1: null, full: null, anim: null, W: 640, H: 200, L: 46, R: 70, T: 14, B: 40};
+  function termFull(p) {
+    var xs = [p.h];
+    (p.term || []).forEach(function (tr) { tr.points.forEach(function (q) { if (q.var != null) xs.push(q.dte); }); });
+    return [Math.min.apply(null, xs), Math.max.apply(null, xs)];
+  }
+  function termLegs(p) {                // the two legs around the horizon, with some room either side
+    var t = p.time;
+    if (!t || !t.lo || !t.hi) return null;
+    var w = Math.max(5, (t.hi.dte - t.lo.dte) * 0.6);
+    return [t.lo.dte - w, t.hi.dte + w];
+  }
+  function termClamp(a, b) {            // inside the data (a day either side), at least three days wide
+    var f = TERM.full, span = Math.max(3, b - a);
+    a = Math.max(f[0] - 1, Math.min(a, f[1] + 1 - span));
+    b = Math.min(f[1] + 1, a + span);
+    return [a, b];
+  }
+  function termZoomTo(a, b, animate) {
+    var to = termClamp(a, b), from = [TERM.x0, TERM.x1];
+    if (TERM.anim) { cancelAnimationFrame(TERM.anim); TERM.anim = null; }
+    if (!animate || from[0] == null || !window.requestAnimationFrame) { TERM.x0 = to[0]; TERM.x1 = to[1]; drawTerm(); return; }
+    var t0 = performance.now(), dur = 300;
+    TERM.anim = requestAnimationFrame(function step(now) {
+      var k = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - k, 3);     // ease-out
+      TERM.x0 = from[0] + (to[0] - from[0]) * e; TERM.x1 = from[1] + (to[1] - from[1]) * e;
+      drawTerm();
+      TERM.anim = k < 1 ? requestAnimationFrame(step) : null;
+    });
+  }
+  function termZoomBy(f, at) {          // f < 1 zooms in; `at` = the day the zoom is about (the centre when missing)
+    var c = at != null ? at : (TERM.x0 + TERM.x1) / 2;
+    termZoomTo(c - (c - TERM.x0) * f, c + (TERM.x1 - c) * f, at == null);
+  }
+  function termDayAt(svg, clientX) {    // the day under a mouse position on a term chart
+    var r = svg.getBoundingClientRect(), vx = (clientX - r.left) / Math.max(1, r.width) * TERM.W;
+    return TERM.x0 + (vx - TERM.L) / (TERM.W - TERM.L - TERM.R) * (TERM.x1 - TERM.x0);
+  }
+  function drawTerm() {
+    var els = document.querySelectorAll('#tabCharts .ip-term');
+    for (var i = 0; i < els.length; i++) els[i].innerHTML = termSvg(P, P.term[+els[i].dataset.i]);
+  }
+  function pickLabels(items, gap) {     // items [{x, pri}]: the ones that fit, highest priority first, then left to right
+    var placed = [];
+    items.slice().sort(function (a, b) { return b.pri - a.pri || a.x - b.x; }).forEach(function (it) {
+      if (placed.every(function (q) { return Math.abs(q - it.x) >= gap; })) { it.ok = true; placed.push(it.x); }
+    });
+    return items;
+  }
   function termSvg(p, tr) {
-    var pts = tr.points.filter(function (q) { return q.var != null; });
-    if (pts.length < 2) return '<div class="ip-msg">Fewer than two listed expiries have a value at strike ' + num(tr.strike, 2) + '.</div>';
-    var W = 640, H = 230, L = 46, R = 70, T = 14, B = 40;
-    var xs = pts.map(function (q) { return q.dte; }).concat([p.h]);
-    var x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
-    var vmax = Math.max.apply(null, pts.map(function (q) { return q.var; }).concat([tr.at ? tr.at.var : 0])) * 1.1 || 1;
-    var ivs = pts.map(function (q) { return q.iv; }); var imin = Math.min.apply(null, ivs), imax = Math.max.apply(null, ivs); if (imax - imin < 1) { imin -= 1; imax += 1; }
-    function X(d) { return L + (W - L - R) * (d - x0) / Math.max(1, x1 - x0); }
+    var all = tr.points.filter(function (q) { return q.var != null; });
+    if (all.length < 2) return '<div class="ip-msg">Fewer than two listed expiries have a value at strike ' + num(tr.strike, 2) + '.</div>';
+    var W = TERM.W, H = TERM.H, L = TERM.L, R = TERM.R, T = TERM.T, B = TERM.B;
+    var x0 = TERM.x0, x1 = TERM.x1;
+    var pts = all.filter(function (q) { return q.dte >= x0 && q.dte <= x1; });
+    var atIn = tr.at && tr.at.var != null && p.h >= x0 && p.h <= x1;
+    var scaleOn = pts.length ? pts : all;   // nothing in view: keep the full scale so the lines still show
+    var vmax = Math.max.apply(null, scaleOn.map(function (q) { return q.var; }).concat([atIn ? tr.at.var : 0])) * 1.1 || 1;
+    var ivs = scaleOn.map(function (q) { return q.iv; }).concat(atIn ? [tr.at.iv] : []);
+    var imin = Math.min.apply(null, ivs), imax = Math.max.apply(null, ivs); if (imax - imin < 1) { imin -= 1; imax += 1; }
+    function X(d) { return L + (W - L - R) * (d - x0) / Math.max(1e-9, x1 - x0); }
     function Y(v) { return H - B - (H - T - B) * v / vmax; }
     function YI(v) { return H - B - (H - T - B) * (v - imin) / (imax - imin); }
-    var s = '<svg class="ip-svg" viewBox="0 0 ' + W + ' ' + H + '">';
+    var cid = 'ipc' + Math.round(tr.strike * 100);
+    var s = '<svg class="ip-svg" viewBox="0 0 ' + W + ' ' + H + '"><defs><clipPath id="' + cid + '"><rect x="' + L + '" y="0" width="' + (W - L - R) + '" height="' + (H - B) + '"/></clipPath></defs>';
     s += '<line class="ax" x1="' + L + '" y1="' + T + '" x2="' + L + '" y2="' + (H - B) + '"/><line class="ax" x1="' + L + '" y1="' + (H - B) + '" x2="' + (W - R) + '" y2="' + (H - B) + '"/>';
-    s += '<text class="lbl" x="4" y="' + (T + 4) + '">&sigma;&sup2;T</text><text class="lbl" x="4" y="' + (Y(vmax / 2) + 3) + '">' + num(vmax / 2, 3) + '</text><text class="lbl" x="' + (W - R + 6) + '" y="' + (T + 4) + '">IV %</text>';
+    s += '<text class="lbl" x="4" y="' + (T + 4) + '">&sigma;&sup2;T</text><text class="lbl" x="4" y="' + (Y(vmax / 2) + 3) + '">' + num(vmax / 2, 3) + '</text><text class="lbl" x="' + (W - R + 6) + '" y="' + (H - B + 12) + '">IV %, dashed</text>';
     s += '<text class="lbl" x="' + (W - R + 6) + '" y="' + (YI(imax) + 3) + '">' + num(imax, 1) + '</text><text class="lbl" x="' + (W - R + 6) + '" y="' + (YI(imin) + 3) + '">' + num(imin, 1) + '</text>';
-    s += '<polyline class="path" points="' + pts.map(function (q) { return X(q.dte).toFixed(1) + ',' + Y(q.var).toFixed(1); }).join(' ') + '"/>';
-    s += '<polyline class="ivp" points="' + pts.map(function (q) { return X(q.dte).toFixed(1) + ',' + YI(q.iv).toFixed(1); }).join(' ') + '"/>';
-    var legs = pts.filter(function (q) { return q.leg; });
+    s += '<g clip-path="url(#' + cid + ')">';
+    s += '<polyline class="path" points="' + all.map(function (q) { return X(q.dte).toFixed(1) + ',' + Y(q.var).toFixed(1); }).join(' ') + '"/>';
+    s += '<polyline class="ivp" points="' + all.map(function (q) { return X(q.dte).toFixed(1) + ',' + YI(q.iv).toFixed(1); }).join(' ') + '"/>';
+    var legs = all.filter(function (q) { return q.leg; });
     if (legs.length === 2) s += '<line class="seg" x1="' + X(legs[0].dte).toFixed(1) + '" y1="' + Y(legs[0].var).toFixed(1) + '" x2="' + X(legs[1].dte).toFixed(1) + '" y2="' + Y(legs[1].var).toFixed(1) + '"/>';
     pts.forEach(function (q) {
       s += '<circle class="' + (q.leg ? 'dot-leg' : 'dot') + '" cx="' + X(q.dte).toFixed(1) + '" cy="' + Y(q.var).toFixed(1) + '" r="' + (q.leg ? 5 : 3.5) + '"><title>' + esc(shortDate(q.date) + ' - ' + q.dte + 'd - IV ' + num(q.iv, 1) + '%' + (q.usable ? '' : ' (under 7 days: never a leg)')) + '</title></circle>';
-      s += '<text class="lbl" x="' + X(q.dte).toFixed(1) + '" y="' + (H - B + 12) + '" text-anchor="middle">' + q.dte + 'd</text>';
-      if (q.leg) s += '<text class="lt" x="' + X(q.dte).toFixed(1) + '" y="' + (Y(q.var) - 8).toFixed(1) + '" text-anchor="middle">' + num(q.iv, 1) + '%</text>';
     });
-    if (tr.at && tr.at.var != null) {
-      s += '<line class="hz" x1="' + X(p.h).toFixed(1) + '" y1="' + T + '" x2="' + X(p.h).toFixed(1) + '" y2="' + (H - B) + '"/>' +
-           '<circle class="dot-res" cx="' + X(p.h).toFixed(1) + '" cy="' + Y(tr.at.var).toFixed(1) + '" r="5.5"/>' +
-           '<text class="rt" x="' + (X(p.h) + 7).toFixed(1) + '" y="' + (Y(tr.at.var) + 4).toFixed(1) + '">' + p.h + 'd: ' + num(tr.at.var, 4) + ' &rarr; IV ' + pct(tr.at.iv) + '</text>';
+    if (atIn) s += '<line class="hz" x1="' + X(p.h).toFixed(1) + '" y1="' + T + '" x2="' + X(p.h).toFixed(1) + '" y2="' + (H - B) + '"/>';
+    s += '</g>';
+    // the day labels: the legs and the horizon first, then whatever else fits (26 px apart at least)
+    var labels = pts.map(function (q) { return {x: X(q.dte), pri: q.leg ? 2 : 1, text: q.dte + 'd', cls: q.leg ? 'lt' : 'lbl'}; });
+    if (atIn) labels.push({x: X(p.h), pri: 3, text: p.h + 'd', cls: 'rt'});
+    pickLabels(labels, 26).forEach(function (l) {
+      if (l.ok) s += '<text class="' + l.cls + '" x="' + l.x.toFixed(1) + '" y="' + (H - B + 12) + '" text-anchor="middle">' + l.text + '</text>';
+    });
+    // the IV at each leg, above its dot (and at the other points when there is room: 48 px apart)
+    var tops = pts.map(function (q) { return {x: X(q.dte), y: Y(q.var), pri: q.leg ? 2 : 1, iv: q.iv, cls: q.leg ? 'lt' : 'lbl'}; });
+    pickLabels(tops, 48).forEach(function (l) {
+      if (l.ok) s += '<text class="' + l.cls + '" x="' + l.x.toFixed(1) + '" y="' + (l.y - 8).toFixed(1) + '" text-anchor="middle">' + num(l.iv, 1) + '%</text>';
+    });
+    if (atIn) {
+      var rx = X(p.h), ry = Y(tr.at.var), flip = rx > W - R - 170;     // the tag to the left when the horizon sits near the right edge
+      var near = legs.some(function (q) { return Math.abs(X(q.dte) - rx) < 60; });   // zoomed out: the legs crowd the horizon - the tag goes under the dot
+      s += '<circle class="dot-res" cx="' + rx.toFixed(1) + '" cy="' + ry.toFixed(1) + '" r="5.5"/>' +
+           '<text class="rt" x="' + (near ? rx : (flip ? rx - 7 : rx + 7)).toFixed(1) + '" y="' + (near ? ry + 17 : ry + 4).toFixed(1) + '"' +
+           (near ? ' text-anchor="middle"' : (flip ? ' text-anchor="end"' : '')) + '>' + p.h + 'd: ' + num(tr.at.var, 4) + ' &rarr; IV ' + pct(tr.at.iv) + '</text>';
     }
-    s += '<text class="lbl" x="' + ((L + W - R) / 2).toFixed(1) + '" y="' + (H - 4) + '" text-anchor="middle">days to expiry - listed expiries at strike ' + num(tr.strike, 2) + '</text></svg>';
+    s += '<text class="lbl" x="' + ((L + W - R) / 2).toFixed(1) + '" y="' + (H - 4) + '" text-anchor="middle">days to expiry - listed expiries at strike ' + num(tr.strike, 2) +
+         ' (' + Math.round(x0) + 'd to ' + Math.round(x1) + 'd in view)</text></svg>';
     return s;
   }
   function smileSvg(p) {
     var sm = p.smile, pts = sm ? sm.points.filter(function (q) { return q.iv != null; }) : [];
     if (pts.length < 2) return '<div class="ip-msg">Fewer than two listed strikes have a value at ' + p.h + ' days.</div>';
-    var W = 640, H = 230, L = 46, R = 20, T = 14, B = 40;
+    var W = 640, H = 200, L = 46, R = 20, T = 14, B = 40;
     var ks = pts.map(function (q) { return q.strike; }).concat([sm.K, sm.spot]);
     var k0 = Math.min.apply(null, ks), k1 = Math.max.apply(null, ks);
     var ivs = pts.map(function (q) { return q.iv; }); var imin = Math.min.apply(null, ivs), imax = Math.max.apply(null, ivs); if (imax - imin < 1) { imin -= 1; imax += 1; }
@@ -260,8 +361,11 @@
     if (legs.length === 2) s += '<line class="seg" x1="' + X(legs[0].strike).toFixed(1) + '" y1="' + Y(legs[0].iv).toFixed(1) + '" x2="' + X(legs[1].strike).toFixed(1) + '" y2="' + Y(legs[1].iv).toFixed(1) + '"/>';
     pts.forEach(function (q, i) {
       s += '<circle class="' + (q.leg ? 'dot-leg' : 'dot') + '" cx="' + X(q.strike).toFixed(1) + '" cy="' + Y(q.iv).toFixed(1) + '" r="' + (q.leg ? 5 : 3.5) + '"><title>' + esc('strike ' + num(q.strike, 2) + ' - IV ' + num(q.iv, 1) + '% (time-interpolated to ' + p.h + 'd)') + '</title></circle>';
-      if (pts.length <= 16 || i % Math.ceil(pts.length / 16) === 0) s += '<text class="lbl" x="' + X(q.strike).toFixed(1) + '" y="' + (H - B + 12) + '" text-anchor="middle">' + num(q.strike, 0) + '</text>';
       if (q.leg) s += '<text class="lt" x="' + X(q.strike).toFixed(1) + '" y="' + (Y(q.iv) - 8).toFixed(1) + '" text-anchor="middle">' + num(q.iv, 1) + '%</text>';
+    });
+    // v4.211: the strike labels that have room (30 px apart), the two legs first
+    pickLabels(pts.map(function (q) { return {x: X(q.strike), pri: q.leg ? 2 : 1, text: num(q.strike, 0), cls: q.leg ? 'lt' : 'lbl'}; }), 30).forEach(function (l) {
+      if (l.ok) s += '<text class="' + l.cls + '" x="' + l.x.toFixed(1) + '" y="' + (H - B + 12) + '" text-anchor="middle">' + l.text + '</text>';
     });
     if (sm.spot) s += '<line class="px" x1="' + X(sm.spot).toFixed(1) + '" y1="' + T + '" x2="' + X(sm.spot).toFixed(1) + '" y2="' + (H - B) + '"/><text class="lbl" x="' + (X(sm.spot) + 4).toFixed(1) + '" y="' + (T + 10) + '" style="fill:#fb923c">price ' + num(sm.spot, 2) + '</text>';
     if (sm.at != null) s += '<line class="hz" x1="' + X(sm.K).toFixed(1) + '" y1="' + T + '" x2="' + X(sm.K).toFixed(1) + '" y2="' + (H - B) + '"/>' +
@@ -273,14 +377,53 @@
   function renderCharts(p) {
     var h = '';
     if (!p.iv) { $('tabCharts').innerHTML = '<div class="ip-card"><div class="ip-msg">' + esc(p.why || 'nothing to interpolate here') + '</div></div>'; return; }
-    (p.term || []).forEach(function (tr) {
-      h += '<div class="ip-card"><h2>1 &middot; Time step - the term structure at strike ' + num(tr.strike, 2) + ' (linear in total variance)</h2>' + termSvg(p, tr) +
+    TERM.full = termFull(p); TERM.x0 = TERM.full[0]; TERM.x1 = TERM.full[1]; TERM.anim = null;
+    if (p.term && p.term.length) {
+      h += '<div class="ip-zoom">Zoom <button type="button" data-z="in" title="Zoom in">+</button><button type="button" data-z="out" title="Zoom out">&minus;</button>' +
+           '<button type="button" data-z="legs" title="The two legs around the horizon">Legs</button><button type="button" data-z="all" title="Every listed expiry">All</button>' +
+           '<span>wheel over a chart to zoom at the cursor, drag to pan - both charts move together</span></div>';
+    }
+    (p.term || []).forEach(function (tr, i) {
+      h += '<div class="ip-card"><h2>1 &middot; Time step - the term structure at strike ' + num(tr.strike, 2) + ' (linear in total variance)</h2><div class="ip-term" data-i="' + i + '">' + termSvg(p, tr) + '</div>' +
            '<div class="ip-legend"><span><i style="background:#60a5fa"></i>listed expiry at this strike (hover: the contract)</span><span><i style="background:#f59e0b"></i>the two legs, joined straight in variance</span><span><i style="background:#34d399"></i>the horizon\'s cut = the interpolated figure</span><span><i style="background:#a78bfa"></i>the same points as IV (dashed, right axis)</span></div></div>';
     });
-    h += '<div class="ip-card"><h2>2 &middot; Strike step - the smile at ' + p.h + ' days (linear in strike)</h2>' + smileSvg(p) +
+    h += '<div class="ip-card"><h2>2 &middot; Strike step - the smile at ' + p.h + ' days (linear in strike)</h2><div class="ip-smile">' + smileSvg(p) + '</div>' +
          '<div class="ip-legend"><span><i style="background:#60a5fa"></i>listed strikes, each already interpolated in time</span><span><i style="background:#f59e0b"></i>the two strikes around the level</span><span><i style="background:#34d399"></i>the level, the cell\'s figure</span><span><i style="background:#fb923c"></i>the stock price</span></div></div>';
     $('tabCharts').innerHTML = h;
   }
+  (function () {                        // v4.211: the zoom bar, the wheel and the drag, once, on the tab
+    var tab = $('tabCharts'), drag = null;
+    tab.addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('.ip-zoom button') : null;
+      if (!b || !P) return;
+      var z = b.dataset.z, legs;
+      if (z === 'in') termZoomBy(0.6);
+      else if (z === 'out') termZoomBy(1 / 0.6);
+      else if (z === 'all') termZoomTo(TERM.full[0], TERM.full[1], true);
+      else if (z === 'legs') { legs = termLegs(P); if (legs) termZoomTo(legs[0], legs[1], true); }
+    });
+    tab.addEventListener('wheel', function (e) {
+      var box = e.target.closest ? e.target.closest('.ip-term') : null;
+      if (!box || !P) return;
+      e.preventDefault();
+      termZoomBy(e.deltaY > 0 ? 1.25 : 0.8, termDayAt(box.querySelector('svg'), e.clientX));
+    }, {passive: false});
+    tab.addEventListener('mousedown', function (e) {
+      var box = e.target.closest ? e.target.closest('.ip-term') : null;
+      if (!box || !P || e.button !== 0) return;
+      e.preventDefault();
+      drag = {box: box, svg: box.querySelector('svg'), x: e.clientX, x0: TERM.x0, x1: TERM.x1, moved: false};
+      box.classList.add('drag');
+    });
+    window.addEventListener('mousemove', function (e) {
+      if (!drag) return;
+      var r = drag.svg.getBoundingClientRect();
+      var days = -(e.clientX - drag.x) / Math.max(1, r.width) * TERM.W / (TERM.W - TERM.L - TERM.R) * (drag.x1 - drag.x0);
+      if (Math.abs(e.clientX - drag.x) > 2) drag.moved = true;
+      termZoomTo(drag.x0 + days, drag.x1 + days, false);
+    });
+    window.addEventListener('mouseup', function () { if (drag) { drag.box.classList.remove('drag'); drag = null; } });
+  })();
   // ── the history tab ──
   function histSvg(s) {
     var rows = s.rows.slice().reverse().filter(function (r) { return r.iv != null; });

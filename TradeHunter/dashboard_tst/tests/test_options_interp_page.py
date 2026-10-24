@@ -18,10 +18,10 @@ def test_the_page_boots_from_the_query_and_has_three_tabs(client, fake):
     r = client.get("/options/interpolation", params={"symbol": "amd", "day": "latest", "h": "90", "m": "0.95", "side": "otm", "window": "90"})
     assert r.status_code == 200
     html = r.text
-    for needle in ('data-tab="work"', 'data-tab="charts"', 'data-tab="hist"', ">Working on the contract table<",
+    for needle in ('data-tab="work"', 'data-tab="charts"', 'data-tab="hist"', ">Surface map &amp; working<",
                    ">Term structure &amp; smile<", ">Interpolated history<", '"symbol": "AMD"', '"h": 90', '"m": 0.95',
                    '"window": 90', "fetch('/options/api/cm/point?'", "fetch('/options/api/cm/series?'",
-                   "function drawOverlay()", "function termSvg(p, tr)", "function smileSvg(p)", "function renderHist(s)",
+                   "function mapSvg(p)", "function mapColor(v, lo, hi)", "function termSvg(p, tr)", "function smileSvg(p)", "function renderHist(s)",
                    'href="/options?symbol=AMD&amp;tab=cm"', 'id="ipCsv"'):
         assert needle in html, needle
     # a bad level falls back to at-the-money; a strike instead of a moneyness
@@ -58,6 +58,8 @@ def test_the_point_and_series_apis_answer_or_say_why(client, fake, screener_url,
     assert j["ok"] is True and j["symbol"] == "AAPL" and j["h"] == 60 and j["iv"] is not None
     assert j["time"]["lo"]["date"] == "2026-11-20" and j["time"]["hi"]["date"] == "2026-12-18" and j["table"]["lo_col"] is not None
     assert j["strike"]["k_lo"]["strike"] == 90.0 and j["strike"]["k_hi"]["strike"] == 100.0
+    assert [e["dte"] for e in j["map"]["expiries"]] == [e["dte"] for e in j["table"]["expiries"]][:0] or len(j["map"]["expiries"]) >= 2
+    assert [s["strike"] for s in j["map"]["strikes"]] == [90.0, 100.0, 110.0] and j["map"]["strikes"][0]["leg"] is True and j["map"]["strikes"][2]["leg"] is False
     # a strike cell; a bad horizon; neither m nor k
     assert client.get("/options/api/cm/point", params={"symbol": "AAPL", "h": "60", "k": "100"}).json()["fixed"] == "strike"
     bad = client.get("/options/api/cm/point", params={"symbol": "AAPL", "h": "abc", "m": "0.95"})
@@ -76,3 +78,44 @@ def test_the_point_and_series_apis_answer_or_say_why(client, fake, screener_url,
     cut = client.get("/options/api/cm/series", params={"symbol": "AAPL", "h": "60", "m": "0.95", "window": "365", "end": "2026-10-06"}).json()
     assert cut["ok"] is True and cut["rows"][0]["on"] == "2026-10-06"
     assert client.get("/options/api/cm/series", params={"symbol": "AAPL", "h": "60", "m": "0.95", "end": "soon"}).json()["ok"] is True   # a bad date is ignored
+
+
+def test_the_term_charts_zoom_and_skip_colliding_labels(client, fake):
+    """v4.211 (user: "the graph in term structure have to make it smaller and can be animated to zoom in and out
+    so the data does not overlapped"): the term charts share one animated x-range (buttons, wheel about the
+    cursor, drag to pan), are capped at 40 rem, rescale their axes to the points in view, and place only the
+    labels that fit (legs and horizon first)."""
+    html = client.get("/options/interpolation", params={"symbol": "AAPL", "h": "90", "m": "0.975"}).text
+    for needle in (".ip-term, .ip-smile { max-width: 40rem; }", ".ip-term svg { cursor: grab; touch-action: none; }",
+                   "var TERM = {x0: null, x1: null, full: null, anim: null, W: 640, H: 200, L: 46, R: 70, T: 14, B: 40};",
+                   "function termFull(p)", "function termLegs(p)", "function termClamp(a, b)", "function termZoomTo(a, b, animate)",
+                   "function termZoomBy(f, at)", "function termDayAt(svg, clientX)", "function drawTerm()", "function pickLabels(items, gap)",
+                   "var k = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - k, 3);", "dur = 300",
+                   "'<div class=\"ip-zoom\">Zoom <button type=\"button\" data-z=\"in\"", 'data-z="out"', 'data-z="legs"', 'data-z="all"',
+                   "<div class=\"ip-term\" data-i=\"' + i + '\">", "<div class=\"ip-smile\">",
+                   "tab.addEventListener('wheel', function (e) {", "termZoomBy(e.deltaY > 0 ? 1.25 : 0.8, termDayAt(box.querySelector('svg'), e.clientX));",
+                   "tab.addEventListener('mousedown', function (e) {", "termZoomTo(drag.x0 + days, drag.x1 + days, false);",
+                   "if (z === 'in') termZoomBy(0.6);", "else if (z === 'all') termZoomTo(TERM.full[0], TERM.full[1], true);",
+                   "var pts = all.filter(function (q) { return q.dte >= x0 && q.dte <= x1; });",
+                   "<clipPath id=\"' + cid + '\">", "pickLabels(labels, 26)", "pickLabels(tops, 48)",
+                   "' (' + Math.round(x0) + 'd to ' + Math.round(x1) + 'd in view)</text></svg>'",
+                   "var near = legs.some(function (q) { return Math.abs(X(q.dte) - rx) < 60; });",
+                   "pickLabels(pts.map(function (q) { return {x: X(q.strike), pri: q.leg ? 2 : 1, text: num(q.strike, 0), cls: q.leg ? 'lt' : 'lbl'}; }), 30)"):
+        assert needle in html, needle
+    assert "i % Math.ceil(pts.length / 16) === 0" not in html         # the smile's every-n-th strike label is gone
+    assert "var W = 640, H = 230" not in html                           # both charts are 200 high now
+    if shutil.which("node"):
+        import pathlib, tempfile
+        # the label picker and the clamp, run as written
+        js = html[html.index("  function termClamp(a, b) {"):html.index("  function termZoomTo(")] + \
+             html[html.index("  function pickLabels(items, gap) {"):html.index("  function termSvg(p, tr) {")]
+        js = "var TERM = {full: [1, 800]};\n" + js + """
+var r = termClamp(-50, -48); console.log(r[0], r[1]);
+var r2 = termClamp(700, 900); console.log(r2[0], r2[1]);
+var items = pickLabels([{x: 10, pri: 1}, {x: 20, pri: 2}, {x: 30, pri: 1}, {x: 60, pri: 1}, {x: 62, pri: 3}], 26);
+console.log(items.map(function (i) { return i.ok ? 1 : 0; }).join(''));
+"""
+        path = pathlib.Path(tempfile.mkdtemp()) / "zoom.js"
+        path.write_text(js, encoding="utf-8")
+        out = subprocess.run(["node", str(path)], capture_output=True, text=True)
+        assert out.stdout.split() == ["0", "3", "601", "801", "01001"], out.stdout + out.stderr

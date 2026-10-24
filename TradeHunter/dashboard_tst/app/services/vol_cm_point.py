@@ -107,6 +107,10 @@ def _extra(grid: dict, ri: int | None, ci: int | None) -> dict | None:
     return {g: x.get(g) for g in _GREEKS} if isinstance(x, dict) else None
 
 
+MAP_BAND = 0.20                 # the map's strikes: within this fraction of the price ...
+MAP_ROWS = 26                   # ... and at most this many, the nearest to the level
+
+
 def point(grid: dict, h, *, m=None, k=None, r: float = RISK_FREE) -> dict:
     """The one cell, opened up (see the module docstring). ``m`` (moneyness) or ``k`` (a listed
     strike) - one of them."""
@@ -124,7 +128,7 @@ def point(grid: dict, h, *, m=None, k=None, r: float = RISK_FREE) -> dict:
     usable = [e for e in exps if int(e["dte"]) >= vol_cm.MIN_LEG_DTE]
     out: dict = {"h": h, "years": round(T, 4), "spot": grid.get("spot"), "on": grid.get("on"), "side": side,
                  "rate": r, "n_expiries_used": n_used, "iv": None, "exact": False, "why": None,
-                 "time": None, "strike": None, "table": None, "term": [], "smile": None, "greeks": None}
+                 "time": None, "strike": None, "table": None, "map": None, "term": [], "smile": None, "greeks": None}
     if m is not None:
         m = norm_m(m)
         K = round(spot * m, 2)
@@ -215,6 +219,22 @@ def point(grid: dict, h, *, m=None, k=None, r: float = RISK_FREE) -> dict:
             "lo_row": rws.index(rows_k[k_lo]) if rows_k.get(k_lo) in rws else None,
             "hi_row": rws.index(rows_k[k_hi]) if rows_k.get(k_hi) in rws else None,
         }
+    # ── the surface map (v4.212): every listed expiry across, the listed strikes within MAP_BAND of the price down
+    #    (at most MAP_ROWS, the nearest to the level), each cell that contract's own IV - the first tab draws it
+    spot_f = float(spot or 0.0)
+    rws_all = [rr for rr, s in enumerate(grid.get("strikes") or ())
+               if not spot_f or abs(float(s) / spot_f - 1.0) <= MAP_BAND]
+    rws_all = sorted(sorted(rws_all, key=lambda rr: abs(float(grid["strikes"][rr]) - K))[:MAP_ROWS])
+    leg_dates = {e["date"] for e in (lo, hi) if e}
+    out["map"] = {
+        "expiries": [{"date": e["date"], "dte": int(e["dte"]), "leg": e["date"] in leg_dates} for e in exps],
+        "strikes": [{"strike": float(grid["strikes"][rr]),
+                     "pct": round(float(grid["strikes"][rr]) / spot_f * 100.0, 1) if spot_f else None,
+                     "leg": float(grid["strikes"][rr]) in leg_ks} for rr in rws_all],
+        "cells": [[_cell(grid, rr, c) for c in range(len(exps))] for rr in rws_all],
+        "band": MAP_BAND, "capped": len(rws_all) < sum(1 for s in (grid.get("strikes") or ())
+                                                        if not spot_f or abs(float(s) / spot_f - 1.0) <= MAP_BAND),
+    }
     # ── the term structure per leg strike (every listed expiry's IV at that strike) ──
     for kk in leg_ks:
         rr = rows_k[kk]

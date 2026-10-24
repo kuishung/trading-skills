@@ -32,6 +32,11 @@ def test_a_moneyness_cell_is_opened_up_by_hand():
     s = p["strike"]
     assert s["k_lo"]["strike"] == 95.0 and s["k_hi"]["strike"] == 105.0 and s["wk"] == pytest.approx(wk, abs=1e-3) and s["exact"] is False
     # the contract table around the cell: the leg expiries +- 1 (44d, 72d, 100d, 253d), both strikes, the cuts
+    # v4.212: the map - every listed expiry, the strikes within 20 % of the price (at most 26, nearest the level), the legs flagged
+    mp = p["map"]
+    assert len(mp["expiries"]) == len([e for e in mp["expiries"]]) >= 2 and all(abs(s["strike"] / 100.0 - 1) <= 0.2 for s in mp["strikes"])
+    assert sum(1 for e in mp["expiries"] if e["leg"]) == 2 and sum(1 for s in mp["strikes"] if s["leg"]) == 2
+    assert len(mp["cells"]) == len(mp["strikes"]) and all(len(r) == len(mp["expiries"]) for r in mp["cells"]) and mp["capped"] is False
     tb = p["table"]
     assert [e["dte"] for e in tb["expiries"]] == [44, 72, 100, 253] and [e["leg"] for e in tb["expiries"]] == [False, True, True, False]
     assert [x["strike"] for x in tb["strikes"]] == [95.0, 105.0] and all(x["leg"] for x in tb["strikes"])

@@ -223,6 +223,42 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-24 - v4.212: the Interpolation page's first tab - the surface as a map replaces the contract table
+
+The user, shown a sample with expiries across and moneyness up: *"i want this to replace the working on the contract
+table"*. The first tab is now **"Surface map & working"** (`options_interp.html`, `mapSvg`):
+- **The map**: every listed expiry across on a **log scale** (near expiries get room, far ones are not squeezed),
+  the listed strikes near the price up (label: strike · strike / price %), each tile coloured light peach to coral
+  by that contract's own IV and written with it where the tile is wide enough (hover gives it always); a tile with
+  no IV is grey. **The horizon** is a vertical dashed line at its day, **the level** a horizontal one at its strike
+  (between the two listed strikes when the level sits between them); **the four legs** are ringed in amber and
+  boxed; **the cell** is the green dot at the cross with its interpolated IV in a tag. A click on a tile opens that
+  contract's history, as before. The working tables (step 1, step 2, the greeks) stay below the map.
+- Data: `vol_cm_point.point` adds `map` - every listed expiry, the strikes within ±20 % of the price (`MAP_BAND`),
+  at most 26 nearest the level (`MAP_ROWS`, `capped` says when the band held more), the cells, the leg flags.
+  `table` is still returned (the API is unchanged) but the page no longer draws it; the overlay code and the
+  step pills are gone.
+- Tests: `test_vol_cm_point.py` (the map's rows, legs and shape), `test_options_interp_page.py` (the tab, the map).
+
+### 2026-10-24 - v4.211: the Interpolation page's term-structure charts - smaller, zoomable, no overlapping labels
+
+The user: *"the graph in term structure have to make it smaller and can be animated to zoom in and out so the data
+does not overlapped"*. On the "Term structure & smile" tab (`options_interp.html`):
+- The term and smile charts are drawn at 640 x 200 and **no longer stretch across the card** (`.ip-term`,
+  `.ip-smile`: max 40 rem), so the labels keep their size.
+- **Zoom** (the term charts, which share one x-range so both move together): a bar above them with **+ / -**
+  (about the centre), **Legs** (the two legs around the horizon, with room either side) and **All**; the **mouse
+  wheel** over a chart zooms about the cursor; a **drag** pans. Button zooms animate over 300 ms (ease-out,
+  `requestAnimationFrame`); wheel and drag follow the mouse at once. The range is clamped to the data and never
+  under three days. Both axes rescale to the points in view; lines are clipped to the plot; the bottom caption
+  says the days in view.
+- **Labels that would collide are skipped** (`pickLabels`): the day labels along the bottom keep the legs and
+  the horizon first, then whatever fits 26 px apart; each point's IV is written above its dot only when there
+  is 48 px of room (the legs always); the smile's strike labels work the same way (30 px, legs first) instead of
+  every n-th strike. The result's tag moves under its dot when the legs crowd the horizon (zoomed out), and the
+  right axis caption sits under the axis instead of on its top label.
+- Tests: `test_options_interp_page.py` (the zoom bar, the handlers, the shared range, the label picker).
+
 ### 2026-10-24 - v4.210: the Interpolated tab's hover card - Greeks, Volatility (with the chart), Model price, all interpolated
 
 The user: *"when hover in the interpolated surface, i need the graph to be shown also with the interpolated
