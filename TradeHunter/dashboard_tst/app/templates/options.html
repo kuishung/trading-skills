@@ -1210,6 +1210,57 @@
   // the earning date"): the x axis spans the WHOLE rank window (span.a .. span.b), not the contract's own first and
   // last session - so a contract listed after an earnings day still shows that day's E line, and the two dates
   // under the chart are the window's start and end; each E carries its date in the same amber
+  // v4.216 (user, on two dates printed over each other: "please look into the date"): where each earnings date goes.
+  // xs = the lines' x, ascending; lo / hi = the room's edges; the dates sit on the plot's top edge (y = 0 here). A
+  // date runs up-right from its line ('r'), else up-left ('l'), else in short form "E Aug 4" ('R' / 'L'), else the
+  // date before it is turned left to make room and this one is tried again, else only an "E" sits on the line
+  // ('s'), or with no room even for that, the line alone ('n') - every date is also listed in words above the chart. Each label is the sloped rectangle the text really
+  // covers (25 degrees, 9 px high), and two labels clash only if those rectangles overlap: two dates leaning the
+  // same way can stand close together, two leaning toward each other cannot (the old rule sent a date near the
+  // right edge up-left, straight into its neighbour's).
+  function earnPlace(xs, lo, hi) {
+    var LEN = {r: 66, l: 66, R: 38, L: 38}, H = 10, C = Math.cos(25 * Math.PI / 180), S = Math.sin(25 * Math.PI / 180);
+    var TRY = ['r', 'l', 'R', 'L'], out = [];
+    function quad(x, dir) {                       // the four corners the label covers
+      if (dir === 's') return [[x - 4, 0], [x + 4, 0], [x + 4, -H], [x - 4, -H]];
+      var L = LEN[dir], p, u, n;
+      if (dir === 'r' || dir === 'R') { p = [x + 2, 0]; u = [C, -S]; n = [-S, -C]; }
+      else { u = [C, S]; p = [x - 2 - L * C, -L * S]; n = [S, -C]; }
+      return [p, [p[0] + u[0] * L, p[1] + u[1] * L], [p[0] + u[0] * L + n[0] * H, p[1] + u[1] * L + n[1] * H], [p[0] + n[0] * H, p[1] + n[1] * H]];
+    }
+    function apart(a, b) {                        // separating-axis test for two convex quads
+      var polys = [a, b];
+      for (var q = 0; q < 2; q++) {
+        var P = polys[q];
+        for (var e = 0; e < 4; e++) {
+          var p1 = P[e], p2 = P[(e + 1) % 4], ax = [p1[1] - p2[1], p2[0] - p1[0]];
+          var mn = [Infinity, Infinity], mx = [-Infinity, -Infinity];
+          for (var k = 0; k < 2; k++) polys[k].forEach(function (v) { var d = v[0] * ax[0] + v[1] * ax[1]; if (d < mn[k]) mn[k] = d; if (d > mx[k]) mx[k] = d; });
+          if (mx[0] <= mn[1] || mx[1] <= mn[0]) return true;
+        }
+      }
+      return false;
+    }
+    function fits(i, dir) {
+      var qd = quad(xs[i], dir);
+      for (var c = 0; c < 4; c++) if (qd[c][0] < lo || qd[c][0] > hi) return false;
+      for (var j = 0; j < i; j++) if (!apart(qd, quad(xs[j], out[j]))) return false;
+      return true;
+    }
+    function first(i) { for (var t = 0; t < TRY.length; t++) if (fits(i, TRY[t])) return TRY[t]; return null; }
+    for (var i = 0; i < xs.length; i++) {
+      var got = first(i);
+      if (!got && i > 0 && (out[i - 1] === 'r' || out[i - 1] === 'R')) {   // turn the one before to the left
+        var was = out[i - 1];
+        out[i - 1] = was === 'r' ? 'l' : 'L';
+        if (!fits(i - 1, out[i - 1]) && was === 'r') out[i - 1] = 'L';
+        if (fits(i - 1, out[i - 1])) got = first(i);
+        if (!got) out[i - 1] = was;
+      }
+      out[i] = got || (fits(i, 's') ? 's' : 'n');      // 'n': no room even for the "E" - the line alone
+    }
+    return out;
+  }
   function sparkline(s, cur, earn, nowWord, span) {
     // v4.202 (user: "the earning date put on top of the chart, the height of the info box can be higher"): the
     // chart is taller and the top band (padT) holds the sloped earnings dates above the plot
@@ -1226,10 +1277,12 @@
     var out = '<svg viewBox="0 0 ' + w + ' ' + hgt + '">' +
       '<rect class="vol-band" x="' + padL + '" y="' + Y(s.hi).toFixed(1) + '" width="' + (w - padL - padR) + '" height="' +
       Math.max(1, Y(s.lo) - Y(s.hi)).toFixed(1) + '"/>';
-    (earn || []).forEach(function (e) {                     // earnings days inside the window
-      var d = dayNum(e.on);
-      if (d == null || d < x0 || d >= x1) return;
-      var xn = X(d), x = xn.toFixed(1);
+    var EL = (earn || []).map(function (e) { return {on: e.on, d: dayNum(e.on)}; })
+      .filter(function (e) { return e.d != null && e.d >= x0 && e.d < x1; })
+      .sort(function (a, b) { return a.d - b.d; });
+    var EP = earnPlace(EL.map(function (e) { return X(e.d); }), 0, w - 2);
+    EL.forEach(function (e, ei) {                           // earnings days inside the window
+      var xn = X(e.d), x = xn.toFixed(1), place = EP[ei];
       // v4.201 (user: "if the earning date are too long in the chart, i need it to be slope degree"): the "E" stays
       // flat at the top; the date runs up the line at 60 degrees from its foot (a 12-character date is about
       // 50 px long: 25 px across, 43 px up - inside the plot whatever the window), to the left of the line when
@@ -1238,11 +1291,19 @@
       // up-left (ending at the line) when the line is near the right edge - in the band padT leaves free
       // v4.204 (user: "the date cannot be seen fully, make it 25% slope"): 25 degrees - a 12-character label is
       // about 55 px long, so 50 px across and 23 px up, well inside the 46 px band; mirrored near the right edge
-      var right = xn > (w - padR) - 56;
-      var lx = right ? xn - 2 : xn + 2, ly = padT - 3, rot = right ? 25 : -25;
-      out += '<line class="vol-earn" x1="' + x + '" x2="' + x + '" y1="' + padT + '" y2="' + (hgt - padB) + '"/>' +
-             '<text class="vol-earn-dt" x="' + lx.toFixed(1) + '" y="' + ly + '" transform="rotate(' + rot + ' ' + lx.toFixed(1) + ' ' + ly + ')"' +
-             (right ? ' text-anchor="end"' : '') + '>E ' + esc(e.on) + '</text>';
+      // v4.216: the side comes from earnPlace - no two dates on top of each other
+      var right = place === 'l' || place === 'L', ly = padT - 3;
+      var short = place === 'R' || place === 'L', md = isoOf(e.d).slice(5).split('-');
+      var label = short ? 'E ' + ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][+md[0] - 1] + ' ' + (+md[1]) : 'E ' + e.on;
+      out += '<line class="vol-earn" x1="' + x + '" x2="' + x + '" y1="' + padT + '" y2="' + (hgt - padB) + '"/>';
+      if (place === 'n') return;
+      if (place === 's') {
+        out += '<text class="vol-earn-dt" x="' + x + '" y="' + ly + '" text-anchor="middle">E<title>' + esc(e.on) + '</title></text>';
+        return;
+      }
+      var lx = right ? xn - 2 : xn + 2, rot = right ? 25 : -25;
+      out += '<text class="vol-earn-dt" x="' + lx.toFixed(1) + '" y="' + ly + '" transform="rotate(' + rot + ' ' + lx.toFixed(1) + ' ' + ly + ')"' +
+             (right ? ' text-anchor="end"' : '') + '>' + esc(label) + (short ? '<title>' + esc(e.on) + '</title>' : '') + '</text>';
     });
     out += '<polyline class="vol-line" points="' + line + '"/>';
     if (cur != null) {

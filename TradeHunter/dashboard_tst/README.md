@@ -223,6 +223,19 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-24 - v4.216: the hover chart's earnings dates never print over each other
+
+The user, on an AMD hover card where "E 2026-05-05" and "E 2026-08-04" were drawn on top of each other: *"please look
+into the date"*. The cause: a date near the chart's right edge was always sent up-LEFT (v4.204), straight into its
+neighbour's date going up-right. `options.html` `earnPlace` now places every date, on both the listed and the
+Interpolated cards (they share `sparkline`): each label is treated as the sloped rectangle its text covers (25
+degrees, 9 px), and two labels clash only if those rectangles overlap (a separating-axis test) - two dates leaning
+the same way can stand close, two leaning toward each other cannot. Each date tries, in order: up-right, up-left,
+the short form "E Aug 4" either way (the full date in its hover title), turning the date before it to the left to
+make room, then a lone "E", then the line alone; every date is still listed in words above the chart. The AMD
+window now reads "E 2025-11-04, E 2026-02-03, E 2026-05-05, E 2026-08-04", all up-right. Test: `test_options_page.py`
+runs `earnPlace` under node on six layouts, including the AMD one.
+
 ### 2026-10-24 - v4.215: the interpolated history no longer times out ("The server did not answer")
 
 The user, on the History tab of an AMD 90-day cell: *"it says The server did not answer"*, then *"does it exceed the

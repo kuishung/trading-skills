@@ -1251,9 +1251,9 @@ def test_the_surface_cells_open_the_contract_history_in_a_new_window(client, fak
     # the sloped "E date" in the top band above the plot
     assert "var w = 300, hgt = 120, padL = 4, padR = 50, padT = 46, padB = 16, pts = s.series || [];" in sp_
     assert "transform=\"rotate(' + rot + ' ' + lx.toFixed(1) + ' ' + ly + ')\"" in sp_
-    assert "var lx = right ? xn - 2 : xn + 2, ly = padT - 3, rot = right ? 25 : -25;" in sp_   # v4.204: 25 degrees, fits the band
-    assert "var right = xn > (w - padR) - 56;" in sp_
-    assert "'>E ' + esc(e.on) + '</text>'" in sp_ and "text-anchor=\"middle\">E</text>" not in sp_
+    assert "var lx = right ? xn - 2 : xn + 2, rot = right ? 25 : -25;" in sp_   # v4.204: 25 degrees, fits the band
+    assert "var right = place === 'l' || place === 'L', ly = padT - 3;" in sp_ and "if (place === 'n') return;" in sp_ and "var EP = earnPlace(EL.map(function (e) { return X(e.d); }), 0, w - 2);" in sp_
+    assert "(short ? '<title>' + esc(e.on) + '</title>' : '') + '</text>'" in sp_ and "'E ' + e.on;" in sp_ and "text-anchor=\"middle\">E<title>' + esc(e.on) + '</title></text>'" in sp_
     assert ".vol-pop .vol-earn-dt { fill: #d97706; font-size: 9px; font-weight: 600; }" in html
     assert ".vol-pop svg { display: block; width: 100%; height: 8rem; margin-top: .35rem; }" in html   # v4.203: not squeezed
     # v4.205 (user: "for the model price I need you to show workings in info box ... a separate calculation"): the
@@ -2103,3 +2103,27 @@ getJSON('drop', {onRetry: function (n, why) { log.push(n + ':' + why); }}).then(
         assert lines[2] == "dead true 3", out.stdout
         assert lines[3] == "x false The server answered 500.", out.stdout
         assert lines[4].startswith("The page hit an error drawing the surface (boom)") and lines[5].startswith("The server did not answer after 3 tries - it may be restarting"), out.stdout
+
+
+def test_the_earnings_dates_on_the_chart_never_sit_on_each_other(client, fake):
+    """v4.216 (user, on 2026-05-05 printed over 2026-08-04: "please look into the date"): earnPlace sends a date up-right
+    from its line, else up-left, else in short form ("E Aug 4"), turning the one before it left to make room, else only
+    an "E"; run as written - the expected layouts are the ones without overlap."""
+    html = client.get("/options").text
+    js = html[html.index("  function earnPlace(xs, lo, hi) {"):html.index("  function sparkline(s, cur, earn, nowWord, span) {")]
+    assert "var LEN = {r: 66, l: 66, R: 38, L: 38}, H = 10," in js and "function apart(a, b) {" in js
+    if not shutil.which("node"):
+        return
+    import pathlib, subprocess, tempfile
+    js += """
+console.log(earnPlace([20, 120, 220], 0, 298).join(''));          // far apart: all up-right
+console.log(earnPlace([32, 103, 175, 243], 0, 298).join(''));     // the user's AMD chart: the last one in short form
+console.log(earnPlace([20, 160, 200], 0, 298).join(''));          // two close, both up-right: parallel, no clash
+console.log(earnPlace([270], 0, 298).join(''));                   // near the right edge: up-left
+console.log(earnPlace([100, 110, 120], 0, 298).join(''));         // three in a crowd
+console.log(earnPlace([10, 30], 0, 298).join(''));                // at the left edge
+"""
+    path = pathlib.Path(tempfile.mkdtemp()) / "earn.js"
+    path.write_text(js, encoding="utf-8")
+    out = subprocess.run(["node", str(path)], capture_output=True, text=True)
+    assert out.stdout.split() == ["rrr", "rrrR", "rrr", "l", "lrn", "rn"], out.stdout + out.stderr
