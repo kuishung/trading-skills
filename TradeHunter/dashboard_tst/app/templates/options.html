@@ -192,7 +192,7 @@
   .vol-pop svg { display: block; width: 100%; height: 5rem; margin-top: .35rem; }
   .vol-pop .vol-earn { stroke: #d97706; stroke-width: 1; stroke-dasharray: 2 2; }
   .vol-pop .vol-earn-lbl { fill: #d97706; font-size: 9px; font-weight: 700; }
-  .vol-pop .vol-earn-dt { fill: #d97706; font-size: 8px; }           /* v4.201: the date, sloped along the E line */
+  .vol-pop .vol-earn-dt { fill: #d97706; font-size: 9px; font-weight: 600; }   /* v4.201/4.202: the date, sloped above its line */
   .vol-pop .vol-cap { color: var(--tv-muted); font-size: 10px; margin-top: .15rem; }
   .vol-pop .vol-line { fill: none; stroke: var(--tv-accent); stroke-width: 1.2; }
   .vol-pop .vol-cur { stroke: var(--tv-text-hi); stroke-width: 1; stroke-dasharray: 3 2; }
@@ -1126,7 +1126,9 @@
   // last session - so a contract listed after an earnings day still shows that day's E line, and the two dates
   // under the chart are the window's start and end; each E carries its date in the same amber
   function sparkline(s, cur, earn, nowWord, span) {
-    var w = 300, hgt = 84, padL = 4, padR = 50, padT = 10, padB = 16, pts = s.series || [];   // 300 = the card's inner width
+    // v4.202 (user: "the earning date put on top of the chart, the height of the info box can be higher"): the
+    // chart is taller and the top band (padT) holds the sloped earnings dates above the plot
+    var w = 300, hgt = 120, padL = 4, padR = 50, padT = 46, padB = 16, pts = s.series || [];   // 300 = the card's inner width
     if (pts.length < 2) return '';
     var lo = Math.min(s.lo, cur == null ? s.lo : cur), hi = Math.max(s.hi, cur == null ? s.hi : cur);
     if (hi - lo < 0.05) { lo -= 0.5; hi += 0.5; }
@@ -1147,11 +1149,13 @@
       // flat at the top; the date runs up the line at 60 degrees from its foot (a 12-character date is about
       // 50 px long: 25 px across, 43 px up - inside the plot whatever the window), to the left of the line when
       // the line sits near the right edge
-      var lx = xn > (w - padR) - 30 ? xn - 4 : xn + 4, ly = hgt - padB - 3, rot = xn > (w - padR) - 30 ? -120 : -60;
+      // v4.202: the date sits ABOVE the plot, rising at 60 degrees from the top of its line - up-right, or
+      // up-left (ending at the line) when the line is near the right edge - in the band padT leaves free
+      var right = xn > (w - padR) - 30;
+      var lx = right ? xn - 2 : xn + 2, ly = padT - 3, rot = right ? 60 : -60;
       out += '<line class="vol-earn" x1="' + x + '" x2="' + x + '" y1="' + padT + '" y2="' + (hgt - padB) + '"/>' +
-             '<text class="vol-earn-lbl" x="' + x + '" y="' + (padT - 2) + '" text-anchor="middle">E</text>' +
              '<text class="vol-earn-dt" x="' + lx.toFixed(1) + '" y="' + ly + '" transform="rotate(' + rot + ' ' + lx.toFixed(1) + ' ' + ly + ')"' +
-             (rot === -120 ? ' text-anchor="end"' : '') + '>' + esc(e.on) + '</text>';
+             (right ? ' text-anchor="end"' : '') + '>E ' + esc(e.on) + '</text>';
     });
     out += '<polyline class="vol-line" points="' + line + '"/>';
     if (cur != null) {

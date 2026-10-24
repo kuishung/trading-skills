@@ -223,6 +223,13 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-24 - v4.202: hover chart - taller, the sloped earnings date above the plot
+
+The user: *"the earning date put in on top of the chart, the height of the info box can be higher"*. The chart
+grew from 84 to 120 px tall; the top 46 px is a band above the plot where each earnings line's label "E
+2026-08-05" rises at 60 degrees from the top of the line (up-right, or up-left ending at the line when it sits
+near the right edge). The flat "E" of v4.201 is folded into that label.
+
 ### 2026-10-24 - v4.201: hover chart - the earnings date sloped along its line
 
 The user: *"if the earning date are too long in the chart, i need it to be slope degree"*. The flat "E 2026-08-05"

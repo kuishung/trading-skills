@@ -1243,9 +1243,13 @@ def test_the_surface_cells_open_the_contract_history_in_a_new_window(client, fak
     assert "var x0 = span && span.a != null ? Math.min(span.a, pts[0][0]) : pts[0][0];" in sp_
     # v4.201 (user: "if the earning date are too long in the chart, i need it to be slope degree"): the "E" flat at
     # the top, the date sloped 60 degrees up the line from its foot (mirrored at the right edge)
-    assert "y=\"' + (padT - 2) + '\" text-anchor=\"middle\">E</text>'" in sp_
+    # v4.202 (user: "the earning date put on top of the chart, the height of the info box can be higher"): taller chart,
+    # the sloped "E date" in the top band above the plot
+    assert "var w = 300, hgt = 120, padL = 4, padR = 50, padT = 46, padB = 16, pts = s.series || [];" in sp_
     assert "transform=\"rotate(' + rot + ' ' + lx.toFixed(1) + ' ' + ly + ')\"" in sp_
-    assert "rot = xn > (w - padR) - 30 ? -120 : -60;" in sp_ and ".vol-pop .vol-earn-dt { fill: #d97706; font-size: 8px; }" in html
+    assert "var lx = right ? xn - 2 : xn + 2, ly = padT - 3, rot = right ? 60 : -60;" in sp_
+    assert "'>E ' + esc(e.on) + '</text>'" in sp_ and "text-anchor=\"middle\">E</text>" not in sp_
+    assert ".vol-pop .vol-earn-dt { fill: #d97706; font-size: 9px; font-weight: 600; }" in html
     assert "'\">' + esc(fromIso) + '</text>'" in sp_ and "text-anchor=\"end\">' + esc(toIso) + '</text></svg>'" in sp_
     assert ".vol-grid td.vol-cell { cursor: pointer; }" in html
     # squarish cells, the IV figure centred both ways; an empty reserved line takes no room
