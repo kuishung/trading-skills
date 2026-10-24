@@ -1250,6 +1250,7 @@ def test_the_surface_cells_open_the_contract_history_in_a_new_window(client, fak
     assert "var lx = right ? xn - 2 : xn + 2, ly = padT - 3, rot = right ? 60 : -60;" in sp_
     assert "'>E ' + esc(e.on) + '</text>'" in sp_ and "text-anchor=\"middle\">E</text>" not in sp_
     assert ".vol-pop .vol-earn-dt { fill: #d97706; font-size: 9px; font-weight: 600; }" in html
+    assert ".vol-pop svg { display: block; width: 100%; height: 8rem; margin-top: .35rem; }" in html   # v4.203: not squeezed
     assert "'\">' + esc(fromIso) + '</text>'" in sp_ and "text-anchor=\"end\">' + esc(toIso) + '</text></svg>'" in sp_
     assert ".vol-grid td.vol-cell { cursor: pointer; }" in html
     # squarish cells, the IV figure centred both ways; an empty reserved line takes no room

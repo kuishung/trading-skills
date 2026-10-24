@@ -189,7 +189,9 @@
   .vol-pop .vol-pos > b { position: absolute; top: -2px; width: 10px; height: 10px; margin-left: -5px; border-radius: 9999px;
                           background: var(--tv-text-hi); box-shadow: 0 0 0 1px var(--tv-panel); }
   .vol-pop .vol-pos-ends { display: flex; justify-content: space-between; font-size: 10px; color: var(--tv-muted); }
-  .vol-pop svg { display: block; width: 100%; height: 5rem; margin-top: .35rem; }
+  /* v4.203 (user: "i need the chart to be previously big, you have make it small"): the rendered height follows the
+     120-unit viewBox (300 x 120 at the card's 20 rem width = 8 rem) - v4.202 kept 5 rem and squeezed the plot */
+  .vol-pop svg { display: block; width: 100%; height: 8rem; margin-top: .35rem; }
   .vol-pop .vol-earn { stroke: #d97706; stroke-width: 1; stroke-dasharray: 2 2; }
   .vol-pop .vol-earn-lbl { fill: #d97706; font-size: 9px; font-weight: 700; }
   .vol-pop .vol-earn-dt { fill: #d97706; font-size: 9px; font-weight: 600; }   /* v4.201/4.202: the date, sloped above its line */

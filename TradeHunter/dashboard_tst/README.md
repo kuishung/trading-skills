@@ -223,6 +223,13 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-24 - v4.203: hover chart - rendered at its new height (the plot was squeezed)
+
+The user: *"i need the chart to be previously big, you have make it small"*. v4.202 made the SVG's viewBox 120
+units tall but the card's CSS still rendered it 5 rem high, so the whole drawing - plot included - shrank. The
+rendered height is now 8 rem (300 x 120 at the card's 20 rem width), so the plot is as tall as before and the
+earnings band sits above it.
+
 ### 2026-10-24 - v4.202: hover chart - taller, the sloped earnings date above the plot
 
 The user: *"the earning date put in on top of the chart, the height of the info box can be higher"*. The chart
