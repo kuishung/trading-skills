@@ -223,6 +223,14 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-24 - v4.201: hover chart - the earnings date sloped along its line
+
+The user: *"if the earning date are too long in the chart, i need it to be slope degree"*. The flat "E 2026-08-05"
+at the top of the chart could run off the chart or over the range labels. Now the "E" stays flat at the top and
+the date runs up the earnings line at 60 degrees from its foot (`.vol-earn-dt`, the line's amber, 8 px): a
+12-character date is about 50 px long, so 25 px across and 43 px up, inside the plot whatever the window; near
+the right edge it slopes to the left of the line instead.
+
 ### 2026-10-24 - v4.200: Volatility surface - the per-tile liquidity gauge and the hover card's Liquidity block removed
 
 The user: *"remove the liquidity edge bar and also the hover tooltip liquidity information"*. Gone from the

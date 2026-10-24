@@ -192,6 +192,7 @@
   .vol-pop svg { display: block; width: 100%; height: 5rem; margin-top: .35rem; }
   .vol-pop .vol-earn { stroke: #d97706; stroke-width: 1; stroke-dasharray: 2 2; }
   .vol-pop .vol-earn-lbl { fill: #d97706; font-size: 9px; font-weight: 700; }
+  .vol-pop .vol-earn-dt { fill: #d97706; font-size: 8px; }           /* v4.201: the date, sloped along the E line */
   .vol-pop .vol-cap { color: var(--tv-muted); font-size: 10px; margin-top: .15rem; }
   .vol-pop .vol-line { fill: none; stroke: var(--tv-accent); stroke-width: 1.2; }
   .vol-pop .vol-cur { stroke: var(--tv-text-hi); stroke-width: 1; stroke-dasharray: 3 2; }
@@ -1142,9 +1143,15 @@
       var d = dayNum(e.on);
       if (d == null || d < x0 || d >= x1) return;
       var xn = X(d), x = xn.toFixed(1);
-      var anchor = xn > (w - padR) * 0.7 ? 'end' : (xn < 60 ? 'start' : 'middle');   // the date stays inside the chart
+      // v4.201 (user: "if the earning date are too long in the chart, i need it to be slope degree"): the "E" stays
+      // flat at the top; the date runs up the line at 60 degrees from its foot (a 12-character date is about
+      // 50 px long: 25 px across, 43 px up - inside the plot whatever the window), to the left of the line when
+      // the line sits near the right edge
+      var lx = xn > (w - padR) - 30 ? xn - 4 : xn + 4, ly = hgt - padB - 3, rot = xn > (w - padR) - 30 ? -120 : -60;
       out += '<line class="vol-earn" x1="' + x + '" x2="' + x + '" y1="' + padT + '" y2="' + (hgt - padB) + '"/>' +
-             '<text class="vol-earn-lbl" x="' + x + '" y="' + (padT - 2) + '" text-anchor="' + anchor + '">E ' + esc(e.on) + '</text>';
+             '<text class="vol-earn-lbl" x="' + x + '" y="' + (padT - 2) + '" text-anchor="middle">E</text>' +
+             '<text class="vol-earn-dt" x="' + lx.toFixed(1) + '" y="' + ly + '" transform="rotate(' + rot + ' ' + lx.toFixed(1) + ' ' + ly + ')"' +
+             (rot === -120 ? ' text-anchor="end"' : '') + '>' + esc(e.on) + '</text>';
     });
     out += '<polyline class="vol-line" points="' + line + '"/>';
     if (cur != null) {
