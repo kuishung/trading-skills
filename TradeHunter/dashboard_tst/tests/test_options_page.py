@@ -1901,7 +1901,7 @@ def test_the_rank_window_api(client, fake, screener_url, monkeypatch):
     assert j["ok"] is True and j["window_days"] == 365 and seen[-1] == 365
     j = client.get("/options/api/surface/history", params={"symbol": "AAPL", "window": "90"}).json()
     assert j["ok"] is True and j["window_days"] == 90 and seen[-1] == 90
-    for bad in ("45", "abc", "0", "400", "90.5"):
+    for bad in ("9", "abc", "0", "1501", "90.5"):          # v4.197: 45 and 400 are now valid custom windows
         r = client.get("/options/api/surface/history", params={"symbol": "AAPL", "window": bad})
         assert r.status_code == 400 and r.json()["ok"] is False and "window" in r.json()["error"], bad
     assert len(seen) == 2
@@ -1918,14 +1918,23 @@ def test_the_page_has_the_rank_window(client, fake):
     for w in (30, 60, 90, 180, 270):
         assert '<input type="radio" name="volWin" id="volWin%d" value="%d">' % (w, w) in panel, w
     assert '<input type="radio" name="volWin" id="volWin365" value="365" checked>' in panel
-    assert "var WIN_KEY = 'th.vol.window', WINS = [30, 60, 90, 180, 270, 365];" in html
+    assert "var WIN_KEY = 'th.vol.window', WINS = [30, 60, 90, 180, 270, 365], WIN_MIN = 10, WIN_MAX = 1500;" in html
+    # v4.197 (user: "a radio button custom for user to key in the rank window ... a button to click"): the custom
+    # radio, its number box (10-1500) and an Apply button; Enter / blur apply too; out of range keeps the last window
+    assert '<input type="radio" name="volWin" id="volWinCustom" value="custom"> custom' in panel
+    assert '<input type="number" id="volWinN" min="10" max="1500" step="1" placeholder="days"' in panel
+    assert '<button type="button" id="volWinGo"' in panel and ">Apply</button>" in panel
+    assert "if (b && b.value === 'custom') { var c = winCustom(); return c == null ? 365 : c; }" in html
+    assert "$('volWinGo').addEventListener('click', function () { winApply(true); });" in html
+    assert "if (e.key === 'Enter') { e.preventDefault(); winApply(true); }" in html
+    assert "if (w >= WIN_MIN && w <= WIN_MAX) { $('volWinN').value = String(w); $('volWinCustom').checked = true; }" in html
     assert '<span id="volLegWin">IV vs own past 365 days:</span>' in html
     assert "'IV vs own past ' + winChosen() + ' days:'" in html
     # the history request carries the window; a change re-fetches the history only
     assert "getJSON('/options/api/surface/history?' + histParams(q).toString())" in html
     assert "h.set('window', String(winChosen()));" in html
-    ch = html[html.index("$('volWin').addEventListener('change'"):]
-    ch = ch[:ch.index("});") + 3]
+    ch = html[html.index("function winApply(custom)"):]
+    ch = ch[:ch.index("$('volWin').addEventListener('change'")]
     assert "lsSet(WIN_KEY, String(winChosen()))" in ch and "loadHistory(V.last, V.histQ, V.seq)" in ch
     assert "/options/api/surface?" not in ch and "runSurface" not in ch
     assert "hseq !== V.histSeq" in html                                   # the last window picked wins

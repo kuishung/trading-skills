@@ -490,6 +490,12 @@
       <legend class="float-left mr-1 text-slate-500">Rank window (days):</legend>
       <div class="vol-hz">
         {% for w in (30, 60, 90, 180, 270, 365) %}<label class="scr-check"><input type="radio" name="volWin" id="volWin{{ w }}" value="{{ w }}"{% if w == 365 %} checked{% endif %}> {{ w }}</label>{% endfor %}
+        {# v4.197 (user: "a radio button custom for user to key in the rank window"): any whole number of days, 10 to 1500 #}
+        <label class="scr-check" title="Any whole number of calendar days from 10 to 1500 - type it and press Enter or click away"><input type="radio" name="volWin" id="volWinCustom" value="custom"> custom
+          <input type="number" id="volWinN" min="10" max="1500" step="1" placeholder="days" aria-label="Custom rank window in days"
+                 class="ml-1 w-16 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-200 focus:border-emerald-500 outline-none tabular-nums"></label>
+        <button type="button" id="volWinGo" title="Rank every cell over the custom window"
+                class="rounded border border-slate-700 px-2 py-0.5 text-[11px] text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Apply</button>
       </div>
     </fieldset>
     <div id="volInfoRow" class="hidden flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400 leading-snug">
@@ -1122,17 +1128,22 @@
     return same(j.strikes || [], hst.strikes || []) && same(ex, hst.expiries || []) && j.side === hst.side;
   }
   // v4.175: the rank window (calendar days, the radios at the top of the tab, th.vol.window)
-  var WIN_KEY = 'th.vol.window', WINS = [30, 60, 90, 180, 270, 365];
+  var WIN_KEY = 'th.vol.window', WINS = [30, 60, 90, 180, 270, 365], WIN_MIN = 10, WIN_MAX = 1500;
+  function winCustom() {               // v4.197: the typed window when it is a whole number in range, else null
+    var n = parseInt(($('volWinN') || {}).value, 10);
+    return isFinite(n) && n >= WIN_MIN && n <= WIN_MAX && String(n) === String($('volWinN').value).trim() ? n : null;
+  }
   function winChosen() {
     var b = document.querySelector('input[name="volWin"]:checked');
+    if (b && b.value === 'custom') { var c = winCustom(); return c == null ? 365 : c; }
     var w = b ? parseInt(b.value, 10) : 365;
     return WINS.indexOf(w) >= 0 ? w : 365;
   }
   function winLoad() {
     var w = parseInt(lsGet(WIN_KEY), 10);
-    if (WINS.indexOf(w) < 0) return;
-    var b = $('volWin' + w);
-    if (b) b.checked = true;
+    if (!isFinite(w)) return;
+    if (WINS.indexOf(w) >= 0) { var b = $('volWin' + w); if (b) b.checked = true; return; }
+    if (w >= WIN_MIN && w <= WIN_MAX) { $('volWinN').value = String(w); $('volWinCustom').checked = true; }
   }
   function winLegend() { $('volLegWin').textContent = 'IV vs own past ' + winChosen() + ' days:'; }
   function histParams(q) {              // the surface's own request + the rank window
@@ -1736,11 +1747,19 @@
     // v4.175: the rank window re-fetches the history only (no new surface) and repaints the tint, the bars,
     // the hover cards (and, with the tick on, the columns the window leaves unranked)
     winLoad(); winLegend();
-    $('volWin').addEventListener('change', function () {
+    // v4.197: a preset radio applies at once; the custom box applies on Apply, Enter or clicking away
+    // (typing ticks "custom"); a number out of range turns the box red and keeps the last good window
+    function winApply(custom) {
+      if (custom) { $('volWinCustom').checked = true; if (winCustom() == null) { $('volWinN').classList.add('border-rose-500'); return; } }
+      $('volWinN').classList.remove('border-rose-500');
       lsSet(WIN_KEY, String(winChosen()));
       winLegend(); hidePop();
       if (V.last && V.histQ) loadHistory(V.last, V.histQ, V.seq);
-    });
+    }
+    $('volWin').addEventListener('change', function (e) { winApply(!!(e.target && e.target.id === 'volWinN') || $('volWinCustom').checked); });
+    $('volWinGo').addEventListener('click', function () { winApply(true); });
+    $('volWinN').addEventListener('focus', function () { $('volWinCustom').checked = true; });
+    $('volWinN').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); winApply(true); } });
     if (lsGet(LIQ_KEY) === '0') $('volLiq').checked = false;
     $('volLiq').addEventListener('change', function () {   // v4.181: no new request - a class flip on the grid
       lsSet(LIQ_KEY, liqOn() ? '1' : '0');

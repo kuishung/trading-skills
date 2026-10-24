@@ -223,6 +223,16 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-24 - v4.197: Volatility surface - a custom rank window
+
+The user: *"i need a radio button 'custom' for user to key in the rank window"*. The rank-window row above the
+grid gained a **custom** radio with a number box (10 to 1500 calendar days). Typing in the box ticks custom;
+Enter or clicking away applies it (the history is re-read over that span, every cell's colour, bar and hover
+card with it); a number out of range turns the box red and keeps the last good window; the choice is
+remembered like the presets (`th.vol.window`). `vol_history.norm_window` now accepts any whole number from
+`WINDOW_MIN` to `WINDOW_MAX` (the presets stay as `WINDOWS`); the 80 % coverage rule still applies to any
+window shorter than 365 days. Tests in `tests/test_vol_history.py` and `tests/test_options_page.py`.
+
 ### 2026-10-24 - v4.196: Watchlist grid - Last, MATP, MBP, then the gap; the plot column gone
 
 The user: *"In the Watchlist MATP $ and % difference is to be put after MBP column. the price should change to

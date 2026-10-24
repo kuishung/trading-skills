@@ -71,6 +71,7 @@ log = logging.getLogger(__name__)
 HISTORY_DAYS = 252              # the past year of sessions (the screener's IV-rank window): a cap on the read
 WINDOWS = (30, 60, 90, 180, 270, 365)   # v4.175: the rank windows a member can pick, in CALENDAR days
 DEFAULT_WINDOW = 365
+WINDOW_MIN, WINDOW_MAX = 10, 1500       # v4.197: a custom window (the user: "key in custom rank window") in this range
 MIN_COVER = 0.8                 # a cell covers at least this share of a (shorter) window to be ranked
 MIN_HISTORY = 10                # a rank needs at least this many days of history
 SPARK_POINTS = 60               # points in a sparkline (about weekly over a year)
@@ -149,18 +150,20 @@ def contract_key(expiry, right: str, strike: float) -> int:
 
 
 def norm_window(window=None) -> int:
-    """The rank window in calendar days: one of ``WINDOWS``; ``DEFAULT_WINDOW`` when none.
-    Raises ``ValueError`` on anything else."""
+    """The rank window in calendar days: a whole number from ``WINDOW_MIN`` to ``WINDOW_MAX``
+    (the presets ``WINDOWS`` or a custom one, v4.197); ``DEFAULT_WINDOW`` when none. Raises
+    ``ValueError`` on anything else."""
     if window is None or str(window).strip() == "":
         return DEFAULT_WINDOW
+    why = "the rank window must be a whole number of days from %d to %d" % (WINDOW_MIN, WINDOW_MAX)
     if isinstance(window, bool):
-        raise ValueError("the rank window must be one of %s days" % ", ".join(str(w) for w in WINDOWS))
+        raise ValueError(why)
     try:
         f = float(str(window).strip())
     except (TypeError, ValueError):
         f = float("nan")
-    if not math.isfinite(f) or f != int(f) or int(f) not in WINDOWS:
-        raise ValueError("the rank window must be one of %s days" % ", ".join(str(w) for w in WINDOWS))
+    if not math.isfinite(f) or f != int(f) or not (WINDOW_MIN <= int(f) <= WINDOW_MAX):
+        raise ValueError(why)
     return int(f)
 
 

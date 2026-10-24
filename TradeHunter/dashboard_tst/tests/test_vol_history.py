@@ -300,7 +300,10 @@ def test_the_rank_window_is_checked():
     assert vol_history.norm_window(None) == vol_history.norm_window("") == vol_history.DEFAULT_WINDOW == 365
     assert vol_history.WINDOWS == (30, 60, 90, 180, 270, 365)
     assert vol_history.norm_window("90") == 90 and vol_history.norm_window(30) == 30
-    for bad in ("45", "abc", "0", "-30", "90.5", "400", True):
+    # v4.197: a custom window - any whole number of days from 10 to 1500
+    assert (vol_history.WINDOW_MIN, vol_history.WINDOW_MAX) == (10, 1500)
+    assert vol_history.norm_window("45") == 45 and vol_history.norm_window(400) == 400 and vol_history.norm_window("1500") == 1500
+    for bad in ("abc", "0", "9", "-30", "90.5", "1501", True):
         with pytest.raises(ValueError, match="window"):
             vol_history.norm_window(bad)
 
@@ -359,5 +362,5 @@ def test_the_window_cuts_the_history_by_calendar_days(sdb, hist):
     h2 = vol_history.grid_history(sdb, "AAPL", g2, window_days=30)
     want = [d for d in sessions_before(ON, N_DAYS)[:-1] if d >= last - _dt.timedelta(days=30)]
     assert h2["days"] == len(want) and h2["window"][1] == want[-1].isoformat()
-    with pytest.raises(ValueError):
-        vol_history.grid_history(sdb, "AAPL", grid, window_days=45)
+    with pytest.raises(ValueError):                       # v4.197: 45 is a valid custom window now; 5 is below the floor
+        vol_history.grid_history(sdb, "AAPL", grid, window_days=5)
