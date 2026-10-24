@@ -1206,12 +1206,19 @@
     var p = String(iso || '').split('-');
     return p.length === 3 ? Math.round(Date.UTC(+p[0], +p[1] - 1, +p[2]) / 86400000) : null;
   }
-  function sparkline(s, cur, earn, nowWord) {
+  function isoOf(d) { return d == null ? '' : new Date(d * 86400000).toISOString().slice(0, 10); }
+  // v4.199 (user: "in the graph, the date put it from start date and end date of the rank window and also include
+  // the earning date"): the x axis spans the WHOLE rank window (span.a .. span.b), not the contract's own first and
+  // last session - so a contract listed after an earnings day still shows that day's E line, and the two dates
+  // under the chart are the window's start and end; each E carries its date in the same amber
+  function sparkline(s, cur, earn, nowWord, span) {
     var w = 300, hgt = 84, padL = 4, padR = 50, padT = 10, padB = 16, pts = s.series || [];   // 300 = the card's inner width
     if (pts.length < 2) return '';
     var lo = Math.min(s.lo, cur == null ? s.lo : cur), hi = Math.max(s.hi, cur == null ? s.hi : cur);
     if (hi - lo < 0.05) { lo -= 0.5; hi += 0.5; }
-    var x0 = pts[0][0], x1 = pts[pts.length - 1][0] + 1;
+    var x0 = span && span.a != null ? Math.min(span.a, pts[0][0]) : pts[0][0];
+    var x1 = (span && span.b != null ? Math.max(span.b, pts[pts.length - 1][0]) : pts[pts.length - 1][0]) + 1;
+    var fromIso = span && span.a != null ? isoOf(x0) : (s.first || ''), toIso = span && span.b != null ? isoOf(x1 - 1) : (s.last || '');
     function X(d) { return padL + (w - padL - padR) * (d - x0) / Math.max(1, x1 - x0); }
     function Y(v) { return hgt - padB - (hgt - padT - padB) * (v - lo) / (hi - lo); }
     var line = pts.map(function (p) { return X(p[0]).toFixed(1) + ',' + Y(p[1]).toFixed(1); }).join(' ');
@@ -1221,9 +1228,10 @@
     (earn || []).forEach(function (e) {                     // earnings days inside the window
       var d = dayNum(e.on);
       if (d == null || d < x0 || d >= x1) return;
-      var x = X(d).toFixed(1);
+      var xn = X(d), x = xn.toFixed(1);
+      var anchor = xn > (w - padR) * 0.7 ? 'end' : (xn < 60 ? 'start' : 'middle');   // the date stays inside the chart
       out += '<line class="vol-earn" x1="' + x + '" x2="' + x + '" y1="' + padT + '" y2="' + (hgt - padB) + '"/>' +
-             '<text class="vol-earn-lbl" x="' + x + '" y="' + (padT - 2) + '" text-anchor="middle">E</text>';
+             '<text class="vol-earn-lbl" x="' + x + '" y="' + (padT - 2) + '" text-anchor="' + anchor + '">E ' + esc(e.on) + '</text>';
     });
     out += '<polyline class="vol-line" points="' + line + '"/>';
     if (cur != null) {
@@ -1235,8 +1243,8 @@
     var yLoLbl = Math.max(yHiLbl + 10, Math.min(hgt - padB - 3, Y(s.lo) - 2)); // ... above the dates, the high above the low
     out += '<text class="vol-lbl" x="' + (padL + 2) + '" y="' + yHiLbl.toFixed(1) + '">high ' + num(s.hi, 1) + '</text>' +
            '<text class="vol-lbl" x="' + (padL + 2) + '" y="' + yLoLbl.toFixed(1) + '">low ' + num(s.lo, 1) + '</text>' +
-           '<text class="vol-lbl" x="' + padL + '" y="' + (hgt - 2) + '">' + esc(s.first || '') + '</text>' +
-           '<text class="vol-lbl" x="' + (w - padR) + '" y="' + (hgt - 2) + '" text-anchor="end">' + esc(s.last || '') + '</text></svg>';
+           '<text class="vol-lbl" x="' + padL + '" y="' + (hgt - 2) + '">' + esc(fromIso) + '</text>' +
+           '<text class="vol-lbl" x="' + (w - padR) + '" y="' + (hgt - 2) + '" text-anchor="end">' + esc(toIso) + '</text></svg>';
     return out;
   }
   function popoverHtml(label, cur, s, key, expiry, figs) {
@@ -1270,9 +1278,14 @@
     } else {
       h += '<div class="text-slate-500 mt-1">No colour: ' + esc(s.why || 'under 10 days of history') + '.</div>';
     }
-    var hs = V.hist || {}, win = (hs.earnings || []).filter(function (e) {
-      var d = dayNum(e.on), a = dayNum(s.first), b = dayNum(s.last);
-      return d != null && a != null && b != null && d >= a && d <= b;
+    // v4.199: the window's own span - its last session back `wd` calendar days - not the contract's first
+    // and last session (a contract listed after an earnings day used to lose that day's E line)
+    var hs = V.hist || {};
+    var endD = dayNum((hs.window && hs.window[1]) || s.last), startD = endD != null ? endD - wd : dayNum(s.first);
+    var span = {a: startD, b: endD};
+    var win = (hs.earnings || []).filter(function (e) {
+      var d = dayNum(e.on);
+      return d != null && startD != null && endD != null && d >= startD && d <= endD;
     });
     var ne = hs.next_earnings, cov = hs.earnings_coverage || null;    // {on, when} | null; {fetched, weekdays}
     function whenWord(w) { return w === 'bmo' ? ' before the open' : (w === 'amc' ? ' after the close' : ''); }
@@ -1283,10 +1296,12 @@
       (ne.when === 'amc' ? ', after the close (after this expiry)' : (ne.when === 'bmo' ? ', before the open (before this expiry)' : ''));
     else nxt = 'next ' + esc(ne.on) + whenWord(ne.when) + (expiry ? (ne.on < expiry ? ' - before this expiry' : ' - after this expiry') : '');
     var partial = cov && cov.weekdays && cov.fetched < cov.weekdays;
-    var inWin = win.length ? intText(win.length) + ' in this window (marked E)' + (partial ? ', history still loading' : '')
+    // v4.199: the earnings dates themselves, in the E line's amber
+    var inWin = win.length ? win.map(function (e) { return '<span style="color:#d97706">' + esc(e.on) + '</span>'; }).join(', ') +
+                             ' (marked E)' + (partial ? ', history still loading' : '')
                            : (partial ? 'history still loading (' + intText(cov.fetched) + ' of ' + intText(cov.weekdays) + ' days on file)' : 'none in this window');
-    h += '<div class="mt-1"><span class="text-slate-500">Earnings:</span> ' + inWin + ' &middot; ' + nxt + '</div>';
-    var chart = sparkline(s, cur, win, nowWord);
+    h += '<div class="mt-1"><span class="text-slate-500">Earnings in the window:</span> ' + inWin + ' &middot; ' + nxt + '</div>';
+    var chart = sparkline(s, cur, win, nowWord, span);
     h += chart;
     if (chart) {
       h += '<div class="vol-cap">Implied volatility by trading day' + (cur != null ? '; the dashed line is ' + nowWord : '') +

@@ -1233,6 +1233,16 @@ def test_the_surface_cells_open_the_contract_history_in_a_new_window(client, fak
     assert "esc(tip)" not in rcm_ and "data-c=\"' + c + '\" style=\"' + cmTint(j, v) + '\">'" in rcm_
     pop_ = html[html.index("function popoverHtml("):html.index("function showPop(")]
     assert "'<div class=\"vol-cap\">Click: contract history in a new window.</div>'" in pop_
+    # v4.199 (user: the chart's dates = the rank window's start and end, the earnings dates stated in the E line's
+    # amber; a contract listed after an earnings day still shows the E line): the x axis spans the window
+    assert "var endD = dayNum((hs.window && hs.window[1]) || s.last), startD = endD != null ? endD - wd : dayNum(s.first);" in pop_
+    assert "return d != null && startD != null && endD != null && d >= startD && d <= endD;" in pop_
+    assert "var chart = sparkline(s, cur, win, nowWord, span);" in pop_
+    assert "'<span style=\"color:#d97706\">' + esc(e.on) + '</span>'" in pop_ and "Earnings in the window:" in pop_
+    sp_ = html[html.index("function sparkline("):html.index("function popoverHtml(")]
+    assert "var x0 = span && span.a != null ? Math.min(span.a, pts[0][0]) : pts[0][0];" in sp_
+    assert "text-anchor=\"' + anchor + '\">E ' + esc(e.on) + '</text>'" in sp_
+    assert "'\">' + esc(fromIso) + '</text>'" in sp_ and "text-anchor=\"end\">' + esc(toIso) + '</text></svg>'" in sp_
     assert ".vol-grid td.vol-cell { cursor: pointer; }" in html
     # squarish cells, the IV figure centred both ways; an empty reserved line takes no room
     assert "vertical-align: middle; text-align: center; position: relative;" in html

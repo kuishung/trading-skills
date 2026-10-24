@@ -223,6 +223,18 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-24 - v4.199: Volatility surface hover chart - the window's dates, the earnings dates, the E line for every tile
+
+The user: *"in the graph, the date put it from start date and end date of the rank window and also include the
+earning date ... use the same colour as the earning line. Also ... if the rank window has an earning, why some
+tile do not show the earning line?"* Cause of the missing line: the chart's x axis and the earnings filter ran
+from the CONTRACT's first session to its last, so a contract listed after an earnings day (within the window)
+never showed it. Now the axis spans the whole rank window - its last session back `window_days` calendar days
+(`span` in `popoverHtml`, from the history answer's `window` and `window_days`) - so the line of a later-listed
+contract starts part-way across and every earnings day inside the window is marked. The two dates under the
+chart are the window's start and end; each E carries its date in the line's amber (`E 2026-08-05`), and the
+"Earnings in the window:" row lists the dates in the same amber. Test in `tests/test_options_page.py`.
+
 ### 2026-10-24 - v4.198: Volatility surface - no browser tooltip over the hover card
 
 The user: *"when hover to the vol surface, I do not want the small tooltip that cover the larger info box"*.
