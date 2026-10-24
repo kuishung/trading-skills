@@ -563,6 +563,45 @@ class MatpIngest(BaseModel):
     selective: bool = False
 
 
+def _list_unposted(db: Session, filter_ids: list[int], posted: set[str], now) -> int:
+    """v4.194: list, with no MATP, every ticker a covered screen holds that this run did not
+    post. Returns how many rows were added or re-activated. The screen's tickers come from
+    the same server-side resolve the queue hands the agent (``matp_queue.filter_symbols``,
+    cached); a screen that cannot be read just lists nothing new. One MATPLevel row per
+    symbol (the table's shape): a ticker already listed under another screen stays there;
+    one this screen dropped earlier comes back price-only (its old median was stale - the
+    history table keeps it)."""
+    from ..services.matp_queue import filter_symbols
+
+    n = 0
+    for fid in filter_ids:
+        f = db.get(FinvizFilter, fid)
+        if f is None:
+            continue
+        try:
+            syms, _err = filter_symbols(f)
+        except Exception:  # noqa: BLE001 - never break the ingest over a screen read
+            continue
+        for sym in syms:
+            if sym in posted:
+                continue
+            row = db.query(MATPLevel).filter(MATPLevel.symbol == sym).first()
+            if row is None:
+                db.add(MATPLevel(symbol=sym, filter_id=fid, matp=None, mbp=None, n_targets=0,
+                                 status="active", last_seen_at=now, as_of=now))
+                n += 1
+            elif row.filter_id == fid and row.status != "active":
+                row.status = "active"
+                row.matp = None
+                row.mbp = None
+                row.n_targets = 0
+                row.last_seen_at = now
+                n += 1
+    if n:
+        db.commit()
+    return n
+
+
 @router.post("/matp")
 def ingest_matp(
     payload: MatpIngest,
@@ -673,6 +712,18 @@ def ingest_matp(
         )
     db.commit()
 
+    # v4.194 (the user added Finviz's ETF screener as a watchlist and read "No tickers here
+    # yet"): the agent posts only tickers with post-earnings analyst targets - an ETF has
+    # neither targets nor earnings, so an all-ETF screen posted nothing. A ticker the screen
+    # lists is still a member of that watchlist: on the closing push every screened ticker
+    # the agent did not post is listed with no MATP (price only), so the watchlist, the
+    # surface's pane and the liquidity verdict can use it.
+    covered_fids = list(dict.fromkeys(
+        ([payload.filter_id] if payload.filter_id is not None else [])
+        + list(payload.advance_filter_ids or [])
+    ))
+    listed = _list_unposted(db, covered_fids, posted_syms, now) if payload.final else 0
+
     # archive the raw run as one JSON file in the MATP folder (the "cream"),
     # only on the finalizing push (so incremental population doesn't spam files).
     # Soft-fail: archiving must never break ingest.
@@ -699,10 +750,7 @@ def ingest_matp(
         # Every filter this run covered — the singular `filter_id` (one-filter
         # run) plus `advance_filter_ids` (the deduplicated multi-filter queue).
         # Deduped so passing both doesn't double-stamp.
-        for fid in dict.fromkeys(
-            ([payload.filter_id] if payload.filter_id is not None else [])
-            + list(payload.advance_filter_ids or [])
-        ):
+        for fid in covered_fids:
             desc = _advance(fid)
             if fid == payload.filter_id:
                 filter_desc = desc
@@ -725,7 +773,7 @@ def ingest_matp(
         "history_appended": appended, "targets_added": targets_added,
         # echoed back so a run that thinks it closed a cycle can SEE whether the
         # schedules actually moved (the silent-drop bug gave no such signal)
-        "dropped": dropped, "archived": archived, "advanced_filters": advanced,
+        "dropped": dropped, "listed_without_matp": listed, "archived": archived, "advanced_filters": advanced,
     }
 
 

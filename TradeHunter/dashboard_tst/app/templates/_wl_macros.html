@@ -70,7 +70,7 @@
   <span class="text-right text-[12px] tabular-nums {{ gap_cls }}" title="{{ 'price minus MATP' if gap is not none else 'no price or no MATP yet' }}">{{ ("%+.2f"|format(gap)) if gap is not none else "-" }}</span>
   <span class="text-right text-[12px] tabular-nums {{ gap_cls }}">{{ ("%+.1f%%"|format(gap_pct)) if gap_pct is not none else "-" }}</span>
   <span class="text-right text-[13px] tabular-nums {% if cur is not none and lv.mbp is not none and cur > lv.mbp %}text-rose-300{% else %}text-white{% endif %}">{{ "%.2f"|format(cur) if cur is not none else "-" }}</span>
-  <span class="text-right text-[13px] text-orange-300 tabular-nums">{{ "%.2f"|format(lv.matp) if lv.matp is not none else "-" }}</span>
+  <span class="text-right text-[13px] text-orange-300 tabular-nums"{% if lv.matp is none %} title="No MATP: {{ 'no analyst price targets after the latest earnings (an ETF has none)' if lv.n_targets == 0 else 'not computed yet' }}"{% endif %}>{{ "%.2f"|format(lv.matp) if lv.matp is not none else "-" }}</span>
   <span class="text-right text-[13px] text-green-500 tabular-nums">{{ "%.2f"|format(lv.mbp) if lv.mbp is not none else "-" }}</span>
   {% set lq = _liq.get(lv.symbol) %}
   {% set lq_cls = "text-slate-700" if not lq else ("text-emerald-300" if lq.level == "liquid" else ("text-amber-300" if lq.level == "fair" else "text-slate-500")) %}

@@ -223,6 +223,20 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-24 - v4.194: Watchlist - a screened ticker with no analyst targets is still listed (ETF screens)
+
+The user added Finviz's ETF screener (`/screener/etf?v=181&t=BOTZ,ROBO,...`) as a watchlist and read "No
+tickers here yet" after a completed run. The scrape was fine (13 of the 14 tickers; DMAT is not in Finviz's
+ETF list). The cause is the MATP itself: the agent keeps only tickers with analyst price targets issued after
+the latest earnings, and an ETF has neither, so it posted nothing and the run closed empty. Now, on the closing
+push, `POST /api/matp` lists every ticker a covered screen holds that the agent did not post, with no MATP
+(`_list_unposted` in `routes/api.py`: price only, `n_targets = 0`, the screen's tickers from the same
+server-side resolve the queue hands the agent; a ticker already listed under another screen stays there; one
+this screen dropped earlier comes back price-only). The answer carries `listed_without_matp`. The grid's MATP
+dash says why on hover ("no analyst price targets after the latest earnings (an ETF has none)"). Such rows
+sit in the qualified list (no MBP to be above), so the Vol surface pane and the Opt liq verdict can use them.
+Tests in `tests/test_matp_ingest_listing.py`.
+
 ### 2026-10-21 - v4.193: the Settings gear - User Management, Integration, Data Ingest
 
 The user: *"the setting menu i want to move it to the toggle dark light and i want to use the logo to represent
