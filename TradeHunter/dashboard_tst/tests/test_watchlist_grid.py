@@ -96,7 +96,14 @@ def test_grid_shows_the_gap_to_matp_and_no_trend_or_sig(client, db, monkeypatch)
     i_no = html.index(">NOMATP<")
     assert html[i_no:i_no + 900].count(">-<") >= 2
     # Price, MATP and MBP are still there
-    assert ">Price<" in html and ">MATP<" in html and ">MBP<" in html and "173.90" in html
+    assert ">MATP<" in html and ">MBP<" in html and "173.90" in html
+    # v4.196 (user): Last, MATP, MBP, then the gap in $ and % after the MBP, then Opt liq; no plot column
+    head = html[html.index('title="My Watchlist"'):html.index(">Opt liq</span>")]
+    assert ">Price<" not in head and ">Last</span>" in head
+    assert head.index(">Last</span>") < head.index(">MATP<") < head.index(">MBP<") < head.index("&Delta;$") < head.index("&Delta;%")
+    assert "&#9639;" not in html and "tv-plot" not in html
+    row = html[html.index(">NVDA<"):html.index(">ABOVE<")]
+    assert row.index(">182.00<") < row.index(">200.00<") < row.index(">173.90<") < row.index(">-18.00<") < row.index(">-9.0%<")
 
 
 def test_saving_the_liquidity_lines_rerenders_the_panel_and_reports_a_bad_line(client, db, user, monkeypatch):

@@ -223,6 +223,14 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-24 - v4.196: Watchlist grid - Last, MATP, MBP, then the gap; the plot column gone
+
+The user: *"In the Watchlist MATP $ and % difference is to be put after MBP column. the price should change to
+last, the plot MBP and MATP column in the watchlist to remove"*. `_wl_macros.html` ticker_grid: the columns
+are now Sym, **Last** (was "Price"), MATP, MBP, **Δ$**, **Δ%** (moved after the MBP), Opt liq, and the
+TradingView plot column (the ▣ per row) is gone - the chart pane keeps its own "Plot on TV" button. Test in
+`tests/test_watchlist_grid.py`.
+
 ### 2026-10-24 - v4.195: Watchlist - a new screen's tickers appear at once, before any MATP run
 
 The user, after v4.194 with the Robotics run still "queued - waiting for the agent": *"the ticker is not shown

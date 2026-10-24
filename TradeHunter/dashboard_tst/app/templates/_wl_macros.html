@@ -32,17 +32,18 @@
    Liquid / Fair / Thin against the member's own fixed lines, judged near the money in the first two
    monthlies (services/opt_liquidity.py); the hover carries the figures. `liq` = {symbol: verdict}. #}
 {% set _liq = liq or {} %}
-{% set GRIDCSS = "display:grid;grid-template-columns:1.2rem minmax(3.4rem,1fr) 3.3rem 3.3rem 3.2rem 3.2rem 3.2rem 5rem 1.3rem" ~ (" 1.3rem" if can_delete else "") ~ ";column-gap:0.25rem;align-items:center" %}
+{# v4.196 (user): the columns are Last, MATP, MBP, then the gap in $ and % AFTER the MBP, then Opt liq; the
+   TradingView plot column is gone (the chart pane has its own "Plot on TV" button) #}
+{% set GRIDCSS = "display:grid;grid-template-columns:1.2rem minmax(3.4rem,1fr) 3.2rem 3.2rem 3.2rem 3.3rem 3.3rem 5rem" ~ (" 1.3rem" if can_delete else "") ~ ";column-gap:0.25rem;align-items:center" %}
 <div style="{{ GRIDCSS }}" class="px-2 pt-1 text-[10px] uppercase tracking-wide text-slate-600">
   <span class="text-center" title="My Watchlist">&#9733;</span>
   <span>Sym</span>
-  <span class="text-right" title="Stock price minus MATP, in dollars">&Delta;$</span>
-  <span class="text-right" title="Stock price minus MATP, as a percent of the MATP">&Delta;%</span>
-  <span class="text-right">Price</span>
+  <span class="text-right" title="The last price">Last</span>
   <span class="text-right">MATP</span>
   <span class="text-right">MBP</span>
+  <span class="text-right" title="Last price minus MATP, in dollars">&Delta;$</span>
+  <span class="text-right" title="Last price minus MATP, as a percent of the MATP">&Delta;%</span>
   <span class="text-right" title="Option liquidity: the near-the-money median open interest (the figure that decides a fill), then the verdict - Liquid / Fair / Thin against your own lines (near OI, near volume, chain OI; the screener's last pass). Hover for the table; change the lines under the list.">Opt liq</span>
-  <span class="text-center" title="Plot MATP &amp; MBP on your TradingView">&#9639;</span>
   {% if can_delete %}<span class="text-center" title="Remove from watchlist">&times;</span>{% endif %}
 </div>
 {% for lv in tickers %}
@@ -67,11 +68,11 @@
   {% set gap = (cur - lv.matp) if (cur is not none and lv.matp is not none) else none %}
   {% set gap_pct = (gap / lv.matp * 100.0) if (gap is not none and lv.matp) else none %}
   {% set gap_cls = "text-slate-600" if gap is none else ("text-emerald-300" if gap < 0 else "text-rose-300") %}
-  <span class="text-right text-[12px] tabular-nums {{ gap_cls }}" title="{{ 'price minus MATP' if gap is not none else 'no price or no MATP yet' }}">{{ ("%+.2f"|format(gap)) if gap is not none else "-" }}</span>
-  <span class="text-right text-[12px] tabular-nums {{ gap_cls }}">{{ ("%+.1f%%"|format(gap_pct)) if gap_pct is not none else "-" }}</span>
   <span class="text-right text-[13px] tabular-nums {% if cur is not none and lv.mbp is not none and cur > lv.mbp %}text-rose-300{% else %}text-white{% endif %}">{{ "%.2f"|format(cur) if cur is not none else "-" }}</span>
   <span class="text-right text-[13px] text-orange-300 tabular-nums"{% if lv.matp is none %} title="No MATP: {{ 'no analyst price targets after the latest earnings (an ETF has none)' if lv.n_targets == 0 else 'not computed yet' }}"{% endif %}>{{ "%.2f"|format(lv.matp) if lv.matp is not none else "-" }}</span>
   <span class="text-right text-[13px] text-green-500 tabular-nums">{{ "%.2f"|format(lv.mbp) if lv.mbp is not none else "-" }}</span>
+  <span class="text-right text-[12px] tabular-nums {{ gap_cls }}" title="{{ 'last price minus MATP' if gap is not none else 'no price or no MATP yet' }}">{{ ("%+.2f"|format(gap)) if gap is not none else "-" }}</span>
+  <span class="text-right text-[12px] tabular-nums {{ gap_cls }}">{{ ("%+.1f%%"|format(gap_pct)) if gap_pct is not none else "-" }}</span>
   {% set lq = _liq.get(lv.symbol) %}
   {% set lq_cls = "text-slate-700" if not lq else ("text-emerald-300" if lq.level == "liquid" else ("text-amber-300" if lq.level == "fair" else "text-slate-500")) %}
   {# v4.187 (user: "show the liquidity in numbers and then the fair, thin, liquid next to it ... in the tooltip
@@ -94,16 +95,6 @@
       <div class="wl-liq-cap">Near the money = {{ lq.near_words }}. A level needs all three figures: green at the Liquid line, amber between the lines, red below Fair.</div>
       <div class="wl-liq-cap">Open interest is yesterday's &middot; volume 15 min delayed &middot; no bid/ask in this data &middot; lines: edit under the list.</div>
     </div>{% else %}-{% endif %}</span>
-  {# Plot MATP/MBP on the user's OWN TradingView via the local TV bridge (127.0.0.1:9223).
-     A <span> (not <button>) so it's valid inside the row <a>; the capture-phase handler
-     in matp.html intercepts it (stopPropagation) so it never triggers the row's chart load. #}
-  <span class="tv-plot cursor-pointer text-center text-[13px] leading-none text-slate-600 hover:text-orange-300 transition select-none"
-        role="button" tabindex="0"
-        title="Plot MATP &amp; MBP on your TradingView"
-        data-sym="{{ lv.symbol }}"
-        data-exch="{{ lv.exchange or '' }}"
-        data-matp="{{ '%.2f'|format(lv.matp) if lv.matp is not none else '' }}"
-        data-mbp="{{ '%.2f'|format(lv.mbp) if lv.mbp is not none else '' }}">&#9639;</span>
   {# Delete (moderators only) — removes the ticker from the watchlist. The capture-phase
      handler in matp.html stops it from also triggering the row's chart load. #}
   {% if can_delete %}
