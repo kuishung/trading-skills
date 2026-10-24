@@ -1296,9 +1296,9 @@ def test_the_surface_tiles_are_configurable(client, fake):
     Volume / Nothing for the bottom (Last on) - remembered in th.vol.tile; the cell renderer and
     the hover card read j.extra; a change repaints without a new request."""
     html = client.get("/options").text
-    for needle in ('<details id="volTile"', 'id="volTileSum"', 'id="volTileTop"', 'id="volTileBottom"',
+    for needle in ('<details id="volTile"', 'id="volTileSum"', 'id="volTileBottom"',
                    'id="volTileNote"', "Greeks and prices are on the latest pass only",
-                   "'th.vol.tile'", "var TILE_DEFAULT = {g: ['d', 'g', 't', 'v'], b: 'last'};",
+                   "'th.vol.tile'", "var TILE_DEFAULT = {g: ['d', 't'], b: 'last'};",
                    "var x = extraAt(j, r, c);", "'<div class=\"vol-l2\">' + tileTop(x) + '</div><div class=\"vol-iv\">'",
                    "'<div class=\"vol-l3\">' + tileBottom(x) + '</div></td>'",
                    "figsHtml(j, xf), modelWorkHtml(j, xf, k, ex, cur));", "j.has_greeks === false",
@@ -1306,9 +1306,15 @@ def test_the_surface_tiles_are_configurable(client, fake):
                    "Model price", "Open interest", "'Delta'", "'Gamma'", "'Theta'", "'Vega'",
                    "g[2].charAt(0) + ' ' + greekText("):      # v4.168: the initials D G T V, not the signs
         assert needle in html, needle
-    # the defaults in the markup: Delta + Theta ticked, Gamma + Vega not, Last price picked
-    for k in ("D", "G", "T", "V"):          # v4.167: all four greeks on by default
-        assert 'id="volTile%s" data-g="%s" checked' % (k, k.lower()) in html
+    # v4.208 (user: "only 2 line which will only show 2 greeks at any time, Delta and Theta by default, then Gamma
+    # and Vega ... switch with a dropdown menu above the table"): the pair dropdown, no greek checkboxes
+    assert 'id="volTileTop"' not in html and 'id="volTileD"' not in html
+    assert '<select id="volGreeks" class="vol-sel">' in html
+    assert '<option value="dt" selected>Delta &amp; Theta</option>' in html and '<option value="gv">Gamma &amp; Vega</option>' in html
+    assert "var PAIRS = {dt: ['d', 't'], gv: ['g', 'v']};" in html
+    assert "$('volGreeks').addEventListener('change', function () { tileRead(); paintTiles(); });" in html
+    assert "TILE.g = (PAIRS[$('volGreeks') ? $('volGreeks').value : 'dt'] || PAIRS.dt).slice();" in html
+    assert "height: 3.1rem;" in html and "height: 3.75rem" not in html       # the shorter tile
     assert 'name="volTileB" value="last" checked' in html
     for v in ("price", "oi", "vol", "none"):
         assert f'name="volTileB" value="{v}">' in html, v
@@ -1944,27 +1950,29 @@ def test_the_page_has_the_rank_window(client, fake):
     html = client.get("/options").text
     panel = html[html.index('<section id="volPanelSurface"'):html.index('id="volTable"')]
     assert panel.index('id="volWin"') < panel.index('id="volInfoRow"')
-    assert "Rank window (days):" in panel
+    # v4.208 (user: "Rank window use drop down ... the text box and the apply only shown when [custom] selected")
+    assert '<select id="volWinSel" class="vol-sel">' in panel and 'type="radio" name="volWin"' not in panel
     for w in (30, 60, 90, 180, 270):
-        assert '<input type="radio" name="volWin" id="volWin%d" value="%d">' % (w, w) in panel, w
-    assert '<input type="radio" name="volWin" id="volWin365" value="365" checked>' in panel
+        assert '<option value="%d">%d days</option>' % (w, w) in panel, w
+    assert '<option value="365" selected>365 days</option>' in panel and '<option value="custom">custom&hellip;</option>' in panel
+    assert '<span id="volWinCustomBox" class="hidden items-center gap-1"' in panel
     assert "var WIN_KEY = 'th.vol.window', WINS = [30, 60, 90, 180, 270, 365], WIN_MIN = 10, WIN_MAX = 1500;" in html
     # v4.197 (user: "a radio button custom for user to key in the rank window ... a button to click"): the custom
     # radio, its number box (10-1500) and an Apply button; Enter / blur apply too; out of range keeps the last window
-    assert '<input type="radio" name="volWin" id="volWinCustom" value="custom"> custom' in panel
     assert '<input type="number" id="volWinN" min="10" max="1500" step="1" placeholder="days"' in panel
     assert '<button type="button" id="volWinGo"' in panel and ">Apply</button>" in panel
-    assert "if (b && b.value === 'custom') { var c = winCustom(); return c == null ? 365 : c; }" in html
+    assert "if (sel === 'custom') { var c = winCustom(); return c == null ? 365 : c; }" in html
+    assert "show($('volWinCustomBox'), c);" in html and "if (!c) { winApply(false); return; }" in html
     assert "$('volWinGo').addEventListener('click', function () { winApply(true); });" in html
     assert "if (e.key === 'Enter') { e.preventDefault(); winApply(true); }" in html
-    assert "if (w >= WIN_MIN && w <= WIN_MAX) { $('volWinN').value = String(w); $('volWinCustom').checked = true; }" in html
+    assert "if (w >= WIN_MIN && w <= WIN_MAX) { $('volWinN').value = String(w); $('volWinSel').value = 'custom'; show($('volWinCustomBox'), true); }" in html
     assert '<span id="volLegWin">IV vs own past 365 days:</span>' in html
     assert "'IV vs own past ' + winChosen() + ' days:'" in html
     # the history request carries the window; a change re-fetches the history only
     assert "getJSON('/options/api/surface/history?' + histParams(q).toString())" in html
     assert "h.set('window', String(winChosen()));" in html
     ch = html[html.index("function winApply(custom)"):]
-    ch = ch[:ch.index("$('volWin').addEventListener('change'")]
+    ch = ch[:ch.index("$('volWinSel').addEventListener('change'")]
     assert "lsSet(WIN_KEY, String(winChosen()))" in ch and "loadHistory(V.last, V.histQ, V.seq)" in ch
     assert "/options/api/surface?" not in ch and "runSurface" not in ch
     assert "hseq !== V.histSeq" in html                                   # the last window picked wins

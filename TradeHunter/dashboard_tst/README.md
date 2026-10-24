@@ -223,6 +223,22 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-24 - v4.208: Volatility surface - shorter tiles (one greeks line), the greeks pair and the rank window as dropdowns
+
+The user: *"reduce the height of the tiles so that the screen can show more tiles ... only 2 greeks at any time,
+Delta and Theta by default, then Gamma and Vega ... switch with a dropdown menu above the table. Rank window use
+drop down so that the screen not too glutted and when custom is selected then the text box and the apply only
+shown when selected"*.
+- **Tiles**: one greeks line of two greeks side by side, the IV, the bottom line - 3.1 rem tall instead of 3.75,
+  so about a fifth more rows fit on a screen.
+- **Greeks dropdown** above the grid (`#volGreeks`): Delta & Theta (default) or Gamma & Vega; remembered in
+  `th.vol.tile` as before (an older saved set of four falls back to the pair it names). The four checkboxes left
+  the Tile block, which keeps the bottom-line choice.
+- **Rank window dropdown** (`#volWinSel`): 30 / 60 / 90 / 180 / 270 / 365 days or custom…; a preset applies at
+  once; choosing custom reveals the number box and the Apply button (hidden otherwise), applied on Apply, Enter
+  or clicking away. The radios are gone.
+Tests in `tests/test_options_page.py`.
+
 ### 2026-10-24 - v4.207: Volatility surface hover card - three panels: Greeks, Volatility, Model price
 
 The user: *"the info box, use panel to separate the following: Greeks, Volatility, Model Price"*. The card is now

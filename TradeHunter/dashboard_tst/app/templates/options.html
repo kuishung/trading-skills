@@ -113,9 +113,15 @@
      cell (empty ones too, so the rows line up) is about 68 x 60 px: the IV figure centred in the box, two
      small lines reserved below it, centred with it (.vol-l2 / .vol-l3, empty for now), the rank bar at the bottom.
      The size is fixed, so on a phone the grid scrolls both ways and the cells keep their shape. */
-  .vol-grid tbody tr:not(.vol-spot):not(.vol-lvl) > td { width: 4.25rem; min-width: 4.25rem; max-width: 4.25rem; height: 3.75rem;
-                                           padding: .45rem .4rem; vertical-align: middle; text-align: center; position: relative; }
-  .vol-grid tbody tr:not(.vol-spot):not(.vol-lvl) > th { vertical-align: middle; height: 3.75rem; }
+  /* v4.208 (user: "reduce the height of the tiles so that the screen can show more tiles"): one greeks line (two
+     greeks side by side), the IV, the bottom line - 3.1rem tall instead of 3.75 */
+  .vol-grid tbody tr:not(.vol-spot):not(.vol-lvl) > td { width: 4.25rem; min-width: 4.25rem; max-width: 4.25rem; height: 3.1rem;
+                                           padding: .3rem .4rem; vertical-align: middle; text-align: center; position: relative; }
+  .vol-grid tbody tr:not(.vol-spot):not(.vol-lvl) > th { vertical-align: middle; height: 3.1rem; }
+  .vol-sel { border-radius: .25rem; background: rgba(2,6,23,.6); border: 1px solid rgb(51,65,85); padding: .1rem .3rem; font-size: 11px;
+             color: rgb(226,232,240); outline: none; }
+  .vol-sel:focus { border-color: rgb(16,185,129); }
+  html.light .vol-sel { background: #fff; color: #131722; border-color: #d1d4dc; }
   /* v4.192 (user: "add an MATP and MBP in the tile so that user will know the strike of the MBP and MATP"): a line
      at the MATP (orange) and at the MBP (green) between the strike rows, like the price line, and a small tag on
      the listed strike nearest each - the Watchlist's colours for the two levels */
@@ -369,14 +375,7 @@
         <span>Tile&hellip;</span><span id="volTileSum" class="text-slate-500 truncate"></span>
       </summary>
       <div class="flex flex-col gap-2 px-2 pb-2 text-xs">
-        <fieldset id="volTileTop">
-          <legend>Top line - Greeks</legend>
-          {# v4.167 (user): all four on by default, named in English #}
-          <label class="scr-check"><input type="checkbox" id="volTileD" data-g="d" checked> Delta</label>
-          <label class="scr-check"><input type="checkbox" id="volTileG" data-g="g" checked> Gamma</label>
-          <label class="scr-check"><input type="checkbox" id="volTileT" data-g="t" checked> Theta</label>
-          <label class="scr-check"><input type="checkbox" id="volTileV" data-g="v" checked> Vega</label>
-        </fieldset>
+        <div class="text-[11px] text-slate-500">Top line: two greeks - pick the pair in the "Greeks" dropdown above the grid</div>
         <div class="text-[11px] text-slate-500">Middle: the implied volatility, in percent</div>
         <fieldset id="volTileBottom">
           <legend>Bottom line</legend>
@@ -458,19 +457,29 @@
     {# v4.175: ONE rank window for the whole surface (calendar days, ending on the day shown), remembered in
        th.vol.window - every cell's colour, rank bar and hover card are over the same span, so a contract
        listed three weeks ago is no longer ranked over three weeks and an old one over a year #}
-    <fieldset id="volWin" class="border-0 m-0 p-0 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400"
-              title="How far back each contract's own IV range reaches for its colour, in calendar days, ending on the day shown. On a window shorter than 365 days a contract listed too recently to cover most of it stays grey.">
-      <legend class="float-left mr-1 text-slate-500">Rank window (days):</legend>
-      <div class="vol-hz">
-        {% for w in (30, 60, 90, 180, 270, 365) %}<label class="scr-check"><input type="radio" name="volWin" id="volWin{{ w }}" value="{{ w }}"{% if w == 365 %} checked{% endif %}> {{ w }}</label>{% endfor %}
-        {# v4.197 (user: "a radio button custom for user to key in the rank window"): any whole number of days, 10 to 1500 #}
-        <label class="scr-check" title="Any whole number of calendar days from 10 to 1500 - type it and press Enter or click away"><input type="radio" name="volWin" id="volWinCustom" value="custom"> custom
-          <input type="number" id="volWinN" min="10" max="1500" step="1" placeholder="days" aria-label="Custom rank window in days"
-                 class="ml-1 w-16 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-200 focus:border-emerald-500 outline-none tabular-nums"></label>
+    {# v4.208 (user: "Rank window use drop down so that the screen not too glutted and when custom is selected then
+       the text box and the apply only shown when selected"; "2 greeks at any time, Delta and Theta by default, then
+       Gamma and Vega ... switch with a dropdown menu above the table") #}
+    <div id="volWin" class="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-400">
+      <label class="flex items-center gap-1.5" title="How far back each contract's own IV range reaches for its colour, in calendar days, ending on the day shown. On a window shorter than 365 days a contract listed too recently to cover most of it stays grey.">Rank window
+        <select id="volWinSel" class="vol-sel">
+          {% for w in (30, 60, 90, 180, 270, 365) %}<option value="{{ w }}"{% if w == 365 %} selected{% endif %}>{{ w }} days</option>{% endfor %}
+          <option value="custom">custom&hellip;</option>
+        </select>
+      </label>
+      <span id="volWinCustomBox" class="hidden items-center gap-1" title="Any whole number of calendar days from 10 to 1500">
+        <input type="number" id="volWinN" min="10" max="1500" step="1" placeholder="days" aria-label="Custom rank window in days"
+               class="w-16 rounded bg-slate-950/60 border border-slate-700 px-1.5 py-0.5 text-[11px] text-slate-200 focus:border-emerald-500 outline-none tabular-nums">
         <button type="button" id="volWinGo" title="Rank every cell over the custom window"
                 class="rounded border border-slate-700 px-2 py-0.5 text-[11px] text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition">Apply</button>
-      </div>
-    </fieldset>
+      </span>
+      <label class="flex items-center gap-1.5" title="The two greeks on the line above each cell's implied volatility">Greeks
+        <select id="volGreeks" class="vol-sel">
+          <option value="dt" selected>Delta &amp; Theta</option>
+          <option value="gv">Gamma &amp; Vega</option>
+        </select>
+      </label>
+    </div>
     <div id="volInfoRow" class="hidden flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400 leading-snug">
       <div id="volInfo" class="min-w-0 break-words"></div>
     </div>
@@ -945,7 +954,8 @@
   // grid on screen from the payload (j.extra) - no new request. A past day has no greeks or prices
   // (has_greeks false: its IVs are solved from the closes), so its tiles show the IV alone.
   var TILE_KEY = 'th.vol.tile';
-  var TILE_DEFAULT = {g: ['d', 'g', 't', 'v'], b: 'last'};     // v4.167: all four greeks by default
+  var TILE_DEFAULT = {g: ['d', 't'], b: 'last'};               // v4.208: ONE line of two greeks - Delta + Theta by default
+  var PAIRS = {dt: ['d', 't'], gv: ['g', 'v']};                 // the two pairs the dropdown above the grid offers
   var GREEKS = [['d', '\u0394', 'Delta', 3], ['g', '\u0393', 'Gamma', 4], ['t', '\u0398', 'Theta', 3], ['v', '\u03BD', 'Vega', 3]];
   var BOTTOMS = {last: 'last', price: 'model', oi: 'OI', vol: 'volume', none: ''};
   var TILE = {g: TILE_DEFAULT.g.slice(), b: TILE_DEFAULT.b};
@@ -985,14 +995,12 @@
     var raw = lsGet(TILE_KEY), t = null;
     try { t = raw ? JSON.parse(raw) : null; } catch (err) { t = null; }
     var known = GREEKS.map(function (g) { return g[0]; });
-    TILE.g = t && Array.isArray(t.g) ? t.g.filter(function (k) { return known.indexOf(k) >= 0; }) : TILE_DEFAULT.g.slice();
+    var g = t && Array.isArray(t.g) ? t.g.filter(function (k) { return known.indexOf(k) >= 0; }) : TILE_DEFAULT.g.slice();
+    TILE.g = (g.indexOf('g') >= 0 || g.indexOf('v') >= 0) && g.indexOf('d') < 0 ? PAIRS.gv.slice() : PAIRS.dt.slice();   // v4.208: a pair, always
     TILE.b = t && Object.prototype.hasOwnProperty.call(BOTTOMS, t.b) ? t.b : TILE_DEFAULT.b;
   }
   function tileFormSet() {             // the Tile block shows the choice in force
-    GREEKS.forEach(function (g) {
-      var box = document.querySelector('#volTileTop input[data-g="' + g[0] + '"]');
-      if (box) box.checked = TILE.g.indexOf(g[0]) >= 0;
-    });
+    if ($('volGreeks')) $('volGreeks').value = TILE.g[0] === 'g' ? 'gv' : 'dt';   // v4.208: the pair dropdown above the grid
     Array.prototype.forEach.call(document.querySelectorAll('input[name="volTileB"]'), function (rd) {
       rd.checked = rd.value === TILE.b;
     });
@@ -1004,10 +1012,7 @@
     $('volTileSum').textContent = [g, b].filter(function (s) { return s; }).join(' \u00B7 ') || 'IV only';
   }
   function tileRead() {                 // the Tile block -> TILE, remembered
-    TILE.g = GREEKS.map(function (g) { return g[0]; }).filter(function (k) {
-      var box = document.querySelector('#volTileTop input[data-g="' + k + '"]');
-      return box && box.checked;
-    });
+    TILE.g = (PAIRS[$('volGreeks') ? $('volGreeks').value : 'dt'] || PAIRS.dt).slice();   // v4.208
     var rd = document.querySelector('input[name="volTileB"]:checked');
     TILE.b = rd && Object.prototype.hasOwnProperty.call(BOTTOMS, rd.value) ? rd.value : TILE_DEFAULT.b;
     lsSet(TILE_KEY, JSON.stringify({g: TILE.g, b: TILE.b}));
@@ -1099,17 +1104,17 @@
     var n = parseInt(($('volWinN') || {}).value, 10);
     return isFinite(n) && n >= WIN_MIN && n <= WIN_MAX && String(n) === String($('volWinN').value).trim() ? n : null;
   }
-  function winChosen() {
-    var b = document.querySelector('input[name="volWin"]:checked');
-    if (b && b.value === 'custom') { var c = winCustom(); return c == null ? 365 : c; }
-    var w = b ? parseInt(b.value, 10) : 365;
+  function winChosen() {               // v4.208: the dropdown; "custom" reads the box
+    var sel = $('volWinSel') ? $('volWinSel').value : '365';
+    if (sel === 'custom') { var c = winCustom(); return c == null ? 365 : c; }
+    var w = parseInt(sel, 10);
     return WINS.indexOf(w) >= 0 ? w : 365;
   }
   function winLoad() {
     var w = parseInt(lsGet(WIN_KEY), 10);
     if (!isFinite(w)) return;
-    if (WINS.indexOf(w) >= 0) { var b = $('volWin' + w); if (b) b.checked = true; return; }
-    if (w >= WIN_MIN && w <= WIN_MAX) { $('volWinN').value = String(w); $('volWinCustom').checked = true; }
+    if (WINS.indexOf(w) >= 0) { $('volWinSel').value = String(w); return; }
+    if (w >= WIN_MIN && w <= WIN_MAX) { $('volWinN').value = String(w); $('volWinSel').value = 'custom'; show($('volWinCustomBox'), true); }
   }
   function winLegend() { $('volLegWin').textContent = 'IV vs own past ' + winChosen() + ' days:'; }
   function histParams(q) {              // the surface's own request + the rank window
@@ -1741,15 +1746,21 @@
     // v4.197: a preset radio applies at once; the custom box applies on Apply, Enter or clicking away
     // (typing ticks "custom"); a number out of range turns the box red and keeps the last good window
     function winApply(custom) {
-      if (custom) { $('volWinCustom').checked = true; if (winCustom() == null) { $('volWinN').classList.add('border-rose-500'); return; } }
+      if (custom && winCustom() == null) { $('volWinN').classList.add('border-rose-500'); return; }
       $('volWinN').classList.remove('border-rose-500');
       lsSet(WIN_KEY, String(winChosen()));
       winLegend(); hidePop();
       if (V.last && V.histQ) loadHistory(V.last, V.histQ, V.seq);
     }
-    $('volWin').addEventListener('change', function (e) { winApply(!!(e.target && e.target.id === 'volWinN') || $('volWinCustom').checked); });
+    // v4.208: a preset applies at once; "custom" shows the box + Apply (hidden otherwise) and applies on Apply, Enter or blur
+    $('volWinSel').addEventListener('change', function () {
+      var c = $('volWinSel').value === 'custom';
+      show($('volWinCustomBox'), c);
+      if (!c) { winApply(false); return; }
+      if (winCustom() != null) winApply(true); else $('volWinN').focus();
+    });
+    $('volWinN').addEventListener('change', function () { winApply(true); });
     $('volWinGo').addEventListener('click', function () { winApply(true); });
-    $('volWinN').addEventListener('focus', function () { $('volWinCustom').checked = true; });
     $('volWinN').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); winApply(true); } });
     if (lsGet(CLEAN_KEY) === '0') $('volClean').checked = false;
     $('volClean').addEventListener('change', function () {
@@ -1799,6 +1810,7 @@
     // v4.166: the Tile block - load the remembered choice, repaint the grid on screen on a change
     tileLoad(); tileFormSet();
     $('volTile').addEventListener('change', function () { tileRead(); paintTiles(); });
+    $('volGreeks').addEventListener('change', function () { tileRead(); paintTiles(); });   // v4.208: the pair above the grid
     $('volTable').addEventListener('mouseover', function (e) {
       var td = e.target.closest ? e.target.closest('td.vol-cell') : null;
       if (!td) { hidePop(); return; }
