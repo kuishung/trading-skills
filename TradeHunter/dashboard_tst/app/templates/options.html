@@ -158,6 +158,7 @@
   .vol-tile[open] summary::after { content: '\25BE'; }
   .vol-tile fieldset { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .2rem; }
   .vol-tile legend { padding: 0; margin-bottom: .15rem; font-size: 11px; color: var(--tv-text); }
+  .vol-pop .vol-pop-sec { border-top: 1px solid var(--tv-border); margin-top: .4rem; padding-top: .35rem; }   /* v4.205 */
   .vol-pop .vol-pop-figs { display: grid; grid-template-columns: 1fr 1fr; column-gap: .75rem; row-gap: .1rem; margin-top: .3rem;
                            padding-top: .3rem; border-top: 1px solid var(--tv-border); }
   .vol-pop .vol-pop-figs > div { display: flex; justify-content: space-between; gap: .4rem; }
@@ -1020,6 +1021,50 @@
       });
     });
   }
+  // ── v4.205 (user: "for the model price I need you to show workings in info box ... put in a separate
+  // calculation"): the Black-Scholes working of the cell's model price, recomputed here from the same inputs
+  // the collector used (the pass's spot, the strike, days / 365 with a half-day floor, the rate, the contract's
+  // own IV), beside the figure the pass stored ──
+  function normCdf(z) {                 // Abramowitz & Stegun 7.1.26 (error under 2e-7 - fine to the cent)
+    var t = 1 / (1 + 0.3275911 * Math.abs(z));
+    var y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-z * z / 2);
+    return z >= 0 ? 0.5 * (1 + y) : 0.5 * (1 - y);
+  }
+  function modelWorkHtml(j, x, k, ex, cur) {   // cur = the cell's IV in percent (the same leg as the figures)
+    if (!j || j.source !== 'latest' || !x || x.price == null) return '';
+    var S = +j.spot, K = +k, days = ex && ex.dte != null ? +ex.dte : null, r = j.rate != null ? +j.rate : 0.04;
+    var iv = cur != null ? +cur / 100 : null;
+    if (!(S > 0) || !(K > 0) || days == null || !(iv > 0)) return '';
+    var isCall = sideOf(j, K) === 'C', T = Math.max(days, 0.5) / 365, sT = iv * Math.sqrt(T);
+    var d1 = (Math.log(S / K) + (r + iv * iv / 2) * T) / sT, d2 = d1 - sT, disc = Math.exp(-r * T);
+    var price = isCall ? S * normCdf(d1) - K * disc * normCdf(d2) : K * disc * normCdf(-d2) - S * normCdf(-d1);
+    var n1 = isCall ? normCdf(d1) : normCdf(-d1), n2 = isCall ? normCdf(d2) : normCdf(-d2);
+    var same = Math.abs(price - x.price) < 0.015;
+    var f4 = function (v) { return num(v, 4); };
+    return '<div class="vol-pop-sec"><div class="vol-pop-row"><span><b>Model price working</b> <span class="text-slate-500">(Black-Scholes)</span></span>' +
+           '<b>' + esc(money(x.price)) + '</b></div>' +
+           '<div class="vol-pop-figs">' +
+           '<div><span>S, stock price (this pass)</span><b>' + num(S, 2) + '</b></div>' +
+           '<div><span>K, strike</span><b>' + num(K, 2) + '</b></div>' +
+           '<div><span>T, ' + intText(days) + ' days / 365</span><b>' + f4(T) + ' y</b></div>' +
+           '<div><span>r, risk-free rate</span><b>' + num(r * 100, 2) + '%</b></div>' +
+           '<div><span>&sigma;, this contract\'s IV</span><b>' + num(iv * 100, 2) + '%</b></div>' +
+           '<div><span>right</span><b>' + (isCall ? 'call' : 'put') + '</b></div>' +
+           '<div><span>&sigma;&radic;T</span><b>' + f4(sT) + '</b></div>' +
+           '<div><span>e<sup>&minus;rT</sup></span><b>' + f4(disc) + '</b></div>' +
+           '<div><span>d1 = [ln(S/K) + (r + &sigma;&sup2;/2)T] / &sigma;&radic;T</span><b>' + f4(d1) + '</b></div>' +
+           '<div><span>d2 = d1 &minus; &sigma;&radic;T</span><b>' + f4(d2) + '</b></div>' +
+           (isCall
+             ? '<div><span>N(d1)</span><b>' + f4(n1) + '</b></div><div><span>N(d2)</span><b>' + f4(n2) + '</b></div>'
+             : '<div><span>N(&minus;d1)</span><b>' + f4(n1) + '</b></div><div><span>N(&minus;d2)</span><b>' + f4(n2) + '</b></div>') +
+           '</div>' +
+           '<div class="vol-cap mt-1">' + (isCall
+             ? 'call = S&middot;N(d1) &minus; K&middot;e<sup>&minus;rT</sup>&middot;N(d2) = ' + num(S, 2) + ' &times; ' + f4(n1) + ' &minus; ' + num(K, 2) + ' &times; ' + f4(disc) + ' &times; ' + f4(n2)
+             : 'put = K&middot;e<sup>&minus;rT</sup>&middot;N(&minus;d2) &minus; S&middot;N(&minus;d1) = ' + num(K, 2) + ' &times; ' + f4(disc) + ' &times; ' + f4(n2) + ' &minus; ' + num(S, 2) + ' &times; ' + f4(n1)) +
+           ' = <b>' + esc(money(price)) + '</b>' +
+           (same ? ' - the same as the pass stored.' : ' - the pass stored ' + esc(money(x.price)) + ' (its spot or IV differed slightly at the time).') + '</div>' +
+           '<div class="vol-cap">No dividend; T has a half-day floor. The IV is Massive\'s own for this contract, so this is what a mid price would be at that volatility - not a quote.</div></div>';
+  }
   function figsHtml(j, x) {             // the hover card's figures, in words
     if (!x) return j && j.has_greeks === false
       ? '<div class="vol-cap">Greeks and prices are on the latest pass only.</div>' : '';
@@ -1248,7 +1293,7 @@
     var key = td.dataset.r + ',' + td.dataset.c;
     var s = V.hist && V.hist.cells[key];
     var xf = extraAt(j, +td.dataset.r, +td.dataset.c);
-    pop.innerHTML = popoverHtml(label, cur, s, key, ex.date, figsHtml(j, xf));
+    pop.innerHTML = popoverHtml(label, cur, s, key, ex.date, figsHtml(j, xf) + modelWorkHtml(j, xf, k, ex, cur));
     pop.classList.remove('hidden');
     var pw = pop.offsetWidth || 320, ph = pop.offsetHeight || 200;
     var x = ev.clientX + 14, y = ev.clientY + 14;

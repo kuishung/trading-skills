@@ -500,7 +500,8 @@ def surface(sdb, symbol, day="latest", *, side=None, band=None, max_dte=None, ex
             "spot_src": meta.get("spot_src"),
             "as_of": as_of.replace(microsecond=0).isoformat() + "Z" if isinstance(as_of, _dt.datetime) else None,
             "traded": meta.get("traded"), "method": method, "has_greeks": meta["source"] == "latest",
-            "liq_n": meta.get("liq_n")}
+            "liq_n": meta.get("liq_n"),
+            "rate": RISK_FREE}           # v4.205: the rate behind every model price, for the hover card's working
 
 
 __all__ = ["SIDES", "FIGURES", "BANDS", "DTES", "SurfaceError", "build", "norm_options", "keep", "is_monthly",

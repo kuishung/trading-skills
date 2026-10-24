@@ -273,6 +273,7 @@ def test_the_latest_surface_is_massives_iv_from_the_last_pass(sdb):
     by = dict(zip(g["strikes"], g["cells"]))
     assert by[90.0] == [30.0, 30.0] and by[110.0] == [25.0, 25.0]      # puts below 101, calls above
     assert "Massive" in g["method"]
+    assert g["rate"] == 0.04                      # v4.205: the rate behind the model prices, for the hover card's working
     # v4.166: the tile figures of each cell's own contract; the latest pass has greeks
     assert g["has_greeks"] is True
     xb = dict(zip(g["strikes"], g["extra"]))

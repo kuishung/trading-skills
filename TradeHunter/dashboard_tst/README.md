@@ -223,6 +223,18 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-24 - v4.205: Volatility surface hover card - the model price's working
+
+The user: *"for the model price I need you to show workings in info box. what value you provide in the formula
+to derive the model price. Put in a separate calculation on the model price"*. The hover card (latest pass) now
+carries a **Model price working (Black-Scholes)** section after the figures: S (the pass's stock price), K, T
+(days / 365, half-day floor), r (the rate the surface answer now carries, `rate` = `RISK_FREE` 4 %), σ (the
+cell's IV), the right, σ√T, e^-rT, d1 and d2 with their formulas, N(d1) / N(d2) (or N(-d1) / N(-d2) for a put),
+the price formula with the numbers in it and its result, recomputed on the page (`modelWorkHtml`, `normCdf` =
+Abramowitz & Stegun 7.1.26), and whether it matches the figure the pass stored. Two caveats in the card: no
+dividend, and the IV is Massive's own for the contract, so the model price is what a mid would be at that
+volatility, not a quote. Tests in `tests/test_options_page.py` and `tests/test_vol_surface.py`.
+
 ### 2026-10-24 - v4.204: hover chart - the earnings dates at 25 degrees
 
 The user (three dates clipped at the top of the card): *"the date cannot be seen fully, make it 25% slope"*. At

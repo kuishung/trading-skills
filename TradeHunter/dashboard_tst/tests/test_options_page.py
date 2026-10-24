@@ -1252,6 +1252,18 @@ def test_the_surface_cells_open_the_contract_history_in_a_new_window(client, fak
     assert "'>E ' + esc(e.on) + '</text>'" in sp_ and "text-anchor=\"middle\">E</text>" not in sp_
     assert ".vol-pop .vol-earn-dt { fill: #d97706; font-size: 9px; font-weight: 600; }" in html
     assert ".vol-pop svg { display: block; width: 100%; height: 8rem; margin-top: .35rem; }" in html   # v4.203: not squeezed
+    # v4.205 (user: "for the model price I need you to show workings in info box ... a separate calculation"): the
+    # Black-Scholes working recomputed on the page from the pass's spot, the strike, days / 365, the rate the
+    # answer carries and the cell's IV, beside the stored figure
+    mw = html[html.index("function modelWorkHtml("):html.index("function figsHtml(")]
+    assert "var S = +j.spot, K = +k, days = ex && ex.dte != null ? +ex.dte : null, r = j.rate != null ? +j.rate : 0.04;" in mw
+    assert "var iv = cur != null ? +cur / 100 : null;" in mw and "T = Math.max(days, 0.5) / 365" in mw
+    assert "var d1 = (Math.log(S / K) + (r + iv * iv / 2) * T) / sT, d2 = d1 - sT, disc = Math.exp(-r * T);" in mw
+    assert "price = isCall ? S * normCdf(d1) - K * disc * normCdf(d2) : K * disc * normCdf(-d2) - S * normCdf(-d1);" in mw
+    assert "<b>Model price working</b>" in mw and "the same as the pass stored." in mw and "No dividend; T has a half-day floor." in mw
+    assert "function normCdf(z) {" in html and "0.3275911" in html
+    assert "figsHtml(j, xf) + modelWorkHtml(j, xf, k, ex, cur));" in html
+    assert ".vol-pop .vol-pop-sec { border-top: 1px solid var(--tv-border);" in html
     assert "'\">' + esc(fromIso) + '</text>'" in sp_ and "text-anchor=\"end\">' + esc(toIso) + '</text></svg>'" in sp_
     assert ".vol-grid td.vol-cell { cursor: pointer; }" in html
     # squarish cells, the IV figure centred both ways; an empty reserved line takes no room
@@ -1273,7 +1285,7 @@ def test_the_surface_tiles_are_configurable(client, fake):
                    "'th.vol.tile'", "var TILE_DEFAULT = {g: ['d', 'g', 't', 'v'], b: 'last'};",
                    "var x = extraAt(j, r, c);", "'<div class=\"vol-l2\">' + tileTop(x) + '</div><div class=\"vol-iv\">'",
                    "'<div class=\"vol-l3\">' + tileBottom(x) + '</div></td>'",
-                   "figsHtml(j, xf));", "j.has_greeks === false",
+                   "figsHtml(j, xf) + modelWorkHtml(j, xf, k, ex, cur));", "j.has_greeks === false",
                    "$('volTile').addEventListener('change', function () { tileRead(); paintTiles(); });",
                    "Model price", "Open interest", "'Delta'", "'Gamma'", "'Theta'", "'Vega'",
                    "g[2].charAt(0) + ' ' + greekText("):      # v4.168: the initials D G T V, not the signs
@@ -1833,7 +1845,7 @@ def test_the_hide_new_and_thinly_listed_tick(client, fake):
     # gauge (v4.181-4.185), its fade, the "Show liquidity" tick, the legend line and the hover card's Liquidity
     # block are gone; the server still ranks (liq / rk in extra) and the watchlist's Opt liq verdict stays
     for gone in ('id="volLiq"', "function liqHtml(", "function liqBar(", "liqAttr(", "vol-lq-pt", "vol-thin",
-                 "vol-nolq", 'id="volLegLiq"', "LIQ_KEY", "data-lq", "vol-pop-sec", ".vol-chip"):
+                 "vol-nolq", 'id="volLegLiq"', "LIQ_KEY", "data-lq", ".vol-chip"):
         assert gone not in html, gone
     rs = html[html.index("function renderSurface("):html.index("function tileLoad(")]
     assert "'<td class=\"vol-cell\" data-r=\"' + r + '\" data-c=\"' + c + '\">' +" in rs
