@@ -223,6 +223,15 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-24 - v4.207: Volatility surface hover card - three panels: Greeks, Volatility, Model price
+
+The user: *"the info box, use panel to separate the following: Greeks, Volatility, Model Price"*. The card is now
+the contract's heading and three bordered, titled panels (`popPanel`, `.vol-panel` / `.vol-panel-t`): **Greeks**
+(delta, gamma, theta, vega, last, OI, volume), **Volatility** (today's IV, the window's range, where today sits
+with its bar, the percentile, the earnings row, the chart - thin rules between those), **Model price** (the
+Black-Scholes working of v4.205, the figure in its header; the "Model price" row left the Greeks grid), then the
+click hint. Test in `tests/test_options_page.py`.
+
 ### 2026-10-24 - v4.206: hover cards - a rule between the blocks
 
 The user: *"in the info box I want it to be separated by way of separator so that each information is neatly

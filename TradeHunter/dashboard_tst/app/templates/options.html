@@ -161,6 +161,10 @@
   .vol-pop .vol-pop-sec { border-top: 1px solid var(--tv-border); margin-top: .4rem; padding-top: .35rem; }   /* v4.205 */
   /* v4.206 (user: "separated by way of separator so that each information is neatly separated") */
   .vol-pop .vol-sep { border: 0; border-top: 1px solid var(--tv-border); margin: .4rem 0 .3rem; }
+  /* v4.207: the card's three panels - Greeks, Volatility, Model price */
+  .vol-pop .vol-panel { border: 1px solid var(--tv-border); border-radius: .4rem; padding: .3rem .5rem .35rem; margin-top: .4rem; }
+  .vol-pop .vol-panel-t { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--tv-muted); margin-bottom: .1rem; }
+  .vol-pop .vol-panel .vol-pop-figs { margin-top: 0; padding-top: 0; border-top: 0; }
   .vol-pop .vol-pop-figs { display: grid; grid-template-columns: 1fr 1fr; column-gap: .75rem; row-gap: .1rem; margin-top: .3rem;
                            padding-top: .3rem; border-top: 1px solid var(--tv-border); }
   .vol-pop .vol-pop-figs > div { display: flex; justify-content: space-between; gap: .4rem; }
@@ -1043,8 +1047,7 @@
     var n1 = isCall ? normCdf(d1) : normCdf(-d1), n2 = isCall ? normCdf(d2) : normCdf(-d2);
     var same = Math.abs(price - x.price) < 0.015;
     var f4 = function (v) { return num(v, 4); };
-    return '<div class="vol-pop-sec"><div class="vol-pop-row"><span><b>Model price working</b> <span class="text-slate-500">(Black-Scholes)</span></span>' +
-           '<b>' + esc(money(x.price)) + '</b></div>' +
+    return popPanel('Model price', '<div class="vol-pop-row"><span>Black-Scholes, from the inputs below</span><b>' + esc(money(x.price)) + '</b></div>' +
            '<div class="vol-pop-figs">' +
            '<div><span>S, stock price (this pass)</span><b>' + num(S, 2) + '</b></div>' +
            '<div><span>K, strike</span><b>' + num(K, 2) + '</b></div>' +
@@ -1065,7 +1068,7 @@
              : 'put = K&middot;e<sup>&minus;rT</sup>&middot;N(&minus;d2) &minus; S&middot;N(&minus;d1) = ' + num(K, 2) + ' &times; ' + f4(disc) + ' &times; ' + f4(n2) + ' &minus; ' + num(S, 2) + ' &times; ' + f4(n1)) +
            ' = <b>' + esc(money(price)) + '</b>' +
            (same ? ' - the same as the pass stored.' : ' - the pass stored ' + esc(money(x.price)) + ' (its spot or IV differed slightly at the time).') + '</div>' +
-           '<div class="vol-cap">No dividend; T has a half-day floor. The IV is Massive\'s own for this contract, so this is what a mid price would be at that volatility - not a quote.</div></div>';
+           '<div class="vol-cap">No dividend; T has a half-day floor. The IV is Massive\'s own for this contract' + (j.side === 'mid' ? ' (here the call + put average is shown; the pass priced the call from its own IV)' : '') + ', so this is what a mid price would be at that volatility - not a quote.</div>');
   }
   function figsHtml(j, x) {             // the hover card's figures, in words
     if (!x) return j && j.has_greeks === false
@@ -1073,7 +1076,6 @@
     var rows = [];
     GREEKS.forEach(function (g) { if (x[g[0]] != null) rows.push([g[2], num(x[g[0]], g[3])]); });
     if (x.last != null) rows.push(['Last', money(x.last)]);
-    if (x.price != null) rows.push(['Model price', money(x.price)]);
     if (x.oi != null) rows.push(['OI', intText(x.oi)]);
     if (x.vol != null) rows.push(['Volume', intText(x.vol)]);
     if (!rows.length) return '';
@@ -1222,37 +1224,41 @@
            '<text class="vol-lbl" x="' + (w - padR) + '" y="' + (hgt - 2) + '" text-anchor="end">' + esc(toIso) + '</text></svg>';
     return out;
   }
-  function popoverHtml(label, cur, s, key, expiry, figs) {
+  function popPanel(title, body) {      // v4.207 (user: "use panel to separate ... Greeks / Volatility / Model Price")
+    return body ? '<div class="vol-panel"><div class="vol-panel-t">' + title + '</div>' + body + '</div>' : '';
+  }
+  function popoverHtml(label, cur, s, key, expiry, figs, model) {
     var latest = !V.last || V.last.source === 'latest', day = V.last ? V.last.on : '';
     var nowCap = latest ? 'Today' : 'On ' + day, nowWord = latest ? 'today' : 'that day';
     var h = '<div><b>' + esc(label) + '</b></div>';
-    h += '<div class="vol-pop-row"><span>' + esc(nowCap) + '</span><b>' + (cur == null ? '-' : num(cur, 1) + '%') + '</b></div>';
-    h += figs || '';                    // v4.166: delta / gamma / theta / vega, last, model price, OI, volume
+    // the Volatility panel's body - today's IV first, then the window, the rank, the earnings and the chart
+    var vol = '<div class="vol-pop-row"><span>' + esc(nowCap) + '</span><b>' + (cur == null ? '-' : num(cur, 1) + '%') + '</b></div>';
+    function done(extra) {
+      return h + popPanel('Greeks', figs || '') + popPanel('Volatility', vol + (extra || '')) + (model || '') +
+             '<div class="vol-cap">Click: contract history in a new window.</div>';   // v4.198: was the cell's own tooltip
+    }
     if (V.histState !== 'ok') {
-      h += '<hr class="vol-sep">' + '<div class="text-slate-500">' + (V.histState === 'failed' ? 'History unavailable: ' + esc(V.histWhy) + '.' : 'History loading...') + '</div>';
-      return h;
+      return done('<div class="text-slate-500 mt-1">' + (V.histState === 'failed' ? 'History unavailable: ' + esc(V.histWhy) + '.' : 'History loading...') + '</div>');
     }
     if (!s) {
       var skipped = key && (V.hist.skipped || []).indexOf(key) >= 0;
-      h += '<div class="text-slate-500 mt-1">' + (skipped
+      return done('<div class="text-slate-500 mt-1">' + (skipped
         ? 'Not computed: the view is too large (over ' + intText(6000) + ' contracts) - narrow the strikes or the expiries.'
         : 'No history for this contract in the past ' + (V.hist.window_days || winChosen()) + ' days (' +
-          intText(V.hist.days) + ' sessions).') + '</div>';
-      return h;
+          intText(V.hist.days) + ' sessions).') + '</div>');
     }
     var wd = s.window_days || V.hist.window_days || winChosen();
-    h += '<hr class="vol-sep">';                       // v4.206: a rule between the card's blocks
-    h += '<div class="vol-pop-row"><span>Past ' + wd + ' days, ' + intText(s.n) + ' sessions' + (s.first ? ' since ' + esc(s.first) : '') + '</span>' +
-         '<span class="whitespace-nowrap">' + num(s.lo, 1) + '% - ' + num(s.hi, 1) + '%</span></div>';
+    vol += '<div class="vol-pop-row"><span>Past ' + wd + ' days, ' + intText(s.n) + ' sessions' + (s.first ? ' since ' + esc(s.first) : '') + '</span>' +
+           '<span class="whitespace-nowrap">' + num(s.lo, 1) + '% - ' + num(s.hi, 1) + '%</span></div>';
     if (s.rank != null) {
-      h += '<div class="vol-pop-row"><span>Where ' + nowWord + ' sits in that ' + wd + '-day range</span><b class="whitespace-nowrap vol-rk-tx" style="' + rankText(s.rank) + '">' +
-           Math.round(s.rank * 100) + '%</b></div>' +
-           posBar(s.rank, s.lo, s.hi) +
-           '<div class="vol-cap">0% = at its lowest IV of the past ' + wd + ' days, 100% = at its highest</div>' +
-           '<div class="vol-pop-row"><span>Days with a lower IV than ' + nowWord + '</span><span class="whitespace-nowrap">' +
-           Math.round(s.pct * 100) + '% (' + intText(Math.round(s.pct * s.n)) + ' of ' + intText(s.n) + ')</span></div>';
+      vol += '<div class="vol-pop-row"><span>Where ' + nowWord + ' sits in that ' + wd + '-day range</span><b class="whitespace-nowrap vol-rk-tx" style="' + rankText(s.rank) + '">' +
+             Math.round(s.rank * 100) + '%</b></div>' +
+             posBar(s.rank, s.lo, s.hi) +
+             '<div class="vol-cap">0% = at its lowest IV of the past ' + wd + ' days, 100% = at its highest</div>' +
+             '<div class="vol-pop-row"><span>Days with a lower IV than ' + nowWord + '</span><span class="whitespace-nowrap">' +
+             Math.round(s.pct * 100) + '% (' + intText(Math.round(s.pct * s.n)) + ' of ' + intText(s.n) + ')</span></div>';
     } else {
-      h += '<div class="text-slate-500 mt-1">No colour: ' + esc(s.why || 'under 10 days of history') + '.</div>';
+      vol += '<div class="text-slate-500 mt-1">No colour: ' + esc(s.why || 'under 10 days of history') + '.</div>';
     }
     // v4.199: the window's own span - its last session back `wd` calendar days - not the contract's first
     // and last session (a contract listed after an earnings day used to lose that day's E line)
@@ -1276,17 +1282,15 @@
     var inWin = win.length ? win.map(function (e) { return '<span style="color:#d97706">' + esc(e.on) + '</span>'; }).join(', ') +
                              ' (marked E)' + (partial ? ', history still loading' : '')
                            : (partial ? 'history still loading (' + intText(cov.fetched) + ' of ' + intText(cov.weekdays) + ' days on file)' : 'none in this window');
-    h += '<hr class="vol-sep">';
-    h += '<div class="mt-0.5"><span class="text-slate-500">Earnings in the window:</span> ' + inWin + ' &middot; ' + nxt + '</div>';
+    vol += '<hr class="vol-sep">' +
+           '<div class="mt-0.5"><span class="text-slate-500">Earnings in the window:</span> ' + inWin + ' &middot; ' + nxt + '</div>';
     var chart = sparkline(s, cur, win, nowWord, span);
-    if (chart) h += '<hr class="vol-sep">';
-    h += chart;
     if (chart) {
-      h += '<div class="vol-cap">Implied volatility by trading day' + (cur != null ? '; the dashed line is ' + nowWord : '') +
-           '; the shaded band is the range over the past ' + wd + ' days' + (win.length ? '; amber E = an earnings day' : '') + '.</div>';
+      vol += '<hr class="vol-sep">' + chart +
+             '<div class="vol-cap">Implied volatility by trading day' + (cur != null ? '; the dashed line is ' + nowWord : '') +
+             '; the shaded band is the range over the past ' + wd + ' days' + (win.length ? '; amber E = an earnings day' : '') + '.</div>';
     }
-    h += '<hr class="vol-sep">' + '<div class="vol-cap">Click: contract history in a new window.</div>';   // v4.198: was the cell's own tooltip
-    return h;
+    return done('');
   }
   function showPop(td, ev) {
     var j = V.last, pop = $('volPop');
@@ -1298,7 +1302,7 @@
     var key = td.dataset.r + ',' + td.dataset.c;
     var s = V.hist && V.hist.cells[key];
     var xf = extraAt(j, +td.dataset.r, +td.dataset.c);
-    pop.innerHTML = popoverHtml(label, cur, s, key, ex.date, figsHtml(j, xf) + modelWorkHtml(j, xf, k, ex, cur));
+    pop.innerHTML = popoverHtml(label, cur, s, key, ex.date, figsHtml(j, xf), modelWorkHtml(j, xf, k, ex, cur));
     pop.classList.remove('hidden');
     var pw = pop.offsetWidth || 320, ph = pop.offsetHeight || 200;
     var x = ev.clientX + 14, y = ev.clientY + 14;

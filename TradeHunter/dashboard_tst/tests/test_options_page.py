@@ -1260,16 +1260,24 @@ def test_the_surface_cells_open_the_contract_history_in_a_new_window(client, fak
     assert "var iv = cur != null ? +cur / 100 : null;" in mw and "T = Math.max(days, 0.5) / 365" in mw
     assert "var d1 = (Math.log(S / K) + (r + iv * iv / 2) * T) / sT, d2 = d1 - sT, disc = Math.exp(-r * T);" in mw
     assert "price = isCall ? S * normCdf(d1) - K * disc * normCdf(d2) : K * disc * normCdf(-d2) - S * normCdf(-d1);" in mw
-    assert "<b>Model price working</b>" in mw and "the same as the pass stored." in mw and "No dividend; T has a half-day floor." in mw
+    assert "return popPanel('Model price', '<div class=\"vol-pop-row\"><span>Black-Scholes, from the inputs below</span>" in mw
+    assert "the same as the pass stored." in mw and "No dividend; T has a half-day floor." in mw
     assert "function normCdf(z) {" in html and "0.3275911" in html
-    assert "figsHtml(j, xf) + modelWorkHtml(j, xf, k, ex, cur));" in html
+    assert "figsHtml(j, xf), modelWorkHtml(j, xf, k, ex, cur));" in html
     assert ".vol-pop .vol-pop-sec { border-top: 1px solid var(--tv-border);" in html
     # v4.206 (user: "separated by way of separator so that each information is neatly separated"): a rule before
     # the history block, the earnings row, the chart, the click hint (both cards)
     assert ".vol-pop .vol-sep { border: 0; border-top: 1px solid var(--tv-border); margin: .4rem 0 .3rem; }" in html
     pop6 = html[html.index("function popoverHtml("):html.index("function showPop(")]
-    assert pop6.count("'<hr class=\"vol-sep\">'") == 5
-    assert "if (chart) h += '<hr class=\"vol-sep\">';" in pop6
+    # v4.207 (user: "use panel to separate the following: Greeks / Volatility / Model Price"): three titled panels,
+    # the rules now only inside the Volatility panel (before the earnings row and the chart)
+    assert "function popPanel(title, body)" in html and "'<div class=\"vol-panel\"><div class=\"vol-panel-t\">' + title + '</div>' + body + '</div>'" in html
+    assert "return h + popPanel('Greeks', figs || '') + popPanel('Volatility', vol + (extra || '')) + (model || '') +" in pop6
+    assert pop6.count("'<hr class=\"vol-sep\">'") == 2
+    assert ".vol-pop .vol-panel { border: 1px solid var(--tv-border); border-radius: .4rem;" in html
+    assert ".vol-pop .vol-panel-t { font-size: 10px; text-transform: uppercase;" in html
+    fg = html[html.index("function figsHtml("):html.index("var GREY = ")]
+    assert "rows.push(['Model price'" not in fg                     # the model price has its own panel
     cmp6 = html[html.index("function cmPopHtml("):html.index("function placePop(")]
     assert "h += '<hr class=\"vol-sep\">' + '<div class=\"vol-cap\">Click: contract history of '" in cmp6
     assert "'\">' + esc(fromIso) + '</text>'" in sp_ and "text-anchor=\"end\">' + esc(toIso) + '</text></svg>'" in sp_
@@ -1293,7 +1301,7 @@ def test_the_surface_tiles_are_configurable(client, fake):
                    "'th.vol.tile'", "var TILE_DEFAULT = {g: ['d', 'g', 't', 'v'], b: 'last'};",
                    "var x = extraAt(j, r, c);", "'<div class=\"vol-l2\">' + tileTop(x) + '</div><div class=\"vol-iv\">'",
                    "'<div class=\"vol-l3\">' + tileBottom(x) + '</div></td>'",
-                   "figsHtml(j, xf) + modelWorkHtml(j, xf, k, ex, cur));", "j.has_greeks === false",
+                   "figsHtml(j, xf), modelWorkHtml(j, xf, k, ex, cur));", "j.has_greeks === false",
                    "$('volTile').addEventListener('change', function () { tileRead(); paintTiles(); });",
                    "Model price", "Open interest", "'Delta'", "'Gamma'", "'Theta'", "'Vega'",
                    "g[2].charAt(0) + ' ' + greekText("):      # v4.168: the initials D G T V, not the signs
