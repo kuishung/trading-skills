@@ -1149,6 +1149,9 @@ def test_the_router_serves_the_screener_paths():
         ("/options", ("GET",)),
         ("/options/history", ("GET",)),                     # v4.159: one contract's history, its own window
         ("/options/api/watchlists", ("GET",)),              # v4.165: the surface's watchlist pane
+        ("/options/interpolation", ("GET",)),               # v4.209: one interpolated cell opened up (3 tabs)
+        ("/options/api/cm/point", ("GET",)),
+        ("/options/api/cm/series", ("GET",)),
         ("/options/api/liquidity", ("GET",)),               # v4.186: the pane's option-liquidity verdicts
         ("/options/api/screens", ("GET",)),
         ("/options/api/spec", ("GET",)),
@@ -1279,7 +1282,7 @@ def test_the_surface_cells_open_the_contract_history_in_a_new_window(client, fak
     fg = html[html.index("function figsHtml("):html.index("var GREY = ")]
     assert "rows.push(['Model price'" not in fg                     # the model price has its own panel
     cmp6 = html[html.index("function cmPopHtml("):html.index("function placePop(")]
-    assert "h += '<hr class=\"vol-sep\">' + '<div class=\"vol-cap\">Click: contract history of '" in cmp6
+    assert "h += '<hr class=\"vol-sep\">' + '<div class=\"vol-cap\">Click: the interpolation page in a new window" in cmp6
     assert "'\">' + esc(fromIso) + '</text>'" in sp_ and "text-anchor=\"end\">' + esc(toIso) + '</text></svg>'" in sp_
     assert ".vol-grid td.vol-cell { cursor: pointer; }" in html
     # squarish cells, the IV figure centred both ways; an empty reserved line takes no room
@@ -1768,7 +1771,6 @@ def test_the_page_has_the_two_tabs_and_the_horizons(client, fake):
                    "if (TAB === 'cm') { runCm(quiet); return; }",
                    "show($('volHz'), TAB === 'cm');",
                    "a listed expiry falls on this horizon - this is that contract\\'s own IV",
-                   "openContract(j.symbol, nearest.date, right, nearest.strike, day)",
                    "weighted by time (linear in total variance) = <b>", "') falls on ' + hz.days + 'd - its own IV",
                    "model price",
                    "'d</th>'", "linear in total variance · legs: every listed expiry at least 7 days out "
@@ -1812,9 +1814,14 @@ def test_the_page_has_the_two_tabs_and_the_horizons(client, fake):
     assert "' % = strike ' + esc(num(row.strike, 2)) + ': between '" in js and "'), by strike = <b>'" in js
     # the click: the nearer listed expiry AND the nearer listed strike, the cell's own right
     click = html[html.index("$('cmTable').addEventListener('click'"):]
-    click = click[:click.index("openContract(") + 80]
-    assert "nearest = cmNear(g, r, c)" in click and "var right = sideOf(g, k);" in click
-    assert "nearest = Object.assign({}, nearest, {strike: k})" in click
+    click = click[:click.index("window.open('/options/interpolation") + 120]
+    # v4.209 (user: "when clicked in, we need to see how the interpolated works"): the click opens the Interpolation
+    # page (the cell's horizon and moneyness / strike, the day, the rank window) instead of a leg's history
+    assert "window.open('/options/interpolation?' + q.toString(), '_blank', 'noopener');" in click
+    assert "if (g.rows && g.rows[r]) q.set('m', String(g.rows[r].m)); else q.set('k', String(k));" in click
+    assert "h: String(g.horizons[c].days)" in click and "window: String(winChosen())" in click
+    assert "openContract(" not in click
+    assert "Click: the interpolation page in a new window" in html
     # the cm request never carries the Expiries setting (all legs, always)
     cmp = html[html.index("function cmParams("):html.index("function syncTick(")]
     assert "exp:" not in cmp and "dte" not in cmp.split("return")[1]

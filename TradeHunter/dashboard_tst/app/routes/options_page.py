@@ -1769,6 +1769,80 @@ async def api_surface_cm(symbol: str = "", day: str = "latest", side: str = "", 
     return JSONResponse(out)
 
 
+@router.get("/interpolation", response_class=HTMLResponse)
+def options_interpolation(request: Request, symbol: str = "", day: str = "latest", h: str = "90", m: str = "",
+                          k: str = "", side: str = "", window: str = "", user: User = Depends(require_user)):
+    """v4.209: one interpolated cell opened up, in its own window (a click on the Interpolated
+    tab): three tabs - the working drawn on the contract table, the term-structure and smile
+    charts, and the day-by-day interpolated history over the rank window.
+    ``?symbol=&day=latest|YYYY-MM-DD&h=90&m=0.95|k=420&side=otm&window=365``."""
+    from ..services import vol_cm_point, vol_history
+
+    sym = (symbol or "").strip().upper()[:20]
+    try:
+        hh = vol_cm_point.norm_h(h or 90)
+    except ValueError:
+        hh = 90
+    mm = kk = None
+    try:
+        if (m or "").strip():
+            mm = vol_cm_point.norm_m(m)
+        elif (k or "").strip():
+            kk = vol_cm_point.norm_k(k)
+    except ValueError:
+        mm, kk = None, None
+    if mm is None and kk is None:
+        mm = 1.0
+    try:
+        wd = vol_history.norm_window(window or None)
+    except ValueError:
+        wd = vol_history.DEFAULT_WINDOW
+    boot = {"symbol": sym, "day": (day or "latest").strip() or "latest", "h": hh, "m": mm, "k": kk,
+            "side": (side or "").strip().lower() or "otm", "window": wd, "today": clock.et_today()}
+    back = "/options?symbol=" + sym + "&tab=cm" if sym else "/options?tab=cm"
+    return templates.TemplateResponse(request, "options_interp.html", {"user": user, "boot": boot, "back_url": back})
+
+
+@router.get("/api/cm/point")
+async def api_cm_point(symbol: str = "", day: str = "latest", h: str = "90", m: str = "", k: str = "", side: str = "",
+                       user: User = Depends(require_user)):
+    """v4.209: one interpolated cell opened up (``vol_cm_point.point_for``): the legs, the weights,
+    the contract table around it, the term structure per leg strike, the smile at the horizon and
+    the greeks. A bad ``h`` / ``m`` / ``k`` is a 400 ``{ok: false, error}``."""
+    from ..services import vol_cm_point
+
+    try:
+        hh = vol_cm_point.norm_h(h)
+        mm = vol_cm_point.norm_m(m) if (m or "").strip() else None
+        kk = vol_cm_point.norm_k(k) if (k or "").strip() and mm is None else None
+        if mm is None and kk is None:
+            raise ValueError("give a moneyness (m) or a strike (k)")
+    except ValueError as exc:
+        return _err(str(exc))
+    return JSONResponse(await run_in_threadpool(_hist_call, vol_cm_point.point_for, symbol, day or "latest", hh,
+                                                m=mm, k=kk, side=side or None))
+
+
+@router.get("/api/cm/series")
+async def api_cm_series(symbol: str = "", h: str = "90", m: str = "", k: str = "", side: str = "", window: str = "",
+                        user: User = Depends(require_user)):
+    """v4.209: the interpolated history of one cell over the rank window (``vol_cm_series.series``):
+    a row per converted session with that day's IV, legs and weights, and the range / rank stats."""
+    from ..services import vol_cm_point, vol_cm_series, vol_history
+
+    try:
+        hh = vol_cm_point.norm_h(h)
+        mm = vol_cm_point.norm_m(m) if (m or "").strip() else None
+        kk = vol_cm_point.norm_k(k) if (k or "").strip() and mm is None else None
+        if mm is None and kk is None:
+            raise ValueError("give a moneyness (m) or a strike (k)")
+        wd = vol_history.norm_window(window or None)
+    except ValueError as exc:
+        return _err(str(exc))
+    return JSONResponse(await run_in_threadpool(_hist_call, vol_cm_series.series, symbol, hh, m=mm, k=kk,
+                                                side=side or None, window_days=wd))
+
+
 @router.get("/api/history/chain")
 async def api_history_chain(symbol: str = "", day: str = "", user: User = Depends(require_user)):
     """The contracts of ``symbol`` that traded on ``day`` (the contract pickers)."""

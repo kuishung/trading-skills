@@ -247,11 +247,13 @@ def _by_strike(grid: dict, hs: tuple[int, ...], r: float) -> tuple[dict, int]:
              "n_cells": n}, len(used))
 
 
-def _by_moneyness(sg: dict, hs: tuple[int, ...], spot: float, side: str, r: float) -> dict:
-    """Step 2 (strike) per moneyness level, from step 1's by-strike grid ``sg``."""
+def _by_moneyness(sg: dict, hs: tuple[int, ...], spot: float, side: str, r: float, levels=MONEYNESS) -> dict:
+    """Step 2 (strike) per moneyness level, from step 1's by-strike grid ``sg``. ``levels`` =
+    the moneyness levels to derive (the tab's fixed rows by default; one level for the
+    interpolation page, v4.209)."""
     strikes = sg["strikes"]
     rows, cells, exact, exact_k, brackets, extra, nearest = [], [], [], [], [], [], []
-    for m in MONEYNESS:
+    for m in levels:
         K = spot * m
         right = _right(side, K, spot)
         c_row, e_row, ek_row, b_row, x_row, n_row = [], [], [], [], [], []

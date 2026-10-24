@@ -1,0 +1,367 @@
+{% extends "base.html" %}
+{% block title %}Interpolation &middot; TradeHunter{% endblock %}
+{% block content %}
+{# v4.209 (user: "when clicked in, we need to see how the interpolated works and represented by graphical ... a
+   table based on original contract ... then show the interpolate based on a linear line of moneyness and the time
+   horizon ... make it in a new page with 3 tabs"): one interpolated cell opened up. Three tabs - Working (the
+   listed contracts around the cell with the horizon and level lines drawn across them, and the arithmetic),
+   Charts (the term structure per leg strike, the smile at the horizon), History (the same cell day by day over the
+   rank window). Data: GET /options/api/cm/point and /options/api/cm/series. Context: user, boot, back_url. #}
+<style>
+  .ip-tabs { display: flex; gap: .25rem; border-bottom: 1px solid var(--tv-border-2); }
+  .ip-tabs button { padding: .35rem .75rem; font-size: 12px; color: var(--tv-muted); background: transparent; border: 0;
+                    border-bottom: 2px solid transparent; cursor: pointer; }
+  .ip-tabs button:hover { color: var(--tv-text-hi); }
+  .ip-tabs button[aria-selected="true"] { color: var(--tv-text-hi); border-bottom-color: var(--tv-accent); }
+  .ip-card { background: var(--tv-panel); border: 1px solid var(--tv-border); border-radius: .6rem; padding: .6rem .8rem; margin-top: .75rem; }
+  .ip-card h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--tv-muted); margin: 0 0 .4rem; font-weight: 600; }
+  .ip-grid { border-collapse: separate; border-spacing: 0; font-variant-numeric: tabular-nums; }
+  .ip-grid th { font-weight: 500; color: var(--tv-muted); font-size: 11px; padding: .25rem .4rem; text-align: center; white-space: nowrap; }
+  .ip-grid th.k { text-align: right; padding-right: .6rem; color: var(--tv-text); }
+  .ip-grid td { width: 4.6rem; height: 3rem; text-align: center; border: 1px solid var(--tv-border); font-size: 13px; font-weight: 600;
+                color: var(--tv-text-hi); background: rgba(96,165,250,.08); }
+  .ip-grid td small { display: block; font-weight: 400; font-size: 10px; color: var(--tv-muted); }
+  .ip-grid td.leg { background: rgba(245,158,11,.22); outline: 2px solid #f59e0b; outline-offset: -2px; }
+  .ip-grid td.dim { opacity: .45; }
+  .ip-grid td.live { cursor: pointer; } .ip-grid td.live:hover { outline: 1px solid var(--tv-accent); outline-offset: -1px; }
+  .ip-wrap { position: relative; display: inline-block; max-width: 100%; overflow: auto; }
+  .ip-ov { position: absolute; inset: 0; pointer-events: none; }
+  .ip-vline { position: absolute; border-left: 2px dashed #34d399; }
+  .ip-hline { position: absolute; border-top: 2px dashed #34d399; }
+  .ip-pt { position: absolute; width: 12px; height: 12px; border-radius: 50%; transform: translate(-50%,-50%); border: 2px solid var(--tv-panel); }
+  .ip-pt.mid { background: #a78bfa; } .ip-pt.res { background: #34d399; width: 16px; height: 16px; }
+  .ip-tag { position: absolute; font-size: 11px; font-weight: 700; white-space: nowrap; transform: translate(8px,-50%); }
+  .ip-tag.mid { color: #a78bfa; } .ip-tag.res { color: #34d399; } .ip-tag.hz { color: #34d399; transform: translate(-50%,0); }
+  .ip-w { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 12px; }
+  .ip-w th { text-align: right; color: var(--tv-muted); font-weight: 500; border-bottom: 1px solid var(--tv-border); padding: .25rem .4rem; font-size: 11px; white-space: nowrap; }
+  .ip-w td { text-align: right; padding: .25rem .4rem; border-bottom: 1px solid var(--tv-border); white-space: nowrap; }
+  .ip-w th:first-child, .ip-w td:first-child { text-align: left; }
+  .ip-w tr.leg td { color: #f59e0b; } .ip-w tr.mid td { color: #a78bfa; } .ip-w tr.res td { color: #34d399; font-weight: 600; }
+  .ip-w td.flag { color: #f87171; }
+  .ip-f { font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; background: rgba(2,6,23,.35); border-radius: .4rem; padding: .45rem .6rem; margin-top: .4rem; color: var(--tv-text); }
+  html.light .ip-f { background: rgba(15,23,42,.06); }
+  .ip-legend { display: flex; flex-wrap: wrap; gap: .8rem; font-size: 11px; color: var(--tv-muted); margin-top: .4rem; }
+  .ip-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: -1px; margin-right: 5px; }
+  .ip-steps { display: flex; gap: .3rem; margin-bottom: .5rem; }
+  .ip-steps button { font-size: 11px; padding: .1rem .55rem; border-radius: 9999px; border: 1px solid var(--tv-border-2); color: var(--tv-muted); background: transparent; cursor: pointer; }
+  .ip-steps button[aria-pressed="true"] { border-color: #34d399; color: #34d399; }
+  svg.ip-svg { width: 100%; height: auto; display: block; }
+  .ip-svg .ax { stroke: var(--tv-border-2); } .ip-svg .lbl { fill: var(--tv-muted); font-size: 10px; }
+  .ip-svg .dot { fill: #60a5fa; } .ip-svg .dot-leg { fill: #f59e0b; } .ip-svg .dot-res { fill: #34d399; stroke: var(--tv-panel); stroke-width: 1.5; }
+  .ip-svg .path { stroke: #60a5fa; stroke-width: 1.2; fill: none; opacity: .75; } .ip-svg .ivp { stroke: #a78bfa; stroke-width: 1.2; fill: none; stroke-dasharray: 3 3; }
+  .ip-svg .seg { stroke: #f59e0b; stroke-width: 2; } .ip-svg .hz { stroke: #34d399; stroke-width: 1.2; stroke-dasharray: 4 3; }
+  .ip-svg .px { stroke: #fb923c; stroke-width: 1.2; stroke-dasharray: 2 3; }
+  .ip-svg .lt { fill: #f59e0b; font-size: 10px; font-weight: 600; } .ip-svg .rt { fill: #34d399; font-size: 11px; font-weight: 700; }
+  .ip-svg .band { fill: rgba(96,165,250,.08); } .ip-svg .line { stroke: #60a5fa; stroke-width: 1.5; fill: none; }
+  .ip-pill { border: 1px solid var(--tv-border-2); border-radius: 9999px; padding: .1rem .6rem; font-size: 11px; color: var(--tv-muted); }
+  .ip-pill b { color: var(--tv-text-hi); font-weight: 600; }
+  .ip-msg { font-size: 12px; color: var(--tv-muted); padding: .5rem 0; }
+</style>
+<div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+  <h1 id="ipTitle" class="text-lg font-semibold">Interpolation</h1>
+  <span id="ipSub" class="text-xs text-slate-500"></span>
+  <a href="{{ back_url }}" class="text-xs text-slate-400 hover:text-slate-200 sm:ml-auto whitespace-nowrap">&larr; Interpolated surface</a>
+</div>
+<div class="ip-tabs mt-2" role="tablist">
+  <button type="button" role="tab" data-tab="work" aria-selected="true">Working on the contract table</button>
+  <button type="button" role="tab" data-tab="charts" aria-selected="false">Term structure &amp; smile</button>
+  <button type="button" role="tab" data-tab="hist" aria-selected="false">Interpolated history</button>
+</div>
+<div id="ipMsg" class="ip-msg">Loading&hellip;</div>
+<section id="tabWork" role="tabpanel"></section>
+<section id="tabCharts" role="tabpanel" class="hidden"></section>
+<section id="tabHist" role="tabpanel" class="hidden"></section>
+<script>
+(function () {
+  var BOOT = {{ boot | tojson }};
+  var $ = function (id) { return document.getElementById(id); };
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; }); }
+  function num(v, d) { return (v == null || !isFinite(v)) ? '-' : Number(v).toFixed(d); }
+  function pct(v) { return v == null ? '-' : num(v, 1) + '%'; }
+  function money(v) { return (v == null || !isFinite(v)) ? '-' : '$' + Number(v).toFixed(2); }
+  function shortDate(iso) { var m = {'01':'Jan','02':'Feb','03':'Mar','04':'Apr','05':'May','06':'Jun','07':'Jul','08':'Aug','09':'Sep','10':'Oct','11':'Nov','12':'Dec'}; var p = String(iso || '').split('-'); return p.length === 3 ? m[p[1]] + ' ' + (+p[2]) + " '" + p[0].slice(2) : iso; }
+  function show(el, on) { el.classList.toggle('hidden', !on); }
+  function levelWords(p) { return p.fixed === 'moneyness' ? num(p.pct, 1) + '% (strike ' + num(p.k, 2) + ')' : 'strike ' + num(p.k, 2); }
+  function rightWord(p) { return p.right === 'C' ? 'call' : 'put'; }
+  function contractUrl(sym, date, right, strike, day) {
+    var q = new URLSearchParams({symbol: sym, expiry: date, right: right, strike: String(strike)});
+    if (day && day !== 'latest') q.set('day', day);
+    return '/options/history?' + q.toString();
+  }
+  var P = null, S = null, STEP = 'both';
+  // ── tabs ──
+  var TAB_KEY = 'th.interp.tab';
+  function tabSet(name) {
+    document.querySelectorAll('.ip-tabs button').forEach(function (b) { b.setAttribute('aria-selected', b.dataset.tab === name ? 'true' : 'false'); });
+    show($('tabWork'), name === 'work'); show($('tabCharts'), name === 'charts'); show($('tabHist'), name === 'hist');
+    try { localStorage.setItem(TAB_KEY, name); } catch (e) {}
+    if (name === 'work' && P) drawOverlay();
+    if (name === 'hist' && !S) loadSeries();
+  }
+  document.querySelectorAll('.ip-tabs button').forEach(function (b) { b.addEventListener('click', function () { tabSet(b.dataset.tab); }); });
+  // ── the working tab ──
+  function renderWork(p) {
+    var t = p.table, h = '';
+    if (!p.iv) {
+      $('tabWork').innerHTML = '<div class="ip-card"><div class="ip-msg">' + esc(p.why || 'nothing to interpolate here') + '</div></div>';
+      return;
+    }
+    if (t) {
+      h += '<div class="ip-card"><h2>The contract table around the cell &middot; listed expiries across, listed strikes down &middot; each figure is that contract\'s own IV</h2>' +
+           '<div class="ip-steps"><button type="button" data-step="both" aria-pressed="true">Both steps</button>' +
+           '<button type="button" data-step="time" aria-pressed="false">Step 1 &middot; time</button>' +
+           '<button type="button" data-step="strike" aria-pressed="false">Step 2 &middot; strike</button></div>' +
+           '<div class="ip-wrap" id="ipWrap"><table class="ip-grid" id="ipGrid"><tr><th></th>';
+      t.expiries.forEach(function (e) { h += '<th>' + esc(shortDate(e.date)) + '<br><small>' + e.dte + 'd</small></th>'; });
+      h += '</tr>';
+      t.strikes.forEach(function (s, r) {
+        h += '<tr><th class="k">' + esc(num(s.strike, 2)) + '</th>';
+        t.expiries.forEach(function (e, c) {
+          var v = t.cells[r][c], leg = s.leg && e.leg && v != null;
+          h += '<td class="' + (v == null ? 'dim' : (leg ? 'leg live' : 'dim live')) + '" data-r="' + r + '" data-c="' + c + '"' +
+               (v != null ? ' title="' + esc(p.symbol + ' ' + num(s.strike, 2) + ' ' + esc(shortDate(e.date)) + ' - click: contract history in a new window') + '"' : '') + '>' +
+               (v == null ? '&middot;' : num(v, 1) + (leg ? '<small>leg</small>' : '')) + '</td>';
+        });
+        h += '</tr>';
+      });
+      h += '</table><div class="ip-ov" id="ipOv"></div></div>' +
+           '<div class="ip-legend"><span><i style="background:#f59e0b"></i>the legs: listed contracts around the horizon and the level</span>' +
+           '<span><i style="background:#a78bfa"></i>step 1: each leg row cut at the horizon, linear in total variance</span>' +
+           '<span><i style="background:#34d399"></i>step 2: the two cuts joined and cut at the level, linear in strike</span>' +
+           '<span>dimmed: listed contracts this cell does not use &middot; click any contract: its history</span></div></div>';
+    }
+    // the working tables
+    var tm = p.time, st = p.strike;
+    h += '<div class="ip-card"><h2>The working</h2>';
+    if (tm) {
+      h += '<table class="ip-w"><tr><th>Step 1 &middot; time' + (tm.exact ? ' (a listed expiry falls on the horizon: its own IV)' : '') + '</th><th>Leg ' + tm.lo.dte + 'd IV</th><th>Leg ' + tm.hi.dte + 'd IV</th><th>&sigma;&sup2;T ' + tm.lo.dte + 'd</th><th>&sigma;&sup2;T ' + tm.hi.dte + 'd</th><th>w (on ' + tm.lo.dte + 'd)</th><th>&sigma;&sup2;T at ' + p.h + 'd</th><th>IV at ' + p.h + 'd</th></tr>';
+      tm.per_strike.forEach(function (q) {
+        h += '<tr class="mid"><td>Strike ' + num(q.strike, 2) + '</td><td>' + pct(q.lo_iv) + '</td><td>' + pct(q.hi_iv) + '</td><td>' + num(q.lo_var, 4) + '</td><td>' + num(q.hi_var, 4) + '</td><td>' + num(tm.w, 3) + '</td><td>' + num(q.var, 4) + '</td><td>' + pct(q.iv) + '</td></tr>';
+      });
+      h += '</table><div class="ip-f">T = days / 365 &rarr; ' + num(tm.lo.years, 4) + ', ' + num(tm.hi.years, 4) + '; horizon ' + num(p.years, 4) +
+           ' &nbsp;&middot;&nbsp; w = (T<sub>hi</sub> &minus; T<sub>h</sub>) / (T<sub>hi</sub> &minus; T<sub>lo</sub>) = (' + num(tm.hi.years, 4) + ' &minus; ' + num(p.years, 4) + ') / (' + num(tm.hi.years, 4) + ' &minus; ' + num(tm.lo.years, 4) + ') = ' + num(tm.w, 3) +
+           '<br>&sigma;&sup2;T(' + p.h + 'd) = w&middot;&sigma;&sup2;T(' + tm.lo.dte + 'd) + (1 &minus; w)&middot;&sigma;&sup2;T(' + tm.hi.dte + 'd) &nbsp;&middot;&nbsp; IV = &radic;(&sigma;&sup2;T / ' + num(p.years, 4) + ')</div>';
+    }
+    if (st) {
+      h += '<table class="ip-w" style="margin-top:.6rem"><tr><th>Step 2 &middot; strike, at ' + p.h + ' days' + (st.exact ? ' (a listed strike falls on the level)' : '') + '</th><th>Strike</th><th>IV from step 1</th><th>w</th><th>Result</th></tr>';
+      if (!st.exact) {
+        h += '<tr class="mid"><td>Below the level</td><td>' + num(st.k_lo.strike, 2) + '</td><td>' + pct(st.k_lo.iv) + '</td><td>' + num(st.wk, 3) + '</td><td></td></tr>' +
+             '<tr class="mid"><td>Above the level</td><td>' + num(st.k_hi.strike, 2) + '</td><td>' + pct(st.k_hi.iv) + '</td><td>' + num(1 - st.wk, 3) + '</td><td></td></tr>';
+      }
+      h += '<tr class="res"><td>At the level, ' + num(st.K, 2) + (p.fixed === 'moneyness' ? ' (price ' + num(p.spot, 2) + ' &times; ' + num(p.pct, 1) + '%)' : '') + '</td><td>' + num(st.K, 2) + '</td><td></td><td></td><td>' + pct(p.iv) + '</td></tr></table>';
+      if (!st.exact) h += '<div class="ip-f">w = (' + num(st.k_hi.strike, 2) + ' &minus; ' + num(st.K, 2) + ') / (' + num(st.k_hi.strike, 2) + ' &minus; ' + num(st.k_lo.strike, 2) + ') = ' + num(st.wk, 3) +
+                         ' &nbsp;&middot;&nbsp; IV = ' + num(st.wk, 3) + ' &times; ' + num(st.k_lo.iv, 1) + ' + ' + num(1 - st.wk, 3) + ' &times; ' + num(st.k_hi.iv, 1) + ' = ' + pct(p.iv) + '</div>';
+    } else {
+      h += '<div class="ip-f">Fixed strike ' + num(p.k, 2) + ': step 1 is the whole of it &rarr; IV ' + pct(p.iv) + '</div>';
+    }
+    var g = p.greeks;
+    if (g && g.legs && g.legs.length) {
+      h += '<table class="ip-w" style="margin-top:.6rem"><tr><th>Greeks and price &middot; the same weights</th><th>Delta</th><th>Gamma</th><th>Theta</th><th>Vega</th><th>Model price</th></tr>';
+      g.legs.forEach(function (l) {
+        h += '<tr class="leg"><td>Leg ' + num(l.strike, 2) + ' ' + (l.right === 'C' ? 'call' : 'put') + ' &middot; ' + esc(shortDate(l.date)) + ' (' + l.dte + 'd) &middot; IV ' + pct(l.iv) + '</td><td>' + num(l.d, 3) + '</td><td>' + num(l.g, 4) + '</td><td>' + num(l.t, 3) + '</td><td>' + num(l.v, 3) + '</td><td></td></tr>';
+      });
+      var r = g.result || {};
+      h += '<tr class="res"><td>Cell &middot; ' + num(p.k, 2) + ' ' + rightWord(p) + ', ' + p.h + 'd</td><td>' + num(r.d, 3) + '</td><td>' + num(r.g, 4) + '</td><td>' + num(r.t, 3) + '</td><td>' + num(r.v, 3) + '</td><td>' + money(r.price) + (r.price != null ? ' &middot; Black-Scholes at ' + pct(p.iv) + ', r ' + num(p.rate * 100, 1) + '%, T ' + num(p.years, 4) : '') + '</td></tr></table>';
+      if (!g.has_greeks) h += '<div class="ip-msg">Greeks are on the latest pass only (a past day\'s legs carry an IV solved from the close, no greeks).</div>';
+    }
+    h += '</div>';
+    $('tabWork').innerHTML = h;
+    document.querySelectorAll('.ip-steps button').forEach(function (b) {
+      b.addEventListener('click', function () { STEP = b.dataset.step; document.querySelectorAll('.ip-steps button').forEach(function (x) { x.setAttribute('aria-pressed', x === b ? 'true' : 'false'); }); drawOverlay(); });
+    });
+    var grid = $('ipGrid');
+    if (grid) grid.addEventListener('click', function (e) {
+      var td = e.target.closest ? e.target.closest('td.live') : null;
+      if (!td || !t) return;
+      var s = t.strikes[+td.dataset.r], ex = t.expiries[+td.dataset.c];
+      var right = p.side === 'call' ? 'C' : (p.side === 'put' ? 'P' : (s.strike < p.spot ? 'P' : 'C'));
+      window.open(contractUrl(p.symbol, ex.date, right, s.strike, p.source === 'latest' ? null : p.on), '_blank', 'noopener');
+    });
+    drawOverlay();
+  }
+  function drawOverlay() {
+    var p = P, t = p && p.table, ov = $('ipOv'), grid = $('ipGrid'), wrap = $('ipWrap');
+    if (!t || !ov || !grid || t.lo_col == null || t.hi_col == null) return;
+    var rows = grid.rows, w0 = wrap.getBoundingClientRect();
+    function colX(c) { var cell = rows[0].cells[c + 1].getBoundingClientRect(); return cell.left + cell.width / 2 - w0.left + wrap.scrollLeft; }
+    function rowY(r) { var cell = rows[r + 1].cells[0].getBoundingClientRect(); return cell.top + cell.height / 2 - w0.top + wrap.scrollTop; }
+    var head = rows[0].getBoundingClientRect(), gtop = head.bottom - w0.top, gbot = grid.getBoundingClientRect().bottom - w0.top;
+    var x = t.lo_col === t.hi_col ? colX(t.lo_col) : colX(t.lo_col) + (colX(t.hi_col) - colX(t.lo_col)) * t.hpos;
+    var h = '';
+    var showT = STEP !== 'strike', showK = STEP !== 'time';
+    if (showT) h += '<div class="ip-vline" style="left:' + x + 'px;top:' + (gtop - 4) + 'px;height:' + (gbot - gtop + 4) + 'px"></div>' +
+                    '<div class="ip-tag hz" style="left:' + x + 'px;top:' + (gtop - 18) + 'px">' + p.h + 'd</div>';
+    var mids = p.time ? p.time.per_strike : [];
+    var rowOf = {}; t.strikes.forEach(function (s, i) { rowOf[String(s.strike)] = i; });
+    var ys = [];
+    mids.forEach(function (q) {
+      var r = rowOf[String(q.strike)]; if (r == null) return;
+      var y = rowY(r); ys.push(y);
+      if (showT) h += '<div class="ip-pt mid" style="left:' + x + 'px;top:' + y + 'px"></div><div class="ip-tag mid" style="left:' + (x + 6) + 'px;top:' + (y - 11) + 'px">' + num(q.iv, 1) + ' at ' + num(q.strike, 2) + '</div>';
+    });
+    if (showK && p.strike && t.lo_row != null && t.hi_row != null) {
+      var y = t.lo_row === t.hi_row ? rowY(t.lo_row) : rowY(t.lo_row) + (rowY(t.hi_row) - rowY(t.lo_row)) * (t.kpos == null ? 0 : t.kpos);
+      var left = rows[0].cells[1].getBoundingClientRect().left - w0.left - 2, right = grid.getBoundingClientRect().right - w0.left;
+      h += '<div class="ip-hline" style="left:' + left + 'px;top:' + y + 'px;width:' + (right - left) + 'px"></div>' +
+           '<div class="ip-pt res" style="left:' + x + 'px;top:' + y + 'px"></div>' +
+           '<div class="ip-tag res" style="left:' + (x + 8) + 'px;top:' + y + 'px">' + pct(p.iv) + (p.fixed === 'moneyness' ? ' at ' + num(p.k, 2) + ' = price &times; ' + num(p.pct, 1) + '%' : '') + '</div>';
+    }
+    ov.innerHTML = h;
+  }
+  window.addEventListener('resize', function () { if (P) drawOverlay(); });
+  // ── the charts tab ──
+  function termSvg(p, tr) {
+    var pts = tr.points.filter(function (q) { return q.var != null; });
+    if (pts.length < 2) return '<div class="ip-msg">Fewer than two listed expiries have a value at strike ' + num(tr.strike, 2) + '.</div>';
+    var W = 640, H = 230, L = 46, R = 70, T = 14, B = 40;
+    var xs = pts.map(function (q) { return q.dte; }).concat([p.h]);
+    var x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
+    var vmax = Math.max.apply(null, pts.map(function (q) { return q.var; }).concat([tr.at ? tr.at.var : 0])) * 1.1 || 1;
+    var ivs = pts.map(function (q) { return q.iv; }); var imin = Math.min.apply(null, ivs), imax = Math.max.apply(null, ivs); if (imax - imin < 1) { imin -= 1; imax += 1; }
+    function X(d) { return L + (W - L - R) * (d - x0) / Math.max(1, x1 - x0); }
+    function Y(v) { return H - B - (H - T - B) * v / vmax; }
+    function YI(v) { return H - B - (H - T - B) * (v - imin) / (imax - imin); }
+    var s = '<svg class="ip-svg" viewBox="0 0 ' + W + ' ' + H + '">';
+    s += '<line class="ax" x1="' + L + '" y1="' + T + '" x2="' + L + '" y2="' + (H - B) + '"/><line class="ax" x1="' + L + '" y1="' + (H - B) + '" x2="' + (W - R) + '" y2="' + (H - B) + '"/>';
+    s += '<text class="lbl" x="4" y="' + (T + 4) + '">&sigma;&sup2;T</text><text class="lbl" x="4" y="' + (Y(vmax / 2) + 3) + '">' + num(vmax / 2, 3) + '</text><text class="lbl" x="' + (W - R + 6) + '" y="' + (T + 4) + '">IV %</text>';
+    s += '<text class="lbl" x="' + (W - R + 6) + '" y="' + (YI(imax) + 3) + '">' + num(imax, 1) + '</text><text class="lbl" x="' + (W - R + 6) + '" y="' + (YI(imin) + 3) + '">' + num(imin, 1) + '</text>';
+    s += '<polyline class="path" points="' + pts.map(function (q) { return X(q.dte).toFixed(1) + ',' + Y(q.var).toFixed(1); }).join(' ') + '"/>';
+    s += '<polyline class="ivp" points="' + pts.map(function (q) { return X(q.dte).toFixed(1) + ',' + YI(q.iv).toFixed(1); }).join(' ') + '"/>';
+    var legs = pts.filter(function (q) { return q.leg; });
+    if (legs.length === 2) s += '<line class="seg" x1="' + X(legs[0].dte).toFixed(1) + '" y1="' + Y(legs[0].var).toFixed(1) + '" x2="' + X(legs[1].dte).toFixed(1) + '" y2="' + Y(legs[1].var).toFixed(1) + '"/>';
+    pts.forEach(function (q) {
+      s += '<circle class="' + (q.leg ? 'dot-leg' : 'dot') + '" cx="' + X(q.dte).toFixed(1) + '" cy="' + Y(q.var).toFixed(1) + '" r="' + (q.leg ? 5 : 3.5) + '"><title>' + esc(shortDate(q.date) + ' - ' + q.dte + 'd - IV ' + num(q.iv, 1) + '%' + (q.usable ? '' : ' (under 7 days: never a leg)')) + '</title></circle>';
+      s += '<text class="lbl" x="' + X(q.dte).toFixed(1) + '" y="' + (H - B + 12) + '" text-anchor="middle">' + q.dte + 'd</text>';
+      if (q.leg) s += '<text class="lt" x="' + X(q.dte).toFixed(1) + '" y="' + (Y(q.var) - 8).toFixed(1) + '" text-anchor="middle">' + num(q.iv, 1) + '%</text>';
+    });
+    if (tr.at && tr.at.var != null) {
+      s += '<line class="hz" x1="' + X(p.h).toFixed(1) + '" y1="' + T + '" x2="' + X(p.h).toFixed(1) + '" y2="' + (H - B) + '"/>' +
+           '<circle class="dot-res" cx="' + X(p.h).toFixed(1) + '" cy="' + Y(tr.at.var).toFixed(1) + '" r="5.5"/>' +
+           '<text class="rt" x="' + (X(p.h) + 7).toFixed(1) + '" y="' + (Y(tr.at.var) + 4).toFixed(1) + '">' + p.h + 'd: ' + num(tr.at.var, 4) + ' &rarr; IV ' + pct(tr.at.iv) + '</text>';
+    }
+    s += '<text class="lbl" x="' + ((L + W - R) / 2).toFixed(1) + '" y="' + (H - 4) + '" text-anchor="middle">days to expiry - listed expiries at strike ' + num(tr.strike, 2) + '</text></svg>';
+    return s;
+  }
+  function smileSvg(p) {
+    var sm = p.smile, pts = sm ? sm.points.filter(function (q) { return q.iv != null; }) : [];
+    if (pts.length < 2) return '<div class="ip-msg">Fewer than two listed strikes have a value at ' + p.h + ' days.</div>';
+    var W = 640, H = 230, L = 46, R = 20, T = 14, B = 40;
+    var ks = pts.map(function (q) { return q.strike; }).concat([sm.K, sm.spot]);
+    var k0 = Math.min.apply(null, ks), k1 = Math.max.apply(null, ks);
+    var ivs = pts.map(function (q) { return q.iv; }); var imin = Math.min.apply(null, ivs), imax = Math.max.apply(null, ivs); if (imax - imin < 1) { imin -= 1; imax += 1; }
+    var pad = (imax - imin) * .15; imin -= pad; imax += pad;
+    function X(k) { return L + (W - L - R) * (k - k0) / Math.max(1e-9, k1 - k0); }
+    function Y(v) { return H - B - (H - T - B) * (v - imin) / (imax - imin); }
+    var s = '<svg class="ip-svg" viewBox="0 0 ' + W + ' ' + H + '">';
+    s += '<line class="ax" x1="' + L + '" y1="' + T + '" x2="' + L + '" y2="' + (H - B) + '"/><line class="ax" x1="' + L + '" y1="' + (H - B) + '" x2="' + (W - R) + '" y2="' + (H - B) + '"/>';
+    s += '<text class="lbl" x="4" y="' + (T + 4) + '">IV %</text><text class="lbl" x="4" y="' + (Y(imax) + 3) + '">' + num(imax, 1) + '</text><text class="lbl" x="4" y="' + (Y(imin) + 3) + '">' + num(imin, 1) + '</text>';
+    s += '<polyline class="path" points="' + pts.map(function (q) { return X(q.strike).toFixed(1) + ',' + Y(q.iv).toFixed(1); }).join(' ') + '"/>';
+    var legs = pts.filter(function (q) { return q.leg; });
+    if (legs.length === 2) s += '<line class="seg" x1="' + X(legs[0].strike).toFixed(1) + '" y1="' + Y(legs[0].iv).toFixed(1) + '" x2="' + X(legs[1].strike).toFixed(1) + '" y2="' + Y(legs[1].iv).toFixed(1) + '"/>';
+    pts.forEach(function (q, i) {
+      s += '<circle class="' + (q.leg ? 'dot-leg' : 'dot') + '" cx="' + X(q.strike).toFixed(1) + '" cy="' + Y(q.iv).toFixed(1) + '" r="' + (q.leg ? 5 : 3.5) + '"><title>' + esc('strike ' + num(q.strike, 2) + ' - IV ' + num(q.iv, 1) + '% (time-interpolated to ' + p.h + 'd)') + '</title></circle>';
+      if (pts.length <= 16 || i % Math.ceil(pts.length / 16) === 0) s += '<text class="lbl" x="' + X(q.strike).toFixed(1) + '" y="' + (H - B + 12) + '" text-anchor="middle">' + num(q.strike, 0) + '</text>';
+      if (q.leg) s += '<text class="lt" x="' + X(q.strike).toFixed(1) + '" y="' + (Y(q.iv) - 8).toFixed(1) + '" text-anchor="middle">' + num(q.iv, 1) + '%</text>';
+    });
+    if (sm.spot) s += '<line class="px" x1="' + X(sm.spot).toFixed(1) + '" y1="' + T + '" x2="' + X(sm.spot).toFixed(1) + '" y2="' + (H - B) + '"/><text class="lbl" x="' + (X(sm.spot) + 4).toFixed(1) + '" y="' + (T + 10) + '" style="fill:#fb923c">price ' + num(sm.spot, 2) + '</text>';
+    if (sm.at != null) s += '<line class="hz" x1="' + X(sm.K).toFixed(1) + '" y1="' + T + '" x2="' + X(sm.K).toFixed(1) + '" y2="' + (H - B) + '"/>' +
+                             '<circle class="dot-res" cx="' + X(sm.K).toFixed(1) + '" cy="' + Y(sm.at).toFixed(1) + '" r="5.5"/>' +
+                             '<text class="rt" x="' + (X(sm.K) + 7).toFixed(1) + '" y="' + (Y(sm.at) - 6).toFixed(1) + '">' + num(sm.K, 2) + (p.fixed === 'moneyness' ? ' = price &times; ' + num(p.pct, 1) + '%' : '') + ' &rarr; ' + pct(sm.at) + '</text>';
+    s += '<text class="lbl" x="' + ((L + W - R) / 2).toFixed(1) + '" y="' + (H - 4) + '" text-anchor="middle">strike - each point is step 1 done at that strike, at ' + p.h + ' days</text></svg>';
+    return s;
+  }
+  function renderCharts(p) {
+    var h = '';
+    if (!p.iv) { $('tabCharts').innerHTML = '<div class="ip-card"><div class="ip-msg">' + esc(p.why || 'nothing to interpolate here') + '</div></div>'; return; }
+    (p.term || []).forEach(function (tr) {
+      h += '<div class="ip-card"><h2>1 &middot; Time step - the term structure at strike ' + num(tr.strike, 2) + ' (linear in total variance)</h2>' + termSvg(p, tr) +
+           '<div class="ip-legend"><span><i style="background:#60a5fa"></i>listed expiry at this strike (hover: the contract)</span><span><i style="background:#f59e0b"></i>the two legs, joined straight in variance</span><span><i style="background:#34d399"></i>the horizon\'s cut = the interpolated figure</span><span><i style="background:#a78bfa"></i>the same points as IV (dashed, right axis)</span></div></div>';
+    });
+    h += '<div class="ip-card"><h2>2 &middot; Strike step - the smile at ' + p.h + ' days (linear in strike)</h2>' + smileSvg(p) +
+         '<div class="ip-legend"><span><i style="background:#60a5fa"></i>listed strikes, each already interpolated in time</span><span><i style="background:#f59e0b"></i>the two strikes around the level</span><span><i style="background:#34d399"></i>the level, the cell\'s figure</span><span><i style="background:#fb923c"></i>the stock price</span></div></div>';
+    $('tabCharts').innerHTML = h;
+  }
+  // ── the history tab ──
+  function histSvg(s) {
+    var rows = s.rows.slice().reverse().filter(function (r) { return r.iv != null; });
+    if (rows.length < 2) return '';
+    var W = 900, H = 150, L = 40, R = 60, T = 24, B = 22;
+    var lo = s.stats.lo, hi = s.stats.hi; if (hi - lo < 0.5) { lo -= .5; hi += .5; }
+    function X(i) { return L + (W - L - R) * i / Math.max(1, rows.length - 1); }
+    function Y(v) { return H - B - (H - T - B) * (v - lo) / (hi - lo); }
+    var g = '<svg class="ip-svg" viewBox="0 0 ' + W + ' ' + H + '">';
+    g += '<rect class="band" x="' + L + '" y="' + Y(s.stats.hi).toFixed(1) + '" width="' + (W - L - R) + '" height="' + Math.max(1, Y(s.stats.lo) - Y(s.stats.hi)).toFixed(1) + '"/>';
+    g += '<line class="ax" x1="' + L + '" y1="' + (H - B) + '" x2="' + (W - R) + '" y2="' + (H - B) + '"/>';
+    g += '<text class="lbl" x="4" y="' + (Y(s.stats.hi) + 3).toFixed(1) + '">' + num(s.stats.hi, 1) + '</text><text class="lbl" x="4" y="' + (Y(s.stats.lo) + 3).toFixed(1) + '">' + num(s.stats.lo, 1) + '</text>';
+    g += '<polyline class="line" points="' + rows.map(function (r, i) { return X(i).toFixed(1) + ',' + Y(r.iv).toFixed(1); }).join(' ') + '"/>';
+    var last = rows[rows.length - 1];
+    g += '<circle class="dot-res" cx="' + X(rows.length - 1).toFixed(1) + '" cy="' + Y(last.iv).toFixed(1) + '" r="3"/><text class="lbl" x="' + (X(rows.length - 1) + 5).toFixed(1) + '" y="' + (Y(last.iv) + 3).toFixed(1) + '">' + esc(last.on) + ' ' + num(last.iv, 1) + '</text>';
+    g += '<text class="lbl" x="' + L + '" y="' + (H - 6) + '">' + esc(rows[0].on) + '</text><text class="lbl" x="' + (W - R) + '" y="' + (H - 6) + '" text-anchor="end">' + esc(last.on) + '</text></svg>';
+    return g;
+  }
+  function renderHist(s) {
+    S = s;
+    var st = s.stats, h = '';
+    h += '<div class="flex flex-wrap items-center gap-2 mt-3 text-xs">' +
+         '<span class="ip-pill">Window: <b>past ' + s.window_days + ' days</b></span><span class="ip-pill">Rows: <b>' + s.days + ' sessions</b></span>';
+    if (st) h += '<span class="ip-pill">Range: <b>' + num(st.lo, 1) + '% &ndash; ' + num(st.hi, 1) + '%</b></span>' +
+                 (st.rank != null ? '<span class="ip-pill">Newest (' + esc(st.newest_on) + ') sits at <b style="color:#34d399">' + Math.round(st.rank * 100) + '%</b> of that range &middot; ' + Math.round(st.pct * 100) + '% of days lower</span>' : '');
+    h += '<button type="button" id="ipCsv" class="ip-pill" style="margin-left:auto;cursor:pointer">Download CSV</button></div>';
+    if (st) h += '<div class="ip-card"><h2>Interpolated IV by trading day &middot; fixed ' + s.h + ' days &middot; ' + (s.fixed === 'moneyness' ? num(s.pct, 1) + '% moneyness' : 'strike ' + num(s.k, 2)) + '</h2>' + histSvg(s) + '</div>';
+    h += '<div class="ip-card" style="overflow:auto"><table class="ip-w"><tr><th>Date</th><th>Stock close</th><th>' + (s.fixed === 'moneyness' ? 'Strike (' + num(s.pct, 1) + '%)' : 'Strike') + '</th><th>IV %</th><th>Model price</th><th>Leg below</th><th>IV</th><th>Leg above</th><th>IV</th><th>w time</th><th>Strikes used</th><th>w strike</th><th>Contracts</th></tr>';
+    s.rows.forEach(function (r) {
+      h += '<tr><td>' + esc(r.on) + '</td><td>' + num(r.spot, 2) + '</td><td>' + num(r.K, 2) + '</td><td style="color:#34d399;font-weight:700">' + (r.iv == null ? '-' : num(r.iv, 1)) + '</td><td>' + money(r.price) + '</td>';
+      if (r.iv == null) {
+        h += '<td colspan="7" class="flag">' + esc(r.why || 'no interpolation that day') + '</td><td>' + r.n + '</td></tr>';
+        return;
+      }
+      h += '<td style="color:#f59e0b">' + (r.lo ? esc(shortDate(r.lo.date)) + ' &middot; ' + r.lo.dte + 'd' : '-') + '</td><td>' + (r.lo ? pct(r.lo.iv) : '-') + '</td>' +
+           '<td style="color:#f59e0b">' + (r.hi && !(r.lo && r.hi.date === r.lo.date) ? esc(shortDate(r.hi.date)) + ' &middot; ' + r.hi.dte + 'd' : (r.exact ? 'exact' : '-')) + '</td><td>' + (r.hi && !(r.lo && r.hi.date === r.lo.date) ? pct(r.hi.iv) : '-') + '</td>' +
+           '<td>' + (r.w == null ? '-' : num(r.w, 2)) + '</td><td style="color:#f59e0b">' + (r.k_lo && r.k_hi ? (r.k_lo.strike === r.k_hi.strike ? num(r.k_lo.strike, 2) : num(r.k_lo.strike, 2) + ' / ' + num(r.k_hi.strike, 2)) : '-') + '</td><td>' + (r.wk == null ? '-' : num(r.wk, 2)) + '</td><td>' + r.n + '</td></tr>';
+    });
+    h += '</table><div class="ip-msg">' + esc(s.method) + '. Strike = that day\'s stock close &times; the moneyness, so it moves with the price while the moneyness stays fixed; the legs are the listed expiries either side of the horizon on that day and roll as expiries pass; "w time" is the weight on the nearer leg, "w strike" the weight on the lower strike. A red note names why a day has no figure. Model price = Black-Scholes at that IV, r ' + num(s.rate * 100, 1) + '%, no dividend.</div></div>';
+    $('tabHist').innerHTML = h;
+    $('ipCsv').addEventListener('click', function () {
+      var lines = [['date', 'stock_close', 'strike', 'iv_pct', 'model_price', 'leg_below', 'leg_below_iv', 'leg_above', 'leg_above_iv', 'w_time', 'strike_lo', 'strike_hi', 'w_strike', 'contracts', 'note'].join(',')];
+      s.rows.forEach(function (r) {
+        lines.push([r.on, r.spot == null ? '' : r.spot, r.K == null ? '' : r.K, r.iv == null ? '' : r.iv, r.price == null ? '' : r.price,
+                    r.lo ? r.lo.date : '', r.lo && r.lo.iv != null ? r.lo.iv : '', r.hi ? r.hi.date : '', r.hi && r.hi.iv != null ? r.hi.iv : '',
+                    r.w == null ? '' : r.w, r.k_lo ? r.k_lo.strike : '', r.k_hi ? r.k_hi.strike : '', r.wk == null ? '' : r.wk, r.n, (r.why || '').replace(/,/g, ';')].join(','));
+      });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([lines.join('\n')], {type: 'text/csv'}));
+      a.download = s.symbol + '_' + s.h + 'd_' + (s.fixed === 'moneyness' ? s.pct + 'pct' : 'k' + s.k) + '_interpolated.csv';
+      a.click();
+    });
+  }
+  function loadSeries() {
+    $('tabHist').innerHTML = '<div class="ip-msg">Rebuilding the cell for every session of the past ' + BOOT.window + ' days from the contract history&hellip; (a minute at most; a second look is instant)</div>';
+    var q = new URLSearchParams({symbol: BOOT.symbol, h: String(BOOT.h), side: BOOT.side, window: String(BOOT.window)});
+    if (BOOT.m != null) q.set('m', String(BOOT.m)); else q.set('k', String(BOOT.k));
+    fetch('/options/api/cm/series?' + q.toString(), {credentials: 'same-origin'}).then(function (r) { return r.json(); }).then(function (j) {
+      if (!j || !j.ok) { $('tabHist').innerHTML = '<div class="ip-msg">' + esc((j && j.error) || 'the history could not be read') + '</div>'; return; }
+      renderHist(j);
+    }).catch(function () { $('tabHist').innerHTML = '<div class="ip-msg">The server did not answer.</div>'; });
+  }
+  // ── load ──
+  function load() {
+    if (!BOOT.symbol) { $('ipMsg').textContent = 'No symbol - open this page from a cell of the Interpolated surface.'; return; }
+    var q = new URLSearchParams({symbol: BOOT.symbol, day: BOOT.day, h: String(BOOT.h), side: BOOT.side});
+    if (BOOT.m != null) q.set('m', String(BOOT.m)); else q.set('k', String(BOOT.k));
+    fetch('/options/api/cm/point?' + q.toString(), {credentials: 'same-origin'}).then(function (r) { return r.json(); }).then(function (j) {
+      if (!j || !j.ok) { $('ipMsg').textContent = (j && j.error) || 'the cell could not be read'; return; }
+      P = j;
+      $('ipMsg').textContent = '';
+      $('ipTitle').textContent = j.symbol + ' · ' + levelWords(j) + ' ' + rightWord(j) + ' · fixed ' + j.h + ' days';
+      $('ipSub').textContent = (j.source === 'latest' ? 'the latest market pass (session ' + j.on + ')' : 'the close of ' + j.on) +
+        ' · price ' + num(j.spot, 2) + ' · ' + (j.iv != null ? 'IV ' + num(j.iv, 1) + '%' + (j.exact ? ' (a listed contract: nothing interpolated)' : '') : (j.why || ''));
+      renderWork(j); renderCharts(j);
+      var want = 'work';
+      try { want = localStorage.getItem(TAB_KEY) || 'work'; } catch (e) {}
+      tabSet(['work', 'charts', 'hist'].indexOf(want) >= 0 ? want : 'work');
+    }).catch(function () { $('ipMsg').textContent = 'The server did not answer.'; });
+  }
+  load();
+})();
+</script>
+{% endblock %}

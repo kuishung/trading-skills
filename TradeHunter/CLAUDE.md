@@ -690,7 +690,13 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
   pane** (`app/services/opt_liquidity.py`): Liquid / Fair / Thin against fixed, member-editable lines
   (near-the-money median OI, near-the-money volume, chain OI; first two monthlies, ±10 % of the price) -
   the user: *"I do not want to compare against each other on the watchlist. I want to know the ticker is
-  liquid enough."* - never a rank across names.
+  liquid enough."* - never a rank across names. **v4.209 (2026-10-24): the INTERPOLATION PAGE**
+  (`/options/interpolation`, `options_interp.html`, services `vol_cm_point.py` + `vol_cm_series.py`): a click on
+  an Interpolated-tab cell opens it in a new window - three tabs: the working drawn on the contract table
+  (horizon line between the leg expiries, level line between the leg strikes), the term-structure and smile
+  charts, and the cell's day-by-day interpolated history over the rank window (the phase-2 constant-maturity
+  history, computed on demand per cell from the Parquet closes, cached 10 min). The tile gauge of v4.181-4.185
+  was removed in v4.200 at the user's request.
 - **Options SCREENER — BUILT in v4.136 (2026-10-10): `dashboard_tst/OPTIONS_SCREENER_DESIGN.md`
   is the contract.** The user asked for *"exactly"* Barchart's options screener
   (barchart.com/options/options-screener) with each member's own settings: `/options` is now a

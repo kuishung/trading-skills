@@ -1613,11 +1613,9 @@
     } else if (j.has_greeks === false) {
       h += '<div class="vol-cap">Greeks and prices are on the latest pass only.</div>';
     }
-    if (n) {
-      h += '<hr class="vol-sep">' + '<div class="vol-cap">Click: contract history of ' + (cmExact(j, r, c) ? 'this contract'
-             : (mon ? 'the nearer listed expiry and strike' : 'the nearer listed expiry')) +
-           ', ' + shortDate(n.date) + ' ' + esc(strikeText(n.strike != null ? n.strike : k)) + ' ' + right + ', in a new window.</div>';
-    }
+    h += '<hr class="vol-sep">' + '<div class="vol-cap">Click: the interpolation page in a new window - the working on the contract table, ' +
+         'the term structure and smile, and this cell\'s day-by-day history' +
+         (n ? ' (the nearer listed contract is ' + shortDate(n.date) + ' ' + esc(strikeText(n.strike != null ? n.strike : k)) + ' ' + right + ')' : '') + '.</div>';
     return h;
   }
   function placePop(pop, ev) {
@@ -1799,13 +1797,15 @@
       var j = CM.last;
       if (!td || !j) return;
       hideCmPop();
-      var g = cmGrid(j), r = +td.dataset.r, c = +td.dataset.c, k = g.strikes[r], nearest = cmNear(g, r, c);
-      if (!nearest) return;
-      // the nearer listed expiry at the nearer listed strike (on strike rows: that strike); the cell's own right
-      if (nearest.strike == null) nearest = Object.assign({}, nearest, {strike: k});
-      var right = sideOf(g, k);
-      var day = j.source === 'latest' ? ((H.days && H.days.length) ? H.days[0] : null) : j.on;
-      openContract(j.symbol, nearest.date, right, nearest.strike, day);
+      var g = cmGrid(j), r = +td.dataset.r, c = +td.dataset.c, k = g.strikes[r];
+      if (g.cells[r][c] == null) return;
+      // v4.209 (user: "when clicked in, we need to see how the interpolated works"): the Interpolation page in a new
+      // window - the working on the contract table, the charts, the day-by-day history of this cell; the legs'
+      // own contract histories are one click away from there
+      var q = new URLSearchParams({symbol: j.symbol, day: j.source === 'latest' ? 'latest' : j.on, h: String(g.horizons[c].days),
+                                   side: j.side || 'otm', window: String(winChosen())});
+      if (g.rows && g.rows[r]) q.set('m', String(g.rows[r].m)); else q.set('k', String(k));
+      window.open('/options/interpolation?' + q.toString(), '_blank', 'noopener');
     });
     // v4.166: the Tile block - load the remembered choice, repaint the grid on screen on a change
     tileLoad(); tileFormSet();

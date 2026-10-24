@@ -223,6 +223,33 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-24 - v4.209: the Interpolation page - one interpolated cell opened up, three tabs
+
+The user: *"when clicked in, we need to see how the interpolated works and represented by graphical ... a table
+based on original contract and then show the interpolate based on a linear line of moneyness and the time
+horizon ... if i want to show this historical table but based on interpolated data? ... make it in a new page
+with 3 tabs each of the mock up will show in the page"*. A click on a cell of the Interpolated tab now opens
+**`/options/interpolation?symbol&day&h&m|k&side&window`** in a new window (`options_interp.html`):
+- **Working on the contract table**: the listed contracts around the cell (the two leg expiries ± 1, the two leg
+  strikes ± 1, each figure that contract's own IV, legs highlighted, the rest dimmed but clickable to their
+  history), with the horizon line placed between the two expiry columns at the fraction time puts it and the
+  level line between the two strike rows at the fraction strike puts it; step 1's cuts (purple) and step 2's
+  result (green) drawn on; a Both / Time / Strike toggle; then the working tables with the formulas and the
+  numbers in them, and the greeks and model price by the same weights.
+- **Term structure & smile**: per leg strike, every listed expiry as a dot in total-variance space (IV dashed on
+  the right axis), the two legs joined straight, the horizon's cut; and the smile at the horizon, every listed
+  strike after step 1, the two bracketing strikes joined, the level's cut, the stock price marked.
+- **Interpolated history**: the same cell day by day over the rank window - each row rebuilt from THAT day's
+  listed contracts (the Parquet history, closes solved to IVs) and stock close at the fixed horizon and fixed
+  moneyness (the strike moves with the price): IV, model price, the legs and both weights, the contract count,
+  a red note where a day has no figure; the range and where the newest sits; a chart; CSV. This is the
+  constant-maturity history of the phase-2 note, computed on demand for one cell and cached ten minutes.
+Services: `vol_cm_point.py` (`point` / `point_for`; `vol_cm._by_moneyness` gained a `levels` parameter) and
+`vol_cm_series.py` (`series`, `day_point`; strikes within 12 % of the level, expiries 7 days to 2 x horizon + 60).
+APIs `GET /options/api/cm/point` and `/options/api/cm/series`. The Interpolated tab's hover card says what a
+click opens and names the nearer listed contract. Tests: `tests/test_vol_cm_point.py`,
+`tests/test_options_interp_page.py`, `tests/test_options_page.py`.
+
 ### 2026-10-24 - v4.208: Volatility surface - shorter tiles (one greeks line), the greeks pair and the rank window as dropdowns
 
 The user: *"reduce the height of the tiles so that the screen can show more tiles ... only 2 greeks at any time,
