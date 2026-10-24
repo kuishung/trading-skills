@@ -1247,7 +1247,8 @@ def test_the_surface_cells_open_the_contract_history_in_a_new_window(client, fak
     # the sloped "E date" in the top band above the plot
     assert "var w = 300, hgt = 120, padL = 4, padR = 50, padT = 46, padB = 16, pts = s.series || [];" in sp_
     assert "transform=\"rotate(' + rot + ' ' + lx.toFixed(1) + ' ' + ly + ')\"" in sp_
-    assert "var lx = right ? xn - 2 : xn + 2, ly = padT - 3, rot = right ? 60 : -60;" in sp_
+    assert "var lx = right ? xn - 2 : xn + 2, ly = padT - 3, rot = right ? 25 : -25;" in sp_   # v4.204: 25 degrees, fits the band
+    assert "var right = xn > (w - padR) - 56;" in sp_
     assert "'>E ' + esc(e.on) + '</text>'" in sp_ and "text-anchor=\"middle\">E</text>" not in sp_
     assert ".vol-pop .vol-earn-dt { fill: #d97706; font-size: 9px; font-weight: 600; }" in html
     assert ".vol-pop svg { display: block; width: 100%; height: 8rem; margin-top: .35rem; }" in html   # v4.203: not squeezed

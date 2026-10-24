@@ -223,6 +223,12 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-24 - v4.204: hover chart - the earnings dates at 25 degrees
+
+The user (three dates clipped at the top of the card): *"the date cannot be seen fully, make it 25% slope"*. At
+60 degrees a label rose 48 px, past the 46 px band. The labels now rise at 25 degrees (about 50 px across and
+23 px up), mirrored up-left when the line sits within 56 px of the right edge, so every date is whole.
+
 ### 2026-10-24 - v4.203: hover chart - rendered at its new height (the plot was squeezed)
 
 The user: *"i need the chart to be previously big, you have make it small"*. v4.202 made the SVG's viewBox 120

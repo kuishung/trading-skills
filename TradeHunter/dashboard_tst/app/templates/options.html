@@ -1153,8 +1153,10 @@
       // the line sits near the right edge
       // v4.202: the date sits ABOVE the plot, rising at 60 degrees from the top of its line - up-right, or
       // up-left (ending at the line) when the line is near the right edge - in the band padT leaves free
-      var right = xn > (w - padR) - 30;
-      var lx = right ? xn - 2 : xn + 2, ly = padT - 3, rot = right ? 60 : -60;
+      // v4.204 (user: "the date cannot be seen fully, make it 25% slope"): 25 degrees - a 12-character label is
+      // about 55 px long, so 50 px across and 23 px up, well inside the 46 px band; mirrored near the right edge
+      var right = xn > (w - padR) - 56;
+      var lx = right ? xn - 2 : xn + 2, ly = padT - 3, rot = right ? 25 : -25;
       out += '<line class="vol-earn" x1="' + x + '" x2="' + x + '" y1="' + padT + '" y2="' + (hgt - padB) + '"/>' +
              '<text class="vol-earn-dt" x="' + lx.toFixed(1) + '" y="' + ly + '" transform="rotate(' + rot + ' ' + lx.toFixed(1) + ' ' + ly + ')"' +
              (right ? ' text-anchor="end"' : '') + '>E ' + esc(e.on) + '</text>';
