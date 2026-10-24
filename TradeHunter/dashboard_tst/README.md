@@ -223,6 +223,13 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-24 - v4.206: hover cards - a rule between the blocks
+
+The user: *"in the info box I want it to be separated by way of separator so that each information is neatly
+separated"*. A thin rule (`.vol-sep`) now sits between the hover card's blocks: the heading and figures, the
+history range / rank / percentile, the earnings row, the chart, the model-price working (its own bordered
+section since v4.205) and the click hint; the Interpolated card gets the rule before its click line.
+
 ### 2026-10-24 - v4.205: Volatility surface hover card - the model price's working
 
 The user: *"for the model price I need you to show workings in info box. what value you provide in the formula

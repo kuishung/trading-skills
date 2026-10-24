@@ -1264,6 +1264,14 @@ def test_the_surface_cells_open_the_contract_history_in_a_new_window(client, fak
     assert "function normCdf(z) {" in html and "0.3275911" in html
     assert "figsHtml(j, xf) + modelWorkHtml(j, xf, k, ex, cur));" in html
     assert ".vol-pop .vol-pop-sec { border-top: 1px solid var(--tv-border);" in html
+    # v4.206 (user: "separated by way of separator so that each information is neatly separated"): a rule before
+    # the history block, the earnings row, the chart, the click hint (both cards)
+    assert ".vol-pop .vol-sep { border: 0; border-top: 1px solid var(--tv-border); margin: .4rem 0 .3rem; }" in html
+    pop6 = html[html.index("function popoverHtml("):html.index("function showPop(")]
+    assert pop6.count("'<hr class=\"vol-sep\">'") == 5
+    assert "if (chart) h += '<hr class=\"vol-sep\">';" in pop6
+    cmp6 = html[html.index("function cmPopHtml("):html.index("function placePop(")]
+    assert "h += '<hr class=\"vol-sep\">' + '<div class=\"vol-cap\">Click: contract history of '" in cmp6
     assert "'\">' + esc(fromIso) + '</text>'" in sp_ and "text-anchor=\"end\">' + esc(toIso) + '</text></svg>'" in sp_
     assert ".vol-grid td.vol-cell { cursor: pointer; }" in html
     # squarish cells, the IV figure centred both ways; an empty reserved line takes no room

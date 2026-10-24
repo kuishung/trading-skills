@@ -159,6 +159,8 @@
   .vol-tile fieldset { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .2rem; }
   .vol-tile legend { padding: 0; margin-bottom: .15rem; font-size: 11px; color: var(--tv-text); }
   .vol-pop .vol-pop-sec { border-top: 1px solid var(--tv-border); margin-top: .4rem; padding-top: .35rem; }   /* v4.205 */
+  /* v4.206 (user: "separated by way of separator so that each information is neatly separated") */
+  .vol-pop .vol-sep { border: 0; border-top: 1px solid var(--tv-border); margin: .4rem 0 .3rem; }
   .vol-pop .vol-pop-figs { display: grid; grid-template-columns: 1fr 1fr; column-gap: .75rem; row-gap: .1rem; margin-top: .3rem;
                            padding-top: .3rem; border-top: 1px solid var(--tv-border); }
   .vol-pop .vol-pop-figs > div { display: flex; justify-content: space-between; gap: .4rem; }
@@ -1227,7 +1229,7 @@
     h += '<div class="vol-pop-row"><span>' + esc(nowCap) + '</span><b>' + (cur == null ? '-' : num(cur, 1) + '%') + '</b></div>';
     h += figs || '';                    // v4.166: delta / gamma / theta / vega, last, model price, OI, volume
     if (V.histState !== 'ok') {
-      h += '<div class="text-slate-500 mt-1">' + (V.histState === 'failed' ? 'History unavailable: ' + esc(V.histWhy) + '.' : 'History loading...') + '</div>';
+      h += '<hr class="vol-sep">' + '<div class="text-slate-500">' + (V.histState === 'failed' ? 'History unavailable: ' + esc(V.histWhy) + '.' : 'History loading...') + '</div>';
       return h;
     }
     if (!s) {
@@ -1239,6 +1241,7 @@
       return h;
     }
     var wd = s.window_days || V.hist.window_days || winChosen();
+    h += '<hr class="vol-sep">';                       // v4.206: a rule between the card's blocks
     h += '<div class="vol-pop-row"><span>Past ' + wd + ' days, ' + intText(s.n) + ' sessions' + (s.first ? ' since ' + esc(s.first) : '') + '</span>' +
          '<span class="whitespace-nowrap">' + num(s.lo, 1) + '% - ' + num(s.hi, 1) + '%</span></div>';
     if (s.rank != null) {
@@ -1273,14 +1276,16 @@
     var inWin = win.length ? win.map(function (e) { return '<span style="color:#d97706">' + esc(e.on) + '</span>'; }).join(', ') +
                              ' (marked E)' + (partial ? ', history still loading' : '')
                            : (partial ? 'history still loading (' + intText(cov.fetched) + ' of ' + intText(cov.weekdays) + ' days on file)' : 'none in this window');
-    h += '<div class="mt-1"><span class="text-slate-500">Earnings in the window:</span> ' + inWin + ' &middot; ' + nxt + '</div>';
+    h += '<hr class="vol-sep">';
+    h += '<div class="mt-0.5"><span class="text-slate-500">Earnings in the window:</span> ' + inWin + ' &middot; ' + nxt + '</div>';
     var chart = sparkline(s, cur, win, nowWord, span);
+    if (chart) h += '<hr class="vol-sep">';
     h += chart;
     if (chart) {
       h += '<div class="vol-cap">Implied volatility by trading day' + (cur != null ? '; the dashed line is ' + nowWord : '') +
            '; the shaded band is the range over the past ' + wd + ' days' + (win.length ? '; amber E = an earnings day' : '') + '.</div>';
     }
-    h += '<div class="vol-cap">Click: contract history in a new window.</div>';   // v4.198: was the cell's own tooltip
+    h += '<hr class="vol-sep">' + '<div class="vol-cap">Click: contract history in a new window.</div>';   // v4.198: was the cell's own tooltip
     return h;
   }
   function showPop(td, ev) {
@@ -1600,7 +1605,7 @@
       h += '<div class="vol-cap">Greeks and prices are on the latest pass only.</div>';
     }
     if (n) {
-      h += '<div class="vol-cap">Click: contract history of ' + (cmExact(j, r, c) ? 'this contract'
+      h += '<hr class="vol-sep">' + '<div class="vol-cap">Click: contract history of ' + (cmExact(j, r, c) ? 'this contract'
              : (mon ? 'the nearer listed expiry and strike' : 'the nearer listed expiry')) +
            ', ' + shortDate(n.date) + ' ' + esc(strikeText(n.strike != null ? n.strike : k)) + ' ' + right + ', in a new window.</div>';
     }
