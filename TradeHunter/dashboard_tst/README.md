@@ -223,6 +223,16 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-24 - v4.200: Volatility surface - the per-tile liquidity gauge and the hover card's Liquidity block removed
+
+The user: *"remove the liquidity edge bar and also the hover tooltip liquidity information"*. Gone from the
+Volatility Surface tab: the right-edge gauge and its pointer (v4.181-4.183), the fade of the thinnest quarter,
+the "Show liquidity" tick (`th.vol.liq`), the legend line and the hover card's Liquidity block (rank / total,
+open interest, volume, turnover, last vs model). The server still ranks each contract within its chain
+(`vol_surface.liquidity_ranks`, `liq` / `rk` in each cell's `extra`) - unused by the page now, kept for the
+Calculator and a future need. The Watchlist's **Opt liq** verdict and the surface pane's label and table
+(v4.186-4.191) are untouched. Test in `tests/test_options_page.py`.
+
 ### 2026-10-24 - v4.199: Volatility surface hover chart - the window's dates, the earnings dates, the E line for every tile
 
 The user: *"in the graph, the date put it from start date and end date of the rank window and also include the

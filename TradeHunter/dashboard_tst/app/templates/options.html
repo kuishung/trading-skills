@@ -167,33 +167,6 @@
   .vol-rk > i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 9999px; }
   .vol-rk > b { position: absolute; top: -1px; width: 5px; height: 5px; margin-left: -2.5px; border-radius: 9999px;
                 background: var(--tv-text-hi); box-shadow: 0 0 0 1px var(--tv-panel); }
-  /* v4.181: liquidity on the listed surface - a 1.5 px bar on the tile's right edge, top to bottom, filled from the
-     bottom with the contract's depth in a soft slate (no solid colour: "the whole screen looks very contrast"); the
-     thinnest quarter of the chain faded. #volTable.vol-nolq (the tick off) hides both. */
-  /* v4.182 (user: "i need like a fuel gauge ... a side edge with a pointer ... pointing the edge not inside ... 3px
-     with dark blue"): the gauge is a 3 px dark-blue track on the right edge, filled from the bottom to the depth, and
-     a small arrow INSIDE the tile pointing out at the level reached */
-  /* v4.183 (user: "why some edge bar looks bolder and some thinner?"): the gauge was its own absolutely positioned box,
-     and columns sit at fractional pixel positions, so each column's box snapped to 2, 3 or 4 device pixels. Now the
-     gauge is the CELL'S OWN BACKGROUND-IMAGE (two flat gradients: the fill from the bottom to --lq, the track behind
-     it), which snaps with the cell's edge - the same 3 px in every column. The tint is background-COLOR beneath it. */
-  .vol-grid td.vol-cell[data-lq] {
-    background-image: linear-gradient(rgba(30,64,175,.72), rgba(30,64,175,.72)), linear-gradient(rgba(30,58,138,.16), rgba(30,58,138,.16));
-    background-size: 3px var(--lq, 0%), 3px 100%; background-position: right bottom, right top; background-repeat: no-repeat; }
-  html:not(.light) .vol-grid td.vol-cell[data-lq] {
-    background-image: linear-gradient(rgba(96,165,250,.6), rgba(96,165,250,.6)), linear-gradient(rgba(96,165,250,.16), rgba(96,165,250,.16)); }
-  .vol-lq-pt { position: absolute; right: 3px; width: 0; height: 0; margin-top: -4px; border-top: 4px solid transparent;
-               border-bottom: 4px solid transparent; border-left: 5px solid rgba(30,64,175,.9); }
-  html:not(.light) .vol-lq-pt { border-left-color: rgba(147,197,253,.9); }
-  .vol-grid.vol-nolq td.vol-cell[data-lq] { background-image: none; }
-  .vol-grid.vol-nolq .vol-lq-pt { display: none; }
-  .vol-grid td.vol-cell.vol-thin { opacity: .38; }
-  .vol-grid td.vol-cell.vol-thin:hover { opacity: 1; }
-  .vol-grid.vol-nolq td.vol-cell.vol-thin { opacity: 1; }
-  .vol-pop .vol-pop-sec { border-top: 1px solid var(--tv-border); margin-top: .4rem; padding-top: .35rem; }
-  .vol-pop .vol-chip { display: inline-block; padding: 0 .4rem; border-radius: 9999px; font-size: 10px;
-                       background: rgba(100,116,139,.18); color: var(--tv-text); white-space: nowrap; }
-  /* v4.185 (user: "the liquidity progress bar in the tooltip i need the colour in blue like the one of the edge bar") */
   /* v4.190: the watchlist pane's option-liquidity table (the Watchlist page's Opt liq hover, same look) */
   .vol-pop .lq-tbl { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
   .vol-pop .lq-tbl th { font-weight: 400; color: var(--tv-muted); text-align: right; padding: 0 0 .2rem;
@@ -202,10 +175,6 @@
   .vol-pop .lq-tbl th:first-child, .vol-pop .lq-tbl td:first-child { text-align: left; }
   .vol-pop .lq-name, .vol-pop .lq-line { color: var(--tv-text); }
   .vol-pop .lq-chip { display: inline-block; padding: 0 .4rem; border-radius: 9999px; background: rgba(120,123,134,.18); font-size: 10px; }
-  .vol-pop .vol-pos > i.vol-pos-lq { background: rgba(30,64,175,.72); }
-  .vol-pop .vol-pos.vol-pos-grey { background: rgba(30,58,138,.16); }
-  html:not(.light) .vol-pop .vol-pos > i.vol-pos-lq { background: rgba(96,165,250,.6); }
-  html:not(.light) .vol-pop .vol-pos.vol-pos-grey { background: rgba(96,165,250,.16); }
   /* the hover card: this contract's IV against its own past year */
   .vol-pop { position: fixed; z-index: 40; width: 20rem; padding: .5rem .6rem; border: 1px solid var(--tv-border-2);
              border-radius: var(--tv-r-panel); background: var(--tv-panel); color: var(--tv-text); font-size: 11px;
@@ -380,11 +349,6 @@
       <label class="scr-check" title="Leaves out expiries listed less than 10 days ago, which have no history to colour yet, and strikes that only some expiries carry. The grid then shows no grey cells and no gaps. On a past day only the contracts that traded are on file, so an empty cell means no trade - there a strike stays while at least half of the expiries have a value. Untick to see everything.">
         <input type="checkbox" id="volClean" checked> Hide new and thinly listed contracts
       </label>
-      {# v4.181 (user: "i want a liquidity indicator on the tiles ... on/off button ... right edge bar ... and fading
-         (for low liquidity)"): the Volatility Surface tab only - remembered in localStorage th.vol.liq #}
-      <label class="scr-check" title="On the Volatility Surface tab: a gauge on the right edge of each tile fills with the contract's depth, an arrow pointing at the level - open interest and today's volume, ranked against every contract of this stock - and the thinnest quarter of the chain is drawn faded. Hover a tile for the figures. Latest pass only: the day files behind a past day carry no open interest. The Interpolated tab has no liquidity (its cells are derived, not traded).">
-        <input type="checkbox" id="volLiq" checked> Show liquidity
-      </label>
       <button type="submit" id="volGo" class="scr-primary w-full">Show</button>
     </form>
     {# v4.166 (user: "configurable tiles in the vol surface ... the top to show the greeks. the bottom will
@@ -433,7 +397,6 @@
          title="Each cell is one option's implied volatility, in percent - strikes down the side, expiries across the top (M = monthly); the line marks the stock price. Below the price each cell is the put, above it the call (out of the money). The colour is each contract against its own IV over the rank window picked above the grid (365 days unless you pick a shorter one): green at its lowest IV, red at its highest; the slim bar at the bottom of a cell shows the same (grey = too little history in the window - listed too recently, or under 10 days with a price). Hover a cell for its history; click: contract history in a new window. An empty cell means no contract there had a volatility.">
       <span id="volLegWin">IV vs own past 365 days:</span>
       <span>low</span><span class="vol-bar"></span><span>high</span>
-      <span id="volLegLiq" class="hidden">&middot; right-edge gauge: depth among this stock's contracts (arrow = the level) &middot; faded: the thinnest quarter</span>
       <span title="The two levels of the Watchlist's MATP run, drawn as lines between the strike rows; the listed strike nearest each carries a tag">&middot; <span class="vol-leg-matp">MATP</span> / <span class="vol-leg-mbp">MBP</span> lines from the Watchlist</span>
       <span>&middot; click a cell: contract history in a new window</span>
       <span id="volHistMsg" class="text-slate-600"></span>
@@ -942,18 +905,16 @@
         // below (.vol-l3), the rank bar at the bottom. The figures come from j.extra (same shape as j.cells).
         var x = extraAt(j, r, c);
         h += v == null ? '<td></td>'
-          // v4.198 (user: "I do not want the small tooltip that cover the larger info box"): no title attribute
-          // on a cell - the browser's own tooltip sat over the hover card; the click hint is in the card
-          : '<td class="vol-cell' + (liqThin(x) ? ' vol-thin' : '') + '"' + liqAttr(x) + ' data-r="' + r + '" data-c="' + c + '">' +
+          // v4.198: no title attribute on a cell (the browser's own tooltip sat over the hover card)
+          : '<td class="vol-cell" data-r="' + r + '" data-c="' + c + '">' +
             '<div class="vol-l2">' + tileTop(x) + '</div><div class="vol-iv">' + num(v, 1) + '</div>' +
-            '<div class="vol-l3">' + tileBottom(x) + '</div>' + liqBar(x) + '</td>';
+            '<div class="vol-l3">' + tileBottom(x) + '</div></td>';
       });
       h += '</tr>';
     });
     if (!spotDone) h += levelsBefore(lst, j.spot, vw.cols.length) + spotRow(j, vw.cols.length);
     h += levelsRest(lst, vw.cols.length);
     $('volTable').innerHTML = h + '</tbody>';
-    $('volTable').classList.toggle('vol-nolq', !liqOn());
     var src = j.source === 'latest'
       ? 'Latest market pass, session ' + esc(j.on) + (j.as_of ? ' (read ' + esc(new Date(j.as_of).toLocaleString()) + ')' : '')
       : 'Close of ' + esc(j.on) + (j.traded != null ? ' (' + intText(j.traded) + ' contracts traded)' : '');
@@ -1056,54 +1017,6 @@
       });
     });
   }
-  // ── v4.181: liquidity on the listed surface's tiles (the user: "right edge bar that cover the top and bottom
-  // of the tile and fading (for low liquidity)", 1.5 px, a soft tone). x.liq = where the contract's depth (open
-  // interest + today's volume) sits among EVERY contract of the stock's chain, 0 thinnest .. 1 deepest (server,
-  // vol_surface.liquidity_ranks). Latest pass only - a past day's rows carry no open interest, so no bar there.
-  var LIQ_KEY = 'th.vol.liq', LIQ_THIN = 0.25;        // faded: the thinnest quarter of the chain
-  function liqOn() { return !!($('volLiq') && $('volLiq').checked); }
-  function liqThin(x) { return !!(x && x.liq != null && x.liq < LIQ_THIN); }
-  function liqPct(x) { return (!x || x.liq == null) ? null : Math.round(Math.max(0, Math.min(1, x.liq)) * 100); }
-  function liqAttr(x) {                 // v4.183: the gauge lives in the cell's background - data-lq + --lq (the fill height)
-    var p = liqPct(x);
-    return p == null ? '' : ' data-lq="' + p + '" style="--lq:' + p + '%"';
-  }
-  function liqVar(td) { return td.dataset.lq != null ? ';--lq:' + td.dataset.lq + '%' : ''; }
-  function liqBar(x) {                  // v4.182: the pointer - an arrow inside the tile pointing out at the level reached
-    var p = liqPct(x);
-    return p == null ? '' : '<b class="vol-lq-pt" style="top:' + (100 - p) + '%"></b>';
-  }
-  function liqWord(l) { return l >= 0.75 ? 'deep' : (l >= LIQ_THIN ? 'fair' : 'thin'); }
-  function liqHtml(j, x) {              // the hover card's liquidity block
-    if (!j || j.source !== 'latest') {
-      return '<div class="vol-pop-sec vol-cap">Liquidity is on the latest pass only: the day files behind a past day carry no open interest.</div>';
-    }
-    if (!x || x.liq == null) {
-      return '<div class="vol-pop-sec vol-cap">Liquidity: the last pass stored no open interest or volume for this contract.</div>';
-    }
-    var l = Math.max(0, Math.min(1, x.liq)), top = Math.max(1, Math.round((1 - l) * 100));
-    // v4.184 (user: "in the tooltip i need xx/xx of the liquidity ranking"): rank 1 = the deepest contract of the chain
-    var rk = x.rk != null && j.liq_n ? intText(x.rk) + ' / ' + intText(j.liq_n) : null;
-    var h = '<div class="vol-pop-sec"><div class="vol-pop-row"><span><b>Liquidity</b></span>' +
-            '<span class="vol-chip">' + liqWord(l) + (rk ? ' · rank ' + rk : '') + ' · top ' + top + '%</span></div>' +
-            (rk ? '<div class="vol-cap">Rank ' + rk + ': ' + intText(x.rk - 1) + ' of ' + esc(j.symbol) + '\'s ' + intText(j.liq_n) +
-                  ' contracts in the last pass ' + (x.rk - 1 === 1 ? 'is' : 'are') + ' deeper than this one (1 = the deepest).</div>' : '') +
-            '<div class="vol-pos vol-pos-grey"><i class="vol-pos-lq" style="width:' + Math.round(l * 100) + '%"></i><b style="left:' + Math.round(l * 100) + '%"></b></div>' +
-            '<div class="vol-pos-ends"><span>thinnest</span><span>deepest</span></div>';
-    if (x.oi != null) h += '<div class="vol-pop-row"><span>Open interest</span><span>' + intText(x.oi) + ' <span class="text-slate-500">(yesterday\'s close)</span></span></div>';
-    if (x.vol != null) h += '<div class="vol-pop-row"><span>Volume today</span><span>' + intText(x.vol) + ' <span class="text-slate-500">(15 min delayed)</span></span></div>';
-    if (x.oi != null && x.vol != null && x.oi > 0) {
-      h += '<div class="vol-pop-row"><span>Turnover (volume / open interest)</span><span>' + Math.round(x.vol / x.oi * 100) + '%</span></div>';
-    }
-    if (x.last != null && x.price != null && x.price > 0) {
-      var gap = (x.last - x.price) / x.price * 100, far = Math.abs(gap) >= 5;
-      h += '<div class="vol-pop-row"><span>Last trade vs model price</span><span>' + (gap > 0 ? '+' : '') + gap.toFixed(1) + '% ' +
-           '<span class="text-slate-500">· ' + (far ? 'a stale print or a wide market' : 'traded near fair value') + '</span></span></div>';
-    }
-    h += '<div class="vol-cap">Depth = open interest and today\'s volume (log scale), ranked against every ' + esc(j.symbol) +
-         ' contract in the last pass. No bid/ask in this data, so the spread itself is not known.</div></div>';
-    return h;
-  }
   function figsHtml(j, x) {             // the hover card's figures, in words
     if (!x) return j && j.has_greeks === false
       ? '<div class="vol-cap">Greeks and prices are on the latest pass only.</div>' : '';
@@ -1156,7 +1069,7 @@
     var n = 0;
     document.querySelectorAll('#volTable td.vol-cell').forEach(function (td) {
       var s = hst.cells[td.dataset.r + ',' + td.dataset.c];
-      td.style.cssText = cellStyle(s) + liqVar(td);   // v4.183: keep the gauge's --lq when the colour lands
+      td.style.cssText = cellStyle(s);
       var old = td.querySelector('.vol-rk');
       if (old) old.remove();
       if (s && s.rank != null) { n++; td.insertAdjacentHTML('beforeend', rankBar(s.rank)); }
@@ -1320,7 +1233,7 @@
     var key = td.dataset.r + ',' + td.dataset.c;
     var s = V.hist && V.hist.cells[key];
     var xf = extraAt(j, +td.dataset.r, +td.dataset.c);
-    pop.innerHTML = popoverHtml(label, cur, s, key, ex.date, figsHtml(j, xf)) + liqHtml(j, xf);
+    pop.innerHTML = popoverHtml(label, cur, s, key, ex.date, figsHtml(j, xf));
     pop.classList.remove('hidden');
     var pw = pop.offsetWidth || 320, ph = pop.offsetHeight || 200;
     var x = ev.clientX + 14, y = ev.clientY + 14;
@@ -1438,7 +1351,6 @@
   }
   function legends() {
     show($('volLegend'), TAB === 'surface' && !!V.last);
-    show($('volLegLiq'), liqOn() && !!V.last && V.last.source === 'latest');
     show($('cmLegend'), TAB === 'cm' && !!CM.last);
   }
   function cmSpotRow(j, n) {            // the line at the price, as on the listed tab; its words never widen the
@@ -1770,13 +1682,6 @@
     $('volWinGo').addEventListener('click', function () { winApply(true); });
     $('volWinN').addEventListener('focus', function () { $('volWinCustom').checked = true; });
     $('volWinN').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); winApply(true); } });
-    if (lsGet(LIQ_KEY) === '0') $('volLiq').checked = false;
-    $('volLiq').addEventListener('change', function () {   // v4.181: no new request - a class flip on the grid
-      lsSet(LIQ_KEY, liqOn() ? '1' : '0');
-      hidePop();
-      $('volTable').classList.toggle('vol-nolq', !liqOn());
-      legends();
-    });
     if (lsGet(CLEAN_KEY) === '0') $('volClean').checked = false;
     $('volClean').addEventListener('change', function () {
       lsSet(CLEAN_KEY, cleanOn() ? '1' : '0');

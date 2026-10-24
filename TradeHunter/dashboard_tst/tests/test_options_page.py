@@ -1262,8 +1262,8 @@ def test_the_surface_tiles_are_configurable(client, fake):
                    'id="volTileNote"', "Greeks and prices are on the latest pass only",
                    "'th.vol.tile'", "var TILE_DEFAULT = {g: ['d', 'g', 't', 'v'], b: 'last'};",
                    "var x = extraAt(j, r, c);", "'<div class=\"vol-l2\">' + tileTop(x) + '</div><div class=\"vol-iv\">'",
-                   "'<div class=\"vol-l3\">' + tileBottom(x) + '</div>' + liqBar(x) + '</td>'",
-                   "figsHtml(j, xf)) + liqHtml(j, xf);", "j.has_greeks === false",
+                   "'<div class=\"vol-l3\">' + tileBottom(x) + '</div></td>'",
+                   "figsHtml(j, xf));", "j.has_greeks === false",
                    "$('volTile').addEventListener('change', function () { tileRead(); paintTiles(); });",
                    "Model price", "Open interest", "'Delta'", "'Gamma'", "'Theta'", "'Vega'",
                    "g[2].charAt(0) + ' ' + greekText("):      # v4.168: the initials D G T V, not the signs
@@ -1819,34 +1819,16 @@ def test_the_hide_new_and_thinly_listed_tick(client, fake):
     assert "got * 2 < live" in cv and "j.cells[r].some(function (v) { return v != null; })" in cv
     td = html[html.index("function tidy("):html.index("function fullView(")]
     assert "cols.every(function (c) { return cells[r][c] != null; })" in td
-    # v4.181 (user: "a liquidity indicator on the tiles ... on/off button ... right edge bar ... and fading"): the
-    # Volatility Surface tab only - a 1.5 px soft-slate bar on the right edge, the thinnest quarter faded, a
-    # "Show liquidity" tick (th.vol.liq), the figures in the hover card; nothing on the Interpolated tab
-    assert '<input type="checkbox" id="volLiq" checked> Show liquidity' in html
-    # v4.182 (user: "a fuel gauge ... a side edge with a pointer ... pointing the edge not inside ... 3px with dark
-    # blue"): a 3 px dark-blue track, the fill from the bottom, an arrow inside the tile pointing out at the level
-    # v4.183 (user: "why some edge bar looks bolder and some thinner?"): the gauge is the cell's own background-image
-    # (snaps with the cell edge - the same 3 px in every column), the tint a background-COLOR beneath it, the
-    # pointer an arrow inside the tile; the colour's repaint keeps --lq
-    assert ".vol-grid td.vol-cell[data-lq] {" in html and "background-size: 3px var(--lq, 0%), 3px 100%;" in html
-    assert "background-position: right bottom, right top; background-repeat: no-repeat; }" in html
-    assert "border-left: 5px solid rgba(30,64,175,.9); }" in html and ".vol-grid.vol-nolq td.vol-cell[data-lq] { background-image: none; }" in html
-    assert "'background-color:hsla(' + rankHue(rank) + ',70%,45%,.35)'" in html and "var GREY = 'background-color:hsla(0,0%,50%,.18)';" in html
-    assert "' data-lq=\"' + p + '\" style=\"--lq:' + p + '%\"'" in html
-    assert "td.style.cssText = cellStyle(s) + liqVar(td);" in html
-    lb = html[html.index("function liqBar("):html.index("function liqWord(")]
-    assert "'<b class=\"vol-lq-pt\" style=\"top:' + (100 - p) + '%\"></b>'" in lb
-    assert "'\"' + liqAttr(x) + ' data-r=\"' + r + '\"" in html[html.index("function renderSurface("):html.index("function tileLoad(")]
-    assert ".vol-grid td.vol-cell.vol-thin { opacity: .38; }" in html and ".vol-grid.vol-nolq .vol-lq-pt { display: none; }" in html
-    assert "var LIQ_KEY = 'th.vol.liq', LIQ_THIN = 0.25;" in html
+    # v4.200 (user: "remove the liquidity edge bar and also the hover tooltip liquidity information"): the per-tile
+    # gauge (v4.181-4.185), its fade, the "Show liquidity" tick, the legend line and the hover card's Liquidity
+    # block are gone; the server still ranks (liq / rk in extra) and the watchlist's Opt liq verdict stays
+    for gone in ('id="volLiq"', "function liqHtml(", "function liqBar(", "liqAttr(", "vol-lq-pt", "vol-thin",
+                 "vol-nolq", 'id="volLegLiq"', "LIQ_KEY", "data-lq", "vol-pop-sec", ".vol-chip"):
+        assert gone not in html, gone
     rs = html[html.index("function renderSurface("):html.index("function tileLoad(")]
-    assert "'<td class=\"vol-cell' + (liqThin(x) ? ' vol-thin' : '') + '\"" in rs and "+ liqBar(x) + '</td>'" in rs
-    assert "$('volTable').classList.toggle('vol-nolq', !liqOn());" in rs
-    lq = html[html.index("function liqHtml("):html.index("function figsHtml(")]
-    assert "Liquidity is on the latest pass only" in lq
-    # v4.184 (user: "in the tooltip i need xx/xx of the liquidity ranking"): rank / chain size in the chip, 1 = deepest
-    assert "intText(x.rk) + ' / ' + intText(j.liq_n)" in lq and "(rk ? ' · rank ' + rk : '')" in lq
-    assert "(1 = the deepest)" in lq
+    assert "'<td class=\"vol-cell\" data-r=\"' + r + '\" data-c=\"' + c + '\">' +" in rs
+    assert "td.style.cssText = cellStyle(s);" in html
+    assert "'background-color:hsla(' + rankHue(rank) + ',70%,45%,.35)'" in html and "var GREY = 'background-color:hsla(0,0%,50%,.18)';" in html
     # v4.189 (user: "when the interface is toggled to dark, the chart background is still white"): the toggle in
     # base.html tells the page, and the charts repaint in place
     assert "document.dispatchEvent(new CustomEvent('th:theme', {detail: {light: light}}));" in html
@@ -1878,14 +1860,6 @@ def test_the_hide_new_and_thinly_listed_tick(client, fake):
     assert "Near the money = ' + esc(v.near_words || '')" in lt
     assert "var row = e.target.closest ? e.target.closest('.vol-wl-row') : null, v = row && LQV[row.dataset.sym];" in html
     assert "pop.innerHTML = lqTipHtml(row.dataset.sym, v);" in html and ".vol-pop .lq-tbl { width: 100%;" in html
-    # v4.185: the hover card's liquidity bar in the edge gauge's blue
-    assert ".vol-pop .vol-pos > i.vol-pos-lq { background: rgba(30,64,175,.72); }" in html
-    assert ".vol-pop .vol-pos.vol-pos-grey { background: rgba(30,58,138,.16); }" in html
-    assert "Turnover (volume / open interest)" in lq and "Last trade vs model price" in lq
-    assert "+ liqHtml(j, xf);" in html and 'id="volLegLiq"' in html
-    assert "show($('volLegLiq'), liqOn() && !!V.last && V.last.source === 'latest');" in html
-    rcm_ = html[html.index("function renderCm("):html.index("function cmMoneyWork(")]
-    assert "liqBar" not in rcm_ and "vol-thin" not in rcm_
     # v4.179 (user, AMD on 2026-10-13: "only 2 strike listed"): a past day's grid holds only the contracts that
     # traded, so a gap is no trade - a row stays while half of the shown expiries have a value; the latest pass
     # keeps the every-column rule
