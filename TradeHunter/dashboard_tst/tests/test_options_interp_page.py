@@ -80,38 +80,45 @@ def test_the_point_and_series_apis_answer_or_say_why(client, fake, screener_url,
     assert client.get("/options/api/cm/series", params={"symbol": "AAPL", "h": "60", "m": "0.95", "end": "soon"}).json()["ok"] is True   # a bad date is ignored
 
 
-def test_the_term_charts_zoom_and_skip_colliding_labels(client, fake):
+def test_the_charts_zoom_and_skip_colliding_labels(client, fake):
     """v4.211 (user: "the graph in term structure have to make it smaller and can be animated to zoom in and out
-    so the data does not overlapped"): the term charts share one animated x-range (buttons, wheel about the
-    cursor, drag to pan), are capped at 40 rem, rescale their axes to the points in view, and place only the
-    labels that fit (legs and horizon first)."""
+    so the data does not overlapped") and v4.213 ("this cannot zoom" - the smile): one zoomer per chart kind
+    (the term charts share one, the smile has its own, opening on the strikes within 30 % of the price); buttons,
+    the wheel about the cursor and a drag to pan; axes rescaled to the points in view; only the labels that fit."""
     html = client.get("/options/interpolation", params={"symbol": "AAPL", "h": "90", "m": "0.975"}).text
-    for needle in (".ip-term, .ip-smile { max-width: 40rem; }", ".ip-term svg { cursor: grab; touch-action: none; }",
-                   "var TERM = {x0: null, x1: null, full: null, anim: null, W: 640, H: 200, L: 46, R: 70, T: 14, B: 40};",
-                   "function termFull(p)", "function termLegs(p)", "function termClamp(a, b)", "function termZoomTo(a, b, animate)",
-                   "function termZoomBy(f, at)", "function termDayAt(svg, clientX)", "function drawTerm()", "function pickLabels(items, gap)",
+    for needle in (".ip-term, .ip-smile { max-width: 40rem; }", ".ip-term svg, .ip-smile svg { cursor: grab; touch-action: none; }",
+                   "var CH = {H: 200, T: 14, B: 40};", "function zoomer(W, L, R, minSpan, pad, draw)",
+                   "var TERM = zoomer(640, 46, 70, 3, 1, drawTerm), SMILE = zoomer(640, 46, 20, 0, 0, drawSmile);",
+                   "function termFull(p)", "function termLegs(p)", "function smileFull(p)", "function smileNear(p)", "function smileLegs(p)",
+                   "function zClamp(z, a, b)", "function zTo(z, a, b, animate)", "function zBy(z, f, at)", "function zAt(z, svg, clientX)", "function zOf(el)",
+                   "function drawTerm()", "function drawSmile()", "function pickLabels(items, gap)",
                    "var k = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - k, 3);", "dur = 300",
-                   "'<div class=\"ip-zoom\">Zoom <button type=\"button\" data-z=\"in\"", 'data-z="out"', 'data-z="legs"', 'data-z="all"',
+                   "function zoomBar(kind, extra, note)", "'<div class=\"ip-zoom\" data-for=\"' + kind + '\">Zoom <button type=\"button\" data-z=\"in\"",
+                   'data-z="out"', 'data-z="legs"', 'data-z="all"', 'data-z="near" title="Strikes within 30% of the price">Near the price</button>',
+                   "zoomBar('term', '', 'wheel over a chart to zoom at the cursor, drag to pan - both term charts move together')",
+                   "SMILE.full = smileFull(p); var sn = smileNear(p) || SMILE.full; SMILE.x0 = sn[0]; SMILE.x1 = sn[1];",
                    "<div class=\"ip-term\" data-i=\"' + i + '\">", "<div class=\"ip-smile\">",
-                   "tab.addEventListener('wheel', function (e) {", "termZoomBy(e.deltaY > 0 ? 1.25 : 0.8, termDayAt(box.querySelector('svg'), e.clientX));",
-                   "tab.addEventListener('mousedown', function (e) {", "termZoomTo(drag.x0 + days, drag.x1 + days, false);",
-                   "if (z === 'in') termZoomBy(0.6);", "else if (z === 'all') termZoomTo(TERM.full[0], TERM.full[1], true);",
+                   "e.target.closest('.ip-term, .ip-smile')", "zBy(z, e.deltaY > 0 ? 1.25 : 0.8, zAt(z, box.querySelector('svg'), e.clientX));",
+                   "zTo(z, drag.x0 + dx, drag.x1 + dx, false);", "if (k === 'in') zBy(z, 0.6);", "else if (k === 'all') zTo(z, z.full[0], z.full[1], true);",
                    "var pts = all.filter(function (q) { return q.dte >= x0 && q.dte <= x1; });",
-                   "<clipPath id=\"' + cid + '\">", "pickLabels(labels, 26)", "pickLabels(tops, 48)",
+                   "var pts = all.filter(function (q) { return q.strike >= k0 && q.strike <= k1; });",
+                   "<clipPath id=\"' + cid + '\">", '<clipPath id="ipsm">', "pickLabels(labels, 26)", "pickLabels(tops, 48)", "pickLabels(labels, 30)",
                    "' (' + Math.round(x0) + 'd to ' + Math.round(x1) + 'd in view)</text></svg>'",
+                   "num(k0, 0) + ' to ' + num(k1, 0) + ' in view)</text></svg>'",
                    "var near = legs.some(function (q) { return Math.abs(X(q.dte) - rx) < 60; });",
-                   "pickLabels(pts.map(function (q) { return {x: X(q.strike), pri: q.leg ? 2 : 1, text: num(q.strike, 0), cls: q.leg ? 'lt' : 'lbl'}; }), 30)"):
+                   "var near = legs.some(function (q) { return Math.abs(X(q.strike) - rx) < 60; });"):
         assert needle in html, needle
     assert "i % Math.ceil(pts.length / 16) === 0" not in html         # the smile's every-n-th strike label is gone
     assert "var W = 640, H = 230" not in html                           # both charts are 200 high now
     if shutil.which("node"):
         import pathlib, tempfile
-        # the label picker and the clamp, run as written
-        js = html[html.index("  function termClamp(a, b) {"):html.index("  function termZoomTo(")] + \
+        # the clamp and the label picker, run as written
+        js = html[html.index("  function zClamp(z, a, b) {"):html.index("  function zTo(")] + \
              html[html.index("  function pickLabels(items, gap) {"):html.index("  function termSvg(p, tr) {")]
-        js = "var TERM = {full: [1, 800]};\n" + js + """
-var r = termClamp(-50, -48); console.log(r[0], r[1]);
-var r2 = termClamp(700, 900); console.log(r2[0], r2[1]);
+        js = js + """
+var z = {full: [1, 800], minSpan: 3, pad: 1};
+var r = zClamp(z, -50, -48); console.log(r[0], r[1]);
+var r2 = zClamp(z, 700, 900); console.log(r2[0], r2[1]);
 var items = pickLabels([{x: 10, pri: 1}, {x: 20, pri: 2}, {x: 30, pri: 1}, {x: 60, pri: 1}, {x: 62, pri: 3}], 26);
 console.log(items.map(function (i) { return i.ok ? 1 : 0; }).join(''));
 """

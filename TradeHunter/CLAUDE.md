@@ -695,7 +695,8 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
   an Interpolated-tab cell opens it in a new window - three tabs: **the surface as a MAP (v4.212: expiries across on
   a log scale, strikes up, tiles coloured by IV, the horizon and level lines, the legs ringed, the cell at the cross;
   it replaced the contract table at the user's request)** with the working tables under it, the term-structure and
-  smile charts (v4.211: smaller, zoomable with +/-/Legs/All, wheel and drag, labels that never collide), and the cell's day-by-day interpolated history over the rank window (the phase-2 constant-maturity
+  smile charts (v4.211/4.213: smaller, each zoomable with +/-/Legs/All, wheel and drag, the smile opening
+  on the strikes within 30 % of the price, labels that never collide), and the cell's day-by-day interpolated history over the rank window (the phase-2 constant-maturity
   history, computed on demand per cell from the Parquet closes, cached 10 min). **v4.210 (2026-10-24): the
   Interpolated tab's HOVER CARD has the listed tab's three panels - Greeks / Volatility (the two-line working,
   the within-surface bar, then the cell's OWN past-N-days range, rank and sparkline with E lines, from

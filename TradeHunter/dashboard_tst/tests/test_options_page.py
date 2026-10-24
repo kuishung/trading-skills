@@ -2062,3 +2062,43 @@ def test_the_interpolated_hover_card_has_the_three_panels_and_its_own_history(cl
         path.write_text(js, encoding="utf-8")
         out = subprocess.run(["node", str(path)], capture_output=True, text=True)
         assert out.stdout.split() == ["0.6319", "0.3681", "0.5000", "0.9987"], out.stdout + out.stderr
+
+
+def test_a_dropped_connection_is_retried_before_the_page_says_the_server_did_not_answer(client, fake):
+    """v4.213 (user: "sometimes when loading the vol surface, it show a message error server did not answer"): getJSON
+    tries three times on no connection or a 502 / 503 / 504 (the server restarting behind the tunnel), noting each
+    retry in the message box; a page error of our own is reported as such, not as the server's silence."""
+    html = client.get("/options").text
+    for needle in ("var FETCH_TRIES = 3, FETCH_WAIT = [1500, 3500, 6000];", "function getJSON(url, opts) {",
+                   "if ((r.status === 502 || r.status === 503 || r.status === 504) && n < FETCH_TRIES - 1) return again('the server answered ' + r.status);",
+                   "err.network = true; throw err;", "function retryNote(n, why)", "function failText(err, what)",
+                   "getJSON('/options/api/surface?' + q.toString(), {onRetry: function (n, why) { if (!V.quiet && my === V.seq) msg($('volMsg'), retryNote(n, why)); }})",
+                   "getJSON('/options/api/surface/cm?' + q.toString(), {onRetry: function (n, why) { if (!CM.quiet && my === CM.seq) msg($('cmMsg'), retryNote(n, why)); }})",
+                   "else msg($('volMsg'), failText(err, 'the surface'));", "else msg($('cmMsg'), failText(err, 'the interpolated surface'));"):
+        assert needle in html, needle
+    assert "msg($('volMsg'), 'The server did not answer. Try again in a minute.')" not in html
+    if shutil.which("node"):
+        import pathlib, subprocess, tempfile
+        js = html[html.index("  var FETCH_TRIES = 3, FETCH_WAIT"):html.index("  function show(el, on)")]
+        js = """var window = {console: console}; var calls = [], log = [];
+var fetch = function (url) { calls.push(url); var k = calls.filter(function (u) { return u === url; }).length;
+  if (url === 'drop') return k < 3 ? Promise.reject(new TypeError('Failed to fetch')) : Promise.resolve({status: 200, json: function () { return Promise.resolve({ok: true, k: k}); }});
+  if (url === 'dead') return Promise.reject(new TypeError('Failed to fetch'));
+  if (url === 'gw') return k < 2 ? Promise.resolve({status: 503, json: function () { return Promise.reject(new Error('html')); }}) : Promise.resolve({status: 200, json: function () { return Promise.resolve({ok: true, k: k}); }});
+  return Promise.resolve({status: 500, json: function () { return Promise.reject(new Error('html')); }}); };
+""" + js + """
+FETCH_WAIT = [1, 1, 1];
+getJSON('drop', {onRetry: function (n, why) { log.push(n + ':' + why); }}).then(function (j) { console.log('drop', j.ok, j.k, log.join(' ')); log = [];
+  return getJSON('gw', {onRetry: function (n, why) { log.push(n + ':' + why); }}); }).then(function (j) { console.log('gw', j.ok, j.k, log.join(' '));
+  return getJSON('dead').then(function () { console.log('dead resolved?'); }, function (e) { console.log('dead', e.network === true, calls.filter(function (u) { return u === 'dead'; }).length); }); })
+  .then(function () { return getJSON('x'); }).then(function (j) { console.log('x', j.ok, j.error); console.log(failText(new Error('boom'), 'the surface')); console.log(failText({network: true}, 'the surface')); });
+"""
+        path = pathlib.Path(tempfile.mkdtemp()) / "retry.js"
+        path.write_text(js, encoding="utf-8")
+        out = subprocess.run(["node", str(path)], capture_output=True, text=True)
+        lines = out.stdout.strip().splitlines()
+        assert lines[0] == "drop true 3 1:no connection 2:no connection", out.stdout + out.stderr
+        assert lines[1] == "gw true 2 1:the server answered 503", out.stdout
+        assert lines[2] == "dead true 3", out.stdout
+        assert lines[3] == "x false The server answered 500.", out.stdout
+        assert lines[4].startswith("The page hit an error drawing the surface (boom)") and lines[5].startswith("The server did not answer after 3 tries - it may be restarting"), out.stdout

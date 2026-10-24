@@ -42,7 +42,7 @@
   /* v4.211 (user: "make it smaller and can be animated to zoom in and out so the data does not overlapped"): the
      term and smile charts stay at their drawn width instead of stretching across the card; the term charts zoom */
   .ip-term, .ip-smile { max-width: 40rem; }
-  .ip-term svg { cursor: grab; touch-action: none; } .ip-term.drag svg { cursor: grabbing; }
+  .ip-term svg, .ip-smile svg { cursor: grab; touch-action: none; } .ip-term.drag svg, .ip-smile.drag svg { cursor: grabbing; }
   .ip-zoom { display: flex; align-items: center; gap: .35rem; flex-wrap: wrap; font-size: 11px; color: var(--tv-muted); margin: .2rem 0 .4rem; }
   .ip-zoom button { border: 1px solid var(--tv-border-2); border-radius: .3rem; padding: .05rem .5rem; color: var(--tv-text); background: var(--tv-panel); font-size: 11px; line-height: 1.3; }
   .ip-zoom button:hover { border-color: var(--tv-accent, #60a5fa); }
@@ -243,7 +243,12 @@
   // animation - the + / - buttons (about the centre), Legs (the two legs around the horizon), All, the wheel over a
   // chart (about the cursor) and a drag to pan. Both axes rescale to the points in view, and the day labels along the
   // bottom skip any that would sit on another (the legs and the horizon are placed first).
-  var TERM = {x0: null, x1: null, full: null, anim: null, W: 640, H: 200, L: 46, R: 70, T: 14, B: 40};
+  // v4.213 (user: "this cannot zoom" - the smile): one zoomer per chart kind. TERM = the term charts (days to expiry,
+  // both charts share it), SMILE = the smile (strike). Each keeps its x-range, its full range, its geometry and the
+  // function that redraws its chart(s); the buttons, the wheel and the drag drive whichever chart they are on.
+  var CH = {H: 200, T: 14, B: 40};                 // every chart's height, top and bottom margins
+  function zoomer(W, L, R, minSpan, pad, draw) { return {x0: null, x1: null, full: null, anim: null, W: W, L: L, R: R, minSpan: minSpan, pad: pad, draw: draw}; }
+  var TERM = zoomer(640, 46, 70, 3, 1, drawTerm), SMILE = zoomer(640, 46, 20, 0, 0, drawSmile);
   function termFull(p) {
     var xs = [p.h];
     (p.term || []).forEach(function (tr) { tr.points.forEach(function (q) { if (q.var != null) xs.push(q.dte); }); });
@@ -255,36 +260,62 @@
     var w = Math.max(5, (t.hi.dte - t.lo.dte) * 0.6);
     return [t.lo.dte - w, t.hi.dte + w];
   }
-  function termClamp(a, b) {            // inside the data (a day either side), at least three days wide
-    var f = TERM.full, span = Math.max(3, b - a);
-    a = Math.max(f[0] - 1, Math.min(a, f[1] + 1 - span));
-    b = Math.min(f[1] + 1, a + span);
+  function smilePts(p) { var sm = p.smile; return sm ? sm.points.filter(function (q) { return q.iv != null; }) : []; }
+  function smileFull(p) {               // every listed strike, the level and the price, a little room either side
+    var pts = smilePts(p), sm = p.smile, ks = pts.map(function (q) { return q.strike; }).concat(sm ? [sm.K, sm.spot] : []).filter(function (v) { return v != null; });
+    if (!ks.length) return [0, 1];
+    var k0 = Math.min.apply(null, ks), k1 = Math.max.apply(null, ks), padK = Math.max(0.5, (k1 - k0) * 0.02);
+    SMILE.minSpan = Math.max(0.5, (k1 - k0) / 200);
+    return [k0 - padK, k1 + padK];
+  }
+  function smileNear(p) {               // strikes within 30 % of the price - the opening view (the chain's far strikes squash the smile)
+    var spot = p.smile && p.smile.spot, pts = smilePts(p);
+    if (!spot) return null;
+    var near = pts.filter(function (q) { return Math.abs(q.strike / spot - 1) <= 0.3; });
+    if (near.length < 4) return null;
+    return [spot * 0.7, spot * 1.3];
+  }
+  function smileLegs(p) {               // the two strikes around the level, two listed strikes out either side
+    var st = p.strike, pts = smilePts(p);
+    if (!st || !pts.length) return null;
+    var ks = pts.map(function (q) { return q.strike; }), i0 = ks.indexOf(st.k_lo.strike), i1 = ks.indexOf(st.k_hi.strike);
+    if (i0 < 0 || i1 < 0) return null;
+    var a = ks[Math.max(0, Math.min(i0, i1) - 2)], b = ks[Math.min(ks.length - 1, Math.max(i0, i1) + 2)];
+    var w = Math.max((b - a) * 0.15, SMILE.minSpan);
+    return [a - w, b + w];
+  }
+  function zClamp(z, a, b) {            // inside the data (plus the pad), never narrower than the minimum span
+    var f = z.full, span = Math.max(z.minSpan, b - a);
+    a = Math.max(f[0] - z.pad, Math.min(a, f[1] + z.pad - span));
+    b = Math.min(f[1] + z.pad, a + span);
     return [a, b];
   }
-  function termZoomTo(a, b, animate) {
-    var to = termClamp(a, b), from = [TERM.x0, TERM.x1];
-    if (TERM.anim) { cancelAnimationFrame(TERM.anim); TERM.anim = null; }
-    if (!animate || from[0] == null || !window.requestAnimationFrame) { TERM.x0 = to[0]; TERM.x1 = to[1]; drawTerm(); return; }
+  function zTo(z, a, b, animate) {
+    var to = zClamp(z, a, b), from = [z.x0, z.x1];
+    if (z.anim) { cancelAnimationFrame(z.anim); z.anim = null; }
+    if (!animate || from[0] == null || !window.requestAnimationFrame) { z.x0 = to[0]; z.x1 = to[1]; z.draw(); return; }
     var t0 = performance.now(), dur = 300;
-    TERM.anim = requestAnimationFrame(function step(now) {
+    z.anim = requestAnimationFrame(function step(now) {
       var k = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - k, 3);     // ease-out
-      TERM.x0 = from[0] + (to[0] - from[0]) * e; TERM.x1 = from[1] + (to[1] - from[1]) * e;
-      drawTerm();
-      TERM.anim = k < 1 ? requestAnimationFrame(step) : null;
+      z.x0 = from[0] + (to[0] - from[0]) * e; z.x1 = from[1] + (to[1] - from[1]) * e;
+      z.draw();
+      z.anim = k < 1 ? requestAnimationFrame(step) : null;
     });
   }
-  function termZoomBy(f, at) {          // f < 1 zooms in; `at` = the day the zoom is about (the centre when missing)
-    var c = at != null ? at : (TERM.x0 + TERM.x1) / 2;
-    termZoomTo(c - (c - TERM.x0) * f, c + (TERM.x1 - c) * f, at == null);
+  function zBy(z, f, at) {              // f < 1 zooms in; `at` = the x the zoom is about (the centre when missing)
+    var c = at != null ? at : (z.x0 + z.x1) / 2;
+    zTo(z, c - (c - z.x0) * f, c + (z.x1 - c) * f, at == null);
   }
-  function termDayAt(svg, clientX) {    // the day under a mouse position on a term chart
-    var r = svg.getBoundingClientRect(), vx = (clientX - r.left) / Math.max(1, r.width) * TERM.W;
-    return TERM.x0 + (vx - TERM.L) / (TERM.W - TERM.L - TERM.R) * (TERM.x1 - TERM.x0);
+  function zAt(z, svg, clientX) {       // the x value under a mouse position on the chart
+    var r = svg.getBoundingClientRect(), vx = (clientX - r.left) / Math.max(1, r.width) * z.W;
+    return z.x0 + (vx - z.L) / (z.W - z.L - z.R) * (z.x1 - z.x0);
   }
+  function zOf(el) { return el && el.classList.contains('ip-smile') ? SMILE : TERM; }
   function drawTerm() {
     var els = document.querySelectorAll('#tabCharts .ip-term');
     for (var i = 0; i < els.length; i++) els[i].innerHTML = termSvg(P, P.term[+els[i].dataset.i]);
   }
+  function drawSmile() { var el = document.querySelector('#tabCharts .ip-smile'); if (el) el.innerHTML = smileSvg(P); }
   function pickLabels(items, gap) {     // items [{x, pri}]: the ones that fit, highest priority first, then left to right
     var placed = [];
     items.slice().sort(function (a, b) { return b.pri - a.pri || a.x - b.x; }).forEach(function (it) {
@@ -295,7 +326,7 @@
   function termSvg(p, tr) {
     var all = tr.points.filter(function (q) { return q.var != null; });
     if (all.length < 2) return '<div class="ip-msg">Fewer than two listed expiries have a value at strike ' + num(tr.strike, 2) + '.</div>';
-    var W = TERM.W, H = TERM.H, L = TERM.L, R = TERM.R, T = TERM.T, B = TERM.B;
+    var W = TERM.W, H = CH.H, L = TERM.L, R = TERM.R, T = CH.T, B = CH.B;
     var x0 = TERM.x0, x1 = TERM.x1;
     var pts = all.filter(function (q) { return q.dte >= x0 && q.dte <= x1; });
     var atIn = tr.at && tr.at.var != null && p.h >= x0 && p.h <= x1;
@@ -344,83 +375,107 @@
     return s;
   }
   function smileSvg(p) {
-    var sm = p.smile, pts = sm ? sm.points.filter(function (q) { return q.iv != null; }) : [];
-    if (pts.length < 2) return '<div class="ip-msg">Fewer than two listed strikes have a value at ' + p.h + ' days.</div>';
-    var W = 640, H = 200, L = 46, R = 20, T = 14, B = 40;
-    var ks = pts.map(function (q) { return q.strike; }).concat([sm.K, sm.spot]);
-    var k0 = Math.min.apply(null, ks), k1 = Math.max.apply(null, ks);
-    var ivs = pts.map(function (q) { return q.iv; }); var imin = Math.min.apply(null, ivs), imax = Math.max.apply(null, ivs); if (imax - imin < 1) { imin -= 1; imax += 1; }
+    var sm = p.smile, all = smilePts(p);
+    if (all.length < 2) return '<div class="ip-msg">Fewer than two listed strikes have a value at ' + p.h + ' days.</div>';
+    var W = SMILE.W, H = CH.H, L = SMILE.L, R = SMILE.R, T = CH.T, B = CH.B;
+    var k0 = SMILE.x0, k1 = SMILE.x1;
+    var pts = all.filter(function (q) { return q.strike >= k0 && q.strike <= k1; });
+    var atIn = sm.at != null && sm.K >= k0 && sm.K <= k1, spotIn = sm.spot != null && sm.spot >= k0 && sm.spot <= k1;
+    var scaleOn = pts.length ? pts : all;
+    var ivs = scaleOn.map(function (q) { return q.iv; }).concat(atIn ? [sm.at] : []);
+    var imin = Math.min.apply(null, ivs), imax = Math.max.apply(null, ivs); if (imax - imin < 1) { imin -= 1; imax += 1; }
     var pad = (imax - imin) * .15; imin -= pad; imax += pad;
     function X(k) { return L + (W - L - R) * (k - k0) / Math.max(1e-9, k1 - k0); }
     function Y(v) { return H - B - (H - T - B) * (v - imin) / (imax - imin); }
-    var s = '<svg class="ip-svg" viewBox="0 0 ' + W + ' ' + H + '">';
+    var s = '<svg class="ip-svg" viewBox="0 0 ' + W + ' ' + H + '"><defs><clipPath id="ipsm"><rect x="' + L + '" y="0" width="' + (W - L - R) + '" height="' + (H - B) + '"/></clipPath></defs>';
     s += '<line class="ax" x1="' + L + '" y1="' + T + '" x2="' + L + '" y2="' + (H - B) + '"/><line class="ax" x1="' + L + '" y1="' + (H - B) + '" x2="' + (W - R) + '" y2="' + (H - B) + '"/>';
-    s += '<text class="lbl" x="4" y="' + (T + 4) + '">IV %</text><text class="lbl" x="4" y="' + (Y(imax) + 3) + '">' + num(imax, 1) + '</text><text class="lbl" x="4" y="' + (Y(imin) + 3) + '">' + num(imin, 1) + '</text>';
-    s += '<polyline class="path" points="' + pts.map(function (q) { return X(q.strike).toFixed(1) + ',' + Y(q.iv).toFixed(1); }).join(' ') + '"/>';
-    var legs = pts.filter(function (q) { return q.leg; });
+    s += '<text class="lbl" x="4" y="' + (Y(imax) + 3) + '">' + num(imax, 1) + '</text><text class="lbl" x="4" y="' + (Y(imin) + 3) + '">' + num(imin, 1) + '</text><text class="lbl" x="4" y="' + (H - B + 12) + '">IV %</text>';
+    s += '<g clip-path="url(#ipsm)">';
+    s += '<polyline class="path" points="' + all.map(function (q) { return X(q.strike).toFixed(1) + ',' + Y(q.iv).toFixed(1); }).join(' ') + '"/>';
+    var legs = all.filter(function (q) { return q.leg; });
     if (legs.length === 2) s += '<line class="seg" x1="' + X(legs[0].strike).toFixed(1) + '" y1="' + Y(legs[0].iv).toFixed(1) + '" x2="' + X(legs[1].strike).toFixed(1) + '" y2="' + Y(legs[1].iv).toFixed(1) + '"/>';
-    pts.forEach(function (q, i) {
+    pts.forEach(function (q) {
       s += '<circle class="' + (q.leg ? 'dot-leg' : 'dot') + '" cx="' + X(q.strike).toFixed(1) + '" cy="' + Y(q.iv).toFixed(1) + '" r="' + (q.leg ? 5 : 3.5) + '"><title>' + esc('strike ' + num(q.strike, 2) + ' - IV ' + num(q.iv, 1) + '% (time-interpolated to ' + p.h + 'd)') + '</title></circle>';
-      if (q.leg) s += '<text class="lt" x="' + X(q.strike).toFixed(1) + '" y="' + (Y(q.iv) - 8).toFixed(1) + '" text-anchor="middle">' + num(q.iv, 1) + '%</text>';
     });
-    // v4.211: the strike labels that have room (30 px apart), the two legs first
-    pickLabels(pts.map(function (q) { return {x: X(q.strike), pri: q.leg ? 2 : 1, text: num(q.strike, 0), cls: q.leg ? 'lt' : 'lbl'}; }), 30).forEach(function (l) {
+    if (spotIn) s += '<line class="px" x1="' + X(sm.spot).toFixed(1) + '" y1="' + T + '" x2="' + X(sm.spot).toFixed(1) + '" y2="' + (H - B) + '"/>';
+    if (atIn) s += '<line class="hz" x1="' + X(sm.K).toFixed(1) + '" y1="' + T + '" x2="' + X(sm.K).toFixed(1) + '" y2="' + (H - B) + '"/>';
+    s += '</g>';
+    // the strike labels that have room (30 px apart), the two legs first, then the level
+    var labels = pts.map(function (q) { return {x: X(q.strike), pri: q.leg ? 2 : 1, text: num(q.strike, 0), cls: q.leg ? 'lt' : 'lbl'}; });
+    pickLabels(labels, 30).forEach(function (l) {
       if (l.ok) s += '<text class="' + l.cls + '" x="' + l.x.toFixed(1) + '" y="' + (H - B + 12) + '" text-anchor="middle">' + l.text + '</text>';
     });
-    if (sm.spot) s += '<line class="px" x1="' + X(sm.spot).toFixed(1) + '" y1="' + T + '" x2="' + X(sm.spot).toFixed(1) + '" y2="' + (H - B) + '"/><text class="lbl" x="' + (X(sm.spot) + 4).toFixed(1) + '" y="' + (T + 10) + '" style="fill:#fb923c">price ' + num(sm.spot, 2) + '</text>';
-    if (sm.at != null) s += '<line class="hz" x1="' + X(sm.K).toFixed(1) + '" y1="' + T + '" x2="' + X(sm.K).toFixed(1) + '" y2="' + (H - B) + '"/>' +
-                             '<circle class="dot-res" cx="' + X(sm.K).toFixed(1) + '" cy="' + Y(sm.at).toFixed(1) + '" r="5.5"/>' +
-                             '<text class="rt" x="' + (X(sm.K) + 7).toFixed(1) + '" y="' + (Y(sm.at) - 6).toFixed(1) + '">' + num(sm.K, 2) + (p.fixed === 'moneyness' ? ' = price &times; ' + num(p.pct, 1) + '%' : '') + ' &rarr; ' + pct(sm.at) + '</text>';
-    s += '<text class="lbl" x="' + ((L + W - R) / 2).toFixed(1) + '" y="' + (H - 4) + '" text-anchor="middle">strike - each point is step 1 done at that strike, at ' + p.h + ' days</text></svg>';
+    // each point's IV above its dot where there is room (48 px), the legs always
+    var tops = pts.map(function (q) { return {x: X(q.strike), y: Y(q.iv), pri: q.leg ? 2 : 1, iv: q.iv, cls: q.leg ? 'lt' : 'lbl'}; });
+    if (atIn) tops = tops.filter(function (l) { return l.pri === 2 || Math.abs(l.x - X(sm.K)) > 90; });   // room for the level's tag
+    pickLabels(tops, 48).forEach(function (l) {
+      if (l.ok) s += '<text class="' + l.cls + '" x="' + l.x.toFixed(1) + '" y="' + (l.y - 8).toFixed(1) + '" text-anchor="middle">' + num(l.iv, 1) + '%</text>';
+    });
+    if (spotIn) s += '<text class="lbl" x="' + (X(sm.spot) + 4).toFixed(1) + '" y="' + (T + 10) + '" style="fill:#fb923c">price ' + num(sm.spot, 2) + '</text>';
+    if (atIn) {
+      var rx = X(sm.K), ry = Y(sm.at), flip = rx > W - R - 190;
+      var near = legs.some(function (q) { return Math.abs(X(q.strike) - rx) < 60; });   // the legs crowd the level: the tag goes under the dot
+      s += '<circle class="dot-res" cx="' + rx.toFixed(1) + '" cy="' + ry.toFixed(1) + '" r="5.5"/>' +
+           '<text class="rt" x="' + (near ? rx : (flip ? rx - 7 : rx + 7)).toFixed(1) + '" y="' + (near ? ry + 17 : ry - 6).toFixed(1) + '"' +
+           (near ? ' text-anchor="middle"' : (flip ? ' text-anchor="end"' : '')) + '>' + num(sm.K, 2) + (p.fixed === 'moneyness' ? ' = price &times; ' + num(p.pct, 1) + '%' : '') + ' &rarr; ' + pct(sm.at) + '</text>';
+    }
+    s += '<text class="lbl" x="' + ((L + W - R) / 2).toFixed(1) + '" y="' + (H - 4) + '" text-anchor="middle">strike - each point is step 1 done at that strike, at ' + p.h + ' days (' +
+         num(k0, 0) + ' to ' + num(k1, 0) + ' in view)</text></svg>';
     return s;
+  }
+  function zoomBar(kind, extra, note) {
+    return '<div class="ip-zoom" data-for="' + kind + '">Zoom <button type="button" data-z="in" title="Zoom in">+</button><button type="button" data-z="out" title="Zoom out">&minus;</button>' +
+           '<button type="button" data-z="legs" title="The two legs around the ' + (kind === 'smile' ? 'level' : 'horizon') + '">Legs</button>' + (extra || '') +
+           '<button type="button" data-z="all" title="' + (kind === 'smile' ? 'Every listed strike' : 'Every listed expiry') + '">All</button><span>' + note + '</span></div>';
   }
   function renderCharts(p) {
     var h = '';
     if (!p.iv) { $('tabCharts').innerHTML = '<div class="ip-card"><div class="ip-msg">' + esc(p.why || 'nothing to interpolate here') + '</div></div>'; return; }
     TERM.full = termFull(p); TERM.x0 = TERM.full[0]; TERM.x1 = TERM.full[1]; TERM.anim = null;
-    if (p.term && p.term.length) {
-      h += '<div class="ip-zoom">Zoom <button type="button" data-z="in" title="Zoom in">+</button><button type="button" data-z="out" title="Zoom out">&minus;</button>' +
-           '<button type="button" data-z="legs" title="The two legs around the horizon">Legs</button><button type="button" data-z="all" title="Every listed expiry">All</button>' +
-           '<span>wheel over a chart to zoom at the cursor, drag to pan - both charts move together</span></div>';
-    }
+    SMILE.full = smileFull(p); var sn = smileNear(p) || SMILE.full; SMILE.x0 = sn[0]; SMILE.x1 = sn[1]; SMILE.anim = null;
+    if (p.term && p.term.length) h += zoomBar('term', '', 'wheel over a chart to zoom at the cursor, drag to pan - both term charts move together');
     (p.term || []).forEach(function (tr, i) {
       h += '<div class="ip-card"><h2>1 &middot; Time step - the term structure at strike ' + num(tr.strike, 2) + ' (linear in total variance)</h2><div class="ip-term" data-i="' + i + '">' + termSvg(p, tr) + '</div>' +
            '<div class="ip-legend"><span><i style="background:#60a5fa"></i>listed expiry at this strike (hover: the contract)</span><span><i style="background:#f59e0b"></i>the two legs, joined straight in variance</span><span><i style="background:#34d399"></i>the horizon\'s cut = the interpolated figure</span><span><i style="background:#a78bfa"></i>the same points as IV (dashed, right axis)</span></div></div>';
     });
-    h += '<div class="ip-card"><h2>2 &middot; Strike step - the smile at ' + p.h + ' days (linear in strike)</h2><div class="ip-smile">' + smileSvg(p) + '</div>' +
+    h += zoomBar('smile', '<button type="button" data-z="near" title="Strikes within 30% of the price">Near the price</button>',
+                 'opens on the strikes within 30% of the price - wheel to zoom at the cursor, drag to pan') +
+         '<div class="ip-card"><h2>2 &middot; Strike step - the smile at ' + p.h + ' days (linear in strike)</h2><div class="ip-smile">' + smileSvg(p) + '</div>' +
          '<div class="ip-legend"><span><i style="background:#60a5fa"></i>listed strikes, each already interpolated in time</span><span><i style="background:#f59e0b"></i>the two strikes around the level</span><span><i style="background:#34d399"></i>the level, the cell\'s figure</span><span><i style="background:#fb923c"></i>the stock price</span></div></div>';
     $('tabCharts').innerHTML = h;
   }
-  (function () {                        // v4.211: the zoom bar, the wheel and the drag, once, on the tab
+  (function () {                        // v4.211 / v4.213: the zoom bars, the wheel and the drag, once, on the tab
     var tab = $('tabCharts'), drag = null;
     tab.addEventListener('click', function (e) {
       var b = e.target.closest ? e.target.closest('.ip-zoom button') : null;
       if (!b || !P) return;
-      var z = b.dataset.z, legs;
-      if (z === 'in') termZoomBy(0.6);
-      else if (z === 'out') termZoomBy(1 / 0.6);
-      else if (z === 'all') termZoomTo(TERM.full[0], TERM.full[1], true);
-      else if (z === 'legs') { legs = termLegs(P); if (legs) termZoomTo(legs[0], legs[1], true); }
+      var bar = b.closest('.ip-zoom'), z = bar && bar.dataset.for === 'smile' ? SMILE : TERM, k = b.dataset.z, to;
+      if (k === 'in') zBy(z, 0.6);
+      else if (k === 'out') zBy(z, 1 / 0.6);
+      else if (k === 'all') zTo(z, z.full[0], z.full[1], true);
+      else if (k === 'near') { to = smileNear(P); if (to) zTo(z, to[0], to[1], true); }
+      else if (k === 'legs') { to = z === SMILE ? smileLegs(P) : termLegs(P); if (to) zTo(z, to[0], to[1], true); }
     });
     tab.addEventListener('wheel', function (e) {
-      var box = e.target.closest ? e.target.closest('.ip-term') : null;
+      var box = e.target.closest ? e.target.closest('.ip-term, .ip-smile') : null;
       if (!box || !P) return;
       e.preventDefault();
-      termZoomBy(e.deltaY > 0 ? 1.25 : 0.8, termDayAt(box.querySelector('svg'), e.clientX));
+      var z = zOf(box);
+      zBy(z, e.deltaY > 0 ? 1.25 : 0.8, zAt(z, box.querySelector('svg'), e.clientX));
     }, {passive: false});
     tab.addEventListener('mousedown', function (e) {
-      var box = e.target.closest ? e.target.closest('.ip-term') : null;
+      var box = e.target.closest ? e.target.closest('.ip-term, .ip-smile') : null;
       if (!box || !P || e.button !== 0) return;
       e.preventDefault();
-      drag = {box: box, svg: box.querySelector('svg'), x: e.clientX, x0: TERM.x0, x1: TERM.x1, moved: false};
+      var z = zOf(box);
+      drag = {box: box, z: z, svg: box.querySelector('svg'), x: e.clientX, x0: z.x0, x1: z.x1};
       box.classList.add('drag');
     });
     window.addEventListener('mousemove', function (e) {
       if (!drag) return;
-      var r = drag.svg.getBoundingClientRect();
-      var days = -(e.clientX - drag.x) / Math.max(1, r.width) * TERM.W / (TERM.W - TERM.L - TERM.R) * (drag.x1 - drag.x0);
-      if (Math.abs(e.clientX - drag.x) > 2) drag.moved = true;
-      termZoomTo(drag.x0 + days, drag.x1 + days, false);
+      var z = drag.z, r = drag.svg.getBoundingClientRect();
+      var dx = -(e.clientX - drag.x) / Math.max(1, r.width) * z.W / (z.W - z.L - z.R) * (drag.x1 - drag.x0);
+      zTo(z, drag.x0 + dx, drag.x1 + dx, false);
     });
     window.addEventListener('mouseup', function () { if (drag) { drag.box.classList.remove('drag'); drag = null; } });
   })();

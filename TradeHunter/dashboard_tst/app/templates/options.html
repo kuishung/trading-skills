@@ -633,10 +633,36 @@
   function num(v, d) { return (v == null || !isFinite(v)) ? '' : Number(v).toFixed(d); }
   function strikeText(k) { return (Math.round(k * 1000) / 1000).toString(); }
   function intText(v) { return v == null ? '' : Number(v).toLocaleString('en-US'); }
-  function getJSON(url) {
-    return fetch(url, {headers: {'Accept': 'application/json'}}).then(function (r) {
-      return r.json().catch(function () { return {ok: false, error: 'The server answered ' + r.status + '.'}; });
-    });
+  // v4.213 (user: "sometimes when loading the vol surface, it show a message error server did not answer"): a fetch
+  // that could not connect, or met a 502 / 503 / 504 (the server restarting behind the tunnel - every deploy and
+  // every autopull restart takes about 15 seconds), is tried again up to three times, with a note in the message
+  // box, before the page gives up. A page error of our own is no longer reported as the server's silence: the
+  // catch handlers tell the two apart (failText) and log the page error to the console.
+  var FETCH_TRIES = 3, FETCH_WAIT = [1500, 3500, 6000];
+  function getJSON(url, opts) {
+    opts = opts || {};
+    var n = 0;
+    function again(why) {
+      var wait = FETCH_WAIT[n] || 6000; n++;
+      if (opts.onRetry) { try { opts.onRetry(n, why); } catch (e) { /* the note is a courtesy */ } }
+      return new Promise(function (res) { setTimeout(res, wait); }).then(attempt);
+    }
+    function attempt() {
+      return fetch(url, {headers: {'Accept': 'application/json'}}).then(function (r) {
+        if ((r.status === 502 || r.status === 503 || r.status === 504) && n < FETCH_TRIES - 1) return again('the server answered ' + r.status);
+        return r.json().catch(function () { return {ok: false, error: 'The server answered ' + r.status + '.'}; });
+      }, function () {
+        if (n < FETCH_TRIES - 1) return again('no connection');
+        var err = new Error('The server did not answer after ' + FETCH_TRIES + ' tries'); err.network = true; throw err;
+      });
+    }
+    return attempt();
+  }
+  function retryNote(n, why) { return 'The server did not answer (' + why + ') - trying again, ' + (n + 1) + ' of ' + FETCH_TRIES + '...'; }
+  function failText(err, what) {        // the catch handlers' wording: the server's silence vs the page's own error
+    if (err && err.network) return 'The server did not answer after ' + FETCH_TRIES + ' tries - it may be restarting (a deploy takes about 15 seconds). Try again in a minute.';
+    if (window.console && err) console.error('drawing ' + what, err);
+    return 'The page hit an error drawing ' + what + (err && err.message ? ' (' + err.message + ')' : '') + '. Reload the page; if it stays, tell the admin.';
   }
   function show(el, on) { el.classList.toggle('hidden', !on); }
   function msg(box, text) { box.textContent = text || ''; show(box, !!text); }
@@ -1335,7 +1361,7 @@
     V.reqSym = sym;
     wlMark(sym);                       // v4.165: highlight this ticker in the watchlist, if it is listed
     if (!V.quiet) msg($('volMsg'), 'Building the ' + sym + ' surface...');
-    getJSON('/options/api/surface?' + q.toString()).then(function (j) {
+    getJSON('/options/api/surface?' + q.toString(), {onRetry: function (n, why) { if (!V.quiet && my === V.seq) msg($('volMsg'), retryNote(n, why)); }}).then(function (j) {
       if (my !== V.seq) return;
       if (!j || !j.ok) {
         if (V.quiet) {                 // a background refresh that failed: keep the grid, the next poll retries
@@ -1354,10 +1380,10 @@
       if (sc) { $('volWrap').scrollTop = sc.t; $('volWrap').scrollLeft = sc.l; }
       syncTick();
       loadHistory(j, q, my);
-    }).catch(function () {
+    }).catch(function (err) {
       if (my !== V.seq) return;
-      if (V.quiet) { V.refreshFailed = 'no answer'; paintTick(); }
-      else msg($('volMsg'), 'The server did not answer. Try again in a minute.');
+      if (V.quiet) { V.refreshFailed = err && err.network ? 'no answer' : 'page error'; paintTick(); if (!(err && err.network)) failText(err, 'the surface'); }
+      else msg($('volMsg'), failText(err, 'the surface'));
     }).then(function () { if (my === V.seq) V.quiet = false; });
   }
   // a cell of the surface -> that contract's history in a NEW WINDOW (v4.159). The right is the
@@ -1740,7 +1766,7 @@
     var my = ++CM.seq, sc = quiet && CM.last ? {t: $('cmWrap').scrollTop, l: $('cmWrap').scrollLeft} : null;
     CM.quiet = !!sc;
     if (!CM.quiet) msg($('cmMsg'), 'Working out the ' + sym + ' surface at fixed horizons...');
-    getJSON('/options/api/surface/cm?' + q.toString()).then(function (j) {
+    getJSON('/options/api/surface/cm?' + q.toString(), {onRetry: function (n, why) { if (!CM.quiet && my === CM.seq) msg($('cmMsg'), retryNote(n, why)); }}).then(function (j) {
       if (my !== CM.seq) return;
       if (!j || !j.ok) {
         if (CM.quiet) { V.refreshFailed = (j && j.error) || 'no answer'; paintTick(); return; }
@@ -1756,10 +1782,10 @@
       renderCm(j);
       if (sc) { $('cmWrap').scrollTop = sc.t; $('cmWrap').scrollLeft = sc.l; }
       syncTick();
-    }).catch(function () {
+    }).catch(function (err) {
       if (my !== CM.seq) return;
-      if (CM.quiet) { V.refreshFailed = 'no answer'; paintTick(); }
-      else msg($('cmMsg'), 'The server did not answer. Try again in a minute.');
+      if (CM.quiet) { V.refreshFailed = err && err.network ? 'no answer' : 'page error'; paintTick(); if (!(err && err.network)) failText(err, 'the interpolated surface'); }
+      else msg($('cmMsg'), failText(err, 'the interpolated surface'));
     }).then(function () { if (my === CM.seq) CM.quiet = false; });
   }
   function passNow() {

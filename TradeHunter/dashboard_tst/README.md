@@ -223,6 +223,27 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-24 - v4.213: the smile chart zooms too
+
+The user, on the smile: *"this cannot zoom"*. The zoom machinery of v4.211 is now one zoomer per chart kind
+(`zoomer`, `zClamp`, `zTo`, `zBy`, `zAt`): the term charts share `TERM` (days), the smile has `SMILE` (strike),
+each with its own zoom bar, and the wheel / drag act on whichever chart the mouse is over. The smile **opens on the
+strikes within 30 % of the price** ("Near the price" button; the chain's far strikes - 25 to 1290 on a 516 stock -
+had squashed the smile into a sliver), **Legs** zooms to the two strikes around the level with two listed strikes
+either side, **All** shows the whole chain. Its y-axis follows the points in view, the strike labels and the IV
+labels above the dots are placed only where they fit, the level's tag drops under its dot when the legs crowd it,
+and the axis caption sits under the axis.
+
+Also in v4.213 - **"The server did not answer"** (the user: *"sometimes when loading the vol surface, it show a
+message error server did not answer"*): the page's `getJSON` now **retries** a fetch that could not connect, or met
+a 502 / 503 / 504, up to three times (1.5 s, 3.5 s, 6 s apart) with "trying again, 2 of 3..." in the message box -
+the usual cause is the web app restarting behind the Cloudflare tunnel for ~15 s after a deploy or an autopull
+restart (there were several today). Only after the third failure does the page say the server did not answer, now
+with the likely reason. A JavaScript error of the page's own while drawing used to fall into the same catch and
+wear the same words; it now reads "The page hit an error drawing the surface (...)" and is logged to the console,
+so a real page bug can no longer hide behind the server's silence. Test: `test_options_page.py` runs the helper
+under node against a dropped connection, a 503 and a dead server.
+
 ### 2026-10-24 - v4.212: the Interpolation page's first tab - the surface as a map replaces the contract table
 
 The user, shown a sample with expiries across and moneyness up: *"i want this to replace the working on the contract
