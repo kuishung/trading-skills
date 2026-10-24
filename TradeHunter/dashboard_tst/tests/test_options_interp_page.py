@@ -71,3 +71,8 @@ def test_the_point_and_series_apis_answer_or_say_why(client, fake, screener_url,
     s = client.get("/options/api/cm/series", params={"symbol": "AAPL", "h": "60", "m": "0.95", "window": "365"}).json()
     assert s["ok"] is True and s["days"] >= 1 and s["stats"] and s["rows"][0]["iv"] is not None
     assert client.get("/options/api/cm/series", params={"symbol": "AAPL", "h": "60", "m": "0.95", "window": "7"}).status_code == 400
+    # v4.210: the hover card's chart - the series points and the earnings keys; `end` = a past-day surface's own day
+    assert s["series"] and len(s["series"][0]) == 2 and "earnings" in s and s["rows"][0]["price"] is not None
+    cut = client.get("/options/api/cm/series", params={"symbol": "AAPL", "h": "60", "m": "0.95", "window": "365", "end": "2026-10-06"}).json()
+    assert cut["ok"] is True and cut["rows"][0]["on"] == "2026-10-06"
+    assert client.get("/options/api/cm/series", params={"symbol": "AAPL", "h": "60", "m": "0.95", "end": "soon"}).json()["ok"] is True   # a bad date is ignored

@@ -104,3 +104,39 @@ def test_the_point_for_the_latest_pass_and_the_series_over_the_history(sdb, hist
         vol_cm_series.series(sdb, "AAPL", 60, window_days=365, root=hist)
     with pytest.raises(SurfaceError):
         vol_cm_series.series(sdb, "SPX", 60, m=1.0, window_days=365, root=hist)        # an index: no stock close
+    # v4.210: the hover card's chart and the model price - the payload's series (oldest first, [days, IV]),
+    # a Black-Scholes price on every solved row, the earnings keys; `end` cuts the history at a past day
+    assert s["series"] and s["series"][0][0] < s["series"][-1][0] and s["series"][-1][1] == st["newest"]
+    assert all(r["price"] is not None and r["price"] > 0 for r in done)
+    assert "earnings" in s and "next_earnings" in s and "earnings_coverage" in s and s["epoch"] == "1970-01-01"
+    cut = vol_cm_series.series(sdb, "AAPL", 60, m=0.95, window_days=365, root=hist, end="2026-10-06")
+    assert cut is not s and cut["rows"][0]["on"] == "2026-10-06" and cut["days"] < s["days"]
+    with pytest.raises(SurfaceError):
+        vol_cm_series.series(sdb, "AAPL", 60, m=0.95, window_days=365, root=hist, end="2020-01-01")   # nothing that early
+
+
+def test_one_day_of_the_series_from_numpy_rows():
+    """v4.210: `day_point` works from that day's rows as arrays (the root's window read once); no rows, no close,
+    nothing near the level or a horizon outside the legs each say why instead of failing."""
+    import datetime as _dt
+    import numpy as np
+    d = _dt.date(2026, 10, 7)
+    exps = [d + _dt.timedelta(days=n) for n in (44, 72)]
+    strikes = [90.0, 95.0, 100.0, 105.0, 110.0]
+    from app.services.black_scholes import black_scholes
+    rows = {"expiry": [], "strike": [], "call": [], "close": []}
+    for e in exps:
+        for k in strikes:
+            for c in (True, False):
+                rows["expiry"].append((e - _dt.date(1970, 1, 1)).days); rows["strike"].append(k); rows["call"].append(c)
+                rows["close"].append(round(black_scholes(101.0, k, (e - d).days / 365.0, 0.04, 0.30, "call" if c else "put").price, 4))
+    arr = {"expiry": np.array(rows["expiry"], np.int64), "strike": np.array(rows["strike"]), "call": np.array(rows["call"], bool),
+           "close": np.array(rows["close"])}
+    r = vol_cm_series.day_point(d, 101.0, arr, 60, m=0.95)
+    assert r["iv"] == pytest.approx(30.0, abs=0.3) and r["K"] == pytest.approx(95.95) and r["price"] > 0 and r["why"] is None
+    assert r["lo"]["dte"] == 44 and r["hi"]["dte"] == 72 and 0 < r["w"] < 1 and r["k_lo"]["strike"] == 95.0
+    empty = {k: v[:0] for k, v in arr.items()}
+    assert vol_cm_series.day_point(d, 101.0, empty, 60, m=0.95)["why"] == "no trade"
+    assert vol_cm_series.day_point(d, None, arr, 60, m=0.95)["why"] == "no stock close on file"
+    assert vol_cm_series.day_point(d, 101.0, arr, 60, k=200.0)["why"] == "no contract near the level traded"
+    assert vol_cm_series.day_point(d, 101.0, arr, 400, m=0.95)["iv"] is None       # no leg beyond 72 days

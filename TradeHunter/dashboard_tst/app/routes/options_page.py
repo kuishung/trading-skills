@@ -1825,9 +1825,11 @@ async def api_cm_point(symbol: str = "", day: str = "latest", h: str = "90", m: 
 
 @router.get("/api/cm/series")
 async def api_cm_series(symbol: str = "", h: str = "90", m: str = "", k: str = "", side: str = "", window: str = "",
-                        user: User = Depends(require_user)):
+                        end: str = "", user: User = Depends(require_user)):
     """v4.209: the interpolated history of one cell over the rank window (``vol_cm_series.series``):
-    a row per converted session with that day's IV, legs and weights, and the range / rank stats."""
+    a row per converted session with that day's IV, legs and weights, and the range / rank stats.
+    v4.210: ``end`` (``YYYY-MM-DD``) = the last session included - a past-day surface's hover card asks
+    for the history up to its own day; a bad date is ignored (the newest day)."""
     from ..services import vol_cm_point, vol_cm_series, vol_history
 
     try:
@@ -1839,8 +1841,11 @@ async def api_cm_series(symbol: str = "", h: str = "90", m: str = "", k: str = "
         wd = vol_history.norm_window(window or None)
     except ValueError as exc:
         return _err(str(exc))
+    end_d = (end or "").strip()[:10]
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", end_d):
+        end_d = None
     return JSONResponse(await run_in_threadpool(_hist_call, vol_cm_series.series, symbol, hh, m=mm, k=kk,
-                                                side=side or None, window_days=wd))
+                                                side=side or None, window_days=wd, end=end_d))
 
 
 @router.get("/api/history/chain")

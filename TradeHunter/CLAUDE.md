@@ -695,8 +695,13 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
   an Interpolated-tab cell opens it in a new window - three tabs: the working drawn on the contract table
   (horizon line between the leg expiries, level line between the leg strikes), the term-structure and smile
   charts, and the cell's day-by-day interpolated history over the rank window (the phase-2 constant-maturity
-  history, computed on demand per cell from the Parquet closes, cached 10 min). The tile gauge of v4.181-4.185
-  was removed in v4.200 at the user's request.
+  history, computed on demand per cell from the Parquet closes, cached 10 min). **v4.210 (2026-10-24): the
+  Interpolated tab's HOVER CARD has the listed tab's three panels - Greeks / Volatility (the two-line working,
+  the within-surface bar, then the cell's OWN past-N-days range, rank and sparkline with E lines, from
+  `/options/api/cm/series`, fetched on first hover, `end=` for a past day) / Model price (Black-Scholes at the
+  interpolated inputs)**; `vol_cm_series` reads the root's window ONCE into numpy (`_root_rows`) so a cell's
+  365-day history takes ~2 s; the page's `normCdf` was wrong (|z| fed to the erf approximation) and is fixed on
+  both tabs. The tile gauge of v4.181-4.185 was removed in v4.200 at the user's request.
 - **Options SCREENER — BUILT in v4.136 (2026-10-10): `dashboard_tst/OPTIONS_SCREENER_DESIGN.md`
   is the contract.** The user asked for *"exactly"* Barchart's options screener
   (barchart.com/options/options-screener) with each member's own settings: `/options` is now a

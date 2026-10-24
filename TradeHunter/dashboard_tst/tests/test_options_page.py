@@ -14,6 +14,7 @@ import importlib.util
 import json
 import math
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -1771,7 +1772,7 @@ def test_the_page_has_the_two_tabs_and_the_horizons(client, fake):
                    "if (TAB === 'cm') { runCm(quiet); return; }",
                    "show($('volHz'), TAB === 'cm');",
                    "a listed expiry falls on this horizon - this is that contract\\'s own IV",
-                   "weighted by time (linear in total variance) = <b>", "') falls on ' + hz.days + 'd - its own IV",
+                   "% weighted by time (linear in total variance)'", "' falls on ' + hz.days + 'd' +",
                    "model price",
                    "'d</th>'", "linear in total variance · legs: every listed expiry at least 7 days out "
                                "(the Expiries setting applies to the other tab)",
@@ -1811,7 +1812,7 @@ def test_the_page_has_the_two_tabs_and_the_horizons(client, fake):
     assert "'at the money - price ' + spot" in rcm0 and "' class=\"vol-atm\"'" in rcm0
     assert "var spotDone = atmShown;" in rcm0 and ".vol-grid tr.vol-atm > th" in html
     # the hover card: the strike step after the time step
-    assert "' % = strike ' + esc(num(row.strike, 2)) + ': between '" in js and "'), by strike = <b>'" in js
+    assert "'% = strike ' + esc(num(row.strike, 2))" in js and "'% weighted by strike = <b>'" in js   # v4.210: two lines
     # the click: the nearer listed expiry AND the nearer listed strike, the cell's own right
     click = html[html.index("$('cmTable').addEventListener('click'"):]
     click = click[:click.index("window.open('/options/interpolation") + 120]
@@ -1997,3 +1998,67 @@ def test_the_page_has_the_rank_window(client, fake):
     assert ".vol-pop .vol-pos { position: relative; height: 6px;" in html
     cmp_ = html[html.index("function cmPopHtml("):html.index("function placePop(")]
     assert "posBar(lv, j.scale ? j.scale[0] : null, j.scale ? j.scale[1] : null, 'lowest', 'highest')" in cmp_
+
+
+def test_the_interpolated_hover_card_has_the_three_panels_and_its_own_history(client, fake):
+    """v4.210 (user: "when hover in the interpolated surface, i need the graph to be shown also ... the info box
+    should be like the one in the volatility surface with greeks, volatility and the model price but all based
+    on the interpolated data"): the Interpolated tab's card = Greeks / Volatility / Model price panels from the
+    interpolated figures; the Volatility panel ends with the cell's own day-by-day series (/options/api/cm/series,
+    fetched on the first hover after a pause, kept per cell, `end=` for a past-day surface) and the sparkline;
+    the Model price panel is Black-Scholes at the cell's strike, the fixed horizon and the interpolated IV. Also
+    the normal CDF fix that both tabs' working rely on."""
+    html = client.get("/options", params={"tab": "cm"}).text
+    cmp_ = html[html.index("function cmPopHtml("):html.index("function placePop(")]
+    for needle in ("h += popPanel('Greeks', figs) + popPanel('Volatility', vol) + cmModelHtml(j, x, k, hz, v, mon ? j.rows[r] : null);",
+                   "vol += '<hr class=\"vol-sep\">' + cmSeriesHtml(cmSeriesFor(j, r, c), v, nowWord);",
+                   "'<div class=\"vol-pop-row\"><span>' + esc(nowCap) + ', interpolated</span><b>'",
+                   "vol += cmMoneyWork(j, r, c, b, v, hz);",
+                   "posBar(lv, j.scale ? j.scale[0] : null, j.scale ? j.scale[1] : null, 'lowest', 'highest')",
+                   "The legs\\' greeks, weighted like the IV (by time'",
+                   "Click: the interpolation page in a new window - the full working, the term structure and smile, the day-by-day history."):
+        assert needle in cmp_, needle
+    # the series: one request per cell after a 180 ms pause, kept in CM.series, the card redrawn when it lands
+    sf = html[html.index("function cmSeriesFor("):html.index("function cmSeriesHtml(")]
+    for needle in ("var q = cmCellQuery(j, r, c), key = cmSeriesKey(q), hit = CM.series[key];",
+                   "hit = CM.series[key] = {state: 'loading', s: null, why: '', timer: null};", "}, 180);",
+                   "if (CM.popKey !== key) { delete CM.series[key]; return; }",
+                   "getJSON('/options/api/cm/series?' + new URLSearchParams(q).toString())",
+                   "showCmPop(CM.popTd, null)"):
+        assert needle in sf, needle
+    cq = html[html.index("function cmCellQuery("):html.index("function cmSeriesKey(")]
+    assert "if (j.rows) q.m = j.rows[r].m; else q.k = j.strikes[r];" in cq
+    assert "if (j.source !== 'latest' && j.on) q.end = j.on;" in cq and "window: winChosen()" in cq
+    sh = html[html.index("function cmSeriesHtml("):html.index("function cmModelHtml(")]
+    for needle in ("History loading - this cell\\'s interpolated IV, day by day...", "History unavailable: ",
+                   "'<div class=\"vol-pop-row\"><span>Past ' + wd + ' days, ' + intText(st.n) + ' sessions'",
+                   "rk = Math.max(0, Math.min(1, (cur - st.lo) / (st.hi - st.lo)));", "posBar(rk, st.lo, st.hi)",
+                   "Days with a lower IV than ' + nowWord",
+                   "sparkline({series: s.series, lo: st.lo, hi: st.hi, first: st.first, last: st.last}, cur, win, nowWord, span)",
+                   "Earnings in the window:", "<span style=\"color:#d97706\">"):
+        assert needle in sh, needle
+    # the Model price panel from the interpolated inputs
+    mh = html[html.index("function cmModelHtml("):html.index("function cmPopHtml(")]
+    for needle in ("var S = +j.spot, K = +k, days = hz && hz.days != null ? +hz.days : null, r = j.rate != null ? +j.rate : 0.04;",
+                   "Black-Scholes, from the interpolated inputs below", "K, strike' + (mon ? ' (' + esc(pctText(mon.pct)) + '% of S)' : '')",
+                   "' days / 365 (fixed)</span>", "&sigma;, this cell\\'s interpolated IV",
+                   "the same as the surface\\'s figure.", "No listed contract has exactly this horizon"):
+        assert needle in mh, needle
+    # the card's own state, cleared with the grid; the wider card
+    assert "CM.series = {};" in html and "CM.popKey = null; CM.popTd = null; CM.popEv = null;" in html
+    assert "if (!CM.quiet) { CM.series = {}; CM.popKey = null; }" in html
+    assert "function hideCmPop() { $('cmPop').classList.add('hidden'); CM.popKey = null; }" in html
+    assert "#cmPop.vol-pop { width: 24rem; }" in html
+    sp = html[html.index("function showCmPop(td, ev) {"):html.index("function hideCmPop()")]
+    assert "CM.popKey = cmSeriesKey(cmCellQuery(cmGrid(j), r, c));" in sp and "if (CM.popEv) placePop(pop, CM.popEv);" in sp
+    # the normal CDF: z / sqrt 2 into the erf approximation, exp(-x^2) - N(0.34) is 0.63, not 0.66 (v4.205's slip)
+    nc = html[html.index("function normCdf(z) {"):html.index("function modelWorkHtml(")]
+    assert "var x = Math.abs(z) / Math.SQRT2, t = 1 / (1 + 0.3275911 * x);" in nc and "Math.exp(-x * x)" in nc
+    assert "Math.exp(-z * z / 2)" not in nc
+    if shutil.which("node"):
+        import subprocess, tempfile, pathlib
+        js = nc + "\nconsole.log(normCdf(0.3368).toFixed(4), normCdf(-0.3368).toFixed(4), normCdf(0).toFixed(4), normCdf(3).toFixed(4));"
+        path = pathlib.Path(tempfile.mkdtemp()) / "cdf.js"
+        path.write_text(js, encoding="utf-8")
+        out = subprocess.run(["node", str(path)], capture_output=True, text=True)
+        assert out.stdout.split() == ["0.6319", "0.3681", "0.5000", "0.9987"], out.stdout + out.stderr

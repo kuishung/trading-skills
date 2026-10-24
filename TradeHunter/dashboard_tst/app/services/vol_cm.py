@@ -395,6 +395,7 @@ def surface_cm(sdb, symbol, day="latest", *, side=None, band=None, expiries=None
             "spot_src": meta.get("spot_src"),
             "as_of": as_of.replace(microsecond=0).isoformat() + "Z" if isinstance(as_of, _dt.datetime) else None,
             "traded": meta.get("traded"), "has_greeks": meta["source"] == "latest",
+            "rate": RISK_FREE,          # v4.210: the rate behind the greeks and model price, for the hover card's working
             "horizons_requested": list(hs), "band": grid["band"], "common": grid["common"],
             "exp_mode": grid["exp_mode"], "n_expiries_listed": len(grid["expiries"])}
 

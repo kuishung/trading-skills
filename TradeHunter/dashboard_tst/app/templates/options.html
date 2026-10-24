@@ -193,6 +193,7 @@
              border-radius: var(--tv-r-panel); background: var(--tv-panel); color: var(--tv-text); font-size: 11px;
              box-shadow: 0 6px 24px rgba(0,0,0,.25); pointer-events: none; }
   .vol-pop b { color: var(--tv-text-hi); }
+  #cmPop.vol-pop { width: 24rem; }   /* v4.210: the interpolated card carries the working and the chart - wider, so rows stay on one line */
   .vol-pop .vol-pop-row { display: flex; justify-content: space-between; gap: .5rem; margin-top: .15rem; }
   /* v4.180 (user: "in the tooltip ... i need a colour progress bar to show where it sit today"): a track from
      the window's low (green) to its high (red), filled to today's position in that position's hue, a dot at the end */
@@ -1036,9 +1037,11 @@
   // calculation"): the Black-Scholes working of the cell's model price, recomputed here from the same inputs
   // the collector used (the pass's spot, the strike, days / 365 with a half-day floor, the rate, the contract's
   // own IV), beside the figure the pass stored ──
-  function normCdf(z) {                 // Abramowitz & Stegun 7.1.26 (error under 2e-7 - fine to the cent)
-    var t = 1 / (1 + 0.3275911 * Math.abs(z));
-    var y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-z * z / 2);
+  function normCdf(z) {                 // N(z) = (1 + erf(z / sqrt 2)) / 2; erf by Abramowitz & Stegun 7.1.26 (error under 2e-7 - fine to the cent)
+    // v4.210: the argument is |z| / sqrt 2 and the exponent -x^2 (the v4.205 copy fed |z| straight in with exp(-z^2/2),
+    // so N(0.34) came out 0.66 instead of 0.63 and the working's price never matched the stored one)
+    var x = Math.abs(z) / Math.SQRT2, t = 1 / (1 + 0.3275911 * x);
+    var y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
     return z >= 0 ? 0.5 * (1 + y) : 0.5 * (1 - y);
   }
   function modelWorkHtml(j, x, k, ex, cur) {   // cur = the cell's IV in percent (the same leg as the figures)
@@ -1525,97 +1528,180 @@
     show($('cmInfoRow'), true); show($('cmWrap'), true); legends();
     tileNote(activeLast());
   }
-  function cmMoneyWork(j, r, c, b, v, hz) {   // v4.175: the working of a moneyness cell - time, then strike
-    var row = j.rows[r], h = '';
-    var weightCap = function () {
-      return '<div class="vol-cap">' + Math.round(b.w * 100) + '% of the weight on ' + shortDate(b.lo.date) + ', ' +
-             Math.round((1 - b.w) * 100) + '% on ' + shortDate(b.hi.date) + ': the closer expiry counts more.</div>';
-    };
+  function cmMoneyWork(j, r, c, b, v, hz) {   // v4.175: the working of a cell - time, then strike. v4.210: two lines, for
+    // either row mode (the card gained the chart; the full working with every leg's figure is the Interpolation page, one click away)
+    var n0 = cmNear(j, r, c), mon = !!j.rows, row = mon ? j.rows[r] : null;
+    var kTxt = mon ? pctText(row.pct) + '% = strike ' + esc(num(row.strike, 2)) : 'strike ' + esc(strikeText(j.strikes[r]));
     if (!b) {
-      var n0 = cmNear(j, r, c);
-      return '<div class="vol-pop-work">A listed expiry' + (n0 ? ' (' + shortDate(n0.date) + ')' : '') + ' falls on ' + hz.days +
-             'd and a listed strike' + (n0 ? ' (' + esc(strikeText(n0.strike)) + ')' : '') + ' on ' + pctText(row.pct) +
-             '% - its own IV: <b>' + num(v, 1) + '</b></div>';
+      return '<div class="vol-pop-work">A listed expiry' + (n0 ? ' (' + shortDate(n0.date) + ')' : '') + ' falls on ' + hz.days + 'd' +
+             (mon ? ' and a listed strike' + (n0 && n0.strike != null ? ' (' + esc(strikeText(n0.strike)) + ')' : '') + ' on ' + pctText(row.pct) + '%' : '') +
+             ' - its own IV: <b>' + num(v, 1) + '</b></div>';
     }
-    if (!b.k_lo) {                      // the level is a listed strike: the time step only
-      if (b.lo) {
-        h += '<div class="vol-pop-work">' + hz.days + 'd at strike ' + esc(num(row.strike, 2)) + ': between ' + shortDate(b.lo.date) +
-             ' (' + b.lo.dte + 'd) ' + num(b.lo.iv, 1) + ' and ' + shortDate(b.hi.date) + ' (' + b.hi.dte + 'd) ' + num(b.hi.iv, 1) +
-             ', weighted by time (linear in total variance) = <b>' + num(v, 1) + '</b></div>' + weightCap();
-      }
-      return h + '<div class="vol-cap">' + pctText(row.pct) + ' % = strike ' + esc(num(row.strike, 2)) + ', a listed strike - no strike step.</div>';
-    }
-    var kStep = function (kp) {
-      return kp.lo_iv != null
-        ? 'strike ' + esc(strikeText(kp.strike)) + ': ' + num(kp.lo_iv, 1) + ' and ' + num(kp.hi_iv, 1) + ' = <b>' + num(kp.iv, 1) + '</b>'
-        : 'strike ' + esc(strikeText(kp.strike)) + ': a listed expiry on ' + hz.days + 'd = <b>' + num(kp.iv, 1) + '</b>';
-    };
+    var h = '';
     if (b.lo) {
-      h += '<div class="vol-pop-work">' + hz.days + 'd: between ' + shortDate(b.lo.date) + ' (' + b.lo.dte + 'd) and ' +
-           shortDate(b.hi.date) + ' (' + b.hi.dte + 'd), weighted by time (linear in total variance) - ' +
-           kStep(b.k_lo) + '; ' + kStep(b.k_hi) + '</div>' + weightCap();
+      h += '<div class="vol-pop-work">' + hz.days + 'd: ' + shortDate(b.lo.date) + ' (' + b.lo.dte + 'd) and ' + shortDate(b.hi.date) + ' (' + b.hi.dte + 'd), ' +
+           Math.round(b.w * 100) + '% / ' + Math.round((1 - b.w) * 100) + '% weighted by time (linear in total variance)' +
+           (b.k_lo ? '' : ' = <b>' + num(v, 1) + '</b>') + '</div>';
     } else {
-      h += '<div class="vol-pop-work">A listed expiry falls on ' + hz.days + 'd: strike ' + esc(strikeText(b.k_lo.strike)) + ' = ' +
-           num(b.k_lo.iv, 1) + ', strike ' + esc(strikeText(b.k_hi.strike)) + ' = ' + num(b.k_hi.iv, 1) + '</div>';
+      h += '<div class="vol-pop-work">A listed expiry falls on ' + hz.days + 'd' + (b.k_lo ? '' : ' - its own IV: <b>' + num(v, 1) + '</b>') + '</div>';
     }
-    h += '<div class="vol-pop-work">' + pctText(row.pct) + ' % = strike ' + esc(num(row.strike, 2)) + ': between ' +
-         esc(strikeText(b.k_lo.strike)) + ' (' + num(b.k_lo.iv, 1) + ') and ' + esc(strikeText(b.k_hi.strike)) + ' (' +
-         num(b.k_hi.iv, 1) + '), by strike = <b>' + num(v, 1) + '</b></div>' +
-         '<div class="vol-cap">' + Math.round(b.wk * 100) + '% of the weight on ' + esc(strikeText(b.k_lo.strike)) + ', ' +
-         Math.round((1 - b.wk) * 100) + '% on ' + esc(strikeText(b.k_hi.strike)) + ': the closer strike counts more.</div>';
+    if (b.k_lo) {
+      h += '<div class="vol-pop-work">' + kTxt + ': strikes ' + esc(strikeText(b.k_lo.strike)) + ' (' + num(b.k_lo.iv, 1) + ') and ' +
+           esc(strikeText(b.k_hi.strike)) + ' (' + num(b.k_hi.iv, 1) + '), ' + Math.round(b.wk * 100) + '% / ' + Math.round((1 - b.wk) * 100) +
+           '% weighted by strike = <b>' + num(v, 1) + '</b></div>';
+    } else if (mon) {
+      h += '<div class="vol-cap">' + kTxt + ', a listed strike - no strike step.</div>';
+    }
     return h;
+  }
+  // v4.210 (user: "when hover in the interpolated surface, i need the graph to be shown also with the interpolated
+  // surface. the info box should be like the one in the volatility surface with greeks, volatility and the model
+  // price but all based on the interpolated data"): the Interpolated tab's card has the same three panels as the
+  // listed tab's. Its history is the cell's OWN day-by-day interpolated series (/options/api/cm/series: each day
+  // rebuilt from that day's listed contracts at this horizon and level), fetched on the first hover of a cell
+  // after a short pause and kept for the page's life; the card redraws when it arrives.
+  CM.series = {};                       // series key -> {state: 'loading' | 'ok' | 'failed', s, why, timer}
+  CM.popKey = null; CM.popTd = null; CM.popEv = null;
+  function cmCellQuery(j, r, c) {       // the series request of one cell: a moneyness row, or a strike row
+    var hz = j.horizons[c], q = {symbol: j.symbol, h: hz.days, side: j.side, window: winChosen()};
+    if (j.rows) q.m = j.rows[r].m; else q.k = j.strikes[r];
+    if (j.source !== 'latest' && j.on) q.end = j.on;       // a past-day surface: the history up to its own day
+    return q;
+  }
+  function cmSeriesKey(q) { return [q.symbol, q.end || 'latest', q.h, q.m != null ? 'm' + q.m : 'k' + q.k, q.side, q.window].join('|'); }
+  function cmSeriesFor(j, r, c) {       // the cell's series from the cache, or scheduled; redraws the card when it lands
+    var q = cmCellQuery(j, r, c), key = cmSeriesKey(q), hit = CM.series[key];
+    if (hit) return hit;
+    hit = CM.series[key] = {state: 'loading', s: null, why: '', timer: null};
+    hit.timer = setTimeout(function () {
+      hit.timer = null;
+      if (CM.popKey !== key) { delete CM.series[key]; return; }    // the mouse moved on during the pause
+      var done = function () {
+        if (CM.popKey === key && CM.popTd && !$('cmPop').classList.contains('hidden')) showCmPop(CM.popTd, null);
+      };
+      getJSON('/options/api/cm/series?' + new URLSearchParams(q).toString()).then(function (res) {
+        if (!res || !res.ok) { hit.state = 'failed'; hit.why = (res && res.error) || 'not available'; }
+        else { hit.state = 'ok'; hit.s = res; }
+        done();
+      }).catch(function () { hit.state = 'failed'; hit.why = 'the server did not answer'; done(); });
+    }, 180);
+    return hit;
+  }
+  function cmSeriesHtml(hit, cur, nowWord) {   // the Volatility panel's second half: the cell against its own past
+    if (!hit || hit.state === 'loading') return '<div class="text-slate-500 mt-1">History loading - this cell\'s interpolated IV, day by day...</div>';
+    if (hit.state === 'failed') return '<div class="text-slate-500 mt-1">History unavailable: ' + esc(hit.why) + '.</div>';
+    var s = hit.s, st = s.stats, wd = s.window_days || winChosen();
+    if (!st || !st.n) {
+      var why = (s.rows || []).map(function (r) { return r.why; }).filter(Boolean);
+      return '<div class="text-slate-500 mt-1">No history in the past ' + wd + ' days' + (why.length ? ': ' + esc(why[0]) : '') + '.</div>';
+    }
+    var h = '<div class="vol-pop-row"><span>Past ' + wd + ' days, ' + intText(st.n) + ' sessions' + (st.first ? ' since ' + esc(st.first) : '') + '</span>' +
+            '<span class="whitespace-nowrap">' + num(st.lo, 1) + '% - ' + num(st.hi, 1) + '%</span></div>';
+    // where the newest interpolated value sits in its own range - the same arithmetic as the listed tab
+    var rk = st.rank, pct = st.pct;
+    if (cur != null && st.hi > st.lo) {   // rank TODAY's cell (the live pass) in the window's range, as the listed tab does
+      rk = Math.max(0, Math.min(1, (cur - st.lo) / (st.hi - st.lo)));
+      var below = (s.series || []).filter(function (p) { return p[1] < cur; }).length;
+      pct = below / st.n;
+    }
+    if (rk != null) {
+      h += '<div class="vol-pop-row"><span>Where ' + nowWord + ' sits in that ' + wd + '-day range</span><b class="whitespace-nowrap vol-rk-tx" style="' + rankText(rk) + '">' +
+           Math.round(rk * 100) + '%</b></div>' +
+           posBar(rk, st.lo, st.hi) +
+           '<div class="vol-cap">0% = at its lowest IV of the past ' + wd + ' days, 100% = at its highest</div>' +
+           '<div class="vol-pop-row"><span>Days with a lower IV than ' + nowWord + '</span><span class="whitespace-nowrap">' +
+           Math.round(pct * 100) + '% (' + intText(Math.round(pct * st.n)) + ' of ' + intText(st.n) + ')</span></div>';
+    }
+    var endD = dayNum((s.window && s.window[1]) || st.last), startD = endD != null ? endD - wd : dayNum(st.first);
+    var span = {a: startD, b: endD};
+    var win = (s.earnings || []).filter(function (e) {
+      var dd = dayNum(e.on);
+      return dd != null && startD != null && endD != null && dd >= startD && dd <= endD;
+    });
+    var ne = s.next_earnings;
+    function whenWord(w) { return w === 'bmo' ? ' before the open' : (w === 'amc' ? ' after the close' : ''); }
+    var nxt = !ne ? 'next date not known' : 'next ' + esc(ne.on) + whenWord(ne.when);
+    var inWin = win.length ? win.map(function (e) { return '<span style="color:#d97706">' + esc(e.on) + '</span>'; }).join(', ') + ' (marked E)' : 'none in this window';
+    h += '<hr class="vol-sep">' +
+         '<div class="mt-0.5"><span class="text-slate-500">Earnings in the window:</span> ' + inWin + ' &middot; ' + nxt + '</div>';
+    var chart = sparkline({series: s.series, lo: st.lo, hi: st.hi, first: st.first, last: st.last}, cur, win, nowWord, span);
+    if (chart) {
+      h += '<hr class="vol-sep">' + chart +
+           '<div class="vol-cap">Interpolated IV by trading day, each day rebuilt from that day\'s listed contracts' +
+           (cur != null ? '; dashed = ' + nowWord : '') + '; band = the ' + wd + '-day range' + (win.length ? '; amber E = earnings' : '') + '.</div>';
+    }
+    return h;
+  }
+  function cmModelHtml(j, x, k, hz, cur, mon) {   // mon = the moneyness row ({m, pct, strike}) or null; the Model price panel from the interpolated figures: S, the cell's strike, the fixed horizon, the cell's IV
+    var S = +j.spot, K = +k, days = hz && hz.days != null ? +hz.days : null, r = j.rate != null ? +j.rate : 0.04;
+    var iv = cur != null ? +cur / 100 : null;
+    if (!(S > 0) || !(K > 0) || days == null || !(iv > 0)) return '';
+    var isCall = sideOf(j, K) === 'C', T = Math.max(days, 0.5) / 365, sT = iv * Math.sqrt(T);
+    var d1 = (Math.log(S / K) + (r + iv * iv / 2) * T) / sT, d2 = d1 - sT, disc = Math.exp(-r * T);
+    var price = isCall ? S * normCdf(d1) - K * disc * normCdf(d2) : K * disc * normCdf(-d2) - S * normCdf(-d1);
+    var n1 = isCall ? normCdf(d1) : normCdf(-d1), n2 = isCall ? normCdf(d2) : normCdf(-d2);
+    var stored = x && x.price != null ? +x.price : null, same = stored != null && Math.abs(price - stored) < 0.015;
+    var f4 = function (v) { return num(v, 4); }, latest = j.source === 'latest';
+    return popPanel('Model price', '<div class="vol-pop-row"><span>Black-Scholes, from the interpolated inputs below</span><b>' + esc(money(stored != null ? stored : price)) + '</b></div>' +
+           '<div class="vol-pop-figs">' +
+           '<div><span>S, stock ' + (latest ? 'price (this pass)' : 'close that day') + '</span><b>' + num(S, 2) + '</b></div>' +
+           '<div><span>K, strike' + (mon ? ' (' + esc(pctText(mon.pct)) + '% of S)' : '') + '</span><b>' + num(K, 2) + '</b></div>' +
+           '<div><span>T, ' + intText(days) + ' days / 365 (fixed)</span><b>' + f4(T) + ' y</b></div>' +
+           '<div><span>r, risk-free rate</span><b>' + num(r * 100, 2) + '%</b></div>' +
+           '<div><span>&sigma;, this cell\'s interpolated IV</span><b>' + num(iv * 100, 2) + '%</b></div>' +
+           '<div><span>right</span><b>' + (isCall ? 'call' : 'put') + '</b></div>' +
+           '<div><span>&sigma;&radic;T</span><b>' + f4(sT) + '</b></div>' +
+           '<div><span>e<sup>&minus;rT</sup></span><b>' + f4(disc) + '</b></div>' +
+           '<div><span>d1 = [ln(S/K) + (r + &sigma;&sup2;/2)T] / &sigma;&radic;T</span><b>' + f4(d1) + '</b></div>' +
+           '<div><span>d2 = d1 &minus; &sigma;&radic;T</span><b>' + f4(d2) + '</b></div>' +
+           (isCall
+             ? '<div><span>N(d1)</span><b>' + f4(n1) + '</b></div><div><span>N(d2)</span><b>' + f4(n2) + '</b></div>'
+             : '<div><span>N(&minus;d1)</span><b>' + f4(n1) + '</b></div><div><span>N(&minus;d2)</span><b>' + f4(n2) + '</b></div>') +
+           '</div>' +
+           '<div class="vol-cap mt-1">' + (isCall
+             ? 'call = S&middot;N(d1) &minus; K&middot;e<sup>&minus;rT</sup>&middot;N(d2) = ' + num(S, 2) + ' &times; ' + f4(n1) + ' &minus; ' + num(K, 2) + ' &times; ' + f4(disc) + ' &times; ' + f4(n2)
+             : 'put = K&middot;e<sup>&minus;rT</sup>&middot;N(&minus;d2) &minus; S&middot;N(&minus;d1) = ' + num(K, 2) + ' &times; ' + f4(disc) + ' &times; ' + f4(n2) + ' &minus; ' + num(S, 2) + ' &times; ' + f4(n1)) +
+           ' = <b>' + esc(money(price)) + '</b>' +
+           (stored == null ? '' : same ? ' - the same as the surface\'s figure.' : ' - the surface\'s figure is ' + esc(money(stored)) + ' (the legs\' prices weighted, not one price at the blended IV).') + '</div>' +
+           '<div class="vol-cap">No dividend; T has a half-day floor. No listed contract has exactly this horizon' + (mon ? ' and strike' : '') +
+           ', so this is what a mid price would be at the interpolated volatility - not a quote' + (j.side === 'mid' ? ' (the IV is the call + put average; priced here as the ' + (isCall ? 'call' : 'put') + ')' : '') + '.</div>');
   }
   function cmPopHtml(j0, r, c) {
     var j = cmGrid(j0), mon = !!j.rows;
     var k = j.strikes[r], hz = j.horizons[c], v = j.cells[r][c], b = j.brackets && j.brackets[r] ? j.brackets[r][c] : null;
     var n = cmNear(j, r, c), right = sideOf(j, k) === 'C' ? 'call' : 'put';
     var side = j.side === 'mid' ? 'call + put average' : right;
+    var latest = j.source === 'latest', nowCap = latest ? 'Today' : 'On ' + j.on, nowWord = latest ? 'today' : 'that day';
     var h = '<div><b>' + esc(j.symbol + ' ' + (mon ? pctText(j.rows[r].pct) + '% (strike ' + num(k, 2) + ')' : strikeText(k)) + ' ' +
             side + ', fixed ' + hz.days + ' days') + '</b></div>';
-    if (mon) {
-      h += cmMoneyWork(j, r, c, b, v, hz);
-    } else if (cmExact(j, r, c) && n) {
-      h += '<div class="vol-pop-work">A listed expiry (' + shortDate(n.date) + ') falls on ' + hz.days + 'd - its own IV: <b>' +
-           num(v, 1) + '</b></div>';
-    } else if (b) {
-      h += '<div class="vol-pop-work">' + hz.days + 'd at strike ' + esc(strikeText(k)) + ': between ' + shortDate(b.lo.date) +
-           ' (' + b.lo.dte + 'd) ' + num(b.lo.iv, 1) + ' and ' + shortDate(b.hi.date) + ' (' + b.hi.dte + 'd) ' + num(b.hi.iv, 1) +
-           ', weighted by time (linear in total variance) = <b>' + num(v, 1) + '</b></div>' +
-           '<div class="vol-cap">' + Math.round(b.w * 100) + '% of the weight on ' + shortDate(b.lo.date) + ', ' +
-           Math.round((1 - b.w) * 100) + '% on ' + shortDate(b.hi.date) + ': the closer expiry counts more.</div>';
-    }
-    var lv = cmLevel(j, v);
-    if (lv != null) {
-      h += '<div class="vol-pop-row"><span>Where this IV sits on this surface</span><b class="whitespace-nowrap vol-rk-tx" style="' + rankText(lv) + '">' +
-           Math.round(lv * 100) + '%</b></div>' +
-           posBar(lv, j.scale ? j.scale[0] : null, j.scale ? j.scale[1] : null, 'lowest', 'highest') +
-           '<div class="vol-cap">0% = the lowest IV on this surface (green), 100% = the highest (red). ' +
-           'Against its own past comes with the constant-maturity history.</div>';
-    }
-    var x = extraAt(j, r, c);
+    // Greeks: the interpolated greeks (the legs' greeks weighted the same way as the IV)
+    var x = extraAt(j, r, c), figs = '';
     if (x) {
       var rows = [];
       GREEKS.forEach(function (g) { if (x[g[0]] != null) rows.push([g[2], num(x[g[0]], g[3])]); });
       if (rows.length) {
-        h += '<div class="vol-pop-figs">' + rows.map(function (q) {
+        figs = '<div class="vol-pop-figs">' + rows.map(function (q) {
           return '<div><span>' + esc(q[0]) + '</span><b>' + esc(q[1]) + '</b></div>';
         }).join('') + '</div>';
-        if (b) h += '<div class="vol-cap">The greeks are ' + (mon && b.k_lo
-          ? (b.lo ? 'the two expiries\' greeks, weighted by time, then the two strikes\', weighted by strike.'
-                  : 'the two strikes\' greeks, weighted by strike.')
-          : 'the two expiries\' greeks, weighted by time.') + '</div>';
-      }
-      if (x.price != null) {
-        h += '<div class="vol-pop-row"><span>model price</span><b>' + esc(money(x.price)) + '</b></div>' +
-             '<div class="vol-cap">Black-Scholes at this IV, ' + (mon ? 'strike ' + esc(num(k, 2)) + ', ' : '') + hz.days +
-             ' days, no dividend - a fixed horizon has no last trade.</div>';
+        figs += '<div class="vol-cap">' + (b ? 'The legs\' greeks, weighted like the IV (by time' + (mon && b.k_lo ? ', then by strike' : '') + ').'
+                                            : 'A listed contract falls on this point - its own greeks.') + '</div>';
       }
     } else if (j.has_greeks === false) {
-      h += '<div class="vol-cap">Greeks and prices are on the latest pass only.</div>';
+      figs = '<div class="vol-cap">Greeks and prices are on the latest pass only.</div>';
     }
-    h += '<hr class="vol-sep">' + '<div class="vol-cap">Click: the interpolation page in a new window - the working on the contract table, ' +
-         'the term structure and smile, and this cell\'s day-by-day history' +
-         (n ? ' (the nearer listed contract is ' + shortDate(n.date) + ' ' + esc(strikeText(n.strike != null ? n.strike : k)) + ' ' + right + ')' : '') + '.</div>';
+    // Volatility: the cell's IV and how it was derived, where it sits on this surface, then its own history
+    var vol = '<div class="vol-pop-row"><span>' + esc(nowCap) + ', interpolated</span><b>' + (v == null ? '-' : num(v, 1) + '%') + '</b></div>';
+    vol += cmMoneyWork(j, r, c, b, v, hz);
+    var lv = cmLevel(j, v);
+    if (lv != null) {
+      vol += '<hr class="vol-sep">' +
+             '<div class="vol-pop-row"><span>Where this IV sits on this surface</span><b class="whitespace-nowrap vol-rk-tx" style="' + rankText(lv) + '">' +
+             Math.round(lv * 100) + '%</b></div>' +
+             posBar(lv, j.scale ? j.scale[0] : null, j.scale ? j.scale[1] : null, 'lowest', 'highest');
+    }
+    vol += '<hr class="vol-sep">' + cmSeriesHtml(cmSeriesFor(j, r, c), v, nowWord);
+    h += popPanel('Greeks', figs) + popPanel('Volatility', vol) + cmModelHtml(j, x, k, hz, v, mon ? j.rows[r] : null);
+    h += '<hr class="vol-sep">' + '<div class="vol-cap">Click: the interpolation page in a new window - the full working, the term structure and smile, the day-by-day history.</div>';
     return h;
   }
   function placePop(pop, ev) {
@@ -1626,14 +1712,17 @@
     pop.style.left = Math.max(4, x) + 'px';
     pop.style.top = Math.max(4, y) + 'px';
   }
-  function showCmPop(td, ev) {
+  function showCmPop(td, ev) {         // ev null = a redraw in place (the series arrived)
     var j = CM.last, pop = $('cmPop');
-    if (!j) return;
-    pop.innerHTML = cmPopHtml(j, +td.dataset.r, +td.dataset.c);
+    if (!j || !td) return;
+    var r = +td.dataset.r, c = +td.dataset.c;
+    CM.popTd = td; if (ev) CM.popEv = ev;
+    CM.popKey = cmSeriesKey(cmCellQuery(cmGrid(j), r, c));
+    pop.innerHTML = cmPopHtml(j, r, c);
     pop.classList.remove('hidden');
-    placePop(pop, ev);
+    if (CM.popEv) placePop(pop, CM.popEv);
   }
-  function hideCmPop() { $('cmPop').classList.add('hidden'); }
+  function hideCmPop() { $('cmPop').classList.add('hidden'); CM.popKey = null; }
   function runCm(quiet) {
     var sym = $('volSym').value.trim().toUpperCase();
     $('volSym').value = sym;
@@ -1661,6 +1750,7 @@
         return;
       }
       CM.last = j; V.refreshFailed = null;
+      if (!CM.quiet) { CM.series = {}; CM.popKey = null; }   // v4.210: the kept per-cell histories belong to the old grid
       var st = T.st || (window.optGetStatus ? window.optGetStatus() : null);   // the pass this grid came from
       CM.passId = st && st.last_pass && st.last_pass.id != null ? st.last_pass.id : CM.passId;
       renderCm(j);

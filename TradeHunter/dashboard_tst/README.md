@@ -223,6 +223,40 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-24 - v4.210: the Interpolated tab's hover card - Greeks, Volatility (with the chart), Model price, all interpolated
+
+The user: *"when hover in the interpolated surface, i need the graph to be shown also with the interpolated
+surface. the info box should be like the one in the volatility surface with greeks, volatility and the model
+price but all based on the interpolated data"*. The Interpolated tab's card now has the listed tab's three panels:
+- **Greeks**: the cell's interpolated greeks (the legs' greeks weighted like the IV: by time, then by strike).
+- **Volatility**: the interpolated IV, its working in two lines (the time step with its weights, the strike step
+  with its weights - the full working with every leg's figure stays on the Interpolation page), where it sits on
+  this surface (the bar), then **the cell's own history**: the past-N-days range of the interpolated IV, where
+  today sits in it (the coloured bar, the percentile, the days below), the earnings dates in the window, and
+  **the chart** - the same sparkline as the listed tab, over the rank window, with the amber E lines.
+- **Model price**: Black-Scholes with the interpolated inputs - S, the cell's strike (its moneyness), T = the
+  fixed horizon / 365, r, the interpolated IV - every value shown, the result against the surface's figure.
+- The history is **`/options/api/cm/series`** fetched on the first hover of a cell after a 180 ms pause (the
+  card says "History loading..." and redraws when it lands) and kept per cell for the grid's life; a new grid
+  drops them. A past-day surface asks for the history up to its own day (**`end=YYYY-MM-DD`**, new).
+- **`vol_cm_series` is fast enough for a hover now**: the root's rows over the window are read ONCE from the
+  Parquet day files into numpy arrays (`_root_rows`, kept for four windows) - every contract of the root traded
+  on a day of the window with an expiry up to `dte_cap(h)` past its end, expired-inside-the-window contracts
+  included (an early day's near leg is one) - and each day solves only the ~20 contracts near the level and the
+  horizon. AAPL, 365 days, 251 sessions: ~2.7 s cold, ~2 s with the rows cached (was one Parquet read per day).
+  History rows carry a Black-Scholes **`price`** at the row's IV (a past day has no greeks pass) and the payload
+  carries `series` ([days since 1970, IV] oldest first), `earnings`, `next_earnings`, `earnings_coverage`.
+- The card is 24 rem wide (the listed one stays 20 rem) so its rows stay on one line; captions shortened. Measured:
+  the interpolated card 946 px against the listed card's 900 px.
+- **Fixed on both tabs: the hover card's Black-Scholes working used a wrong normal CDF.** `normCdf` fed |z|
+  straight into Abramowitz & Stegun 7.1.26 (an erf approximation) with exp(-z²/2): N(0.34) came out 0.66
+  instead of 0.63, so the recomputed price never matched the stored one (the card blamed "its spot or IV
+  differed slightly"). Now z / √2 and exp(-x²); the working's price equals the stored figure to the cent.
+- The interpolated surface answer carries `rate` (the rate behind its greeks and model price).
+- Tests: `test_options_page.py` (the card's panels, the series fetch, the width, the CDF), `test_vol_cm_point.py`
+  (the series' `series` / `price` / earnings keys, `end`, a direct `day_point`), `test_options_interp_page.py`
+  (`end` on the API).
+
 ### 2026-10-24 - v4.209: the Interpolation page - one interpolated cell opened up, three tabs
 
 The user: *"when clicked in, we need to see how the interpolated works and represented by graphical ... a table
