@@ -362,15 +362,22 @@ def add_filter(
 ):
     desc, link = description.strip(), url.strip()
     if desc and link:
-        db.add(
-            FinvizFilter(
-                description=desc,
-                url=link,
-                is_active=is_active is not None,
-                created_by=mod.id,
-            )
+        f = FinvizFilter(
+            description=desc,
+            url=link,
+            is_active=is_active is not None,
+            created_by=mod.id,
         )
+        db.add(f)
         db.commit()
+        # v4.195: the screen's tickers appear on its watchlist at once (price only); the MATP
+        # run fills the medians in later
+        try:
+            from ..services.matp_queue import seed_filter_members
+
+            seed_filter_members(db, f)
+        except Exception:  # noqa: BLE001 - seeding is a convenience, never the reason an add fails
+            pass
     return RedirectResponse(url="/finviz", status_code=303)
 
 

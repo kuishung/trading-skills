@@ -223,6 +223,17 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-24 - v4.195: Watchlist - a new screen's tickers appear at once, before any MATP run
+
+The user, after v4.194 with the Robotics run still "queued - waiting for the agent": *"the ticker is not shown
+in the watchlist when i click robotics"*. A screen's membership should not wait for a MATP run. Now
+`matp_queue.seed_filter_members` lists a screen's tickers price only - one `MATPLevel` row per ticker that has
+no row yet (`matp` None, `n_targets` None = "not computed yet", hover on the dash says so) - and it runs (a)
+when a filter is added in Data Ingest (`routes/finviz.py::add_filter`) and (b) on the first look at a screen
+no run has touched (`routes/matp.py::_seed_filter`, from `_watchlist_context`; a screen whose rows were all
+dropped by a run is left alone). The MATP run then fills the medians in and its closing push (v4.194) lists
+what it skipped with `n_targets = 0`. Tests in `tests/test_filter_seed.py`.
+
 ### 2026-10-24 - v4.194: Watchlist - a screened ticker with no analyst targets is still listed (ETF screens)
 
 The user added Finviz's ETF screener (`/screener/etf?v=181&t=BOTZ,ROBO,...`) as a watchlist and read "No

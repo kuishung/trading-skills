@@ -296,3 +296,30 @@ def build_queue(db: Session, *, due_only: bool = False,
             "watchlist_new": len(watchlist_set),
         },
     }
+
+
+def seed_filter_members(db: Session, f: FinvizFilter, now: _dt.datetime | None = None) -> list:
+    """v4.195 (the user added an ETF screen in Data Ingest and saw nothing under its watchlist
+    until a MATP run): list the screen's tickers AT ONCE, price only - one MATPLevel row per
+    ticker that has no row yet (``matp`` None, ``n_targets`` None = "not computed yet"), tied
+    to this screen. The MATP run fills the median in later; its closing push lists what it
+    skipped (``routes/api.py::_list_unposted``). Returns the rows added. Soft-fail: a screen
+    that cannot be read seeds nothing."""
+    from ..models import MATPLevel  # noqa: PLC0415
+
+    when = now or _dt.datetime.now(_dt.timezone.utc)
+    try:
+        syms, _err = filter_symbols(f)
+    except Exception:  # noqa: BLE001
+        return []
+    added = []
+    for sym in syms:
+        if db.query(MATPLevel).filter(MATPLevel.symbol == sym).first() is not None:
+            continue
+        row = MATPLevel(symbol=sym, filter_id=f.id, matp=None, mbp=None, n_targets=None,
+                        status="active", last_seen_at=when, as_of=when)
+        db.add(row)
+        added.append(row)
+    if added:
+        db.commit()
+    return added

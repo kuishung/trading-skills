@@ -291,6 +291,9 @@ def _watchlist_context(
         shown = list(unfiled)
     elif sel_wl in valid_ids:
         shown = list(by_filter.get(int(sel_wl), []))
+        if not shown and not any(lv.filter_id == int(sel_wl) for lv in all_levels):
+            # v4.195: a screen no run has touched yet lists its tickers at once, price only
+            shown = _seed_filter(db, int(sel_wl))
     else:
         shown = list(active)
 
@@ -339,6 +342,23 @@ def _watchlist_context(
 
 
 log = logging.getLogger(__name__)
+
+
+def _seed_filter(db: Session, fid: int) -> list:
+    """v4.195: the first look at a screen's watchlist before any MATP run - its tickers,
+    price only, sorted by symbol (``matp_queue.seed_filter_members``); [] when the screen
+    cannot be read."""
+    from ..services.matp_queue import seed_filter_members
+
+    f = db.get(FinvizFilter, fid)
+    if f is None:
+        return []
+    try:
+        rows = seed_filter_members(db, f)
+    except Exception:  # noqa: BLE001
+        log.exception("seeding filter %s failed", fid)
+        return []
+    return sorted(rows, key=lambda lv: lv.symbol or "")
 
 
 def _liq_thresholds(user) -> dict:
