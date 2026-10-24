@@ -18,11 +18,23 @@ through ``vol_cm_point.point``. A computed series is reused ``TTL`` seconds. ``s
 over the window and where the newest value sits (rank / percentile), the same arithmetic as the
 listed tab's ``vol_history``. This is the constant-maturity history the phase-2 note planned,
 computed on demand for one cell.
+
+v4.215 (user: the History tab of an AMD cell said "The server did not answer"): on Hermes a series could
+outlast Cloudflare's ~100 s request limit - each horizon re-read the whole window from disk (the read was
+cached per expiry cap, so a 30-day, a 90-day and a 365-day cell were three ~1.3 GB scans on Hermes's slow
+virtual disk) and every hovered cell started its own rebuild. Now: ONE read per root and window, out to
+``READ_CAP`` days of expiry, shared by every horizon, sorted by day so a day is a slice; each day solves only
+the ``NEAR_EXP`` listed expiries either side of the horizon and the ``NEAR_K`` listed strikes either side of the
+level (the legs and their neighbours - the same result, a tenth of the work); at most ``MAX_JOBS`` series
+compute at once; and ``series_async`` runs a series as a background job, answering "pending" after ``wait``
+seconds, so a request never sits on the tunnel for long - the page asks again until it is done. No Massive
+API call is involved: everything is read from the stored Parquet days.
 """
 from __future__ import annotations
 
 import collections
 import datetime as _dt
+import logging
 import threading
 import time
 
@@ -33,26 +45,37 @@ from .black_scholes import black_scholes
 from .opt_constants import RISK_FREE
 from .vol_surface import SurfaceError
 
-K_BAND = 0.12                  # contracts within this fraction of the price around the level are solved
+K_BAND = 0.12                  # the outer bound: contracts within this fraction of the price around the level ...
+NEAR_K = 3                     # ... and of those, the listed strikes this many either side of the level
+NEAR_EXP = 6                   # the listed expiries this many either side of the horizon
 TTL = 600.0                    # seconds a computed series is reused
 MAX_DAYS = 400                 # sessions solved for one series at most (a 365-day window holds ~252)
 ROOT_CACHE_N = 4               # root windows whose rows are kept in memory
+MAX_JOBS = 2                   # series computed at the same time (the rest wait their turn)
+JOB_ERROR_TTL = 30.0           # seconds a failed job's message is kept before a new request tries again
 _LOCK = threading.Lock()
 _READ_LOCK = threading.Lock()
+_RUN = threading.BoundedSemaphore(MAX_JOBS)
 _CACHE: dict[tuple, tuple[float, dict]] = {}
 _ROOTS: collections.OrderedDict = collections.OrderedDict()
+_JOBS: dict[tuple, dict] = {}
 _EPOCH = _dt.date(1970, 1, 1)
+log = logging.getLogger(__name__)
 
 
 def dte_cap(h: int) -> int:
-    """Expiries read for a horizon: up to twice the horizon plus two months, so the upper leg is there."""
+    """Expiries used for a horizon: up to twice the horizon plus two months, so the upper leg is there."""
     return int(h * 2 + 60)
+
+
+READ_CAP = dte_cap(max(vol_cm.HORIZONS))   # v4.215: the one read covers the longest horizon, so every horizon shares it
 
 
 def clear_cache() -> None:
     with _LOCK:
         _CACHE.clear()
         _ROOTS.clear()
+        _JOBS.clear()
 
 
 def _to_date(x) -> _dt.date | None:
@@ -91,7 +114,7 @@ def _read_root(opt_root: str, days: list[str], cap: int, root=None) -> dict:
     base = opt_history._root(root)  # noqa: SLF001 - the module's own root resolver
     paths = [str(opt_history.day_path(d, base)) for d in days]
     empty = {"on": np.zeros(0, np.int64), "expiry": np.zeros(0, np.int64), "strike": np.zeros(0),
-             "call": np.zeros(0, bool), "close": np.zeros(0)}
+             "call": np.zeros(0, bool), "close": np.zeros(0), "slices": {}}
     if not paths:
         return empty
     try:
@@ -110,12 +133,26 @@ def _read_root(opt_root: str, days: list[str], cap: int, root=None) -> dict:
     call = np.array(pc.equal(tbl["right"], "C").to_numpy(zero_copy_only=False), dtype=bool)
     close = tbl["close"].to_numpy(zero_copy_only=False).astype(np.float64)
     keep = (ex > on) & (close > 0)
-    return {"on": on[keep], "expiry": ex[keep], "strike": strike[keep], "call": call[keep], "close": close[keep]}
+    out = {"on": on[keep], "expiry": ex[keep], "strike": strike[keep], "call": call[keep], "close": close[keep]}
+    return _by_day(out)
 
 
-def _root_rows(opt_root: str, days: list[str], cap: int, root=None) -> dict:
-    """``_read_root`` cached per (root, window, cap bucket)."""
-    key = (str(opt_root).upper(), days[0] if days else "", days[-1] if days else "", len(days), (cap // 100) * 100, str(root or ""))
+def _by_day(a: dict) -> dict:
+    """v4.215: the arrays sorted by day, with ``slices`` = {day number: (start, end)} - a day is a slice."""
+    order = np.argsort(a["on"], kind="stable")
+    a = {kk: v[order] for kk, v in a.items()}
+    if a["on"].size:
+        u, starts = np.unique(a["on"], return_index=True)
+        ends = list(starts[1:]) + [a["on"].size]
+        a["slices"] = {int(d): (int(b), int(e)) for d, b, e in zip(u, starts, ends)}
+    else:
+        a["slices"] = {}
+    return a
+
+
+def _root_rows(opt_root: str, days: list[str], cap: int = READ_CAP, root=None) -> dict:
+    """``_read_root`` cached per (root, window) - v4.215: no longer per expiry cap, so every horizon shares one read."""
+    key = (str(opt_root).upper(), days[0] if days else "", days[-1] if days else "", len(days), str(root or ""))
     with _LOCK:
         hit = _ROOTS.get(key)
         if hit is not None:
@@ -126,7 +163,10 @@ def _root_rows(opt_root: str, days: list[str], cap: int, root=None) -> dict:
             hit = _ROOTS.get(key)
             if hit is not None:
                 return hit
-        arrays = _read_root(opt_root, days, cap, root)
+        t0 = time.monotonic()
+        arrays = _read_root(opt_root, days, max(cap, READ_CAP), root)
+        log.info("interpolated history: read %s, %d sessions, %d contract-days in %.1f s",
+                 opt_root, len(days), arrays["on"].size, time.monotonic() - t0)
         with _LOCK:
             _ROOTS[key] = arrays
             while len(_ROOTS) > ROOT_CACHE_N:
@@ -135,6 +175,28 @@ def _root_rows(opt_root: str, days: list[str], cap: int, root=None) -> dict:
 
 
 # ───────────────────────────────── one day, one cell ─────────────────────────────────
+
+def _solve(d, dn, spot, rows_day, sel, h, m, k, side, r):
+    """The chosen contracts of one day solved to IVs, built into a grid and interpolated: ``(point, None)`` or
+    ``(None, why)``."""
+    ex, Ks, call, close = rows_day["expiry"][sel], rows_day["strike"][sel], rows_day["call"][sel], rows_day["close"][sel]
+    T = (ex - dn) / 365.0
+    iv = vol_history.implied_vols_fast(close, np.full(close.shape, float(spot)), Ks, T, call, r)
+    rows = [{"expiry": _EPOCH + _dt.timedelta(days=int(e)), "right": "C" if c else "P", "strike": float(kk),
+             "iv": (None if v != v else float(v))}
+            for e, kk, c, v in zip(ex.tolist(), Ks.tolist(), call.tolist(), iv.tolist())]
+    o = vol_surface.norm_options(side, 0, 0, "all")
+    try:
+        grid = vol_surface.build(rows, spot, d, common=False, **o)
+    except SurfaceError as exc:
+        return None, str(exc)
+    if not grid["n_cells"]:
+        return None, "no contract near the level has a volatility"
+    try:
+        return vol_cm_point.point(grid, h, m=m, k=k, r=r), None
+    except (SurfaceError, ValueError) as exc:
+        return None, str(exc)
+
 
 def day_point(d: _dt.date, spot: float | None, rows_day: dict, h: int, *, m=None, k=None, side=None,
               r: float = RISK_FREE) -> dict:
@@ -156,25 +218,24 @@ def day_point(d: _dt.date, spot: float | None, rows_day: dict, h: int, *, m=None
     if not sel.any():
         row["why"] = "no contract near the level traded"
         return row
-    ex, Ks, call, close = rows_day["expiry"][sel], rows_day["strike"][sel], rows_day["call"][sel], rows_day["close"][sel]
-    T = (ex - dn) / 365.0
-    iv = vol_history.implied_vols_fast(close, np.full(close.shape, float(spot)), Ks, T, call, r)
-    rows = [{"expiry": _EPOCH + _dt.timedelta(days=int(e)), "right": "C" if c else "P", "strike": float(kk),
-             "iv": (None if v != v else float(v))}
-            for e, kk, c, v in zip(ex.tolist(), Ks.tolist(), call.tolist(), iv.tolist())]
-    o = vol_surface.norm_options(side, 0, 0, "all")
-    try:
-        grid = vol_surface.build(rows, spot, d, common=False, **o)
-    except SurfaceError as exc:
-        row["why"] = str(exc)
-        return row
-    if not grid["n_cells"]:
-        row["why"] = "no contract near the level has a volatility"
-        return row
-    try:
-        pt = vol_cm_point.point(grid, h, m=m, k=k, r=r)
-    except (SurfaceError, ValueError) as exc:
-        row["why"] = str(exc)
+    # v4.215: first only the listed expiries NEAR_EXP either side of the horizon and, on each, its own NEAR_K listed
+    # strikes either side of the level - the legs and their neighbours, a tenth of the work; when that finds no value
+    # (the strike pair the interpolation needs sits further out, mostly at long horizons), the day is solved again on
+    # the full band exactly as before, so the answer never differs from the full computation
+    ud = np.unique(dte[sel])
+    keep_d = np.concatenate([ud[ud <= h][-NEAR_EXP:], ud[ud > h][:NEAR_EXP]])
+    narrow = sel & np.isin(dte, keep_d)
+    near = np.zeros_like(sel)
+    for dd in keep_d:                                        # each expiry's OWN nearest strikes: the long-dated ones list
+        on_d = narrow & (dte == dd)                          # coarser strikes than the weeklies, and must keep theirs
+        uk = np.unique(rows_day["strike"][on_d])
+        keep_k = np.concatenate([uk[uk <= K][-NEAR_K:], uk[uk > K][:NEAR_K]])
+        near |= on_d & np.isin(rows_day["strike"], keep_k)
+    pt, why = _solve(d, dn, spot, rows_day, near, h, m, k, side, r)
+    if (pt is None or pt.get("iv") is None) and int(near.sum()) < int(sel.sum()):
+        pt, why = _solve(d, dn, spot, rows_day, sel, h, m, k, side, r)
+    if pt is None:
+        row["why"] = why
         return row
     row["n"] = int(pt.get("n_contracts") or 0)
     if pt.get("iv") is None:
@@ -238,13 +299,21 @@ def series(sdb, symbol, h, *, m=None, k=None, side=None, window_days=None, root=
     start = last - _dt.timedelta(days=wd)
     days = [d for d in days_all if _to_date(d) and _to_date(d) > start][:MAX_DAYS]
     closes = vol_surface.raw_closes(sdb, sym, days)
-    arrays = _root_rows(oroot, sorted(days), dte_cap(h), root)
-    rows = []
-    for ds in days:
-        d = _to_date(ds)
-        sel = arrays["on"] == _dnum(d)
-        rows_day = {kk: arrays[kk][sel] for kk in ("expiry", "strike", "call", "close")}
-        rows.append(day_point(d, closes.get(ds), rows_day, h, m=m, k=k, side=side))
+    t0 = time.monotonic()
+    with _RUN:                                               # v4.215: at most MAX_JOBS series at once
+        with _LOCK:                                          # done by another caller while this one waited?
+            hit = _CACHE.get(key)
+            if hit and time.monotonic() - hit[0] < TTL:
+                return hit[1]
+        arrays = _root_rows(oroot, sorted(days), READ_CAP, root)
+        rows = []
+        for ds in days:
+            d = _to_date(ds)
+            b, e = arrays["slices"].get(_dnum(d), (0, 0))
+            rows_day = {kk: arrays[kk][b:e] for kk in ("expiry", "strike", "call", "close")}
+            rows.append(day_point(d, closes.get(ds), rows_day, h, m=m, k=k, side=side))
+    log.info("interpolated history: %s %dd %s over %d sessions in %.1f s", sym, h,
+             ("m %.3f" % m) if m is not None else ("k %.2f" % k), len(days), time.monotonic() - t0)
     vals = [r["iv"] for r in rows if r["iv"] is not None]
     stats = None
     if vals:
@@ -276,4 +345,67 @@ def series(sdb, symbol, h, *, m=None, k=None, side=None, window_days=None, root=
     return out
 
 
-__all__ = ["K_BAND", "TTL", "MAX_DAYS", "ROOT_CACHE_N", "dte_cap", "day_point", "series", "clear_cache"]
+def _job_key(symbol, h, m, k, side, window_days, end, root) -> tuple:
+    """The cache key ``series`` uses, from the raw arguments (raises ValueError / SurfaceError as series does)."""
+    sym = vol_surface._sym(symbol)
+    if not sym:
+        raise SurfaceError("type an underlying symbol")
+    h = vol_cm_point.norm_h(h)
+    if (m is None) == (k is None):
+        raise ValueError("give a moneyness (m) or a strike (k), not both")
+    m = vol_cm_point.norm_m(m) if m is not None else None
+    k = vol_cm_point.norm_k(k) if k is not None else None
+    wd = vol_history.norm_window(window_days)
+    side = vol_surface.norm_options(side, 0, 0, "all")["side"]
+    end_d = _to_date(end) if end else None
+    return (sym, h, m, k, side, wd, end_d.isoformat() if end_d else "", str(root or ""))
+
+
+def series_async(session_factory, symbol, h, *, m=None, k=None, side=None, window_days=None, root=None, end=None,
+                 wait: float = 20.0) -> dict:
+    """v4.215: ``series`` as a background job, so no request outlasts the tunnel. ``{state: "done", result}``,
+    ``{state: "pending", elapsed}`` (still computing after ``wait`` seconds - ask again) or ``{state: "error",
+    error}``. One job per series key: a second caller waits on the same job instead of starting another.
+    ``session_factory`` opens a screener session for the job's own thread."""
+    key = _job_key(symbol, h, m, k, side, window_days, end, root)
+    now = time.monotonic()
+    with _LOCK:
+        hit = _CACHE.get(key)
+        if hit and now - hit[0] < TTL:
+            return {"state": "done", "result": hit[1]}
+        job = _JOBS.get(key)
+        if job is not None and job["done"].is_set() and job.get("error") and now - job["ended"] > JOB_ERROR_TTL:
+            job = None                                       # a stale failure: try again
+        if job is None:
+            job = {"done": threading.Event(), "started": now, "ended": None, "error": None, "result": None}
+            _JOBS[key] = job
+
+            def run():
+                try:
+                    with session_factory() as sdb:
+                        job["result"] = series(sdb, symbol, h, m=m, k=k, side=side, window_days=window_days,
+                                               root=root, end=end)
+                except (SurfaceError, ValueError) as exc:
+                    job["error"] = str(exc)
+                except Exception as exc:  # noqa: BLE001 - reported to the page, logged here
+                    log.exception("interpolated history job %s failed", key)
+                    job["error"] = "the history could not be rebuilt (%s)" % type(exc).__name__
+                finally:
+                    job["ended"] = time.monotonic()
+                    job["done"].set()
+                    if not job["error"]:
+                        with _LOCK:
+                            if _JOBS.get(key) is job:
+                                _JOBS.pop(key, None)
+
+            threading.Thread(target=run, name="cm-series", daemon=True).start()
+    job["done"].wait(max(0.0, float(wait)))
+    if job["done"].is_set():
+        if job["error"]:
+            return {"state": "error", "error": job["error"]}
+        return {"state": "done", "result": job["result"]}
+    return {"state": "pending", "elapsed": round(time.monotonic() - job["started"], 1)}
+
+
+__all__ = ["K_BAND", "NEAR_K", "NEAR_EXP", "TTL", "MAX_DAYS", "ROOT_CACHE_N", "MAX_JOBS", "READ_CAP", "dte_cap",
+           "day_point", "series", "series_async", "clear_cache"]

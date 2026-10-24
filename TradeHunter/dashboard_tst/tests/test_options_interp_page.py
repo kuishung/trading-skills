@@ -78,6 +78,16 @@ def test_the_point_and_series_apis_answer_or_say_why(client, fake, screener_url,
     cut = client.get("/options/api/cm/series", params={"symbol": "AAPL", "h": "60", "m": "0.95", "window": "365", "end": "2026-10-06"}).json()
     assert cut["ok"] is True and cut["rows"][0]["on"] == "2026-10-06"
     assert client.get("/options/api/cm/series", params={"symbol": "AAPL", "h": "60", "m": "0.95", "end": "soon"}).json()["ok"] is True   # a bad date is ignored
+    # v4.215: a job still running answers "pending" (the page asks again); an index says why
+    import threading
+    gate = threading.Event()
+    real = vol_cm_series.series
+    monkeypatch.setattr(vol_cm_series, "series", lambda *a, **kw: (gate.wait(5), real(*a, **kw))[1])
+    vol_cm_series.clear_cache()
+    p = client.get("/options/api/cm/series", params={"symbol": "AAPL", "h": "90", "m": "1", "window": "365", "wait": "0.05"}).json()
+    assert p["ok"] is False and p["pending"] is True and p["error"].startswith("still rebuilding")
+    gate.set()
+    assert client.get("/options/api/cm/series", params={"symbol": "AAPL", "h": "90", "m": "1", "window": "365", "wait": "10"}).json()["ok"] is True
 
 
 def test_the_charts_zoom_and_skip_colliding_labels(client, fake):

@@ -699,7 +699,9 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
   it replaced the contract table at the user's request)** with the working tables under it, the term-structure and
   smile charts (v4.211/4.213: smaller, each zoomable with +/-/Legs/All, wheel and drag, the smile opening
   on the strikes within 30 % of the price, labels that never collide), and the cell's day-by-day interpolated history over the rank window (the phase-2 constant-maturity
-  history, computed on demand per cell from the Parquet closes, cached 10 min). **v4.210 (2026-10-24): the
+  history, computed on demand per cell from the Parquet closes, cached 10 min; **since v4.215 a background job - the
+  API answers `pending` and the page polls, one shared read per stock - because a long request hit Cloudflare's
+  ~100 s limit ("The server did not answer"); no Massive API call is involved**). **v4.210 (2026-10-24): the
   Interpolated tab's HOVER CARD has the listed tab's three panels - Greeks / Volatility (the two-line working,
   the within-surface bar, then the cell's OWN past-N-days range, rank and sparkline with E lines, from
   `/options/api/cm/series`, fetched on first hover, `end=` for a past day) / Model price (Black-Scholes at the

@@ -2023,14 +2023,15 @@ def test_the_interpolated_hover_card_has_the_three_panels_and_its_own_history(cl
     for needle in ("var q = cmCellQuery(j, r, c), key = cmSeriesKey(q), hit = CM.series[key];",
                    "hit = CM.series[key] = {state: 'loading', s: null, why: '', timer: null};", "}, 180);",
                    "if (CM.popKey !== key) { delete CM.series[key]; return; }",
-                   "getJSON('/options/api/cm/series?' + new URLSearchParams(q).toString())",
+                   "getJSON('/options/api/cm/series?' + new URLSearchParams(Object.assign({wait: '8'}, q)).toString())",
+                   "if (res && res.pending) {", "if (CM.popKey === key) { done(); setTimeout(ask, 1500); } else delete CM.series[key];",
                    "showCmPop(CM.popTd, null)"):
         assert needle in sf, needle
     cq = html[html.index("function cmCellQuery("):html.index("function cmSeriesKey(")]
     assert "if (j.rows) q.m = j.rows[r].m; else q.k = j.strikes[r];" in cq
     assert "if (j.source !== 'latest' && j.on) q.end = j.on;" in cq and "window: winChosen()" in cq
     sh = html[html.index("function cmSeriesHtml("):html.index("function cmModelHtml(")]
-    for needle in ("History loading - this cell\\'s interpolated IV, day by day...", "History unavailable: ",
+    for needle in ("History loading - this cell\\'s interpolated IV, day by day' +", "the first look at a stock reads a year of day files", "History unavailable: ",
                    "'<div class=\"vol-pop-row\"><span>Past ' + wd + ' days, ' + intText(st.n) + ' sessions'",
                    "rk = Math.max(0, Math.min(1, (cur - st.lo) / (st.hi - st.lo)));", "posBar(rk, st.lo, st.hi)",
                    "Days with a lower IV than ' + nowWord",

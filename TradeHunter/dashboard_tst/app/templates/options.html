@@ -1605,16 +1605,25 @@
       var done = function () {
         if (CM.popKey === key && CM.popTd && !$('cmPop').classList.contains('hidden')) showCmPop(CM.popTd, null);
       };
-      getJSON('/options/api/cm/series?' + new URLSearchParams(q).toString()).then(function (res) {
-        if (!res || !res.ok) { hit.state = 'failed'; hit.why = (res && res.error) || 'not available'; }
-        else { hit.state = 'ok'; hit.s = res; }
-        done();
-      }).catch(function () { hit.state = 'failed'; hit.why = 'the server did not answer'; done(); });
+      var ask = function () {
+        getJSON('/options/api/cm/series?' + new URLSearchParams(Object.assign({wait: '8'}, q)).toString()).then(function (res) {
+          if (res && res.pending) {        // v4.215: still rebuilding on the server - ask again while the mouse stays here
+            hit.elapsed = res.elapsed;
+            if (CM.popKey === key) { done(); setTimeout(ask, 1500); } else delete CM.series[key];
+            return;
+          }
+          if (!res || !res.ok) { hit.state = 'failed'; hit.why = (res && res.error) || 'not available'; }
+          else { hit.state = 'ok'; hit.s = res; }
+          done();
+        }).catch(function () { hit.state = 'failed'; hit.why = 'the server did not answer'; done(); });
+      };
+      ask();
     }, 180);
     return hit;
   }
   function cmSeriesHtml(hit, cur, nowWord) {   // the Volatility panel's second half: the cell against its own past
-    if (!hit || hit.state === 'loading') return '<div class="text-slate-500 mt-1">History loading - this cell\'s interpolated IV, day by day...</div>';
+    if (!hit || hit.state === 'loading') return '<div class="text-slate-500 mt-1">History loading - this cell\'s interpolated IV, day by day' +
+      (hit && hit.elapsed ? ' (' + Math.round(hit.elapsed) + ' s so far; the first look at a stock reads a year of day files)' : '') + '...</div>';
     if (hit.state === 'failed') return '<div class="text-slate-500 mt-1">History unavailable: ' + esc(hit.why) + '.</div>';
     var s = hit.s, st = s.stats, wd = s.window_days || winChosen();
     if (!st || !st.n) {

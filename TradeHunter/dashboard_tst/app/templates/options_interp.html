@@ -532,14 +532,33 @@
       a.click();
     });
   }
+  // v4.215 (user: the History tab of an AMD cell said "The server did not answer"): the server rebuilds the series
+  // as a background job and answers "pending" after 20 s, so this asks again until it is done, showing the time so
+  // far; a dropped connection (the app restarting behind the tunnel) is tried three times before giving up
   function loadSeries() {
-    $('tabHist').innerHTML = '<div class="ip-msg">Rebuilding the cell for every session of the past ' + BOOT.window + ' days from the contract history&hellip; (a minute at most; a second look is instant)</div>';
     var q = new URLSearchParams({symbol: BOOT.symbol, h: String(BOOT.h), side: BOOT.side, window: String(BOOT.window)});
     if (BOOT.m != null) q.set('m', String(BOOT.m)); else q.set('k', String(BOOT.k));
-    fetch('/options/api/cm/series?' + q.toString(), {credentials: 'same-origin'}).then(function (r) { return r.json(); }).then(function (j) {
-      if (!j || !j.ok) { $('tabHist').innerHTML = '<div class="ip-msg">' + esc((j && j.error) || 'the history could not be read') + '</div>'; return; }
-      renderHist(j);
-    }).catch(function () { $('tabHist').innerHTML = '<div class="ip-msg">The server did not answer.</div>'; });
+    var t0 = Date.now(), drops = 0;
+    function note(extra) {
+      $('tabHist').innerHTML = '<div class="ip-msg">Rebuilding the cell for every session of the past ' + BOOT.window + ' days from the stored contract history&hellip; ' +
+        Math.round((Date.now() - t0) / 1000) + ' s so far' + (extra ? ' &middot; ' + extra : '') +
+        ' (the first look at a stock reads a year of day files; every other cell of it, and a second look, is quick)</div>';
+    }
+    function ask() {
+      fetch('/options/api/cm/series?' + q.toString(), {credentials: 'same-origin'}).then(function (r) {
+        return r.json().catch(function () { var e = new Error('answer ' + r.status); e.drop = r.status >= 500; throw e; });
+      }).then(function (j) {
+        drops = 0;
+        if (j && j.pending) { note(); setTimeout(ask, 1500); return; }
+        if (!j || !j.ok) { $('tabHist').innerHTML = '<div class="ip-msg">' + esc((j && j.error) || 'the history could not be read') + '</div>'; return; }
+        renderHist(j);
+      }).catch(function (err) {
+        if ((!err || err.drop !== false) && ++drops <= 3) { note('the server did not answer - trying again, ' + drops + ' of 3'); setTimeout(ask, 3000); return; }
+        $('tabHist').innerHTML = '<div class="ip-msg">The server did not answer after 3 tries (' + esc(err && err.message ? err.message : 'no connection') + '). It may be restarting - reload in a minute.</div>';
+      });
+    }
+    note();
+    ask();
   }
   // ── load ──
   function load() {

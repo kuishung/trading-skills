@@ -223,6 +223,31 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-24 - v4.215: the interpolated history no longer times out ("The server did not answer")
+
+The user, on the History tab of an AMD 90-day cell: *"it says The server did not answer"*, then *"does it exceed the
+API call?"* - no API is involved (the history is rebuilt from the Parquet days stored on Hermes); the request
+outlasted Cloudflare's ~100 s limit. Causes and fixes (`services/vol_cm_series.py`, `routes/options_page.py`,
+`options_interp.html`, `options.html`):
+- **One read per stock, shared by every horizon.** The year of day files was read once per expiry cap, so a 30-day,
+  a 90-day and a 365-day cell of the same stock were three full scans (~1.3 GB each on Hermes's virtual disk). The
+  read now goes out to `READ_CAP` (the longest horizon's cap) and is cached per stock and window; it is sorted by
+  day so each day is a slice instead of a scan of every row.
+- **Each day solves only the legs and their neighbours**: the listed expiries `NEAR_EXP` (6) either side of the
+  horizon and, on each, its own `NEAR_K` (3) strikes either side of the level. When that finds no value (mostly
+  long horizons, where the strike pair sits further out), the day is solved again on the full band - so every
+  value equals the full computation's. Checked on AMD (30 / 90 / 365 d), AAPL 60 d, NVDA 180 d and TSLA 90 d over
+  251 sessions each: every day identical to the old code (one AMD 365-day session now has a value the old,
+  shorter read had cut off). AMD 90 d: about 1.9 s on the laptop with the read cached.
+- **A background job instead of one long request.** `series_async` runs a series in its own thread (one job per
+  cell - a second caller joins it; at most `MAX_JOBS` = 2 compute at once, so hovering across many cells no longer
+  piles up work); `/options/api/cm/series` waits at most `wait` seconds (20 for the History tab, 8 for the hover
+  card) and otherwise answers `{pending: true, elapsed}`. The History tab asks again every 1.5 s, showing the
+  seconds so far, and tries a dropped connection three times; the hover card keeps asking while the mouse stays
+  on the cell. The log line "interpolated history: ..." gives each read's and each series' time on Hermes.
+- Tests: `test_vol_cm_point.py` (the job: pending, joined, done, error; the narrow day and its fallback),
+  `test_options_interp_page.py` (the pending answer), `test_options_page.py` (the hover card's polling).
+
 ### 2026-10-24 - v4.214: option liquidity - near-the-money open interest SUMMED; the band and monthlies are the member's
 
 The user: *"in the watchlist, Option liquidity should be based on sum of open interest rather than median currently

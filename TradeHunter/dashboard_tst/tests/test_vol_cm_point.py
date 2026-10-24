@@ -120,6 +120,63 @@ def test_the_point_for_the_latest_pass_and_the_series_over_the_history(sdb, hist
         vol_cm_series.series(sdb, "AAPL", 60, m=0.95, window_days=365, root=hist, end="2020-01-01")   # nothing that early
 
 
+def test_the_series_runs_as_a_background_job_and_says_pending(sdb, hist, monkeypatch):
+    """v4.215: ``series_async`` - a job per series key; "done" with the same result as ``series``; "pending" while
+    it runs past ``wait``; "error" with the reason; a second caller joins the running job."""
+    import contextlib
+    import threading
+    vol_cm_series.clear_cache()
+
+    @contextlib.contextmanager
+    def factory():
+        yield sdb
+
+    gate = threading.Event()
+    real = vol_cm_series.series
+
+    def slow(*a, **kw):
+        gate.wait(5)
+        return real(*a, **kw)
+
+    monkeypatch.setattr(vol_cm_series, "series", slow)
+    first = vol_cm_series.series_async(factory, "AAPL", 60, m=0.95, window_days=365, root=hist, wait=0.05)
+    assert first["state"] == "pending" and first["elapsed"] >= 0
+    again = vol_cm_series.series_async(factory, "aapl", 60, m=0.95, window_days=365, root=hist, wait=0.05)
+    assert again["state"] == "pending" and len(vol_cm_series._JOBS) == 1          # joined the same job
+    gate.set()
+    done = vol_cm_series.series_async(factory, "AAPL", 60, m=0.95, window_days=365, root=hist, wait=10)
+    assert done["state"] == "done" and done["result"]["symbol"] == "AAPL" and done["result"]["stats"]
+    monkeypatch.setattr(vol_cm_series, "series", real)
+    cached = vol_cm_series.series_async(factory, "AAPL", 60, m=0.95, window_days=365, root=hist, wait=0)
+    assert cached["state"] == "done" and cached["result"] is done["result"]
+    bad = vol_cm_series.series_async(factory, "SPX", 60, m=1.0, window_days=365, root=hist, wait=10)
+    assert bad["state"] == "error" and "index" in bad["error"]
+    with pytest.raises(ValueError):
+        vol_cm_series.series_async(factory, "AAPL", 60, window_days=365, root=hist)
+
+
+def test_one_day_solves_the_legs_and_their_neighbours_and_falls_back_to_the_full_band():
+    """v4.215: a day solves only the expiries NEAR_EXP either side of the horizon and each expiry's own NEAR_K strikes
+    either side of the level; if that finds nothing, the full band - the answer is the full computation's."""
+    import datetime as _dt
+    import numpy as np
+    from app.services.black_scholes import black_scholes
+    d = _dt.date(2026, 10, 7)
+    rows = {"expiry": [], "strike": [], "call": [], "close": []}
+    for n in (9, 16, 23, 30, 44, 58, 72, 100, 135):           # many expiries; the far ones list every 10, the near every 1
+        e = d + _dt.timedelta(days=n)
+        ks = [float(x) for x in range(80, 121)] if n < 40 else [80.0, 90.0, 100.0, 110.0, 120.0]
+        for kk in ks:
+            for c in (True, False):
+                rows["expiry"].append((e - _dt.date(1970, 1, 1)).days); rows["strike"].append(kk); rows["call"].append(c)
+                rows["close"].append(round(black_scholes(101.0, kk, n / 365.0, 0.04, 0.30, "call" if c else "put").price, 4))
+    arr = {kk: np.array(v) for kk, v in rows.items()}
+    r = vol_cm_series.day_point(d, 101.0, arr, 60, m=0.95)
+    assert r["iv"] == pytest.approx(30.0, abs=0.3) and r["lo"]["dte"] == 58 and r["hi"]["dte"] == 72
+    assert r["k_lo"]["strike"] == 90.0 and r["k_hi"]["strike"] == 100.0          # the far expiries' own strikes kept
+    assert r["n"] < arr["close"].size / 3                                           # the narrow pass did the work
+
+
 def test_one_day_of_the_series_from_numpy_rows():
     """v4.210: `day_point` works from that day's rows as arrays (the root's window read once); no rows, no close,
     nothing near the level or a horizon outside the legs each say why instead of failing."""

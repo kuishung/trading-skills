@@ -1825,12 +1825,17 @@ async def api_cm_point(symbol: str = "", day: str = "latest", h: str = "90", m: 
 
 @router.get("/api/cm/series")
 async def api_cm_series(symbol: str = "", h: str = "90", m: str = "", k: str = "", side: str = "", window: str = "",
-                        end: str = "", user: User = Depends(require_user)):
+                        end: str = "", wait: str = "", user: User = Depends(require_user)):
     """v4.209: the interpolated history of one cell over the rank window (``vol_cm_series.series``):
     a row per converted session with that day's IV, legs and weights, and the range / rank stats.
     v4.210: ``end`` (``YYYY-MM-DD``) = the last session included - a past-day surface's hover card asks
-    for the history up to its own day; a bad date is ignored (the newest day)."""
+    for the history up to its own day; a bad date is ignored (the newest day).
+    v4.215: a background job (``vol_cm_series.series_async``) - the request waits at most ``wait`` seconds
+    (default 20, 0 to 25) and answers ``{ok: false, pending: true, elapsed}`` when the job is still running,
+    so no request outlasts Cloudflare's ~100 s limit; the page asks again until it is done."""
+    from .. import screener_db
     from ..services import vol_cm_point, vol_cm_series, vol_history
+    from ..services.vol_surface import SurfaceError
 
     try:
         hh = vol_cm_point.norm_h(h)
@@ -1844,8 +1849,21 @@ async def api_cm_series(symbol: str = "", h: str = "90", m: str = "", k: str = "
     end_d = (end or "").strip()[:10]
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", end_d):
         end_d = None
-    return JSONResponse(await run_in_threadpool(_hist_call, vol_cm_series.series, symbol, hh, m=mm, k=kk,
-                                                side=side or None, window_days=wd, end=end_d))
+    try:
+        wt = max(0.0, min(25.0, float(wait))) if (wait or "").strip() else 20.0
+    except ValueError:
+        wt = 20.0
+    try:
+        res = await run_in_threadpool(vol_cm_series.series_async, screener_db.session, symbol, hh, m=mm, k=kk,
+                                      side=side or None, window_days=wd, end=end_d, wait=wt)
+    except (ValueError, SurfaceError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)})
+    if res["state"] == "done":
+        return JSONResponse({"ok": True, **res["result"]})
+    if res["state"] == "pending":
+        return JSONResponse({"ok": False, "pending": True, "elapsed": res["elapsed"],
+                             "error": "still rebuilding (%d s so far)" % int(res["elapsed"])})
+    return JSONResponse({"ok": False, "error": res["error"]})
 
 
 @router.get("/api/history/chain")
