@@ -161,21 +161,3 @@ def test_preview_with_an_iv_change_on_the_target_date(client, sdb):
     bad = client.post("/calc/api/preview", json={**body, "iv_shift": 500}).json()
     assert bad["ok"] is False and "vol points" in bad["error"]
 
-
-def test_the_sheet_has_the_iv_change_input(client, sdb):
-    html = client.get("/calc?view=sheet").text
-    for needle in ('id="shIv" class="calc-in" type="number" step="1" min="-50" max="100" value="0"', ">IV change on the target date</label>",
-                   'data-iv="-20"', 'data-iv="-10"', 'data-iv="10"', "function syncIv()", "function ivWords(v)",
-                   "iv_shift: ivs,", "iv_shift: bd.iv_shift,", "$('shIv').value = isNum(it.iv_shift) ? it.iv_shift : 0; syncIv();",
-                   "row('IV on target date'", "kv('IV on the target date'", "var nb = c.net_target_base || [];",
-                   "IV unchanged</th>", "dotted line: the target date with IV unchanged"):
-        assert needle in html, needle
-    import shutil, subprocess, tempfile, pathlib, re as _re
-    if shutil.which("node"):
-        for i, m in enumerate(_re.finditer(r"<script(?P<a>[^>]*)>(?P<b>.*?)</script>", html, _re.S)):
-            if "src=" in m.group("a") or "json" in m.group("a") or not m.group("b").strip():
-                continue
-            path = pathlib.Path(tempfile.mkdtemp()) / ("c%d.js" % i)
-            path.write_text(m.group("b"), encoding="utf-8")
-            chk = subprocess.run(["node", "--check", str(path)], capture_output=True, text=True)
-            assert chk.returncode == 0, chk.stderr[:800]

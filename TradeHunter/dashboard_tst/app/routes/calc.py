@@ -1,12 +1,9 @@
-"""The option calculator page (OPTION_CALCULATOR_DESIGN.md steps 2-3) - the member's view.
+"""The option calculator's API (OPTION_CALCULATOR_DESIGN.md steps 2-3).
 
-* ``GET /calc`` - the page: the member's saved setups (left / top), the selected setup's
-  result (right / below), a "New setup" form (two prices: expected and worst case;
-  "find the legs for me" = a pair request, "I pick the legs" = a manual one) and the
-  member's defaults. ``?id=`` selects a setup, ``?symbol=`` fills the ticker,
-  ``?view=sheet|setups`` picks the view (v4.157: the Excel-style "Sheet" with the
-  volatility surface as the leg picker, or the saved "Setups").
-* ``/calc/api/*`` - the JSON the page talks to:
+* ``GET /calc`` - v4.218: the PAGE was removed (user: "the current interface of the calculator is too
+  difficult to understand. remove the interface."); the address forwards to the Volatility Surface.
+  ``templates/calc.html`` is gone; the API, the engine, the saved setups and the Hermes lane stay.
+* ``/calc/api/*`` - the JSON (kept for the page that replaces it):
 
   - ``GET  /api/chain?symbol=``          the last market pass's chain for the leg picker
   - ``GET  /api/requests``               the member's setups
@@ -33,12 +30,10 @@ from __future__ import annotations
 import datetime as _dt
 import logging
 import math
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, Request
-from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
+from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
@@ -50,7 +45,6 @@ from ..services import clock
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/calc", tags=["calc"])
-templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent / "templates"))
 
 HISTORY_LIMIT = 30            # passes shown under a setup
 STALE_S = 5 * 60              # the lane looks every minute; no heartbeat for 5 min = not running
@@ -235,38 +229,12 @@ def _status_payload(now: _dt.datetime | None = None) -> dict:
 
 # ─────────────────────────────────────── the page ───────────────────────────────────────
 
-@router.get("", response_class=HTMLResponse)
-def calc_home(request: Request, id: str = "", symbol: str = "", view: str = "",
-              user: User = Depends(require_user), db: Session = Depends(get_db)):
-    engine_error, requests, prefs, defaults, limits, families = None, [], {}, {}, {}, {}
-    try:
-        store, _chain, pair, _worker = _services()
-        requests = [_req_dict(r) for r in store.list_requests(db, user)]
-        prefs, defaults = store.read_prefs(user), dict(store.DEFAULTS)
-        limits = {k: list(v) for k, v in store.LIMITS.items()}
-        families = {k: {"direction": v[0], "legs": v[1], "defined_risk": v[2], "label": v[3], "debit_credit": v[4]}
-                    for k, v in pair.FAMILIES.items()}
-    except _Missing as exc:
-        engine_error = str(exc)
-    try:
-        selected = int(id) if id else None
-    except ValueError:
-        selected = None
-    if selected is not None and not any(r["id"] == selected for r in requests):
-        selected = None
-    sym = str(symbol or "").strip().upper()[:20]
-    # v4.157: "sheet" (the Excel-style sheet with the volatility-surface leg picker) or
-    # "setups" (the saved setups). Empty = the page decides: ?id= -> setups, else the
-    # member's last choice (browser storage), else the sheet.
-    view = str(view or "").strip().lower()
-    view = view if view in ("sheet", "setups") else ""
-    boot = {
-        "engine_error": engine_error, "requests": requests, "prefs": prefs, "defaults": defaults,
-        "limits": limits, "families": families, "selected": selected, "symbol": sym,
-        "status": _status_payload(), "today": clock.et_today(), "max_legs": MAX_LEGS, "view": view,
-    }
-    return templates.TemplateResponse(request, "calc.html", {"user": user, "boot": boot,
-                                                             "engine_error": engine_error})
+@router.get("", include_in_schema=False)
+def calc_home():
+    """v4.218 (user: "the current interface of the calculator is too difficult to understand. remove the
+    interface."): the page is gone; an old link or bookmark lands on the Volatility Surface. The JSON API below,
+    the engine, the members' saved setups and the Hermes lane are kept for the page that replaces it."""
+    return RedirectResponse("/options", status_code=303)
 
 
 # ─────────────────────────────────────── the API ───────────────────────────────────────

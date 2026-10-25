@@ -223,6 +223,22 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-25 - v4.218: the Calculator page is removed
+
+The user: *"the current interface of the calculator is too difficult to understand. remove the interface."* The
+page goes; what it stood on stays, for the page that replaces it:
+- **Removed**: `templates/calc.html` (the Sheet view and the Setups view), the **Calculator** entry of the Options
+  dropdown (`menus.py`: its tuple is kept there as a comment), the **"Calculator ↗"** button in the Watchlist's
+  chart pane (`_chart_pane.html`), the page handler in `routes/calc.py` and its templates object (and the entry in
+  `main.py`'s template-globals loop).
+- **`/calc`** now forwards (303) to the Volatility Surface, so an old link or bookmark lands somewhere useful.
+- **Kept**: the JSON API `/calc/api/*` (gated by the `calc` menu key, now in `HIDDEN_KEYS` so existing grants keep
+  working), the engine (`option_calc.py`), the chain / store / pairing services, the members' saved setups and the
+  Hermes lane `TST-Option-Calc` that recomputes them, and Settings -> Data Ingest -> Option Calculator (its wording
+  no longer points at the page).
+- Tests: `test_calc_page.py` (the address forwards, no nav link, no template, the API gate), the page tests of
+  `test_calc_sheet.py` / `test_calc_sheet_api.py` removed (their API tests stay), `test_options_page.py` (no button).
+
 ### 2026-10-25 - v4.217: the Calculator - an IV change on the target date
 
 The user: *"Start with the IV-change scenario on the target date in the calculator."* (and *"you have studies the

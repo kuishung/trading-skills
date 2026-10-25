@@ -67,7 +67,7 @@ for _routes_mod in (
     auth_routes, matp_routes, studies_routes,
     finviz_routes, feedback_routes, admin_routes, agent_routes, pipeline_routes,
     research_routes, patterns_routes, strategy_routes, curated_routes,
-    portfolio_routes, spreads_routes, ivscan_routes, options_page_routes, calc_routes,
+    portfolio_routes, spreads_routes, ivscan_routes, options_page_routes,   # calc_routes: no page since v4.218
     company_analysis_routes, sector_routes, macro_routes, calendar_routes,
 ):
     _routes_mod.templates.env.globals["version"] = APP_VERSION

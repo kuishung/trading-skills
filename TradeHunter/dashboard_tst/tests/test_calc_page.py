@@ -1,5 +1,5 @@
-"""The option calculator page (OPTION_CALCULATOR_DESIGN.md steps 2-3): ``routes/calc.py`` +
-``templates/calc.html`` - the page and its nav link, the chain for the leg picker, the
+"""The option calculator API (OPTION_CALCULATOR_DESIGN.md steps 2-3): ``routes/calc.py`` - since v4.218
+the page is gone (``/calc`` forwards to the Volatility Surface, no nav link); the chain for the leg picker, the
 create -> compute -> read round trip for a manual and a pair setup, the defaults, bad
 input, member scoping, and the status line with and without the lane's state file."""
 from __future__ import annotations
@@ -134,27 +134,23 @@ def _legs():
 
 # ────────────────────────────────── the page ──────────────────────────────────
 
-def test_the_page_renders_with_the_nav_link_and_boot(client, no_screener_db):
-    r = client.get("/calc?symbol=nvda")
-    assert r.status_code == 200
-    html = r.text
-    assert 'href="/calc"' in html and ">Calculator<" in html            # the nav item
-    assert 'id="calcPage"' in html and "Find the legs for me" in html and "I pick the legs" in html
-    assert "Expected price" in html and "Worst-case price" in html and "Your defaults" in html
-    boot = _boot(html)
-    assert boot["requests"] == [] and boot["selected"] is None and boot["symbol"] == "NVDA"
-    assert boot["prefs"]["horizon_days"] == 45 and boot["defaults"]["min_oi"] == 100
-    assert boot["families"]["bull_call_spread"]["label"] == "Bull call spread"
-    assert boot["status"]["lane"]["state"] == "absent" and boot["engine_error"] is None
-    # the page never overrides base.html's invisible-until-hover scrollbar
-    own = [b for b in re.findall(r"<style>(.*?)</style>", html, re.S) if ".calc-grid" in b]
-    assert own and "scrollbar" not in own[0]
+def test_the_page_is_gone_and_its_address_forwards_to_the_surface(client, no_screener_db):
+    """v4.218 (user: "the current interface of the calculator is too difficult to understand. remove the
+    interface."): no page, no nav link, no template; the address lands on the Volatility Surface."""
+    r = client.get("/calc?view=sheet&symbol=nvda", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/options"
+    html = client.get("/matp").text
+    assert 'href="/calc"' not in html and ">Calculator<" not in html
+    import pathlib
+    assert not (pathlib.Path(calc_routes.__file__).resolve().parent.parent / "templates" / "calc.html").exists()
+    from app import menus
+    assert "calc" in menus.ALL_KEYS and "calc" not in [m[0] for m in menus.MENUS]     # the API's gate still passes
 
 
 def test_a_member_without_the_grant_is_sent_away(client, db, user):
     user.menu_access = ["matp"]
     db.commit()
-    r = client.get("/calc")
+    r = client.get("/calc/api/requests", follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/matp"
 
 
@@ -287,7 +283,6 @@ def test_another_member_cannot_see_the_setup(client, engine, db):
     assert c2.post("/calc/api/requests/%d/active" % rid, json={"active": False}).status_code == 404
     assert c2.post("/calc/api/requests/%d/compute" % rid).status_code == 404
     assert c2.delete("/calc/api/requests/%d" % rid).status_code == 404
-    assert "ACME" not in json.dumps(_boot(c2.get("/calc?id=%d" % rid).text)["requests"])
 
 
 # ────────────────────────────────── status ──────────────────────────────────

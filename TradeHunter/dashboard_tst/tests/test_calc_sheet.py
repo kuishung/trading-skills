@@ -129,45 +129,6 @@ def _pick(surface: dict, right: str, strike: float, col: int, qty: int) -> dict:
 
 # ────────────────────────────────── the page ──────────────────────────────────
 
-def test_the_page_has_the_sheet_and_the_view_switch(client, no_screener_db):
-    html = client.get("/calc").text
-    # the switch, the sheet's blocks, and the old view kept intact
-    assert 'data-view="sheet"' in html and 'data-view="setups"' in html and 'id="sheetPage"' in html
-    assert 'id="setupsPage"' in html and 'id="calcPage"' in html and "Find the legs for me" in html
-    for bit in ('id="shSym"', 'id="shSpot"', 'id="shTarget"', 'id="shWorst"', 'id="shDays"', 'id="shSets"',
-                'id="shGrid"', 'id="shLegs"', 'id="shResult"', 'id="shSave"',
-                "Pick the legs on the volatility surface", "Option values", "Decision indicators",
-                "Post-decayed", "Reward over risk", "Total outlay", "model probability, not a forecast",
-                "/calc/api/surface", "/calc/api/preview", 'data-act="sheet"', "Open in sheet"):
-        assert bit in html, bit
-    boot = _boot(html)
-    assert boot["view"] == "" and boot["max_legs"] == 4 and boot["prefs"]["horizon_days"] == 45
-    # the page's own CSS never touches base.html's invisible-until-hover scroll bars
-    own = [b for b in re.findall(r"<style>(.*?)</style>", html, re.S) if ".calc-grid" in b]
-    assert own and "scrollbar" not in own[0]
-
-
-def test_view_and_symbol_reach_the_boot(client, no_screener_db):
-    boot = _boot(client.get("/calc?view=sheet&symbol=acme").text)
-    assert boot["view"] == "sheet" and boot["symbol"] == "ACME"
-    assert _boot(client.get("/calc?view=SETUPS").text)["view"] == "setups"
-    assert _boot(client.get("/calc?view=nonsense").text)["view"] == ""
-
-
-def test_open_in_sheet_boots_the_saved_setup(client, sdb):
-    _fill(sdb)
-    exp = MONTHLIES[1].isoformat()
-    legs = [{"right": "C", "strike": 100, "expiry": exp, "qty": 1}, {"right": "C", "strike": 120, "expiry": exp, "qty": -1}]
-    it = client.post("/calc/api/requests", json={"symbol": "ACME", "kind": "manual", "target": 125, "worst": 92,
-                                                 "horizon_days": 30, "sets": 2, "legs": legs}).json()["item"]
-    boot = _boot(client.get("/calc?view=sheet&id=%d" % it["id"]).text)
-    assert boot["view"] == "sheet" and boot["selected"] == it["id"]
-    saved = next(x for x in boot["requests"] if x["id"] == it["id"])
-    assert saved["kind"] == "manual" and saved["target"] == 125 and saved["worst"] == 92 and saved["sets"] == 2
-    assert [(lg["right"], lg["strike"], lg["expiry"], lg["qty"]) for lg in saved["legs"]] == \
-        [("C", 100.0, exp, 1), ("C", 120.0, exp, -1)]
-
-
 # ────────────────────────────────── the picker ──────────────────────────────────
 
 def test_the_surface_is_a_grid_for_the_picker(client, sdb):

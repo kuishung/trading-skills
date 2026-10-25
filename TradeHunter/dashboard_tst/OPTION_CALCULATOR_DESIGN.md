@@ -230,3 +230,8 @@ the excel sheet and then on the leg user can select the leg from the volatility 
   total gains and risk, a dotted line on the chart, an "IV on target date" row per leg. Saved
   manual setups keep it (`option_calc_requests.iv_shift`, migration `c5d8e2a4f7b1`) and the
   Hermes lane prices them with it. The pairing search (step 3) still keeps IV unchanged.
+- 2026-10-25 (v4.218) — **The page is removed.** The user: *"the current interface of the
+  calculator is too difficult to understand. remove the interface."* `templates/calc.html`, the
+  nav entry and the Watchlist's "Calculator" button are gone; `/calc` forwards to the Volatility
+  Surface. Steps 1 and 3 (engine, pairing), the store, the `/calc/api/*` JSON, the saved setups and
+  the Hermes lane are kept - a new, simpler page (step 2) is to be designed on top of them.

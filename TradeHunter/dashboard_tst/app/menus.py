@@ -36,10 +36,11 @@ MENUS = [
     # (2026-10-17, user: "Move Calculator under an Options dropdown") it is the first
     # entry of an "Options" DROPDOWN whose second entry is the Calculator below.
     ("options",          "Volatility Surface", "Options", "/options"),   # v4.159: the page is the surface only
-    # Calculator - the option calculator (OPTION_CALCULATOR_DESIGN.md steps 2-3, 2026-10-17):
-    # the member types an expected and a worst-case price; the Hermes lane finds the legs
-    # (or prices the member's own) after every Massive pass. routes/calc.py.
-    ("calc",             "Calculator",        "Options", "/calc"),
+    # The Calculator (OPTION_CALCULATOR_DESIGN.md steps 2-3, 2026-10-17) was the second entry here. Its PAGE was
+    # removed in v4.218 (2026-10-25, user: "the current interface of the calculator is too difficult to understand.
+    # remove the interface."); the key "calc" stays in HIDDEN_KEYS so the /calc/api/* gate and existing grants keep
+    # working for the page that replaces it. To bring a page back at this spot:
+    #   ("calc",             "Calculator",        "Options", "/calc"),
 ]
 # Off the nav since 2026-10-01 (user: "i want to disable the Company, macro,
 # options") - the SAME treatment as the 2026-09-15 removal: the pages stay
@@ -70,7 +71,7 @@ OFF_NAV_KEYS = ["macro", "company_analysis", "ivscan", "spreads", "positions"]
 # (the OLD Portfolio placeholder became Curated on 2026-09-07), so reusing that key
 # would hand this page's grants to Curated. The nav's exit-line badge poll
 # (base.html, /portfolio/badge) renders only while this entry is in MENUS.
-HIDDEN_KEYS = OFF_NAV_KEYS + ["company", "studies", "strategy", "patterns"]
+HIDDEN_KEYS = OFF_NAV_KEYS + ["company", "studies", "strategy", "patterns", "calc"]   # calc: v4.218, page removed
 # Where an approved user lands after sign-in (user, 2026-09-07: "on login go to
 # calendar by default"). Kept here rather than hard-coded at each redirect site so
 # the three of them (index, password login, OAuth callback) cannot drift apart.
@@ -84,7 +85,7 @@ ALL_KEYS = [m[0] for m in MENUS] + HIDDEN_KEYS
 LEGACY_KEYS = {"portfolio": "curated"}
 LABELS = {m[0]: m[1] for m in MENUS}
 LABELS.update({"macro": "Macro", "company_analysis": "Company", "ivscan": "IV Rank",
-               "spreads": "Spread", "positions": "Positions"})
+               "spreads": "Spread", "positions": "Positions", "calc": "Calculator"})
 
 
 def allowed_keys(user: User) -> set:

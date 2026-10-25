@@ -32,10 +32,7 @@
     <a href="/options?symbol={{ sel.symbol | urlencode }}#surface" target="_blank" rel="noopener"
        class="text-[11px] px-2.5 py-1 rounded border transition border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 ml-1"
        title="Open the option volatility surface for {{ sel.symbol }} in a new window">Vol surface &#8599;</a>
-    {# v4.157: the option calculator's Sheet view for THIS ticker (legs picked from the surface) #}
-    <a href="/calc?view=sheet&amp;symbol={{ sel.symbol | urlencode }}" target="_blank" rel="noopener"
-       class="text-[11px] px-2.5 py-1 rounded border transition border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300"
-       title="Open the option calculator for {{ sel.symbol }} in a new window">Calculator &#8599;</a>
+    {# v4.218: the Calculator button went with the calculator page #}
   </div>
 
   <div id="tabChart" class="flex flex-col lg:flex-1 lg:min-h-0">
