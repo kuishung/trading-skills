@@ -2192,3 +2192,21 @@ def test_the_option_finder_ranking_lays_over_the_surface(client, fake):
         path.write_text(js, encoding="utf-8")
         out = subprocess.run(["node", str(path)], capture_output=True, text=True)
         assert out.stdout.split() == ["123455", "1"], out.stdout + out.stderr
+
+
+
+def test_the_ranking_list_picks_calls_onto_the_surface(client, fake):
+    """v4.224 (user: "give me a ranking list and when I click the list the selected will be overlay in the vol surface"):
+    in the window the finder opens, the ranked calls as a list in the left panel; a click picks a call (more clicks
+    compare several, a second click drops it) and the surface then shows only the picked calls, scrolled to the one
+    clicked with its hover card open; "Show all" goes back to the whole ranking."""
+    html = client.get("/options").text
+    for needle in ('id="volRankPane" class="hidden vol-rankpane', 'id="volRankList"', 'aria-multiselectable="true"', 'id="volRankClear"',
+                   "function paintRankList()", "function rankCell(key)", "function focusRank(key)",
+                   "if (picked && !RK.sel[key]) return;", "if (picked) td.classList.add('vol-rk-pick');",
+                   "if (RK.sel[key]) delete RK.sel[key]; else RK.sel[key] = true;", "if (RK.sel[key]) focusRank(key); else hidePop();",
+                   "$('volRankClear').addEventListener('click', function () { RK.sel = {}; hidePop(); paintRank(); });",
+                   "td.scrollIntoView({block: 'center', inline: 'center', behavior: 'smooth'});", "showPop(td, {clientX: b.right, clientY: b.top});",
+                   "'<span class=\"v\">' + esc(ofCellText(r, RK.sort)) + '</span></button>'",
+                   ".vol-grid td.vol-rk-pick { box-shadow: inset 0 0 0 2px #10b981; }", ".vol-rk-row.on { background: rgba(16,185,129,.22);"):
+        assert needle in html, needle

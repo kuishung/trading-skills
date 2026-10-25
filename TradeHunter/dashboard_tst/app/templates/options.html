@@ -121,6 +121,15 @@
   .vol-rankbar { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .9rem; font-size: 11px; color: var(--tv-muted);
                  border: 1px solid rgba(16,185,129,.45); background: rgba(16,185,129,.07); border-radius: .5rem; padding: .35rem .6rem; }
   .vol-rankbar b { color: var(--tv-text-hi); }
+  /* v4.224: the ranking list in the left panel; the picked calls */
+  .vol-rankpane { max-height: 46vh; border-color: rgba(16,185,129,.45); }
+  .vol-rk-row { display: grid; grid-template-columns: 2.2rem 1fr auto; gap: .35rem; align-items: baseline; width: 100%;
+                text-align: left; padding: .2rem .4rem; border-radius: .3rem; color: var(--tv-text); font-variant-numeric: tabular-nums; }
+  .vol-rk-row:hover { background: var(--tv-hover); }
+  .vol-rk-row .n { color: var(--tv-muted); font-size: 10px; } .vol-rk-row .v { color: var(--tv-text-hi); font-weight: 600; }
+  .vol-rk-row.on { background: rgba(16,185,129,.22); box-shadow: inset 2px 0 0 #10b981; }
+  .vol-grid td.vol-rk-pick { box-shadow: inset 0 0 0 2px #10b981; }
+  .vol-grid td.vol-rk-pick.vol-rk-top { box-shadow: inset 0 0 0 2px #d97706; }
   .vol-grid td.vol-cell:hover { outline: 1px solid var(--tv-accent); outline-offset: -1px; }
   .vol-bar { display: inline-block; width: 9rem; height: .5rem; border-radius: 9999px; vertical-align: middle;
              background: linear-gradient(90deg, hsla(120,70%,45%,.75), hsla(60,70%,45%,.75), hsla(0,70%,45%,.75)); }
@@ -350,6 +359,17 @@
      sets the split, remembered in localStorage th.vol.split. Phone: a fixed-height list, no handle. #}
   <aside id="volAside" class="vol-aside shrink-0 lg:w-56 flex flex-col gap-2 min-h-0 lg:h-full lg:overflow-hidden">
     <h1 class="shrink-0 text-sm font-medium text-slate-200 whitespace-nowrap">Volatility surface</h1>
+    {# v4.224 (user: "give me a ranking list and when I click the list the selected will be overlay in the vol surface"):
+       in a window opened from the Option Finder, the ranked calls as a list; a click picks a call (more clicks compare
+       several) and the surface then shows only the picked ones, scrolled to and with the hover card open #}
+    <section id="volRankPane" class="hidden vol-rankpane flex flex-col min-h-0 rounded border" aria-label="Ranking">
+      <div class="shrink-0 flex items-center justify-between gap-2 px-2 pt-1.5 text-[11px] text-slate-400">
+        <span class="font-medium text-slate-300">Ranking <span id="volRankBy" class="font-normal text-slate-500"></span></span>
+        <button type="button" id="volRankClear" class="hidden text-[11px] text-emerald-300 hover:underline">Show all</button>
+      </div>
+      <div id="volRankHint" class="shrink-0 px-2 pb-1 text-[10px] text-slate-500 leading-snug">Click a call to show only it on the surface; click more to compare, again to drop.</div>
+      <div id="volRankList" class="flex-1 min-h-0 overflow-y-auto px-1 pb-1 text-xs" role="listbox" aria-multiselectable="true" aria-label="Ranked calls"></div>
+    </section>
     <section id="volWlPane" class="vol-wlpane flex flex-col min-h-0 rounded border border-slate-800" aria-label="Watchlist">
       <div class="shrink-0 flex items-center justify-between gap-2 px-2 pt-1.5 text-[11px] text-slate-400">
         <span class="font-medium text-slate-300">Watchlist</span>
@@ -1624,10 +1644,11 @@
     out.sort(function (a, b) { var d = val(b) - val(a); return d || (a.expiry < b.expiry ? -1 : a.expiry > b.expiry ? 1 : a.strike - b.strike); });
     return out;
   }
-  function ofCellText(r) {
-    if (OF.sort === 'rr') return r.no_loss ? 'no loss' : num(r.rr, 2);
-    if (OF.sort === 'roi') return pctOf(r.roi, 0);
-    if (OF.sort === 'prob') return pctOf(r.prob, 0);
+  function ofCellText(r, key) {
+    var k = key || OF.sort;
+    if (k === 'rr') return r.no_loss ? 'no loss' : num(r.rr, 2);
+    if (k === 'roi') return pctOf(r.roi, 0);
+    if (k === 'prob') return pctOf(r.prob, 0);
     return (r.be_pct >= 0 ? '+' : '') + pctOf(r.be_pct, 1);
   }
   function runFind() {
@@ -1738,7 +1759,7 @@
     show($('ofMapBox'), true);
   }
   // ── v4.223: the Option Finder ranking laid over the Volatility Surface (a window opened by the finder's button) ──
-  var RK = {params: null, data: null, sym: null, sort: 'rr', on: true, byKey: {}, n: 0};
+  var RK = {params: null, data: null, sym: null, sort: 'rr', on: true, byKey: {}, n: 0, sel: {}};   // sel: v4.224 picks
   function rkKey(expiry, strike) { return String(expiry).slice(0, 10) + '|' + strikeText(Number(strike)); }
   function finderUrl(p, sym) {
     var q = new URLSearchParams({symbol: sym, strategy: p.strategy || 'long_call', target: p.target, worst: p.worst, mode: p.mode || 'expiry'});
@@ -1756,22 +1777,68 @@
   function paintRank() {               // after every surface draw (and the history colours)
     var table = $('volTable'), j = V.last;
     if (!table) return;
-    var on = !!(RK.params && RK.on && RK.data && j && j.symbol === RK.sym);
+    var on = !!(RK.params && RK.on && RK.data && j && j.symbol === RK.sym), picked = Object.keys(RK.sel).length > 0;
     table.classList.toggle('vol-rk-on', on);
     Array.prototype.forEach.call(table.querySelectorAll('td.vol-cell'), function (td) {
-      td.classList.remove('vol-rk', 'vol-rk1', 'vol-rk2', 'vol-rk3', 'vol-rk4', 'vol-rk5', 'vol-rk-top');
+      td.classList.remove('vol-rk', 'vol-rk1', 'vol-rk2', 'vol-rk3', 'vol-rk4', 'vol-rk5', 'vol-rk-top', 'vol-rk-pick');
       var old = td.querySelector('.vol-rkb');
       if (old) old.remove();
       if (!on) return;
       var k = j.strikes[+td.dataset.r], ex = j.expiries[+td.dataset.c];
       if (!ex || sideOf(j, k) !== 'C') return;          // buy a call: the call cells only
-      var hit = RK.byKey[rkKey(ex.date, k)];
+      var key = rkKey(ex.date, k), hit = RK.byKey[key];
       if (!hit) return;
+      if (picked && !RK.sel[key]) return;                // v4.224: with picks, only the picked calls show
       td.classList.add('vol-rk', 'vol-rk' + rankTier(hit.i, RK.n));
+      if (picked) td.classList.add('vol-rk-pick');
       if (hit.i === 0) td.classList.add('vol-rk-top');
       td.insertAdjacentHTML('afterbegin', '<span class="vol-rkb">#' + (hit.i + 1) + '</span>');
     });
     paintRankBar();
+    paintRankList();
+  }
+  function paintRankList() {           // v4.224: the ranked calls, best first by the chosen key; the picks highlighted
+    var box = $('volRankList');
+    if (!box || !RK.params) return;
+    show($('volRankPane'), true);
+    $('volRankBy').textContent = '- ' + OF_SORTS[RK.sort].toLowerCase();
+    var npick = Object.keys(RK.sel).length;
+    show($('volRankClear'), npick > 0);
+    $('volRankHint').textContent = npick ? npick + (npick === 1 ? ' call' : ' calls') + ' shown on the surface; click more to compare, again to drop.'
+                                         : 'Click a call to show only it on the surface; click more to compare, again to drop.';
+    if (!RK.data || !RK.data.rows) {
+      box.innerHTML = '<div class="px-2 py-2 text-[11px] text-slate-500">' + esc(RK.error ? 'No ranking: ' + RK.error : 'Ranking...') + '</div>';
+      return;
+    }
+    var rows = ofSorted(RK.data.rows, RK.sort);
+    if (!rows.length) { box.innerHTML = '<div class="px-2 py-2 text-[11px] text-slate-500">No call passes the filters.</div>'; return; }
+    box.innerHTML = rows.map(function (r, i) {
+      var key = rkKey(r.expiry, r.strike), on = !!RK.sel[key];
+      return '<button type="button" class="vol-rk-row' + (on ? ' on' : '') + '" role="option" aria-selected="' + on + '" data-key="' + esc(key) + '"' +
+        ' title="' + esc(shortDate(r.expiry) + ' ' + strikeText(r.strike) + ' call - cost ' + money(r.cost) + ', breakeven ' + money(r.breakeven) +
+          ', reward / risk ' + (r.no_loss ? 'no loss' : num(r.rr, 2)) + ', ROI ' + pctOf(r.roi, 0) + ', chance above breakeven ' + pctOf(r.prob, 0)) + '">' +
+        '<span class="n">#' + (i + 1) + '</span><span>' + esc(shortDate(r.expiry)) + ' <b>' + esc(strikeText(r.strike)) + '</b></span>' +
+        '<span class="v">' + esc(ofCellText(r, RK.sort)) + '</span></button>';
+    }).join('');
+  }
+  function rankCell(key) {             // the surface cell of a ranked call, or null when the grid does not show it
+    var j = V.last, out = null;
+    if (!j) return null;
+    Array.prototype.some.call($('volTable').querySelectorAll('td.vol-cell'), function (td) {
+      var ex = j.expiries[+td.dataset.c];
+      if (ex && rkKey(ex.date, j.strikes[+td.dataset.r]) === key && sideOf(j, j.strikes[+td.dataset.r]) === 'C') { out = td; return true; }
+      return false;
+    });
+    return out;
+  }
+  function focusRank(key) {            // scroll the picked call into view and open its hover card
+    var td = rankCell(key);
+    if (!td) { $('volRankHint').textContent = 'That call is not on the surface as drawn (outside the strike range) - widen Strikes in the controls.'; return; }
+    td.scrollIntoView({block: 'center', inline: 'center', behavior: 'smooth'});
+    setTimeout(function () {
+      var b = td.getBoundingClientRect();
+      showPop(td, {clientX: b.right, clientY: b.top});
+    }, 420);
   }
   function paintRankBar() {
     if (!RK.params) { show($('volRankBar'), false); return; }
@@ -1806,7 +1873,7 @@
     paintRankBar();
     getJSON(finderUrl(RK.params, sym)).then(function (d) {
       if (RK.sym !== sym) return;
-      if (!d || !d.ok) { RK.error = (d && d.error) || 'the ranking could not be read'; paintRankBar(); return; }
+      if (!d || !d.ok) { RK.error = (d && d.error) || 'the ranking could not be read'; paintRankBar(); paintRankList(); return; }
       RK.data = d; rkIndex(); paintRank();
     }).catch(function () { RK.error = 'the server did not answer'; paintRankBar(); });
   }
@@ -1825,6 +1892,17 @@
       if ($('volClean')) $('volClean').checked = false;      // the tidy-up hides strikes not listed in half the expiries - with weeklies, most
       $('volRankSort').addEventListener('change', function () { RK.sort = $('volRankSort').value; rkIndex(); paintRank(); });
       $('volRankShow').addEventListener('change', function () { RK.on = $('volRankShow').checked; paintRank(); });
+      $('volRankList').addEventListener('click', function (e) {          // v4.224: pick / drop a call
+        var b = e.target.closest ? e.target.closest('.vol-rk-row') : null;
+        if (!b) return;
+        var key = b.dataset.key;
+        if (RK.sel[key]) delete RK.sel[key]; else RK.sel[key] = true;
+        if (!RK.on) { RK.on = true; $('volRankShow').checked = true; }
+        paintRank();
+        if (RK.sel[key]) focusRank(key); else hidePop();
+      });
+      $('volRankClear').addEventListener('click', function () { RK.sel = {}; hidePop(); paintRank(); });
+      show($('volRankPane'), true);
     })();
   }
   if (MODE === 'surface') {

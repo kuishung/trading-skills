@@ -223,6 +223,19 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-25 - v4.224: a ranking list beside the ranked surface - click a call to show it on the surface
+
+The user: *"or you will give me a ranking list and when I click the list the selected will be overlay in the vol
+surface"*. In the window the Option Finder opens (`options.html`):
+- **The list**: the left panel gains a "Ranking" list above the watchlist - every ranked call, best first by the
+  bar's Rank-by choice: rank, expiry, strike and the ranked figure (its tooltip: cost, breakeven, reward / risk, ROI,
+  chance above breakeven).
+- **A click picks a call**: the surface then shows only the picked calls (tinted by rank, ringed in green, the rest
+  dimmed), scrolls to the one clicked and opens its hover card (with its Option Finder panel). More clicks add calls
+  to compare; a second click drops one; **"Show all"** returns to the whole ranking. The Rank-by switch re-orders the
+  list and keeps the picks.
+- Tests: `test_options_page.py` (the list, picking, dropping, "Show all", the scroll and the hover card).
+
 ### 2026-10-25 - v4.223: the Option Finder's ranking laid over the Volatility Surface, in a new window
 
 The user: *"can you give me a button so that the ranking of the result can be overlay to the vol surface? so that I can
