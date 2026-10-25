@@ -569,7 +569,7 @@
       if (!j || !j.ok) { $('ipMsg').textContent = (j && j.error) || 'the cell could not be read'; return; }
       P = j;
       $('ipMsg').textContent = '';
-      $('ipTitle').textContent = j.symbol + ' · ' + levelWords(j) + ' ' + rightWord(j) + ' · fixed ' + j.h + ' days';
+      $('ipTitle').innerHTML = (window.tkLogo ? tkLogo(j.symbol, 22, 'tk-lg') : '') + esc(j.symbol + ' · ' + levelWords(j) + ' ' + rightWord(j) + ' · fixed ' + j.h + ' days');
       $('ipSub').textContent = (j.source === 'latest' ? 'the latest market pass (session ' + j.on + ')' : 'the close of ' + j.on) +
         ' · price ' + num(j.spot, 2) + ' · ' + (j.iv != null ? 'IV ' + num(j.iv, 1) + '%' + (j.exact ? ' (a listed contract: nothing interpolated)' : '') : (j.why || ''));
       renderWork(j); renderCharts(j);

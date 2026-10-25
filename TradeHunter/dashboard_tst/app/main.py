@@ -42,6 +42,7 @@ from .routes import options_page as options_page_routes
 from .routes import calc as calc_routes
 from .routes import macro as macro_routes
 from .routes import feedback as feedback_routes
+from .routes import logos as logos_routes
 from .routes import finviz as finviz_routes
 from .routes import matp as matp_routes
 from .routes import patterns as patterns_routes
@@ -61,6 +62,21 @@ log = logging.getLogger("dashboard_tst")
 APP_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
 
+def _ticker_logo(symbol, px: int = 16, cls: str = ""):
+    """v4.221 (user: "I will want the logo of the ticker in wherever it is shown"): ``{{ ticker_logo(sym) }}`` - the
+    logo badge (``GET /logo/<SYM>``, letters when there is none), ``px`` square, styled by ``.tk-logo`` in base.html."""
+    from markupsafe import Markup, escape  # noqa: PLC0415
+
+    from .services.logos import clean_symbol  # noqa: PLC0415
+
+    s = clean_symbol(symbol)
+    if not s:
+        return Markup("")
+    n = max(10, min(int(px or 16), 64))
+    return Markup('<img class="tk-logo %s" src="/logo/%s" width="%d" height="%d" alt="" loading="lazy" decoding="async">'
+                  % (escape(cls), escape(s), n, n))
+
+
 # Expose the build version as a Jinja global on every templates env, so the
 # sidebar logo (base.html) shows "v<version>" without each route passing it.
 for _routes_mod in (
@@ -73,7 +89,9 @@ for _routes_mod in (
     _routes_mod.templates.env.globals["version"] = APP_VERSION
     _routes_mod.templates.env.globals["nav_for"] = menus.nav_for   # access-filtered nav
     _routes_mod.templates.env.globals["gloss"] = _gloss            # metric-label tooltips
+    _routes_mod.templates.env.globals["ticker_logo"] = _ticker_logo  # v4.221: the company logo beside a ticker
 templates.env.globals["version"] = APP_VERSION
+templates.env.globals["ticker_logo"] = _ticker_logo
 templates.env.globals["nav_for"] = menus.nav_for
 templates.env.globals["gloss"] = _gloss
 
@@ -256,6 +274,7 @@ def create_app() -> FastAPI:
     # only, no per-menu gate, same as the drawings API.
     app.include_router(options_routes.router)
     app.include_router(feedback_routes.router)
+    app.include_router(logos_routes.router)          # v4.221: GET /logo/<SYM>
     app.include_router(admin_routes.router)
     app.include_router(agent_routes.router)
     app.include_router(api_routes.router)

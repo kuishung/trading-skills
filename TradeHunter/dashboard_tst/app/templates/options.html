@@ -258,6 +258,7 @@
   .vol-tabs .vol-tick { align-self: center; margin-left: auto; margin-bottom: .2rem; flex: none; }
   /* v4.178: the grid's heading - the ticker large, the name and price small beside it */
   .vol-head { display: inline-flex; align-items: baseline; flex-wrap: wrap; gap: .5rem; }
+  .vol-head .tk-logo { align-self: center; }   /* v4.221 */
   .vol-head > b { font-size: 1.25rem; line-height: 1.2; font-weight: 600; color: var(--tv-text-hi); }
   .vol-head-name { font-size: 12px; color: var(--tv-muted); }
   .vol-head-px { font-size: 12px; color: var(--tv-text); font-variant-numeric: tabular-nums; }
@@ -1023,7 +1024,7 @@
   function infoHead(el, j, detail) {
     el.title = (detail ? detail + '\n' : '') + (j.method || '');
     var ss = spotSource(j);
-    el.innerHTML = '<span class="vol-head"><b>' + esc(j.symbol) + '</b>' +
+    el.innerHTML = '<span class="vol-head">' + (window.tkLogo ? tkLogo(j.symbol, 22, 'tk-lg') : '') + '<b>' + esc(j.symbol) + '</b>' +
       (j.name ? '<span class="vol-head-name">' + esc(j.name) + '</span>' : '') +
       (j.spot != null ? '<span class="vol-head-px" title="' + esc(ss[1] || 'the stock price') + '">' + esc(num(j.spot, 2)) + '</span>' +
         (ss[0] ? '<span class="vol-head-src' + (ss[2] ? ' est' : '') + '" title="' + esc(ss[1]) + '">' + esc(ss[0]) + '</span>' : '') : '') + '</span>';
@@ -1641,7 +1642,7 @@
     if (j.n_thin) left.push(intText(j.n_thin) + ' with open interest under ' + j.min_oi);
     if (j.n_cheap) left.push(intText(j.n_cheap) + ' worth under ' + money(j.min_cost));
     var earnRows = j.rows.filter(function (r) { return r.earnings; }).length;
-    $('ofInfo').innerHTML = '<b style="color:var(--tv-text-hi)">' + esc(j.symbol) + '</b> ' + money(j.spot) +
+    $('ofInfo').innerHTML = (window.tkLogo ? tkLogo(j.symbol, 16) : '') + '<b style="color:var(--tv-text-hi)">' + esc(j.symbol) + '</b> ' + money(j.spot) +
       (spotSource(j)[0] ? ' (' + esc(spotSource(j)[0]) + ')' : '') + ' &middot; option prices from the market pass of ' + esc(j.session || '?') +
       ' &middot; target ' + money(j.target) + ', worst case ' + money(j.worst) + ' &middot; ' + esc(when) + ' &middot; ' +
       intText(j.n) + ' calls ranked' + (left.length ? ' (' + esc(left.join(', ')) + ' left out)' : '') +
@@ -2329,7 +2330,7 @@
     box.innerHTML = l.symbols.map(function (r) {
       return '<button type="button" class="vol-wl-row w-full flex items-baseline justify-between gap-2 px-2 py-1 rounded text-left hover:bg-slate-800/70"' +
              ' role="option" aria-selected="false" data-sym="' + esc(r.symbol) + '" title="Show the ' + esc(r.symbol) + ' volatility surface">' +
-             '<span class="vol-wl-sym text-[13px] font-semibold whitespace-nowrap text-white">' + esc(r.symbol) + '</span>' +
+             '<span class="vol-wl-sym text-[13px] font-semibold whitespace-nowrap text-white">' + (window.tkLogo ? tkLogo(r.symbol, 15) : '') + esc(r.symbol) + '</span>' +
              '<span class="vol-wl-lq text-[10px] whitespace-nowrap text-slate-600 ml-auto" data-sym="' + esc(r.symbol) + '"></span>' +
              (r.matp == null ? '' : '<span class="text-[10px] text-slate-500 whitespace-nowrap tabular-nums">MATP ' + esc(num(r.matp, 2)) + '</span>') +
              '</button>';

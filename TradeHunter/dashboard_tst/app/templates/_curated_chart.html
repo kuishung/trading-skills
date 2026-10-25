@@ -59,7 +59,7 @@
 
 <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1 shrink-0">
   <span class="text-xs text-slate-300">
-    {{ row.symbol }} <span class="text-slate-500">curated {{ row.curated_on }}</span>
+    {{ ticker_logo(row.symbol, 18, 'tk-lg') }}{{ row.symbol }} <span class="text-slate-500">curated {{ row.curated_on }}</span>
   </span>
   <span class="text-[11px] px-1.5 py-0.5 rounded border
     {% if rev.current %}border-emerald-500/60 text-emerald-300 bg-emerald-500/10{% else %}border-slate-600 text-slate-400{% endif %}">

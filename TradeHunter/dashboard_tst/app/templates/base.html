@@ -328,8 +328,19 @@
       /* chart-pane and card surfaces that use a bare white/black overlay */
       .bg-black\/20, .bg-black\/30, .bg-black\/40 { background-color:var(--tv-hover) !important; }
     }
+    /* v4.221: a ticker's logo badge - a white rounded tile so a dark logo stays visible on the dark theme */
+    .tk-logo { display: inline-block; flex: none; vertical-align: -0.2em; object-fit: contain; background: #fff;
+               border-radius: 4px; padding: 1px; box-shadow: 0 0 0 1px rgba(148,163,184,.25); margin-right: .35em; }
+    .tk-logo.tk-lg { border-radius: 6px; padding: 2px; }
   </style>
   {# set the theme class on <html> before paint (default light; persisted choice wins) #}
+  <script>/* v4.221: the logo badge for pages that draw tickers in script - window.tkLogo('AMD', 16) */
+    window.tkLogo = function (sym, px, cls) {
+      var s = String(sym || '').trim().toUpperCase().replace(/[./]/g, '-');
+      if (!/^[A-Z0-9][A-Z0-9-]{0,11}$/.test(s)) return '';
+      var n = Math.max(10, Math.min(px || 16, 64));
+      return '<img class="tk-logo' + (cls ? ' ' + cls : '') + '" src="/logo/' + s + '" width="' + n + '" height="' + n + '" alt="" loading="lazy" decoding="async">';
+    };</script>
   <script>(function(){try{var t=localStorage.getItem('theme');if(t==='dark')document.documentElement.classList.remove('light');else document.documentElement.classList.add('light');}catch(e){document.documentElement.classList.add('light');}})();</script>
 </head>
 <body class="min-h-screen lg:h-screen lg:overflow-hidden">

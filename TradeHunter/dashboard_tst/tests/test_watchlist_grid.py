@@ -94,8 +94,8 @@ def test_grid_shows_the_gap_to_matp_and_no_trend_or_sig(client, db, monkeypatch)
     # ABOVE: 104 - 100 = +4.00, +4.0 %, red (past the target)
     assert "+4.00" in html and "+4.0%" in html
     i_nvda, i_above = html.index(">NVDA<"), html.index(">ABOVE<")
-    assert "text-emerald-300" in html[i_nvda:i_nvda + 1500]
-    assert "text-rose-300" in html[i_above:i_above + 1500]
+    assert "text-emerald-300" in html[i_nvda:i_nvda + 2500]
+    assert "text-rose-300" in html[i_above:i_above + 2500]
     # no MATP -> dashes, no crash
     i_no = html.index(">NOMATP<")
     assert html[i_no:i_no + 900].count(">-<") >= 2

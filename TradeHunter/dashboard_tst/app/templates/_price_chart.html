@@ -14,7 +14,7 @@
      chart meta). The ticker links out to the TradingView chart. #}
   <div class="tvq-header border-b border-slate-800 {% if chart_fill %}shrink-0{% endif %} flex items-center gap-2 px-3" style="height:2.5rem">
     <a href="https://www.tradingview.com/symbols/{{ tv_symbol|replace(':','-') }}/" target="_blank" rel="noopener"
-       class="font-semibold text-slate-100 hover:text-orange-300 shrink-0" title="Open {{ chart_symbol }} on TradingView">{{ chart_symbol }}</a>
+       class="font-semibold text-slate-100 hover:text-orange-300 shrink-0" title="Open {{ chart_symbol }} on TradingView">{{ ticker_logo(chart_symbol, 20, 'tk-lg') }}{{ chart_symbol }}</a>
     <span id="chartName" class="text-sm text-slate-500 truncate min-w-0"></span>
     <span id="chartPrice" class="ml-auto tabular-nums font-semibold text-slate-100 shrink-0"></span>
     <span id="chartChg" class="tabular-nums text-sm shrink-0"></span>

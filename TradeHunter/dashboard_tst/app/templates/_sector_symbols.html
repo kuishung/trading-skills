@@ -33,7 +33,7 @@
         role="button" tabindex="0" aria-pressed="{{ 'true' if _on else 'false' }}"
         title="{{ 'Remove ' ~ t.symbol ~ ' from My Watchlist' if _on else 'Add ' ~ t.symbol ~ ' to My Watchlist' }}"
         data-sym="{{ t.symbol }}">{% if _on %}&#9733;{% else %}&#9734;{% endif %}</span>
-  <span class="text-[12px] font-medium text-slate-200">{{ t.symbol }}</span>
+  <span class="text-[12px] font-medium text-slate-200">{{ ticker_logo(t.symbol, 14) }}{{ t.symbol }}</span>
   <span class="block min-w-0 text-[11px] text-slate-400 truncate" title="{{ t.company }}{% if t.industry %} &middot; {{ t.industry }}{% endif %}">{{ t.company or '&mdash;' }}{% if t.industry and not industry %} <span class="text-slate-600">&middot; {{ t.industry }}</span>{% endif %}</span>
   <span class="text-right text-[11px] text-slate-300 tabular-nums">{{ '%.2f'|format(t.price) if t.price is not none else '-' }}</span>
   {# Second line of the same row: the setup chips, full width under the ticker /

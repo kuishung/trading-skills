@@ -1540,7 +1540,7 @@ def test_the_surface_opens_on_every_expiry_and_reads_the_atm_line_the_right_way(
     # surface"): both grids head with the ticker large; the old line and the method are the tooltip
     head = html[html.index("function infoHead("):html.index("function renderSurface(")]
     assert "el.title = (detail ? detail + '\\n' : '') + (j.method || '');" in head
-    assert "'<span class=\"vol-head\"><b>' + esc(j.symbol) + '</b>'" in head and "vol-head-name" in head
+    assert "'<span class=\"vol-head\">' + (window.tkLogo ? tkLogo(j.symbol, 22, 'tk-lg') : '') + '<b>' + esc(j.symbol) + '</b>'" in head and "vol-head-name" in head   # v4.221: the logo
     assert html.count("infoHead($('volInfo'), j, detail);") == 1 and html.count("infoHead($('cmInfo'), j, detail);") == 1
     assert "$('volInfo').innerHTML" not in html and "$('cmInfo').innerHTML" not in html
     assert ".vol-head > b { font-size: 1.25rem;" in html

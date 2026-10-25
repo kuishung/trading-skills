@@ -65,7 +65,7 @@
         role="button" tabindex="0" aria-pressed="{{ 'true' if _on else 'false' }}"
         title="{{ 'Remove ' ~ lv.symbol ~ ' from My Watchlist' if _on else 'Add ' ~ lv.symbol ~ ' to My Watchlist' }}"
         data-sym="{{ lv.symbol }}">{% if _on %}&#9733;{% else %}&#9734;{% endif %}</span>
-  <span class="wl-sym text-[13px] font-medium whitespace-nowrap {% if sel_sym == lv.symbol %}text-emerald-300{% else %}text-white{% endif %}">{{ lv.symbol }}{% if lv.symbol in open_symbols %} <span class="text-amber-400">&#8635;</span>{% endif %}</span>
+  <span class="wl-sym text-[13px] font-medium whitespace-nowrap {% if sel_sym == lv.symbol %}text-emerald-300{% else %}text-white{% endif %}">{{ ticker_logo(lv.symbol, 15) }}{{ lv.symbol }}{% if lv.symbol in open_symbols %} <span class="text-amber-400">&#8635;</span>{% endif %}</span>
   {% set gap = (cur - lv.matp) if (cur is not none and lv.matp is not none) else none %}
   {% set gap_pct = (gap / lv.matp * 100.0) if (gap is not none and lv.matp) else none %}
   {% set gap_cls = "text-slate-600" if gap is none else ("text-emerald-300" if gap < 0 else "text-rose-300") %}

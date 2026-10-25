@@ -253,7 +253,7 @@
 
       {# 1. the call #}
       <div class="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[13px] leading-tight">
-        <span class="text-[14px] font-semibold text-slate-100">{{ r.symbol }}</span>
+        <span class="text-[14px] font-semibold text-slate-100">{{ ticker_logo(r.symbol, 16) }}{{ r.symbol }}</span>
         {% if e.direction == "short" %}<span class="text-[10px] text-amber-400/80" title="Short — your stop is above the entry">S</span>{% endif %}
         {% if r.note %}<span class="text-slate-500 cursor-help" title="{{ r.note }}">&#9432;</span>{% endif %}
         <span class="text-slate-400 tabular-nums" title="Curated {{ r.curated_on }}">{{ r.curated_on[5:] }}</span>

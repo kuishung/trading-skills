@@ -87,7 +87,7 @@
             <div class="flex items-baseline gap-1.5">
               <a href="/company-analysis?symbol={{ r.symbol }}"
                  class="text-[14px] font-medium hover:text-emerald-300 {% if starred %}text-amber-300{% else %}text-white{% endif %}"
-                 title="Company Analysis for {{ r.symbol }}">{{ r.symbol }}</a>
+                 title="Company Analysis for {{ r.symbol }}">{{ ticker_logo(r.symbol, 14) }}{{ r.symbol }}</a>
               {% if r.when == "pre" %}<span class="text-[11px] px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300 font-semibold" title="Before the open — reports before the market opens">BMO</span>
               {% elif r.when == "post" %}<span class="text-[11px] px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-300 font-semibold" title="After market close — reports after the market closes">AMC</span>
               {% else %}<span class="text-[11px] px-1.5 py-0.5 rounded bg-slate-700/40 text-slate-400 font-semibold" title="Time not supplied by the source">TBD</span>{% endif %}

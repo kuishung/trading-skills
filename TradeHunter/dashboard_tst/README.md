@@ -223,6 +223,26 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-25 - v4.221: the company logo beside every ticker
+
+The user: *"I will want the logo of the ticker in wherever it is shown be it in the watchlist or in a chart or in the
+vol surface"*.
+- **Where**: the Watchlist rows and the chart heading (`_wl_macros.html`, `_price_chart.html`); the Volatility
+  Surface page's heading on both tabs, its watchlist pane and the Option Finder line (`options.html`); the
+  Interpolation page's title (`options_interp.html`); and the other pages that list tickers - Curated (list and chart),
+  the Calendar's day detail, Sector & Industry's symbols.
+- **How**: `services/logos.py` fetches a ticker's logo ONCE from a free public logo service that needs no key -
+  Financial Modeling Prep (`/image-stock/<SYM>.png`), else Parqet - and keeps it in `state/logos/<SYM>.png` on the
+  server (refreshed after 30 days; a ticker no service knows is remembered and asked again after 3 days). Massive's
+  ticker details also carry logos but would spend the Stocks Basic allowance the screener collector needs.
+  `GET /logo/<SYM>` (`routes/logos.py`, signed-in members) serves it - browsers never call the outside services - or,
+  with none, an SVG badge of the ticker's first letters. Templates use `{{ ticker_logo(sym, px) }}` (a Jinja global
+  in `main.py`), scripts `window.tkLogo(sym, px)` (`base.html`); `.tk-logo` draws it on a small white rounded tile
+  so dark logos stay visible on the dark theme.
+- Tests: `test_logos.py` (fetched once and kept, a failed refresh keeps the old one, a missing logo remembered then
+  asked again, only real PNGs, the letters badge, the route, the template helper); `test_options_page.py`,
+  `test_watchlist_grid.py` adjusted for the logo beside the ticker.
+
 ### 2026-10-25 - v4.220: the stock price is the official close once the session has closed, and says where it came from
 
 The user: *"AMD closed price is 516.79 but tradehunter is 515.95"*, then *"use the official close once the session has

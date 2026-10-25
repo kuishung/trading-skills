@@ -677,6 +677,11 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
   Stocks Basic publishes the close at 20:00 ET (08:00 MYT); the surface and the finder say which ("official close",
   "estimated from options"). After a pull touching `scr_store.py` / `scr_collector.py`, restart the
   `TST-Options-Screener` task (`setup_screener_task.ps1 -StartNow`).
+  **v4.221 (2026-10-25): TICKER LOGOS everywhere a ticker is shown** (user: *"I will want the logo of the ticker in
+  wherever it is shown"*) - `services/logos.py` (Financial Modeling Prep, else Parqet; public, no key; fetched once,
+  kept in `state/logos/`; never Massive, to spare the collector's allowance), `GET /logo/<SYM>` (letters badge when
+  none), `{{ ticker_logo(sym, px) }}` in templates and `window.tkLogo(sym, px)` in scripts - use these for any NEW
+  place that shows a ticker.
 - **Options page = the Volatility surface ONLY since v4.159 (2026-10-20, user: "We only have the
   Volatility Surface")**: nav Options ▾ → **Volatility Surface** (`/options`) (+ Calculator until v4.218). A surface
   cell click opens `/options/history?symbol=&expiry=&right=&strike=&day=` (the contract's daily bars +
