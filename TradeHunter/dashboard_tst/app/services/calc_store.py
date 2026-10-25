@@ -125,7 +125,39 @@ def criteria_for(user, request: OptionCalcRequest | None = None) -> dict:
 
 # ────────────────────────────────── requests ──────────────────────────────────
 
-def _clean(symbol, target, worst, kind, name, horizon_days, sets, legs, criteria) -> dict:
+IV_SHIFT_LIMITS = (-50.0, 100.0)  # v4.217: the IV change on the target date, in vol points
+
+
+def norm_iv_shift(v) -> float:
+    """The IV change on the target date in VOL POINTS (-10 = every leg's IV 10 points lower on the target
+    date); blank = 0. Raises CalcInputError outside ``IV_SHIFT_LIMITS``."""
+    if v in (None, ""):
+        return 0.0
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        raise CalcInputError("The IV change must be a number of vol points (e.g. -10).") from None
+    if f != f or not IV_SHIFT_LIMITS[0] <= f <= IV_SHIFT_LIMITS[1]:
+        raise CalcInputError("The IV change must be between %d and +%d vol points." % IV_SHIFT_LIMITS)
+    return round(f, 2)
+
+
+BASE_KEYS = ("target_value", "worst_value", "decayed_value", "gain_at_target", "loss_at_worst", "reward_over_risk",
+             "roi", "roi_on_max_loss", "total_gains", "total_risk", "max_profit", "max_loss", "net_delta_target",
+             "total_decay")
+
+
+def add_base(figs: dict, curves: dict | None, base, *, step: int = 1) -> None:
+    """v4.217: with an IV change, the same legs priced with IV UNCHANGED (the workbook's assumption) ride along
+    for comparison - ``figs["base"]`` (the target-date figures) and ``curves["net_target_base"]``."""
+    b = {k: _r(getattr(base, k)) for k in BASE_KEYS}
+    b["breakevens"] = [_r(x) for x in base.breakevens]
+    figs["base"] = b
+    if curves is not None:
+        curves["net_target_base"] = [_r(x, 4) for x in base.net_curve_target[::step]]
+
+
+def _clean(symbol, target, worst, kind, name, horizon_days, sets, legs, criteria, iv_shift=None) -> dict:
     sym = str(symbol or "").strip().upper().replace(".", "-")
     if not sym or len(sym) > 20:
         raise CalcInputError("A ticker is needed.")
@@ -159,13 +191,14 @@ def _clean(symbol, target, worst, kind, name, horizon_days, sets, legs, criteria
             raise CalcInputError("criteria must be an object")
         crit = {k: v for k, v in criteria.items() if k in DEFAULTS}
     nm = (str(name).strip()[:80] or None) if name is not None else None
+    ivs = norm_iv_shift(iv_shift) if kind == "manual" else 0.0     # the pairing search keeps IV unchanged
     return {"symbol": sym, "kind": kind, "name": nm, "target": t, "worst": w, "horizon_days": h,
-            "sets": int(s), "legs": clean_legs, "criteria": crit}
+            "sets": int(s), "legs": clean_legs, "criteria": crit, "iv_shift": ivs or None}
 
 
 def create_request(db, user, *, symbol, target, worst, kind="manual", name=None, horizon_days=None,
-                   sets=1, legs=None, criteria=None) -> OptionCalcRequest:
-    fields = _clean(symbol, target, worst, kind, name, horizon_days, sets, legs, criteria)
+                   sets=1, legs=None, criteria=None, iv_shift=None) -> OptionCalcRequest:
+    fields = _clean(symbol, target, worst, kind, name, horizon_days, sets, legs, criteria, iv_shift)
     req = OptionCalcRequest(user_id=user.id, active=True, **fields)
     db.add(req)
     db.commit()
@@ -199,7 +232,7 @@ def update_request(db, user, rid, **changes) -> OptionCalcRequest | None:
         return None
     cur = {"symbol": req.symbol, "target": req.target, "worst": req.worst, "kind": req.kind,
            "name": req.name, "horizon_days": req.horizon_days, "sets": req.sets, "legs": req.legs,
-           "criteria": req.criteria}
+           "criteria": req.criteria, "iv_shift": req.iv_shift}
     cur.update({k: v for k, v in changes.items() if k in cur})
     fields = _clean(**cur)
     for k, v in fields.items():

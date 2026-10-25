@@ -30,7 +30,7 @@ from pathlib import Path
 from ..models import User
 from . import calc_pair, calc_store, clock, scr_store
 from .calc_chain import ChainError, load_chain, resolve_legs
-from .calc_store import CalcInputError, curves_from, figures_from
+from .calc_store import CalcInputError, add_base, curves_from, figures_from
 from .opt_constants import RISK_FREE
 from .option_calc import Scenario, evaluate
 
@@ -71,15 +71,22 @@ def compute_request(sdb, req, user, *, today: _dt.date, r: float = RISK_FREE) ->
     if req.kind == "manual":
         legs, resolved = resolve_legs(chain, req.legs, today)
         days = int(req.horizon_days or prefs["horizon_days"])
-        res = evaluate(legs, Scenario(chain.spot, req.target, req.worst, days, sets=req.sets, r=r))
+        shift = float(getattr(req, "iv_shift", None) or 0.0)     # v4.217: vol points on the target date
+        res = evaluate(legs, Scenario(chain.spot, req.target, req.worst, days, sets=req.sets, r=r, iv_shift=shift / 100.0))
         figs = figures_from(res)
+        curves = curves_from(res)
+        if shift:
+            add_base(figs, curves, evaluate(legs, Scenario(chain.spot, req.target, req.worst, days, sets=req.sets, r=r)))
+        figs["iv_shift"] = shift
+        for rl in resolved:
+            rl["iv_target"] = None if rl.get("iv") is None else round(max(rl["iv"] + shift / 100.0, 0.0), 6)
         figs.update({"direction": "bull" if req.target > chain.spot else "bear" if req.target < chain.spot else "flat",
                      "family_label": "Your legs", "atm_iv": round(calc_pair._atm_iv(chain, resolved[0]["expiry"], chain.spot), 4)})
         p = calc_pair._prob_profit(res, chain.spot, figs["atm_iv"], days / 365.0, r)
         figs["prob_profit"] = None if p != p else round(p, 4)
         rows = [{"family": "manual", "rank": 1, "horizon_days": days,
                  "target_date": (today + _dt.timedelta(days=days)).isoformat(), "legs": resolved,
-                 "figures": figs, "curves": curves_from(res), "score": None}]
+                 "figures": figs, "curves": curves, "score": None}]
         return rows, chain
     rows, summary = calc_pair.search(chain, req.target, req.worst, prefs, today, horizon_days=req.horizon_days,
                                      r=r, sets=req.sets)

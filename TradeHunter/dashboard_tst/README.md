@@ -223,6 +223,30 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-25 - v4.217: the Calculator - an IV change on the target date
+
+The user: *"Start with the IV-change scenario on the target date in the calculator."* (and *"you have studies the
+excel sheet i gave you before?"* - yes: the engine is the workbook and is tested against it; the workbook holds IV
+constant and has no input for this, its own flaw 5, so this is an addition beyond the sheet).
+- **The Sheet view** (`calc.html`): a new input under Sets, **"IV change on the target date"** in **vol points**
+  (-10 = a leg at 30 % priced at 20 % on the target date), a number box plus quick buttons -20 / -10 / -5 / 0 / +5 /
+  +10, bounds -50 to +100; 0 = the sheet's own assumption. Today's prices keep today's IV.
+- **The comparison**: with a change, **Option Values** gains an **"IV unchanged"** column; **Decision indicators**
+  open with "IV on the target date" and add "IV unchanged: ..." beside breakeven, reward / risk, ROI, total gains and
+  total risk; the **chart** draws a dotted line for the target date at IV unchanged (and the hover says its value);
+  the legs table has an **"IV on target date"** row; the earnings warning suggests trying -10 when IV is left
+  unchanged.
+- **The API** (`routes/calc.py`): `/calc/api/preview` takes `iv_shift` (vol points), answers it back, adds
+  `figures.base` / `curves.net_target_base` (the IV-unchanged figures and curve) and `iv_target` per leg; a value out
+  of bounds is refused in words. `/calc/api/requests` create / update take `iv_shift`; setups carry it.
+- **Saved setups** keep it: `option_calc_requests.iv_shift` (Float, migration `c5d8e2a4f7b1`; NULL = unchanged),
+  `calc_store.norm_iv_shift` / `add_base`; the **Hermes lane** (`calc_worker.compute_request`) prices a manual setup
+  with its IV change and stores the IV-unchanged figures beside; the saved result view shows the change and the
+  dotted line. "Open in sheet" restores it. Pair setups never carry one (the pairing search keeps IV unchanged).
+- Tests: `test_option_calc.py` (only the target date moves; floored at 0), `test_calc_store.py` (kept, bounds, pair
+  never, the column), `test_calc_pair.py` (the lane), `test_calc_sheet_api.py` (the preview, the page and its
+  scripts parse).
+
 ### 2026-10-24 - v4.216: the hover chart's earnings dates never print over each other
 
 The user, on an AMD hover card where "E 2026-05-05" and "E 2026-08-04" were drawn on top of each other: *"please look

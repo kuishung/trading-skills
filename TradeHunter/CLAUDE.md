@@ -660,8 +660,9 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
   (decision 6), the direction picks the strategy families, horizons = the first monthlies (or the
   member's days), the window = the two prices ± one expected move, every leg set scored with numpy,
   filtered by the member's criteria (defaults in `User.prefs`), ranked. Earnings inside a horizon FLAG
-  a result, never empty it (v4.157). Range trades (two worst prices), IV shift and chart-drawn levels
-  are the open next steps. **Subagents for this work ran on Opus at the user's request (2026-10-17).**
+  a result, never empty it (v4.157). **v4.217 (2026-10-25): an IV change on the target date (vol points, Sheet
+  view + saved manual setups, IV-unchanged figures beside; the workbook itself holds IV constant).** Range trades
+  (two worst prices) and chart-drawn levels are the open next steps. **Subagents for this work ran on Opus at the user's request (2026-10-17).**
 - **Options page = the Volatility surface ONLY since v4.159 (2026-10-20, user: "We only have the
   Volatility Surface")**: nav Options ▾ → **Volatility Surface** (`/options`) + Calculator. A surface
   cell click opens `/options/history?symbol=&expiry=&right=&strike=&day=` (the contract's daily bars +

@@ -55,7 +55,7 @@ templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent
 HISTORY_LIMIT = 30            # passes shown under a setup
 STALE_S = 5 * 60              # the lane looks every minute; no heartbeat for 5 min = not running
 MAX_LEGS = 4
-REQUEST_FIELDS = ("symbol", "target", "worst", "kind", "name", "horizon_days", "sets", "legs", "criteria")
+REQUEST_FIELDS = ("symbol", "target", "worst", "kind", "name", "horizon_days", "sets", "legs", "criteria", "iv_shift")
 
 
 # ─────────────────────────────────────── helpers ───────────────────────────────────────
@@ -121,7 +121,7 @@ def _req_dict(r) -> dict:
     return {
         "id": r.id, "symbol": r.symbol, "kind": r.kind, "name": r.name, "target": r.target,
         "worst": r.worst, "horizon_days": r.horizon_days, "sets": r.sets, "legs": r.legs,
-        "criteria": r.criteria, "active": bool(r.active), "last_pass_id": r.last_pass_id,
+        "criteria": r.criteria, "iv_shift": r.iv_shift or 0, "active": bool(r.active), "last_pass_id": r.last_pass_id,
         "last_computed_at": _iso(r.last_computed_at), "last_computed_et": _et(r.last_computed_at),
         "last_error": r.last_error, "created_at": _iso(r.created_at),
     }
@@ -557,7 +557,9 @@ async def api_surface(symbol: str = "", user: User = Depends(require_user)):
 
 def _preview_payload(user, body: dict) -> dict:
     """The sheet's figures for the legs on screen: ``{ok, spot, as_of_et, session, horizon_days,
-    target_date, legs (resolved), figures, curves}``. Nothing is saved."""
+    target_date, legs (resolved), figures, curves}``. Nothing is saved. v4.217: ``iv_shift`` (vol points) is added
+    to every leg's IV on the target date; when it is not 0, ``figures.base`` / ``curves.net_target_base`` carry the
+    same legs with IV unchanged (the workbook's assumption) for comparison."""
     from .. import screener_db  # noqa: PLC0415
     from ..services.option_calc import Scenario, evaluate  # noqa: PLC0415
 
@@ -584,14 +586,23 @@ def _preview_payload(user, body: dict) -> dict:
     except (TypeError, ValueError):
         sets = 1
     sets = max(1, min(sets, 10_000))
+    try:
+        shift = store.norm_iv_shift(body.get("iv_shift"))
+    except store.CalcInputError as exc:
+        raise chain_mod.ChainError(str(exc)) from None
     today = clock.et_date()
     with screener_db.session() as s:
         ch = chain_mod.load_chain(s, sym)
     if not ch.spot or ch.spot <= 0:
         raise chain_mod.ChainError("the last market pass has no spot price for %s" % ch.symbol)
     legs, resolved = chain_mod.resolve_legs(ch, body.get("legs") or [], today)
-    res = evaluate(legs, Scenario(ch.spot, target, worst, days, sets=sets))
+    res = evaluate(legs, Scenario(ch.spot, target, worst, days, sets=sets, iv_shift=shift / 100.0))
     figs = store.figures_from(res)
+    curves = store.curves_from(res)
+    if shift:
+        store.add_base(figs, curves, evaluate(legs, Scenario(ch.spot, target, worst, days, sets=sets)))
+    for rl in resolved:
+        rl["iv_target"] = None if rl.get("iv") is None else round(max(rl["iv"] + shift / 100.0, 0.0), 6)
     atm = pair._atm_iv(ch, resolved[0]["expiry"], ch.spot)
     p = pair._prob_profit(res, ch.spot, atm, days / 365.0, res_r(res))
     figs.update({"prob_profit": None if p != p else round(p, 4), "atm_iv": round(atm, 4),
@@ -602,8 +613,8 @@ def _preview_payload(user, body: dict) -> dict:
     return _clean({"ok": True, "symbol": ch.symbol, "spot": ch.spot, "spot_src": ch.spot_src,
                    "as_of": _iso(ch.as_of), "as_of_et": _et(ch.as_of), "session": ch.session,
                    "horizon_days": days, "target_date": (today + _dt.timedelta(days=days)).isoformat(),
-                   "today": today.isoformat(), "sets": sets, "legs": resolved, "figures": figs,
-                   "curves": store.curves_from(res)})
+                   "today": today.isoformat(), "sets": sets, "iv_shift": shift, "legs": resolved, "figures": figs,
+                   "curves": curves})
 
 
 def res_r(res) -> float:

@@ -209,3 +209,25 @@ def test_migration_tables_present(db):
     names = set(inspect(db.get_bind()).get_table_names())
     assert {"option_calc_requests", "option_calc_results"} <= names
     assert db.query(OptionCalcRequest).count() == 0
+
+
+def test_the_iv_change_is_kept_on_a_manual_setup(db, user):
+    """v4.217: a manual setup keeps its IV change on the target date (vol points); a pair setup never has one
+    (the pairing search keeps IV unchanged); 0 is stored as none; out of bounds is refused."""
+    req = calc_store.create_request(db, user, symbol="NVDA", target=175, worst=50, legs=LEGS, iv_shift="-10")
+    assert req.iv_shift == -10.0
+    assert calc_store.update_request(db, user, req.id, iv_shift=5).iv_shift == 5.0
+    assert calc_store.update_request(db, user, req.id, target=180).iv_shift == 5.0          # other edits keep it
+    assert calc_store.update_request(db, user, req.id, iv_shift=0).iv_shift is None
+    pair = calc_store.create_request(db, user, symbol="NVDA", target=120, worst=90, kind="pair", iv_shift=-10)
+    assert pair.iv_shift is None
+    for bad in (-60, 101, "lots"):
+        with pytest.raises(calc_store.CalcInputError, match="vol points"):
+            calc_store.create_request(db, user, symbol="NVDA", target=175, worst=50, legs=LEGS, iv_shift=bad)
+    assert calc_store.norm_iv_shift("") == 0.0 and calc_store.norm_iv_shift(None) == 0.0
+
+
+def test_the_iv_shift_column_is_migrated(db):
+    from sqlalchemy import inspect
+    cols = {c["name"] for c in inspect(db.get_bind()).get_columns("option_calc_requests")}
+    assert "iv_shift" in cols

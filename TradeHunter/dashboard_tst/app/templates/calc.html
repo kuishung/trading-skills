@@ -132,6 +132,13 @@
   .sh-dim { opacity: .55; transition: opacity .15s; }
   .sh-kv td.l { white-space: normal; }
   .sh-kv td .n { display: block; font-size: 10px; color: var(--tv-muted); white-space: normal; }
+  /* v4.217: the IV change on the target date - a number box and quick buttons */
+  .sh-ivrow { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
+  .sh-ivrow #shIv { width: 5rem; }
+  .sh-ivp { display: inline-flex; gap: .2rem; flex-wrap: wrap; }
+  .sh-ivp button { border: 1px solid var(--tv-border-2); border-radius: 9999px; padding: 0 .5rem; font-size: 11px; line-height: 1.6; color: var(--tv-muted); background: transparent; }
+  .sh-ivp button:hover { color: var(--tv-text); }
+  .sh-ivp button[aria-pressed="true"] { border-color: var(--tv-accent-tx); color: var(--tv-accent-tx); }
 </style>
 
 <div class="flex items-center gap-3 flex-wrap mb-3">
@@ -170,6 +177,19 @@
         <label class="calc-lbl">Sets
           <input id="shSets" class="calc-in" type="number" step="1" min="1" value="1" inputmode="numeric">
         </label>
+        {# v4.217 (user: "the IV-change scenario on the target date"): vol points added to every leg's IV on the
+           target date only - the workbook holds IV constant (0 here is the sheet's own assumption) #}
+        <div class="col-span-2">
+          <label class="calc-lbl" for="shIv">IV change on the target date</label>
+          <div class="sh-ivrow">
+            <input id="shIv" class="calc-in" type="number" step="1" min="-50" max="100" value="0" inputmode="numeric" aria-describedby="shIvNote">
+            <span class="calc-small calc-muted">vol points</span>
+            <span class="sh-ivp" role="group" aria-label="Quick IV changes">
+              <button type="button" data-iv="-20">-20</button><button type="button" data-iv="-10">-10</button><button type="button" data-iv="-5">-5</button><button type="button" data-iv="0" aria-pressed="true">0</button><button type="button" data-iv="5">+5</button><button type="button" data-iv="10">+10</button>
+            </span>
+          </div>
+          <p id="shIvNote" class="calc-small calc-muted mt-0.5">Added to every leg's implied volatility on the target date only; today's prices keep today's IV. 0 = the sheet: IV unchanged. After earnings IV usually falls - try -10 or -20.</p>
+        </div>
         <div id="shHint" class="col-span-2 calc-small calc-muted"></div>
         <label class="calc-lbl col-span-2">Name (optional, for saving)
           <input id="shName" class="calc-in" type="text" maxlength="80" placeholder="e.g. breakout to the old high">
@@ -567,6 +587,7 @@
       fig('Worth at the worst price', money(f.worst_value), 'at ' + money(it.worst)) +
       fig('Profit or loss at the expected price', signed(f.gain_at_target), 'per share', f.gain_at_target >= 0 ? 'calc-up' : 'calc-down') +
       fig('Profit or loss at the worst price', signed(f.loss_at_worst), 'per share', f.loss_at_worst >= 0 ? 'calc-up' : 'calc-down') +
+      (f.iv_shift ? fig('IV on the target date', ivWords(f.iv_shift), 'added to every leg\'s IV' + (f.base ? '; IV unchanged: worth ' + money(f.base.target_value) + ' at the expected price' : ''), f.iv_shift < 0 ? 'calc-down' : 'calc-up') : '') +
       fig('Reward over risk', rrText(f), 'gain at expected ÷ loss at worst') +
       fig('Return on cost', pct(f.roi, 0), 'gain at expected ÷ cost to open') +
       fig('Breakeven', (f.breakevens || []).length ? f.breakevens.map(function (b) { return money(b); }).join(' / ') : 'none in range', 'stock price on the target date where the trade is flat') +
@@ -589,7 +610,8 @@
     return '<h2 class="mt-4">Profit and loss on the target date</h2>' +
       '<div class="calc-chart" data-chart="' + id + '"></div>' +
       '<p class="calc-small calc-muted mt-1">Solid line: what the position is worth on ' + esc(shortDate(r.target_date)) +
-      ' at each stock price. Dashed line: what it is worth today. Faint lines: each leg. Green above the cost to open is profit, red below is loss. ' +
+      ' at each stock price' + (f.iv_shift ? ' with IV ' + esc(ivWords(f.iv_shift)) : '') + '. Dashed line: what it is worth today. ' +
+      (r.curves.net_target_base ? 'Dotted line: the target date with IV unchanged. ' : '') + 'Faint lines: each leg. Green above the cost to open is profit, red below is loss. ' +
       'Values per share (one contract = 100 shares). Computed' + (r.pass_id ? ' on market pass #' + r.pass_id : ' by hand') +
       (r.created_et ? ' at ' + esc(r.created_et) : '') + ' from ' + esc(it.symbol) + ' at ' + money(spot) + '.</p>';
   }
@@ -607,8 +629,9 @@
   var clipN = 0;
   function payoffChart(o, width) {
     var c = o.curves, g = c.grid, net = c.net_target || [], ent = c.net_entry || [], legs = c.legs || [];
+    var nb = c.net_target_base || [];                // v4.217: the target date with IV unchanged (only with an IV change)
     var x0 = g[0], x1 = g[g.length - 1];
-    var ys = net.concat(ent).concat(isNum(o.entry) ? [o.entry] : []).filter(isNum);
+    var ys = net.concat(ent).concat(nb).concat(isNum(o.entry) ? [o.entry] : []).filter(isNum);
     var y0 = Math.min.apply(null, ys), y1 = Math.max.apply(null, ys);
     if (y1 - y0 < 0.5) { y1 += 0.5; y0 -= 0.5; }
     var yp = (y1 - y0) * 0.07; y0 -= yp; y1 += yp;
@@ -646,6 +669,7 @@
         '<text x="' + (L + 4) + '" y="' + (ey + 11).toFixed(1) + '" text-anchor="start">cost to open: ' + esc(cost(o.entry).toLowerCase()) + '</text>';
     }
     s += '<path d="' + path(ent) + '" style="fill:none;stroke:var(--tv-text);stroke-width:1;stroke-dasharray:5 4;stroke-opacity:.7"/>';
+    if (nb.length) s += '<path class="calc-base" d="' + path(nb) + '" clip-path="url(#' + id + 'p)" style="fill:none;stroke:var(--tv-accent-tx);stroke-width:1.3;stroke-dasharray:1.5 3;stroke-linecap:round"/>';
     s += '<path d="' + line + '" style="fill:none;stroke:var(--tv-text-hi);stroke-width:1.8"/>';
     function vline(x, color, label, dy) {
       if (!isNum(x) || x < x0 || x > x1) return '';
@@ -677,8 +701,10 @@
       for (var j = 0; j < g.length; j++) { var d = Math.abs(g[j] - xv); if (d < best) { best = d; i = j; } }
       var v = o.curves.net_target[i], pl = isNum(v) && isNum(o.entry) ? v - o.entry : null;
       cross.setAttribute('x1', px.toFixed(1)); cross.setAttribute('x2', px.toFixed(1)); cross.style.display = '';
+      var vb = o.curves.net_target_base ? o.curves.net_target_base[i] : null;
       tip.innerHTML = 'Stock at <b>' + money(g[i]) + '</b>: worth ' + money(v) + ' · ' +
-        '<span class="' + (pl >= 0 ? 'calc-up' : 'calc-down') + '">' + (pl >= 0 ? 'profit ' : 'loss ') + money(Math.abs(pl)) + '</span> per share';
+        '<span class="' + (pl >= 0 ? 'calc-up' : 'calc-down') + '">' + (pl >= 0 ? 'profit ' : 'loss ') + money(Math.abs(pl)) + '</span> per share' +
+        (isNum(vb) ? ' <span class="calc-muted">(IV unchanged: worth ' + money(vb) + ')</span>' : '');
       tip.classList.remove('hidden');
       var left = (ev.clientX - el.getBoundingClientRect().left) + 12;
       if (left + tip.offsetWidth > el.clientWidth) left = Math.max(0, left - tip.offsetWidth - 24);
@@ -1226,7 +1252,7 @@
     row('Expiry', function (l) { return shortDate(l.expiry); });
     row('Days to expiry', function (l, e, r, s) { return isNum(r.dte) ? r.dte : isNum(s.dte) ? s.dte : '–'; });
     row('Implied volatility', function (l, e, r, s) { return isNum(r.iv) ? pct(r.iv, 1) : isNum(s.iv) ? num(s.iv, 1) + '%' : '–'; },
-        'The contract\'s own implied volatility on the last market pass; it is held constant to the target date.');
+        'The contract\'s own implied volatility on the last market pass - what today\'s price uses.');
     row('Open interest', function (l, e, r, s) { var oi = isNum(r.oi) ? r.oi : s.oi; return isNum(oi) ? oi.toLocaleString('en-US') : '–'; });
     row('Weight (+ buy, - sell)', function (l, e, r, s, i) {
       return '<input class="calc-in sh-w" type="number" step="1" data-w="' + i + '" value="' + esc(l.qty) + '" aria-label="Leg ' + (i + 1) + ' weight, + buy, - sell">';
@@ -1236,6 +1262,11 @@
     row('Option price', function (l, e) { return p ? money(e.price_entry) : wait; }, 'Model price per share today, from the contract\'s implied volatility.');
     row('Delta', function (l, e) { return p ? num(e.delta_entry, 3) : wait; });
     row('Days left on target date', function (l, e) { return p ? num(e.dte_target, 0) : wait; });
+    row('IV on target date', function (l, e, r) {
+      if (!p) return wait;
+      var v = isNum(r.iv_target) ? r.iv_target : r.iv;
+      return isNum(v) ? (p.iv_shift ? '<b>' + pct(v, 1) + '</b>' : pct(v, 1)) : '–';
+    }, 'The IV the target-date price uses: today\'s IV plus the IV change above (0 = unchanged, as the sheet).');
     row('Price on target date', function (l, e) { return p ? money(e.price_target) : wait; }, 'Model price on the target date at today\'s stock price.');
     row('Delta on target date', function (l, e) { return p ? num(e.delta_target, 3) : wait; });
     row('Value (price × weight)', function (l, e) { return p ? signed(e.value_entry) : wait; });
@@ -1291,9 +1322,17 @@
   }
   $('shSym').addEventListener('change', symChanged);
   $('shSym').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); symChanged(); } });
-  ['shTarget', 'shWorst', 'shDays', 'shSets'].forEach(function (id) {
-    $(id).addEventListener('input', function () { shHint(); legNote(); schedule(); });
+  ['shTarget', 'shWorst', 'shDays', 'shSets', 'shIv'].forEach(function (id) {
+    $(id).addEventListener('input', function () { shHint(); legNote(); syncIv(); schedule(); });
   });
+  function syncIv() {               // v4.217: the quick buttons show the value typed
+    var v = Number($('shIv').value || 0);
+    document.querySelectorAll('.sh-ivp button').forEach(function (b) { b.setAttribute('aria-pressed', String(Number(b.dataset.iv) === v)); });
+  }
+  document.querySelectorAll('.sh-ivp button').forEach(function (b) {
+    b.addEventListener('click', function () { $('shIv').value = b.dataset.iv; syncIv(); schedule(); });
+  });
+  function ivWords(v) { return (v > 0 ? '+' : v < 0 ? '−' : '') + num(Math.abs(v), Math.abs(v) % 1 ? 1 : 0) + ' vol points'; }
   $('shClear').onclick = function () { SH.legs = []; shMsg(''); legsChanged(); };
 
   // the preview: every change, debounced; nothing is saved
@@ -1309,7 +1348,9 @@
     }
     if (!(t > 0) || !(w > 0)) return {why: 'Type the expected price and the worst-case price to see the figures.'};
     if (dtxt && !(parseInt(dtxt, 10) >= 1)) return {why: 'Days to target date must be a whole number, 1 or more.'};
-    return {body: {symbol: sym, target: t, worst: w, days: dtxt ? parseInt(dtxt, 10) : null, sets: Math.max(1, sets),
+    var ivTxt = $('shIv').value.trim(), ivs = ivTxt === '' ? 0 : Number(ivTxt);
+    if (!isFinite(ivs) || ivs < -50 || ivs > 100) return {why: 'The IV change on the target date must be between -50 and +100 vol points.'};
+    return {body: {symbol: sym, target: t, worst: w, days: dtxt ? parseInt(dtxt, 10) : null, sets: Math.max(1, sets), iv_shift: ivs,
                    legs: SH.legs.map(function (l) { return {right: l.right, strike: Number(l.strike), expiry: l.expiry, qty: l.qty}; })}};
   }
   function schedule() { clearTimeout(SH.timer); SH.timer = setTimeout(runPreview, 300); }
@@ -1362,6 +1403,7 @@
       return;
     }
     var f = p.figures || {}, b = SH.prevBody || {}, spot = p.spot, sets = p.sets || 1, e0 = f.entry_value;
+    var ivs = isNum(p.iv_shift) ? p.iv_shift : 0, fb = ivs && f.base ? f.base : null;     // v4.217
     var when = 'on ' + shortDate(p.target_date) + ' (' + p.horizon_days + ' days from today)';
     var h = '<div class="flex items-baseline justify-between gap-2 flex-wrap mb-2"><p class="calc-small calc-muted">' +
       esc(p.symbol) + ' at ' + money(spot) + ' · computed from the market pass of ' + esc(p.as_of_et || p.session || '?') +
@@ -1372,15 +1414,20 @@
                 ['Target', f.target_value, 'at the expected price ' + money(b.target) + ', ' + when],
                 ['Worst', f.worst_value, 'at the worst-case price ' + money(b.worst) + ', ' + when],
                 ['Post-decayed', f.decayed_value, 'at today\'s price ' + money(spot) + ', ' + when]];
+    var baseVals = fb ? [e0, fb.target_value, fb.worst_value, fb.decayed_value] : null;
     h += '<section class="calc-card min-w-0"><h2>Option values</h2><div class="calc-scroll"><table class="calc-table sh-kv"><thead><tr>' +
-      '<th class="l"></th><th>Value</th><th>$ change</th><th>% change</th></tr></thead><tbody>';
+      '<th class="l"></th><th>Value' + (fb ? ' <span class="calc-muted" style="font-weight:400">(IV ' + esc(ivWords(ivs)) + ')</span>' : '') + '</th><th>$ change</th><th>% change</th>' +
+      (fb ? '<th title="The same legs on the target date with IV held at today\'s - the sheet\'s own assumption">IV unchanged</th>' : '') + '</tr></thead><tbody>';
     rows.forEach(function (rw, i) {
       var c = i === 0 ? ['', ''] : chg(rw[1], e0);
       h += '<tr><td class="l" title="' + esc(rw[2]) + '"><b style="color:var(--tv-text-hi)">' + rw[0] + '</b><span class="n">' + esc(rw[2]) + '</span></td>' +
-        '<td>' + money(rw[1]) + '</td><td>' + c[0] + '</td><td>' + c[1] + '</td></tr>';
+        '<td>' + money(rw[1]) + '</td><td>' + c[0] + '</td><td>' + c[1] + '</td>' +
+        (fb ? '<td class="calc-muted">' + (i === 0 ? 'same' : money(baseVals[i])) + '</td>' : '') + '</tr>';
     });
     h += '</tbody></table></div><p class="calc-small calc-muted mt-1">Per share, net of all legs (one contract = 100 shares). ' +
-      'Changes are against "Current", the value today.</p></section>';
+      'Changes are against "Current", the value today.' +
+      (fb ? ' The target-date values take every leg\'s IV ' + esc(ivWords(ivs)) + '; "IV unchanged" is the same legs at today\'s IV, as the sheet prices them.' : '') +
+      '</p></section>';
     // Decision Indicators (B23:C33)
     var be = (f.breakevens || []).filter(isNum);
     var beTxt = be.length ? be.map(function (x) {
@@ -1388,14 +1435,19 @@
     }).join('<br>') : 'none in the price range';
     var rr = isNum(f.reward_over_risk) ? num(f.reward_over_risk, 2) + ' : 1'
       : (isNum(f.loss_at_worst) && f.loss_at_worst >= 0 ? 'no loss at the worst case' : '–');
+    function cmp(txt) { return fb ? ' · <span class="calc-muted">IV unchanged: ' + txt + '</span>' : ''; }
+    var rrBase = fb ? (isNum(fb.reward_over_risk) ? num(fb.reward_over_risk, 2) + ' : 1' : (isNum(fb.loss_at_worst) && fb.loss_at_worst >= 0 ? 'no loss' : '–')) : '';
+    var beBase = fb ? ((fb.breakevens || []).filter(isNum).map(function (x) { return money(x); }).join(' / ') || 'none') : '';
     h += '<section class="calc-card min-w-0"><h2>Decision indicators</h2><div class="calc-scroll"><table class="calc-table sh-kv"><tbody>' +
-      kv('Breakeven stock price', beTxt, 'where the trade is flat ' + esc(when) + '; vs today\'s ' + money(spot)) +
-      kv('Reward over risk', rr, 'gain at the expected price ÷ loss at the worst-case price') +
-      kv('Return on investment', pct(f.roi, 1), 'gain at the expected price ÷ what the legs cost today', isNum(f.roi) ? (f.roi >= 0 ? 'calc-up' : 'calc-down') : '') +
+      kv('IV on the target date', ivs ? ivWords(ivs) : 'unchanged', ivs ? 'added to every leg\'s IV on ' + esc(shortDate(p.target_date)) + '; today\'s prices keep today\'s IV'
+                                                          : 'each leg keeps today\'s IV, as the sheet; set an IV change in the inputs to see a drop or a rise', ivs < 0 ? 'calc-down' : ivs > 0 ? 'calc-up' : '') +
+      kv('Breakeven stock price', beTxt, 'where the trade is flat ' + esc(when) + '; vs today\'s ' + money(spot) + cmp(beBase)) +
+      kv('Reward over risk', rr, 'gain at the expected price ÷ loss at the worst-case price' + cmp(rrBase)) +
+      kv('Return on investment', pct(f.roi, 1), 'gain at the expected price ÷ what the legs cost today' + cmp(fb ? pct(fb.roi, 1) : ''), isNum(f.roi) ? (f.roi >= 0 ? 'calc-up' : 'calc-down') : '') +
       (isNum(f.roi_on_max_loss) && isNum(e0) && e0 < 0 ? kv('Return on the most it can lose', pct(f.roi_on_max_loss, 1), 'for a credit trade: gain ÷ the largest loss in the chart') : '') +
       kv('#Sets', String(sets), 'each set = the legs above × 100 shares') +
-      kv('Total gains', signed(f.total_gains, 0), 'at the expected price, all sets', isNum(f.total_gains) ? (f.total_gains >= 0 ? 'calc-up' : 'calc-down') : '') +
-      kv('Total risk', signed(f.total_risk, 0), 'at the worst-case price, all sets', isNum(f.total_risk) ? (f.total_risk >= 0 ? 'calc-up' : 'calc-down') : '') +
+      kv('Total gains', signed(f.total_gains, 0), 'at the expected price, all sets' + cmp(fb ? signed(fb.total_gains, 0) : ''), isNum(f.total_gains) ? (f.total_gains >= 0 ? 'calc-up' : 'calc-down') : '') +
+      kv('Total risk', signed(f.total_risk, 0), 'at the worst-case price, all sets' + cmp(fb ? signed(fb.total_risk, 0) : ''), isNum(f.total_risk) ? (f.total_risk >= 0 ? 'calc-up' : 'calc-down') : '') +
       kv('Total outlay', money(f.total_outlay, 0), isNum(f.total_outlay) && f.total_outlay < 0 ? 'a credit: money you collect to open, all sets' : 'what you pay to open, all sets') +
       kv('Probability of profit', pct(f.prob_profit, 0), 'model probability, not a forecast') +
       kv('Net delta now / on target date', num(f.net_delta_entry, 3) + ' / ' + num(f.net_delta_target, 3), 'how much the position moves per $1 in the stock, per share') +
@@ -1409,10 +1461,11 @@
       h += '<section class="calc-card mt-3 min-w-0"><h2>Profit and loss ' + esc(when) + '</h2>' +
         '<div class="calc-chart" data-chart="sheet"></div>' +
         '<p class="calc-small calc-muted mt-1">Computed from the market pass of ' + esc(p.as_of_et || p.session || '?') + ', spot ' + money(spot) + '. ' +
-        'Solid line: what the position is worth on ' + esc(shortDate(p.target_date)) + ' at each stock price; dashed line: what it is worth today; ' +
+        'Solid line: what the position is worth on ' + esc(shortDate(p.target_date)) + ' at each stock price' + (ivs ? ' with IV ' + esc(ivWords(ivs)) : '') +
+        '; dashed line: what it is worth today; ' + (fb ? 'dotted line: the target date with IV unchanged; ' : '') +
         'faint lines: each leg. Green above the cost to open is profit, red below is loss. Per share.</p>' +
         (f.earnings_in_window ? '<p class="calc-notice mt-2">Earnings on ' + esc(shortDate(f.earnings_date)) + ' fall inside this window. ' +
-          'Implied volatility usually drops after the report; these figures keep it unchanged.</p>' : '') +
+          (ivs ? 'These figures take IV ' + esc(ivWords(ivs)) + ' on the target date.' : 'Implied volatility usually drops after the report; these figures keep it unchanged - set an IV change in the inputs (e.g. -10) to see the drop.') + '</p>' : '') +
         '</section>';
     }
     h += '</div>';
@@ -1430,7 +1483,7 @@
     var btn = $('shSave');
     btn.disabled = true; btn.textContent = 'Saving…';
     api('/calc/api/requests', 'POST', {symbol: bd.symbol, kind: 'manual', target: bd.target, worst: bd.worst,
-      horizon_days: bd.days, sets: bd.sets, name: $('shName').value.trim() || null, legs: bd.legs}).then(function (j) {
+      horizon_days: bd.days, sets: bd.sets, iv_shift: bd.iv_shift, name: $('shName').value.trim() || null, legs: bd.legs}).then(function (j) {
       btn.disabled = false; btn.textContent = 'Save this setup';
       if (!j.ok) { shErr(j.error || 'Not saved.'); return; }
       upsertItem(j.item); S.sel = j.item.id; paintList();
@@ -1449,6 +1502,7 @@
     $('shWorst').value = isNum(it.worst) ? it.worst : '';
     $('shDays').value = it.horizon_days || S.prefs.horizon_days || 45;
     $('shSets').value = it.sets || 1;
+    $('shIv').value = isNum(it.iv_shift) ? it.iv_shift : 0; syncIv();
     $('shName').value = it.name || '';
     SH.legs = (it.legs || []).slice(0, MAXL).map(function (l) {
       return {right: l.right, strike: Number(l.strike), expiry: l.expiry, qty: parseInt(l.qty, 10)};

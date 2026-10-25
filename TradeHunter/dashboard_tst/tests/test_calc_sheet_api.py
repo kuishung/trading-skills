@@ -142,3 +142,40 @@ def test_preview_uses_the_member_default_days_and_validates(client, sdb):
     assert ghost["ok"] is False and "not in the last market pass" in ghost["error"]
     unknown = client.post("/calc/api/preview", json={"symbol": "ZZZZ", "target": 90, "worst": 108, "legs": leg}).json()
     assert unknown["ok"] is False and "not in the screener" in unknown["error"]
+
+
+def test_preview_with_an_iv_change_on_the_target_date(client, sdb):
+    """v4.217 (user: "the IV-change scenario on the target date"): ``iv_shift`` in vol points; today's figures stay,
+    the target-date ones move, and the IV-unchanged figures and curve ride along; bad values are refused in words."""
+    exp = MONTHLIES[1].isoformat()
+    leg = [{"right": "C", "strike": 100, "expiry": exp, "qty": 1}]
+    body = {"symbol": "ACME", "target": 110, "worst": 92, "days": 30, "legs": leg}
+    flat = client.post("/calc/api/preview", json=body).json()
+    j = client.post("/calc/api/preview", json={**body, "iv_shift": -10}).json()
+    assert j["ok"] and j["iv_shift"] == -10.0 and flat["iv_shift"] == 0.0 and "base" not in flat["figures"]
+    f, fb = j["figures"], j["figures"]["base"]
+    assert f["entry_value"] == pytest.approx(flat["figures"]["entry_value"])
+    assert f["target_value"] < flat["figures"]["target_value"] and fb["target_value"] == pytest.approx(flat["figures"]["target_value"])
+    assert j["legs"][0]["iv_target"] == pytest.approx(0.20) and flat["legs"][0]["iv_target"] == pytest.approx(0.30)
+    assert len(j["curves"]["net_target_base"]) == len(j["curves"]["grid"]) and "net_target_base" not in flat["curves"]
+    bad = client.post("/calc/api/preview", json={**body, "iv_shift": 500}).json()
+    assert bad["ok"] is False and "vol points" in bad["error"]
+
+
+def test_the_sheet_has_the_iv_change_input(client, sdb):
+    html = client.get("/calc?view=sheet").text
+    for needle in ('id="shIv" class="calc-in" type="number" step="1" min="-50" max="100" value="0"', ">IV change on the target date</label>",
+                   'data-iv="-20"', 'data-iv="-10"', 'data-iv="10"', "function syncIv()", "function ivWords(v)",
+                   "iv_shift: ivs,", "iv_shift: bd.iv_shift,", "$('shIv').value = isNum(it.iv_shift) ? it.iv_shift : 0; syncIv();",
+                   "row('IV on target date'", "kv('IV on the target date'", "var nb = c.net_target_base || [];",
+                   "IV unchanged</th>", "dotted line: the target date with IV unchanged"):
+        assert needle in html, needle
+    import shutil, subprocess, tempfile, pathlib, re as _re
+    if shutil.which("node"):
+        for i, m in enumerate(_re.finditer(r"<script(?P<a>[^>]*)>(?P<b>.*?)</script>", html, _re.S)):
+            if "src=" in m.group("a") or "json" in m.group("a") or not m.group("b").strip():
+                continue
+            path = pathlib.Path(tempfile.mkdtemp()) / ("c%d.js" % i)
+            path.write_text(m.group("b"), encoding="utf-8")
+            chk = subprocess.run(["node", "--check", str(path)], capture_output=True, text=True)
+            assert chk.returncode == 0, chk.stderr[:800]

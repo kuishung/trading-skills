@@ -175,3 +175,18 @@ def test_without_curves_is_light():
     r = evaluate(LEGS, SCEN, with_curves=False)
     assert r.grid == [] and r.net_curve_target == []
     assert r.reward_over_risk == pytest.approx(8.280547101951894, abs=1e-9)
+
+
+def test_iv_shift_moves_only_the_target_date():
+    """v4.217 (user: "the IV-change scenario on the target date"): ``iv_shift`` (a fraction: -0.10 = 10 vol points
+    lower) is added to every leg's IV on the target date only - the workbook holds IV constant, so 0 is the sheet."""
+    long_call = [Leg("c", 100, 120, 0.20, +1)]
+    base = evaluate(long_call, Scenario(100, 110, 90, 30, r=0.048))
+    down = evaluate(long_call, Scenario(100, 110, 90, 30, r=0.048, iv_shift=-0.10))
+    up = evaluate(long_call, Scenario(100, 110, 90, 30, r=0.048, iv_shift=+0.10))
+    assert down.entry_value == pytest.approx(base.entry_value) == pytest.approx(up.entry_value)   # today untouched
+    assert down.target_value < base.target_value < up.target_value                                # a long option loses with IV
+    assert down.decayed_value < base.decayed_value and down.worst_value < base.worst_value
+    assert evaluate(long_call, Scenario(100, 110, 90, 30, r=0.048, iv_shift=0.0)).target_value == pytest.approx(base.target_value)
+    crush = evaluate(long_call, Scenario(100, 110, 90, 30, r=0.048, iv_shift=-0.50))                # floored at 0 IV
+    assert crush.target_value == pytest.approx(max(110 - 100 * math.exp(-0.048 * 90 / 365), 0), abs=0.05)

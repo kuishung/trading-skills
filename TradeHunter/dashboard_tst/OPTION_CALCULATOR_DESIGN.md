@@ -109,7 +109,7 @@ Everything else (flat-IV mode for checking against the sheet, 365-day count) is 
 |---|---|---|
 | 1 | rate and dividend | rate = `opt_constants.RISK_FREE` (one app setting); dividend yield 0, Yahoo later |
 | 2 | day count | calendar days / 365, as the sheet |
-| 3 | IV on the target date | each leg's own IV, unchanged (`iv_shift = 0`) |
+| 3 | IV on the target date | each leg's own IV, unchanged (`iv_shift = 0`) by default; **since v4.217 the member sets an IV change in vol points on the Sheet view** (added to every leg's IV on the target date only) |
 | 4 | breakeven | every crossing on the target date, reported as a list |
 | 5 | where | `app/services/option_calc.py` + `tests/test_option_calc.py` |
 
@@ -206,7 +206,7 @@ the excel sheet and then on the leg user can select the leg from the volatility 
 
 **Still open / next:**
 - Range trades (a second worst price; condors, butterflies, strangles) - decision 8.
-- An IV-change scenario on the target date (`Scenario.iv_shift` exists, no UI).
+- ~~An IV-change scenario on the target date~~ - built in v4.217 (manual setups and the Sheet view; the pairing search still keeps IV unchanged).
 - Chart-drawn levels: drag support / resistance on the MATP chart to fill the two prices.
 - Ratio spreads and American-style pricing (the sheet's European model is kept).
 - The parked workbook flaws (`strategies-reference/OPTION_PRICING_CALCULATOR.md`).
@@ -219,3 +219,14 @@ the excel sheet and then on the leg user can select the leg from the volatility 
   the sheet to 1e-9. Flow diagram added. Decisions 6-12 recorded (two-price input,
   horizons searched, directional first, tst.db, retention, trigger). Build of steps 2-3
   started.
+- 2026-10-25 (v4.217) — **IV change on the target date.** The user: *"Start with the IV-change
+  scenario on the target date in the calculator."* The workbook holds IV constant (its own
+  flaw 5, no input cell), so this is an addition beyond the sheet: an "IV change on the target
+  date" input in VOL POINTS on the Sheet view (box + quick buttons -20 / -10 / -5 / 0 / +5 / +10;
+  bounds -50 to +100), passed to the engine's existing `Scenario.iv_shift` (as a fraction) -
+  every leg's IV on the target date only, today's prices keep today's IV, floored at 0. With a
+  change, the same legs at IV unchanged ride along (`figures.base`, `curves.net_target_base`):
+  an "IV unchanged" column in Option Values, "IV unchanged: ..." beside breakeven, R/R, ROI,
+  total gains and risk, a dotted line on the chart, an "IV on target date" row per leg. Saved
+  manual setups keep it (`option_calc_requests.iv_shift`, migration `c5d8e2a4f7b1`) and the
+  Hermes lane prices them with it. The pairing search (step 3) still keeps IV unchanged.

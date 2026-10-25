@@ -1736,6 +1736,7 @@ class OptionCalcRequest(Base):
     sets = Column(Integer, nullable=False, default=1)
     legs = Column(JSON, nullable=True)                              # manual: [{right, strike, expiry, qty}]
     criteria = Column(JSON, nullable=True)                          # pair: overrides of the member's criteria
+    iv_shift = Column(Float, nullable=True)                         # v4.217 manual: vol points added to every leg's IV on the target date
     active = Column(Boolean, nullable=False, default=True)
     last_pass_id = Column(Integer, nullable=True)
     last_computed_at = Column(DateTime, nullable=True)

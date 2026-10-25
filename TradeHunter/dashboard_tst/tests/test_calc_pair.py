@@ -280,3 +280,20 @@ def test_compute_and_store_inline(db, user, sdb):
     with pytest.raises(calc_chain.ChainError, match="not in the screener"):
         calc_worker.compute_and_store(db, sdb, ghost, user, now=NOW)
     assert "not in the screener" in ghost.last_error
+
+
+def test_a_manual_setup_is_computed_with_its_iv_change(db, user, sdb):
+    """v4.217: the Hermes lane prices a manual setup's target date with its IV change, and keeps the IV-unchanged
+    figures and curve beside them for comparison."""
+    _fill(sdb)
+    exp = MONTHLIES[1].isoformat()
+    legs = [{"right": "C", "strike": 100, "expiry": exp, "qty": 1}]
+    flat = calc_worker.compute_request(sdb, _req(db, user, kind="manual", horizon_days=30, legs=legs), user, today=TODAY)[0][0]
+    down = calc_worker.compute_request(sdb, _req(db, user, kind="manual", horizon_days=30, legs=legs, iv_shift=-10), user,
+                                       today=TODAY)[0][0]
+    f, fb = down["figures"], down["figures"]["base"]
+    assert f["iv_shift"] == -10.0 and flat["figures"]["iv_shift"] == 0.0 and "base" not in flat["figures"]
+    assert f["entry_value"] == pytest.approx(flat["figures"]["entry_value"])
+    assert f["target_value"] < fb["target_value"] == pytest.approx(flat["figures"]["target_value"])
+    assert len(down["curves"]["net_target_base"]) == len(down["curves"]["grid"])
+    assert down["legs"][0]["iv_target"] == pytest.approx(down["legs"][0]["iv"] - 0.10)
