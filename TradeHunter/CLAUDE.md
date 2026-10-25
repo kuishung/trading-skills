@@ -663,8 +663,12 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
   a result, never empty it (v4.157). **v4.217 (2026-10-25): an IV change on the target date (vol points, Sheet
   view + saved manual setups, IV-unchanged figures beside; the workbook itself holds IV constant).** Range trades
   (two worst prices) and chart-drawn levels are the open next steps. **Subagents for this work ran on Opus at the user's request (2026-10-17).**
+  **v4.218 (2026-10-25): the Calculator PAGE was REMOVED** (user: *"the current interface of the calculator is too
+  difficult to understand. remove the interface."*) - `calc.html`, the Options ▾ → Calculator entry and the
+  Watchlist's "Calculator ↗" button are gone, `/calc` forwards to `/options`. KEPT for a simpler replacement page:
+  the engine, pairing, store, `/calc/api/*` (menu key `calc` now in `HIDDEN_KEYS`), saved setups, the Hermes lane.
 - **Options page = the Volatility surface ONLY since v4.159 (2026-10-20, user: "We only have the
-  Volatility Surface")**: nav Options ▾ → **Volatility Surface** (`/options`) + Calculator. A surface
+  Volatility Surface")**: nav Options ▾ → **Volatility Surface** (`/options`) (+ Calculator until v4.218). A surface
   cell click opens `/options/history?symbol=&expiry=&right=&strike=&day=` (the contract's daily bars +
   IV) in a new window. The Set filters / Results tabs and the Go-to picker are gone from the page; the
   screener ENGINE, `/options/api/*`, saved screeners, the collectors and the Parquet lane stay (the
