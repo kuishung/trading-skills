@@ -199,6 +199,72 @@ def close_time_utc(on) -> _dt.datetime | None:
     return _dt.datetime.combine(day, clock.SESSION_CLOSE) - off
 
 
+def spot_session(as_of) -> str | None:
+    """v4.220: the ET session a stock price read at ``as_of`` (naive UTC) belongs to - that day when it was read on
+    a trading day at or after the 09:30 open, else the trading day before (a weekend or pre-open read)."""
+    if not isinstance(as_of, _dt.datetime):
+        return None
+    et = clock.et_now(as_of)
+    d = et.date()
+    if not clock.is_trading_day(d) or et.time() < clock.SESSION_OPEN:
+        d = clock.prev_trading_day(d)
+    return d.isoformat()
+
+
+def settle_spots(db, *, symbols=None) -> int:
+    """v4.220 (user: *"use the official close once the session has closed, keep the option-implied price only
+    during market hours, and show where the price came from"*). A pass prices the stock from the options
+    (put-call parity, ``spot_src = "parity"``) or a stock snapshot (``"massive"``); the end-of-day pass runs right
+    after the 16:00 ET close, but Stocks Basic publishes the day's official closes only at 20:00 ET, so that
+    session's price stayed the option-implied estimate (AMD 515.95 against a 516.79 close). Here every underlying
+    whose price is not already a close, and whose session's close (unadjusted ``close_raw``, else the adjusted
+    ``close``) - or a later one - is now on file, takes that close: ``spot_src = "close"``, ``spot_as_of`` = 16:00 ET
+    of that session, the day change against the session before. A price read during today's session keeps its
+    estimate until today's close is published. ``symbols`` limits the look (None = every underlying). Commits;
+    returns how many prices were settled."""
+    q = db.query(U).filter(U.spot.isnot(None), or_(U.spot_src.is_(None), U.spot_src != "close"))
+    if symbols is not None:
+        syms = sorted({_sym(s) for s in symbols if _sym(s)})
+        cands = []
+        for part in _chunks(syms, 500):
+            cands.extend(q.filter(U.symbol.in_(part)).all())
+    else:
+        cands = q.all()
+    want = {}
+    for u in cands:
+        sess = spot_session(u.spot_as_of)
+        if sess:
+            want[u.symbol] = (u, sess)
+    if not want:
+        return 0
+    lo = min(s for _u, s in want.values())
+    best: dict[str, tuple[str, float]] = {}
+    for part in _chunks(sorted(want), 500):
+        for sym, on, raw, adj in (db.query(D.symbol, D.on, D.close_raw, D.close)
+                                    .filter(D.symbol.in_(part), D.on >= lo)):
+            val = _pos(raw) or _pos(adj)
+            if val is None or on < want[sym][1]:
+                continue
+            if sym not in best or on > best[sym][0]:
+                best[sym] = (on, val)
+    if not best:
+        return 0
+
+    def apply() -> int:
+        n = 0
+        for sym, (on, val) in best.items():
+            u = want[sym][0]
+            u.spot, u.spot_src, u.spot_as_of = val, "close", close_time_utc(on)
+            pc = _prev_close(db, sym, on)
+            u.prev_close = pc
+            u.chg_pct = ((val / pc - 1.0) * 100.0) if pc else None
+            n += 1
+        db.flush()
+        return n
+
+    return _txn(db, apply)
+
+
 def _und(db, sym: str, *, create: bool, now: _dt.datetime | None = None):
     row = db.query(U).filter(U.symbol == sym).one_or_none()
     if row is None and create:

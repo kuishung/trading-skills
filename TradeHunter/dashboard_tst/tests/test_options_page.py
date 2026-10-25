@@ -2147,3 +2147,17 @@ def test_the_option_finder_tab(client, fake):
                    "function ofSorted(rows)", "function paintFindMap(rows)", "return r.be_pct == null ? -Infinity : -Math.abs(r.be_pct);",
                    "openContract(OF.last.symbol, c.dataset.exp, 'C', Number(c.dataset.k), null);"):
         assert needle in html, needle
+
+
+def test_the_price_says_where_it_came_from(client, fake):
+    """v4.220 (user: "show where the price came from"): the surface heading and the Option Finder name the price's
+    source - the official close of its day, an estimate from the option prices (amber), or a delayed quote."""
+    html = client.get("/options").text
+    sp = html[html.index("function spotSource(j) {"):html.index("function infoHead(el, j, detail) {")]
+    for needle in ("if (src === 'close') return ['official close'", "if (src === 'parity') return ['estimated from options'",
+                   "official close is published at 20:00 ET (08:00 MYT)", "if (src === 'massive') return ['stock quote, 15-min delayed'",
+                   "if (j && j.source === 'history') return ['close of '"):
+        assert needle in sp, needle
+    assert "timeZone: 'America/New_York'" in html and ".vol-head-src.est { color: #d97706; }" in html
+    assert "'<span class=\"vol-head-src' + (ss[2] ? ' est' : '') + '\" title=\"' + esc(ss[1]) + '\">'" in html
+    assert 'id="ofSpotSrc" class="vol-head-src"' in html and "var ofs = spotSource(j);" in html

@@ -223,6 +223,31 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-25 - v4.220: the stock price is the official close once the session has closed, and says where it came from
+
+The user: *"AMD closed price is 516.79 but tradehunter is 515.95"*, then *"use the official close once the session has
+closed, keep the option-implied price only during market hours, and show where the price came from"*.
+- **Why it differed**: on Options Starter a pass prices the stock from the options themselves (put-call parity,
+  `spot_src = "parity"`, `opt_massive.estimate_spot`). The end-of-day pass runs right after the 16:00 ET close, but
+  Stocks Basic publishes the day's official closes only at **20:00 ET**, so that session's price stayed the estimate
+  - 0.84 below AMD's close here - and nothing replaced it afterwards.
+- **`scr_store.settle_spots`**: every underlying whose price is not already a close, and whose session's close
+  (`close_raw` first, else the adjusted `close`) - or a later one - is on file, takes that close (`spot_src =
+  "close"`, `spot_as_of` = 16:00 ET of the session, the day change against the session before). `spot_session` maps
+  a reading time to its session (a weekend or pre-open reading belongs to the trading day before). A price read
+  during today's session keeps its estimate until today's close is published.
+- **The collector** (`scr_collector.py`) settles: right after each symbol's pass (when the close is already out),
+  right after a grouped stock day is filed (`job_stock_day`), and every 15 minutes - including the first look after a
+  start, which settles the prices stored before this release (AMD shows 516.79 once the collector restarts).
+- **Where the price came from** (`options.html`): the surface heading (both tabs) and the Option Finder show it beside
+  the price - "official close Oct 23", "estimated from options" (amber; the tooltip says it is replaced by the
+  official close at 20:00 ET / 08:00 MYT), "stock quote, 15-min delayed", or "close of <day>" for a past day. The
+  surface and interpolated answers and the finder carry `spot_as_of` (`vol_surface`, `vol_cm`, `calc_chain.Chain`,
+  `opt_finder`).
+- Tests: `test_scr_store.py` (the session of a reading; settling: parity and snapshot prices take the close, a price
+  of an open session waits, a close stays, the adjusted close when the unadjusted is missing, the day change),
+  `test_options_page.py` (the labels).
+
 ### 2026-10-25 - v4.219: the Option Finder - your Excel calculator run over every call, ranked
 
 The user, after the calculator page was removed: *"the inputs are Current Stock Price (fed from TradeHunter), Target

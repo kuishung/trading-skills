@@ -929,3 +929,44 @@ def test_earnings_history_is_kept_per_day_and_read_per_symbol(sdb):
     file_earnings_day(db, "2026-10-06", [{"symbol": "NVDA", "when": "post"}])
     assert earnings_dates(db, "NVDA", "2026-10-06", None) == [{"on": "2026-10-06", "when": "amc"}]
     assert earnings_days_empty(db, ["2026-10-01", "2026-10-02", "2026-10-06", "2026-10-09"]) == {"2026-10-02"}
+
+
+# ─────────────── v4.220: the official close replaces the option-implied price ───────────────
+
+def test_spot_session_is_the_session_a_price_was_read_in():
+    # naive UTC; Friday 2026-10-23 is a trading day, the 24th / 25th a weekend
+    assert scr_store.spot_session(_dt.datetime(2026, 10, 23, 19, 30)) == "2026-10-23"     # 15:30 ET, during the session
+    assert scr_store.spot_session(_dt.datetime(2026, 10, 23, 20, 45)) == "2026-10-23"     # 16:45 ET, the end-of-day pass
+    assert scr_store.spot_session(_dt.datetime(2026, 10, 23, 12, 0)) == "2026-10-22"      # 08:00 ET, before the open
+    assert scr_store.spot_session(_dt.datetime(2026, 10, 25, 3, 0)) == "2026-10-23"       # Saturday night ET
+    assert scr_store.spot_session(None) is None
+
+
+def test_settle_spots_takes_the_official_close_once_it_is_on_file(sdb):
+    """v4.220 (user: "AMD closed price is 516.79 but tradehunter is 515.95" -> "use the official close once the
+    session has closed, keep the option-implied price only during market hours"): a price estimated from the
+    options (parity) or a stock snapshot gives way to its session's close (unadjusted first); a price read in a
+    session whose close is not out yet keeps its estimate; a close stays a close; the day change follows."""
+    fri = _dt.datetime(2026, 10, 23, 20, 45)                       # the end-of-day pass, 16:45 ET
+    for sym, spot, src, at in (("AMD", 515.95, "parity", fri), ("SNAP", 10.0, "massive", fri),
+                               ("TODAY", 50.0, "parity", _dt.datetime(2026, 10, 26, 15, 0)),   # Monday 11:00 ET
+                               ("DONE", 20.0, "close", _dt.datetime(2026, 10, 22, 20, 0)),
+                               ("ADJ", 30.0, "parity", fri)):
+        sdb.add(ScrUnderlying(symbol=sym, spot=spot, spot_src=src, spot_as_of=at, history_done=False, history_tries=0))
+    sdb.add_all([ScrUnderlyingDaily(symbol="AMD", on="2026-10-22", close=510.0, close_raw=510.0),
+                 ScrUnderlyingDaily(symbol="AMD", on="2026-10-23", close=516.79, close_raw=516.79),
+                 ScrUnderlyingDaily(symbol="SNAP", on="2026-10-23", close=10.5, close_raw=10.5),
+                 ScrUnderlyingDaily(symbol="TODAY", on="2026-10-23", close=49.0, close_raw=49.0),   # the session BEFORE its price
+                 ScrUnderlyingDaily(symbol="DONE", on="2026-10-23", close=21.0, close_raw=21.0),
+                 ScrUnderlyingDaily(symbol="ADJ", on="2026-10-23", close=31.0, close_raw=None)])     # only the adjusted close
+    sdb.commit()
+    assert scr_store.settle_spots(sdb, symbols=["amd"]) == 1                   # the symbols filter
+    amd = sdb.query(ScrUnderlying).filter_by(symbol="AMD").one()
+    assert (amd.spot, amd.spot_src) == (516.79, "close")
+    assert amd.spot_as_of == scr_store.close_time_utc("2026-10-23")             # 16:00 ET of that session
+    assert amd.prev_close == 510.0 and amd.chg_pct == pytest.approx((516.79 / 510.0 - 1) * 100)
+    assert scr_store.settle_spots(sdb) == 2                                     # SNAP and ADJ; TODAY waits, DONE stays
+    got = {u.symbol: (u.spot, u.spot_src) for u in sdb.query(ScrUnderlying)}
+    assert got["SNAP"] == (10.5, "close") and got["ADJ"] == (31.0, "close")
+    assert got["TODAY"] == (50.0, "parity") and got["DONE"] == (20.0, "close")
+    assert scr_store.settle_spots(sdb) == 0                                     # nothing left to settle

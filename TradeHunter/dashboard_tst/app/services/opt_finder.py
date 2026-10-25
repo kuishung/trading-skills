@@ -158,7 +158,9 @@ def find(sdb, symbol, *, target, worst, strategy="long_call", mode="expiry", on=
             "earnings": bool(earn and today < earn <= on_day),
         })
     rows.sort(key=lambda x: (-(1e12 if x["no_loss"] else x["rr"] if x["rr"] is not None else -1e9), x["expiry"], x["strike"]))
+    sa = getattr(ch, "spot_as_of", None)
     return {"symbol": ch.symbol, "name": ch.name, "spot": spot, "spot_src": ch.spot_src, "session": ch.session,
+            "spot_as_of": sa.replace(microsecond=0).isoformat() + "Z" if isinstance(sa, _dt.datetime) else None,
             "as_of": ch.as_of.isoformat() if ch.as_of else None, "today": today.isoformat(),
             "strategy": strategy, "mode": mode, "on": when.isoformat() if when else None,
             "target": t, "worst": w, "rate": r, "band": band, "min_oi": min_oi,

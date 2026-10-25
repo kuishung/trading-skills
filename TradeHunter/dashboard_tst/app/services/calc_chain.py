@@ -76,6 +76,7 @@ class Chain:
     iv_rank: float | None
     contracts: list[Contract] = field(default_factory=list)
     _by_key: dict = field(default_factory=dict, repr=False)
+    spot_as_of: _dt.datetime | None = None          # v4.220: when the price was read (a close: 16:00 ET of its day)
 
     def __post_init__(self):
         self._by_key = {c.key: c for c in self.contracts}
@@ -129,7 +130,7 @@ def load_chain(sdb, symbol) -> Chain:
     return Chain(symbol=sym, spot=_f(getattr(u, "spot", None)), spot_src=getattr(u, "spot_src", None),
                  as_of=as_of, session=session, name=getattr(u, "name", None),
                  earnings_date=getattr(u, "earnings_date", None), iv_rank=_f(getattr(u, "iv_rank", None)),
-                 contracts=contracts)
+                 contracts=contracts, spot_as_of=getattr(u, "spot_as_of", None))
 
 
 def dte(expiry, today: _dt.date) -> int:

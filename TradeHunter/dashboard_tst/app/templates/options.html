@@ -261,6 +261,8 @@
   .vol-head > b { font-size: 1.25rem; line-height: 1.2; font-weight: 600; color: var(--tv-text-hi); }
   .vol-head-name { font-size: 12px; color: var(--tv-muted); }
   .vol-head-px { font-size: 12px; color: var(--tv-text); font-variant-numeric: tabular-nums; }
+  .vol-head-src { font-size: 11px; color: var(--tv-muted); }   /* v4.220: where the price came from */
+  .vol-head-src.est { color: #d97706; }
   /* the interpolated tab: a horizon that falls on a listed expiry carries a small "=" mark in the cell's bottom-right
      corner (that contract's own IV) - the corner the rank bar uses on the listed tab, free here */
   .vol-grid .vol-x { position: absolute; bottom: .15rem; right: .2rem; font-size: 9px; line-height: 1; padding: 0 .15rem;
@@ -573,7 +575,7 @@
           {% for s in finder_strategies or [] %}<option value="{{ s[0] }}"{% if not s[4] %} disabled{% endif %}>{{ s[1] }}{% if not s[4] %} - coming soon{% endif %}</option>{% endfor %}
         </select>
       </label>
-      <div class="of-l">Current price<b id="ofSpot" class="of-spot">-</b></div>
+      <div class="of-l">Current price<b id="ofSpot" class="of-spot">-</b><span id="ofSpotSrc" class="vol-head-src"></span></div>
       <label class="of-l">Target price
         <input id="ofTarget" class="of-in" type="number" step="any" min="0" inputmode="decimal" placeholder="where it goes">
       </label>
@@ -1000,11 +1002,31 @@
   // v4.178 (user: "this line is too long. we do not need this, just put the ticker name in bigger font size,
   // apply to both surface"): the heading of either grid = the ticker large, the name and the price small
   // beside it; everything the long line used to say, and the method, is the heading's tooltip
+  // v4.220 (user: "show where the price came from"): the stock price's source in words. "close" = the official
+  // close of its session (Stocks Basic, published at 20:00 ET); "parity" = estimated from the option prices
+  // (put-call parity) - what a pass uses during market hours and until the day's close is published;
+  // "massive" = a stock quote, 15 minutes delayed.
+  function etDay(iso) {                 // the ET date of an ISO time (a close is stamped 16:00 ET)
+    if (!iso) return null;
+    var t = new Date(iso);
+    if (isNaN(t)) return null;
+    try { return new Intl.DateTimeFormat('en-CA', {timeZone: 'America/New_York'}).format(t); } catch (err) { return iso.slice(0, 10); }
+  }
+  function spotSource(j) {              // [short words, full sentence, is it an estimate]
+    var src = j && j.spot_src, day = etDay(j && j.spot_as_of);
+    if (j && j.source === 'history') return ['close of ' + shortDate(j.on), 'The official close of ' + j.on + ' (the contract history\'s day).', false];
+    if (src === 'close') return ['official close' + (day ? ' ' + shortDate(day) : ''), 'The official close' + (day ? ' of ' + day : '') + ' (Massive Stocks Basic, published at 20:00 ET).', false];
+    if (src === 'parity') return ['estimated from options', 'Estimated from the option prices (put-call parity), 15 minutes delayed - used during market hours and until the day\'s official close is published at 20:00 ET (08:00 MYT).', true];
+    if (src === 'massive') return ['stock quote, 15-min delayed', 'A stock quote from Massive, 15 minutes delayed.', false];
+    return ['', '', false];
+  }
   function infoHead(el, j, detail) {
     el.title = (detail ? detail + '\n' : '') + (j.method || '');
+    var ss = spotSource(j);
     el.innerHTML = '<span class="vol-head"><b>' + esc(j.symbol) + '</b>' +
       (j.name ? '<span class="vol-head-name">' + esc(j.name) + '</span>' : '') +
-      (j.spot != null ? '<span class="vol-head-px" title="the stock price">' + esc(num(j.spot, 2)) + '</span>' : '') + '</span>';
+      (j.spot != null ? '<span class="vol-head-px" title="' + esc(ss[1] || 'the stock price') + '">' + esc(num(j.spot, 2)) + '</span>' +
+        (ss[0] ? '<span class="vol-head-src' + (ss[2] ? ' est' : '') + '" title="' + esc(ss[1]) + '">' + esc(ss[0]) + '</span>' : '') : '') + '</span>';
   }
   function renderSurface(j) {
     var ex = j.expiries || [], vw = surfaceView(j);
@@ -1594,6 +1616,9 @@
     getJSON('/options/api/finder?' + q.toString(), {onRetry: function (n, why) { if (my === OF.seq) msg($('ofMsg'), retryNote(n, why)); }}).then(function (j) {
       if (my !== OF.seq) return;
       $('ofSpot').textContent = j && j.spot ? money(j.spot) : '-';
+      var ofs = spotSource(j);              // v4.220: where the price came from
+      $('ofSpotSrc').textContent = ofs[0]; $('ofSpotSrc').title = ofs[1]; $('ofSpot').title = ofs[1];
+      $('ofSpotSrc').classList.toggle('est', !!ofs[2]);
       if (!j || !j.ok) {
         OF.last = null;
         show($('ofWrap'), false); show($('ofInfo'), false); show($('ofMapBox'), false); show($('ofMore'), false);
@@ -1616,7 +1641,8 @@
     if (j.n_thin) left.push(intText(j.n_thin) + ' with open interest under ' + j.min_oi);
     if (j.n_cheap) left.push(intText(j.n_cheap) + ' worth under ' + money(j.min_cost));
     var earnRows = j.rows.filter(function (r) { return r.earnings; }).length;
-    $('ofInfo').innerHTML = '<b style="color:var(--tv-text-hi)">' + esc(j.symbol) + '</b> ' + money(j.spot) + ' &middot; market pass of ' + esc(j.session || '?') +
+    $('ofInfo').innerHTML = '<b style="color:var(--tv-text-hi)">' + esc(j.symbol) + '</b> ' + money(j.spot) +
+      (spotSource(j)[0] ? ' (' + esc(spotSource(j)[0]) + ')' : '') + ' &middot; option prices from the market pass of ' + esc(j.session || '?') +
       ' &middot; target ' + money(j.target) + ', worst case ' + money(j.worst) + ' &middot; ' + esc(when) + ' &middot; ' +
       intText(j.n) + ' calls ranked' + (left.length ? ' (' + esc(left.join(', ')) + ' left out)' : '') +
       ' &middot; strikes within ' + Math.round(j.band * 100) + '% of the price, ' + j.min_dte + '+ days to expiry, rate ' + num(j.rate * 100, 1) + '%, no dividend' +

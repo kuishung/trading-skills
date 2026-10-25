@@ -1883,7 +1883,10 @@ async def api_finder(symbol: str = "", strategy: str = "long_call", target: str 
         with screener_db.session() as s:
             if not (target or "").strip() or not (worst or "").strip():
                 ch = load_chain(s, symbol)
-                return {"ok": False, "need_prices": True, "symbol": ch.symbol, "name": ch.name, "spot": ch.spot}
+                sa = ch.spot_as_of
+                return {"ok": False, "need_prices": True, "symbol": ch.symbol, "name": ch.name, "spot": ch.spot,
+                        "spot_src": ch.spot_src,
+                        "spot_as_of": sa.replace(microsecond=0).isoformat() + "Z" if isinstance(sa, _dt.datetime) else None}
             res = opt_finder.find(s, symbol, target=target, worst=worst, strategy=(strategy or "long_call").strip(),
                                   mode=(mode or "expiry").strip().lower(), on=(date or "").strip() or None,
                                   today=_dt.date.fromisoformat(clock.et_today()))

@@ -1452,6 +1452,8 @@ class Collector:
             iv30=fig["iv30"], exp_move30=fig["exp_move30"], call_vol=fig["call_vol"],
             put_vol=fig["put_vol"], call_oi=fig["call_oi"], put_oi=fig["put_oi"],
             n_contracts=fig["n_contracts"], file_iv=(kind == "eod"), now=t_read)
+        if scr_store.settle_spots(db, symbols=[sym]):   # v4.220: this session's official close is already on file
+            src = "close"
         return {"symbol": sym, "contracts": n, "pages": pages, "spot": spot,
                 "spot_src": src, "iv30": fig["iv30"], "rows": len(raw)}
 
@@ -3261,6 +3263,9 @@ class Collector:
                 bars = self.client.grouped_daily(day, adjusted=False)
                 out["raw_bars"] = len(bars)
                 out["filed"] += scr_store.file_grouped_day(db, day, bars, adjusted=False, symbols=syms)
+            if out["adj_bars"] or out["raw_bars"]:
+                # v4.220: the day's official closes are out - they replace the option-implied prices of that session
+                out["settled"] = scr_store.settle_spots(db, symbols=syms)
             if adjusted and out["adj_bars"]:
                 prev = clock.prev_trading_day(day).isoformat()
                 if self._days.get(prev, [False])[0]:
@@ -3444,8 +3449,27 @@ class Collector:
         else:
             self.state, self.detail = state, DETAIL_JOIN.join(parts)
 
+    SETTLE_EVERY_S = 15 * 60
+
+    def _settle_tick(self, db, now: _dt.datetime) -> None:
+        """v4.220: every 15 minutes (and on the first tick after a start - which settles the prices stored before this
+        release), the official closes on file replace the option-implied prices of their sessions
+        (``scr_store.settle_spots``). Never raises: a failure is logged and tried on the next look."""
+        last = getattr(self, "_settled_at", None)
+        if last is not None and (now - last).total_seconds() < self.SETTLE_EVERY_S:
+            return
+        self._settled_at = now
+        try:
+            n = scr_store.settle_spots(db)
+            if n:
+                self.log.info("settled %d stock prices on their official close", n)
+        except Exception:  # noqa: BLE001
+            self._rollback(db)
+            self.log.exception("settling the stock prices on their close failed")
+
     def _step(self, db, now: _dt.datetime) -> None:
         syms = self._refresh_counts(db, now)
+        self._settle_tick(db, now)
         self._flat_tick(db, now)            # Massive Flat Files: its own keys, never the REST key
         self._pq_tick(now)                  # the day files on this PC -> Parquet: no Massive request at all
         if not self._ready(now):

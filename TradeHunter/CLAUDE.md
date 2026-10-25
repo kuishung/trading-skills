@@ -672,6 +672,11 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
   time decay = each call's own expiry OR a picked date), ranked by reward/risk, ROI, breakeven closest to today, or
   the model's chance above breakeven; the surface below coloured by that rank. Strategy dropdown: Buy a call built,
   buy a put / bull call / bear put spreads / condors "coming soon" - the next steps.
+  **v4.220 (2026-10-25): the STOCK PRICE** is the official close once a session has closed (`scr_store.settle_spots`,
+  run by the screener collector) and the option-implied estimate (put-call parity) only during market hours and until
+  Stocks Basic publishes the close at 20:00 ET (08:00 MYT); the surface and the finder say which ("official close",
+  "estimated from options"). After a pull touching `scr_store.py` / `scr_collector.py`, restart the
+  `TST-Options-Screener` task (`setup_screener_task.ps1 -StartNow`).
 - **Options page = the Volatility surface ONLY since v4.159 (2026-10-20, user: "We only have the
   Volatility Surface")**: nav Options ▾ → **Volatility Surface** (`/options`) (+ Calculator until v4.218). A surface
   cell click opens `/options/history?symbol=&expiry=&right=&strike=&day=` (the contract's daily bars +

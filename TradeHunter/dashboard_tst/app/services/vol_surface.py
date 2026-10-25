@@ -328,6 +328,10 @@ def _models():
     return ScrContract, ScrUnderlying, ScrUnderlyingDaily
 
 
+def _iso_z(t) -> str | None:
+    return t.replace(microsecond=0).isoformat() + "Z" if isinstance(t, _dt.datetime) else None
+
+
 def underlying(sdb, symbol) -> dict | None:
     """The screener's row for ``symbol`` (name, type, spot) or None."""
     _C, U, _D = _models()
@@ -424,7 +428,8 @@ def latest_rows(sdb, symbol) -> tuple[list[dict], dict]:
 
     on = session or clock.et_today()
     return rows, {"source": "latest", "on": str(on)[:10], "spot": (u or {}).get("spot"),
-                  "spot_src": (u or {}).get("spot_src"), "as_of": as_of, "name": (u or {}).get("name"),
+                  "spot_src": (u or {}).get("spot_src"), "spot_as_of": (u or {}).get("spot_as_of"),
+                  "as_of": as_of, "name": (u or {}).get("name"),
                   "liq_n": sum(1 for r in rows if r.get("liq") is not None)}   # v4.184: the chain's ranked contracts
 
 
@@ -497,7 +502,7 @@ def surface(sdb, symbol, day="latest", *, side=None, band=None, max_dte=None, ex
                            "range or the expiries" % sym)
     as_of = meta.get("as_of")
     return {**grid, "symbol": sym, "name": meta.get("name"), "source": meta["source"],
-            "spot_src": meta.get("spot_src"),
+            "spot_src": meta.get("spot_src"), "spot_as_of": _iso_z(meta.get("spot_as_of")),   # v4.220: where the price came from
             "as_of": as_of.replace(microsecond=0).isoformat() + "Z" if isinstance(as_of, _dt.datetime) else None,
             "traded": meta.get("traded"), "method": method, "has_greeks": meta["source"] == "latest",
             "liq_n": meta.get("liq_n"),

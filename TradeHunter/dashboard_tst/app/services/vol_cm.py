@@ -392,7 +392,7 @@ def surface_cm(sdb, symbol, day="latest", *, side=None, band=None, expiries=None
                            % (sym, MIN_LEG_DTE, span))
     as_of = meta.get("as_of")
     return {**out, "symbol": sym, "name": meta.get("name"), "source": meta["source"],
-            "spot_src": meta.get("spot_src"),
+            "spot_src": meta.get("spot_src"), "spot_as_of": vol_surface._iso_z(meta.get("spot_as_of")),   # v4.220
             "as_of": as_of.replace(microsecond=0).isoformat() + "Z" if isinstance(as_of, _dt.datetime) else None,
             "traded": meta.get("traded"), "has_greeks": meta["source"] == "latest",
             "rate": RISK_FREE,          # v4.210: the rate behind the greeks and model price, for the hover card's working
