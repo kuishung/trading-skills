@@ -1268,7 +1268,7 @@ def test_the_surface_cells_open_the_contract_history_in_a_new_window(client, fak
     assert "return popPanel('Model price', '<div class=\"vol-pop-row\"><span>Black-Scholes, from the inputs below</span>" in mw
     assert "the same as the pass stored." in mw and "No dividend; T has a half-day floor." in mw
     assert "function normCdf(z) {" in html and "0.3275911" in html
-    assert "figsHtml(j, xf), modelWorkHtml(j, xf, k, ex, cur));" in html
+    assert "figsHtml(j, xf), modelWorkHtml(j, xf, k, ex, cur)) + rankPanel(j, k, ex.date);" in html
     assert ".vol-pop .vol-pop-sec { border-top: 1px solid var(--tv-border);" in html
     # v4.206 (user: "separated by way of separator so that each information is neatly separated"): a rule before
     # the history block, the earnings row, the chart, the click hint (both cards)
@@ -1306,7 +1306,7 @@ def test_the_surface_tiles_are_configurable(client, fake):
                    "'th.vol.tile'", "var TILE_DEFAULT = {g: ['d', 't'], b: 'last'};",
                    "var x = extraAt(j, r, c);", "'<div class=\"vol-l2\">' + tileTop(x) + '</div><div class=\"vol-iv\">'",
                    "'<div class=\"vol-l3\">' + tileBottom(x) + '</div></td>'",
-                   "figsHtml(j, xf), modelWorkHtml(j, xf, k, ex, cur));", "j.has_greeks === false",
+                   "figsHtml(j, xf), modelWorkHtml(j, xf, k, ex, cur)) + rankPanel(j, k, ex.date);", "j.has_greeks === false",
                    "$('volTile').addEventListener('change', function () { tileRead(); paintTiles(); });",
                    "Model price", "Open interest", "'Delta'", "'Gamma'", "'Theta'", "'Vega'",
                    "g[2].charAt(0) + ' ' + greekText("):      # v4.168: the initials D G T V, not the signs
@@ -2144,7 +2144,7 @@ def test_the_option_finder_tab(client, fake):
                    '<option value="roi">Return on investment</option>', "<option value=\"be\">Breakeven closest to today's price</option>",
                    "fetch" if False else "getJSON('/options/api/finder?' + q.toString()",
                    "if (TAB === 'find') { if (!quiet) runFind(); return; }", "['find', 'volTabFind', 'volPanelFind']",
-                   "function ofSorted(rows)", "function paintFindMap(rows)", "return r.be_pct == null ? -Infinity : -Math.abs(r.be_pct);",
+                   "function ofSorted(rows, key)", "function paintFindMap(rows)", "return r.be_pct == null ? -Infinity : -Math.abs(r.be_pct);",
                    "openContract(OF.last.symbol, c.dataset.exp, 'C', Number(c.dataset.k), null);"):
         assert needle in html, needle
 
@@ -2161,3 +2161,34 @@ def test_the_price_says_where_it_came_from(client, fake):
     assert "timeZone: 'America/New_York'" in html and ".vol-head-src.est { color: #d97706; }" in html
     assert "'<span class=\"vol-head-src' + (ss[2] ? ' est' : '') + '\" title=\"' + esc(ss[1]) + '\">'" in html
     assert 'id="ofSpotSrc" class="vol-head-src"' in html and "var ofs = spotSource(j);" in html
+
+
+
+def test_the_option_finder_ranking_lays_over_the_surface(client, fake):
+    """v4.223 (user: "a button so that the ranking of the result can be overlay to the vol surface ... the vol surface
+    with the result is to be open in new window"): the finder's button opens /options?tab=surface&rank=... in a new
+    window; that window reads the ranking's inputs, shows every call of every expiry, ranks the cells (a #n badge,
+    five green tiers, the best ringed, the rest dimmed), a bar with a Rank-by switch and a show / hide tick, and an
+    Option Finder panel in the hover card."""
+    html = client.get("/options").text
+    for needle in ('id="ofSurf"', "Show this ranking on the volatility surface &#8599;",
+                   "var q = new URLSearchParams({symbol: j.symbol, tab: 'surface', rank: j.strategy, target: String(j.target),",
+                   "window.open('/options?' + q.toString(), '_blank', 'noopener');",
+                   'id="volRankBar" class="vol-rankbar hidden"', 'id="volRankSort"', 'id="volRankShow" checked',
+                   "if (!q.get('rank') || !q.get('target') || !q.get('worst')) return;",
+                   "$('volSide').value = 'call'; $('volExp').value = 'all'; $('volDte').value = '0';",
+                   "if ($('volClean')) $('volClean').checked = false;",
+                   "function paintRank()", "if (!ex || sideOf(j, k) !== 'C') return;", "td.classList.add('vol-rk', 'vol-rk' + rankTier(hit.i, RK.n));",
+                   "'<span class=\"vol-rkb\">#' + (hit.i + 1) + '</span>'", "function rankPanel(j, k, expiry)",
+                   "'Option Finder - rank ' + (hit.i + 1) + ' of ' + RK.n", "if (RK.params) { if (RK.sym !== j.symbol && !RK.sym) loadRank(j.symbol); else paintRank(); }",
+                   ".vol-grid.vol-rk-on td.vol-cell:not(.vol-rk) { opacity: .28; }", ".vol-grid td.vol-rk1 { background-color: rgba(16,185,129,.62) !important; }",
+                   ".vol-grid td.vol-rk-top { box-shadow: inset 0 0 0 2px #d97706; }"):
+        assert needle in html, needle
+    import shutil, subprocess, tempfile, pathlib
+    if shutil.which("node"):
+        js = html[html.index("  function rankTier(i, n)"):html.index("  function paintRank()")]
+        js += "console.log([0, 1, 3, 5, 8, 9].map(function (i) { return rankTier(i, 10); }).join(''), rankTier(0, 1));"
+        path = pathlib.Path(tempfile.mkdtemp()) / "tier.js"
+        path.write_text(js, encoding="utf-8")
+        out = subprocess.run(["node", str(path)], capture_output=True, text=True)
+        assert out.stdout.split() == ["123455", "1"], out.stdout + out.stderr

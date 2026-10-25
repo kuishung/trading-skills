@@ -223,6 +223,27 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-25 - v4.223: the Option Finder's ranking laid over the Volatility Surface, in a new window
+
+The user: *"can you give me a button so that the ranking of the result can be overlay to the vol surface? so that I can
+use back the same vol surface with the ranking of the ranking result. the vol surface with the result is to be open in
+new window"*. In `options.html`:
+- **The button** under the Option Finder's info line, "Show this ranking on the volatility surface", opens
+  `/options?symbol=&tab=surface&rank=long_call&target=&worst=&mode=&date=&sort=` in a new window.
+- **That window** is the ordinary Volatility Surface (tiles, greeks, history colours, hover card, a click for the
+  contract's history) set to show every call (Show: Calls, every expiry - weeklies too -, no expiry limit, common
+  strikes and the thin-strike tidy-up off, so every ranked call has its cell). It reads the ranking from
+  `/options/api/finder` and lays it over the cells (`paintRank`, after every draw): each ranked call's cell carries a
+  **#n badge** and a **green tint in five tiers** by rank (classes, so the history colouring never wipes them), the
+  **best ringed in amber**, cells outside the ranking dimmed. A **bar** above the grid states the ranking (strategy,
+  ticker, target, worst case, time decay, how many ranked, #1) with a **Rank by** switch (reward over risk, ROI,
+  breakeven closest to today's price, chance above breakeven - re-ranked on the page) and a **Show the ranking** tick.
+  The **hover card** gains an **"Option Finder - rank n of N"** panel: cost, breakeven, worth at target and at worst,
+  reward / risk, ROI, chance above breakeven, valued-on. Typing another ticker in that window keeps the surface but not
+  the ranking (the bar says to open it again from the finder for that ticker).
+- Tests: `test_options_page.py` (the button, the window's settings, the overlay, the bar, the hover panel, the five
+  tiers run under node).
+
 ### 2026-10-25 - v4.222: ticker logos are downloaded ahead of time, so pages never wait for one
 
 The user: *"when loading the logo it takes too long can we download it in hermes so it load fast?"* In v4.221 a logo

@@ -106,6 +106,21 @@
   .vol-grid tr.vol-atm > th, .vol-grid tr.vol-atm > td { border-top: 2px solid var(--tv-accent); border-bottom: 2px solid var(--tv-accent); }
   .vol-grid th.vol-m-k { white-space: nowrap; }
   .vol-grid td.vol-cell { cursor: pointer; }
+  /* v4.223: the Option Finder ranking laid over the surface - a ranked call's cell tinted by its rank (five tiers,
+     classes so the history colouring's inline style never wipes them), a #n badge, the best ringed, the rest dimmed */
+  .vol-grid.vol-rk-on td.vol-cell:not(.vol-rk) { opacity: .28; }
+  .vol-grid td.vol-rk { box-shadow: inset 0 0 0 1px rgba(16,185,129,.55); }
+  .vol-grid td.vol-rk1 { background-color: rgba(16,185,129,.62) !important; }
+  .vol-grid td.vol-rk2 { background-color: rgba(16,185,129,.46) !important; }
+  .vol-grid td.vol-rk3 { background-color: rgba(16,185,129,.32) !important; }
+  .vol-grid td.vol-rk4 { background-color: rgba(16,185,129,.20) !important; }
+  .vol-grid td.vol-rk5 { background-color: rgba(16,185,129,.10) !important; }
+  .vol-grid td.vol-rk-top { box-shadow: inset 0 0 0 2px #d97706; }
+  .vol-rkb { position: absolute; top: 1px; left: 2px; font-size: 9px; font-weight: 700; line-height: 1; color: #065f46;
+             background: rgba(255,255,255,.85); border-radius: 3px; padding: 1px 2px; pointer-events: none; }
+  .vol-rankbar { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .9rem; font-size: 11px; color: var(--tv-muted);
+                 border: 1px solid rgba(16,185,129,.45); background: rgba(16,185,129,.07); border-radius: .5rem; padding: .35rem .6rem; }
+  .vol-rankbar b { color: var(--tv-text-hi); }
   .vol-grid td.vol-cell:hover { outline: 1px solid var(--tv-accent); outline-offset: -1px; }
   .vol-bar { display: inline-block; width: 9rem; height: .5rem; border-radius: 9999px; vertical-align: middle;
              background: linear-gradient(90deg, hsla(120,70%,45%,.75), hsla(60,70%,45%,.75), hsla(0,70%,45%,.75)); }
@@ -492,6 +507,18 @@
      day of the contract history. Full screen (v4.159): the grid takes the rest of the page and
      scrolls inside, the strike column and the expiry header held. Painted by the script below. #}
   <section id="volPanelSurface" class="flex flex-col min-h-0 flex-1 space-y-2" role="tabpanel" aria-labelledby="volTabSurface">
+    {# v4.223 (user: "a button so that the ranking of the result can be overlay to the vol surface ... open in new
+       window"): when this window was opened from the Option Finder (?rank=...), the ranking's inputs, a Rank-by
+       switch and a show / hide tick; the cells carry the rank (paintRank) #}
+    <div id="volRankBar" class="vol-rankbar hidden">
+      <span id="volRankText"></span>
+      <label class="flex items-center gap-1">Rank by
+        <select id="volRankSort" class="vol-sel">
+          <option value="rr">Reward over risk</option><option value="roi">Return on investment</option>
+          <option value="be">Breakeven closest to today's price</option><option value="prob">Chance above breakeven</option>
+        </select></label>
+      <label class="scr-check"><input type="checkbox" id="volRankShow" checked> Show the ranking</label>
+    </div>
     {# v4.175: ONE rank window for the whole surface (calendar days, ending on the day shown), remembered in
        th.vol.window - every cell's colour, rank bar and hover card are over the same span, so a contract
        listed three weeks ago is no longer ranked over three weeks and an old one over a year #}
@@ -600,6 +627,8 @@
     </div>
     <div id="ofMsg" class="hidden rounded border border-slate-700 px-3 py-2 text-xs text-slate-300"></div>
     <div id="ofInfo" class="hidden text-[11px] text-slate-400 leading-snug"></div>
+    <div id="ofSurfRow" class="hidden"><button type="button" id="ofSurf" class="rounded border border-emerald-600/60 px-2.5 py-1 text-[11px] text-emerald-300 hover:bg-emerald-500/10"
+      title="The same Volatility Surface in a new window, each ranked call's cell carrying its rank">Show this ranking on the volatility surface &#8599;</button></div>
     <div id="ofWrap" class="hidden scr-wrap of-wrap rounded-lg border border-slate-800 overflow-auto">
       <table id="ofTable" class="of-table text-xs"></table>
     </div>
@@ -1077,6 +1106,7 @@
     tileNote(activeLast());
     // a redraw (the tick, a refresh) keeps the colours when the history on hand is this grid's
     if (V.histState === 'ok' && V.hist && sameGrid(j, V.hist)) paintHistory(j, V.hist);
+    if (RK.params) { if (RK.sym !== j.symbol && !RK.sym) loadRank(j.symbol); else paintRank(); }   // v4.223
   }
   // ── the configurable tile (v4.166) ── which greeks sit above the IV, which figure below it; the
   // choice lives in localStorage th.vol.tile ({g: ['d', 't'], b: 'last'}) and a change repaints the
@@ -1499,7 +1529,7 @@
     var key = td.dataset.r + ',' + td.dataset.c;
     var s = V.hist && V.hist.cells[key];
     var xf = extraAt(j, +td.dataset.r, +td.dataset.c);
-    pop.innerHTML = popoverHtml(label, cur, s, key, ex.date, figsHtml(j, xf), modelWorkHtml(j, xf, k, ex, cur));
+    pop.innerHTML = popoverHtml(label, cur, s, key, ex.date, figsHtml(j, xf), modelWorkHtml(j, xf, k, ex, cur)) + rankPanel(j, k, ex.date);   // v4.223
     pop.classList.remove('hidden');
     var pw = pop.offsetWidth || 320, ph = pop.offsetHeight || 200;
     var x = ev.clientX + 14, y = ev.clientY + 14;
@@ -1583,8 +1613,8 @@
   function ofSavePrices(sym) { if (sym) lsSet('th.of.p.' + sym, JSON.stringify({t: $('ofTarget').value, w: $('ofWorst').value})); }
   function ofSchedule() { clearTimeout(OF.timer); OF.timer = setTimeout(runFind, 450); }
   function pctOf(v, d) { return v == null || !isFinite(v) ? '-' : (v * 100).toFixed(d == null ? 0 : d) + '%'; }
-  function ofSorted(rows) {
-    var k = OF.sort, out = rows.slice();
+  function ofSorted(rows, key) {
+    var k = key || OF.sort, out = rows.slice();
     function val(r) {
       if (k === 'rr') return r.no_loss ? Infinity : (r.rr == null ? -Infinity : r.rr);
       if (k === 'roi') return r.roi == null ? -Infinity : r.roi;
@@ -1622,7 +1652,7 @@
       $('ofSpotSrc').classList.toggle('est', !!ofs[2]);
       if (!j || !j.ok) {
         OF.last = null;
-        show($('ofWrap'), false); show($('ofInfo'), false); show($('ofMapBox'), false); show($('ofMore'), false);
+        show($('ofWrap'), false); show($('ofInfo'), false); show($('ofMapBox'), false); show($('ofMore'), false); show($('ofSurfRow'), false);
         msg($('ofMsg'), j && j.need_prices ? 'Type your target price and your worst-case price (your stop) for ' + (j.symbol || sym) + ' at ' + money(j.spot) + '.'
                                            : (j && j.error ? j.error : 'The contracts could not be ranked.'));
         return;
@@ -1649,6 +1679,7 @@
       ' &middot; strikes within ' + Math.round(j.band * 100) + '% of the price, ' + j.min_dte + '+ days to expiry, rate ' + num(j.rate * 100, 1) + '%, no dividend' +
       (earnRows ? ' &middot; <span class="of-e">E</span> earnings on ' + esc(shortDate(j.earnings_date)) + ' fall before the valuation date (IV is held unchanged)' : '');
     show($('ofInfo'), true);
+    show($('ofSurfRow'), !!j.rows.length);
     function th(key, label, tip) {
       return '<th title="' + esc(tip) + '"><button type="button" data-ofsort="' + key + '" aria-pressed="' + (OF.sort === key) + '">' + label + (OF.sort === key ? ' &#9660;' : '') + '</button></th>';
     }
@@ -1706,8 +1737,106 @@
     $('ofMapTitle').innerHTML = 'The same calls on the surface, each coloured by its rank for <b>' + esc(OF_SORTS[OF.sort]) + '</b> (deeper green = higher); the best one ringed. Click a cell or a row for that contract\'s history.';
     show($('ofMapBox'), true);
   }
+  // ── v4.223: the Option Finder ranking laid over the Volatility Surface (a window opened by the finder's button) ──
+  var RK = {params: null, data: null, sym: null, sort: 'rr', on: true, byKey: {}, n: 0};
+  function rkKey(expiry, strike) { return String(expiry).slice(0, 10) + '|' + strikeText(Number(strike)); }
+  function finderUrl(p, sym) {
+    var q = new URLSearchParams({symbol: sym, strategy: p.strategy || 'long_call', target: p.target, worst: p.worst, mode: p.mode || 'expiry'});
+    if (p.mode === 'date' && p.date) q.set('date', p.date);
+    return '/options/api/finder?' + q.toString();
+  }
+  function rkIndex() {                 // rows -> rank by the chosen key
+    RK.byKey = {}; RK.n = 0;
+    if (!RK.data || !RK.data.rows) return;
+    var rows = ofSorted(RK.data.rows, RK.sort);
+    RK.n = rows.length;
+    rows.forEach(function (r, i) { RK.byKey[rkKey(r.expiry, r.strike)] = {r: r, i: i}; });
+  }
+  function rankTier(i, n) { var t = n > 1 ? i / (n - 1) : 0; return t < 0.1 ? 1 : t < 0.3 ? 2 : t < 0.55 ? 3 : t < 0.8 ? 4 : 5; }
+  function paintRank() {               // after every surface draw (and the history colours)
+    var table = $('volTable'), j = V.last;
+    if (!table) return;
+    var on = !!(RK.params && RK.on && RK.data && j && j.symbol === RK.sym);
+    table.classList.toggle('vol-rk-on', on);
+    Array.prototype.forEach.call(table.querySelectorAll('td.vol-cell'), function (td) {
+      td.classList.remove('vol-rk', 'vol-rk1', 'vol-rk2', 'vol-rk3', 'vol-rk4', 'vol-rk5', 'vol-rk-top');
+      var old = td.querySelector('.vol-rkb');
+      if (old) old.remove();
+      if (!on) return;
+      var k = j.strikes[+td.dataset.r], ex = j.expiries[+td.dataset.c];
+      if (!ex || sideOf(j, k) !== 'C') return;          // buy a call: the call cells only
+      var hit = RK.byKey[rkKey(ex.date, k)];
+      if (!hit) return;
+      td.classList.add('vol-rk', 'vol-rk' + rankTier(hit.i, RK.n));
+      if (hit.i === 0) td.classList.add('vol-rk-top');
+      td.insertAdjacentHTML('afterbegin', '<span class="vol-rkb">#' + (hit.i + 1) + '</span>');
+    });
+    paintRankBar();
+  }
+  function paintRankBar() {
+    if (!RK.params) { show($('volRankBar'), false); return; }
+    var p = RK.params, d = RK.data, j = V.last, top = null;
+    if (d && d.rows && d.rows.length) top = ofSorted(d.rows, RK.sort)[0];
+    var when = p.mode === 'date' ? 'every call valued on ' + shortDate(p.date) : 'each call valued at its own expiry';
+    var other = j && RK.sym && j.symbol !== RK.sym;
+    $('volRankText').innerHTML = '<b>Option Finder ranking</b> &middot; Buy a call &middot; ' + esc(RK.sym || '') +
+      ' &middot; target ' + money(Number(p.target)) + ', worst case ' + money(Number(p.worst)) + ' &middot; ' + esc(when) +
+      (RK.error ? ' &middot; <span class="text-rose-300">' + esc(RK.error) + '</span>'
+        : (d ? ' &middot; ' + intText(RK.n) + ' calls ranked' + (top ? ' &middot; #1 ' + esc(shortDate(top.expiry) + ' ' + strikeText(top.strike)) + ' call' : '') : ' &middot; ranking...')) +
+      (other ? ' &middot; <span class="text-amber-300">the ranking is for ' + esc(RK.sym) + ' - open it again from the Option Finder for ' + esc(j.symbol) + '</span>' : '') +
+      ' &middot; <span class="text-slate-500">dimmed cells are not in the ranking (puts, filtered out, or not offered)</span>';
+    show($('volRankBar'), true);
+  }
+  function rankPanel(j, k, expiry) {   // the hover card's Option Finder panel for a ranked cell
+    if (!RK.params || !RK.on || !RK.data || !j || j.symbol !== RK.sym || sideOf(j, k) !== 'C') return '';
+    var hit = RK.byKey[rkKey(expiry, k)];
+    if (!hit) return popPanel('Option Finder', '<div class="vol-cap">Not in the ranking (filtered out: open interest, cost, days or strike range).</div>');
+    var r = hit.r;
+    return popPanel('Option Finder - rank ' + (hit.i + 1) + ' of ' + RK.n + ' by ' + OF_SORTS[RK.sort].toLowerCase(),
+      '<div class="vol-pop-figs">' +
+      '<div><span>Cost</span><b>' + money(r.cost) + '</b></div><div><span>Breakeven</span><b>' + money(r.breakeven) + '</b></div>' +
+      '<div><span>At target</span><b>' + money(r.at_target) + '</b></div><div><span>At worst</span><b>' + money(r.at_worst) + '</b></div>' +
+      '<div><span>Reward / risk</span><b>' + (r.no_loss ? 'no loss' : num(r.rr, 2)) + '</b></div><div><span>ROI</span><b>' + pctOf(r.roi, 0) + '</b></div>' +
+      '<div><span>Chance above BE</span><b>' + pctOf(r.prob, 0) + '</b></div><div><span>Valued on</span><b>' + esc(shortDate(r.valued_on)) + '</b></div>' +
+      '</div>');
+  }
+  function loadRank(sym) {
+    if (!RK.params) return;
+    RK.sym = sym; RK.data = null; RK.error = null;
+    paintRankBar();
+    getJSON(finderUrl(RK.params, sym)).then(function (d) {
+      if (RK.sym !== sym) return;
+      if (!d || !d.ok) { RK.error = (d && d.error) || 'the ranking could not be read'; paintRankBar(); return; }
+      RK.data = d; rkIndex(); paintRank();
+    }).catch(function () { RK.error = 'the server did not answer'; paintRankBar(); });
+  }
+  if (MODE === 'surface') {
+    (function () {                      // ?rank=<strategy>&target=&worst=&mode=&date=&sort= from the finder's button
+      var q;
+      try { q = new URLSearchParams(location.search); } catch (err) { return; }
+      if (!q.get('rank') || !q.get('target') || !q.get('worst')) return;
+      RK.params = {strategy: q.get('rank'), target: q.get('target'), worst: q.get('worst'),
+                   mode: q.get('mode') === 'date' ? 'date' : 'expiry', date: q.get('date') || ''};
+      RK.sort = OF_SORTS[q.get('sort')] ? q.get('sort') : 'rr';
+      $('volRankSort').value = RK.sort;
+      // the calls the finder ranks: every call (not out of the money), every expiry (weeklies too), every strike
+      $('volSide').value = 'call'; $('volExp').value = 'all'; $('volDte').value = '0';
+      if ($('volCommon')) $('volCommon').checked = false;
+      if ($('volClean')) $('volClean').checked = false;      // the tidy-up hides strikes not listed in half the expiries - with weeklies, most
+      $('volRankSort').addEventListener('change', function () { RK.sort = $('volRankSort').value; rkIndex(); paintRank(); });
+      $('volRankShow').addEventListener('change', function () { RK.on = $('volRankShow').checked; paintRank(); });
+    })();
+  }
   if (MODE === 'surface') {
     (function () {
+      $('ofSurf').addEventListener('click', function () {   // v4.223: the ranking on the surface, in a new window
+        var j = OF.last;
+        if (!j) return;
+        var q = new URLSearchParams({symbol: j.symbol, tab: 'surface', rank: j.strategy, target: String(j.target),
+                                     worst: String(j.worst), mode: j.mode, sort: OF.sort});
+        if (j.mode === 'date' && j.on) q.set('date', j.on);
+        window.open('/options?' + q.toString(), '_blank', 'noopener');
+      });
       var s0 = lsGet(OF_SORT_KEY);
       if (s0 && OF_SORTS[s0]) { OF.sort = s0; $('ofSort').value = s0; }
       if (lsGet(OF_MODE_KEY) === 'date') { $('ofModeD').checked = true; show($('ofDate'), true); $('ofDate').value = ofDefaultDate(); }

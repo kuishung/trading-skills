@@ -671,7 +671,10 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
   `services/opt_finder.py`, `/options/api/finder`): the user's Excel calculator over every call (target, worst case,
   time decay = each call's own expiry OR a picked date), ranked by reward/risk, ROI, breakeven closest to today, or
   the model's chance above breakeven; the surface below coloured by that rank. Strategy dropdown: Buy a call built,
-  buy a put / bull call / bear put spreads / condors "coming soon" - the next steps.
+  buy a put / bull call / bear put spreads / condors "coming soon" - the next steps. **v4.223**: the finder's
+  "Show this ranking on the volatility surface" button opens the surface in a NEW WINDOW (`?rank=...&target=&worst=`)
+  with every ranked call's cell badged #n, tinted by rank, the best ringed, a Rank-by bar and a finder panel in the
+  hover card.
   **v4.220 (2026-10-25): the STOCK PRICE** is the official close once a session has closed (`scr_store.settle_spots`,
   run by the screener collector) and the option-implied estimate (put-call parity) only during market hours and until
   Stocks Basic publishes the close at 20:00 ET (08:00 MYT); the surface and the finder say which ("official close",
