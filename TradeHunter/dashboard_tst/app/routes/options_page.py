@@ -1393,9 +1393,10 @@ def options_home(request: Request, user: User = Depends(require_user)):
         "no_data": _no_data_text(),
         "is_admin": bool(getattr(user, "is_admin", False)),
     }
+    from ..services import opt_finder   # noqa: PLC0415 - v4.219: the Option Finder tab's strategy list
     return templates.TemplateResponse(request, "options.html", {
         "user": user, "mode": "surface", "status": status, "contract": {}, "back_url": "/options",
-        "boot": boot,
+        "boot": boot, "finder_strategies": opt_finder.STRATEGIES,
     })
 
 
@@ -1864,6 +1865,37 @@ async def api_cm_series(symbol: str = "", h: str = "90", m: str = "", k: str = "
         return JSONResponse({"ok": False, "pending": True, "elapsed": res["elapsed"],
                              "error": "still rebuilding (%d s so far)" % int(res["elapsed"])})
     return JSONResponse({"ok": False, "error": res["error"]})
+
+
+@router.get("/api/finder")
+async def api_finder(symbol: str = "", strategy: str = "long_call", target: str = "", worst: str = "",
+                     mode: str = "expiry", date: str = "", user: User = Depends(require_user)):
+    """v4.219 - the Option Finder tab (``services/opt_finder.py``): every contract of the strategy ranked by the
+    workbook's figures for the member's target and worst-case prices, valued at each contract's own expiry
+    (``mode=expiry``) or on one date (``mode=date&date=YYYY-MM-DD``). Before both prices are typed the answer is
+    ``{ok: false, need_prices: true, spot}`` so the page can show today's price; a problem is
+    ``{ok: false, error}`` in words."""
+    from .. import screener_db
+    from ..services import opt_finder
+    from ..services.calc_chain import ChainError, load_chain
+
+    def run():
+        with screener_db.session() as s:
+            if not (target or "").strip() or not (worst or "").strip():
+                ch = load_chain(s, symbol)
+                return {"ok": False, "need_prices": True, "symbol": ch.symbol, "name": ch.name, "spot": ch.spot}
+            res = opt_finder.find(s, symbol, target=target, worst=worst, strategy=(strategy or "long_call").strip(),
+                                  mode=(mode or "expiry").strip().lower(), on=(date or "").strip() or None,
+                                  today=_dt.date.fromisoformat(clock.et_today()))
+            return {"ok": True, **res}
+
+    try:
+        return JSONResponse(await run_in_threadpool(run))
+    except (opt_finder.FinderError, ChainError) as exc:
+        return JSONResponse({"ok": False, "error": str(exc)})
+    except Exception as exc:  # noqa: BLE001
+        log.exception("option finder failed")
+        return JSONResponse({"ok": False, "error": "The option data could not be read just now (%s)." % type(exc).__name__})
 
 
 @router.get("/api/history/chain")

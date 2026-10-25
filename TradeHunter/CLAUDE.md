@@ -667,6 +667,11 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
   difficult to understand. remove the interface."*) - `calc.html`, the Options ▾ → Calculator entry and the
   Watchlist's "Calculator ↗" button are gone, `/calc` forwards to `/options`. KEPT for a simpler replacement page:
   the engine, pairing, store, `/calc/api/*` (menu key `calc` now in `HIDDEN_KEYS`), saved setups, the Hermes lane.
+  **v4.219 (2026-10-25): the OPTION FINDER** - a third tab on the Volatility Surface page (`?tab=find`,
+  `services/opt_finder.py`, `/options/api/finder`): the user's Excel calculator over every call (target, worst case,
+  time decay = each call's own expiry OR a picked date), ranked by reward/risk, ROI, breakeven closest to today, or
+  the model's chance above breakeven; the surface below coloured by that rank. Strategy dropdown: Buy a call built,
+  buy a put / bull call / bear put spreads / condors "coming soon" - the next steps.
 - **Options page = the Volatility surface ONLY since v4.159 (2026-10-20, user: "We only have the
   Volatility Surface")**: nav Options ▾ → **Volatility Surface** (`/options`) (+ Calculator until v4.218). A surface
   cell click opens `/options/history?symbol=&expiry=&right=&strike=&day=` (the contract's daily bars +

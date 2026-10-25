@@ -223,6 +223,37 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-25 - v4.219: the Option Finder - your Excel calculator run over every call, ranked
+
+The user, after the calculator page was removed: *"the inputs are Current Stock Price (fed from TradeHunter), Target
+Stock Price, Worst case Stock Price (the stop loss), Time Decay ... the legs data can be fed by TradeHunter ... the
+output is Breakeven Stock Price, Reward over Risk, Return on Investment ... we make it easy first by working on the
+single leg naked call ... auto calculate the strike and each expiry and generate a report ... rank it"*; then both
+time-decay choices confirmed (*"at each call's own expiry - yes confirm"*, *"on a target date ... OK, give a date
+picker"*), *"make this sortable by choice"*, *"we use the word option find and user can select based on what strategy
+they are looking at"*, *"ok wire it"*.
+- **A third tab on the Volatility Surface page, "Option Finder"** (`options.html`, `?tab=find`, remembered in
+  `th.vol.tab`): **Strategy** dropdown (Buy a call; Buy a put, bull call spread, bear put spread, iron condor /
+  butterfly listed as "coming soon"), **Current price** from the market pass, **Target price**, **Worst case
+  (stop)** (remembered per ticker in this browser), **Time decay** - value each contract *at its own expiry* or *on a
+  date* (a date picker; blank = 45 days out), **Rank by** - reward over risk, return on investment, breakeven closest
+  to today's price, or chance above breakeven (also by clicking those column heads). The ticker and watchlist are the
+  surface page's own.
+- **The table**: rank, expiry (days), strike, IV, open interest, cost, worth at target, worth at worst, breakeven (and
+  % from today's price), reward / risk, ROI, chance above breakeven, valued-on; the top 30, "Show all"; an amber E
+  where earnings fall before the valuation date. **Under it the same calls on the surface** (strikes x expiries),
+  each cell showing the chosen figure and coloured by its rank, the best ringed. A row or a cell opens that
+  contract's history.
+- **`services/opt_finder.py`** `find()`: every call within 15 % of the price, 7+ days out, open interest 100+, through
+  `option_calc.evaluate` (the engine that IS the workbook; the contract's own IV, the platform's rate, no dividend);
+  contracts worth under $0.05 or expiring before the chosen date are left out (counted in the info line). Because
+  "at its own expiry" ranks near-dated cheap calls first (they need the target reached within days), every row also
+  carries **the model's chance the stock ends above the breakeven** by the valuation date (`prob_above`, N(d2) at the
+  contract's IV) - a figure, not a forecast. `GET /options/api/finder?symbol&strategy&target&worst&mode&date`
+  (before both prices are typed it answers today's price; problems in words).
+- Tests: `test_opt_finder.py` (both modes against the engine, the filters, the order, the inputs refused in words,
+  N(d2), the API), `test_options_page.py` (the tab and the route).
+
 ### 2026-10-25 - v4.218: the Calculator page is removed
 
 The user: *"the current interface of the calculator is too difficult to understand. remove the interface."* The

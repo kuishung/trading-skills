@@ -235,3 +235,9 @@ the excel sheet and then on the leg user can select the leg from the volatility 
   nav entry and the Watchlist's "Calculator" button are gone; `/calc` forwards to the Volatility
   Surface. Steps 1 and 3 (engine, pairing), the store, the `/calc/api/*` JSON, the saved setups and
   the Hermes lane are kept - a new, simpler page (step 2) is to be designed on top of them.
+- 2026-10-25 (v4.219) — **The Option Finder** replaces the page: a tab on the Volatility Surface
+  page that runs the workbook over every call (`services/opt_finder.py`, `/options/api/finder`)
+  for the member's target and worst-case prices - valued at each call's own expiry or on a picked
+  date - and ranks them by reward over risk, ROI, breakeven closest to today's price or the model's
+  chance above breakeven. Buy a call only; the strategy dropdown lists the next ones (buy a put,
+  bull call / bear put spreads, condors) as "coming soon".

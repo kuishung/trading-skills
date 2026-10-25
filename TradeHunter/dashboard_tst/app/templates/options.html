@@ -224,6 +224,36 @@
   .vol-tabs button { padding: .35rem .75rem; font-size: 12px; color: var(--tv-muted); background: transparent;
                      border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
   .vol-tabs button:hover { color: var(--tv-text-hi); }
+  /* v4.219: the Option Finder tab */
+  .of-inputs { display: flex; flex-wrap: wrap; align-items: flex-end; gap: .5rem .9rem; font-size: 11px; color: var(--tv-muted); }
+  .of-l { display: flex; flex-direction: column; gap: .15rem; }
+  .of-in { min-width: 0; width: 8.5rem; border-radius: .3rem; border: 1px solid var(--tv-border-2); background: var(--tv-panel);
+           color: var(--tv-text); padding: .2rem .4rem; font-size: 12px; }
+  select.of-in { width: auto; }
+  .of-spot { font-size: 14px; color: var(--tv-text-hi); padding: .1rem 0; }
+  .of-mode { border: 0; margin: 0; padding: 0; display: flex; flex-wrap: wrap; align-items: center; gap: .2rem .6rem; }
+  .of-mode legend { float: left; width: 100%; margin-bottom: .15rem; }
+  .of-table { border-collapse: collapse; font-variant-numeric: tabular-nums; min-width: 100%; }
+  .of-table th { position: sticky; top: 0; background: var(--tv-panel); color: var(--tv-muted); font-weight: 500; text-align: right;
+                 padding: .3rem .5rem; border-bottom: 1px solid var(--tv-border-2); white-space: nowrap; }
+  .of-table th.l, .of-table td.l { text-align: left; }
+  .of-table th button { color: inherit; background: none; border: 0; padding: 0; cursor: pointer; font: inherit; }
+  .of-table th button[aria-pressed="true"] { color: var(--tv-text-hi); }
+  .of-table td { text-align: right; padding: .25rem .5rem; border-bottom: 1px solid var(--tv-border); white-space: nowrap; color: var(--tv-text); }
+  .of-table tbody tr { cursor: pointer; } .of-table tbody tr:hover td { background: var(--tv-hover); }
+  .of-table tr.of-best td { background: rgba(16,185,129,.10); }
+  .of-table .of-key { color: var(--tv-text-hi); font-weight: 600; }
+  .of-e { display: inline-block; margin-left: .25rem; padding: 0 .25rem; border-radius: .2rem; background: rgba(217,119,6,.2); color: #d97706; font-size: 10px; }
+  #volPanelFind > * { flex-shrink: 0; }
+  #volPanelFind .of-wrap { flex: 0 0 auto; max-height: 60vh; }   /* .scr-wrap's flex: 1 0 0 would squeeze it */
+  .of-map { border-collapse: separate; border-spacing: 2px; font-variant-numeric: tabular-nums; }
+  .of-map th { position: sticky; top: 0; background: var(--tv-panel); color: var(--tv-muted); font-weight: 500; padding: .2rem .4rem; white-space: nowrap; }
+  .of-map th.vol-k { position: sticky; left: 0; z-index: 1; text-align: right; color: var(--tv-text); }
+  .of-map thead th.vol-k { z-index: 2; }
+  .of-map td { padding: .2rem .35rem; text-align: center; border-radius: .2rem; }
+  .of-map td.of-cell { cursor: pointer; min-width: 3.2rem; color: var(--tv-text-hi); }
+  .of-map td.of-cell:hover { outline: 1px solid var(--tv-text); outline-offset: -1px; }
+  .of-map td.of-top { outline: 2px solid #d97706; outline-offset: -2px; font-weight: 600; }
   .vol-tabs button[aria-selected="true"] { color: var(--tv-text-hi); border-bottom-color: var(--tv-accent); }
   .vol-tabs .vol-tick { align-self: center; margin-left: auto; margin-bottom: .2rem; flex: none; }
   /* v4.178: the grid's heading - the ticker large, the name and price small beside it */
@@ -429,6 +459,10 @@
             title="One column per listed expiry date">Volatility Surface</button>
     <button type="button" id="volTabCm" role="tab" data-vtab="cm" aria-selected="false" aria-controls="volPanelCm"
             title="One column per fixed time horizon (30 to 365 days), worked out from the listed expiries around it">Interpolated Volatility Surface</button>
+    {# v4.219 (user: "we use the word option find and user can select based on what strategy they are looking at"):
+       the workbook's figures for every contract of a strategy, ranked (services/opt_finder.py) #}
+    <button type="button" id="volTabFind" role="tab" data-vtab="find" aria-selected="false" aria-controls="volPanelFind"
+            title="Every contract of a strategy priced like your Excel calculator for your target and worst-case prices, ranked">Option Finder</button>
     {# v4.176 (user: "this should be show on the tab header"): the countdown to the next market pass sits at
        the right end of the tab row, above whichever surface is shown #}
     <span id="volTick" class="vol-tick ml-auto hidden"></span>
@@ -526,6 +560,51 @@
       <table id="cmTable" class="vol-grid text-xs"></table>
     </div>
     <div id="cmPop" class="vol-pop hidden" role="tooltip"></div>
+  </section>
+
+  {# ── OPTION FINDER (v4.219) ── the user's Excel calculator over every contract of the chosen strategy: the inputs
+     (current price from the market pass, target, worst case, time decay = each contract's own expiry or one date
+     from the picker), the outputs (breakeven, reward over risk, return on investment) per contract, ranked by the
+     member's choice; under the table the same contracts on the surface, coloured by that ranking. #}
+  <section id="volPanelFind" class="hidden flex flex-col min-h-0 flex-1 space-y-2 overflow-y-auto" role="tabpanel" aria-labelledby="volTabFind">
+    <div class="of-inputs">
+      <label class="of-l">Strategy
+        <select id="ofStrat" class="of-in">
+          {% for s in finder_strategies or [] %}<option value="{{ s[0] }}"{% if not s[4] %} disabled{% endif %}>{{ s[1] }}{% if not s[4] %} - coming soon{% endif %}</option>{% endfor %}
+        </select>
+      </label>
+      <div class="of-l">Current price<b id="ofSpot" class="of-spot">-</b></div>
+      <label class="of-l">Target price
+        <input id="ofTarget" class="of-in" type="number" step="any" min="0" inputmode="decimal" placeholder="where it goes">
+      </label>
+      <label class="of-l">Worst case (stop)
+        <input id="ofWorst" class="of-in" type="number" step="any" min="0" inputmode="decimal" placeholder="your stop-loss">
+      </label>
+      <fieldset class="of-l of-mode">
+        <legend>Time decay: value each contract</legend>
+        <label class="scr-check"><input type="radio" name="ofMode" id="ofModeE" value="expiry" checked> at its own expiry</label>
+        <label class="scr-check"><input type="radio" name="ofMode" id="ofModeD" value="date"> on a date</label>
+        <input id="ofDate" class="of-in hidden" type="date" aria-label="The date to value every contract on">
+      </fieldset>
+      <label class="of-l">Rank by
+        <select id="ofSort" class="of-in">
+          <option value="rr">Reward over risk</option>
+          <option value="roi">Return on investment</option>
+          <option value="be">Breakeven closest to today's price</option>
+          <option value="prob">Chance above breakeven</option>
+        </select>
+      </label>
+    </div>
+    <div id="ofMsg" class="hidden rounded border border-slate-700 px-3 py-2 text-xs text-slate-300"></div>
+    <div id="ofInfo" class="hidden text-[11px] text-slate-400 leading-snug"></div>
+    <div id="ofWrap" class="hidden scr-wrap of-wrap rounded-lg border border-slate-800 overflow-auto">
+      <table id="ofTable" class="of-table text-xs"></table>
+    </div>
+    <div id="ofMore" class="hidden"></div>
+    <div id="ofMapBox" class="hidden space-y-1">
+      <div id="ofMapTitle" class="text-[11px] text-slate-400"></div>
+      <div class="scr-wrap of-wrap rounded-lg border border-slate-800 overflow-auto"><table id="ofMap" class="of-map text-xs"></table></div>
+    </div>
   </section>
   {# v4.190: the watchlist pane's option-liquidity hover table (same as the Watchlist page's Opt liq).
      v4.191: OUTSIDE both tab panels - inside the (hidden) Interpolated panel it never showed on the Surface tab. #}
@@ -699,7 +778,7 @@
   // tab on screen; the left panel, the countdown and the status polls are shared and follow the active tab
   var CM = {seq: 0, last: null, passId: null, quiet: false, want: null};
   var TAB = 'surface';
-  function activeLast() { return TAB === 'cm' ? CM.last : V.last; }
+  function activeLast() { return TAB === 'cm' ? CM.last : V.last; }      // the finder tab keeps the surface's
   // ── v4.149: the countdown to the next market pass (Latest = the collector's last pass of Massive) ──
   var T = {st: null, at: 0, left: null, timer: null, due: false};
   function etTime(iso) {               // "09:45 ET" for an ISO instant
@@ -1409,6 +1488,7 @@
   function hidePop() { $('volPop').classList.add('hidden'); }
   function runSurface(quiet) {           // quiet (v4.149): a refresh behind the shown grid - no message, scroll kept
     if (TAB === 'cm') { runCm(quiet); return; }    // v4.171: the left panel draws the tab on screen
+    if (TAB === 'find') { if (!quiet) runFind(); return; }   // v4.219
     var sym = $('volSym').value.trim().toUpperCase();
     $('volSym').value = sym;
     if (!sym) { msg($('volMsg'), 'Type an underlying symbol, for example AAPL.'); return; }
@@ -1457,6 +1537,176 @@
   }
   function openContract(sym, expiry, right, strike, day) {
     window.open(historyUrl(sym, expiry, right, strike, day), '_blank', 'noopener');
+  }
+
+  // ── v4.219: the OPTION FINDER ───────────────────────────────────────────────────────────────
+  // (user: "based on the vol surface, when a user define the user input, i want the system to auto calculate the
+  // strike and each expiry and generate a report on screen with the output which user can obtain using the sheet
+  // ... rank it"; "make this sortable by choice"; "give a date picker"). The server runs the workbook's math
+  // (/options/api/finder); the page sorts the rows by the member's choice and paints the surface by that ranking.
+  var OF = {seq: 0, last: null, sym: null, timer: null, all: false, sort: 'rr'};
+  var OF_SORT_KEY = 'th.of.sort', OF_MODE_KEY = 'th.of.mode', OF_TOP = 30;
+  var OF_SORTS = {rr: 'Reward over risk', roi: 'Return on investment', be: 'Breakeven closest to today\'s price', prob: 'Chance above breakeven'};
+  function ofMode() { return $('ofModeD').checked ? 'date' : 'expiry'; }
+  function ofDefaultDate() {            // blank date -> 45 days from today (the calculator's default horizon)
+    var d = new Date(Date.now() + 45 * 86400000);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  function ofLoadPrices(sym) {          // the member's last target / worst for this ticker (this browser only)
+    var o = {};
+    try { o = JSON.parse(lsGet('th.of.p.' + sym) || '{}') || {}; } catch (err) { o = {}; }
+    $('ofTarget').value = o.t || ''; $('ofWorst').value = o.w || '';
+  }
+  function ofSavePrices(sym) { if (sym) lsSet('th.of.p.' + sym, JSON.stringify({t: $('ofTarget').value, w: $('ofWorst').value})); }
+  function ofSchedule() { clearTimeout(OF.timer); OF.timer = setTimeout(runFind, 450); }
+  function pctOf(v, d) { return v == null || !isFinite(v) ? '-' : (v * 100).toFixed(d == null ? 0 : d) + '%'; }
+  function ofSorted(rows) {
+    var k = OF.sort, out = rows.slice();
+    function val(r) {
+      if (k === 'rr') return r.no_loss ? Infinity : (r.rr == null ? -Infinity : r.rr);
+      if (k === 'roi') return r.roi == null ? -Infinity : r.roi;
+      if (k === 'prob') return r.prob == null ? -Infinity : r.prob;
+      return r.be_pct == null ? -Infinity : -Math.abs(r.be_pct);        // be: the closest to today's price first
+    }
+    out.sort(function (a, b) { var d = val(b) - val(a); return d || (a.expiry < b.expiry ? -1 : a.expiry > b.expiry ? 1 : a.strike - b.strike); });
+    return out;
+  }
+  function ofCellText(r) {
+    if (OF.sort === 'rr') return r.no_loss ? 'no loss' : num(r.rr, 2);
+    if (OF.sort === 'roi') return pctOf(r.roi, 0);
+    if (OF.sort === 'prob') return pctOf(r.prob, 0);
+    return (r.be_pct >= 0 ? '+' : '') + pctOf(r.be_pct, 1);
+  }
+  function runFind() {
+    var sym = $('volSym').value.trim().toUpperCase();
+    $('volSym').value = sym;
+    if (!sym) { msg($('ofMsg'), 'Type an underlying symbol, for example AAPL.'); return; }
+    wlMark(sym);
+    if (OF.sym !== sym) { OF.sym = sym; OF.all = false; ofLoadPrices(sym); }
+    var q = new URLSearchParams({symbol: sym, strategy: $('ofStrat').value, target: $('ofTarget').value.trim(),
+                                worst: $('ofWorst').value.trim(), mode: ofMode()});
+    if (ofMode() === 'date') {
+      if (!$('ofDate').value) $('ofDate').value = ofDefaultDate();
+      q.set('date', $('ofDate').value);
+    }
+    var my = ++OF.seq;
+    if ($('ofTarget').value.trim() && $('ofWorst').value.trim()) msg($('ofMsg'), 'Pricing every ' + sym + ' contract like the sheet...');
+    getJSON('/options/api/finder?' + q.toString(), {onRetry: function (n, why) { if (my === OF.seq) msg($('ofMsg'), retryNote(n, why)); }}).then(function (j) {
+      if (my !== OF.seq) return;
+      $('ofSpot').textContent = j && j.spot ? money(j.spot) : '-';
+      if (!j || !j.ok) {
+        OF.last = null;
+        show($('ofWrap'), false); show($('ofInfo'), false); show($('ofMapBox'), false); show($('ofMore'), false);
+        msg($('ofMsg'), j && j.need_prices ? 'Type your target price and your worst-case price (your stop) for ' + (j.symbol || sym) + ' at ' + money(j.spot) + '.'
+                                           : (j && j.error ? j.error : 'The contracts could not be ranked.'));
+        return;
+      }
+      OF.last = j;
+      msg($('ofMsg'), j.rows.length ? '' : 'No ' + sym + ' call passes the filters (strikes within ' + Math.round(j.band * 100) + '% of the price, ' +
+        j.min_dte + '+ days to expiry, open interest ' + j.min_oi + '+, worth ' + money(j.min_cost) + '+).');
+      paintFind();
+    }).catch(function (err) { if (my === OF.seq) msg($('ofMsg'), failText(err, 'the Option Finder')); });
+  }
+  function paintFind() {
+    var j = OF.last;
+    if (!j) return;
+    var rows = ofSorted(j.rows), shown = OF.all ? rows : rows.slice(0, OF_TOP);
+    var when = j.mode === 'date' ? 'every contract valued on ' + shortDate(j.on) : 'each contract valued at its own expiry';
+    var left = [];
+    if (j.n_thin) left.push(intText(j.n_thin) + ' with open interest under ' + j.min_oi);
+    if (j.n_cheap) left.push(intText(j.n_cheap) + ' worth under ' + money(j.min_cost));
+    var earnRows = j.rows.filter(function (r) { return r.earnings; }).length;
+    $('ofInfo').innerHTML = '<b style="color:var(--tv-text-hi)">' + esc(j.symbol) + '</b> ' + money(j.spot) + ' &middot; market pass of ' + esc(j.session || '?') +
+      ' &middot; target ' + money(j.target) + ', worst case ' + money(j.worst) + ' &middot; ' + esc(when) + ' &middot; ' +
+      intText(j.n) + ' calls ranked' + (left.length ? ' (' + esc(left.join(', ')) + ' left out)' : '') +
+      ' &middot; strikes within ' + Math.round(j.band * 100) + '% of the price, ' + j.min_dte + '+ days to expiry, rate ' + num(j.rate * 100, 1) + '%, no dividend' +
+      (earnRows ? ' &middot; <span class="of-e">E</span> earnings on ' + esc(shortDate(j.earnings_date)) + ' fall before the valuation date (IV is held unchanged)' : '');
+    show($('ofInfo'), true);
+    function th(key, label, tip) {
+      return '<th title="' + esc(tip) + '"><button type="button" data-ofsort="' + key + '" aria-pressed="' + (OF.sort === key) + '">' + label + (OF.sort === key ? ' &#9660;' : '') + '</button></th>';
+    }
+    var h = '<thead><tr><th class="l">#</th><th class="l">Expiry</th><th>Strike</th><th title="The contract\'s own implied volatility">IV</th><th>Open int.</th>' +
+      '<th title="What one call costs per share today (the sheet\'s Current value)">Cost</th>' +
+      '<th title="Worth per share at your target price on the valuation date">At target</th>' +
+      '<th title="Worth per share at your worst-case price on the valuation date">At worst</th>' +
+      th('be', 'Breakeven', 'The stock price on the valuation date where the trade is flat; and how far from today\'s price') +
+      th('rr', 'Reward / risk', 'Gain at the target price divided by the loss at the worst-case price') +
+      th('roi', 'ROI', 'Gain at the target price divided by the cost') +
+      th('prob', 'Chance above BE', 'The model\'s chance the stock ends above the breakeven by the valuation date (from the contract\'s own IV) - not a forecast') +
+      (j.mode === 'date' ? '' : '<th class="l">Valued on</th>') + '</tr></thead><tbody>';
+    shown.forEach(function (r, i) {
+      h += '<tr class="' + (i === 0 ? 'of-best' : '') + '" data-exp="' + esc(r.expiry) + '" data-k="' + r.strike + '" title="Open the ' + esc(shortDate(r.expiry) + ' ' + strikeText(r.strike)) + ' call\'s history">' +
+        '<td class="l">' + (i + 1) + '</td><td class="l">' + esc(shortDate(r.expiry)) + ' <span class="text-slate-500">' + r.dte + 'd</span>' + (r.earnings ? '<span class="of-e" title="Earnings fall before the valuation date">E</span>' : '') + '</td>' +
+        '<td>' + esc(strikeText(r.strike)) + '</td><td>' + pctOf(r.iv, 1) + '</td><td>' + intText(r.oi) + '</td>' +
+        '<td>' + money(r.cost) + '</td><td>' + money(r.at_target) + '</td><td>' + money(r.at_worst) + '</td>' +
+        '<td class="' + (OF.sort === 'be' ? 'of-key' : '') + '">' + money(r.breakeven) + ' <span class="text-slate-500">' + (r.be_pct >= 0 ? '+' : '') + pctOf(r.be_pct, 1) + '</span></td>' +
+        '<td class="' + (OF.sort === 'rr' ? 'of-key' : '') + '">' + (r.no_loss ? 'no loss' : num(r.rr, 2)) + '</td>' +
+        '<td class="' + (OF.sort === 'roi' ? 'of-key' : '') + '">' + pctOf(r.roi, 0) + '</td>' +
+        '<td class="' + (OF.sort === 'prob' ? 'of-key' : '') + '">' + pctOf(r.prob, 0) + '</td>' +
+        (j.mode === 'date' ? '' : '<td class="l">' + esc(shortDate(r.valued_on)) + '</td>') + '</tr>';
+    });
+    $('ofTable').innerHTML = h + '</tbody>';
+    show($('ofWrap'), !!rows.length);
+    $('ofMore').innerHTML = rows.length > OF_TOP ? '<button type="button" id="ofMoreBtn" class="text-[11px] text-slate-400 hover:text-slate-200 underline">' +
+      (OF.all ? 'Show the top ' + OF_TOP + ' only' : 'Show all ' + intText(rows.length)) + '</button>' : '';
+    show($('ofMore'), rows.length > OF_TOP);
+    paintFindMap(rows);
+  }
+  function paintFindMap(rows) {         // the same contracts on the surface, coloured by the chosen ranking
+    var j = OF.last, by = {}, exps = [], ks = [];
+    rows.forEach(function (r, i) {
+      by[r.expiry + '|' + r.strike] = {r: r, i: i};
+      if (exps.indexOf(r.expiry) < 0) exps.push(r.expiry);
+      if (ks.indexOf(r.strike) < 0) ks.push(r.strike);
+    });
+    if (!rows.length) { show($('ofMapBox'), false); return; }
+    exps.sort(); ks.sort(function (a, b) { return a - b; });
+    var n = rows.length, h = '<thead><tr><th class="vol-k">Strike &darr; / expiry &rarr;</th>';
+    exps.forEach(function (e) { h += '<th>' + esc(shortDate(e)) + '</th>'; });
+    h += '</tr></thead><tbody>';
+    ks.forEach(function (k) {
+      h += '<tr><th class="vol-k">' + esc(strikeText(k)) + (Math.abs(k - j.spot) === Math.min.apply(null, ks.map(function (x) { return Math.abs(x - j.spot); })) ? ' <span class="text-slate-500">&middot; price</span>' : '') + '</th>';
+      exps.forEach(function (e) {
+        var c = by[e + '|' + k];
+        if (!c) { h += '<td></td>'; return; }
+        var t = n > 1 ? 1 - c.i / (n - 1) : 1;
+        h += '<td class="of-cell' + (c.i === 0 ? ' of-top' : '') + '" data-exp="' + esc(e) + '" data-k="' + k + '" style="background:rgba(16,185,129,' + (0.06 + 0.6 * t * t).toFixed(2) + ')"' +
+          ' title="' + esc(shortDate(e) + ' ' + strikeText(k) + ' call - rank ' + (c.i + 1) + ' of ' + n + ': ' + OF_SORTS[OF.sort] + ' ' + ofCellText(c.r)) + '">' + esc(ofCellText(c.r)) + '</td>';
+      });
+      h += '</tr>';
+    });
+    $('ofMap').innerHTML = h + '</tbody>';
+    $('ofMapTitle').innerHTML = 'The same calls on the surface, each coloured by its rank for <b>' + esc(OF_SORTS[OF.sort]) + '</b> (deeper green = higher); the best one ringed. Click a cell or a row for that contract\'s history.';
+    show($('ofMapBox'), true);
+  }
+  if (MODE === 'surface') {
+    (function () {
+      var s0 = lsGet(OF_SORT_KEY);
+      if (s0 && OF_SORTS[s0]) { OF.sort = s0; $('ofSort').value = s0; }
+      if (lsGet(OF_MODE_KEY) === 'date') { $('ofModeD').checked = true; show($('ofDate'), true); $('ofDate').value = ofDefaultDate(); }
+      ['ofTarget', 'ofWorst'].forEach(function (id) {
+        $(id).addEventListener('input', function () { ofSavePrices(OF.sym); ofSchedule(); });
+      });
+      $('ofStrat').addEventListener('change', runFind);
+      $('ofDate').addEventListener('change', runFind);
+      Array.prototype.forEach.call(document.querySelectorAll('input[name="ofMode"]'), function (b) {
+        b.addEventListener('change', function () {
+          lsSet(OF_MODE_KEY, ofMode());
+          show($('ofDate'), ofMode() === 'date');
+          if (ofMode() === 'date' && !$('ofDate').value) $('ofDate').value = ofDefaultDate();
+          runFind();
+        });
+      });
+      function setSort(k) { OF.sort = k; $('ofSort').value = k; lsSet(OF_SORT_KEY, k); paintFind(); }
+      $('ofSort').addEventListener('change', function () { setSort($('ofSort').value); });
+      $('volPanelFind').addEventListener('click', function (e) {
+        var b = e.target.closest ? e.target.closest('[data-ofsort]') : null;
+        if (b) { setSort(b.dataset.ofsort); return; }
+        if (e.target.closest && e.target.closest('#ofMoreBtn')) { OF.all = !OF.all; paintFind(); return; }
+        var c = e.target.closest ? e.target.closest('tr[data-exp], td.of-cell') : null;
+        if (c && OF.last) openContract(OF.last.symbol, c.dataset.exp, 'C', Number(c.dataset.k), null);
+      });
+    })();
   }
 
   // ── v4.171: the TABS and the INTERPOLATED VOLATILITY SURFACE ───────────────────────────────
@@ -1864,6 +2114,7 @@
   }
   function drawIfStale() {              // the tab just opened: draw it when its last answer is for other settings
     var sym = $('volSym').value.trim().toUpperCase(), pid = passNow();
+    if (TAB === 'find') { if (!OF.last || OF.sym !== sym) runFind(); return; }   // v4.219
     if (!sym) {
       msg(TAB === 'cm' ? $('cmMsg') : $('volMsg'), 'Type an underlying symbol and press Enter, for example AAPL.');
       return;
@@ -1873,9 +2124,9 @@
     if (S.want !== want || older) runSurface();
   }
   function tabSet(t, draw) {
-    TAB = t === 'cm' ? 'cm' : 'surface';
+    TAB = t === 'cm' || t === 'find' ? t : 'surface';
     lsSet(TAB_KEY, TAB);
-    [['surface', 'volTabSurface', 'volPanelSurface'], ['cm', 'volTabCm', 'volPanelCm']].forEach(function (p) {
+    [['surface', 'volTabSurface', 'volPanelSurface'], ['cm', 'volTabCm', 'volPanelCm'], ['find', 'volTabFind', 'volPanelFind']].forEach(function (p) {
       var on = p[0] === TAB;
       $(p[1]).setAttribute('aria-selected', on ? 'true' : 'false');
       $(p[1]).tabIndex = on ? 0 : -1;
@@ -1908,8 +2159,9 @@
       b.addEventListener('keydown', function (e) {
         if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
         e.preventDefault();
-        tabSet(TAB === 'cm' ? 'surface' : 'cm', true);
-        $(TAB === 'cm' ? 'volTabCm' : 'volTabSurface').focus();
+        var order = ['surface', 'cm', 'find'], i = order.indexOf(TAB);
+        tabSet(order[(i + (e.key === 'ArrowRight' ? 1 : order.length - 1)) % order.length], true);
+        $({surface: 'volTabSurface', cm: 'volTabCm', find: 'volTabFind'}[TAB]).focus();
       });
     });
     hzLoad();
@@ -2348,7 +2600,8 @@
     // v4.171: ?tab=cm opens the Interpolated Volatility Surface; else the tab last used in this browser
     var tabWant = '';
     try { tabWant = (new URLSearchParams(location.search).get('tab') || '').trim().toLowerCase(); } catch (err) { tabWant = ''; }
-    tabSet(tabWant === 'cm' || tabWant === 'surface' ? tabWant : (lsGet(TAB_KEY) === 'cm' ? 'cm' : 'surface'), false);
+    var tabMem = lsGet(TAB_KEY);
+    tabSet(tabWant === 'cm' || tabWant === 'surface' || tabWant === 'find' ? tabWant : (tabMem === 'cm' || tabMem === 'find' ? tabMem : 'surface'), false);
     var want = '';
     try { want = (new URLSearchParams(location.search).get('symbol') || '').trim().toUpperCase(); } catch (err) { want = ''; }
     if (want && /^[A-Z0-9.\-]{1,12}$/.test(want)) {
@@ -2358,6 +2611,7 @@
       loadDays();
       msg($('volMsg'), 'Type an underlying symbol and press Enter, for example AAPL.');
       msg($('cmMsg'), 'Type an underlying symbol and press Enter, for example AAPL.');
+      msg($('ofMsg'), 'Type an underlying symbol and press Enter, for example AAPL.');
       $('volSym').focus();
     }
   }

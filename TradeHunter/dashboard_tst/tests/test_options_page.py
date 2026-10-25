@@ -1153,6 +1153,7 @@ def test_the_router_serves_the_screener_paths():
         ("/options/interpolation", ("GET",)),               # v4.209: one interpolated cell opened up (3 tabs)
         ("/options/api/cm/point", ("GET",)),
         ("/options/api/cm/series", ("GET",)),
+        ("/options/api/finder", ("GET",)),                  # v4.219: the Option Finder tab
         ("/options/api/liquidity", ("GET",)),               # v4.186: the pane's option-liquidity verdicts
         ("/options/api/screens", ("GET",)),
         ("/options/api/spec", ("GET",)),
@@ -2127,3 +2128,22 @@ console.log(earnPlace([10, 30], 0, 298).join(''));                // at the left
     path.write_text(js, encoding="utf-8")
     out = subprocess.run(["node", str(path)], capture_output=True, text=True)
     assert out.stdout.split() == ["rrr", "rrrR", "rrr", "l", "lrn", "rn"], out.stdout + out.stderr
+
+
+def test_the_option_finder_tab(client, fake):
+    """v4.219 (user: "we use the word option find and user can select based on what strategy they are looking at";
+    "make this sortable by choice"; "give a date picker"): a third tab with the strategy dropdown (only Buy a call
+    built, the rest "coming soon"), today's price, the two prices, the time decay choice with a date picker, the
+    rank choice, the table and the coloured surface."""
+    html = client.get("/options").text
+    for needle in ('id="volTabFind" role="tab" data-vtab="find"', ">Option Finder</button>", 'id="volPanelFind"',
+                   '<option value="long_call">Buy a call</option>', '<option value="long_put" disabled>Buy a put - coming soon</option>',
+                   '<option value="bull_call_spread" disabled>Bull call spread - coming soon</option>',
+                   'id="ofTarget"', 'id="ofWorst"', 'id="ofModeE" value="expiry" checked', 'id="ofModeD" value="date"',
+                   'id="ofDate" class="of-in hidden" type="date"', '<option value="rr">Reward over risk</option>',
+                   '<option value="roi">Return on investment</option>', "<option value=\"be\">Breakeven closest to today's price</option>",
+                   "fetch" if False else "getJSON('/options/api/finder?' + q.toString()",
+                   "if (TAB === 'find') { if (!quiet) runFind(); return; }", "['find', 'volTabFind', 'volPanelFind']",
+                   "function ofSorted(rows)", "function paintFindMap(rows)", "return r.be_pct == null ? -Infinity : -Math.abs(r.be_pct);",
+                   "openContract(OF.last.symbol, c.dataset.exp, 'C', Number(c.dataset.k), null);"):
+        assert needle in html, needle
