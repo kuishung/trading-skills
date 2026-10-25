@@ -226,6 +226,12 @@ async def lifespan(app: FastAPI):
             _time.sleep(_REWARM_EVERY_S)
 
     threading.Thread(target=_prewarm_sectors, daemon=True, name="prewarm-sectors").start()
+    # v4.222: the ticker logos are downloaded in the background (watchlists first), so a page never waits for one
+    try:
+        from .services import logos as _logos
+        _logos.start_background()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("ticker logo download not started: %s", exc)
     yield
 
 

@@ -30,6 +30,8 @@ os.environ["TST_SCREENER_DATABASE_URL"] = "sqlite:///" + (_TEST_TMP / "screener_
 # the contract history (v4.139): never the real Parquet folder (a test that needs one passes its own root)
 os.environ["TST_OPTION_HISTORY_DIR"] = str(_TEST_TMP / "option_history_unused")
 os.environ["TST_AUTH_MODE"] = "password"
+# v4.222: no background logo downloads from the test app (a test that needs them calls services/logos directly)
+os.environ["TST_LOGO_WARM"] = "0"
 os.environ["TST_ADMIN_EMAIL"] = "dev@local.test"
 os.environ.setdefault("TST_ADMIN_PASSWORD", "dev-only-not-a-real-password")
 os.environ["TST_IV_SEED_IBKR"] = "0"      # never probe a port or spawn the IB seeder from a test

@@ -8,6 +8,7 @@ import time
 import pytest
 
 from tests.test_options_page import client, fake, no_screener_db, screener_url  # noqa: F401 - a signed-in client
+from tests.test_calc_health import admin_client  # noqa: F401 - Settings -> Data Ingest is admin-only
 
 from app.services import logos
 
@@ -70,14 +71,59 @@ def test_the_letters_badge():
     assert logos.initials_svg("BRK-B") == svg and ">F</text>" in logos.initials_svg("F")
 
 
-def test_the_route_and_the_template_helper(client, monkeypatch):
-    monkeypatch.setattr(logos, "logo_png", lambda sym: PNG if sym.upper() == "AMD" else None)
+def test_the_route_never_waits_and_queues_what_it_lacks(client, monkeypatch):
+    """v4.222 (user: "when loading the logo it takes too long can we download it in hermes so it load fast?"): the
+    stored logo at once; else the letters badge at once (kept two minutes) with the ticker queued at the FRONT."""
+    monkeypatch.setattr(logos, "stored_png", lambda sym: PNG if sym.upper() == "AMD" else None)
+    monkeypatch.setattr(logos, "is_fresh", lambda sym, root=None: False)
+    monkeypatch.setattr(logos, "logo_png", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no download in a request")))
+    logos._Q.clear()
     r = client.get("/logo/AMD")
     assert r.status_code == 200 and r.headers["content-type"] == "image/png" and r.content == PNG
     assert "max-age=604800" in r.headers["cache-control"]
+    logos.enqueue(["AAA"])
     r = client.get("/logo/ZZZZQ")
     assert r.status_code == 200 and r.headers["content-type"].startswith("image/svg+xml") and b">ZZ</text>" in r.content
+    assert "max-age=120" in r.headers["cache-control"] and logos.queued()[0] == "ZZZZQ"     # ahead of AAA
+    # a ticker no service has (a recent "none") is not queued again and the badge is kept a day
+    monkeypatch.setattr(logos, "is_fresh", lambda sym, root=None: True)
+    r = client.get("/logo/QQQQX")
+    assert "max-age=86400" in r.headers["cache-control"] and "QQQQX" not in logos.queued()
+    logos._Q.clear()
     from app.main import _ticker_logo
     tag = str(_ticker_logo("brk.b", 20, "tk-lg"))
     assert tag == '<img class="tk-logo tk-lg" src="/logo/BRK-B" width="20" height="20" alt="" loading="lazy" decoding="async">'
     assert str(_ticker_logo("../x")) == ""
+
+
+def test_the_queue_the_worker_step_and_the_status(tmp_path):
+    logos._Q.clear()
+    (tmp_path / "OLD.png").write_bytes(PNG)                       # fresh: never queued
+    assert logos.warm(["old", "amd", "AMD", "brk.b", "../x"], root=tmp_path) == 2
+    assert logos.queued() == ["AMD", "BRK-B"]
+    assert logos.enqueue(["BRK-B"], front=True, root=tmp_path) == 0 and logos.queued() == ["BRK-B", "AMD"]
+    sym = logos._next()
+    assert sym == "BRK-B" and logos.work_one(sym, root=tmp_path, fetcher=lambda s: (PNG, "fmp")) == PNG
+    assert logos.work_one("AMD", root=tmp_path, fetcher=lambda s: (None, None)) is None
+    st = logos.status(root=tmp_path)
+    assert st["stored"] == 2 and st["missing"] == 1 and st["queued"] == 1 and st["last_symbol"] == "AMD"
+    assert st["sources"] == ["fmp", "parqet"] and st["last_warm_queued"] == 2 and st["off"] is True   # the tests switch it off
+    assert logos.start_background() is False                        # TST_LOGO_WARM=0 in the tests
+    logos._Q.clear()
+
+
+def test_the_data_ingest_tab(admin_client, monkeypatch):
+    client = admin_client
+    monkeypatch.setattr(logos, "status", lambda root=None: {
+        "started": "2026-10-25T10:00:00+00:00", "off": False, "stored": 1234, "queued": 56, "missing": 7,
+        "fetched": 60, "found": 55, "missed": 5, "last_symbol": "AMD", "last_fetch_at": "2026-10-25T10:05:00+00:00",
+        "last_warm_at": "2026-10-25T10:00:20+00:00", "last_warm_queued": 1290, "last_error": None,
+        "sources": ["fmp", "parqet"], "dir": "state/logos", "keep_days": 30, "miss_days": 3, "warm_every_h": 12})
+    html = client.get("/finviz/logos").text
+    for needle in (">Downloading</b>", "1,234</b> logos stored", "56</b> waiting", "7</b> tickers with no logo anywhere",
+                   "last AMD at", 'id="lgWarm"', "fmp or parqet"):
+        assert needle in html, needle
+    page = client.get("/finviz").text
+    assert 'data-tab="logos"' in page and 'data-panel="logos"' in page and "window.loadLogos = function loadLogos()" in page
+    monkeypatch.setattr(logos, "warm", lambda symbols=None, root=None: 42)
+    assert client.post("/finviz/logos/warm").json()["queued"] == 42

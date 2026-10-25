@@ -1,0 +1,33 @@
+{# Settings -> Data Ingest -> Ticker Logos (v4.222, services/logos.status): the logos the server downloaded for the
+   company badge beside every ticker. Context: lg (the status dict), sample (the first queued tickers). #}
+{% set running = lg.started and not lg.off %}
+<div class="rounded-lg border border-slate-800 px-4 py-3 space-y-2 text-sm">
+  <div class="flex flex-wrap items-center gap-x-4 gap-y-1">
+    <span class="inline-flex items-center gap-1.5">
+      <span class="inline-block w-2 h-2 rounded-full {{ 'bg-emerald-400' if running and lg.queued == 0 else ('bg-amber-400' if running else 'bg-slate-500') }}"></span>
+      <b class="text-slate-200">{{ 'Up to date' if running and lg.queued == 0 else ('Downloading' if running else 'Not running') }}</b>
+    </span>
+    <span class="text-slate-400"><b class="text-slate-200 tabular-nums">{{ "{:,}".format(lg.stored) }}</b> logos stored</span>
+    <span class="text-slate-400"><b class="text-slate-200 tabular-nums">{{ "{:,}".format(lg.queued) }}</b> waiting</span>
+    <span class="text-slate-400"><b class="text-slate-200 tabular-nums">{{ "{:,}".format(lg.missing) }}</b> tickers with no logo anywhere (shown as letters)</span>
+    {% if user.can_moderate %}<button type="button" id="lgWarm" class="ml-auto rounded border border-slate-700 px-2 py-0.5 text-xs text-slate-300 hover:border-emerald-500 hover:text-emerald-300">Download missing now</button>{% endif %}
+  </div>
+  <div class="text-xs text-slate-400 leading-relaxed">
+    {% if lg.off %}Background downloads are switched off on this server (TST_LOGO_WARM=0).
+    {% elif not lg.started %}The download worker has not started - restart the web app.
+    {% else %}Worker started {{ lg.started }} UTC &middot; {{ lg.fetched }} downloaded since ({{ lg.found }} found, {{ lg.missed }} with none)
+      {% if lg.last_symbol %}&middot; last {{ lg.last_symbol }} at {{ lg.last_fetch_at }} UTC{% endif %}
+      {% if lg.last_warm_at %}&middot; last look for missing logos {{ lg.last_warm_at }} UTC ({{ lg.last_warm_queued }} queued){% endif %}
+    {% endif %}
+    {% if lg.last_error %}<div class="text-rose-300">Last problem: {{ lg.last_error }}</div>{% endif %}
+    {% if sample %}<div>Next up: {{ sample | join(", ") }}{% if lg.queued > sample|length %} &hellip;{% endif %}</div>{% endif %}
+  </div>
+  <p class="text-xs text-slate-500 max-w-3xl leading-relaxed">
+    <b class="text-slate-400">How it works - nothing to do by hand.</b> The web app downloads each ticker's logo once from
+    a free public logo service ({{ lg.sources | join(" or ") }}, no key needed) and keeps it on this server
+    ({{ lg.dir }}), so pages show it at once. Your members' watchlist, MATP and Curated tickers go first, then every stock
+    and ETF in the options data; it looks again every {{ lg.warm_every_h }} hours, refreshes a logo after
+    {{ lg.keep_days }} days, and asks again after {{ lg.miss_days }} days for a ticker no service had. Until a logo is
+    stored, the page shows the ticker's letters.
+  </p>
+</div>

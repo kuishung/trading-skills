@@ -12,6 +12,7 @@
   <button type="button" data-tab="edgar" class="di-tab px-3 py-2 text-sm border-b-2 border-transparent text-slate-400">EDGAR Filings</button>
   <button type="button" data-tab="opthist" class="di-tab px-3 py-2 text-sm border-b-2 border-transparent text-slate-400">Option History</button>
   <button type="button" data-tab="optcalc" class="di-tab px-3 py-2 text-sm border-b-2 border-transparent text-slate-400">Option Calculator</button>
+  <button type="button" data-tab="logos" class="di-tab px-3 py-2 text-sm border-b-2 border-transparent text-slate-400">Ticker Logos</button>
 </div>
 
 {# ======================== MATP Tickers (the deduplicated MATP queue) ========================
@@ -395,6 +396,14 @@
    The Hermes lane (task TST-Option-Calc) that recomputes every member's saved option-calculator
    setups after each Massive market pass. Fetched when the tab opens, then every 30 s while it
    stays open (GET /finviz/option-calc). #}
+{# ======================== Ticker Logos (v4.222) ========================
+   The company logos the server downloads in the background for the badge beside every ticker
+   (services/logos.py). Fetched when the tab opens, then every 15 s while it stays open (GET /finviz/logos). #}
+<div data-panel="logos" class="hidden">
+<h2 class="text-lg font-medium mb-1">Ticker Logos
+  <span class="text-xs font-normal text-slate-500">&mdash; the company logo beside every ticker, downloaded ahead of time</span></h2>
+<div id="lgBox"><p class="text-xs text-slate-500 py-4"><span class="inline-block animate-pulse">Reading the logo download&hellip;</span></p></div>
+</div>
 <div data-panel="optcalc" class="hidden">
 <h2 class="text-lg font-medium mb-1">Option Calculator
   <span class="text-xs font-normal text-slate-500">&mdash; members' saved setups, recomputed after each market pass</span></h2>
@@ -429,6 +438,7 @@
       activate._current = name;
       if (name === 'opthist') loadOptHist();
       if (name === 'optcalc') loadOptCalc();
+      if (name === 'logos') loadLogos();
       try { history.replaceState(null, '', '#' + name); } catch (e) {}
     }
     // Fetch the MATP-queue panel with an explicit failure path. Plain fetch (not
@@ -506,6 +516,35 @@
     };
     document.addEventListener('visibilitychange', function () {
       if (!document.hidden && activate._current === 'optcalc' && !ocTimer) loadOptCalc();
+    });
+
+    // v4.222: Ticker Logos - fetched on open, then every 15 s while it is shown; "Download missing now"
+    var lgTimer = null;
+    window.loadLogos = function loadLogos() {
+      var box = document.getElementById('lgBox');
+      if (!box) return;
+      if (lgTimer) { clearTimeout(lgTimer); lgTimer = null; }
+      fetch('/finviz/logos', { headers: { 'HX-Request': 'true' } })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+        .then(function (html) { box.innerHTML = html; })
+        .catch(function (err) {
+          box.innerHTML = '<div class="rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-xs text-rose-200">' +
+            '<b>Could not read the logo status.</b> ' + String(err.message || err) + '</div>';
+        })
+        .finally(function () {
+          lgTimer = setTimeout(function () {
+            if (activate._current === 'logos' && !document.hidden) loadLogos();
+            else lgTimer = null;
+          }, 15000);
+        });
+    };
+    document.addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('#lgWarm') : null;
+      if (!b || b.disabled) return;
+      b.disabled = true; b.textContent = 'Queuing…';
+      fetch('/finviz/logos/warm', { method: 'POST' }).then(function (r) { return r.json(); })
+        .then(function (j) { b.textContent = j && j.ok ? j.queued + ' queued' : 'Not queued'; setTimeout(loadLogos, 1500); })
+        .catch(function () { b.textContent = 'Not queued'; b.disabled = false; });
     });
 
     // "Recalculate all" — reports back what it actually queued (a redirect would

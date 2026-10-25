@@ -192,6 +192,30 @@ def option_calc_panel(request: Request, user: User = Depends(require_user), db: 
     return templates.TemplateResponse(request, "_option_calc_health.html", {"user": user, "oc": oc})
 
 
+@router.get("/logos", response_class=HTMLResponse)
+def logos_panel(request: Request, user: User = Depends(require_user)):
+    """v4.222 - the Ticker Logos tab: how many logos the server has downloaded, how many tickers have none anywhere,
+    what is still queued and what the background worker did last (``services/logos.status``). An HTML fragment;
+    the page fetches it when the tab opens and every 15 s while it is open."""
+    from ..services import logos
+
+    try:
+        st = logos.status()
+    except Exception as exc:  # noqa: BLE001
+        return HTMLResponse('<div class="rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-xs '
+                            'text-rose-200">The logo status could not be read (%s).</div>' % type(exc).__name__)
+    return templates.TemplateResponse(request, "_logos_health.html", {"user": user, "lg": st,
+                                                                       "sample": logos.queued()[:12]})
+
+
+@router.post("/logos/warm")
+def logos_warm(mod: User = Depends(require_moderator)):
+    """v4.222 - "Download missing now": queue every ticker without a fresh logo at once (moderators)."""
+    from ..services import logos
+
+    return {"ok": True, "queued": logos.warm(), "running": bool(logos.status().get("started"))}
+
+
 @router.get("/queue", response_class=HTMLResponse)
 def matp_queue_panel(
     request: Request,

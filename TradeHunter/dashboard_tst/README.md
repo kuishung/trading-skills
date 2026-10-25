@@ -223,6 +223,25 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-25 - v4.222: ticker logos are downloaded ahead of time, so pages never wait for one
+
+The user: *"when loading the logo it takes too long can we download it in hermes so it load fast?"* In v4.221 a logo
+was downloaded the first time a page asked for it, and the page waited (a few seconds per new logo, longer when the
+first service had none and the second was tried).
+- **A background download** (`services/logos.py`): a worker thread in the web app (started in `main.py`'s
+  lifespan; `TST_LOGO_WARM=0` switches it off - the tests do) downloads a queue of tickers, one every 0.4 s. Twenty
+  seconds after a start and then every 12 hours it queues every ticker the platform shows that has no fresh logo -
+  the members' watchlists, MATP tickers and Curated calls first, then every stock and ETF in the options data.
+- **`GET /logo/<SYM>` never waits**: the stored logo at once (the browser keeps it a week); else the letters badge at
+  once (kept two minutes) with the ticker queued at the front, so the real logo shows on the next view; a ticker no
+  service has keeps its letters for a day.
+- **Settings -> Data Ingest -> Ticker Logos** (`routes/finviz.py` `/finviz/logos`, `_logos_health.html`): stored,
+  waiting, without a logo, what the worker did last and when it last looked, the next tickers up; **"Download missing
+  now"** (moderators, `POST /finviz/logos/warm`) queues the missing ones at once. The tray is unchanged: logos are
+  decoration, not a health signal of Hermes.
+- Tests: `test_logos.py` (the route answers at once and queues at the front, a known "none" is not queued, the queue,
+  a worker step, the status, the Data Ingest tab and its button).
+
 ### 2026-10-25 - v4.221: the company logo beside every ticker
 
 The user: *"I will want the logo of the ticker in wherever it is shown be it in the watchlist or in a chart or in the
