@@ -684,6 +684,8 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
   **a past day WITHOUT a snapshot is BLANK** (user: *"left blank when no snapshot exists"*) - never the IV solved from
   the last trade. The cell colours / sparkline / interpolated history still solve from the last trade (not changed).
   After a pull touching it: restart `TST-Options-Screener` (`setup_screener_task.ps1 -StartNow`) + `IntradayBot-Tray`.
+  **v4.226**: Settings -> Data Ingest -> Option History lists each recent trading day's snapshot (collected / due
+  tonight / missed / not kept yet) and the next close to be read.
   **v4.220 (2026-10-25): the STOCK PRICE** is the official close once a session has closed (`scr_store.settle_spots`,
   run by the screener collector) and the option-implied estimate (put-call parity) only during market hours and until
   Stocks Basic publishes the close at 20:00 ET (08:00 MYT); the surface and the finder say which ("official close",

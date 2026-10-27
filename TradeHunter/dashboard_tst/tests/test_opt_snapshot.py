@@ -176,3 +176,29 @@ def test_the_option_history_tab_shows_the_snapshot_and_counts_the_window(sdb, tm
                                  window=[DAY])
     sn = v["snapshot"]
     assert (sn["days"], sn["newest"], sn["rows"], sn["state"]) == (1, DAY, 14, "saved") and "MYT" in sn["last"]
+
+
+def test_the_settings_list_says_which_closes_were_collected(sdb, tmp_path):
+    """v4.226 (the user: "I need to know if the daily snapshot is collected"): each recent trading day's
+    closing snapshot - collected, due tonight, today's still to come, missed (the next session opened
+    without one) or not kept yet (before the first one)."""
+    root = tmp_path / "pq"
+    opt_snapshot.write_session(sdb, DAY, root=root)                       # Wednesday 2026-10-07
+    fri = _dt.datetime(2026, 10, 9, 15, 0)                                # Friday 11:00 ET
+    got = option_history_view.snapshot_days(fri, root, n=4)
+    assert [(r["day"], r["state"]) for r in got["days"]] == [
+        ("2026-10-09", "upcoming"), ("2026-10-08", "missed"), (DAY, "saved"), ("2026-10-06", "before")]
+    saved = got["days"][2]
+    assert saved["rows"] == 14 and saved["size"] and "MYT" in saved["saved"]
+    assert got["n_missed"] == 1 and got["first"] == DAY
+    assert got["next"] == {"day": "2026-10-09", "at_et": "Fri 2026-10-09 16:20 ET", "at_myt": "Sat 04:20 MYT"}
+    thu_eve = _dt.datetime(2026, 10, 8, 22, 0)                           # Thursday 18:00 ET: still to be saved
+    got = option_history_view.snapshot_days(thu_eve, root, n=2)
+    assert [(r["day"], r["state"]) for r in got["days"]] == [("2026-10-08", "pending"), (DAY, "saved")]
+    assert got["n_missed"] == 0 and got["next"]["day"] == "2026-10-08"
+    sat = _dt.datetime(2026, 10, 10, 16, 0)                              # a weekend: Friday is the newest session
+    assert option_history_view.snapshot_days(sat, root, n=1)["days"][0]["day"] == "2026-10-09"
+    v = option_history_view.view(fri, store=opt_history.Store(root=root, flat_root=tmp_path / "flat"),
+                                 collector={"state": "idle", "heartbeat": fri.isoformat() + "Z", "progress": {}},
+                                 window=[DAY])
+    assert v["snapshot"]["n_missed"] == 1 and v["snapshot"]["list"][2]["state"] == "saved"

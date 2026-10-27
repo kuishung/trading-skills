@@ -1491,7 +1491,8 @@ def test_the_data_ingest_page_has_the_option_history_tab(engine, db, no_screener
         frag = client.get("/finviz/option-history")
         assert frag.status_code == 200
         for needle in ("1 &middot; Download from Massive", "2 &middot; IV Rank history",
-                       "3 &middot; Convert to Parquet", "By month", "How it updates", "has not reported on this server"):
+                       "3 &middot; Convert to Parquet", "By month", "How it updates", "has not reported on this server",
+                       "4 &middot; Closing IV snapshot", "Closing IV snapshot - last 10 trading days", "Saved</th>"):
             assert needle in frag.text, needle
     finally:
         app.dependency_overrides.clear()

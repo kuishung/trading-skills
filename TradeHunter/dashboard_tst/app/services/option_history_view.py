@@ -24,6 +24,9 @@ log = logging.getLogger(__name__)
 STALE_S = 5 * 60                     # the collector beats every 15 s: 5 min without one is stale
 FLAT_READY_AT = _dt.time(11, 15)     # a day's file is asked for from 11:15 ET the next day (scr_collector)
 SHOW_MISSING = 30                    # missing days listed by name
+SNAP_AT = _dt.time(16, 20)           # v4.226: a session's closing snapshot is read from 16:20 ET (the EOD pass) ...
+SNAP_LAST_CHANCE = _dt.time(9, 30)   # ... and can be caught up until the next session opens (then it is lost)
+SNAP_SHOW_DAYS = 10                  # the trading days listed in the snapshot table
 
 
 def _utcnow() -> _dt.datetime:
@@ -138,6 +141,62 @@ def _next_file(newest_local: str | None, now: _dt.datetime) -> dict:
             "late": now >= due_utc}
 
 
+def _et_at(day: _dt.date, t: _dt.time, now: _dt.datetime) -> _dt.datetime:
+    """``day`` at ``t`` New York time, as naive UTC (the zone of ``clock.et_now``, so DST is right)."""
+    tz = clock.et_now(now).tzinfo
+    return _dt.datetime.combine(day, t, tzinfo=tz).astimezone(_dt.timezone.utc).replace(tzinfo=None)
+
+
+def snapshot_days(now: _dt.datetime, root=None, *, n: int = SNAP_SHOW_DAYS) -> dict:
+    """v4.226 (the user: *"I need to know if the daily snapshot is collected"*): the closing snapshot of each
+    of the last ``n`` trading days, newest first - ``{day, state, rows, size, saved}`` where ``state`` is
+    ``saved`` (the file is there), ``upcoming`` (today, before 16:20 ET), ``pending`` (read after 16:20 ET;
+    it can still be caught up until the next open), ``missed`` (the next session has opened without one -
+    lost: Massive keeps no closing IV history) or ``before`` (a day before the first snapshot ever saved) -
+    plus ``n_missed`` (every missed day since the first snapshot), ``next`` ``{day, at_et, at_myt}`` and
+    ``first``."""
+    have = set(opt_snapshot.days(root))
+    first = min(have) if have else None
+    et = clock.et_now(now)
+    today = et.date()
+    newest = today if clock.is_trading_day(today) else clock.last_trading_day(today)
+    rows, d = [], newest
+    for _ in range(max(1, n)):
+        rows.append(d)
+        d = clock.prev_trading_day(d)
+
+    def state_of(day: _dt.date) -> str:
+        iso = day.isoformat()
+        if iso in have:
+            return "saved"
+        if now < _et_at(day, SNAP_AT, now):
+            return "upcoming"
+        if now < _et_at(clock.next_trading_day(day), SNAP_LAST_CHANCE, now):
+            return "pending"
+        return "missed" if (first is not None and iso >= first) else "before"
+
+    out = []
+    for day in rows:
+        st = state_of(day)
+        info = opt_snapshot.day_info(day, root) if st == "saved" else None
+        out.append({"day": day.isoformat(), "state": st, "rows": (info or {}).get("rows"),
+                    "size": size_text(info["bytes"]) if info else None,
+                    "saved": _stamp_words((info or {}).get("saved_at"), now) if info else None})
+    n_missed = 0
+    if first is not None:
+        d = clock.last_trading_day(_dt.date.fromisoformat(first))
+        while d <= newest:
+            if state_of(d) == "missed":
+                n_missed += 1
+            d = clock.next_trading_day(d)
+    nxt = next((r for r in reversed(out) if r["state"] in ("upcoming", "pending")), None)
+    nday = _dt.date.fromisoformat(nxt["day"]) if nxt else clock.next_trading_day(today)
+    at = _et_at(nday, SNAP_AT, now)
+    return {"days": out, "n_missed": n_missed, "first": first,
+            "next": {"day": nday.isoformat(), "at_et": "%s 16:20 ET" % nday.strftime("%a %Y-%m-%d"),
+                     "at_myt": clock.myt_now(at).strftime("%a %H:%M MYT")}}
+
+
 def _pct(a, b) -> int:
     try:
         return max(0, min(100, int(round(100.0 * float(a) / float(b))))) if b else 0
@@ -167,6 +226,11 @@ def view(now: _dt.datetime | None = None, *, store: opt_history.Store | None = N
     except Exception as exc:  # noqa: BLE001 - a count only
         log.debug("option history view: no snapshot summary (%s)", exc)
         sn = {"days": 0, "oldest": None, "newest": None, "bytes": 0, "newest_rows": None, "root": None}
+    try:
+        sd = snapshot_days(now, st.root)
+    except Exception as exc:  # noqa: BLE001 - the table only
+        log.debug("option history view: no snapshot days (%s)", exc)
+        sd = {"days": [], "n_missed": 0, "first": None, "next": {}}
     failing = set(prog.get("pq_failed") or ())           # the collector's own record (this process has none)
     for r in s["recent"]:
         if r["state"] == "pending" and r["day"] in failing:
@@ -205,6 +269,7 @@ def view(now: _dt.datetime | None = None, *, store: opt_history.Store | None = N
             "rows": sn["newest_rows"], "root": sn["root"],
             "state": prog.get("snap_state") or ("saved" if sn["days"] else "waiting"),
             "last": _stamp_words(prog.get("snap_at"), now), "error": prog.get("snap_error"),
+            "list": sd["days"], "n_missed": sd["n_missed"], "first": sd["first"], "next": sd["next"],   # v4.226
         },
         "months": [dict(m, gz=size_text(m["gz_bytes"]), pqs=size_text(m["pq_bytes"])) for m in s["months"]],
         "recent": [dict(r, gz=size_text(r["gz_bytes"]) if r["gz_bytes"] is not None else None,
@@ -216,4 +281,4 @@ def view(now: _dt.datetime | None = None, *, store: opt_history.Store | None = N
     }
 
 
-__all__ = ["view", "size_text", "ago_text", "dur_text"]
+__all__ = ["view", "snapshot_days", "size_text", "ago_text", "dur_text"]

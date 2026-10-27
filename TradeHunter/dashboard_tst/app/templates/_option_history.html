@@ -95,6 +95,8 @@
     <div class="text-slate-300">None saved yet - the first after the next end-of-day read.</div>
     {% endif %}
     {% if sn.last %}<div class="text-slate-500">Last saved {{ sn.last }}</div>{% endif %}
+    {% if sn.next.day %}<div class="text-slate-400">Next: the <b>{{ sn.next.day }}</b> close, read from {{ sn.next.at_et }} ({{ sn.next.at_myt }})</div>{% endif %}
+    {% if sn.n_missed %}<div class="text-amber-300">{{ sn.n_missed }} trading day{{ '' if sn.n_missed == 1 else 's' }} missed since {{ sn.first }} (listed below) - a missed close cannot be fetched again</div>{% endif %}
     {% if sn.error %}<div class="text-rose-300 break-words">{{ sn.error }}</div>{% endif %}
     <div class="text-slate-500">Massive's own IV of every contract at the close (from the bid / ask quote), with its
       greeks - saved after each day's end-of-day read (from 16:20 ET). Past dates of the Volatility surface use it;
@@ -112,6 +114,40 @@
   After the close the collector also saves Massive's closing IVs (part 4) - those days' surfaces use the closing quote
   instead of the last trade.
 </p>
+
+{# ── v4.226: the closing snapshot of each recent trading day ── #}
+<h3 class="text-sm font-medium text-slate-200 mb-1">Closing IV snapshot - last {{ sn.list|length }} trading days</h3>
+<div class="overflow-x-auto mb-6 rounded border border-slate-800">
+<table class="w-full text-xs">
+  <thead class="text-[10px] uppercase tracking-wide text-slate-500 bg-slate-900">
+    <tr>
+      <th class="text-left px-2 py-1">Session</th>
+      <th class="text-left px-2 py-1">Snapshot</th>
+      <th class="text-right px-2 py-1">Contracts</th>
+      <th class="text-right px-2 py-1">Size</th>
+      <th class="text-left px-2 py-1">Saved</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% set sbadge = {'saved': 'bg-emerald-900/50 text-emerald-300', 'pending': 'bg-sky-900/40 text-sky-300',
+                     'upcoming': 'bg-slate-800 text-slate-300', 'missed': 'bg-rose-900/50 text-rose-300',
+                     'before': 'bg-slate-800 text-slate-500'} %}
+    {% set slabel = {'saved': 'collected', 'pending': 'due tonight - after 16:20 ET', 'upcoming': 'today - after 16:20 ET',
+                     'missed': 'missed', 'before': 'not kept yet'} %}
+    {% for r in sn.list %}
+    <tr class="border-t border-slate-800">
+      <td class="px-2 py-1 font-medium text-slate-200 tabular-nums">{{ r.day }}</td>
+      <td class="px-2 py-1"><span class="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium {{ sbadge[r.state] }}">{{ slabel[r.state] }}</span></td>
+      <td class="px-2 py-1 text-right tabular-nums text-slate-400">{{ '{:,}'.format(r.rows) if r.rows is not none else '-' }}</td>
+      <td class="px-2 py-1 text-right tabular-nums text-slate-400">{{ r.size or '-' }}</td>
+      <td class="px-2 py-1 text-slate-500">{{ r.saved or '-' }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5" class="px-2 py-3 text-slate-500">No trading days yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
 
 {# ── by month ── #}
 <h3 class="text-sm font-medium text-slate-200 mb-1">By month</h3>

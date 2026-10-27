@@ -223,6 +223,17 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-27 - v4.226: Settings shows whether each day's closing snapshot was collected
+
+The user: *"I need to know if the daily snapshot is collected"*. Settings -> Data Ingest -> Option History:
+- **Card 4** adds the next close to be read ("Next: the 2026-10-28 close, read from Wed 2026-10-28 16:20 ET (Thu
+  04:20 MYT)") and, in amber, how many trading days were missed since the first snapshot.
+- **A new table "Closing IV snapshot - last 10 trading days"**: per session `collected` (with the contracts, size and
+  when it was saved), `due tonight - after 16:20 ET` (read but not saved yet - it can still be caught up until the next
+  open), `today - after 16:20 ET`, `missed` (the next session opened without one: lost, Massive keeps no closing IV
+  history) or `not kept yet` (before the first snapshot).
+- `option_history_view.snapshot_days`, `opt_snapshot.day_info`. Tests: `test_opt_snapshot.py`, `test_options_page.py`.
+
 ### 2026-10-27 - v4.225: Massive's closing IV kept every day; a past day without it is blank
 
 The user: *"our definition of close is the quoted price at the end of the day when market closes"* - and, on the

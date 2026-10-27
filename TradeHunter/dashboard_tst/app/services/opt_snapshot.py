@@ -260,6 +260,26 @@ def days(root=None) -> list[str]:
     return sorted(out)
 
 
+def day_info(day, root=None) -> dict | None:
+    """One session's snapshot file: ``{rows, bytes, saved_at}`` (``saved_at`` = the file's time, naive
+    UTC; ``rows`` None when pyarrow cannot read the footer), or None when there is none."""
+    try:
+        p = day_path(day, root)
+        st = p.stat()
+    except (OSError, ValueError):
+        return None
+    rows = None
+    if not opt_history.available():
+        try:
+            import pyarrow.parquet as pq  # noqa: PLC0415
+
+            rows = pq.read_metadata(str(p)).num_rows
+        except Exception:  # noqa: BLE001 - a count only
+            rows = None
+    saved = _dt.datetime.fromtimestamp(st.st_mtime, _dt.timezone.utc).replace(tzinfo=None, microsecond=0)
+    return {"rows": rows, "bytes": st.st_size, "saved_at": saved}
+
+
 def summary(root=None) -> dict:
     """``{days, oldest, newest, bytes, newest_rows, root}`` for the Option History tab."""
     ds = days(root)
@@ -282,4 +302,4 @@ def summary(root=None) -> dict:
 
 
 __all__ = ["SUBDIR", "COLUMNS", "snapshot_root", "day_path", "has_day", "write_session", "chain", "contract_rows",
-           "days", "summary"]
+           "days", "day_info", "summary"]
