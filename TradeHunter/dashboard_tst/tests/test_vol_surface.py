@@ -297,24 +297,26 @@ def test_the_latest_surface_is_massives_iv_from_the_last_pass(sdb):
         vol_surface.surface(sdb, "AAPLE")
 
 
-def test_a_past_days_surface_solves_the_closes_back_to_their_volatility(sdb, hist):
-    g = vol_surface.surface(sdb, "AAPL", ON.isoformat(), root=hist, side="call")
-    assert g["source"] == "history" and g["spot"] == SPOT and g["traded"] == 20
+def test_a_past_day_without_a_closing_snapshot_is_blank_and_the_trade_solve_is_kept(sdb, hist):
+    """v4.225: a past day's surface is the closing snapshot or nothing (the user: "left blank when no
+    snapshot exists for that day"); ``trade_rows`` keeps the solve from the closes for a by-hand look."""
+    with pytest.raises(SurfaceError, match="no closing snapshot is saved for 2026-10-07"):
+        vol_surface.surface(sdb, "AAPL", ON.isoformat(), root=hist, side="call")
+    rows, meta = vol_surface.trade_rows(sdb, "AAPL", ON.isoformat(), root=hist)
+    g = vol_surface.build(rows, meta["spot"], meta["on"], side="call")
+    assert meta["source"] == "history" and meta["iv_src"] == "trade" and g["spot"] == SPOT and meta["traded"] == 20
     for row_ in g["cells"]:
         for v in row_:
             assert v == pytest.approx(30.0, abs=0.05)
-    assert "Black-Scholes" in g["method"]
-    # v4.166: a past day has no greeks or prices - every tile figure cell is null
-    assert g["has_greeks"] is False
-    assert len(g["extra"]) == len(g["cells"]) and all(x is None for row_ in g["extra"] for x in row_)
+    assert all(x is None for row_ in g["extra"] for x in row_)
     with pytest.raises(SurfaceError, match="index"):
-        vol_surface.surface(sdb, "SPX", ON.isoformat(), root=hist)
+        vol_surface.trade_rows(sdb, "SPX", ON.isoformat(), root=hist)
     with pytest.raises(SurfaceError, match="not in the contract history"):
-        vol_surface.surface(sdb, "AAPL", "2026-10-02", root=hist)
+        vol_surface.trade_rows(sdb, "AAPL", "2026-10-02", root=hist)
     sdb.query(ScrUnderlyingDaily).filter(ScrUnderlyingDaily.on == "2026-10-06").delete()
     sdb.commit()
     with pytest.raises(SurfaceError, match="stock close"):
-        vol_surface.surface(sdb, "AAPL", "2026-10-06", root=hist)
+        vol_surface.trade_rows(sdb, "AAPL", "2026-10-06", root=hist)
 
 
 def test_the_contract_pickers_and_one_contracts_life(sdb, hist):
@@ -326,14 +328,13 @@ def test_the_contract_pickers_and_one_contracts_life(sdb, hist):
     assert life["ticker"] == "O:AAPL261120C00100000"
     assert [r["on"] for r in life["rows"]] == ["2026-10-05", "2026-10-06", "2026-10-07"]
     assert [r["spot"] for r in life["rows"]] == [98.0, 99.0, 100.0]
-    assert all(r["iv"] == pytest.approx(30.0, abs=0.05) for r in life["rows"])
+    assert all(r["iv"] is None and r["iv_src"] is None for r in life["rows"])   # v4.225: no closing snapshot - blank
     assert life["rows"][-1]["dte"] == 44 and life["rows"][-1]["close"] == pytest.approx(bs(SPOT, 100.0, NOV, "C", 0.30), abs=1e-4)
     with pytest.raises(SurfaceError):
         contract_view.contract_series(sdb, "AAPL", NOV.isoformat(), "X", "100", root=hist)
     with pytest.raises(SurfaceError, match="index"):
         contract_view.day_contracts(sdb, "SPX", ON.isoformat(), root=hist)
     assert contract_view.history_days(hist) == ["2026-10-07", "2026-10-06", "2026-10-05"]
-    assert not math.isnan(life["rows"][0]["iv"])
 
 
 def test_the_hermes_check_script_solves_independently_and_reports(sdb, hist, tmp_path, monkeypatch, capsys):

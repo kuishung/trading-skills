@@ -45,6 +45,11 @@ class ScrContract(ScrBase):
     weekly = Column(Boolean, nullable=False, default=False)   # not the standard monthly
     price = Column(Float, nullable=True)                 # ESTIMATED: Black-Scholes from its own IV, else last
     last = Column(Float, nullable=True)                  # the day bar close (last trade of the session)
+    # v4.225 (migration e5f7a9b1c3d6): the rest of the day bar - None when not traded in ``session``
+    bar_open = Column(Float, nullable=True)
+    bar_high = Column(Float, nullable=True)
+    bar_low = Column(Float, nullable=True)
+    vwap = Column(Float, nullable=True)
     chg_pct = Column(Float, nullable=True)               # the contract's day change, percent
     volume = Column(Integer, nullable=True)
     oi = Column(Integer, nullable=True)                  # open interest as of the prior close

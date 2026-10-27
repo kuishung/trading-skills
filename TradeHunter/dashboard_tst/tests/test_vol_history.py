@@ -167,6 +167,14 @@ def hist(tmp_path, monkeypatch):
     return root
 
 
+def past_grid(sdb, day, side="call", band=20):
+    """A past day's grid from the trade solve (v4.225: the surface itself is blank without a closing
+    snapshot; the per-cell history behind the colours is unchanged)."""
+    rows, meta = vol_surface.trade_rows(sdb, "AAPL", day, band=band)
+    return {**vol_surface.build(rows, meta["spot"], meta["on"], side=side, band=band), "symbol": "AAPL",
+            "source": "history"}
+
+
 def test_the_grid_payload_ranks_each_cell_in_its_own_history(sdb, hist):
     grid = vol_surface.surface(sdb, "AAPL", "latest", side="otm", band=20)
     h = vol_history.grid_history(sdb, "AAPL", grid)
@@ -199,7 +207,7 @@ def test_the_history_is_cached_and_a_past_day_excludes_itself(sdb, hist):
     assert dict(vol_history._TABLES) == tables_before and h2["days"] == N_DAYS
     # a past day's surface: its history stops the session before it
     last = sessions_before(ON, N_DAYS)[-1]
-    g = vol_surface.surface(sdb, "AAPL", last.isoformat(), side="call", band=20)
+    g = past_grid(sdb, last.isoformat())
     h = vol_history.grid_history(sdb, "AAPL", g)
     assert h["days"] == N_DAYS - 1 and h["window"][1] == sessions_before(ON, N_DAYS)[-2].isoformat()
     rows = {k: i for i, k in enumerate(g["strikes"])}
@@ -288,7 +296,7 @@ def test_the_payload_carries_the_earnings_dates_of_the_window_and_the_next(sdb, 
     assert h3["next_earnings"] == {"on": ON.isoformat(), "when": "bmo"}
     assert ON.isoformat() not in [e["on"] for e in h3["earnings"]]
     # a past day's surface: dates before that day, the next one on or after it
-    g2 = vol_surface.surface(sdb, "AAPL", days[10].isoformat(), side="call", band=20)
+    g2 = past_grid(sdb, days[10].isoformat())
     h2 = vol_history.grid_history(sdb, "AAPL", g2)
     assert [e["on"] for e in h2["earnings"]] == [days[5].isoformat()]
     assert h2["next_earnings"] == {"on": days[20].isoformat(), "when": "amc"}
@@ -358,7 +366,7 @@ def test_the_window_cuts_the_history_by_calendar_days(sdb, hist):
     assert c["lo"] == pytest.approx(iv_on(N_DAYS - len(inside)) * 100, abs=0.05)   # ... whose low is higher
     # a past day: the window ends on that day
     last = sessions_before(ON, N_DAYS)[-1]
-    g2 = vol_surface.surface(sdb, "AAPL", last.isoformat(), side="call", band=20)
+    g2 = past_grid(sdb, last.isoformat())
     h2 = vol_history.grid_history(sdb, "AAPL", g2, window_days=30)
     want = [d for d in sessions_before(ON, N_DAYS)[:-1] if d >= last - _dt.timedelta(days=30)]
     assert h2["days"] == len(want) and h2["window"][1] == want[-1].isoformat()

@@ -25,7 +25,7 @@ from app.services import scr_store
 
 from .conftest import DASH_ROOT
 
-HEAD = "d4e6f8a0b2c4"                 # scr_earnings + scr_earnings_day (v4.143) on top of c3d9e5f1a7b2
+HEAD = "e5f7a9b1c3d6"                 # scr_contract's day bar (v4.225) on top of d4e6f8a0b2c4 (scr_earnings)
 PARTIAL_REV = "b4e1f7c9d2a6"          # scr_pass.partial (v4.137) on top of 8d2f4b6a1c37
 STATUS_REV = "8d2f4b6a1c37"           # scr_status progress columns (v4.137) on top of 5c7a1d3e9b20
 BASE_REV = "5c7a1d3e9b20"

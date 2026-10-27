@@ -223,6 +223,41 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-27 - v4.225: Massive's closing IV kept every day; a past day without it is blank
+
+The user: *"our definition of close is the quoted price at the end of the day when market closes"* - and, on the
+past-day IV solved from the last trade, *"I prefer it to be left blank when no snapshot exists for that day"*.
+Massive's daily options files hold only trades (no IV, no quotes), and the collector's end-of-day pass (from 16:20 ET)
+reads Massive's quote-based IV of every contract but each pass replaced the one before.
+- **The closing snapshot** - new `app/services/opt_snapshot.py`: after an EOD pass on the full list the screener
+  collector (`scr_collector`, lane 4d, its own thread) writes that pass's stored contracts - the contract's DAY BAR
+  (open / high / low / close / volume / VWAP) and Massive's IV (from the bid / ask quote), greeks, open interest, the
+  price it saw, all from the SAME read (the user: *"we want the time consistency of the data rather than rely on
+  separate data source"*) - to
+  `<option history>/snapshot/YYYY/YYYY-MM-DD.parquet` (on Hermes `C:\HermesSync\MarketData\option_history\snapshot`),
+  once per session; at a start the last such pass is written when its file is missing; skipped when a newer session's
+  pass has begun replacing the rows; a failure is tried again in 10 min. Progress keys `snap_state / snap_session /
+  snap_rows / snap_at / snap_error`.
+- **Past days on the Volatility surface** (`vol_surface.history_rows`, so also the Interpolated tab and the
+  interpolation page) read the snapshot: Massive's closing IV, with the greeks and tile figures, every contract with
+  open interest (not only those that traded), the official close as the stock price. **A day without a snapshot is
+  blank** (a message says from when they are kept) - the IV solved from the last trade is no longer drawn
+  (`trade_rows` keeps it for a by-hand look). The day picker lists only the days with a closing snapshot.
+- **The day bar is stored** (`scr_contract.bar_open / bar_high / bar_low / vwap`, screener migration
+  `e5f7a9b1c3d6`; `massive.parse_snapshot_result` reads the bar's open / high / low; None when the contract has not
+  traded in the session read).
+- **Contract history** (`contract_view`): a snapshot day takes EVERY figure from the snapshot (day bar + closing IV,
+  "Source: closing snapshot"); a day before the snapshots keeps the trade file's prices with a blank IV ("Source:
+  trade file"); a snapshot day appears even when the contract did not trade. The CSV gains `vwap` and `source`.
+- **Settings -> Data Ingest -> Option History**: a 4th card "Closing IV snapshot" (sessions saved, size, last saved,
+  error); card 1 counts the days of the window ("495 of 495 ... plus 12 older"); card 2 says the files carry prices
+  only and TradeHunter works the IV30 out of them.
+- Not changed: the cell colours / rank / sparkline of the listed tab (`vol_history`) and the Interpolated tab's history
+  (`vol_cm_series`) still solve each day's IV from the last trade; IV Rank / IV Percentile (IV30) are unchanged.
+- After the pull on Hermes: restart `TST-Options-Screener` (`deploy\setup_screener_task.ps1 -StartNow`) and the
+  `IntradayBot-Tray` task.
+- Tests: `tests/test_opt_snapshot.py` (new), `test_scr_collector.py` (the EOD pass saved once, the tray line).
+
 ### 2026-10-25 - v4.224: a ranking list beside the ranked surface - click a call to show it on the surface
 
 The user: *"or you will give me a ranking list and when I click the list the selected will be overlay in the vol

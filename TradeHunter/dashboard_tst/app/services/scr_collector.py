@@ -119,6 +119,12 @@ only starts jobs and files their results.
    only that day (tried again in 1 h, or as soon as it changes); pyarrow missing or a folder
    that cannot be written stops the lane (``error``, looked at again every 5 min). The
    Options page's Contract history and past-day Volatility surface read these files.
+4d. **The closing snapshot** (v4.225; ``opt_snapshot``) - after an EOD pass on the full list
+   (and at a start, for the last such pass when its file is missing), the "snapshot" thread writes
+   that pass's stored contracts - Massive's own quote-based IV and greeks at the close - to one
+   Parquet file per session beside the contract history. Written once; skipped when a newer
+   session's pass has begun replacing the rows (``superseded``); a failure is tried again in 10 min.
+   The past-day Volatility surface prefers these IVs over the ones solved from the last trade.
 5. **Status** - ``scr_status`` (row 1) and ``state/screener_collector.json`` (the Hermes
    tray reads it) at the start and the end of every tick: the state, a plain-English
    ``detail`` (jobs running at once are joined with " · "), the active error's kind and
@@ -153,7 +159,7 @@ import time
 import zlib
 from pathlib import Path
 
-from . import calendars, clock, flat_files, massive, opt_history, opt_massive, option_metrics, scr_store
+from . import calendars, clock, flat_files, massive, opt_history, opt_massive, opt_snapshot, option_metrics, scr_store
 from .flat_files import FlatFilesError                  # (scr_flativ needs numpy: imported by the lane)
 from .massive import MassiveError
 
@@ -248,6 +254,8 @@ PQ_ERROR_RETRY_S = 600.0         # a job that failed for another reason: again i
 PQ_ETA_MIN_DAYS = 3              # the conversion's time left once 3 days are converted
 PQ_LOG_EVERY = 50                # a progress line every 50 days converted
 PQ_STATES = ("off", "waiting", "building", "ready", "error")   # error: the job failed, or day files keep failing
+SNAP_RETRY_S = 600.0             # v4.225: a closing snapshot that could not be written: again in 10 min
+SNAP_STATES = ("waiting", "saving", "saved", "skipped", "error")
 
 NO_KEY_TEXT = "%s is not set on this PC" % massive.ENV_KEY
 UNIVERSE_EMPTY_TEXT = "Massive returned an empty options list (/v3/reference/options/contracts)"
@@ -266,6 +274,7 @@ PROGRESS_KEYS = ("universe_pages", "universe_symbols", "universe_started", "pass
                  "history_left", "history_waiting", "history_eta_s", "earnings_history_left",
                  "flat_days_done", "flat_days_total", "flat_eta_s", "flat_state", "flat_error", "flat_kind",
                  "pq_state", "pq_days_done", "pq_days_total", "pq_eta_s", "pq_error", "pq_failed",
+                 "snap_state", "snap_session", "snap_rows", "snap_at", "snap_error",
                  "next_pass", "next_pass_in_s", "cycle_min")
 
 STATE_PATH = Path(__file__).resolve().parents[2] / "state" / "screener_collector.json"
@@ -452,6 +461,9 @@ def contract_rows(std_rows, spot, *, day, session) -> tuple[list[dict], dict]:
     """The rows a pass keeps from one chain's standard contracts, and the underlying's
     option-wide figures. Pure.
 
+    v4.225: ``bar_open`` / ``bar_high`` / ``bar_low`` / ``vwap`` = the rest of the bar, None when the bar is
+    not from ``session``.
+
     Kept (§3): open interest > 0 or volume > 0 in the contract's latest day bar; expiry on
     or after ``day`` (the ET date of the read). Per row: ``weekly`` (not the standard
     monthly - ``opt_massive.is_monthly`` against the chain's expiries), ``price`` = the
@@ -490,6 +502,9 @@ def contract_rows(std_rows, spot, *, day, session) -> tuple[list[dict], dict]:
             "volume": (vol or 0) if fresh else 0, "oi": oi,
             "iv": r.get("iv"), "delta": r.get("delta"), "gamma": r.get("gamma"),
             "theta": r.get("theta"), "vega": r.get("vega"), "last_trade": t,
+            # v4.225: the rest of the day bar, only when it is this session's (the closing snapshot keeps it)
+            "bar_open": r.get("day_open") if fresh else None, "bar_high": r.get("day_high") if fresh else None,
+            "bar_low": r.get("day_low") if fresh else None, "vwap": r.get("day_vwap") if fresh else None,
         })
     fig = {"iv30": None, "exp_move30": None, "n_contracts": len(out),
            "call_vol": sum(int(x["volume"] or 0) for x in out if x["right"] == "C"),
@@ -871,6 +886,14 @@ class Collector:
         self._pq_job_err: str | None = None              # the last job's failure (the folder, pyarrow, a bug)
         self._pq_failed: list[tuple[str, dict]] = []     # day files that keep failing (Store.failed_days)
         self._pq_logged: str | None = None               # the last warning logged (once per text)
+        # the closing snapshot (4d, v4.225): Massive's closing IVs kept per session
+        self._snappool = None
+        self._snap_future: cf.Future | None = None
+        self._snap_due: tuple[str, _dt.datetime | None] | None = None   # (session, the EOD pass's start)
+        self._snap_retry_at: _dt.datetime | None = None
+        self._snap_state = "waiting"
+        self._snap_last: dict | None = None              # the last session written: {session, rows, at}
+        self._snap_error: str | None = None
         self._restored = False
         self._last_beat: _dt.datetime | None = None
         self._db_warned = False
@@ -1217,6 +1240,7 @@ class Collector:
             out["history_eta_s"] = int(eta) if eta is not None else None
         out.update(self._flat_progress(now))
         out.update(self._pq_progress(now))
+        out.update(self._snap_progress())
         out["earnings_history_left"] = len(self._earn_hist_days) if self._earn_hist_days is not None else None
         # v4.149: when the next market pass is due - the surface tab's countdown (the tray's detail line
         # already carries the same time in words)
@@ -1351,6 +1375,7 @@ class Collector:
             n_ok, n_failed = int(full.get("n_ok") or 0), int(full.get("n_failed") or 0)
             if n_failed * 2 <= n_ok + n_failed:
                 self._last_eod = full.get("session")
+                self._snap_due = (full.get("session"), full.get("started"))   # v4.225: written unless on file
         self.last_pass = last
         self.universe_on = st.get("universe_on") or None
         ud = st.get("universe_done")
@@ -1759,6 +1784,7 @@ class Collector:
                     self._partial_eod = p.session
                 elif mark_eod:
                     self._last_eod = p.session
+                    self._snap_due = (p.session, p.started)     # v4.225: keep the closing IVs
             self.log.info("%s pass %d done: %d ok, %d failed, %s, %d requests, %.0f s%s", p.kind, p.id,
                           p.ok, p.failed, _plural(p.contracts, "contract"), p.pages, ms / 1000.0,
                           " (on a partial list of optionable stocks)" if partial else "")
@@ -2581,6 +2607,89 @@ class Collector:
         state, err = self._pq_now()
         return {"state": state, "error": err, "days_done": done, "days_total": total,
                 "running": self._pq_future is not None}
+
+    # ── the closing snapshot (4d, v4.225; one thread) ──
+
+    def _snap_tick(self, now: _dt.datetime) -> None:
+        """Start writing the due session's closing snapshot (never while a pass runs - an EOD
+        pass of a later session would be replacing the rows)."""
+        due = self._snap_due
+        if due is None or self._snap_future is not None or self._pass is not None or self._stopping.is_set():
+            return
+        if self._snap_retry_at is not None and now < self._snap_retry_at:
+            return
+        if opt_history.available():
+            return                               # pyarrow missing: the contract-history lane says so
+        root = self._pq.root if self._pq is not None else None
+        if opt_snapshot.has_day(due[0], root):
+            self._snap_due = None
+            return
+        if self._snappool is None:
+            self._snappool = self._executor_factory(1)
+        self._snap_state = "saving"
+        self._snap_future = self._snappool.submit(self._snap_wrap, due[0], due[1], root)
+
+    def _snap_wrap(self, session: str, started, root) -> dict:
+        """Run ``opt_snapshot.write_session``; never raises."""
+        db = self._sf()
+        try:
+            since = (started - _dt.timedelta(minutes=opt_snapshot.SINCE_MARGIN_MIN)
+                     if isinstance(started, _dt.datetime) else None)
+            res = opt_snapshot.write_session(db, session, since=since, root=root)
+            res["ok"] = True
+            return res
+        except opt_history.HistoryError as exc:
+            return {"ok": False, "session": session, "kind": exc.kind, "error": self._err_text(exc)}
+        except Exception as exc:  # noqa: BLE001 - a bug or a DB failure: tried again later
+            self.log.exception("the closing snapshot of %s failed", session)
+            return {"ok": False, "session": session, "kind": "error", "error": self._err_text(exc)}
+        finally:
+            try:
+                db.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _collect_snap(self) -> dict | None:
+        f = self._snap_future
+        if f is None or not f.done():
+            return None
+        self._snap_future = None
+        try:
+            res = f.result()
+        except Exception as exc:  # noqa: BLE001
+            res = {"ok": False, "kind": "error", "error": self._err_text(exc)}
+        now = self._now()
+        ses = res.get("session")
+        if res.get("ok"):
+            if self._snap_due and self._snap_due[0] == ses:
+                self._snap_due = None
+            self._snap_retry_at, self._snap_error = None, None
+            if res.get("written"):
+                self._snap_state = "saved"
+                self._snap_last = {"session": ses, "rows": res.get("rows"), "at": now}
+                self.log.info("Closing snapshot of %s saved: %s contracts of %s, %.1f MB (Massive's quote-based IV)",
+                              ses, format(int(res.get("rows") or 0), ","), _plural(int(res.get("symbols") or 0), "underlying"),
+                              (res.get("bytes") or 0) / 1e6)
+            else:
+                why = res.get("why")
+                if why != "exists":
+                    self._snap_state = "skipped"
+                    self.log.warning("Closing snapshot of %s not saved: %s", ses, {
+                        "superseded": "a newer session's market pass had already begun replacing the contracts",
+                        "empty": "no contract of that session is stored"}.get(why, why))
+                elif self._snap_state == "saving":
+                    self._snap_state = "saved" if self._snap_last else "waiting"
+        else:
+            self._snap_state = "error"
+            self._snap_error = str(res.get("error") or "the snapshot job failed")[:500]
+            self._snap_retry_at = now + _dt.timedelta(seconds=SNAP_RETRY_S)
+            self.log.warning("Closing snapshot of %s: %s - tried again %s", ses, self._snap_error, _et_hm(self._snap_retry_at))
+        return res
+
+    def _snap_progress(self) -> dict:
+        last = self._snap_last or {}
+        return {"snap_state": self._snap_state, "snap_session": last.get("session"), "snap_rows": last.get("rows"),
+                "snap_at": _iso(last.get("at")), "snap_error": self._snap_error}
 
     # ── the stocks lane (one thread) ──
 
@@ -3417,6 +3526,7 @@ class Collector:
         self._collect_earn()
         self._collect_flat()
         self._collect_pq()
+        self._collect_snap()
         self._collect_history()
         self._collect_pass(db)
 
@@ -3444,6 +3554,9 @@ class Collector:
         if self._pq_future is not None:
             state = state or "history"
             parts.append(self._pq_text(now))
+        if self._snap_future is not None and self._snap_due:
+            state = state or "history"
+            parts.append("Saving the closing snapshot of %s (Massive's IV at the close)." % _day_words(self._snap_due[0]))
         if state is None:
             self.state, self.detail = "idle", self._idle_text(now)
         else:
@@ -3472,6 +3585,7 @@ class Collector:
         self._settle_tick(db, now)
         self._flat_tick(db, now)            # Massive Flat Files: its own keys, never the REST key
         self._pq_tick(now)                  # the day files on this PC -> Parquet: no Massive request at all
+        self._snap_tick(now)                # v4.225: the last EOD pass's closing IVs -> Parquet
         if not self._ready(now):
             return
         self._uni_resumed()
@@ -3766,7 +3880,7 @@ class Collector:
         if self._pass is not None:
             futs += list(self._pass.futures)
         for f in ((self._bg[1] if self._bg is not None else None), self._uni_future, self._earn_future,
-                  self._flat_future, self._pq_future):
+                  self._flat_future, self._pq_future, self._snap_future):
             if f is not None:
                 futs.append(f)
         if futs:
@@ -3778,7 +3892,8 @@ class Collector:
         self._stopping.set()
         if self._pass is not None:
             self._pass.halt.set()
-        for pool in (self._pool, self._bgpool, self._unipool, self._earnpool, self._flatpool, self._pqpool):
+        for pool in (self._pool, self._bgpool, self._unipool, self._earnpool, self._flatpool, self._pqpool,
+                     self._snappool):
             if pool is not None:
                 try:
                     pool.shutdown(wait=False, cancel_futures=True)
@@ -3787,6 +3902,7 @@ class Collector:
                 except Exception:  # noqa: BLE001
                     pass
         self._pool = self._bgpool = self._unipool = self._earnpool = self._flatpool = self._pqpool = None
+        self._snappool = None
         self.state = "stopped"
         self.detail = reason
         try:

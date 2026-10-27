@@ -9,7 +9,15 @@ Where the numbers come from
 * ``latest`` - the screener DB's chain (``scr_contract``: the last market pass, Massive's
   own IV per contract, 15 min delayed; only contracts with open interest or volume are
   kept) and the underlying's spot from the same pass (``scr_underlying``).
-* a past session ``YYYY-MM-DD`` - the contract history (``opt_history``: Massive's options
+* a past session with a CLOSING SNAPSHOT (v4.225, ``opt_snapshot``: the EOD pass's chain kept
+  as Parquet) - Massive's own IV per contract at the close, worked out from the contract's
+  QUOTE, with its greeks and the tile figures; contracts that did not trade that day are there
+  too. ``iv_src`` = ``quote``. The stock price is the official close (as below).
+* any other past session: BLANK (the user, 2026-10-27: *"I prefer it to be left blank when no
+  snapshot exists for that day"*) - ``history_rows`` raises ``SurfaceError`` saying so. The IV
+  solved from the last trade (below) is no longer drawn on the surface; ``trade_rows`` keeps it
+  for the tests and a by-hand look.
+* (before v4.225) a past session ``YYYY-MM-DD`` - the contract history (``opt_history``: Massive's options
   day files as Parquet): every contract that TRADED that day, its CLOSE -> Black-Scholes
   implied vol against the stock's UNADJUSTED close that day (``scr_underlying_daily.
   close_raw`` - an option keeps its listed strike through a split), r = ``RISK_FREE``, no
@@ -48,7 +56,7 @@ import datetime as _dt
 import math
 import statistics
 
-from . import opt_history
+from . import opt_history, opt_snapshot
 from .opt_constants import RISK_FREE
 
 SIDES = ("otm", "call", "put", "mid")
@@ -322,6 +330,20 @@ def build(rows, spot, on, *, side=DEFAULT_SIDE, band=DEFAULT_BAND, max_dte=DEFAU
 
 # ────────────────────────────────── the reads ──────────────────────────────────
 
+SNAPSHOT_METHOD = ("Massive's implied volatility per contract at the close (its closing snapshot: worked out from "
+                   "the bid / ask quote, read after 16:20 ET), with its greeks; the stock price is the official close")
+
+
+def iv_src(meta: dict) -> str:
+    """v4.225: where a surface's IVs came from - ``quote`` (Massive's, from the bid / ask: the latest pass or a
+    closing snapshot) or ``trade`` (solved by TradeHunter from the day's last trade)."""
+    return meta.get("iv_src") or ("quote" if meta.get("source") == "latest" else "trade")
+
+
+def meta_greeks(meta: dict) -> bool:
+    """Do the rows carry Massive's greeks and tile figures (the latest pass, a closing snapshot)?"""
+    return bool(meta.get("has_greeks", meta.get("source") == "latest"))
+
 def _models():
     from ..screener_models import ScrContract, ScrUnderlying, ScrUnderlyingDaily  # noqa: PLC0415
 
@@ -433,10 +455,71 @@ def latest_rows(sdb, symbol) -> tuple[list[dict], dict]:
                   "liq_n": sum(1 for r in rows if r.get("liq") is not None)}   # v4.184: the chain's ranked contracts
 
 
+def snapshot_rows(sdb, symbol, day, *, root=None) -> tuple[list[dict], dict] | None:
+    """v4.225: ``symbol``'s closing snapshot on ``day`` (``opt_snapshot``: Massive's quote-based IV
+    per contract at the close, with the tile figures) and its meta - or None when that day has no
+    snapshot (or none for this symbol, or pyarrow is missing). The stock price is the official
+    close when it is on file, else the price the end-of-day pass saw."""
+    sym = _sym(symbol)
+    d = _to_date(day)
+    if d is None or opt_history.available() or not opt_snapshot.has_day(d, root):
+        return None
+    tbl = opt_snapshot.chain(sym, d, root=root)
+    if tbl is None or tbl.num_rows == 0:
+        return None
+    rows, pass_spot, pass_src, as_of = [], None, None, None
+    for r in tbl.to_pylist():
+        rows.append({"expiry": r["expiry"], "right": r["right"], "strike": r["strike"], "iv": r["iv"],
+                     "delta": r["delta"], "gamma": r["gamma"], "theta": r["theta"], "vega": r["vega"],
+                     "last": r["close"], "price": r["price"], "chg_pct": r["chg_pct"], "oi": r["oi"],
+                     "volume": r["volume"]})
+        if pass_spot is None and _f(r.get("spot")):
+            pass_spot, pass_src = _f(r["spot"]), r.get("spot_src")
+        ao = r.get("as_of")
+        if isinstance(ao, _dt.datetime) and (as_of is None or ao > as_of):
+            as_of = ao
+    liquidity_ranks(rows)
+    u = underlying(sdb, sym)
+    close = raw_closes(sdb, sym, [d.isoformat()]).get(d.isoformat())
+    spot, src = (close, "close") if close is not None else (pass_spot, pass_src)
+    return rows, {"source": "history", "iv_src": "quote", "has_greeks": True, "on": d.isoformat(), "spot": spot,
+                  "spot_src": src, "as_of": as_of, "name": (u or {}).get("name"),
+                  "traded": sum(1 for r in rows if (r.get("volume") or 0) > 0), "contracts": len(rows),
+                  "liq_n": sum(1 for r in rows if r.get("liq") is not None)}
+
+
+def no_snapshot_text(sym: str, d: _dt.date, root=None) -> str:
+    """Why a past day is blank: no closing snapshot for it (with the first day there is one)."""
+    try:
+        have = opt_snapshot.days(root)
+    except Exception:  # noqa: BLE001 - words only
+        have = []
+    first = ("they are saved from %s on" % have[0]) if have else "they are saved after each session's close from now on"
+    return ("no closing snapshot is saved for %s, so %s has no IV on that day - Massive's closing IVs are only kept "
+            "by TradeHunter, %s" % (d.isoformat(), sym, first))
+
+
 def history_rows(sdb, symbol, day, *, band=DEFAULT_BAND, max_dte=DEFAULT_DTE, root=None) -> tuple[list[dict], dict]:
-    """The contracts of ``symbol`` that traded on ``day`` (the contract history) with an IV
-    solved from each one's close, and the meta ``{source, on, spot, name, traded}``. Only
-    the contracts inside the surface's window are solved (both sides)."""
+    """The contracts of ``symbol`` on a past ``day``: the closing snapshot's (Massive's quote-based IV,
+    ``snapshot_rows``) and the meta ``{source, iv_src, has_greeks, on, spot, name, traded}``. A day
+    without a snapshot is BLANK (v4.225, the user's choice): ``SurfaceError`` says so - never the IV
+    solved from the last trade."""
+    sym = _sym(symbol)
+    d = _to_date(day)
+    if d is None:
+        raise SurfaceError("pick a day")
+    snap = snapshot_rows(sdb, sym, d, root=root)
+    if snap is not None:
+        return snap
+    if underlying(sdb, sym) is None:
+        raise SurfaceError(unknown_symbol_text(sdb, sym))
+    raise SurfaceError(no_snapshot_text(sym, d, root))
+
+
+def trade_rows(sdb, symbol, day, *, band=DEFAULT_BAND, max_dte=DEFAULT_DTE, root=None) -> tuple[list[dict], dict]:
+    """(before v4.225 the past-day surface) The contracts of ``symbol`` that TRADED on ``day`` (the
+    contract history) with an IV solved from each one's last trade - no longer drawn (a day without a
+    closing snapshot is blank); kept for a by-hand comparison."""
     sym = _sym(symbol)
     d = _to_date(day)
     if d is None:
@@ -475,8 +558,9 @@ def history_rows(sdb, symbol, day, *, band=DEFAULT_BAND, max_dte=DEFAULT_DTE, ro
         meta.append((e, r["right"], k))
     ivs = solve_ivs(prices, S, K, T, calls)
     rows = [{"expiry": e, "right": right, "strike": k, "iv": iv} for (e, right, k), iv in zip(meta, ivs)]
-    return rows, {"source": "history", "on": d.isoformat(), "spot": spot, "spot_src": "close",
-                  "as_of": None, "name": (u or {}).get("name"), "traded": tbl.num_rows, "root": oroot}
+    return rows, {"source": "history", "iv_src": "trade", "has_greeks": False, "on": d.isoformat(), "spot": spot,
+                  "spot_src": "close", "as_of": None, "name": (u or {}).get("name"), "traded": tbl.num_rows,
+                  "root": oroot}
 
 
 def surface(sdb, symbol, day="latest", *, side=None, band=None, max_dte=None, expiries=None, common=True,
@@ -494,8 +578,7 @@ def surface(sdb, symbol, day="latest", *, side=None, band=None, max_dte=None, ex
         method = "Massive's implied volatility per contract, from the last market pass (15 min delayed)"
     else:
         rows, meta = history_rows(sdb, sym, day, band=o["band"], max_dte=o["max_dte"], root=root)
-        method = ("Black-Scholes implied volatility from each contract's closing price and the stock's close "
-                  "(r = %.1f %%, no dividend, T = days / 365)" % (RISK_FREE * 100.0))
+        method = SNAPSHOT_METHOD
     grid = build(rows, meta.get("spot"), meta.get("on"), common=common, **o)
     if not grid["n_cells"]:
         raise SurfaceError("no %s option inside this window has an implied volatility - widen the strike "
@@ -504,11 +587,13 @@ def surface(sdb, symbol, day="latest", *, side=None, band=None, max_dte=None, ex
     return {**grid, "symbol": sym, "name": meta.get("name"), "source": meta["source"],
             "spot_src": meta.get("spot_src"), "spot_as_of": _iso_z(meta.get("spot_as_of")),   # v4.220: where the price came from
             "as_of": as_of.replace(microsecond=0).isoformat() + "Z" if isinstance(as_of, _dt.datetime) else None,
-            "traded": meta.get("traded"), "method": method, "has_greeks": meta["source"] == "latest",
+            "traded": meta.get("traded"), "method": method, "has_greeks": meta_greeks(meta),
+            "iv_src": iv_src(meta), "contracts": meta.get("contracts"),       # v4.225: quote (Massive) | trade (solved)
             "liq_n": meta.get("liq_n"),
             "rate": RISK_FREE}           # v4.205: the rate behind every model price, for the hover card's working
 
 
 __all__ = ["SIDES", "FIGURES", "BANDS", "DTES", "SurfaceError", "build", "norm_options", "keep", "is_monthly",
-           "latest_rows", "history_rows", "surface", "raw_closes", "solve_ivs", "option_root_of", "underlying",
+           "latest_rows", "history_rows", "snapshot_rows", "trade_rows", "no_snapshot_text", "surface",
+           "SNAPSHOT_METHOD", "iv_src", "meta_greeks", "raw_closes", "solve_ivs", "option_root_of", "underlying",
            "unknown_symbol_text", "liquidity_ranks"]

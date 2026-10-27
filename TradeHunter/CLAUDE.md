@@ -676,6 +676,14 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
   with every ranked call's cell badged #n, tinted by rank, the best ringed, a Rank-by bar and a finder panel in the
   hover card. **v4.224**: plus a RANKING LIST in that window's left panel - a click shows only the picked
   call(s) on the surface, scrolled to with the hover card open; "Show all" returns to the whole ranking.
+  **v4.225 (2026-10-27): MASSIVE'S CLOSING IV KEPT DAILY** (user: *"our definition of close is the quoted price at the
+  end of the day"*): Massive's daily option files hold TRADES only (no IV, no quotes), so after each EOD pass the
+  screener collector saves that pass's contracts (the day bar OHLCV + VWAP AND Massive's quote-based IV + greeks,
+  one read = one moment; user: "time consistency ... rather than rely on separate data source") as Parquet,
+  `option_history\snapshot\YYYY\YYYY-MM-DD.parquet` (`services/opt_snapshot.py`). Past days on the surface use it;
+  **a past day WITHOUT a snapshot is BLANK** (user: *"left blank when no snapshot exists"*) - never the IV solved from
+  the last trade. The cell colours / sparkline / interpolated history still solve from the last trade (not changed).
+  After a pull touching it: restart `TST-Options-Screener` (`setup_screener_task.ps1 -StartNow`) + `IntradayBot-Tray`.
   **v4.220 (2026-10-25): the STOCK PRICE** is the official close once a session has closed (`scr_store.settle_spots`,
   run by the screener collector) and the option-implied estimate (put-call parity) only during market hours and until
   Stocks Basic publishes the close at 20:00 ET (08:00 MYT); the surface and the finder say which ("official close",

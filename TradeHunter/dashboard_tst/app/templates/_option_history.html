@@ -2,11 +2,13 @@
    options day files are kept up to date on Hermes - 1 the download, 2 the IV readings filed from them,
    3 the conversion to Parquet (the contract history). Fetched by finviz.html when the tab opens and
    every 30 s while it stays open (GET /finviz/option-history). Context: oh (services/option_history_view). #}
-{% set dl = oh.download %}{% set iv = oh.iv %}{% set pq = oh.parquet %}{% set col = oh.collector %}
+{% set dl = oh.download %}{% set iv = oh.iv %}{% set pq = oh.parquet %}{% set col = oh.collector %}{% set sn = oh.snapshot %}
 {% set word = {'building': 'working', 'ready': 'up to date', 'waiting': 'waiting', 'retry': 'retrying',
-               'error': 'problem', 'off': 'off', 'unknown': 'unknown'} %}
+               'error': 'problem', 'off': 'off', 'unknown': 'unknown', 'saving': 'saving', 'saved': 'up to date',
+               'skipped': 'skipped'} %}
 {% set tone = {'building': 'text-sky-300', 'ready': 'text-emerald-300', 'waiting': 'text-slate-400',
-               'retry': 'text-amber-300', 'error': 'text-rose-300', 'off': 'text-slate-500', 'unknown': 'text-slate-500'} %}
+               'retry': 'text-amber-300', 'error': 'text-rose-300', 'off': 'text-slate-500', 'unknown': 'text-slate-500',
+               'saving': 'text-sky-300', 'saved': 'text-emerald-300', 'skipped': 'text-amber-300'} %}
 
 <div class="flex flex-wrap items-center gap-2 mb-3 text-xs">
   <span class="inline-block h-2.5 w-2.5 rounded-full
@@ -28,14 +30,15 @@
 </div>
 {% endif %}
 
-<div class="grid gap-3 md:grid-cols-3 mb-6">
+<div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4 mb-6">
   {# ── 1 download ── #}
   <div class="rounded-lg border border-slate-800 bg-slate-900/40 p-3 text-xs space-y-1.5">
     <div class="flex items-center justify-between">
       <span class="text-sm font-medium text-slate-200">1 &middot; Download from Massive</span>
       {% if dl.state %}<span class="{{ tone.get(dl.state, 'text-slate-400') }}">{{ word.get(dl.state, dl.state) }}</span>{% endif %}
     </div>
-    <div class="text-slate-300"><b class="tabular-nums">{{ '{:,}'.format(dl.done) }}</b> of <span class="tabular-nums">{{ '{:,}'.format(dl.total) }}</span> trading days on Hermes</div>
+    <div class="text-slate-300"><b class="tabular-nums">{{ '{:,}'.format(dl.done) }}</b> of <span class="tabular-nums">{{ '{:,}'.format(dl.total) }}</span> trading days on Hermes{% if dl.older %}
+      <span class="text-slate-500" title="Files from before the two-year window Massive serves - kept, not counted above">&middot; plus {{ dl.older }} older</span>{% endif %}</div>
     <div class="h-1.5 rounded bg-slate-800 overflow-hidden"><div class="h-full bg-emerald-500" style="width: {{ dl.pct }}%"></div></div>
     <div class="text-slate-400">{{ dl.size }}{% if dl.oldest %} &middot; {{ dl.oldest }} to {{ dl.newest }}{% endif %}</div>
     {% if dl.last %}<div class="text-slate-500">Last file downloaded {{ dl.last }}</div>{% endif %}
@@ -57,7 +60,9 @@
     {% else %}
     <div class="text-slate-500">Not reported yet.</div>
     {% endif %}
-    <div class="text-slate-500">Each day file gives every stock's 30-day implied volatility for that day - the screener's IV Rank and IV Percentile.</div>
+    <div class="text-slate-500">The files carry prices only (open, high, low, close, volume - no IV). From each day's
+      closing trades TradeHunter works out every stock's 30-day implied volatility for that day - the screener's IV Rank
+      and IV Percentile.</div>
   </div>
 
   {# ── 3 Parquet ── #}
@@ -76,6 +81,26 @@
     {% if pq.error %}<div class="text-rose-300 break-words">{{ pq.error }}</div>{% endif %}
     <div class="text-slate-500 break-all">{{ oh.root }}</div>
   </div>
+
+  {# ── 4 closing snapshot (v4.225) ── #}
+  <div class="rounded-lg border border-slate-800 bg-slate-900/40 p-3 text-xs space-y-1.5">
+    <div class="flex items-center justify-between">
+      <span class="text-sm font-medium text-slate-200">4 &middot; Closing IV snapshot</span>
+      {% if sn.state %}<span class="{{ tone.get(sn.state, 'text-slate-400') }}">{{ word.get(sn.state, sn.state) }}</span>{% endif %}
+    </div>
+    {% if sn.days %}
+    <div class="text-slate-300"><b class="tabular-nums">{{ '{:,}'.format(sn.days) }}</b> session{{ '' if sn.days == 1 else 's' }} saved &middot; {{ sn.oldest }}{% if sn.newest != sn.oldest %} to {{ sn.newest }}{% endif %}</div>
+    <div class="text-slate-400">{{ sn.size }}{% if sn.rows %} &middot; <span class="tabular-nums">{{ '{:,}'.format(sn.rows) }}</span> contracts in the newest{% endif %}</div>
+    {% else %}
+    <div class="text-slate-300">None saved yet - the first after the next end-of-day read.</div>
+    {% endif %}
+    {% if sn.last %}<div class="text-slate-500">Last saved {{ sn.last }}</div>{% endif %}
+    {% if sn.error %}<div class="text-rose-300 break-words">{{ sn.error }}</div>{% endif %}
+    <div class="text-slate-500">Massive's own IV of every contract at the close (from the bid / ask quote), with its
+      greeks - saved after each day's end-of-day read (from 16:20 ET). Past dates of the Volatility surface use it;
+      days before the first one stay solved from the last trade.</div>
+    {% if sn.root %}<div class="text-slate-500 break-all">{{ sn.root }}</div>{% endif %}
+  </div>
 </div>
 
 <p class="text-xs text-slate-400 mb-4 max-w-4xl leading-relaxed">
@@ -84,6 +109,8 @@
   (every hour until it is out), files every stock's implied volatility from it, then converts it to Parquet within a
   minute. Massive re-publishes old days now and then: the collector checks weekly and converts those again. The
   Parquet files are the Options page's <i>Contract history</i> and the past dates of its <i>Volatility surface</i>.
+  After the close the collector also saves Massive's closing IVs (part 4) - those days' surfaces use the closing quote
+  instead of the last trade.
 </p>
 
 {# ── by month ── #}

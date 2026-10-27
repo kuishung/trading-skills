@@ -821,6 +821,8 @@ def parse_snapshot_result(res) -> dict | None:
         "theta": _num(greeks.get("theta")), "vega": _num(greeks.get("vega")),
         "oi": _count(res.get("open_interest")),
         "volume": _count(day.get("volume")),
+        "day_open": _pos(day.get("open")), "day_high": _pos(day.get("high")),   # v4.225: the whole day bar
+        "day_low": _pos(day.get("low")),
         "day_close": _pos(day.get("close")),
         "day_vwap": _pos(day.get("vwap")),
         "prev_close": _pos(day.get("previous_close")),

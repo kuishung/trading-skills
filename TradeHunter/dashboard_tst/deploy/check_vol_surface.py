@@ -339,7 +339,10 @@ def check_past_day(s, sym, day, r, vs, oh) -> bool:
         print("   SKIP - an index")
         return True
     try:
-        g = vs.surface(s, sym, day, side="otm", band=0, max_dte=0)
+        # v4.225: the surface of a past day is the closing snapshot (or blank); the solve from the closes
+        # still feeds the cell colours, so that is what is checked here
+        rows, meta = vs.trade_rows(s, sym, day, band=0, max_dte=0)
+        g = vs.build(rows, meta["spot"], meta["on"], side="otm", band=0, max_dte=0)
     except vs.SurfaceError as exc:
         print("   SKIP - %s" % exc)
         return True

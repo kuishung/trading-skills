@@ -5,13 +5,21 @@ volume, trades, the stock's close that day and the implied volatility solved fro
 contract's close (the volatility surface's own method, ``vol_surface.solve_ivs``).
 
 Only days a contract TRADED are in Massive's day files, so a day with no trade has no row.
+
+v4.225: a day with a CLOSING SNAPSHOT (``opt_snapshot``) takes ALL its figures from it - the day bar
+(open / high / low / close / volume / VWAP) and Massive's IV at the close (from the quote, ``iv_src`` =
+``quote``), read at one moment (the user: *"we want the time consistency of the data rather than rely
+on separate data source"*; ``src`` = ``snapshot``). A day without one keeps the day file's prices
+(``src`` = ``file``) and has NO IV (the user: *"left blank when no snapshot exists for that day"*) - the
+IV is no longer solved from the last trade. A contract has a row on a snapshot day even when it did not
+trade.
 """
 from __future__ import annotations
 
 import datetime as _dt
 
-from . import opt_history
-from .vol_surface import SurfaceError, _f, _sym, _to_date, option_root_of, raw_closes, solve_ivs
+from . import opt_history, opt_snapshot
+from .vol_surface import SurfaceError, _f, _sym, _to_date, option_root_of, raw_closes
 
 MAX_PICK_EXPIRIES = 120
 
@@ -65,7 +73,8 @@ def day_contracts(sdb, symbol, day, *, root=None) -> dict:
 def contract_series(sdb, symbol, expiry, right, strike, *, root=None) -> dict:
     """One contract's daily bars from the contract history with the stock's close and the
     IV of each day: ``{symbol, root, ticker, expiry, right, strike, rows: [{on, open, high,
-    low, close, volume, transactions, spot, iv}]}`` (``iv`` PERCENT or None)."""
+    low, close, volume, transactions, vwap, spot, iv, iv_src, src}]}`` (``iv`` PERCENT, None on a day
+    without a closing snapshot; ``iv_src`` quote | None; ``src`` snapshot | file)."""
     sym, oroot = _root_or_error(sdb, symbol)
     e = _to_date(expiry)
     k = _f(strike)
@@ -75,30 +84,27 @@ def contract_series(sdb, symbol, expiry, right, strike, *, root=None) -> dict:
     rows = opt_history.contract_history(oroot, e, rt, k, root=root)
     days = [r["on"].isoformat() for r in rows]
     closes = raw_closes(sdb, sym, days)
-    prices, S, K, T, calls, at = [], [], [], [], [], []
-    for i, r in enumerate(rows):
-        spot = closes.get(r["on"].isoformat())
-        c = _f(r.get("close"))
-        dte = (e - r["on"]).days
-        if spot is None or c is None or c <= 0 or dte < 1:
-            continue
-        prices.append(c)
-        S.append(spot)
-        K.append(k)
-        T.append(dte / 365.0)
-        calls.append(rt == "C")
-        at.append(i)
-    ivs = dict(zip(at, solve_ivs(prices, S, K, T, calls)))
-    out = []
-    for i, r in enumerate(rows):
-        iv = ivs.get(i)
+    out = {}
+    for r in rows:
         on = r["on"].isoformat()
-        out.append({"on": on, "dte": (e - r["on"]).days, "open": r.get("open"), "high": r.get("high"),
-                    "low": r.get("low"), "close": r.get("close"), "volume": r.get("volume"),
-                    "transactions": r.get("transactions"), "spot": closes.get(on),
-                    "iv": round(iv * 100.0, 2) if iv is not None else None})
+        out[on] = {"on": on, "dte": (e - r["on"]).days, "open": r.get("open"), "high": r.get("high"),
+                   "low": r.get("low"), "close": r.get("close"), "volume": r.get("volume"),
+                   "transactions": r.get("transactions"), "vwap": None, "spot": closes.get(on), "iv": None,
+                   "iv_src": None, "src": "file"}
+    snaps = opt_snapshot.contract_rows(sym, e, rt, k, root=root) if opt_snapshot.days(root) else {}
+    more = raw_closes(sdb, sym, [d for d in snaps if d not in closes]) if snaps else {}
+    for on, sn in snaps.items():                   # v4.225: the snapshot day - every figure from the one read
+        siv = _f(sn.get("iv"))
+        d = _to_date(on)
+        out[on] = {"on": on, "dte": (e - d).days, "open": _f(sn.get("open")), "high": _f(sn.get("high")),
+                   "low": _f(sn.get("low")), "close": _f(sn.get("close")), "volume": sn.get("volume") or 0,
+                   "transactions": None, "vwap": _f(sn.get("vwap")),
+                   "spot": closes.get(on) or more.get(on) or _f(sn.get("spot")),
+                   "iv": round(siv * 100.0, 2) if (siv is not None and siv > 0) else None,
+                   "iv_src": "quote" if (siv is not None and siv > 0) else None, "src": "snapshot"}
     return {"symbol": sym, "root": oroot, "ticker": opt_history.occ_ticker(oroot, e, rt, k),
-            "expiry": e.isoformat(), "right": rt, "strike": k, "rows": out}
+            "expiry": e.isoformat(), "right": rt, "strike": k, "rows": [out[d] for d in sorted(out)],
+            "n_quote": sum(1 for r in out.values() if r["iv_src"] == "quote")}
 
 
 __all__ = ["history_days", "day_contracts", "contract_series"]

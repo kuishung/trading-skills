@@ -1641,11 +1641,13 @@ def _hist_call(fn, *args, **kw):
 
 
 def _hist_days_payload() -> dict:
-    from ..services import contract_view, opt_history
+    from ..services import contract_view, opt_history, opt_snapshot
 
     why = opt_history.available()
     days = [] if why else contract_view.history_days()
-    return {"ok": True, "days": days, "available": why is None, "why": why,
+    # v4.225: the surface's past days = the sessions with a closing snapshot (others are blank)
+    snap = [] if why else list(reversed(opt_snapshot.days()))
+    return {"ok": True, "days": days, "snap_days": snap, "available": why is None, "why": why,
             "today": clock.et_today()}
 
 

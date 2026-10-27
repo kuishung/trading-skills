@@ -49,6 +49,13 @@ HEAD = "c5d8e2a4f7b1"
 PREVIOUS_HEAD = "e2f3a4b5c6d7"     # test_option_store: the revision BEFORE the options-module tables
 
 
+@pytest.fixture(autouse=True)
+def _own_option_history(monkeypatch, tmp_path):
+    """v4.225: each test its own contract-history folder - a collector test's EOD pass writes a closing
+    snapshot there, which must not reach the next test's past-day surface."""
+    monkeypatch.setenv("TST_OPTION_HISTORY_DIR", str(tmp_path / "option_history_unused"))
+
+
 def alembic_config(url: str) -> Config:
     """An Alembic config aimed at ``url``. env.py overrides the URL from
     ``settings.database_url``, so that is set too."""

@@ -33,6 +33,13 @@ web, Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-10-27 — `tray_status.py`: the Options screener line shows the closing IV snapshot (tray-sync rule)
+
+dashboard_tst v4.225 keeps Massive's closing IV of every contract after each end-of-day pass. The screener line now
+says "close IV 2026-10-27 saved" / "close IV saving" / "close IV skipped" (`progress.snap_*`), and a snapshot that
+could not be written turns the line amber: "WARN - Closing IV snapshot not saved (tried again every 10 min): <reason>".
+Restart the `IntradayBot-Tray` task after the pull.
+
 ### 2026-10-17 — `tray_status.py`: a new "Option calculator" line for the `TST-Option-Calc` lane (tray-sync rule)
 - dashboard_tst v4.151 adds a second always-on Hermes lane, the option calculator
   (`dashboard_tst/deploy/option_calc_worker.py`, task `TST-Option-Calc`), which recomputes members'

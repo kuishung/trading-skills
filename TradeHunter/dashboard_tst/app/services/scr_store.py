@@ -389,7 +389,7 @@ def technicals(bars) -> dict:
 
 # ────────────────────────────────── contracts ──────────────────────────────────
 
-_CONTRACT_FLOATS = ("chg_pct", "delta", "gamma", "theta", "vega")
+_CONTRACT_FLOATS = ("chg_pct", "delta", "gamma", "theta", "vega", "bar_open", "bar_high", "bar_low", "vwap")
 
 
 def _contract_key(expiry, right, strike):

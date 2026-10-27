@@ -4,6 +4,10 @@ collector's flat-file lane), the IV readings filed from them, and the CONVERSION
 (the collector's parquet lane, ``opt_history``) - in one view model for
 ``templates/_option_history.html``.
 
+v4.225: a fourth part, the CLOSING SNAPSHOT (``opt_snapshot``: Massive's own quote-based IV of every
+contract at each session's close, saved by the collector after its end-of-day pass); and the
+download count is the window's days on Hermes, with the older days kept beside them counted apart.
+
 Read-only: the flat-file and Parquet manifests on this PC (``opt_history.Store.summary``)
 and the collector's heartbeat row (``scr_status``: state, detail, ``progress.flat_*`` /
 ``pq_*``). The web app runs on Hermes beside the collector, so both are local reads.
@@ -13,7 +17,7 @@ from __future__ import annotations
 import datetime as _dt
 import logging
 
-from . import clock, opt_history
+from . import clock, opt_history, opt_snapshot
 
 log = logging.getLogger(__name__)
 
@@ -157,6 +161,12 @@ def view(now: _dt.datetime | None = None, *, store: opt_history.Store | None = N
     pq_state = prog.get("pq_state")
     if age is None or age > STALE_S:
         pq_state = pq_state or "unknown"
+    in_win = max(0, total - len(s["missing"])) if s["window"]["sessions"] else flat["days"]
+    try:
+        sn = opt_snapshot.summary(st.root)
+    except Exception as exc:  # noqa: BLE001 - a count only
+        log.debug("option history view: no snapshot summary (%s)", exc)
+        sn = {"days": 0, "oldest": None, "newest": None, "bytes": 0, "newest_rows": None, "root": None}
     failing = set(prog.get("pq_failed") or ())           # the collector's own record (this process has none)
     for r in s["recent"]:
         if r["state"] == "pending" and r["day"] in failing:
@@ -169,7 +179,8 @@ def view(now: _dt.datetime | None = None, *, store: opt_history.Store | None = N
             "age": ago_text(age), "stale": age is None or age > STALE_S,
         },
         "download": {
-            "done": flat["days"], "total": total, "pct": _pct(flat["days"], total),
+            "done": in_win, "total": total, "pct": _pct(in_win, total),
+            "older": max(0, flat["days"] - in_win),       # v4.225: files from before the window, still kept
             "size": size_text(flat["bytes"]), "oldest": flat["oldest"], "newest": flat["newest"],
             "last": _stamp_words(flat["last_download"], now),
             "state": prog.get("flat_state"), "error": prog.get("flat_error"), "kind": prog.get("flat_kind"),
@@ -188,6 +199,12 @@ def view(now: _dt.datetime | None = None, *, store: opt_history.Store | None = N
             "state": pq_state, "error": prog.get("pq_error"), "eta": dur_text(prog.get("pq_eta_s")),
             "running_done": prog.get("pq_days_done"), "running_total": prog.get("pq_days_total"),
             "failed": [{"day": d} for d in (prog.get("pq_failed") or [])] or s["failed"],
+        },
+        "snapshot": {                                     # v4.225
+            "days": sn["days"], "oldest": sn["oldest"], "newest": sn["newest"], "size": size_text(sn["bytes"]),
+            "rows": sn["newest_rows"], "root": sn["root"],
+            "state": prog.get("snap_state") or ("saved" if sn["days"] else "waiting"),
+            "last": _stamp_words(prog.get("snap_at"), now), "error": prog.get("snap_error"),
         },
         "months": [dict(m, gz=size_text(m["gz_bytes"]), pqs=size_text(m["pq_bytes"])) for m in s["months"]],
         "recent": [dict(r, gz=size_text(r["gz_bytes"]) if r["gz_bytes"] is not None else None,

@@ -3347,3 +3347,56 @@ def test_a_pass_that_is_due_but_held_publishes_no_next_pass_time(build):
     col._universe_done = clk()                             # the list is complete: the EOD pass is due now
     pr = col._progress(clk())
     assert pr["next_pass_in_s"] == 0 and pr["next_pass"] is not None
+
+
+# ───────────────────────────── the closing IV snapshot (v4.225) ─────────────────────────────
+
+def test_the_eod_pass_is_saved_as_the_closing_snapshot(db, build, tmp_path):
+    """v4.225: after the EOD pass on the full list the collector keeps that pass's contracts -
+    Massive's quote-based IV at the close - as Parquet (once: a restart does not write it again)."""
+    pytest.importorskip("pyarrow")
+    from app.services import opt_history, opt_snapshot
+
+    (tmp_path / "flat").mkdir()
+    clk = Clock(EOD)
+    store = opt_history.Store(root=tmp_path / "pq", flat_root=tmp_path / "flat", now=lambda: clk.t)
+    col, cl = build(clk, history_store=store)
+    for _ in range(3):
+        col.tick()
+        clk.advance(seconds=15)
+    assert col._last_eod == DAY
+    root = tmp_path / "pq"
+    assert opt_snapshot.days(root) == [DAY]
+    tbl = opt_snapshot.chain("AAA", DAY, root=root)
+    assert tbl.num_rows == KEPT and all(r["iv"] for r in tbl.to_pylist() if r["right"] in "CP")
+    pr = json.loads((tmp_path / "state" / "screener_collector.json").read_text(encoding="utf-8"))["progress"]
+    assert (pr["snap_state"], pr["snap_session"], pr["snap_error"]) == ("saved", DAY, None)
+    assert pr["snap_rows"] == db.query(ScrContract).filter(ScrContract.session == DAY).count()
+    mtime = opt_snapshot.day_path(DAY, root).stat().st_mtime
+    col2, _ = build(clk, client=cl, history_store=opt_history.Store(root=root, flat_root=tmp_path / "flat"))
+    col2.tick()
+    col2.tick()
+    assert opt_snapshot.day_path(DAY, root).stat().st_mtime == mtime and col2._snap_due is None
+
+
+def test_tray_shows_the_closing_snapshot_and_its_warning(tmp_path):
+    """v4.225 (tray-sync rule): the closing IV snapshot on the screener line, and one that could not
+    be written as an amber WARN."""
+    p = tmp_path / "screener_collector.json"
+    status = _tray_function(p)
+    prog = {"pq_state": "ready", "pq_days_done": 497, "pq_days_total": 497, "snap_state": "saved",
+            "snap_session": "2026-10-27", "snap_error": None}
+    base = {"state": "idle", "heartbeat": "2026-10-08T13:59:40+00:00", "last_pass_et": "16:40 ET",
+            "last_pass_id": 3, "last_pass_contracts": 980000, "universe_n": 4512,
+            "universe_done": "2026-10-08T11:40:00+00:00", "detail": "Up to date.", "warn": None,
+            "last_error": None, "progress": prog}
+    _write(p, base)
+    got = status(now=TRAY_NOW)
+    assert got["color"] == "green" and "· close IV 2026-10-27 saved ·" in got["line"], got["line"]
+    _write(p, dict(base, progress=dict(prog, snap_state="saving")))
+    assert "· close IV saving ·" in status(now=TRAY_NOW)["line"]
+    err = "the closing snapshot of 2026-10-27 could not be written (OSError: disk full)"
+    _write(p, dict(base, progress=dict(prog, snap_state="error", snap_error=err)))
+    got = status(now=TRAY_NOW)
+    assert (got["color"], got["tip"]) == ("amber", "Scr WARN")
+    assert got["line"] == "Options screener: WARN - Closing IV snapshot not saved (tried again every 10 min): " + err

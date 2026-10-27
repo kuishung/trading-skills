@@ -295,7 +295,8 @@ def point_for(sdb, symbol, day="latest", h=90, *, m=None, k=None, side=None, roo
     as_of = meta.get("as_of")
     out.update({"symbol": sym, "name": meta.get("name"), "source": meta["source"],
                 "as_of": as_of.replace(microsecond=0).isoformat() + "Z" if isinstance(as_of, _dt.datetime) else None,
-                "has_greeks": meta["source"] == "latest" and bool((out.get("greeks") or {}).get("has_greeks"))})
+                "has_greeks": vol_surface.meta_greeks(meta) and bool((out.get("greeks") or {}).get("has_greeks")),
+                "iv_src": vol_surface.iv_src(meta)})     # v4.225
     return out
 
 

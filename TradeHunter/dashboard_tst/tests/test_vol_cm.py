@@ -348,8 +348,8 @@ def test_the_expiries_setting_is_ignored_every_listed_expiry_is_a_leg(sdb, monke
     assert seen["expiries"] == "all" and seen["max_dte"] == 0 and g["exp_mode"] == "all"
 
 
-def test_a_past_days_interpolated_surface_has_no_greeks(sdb, hist):
-    g = vol_cm.surface_cm(sdb, "AAPL", ON.isoformat(), root=hist, side="call")
-    assert g["source"] == "history" and g["has_greeks"] is False
-    assert g["cells"] and all(row[1] == pytest.approx(30.0, abs=0.05) for row in g["cells"])
-    assert all(x is None for row in g["extra"] for x in row)
+def test_a_past_days_interpolated_surface_is_blank_without_a_closing_snapshot(sdb, hist):
+    """v4.225 (the user: "left blank when no snapshot exists for that day"): never the IV solved from
+    the last trade."""
+    with pytest.raises(SurfaceError, match="no closing snapshot is saved for 2026-10-07"):
+        vol_cm.surface_cm(sdb, "AAPL", ON.isoformat(), root=hist, side="call")

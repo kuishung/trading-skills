@@ -1411,7 +1411,7 @@ def test_the_surface_api_answers_with_the_grid_or_a_plain_reason(client, fake, s
     j = client.get("/options/api/surface", params={"symbol": "NOPE"}).json()
     assert j["ok"] is False and "NOPE" in j["error"]
     j = client.get("/options/api/surface", params={"symbol": "AAPL", "day": "2026-10-02"}).json()
-    assert j["ok"] is False and "contract history" in j["error"]
+    assert j["ok"] is False and "no closing snapshot is saved for 2026-10-02" in j["error"]   # v4.225: blank
 
 
 def test_the_surface_apis_carry_the_tickers_matp_and_mbp(client, fake, screener_url, db):
@@ -1753,7 +1753,7 @@ def test_the_interpolated_surface_api(client, fake, screener_url):
     assert none["ok"] is False and "bracket" in none["error"]
     assert client.get("/options/api/surface/cm", params={"symbol": "NOPE"}).json()["ok"] is False
     j = client.get("/options/api/surface/cm", params={"symbol": "AAPL", "day": "2026-10-02"}).json()
-    assert j["ok"] is False and "contract history" in j["error"]
+    assert j["ok"] is False and "no closing snapshot is saved for 2026-10-02" in j["error"]   # v4.225: blank
 
 
 def test_the_page_has_the_two_tabs_and_the_horizons(client, fake):
@@ -1920,7 +1920,7 @@ def test_the_hide_new_and_thinly_listed_tick(client, fake):
     assert "if (minShare == null) return cols.every(" in td and "return got >= Math.ceil(cols.length * minShare);" in td
     sv = html[html.index("function surfaceView("):html.index("function tidyNote(")]
     assert "tidy(j.cells || [], n, youngCols(j), j.source === 'latest' ? null : 0.5)" in sv
-    assert "an empty cell: that contract did not trade that day" in html
+    assert "an empty cell: no open interest, volume or IV at the close" in html     # v4.225: the closing snapshot
     assert "' hidden by the tick'" in html and "tidyNote(vw, 'expiry', 'expiries')" in html
     assert "tidyNote(vw, 'horizon', 'horizons')" in html and "tidyNote(vw, 'horizon', 'horizons', 'row', 'rows')" in html
     # the history's arrival redraws the tidy grid; the tick repaints without a request

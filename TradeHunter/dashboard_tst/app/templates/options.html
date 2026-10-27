@@ -804,14 +804,16 @@
     if (H.promise) return H.promise;
     H.promise = getJSON('/options/api/history/days').then(function (j) {
       H.days = (j && j.days) || [];
+      H.snap = (j && j.snap_days) || [];      // v4.225: the days with Massive's closing IV (the surface's past days)
       H.available = !!(j && j.available);
       H.why = j && j.why;
       var vd = $('volDay'), keep = vd ? vd.value : '';
       if (vd) {
-        vd.innerHTML = '<option value="latest">Latest market pass</option>' + H.days.map(function (d) {
-          return '<option value="' + esc(d) + '">' + esc(d) + '</option>';
-        }).join('');
-        vd.value = keep && (keep === 'latest' || H.days.indexOf(keep) >= 0) ? keep : 'latest';
+        // v4.225: only the sessions with a closing snapshot - a past day without one is blank
+        vd.innerHTML = '<option value="latest">Latest market pass</option>' + (H.snap.length ? H.snap.map(function (d) {
+          return '<option value="' + esc(d) + '">' + esc(d) + ' (closing IV)</option>';
+        }).join('') : '<option value="" disabled>Past days: saved from the next close on</option>');
+        vd.value = keep && (keep === 'latest' || H.snap.indexOf(keep) >= 0) ? keep : 'latest';
       }
       if ($('chDay')) {
         $('chDay').innerHTML = H.days.length ? H.days.map(function (d) {
@@ -1114,13 +1116,13 @@
     $('volTable').innerHTML = h + '</tbody>';
     var src = j.source === 'latest'
       ? 'Latest market pass, session ' + esc(j.on) + (j.as_of ? ' (read ' + esc(new Date(j.as_of).toLocaleString()) + ')' : '')
-      : 'Close of ' + esc(j.on) + (j.traded != null ? ' (' + intText(j.traded) + ' contracts traded)' : '');
+      : 'Closing snapshot of ' + esc(j.on) + ' - Massive\'s IV at the close (from the quote)' + (j.contracts != null ? ', ' + intText(j.contracts) + ' contracts' : '');
     // v4.178 (user: "this line is too long ... just put the ticker name in bigger font size"): the ticker
     // large, the name and price small beside it; the rest of the line (source, counts, method) is the tooltip
     var detail = src + ' · price ' + num(j.spot, 2) +
       ' · ' + intText(vw.rows.length) + ' strikes x ' + intText(vw.cols.length) + ' expiries' +
       (j.hidden_strikes ? ' · ' + intText(j.hidden_strikes) + ' hidden' : '') + plain(tidyNote(vw, 'expiry', 'expiries')) +
-      (j.source === 'latest' ? '' : ' · an empty cell: that contract did not trade that day');
+      (j.source === 'latest' ? '' : ' · an empty cell: no open interest, volume or IV at the close');
     infoHead($('volInfo'), j, detail);
     show($('volInfoRow'), true); show($('volWrap'), true); legends();
     tileNote(activeLast());
@@ -2726,7 +2728,7 @@
   }
   function renderHistory(j) {
     var cols = [['Date', 'l'], ['Days left', ''], ['Open', ''], ['High', ''], ['Low', ''], ['Close', ''],
-                ['Volume', ''], ['Trades', ''], ['Stock close', ''], ['IV %', '']];
+                ['Volume', ''], ['Trades', ''], ['Stock close', ''], ['IV %', ''], ['Source', 'l']];
     $('chTable').querySelector('thead').innerHTML = '<tr>' + cols.map(function (c) {
       return '<th class="' + (c[1] === 'l' ? 'scr-l' : '') + '" style="cursor:default">' + c[0] + '</th>';
     }).join('') + '</tr>';
@@ -2738,13 +2740,19 @@
         '<td class="text-right tabular-nums">' + intText(r.volume) + '</td>' +
         '<td class="text-right tabular-nums">' + intText(r.transactions) + '</td>' +
         '<td class="text-right tabular-nums">' + num(r.spot, 2) + '</td>' +
-        '<td class="text-right tabular-nums">' + num(r.iv, 1) + '</td></tr>';
+        '<td class="text-right tabular-nums">' + num(r.iv, 1) + '</td>' +
+        // v4.225: Massive's closing quote (a day with a closing snapshot) or the day's last trade (solved here)
+        '<td class="scr-l text-[11px] ' + (r.iv_src === 'quote' ? 'text-emerald-300' : 'text-slate-500') + '" title="' +
+          esc(r.src === 'snapshot' ? 'Massive\'s end-of-day read: the day bar and the IV at the close (from the bid / ask quote), one moment'
+                                   : 'Massive\'s daily trade file (prices only) - no closing snapshot is saved for this day, so no IV') + '">' +
+          (r.src === 'snapshot' ? 'closing snapshot' : 'trade file') + '</td></tr>';
     }).join('');
     var first = j.rows.length ? j.rows[0].on : null, last = j.rows.length ? j.rows[j.rows.length - 1].on : null;
     $('chInfoText').innerHTML = '<b class="text-slate-200">' + esc(j.symbol) + ' ' + esc(shortDate(j.expiry)) + ' ' +
       esc(strikeText(j.strike)) + ' ' + (j.right === 'C' ? 'call' : 'put') + '</b> <span class="text-slate-500">' + esc(j.ticker) + '</span>' +
-      ' &middot; traded on ' + intText(j.rows.length) + ' day' + (j.rows.length === 1 ? '' : 's') +
-      (first ? ' (' + esc(first) + ' to ' + esc(last) + ')' : '');
+      ' &middot; ' + intText(j.rows.length) + ' day' + (j.rows.length === 1 ? '' : 's') +
+      (first ? ' (' + esc(first) + ' to ' + esc(last) + ')' : '') +
+      (j.n_quote ? ' &middot; ' + intText(j.n_quote) + ' with Massive\'s closing IV' : '');
     show($('chInfo'), true);
     show($('chWrap'), !!j.rows.length);
     msg($('chMsg'), j.rows.length ? '' : 'This contract has no trading day in the contract history.');
@@ -2766,9 +2774,9 @@
   function csvDownload() {
     var j = C.meta;
     if (!j || !j.rows) return;
-    var lines = ['date,days_left,open,high,low,close,volume,trades,stock_close,iv_pct'];
+    var lines = ['date,days_left,open,high,low,close,volume,trades,vwap,stock_close,iv_pct,source'];
     j.rows.forEach(function (r) {
-      lines.push([r.on, r.dte, r.open, r.high, r.low, r.close, r.volume, r.transactions, r.spot, r.iv]
+      lines.push([r.on, r.dte, r.open, r.high, r.low, r.close, r.volume, r.transactions, r.vwap, r.spot, r.iv, r.src]
         .map(function (v) { return v == null ? '' : v; }).join(','));
     });
     var blob = new Blob([lines.join('\n') + '\n'], {type: 'text/csv'});

@@ -993,7 +993,9 @@ def get_screener_collector_status(path=None, now=None, log_path=None) -> dict:
     IV history to go, the IV history built from Massive's daily option files (v4.138:
     "IV files 187/252 days, about 6 min" - waiting for stock prices / retrying / off with
     its reason), the contract history those files are converted into (v4.139: "Parquet
-    120/497 days, about 6 min" while it converts, "Parquet 497/497 days" once done),
+    120/497 days, about 6 min" while it converts, "Parquet 497/497 days" once done), the
+    closing IV snapshot (v4.225: "close IV 2026-10-27 saved" / "close IV saving"; a snapshot that
+    could not be written - ``progress.snap_state`` error - is a WARN "Closing IV snapshot not saved"),
     heartbeat age - one line + a tooltip fragment, and the collector's
     own sentence (``detail``: what it is doing, or the whole error / stop reason, cut to
     220 characters) for the second line of the Show Status window.
@@ -1190,6 +1192,17 @@ def get_screener_collector_status(path=None, now=None, log_path=None) -> dict:
         parts.append("Parquet paused")
     elif q_state == "off" and q_err:
         parts.append("Parquet off")
+    # v4.225: the closing IV snapshot (Massive's quote-based IV of every contract at the close)
+    s_state = str(prog.get("snap_state") or "").strip().lower()
+    s_ses, s_err = _text(prog.get("snap_session")), _text(prog.get("snap_error"))
+    if s_state == "saving":
+        parts.append("close IV saving")
+    elif s_state == "saved" and s_ses:
+        parts.append(f"close IV {s_ses} saved")
+    elif s_state == "skipped":
+        parts.append("close IV skipped")
+    elif s_state == "error":
+        parts.append("close IV failed")
     eh_left = _n(prog.get("earnings_history_left"))        # v4.143: the past year's earnings dates being read
     if eh_left:
         parts.append(f"earnings history {eh_left:,} days to go")
@@ -1221,6 +1234,9 @@ def get_screener_collector_status(path=None, now=None, log_path=None) -> dict:
                         + (q_err or "converting the daily option files failed"))
         elif q_state == "off" and q_err:
             warn_why = "Contract history (Parquet) is not running: " + q_err
+        elif s_state == "error":
+            warn_why = ("Closing IV snapshot not saved (tried again every 10 min): "
+                        + (s_err or "writing the snapshot failed"))
 
     if age is None or age > OPTIONS_SCREENER_STALE_SEC:
         if raw == "error":
