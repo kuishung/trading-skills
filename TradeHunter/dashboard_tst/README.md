@@ -223,6 +223,14 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-31 - v4.227: the Interpolated tab's column headings show each horizon's date
+
+The user: *"in the interpolated vol surface the top column I need the expiry date to be stated - the horizon"*. Each
+horizon column now reads e.g. "30d" with "Nov 29 '26" under it - the date that fixed horizon falls on (the surface's
+day + N calendar days; a past day's surface counts from that day), as the listed tab shows each expiry's date. The
+heading's tooltip names the date too. `options.html` (`hzDate`); test in `test_options_page.py` (the date math run
+under node).
+
 ### 2026-10-27 - v4.226: Settings shows whether each day's closing snapshot was collected
 
 The user: *"I need to know if the daily snapshot is collected"*. Settings -> Data Ingest -> Option History:

@@ -1776,11 +1776,21 @@ def test_the_page_has_the_two_tabs_and_the_horizons(client, fake):
                    "a listed expiry falls on this horizon - this is that contract\\'s own IV",
                    "% weighted by time (linear in total variance)'", "' falls on ' + hz.days + 'd' +",
                    "model price",
-                   "'d</th>'", "linear in total variance · legs: every listed expiry at least 7 days out "
+                   "'<div class=\"vol-sub\">' + shortDate(on) + '</div>'", "on = hzDate(j.on, d)",
+                   "linear in total variance · legs: every listed expiry at least 7 days out "
                                "(the Expiries setting applies to the other tab)",
                    "rows at fixed moneyness (strike / price), interpolated by strike",
                    "Tick at least one horizon above the grid (30 days to 2 years)."):
         assert needle in html, needle
+    # v4.227: the horizon's own date under its days - the surface's day + N calendar days (run under node)
+    import shutil
+    import subprocess
+    if shutil.which("node"):
+        src = html[html.index("function hzDate("):html.index("function shortDate(")]
+        out = subprocess.run(["node", "-e", src + "console.log([hzDate('2026-10-30', 30), hzDate('2026-12-15', 365),"
+                                                  " hzDate('2026-02-27', 2), hzDate('', 30)].join(','));"],
+                             capture_output=True, text=True, check=True).stdout.strip()
+        assert out == "2026-11-29,2027-12-15,2026-03-01,"
     # v4.175: out to two years, every horizon ticked by default; the new ones say their months
     for h in (30, 60, 90, 180, 270, 365, 456, 547, 638, 730):
         assert 'id="volHz%d" data-h="%d" checked' % (h, h) in html, h

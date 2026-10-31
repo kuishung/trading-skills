@@ -756,6 +756,12 @@
     });
   }
   function toast(msg, kind) { if (window.thToast) window.thToast(msg, kind); }
+  function hzDate(iso, days) {         // v4.227: the date a fixed horizon falls on - 2026-10-30 + 30 -> 2026-11-29
+    var p = String(iso || '').split('-');
+    if (p.length !== 3 || days == null) return null;
+    var t = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2] + Number(days)));
+    return isNaN(t) ? null : t.toISOString().slice(0, 10);
+  }
   function shortDate(iso) {            // 2026-11-20 -> Nov 20 '26
     var p = String(iso || '').split('-');
     if (p.length !== 3) return esc(iso);
@@ -2049,9 +2055,12 @@
     var vw = cmView(j);
     var h = '<thead><tr><th class="vol-sticky vol-corner">' + (mon ? 'Strike/price \\ Horizon' : 'Strike \\ Horizon') + '</th>';
     vw.cols.forEach(function (c) {
-      var d = hz[c].days;
-      h += '<th title="' + esc((HZ_MONTHS[d] ? HZ_MONTHS[d] + ' - ' : '') + 'A fixed ' + d + ' days out (' + hz[c].years + ' years), worked out from the listed expiries around it') +
-           '">' + d + 'd</th>';
+      var d = hz[c].days, on = hzDate(j.on, d);
+      // v4.227 (user: "the top column I need the expiry date to be stated - the horizon"): the date the fixed
+      // horizon falls on (the surface's day + N calendar days) under the days, like the listed tab's expiries
+      h += '<th title="' + esc((HZ_MONTHS[d] ? HZ_MONTHS[d] + ' - ' : '') + 'A fixed ' + d + ' days out (' + hz[c].years + ' years)' +
+           (on ? ', on ' + on : '') + ', worked out from the listed expiries around it') +
+           '">' + d + 'd' + (on ? '<div class="vol-sub">' + shortDate(on) + '</div>' : '') + '</th>';
     });
     h += '</tr></thead><tbody>';
     // the at-the-money line: on moneyness rows the 100% row itself (when shown), else the line at the price
