@@ -666,6 +666,11 @@
        coloured surface first, as wide as its columns; the ranked table under it #}
     <div id="ofMapBox" class="hidden space-y-1">
       <div id="ofMapTitle" class="text-[11px] text-slate-400"></div>
+      {# v4.231 (user: "a button ticker to tick to hide the thin contract so that the gaps will disappear in the colour
+         chart"): the surface's own tidy-up on this chart only (the table keeps every call); remembered (th.of.clean) #}
+      <label class="scr-check text-[11px]" title="Leaves out the expiries that carry fewer than half as many ranked calls as the fullest one, then every strike that still has a gap - so the chart shows no gaps. The table below keeps every call. Untick to see everything.">
+        <input type="checkbox" id="ofClean" checked> Hide thinly listed contracts (no gaps in the chart)
+      </label>
       <div class="scr-wrap of-wrap of-mapwrap rounded-lg border border-slate-800 overflow-auto"><table id="ofMap" class="of-map text-xs"></table></div>
     </div>
     <div id="ofWrap" class="hidden scr-wrap of-wrap rounded-lg border border-slate-800 overflow-auto">
@@ -1766,6 +1771,21 @@
     });
     if (!rows.length) { show($('ofMapBox'), false); return; }
     exps.sort(); ks.sort(function (a, b) { return a - b; });
+    // v4.231: "Hide thinly listed contracts" - (1) an expiry with fewer than half the ranked calls of the fullest one
+    // goes, then (2) every strike with a gap in the expiries left (the surface's own tidy())
+    var hidE = 0, hidK = 0, topHidden = false;
+    if ($('ofClean') && $('ofClean').checked) {
+      var grid = ks.map(function (k) { return exps.map(function (e) { return by[e + '|' + k] ? 1 : null; }); });
+      var cnt = exps.map(function (e, c) { return grid.filter(function (row) { return row[c] != null; }).length; });
+      var most = Math.max.apply(null, cnt);
+      var tv = tidy(grid, exps.length, cnt.map(function (n) { return n * 2 < most; }), null);
+      if (tv.rows.length && tv.cols.length) {
+        hidE = tv.hidCols; hidK = tv.hidRows;
+        exps = tv.cols.map(function (c) { return exps[c]; });
+        ks = tv.rows.map(function (r) { return ks[r]; });
+        topHidden = !(exps.indexOf(rows[0].expiry) >= 0 && ks.indexOf(rows[0].strike) >= 0);
+      }
+    }
     var n = rows.length, h = '<thead><tr><th class="vol-k">Strike \\ Expiry</th>';
     // v4.230 (user: "the MATP and MBP and Current price to be marked like the vol surface"): the surface's own lines
     var lj = {spot: j.spot, levels: j.levels, strikes: ks}, idx = ks.map(function (_k, i) { return i; });
@@ -1795,7 +1815,9 @@
     if (!spotDone) h += levelsBefore(lst, j.spot, nc) + spotRow(j, nc);
     h += levelsRest(lst, nc);
     $('ofMap').innerHTML = h + '</tbody>';
-    $('ofMapTitle').innerHTML = 'The ranked calls on the surface, each coloured by its rank for <b>' + esc(OF_SORTS[OF.sort]) + '</b> (deeper green = higher); the best one ringed; the price, MATP and MBP lines as on the Volatility Surface. The table below lists them. Click a cell or a row for that contract\'s history.';
+    $('ofMapTitle').innerHTML = 'The ranked calls on the surface, each coloured by its rank for <b>' + esc(OF_SORTS[OF.sort]) + '</b> (deeper green = higher); the best one ringed; the price, MATP and MBP lines as on the Volatility Surface. The table below lists them. Click a cell or a row for that contract\'s history.' +
+      (hidE || hidK ? ' <span class="text-slate-500">Hidden as thinly listed: ' + [hidE ? hidE + (hidE === 1 ? ' expiry' : ' expiries') : '', hidK ? hidK + (hidK === 1 ? ' strike' : ' strikes') : '']
+        .filter(Boolean).join(' and ') + (topHidden ? ' - the #1 call is among them (it is in the table)' : '') + '.</span>' : '');
     show($('ofMapBox'), true);
   }
   // ── v4.223: the Option Finder ranking laid over the Volatility Surface (a window opened by the finder's button) ──
@@ -1973,6 +1995,11 @@
       });
       function setSort(k) { OF.sort = k; $('ofSort').value = k; lsSet(OF_SORT_KEY, k); paintFind(); }
       $('ofSort').addEventListener('change', function () { setSort($('ofSort').value); });
+      try { var oc = localStorage.getItem('th.of.clean'); if (oc != null) $('ofClean').checked = oc === '1'; } catch (err) { /* private window */ }
+      $('ofClean').addEventListener('change', function () {               // v4.231: redraw the chart only
+        try { localStorage.setItem('th.of.clean', $('ofClean').checked ? '1' : '0'); } catch (err) { /* ignore */ }
+        if (OF.last && OF.last.rows) paintFindMap(ofSorted(OF.last.rows));
+      });
       $('volPanelFind').addEventListener('click', function (e) {
         var b = e.target.closest ? e.target.closest('[data-ofsort]') : null;
         if (b) { setSort(b.dataset.ofsort); return; }

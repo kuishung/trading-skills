@@ -118,3 +118,19 @@ def test_the_finder_api_carries_the_tickers_matp_and_mbp(client, sdb, monkeypatc
     monkeypatch.setattr(options_page, "_levels_for", lambda db, sym: {"matp": 112.4, "mbp": 93.6} if sym.upper() == "ACME" else {})
     j = client.get("/options/api/finder", params={"symbol": "ACME", "target": "120", "worst": "92"}).json()
     assert j["ok"] is True and j["levels"] == {"matp": 112.4, "mbp": 93.6}
+
+
+def test_a_tick_hides_the_thinly_listed_contracts_from_the_chart():
+    """v4.231 (user: "a button ticker to tick to hide the thin contract so that the gaps will disappear in the colour
+    chart"): on by default and remembered; the chart drops thin expiries then every strike with a gap (the surface's
+    tidy()); the table keeps every call; the title says what was hidden and whether the #1 call is among it."""
+    from pathlib import Path
+    html = (Path(__file__).resolve().parent.parent / "app" / "templates" / "options.html").read_text(encoding="utf-8")
+    assert '<input type="checkbox" id="ofClean" checked> Hide thinly listed contracts (no gaps in the chart)' in html
+    assert html.index('id="ofMapTitle"') < html.index('id="ofClean"') < html.index('id="ofMap"')
+    fm = html[html.index("function paintFindMap("):html.index("function rkKey(")]
+    for needle in ("if ($('ofClean') && $('ofClean').checked)", "cnt.map(function (n) { return n * 2 < most; })",
+                   "var tv = tidy(grid, exps.length,", "topHidden = !(exps.indexOf(rows[0].expiry) >= 0",
+                   "Hidden as thinly listed: ", "the #1 call is among them (it is in the table)"):
+        assert needle in fm, needle
+    assert "localStorage.setItem('th.of.clean'" in html and "paintFindMap(ofSorted(OF.last.rows))" in html

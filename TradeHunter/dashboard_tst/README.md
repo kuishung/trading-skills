@@ -223,6 +223,16 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-31 - v4.231: the Option Finder - a tick hides the thinly listed contracts from the colour chart
+
+The user: *"in the option finder i need a button ticker to tick to hide the thin contract so that the gaps will disappear
+in the colour chart"*. A tick above the chart, **"Hide thinly listed contracts (no gaps in the chart)"** - on by default,
+remembered in this browser (`th.of.clean`): the chart leaves out the expiries that carry fewer than half as many ranked
+calls as the fullest one, then every strike that still has a gap (the Volatility Surface's own `tidy()`), so it shows
+no gaps. The ranked table below keeps every call; the chart's title says how many expiries / strikes were hidden and
+whether the #1 call is among them. Redrawn at once, no new request. Checked in the local preview (6 x 6 with 5 gaps ->
+5 x 5 with none). `options.html`; `test_opt_finder.py`.
+
 ### 2026-10-31 - v4.230: the Option Finder - the coloured surface on top, as wide as its columns, with the price / MATP / MBP lines
 
 The user: *"in the option finder, i want to switch the table to be bottom and the colour up and i want to make the colour
