@@ -1776,7 +1776,7 @@ def test_the_page_has_the_two_tabs_and_the_horizons(client, fake):
                    "a listed expiry falls on this horizon - this is that contract\\'s own IV",
                    "% weighted by time (linear in total variance)'", "' falls on ' + hz.days + 'd' +",
                    "model price",
-                   "'<div class=\"vol-sub\">' + shortDate(on) + '</div>'", "on = hzDate(j.on, d)",
+                   "(on ? shortDate(on) + '<div class=\"vol-sub\">' + d + 'd</div>' : d + 'd')", "on = hzDate(j.on, d)",
                    "linear in total variance · legs: every listed expiry at least 7 days out "
                                "(the Expiries setting applies to the other tab)",
                    "rows at fixed moneyness (strike / price), interpolated by strike",

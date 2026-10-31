@@ -2060,7 +2060,8 @@
       // horizon falls on (the surface's day + N calendar days) under the days, like the listed tab's expiries
       h += '<th title="' + esc((HZ_MONTHS[d] ? HZ_MONTHS[d] + ' - ' : '') + 'A fixed ' + d + ' days out (' + hz[c].years + ' years)' +
            (on ? ', on ' + on : '') + ', worked out from the listed expiries around it') +
-           '">' + d + 'd' + (on ? '<div class="vol-sub">' + shortDate(on) + '</div>' : '') + '</th>';
+           // v4.228 (user: "make the same vol surface, date on top"): the date on top, the days under it - as the listed tab
+           '">' + (on ? shortDate(on) + '<div class="vol-sub">' + d + 'd</div>' : d + 'd') + '</th>';
     });
     h += '</tr></thead><tbody>';
     // the at-the-money line: on moneyness rows the 100% row itself (when shown), else the line at the price

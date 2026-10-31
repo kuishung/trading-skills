@@ -223,6 +223,11 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-31 - v4.228: the Interpolated tab's headings put the date on top, like the listed tab
+
+The user: *"make the same vol surface, date on top"*. Each horizon column now reads "Nov 29 '26" with "30d" under it -
+the same layout as the listed tab's expiry headings (date, then days). `options.html`; `test_options_page.py`.
+
 ### 2026-10-31 - v4.227: the Interpolated tab's column headings show each horizon's date
 
 The user: *"in the interpolated vol surface the top column I need the expiry date to be stated - the horizon"*. Each
