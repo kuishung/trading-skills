@@ -223,6 +223,28 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-31 - v4.232: download the Volatility Surface and the Interpolated surface to Excel
+
+The user: *"I need to be able to download data from vol surface IV, price, contract expiry, strike (no need greeks) in
+to excel. Both the vol surface and the Interpolated"*.
+- A **Download Excel** button on each tab's ticker line (`options.html`, `xlsxDownload`) sends the page's own settings
+  (day, options shown, strikes, expiries, common strikes; the ticked horizons on the Interpolated tab) to the new
+  `GET /options/api/surface/xlsx?tab=surface|cm` (`routes/options_page.py`), which rebuilds the same grid and returns
+  an .xlsx (`services/vol_export.py`, new):
+  - **Volatility Surface** - sheet *Contracts*: Expiry, Days to expiry, Monthly (M), Strike, Call / put, IV %, Price
+    (Black-Scholes at that IV), Last trade - one row per cell; sheet *IV grid*: strikes down, expiries across.
+  - **Interpolated** - sheet *Contracts*: Horizon (days), Horizon date, Strike, Call / put, IV %, Price (at that IV),
+    How (the listed expiry, or "interpolated between <expiry> and <expiry>"); sheets *IV grid (moneyness)* and *IV grid
+    (strike)*.
+  - Every sheet opens with the ticker, the day (latest pass / closing snapshot), the stock price and its source, and the
+    method. No greeks (the user's choice). The page's "Hide new and thinly listed" tick is a view only: the workbook has
+    every strike of the grid.
+- **`openpyxl` added to `app/requirements.txt`** - `deploy\update.ps1` installs it on Hermes (it reinstalls when the
+  requirements change).
+- Checked in the local preview (both downloads 200). Tests: `tests/test_vol_export.py` (new), `test_options_page.py`.
+- (The code went out in commit 36a2d7a, which by mistake carries the v4.231 title; this entry and the version bump
+  followed in the next commit.)
+
 ### 2026-10-31 - v4.231: the Option Finder - a tick hides the thinly listed contracts from the colour chart
 
 The user: *"in the option finder i need a button ticker to tick to hide the thin contract so that the gaps will disappear
