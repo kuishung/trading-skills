@@ -1871,12 +1871,14 @@ async def api_cm_series(symbol: str = "", h: str = "90", m: str = "", k: str = "
 
 @router.get("/api/finder")
 async def api_finder(symbol: str = "", strategy: str = "long_call", target: str = "", worst: str = "",
-                     mode: str = "expiry", date: str = "", user: User = Depends(require_user)):
+                     mode: str = "expiry", date: str = "", user: User = Depends(require_user),
+                     db: Session = Depends(get_db)):
     """v4.219 - the Option Finder tab (``services/opt_finder.py``): every contract of the strategy ranked by the
     workbook's figures for the member's target and worst-case prices, valued at each contract's own expiry
     (``mode=expiry``) or on one date (``mode=date&date=YYYY-MM-DD``). Before both prices are typed the answer is
     ``{ok: false, need_prices: true, spot}`` so the page can show today's price; a problem is
-    ``{ok: false, error}`` in words."""
+    ``{ok: false, error}`` in words. v4.230: ``levels`` = the ticker's MATP and MBP (as the surface's), for the lines
+    on the finder's surface."""
     from .. import screener_db
     from ..services import opt_finder
     from ..services.calc_chain import ChainError, load_chain
@@ -1895,7 +1897,10 @@ async def api_finder(symbol: str = "", strategy: str = "long_call", target: str 
             return {"ok": True, **res}
 
     try:
-        return JSONResponse(await run_in_threadpool(run))
+        out = await run_in_threadpool(run)
+        if out.get("ok"):
+            out["levels"] = _levels_for(db, symbol)
+        return JSONResponse(out)
     except (opt_finder.FinderError, ChainError) as exc:
         return JSONResponse({"ok": False, "error": str(exc)})
     except Exception as exc:  # noqa: BLE001

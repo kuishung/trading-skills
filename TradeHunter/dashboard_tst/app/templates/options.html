@@ -273,6 +273,17 @@
   #volPanelFind > * { flex-shrink: 0; }
   #volPanelFind .of-wrap { flex: 0 0 auto; max-height: 60vh; }   /* .scr-wrap's flex: 1 0 0 would squeeze it */
   .of-map { border-collapse: separate; border-spacing: 2px; font-variant-numeric: tabular-nums; }
+  #volPanelFind .of-mapwrap { width: fit-content; max-width: 100%; }   /* v4.230: as wide as its columns */
+  /* v4.230: the price line and the MATP / MBP lines, as on the Volatility Surface */
+  .of-map tbody th { top: auto; }
+  .of-map tr.vol-spot th, .of-map tr.vol-spot td, .of-map tr.vol-lvl th, .of-map tr.vol-lvl td {
+    padding: .1rem .45rem; font-size: 10px; white-space: nowrap; text-align: left; border-radius: 0; border-bottom: 2px solid; }
+  .of-map tr.vol-spot th, .of-map tr.vol-spot td { color: var(--tv-accent-tx); border-bottom-color: var(--tv-accent); }
+  .of-map tr.vol-spot th, .of-map tr.vol-lvl th { position: sticky; left: 0; z-index: 1; }
+  .of-map tr.vol-lvl.vol-lvl-matp th, .of-map tr.vol-lvl.vol-lvl-matp td { color: #fb923c; border-bottom-color: #f97316; }
+  .of-map tr.vol-lvl.vol-lvl-mbp th, .of-map tr.vol-lvl.vol-lvl-mbp td { color: #22c55e; border-bottom-color: #16a34a; }
+  html.light .of-map tr.vol-lvl.vol-lvl-matp th, html.light .of-map tr.vol-lvl.vol-lvl-matp td { color: #c2410c; }
+  html.light .of-map tr.vol-lvl.vol-lvl-mbp th, html.light .of-map tr.vol-lvl.vol-lvl-mbp td { color: #15803d; }
   .of-map th { position: sticky; top: 0; background: var(--tv-panel); color: var(--tv-muted); font-weight: 500; padding: .2rem .4rem; white-space: nowrap; }
   .of-map th.vol-k { position: sticky; left: 0; z-index: 1; text-align: right; color: var(--tv-text); }
   .of-map thead th.vol-k { z-index: 2; }
@@ -651,14 +662,16 @@
     <div id="ofInfo" class="hidden text-[11px] text-slate-400 leading-snug"></div>
     <div id="ofSurfRow" class="hidden"><button type="button" id="ofSurf" class="rounded border border-emerald-600/60 px-2.5 py-1 text-[11px] text-emerald-300 hover:bg-emerald-500/10"
       title="The same Volatility Surface in a new window, each ranked call's cell carrying its rank">Show this ranking on the volatility surface &#8599;</button></div>
+    {# v4.230 (user: "switch the table to be bottom and the colour up ... make the colour table width to fit"): the
+       coloured surface first, as wide as its columns; the ranked table under it #}
+    <div id="ofMapBox" class="hidden space-y-1">
+      <div id="ofMapTitle" class="text-[11px] text-slate-400"></div>
+      <div class="scr-wrap of-wrap of-mapwrap rounded-lg border border-slate-800 overflow-auto"><table id="ofMap" class="of-map text-xs"></table></div>
+    </div>
     <div id="ofWrap" class="hidden scr-wrap of-wrap rounded-lg border border-slate-800 overflow-auto">
       <table id="ofTable" class="of-table text-xs"></table>
     </div>
     <div id="ofMore" class="hidden"></div>
-    <div id="ofMapBox" class="hidden space-y-1">
-      <div id="ofMapTitle" class="text-[11px] text-slate-400"></div>
-      <div class="scr-wrap of-wrap rounded-lg border border-slate-800 overflow-auto"><table id="ofMap" class="of-map text-xs"></table></div>
-    </div>
   </section>
   {# v4.190: the watchlist pane's option-liquidity hover table (same as the Watchlist page's Opt liq).
      v4.191: OUTSIDE both tab panels - inside the (hidden) Interpolated panel it never showed on the Surface tab. #}
@@ -1754,6 +1767,9 @@
     if (!rows.length) { show($('ofMapBox'), false); return; }
     exps.sort(); ks.sort(function (a, b) { return a - b; });
     var n = rows.length, h = '<thead><tr><th class="vol-k">Strike \\ Expiry</th>';
+    // v4.230 (user: "the MATP and MBP and Current price to be marked like the vol surface"): the surface's own lines
+    var lj = {spot: j.spot, levels: j.levels, strikes: ks}, idx = ks.map(function (_k, i) { return i; });
+    var lst = levelState(lj), ltags = levelTags(lj, idx), spotDone = false, nc = exps.length;
     // v4.229 (user: "the strike and expiry column need the expiry horizon like the vol surface"): the date, the
     // monthly M and the days to expiry under it - the Volatility Surface's own heading
     exps.forEach(function (e) {
@@ -1763,8 +1779,10 @@
            (m.dte != null ? '<div class="vol-sub">' + m.dte + 'd</div>' : '') + '</th>';
     });
     h += '</tr></thead><tbody>';
-    ks.forEach(function (k) {
-      h += '<tr><th class="vol-k">' + esc(strikeText(k)) + (Math.abs(k - j.spot) === Math.min.apply(null, ks.map(function (x) { return Math.abs(x - j.spot); })) ? ' <span class="text-slate-500">&middot; price</span>' : '') + '</th>';
+    ks.forEach(function (k, ri) {
+      if (!spotDone && k >= j.spot) { h += levelsBefore(lst, j.spot, nc) + spotRow(j, nc); spotDone = true; }
+      h += levelsBefore(lst, k, nc);
+      h += '<tr><th class="vol-k">' + esc(strikeText(k)) + tagHtml(ltags[ri]) + '</th>';
       exps.forEach(function (e) {
         var c = by[e + '|' + k];
         if (!c) { h += '<td></td>'; return; }
@@ -1774,8 +1792,10 @@
       });
       h += '</tr>';
     });
+    if (!spotDone) h += levelsBefore(lst, j.spot, nc) + spotRow(j, nc);
+    h += levelsRest(lst, nc);
     $('ofMap').innerHTML = h + '</tbody>';
-    $('ofMapTitle').innerHTML = 'The same calls on the surface, each coloured by its rank for <b>' + esc(OF_SORTS[OF.sort]) + '</b> (deeper green = higher); the best one ringed. Click a cell or a row for that contract\'s history.';
+    $('ofMapTitle').innerHTML = 'The ranked calls on the surface, each coloured by its rank for <b>' + esc(OF_SORTS[OF.sort]) + '</b> (deeper green = higher); the best one ringed; the price, MATP and MBP lines as on the Volatility Surface. The table below lists them. Click a cell or a row for that contract\'s history.';
     show($('ofMapBox'), true);
   }
   // ── v4.223: the Option Finder ranking laid over the Volatility Surface (a window opened by the finder's button) ──

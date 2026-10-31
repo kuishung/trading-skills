@@ -223,6 +223,18 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-31 - v4.230: the Option Finder - the coloured surface on top, as wide as its columns, with the price / MATP / MBP lines
+
+The user: *"in the option finder, i want to switch the table to be bottom and the colour up and i want to make the colour
+table width to fit and also i need the MATP and MBP and Current price to be marked like the vol surface"*.
+- The coloured surface now comes first and the ranked table under it (`options.html`); the surface is only as wide as
+  its columns (`.of-mapwrap`: fit-content, capped at the panel).
+- On that surface: the **price line (ATM)** between the strikes below and above the price, and the **MATP / MBP lines**
+  with the tags on the nearest strikes - the Volatility Surface's own helpers (`levelState`, `levelsBefore`,
+  `spotRow`, `levelTags`, `tagHtml`), coloured the same. `/options/api/finder` returns `levels` (the ticker's MATP and
+  MBP, `_levels_for`).
+- Checked in the local preview with a made-up chain. Tests: `test_opt_finder.py`.
+
 ### 2026-10-31 - v4.229: the Option Finder's expiry headings like the Volatility Surface's
 
 The user: *"in the option finder the strike and expiry column - need the expiry horizon like the vol surface and

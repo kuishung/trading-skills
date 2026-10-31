@@ -94,3 +94,27 @@ def test_rows_say_which_expiries_are_the_standard_monthlies(sdb):
     assert "meta[r.expiry] = {dte: r.dte, monthly: !!r.monthly};" in fm
     assert "(m.monthly ? '<span class=\"vol-m\">M</span>' : '')" in fm and "'<div class=\"vol-sub\">' + m.dte + 'd</div>'" in fm
     assert "Strike " + "\\" * 2 + " Expiry" in fm and ".of-map .vol-sub" in html
+
+
+def test_the_coloured_surface_sits_above_the_table_with_the_price_and_matp_lines():
+    """v4.230 (user: "switch the table to be bottom and the colour up ... make the colour table width to fit ... the
+    MATP and MBP and Current price to be marked like the vol surface")."""
+    from pathlib import Path
+    html = (Path(__file__).resolve().parent.parent / "app" / "templates" / "options.html").read_text(encoding="utf-8")
+    assert html.index('id="ofMapBox"') < html.index('id="ofWrap"') < html.index('id="ofMore"')     # colour first
+    assert "#volPanelFind .of-mapwrap { width: fit-content; max-width: 100%; }" in html
+    fm = html[html.index("function paintFindMap("):html.index("function rkKey(")]
+    for needle in ("var lj = {spot: j.spot, levels: j.levels, strikes: ks}", "levelState(lj)", "levelTags(lj, idx)",
+                   "h += levelsBefore(lst, j.spot, nc) + spotRow(j, nc); spotDone = true;", "tagHtml(ltags[ri])",
+                   "h += levelsRest(lst, nc);"):
+        assert needle in fm, needle
+    assert "&middot; price</span>" not in fm                       # the old marker gave way to the price line
+    for css in (".of-map tr.vol-spot th", ".of-map tr.vol-lvl.vol-lvl-matp th", ".of-map tr.vol-lvl.vol-lvl-mbp th"):
+        assert css in html, css
+
+
+def test_the_finder_api_carries_the_tickers_matp_and_mbp(client, sdb, monkeypatch):
+    from app.routes import options_page
+    monkeypatch.setattr(options_page, "_levels_for", lambda db, sym: {"matp": 112.4, "mbp": 93.6} if sym.upper() == "ACME" else {})
+    j = client.get("/options/api/finder", params={"symbol": "ACME", "target": "120", "worst": "92"}).json()
+    assert j["ok"] is True and j["levels"] == {"matp": 112.4, "mbp": 93.6}
