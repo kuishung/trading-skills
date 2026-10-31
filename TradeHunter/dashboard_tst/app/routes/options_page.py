@@ -1744,6 +1744,39 @@ async def api_surface_history(symbol: str = "", day: str = "latest", side: str =
                                                 max_dte=dte or None, expiries=exp or None, common=_flag(common)))
 
 
+@router.get("/api/surface/xlsx")
+async def api_surface_xlsx(symbol: str = "", day: str = "latest", tab: str = "surface", side: str = "", band: str = "",
+                           dte: str = "", exp: str = "", common: str = "1", horizons: str = "", rows: str = "",
+                           user: User = Depends(require_user)):
+    """v4.232 (the user: "download data from vol surface IV, price, contract expiry, strike (no need greeks) in to
+    excel. Both the vol surface and the Interpolated"): the grid of ``tab`` (``surface`` = the listed Volatility
+    Surface, ``cm`` = the Interpolated one) for the page's own settings as an .xlsx (``services/vol_export.py``). A
+    problem is ``{ok: false, error}`` (400) in words."""
+    from ..services import vol_cm, vol_export, vol_surface
+
+    t = "cm" if (tab or "").strip().lower() == "cm" else "surface"
+    if t == "cm":
+        try:
+            hs = vol_cm.norm_horizons(horizons or None)
+            rm = vol_cm.norm_rows(rows or None)
+        except ValueError as exc:
+            return _err(str(exc))
+        res = await run_in_threadpool(_hist_call, vol_cm.surface_cm, symbol, day or "latest", side=side or None,
+                                      band=band or None, expiries="all", common=_flag(common), horizons=hs, rows=rm)
+    else:
+        res = await run_in_threadpool(_hist_call, vol_surface.surface, symbol, day or "latest", side=side or None,
+                                      band=band or None, max_dte=dte or None, expiries=exp or None,
+                                      common=_flag(common))
+    if not res.get("ok"):
+        return _err(res.get("error") or "the surface could not be read")
+    try:
+        blob = await run_in_threadpool(vol_export.workbook, res, t)
+    except ImportError:
+        return _err("Excel export needs openpyxl on this server - run: pip install -r app\\requirements.txt")
+    return Response(content=blob, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": 'attachment; filename="%s"' % vol_export.filename(res, t)})
+
+
 @router.get("/api/surface/cm")
 async def api_surface_cm(symbol: str = "", day: str = "latest", side: str = "", band: str = "", exp: str = "",
                          common: str = "1", horizons: str = "", rows: str = "", user: User = Depends(require_user),

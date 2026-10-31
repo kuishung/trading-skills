@@ -1167,6 +1167,7 @@ def test_the_router_serves_the_screener_paths():
         ("/options/api/surface", ("GET",)),                 # v4.139: the volatility surface
         ("/options/api/surface/history", ("GET",)),         # v4.141: each cell's own history behind it
         ("/options/api/surface/cm", ("GET",)),              # v4.171: the interpolated (fixed-horizon) surface
+        ("/options/api/surface/xlsx", ("GET",)),            # v4.232: either surface as an Excel workbook
         ("/options/api/history/days", ("GET",)),            # v4.139: the contract history
         ("/options/api/history/chain", ("GET",)),
         ("/options/api/history/contract", ("GET",)),

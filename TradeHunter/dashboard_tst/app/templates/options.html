@@ -273,6 +273,10 @@
   #volPanelFind > * { flex-shrink: 0; }
   #volPanelFind .of-wrap { flex: 0 0 auto; max-height: 60vh; }   /* .scr-wrap's flex: 1 0 0 would squeeze it */
   .of-map { border-collapse: separate; border-spacing: 2px; font-variant-numeric: tabular-nums; }
+  .vol-xlsx { margin-left: auto; border: 1px solid rgba(16,185,129,.55); color: #6ee7b7; border-radius: .3rem;
+              padding: .15rem .55rem; font-size: 11px; white-space: nowrap; }
+  .vol-xlsx:hover { background: rgba(16,185,129,.12); } .vol-xlsx[disabled] { opacity: .5; cursor: wait; }
+  html.light .vol-xlsx { color: #047857; }
   #volPanelFind .of-mapwrap { width: fit-content; max-width: 100%; }   /* v4.230: as wide as its columns */
   /* v4.230: the price line and the MATP / MBP lines, as on the Volatility Surface */
   .of-map tbody th { top: auto; }
@@ -580,6 +584,8 @@
     </div>
     <div id="volInfoRow" class="hidden flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400 leading-snug">
       <div id="volInfo" class="min-w-0 break-words"></div>
+      {# v4.232 (user: "download data from vol surface IV, price, contract expiry, strike ... in to excel") #}
+      <button type="button" id="volXlsx" class="vol-xlsx" title="This surface as an Excel workbook: every contract (expiry, days, strike, call / put, IV, price, last trade) and the IV grid as on screen - the page's settings, every strike (the Hide tick is a view on the page only)">Download Excel</button>
     </div>
     <div id="volMsg" class="hidden rounded border border-slate-700 px-3 py-2 text-xs text-slate-300"></div>
     <div id="volWrap" class="hidden scr-wrap vol-wrap rounded-lg border border-slate-800 overflow-auto">
@@ -617,6 +623,7 @@
     </div>
     <div id="cmInfoRow" class="hidden flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400 leading-snug">
       <div id="cmInfo" class="min-w-0 break-words"></div>
+      <button type="button" id="cmXlsx" class="vol-xlsx" title="This interpolated surface as an Excel workbook: every strike x horizon (horizon days and date, strike, call / put, IV, price at that IV, the listed expiries it came from) and the IV grids by moneyness and by strike">Download Excel</button>
     </div>
     <div id="cmMsg" class="hidden rounded border border-slate-700 px-3 py-2 text-xs text-slate-300"></div>
     <div id="cmWrap" class="hidden scr-wrap vol-wrap rounded-lg border border-slate-800 overflow-auto">
@@ -1995,6 +2002,8 @@
       });
       function setSort(k) { OF.sort = k; $('ofSort').value = k; lsSet(OF_SORT_KEY, k); paintFind(); }
       $('ofSort').addEventListener('change', function () { setSort($('ofSort').value); });
+      if ($('volXlsx')) $('volXlsx').addEventListener('click', function () { xlsxDownload('surface', $('volXlsx'), $('volMsg')); });   // v4.232
+      if ($('cmXlsx')) $('cmXlsx').addEventListener('click', function () { xlsxDownload('cm', $('cmXlsx'), $('cmMsg')); });
       try { var oc = localStorage.getItem('th.of.clean'); if (oc != null) $('ofClean').checked = oc === '1'; } catch (err) { /* private window */ }
       $('ofClean').addEventListener('change', function () {               // v4.231: redraw the chart only
         try { localStorage.setItem('th.of.clean', $('ofClean').checked ? '1' : '0'); } catch (err) { /* ignore */ }
@@ -2053,6 +2062,29 @@
     return new URLSearchParams({symbol: sym, day: $('volDay').value || 'latest', side: $('volSide').value,
                                 band: $('volBand').value, dte: $('volDte').value, exp: $('volExp').value,
                                 common: $('volCommon').checked ? '1' : '0'});
+  }
+  function xlsxDownload(tab, btn, msgEl) {   // v4.232: the surface on screen as an Excel workbook
+    var sym = $('volSym').value.trim().toUpperCase();
+    if (!sym) return;
+    var q = tab === 'cm' ? cmParams(sym) : surfaceParams(sym);
+    q.set('tab', tab);
+    var was = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Preparing...';
+    fetch('/options/api/surface/xlsx?' + q.toString(), {credentials: 'same-origin'}).then(function (r) {
+      var ct = r.headers.get('content-type') || '';
+      if (!r.ok || ct.indexOf('json') >= 0) {
+        return r.json().catch(function () { return {}; }).then(function (j) { msg(msgEl, 'The Excel file could not be made: ' + (j.error || ('HTTP ' + r.status)) + '.'); });
+      }
+      var cd = r.headers.get('content-disposition') || '', m = /filename="([^"]+)"/.exec(cd);
+      return r.blob().then(function (b) {
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(b);
+        a.download = m ? m[1] : 'tradehunter-' + sym + '.xlsx';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+      });
+    }).catch(function () { msg(msgEl, 'The server did not answer. Try again in a minute.'); })
+      .then(function () { btn.disabled = false; btn.textContent = was; });
   }
   function cmParams(sym) {              // no "dte" and no "exp": every listed expiry is a leg (v4.175: a monthly-only
     // list left the 30-day horizon without a near leg; the Expiries setting applies to the other tab)
