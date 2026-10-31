@@ -223,6 +223,16 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-10-31 - v4.229: the Option Finder's expiry headings like the Volatility Surface's
+
+The user: *"in the option finder the strike and expiry column - need the expiry horizon like the vol surface and
+another surface"*. The finder's surface (under the results) now heads each expiry column the way the Volatility
+Surface does: the date, an **M** for the standard monthly, and the days to expiry under it ("Nov 20 '26 M / 21d");
+the corner reads "Strike \ Expiry". The results table's Expiry column shows the M too. `opt_finder.find` gives each
+row `monthly` (`vol_surface.is_monthly`). Tests: `test_opt_finder.py` (the new flag and headings; and the one-date
+test no longer assumes the TOP-ranked call keeps time value - by the calendar its next expiry can be days after the
+valuation date - it checks the farthest at-the-money call instead).
+
 ### 2026-10-31 - v4.228: the Interpolated tab's headings put the date on top, like the listed tab
 
 The user: *"make the same vol surface, date on top"*. Each horizon column now reads "Nov 29 '26" with "30d" under it -

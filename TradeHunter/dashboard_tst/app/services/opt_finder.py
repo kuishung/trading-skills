@@ -28,6 +28,7 @@ from __future__ import annotations
 import datetime as _dt
 import math
 
+from . import vol_surface
 from .calc_chain import ChainError, load_chain
 from .opt_constants import RISK_FREE
 from .option_calc import Leg, Scenario, evaluate
@@ -149,6 +150,7 @@ def find(sdb, symbol, *, target, worst, strategy="long_call", mode="expiry", on=
         on_day = today + _dt.timedelta(days=decay)
         rows.append({
             "expiry": exp.isoformat(), "dte": dte, "strike": c.strike, "iv": _r(c.iv, 6), "oi": c.oi,
+            "monthly": vol_surface.is_monthly(exp),         # v4.229: the standard monthly (the surface's "M")
             "volume": c.volume, "decay": decay, "valued_on": on_day.isoformat(),
             "cost": _r(res.entry_value), "at_target": _r(res.target_value), "at_worst": _r(res.worst_value),
             "gain": _r(res.gain_at_target), "loss": _r(res.loss_at_worst),

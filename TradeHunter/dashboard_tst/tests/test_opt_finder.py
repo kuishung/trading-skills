@@ -38,7 +38,11 @@ def test_every_call_valued_on_one_date(sdb):
     assert all(x["decay"] == 40 and x["valued_on"] == on and x["dte"] >= 40 for x in j["rows"])     # earlier expiries left out
     r = j["rows"][0]
     want = evaluate([Leg("c", r["strike"], r["dte"], r["iv"], 1)], Scenario(100.0, 120, 92, 40, r=j["rate"]), with_curves=False)
-    assert r["at_target"] == pytest.approx(want.target_value, abs=1e-4) and r["at_worst"] > 0          # time value left
+    assert r["at_target"] == pytest.approx(want.target_value, abs=1e-4) and r["at_worst"] >= 0
+    # time value left on the valuation date: the at-the-money call of the farthest expiry (the top-ranked one can be
+    # a far strike whose next expiry is only days after the date - worth ~0 at the worst case, by the calendar)
+    far = max((x for x in j["rows"] if x["strike"] == 100.0), key=lambda x: x["dte"])
+    assert far["dte"] > 40 and far["at_worst"] > 0
 
 
 def test_inputs_are_refused_in_words(sdb):
@@ -76,3 +80,17 @@ def test_the_api_and_the_tab(client, sdb, monkeypatch):
     d = client.get("/options/api/finder", params={"symbol": "ACME", "target": "120", "worst": "92", "mode": "date",
                                                   "date": (TODAY + _dt.timedelta(days=40)).isoformat()}).json()
     assert d["ok"] and d["on"] == (TODAY + _dt.timedelta(days=40)).isoformat()
+
+
+def test_rows_say_which_expiries_are_the_standard_monthlies(sdb):
+    """v4.229 (user: "the strike and expiry column need the expiry horizon like the vol surface"): each row carries
+    ``monthly`` so the finder's headings show the surface's M beside the date, with the days under it."""
+    j = opt_finder.find(sdb, "ACME", target=120, worst=92, mode="expiry", today=TODAY)
+    from app.services import vol_surface
+    assert j["rows"] and all(x["monthly"] == vol_surface.is_monthly(x["expiry"]) for x in j["rows"])
+    from pathlib import Path
+    html = (Path(__file__).resolve().parent.parent / "app" / "templates" / "options.html").read_text(encoding="utf-8")
+    fm = html[html.index("function paintFindMap("):html.index("function rkKey(")]
+    assert "meta[r.expiry] = {dte: r.dte, monthly: !!r.monthly};" in fm
+    assert "(m.monthly ? '<span class=\"vol-m\">M</span>' : '')" in fm and "'<div class=\"vol-sub\">' + m.dte + 'd</div>'" in fm
+    assert "Strike " + "\\" * 2 + " Expiry" in fm and ".of-map .vol-sub" in html

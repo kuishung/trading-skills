@@ -92,8 +92,10 @@
   .vol-grid .vol-sticky { position: sticky; left: 0; z-index: 1; background: var(--tv-panel); text-align: right; }
   .vol-grid thead th.vol-sticky { z-index: 3; }
   .vol-grid .vol-corner { color: var(--tv-muted); font-weight: 400; }
-  .vol-grid .vol-sub { color: var(--tv-muted); font-size: 10px; font-weight: 400; }
-  .vol-grid .vol-m { display: inline-block; margin-left: .25rem; padding: 0 .2rem; font-size: 9px; border-radius: 3px;
+  .vol-grid .vol-sub, .of-map .vol-sub { color: var(--tv-muted); font-size: 10px; font-weight: 400; }
+  .of-mm { display: inline-block; margin-left: .25rem; padding: 0 .2rem; font-size: 9px; border-radius: 3px;
+           background: var(--tv-hover); color: var(--tv-text-hi); vertical-align: 1px; }
+  .vol-grid .vol-m, .of-map .vol-m { display: inline-block; margin-left: .25rem; padding: 0 .2rem; font-size: 9px; border-radius: 3px;
                      background: var(--tv-hover); color: var(--tv-text-hi); vertical-align: 1px; }
   .vol-grid .vol-k { font-weight: 600; color: var(--tv-text-hi); }
   /* v4.143: a line at the price separates in-the-money from out-of-the-money (no row of its own:
@@ -1723,7 +1725,8 @@
       (j.mode === 'date' ? '' : '<th class="l">Valued on</th>') + '</tr></thead><tbody>';
     shown.forEach(function (r, i) {
       h += '<tr class="' + (i === 0 ? 'of-best' : '') + '" data-exp="' + esc(r.expiry) + '" data-k="' + r.strike + '" title="Open the ' + esc(shortDate(r.expiry) + ' ' + strikeText(r.strike)) + ' call\'s history">' +
-        '<td class="l">' + (i + 1) + '</td><td class="l">' + esc(shortDate(r.expiry)) + ' <span class="text-slate-500">' + r.dte + 'd</span>' + (r.earnings ? '<span class="of-e" title="Earnings fall before the valuation date">E</span>' : '') + '</td>' +
+        '<td class="l">' + (i + 1) + '</td><td class="l">' + esc(shortDate(r.expiry)) + (r.monthly ? '<span class="vol-m of-mm">M</span>' : '') +
+          ' <span class="text-slate-500">' + r.dte + 'd</span>' + (r.earnings ? '<span class="of-e" title="Earnings fall before the valuation date">E</span>' : '') + '</td>' +
         '<td>' + esc(strikeText(r.strike)) + '</td><td>' + pctOf(r.iv, 1) + '</td><td>' + intText(r.oi) + '</td>' +
         '<td>' + money(r.cost) + '</td><td>' + money(r.at_target) + '</td><td>' + money(r.at_worst) + '</td>' +
         '<td class="' + (OF.sort === 'be' ? 'of-key' : '') + '">' + money(r.breakeven) + ' <span class="text-slate-500">' + (r.be_pct >= 0 ? '+' : '') + pctOf(r.be_pct, 1) + '</span></td>' +
@@ -1741,15 +1744,24 @@
   }
   function paintFindMap(rows) {         // the same contracts on the surface, coloured by the chosen ranking
     var j = OF.last, by = {}, exps = [], ks = [];
+    var meta = {};                      // v4.229: each expiry's days and monthly flag, for the headings
     rows.forEach(function (r, i) {
       by[r.expiry + '|' + r.strike] = {r: r, i: i};
+      meta[r.expiry] = {dte: r.dte, monthly: !!r.monthly};
       if (exps.indexOf(r.expiry) < 0) exps.push(r.expiry);
       if (ks.indexOf(r.strike) < 0) ks.push(r.strike);
     });
     if (!rows.length) { show($('ofMapBox'), false); return; }
     exps.sort(); ks.sort(function (a, b) { return a - b; });
-    var n = rows.length, h = '<thead><tr><th class="vol-k">Strike &darr; / expiry &rarr;</th>';
-    exps.forEach(function (e) { h += '<th>' + esc(shortDate(e)) + '</th>'; });
+    var n = rows.length, h = '<thead><tr><th class="vol-k">Strike \\ Expiry</th>';
+    // v4.229 (user: "the strike and expiry column need the expiry horizon like the vol surface"): the date, the
+    // monthly M and the days to expiry under it - the Volatility Surface's own heading
+    exps.forEach(function (e) {
+      var m = meta[e] || {};
+      h += '<th title="' + esc(e + (m.dte != null ? ' - ' + m.dte + ' days' : '') + (m.monthly ? ' - standard monthly' : '')) + '">' +
+           esc(shortDate(e)) + (m.monthly ? '<span class="vol-m">M</span>' : '') +
+           (m.dte != null ? '<div class="vol-sub">' + m.dte + 'd</div>' : '') + '</th>';
+    });
     h += '</tr></thead><tbody>';
     ks.forEach(function (k) {
       h += '<tr><th class="vol-k">' + esc(strikeText(k)) + (Math.abs(k - j.spot) === Math.min.apply(null, ks.map(function (x) { return Math.abs(x - j.spot); })) ? ' <span class="text-slate-500">&middot; price</span>' : '') + '</th>';
