@@ -2039,7 +2039,29 @@ def api_liquidity(symbols: str = "", user: User = Depends(require_user)):
     out = {k: {"level": x["level"], "label": x["label"], "text": x["text"], "short": x["short"], "num": x["num"],
                "near_words": x["near_words"], "figs": x["figs"]}          # v4.190: the hover table's rows
            for k, x in v.items()}
-    return JSONResponse({"ok": True, "verdicts": out})
+    return JSONResponse({"ok": True, "verdicts": out, "prices": _pane_prices(syms)})
+
+
+def _pane_prices(syms) -> dict:
+    """v4.239 (user: "in the watchlist in option surface, I need the last price of the ticker"): each ticker's
+    stock price as the screener holds it - ``{symbol: {spot, spot_src, spot_as_of, chg_pct}}``. Options Starter +
+    Stocks Basic carry no live stock quote: the price is the official close once published (20:00 ET), else the
+    estimate from the option prices (put-call parity, 15 min delayed) - the same price the surface uses."""
+    from .. import screener_db
+    from ..screener_models import ScrUnderlying as U
+    from ..services import vol_surface
+
+    out = {}
+    try:
+        with screener_db.session() as s:
+            for sym, spot, src, at, chg in (s.query(U.symbol, U.spot, U.spot_src, U.spot_as_of, U.chg_pct)
+                                            .filter(U.symbol.in_(list(syms)))):
+                if spot is None:
+                    continue
+                out[sym] = {"spot": spot, "spot_src": src, "spot_as_of": vol_surface._iso_z(at), "chg_pct": chg}
+    except Exception:  # noqa: BLE001 - the pane shows no price rather than losing the verdicts
+        log.exception("surface pane prices failed")
+    return out
 
 
 @router.get("/api/watchlists")

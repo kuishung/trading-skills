@@ -223,6 +223,19 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-01 - v4.239: the Volatility Surface's watchlist pane shows each ticker's price
+
+The user: *"in the watchlist in option surface, I need the last price of the ticker. Did massive provide last price of
+stock?"* Our Massive plans carry **no live stock quote** (Options Starter has no stock snapshot; Stocks Basic gives
+end-of-day bars only), so the price is the one the surface already uses (v4.220): the **official close** once Stocks
+Basic publishes it (20:00 ET / 08:00 MYT), else the **estimate from the option prices** (put-call parity, 15 min
+delayed).
+- `routes/options_page.py`: `/options/api/liquidity` also answers `prices` - `{symbol: {spot, spot_src, spot_as_of,
+  chg_pct}}` from `scr_underlying` (`_pane_prices`; a failure there leaves the verdicts intact).
+- `options.html`: each pane row shows the price and its day change (green / red) before the liquidity verdict; an
+  estimate is marked `~`. The hover table opens with the price, the change and where the price came from.
+- Tests: `test_options_page.py`.
+
 ### 2026-11-01 - v4.238: the Option Finder's price bar marks the MATP and MBP
 
 The user: *"i need the MATP and MBP to be shown in the bar also"*. In `options.html`:

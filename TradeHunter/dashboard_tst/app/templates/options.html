@@ -2900,7 +2900,9 @@
              ' role="option" aria-selected="false" data-sym="' + esc(r.symbol) + '" title="Show the ' + esc(r.symbol) + ' volatility surface">' +
              '<span class="vol-wl-sym text-[13px] font-semibold whitespace-nowrap text-white">' + (window.tkLogo ? tkLogo(r.symbol, 15) : '') + esc(r.symbol) + '</span>' +
              // v4.233 (user: "in the option watchlist only show the liquidity column, not need to show the MATP")
-             '<span class="vol-wl-lq text-[10px] whitespace-nowrap text-slate-600 ml-auto" data-sym="' + esc(r.symbol) + '"></span>' +
+             // v4.239 (user: "in the watchlist in option surface, I need the last price of the ticker")
+             '<span class="vol-wl-px text-[11px] whitespace-nowrap tabular-nums text-slate-300 ml-auto" data-sym="' + esc(r.symbol) + '"></span>' +
+             '<span class="vol-wl-lq text-[10px] whitespace-nowrap text-slate-600" data-sym="' + esc(r.symbol) + '"></span>' +
              '</button>';
     }).join('');
     wlMark(V.reqSym || $('volSym').value.trim());
@@ -2911,19 +2913,30 @@
   // judged near the money (the member's band and monthlies, v4.214: the open interest summed); the hover carries the figures
   var LQ_CLS = {liquid: 'text-emerald-300', fair: 'text-amber-300', thin: 'text-slate-500'};
   var LQ_VAL = {liquid: 'text-emerald-300', fair: 'text-amber-300', thin: 'text-rose-300'};
-  var lqSeq = 0, LQV = {};               // the verdicts on hand, by symbol (for the hover table)
+  var lqSeq = 0, LQV = {}, LQP = {};     // the verdicts on hand, by symbol (for the hover table); v4.239: the prices
   function wlLiq(syms) {
     if (!syms || !syms.length) return;
     var seq = ++lqSeq;
     getJSON('/options/api/liquidity?symbols=' + encodeURIComponent(syms.join(','))).then(function (j) {
       if (seq !== lqSeq || !j || !j.ok) return;
       LQV = j.verdicts || {};
+      LQP = j.prices || {};
+      // v4.239: the stock price the surface uses - the official close, or estimated from the options (marked ~)
+      Array.prototype.forEach.call($('volWlList').querySelectorAll('.vol-wl-px'), function (el) {
+        var p = LQP[el.dataset.sym];
+        if (!p || p.spot == null) { el.innerHTML = ''; el.title = ''; return; }
+        var ss = spotSource(p), c = p.chg_pct;
+        el.innerHTML = (ss[2] ? '~' : '') + esc(num(p.spot, 2)) +
+          (c != null && isFinite(c) ? ' <span class="' + (c > 0 ? 'text-emerald-400' : c < 0 ? 'text-rose-400' : 'text-slate-500') + '">' +
+            (c > 0 ? '+' : '') + num(c, 1) + '%</span>' : '');
+        el.title = LQV[el.dataset.sym] ? '' : (ss[1] || 'the stock price');   // with a verdict, the hover table says it
+      });
       Array.prototype.forEach.call($('volWlList').querySelectorAll('.vol-wl-lq'), function (el) {
         var v = LQV[el.dataset.sym];
         if (!v) { el.textContent = ''; el.title = 'No option data for ' + el.dataset.sym + ' in the screener\'s last pass.'; return; }
         el.textContent = (v.num && v.num !== '-' ? v.num + ' ' : '') + v.label;   // v4.187: the near OI, then the verdict
         el.title = '';                     // v4.190: the hover is the table below, the same as the Watchlist page
-        el.className = 'vol-wl-lq text-[10px] whitespace-nowrap ml-auto ' + (LQ_CLS[v.level] || 'text-slate-600');
+        el.className = 'vol-wl-lq text-[10px] whitespace-nowrap ' + (LQ_CLS[v.level] || 'text-slate-600');
       });
     }).catch(function () {});
   }
@@ -2933,6 +2946,7 @@
   function lqTipHtml(sym, v) {
     var h = '<div class="flex items-baseline justify-between gap-2 mb-1"><b>' + esc(sym) + ' option liquidity</b>' +
             '<span class="lq-chip ' + (LQ_CLS[v.level] || '') + '">' + esc(v.label) + '</span></div>' +
+            lqPxLine(sym) +
             '<table class="lq-tbl"><tr><th class="text-left">Figure</th><th>' + esc(sym) + '</th><th>Fair &ge;</th><th>Liquid &ge;</th></tr>';
     (v.figs || []).forEach(function (f) {
       h += '<tr><td class="text-left lq-name">' + esc(f.name) + '</td><td class="' + (LQ_VAL[f.level] || '') + '">' + esc(f.value_text) +
@@ -2941,6 +2955,14 @@
     h += '</table><div class="vol-cap">Near the money = ' + esc(v.near_words || '') + '. A level needs all three figures: green at the Liquid line, amber between the lines, red below Fair.</div>' +
          '<div class="vol-cap">Open interest is yesterday\'s &middot; volume 15 min delayed &middot; no bid/ask in this data &middot; lines: edit under the Watchlist page\'s list.</div>';
     return h;
+  }
+  function lqPxLine(sym) {               // v4.239: the price, its day change and where it came from
+    var p = LQP[sym];
+    if (!p || p.spot == null) return '';
+    var ss = spotSource(p), c = p.chg_pct;
+    return '<div class="vol-cap" style="margin:0 0 .3rem">Price <b>' + esc(num(p.spot, 2)) + '</b>' +
+           (c != null && isFinite(c) ? ' (' + (c > 0 ? '+' : '') + esc(num(c, 2)) + '% on the day)' : '') +
+           (ss[0] ? ' &middot; ' + esc(ss[0]) : '') + '. ' + esc(ss[1] || '') + '</div>';
   }
   function lqPopPlace(ev) {
     var pop = $('volLqPop'), pw = pop.offsetWidth || 304, ph = pop.offsetHeight || 160;

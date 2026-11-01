@@ -1909,7 +1909,10 @@ def test_the_hide_new_and_thinly_listed_tick(client, fake):
     assert "document.addEventListener('th:theme', function (ev) {" in pd
     # v4.186: the watchlist pane's per-ticker verdict (Liquid / Fair / Thin) from /options/api/liquidity
     wp = html[html.index("function wlPaint("):html.index("function wlLoad(")]
-    assert "'<span class=\"vol-wl-lq text-[10px] whitespace-nowrap text-slate-600 ml-auto\" data-sym=\"' + esc(r.symbol) + '\"></span>'" in wp
+    assert "'<span class=\"vol-wl-lq text-[10px] whitespace-nowrap text-slate-600\" data-sym=\"' + esc(r.symbol) + '\"></span>'" in wp
+    # v4.239: the stock price (with its day change) before the verdict
+    assert "'<span class=\"vol-wl-px text-[11px] whitespace-nowrap tabular-nums text-slate-300 ml-auto\" data-sym=\"' + esc(r.symbol) + '\"></span>'" in wp
+    assert "LQP = j.prices || {};" in wp and "el.innerHTML = (ss[2] ? '~' : '') + esc(num(p.spot, 2)) +" in wp
     assert "wlLiq(l.symbols.map(function (r) { return r.symbol; }));" in wp
     assert "MATP ' + esc(num(r.matp" not in wp          # v4.233: the pane shows the liquidity only, no MATP
     assert "getJSON('/options/api/liquidity?symbols=' + encodeURIComponent(syms.join(',')))" in wp
@@ -2223,3 +2226,21 @@ def test_the_ranking_list_picks_calls_onto_the_surface(client, fake):
                    "'<span class=\"v\">' + esc(ofCellText(r, RK.sort)) + '</span></button>'",
                    ".vol-grid td.vol-rk-pick { box-shadow: inset 0 0 0 2px #10b981; }", ".vol-rk-row.on { background: rgba(16,185,129,.22);"):
         assert needle in html, needle
+
+
+def test_the_pane_liquidity_answer_carries_each_tickers_price(client, fake, screener_url):
+    """v4.239 (user: "in the watchlist in option surface, I need the last price of the ticker"): the screener's
+    stock price, its source and day change ride along with the verdicts; a ticker without a price is left out."""
+    from app import screener_db
+    from app.screener_models import ScrUnderlying
+
+    with screener_db.session() as s:
+        s.add(ScrUnderlying(symbol="AAPL", name="Apple", sec_type="stock", spot=231.5, spot_src="close",
+                            spot_as_of=_dt.datetime(2026, 10, 30, 20, 0), chg_pct=1.25, history_done=False,
+                            history_tries=0))
+        s.add(ScrUnderlying(symbol="AMD", name="AMD", sec_type="stock", spot=None, history_done=False, history_tries=0))
+        s.commit()
+    j = client.get("/options/api/liquidity", params={"symbols": "aapl,amd,zzzz"}).json()
+    assert j["ok"] is True
+    assert j["prices"] == {"AAPL": {"spot": 231.5, "spot_src": "close", "spot_as_of": "2026-10-30T20:00:00Z",
+                                    "chg_pct": 1.25}}
