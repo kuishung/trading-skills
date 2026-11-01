@@ -257,6 +257,10 @@
            color: var(--tv-text); padding: .2rem .4rem; font-size: 12px; }
   select.of-in { width: auto; }
   .of-spot { font-size: 14px; color: var(--tv-text-hi); padding: .1rem 0; }
+  .of-entry .of-spot { font-size: 13px; margin-left: .2rem; }   /* v4.234: the price beside its radio */
+  .of-entry .vol-head-src { margin-left: .35rem; }
+  .of-entry #ofEntryPx { width: 8.5rem; }
+  .of-entry-on { color: #fbbf24; font-weight: 600; }
   .of-mode { border: 0; margin: 0; padding: 0; display: flex; flex-wrap: wrap; align-items: center; gap: .2rem .6rem; }
   .of-mode legend { float: left; width: 100%; margin-bottom: .15rem; }
   .of-table { border-collapse: collapse; font-variant-numeric: tabular-nums; min-width: 100%; }
@@ -552,7 +556,7 @@
       <label class="flex items-center gap-1">Rank by
         <select id="volRankSort" class="vol-sel">
           <option value="rr">Reward over risk</option><option value="roi">Return on investment</option>
-          <option value="be">Breakeven closest to today's price</option><option value="prob">Chance above breakeven</option>
+          <option value="be">Breakeven closest to the entry price</option><option value="prob">Chance above breakeven</option>
         </select></label>
       <label class="scr-check"><input type="checkbox" id="volRankShow" checked> Show the ranking</label>
     </div>
@@ -643,7 +647,15 @@
           {% for s in finder_strategies or [] %}<option value="{{ s[0] }}"{% if not s[4] %} disabled{% endif %}>{{ s[1] }}{% if not s[4] %} - coming soon{% endif %}</option>{% endfor %}
         </select>
       </label>
-      <div class="of-l">Current price<b id="ofSpot" class="of-spot">-</b><span id="ofSpotSrc" class="vol-head-src"></span></div>
+      {# v4.234 (user: "We need an entry price ... current price radio button ... based on the last price (massive has 15
+         delay); another radio button will be user defined entry price, the table will be recalculated based on user price") #}
+      <fieldset class="of-l of-mode of-entry">
+        <legend>Entry price (stock)</legend>
+        <label class="scr-check" title="The last market pass's price (Massive, 15 minutes delayed)"><input type="radio" name="ofEntry" id="ofEntryL" value="last" checked>
+          current price <b id="ofSpot" class="of-spot">-</b><span id="ofSpotSrc" class="vol-head-src"></span></label>
+        <label class="scr-check" title="Your own stock price: every call is priced and every figure worked from it"><input type="radio" name="ofEntry" id="ofEntryU" value="user"> my entry price</label>
+        <input id="ofEntryPx" class="of-in hidden" type="number" step="any" min="0" inputmode="decimal" placeholder="the stock price you buy at" aria-label="Your entry price for the stock">
+      </fieldset>
       <label class="of-l">Target price
         <input id="ofTarget" class="of-in" type="number" step="any" min="0" inputmode="decimal" placeholder="where it goes">
       </label>
@@ -660,7 +672,7 @@
         <select id="ofSort" class="of-in">
           <option value="rr">Reward over risk</option>
           <option value="roi">Return on investment</option>
-          <option value="be">Breakeven closest to today's price</option>
+          <option value="be">Breakeven closest to the entry price</option>
           <option value="prob">Chance above breakeven</option>
         </select>
       </label>
@@ -1654,8 +1666,9 @@
   // (/options/api/finder); the page sorts the rows by the member's choice and paints the surface by that ranking.
   var OF = {seq: 0, last: null, sym: null, timer: null, all: false, sort: 'rr'};
   var OF_SORT_KEY = 'th.of.sort', OF_MODE_KEY = 'th.of.mode', OF_TOP = 30;
-  var OF_SORTS = {rr: 'Reward over risk', roi: 'Return on investment', be: 'Breakeven closest to today\'s price', prob: 'Chance above breakeven'};
+  var OF_SORTS = {rr: 'Reward over risk', roi: 'Return on investment', be: 'Breakeven closest to the entry price', prob: 'Chance above breakeven'};
   function ofMode() { return $('ofModeD').checked ? 'date' : 'expiry'; }
+  function ofEntryUser() { return $('ofEntryU').checked; }   // v4.234: the member's own stock entry price
   function ofDefaultDate() {            // blank date -> 45 days from today (the calculator's default horizon)
     var d = new Date(Date.now() + 45 * 86400000);
     return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -1664,8 +1677,11 @@
     var o = {};
     try { o = JSON.parse(lsGet('th.of.p.' + sym) || '{}') || {}; } catch (err) { o = {}; }
     $('ofTarget').value = o.t || ''; $('ofWorst').value = o.w || '';
+    $('ofEntryPx').value = o.e || '';                       // v4.234: the entry price too (the radio stays as chosen)
   }
-  function ofSavePrices(sym) { if (sym) lsSet('th.of.p.' + sym, JSON.stringify({t: $('ofTarget').value, w: $('ofWorst').value})); }
+  function ofSavePrices(sym) {
+    if (sym) lsSet('th.of.p.' + sym, JSON.stringify({t: $('ofTarget').value, w: $('ofWorst').value, e: $('ofEntryPx').value}));
+  }
   function ofSchedule() { clearTimeout(OF.timer); OF.timer = setTimeout(runFind, 450); }
   function pctOf(v, d) { return v == null || !isFinite(v) ? '-' : (v * 100).toFixed(d == null ? 0 : d) + '%'; }
   function ofSorted(rows, key) {
@@ -1698,11 +1714,17 @@
       if (!$('ofDate').value) $('ofDate').value = ofDefaultDate();
       q.set('date', $('ofDate').value);
     }
+    if (ofEntryUser()) {                                     // v4.234: priced from the member's own stock price
+      var ep = $('ofEntryPx').value.trim();
+      if (!ep) { msg($('ofMsg'), 'Type your entry price for the stock, or pick the current price.'); return; }
+      q.set('entry', ep);
+    }
     var my = ++OF.seq;
     if ($('ofTarget').value.trim() && $('ofWorst').value.trim()) msg($('ofMsg'), 'Pricing every ' + sym + ' contract like the sheet...');
     getJSON('/options/api/finder?' + q.toString(), {onRetry: function (n, why) { if (my === OF.seq) msg($('ofMsg'), retryNote(n, why)); }}).then(function (j) {
       if (my !== OF.seq) return;
       $('ofSpot').textContent = j && j.spot ? money(j.spot) : '-';
+      if (j && j.spot) OF.spot = j.spot;                    // v4.234: the entry box starts from it
       var ofs = spotSource(j);              // v4.220: where the price came from
       $('ofSpotSrc').textContent = ofs[0]; $('ofSpotSrc').title = ofs[1]; $('ofSpot').title = ofs[1];
       $('ofSpotSrc').classList.toggle('est', !!ofs[2]);
@@ -1729,7 +1751,9 @@
     if (j.n_cheap) left.push(intText(j.n_cheap) + ' worth under ' + money(j.min_cost));
     var earnRows = j.rows.filter(function (r) { return r.earnings; }).length;
     $('ofInfo').innerHTML = (window.tkLogo ? tkLogo(j.symbol, 16) : '') + '<b style="color:var(--tv-text-hi)">' + esc(j.symbol) + '</b> ' + money(j.spot) +
-      (spotSource(j)[0] ? ' (' + esc(spotSource(j)[0]) + ')' : '') + ' &middot; option prices from the market pass of ' + esc(j.session || '?') +
+      (spotSource(j)[0] ? ' (' + esc(spotSource(j)[0]) + ')' : '') +
+      (j.entry_src === 'user' ? ' &middot; <b class="of-entry-on">priced from your entry price ' + money(j.entry) + '</b> (each call at its own IV)' : ' &middot; priced from the current price') +
+      ' &middot; option prices from the market pass of ' + esc(j.session || '?') +
       ' &middot; target ' + money(j.target) + ', worst case ' + money(j.worst) + ' &middot; ' + esc(when) + ' &middot; ' +
       intText(j.n) + ' calls ranked' + (left.length ? ' (' + esc(left.join(', ')) + ' left out)' : '') +
       ' &middot; strikes within ' + Math.round(j.band * 100) + '% of the price, ' + j.min_dte + '+ days to expiry, rate ' + num(j.rate * 100, 1) + '%, no dividend' +
@@ -1740,10 +1764,11 @@
       return '<th title="' + esc(tip) + '"><button type="button" data-ofsort="' + key + '" aria-pressed="' + (OF.sort === key) + '">' + label + (OF.sort === key ? ' &#9660;' : '') + '</button></th>';
     }
     var h = '<thead><tr><th class="l">#</th><th class="l">Expiry</th><th>Strike</th><th title="The contract\'s own implied volatility">IV</th><th>Open int.</th>' +
-      '<th title="What one call costs per share today (the sheet\'s Current value)">Cost</th>' +
+      '<th title="' + esc(j.entry_src === 'user' ? 'What one call costs per share with the stock at your entry price ' + money(j.entry) + ' (its own IV held) - the sheet\'s Current value'
+                                                : 'What one call costs per share at the current price ' + money(j.entry) + ' - the sheet\'s Current value') + '">Entry price</th>' +
       '<th title="Worth per share at your target price on the valuation date">At target</th>' +
       '<th title="Worth per share at your worst-case price on the valuation date">At worst</th>' +
-      th('be', 'Breakeven', 'The stock price on the valuation date where the trade is flat; and how far from today\'s price') +
+      th('be', 'Breakeven', 'The stock price on the valuation date where the trade is flat; and how far from the entry price') +
       th('rr', 'Reward / risk', 'Gain at the target price divided by the loss at the worst-case price') +
       th('roi', 'ROI', 'Gain at the target price divided by the cost') +
       th('prob', 'Chance above BE', 'The model\'s chance the stock ends above the breakeven by the valuation date (from the contract\'s own IV) - not a forecast') +
@@ -1833,6 +1858,7 @@
   function finderUrl(p, sym) {
     var q = new URLSearchParams({symbol: sym, strategy: p.strategy || 'long_call', target: p.target, worst: p.worst, mode: p.mode || 'expiry'});
     if (p.mode === 'date' && p.date) q.set('date', p.date);
+    if (p.entry) q.set('entry', p.entry);                    // v4.234
     return '/options/api/finder?' + q.toString();
   }
   function rkIndex() {                 // rows -> rank by the chosen key
@@ -1952,7 +1978,7 @@
       try { q = new URLSearchParams(location.search); } catch (err) { return; }
       if (!q.get('rank') || !q.get('target') || !q.get('worst')) return;
       RK.params = {strategy: q.get('rank'), target: q.get('target'), worst: q.get('worst'),
-                   mode: q.get('mode') === 'date' ? 'date' : 'expiry', date: q.get('date') || ''};
+                   mode: q.get('mode') === 'date' ? 'date' : 'expiry', date: q.get('date') || '', entry: q.get('entry') || ''};
       RK.sort = OF_SORTS[q.get('sort')] ? q.get('sort') : 'rr';
       $('volRankSort').value = RK.sort;
       // the calls the finder ranks: every call (not out of the money), every expiry (weeklies too), every strike
@@ -1981,14 +2007,23 @@
         if (!j) return;
         var q = new URLSearchParams({symbol: j.symbol, tab: 'surface', rank: j.strategy, target: String(j.target),
                                      worst: String(j.worst), mode: j.mode, sort: OF.sort});
+        if (j.entry_src === 'user') q.set('entry', String(j.entry));      // v4.234
         if (j.mode === 'date' && j.on) q.set('date', j.on);
         window.open('/options?' + q.toString(), '_blank', 'noopener');
       });
       var s0 = lsGet(OF_SORT_KEY);
       if (s0 && OF_SORTS[s0]) { OF.sort = s0; $('ofSort').value = s0; }
       if (lsGet(OF_MODE_KEY) === 'date') { $('ofModeD').checked = true; show($('ofDate'), true); $('ofDate').value = ofDefaultDate(); }
-      ['ofTarget', 'ofWorst'].forEach(function (id) {
-        $(id).addEventListener('input', function () { ofSavePrices(OF.sym); ofSchedule(); });
+      ['ofTarget', 'ofWorst', 'ofEntryPx'].forEach(function (id) {
+        $(id).addEventListener('input', function () { ofSavePrices(OF.sym); if (id !== 'ofEntryPx' || ofEntryUser()) ofSchedule(); });
+      });
+      Array.prototype.forEach.call(document.querySelectorAll('input[name="ofEntry"]'), function (b) {   // v4.234
+        b.addEventListener('change', function () {
+          show($('ofEntryPx'), ofEntryUser());
+          if (ofEntryUser() && !$('ofEntryPx').value && OF.spot) { $('ofEntryPx').value = OF.spot; ofSavePrices(OF.sym); }
+          if (ofEntryUser()) $('ofEntryPx').focus();
+          runFind();
+        });
       });
       $('ofStrat').addEventListener('change', runFind);
       $('ofDate').addEventListener('change', runFind);

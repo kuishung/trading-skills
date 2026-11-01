@@ -1904,14 +1904,14 @@ async def api_cm_series(symbol: str = "", h: str = "90", m: str = "", k: str = "
 
 @router.get("/api/finder")
 async def api_finder(symbol: str = "", strategy: str = "long_call", target: str = "", worst: str = "",
-                     mode: str = "expiry", date: str = "", user: User = Depends(require_user),
+                     mode: str = "expiry", date: str = "", entry: str = "", user: User = Depends(require_user),
                      db: Session = Depends(get_db)):
     """v4.219 - the Option Finder tab (``services/opt_finder.py``): every contract of the strategy ranked by the
     workbook's figures for the member's target and worst-case prices, valued at each contract's own expiry
     (``mode=expiry``) or on one date (``mode=date&date=YYYY-MM-DD``). Before both prices are typed the answer is
     ``{ok: false, need_prices: true, spot}`` so the page can show today's price; a problem is
     ``{ok: false, error}`` in words. v4.230: ``levels`` = the ticker's MATP and MBP (as the surface's), for the lines
-    on the finder's surface."""
+    on the finder's surface. v4.234: ``entry`` = the member's own stock entry price (blank = the last price)."""
     from .. import screener_db
     from ..services import opt_finder
     from ..services.calc_chain import ChainError, load_chain
@@ -1926,7 +1926,7 @@ async def api_finder(symbol: str = "", strategy: str = "long_call", target: str 
                         "spot_as_of": sa.replace(microsecond=0).isoformat() + "Z" if isinstance(sa, _dt.datetime) else None}
             res = opt_finder.find(s, symbol, target=target, worst=worst, strategy=(strategy or "long_call").strip(),
                                   mode=(mode or "expiry").strip().lower(), on=(date or "").strip() or None,
-                                  today=_dt.date.fromisoformat(clock.et_today()))
+                                  today=_dt.date.fromisoformat(clock.et_today()), entry=(entry or "").strip() or None)
             return {"ok": True, **res}
 
     try:

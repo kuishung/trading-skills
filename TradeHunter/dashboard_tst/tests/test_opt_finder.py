@@ -134,3 +134,42 @@ def test_a_tick_hides_the_thinly_listed_contracts_from_the_chart():
                    "Hidden as thinly listed: ", "the #1 call is among them (it is in the table)"):
         assert needle in fm, needle
     assert "localStorage.setItem('th.of.clean'" in html and "paintFindMap(ofSorted(OF.last.rows))" in html
+
+
+def test_a_user_entry_price_reprices_every_call(sdb):
+    """v4.234 (user: "another radio button will be user defined entry price, the table will be recalculated based on
+    user price"): the calls are priced and every figure worked from the member's stock price; blank = the last price."""
+    last = opt_finder.find(sdb, "ACME", target=120, worst=92, today=TODAY)
+    assert (last["entry"], last["entry_src"]) == (100.0, "last")
+    mine = opt_finder.find(sdb, "ACME", target=120, worst=92, today=TODAY, entry="96")
+    assert (mine["entry"], mine["entry_src"], mine["spot"]) == (96.0, "user", 100.0)
+    a = next(x for x in last["rows"] if x["strike"] == 100.0 and x["expiry"] == MONTHLIES[1].isoformat())
+    b = next(x for x in mine["rows"] if x["strike"] == 100.0 and x["expiry"] == MONTHLIES[1].isoformat())
+    want = evaluate([Leg("c", 100.0, b["dte"], b["iv"], 1)], Scenario(96.0, 120, 92, b["dte"], r=mine["rate"]), with_curves=False)
+    assert b["cost"] == pytest.approx(want.entry_value, abs=1e-4) and b["cost"] < a["cost"]     # cheaper with the stock lower
+    assert b["be_pct"] == pytest.approx((b["breakeven"] - 96.0) / 96.0, abs=1e-5)
+    assert all(96 * 0.85 <= x["strike"] <= 96 * 1.15 for x in mine["rows"])                # the band follows the entry
+    with pytest.raises(opt_finder.FinderError, match="above your entry price"):
+        opt_finder.find(sdb, "ACME", target=95, worst=90, today=TODAY, entry="96")
+    with pytest.raises(opt_finder.FinderError, match="within 50%"):
+        opt_finder.find(sdb, "ACME", target=200, worst=90, today=TODAY, entry="160")
+    with pytest.raises(opt_finder.FinderError, match="entry price must be a positive number"):
+        opt_finder.find(sdb, "ACME", target=120, worst=90, today=TODAY, entry="-3")
+
+
+def test_the_entry_price_radio_and_column():
+    from pathlib import Path
+    html = (Path(__file__).resolve().parent.parent / "app" / "templates" / "options.html").read_text(encoding="utf-8")
+    for needle in ('<input type="radio" name="ofEntry" id="ofEntryL" value="last" checked>',
+                   '<input type="radio" name="ofEntry" id="ofEntryU" value="user"> my entry price',
+                   'id="ofEntryPx"', "q.set('entry', ep);", "'\">Entry price</th>'",
+                   "priced from your entry price ", "if (j.entry_src === 'user') q.set('entry', String(j.entry));",
+                   "if (p.entry) q.set('entry', p.entry);", "entry: q.get('entry') || ''"):
+        assert needle in html, needle
+
+
+def test_the_api_passes_the_entry_price(client, sdb):
+    j = client.get("/options/api/finder", params={"symbol": "ACME", "target": "120", "worst": "92", "entry": "97.5"}).json()
+    assert j["ok"] is True and j["entry"] == 97.5 and j["entry_src"] == "user"
+    j = client.get("/options/api/finder", params={"symbol": "ACME", "target": "120", "worst": "92"}).json()
+    assert j["entry_src"] == "last" and j["entry"] == j["spot"]

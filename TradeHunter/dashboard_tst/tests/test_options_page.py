@@ -2154,7 +2154,7 @@ def test_the_option_finder_tab(client, fake):
                    '<option value="bull_call_spread" disabled>Bull call spread - coming soon</option>',
                    'id="ofTarget"', 'id="ofWorst"', 'id="ofModeE" value="expiry" checked', 'id="ofModeD" value="date"',
                    'id="ofDate" class="of-in hidden" type="date"', '<option value="rr">Reward over risk</option>',
-                   '<option value="roi">Return on investment</option>', "<option value=\"be\">Breakeven closest to today's price</option>",
+                   '<option value="roi">Return on investment</option>', "<option value=\"be\">Breakeven closest to the entry price</option>",
                    "fetch" if False else "getJSON('/options/api/finder?' + q.toString()",
                    "if (TAB === 'find') { if (!quiet) runFind(); return; }", "['find', 'volTabFind', 'volPanelFind']",
                    "function ofSorted(rows, key)", "function paintFindMap(rows)", "return r.be_pct == null ? -Infinity : -Math.abs(r.be_pct);",

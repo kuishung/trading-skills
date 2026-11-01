@@ -223,6 +223,25 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-01 - v4.234: the Option Finder - price from the current price or your own entry price
+
+The user: *"in the option finder, the data is calculated based on the current price. We need an entry price column. So
+in option finder, when the current price radio button is selected is based on the last price (massive has 15 delay);
+another radio button will be user defined entry price, the table will be recalculated based on user price"*.
+- **Entry price (stock)** - two radio buttons where "Current price" stood: **current price** (the last market pass's
+  price, Massive, 15 minutes delayed - as before) or **my entry price** (a box, prefilled with the current price;
+  remembered per ticker with the target and worst case). Changing it re-ranks at once.
+- `opt_finder.find(entry=...)` works every figure from that stock price: each call's price there (at its own IV, held
+  where it is), the strike band, the breakeven's distance and the chance above it; the target must be above it, and it
+  must lie within 50 % of the last price. The answer carries `entry` / `entry_src` (last | user); `/options/api/finder`
+  takes `entry`.
+- The table's **Cost** column is now **Entry price** (what one call costs per share with the stock at that price); the
+  info line says "priced from the current price" or "priced from your entry price $X"; "Breakeven closest to the entry
+  price" replaces "... today's price". The ranked-surface window opened from the finder carries the entry price too.
+  The chart's ATM line stays at the market price.
+- Checked in the local preview (a made-up chain: the top call's entry price $1.33 at $101.30 -> $0.57 at $97).
+  Tests: `test_opt_finder.py`, `test_options_page.py`.
+
 ### 2026-11-01 - v4.233: the Volatility Surface's watchlist pane shows the liquidity only
 
 The user: *"in the option watchlist only show the liquidity column, not need to show the MATP"*. Each ticker in the

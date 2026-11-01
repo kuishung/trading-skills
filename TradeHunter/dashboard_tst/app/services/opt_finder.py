@@ -22,6 +22,13 @@ Every row carries the sheet's three answers - **breakeven stock price**, **rewar
 page sorts by the member's choice (reward over risk, ROI, or the breakeven closest to today's price).
 
 ``STRATEGIES`` lists what the dropdown will hold; only ``long_call`` is built (the rest show "coming soon").
+
+**Entry price** (v4.234; the user: *"We need an entry price column ... when the current price radio button is selected
+it is based on the last price (Massive has 15 delay); another radio button will be user defined entry price, the table
+will be recalculated based on user price"*): ``entry`` = the STOCK price the member plans to buy at. None = the last
+market pass's price (15 minutes delayed); a number = the member's own. Every figure is then worked from that price:
+each call's entry price (what it costs with the stock there, at the contract's own IV - held where it is), the strike
+band, the breakeven's distance and the chance above it. ``ENTRY_MAX_MOVE`` keeps the entry within 50 % of the price.
 """
 from __future__ import annotations
 
@@ -38,6 +45,7 @@ MIN_OI = 100               # open interest of at least this many contracts (yest
 MIN_DTE = 7                # contracts expiring within a week are left out (a target "by expiry" in days is a lottery ticket)
 MIN_COST = 0.05            # nor a contract worth under 5 cents a share (no fill, and a near-zero cost makes every ratio explode)
 DATE_MAX_DAYS = 800        # the "by a date" picker's far end
+ENTRY_MAX_MOVE = 0.5       # v4.234: a member's entry price within 50 % of the last price
 
 # key, label, view (bull / bear / range), legs, built
 STRATEGIES = (
@@ -96,7 +104,7 @@ def prob_above(spot: float, level: float, sigma: float, days: float, r: float = 
 
 
 def find(sdb, symbol, *, target, worst, strategy="long_call", mode="expiry", on=None, today: _dt.date | None = None,
-         band: float = BAND, min_oi: int = MIN_OI, r: float = RISK_FREE) -> dict:
+         band: float = BAND, min_oi: int = MIN_OI, r: float = RISK_FREE, entry=None) -> dict:
     """The ranked contracts for one ticker. Raises FinderError / ChainError with a message for the member."""
     if strategy not in BUILT:
         known = {s[0]: s[1] for s in STRATEGIES}
@@ -109,8 +117,15 @@ def find(sdb, symbol, *, target, worst, strategy="long_call", mode="expiry", on=
     spot = float(ch.spot or 0)
     if spot <= 0:
         raise ChainError("the last market pass has no price for %s" % ch.symbol)
-    if t <= spot:
-        raise FinderError("Buy a call profits when the stock rises: set a target above today's price (%.2f)." % spot)
+    if entry is None or str(entry).strip() == "":
+        px, px_src = spot, "last"                           # the last market pass's price (15 min delayed)
+    else:
+        px, px_src = _num(entry, "entry price"), "user"
+        if abs(px - spot) > ENTRY_MAX_MOVE * spot:
+            raise FinderError("Set an entry price within %d%% of today's price (%.2f)." % (round(ENTRY_MAX_MOVE * 100), spot))
+    if t <= px:
+        raise FinderError("Buy a call profits when the stock rises: set a target above %s (%.2f)."
+                          % ("your entry price" if px_src == "user" else "today's price", px))
     if w >= t:
         raise FinderError("The worst-case price must be below the target price.")
     when = None
@@ -122,7 +137,7 @@ def find(sdb, symbol, *, target, worst, strategy="long_call", mode="expiry", on=
             raise FinderError("Pick a date after today.")
         if (when - today).days > DATE_MAX_DAYS:
             raise FinderError("Pick a date within %d days." % DATE_MAX_DAYS)
-    lo_k, hi_k = spot * (1 - band), spot * (1 + band)
+    lo_k, hi_k = px * (1 - band), px * (1 + band)
     rows, n_seen, n_thin, n_cheap = [], 0, 0, 0
     earn = _date(ch.earnings_date)
     for c in ch.contracts:
@@ -141,7 +156,7 @@ def find(sdb, symbol, *, target, worst, strategy="long_call", mode="expiry", on=
         if (c.oi or 0) < min_oi:
             n_thin += 1
             continue
-        res = evaluate([Leg("c", c.strike, dte, c.iv, 1)], Scenario(spot, t, w, decay, r=r), with_curves=False)
+        res = evaluate([Leg("c", c.strike, dte, c.iv, 1)], Scenario(px, t, w, decay, r=r), with_curves=False)
         if (res.entry_value or 0) < MIN_COST:
             n_cheap += 1
             continue
@@ -154,9 +169,9 @@ def find(sdb, symbol, *, target, worst, strategy="long_call", mode="expiry", on=
             "volume": c.volume, "decay": decay, "valued_on": on_day.isoformat(),
             "cost": _r(res.entry_value), "at_target": _r(res.target_value), "at_worst": _r(res.worst_value),
             "gain": _r(res.gain_at_target), "loss": _r(res.loss_at_worst),
-            "breakeven": _r(be), "be_pct": _r((be - spot) / spot, 6) if be is not None else None,
+            "breakeven": _r(be), "be_pct": _r((be - px) / px, 6) if be is not None else None,
             "rr": _r(res.reward_over_risk), "no_loss": no_loss, "roi": _r(res.roi, 6),
-            "prob": _r(prob_above(spot, be, c.iv, decay, r), 6) if be is not None else None,
+            "prob": _r(prob_above(px, be, c.iv, decay, r), 6) if be is not None else None,
             "earnings": bool(earn and today < earn <= on_day),
         })
     rows.sort(key=lambda x: (-(1e12 if x["no_loss"] else x["rr"] if x["rr"] is not None else -1e9), x["expiry"], x["strike"]))
@@ -166,7 +181,8 @@ def find(sdb, symbol, *, target, worst, strategy="long_call", mode="expiry", on=
             "as_of": ch.as_of.isoformat() if ch.as_of else None, "today": today.isoformat(),
             "strategy": strategy, "mode": mode, "on": when.isoformat() if when else None,
             "target": t, "worst": w, "rate": r, "band": band, "min_oi": min_oi,
+            "entry": px, "entry_src": px_src,                # v4.234: the stock price every figure is worked from
             "n_checked": n_seen, "n_thin": n_thin, "n_cheap": n_cheap, "min_dte": MIN_DTE, "min_cost": MIN_COST, "n": len(rows), "earnings_date": ch.earnings_date, "rows": rows}
 
 
-__all__ = ["BAND", "MIN_OI", "MIN_DTE", "MIN_COST", "prob_above", "STRATEGIES", "BUILT", "MODES", "SORTS", "FinderError", "find"]
+__all__ = ["ENTRY_MAX_MOVE", "BAND", "MIN_OI", "MIN_DTE", "MIN_COST", "prob_above", "STRATEGIES", "BUILT", "MODES", "SORTS", "FinderError", "find"]
