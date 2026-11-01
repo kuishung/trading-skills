@@ -201,8 +201,26 @@ def test_the_entry_is_fixed_by_a_tick_and_the_top_panel_stays_put():
     assert 'name="ofEntry"' not in html and "Target price\n        <input" not in html
     assert "function ofEntryUser() { return !$('ofEntryLock').checked; }" in html
     assert "localStorage.setItem('th.of.lock'" in html
-    assert html.index('<div id="ofHead" class="of-head">') < html.index('<div class="of-inputs">') < html.index('id="ofBar"')
+    assert html.index('<div id="ofHead" class="of-head">') < html.index('id="ofBar"')
     assert ".of-head { position: sticky; top: 0; z-index: 6; background: var(--tv-page);" in html
     # a ticker with no saved prices starts from target +10 % / worst -5 % on the bar, then ranks
     assert "if (j && j.need_prices && j.spot && ofbDefaults(j.spot)) { runFind(); return; }" in html
     assert "if ($('ofTarget').value || $('ofWorst').value) return false;" in html
+
+
+def test_the_finder_settings_sit_in_the_left_panel_and_the_bar_spans_the_top():
+    """v4.237 (user: "I want to make this panel height slimmer"; "i think this we put in left panel add a new one";
+    "so the bar will occupy the whole top of the table"): the strategy / entry / time decay / ranking move to a new box
+    in the left panel (under the ticker, on the Option Finder tab only); the fixed head holds only the slim, full-width
+    bar."""
+    from pathlib import Path
+    html = (Path(__file__).resolve().parent.parent / "app" / "templates" / "options.html").read_text(encoding="utf-8")
+    side = html.index('<section id="ofSide" class="hidden of-side"')
+    assert html.index('id="volSym"') < side < html.index('id="volDay"')          # under the ticker, in the left panel
+    assert side < html.index('<div class="of-inputs">') < html.index('id="ofEntryLock"') < html.index('id="volDay"')
+    head = html[html.index('<div id="ofHead" class="of-head">'):html.index('id="ofMsg"')]
+    assert 'class="of-inputs"' not in head and 'id="ofBar"' in head
+    assert "show($('ofSide'), TAB === 'find');" in html
+    assert ".of-bar { width: 100%;" in html and ".of-bar-track { position: relative; flex: 1 1 auto; height: 2.75rem;" in html
+    assert "sp.style.transform = o.x > 88 ? 'translateX(-100%)' : o.x < 12 ? 'translateX(0)' : '';" in html
+    assert "if (q !== 0 && (q % (step * 2) === 0" in html                       # the "Now" label takes the 0 % spot

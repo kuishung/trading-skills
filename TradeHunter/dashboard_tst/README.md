@@ -223,6 +223,20 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-01 - v4.237: the Option Finder - settings in the left panel, a slim full-width price bar on top
+
+The user: *"I want to make this panel height slimmer"*, *"i think this we put in left panel add a new one"* and *"so the
+bar will occupy the whole top of the table to fix the size"*. In `options.html`:
+- **Strategy, Entry price (the "fixed at the last price" tick), Value each call (at its own expiry / on a date) and Rank
+  by** move to a new **"Option Finder" box in the left panel**, under the Ticker - shown only while the Option Finder tab
+  is open (`tabSet`), stacked to fit the panel.
+- The fixed head now holds only the **price bar**, **full width** and slim: the ±10/20/30% buttons stacked on its left,
+  the handle labels on one row above the line, the % ticks and "Now" on one row under it (a crowded label drops under
+  the line; a label near an end opens inwards so it is never cut off; the explanation is the bar's tooltip). The head is
+  61 px high at desktop width (it was about 215).
+- Checked in the local preview at 1600 px (the box shows on the Option Finder tab only; no console error).
+  Tests: `test_opt_finder.py`.
+
 ### 2026-11-01 - v4.236: the Option Finder - prices only on the bar, a tick fixes the entry, the top panel stays put
 
 The user: *"we do not need the target price column, worst case column since we have the bar; we also do not need the
