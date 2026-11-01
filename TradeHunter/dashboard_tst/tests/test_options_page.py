@@ -1911,6 +1911,7 @@ def test_the_hide_new_and_thinly_listed_tick(client, fake):
     wp = html[html.index("function wlPaint("):html.index("function wlLoad(")]
     assert "'<span class=\"vol-wl-lq text-[10px] whitespace-nowrap text-slate-600 ml-auto\" data-sym=\"' + esc(r.symbol) + '\"></span>'" in wp
     assert "wlLiq(l.symbols.map(function (r) { return r.symbol; }));" in wp
+    assert "MATP ' + esc(num(r.matp" not in wp          # v4.233: the pane shows the liquidity only, no MATP
     assert "getJSON('/options/api/liquidity?symbols=' + encodeURIComponent(syms.join(',')))" in wp
     assert "var LQ_CLS = {liquid: 'text-emerald-300', fair: 'text-amber-300', thin: 'text-slate-500'};" in wp
     assert "el.textContent = (v.num && v.num !== '-' ? v.num + ' ' : '') + v.label;" in wp   # v4.187: the near OI, then the verdict

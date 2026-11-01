@@ -223,6 +223,13 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-01 - v4.233: the Volatility Surface's watchlist pane shows the liquidity only
+
+The user: *"in the option watchlist only show the liquidity column, not need to show the MATP"*. Each ticker in the
+watchlist pane (left of the Volatility Surface) now shows the option-liquidity verdict (Liquid / Fair / Thin) alone; the
+"MATP 123.45" label is gone (`options.html`, `wlPaint`). The MATP / MBP lines on the surfaces are unchanged.
+`test_options_page.py`.
+
 ### 2026-10-31 - v4.232: download the Volatility Surface and the Interpolated surface to Excel
 
 The user: *"I need to be able to download data from vol surface IV, price, contract expiry, strike (no need greeks) in
