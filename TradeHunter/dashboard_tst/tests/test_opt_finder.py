@@ -173,3 +173,20 @@ def test_the_api_passes_the_entry_price(client, sdb):
     assert j["ok"] is True and j["entry"] == 97.5 and j["entry_src"] == "user"
     j = client.get("/options/api/finder", params={"symbol": "ACME", "target": "120", "worst": "92"}).json()
     assert j["entry_src"] == "last" and j["entry"] == j["spot"]
+
+
+def test_the_price_bar_drags_the_entry_target_and_worst_case():
+    """v4.235 (user: "combine these into a bar where the bar will indicate 10% to 30% plus minus range and user will be
+    able to drag a line in the bar rather than typing the price"): the current price fixed, three handles; a handle
+    writes its box and fires its input (so the finder re-ranks); dragging the entry switches to "my entry price"."""
+    from pathlib import Path
+    html = (Path(__file__).resolve().parent.parent / "app" / "templates" / "options.html").read_text(encoding="utf-8")
+    for needle in ('<div id="ofBar" class="of-bar hidden"', 'data-ofrange="10"', 'data-ofrange="20"', 'data-ofrange="30"',
+                   'data-ofh="worst"', 'data-ofh="entry"', 'data-ofh="target"', 'id="ofBarNow"',
+                   "var OFB_BOX = {entry: 'ofEntryPx', target: 'ofTarget', worst: 'ofWorst'};",
+                   "box.dispatchEvent(new Event('input'));",
+                   "if (k === 'entry' && !ofEntryUser()) { $('ofEntryU').checked = true; show($('ofEntryPx'), true); }",
+                   "$('ofBarTrack').addEventListener('pointerdown'", "$('ofBarTrack').addEventListener('keydown'",
+                   "localStorage.setItem('th.of.range', String(OFB.range));", "ofbPaint();                                           // v4.235"):
+        assert needle in html, needle
+    assert html.index('id="ofBar"') < html.index('id="ofMsg"')

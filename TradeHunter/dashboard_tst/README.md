@@ -223,6 +223,23 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-01 - v4.235: the Option Finder - drag the entry, target and worst case on a price bar
+
+The user: *"so now we have current price, entry price, target price, worst case - i want to combine these into a bar
+where the bar will indicate 10% to 30% plus minus range and user will be able to drag a line in the bar rather than
+typing the price"*. Under the inputs (`options.html`):
+- **A price bar** around the current price with a **±10% / ±20% / ±30%** switch (remembered, `th.of.range`; ±20% at
+  first), ticks every 2 / 5 %, the **current price fixed** as a blue line ("Now $101.30"), and three handles: **Worst**
+  (red), **Entry** (amber), **Target** (green), each labelled with its price and its % from now; the span from the worst
+  case to the target is shaded red -> green.
+- **Drag a handle** (mouse or touch) to set its price - it snaps to a sensible step ($0.01 under $20, $0.05 under $100,
+  $0.10 under $500, else $0.50), writes its box and the finder re-ranks (the same debounce as typing). Dragging the Entry
+  handle switches to "my entry price". Typing in a box moves its handle. Arrow keys nudge a focused handle (Shift = x10).
+  An empty box's handle waits faded at a default spot ("(drag)"); a price outside the range sits at the edge with an
+  arrow.
+- Checked in the local preview (a made-up chain: target dragged 115 -> 118.90, entry 101.30 -> 98.70, re-ranked each
+  time). Test: `test_opt_finder.py`.
+
 ### 2026-11-01 - v4.234: the Option Finder - price from the current price or your own entry price
 
 The user: *"in the option finder, the data is calculated based on the current price. We need an entry price column. So

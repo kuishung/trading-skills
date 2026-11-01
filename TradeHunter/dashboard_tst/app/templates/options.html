@@ -261,6 +261,29 @@
   .of-entry .vol-head-src { margin-left: .35rem; }
   .of-entry #ofEntryPx { width: 8.5rem; }
   .of-entry-on { color: #fbbf24; font-weight: 600; }
+  /* v4.235: the price bar */
+  .of-bar { max-width: 46rem; padding: .35rem .5rem 0; border: 1px solid var(--tv-border); border-radius: .5rem; }
+  .of-bar-top { display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: var(--tv-muted); }
+  .of-bar-range button { padding: .05rem .45rem; margin-left: .2rem; border: 1px solid var(--tv-border); border-radius: .25rem; color: var(--tv-muted); }
+  .of-bar-range button[aria-pressed="true"] { color: var(--tv-text-hi); border-color: var(--tv-accent); background: rgba(41,98,255,.15); }
+  .of-bar-track { position: relative; height: 4.6rem; margin: 0 1.6rem; touch-action: none; user-select: none; }
+  .of-bar-track::before { content: ""; position: absolute; left: 0; right: 0; top: 2.25rem; height: 4px; border-radius: 2px; background: var(--tv-border-2, #363a45); }
+  .of-bar-ticks span { position: absolute; top: 2.75rem; transform: translateX(-50%); font-size: 9px; color: var(--tv-muted); white-space: nowrap; }
+  .of-bar-ticks i { position: absolute; top: 2.1rem; width: 1px; height: .55rem; background: var(--tv-muted); opacity: .5; }
+  .of-bar-zone { position: absolute; top: 2.25rem; height: 4px; border-radius: 2px;
+                 background: linear-gradient(90deg, rgba(239,68,68,.55), rgba(251,191,36,.45), rgba(34,197,94,.6)); }
+  .of-bar-now { position: absolute; top: 1.55rem; width: 2px; height: 1.4rem; margin-left: -1px; background: #60a5fa; }
+  .of-bar-now span { position: absolute; top: 2.05rem; left: 50%; transform: translateX(-50%); font-size: 10px; color: #93c5fd; white-space: nowrap; font-weight: 600; }
+  .of-bar-h { position: absolute; top: .2rem; width: 0; height: 2.6rem; cursor: ew-resize; outline: none; }
+  .of-bar-h::before { content: ""; position: absolute; left: -1.5px; top: .95rem; width: 3px; height: 1.65rem; border-radius: 2px; background: currentColor; }
+  .of-bar-h::after { content: ""; position: absolute; left: -.42rem; top: 1.75rem; width: .84rem; height: .84rem; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 2px var(--tv-panel); }
+  .of-bar-h span { position: absolute; top: 0; left: 0; transform: translateX(-50%); font-size: 10px; font-weight: 600; white-space: nowrap; padding: 0 .25rem; border-radius: .2rem; background: var(--tv-panel); }
+  .of-bar-h:focus-visible span, .of-bar-h.drag span { outline: 1px solid currentColor; }
+  .of-bar-worst { color: #f87171; } .of-bar-entry { color: #fbbf24; } .of-bar-target { color: #4ade80; }
+  .of-bar-h.unset { opacity: .45; } .of-bar-h.off { opacity: .35; }
+  .of-bar-h.edge span::after { content: " \2192"; } .of-bar-h.edge-lo span::before { content: "\2190 "; }
+  html.light .of-bar-worst { color: #dc2626; } html.light .of-bar-entry { color: #b45309; } html.light .of-bar-target { color: #15803d; }
+  html.light .of-bar-now { background: #2563eb; } html.light .of-bar-now span { color: #1d4ed8; }
   .of-mode { border: 0; margin: 0; padding: 0; display: flex; flex-wrap: wrap; align-items: center; gap: .2rem .6rem; }
   .of-mode legend { float: left; width: 100%; margin-bottom: .15rem; }
   .of-table { border-collapse: collapse; font-variant-numeric: tabular-nums; min-width: 100%; }
@@ -676,6 +699,26 @@
           <option value="prob">Chance above breakeven</option>
         </select>
       </label>
+    </div>
+    {# v4.235 (user: "current price, entry price, target price, worst case - combine these into a bar where the bar will
+       indicate 10% to 30% plus minus range and user will be able to drag a line in the bar rather than typing the
+       price"): the four prices on one scale around the current price; drag a handle to set its price (the boxes
+       above follow, and typing in a box moves its handle) #}
+    <div id="ofBar" class="of-bar hidden" aria-label="Drag the entry, target and worst-case prices">
+      <div class="of-bar-top">
+        <span class="of-bar-title">Drag the prices</span>
+        <span class="of-bar-range" role="group" aria-label="Range of the bar">
+          <button type="button" data-ofrange="10">&plusmn;10%</button><button type="button" data-ofrange="20">&plusmn;20%</button><button type="button" data-ofrange="30">&plusmn;30%</button>
+        </span>
+      </div>
+      <div id="ofBarTrack" class="of-bar-track">
+        <div id="ofBarTicks" class="of-bar-ticks"></div>
+        <div id="ofBarZone" class="of-bar-zone"></div>
+        <div id="ofBarNow" class="of-bar-now"><span></span></div>
+        <div class="of-bar-h of-bar-worst" data-ofh="worst" tabindex="0" role="slider" aria-label="Worst case (stop)"><span></span></div>
+        <div class="of-bar-h of-bar-entry" data-ofh="entry" tabindex="0" role="slider" aria-label="Entry price"><span></span></div>
+        <div class="of-bar-h of-bar-target" data-ofh="target" tabindex="0" role="slider" aria-label="Target price"><span></span></div>
+      </div>
     </div>
     <div id="ofMsg" class="hidden rounded border border-slate-700 px-3 py-2 text-xs text-slate-300"></div>
     <div id="ofInfo" class="hidden text-[11px] text-slate-400 leading-snug"></div>
@@ -1669,6 +1712,78 @@
   var OF_SORTS = {rr: 'Reward over risk', roi: 'Return on investment', be: 'Breakeven closest to the entry price', prob: 'Chance above breakeven'};
   function ofMode() { return $('ofModeD').checked ? 'date' : 'expiry'; }
   function ofEntryUser() { return $('ofEntryU').checked; }   // v4.234: the member's own stock entry price
+  // ── v4.235: the price bar - the current price fixed, the entry / target / worst-case handles dragged on a
+  // +-10/20/30 % scale around it; each handle writes its box (and fires its input, so the finder re-ranks) ──
+  var OFB = {range: 20, drag: null};
+  var OFB_BOX = {entry: 'ofEntryPx', target: 'ofTarget', worst: 'ofWorst'};
+  var OFB_WORD = {entry: 'Entry', target: 'Target', worst: 'Worst'};
+  var OFB_DEFAULT = {entry: 0, target: 0.10, worst: -0.05};   // where an empty box's handle waits (share of the price)
+  function ofbStep(spot) { return spot < 20 ? 0.01 : spot < 100 ? 0.05 : spot < 500 ? 0.1 : 0.5; }
+  function ofbLo(spot) { return spot * (1 - OFB.range / 100); }
+  function ofbHi(spot) { return spot * (1 + OFB.range / 100); }
+  function ofbVal(k, spot) {             // the handle's price: its box, else the current price (entry), else its default
+    if (k === 'entry' && !ofEntryUser()) return spot;
+    var v = parseFloat($(OFB_BOX[k]).value);
+    return isFinite(v) && v > 0 ? v : null;
+  }
+  function ofbPaint() {
+    var spot = OF.spot, bar = $('ofBar');
+    if (!bar) return;
+    if (!(spot > 0)) { show(bar, false); return; }
+    show(bar, true);
+    var lo = ofbLo(spot), hi = ofbHi(spot);
+    function pct(v) { return Math.max(0, Math.min(100, (v - lo) / (hi - lo) * 100)); }
+    Array.prototype.forEach.call(bar.querySelectorAll('[data-ofrange]'), function (b) {
+      b.setAttribute('aria-pressed', String(+b.dataset.ofrange === OFB.range));
+    });
+    var t = '', step = OFB.range <= 10 ? 2 : 5;
+    for (var q = -OFB.range; q <= OFB.range; q += step) {
+      var x = (q + OFB.range) / (2 * OFB.range) * 100;
+      t += '<i style="left:' + x + '%"></i>';
+      if (q % (step * 2) === 0 || q === -OFB.range || q === OFB.range) t += '<span style="left:' + x + '%">' + (q > 0 ? '+' : '') + q + '%</span>';
+    }
+    $('ofBarTicks').innerHTML = t;
+    var now = $('ofBarNow');
+    now.style.left = pct(spot) + '%';
+    now.querySelector('span').textContent = 'Now ' + money(spot);
+    var vals = {};
+    ['worst', 'entry', 'target'].forEach(function (k) {
+      var h = bar.querySelector('[data-ofh="' + k + '"]'), v = ofbVal(k, spot), unset = v == null;
+      var pv = unset ? spot * (1 + OFB_DEFAULT[k]) : v;
+      vals[k] = pv;
+      h.style.left = pct(pv) + '%';
+      h.classList.toggle('unset', unset);
+      h.classList.toggle('off', k === 'entry' && !ofEntryUser());
+      h.classList.toggle('edge', pv > hi); h.classList.toggle('edge-lo', pv < lo);
+      var chg = (pv - spot) / spot * 100;
+      h.querySelector('span').textContent = OFB_WORD[k] + ' ' + (unset ? '(drag)' : money(pv) + ' ' + (chg >= 0 ? '+' : '') + chg.toFixed(1) + '%');
+      h.setAttribute('aria-valuenow', pv.toFixed(2));
+      h.title = OFB_WORD[k] + (k === 'entry' && !ofEntryUser() ? ' = the current price - drag it to set your own entry price' : ' - drag, or use the arrow keys');
+    });
+    var z = $('ofBarZone'), a = pct(vals.worst), b = pct(vals.target);   // the trade's span: stop to target
+    z.style.left = Math.min(a, b) + '%'; z.style.width = Math.abs(b - a) + '%';
+    // labels that would overlap ride on alternate rows
+    var hs = ['worst', 'entry', 'target'].map(function (k) { return {k: k, x: pct(vals[k])}; }).sort(function (p, q) { return p.x - q.x; });
+    hs.forEach(function (o, i) {
+      var sp = bar.querySelector('[data-ofh="' + o.k + '"] span');
+      sp.style.top = (i > 0 && o.x - hs[i - 1].x < 18 && hs[i - 1].row === 0) ? '-1.0rem' : '0';
+      o.row = sp.style.top === '0' || sp.style.top === '0px' ? 0 : 1;
+    });
+  }
+  function ofbSet(k, price) {            // a handle moved: its box gets the price, the finder re-ranks
+    var spot = OF.spot, st = ofbStep(spot);
+    price = Math.round(price / st) * st;
+    if (k === 'entry' && !ofEntryUser()) { $('ofEntryU').checked = true; show($('ofEntryPx'), true); }
+    var box = $(OFB_BOX[k]);
+    box.value = price.toFixed(2);
+    box.dispatchEvent(new Event('input'));
+    ofbPaint();
+  }
+  function ofbFromX(clientX) {
+    var r = $('ofBarTrack').getBoundingClientRect(), spot = OF.spot;
+    var f = Math.max(0, Math.min(1, (clientX - r.left) / r.width));
+    return ofbLo(spot) + f * (ofbHi(spot) - ofbLo(spot));
+  }
   function ofDefaultDate() {            // blank date -> 45 days from today (the calculator's default horizon)
     var d = new Date(Date.now() + 45 * 86400000);
     return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -1725,6 +1840,7 @@
       if (my !== OF.seq) return;
       $('ofSpot').textContent = j && j.spot ? money(j.spot) : '-';
       if (j && j.spot) OF.spot = j.spot;                    // v4.234: the entry box starts from it
+      ofbPaint();                                           // v4.235: the price bar around it
       var ofs = spotSource(j);              // v4.220: where the price came from
       $('ofSpotSrc').textContent = ofs[0]; $('ofSpotSrc').title = ofs[1]; $('ofSpot').title = ofs[1];
       $('ofSpotSrc').classList.toggle('est', !!ofs[2]);
@@ -2015,11 +2131,46 @@
       if (s0 && OF_SORTS[s0]) { OF.sort = s0; $('ofSort').value = s0; }
       if (lsGet(OF_MODE_KEY) === 'date') { $('ofModeD').checked = true; show($('ofDate'), true); $('ofDate').value = ofDefaultDate(); }
       ['ofTarget', 'ofWorst', 'ofEntryPx'].forEach(function (id) {
-        $(id).addEventListener('input', function () { ofSavePrices(OF.sym); if (id !== 'ofEntryPx' || ofEntryUser()) ofSchedule(); });
+        $(id).addEventListener('input', function () { ofSavePrices(OF.sym); ofbPaint(); if (id !== 'ofEntryPx' || ofEntryUser()) ofSchedule(); });
+      });
+      // v4.235: the price bar - range buttons, dragging (pointer) and the arrow keys
+      try { var r0 = +localStorage.getItem('th.of.range'); if (r0 === 10 || r0 === 20 || r0 === 30) OFB.range = r0; } catch (err) { /* ignore */ }
+      $('ofBar').addEventListener('click', function (e) {
+        var b = e.target.closest ? e.target.closest('[data-ofrange]') : null;
+        if (!b) return;
+        OFB.range = +b.dataset.ofrange;
+        try { localStorage.setItem('th.of.range', String(OFB.range)); } catch (err) { /* ignore */ }
+        ofbPaint();
+      });
+      $('ofBarTrack').addEventListener('pointerdown', function (e) {
+        var h = e.target.closest ? e.target.closest('[data-ofh]') : null;
+        if (!h || !(OF.spot > 0)) return;
+        e.preventDefault();
+        OFB.drag = h.dataset.ofh;
+        h.classList.add('drag');
+        try { $('ofBarTrack').setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+      });
+      $('ofBarTrack').addEventListener('pointermove', function (e) { if (OFB.drag) ofbSet(OFB.drag, ofbFromX(e.clientX)); });
+      function ofbEnd() {
+        if (!OFB.drag) return;
+        var h = $('ofBar').querySelector('[data-ofh="' + OFB.drag + '"]');
+        if (h) h.classList.remove('drag');
+        OFB.drag = null;
+      }
+      $('ofBarTrack').addEventListener('pointerup', ofbEnd);
+      $('ofBarTrack').addEventListener('pointercancel', ofbEnd);
+      $('ofBarTrack').addEventListener('keydown', function (e) {
+        var h = e.target.closest ? e.target.closest('[data-ofh]') : null;
+        if (!h || !(OF.spot > 0) || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+        e.preventDefault();
+        var k = h.dataset.ofh, v = ofbVal(k, OF.spot);
+        if (v == null) v = OF.spot * (1 + OFB_DEFAULT[k]);
+        ofbSet(k, v + (e.key === 'ArrowRight' ? 1 : -1) * ofbStep(OF.spot) * (e.shiftKey ? 10 : 1));
       });
       Array.prototype.forEach.call(document.querySelectorAll('input[name="ofEntry"]'), function (b) {   // v4.234
         b.addEventListener('change', function () {
           show($('ofEntryPx'), ofEntryUser());
+          ofbPaint();
           if (ofEntryUser() && !$('ofEntryPx').value && OF.spot) { $('ofEntryPx').value = OF.spot; ofSavePrices(OF.sym); }
           if (ofEntryUser()) $('ofEntryPx').focus();
           runFind();
