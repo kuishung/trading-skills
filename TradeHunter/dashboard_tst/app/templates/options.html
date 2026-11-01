@@ -262,6 +262,9 @@
   .of-entry #ofEntryPx { width: 8.5rem; }
   .of-entry-on { color: #fbbf24; font-weight: 600; }
   /* v4.235: the price bar */
+  .of-head { position: sticky; top: 0; z-index: 6; background: var(--tv-page); padding-bottom: .4rem;
+             border-bottom: 1px solid var(--tv-border); }
+  .of-head .of-bar { margin-top: .45rem; }
   .of-bar { max-width: 46rem; padding: .35rem .5rem 0; border: 1px solid var(--tv-border); border-radius: .5rem; }
   .of-bar-top { display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: var(--tv-muted); }
   .of-bar-range button { padding: .05rem .45rem; margin-left: .2rem; border: 1px solid var(--tv-border); border-radius: .25rem; color: var(--tv-muted); }
@@ -664,27 +667,23 @@
      from the picker), the outputs (breakeven, reward over risk, return on investment) per contract, ranked by the
      member's choice; under the table the same contracts on the surface, coloured by that ranking. #}
   <section id="volPanelFind" class="hidden flex flex-col min-h-0 flex-1 space-y-2 overflow-y-auto" role="tabpanel" aria-labelledby="volTabFind">
+    {# v4.236 (user: "the top selection panel in option finder make it fixed and cannot be scrolled") #}
+    <div id="ofHead" class="of-head">
     <div class="of-inputs">
       <label class="of-l">Strategy
         <select id="ofStrat" class="of-in">
           {% for s in finder_strategies or [] %}<option value="{{ s[0] }}"{% if not s[4] %} disabled{% endif %}>{{ s[1] }}{% if not s[4] %} - coming soon{% endif %}</option>{% endfor %}
         </select>
       </label>
-      {# v4.234 (user: "We need an entry price ... current price radio button ... based on the last price (massive has 15
-         delay); another radio button will be user defined entry price, the table will be recalculated based on user price") #}
-      <fieldset class="of-l of-mode of-entry">
-        <legend>Entry price (stock)</legend>
-        <label class="scr-check" title="The last market pass's price (Massive, 15 minutes delayed)"><input type="radio" name="ofEntry" id="ofEntryL" value="last" checked>
-          current price <b id="ofSpot" class="of-spot">-</b><span id="ofSpotSrc" class="vol-head-src"></span></label>
-        <label class="scr-check" title="Your own stock price: every call is priced and every figure worked from it"><input type="radio" name="ofEntry" id="ofEntryU" value="user"> my entry price</label>
-        <input id="ofEntryPx" class="of-in hidden" type="number" step="any" min="0" inputmode="decimal" placeholder="the stock price you buy at" aria-label="Your entry price for the stock">
-      </fieldset>
-      <label class="of-l">Target price
-        <input id="ofTarget" class="of-in" type="number" step="any" min="0" inputmode="decimal" placeholder="where it goes">
-      </label>
-      <label class="of-l">Worst case (stop)
-        <input id="ofWorst" class="of-in" type="number" step="any" min="0" inputmode="decimal" placeholder="your stop-loss">
-      </label>
+      {# v4.236 (user: "we do not need the target price column, worst case column since we have the bar; we also do not
+         need the radio button ... my entry price also make it moveable in the bar ... add the button to make the fix
+         entry price as last price so the entry bar cannot be moved, untick it make it movable"): the prices live on the
+         bar; these hidden boxes only hold them. The tick fixes the entry at the last price (remembered, th.of.lock). #}
+      <div class="of-l of-entry">Entry price
+        <label class="scr-check" title="Ticked: the entry is the last market pass's price (Massive, 15 minutes delayed) and its handle on the bar is fixed. Untick it to drag the entry handle to your own price.">
+          <input type="checkbox" id="ofEntryLock" checked> fixed at the last price <b id="ofSpot" class="of-spot">-</b><span id="ofSpotSrc" class="vol-head-src"></span></label>
+      </div>
+      <input id="ofEntryPx" type="hidden"><input id="ofTarget" type="hidden"><input id="ofWorst" type="hidden">
       <fieldset class="of-l of-mode">
         <legend>Time decay: value each contract</legend>
         <label class="scr-check"><input type="radio" name="ofMode" id="ofModeE" value="expiry" checked> at its own expiry</label>
@@ -706,7 +705,7 @@
        above follow, and typing in a box moves its handle) #}
     <div id="ofBar" class="of-bar hidden" aria-label="Drag the entry, target and worst-case prices">
       <div class="of-bar-top">
-        <span class="of-bar-title">Drag the prices</span>
+        <span class="of-bar-title">Drag <b class="of-bar-worst">Worst</b>, <b class="of-bar-target">Target</b> and - when "fixed at the last price" is unticked - <b class="of-bar-entry">Entry</b></span>
         <span class="of-bar-range" role="group" aria-label="Range of the bar">
           <button type="button" data-ofrange="10">&plusmn;10%</button><button type="button" data-ofrange="20">&plusmn;20%</button><button type="button" data-ofrange="30">&plusmn;30%</button>
         </span>
@@ -719,6 +718,7 @@
         <div class="of-bar-h of-bar-entry" data-ofh="entry" tabindex="0" role="slider" aria-label="Entry price"><span></span></div>
         <div class="of-bar-h of-bar-target" data-ofh="target" tabindex="0" role="slider" aria-label="Target price"><span></span></div>
       </div>
+    </div>
     </div>
     <div id="ofMsg" class="hidden rounded border border-slate-700 px-3 py-2 text-xs text-slate-300"></div>
     <div id="ofInfo" class="hidden text-[11px] text-slate-400 leading-snug"></div>
@@ -1711,7 +1711,7 @@
   var OF_SORT_KEY = 'th.of.sort', OF_MODE_KEY = 'th.of.mode', OF_TOP = 30;
   var OF_SORTS = {rr: 'Reward over risk', roi: 'Return on investment', be: 'Breakeven closest to the entry price', prob: 'Chance above breakeven'};
   function ofMode() { return $('ofModeD').checked ? 'date' : 'expiry'; }
-  function ofEntryUser() { return $('ofEntryU').checked; }   // v4.234: the member's own stock entry price
+  function ofEntryUser() { return !$('ofEntryLock').checked; }   // v4.236: unticked = the member's own (draggable) entry
   // ── v4.235: the price bar - the current price fixed, the entry / target / worst-case handles dragged on a
   // +-10/20/30 % scale around it; each handle writes its box (and fires its input, so the finder re-ranks) ──
   var OFB = {range: 20, drag: null};
@@ -1758,7 +1758,7 @@
       var chg = (pv - spot) / spot * 100;
       h.querySelector('span').textContent = OFB_WORD[k] + ' ' + (unset ? '(drag)' : money(pv) + ' ' + (chg >= 0 ? '+' : '') + chg.toFixed(1) + '%');
       h.setAttribute('aria-valuenow', pv.toFixed(2));
-      h.title = OFB_WORD[k] + (k === 'entry' && !ofEntryUser() ? ' = the current price - drag it to set your own entry price' : ' - drag, or use the arrow keys');
+      h.title = OFB_WORD[k] + (k === 'entry' && !ofEntryUser() ? ' = the last price (fixed) - untick "fixed at the last price" to move it' : ' - drag, or use the arrow keys');
     });
     var z = $('ofBarZone'), a = pct(vals.worst), b = pct(vals.target);   // the trade's span: stop to target
     z.style.left = Math.min(a, b) + '%'; z.style.width = Math.abs(b - a) + '%';
@@ -1773,11 +1773,19 @@
   function ofbSet(k, price) {            // a handle moved: its box gets the price, the finder re-ranks
     var spot = OF.spot, st = ofbStep(spot);
     price = Math.round(price / st) * st;
-    if (k === 'entry' && !ofEntryUser()) { $('ofEntryU').checked = true; show($('ofEntryPx'), true); }
     var box = $(OFB_BOX[k]);
     box.value = price.toFixed(2);
     box.dispatchEvent(new Event('input'));
     ofbPaint();
+  }
+  function ofbDefaults(spot) {           // v4.236: a ticker with no saved prices starts at target +10 %, worst -5 %
+    if ($('ofTarget').value || $('ofWorst').value) return false;
+    var st = ofbStep(spot);
+    $('ofTarget').value = (Math.round(spot * (1 + OFB_DEFAULT.target) / st) * st).toFixed(2);
+    $('ofWorst').value = (Math.round(spot * (1 + OFB_DEFAULT.worst) / st) * st).toFixed(2);
+    ofSavePrices(OF.sym);
+    ofbPaint();
+    return true;
   }
   function ofbFromX(clientX) {
     var r = $('ofBarTrack').getBoundingClientRect(), spot = OF.spot;
@@ -1831,7 +1839,7 @@
     }
     if (ofEntryUser()) {                                     // v4.234: priced from the member's own stock price
       var ep = $('ofEntryPx').value.trim();
-      if (!ep) { msg($('ofMsg'), 'Type your entry price for the stock, or pick the current price.'); return; }
+      if (!ep) { msg($('ofMsg'), 'Drag the Entry handle on the bar, or tick "fixed at the last price".'); return; }
       q.set('entry', ep);
     }
     var my = ++OF.seq;
@@ -1847,7 +1855,8 @@
       if (!j || !j.ok) {
         OF.last = null;
         show($('ofWrap'), false); show($('ofInfo'), false); show($('ofMapBox'), false); show($('ofMore'), false); show($('ofSurfRow'), false);
-        msg($('ofMsg'), j && j.need_prices ? 'Type your target price and your worst-case price (your stop) for ' + (j.symbol || sym) + ' at ' + money(j.spot) + '.'
+        if (j && j.need_prices && j.spot && ofbDefaults(j.spot)) { runFind(); return; }   // v4.236: start from the bar's defaults
+        msg($('ofMsg'), j && j.need_prices ? 'Drag the Target and Worst handles on the bar for ' + (j.symbol || sym) + ' at ' + money(j.spot) + '.'
                                            : (j && j.error ? j.error : 'The contracts could not be ranked.'));
         return;
       }
@@ -2145,6 +2154,7 @@
       $('ofBarTrack').addEventListener('pointerdown', function (e) {
         var h = e.target.closest ? e.target.closest('[data-ofh]') : null;
         if (!h || !(OF.spot > 0)) return;
+        if (h.dataset.ofh === 'entry' && !ofEntryUser()) return;      // v4.236: fixed at the last price
         e.preventDefault();
         OFB.drag = h.dataset.ofh;
         h.classList.add('drag');
@@ -2164,17 +2174,16 @@
         if (!h || !(OF.spot > 0) || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
         e.preventDefault();
         var k = h.dataset.ofh, v = ofbVal(k, OF.spot);
+        if (k === 'entry' && !ofEntryUser()) return;                  // v4.236: fixed at the last price
         if (v == null) v = OF.spot * (1 + OFB_DEFAULT[k]);
         ofbSet(k, v + (e.key === 'ArrowRight' ? 1 : -1) * ofbStep(OF.spot) * (e.shiftKey ? 10 : 1));
       });
-      Array.prototype.forEach.call(document.querySelectorAll('input[name="ofEntry"]'), function (b) {   // v4.234
-        b.addEventListener('change', function () {
-          show($('ofEntryPx'), ofEntryUser());
-          ofbPaint();
-          if (ofEntryUser() && !$('ofEntryPx').value && OF.spot) { $('ofEntryPx').value = OF.spot; ofSavePrices(OF.sym); }
-          if (ofEntryUser()) $('ofEntryPx').focus();
-          runFind();
-        });
+      try { if (localStorage.getItem('th.of.lock') === '0') $('ofEntryLock').checked = false; } catch (err) { /* ignore */ }
+      $('ofEntryLock').addEventListener('change', function () {        // v4.236: fix / free the entry handle
+        try { localStorage.setItem('th.of.lock', $('ofEntryLock').checked ? '1' : '0'); } catch (err) { /* ignore */ }
+        if (ofEntryUser() && !$('ofEntryPx').value && OF.spot) { $('ofEntryPx').value = Number(OF.spot).toFixed(2); ofSavePrices(OF.sym); }
+        ofbPaint();
+        runFind();
       });
       $('ofStrat').addEventListener('change', runFind);
       $('ofDate').addEventListener('change', runFind);

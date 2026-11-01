@@ -160,9 +160,8 @@ def test_a_user_entry_price_reprices_every_call(sdb):
 def test_the_entry_price_radio_and_column():
     from pathlib import Path
     html = (Path(__file__).resolve().parent.parent / "app" / "templates" / "options.html").read_text(encoding="utf-8")
-    for needle in ('<input type="radio" name="ofEntry" id="ofEntryL" value="last" checked>',
-                   '<input type="radio" name="ofEntry" id="ofEntryU" value="user"> my entry price',
-                   'id="ofEntryPx"', "q.set('entry', ep);", "'\">Entry price</th>'",
+    for needle in ('<input type="checkbox" id="ofEntryLock" checked> fixed at the last price',     # v4.236: a tick, no radios
+                   '<input id="ofEntryPx" type="hidden"><input id="ofTarget" type="hidden"><input id="ofWorst" type="hidden">', "q.set('entry', ep);", "'\">Entry price</th>'",
                    "priced from your entry price ", "if (j.entry_src === 'user') q.set('entry', String(j.entry));",
                    "if (p.entry) q.set('entry', p.entry);", "entry: q.get('entry') || ''"):
         assert needle in html, needle
@@ -185,8 +184,25 @@ def test_the_price_bar_drags_the_entry_target_and_worst_case():
                    'data-ofh="worst"', 'data-ofh="entry"', 'data-ofh="target"', 'id="ofBarNow"',
                    "var OFB_BOX = {entry: 'ofEntryPx', target: 'ofTarget', worst: 'ofWorst'};",
                    "box.dispatchEvent(new Event('input'));",
-                   "if (k === 'entry' && !ofEntryUser()) { $('ofEntryU').checked = true; show($('ofEntryPx'), true); }",
+                   "if (h.dataset.ofh === 'entry' && !ofEntryUser()) return;      // v4.236: fixed at the last price",
                    "$('ofBarTrack').addEventListener('pointerdown'", "$('ofBarTrack').addEventListener('keydown'",
                    "localStorage.setItem('th.of.range', String(OFB.range));", "ofbPaint();                                           // v4.235"):
         assert needle in html, needle
     assert html.index('id="ofBar"') < html.index('id="ofMsg"')
+
+
+def test_the_entry_is_fixed_by_a_tick_and_the_top_panel_stays_put():
+    """v4.236 (user: "we do not need the target price column, worst case column since we have the bar; we also do not
+    need the radio button ... add the button to make the fix entry price as last price so the entry bar cannot be
+    moved, untick it make it movable"; "the top selection panel in option finder make it fixed and cannot be
+    scrolled")."""
+    from pathlib import Path
+    html = (Path(__file__).resolve().parent.parent / "app" / "templates" / "options.html").read_text(encoding="utf-8")
+    assert 'name="ofEntry"' not in html and "Target price\n        <input" not in html
+    assert "function ofEntryUser() { return !$('ofEntryLock').checked; }" in html
+    assert "localStorage.setItem('th.of.lock'" in html
+    assert html.index('<div id="ofHead" class="of-head">') < html.index('<div class="of-inputs">') < html.index('id="ofBar"')
+    assert ".of-head { position: sticky; top: 0; z-index: 6; background: var(--tv-page);" in html
+    # a ticker with no saved prices starts from target +10 % / worst -5 % on the bar, then ranks
+    assert "if (j && j.need_prices && j.spot && ofbDefaults(j.spot)) { runFind(); return; }" in html
+    assert "if ($('ofTarget').value || $('ofWorst').value) return false;" in html

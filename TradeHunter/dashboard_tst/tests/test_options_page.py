@@ -2152,7 +2152,7 @@ def test_the_option_finder_tab(client, fake):
     for needle in ('id="volTabFind" role="tab" data-vtab="find"', ">Option Finder</button>", 'id="volPanelFind"',
                    '<option value="long_call">Buy a call</option>', '<option value="long_put" disabled>Buy a put - coming soon</option>',
                    '<option value="bull_call_spread" disabled>Bull call spread - coming soon</option>',
-                   'id="ofTarget"', 'id="ofWorst"', 'id="ofModeE" value="expiry" checked', 'id="ofModeD" value="date"',
+                   '<input id="ofTarget" type="hidden">', '<input id="ofWorst" type="hidden">', 'id="ofModeE" value="expiry" checked', 'id="ofModeD" value="date"',
                    'id="ofDate" class="of-in hidden" type="date"', '<option value="rr">Reward over risk</option>',
                    '<option value="roi">Return on investment</option>', "<option value=\"be\">Breakeven closest to the entry price</option>",
                    "fetch" if False else "getJSON('/options/api/finder?' + q.toString()",

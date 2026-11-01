@@ -223,6 +223,23 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-01 - v4.236: the Option Finder - prices only on the bar, a tick fixes the entry, the top panel stays put
+
+The user: *"we do not need the target price column, worst case column since we have the bar; we also do not need the
+radio button ... my entry price also make it moveable in the bar; just add the button to make the fix entry price as
+last price so the entry bar cannot be moved, untick it make it movable ... so we have the two column free up space"*;
+then *"the top selection panel in option finder make it fixed and cannot be scrolled"*. In `options.html`:
+- The **Target price** and **Worst case** boxes and the **entry radio buttons** are gone; the prices are set on the bar
+  only (hidden boxes keep them for the request and for this browser's memory per ticker).
+- **"Entry price - fixed at the last price"** tick (with the last price and its source beside it; remembered,
+  `th.of.lock`): ticked, the Entry handle sits on the last price and cannot be dragged or nudged; unticked, it drags like
+  the others (starting from the last price) and every figure is worked from it.
+- A ticker with no saved prices **starts from the bar's defaults** - target +10 %, worst case -5 % - and ranks at once.
+- The **top panel** (the inputs and the bar) is **fixed**: it stays at the top while the chart and the table scroll
+  under it (sticky).
+- Checked in the local preview at desktop width (the results scrolled 400 px under the fixed panel; the fixed entry did
+  not move; unticked, it dragged to $98.90 and the table re-priced). Tests: `test_opt_finder.py`, `test_options_page.py`.
+
 ### 2026-11-01 - v4.235: the Option Finder - drag the entry, target and worst case on a price bar
 
 The user: *"so now we have current price, entry price, target price, worst case - i want to combine these into a bar
