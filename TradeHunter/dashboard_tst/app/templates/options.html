@@ -66,6 +66,13 @@
      handle. On a large screen the watchlist pane takes --vol-wl-h (set by the handle, remembered
      per browser; 45 % of the panel until then); on a phone it is a fixed 12rem above the controls. */
   .vol-wlpane { flex: none; height: 12rem; }
+  /* v4.240 (user: "the price and the percentage in all the watchlist should align"): fixed, right-aligned columns -
+     price, day change, liquidity - so every row lines up whatever the ticker or figure */
+  .vol-wl-sym { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .vol-wl-px { flex: none; display: inline-flex; gap: .2rem; margin-left: auto; }
+  .vol-wl-pv { width: 2.95rem; text-align: right; }
+  .vol-wl-pc { width: 2.45rem; text-align: right; }
+  .vol-wl-lq { flex: none; width: 3.5rem; text-align: right; }
   @media (min-width: 1024px) { .vol-wlpane { height: var(--vol-wl-h, 45%); } }
   /* v4.149: the countdown to the next market pass (Latest) / the fixed-day tag (a past date) */
   .vol-tick { display: inline-flex; flex-direction: column; gap: .25rem; min-width: 12rem; padding: .25rem .6rem;
@@ -423,7 +430,7 @@
      adjustable"): the left panel holds two panes - the member's watchlists on top (a click on a
      ticker draws its surface), the controls below - and a drag handle between them (#volSplit)
      sets the split, remembered in localStorage th.vol.split. Phone: a fixed-height list, no handle. #}
-  <aside id="volAside" class="vol-aside shrink-0 lg:w-56 flex flex-col gap-2 min-h-0 lg:h-full lg:overflow-hidden">
+  <aside id="volAside" class="vol-aside shrink-0 lg:w-60 flex flex-col gap-2 min-h-0 lg:h-full lg:overflow-hidden">
     <h1 class="shrink-0 text-sm font-medium text-slate-200 whitespace-nowrap">Volatility surface</h1>
     {# v4.224 (user: "give me a ranking list and when I click the list the selected will be overlay in the vol surface"):
        in a window opened from the Option Finder, the ranked calls as a list; a click picks a call (more clicks compare
@@ -2896,12 +2903,12 @@
     $('volWlCount').textContent = l ? intText(n) + (n === 1 ? ' ticker' : ' tickers') : '';
     if (!l || !n) { box.innerHTML = '<div class="px-2 py-2 text-[11px] text-slate-500">No tickers in this list yet.</div>'; return; }
     box.innerHTML = l.symbols.map(function (r) {
-      return '<button type="button" class="vol-wl-row w-full flex items-baseline justify-between gap-2 px-2 py-1 rounded text-left hover:bg-slate-800/70"' +
+      return '<button type="button" class="vol-wl-row w-full flex items-baseline justify-between gap-1 px-2 py-1 rounded text-left hover:bg-slate-800/70"' +
              ' role="option" aria-selected="false" data-sym="' + esc(r.symbol) + '" title="Show the ' + esc(r.symbol) + ' volatility surface">' +
              '<span class="vol-wl-sym text-[13px] font-semibold whitespace-nowrap text-white">' + (window.tkLogo ? tkLogo(r.symbol, 15) : '') + esc(r.symbol) + '</span>' +
              // v4.233 (user: "in the option watchlist only show the liquidity column, not need to show the MATP")
              // v4.239 (user: "in the watchlist in option surface, I need the last price of the ticker")
-             '<span class="vol-wl-px text-[11px] whitespace-nowrap tabular-nums text-slate-300 ml-auto" data-sym="' + esc(r.symbol) + '"></span>' +
+             '<span class="vol-wl-px text-[11px] whitespace-nowrap tabular-nums text-slate-300" data-sym="' + esc(r.symbol) + '"></span>' +
              '<span class="vol-wl-lq text-[10px] whitespace-nowrap text-slate-600" data-sym="' + esc(r.symbol) + '"></span>' +
              '</button>';
     }).join('');
@@ -2926,9 +2933,9 @@
         var p = LQP[el.dataset.sym];
         if (!p || p.spot == null) { el.innerHTML = ''; el.title = ''; return; }
         var ss = spotSource(p), c = p.chg_pct;
-        el.innerHTML = (ss[2] ? '~' : '') + esc(num(p.spot, 2)) +
-          (c != null && isFinite(c) ? ' <span class="' + (c > 0 ? 'text-emerald-400' : c < 0 ? 'text-rose-400' : 'text-slate-500') + '">' +
-            (c > 0 ? '+' : '') + num(c, 1) + '%</span>' : '');
+        el.innerHTML = '<span class="vol-wl-pv">' + (ss[2] ? '~' : '') + esc(num(p.spot, 2)) + '</span>' +   // v4.240: two aligned columns
+          '<span class="vol-wl-pc ' + (c > 0 ? 'text-emerald-400' : c < 0 ? 'text-rose-400' : 'text-slate-500') + '">' +
+          (c != null && isFinite(c) ? (c > 0 ? '+' : '') + num(c, 1) + '%' : '') + '</span>';
         el.title = LQV[el.dataset.sym] ? '' : (ss[1] || 'the stock price');   // with a verdict, the hover table says it
       });
       Array.prototype.forEach.call($('volWlList').querySelectorAll('.vol-wl-lq'), function (el) {

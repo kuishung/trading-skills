@@ -1911,8 +1911,14 @@ def test_the_hide_new_and_thinly_listed_tick(client, fake):
     wp = html[html.index("function wlPaint("):html.index("function wlLoad(")]
     assert "'<span class=\"vol-wl-lq text-[10px] whitespace-nowrap text-slate-600\" data-sym=\"' + esc(r.symbol) + '\"></span>'" in wp
     # v4.239: the stock price (with its day change) before the verdict
-    assert "'<span class=\"vol-wl-px text-[11px] whitespace-nowrap tabular-nums text-slate-300 ml-auto\" data-sym=\"' + esc(r.symbol) + '\"></span>'" in wp
-    assert "LQP = j.prices || {};" in wp and "el.innerHTML = (ss[2] ? '~' : '') + esc(num(p.spot, 2)) +" in wp
+    assert "'<span class=\"vol-wl-px text-[11px] whitespace-nowrap tabular-nums text-slate-300\" data-sym=\"' + esc(r.symbol) + '\"></span>'" in wp
+    assert "LQP = j.prices || {};" in wp
+    # v4.240: price and day change in fixed, right-aligned columns, the verdict too
+    assert "el.innerHTML = '<span class=\"vol-wl-pv\">' + (ss[2] ? '~' : '') + esc(num(p.spot, 2)) + '</span>' +" in wp
+    assert "'<span class=\"vol-wl-pc ' + (c > 0 ?" in wp
+    for rule in (".vol-wl-pv { width: 2.95rem; text-align: right; }", ".vol-wl-pc { width: 2.45rem; text-align: right; }",
+                 ".vol-wl-lq { flex: none; width: 3.5rem; text-align: right; }"):
+        assert rule in html, rule
     assert "wlLiq(l.symbols.map(function (r) { return r.symbol; }));" in wp
     assert "MATP ' + esc(num(r.matp" not in wp          # v4.233: the pane shows the liquidity only, no MATP
     assert "getJSON('/options/api/liquidity?symbols=' + encodeURIComponent(syms.join(',')))" in wp

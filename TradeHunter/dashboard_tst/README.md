@@ -223,6 +223,14 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-01 - v4.240: the watchlist pane's price, change and liquidity line up in columns
+
+The user: *"the price and the percentage in all the watchlist should align so it looks neat"*. In `options.html`:
+the price, the day change and the liquidity verdict sit in fixed-width, right-aligned columns (`.vol-wl-pv`,
+`.vol-wl-pc`, `.vol-wl-lq`), so every row lines up whatever the figures; the left panel is 1 rem wider (`lg:w-60`) so a
+four-letter ticker keeps its full name (a longer one ends in an ellipsis; the hover names it). Checked in the local
+preview (four tickers, prices 8.07 to 1234.50, all edges equal, no overflow). Tests: `test_options_page.py`.
+
 ### 2026-11-01 - v4.239: the Volatility Surface's watchlist pane shows each ticker's price
 
 The user: *"in the watchlist in option surface, I need the last price of the ticker. Did massive provide last price of
