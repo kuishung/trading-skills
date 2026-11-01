@@ -295,6 +295,13 @@
   .of-bar-h span { position: absolute; top: -.05rem; left: 0; transform: translateX(-50%); font-size: 10px; line-height: 1.2; font-weight: 600; white-space: nowrap; padding: 0 .25rem; border-radius: .2rem; background: var(--tv-panel); z-index: 1; }
   .of-bar-h:focus-visible span, .of-bar-h.drag span { outline: 1px solid currentColor; }
   .of-bar-worst { color: #f87171; } .of-bar-entry { color: #fbbf24; } .of-bar-target { color: #4ade80; }
+  /* v4.238: the MATP / MBP marks - the Volatility Surface's colours, dashed, not draggable */
+  .of-bar-lvl { position: absolute; top: .6rem; height: 1.3rem; width: 0; margin-left: -1px; border-left: 2px dashed currentColor; pointer-events: none; }
+  .of-bar-lvl span { position: absolute; top: 1.08rem; left: 0; transform: translateX(-50%); font-size: 9px; font-weight: 700; line-height: 1.2;
+                     white-space: nowrap; padding: 0 .2rem; border-radius: .2rem; background: var(--tv-panel); z-index: 1; pointer-events: auto; cursor: help; }
+  .of-bar-matp { color: #fb923c; } .of-bar-mbp { color: #22c55e; }
+  .of-bar-lvl.edge span::after { content: " \2192"; } .of-bar-lvl.edge-lo span::before { content: "\2190 "; }
+  html.light .of-bar-matp { color: #c2410c; } html.light .of-bar-mbp { color: #15803d; }
   .of-bar-h.unset { opacity: .45; } .of-bar-h.off { opacity: .35; }
   .of-bar-h.edge span::after { content: " \2192"; } .of-bar-h.edge-lo span::before { content: "\2190 "; }
   html.light .of-bar-worst { color: #dc2626; } html.light .of-bar-entry { color: #b45309; } html.light .of-bar-target { color: #15803d; }
@@ -732,6 +739,9 @@
         <div id="ofBarTicks" class="of-bar-ticks"></div>
         <div id="ofBarZone" class="of-bar-zone"></div>
         <div id="ofBarNow" class="of-bar-now"><span></span></div>
+        {# v4.238 (user: "i need the MATP and MBP to be shown in the bar also"): the Watchlist's MATP run levels, fixed marks #}
+        <div class="of-bar-lvl of-bar-mbp hidden" data-lvl="mbp"><span></span></div>
+        <div class="of-bar-lvl of-bar-matp hidden" data-lvl="matp"><span></span></div>
         <div class="of-bar-h of-bar-worst" data-ofh="worst" tabindex="0" role="slider" aria-label="Worst case (stop)"><span></span></div>
         <div class="of-bar-h of-bar-entry" data-ofh="entry" tabindex="0" role="slider" aria-label="Entry price"><span></span></div>
         <div class="of-bar-h of-bar-target" data-ofh="target" tabindex="0" role="slider" aria-label="Target price"><span></span></div>
@@ -1778,17 +1788,47 @@
       h.setAttribute('aria-valuenow', pv.toFixed(2));
       h.title = OFB_WORD[k] + (k === 'entry' && !ofEntryUser() ? ' = the last price (fixed) - untick "fixed at the last price" to move it' : ' - drag, or use the arrow keys');
     });
+    // v4.238: the ticker's MATP / MBP (from the finder's answer for this ticker) as fixed dashed marks
+    var lv = (OF.last && OF.last.symbol === OF.sym && OF.last.levels) || {};
+    ['matp', 'mbp'].forEach(function (k) {
+      var el = bar.querySelector('[data-lvl="' + k + '"]'), v = lv[k];
+      var on = v != null && isFinite(v) && v > 0;
+      show(el, on);
+      if (!on) return;
+      var x = pct(+v);
+      el.style.left = x + '%';
+      el.classList.toggle('edge', +v > hi); el.classList.toggle('edge-lo', +v < lo);
+      var sp = el.querySelector('span');
+      sp.textContent = k.toUpperCase() + ' ' + money(+v);
+      sp.title = (k === 'matp' ? 'MATP - the maximum acceptable target price' : 'MBP - the maximum buy price') +
+                 ' from the Watchlist\'s MATP run: ' + money(+v) + ' (' + ((+v - spot) / spot * 100 >= 0 ? '+' : '') + ((+v - spot) / spot * 100).toFixed(1) + '% from now)';
+    });
     var z = $('ofBarZone'), a = pct(vals.worst), b = pct(vals.target);   // the trade's span: stop to target
     z.style.left = Math.min(a, b) + '%'; z.style.width = Math.abs(b - a) + '%';
-    // labels that would overlap ride on alternate rows
-    var hs = ['worst', 'entry', 'target'].map(function (k) { return {k: k, x: pct(vals[k])}; }).sort(function (p, q) { return p.x - q.x; });
-    hs.forEach(function (o, i) {
-      var sp = bar.querySelector('[data-ofh="' + o.k + '"] span');
-      o.row = (i > 0 && o.x - hs[i - 1].x < 18 && hs[i - 1].row === 0) ? 1 : 0;
-      sp.style.top = o.row ? '1.7rem' : '';               // v4.237: a crowded label drops under the line
-      // v4.237: a label near an end of the bar opens inwards, so it is never cut off
-      sp.style.transform = o.x > 88 ? 'translateX(-100%)' : o.x < 12 ? 'translateX(0)' : '';
+    // v4.238: the labels on each row are spread sideways so none overlaps and none leaves the bar - the handles'
+    // labels on the row above the line, "Now" / MBP / MATP on the row under it
+    ofbSpread(['worst', 'entry', 'target'].map(function (k) { return {el: bar.querySelector('[data-ofh="' + k + '"] span'), x: pct(vals[k])}; }));
+    var low = [{el: now.querySelector('span'), x: pct(spot)}];
+    ['matp', 'mbp'].forEach(function (k) {
+      var el = bar.querySelector('[data-lvl="' + k + '"]');
+      if (!el.classList.contains('hidden')) low.push({el: el.querySelector('span'), x: parseFloat(el.style.left)});
     });
+    ofbSpread(low);
+  }
+  function ofbSpread(items) {            // v4.238: lay labels out on one row - each as near its mark as the others allow
+    var W = $('ofBarTrack').clientWidth, pad = 4, lo = -26, hi = W + 26;   // the track's side margins hold the ends
+    if (!W) return;
+    items.forEach(function (o) {
+      o.el.style.transform = 'none'; o.el.style.left = '0px';
+      o.w = o.el.offsetWidth; o.c = o.x / 100 * W;
+      o.l = Math.max(lo, Math.min(hi - o.w, o.c - o.w / 2));
+    });
+    items.sort(function (a, b) { return a.c - b.c; });
+    for (var i = 1; i < items.length; i++) items[i].l = Math.max(items[i].l, items[i - 1].l + items[i - 1].w + pad);
+    var last = items[items.length - 1];
+    if (last && last.l + last.w > hi) last.l = hi - last.w;
+    for (var j = items.length - 2; j >= 0; j--) items[j].l = Math.min(items[j].l, items[j + 1].l - items[j].w - pad);
+    items.forEach(function (o) { o.el.style.left = (o.l - o.c) + 'px'; });
   }
   function ofbSet(k, price) {            // a handle moved: its box gets the price, the finder re-ranks
     var spot = OF.spot, st = ofbStep(spot);
@@ -1881,6 +1921,7 @@
         return;
       }
       OF.last = j;
+      ofbPaint();                                           // v4.238: with this ticker's MATP / MBP marks
       msg($('ofMsg'), j.rows.length ? '' : 'No ' + sym + ' call passes the filters (strikes within ' + Math.round(j.band * 100) + '% of the price, ' +
         j.min_dte + '+ days to expiry, open interest ' + j.min_oi + '+, worth ' + money(j.min_cost) + '+).');
       paintFind();
@@ -2686,6 +2727,7 @@
     });
     show($('volHz'), TAB === 'cm');
     show($('ofSide'), TAB === 'find');                       // v4.237: the finder's settings in the left panel
+    if (TAB === 'find') ofbPaint();                          // v4.238: the labels are laid out while visible
     hidePop(); hideCmPop();
     legends();
     tileNote(activeLast());

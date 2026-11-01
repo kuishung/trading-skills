@@ -222,5 +222,22 @@ def test_the_finder_settings_sit_in_the_left_panel_and_the_bar_spans_the_top():
     assert 'class="of-inputs"' not in head and 'id="ofBar"' in head
     assert "show($('ofSide'), TAB === 'find');" in html
     assert ".of-bar { width: 100%;" in html and ".of-bar-track { position: relative; flex: 1 1 auto; height: 2.75rem;" in html
-    assert "sp.style.transform = o.x > 88 ? 'translateX(-100%)' : o.x < 12 ? 'translateX(0)' : '';" in html
+    assert "function ofbSpread(items)" in html                                   # v4.238: labels spread, never cut off
     assert "if (q !== 0 && (q % (step * 2) === 0" in html                       # the "Now" label takes the 0 % spot
+
+
+def test_the_bar_marks_the_matp_and_mbp():
+    """v4.238 (user: "i need the MATP and MBP to be shown in the bar also"): fixed dashed marks from the finder's
+    ``levels`` for this ticker, coloured as on the Volatility Surface, pinned to an end (with an arrow) when outside the
+    range; the labels on each row are spread so none overlaps."""
+    from pathlib import Path
+    html = (Path(__file__).resolve().parent.parent / "app" / "templates" / "options.html").read_text(encoding="utf-8")
+    for needle in ('<div class="of-bar-lvl of-bar-mbp hidden" data-lvl="mbp"><span></span></div>',
+                   '<div class="of-bar-lvl of-bar-matp hidden" data-lvl="matp"><span></span></div>',
+                   "var lv = (OF.last && OF.last.symbol === OF.sym && OF.last.levels) || {};",
+                   "sp.textContent = k.toUpperCase() + ' ' + money(+v);",
+                   ".of-bar-matp { color: #fb923c; } .of-bar-mbp { color: #22c55e; }",
+                   "ofbSpread(low);", "if (TAB === 'find') ofbPaint();"):
+        assert needle in html, needle
+    bar = html[html.index('id="ofBarTrack"'):html.index('id="ofMsg"')]
+    assert 'data-lvl="matp"' in bar and 'data-ofh="target"' in bar

@@ -223,6 +223,18 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-01 - v4.238: the Option Finder's price bar marks the MATP and MBP
+
+The user: *"i need the MATP and MBP to be shown in the bar also"*. In `options.html`:
+- The bar carries the ticker's **MATP** (orange) and **MBP** (green) from the Watchlist's MATP run - the finder's
+  `levels`, the Volatility Surface's colours - as fixed dashed marks with their price (hover: what each is and how far
+  from now). A level outside the bar's range sits at that end with an arrow; a ticker without them shows none.
+- **Labels never overlap**: each row's labels (Worst / Entry / Target above the line; Now / MBP / MATP under it) are
+  laid out side by side as near their marks as the others allow, and kept inside the bar (`ofbSpread` - replaces the
+  v4.237 alternate-row rule, which could put a crowded label on top of "Now"). The bar is laid out again when the
+  Option Finder tab opens.
+- Checked in the local preview at ±10% and ±20% (no overlaps; MATP at the edge on ±10%). Tests: `test_opt_finder.py`.
+
 ### 2026-11-01 - v4.237: the Option Finder - settings in the left panel, a slim full-width price bar on top
 
 The user: *"I want to make this panel height slimmer"*, *"i think this we put in left panel add a new one"* and *"so the
