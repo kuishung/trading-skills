@@ -223,6 +223,16 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-02 - v4.241: the Option Finder follows the ticker clicked in the watchlist
+
+The user: *"in option finder when a ticker is clicked, the option finder details did not change"*. With "fixed at the
+last price" unticked, a ticker with no entry price saved yet stopped the finder ("Drag the Entry handle...") and the
+LAST ticker's table, map and bar stayed on screen. In `options.html` (`runFind`):
+- When the ticker changes, the previous ranking (table, map, info line, price) is cleared at once.
+- A ticker without its own entry price is priced from its last price, and the Entry handle starts there (saved for
+  that ticker); the member drags it from there.
+- Checked in the local preview with two tickers, entry fixed and not fixed. Tests: `test_opt_finder.py`.
+
 ### 2026-11-01 - v4.240: the watchlist pane's price, change and liquidity line up in columns
 
 The user: *"the price and the percentage in all the watchlist should align so it looks neat"*. In `options.html`:

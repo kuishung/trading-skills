@@ -241,3 +241,17 @@ def test_the_bar_marks_the_matp_and_mbp():
         assert needle in html, needle
     bar = html[html.index('id="ofBarTrack"'):html.index('id="ofMsg"')]
     assert 'data-lvl="matp"' in bar and 'data-ofh="target"' in bar
+
+
+def test_a_new_ticker_replaces_the_last_ranking_at_once():
+    """v4.241 (user: "in option finder when a ticker is clicked, the option finder details did not change"): with the
+    entry not fixed and no entry saved for the new ticker, the finder stopped and left the old ticker's table on
+    screen. Now the old ranking is cleared as soon as the ticker changes, and a ticker without its own entry is priced
+    from its last price, the Entry handle starting there."""
+    from pathlib import Path
+    html = (Path(__file__).resolve().parent.parent / "app" / "templates" / "options.html").read_text(encoding="utf-8")
+    rf = html[html.index("function runFind("):html.index("function paintFind(")]
+    assert "OF.last = null; OF.spot = null;" in rf
+    assert "Drag the Entry handle on the bar, or tick" not in rf
+    assert "if (ep) q.set('entry', ep);" in rf
+    assert "$('ofEntryPx').value = (+j.spot).toFixed(2); ofSavePrices(sym);" in rf

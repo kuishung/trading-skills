@@ -1897,7 +1897,13 @@
     $('volSym').value = sym;
     if (!sym) { msg($('ofMsg'), 'Type an underlying symbol, for example AAPL.'); return; }
     wlMark(sym);
-    if (OF.sym !== sym) { OF.sym = sym; OF.all = false; ofLoadPrices(sym); }
+    if (OF.sym !== sym) {
+      OF.sym = sym; OF.all = false; ofLoadPrices(sym);
+      // v4.241 (user: "when a ticker is clicked, the option finder details did not change"): never leave the last
+      // ticker's ranking on screen under a new ticker - it goes at once, the new one replaces it
+      OF.last = null; OF.spot = null; $('ofSpot').textContent = '-'; $('ofSpotSrc').textContent = '';
+      show($('ofWrap'), false); show($('ofInfo'), false); show($('ofMapBox'), false); show($('ofMore'), false); show($('ofSurfRow'), false);
+    }
     var q = new URLSearchParams({symbol: sym, strategy: $('ofStrat').value, target: $('ofTarget').value.trim(),
                                 worst: $('ofWorst').value.trim(), mode: ofMode()});
     if (ofMode() === 'date') {
@@ -1905,9 +1911,9 @@
       q.set('date', $('ofDate').value);
     }
     if (ofEntryUser()) {                                     // v4.234: priced from the member's own stock price
+      // v4.241: a ticker with no entry of its own yet is priced from its last price, and the Entry handle starts there
       var ep = $('ofEntryPx').value.trim();
-      if (!ep) { msg($('ofMsg'), 'Drag the Entry handle on the bar, or tick "fixed at the last price".'); return; }
-      q.set('entry', ep);
+      if (ep) q.set('entry', ep);
     }
     var my = ++OF.seq;
     if ($('ofTarget').value.trim() && $('ofWorst').value.trim()) msg($('ofMsg'), 'Pricing every ' + sym + ' contract like the sheet...');
@@ -1915,6 +1921,9 @@
       if (my !== OF.seq) return;
       $('ofSpot').textContent = j && j.spot ? money(j.spot) : '-';
       if (j && j.spot) OF.spot = j.spot;                    // v4.234: the entry box starts from it
+      if (j && j.spot && ofEntryUser() && !$('ofEntryPx').value.trim()) {   // v4.241: the handle starts at the last price
+        $('ofEntryPx').value = (+j.spot).toFixed(2); ofSavePrices(sym);
+      }
       ofbPaint();                                           // v4.235: the price bar around it
       var ofs = spotSource(j);              // v4.220: where the price came from
       $('ofSpotSrc').textContent = ofs[0]; $('ofSpotSrc').title = ofs[1]; $('ofSpot').title = ofs[1];
