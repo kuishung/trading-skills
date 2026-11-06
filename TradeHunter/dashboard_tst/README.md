@@ -223,6 +223,22 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-06 - v4.242: an "Insights" menu (Macro, Industry, Company); Sector & Industry becomes Sector Rotation
+
+The user: *"I need to build a menu call Insights"*, *"there will be Macro, Industrial and Company as submenu"*, *"after
+calendar"*, the label *"Industry"*, *"i want to revamp the whole thing but you can keep what you have already done"*,
+then *"the sector and industry menu change it to Sector Rotation"*.
+- `app/menus.py`: a new **Insights** dropdown right after Calendar - **Macro** (`/macro`) and **Company**
+  (`/company-analysis`) open the pages that exist today (back from `OFF_NAV_KEYS`, off the bar since 2026-10-01) until
+  the revamp replaces them; **Industry** is a new menu key `industry`. The top-level **Sector & Industry** is renamed
+  **Sector Rotation** (key `sector` and `/sector` unchanged, so grants and links keep working) and sits after Insights.
+- `app/routes/insights.py` (new): `/insights/industry`, an under-construction page (the shared `strategy.html`
+  layout) pointing to Sector Rotation for now; `app/main.py` registers it behind `require_menu("industry")`.
+- `app/templates/sector.html`: the page's help text says Sector Rotation.
+- A member whose menu access is a fixed list sees Industry only once an admin ticks it in the admin console
+  (everyone else sees it at once).
+- Tests: `tests/test_menus.py` (new).
+
 ### 2026-11-02 - v4.241: the Option Finder follows the ticker clicked in the watchlist
 
 The user: *"in option finder when a ticker is clicked, the option finder details did not change"*. With "fixed at the

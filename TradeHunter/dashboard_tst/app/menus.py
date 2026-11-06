@@ -25,7 +25,17 @@ MENUS = [
     # carries both feeds. The key stays "calendar_month" so existing per-user
     # menu grants keep working.
     ("calendar_month",    "Calendar",          None, "/calendar/month"),
-    ("sector",           "Sector & Industry", None, "/sector"),
+    # Insights — v4.242 (2026-11-06, user: "I need to build a menu call Insights", "there will be Macro, Industrial
+    # and Company as submenu", "after calendar", "i want to revamp the whole thing but you can keep what you have
+    # already done"): the top-down funnel as ONE dropdown. Macro and Company open the pages that already exist
+    # (back from OFF_NAV_KEYS) until the revamp replaces them; Industry is a new key with an under-construction page
+    # (routes/insights.py), since the Sector & Industry page stays in the bar as Sector Rotation (below).
+    ("macro",            "Macro",             "Insights", "/macro"),
+    ("industry",         "Industry",          "Insights", "/insights/industry"),
+    ("company_analysis", "Company",           "Insights", "/company-analysis"),
+    # v4.242 (user: "the sector and industry menu change it to Sector Rotation"): the label only - key "sector" and
+    # /sector are unchanged, so grants and links keep working.
+    ("sector",           "Sector Rotation",   None, "/sector"),
     ("matp",             "Watchlist",         None, "/matp"),
     # Curated — each member's own dated calls (entry/stop/target), judged from
     # price history. Replaced the Portfolio placeholder 2026-09-07 (user).
@@ -48,14 +58,13 @@ MENUS = [
 # Watchlist's Options tab, the calendar's ticker links), they are just not in
 # the bar. To bring one back, move its tuple up into MENUS at its funnel
 # position. The tuples are kept here verbatim so that is a cut-and-paste:
-#   ("macro",            "Macro",             None,      "/macro")        - the fixed six-topic board (2026-08-16); free-form macro research at /research?kind=macro
-#   ("company_analysis", "Company",           None,      "/company-analysis")
+#   (Macro and Company were here until v4.242 - they are back in MENUS under Insights.)
 #   ("ivscan",           "IV Rank",           "Options", "/ivscan")       - the member's TWS High IV Rank scanner as a watchlist
 #   ("spreads",          "Spread",            "Options", "/spreads")      - the bull put spread screener
 #   ("positions",        "Positions",         "Options", "/portfolio")    - open spreads graded against the management lines; the nav's exit-line badge renders only while this is in MENUS
 # (The Options dropdown had been removed 2026-09-15 and put back 2026-09-18 -
 # "put back the option menu and then give me the watchlist" - before this.)
-OFF_NAV_KEYS = ["macro", "company_analysis", "ivscan", "spreads", "positions"]
+OFF_NAV_KEYS = ["ivscan", "spreads", "positions"]          # v4.242: macro + company_analysis moved to Insights
 # Routes that stay ACCESSIBLE (granted + reachable by URL) but are no longer shown
 # in the top nav after the revamp. Kept in ALL_KEYS so their require_menu() guards
 # still pass; simply not rendered by nav_for. "company" is the research chat
@@ -84,7 +93,7 @@ ALL_KEYS = [m[0] for m in MENUS] + HIDDEN_KEYS
 # migration, and without pinning the code to a name the page no longer has.
 LEGACY_KEYS = {"portfolio": "curated"}
 LABELS = {m[0]: m[1] for m in MENUS}
-LABELS.update({"macro": "Macro", "company_analysis": "Company", "ivscan": "IV Rank",
+LABELS.update({"ivscan": "IV Rank",
                "spreads": "Spread", "positions": "Positions", "calc": "Calculator"})
 
 

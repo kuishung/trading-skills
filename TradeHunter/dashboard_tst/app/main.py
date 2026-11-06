@@ -54,6 +54,7 @@ from .routes import ivscan as ivscan_routes
 from .routes import research as research_routes
 from .routes import sector as sector_routes
 from .routes import strategy as strategy_routes
+from .routes import insights as insights_routes
 from .routes import studies as studies_routes
 from .security import current_user, hash_password, require_admin
 
@@ -84,7 +85,7 @@ for _routes_mod in (
     finviz_routes, feedback_routes, admin_routes, agent_routes, pipeline_routes,
     research_routes, patterns_routes, strategy_routes, curated_routes,
     portfolio_routes, spreads_routes, ivscan_routes, options_page_routes,   # calc_routes: no page since v4.218
-    company_analysis_routes, sector_routes, macro_routes, calendar_routes,
+    company_analysis_routes, sector_routes, macro_routes, calendar_routes, insights_routes,
 ):
     _routes_mod.templates.env.globals["version"] = APP_VERSION
     _routes_mod.templates.env.globals["nav_for"] = menus.nav_for   # access-filtered nav
@@ -287,6 +288,7 @@ def create_app() -> FastAPI:
     app.include_router(pipeline_routes.router)
     app.include_router(research_routes.router, dependencies=[Depends(menus.require_menu("macro", "company"))])
     app.include_router(strategy_routes.router, dependencies=[Depends(menus.require_menu("strategy"))])
+    app.include_router(insights_routes.router, dependencies=[Depends(menus.require_menu("industry"))])   # v4.242
     # Curated — per-member dated calls with entry/stop/target, judged from prices.
     app.include_router(curated_routes.router, dependencies=[Depends(menus.require_menu("curated"))])
     app.include_router(portfolio_routes.router,
