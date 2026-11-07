@@ -195,7 +195,58 @@ def _fetch_fred(series_id: str, start: _dt.date) -> list[tuple[_dt.datetime, flo
 
 def _fetch_yahoo(symbol: str, start: _dt.date) -> list[tuple[_dt.datetime, float]]:
     """Daily closes from Yahoo, in memory. Never touches the parquet store —
-    this is a live/operational view (see the two-path rule in the design doc)."""
+    this is a live/operational view (see the two-path rule in the design doc).
+
+    v4.247: read through the app's OWN Yahoo chart client first (``services.prices``, httpx,
+    the same path the MATP chart uses). ``yfinance`` is not in the web app's requirements, so
+    on Hermes the yfinance path below raised ImportError and every Yahoo series (the dollar
+    index, VIX...) stayed empty while FRED loaded; the Exchange Rates chart came up blank.
+    yfinance is now only the fallback, for a machine that has it."""
+    try:
+        out = _fetch_yahoo_chart(symbol, start)
+        if out:
+            return out
+    except Exception:  # noqa: BLE001 - fall through to yfinance
+        pass
+    return _fetch_yahoo_yf(symbol, start)
+
+
+def _fetch_yahoo_chart(symbol: str, start: _dt.date) -> list[tuple[_dt.datetime, float]]:
+    """Yahoo's chart endpoint over the app's pooled httpx client, asked by DATE WINDOW
+    (``period1``/``period2``): ``range=max`` makes Yahoo downsample to monthly or quarterly
+    bars (DX-Y.NYB came back as 169 three-month bars), while a window returns true daily
+    closes. Null closes (holidays, gaps) are dropped."""
+    from . import prices  # noqa: PLC0415
+
+    p1 = int(_dt.datetime.combine(start, _dt.time()).replace(tzinfo=_dt.timezone.utc).timestamp())
+    p2 = int(_dt.datetime.now(_dt.timezone.utc).timestamp()) + 86400
+    params = {"period1": p1, "period2": p2, "interval": "1d"}
+    for host in prices._HOSTS:
+        try:
+            r = prices._client().get(f"https://{host}/v8/finance/chart/{symbol}", params=params, timeout=20.0)
+            r.raise_for_status()
+            res = (r.json().get("chart", {}).get("result") or [None])[0]
+        except Exception:  # noqa: BLE001 - try the other host
+            continue
+        if not res:
+            continue
+        ts = res.get("timestamp") or []
+        closes = ((res.get("indicators", {}).get("quote") or [{}])[0]).get("close") or []
+        out = []
+        for i, t in enumerate(ts):
+            c = closes[i] if i < len(closes) else None
+            if c is None:
+                continue
+            day = _dt.datetime.fromtimestamp(int(t), _dt.timezone.utc).date()
+            if day >= start:
+                out.append((_dt.datetime(day.year, day.month, day.day), float(c)))
+        if out:
+            return out
+    return []
+
+
+def _fetch_yahoo_yf(symbol: str, start: _dt.date) -> list[tuple[_dt.datetime, float]]:
+    """The yfinance path (needs ``pip install yfinance``; the fallback since v4.247)."""
     from . import resources_bridge  # noqa: F401  (puts resources.* on sys.path)
     try:
         from yf_daily_bars import fetch_daily_single  # type: ignore

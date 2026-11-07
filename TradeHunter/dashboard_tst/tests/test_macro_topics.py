@@ -213,6 +213,47 @@ def test_the_dollar_reading_marks_the_52_week_range(seeded):
     assert r["gauge"]["band_lo"] == 100.0 and r["gauge"]["band_hi"] == 104.9
 
 
+def test_the_dollar_reading_falls_back_to_the_broad_index_when_dxy_is_missing(seeded):
+    """v4.247: on Hermes the Yahoo series were never stored (no yfinance in the venv) while FRED's
+    broad dollar index was - the page said "No data yet" over a blank chart."""
+    day = _dt.datetime(2026, 10, 30)
+    seeded.add_all([models.MacroReading(indicator_key="dtwexbgs", as_of=day - _dt.timedelta(days=d),
+                                        value=120.0 + (d % 40) / 10.0) for d in range(0, 400)])
+    seeded.commit()
+    r = macro_topics.reading(seeded, "dollar")
+    assert r["tone"] != "none" and r["headline"]["label"] == "Broad dollar index"
+    assert r["sentence"].startswith("Broad dollar index 120.00")
+    assert any("DXY has not been fetched yet" in l for l in r["lines"])
+    assert {l["label"] for l in r["levels"]} >= {"52w high", "52w low"}
+
+
+def test_yahoo_series_are_read_through_the_apps_own_chart_client(monkeypatch):
+    """v4.247: no yfinance needed - Yahoo's chart endpoint over the app's httpx client, asked by
+    date window (range=max would come back downsampled to monthly / quarterly bars)."""
+    from app.services import prices
+    calls = []
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            ts = [int(_dt.datetime(2001, 1, 2, tzinfo=_dt.timezone.utc).timestamp()),
+                  int(_dt.datetime(2026, 11, 5, tzinfo=_dt.timezone.utc).timestamp()),
+                  int(_dt.datetime(2026, 11, 6, tzinfo=_dt.timezone.utc).timestamp())]
+            return {"chart": {"result": [{"timestamp": ts, "indicators": {"quote": [{"close": [110.0, 99.5, None]}]}}]}}
+
+    class _Client:
+        def get(self, url, params=None, **kw):
+            calls.append((url, params))
+            return _Resp()
+    monkeypatch.setattr(prices, "_client", lambda: _Client())
+    pts = indicators._fetch_yahoo("DX-Y.NYB", _dt.date(2002, 1, 1))
+    assert len(calls) == 1 and calls[0][0].endswith("/v8/finance/chart/DX-Y.NYB")
+    assert calls[0][1]["interval"] == "1d" and "period1" in calls[0][1] and "range" not in calls[0][1]
+    assert pts == [(_dt.datetime(2026, 11, 5), 99.5)]        # before `start` and null closes dropped
+
+
 def test_a_topic_without_data_reads_as_no_data_yet(seeded):
     r = macro_topics.reading(seeded, "debt")
     assert r["tone"] == "none" and r["word"] == "No data yet" and r["gauge"] is None

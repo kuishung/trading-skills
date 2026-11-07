@@ -223,6 +223,28 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-07 - v4.247: Yahoo series without yfinance; the Exchange Rates page is never blank
+
+The user, on Hermes: *"why i dont see the data on chart?"* - Exchange Rates showed "No data yet", a "-" headline and
+an empty chart, with only the hidden FRED broad index holding a value. Cause: `indicators._fetch_yahoo` went through
+`resources/yf_daily_bars` → `yfinance`, which is NOT in `app/requirements.txt`, so in the Hermes venv every Yahoo
+series (DXY, VIX, TNX, GLD, USO, EEM) failed with an ImportError (visible per series under Settings → Data Ingest →
+Macro Series) while every FRED series loaded. The dollar page's only default-on series was the empty DXY.
+
+- `app/services/indicators.py`: `_fetch_yahoo` now reads Yahoo's chart endpoint over the app's OWN pooled httpx
+  client (`_fetch_yahoo_chart`, `services/prices._client()`, the MATP chart's path), asked by DATE WINDOW
+  (`period1`/`period2`, `interval=1d`) - `range=max` makes Yahoo downsample (DX-Y.NYB came back as 169 three-month
+  bars; the window gives ~7,600 daily closes); null closes dropped. The yfinance path is `_fetch_yahoo_yf`, the
+  fallback for a machine that has it. No new requirement - the deploy's restart runs the refresh 90 s later and
+  stores DXY.
+- `app/services/macro_topics.py`: `read_dollar` falls back to the Fed's broad index (`dtwexbgs`) when DXY is empty -
+  headline "Broad dollar index", the same 52-week range / 200-day reading, a line saying DXY is not fetched yet.
+- `app/templates/macro.html`: when none of a chart's default-on series has any points, every hidden series that does
+  is switched on (`onMap`), so a chart with data is never blank; the reference lines attach to the first visible
+  series WITH DATA (right axis preferred, else any), never to an empty one.
+- `tests/test_macro_topics.py`: the broad-index fallback; the Yahoo read goes through `prices.fetch_daily_ohlc` with
+  `rng="max"`, drops rows before `start` and null closes.
+
 ### 2026-11-07 - v4.246: the SPY and QQQ tick boxes removed again
 
 The user, on seeing v4.245: *"i dont need the SPY and QQQ tick box"*. The Fed Funds Rate tick (v4.244) stays.

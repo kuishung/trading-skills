@@ -462,6 +462,12 @@ def read_fed_funds(db: Session, inds: dict) -> dict:
 
 def read_dollar(db: Session, inds: dict) -> dict:
     dxy = _series(db, inds, "dxy")
+    name = "DXY"
+    if not dxy:
+        # v4.247: DXY (Yahoo) missing but the Fed's broad index (FRED) stored - read that
+        # instead of "No data yet" (both rise when the dollar strengthens; the course names both).
+        dxy = _series(db, inds, "dtwexbgs")
+        name = "Broad dollar index"
     if not dxy:
         return _blank(_BY_KEY["dollar"], "The dollar index has not been fetched yet.")
     t, v = dxy[-1]
@@ -486,17 +492,20 @@ def read_dollar(db: Session, inds: dict) -> dict:
     elif v <= lo + 1e-9:
         flags.append({"tone": "watch", "text": "At its 52-week low - a break lower is dollar weakness"})
     where = ("above" if above else "below") + " its 200-day average" if ma200 is not None else ""
-    sentence = (f"DXY {v:,.2f}, {_signed(pct3, '%', 1) if pct3 is not None else '-'} over 3 months"
+    sentence = (f"{name} {v:,.2f}, {_signed(pct3, '%', 1) if pct3 is not None else '-'} over 3 months"
                 + (f", {where}" if where else "") + f"; the 52-week range is {lo:,.2f}-{hi:,.2f}.")
     lines = [f"52-week high {hi:,.2f} (resistance)", f"52-week low {lo:,.2f} (support)"]
     if ma200 is not None:
         lines.append(f"200-day average {ma200:,.2f}")
-    bro = _series(db, inds, "dtwexbgs")
-    if bro:
-        lines.append(f"Trade-weighted broad index {bro[-1][1]:,.1f} ({bro[-1][0].date().isoformat()})")
+    if name == "DXY":
+        bro = _series(db, inds, "dtwexbgs")
+        if bro:
+            lines.append(f"Trade-weighted broad index {bro[-1][1]:,.1f} ({bro[-1][0].date().isoformat()})")
+    else:
+        lines.append("DXY has not been fetched yet - this reading uses the Fed's trade-weighted broad index.")
     return {
         "tone": tone, "word": word, "sentence": sentence,
-        "headline": {"label": "DXY", "text": f"{v:,.2f}", "as_of": _date(t), "when": t.date().isoformat()},
+        "headline": {"label": name, "text": f"{v:,.2f}", "as_of": _date(t), "when": t.date().isoformat()},
         "lines": lines, "flags": flags,
         "trend": {"3m": _signed(pct3, "%", 1) if pct3 is not None else None,
                   "12m": _signed(pct12, "%", 1) if pct12 is not None else None, "unit": "%"},

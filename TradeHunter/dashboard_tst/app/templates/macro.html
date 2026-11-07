@@ -314,7 +314,15 @@
   function buildPanel(p) {
     var pd = p.def, defs = p.defs;
     p.chart = makeChart(p.box.querySelector('.mc-chart'));
-    p.chart.applyOptions({ leftPriceScale: { visible: defs.some(function (s) { return s.axis === 'left' && isOn(s); }) } });
+    // which series start visible: the definitions' defaults, the shared ticks - and, when none of
+    // those has any points (v4.247: DXY not fetched on a machine while the FRED broad index
+    // was), every hidden series that does, so a chart with data is never blank
+    var onMap = {};
+    defs.forEach(function (s) { onMap[s.key] = isOn(s); });
+    if (!defs.some(function (s) { return onMap[s.key] && s.points.length; })) {
+      defs.forEach(function (s) { if (s.points.length && !s.toggle) onMap[s.key] = true; });
+    }
+    p.chart.applyOptions({ leftPriceScale: { visible: defs.some(function (s) { return s.axis === 'left' && onMap[s.key]; }) } });
     var first = null, last = null;
     defs.forEach(function (s) {
       if (!s.points.length) return;
@@ -335,9 +343,9 @@
       band.createPriceLine({ price: pd.band.hi, color: 'rgba(52,211,153,0.6)', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: pd.band.label });
       p.objs.push({ s: band, band: true });
     }
-    var lineHost = null;
+    var lineHost = null, anyHost = null;
     defs.forEach(function (s) {
-      var opts = { priceScaleId: s.axis === 'left' ? 'left' : 'right', visible: isOn(s),
+      var opts = { priceScaleId: s.axis === 'left' ? 'left' : 'right', visible: onMap[s.key],
                    priceFormat: { type: 'price', precision: s.unit === '$tn' ? 1 : 2, minMove: 0.01 },
                    lastValueVisible: true, priceLineVisible: false, title: '' };
       var obj;
@@ -348,12 +356,16 @@
         obj = p.chart.addLineSeries(Object.assign({ color: s.color, lineWidth: s.width || 2, crosshairMarkerRadius: 3 }, opts));
         obj.setData(s.points.map(function (q) { return { time: q[0], value: q[1] }; }));
       }
-      if (!lineHost && s.on && !s.toggle && s.axis !== 'left') lineHost = obj;
-      p.objs.push({ s: obj, def: s, on: isOn(s), last: s.points.length ? s.points[s.points.length - 1][1] : null });
+      if (onMap[s.key] && !s.toggle && s.points.length) {
+        if (!lineHost && s.axis !== 'left') lineHost = obj;
+        if (!anyHost) anyHost = obj;
+      }
+      p.objs.push({ s: obj, def: s, on: onMap[s.key], last: s.points.length ? s.points[s.points.length - 1][1] : null });
     });
-    // fixed reference lines (0%, 100% of GDP, the 52-week range...) on the first visible right-axis series
+    // fixed reference lines (0%, 100% of GDP, the 52-week range...) on the first visible right-axis
+    // series WITH DATA - else the first visible series with data (its own scale), else the first
     (pd.lines || []).forEach(function (l) {
-      var h = lineHost || (p.objs[0] && p.objs[0].s);
+      var h = lineHost || anyHost || (p.objs[0] && p.objs[0].s);
       if (!h) return;
       h.createPriceLine({ price: l.v, color: l.color || '#94a3b8', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: l.label || '' });
     });
