@@ -142,7 +142,8 @@
   .mc-leg .sw { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
   .mc-leg .val { font-variant-numeric: tabular-nums; color: #cbd5e1; }
   /* a tick-box legend entry (the Fed Funds Rate on the inflation charts): off until ticked */
-  .mc-leg.tick { margin-left: auto; padding: 2px 8px; border: 1px solid rgba(148,163,184,0.35); border-radius: 6px; }
+  .mc-leg.tick { padding: 2px 8px; border: 1px solid rgba(148,163,184,0.35); border-radius: 6px; }
+  .mc-leg.tick.first { margin-left: auto; }   /* the tick boxes sit together at the legend's right */
   .mc-leg.tick.off { opacity: .75; }
   .mc-leg .tk { width: 13px; height: 13px; border: 1px solid #94a3b8; border-radius: 3px; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; line-height: 1; color: transparent; }
   .mc-leg:not(.off) .tk { color: #fff; border-color: transparent; }
@@ -227,6 +228,7 @@
     var s = (Math.abs(v) >= 1000) ? v.toLocaleString(undefined, { maximumFractionDigits: 1 }) : v.toFixed(d);
     if (unit === '%') return s + '%';
     if (unit === '$tn') return '$' + s + ' tn';
+    if (unit === '$') return '$' + s;
     return s;
   }
   document.addEventListener('th:theme', function () {
@@ -391,6 +393,7 @@
       d.textContent = typeof hover.time === 'string' ? hover.time : '';
       el.appendChild(d);
     }
+    var firstTick = true;
     p.objs.forEach(function (o, i) {
       if (o.band) return;
       var v = o.last;
@@ -399,7 +402,8 @@
         v = dp ? (dp.value != null ? dp.value : dp.close) : null;
       }
       var b = document.createElement('span');
-      b.className = 'mc-leg' + (o.def.toggle ? ' tick' : '') + (o.on ? '' : ' off');
+      b.className = 'mc-leg' + (o.def.toggle ? ' tick' + (firstTick ? ' first' : '') : '') + (o.on ? '' : ' off');
+      if (o.def.toggle) firstTick = false;
       b.dataset.i = i;
       b.title = (o.def.note ? o.def.note + ' - ' : '') + (o.def.toggle ? 'tick to show it on this chart' : 'click to show or hide');
       b.innerHTML = (o.def.toggle

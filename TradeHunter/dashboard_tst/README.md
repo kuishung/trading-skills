@@ -223,6 +223,22 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-07 - v4.245: SPY and QQQ tick boxes on the CPI, PCE and PPI charts
+
+The user: *"i also want QQQ and SPY ticker box"*. Two more tick boxes beside the Fed Funds one on each inflation chart,
+so the course's "how it reaches stocks" can be seen against the data.
+
+- `app/services/indicators.py`: two Yahoo-sourced series in `SEED` (section `topics`): `spy` (SPY) and `qqq` (QQQ),
+  daily closes in dollars, the whole stored window. `ensure_seeded` adds them to a live table at the next page load;
+  the daily refresh (or Settings -> Data Ingest -> Macro Series -> Refresh now) fetches them.
+- `app/services/macro_topics.py`: the Inflation topic's series gain `spy` (emerald) and `qqq` (slate) as toggles on the
+  LEFT axis (prices, not percentages), and every panel lists them after `effr`.
+- `app/templates/macro.html`: the tick boxes sit together at the legend's right (`first` on the first tick carries the
+  `margin-left: auto`); `fmt` writes a `$` unit as `$123.45`. The left price scale appears while any ticked series
+  uses it (already the case since v4.244).
+- `tests/test_macro_topics.py`: the inflation payload test now expects `effr`, `spy`, `qqq` after each index and
+  checks the ETFs' axis, unit and source.
+
 ### 2026-11-07 - v4.244: the Fed Funds Rate as a tick on the CPI, PCE and PPI charts
 
 The user: *"in the CPI PCE and PPI I want you to give a ticker to show the Fed Fund Rate in the chart"*. The course's
