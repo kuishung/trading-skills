@@ -33,6 +33,15 @@ web, Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-11-07 — `tray_status.py`: a "Macro series" line for the Macro page's daily FRED/Yahoo refresh (tray-sync rule)
+
+dashboard_tst v4.243 refreshes the Insights -> Macro topics' series once a day inside the web app and mirrors the
+state to `dashboard_tst/state/macro_refresh.json`. `get_macro_series_status()` reads it: green when the last run
+is under 36 h old with nothing failed ("Macro series: 33 series · last refresh 07:05 ET · 5 new"), amber on a failed
+series, an error or a stale run, grey when the file is absent (the web app does not run on this PC). Shown as a
+line in the Show Status window and as `Macro OK / Macro 2 fail / Macro stale / Macro -` in the icon tooltip.
+Restart the `IntradayBot-Tray` task after the pull.
+
 ### 2026-10-27 — `tray_status.py`: the Options screener line shows the closing IV snapshot (tray-sync rule)
 
 dashboard_tst v4.225 keeps Massive's closing IV of every contract after each end-of-day pass. The screener line now

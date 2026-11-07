@@ -1,0 +1,57 @@
+{# Settings -> Data Ingest -> Macro Series (v4.243, services/macro_refresh.status): the daily refresh of the
+   Macro topics' FRED / Yahoo series inside the web app, and each stored series' newest observation.
+   Context: ms (the status dict), rows (one per active indicator). #}
+{% from "_time.html" import localtime %}
+{% set failed = ms.failed or [] %}
+{% set tone = 'slate' if ms.off else ('sky' if ms.running else ('amber' if (failed or ms.last_error) else ('emerald' if ms.last_finished else 'slate'))) %}
+{% set dot = {'emerald': 'bg-emerald-400', 'sky': 'bg-sky-400', 'amber': 'bg-amber-400', 'slate': 'bg-slate-500'} %}
+<div class="rounded-lg border border-slate-800 px-4 py-3 space-y-2 text-sm">
+  <div class="flex flex-wrap items-center gap-x-4 gap-y-1">
+    <span class="inline-flex items-center gap-1.5">
+      <span class="inline-block w-2 h-2 rounded-full {{ dot[tone] }}"></span>
+      <b class="text-slate-200">
+        {% if ms.off %}Switched off{% elif ms.running %}Refreshing now{% elif failed or ms.last_error %}Refreshed with problems
+        {% elif ms.last_finished %}Up to date{% else %}Not refreshed yet{% endif %}</b>
+    </span>
+    {% if ms.indicators %}<span class="text-slate-400"><b class="text-slate-200 tabular-nums">{{ ms.ok }}</b> of {{ ms.indicators }} series fetched</span>{% endif %}
+    {% if ms.last_finished %}<span class="text-slate-400">last run <span data-utc="{{ ms.last_finished }}">{{ ms.last_finished }}</span>
+      ({{ ms.added }} new, {{ ms.revised }} revised{% if ms.last_ms is not none %}, {{ ms.last_ms }} ms{% endif %})</span>{% endif %}
+    {% if ms.next_at %}<span class="text-slate-500">next <span data-utc="{{ ms.next_at }}">{{ ms.next_at }}</span></span>{% endif %}
+    {% if user.can_moderate %}<button type="button" id="msRefresh" class="ml-auto rounded border border-slate-700 px-2 py-0.5 text-xs text-slate-300 hover:border-emerald-500 hover:text-emerald-300" {% if ms.running %}disabled{% endif %}>Refresh now</button>{% endif %}
+  </div>
+  {% if ms.off %}<div class="text-xs text-amber-300">The daily refresh is switched off on this server (TST_MACRO_REFRESH=0); the series only update when a moderator presses Refresh now.</div>
+  {% elif not ms.started %}<div class="text-xs text-amber-300">The refresh worker has not started - restart the web app.</div>{% endif %}
+  {% if ms.last_error %}<div class="text-xs text-rose-300 break-words">Last problem: {{ ms.last_error }}</div>{% endif %}
+  {% if failed %}<div class="text-xs text-amber-300">Could not fetch: {% for f in failed %}<b>{{ f.label or f.key }}</b> ({{ f.error }}){% if not loop.last %}; {% endif %}{% endfor %}</div>{% endif %}
+
+  <table class="w-full text-xs mt-1">
+    <thead><tr class="text-slate-500 text-left">
+      <th class="py-1 font-normal">Series</th><th class="py-1 font-normal">Source</th>
+      <th class="py-1 font-normal text-right">Newest observation</th><th class="py-1 font-normal text-right">Rows</th>
+      <th class="py-1 font-normal text-right">Last fetch</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr class="border-t border-slate-800/60 {% if not r.topic %}text-slate-500{% endif %}">
+        <td class="py-1 pr-2">{{ r.label }}{% if r.topic %} <span class="text-[10px] text-emerald-500/80">topic</span>{% endif %}</td>
+        <td class="py-1 pr-2 text-slate-500">{{ r.source }}</td>
+        <td class="py-1 text-right tabular-nums">{{ r.last.strftime('%Y-%m-%d') if r.last else '-' }}</td>
+        <td class="py-1 text-right tabular-nums">{{ r.n }}</td>
+        <td class="py-1 text-right">{% if r.result %}{% if r.result.ok %}<span class="text-emerald-400">+{{ r.result.added }}{% if r.result.revised %} / {{ r.result.revised }} rev{% endif %}</span>{% else %}<span class="text-rose-300" title="{{ r.result.error }}">failed</span>{% endif %}{% else %}-{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="text-xs text-slate-500 max-w-3xl leading-relaxed">
+    <b class="text-slate-400">How it works - nothing to do by hand.</b> The web app fetches every series once a day
+    (and 90 s after it starts) from FRED's public download - no API key - and from Yahoo for the dollar index, adding new
+    observations and updating revised ones (GDP and the price indexes are revised after their first print). The series
+    marked <span class="text-emerald-500/80">topic</span> feed the Insights &rarr; Macro page; the rest feed the macro study board.
+  </p>
+</div>
+<script>
+  (function () {
+    document.querySelectorAll('[data-utc]').forEach(function (el) {
+      try { var d = new Date(el.getAttribute('data-utc')); if (!isNaN(d)) el.textContent = d.toLocaleString(); } catch (e) {}
+    });
+  })();
+</script>

@@ -233,6 +233,12 @@ async def lifespan(app: FastAPI):
         _logos.start_background()
     except Exception as exc:  # noqa: BLE001
         log.warning("ticker logo download not started: %s", exc)
+    # v4.243: the Macro topics' series (FRED / Yahoo) are refreshed once a day in the background
+    try:
+        from .services import macro_refresh as _macro_refresh
+        _macro_refresh.start_background()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("macro series refresh not started: %s", exc)
     yield
 
 

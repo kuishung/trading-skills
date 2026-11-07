@@ -1,84 +1,568 @@
 {% extends "base.html" %}
 {% block title %}Macro &middot; TradeHunter{% endblock %}
 {% block content %}
-{% from "_time.html" import localtime %}
+{# Insights -> Macro (v4.243): the seven topics of the user's macro course as a side rail; the chosen
+   topic shows a gauge of the latest reading against the course's healthy zone, the full stored
+   history as an interactive chart (tabs when a topic has several series, e.g. CPI | PCE | PPI), and
+   four glance cards (the cause-and-effect chain, stock winners and losers, what to watch for, when
+   to check); the course's full notes are folded away. Data: GET /macro/api/topic/<key>
+   (services/macro_topics.payload). #}
 
-<div class="flex items-baseline justify-between gap-3 mb-1">
+<div class="flex items-baseline justify-between gap-3 mb-3 flex-wrap">
   <h1 class="text-2xl font-semibold">Macro</h1>
-  <span class="text-xs text-slate-500">top-down &middot; what moves everything</span>
+  <span class="text-xs text-slate-500">
+    <span id="mcAsOf"></span>
+    <a href="/macro/study" class="text-emerald-400 hover:underline ml-2">Study board &rarr;</a>
+  </span>
 </div>
-<p class="text-slate-400 mb-5 text-sm">
-  The six topics that set the weather for every position. Pick one on the left; its analysis
-  is on the right. For free-form macro questions, use
-  <a href="/research?kind=macro" class="text-emerald-400 hover:underline">Research</a>.
-</p>
 
-{# Two panes. The rail is a fixed taxonomy — same six every morning — so the left
-   side is navigation, not a list that grows. Right pane swaps via HTMX so
-   switching topics never re-fetches the other sections' live tiles. #}
 <div class="grid grid-cols-1 lg:grid-cols-[16rem_1fr] gap-4 items-start">
 
-  <nav class="rounded-lg border border-slate-800 bg-slate-900/40 overflow-hidden lg:sticky lg:top-4">
+  {# ── the rail: seven topics, server-rendered with their readings ── #}
+  <nav id="mcRail" class="rounded-lg border border-slate-800 bg-slate-900/40 overflow-hidden lg:sticky lg:top-4">
     {% for r in rail %}
-    <a href="/macro?section={{ r.key }}"
-       hx-get="/macro/section/{{ r.key }}" hx-target="#macroPane" hx-swap="innerHTML"
-       hx-push-url="/macro?section={{ r.key }}"
-       class="macro-tab block px-3 py-2.5 border-l-2 transition
-              {% if r.active %}border-emerald-400 bg-emerald-500/10{% else %}border-transparent hover:bg-slate-800/50{% endif %}
-              {% if not loop.first %}border-t border-t-slate-800/60{% endif %}">
+    <a href="/macro?topic={{ r.key }}" data-topic="{{ r.key }}"
+       class="mc-tab block px-3 py-2.5 border-l-2 transition {% if r.key == active %}on{% endif %} {% if not loop.first %}border-t border-t-slate-800/60{% endif %}">
       <div class="flex items-center gap-2">
-        <span class="text-[13px] {% if r.active %}text-emerald-300 font-medium{% else %}text-slate-200{% endif %}">{{ r.label }}</span>
-        {% if not r.has_analysis %}
-        <span class="ml-auto text-[10px] text-slate-600" title="No analysis written yet">&mdash;</span>
-        {% endif %}
+        <span class="mc-dot inline-block w-2.5 h-2.5 rounded-full shrink-0 tone-{{ r.tone }}" title="{{ r.word }}"></span>
+        <span class="mc-lbl text-[13px] text-slate-200">{{ r.label }}</span>
+        {% if r.headline %}<span class="ml-auto text-[12px] tabular-nums text-slate-300">{{ r.headline.text }}</span>{% endif %}
       </div>
-      <div class="text-[11px] text-slate-500 mt-0.5">{{ r.blurb }}</div>
-      {% if r.as_of %}<div class="text-[10px] text-slate-600 mt-0.5">{{ localtime(r.as_of, date_only=true) }}</div>{% endif %}
+      <div class="mc-word text-[11px] text-slate-500 mt-0.5 pl-4">{{ r.word or r.blurb }}</div>
     </a>
     {% endfor %}
   </nav>
 
-  <div id="macroPane">{% include "_macro_section.html" %}</div>
+  {# ── the pane ── #}
+  <div id="mcPane" class="space-y-3 min-w-0">
+    <section class="rounded-lg border border-slate-800 bg-slate-900/40">
+      <div class="px-4 py-3 border-b border-slate-800 flex items-center justify-between gap-3 flex-wrap">
+        <div class="min-w-0">
+          <h2 id="mcTitle" class="text-base font-medium text-slate-100">&nbsp;</h2>
+          <p id="mcBlurb" class="text-[11px] text-slate-500 mt-0.5"></p>
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
+          <span id="mcCadence" class="text-[11px] px-2 py-0.5 rounded-full border border-slate-700 text-slate-400" title=""></span>
+          <span id="mcVerdict" class="text-[12px] px-2.5 py-0.5 rounded-full font-medium"></span>
+        </div>
+      </div>
+
+      {# the reading: the number, the gauge, the trend, the flags, the next release #}
+      <div class="px-4 py-3 border-b border-slate-800 grid grid-cols-1 md:grid-cols-[13rem_1fr] gap-x-6 gap-y-3">
+        <div>
+          <div id="mcHeadLbl" class="text-[11px] text-slate-500"></div>
+          <div id="mcHead" class="text-4xl font-semibold tabular-nums text-slate-100 leading-tight">-</div>
+          <div id="mcHeadWhen" class="text-[11px] text-slate-500"></div>
+          <div id="mcTrend" class="flex flex-wrap gap-1.5 mt-2"></div>
+        </div>
+        <div class="min-w-0">
+          <div id="mcGauge" class="mc-gauge"></div>
+          <div id="mcFlags" class="flex flex-wrap gap-1.5 mt-2"></div>
+          <div id="mcNext" class="mt-2"></div>
+        </div>
+      </div>
+
+      {# the chart #}
+      <div class="px-4 pt-3 pb-2">
+        <div class="flex items-center justify-end gap-1 text-[11px] mb-2">
+          <span class="text-slate-600 mr-1">Range</span>
+          {% for y in [1, 3, 5, 10, 0] %}
+          <button type="button" data-years="{{ y }}" class="mc-range rounded border border-slate-700 px-1.5 py-0.5 text-slate-400 hover:text-emerald-300 hover:border-emerald-500">{{ 'All' if y == 0 else (y ~ 'Y') }}</button>
+          {% endfor %}
+        </div>
+        {# one block per panel: tabs when the topic has several charts, the legend, the chart #}
+        <div id="mcCharts"></div>
+        <div id="mcSources" class="mt-1.5 text-[10px] text-slate-600"></div>
+      </div>
+    </section>
+
+    {# the glance cards #}
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <section class="mc-card">
+        <div class="mc-h">How it reaches stocks</div>
+        <div id="mcFlow" class="mc-flow"></div>
+      </section>
+      <section class="mc-card">
+        <div class="mc-h">Winners and losers</div>
+        <div class="grid grid-cols-2 gap-2">
+          <div><div class="text-[10px] text-emerald-400/80 mb-1">Helped</div><div id="mcGood" class="flex flex-wrap gap-1"></div></div>
+          <div><div class="text-[10px] text-rose-400/80 mb-1">Hurt</div><div id="mcBad" class="flex flex-wrap gap-1"></div></div>
+        </div>
+      </section>
+      <section class="mc-card">
+        <div class="mc-h">Watch for</div>
+        <ul id="mcWatch" class="mc-watch"></ul>
+      </section>
+      <section class="mc-card">
+        <div class="mc-h">In words</div>
+        <p id="mcSentence" class="text-[13px] text-slate-200 leading-relaxed"></p>
+        <ul id="mcLines" class="text-[11px] text-slate-500 mt-1.5 space-y-0.5"></ul>
+      </section>
+      <section class="mc-card md:col-span-2">
+        <div class="mc-h flex items-center justify-between">Where to look it up
+          <span class="normal-case tracking-normal text-slate-600">{{ sheet.title }} {{ sheet.version }} ({{ sheet.publisher }}, {{ sheet.date }})</span></div>
+        <div id="mcSrc" class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3"></div>
+      </section>
+    </div>
+
+    <details class="rounded-lg border border-slate-800 bg-slate-900/40 group">
+      <summary class="px-4 py-2.5 text-sm text-slate-300 cursor-pointer select-none flex items-center justify-between">
+        <span>Notes from the course</span>
+        <span class="text-[11px] text-slate-600 group-open:hidden">show</span><span class="text-[11px] text-slate-600 hidden group-open:inline">hide</span>
+      </summary>
+      <div class="px-4 pb-4 grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-3 text-[13px] leading-relaxed border-t border-slate-800 pt-3">
+        <div class="md:col-span-2"><div class="mc-h">How to interpret</div><div id="mcInterpret" class="text-slate-200"></div></div>
+        <div><div class="mc-h">Definition</div><div id="mcDefinition" class="text-slate-300"></div></div>
+        <div><div class="mc-h">What it covers</div><div id="mcCovers" class="text-slate-300"></div></div>
+        <div><div class="mc-h">Why it matters</div><div id="mcWhy" class="text-slate-300"></div></div>
+        <div><div class="mc-h">How it affects stocks</div><div id="mcStocks" class="text-slate-300"></div></div>
+        <div><div class="mc-h">How it is measured</div><div id="mcMeasured" class="text-slate-300"></div></div>
+        <div><div class="mc-h">When to check</div><div id="mcMonitor" class="text-slate-300"></div></div>
+        <div class="md:col-span-2"><div class="mc-h">Key takeaways</div><ul id="mcTakeaways" class="list-disc pl-5 text-slate-300 space-y-0.5"></ul></div>
+      </div>
+    </details>
+  </div>
 </div>
 
-<script>
-// Paint the active rail item on swap — the fragment replaces only the right pane,
-// so the rail's own highlight has to be updated here.
-// "Refresh series" — backfills this section's indicators from FRED/Yahoo.
-// Delegated on document because the button ships inside the HTMX-swapped pane.
-document.addEventListener('click', function (e) {
-  var btn = e.target.closest ? e.target.closest('#macroRefresh') : null;
-  if (!btn || btn._busy) return;
-  e.preventDefault();
-  var key = btn.dataset.key, old = btn.innerHTML;
-  btn._busy = true; btn.innerHTML = 'Fetching…';
-  fetch('/macro/section/' + key + '/refresh', { method: 'POST' })
-    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-    .then(function (j) {
-      window.thToast && window.thToast(j.note || 'Refreshed', j.failed && j.failed.length ? 'err' : 'ok');
-      // repaint the pane so new observations show immediately
-      if (window.htmx) htmx.ajax('GET', '/macro/section/' + key, { target: '#macroPane', swap: 'innerHTML' });
-    })
-    .catch(function (err) { window.thToast && window.thToast('Refresh failed: ' + err.message, 'err'); })
-    .finally(function () { btn._busy = false; btn.innerHTML = old; });
-});
+<style>
+  .mc-tab { border-left-color: transparent; }
+  .mc-tab:hover { background: rgba(30,41,59,.5); }
+  .mc-tab.on { border-left-color: #34d399; background: rgba(16,185,129,.10); }
+  .mc-tab.on .mc-lbl { color: #6ee7b7; font-weight: 500; }
+  .tone-ok { background: #34d399; } .tone-watch { background: #fbbf24; } .tone-bad { background: #fb7185; }
+  .tone-info { background: #38bdf8; } .tone-none { background: #475569; }
+  .mc-h { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: #64748b; margin-bottom: 6px; }
+  .mc-card { border: 1px solid rgb(30 41 59); background: rgba(15,23,42,.4); border-radius: .5rem; padding: .75rem 1rem; }
+  .mc-range.on { color: #6ee7b7; border-color: #10b981; }
+  .mc-ptab { color: #94a3b8; border-color: transparent; }
+  .mc-ptab:hover { color: #cbd5e1; }
+  .mc-ptab.on { color: #6ee7b7; border-color: #10b981; font-weight: 500; }
+  .mc-leg { display: inline-flex; align-items: center; gap: .35rem; cursor: pointer; user-select: none; }
+  .mc-leg.off { opacity: .4; }
+  .mc-leg .sw { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+  .mc-leg .val { font-variant-numeric: tabular-nums; color: #cbd5e1; }
+  .mc-chip { font-size: 11px; padding: 2px 9px; border-radius: 9999px; white-space: nowrap; }
+  .mc-chip.ok { background: rgba(52,211,153,.15); color: #6ee7b7; }
+  .mc-chip.watch { background: rgba(251,191,36,.15); color: #fcd34d; }
+  .mc-chip.bad { background: rgba(251,113,133,.15); color: #fda4af; }
+  .mc-chip.info { background: rgba(56,189,248,.15); color: #7dd3fc; }
+  .mc-chip.plain { background: rgba(71,85,105,.25); color: #cbd5e1; }
+  .mc-chip.next { background: rgba(56,189,248,.12); color: #bae6fd; border: 1px solid rgba(56,189,248,.25); }
+  .mc-chip.src { background: rgba(56,189,248,.08); color: #7dd3fc; border: 1px solid rgba(56,189,248,.25); text-decoration: none; }
+  .mc-chip.src:hover { background: rgba(56,189,248,.2); }
+  html.light .mc-chip.src { color: #0369a1; }
+  .mc-chip b { font-weight: 600; }
+  /* the gauge */
+  .mc-gauge { position: relative; height: 66px; }
+  .mc-gauge .bar { position: absolute; left: 0; right: 0; top: 24px; height: 10px; border-radius: 5px; background: rgba(100,116,139,.25); }
+  .mc-gauge .zone { position: absolute; top: 24px; height: 10px; background: rgba(52,211,153,.35); }
+  .mc-gauge .zone-lbl { position: absolute; top: 37px; font-size: 10px; color: #34d399; transform: translateX(-50%); white-space: nowrap; }
+  .mc-gauge .line { position: absolute; top: 20px; width: 2px; height: 18px; background: rgba(148,163,184,.8); transform: translateX(-50%); }
+  .mc-gauge .line-lbl { position: absolute; top: 37px; font-size: 10px; color: #94a3b8; transform: translateX(-50%); white-space: nowrap; }
+  .mc-gauge .mark { position: absolute; top: 22px; width: 2px; height: 14px; background: #38bdf8; transform: translateX(-50%); }
+  .mc-gauge .mark-lbl { position: absolute; top: 50px; font-size: 10px; color: #7dd3fc; transform: translateX(-50%); white-space: nowrap; }
+  .mc-gauge .pin { position: absolute; top: 18px; width: 0; height: 0; transform: translateX(-50%); border-left: 7px solid transparent; border-right: 7px solid transparent; border-top: 9px solid #f8fafc; }
+  .mc-gauge .pin-lbl { position: absolute; top: 0; font-size: 12px; font-weight: 600; color: #f8fafc; transform: translateX(-50%); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .mc-gauge .pin.ok { border-top-color: #34d399; } .mc-gauge .pin-lbl.ok { color: #6ee7b7; }
+  .mc-gauge .pin.watch { border-top-color: #fbbf24; } .mc-gauge .pin-lbl.watch { color: #fcd34d; }
+  .mc-gauge .pin.bad { border-top-color: #fb7185; } .mc-gauge .pin-lbl.bad { color: #fda4af; }
+  .mc-gauge .pin.info { border-top-color: #38bdf8; } .mc-gauge .pin-lbl.info { color: #7dd3fc; }
+  .mc-gauge .end { position: absolute; top: 37px; font-size: 10px; color: #64748b; white-space: nowrap; }
+  .mc-gauge .end.l { left: 0; } .mc-gauge .end.r { right: 0; }
+  /* the stage track */
+  .mc-stages { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-top: 10px; }
+  .mc-stage { text-align: center; font-size: 11px; padding: 8px 4px; border-radius: 6px; background: rgba(71,85,105,.2); color: #94a3b8; }
+  .mc-stage.on { background: rgba(52,211,153,.2); color: #6ee7b7; font-weight: 600; outline: 1px solid rgba(52,211,153,.5); }
+  .mc-stage.on.watch { background: rgba(251,191,36,.2); color: #fcd34d; outline-color: rgba(251,191,36,.5); }
+  .mc-stage.on.bad { background: rgba(251,113,133,.2); color: #fda4af; outline-color: rgba(251,113,133,.5); }
+  /* the cause-and-effect chain */
+  .mc-flow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+  .mc-flow .step { font-size: 11px; padding: 4px 9px; border-radius: 6px; background: rgba(71,85,105,.25); color: #cbd5e1; }
+  .mc-flow .step.first { background: rgba(56,189,248,.15); color: #bae6fd; }
+  .mc-flow .step.last { background: rgba(251,113,133,.15); color: #fda4af; }
+  .mc-flow .step.stage.on { background: rgba(52,211,153,.2); color: #6ee7b7; font-weight: 600; }
+  .mc-flow .arr { color: #64748b; font-size: 12px; }
+  .mc-watch { list-style: none; padding: 0; margin: 0; }
+  .mc-watch li { font-size: 12px; color: #cbd5e1; padding: 3px 0 3px 18px; position: relative; }
+  .mc-watch li:before { content: ''; position: absolute; left: 2px; top: 9px; width: 8px; height: 8px; border-radius: 2px; background: #fbbf24; opacity: .8; }
+  html.light .mc-tab.on .mc-lbl { color: #047857; }
+  html.light .mc-leg .val, html.light .mc-flow .step, html.light .mc-watch li, html.light .mc-chip.plain { color: #334155; }
+  html.light .mc-gauge .pin { border-top-color: #0f172a; } html.light .mc-gauge .pin-lbl { color: #0f172a; }
+  html.light .mc-card { background: rgba(248,250,252,.6); border-color: #e2e8f0; }
+  html.light .mc-chip.ok, html.light .mc-flow .step.stage.on, html.light .mc-stage.on { color: #047857; }
+  html.light .mc-chip.bad, html.light .mc-flow .step.last { color: #be123c; }
+  html.light .mc-chip.watch, html.light .mc-stage.on.watch { color: #b45309; }
+  html.light .mc-chip.info, html.light .mc-chip.next, html.light .mc-flow .step.first { color: #0369a1; }
+  html.light .mc-stage.on.bad { color: #be123c; }
+  html.light .mc-gauge .zone-lbl { color: #059669; } html.light .mc-gauge .mark-lbl { color: #0369a1; }
+  html.light .mc-gauge .pin.ok { border-top-color: #059669; } html.light .mc-gauge .pin-lbl.ok { color: #047857; }
+  html.light .mc-gauge .pin.watch { border-top-color: #d97706; } html.light .mc-gauge .pin-lbl.watch { color: #b45309; }
+  html.light .mc-gauge .pin.bad { border-top-color: #e11d48; } html.light .mc-gauge .pin-lbl.bad { color: #be123c; }
+  html.light .mc-gauge .pin.info { border-top-color: #0284c7; } html.light .mc-gauge .pin-lbl.info { color: #0369a1; }
+</style>
 
-document.body.addEventListener('htmx:afterOnLoad', function (e) {
-  var t = e.detail && e.detail.elt;
-  if (!t || !t.classList || !t.classList.contains('macro-tab')) return;
-  document.querySelectorAll('.macro-tab').forEach(function (a) {
-    var on = a === t;
-    a.classList.toggle('border-emerald-400', on);
-    a.classList.toggle('bg-emerald-500/10', on);
-    a.classList.toggle('border-transparent', !on);
-    a.classList.toggle('hover:bg-slate-800/50', !on);
-    var lbl = a.querySelector('span');
-    if (lbl) {
-      lbl.classList.toggle('text-emerald-300', on);
-      lbl.classList.toggle('font-medium', on);
-      lbl.classList.toggle('text-slate-200', !on);
-    }
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+  var TONE = { ok: ['bg-emerald-500/15', 'text-emerald-300'], watch: ['bg-amber-500/15', 'text-amber-300'],
+               bad: ['bg-rose-500/15', 'text-rose-300'], info: ['bg-sky-500/15', 'text-sky-300'], none: ['bg-slate-700/40', 'text-slate-400'] };
+  // One chart per PANEL (Inflation has three: CPI, PCE, PPI as tabs; the other topics one). Each
+  // panel keeps its chart, its series objects and its legend; the range buttons drive all of them.
+  var panels = [], cur = null, curYears = 10, seq = 0;
+
+  function light() { return document.documentElement.classList.contains('light'); }
+  function layout() {
+    return { background: { color: light() ? '#ffffff' : '#0b1220' }, textColor: light() ? '#334155' : '#94a3b8' };
+  }
+  function fmt(v, unit, d) {
+    if (v == null || isNaN(v)) return '-';
+    d = (d == null) ? 2 : d;
+    var s = (Math.abs(v) >= 1000) ? v.toLocaleString(undefined, { maximumFractionDigits: 1 }) : v.toFixed(d);
+    if (unit === '%') return s + '%';
+    if (unit === '$tn') return '$' + s + ' tn';
+    return s;
+  }
+  document.addEventListener('th:theme', function () {
+    panels.forEach(function (p) { if (p.chart) p.chart.applyOptions({ layout: layout() }); });
   });
-});
+
+  function makeChart(el) {
+    return LightweightCharts.createChart(el, {
+      autoSize: true,
+      layout: layout(),
+      grid: { vertLines: { color: 'rgba(148,163,184,0.14)' }, horzLines: { color: 'rgba(148,163,184,0.14)' } },
+      rightPriceScale: { borderColor: 'rgba(148,163,184,0.35)', scaleMargins: { top: 0.08, bottom: 0.08 } },
+      leftPriceScale: { visible: false, borderColor: 'rgba(148,163,184,0.35)' },
+      timeScale: { borderColor: 'rgba(148,163,184,0.35)', timeVisible: false, rightOffset: 2 },
+      crosshair: {
+        mode: (LightweightCharts.CrosshairMode && LightweightCharts.CrosshairMode.Normal) || 0,
+        vertLine: { color: 'rgba(148,163,184,0.65)', width: 1, style: 3, labelBackgroundColor: '#0f766e' },
+        horzLine: { color: 'rgba(148,163,184,0.65)', width: 1, style: 3, labelBackgroundColor: '#0f766e' }
+      },
+      handleScroll: true, handleScale: true
+    });
+  }
+
+  function clearPanels() {
+    panels.forEach(function (p) { try { if (p.chart) p.chart.remove(); } catch (e) {} });
+    panels = [];
+    $('mcCharts').innerHTML = '';
+  }
+
+  function draw(j) {
+    clearPanels();
+    var byKey = {};
+    j.series.forEach(function (s) { byKey[s.key] = s; });
+    var many = (j.panels || []).length > 1;
+    var host = $('mcCharts');
+    // several panels (Inflation: CPI, PCE, PPI) are TABS over one chart area; a panel's chart is
+    // built when its tab first opens
+    var tabRow = null;
+    if (many) {
+      tabRow = document.createElement('div');
+      tabRow.className = 'flex items-center gap-1 border-b border-slate-800 mb-2';
+      host.appendChild(tabRow);
+    }
+    (j.panels || []).forEach(function (pd, pi) {
+      var defs = pd.series.map(function (k) { return byKey[k]; }).filter(Boolean);
+      var box = document.createElement('div');
+      box.style.display = pi === 0 ? '' : 'none';
+      box.innerHTML =
+        (pd.label ? '<div class="text-[12px] font-medium text-slate-300 mb-1">' + esc(pd.label) +
+                    (pd.note ? ' <span class="font-normal text-slate-500">- ' + esc(pd.note) + '</span>' : '') + '</div>' : '') +
+        '<div class="mc-legend flex items-center gap-x-3 gap-y-1 flex-wrap text-[11px] mb-1"></div>' +
+        '<div class="mc-chart w-full rounded border border-slate-800/70 bg-slate-950/30" style="height:380px"></div>';
+      host.appendChild(box);
+      var p = { def: pd, defs: defs, box: box, chart: null, legendEl: box.querySelector('.mc-legend'), objs: [], last: null };
+      panels.push(p);
+      if (tabRow) {
+        var tb = document.createElement('button');
+        tb.type = 'button';
+        tb.className = 'mc-ptab px-3 py-1.5 text-[12px] border-b-2 -mb-px ' + (pi === 0 ? 'on' : '');
+        tb.textContent = (pd.label || pd.key).split(' - ')[0];
+        tb.title = pd.label || '';
+        tb.addEventListener('click', function () { showPanel(pi); });
+        tabRow.appendChild(tb);
+      }
+    });
+    showPanel(0);
+  }
+
+  function showPanel(i) {
+    panels.forEach(function (p, k) { p.box.style.display = k === i ? '' : 'none'; });
+    document.querySelectorAll('.mc-ptab').forEach(function (b, k) { b.classList.toggle('on', k === i); });
+    var p = panels[i];
+    if (p && !p.chart) buildPanel(p);
+    if (p && cur) paintTop(p.def.reading || cur.reading, p.def.reading ? p.def.next : cur.next, cur.topic);
+    setRange(curYears);
+  }
+
+  function buildPanel(p) {
+    var pd = p.def, defs = p.defs;
+    p.chart = makeChart(p.box.querySelector('.mc-chart'));
+    p.chart.applyOptions({ leftPriceScale: { visible: defs.some(function (s) { return s.axis === 'left' && s.on; }) } });
+    var first = null, last = null;
+    defs.forEach(function (s) {
+      if (!s.points.length) return;
+      var a = s.points[0][0], b = s.points[s.points.length - 1][0];
+      if (!first || a < first) first = a;
+      if (!last || b > last) last = b;
+    });
+    // the healthy band: a baseline series filled between the band's low and high
+    if (pd.band && first && last) {
+      var band = p.chart.addBaselineSeries({
+        baseValue: { type: 'price', price: pd.band.lo },
+        topLineColor: 'rgba(52,211,153,0.35)', topFillColor1: 'rgba(52,211,153,0.16)', topFillColor2: 'rgba(52,211,153,0.12)',
+        bottomLineColor: 'rgba(0,0,0,0)', bottomFillColor1: 'rgba(0,0,0,0)', bottomFillColor2: 'rgba(0,0,0,0)',
+        lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, priceScaleId: 'right'
+      });
+      band.setData([{ time: first, value: pd.band.hi }, { time: last, value: pd.band.hi }]);
+      band.createPriceLine({ price: pd.band.lo, color: 'rgba(52,211,153,0.6)', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '' });
+      band.createPriceLine({ price: pd.band.hi, color: 'rgba(52,211,153,0.6)', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: pd.band.label });
+      p.objs.push({ s: band, band: true });
+    }
+    var lineHost = null;
+    defs.forEach(function (s) {
+      var opts = { priceScaleId: s.axis === 'left' ? 'left' : 'right', visible: !!s.on,
+                   priceFormat: { type: 'price', precision: s.unit === '$tn' ? 1 : 2, minMove: 0.01 },
+                   lastValueVisible: true, priceLineVisible: false, title: '' };
+      var obj;
+      if (s.style === 'bars') {
+        obj = p.chart.addHistogramSeries(Object.assign({ base: 0 }, opts));
+        obj.setData(s.points.map(function (q) { return { time: q[0], value: q[1], color: q[1] >= 0 ? 'rgba(52,211,153,0.75)' : 'rgba(251,113,133,0.8)' }; }));
+      } else {
+        obj = p.chart.addLineSeries(Object.assign({ color: s.color, lineWidth: s.width || 2, crosshairMarkerRadius: 3 }, opts));
+        obj.setData(s.points.map(function (q) { return { time: q[0], value: q[1] }; }));
+      }
+      if (!lineHost && s.on && s.axis !== 'left') lineHost = obj;
+      p.objs.push({ s: obj, def: s, on: !!s.on, last: s.points.length ? s.points[s.points.length - 1][1] : null });
+    });
+    // fixed reference lines (0%, 100% of GDP, the 52-week range...) on the first visible right-axis series
+    (pd.lines || []).forEach(function (l) {
+      var h = lineHost || (p.objs[0] && p.objs[0].s);
+      if (!h) return;
+      h.createPriceLine({ price: l.v, color: l.color || '#94a3b8', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: l.label || '' });
+    });
+    p.chart.subscribeCrosshairMove(function (ev) { legend(p, ev && ev.time ? ev : null); });
+    p.legendEl.addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('.mc-leg') : null;
+      if (!b) return;
+      var o = p.objs[+b.dataset.i];
+      if (!o) return;
+      o.on = !o.on;
+      o.s.applyOptions({ visible: o.on });
+      p.chart.applyOptions({ leftPriceScale: { visible: p.objs.some(function (x) { return x.def && x.def.axis === 'left' && x.on; }) } });
+      legend(p, null);
+    });
+    legend(p, null);
+    p.last = last;
+  }
+
+  function legend(p, hover) {
+    var el = p.legendEl;
+    el.innerHTML = '';
+    if (hover && hover.time) {
+      var d = document.createElement('span');
+      d.className = 'text-slate-400 tabular-nums';
+      d.textContent = typeof hover.time === 'string' ? hover.time : '';
+      el.appendChild(d);
+    }
+    p.objs.forEach(function (o, i) {
+      if (o.band) return;
+      var v = o.last;
+      if (hover && hover.seriesData) {
+        var dp = hover.seriesData.get(o.s);
+        v = dp ? (dp.value != null ? dp.value : dp.close) : null;
+      }
+      var b = document.createElement('span');
+      b.className = 'mc-leg' + (o.on ? '' : ' off');
+      b.dataset.i = i;
+      b.title = (o.def.note ? o.def.note + ' - ' : '') + 'click to show or hide';
+      b.innerHTML = '<span class="sw" style="background:' + o.def.color + '"></span><span class="text-slate-400">' + esc(o.def.label) + '</span> <span class="val">' + esc(fmt(v, o.def.unit)) + '</span>';
+      el.appendChild(b);
+    });
+  }
+
+  function setRange(years) {
+    curYears = years;
+    document.querySelectorAll('.mc-range').forEach(function (b) { b.classList.toggle('on', +b.dataset.years === years); });
+    panels.forEach(function (p) {
+      if (!p.chart) return;
+      if (!years || !p.last) { p.chart.timeScale().fitContent(); return; }
+      var to = new Date(p.last + 'T00:00:00Z');
+      var from = new Date(to.getTime()); from.setUTCFullYear(from.getUTCFullYear() - years);
+      p.chart.timeScale().setVisibleRange({ from: from.toISOString().slice(0, 10), to: p.last });
+    });
+  }
+  document.querySelectorAll('.mc-range').forEach(function (b) {
+    b.addEventListener('click', function () { setRange(+b.dataset.years); });
+  });
+
+  // ── the gauge: the latest value on a bar with the course's zone shaded ──
+  function gauge(g, tone) {
+    var el = $('mcGauge');
+    el.innerHTML = '';
+    el.className = 'mc-gauge';
+    if (!g) { el.style.height = '0'; return; }
+    el.style.height = '';
+    if (g.kind === 'stages') {
+      el.className = '';
+      var t = document.createElement('div');
+      t.className = 'mc-stages';
+      t.innerHTML = g.stages.map(function (s) {
+        return '<div class="mc-stage' + (s === g.active ? ' on ' + (tone || '') : '') + '">' + esc(s) + '</div>';
+      }).join('');
+      el.appendChild(t);
+      return;
+    }
+    var span = (g.max - g.min) || 1;
+    var pct = function (v) { return Math.max(0, Math.min(100, (v - g.min) / span * 100)); };
+    var h = '<div class="bar"></div>';
+    var zl = (g.lo != null) ? g.lo : g.band_lo, zh = (g.hi != null) ? g.hi : g.band_hi;
+    if (zl != null && zh != null) {
+      h += '<div class="zone" style="left:' + pct(zl) + '%;width:' + (pct(zh) - pct(zl)) + '%"></div>';
+      if (g.zone_label || (g.lo != null)) {
+        h += '<div class="zone-lbl" style="left:' + ((pct(zl) + pct(zh)) / 2) + '%">' + esc(g.zone_label || (fmt(g.lo, g.unit, 0) + ' - ' + fmt(g.hi, g.unit, 0))) + '</div>';
+      }
+    }
+    if (g.line != null) {
+      h += '<div class="line" style="left:' + pct(g.line) + '%"></div><div class="line-lbl" style="left:' + pct(g.line) + '%">' + esc(fmt(g.line, g.unit, 0)) + '</div>';
+    }
+    (g.marks || []).forEach(function (m) {
+      h += '<div class="mark" style="left:' + pct(m.v) + '%" title="' + esc(m.label + ' ' + fmt(m.v, g.unit)) + '"></div>' +
+           '<div class="mark-lbl" style="left:' + pct(m.v) + '%">' + esc(m.label) + '</div>';
+    });
+    h += '<div class="pin ' + (tone || '') + '" style="left:' + pct(g.value) + '%"></div>' +
+         '<div class="pin-lbl ' + (tone || '') + '" style="left:' + pct(g.value) + '%">' + esc(fmt(g.value, g.unit, g.unit === '' ? 2 : 1)) + '</div>';
+    if (g.left) h += '<div class="end l">' + esc(g.left) + '</div>';
+    if (g.right) h += '<div class="end r">' + esc(g.right) + '</div>';
+    el.innerHTML = h;
+  }
+
+  function trendChip(label, s) {
+    if (!s) return '';
+    var up = s.charAt(0) === '+', flat = /^[+-]?0(\.0+)?( |%|$)/.test(s);
+    var arrow = flat ? '&#8594;' : (up ? '&#9650;' : '&#9660;');
+    return '<span class="mc-chip plain"><span class="text-slate-500">' + esc(label) + '</span> ' + arrow + ' <b>' + esc(s) + '</b></span>';
+  }
+
+  // the TOP block - the number, trend chips, verdict, gauge, flags, next release, the sentence -
+  // painted for the topic, and again for a TAB that carries its own reading (CPI / PCE / PPI)
+  function paintTop(r, n, t) {
+    var v = $('mcVerdict'), tone = TONE[r.tone] || TONE.none;
+    v.className = 'text-[12px] px-2.5 py-0.5 rounded-full font-medium ' + tone[0] + ' ' + tone[1];
+    v.textContent = r.word || '';
+    var h = r.headline;
+    $('mcHeadLbl').textContent = h ? h.label : '';
+    $('mcHead').textContent = h ? h.text : '-';
+    $('mcHeadWhen').textContent = h && h.when ? h.when : '';
+    var tr = r.trend || {};
+    $('mcTrend').innerHTML = trendChip('3m', tr['3m']) + trendChip('12m', tr['12m']) +
+      (tr.prev ? '<span class="mc-chip plain"><span class="text-slate-500">prev qtr</span> <b>' + esc(tr.prev) + '</b></span>' : '') +
+      (tr.yoy ? '<span class="mc-chip plain"><span class="text-slate-500">YoY</span> <b>' + esc(tr.yoy) + '</b></span>' : '');
+    gauge(r.gauge, r.tone === 'none' ? '' : r.tone);
+    $('mcFlags').innerHTML = (r.flags || []).map(function (f) { return '<span class="mc-chip ' + esc(f.tone) + '">' + esc(f.text) + '</span>'; }).join('');
+    var nx = $('mcNext');
+    if (n && n.when) {
+      var d = new Date(n.when), days = Math.round((d - new Date()) / 864e5);
+      var when = isNaN(d) ? n.when : d.toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+      nx.innerHTML = '<span class="mc-chip next">Next: <b>' + esc(n.title) + '</b>' + (n.period ? ' ' + esc(n.period) : '') +
+        ' &middot; ' + esc(when) + (isNaN(days) ? '' : ' (' + (days <= 0 ? 'today' : 'in ' + days + ' day' + (days === 1 ? '' : 's')) + ')') +
+        (n.forecast ? ' &middot; f\'cast ' + esc(n.forecast) : '') + (n.previous ? ' &middot; prev ' + esc(n.previous) : '') + '</span>';
+    } else {
+      nx.innerHTML = '<span class="mc-chip plain">' + esc(t.key === 'dollar' ? 'Trades daily - no release' : (t.key === 'cycle' ? 'Moves with the GDP, jobs and inflation prints' : (t.key === 'debt' ? 'No release - watch the news' : 'No release scheduled'))) + '</span>';
+    }
+    $('mcSentence').textContent = r.sentence || '';
+    $('mcLines').innerHTML = (r.lines || []).map(function (l) { return '<li>' + esc(l) + '</li>'; }).join('');
+  }
+
+  function paintReading(j) {
+    var r = j.reading || {}, t = j.topic, g = r.glance || {};
+    $('mcTitle').textContent = t.label;
+    $('mcBlurb').textContent = t.blurb;
+    $('mcCadence').textContent = 'Check: ' + t.cadence;
+    $('mcCadence').title = t.cadence_text || '';
+    var v = $('mcVerdict'), tone = TONE[r.tone] || TONE.none;
+    v.className = 'text-[12px] px-2.5 py-0.5 rounded-full font-medium ' + tone[0] + ' ' + tone[1];
+    v.textContent = r.word || '';
+    paintTop(r, j.next, t);
+    // the glance cards
+    var flow = g.flow || [], isStages = t.key === 'cycle';
+    $('mcFlow').innerHTML = flow.map(function (s, i) {
+      var cls = isStages ? ('step stage' + (g.active === s ? ' on' : '')) : ('step' + (i === 0 ? ' first' : (i === flow.length - 1 ? ' last' : '')));
+      return '<span class="' + cls + '">' + esc(s) + '</span>' + (i < flow.length - 1 ? '<span class="arr">&#8594;</span>' : (isStages ? '<span class="arr">&#8635;</span>' : ''));
+    }).join('');
+    $('mcGood').innerHTML = (g.good || []).map(function (s) { return '<span class="mc-chip ok">' + esc(s) + '</span>'; }).join('') || '<span class="text-[11px] text-slate-600">-</span>';
+    $('mcBad').innerHTML = (g.bad || []).map(function (s) { return '<span class="mc-chip bad">' + esc(s) + '</span>'; }).join('') || '<span class="text-[11px] text-slate-600">-</span>';
+    $('mcWatch').innerHTML = (g.watch || []).map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('');
+    // the course's link sheet, this topic's rows, grouped by the sheet's headings (new tab)
+    $('mcSrc').innerHTML = (j.links || []).map(function (grp) {
+      return '<div><div class="text-[10px] text-slate-500 mb-1">' + esc(grp.group) + '</div><div class="flex flex-wrap gap-1.5">' +
+        grp.items.map(function (l) {
+          return '<a href="' + esc(l.url) + '" target="_blank" rel="noopener" class="mc-chip src" title="' + esc(l.url) + '">' + esc(l.label) + ' &#8599;</a>';
+        }).join('') + '</div></div>';
+    }).join('') || '<span class="text-[11px] text-slate-600">No links on the sheet for this topic.</span>';
+    $('mcSources').textContent = j.series.filter(function (s) { return s.n; }).map(function (s) { return s.source + ' ' + s.first + ' to ' + s.last; }).join(' · ');
+    var x = j.text || {};
+    $('mcInterpret').textContent = x.interpret || '';
+    $('mcDefinition').textContent = x.definition || '';
+    $('mcCovers').textContent = x.covers || '';
+    $('mcWhy').textContent = x.why || '';
+    $('mcStocks').textContent = x.stocks || '';
+    $('mcMeasured').textContent = x.measured || '';
+    $('mcMonitor').textContent = t.cadence_text || '';
+    $('mcTakeaways').innerHTML = (x.takeaways || []).map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('');
+    // the rail's dot + word for this topic follow the fresh reading
+    var tab = document.querySelector('.mc-tab[data-topic="' + t.key + '"]');
+    if (tab) {
+      var dot = tab.querySelector('.mc-dot');
+      if (dot) { dot.className = 'mc-dot inline-block w-2.5 h-2.5 rounded-full shrink-0 tone-' + (r.tone || 'none'); dot.title = r.word || ''; }
+      var w = tab.querySelector('.mc-word');
+      if (w && r.word) w.textContent = r.word;
+    }
+  }
+
+  function load(key, push) {
+    var my = ++seq;
+    document.querySelectorAll('.mc-tab').forEach(function (a) { a.classList.toggle('on', a.dataset.topic === key); });
+    if (push) { try { history.pushState({ topic: key }, '', '/macro?topic=' + key); } catch (e) {} }
+    $('mcTitle').innerHTML = '<span class="animate-pulse text-slate-500">Loading…</span>';
+    fetch('/macro/api/topic/' + encodeURIComponent(key))
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (j) {
+        if (my !== seq) return;
+        if (!j.ok) throw new Error(j.error || 'no data');
+        cur = j;
+        paintReading(j);
+        draw(j);
+        if (!j.series.some(function (s) { return s.n; })) {
+          $('mcSentence').textContent = 'No data stored yet for this topic. The series are fetched 90 s after the web app starts and once a day after that' + ({{ 'true' if user.can_moderate else 'false' }} ? ' - or press Refresh now under Settings → Data Ingest → Macro Series.' : '.');
+        }
+      })
+      .catch(function (err) {
+        if (my !== seq) return;
+        $('mcTitle').textContent = 'Could not load this topic';
+        $('mcSentence').textContent = String(err.message || err);
+      });
+  }
+  document.addEventListener('click', function (e) {
+    var a = e.target.closest ? e.target.closest('.mc-tab') : null;
+    if (!a) return;
+    e.preventDefault();
+    load(a.dataset.topic, true);
+  });
+  window.addEventListener('popstate', function () {
+    var m = /[?&]topic=([a-z_]+)/.exec(location.search);
+    load(m ? m[1] : '{{ active }}', false);
+  });
+  fetch('/macro/api/status').then(function (r) { return r.json(); }).then(function (j) {
+    if (!j || !j.last_finished) return;
+    var d = new Date(j.last_finished);
+    $('mcAsOf').textContent = 'data refreshed ' + (isNaN(d) ? j.last_finished : d.toLocaleString()) + (j.failed && j.failed.length ? ' (' + j.failed.length + ' failed)' : '');
+  }).catch(function () {});
+  load('{{ active }}', false);
+})();
 </script>
 {% endblock %}

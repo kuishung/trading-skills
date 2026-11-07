@@ -645,6 +645,22 @@ it — memory files don't sync across PCs.
 platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
 `dashboard_tst/DEPLOY.md`. Key facts (so any session/PC recalls them):
 
+- **Insights → Macro = the course's SEVEN TOPICS — BUILT v4.243 (2026-11-07).** Source material: the user's
+  Beyond Insights "Macro Insights" course, in `trading-skills/BI Materials/` (Section 1 slides + "Key Data Source
+  Links v1.20"). The user: *"I do not want to be like reading the same materials. I want to wire a macro dashboard"*,
+  *"the 7 topics ... on a side menu tab ... interactive historical data ... based on the materials which give
+  interpretation"*, *"make it more graphical"*, *"put the data link to each of the page which is relevant"* (NO
+  separate sources tab). `/macro` (`routes/macro.py`, `templates/macro.html`, `services/macro_topics.py` = topics +
+  bands + readers + gauges + glance cards, `services/macro_links.py` = the sheet's 108 links tagged per topic): a rail
+  of Inflation / Fed Funds Rate / Exchange Rates / Unemployment / Economic Cycles / Economic Growth / US National Debt;
+  per topic a gauge on the course's zone, a 25-year interactive history chart (lightweight-charts), the reading, the
+  next release, glance cards and "Where to look it up". Inflation = CPI | PCE | PPI TABS, each with its own reading;
+  the 2-4% zone is CPI/PCE only (the course gives PPI no band). Data: FRED via the public `fredgraph.csv` (NO API key
+  needed) + Yahoo DXY, stored in `macro_readings`, refreshed daily INSIDE the web app (`services/macro_refresh.py`;
+  Settings → Data Ingest → Macro Series; tray "Macro series" line). The old six-section study board lives on at
+  `/macro/study`. Honest proxies, labelled: the market's rate lean = 2y yield vs EFFR (no free FedWatch); the cycle
+  stage is ESTIMATED from GDP/jobs/inflation/curve (no Fidelity feed). Next ideas the user has not asked for yet:
+  the Industry and Company pages of the Insights revamp.
 - **Option CALCULATOR + setup pairing — BUILT v4.150-4.157 (2026-10-17/19):
   `dashboard_tst/OPTION_CALCULATOR_DESIGN.md` is the contract** (§10 = where everything lives;
   `design/option_calculator_flow.svg` = the flow the user checked). Born from the user's Excel strategy

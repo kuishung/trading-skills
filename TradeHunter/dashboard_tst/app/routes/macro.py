@@ -1,15 +1,17 @@
-"""Macro board — the top of the investing funnel.
+"""Insights -> Macro.
 
-Two panes: a fixed left rail of the six canonical macro topics, and the selected
-topic's analysis on the right. The taxonomy is deliberately FIXED (see
-`models.MACRO_SECTIONS`) rather than user-created — this is a dashboard you read
-the same way every morning, not a notebook. Free-form macro research still lives
-on /research, which is unchanged.
+Since v4.243 the Macro page is the SEVEN TOPICS of the user's macro course (Inflation, Fed
+Funds Rate, Exchange Rates, Unemployment, Economic Cycles, Economic Growth, US National Debt;
+``services/macro_topics.py``): a side rail of the topics, and for the chosen one an
+interactive history chart of its stored series with the course's healthy band drawn on it,
+a reading written from the data, the next release and the course's "how to read it" text.
+The series come from the indicator store (``services/indicators.py``), refreshed daily
+inside the app (``services/macro_refresh.py``).
 
-Each section combines two things:
-  - COMPUTED tiles (live, via services/macro.py) where the answer is arithmetic
-  - WRITTEN analysis (MacroAnalysis) where it needs judgement — pushed by the
-    Nous agent via /api/macro/{section} or typed by a moderator here.
+The earlier six-section STUDY BOARD (written analysis per section, computed cross-asset
+tiles, the per-section indicator sparklines; MACRO_STUDY_DESIGN.md) is kept at
+``/macro/study`` with its fragment and edit routes unchanged - the user: "you can keep what
+you have already done".
 """
 from __future__ import annotations
 
@@ -31,8 +33,68 @@ templates = Jinja2Templates(
 )
 
 
+# ---------------------------------------------------------------------------
+# The seven topics (v4.243)
+# ---------------------------------------------------------------------------
+@router.get("", response_class=HTMLResponse)
+def macro_home(
+    request: Request,
+    topic: str | None = None,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    from ..services import macro_topics
+    from ..services.indicators import ensure_seeded
+
+    try:
+        ensure_seeded(db)          # idempotent; adds any series a new release introduced
+    except Exception:  # noqa: BLE001
+        pass
+    from ..services import macro_links
+
+    key = topic if topic in macro_topics.TOPIC_KEYS else macro_topics.TOPIC_KEYS[0]
+    try:
+        rail = macro_topics.rail(db)
+    except Exception:  # noqa: BLE001
+        rail = [{"key": t["key"], "label": t["label"], "blurb": t["blurb"], "cadence": t["cadence"],
+                 "tone": "none", "word": "", "headline": None} for t in macro_topics.TOPICS]
+    return templates.TemplateResponse(request, "macro.html", {
+        "user": user, "rail": rail, "active": key, "sheet": macro_links.SHEET,
+    })
+
+
+@router.get("/api/topic/{key}")
+def macro_topic_api(key: str, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    """One topic's chart payload: the full stored history of its series, the band and
+    reference lines, the reading, the next release and the course text."""
+    from ..services import macro_topics
+
+    if key not in macro_topics.TOPIC_KEYS:
+        return {"ok": False, "error": "unknown topic"}
+    return {"ok": True, **macro_topics.payload(db, key)}
+
+
+@router.get("/api/status")
+def macro_status_api(user: User = Depends(require_user)):
+    """The daily refresh's state (the page's "data as of" line)."""
+    from ..services import macro_refresh
+
+    return {"ok": True, **macro_refresh.status()}
+
+
+@router.post("/api/refresh")
+def macro_refresh_now(mod: User = Depends(require_moderator)):
+    """Fetch every series now (moderators). Runs in the request; ~35 small HTTP calls."""
+    from ..services import macro_refresh
+
+    return macro_refresh.run_once()
+
+
+# ---------------------------------------------------------------------------
+# The study board (the pre-v4.243 page), kept at /macro/study
+# ---------------------------------------------------------------------------
 def _rail(db: Session, active: str) -> list[dict]:
-    """The left rail: every section, whether it has analysis yet, and which is open."""
+    """The study board's left rail: every section, whether it has analysis yet, and which is open."""
     rows = {r.section: r for r in db.query(MacroAnalysis).all()}
     return [
         {
@@ -81,24 +143,21 @@ def _section_ctx(db: Session, key: str) -> dict:
     return ctx
 
 
-@router.get("", response_class=HTMLResponse)
-def macro_home(
+@router.get("/study", response_class=HTMLResponse)
+def macro_study(
     request: Request,
     section: str | None = None,
     user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ):
     key = (section or "").strip() if (section or "").strip() in MACRO_SECTIONS else MACRO_SECTIONS[0]
-    # First visit populates the indicator definitions. Idempotent, and after the
-    # first run it's a single COUNT — cheaper than a startup hook and it can
-    # never clobber a user's edits to the set.
     try:
         from ..services.indicators import ensure_seeded
 
         ensure_seeded(db)
     except Exception:  # noqa: BLE001
         pass
-    return templates.TemplateResponse(request, "macro.html", {
+    return templates.TemplateResponse(request, "macro_study.html", {
         "user": user, "rail": _rail(db, key), "sec": _section_ctx(db, key),
     })
 
@@ -127,9 +186,9 @@ def macro_section_refresh(
 ):
     """Backfill/refresh this section's indicator series from source.
 
-    Idempotent — existing observations are left alone, so a re-run only fills
-    gaps and appends. Returns per-indicator results so a missing FRED key or a
-    dead series is visible rather than silently producing an empty chart."""
+    Idempotent — a re-run fills gaps, appends and updates revised values. Returns
+    per-indicator results so a dead series is visible rather than silently producing
+    an empty chart."""
     if key not in MACRO_SECTIONS:
         return {"ok": False, "error": "unknown section"}
     from ..services.indicators import ensure_seeded, refresh_section
@@ -156,7 +215,7 @@ def macro_section_save(
 ):
     """Moderator edit. Portable upsert (query-then-write) per the data-handling rule."""
     if key not in MACRO_SECTIONS:
-        return RedirectResponse(url="/macro", status_code=303)
+        return RedirectResponse(url="/macro/study", status_code=303)
     row = db.query(MacroAnalysis).filter(MacroAnalysis.section == key).first()
     if row is None:
         row = MacroAnalysis(section=key)
@@ -167,4 +226,4 @@ def macro_section_save(
     row.as_of = _utcnow()
     row.updated_by = mod.email
     db.commit()
-    return RedirectResponse(url=f"/macro?section={key}", status_code=303)
+    return RedirectResponse(url=f"/macro/study?section={key}", status_code=303)

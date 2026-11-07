@@ -223,6 +223,43 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-07 - v4.243: Insights -> Macro is the course's seven topics - gauges, history charts, readings, the link sheet
+
+The user shared the Beyond Insights "Macro Insights" material (`BI Materials/`: Section 1 slides + "Key Data Source
+Links v1.20") and asked for a macro DASHBOARD rather than a re-read of it: *"I want the 7 topics to be on a side menu
+tab and when user click on it, it will show the interactive historical data which user can interact with and based on
+the materials which give interpretation of the data"*, *"if the data only showing the latest it has no meaning, we need
+to see the historical data so that we can see the trend"*, *"the page looks too wordy, can you make it more graphical"*.
+- **`/macro` is rebuilt** (`routes/macro.py`, `templates/macro.html`): a left rail of the seven topics - Inflation,
+  Fed Funds Rate, Exchange Rates, Unemployment, Economic Cycles, Economic Growth, US National Debt - each with a colour
+  dot, the headline figure and the verdict word. The chosen topic shows: the headline number with a **gauge** (the
+  course's healthy zone shaded - CPI/PCE 2-4%, unemployment 4-6%, the Fed's target range, the dollar's 52-week range
+  with the 200-day tick, GDP's 0 line with the GDPNow tick, debt's 100%-of-GDP line; Cycles shows a four-stage track),
+  3m/12m trend chips, flags for the course's warning rules (rising streaks, the Sahm rule, two negative quarters), a
+  next-release chip (Calendar feed, countdown, forecast/previous); the **full stored history as an interactive chart**
+  (lightweight-charts, up to 25 years, the zone tinted, reference lines, legend toggles, 1Y-All ranges, hover readout);
+  four glance cards (the cause-and-effect chain, stock winners/losers, watch-for rules, the one-sentence reading) and
+  **"Where to look it up"** - the sheet's links for that topic grouped under the sheet's headings (user: no separate
+  tab, *"put the data link to each of the page which is relevant"*); the course notes folded away.
+- **Inflation has CPI | PCE | PPI tabs** over one chart, each with ITS OWN reading, gauge and next release (user:
+  *"when i press CPI, PCE and PPI the top data did not change"*). CPI and PCE carry the 2-4% zone; PPI has none - the
+  course gives it none (*"the CPI PCE and PPI are all 2% -4%?"*).
+- `services/macro_topics.py` (new): the topics, bands, per-topic readers (`read_price_index`, `read_fed_funds`,
+  `read_dollar`, `read_unemployment`, `read_cycle` + `cycle_stage` (estimated - Fidelity's chart has no feed),
+  `read_growth`, `read_debt`), gauges, glance content, `next_release`, `payload`. `services/macro_links.py` (new): the
+  108 links of the sheet, each tagged with its topic(s). The old six-section study board stays at **`/macro/study`**.
+- `services/indicators.py`: 12 new FRED series in `SEED` (PCEPI, PPIFIS, DFEDTARU/L, DFF, DTWEXBGS, SAHMREALTIME,
+  A191RL1Q225SBEA, GDPC1, GDPNOW, GFDEBTN, GFDEGDQ188S; section `topics`); `ensure_seeded` now ADDS missing keys to a
+  live table; FRED is fetched **without an API key** through its public `fredgraph.csv` when `TST_FRED_API_KEY` is
+  unset; a refresh UPDATES revised values; `refresh_keys` / `points_for`; the Yahoo fetch asks yfinance directly for
+  an index symbol (the batch fetcher turned `DX-Y.NYB` into `DX-Y-NYB`, so DXY had never been stored).
+- `services/macro_refresh.py` (new): the series are refreshed **once a day inside the web app** (90 s after start,
+  then every 24 h; `TST_MACRO_REFRESH=0` turns it off), state mirrored to `state/macro_refresh.json` for the tray.
+  **Settings -> Data Ingest -> Macro Series** (`/finviz/macro`, `_macro_health.html`): the last run, every series'
+  newest observation, failures, "Refresh now" (moderators). Hermes tray: a "Macro series" line (tray-sync rule).
+- Tests: `tests/test_macro_topics.py` (new). Checked in the local preview with real FRED/Yahoo history (33 series,
+  106k observations in 56 s).
+
 ### 2026-11-06 - v4.242: an "Insights" menu (Macro, Industry, Company); Sector & Industry becomes Sector Rotation
 
 The user: *"I need to build a menu call Insights"*, *"there will be Macro, Industrial and Company as submenu"*, *"after

@@ -13,6 +13,7 @@
   <button type="button" data-tab="opthist" class="di-tab px-3 py-2 text-sm border-b-2 border-transparent text-slate-400">Option History</button>
   <button type="button" data-tab="optcalc" class="di-tab px-3 py-2 text-sm border-b-2 border-transparent text-slate-400">Option Calculator</button>
   <button type="button" data-tab="logos" class="di-tab px-3 py-2 text-sm border-b-2 border-transparent text-slate-400">Ticker Logos</button>
+  <button type="button" data-tab="macro" class="di-tab px-3 py-2 text-sm border-b-2 border-transparent text-slate-400">Macro Series</button>
 </div>
 
 {# ======================== MATP Tickers (the deduplicated MATP queue) ========================
@@ -404,6 +405,14 @@
   <span class="text-xs font-normal text-slate-500">&mdash; the company logo beside every ticker, downloaded ahead of time</span></h2>
 <div id="lgBox"><p class="text-xs text-slate-500 py-4"><span class="inline-block animate-pulse">Reading the logo download&hellip;</span></p></div>
 </div>
+{# ======================== Macro Series (v4.243) ========================
+   The Macro topics' FRED / Yahoo series, refreshed once a day inside the web app (services/macro_refresh.py).
+   Fetched when the tab opens, then every 30 s while it stays open (GET /finviz/macro). #}
+<div data-panel="macro" class="hidden">
+<h2 class="text-lg font-medium mb-1">Macro Series
+  <span class="text-xs font-normal text-slate-500">&mdash; the Insights &rarr; Macro topics' history, fetched daily from FRED and Yahoo</span></h2>
+<div id="msBox"><p class="text-xs text-slate-500 py-4"><span class="inline-block animate-pulse">Reading the macro series&hellip;</span></p></div>
+</div>
 <div data-panel="optcalc" class="hidden">
 <h2 class="text-lg font-medium mb-1">Option Calculator
   <span class="text-xs font-normal text-slate-500">&mdash; members' saved setups, recomputed after each market pass</span></h2>
@@ -439,6 +448,7 @@
       if (name === 'opthist') loadOptHist();
       if (name === 'optcalc') loadOptCalc();
       if (name === 'logos') loadLogos();
+      if (name === 'macro') loadMacro();
       try { history.replaceState(null, '', '#' + name); } catch (e) {}
     }
     // Fetch the MATP-queue panel with an explicit failure path. Plain fetch (not
@@ -538,6 +548,41 @@
           }, 15000);
         });
     };
+    // v4.243: Macro Series - fetched on open, then every 30 s while it is shown; "Refresh now" (moderators)
+    var msTimer = null;
+    window.loadMacro = function loadMacro() {
+      var box = document.getElementById('msBox');
+      if (!box) return;
+      if (msTimer) { clearTimeout(msTimer); msTimer = null; }
+      fetch('/finviz/macro', { headers: { 'HX-Request': 'true' } })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+        .then(function (html) {
+          box.innerHTML = html;
+          box.querySelectorAll('script').forEach(function (s) { try { (0, eval)(s.textContent); } catch (e) {} });
+        })
+        .catch(function (err) {
+          box.innerHTML = '<div class="rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-xs text-rose-200">' +
+            '<b>Could not read the macro series status.</b> ' + String(err.message || err) + '</div>';
+        })
+        .finally(function () {
+          msTimer = setTimeout(function () {
+            if (activate._current === 'macro' && !document.hidden) loadMacro();
+            else msTimer = null;
+          }, 30000);
+        });
+    };
+    document.addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('#msRefresh') : null;
+      if (!b || b.disabled) return;
+      b.disabled = true; b.textContent = 'Fetching…';
+      fetch('/finviz/macro/refresh', { method: 'POST' }).then(function (r) { return r.json(); })
+        .then(function (j) {
+          var f = (j && j.failed) ? j.failed.length : 0;
+          window.thToast && window.thToast(j && j.ok ? ((j.added || 0) + ' new, ' + (j.revised || 0) + ' revised' + (f ? ', ' + f + ' failed' : '')) : 'Refresh failed', f ? 'err' : 'ok');
+        })
+        .catch(function () { window.thToast && window.thToast('Refresh failed', 'err'); })
+        .finally(function () { loadMacro(); });
+    });
     document.addEventListener('click', function (e) {
       var b = e.target.closest ? e.target.closest('#lgWarm') : null;
       if (!b || b.disabled) return;

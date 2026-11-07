@@ -86,31 +86,94 @@ SEED = [
      None),
     ("tga", "liquidity", "Treasury General Account", "fred", "WTREGEN", "$bn", "level", "neutral",
      "A rising TGA drains reserves; net liquidity = balance sheet - RRP - TGA."),
+    # — The seven Macro topics (v4.243, services/macro_topics.py). Section "topics" keeps
+    #   them off the six-section study board; the topics also reuse cpi, unrate, dxy, dgs2
+    #   and t10y2y from above. —
+    ("pce", "topics", "PCE price index (YoY)", "fred", "PCEPI", "%", "yoy", "risk_off",
+     "Headline PCE, the BEA's measure of what consumers actually pay."),
+    ("ppi", "topics", "PPI, final demand (YoY)", "fred", "PPIFIS", "%", "yoy", "risk_off",
+     "Producers' selling prices; more volatile than CPI or PCE."),
+    ("fftr_upper", "topics", "Fed funds target, upper bound", "fred", "DFEDTARU", "%", "level",
+     "neutral", "Set by the FOMC eight times a year."),
+    ("fftr_lower", "topics", "Fed funds target, lower bound", "fred", "DFEDTARL", "%", "level",
+     "neutral", None),
+    ("effr", "topics", "Effective fed funds rate (EFFR)", "fred", "DFF", "%", "level", "neutral",
+     "Where banks actually lend reserves overnight; open market operations keep it inside the "
+     "target range."),
+    ("dtwexbgs", "topics", "Trade-weighted dollar (broad)", "fred", "DTWEXBGS", "index", "level",
+     "risk_off", "The Fed's nominal broad dollar index; weights refreshed yearly."),
+    ("sahm", "topics", "Sahm rule (real time)", "fred", "SAHMREALTIME", "pp", "level", "risk_off",
+     "3-month average unemployment minus its 12-month low; 0.50 or more has marked every recession "
+     "start since 1970."),
+    ("gdp_qoq", "topics", "Real GDP, q/q annualised", "fred", "A191RL1Q225SBEA", "%", "level",
+     "risk_on", "The headline growth print, one value per quarter."),
+    ("gdp_yoy", "topics", "Real GDP (YoY)", "fred", "GDPC1", "%", "yoy", "risk_on", None),
+    ("gdpnow", "topics", "GDPNow (Atlanta Fed)", "fred", "GDPNOW", "%", "level", "risk_on",
+     "A running estimate of the current quarter's growth, updated after each data release."),
+    ("debt", "topics", "Federal debt, total public", "fred", "GFDEBTN", "$m", "level", "neutral",
+     "Quarterly; stored in $ millions."),
+    ("debt_gdp", "topics", "Federal debt as % of GDP", "fred", "GFDEGDQ188S", "%", "level",
+     "neutral", None),
 ]
 
 
 def ensure_seeded(db: Session) -> int:
-    """Populate the indicator definitions once, on an empty table. Never
-    overwrites: after first run this is a single cheap COUNT."""
-    if db.query(MacroIndicator.id).first() is not None:
-        return 0
+    """Populate the indicator definitions: every SEED entry whose key is not in the table yet
+    is inserted (so a new release can add series to a live DB); existing rows are never
+    overwritten, so the user's edits to a definition survive. After the first run this is one
+    cheap query of the keys."""
+    have = {k for (k,) in db.query(MacroIndicator.key).all()}
+    added = 0
     for i, (key, section, label, source, ref, unit, transform, higher, note) in enumerate(SEED):
+        if key in have:
+            continue
         db.add(MacroIndicator(
             key=key, section=section, label=label, source=source, source_ref=ref,
             unit=unit, transform=transform, higher_is=higher, note=note, sort=i, active=True,
         ))
-    db.commit()
-    return len(SEED)
+        added += 1
+    if added:
+        db.commit()
+    return added
 
 
 # ---------------------------------------------------------------------------
 # Fetching
 # ---------------------------------------------------------------------------
+_FRED_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+
+
+def parse_fred_csv(text: str) -> list[tuple[_dt.datetime, float]]:
+    """The rows of FRED's public ``fredgraph.csv`` download (``observation_date,<ID>`` then one
+    line per observation; a missing value is ``.``)."""
+    out = []
+    for line in text.splitlines()[1:]:
+        parts = line.strip().split(",")
+        if len(parts) < 2:
+            continue
+        raw = parts[1].strip()
+        if raw in ("", "."):
+            continue
+        try:
+            out.append((_dt.datetime.fromisoformat(parts[0].strip()), float(raw)))
+        except ValueError:
+            continue
+    return out
+
+
+def _fetch_fred_csv(series_id: str, start: _dt.date) -> list[tuple[_dt.datetime, float]]:
+    """Observations from FRED WITHOUT an API key: the same public CSV the "Download" button on
+    a FRED chart serves (v4.243, so Hermes needs no FRED key for the Macro topics)."""
+    r = httpx.get(_FRED_CSV_URL, params={"id": series_id, "cosd": start.isoformat()},
+                  headers={"User-Agent": _UA}, timeout=30.0, follow_redirects=True)
+    r.raise_for_status()
+    return parse_fred_csv(r.text)
+
+
 def _fetch_fred(series_id: str, start: _dt.date) -> list[tuple[_dt.datetime, float]]:
-    """Observations from FRED. Returns [] when no key is configured (the caller
-    reports 'not configured' rather than failing)."""
+    """Observations from FRED: the JSON API when a key is configured, else the public CSV."""
     if not settings.fred_api_key:
-        return []
+        return _fetch_fred_csv(series_id, start)
     r = httpx.get(_FRED_URL, params={
         "series_id": series_id, "api_key": settings.fred_api_key,
         "file_type": "json", "observation_start": start.isoformat(),
@@ -132,10 +195,26 @@ def _fetch_yahoo(symbol: str, start: _dt.date) -> list[tuple[_dt.datetime, float
     """Daily closes from Yahoo, in memory. Never touches the parquet store —
     this is a live/operational view (see the two-path rule in the design doc)."""
     from . import resources_bridge  # noqa: F401  (puts resources.* on sys.path)
-    from yf_daily_bars import fetch_daily_single  # type: ignore
+    try:
+        from yf_daily_bars import fetch_daily_single  # type: ignore
+    except ImportError:                      # resources/ itself not on sys.path (a one-off script)
+        from resources.yf_daily_bars import fetch_daily_single  # type: ignore
 
     days = max(1, (_dt.date.today() - start).days)
-    bars = fetch_daily_single(symbol, lookback_days=days) or []
+    if "." in symbol or "=" in symbol:
+        # v4.243: the batch fetcher maps "." to "-" for share classes (BRK.B), which breaks
+        # an index symbol such as DX-Y.NYB (the dollar index); ask yfinance directly.
+        import yfinance as yf  # type: ignore
+
+        df = yf.Ticker(symbol).history(period=f"{days}d", interval="1d", auto_adjust=False)
+        bars = []
+        for idx, row in df.iterrows():
+            try:
+                bars.append({"t": idx.to_pydatetime().replace(tzinfo=None), "c": float(row["Close"])})
+            except (KeyError, TypeError, ValueError):
+                continue
+    else:
+        bars = fetch_daily_single(symbol, lookback_days=days) or []
     out = []
     for b in bars:
         t, c = b.get("t"), b.get("c")
@@ -153,14 +232,14 @@ def _fetch_yahoo(symbol: str, start: _dt.date) -> list[tuple[_dt.datetime, float
 def refresh(db: Session, ind: MacroIndicator, *, years: int = 25) -> dict:
     """Fetch and store one indicator's observations.
 
-    Idempotent: existing (indicator, as_of) rows are left alone, so a re-run only
-    fills gaps and appends. Returns a small report for the UI.
+    Idempotent: a re-run fills gaps and appends; an existing (indicator, as_of) row whose
+    value the source now reports differently is UPDATED (v4.243 - GDP, payrolls and the
+    price indexes are revised after their first print, and the chart must show the revised
+    series). Returns a small report for the UI.
     """
     start = _dt.date.today() - _dt.timedelta(days=365 * years)
     try:
         if ind.source == "fred":
-            if not settings.fred_api_key:
-                return {"key": ind.key, "ok": False, "error": "FRED key not configured", "added": 0}
             points = _fetch_fred(ind.source_ref, start)
         elif ind.source == "yahoo":
             points = _fetch_yahoo(ind.source_ref, start)
@@ -172,18 +251,21 @@ def refresh(db: Session, ind: MacroIndicator, *, years: int = 25) -> dict:
                 "added": 0}
 
     have = {
-        r.as_of for r in
-        db.query(MacroReading.as_of).filter(MacroReading.indicator_key == ind.key).all()
+        r.as_of: r for r in
+        db.query(MacroReading).filter(MacroReading.indicator_key == ind.key).all()
     }
-    added = 0
+    added = revised = 0
     for as_of, value in points:
-        if as_of in have:
-            continue
-        db.add(MacroReading(indicator_key=ind.key, as_of=as_of, value=value))
-        have.add(as_of)
-        added += 1
+        row = have.get(as_of)
+        if row is None:
+            db.add(MacroReading(indicator_key=ind.key, as_of=as_of, value=value))
+            have[as_of] = True
+            added += 1
+        elif row is not True and abs(row.value - value) > 1e-9:
+            row.value = value
+            revised += 1
     db.commit()
-    return {"key": ind.key, "ok": True, "added": added, "total": len(points)}
+    return {"key": ind.key, "ok": True, "added": added, "revised": revised, "total": len(points)}
 
 
 def refresh_section(db: Session, section: str, *, years: int = 25) -> list[dict]:
@@ -195,6 +277,32 @@ def refresh_section(db: Session, section: str, *, years: int = 25) -> list[dict]
         .all()
     )
     return [refresh(db, i, years=years) for i in inds]
+
+
+def refresh_keys(db: Session, keys, *, years: int = 25) -> list[dict]:
+    """Refresh the named indicators (the Macro topics' series; v4.243)."""
+    inds = (
+        db.query(MacroIndicator)
+        .filter(MacroIndicator.key.in_(list(keys)), MacroIndicator.active.is_(True))
+        .order_by(MacroIndicator.sort)
+        .all()
+    )
+    return [refresh(db, i, years=years) for i in inds]
+
+
+def points_for(db: Session, ind: MacroIndicator, *, limit: int | None = None
+               ) -> list[tuple[_dt.datetime, float]]:
+    """One indicator's series, transformed for reading (YoY, MoM or the level), oldest first.
+    ``limit`` keeps only the newest N STORED rows before the transform (a YoY needs a year of
+    earlier rows, so ask for more than you will show)."""
+    q = (db.query(MacroReading.as_of, MacroReading.value)
+         .filter(MacroReading.indicator_key == ind.key))
+    if limit:
+        rows = q.order_by(MacroReading.as_of.desc()).limit(limit).all()
+        rows.reverse()
+    else:
+        rows = q.order_by(MacroReading.as_of).all()
+    return _transform([(t, v) for t, v in rows], ind.transform or "level")
 
 
 # ---------------------------------------------------------------------------

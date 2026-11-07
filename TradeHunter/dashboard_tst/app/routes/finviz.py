@@ -208,6 +208,45 @@ def logos_panel(request: Request, user: User = Depends(require_user)):
                                                                        "sample": logos.queued()[:12]})
 
 
+@router.get("/macro", response_class=HTMLResponse)
+def macro_panel(request: Request, user: User = Depends(require_user), db: Session = Depends(get_db)):
+    """v4.243 - the Macro Series tab: the daily refresh of the Macro topics' FRED / Yahoo series
+    (``services/macro_refresh``) and each stored series' newest observation. An HTML fragment;
+    the page fetches it when the tab opens and every 30 s while it is open."""
+    from ..models import MacroIndicator, MacroReading
+    from ..services import macro_refresh, macro_topics
+    from sqlalchemy import func
+
+    try:
+        from ..services import indicators as _indicators
+        _indicators.ensure_seeded(db)          # the table lists every series, fetched or not
+        st = macro_refresh.status()
+        last = dict(db.query(MacroReading.indicator_key, func.max(MacroReading.as_of))
+                    .group_by(MacroReading.indicator_key).all())
+        counts = dict(db.query(MacroReading.indicator_key, func.count(MacroReading.id))
+                      .group_by(MacroReading.indicator_key).all())
+        topic_keys = set(macro_topics.all_series_keys())
+        results = {r["key"]: r for r in st.get("results") or []}
+        rows = []
+        for ind in db.query(MacroIndicator).filter(MacroIndicator.active.is_(True)).order_by(MacroIndicator.sort):
+            rows.append({"key": ind.key, "label": ind.label, "source": f"{ind.source} {ind.source_ref}",
+                         "topic": ind.key in topic_keys, "last": last.get(ind.key), "n": counts.get(ind.key, 0),
+                         "result": results.get(ind.key)})
+    except Exception as exc:  # noqa: BLE001
+        return HTMLResponse('<div class="rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-xs '
+                            'text-rose-200">The macro series status could not be read (%s).</div>'
+                            % type(exc).__name__)
+    return templates.TemplateResponse(request, "_macro_health.html", {"user": user, "ms": st, "rows": rows})
+
+
+@router.post("/macro/refresh")
+def macro_refresh_now(mod: User = Depends(require_moderator)):
+    """v4.243 - "Refresh now": fetch every macro series from FRED / Yahoo at once (moderators)."""
+    from ..services import macro_refresh
+
+    return macro_refresh.run_once()
+
+
 @router.post("/logos/warm")
 def logos_warm(mod: User = Depends(require_moderator)):
     """v4.222 - "Download missing now": queue every ticker without a fresh logo at once (moderators)."""

@@ -1464,6 +1464,76 @@ def get_option_calc_status(path=None, now=None) -> dict:
     return out
 
 
+# The Macro topics' series refresh (dashboard_tst/app/services/macro_refresh.py, v4.243): the
+# web app fetches the seven topics' FRED / Yahoo series once a day and mirrors its state here
+# (tray-sync rule). Not a lane: no heartbeat; the file says when it last ran and what failed.
+MACRO_REFRESH_STATE_PATH = SKILL_DIR / "dashboard_tst" / "state" / "macro_refresh.json"
+MACRO_REFRESH_STALE_SEC = 36 * 3600   # a daily run older than 36 h -> amber
+
+
+def get_macro_series_status(path=None, now=None) -> dict:
+    """The Macro page's daily series refresh from its state file: when it last ran, how many
+    series, how many failed. Line: ``Macro series: 35 series · last refresh 07:05 ET ·
+    2 failed``; ``tip``: ``Macro OK`` / ``Macro 2 fail`` / ``Macro stale`` / ``Macro -``.
+    Colour: green = ran within 36 h with nothing failed; amber = failures, an error or a
+    stale run; grey = no file (the web app does not run on this PC). File reads only."""
+    p = Path(path) if path is not None else MACRO_REFRESH_STATE_PATH
+    out = {"level": "absent", "color": "grey", "state": "absent", "age_sec": None, "failed": 0,
+           "indicators": None, "line": "Macro series: no refresh on this PC (no state file)", "tip": "Macro -"}
+    if not p.exists():
+        return out
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+        if not isinstance(d, dict):
+            raise ValueError("not a JSON object")
+    except Exception as exc:
+        out.update(level="warn", color="amber", state="error", tip="Macro ?",
+                   line=f"Macro series: state file unreadable ({exc})"[:160])
+        return out
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    if d.get("off"):
+        out.update(state="off", tip="Macro off", line="Macro series: daily refresh switched off (TST_MACRO_REFRESH=0)")
+        return out
+    fin = d.get("last_finished")
+    failed = d.get("failed") or []
+    n = d.get("indicators")
+    out.update(failed=len(failed), indicators=n)
+    if d.get("running"):
+        out.update(level="ok", color="green", state="running", tip="Macro run",
+                   line="Macro series: refreshing now" + (f" ({n} series)" if n else ""))
+        return out
+    if not fin:
+        nxt = d.get("next_at") or ""
+        out.update(level="ok", color="green", state="waiting", tip="Macro wait",
+                   line="Macro series: not refreshed yet since the web app started"
+                        + (f" · next {_option_calc_et(nxt, now) or nxt}" if nxt else ""))
+        return out
+    try:
+        fin_dt = datetime.strptime(fin, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        age = (now - fin_dt).total_seconds()
+    except ValueError:
+        age = None
+    out["age_sec"] = age
+    when = _option_calc_et(fin, now) or fin
+    parts = [f"{n} series" if n is not None else "? series", f"last refresh {when}"]
+    if d.get("added"):
+        parts.append(f"{d['added']} new")
+    if failed:
+        parts.append(f"{len(failed)} failed ({', '.join(str(f.get('key')) for f in failed[:3])})")
+    if d.get("last_error"):
+        parts.append(f"error: {d['last_error']}"[:80])
+    line = "Macro series: " + " · ".join(parts)
+    if d.get("last_error") or failed:
+        out.update(level="warn", color="amber", state="error", tip=f"Macro {len(failed) or 1} fail", line=line)
+    elif age is not None and age > MACRO_REFRESH_STALE_SEC:
+        out.update(level="warn", color="amber", state="stale", tip="Macro stale", line=line + " · STALE")
+    else:
+        out.update(level="ok", color="green", state="ok", tip="Macro OK", line=line)
+    return out
+
+
 def option_calc_toast(prev, cur):
     """The toast for a change in the Option Calculator lane between two tray polls
     (``get_option_calc_status`` results), or None. Edge-triggered, so a state that lasts
@@ -1834,6 +1904,13 @@ def _build_progress_window(root):
         win, textvariable=calc_detail_var, font=('Segoe UI', 9),
         bg='#1a1a1a', fg='#9ca3af', wraplength=430, justify='center',
     )
+    # Macro topics' daily series refresh (dashboard_tst web app, v4.243) - tray-sync rule.
+    macro_var = tk.StringVar(value='Macro series: -')
+    macro_lbl = tk.Label(
+        win, textvariable=macro_var, font=('Segoe UI', 10),
+        bg='#1a1a1a', fg='#888888', wraplength=430, justify='center',
+    )
+    macro_lbl.pack(pady=(0, 4))
 
     # ── DEEP CHECK section ─────────────────────────────────────────────────
     tk.Label(win, text='DEEP CHECK', font=('Segoe UI', 8, 'bold'),
@@ -2265,6 +2342,16 @@ def _build_progress_window(root):
             except Exception:
                 pass
 
+            # Macro series daily refresh (green / amber / grey)
+            try:
+                ms = get_macro_series_status()
+                macro_var.set(ms.get('line') or "Macro series: ?")
+                macro_lbl.configure(fg={'green': '#5fd97a', 'amber': '#facc15'}.get(
+                    ms.get('color'), '#888888'))
+            except Exception:
+                macro_var.set("Macro series: ?")
+                macro_lbl.configure(fg='#888888')
+
             # "Completed through" date (ingest currency)
             try:
                 ct = get_completed_through()
@@ -2529,12 +2616,16 @@ def _update_loop(icon: "pystray.Icon"):
                     prev_calc = ocalc
                 except Exception:
                     calc_str = "Calc ?"
+                try:
+                    macro_str = get_macro_series_status().get("tip") or "Macro ?"
+                except Exception:
+                    macro_str = "Macro ?"
                 # Windows tray tooltips cap at 128 chars; put the critical
                 # signals (state, deep-check, gateway, options collector,
                 # options screener, option calculator, through) FIRST so they
                 # survive, and let the verbose status tooltip trail + be trimmed.
                 icon.title = _clamp_title(
-                    f"Ingest: {new_state} | {dc_str} | {gw_str} | {opt_str} | {scr_str} | {calc_str} | {through_str} — {status['tooltip']}"
+                    f"Ingest: {new_state} | {dc_str} | {gw_str} | {opt_str} | {scr_str} | {calc_str} | {macro_str} | {through_str} — {status['tooltip']}"
                 )
                 if new_state != current_state:
                     current_state = new_state
