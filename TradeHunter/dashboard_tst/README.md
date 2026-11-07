@@ -223,6 +223,22 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-07 - v4.244: the Fed Funds Rate as a tick on the CPI, PCE and PPI charts
+
+The user: *"in the CPI PCE and PPI I want you to give a ticker to show the Fed Fund Rate in the chart"*. The course's
+point is that the Fed moves the rate to keep inflation in the 2-4% zone, so the two belong on one chart.
+
+- `app/services/macro_topics.py`: the Inflation topic's series gain `effr` (the effective Fed Funds Rate, FRED `DFF`,
+  already stored for the Fed Funds topic) with `on: False` and a new `toggle: True` flag, and every panel (CPI, PCE,
+  PPI) lists it after its own index; `payload()` passes `toggle` through to the page. Same % axis, a thin rose line.
+- `app/templates/macro.html`: a series flagged `toggle` is drawn in the legend as a TICK BOX ("✓ Fed Funds Rate
+  (effective)"), right-aligned, off until ticked. The tick is ONE state shared by all the tabs (`ticks` map + `isOn`):
+  tick it on CPI and the PCE and PPI charts open with it on. The legend's show/hide click handler now goes through
+  `setOn()`, which also keeps the left price scale's visibility right; the reference lines never attach to a toggle
+  series.
+- `tests/test_macro_topics.py`: the inflation payload test checks every panel ends with `effr`, that it is a toggle
+  off by default, and that nothing else is.
+
 ### 2026-11-07 - v4.243: Insights -> Macro is the course's seven topics - gauges, history charts, readings, the link sheet
 
 The user shared the Beyond Insights "Macro Insights" material (`BI Materials/`: Section 1 slides + "Key Data Source

@@ -141,6 +141,11 @@
   .mc-leg.off { opacity: .4; }
   .mc-leg .sw { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
   .mc-leg .val { font-variant-numeric: tabular-nums; color: #cbd5e1; }
+  /* a tick-box legend entry (the Fed Funds Rate on the inflation charts): off until ticked */
+  .mc-leg.tick { margin-left: auto; padding: 2px 8px; border: 1px solid rgba(148,163,184,0.35); border-radius: 6px; }
+  .mc-leg.tick.off { opacity: .75; }
+  .mc-leg .tk { width: 13px; height: 13px; border: 1px solid #94a3b8; border-radius: 3px; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; line-height: 1; color: transparent; }
+  .mc-leg:not(.off) .tk { color: #fff; border-color: transparent; }
   .mc-chip { font-size: 11px; padding: 2px 9px; border-radius: 9999px; white-space: nowrap; }
   .mc-chip.ok { background: rgba(52,211,153,.15); color: #6ee7b7; }
   .mc-chip.watch { background: rgba(251,191,36,.15); color: #fcd34d; }
@@ -299,10 +304,15 @@
     setRange(curYears);
   }
 
+  // the tick-box series (the Fed Funds Rate on CPI / PCE / PPI): one state shared by every tab,
+  // so a tick on the CPI chart shows it on the PCE and PPI charts too
+  var ticks = {};
+  function isOn(s) { return s.toggle && Object.prototype.hasOwnProperty.call(ticks, s.key) ? ticks[s.key] : !!s.on; }
+
   function buildPanel(p) {
     var pd = p.def, defs = p.defs;
     p.chart = makeChart(p.box.querySelector('.mc-chart'));
-    p.chart.applyOptions({ leftPriceScale: { visible: defs.some(function (s) { return s.axis === 'left' && s.on; }) } });
+    p.chart.applyOptions({ leftPriceScale: { visible: defs.some(function (s) { return s.axis === 'left' && isOn(s); }) } });
     var first = null, last = null;
     defs.forEach(function (s) {
       if (!s.points.length) return;
@@ -325,7 +335,7 @@
     }
     var lineHost = null;
     defs.forEach(function (s) {
-      var opts = { priceScaleId: s.axis === 'left' ? 'left' : 'right', visible: !!s.on,
+      var opts = { priceScaleId: s.axis === 'left' ? 'left' : 'right', visible: isOn(s),
                    priceFormat: { type: 'price', precision: s.unit === '$tn' ? 1 : 2, minMove: 0.01 },
                    lastValueVisible: true, priceLineVisible: false, title: '' };
       var obj;
@@ -336,8 +346,8 @@
         obj = p.chart.addLineSeries(Object.assign({ color: s.color, lineWidth: s.width || 2, crosshairMarkerRadius: 3 }, opts));
         obj.setData(s.points.map(function (q) { return { time: q[0], value: q[1] }; }));
       }
-      if (!lineHost && s.on && s.axis !== 'left') lineHost = obj;
-      p.objs.push({ s: obj, def: s, on: !!s.on, last: s.points.length ? s.points[s.points.length - 1][1] : null });
+      if (!lineHost && s.on && !s.toggle && s.axis !== 'left') lineHost = obj;
+      p.objs.push({ s: obj, def: s, on: isOn(s), last: s.points.length ? s.points[s.points.length - 1][1] : null });
     });
     // fixed reference lines (0%, 100% of GDP, the 52-week range...) on the first visible right-axis series
     (pd.lines || []).forEach(function (l) {
@@ -351,13 +361,25 @@
       if (!b) return;
       var o = p.objs[+b.dataset.i];
       if (!o) return;
-      o.on = !o.on;
-      o.s.applyOptions({ visible: o.on });
-      p.chart.applyOptions({ leftPriceScale: { visible: p.objs.some(function (x) { return x.def && x.def.axis === 'left' && x.on; }) } });
-      legend(p, null);
+      setOn(p, o, !o.on);
+      if (o.def.toggle) {
+        // a tick is shared: apply it to the same series on every other tab already built
+        ticks[o.def.key] = o.on;
+        panels.forEach(function (q) {
+          if (q === p || !q.chart) return;
+          q.objs.forEach(function (x) { if (x.def && x.def.key === o.def.key) setOn(q, x, o.on); });
+        });
+      }
     });
     legend(p, null);
     p.last = last;
+  }
+
+  function setOn(p, o, on) {
+    o.on = on;
+    o.s.applyOptions({ visible: on });
+    p.chart.applyOptions({ leftPriceScale: { visible: p.objs.some(function (x) { return x.def && x.def.axis === 'left' && x.on; }) } });
+    legend(p, null);
   }
 
   function legend(p, hover) {
@@ -377,10 +399,13 @@
         v = dp ? (dp.value != null ? dp.value : dp.close) : null;
       }
       var b = document.createElement('span');
-      b.className = 'mc-leg' + (o.on ? '' : ' off');
+      b.className = 'mc-leg' + (o.def.toggle ? ' tick' : '') + (o.on ? '' : ' off');
       b.dataset.i = i;
-      b.title = (o.def.note ? o.def.note + ' - ' : '') + 'click to show or hide';
-      b.innerHTML = '<span class="sw" style="background:' + o.def.color + '"></span><span class="text-slate-400">' + esc(o.def.label) + '</span> <span class="val">' + esc(fmt(v, o.def.unit)) + '</span>';
+      b.title = (o.def.note ? o.def.note + ' - ' : '') + (o.def.toggle ? 'tick to show it on this chart' : 'click to show or hide');
+      b.innerHTML = (o.def.toggle
+          ? '<span class="tk" style="background:' + (o.on ? o.def.color : 'transparent') + '">&#10003;</span>'
+          : '<span class="sw" style="background:' + o.def.color + '"></span>') +
+        '<span class="text-slate-400">' + esc(o.def.label) + '</span> <span class="val">' + esc(fmt(v, o.def.unit)) + '</span>';
       el.appendChild(b);
     });
   }

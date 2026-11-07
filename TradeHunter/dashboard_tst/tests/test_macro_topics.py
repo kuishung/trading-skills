@@ -141,6 +141,11 @@ def test_each_inflation_tab_has_its_own_reading_and_release(seeded):
     p = macro_topics.payload(seeded, "inflation")
     assert [x["key"] for x in p["panels"]] == ["cpi", "pce", "ppi"]
     by = {x["key"]: x for x in p["panels"]}
+    # v4.244: the Fed Funds Rate is a tick on every inflation chart, off until ticked
+    assert all(x["series"][-1] == "effr" for x in p["panels"])
+    effr = next(s for s in p["series"] if s["key"] == "effr")
+    assert effr["toggle"] is True and effr["on"] is False and effr["label"] == "Fed Funds Rate (effective)"
+    assert all(s["toggle"] is False for s in p["series"] if s["key"] != "effr")
     assert by["cpi"]["reading"]["headline"]["label"] == "CPI (YoY)"
     assert by["pce"]["reading"]["headline"]["text"] == "2.9%" and by["pce"]["band"] == {"lo": 2.0, "hi": 4.0, "label": "Goldilocks zone 2-4%"}
     ppi = by["ppi"]["reading"]

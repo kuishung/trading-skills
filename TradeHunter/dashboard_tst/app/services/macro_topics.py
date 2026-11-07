@@ -43,6 +43,12 @@ TOPICS: list[dict] = [
             {"key": "cpi", "color": _AMBER, "on": True},
             {"key": "pce", "color": _SKY, "on": True},
             {"key": "ppi", "color": _VIOLET, "on": True},
+            # The Fed Funds Rate as a TICK on each of the three charts, off until ticked (user,
+            # 2026-11-07: "in the CPI PCE and PPI I want you to give a ticker to show the Fed Fund
+            # Rate in the chart") - the course's point is that the Fed moves the rate to keep
+            # inflation in the zone, so the two belong on one chart. Same % axis.
+            {"key": "effr", "color": _ROSE, "on": False, "toggle": True, "width": 1,
+             "label": "Fed Funds Rate (effective)"},
         ],
         # Three charts, one per index (user, 2026-11-07: "i need the PPC and PCI to be shown in
         # separate chart"), each with the 2-4% zone.
@@ -51,11 +57,11 @@ TOPICS: list[dict] = [
         "panels": [
             # "reading": each tab has its OWN reading (number, gauge, verdict, next release) - user,
             # 2026-11-07: "when i press CPI, PCE and PPI the top data did not change"
-            {"key": "cpi", "label": "CPI - Consumer Price Index", "series": ["cpi"], "reading": "cpi",
+            {"key": "cpi", "label": "CPI - Consumer Price Index", "series": ["cpi", "effr"], "reading": "cpi",
              "note": "the consumer inflation rate, read against the 2-4% zone"},
-            {"key": "pce", "label": "PCE - Personal Consumption Expenditures price index", "series": ["pce"], "reading": "pce",
+            {"key": "pce", "label": "PCE - Personal Consumption Expenditures price index", "series": ["pce", "effr"], "reading": "pce",
              "note": "the Fed's preferred measure, read against the same 2-4% zone"},
-            {"key": "ppi", "label": "PPI - Producer Price Index", "series": ["ppi"], "band": None, "reading": "ppi",
+            {"key": "ppi", "label": "PPI - Producer Price Index", "series": ["ppi", "effr"], "band": None, "reading": "ppi",
              "note": "producers' input costs: no target band - more volatile, and an early warning for CPI and PCE"},
         ],
         "band": {"lo": 2.0, "hi": 4.0, "label": "Goldilocks zone 2-4%"},
@@ -914,6 +920,7 @@ def payload(db: Session, key: str) -> dict:
             "unit": s.get("unit") or (ind.unit if ind else ""), "note": ind.note if ind else None,
             "style": s.get("style", "line"), "color": s["color"], "on": bool(s.get("on", True)),
             "axis": s.get("axis", "right"), "width": s.get("width", 2),
+            "toggle": bool(s.get("toggle", False)),   # drawn as a tick box in the legend; its state is shared across the tabs
             "source": f"FRED {ind.source_ref}" if ind and ind.source == "fred" else (f"Yahoo {ind.source_ref}" if ind else ""),
             "points": [[a.date().isoformat(), round(b, 4)] for a, b in pts],
             "n": len(pts), "first": pts[0][0].date().isoformat() if pts else None,
