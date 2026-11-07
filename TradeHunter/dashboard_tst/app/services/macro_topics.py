@@ -49,10 +49,8 @@ TOPICS: list[dict] = [
             # inflation in the zone, so the two belong on one chart. Same % axis.
             {"key": "effr", "color": _ROSE, "on": False, "toggle": True, "width": 1,
              "label": "Fed Funds Rate (effective)"},
-            # v4.245: SPY and QQQ too (user: "i also want QQQ and SPY ticker box") - prices, so on
-            # the LEFT axis in dollars; the course's "how it reaches stocks" seen on the chart.
-            {"key": "spy", "color": _EMERALD, "on": False, "toggle": True, "width": 1, "axis": "left", "label": "SPY"},
-            {"key": "qqq", "color": _SLATE, "on": False, "toggle": True, "width": 1, "axis": "left", "label": "QQQ"},
+            # (v4.245 added SPY and QQQ ticks here on a left $ axis; v4.246 removed them - user:
+            # "i dont need the SPY and QQQ tick box".)
         ],
         # Three charts, one per index (user, 2026-11-07: "i need the PPC and PCI to be shown in
         # separate chart"), each with the 2-4% zone.
@@ -61,11 +59,11 @@ TOPICS: list[dict] = [
         "panels": [
             # "reading": each tab has its OWN reading (number, gauge, verdict, next release) - user,
             # 2026-11-07: "when i press CPI, PCE and PPI the top data did not change"
-            {"key": "cpi", "label": "CPI - Consumer Price Index", "series": ["cpi", "effr", "spy", "qqq"], "reading": "cpi",
+            {"key": "cpi", "label": "CPI - Consumer Price Index", "series": ["cpi", "effr"], "reading": "cpi",
              "note": "the consumer inflation rate, read against the 2-4% zone"},
-            {"key": "pce", "label": "PCE - Personal Consumption Expenditures price index", "series": ["pce", "effr", "spy", "qqq"], "reading": "pce",
+            {"key": "pce", "label": "PCE - Personal Consumption Expenditures price index", "series": ["pce", "effr"], "reading": "pce",
              "note": "the Fed's preferred measure, read against the same 2-4% zone"},
-            {"key": "ppi", "label": "PPI - Producer Price Index", "series": ["ppi", "effr", "spy", "qqq"], "band": None, "reading": "ppi",
+            {"key": "ppi", "label": "PPI - Producer Price Index", "series": ["ppi", "effr"], "band": None, "reading": "ppi",
              "note": "producers' input costs: no target band - more volatile, and an early warning for CPI and PCE"},
         ],
         "band": {"lo": 2.0, "hi": 4.0, "label": "Goldilocks zone 2-4%"},

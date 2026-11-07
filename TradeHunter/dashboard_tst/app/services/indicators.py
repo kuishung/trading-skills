@@ -114,12 +114,8 @@ SEED = [
      "Quarterly; stored in $ millions."),
     ("debt_gdp", "topics", "Federal debt as % of GDP", "fred", "GFDEGDQ188S", "%", "level",
      "neutral", None),
-    # v4.245: the two index ETFs as tick boxes on the inflation charts (user: "i also want QQQ and
-    # SPY ticker box") - daily closes from Yahoo, the whole stored window.
-    ("spy", "topics", "SPY (S&P 500 ETF)", "yahoo", "SPY", "$", "level", "risk_on",
-     "The S&P 500 as an ETF - the broad market's price, for reading the data against stocks."),
-    ("qqq", "topics", "QQQ (Nasdaq-100 ETF)", "yahoo", "QQQ", "$", "level", "risk_on",
-     "The Nasdaq-100 as an ETF - the high-growth names, which inflation and rates hit hardest."),
+    # (v4.245 seeded spy / qqq here for the inflation charts; v4.246 removed them at the user's
+    # request. A table that already holds the two rows keeps them; they are unused and harmless.)
 ]
 
 

@@ -223,6 +223,18 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-07 - v4.246: the SPY and QQQ tick boxes removed again
+
+The user, on seeing v4.245: *"i dont need the SPY and QQQ tick box"*. The Fed Funds Rate tick (v4.244) stays.
+
+- `app/services/macro_topics.py`: the `spy` / `qqq` toggle series and their panel entries are gone; the Inflation
+  topic's series are `cpi`, `pce`, `ppi`, `effr` again.
+- `app/services/indicators.py`: the two `SEED` rows are gone. A table that already seeded them (a Hermes that pulled
+  v4.245) keeps the rows; they are unused and harmless.
+- `app/templates/macro.html`: unchanged - the generic bits of v4.245 (ticks grouped at the legend's right, `$` in
+  `fmt`) stay for any future toggle.
+- `tests/test_macro_topics.py`: the inflation payload test expects `effr` as the only tick.
+
 ### 2026-11-07 - v4.245: SPY and QQQ tick boxes on the CPI, PCE and PPI charts
 
 The user: *"i also want QQQ and SPY ticker box"*. Two more tick boxes beside the Fed Funds one on each inflation chart,
