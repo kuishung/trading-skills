@@ -280,7 +280,8 @@ def test_the_macro_page_lists_the_seven_topics_and_no_sources_tab(engine, user):
         c = _client(engine, user.id)
         html = c.get("/macro").text
         api = c.get("/macro/api/topic/growth").json()
-        study = c.get("/macro/study")
+        study = c.get("/macro/study")            # removed in v4.249
+        frag = c.get("/macro/section/cross_asset")
         bad = c.get("/macro/api/topic/nope").json()
     finally:
         app.dependency_overrides.clear()
@@ -296,7 +297,7 @@ def test_the_macro_page_lists_the_seven_topics_and_no_sources_tab(engine, user):
     assert api["ok"] and [s["key"] for s in api["series"]] == ["gdp_qoq", "gdpnow", "gdp_yoy"]
     assert api["series"][0]["style"] == "bars" and api["panels"][0]["series"] == ["gdp_qoq", "gdpnow", "gdp_yoy"]
     assert api["reading"]["word"] == "No data yet" and api["links"]
-    assert study.status_code == 200 and "Macro study" in study.text
+    assert study.status_code == 404 and frag.status_code == 404 and "Study board" not in html
     assert bad == {"ok": False, "error": "unknown topic"}
 
 

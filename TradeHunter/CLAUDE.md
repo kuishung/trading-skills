@@ -657,8 +657,9 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
   next release, glance cards and "Where to look it up". Inflation = CPI | PCE | PPI TABS, each with its own reading;
   the 2-4% zone is CPI/PCE only (the course gives PPI no band). Data: FRED via the public `fredgraph.csv` (NO API key
   needed) + Yahoo DXY, stored in `macro_readings`, refreshed daily INSIDE the web app (`services/macro_refresh.py`;
-  Settings → Data Ingest → Macro Series; tray "Macro series" line). The old six-section study board lives on at
-  `/macro/study`. Honest proxies, labelled: the market's rate lean = 2y yield vs EFFR (no free FedWatch); the cycle
+  Settings → Data Ingest → Macro Series; tray "Macro series" line). The old six-section study board (`/macro/study`)
+  was REMOVED in v4.249 (2026-11-08, user: "remove the micro study page"); its `macro_analysis` table and
+  `POST /api/macro/{section}` stay. Honest proxies, labelled: the market's rate lean = 2y yield vs EFFR (no free FedWatch); the cycle
   stage is ESTIMATED from GDP/jobs/inflation/curve (no Fidelity feed). Next ideas the user has not asked for yet:
   the Industry and Company pages of the Insights revamp.
 - **Option CALCULATOR + setup pairing — BUILT v4.150-4.157 (2026-10-17/19):

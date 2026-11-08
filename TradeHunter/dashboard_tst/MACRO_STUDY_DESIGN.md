@@ -4,9 +4,15 @@ Turning each `/macro` topic from a written snapshot into a **continuous study**:
 tracked trend, framed outcomes, stated implications, and mechanical monitoring
 that tells you when the story changes.
 
-Status: **DESIGN** (2026-08-16). Phase 1 of the board itself shipped in
-dashboard_tst v3.94 (two-pane, six canonical topics, live cross-asset strip,
-moderator/agent-written analysis). This doc covers what comes next.
+Status: **SUPERSEDED / PAGE REMOVED** (2026-11-08, v4.249). The study board page
+(`/macro/study`, its section fragments and edit form) was removed at the user's request;
+`/macro` is the seven course topics of v4.243 (`app/services/macro_topics.py`). What
+survives from this design: the indicator store (`services/indicators.py`, now the topics'
+data layer), the `macro_analysis` table and `POST /api/macro/{section}` (the agent's
+written analysis), `services/macro.py` (cross-asset tiles, unused by any page now).
+Kept for history. Original status line: DESIGN (2026-08-16); Phase 1 of the board shipped
+in v3.94 (two-pane, six canonical topics, live cross-asset strip, moderator/agent-written
+analysis).
 
 Companion docs: `COMPANY_ANALYSIS_DESIGN.md` (same provenance/confidence pattern,
 per-ticker), `COMPANY_INTELLIGENCE_DESIGN.md` (in-app alerting decision),

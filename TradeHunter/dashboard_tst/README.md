@@ -223,6 +223,21 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-08 - v4.249: the Macro study board removed
+
+The user: *"remove the micro study page"* - the pre-v4.243 six-section study board kept at `/macro/study`.
+
+- `app/routes/macro.py`: `GET /macro/study`, `GET /macro/section/{key}`, `POST /macro/section/{key}/refresh` and
+  `POST /macro/section/{key}` are gone (all answer 404 now), with their helpers and imports; the module keeps the
+  seven-topic page and its three API routes. The `macro_analysis` table stays (no schema drop), still written by
+  `POST /api/macro/{section}` in `routes/api.py` for the agent.
+- `app/templates/macro_study.html` and `app/templates/_macro_section.html`: deleted.
+- `app/templates/macro.html`: the "Study board →" link is gone from the page header.
+- `MACRO_STUDY_DESIGN.md`: status line says superseded / page removed, with what survives of it.
+- Left in place, now unused by any page: `services/indicators.section_summaries` / `refresh_section` and
+  `services/macro.py` (the cross-asset tiles). Remove them in a later tidy-up if nothing picks them up.
+- `tests/test_macro_topics.py`: the study page and its fragment answer 404; no "Study board" link on `/macro`.
+
 ### 2026-11-08 - v4.248: an icon per Macro topic, animated on the active one
 
 The user: *"can you add some icon to the or gif for the each item in macro?"*.
