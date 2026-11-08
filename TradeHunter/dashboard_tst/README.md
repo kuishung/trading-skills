@@ -223,6 +223,22 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-08 - v4.248: an icon per Macro topic, animated on the active one
+
+The user: *"can you add some icon to the or gif for the each item in macro?"*.
+
+- `app/services/macro_topics.py`: `ICONS` - one inline SVG line icon (24x24, stroke = currentColor, Lucide-style
+  paths, no external file) per topic with its colour and a motion name: Inflation a flame (flickers), Fed Funds a
+  landmark, Exchange Rates two arrows (slide), Unemployment a briefcase, Economic Cycles circling arrows (turn),
+  Economic Growth a rising line (lifts), National Debt a balance (tilts). `icon(key)`; `rail()` rows and the API's
+  `topic` carry it.
+- `app/templates/macro.html`: the rail shows the icon as a tinted tile (`.mc-ico`, `--c` = the topic colour) with the
+  tone dot on its corner, the label and figure beside it; the header shows the same icon larger (`#mcIcon`). The
+  active rail icon and the header icon draw themselves in (`stroke-dashoffset`) and then run the topic's own small
+  loop - the "gif" the user asked for, without an image file; off under `prefers-reduced-motion`. Light theme keeps
+  the dot's white ring. The post-load dot/word refresh uses the new markup.
+- `tests/test_macro_topics.py`: seven icon tiles in the rail, an icon for every topic key, the API's topic icon.
+
 ### 2026-11-07 - v4.247: Yahoo series without yfinance; the Exchange Rates page is never blank
 
 The user, on Hermes: *"why i dont see the data on chart?"* - Exchange Rates showed "No data yet", a "-" headline and

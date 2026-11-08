@@ -851,13 +851,47 @@ def reading(db: Session, key: str) -> dict:
     return r
 
 
+# ---------------------------------------------------------------------------
+# One icon per topic (v4.248, user: "can you add some icon ... for each item in macro?"):
+# inline SVG line icons (24x24, stroke = currentColor, no external file), with the topic's
+# colour; the page animates the active one (a draw-in, the cycle's arrows turn, the flame
+# flickers). Keys match TOPICS.
+ICONS: dict[str, dict] = {
+    "inflation": {"color": "#fb7185", "anim": "flame", "svg":
+                  '<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 '
+                  '2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>'},
+    "fed_funds": {"color": "#38bdf8", "anim": "", "svg":
+                  '<line x1="3" x2="21" y1="22" y2="22"/><line x1="6" x2="6" y1="18" y2="11"/>'
+                  '<line x1="10" x2="10" y1="18" y2="11"/><line x1="14" x2="14" y1="18" y2="11"/>'
+                  '<line x1="18" x2="18" y1="18" y2="11"/><polygon points="12 2 20 7 4 7"/>'},
+    "dollar": {"color": "#a78bfa", "anim": "swap", "svg":
+               '<path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/>'},
+    "unemployment": {"color": "#f59e0b", "anim": "", "svg":
+                     '<rect width="20" height="14" x="2" y="7" rx="2" ry="2"/>'
+                     '<path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>'},
+    "cycle": {"color": "#34d399", "anim": "spin", "svg":
+              '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>'
+              '<path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>'},
+    "growth": {"color": "#22d3ee", "anim": "rise", "svg":
+               '<polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/>'},
+    "debt": {"color": "#94a3b8", "anim": "tilt", "svg":
+             '<path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/>'
+             '<path d="m2 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="M7 21h10"/>'
+             '<path d="M12 3v18"/><path d="M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2"/>'},
+}
+
+
+def icon(key: str) -> dict:
+    return ICONS.get(key) or {"color": "#94a3b8", "anim": "", "svg": '<circle cx="12" cy="12" r="9"/>'}
+
+
 def rail(db: Session) -> list[dict]:
     """The left rail: every topic with its tone, word and headline figure."""
     out = []
     for t in TOPICS:
         r = reading(db, t["key"])
         out.append({"key": t["key"], "label": t["label"], "blurb": t["blurb"], "cadence": t["cadence"],
-                    "tone": r["tone"], "word": r["word"], "headline": r.get("headline")})
+                    "tone": r["tone"], "word": r["word"], "headline": r.get("headline"), "icon": icon(t["key"])})
     return out
 
 
@@ -959,7 +993,7 @@ def payload(db: Session, key: str) -> dict:
         panels.append(pd)
     return {
         "topic": {"key": t["key"], "label": t["label"], "blurb": t["blurb"], "cadence": t["cadence"],
-                  "cadence_text": t["cadence_text"]},
+                  "cadence_text": t["cadence_text"], "icon": icon(t["key"])},
         "series": series, "panels": panels, "band": t.get("band"), "lines": lines, "reading": r,
         "next": next_release(key), "text": t["text"],
         "links": _links.for_topic(t["key"]),        # the course's link sheet, this topic's rows

@@ -288,6 +288,10 @@ def test_the_macro_page_lists_the_seven_topics_and_no_sources_tab(engine, user):
                   "Economic Growth", "US National Debt"):
         assert label in html
     assert html.count('class="mc-tab ') == 7 and 'data-topic="sources"' not in html
+    # v4.248: an inline SVG icon per topic in the rail, and the API hands the page the topic's icon
+    assert html.count('<span class="mc-ico ') == 7 and html.count("<svg viewBox=\"0 0 24 24\"") >= 7
+    assert set(macro_topics.ICONS) == set(macro_topics.TOPIC_KEYS)
+    assert api["topic"]["icon"]["svg"].startswith("<") and api["topic"]["icon"]["color"].startswith("#")
     assert "Where to look it up" in html and "lightweight-charts" in html
     assert api["ok"] and [s["key"] for s in api["series"]] == ["gdp_qoq", "gdpnow", "gdp_yoy"]
     assert api["series"][0]["style"] == "bars" and api["panels"][0]["series"] == ["gdp_qoq", "gdpnow", "gdp_yoy"]

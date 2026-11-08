@@ -23,12 +23,20 @@
     {% for r in rail %}
     <a href="/macro?topic={{ r.key }}" data-topic="{{ r.key }}"
        class="mc-tab block px-3 py-2.5 border-l-2 transition {% if r.key == active %}on{% endif %} {% if not loop.first %}border-t border-t-slate-800/60{% endif %}">
-      <div class="flex items-center gap-2">
-        <span class="mc-dot inline-block w-2.5 h-2.5 rounded-full shrink-0 tone-{{ r.tone }}" title="{{ r.word }}"></span>
-        <span class="mc-lbl text-[13px] text-slate-200">{{ r.label }}</span>
-        {% if r.headline %}<span class="ml-auto text-[12px] tabular-nums text-slate-300">{{ r.headline.text }}</span>{% endif %}
+      <div class="flex items-center gap-2.5">
+        {# the topic's icon, tinted with its colour; the tone dot sits on its corner #}
+        <span class="mc-ico {{ r.icon.anim }}" style="--c:{{ r.icon.color }}" title="{{ r.word }}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{{ r.icon.svg | safe }}</svg>
+          <span class="mc-dot tone-{{ r.tone }}"></span>
+        </span>
+        <span class="min-w-0 flex-1">
+          <span class="flex items-center gap-2">
+            <span class="mc-lbl text-[13px] text-slate-200">{{ r.label }}</span>
+            {% if r.headline %}<span class="ml-auto text-[12px] tabular-nums text-slate-300">{{ r.headline.text }}</span>{% endif %}
+          </span>
+          <span class="mc-word block text-[11px] text-slate-500 mt-0.5">{{ r.word or r.blurb }}</span>
+        </span>
       </div>
-      <div class="mc-word text-[11px] text-slate-500 mt-0.5 pl-4">{{ r.word or r.blurb }}</div>
     </a>
     {% endfor %}
   </nav>
@@ -37,9 +45,12 @@
   <div id="mcPane" class="space-y-3 min-w-0">
     <section class="rounded-lg border border-slate-800 bg-slate-900/40">
       <div class="px-4 py-3 border-b border-slate-800 flex items-center justify-between gap-3 flex-wrap">
-        <div class="min-w-0">
-          <h2 id="mcTitle" class="text-base font-medium text-slate-100">&nbsp;</h2>
-          <p id="mcBlurb" class="text-[11px] text-slate-500 mt-0.5"></p>
+        <div class="min-w-0 flex items-center gap-3">
+          <span id="mcIcon" class="mc-ico lg"></span>
+          <div class="min-w-0">
+            <h2 id="mcTitle" class="text-base font-medium text-slate-100">&nbsp;</h2>
+            <p id="mcBlurb" class="text-[11px] text-slate-500 mt-0.5"></p>
+          </div>
         </div>
         <div class="flex items-center gap-2 shrink-0">
           <span id="mcCadence" class="text-[11px] px-2 py-0.5 rounded-full border border-slate-700 text-slate-400" title=""></span>
@@ -129,6 +140,29 @@
   .mc-tab:hover { background: rgba(30,41,59,.5); }
   .mc-tab.on { border-left-color: #34d399; background: rgba(16,185,129,.10); }
   .mc-tab.on .mc-lbl { color: #6ee7b7; font-weight: 500; }
+  /* the topic icons (v4.248): a tinted tile per topic, the tone dot on its corner; the active
+     one draws itself in, and a few have a small motion of their own (the "gif" feel) */
+  .mc-ico { --c: #94a3b8; position: relative; display: inline-flex; align-items: center; justify-content: center;
+            width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0; color: var(--c);
+            background: color-mix(in srgb, var(--c) 14%, transparent); border: 1px solid color-mix(in srgb, var(--c) 30%, transparent); }
+  .mc-ico svg { width: 17px; height: 17px; }
+  .mc-ico.lg { width: 38px; height: 38px; border-radius: 10px; }
+  .mc-ico.lg svg { width: 22px; height: 22px; }
+  .mc-ico .mc-dot { position: absolute; right: -3px; bottom: -3px; width: 9px; height: 9px; border-radius: 9999px; border: 2px solid #0f172a; }
+  .mc-tab.on .mc-ico { background: color-mix(in srgb, var(--c) 24%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 14%, transparent); }
+  .mc-tab.on .mc-ico svg *, .mc-ico.lg svg * { stroke-dasharray: 90; stroke-dashoffset: 90; animation: mc-draw 1.1s ease-out forwards; }
+  @keyframes mc-draw { to { stroke-dashoffset: 0; } }
+  .mc-tab.on .mc-ico.spin svg, .mc-ico.lg.spin svg { animation: mc-spin 6s linear infinite 1.1s; }
+  @keyframes mc-spin { to { transform: rotate(360deg); } }
+  .mc-tab.on .mc-ico.flame svg, .mc-ico.lg.flame svg { transform-origin: 50% 90%; animation: mc-flame 1.6s ease-in-out infinite 1.1s; }
+  @keyframes mc-flame { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.1) translateY(-1px); } }
+  .mc-tab.on .mc-ico.rise svg, .mc-ico.lg.rise svg { animation: mc-rise 2.4s ease-in-out infinite 1.1s; }
+  @keyframes mc-rise { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
+  .mc-tab.on .mc-ico.swap svg, .mc-ico.lg.swap svg { animation: mc-swap 3s ease-in-out infinite 1.1s; }
+  @keyframes mc-swap { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(2px); } }
+  .mc-tab.on .mc-ico.tilt svg, .mc-ico.lg.tilt svg { transform-origin: 50% 20%; animation: mc-tilt 3s ease-in-out infinite 1.1s; }
+  @keyframes mc-tilt { 0%, 100% { transform: rotate(-4deg); } 50% { transform: rotate(4deg); } }
+  @media (prefers-reduced-motion: reduce) { .mc-ico svg, .mc-ico svg * { animation: none !important; stroke-dashoffset: 0 !important; } }
   .tone-ok { background: #34d399; } .tone-watch { background: #fbbf24; } .tone-bad { background: #fb7185; }
   .tone-info { background: #38bdf8; } .tone-none { background: #475569; }
   .mc-h { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: #64748b; margin-bottom: 6px; }
@@ -192,6 +226,7 @@
   .mc-watch li { font-size: 12px; color: #cbd5e1; padding: 3px 0 3px 18px; position: relative; }
   .mc-watch li:before { content: ''; position: absolute; left: 2px; top: 9px; width: 8px; height: 8px; border-radius: 2px; background: #fbbf24; opacity: .8; }
   html.light .mc-tab.on .mc-lbl { color: #047857; }
+  html.light .mc-ico .mc-dot { border-color: #fff; }
   html.light .mc-leg .val, html.light .mc-flow .step, html.light .mc-watch li, html.light .mc-chip.plain { color: #334155; }
   html.light .mc-gauge .pin { border-top-color: #0f172a; } html.light .mc-gauge .pin-lbl { color: #0f172a; }
   html.light .mc-card { background: rgba(248,250,252,.6); border-color: #e2e8f0; }
@@ -523,6 +558,10 @@
     var r = j.reading || {}, t = j.topic, g = r.glance || {};
     $('mcTitle').textContent = t.label;
     $('mcBlurb').textContent = t.blurb;
+    var ic = $('mcIcon'), icon = t.icon || {};
+    ic.className = 'mc-ico lg ' + (icon.anim || '');
+    ic.style.setProperty('--c', icon.color || '#94a3b8');
+    ic.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (icon.svg || '') + '</svg>';
     $('mcCadence').textContent = 'Check: ' + t.cadence;
     $('mcCadence').title = t.cadence_text || '';
     var v = $('mcVerdict'), tone = TONE[r.tone] || TONE.none;
@@ -559,7 +598,9 @@
     var tab = document.querySelector('.mc-tab[data-topic="' + t.key + '"]');
     if (tab) {
       var dot = tab.querySelector('.mc-dot');
-      if (dot) { dot.className = 'mc-dot inline-block w-2.5 h-2.5 rounded-full shrink-0 tone-' + (r.tone || 'none'); dot.title = r.word || ''; }
+      if (dot) { dot.className = 'mc-dot tone-' + (r.tone || 'none'); }
+      var ico = tab.querySelector('.mc-ico');
+      if (ico) ico.title = r.word || '';
       var w = tab.querySelector('.mc-word');
       if (w && r.word) w.textContent = r.word;
     }
