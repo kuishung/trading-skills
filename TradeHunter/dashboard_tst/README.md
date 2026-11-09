@@ -223,6 +223,17 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-09 - v4.254: Sector Rotation - the folded panel parks on the right; a name tag on every line
+
+The user, after v4.253: *"when hide the ticker panel does not move to right"* and *"the name of the ticker is not
+shown in the chart"*. `templates/sector.html`: (1) the folded rail is now a 3 rem strip at the RIGHT edge of the
+page (`order: 2`, grid `1fr 3rem`), so the chart, the tables and the RRG embed slide left and span the whole
+window; the chevron points right to hide, left to bring it back. (2) Every drawn line on the ETF history chart
+carries a tag at its end INSIDE the plot - the ticker and the fund's name in the line's colour ("XLV Health
+Care"), tags nudged apart when two line ends sit close - placed by `placeTags()` from the series'
+`priceToCoordinate` / `timeToCoordinate` and re-placed on range change, tick change, fold and resize. The
+price-axis label of v4.253 ("XLV +26.9%") stays.
+
 ### 2026-11-09 - v4.253: Sector Rotation - the side panel folds away; the chart names each line
 
 The user: *"I want the side panel to be able to hide to the side with a button ... want in the chart it will

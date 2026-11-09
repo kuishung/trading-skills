@@ -34,7 +34,7 @@
   <nav id="scRail" class="rounded-lg border border-slate-800 bg-slate-900/40 overflow-hidden lg:sticky lg:top-4">
     <button type="button" id="scRailBtn" class="hidden lg:flex w-full items-center justify-end px-2 py-1.5 text-slate-500 hover:text-slate-200 border-b border-slate-800/60"
             title="Hide the side panel" aria-label="Hide the side panel" aria-expanded="true">
-      <svg class="sc-chev" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg>
+      <svg class="sc-chev" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
     </button>
     <a href="/sector" data-tab="rrg" title="RRG Chart" class="sc-tab block px-3 py-3 border-l-2 transition {% if tab == 'rrg' %}on{% endif %}">
       <div class="flex items-center gap-2.5">
@@ -106,7 +106,11 @@
           </div>
         </div>
         <div class="px-4 pb-3 pt-2">
-          <div id="scChart" class="w-full rounded border border-slate-800/70 bg-slate-950/30" style="height:400px"></div>
+          <div class="relative">
+            <div id="scChart" class="w-full rounded border border-slate-800/70 bg-slate-950/30" style="height:400px"></div>
+            {# v4.254: a tag at the end of every drawn line - "XLV Health Care" - placed by placeTags() #}
+            <div id="scTags" class="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true"></div>
+          </div>
         </div>
       </section>
 
@@ -183,9 +187,11 @@
   .sc-ico { --c: #94a3b8; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
             color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); border: 1px solid color-mix(in srgb, var(--c) 30%, transparent); }
   .sc-ico svg { width: 17px; height: 17px; }
-  /* the folded rail: a 3rem icon strip, labels gone, the chevron turned */
+  /* the folded rail (v4.254): a 3rem icon strip parked at the RIGHT edge, the panes slide left and take
+     the whole width; labels gone, the chevron turned to point the way back */
   @media (min-width: 1024px) {
-    #scGrid.sc-folded { grid-template-columns: 3rem minmax(0, 1fr); }
+    #scGrid.sc-folded { grid-template-columns: minmax(0, 1fr) 3rem; }
+    #scGrid.sc-folded #scRail { order: 2; }
     #scGrid.sc-folded .sc-txt { display: none; }
     #scGrid.sc-folded .sc-tab { padding-left: 0; padding-right: 0; }
     #scGrid.sc-folded .sc-tab > div { justify-content: center; }
@@ -203,6 +209,10 @@
   .sc-tick:has(input:checked) .sw { opacity: 1; }
   .sc-tick .sym { font-weight: 600; color: #e2e8f0; }
   .sc-tick .val { color: #cbd5e1; margin-left: .15rem; }
+  .sc-tag { --c: #94a3b8; position: absolute; transform: translateY(-50%); white-space: nowrap; font-size: 11px; line-height: 1; padding: 3px 6px;
+            border-radius: 4px; color: var(--c); font-weight: 600; background: rgba(11,18,32,.82); border: 1px solid color-mix(in srgb, var(--c) 55%, transparent); }
+  .sc-tag .nm { color: #cbd5e1; font-weight: 400; margin-left: .3em; }
+  html.light .sc-tag { background: rgba(255,255,255,.88); } html.light .sc-tag .nm { color: #334155; }
   .sc-row { cursor: pointer; border-bottom: 1px solid rgba(30,41,59,.7); }
   .sc-row:hover { background: rgba(30,41,59,.45); }
   .sc-row.on { background: rgba(16,185,129,.10); }
@@ -252,7 +262,7 @@
     b.setAttribute('aria-label', b.title);
     if (save) { try { localStorage.setItem(RAIL_KEY, on ? '1' : '0'); } catch (e) {} }
     window.dispatchEvent(new Event('resize'));
-    if (chart) setTimeout(function () { chart.timeScale().fitContent(); }, 50);
+    if (chart) setTimeout(function () { chart.timeScale().fitContent(); placeTags(); }, 50);
   }
   $('scRailBtn').addEventListener('click', function () { setFolded(!$('scGrid').classList.contains('sc-folded'), true); });
   try { if (localStorage.getItem(RAIL_KEY) === '1') setFolded(true, false); } catch (e) {}
@@ -314,7 +324,35 @@
     if (zero) zero.createPriceLine({ price: 0, color: 'rgba(148,163,184,0.6)', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '0%' });
     setRange(range);
     chart.subscribeCrosshairMove(function (ev) { paintTickValues(ev && ev.time ? ev : null); });
+    chart.timeScale().subscribeVisibleLogicalRangeChange(function () { placeTags(); });
+    if (window.ResizeObserver && !buildChart._ro) {
+      buildChart._ro = new ResizeObserver(function () { placeTags(); });
+      buildChart._ro.observe($('scChart'));
+    }
   }
+  // a tag at the end of every drawn line, inside the plot: the ticker and the fund's name, in the
+  // line's colour, nudged apart when two ends sit close (v4.254)
+  function placeTags() {
+    var host = $('scTags');
+    if (!chart || !D) { host.innerHTML = ''; return; }
+    var ts = chart.timeScale(), W = $('scChart').clientWidth, items = [];
+    D.etfs.forEach(function (e) {
+      if (!isTicked(e.symbol)) return;
+      var d = rebased(e.symbol);
+      if (!d.length) return;
+      var last = d[d.length - 1];
+      var y = lines[e.symbol].priceToCoordinate(last.value), x = ts.timeToCoordinate(last.time);
+      if (y == null || x == null) return;
+      items.push({ e: e, x: x, y: y });
+    });
+    items.sort(function (a, b) { return a.y - b.y; });
+    for (var i = 1; i < items.length; i++) if (items[i].y - items[i - 1].y < 16) items[i].y = items[i - 1].y + 16;
+    host.innerHTML = items.map(function (it) {
+      return '<span class="sc-tag" style="right:' + Math.max(0, W - it.x + 8).toFixed(0) + 'px;top:' + it.y.toFixed(0) + 'px;--c:' + it.e.color + '">' +
+        esc(it.e.symbol) + '<span class="nm">' + esc(it.e.name) + '</span></span>';
+    }).join('');
+  }
+  function tagsSoon() { if (window.requestAnimationFrame) requestAnimationFrame(placeTags); else setTimeout(placeTags, 0); }
   function rebased(sym) {
     var pts = (D.series[sym] || []);
     var n = RANGE_DAYS[range] || 252;
@@ -330,6 +368,7 @@
     D.etfs.forEach(function (e) { lines[e.symbol].setData(rebased(e.symbol)); });
     chart.timeScale().fitContent();
     paintTickValues(null);
+    tagsSoon();
   }
   document.querySelectorAll('.sc-range').forEach(function (b) { b.addEventListener('click', function () { setRange(b.dataset.range); }); });
   document.addEventListener('th:theme', function () {
@@ -344,6 +383,7 @@
     if (i) i.checked = !!on;
     if (lines[sym]) lines[sym].applyOptions({ visible: !!on });
     paintTickValues(null);
+    tagsSoon();
   }
   $('scTicks').addEventListener('change', function (e) {
     if (e.target && e.target.tagName === 'INPUT') setTicked(e.target.value, e.target.checked);
