@@ -90,7 +90,9 @@
           </div>
         </div>
         {# v4.256: the tick boxes stand in a column to the RIGHT of the chart (user: "I want the ticker panel to show at right") #}
-        <div id="scFold-chart" class="px-4 pb-3 pt-2.5 flex flex-col lg:flex-row gap-3 items-stretch">
+        {# v4.259: the body is wrapped so the drag grip under it folds away with it; the grip sets the chart's height #}
+        <div id="scFold-chart">
+        <div class="px-4 pt-2.5 flex flex-col lg:flex-row gap-3 items-stretch">
           <div class="relative flex-1 min-w-0">
             <div id="scChart" class="w-full rounded border border-slate-800/70 bg-slate-950/30" style="height:400px"></div>
             {# v4.254: a tag at the end of every drawn line - the fund's name - placed by placeTags() #}
@@ -106,6 +108,8 @@
             </label>
             {% endfor %}
           </div>
+        </div>
+        <div class="sc-grip" data-grip="chart" title="drag to change the chart's height - double-click to reset" role="separator" aria-orientation="horizontal"></div>
         </div>
       </section>
 
@@ -126,7 +130,9 @@
           </div>
         </div>
         {# v4.257: the table folds away (the button above) so the Holdings table comes into view #}
-        <div id="scFold-perf" class="overflow-x-auto">
+        {# v4.259: the table scrolls inside a height the grip under it sets (no cap until dragged); the heading stays put #}
+        <div id="scFold-perf">
+        <div id="scPerfScroll" class="overflow-auto">
           <table class="w-full text-[12px]" id="scEtfTable">
             <thead class="text-[10px] uppercase tracking-wide text-slate-500">
               <tr id="scEtfHead" class="border-b border-slate-800">
@@ -138,6 +144,8 @@
             </thead>
             <tbody id="scEtfBody"><tr><td colspan="14" class="px-4 py-6 text-center text-slate-500">Loading the funds&hellip;</td></tr></tbody>
           </table>
+        </div>
+        <div class="sc-grip" data-grip="perf" title="drag to change the table's height - double-click to show it whole" role="separator" aria-orientation="horizontal"></div>
         </div>
       </section>
 
@@ -200,6 +208,14 @@
   .sc-fold-chev { transition: transform .15s; }
   .sc-fold.closed .sc-fold-chev { transform: rotate(180deg); }
   .sc-folded-away { display: none !important; }
+  /* v4.259: the drag grips that set the chart's and the Performance table's height */
+  .sc-grip { height: 12px; margin: 2px 0 0; cursor: ns-resize; display: flex; align-items: center; justify-content: center; touch-action: none; user-select: none; }
+  .sc-grip::before { content: ''; width: 44px; height: 3px; border-radius: 2px; background: #334155; transition: background .15s; }
+  .sc-grip:hover::before, .sc-grip.dragging::before { background: #94a3b8; }
+  html.light .sc-grip::before { background: #cbd5e1; }
+  html.light .sc-grip:hover::before, html.light .sc-grip.dragging::before { background: #64748b; }
+  #scPerfScroll thead th { position: sticky; top: 0; z-index: 1; background: #0f172a; }
+  html.light #scPerfScroll thead th { background: #f8fafc; }
   .sc-tick { --c: #94a3b8; display: flex; align-items: center; gap: .35rem; cursor: pointer; user-select: none; padding: 3px 8px 3px 6px; border-radius: 6px;
              border: 1px solid rgba(148,163,184,.25); min-width: 0; }
   .sc-tick .nm { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -280,6 +296,35 @@
     if (save) { try { localStorage.setItem('th_sector_fold_' + key, closed ? '1' : '0'); } catch (e) {} }
     if (!closed && key === 'chart' && chart) setTimeout(function () { chart.timeScale().fitContent(); placeTags(); }, 50);
   }
+  // v4.259: the grips - drag to set the chart's height (the tick column follows) or the height the
+  // Performance table scrolls inside; double-click resets; each size is kept per browser
+  var SIZES = { chart: { min: 220, max: 1600, def: 400 }, perf: { min: 120, max: 4000, def: 0 } };
+  function sizedEl(key) { return key === 'chart' ? $('scChart') : $('scPerfScroll'); }
+  function applySize(key, h, save) {
+    h = h > 0 ? Math.round(Math.min(SIZES[key].max, Math.max(SIZES[key].min, h))) : 0;
+    if (key === 'chart') { $('scChart').style.height = h + 'px'; $('scTicks').style.maxHeight = h + 'px'; tagsSoon(); }
+    else $('scPerfScroll').style.maxHeight = h ? h + 'px' : '';
+    if (save) { try { if (h && h !== SIZES[key].def) localStorage.setItem('th_sector_h_' + key, String(h)); else localStorage.removeItem('th_sector_h_' + key); } catch (e) {} }
+  }
+  document.querySelectorAll('.sc-grip').forEach(function (g) {
+    var key = g.dataset.grip;
+    g.addEventListener('pointerdown', function (ev) {
+      if (ev.button !== 0) return;
+      ev.preventDefault();
+      try { g.setPointerCapture(ev.pointerId); } catch (e) {}
+      g.classList.add('dragging');
+      var y0 = ev.clientY, h0 = sizedEl(key).getBoundingClientRect().height;
+      function mv(e) { applySize(key, h0 + e.clientY - y0, false); }
+      function up() {
+        g.classList.remove('dragging');
+        g.removeEventListener('pointermove', mv); g.removeEventListener('pointerup', up); g.removeEventListener('pointercancel', up);
+        applySize(key, sizedEl(key).getBoundingClientRect().height, true);
+      }
+      g.addEventListener('pointermove', mv); g.addEventListener('pointerup', up); g.addEventListener('pointercancel', up);
+    });
+    g.addEventListener('dblclick', function () { applySize(key, SIZES[key].def, true); });
+    try { var v = parseInt(localStorage.getItem('th_sector_h_' + key) || '', 10); if (v > 0) applySize(key, v, false); } catch (e) {}
+  });
   document.querySelectorAll('.sc-fold').forEach(function (b) {
     b.addEventListener('click', function () { setCardFold(b.dataset.fold, !b.classList.contains('closed'), true); });
     try { if (localStorage.getItem('th_sector_fold_' + b.dataset.fold) === '1') setCardFold(b.dataset.fold, true, false); } catch (e) {}

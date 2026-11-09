@@ -223,6 +223,17 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-09 - v4.259: Sector Rotation - the chart and the Performance table are adjustable in height
+
+The user: *"make the chart and the performance pane in sector rotation adjustible"*. `templates/sector.html`: a
+drag grip (a short bar) under the ETF history chart sets the chart's height (220-1600 px; the tick column
+follows, the chart re-fits through `autoSize`, the line tags re-place), and one under the Performance table sets
+the height the table scrolls inside (no cap until dragged, the column headings stay put while it scrolls).
+Double-click a grip to reset (the chart to 400 px, the table to its whole height). Each size is kept per
+browser (`localStorage` `th_sector_h_chart` / `th_sector_h_perf`, screens differ per device). Both card bodies
+are wrapped (`#scFold-chart`, `#scFold-perf`) so a grip folds away with its card; the table now sits in
+`#scPerfScroll`. Pointer events with capture, so a drag works with a mouse or a finger.
+
 ### 2026-11-09 - v4.258: Sector Rotation - the ticked funds are remembered per member
 
 The user: *"the selection of the ETF list make it a user memory, when user tick to show in chart it will
