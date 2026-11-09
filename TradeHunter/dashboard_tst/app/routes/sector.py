@@ -105,7 +105,7 @@ def sector_home(request: Request, tab: str = "", user: User = Depends(require_us
         request, "sector.html",
         {"user": user, "etfs": etfs, "tab": "chart" if tab == "chart" else "rrg",
          "periods": [{"key": k, "days": n, "group": g} for k, n, g in sc.PERIODS],
-         "default_period": sc.DEFAULT_PERIOD},
+         "default_period": sc.DEFAULT_PERIOD, "default_group": sc.DEFAULT_GROUP},
     )
 
 

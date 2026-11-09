@@ -83,7 +83,12 @@ def test_the_page_has_two_side_tabs_and_the_api_answers(engine, user, monkeypatc
     assert html.count('class="sc-tab ') == 2 and "RRG Chart" in html and "Sector Chart" in html
     assert 'data-tab="rrg" class="sc-tab block px-3 py-3 border-l-2 transition on"' in html
     assert 'data-tab="chart" class="sc-tab block px-3 py-3 border-l-2 border-t border-t-slate-800/60 transition on"' in html2
-    assert html.count('class="sc-tick"') == 13 and html.count('class="sc-per ') == 26 and 'rrg.optuma.com' in html
+    assert html.count('class="sc-tick"') == 13 and 'rrg.optuma.com' in html
+    # v4.251: a group selector (All days / All weeks / All months) in place of 26 period pills;
+    # the 26 periods travel to the page as JSON and become the tables' columns
+    assert html.count('class="sc-grp ') == 3 and 'data-group="months" title="1m to 6m - 21 sessions each">All months' in html
+    assert 'hover:text-slate-200 on"\n                    data-group="months"' in html      # the default group is on
+    assert html.count('class="sc-per ') == 0 and '"key": "10w"' in html and "var group = 'months'" in html
     assert "Holdings" in html and "Industry" in html and "lightweight-charts" in html
     assert api["ok"] and len(api["etfs"]) == 13 and api["etfs"][0]["last"] is None
     assert bad == {"ok": False, "error": "unknown fund"}

@@ -108,33 +108,27 @@
         <div class="px-4 py-2.5 border-b border-slate-800 flex items-center justify-between gap-3 flex-wrap">
           <div>
             <h2 class="text-sm font-semibold text-slate-200">Performance</h2>
-            <p class="text-[11px] text-slate-500">every fund's return over the picked period, best first &middot; click a row to list what the fund holds</p>
+            <p class="text-[11px] text-slate-500">every fund's return over each period of the picked group &middot; click a column to sort by it &middot; click a row to list what the fund holds</p>
           </div>
-          <div class="text-[11px] space-y-1">
-            {% for g in ['days', 'weeks', 'months'] %}
-            <div class="flex items-center gap-1">
-              <span class="w-12 text-slate-500 capitalize">{{ g }}</span>
-              {% for p in periods if p.group == g %}
-              <button type="button" class="sc-per px-1.5 py-0.5 rounded border border-slate-700 text-slate-400 hover:text-slate-200 tabular-nums {% if p.key == default_period %}on{% endif %}"
-                      data-period="{{ p.key }}" title="{{ p.days }} trading sessions">{{ p.key }}</button>
-              {% endfor %}
-            </div>
+          <div class="flex items-center gap-1 text-[11px]">
+            <span class="text-slate-500 mr-1">Show</span>
+            {% for g, lbl, hint in [('days', 'All days', '1d to 10d - trading sessions'), ('weeks', 'All weeks', '1w to 10w - 5 sessions each'), ('months', 'All months', '1m to 6m - 21 sessions each')] %}
+            <button type="button" class="sc-grp px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:text-slate-200 {% if g == default_group %}on{% endif %}"
+                    data-group="{{ g }}" title="{{ hint }}">{{ lbl }}</button>
             {% endfor %}
           </div>
         </div>
         <div class="overflow-x-auto">
           <table class="w-full text-[12px]" id="scEtfTable">
             <thead class="text-[10px] uppercase tracking-wide text-slate-500">
-              <tr class="border-b border-slate-800">
+              <tr id="scEtfHead" class="border-b border-slate-800">
                 <th class="text-left px-4 py-2 w-8">#</th>
                 <th class="text-left px-2 py-2">ETF</th>
                 <th class="text-right px-2 py-2">Last</th>
-                <th class="text-right px-2 py-2 whitespace-nowrap">Return <span id="scPerLbl" class="normal-case text-slate-400"></span></th>
-                <th class="text-left px-2 py-2 w-56"></th>
                 <th class="text-left px-4 py-2">Trend</th>
               </tr>
             </thead>
-            <tbody id="scEtfBody"><tr><td colspan="6" class="px-4 py-6 text-center text-slate-500">Loading the funds&hellip;</td></tr></tbody>
+            <tbody id="scEtfBody"><tr><td colspan="14" class="px-4 py-6 text-center text-slate-500">Loading the funds&hellip;</td></tr></tbody>
           </table>
         </div>
       </section>
@@ -157,22 +151,16 @@
         <div class="overflow-x-auto">
           <table class="w-full text-[12px]" id="scHoldTable">
             <thead class="text-[10px] uppercase tracking-wide text-slate-500">
-              <tr class="border-b border-slate-800">
+              <tr id="scHoldHead" class="border-b border-slate-800">
                 <th class="text-left px-4 py-2 w-8">#</th>
                 <th class="text-left px-2 py-2 sc-sort" data-key="symbol">Ticker</th>
                 <th class="text-right px-2 py-2 sc-sort" data-key="weight">Weight</th>
                 <th class="text-left px-2 py-2 sc-sort" data-key="sector">Sector</th>
                 <th class="text-left px-2 py-2 sc-sort" data-key="industry">Industry</th>
                 <th class="text-right px-2 py-2 sc-sort" data-key="last">Last</th>
-                <th class="text-right px-2 py-2 sc-sort whitespace-nowrap" data-key="ret">Return <span class="sc-hper normal-case text-slate-400"></span></th>
-                <th class="text-left px-2 py-2 w-28"></th>
-                <th class="text-right px-2 py-2 sc-sort" data-key="1w">1w</th>
-                <th class="text-right px-2 py-2 sc-sort" data-key="1m">1m</th>
-                <th class="text-right px-2 py-2 sc-sort" data-key="3m">3m</th>
-                <th class="text-right px-4 py-2 sc-sort" data-key="6m">6m</th>
               </tr>
             </thead>
-            <tbody id="scHoldBody"><tr><td colspan="12" class="px-4 py-6 text-center text-slate-500">Pick a fund above to list its holdings.</td></tr></tbody>
+            <tbody id="scHoldBody"><tr><td colspan="16" class="px-4 py-6 text-center text-slate-500">Pick a fund above to list its holdings.</td></tr></tbody>
           </table>
         </div>
       </section>
@@ -188,7 +176,9 @@
   .sc-ico { --c: #94a3b8; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
             color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); border: 1px solid color-mix(in srgb, var(--c) 30%, transparent); }
   .sc-ico svg { width: 17px; height: 17px; }
-  .sc-range.on, .sc-per.on { border-color: rgba(52,211,153,.6); background: rgba(16,185,129,.15); color: #6ee7b7; }
+  .sc-range.on, .sc-grp.on { border-color: rgba(52,211,153,.6); background: rgba(16,185,129,.15); color: #6ee7b7; }
+  .sc-pcol { cursor: pointer; white-space: nowrap; } .sc-pcol:hover { color: #cbd5e1; } .sc-pcol.on { color: #6ee7b7; }
+  .sc-heat { font-variant-numeric: tabular-nums; }
   .sc-tick { --c: #94a3b8; display: inline-flex; align-items: center; gap: .35rem; cursor: pointer; user-select: none; padding: 2px 8px 2px 6px; border-radius: 6px;
              border: 1px solid rgba(148,163,184,.25); }
   .sc-tick input { width: 13px; height: 13px; accent-color: var(--c); margin: 0; }
@@ -210,7 +200,7 @@
   html.light .sc-row.on .sc-sym { color: #047857; }
   html.light .sc-row:hover { background: rgba(148,163,184,.16); }
   html.light .sc-row.on { background: rgba(16,185,129,.12); }
-  html.light .sc-range.on, html.light .sc-per.on, html.light .sc-sort.on { color: #047857; }
+  html.light .sc-range.on, html.light .sc-grp.on, html.light .sc-sort.on, html.light .sc-pcol.on { color: #047857; }
 </style>
 
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
@@ -238,7 +228,9 @@
 
   // ── state ──
   var D = null;                 // /sector/api/etfs payload
-  var period = '{{ default_period }}';
+  var PERIODS = {{ periods|tojson }};          // [{key, days, group}] - the 26 periods
+  var group = '{{ default_group }}';           // days | weeks | months: the columns both tables show
+  var period = '{{ default_period }}';         // the column the Performance table is sorted by
   var range = '1Y';
   var selected = null;          // the picked fund (holdings)
   var chart = null, lines = {}; // lightweight-charts + one line per ETF
@@ -252,7 +244,7 @@
     loading = true;
     fetch('/sector/api/etfs', { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (j) {
       loading = false;
-      if (!j.ok) { $('scEtfBody').innerHTML = '<tr><td colspan="6" class="px-4 py-6 text-center text-rose-300">Could not load the funds.</td></tr>'; return; }
+      if (!j.ok) { $('scEtfBody').innerHTML = '<tr><td colspan="14" class="px-4 py-6 text-center text-rose-300">Could not load the funds.</td></tr>'; return; }
       D = j;
       var asof = (D.etfs.find(function (e) { return e.symbol === 'SPY'; }) || D.etfs[0] || {}).as_of;
       if (asof) $('scAsOf').textContent = 'closes to ' + asof;
@@ -263,7 +255,7 @@
         var best = sortedEtfs().filter(function (e) { return e.symbol !== 'SPY' && e.symbol !== 'QQQ'; })[0];
         if (best) select(best.symbol, false);
       }
-    }).catch(function () { loading = false; $('scEtfBody').innerHTML = '<tr><td colspan="6" class="px-4 py-6 text-center text-rose-300">Could not load the funds.</td></tr>'; });
+    }).catch(function () { loading = false; $('scEtfBody').innerHTML = '<tr><td colspan="14" class="px-4 py-6 text-center text-rose-300">Could not load the funds.</td></tr>'; });
   }
 
   // ── the chart ──
@@ -343,6 +335,23 @@
   }
 
   // ── the performance table ──
+  function groupPeriods() { return PERIODS.filter(function (p) { return p.group === group; }); }
+  function groupDays() { return Math.max.apply(null, groupPeriods().map(function (p) { return p.days; })); }
+  // a cell's tint: the return against the biggest move in the table, green or red, never opaque
+  function heat(v, maxAbs) {
+    if (v == null || !maxAbs) return '';
+    var a = Math.min(1, Math.abs(v) / maxAbs) * 0.32;
+    return 'background:' + (v >= 0 ? 'rgba(52,211,153,' : 'rgba(251,113,133,') + a.toFixed(3) + ')';
+  }
+  function periodTh(p, onKey, cls, last) {
+    return '<th class="' + cls + ' text-right py-2 ' + (last ? 'px-4' : 'px-2') + (p.key === onKey ? ' on' : '') + '" data-key="' + p.key + '" data-period="' + p.key + '" title="' + p.days + ' trading sessions">' + p.key + '</th>';
+  }
+  function renderEtfHead() {
+    var ps = groupPeriods();
+    $('scEtfHead').innerHTML = '<th class="text-left px-4 py-2 w-8">#</th><th class="text-left px-2 py-2">ETF</th><th class="text-right px-2 py-2">Last</th>' +
+      ps.map(function (p) { return periodTh(p, period, 'sc-pcol'); }).join('') +
+      '<th class="text-left px-4 py-2">Trend <span class="normal-case text-slate-400">' + ps[ps.length - 1].key + '</span></th>';
+  }
   function sortedEtfs() {
     return D.etfs.slice().sort(function (a, b) {
       var x = a.ret[period], y = b.ret[period];
@@ -361,46 +370,51 @@
     return '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '" aria-hidden="true"><polyline fill="none" stroke="' + c + '" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" points="' + d + '"/>' +
            '<circle cx="' + (w - 1) + '" cy="' + (h - 2 - (pts[pts.length - 1] - lo) * (h - 4) / span).toFixed(1) + '" r="2" fill="' + c + '"/></svg>';
   }
-  function bar(v, maxAbs, w) {
-    w = w || 200;
-    if (v == null || !maxAbs) return '';
-    var half = w / 2, len = Math.min(half, Math.abs(v) / maxAbs * half);
-    var left = v >= 0 ? half : half - len;
-    return '<div class="relative" style="width:' + w + 'px;height:8px"><div class="absolute top-0 bottom-0" style="left:' + half + 'px;width:1px;background:rgba(148,163,184,.4)"></div>' +
-           '<div class="sc-bar absolute top-0" style="left:' + left + 'px;width:' + len + 'px;background:' + (v >= 0 ? 'rgba(52,211,153,.75)' : 'rgba(251,113,133,.8)') + '"></div></div>';
-  }
   function renderTable() {
     if (!D) return;
-    var n = periodDays(period);
-    $('scPerLbl').textContent = period;
-    document.querySelectorAll('.sc-hper').forEach(function (s) { s.textContent = period; });
+    renderEtfHead();
+    var ps = groupPeriods(), n = groupDays();
     var rows = sortedEtfs();
-    var maxAbs = Math.max.apply(null, rows.map(function (e) { return Math.abs(e.ret[period] || 0); }).concat([0.01]));
+    var maxAbs = 0.01;
+    rows.forEach(function (e) { ps.forEach(function (p) { maxAbs = Math.max(maxAbs, Math.abs(e.ret[p.key] || 0)); }); });
     $('scEtfBody').innerHTML = rows.map(function (e, i) {
-      var v = e.ret[period];
       return '<tr class="sc-row' + (e.symbol === selected ? ' on' : '') + '" data-sym="' + e.symbol + '">' +
         '<td class="px-4 py-1.5 text-slate-500 tabular-nums">' + (i + 1) + '</td>' +
         '<td class="px-2 py-1.5"><span class="inline-flex items-center gap-2"><span class="sc-dot" style="background:' + e.color + '"></span>' +
           '<span class="sc-sym font-semibold text-slate-200">' + esc(e.symbol) + '</span><span class="text-slate-500">' + esc(e.name) + '</span></span></td>' +
         '<td class="px-2 py-1.5 text-right tabular-nums text-slate-300">' + money(e.last) + '</td>' +
-        '<td class="px-2 py-1.5 text-right tabular-nums font-medium ' + cls(v) + '">' + pct(v) + '</td>' +
-        '<td class="px-2 py-1.5">' + bar(v, maxAbs) + '</td>' +
+        ps.map(function (p) {
+          var v = e.ret[p.key];
+          return '<td class="sc-heat px-2 py-1.5 text-right ' + cls(v) + (p.key === period ? ' font-semibold' : '') + '" style="' + heat(v, maxAbs) + '">' + pct(v, 1) + '</td>';
+        }).join('') +
         '<td class="px-4 py-1.5">' + spark(e.tail, n, e.color) + '</td></tr>';
     }).join('');
   }
-  function periodDays(k) { var p = (D ? D.periods : []).find(function (x) { return x.key === k; }); return p ? p.days : 21; }
   $('scEtfBody').addEventListener('click', function (e) {
     var tr = e.target.closest ? e.target.closest('tr.sc-row') : null;
     if (tr) select(tr.dataset.sym, true);
   });
-  document.querySelectorAll('.sc-per').forEach(function (b) {
-    b.addEventListener('click', function () {
-      period = b.dataset.period;
-      document.querySelectorAll('.sc-per').forEach(function (x) { x.classList.toggle('on', x === b); });
-      renderTable();
-      renderHoldings();
-    });
+  // a period column sorts the funds by it
+  $('scEtfHead').addEventListener('click', function (e) {
+    var th = e.target.closest ? e.target.closest('th.sc-pcol') : null;
+    if (!th) return;
+    period = th.dataset.period;
+    renderTable();
   });
+  // the group: every period of it becomes a column, in both tables
+  function setGroup(g) {
+    group = g;
+    document.querySelectorAll('.sc-grp').forEach(function (b) { b.classList.toggle('on', b.dataset.group === g); });
+    var ps = groupPeriods();
+    if (!ps.some(function (p) { return p.key === period; })) period = ps[0].key;
+    if (PERIOD_KEYS[holdSort.key] && !ps.some(function (p) { return p.key === holdSort.key; })) holdSort = { key: ps[0].key, dir: -1 };
+    renderTable();
+    renderHoldHead();
+    renderHoldings();
+  }
+  var PERIOD_KEYS = {};
+  PERIODS.forEach(function (p) { PERIOD_KEYS[p.key] = p.days; });
+  document.querySelectorAll('.sc-grp').forEach(function (b) { b.addEventListener('click', function () { setGroup(b.dataset.group); }); });
 
   // ── the holdings ──
   function select(sym, tickIt) {
@@ -415,24 +429,30 @@
     if (!hit) {
       $('scHoldTitle').textContent = sym;
       $('scHoldSub').textContent = 'loading the holdings…';
-      $('scHoldBody').innerHTML = '<tr><td colspan="12" class="px-4 py-6 text-center text-slate-500">Loading ' + esc(sym) + '’s holdings and their prices…</td></tr>';
+      $('scHoldBody').innerHTML = '<tr><td colspan="16" class="px-4 py-6 text-center text-slate-500">Loading ' + esc(sym) + '’s holdings and their prices…</td></tr>';
     }
     fetch('/sector/api/holdings?symbol=' + encodeURIComponent(sym), { credentials: 'same-origin' })
       .then(function (r) { return r.json(); })
       .then(function (j) {
-        if (!j.ok) { $('scHoldBody').innerHTML = '<tr><td colspan="12" class="px-4 py-6 text-center text-rose-300">' + esc(j.error || 'Could not load the holdings.') + '</td></tr>'; return; }
+        if (!j.ok) { $('scHoldBody').innerHTML = '<tr><td colspan="16" class="px-4 py-6 text-center text-rose-300">' + esc(j.error || 'Could not load the holdings.') + '</td></tr>'; return; }
         holdCache[sym] = j;
         if (sym === selected) renderHoldings();
         // the sector / industry map is built once, in the background (the 11 Finviz sector
         // screens; a cold build can take minutes when Finviz throttles): ask again, up to 5 min
         if (j.industry_state === 'loading' && attempt < 60) setTimeout(function () { if (sym === selected) loadHoldings(sym, attempt + 1); }, 5000);
       })
-      .catch(function () { $('scHoldBody').innerHTML = '<tr><td colspan="12" class="px-4 py-6 text-center text-rose-300">Could not load the holdings.</td></tr>'; });
+      .catch(function () { $('scHoldBody').innerHTML = '<tr><td colspan="16" class="px-4 py-6 text-center text-rose-300">Could not load the holdings.</td></tr>'; });
   }
   function holdVal(r, key) {
-    if (key === 'ret') return r.ret ? r.ret[period] : null;
-    if (['1w', '1m', '3m', '6m'].indexOf(key) >= 0) return r.ret ? r.ret[key] : null;
+    if (PERIOD_KEYS[key]) return r.ret ? r.ret[key] : null;
     return r[key];
+  }
+  var HOLD_FIXED = '<th class="text-left px-4 py-2 w-8">#</th><th class="text-left px-2 py-2 sc-sort" data-key="symbol">Ticker</th>' +
+    '<th class="text-right px-2 py-2 sc-sort" data-key="weight">Weight</th><th class="text-left px-2 py-2 sc-sort" data-key="sector">Sector</th>' +
+    '<th class="text-left px-2 py-2 sc-sort" data-key="industry">Industry</th><th class="text-right px-2 py-2 sc-sort" data-key="last">Last</th>';
+  function renderHoldHead() {
+    var ps = groupPeriods();
+    $('scHoldHead').innerHTML = HOLD_FIXED + ps.map(function (p, i) { return periodTh(p, holdSort.key, 'sc-sort', i === ps.length - 1); }).join('');
   }
   function renderHoldings() {
     var j = holdCache[selected];
@@ -460,11 +480,14 @@
       return (x - y) * dir;
     });
     document.querySelectorAll('.sc-sort').forEach(function (th) { th.classList.toggle('on', th.dataset.key === k); });
-    var maxAbs = Math.max.apply(null, rows.map(function (r) { return Math.abs(holdVal(r, 'ret') || 0); }).concat([0.01]));
-    if (!rows.length) { $('scHoldBody').innerHTML = '<tr><td colspan="12" class="px-4 py-6 text-center text-slate-500">' + (j.error ? esc(j.error) : 'No holdings to show.') + '</td></tr>'; return; }
+    var ps = groupPeriods(), maxAbs = 0.01;
+    rows.forEach(function (r) { if (r.ret) ps.forEach(function (p) { maxAbs = Math.max(maxAbs, Math.abs(r.ret[p.key] || 0)); }); });
+    if (!rows.length) { $('scHoldBody').innerHTML = '<tr><td colspan="16" class="px-4 py-6 text-center text-slate-500">' + (j.error ? esc(j.error) : 'No holdings to show.') + '</td></tr>'; return; }
     $('scHoldBody').innerHTML = rows.map(function (r, i) {
-      var v = holdVal(r, 'ret');
-      function cell(key) { var x = holdVal(r, key); return '<td class="px-2 py-1.5 text-right tabular-nums ' + cls(x) + '">' + pct(x, 1) + '</td>'; }
+      function cell(p, last) {
+        var x = holdVal(r, p.key);
+        return '<td class="sc-heat py-1.5 text-right ' + (last ? 'px-4' : 'px-2') + ' ' + cls(x) + (p.key === k ? ' font-semibold' : '') + '" style="' + heat(x, maxAbs) + '">' + pct(x, 1) + '</td>';
+      }
       return '<tr class="sc-row sc-hold" data-sym="' + esc(r.chart_symbol || r.symbol) + '" title="open ' + esc(r.symbol) + '’s chart in a new window">' +
         '<td class="px-4 py-1.5 text-slate-500 tabular-nums">' + (i + 1) + '</td>' +
         '<td class="px-2 py-1.5"><span class="inline-flex items-center gap-2">' + (window.tkLogo ? window.tkLogo(r.symbol, 16) : '') +
@@ -473,19 +496,18 @@
         '<td class="px-2 py-1.5 text-slate-400 whitespace-nowrap">' + esc(r.sector || '') + '</td>' +
         '<td class="px-2 py-1.5 text-slate-400 whitespace-nowrap">' + esc(r.industry || '') + '</td>' +
         '<td class="px-2 py-1.5 text-right tabular-nums text-slate-300">' + money(r.last) + '</td>' +
-        '<td class="px-2 py-1.5 text-right tabular-nums font-medium ' + cls(v) + '">' + pct(v) + '</td>' +
-        '<td class="px-2 py-1.5">' + bar(v, maxAbs, 100) + '</td>' +
-        cell('1w') + cell('1m') + cell('3m') + cell('6m').replace('px-2', 'px-4') + '</tr>';
+        ps.map(function (p, j) { return cell(p, j === ps.length - 1); }).join('') + '</tr>';
     }).join('');
   }
-  document.querySelectorAll('.sc-sort').forEach(function (th) {
-    th.addEventListener('click', function () {
-      var k = th.dataset.key;
-      if (holdSort.key === k) holdSort.dir = -holdSort.dir;
-      else holdSort = { key: k, dir: (k === 'symbol' || k === 'sector' || k === 'industry') ? 1 : -1 };
-      renderHoldings();
-    });
+  $('scHoldHead').addEventListener('click', function (e) {
+    var th = e.target.closest ? e.target.closest('th.sc-sort') : null;
+    if (!th) return;
+    var k = th.dataset.key;
+    if (holdSort.key === k) holdSort.dir = -holdSort.dir;
+    else holdSort = { key: k, dir: (k === 'symbol' || k === 'sector' || k === 'industry') ? 1 : -1 };
+    renderHoldings();
   });
+  renderHoldHead();
   $('scHoldFind').addEventListener('input', renderHoldings);
   // a ticker opens its chart in its own window (the Watchlist chart; one window per ticker)
   $('scHoldBody').addEventListener('click', function (e) {

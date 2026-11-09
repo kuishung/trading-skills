@@ -223,6 +223,18 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-09 - v4.251: Sector Chart - all days, all weeks or all months as columns
+
+The user, on the 26 periods: *"this i need it to be in shown all day, all week, or all month"*. The Performance
+table no longer shows ONE picked period: a **Show** selector - **All days | All weeks | All months** - makes
+every period of the group a column (1d-10d, 1w-10w or 1m-6m), each cell the return tinted green / red against
+the biggest move in the table, a click on a column heading sorts the funds by it (the heading highlighted, the
+column bold), the Trend sparkline covers the group's longest window (10d / 10w / 6m). The **Holdings** table
+follows the same group: its Return + bar + 1w/1m/3m/6m columns are replaced by the group's columns, all
+sortable, the same tint. Opens on months, sorted by 1m. `templates/sector.html` (the 26 periods arrive as
+JSON; both table heads are built by the page), `routes/sector.py` + `services/sector_chart.py`
+(`DEFAULT_GROUP`), `tests/test_sector_chart.py`. No server-side data change.
+
 ### 2026-11-09 - v4.250: Sector Rotation revamped - two side tabs, RRG Chart | Sector Chart
 
 The user: *"in sector rotation page i need to revamp it. Currently is a 3 panel in vertical page. I need two side tab.

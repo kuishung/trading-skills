@@ -648,7 +648,9 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
 - **Sector Rotation = TWO SIDE TABS since v4.250 (2026-11-09): "RRG Chart" (Optuma's embed) | "Sector Chart"**
   (`routes/sector.py`, `templates/sector.html`, `services/sector_chart.py`): the ETF history chart with a tick box
   per fund (11 SPDR sectors + SPY/QQQ, lines rebased to 0% over the range), the Performance table over 26 periods
-  (1d-10d, 1w-10w, 1m-6m in TRADING days) with sparklines, and the picked fund's Holdings (issuer book + Finviz
+  (1d-10d, 1w-10w, 1m-6m in TRADING days) with sparklines - **since v4.251 a Show selector (All days | All weeks |
+  All months) makes every period of the group a tinted column in BOTH tables, a column heading sorts** (user: "shown
+  all day, all week, or all month") - and the picked fund's Holdings (issuer book + Finviz
   sector/industry map + each holding's returns from Yahoo closes, heaviest 120 priced). `/sector/api/etfs`,
   `/sector/api/holdings?symbol=`. The old three-column page (Finviz filter, Sector & Industry drill-down, ticker
   list, inline chart) is gone from the page; its fragment routes still exist in `routes/sector.py`.

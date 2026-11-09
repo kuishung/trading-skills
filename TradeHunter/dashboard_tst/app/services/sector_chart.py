@@ -39,6 +39,7 @@ PERIODS: list[tuple[str, int, str]] = (
 )
 PERIOD_DAYS = {k: n for k, n, _ in PERIODS}
 DEFAULT_PERIOD = "1m"
+DEFAULT_GROUP = "months"     # the columns both tables open on: days | weeks | months (v4.251)
 MAX_DAYS = max(PERIOD_DAYS.values())          # 126 - the sparkline tail is MAX_DAYS + 1 closes
 
 # one colour per ETF, shared by the tick boxes, the chart lines and the table rows
