@@ -35,15 +35,15 @@
     <a href="/sector" data-tab="rrg" title="RRG Chart" class="sc-tab block px-3 py-3 border-l-2 transition {% if tab == 'rrg' %}on{% endif %}">
       <div class="flex items-center gap-2.5">
         <span class="sc-ico" style="--c:#34d399"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></span>
-        <span class="sc-txt min-w-0"><span class="sc-lbl block text-[14px] text-slate-200">RRG Chart</span>
-          <span class="block text-[12px] text-slate-500">Relative Rotation Graph</span></span>
+        <span class="sc-txt min-w-0"><span class="sc-lbl block text-[16px] text-slate-200">RRG Chart</span>
+          <span class="block text-[13px] text-slate-500">Relative Rotation Graph</span></span>
       </div>
     </a>
     <a href="/sector?tab=chart" data-tab="chart" title="Sector Chart" class="sc-tab block px-3 py-3 border-l-2 border-t border-t-slate-800/60 transition {% if tab == 'chart' %}on{% endif %}">
       <div class="flex items-center gap-2.5">
         <span class="sc-ico" style="--c:#38bdf8"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg></span>
-        <span class="sc-txt min-w-0"><span class="sc-lbl block text-[14px] text-slate-200">Sector Chart</span>
-          <span class="block text-[12px] text-slate-500">ETFs, performance, holdings</span></span>
+        <span class="sc-txt min-w-0"><span class="sc-lbl block text-[16px] text-slate-200">Sector Chart</span>
+          <span class="block text-[13px] text-slate-500">ETFs, performance, holdings</span></span>
       </div>
     </a>
   </nav>
@@ -55,14 +55,14 @@
     <section id="scPane-rrg" class="rounded-lg border border-slate-800 bg-slate-900/40 p-4 flex-col" style="display:{% if tab == 'rrg' %}flex{% else %}none{% endif %};min-height:calc(100vh - 9rem)">
       <div class="flex items-center justify-between gap-2 mb-3 shrink-0">
         <div>
-          <h2 class="text-base font-semibold text-slate-200">Relative Rotation Graph</h2>
+          <h2 class="text-lg font-semibold text-slate-200">Relative Rotation Graph</h2>
           {# Optuma IS the RRG vendor - JdK RS-Ratio / RS-Momentum are licensed from RRG Research. First
              visit: pick "SPDR S&P US Sectors ETF" + "1 Week" from its own menus; it remembers per browser. #}
-          <span class="text-[12px] text-slate-500">the official Optuma RRG &middot; set Universe to
+          <span class="text-[13px] text-slate-500">the official Optuma RRG &middot; set Universe to
             <span class="text-slate-400">SPDR S&amp;P US Sectors ETF</span> once &mdash; it remembers</span>
         </div>
         <a href="https://rrg.optuma.com/" target="_blank" rel="noopener"
-           class="text-[12px] px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition whitespace-nowrap"
+           class="text-[13px] px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition whitespace-nowrap"
            title="Open the Optuma RRG in a new tab">Open full size &#8599;</a>
       </div>
       {# not sandboxed on purpose: without allow-same-origin it loses the localStorage that remembers the universe #}
@@ -78,8 +78,8 @@
       <section class="rounded-lg border border-slate-800 bg-slate-900/40">
         <div class="px-4 py-2.5 border-b border-slate-800 flex items-center justify-between gap-3 flex-wrap">
           {# v4.255: the "ETF history" title and its line are gone; only the closes date stays #}
-          <span id="scAsOf" class="text-[12px] text-slate-500" title="each line is rebased to 0% at the start of the range"></span>
-          <div class="flex items-center gap-1 text-[12px]">
+          <span id="scAsOf" class="text-[13px] text-slate-500" title="each line is rebased to 0% at the start of the range"></span>
+          <div class="flex items-center gap-1 text-[13px]">
             <span class="text-slate-500 mr-1">Range</span>
             {% for r in ['1M', '3M', '6M', '1Y', '2Y'] %}
             <button type="button" class="sc-range px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:text-slate-200 {% if r == '1Y' %}on{% endif %}" data-range="{{ r }}">{{ r }}</button>
@@ -98,7 +98,7 @@
             {# v4.254: a tag at the end of every drawn line - the fund's name - placed by placeTags() #}
             <div id="scTags" class="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true"></div>
           </div>
-          <div id="scTicks" class="w-full lg:w-64 shrink-0 flex flex-col gap-1 text-[14px] overflow-y-auto" style="max-height:400px">
+          <div id="scTicks" class="w-full lg:w-72 shrink-0 flex flex-col gap-1 text-[16px] overflow-y-auto" style="max-height:400px">
             {% for e in etfs %}
             <label class="sc-tick" style="--c:{{ e.color }}" title="{{ e.full_name }}">
               {# v4.258: ticked = the member's saved choice (User.prefs), SPY for a member who has never ticked #}
@@ -117,10 +117,10 @@
       <section class="rounded-lg border border-slate-800 bg-slate-900/40">
         <div class="px-4 py-2.5 border-b border-slate-800 flex items-center justify-between gap-3 flex-wrap">
           <div>
-            <h2 class="text-base font-semibold text-slate-200">Performance</h2>
-            <p class="text-[12px] text-slate-500">every fund's return over each period of the picked group &middot; click a column to sort by it &middot; click a row to list what the fund holds</p>
+            <h2 class="text-lg font-semibold text-slate-200">Performance</h2>
+            <p class="text-[13px] text-slate-500">every fund's return over each period of the picked group &middot; click a column to sort by it &middot; click a row to list what the fund holds</p>
           </div>
-          <div class="flex items-center gap-1 text-[12px]">
+          <div class="flex items-center gap-1 text-[13px]">
             <span class="text-slate-500 mr-1">Show</span>
             {% for g, lbl, hint in [('days', 'All days', '1d to 10d - trading sessions'), ('weeks', 'All weeks', '1w to 10w - 5 sessions each'), ('months', 'All months', '1m to 6m - 21 sessions each')] %}
             <button type="button" class="sc-grp px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:text-slate-200 {% if g == default_group %}on{% endif %}"
@@ -133,8 +133,8 @@
         {# v4.259: the table scrolls inside a height the grip under it sets (no cap until dragged); the heading stays put #}
         <div id="scFold-perf">
         <div id="scPerfScroll" class="overflow-auto">
-          <table class="w-full text-[14px]" id="scEtfTable">
-            <thead class="text-[11px] uppercase tracking-wide text-slate-500">
+          <table class="w-full text-[16px]" id="scEtfTable">
+            <thead class="text-[12px] uppercase tracking-wide text-slate-500">
               <tr id="scEtfHead" class="border-b border-slate-800">
                 <th class="text-left px-4 py-2 w-8">#</th>
                 <th class="text-left px-2 py-2">ETF</th>
@@ -155,18 +155,18 @@
           <div class="min-w-0 flex items-center gap-2.5">
             <span id="scHoldLogo"></span>
             <div class="min-w-0">
-              <h2 class="text-base font-semibold text-slate-200"><span id="scHoldTitle">Holdings</span></h2>
-              <p id="scHoldSub" class="text-[12px] text-slate-500 truncate">pick a fund in the table above</p>
+              <h2 class="text-lg font-semibold text-slate-200"><span id="scHoldTitle">Holdings</span></h2>
+              <p id="scHoldSub" class="text-[13px] text-slate-500 truncate">pick a fund in the table above</p>
             </div>
           </div>
-          <div class="flex items-center gap-2 text-[12px] text-slate-500">
-            <input id="scHoldFind" type="search" placeholder="find a ticker, sector or industry" class="bg-slate-950/40 border border-slate-700 rounded px-2 py-1 text-[14px] text-slate-200 w-56">
+          <div class="flex items-center gap-2 text-[13px] text-slate-500">
+            <input id="scHoldFind" type="search" placeholder="find a ticker, sector or industry" class="bg-slate-950/40 border border-slate-700 rounded px-2 py-1 text-[16px] text-slate-200 w-56">
             <span id="scHoldNote"></span>
           </div>
         </div>
         <div class="overflow-x-auto">
-          <table class="w-full text-[14px]" id="scHoldTable">
-            <thead class="text-[11px] uppercase tracking-wide text-slate-500">
+          <table class="w-full text-[16px]" id="scHoldTable">
+            <thead class="text-[12px] uppercase tracking-wide text-slate-500">
               <tr id="scHoldHead" class="border-b border-slate-800">
                 <th class="text-left px-4 py-2 w-8">#</th>
                 <th class="text-left px-2 py-2 sc-sort" data-key="symbol">Ticker</th>
@@ -226,7 +226,7 @@
   .sc-tick:has(input:checked) .sw { opacity: 1; }
   .sc-tick .sym { font-weight: 600; color: #e2e8f0; }
   .sc-tick .val { color: #cbd5e1; }
-  .sc-tag { --c: #94a3b8; position: absolute; transform: translateY(-50%); white-space: nowrap; font-size: 12px; line-height: 1; padding: 3px 6px;
+  .sc-tag { --c: #94a3b8; position: absolute; transform: translateY(-50%); white-space: nowrap; font-size: 13px; line-height: 1; padding: 3px 6px;
             border-radius: 4px; color: var(--c); font-weight: 600; background: rgba(11,18,32,.82); border: 1px solid color-mix(in srgb, var(--c) 55%, transparent); }
   .sc-tag .nm { color: #cbd5e1; font-weight: 400; margin-left: .3em; }
   html.light .sc-tag { background: rgba(255,255,255,.88); } html.light .sc-tag .nm { color: #334155; }
@@ -367,7 +367,7 @@
     if (chart) { try { chart.remove(); } catch (e) {} lines = {}; }
     chart = LightweightCharts.createChart($('scChart'), {
       autoSize: true,
-      layout: { background: { color: light() ? '#ffffff' : '#0b1220' }, textColor: light() ? '#334155' : '#94a3b8', fontSize: 12 },
+      layout: { background: { color: light() ? '#ffffff' : '#0b1220' }, textColor: light() ? '#334155' : '#94a3b8', fontSize: 13 },
       grid: { vertLines: { color: 'rgba(148,163,184,0.14)' }, horzLines: { color: 'rgba(148,163,184,0.14)' } },
       rightPriceScale: { borderColor: 'rgba(148,163,184,0.35)', scaleMargins: { top: 0.08, bottom: 0.08 } },
       timeScale: { borderColor: 'rgba(148,163,184,0.35)', timeVisible: false, rightOffset: 2 },

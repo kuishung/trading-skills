@@ -223,6 +223,12 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-09 - v4.261: Sector Rotation - larger type again
+
+The user, after v4.260: *"i need the font to be bigger"*. `templates/sector.html`: the tables and tick boxes
+14 -> 16 px, column headings 11 -> 12 px, helper lines / controls / buttons 12 -> 13 px, card titles 16 -> 18 px,
+side-tab labels 14 -> 16 px, the line tags and the chart's axis text 12 -> 13 px; the tick column 16 -> 18 rem.
+
 ### 2026-11-09 - v4.260: Sector Rotation - larger type
 
 The user: *"the font size in the sector rotation page too small, please increase it"*. `templates/sector.html`:
