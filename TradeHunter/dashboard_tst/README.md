@@ -223,6 +223,14 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-09 - v4.255: Sector Rotation - headings gone; the chart tags carry the fund's name
+
+The user: *"i do not want the sector rotation wording (save some space), the ETF History and the description
+also remove. The ticker name in chart show the full name not the ticker"*. `templates/sector.html`: the page
+heading row and the chart card's "ETF history" title + description are removed (the "closes to" date moves
+into the chart card's header row); the tag at the end of each drawn line and the price-axis label now show
+the fund's NAME ("Health Care", "S&P 500") instead of the ticker. The browser-tab title keeps "Sector Rotation".
+
 ### 2026-11-09 - v4.254: Sector Rotation - the folded panel parks on the right; a name tag on every line
 
 The user, after v4.253: *"when hide the ticker panel does not move to right"* and *"the name of the ticker is not

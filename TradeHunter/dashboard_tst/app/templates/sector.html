@@ -22,11 +22,7 @@
    (services/sector_chart.py). The earlier three-column page (Finviz filter, Sector &
    Industry drill-down, ticker list, inline chart) is gone; its routes remain. #}
 
-<div class="flex items-baseline justify-between gap-3 mb-3 flex-wrap">
-  <h1 class="text-2xl font-semibold">Sector Rotation</h1>
-  <span id="scAsOf" class="text-xs text-slate-500"></span>
-</div>
-
+{# v4.255: no page heading - the user wants the room for the charts #}
 {# v4.253: the rail folds to an icon strip with the chevron button (remembered per browser); the panes take the room #}
 <div id="scGrid" class="grid grid-cols-1 lg:grid-cols-[13rem_1fr] gap-4 items-start">
 
@@ -81,10 +77,8 @@
       {# 2a. the ETF history chart #}
       <section class="rounded-lg border border-slate-800 bg-slate-900/40">
         <div class="px-4 py-2.5 border-b border-slate-800 flex items-center justify-between gap-3 flex-wrap">
-          <div>
-            <h2 class="text-sm font-semibold text-slate-200">ETF history</h2>
-            <p class="text-[11px] text-slate-500">tick a fund to draw it &middot; each line is rebased to 0% at the start of the range, so the funds compare</p>
-          </div>
+          {# v4.255: the "ETF history" title and its line are gone; only the closes date stays #}
+          <span id="scAsOf" class="text-[11px] text-slate-500" title="each line is rebased to 0% at the start of the range"></span>
           <div class="flex items-center gap-1 text-[11px]">
             <span class="text-slate-500 mr-1">Range</span>
             {% for r in ['1M', '3M', '6M', '1Y', '2Y'] %}
@@ -245,7 +239,7 @@
     $('scPane-chart').style.display = name === 'chart' ? 'block' : 'none';
     document.querySelectorAll('.sc-tab').forEach(function (a) { a.classList.toggle('on', a.dataset.tab === name); });
     if (push) history.replaceState(null, '', name === 'chart' ? '/sector?tab=chart' : '/sector');
-    if (name === 'chart') { ensureLoaded(); if (chart) chart.timeScale().fitContent(); }
+    if (name === 'chart') { ensureLoaded(); if (chart) { chart.timeScale().fitContent(); tagsSoon(); } }
     else window.dispatchEvent(new Event('resize'));
   }
   document.querySelectorAll('.sc-tab').forEach(function (a) {
@@ -314,9 +308,9 @@
     });
     var zero = null;
     D.etfs.forEach(function (e) {
-      // title = the ticker: the price-axis label reads "XLV +26.9%", so each line is named on the chart (v4.253)
+      // title = the fund's name: the price-axis label reads "Health Care +26.9%" (v4.253 ticker; v4.255 name)
       var s = chart.addLineSeries({ color: e.color, lineWidth: e.symbol === 'SPY' ? 3 : 2, priceLineVisible: false, lastValueVisible: true,
-                                    title: e.symbol, crosshairMarkerRadius: 3, visible: isTicked(e.symbol),
+                                    title: e.name, crosshairMarkerRadius: 3, visible: isTicked(e.symbol),
                                     priceFormat: { type: 'custom', minMove: 0.01, formatter: function (v) { return (v > 0 ? '+' : '') + v.toFixed(2) + '%'; } } });
       lines[e.symbol] = s;
       if (!zero) zero = s;
@@ -348,11 +342,18 @@
     items.sort(function (a, b) { return a.y - b.y; });
     for (var i = 1; i < items.length; i++) if (items[i].y - items[i - 1].y < 16) items[i].y = items[i - 1].y + 16;
     host.innerHTML = items.map(function (it) {
+      // the fund's NAME, not the ticker (user, v4.255: "show the full name not the ticker")
       return '<span class="sc-tag" style="right:' + Math.max(0, W - it.x + 8).toFixed(0) + 'px;top:' + it.y.toFixed(0) + 'px;--c:' + it.e.color + '">' +
-        esc(it.e.symbol) + '<span class="nm">' + esc(it.e.name) + '</span></span>';
+        esc(it.e.name) + '</span>';
     }).join('');
   }
-  function tagsSoon() { if (window.requestAnimationFrame) requestAnimationFrame(placeTags); else setTimeout(placeTags, 0); }
+  // the chart lays out a frame or two after setData / fitContent, so place the tags now AND shortly
+  // after (a fresh load answered null coordinates on the first try and showed no tags - v4.255)
+  function tagsSoon() {
+    if (window.requestAnimationFrame) requestAnimationFrame(placeTags); else setTimeout(placeTags, 0);
+    setTimeout(placeTags, 150); setTimeout(placeTags, 600); setTimeout(placeTags, 1500);
+  }
+  window.addEventListener('resize', function () { setTimeout(placeTags, 50); });
   function rebased(sym) {
     var pts = (D.series[sym] || []);
     var n = RANGE_DAYS[range] || 252;
