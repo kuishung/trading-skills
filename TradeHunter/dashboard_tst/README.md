@@ -223,6 +223,15 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-09 - v4.257: Sector Rotation - the Performance and chart cards collapse
+
+The user: *"in the performance table I need to have able to collapse so that user can see the ticker table"*.
+A chevron button at the right of the Performance card's header folds the table away (the header with the
+Show selector stays), so the Holdings table rises into view; the ETF history card has the same button. Each
+choice is kept per browser (`localStorage` `th_sector_fold_perf` / `th_sector_fold_chart`); re-opening the
+chart card refits it and re-places the line tags. `templates/sector.html` + the new
+`templates/_sector_fold_btn.html` (the button, included twice with `_fold` set).
+
 ### 2026-11-09 - v4.256: Sector Rotation - the tick boxes stand to the right of the chart; the folded strip stays left
 
 The user, correcting v4.254: *"when hide the tab should still stay right [where it is]. I want the ticker panel to

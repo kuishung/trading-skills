@@ -86,10 +86,11 @@
             {% endfor %}
             <button type="button" id="scAll" class="ml-2 px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:text-slate-200" title="tick every fund">All</button>
             <button type="button" id="scNone" class="px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:text-slate-200" title="untick every fund">None</button>
+            {% set _fold = 'chart' %}{% include "_sector_fold_btn.html" %}
           </div>
         </div>
         {# v4.256: the tick boxes stand in a column to the RIGHT of the chart (user: "I want the ticker panel to show at right") #}
-        <div class="px-4 pb-3 pt-2.5 flex flex-col lg:flex-row gap-3 items-stretch">
+        <div id="scFold-chart" class="px-4 pb-3 pt-2.5 flex flex-col lg:flex-row gap-3 items-stretch">
           <div class="relative flex-1 min-w-0">
             <div id="scChart" class="w-full rounded border border-slate-800/70 bg-slate-950/30" style="height:400px"></div>
             {# v4.254: a tag at the end of every drawn line - the fund's name - placed by placeTags() #}
@@ -120,9 +121,11 @@
             <button type="button" class="sc-grp px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:text-slate-200 {% if g == default_group %}on{% endif %}"
                     data-group="{{ g }}" title="{{ hint }}">{{ lbl }}</button>
             {% endfor %}
+            {% set _fold = 'perf' %}{% include "_sector_fold_btn.html" %}
           </div>
         </div>
-        <div class="overflow-x-auto">
+        {# v4.257: the table folds away (the button above) so the Holdings table comes into view #}
+        <div id="scFold-perf" class="overflow-x-auto">
           <table class="w-full text-[12px]" id="scEtfTable">
             <thead class="text-[10px] uppercase tracking-wide text-slate-500">
               <tr id="scEtfHead" class="border-b border-slate-800">
@@ -193,6 +196,9 @@
   .sc-range.on, .sc-grp.on { border-color: rgba(52,211,153,.6); background: rgba(16,185,129,.15); color: #6ee7b7; }
   .sc-pcol { cursor: pointer; white-space: nowrap; } .sc-pcol:hover { color: #cbd5e1; } .sc-pcol.on { color: #6ee7b7; }
   .sc-heat { font-variant-numeric: tabular-nums; }
+  .sc-fold-chev { transition: transform .15s; }
+  .sc-fold.closed .sc-fold-chev { transform: rotate(180deg); }
+  .sc-folded-away { display: none !important; }
   .sc-tick { --c: #94a3b8; display: flex; align-items: center; gap: .35rem; cursor: pointer; user-select: none; padding: 3px 8px 3px 6px; border-radius: 6px;
              border: 1px solid rgba(148,163,184,.25); min-width: 0; }
   .sc-tick .nm { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -260,6 +266,23 @@
   }
   $('scRailBtn').addEventListener('click', function () { setFolded(!$('scGrid').classList.contains('sc-folded'), true); });
   try { if (localStorage.getItem(RAIL_KEY) === '1') setFolded(true, false); } catch (e) {}
+
+  // ── a card's body folds away (v4.257: "collapse so that user can see the ticker table") ──
+  function setCardFold(key, closed, save) {
+    var body = $('scFold-' + key), btn = document.querySelector('.sc-fold[data-fold="' + key + '"]');
+    if (!body || !btn) return;
+    body.classList.toggle('sc-folded-away', !!closed);
+    btn.classList.toggle('closed', !!closed);
+    btn.title = closed ? 'Expand' : 'Collapse';
+    btn.setAttribute('aria-label', btn.title);
+    btn.setAttribute('aria-expanded', closed ? 'false' : 'true');
+    if (save) { try { localStorage.setItem('th_sector_fold_' + key, closed ? '1' : '0'); } catch (e) {} }
+    if (!closed && key === 'chart' && chart) setTimeout(function () { chart.timeScale().fitContent(); placeTags(); }, 50);
+  }
+  document.querySelectorAll('.sc-fold').forEach(function (b) {
+    b.addEventListener('click', function () { setCardFold(b.dataset.fold, !b.classList.contains('closed'), true); });
+    try { if (localStorage.getItem('th_sector_fold_' + b.dataset.fold) === '1') setCardFold(b.dataset.fold, true, false); } catch (e) {}
+  });
 
   // ── state ──
   var D = null;                 // /sector/api/etfs payload
