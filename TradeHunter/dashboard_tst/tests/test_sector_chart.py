@@ -87,7 +87,7 @@ def test_the_page_has_two_side_tabs_and_the_api_answers(engine, user, monkeypatc
     assert "<h1" not in html and "ETF history" not in html                                                  # v4.255: no headings
     assert 'id="scTags"' in html and "function placeTags()" in html                                         # v4.254
     assert "#scGrid.sc-folded { grid-template-columns: 3rem minmax(0, 1fr); }" in html and "order: 2" not in html   # v4.256: the strip stays left
-    assert 'id="scTicks" class="w-full lg:w-56' in html and html.index('id="scChart"') < html.index('id="scTicks"')  # the tick boxes right of the chart
+    assert 'id="scTicks" class="w-full lg:w-64' in html and html.index('id="scChart"') < html.index('id="scTicks"')  # the tick boxes right of the chart
     assert html.count('class="sc-fold ') == 2 and 'id="scFold-perf"' in html and 'id="scFold-chart"' in html         # v4.257: the cards collapse
     assert html.count('class="sc-grip" data-grip=') == 2 and 'id="scPerfScroll"' in html and "th_sector_h_" in html  # v4.259: the heights drag
     assert html.index('id="scFold-perf"') < html.index('id="scPerfScroll"') < html.index('data-grip="perf"')        # the grip is inside the foldable body

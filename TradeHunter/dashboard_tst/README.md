@@ -223,6 +223,14 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-09 - v4.260: Sector Rotation - larger type
+
+The user: *"the font size in the sector rotation page too small, please increase it"*. `templates/sector.html`:
+every size on the page steps up - the Performance and Holdings tables and the tick boxes 12 -> 14 px, their
+column headings 10 -> 11 px, the helper lines, controls and range / group buttons 11 -> 12 px, the card titles
+14 -> 16 px, the side-tab labels 13 -> 14 px, the line tags 11 -> 12 px, the chart's axis text 11 -> 12 px
+(`layout.fontSize`). The tick column widens 14 -> 16 rem so the fund names still fit at the new size.
+
 ### 2026-11-09 - v4.259: Sector Rotation - the chart and the Performance table are adjustable in height
 
 The user: *"make the chart and the performance pane in sector rotation adjustible"*. `templates/sector.html`: a
