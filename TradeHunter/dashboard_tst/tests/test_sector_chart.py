@@ -81,8 +81,9 @@ def test_the_page_has_two_side_tabs_and_the_api_answers(engine, user, monkeypatc
     finally:
         app.dependency_overrides.clear()
     assert html.count('class="sc-tab ') == 2 and "RRG Chart" in html and "Sector Chart" in html
-    assert 'data-tab="rrg" class="sc-tab block px-3 py-3 border-l-2 transition on"' in html
-    assert 'data-tab="chart" class="sc-tab block px-3 py-3 border-l-2 border-t border-t-slate-800/60 transition on"' in html2
+    assert 'data-tab="rrg" title="RRG Chart" class="sc-tab block px-3 py-3 border-l-2 transition on"' in html
+    assert 'data-tab="chart" title="Sector Chart" class="sc-tab block px-3 py-3 border-l-2 border-t border-t-slate-800/60 transition on"' in html2
+    assert 'id="scRailBtn"' in html and 'th_sector_rail_folded' in html and "title: e.symbol" in html     # v4.253
     assert html.count('class="sc-tick"') == 13 and 'rrg.optuma.com' in html
     # v4.251: a group selector (All days / All weeks / All months) in place of 26 period pills;
     # the 26 periods travel to the page as JSON and become the tables' columns

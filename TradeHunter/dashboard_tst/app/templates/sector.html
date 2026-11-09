@@ -27,21 +27,26 @@
   <span id="scAsOf" class="text-xs text-slate-500"></span>
 </div>
 
-<div class="grid grid-cols-1 lg:grid-cols-[13rem_1fr] gap-4 items-start">
+{# v4.253: the rail folds to an icon strip with the chevron button (remembered per browser); the panes take the room #}
+<div id="scGrid" class="grid grid-cols-1 lg:grid-cols-[13rem_1fr] gap-4 items-start">
 
   {# ── the rail ── #}
-  <nav class="rounded-lg border border-slate-800 bg-slate-900/40 overflow-hidden lg:sticky lg:top-4">
-    <a href="/sector" data-tab="rrg" class="sc-tab block px-3 py-3 border-l-2 transition {% if tab == 'rrg' %}on{% endif %}">
+  <nav id="scRail" class="rounded-lg border border-slate-800 bg-slate-900/40 overflow-hidden lg:sticky lg:top-4">
+    <button type="button" id="scRailBtn" class="hidden lg:flex w-full items-center justify-end px-2 py-1.5 text-slate-500 hover:text-slate-200 border-b border-slate-800/60"
+            title="Hide the side panel" aria-label="Hide the side panel" aria-expanded="true">
+      <svg class="sc-chev" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg>
+    </button>
+    <a href="/sector" data-tab="rrg" title="RRG Chart" class="sc-tab block px-3 py-3 border-l-2 transition {% if tab == 'rrg' %}on{% endif %}">
       <div class="flex items-center gap-2.5">
         <span class="sc-ico" style="--c:#34d399"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></span>
-        <span class="min-w-0"><span class="sc-lbl block text-[13px] text-slate-200">RRG Chart</span>
+        <span class="sc-txt min-w-0"><span class="sc-lbl block text-[13px] text-slate-200">RRG Chart</span>
           <span class="block text-[11px] text-slate-500">Relative Rotation Graph</span></span>
       </div>
     </a>
-    <a href="/sector?tab=chart" data-tab="chart" class="sc-tab block px-3 py-3 border-l-2 border-t border-t-slate-800/60 transition {% if tab == 'chart' %}on{% endif %}">
+    <a href="/sector?tab=chart" data-tab="chart" title="Sector Chart" class="sc-tab block px-3 py-3 border-l-2 border-t border-t-slate-800/60 transition {% if tab == 'chart' %}on{% endif %}">
       <div class="flex items-center gap-2.5">
         <span class="sc-ico" style="--c:#38bdf8"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg></span>
-        <span class="min-w-0"><span class="sc-lbl block text-[13px] text-slate-200">Sector Chart</span>
+        <span class="sc-txt min-w-0"><span class="sc-lbl block text-[13px] text-slate-200">Sector Chart</span>
           <span class="block text-[11px] text-slate-500">ETFs, performance, holdings</span></span>
       </div>
     </a>
@@ -178,6 +183,15 @@
   .sc-ico { --c: #94a3b8; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
             color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); border: 1px solid color-mix(in srgb, var(--c) 30%, transparent); }
   .sc-ico svg { width: 17px; height: 17px; }
+  /* the folded rail: a 3rem icon strip, labels gone, the chevron turned */
+  @media (min-width: 1024px) {
+    #scGrid.sc-folded { grid-template-columns: 3rem minmax(0, 1fr); }
+    #scGrid.sc-folded .sc-txt { display: none; }
+    #scGrid.sc-folded .sc-tab { padding-left: 0; padding-right: 0; }
+    #scGrid.sc-folded .sc-tab > div { justify-content: center; }
+    #scGrid.sc-folded #scRailBtn { justify-content: center; }
+    #scGrid.sc-folded .sc-chev { transform: rotate(180deg); }
+  }
   .sc-range.on, .sc-grp.on { border-color: rgba(52,211,153,.6); background: rgba(16,185,129,.15); color: #6ee7b7; }
   .sc-pcol { cursor: pointer; white-space: nowrap; } .sc-pcol:hover { color: #cbd5e1; } .sc-pcol.on { color: #6ee7b7; }
   .sc-heat { font-variant-numeric: tabular-nums; }
@@ -228,6 +242,21 @@
     a.addEventListener('click', function (e) { e.preventDefault(); setTab(a.dataset.tab, true); });
   });
 
+  // ── the rail folds to an icon strip; the choice is remembered per browser ──
+  var RAIL_KEY = 'th_sector_rail_folded';
+  function setFolded(on, save) {
+    $('scGrid').classList.toggle('sc-folded', !!on);
+    var b = $('scRailBtn');
+    b.setAttribute('aria-expanded', on ? 'false' : 'true');
+    b.title = on ? 'Show the side panel' : 'Hide the side panel';
+    b.setAttribute('aria-label', b.title);
+    if (save) { try { localStorage.setItem(RAIL_KEY, on ? '1' : '0'); } catch (e) {} }
+    window.dispatchEvent(new Event('resize'));
+    if (chart) setTimeout(function () { chart.timeScale().fitContent(); }, 50);
+  }
+  $('scRailBtn').addEventListener('click', function () { setFolded(!$('scGrid').classList.contains('sc-folded'), true); });
+  try { if (localStorage.getItem(RAIL_KEY) === '1') setFolded(true, false); } catch (e) {}
+
   // ── state ──
   var D = null;                 // /sector/api/etfs payload
   var PERIODS = {{ periods|tojson }};          // [{key, days, group}] - the 26 periods
@@ -275,8 +304,9 @@
     });
     var zero = null;
     D.etfs.forEach(function (e) {
+      // title = the ticker: the price-axis label reads "XLV +26.9%", so each line is named on the chart (v4.253)
       var s = chart.addLineSeries({ color: e.color, lineWidth: e.symbol === 'SPY' ? 3 : 2, priceLineVisible: false, lastValueVisible: true,
-                                    title: '', crosshairMarkerRadius: 3, visible: isTicked(e.symbol),
+                                    title: e.symbol, crosshairMarkerRadius: 3, visible: isTicked(e.symbol),
                                     priceFormat: { type: 'custom', minMove: 0.01, formatter: function (v) { return (v > 0 ? '+' : '') + v.toFixed(2) + '%'; } } });
       lines[e.symbol] = s;
       if (!zero) zero = s;

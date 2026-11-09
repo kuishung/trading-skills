@@ -223,6 +223,15 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-09 - v4.253: Sector Rotation - the side panel folds away; the chart names each line
+
+The user: *"I want the side panel to be able to hide to the side with a button ... want in the chart it will
+show the name of the ticker"*. `templates/sector.html`: a chevron button at the top of the rail folds it to a
+3 rem icon strip (the two tab icons stay clickable, their names in the tooltip) and the panes take the room;
+the button turns to unfold it; the choice is kept per browser (`localStorage` `th_sector_rail_folded`). On the
+ETF history chart each line now carries its ticker: the price-axis label reads e.g. "XLV +26.9%" (the series
+`title`), so a drawn line is named without looking back at the tick boxes.
+
 ### 2026-11-09 - v4.252: Sector Rotation fills the window
 
 The user: *"i want the page to occupy full page not in the center"*. `templates/sector.html` overrides
