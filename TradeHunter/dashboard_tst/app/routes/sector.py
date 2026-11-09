@@ -105,8 +105,59 @@ def sector_home(request: Request, tab: str = "", user: User = Depends(require_us
         request, "sector.html",
         {"user": user, "etfs": etfs, "tab": "chart" if tab == "chart" else "rrg",
          "periods": [{"key": k, "days": n, "group": g} for k, n, g in sc.PERIODS],
-         "default_period": sc.DEFAULT_PERIOD, "default_group": sc.DEFAULT_GROUP},
+         "default_period": sc.DEFAULT_PERIOD, "default_group": sc.DEFAULT_GROUP,
+         "ticked": _sector_ticked(user)},
     )
+
+
+TICKED_PREF = "sector_chart_ticked"   # User.prefs: the funds ticked on the Sector Chart (v4.258)
+DEFAULT_TICKED = ["SPY"]              # what a member who has never ticked anything sees
+
+
+def _sector_ticked(user: User) -> list[str]:
+    """The funds the member last ticked on the Sector Chart (user, 2026-11-09: "when user
+    tick to show in chart it will remember and show it when the page is loaded"). Saved per
+    member, so the choice follows them to any browser; an empty list is a real choice (every
+    fund unticked) and is kept as such - only a member who has never ticked gets the default."""
+    from ..services import sector_chart as sc
+
+    prefs = getattr(user, "prefs", None) or {}
+    saved = prefs.get(TICKED_PREF)
+    if not isinstance(saved, list):
+        return list(DEFAULT_TICKED)
+    known = {s for s, _ in sc.ETFS}
+    return [str(s).upper() for s in saved if str(s).upper() in known]
+
+
+@router.post("/api/ticks")
+def sector_api_ticks(
+    payload: dict = Body(...),
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Remember which funds the member has ticked on the Sector Chart: ``{"symbols": [...]}``,
+    unknown symbols dropped, an empty list kept (= none ticked). Anything else clears the
+    memory, so the page opens on the default again."""
+    from ..services import sector_chart as sc
+
+    u = db.get(User, user.id)
+    if u is None:
+        return {"ok": False}
+    syms = payload.get("symbols")
+    prefs = dict(u.prefs or {})
+    if isinstance(syms, list):
+        known = {s for s, _ in sc.ETFS}
+        seen: list[str] = []
+        for s in syms:
+            s = str(s).strip().upper()
+            if s in known and s not in seen:
+                seen.append(s)
+        prefs[TICKED_PREF] = seen
+    else:
+        prefs.pop(TICKED_PREF, None)
+    u.prefs = prefs
+    db.commit()
+    return {"ok": True, "symbols": prefs.get(TICKED_PREF)}
 
 
 @router.get("/api/etfs")

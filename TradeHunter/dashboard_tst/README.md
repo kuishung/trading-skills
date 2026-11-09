@@ -223,6 +223,17 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-09 - v4.258: Sector Rotation - the ticked funds are remembered per member
+
+The user: *"the selection of the ETF list make it a user memory, when user tick to show in chart it will
+remember and show it when the page is loaded"*. The funds ticked on the Sector Chart are saved **per member on
+the server** (`User.prefs["sector_chart_ticked"]`, not the browser), so the chart opens on the same lines from
+any PC or phone. `routes/sector.py`: `sector_home` renders the saved set as the checked boxes (`_sector_ticked`;
+SPY for a member who has never ticked; an empty set is kept as "none ticked"); new `POST /sector/api/ticks`
+(`{"symbols": [...]}`, unknown symbols dropped, `null` clears back to the default). `templates/sector.html`:
+every tick change - a box, All / None, a row click that ticks its fund - posts the current set once, 400 ms
+after the last change. Test added.
+
 ### 2026-11-09 - v4.257: Sector Rotation - the Performance and chart cards collapse
 
 The user: *"in the performance table I need to have able to collapse so that user can see the ticker table"*.

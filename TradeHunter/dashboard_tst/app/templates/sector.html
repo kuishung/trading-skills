@@ -99,7 +99,8 @@
           <div id="scTicks" class="w-full lg:w-56 shrink-0 flex flex-col gap-1 text-[12px] overflow-y-auto" style="max-height:400px">
             {% for e in etfs %}
             <label class="sc-tick" style="--c:{{ e.color }}" title="{{ e.full_name }}">
-              <input type="checkbox" value="{{ e.symbol }}" {% if e.symbol == 'SPY' %}checked{% endif %}>
+              {# v4.258: ticked = the member's saved choice (User.prefs), SPY for a member who has never ticked #}
+              <input type="checkbox" value="{{ e.symbol }}" {% if e.symbol in ticked %}checked{% endif %}>
               <span class="sw"></span><span class="sym">{{ e.symbol }}</span>
               <span class="nm text-slate-500">{{ e.name }}</span><span class="val tabular-nums"></span>
             </label>
@@ -311,7 +312,7 @@
       if (!selected) {
         // land on the period's best SECTOR (not an index), as the table is sorted
         var best = sortedEtfs().filter(function (e) { return e.symbol !== 'SPY' && e.symbol !== 'QQQ'; })[0];
-        if (best) select(best.symbol, false);
+        if (best) select(best.symbol, null);   // null: land on it, but leave the member's ticks as saved (v4.258)
       }
     }).catch(function () { loading = false; $('scEtfBody').innerHTML = '<tr><td colspan="14" class="px-4 py-6 text-center text-rose-300">Could not load the funds.</td></tr>'; });
   }
@@ -408,6 +409,21 @@
     if (lines[sym]) lines[sym].applyOptions({ visible: !!on });
     paintTickValues(null);
     tagsSoon();
+    saveTicksSoon();
+  }
+  // v4.258: the ticked funds are remembered per member on the server (User.prefs), so the
+  // page opens on the same lines in any browser; one save a moment after the last change
+  var saveTimer = null;
+  function saveTicksSoon() {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveTicks, 400);
+  }
+  function saveTicks() {
+    saveTimer = null;
+    var syms = tickInputs().filter(function (i) { return i.checked; }).map(function (i) { return i.value; });
+    fetch('/sector/api/ticks', { method: 'POST', credentials: 'same-origin',
+                                 headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ symbols: syms }) })
+      .catch(function () {});
   }
   $('scTicks').addEventListener('change', function (e) {
     if (e.target && e.target.tagName === 'INPUT') setTicked(e.target.value, e.target.checked);
@@ -516,7 +532,7 @@
   function select(sym, tickIt) {
     selected = sym;
     document.querySelectorAll('#scEtfBody tr.sc-row').forEach(function (tr) { tr.classList.toggle('on', tr.dataset.sym === sym); });
-    if (tickIt || !isTicked(sym)) setTicked(sym, true);
+    if (tickIt !== null && (tickIt || !isTicked(sym))) setTicked(sym, true);
     loadHoldings(sym, 0);
   }
   function loadHoldings(sym, attempt) {

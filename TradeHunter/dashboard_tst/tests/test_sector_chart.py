@@ -98,3 +98,28 @@ def test_the_page_has_two_side_tabs_and_the_api_answers(engine, user, monkeypatc
     assert "Holdings" in html and "Industry" in html and "lightweight-charts" in html
     assert api["ok"] and len(api["etfs"]) == 13 and api["etfs"][0]["last"] is None
     assert bad == {"ok": False, "error": "unknown fund"}
+
+
+def test_the_ticked_funds_are_remembered_per_member(engine, user, monkeypatch):
+    """v4.258: the tick boxes open on the member's saved choice (User.prefs), SPY until they
+    have ticked anything; an empty choice is kept as 'none ticked'; unknown symbols are dropped."""
+    monkeypatch.setattr(sc, "_fetch_many", lambda symbols, rng: {s: ([], []) for s in symbols})
+    sc._etf_cache.clear()
+
+    def checked(html):
+        import re
+        return re.findall(r'value="([A-Z]+)" checked', html)
+
+    try:
+        c = _client(engine, user.id)
+        assert checked(c.get("/sector?tab=chart").text) == ["SPY"]
+        r = c.post("/sector/api/ticks", json={"symbols": ["xlk", "XLV", "NOPE", "XLK"]}).json()
+        assert r == {"ok": True, "symbols": ["XLK", "XLV"]}
+        assert checked(c.get("/sector?tab=chart").text) == ["XLK", "XLV"]        # page order, saved set
+        assert c.post("/sector/api/ticks", json={"symbols": []}).json()["symbols"] == []
+        assert checked(c.get("/sector?tab=chart").text) == []
+        assert c.post("/sector/api/ticks", json={"symbols": None}).json()["symbols"] is None
+        assert checked(c.get("/sector?tab=chart").text) == ["SPY"]              # cleared -> the default again
+        assert "function saveTicks()" in c.get("/sector").text
+    finally:
+        app.dependency_overrides.clear()
