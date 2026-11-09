@@ -239,6 +239,14 @@ async def lifespan(app: FastAPI):
         _macro_refresh.start_background()
     except Exception as exc:  # noqa: BLE001
         log.warning("macro series refresh not started: %s", exc)
+    # v4.250: the Sector Chart's ticker -> sector / industry map (the 11 Finviz sector screens;
+    # minutes cold when Finviz throttles) is built in the background a minute after start, so
+    # the first visitor's Holdings table has its columns. TST_SECTOR_PREWARM=0 switches it off.
+    try:
+        from .services import sector_chart as _sector_chart
+        _sector_chart.start_prewarm()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("sector industry map prewarm not started: %s", exc)
     yield
 
 

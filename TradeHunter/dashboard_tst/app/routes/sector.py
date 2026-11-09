@@ -91,27 +91,42 @@ def sector_filter_toggle(
 
 
 @router.get("", response_class=HTMLResponse)
-def sector_home(request: Request, user: User = Depends(require_user)):
-    # ETF_UNIVERSE drives the Sector ETFs tab's buttons, so that tab and the RRG /
-    # returns panels can never list a different set of sectors. The ORDER comes from
-    # the left panel (weekly, its default) so the tab reads strongest-rotation-first
-    # and the two lists agree on sight; the page then keeps them in sync client-side
-    # when the panel's Daily/Weekly toggle re-groups it.
-    from ..services.etf import ETF_UNIVERSE, INDEX_ETFS, panel_symbol_order
+def sector_home(request: Request, tab: str = "", user: User = Depends(require_user)):
+    """The page (v4.250): two side tabs - the RRG Chart (Optuma's embed) and the Sector
+    Chart (the ETF history chart with tick boxes, the performance table over 26 periods,
+    the picked fund's holdings with sector / industry / performance). Data comes from
+    ``/sector/api/etfs`` and ``/sector/api/holdings``; see services/sector_chart.py."""
+    from ..services import sector_chart as sc
 
-    from ..services.etf import etf_full_name
-
-    names = dict(ETF_UNIVERSE)
-    etfs = [{"symbol": s, "name": f"{names.get(s, s)} — {etf_full_name(s)}"}
-            for s in panel_symbol_order("weekly")]
-    # SPY / QQQ ride along as a SECOND group on the tab, kept out of the sector list
-    # above so the rotation panel, the RRG and the industry drill-down still see
-    # exactly the 11 sectors (see services/etf.py::INDEX_ETFS). They keep their
-    # declared order — there is no rotation ranking to sort an index by.
-    indexes = [{"symbol": s, "name": f"{n} — {etf_full_name(s)}"} for s, n in INDEX_ETFS]
+    etfs = [{"symbol": s, "name": n, "full_name": sc.ETF_FULL_NAMES.get(s, n),
+             "color": sc.ETF_COLORS.get(s, "#94a3b8"), "index": s in dict(sc.INDEX_ETFS)}
+            for s, n in sc.ETFS]
     return templates.TemplateResponse(
-        request, "sector.html", {"user": user, "etfs": etfs, "indexes": indexes},
+        request, "sector.html",
+        {"user": user, "etfs": etfs, "tab": "chart" if tab == "chart" else "rrg",
+         "periods": [{"key": k, "days": n, "group": g} for k, n, g in sc.PERIODS],
+         "default_period": sc.DEFAULT_PERIOD},
     )
+
+
+@router.get("/api/etfs")
+def sector_api_etfs(user: User = Depends(require_user)):
+    """The Sector Chart tab's ETF data: 2 years of daily closes per fund for the chart, each
+    fund's return over the 26 periods and its sparkline tail."""
+    from ..services import sector_chart as sc
+
+    return {"ok": True, **sc.etf_table()}
+
+
+@router.get("/api/holdings")
+def sector_api_holdings(symbol: str = "", user: User = Depends(require_user)):
+    """The picked fund's holdings with sector, industry and the 26-period returns."""
+    from ..services import sector_chart as sc
+
+    sym = (symbol or "").strip().upper()
+    if sym not in sc.ETF_SYMBOLS:
+        return {"ok": False, "error": "unknown fund"}
+    return {"ok": True, **sc.holdings_table(sym)}
 
 
 @router.get("/returns", response_class=HTMLResponse)

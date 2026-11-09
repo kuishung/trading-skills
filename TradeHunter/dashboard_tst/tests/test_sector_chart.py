@@ -1,0 +1,89 @@
+"""Sector Rotation -> the Sector Chart tab (v4.250): the periods, the ETF table and chart
+series, the holdings table with sector / industry / returns, the page and its API."""
+from __future__ import annotations
+
+import pytest
+
+from app.main import app
+from app.services import sector_chart as sc
+from tests.test_options_page import _client
+
+
+def _bars(n, start=100.0, step=1.0):
+    """n daily bars, close rising by `step` a day, dated 2026-01-01 onwards (weekday-blind)."""
+    import datetime as _dt
+    d0 = _dt.date(2026, 1, 1)
+    return [{"time": (d0 + _dt.timedelta(days=i)).isoformat(), "close": start + i * step} for i in range(n)]
+
+
+def test_the_26_periods_are_trading_days():
+    keys = [k for k, _, _ in sc.PERIODS]
+    assert keys[:3] == ["1d", "2d", "3d"] and keys[9] == "10d" and keys[10] == "1w" and keys[19] == "10w"
+    assert keys[20] == "1m" and keys[-1] == "6m" and len(keys) == 26
+    assert sc.PERIOD_DAYS["1w"] == 5 and sc.PERIOD_DAYS["10w"] == 50 and sc.PERIOD_DAYS["1m"] == 21 and sc.PERIOD_DAYS["6m"] == 126
+    assert sc.ret([100, 110], 1) == pytest.approx(10.0) and sc.ret([100, 110], 2) is None
+    assert sc.returns([100.0] * 200)["6m"] == pytest.approx(0.0)
+
+
+def test_the_etf_table_carries_returns_series_and_a_sparkline_tail(monkeypatch):
+    def fake(symbols, rng):
+        return {s: (lambda b: ([x["time"] for x in b], [x["close"] for x in b]))(_bars(600, 100.0, 0.5 if s == "XLK" else 0.1))
+                for s in symbols}
+    monkeypatch.setattr(sc, "_fetch_many", fake)
+    sc._etf_cache.clear()
+    t = sc.etf_table()
+    assert [e["symbol"] for e in t["etfs"]] == sc.ETF_SYMBOLS and len(t["etfs"]) == 13
+    xlk = next(e for e in t["etfs"] if e["symbol"] == "XLK")
+    assert xlk["color"] == sc.ETF_COLORS["XLK"] and xlk["full_name"].startswith("Technology")
+    assert xlk["last"] == 100 + 599 * 0.5 and len(xlk["tail"]) == sc.MAX_DAYS + 1
+    assert xlk["ret"]["1d"] == pytest.approx(0.5 / (xlk["last"] - 0.5) * 100, abs=0.01)
+    assert set(xlk["ret"]) == set(sc.PERIOD_DAYS)
+    assert len(t["series"]["XLK"]) == 2 * 252 + 5 and t["series"]["XLK"][-1][1] == xlk["last"]
+    assert t["default"] == "1m" and [p["key"] for p in t["periods"]][-1] == "6m"
+    sc._etf_cache.clear()
+
+
+def test_the_holdings_table_joins_weights_sector_industry_and_returns(monkeypatch):
+    from app.services import etf_holdings as eh
+
+    monkeypatch.setattr(eh, "holdings", lambda s: {"symbol": s, "as_of": "2026-11-06", "source": "ssga", "stale": False, "error": None,
+                                                   "rows": [{"symbol": "AAPL", "name": "APPLE INC", "weight": 12.5},
+                                                            {"symbol": "BRK.B", "name": "BERKSHIRE", "weight": 1.0},
+                                                            {"symbol": "NVDA", "name": "NVIDIA CORP", "weight": 14.0}]})
+    monkeypatch.setattr(sc, "industry_map", lambda **kw: ({"AAPL": {"sector": "Technology", "industry": "Consumer Electronics", "company": "Apple Inc"},
+                                                          "NVDA": {"sector": "Technology", "industry": "Semiconductors", "company": "NVIDIA Corp"}}, "ready"))
+    asked = {}
+
+    def fake(symbols, rng):
+        asked["symbols"] = list(symbols)
+        return {s: (lambda b: ([x["time"] for x in b], [x["close"] for x in b]))(_bars(300, 50.0, 1.0)) for s in symbols}
+    monkeypatch.setattr(sc, "_fetch_many", fake)
+    t = sc.holdings_table("XLK", cap=2)
+    assert t["etf"] == "XLK" and t["n"] == 3 and t["capped"] == 2 and t["industry_state"] == "ready"
+    assert [r["symbol"] for r in t["rows"]] == ["NVDA", "AAPL", "BRK.B"]          # weight order
+    assert asked["symbols"] == ["NVDA", "AAPL"]                                      # the heaviest `cap` are priced
+    nvda, aapl, brk = t["rows"]
+    assert nvda["sector"] == "Technology" and nvda["industry"] == "Semiconductors" and nvda["name"] == "NVIDIA Corp"
+    assert nvda["last"] == 349.0 and nvda["ret"]["1d"] == pytest.approx(1 / 348 * 100, abs=0.01)
+    assert brk["chart_symbol"] == "BRK-B" and brk["ret"] is None and brk["sector"] is None and brk["name"] == "Berkshire"
+    assert aapl["ret"]["6m"] == pytest.approx(126 / (349 - 126) * 100, abs=0.01)
+
+
+def test_the_page_has_two_side_tabs_and_the_api_answers(engine, user, monkeypatch):
+    monkeypatch.setattr(sc, "_fetch_many", lambda symbols, rng: {s: ([], []) for s in symbols})
+    sc._etf_cache.clear()
+    try:
+        c = _client(engine, user.id)
+        html = c.get("/sector").text
+        html2 = c.get("/sector?tab=chart").text
+        api = c.get("/sector/api/etfs").json()
+        bad = c.get("/sector/api/holdings?symbol=NOPE").json()
+    finally:
+        app.dependency_overrides.clear()
+    assert html.count('class="sc-tab ') == 2 and "RRG Chart" in html and "Sector Chart" in html
+    assert 'data-tab="rrg" class="sc-tab block px-3 py-3 border-l-2 transition on"' in html
+    assert 'data-tab="chart" class="sc-tab block px-3 py-3 border-l-2 border-t border-t-slate-800/60 transition on"' in html2
+    assert html.count('class="sc-tick"') == 13 and html.count('class="sc-per ') == 26 and 'rrg.optuma.com' in html
+    assert "Holdings" in html and "Industry" in html and "lightweight-charts" in html
+    assert api["ok"] and len(api["etfs"]) == 13 and api["etfs"][0]["last"] is None
+    assert bad == {"ok": False, "error": "unknown fund"}

@@ -223,6 +223,39 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-09 - v4.250: Sector Rotation revamped - two side tabs, RRG Chart | Sector Chart
+
+The user: *"in sector rotation page i need to revamp it. Currently is a 3 panel in vertical page. I need two side tab.
+First Tab - The RRG Chart. Second Tab - Sector Chart. I want a chart on top that will show all the ETF chart with
+ticker box when tick the historical data of the etf will be shown in the chart. Then below the chart is a table that
+show all the ETF performance with option to compare it as follow 1d..10d, 1w..10w, 1m..6m with a small chart on the
+table also. with the ETF selected on the 3rd table below it will list the tickers in table and stock in the ETF will
+be shown with sector and industry will be shown and the performance will also be shown."*
+
+- `app/services/sector_chart.py` (new): `PERIODS` (26, in TRADING days: 1d-10d, 1w-10w = 5 each, 1m-6m = 21 each),
+  `ret` / `returns`; `etf_table()` - the 13 funds (11 SPDR sectors + SPY / QQQ) with 2 years of daily closes for the
+  chart (`series`), the return over every period and the sparkline tail (Yahoo through `services.prices`, the same
+  5y cache entry `services.etf` uses; 10-min cache); `holdings_table(etf)` - the issuer's book (`etf_holdings`,
+  weights) joined to a ticker -> sector / industry map built from the 11 Finviz sector screens (`services.industry`)
+  in a background thread the first time (`industry_map()`, state ready | loading | failed), each of the heaviest
+  `RETURN_CAP` = 120 holdings priced from its own daily closes (12 threads) for the same 26 returns.
+- `app/routes/sector.py`: `GET /sector?tab=rrg|chart` renders the new page; `GET /sector/api/etfs` and
+  `GET /sector/api/holdings?symbol=` feed it. The old fragment routes (`/returns`, `/rrg`, `/industries`, `/symbols`,
+  `/basket`, `/filter`, `/chart`, `/chart-window`, `/etf-structure`) are untouched; the page no longer calls them
+  except `/chart-window` (a holding click opens its chart in a new window, as before).
+- `app/templates/sector.html` (rewritten): a left rail with the two tabs (icons, Macro's style); RRG Chart = Optuma's
+  embed as before; Sector Chart = (1) the ETF history chart - a tick box per fund in the fund's colour (SPY on by
+  default; All / None), lines rebased to 0% at the start of the range (1M 3M 6M 1Y 2Y), the end-of-range % beside each
+  ticked fund (the crosshair value while hovering); (2) the Performance table - period pills in three rows (days /
+  weeks / months), rows best-first with the return, a centred bar and a sparkline of that window; a row click picks
+  the fund (and ticks it on the chart); first load picks the period's best sector; (3) the fund's Holdings - logo,
+  full name, book date; ticker (logo), weight, sector, industry, last, the picked period's return with a bar, and
+  1w / 1m / 3m / 6m; sortable headers, a find box, the sector/industry columns fill in once the map is built (the
+  page re-asks every 5 s); a row click opens the ticker's chart window. The earlier three columns (Finviz filter,
+  Sector & Industry drill-down with setup conditions, ticker list, inline chart) are gone from the page.
+- `tests/test_sector_chart.py` (new): the periods, the ETF table shape and returns, the holdings join (weight order,
+  cap, share-class chart symbol, missing map entries), the page's two tabs / 13 ticks / 26 pills and the API.
+
 ### 2026-11-08 - v4.249: the Macro study board removed
 
 The user: *"remove the micro study page"* - the pre-v4.243 six-section study board kept at `/macro/study`.

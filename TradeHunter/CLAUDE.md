@@ -645,6 +645,13 @@ it — memory files don't sync across PCs.
 platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
 `dashboard_tst/DEPLOY.md`. Key facts (so any session/PC recalls them):
 
+- **Sector Rotation = TWO SIDE TABS since v4.250 (2026-11-09): "RRG Chart" (Optuma's embed) | "Sector Chart"**
+  (`routes/sector.py`, `templates/sector.html`, `services/sector_chart.py`): the ETF history chart with a tick box
+  per fund (11 SPDR sectors + SPY/QQQ, lines rebased to 0% over the range), the Performance table over 26 periods
+  (1d-10d, 1w-10w, 1m-6m in TRADING days) with sparklines, and the picked fund's Holdings (issuer book + Finviz
+  sector/industry map + each holding's returns from Yahoo closes, heaviest 120 priced). `/sector/api/etfs`,
+  `/sector/api/holdings?symbol=`. The old three-column page (Finviz filter, Sector & Industry drill-down, ticker
+  list, inline chart) is gone from the page; its fragment routes still exist in `routes/sector.py`.
 - **Insights → Macro = the course's SEVEN TOPICS — BUILT v4.243 (2026-11-07).** Source material: the user's
   Beyond Insights "Macro Insights" course, in `trading-skills/BI Materials/` (Section 1 slides + "Key Data Source
   Links v1.20"). The user: *"I do not want to be like reading the same materials. I want to wire a macro dashboard"*,

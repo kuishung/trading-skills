@@ -1,496 +1,503 @@
 {% extends "base.html" %}
-{% block title %}Sector &amp; Industry &middot; TradeHunter{% endblock %}
-{% block main_class %}flex-1 w-full px-4 py-4 overflow-hidden{% endblock %}
+{% block title %}Sector Rotation &middot; TradeHunter{% endblock %}
 
 {% block content %}
-{# Sector & Industry — the "where to focus" step of the top-down funnel. Everything
-   fits within the viewport (no page scroll); each panel scrolls internally if needed.
+{# Sector Rotation (v4.250, user: "revamp it ... two side tab: First Tab - The RRG Chart,
+   Second Tab - Sector Chart"):
 
-   ONE screen, four pieces (user, 2026-09-15: "I have to merge this into using only
-   1 Chart. So the screen will only see: 1. RRG 2. Chart 3. Ticker panel where user
-   can either use the sector and industry method ... Or user can select by ETF
-   basket of tickers where it will be shortlisted based on the criteria given
-   4. a filter panel"):
+   RAIL (left)          PANE (right)
+   RRG Chart       ->   the official Optuma RRG, embedded (as before)
+   Sector Chart    ->   1. the ETF history chart: a tick box per fund (11 SPDR sectors +
+                           SPY / QQQ); a ticked fund's daily closes are drawn, rebased to 0%
+                           at the start of the chosen range so the funds compare
+                        2. the performance table: every fund's return over the picked period
+                           (1d-10d, 1w-10w, 1m-6m), with a sparkline of that window; a row
+                           click picks the fund
+                        3. the picked fund's holdings: ticker, weight, sector, industry, last
+                           price and the SAME period's return (+ 1w / 1m / 3m / 6m); a ticker
+                           click opens its chart in a new window (the Watchlist chart).
+   Data: /sector/api/etfs (one call, cached 10 min) and /sector/api/holdings?symbol=
+   (services/sector_chart.py). The earlier three-column page (Finviz filter, Sector &
+   Industry drill-down, ticker list, inline chart) is gone; its routes remain. #}
 
-   Four panels in three columns (user, 2026-09-15: "make it 4 panel on screen:
-   first left (Filter up and Pick by panel), second left (ticker list), thirdly
-   the chart"):
+<div class="flex items-baseline justify-between gap-3 mb-3 flex-wrap">
+  <h1 class="text-2xl font-semibold">Sector Rotation</h1>
+  <span id="scAsOf" class="text-xs text-slate-500"></span>
+</div>
 
-     COLUMN 1 (narrow)
-       Filter   — the member's Finviz screener criteria. Applies to BOTH ways of
-                  picking tickers.
-       Pick by  — a toggle:
-            Sector Rotation: the rotation tree; click an industry.
-            ETF basket:        the 11 sector SPDRs + SPY/QQQ and the swing-structure
-                               strip; click a fund.
-     COLUMN 2
-       Tickers  — what the pick produced: the industry's symbols, or the fund's
-                  holdings, ranked by the SAME setup conditions and narrowed by the
-                  same Finviz criteria.
-     COLUMN 3 (the rest)
-       RRG / Chart tabs — the ONE chart. Any ticker or ETF clicked lands here. The
-                  old "Sector ETFs" tab (own chart, holdings opening new windows) is
-                  gone; the pop-out survives only as a per-row ↗ button. #}
-{% macro loading() %}
-<div class="flex-1 flex items-center justify-center text-xs text-slate-500 py-6">Loading&hellip;</div>
-{% endmacro %}
+<div class="grid grid-cols-1 lg:grid-cols-[13rem_1fr] gap-4 items-start">
 
-<div class="lg:flex lg:gap-4 lg:items-stretch lg:h-[calc(100vh-6rem)]">
-
-  {# ── COLUMN 1: Filter (top) + Pick by (the rest) ───────────────────── #}
-  <aside class="lg:w-72 lg:shrink-0 flex flex-col gap-2 mb-4 lg:mb-0 lg:h-full lg:min-h-0">
-
-    {# Filter — the saved Finviz screener criteria. The fragment (_sector_filter.html)
-       carries its own "Filter · on" toggle and the URL form; applying it fires
-       sector-filter-changed, which re-fetches whichever list is showing (column 2). #}
-    <section class="rounded-xl border border-slate-800 bg-slate-900/40 p-2 shrink-0">
-      <div class="flex items-baseline justify-between gap-2 px-1 mb-1">
-        <h2 class="text-sm font-semibold text-slate-200">Filter</h2>
-        <span class="text-[10px] text-slate-500 truncate" title="Paste a Finviz screener URL; its criteria narrow both the industry list and the ETF basket to matching tickers">Finviz &middot; both lists</span>
+  {# ── the rail ── #}
+  <nav class="rounded-lg border border-slate-800 bg-slate-900/40 overflow-hidden lg:sticky lg:top-4">
+    <a href="/sector" data-tab="rrg" class="sc-tab block px-3 py-3 border-l-2 transition {% if tab == 'rrg' %}on{% endif %}">
+      <div class="flex items-center gap-2.5">
+        <span class="sc-ico" style="--c:#34d399"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></span>
+        <span class="min-w-0"><span class="sc-lbl block text-[13px] text-slate-200">RRG Chart</span>
+          <span class="block text-[11px] text-slate-500">Relative Rotation Graph</span></span>
       </div>
-      <div class="min-w-0" hx-get="/sector/filter" hx-trigger="load" hx-swap="innerHTML"></div>
-    </section>
-
-    {# Pick by — two ways to choose what column 2 lists, one at a time #}
-    <section id="siPanel" class="rounded-xl border border-slate-800 bg-slate-900/40 p-2 flex flex-col min-h-0 flex-1 w-full">
-      <div class="flex items-center gap-1 mb-1.5 px-1 shrink-0">
-        <span class="text-[10px] uppercase tracking-wide text-slate-500 mr-0.5">Pick by</span>
-        <button type="button" class="modebtn text-[11px] px-2 py-0.5 rounded border transition" data-mode="si"
-                title="Drill down: sector → industry → its tickers">Sector &amp; Industry</button>
-        <button type="button" class="modebtn text-[11px] px-2 py-0.5 rounded border transition" data-mode="etf"
-                title="Pick a fund: its holdings, shortlisted by the setup conditions">ETF basket</button>
+    </a>
+    <a href="/sector?tab=chart" data-tab="chart" class="sc-tab block px-3 py-3 border-l-2 border-t border-t-slate-800/60 transition {% if tab == 'chart' %}on{% endif %}">
+      <div class="flex items-center gap-2.5">
+        <span class="sc-ico" style="--c:#38bdf8"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg></span>
+        <span class="min-w-0"><span class="sc-lbl block text-[13px] text-slate-200">Sector Chart</span>
+          <span class="block text-[11px] text-slate-500">ETFs, performance, holdings</span></span>
       </div>
+    </a>
+  </nav>
 
-      {# mode A: the rotation tree; an industry click fills column 2 #}
-      <div id="modeSI" class="flex flex-col min-h-0 flex-1">
-        <div class="flex items-baseline justify-between mb-1 px-1 shrink-0">
-          <h2 class="text-sm font-semibold text-slate-200">Sector &amp; Industry</h2>
-          <span class="text-[11px] text-slate-500 truncate" title="Grouped by rotation; click a sector, then an industry">by rotation</span>
-        </div>
-        {# sector rows; clicking one expands its industry headers below it. Scrolls
-           internally (scrollbar invisible-until-hover, base.html). #}
-        <div class="si-returns flex-1 min-h-0 overflow-y-auto pr-1" hx-get="/sector/returns" hx-trigger="load" hx-swap="innerHTML">{{ loading() }}</div>
-      </div>
+  {# ── the panes ── #}
+  <div class="min-w-0">
 
-      {# mode B: the funds + the swing-structure strip; a fund click fills column 2 #}
-      <div id="modeETF" class="flex flex-col min-h-0 flex-1" style="display:none">
-        <div class="flex items-baseline justify-between mb-1 px-1 shrink-0">
-          <h2 class="text-sm font-semibold text-slate-200">ETF basket</h2>
-          <span class="text-[11px] text-slate-500 truncate" title="Click a fund to chart it and list its holdings">click a fund</span>
-        </div>
-        {# The sector buttons are re-sorted client-side into the rotation tree's order
-           (syncEtfOrder moves them BEFORE the first <span>, the caption), so the
-           caption doubles as the divider before the index group, which is never
-           re-sorted (an index has no quadrant to sort by). #}
-        {# Two buttons per row (user, 2026-09-15: "in the ETF list, one line showing
-           only 1 ETF"): with the sector name on the button (v4.88) a wrapped row
-           held one button each in this narrow column. A two-column grid with the
-           SHORT names below keeps the whole basket to seven rows. The caption spans
-           the row so syncEtfOrder's "move before the first <span>" still works. #}
-        {% set short = {'Consumer Discretionary': 'Cons Disc', 'Consumer Staples': 'Cons Staples',
-                        'Communication Services': 'Comm Svcs', 'Health Care': 'Health Care',
-                        'Real Estate': 'Real Estate', 'Nasdaq-100': 'Nasdaq 100'} %}
-        <div class="grid grid-cols-2 gap-1 px-1 shrink-0">
-          {% for e in etfs %}
-          {% set nm = e.name.split(' — ')[0] %}
-          <button type="button" class="etfbtn text-left text-[11px] px-1.5 py-0.5 rounded border border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 transition whitespace-nowrap truncate"
-                  data-sym="{{ e.symbol }}" title="{{ e.name }}"><span class="font-semibold">{{ e.symbol }}</span> <span class="opacity-75">{{ short.get(nm, nm) }}</span></button>
-          {% endfor %}
-          <span class="col-span-2 text-[10px] text-slate-600">sectors</span>
-          {% for e in indexes %}
-          {% set nm = e.name.split(' — ')[0] %}
-          <button type="button" class="etfbtn text-left text-[11px] px-1.5 py-0.5 rounded border border-slate-700 text-slate-400 hover:border-emerald-500 hover:text-emerald-300 transition whitespace-nowrap truncate"
-                  data-sym="{{ e.symbol }}" title="{{ e.name }}"><span class="font-semibold">{{ e.symbol }}</span> <span class="opacity-75">{{ short.get(nm, nm) }}</span></button>
-          {% endfor %}
-          <span class="col-span-2 text-[10px] text-slate-600">index</span>
-        </div>
-        {# Swing-structure monitor for all of them at once (services/structure.py):
-           lazy, then self-polling, so it keeps watching without a reload. A chip
-           charts that fund, like its button. #}
-        <div id="etfStructure" class="mt-2 px-1 min-h-[1.25rem] text-[11px] flex-1 min-h-0 overflow-y-auto"
-             hx-get="/sector/etf-structure" hx-trigger="load" hx-swap="innerHTML"></div>
-      </div>
-    </section>
-  </aside>
-
-  {# ── COLUMN 2: the ticker list — the picked industry's symbols, or the picked
-     fund's holdings, depending on the mode. Both are ranked by the same setup
-     conditions and narrowed by the same Finviz filter. #}
-  <aside class="lg:w-80 lg:shrink-0 flex flex-col mb-4 lg:mb-0 lg:h-full lg:min-h-0">
-    <section class="rounded-xl border border-slate-800 bg-slate-900/40 p-2 flex flex-col min-h-0 flex-1 w-full">
-      <div class="flex items-baseline justify-between gap-2 mb-1 px-1 shrink-0">
-        <h2 class="text-sm font-semibold text-slate-200">Tickers</h2>
-        <span class="text-[11px] text-slate-500">click one to chart it</span>
-      </div>
-      <div id="listSI" class="flex flex-col min-h-0 flex-1">
-        <div id="symbolPanel" class="flex-1 min-h-0 overflow-y-auto pr-1">
-          <p class="text-xs text-slate-600 py-3 px-1">Select a sector, then an industry, to list its symbols.</p>
-        </div>
-      </div>
-      <div id="listETF" class="flex flex-col min-h-0 flex-1" style="display:none">
-        <div id="basketPanel" class="flex-1 min-h-0 overflow-y-auto pr-1">
-          <p class="text-xs text-slate-600 py-3 px-1">Pick a fund to list what it holds.</p>
-        </div>
-      </div>
-    </section>
-  </aside>
-
-  {# ── CENTER: two tabs — the RRG (default) and THE chart. Every ticker and ETF
-     clicked on the left loads its chart INLINE here (no new window). #}
-  <div class="flex-1 min-w-0 flex flex-col min-h-0 mt-4 lg:mt-0">
-    <div class="flex items-center gap-1 mb-2 shrink-0 border-b border-slate-800">
-      <button type="button" class="ctab text-xs px-3 py-1.5 -mb-px border-b-2 transition" data-tab="rrg">Relative Rotation</button>
-      <button type="button" class="ctab text-xs px-3 py-1.5 -mb-px border-b-2 transition" data-tab="chart">Chart</button>
-      <span id="chartTabTicker" class="ml-auto text-[11px] text-slate-500 pr-1"></span>
-    </div>
-
-    {# 1. RRG pane #}
-    <section id="tabPane-rrg" class="rounded-xl border border-slate-800 bg-slate-900/40 p-4 flex flex-col min-w-0 flex-1 min-h-0">
+    {# 1. RRG #}
+    <section id="scPane-rrg" class="rounded-lg border border-slate-800 bg-slate-900/40 p-4 flex-col" style="display:{% if tab == 'rrg' %}flex{% else %}none{% endif %};min-height:calc(100vh - 9rem)">
       <div class="flex items-center justify-between gap-2 mb-3 shrink-0">
         <div>
           <h2 class="text-sm font-semibold text-slate-200">Relative Rotation Graph</h2>
-          {# Optuma IS the RRG vendor — JdK RS-Ratio / RS-Momentum are licensed from RRG
-             Research, so this shows the real indicator rather than our approximation of
-             it. First visit: pick "SPDR S&P US Sectors ETF" + "1 Week" from its own
-             Universe / timeframe menus. It stores that choice in localStorage, so it
-             sticks per browser and you only choose once. #}
+          {# Optuma IS the RRG vendor - JdK RS-Ratio / RS-Momentum are licensed from RRG Research. First
+             visit: pick "SPDR S&P US Sectors ETF" + "1 Week" from its own menus; it remembers per browser. #}
           <span class="text-[11px] text-slate-500">the official Optuma RRG &middot; set Universe to
-            <span class="text-slate-400">SPDR S&amp;P US Sectors ETF</span> once — it remembers</span>
+            <span class="text-slate-400">SPDR S&amp;P US Sectors ETF</span> once &mdash; it remembers</span>
         </div>
         <a href="https://rrg.optuma.com/" target="_blank" rel="noopener"
            class="text-[11px] px-2 py-1 rounded border border-slate-700 text-slate-300 hover:border-emerald-500 hover:text-emerald-300 transition whitespace-nowrap"
            title="Open the Optuma RRG in a new tab">Open full size &#8599;</a>
       </div>
-      {# The vendor's own app, embedded. It sets no X-Frame-Options / CSP and does not
-         frame-bust, so it runs here as it does standalone. NOT sandboxed on purpose:
-         without allow-same-origin it loses the localStorage that remembers the universe.
-         Loaded lazily so switching to the Chart tab doesn't pay for it. #}
-      <iframe src="https://rrg.optuma.com/" title="Relative Rotation Graph — Optuma"
+      {# not sandboxed on purpose: without allow-same-origin it loses the localStorage that remembers the universe #}
+      <iframe src="https://rrg.optuma.com/" title="Relative Rotation Graph - Optuma"
               loading="lazy" referrerpolicy="no-referrer-when-downgrade"
-              class="flex-1 min-h-0 w-full rounded-lg bg-white border-0"></iframe>
+              class="flex-1 min-h-0 w-full rounded-lg bg-white border-0" style="min-height:70vh"></iframe>
     </section>
 
-    {# 2. Chart pane — the one chart. Cleared when hidden so #priceChart's fixed ids
-       are never duplicated; reloaded from chartSym when the tab is re-selected. #}
-    <section id="tabPane-chart" class="hidden rounded-xl border border-slate-800 bg-slate-900/40 p-4 flex flex-col min-w-0 flex-1 min-h-0">
-      <div id="sectorChartBody" class="flex-1 min-h-0 overflow-y-auto flex flex-col">
-        <div class="flex-1 flex items-center justify-center text-xs text-slate-500 text-center px-4">Click a ticker or a fund on the left to load its chart here.</div>
-      </div>
-    </section>
+    {# 2. Sector Chart #}
+    <div id="scPane-chart" class="space-y-3" style="display:{% if tab == 'chart' %}block{% else %}none{% endif %}">
+
+      {# 2a. the ETF history chart #}
+      <section class="rounded-lg border border-slate-800 bg-slate-900/40">
+        <div class="px-4 py-2.5 border-b border-slate-800 flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h2 class="text-sm font-semibold text-slate-200">ETF history</h2>
+            <p class="text-[11px] text-slate-500">tick a fund to draw it &middot; each line is rebased to 0% at the start of the range, so the funds compare</p>
+          </div>
+          <div class="flex items-center gap-1 text-[11px]">
+            <span class="text-slate-500 mr-1">Range</span>
+            {% for r in ['1M', '3M', '6M', '1Y', '2Y'] %}
+            <button type="button" class="sc-range px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:text-slate-200 {% if r == '1Y' %}on{% endif %}" data-range="{{ r }}">{{ r }}</button>
+            {% endfor %}
+            <button type="button" id="scAll" class="ml-2 px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:text-slate-200" title="tick every fund">All</button>
+            <button type="button" id="scNone" class="px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:text-slate-200" title="untick every fund">None</button>
+          </div>
+        </div>
+        <div class="px-4 pt-2.5">
+          <div id="scTicks" class="flex flex-wrap gap-x-3 gap-y-1.5 text-[12px]">
+            {% for e in etfs %}
+            <label class="sc-tick" style="--c:{{ e.color }}" title="{{ e.full_name }}">
+              <input type="checkbox" value="{{ e.symbol }}" {% if e.symbol == 'SPY' %}checked{% endif %}>
+              <span class="sw"></span><span class="sym">{{ e.symbol }}</span>
+              <span class="nm text-slate-500">{{ e.name }}</span><span class="val tabular-nums"></span>
+            </label>
+            {% endfor %}
+          </div>
+        </div>
+        <div class="px-4 pb-3 pt-2">
+          <div id="scChart" class="w-full rounded border border-slate-800/70 bg-slate-950/30" style="height:400px"></div>
+        </div>
+      </section>
+
+      {# 2b. the performance table #}
+      <section class="rounded-lg border border-slate-800 bg-slate-900/40">
+        <div class="px-4 py-2.5 border-b border-slate-800 flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h2 class="text-sm font-semibold text-slate-200">Performance</h2>
+            <p class="text-[11px] text-slate-500">every fund's return over the picked period, best first &middot; click a row to list what the fund holds</p>
+          </div>
+          <div class="text-[11px] space-y-1">
+            {% for g in ['days', 'weeks', 'months'] %}
+            <div class="flex items-center gap-1">
+              <span class="w-12 text-slate-500 capitalize">{{ g }}</span>
+              {% for p in periods if p.group == g %}
+              <button type="button" class="sc-per px-1.5 py-0.5 rounded border border-slate-700 text-slate-400 hover:text-slate-200 tabular-nums {% if p.key == default_period %}on{% endif %}"
+                      data-period="{{ p.key }}" title="{{ p.days }} trading sessions">{{ p.key }}</button>
+              {% endfor %}
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-[12px]" id="scEtfTable">
+            <thead class="text-[10px] uppercase tracking-wide text-slate-500">
+              <tr class="border-b border-slate-800">
+                <th class="text-left px-4 py-2 w-8">#</th>
+                <th class="text-left px-2 py-2">ETF</th>
+                <th class="text-right px-2 py-2">Last</th>
+                <th class="text-right px-2 py-2 whitespace-nowrap">Return <span id="scPerLbl" class="normal-case text-slate-400"></span></th>
+                <th class="text-left px-2 py-2 w-56"></th>
+                <th class="text-left px-4 py-2">Trend</th>
+              </tr>
+            </thead>
+            <tbody id="scEtfBody"><tr><td colspan="6" class="px-4 py-6 text-center text-slate-500">Loading the funds&hellip;</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      {# 2c. the picked fund's holdings #}
+      <section class="rounded-lg border border-slate-800 bg-slate-900/40">
+        <div class="px-4 py-2.5 border-b border-slate-800 flex items-center justify-between gap-3 flex-wrap">
+          <div class="min-w-0 flex items-center gap-2.5">
+            <span id="scHoldLogo"></span>
+            <div class="min-w-0">
+              <h2 class="text-sm font-semibold text-slate-200"><span id="scHoldTitle">Holdings</span></h2>
+              <p id="scHoldSub" class="text-[11px] text-slate-500 truncate">pick a fund in the table above</p>
+            </div>
+          </div>
+          <div class="flex items-center gap-2 text-[11px] text-slate-500">
+            <input id="scHoldFind" type="search" placeholder="find a ticker, sector or industry" class="bg-slate-950/40 border border-slate-700 rounded px-2 py-1 text-[12px] text-slate-200 w-56">
+            <span id="scHoldNote"></span>
+          </div>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-[12px]" id="scHoldTable">
+            <thead class="text-[10px] uppercase tracking-wide text-slate-500">
+              <tr class="border-b border-slate-800">
+                <th class="text-left px-4 py-2 w-8">#</th>
+                <th class="text-left px-2 py-2 sc-sort" data-key="symbol">Ticker</th>
+                <th class="text-right px-2 py-2 sc-sort" data-key="weight">Weight</th>
+                <th class="text-left px-2 py-2 sc-sort" data-key="sector">Sector</th>
+                <th class="text-left px-2 py-2 sc-sort" data-key="industry">Industry</th>
+                <th class="text-right px-2 py-2 sc-sort" data-key="last">Last</th>
+                <th class="text-right px-2 py-2 sc-sort whitespace-nowrap" data-key="ret">Return <span class="sc-hper normal-case text-slate-400"></span></th>
+                <th class="text-left px-2 py-2 w-28"></th>
+                <th class="text-right px-2 py-2 sc-sort" data-key="1w">1w</th>
+                <th class="text-right px-2 py-2 sc-sort" data-key="1m">1m</th>
+                <th class="text-right px-2 py-2 sc-sort" data-key="3m">3m</th>
+                <th class="text-right px-4 py-2 sc-sort" data-key="6m">6m</th>
+              </tr>
+            </thead>
+            <tbody id="scHoldBody"><tr><td colspan="12" class="px-4 py-6 text-center text-slate-500">Pick a fund above to list its holdings.</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
   </div>
 </div>
 
-{# preload the chart library ONCE so the Chart tab renders instantly on first click #}
+<style>
+  .sc-tab { border-left-color: transparent; }
+  .sc-tab:hover { background: rgba(30,41,59,.5); }
+  .sc-tab.on { border-left-color: #34d399; background: rgba(16,185,129,.10); }
+  .sc-tab.on .sc-lbl { color: #6ee7b7; font-weight: 500; }
+  .sc-ico { --c: #94a3b8; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
+            color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); border: 1px solid color-mix(in srgb, var(--c) 30%, transparent); }
+  .sc-ico svg { width: 17px; height: 17px; }
+  .sc-range.on, .sc-per.on { border-color: rgba(52,211,153,.6); background: rgba(16,185,129,.15); color: #6ee7b7; }
+  .sc-tick { --c: #94a3b8; display: inline-flex; align-items: center; gap: .35rem; cursor: pointer; user-select: none; padding: 2px 8px 2px 6px; border-radius: 6px;
+             border: 1px solid rgba(148,163,184,.25); }
+  .sc-tick input { width: 13px; height: 13px; accent-color: var(--c); margin: 0; }
+  .sc-tick .sw { width: 14px; height: 3px; border-radius: 2px; background: var(--c); display: inline-block; opacity: .35; }
+  .sc-tick:has(input:checked) { border-color: color-mix(in srgb, var(--c) 60%, transparent); background: color-mix(in srgb, var(--c) 10%, transparent); }
+  .sc-tick:has(input:checked) .sw { opacity: 1; }
+  .sc-tick .sym { font-weight: 600; color: #e2e8f0; }
+  .sc-tick .val { color: #cbd5e1; margin-left: .15rem; }
+  .sc-row { cursor: pointer; border-bottom: 1px solid rgba(30,41,59,.7); }
+  .sc-row:hover { background: rgba(30,41,59,.45); }
+  .sc-row.on { background: rgba(16,185,129,.10); }
+  .sc-row.on .sc-sym { color: #6ee7b7; }
+  .sc-bar { height: 8px; border-radius: 3px; }
+  .sc-pos { color: #34d399; } .sc-neg { color: #fb7185; } .sc-nil { color: #64748b; }
+  .sc-sort { cursor: pointer; white-space: nowrap; } .sc-sort:hover { color: #cbd5e1; } .sc-sort.on { color: #6ee7b7; }
+  .sc-dot { width: 9px; height: 9px; border-radius: 9999px; display: inline-block; }
+  html.light .sc-tab.on .sc-lbl { color: #047857; }
+  html.light .sc-tick .sym { color: #0f172a; } html.light .sc-tick .val { color: #334155; }
+  html.light .sc-row.on .sc-sym { color: #047857; }
+  html.light .sc-row:hover { background: rgba(148,163,184,.16); }
+  html.light .sc-row.on { background: rgba(16,185,129,.12); }
+  html.light .sc-range.on, html.light .sc-per.on, html.light .sc-sort.on { color: #047857; }
+</style>
+
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
-
-{# analyst-targets pop-out, used by the chart's "Analyst targets →" button #}
-{% include "_at_modal.html" %}
-
 <script>
-  // Keep the clicked sector highlighted. Delegated on document so it survives the
-  // returns panel's HTMX load; the sector rows aren't reloaded when the industry
-  // panel swaps, so the selection persists.
-  (function () {
-    function selectAmong(sel, el) {
-      document.querySelectorAll(sel).forEach(function (r) {
-        var on = (r === el);
-        r.classList.toggle('bg-emerald-500/15', on);
-        r.classList.toggle('text-emerald-300', on);
-      });
-    }
-    document.addEventListener('click', function (e) {
-      var sec = e.target.closest ? e.target.closest('.wl-sector') : null;
-      if (sec) { selectAmong('.wl-sector', sec); return; }
-      var ind = e.target.closest ? e.target.closest('.wl-industry') : null;
-      if (ind) { selectAmong('.wl-industry', ind); }
-    });
-  })();
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function light() { return document.documentElement.classList.contains('light'); }
+  function pct(v, d) { if (v == null || isNaN(v)) return '-'; return (v > 0 ? '+' : '') + v.toFixed(d == null ? 2 : d) + '%'; }
+  function cls(v) { return v == null ? 'sc-nil' : (v > 0 ? 'sc-pos' : (v < 0 ? 'sc-neg' : 'sc-nil')); }
+  function money(v) { return v == null ? '-' : (v >= 1000 ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : v.toFixed(2)); }
 
-  // ── Center tabs (Relative Rotation | Chart), the ticker-panel modes, the ETF
-  //    basket, and the one chart they all feed ──────────────────────────────
-  (function () {
-    var chartSym = null;          // what the Chart tab shows (or should, when re-shown)
-    var etfSym = null, etfPinned = false;
-
-    function chartTabOn() {
-      var p = document.getElementById('tabPane-chart');
-      return !!p && p.style.display !== 'none';
-    }
-    function clearPane(id, msg) {
-      var el = document.getElementById(id);
-      if (el) {
-        el.innerHTML = '<div class="flex-1 flex items-center justify-center text-xs ' +
-          'text-slate-500 text-center px-4">' + msg + '</div>';
-      }
-    }
-    function loadChart(sym) {
-      chartSym = sym;
-      var lbl = document.getElementById('chartTabTicker');
-      if (lbl) lbl.textContent = sym || '';
-      if (!window.htmx || !sym) return;
-      htmx.ajax('GET', '/sector/chart?symbol=' + encodeURIComponent(sym),
-                { target: '#sectorChartBody', swap: 'innerHTML' });
-    }
-
-    function setTab(name) {
-      // control display inline (not via the `hidden` class) — `hidden` and `flex`
-      // on the same element conflict, which left the RRG pane 0-sized on re-show.
-      document.querySelectorAll('[id^="tabPane-"]').forEach(function (p) {
-        p.style.display = (p.id === 'tabPane-' + name) ? 'flex' : 'none';
-      });
-      document.querySelectorAll('.ctab').forEach(function (b) {
-        var on = b.getAttribute('data-tab') === name;
-        b.classList.toggle('border-emerald-500', on);
-        b.classList.toggle('text-emerald-300', on);
-        b.classList.toggle('border-transparent', !on);
-        b.classList.toggle('text-slate-400', !on);
-      });
-      // the RRG measures its container on resize; nudge it when its pane reappears
-      if (name === 'rrg') {
-        window.dispatchEvent(new Event('resize'));
-        // Only ONE chart may exist in the DOM at a time (_price_chart.html addresses
-        // its elements by fixed id), and a chart mounted in a hidden pane would be
-        // the one a later script found. Clear it; the tab reloads it on return.
-        clearPane('sectorChartBody', 'Click a ticker or a fund on the left to load its chart here.');
-      } else if (name === 'chart' && chartSym) {
-        loadChart(chartSym);
-      }
-    }
-    window._sectorSetTab = setTab;
-    document.querySelectorAll('.ctab').forEach(function (b) {
-      b.addEventListener('click', function () { setTab(b.getAttribute('data-tab')); });
-    });
-
-    // ── "Pick by" modes ────────────────────────────────────────────────────
-    var MODE_KEY = 'sectorTickerMode';
-    function setMode(m, remember) {
-      // column 1 (the picker) and column 2 (the list it fills) switch together
-      [['modeSI', 'si'], ['listSI', 'si'], ['modeETF', 'etf'], ['listETF', 'etf']].forEach(function (pair) {
-        var el = document.getElementById(pair[0]);
-        if (el) el.style.display = (pair[1] === m) ? 'flex' : 'none';
-      });
-      document.querySelectorAll('.modebtn').forEach(function (b) {
-        var on = b.getAttribute('data-mode') === m;
-        b.className = 'modebtn text-[11px] px-2 py-0.5 rounded border transition ' +
-          (on ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-300'
-              : 'border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200');
-      });
-      if (remember) { try { localStorage.setItem(MODE_KEY, m); } catch (e) {} }
-      // Land on a fund, never on an empty "pick one" pane: the first button is the
-      // rotation leader. An explicit pick is remembered (etfPinned) so re-entering
-      // the mode doesn't throw away the fund the user chose.
-      if (m === 'etf') {
-        var want = (etfPinned && etfSym) || etfSym || firstEtf();
-        if (want) loadEtf(want, etfPinned, false);
-      }
-    }
-    document.querySelectorAll('.modebtn').forEach(function (b) {
-      b.addEventListener('click', function () { setMode(b.getAttribute('data-mode'), true); });
-    });
-
-    // ── ETF basket ─────────────────────────────────────────────────────────
-    function etfButtons() { return Array.prototype.slice.call(document.querySelectorAll('.etfbtn')); }
-    function firstEtf() { var b = document.querySelector('.etfbtn'); return b ? b.getAttribute('data-sym') : null; }
-
-    // Keep the fund buttons in the rotation tree's order. The tree re-groups when
-    // its Daily/Weekly toggle is used, and the server can only set the order the
-    // page was built with -- so the buttons are re-sorted here whenever that
-    // fragment swaps. Buttons are MOVED, never rebuilt, so their listeners and the
-    // selected highlight survive.
-    function syncEtfOrder() {
-      var buttons = etfButtons();
-      if (!buttons.length) return;
-      var host = buttons[0].parentNode;
-      var bySym = {};
-      buttons.forEach(function (b) { bySym[b.getAttribute('data-sym')] = b; });
-      var order = Array.prototype.slice
-        .call(document.querySelectorAll('.si-returns .wl-sector[data-sym]'))
-        .map(function (r) { return r.getAttribute('data-sym'); });
-      if (!order.length) return;
-      var tail = host.querySelector('span');   // the "sectors" caption
-      order.forEach(function (sym) {
-        var b = bySym[sym];
-        if (b) host.insertBefore(b, tail);     // reinserting an existing node moves it
-      });
-      // An auto-selection follows the new leader; a pinned one stays put.
-      var etfMode = document.getElementById('modeETF').style.display !== 'none';
-      if (!etfPinned && etfMode) {
-        var top = firstEtf();
-        if (top && top !== etfSym) loadEtf(top, false, false);
-      }
-    }
-
-    // The value column / secondary order of the basket, remembered per browser.
-    var BK_SORT_KEY = 'thEtfHoldingsSort';
-    function basketSort() { try { return localStorage.getItem(BK_SORT_KEY) || ''; } catch (e) { return ''; } }
-    function loadBasket(sym) {
-      var el = document.getElementById('basketPanel');
-      if (!window.htmx || !el || !sym) return;
-      el.innerHTML = '<p class="text-xs text-slate-500 py-3 px-1">Loading ' + sym + ' holdings&hellip;</p>';
-      var s = basketSort();
-      htmx.ajax('GET', '/sector/basket?symbol=' + encodeURIComponent(sym) +
-                (s ? '&sort=' + encodeURIComponent(s) : ''),
-                { target: '#basketPanel', swap: 'innerHTML' });
-    }
-
-    // showChart: a click on a fund charts it (and switches to the Chart tab); an
-    // automatic selection (entering the mode, the rotation re-sort) only lists the
-    // holdings and remembers the fund for the Chart tab, so the RRG is not stolen.
-    function loadEtf(sym, pinned, showChart) {
-      etfSym = sym;
-      if (pinned) etfPinned = true;
-      document.querySelectorAll('.etfbtn').forEach(function (b) {
-        var on = b.getAttribute('data-sym') === sym;
-        b.classList.toggle('border-emerald-500', on);
-        b.classList.toggle('text-emerald-300', on);
-        b.classList.toggle('bg-emerald-500/10', on);
-        b.classList.toggle('border-slate-700', !on);
-        b.classList.toggle('text-slate-400', !on);
-      });
-      loadBasket(sym);
-      if (showChart) { chartSym = sym; setTab('chart'); }
-      else if (chartTabOn() && !chartSym) loadChart(sym);
-    }
-    document.querySelectorAll('.etfbtn').forEach(function (b) {
-      b.addEventListener('click', function () { loadEtf(b.getAttribute('data-sym'), true, true); });
-    });
-    // A chip in the structure strip charts that fund. Delegated on document because
-    // the strip is HTMX-swapped on every poll.
-    document.addEventListener('click', function (e) {
-      var chip = e.target.closest ? e.target.closest('.structchip') : null;
-      if (!chip) return;
-      var sym = chip.getAttribute('data-sym');
-      if (sym) loadEtf(sym, true, true);
-    });
-    // Basket value pills: remember the choice (the pill's own hx-get re-renders).
-    document.addEventListener('click', function (e) {
-      var pill = e.target.closest ? e.target.closest('.bk-sort') : null;
-      if (pill) { try { localStorage.setItem(BK_SORT_KEY, pill.getAttribute('data-sort') || ''); } catch (err) {} }
-    });
-    // ↗ on a basket row: that ticker's chart in its own window (one window per
-    // ticker; re-clicking brings it forward). CAPTURE phase + stopPropagation so the
-    // row's own hx-get (the inline chart) does not also fire.
-    document.addEventListener('click', function (e) {
-      var b = e.target.closest ? e.target.closest('.bk-popout') : null;
-      if (!b) return;
-      e.preventDefault(); e.stopPropagation();
-      var sym = b.getAttribute('data-sym');
-      if (!sym) return;
-      var w = window.open('/sector/chart-window?symbol=' + encodeURIComponent(sym),
-                          'th_chart_' + sym.replace(/[^A-Za-z0-9]/g, '_'),
-                          'width=1280,height=860,resizable=yes,scrollbars=yes');
-      if (w) { try { w.focus(); } catch (err) { /* cross-window focus can be refused */ } }
-    }, true);
-
-    // the rotation tree loads after this script and again on every timeframe switch
-    document.body.addEventListener('htmx:afterSwap', function (e) {
-      var t = e.detail && e.detail.target;
-      if (t && t.classList && t.classList.contains('si-returns')) syncEtfOrder();
-    });
-    // The charted ticker stays marked in whichever list is showing, through every
-    // re-render of that list — the basket polls itself while the index's
-    // performance loads, and a condition toggle or a value pill re-renders both
-    // lists (user, 2026-09-13: "when a ticker is selected I need to know where I
-    // have selected"). htmx:load fires on the NEW content, which is in the DOM.
-    function markCharted() {
-      document.querySelectorAll('.wl-ticker').forEach(function (r) {
-        var on = !!chartSym && r.getAttribute('data-sym') === chartSym;
-        r.classList.toggle('bg-emerald-500/15', on);
-        r.classList.toggle('text-emerald-300', on);
-      });
-    }
-    document.body.addEventListener('htmx:load', function (e) {
-      var el = e.detail && e.detail.elt;
-      if (el && el.querySelector && (el.classList.contains('wl-ticker') || el.querySelector('.wl-ticker'))) markCharted();
-    });
-
-    // Clicking a ticker (industry list OR basket): switch to the Chart tab and
-    // highlight it. The row's own hx-get loads the chart fragment into
-    // #sectorChartBody.
-    document.addEventListener('click', function (e) {
-      var t = e.target.closest ? e.target.closest('.wl-ticker') : null;
-      if (!t) return;
-      var sym = t.getAttribute('data-sym') || '';
-      if (sym) chartSym = sym;
-      markCharted();
-      var lbl = document.getElementById('chartTabTicker');
-      if (lbl) lbl.textContent = sym;
-      // show the pane WITHOUT reloading: the row's hx-get is already in flight
-      document.querySelectorAll('[id^="tabPane-"]').forEach(function (p) {
-        p.style.display = (p.id === 'tabPane-chart') ? 'flex' : 'none';
-      });
-      document.querySelectorAll('.ctab').forEach(function (b) {
-        var on = b.getAttribute('data-tab') === 'chart';
-        b.classList.toggle('border-emerald-500', on);
-        b.classList.toggle('text-emerald-300', on);
-        b.classList.toggle('border-transparent', !on);
-        b.classList.toggle('text-slate-400', !on);
-      });
-    });
-
-    // Warm the price cache on ticker HOVER so the chart appears instantly on click
-    // (the chart's /prices fetch then hits the cache). Deduped per symbol.
-    var warmedPx = {};
-    document.addEventListener('mouseover', function (e) {
-      var t = e.target.closest ? e.target.closest('.wl-ticker') : null;
-      if (!t) return;
-      var sym = t.getAttribute('data-sym');
-      if (!sym || warmedPx[sym]) return;
-      warmedPx[sym] = true;
-      fetch('/matp/' + encodeURIComponent(sym) + '/prices', { credentials: 'same-origin' })
-        .catch(function () { delete warmedPx[sym]; });
-    }, { passive: true });
-
-    // When the Finviz filter changes, re-fetch whichever list is showing: the
-    // selected industry's symbols, and the basket (the server reads the saved filter).
-    document.body.addEventListener('sector-filter-changed', function () {
-      if (window._sectorClearWarm) window._sectorClearWarm();  // filtered = different cache
-      var sel = document.querySelector('.wl-industry.text-emerald-300');
-      if (sel && window.htmx) {
-        var url = sel.getAttribute('hx-get');
-        if (url) htmx.ajax('GET', url, { target: '#symbolPanel', swap: 'innerHTML' });
-      }
-      if (etfSym) loadBasket(etfSym);
-    });
-
-    setTab('rrg');
-    var mode = 'si';
-    try { mode = localStorage.getItem(MODE_KEY) || 'si'; } catch (e) {}
-    setMode(mode === 'etf' ? 'etf' : 'si', false);
-  })();
-
-  // Prefetch a sector's industry list on HOVER so the click is instant. The server
-  // caches sector_industries(), so warming it on mouseenter means the subsequent
-  // click (and the industry->symbols click, same cache) returns immediately even
-  // when the sector was cold. Deduped per URL; cleared when the filter changes
-  // (filtered results are a different server cache key).
-  (function () {
-    var warmed = {};
-    function warm(url) {
-      if (!url || warmed[url]) return;
-      warmed[url] = true;
-      fetch(url, { credentials: 'same-origin', headers: { 'HX-Request': 'true' } })
-        .catch(function () { delete warmed[url]; });
-    }
-    document.addEventListener('mouseover', function (e) {
-      var row = e.target.closest ? e.target.closest('.wl-sector') : null;
-      if (row) warm(row.getAttribute('hx-get'));
-    }, { passive: true });
-    // expose so the filter-change handler can reset the warm cache
-    window._sectorClearWarm = function () { warmed = {}; };
-  })();
-
-  // Instant "Loading…" feedback in the drill-down targets while a scrape is in flight
-  // (the cold path). Replaced by the real content on swap.
-  document.body.addEventListener('htmx:beforeRequest', function (e) {
-    var t = e.detail && e.detail.target;
-    if (!t || !t.classList) return;
-    if (t.classList.contains('sector-children')) {
-      t.innerHTML = '<p class="text-[11px] text-slate-600 px-2 py-1">Loading industries&hellip;</p>';
-    } else if (t.id === 'symbolPanel') {
-      t.innerHTML = '<p class="text-xs text-slate-600 py-3 px-1">Loading symbols&hellip;</p>';
-    }
+  // ── the two tabs ──
+  function setTab(name, push) {
+    $('scPane-rrg').style.display = name === 'rrg' ? 'flex' : 'none';
+    $('scPane-chart').style.display = name === 'chart' ? 'block' : 'none';
+    document.querySelectorAll('.sc-tab').forEach(function (a) { a.classList.toggle('on', a.dataset.tab === name); });
+    if (push) history.replaceState(null, '', name === 'chart' ? '/sector?tab=chart' : '/sector');
+    if (name === 'chart') { ensureLoaded(); if (chart) chart.timeScale().fitContent(); }
+    else window.dispatchEvent(new Event('resize'));
+  }
+  document.querySelectorAll('.sc-tab').forEach(function (a) {
+    a.addEventListener('click', function (e) { e.preventDefault(); setTab(a.dataset.tab, true); });
   });
 
+  // ── state ──
+  var D = null;                 // /sector/api/etfs payload
+  var period = '{{ default_period }}';
+  var range = '1Y';
+  var selected = null;          // the picked fund (holdings)
+  var chart = null, lines = {}; // lightweight-charts + one line per ETF
+  var holdCache = {};           // symbol -> holdings payload
+  var holdSort = { key: 'weight', dir: -1 };
+  var loading = false;
+  var RANGE_DAYS = { '1M': 21, '3M': 63, '6M': 126, '1Y': 252, '2Y': 100000 };
+
+  function ensureLoaded() {
+    if (D || loading) return;
+    loading = true;
+    fetch('/sector/api/etfs', { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (j) {
+      loading = false;
+      if (!j.ok) { $('scEtfBody').innerHTML = '<tr><td colspan="6" class="px-4 py-6 text-center text-rose-300">Could not load the funds.</td></tr>'; return; }
+      D = j;
+      var asof = (D.etfs.find(function (e) { return e.symbol === 'SPY'; }) || D.etfs[0] || {}).as_of;
+      if (asof) $('scAsOf').textContent = 'closes to ' + asof;
+      buildChart();
+      renderTable();
+      if (!selected) {
+        // land on the period's best SECTOR (not an index), as the table is sorted
+        var best = sortedEtfs().filter(function (e) { return e.symbol !== 'SPY' && e.symbol !== 'QQQ'; })[0];
+        if (best) select(best.symbol, false);
+      }
+    }).catch(function () { loading = false; $('scEtfBody').innerHTML = '<tr><td colspan="6" class="px-4 py-6 text-center text-rose-300">Could not load the funds.</td></tr>'; });
+  }
+
+  // ── the chart ──
+  function buildChart() {
+    if (chart) { try { chart.remove(); } catch (e) {} lines = {}; }
+    chart = LightweightCharts.createChart($('scChart'), {
+      autoSize: true,
+      layout: { background: { color: light() ? '#ffffff' : '#0b1220' }, textColor: light() ? '#334155' : '#94a3b8' },
+      grid: { vertLines: { color: 'rgba(148,163,184,0.14)' }, horzLines: { color: 'rgba(148,163,184,0.14)' } },
+      rightPriceScale: { borderColor: 'rgba(148,163,184,0.35)', scaleMargins: { top: 0.08, bottom: 0.08 } },
+      timeScale: { borderColor: 'rgba(148,163,184,0.35)', timeVisible: false, rightOffset: 2 },
+      crosshair: { mode: (LightweightCharts.CrosshairMode && LightweightCharts.CrosshairMode.Normal) || 0 },
+      localization: { priceFormatter: function (v) { return (v > 0 ? '+' : '') + v.toFixed(1) + '%'; } },
+      handleScroll: true, handleScale: true
+    });
+    var zero = null;
+    D.etfs.forEach(function (e) {
+      var s = chart.addLineSeries({ color: e.color, lineWidth: e.symbol === 'SPY' ? 3 : 2, priceLineVisible: false, lastValueVisible: true,
+                                    title: '', crosshairMarkerRadius: 3, visible: isTicked(e.symbol),
+                                    priceFormat: { type: 'custom', minMove: 0.01, formatter: function (v) { return (v > 0 ? '+' : '') + v.toFixed(2) + '%'; } } });
+      lines[e.symbol] = s;
+      if (!zero) zero = s;
+    });
+    if (zero) zero.createPriceLine({ price: 0, color: 'rgba(148,163,184,0.6)', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '0%' });
+    setRange(range);
+    chart.subscribeCrosshairMove(function (ev) { paintTickValues(ev && ev.time ? ev : null); });
+  }
+  function rebased(sym) {
+    var pts = (D.series[sym] || []);
+    var n = RANGE_DAYS[range] || 252;
+    pts = pts.slice(-Math.min(pts.length, n + 1));
+    if (!pts.length) return [];
+    var c0 = pts[0][1] || 1;
+    return pts.map(function (p) { return { time: p[0], value: (p[1] / c0 - 1) * 100 }; });
+  }
+  function setRange(r) {
+    range = r;
+    document.querySelectorAll('.sc-range').forEach(function (b) { b.classList.toggle('on', b.dataset.range === r); });
+    if (!chart) return;
+    D.etfs.forEach(function (e) { lines[e.symbol].setData(rebased(e.symbol)); });
+    chart.timeScale().fitContent();
+    paintTickValues(null);
+  }
+  document.querySelectorAll('.sc-range').forEach(function (b) { b.addEventListener('click', function () { setRange(b.dataset.range); }); });
+  document.addEventListener('th:theme', function () {
+    if (chart) chart.applyOptions({ layout: { background: { color: light() ? '#ffffff' : '#0b1220' }, textColor: light() ? '#334155' : '#94a3b8' } });
+  });
+
+  // ── the tick boxes ──
+  function tickInputs() { return Array.prototype.slice.call(document.querySelectorAll('#scTicks input')); }
+  function isTicked(sym) { var i = tickInputs().find(function (x) { return x.value === sym; }); return !!(i && i.checked); }
+  function setTicked(sym, on) {
+    var i = tickInputs().find(function (x) { return x.value === sym; });
+    if (i) i.checked = !!on;
+    if (lines[sym]) lines[sym].applyOptions({ visible: !!on });
+    paintTickValues(null);
+  }
+  $('scTicks').addEventListener('change', function (e) {
+    if (e.target && e.target.tagName === 'INPUT') setTicked(e.target.value, e.target.checked);
+  });
+  $('scAll').addEventListener('click', function () { tickInputs().forEach(function (i) { setTicked(i.value, true); }); });
+  $('scNone').addEventListener('click', function () { tickInputs().forEach(function (i) { setTicked(i.value, false); }); });
+  // the % at the end of the range (or under the crosshair) beside each ticked fund
+  function paintTickValues(ev) {
+    if (!D) return;
+    D.etfs.forEach(function (e) {
+      var lab = document.querySelector('#scTicks input[value="' + e.symbol + '"]');
+      if (!lab) return;
+      var val = lab.parentNode.querySelector('.val');
+      if (!lab.checked) { val.textContent = ''; return; }
+      var v = null;
+      if (ev && ev.seriesData) { var dp = ev.seriesData.get(lines[e.symbol]); v = dp ? dp.value : null; }
+      else { var d = rebased(e.symbol); v = d.length ? d[d.length - 1].value : null; }
+      val.textContent = v == null ? '' : pct(v, 1);
+      val.className = 'val tabular-nums ' + cls(v);
+    });
+  }
+
+  // ── the performance table ──
+  function sortedEtfs() {
+    return D.etfs.slice().sort(function (a, b) {
+      var x = a.ret[period], y = b.ret[period];
+      if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1;
+      return y - x;
+    });
+  }
+  function spark(tail, n, color, w, h) {
+    w = w || 96; h = h || 24;
+    var pts = (tail || []).slice(-(n + 1));
+    if (pts.length < 2) return '<span class="text-slate-600">-</span>';
+    var lo = Math.min.apply(null, pts), hi = Math.max.apply(null, pts), span = (hi - lo) || 1;
+    var d = pts.map(function (v, i) { return (i * (w - 2) / (pts.length - 1) + 1).toFixed(1) + ',' + (h - 2 - (v - lo) * (h - 4) / span).toFixed(1); }).join(' ');
+    var up = pts[pts.length - 1] >= pts[0];
+    var c = color || (up ? '#34d399' : '#fb7185');
+    return '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '" aria-hidden="true"><polyline fill="none" stroke="' + c + '" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" points="' + d + '"/>' +
+           '<circle cx="' + (w - 1) + '" cy="' + (h - 2 - (pts[pts.length - 1] - lo) * (h - 4) / span).toFixed(1) + '" r="2" fill="' + c + '"/></svg>';
+  }
+  function bar(v, maxAbs, w) {
+    w = w || 200;
+    if (v == null || !maxAbs) return '';
+    var half = w / 2, len = Math.min(half, Math.abs(v) / maxAbs * half);
+    var left = v >= 0 ? half : half - len;
+    return '<div class="relative" style="width:' + w + 'px;height:8px"><div class="absolute top-0 bottom-0" style="left:' + half + 'px;width:1px;background:rgba(148,163,184,.4)"></div>' +
+           '<div class="sc-bar absolute top-0" style="left:' + left + 'px;width:' + len + 'px;background:' + (v >= 0 ? 'rgba(52,211,153,.75)' : 'rgba(251,113,133,.8)') + '"></div></div>';
+  }
+  function renderTable() {
+    if (!D) return;
+    var n = periodDays(period);
+    $('scPerLbl').textContent = period;
+    document.querySelectorAll('.sc-hper').forEach(function (s) { s.textContent = period; });
+    var rows = sortedEtfs();
+    var maxAbs = Math.max.apply(null, rows.map(function (e) { return Math.abs(e.ret[period] || 0); }).concat([0.01]));
+    $('scEtfBody').innerHTML = rows.map(function (e, i) {
+      var v = e.ret[period];
+      return '<tr class="sc-row' + (e.symbol === selected ? ' on' : '') + '" data-sym="' + e.symbol + '">' +
+        '<td class="px-4 py-1.5 text-slate-500 tabular-nums">' + (i + 1) + '</td>' +
+        '<td class="px-2 py-1.5"><span class="inline-flex items-center gap-2"><span class="sc-dot" style="background:' + e.color + '"></span>' +
+          '<span class="sc-sym font-semibold text-slate-200">' + esc(e.symbol) + '</span><span class="text-slate-500">' + esc(e.name) + '</span></span></td>' +
+        '<td class="px-2 py-1.5 text-right tabular-nums text-slate-300">' + money(e.last) + '</td>' +
+        '<td class="px-2 py-1.5 text-right tabular-nums font-medium ' + cls(v) + '">' + pct(v) + '</td>' +
+        '<td class="px-2 py-1.5">' + bar(v, maxAbs) + '</td>' +
+        '<td class="px-4 py-1.5">' + spark(e.tail, n, e.color) + '</td></tr>';
+    }).join('');
+  }
+  function periodDays(k) { var p = (D ? D.periods : []).find(function (x) { return x.key === k; }); return p ? p.days : 21; }
+  $('scEtfBody').addEventListener('click', function (e) {
+    var tr = e.target.closest ? e.target.closest('tr.sc-row') : null;
+    if (tr) select(tr.dataset.sym, true);
+  });
+  document.querySelectorAll('.sc-per').forEach(function (b) {
+    b.addEventListener('click', function () {
+      period = b.dataset.period;
+      document.querySelectorAll('.sc-per').forEach(function (x) { x.classList.toggle('on', x === b); });
+      renderTable();
+      renderHoldings();
+    });
+  });
+
+  // ── the holdings ──
+  function select(sym, tickIt) {
+    selected = sym;
+    document.querySelectorAll('#scEtfBody tr.sc-row').forEach(function (tr) { tr.classList.toggle('on', tr.dataset.sym === sym); });
+    if (tickIt || !isTicked(sym)) setTicked(sym, true);
+    loadHoldings(sym, 0);
+  }
+  function loadHoldings(sym, attempt) {
+    var hit = holdCache[sym];
+    if (hit && hit.industry_state === 'ready') { renderHoldings(); return; }
+    if (!hit) {
+      $('scHoldTitle').textContent = sym;
+      $('scHoldSub').textContent = 'loading the holdings…';
+      $('scHoldBody').innerHTML = '<tr><td colspan="12" class="px-4 py-6 text-center text-slate-500">Loading ' + esc(sym) + '’s holdings and their prices…</td></tr>';
+    }
+    fetch('/sector/api/holdings?symbol=' + encodeURIComponent(sym), { credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j.ok) { $('scHoldBody').innerHTML = '<tr><td colspan="12" class="px-4 py-6 text-center text-rose-300">' + esc(j.error || 'Could not load the holdings.') + '</td></tr>'; return; }
+        holdCache[sym] = j;
+        if (sym === selected) renderHoldings();
+        // the sector / industry map is built once, in the background (the 11 Finviz sector
+        // screens; a cold build can take minutes when Finviz throttles): ask again, up to 5 min
+        if (j.industry_state === 'loading' && attempt < 60) setTimeout(function () { if (sym === selected) loadHoldings(sym, attempt + 1); }, 5000);
+      })
+      .catch(function () { $('scHoldBody').innerHTML = '<tr><td colspan="12" class="px-4 py-6 text-center text-rose-300">Could not load the holdings.</td></tr>'; });
+  }
+  function holdVal(r, key) {
+    if (key === 'ret') return r.ret ? r.ret[period] : null;
+    if (['1w', '1m', '3m', '6m'].indexOf(key) >= 0) return r.ret ? r.ret[key] : null;
+    return r[key];
+  }
+  function renderHoldings() {
+    var j = holdCache[selected];
+    if (!j) return;
+    var e = (D ? D.etfs : []).find(function (x) { return x.symbol === j.etf; }) || {};
+    $('scHoldLogo').innerHTML = window.tkLogo ? window.tkLogo(j.etf, 28) : '';
+    $('scHoldTitle').textContent = j.etf + ' · ' + (j.full_name || j.name || '');
+    var sub = j.n + ' holdings' + (j.as_of ? ' · book as of ' + j.as_of : '') + (j.source ? ' · ' + j.source : '') + (j.stale ? ' · last good copy' : '');
+    $('scHoldSub').textContent = j.error ? j.error : sub;
+    var notes = [];
+    if (j.industry_state === 'loading') notes.push('sector & industry loading…');
+    if (j.industry_state === 'failed') notes.push('sector & industry unavailable');
+    if (j.capped) notes.push('prices for the ' + j.capped + ' heaviest');
+    $('scHoldNote').textContent = notes.join(' · ');
+    var q = ($('scHoldFind').value || '').trim().toLowerCase();
+    var rows = j.rows.filter(function (r) {
+      if (!q) return true;
+      return [r.symbol, r.name, r.sector, r.industry].some(function (s) { return (s || '').toLowerCase().indexOf(q) >= 0; });
+    });
+    var k = holdSort.key, dir = holdSort.dir;
+    rows.sort(function (a, b) {
+      var x = holdVal(a, k), y = holdVal(b, k);
+      if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1;
+      if (typeof x === 'string') return x.localeCompare(y) * dir;
+      return (x - y) * dir;
+    });
+    document.querySelectorAll('.sc-sort').forEach(function (th) { th.classList.toggle('on', th.dataset.key === k); });
+    var maxAbs = Math.max.apply(null, rows.map(function (r) { return Math.abs(holdVal(r, 'ret') || 0); }).concat([0.01]));
+    if (!rows.length) { $('scHoldBody').innerHTML = '<tr><td colspan="12" class="px-4 py-6 text-center text-slate-500">' + (j.error ? esc(j.error) : 'No holdings to show.') + '</td></tr>'; return; }
+    $('scHoldBody').innerHTML = rows.map(function (r, i) {
+      var v = holdVal(r, 'ret');
+      function cell(key) { var x = holdVal(r, key); return '<td class="px-2 py-1.5 text-right tabular-nums ' + cls(x) + '">' + pct(x, 1) + '</td>'; }
+      return '<tr class="sc-row sc-hold" data-sym="' + esc(r.chart_symbol || r.symbol) + '" title="open ' + esc(r.symbol) + '’s chart in a new window">' +
+        '<td class="px-4 py-1.5 text-slate-500 tabular-nums">' + (i + 1) + '</td>' +
+        '<td class="px-2 py-1.5"><span class="inline-flex items-center gap-2">' + (window.tkLogo ? window.tkLogo(r.symbol, 16) : '') +
+          '<span class="font-semibold text-slate-200">' + esc(r.symbol) + '</span><span class="text-slate-500 truncate max-w-[14rem]">' + esc(r.name) + '</span></span></td>' +
+        '<td class="px-2 py-1.5 text-right tabular-nums text-slate-300">' + (r.weight == null ? '-' : r.weight.toFixed(2) + '%') + '</td>' +
+        '<td class="px-2 py-1.5 text-slate-400 whitespace-nowrap">' + esc(r.sector || '') + '</td>' +
+        '<td class="px-2 py-1.5 text-slate-400 whitespace-nowrap">' + esc(r.industry || '') + '</td>' +
+        '<td class="px-2 py-1.5 text-right tabular-nums text-slate-300">' + money(r.last) + '</td>' +
+        '<td class="px-2 py-1.5 text-right tabular-nums font-medium ' + cls(v) + '">' + pct(v) + '</td>' +
+        '<td class="px-2 py-1.5">' + bar(v, maxAbs, 100) + '</td>' +
+        cell('1w') + cell('1m') + cell('3m') + cell('6m').replace('px-2', 'px-4') + '</tr>';
+    }).join('');
+  }
+  document.querySelectorAll('.sc-sort').forEach(function (th) {
+    th.addEventListener('click', function () {
+      var k = th.dataset.key;
+      if (holdSort.key === k) holdSort.dir = -holdSort.dir;
+      else holdSort = { key: k, dir: (k === 'symbol' || k === 'sector' || k === 'industry') ? 1 : -1 };
+      renderHoldings();
+    });
+  });
+  $('scHoldFind').addEventListener('input', renderHoldings);
+  // a ticker opens its chart in its own window (the Watchlist chart; one window per ticker)
+  $('scHoldBody').addEventListener('click', function (e) {
+    var tr = e.target.closest ? e.target.closest('tr.sc-hold') : null;
+    if (!tr) return;
+    var sym = tr.dataset.sym;
+    var w = window.open('/sector/chart-window?symbol=' + encodeURIComponent(sym), 'th_chart_' + sym.replace(/[^A-Za-z0-9]/g, '_'),
+                        'width=1280,height=860,resizable=yes,scrollbars=yes');
+    if (w) { try { w.focus(); } catch (err) {} }
+  });
+
+  setTab('{{ tab }}', false);
+})();
 </script>
 {% endblock %}
