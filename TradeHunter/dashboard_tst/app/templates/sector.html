@@ -1,5 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Sector Rotation &middot; TradeHunter{% endblock %}
+{# v4.252: the whole window, not base.html's centred max-w-6xl column (user: "occupy full page not in the center") #}
+{% block main_class %}flex-1 min-h-0 overflow-y-auto w-full px-4 py-4{% endblock %}
 
 {% block content %}
 {# Sector Rotation (v4.250, user: "revamp it ... two side tab: First Tab - The RRG Chart,

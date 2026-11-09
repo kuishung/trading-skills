@@ -223,6 +223,13 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-09 - v4.252: Sector Rotation fills the window
+
+The user: *"i want the page to occupy full page not in the center"*. `templates/sector.html` overrides
+`base.html`'s `main_class` block (the default is a centred `max-w-6xl` column) with a full-width main, as the
+Watchlist, Options and Calendar pages already do - the RRG embed, the ETF chart and the two wide tables now
+use the whole window.
+
 ### 2026-11-09 - v4.251: Sector Chart - all days, all weeks or all months as columns
 
 The user, on the 26 periods: *"this i need it to be in shown all day, all week, or all month"*. The Performance
