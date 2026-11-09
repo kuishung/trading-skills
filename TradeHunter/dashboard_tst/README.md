@@ -223,6 +223,15 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-09 - v4.256: Sector Rotation - the tick boxes stand to the right of the chart; the folded strip stays left
+
+The user, correcting v4.254: *"when hide the tab should still stay right [where it is]. I want the ticker panel to
+show at right"*. `templates/sector.html`: the tick-box panel ("ticker panel") is now a column to the RIGHT of
+the ETF history chart - one row per fund (tick, swatch, ticker, name, the value at the range end / under the
+crosshair), 14 rem wide, scrolling inside the chart's height, under the chart on narrow screens - instead of
+the wrapped row above it; the folded side rail is back to a 3 rem strip on the LEFT (the v4.254 move to the
+right edge is undone), the chevron points left to hide and right to bring it back.
+
 ### 2026-11-09 - v4.255: Sector Rotation - headings gone; the chart tags carry the fund's name
 
 The user: *"i do not want the sector rotation wording (save some space), the ETF History and the description

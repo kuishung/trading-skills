@@ -85,7 +85,9 @@ def test_the_page_has_two_side_tabs_and_the_api_answers(engine, user, monkeypatc
     assert 'data-tab="chart" title="Sector Chart" class="sc-tab block px-3 py-3 border-l-2 border-t border-t-slate-800/60 transition on"' in html2
     assert 'id="scRailBtn"' in html and 'th_sector_rail_folded' in html and "title: e.name" in html       # v4.253 / v4.255
     assert "<h1" not in html and "ETF history" not in html                                                  # v4.255: no headings
-    assert 'id="scTags"' in html and "function placeTags()" in html and "#scGrid.sc-folded #scRail { order: 2; }" in html   # v4.254
+    assert 'id="scTags"' in html and "function placeTags()" in html                                         # v4.254
+    assert "#scGrid.sc-folded { grid-template-columns: 3rem minmax(0, 1fr); }" in html and "order: 2" not in html   # v4.256: the strip stays left
+    assert 'id="scTicks" class="w-full lg:w-56' in html and html.index('id="scChart"') < html.index('id="scTicks"')  # the tick boxes right of the chart
     assert html.count('class="sc-tick"') == 13 and 'rrg.optuma.com' in html
     # v4.251: a group selector (All days / All weeks / All months) in place of 26 period pills;
     # the 26 periods travel to the page as JSON and become the tables' columns

@@ -30,7 +30,7 @@
   <nav id="scRail" class="rounded-lg border border-slate-800 bg-slate-900/40 overflow-hidden lg:sticky lg:top-4">
     <button type="button" id="scRailBtn" class="hidden lg:flex w-full items-center justify-end px-2 py-1.5 text-slate-500 hover:text-slate-200 border-b border-slate-800/60"
             title="Hide the side panel" aria-label="Hide the side panel" aria-expanded="true">
-      <svg class="sc-chev" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+      <svg class="sc-chev" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg>
     </button>
     <a href="/sector" data-tab="rrg" title="RRG Chart" class="sc-tab block px-3 py-3 border-l-2 transition {% if tab == 'rrg' %}on{% endif %}">
       <div class="flex items-center gap-2.5">
@@ -88,8 +88,14 @@
             <button type="button" id="scNone" class="px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:text-slate-200" title="untick every fund">None</button>
           </div>
         </div>
-        <div class="px-4 pt-2.5">
-          <div id="scTicks" class="flex flex-wrap gap-x-3 gap-y-1.5 text-[12px]">
+        {# v4.256: the tick boxes stand in a column to the RIGHT of the chart (user: "I want the ticker panel to show at right") #}
+        <div class="px-4 pb-3 pt-2.5 flex flex-col lg:flex-row gap-3 items-stretch">
+          <div class="relative flex-1 min-w-0">
+            <div id="scChart" class="w-full rounded border border-slate-800/70 bg-slate-950/30" style="height:400px"></div>
+            {# v4.254: a tag at the end of every drawn line - the fund's name - placed by placeTags() #}
+            <div id="scTags" class="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true"></div>
+          </div>
+          <div id="scTicks" class="w-full lg:w-56 shrink-0 flex flex-col gap-1 text-[12px] overflow-y-auto" style="max-height:400px">
             {% for e in etfs %}
             <label class="sc-tick" style="--c:{{ e.color }}" title="{{ e.full_name }}">
               <input type="checkbox" value="{{ e.symbol }}" {% if e.symbol == 'SPY' %}checked{% endif %}>
@@ -97,13 +103,6 @@
               <span class="nm text-slate-500">{{ e.name }}</span><span class="val tabular-nums"></span>
             </label>
             {% endfor %}
-          </div>
-        </div>
-        <div class="px-4 pb-3 pt-2">
-          <div class="relative">
-            <div id="scChart" class="w-full rounded border border-slate-800/70 bg-slate-950/30" style="height:400px"></div>
-            {# v4.254: a tag at the end of every drawn line - "XLV Health Care" - placed by placeTags() #}
-            <div id="scTags" class="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true"></div>
           </div>
         </div>
       </section>
@@ -181,11 +180,10 @@
   .sc-ico { --c: #94a3b8; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
             color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); border: 1px solid color-mix(in srgb, var(--c) 30%, transparent); }
   .sc-ico svg { width: 17px; height: 17px; }
-  /* the folded rail (v4.254): a 3rem icon strip parked at the RIGHT edge, the panes slide left and take
-     the whole width; labels gone, the chevron turned to point the way back */
+  /* the folded rail: a 3rem icon strip that STAYS on the left (user, v4.256: "when hide the tab should
+     still stay"); labels gone, the panes take the room, the chevron turned to point the way back */
   @media (min-width: 1024px) {
-    #scGrid.sc-folded { grid-template-columns: minmax(0, 1fr) 3rem; }
-    #scGrid.sc-folded #scRail { order: 2; }
+    #scGrid.sc-folded { grid-template-columns: 3rem minmax(0, 1fr); }
     #scGrid.sc-folded .sc-txt { display: none; }
     #scGrid.sc-folded .sc-tab { padding-left: 0; padding-right: 0; }
     #scGrid.sc-folded .sc-tab > div { justify-content: center; }
@@ -195,14 +193,16 @@
   .sc-range.on, .sc-grp.on { border-color: rgba(52,211,153,.6); background: rgba(16,185,129,.15); color: #6ee7b7; }
   .sc-pcol { cursor: pointer; white-space: nowrap; } .sc-pcol:hover { color: #cbd5e1; } .sc-pcol.on { color: #6ee7b7; }
   .sc-heat { font-variant-numeric: tabular-nums; }
-  .sc-tick { --c: #94a3b8; display: inline-flex; align-items: center; gap: .35rem; cursor: pointer; user-select: none; padding: 2px 8px 2px 6px; border-radius: 6px;
-             border: 1px solid rgba(148,163,184,.25); }
+  .sc-tick { --c: #94a3b8; display: flex; align-items: center; gap: .35rem; cursor: pointer; user-select: none; padding: 3px 8px 3px 6px; border-radius: 6px;
+             border: 1px solid rgba(148,163,184,.25); min-width: 0; }
+  .sc-tick .nm { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sc-tick .val { margin-left: auto; }
   .sc-tick input { width: 13px; height: 13px; accent-color: var(--c); margin: 0; }
   .sc-tick .sw { width: 14px; height: 3px; border-radius: 2px; background: var(--c); display: inline-block; opacity: .35; }
   .sc-tick:has(input:checked) { border-color: color-mix(in srgb, var(--c) 60%, transparent); background: color-mix(in srgb, var(--c) 10%, transparent); }
   .sc-tick:has(input:checked) .sw { opacity: 1; }
   .sc-tick .sym { font-weight: 600; color: #e2e8f0; }
-  .sc-tick .val { color: #cbd5e1; margin-left: .15rem; }
+  .sc-tick .val { color: #cbd5e1; }
   .sc-tag { --c: #94a3b8; position: absolute; transform: translateY(-50%); white-space: nowrap; font-size: 11px; line-height: 1; padding: 3px 6px;
             border-radius: 4px; color: var(--c); font-weight: 600; background: rgba(11,18,32,.82); border: 1px solid color-mix(in srgb, var(--c) 55%, transparent); }
   .sc-tag .nm { color: #cbd5e1; font-weight: 400; margin-left: .3em; }
