@@ -25,7 +25,7 @@ import datetime as _dt
 from pathlib import Path
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import User
 from ..security import require_user
+from ..services import cal_events as ce
 from ..services import calendars as cal
 
 router = APIRouter(prefix="/calendar", tags=["calendar"])
@@ -124,12 +125,14 @@ def month_page(
 
 
 # ───────────────────────── panels (HTMX fragments) ─────────────────────────
-def _econ_for(start, end, picked, imp) -> tuple[dict, bool]:
-    """{market date -> that day's releases, loudest first}, plus a failure flag."""
+def _econ_for(start, end, picked, imp, mode=ce.MODE_ALL, titles=frozenset()) -> tuple[dict, bool]:
+    """{market date -> that day's releases, loudest first}, plus a failure flag. v4.263:
+    only the releases the member's choice keeps (services/cal_events.py)."""
     try:
         events = cal.economic_events(start, end, picked, _IMP_MIN[imp])
     except Exception:  # noqa: BLE001 — defensive; the service already soft-fails
         return {}, True
+    events = ce.filter_events(events, mode, set(titles))
     out: dict[_dt.date, list[dict]] = {}
     for e in events:
         out.setdefault(e["date"], []).append(e)
@@ -195,7 +198,8 @@ def month_panel(
         sel_d = today if start <= today <= end else start
 
     my_syms = _my_symbols(db, user)
-    econ, econ_failed = _econ_for(start, end, picked, imp)
+    ev_mode, ev_titles = ce.selection(user)                  # v4.263: the member's own set of releases
+    econ, econ_failed = _econ_for(start, end, picked, imp, ev_mode, ev_titles)
     # Nasdaq is one HTTP call per day; US companies don't report at the weekend,
     # so the month asks for weekdays only — 31 calls become 22 and the cells that
     # would have been filled are empty anyway.
@@ -229,6 +233,63 @@ def month_panel(
         "prev_day": _step(anchor, -1).isoformat(),
         "next_day": _step(anchor, +1).isoformat(),
         "params": params,
+        # v4.263: the Events button - which releases this member's calendar shows
+        "ev_mode": ev_mode, "ev_label": ce.MODE_LABELS[ev_mode],
+        "ev_n": len(ev_titles) if ev_mode == ce.MODE_CUSTOM else None,
+        "events_url": "/calendar/events/panel?" + urlencode({"countries": ",".join(picked), "back": _url()}),
         **_urls("/calendar/month/panel", params),
     }
     return templates.TemplateResponse(request, "_cal_month.html", ctx)
+
+
+# ───────────── v4.263: which economic releases a member's calendar shows ─────────────
+def _safe_back(back: str | None) -> str:
+    """The month panel URL to reload after a save - only ever our own panel path."""
+    b = (back or "").strip()
+    return b if b.startswith("/calendar/month/panel") else "/calendar/month/panel"
+
+
+@router.get("/events/panel", response_class=HTMLResponse)
+def events_panel(
+    request: Request,
+    countries: str = "US",
+    back: str | None = None,
+    user: User = Depends(require_user),
+):
+    """The picker: Macro Insights (the default) / all events / the member's own list, over
+    every release title the feed has around today for the picked countries."""
+    picked = [c.strip().upper() for c in (countries or "").split(",") if c.strip()] or ["US"]
+    mode, titles = ce.selection(user)
+    rows = ce.catalogue(picked, mode, titles)
+    return templates.TemplateResponse(
+        request, "_cal_events.html",
+        {"user": user, "mode": mode, "modes": [(m, ce.MODE_LABELS[m]) for m in ce.MODES],
+         "rows": rows, "n_macro": sum(1 for r in rows if r["macro"]), "picked": picked,
+         "back": _safe_back(back), "titles": titles},
+    )
+
+
+@router.post("/events/save", response_class=HTMLResponse)
+def events_save(
+    request: Request,
+    mode: str = Form(ce.MODE_MACRO),
+    titles: list[str] = Form([]),
+    back: str | None = Form(None),
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Save the member's choice, close the picker and reload the month panel (an
+    out-of-band swap of #calPanel back to the view the member was reading)."""
+    mode = mode if mode in ce.MODES else ce.MODE_MACRO
+    ce.save(db, user, mode, titles)
+    return HTMLResponse(
+        '<div id="calPanel" class="flex-1 min-h-0 flex flex-col" hx-swap-oob="true" '
+        f'hx-get="{_safe_back(back)}" hx-trigger="load" hx-swap="innerHTML">'
+        '<div class="flex-1 flex items-center justify-center text-xs text-slate-500 py-8">Loading&hellip;</div></div>'
+    )
+
+
+@router.get("/events/close", response_class=HTMLResponse)
+def events_close(user: User = Depends(require_user)):
+    """Close the picker without saving (empties #calEvents)."""
+    return HTMLResponse("")

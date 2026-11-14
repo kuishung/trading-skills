@@ -21,6 +21,11 @@
     <span class="text-[11px] uppercase tracking-wide text-sky-300 mr-0.5">Econ</span>
     {% for key, label, _min in importance_filters %}{{ C.pill(url(imp=key), label, imp == key,
       "Economic releases: " ~ label) }}{% endfor %}
+    {# v4.263: which releases THIS member's calendar shows - Macro Insights by default #}
+    <button type="button" id="calEventsBtn" hx-get="{{ events_url }}" hx-target="#calEvents" hx-swap="innerHTML"
+            title="Choose which economic releases your calendar shows (your own setting)"
+            class="text-[12px] px-2 py-1 rounded border border-sky-500/50 text-sky-300 hover:bg-sky-500/10 transition whitespace-nowrap">
+      Events: {{ ev_label }}{% if ev_n is not none %} ({{ ev_n }}){% endif %}</button>
   </div>
   <div class="flex items-center gap-1">
     <span class="text-[11px] uppercase tracking-wide text-amber-300 mr-0.5">Earn</span>

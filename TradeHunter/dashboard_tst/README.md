@@ -223,6 +223,26 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-14 - v4.263: Calendar - which economic releases a member's calendar shows
+
+The user: *"the economic calendar is set to have all event and it is so many. I want user to be able to select
+which event to show in his calendar so it is a per user setting. By default the calendar for the item in the
+macro insight will be default calendar events"*. New `services/cal_events.py`: each member keeps one of three
+choices in `User.prefs["cal_econ_events"]` - **Macro Insights** (absent = the default: the releases the Macro
+page's topics read - CPI, PCE, PPI, the Fed decision / FOMC, unemployment, payrolls, GDP - derived from
+`macro_topics` so a new topic joins by itself), **All events** (`"all"`, what the page showed before) or **My own
+list** (`{"titles": [...]}`, the feed's release titles, matched across every picked country; an empty list =
+none). `routes/calendar.py`: the month panel filters the feed through that choice (`_econ_for`); an **Events**
+button in the Econ group (showing the choice) opens `GET /calendar/events/panel` - a drawer (`_cal_events.html`)
+with the three choices over every title the feed has ten weeks either side of today (Macro titles first, loudest
+first, then the rest A-Z, impact dot and count per title, a find box, Tick / Untick shown; ticking a box switches
+to My own list); `POST /calendar/events/save` stores it and reloads the month panel to the view the member was
+reading (an out-of-band swap; only our own panel path is accepted as the return URL); `/calendar/events/close`.
+`calendar.html` carries the `#calEvents` host. Tests in `tests/test_calendar_events.py`. Found while checking
+against the live feed: TradingView now titles the US Fed decision plainly "Interest Rate", so the Fed Funds
+topic's release pattern in `services/macro_topics.py` gains it (the Macro page's "next release" for the Fed
+had been missing it too).
+
 ### 2026-11-14 - v4.262: Option Finder - the price bar's range is the member's own
 
 The user: *"i need the rate +- % of the price movement to be adjustable by user manually key in the value, so when

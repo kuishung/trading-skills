@@ -96,7 +96,8 @@ TOPICS: list[dict] = [
         ],
         "band": None,
         "lines": [],
-        "release": r"^(Fed Interest Rate Decision|FOMC .*|Fed Press Conference)$",
+        # v4.263: the feed names the US decision plainly "Interest Rate" now (seen 2026-11-14)
+        "release": r"^(Fed Interest Rate Decision|Interest Rate|FOMC .*|Fed Press Conference)$",
         "text": {
             "definition": "The rate at which banks lend their reserve balances to each other overnight. The FOMC sets a target RANGE (the FFTR, an upper and a lower bound) at its eight meetings a year; open market operations then keep the effective rate (EFFR) inside that range.",
             "covers": "Every other interest rate - mortgages, credit cards, bank loans, deposits, Treasury yields - and the value of the dollar, so household and business assets, commodities and foreign currencies.",

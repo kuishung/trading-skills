@@ -1,0 +1,113 @@
+{# v4.263: which economic releases THIS member's calendar shows (routes/calendar.py::events_panel).
+
+   A drawer over the calendar: three choices - Macro Insights (the default: the releases the
+   Macro page's topics read), every event, or the member's own ticked list - over every release
+   title the feed has around today for the picked countries. Ticking a box switches to "My own
+   list". Save stores the choice in User.prefs and reloads the month panel; Cancel just closes.
+
+   Context: mode, modes [(key, label)], rows [{title, importance, n, macro, on}], n_macro, picked,
+   back (the month panel URL to reload), titles (the saved custom set). #}
+<div class="fixed inset-0 z-40 bg-black/50" hx-get="/calendar/events/close" hx-target="#calEvents" hx-swap="innerHTML" aria-hidden="true"></div>
+<form id="calEventsForm" hx-post="/calendar/events/save" hx-target="#calEvents" hx-swap="innerHTML"
+      class="fixed inset-y-0 right-0 z-50 w-[28rem] max-w-full flex flex-col bg-slate-900 border-l border-slate-800 shadow-2xl"
+      role="dialog" aria-label="Economic releases on my calendar">
+  <input type="hidden" name="back" value="{{ back }}">
+  <div class="px-4 py-3 border-b border-slate-800 flex items-start justify-between gap-3">
+    <div>
+      <h2 class="text-base font-semibold text-slate-100">Economic releases on my calendar</h2>
+      <p class="text-[12px] text-slate-500">your own setting &middot; countries on: {{ picked | join(", ") }}</p>
+    </div>
+    <button type="button" hx-get="/calendar/events/close" hx-target="#calEvents" hx-swap="innerHTML"
+            class="w-7 h-7 rounded border border-slate-700 text-slate-400 hover:text-slate-200" title="Close" aria-label="Close">&times;</button>
+  </div>
+
+  <div class="px-4 py-2.5 border-b border-slate-800 flex flex-col gap-1.5" id="calEvModes">
+    {% for key, label in modes %}
+    <label class="flex items-start gap-2 text-[13px] text-slate-300 cursor-pointer">
+      <input type="radio" name="mode" value="{{ key }}" {% if key == mode %}checked{% endif %} class="mt-0.5 accent-sky-500">
+      <span><b class="text-slate-100">{{ label }}</b>
+        {% if key == 'macro' %}<span class="text-slate-500"> &middot; the default: the {{ n_macro }} releases the Macro Insights topics read (CPI, PCE, PPI, the Fed decision, unemployment, payrolls, GDP)</span>
+        {% elif key == 'all' %}<span class="text-slate-500"> &middot; every release the feed has ({{ rows | length }} titles)</span>
+        {% else %}<span class="text-slate-500"> &middot; tick the releases below</span>{% endif %}</span>
+    </label>
+    {% endfor %}
+  </div>
+
+  <div class="px-4 py-2 border-b border-slate-800 flex items-center gap-2 text-[12px]">
+    <input type="search" id="calEvFind" placeholder="find a release" aria-label="Find a release"
+           class="flex-1 bg-slate-950/40 border border-slate-700 rounded px-2 py-1 text-[12px] text-slate-200">
+    <button type="button" id="calEvAllShown" class="px-2 py-1 rounded border border-slate-700 text-slate-400 hover:text-slate-200" title="tick every release shown">Tick shown</button>
+    <button type="button" id="calEvNoneShown" class="px-2 py-1 rounded border border-slate-700 text-slate-400 hover:text-slate-200" title="untick every release shown">Untick shown</button>
+  </div>
+
+  <div class="flex-1 min-h-0 overflow-y-auto px-2 py-1.5" id="calEvList">
+    {% if not rows %}
+    <div class="text-[12px] text-slate-500 px-2 py-6 text-center">The release feed did not answer. Try again in a minute.</div>
+    {% endif %}
+    {% set ns = namespace(group=None) %}
+    {% for r in rows %}
+      {% set g = 'macro' if r.macro else 'other' %}
+      {% if g != ns.group %}{% set ns.group = g %}
+        <div class="px-2 pt-2 pb-1 text-[11px] uppercase tracking-wide text-slate-500">{{ 'Macro Insights releases' if r.macro else 'Other releases' }}</div>
+      {% endif %}
+      <label class="cal-ev flex items-center gap-2 px-2 py-1 rounded hover:bg-slate-800/60 text-[13px] text-slate-200 cursor-pointer"
+             data-title="{{ r.title | lower }}" data-macro="{{ 1 if r.macro else 0 }}">
+        <input type="checkbox" name="titles" value="{{ r.title }}"{% if r.on %} checked{% endif %} class="accent-sky-500">
+        <span class="w-2 h-2 rounded-full shrink-0 {% if r.importance >= 1 %}bg-rose-400{% elif r.importance == 0 %}bg-amber-400{% else %}bg-slate-600{% endif %}"
+              title="{{ 'high' if r.importance >= 1 else 'medium' if r.importance == 0 else 'low' }} impact"></span>
+        <span class="flex-1 min-w-0 truncate">{{ r.title }}</span>
+        <span class="text-[11px] text-slate-500 tabular-nums shrink-0" title="times in the feed over the next and the past ten weeks">{{ r.n }}</span>
+      </label>
+    {% endfor %}
+  </div>
+
+  <div class="px-4 py-3 border-t border-slate-800 flex items-center justify-between gap-2">
+    <span class="text-[12px] text-slate-500" id="calEvCount"></span>
+    <span class="flex items-center gap-2">
+      <button type="button" hx-get="/calendar/events/close" hx-target="#calEvents" hx-swap="innerHTML"
+              class="text-[12px] px-3 py-1.5 rounded border border-slate-700 text-slate-400 hover:text-slate-200">Cancel</button>
+      <button type="submit" class="text-[12px] px-3 py-1.5 rounded bg-sky-600 text-white hover:bg-sky-500">Save</button>
+    </span>
+  </div>
+</form>
+<script>
+(function () {
+  var form = document.getElementById('calEventsForm'), list = document.getElementById('calEvList');
+  function boxes() { return Array.prototype.slice.call(list.querySelectorAll('input[name="titles"]')); }
+  function rows() { return Array.prototype.slice.call(list.querySelectorAll('.cal-ev')); }
+  function mode() { var r = form.querySelector('input[name="mode"]:checked'); return r ? r.value : 'macro'; }
+  function setMode(m) { var r = form.querySelector('input[name="mode"][value="' + m + '"]'); if (r) r.checked = true; }
+  // the boxes always show what the chosen mode keeps; in Macro / All they only inform
+  function paint() {
+    var m = mode();
+    rows().forEach(function (row) {
+      var b = row.querySelector('input');
+      if (m === 'macro') b.checked = row.dataset.macro === '1';
+      else if (m === 'all') b.checked = true;
+    });
+    list.classList.toggle('opacity-70', m !== 'custom');
+    var n = boxes().filter(function (b) { return b.checked; }).length;
+    document.getElementById('calEvCount').textContent = n + ' of ' + boxes().length + ' releases on the calendar';
+  }
+  form.querySelectorAll('input[name="mode"]').forEach(function (r) { r.addEventListener('change', paint); });
+  list.addEventListener('change', function (e) {              // a tick = the member's own list
+    if (e.target && e.target.name === 'titles') { setMode('custom'); paint(); }
+  });
+  document.getElementById('calEvFind').addEventListener('input', function () {
+    var q = this.value.trim().toLowerCase();
+    rows().forEach(function (row) { row.classList.toggle('hidden', !!q && row.dataset.title.indexOf(q) < 0); });
+  });
+  document.getElementById('calEvAllShown').addEventListener('click', function () {
+    setMode('custom'); rows().forEach(function (row) { if (!row.classList.contains('hidden')) row.querySelector('input').checked = true; }); paint();
+  });
+  document.getElementById('calEvNoneShown').addEventListener('click', function () {
+    setMode('custom'); rows().forEach(function (row) { if (!row.classList.contains('hidden')) row.querySelector('input').checked = false; }); paint();
+  });
+  document.addEventListener('keydown', function esc(e) {
+    if (e.key !== 'Escape') return;
+    document.removeEventListener('keydown', esc);
+    var c = document.getElementById('calEvents'); if (c) { c.innerHTML = ''; }
+  });
+  paint();
+})();
+</script>
