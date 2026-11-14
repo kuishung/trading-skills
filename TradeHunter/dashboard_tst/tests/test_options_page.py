@@ -2171,6 +2171,26 @@ def test_the_option_finder_tab(client, fake):
         assert needle in html, needle
 
 
+def test_the_price_bar_range_is_the_members_own(client, fake):
+    """v4.262 (user: "the rate +- % of the price movement to be adjustable by user manually key in the value ...
+    right click on the price ... preset value from +-10% to +-100% or a custom price ... auto adjust the button
+    range on the left side"): a fourth range button takes a keyed %, the bar's right-click menu offers +-10..100 %,
+    a keyed range and a keyed price the bar widens to show, and on a handle that handle's price; any range is kept."""
+    html = client.get("/options").text
+    for needle in ('id="ofRangeCustom" data-ofrange=""', '<div id="ofMenu" class="of-menu hidden" role="menu"',
+                   "var OFB_PRESETS = [10, 20, 30];", "function ofbSetRange(r)", "function ofbRangeFor(price)",
+                   "function ofbAskRange()", "function ofbAskPrice(k)", "function ofMenuOpen(e, k)",
+                   "for (var p = 10; p <= 100; p += 10) h += '<button type=\"button\" data-ofm=\"range:' + p + '\"",
+                   'data-ofm="range:ask">Custom range %', 'data-ofm="price:">Custom price',
+                   "$('ofBar').addEventListener('contextmenu', function (e) {",
+                   "if (b.id === 'ofRangeCustom') { ofbAskRange(); return; }",
+                   "if (r0 >= OFB_RANGE_MIN && r0 <= OFB_RANGE_MAX) OFB.range = r0;",
+                   "if (!h || !(OF.spot > 0) || e.button !== 0) return;",
+                   "b.innerHTML = preset ? '&plusmn;&hellip;' : '&plusmn;' + OFB.range + '%';"):
+        assert needle in html, needle
+    assert "if (r0 === 10 || r0 === 20 || r0 === 30) OFB.range = r0;" not in html
+
+
 def test_the_price_says_where_it_came_from(client, fake):
     """v4.220 (user: "show where the price came from"): the surface heading and the Option Finder name the price's
     source - the official close of its day, an estimate from the option prices (amber), or a delayed quote."""

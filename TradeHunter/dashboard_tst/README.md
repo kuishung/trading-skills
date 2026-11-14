@@ -223,6 +223,20 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-14 - v4.262: Option Finder - the price bar's range is the member's own
+
+The user: *"i need the rate +- % of the price movement to be adjustable by user manually key in the value, so when
+use right click on the price, it will give a list of price to be selectable by user which will give preset value
+from +-10% to +-100% or a custom price to be key in by user and that will auto adjust the button range on the left
+side"*. `templates/options.html`, the finder's price bar: **a right-click anywhere on the bar** (the price, a
+handle, the buttons) opens a menu - the presets ±10 % to ±100 % in steps of 10, "Custom range %…" (key in any whole
+percent, 1-500), "Custom price…" (key in a price; the bar widens to the next 5 % that reaches it), and, when the
+right-click was on a movable handle, "Set Worst / Target / Entry price…" (the handle moves there, the bar widens if
+it must). The range buttons on the bar's left gain a **fourth button** that shows the member's own range (±45 %)
+when it is not 10 / 20 / 30 and, clicked, asks for a keyed %. Any range is remembered (`th.of.range`, no longer
+only 10 / 20 / 30); the tick marks walk out from 0 so an odd range still ends on a labelled tick at each edge. A
+right-click on a handle no longer starts a drag. Test added.
+
 ### 2026-11-09 - v4.261: Sector Rotation - larger type again
 
 The user, after v4.260: *"i need the font to be bigger"*. `templates/sector.html`: the tables and tick boxes

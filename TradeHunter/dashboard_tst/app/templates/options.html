@@ -288,6 +288,16 @@
   .of-bar-range { display: flex; flex-direction: column; gap: 1px; }
   .of-bar-range button { padding: 0 .35rem; font-size: 10px; line-height: 1.35; border: 1px solid var(--tv-border); border-radius: .25rem; color: var(--tv-muted); }
   .of-bar-range button[aria-pressed="true"] { color: var(--tv-text-hi); border-color: var(--tv-accent); background: rgba(41,98,255,.15); }
+  /* v4.262: the bar's right-click menu */
+  .of-menu { position: fixed; z-index: 60; min-width: 11rem; padding: .25rem 0; border: 1px solid var(--tv-border); border-radius: .4rem;
+             background: var(--tv-page); box-shadow: 0 8px 24px rgba(0,0,0,.45); font-size: 12px; }
+  .of-menu-h { padding: .2rem .7rem .15rem; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--tv-muted); }
+  .of-menu-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px; padding: 0 .4rem .25rem; }
+  .of-menu-grid button { padding: .15rem 0; font-size: 11px; border: 1px solid var(--tv-border); border-radius: .25rem; color: var(--tv-text, #d1d4dc); }
+  .of-menu-grid button[aria-pressed="true"] { color: var(--tv-text-hi); border-color: var(--tv-accent); background: rgba(41,98,255,.15); }
+  .of-menu-grid button:hover, .of-menu-it:hover { background: rgba(148,163,184,.15); }
+  .of-menu-it { display: block; width: 100%; text-align: left; padding: .3rem .7rem; color: var(--tv-text, #d1d4dc); }
+  .of-menu-sep { border-top: 1px solid var(--tv-border); margin: .2rem 0; }
   .of-bar-track { position: relative; flex: 1 1 auto; height: 2.75rem; margin: 0 1.8rem; touch-action: none; user-select: none; }
   .of-bar-track::before { content: ""; position: absolute; left: 0; right: 0; top: 1.25rem; height: 4px; border-radius: 2px; background: var(--tv-border-2, #363a45); }
   .of-bar-ticks span { position: absolute; top: 1.7rem; transform: translateX(-50%); font-size: 9px; color: var(--tv-muted); white-space: nowrap; }
@@ -740,6 +750,8 @@
         <span class="of-bar-title">Drag <b class="of-bar-worst">Worst</b>, <b class="of-bar-target">Target</b> and - when "fixed at the last price" is unticked - <b class="of-bar-entry">Entry</b></span>
         <span class="of-bar-range" role="group" aria-label="Range of the bar">
           <button type="button" data-ofrange="10">&plusmn;10%</button><button type="button" data-ofrange="20">&plusmn;20%</button><button type="button" data-ofrange="30">&plusmn;30%</button>
+          {# v4.262: the member's own range - set here (a keyed-in %) or from the right-click menu on the bar #}
+          <button type="button" id="ofRangeCustom" data-ofrange="" title="Key in your own range (%) - or right-click the bar for presets to &plusmn;100% and a custom price">&plusmn;&hellip;</button>
         </span>
       </div>
       <div id="ofBarTrack" class="of-bar-track">
@@ -754,6 +766,10 @@
         <div class="of-bar-h of-bar-target" data-ofh="target" tabindex="0" role="slider" aria-label="Target price"><span></span></div>
       </div>
     </div>
+    {# v4.262 (user: "when use right click on the price, it will give a list of price to be selectable ... preset value
+       from +-10% to +-100% or a custom price to be key in"): the bar's right-click menu - the range presets, a keyed
+       range, a keyed price the bar then widens to show, and (on a handle) that handle's price #}
+    <div id="ofMenu" class="of-menu hidden" role="menu" aria-label="Price bar range"></div>
     </div>
     <div id="ofMsg" class="hidden rounded border border-slate-700 px-3 py-2 text-xs text-slate-300"></div>
     <div id="ofInfo" class="hidden text-[11px] text-slate-400 leading-snug"></div>
@@ -1750,6 +1766,55 @@
   // ── v4.235: the price bar - the current price fixed, the entry / target / worst-case handles dragged on a
   // +-10/20/30 % scale around it; each handle writes its box (and fires its input, so the finder re-ranks) ──
   var OFB = {range: 20, drag: null};
+  var OFB_PRESETS = [10, 20, 30];        // the three buttons; anything else is the member's own range (v4.262)
+  var OFB_RANGE_MIN = 1, OFB_RANGE_MAX = 500;
+  function ofbSetRange(r) {              // v4.262: the bar's +- range, from a button, the menu or a keyed value
+    r = Math.round(+r);
+    if (!isFinite(r) || r < OFB_RANGE_MIN) return false;
+    OFB.range = Math.min(OFB_RANGE_MAX, r);
+    try { localStorage.setItem('th.of.range', String(OFB.range)); } catch (err) { /* ignore */ }
+    ofbPaint();
+    return true;
+  }
+  function ofbRangeFor(price) {          // the smallest whole-% range that shows this price on the bar
+    var spot = OF.spot;
+    if (!(spot > 0) || !(price > 0)) return null;
+    return Math.max(OFB_RANGE_MIN, Math.ceil(Math.abs(price - spot) / spot * 100 + 1e-9));
+  }
+  function ofbAskRange() {
+    var v = window.prompt('Range of the bar, as a percent either side of the price (1 to ' + OFB_RANGE_MAX + '):', String(OFB.range));
+    if (v == null) return;
+    v = parseFloat(String(v).replace(/[%\s]/g, ''));
+    if (!ofbSetRange(v)) window.alert('Key in a whole number of percent, for example 45.');
+  }
+  function ofbAskPrice(k) {              // k: a handle to set, or null = only widen the bar to show the price
+    var spot = OF.spot;
+    if (!(spot > 0)) return;
+    var cur = k ? ofbVal(k, spot) : null;
+    var v = window.prompt(k ? OFB_WORD[k] + ' price:' : 'Price to show on the bar (the range widens to reach it):',
+                          cur != null ? cur.toFixed(2) : spot.toFixed(2));
+    if (v == null) return;
+    v = parseFloat(String(v).replace(/[$,\s]/g, ''));
+    if (!(v > 0)) { window.alert('Key in a price, for example ' + spot.toFixed(2) + '.'); return; }
+    var need = ofbRangeFor(v);
+    if (need > OFB.range) ofbSetRange(Math.min(OFB_RANGE_MAX, Math.max(need, Math.ceil(need / 5) * 5)));   // widen to the next 5 %
+    if (k) ofbSet(k, v);
+  }
+  function ofMenuClose() { var m = $('ofMenu'); if (m) show(m, false); }
+  function ofMenuOpen(e, k) {            // the right-click menu: presets to +-100 %, a keyed range, a keyed price, a handle's price
+    var m = $('ofMenu'), h = '';
+    if (k) h += '<button type="button" class="of-menu-it" data-ofm="price:' + k + '">Set ' + OFB_WORD[k] + ' price&hellip;</button><div class="of-menu-sep"></div>';
+    h += '<div class="of-menu-h">Range either side of ' + money(OF.spot) + '</div><div class="of-menu-grid">';
+    for (var p = 10; p <= 100; p += 10) h += '<button type="button" data-ofm="range:' + p + '" aria-pressed="' + (p === OFB.range) + '">&plusmn;' + p + '%</button>';
+    h += '</div><div class="of-menu-sep"></div>';
+    h += '<button type="button" class="of-menu-it" data-ofm="range:ask">Custom range %&hellip;</button>';
+    h += '<button type="button" class="of-menu-it" data-ofm="price:">Custom price&hellip; (the bar widens to it)</button>';
+    m.innerHTML = h;
+    show(m, true);
+    var W = m.offsetWidth, H = m.offsetHeight;
+    m.style.left = Math.max(4, Math.min(window.innerWidth - W - 4, e.clientX)) + 'px';
+    m.style.top = Math.max(4, Math.min(window.innerHeight - H - 4, e.clientY)) + 'px';
+  }
   var OFB_BOX = {entry: 'ofEntryPx', target: 'ofTarget', worst: 'ofWorst'};
   var OFB_WORD = {entry: 'Entry', target: 'Target', worst: 'Worst'};
   var OFB_DEFAULT = {entry: 0, target: 0.10, worst: -0.05};   // where an empty box's handle waits (share of the price)
@@ -1768,15 +1833,24 @@
     show(bar, true);
     var lo = ofbLo(spot), hi = ofbHi(spot);
     function pct(v) { return Math.max(0, Math.min(100, (v - lo) / (hi - lo) * 100)); }
+    var preset = OFB_PRESETS.indexOf(OFB.range) >= 0;
     Array.prototype.forEach.call(bar.querySelectorAll('[data-ofrange]'), function (b) {
+      if (b.id === 'ofRangeCustom') {          // v4.262: the member's own range shows on the fourth button
+        b.setAttribute('aria-pressed', String(!preset));
+        b.innerHTML = preset ? '&plusmn;&hellip;' : '&plusmn;' + OFB.range + '%';
+        return;
+      }
       b.setAttribute('aria-pressed', String(+b.dataset.ofrange === OFB.range));
     });
-    var t = '', step = OFB.range <= 10 ? 2 : 5;
-    for (var q = -OFB.range; q <= OFB.range; q += step) {
-      var x = (q + OFB.range) / (2 * OFB.range) * 100;
+    // v4.262: the ticks walk out from 0 so any range (a keyed one too) ends on a labelled tick at each edge
+    var t = '', R = OFB.range, step = R <= 10 ? 2 : R <= 40 ? 5 : R <= 100 ? 10 : 25, qs = [0];
+    for (var q = step; q < R; q += step) qs.push(q, -q);
+    qs.push(R, -R);
+    qs.forEach(function (q) {
+      var x = (q + R) / (2 * R) * 100;
       t += '<i style="left:' + x + '%"></i>';
-      if (q !== 0 && (q % (step * 2) === 0 || q === -OFB.range || q === OFB.range)) t += '<span style="left:' + x + '%">' + (q > 0 ? '+' : '') + q + '%</span>';
-    }
+      if (q !== 0 && (q % (step * 2) === 0 || Math.abs(q) === R)) t += '<span style="left:' + x + '%">' + (q > 0 ? '+' : '') + q + '%</span>';
+    });
     $('ofBarTicks').innerHTML = t;
     var now = $('ofBarNow');
     now.style.left = pct(spot) + '%';
@@ -2220,17 +2294,35 @@
         $(id).addEventListener('input', function () { ofSavePrices(OF.sym); ofbPaint(); if (id !== 'ofEntryPx' || ofEntryUser()) ofSchedule(); });
       });
       // v4.235: the price bar - range buttons, dragging (pointer) and the arrow keys
-      try { var r0 = +localStorage.getItem('th.of.range'); if (r0 === 10 || r0 === 20 || r0 === 30) OFB.range = r0; } catch (err) { /* ignore */ }
+      try { var r0 = Math.round(+localStorage.getItem('th.of.range')); if (r0 >= OFB_RANGE_MIN && r0 <= OFB_RANGE_MAX) OFB.range = r0; } catch (err) { /* ignore */ }
       $('ofBar').addEventListener('click', function (e) {
         var b = e.target.closest ? e.target.closest('[data-ofrange]') : null;
         if (!b) return;
-        OFB.range = +b.dataset.ofrange;
-        try { localStorage.setItem('th.of.range', String(OFB.range)); } catch (err) { /* ignore */ }
-        ofbPaint();
+        if (b.id === 'ofRangeCustom') { ofbAskRange(); return; }      // v4.262: key in a range
+        ofbSetRange(+b.dataset.ofrange);
       });
+      // v4.262: right-click anywhere on the bar (a price, a handle, the buttons) for the range presets and the keyed values
+      $('ofBar').addEventListener('contextmenu', function (e) {
+        if (!(OF.spot > 0)) return;
+        e.preventDefault();
+        var h = e.target.closest ? e.target.closest('[data-ofh]') : null, k = h ? h.dataset.ofh : null;
+        if (k === 'entry' && !ofEntryUser()) k = null;                  // fixed at the last price: nothing to set
+        ofMenuOpen(e, k);
+      });
+      $('ofMenu').addEventListener('click', function (e) {
+        var b = e.target.closest ? e.target.closest('[data-ofm]') : null;
+        if (!b) return;
+        var a = b.dataset.ofm.split(':'), what = a[0], arg = a[1];
+        ofMenuClose();
+        if (what === 'range') { if (arg === 'ask') ofbAskRange(); else ofbSetRange(+arg); }
+        else if (what === 'price') ofbAskPrice(arg || null);
+      });
+      document.addEventListener('pointerdown', function (e) { if (!$('ofMenu').classList.contains('hidden') && !e.target.closest('#ofMenu')) ofMenuClose(); });
+      document.addEventListener('keydown', function (e) { if (e.key === 'Escape') ofMenuClose(); });
+      window.addEventListener('scroll', ofMenuClose, true);
       $('ofBarTrack').addEventListener('pointerdown', function (e) {
         var h = e.target.closest ? e.target.closest('[data-ofh]') : null;
-        if (!h || !(OF.spot > 0)) return;
+        if (!h || !(OF.spot > 0) || e.button !== 0) return;            // v4.262: a right-click opens the menu, never a drag
         if (h.dataset.ofh === 'entry' && !ofEntryUser()) return;      // v4.236: fixed at the last price
         e.preventDefault();
         OFB.drag = h.dataset.ofh;
