@@ -2185,9 +2185,16 @@ def test_the_price_bar_range_is_the_members_own(client, fake):
                    # v4.264 (user: "after click custom price and input figure the status bar did not change in price"):
                    # a keyed price MOVES a handle - above the current price the Target, below it the Worst - and the
                    # menu always offers Set Target / Worst (and Entry when movable) with each one's current price
-                   "k = v > spot ? 'target' : 'worst';", "ofbSet(k, v);                        // the handle moves there",
+                   "ofbSet(k, v);                        // the handle moves there",
                    "['target', 'worst', 'entry'].filter(function (x) { return x !== k && (x !== 'entry' || ofEntryUser()); })",
                    ".of-bar-h.flash::before {",
+                   # v4.265 (user: "after changing the figures the table in the options finder is not showing"): the
+                   # finder's own rules checked as the figure is keyed, so a refused figure keeps the old price and the
+                   # table; a refusal from the server stands out and says how to get the table back
+                   "if (k === 'target' && v <= px) { window.alert('Buy a call profits when the stock rises: the Target must be above '",
+                   "if (k === 'worst' && v >= tgt) { window.alert('The Worst case must be below the Target ('",
+                   "k = v > px ? 'target' : 'worst';", "$('ofMsg').classList.toggle('of-msg-err', !(j && j.need_prices));",
+                   "The table shows again once the prices are fixed - drag a handle or right-click the bar.", "#ofMsg.of-msg-err {",
                    "$('ofBar').addEventListener('contextmenu', function (e) {",
                    "if (b.id === 'ofRangeCustom') { ofbAskRange(); return; }",
                    "if (r0 >= OFB_RANGE_MIN && r0 <= OFB_RANGE_MAX) OFB.range = r0;",

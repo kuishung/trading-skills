@@ -301,6 +301,8 @@
   .of-menu-cur { font-size: 10px; color: var(--tv-muted); margin-left: .3rem; }
   .of-menu-hit { font-weight: 600; }
   .of-bar-h.flash::before { box-shadow: 0 0 0 4px rgba(251,191,36,.45); }           /* v4.264: the handle a keyed price moved */
+  #ofMsg.of-msg-err { border-color: rgba(244,63,94,.6); background: rgba(244,63,94,.08); color: #fecdd3; font-size: 12px; }   /* v4.265: a refusal */
+  html.light #ofMsg.of-msg-err { color: #9f1239; }
   .of-bar-track { position: relative; flex: 1 1 auto; height: 2.75rem; margin: 0 1.8rem; touch-action: none; user-select: none; }
   .of-bar-track::before { content: ""; position: absolute; left: 0; right: 0; top: 1.25rem; height: 4px; border-radius: 2px; background: var(--tv-border-2, #363a45); }
   .of-bar-ticks span { position: absolute; top: 1.7rem; transform: translateX(-50%); font-size: 9px; color: var(--tv-muted); white-space: nowrap; }
@@ -1799,10 +1801,21 @@
     if (v == null) return;
     v = parseFloat(String(v).replace(/[$,\s]/g, ''));
     if (!(v > 0)) { window.alert('Key in a price, for example ' + spot.toFixed(2) + '.'); return; }
+    // v4.265 (user: "after changing the figures the table in the options finder is not showing"): the finder REFUSES a
+    // Target at or below the entry price and a Worst at or above the Target, and a refusal empties the table - so the
+    // same rules are checked here, the figure is refused with the reason, and the old price (and the table) stay
+    var px = ofEntryUser() && ofbVal('entry', spot) != null ? ofbVal('entry', spot) : spot;   // what the calls are priced from
+    var tgt = ofbVal('target', spot), wst = ofbVal('worst', spot);
+    if (tgt == null) tgt = spot * (1 + OFB_DEFAULT.target);
+    if (wst == null) wst = spot * (1 + OFB_DEFAULT.worst);
     if (!k) {
-      if (Math.abs(v - spot) < ofbStep(spot) / 2) { window.alert('That is the current price - key in a price above it (Target) or below it (Worst case).'); return; }
-      k = v > spot ? 'target' : 'worst';
+      if (Math.abs(v - px) < ofbStep(spot) / 2) { window.alert('That is the price the calls are priced from (' + money(px) + ') - key in a price above it (Target) or below it (Worst case).'); return; }
+      k = v > px ? 'target' : 'worst';
     }
+    if (k === 'target' && v <= px) { window.alert('Buy a call profits when the stock rises: the Target must be above ' + money(px) + '. Key in a higher Target - or key the figure in as the Worst case.'); return; }
+    if (k === 'worst' && v >= tgt) { window.alert('The Worst case must be below the Target (' + money(tgt) + '). Key in a lower Worst case - or raise the Target first.'); return; }
+    if (k === 'target' && v <= wst) { window.alert('The Target must be above the Worst case (' + money(wst) + '). Key in a higher Target - or lower the Worst case first.'); return; }
+    if (k === 'entry' && Math.abs(v - spot) > 0.5 * spot) { window.alert('Set an entry price within 50% of today\'s price (' + money(spot) + ').'); return; }
     var need = ofbRangeFor(v);
     if (need > OFB.range) ofbSetRange(Math.min(OFB_RANGE_MAX, Math.max(need, Math.ceil(need / 5) * 5)));   // widen to the next 5 %
     ofbSet(k, v);                        // the handle moves there (its box, the finder re-ranks)
@@ -2022,10 +2035,13 @@
         OF.last = null;
         show($('ofWrap'), false); show($('ofInfo'), false); show($('ofMapBox'), false); show($('ofMore'), false); show($('ofSurfRow'), false);
         if (j && j.need_prices && j.spot && ofbDefaults(j.spot)) { runFind(); return; }   // v4.236: start from the bar's defaults
+        // v4.265: a refusal stands out (rose) and says what to do - the table is gone, so the reason must be seen
+        $('ofMsg').classList.toggle('of-msg-err', !(j && j.need_prices));
         msg($('ofMsg'), j && j.need_prices ? 'Drag the Target and Worst handles on the bar for ' + (j.symbol || sym) + ' at ' + money(j.spot) + '.'
-                                           : (j && j.error ? j.error : 'The contracts could not be ranked.'));
+                                           : (j && j.error ? j.error + ' The table shows again once the prices are fixed - drag a handle or right-click the bar.' : 'The contracts could not be ranked.'));
         return;
       }
+      $('ofMsg').classList.remove('of-msg-err');
       OF.last = j;
       ofbPaint();                                           // v4.238: with this ticker's MATP / MBP marks
       msg($('ofMsg'), j.rows.length ? '' : 'No ' + sym + ' call passes the filters (strikes within ' + Math.round(j.band * 100) + '% of the price, ' +

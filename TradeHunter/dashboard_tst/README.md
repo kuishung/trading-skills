@@ -223,6 +223,19 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-23 - v4.265: Option Finder - a keyed figure the finder would refuse is refused on the spot
+
+The user, on v4.264: *"after changing the figures the table in the options finder is not showing"*. Reproduced
+locally with a mocked answer: the page's path is sound (the finder re-runs with the new prices and the table
+draws), so the table vanishes when the SERVER refuses the prices - `opt_finder.find` rejects a Target at or below
+the price the calls are priced from (today's, or the member's entry) and a Worst at or above the Target - and on
+any refusal the page empties the table and prints a one-line note that is easy to miss. `templates/options.html`:
+(1) `ofbAskPrice` checks the same rules as the figure is keyed - a Target not above the entry price, a Worst not
+below the Target, a Target not above the Worst, an entry beyond 50 % of today's price - and refuses it with the
+rule and what to do, keeping the old price and the table; "Key in a price…" splits Target / Worst at the entry
+price (not today's) when the entry is the member's own. (2) A refusal from the server now stands out (rose box)
+and ends with how to get the table back ("drag a handle or right-click the bar").
+
 ### 2026-11-23 - v4.264: Option Finder - a keyed price moves a handle
 
 The user, on v4.262: *"after click custom price and input figure the status bar did not change in price"* - the
