@@ -223,6 +223,16 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-23 - v4.264: Option Finder - a keyed price moves a handle
+
+The user, on v4.262: *"after click custom price and input figure the status bar did not change in price"* - the
+"Custom price" item only widened the bar to reach the price and moved nothing, so the bar read the same.
+`templates/options.html`: the item is now **"Key in a price…"** and the price SETS a handle - above the current
+price it becomes the Target, below it the Worst case (the bar still widens to the next 5 % when it must); the
+current price itself is refused with a hint. The menu also always lists **Set Target price… / Set Worst price…**
+(and Set Entry price… while the entry is movable), each with its present price, the handle under the pointer
+first in bold. The moved handle flashes for a second so the change is seen.
+
 ### 2026-11-14 - v4.263: Calendar - which economic releases a member's calendar shows
 
 The user: *"the economic calendar is set to have all event and it is so many. I want user to be able to select

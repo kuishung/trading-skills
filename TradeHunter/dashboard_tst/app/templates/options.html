@@ -298,6 +298,9 @@
   .of-menu-grid button:hover, .of-menu-it:hover { background: rgba(148,163,184,.15); }
   .of-menu-it { display: block; width: 100%; text-align: left; padding: .3rem .7rem; color: var(--tv-text, #d1d4dc); }
   .of-menu-sep { border-top: 1px solid var(--tv-border); margin: .2rem 0; }
+  .of-menu-cur { font-size: 10px; color: var(--tv-muted); margin-left: .3rem; }
+  .of-menu-hit { font-weight: 600; }
+  .of-bar-h.flash::before { box-shadow: 0 0 0 4px rgba(251,191,36,.45); }           /* v4.264: the handle a keyed price moved */
   .of-bar-track { position: relative; flex: 1 1 auto; height: 2.75rem; margin: 0 1.8rem; touch-action: none; user-select: none; }
   .of-bar-track::before { content: ""; position: absolute; left: 0; right: 0; top: 1.25rem; height: 4px; border-radius: 2px; background: var(--tv-border-2, #363a45); }
   .of-bar-ticks span { position: absolute; top: 1.7rem; transform: translateX(-50%); font-size: 9px; color: var(--tv-muted); white-space: nowrap; }
@@ -1787,28 +1790,41 @@
     v = parseFloat(String(v).replace(/[%\s]/g, ''));
     if (!ofbSetRange(v)) window.alert('Key in a whole number of percent, for example 45.');
   }
-  function ofbAskPrice(k) {              // k: a handle to set, or null = only widen the bar to show the price
-    var spot = OF.spot;
-    if (!(spot > 0)) return;
+  function ofbAskPrice(k) {              // k: the handle to set; null = a keyed price becomes the Target when above
+    var spot = OF.spot;                  // the current price, the Worst when below it (v4.264 - user: "after click custom
+    if (!(spot > 0)) return;             // price and input figure the status bar did not change in price")
     var cur = k ? ofbVal(k, spot) : null;
-    var v = window.prompt(k ? OFB_WORD[k] + ' price:' : 'Price to show on the bar (the range widens to reach it):',
+    var v = window.prompt(k ? OFB_WORD[k] + ' price:' : 'Price (above ' + money(spot) + ' = the Target, below it = the Worst case):',
                           cur != null ? cur.toFixed(2) : spot.toFixed(2));
     if (v == null) return;
     v = parseFloat(String(v).replace(/[$,\s]/g, ''));
     if (!(v > 0)) { window.alert('Key in a price, for example ' + spot.toFixed(2) + '.'); return; }
+    if (!k) {
+      if (Math.abs(v - spot) < ofbStep(spot) / 2) { window.alert('That is the current price - key in a price above it (Target) or below it (Worst case).'); return; }
+      k = v > spot ? 'target' : 'worst';
+    }
     var need = ofbRangeFor(v);
     if (need > OFB.range) ofbSetRange(Math.min(OFB_RANGE_MAX, Math.max(need, Math.ceil(need / 5) * 5)));   // widen to the next 5 %
-    if (k) ofbSet(k, v);
+    ofbSet(k, v);                        // the handle moves there (its box, the finder re-ranks)
+    var h = $('ofBar').querySelector('[data-ofh="' + k + '"]');
+    if (h) { h.classList.add('flash'); setTimeout(function () { h.classList.remove('flash'); }, 1200); }
   }
   function ofMenuClose() { var m = $('ofMenu'); if (m) show(m, false); }
   function ofMenuOpen(e, k) {            // the right-click menu: presets to +-100 %, a keyed range, a keyed price, a handle's price
     var m = $('ofMenu'), h = '';
-    if (k) h += '<button type="button" class="of-menu-it" data-ofm="price:' + k + '">Set ' + OFB_WORD[k] + ' price&hellip;</button><div class="of-menu-sep"></div>';
+    // v4.264: the handle under the pointer first, then every movable handle, so a price can always be keyed in
+    var ks = (k ? [k] : []).concat(['target', 'worst', 'entry'].filter(function (x) { return x !== k && (x !== 'entry' || ofEntryUser()); }));
+    ks.forEach(function (x, i) {
+      var cur = ofbVal(x, OF.spot);
+      h += '<button type="button" class="of-menu-it' + (i === 0 && k ? ' of-menu-hit' : '') + '" data-ofm="price:' + x + '">Set ' + OFB_WORD[x] + ' price&hellip;' +
+           (cur != null ? ' <span class="of-menu-cur">' + money(cur) + '</span>' : '') + '</button>';
+    });
+    h += '<div class="of-menu-sep"></div>';
     h += '<div class="of-menu-h">Range either side of ' + money(OF.spot) + '</div><div class="of-menu-grid">';
     for (var p = 10; p <= 100; p += 10) h += '<button type="button" data-ofm="range:' + p + '" aria-pressed="' + (p === OFB.range) + '">&plusmn;' + p + '%</button>';
     h += '</div><div class="of-menu-sep"></div>';
     h += '<button type="button" class="of-menu-it" data-ofm="range:ask">Custom range %&hellip;</button>';
-    h += '<button type="button" class="of-menu-it" data-ofm="price:">Custom price&hellip; (the bar widens to it)</button>';
+    h += '<button type="button" class="of-menu-it" data-ofm="price:">Key in a price&hellip; <span class="of-menu-cur">above now = Target, below = Worst</span></button>';
     m.innerHTML = h;
     show(m, true);
     var W = m.offsetWidth, H = m.offsetHeight;
