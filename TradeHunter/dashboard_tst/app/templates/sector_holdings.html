@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+{% block title %}{{ symbol }} holdings &middot; TradeHunter{% endblock %}
+{% block main_class %}flex-1 w-full px-4 py-3 overflow-y-auto{% endblock %}
+
+{% block content %}
+{# v4.268: a fund's holdings on their own page, opened in a pop-up window from the Sector Chart tab's
+   Performance table (user, 2026-11-23: "when user click the ETF i need a new window to pop up to show the
+   ticker rather than shown in the panel below. Remove the panel below."). The table that used to sit under
+   the Performance table moved here as it was: #, Ticker, Weight, Sector, Industry, Last and every period of
+   the picked group (Show: All days / All weeks / All months), a find box, a click on a heading sorts, a click
+   on a ticker opens its chart window. The route passes chromeless=True: no site header / menu - this is a
+   holdings window, not a second copy of the site (the chart window's rule, 2026-09-11).
+
+   Context: symbol, name, full_name, color, periods, group, default_group. #}
+<style>
+  .sc-grp { transition: color .12s, border-color .12s, background .12s; }
+  .sc-grp.on { border-color: rgba(52,211,153,.6); background: rgba(16,185,129,.15); color: #6ee7b7; }
+  .sc-heat { font-variant-numeric: tabular-nums; }
+  .sc-row { cursor: pointer; border-bottom: 1px solid rgba(30,41,59,.7); }
+  .sc-row:hover { background: rgba(30,41,59,.45); }
+  .sc-pos { color: #34d399; } .sc-neg { color: #fb7185; } .sc-nil { color: #64748b; }
+  .sc-sort { cursor: pointer; white-space: nowrap; } .sc-sort:hover { color: #cbd5e1; } .sc-sort.on { color: #6ee7b7; }
+  #scHoldTable thead th { position: sticky; top: 0; z-index: 1; background: #0f172a; }
+  html.light #scHoldTable thead th { background: #f8fafc; }
+  html.light .sc-row:hover { background: rgba(148,163,184,.16); }
+  html.light .sc-grp.on, html.light .sc-sort.on { color: #047857; }
+</style>
+
+<section class="rounded-lg border border-slate-800 bg-slate-900/40">
+  <div class="px-4 py-2.5 border-b border-slate-800 flex items-center justify-between gap-3 flex-wrap">
+    <div class="min-w-0 flex items-center gap-2.5">
+      <span id="scHoldLogo">{{ ticker_logo(symbol, 28) }}</span>
+      <div class="min-w-0">
+        <h1 class="text-lg font-semibold text-slate-200"><span class="inline-block w-2.5 h-2.5 rounded-full align-middle mr-1" style="background:{{ color }}"></span><span id="scHoldTitle">{{ symbol }} &middot; {{ full_name }}</span></h1>
+        <p id="scHoldSub" class="text-[13px] text-slate-500 truncate">loading the holdings&hellip;</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-2 text-[13px] text-slate-500 flex-wrap">
+      <span class="text-slate-500">Show</span>
+      {% for g, lbl, hint in [('days', 'All days', '1d to 10d - trading sessions'), ('weeks', 'All weeks', '1w to 10w - 5 sessions each'), ('months', 'All months', '1m to 6m - 21 sessions each')] %}
+      <button type="button" class="sc-grp px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:text-slate-200 {% if g == group %}on{% endif %}"
+              data-group="{{ g }}" title="{{ hint }}">{{ lbl }}</button>
+      {% endfor %}
+      <input id="scHoldFind" type="search" placeholder="find a ticker, sector or industry" class="bg-slate-950/40 border border-slate-700 rounded px-2 py-1 text-[16px] text-slate-200 w-56 ml-2">
+      <span id="scHoldNote"></span>
+    </div>
+  </div>
+  <div class="overflow-x-auto">
+    <table class="w-full text-[16px]" id="scHoldTable">
+      <thead class="text-[12px] uppercase tracking-wide text-slate-500">
+        <tr id="scHoldHead" class="border-b border-slate-800">
+          <th class="text-left px-4 py-2 w-8">#</th>
+          <th class="text-left px-2 py-2 sc-sort" data-key="symbol">Ticker</th>
+          <th class="text-right px-2 py-2 sc-sort" data-key="weight">Weight</th>
+          <th class="text-left px-2 py-2 sc-sort" data-key="sector">Sector</th>
+          <th class="text-left px-2 py-2 sc-sort" data-key="industry">Industry</th>
+          <th class="text-right px-2 py-2 sc-sort" data-key="last">Last</th>
+        </tr>
+      </thead>
+      <tbody id="scHoldBody"><tr><td colspan="16" class="px-4 py-6 text-center text-slate-500">Loading {{ symbol }}&rsquo;s holdings and their prices&hellip;</td></tr></tbody>
+    </table>
+  </div>
+  <div class="px-4 py-1.5 border-t border-slate-800 text-[12px] text-slate-600">click a column heading to sort by it &middot; click a ticker to open its chart in its own window</div>
+</section>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function pct(v, d) { if (v == null || isNaN(v)) return '-'; return (v > 0 ? '+' : '') + v.toFixed(d == null ? 2 : d) + '%'; }
+  function cls(v) { return v == null ? 'sc-nil' : (v > 0 ? 'sc-pos' : (v < 0 ? 'sc-neg' : 'sc-nil')); }
+  function money(v) { return v == null ? '-' : (v >= 1000 ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : v.toFixed(2)); }
+  function heat(v, maxAbs) {
+    if (v == null || !maxAbs) return '';
+    var a = Math.min(1, Math.abs(v) / maxAbs) * 0.32;
+    return 'background:' + (v >= 0 ? 'rgba(52,211,153,' : 'rgba(251,113,133,') + a.toFixed(3) + ')';
+  }
+  var SYM = {{ symbol|tojson }};
+  var PERIODS = {{ periods|tojson }};
+  var PERIOD_KEYS = {};
+  PERIODS.forEach(function (p) { PERIOD_KEYS[p.key] = p.days; });
+  var group = {{ group|tojson }};
+  var holdSort = { key: 'weight', dir: -1 };
+  var J = null, attempt = 0;
+  function groupPeriods() { return PERIODS.filter(function (p) { return p.group === group; }); }
+  function periodTh(p, onKey, cls, last) {
+    return '<th class="' + cls + ' text-right py-2 ' + (last ? 'px-4' : 'px-2') + (p.key === onKey ? ' on' : '') + '" data-key="' + p.key + '" data-period="' + p.key + '" title="' + p.days + ' trading sessions">' + p.key + '</th>';
+  }
+  var HOLD_FIXED = '<th class="text-left px-4 py-2 w-8">#</th><th class="text-left px-2 py-2 sc-sort" data-key="symbol">Ticker</th>' +
+    '<th class="text-right px-2 py-2 sc-sort" data-key="weight">Weight</th><th class="text-left px-2 py-2 sc-sort" data-key="sector">Sector</th>' +
+    '<th class="text-left px-2 py-2 sc-sort" data-key="industry">Industry</th><th class="text-right px-2 py-2 sc-sort" data-key="last">Last</th>';
+  function renderHead() {
+    var ps = groupPeriods();
+    $('scHoldHead').innerHTML = HOLD_FIXED + ps.map(function (p, i) { return periodTh(p, holdSort.key, 'sc-sort', i === ps.length - 1); }).join('');
+  }
+  function holdVal(r, key) {
+    if (PERIOD_KEYS[key]) return r.ret ? r.ret[key] : null;
+    return r[key];
+  }
+  function load() {
+    fetch('/sector/api/holdings?symbol=' + encodeURIComponent(SYM), { credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j.ok) { $('scHoldBody').innerHTML = '<tr><td colspan="16" class="px-4 py-6 text-center text-rose-300">' + esc(j.error || 'Could not load the holdings.') + '</td></tr>'; $('scHoldSub').textContent = ''; return; }
+        J = j;
+        render();
+        // the sector / industry map is built once, in the background (the 11 Finviz sector screens; a cold
+        // build can take minutes when Finviz throttles): ask again, up to 5 min
+        if (j.industry_state === 'loading' && attempt++ < 60) setTimeout(load, 5000);
+      })
+      .catch(function () { $('scHoldBody').innerHTML = '<tr><td colspan="16" class="px-4 py-6 text-center text-rose-300">Could not load the holdings.</td></tr>'; });
+  }
+  function render() {
+    var j = J;
+    if (!j) return;
+    $('scHoldTitle').textContent = j.etf + ' · ' + (j.full_name || j.name || '');
+    var sub = j.n + ' holdings' + (j.as_of ? ' · book as of ' + j.as_of : '') + (j.source ? ' · ' + j.source : '') + (j.stale ? ' · last good copy' : '');
+    $('scHoldSub').textContent = j.error ? j.error : sub;
+    var notes = [];
+    if (j.industry_state === 'loading') notes.push('sector & industry loading…');
+    if (j.industry_state === 'failed') notes.push('sector & industry unavailable');
+    if (j.capped) notes.push('prices for the ' + j.capped + ' heaviest');
+    $('scHoldNote').textContent = notes.join(' · ');
+    var q = ($('scHoldFind').value || '').trim().toLowerCase();
+    var rows = j.rows.filter(function (r) {
+      if (!q) return true;
+      return [r.symbol, r.name, r.sector, r.industry].some(function (s) { return (s || '').toLowerCase().indexOf(q) >= 0; });
+    });
+    var k = holdSort.key, dir = holdSort.dir;
+    rows.sort(function (a, b) {
+      var x = holdVal(a, k), y = holdVal(b, k);
+      if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1;
+      if (typeof x === 'string') return x.localeCompare(y) * dir;
+      return (x - y) * dir;
+    });
+    document.querySelectorAll('.sc-sort').forEach(function (th) { th.classList.toggle('on', th.dataset.key === k); });
+    var ps = groupPeriods(), maxAbs = 0.01;
+    rows.forEach(function (r) { if (r.ret) ps.forEach(function (p) { maxAbs = Math.max(maxAbs, Math.abs(r.ret[p.key] || 0)); }); });
+    if (!rows.length) { $('scHoldBody').innerHTML = '<tr><td colspan="16" class="px-4 py-6 text-center text-slate-500">' + (j.error ? esc(j.error) : 'No holdings to show.') + '</td></tr>'; return; }
+    $('scHoldBody').innerHTML = rows.map(function (r, i) {
+      function cell(p, last) {
+        var x = holdVal(r, p.key);
+        return '<td class="sc-heat py-1.5 text-right ' + (last ? 'px-4' : 'px-2') + ' ' + cls(x) + (p.key === k ? ' font-semibold' : '') + '" style="' + heat(x, maxAbs) + '">' + pct(x, 1) + '</td>';
+      }
+      return '<tr class="sc-row sc-hold" data-sym="' + esc(r.chart_symbol || r.symbol) + '" title="open ' + esc(r.symbol) + '’s chart in a new window">' +
+        '<td class="px-4 py-1.5 text-slate-500 tabular-nums">' + (i + 1) + '</td>' +
+        '<td class="px-2 py-1.5"><span class="inline-flex items-center gap-2">' + (window.tkLogo ? window.tkLogo(r.symbol, 16) : '') +
+          '<span class="font-semibold text-slate-200">' + esc(r.symbol) + '</span><span class="text-slate-500 truncate max-w-[14rem]">' + esc(r.name) + '</span></span></td>' +
+        '<td class="px-2 py-1.5 text-right tabular-nums text-slate-300">' + (r.weight == null ? '-' : r.weight.toFixed(2) + '%') + '</td>' +
+        '<td class="px-2 py-1.5 text-slate-400 whitespace-nowrap">' + esc(r.sector || '') + '</td>' +
+        '<td class="px-2 py-1.5 text-slate-400 whitespace-nowrap">' + esc(r.industry || '') + '</td>' +
+        '<td class="px-2 py-1.5 text-right tabular-nums text-slate-300">' + money(r.last) + '</td>' +
+        ps.map(function (p, j) { return cell(p, j === ps.length - 1); }).join('') + '</tr>';
+    }).join('');
+  }
+  function setGroup(g) {
+    group = g;
+    document.querySelectorAll('.sc-grp').forEach(function (b) { b.classList.toggle('on', b.dataset.group === g); });
+    var ps = groupPeriods();
+    if (PERIOD_KEYS[holdSort.key] && !ps.some(function (p) { return p.key === holdSort.key; })) holdSort = { key: ps[0].key, dir: -1 };
+    renderHead();
+    render();
+  }
+  document.querySelectorAll('.sc-grp').forEach(function (b) { b.addEventListener('click', function () { setGroup(b.dataset.group); }); });
+  $('scHoldHead').addEventListener('click', function (e) {
+    var th = e.target.closest ? e.target.closest('th.sc-sort') : null;
+    if (!th) return;
+    var k = th.dataset.key;
+    if (holdSort.key === k) holdSort.dir = -holdSort.dir;
+    else holdSort = { key: k, dir: (k === 'symbol' || k === 'sector' || k === 'industry') ? 1 : -1 };
+    render();
+  });
+  $('scHoldFind').addEventListener('input', render);
+  // a ticker opens its chart in its own window (the Watchlist chart; one window per ticker)
+  $('scHoldBody').addEventListener('click', function (e) {
+    var tr = e.target.closest ? e.target.closest('tr.sc-hold') : null;
+    if (!tr) return;
+    var sym = tr.dataset.sym;
+    var w = window.open('/sector/chart-window?symbol=' + encodeURIComponent(sym), 'th_chart_' + sym.replace(/[^A-Za-z0-9]/g, '_'),
+                        'width=1280,height=860,resizable=yes,scrollbars=yes');
+    if (w) { try { w.focus(); } catch (err) {} }
+  });
+  renderHead();
+  load();
+})();
+</script>
+{% endblock %}

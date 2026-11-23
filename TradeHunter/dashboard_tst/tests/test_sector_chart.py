@@ -97,9 +97,35 @@ def test_the_page_has_two_side_tabs_and_the_api_answers(engine, user, monkeypatc
     assert html.count('class="sc-grp ') == 3 and 'data-group="months" title="1m to 6m - 21 sessions each">All months' in html
     assert 'hover:text-slate-200 on"\n                    data-group="months"' in html      # the default group is on
     assert html.count('class="sc-per ') == 0 and '"key": "10w"' in html and "var group = 'months'" in html
-    assert "Holdings" in html and "Industry" in html and "lightweight-charts" in html
+    assert "lightweight-charts" in html
+    # v4.268: no holdings panel on the tab - a row click opens the fund's holdings in their own window
+    assert 'id="scHoldTable"' not in html and "function loadHoldings" not in html
+    assert "function openHoldings(sym)" in html and "window.open('/sector/holdings?symbol=' + encodeURIComponent(sym) + '&group='" in html
+    assert "click a row to open what the fund holds in its own window" in html
     assert api["ok"] and len(api["etfs"]) == 13 and api["etfs"][0]["last"] is None
     assert bad == {"ok": False, "error": "unknown fund"}
+
+
+def test_the_holdings_window_is_its_own_chromeless_page(engine, user, monkeypatch):
+    """v4.268 (user: "when user click the ETF i need a new window to pop up to show the ticker rather than
+    shown in the panel below. Remove the panel below."): /sector/holdings?symbol=&group= is the holdings
+    table on its own page - the fund's name, the Show selector on the group the tab showed, the table that
+    reads /sector/api/holdings, no site header; an unknown fund is a 404."""
+    monkeypatch.setattr(sc, "_fetch_many", lambda symbols, rng: {s: ([], []) for s in symbols})
+    try:
+        c = _client(engine, user.id)
+        r = c.get("/sector/holdings?symbol=xlv&group=weeks")
+        html = r.text
+        assert r.status_code == 200 and "XLV &middot; Health Care Select Sector SPDR Fund" in html
+        assert 'var SYM = "XLV";' in html and 'var group = "weeks";' in html and '"key": "10w"' in html
+        assert 'data-group="weeks" title="1w to 10w - 5 sessions each">All weeks' in html and html.count('class="sc-grp ') == 3
+        assert 'id="scHoldTable"' in html and "fetch('/sector/api/holdings?symbol=' + encodeURIComponent(SYM)" in html
+        assert "window.open('/sector/chart-window?symbol='" in html
+        assert 'href="/sector"' not in html                                   # chromeless: no site menu
+        assert 'var group = "months";' in c.get("/sector/holdings?symbol=XLK&group=nope").text   # the default group
+        assert c.get("/sector/holdings?symbol=NOPE").status_code == 404
+    finally:
+        app.dependency_overrides.clear()
 
 
 def test_the_ticked_funds_are_remembered_per_member(engine, user, monkeypatch):

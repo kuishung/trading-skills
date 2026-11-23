@@ -223,6 +223,19 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-23 - v4.268: Sector Rotation - a fund's holdings open in their own window; the panel below is gone
+
+The user: *"when user click the ETF i need a new window to pop up to show the ticker rather than shown in the
+panel below. Remove the panel below."* `templates/sector.html`: the Holdings section under the Performance
+table and its script are removed; a row click still ticks the fund on the chart and marks the row, and now
+opens `/sector/holdings?symbol=<fund>&group=<days|weeks|months>` in a pop-up window (one named window,
+`th_sector_holdings`, so the next click replaces the fund in the same window). The tab no longer lands on the
+best sector's holdings on load. New `templates/sector_holdings.html` + `routes/sector.py::sector_holdings_window`:
+the holdings table as it was - #, Ticker, Weight, Sector, Industry, Last, every period of the group with the
+tinted cells, a Show selector (opens on the group the tab showed), the find box, sort by a heading, a ticker
+opens its chart window - on a chromeless page (no site header / menu, the chart window's rule); an unknown
+fund is a 404. Tests updated and added.
+
 ### 2026-11-23 - v4.267: Options - a remove button on the watchlist pane
 
 The user: *"the watchlist in option i need to have the remove button"*. `templates/options.html`: every row of

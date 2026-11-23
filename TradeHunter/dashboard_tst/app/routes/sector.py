@@ -160,6 +160,30 @@ def sector_api_ticks(
     return {"ok": True, "symbols": prefs.get(TICKED_PREF)}
 
 
+@router.get("/holdings", response_class=HTMLResponse)
+def sector_holdings_window(request: Request, symbol: str = "", group: str = "",
+                           user: User = Depends(require_user)):
+    """v4.268: one fund's holdings as a full page, opened in a pop-up window from the Sector
+    Chart tab's Performance table (user, 2026-11-23: "when user click the ETF i need a new
+    window to pop up to show the ticker rather than shown in the panel below. Remove the panel
+    below."). ``group`` (days | weeks | months) opens the window on the columns the tab was
+    showing. Chromeless, as the chart window is: no site header / menu."""
+    from ..services import sector_chart as sc
+
+    sym = (symbol or "").strip().upper()
+    names = dict(sc.ETFS)
+    if sym not in names:
+        return HTMLResponse("<p class='p-6 text-slate-400'>unknown fund</p>", status_code=404)
+    group = group if group in ("days", "weeks", "months") else sc.DEFAULT_GROUP
+    return templates.TemplateResponse(
+        request, "sector_holdings.html",
+        {"user": user, "chromeless": True, "symbol": sym, "name": names[sym],
+         "full_name": sc.ETF_FULL_NAMES.get(sym, names[sym]), "color": sc.ETF_COLORS.get(sym, "#94a3b8"),
+         "periods": [{"key": k, "days": n, "group": g} for k, n, g in sc.PERIODS],
+         "group": group, "default_group": sc.DEFAULT_GROUP},
+    )
+
+
 @router.get("/api/etfs")
 def sector_api_etfs(user: User = Depends(require_user)):
     """The Sector Chart tab's ETF data: 2 years of daily closes per fund for the chart, each
