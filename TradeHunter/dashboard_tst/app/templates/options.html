@@ -311,6 +311,7 @@
   .of-fix button { padding: .2rem .6rem; border: 1px solid currentColor; border-radius: .3rem; font-size: 11px; font-weight: 600; }
   .of-fix button:hover { background: rgba(244,63,94,.15); }
   .of-fix span { font-size: 11px; opacity: .8; }
+  .of-rr { text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; }   /* v4.269: the working opens on a click */
   .of-bar-track { position: relative; flex: 1 1 auto; height: 2.75rem; margin: 0 1.8rem; touch-action: none; user-select: none; }
   .of-bar-track::before { content: ""; position: absolute; left: 0; right: 0; top: 1.25rem; height: 4px; border-radius: 2px; background: var(--tv-border-2, #363a45); }
   .of-bar-ticks span { position: absolute; top: 1.7rem; transform: translateX(-50%); font-size: 9px; color: var(--tv-muted); white-space: nowrap; }
@@ -1765,6 +1766,20 @@
   function openContract(sym, expiry, right, strike, day) {
     window.open(historyUrl(sym, expiry, right, strike, day), '_blank', 'noopener');
   }
+  // v4.269 (user: "when clicked on the tile, we need to show the R/R in a new window which is the option value
+  // model price"): a finder tile or table row opens the call's Reward / risk WORKING - c(target) - c(entry) over
+  // c(entry) - c(worst) - with the finder's own inputs, in one named window (the next click replaces the call)
+  function rrUrl(exp, k) {
+    var j = OF.last, q = new URLSearchParams({symbol: j.symbol, expiry: exp, strike: String(k), target: String(j.target), worst: String(j.worst), mode: j.mode || 'expiry'});
+    if (j.mode === 'date' && j.on) q.set('date', j.on);
+    if (j.entry_src === 'user') q.set('entry', String(j.entry));
+    return '/options/rr?' + q.toString();
+  }
+  function openRR(exp, k) {
+    if (!OF.last) return;
+    var w = window.open(rrUrl(exp, k), 'th_of_rr', 'width=1120,height=860,resizable=yes,scrollbars=yes');
+    if (w) { try { w.focus(); } catch (err) {} }
+  }
 
   // ── v4.219: the OPTION FINDER ───────────────────────────────────────────────────────────────
   // (user: "based on the vol surface, when a user define the user input, i want the system to auto calculate the
@@ -2125,13 +2140,13 @@
       th('prob', 'Chance above BE', 'The model\'s chance the stock ends above the breakeven by the valuation date (from the contract\'s own IV) - not a forecast') +
       (j.mode === 'date' ? '' : '<th class="l">Valued on</th>') + '</tr></thead><tbody>';
     shown.forEach(function (r, i) {
-      h += '<tr class="' + (i === 0 ? 'of-best' : '') + '" data-exp="' + esc(r.expiry) + '" data-k="' + r.strike + '" title="Open the ' + esc(shortDate(r.expiry) + ' ' + strikeText(r.strike)) + ' call\'s history">' +
+      h += '<tr class="' + (i === 0 ? 'of-best' : '') + '" data-exp="' + esc(r.expiry) + '" data-k="' + r.strike + '" title="The Reward / risk working for the ' + esc(shortDate(r.expiry) + ' ' + strikeText(r.strike)) + ' call, in its own window (its history is linked there)">' +
         '<td class="l">' + (i + 1) + '</td><td class="l">' + esc(shortDate(r.expiry)) + (r.monthly ? '<span class="vol-m of-mm">M</span>' : '') +
           ' <span class="text-slate-500">' + r.dte + 'd</span>' + (r.earnings ? '<span class="of-e" title="Earnings fall before the valuation date">E</span>' : '') + '</td>' +
         '<td>' + esc(strikeText(r.strike)) + '</td><td>' + pctOf(r.iv, 1) + '</td><td>' + intText(r.oi) + '</td>' +
         '<td>' + money(r.cost) + '</td><td>' + money(r.at_target) + '</td><td>' + money(r.at_worst) + '</td>' +
         '<td class="' + (OF.sort === 'be' ? 'of-key' : '') + '">' + money(r.breakeven) + ' <span class="text-slate-500">' + (r.be_pct >= 0 ? '+' : '') + pctOf(r.be_pct, 1) + '</span></td>' +
-        '<td class="' + (OF.sort === 'rr' ? 'of-key' : '') + '">' + (r.no_loss ? 'no loss' : num(r.rr, 2)) + '</td>' +
+        '<td class="of-rr' + (OF.sort === 'rr' ? ' of-key' : '') + '">' + (r.no_loss ? 'no loss' : num(r.rr, 2)) + '</td>' +   // v4.269: the working opens on a click
         '<td class="' + (OF.sort === 'roi' ? 'of-key' : '') + '">' + pctOf(r.roi, 0) + '</td>' +
         '<td class="' + (OF.sort === 'prob' ? 'of-key' : '') + '">' + pctOf(r.prob, 0) + '</td>' +
         (j.mode === 'date' ? '' : '<td class="l">' + esc(shortDate(r.valued_on)) + '</td>') + '</tr>';
@@ -2198,7 +2213,7 @@
     if (!spotDone) h += levelsBefore(lst, j.spot, nc) + spotRow(j, nc);
     h += levelsRest(lst, nc);
     $('ofMap').innerHTML = h + '</tbody>';
-    $('ofMapTitle').innerHTML = 'The ranked calls on the surface, each coloured by its rank for <b>' + esc(OF_SORTS[OF.sort]) + '</b> (deeper green = higher); the best one ringed; the price, MATP and MBP lines as on the Volatility Surface. The table below lists them. Click a cell or a row for that contract\'s history.' +
+    $('ofMapTitle').innerHTML = 'The ranked calls on the surface, each coloured by its rank for <b>' + esc(OF_SORTS[OF.sort]) + '</b> (deeper green = higher); the best one ringed; the price, MATP and MBP lines as on the Volatility Surface. The table below lists them. Click a cell or a row for that call\'s Reward / risk working - c(target) &minus; c(entry) over c(entry) &minus; c(worst) - in its own window (its history is linked there).' +
       (hidE || hidK ? ' <span class="text-slate-500">Hidden as thinly listed: ' + [hidE ? hidE + (hidE === 1 ? ' expiry' : ' expiries') : '', hidK ? hidK + (hidK === 1 ? ' strike' : ' strikes') : '']
         .filter(Boolean).join(' and ') + (topHidden ? ' - the #1 call is among them (it is in the table)' : '') + '.</span>' : '');
     show($('ofMapBox'), true);
@@ -2453,7 +2468,7 @@
         if (b) { setSort(b.dataset.ofsort); return; }
         if (e.target.closest && e.target.closest('#ofMoreBtn')) { OF.all = !OF.all; paintFind(); return; }
         var c = e.target.closest ? e.target.closest('tr[data-exp], td.of-cell') : null;
-        if (c && OF.last) openContract(OF.last.symbol, c.dataset.exp, 'C', Number(c.dataset.k), null);
+        if (c && OF.last) openRR(c.dataset.exp, Number(c.dataset.k));        // v4.269: the Reward / risk working
       });
     })();
   }

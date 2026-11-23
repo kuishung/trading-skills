@@ -45,6 +45,55 @@ def test_every_call_valued_on_one_date(sdb):
     assert far["dte"] > 40 and far["at_worst"] > 0
 
 
+def test_the_reward_risk_working_of_one_call_agrees_with_the_table(sdb):
+    """v4.269 (user: "Reward = call option price if share price reach $2000 - call option price if share price is at
+    $1000; Risk = ... at $1000 - ... drops to $900; R/R = Reward/Risk"): working() lays out ONE call's figures the
+    way the user wrote them, from the same engine and inputs as find(), so they match the table to the cent."""
+    exp = MONTHLIES[1].isoformat()
+    j = opt_finder.find(sdb, "acme", target=120, worst=92, mode="expiry", today=TODAY)
+    r = next(x for x in j["rows"] if x["strike"] == 100.0 and x["expiry"] == exp)
+    w = opt_finder.working(sdb, "acme", expiry=exp, strike="100", target="120", worst="92", mode="expiry", today=TODAY)
+    assert w["symbol"] == "ACME" and w["strike"] == 100.0 and w["expiry"] == exp and w["dte"] == r["dte"] and w["valued_on"] == exp
+    p = w["prices"]
+    assert p["entry"]["stock"] == 100.0 and p["entry"]["value"] == pytest.approx(r["cost"], abs=1e-4) and p["entry"]["days_left"] == r["dte"]
+    assert p["entry"]["intrinsic"] == 0.0 and p["entry"]["time"] == pytest.approx(r["cost"], abs=1e-4)
+    assert p["target"] == {"stock": 120.0, "value": 20.0, "intrinsic": 20.0, "time": 0.0, "days_left": 0}     # the payoff at expiry
+    assert p["worst"] == {"stock": 92.0, "value": 0.0, "intrinsic": 0.0, "time": 0.0, "days_left": 0}
+    assert w["reward"] == pytest.approx(20.0 - r["cost"], abs=1e-4) and w["risk"] == pytest.approx(r["cost"], abs=1e-4)
+    assert w["rr"] == pytest.approx(r["rr"], abs=1e-4) and w["rr"] == pytest.approx(w["rr_sheet"], abs=1e-4) and not w["no_loss"]
+    assert w["roi"] == pytest.approx(r["roi"], abs=1e-4) and w["breakeven"] == pytest.approx(r["breakeven"], abs=1e-4)
+    assert w["prob"] == pytest.approx(r["prob"], abs=1e-4) and w["entry_src"] == "last" and w["iv"] == 0.3
+    # on a date before expiry: time value is left at the target and the worst case
+    on = (TODAY + _dt.timedelta(days=20)).isoformat()
+    d = opt_finder.working(sdb, "ACME", expiry=exp, strike=100, target=120, worst=92, mode="date", on=on, today=TODAY)
+    assert d["valued_on"] == on and d["decay"] == 20 and d["prices"]["target"]["days_left"] == r["dte"] - 20
+    assert d["prices"]["target"]["time"] > 0 and d["prices"]["worst"]["value"] > 0
+    # refused in words
+    with pytest.raises(opt_finder.FinderError, match="no 2099-01-01 100.00 call"):
+        opt_finder.working(sdb, "ACME", expiry="2099-01-01", strike=100, target=120, worst=92, today=TODAY)
+    with pytest.raises(opt_finder.FinderError, match="target above today's price"):
+        opt_finder.working(sdb, "ACME", expiry=exp, strike=100, target=90, worst=80, today=TODAY)
+    with pytest.raises(opt_finder.FinderError, match="expires before"):
+        opt_finder.working(sdb, "ACME", expiry=exp, strike=100, target=120, worst=92, mode="date",
+                           on=(MONTHLIES[1] + _dt.timedelta(days=5)).isoformat(), today=TODAY)
+
+
+def test_the_reward_risk_page(client, sdb, monkeypatch):
+    """GET /options/rr renders the working on a chromeless page; a refused input shows in words."""
+    from app.services import clock
+    monkeypatch.setattr(clock, "et_today", lambda: TODAY.isoformat())
+    exp = MONTHLIES[1].isoformat()
+    r = client.get("/options/rr", params={"symbol": "acme", "expiry": exp, "strike": "100", "target": "120", "worst": "92"})
+    assert r.status_code == 200
+    html = r.text
+    assert "ACME 100 call &middot; expires " + exp in html and "c(target) &minus; c(entry)" in html and "c(entry) &minus; c(worst)" in html
+    assert "20.00 &minus; " in html and "intrinsic 20.00 &middot; time value 0.00 &middot; at expiry: the payoff" in html
+    assert 'href="/options/history?symbol=ACME&amp;expiry=' + exp + '&amp;right=C&amp;strike=100"' in html
+    assert 'href="/options"' not in html                                   # chromeless: no site menu
+    bad = client.get("/options/rr", params={"symbol": "ACME", "expiry": exp, "strike": "100", "target": "90", "worst": "80"}).text
+    assert "set a target above today" in bad and "c(target)" not in bad
+
+
 def test_inputs_are_refused_in_words(sdb):
     with pytest.raises(opt_finder.FinderError, match="target above today's price"):
         opt_finder.find(sdb, "ACME", target=95, worst=90, today=TODAY)

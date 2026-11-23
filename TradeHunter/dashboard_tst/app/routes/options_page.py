@@ -1400,6 +1400,39 @@ def options_home(request: Request, user: User = Depends(require_user)):
     })
 
 
+@router.get("/rr", response_class=HTMLResponse)
+def options_rr(request: Request, symbol: str = "", expiry: str = "", strike: str = "", target: str = "", worst: str = "",
+               mode: str = "expiry", date: str = "", entry: str = "", user: User = Depends(require_user)):
+    """v4.269 (user: "when clicked on the tile, we need to show the R/R in a new window which is the option
+    value model price ... Reward = call option price if share price reach $2000 - call option price if share
+    price is at $1000; Risk = ... at $1000 - ... drops to $900; R/R = Reward/Risk"): one call's Reward / risk
+    worked out on its own chromeless page, opened in a window by a click on a finder tile or table row.
+    The same inputs the finder had (``target``, ``worst``, ``mode``, ``date``, ``entry``), so the figures match."""
+    from urllib.parse import urlencode
+
+    from .. import screener_db
+    from ..services import opt_finder
+    from ..services.calc_chain import ChainError
+
+    sym = (symbol or "").strip().upper()
+    w, err = None, None
+    try:
+        with screener_db.session() as s:
+            w = opt_finder.working(s, sym, expiry=(expiry or "").strip(), strike=(strike or "").strip(), target=target, worst=worst,
+                                   mode=(mode or "expiry").strip().lower(), on=(date or "").strip() or None,
+                                   today=_dt.date.fromisoformat(clock.et_today()), entry=(entry or "").strip() or None)
+    except (opt_finder.FinderError, ChainError, ValueError) as exc:
+        err = str(exc)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("option r/r working failed")
+        err = "The option data could not be read just now (%s)." % type(exc).__name__
+    history_url = "/options/history?" + urlencode({"symbol": sym, "expiry": (expiry or "").strip(), "right": "C", "strike": (strike or "").strip()})
+    return templates.TemplateResponse(request, "options_rr.html", {
+        "user": user, "chromeless": True, "w": w, "err": err, "symbol": sym, "expiry": (expiry or "").strip(),
+        "strike": (strike or "").strip(), "history_url": history_url,
+    })
+
+
 @router.get("/history", response_class=HTMLResponse)
 def options_history(request: Request, symbol: str = "", expiry: str = "", right: str = "", strike: str = "",
                     day: str = "", user: User = Depends(require_user)):

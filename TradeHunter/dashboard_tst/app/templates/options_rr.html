@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}{{ symbol }} {{ strike }} call &middot; Reward / risk &middot; TradeHunter{% endblock %}
+{% block main_class %}flex-1 w-full px-4 py-3 overflow-y-auto{% endblock %}
+
+{% block content %}
+{# v4.269: one call's Reward / risk WORKING on its own chromeless page, opened in a window by a click on an
+   Option Finder tile or table row (routes/options_page.py::options_rr, services/opt_finder.working). The user's
+   definition (2026-11-24): Reward = c(target) - c(entry), Risk = c(entry) - c(worst), R/R = Reward / Risk, where
+   c(S) is the call's model price with the stock at S - c(entry) today, c(target) / c(worst) on the valuation date.
+
+   Context: w (the working dict, or None), err, symbol, expiry, strike, history_url. #}
+<style>
+  .rr-card { border: 1px solid rgba(51,65,85,.9); border-radius: .5rem; background: rgba(15,23,42,.5); }
+  html.light .rr-card { background: rgba(248,250,252,.9); border-color: #cbd5e1; }
+  .rr-k { color: #94a3b8; } html.light .rr-k { color: #475569; }
+  .rr-v { color: #e2e8f0; font-variant-numeric: tabular-nums; } html.light .rr-v { color: #0f172a; }
+  .rr-big { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .rr-frac { display: grid; grid-template-columns: auto auto auto auto auto auto auto; align-items: center; column-gap: .9rem; row-gap: .2rem; font-variant-numeric: tabular-nums; }
+  .rr-frac .num, .rr-frac .den { text-align: center; padding: .15rem .5rem; white-space: nowrap; }
+  .rr-frac .num { border-bottom: 2px solid #94a3b8; }
+  .rr-frac .eq { font-size: 22px; color: #94a3b8; grid-row: span 2; }
+  .rr-frac .res { grid-row: span 2; }
+  .rr-pos { color: #34d399; } .rr-neg { color: #fb7185; }
+  .rr-tag { display: inline-block; font-size: 11px; padding: .1rem .45rem; border-radius: 9999px; border: 1px solid rgba(100,116,139,.6); color: #94a3b8; }
+</style>
+
+{% macro m2(x) %}{% if x is none %}-{% else %}{{ '%.2f'|format(x) }}{% endif %}{% endmacro %}
+
+<div class="max-w-5xl mx-auto space-y-3">
+  <div class="flex items-start justify-between gap-3 flex-wrap">
+    <div class="flex items-center gap-2.5 min-w-0">
+      {{ ticker_logo(symbol, 28) }}
+      <div class="min-w-0">
+        <h1 class="text-lg font-semibold text-slate-100">{{ symbol }} {{ strike }} call{% if w %} &middot; expires {{ w.expiry }} ({{ w.dte }} days){% endif %} &middot; Reward / risk</h1>
+        {% if w %}
+        <p class="text-[12px] text-slate-500">{{ w.name or '' }} &middot; stock {{ m2(w.spot) }} ({{ w.spot_src or 'last' }}) &middot; option prices from the market pass of {{ w.session or '?' }}
+          &middot; IV {{ '%.1f'|format(w.iv * 100) }}% &middot; open interest {{ w.oi if w.oi is not none else '-' }}</p>
+        {% endif %}
+      </div>
+    </div>
+    <div class="flex items-center gap-2 text-[12px]">
+      <a href="{{ history_url }}" target="_blank" rel="noopener" class="px-2.5 py-1 rounded border border-slate-700 text-slate-300 hover:text-white hover:border-slate-500">Contract history &#8599;</a>
+      <button type="button" onclick="window.close()" class="px-2.5 py-1 rounded border border-slate-700 text-slate-400 hover:text-slate-200">Close</button>
+    </div>
+  </div>
+
+  {% if err %}
+  <div class="rounded border border-rose-500/60 bg-rose-500/10 px-4 py-3 text-[13px] text-rose-200">{{ err }}</div>
+  {% elif w %}
+
+  {# the inputs #}
+  <section class="rr-card px-4 py-3">
+    <div class="text-[11px] uppercase tracking-wide text-slate-500 mb-2">Inputs</div>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-1.5 text-[13px]">
+      <div><span class="rr-k">Entry price (stock)</span><br><span class="rr-v">{{ m2(w.entry) }}</span> <span class="rr-tag">{{ 'your entry' if w.entry_src == 'user' else 'last price' }}</span></div>
+      <div><span class="rr-k">Target price</span><br><span class="rr-v">{{ m2(w.target) }}</span> <span class="text-slate-500">({{ '%+.1f'|format((w.target - w.entry) / w.entry * 100) }}%)</span></div>
+      <div><span class="rr-k">Worst-case price</span><br><span class="rr-v">{{ m2(w.worst) }}</span> <span class="text-slate-500">({{ '%+.1f'|format((w.worst - w.entry) / w.entry * 100) }}%)</span></div>
+      <div><span class="rr-k">Valued on</span><br><span class="rr-v">{{ w.valued_on }}</span> <span class="text-slate-500">({{ 'its expiry' if w.mode == 'expiry' else w.decay ~ ' days out, ' ~ (w.dte - w.decay) ~ ' left' }})</span></div>
+      <div><span class="rr-k">Strike</span><br><span class="rr-v">{{ m2(w.strike) }}</span></div>
+      <div><span class="rr-k">Implied volatility</span><br><span class="rr-v">{{ '%.2f'|format(w.iv * 100) }}%</span> <span class="text-slate-500">(the contract's own, held)</span></div>
+      <div><span class="rr-k">Days to expiry</span><br><span class="rr-v">{{ w.dte }}</span></div>
+      <div><span class="rr-k">Rate / dividend</span><br><span class="rr-v">{{ '%.2f'|format(w.rate * 100) }}% / none</span></div>
+    </div>
+  </section>
+
+  {# the three model prices #}
+  <section class="grid grid-cols-1 md:grid-cols-3 gap-3">
+    {% for key, label, note in [('entry', 'c(entry)', 'today, stock at the entry price - what one call costs per share'),
+                                ('target', 'c(target)', 'on the valuation date, stock at the target price'),
+                                ('worst', 'c(worst)', 'on the valuation date, stock at the worst-case price')] %}
+    {% set p = w.prices[key] %}
+    <div class="rr-card px-4 py-3">
+      <div class="flex items-baseline justify-between"><span class="text-[13px] font-semibold text-slate-200">{{ label }}</span><span class="text-[12px] text-slate-500">stock {{ m2(p.stock) }}</span></div>
+      <div class="rr-big rr-v mt-1">{{ m2(p.value) }}</div>
+      <div class="text-[12px] text-slate-500 mt-1">intrinsic {{ m2(p.intrinsic) }} &middot; time value {{ m2(p.time) }}{% if p.days_left == 0 %} &middot; at expiry: the payoff{% else %} &middot; {{ p.days_left }} days left{% endif %}</div>
+      <div class="text-[11px] text-slate-600 mt-1">{{ note }}</div>
+    </div>
+    {% endfor %}
+  </section>
+
+  {# the fraction, the way the user wrote it #}
+  <section class="rr-card px-4 py-4">
+    <div class="text-[11px] uppercase tracking-wide text-slate-500 mb-3">Reward / risk</div>
+    <div class="overflow-x-auto">
+      <div class="rr-frac text-[15px]">
+        <div class="num rr-v">c(target) &minus; c(entry)</div><div class="eq">=</div>
+        <div class="num rr-v">{{ m2(w.prices.target.value) }} &minus; {{ m2(w.prices.entry.value) }}</div><div class="eq">=</div>
+        <div class="num rr-v {{ 'rr-pos' if w.reward > 0 else 'rr-neg' }}">{{ m2(w.reward) }}</div><div class="eq">=</div>
+        <div class="res rr-big {{ 'rr-pos' if (w.rr or 0) > 0 else 'rr-neg' }}">{% if w.no_loss %}no loss{% else %}{{ m2(w.rr) }}{% endif %}</div>
+        <div class="den rr-v">c(entry) &minus; c(worst)</div>
+        <div class="den rr-v">{{ m2(w.prices.entry.value) }} &minus; {{ m2(w.prices.worst.value) }}</div>
+        <div class="den rr-v {{ 'rr-neg' if w.risk > 0 else 'rr-pos' }}">{{ m2(w.risk) }}</div>
+      </div>
+    </div>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-1.5 text-[13px] mt-4">
+      <div><span class="rr-k">Reward</span><br><span class="rr-v">{{ m2(w.reward) }}</span> <span class="text-slate-500">per share, {{ m2(w.reward * 100) }} a contract</span></div>
+      <div><span class="rr-k">Risk</span><br><span class="rr-v">{{ m2(w.risk) }}</span> <span class="text-slate-500">per share, {{ m2(w.risk * 100) }} a contract</span></div>
+      <div><span class="rr-k">Return on investment</span><br><span class="rr-v">{% if w.roi is none %}-{% else %}{{ '%.0f'|format(w.roi * 100) }}%{% endif %}</span> <span class="text-slate-500">reward / c(entry)</span></div>
+      <div><span class="rr-k">Breakeven on {{ w.valued_on }}</span><br><span class="rr-v">{{ m2(w.breakeven) }}</span> <span class="text-slate-500">{% if w.be_pct is not none %}({{ '%+.1f'|format(w.be_pct * 100) }}% from the entry){% endif %}{% if w.prob is not none %} &middot; chance above it {{ '%.0f'|format(w.prob * 100) }}%{% endif %}</span></div>
+    </div>
+    <p class="text-[11px] text-slate-600 mt-3">c(S) is the call's Black-Scholes price with the stock at S, at the contract's own implied volatility held unchanged, the platform's one rate and no dividend - the Option Finder's engine (the sheet's math). On the contract's expiry the value is the payoff: the stock price less the strike, or nothing. The chance above breakeven is the model's, from the same IV - not a forecast.</p>
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

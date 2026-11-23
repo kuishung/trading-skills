@@ -2195,8 +2195,11 @@ def test_the_option_finder_tab(client, fake):
                    "fetch" if False else "getJSON('/options/api/finder?' + q.toString()",
                    "if (TAB === 'find') { if (!quiet) runFind(); return; }", "['find', 'volTabFind', 'volPanelFind']",
                    "function ofSorted(rows, key)", "function paintFindMap(rows)", "return r.be_pct == null ? -Infinity : -Math.abs(r.be_pct);",
-                   "openContract(OF.last.symbol, c.dataset.exp, 'C', Number(c.dataset.k), null);"):
+                   # v4.269: a tile or a row opens the call's Reward / risk working in a window (the history is linked there)
+                   "openRR(c.dataset.exp, Number(c.dataset.k));", "function rrUrl(exp, k)", "function openRR(exp, k)",
+                   "window.open(rrUrl(exp, k), 'th_of_rr',", "'<td class=\"of-rr'", "call\\'s Reward / risk working"):
         assert needle in html, needle
+    assert "openContract(OF.last.symbol, c.dataset.exp, 'C', Number(c.dataset.k), null);" not in html
 
 
 def test_the_price_bar_range_is_the_members_own(client, fake):

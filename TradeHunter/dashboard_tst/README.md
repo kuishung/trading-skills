@@ -223,6 +223,24 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-24 - v4.269: Option Finder - a tile or row opens the call's Reward / risk working in a window
+
+The user: *"when clicked on the tile, we need to show the R/R in a new window which is the option value model
+price. Example: [C(2000) - c(1000)] / [c(1000) - c(900)]. Reward = call option price if share price reach $2000
+- call option price if share price is at $1000. Risk = call option price if share price is at $1000 - call option
+price if share drops to $900. R/R = Reward/Risk"* and *"the reward/risk column in the panel below will also
+show this?"* (yes - a click anywhere on a table row, the Reward / risk cell included). New
+`services/opt_finder.working()`: one call's figures with the finder's own rules and inputs - c(entry) today
+with the stock at the entry price, c(target) and c(worst) on the valuation date (the payoff at expiry, else
+Black-Scholes at the contract's own IV), each split into intrinsic and time value, Reward, Risk, R/R, ROI,
+breakeven and the chance above it - so the window agrees with the table to the cent. New
+`GET /options/rr?symbol=&expiry=&strike=&target=&worst=&mode=&date=&entry=` (`routes/options_page.py`) renders
+`templates/options_rr.html`: a chromeless page with the inputs, the three model prices as cards, the fraction
+written the way the user wrote it with the numbers filled in, the result, ROI / breakeven / chance, a
+"Contract history" link and Close; a refused input is shown in words. `templates/options.html`: a click on a
+finder tile or table row now opens that page in one named window (`th_of_rr`; the next click replaces the
+call) instead of the contract's history, which the window links to. Tests added.
+
 ### 2026-11-23 - v4.268: Sector Rotation - a fund's holdings open in their own window; the panel below is gone
 
 The user: *"when user click the ETF i need a new window to pop up to show the ticker rather than shown in the

@@ -103,6 +103,85 @@ def prob_above(spot: float, level: float, sigma: float, days: float, r: float = 
     return 0.5 * (1 + math.erf(d2 / math.sqrt(2)))
 
 
+def working(sdb, symbol, *, expiry, strike, target, worst, mode="expiry", on=None, today: _dt.date | None = None,
+            r: float = RISK_FREE, entry=None) -> dict:
+    """v4.269 - the Reward / risk WORKING for ONE call, the way the user wrote it (2026-11-24):
+
+        Reward = c(target) - c(entry)      c(S) = the call's model price with the stock at S
+        Risk   = c(entry)  - c(worst)      R/R  = Reward / Risk
+
+    ``c(entry)`` is today's price with the stock at the entry price (what is paid); ``c(target)`` and
+    ``c(worst)`` are on the valuation date - the contract's own expiry (``mode="expiry"``: the payoff) or the
+    member's date (Black-Scholes at the contract's own IV, held). The same rules and inputs as :func:`find`,
+    so the figures agree with the finder's table to the cent. Raises FinderError / ChainError in words."""
+    if mode not in MODES:
+        raise FinderError("Value the contract at its expiry or by a date.")
+    t, w = _num(target, "target price"), _num(worst, "worst-case price")
+    k = _num(strike, "strike")
+    exp = _date(expiry)
+    if exp is None:
+        raise FinderError("Pick the contract's expiry (YYYY-MM-DD).")
+    today = today or _dt.date.today()
+    ch = load_chain(sdb, symbol)
+    spot = float(ch.spot or 0)
+    if spot <= 0:
+        raise ChainError("the last market pass has no price for %s" % ch.symbol)
+    if entry is None or str(entry).strip() == "":
+        px, px_src = spot, "last"
+    else:
+        px, px_src = _num(entry, "entry price"), "user"
+        if abs(px - spot) > ENTRY_MAX_MOVE * spot:
+            raise FinderError("Set an entry price within %d%% of today's price (%.2f)." % (round(ENTRY_MAX_MOVE * 100), spot))
+    if t <= px:
+        raise FinderError("Buy a call profits when the stock rises: set a target above %s (%.2f)."
+                          % ("your entry price" if px_src == "user" else "today's price", px))
+    if w >= t:
+        raise FinderError("The worst-case price must be below the target price.")
+    c = next((x for x in ch.contracts if x.right == "C" and x.expiry == exp.isoformat() and abs(x.strike - k) < 1e-6), None)
+    if c is None:
+        raise FinderError("%s has no %s %.2f call in the last market pass." % (ch.symbol, exp.isoformat(), k))
+    if not c.iv or c.iv <= 0:
+        raise FinderError("The last market pass has no implied volatility for the %s %.2f call." % (exp.isoformat(), k))
+    dte = (exp - today).days
+    if dte < 0:
+        raise FinderError("The %s %.2f call has expired." % (exp.isoformat(), k))
+    if mode == "date":
+        when = _date(on)
+        if when is None:
+            raise FinderError("Pick the date to value the call on.")
+        if when <= today:
+            raise FinderError("Pick a date after today.")
+        decay = (when - today).days
+        if decay > dte:
+            raise FinderError("The %s call expires before %s - value it at its expiry instead." % (exp.isoformat(), when.isoformat()))
+    else:
+        when, decay = exp, dte
+    res = evaluate([Leg("c", c.strike, dte, c.iv, 1)], Scenario(px, t, w, decay, r=r), with_curves=False)
+
+    def leg_price(stock: float, value: float, days_left: float) -> dict:
+        intrinsic = max(stock - c.strike, 0.0)
+        return {"stock": _r(stock, 4), "value": _r(value), "intrinsic": _r(intrinsic), "time": _r(value - intrinsic),
+                "days_left": days_left}
+
+    prices = {"entry": leg_price(px, res.entry_value, dte),
+              "target": leg_price(t, res.target_value, dte - decay),
+              "worst": leg_price(w, res.worst_value, dte - decay)}
+    reward = res.target_value - res.entry_value
+    risk = res.entry_value - res.worst_value
+    be = res.breakevens[0] if res.breakevens else None
+    return {"symbol": ch.symbol, "name": ch.name, "spot": spot, "spot_src": ch.spot_src, "session": ch.session,
+            "as_of": ch.as_of.isoformat() if ch.as_of else None, "today": today.isoformat(),
+            "expiry": exp.isoformat(), "strike": c.strike, "iv": _r(c.iv, 6), "oi": c.oi, "dte": dte,
+            "mode": mode, "valued_on": when.isoformat(), "decay": decay, "rate": r,
+            "entry": px, "entry_src": px_src, "target": t, "worst": w,
+            "prices": prices, "reward": _r(reward), "risk": _r(risk),
+            "rr": _r(reward / risk) if risk > 0 else None, "no_loss": risk <= 0,
+            "roi": _r(reward / res.entry_value, 6) if res.entry_value > 0 else None,
+            "breakeven": _r(be), "be_pct": _r((be - px) / px, 6) if be is not None else None,
+            "prob": _r(prob_above(px, be, c.iv, decay, r), 6) if be is not None else None,
+            "rr_sheet": _r(res.reward_over_risk)}
+
+
 def find(sdb, symbol, *, target, worst, strategy="long_call", mode="expiry", on=None, today: _dt.date | None = None,
          band: float = BAND, min_oi: int = MIN_OI, r: float = RISK_FREE, entry=None) -> dict:
     """The ranked contracts for one ticker. Raises FinderError / ChainError with a message for the member."""
