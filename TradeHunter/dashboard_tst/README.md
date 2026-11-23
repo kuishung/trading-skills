@@ -223,6 +223,19 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-23 - v4.266: Option Finder - a refused price shows why, and the fix is one click
+
+The user's screenshot after v4.265: ARM at 152.20, the bar a bare line with one dot at its left edge, the note
+*"set a target above your entry price (218.10)"* and no table. Cause: the entry handle was unlocked and the entry
+price saved for ARM on an earlier day (218.10) is far above today's 152.20, so every Target is below it and the
+finder refuses; the refusal answer carried no price, so the bar could not draw "Now" and the handles piled at an
+edge. Three changes. `routes/options_page.py`: a refused price (`FinderError`) still answers with the stock's
+price (`refused: true`, `spot`, `symbol`, `name`), so the bar draws. `templates/options.html`: (1) the bar widens
+by itself so every handle - entry, Target, Worst - is on the scale (shown, not saved), so a stale price is seen
+and can be dragged; (2) the refusal note (`ofRefusal`) offers the fix as buttons: **"Price from today's price
+… instead of your entry …"** (puts the entry back to "fixed at the last price") and **"Start over: Target +10%,
+Worst -5%"**, each re-running the finder at once; "drag a handle / right-click the bar" stays as the manual way.
+
 ### 2026-11-23 - v4.265: Option Finder - a keyed figure the finder would refuse is refused on the spot
 
 The user, on v4.264: *"after changing the figures the table in the options finder is not showing"*. Reproduced

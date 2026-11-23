@@ -77,6 +77,8 @@ def test_the_api_and_the_tab(client, sdb, monkeypatch):
     assert need["ok"] is False and need["need_prices"] is True and need["spot"] == 100.0
     bad = client.get("/options/api/finder", params={"symbol": "ACME", "target": "90", "worst": "80"}).json()
     assert bad["ok"] is False and "target above" in bad["error"]
+    # v4.266: a refused price still carries the stock's price, so the page's bar can draw it and show why
+    assert bad["refused"] is True and bad["spot"] == 100.0 and bad["symbol"] == "ACME"
     d = client.get("/options/api/finder", params={"symbol": "ACME", "target": "120", "worst": "92", "mode": "date",
                                                   "date": (TODAY + _dt.timedelta(days=40)).isoformat()}).json()
     assert d["ok"] and d["on"] == (TODAY + _dt.timedelta(days=40)).isoformat()

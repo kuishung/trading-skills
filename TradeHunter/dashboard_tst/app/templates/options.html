@@ -303,6 +303,10 @@
   .of-bar-h.flash::before { box-shadow: 0 0 0 4px rgba(251,191,36,.45); }           /* v4.264: the handle a keyed price moved */
   #ofMsg.of-msg-err { border-color: rgba(244,63,94,.6); background: rgba(244,63,94,.08); color: #fecdd3; font-size: 12px; }   /* v4.265: a refusal */
   html.light #ofMsg.of-msg-err { color: #9f1239; }
+  .of-fix { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin-top: .45rem; }          /* v4.266: the fixes */
+  .of-fix button { padding: .2rem .6rem; border: 1px solid currentColor; border-radius: .3rem; font-size: 11px; font-weight: 600; }
+  .of-fix button:hover { background: rgba(244,63,94,.15); }
+  .of-fix span { font-size: 11px; opacity: .8; }
   .of-bar-track { position: relative; flex: 1 1 auto; height: 2.75rem; margin: 0 1.8rem; touch-action: none; user-select: none; }
   .of-bar-track::before { content: ""; position: absolute; left: 0; right: 0; top: 1.25rem; height: 4px; border-radius: 2px; background: var(--tv-border-2, #363a45); }
   .of-bar-ticks span { position: absolute; top: 1.7rem; transform: translateX(-50%); font-size: 9px; color: var(--tv-muted); white-space: nowrap; }
@@ -1860,6 +1864,14 @@
     if (!bar) return;
     if (!(spot > 0)) { show(bar, false); return; }
     show(bar, true);
+    // v4.266: the bar widens by itself so every handle is ON the scale - a saved entry or target far from today's
+    // price (a ticker that moved since the prices were saved) used to pile at an edge, unreadable and undraggable
+    var needR = 0;
+    ['worst', 'entry', 'target'].forEach(function (k) {
+      var v = ofbVal(k, spot);
+      if (v != null) needR = Math.max(needR, ofbRangeFor(v) || 0);
+    });
+    if (needR > OFB.range) OFB.range = Math.min(OFB_RANGE_MAX, Math.ceil(needR / 5) * 5);   // shown, not saved
     var lo = ofbLo(spot), hi = ofbHi(spot);
     function pct(v) { return Math.max(0, Math.min(100, (v - lo) / (hi - lo) * 100)); }
     var preset = OFB_PRESETS.indexOf(OFB.range) >= 0;
@@ -2037,6 +2049,7 @@
         if (j && j.need_prices && j.spot && ofbDefaults(j.spot)) { runFind(); return; }   // v4.236: start from the bar's defaults
         // v4.265: a refusal stands out (rose) and says what to do - the table is gone, so the reason must be seen
         $('ofMsg').classList.toggle('of-msg-err', !(j && j.need_prices));
+        if (j && j.refused) { ofRefusal(j); return; }          // v4.266: with one-click fixes
         msg($('ofMsg'), j && j.need_prices ? 'Drag the Target and Worst handles on the bar for ' + (j.symbol || sym) + ' at ' + money(j.spot) + '.'
                                            : (j && j.error ? j.error + ' The table shows again once the prices are fixed - drag a handle or right-click the bar.' : 'The contracts could not be ranked.'));
         return;
@@ -2049,6 +2062,32 @@
       paintFind();
     }).catch(function (err) { if (my === OF.seq) msg($('ofMsg'), failText(err, 'the Option Finder')); });
   }
+  // v4.266 (user's screenshot: ARM at 152.20 with a saved entry of 218.10 - "set a target above your entry price
+  // (218.10)" and an empty table): the refusal names the fix and offers it as buttons - price the calls from
+  // today's price again (the saved entry is from another day), or start the Target / Worst over from the defaults
+  function ofRefusal(j) {
+    var box = $('ofMsg'), spot = OF.spot, h = esc(j.error || 'The contracts could not be ranked.');
+    var stale = ofEntryUser() && ofbVal('entry', spot) != null && Math.abs(ofbVal('entry', spot) - spot) > ofbStep(spot);
+    h += '<div class="of-fix">';
+    if (stale) h += '<button type="button" data-offix="entry">Price from today\'s price ' + money(spot) + ' instead of your entry ' + money(ofbVal('entry', spot)) + '</button>';
+    h += '<button type="button" data-offix="defaults">Start over: Target +10%, Worst -5% of ' + money(spot) + '</button>';
+    h += '<span>or drag a handle / right-click the bar</span></div>';
+    box.innerHTML = h;
+    show(box, true);
+  }
+  $('ofMsg').addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('[data-offix]') : null;
+    if (!b || !(OF.spot > 0)) return;
+    if (b.dataset.offix === 'entry') {                        // back to "fixed at the last price"
+      $('ofEntryLock').checked = true;
+      try { localStorage.setItem('th.of.lock', '1'); } catch (err) { /* ignore */ }
+    } else {
+      $('ofTarget').value = ''; $('ofWorst').value = '';
+      ofbDefaults(OF.spot);
+    }
+    ofbPaint();
+    runFind();
+  });
   function paintFind() {
     var j = OF.last;
     if (!j) return;

@@ -2195,6 +2195,12 @@ def test_the_price_bar_range_is_the_members_own(client, fake):
                    "if (k === 'worst' && v >= tgt) { window.alert('The Worst case must be below the Target ('",
                    "k = v > px ? 'target' : 'worst';", "$('ofMsg').classList.toggle('of-msg-err', !(j && j.need_prices));",
                    "The table shows again once the prices are fixed - drag a handle or right-click the bar.", "#ofMsg.of-msg-err {",
+                   # v4.266 (the user's screenshot: a stale saved entry of 218.10 on ARM at 152.20, an empty table): the bar
+                   # widens by itself so every handle is on the scale; a refusal offers the fix as buttons
+                   "if (needR > OFB.range) OFB.range = Math.min(OFB_RANGE_MAX, Math.ceil(needR / 5) * 5);",
+                   "function ofRefusal(j) {", "if (j && j.refused) { ofRefusal(j); return; }",
+                   'data-offix="entry">Price from today\\\'s price ', 'data-offix="defaults">Start over: Target +10%, Worst -5% of ',
+                   "$('ofMsg').addEventListener('click', function (e) {",
                    "$('ofBar').addEventListener('contextmenu', function (e) {",
                    "if (b.id === 'ofRangeCustom') { ofbAskRange(); return; }",
                    "if (r0 >= OFB_RANGE_MIN && r0 <= OFB_RANGE_MAX) OFB.range = r0;",

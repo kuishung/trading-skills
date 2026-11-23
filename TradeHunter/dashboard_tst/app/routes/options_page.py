@@ -1918,15 +1918,20 @@ async def api_finder(symbol: str = "", strategy: str = "long_call", target: str 
 
     def run():
         with screener_db.session() as s:
+            ch = load_chain(s, symbol)
+            sa = ch.spot_as_of
+            about = {"symbol": ch.symbol, "name": ch.name, "spot": ch.spot, "spot_src": ch.spot_src,
+                     "spot_as_of": sa.replace(microsecond=0).isoformat() + "Z" if isinstance(sa, _dt.datetime) else None}
             if not (target or "").strip() or not (worst or "").strip():
-                ch = load_chain(s, symbol)
-                sa = ch.spot_as_of
-                return {"ok": False, "need_prices": True, "symbol": ch.symbol, "name": ch.name, "spot": ch.spot,
-                        "spot_src": ch.spot_src,
-                        "spot_as_of": sa.replace(microsecond=0).isoformat() + "Z" if isinstance(sa, _dt.datetime) else None}
-            res = opt_finder.find(s, symbol, target=target, worst=worst, strategy=(strategy or "long_call").strip(),
-                                  mode=(mode or "expiry").strip().lower(), on=(date or "").strip() or None,
-                                  today=_dt.date.fromisoformat(clock.et_today()), entry=(entry or "").strip() or None)
+                return {"ok": False, "need_prices": True, **about}
+            try:
+                res = opt_finder.find(s, symbol, target=target, worst=worst, strategy=(strategy or "long_call").strip(),
+                                      mode=(mode or "expiry").strip().lower(), on=(date or "").strip() or None,
+                                      today=_dt.date.fromisoformat(clock.et_today()), entry=(entry or "").strip() or None)
+            except opt_finder.FinderError as exc:
+                # v4.266: a refused price still answers with the stock's price, so the page's bar can draw it and
+                # the member can see WHY (a stale entry price far from today's, a target under it) and fix it
+                return {"ok": False, "error": str(exc), "refused": True, **about}
             return {"ok": True, **res}
 
     try:
