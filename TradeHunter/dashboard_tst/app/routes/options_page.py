@@ -2000,7 +2000,10 @@ def _watchlists_payload(db: Session, user: User) -> dict:
         return out
 
     def entry(key: str, label: str, symbols: list[dict]) -> dict:
-        return {"key": key, "label": label, "n": len(symbols), "symbols": symbols}
+        # v4.267: whether this member may remove a ticker from the list - their own list always,
+        # the screener / Selective / All lists (the MATP rows) only as a moderator, as on the Watchlist page
+        return {"key": key, "label": label, "n": len(symbols), "symbols": symbols,
+                "can_remove": key == "mine" or bool(getattr(user, "can_moderate", False))}
 
     mine = [{"symbol": s, "matp": matp_of.get(s)} for s in uwl.symbols(db, user)]
     lists = [entry("mine", "My Watchlist", mine)]
@@ -2067,6 +2070,34 @@ def _pane_prices(syms) -> dict:
     except Exception:  # noqa: BLE001 - the pane shows no price rather than losing the verdicts
         log.exception("surface pane prices failed")
     return out
+
+
+@router.post("/api/watchlists/remove")
+def api_watchlists_remove(payload: dict = Body(...), user: User = Depends(require_user), db: Session = Depends(get_db)):
+    """v4.267 (user: "the watchlist in option i need to have the remove button"): take one ticker off a
+    list from the surface's pane - ``{key, symbol}``. ``mine`` unstars it on the member's own list; any
+    other list is the MATP watchlist (the Watchlist page's rows), which only a moderator may delete
+    from - the same rule and the same effect as that page's remove (every MATPLevel row of the
+    symbol goes; a screener run can list it again). Answers ``{ok, key, symbol, n}``."""
+    from ..models import MATPLevel
+    from ..services import user_watchlist as uwl
+
+    key = str(payload.get("key") or "").strip()
+    sym = str(payload.get("symbol") or "").strip().upper()
+    if not sym:
+        return JSONResponse({"ok": False, "error": "no symbol"})
+    if key == "mine":
+        gone = uwl.remove(db, user, sym)
+        return JSONResponse({"ok": True, "key": key, "symbol": sym, "n": 1 if gone else 0})
+    if not getattr(user, "can_moderate", False):
+        return JSONResponse({"ok": False, "error": "Only a moderator can remove a ticker from a screener list. "
+                                                   "My Watchlist is your own list - remove from there."})
+    rows = db.query(MATPLevel).filter(MATPLevel.symbol == sym).all()
+    for r in rows:
+        db.delete(r)
+    if rows:
+        db.commit()
+    return JSONResponse({"ok": True, "key": key, "symbol": sym, "n": len(rows)})
 
 
 @router.get("/api/watchlists")

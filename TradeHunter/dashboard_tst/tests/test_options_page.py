@@ -1628,11 +1628,39 @@ def test_the_watchlists_api_lists_the_members_lists(client, db, user):
     assert by[str(f1.id)]["label"] == "Big caps"
     assert by[str(f1.id)]["symbols"] == [{"symbol": "AAPL", "matp": None}, {"symbol": "NVDA", "matp": 210.5}]
     assert by["individual"] == {"key": "individual", "label": "Selective", "n": 1,
-                                "symbols": [{"symbol": "SOLO", "matp": 12.25}]}
+                                "symbols": [{"symbol": "SOLO", "matp": 12.25}], "can_remove": False}
     assert by["all"]["label"] == "All"
     assert [s["symbol"] for s in by["all"]["symbols"]] == ["AAPL", "NVDA", "OFF1", "SOLO"]   # active rows, sorted
     for x in j["lists"]:
         assert x["n"] == len(x["symbols"])
+    # v4.267: a member may remove from their own list only; a moderator from every list
+    assert by["mine"]["can_remove"] is True and by["all"]["can_remove"] is False
+
+
+def test_the_pane_removes_a_ticker_by_the_lists_own_rule(client, db, user):
+    """v4.267 (user: "the watchlist in option i need to have the remove button"): POST /options/api/watchlists/remove
+    unstars from My Watchlist; the screener / Selective / All lists are the MATP rows, moderators only."""
+    from app import models
+    _seed_watchlists(db, user)
+    j = client.post("/options/api/watchlists/remove", json={"key": "mine", "symbol": "nvda"}).json()
+    assert j == {"ok": True, "key": "mine", "symbol": "NVDA", "n": 1}
+    by = {x["key"]: x for x in client.get("/options/api/watchlists").json()["lists"]}
+    assert [s["symbol"] for s in by["mine"]["symbols"]] == ["ZZZZ"]
+    assert "NVDA" in [s["symbol"] for s in by["all"]["symbols"]]                 # the MATP row is untouched
+    j = client.post("/options/api/watchlists/remove", json={"key": "all", "symbol": "SOLO"}).json()
+    assert j["ok"] is False and "moderator" in j["error"]
+    assert client.post("/options/api/watchlists/remove", json={"key": "mine", "symbol": ""}).json()["ok"] is False
+    user.role = models.ROLE_MODERATOR
+    db.commit()
+    j = client.post("/options/api/watchlists/remove", json={"key": "all", "symbol": "SOLO"}).json()
+    assert j == {"ok": True, "key": "all", "symbol": "SOLO", "n": 1}
+    by = {x["key"]: x for x in client.get("/options/api/watchlists").json()["lists"]}
+    assert "individual" not in by and "SOLO" not in [s["symbol"] for s in by["all"]["symbols"]]
+    assert by["all"]["can_remove"] is True
+    html = client.get("/options").text
+    for needle in ("function wlRemove(sym)", "fetch('/options/api/watchlists/remove'", 'class="vol-wl-x" role="button"',
+                   "(l.can_remove ? '<span class=\"vol-wl-x\"", "if (x) { e.stopPropagation(); wlRemove(x.dataset.rm); return; }"):
+        assert needle in html, needle
 
 
 def test_the_watchlists_api_without_any_list_keeps_mine_and_all(client, db, user):
@@ -1673,7 +1701,7 @@ def test_the_left_panel_has_the_watchlist_on_top_and_an_adjustable_split(client,
     # a click on a ticker row calls runSurface; runSurface marks the drawn ticker in the list
     script = html[html.index("THE SURFACE'S WATCHLIST"):]
     click = script[script.index("$('volWlList').addEventListener('click'"):]
-    assert "runSurface();" in click[:400]
+    assert "runSurface();" in click[:800]          # v4.267: the x's branch comes first in the handler
     run = html[html.index("function runSurface("):html.index("function historyUrl(")]
     assert "wlMark(sym);" in run
     for name in ("wlMark", "wlPaint", "wlLoad", "splitInit", "splitSet", "splitClamp"):

@@ -223,6 +223,17 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-23 - v4.267: Options - a remove button on the watchlist pane
+
+The user: *"the watchlist in option i need to have the remove button"*. `templates/options.html`: every row of
+the surface's watchlist pane carries a **×** (faint until the row is hovered, red under the pointer; Enter /
+Space by keyboard) on the lists the member may edit; a click asks "Remove X from <list>?" then posts to the new
+`POST /options/api/watchlists/remove` (`routes/options_page.py`, `{key, symbol}`), drops the row at once and
+re-reads the lists. The rule is the Watchlist page's: **My Watchlist** = unstar (any member); a **screener /
+Selective / All** list is the MATP rows, which only a moderator may delete (every MATPLevel row of the symbol
+goes; a screener run can list it again) - a member sees no × there, and the server refuses in words anyway.
+`/options/api/watchlists` now says `can_remove` per list. Tests added.
+
 ### 2026-11-23 - v4.266: Option Finder - a refused price shows why, and the fix is one click
 
 The user's screenshot after v4.265: ARM at 152.20, the bar a bare line with one dot at its left edge, the note
