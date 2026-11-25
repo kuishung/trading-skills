@@ -233,6 +233,13 @@ root, which tells a real public chain from an intercepting firewall), then what 
 it with the exact error. From the laptop: Telegram's chain ends in "Go Daddy Root Certificate Authority - G2",
 trusted here - so on Hermes that root is missing from the Windows trust store (a Server 2019 VM whose root
 auto-update never fetched it). Run it on Hermes: `py -3.12 deploy\tls_peek.py api.telegram.org`.
+**Outcome (2026-11-26):** confirmed - Hermes's Python loaded only 25 roots and the verified handshake failed with
+code 19. Fixed on Hermes without touching the app: `certutil -generateSSTFromWU C:\temp\roots.sst` then
+`certutil -addstore -f Root C:\temp\roots.sst` (411 roots after; the `Import-Certificate` form kept being
+doubled by the RDP paste, certutil's short line went through). The test message then arrived in the chat with
+`@Tradehuntersetupbot`, the platform's bot (token + the admin's chat id saved on Settings → Integration, not in
+the vault). No restart needed - Python reads the store on every call. If a future Hermes rebuild shows
+`CERTIFICATE_VERIFY_FAILED` on any public site, run the same two certutil lines first.
 
 ### 2026-11-26 - v4.270: Settings - Integration - the Telegram test says why it failed
 

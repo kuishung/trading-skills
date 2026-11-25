@@ -886,6 +886,13 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
 - **Roles:** Administrator / Moderator / Member (admin = user mgmt + all;
   moderator = content moderation, e.g. Finviz filters + delete feedback;
   member = collaborate). Managed in the `/admin` console.
+- **Telegram (linked 2026-11-26):** the platform's bot is `@Tradehuntersetupbot`; its token and the admin's chat
+  id are saved on Settings → Integration (the `app_settings` table on Hermes), NOT in the vault - the vault has
+  no `telegram.env` on any PC, so the intraday bot's Telegram alerts are not configured. The only live sender is
+  the card's "Send test message"; the per-member `/start` + 6-digit-code handshake in `services/telegram.py` is
+  written but nothing calls it. Hermes needed its Windows root store refreshed before any HTTPS to Telegram
+  verified (`certutil -generateSSTFromWU` + `certutil -addstore -f Root`; `deploy/tls_peek.py <host>` is the
+  diagnostic) - see README v4.271. Deciding what to push (and when) is the open next step.
 - **Pages:** `/matp` (approved-user landing, "under construction" board),
   `/studies`, `/finviz` (moderator-curated saved-filter list — no scan
   here), `/feedback`, `/admin`. **Settings (v4.193, 2026-10-21): a GEAR icon beside the
