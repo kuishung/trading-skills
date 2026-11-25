@@ -223,6 +223,17 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-26 - v4.271: deploy/tls_peek.py - what a host's TLS handshake hands this Python
+
+With v4.270 the Telegram test on Hermes read *"CERTIFICATE_VERIFY_FAILED: self-signed certificate in certificate
+chain"*. New `deploy/tls_peek.py <host>` (diagnostic only, no token, changes nothing): with verification off it
+prints the TLS version and every certificate the server sent (subject / issuer / validity; the last one is the
+root, which tells a real public chain from an intercepting firewall), then what this Python verifies against
+(OpenSSL paths, `SSL_CERT_FILE` and friends, the store count, certifi) and a verified handshake as the app does
+it with the exact error. From the laptop: Telegram's chain ends in "Go Daddy Root Certificate Authority - G2",
+trusted here - so on Hermes that root is missing from the Windows trust store (a Server 2019 VM whose root
+auto-update never fetched it). Run it on Hermes: `py -3.12 deploy\tls_peek.py api.telegram.org`.
+
 ### 2026-11-26 - v4.270: Settings - Integration - the Telegram test says why it failed
 
 The user linked a bot (`@Tradehuntersetupbot`) and pressed "Send test message": the card read *"Telegram send
