@@ -223,6 +223,14 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-26 - v4.270: Settings - Integration - the Telegram test says why it failed
+
+The user linked a bot (`@Tradehuntersetupbot`) and pressed "Send test message": the card read *"Telegram send
+failed:"* and nothing after it. The reason was there but unescaped - a network error from `urllib` reads
+`<urlopen error ...>`, which the browser took for a tag and hid. `routes/admin.py::telegram_test`: the reason is
+HTML-escaped, and a network-shaped reason (urlopen / getaddrinfo / timed out / refused) adds "the server could
+not reach api.telegram.org (DNS, firewall or proxy on Hermes)". Test added.
+
 ### 2026-11-24 - v4.269: Option Finder - a tile or row opens the call's Reward / risk working in a window
 
 The user: *"when clicked on the tile, we need to show the R/R in a new window which is the option value model

@@ -130,6 +130,14 @@ def test_the_telegram_test_send_reports_in_words(aclient, db, admin, monkeypatch
     sent = {}
     monkeypatch.setattr(telegram, "send", lambda html, chat_id=None: sent.update(chat=chat_id, text=html) or (True, ""))
     assert "Sent" in aclient.post("/admin/integrations/test/telegram").text and sent["chat"] == "5" and "test" in sent["text"]
+    # v4.270: a failure's reason is escaped (urllib's "<urlopen error ...>" used to vanish as a tag) and a network
+    # reason names the likely cause on Hermes
+    monkeypatch.setattr(telegram, "send", lambda html, chat_id=None: (False, "<urlopen error [Errno 11001] getaddrinfo failed>"))
+    out = aclient.post("/admin/integrations/test/telegram").text
+    assert "Telegram send failed: &lt;urlopen error [Errno 11001] getaddrinfo failed&gt; - the server could not reach api.telegram.org" in out
+    monkeypatch.setattr(telegram, "send", lambda html, chat_id=None: (False, "HTTP 401 Unauthorized"))
+    out = aclient.post("/admin/integrations/test/telegram").text
+    assert "Telegram send failed: HTTP 401 Unauthorized</span>" in out
 
 
 def test_the_settings_gear_replaces_the_settings_menu_and_the_admin_link(aclient):

@@ -15,6 +15,7 @@ Until that relay is built, bot actions are explicit stubs.
 from __future__ import annotations
 
 import datetime as _dt
+import html as html_mod
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -195,7 +196,13 @@ def telegram_test(admin: User = Depends(require_admin)):
         ok, why = False, type(exc).__name__
     if ok:
         return HTMLResponse('<span class="text-emerald-300">Sent &#10003; - check the Telegram chat.</span>')
-    return HTMLResponse('<span class="text-rose-300">Telegram send failed: ' + str(why or "see the server log") + '</span>')
+    # v4.270: the reason escaped - a network error reads "<urlopen error ...>", which the browser took for a tag
+    # and hid (the user, 2026-11-26: the card showed "Telegram send failed:" and nothing after it)
+    why = html_mod.escape(str(why or "see the server log"))
+    hint = ""
+    if "urlopen" in why or "getaddrinfo" in why or "timed out" in why or "refused" in why:
+        hint = " - the server could not reach api.telegram.org (DNS, firewall or proxy on Hermes)"
+    return HTMLResponse('<span class="text-rose-300">Telegram send failed: ' + why + hint + '</span>')
 
 
 @router.post("/discord-test", response_class=HTMLResponse)
