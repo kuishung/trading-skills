@@ -9,6 +9,7 @@ discuss doorbell.
 """
 from __future__ import annotations
 
+import datetime as _dt
 import math
 from pathlib import Path
 
@@ -303,33 +304,41 @@ def _post_new_study(db: Session, s: Setup, user: User) -> None:
         pass
 
 
+def _discussion_for(db: Session, s: Setup):
+    """v4.275: the study's discussion (DISCUSSIONS_DESIGN.md). A study that already had a Discord
+    thread before the discussions layer is adopted into a ``kind=setup`` discussion the first time
+    it is read, so its thread keeps being read and mirrored."""
+    from ..services import discussions
+
+    d = discussions.for_subject(db, "setup", str(s.id))
+    if d is None and s.discord_thread_id:
+        try:
+            d = discussions.open_discussion(db, kind="setup", ref=str(s.id), title=f"{s.symbol} - study #{s.id}: {s.title}",
+                                            body=s.rationale, user=None, channels=(), discord_thread_id=s.discord_thread_id)
+        except Exception:  # noqa: BLE001 - soft-fail
+            d = None
+    return d
+
+
 def _ensure_thread(db: Session, s: Setup, user: User) -> None:
-    """Create the study's Discord thread (bot) if missing, so the study page can
-    show its discussion. Soft-fail; never blocks curation."""
-    if not discord.bot_configured() or s.discord_thread_id:
+    """Open the study's discussion - a Discord thread and a Telegram topic (whichever is
+    configured) - if it has none, so the study page can show the members' replies. Soft-fail;
+    never blocks curation. v4.275: through the discussions layer (DISCUSSIONS_DESIGN.md)."""
+    from ..services import discussions
+
+    if discussions.for_subject(db, "setup", str(s.id)) is not None:
+        return
+    if not (discord.bot_configured() or discussions.telegram.configured()):
         return
     try:
-        from ..services.prices import fetch_daily_ohlc, fetch_next_earnings
-
-        lv = db.query(MATPLevel).filter(MATPLevel.symbol == s.symbol).first()
-        bars = fetch_daily_ohlc(s.symbol)
-        price = bars[-1]["close"] if bars else None
-        embed = discord.build_ticker_embed(
-            symbol=s.symbol,
-            matp=lv.matp if lv else None, mbp=lv.mbp if lv else None,
-            signal=lv.signal if lv else None, price=price,
-            next_earnings=fetch_next_earnings(s.symbol),
-            last_earnings=lv.last_earnings_date if lv else None,
-            note=f"{s.title} — curated by {user.display_name or user.email}"
-            + (f"\n{s.rationale}" if s.rationale else ""),
-            title_prefix="📋 Study", public_url=settings.public_url,
-            url=f"{settings.public_url}/studies/{s.id}",
-        )
-        tid = discord.create_study_thread(name=f"{s.symbol} — study #{s.id}", embed=embed)
-        if tid:
-            s.discord_thread_id = tid
+        body = (f"{s.title} - curated by {user.display_name or user.email}"
+                + (("\n" + s.rationale) if s.rationale else ""))
+        d = discussions.open_discussion(db, kind="setup", ref=str(s.id), title=f"{s.symbol} - study #{s.id}: {s.title}",
+                                        body=body, user=user, discord_thread_id=s.discord_thread_id or None)
+        if d.discord_thread_id and not s.discord_thread_id:
+            s.discord_thread_id = d.discord_thread_id
             db.commit()
-    except Exception:  # noqa: BLE001 — soft-fail
+    except Exception:  # noqa: BLE001 - soft-fail
         pass
 
 
@@ -351,13 +360,27 @@ def study_page(
 def _render_chat(request: Request, db: Session, user: User, sid: int):
     """Render the right-panel chat fragment: the study's Discord thread messages
     MERGED with the on-platform comments, time-sorted as chat bubbles."""
+    from ..services import discussions
+
     s = db.get(Setup, sid)
     msgs: list[dict] = []
+    d = _discussion_for(db, s) if s is not None else None
+    links = discussions.links(d) if d else {}
     if s is not None:
-        for m in (discord.fetch_thread_messages(s.discord_thread_id) if s.discord_thread_id else None) or []:
-            text = m.get("content") or m.get("embed_text") or ("(attachment)" if m.get("has_attach") else "")
-            msgs.append({"author": m["author"], "text": text, "ts": m["ts"],
-                         "source": "discord", "me": False})
+        # v4.275: the discussion's stored contributions (Discord + Telegram + app), re-read from
+        # Discord when the last read is older than 10 s so the strip stays live on any PC
+        if d is not None:
+            if d.discord_thread_id and discord.bot_configured():
+                age = (_dt.datetime.utcnow() - d.last_synced_at).total_seconds() if d.last_synced_at else 1e9
+                if age > 10:
+                    try:
+                        discussions.sync_discord(db, d)
+                    except Exception:  # noqa: BLE001
+                        pass
+            for m in discussions.messages(db, d, me=user):
+                if m["is_opener"]:
+                    continue
+                msgs.append({"author": m["author"], "text": m["text"], "ts": m["ts"], "source": m["source"], "me": m["me"]})
         for c in db.query(Comment).filter(Comment.setup_id == sid).all():
             msgs.append({
                 "author": (c.user.display_name or c.user.email) if c.user else "member",
@@ -374,8 +397,9 @@ def _render_chat(request: Request, db: Session, user: User, sid: int):
         request, "_study_chat.html",
         {
             "user": user, "s": s, "messages": msgs,
-            "bot_configured": discord.bot_configured(),
-            "thread_link": discord.thread_link(s.discord_thread_id) if s else None,
+            "bot_configured": discord.bot_configured() or discussions.telegram.configured(),
+            "thread_link": links.get("discord") or (discord.thread_link(s.discord_thread_id) if s and s.discord_thread_id else None),
+            "telegram_link": links.get("telegram"), "has_discussion": d is not None,
         },
     )
 
@@ -409,7 +433,13 @@ def add_comment(
         # there's no thread or the post fails, fall back to a platform comment so
         # the message is never lost.
         mirrored = False
-        if s.discord_thread_id and discord.bot_configured():
+        # v4.275: through the discussion (stored here, mirrored to Discord AND Telegram)
+        d = _discussion_for(db, s)
+        if d is not None:
+            from ..services import discussions
+
+            mirrored = discussions.post(db, d, text, user) is not None
+        elif s.discord_thread_id and discord.bot_configured():
             mirrored = discord.post_thread_message(s.discord_thread_id, f"{name}: {text[:1900]}")
         if not mirrored:
             db.add(Comment(setup_id=sid, user_id=user.id, body=text[:4000]))

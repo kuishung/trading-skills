@@ -14,6 +14,16 @@
   <button type="button" data-tab="optcalc" class="di-tab px-3 py-2 text-sm border-b-2 border-transparent text-slate-400">Option Calculator</button>
   <button type="button" data-tab="logos" class="di-tab px-3 py-2 text-sm border-b-2 border-transparent text-slate-400">Ticker Logos</button>
   <button type="button" data-tab="macro" class="di-tab px-3 py-2 text-sm border-b-2 border-transparent text-slate-400">Macro Series</button>
+  <button type="button" data-tab="disc" class="di-tab px-3 py-2 text-sm border-b-2 border-transparent text-slate-400">Discussions</button>
+</div>
+
+{# ======================== Discussions (v4.275, DISCUSSIONS_DESIGN.md §4) ========================
+   The discussions sync inside the web app: the Telegram long poll, the Discord thread passes, the groups the bot
+   has seen. Fetched when the tab opens, then every 30 s while it stays open (GET /discussions/health). #}
+<div data-panel="disc" class="hidden">
+<h2 class="text-base font-semibold text-slate-100 mb-1">Discussions sync</h2>
+<p class="text-xs text-slate-500 mb-3">Reads the members' contributions in the Discord threads and Telegram topics back into TradeHunter (<a href="/discussions" class="text-emerald-300 hover:underline">Discussions</a>).</p>
+<div id="dscHealthBox"><p class="text-xs text-slate-500 py-4"><span class="inline-block animate-pulse">Reading the sync state&hellip;</span></p></div>
 </div>
 
 {# ======================== MATP Tickers (the deduplicated MATP queue) ========================
@@ -449,6 +459,7 @@
       if (name === 'optcalc') loadOptCalc();
       if (name === 'logos') loadLogos();
       if (name === 'macro') loadMacro();
+      if (name === 'disc') loadDisc();
       try { history.replaceState(null, '', '#' + name); } catch (e) {}
     }
     // Fetch the MATP-queue panel with an explicit failure path. Plain fetch (not
@@ -549,6 +560,26 @@
         });
     };
     // v4.243: Macro Series - fetched on open, then every 30 s while it is shown; "Refresh now" (moderators)
+    // v4.275: the discussions sync card - fetched on open, then every 30 s while this tab is the one shown
+    var dscTimer = null;
+    window.loadDisc = function loadDisc() {
+      var box = document.getElementById('dscHealthBox');
+      if (!box) return;
+      if (dscTimer) { clearTimeout(dscTimer); dscTimer = null; }
+      fetch('/discussions/health', { headers: { 'HX-Request': 'true' } })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+        .then(function (html) { box.innerHTML = html; })
+        .catch(function (err) {
+          box.innerHTML = '<div class="rounded-lg border border-rose-500/40 bg-rose-500/5 px-4 py-3 text-xs text-rose-200">' +
+            '<b>Could not read the discussions sync state.</b> ' + String(err.message || err) + '</div>';
+        })
+        .finally(function () {
+          dscTimer = setTimeout(function () {
+            if (activate._current === 'disc' && !document.hidden) loadDisc();
+            else dscTimer = null;
+          }, 30000);
+        });
+    };
     var msTimer = null;
     window.loadMacro = function loadMacro() {
       var box = document.getElementById('msBox');

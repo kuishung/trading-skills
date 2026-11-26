@@ -899,6 +899,18 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
   application "TradeHunter" lives in the user's Discord Developer Portal; it is invited into the "tradehunter"
   server (channel id / server id saved on the card). The card's test post goes through. v4.272-4.274 made the
   card say WHY a post fails (Discord's own message, the URL's shape checked first, the saved URL shown masked).
+- **Discussions — STRUCTURE BUILT v4.275 (2026-11-26): `dashboard_tst/DISCUSSIONS_DESIGN.md` is the contract.**
+  The user: *"we moderator put up a topic or study in the chat either discord or telegram, there will be a thread
+  created for that topic or studies and user can contribute in the thread which can be read in tradehunter"* -
+  and *"build the structure first"*: which subjects open a discussion (a curated setup, a macro study, a company
+  insight, a study, a free topic) and WHEN is NOT decided (design §6). What exists: `Discussion` (kind + ref) and
+  `Contribution` tables (migration `f5a6b7c8d9e0`), `services/discussions.py` (open on Discord = a thread via
+  the bot, on Telegram = a forum TOPIC in the group saved as `telegram_group_id`; post + mirror; sync),
+  `services/discussion_sync.py` (a thread in the web app: the ONE Telegram `getUpdates` long-poller + Discord
+  passes; state `state/discussions_sync.json`, tray line "Discussions:", Data Ingest → Discussions), the nav page
+  `/discussions` (menu key `discussions`; moderators open one by hand), Studies read through it. Telegram
+  prerequisite (design §7): a GROUP with Topics on, the bot an admin with Manage Topics, its id on Settings →
+  Integration (picked from "groups the bot has seen").
 - **Pages:** `/matp` (approved-user landing, "under construction" board),
   `/studies`, `/finviz` (moderator-curated saved-filter list — no scan
   here), `/feedback`, `/admin`. **Settings (v4.193, 2026-10-21): a GEAR icon beside the

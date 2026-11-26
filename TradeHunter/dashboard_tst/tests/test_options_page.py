@@ -1154,6 +1154,8 @@ def test_the_router_serves_the_screener_paths():
         ("/options/api/cm/point", ("GET",)),
         ("/options/api/cm/series", ("GET",)),
         ("/options/api/finder", ("GET",)),                  # v4.219: the Option Finder tab
+        ("/options/rr", ("GET",)),                          # v4.269: the Reward / risk working window
+        ("/options/api/watchlists/remove", ("POST",)),      # v4.267: the watchlist pane's remove button
         ("/options/api/liquidity", ("GET",)),               # v4.186: the pane's option-liquidity verdicts
         ("/options/api/screens", ("GET",)),
         ("/options/api/spec", ("GET",)),

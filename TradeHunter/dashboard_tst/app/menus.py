@@ -40,6 +40,9 @@ MENUS = [
     # Curated — each member's own dated calls (entry/stop/target), judged from
     # price history. Replaced the Portfolio placeholder 2026-09-07 (user).
     ("curated",          "Curated",           None, "/curated"),
+    # Discussions - v4.275 (DISCUSSIONS_DESIGN.md): a thread per subject on Discord / Telegram, the members'
+    # contributions read back. The structure first; which subjects open one automatically is left to decide.
+    ("discussions",      "Discussions",       None, "/discussions"),
     # Options — ONE page that replaces IV Rank, Spread and Positions (2026-10-04);
     # those three stay reachable by URL (see HIDDEN_KEYS) with their guards widened
     # to accept this key. Rebuilt as the Options Screener in v4.136. Since v4.152

@@ -68,6 +68,24 @@
       </div>
     </div>
     <div class="space-y-3">{% for r in telegram %}{{ field(r) }}{% endfor %}</div>
+    {# v4.275 (DISCUSSIONS_DESIGN.md §7): the group where discussions open as topics - picked from the groups the bot
+       has seen (the sync learns them from any message in a group the bot is in) instead of reading JSON for the id #}
+    <div class="mt-3 text-xs text-slate-500">
+      <p>The <b class="text-slate-400">group id</b> is where discussions open as Telegram topics: a group with <b class="text-slate-400">Topics switched on</b>,
+        the bot added as an <b class="text-slate-400">administrator with Manage Topics</b>. Add the bot, send any message in the group, and it appears here:</p>
+      {% if seen_groups %}
+      <ul class="mt-1.5 space-y-1">
+        {% for g in seen_groups %}
+        <li class="flex items-center gap-2">
+          <button type="button" class="px-2 py-0.5 rounded border border-slate-700 text-slate-300 hover:border-sky-500 hover:text-sky-300"
+                  onclick="var f=document.getElementById('f_telegram_group_id'); if(f){f.value='{{ g.id }}'; f.focus();}">Use</button>
+          <span class="tabular-nums text-slate-300">{{ g.id }}</span><span class="text-slate-400">{{ g.title }}</span>
+          {% if g.is_forum %}<span class="text-emerald-300">topics on</span>{% else %}<span class="text-amber-300">topics off - switch Topics on in the group's settings</span>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}<p class="mt-1 text-slate-600">no group seen yet.</p>{% endif %}
+    </div>
   </section>
 
   <div class="flex items-center gap-3">

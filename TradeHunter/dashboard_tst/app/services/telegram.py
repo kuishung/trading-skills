@@ -78,10 +78,11 @@ def default_chat_id() -> str | None:
 
 # ─────────────────────────────────────── the API ───────────────────────────────────────
 
-def _api(method: str, data: dict) -> dict:
+def _api(method: str, data: dict, *, timeout: float | None = None) -> dict:
     """POST ``data`` (form-encoded, like ``_common.send_telegram``) to a Bot API
     method and return the decoded body. Raises ``TelegramError`` when the token is
-    missing, the request fails, or the body says ``ok: false``."""
+    missing, the request fails, or the body says ``ok: false``. ``timeout`` (v4.275)
+    lets a long-poll ``getUpdates`` wait longer than the default."""
     token, _ = creds()
     if not token:
         raise TelegramError("not configured")
@@ -91,7 +92,7 @@ def _api(method: str, data: dict) -> dict:
         headers={"Content-Type": "application/x-www-form-urlencoded", "User-Agent": USER_AGENT},
     )
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+        with urllib.request.urlopen(req, timeout=timeout or TIMEOUT) as resp:
             out = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         try:
@@ -143,6 +144,64 @@ def send(html: str, *, chat_id: str | None = None) -> tuple[bool, str]:
             errors.append(str(exc))
             log.warning("telegram send to %s failed: %s", target, exc)
     return (not errors), "; ".join(errors)
+
+
+# ─────────────────────────── v4.275: discussions - topics in a group ───────────────────────────
+
+def group_id() -> str | None:
+    """The group where discussions open as topics (Settings → Integration, ``telegram_group_id``)."""
+    from . import app_settings  # noqa: PLC0415
+
+    v = app_settings.get("telegram_group_id", None)
+    return str(v).strip() if v else None
+
+
+def send_message(html: str, *, chat_id: str, thread_id: str | int | None = None,
+                 reply_to: str | int | None = None) -> dict:
+    """One message into a chat - and, with ``thread_id``, into that topic of a forum group.
+    Returns the sent message (``message_id`` etc.); raises ``TelegramError``. Long texts are
+    chunked like :func:`send`; the FIRST chunk's message is returned."""
+    first: dict | None = None
+    for chunk in chunks(html):
+        out = _api("sendMessage", {"chat_id": str(chat_id), "text": chunk, "parse_mode": "HTML",
+                                   "disable_web_page_preview": "true",
+                                   "message_thread_id": str(thread_id) if thread_id else None,
+                                   "reply_to_message_id": str(reply_to) if reply_to else None})
+        if first is None:
+            first = out.get("result") or {}
+    return first or {}
+
+
+def create_forum_topic(chat_id: str, name: str) -> str:
+    """Open a topic named ``name`` in a group with Topics switched on; the bot must be an
+    administrator with Manage Topics. Returns the topic's ``message_thread_id`` (a string);
+    raises ``TelegramError`` with Telegram's words otherwise."""
+    out = _api("createForumTopic", {"chat_id": str(chat_id), "name": (name or "Discussion")[:128]})
+    tid = (out.get("result") or {}).get("message_thread_id")
+    if not tid:
+        raise TelegramError("createForumTopic returned no topic id")
+    return str(tid)
+
+
+def get_updates(offset: int | None, *, timeout: int = 20) -> list[dict]:
+    """Long-poll the bot's updates (messages only). ONE poller per token - the Bot API answers
+    409 to a second one - so only the discussions sync calls this. Raises ``TelegramError``."""
+    out = _api("getUpdates", {"offset": offset or None, "timeout": timeout,
+                              "allowed_updates": json.dumps(["message", "my_chat_member"])},
+               timeout=timeout + 15)
+    return list(out.get("result") or [])
+
+
+def topic_link(chat_id: str | None, topic_id: str | None) -> str | None:
+    """``https://t.me/c/<group id without -100>/<topic id>`` - opens for members of the group."""
+    if not chat_id or not topic_id:
+        return None
+    cid = str(chat_id)
+    if cid.startswith("-100"):
+        cid = cid[4:]
+    elif cid.startswith("-"):
+        cid = cid[1:]
+    return f"https://t.me/c/{cid}/{topic_id}"
 
 
 # ─────────────────────────────────── the handshake ───────────────────────────────────

@@ -8,7 +8,7 @@
   <div class="flex flex-col {% if m.me %}items-end{% endif %}">
     <div class="flex items-center gap-1.5 text-[10px] text-slate-500 mb-0.5">
       <span class="font-medium text-slate-400">{{ m.author }}</span>
-      <span class="px-1 rounded {% if m.source == 'discord' %}bg-indigo-500/20 text-indigo-300{% else %}bg-slate-700/40 text-slate-400{% endif %}">{{ 'discord' if m.source == 'discord' else 'web' }}</span>
+      <span class="px-1 rounded {% if m.source == 'discord' %}bg-indigo-500/20 text-indigo-300{% elif m.source == 'telegram' %}bg-sky-500/20 text-sky-300{% else %}bg-slate-700/40 text-slate-400{% endif %}">{{ m.source if m.source in ('discord', 'telegram') else 'web' }}</span>
       {% if m.ts_iso %}<time class="chat-ts" data-utc="{{ m.ts_iso }}">{{ m.ts[11:16] }}</time>{% endif %}
     </div>
     <div class="rounded-lg px-2.5 py-1 text-xs max-w-[92%] whitespace-pre-line leading-relaxed {% if m.me %}bg-emerald-600/20 text-emerald-100{% else %}bg-slate-800/70 text-slate-200{% endif %}">{{ m.text }}</div>
@@ -19,9 +19,14 @@
 </div>
 
 <div class="shrink-0 pt-2 space-y-1.5">
-  {% if thread_link %}<a href="{{ thread_link }}" target="_blank" rel="noopener" class="text-[11px] text-indigo-300 hover:text-indigo-200">Reply in Discord &#8599;</a>
-  {% elif bot_configured and user.can_moderate and s and not s.discord_thread_id %}
-  <form method="post" action="/studies/{{ s.id }}/discord-thread"><button class="text-[11px] text-indigo-300 hover:text-indigo-200">Start Discord thread</button></form>
+  {% if thread_link or telegram_link %}
+  <div class="flex items-center gap-3 text-[11px]">
+    {% if thread_link %}<a href="{{ thread_link }}" target="_blank" rel="noopener" class="text-indigo-300 hover:text-indigo-200">Reply in Discord &#8599;</a>{% endif %}
+    {% if telegram_link %}<a href="{{ telegram_link }}" target="_blank" rel="noopener" class="text-sky-300 hover:text-sky-200">Reply in Telegram &#8599;</a>{% endif %}
+  </div>
+  {% elif bot_configured and user.can_moderate and s and not has_discussion %}
+  {# v4.275: opens the study's discussion on every configured chat (DISCUSSIONS_DESIGN.md) #}
+  <form method="post" action="/studies/{{ s.id }}/discord-thread"><button class="text-[11px] text-indigo-300 hover:text-indigo-200">Open the discussion in Discord / Telegram</button></form>
   {% endif %}
   {# HTMX: post the comment and swap the refreshed chat in place (the whole
      #chatbox is replaced, so the new message shows instantly and the input

@@ -33,6 +33,15 @@ web, Windows launchers, Desktop-shortcut installer).
 
 ## Changelog
 
+### 2026-11-26 — `tray_status.py`: a "Discussions" line for the web app's discussions sync (tray-sync rule)
+
+`get_discussions_status()` reads `dashboard_tst/state/discussions_sync.json` (written by
+`dashboard_tst/app/services/discussion_sync.py`, v4.275): whether the sync thread runs, whether it is
+long-polling Telegram and when it last did, how many contributions it stored, the last Discord pass, the last
+error. Detail window line `Discussions: polling Telegram · last poll 09:12 ET · 4 stored · Discord 2 threads`
+(green = running and fresh; amber = stopped, an error or a poll older than 5 min; grey = no file / switched
+off) and a `Disc OK / stale / err / stop / -` piece in the tooltip after the Macro one.
+
 ### 2026-11-07 — `tray_status.py`: a "Macro series" line for the Macro page's daily FRED/Yahoo refresh (tray-sync rule)
 
 dashboard_tst v4.243 refreshes the Insights -> Macro topics' series once a day inside the web app and mirrors the

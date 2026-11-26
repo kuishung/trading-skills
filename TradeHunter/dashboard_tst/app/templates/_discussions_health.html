@@ -1,0 +1,37 @@
+{# v4.275: Settings → Data Ingest → Discussions - the sync thread's state (services/discussion_sync.py).
+   Context: st (the state dict), n_open, telegram_token, telegram_group, discord_bot. #}
+{% set tg = st.get('telegram') or {} %}{% set dc = st.get('discord') or {} %}
+<div class="space-y-3 text-[12px]">
+  <div class="flex items-center gap-2 flex-wrap">
+    <span class="px-2 py-0.5 rounded border {% if st.get('running') %}border-emerald-500/50 text-emerald-300{% elif st.get('off') %}border-slate-700 text-slate-500{% else %}border-amber-500/50 text-amber-300{% endif %}">
+      sync {{ 'running' if st.get('running') else ('switched off (TST_DISCUSSIONS_SYNC=0)' if st.get('off') else 'not running on this PC') }}</span>
+    <span class="text-slate-500">{{ n_open }} open discussion{{ '' if n_open == 1 else 's' }}</span>
+    {% if st.get('started_at') %}<span class="text-slate-600">since {{ st.started_at }}</span>{% endif %}
+  </div>
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+    <div class="rounded border border-slate-800 p-3">
+      <div class="font-semibold text-sky-300 mb-1">Telegram</div>
+      {% if not telegram_token %}<p class="text-slate-500">No bot token saved - Settings → Integration.</p>
+      {% else %}
+      <p class="text-slate-400">{{ 'long-polling the bot' if tg.get('polling') else 'not polling' }} &middot; group id {{ telegram_group or '<span class="text-amber-300">not set</span>'|safe }}</p>
+      <p class="text-slate-500">last poll {{ tg.get('last_poll') or '-' }} &middot; {{ tg.get('updates_total', 0) }} updates &middot; {{ tg.get('stored_total', 0) }} contributions stored &middot; {{ tg.get('starts_answered', 0) }} /start answered</p>
+      {% if tg.get('last_error') %}<p class="text-rose-300">last error: {{ tg.last_error }}</p>{% endif %}
+      {% if tg.get('seen_groups') %}
+      <div class="mt-2 text-slate-500">groups the bot has seen:</div>
+      <ul class="mt-1 space-y-0.5">
+        {% for g in tg.seen_groups %}<li class="text-slate-300"><span class="tabular-nums">{{ g.id }}</span> {{ g.title }}{% if g.is_forum %} <span class="text-emerald-300">topics on</span>{% else %} <span class="text-amber-300">topics off</span>{% endif %}</li>{% endfor %}
+      </ul>
+      {% else %}<p class="text-slate-600 mt-1">no group seen yet - add the bot to the group as an administrator and send any message there</p>{% endif %}
+      {% endif %}
+    </div>
+    <div class="rounded border border-slate-800 p-3">
+      <div class="font-semibold text-indigo-300 mb-1">Discord</div>
+      {% if not discord_bot %}<p class="text-slate-500">No bot token / channel id saved - Settings → Integration.</p>
+      {% else %}
+      <p class="text-slate-500">last pass {{ dc.get('last_pass') or '-' }} &middot; {{ dc.get('threads', 0) }} threads read &middot; {{ dc.get('stored_total', 0) }} contributions stored</p>
+      {% if dc.get('last_error') %}<p class="text-rose-300">last error: {{ dc.last_error }}</p>{% endif %}
+      {% endif %}
+    </div>
+  </div>
+  {% if st.get('last_error') %}<p class="text-rose-300">sync error: {{ st.last_error }}</p>{% endif %}
+</div>

@@ -36,6 +36,7 @@ from .routes import api as api_routes
 from .routes import auth as auth_routes
 from .routes import calendar as calendar_routes
 from .routes import company_analysis as company_analysis_routes
+from .routes import discussions as discussions_routes
 from .routes import drawings as drawings_routes
 from .routes import options as options_routes
 from .routes import options_page as options_page_routes
@@ -86,6 +87,7 @@ for _routes_mod in (
     research_routes, patterns_routes, strategy_routes, curated_routes,
     portfolio_routes, spreads_routes, ivscan_routes, options_page_routes,   # calc_routes: no page since v4.218
     company_analysis_routes, sector_routes, macro_routes, calendar_routes, insights_routes,
+    discussions_routes,                                                      # v4.275
 ):
     _routes_mod.templates.env.globals["version"] = APP_VERSION
     _routes_mod.templates.env.globals["nav_for"] = menus.nav_for   # access-filtered nav
@@ -247,6 +249,12 @@ async def lifespan(app: FastAPI):
         _sector_chart.start_prewarm()
     except Exception as exc:  # noqa: BLE001
         log.warning("sector industry map prewarm not started: %s", exc)
+    # v4.275: the discussions sync - Telegram long-poll + Discord thread re-reads (DISCUSSIONS_DESIGN.md §4)
+    try:
+        from .services import discussion_sync as _discussion_sync
+        _discussion_sync.start_background()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("discussions sync not started: %s", exc)
     yield
 
 
@@ -296,6 +304,7 @@ def create_app() -> FastAPI:
     app.include_router(options_routes.router)
     app.include_router(feedback_routes.router)
     app.include_router(logos_routes.router)          # v4.221: GET /logo/<SYM>
+    app.include_router(discussions_routes.router)    # v4.275: /discussions (DISCUSSIONS_DESIGN.md)
     app.include_router(admin_routes.router)
     app.include_router(agent_routes.router)
     app.include_router(api_routes.router)

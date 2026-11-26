@@ -1468,6 +1468,65 @@ def get_option_calc_status(path=None, now=None) -> dict:
 # web app fetches the seven topics' FRED / Yahoo series once a day and mirrors its state here
 # (tray-sync rule). Not a lane: no heartbeat; the file says when it last ran and what failed.
 MACRO_REFRESH_STATE_PATH = SKILL_DIR / "dashboard_tst" / "state" / "macro_refresh.json"
+# The discussions sync (dashboard_tst/app/services/discussion_sync.py, v4.275): the Telegram long poll and
+# the Discord thread re-reads that bring the members' contributions back into TradeHunter - tray-sync rule.
+DISCUSSIONS_STATE_PATH = SKILL_DIR / "dashboard_tst" / "state" / "discussions_sync.json"
+DISCUSSIONS_STALE_SEC = 5 * 60    # a Telegram poll older than 5 min while a token is saved -> amber
+
+
+def get_discussions_status(path=None, now=None) -> dict:
+    """The discussions sync from its state file. Line: ``Discussions: polling Telegram · last poll 09:12 ET ·
+    4 stored · Discord 2 threads``; ``tip``: ``Disc OK`` / ``Disc stale`` / ``Disc err`` / ``Disc -``.
+    Green = running and the Telegram poll (when polling) is fresh; amber = an error or a stale poll;
+    grey = no file / switched off. File reads only."""
+    p = Path(path) if path is not None else DISCUSSIONS_STATE_PATH
+    out = {"level": "absent", "color": "grey", "state": "absent", "line": "Discussions: no sync on this PC (no state file)", "tip": "Disc -"}
+    if not p.exists():
+        return out
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+        if not isinstance(d, dict):
+            raise ValueError("not a JSON object")
+    except Exception as exc:
+        out.update(level="warn", color="amber", state="error", tip="Disc ?", line=f"Discussions: state file unreadable ({exc})"[:160])
+        return out
+    if d.get("off"):
+        out.update(state="off", tip="Disc off", line="Discussions: sync switched off (TST_DISCUSSIONS_SYNC=0)")
+        return out
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    tg = d.get("telegram") or {}
+    dc = d.get("discord") or {}
+    parts = []
+    stale = False
+    if tg.get("polling"):
+        lp = tg.get("last_poll")
+        when = _option_calc_et(lp, now) if lp else None
+        parts.append("polling Telegram" + (f" · last poll {when or lp}" if lp else ""))
+        try:
+            age = (now - datetime.strptime(lp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)).total_seconds() if lp else None
+        except ValueError:
+            age = None
+        stale = age is not None and age > DISCUSSIONS_STALE_SEC
+    else:
+        parts.append("Telegram not polled")
+    parts.append(f"{int(tg.get('stored_total') or 0) + int(dc.get('stored_total') or 0)} stored")
+    if dc.get("last_pass"):
+        parts.append(f"Discord {dc.get('threads', 0)} threads")
+    err = tg.get("last_error") or dc.get("last_error") or d.get("last_error")
+    if err:
+        parts.append(f"error: {err}"[:80])
+    line = "Discussions: " + " · ".join(parts)
+    if not d.get("running"):
+        out.update(level="warn", color="amber", state="stopped", tip="Disc stop", line="Discussions: sync not running" + (f" (last: {line[13:]})" if parts else ""))
+    elif err:
+        out.update(level="warn", color="amber", state="error", tip="Disc err", line=line)
+    elif stale:
+        out.update(level="warn", color="amber", state="stale", tip="Disc stale", line=line)
+    else:
+        out.update(level="ok", color="green", state="ok", tip="Disc OK", line=line)
+    return out
 MACRO_REFRESH_STALE_SEC = 36 * 3600   # a daily run older than 36 h -> amber
 
 
@@ -1911,6 +1970,13 @@ def _build_progress_window(root):
         bg='#1a1a1a', fg='#888888', wraplength=430, justify='center',
     )
     macro_lbl.pack(pady=(0, 4))
+    # Discussions sync (dashboard_tst web app, v4.275) - tray-sync rule.
+    disc_var = tk.StringVar(value='Discussions: -')
+    disc_lbl = tk.Label(
+        win, textvariable=disc_var, font=('Segoe UI', 10),
+        bg='#1a1a1a', fg='#888888', wraplength=430, justify='center',
+    )
+    disc_lbl.pack(pady=(0, 4))
 
     # ── DEEP CHECK section ─────────────────────────────────────────────────
     tk.Label(win, text='DEEP CHECK', font=('Segoe UI', 8, 'bold'),
@@ -2352,6 +2418,16 @@ def _build_progress_window(root):
                 macro_var.set("Macro series: ?")
                 macro_lbl.configure(fg='#888888')
 
+            # Discussions sync (green / amber / grey)
+            try:
+                ds = get_discussions_status()
+                disc_var.set(ds.get('line') or "Discussions: ?")
+                disc_lbl.configure(fg={'green': '#5fd97a', 'amber': '#facc15'}.get(
+                    ds.get('color'), '#888888'))
+            except Exception:
+                disc_var.set("Discussions: ?")
+                disc_lbl.configure(fg='#888888')
+
             # "Completed through" date (ingest currency)
             try:
                 ct = get_completed_through()
@@ -2620,12 +2696,16 @@ def _update_loop(icon: "pystray.Icon"):
                     macro_str = get_macro_series_status().get("tip") or "Macro ?"
                 except Exception:
                     macro_str = "Macro ?"
+                try:
+                    disc_str = get_discussions_status().get("tip") or "Disc ?"
+                except Exception:
+                    disc_str = "Disc ?"
                 # Windows tray tooltips cap at 128 chars; put the critical
                 # signals (state, deep-check, gateway, options collector,
                 # options screener, option calculator, through) FIRST so they
                 # survive, and let the verbose status tooltip trail + be trimmed.
                 icon.title = _clamp_title(
-                    f"Ingest: {new_state} | {dc_str} | {gw_str} | {opt_str} | {scr_str} | {calc_str} | {macro_str} | {through_str} — {status['tooltip']}"
+                    f"Ingest: {new_state} | {dc_str} | {gw_str} | {opt_str} | {scr_str} | {calc_str} | {macro_str} | {disc_str} | {through_str} — {status['tooltip']}"
                 )
                 if new_state != current_state:
                     current_state = new_state

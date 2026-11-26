@@ -1,0 +1,42 @@
+{# v4.275: a discussion's chat strip - Discord, Telegram and app contributions merged in time order, a composer
+   that posts through services/discussions.post (stored, mirrored to the chats). Self-polls every 15 s.
+   Context: d, messages=[{author,text,ts,ts_iso,channel,source,me,is_opener}], links={discord,telegram}, can_moderate, user. #}
+{% if d %}
+<div hx-get="/discussions/{{ d.id }}/chat" hx-trigger="load delay:15s" hx-target="#dscbox" hx-swap="innerHTML"></div>
+<div id="dscscroll" class="flex-1 min-h-0 overflow-y-auto space-y-2 pr-1">
+  {% for m in messages %}
+  <div class="flex flex-col {% if m.me %}items-end{% endif %}">
+    <div class="flex items-center gap-1.5 text-[10px] text-slate-500 mb-0.5">
+      <span class="font-medium text-slate-400">{{ m.author }}</span>
+      <span class="px-1 rounded {% if m.source == 'discord' %}bg-indigo-500/20 text-indigo-300{% elif m.source == 'telegram' %}bg-sky-500/20 text-sky-300{% else %}bg-slate-700/40 text-slate-400{% endif %}">{{ m.source }}</span>
+      {% if m.is_opener %}<span class="px-1 rounded bg-emerald-500/15 text-emerald-300">opener</span>{% endif %}
+      {% if m.ts_iso %}<time class="dsc-ts" data-utc="{{ m.ts_iso }}">{{ m.ts[11:16] }}</time>{% endif %}
+    </div>
+    <div class="rounded-lg px-2.5 py-1 text-[13px] max-w-[92%] whitespace-pre-line leading-relaxed {% if m.me %}bg-emerald-600/20 text-emerald-100{% else %}bg-slate-800/70 text-slate-200{% endif %}">{{ m.text }}</div>
+  </div>
+  {% else %}
+  <p class="text-[12px] text-slate-500">No contributions yet{% if links.discord or links.telegram %} &mdash; write below, in Discord or in Telegram{% endif %}.</p>
+  {% endfor %}
+</div>
+<div class="shrink-0 pt-2 space-y-1.5">
+  <div class="flex items-center gap-3 text-[11px]">
+    {% if links.discord %}<a href="{{ links.discord }}" target="_blank" rel="noopener" class="text-indigo-300 hover:text-indigo-200">Reply in Discord &#8599;</a>{% endif %}
+    {% if links.telegram %}<a href="{{ links.telegram }}" target="_blank" rel="noopener" class="text-sky-300 hover:text-sky-200">Reply in Telegram &#8599;</a>{% endif %}
+  </div>
+  {% if d.status == 'open' %}
+  <form method="post" action="/discussions/{{ d.id }}/post" hx-post="/discussions/{{ d.id }}/post" hx-target="#dscbox" hx-swap="innerHTML" class="flex gap-1.5">
+    <input name="body" required autocomplete="off" placeholder="Message&hellip; (also posted into the chats)"
+           class="flex-1 min-w-0 rounded bg-slate-950/60 border border-slate-700 px-2.5 py-1.5 text-[13px] focus:border-emerald-500 outline-none">
+    <button class="text-[13px] px-3 rounded bg-emerald-600 hover:bg-emerald-500 font-medium text-white">Send</button>
+  </form>
+  {% else %}
+  <p class="text-[11px] text-slate-500">This discussion is closed.</p>
+  {% endif %}
+</div>
+<script>(function(){
+  document.querySelectorAll('#dscscroll .dsc-ts').forEach(function(el){
+    var d = new Date(el.getAttribute('data-utc')); if (!isNaN(d.getTime())) el.textContent = d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  });
+  var e = document.getElementById('dscscroll'); if (e) e.scrollTop = e.scrollHeight;
+})();</script>
+{% endif %}

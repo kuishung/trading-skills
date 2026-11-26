@@ -115,6 +115,16 @@ def portfolio_diag(admin: User = Depends(require_admin)):
     return f"exit {r.returncode}\n\n{r.stdout}\n{r.stderr}"
 
 
+def _seen_groups() -> list[dict]:
+    """v4.275: the Telegram groups the discussions sync has seen the bot in (newest first)."""
+    try:
+        from ..services import discussion_sync
+
+        return list(((discussion_sync.status() or {}).get("telegram") or {}).get("seen_groups") or [])
+    except Exception:  # noqa: BLE001
+        return []
+
+
 @router.get("/integrations", response_class=HTMLResponse)
 def integrations_page(
     request: Request,
@@ -137,7 +147,9 @@ def integrations_page(
             "user": admin,
             "rows": rows,
             "discord": [by[k] for k in ("discord_webhook_url", "discord_bot_token", "discord_channel_id", "discord_guild_id")],
-            "telegram": [by[k] for k in ("telegram_bot_token", "telegram_chat_id")],
+            "telegram": [by[k] for k in ("telegram_bot_token", "telegram_chat_id", "telegram_group_id")],
+            # v4.275: the groups the bot has seen (the discussions sync), so the group id can be picked
+            "seen_groups": _seen_groups(),
             "discord_configured": discord.configured(),
             "discord_bot_configured": discord.bot_configured(),
             "telegram_configured": telegram.configured(),
@@ -156,6 +168,7 @@ def integrations_save(
     discord_guild_id: str = Form(""),
     telegram_bot_token: str = Form(""),
     telegram_chat_id: str = Form(""),
+    telegram_group_id: str = Form(""),
     clear: list[str] = Form([]),
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
@@ -168,7 +181,8 @@ def integrations_save(
     values: dict = {}
     form = {"discord_webhook_url": discord_webhook_url, "discord_bot_token": discord_bot_token,
             "discord_channel_id": discord_channel_id, "discord_guild_id": discord_guild_id,
-            "telegram_bot_token": telegram_bot_token, "telegram_chat_id": telegram_chat_id}
+            "telegram_bot_token": telegram_bot_token, "telegram_chat_id": telegram_chat_id,
+            "telegram_group_id": telegram_group_id}
     for key, (_label, _env, secret) in app_settings.KEYS.items():
         v = (form.get(key) or "").strip()
         if key in (clear or []):

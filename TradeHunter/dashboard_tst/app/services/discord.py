@@ -137,6 +137,9 @@ def fetch_thread_messages(thread_id: str, limit: int = 50) -> list[dict] | None:
                 for f in (e.get("fields") or []):
                     parts.append(f"{f.get('name', '')}: {f.get('value', '')}".strip(": "))
             out.append({
+                "id": str(m.get("id") or ""),                          # v4.275: for the discussions' dedupe
+                "author_id": str(a.get("id") or ""),
+                "reply_to": str(((m.get("message_reference") or {}).get("message_id")) or "") or None,
                 "author": a.get("global_name") or a.get("username") or "member",
                 "content": m.get("content") or "",
                 "embed_text": "\n".join(p for p in parts if p),

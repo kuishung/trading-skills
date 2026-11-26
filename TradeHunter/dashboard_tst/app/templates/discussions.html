@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}Discussions &middot; TradeHunter{% endblock %}
+{% block main_class %}flex-1 w-full px-4 py-4 overflow-hidden{% endblock %}
+
+{% block content %}
+{# v4.275 (DISCUSSIONS_DESIGN.md): every discussion on the left (filter by kind / status; moderators open one by
+   hand), the picked one on the right as a chat strip - Discord, Telegram and app contributions merged, a composer
+   that mirrors into the chats. Which subjects open a discussion automatically is left to decide (design §6). #}
+<div class="flex flex-col h-[calc(100vh-6rem)] min-h-0">
+  <div class="flex items-baseline gap-3 mb-3 shrink-0 flex-wrap">
+    <h1 class="text-xl font-semibold text-slate-100">Discussions</h1>
+    <span class="text-sm text-slate-500">a thread per subject on Discord and Telegram &middot; what members write there is read back here</span>
+    <span class="ml-auto flex items-center gap-2 text-[11px]">
+      <span class="px-2 py-0.5 rounded border {% if discord_ready %}border-indigo-500/50 text-indigo-300{% else %}border-slate-700 text-slate-500{% endif %}" title="{{ 'the Discord bot and channel are set' if discord_ready else 'no Discord bot token / channel id saved (Settings → Integration)' }}">Discord {{ 'ready' if discord_ready else 'not set' }}</span>
+      <span class="px-2 py-0.5 rounded border {% if telegram_ready %}border-sky-500/50 text-sky-300{% else %}border-slate-700 text-slate-500{% endif %}" title="{{ 'the Telegram bot and group are set' if telegram_ready else ('no Telegram group id saved - Settings → Integration' if telegram_token else 'no Telegram bot token saved (Settings → Integration)') }}">Telegram {{ 'ready' if telegram_ready else 'not set' }}</span>
+    </span>
+  </div>
+
+  <div class="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[22rem_1fr] gap-4">
+    {# ── left: the list ── #}
+    <section class="rounded-xl border border-slate-800 bg-slate-900/40 flex flex-col min-h-0 overflow-hidden">
+      <form method="get" action="/discussions" class="px-3 py-2 border-b border-slate-800 flex items-center gap-2 text-[12px]">
+        <select name="kind" class="bg-slate-950/40 border border-slate-700 rounded px-2 py-1 text-[12px] text-slate-200" onchange="this.form.submit()">
+          <option value="">All kinds</option>
+          {% for k, lbl in kinds %}<option value="{{ k }}" {% if k == kind %}selected{% endif %}>{{ lbl }}</option>{% endfor %}
+        </select>
+        <select name="status" class="bg-slate-950/40 border border-slate-700 rounded px-2 py-1 text-[12px] text-slate-200" onchange="this.form.submit()">
+          {% for s in statuses %}<option value="{{ s }}" {% if s == status %}selected{% endif %}>{{ s|capitalize }}</option>{% endfor %}
+        </select>
+        <span class="ml-auto text-slate-500 tabular-nums">{{ rows|length }}</span>
+      </form>
+      {% if user.can_moderate %}
+      <details class="border-b border-slate-800 text-[12px]" {% if not rows %}open{% endif %}>
+        <summary class="px-3 py-2 cursor-pointer text-emerald-300 hover:text-emerald-200">New discussion</summary>
+        <form method="post" action="/discussions/new" class="px-3 pb-3 space-y-2">
+          <div class="flex gap-2">
+            <select name="kind" class="bg-slate-950/40 border border-slate-700 rounded px-2 py-1 text-[12px] text-slate-200">
+              {% for k, lbl in kinds %}<option value="{{ k }}" {% if k == 'topic' %}selected{% endif %}>{{ lbl }}</option>{% endfor %}
+            </select>
+            <input name="ref" placeholder="ref (study id, ticker, macro key)" class="flex-1 min-w-0 bg-slate-950/40 border border-slate-700 rounded px-2 py-1 text-[12px] text-slate-200">
+          </div>
+          <input name="title" required maxlength="200" placeholder="Title - becomes the thread's name" class="w-full bg-slate-950/40 border border-slate-700 rounded px-2 py-1 text-[12px] text-slate-200">
+          <textarea name="body" rows="3" placeholder="The opener: what to discuss" class="w-full bg-slate-950/40 border border-slate-700 rounded px-2 py-1 text-[12px] text-slate-200"></textarea>
+          <div class="flex items-center gap-3 text-slate-400">
+            <label class="flex items-center gap-1"><input type="checkbox" name="ch_discord" value="1" {% if discord_ready %}checked{% else %}disabled{% endif %} class="accent-indigo-500"> Discord thread</label>
+            <label class="flex items-center gap-1"><input type="checkbox" name="ch_telegram" value="1" {% if telegram_ready %}checked{% else %}disabled{% endif %} class="accent-sky-500"> Telegram topic</label>
+            <button class="ml-auto px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-medium">Open</button>
+          </div>
+        </form>
+      </details>
+      {% endif %}
+      <div class="flex-1 min-h-0 overflow-y-auto">
+        {% for d in rows %}
+        {% set lk = links_of(d) %}
+        <a href="/discussions?id={{ d.id }}&kind={{ kind }}&status={{ status }}"
+           class="block px-3 py-2 border-b border-slate-800/70 hover:bg-slate-800/50 {% if sel and sel.id == d.id %}bg-emerald-500/10{% endif %}">
+          <div class="flex items-center gap-2 text-[11px]">
+            <span class="px-1.5 rounded bg-slate-700/50 text-slate-300">{{ kind_labels[d.kind] }}</span>
+            {% if d.ref %}<span class="text-slate-500 truncate">{{ d.ref }}</span>{% endif %}
+            {% if d.status != 'open' %}<span class="px-1.5 rounded bg-slate-800 text-slate-500">closed</span>{% endif %}
+            <span class="ml-auto text-slate-500 tabular-nums">{{ d.n_contributions }}</span>
+          </div>
+          <div class="text-[13px] text-slate-200 truncate mt-0.5">{{ d.title }}</div>
+          <div class="flex items-center gap-2 text-[11px] text-slate-500 mt-0.5">
+            {% if d.discord_thread_id %}<span class="text-indigo-300">discord</span>{% endif %}
+            {% if d.telegram_topic_id %}<span class="text-sky-300">telegram</span>{% endif %}
+            {% if d.channel_errors %}<span class="text-rose-300" title="{{ d.channel_errors|tojson|forceescape }}">channel error</span>{% endif %}
+            {% if d.last_activity_at %}<time class="ml-auto dsc-ts" data-utc="{{ d.last_activity_at.isoformat() }}Z">{{ d.last_activity_at.strftime('%Y-%m-%d %H:%M') }}</time>{% endif %}
+          </div>
+        </a>
+        {% else %}
+        <p class="px-3 py-6 text-[12px] text-slate-500 text-center">No discussions{% if kind or status != 'all' %} with these filters{% endif %} yet.</p>
+        {% endfor %}
+      </div>
+    </section>
+
+    {# ── right: the picked discussion ── #}
+    <section class="rounded-xl border border-slate-800 bg-slate-900/40 flex flex-col min-h-0 overflow-hidden">
+      {% if sel %}
+      {% set lk = links_of(sel) %}
+      <div class="px-4 py-2.5 border-b border-slate-800 flex items-start justify-between gap-3 flex-wrap">
+        <div class="min-w-0">
+          <div class="flex items-center gap-2 text-[11px] text-slate-500">
+            <span class="px-1.5 rounded bg-slate-700/50 text-slate-300">{{ kind_labels[sel.kind] }}</span>
+            {% if sel.ref %}{% set su = subject_url_of(sel.kind, sel.ref) %}{% if su %}<a href="{{ su }}" class="text-emerald-300 hover:underline">{{ sel.ref }} &#8599;</a>{% else %}<span>{{ sel.ref }}</span>{% endif %}{% endif %}
+            <span>&middot; opened {{ sel.created_at.strftime('%Y-%m-%d') if sel.created_at else '' }}{% if sel.creator %} by {{ sel.creator.display_name or sel.creator.email }}{% endif %}</span>
+            {% if sel.status != 'open' %}<span class="px-1.5 rounded bg-slate-800 text-slate-400">closed</span>{% endif %}
+          </div>
+          <h2 class="text-base font-semibold text-slate-100 truncate">{{ sel.title }}</h2>
+        </div>
+        <div class="flex items-center gap-2 text-[11px]">
+          {% if lk.discord %}<a href="{{ lk.discord }}" target="_blank" rel="noopener" class="px-2 py-1 rounded border border-indigo-500/50 text-indigo-300 hover:bg-indigo-500/10">Open in Discord &#8599;</a>{% endif %}
+          {% if lk.telegram %}<a href="{{ lk.telegram }}" target="_blank" rel="noopener" class="px-2 py-1 rounded border border-sky-500/50 text-sky-300 hover:bg-sky-500/10">Open in Telegram &#8599;</a>{% endif %}
+          {% if user.can_moderate %}
+            <button type="button" hx-post="/discussions/{{ sel.id }}/sync" hx-target="#dscbox" hx-swap="innerHTML" class="px-2 py-1 rounded border border-slate-700 text-slate-400 hover:text-slate-200" title="re-read the Discord thread now">Refresh</button>
+            {% if sel.status == 'open' %}
+            <form method="post" action="/discussions/{{ sel.id }}/close"><button class="px-2 py-1 rounded border border-slate-700 text-slate-400 hover:text-rose-300">Close</button></form>
+            {% else %}
+            <form method="post" action="/discussions/{{ sel.id }}/reopen"><button class="px-2 py-1 rounded border border-slate-700 text-slate-400 hover:text-emerald-300">Reopen</button></form>
+            {% endif %}
+          {% endif %}
+        </div>
+      </div>
+      {% if sel.channel_errors %}
+      <div class="px-4 py-2 border-b border-rose-500/30 bg-rose-500/5 text-[12px] text-rose-200">
+        {% for ch, why in sel.channel_errors.items() %}<div><b>{{ ch|capitalize }}</b> was not opened: {{ why }}</div>{% endfor %}
+      </div>
+      {% endif %}
+      <div id="dscbox" class="flex-1 min-h-0 flex flex-col px-4 py-3">
+        {% with d=chat.d, messages=chat.messages, links=chat.links, can_moderate=chat.can_moderate %}{% include "_discussion_chat.html" %}{% endwith %}
+      </div>
+      {% else %}
+      <div class="flex-1 flex items-center justify-center text-[13px] text-slate-500 px-6 text-center">
+        {% if user.can_moderate %}Open a discussion on the left: it becomes a thread in Discord and a topic in Telegram, and what members write there shows here.{% else %}No discussion picked.{% endif %}
+      </div>
+      {% endif %}
+    </section>
+  </div>
+</div>
+<script>(function(){
+  document.querySelectorAll('.dsc-ts').forEach(function(el){
+    var d = new Date(el.getAttribute('data-utc')); if (!isNaN(d.getTime())) el.textContent = d.toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'});
+  });
+})();</script>
+{% endblock %}

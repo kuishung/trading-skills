@@ -223,6 +223,40 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-26 - v4.275: Discussions - one thread per subject on Discord and Telegram, read back (the structure)
+
+The user: *"we moderator put up a topic or study in the chat either discord or telegram, there will be a thread
+created for that topic or studies and user can contribute in the thread which can be read in tradehunter"* -
+and *"build the structure first, I have not decided which topic or studies will be created from tradehunter ...
+a curated setup, a macro study, a company insight ... the manner how the thread is created has not been decided"*.
+**`DISCUSSIONS_DESIGN.md` is the contract** (§6 = what is left to decide). Built:
+- **Models + migration `f5a6b7c8d9e0`**: `Discussion` (kind `setup | curated | macro | company | topic`, ref, title,
+  body, status, the Discord thread id and the Telegram chat + topic id, counts, `channel_errors`) and
+  `Contribution` (channel `app | discord | telegram`, the chat's message id - unique per discussion and channel,
+  author, text, time, reply-to, opener flag, the ids an app post got in each chat).
+- **`services/discussions.py`**: `open_discussion` (a Discord thread via the bot + a Telegram forum TOPIC in the
+  group saved as `telegram_group_id`, the opener posted into both, a failing channel recorded in words), `post`
+  (stored, mirrored as "Name: text" into both chats), `sync_discord`, `route_telegram_update` (topic messages
+  stored once, the bot's own skipped, groups seen remembered, a private `/start` answered with the chat id),
+  `for_subject`, `messages`, `links`, `subject_url`.
+- **`services/discussion_sync.py`**: a daemon thread in the web app - the Telegram long poll (the ONE poller per
+  token; `TST_DISCUSSIONS_SYNC=0` switches it off) and a Discord pass every 60 s over the discussions active in
+  30 days; state in `state/discussions_sync.json`.
+- **`services/telegram.py`**: `send_message` (into a topic, returns the message), `create_forum_topic`,
+  `get_updates` (long poll), `topic_link`, `group_id`; `_api` takes a timeout. `services/discord.py`: a fetched
+  thread message carries its `id`, `author_id` and `reply_to`. `app_settings`: the key `telegram_group_id`.
+- **Nav → Discussions** (`routes/discussions.py`, `templates/discussions.html` + `_discussion_chat.html`): the
+  list (filters by kind and status), New discussion for moderators (kind, ref, title, body, which chats), the picked
+  one as a chat strip (Discord / Telegram / web badges, opener, composer, Open in Discord / Telegram, Refresh,
+  Close / Reopen, channel errors in words). Menu key `discussions`.
+- **Studies** read through the layer: a study's existing Discord thread is adopted into a `kind=setup`
+  discussion on first read; "Open the discussion in Discord / Telegram" opens both; the chatroom shows Telegram
+  replies with a sky badge and a "Reply in Telegram" link; a typed reply goes through `discussions.post`.
+- **Settings → Integration**: the "Telegram group id (discussions)" field with "groups the bot has seen" and a
+  Use button (no JSON reading); **Settings → Data Ingest → Discussions** card (`/discussions/health`); the
+  **Hermes tray** gains a "Discussions: …" line and a `Disc OK / stale / err` tooltip piece (tray-sync rule).
+- Tests in `tests/test_discussions.py`.
+
 ### 2026-11-26 - v4.274: Settings - Integration - the webhook shape check accepts Discord's variants and shows the saved URL masked
 
 The user's real URL tripped v4.273's shape check. `services/discord.py`: `WEBHOOK_SHAPE` now accepts every form

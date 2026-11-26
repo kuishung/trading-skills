@@ -241,6 +241,60 @@ class Comment(Base):
     user = relationship("User")
 
 
+# ───────────────────────── Discussions (v4.275, DISCUSSIONS_DESIGN.md) ─────────────────────────
+# One thread per subject on Discord and / or Telegram, the members' contributions read back and kept.
+# The subject is (kind, ref): a study, a curated call, a macro topic, a company, or a free topic.
+
+DISCUSSION_KINDS = ("setup", "curated", "macro", "company", "topic")
+
+
+class Discussion(Base):
+    __tablename__ = "discussions"
+
+    id = Column(Integer, primary_key=True)
+    kind = Column(String(20), nullable=False, index=True)          # one of DISCUSSION_KINDS
+    ref = Column(String(80), nullable=True, index=True)            # the subject's key within its kind ("" for a free topic)
+    title = Column(String(200), nullable=False)
+    body = Column(Text, nullable=True)
+    status = Column(String(20), nullable=False, default="open")    # open | closed
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
+    closed_at = Column(DateTime, nullable=True)
+    discord_channel_id = Column(String(40), nullable=True)
+    discord_thread_id = Column(String(40), nullable=True, index=True)
+    telegram_chat_id = Column(String(40), nullable=True)
+    telegram_topic_id = Column(String(40), nullable=True, index=True)
+    last_activity_at = Column(DateTime, nullable=True)
+    last_synced_at = Column(DateTime, nullable=True)
+    n_contributions = Column(Integer, nullable=False, default=0)
+    channel_errors = Column(JSON, nullable=True)                   # {"discord": "why", "telegram": "why"}
+
+    creator = relationship("User", foreign_keys=[created_by])
+    contributions = relationship("Contribution", back_populates="discussion", cascade="all, delete-orphan",
+                                 order_by="Contribution.posted_at")
+
+
+class Contribution(Base):
+    __tablename__ = "contributions"
+    __table_args__ = (UniqueConstraint("discussion_id", "channel", "external_id", name="uq_contribution_message"),)
+
+    id = Column(Integer, primary_key=True)
+    discussion_id = Column(Integer, ForeignKey("discussions.id"), nullable=False, index=True)
+    channel = Column(String(10), nullable=False)                   # app | discord | telegram
+    external_id = Column(String(60), nullable=True)                # the chat's message id (an app post: "app:<id>")
+    author_external_id = Column(String(60), nullable=True)
+    author_name = Column(String(120), nullable=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    text = Column(Text, nullable=False)
+    posted_at = Column(DateTime, nullable=False, default=_utcnow)
+    reply_to_external_id = Column(String(60), nullable=True)
+    is_opener = Column(Boolean, nullable=False, default=False)
+    mirrored = Column(JSON, nullable=True)                         # an app post's ids in each chat
+
+    discussion = relationship("Discussion", back_populates="contributions")
+    user = relationship("User")
+
+
 class FinvizFilter(Base):
     """A saved Finviz screener: URL + description + active flag. Moderators
     manage the list; the tickers from *active* filters form the shared
