@@ -2234,6 +2234,15 @@ def test_the_price_bar_range_is_the_members_own(client, fake):
                    "function ofRefusal(j) {", "if (j && j.refused) { ofRefusal(j); return; }",
                    'data-offix="entry">Price from today\\\'s price ', 'data-offix="defaults">Start over: Target +10%, Worst -5% of ',
                    "$('ofMsg').addEventListener('click', function (e) {",
+                   # v4.276 (user: "showing the chart and user can adjust from the chart the Entry, target and SL and the
+                   # bar will be adjusted accordingly"): the price chart under the bar, its three lines draggable, kept in
+                   # step with the bar both ways; the chart library loaded on first use
+                   'id="ofChartBtn" aria-pressed="false"', 'id="ofChartBox" class="hidden', 'id="ofChart" class="relative select-none"',
+                   "function ofcBuild()", "function ofcHit(y)", "function ofcSync()", "autoscaleInfoProvider: function (orig)",
+                   "getJSON('/matp/' + encodeURIComponent(sym) + '/prices')", "if (p != null && p > 0) ofbSet(OFC.drag, p);",
+                   "    ofcSync();                           // v4.276: the chart's lines follow the bar",
+                   "el.addEventListener('pointerdown', ofcDown, true);", "if (lsGet('th.of.chart') === '1') ofcToggle(true, false);",
+                   "lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js",
                    "$('ofBar').addEventListener('contextmenu', function (e) {",
                    "if (b.id === 'ofRangeCustom') { ofbAskRange(); return; }",
                    "if (r0 >= OFB_RANGE_MIN && r0 <= OFB_RANGE_MAX) OFB.range = r0;",

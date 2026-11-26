@@ -766,6 +766,9 @@
           <button type="button" data-ofrange="10">&plusmn;10%</button><button type="button" data-ofrange="20">&plusmn;20%</button><button type="button" data-ofrange="30">&plusmn;30%</button>
           {# v4.262: the member's own range - set here (a keyed-in %) or from the right-click menu on the bar #}
           <button type="button" id="ofRangeCustom" data-ofrange="" title="Key in your own range (%) - or right-click the bar for presets to &plusmn;100% and a custom price">&plusmn;&hellip;</button>
+          {# v4.276 (user: "showing the chart and user can adjust from the chart the Entry, target and SL and the bar
+             will be adjusted accordingly"): the price chart under the bar, its three lines draggable #}
+          <button type="button" id="ofChartBtn" aria-pressed="false" title="Show the price chart - drag the Entry, Target and Worst lines on it and the bar follows">Chart</button>
         </span>
       </div>
       <div id="ofBarTrack" class="of-bar-track">
@@ -784,6 +787,15 @@
        from +-10% to +-100% or a custom price to be key in"): the bar's right-click menu - the range presets, a keyed
        range, a keyed price the bar then widens to show, and (on a handle) that handle's price #}
     <div id="ofMenu" class="of-menu hidden" role="menu" aria-label="Price bar range"></div>
+    </div>
+    {# v4.276: the price chart - daily candles of the ticker (the Watchlist chart's feed, /matp/<sym>/prices) with the
+       Entry / Target / Worst prices as lines; drag a line and its handle on the bar, its box and the ranking follow #}
+    <div id="ofChartBox" class="hidden rounded border border-slate-800 bg-slate-950/30">
+      <div class="flex items-center justify-between gap-2 px-2 py-1 text-[11px] text-slate-500 flex-wrap">
+        <span>Drag <b style="color:#fb7185">Worst</b>, <b style="color:#34d399">Target</b> and - when "fixed at the last price" is unticked - <b style="color:#38bdf8">Entry</b> on the chart; the bar follows. Scroll to zoom, drag elsewhere to pan.</span>
+        <span id="ofChartNote"></span>
+      </div>
+      <div id="ofChart" class="relative select-none" style="height:300px"></div>
     </div>
     <div id="ofMsg" class="hidden rounded border border-slate-700 px-3 py-2 text-xs text-slate-300"></div>
     <div id="ofInfo" class="hidden text-[11px] text-slate-400 leading-snug"></div>
@@ -1955,6 +1967,7 @@
       if (!el.classList.contains('hidden')) low.push({el: el.querySelector('span'), x: parseFloat(el.style.left)});
     });
     ofbSpread(low);
+    ofcSync();                           // v4.276: the chart's lines follow the bar
   }
   function ofbSpread(items) {            // v4.238: lay labels out on one row - each as near its mark as the others allow
     var W = $('ofBarTrack').clientWidth, pad = 4, lo = -26, hi = W + 26;   // the track's side margins hold the ends
@@ -1987,6 +2000,139 @@
     ofSavePrices(OF.sym);
     ofbPaint();
     return true;
+  }
+  // ── v4.276: the price chart under the bar - the Entry / Target / Worst prices as lines the member DRAGS on the
+  // candles (user: "showing the chart and user can adjust from the chart the Entry, target and SL and the bar will be
+  // adjusted accordingly"). Bars from the Watchlist chart's feed (/matp/<sym>/prices, Yahoo daily - a live view, never
+  // parquet); the chart library is loaded on first use so the page pays nothing until the Chart button is pressed.
+  // One source of truth: a drag calls ofbSet() exactly as a bar handle does (box -> bar -> ranking), and ofbPaint()
+  // calls ofcSync() so the lines follow the bar, the boxes and a keyed price. ──
+  var OFC = {chart: null, series: null, lines: {}, lvl: {}, sym: null, drag: null, on: false, lib: null, loading: null};
+  var OFC_COLORS = {entry: '#38bdf8', target: '#34d399', worst: '#fb7185'};
+  var OFC_LIB = 'https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js';
+  function ofcLib() {
+    if (window.LightweightCharts) return Promise.resolve();
+    if (!OFC.lib) OFC.lib = new Promise(function (res, rej) {
+      var s = document.createElement('script');
+      s.src = OFC_LIB; s.async = true;
+      s.onload = function () { res(); };
+      s.onerror = function () { OFC.lib = null; rej(new Error('the chart library did not load')); };
+      document.head.appendChild(s);
+    });
+    return OFC.lib;
+  }
+  function ofcPrices() {                 // the three prices as the bar shows them (a default where a box is empty)
+    var spot = OF.spot, out = {};
+    if (!(spot > 0)) return out;
+    ['worst', 'entry', 'target'].forEach(function (k) { var v = ofbVal(k, spot); out[k] = v == null ? spot * (1 + OFB_DEFAULT[k]) : v; });
+    return out;
+  }
+  function ofcBuild() {
+    var el = $('ofChart'), lightMode = document.documentElement.classList.contains('light');
+    OFC.chart = LightweightCharts.createChart(el, {
+      autoSize: true,
+      layout: {background: {color: lightMode ? '#ffffff' : '#0b1220'}, textColor: lightMode ? '#334155' : '#94a3b8', fontSize: 11},
+      grid: {vertLines: {color: 'rgba(148,163,184,.08)'}, horzLines: {color: 'rgba(148,163,184,.08)'}},
+      rightPriceScale: {borderVisible: false}, timeScale: {borderVisible: false, rightOffset: 6}, crosshair: {mode: 0},
+    });
+    OFC.series = OFC.chart.addCandlestickSeries({
+      upColor: '#34d399', downColor: '#fb7185', borderVisible: false, wickUpColor: '#34d399', wickDownColor: '#fb7185',
+      // the scale always shows the three lines, even a target far above the candles
+      autoscaleInfoProvider: function (orig) {
+        var r = orig();
+        var ps = ofcPrices(), vals = Object.keys(ps).map(function (k) { return ps[k]; }).filter(function (v) { return v > 0; });
+        if (!r || !r.priceRange || !vals.length) return r;
+        return {priceRange: {minValue: Math.min.apply(null, vals.concat([r.priceRange.minValue])),
+                             maxValue: Math.max.apply(null, vals.concat([r.priceRange.maxValue]))}, margins: r.margins};
+      },
+    });
+    ['worst', 'entry', 'target'].forEach(function (k) {
+      OFC.lines[k] = OFC.series.createPriceLine({price: 0, color: OFC_COLORS[k], lineWidth: 2, lineStyle: 0, axisLabelVisible: false, lineVisible: false, title: OFB_WORD[k]});
+    });
+    // the drag is caught before the chart's own handlers (capture), so a line is dragged and the chart is not panned
+    el.addEventListener('pointerdown', ofcDown, true);
+    el.addEventListener('pointermove', ofcMove, true);
+    el.addEventListener('pointerup', ofcUp, true);
+    el.addEventListener('pointercancel', ofcUp, true);
+  }
+  function ofcLoad() {                   // the bars of the ticker on screen (once per ticker), then the lines
+    var sym = OF.sym;
+    if (!OFC.on || !sym) return;
+    ofcLib().then(function () {
+      if (!OFC.chart) ofcBuild();
+      if (OFC.sym === sym) { ofcSync(); return; }
+      OFC.sym = sym;
+      $('ofChartNote').textContent = 'loading ' + sym + '…';
+      return getJSON('/matp/' + encodeURIComponent(sym) + '/prices').then(function (j) {
+        if (OFC.sym !== sym) return;
+        var bars = ((j && j.bars) || []).filter(function (b) { return b && b.time && b.close != null; });
+        OFC.series.setData(bars.map(function (b) { return {time: b.time, open: +b.open, high: +b.high, low: +b.low, close: +b.close}; }));
+        if (bars.length) OFC.chart.timeScale().setVisibleLogicalRange({from: Math.max(0, bars.length - 130), to: bars.length + 6});
+        $('ofChartNote').textContent = bars.length ? sym + ' · daily · to ' + bars[bars.length - 1].time : 'no bars for ' + sym;
+        ofcSync();
+      });
+    }).catch(function (e) { $('ofChartNote').textContent = failText(e, 'the chart'); });
+  }
+  function ofcSync() {                   // the lines (and the MATP / MBP marks) from the bar's prices
+    if (!OFC.series || !OFC.on) return;
+    var ps = ofcPrices(), ys = {};
+    Object.keys(OFC.lines).forEach(function (k) {
+      var v = ps[k], on = v > 0;
+      OFC.lines[k].applyOptions({price: on ? v : 0, lineVisible: on, axisLabelVisible: on,
+                                 lineStyle: (k === 'entry' && !ofEntryUser()) ? 2 : 0});
+      if (on) { var y = OFC.series.priceToCoordinate(v); if (y != null) ys[k] = Math.round(y); }
+    });
+    var lv = (OF.last && OF.last.symbol === OF.sym && OF.last.levels) || {};
+    ['matp', 'mbp'].forEach(function (k) {
+      var v = lv[k], on = v != null && isFinite(v) && v > 0;
+      if (!OFC.lvl[k]) OFC.lvl[k] = OFC.series.createPriceLine({price: 0, color: k === 'matp' ? '#f97316' : '#16a34a', lineWidth: 1, lineStyle: 2, axisLabelVisible: false, lineVisible: false, title: k.toUpperCase()});
+      OFC.lvl[k].applyOptions({price: on ? +v : 0, lineVisible: on, axisLabelVisible: on});
+    });
+    $('ofChart').dataset.lines = JSON.stringify(ys);          // where the lines sit, for a check from outside
+  }
+  function ofcY(ev) { return ev.clientY - $('ofChart').getBoundingClientRect().top; }
+  function ofcHit(y) {                   // the draggable line within 8 px of y, the nearest when two overlap
+    var ps = ofcPrices(), best = null;
+    Object.keys(ps).forEach(function (k) {
+      if (k === 'entry' && !ofEntryUser()) return;
+      var yy = OFC.series.priceToCoordinate(ps[k]);
+      if (yy == null) return;
+      var d = Math.abs(yy - y);
+      if (d <= 8 && (!best || d < best.d)) best = {k: k, d: d};
+    });
+    return best ? best.k : null;
+  }
+  function ofcDown(ev) {
+    if (ev.button !== 0 || !OFC.series || !(OF.spot > 0)) return;
+    var k = ofcHit(ofcY(ev));
+    if (!k) return;
+    ev.preventDefault(); ev.stopPropagation();
+    OFC.drag = k;
+    OFC.chart.applyOptions({handleScroll: false, handleScale: false});
+    try { $('ofChart').setPointerCapture(ev.pointerId); } catch (err) { /* ignore */ }
+  }
+  function ofcMove(ev) {
+    if (!OFC.series) return;
+    if (OFC.drag) {
+      ev.preventDefault(); ev.stopPropagation();
+      var p = OFC.series.coordinateToPrice(ofcY(ev));
+      if (p != null && p > 0) ofbSet(OFC.drag, p);            // the box, the bar, the ranking - as a bar handle does
+      return;
+    }
+    $('ofChart').style.cursor = (OF.spot > 0 && ofcHit(ofcY(ev))) ? 'ns-resize' : '';
+  }
+  function ofcUp(ev) {
+    if (!OFC.drag) return;
+    ev.stopPropagation();
+    OFC.drag = null;
+    OFC.chart.applyOptions({handleScroll: true, handleScale: true});
+  }
+  function ofcToggle(on, save) {
+    OFC.on = !!on;
+    show($('ofChartBox'), OFC.on);
+    $('ofChartBtn').setAttribute('aria-pressed', String(OFC.on));
+    if (save) lsSet('th.of.chart', OFC.on ? '1' : '0');
+    if (OFC.on) ofcLoad();
   }
   function ofbFromX(clientX) {
     var r = $('ofBarTrack').getBoundingClientRect(), spot = OF.spot;
@@ -2037,6 +2183,7 @@
       // ticker's ranking on screen under a new ticker - it goes at once, the new one replaces it
       OF.last = null; OF.spot = null; $('ofSpot').textContent = '-'; $('ofSpotSrc').textContent = '';
       show($('ofWrap'), false); show($('ofInfo'), false); show($('ofMapBox'), false); show($('ofMore'), false); show($('ofSurfRow'), false);
+      if (OFC.on) ofcLoad();                               // v4.276: the chart moves to the new ticker
     }
     var q = new URLSearchParams({symbol: sym, strategy: $('ofStrat').value, target: $('ofTarget').value.trim(),
                                 worst: $('ofWorst').value.trim(), mode: ofMode()});
@@ -2391,6 +2538,9 @@
         if (b.id === 'ofRangeCustom') { ofbAskRange(); return; }      // v4.262: key in a range
         ofbSetRange(+b.dataset.ofrange);
       });
+      // v4.276: the Chart button (remembered per browser)
+      $('ofChartBtn').addEventListener('click', function () { ofcToggle(!OFC.on, true); });
+      if (lsGet('th.of.chart') === '1') ofcToggle(true, false);
       // v4.262: right-click anywhere on the bar (a price, a handle, the buttons) for the range presets and the keyed values
       $('ofBar').addEventListener('contextmenu', function (e) {
         if (!(OF.spot > 0)) return;
@@ -2925,6 +3075,7 @@
     });
     show($('volHz'), TAB === 'cm');
     show($('ofSide'), TAB === 'find');                       // v4.237: the finder's settings in the left panel
+    if (TAB === 'find' && OFC.on) setTimeout(ofcLoad, 50);   // v4.276: the chart draws once the tab is on screen
     if (TAB === 'find') ofbPaint();                          // v4.238: the labels are laid out while visible
     hidePop(); hideCmPop();
     legends();

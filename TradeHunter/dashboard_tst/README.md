@@ -223,6 +223,21 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-26 - v4.276: Option Finder - the price chart under the bar; Entry / Target / Worst dragged on the candles
+
+The user: *"in option finder i need another control by showing the chart and user can adjust from the chart the
+Entry, target and SL and the bar will be adjusted accordingly"*. `templates/options.html`: a **Chart** button in
+the bar's button column (remembered per browser, `th.of.chart`) opens a 300 px candlestick chart of the ticker
+under the bar - daily bars from the Watchlist chart's feed (`/matp/<sym>/prices`, Yahoo, a live view) - with the
+three prices as lines in the bar's colours (Entry dashed while "fixed at the last price" is ticked, and not
+draggable then), plus the MATP / MBP marks when the finder knows them. **Drag a line** (the pointer turns to
+a resize arrow within 8 px of it; the drag is caught before the chart's own pan) and it calls `ofbSet()` exactly as
+a bar handle does - the box, the bar and the ranking follow; every bar change (a handle, a keyed price, All /
+None) calls `ofcSync()` so the lines follow the bar. The price scale always includes the three lines (an
+`autoscaleInfoProvider`), so a far target never falls off the chart. The chart library (lightweight-charts 4.2.0)
+is loaded on first use, so the page pays nothing until the button is pressed; the chart moves to the ticker on
+screen when it changes.
+
 ### 2026-11-26 - v4.275: Discussions - one thread per subject on Discord and Telegram, read back (the structure)
 
 The user: *"we moderator put up a topic or study in the chat either discord or telegram, there will be a thread
