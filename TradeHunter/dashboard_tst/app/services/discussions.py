@@ -232,21 +232,52 @@ def recent_for_sync(db: Session, *, days: int = SYNC_WINDOW_DAYS) -> list[Discus
     return rows
 
 
+def relay_on() -> bool:
+    """v4.278 (user: "make it an optional setting by admin, if admin turn on the feature, then both discord and
+    telegram message will be relayed"): Settings → Integration → "Relay replies between Discord and Telegram"."""
+    from . import app_settings  # noqa: PLC0415
+
+    return str(app_settings.get("discussions_relay", "") or "").strip().lower() in ("1", "true", "on", "yes")
+
+
+def _relay(d: Discussion, c: Contribution) -> dict:
+    """Copy a chat reply into the OTHER chat as "Name (Telegram): text" / "Name (Discord): text". The copy is
+    posted by the bot, and the sync skips the bot's own messages, so it is never read back (no loop). Returns
+    what was done, kept on the contribution's ``mirrored`` map."""
+    out: dict = {}
+    line = f"{c.author_name or 'member'} ({'Telegram' if c.channel == 'telegram' else 'Discord'}): {c.text}"
+    if c.channel == "telegram" and d.discord_thread_id and discord.bot_configured():
+        try:
+            out["discord"] = bool(discord.post_thread_message(d.discord_thread_id, line[:1900]))
+        except Exception as exc:  # noqa: BLE001
+            out["discord"] = f"error: {exc}"[:200]
+    elif c.channel == "discord" and d.telegram_chat_id and d.telegram_topic_id and telegram.configured():
+        try:
+            m = telegram.send_message(_html.escape(line), chat_id=d.telegram_chat_id, thread_id=d.telegram_topic_id)
+            out["telegram"] = str(m.get("message_id") or True)
+        except telegram.TelegramError as exc:
+            out["telegram"] = f"error: {exc}"[:200]
+    return out
+
+
 def _store(db: Session, d: Discussion, *, channel: str, external_id: str, author_id: str | None, author_name: str,
            text: str, posted_at: _dt.datetime, reply_to: str | None) -> bool:
-    """Upsert one chat message; True when it was new."""
+    """Upsert one chat message; True when it was new. With the relay on, a new reply is copied into the other chat."""
     if not external_id:
         return False
     exists = db.query(Contribution.id).filter(Contribution.discussion_id == d.id, Contribution.channel == channel,
                                                Contribution.external_id == external_id).first()
     if exists:
         return False
-    db.add(Contribution(discussion_id=d.id, channel=channel, external_id=external_id, author_external_id=author_id,
-                        author_name=(author_name or "member")[:120], text=(text or "")[:MAX_TEXT] or "(no text)",
-                        posted_at=posted_at, reply_to_external_id=reply_to))
+    c = Contribution(discussion_id=d.id, channel=channel, external_id=external_id, author_external_id=author_id,
+                     author_name=(author_name or "member")[:120], text=(text or "")[:MAX_TEXT] or "(no text)",
+                     posted_at=posted_at, reply_to_external_id=reply_to)
+    db.add(c)
     d.n_contributions = (d.n_contributions or 0) + 1
     if d.last_activity_at is None or posted_at > d.last_activity_at:
         d.last_activity_at = posted_at
+    if relay_on():
+        c.mirrored = _relay(d, c) or None
     return True
 
 

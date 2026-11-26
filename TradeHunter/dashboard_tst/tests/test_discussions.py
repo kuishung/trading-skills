@@ -119,6 +119,32 @@ def test_open_post_sync_and_route(db, mod, fake_chats):
     assert discussions.for_subject(db, "company", "nvda", open_only=False).id == d.id
 
 
+def test_the_relay_copies_a_reply_into_the_other_chat_when_the_admin_switch_is_on(db, mod, fake_chats):
+    """v4.278 (user: "make it an optional setting by admin, if admin turn on the feature, then both discord and
+    telegram message will be relayed"): off by default - a Telegram reply stays in Telegram; on - it is posted into
+    the Discord thread as "Name (Telegram): text" and a Discord reply into the topic as "Name (Discord): text"."""
+    d = discussions.open_discussion(db, kind="topic", ref="", title="Relay test", body=None, user=mod)
+    n_posts, n_tg = len(fake_chats["discord_posts"]), len(fake_chats["tg"])
+    upd = {"update_id": 20, "message": {"message_id": 70, "date": 1767610800, "message_thread_id": 55,
+                                        "chat": {"id": -1001234567890, "type": "supergroup"},
+                                        "from": {"id": 42, "first_name": "Bob", "is_bot": False}, "text": "from telegram"}}
+    assert discussions.relay_on() is False
+    assert discussions.route_telegram_update(db, upd)["stored"] is True
+    assert len(fake_chats["discord_posts"]) == n_posts                                   # off: nothing relayed
+    app_settings.set_many(db, mod, {"discussions_relay": "1"})
+    assert discussions.relay_on() is True
+    upd["update_id"], upd["message"]["message_id"], upd["message"]["text"] = 21, 71, "again, relayed"
+    assert discussions.route_telegram_update(db, upd)["stored"] is True
+    assert fake_chats["discord_posts"][-1] == ("th1", "Bob (Telegram): again, relayed")
+    c = db.query(models.Contribution).filter_by(channel="telegram", external_id="71").one()
+    assert c.mirrored == {"discord": True}
+    assert discussions.sync_discord(db, d) == 1                                            # Alice's Discord reply
+    assert fake_chats["tg"][-1][0] == "sendMessage" and fake_chats["tg"][-1][1]["text"] == "Alice (Discord): looks strong"
+    assert fake_chats["tg"][-1][1]["message_thread_id"] == "55"
+    assert db.query(models.Contribution).filter_by(channel="discord", external_id="m1").one().mirrored == {"telegram": "101"}
+    assert discussions.sync_discord(db, d) == 0 and fake_chats["tg"][-1][1]["text"] == "Alice (Discord): looks strong"   # not re-sent
+
+
 def test_a_channel_that_fails_is_recorded_in_words(db, mod, monkeypatch):
     app_settings.set_many(db, mod, {"telegram_bot_token": "tt", "telegram_group_id": "-100555"})
 

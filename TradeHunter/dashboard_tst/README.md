@@ -223,6 +223,18 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-27 - v4.278: Discussions - an admin switch relays replies between Discord and Telegram
+
+The user: *"if user reply from telegram, the message will be shown in discord?"* - no, until now - *"i want to make it
+an optional setting by admin, if admin turn on the feature, then both discord and telegram message will be relayed"*.
+`services/app_settings.py`: the key `discussions_relay` (off by default). `services/discussions.py`: `relay_on()`
+and `_relay()` - when the switch is on, `_store` posts a new Telegram reply into the Discord thread as
+"Name (Telegram): text" and a new Discord reply into the Telegram topic as "Name (Discord): text", recording what
+was sent on the contribution's `mirrored` map; the sync skips the bot's own messages, so a relayed copy is never
+read back and nothing loops; replies stored before the switch are not re-sent. Settings → Integration gains a
+**Discussions** card with the tick box (`routes/admin.py`, `admin_integrations.html`); the Discussions page and
+the Data Ingest → Discussions card show "Relay on / off". `DISCUSSIONS_DESIGN.md` §6 item 3 marked built. Test added.
+
 ### 2026-11-26 - v4.277: Option Finder - the Entry is always draggable; the chart in its own window
 
 The user, on v4.276: *"the entry price cannot be set from the chart"* and *"is it possible to open the chart in

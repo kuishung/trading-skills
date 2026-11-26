@@ -32,6 +32,8 @@ KEYS: dict[str, tuple[str, str, bool]] = {
     "telegram_chat_id": ("Telegram default chat id", "TELEGRAM_CHAT_ID", False),
     # v4.275: the GROUP (Topics switched on, the bot an admin) where discussions open as topics
     "telegram_group_id": ("Telegram group id (discussions)", "TELEGRAM_GROUP_ID", False),
+    # v4.278: "1" = a reply in one chat is relayed into the other (Discord <-> Telegram); off by default
+    "discussions_relay": ("Relay replies between Discord and Telegram", "TST_DISCUSSIONS_RELAY", False),
 }
 TTL = 10.0                   # seconds a read is reused before the table is asked again
 MAX_LEN = 2000

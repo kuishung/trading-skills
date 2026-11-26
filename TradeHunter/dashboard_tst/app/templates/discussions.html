@@ -13,6 +13,8 @@
     <span class="ml-auto flex items-center gap-2 text-[11px]">
       <span class="px-2 py-0.5 rounded border {% if discord_ready %}border-indigo-500/50 text-indigo-300{% else %}border-slate-700 text-slate-500{% endif %}" title="{{ 'the Discord bot and channel are set' if discord_ready else 'no Discord bot token / channel id saved (Settings → Integration)' }}">Discord {{ 'ready' if discord_ready else 'not set' }}</span>
       <span class="px-2 py-0.5 rounded border {% if telegram_ready %}border-sky-500/50 text-sky-300{% else %}border-slate-700 text-slate-500{% endif %}" title="{{ 'the Telegram bot and group are set' if telegram_ready else ('no Telegram group id saved - Settings → Integration' if telegram_token else 'no Telegram bot token saved (Settings → Integration)') }}">Telegram {{ 'ready' if telegram_ready else 'not set' }}</span>
+      {# v4.278: the admin's relay switch (Settings → Integration → Discussions) #}
+      <span class="px-2 py-0.5 rounded border {% if relay_on %}border-emerald-500/50 text-emerald-300{% else %}border-slate-700 text-slate-500{% endif %}" title="{{ 'a reply in one chat is also posted into the other' if relay_on else 'replies stay in the chat they were written in (an admin can switch the relay on under Settings → Integration)' }}">Relay {{ 'on' if relay_on else 'off' }}</span>
     </span>
   </div>
 

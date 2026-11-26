@@ -115,6 +115,15 @@ def portfolio_diag(admin: User = Depends(require_admin)):
     return f"exit {r.returncode}\n\n{r.stdout}\n{r.stderr}"
 
 
+def _relay_on() -> bool:
+    try:
+        from ..services import discussions
+
+        return discussions.relay_on()
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _seen_groups() -> list[dict]:
     """v4.275: the Telegram groups the discussions sync has seen the bot in (newest first)."""
     try:
@@ -148,6 +157,8 @@ def integrations_page(
             "rows": rows,
             "discord": [by[k] for k in ("discord_webhook_url", "discord_bot_token", "discord_channel_id", "discord_guild_id")],
             "telegram": [by[k] for k in ("telegram_bot_token", "telegram_chat_id", "telegram_group_id")],
+            # v4.278: the Discussions card - relay replies between the two chats (an admin switch, off by default)
+            "relay_on": _relay_on(),
             # v4.275: the groups the bot has seen (the discussions sync), so the group id can be picked
             "seen_groups": _seen_groups(),
             "discord_configured": discord.configured(),
@@ -169,6 +180,7 @@ def integrations_save(
     telegram_bot_token: str = Form(""),
     telegram_chat_id: str = Form(""),
     telegram_group_id: str = Form(""),
+    discussions_relay: str = Form(""),
     clear: list[str] = Form([]),
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
@@ -182,7 +194,7 @@ def integrations_save(
     form = {"discord_webhook_url": discord_webhook_url, "discord_bot_token": discord_bot_token,
             "discord_channel_id": discord_channel_id, "discord_guild_id": discord_guild_id,
             "telegram_bot_token": telegram_bot_token, "telegram_chat_id": telegram_chat_id,
-            "telegram_group_id": telegram_group_id}
+            "telegram_group_id": telegram_group_id, "discussions_relay": discussions_relay}
     for key, (_label, _env, secret) in app_settings.KEYS.items():
         v = (form.get(key) or "").strip()
         if key in (clear or []):

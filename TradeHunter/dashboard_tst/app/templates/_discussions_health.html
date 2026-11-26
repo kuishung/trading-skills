@@ -6,6 +6,7 @@
     <span class="px-2 py-0.5 rounded border {% if st.get('running') %}border-emerald-500/50 text-emerald-300{% elif st.get('off') %}border-slate-700 text-slate-500{% else %}border-amber-500/50 text-amber-300{% endif %}">
       sync {{ 'running' if st.get('running') else ('switched off (TST_DISCUSSIONS_SYNC=0)' if st.get('off') else 'not running on this PC') }}</span>
     <span class="text-slate-500">{{ n_open }} open discussion{{ '' if n_open == 1 else 's' }}</span>
+    <span class="px-2 py-0.5 rounded border {% if relay_on %}border-emerald-500/50 text-emerald-300{% else %}border-slate-700 text-slate-500{% endif %}">relay Discord &harr; Telegram {{ 'on' if relay_on else 'off' }}</span>
     {% if st.get('started_at') %}<span class="text-slate-600">since {{ st.started_at }}</span>{% endif %}
   </div>
   <div class="grid grid-cols-1 md:grid-cols-2 gap-3">

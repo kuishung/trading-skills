@@ -95,9 +95,14 @@ A daemon thread inside the web app (like the macro refresh and the logo download
 1. **Which subjects open a discussion, and when** - by hand from the Discussions page (built), automatically
    when a study / curated call / macro reading / company note is published, or by a button on each page.
 2. **Which chat(s)** - both by default (built, with ticks per discussion), or one per kind.
-3. **Mirroring between the chats** - today the app mirrors to both, but a Discord reply is NOT copied to Telegram
-   or the other way (no loops, no doubled messages). If the two memberships should see each other, that is a
-   small addition with the `mirrored` map as the loop guard.
+3. ~~**Mirroring between the chats**~~ - **BUILT v4.278 as an admin switch, off by default** (the user: *"make it
+   an optional setting by admin, if admin turn on the feature, then both discord and telegram message will be
+   relayed"*): Settings → Integration → Discussions → "Relay replies between Discord and Telegram"
+   (`app_settings` key `discussions_relay`). On: a reply stored from Telegram is posted into the Discord thread
+   as "Name (Telegram): text" and a Discord reply into the Telegram topic as "Name (Discord): text"
+   (`discussions._relay`, called by `_store`; what was sent is kept on the contribution's `mirrored` map). The
+   bot's own copies are skipped by the sync, so nothing loops; replies stored before the switch are not re-sent.
+   The Discussions page and the Data Ingest card show "Relay on / off".
 4. **Member identity** - chat names today; linking a Telegram user id / Discord user id to a TradeHunter account
    (the handshake exists for Telegram) would let a contribution carry the member's role and avatar.
 

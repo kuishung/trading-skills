@@ -69,7 +69,7 @@ def discussions_home(request: Request, kind: str = "", status: str = "open", id:
         "kinds": [(k, discussions.KIND_LABELS[k]) for k in DISCUSSION_KINDS], "kind_labels": discussions.KIND_LABELS,
         "statuses": STATUSES, "links_of": discussions.links, "subject_url_of": discussions.subject_url,
         "discord_ready": discord.bot_configured(), "telegram_ready": bool(telegram.configured() and telegram.group_id()),
-        "telegram_token": telegram.configured(),
+        "telegram_token": telegram.configured(), "relay_on": discussions.relay_on(),      # v4.278
         "chat": _chat_ctx(db, user, sel),
     }
     return templates.TemplateResponse(request, "discussions.html", ctx)
@@ -139,4 +139,4 @@ def discussions_health(request: Request, user: User = Depends(require_user), db:
     return templates.TemplateResponse(request, "_discussions_health.html",
                                       {"user": user, "st": st, "n_open": n_open,
                                        "telegram_token": telegram.configured(), "telegram_group": telegram.group_id(),
-                                       "discord_bot": discord.bot_configured()})
+                                       "discord_bot": discord.bot_configured(), "relay_on": discussions.relay_on()})

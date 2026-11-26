@@ -88,6 +88,24 @@
     </div>
   </section>
 
+  {# v4.278 (user: "make it an optional setting by admin, if admin turn on the feature, then both discord and telegram
+     message will be relayed"): the Discussions card - the relay switch, saved like the other settings #}
+  <section class="rounded-lg border border-slate-800 bg-slate-900/40 p-4">
+    <div class="flex items-center justify-between gap-3 flex-wrap mb-3">
+      <div>
+        <h2 class="text-lg font-medium">Discussions</h2>
+        <p class="text-xs text-slate-500 mt-0.5">A discussion opens as a Discord thread and a Telegram topic; what members write in either is read back into
+          TradeHunter. With the relay on, a reply in one chat is also posted into the other, as "Name (Telegram): …" / "Name (Discord): …",
+          so both memberships read one conversation. {% if relay_on %}<span class="text-emerald-300">Relay on.</span>{% else %}<span class="text-slate-500">Relay off.</span>{% endif %}</p>
+      </div>
+    </div>
+    <label class="flex items-center gap-2 text-sm text-slate-200 cursor-pointer">
+      <input type="checkbox" name="discussions_relay" value="1" {% if relay_on %}checked{% endif %} class="accent-emerald-500">
+      Relay replies between Discord and Telegram
+    </label>
+    <p class="text-[11px] text-slate-600 mt-1">Takes effect at once for every open discussion. Replies already stored are not re-sent. The bot's own copies are never read back, so nothing loops.</p>
+  </section>
+
   <div class="flex items-center gap-3">
     <button type="submit" class="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-medium text-white transition">Save</button>
     <span class="text-xs text-slate-500">Used at once - no restart. Hermes's <code class="text-slate-400">app\.env</code> is untouched.</span>
