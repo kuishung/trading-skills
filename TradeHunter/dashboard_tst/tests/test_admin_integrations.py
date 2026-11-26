@@ -135,6 +135,15 @@ def test_the_discord_test_post_reports_in_words(aclient, db, admin, monkeypatch)
         .startswith("the URL has spaces")
     good = "https://discord.com/api/webhooks/1234567890123/" + "a" * 60
     assert discord.webhook_shape_problem(good) is None and discord.webhook_shape_problem("") == "no webhook URL saved"
+    # v4.274: Discord's variants pass; a wrong one is shown masked (the token never shown)
+    for v in ("https://discordapp.com/api/webhooks/123456789012345678/" + "b-_" * 20,
+              "https://canary.discord.com/api/v10/webhooks/123456789012345678/" + "c" * 68 + "/",
+              good + "?thread_id=123456789012345678", good + "?wait=true"):
+        assert discord.webhook_shape_problem(v) is None, v
+    assert discord.masked_webhook("https://discord.com/api/webhook/1234567890123/" + "s" * 60 + "?x=1") == \
+        "https://discord.com/api/webhook/1234567890123/<…>?…"
+    assert "saved: https://discord.com/api/webhook/1234567890123/<…>" in \
+        discord.webhook_shape_problem("https://discord.com/api/webhook/1234567890123/" + "s" * 60)
     app_settings.set_many(db, admin, {"discord_webhook_url": good})
     seen = {}
 

@@ -241,7 +241,22 @@ def post_embed(
     return ok
 
 
-WEBHOOK_SHAPE = re.compile(r"^https://(?:ptb\.|canary\.)?discord(?:app)?\.com/api/webhooks/\d{10,25}/[A-Za-z0-9_\-]{30,}/?$")
+# v4.274: every form Discord hands out - discord.com / discordapp.com, the ptb / canary hosts, an /api/vN/ prefix,
+# a trailing slash, a ?thread_id= or ?wait= query; the id is 17-20 digits, the token 60-odd url-safe characters
+WEBHOOK_SHAPE = re.compile(r"^https://(?:[a-z]+\.)?discord(?:app)?\.com/api/(?:v\d+/)?webhooks/\d{10,25}/[A-Za-z0-9_\-]{20,}/?(?:\?.*)?$")
+
+
+def masked_webhook(url: str | None) -> str:
+    """The saved URL with its token hidden, for the Settings card: host + path, every path piece
+    longer than 20 characters (the token) shown as <…>, a query as ?…"""
+    u = (url or "").strip()
+    if not u:
+        return "(empty)"
+    body = u.split("://", 1)[-1]
+    body, _, query = body.partition("?")
+    host, _, path = body.partition("/")
+    pieces = [("<…>" if len(p) > 20 else p) for p in path.split("/")]
+    return ("https://" if u.startswith("https://") else "http://" if u.startswith("http://") else "") + host + "/" + "/".join(pieces) + ("?…" if query else "")
 
 
 def webhook_shape_problem(url: str | None) -> str | None:
@@ -260,8 +275,8 @@ def webhook_shape_problem(url: str | None) -> str | None:
     if not u.startswith("https://"):
         return "the URL must start with https://discord.com/api/webhooks/"
     if not WEBHOOK_SHAPE.match(u):
-        return ("not the shape of a webhook URL (https://discord.com/api/webhooks/<numbers>/<token>): copy it again "
-                "with Copy Webhook URL in the channel's Integrations → Webhooks")
+        return ("not the shape of a webhook URL (https://discord.com/api/webhooks/<numbers>/<token>) - saved: "
+                + masked_webhook(u) + " - copy it again with Copy Webhook URL in the channel's Integrations → Webhooks")
     return None
 
 

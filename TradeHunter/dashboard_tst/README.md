@@ -223,6 +223,14 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-26 - v4.274: Settings - Integration - the webhook shape check accepts Discord's variants and shows the saved URL masked
+
+The user's real URL tripped v4.273's shape check. `services/discord.py`: `WEBHOOK_SHAPE` now accepts every form
+Discord hands out (discord.com / discordapp.com, the ptb / canary hosts, an `/api/vN/` prefix, a trailing slash, a
+`?thread_id=` / `?wait=` query; token 20+ url-safe characters), and a failing check shows the saved URL MASKED
+(`masked_webhook`: host + path, any piece over 20 characters - the token - as `<…>`, a query as `?…`) so the
+member can see what shape is saved without the token ever appearing on screen. Tests extended.
+
 ### 2026-11-26 - v4.273: Settings - Integration - a wrong kind of Discord URL is named before any POST
 
 The user, with v4.272: *"Webhook POST failed: HTTP 400"* and no message - Discord answers a bare 400 when the
