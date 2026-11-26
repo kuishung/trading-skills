@@ -1400,6 +1400,17 @@ def options_home(request: Request, user: User = Depends(require_user)):
     })
 
 
+@router.get("/finder-chart", response_class=HTMLResponse)
+def options_finder_chart(request: Request, symbol: str = "", user: User = Depends(require_user)):
+    """v4.277 (user: "is it possible to open the chart in separate windows and adjust it"): the Option Finder's
+    price chart in its own chromeless window. It draws the ticker's daily candles (``/matp/<sym>/prices``) with
+    the Entry / Target / Worst lines, takes its prices from the finder page over a same-origin BroadcastChannel
+    ("th_of_chart") and sends a dragged line back, so the bar and the ranking in the main window follow. It
+    follows the ticker the finder shows; without a finder page open it says so."""
+    sym = (symbol or "").strip().upper()
+    return templates.TemplateResponse(request, "options_finder_chart.html", {"user": user, "chromeless": True, "symbol": sym})
+
+
 @router.get("/rr", response_class=HTMLResponse)
 def options_rr(request: Request, symbol: str = "", expiry: str = "", strike: str = "", target: str = "", worst: str = "",
                mode: str = "expiry", date: str = "", entry: str = "", user: User = Depends(require_user)):

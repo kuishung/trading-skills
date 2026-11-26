@@ -223,6 +223,21 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-26 - v4.277: Option Finder - the Entry is always draggable; the chart in its own window
+
+The user, on v4.276: *"the entry price cannot be set from the chart"* and *"is it possible to open the chart in
+separate windows and adjust it"*. (1) A drag on the **Entry** - on the chart or on the bar's handle, or the
+arrow keys on it - **unticks "fixed at the last price" by itself** (`ofUnlockEntry`) and moves it; ticking the box
+again pins the entry to the last price. (2) The chart code moved to **`static/of_chart.js`** (`THFinderChart`: bars
+in, prices in, a drag out through `onDrag` / `onUnlock`; the library loader; the autoscale that keeps the three
+lines on the scale), shared by the finder tab and by the new **chart window** `GET /options/finder-chart?symbol=`
+(`templates/options_finder_chart.html`, chromeless; the "Chart ↗" button beside Chart opens it as one named window).
+The two windows talk over a same-origin **BroadcastChannel** `th_of_chart`: the window says hello, the finder
+answers with its state (ticker, price, the three prices, the lock, MATP / MBP) on every bar change, a line dragged
+in the window comes back as `of-set` and the finder applies it as a bar handle - so the bar, the ranking and both
+charts stay in step; the window follows the ticker the finder shows and says when no finder page is open.
+`routes/options_page.py::options_finder_chart`. Tests extended.
+
 ### 2026-11-26 - v4.276: Option Finder - the price chart under the bar; Entry / Target / Worst dragged on the candles
 
 The user: *"in option finder i need another control by showing the chart and user can adjust from the chart the

@@ -1155,6 +1155,7 @@ def test_the_router_serves_the_screener_paths():
         ("/options/api/cm/series", ("GET",)),
         ("/options/api/finder", ("GET",)),                  # v4.219: the Option Finder tab
         ("/options/rr", ("GET",)),                          # v4.269: the Reward / risk working window
+        ("/options/finder-chart", ("GET",)),                # v4.277: the finder chart in its own window
         ("/options/api/watchlists/remove", ("POST",)),      # v4.267: the watchlist pane's remove button
         ("/options/api/liquidity", ("GET",)),               # v4.186: the pane's option-liquidity verdicts
         ("/options/api/screens", ("GET",)),
@@ -2238,11 +2239,16 @@ def test_the_price_bar_range_is_the_members_own(client, fake):
                    # bar will be adjusted accordingly"): the price chart under the bar, its three lines draggable, kept in
                    # step with the bar both ways; the chart library loaded on first use
                    'id="ofChartBtn" aria-pressed="false"', 'id="ofChartBox" class="hidden', 'id="ofChart" class="relative select-none"',
-                   "function ofcBuild()", "function ofcHit(y)", "function ofcSync()", "autoscaleInfoProvider: function (orig)",
-                   "getJSON('/matp/' + encodeURIComponent(sym) + '/prices')", "if (p != null && p > 0) ofbSet(OFC.drag, p);",
+                   '<script src="/static/of_chart.js"></script>', "new THFinderChart($('ofChart'), {onDrag: ofcApply, onUnlock: ofUnlockEntry})",
+                   "function ofcSync()", "function ofcApply(k, price)", "getJSON('/matp/' + encodeURIComponent(sym) + '/prices')",
                    "    ofcSync();                           // v4.276: the chart's lines follow the bar",
-                   "el.addEventListener('pointerdown', ofcDown, true);", "if (lsGet('th.of.chart') === '1') ofcToggle(true, false);",
+                   "if (lsGet('th.of.chart') === '1') ofcToggle(true, false);",
                    "lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js",
+                   # v4.277 (user: "the entry price cannot be set from the chart"; "open the chart in separate windows and
+                   # adjust it"): a drag on Entry unticks the lock; the chart's own window over a BroadcastChannel
+                   "function ofUnlockEntry()", "if (h.dataset.ofh === 'entry') ofUnlockEntry();", "if (k === 'entry') ofUnlockEntry();",
+                   'id="ofChartPop"', "function ofcPop()", "window.open('/options/finder-chart?symbol=' + encodeURIComponent(OF.sym), 'th_of_chart'",
+                   "OFC.bc = new BroadcastChannel('th_of_chart');", "else if (m.type === 'of-set' && m.sym && m.sym === OF.sym) ofcApply(m.k, +m.price);",
                    "$('ofBar').addEventListener('contextmenu', function (e) {",
                    "if (b.id === 'ofRangeCustom') { ofbAskRange(); return; }",
                    "if (r0 >= OFB_RANGE_MIN && r0 <= OFB_RANGE_MAX) OFB.range = r0;",
@@ -2250,6 +2256,25 @@ def test_the_price_bar_range_is_the_members_own(client, fake):
                    "b.innerHTML = preset ? '&plusmn;&hellip;' : '&plusmn;' + OFB.range + '%';"):
         assert needle in html, needle
     assert "if (r0 === 10 || r0 === 20 || r0 === 30) OFB.range = r0;" not in html
+
+
+def test_the_finder_chart_window_and_the_shared_chart_script(client, fake):
+    """v4.277: /options/finder-chart is the chart in its own chromeless window, on the shared /static/of_chart.js,
+    linked to the finder page over the BroadcastChannel "th_of_chart"; the script serves and holds the drag logic."""
+    html = client.get("/options/finder-chart?symbol=nvda").text
+    for needle in ('<b id="fcSym" class="text-slate-100 text-base">NVDA</b>', '<script src="/static/of_chart.js"></script>',
+                   "new BroadcastChannel('th_of_chart')", "send({type: 'of-hello', sym: S.sym});",
+                   "send({type: 'of-set', sym: S.sym, k: k, price: price});", "if (m.type === 'of-state') onState(m);",
+                   "fetch('/matp/' + encodeURIComponent(sym) + '/prices'", 'href="/options?tab=find&symbol=NVDA"'):
+        assert needle in html, needle
+    assert 'href="/options"' not in html                                  # chromeless: no site menu
+    js = client.get("/static/of_chart.js")
+    assert js.status_code == 200
+    for needle in ("window.THFinderChart = FinderChart;", "FinderChart.load = function (url)", "autoscaleInfoProvider: function (orig)",
+                   "FinderChart.prototype._hit = function (y)", "if (k === 'entry' && this.lock && this.opts.onUnlock) this.opts.onUnlock();",
+                   "if (p != null && p > 0 && this.opts.onDrag) this.opts.onDrag(this.drag, p);",
+                   "el.addEventListener('pointerdown', function (ev) { self._down(ev); }, true);"):
+        assert needle in js.text, needle
 
 
 def test_the_price_says_where_it_came_from(client, fake):

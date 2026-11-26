@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}{{ symbol or 'Chart' }} &middot; Option Finder chart &middot; TradeHunter{% endblock %}
+{% block main_class %}flex-1 w-full px-3 py-2 overflow-hidden{% endblock %}
+
+{% block content %}
+{# v4.277: the Option Finder's price chart in its own window (routes/options_page.py::options_finder_chart). The chart is
+   /static/of_chart.js, the same one the finder tab draws under its bar. Prices come from the finder page over the
+   BroadcastChannel "th_of_chart": this window says hello, the finder answers with its state (and again on every bar
+   change); a line dragged here goes back as of-set and the finder applies it as a bar handle - so the bar, the ranking
+   and both charts stay in step. The window follows the ticker the finder shows. Chromeless: no site header / menu. #}
+<div class="flex flex-col h-[calc(100vh-1.5rem)] min-h-0">
+  <div class="shrink-0 flex items-center justify-between gap-3 flex-wrap px-1 pb-1.5 text-[12px]">
+    <div class="flex items-center gap-2 min-w-0">
+      <span id="fcLogo"></span>
+      <b id="fcSym" class="text-slate-100 text-base">{{ symbol or '-' }}</b>
+      <span id="fcNote" class="text-slate-500">waiting for the Option Finder&hellip;</span>
+    </div>
+    <div class="flex items-center gap-3 text-slate-500">
+      <span>Drag <b style="color:#fb7185">Worst</b>, <b style="color:#34d399">Target</b>, <b style="color:#38bdf8">Entry</b> &middot; the bar in the Option Finder follows</span>
+      <a id="fcBack" href="/options?tab=find{% if symbol %}&symbol={{ symbol }}{% endif %}" target="th_main" class="px-2 py-0.5 rounded border border-slate-700 text-slate-300 hover:text-white">Option Finder &#8599;</a>
+      <button type="button" onclick="window.close()" class="px-2 py-0.5 rounded border border-slate-700 text-slate-400 hover:text-slate-200">Close</button>
+    </div>
+  </div>
+  <div id="fcPrices" class="shrink-0 flex items-center gap-4 px-1 pb-1.5 text-[12px] tabular-nums text-slate-400"></div>
+  <div id="fcChart" class="flex-1 min-h-0 rounded border border-slate-800 bg-slate-950/30 relative select-none"></div>
+</div>
+
+<script src="/static/of_chart.js"></script>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var LIB = 'https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js';
+  var SYM = {{ symbol|tojson }};
+  var S = {sym: SYM, inst: null, loaded: null, state: null, bc: null, heard: false};
+  function money(v) { return v == null || !(v > 0) ? '-' : (v >= 1000 ? v.toLocaleString(undefined, {maximumFractionDigits: 2}) : v.toFixed(2)); }
+  function pct(v, s) { return v > 0 && s > 0 ? ((v - s) / s * 100 >= 0 ? '+' : '') + ((v - s) / s * 100).toFixed(1) + '%' : ''; }
+  function paintPrices() {
+    var st = S.state;
+    if (!st) { $('fcPrices').innerHTML = ''; return; }
+    var parts = [['Now', st.spot, '#93c5fd'], ['Entry', st.entry, '#38bdf8'], ['Target', st.target, '#34d399'], ['Worst', st.worst, '#fb7185']];
+    $('fcPrices').innerHTML = parts.map(function (p) {
+      return '<span><b style="color:' + p[2] + '">' + p[0] + '</b> ' + money(p[1]) + (p[0] !== 'Now' ? ' <span class="text-slate-600">' + pct(p[1], st.spot) + '</span>' : '') + '</span>';
+    }).join('') + (st.lock ? '<span class="text-slate-600">entry fixed at the last price - drag it to set your own</span>' : '');
+  }
+  function send(msg) { if (S.bc) { try { S.bc.postMessage(msg); } catch (err) { /* ignore */ } } }
+  function loadBars(sym) {
+    S.sym = sym;
+    $('fcSym').textContent = sym;
+    $('fcLogo').innerHTML = window.tkLogo ? tkLogo(sym, 22) : '';
+    document.title = sym + ' · Option Finder chart · TradeHunter';
+    $('fcBack').href = '/options?tab=find&symbol=' + encodeURIComponent(sym);
+    $('fcNote').textContent = 'loading ' + sym + '…';
+    return fetch('/matp/' + encodeURIComponent(sym) + '/prices', {credentials: 'same-origin'})
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (S.sym !== sym) return;
+        var n = S.inst.setBars((j && j.bars) || []);
+        $('fcNote').textContent = n ? 'daily · to ' + j.bars[j.bars.length - 1].time : 'no bars for ' + sym;
+        if (S.state) S.inst.setPrices(S.state);
+      })
+      .catch(function () { $('fcNote').textContent = 'the bars could not be loaded'; });
+  }
+  function onState(st) {
+    if (!st || !st.sym) return;
+    S.heard = true;
+    if (st.sym !== S.sym) loadBars(st.sym);        // follow the ticker the finder shows
+    S.state = st;
+    paintPrices();
+    if (S.inst) S.inst.setPrices(st);
+  }
+  THFinderChart.load(LIB).then(function () {
+    S.inst = new THFinderChart($('fcChart'), {
+      onDrag: function (k, price) { send({type: 'of-set', sym: S.sym, k: k, price: price}); },
+      onUnlock: function () { if (S.state) { S.state.lock = false; paintPrices(); } },
+    });
+    if ('BroadcastChannel' in window) {
+      S.bc = new BroadcastChannel('th_of_chart');
+      S.bc.onmessage = function (ev) { var m = ev.data || {}; if (m.type === 'of-state') onState(m); };
+      send({type: 'of-hello', sym: S.sym});
+    } else {
+      $('fcNote').textContent = 'this browser cannot link two windows (no BroadcastChannel)';
+    }
+    if (S.sym) loadBars(S.sym);
+    setTimeout(function () {
+      if (!S.heard) $('fcNote').textContent = (S.sym || 'the ticker') + ' - open the Option Finder in the main window for this ticker: the lines appear and follow it';
+    }, 2500);
+  }).catch(function () { $('fcNote').textContent = 'the chart library did not load'; });
+})();
+</script>
+{% endblock %}
