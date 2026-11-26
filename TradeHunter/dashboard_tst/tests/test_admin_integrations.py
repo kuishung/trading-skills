@@ -125,7 +125,17 @@ def test_the_discord_test_post_reports_in_words(aclient, db, admin, monkeypatch)
     """v4.272 (user: the card read "Webhook POST failed - see the server log" and nothing else): Discord's own
     status and message, escaped, with the likely fix; a 2xx says Sent."""
     from app.services import discord
+    # v4.273: a URL that is not a webhook (the user's blank "HTTP 400") is named before any POST
+    app_settings.set_many(db, admin, {"discord_webhook_url": "https://discord.com/channels/123/456"})
+    out = aclient.post("/admin/discord-test").text
+    assert "will not work: that is a channel link, not a webhook" in out
     app_settings.set_many(db, admin, {"discord_webhook_url": "https://discord.com/api/webhooks/1/x"})
+    assert "not the shape of a webhook URL" in aclient.post("/admin/discord-test").text
+    assert discord.webhook_shape_problem(" https://discord.com/api/webhooks/1234567890123/" + "a" * 60 + " ") \
+        .startswith("the URL has spaces")
+    good = "https://discord.com/api/webhooks/1234567890123/" + "a" * 60
+    assert discord.webhook_shape_problem(good) is None and discord.webhook_shape_problem("") == "no webhook URL saved"
+    app_settings.set_many(db, admin, {"discord_webhook_url": good})
     seen = {}
 
     def fake(hook, embed):
@@ -133,7 +143,7 @@ def test_the_discord_test_post_reports_in_words(aclient, db, admin, monkeypatch)
         return False, "HTTP 404 Unknown Webhook"
     monkeypatch.setattr(discord, "post_embed_why", fake)
     out = aclient.post("/admin/discord-test").text
-    assert seen["hook"].endswith("/webhooks/1/x") and "test" in seen["title"]
+    assert seen["hook"] == good and "test" in seen["title"]
     assert "Webhook POST failed: HTTP 404 Unknown Webhook - the webhook no longer exists or the URL is wrong" in out
     monkeypatch.setattr(discord, "post_embed_why", lambda hook, embed: (False, "ConnectError: <bad host>"))
     out = aclient.post("/admin/discord-test").text

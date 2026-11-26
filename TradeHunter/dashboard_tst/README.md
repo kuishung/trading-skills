@@ -223,6 +223,16 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-26 - v4.273: Settings - Integration - a wrong kind of Discord URL is named before any POST
+
+The user, with v4.272: *"Webhook POST failed: HTTP 400"* and no message - Discord answers a bare 400 when the
+URL is not a webhook at all (a channel link, a token, a URL with spaces). `services/discord.py`:
+`webhook_shape_problem(url)` says in words what is wrong (a channel link → "open the channel's settings →
+Integrations → Webhooks → New Webhook → Copy Webhook URL"; spaces; not https; not the
+`https://discord.com/api/webhooks/<numbers>/<token>` shape) or None; `post_embed_why` now also carries
+Discord's field-level `errors` and, when the reply has no message, its raw text or "(no message in the reply)".
+`routes/admin.py::discord_test` runs the shape check first. Test extended.
+
 ### 2026-11-26 - v4.272: Settings - Integration - the Discord test says why it failed
 
 The user, after Telegram went through: the Discord "Send test post" read *"Webhook POST failed - see the server

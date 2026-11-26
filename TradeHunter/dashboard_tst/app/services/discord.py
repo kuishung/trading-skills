@@ -10,6 +10,7 @@ raises, so it can't break the request that triggered it. Callers should schedule
 from __future__ import annotations
 
 import logging
+import re
 
 import httpx
 
@@ -240,6 +241,30 @@ def post_embed(
     return ok
 
 
+WEBHOOK_SHAPE = re.compile(r"^https://(?:ptb\.|canary\.)?discord(?:app)?\.com/api/webhooks/\d{10,25}/[A-Za-z0-9_\-]{30,}/?$")
+
+
+def webhook_shape_problem(url: str | None) -> str | None:
+    """v4.273: what is wrong with a saved webhook URL, in words - or None when it looks right.
+    A webhook URL is ``https://discord.com/api/webhooks/<id>/<token>`` (from the channel's
+    Integrations → Webhooks → Copy Webhook URL); a channel link, a bot token or a URL with
+    spaces posts a bare 400 that says nothing."""
+    u = (url or "").strip()
+    if not u:
+        return "no webhook URL saved"
+    if u != (url or ""):
+        return "the URL has spaces or line breaks around it - paste it again without them"
+    if "discord.com/channels/" in u or "discordapp.com/channels/" in u:
+        return ("that is a channel link, not a webhook: in Discord open the channel's settings → Integrations → "
+                "Webhooks → New Webhook → Copy Webhook URL")
+    if not u.startswith("https://"):
+        return "the URL must start with https://discord.com/api/webhooks/"
+    if not WEBHOOK_SHAPE.match(u):
+        return ("not the shape of a webhook URL (https://discord.com/api/webhooks/<numbers>/<token>): copy it again "
+                "with Copy Webhook URL in the channel's Integrations → Webhooks")
+    return None
+
+
 def post_embed_why(hook: str, embed: dict) -> tuple[bool, str]:
     """v4.272: the POST itself, answering ``(ok, why)`` so the Settings test can SAY what went
     wrong (the card used to read "Webhook POST failed - see the server log" and nothing else).
@@ -253,8 +278,13 @@ def post_embed_why(hook: str, embed: dict) -> tuple[bool, str]:
         try:
             j = r.json()
             detail = str(j.get("message") or j.get("error") or "")[:200]
+            errs = j.get("errors") if isinstance(j, dict) else None
+            if errs:
+                detail = (detail + " " + str(errs)[:200]).strip()        # Discord's field-level detail ("embeds.0.url ...")
         except Exception:  # noqa: BLE001
-            detail = (r.text or "")[:200]
+            pass
+        if not detail:
+            detail = (r.text or "").strip()[:200] or "(no message in the reply)"
         why = f"HTTP {r.status_code} {detail}".strip()
         log.warning("discord webhook non-2xx: %s", why)
         return False, why

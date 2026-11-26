@@ -214,12 +214,16 @@ def discord_test(admin: User = Depends(require_admin)):
             '<span class="text-rose-300">No webhook configured — save one on this page '
             '(or set <code>TST_DISCORD_WEBHOOK_URL</code> in app/.env and restart).</span>'
         )
+    hook = discord._cfg("discord_webhook_url")  # noqa: SLF001
+    shape = discord.webhook_shape_problem(hook)   # v4.273: a wrong kind of URL posts a bare 400 that says nothing
+    if shape:
+        return HTMLResponse('<span class="text-rose-300">The saved Discord webhook URL will not work: ' + html_mod.escape(shape) + '.</span>')
     embed = {"title": "🔔 TradeHunter · test", "color": discord.COLOR_EMERALD,
              "description": f"Test post from {admin.display_name or admin.email}. "
                             "If you can read this in your channel, the Discord integration works."}
     if settings.public_url:
         embed["url"] = settings.public_url
-    ok, why = discord.post_embed_why(discord._cfg("discord_webhook_url"), embed)  # noqa: SLF001
+    ok, why = discord.post_embed_why(hook, embed)
     if ok:
         return HTMLResponse('<span class="text-emerald-300">Sent ✓ — check your Discord channel.</span>')
     # v4.272: the reason, escaped, with the likely fix (the user, 2026-11-26: the card read "Webhook POST
