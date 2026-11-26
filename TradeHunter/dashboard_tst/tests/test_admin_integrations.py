@@ -121,6 +121,27 @@ def test_the_integration_page_saves_and_keeps_secrets_left_blank(aclient, db, ad
     assert db.get(models.AppSetting, "telegram_bot_token").value is None
 
 
+def test_the_discord_test_post_reports_in_words(aclient, db, admin, monkeypatch):
+    """v4.272 (user: the card read "Webhook POST failed - see the server log" and nothing else): Discord's own
+    status and message, escaped, with the likely fix; a 2xx says Sent."""
+    from app.services import discord
+    app_settings.set_many(db, admin, {"discord_webhook_url": "https://discord.com/api/webhooks/1/x"})
+    seen = {}
+
+    def fake(hook, embed):
+        seen.update(hook=hook, title=embed.get("title"))
+        return False, "HTTP 404 Unknown Webhook"
+    monkeypatch.setattr(discord, "post_embed_why", fake)
+    out = aclient.post("/admin/discord-test").text
+    assert seen["hook"].endswith("/webhooks/1/x") and "test" in seen["title"]
+    assert "Webhook POST failed: HTTP 404 Unknown Webhook - the webhook no longer exists or the URL is wrong" in out
+    monkeypatch.setattr(discord, "post_embed_why", lambda hook, embed: (False, "ConnectError: <bad host>"))
+    out = aclient.post("/admin/discord-test").text
+    assert "ConnectError: &lt;bad host&gt; - the server could not reach discord.com" in out
+    monkeypatch.setattr(discord, "post_embed_why", lambda hook, embed: (True, ""))
+    assert "Sent" in aclient.post("/admin/discord-test").text
+
+
 def test_the_telegram_test_send_reports_in_words(aclient, db, admin, monkeypatch):
     monkeypatch.setattr(telegram.thc, "telegram_env", lambda cfg=None: (None, None))
     assert "No Telegram bot token" in aclient.post("/admin/integrations/test/telegram").text

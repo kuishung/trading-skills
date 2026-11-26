@@ -214,15 +214,27 @@ def discord_test(admin: User = Depends(require_admin)):
             '<span class="text-rose-300">No webhook configured — save one on this page '
             '(or set <code>TST_DISCORD_WEBHOOK_URL</code> in app/.env and restart).</span>'
         )
-    ok = discord.post_embed(
-        title="🔔 TradeHunter · test",
-        description=f"Test post from {admin.display_name or admin.email}. "
-        "If you can read this in your channel, the Discord integration works.",
-        url=settings.public_url,
-    )
+    embed = {"title": "🔔 TradeHunter · test", "color": discord.COLOR_EMERALD,
+             "description": f"Test post from {admin.display_name or admin.email}. "
+                            "If you can read this in your channel, the Discord integration works."}
+    if settings.public_url:
+        embed["url"] = settings.public_url
+    ok, why = discord.post_embed_why(discord._cfg("discord_webhook_url"), embed)  # noqa: SLF001
     if ok:
         return HTMLResponse('<span class="text-emerald-300">Sent ✓ — check your Discord channel.</span>')
-    return HTMLResponse('<span class="text-rose-300">Webhook POST failed — see the server log.</span>')
+    # v4.272: the reason, escaped, with the likely fix (the user, 2026-11-26: the card read "Webhook POST
+    # failed - see the server log" and nothing else)
+    why = html_mod.escape(why or "see the server log")
+    hint = ""
+    if "404" in why or "Unknown Webhook" in why:
+        hint = " - the webhook no longer exists or the URL is wrong: in Discord open the channel's settings → Integrations → Webhooks, make a new one, copy its URL and save it above"
+    elif "401" in why or "403" in why:
+        hint = " - Discord refused the URL: copy it again from the channel's Integrations → Webhooks"
+    elif "429" in why:
+        hint = " - rate limited; try again in a minute"
+    elif "Connect" in why or "SSL" in why or "certificate" in why or "timed out" in why.lower():
+        hint = " - the server could not reach discord.com (DNS, firewall, proxy or TLS on Hermes)"
+    return HTMLResponse('<span class="text-rose-300">Webhook POST failed: ' + why + hint + '</span>')
 
 
 def _get(db: Session, uid: int) -> User | None:

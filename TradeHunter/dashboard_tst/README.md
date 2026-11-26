@@ -223,6 +223,15 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-26 - v4.272: Settings - Integration - the Discord test says why it failed
+
+The user, after Telegram went through: the Discord "Send test post" read *"Webhook POST failed - see the server
+log"* and nothing else. `services/discord.py`: new `post_embed_why(hook, embed)` answers `(ok, why)` - Discord's
+status and message ("404 Unknown Webhook" = the webhook was deleted or the URL is wrong) or the network error;
+`post_embed` delegates to it, unchanged for its callers. `routes/admin.py::discord_test`: the reason, escaped,
+with the likely fix in words (404 → make a new webhook in the channel's Integrations → Webhooks and save its URL;
+401/403 → copy the URL again; 429 → wait; a connection / TLS error → the server could not reach discord.com).
+
 ### 2026-11-26 - v4.271: deploy/tls_peek.py - what a host's TLS handshake hands this Python
 
 With v4.270 the Telegram test on Hermes read *"CERTIFICATE_VERIFY_FAILED: self-signed certificate in certificate

@@ -236,12 +236,29 @@ def post_embed(
             }
             for f in fields[:25]
         ]
+    ok, _why = post_embed_why(hook, embed)
+    return ok
+
+
+def post_embed_why(hook: str, embed: dict) -> tuple[bool, str]:
+    """v4.272: the POST itself, answering ``(ok, why)`` so the Settings test can SAY what went
+    wrong (the card used to read "Webhook POST failed - see the server log" and nothing else).
+    ``why`` is Discord's status and message ("404 Unknown Webhook" = the webhook was deleted or
+    the URL is wrong) or the network error. Never raises."""
     try:
         r = httpx.post(hook, json={"embeds": [embed]}, timeout=8.0)
         if r.status_code // 100 == 2:
-            return True
-        log.warning("discord webhook non-2xx: %s %s", r.status_code, (r.text or "")[:200])
-        return False
+            return True, ""
+        detail = ""
+        try:
+            j = r.json()
+            detail = str(j.get("message") or j.get("error") or "")[:200]
+        except Exception:  # noqa: BLE001
+            detail = (r.text or "")[:200]
+        why = f"HTTP {r.status_code} {detail}".strip()
+        log.warning("discord webhook non-2xx: %s", why)
+        return False, why
     except Exception as e:  # noqa: BLE001 — soft-fail, must never break the caller
-        log.warning("discord webhook error: %s", e)
-        return False
+        why = f"{type(e).__name__}: {e}"[:300]
+        log.warning("discord webhook error: %s", why)
+        return False, why
