@@ -893,6 +893,12 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
   written but nothing calls it. Hermes needed its Windows root store refreshed before any HTTPS to Telegram
   verified (`certutil -generateSSTFromWU` + `certutil -addstore -f Root`; `deploy/tls_peek.py <host>` is the
   diagnostic) - see README v4.271. Deciding what to push (and when) is the open next step.
+- **Discord (re-linked 2026-11-26):** the webhook URL and the bot token are now SAVED ON THE CARD (Settings →
+  Integration) and override the `app\.env` values on Hermes, which were placeholders
+  (`https://discord.com/api/webhooks/XXXX/YYYY`, a token ending 5YC0) - treat those file values as dead. The bot
+  application "TradeHunter" lives in the user's Discord Developer Portal; it is invited into the "tradehunter"
+  server (channel id / server id saved on the card). The card's test post goes through. v4.272-4.274 made the
+  card say WHY a post fails (Discord's own message, the URL's shape checked first, the saved URL shown masked).
 - **Pages:** `/matp` (approved-user landing, "under construction" board),
   `/studies`, `/finviz` (moderator-curated saved-filter list — no scan
   here), `/feedback`, `/admin`. **Settings (v4.193, 2026-10-21): a GEAR icon beside the
