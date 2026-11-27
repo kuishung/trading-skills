@@ -911,6 +911,12 @@ platform**. Full blueprint: `dashboard_tst/DESIGN.md`; deploy runbook:
   `/discussions` (menu key `discussions`; moderators open one by hand), Studies read through it. Telegram
   prerequisite (design §7): a GROUP with Topics on, the bot an admin with Manage Topics, its id on Settings →
   Integration (picked from "groups the bot has seen").
+  **v4.279 (2026-11-27): the first subject that opens a discussion automatically = a SHARED OPTION SETUP.** In the
+  Option Finder a right-click on a tile / table row gives moderators and admins "Share this setup to Discord &
+  Telegram": the finder chart's picture (Entry / Target / Worst lines) + the call's figures go out as the openers
+  (Discord embed image, Telegram photo + caption) with a link to `/setups/option/<id>` (`OptionStudy` table,
+  `services/option_studies.py`, `routes/option_studies.py`; snapshots in `dashboard_tst/state/snapshots/`, not in
+  git). The Curated page has an Option setups panel (`/setups/panel`) with the picked setup's discussion strip.
 - **Pages:** `/matp` (approved-user landing, "under construction" board),
   `/studies`, `/finviz` (moderator-curated saved-filter list — no scan
   here), `/feedback`, `/admin`. **Settings (v4.193, 2026-10-21): a GEAR icon beside the

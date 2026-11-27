@@ -37,6 +37,7 @@ from .routes import auth as auth_routes
 from .routes import calendar as calendar_routes
 from .routes import company_analysis as company_analysis_routes
 from .routes import discussions as discussions_routes
+from .routes import option_studies as option_studies_routes   # v4.279
 from .routes import drawings as drawings_routes
 from .routes import options as options_routes
 from .routes import options_page as options_page_routes
@@ -88,6 +89,7 @@ for _routes_mod in (
     portfolio_routes, spreads_routes, ivscan_routes, options_page_routes,   # calc_routes: no page since v4.218
     company_analysis_routes, sector_routes, macro_routes, calendar_routes, insights_routes,
     discussions_routes,                                                      # v4.275
+    option_studies_routes,                                                   # v4.279
 ):
     _routes_mod.templates.env.globals["version"] = APP_VERSION
     _routes_mod.templates.env.globals["nav_for"] = menus.nav_for   # access-filtered nav
@@ -305,6 +307,7 @@ def create_app() -> FastAPI:
     app.include_router(feedback_routes.router)
     app.include_router(logos_routes.router)          # v4.221: GET /logo/<SYM>
     app.include_router(discussions_routes.router)    # v4.275: /discussions (DISCUSSIONS_DESIGN.md)
+    app.include_router(option_studies_routes.router) # v4.279: /setups/option/<id> - a shared option setup
     app.include_router(admin_routes.router)
     app.include_router(agent_routes.router)
     app.include_router(api_routes.router)

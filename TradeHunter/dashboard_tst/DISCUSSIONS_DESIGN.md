@@ -34,7 +34,7 @@ study, or a free topic.
                                    (merged, time-ordered; a reply typed in the app is mirrored to both chats)
 ```
 
-- **Discussion** (`discussions` table): `kind` (`setup | curated | macro | company | topic`), `ref` (the subject's
+- **Discussion** (`discussions` table): `kind` (`setup | curated | macro | company | topic | option` - `option` since v4.279), `ref` (the subject's
   key within its kind - the setup id, the curated call id, the macro topic key, the ticker; empty for a free
   topic), `title`, `body`, `status` (`open | closed`), who opened it and when, the channel ids
   (`discord_channel_id` + `discord_thread_id`, `telegram_chat_id` + `telegram_topic_id`), `last_activity_at`,
@@ -94,6 +94,12 @@ A daemon thread inside the web app (like the macro refresh and the logo download
 
 1. **Which subjects open a discussion, and when** - by hand from the Discussions page (built), automatically
    when a study / curated call / macro reading / company note is published, or by a button on each page.
+   **First one BUILT v4.279: a shared OPTION SETUP** (kind `option`, ref = the `option_studies` id) - a moderator
+   right-clicks a call in the Option Finder → "Share this setup to Discord & Telegram": the discussion opens on both
+   chats with the chart picture (`open_discussion(image=…, page=…)`: the Discord embed's image, a Telegram photo with
+   the opener as its caption) and links `/setups/option/<id>`, where members read the snapshot, the figures and the
+   discussion (`services/option_studies.py`, `routes/option_studies.py`). The Curated page's Option setups panel
+   lists them with the picked one's discussion. The other subjects (curated call, macro, company) are still open.
 2. **Which chat(s)** - both by default (built, with ticks per discussion), or one per kind.
 3. ~~**Mirroring between the chats**~~ - **BUILT v4.278 as an admin switch, off by default** (the user: *"make it
    an optional setting by admin, if admin turn on the feature, then both discord and telegram message will be

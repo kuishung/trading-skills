@@ -346,5 +346,10 @@
 </div>
 {% endif %}
 
+{# v4.279: the Option setups panel - the calls shared from the Option Finder and their Discord / Telegram
+   discussions (user: "In the curated list, we need studies panel to show the curated list and also the user
+   messages for the discussion"). routes/option_studies.py::option_studies_panel. #}
+<div hx-get="/setups/panel" hx-trigger="load" hx-swap="innerHTML"></div>
+
 </div>{# /#curatedSide #}
 </div>{# /.curated-panel #}

@@ -45,7 +45,7 @@ from app.config import settings                  # noqa: E402
 from app import models                           # noqa: E402,F401  (register models on Base)
 
 DASH_ROOT = Path(__file__).resolve().parent.parent      # dashboard_tst/
-HEAD = "f5a6b7c8d9e0"           # v4.275: discussions + contributions
+HEAD = "a6b7c8d9e0f1"           # v4.279: option_studies (shared option setups)
 PREVIOUS_HEAD = "e2f3a4b5c6d7"     # test_option_store: the revision BEFORE the options-module tables
 
 

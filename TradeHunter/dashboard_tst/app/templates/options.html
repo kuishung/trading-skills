@@ -299,6 +299,14 @@
   .of-menu-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px; padding: 0 .4rem .25rem; }
   .of-menu-grid button { padding: .15rem 0; font-size: 11px; border: 1px solid var(--tv-border); border-radius: .25rem; color: var(--tv-text, #d1d4dc); }
   .of-menu-grid button[aria-pressed="true"] { color: var(--tv-text-hi); border-color: var(--tv-accent); background: rgba(41,98,255,.15); }
+  /* v4.279: the Share card in #ofMsg */
+  .of-share { display: flex; flex-direction: column; gap: .5rem; }
+  .of-share-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .25rem .75rem; font-size: 12px; }
+  .of-share-grid span { color: var(--tv-muted); display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
+  .of-share-grid b { font-weight: 600; font-variant-numeric: tabular-nums; } .of-share-grid i { color: var(--tv-muted); font-size: 10px; }
+  .of-share-note { width: 100%; resize: vertical; font-size: 12px; padding: .35rem .5rem; border: 1px solid var(--tv-border); border-radius: .3rem; background: rgba(2,6,23,.4); color: inherit; }
+  .of-btn { padding: .2rem .6rem; border: 1px solid currentColor; border-radius: .3rem; font-size: 11px; font-weight: 600; color: var(--tv-muted); }
+  .of-btn:hover { color: var(--tv-text-hi); } .of-btn-go { border-color: rgba(16,185,129,.7); color: #6ee7b7; } .of-btn-go:disabled { opacity: .5; cursor: wait; }
   .of-menu-grid button:hover, .of-menu-it:hover { background: rgba(148,163,184,.15); }
   .of-menu-it { display: block; width: 100%; text-align: left; padding: .3rem .7rem; color: var(--tv-text, #d1d4dc); }
   .of-menu-sep { border-top: 1px solid var(--tv-border); margin: .2rem 0; }
@@ -789,6 +797,7 @@
        from +-10% to +-100% or a custom price to be key in"): the bar's right-click menu - the range presets, a keyed
        range, a keyed price the bar then widens to show, and (on a handle) that handle's price #}
     <div id="ofMenu" class="of-menu hidden" role="menu" aria-label="Price bar range"></div>
+    <div id="ofRowMenu" class="of-menu hidden" role="menu" aria-label="This call"></div>   {# v4.279: right-click on a tile / row #}
     </div>
     {# v4.276: the price chart - daily candles of the ticker (the Watchlist chart's feed, /matp/<sym>/prices) with the
        Entry / Target / Worst prices as lines; drag a line and its handle on the bar, its box and the ranking follow #}
@@ -1796,6 +1805,122 @@
     if (w) { try { w.focus(); } catch (err) {} }
   }
 
+  // ── v4.279: a RIGHT-CLICK on a finder tile / table row ──────────────────────────────────────
+  // (user: "a right click on the tiles or the table item it will give the moderator and above to be able to send
+  // the studies to telegram and discord the setup ... the snapshot of the chart showing its Entry, SL, PT and
+  // also the detail of the selected strike"). The menu: the Reward / risk working, the contract's history and,
+  // for moderators, "Share this setup" - a card under the table with the figures, a note box and the chats to
+  // post to; Send takes the finder chart's picture (the Entry / Target / Worst lines on the candles), POSTs it
+  // with the call's figures to /setups/option, and the answer links the page the members get.
+  var OFS = {exp: null, k: null};
+  function ofRow(exp, k) {
+    var rows = (OF.last && OF.last.rows) || [];
+    for (var i = 0; i < rows.length; i++) if (rows[i].expiry === exp && Number(rows[i].strike) === Number(k)) return rows[i];
+    return null;
+  }
+  function ofRowMenuClose() { var m = $('ofRowMenu'); if (m) show(m, false); }
+  function ofRowMenuOpen(e, exp, k) {
+    var r = ofRow(exp, k), m = $('ofRowMenu');
+    if (!r || !m) return;
+    OFS.exp = exp; OFS.k = k;
+    var h = '<div class="of-menu-h">' + esc(shortDate(exp) + ' ' + strikeText(k)) + ' call &middot; R/R ' + (r.no_loss ? 'no loss' : num(r.rr, 2)) + '</div>';
+    h += '<button type="button" class="of-menu-it" data-ofr="rr">Reward / risk working &#8599;</button>';
+    h += '<button type="button" class="of-menu-it" data-ofr="hist">Contract history &#8599;</button>';
+    if (BOOT.can_moderate) {
+      h += '<div class="of-menu-sep"></div>';
+      h += '<button type="button" class="of-menu-it of-menu-hit" data-ofr="share">Share this setup to Discord &amp; Telegram&hellip;</button>';
+    }
+    m.innerHTML = h;
+    show(m, true);
+    var W = m.offsetWidth, H = m.offsetHeight;
+    m.style.left = Math.max(4, Math.min(window.innerWidth - W - 4, e.clientX)) + 'px';
+    m.style.top = Math.max(4, Math.min(window.innerHeight - H - 4, e.clientY)) + 'px';
+  }
+  function ofHistUrl(exp, k) {
+    return '/options/history?' + new URLSearchParams({symbol: OF.last.symbol, expiry: exp, right: 'C', strike: String(k)}).toString();
+  }
+  function ofShareCard(exp, k) {         // the card: what will be sent, a note, the chats
+    var r = ofRow(exp, k), j = OF.last, box = $('ofMsg');
+    if (!r || !j) return;
+    OFS.exp = exp; OFS.k = k;
+    var entry = (j.entry_src === 'user' && j.entry) ? j.entry : j.spot;
+    var pc = function (v) { return entry ? ' (' + (v >= entry ? '+' : '') + ((v - entry) / entry * 100).toFixed(1) + '%)' : ''; };
+    var h = '<div class="of-share">' +
+      '<div class="flex items-center justify-between gap-2 flex-wrap"><b class="text-slate-100">Share ' + esc(j.symbol + ' ' + strikeText(k) + ' call ' + shortDate(exp)) + ' to the members</b>' +
+      '<button type="button" class="of-btn" data-ofs="cancel">Cancel</button></div>' +
+      '<div class="of-share-grid">' +
+      '<div><span>Entry</span><b>' + money(entry) + (j.entry_src === 'user' ? '' : ' <i>last</i>') + '</b></div>' +
+      '<div><span>Target</span><b>' + money(j.target) + pc(j.target) + '</b></div>' +
+      '<div><span>Worst</span><b>' + money(j.worst) + pc(j.worst) + '</b></div>' +
+      '<div><span>Valued on</span><b>' + esc(shortDate(r.valued_on || j.on || exp)) + '</b></div>' +
+      '<div><span>Cost</span><b>' + money(r.cost) + '</b></div><div><span>Breakeven</span><b>' + money(r.breakeven) + '</b></div>' +
+      '<div><span>Reward / risk</span><b>' + (r.no_loss ? 'no loss' : num(r.rr, 2)) + '</b></div><div><span>ROI</span><b>' + pctOf(r.roi, 0) + '</b></div>' +
+      '</div>' +
+      '<textarea id="ofShareNote" rows="2" placeholder="A note for the members (optional) - why this call, what to watch" class="of-share-note"></textarea>' +
+      '<div class="flex items-center gap-3 flex-wrap text-[12px]">' +
+      '<label class="flex items-center gap-1"><input type="checkbox" id="ofShareDiscord" checked> Discord</label>' +
+      '<label class="flex items-center gap-1"><input type="checkbox" id="ofShareTelegram" checked> Telegram</label>' +
+      '<span class="text-slate-500">' + (OFC.on ? 'The chart on screen is sent as the picture.' : 'The chart is opened to take its picture.') + '</span>' +
+      '<button type="button" class="of-btn of-btn-go" data-ofs="send">Send</button>' +
+      '<span id="ofShareState" class="text-slate-400"></span></div></div>';
+    box.innerHTML = h;
+    box.classList.remove('of-msg-err');
+    show(box, true);
+    box.scrollIntoView({block: 'nearest', behavior: 'smooth'});
+  }
+  function ofChartPng() {                // the finder chart as a PNG data URL (opens + loads it first); '' when none
+    return new Promise(function (resolve) {
+      if (!OFC.on) ofcToggle(true, false);
+      var tries = 0;
+      (function wait() {
+        var inst = OFC.inst;
+        if (inst && inst.bars && OFC.sym === OF.sym) {
+          try { ofcSync(); var cv = inst.chart.takeScreenshot(); resolve(cv && cv.width ? cv.toDataURL('image/png') : ''); }
+          catch (err) { resolve(''); }
+          return;
+        }
+        if (++tries > 40) { resolve(''); return; }
+        setTimeout(wait, 150);
+      })();
+    });
+  }
+  function ofShareSend() {
+    var r = ofRow(OFS.exp, OFS.k), j = OF.last, st = $('ofShareState');
+    if (!r || !j) return;
+    var btn = document.querySelector('[data-ofs="send"]'); if (btn) btn.disabled = true;
+    if (st) st.textContent = 'taking the chart picture\u2026';
+    var chans = [];
+    if ($('ofShareDiscord') && $('ofShareDiscord').checked) chans.push('discord');
+    if ($('ofShareTelegram') && $('ofShareTelegram').checked) chans.push('telegram');
+    ofChartPng().then(function (png) {
+      if (st) st.textContent = 'sending\u2026';
+      var body = {symbol: j.symbol, expiry: OFS.exp, strike: OFS.k, right: 'C', spot: j.spot,
+                  entry: (j.entry_src === 'user' && j.entry) ? j.entry : j.spot, entry_src: j.entry_src === 'user' ? 'user' : 'last',
+                  target: j.target, worst: j.worst, mode: j.mode || 'expiry', valued_on: r.valued_on || (j.mode === 'date' ? j.on : OFS.exp),
+                  figures: r, note: ($('ofShareNote') || {}).value || '', image: png, channels: chans};
+      return fetch('/setups/option', {method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'same-origin', body: JSON.stringify(body)})
+        .then(function (res) { return res.json().then(function (out) { out._status = res.status; return out; }); });
+    }).then(function (out) {
+      var box = $('ofMsg');
+      if (!out || !out.ok) {
+        box.classList.add('of-msg-err');
+        box.innerHTML = '<b>Not shared.</b> ' + esc((out && out.error) || 'The server did not answer.') +
+          ' <button type="button" class="of-btn" data-ofs="retry">Try again</button>';
+        return;
+      }
+      var h = '<b class="text-emerald-300">Shared.</b> ' + esc(out.title) + (out.snapshot ? '' : ' <span class="text-amber-300">(no chart picture)</span>') +
+        ' &middot; <a class="text-sky-300 hover:underline" href="' + esc(out.url) + '" target="_blank">the page the members get &#8599;</a>';
+      if (out.links && out.links.discord) h += ' &middot; <a class="text-indigo-300 hover:underline" href="' + esc(out.links.discord) + '" target="_blank">Discord &#8599;</a>';
+      if (out.links && out.links.telegram) h += ' &middot; <a class="text-sky-300 hover:underline" href="' + esc(out.links.telegram) + '" target="_blank">Telegram &#8599;</a>';
+      Object.keys(out.errors || {}).forEach(function (ch) { h += '<div class="text-amber-300">' + esc(ch) + ': ' + esc(out.errors[ch]) + '</div>'; });
+      box.classList.remove('of-msg-err');
+      box.innerHTML = h;
+    }).catch(function (e) {
+      var box = $('ofMsg'); box.classList.add('of-msg-err');
+      box.innerHTML = '<b>Not shared.</b> ' + esc(failText(e, 'the share')) + ' <button type="button" class="of-btn" data-ofs="retry">Try again</button>';
+    });
+  }
+
   // ── v4.219: the OPTION FINDER ───────────────────────────────────────────────────────────────
   // (user: "based on the vol surface, when a user define the user input, i want the system to auto calculate the
   // strike and each expiry and generate a report on screen with the output which user can obtain using the sheet
@@ -2569,6 +2694,31 @@
         var c = e.target.closest ? e.target.closest('tr[data-exp], td.of-cell') : null;
         if (c && OF.last) openRR(c.dataset.exp, Number(c.dataset.k));        // v4.269: the Reward / risk working
       });
+      $('volPanelFind').addEventListener('contextmenu', function (e) {       // v4.279: the call's menu (+ Share for moderators)
+        var c = e.target.closest ? e.target.closest('tr[data-exp], td.of-cell') : null;
+        if (!c || !OF.last) return;
+        e.preventDefault();
+        ofMenuClose();
+        ofRowMenuOpen(e, c.dataset.exp, Number(c.dataset.k));
+      });
+      $('ofRowMenu').addEventListener('click', function (e) {
+        var b = e.target.closest ? e.target.closest('[data-ofr]') : null;
+        if (!b) return;
+        ofRowMenuClose();
+        if (b.dataset.ofr === 'rr') openRR(OFS.exp, OFS.k);
+        else if (b.dataset.ofr === 'hist') window.open(ofHistUrl(OFS.exp, OFS.k), '_blank');
+        else if (b.dataset.ofr === 'share') ofShareCard(OFS.exp, OFS.k);
+      });
+      $('ofMsg').addEventListener('click', function (e) {
+        var b = e.target.closest ? e.target.closest('[data-ofs]') : null;
+        if (!b) return;
+        if (b.dataset.ofs === 'cancel') show($('ofMsg'), false);
+        else if (b.dataset.ofs === 'send') ofShareSend();
+        else if (b.dataset.ofs === 'retry') ofShareCard(OFS.exp, OFS.k);
+      });
+      document.addEventListener('pointerdown', function (e) { if (!$('ofRowMenu').classList.contains('hidden') && !e.target.closest('#ofRowMenu')) ofRowMenuClose(); });
+      document.addEventListener('keydown', function (e) { if (e.key === 'Escape') ofRowMenuClose(); });
+      window.addEventListener('scroll', ofRowMenuClose, true);
     })();
   }
 

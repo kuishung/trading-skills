@@ -172,6 +172,32 @@ def send_message(html: str, *, chat_id: str, thread_id: str | int | None = None,
     return first or {}
 
 
+def send_photo(image: bytes, *, chat_id: str, caption_html: str = "", thread_id: str | int | None = None,
+               filename: str = "snapshot.png") -> dict:
+    """v4.279: a PNG into a chat (and, with ``thread_id``, into that topic) with an HTML caption of at most
+    1024 characters - the chart snapshot of a shared option setup. Multipart through httpx (the Bot API's
+    ``sendPhoto``). Returns the sent message; raises ``TelegramError``."""
+    import httpx  # noqa: PLC0415 - the only multipart call in this module
+
+    token, _ = creds()
+    if not token:
+        raise TelegramError("not configured")
+    data = {"chat_id": str(chat_id), "parse_mode": "HTML"}
+    if caption_html:
+        data["caption"] = caption_html[:1024]
+    if thread_id:
+        data["message_thread_id"] = str(thread_id)
+    try:
+        r = httpx.post(f"{API}/bot{token}/sendPhoto", data=data, files={"photo": (filename, image, "image/png")},
+                       headers={"User-Agent": USER_AGENT}, timeout=30.0)
+        out = r.json()
+    except Exception as exc:  # noqa: BLE001
+        raise TelegramError(str(exc) or type(exc).__name__) from exc
+    if not isinstance(out, dict) or not out.get("ok"):
+        raise TelegramError(str((out or {}).get("description") or out)[:300])
+    return out.get("result") or {}
+
+
 def create_forum_topic(chat_id: str, name: str) -> str:
     """Open a topic named ``name`` in a group with Topics switched on; the bot must be an
     administrator with Manage Topics. Returns the topic's ``message_thread_id`` (a string);

@@ -223,6 +223,44 @@ surface takes shape.
 > (it is NOT derived from git). They drifted (README hit v3.66 while the app still
 > reported 3.60); keep them in lockstep.
 
+### 2026-11-27 - v4.279: Option Finder - a right-click shares a call to Discord & Telegram, with the chart picture; the Curated page's Option setups panel
+
+The user: *"in option finder, i want a right click on the tiles or the table item it will give the moderator and above
+(moderator and administrator) to be able to send the studies to telegram and discord the setup. I will give user the
+link so that when user open the link, it will go to tradehunter to the page. In the studies, i need also the snapshot
+of the chart showing its Entry, SL, PT and also the detail of the selected strike so that user reading the telegram
+and discord know the setup and can discuss on it. In the curated list, we need studies panel to show the curated list
+and also the user messages for the discussion."* The first SUBJECT that opens a discussion automatically
+(`DISCUSSIONS_DESIGN.md` §6 item 1): a shared option setup.
+- **A right-click on a finder tile or table row** (`options.html`: `#ofRowMenu`, `ofRowMenuOpen`) opens a menu:
+  Reward / risk working, Contract history and, for moderators and admins (`boot.can_moderate`), **"Share this setup
+  to Discord & Telegram…"** - a card under the table (`ofShareCard`) with the Entry / Target / Worst, the call's
+  cost, breakeven, R/R and ROI, a note box and a tick per chat. **Send** opens the finder chart if it is closed,
+  takes its picture (`chart.takeScreenshot()` - the candles with the Entry / Target / Worst lines and the MATP /
+  MBP levels), and POSTs it with the call's figures to `/setups/option`; the answer links the page the members get
+  and the Discord thread / Telegram topic.
+- **`OptionStudy`** (`option_studies` table, migration `a6b7c8d9e0f1`; `services/option_studies.py`): the call,
+  the stock prices it was judged against, the finder's figures as JSON, the note, the snapshot file name
+  (`state/snapshots/option_<id>.png`, never in git) and the discussion it opened. `create()` saves all of it and
+  calls `discussions.open_discussion(kind="option", image=…, page=…)` - the new discussion kind **`option`**
+  (`subject_url` → `/setups/option/<id>`).
+- **Pictures in the openers:** `discord.create_study_thread(…, image=)` posts the opener as multipart with the PNG
+  shown inside the embed (`attachment://snapshot.png`; `post_thread_image`); `telegram.send_photo()` (multipart
+  `sendPhoto`, caption ≤ 1024 characters, the rest as a message) - the Telegram opener IS the photo with the details
+  as its caption. `open_discussion` also takes `page=` so the openers link the setup's page, not `/discussions`.
+- **The page** `GET /setups/option/<id>` (`routes/option_studies.py`, `option_study.html`): the snapshot, the note,
+  the setup's details (stock entry / target / worst with %, valued on, contract, IV, OI, cost, at target / worst,
+  breakeven, R/R, ROI, chance), buttons to the Reward / risk working, the contract history, the Option Finder,
+  Discord and Telegram, and the discussion strip (`_discussion_chat.html`, posts mirror into both chats).
+  `GET /setups/option/<id>/snapshot.png`, `GET /setups/option/<id>/chat`. The prefix is `/setups` so it never
+  collides with `/studies/{sid}`.
+- **The Curated page's Option setups panel** (`GET /setups/panel?sel=`, `_option_studies_panel.html`, loaded at
+  the end of `#curatedSide` in `_curated_list.html`): the shared calls newest first (ticker + strike, target, R/R,
+  shared date, reply count) - a click shows that setup's snapshot thumbnail, key figures and its discussion strip.
+- Tests: `tests/test_option_studies.py` (decode, create + both openers with the picture, no-image path, bad
+  payloads, the endpoint / page / snapshot / chat / panel, member 403, the finder boot); the Discord fake in
+  `test_discussions.py` accepts the new `image=` keyword; `conftest.HEAD` → `a6b7c8d9e0f1`.
+
 ### 2026-11-27 - v4.278: Discussions - an admin switch relays replies between Discord and Telegram
 
 The user: *"if user reply from telegram, the message will be shown in discord?"* - no, until now - *"i want to make it

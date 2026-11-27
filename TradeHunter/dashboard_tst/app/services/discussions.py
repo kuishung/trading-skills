@@ -31,7 +31,8 @@ from . import discord, telegram
 
 log = logging.getLogger(__name__)
 
-KIND_LABELS = {"setup": "Study", "curated": "Curated setup", "macro": "Macro", "company": "Company", "topic": "Topic"}
+KIND_LABELS = {"setup": "Study", "curated": "Curated setup", "macro": "Macro", "company": "Company", "topic": "Topic",
+               "option": "Option setup"}   # option: v4.279, an OptionStudy shared from the Option Finder
 CHANNELS = ("discord", "telegram")
 SYNC_WINDOW_DAYS = 30          # discussions active within this many days are re-read by the sync
 MAX_TEXT = 4000
@@ -58,6 +59,8 @@ def subject_url(kind: str, ref: str | None) -> str | None:
         return "/macro" + (f"#{r}" if r else "")
     if kind == "company" and r:
         return f"/company-analysis?symbol={r.upper()}"
+    if kind == "option" and r:
+        return f"/setups/option/{r}"
     return None
 
 
@@ -71,21 +74,24 @@ def links(d: Discussion) -> dict:
             "telegram": telegram.topic_link(d.telegram_chat_id, d.telegram_topic_id)}
 
 
-def _opener_text(d: Discussion, by: str) -> str:
+def _opener_text(d: Discussion, by: str, page: str | None = None) -> str:
     base = (settings.public_url or "").rstrip("/")
     lines = [d.title.strip()]
     if d.body:
         lines.append(d.body.strip()[:1500])
-    lines.append(f"opened by {by} on TradeHunter" + (f" - {base}{page_url(d)}" if base else ""))
+    lines.append(f"opened by {by} on TradeHunter" + (f" - {base}{page or page_url(d)}" if base else ""))
     return "\n".join(lines)
 
 
 # ─────────────────────────────────────── opening ───────────────────────────────────────
 
 def open_discussion(db: Session, *, kind: str, ref: str | None, title: str, body: str | None, user: User | None,
-                    channels=CHANNELS, discord_thread_id: str | None = None) -> Discussion:
+                    channels=CHANNELS, discord_thread_id: str | None = None, image: bytes | None = None,
+                    page: str | None = None) -> Discussion:
     """Create the discussion and open it on each asked-for channel that is configured. ``discord_thread_id``
-    adopts a thread that already exists (a study's) instead of opening one."""
+    adopts a thread that already exists (a study's) instead of opening one. v4.279: ``image`` (PNG bytes) goes
+    into both openers - the Discord embed's picture, a Telegram photo with the opener as its caption; ``page``
+    is the TradeHunter page the openers link to (the discussion's own page when None)."""
     if kind not in DISCUSSION_KINDS:
         raise ValueError(f"unknown discussion kind {kind!r}")
     title = (title or "").strip()[:200] or f"{KIND_LABELS.get(kind, kind)} {ref or ''}".strip()
@@ -94,7 +100,7 @@ def open_discussion(db: Session, *, kind: str, ref: str | None, title: str, body
     db.add(d)
     db.flush()                                      # an id for the links
     by = _name(user)
-    opener = _opener_text(d, by)
+    opener = _opener_text(d, by, page)
     errors: dict = {}
     wanted = set(channels or ())
     # Discord: a thread in the configured channel (the bot)
@@ -110,8 +116,8 @@ def open_discussion(db: Session, *, kind: str, ref: str | None, title: str, body
                 embed = {"title": title[:256], "description": ((d.body or "")[:1800] + f"\n\nopened by {by}").strip(),
                          "color": discord.COLOR_EMERALD}
                 if base:
-                    embed["url"] = base + page_url(d)
-                tid = discord.create_study_thread(name=title[:100], embed=embed)
+                    embed["url"] = base + (page or page_url(d))
+                tid = discord.create_study_thread(name=title[:100], embed=embed, image=image)
                 if tid:
                     d.discord_thread_id = str(tid)
                     d.discord_channel_id = discord._cfg("discord_channel_id")  # noqa: SLF001
@@ -132,7 +138,13 @@ def open_discussion(db: Session, *, kind: str, ref: str | None, title: str, body
                 d.telegram_chat_id = gid
                 d.telegram_topic_id = topic
                 try:
-                    telegram.send_message(_html.escape(opener), chat_id=gid, thread_id=topic)
+                    cap = _html.escape(opener)
+                    if image:                                 # the picture first, the opener as its caption
+                        telegram.send_photo(image, chat_id=gid, thread_id=topic, caption_html=cap[:1024])
+                        if len(cap) > 1024:
+                            telegram.send_message(cap, chat_id=gid, thread_id=topic)
+                    else:
+                        telegram.send_message(cap, chat_id=gid, thread_id=topic)
                 except telegram.TelegramError as exc:
                     errors["telegram"] = f"topic opened, but the opener was not posted: {exc}"[:300]
             except telegram.TelegramError as exc:

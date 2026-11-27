@@ -245,7 +245,7 @@ class Comment(Base):
 # One thread per subject on Discord and / or Telegram, the members' contributions read back and kept.
 # The subject is (kind, ref): a study, a curated call, a macro topic, a company, or a free topic.
 
-DISCUSSION_KINDS = ("setup", "curated", "macro", "company", "topic")
+DISCUSSION_KINDS = ("setup", "curated", "macro", "company", "topic", "option")   # option: v4.279, an OptionStudy
 
 
 class Discussion(Base):
@@ -293,6 +293,35 @@ class Contribution(Base):
 
     discussion = relationship("Discussion", back_populates="contributions")
     user = relationship("User")
+
+
+class OptionStudy(Base):
+    """v4.279: an option SETUP shared from the Option Finder by a moderator - the call, the stock prices it was
+    judged against, the finder's figures for it, a snapshot of the chart with the Entry / Target / Worst lines,
+    and the discussion (kind ``option``, ref = this id) it opened on Discord / Telegram."""
+    __tablename__ = "option_studies"
+
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), nullable=False, index=True)
+    expiry = Column(String(10), nullable=False)                   # YYYY-MM-DD
+    right = Column(String(1), nullable=False, default="C")
+    strike = Column(Float, nullable=False)
+    spot = Column(Float, nullable=True)                           # the stock price when shared
+    entry = Column(Float, nullable=True)                          # the price the calls were priced from
+    entry_src = Column(String(10), nullable=True)                 # last | user
+    target = Column(Float, nullable=True)
+    worst = Column(Float, nullable=True)
+    mode = Column(String(10), nullable=True)                      # expiry | date
+    valued_on = Column(String(10), nullable=True)
+    figures = Column(JSON, nullable=True)                         # the finder row: iv, oi, cost, at_target, at_worst, breakeven, be_pct, rr, roi, prob, dte
+    note = Column(Text, nullable=True)                            # the moderator's words
+    snapshot = Column(String(200), nullable=True)                 # file name under state/snapshots/
+    discussion_id = Column(Integer, ForeignKey("discussions.id"), nullable=True, index=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
+
+    discussion = relationship("Discussion")
+    creator = relationship("User", foreign_keys=[created_by])
 
 
 class FinvizFilter(Base):

@@ -1392,6 +1392,7 @@ def options_home(request: Request, user: User = Depends(require_user)):
         "status": status,                     # the alert + the no-data panel on first paint
         "no_data": _no_data_text(),
         "is_admin": bool(getattr(user, "is_admin", False)),
+        "can_moderate": bool(getattr(user, "can_moderate", False)),   # v4.279: the finder's Share menu item
     }
     from ..services import opt_finder   # noqa: PLC0415 - v4.219: the Option Finder tab's strategy list
     return templates.TemplateResponse(request, "options.html", {

@@ -54,11 +54,35 @@ def _bot_headers() -> dict:
     }
 
 
-def create_study_thread(name: str, embed: dict | None = None) -> str | None:
+def post_thread_image(thread_id: str, embed: dict | None, image: bytes, filename: str = "snapshot.png") -> bool:
+    """v4.279: one message into a thread with a PNG attached and shown inside the embed
+    (``attachment://<filename>``) - the chart snapshot of a shared option setup. True on a 2xx."""
+    if not (bot_configured() and thread_id and image):
+        return False
+    try:
+        emb = dict(embed or {})
+        emb["image"] = {"url": "attachment://" + filename}
+        r = httpx.post(
+            f"{_API}/channels/{thread_id}/messages", headers=_bot_headers(),
+            data={"payload_json": json.dumps({"embeds": [emb]})},
+            files={"files[0]": (filename, image, "image/png")}, timeout=15.0,
+        )
+        if r.status_code // 100 == 2:
+            return True
+        log.warning("discord thread image non-2xx: %s %s", r.status_code, (r.text or "")[:200])
+        return False
+    except Exception as e:  # noqa: BLE001
+        log.warning("discord thread image error: %s", e)
+        return False
+
+
+def create_study_thread(name: str, embed: dict | None = None, image: bytes | None = None,
+                        image_name: str = "snapshot.png") -> str | None:
     """Create a public thread in the configured channel for a study and post the
     opening embed into it. Returns the thread id (a string), or None on any
     failure (soft-fail — never raises). Needs the bot to have Create Public
-    Threads + Send Messages in Threads."""
+    Threads + Send Messages in Threads. v4.279: ``image`` (PNG bytes) is attached to
+    the opener and shown in the embed."""
     if not bot_configured():
         return None
     try:
@@ -75,7 +99,9 @@ def create_study_thread(name: str, embed: dict | None = None) -> str | None:
         tid = str((r.json() or {}).get("id") or "")
         if not tid:
             return None
-        if embed is not None:
+        if embed is not None and image:
+            post_thread_image(tid, embed, image, image_name)
+        elif embed is not None:
             try:
                 httpx.post(
                     f"{_API}/channels/{tid}/messages",

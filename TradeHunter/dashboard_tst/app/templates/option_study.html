@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} &middot; Option setup &middot; TradeHunter{% endblock %}
+{% block main_class %}flex-1 w-full px-4 py-3 overflow-y-auto{% endblock %}
+
+{% block content %}
+{# v4.279: the page a shared option setup's Discord / Telegram link opens (routes/option_studies.py,
+   services/option_studies.py). The user: "I will give user the link so that when user open the link, it will go
+   to tradehunter to the page ... the snapshot of the chart showing its Entry, SL, PT and also the detail of the
+   selected strike so that user reading the telegram and discord know the setup and can discuss on it."
+   Left: the chart snapshot + the details; right: the discussion (the same strip as /discussions, posts mirror
+   into both chats). Context: s, d, title, details=[(label, value)], has_snapshot, rr_url, history_url,
+   finder_url, links, errors, by, chat (the strip's context). #}
+<style>
+  .os-card { border: 1px solid rgba(51,65,85,.9); border-radius: .5rem; background: rgba(15,23,42,.5); }
+  html.light .os-card { background: rgba(248,250,252,.9); border-color: #cbd5e1; }
+  .os-k { color: #94a3b8; } html.light .os-k { color: #475569; }
+  .os-v { color: #e2e8f0; font-variant-numeric: tabular-nums; } html.light .os-v { color: #0f172a; }
+  .os-snap { width: 100%; border-radius: .4rem; border: 1px solid rgba(51,65,85,.9); background: #0b1220; display: block; }
+  .os-chat { height: min(70vh, 640px); }
+</style>
+
+<div class="max-w-6xl mx-auto space-y-3">
+  <div class="flex items-start justify-between gap-3 flex-wrap">
+    <div class="flex items-center gap-2.5 min-w-0">
+      {{ ticker_logo(s.symbol, 32) }}
+      <div class="min-w-0">
+        <h1 class="text-lg font-semibold text-slate-100">{{ title }} <span class="text-slate-500 font-normal">&middot; option setup</span></h1>
+        <p class="text-[12px] text-slate-500">shared by {{ by }} on {{ s.created_at.strftime('%Y-%m-%d %H:%M') if s.created_at else '-' }} UTC
+          {% if s.spot %}&middot; stock {{ '%.2f'|format(s.spot) }} then{% endif %}</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-2 text-[12px] flex-wrap">
+      <a href="{{ rr_url }}" target="th_of_rr" rel="noopener" class="px-2.5 py-1 rounded border border-slate-700 text-slate-300 hover:text-white hover:border-slate-500">Reward / risk working &#8599;</a>
+      <a href="{{ history_url }}" target="_blank" rel="noopener" class="px-2.5 py-1 rounded border border-slate-700 text-slate-300 hover:text-white hover:border-slate-500">Contract history &#8599;</a>
+      <a href="{{ finder_url }}" class="px-2.5 py-1 rounded border border-slate-700 text-slate-300 hover:text-white hover:border-slate-500">Open in the Option Finder</a>
+      {% if links.discord %}<a href="{{ links.discord }}" target="_blank" rel="noopener" class="px-2.5 py-1 rounded border border-indigo-500/50 text-indigo-300 hover:text-indigo-100">Discord &#8599;</a>{% endif %}
+      {% if links.telegram %}<a href="{{ links.telegram }}" target="_blank" rel="noopener" class="px-2.5 py-1 rounded border border-sky-500/50 text-sky-300 hover:text-sky-100">Telegram &#8599;</a>{% endif %}
+    </div>
+  </div>
+
+  {% if errors %}
+  <div class="rounded border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-200">
+    {% for ch, why in errors.items() %}<div><b class="capitalize">{{ ch }}</b>: {{ why }}</div>{% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="grid grid-cols-1 lg:grid-cols-5 gap-3">
+    <div class="lg:col-span-3 space-y-3">
+      <section class="os-card p-2">
+        {% if has_snapshot %}
+        <img class="os-snap" src="/setups/option/{{ s.id }}/snapshot.png" alt="{{ title }} - the chart with the Entry, Target and Worst lines">
+        {% else %}
+        <p class="text-[12px] text-slate-500 px-2 py-6 text-center">No chart snapshot was taken for this setup.</p>
+        {% endif %}
+        <p class="text-[11px] text-slate-500 px-1 pt-1.5">Daily candles when shared &middot; <span class="text-emerald-300">Target</span>,
+          <span class="text-sky-300">Entry</span>, <span class="text-rose-300">Worst</span> &middot; MATP / MBP dotted when known</p>
+      </section>
+      {% if s.note %}
+      <section class="os-card px-4 py-3">
+        <div class="text-[11px] uppercase tracking-wide text-slate-500 mb-1">From {{ by }}</div>
+        <p class="text-[13px] text-slate-200 whitespace-pre-line leading-relaxed">{{ s.note }}</p>
+      </section>
+      {% endif %}
+      <section class="os-card px-4 py-3">
+        <div class="text-[11px] uppercase tracking-wide text-slate-500 mb-2">The setup</div>
+        <div class="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2 text-[13px]">
+          {% for k, v in details %}
+          <div><span class="os-k">{{ k }}</span><br><span class="os-v">{{ v }}</span></div>
+          {% endfor %}
+        </div>
+        <p class="text-[11px] text-slate-500 mt-2">Option prices are the finder's model prices from the market pass when the setup was shared; the
+          <a href="{{ rr_url }}" target="th_of_rr" class="text-sky-300 hover:underline">Reward / risk working</a> recomputes them from today's data.</p>
+      </section>
+    </div>
+
+    <div class="lg:col-span-2">
+      <section class="os-card px-3 py-2.5 flex flex-col os-chat">
+        <div class="flex items-center justify-between gap-2 mb-1.5 shrink-0">
+          <div class="text-[11px] uppercase tracking-wide text-slate-500">Discussion{% if d %} &middot; {{ d.n_contributions or 0 }}{% endif %}</div>
+          <a href="/discussions{% if d %}?id={{ d.id }}&status=all{% endif %}" class="text-[11px] text-slate-400 hover:text-slate-200">All discussions &rsaquo;</a>
+        </div>
+        <div id="dscbox" class="flex-1 min-h-0 flex flex-col">
+          {% if d %}{% with d=chat.d, messages=chat.messages, links=chat.links, can_moderate=chat.can_moderate %}{% include "_discussion_chat.html" %}{% endwith %}
+          {% else %}<p class="text-[12px] text-slate-500">This setup has no discussion.</p>{% endif %}
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -235,7 +235,7 @@ def test_the_price_bar_drags_the_entry_target_and_worst_case():
                    'data-ofh="worst"', 'data-ofh="entry"', 'data-ofh="target"', 'id="ofBarNow"',
                    "var OFB_BOX = {entry: 'ofEntryPx', target: 'ofTarget', worst: 'ofWorst'};",
                    "box.dispatchEvent(new Event('input'));",
-                   "if (h.dataset.ofh === 'entry' && !ofEntryUser()) return;      // v4.236: fixed at the last price",
+                   "if (h.dataset.ofh === 'entry') ofUnlockEntry();                 // v4.277: a drag on Entry unticks \"fixed at the last price\"",
                    "$('ofBarTrack').addEventListener('pointerdown'", "$('ofBarTrack').addEventListener('keydown'",
                    "localStorage.setItem('th.of.range', String(OFB.range));", "ofbPaint();                                           // v4.235"):
         assert needle in html, needle

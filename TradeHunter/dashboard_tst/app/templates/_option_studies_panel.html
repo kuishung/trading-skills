@@ -1,0 +1,67 @@
+{# v4.279: the Curated page's OPTION SETUPS panel (routes/option_studies.py::option_studies_panel), loaded under
+   the curated list with hx-get="/setups/panel". The user: "In the curated list, we need studies panel to show
+   the curated list and also the user messages for the discussion." One column, because #curatedSide is the
+   narrow right-hand column beside the chart: the setups shared from the Option Finder, newest first (a click
+   picks one), then the picked setup's snapshot, key figures and its discussion strip (posts mirror into
+   Discord / Telegram). Context: rows, s, d, sel, title_of, strike_text, links, chat, details, has_snapshot,
+   rr_url, user. #}
+<section id="osPanel" class="mt-6 rounded-lg border border-slate-800 bg-slate-900/40">
+  <div class="flex items-center justify-between gap-2 px-3 py-2 border-b border-slate-800">
+    <h3 class="text-sm font-semibold text-slate-200">Option setups <span class="text-slate-500 font-normal">&middot; shared from the Option Finder, discussed on Discord &amp; Telegram</span></h3>
+    <a href="/options?tab=find" class="text-[11px] text-slate-400 hover:text-slate-200 whitespace-nowrap">Option Finder &rsaquo;</a>
+  </div>
+  {% if not rows %}
+  <p class="px-3 py-4 text-[12px] text-slate-500">Nothing shared yet. A moderator right-clicks a call in the Option Finder &rarr; <i>Share this setup to Discord &amp; Telegram</i>.</p>
+  {% else %}
+  <div class="max-h-[220px] overflow-y-auto border-b border-slate-800">
+    <table class="w-full text-[12px]">
+      <thead class="sticky top-0 bg-slate-900 text-[10px] uppercase tracking-wide text-slate-500">
+        <tr><th class="text-left px-3 py-1.5">Setup</th><th class="text-right px-2 py-1.5">Target</th><th class="text-right px-2 py-1.5">R / R</th><th class="text-right px-3 py-1.5">Shared</th></tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        {% set f = r.figures or {} %}
+        <tr class="cursor-pointer border-t border-slate-800/70 hover:bg-slate-800/50 {% if r.id == sel %}bg-slate-800/70{% endif %}"
+            hx-get="/setups/panel?sel={{ r.id }}" hx-target="#osPanel" hx-swap="outerHTML" title="Show this setup and its discussion">
+          <td class="px-3 py-1.5 whitespace-nowrap">
+            <span class="inline-flex items-center gap-1.5">{{ ticker_logo(r.symbol, 16) }}<span class="text-slate-100 font-medium">{{ r.symbol }} {{ strike_text(r.strike) }}{{ 'P' if r.right == 'P' else 'C' }}</span>
+              <span class="text-slate-500">{{ r.expiry[5:] }}</span></span>
+          </td>
+          <td class="px-2 py-1.5 text-right tabular-nums text-slate-300">{{ '%.2f'|format(r.target) if r.target else '-' }}</td>
+          <td class="px-2 py-1.5 text-right tabular-nums {{ 'text-emerald-300' if (f.rr or 0) >= 1 else 'text-slate-300' }}">{{ 'no loss' if f.no_loss else ('%.2f'|format(f.rr) if f.rr is not none else '-') }}</td>
+          <td class="px-3 py-1.5 text-right text-slate-500 whitespace-nowrap">{{ r.created_at.strftime('%b %d') if r.created_at else '' }}{% if r.discussion and r.discussion.n_contributions %} &middot; {{ r.discussion.n_contributions }} &#128172;{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if s %}
+  <div class="p-3 flex flex-col gap-2 h-[460px]">
+    <div class="flex items-start justify-between gap-2 shrink-0 flex-wrap">
+      <a href="/setups/option/{{ s.id }}" class="text-[13px] font-semibold text-slate-100 hover:text-sky-200">{{ title_of(s) }} &rsaquo;</a>
+      <div class="flex items-center gap-2 text-[11px] shrink-0">
+        {% if rr_url %}<a href="{{ rr_url }}" target="th_of_rr" rel="noopener" class="text-slate-400 hover:text-slate-200">R / R &#8599;</a>{% endif %}
+        {% if links.discord %}<a href="{{ links.discord }}" target="_blank" rel="noopener" class="text-indigo-300 hover:text-indigo-200">Discord &#8599;</a>{% endif %}
+        {% if links.telegram %}<a href="{{ links.telegram }}" target="_blank" rel="noopener" class="text-sky-300 hover:text-sky-200">Telegram &#8599;</a>{% endif %}
+      </div>
+    </div>
+    <div class="flex flex-col gap-2 shrink-0">
+      {% if has_snapshot %}
+      <a href="/setups/option/{{ s.id }}" class="block" title="Open the setup's page">
+        <img src="/setups/option/{{ s.id }}/snapshot.png" alt="chart snapshot" class="w-full rounded border border-slate-800 bg-slate-950">
+      </a>
+      {% endif %}
+      <dl class="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] content-start">
+        {% for k, v in details[:4] + details[7:8] + details[9:11] %}
+        <div class="min-w-0"><dt class="text-slate-500">{{ k }}</dt><dd class="text-slate-200 tabular-nums break-words">{{ v }}</dd></div>
+        {% endfor %}
+      </dl>
+    </div>
+    <div id="dscbox" class="flex-1 min-h-0 flex flex-col">
+      {% if d %}{% with d=chat.d, messages=chat.messages, links=chat.links, can_moderate=chat.can_moderate %}{% include "_discussion_chat.html" %}{% endwith %}
+      {% else %}<p class="text-[12px] text-slate-500">This setup has no discussion.</p>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+  {% endif %}
+</section>

@@ -46,7 +46,7 @@ def fake_chats(db, mod, monkeypatch):
     app_settings.set_many(db, mod, {"discord_bot_token": "t", "discord_channel_id": "777", "discord_guild_id": "999",
                                     "telegram_bot_token": "tt", "telegram_group_id": "-1001234567890"})
     sent = {"discord_threads": [], "discord_posts": [], "tg": []}
-    monkeypatch.setattr(discord, "create_study_thread", lambda name, embed=None: (sent["discord_threads"].append((name, embed)) or "th1"))
+    monkeypatch.setattr(discord, "create_study_thread", lambda name, embed=None, **kw: (sent["discord_threads"].append((name, embed)) or "th1"))
     monkeypatch.setattr(discord, "post_thread_message", lambda tid, text: (sent["discord_posts"].append((tid, text)) or True))
     monkeypatch.setattr(discord, "fetch_thread_messages", lambda tid, limit=50: [
         {"id": "m1", "author_id": "u1", "author": "Alice", "content": "looks strong", "embed_text": "", "has_attach": False,
